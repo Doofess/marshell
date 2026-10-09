@@ -52,6 +52,8 @@ Also check:
    - The files come from the NuGet package `Microsoft.Windows.Console.ConPTY` 1.25.260930003 (MIT). Both binaries are Authenticode-signed by Microsoft Corporation.
    - Long lines were unaffected: the S6 raw run measured 38 MB/s both ways.
 
+4. **Deviation from PLAN §7: phase 1 kills the Windows process tree with `taskkill /T /F`, not a Job Object.** The orphan check above passed with it. It only runs while the app is alive, so it does nothing if the app crashes. A Job Object with `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` is planned for phase 2, when tabs become closable.
+
 ## Decision
 - [x] Stock ConPTY is functionally fine: every shell renders, resizes, takes keys and exits cleanly.
 - [x] Ship a sideloaded conpty.dll + OpenConsole for throughput. The reason is not a bug: the inbox ConPTY is about 4× slower than OpenConsole on short-line floods.
