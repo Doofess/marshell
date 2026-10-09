@@ -4,7 +4,7 @@ import type { LatencyMeter } from "./latency";
 
 /** Hidden panel for the performance gate. Toggle: Ctrl+Shift+Alt+P (Cmd+Shift+Alt+P on macOS). */
 export function PerfOverlay({ meter, renderer }: { meter: LatencyMeter; renderer: RendererKind }) {
-  const [stats, setStats] = useState(meter.stats());
+  const [stats, setStats] = useState(() => meter.stats());
   useEffect(() => {
     const id = setInterval(() => setStats(meter.stats()), 500);
     return () => clearInterval(id);

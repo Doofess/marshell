@@ -1,5 +1,6 @@
 import { TOKEN_SUBPROTOCOL_PREFIX, WS_SUBPROTOCOL } from "../../generated/constants";
 import type { Endpoint } from "../../generated/Endpoint";
+import type { Resize } from "../../generated/Resize";
 import { decodeServerFrame, encodeAck, encodeBinaryString, encodeInput, encodeResize, encodeResume } from "./frames";
 
 export interface PtyHandlers {
@@ -15,6 +16,8 @@ const ACK_DELAY_MS = 16;
 export class PtySocket {
   private ws: WebSocket | null = null;
   private processedUpTo = 0;
+  // The renderer's size, replayed on every open: resizes while CONNECTING would otherwise be dropped.
+  private lastSize: Resize | null = null;
   private lastAckSent = 0;
   private ackTimer: ReturnType<typeof setTimeout> | null = null;
   private retryTimer: ReturnType<typeof setTimeout> | null = null;
@@ -37,6 +40,7 @@ export class PtySocket {
     ws.onopen = () => {
       this.retries = 0;
       ws.send(encodeResume(this.processedUpTo));
+      if (this.lastSize) ws.send(encodeResize(this.lastSize));
     };
     ws.onmessage = (ev) => {
       if (!(ev.data instanceof ArrayBuffer)) return;
@@ -74,7 +78,9 @@ export class PtySocket {
   }
 
   resize(cols: number, rows: number): void {
-    if (cols > 0 && rows > 0) this.send(encodeResize({ cols, rows }));
+    if (cols <= 0 || rows <= 0) return;
+    this.lastSize = { cols, rows };
+    this.send(encodeResize(this.lastSize));
   }
 
   /** The renderer has fully processed output before this byte offset. Acks are batched. */

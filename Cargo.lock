@@ -2232,11 +2232,8 @@ dependencies = [
 name = "marshell-app"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "marshell-core",
  "marshell-protocol",
- "serde",
- "serde_json",
  "tauri",
  "tauri-build",
  "tauri-plugin-single-instance",

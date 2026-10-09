@@ -33,7 +33,7 @@ fn allowed_origins() -> Vec<String> {
     origins
 }
 
-/// Spike S1 tries WebKitGTK workarounds one at a time through MARSHELL_LINUX_GFX.
+/// Spike S1 tries WebKitGTK workarounds one at a time through the `brand::env_var("LINUX_GFX")` env var.
 /// Never overrides a value the user already set.
 fn linux_webview_workarounds() {
     #[cfg(target_os = "linux")]
