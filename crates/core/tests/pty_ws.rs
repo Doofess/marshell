@@ -378,6 +378,55 @@ async fn no_resume_closes_socket() {
     assert!(closed.is_ok(), "socket stayed open without RESUME");
 }
 
+/// Tries a `/v1/pty/{tab}` upgrade with the given `Sec-WebSocket-Protocol` value and optional
+/// Origin. Returns the HTTP status the server refused it with.
+async fn refused_upgrade(core: &RunningCore, tab: &str, protocols: &str, origin: Option<&str>) -> u16 {
+    let mut req = format!("ws://127.0.0.1:{}/v1/pty/{tab}", core.endpoint.port)
+        .into_client_request()
+        .unwrap();
+    req.headers_mut()
+        .insert("Sec-WebSocket-Protocol", protocols.parse().unwrap());
+    if let Some(origin) = origin {
+        req.headers_mut().insert("Origin", origin.parse().unwrap());
+    }
+    match tokio_tungstenite::connect_async(req).await {
+        Err(tokio_tungstenite::tungstenite::Error::Http(res)) => res.status().as_u16(),
+        Ok(_) => panic!("the upgrade was accepted"),
+        Err(e) => panic!("unexpected error: {e}"),
+    }
+}
+
+#[tokio::test]
+async fn websocket_with_wrong_token_is_unauthorized() {
+    let (core, _home) = core().await;
+    let tab = create(&core, fake(&["exit", "0"]), None).await.unwrap();
+    assert_eq!(refused_upgrade(&core, &tab, "marshell.v1, token.nope", None).await, 401);
+}
+
+#[tokio::test]
+async fn websocket_without_token_is_unauthorized() {
+    let (core, _home) = core().await;
+    let tab = create(&core, fake(&["exit", "0"]), None).await.unwrap();
+    assert_eq!(refused_upgrade(&core, &tab, "marshell.v1", None).await, 401);
+}
+
+#[tokio::test]
+async fn websocket_from_foreign_origin_is_forbidden() {
+    let home = tempfile::tempdir().unwrap();
+    let core = start(CoreConfig {
+        home: home.path().to_path_buf(),
+        allowed_origins: vec!["http://tauri.localhost".into()],
+    })
+    .await
+    .unwrap();
+    let tab = create(&core, fake(&["exit", "0"]), None).await.unwrap();
+    let protocols = format!("marshell.v1, token.{}", core.endpoint.token);
+    assert_eq!(
+        refused_upgrade(&core, &tab, &protocols, Some("https://evil.example")).await,
+        403
+    );
+}
+
 /// S6 throughput. Run with: cargo test -p marshell-core --release --test pty_ws -- --ignored --nocapture
 #[tokio::test]
 #[ignore]
