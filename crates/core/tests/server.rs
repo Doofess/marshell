@@ -176,3 +176,19 @@ async fn preflight_with_wrong_host_is_forbidden() {
         .unwrap();
     assert_eq!(app().oneshot(req).await.unwrap().status(), StatusCode::FORBIDDEN);
 }
+
+/// `CommandBuilder::from_argv` indexes `argv[0]`, so an empty argv must be refused before spawning.
+#[tokio::test]
+async fn empty_shell_argv_is_a_bad_request() {
+    let req = get("/v1/sessions")
+        .method("POST")
+        .header(header::AUTHORIZATION, format!("Bearer {TOKEN}"))
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(r#"{"shell":[],"cols":80,"rows":24}"#))
+        .unwrap();
+    let res = app().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+    let body = axum::body::to_bytes(res.into_body(), 1024).await.unwrap();
+    let text = String::from_utf8_lossy(&body);
+    assert!(text.contains("empty"), "body: {text}");
+}

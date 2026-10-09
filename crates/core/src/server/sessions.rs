@@ -12,9 +12,14 @@ pub async fn create(
     State(st): State<AppState>,
     Json(req): Json<CreateSessionRequest>,
 ) -> Result<Json<CreateSessionResponse>, (StatusCode, String)> {
+    let argv = req.shell.unwrap_or_else(shell::default_shell);
+    if argv.is_empty() {
+        // `CommandBuilder::from_argv` would panic on an empty argv; refuse it before spawning.
+        return Err((StatusCode::BAD_REQUEST, "The shell argv is empty.".into()));
+    }
     let tab_id = auth::new_id("t");
     let spec = SpawnSpec {
-        argv: req.shell.unwrap_or_else(shell::default_shell),
+        argv,
         cwd: req.cwd.map(PathBuf::from).or_else(dirs::home_dir),
         env: vec![
             (brand::env_var("TAB_ID"), tab_id.clone()),
