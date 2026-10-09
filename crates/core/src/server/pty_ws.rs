@@ -5,6 +5,7 @@ use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
+use futures_util::stream::{SplitSink, SplitStream};
 use futures_util::{SinkExt, StreamExt};
 use marshell_protocol::brand;
 use std::sync::Arc;
@@ -16,6 +17,8 @@ const FLUSH_INTERVAL: Duration = Duration::from_millis(8);
 const SAFETY_TICK: Duration = Duration::from_millis(250);
 const RESUME_TIMEOUT: Duration = Duration::from_secs(5);
 const SEND_TIMEOUT: Duration = Duration::from_secs(10);
+/// How long we wait for the client's Close frame after sending ours.
+const CLOSE_TIMEOUT: Duration = Duration::from_secs(5);
 const MAX_MESSAGE: usize = 1 << 20;
 
 /// Detaches the session when dropped, so a panic or abort also detaches.
@@ -64,6 +67,9 @@ async fn run(socket: WebSocket, session: Arc<Session>) {
     // new output is coalesced or sent at once.
     let mut last_sent: Option<Instant> = None;
     let resume_by = Instant::now() + RESUME_TIMEOUT;
+    // Set when we end the connection ourselves (EXIT sent, or no RESUME in time): then we owe the
+    // client a close handshake. When the client ends it, or the socket is broken, we just leave.
+    let mut closing = false;
 
     loop {
         let mut check = false;
@@ -90,7 +96,10 @@ async fn run(socket: WebSocket, session: Arc<Session>) {
             _ = session.notified(), if cursor.is_some() => check = true,
             _ = tokio::time::sleep_until(deadline.unwrap_or_else(Instant::now)), if deadline.is_some() => check = true,
             _ = tokio::time::sleep(SAFETY_TICK), if cursor.is_some() => check = true,
-            _ = tokio::time::sleep_until(resume_by), if cursor.is_none() => break,
+            _ = tokio::time::sleep_until(resume_by), if cursor.is_none() => {
+                closing = true;
+                break;
+            }
         }
         if !check {
             continue;
@@ -127,7 +136,7 @@ async fn run(socket: WebSocket, session: Arc<Session>) {
                 }
             }
             if exited {
-                let _ = tokio::time::timeout(SEND_TIMEOUT, tx.send(Message::Close(None))).await;
+                closing = true;
                 done = true;
                 break;
             }
@@ -138,6 +147,31 @@ async fn run(socket: WebSocket, session: Arc<Session>) {
             break;
         }
     }
+    if closing {
+        close_handshake(&mut tx, &mut rx).await;
+    }
+}
+
+/// The WebSocket close handshake, started by us: send Close, then read and discard whatever the
+/// client still sends until its own Close frame (or the end of the stream) arrives.
+///
+/// Dropping the socket right after our Close frame is not enough. The client acks every frame and
+/// can be up to MAX_UNACKED behind, so it may still be sending acks for frames it has not read
+/// yet. Data arriving at a closed socket is answered with a TCP RST, which throws away everything
+/// the client had not read, EXIT included. Bounded by CLOSE_TIMEOUT, so a client that never
+/// answers cannot keep this task alive.
+async fn close_handshake(tx: &mut SplitSink<WebSocket, Message>, rx: &mut SplitStream<WebSocket>) {
+    let _ = tokio::time::timeout(CLOSE_TIMEOUT, async {
+        if tx.send(Message::Close(None)).await.is_err() {
+            return;
+        }
+        while let Some(Ok(msg)) = rx.next().await {
+            if matches!(msg, Message::Close(_)) {
+                break;
+            }
+        }
+    })
+    .await;
 }
 
 #[cfg(test)]

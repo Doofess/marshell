@@ -1,4 +1,5 @@
 use futures_util::{SinkExt, StreamExt};
+use marshell_core::pty::Pull;
 use marshell_core::server::{CoreConfig, RunningCore, start};
 use marshell_protocol::api::{CreateSessionRequest, CreateSessionResponse};
 use std::time::{Duration, Instant};
@@ -291,6 +292,65 @@ async fn idle_echo_is_not_held_for_the_coalescing_window() {
     assert!(
         *best < Duration::from_millis(4),
         "idle output was held for the coalescing window: {held:?}"
+    );
+}
+
+/// The server must finish the WebSocket close handshake, not drop the socket after its Close frame.
+///
+/// The real client acks every frame and can be up to MAX_UNACKED behind. When the server dropped
+/// the socket right after EXIT and Close, those late acks hit a closed socket, and Linux answers
+/// that with a TCP RST, which throws away everything the client had not read yet, EXIT included.
+/// The S6 run in CI failed exactly this way. This client is deliberately slow: it lets the whole
+/// burst, EXIT and Close pile up unread, then reads one frame at a time, acking and pausing after
+/// each, so at least one ack is sent while frames are still unread.
+#[tokio::test]
+async fn slow_acking_client_still_gets_exit() {
+    let (core, _home) = core().await;
+    // Under MAX_UNACKED, so the server never waits for an ack; over FLUSH_BYTES, so the burst
+    // takes several frames and the client acks while some are still unread.
+    let tab = create(&core, fake(&["flood", "81920"]), None).await.unwrap();
+    let session = core.state.session(&tab).unwrap();
+    let mut ws = connect(&core, &tab, 0).await;
+
+    // Read nothing until the server can send EXIT, then give it time to send EXIT and Close
+    // (and, before the fix, to drop the socket).
+    let give_up = Instant::now() + Duration::from_secs(10);
+    while !matches!(session.pull(session.counters().0, 1), Pull::Exit(_)) {
+        assert!(Instant::now() < give_up, "the flood never exited");
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    tokio::time::sleep(Duration::from_millis(500)).await;
+
+    let mut frames = 0;
+    let mut exit = None;
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while exit.is_none() {
+        assert!(Instant::now() < deadline, "no EXIT after {frames} frames");
+        let f = match ws.next().await {
+            Some(Ok(Message::Binary(f))) => f,
+            other => panic!("stream ended before EXIT, after {frames} frames: {other:?}"),
+        };
+        let end = match f[0] {
+            0x01 => u64::from_be_bytes(f[1..9].try_into().unwrap()) + (f.len() - 9) as u64,
+            0x02 => {
+                exit = Some(i32::from_be_bytes(f[1..5].try_into().unwrap()));
+                break;
+            }
+            _ => continue,
+        };
+        frames += 1;
+        // Ack like the real client, then pause so the ack reaches the server before the next read.
+        let mut ack = vec![0x12];
+        ack.extend_from_slice(&end.to_be_bytes());
+        ws.send(Message::Binary(ack.into()))
+            .await
+            .expect("ack after the server's Close frame");
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    assert_eq!(exit, Some(0));
+    assert!(
+        frames >= 2,
+        "the burst must span several frames to exercise the race, got {frames}"
     );
 }
 
