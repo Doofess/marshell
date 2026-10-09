@@ -6,14 +6,27 @@ use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 use marshell_protocol::brand;
 
-/// Every request passes three checks, in order:
-/// 1. `Host` is exactly `127.0.0.1:<port>` (blocks DNS rebinding).
-/// 2. `Origin`, when present, is on the allowlist (blocks other web pages).
-/// 3. The per-launch token is present (Bearer header, or `token.<t>` WebSocket subprotocol).
-pub async fn guard(State(st): State<AppState>, req: Request, next: Next) -> Response {
-    let headers = req.headers();
-    let host_ok = headers.get(header::HOST).and_then(|h| h.to_str().ok()) == Some(st.host());
+/// Outermost check, runs before CORS so even preflights need a good `Host`.
+/// `Host` must be present exactly once and equal `127.0.0.1:<port>` (blocks DNS rebinding).
+pub async fn host_guard(State(st): State<AppState>, req: Request, next: Next) -> Response {
+    let hosts = req.headers().get_all(header::HOST);
+    let mut values = hosts.iter();
+    let host_ok = match (values.next(), values.next()) {
+        (Some(h), None) => h.to_str().ok() == Some(st.host()),
+        _ => false,
+    };
     if !host_ok {
+        return StatusCode::FORBIDDEN.into_response();
+    }
+    next.run(req).await
+}
+
+/// Inside CORS. `Origin`, when present, must appear once and be on the allowlist (blocks other
+/// web pages). Then the per-launch token must be present and correct (Bearer header, or
+/// `token.<t>` WebSocket subprotocol).
+pub async fn auth_guard(State(st): State<AppState>, req: Request, next: Next) -> Response {
+    let headers = req.headers();
+    if headers.get_all(header::ORIGIN).iter().count() > 1 {
         return StatusCode::FORBIDDEN.into_response();
     }
     if let Some(origin) = headers.get(header::ORIGIN) {

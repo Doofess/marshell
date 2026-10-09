@@ -94,3 +94,70 @@ async fn start_writes_endpoint_file_and_serves() {
     assert_eq!(status, 200);
     core.shutdown();
 }
+
+#[tokio::test]
+async fn bad_bearer_token_is_unauthorized() {
+    let req = get("/v1/health").header(header::AUTHORIZATION, "Bearer nope").body(Body::empty()).unwrap();
+    assert_eq!(app().oneshot(req).await.unwrap().status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn bad_subprotocol_token_is_unauthorized() {
+    let req = get("/v1/health")
+        .header(header::SEC_WEBSOCKET_PROTOCOL, "marshell.v1, token.nope")
+        .body(Body::empty())
+        .unwrap();
+    assert_eq!(app().oneshot(req).await.unwrap().status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn empty_subprotocol_token_is_unauthorized() {
+    let req = get("/v1/health")
+        .header(header::SEC_WEBSOCKET_PROTOCOL, "marshell.v1, token.")
+        .body(Body::empty())
+        .unwrap();
+    assert_eq!(app().oneshot(req).await.unwrap().status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn allowed_origin_with_token_is_ok() {
+    let req = get("/v1/health")
+        .header(header::AUTHORIZATION, format!("Bearer {TOKEN}"))
+        .header(header::ORIGIN, ORIGIN)
+        .body(Body::empty())
+        .unwrap();
+    assert_eq!(app().oneshot(req).await.unwrap().status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn missing_host_is_forbidden() {
+    let req = Request::builder()
+        .uri("/v1/health")
+        .header(header::AUTHORIZATION, format!("Bearer {TOKEN}"))
+        .body(Body::empty())
+        .unwrap();
+    assert_eq!(app().oneshot(req).await.unwrap().status(), StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn duplicate_host_is_forbidden() {
+    let req = get("/v1/health")
+        .header(header::HOST, format!("127.0.0.1:{PORT}"))
+        .header(header::AUTHORIZATION, format!("Bearer {TOKEN}"))
+        .body(Body::empty())
+        .unwrap();
+    assert_eq!(app().oneshot(req).await.unwrap().status(), StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn preflight_with_wrong_host_is_forbidden() {
+    let req = Request::builder()
+        .uri("/v1/health")
+        .method("OPTIONS")
+        .header(header::HOST, "evil.example:5555")
+        .header(header::ORIGIN, ORIGIN)
+        .header(header::ACCESS_CONTROL_REQUEST_METHOD, "POST")
+        .body(Body::empty())
+        .unwrap();
+    assert_eq!(app().oneshot(req).await.unwrap().status(), StatusCode::FORBIDDEN);
+}

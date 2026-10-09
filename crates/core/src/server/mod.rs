@@ -60,9 +60,10 @@ pub fn router(state: AppState) -> Router {
         .allow_headers([header::AUTHORIZATION, header::CONTENT_TYPE]);
     Router::new()
         .route("/v1/health", get(health))
-        .layer(axum::middleware::from_fn_with_state(state.clone(), guard::guard))
-        // Added last = outermost: CORS answers preflights before the guard runs.
+        .layer(axum::middleware::from_fn_with_state(state.clone(), guard::auth_guard))
         .layer(cors)
+        // Added last = outermost: Host is checked before CORS can answer a preflight.
+        .layer(axum::middleware::from_fn_with_state(state.clone(), guard::host_guard))
         .with_state(state)
 }
 
