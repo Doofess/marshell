@@ -23,6 +23,9 @@ tracing = "0.1.44"
 [target."cfg(unix)".dependencies]
 libc = "0.2.190"
 
+[target."cfg(unix)".dev-dependencies]
+libc = "0.2.190"
+
 [dev-dependencies]
 rusqlite = { version = "0.40.2", features = ["bundled"] }
 tempfile = "3.27.0"

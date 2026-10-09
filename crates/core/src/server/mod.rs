@@ -78,8 +78,12 @@ pub struct RunningCore {
 }
 
 impl RunningCore {
-    /// Stops the server. Task 5 adds: kill every session's process tree.
+    /// Kills every session's process tree, then stops the server.
     pub fn shutdown(self) {
+        let sessions: Vec<_> = self.state.0.sessions.lock().unwrap().values().cloned().collect();
+        for s in sessions {
+            s.kill();
+        }
         let _ = self.shutdown.send(());
     }
 }
