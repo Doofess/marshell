@@ -1,4 +1,6 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
+import tokensCss from "../styles/tokens.css?raw";
+import { parseTokens } from "./cssTokens";
 import { ThemePair } from "./ThemePair";
 import "./specimen.css";
 
@@ -18,6 +20,9 @@ export const Space: StoryObj = {
   ),
 };
 
+// Read from the token file, so the story also renders outside a browser (the review page is server-rendered).
+const tokens = parseTokens(tokensCss, ":root");
+
 const durations = [
   "--dur-palette",
   "--dur-peek",
@@ -36,9 +41,7 @@ export const MotionTokens: StoryObj = {
       {durations.map((d) => (
         <div className="type-row" key={d}>
           <span className="type-row__meta">{d}</span>
-          <code style={{ fontSize: "var(--text-12)" }}>
-            {getComputedStyle(document.documentElement).getPropertyValue(d)}
-          </code>
+          <code style={{ fontSize: "var(--text-12)" }}>{tokens[d]?.dark ?? "–"}</code>
         </div>
       ))}
     </ThemePair>

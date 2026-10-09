@@ -12,7 +12,8 @@
     "tauri": "tauri",
     "check:generated": "node scripts/check-generated.mjs",
     "storybook": "storybook dev -p 6006",
-    "build-storybook": "storybook build -o storybook-static"
+    "build-storybook": "storybook build -o storybook-static",
+    "review:build": "node scripts/build-review.mjs"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.12.1",
