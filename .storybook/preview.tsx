@@ -4,6 +4,9 @@ import "../src/styles/tokens.css";
 import "../src/styles/accents.css";
 import "../src/styles/base.css";
 import "../src/styles/motion.css";
+import { syncPageHidden } from "../src/design/visibility";
+
+syncPageHidden(document);
 
 const ACCENTS = ["amber", "blue", "indigo", "violet", "magenta", "cyan", "teal", "slate"] as const;
 

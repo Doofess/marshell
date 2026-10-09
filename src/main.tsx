@@ -5,6 +5,9 @@ import "./styles/tokens.css";
 import "./styles/accents.css";
 import "./styles/base.css";
 import "./styles/app.css";
+import { syncPageHidden } from "./design/visibility";
+
+syncPageHidden(document);
 
 const root = document.getElementById("root");
 if (root) {

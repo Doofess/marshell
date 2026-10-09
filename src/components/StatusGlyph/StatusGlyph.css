@@ -1,0 +1,49 @@
+.status-glyph,
+.aux-glyph {
+  display: block;
+  flex: none;
+  overflow: visible;
+}
+
+/* Colour per state; shapes use currentColor. */
+.status-glyph[data-kind="idle"],
+.status-glyph[data-kind="stuck"],
+.status-glyph[data-kind="ended"],
+.status-glyph[data-kind="limited"] {
+  color: var(--text-3);
+}
+.status-glyph[data-kind="working"] {
+  color: var(--text-1);
+}
+.status-glyph[data-kind="done-unseen"] {
+  color: var(--ok);
+}
+.status-glyph[data-kind="done-seen"] {
+  color: color-mix(in oklch, var(--ok) 50%, transparent);
+}
+.status-glyph[data-kind="error"] {
+  color: var(--error);
+}
+.aux-glyph[data-kind="caution"] {
+  color: var(--caution);
+}
+.aux-glyph:is([data-kind="muted"], [data-kind="elevated"]) {
+  color: var(--text-2);
+}
+
+/* The ¾ arc is the reduced-motion stand-in for the pulse. */
+.g-working-arc {
+  opacity: 0;
+}
+
+/* Windows High Contrast: draw with system colours so every glyph stays visible. */
+@media (forced-colors: active) {
+  .status-glyph,
+  .aux-glyph {
+    color: CanvasText;
+    forced-color-adjust: none;
+  }
+  .status-glyph .g-badge {
+    fill: Highlight;
+  }
+}

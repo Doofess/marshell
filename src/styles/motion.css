@@ -1,1 +1,71 @@
-/* Motion: filled in by Task 3. */
+/*
+ * Motion for glyphs and rows (docs/PLAN.md "Motion").
+ * Full motion runs only when the OS allows it AND the Storybook/app switch is not "reduce".
+ * Looping animation pauses while the page is hidden (src/design/visibility.ts sets data-page-hidden).
+ */
+@keyframes g-pulse {
+  from { opacity: 0.45; }
+  to { opacity: 1; }
+}
+@keyframes g-bounce {
+  0%, 100% { transform: scale(1); }
+  45% { transform: scale(1.2); }
+}
+@keyframes g-draw {
+  from { stroke-dashoffset: 1; }
+  to { stroke-dashoffset: 0; }
+}
+@keyframes g-flash {
+  0%, 100% { opacity: 1; }
+  40% { opacity: 0.35; }
+}
+@keyframes row-flash {
+  from { background-color: var(--accent-flash); }
+  to { background-color: transparent; }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  :root:not([data-motion="reduce"]) .status-glyph[data-kind="working"] .g-working-dot {
+    animation: g-pulse var(--dur-pulse) var(--ease-out) infinite alternate;
+  }
+  :root:not([data-motion="reduce"]) .status-glyph:is([data-kind="needs-permission"], [data-kind="needs-question"]) {
+    transform-origin: center;
+    animation: g-bounce var(--dur-bounce) var(--ease-spring) 1;
+  }
+  :root:not([data-motion="reduce"]) .status-glyph[data-kind="done-unseen"] .g-check {
+    stroke-dasharray: 1;
+    animation: g-draw var(--dur-check) var(--ease-out) 1 both;
+  }
+  :root:not([data-motion="reduce"]) .status-glyph[data-kind="error"] .g-octagon {
+    animation: g-flash var(--dur-flash) var(--ease-out) 1;
+  }
+  :root:not([data-motion="reduce"]) .session-row[data-flash] {
+    animation: row-flash var(--dur-flash) var(--ease-out) 1;
+  }
+}
+
+/* Reduced: the working dot holds still and the ¾ arc shows instead. */
+@media (prefers-reduced-motion: reduce) {
+  .status-glyph[data-kind="working"] .g-working-arc {
+    opacity: 1;
+  }
+}
+:root[data-motion="reduce"] .status-glyph[data-kind="working"] .g-working-arc {
+  opacity: 1;
+}
+
+/* Reduced row flash: an instant tint that fades without movement. */
+@media (prefers-reduced-motion: reduce) {
+  .session-row[data-flash] {
+    background-color: var(--accent-tint);
+    transition: background-color 300ms var(--ease-out);
+  }
+}
+:root[data-motion="reduce"] .session-row[data-flash] {
+  background-color: var(--accent-tint);
+  transition: background-color 300ms var(--ease-out);
+}
+
+:root[data-page-hidden] * {
+  animation-play-state: paused !important;
+}

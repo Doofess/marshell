@@ -1,0 +1,21 @@
+.context-ring {
+  display: block;
+  flex: none;
+}
+.context-ring__track {
+  stroke: var(--hairline);
+}
+.context-ring__value {
+  stroke: var(--text-2);
+}
+.context-ring[data-tone="caution"] .context-ring__value {
+  stroke: var(--caution);
+}
+.context-ring[data-tone="error"] .context-ring__value {
+  stroke: var(--error);
+}
+@media (forced-colors: active) {
+  .context-ring__value {
+    stroke: CanvasText;
+  }
+}
