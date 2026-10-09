@@ -60,13 +60,11 @@ struct Received {
     exit: Option<i32>,
     end: u64,
     resets: usize,
-    /// OUTPUT frames seen.
-    frames: usize,
 }
 
 /// Reads frames, acking each, until EXIT, `stop` matches, or the timeout passes.
 async fn read_until(ws: &mut Ws, timeout: Duration, stop: impl Fn(&[u8]) -> bool) -> Received {
-    let mut r = Received { bytes: vec![], exit: None, end: 0, resets: 0, frames: 0 };
+    let mut r = Received { bytes: vec![], exit: None, end: 0, resets: 0 };
     let deadline = Instant::now() + timeout;
     while Instant::now() < deadline && !stop(&r.bytes) {
         let f = match tokio::time::timeout(Duration::from_millis(200), ws.next()).await {
@@ -78,7 +76,6 @@ async fn read_until(ws: &mut Ws, timeout: Duration, stop: impl Fn(&[u8]) -> bool
         let seq = || u64::from_be_bytes(f[1..9].try_into().unwrap());
         match f[0] {
             0x01 => {
-                r.frames += 1;
                 r.bytes.extend_from_slice(&f[9..]);
                 r.end = seq() + (f.len() - 9) as u64;
             }
@@ -185,8 +182,9 @@ async fn evicted_cursor_gets_a_reset() {
     assert_eq!(got.exit, Some(0));
 }
 
-/// Reads OUTPUT frames, acking each, until `needle` shows up. Returns when the first frame arrived.
-async fn first_frame_of_reply(ws: &mut Ws, needle: &str) -> Instant {
+/// Reads OUTPUT frames, acking each, until `needle` shows up. Returns when the first frame at or
+/// past `baseline` arrived; leftover frames from before it are read but not timed.
+async fn first_frame_of_reply(ws: &mut Ws, needle: &str, baseline: u64) -> Instant {
     let mut first: Option<Instant> = None;
     let mut bytes = Vec::new();
     let deadline = Instant::now() + Duration::from_secs(10);
@@ -201,9 +199,12 @@ async fn first_frame_of_reply(ws: &mut Ws, needle: &str) -> Instant {
         if f[0] != 0x01 {
             continue;
         }
-        first.get_or_insert_with(Instant::now);
+        let seq = u64::from_be_bytes(f[1..9].try_into().unwrap());
+        if seq >= baseline {
+            first.get_or_insert_with(Instant::now);
+        }
         bytes.extend_from_slice(&f[9..]);
-        let end = u64::from_be_bytes(f[1..9].try_into().unwrap()) + (f.len() - 9) as u64;
+        let end = seq + (f.len() - 9) as u64;
         let mut ack = vec![0x12];
         ack.extend_from_slice(&end.to_be_bytes());
         ws.send(Message::Binary(ack.into())).await.unwrap();
@@ -211,11 +212,12 @@ async fn first_frame_of_reply(ws: &mut Ws, needle: &str) -> Instant {
     first.unwrap()
 }
 
-/// Output after an idle gap is sent at once, not held for the 8 ms coalescing window.
+/// Smoke test: output after an idle gap is sent at once, not held for the 8 ms coalescing window.
 /// Measured inside the core: from the moment the bytes land in the session buffer to the moment
 /// the first frame reaches the socket. The old code held every such frame for at least 8 ms
 /// (about 15 ms on Windows, whose timer ticks at 15.6 ms), so no sample could dip under that.
-/// Asserting on the minimum of several rounds keeps a busy CI runner from failing the test.
+/// Asserting on the minimum of several rounds keeps a busy CI runner from failing the test; the
+/// regression guard proper is the `hold_until` unit test in `server/pty_ws.rs`.
 #[tokio::test]
 async fn idle_echo_is_not_held_for_the_coalescing_window() {
     let (core, _home) = core().await;
@@ -246,7 +248,7 @@ async fn idle_echo_is_not_held_for_the_coalescing_window() {
         let mut input = vec![0x10];
         input.extend_from_slice(format!("p{i}\r").as_bytes());
         ws.send(Message::Binary(input.into())).await.unwrap();
-        let sent = first_frame_of_reply(&mut ws, &format!("got:p{i}")).await;
+        let sent = first_frame_of_reply(&mut ws, &format!("got:p{i}"), baseline).await;
         let landed = landed.await.unwrap();
         // If the socket beat the watcher, the watcher was descheduled: that sample says nothing.
         match sent.checked_duration_since(landed) {
@@ -258,22 +260,6 @@ async fn idle_echo_is_not_held_for_the_coalescing_window() {
     let best = held.iter().min().expect("every sample was unusable; the watcher thread never ran in time");
     // Half the coalescing window: the old code could not produce any sample under 8 ms.
     assert!(*best < Duration::from_millis(4), "idle output was held for the coalescing window: {held:?}");
-}
-
-/// Sustained output is still coalesced: a flood arrives in frames far larger than one 80-byte
-/// line, not one frame per line.
-#[tokio::test]
-async fn sustained_output_coalesces_into_large_frames() {
-    let (core, _home) = core().await;
-    let total = 2 * 1024 * 1024;
-    let tab = create(&core, fake(&["flood", &total.to_string()]), None).await.unwrap();
-    let mut ws = connect(&core, &tab, 0).await;
-    let got = read_until(&mut ws, Duration::from_secs(30), |_| false).await;
-    assert_eq!(got.exit, Some(0));
-    assert!(got.bytes.len() >= total, "got {} bytes", got.bytes.len());
-    let avg = got.bytes.len() / got.frames.max(1);
-    println!("flood: {} bytes in {} frames, avg {avg} bytes/frame", got.bytes.len(), got.frames);
-    assert!(avg > 4096, "frames too small: avg {avg} bytes over {} frames", got.frames);
 }
 
 #[tokio::test]

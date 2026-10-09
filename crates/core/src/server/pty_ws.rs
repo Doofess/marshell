@@ -38,14 +38,28 @@ pub async fn handler(State(st): State<AppState>, Path(tab): Path<String>, ws: We
     ws.max_message_size(MAX_MESSAGE).protocols([brand::WS_SUBPROTOCOL]).on_upgrade(move |socket| run(socket, session))
 }
 
+/// The flush rule. None: send what is pending now. Some(t): hold it until t.
+///
+/// Leading-edge flush: after an idle gap (no frame within FLUSH_INTERVAL) output goes out at once.
+/// Only a sustained stream is coalesced, until FLUSH_INTERVAL after the previous frame or until
+/// FLUSH_BYTES are pending, whichever comes first. With nothing pending we never hold, so the
+/// caller still pulls and EXIT is noticed.
+fn hold_until(avail: u64, last_sent: Option<Instant>, now: Instant) -> Option<Instant> {
+    if avail == 0 || avail >= FLUSH_BYTES as u64 {
+        return None;
+    }
+    last_sent.map(|t| t + FLUSH_INTERVAL).filter(|d| *d > now)
+}
+
 async fn run(socket: WebSocket, session: Arc<Session>) {
     let (mut tx, mut rx) = socket.split();
     // Set when the first RESUME arrives; nothing is attached before that.
     let mut guard: Option<AttachGuard> = None;
     let mut cursor: Option<u64> = None;
-    // When pending output must be flushed at the latest.
+    // When pending output must be flushed at the latest; derived from `hold_until`.
     let mut deadline: Option<Instant> = None;
-    // When the last frame went out; decides whether new output is coalesced or sent at once.
+    // When the last OUTPUT or RESET frame went out (a RESET is a paint too); decides whether
+    // new output is coalesced or sent at once.
     let mut last_sent: Option<Instant> = None;
     let resume_by = Instant::now() + RESUME_TIMEOUT;
 
@@ -82,13 +96,10 @@ async fn run(socket: WebSocket, session: Arc<Session>) {
         let Some(mut c) = cursor else { continue };
 
         let avail = session.available(c);
-        // Leading-edge flush: after an idle gap (no frame within FLUSH_INTERVAL) output goes out
-        // at once. Only a sustained stream is coalesced, until FLUSH_INTERVAL after the previous
-        // frame or until FLUSH_BYTES are pending, whichever comes first.
-        let coalescing = last_sent.is_some_and(|t| t.elapsed() < FLUSH_INTERVAL);
-        // With nothing pending we still pull, so EXIT is noticed.
-        if avail > 0 && avail < FLUSH_BYTES as u64 && coalescing {
-            deadline = last_sent.map(|t| t + FLUSH_INTERVAL);
+        // The deadline is always in the future when armed, and tokio never completes a timer
+        // early, so this branch never spins.
+        if let Some(d) = hold_until(avail, last_sent, Instant::now()) {
+            deadline = Some(d);
             continue;
         }
         let mut done = false;
@@ -124,5 +135,38 @@ async fn run(socket: WebSocket, session: Arc<Session>) {
         if done {
             break;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const MS: Duration = Duration::from_millis(1);
+
+    #[test]
+    fn idle_stream_sends_at_once() {
+        let now = Instant::now();
+        assert_eq!(hold_until(1, None, now), None);
+        assert_eq!(hold_until(1, Some(now - 8 * MS), now), None);
+        assert_eq!(hold_until(1, Some(now - 20 * MS), now), None);
+    }
+
+    #[test]
+    fn sustained_stream_holds_until_one_interval_after_the_last_frame() {
+        let now = Instant::now();
+        assert_eq!(hold_until(1, Some(now - MS), now), Some(now + 7 * MS));
+    }
+
+    #[test]
+    fn nothing_pending_never_holds_so_exit_is_noticed() {
+        let now = Instant::now();
+        assert_eq!(hold_until(0, Some(now - MS), now), None);
+    }
+
+    #[test]
+    fn a_full_frame_is_sent_at_once() {
+        let now = Instant::now();
+        assert_eq!(hold_until(FLUSH_BYTES as u64, Some(now - MS), now), None);
     }
 }
