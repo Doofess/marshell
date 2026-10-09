@@ -5,6 +5,7 @@
   padding-inline: var(--space-3) 10px;
   color: var(--text-1);
   font-size: var(--text-13);
+  font-variant-numeric: tabular-nums;
   line-height: 20px;
   outline-offset: -2px;
   cursor: default;
@@ -21,27 +22,33 @@
   padding-block: var(--space-2);
 }
 
-.session-row[aria-current="true"] {
-  background: var(--selected);
-}
+/*
+ * Backgrounds layer instead of replacing each other: the needs-you tint is the background colour (the flash
+ * animates it), hover is a background image on top, and selection is an inset shadow on top of both.
+ */
 .session-row[data-needs-you] {
-  background: var(--accent-tint);
+  background-color: var(--accent-tint);
 }
-.session-row[data-ended] {
-  color: color-mix(in oklch, var(--text-1) 60%, transparent);
+.session-row[aria-selected="true"] {
+  box-shadow: inset 0 0 0 100vmax var(--selected);
 }
 
 @media (hover: hover) and (pointer: fine) {
   .session-row:hover {
-    background: var(--hover);
-  }
-  .session-row[data-needs-you]:hover {
-    background: color-mix(in oklch, var(--accent) 10%, transparent);
+    background-image: linear-gradient(var(--hover), var(--hover));
   }
 }
 
 .session-row:focus-visible {
   outline: 2px solid var(--accent);
+}
+
+/* An ended row reads at --text-3 throughout, which passes AA on every surface (contrast.test.ts). */
+.session-row[data-ended] {
+  color: var(--text-3);
+}
+.session-row[data-ended] :is(.session-row__project, .session-row__sep, .session-row__branch-head, .session-row__branch-tail, .session-row__phrase, .session-row__time) {
+  color: inherit;
 }
 
 /* Brand stripe, flush to the inline start. */
@@ -62,10 +69,6 @@
   background: var(--brand-gemini);
 }
 
-/*
- * Truncation order (docs/PLAN.md): branch first (middle), then project (end), then name (end, keeps 8 characters).
- * Large shrink ratios make the branch give up its width before the project, and the project before the name.
- */
 .session-row__line1 {
   display: flex;
   align-items: center;
@@ -80,18 +83,29 @@
   margin-inline-end: var(--space-1);
 }
 
+/*
+ * Truncation order (docs/PLAN.md): the branch head (middle, the tail stays), then the project, then the branch tail;
+ * the name never shrinks and is only capped at the lead's width, so it is cut last and shows as much as fits. The
+ * lead clips at its end, so the right cluster always stays whole.
+ */
+.session-row__lead {
+  display: flex;
+  align-items: center;
+  flex: 1 1 auto;
+  min-inline-size: 0;
+  overflow: clip;
+}
+
 .session-row__name {
-  flex: 0 1 auto;
-  min-inline-size: 8ch;
+  flex: none;
+  max-inline-size: 100%;
   overflow: clip;
   text-overflow: ellipsis;
+  unicode-bidi: plaintext;
   font-weight: 500;
 }
-.session-row__name[data-short] {
-  flex: none;
-  min-inline-size: 0;
-}
 .session-row[data-unseen] .session-row__name {
+  max-inline-size: calc(100% - 10px);
   font-weight: 600;
 }
 
@@ -110,6 +124,7 @@
   margin-inline-start: 6px;
   overflow: clip;
   text-overflow: ellipsis;
+  unicode-bidi: plaintext;
   color: var(--text-2);
   font-size: var(--text-12);
 }
@@ -121,16 +136,22 @@
   font-size: var(--text-12);
 }
 
+/* Never below 1.5ch, so a collapsed head still shows its ellipsis before the tail. */
 .session-row__branch-head {
   flex: 0 10000 auto;
-  min-inline-size: 0;
+  min-inline-size: 1.5ch;
   overflow: clip;
   text-overflow: ellipsis;
+  unicode-bidi: plaintext;
   color: var(--text-2);
   font-size: var(--text-12);
 }
 .session-row__branch-tail {
-  flex: none;
+  flex: 0 50 auto;
+  min-inline-size: 0;
+  overflow: clip;
+  text-overflow: ellipsis;
+  unicode-bidi: plaintext;
   color: var(--text-2);
   font-size: var(--text-12);
 }
@@ -141,14 +162,12 @@
   display: flex;
   align-items: center;
   gap: 6px;
-  margin-inline-start: auto;
   padding-inline-start: var(--space-2);
 }
 
 .session-row__time {
   color: var(--text-2);
   font-size: var(--text-11);
-  font-variant-numeric: tabular-nums;
 }
 .session-row[data-needs-you] .session-row__time {
   color: var(--text-1);
@@ -202,5 +221,16 @@
 .session-row__usage {
   color: var(--text-3);
   font-size: var(--text-11);
-  font-variant-numeric: tabular-nums;
+}
+
+/* Windows High Contrast: shadows and tints are dropped, so selection and the unread dot use system colours. */
+@media (forced-colors: active) {
+  .session-row[aria-selected="true"] {
+    outline: 2px solid Highlight;
+    outline-offset: -2px;
+  }
+  .session-row__unread {
+    forced-color-adjust: none;
+    background: CanvasText;
+  }
 }

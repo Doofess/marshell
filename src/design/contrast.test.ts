@@ -60,3 +60,17 @@ describe("distinctness", () => {
     expect(parseTokens(accentsCss, ":root")["--accent"]).toEqual(accent("amber")["--accent"]);
   });
 });
+
+describe("composited and derived colours (final review)", () => {
+  for (const theme of THEMES)
+    it(`--ok-dim (the seen check) is at least 3:1 on every surface (${theme})`, () => {
+      expect(minOnSurfaces(tokens["--ok-dim"]![theme], tokens, theme)).toBeGreaterThanOrEqual(3);
+    });
+  const brands = ["--brand-claude", "--brand-codex", "--brand-gemini", "--brand-generic"];
+  for (const theme of THEMES)
+    for (const s of ["--error", "--ok", "--caution"])
+      for (const b of brands)
+        it(`${s} is ΔE ≥ 15 from ${b} (${theme})`, () => {
+          expect(deltaE(tokens[s]![theme], tokens[b]![theme])).toBeGreaterThanOrEqual(15);
+        });
+});

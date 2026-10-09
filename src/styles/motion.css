@@ -19,9 +19,13 @@
   0%, 100% { opacity: 1; }
   40% { opacity: 0.35; }
 }
+/* No "to" frame: the flash fades into whatever background the row has (needs-you tint, selection, none). */
 @keyframes row-flash {
   from { background-color: var(--accent-flash); }
-  to { background-color: transparent; }
+}
+/* Reduced motion: an instant tint held for 300 ms, then gone; nothing moves or fades. */
+@keyframes row-flash-reduced {
+  from, to { background-color: var(--accent-flash); }
 }
 
 @media (prefers-reduced-motion: no-preference) {
@@ -42,6 +46,10 @@
   :root:not([data-motion="reduce"]) .session-row[data-flash] {
     animation: row-flash var(--dur-flash) var(--ease-out) 1;
   }
+  /* A muted session's badge does not bounce (docs/PLAN.md "Sidebar rows"). */
+  :root:not([data-motion="reduce"]) .session-row[data-muted] .status-glyph {
+    animation: none;
+  }
 }
 
 /* Reduced: the working dot holds still and the ¾ arc shows instead. */
@@ -54,16 +62,13 @@
   opacity: 1;
 }
 
-/* Reduced row flash: an instant tint that fades without movement. */
 @media (prefers-reduced-motion: reduce) {
   .session-row[data-flash] {
-    background-color: var(--accent-tint);
-    transition: background-color 300ms var(--ease-out);
+    animation: row-flash-reduced 300ms step-end 1;
   }
 }
 :root[data-motion="reduce"] .session-row[data-flash] {
-  background-color: var(--accent-tint);
-  transition: background-color 300ms var(--ease-out);
+  animation: row-flash-reduced 300ms step-end 1;
 }
 
 :root[data-page-hidden] * {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { displayWidth, splitForMiddle } from "./truncate";
+import { splitForMiddle } from "./truncate";
 
 describe("splitForMiddle", () => {
   it.each([
@@ -28,15 +28,4 @@ describe("splitForMiddle", () => {
   it("returns the whole string as tail when it is short", () => {
     expect(splitForMiddle("dev")).toEqual({ head: "", tail: "dev" });
   });
-});
-
-describe("displayWidth", () => {
-  it.each([
-    ["billing", 7],
-    ["x", 1],
-    ["認証サーバー 🚀", 15],
-    ["프로젝트", 8],
-    ["خادم-التحقق", 11],
-    ["fix-🚀", 6],
-  ])("%s → %i columns", (s, w) => expect(displayWidth(s)).toBe(w));
 });

@@ -19,7 +19,7 @@
   color: var(--ok);
 }
 .status-glyph[data-kind="done-seen"] {
-  color: color-mix(in oklch, var(--ok) 50%, transparent);
+  color: var(--ok-dim);
 }
 .status-glyph[data-kind="error"] {
   color: var(--error);
@@ -36,14 +36,31 @@
   opacity: 0;
 }
 
-/* Windows High Contrast: draw with system colours so every glyph stays visible. */
+/*
+ * Windows High Contrast: draw every glyph in system colours. The [data-kind] selectors match the specificity of the
+ * per-kind colour rules above, and come later, so they win. Badge marks sit on Highlight; cut-outs show Canvas.
+ */
 @media (forced-colors: active) {
-  .status-glyph,
-  .aux-glyph {
+  .status-glyph[data-kind],
+  .aux-glyph[data-kind] {
     color: CanvasText;
     forced-color-adjust: none;
   }
   .status-glyph .g-badge {
     fill: Highlight;
+  }
+  .status-glyph .g-mark {
+    stroke: HighlightText;
+  }
+  .status-glyph .g-mark--fill {
+    stroke: none;
+    fill: HighlightText;
+  }
+  :is(.status-glyph, .aux-glyph) .g-cut {
+    stroke: Canvas;
+  }
+  :is(.status-glyph, .aux-glyph) .g-cut--fill {
+    stroke: none;
+    fill: Canvas;
   }
 }

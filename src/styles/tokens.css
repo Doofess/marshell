@@ -19,9 +19,12 @@
   --error: light-dark(oklch(56% 0.22 27), oklch(67% 0.21 29));
   --ok: light-dark(oklch(55% 0.14 147), oklch(76.5% 0.19 147));
   --caution: light-dark(oklch(52% 0.11 100), oklch(90% 0.17 100));
+  /* A quieter ok for "done, seen": still at least 3:1 on every surface, unlike ok at 50% opacity. */
+  --ok-dim: light-dark(oklch(60% 0.07 147), oklch(58% 0.09 147));
 
   /* Agent brand colours: stripes and dots only, never status. */
-  --brand-claude: light-dark(oklch(62% 0.14 42), oklch(68% 0.13 42));
+  /* Claude is a muted terracotta so it stays ΔE ≥ 15 from --error and ≥ 18 from the amber accent. */
+  --brand-claude: light-dark(oklch(56% 0.08 45), oklch(70% 0.08 45));
   --brand-codex: light-dark(oklch(32% 0 none), oklch(86% 0 none));
   --brand-gemini: light-dark(oklch(52% 0.17 265), oklch(70% 0.14 265));
   --brand-generic: light-dark(oklch(52% 0.02 250), oklch(65% 0.02 250));

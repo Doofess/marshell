@@ -14,7 +14,7 @@ const shapes: Record<GlyphKind, ReactNode> = {
   "needs-permission": (
     <>
       <rect className="g-badge" x="1.5" y="1.5" width="13" height="13" rx="3.5" fill="var(--accent)" />
-      <g fill="none" stroke="var(--accent-ink)" strokeWidth="1.5" strokeLinecap="round">
+      <g className="g-mark" fill="none" stroke="var(--accent-ink)" strokeWidth="1.5" strokeLinecap="round">
         <circle cx="5.75" cy="8" r="2" />
         <path d="M7.75 8h4.5M10.75 8v1.75" />
       </g>
@@ -24,13 +24,14 @@ const shapes: Record<GlyphKind, ReactNode> = {
     <>
       <rect className="g-badge" x="1.5" y="1.5" width="13" height="13" rx="3.5" fill="var(--accent)" />
       <path
+        className="g-mark"
         d="M6.25 6.25a1.75 1.75 0 1 1 2.6 1.53c-.5.28-.85.62-.85 1.22v.25"
         fill="none"
         stroke="var(--accent-ink)"
         strokeWidth="1.5"
         strokeLinecap="round"
       />
-      <circle cx="8" cy="11.4" r="0.9" fill="var(--accent-ink)" />
+      <circle className="g-mark g-mark--fill" cx="8" cy="11.4" r="0.9" fill="var(--accent-ink)" />
     </>
   ),
   "done-unseen": (
@@ -42,7 +43,7 @@ const shapes: Record<GlyphKind, ReactNode> = {
   error: (
     <>
       <polygon className="g-octagon" points="5.2,1.5 10.8,1.5 14.5,5.2 14.5,10.8 10.8,14.5 5.2,14.5 1.5,10.8 1.5,5.2" fill="currentColor" />
-      <path d="M6 6l4 4M10 6l-4 4" fill="none" stroke="var(--bg-base)" strokeWidth="1.5" strokeLinecap="round" />
+      <path className="g-cut" d="M6 6l4 4M10 6l-4 4" fill="none" stroke="var(--bg-base)" strokeWidth="1.5" strokeLinecap="round" />
     </>
   ),
   stuck: <circle cx="8" cy="8" r="5.25" fill="none" stroke="currentColor" strokeWidth="1.5" strokeDasharray="2.2 2" />,
@@ -84,8 +85,8 @@ const aux: Record<AuxKind, ReactNode> = {
   caution: (
     <>
       <path d="M8 2l6.25 11H1.75L8 2z" fill="currentColor" />
-      <path d="M8 6.25v3" stroke="var(--bg-base)" strokeWidth="1.5" strokeLinecap="round" />
-      <circle cx="8" cy="11.1" r="0.85" fill="var(--bg-base)" />
+      <path className="g-cut" d="M8 6.25v3" stroke="var(--bg-base)" strokeWidth="1.5" strokeLinecap="round" />
+      <circle className="g-cut g-cut--fill" cx="8" cy="11.1" r="0.85" fill="var(--bg-base)" />
     </>
   ),
 };

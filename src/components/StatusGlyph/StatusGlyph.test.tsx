@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { AUX_LABELS, GLYPHS, type AuxKind, type GlyphKind } from "./glyphs";
@@ -54,4 +55,26 @@ describe("AuxGlyph", () => {
       expect(html).toContain('width="12"');
       expect(html).toContain(`aria-label="${AUX_LABELS[k]}"`);
     });
+});
+
+describe("forced colours (final review)", () => {
+  const css = readFileSync(new URL("./StatusGlyph.css", import.meta.url), "utf8");
+  const forced = css.slice(css.indexOf("@media (forced-colors: active)"));
+  it("overrides every per-kind colour, not just the bare class", () => {
+    expect(forced).toMatch(/\.status-glyph\[data-kind\]/);
+    expect(forced).toMatch(/\.aux-glyph\[data-kind\]/);
+  });
+  it("keeps the badge's key and question mark visible on the Highlight fill", () => {
+    expect(forced).toMatch(/\.g-mark[^{]*\{[^}]*HighlightText/);
+    for (const k of ["needs-permission", "needs-question"] as const)
+      expect(renderToStaticMarkup(<StatusGlyph kind={k} />)).toContain('class="g-mark');
+  });
+  it("cuts the error cross and caution bang out in Canvas", () => {
+    expect(forced).toMatch(/\.g-cut[^{]*\{[^}]*Canvas/);
+    expect(renderToStaticMarkup(<StatusGlyph kind="error" />)).toContain('class="g-cut');
+    expect(renderToStaticMarkup(<AuxGlyph kind="caution" />)).toContain('class="g-cut');
+  });
+  it("draws the seen check with the dimmed ok token, not transparency", () => {
+    expect(css).toMatch(/\[data-kind="done-seen"\][^{]*\{[^}]*var\(--ok-dim\)/);
+  });
 });

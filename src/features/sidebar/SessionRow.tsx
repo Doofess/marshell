@@ -2,14 +2,27 @@ import { AuxGlyph, StatusGlyph } from "../../components/StatusGlyph/StatusGlyph"
 import { ContextRing } from "../../components/ContextRing/ContextRing";
 import { formatDuration, formatUsage, modeCaution } from "./format";
 import { rowLabel, rowTitle } from "./labels";
-import { displayWidth, splitForMiddle } from "./truncate";
+import { splitForMiddle } from "./truncate";
 import type { Density, RowModel } from "./types";
 import "./SessionRow.css";
 
 const NEEDS_YOU = new Set(["needs-permission", "needs-question"]);
 
-/** One sidebar row (docs/PLAN.md "Sidebar rows"). Height is fixed per density; hover never changes it. */
-export function SessionRow({ row, density, selected = false }: { row: RowModel; density: Density; selected?: boolean }) {
+/**
+ * One sidebar row (docs/PLAN.md "Sidebar rows"): an option in the sidebar's listbox. Height is fixed per density and
+ * hover never changes it. Focus is roving: the list gives exactly one row `tabStop`, arrow keys move it (batch 2).
+ */
+export function SessionRow({
+  row,
+  density,
+  selected = false,
+  tabStop = false,
+}: {
+  row: RowModel;
+  density: Density;
+  selected?: boolean;
+  tabStop?: boolean;
+}) {
   const caution = modeCaution(row.mode);
   const time = row.waitingMs ?? (row.status === "done-unseen" || row.status === "done-seen" || row.status === "ended" ? row.ageMs : undefined);
   const branch = row.branch ? splitForMiddle(row.branch) : null;
@@ -17,36 +30,47 @@ export function SessionRow({ row, density, selected = false }: { row: RowModel; 
   return (
     <div
       className="session-row"
-      role="listitem"
-      tabIndex={0}
+      role="option"
+      aria-selected={selected}
+      tabIndex={tabStop ? 0 : -1}
       title={rowTitle(row)}
       aria-label={rowLabel(row)}
-      aria-current={selected || undefined}
       data-density={density}
       data-agent={row.agent}
       data-status={row.status}
       data-needs-you={NEEDS_YOU.has(row.status) || undefined}
       data-unseen={row.status === "done-unseen" || undefined}
       data-ended={row.status === "ended" || undefined}
+      data-muted={row.muted || undefined}
       data-flash={row.flash || undefined}
     >
       <span className="session-row__stripe" aria-hidden="true" />
       <div className="session-row__line1" aria-hidden="true">
         <StatusGlyph kind={row.status} />
         {row.elevated && <AuxGlyph kind="elevated" />}
-        {/* Names up to 8 columns wide never shrink; longer ones keep at least 8 (docs/PLAN.md truncation order). */}
-        <span className="session-row__name" data-short={displayWidth(row.name) <= 8 || undefined}>
-          {row.name}
+        {/* The lead clips, so whatever happens to the names, the right cluster always stays in the row. */}
+        <span className="session-row__lead">
+          <span className="session-row__name" dir="auto">
+            {row.name}
+          </span>
+          {row.status === "done-unseen" && <span className="session-row__unread" />}
+          <span className="session-row__project" dir="auto">
+            {row.project}
+          </span>
+          {branch && (
+            <>
+              <span className="session-row__sep">·</span>
+              {branch.head && (
+                <span className="session-row__branch-head" dir="auto">
+                  {branch.head}
+                </span>
+              )}
+              <span className="session-row__branch-tail" dir="auto">
+                {branch.tail}
+              </span>
+            </>
+          )}
         </span>
-        {row.status === "done-unseen" && <span className="session-row__unread" />}
-        <span className="session-row__project">{row.project}</span>
-        {branch && (
-          <>
-            <span className="session-row__sep">·</span>
-            <span className="session-row__branch-head">{branch.head}</span>
-            <span className="session-row__branch-tail">{branch.tail}</span>
-          </>
-        )}
         <span className="session-row__cluster">
           {caution && <AuxGlyph kind="caution" label={caution} />}
           {row.muted && <AuxGlyph kind="muted" />}
