@@ -45,6 +45,8 @@ async fn run(socket: WebSocket, session: Arc<Session>) {
     let mut cursor: Option<u64> = None;
     // When pending output must be flushed at the latest.
     let mut deadline: Option<Instant> = None;
+    // When the last frame went out; decides whether new output is coalesced or sent at once.
+    let mut last_sent: Option<Instant> = None;
     let resume_by = Instant::now() + RESUME_TIMEOUT;
 
     loop {
@@ -79,14 +81,14 @@ async fn run(socket: WebSocket, session: Arc<Session>) {
         }
         let Some(mut c) = cursor else { continue };
 
-        let due = deadline.is_some_and(|d| d <= Instant::now());
         let avail = session.available(c);
+        // Leading-edge flush: after an idle gap (no frame within FLUSH_INTERVAL) output goes out
+        // at once. Only a sustained stream is coalesced, until FLUSH_INTERVAL after the previous
+        // frame or until FLUSH_BYTES are pending, whichever comes first.
+        let coalescing = last_sent.is_some_and(|t| t.elapsed() < FLUSH_INTERVAL);
         // With nothing pending we still pull, so EXIT is noticed.
-        if avail > 0 && avail < FLUSH_BYTES as u64 && !due {
-            // Pending data waits at most one interval.
-            if deadline.is_none() {
-                deadline = Some(Instant::now() + FLUSH_INTERVAL);
-            }
+        if avail > 0 && avail < FLUSH_BYTES as u64 && coalescing {
+            deadline = last_sent.map(|t| t + FLUSH_INTERVAL);
             continue;
         }
         let mut done = false;
@@ -104,7 +106,7 @@ async fn run(socket: WebSocket, session: Arc<Session>) {
                 Pull::Idle => break,
             };
             match tokio::time::timeout(SEND_TIMEOUT, tx.send(Message::Binary(frame.into()))).await {
-                Ok(Ok(())) => {}
+                Ok(Ok(())) => last_sent = Some(Instant::now()),
                 // Send failed or timed out: the peer is gone or stuck.
                 _ => {
                     done = true;
