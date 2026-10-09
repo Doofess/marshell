@@ -66,11 +66,29 @@ fn backpressure_bounds_unacked_output() {
     let s = Session::spawn("t4".into(), fake(&["flood", "8000000"])).unwrap();
     let generation = s.attach();
     s.resume(0);
-    std::thread::sleep(Duration::from_millis(1500)); // never ack
+    // Never ack. First prove output flowed, so a slow machine cannot pass vacuously.
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        let (end, acked) = s.counters();
+        if end - acked >= MAX_UNACKED / 2 {
+            break;
+        }
+        assert!(Instant::now() < deadline, "output never reached {} bytes", MAX_UNACKED / 2);
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    std::thread::sleep(Duration::from_millis(500));
     let (end, acked) = s.counters();
     assert!(end - acked <= MAX_UNACKED + 64 * 1024, "unacked {} exceeds the limit", end - acked);
     s.detach(generation);
     s.kill();
+}
+
+#[test]
+fn kill_after_exit_is_a_noop() {
+    let s = Session::spawn("t7".into(), fake(&["exit", "0"])).unwrap();
+    assert_eq!(drain(&s, Duration::from_secs(10)).1, Some(0));
+    s.kill();
+    s.force_kill();
 }
 
 #[test]

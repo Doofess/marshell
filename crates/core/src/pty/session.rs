@@ -4,6 +4,7 @@ use portable_pty::{native_pty_system, CommandBuilder, MasterPty, PtySize};
 use std::ffi::OsString;
 use std::io::{Read, Write};
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
@@ -51,6 +52,8 @@ pub struct Session {
     input: mpsc::Sender<Vec<u8>>,
     master: Mutex<Option<Box<dyn MasterPty + Send>>>,
     pid: Option<u32>,
+    /// Set when the child has exited, so a late kill cannot hit a reused pid.
+    exited: Arc<AtomicBool>,
 }
 
 impl Session {
@@ -90,6 +93,7 @@ impl Session {
             input: input_tx,
             master: Mutex::new(Some(pair.master)),
             pid,
+            exited: Arc::new(AtomicBool::new(false)),
         });
 
         std::thread::Builder::new().name(format!("pty-write-{id}")).spawn(move || {
@@ -139,10 +143,15 @@ impl Session {
         // ConPTY holds back all output until its startup query is answered, and a client can attach
         // before that query arrives, so the core answers the first one even when attached.
         let startup_pending = cfg!(windows) && !out.startup_dsr_answered;
-        let (pass, answered) =
+        let (mut pass, answered) =
             if out.attached && !startup_pending { (bytes.to_vec(), 0) } else { out.dsr.filter(bytes) };
-        if answered > 0 {
+        if answered > 0 && !out.startup_dsr_answered {
             out.startup_dsr_answered = true;
+            if out.attached {
+                // The filter stops here, so release any bytes it was holding back.
+                let carry = out.dsr.take_carry();
+                pass.extend(carry);
+            }
         }
         out.screen.process(&pass);
         out.buf.push(&pass);
@@ -158,12 +167,21 @@ impl Session {
         }
     }
 
-    fn on_exit(&self, code: i32) {
+    fn on_exit(self: &Arc<Self>, code: i32) {
+        self.exited.store(true, Ordering::SeqCst);
         self.output.lock().unwrap().exit = Some((code, Instant::now()));
         self.space.notify_all();
         // Windows: the reader only gets EOF once the pseudoconsole is closed.
-        self.master.lock().unwrap().take();
+        // Take it out of the mutex first: closing can block, and `resize` must not wait on it.
+        let master = self.master.lock().unwrap().take();
+        drop(master);
         self.notify.notify_one();
+        // `pull` gives up waiting for EOF after 500 ms; wake the async task so it re-pulls then.
+        let s = self.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(550));
+            s.notify.notify_one();
+        });
     }
 
     pub fn write_input(&self, bytes: Vec<u8>) {
@@ -252,16 +270,31 @@ impl Session {
         (out.buf.end(), out.acked)
     }
 
-    /// Kills the whole process tree, not just the direct child.
+    /// Politely kills the whole process tree. Never blocks the caller.
+    /// Unix: SIGHUP now, SIGKILL after 2 s if the child has not exited by then.
+    /// Windows: taskkill /T /F on a helper thread.
     pub fn kill(&self) {
+        if self.exited.load(Ordering::SeqCst) {
+            return;
+        }
         if let Some(pid) = self.pid {
-            kill_tree(pid);
+            kill_tree(pid, self.exited.clone());
+        }
+    }
+
+    /// Kills the whole process tree right now and waits for it. Use when the process is about to exit.
+    pub fn force_kill(&self) {
+        if self.exited.load(Ordering::SeqCst) {
+            return;
+        }
+        if let Some(pid) = self.pid {
+            force_kill_tree(pid);
         }
     }
 }
 
 #[cfg(windows)]
-fn kill_tree(pid: u32) {
+fn taskkill(pid: u32) {
     use std::os::windows::process::CommandExt;
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;
     let _ = std::process::Command::new("taskkill")
@@ -270,16 +303,36 @@ fn kill_tree(pid: u32) {
         .status();
 }
 
+#[cfg(windows)]
+fn kill_tree(pid: u32, _exited: Arc<AtomicBool>) {
+    std::thread::spawn(move || taskkill(pid));
+}
+
+#[cfg(windows)]
+fn force_kill_tree(pid: u32) {
+    taskkill(pid);
+}
+
 #[cfg(unix)]
-fn kill_tree(pid: u32) {
+fn kill_tree(pid: u32, exited: Arc<AtomicBool>) {
     // portable-pty starts the child in its own session, so its pid is the process group id.
     unsafe {
         libc::killpg(pid as i32, libc::SIGHUP);
     }
     std::thread::spawn(move || {
         std::thread::sleep(Duration::from_secs(2));
-        unsafe {
-            libc::killpg(pid as i32, libc::SIGKILL);
+        // After the child exits its pid may be reused, so only escalate while it is still ours.
+        if !exited.load(Ordering::SeqCst) {
+            unsafe {
+                libc::killpg(pid as i32, libc::SIGKILL);
+            }
         }
     });
+}
+
+#[cfg(unix)]
+fn force_kill_tree(pid: u32) {
+    unsafe {
+        libc::killpg(pid as i32, libc::SIGKILL);
+    }
 }

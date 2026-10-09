@@ -82,7 +82,7 @@ impl RunningCore {
     pub fn shutdown(self) {
         let sessions: Vec<_> = self.state.0.sessions.lock().unwrap().values().cloned().collect();
         for s in sessions {
-            s.kill();
+            s.force_kill();
         }
         let _ = self.shutdown.send(());
     }
