@@ -5,5 +5,5 @@ Pass criterion: an FTS5 table is created and matched (with snippet()) on Windows
 | OS | Result | Evidence |
 |---|---|---|
 | Windows 11 (dev box) | PASS | `cargo test -p marshell-core --test fts5`, 2026-10-09 |
-| macOS (CI) | | CI run link |
-| Linux (CI) | | CI run link |
+| macOS (CI) | PASS (`bundled_sqlite_has_fts5 ... ok`) | [run](https://github.com/Doofess/marshell/actions/runs/37999636586) |
+| Linux (CI) | PASS (`bundled_sqlite_has_fts5 ... ok`) | [run](https://github.com/Doofess/marshell/actions/runs/37999636586) |

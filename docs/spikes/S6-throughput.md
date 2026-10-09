@@ -6,9 +6,9 @@ Pass: 50 MB through the full pipeline in under 2 s end to end (pty -> core -> WS
 | OS | `s6_throughput_50mb` output | Pass |
 |---|---|---|
 | Windows (dev box) | `S6: 58981347 bytes in 1.63s = 36.1 MB/s, exit Some(0)` (median of 3; raw ConPTY 1.58 s, pipeline +3%) | PASS |
-| Windows (CI) | pending first CI run | |
-| macOS (CI) | pending first CI run | |
-| Linux (CI) | pending first CI run | |
+| Windows (CI) | pipeline `58980257 bytes in 3.57s = 16.5 MB/s`; raw `3.70s = 15.9 MB/s` ([run](https://github.com/Doofess/marshell/actions/runs/37999636586)) | Pass by the 20% rule: misses 2 s, but the pipeline adds nothing over raw ConPTY on the shared runner |
+| macOS (CI) | pipeline `53084960 bytes in 1.72s = 30.9 MB/s`; raw `1.72s` ([run](https://github.com/Doofess/marshell/actions/runs/37999636586)) | Pass |
+| Linux (CI) | pipeline `53084160 bytes in 1.03s = 51.8 MB/s`; raw `1.12s = 47.3 MB/s` ([run](https://github.com/Doofess/marshell/actions/runs/37999636586)) | Pass |
 
 If Windows misses 2 s, the likely ceiling is ConPTY itself. Measure a raw ConPTY read of the same flood (a
 `Session::pull` loop with no WebSocket) and record both numbers. Our pipeline passes if it adds under 20%.
@@ -39,5 +39,5 @@ magnitude off, so run-to-run noise does not change the conclusion.
 
 ## Pending
 
-- CI rows: fill from the first CI run on each OS (`--ignored` tests are not run by `cargo test` by default).
+- CI rows come from CI's two S6 steps, which run both ignored tests by name.
 - "Typing in another tab stays under 30 ms" waits for phase 2 (multiple tabs). Not measured here.
