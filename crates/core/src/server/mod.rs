@@ -1,4 +1,7 @@
+pub mod frames;
 mod guard;
+mod pty_ws;
+mod sessions;
 
 use crate::{auth, paths};
 use axum::http::{header, HeaderValue, Method};
@@ -27,8 +30,7 @@ struct Inner {
     token: String,
     host: String,
     allowed_origins: Vec<String>,
-    // Filled in Task 6. Kept here so every handler reaches it through one State.
-    #[allow(dead_code)]
+    // Kept here so every handler reaches it through one State.
     sessions: Mutex<HashMap<String, Arc<crate::pty::Session>>>,
 }
 
@@ -47,6 +49,12 @@ impl AppState {
     pub fn host(&self) -> &str {
         &self.0.host
     }
+    pub fn session(&self, tab: &str) -> Option<Arc<crate::pty::Session>> {
+        self.0.sessions.lock().unwrap().get(tab).cloned()
+    }
+    pub fn insert_session(&self, session: Arc<crate::pty::Session>) {
+        self.0.sessions.lock().unwrap().insert(session.id().to_string(), session);
+    }
     pub fn origin_allowed(&self, origin: &str) -> bool {
         self.0.allowed_origins.iter().any(|o| o == origin)
     }
@@ -60,6 +68,8 @@ pub fn router(state: AppState) -> Router {
         .allow_headers([header::AUTHORIZATION, header::CONTENT_TYPE]);
     Router::new()
         .route("/v1/health", get(health))
+        .route("/v1/sessions", axum::routing::post(sessions::create))
+        .route("/v1/pty/{tab}", get(pty_ws::handler))
         .layer(axum::middleware::from_fn_with_state(state.clone(), guard::auth_guard))
         .layer(cors)
         // Added last = outermost: Host is checked before CORS can answer a preflight.
