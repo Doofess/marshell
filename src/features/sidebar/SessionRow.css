@@ -1,0 +1,206 @@
+.session-row {
+  position: relative;
+  display: grid;
+  align-content: center;
+  padding-inline: var(--space-3) 10px;
+  color: var(--text-1);
+  font-size: var(--text-13);
+  line-height: 20px;
+  outline-offset: -2px;
+  cursor: default;
+}
+
+.session-row[data-density="compact"] {
+  block-size: var(--row-compact);
+}
+.session-row[data-density="comfortable"] {
+  block-size: var(--row-comfortable);
+}
+.session-row[data-density="expanded"] {
+  min-block-size: var(--row-comfortable);
+  padding-block: var(--space-2);
+}
+
+.session-row[aria-current="true"] {
+  background: var(--selected);
+}
+.session-row[data-needs-you] {
+  background: var(--accent-tint);
+}
+.session-row[data-ended] {
+  color: color-mix(in oklch, var(--text-1) 60%, transparent);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .session-row:hover {
+    background: var(--hover);
+  }
+  .session-row[data-needs-you]:hover {
+    background: color-mix(in oklch, var(--accent) 10%, transparent);
+  }
+}
+
+.session-row:focus-visible {
+  outline: 2px solid var(--accent);
+}
+
+/* Brand stripe, flush to the inline start. */
+.session-row__stripe {
+  position: absolute;
+  inset-block: 0;
+  inset-inline-start: 0;
+  inline-size: var(--stripe);
+  background: var(--brand-generic);
+}
+.session-row[data-agent="claude"] .session-row__stripe {
+  background: var(--brand-claude);
+}
+.session-row[data-agent="codex"] .session-row__stripe {
+  background: var(--brand-codex);
+}
+.session-row[data-agent="gemini"] .session-row__stripe {
+  background: var(--brand-gemini);
+}
+
+/*
+ * Truncation order (docs/PLAN.md): branch first (middle), then project (end), then name (end, keeps 8 characters).
+ * Large shrink ratios make the branch give up its width before the project, and the project before the name.
+ */
+.session-row__line1 {
+  display: flex;
+  align-items: center;
+  min-inline-size: 0;
+  white-space: nowrap;
+}
+
+.session-row__line1 > .status-glyph {
+  margin-inline-end: var(--space-2);
+}
+.session-row__line1 > .aux-glyph {
+  margin-inline-end: var(--space-1);
+}
+
+.session-row__name {
+  flex: 0 1 auto;
+  min-inline-size: 8ch;
+  overflow: clip;
+  text-overflow: ellipsis;
+  font-weight: 500;
+}
+.session-row__name[data-short] {
+  flex: none;
+  min-inline-size: 0;
+}
+.session-row[data-unseen] .session-row__name {
+  font-weight: 600;
+}
+
+.session-row__unread {
+  flex: none;
+  inline-size: 6px;
+  block-size: 6px;
+  margin-inline-start: var(--space-1);
+  border-radius: 50%;
+  background: var(--text-1);
+}
+
+.session-row__project {
+  flex: 0 100 auto;
+  min-inline-size: 0;
+  margin-inline-start: 6px;
+  overflow: clip;
+  text-overflow: ellipsis;
+  color: var(--text-2);
+  font-size: var(--text-12);
+}
+
+.session-row__sep {
+  flex: none;
+  padding-inline: var(--space-1);
+  color: var(--text-3);
+  font-size: var(--text-12);
+}
+
+.session-row__branch-head {
+  flex: 0 10000 auto;
+  min-inline-size: 0;
+  overflow: clip;
+  text-overflow: ellipsis;
+  color: var(--text-2);
+  font-size: var(--text-12);
+}
+.session-row__branch-tail {
+  flex: none;
+  color: var(--text-2);
+  font-size: var(--text-12);
+}
+
+/* The right cluster never truncates. */
+.session-row__cluster {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-inline-start: auto;
+  padding-inline-start: var(--space-2);
+}
+
+.session-row__time {
+  color: var(--text-2);
+  font-size: var(--text-11);
+  font-variant-numeric: tabular-nums;
+}
+.session-row[data-needs-you] .session-row__time {
+  color: var(--text-1);
+  font-weight: 500;
+}
+
+.session-row__phrase {
+  padding-inline-start: calc(var(--glyph) + var(--space-2));
+  overflow: clip;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-2);
+  font-size: var(--text-12);
+  line-height: 16px;
+}
+
+.session-row__details {
+  display: grid;
+  gap: var(--space-1);
+  padding-inline-start: calc(var(--glyph) + var(--space-2));
+  margin-block-start: var(--space-1);
+  color: var(--text-2);
+  font-size: var(--text-12);
+  line-height: 16px;
+}
+
+.session-row__meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-2);
+}
+
+.session-row__pill {
+  padding-inline: 6px;
+  border: 1px solid var(--hairline);
+  border-radius: 999px;
+  color: var(--text-1);
+  font-size: var(--text-11);
+}
+
+.session-row__caution-text {
+  color: var(--text-1);
+}
+
+.session-row__recap {
+  margin: 0;
+  color: var(--text-1);
+}
+
+.session-row__age,
+.session-row__usage {
+  color: var(--text-3);
+  font-size: var(--text-11);
+  font-variant-numeric: tabular-nums;
+}
