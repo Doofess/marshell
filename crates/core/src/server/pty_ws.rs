@@ -8,77 +8,119 @@ use axum::response::{IntoResponse, Response};
 use futures_util::{SinkExt, StreamExt};
 use marshell_protocol::brand;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
+use tokio::time::Instant;
 
 const FLUSH_INTERVAL: Duration = Duration::from_millis(8);
+/// Slow safety re-pull: covers a Notify permit eaten by a stale connection and the exit fallback.
+const SAFETY_TICK: Duration = Duration::from_millis(250);
+const RESUME_TIMEOUT: Duration = Duration::from_secs(5);
+const SEND_TIMEOUT: Duration = Duration::from_secs(10);
+const MAX_MESSAGE: usize = 1 << 20;
+
+/// Detaches the session when dropped, so a panic or abort also detaches.
+struct AttachGuard {
+    session: Arc<Session>,
+    generation: u64,
+}
+
+impl Drop for AttachGuard {
+    fn drop(&mut self) {
+        self.session.detach(self.generation);
+    }
+}
 
 pub async fn handler(State(st): State<AppState>, Path(tab): Path<String>, ws: WebSocketUpgrade) -> Response {
     let Some(session) = st.session(&tab) else {
         return StatusCode::NOT_FOUND.into_response();
     };
     // Echo our subprotocol, or browsers drop the connection.
-    ws.protocols([brand::WS_SUBPROTOCOL]).on_upgrade(move |socket| run(socket, session))
+    ws.max_message_size(MAX_MESSAGE).protocols([brand::WS_SUBPROTOCOL]).on_upgrade(move |socket| run(socket, session))
 }
 
 async fn run(socket: WebSocket, session: Arc<Session>) {
-    let generation = session.attach();
     let (mut tx, mut rx) = socket.split();
-    // None until the client sends RESUME.
+    // Set when the first RESUME arrives; nothing is attached before that.
+    let mut guard: Option<AttachGuard> = None;
     let mut cursor: Option<u64> = None;
-    let mut last_flush = Instant::now();
+    // When pending output must be flushed at the latest.
+    let mut deadline: Option<Instant> = None;
+    let resume_by = Instant::now() + RESUME_TIMEOUT;
 
     loop {
+        let mut check = false;
         tokio::select! {
             msg = rx.next() => match msg {
                 Some(Ok(Message::Binary(frame))) => match decode_client(&frame) {
                     Some(ClientFrame::Input(bytes)) => session.write_input(bytes),
                     Some(ClientFrame::Resize(r)) => { let _ = session.resize(r.cols, r.rows); }
                     Some(ClientFrame::Ack(n)) => session.ack(n),
-                    Some(ClientFrame::Resume(from)) => { session.resume(from); cursor = Some(from); }
+                    Some(ClientFrame::Resume(from)) => {
+                        if guard.is_none() {
+                            guard = Some(AttachGuard { generation: session.attach(), session: session.clone() });
+                        }
+                        let from = from.min(session.counters().0);
+                        session.resume(from);
+                        cursor = Some(from);
+                        check = true;
+                    }
                     None => {}
                 },
                 Some(Ok(Message::Close(_))) | None | Some(Err(_)) => break,
                 Some(Ok(_)) => {}
             },
-            _ = session.notified(), if cursor.is_some() => {}
-            _ = tokio::time::sleep(FLUSH_INTERVAL), if cursor.is_some() => {}
+            _ = session.notified(), if cursor.is_some() => check = true,
+            _ = tokio::time::sleep_until(deadline.unwrap_or_else(Instant::now)), if deadline.is_some() => check = true,
+            _ = tokio::time::sleep(SAFETY_TICK), if cursor.is_some() => check = true,
+            _ = tokio::time::sleep_until(resume_by), if cursor.is_none() => break,
         }
-
-        let Some(mut c) = cursor else { continue };
-        // Coalesce: flush when 64 KiB is waiting or 8 ms have passed since the last flush.
-        if session.available(c) < FLUSH_BYTES as u64 && last_flush.elapsed() < FLUSH_INTERVAL {
+        if !check {
             continue;
         }
-        let mut exited = false;
+        let Some(mut c) = cursor else { continue };
+
+        let due = deadline.is_some_and(|d| d <= Instant::now());
+        let avail = session.available(c);
+        // With nothing pending we still pull, so EXIT is noticed.
+        if avail > 0 && avail < FLUSH_BYTES as u64 && !due {
+            // Pending data waits at most one interval.
+            if deadline.is_none() {
+                deadline = Some(Instant::now() + FLUSH_INTERVAL);
+            }
+            continue;
+        }
+        let mut done = false;
         loop {
-            let frame = match session.pull(c, FLUSH_BYTES) {
+            let (frame, exited) = match session.pull(c, FLUSH_BYTES) {
                 Pull::Data { seq, bytes } => {
                     c = seq + bytes.len() as u64;
-                    encode_output(seq, &bytes)
+                    (encode_output(seq, &bytes), false)
                 }
                 Pull::Reset { seq, screen } => {
                     c = seq;
-                    encode_reset(seq, &screen)
+                    (encode_reset(seq, &screen), false)
                 }
-                Pull::Exit(code) => {
-                    exited = true;
-                    encode_exit(code)
-                }
+                Pull::Exit(code) => (encode_exit(code), true),
                 Pull::Idle => break,
             };
-            if tx.send(Message::Binary(frame.into())).await.is_err() {
-                exited = true;
-                break;
+            match tokio::time::timeout(SEND_TIMEOUT, tx.send(Message::Binary(frame.into()))).await {
+                Ok(Ok(())) => {}
+                // Send failed or timed out: the peer is gone or stuck.
+                _ => {
+                    done = true;
+                    break;
+                }
             }
             if exited {
+                let _ = tokio::time::timeout(SEND_TIMEOUT, tx.send(Message::Close(None))).await;
+                done = true;
                 break;
             }
         }
         cursor = Some(c);
-        last_flush = Instant::now();
-        if exited {
+        deadline = None;
+        if done {
             break;
         }
     }
-    session.detach(generation);
 }

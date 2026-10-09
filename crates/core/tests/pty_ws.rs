@@ -67,8 +67,11 @@ async fn read_until(ws: &mut Ws, timeout: Duration, stop: impl Fn(&[u8]) -> bool
     let mut r = Received { bytes: vec![], exit: None, end: 0, resets: 0 };
     let deadline = Instant::now() + timeout;
     while Instant::now() < deadline && !stop(&r.bytes) {
-        let Ok(Some(Ok(Message::Binary(f)))) = tokio::time::timeout(Duration::from_millis(200), ws.next()).await else {
-            continue;
+        let f = match tokio::time::timeout(Duration::from_millis(200), ws.next()).await {
+            Err(_) => continue,
+            Ok(Some(Ok(Message::Binary(f)))) => f,
+            Ok(Some(Ok(Message::Close(_)))) | Ok(None) | Ok(Some(Err(_))) => break,
+            Ok(Some(Ok(_))) => continue,
         };
         let seq = || u64::from_be_bytes(f[1..9].try_into().unwrap());
         match f[0] {
@@ -167,11 +170,36 @@ async fn evicted_cursor_gets_a_reset() {
     let (core, _home) = core().await;
     // 9 MiB with nobody attached overflows the 8 MiB ring.
     let tab = create(&core, fake(&["flood", "9437184"]), None).await.unwrap();
-    tokio::time::sleep(Duration::from_secs(4)).await;
+    let session = core.state.session(&tab).unwrap();
+    let overflow = Instant::now() + Duration::from_secs(20);
+    while session.counters().0 < 9_437_184 {
+        assert!(Instant::now() < overflow, "flood never overflowed the ring");
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
     let mut ws = connect(&core, &tab, 0).await;
     let got = read_until(&mut ws, Duration::from_secs(20), |_| false).await;
     assert!(got.resets >= 1);
     assert_eq!(got.exit, Some(0));
+}
+
+#[tokio::test]
+async fn no_resume_closes_socket() {
+    let (core, _home) = core().await;
+    let tab = create(&core, fake(&["echo"]), None).await.unwrap();
+    let mut req = format!("ws://127.0.0.1:{}/v1/pty/{tab}", core.endpoint.port).into_client_request().unwrap();
+    req.headers_mut()
+        .insert("Sec-WebSocket-Protocol", format!("marshell.v1, token.{}", core.endpoint.token).parse().unwrap());
+    let (mut ws, _) = tokio_tungstenite::connect_async(req).await.unwrap();
+    let closed = tokio::time::timeout(Duration::from_secs(7), async {
+        loop {
+            match ws.next().await {
+                None | Some(Err(_)) | Some(Ok(Message::Close(_))) => break,
+                Some(Ok(_)) => {}
+            }
+        }
+    })
+    .await;
+    assert!(closed.is_ok(), "socket stayed open without RESUME");
 }
 
 /// S6 throughput. Run with: cargo test -p marshell-core --release --test pty_ws -- --ignored --nocapture
