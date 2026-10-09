@@ -28,21 +28,50 @@ pub fn tokens_match(a: &str, b: &str) -> bool {
         == 0
 }
 
-/// Writes the endpoint file atomically (temp file + rename), readable by the user only.
-/// On Windows the file inherits the user-only ACL of the profile directory.
+/// Writes the endpoint file atomically (temp file + rename) and creates it private from the start.
+/// On unix the directory is 0700 and the file 0600, so no other user can read it, not even briefly.
+/// On Windows the file inherits the ACL of its directory, which is user-only under the default
+/// `~/.marshell`. An explicit owner-only ACL comes when the hook bridge starts reading this file (phase 3).
 pub fn write_endpoint_file(path: &Path, ep: &Endpoint) -> anyhow::Result<()> {
     let dir = path
         .parent()
         .ok_or_else(|| anyhow::anyhow!("endpoint path has no parent"))?;
-    std::fs::create_dir_all(dir)?;
-    let tmp = dir.join(".endpoint.json.tmp");
-    std::fs::write(&tmp, serde_json::to_vec_pretty(ep)?)?;
+    create_private_dir(dir)?;
+    let tmp = dir.join(format!(".endpoint.{}.tmp", std::process::id()));
+    let result = write_private_file(&tmp, &serde_json::to_vec_pretty(ep)?)
+        .and_then(|()| Ok(std::fs::rename(&tmp, path)?));
+    if result.is_err() {
+        let _ = std::fs::remove_file(&tmp);
+    }
+    result
+}
+
+fn create_private_dir(dir: &Path) -> anyhow::Result<()> {
     #[cfg(unix)]
     {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o600))?;
+        use std::os::unix::fs::DirBuilderExt;
+        std::fs::DirBuilder::new()
+            .recursive(true)
+            .mode(0o700)
+            .create(dir)?;
     }
-    std::fs::rename(&tmp, path)?;
+    #[cfg(not(unix))]
+    std::fs::create_dir_all(dir)?;
+    Ok(())
+}
+
+fn write_private_file(path: &Path, bytes: &[u8]) -> anyhow::Result<()> {
+    use std::io::Write;
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let mut file = options.open(path)?;
+    file.write_all(bytes)?;
+    file.sync_all()?;
     Ok(())
 }
 
@@ -94,5 +123,26 @@ mod tests {
             let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
             assert_eq!(mode, 0o600);
         }
+    }
+
+    #[test]
+    fn endpoint_file_overwrites_existing() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("run").join("endpoint.json");
+        let first = Endpoint {
+            port: 1111,
+            token: "a".into(),
+            platform: Platform::current(),
+        };
+        let second = Endpoint {
+            port: 2222,
+            token: "b".into(),
+            platform: Platform::current(),
+        };
+        write_endpoint_file(&path, &first).unwrap();
+        write_endpoint_file(&path, &second).unwrap();
+        let back: Endpoint = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        assert_eq!(back.port, 2222);
+        assert_eq!(back.token, "b");
     }
 }
