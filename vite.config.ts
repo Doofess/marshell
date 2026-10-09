@@ -6,6 +6,9 @@ export default defineConfig({
   plugins: [react()],
   clearScreen: false,
   server: { port: 1420, strictPort: true },
-  build: { target: "es2022" },
+  // cssTarget: the webviews Marshell ships on (WebView2, WKWebView, WebKitGTK) all handle light-dark() and oklch()
+  // natively. An older target makes the minifier rewrite light-dark() into variables that ignore a nested
+  // color-scheme, which breaks forced-dark or side-by-side light panels.
+  build: { target: "es2022", cssTarget: ["chrome123", "safari17.5"] },
   test: { environment: "node" },
 });

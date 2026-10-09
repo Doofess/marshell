@@ -1,0 +1,21 @@
+.theme-pair {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 360px), 1fr));
+  gap: var(--space-4);
+}
+
+.theme-pair__panel {
+  padding: var(--space-4);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius);
+  background: var(--bg-base);
+  color: var(--text-1);
+}
+
+.theme-pair__caption {
+  margin: 0 0 var(--space-3);
+  color: var(--text-3);
+  font-size: var(--text-11);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
