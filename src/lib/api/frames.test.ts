@@ -44,4 +44,9 @@ describe("client frames", () => {
     expect(Array.from(encodeAck(258))).toEqual([0x12, 0, 0, 0, 0, 0, 0, 1, 2]);
     expect(Array.from(encodeResume(0))).toEqual([0x13, 0, 0, 0, 0, 0, 0, 0, 0]);
   });
+  it("truncates non-integer offsets instead of throwing", () => {
+    expect(Array.from(encodeAck(1.9))).toEqual(Array.from(encodeAck(1)));
+    expect(Array.from(encodeAck(Number.NaN))).toEqual(Array.from(encodeAck(0)));
+    expect(Array.from(encodeResume(-5))).toEqual(Array.from(encodeResume(0)));
+  });
 });

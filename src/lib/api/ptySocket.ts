@@ -17,6 +17,7 @@ export class PtySocket {
   private processedUpTo = 0;
   private lastAckSent = 0;
   private ackTimer: ReturnType<typeof setTimeout> | null = null;
+  private retryTimer: ReturnType<typeof setTimeout> | null = null;
   private retries = 0;
   private done = false;
 
@@ -29,6 +30,7 @@ export class PtySocket {
   }
 
   private connect(): void {
+    if (this.done) return;
     const url = `ws://127.0.0.1:${this.endpoint.port}/v1/pty/${encodeURIComponent(this.tabId)}`;
     const ws = new WebSocket(url, [WS_SUBPROTOCOL, TOKEN_SUBPROTOCOL_PREFIX + this.endpoint.token]);
     ws.binaryType = "arraybuffer";
@@ -51,7 +53,10 @@ export class PtySocket {
       this.ws = null;
       if (this.done) return;
       const delay = Math.min(2000, 100 * 2 ** this.retries++);
-      setTimeout(() => this.connect(), delay);
+      this.retryTimer = setTimeout(() => {
+        this.retryTimer = null;
+        this.connect();
+      }, delay);
     };
     this.ws = ws;
   }
@@ -74,6 +79,7 @@ export class PtySocket {
 
   /** The renderer has fully processed output before this byte offset. Acks are batched. */
   processed(upTo: number): void {
+    if (this.done) return;
     this.processedUpTo = upTo;
     if (upTo - this.lastAckSent >= ACK_EVERY_BYTES) {
       this.flushAck();
@@ -92,6 +98,9 @@ export class PtySocket {
   close(): void {
     this.done = true;
     if (this.ackTimer !== null) clearTimeout(this.ackTimer);
+    this.ackTimer = null;
+    if (this.retryTimer !== null) clearTimeout(this.retryTimer);
+    this.retryTimer = null;
     this.ws?.close();
   }
 }

@@ -1,5 +1,5 @@
 import react from "@vitejs/plugin-react";
-import { defineConfig } from "vite";
+import { defineConfig } from "vitest/config";
 
 // Tauri expects a fixed dev port (tauri.conf.json devUrl).
 export default defineConfig({

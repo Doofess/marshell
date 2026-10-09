@@ -48,7 +48,7 @@ function encodeU64(op: number, n: number): Uint8Array<ArrayBuffer> {
   const out = new Uint8Array(9);
   const view = new DataView(out.buffer);
   view.setUint8(0, op);
-  view.setBigUint64(1, BigInt(n));
+  view.setBigUint64(1, BigInt(Math.max(0, Math.trunc(n)) || 0));
   return out;
 }
 

@@ -26,7 +26,7 @@ export class LatencyMeter {
     const n = this.samples.length;
     if (n === 0) return { p50: 0, p95: 0, n: 0 };
     const sorted = [...this.samples].sort((a, b) => a - b);
-    const at = (p: number) => sorted[Math.min(n - 1, Math.ceil((p / 100) * n) - 1)] ?? 0;
+    const at = (p: number) => sorted[Math.min(n - 1, Math.ceil((p * n) / 100) - 1)] ?? 0;
     return { p50: at(50), p95: at(95), n };
   }
 }
