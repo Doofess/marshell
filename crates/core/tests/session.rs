@@ -83,6 +83,25 @@ fn backpressure_bounds_unacked_output() {
     s.kill();
 }
 
+/// S6 raw ConPTY baseline: the same flood as `s6_throughput_50mb`, through `Session` only (no WebSocket).
+/// Run with: cargo test -p marshell-core --release --test session -- --ignored --nocapture s6_raw_conpty_50mb
+#[test]
+#[ignore]
+fn s6_raw_conpty_50mb() {
+    let s = Session::spawn("s6".into(), fake(&["flood", "52428800"])).unwrap();
+    let started = Instant::now();
+    let (out, code) = drain(&s, Duration::from_secs(120));
+    let secs = started.elapsed().as_secs_f64();
+    println!(
+        "S6 raw: {} bytes in {secs:.2}s = {:.1} MB/s, exit {:?}",
+        out.len(),
+        out.len() as f64 / secs / 1e6,
+        code
+    );
+    assert_eq!(code, Some(0));
+    assert!(out.len() >= 50 * 1024 * 1024 - 1024);
+}
+
 #[test]
 fn kill_after_exit_is_a_noop() {
     let s = Session::spawn("t7".into(), fake(&["exit", "0"])).unwrap();

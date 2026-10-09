@@ -26,12 +26,18 @@ fn main() {
         }
         Some("flood") => {
             let total: usize = args[1].parse().unwrap();
-            let line = [b'x'; 79];
-            let mut written = 0;
-            while written < total {
-                out.write_all(&line).unwrap();
-                out.write_all(b"\n").unwrap();
-                written += 80;
+            // Write whole 64 KiB chunks, not one line at a time: stdout is line-buffered, and
+            // ~650k 80-byte console writes into ConPTY would measure this agent, not the pipeline.
+            let mut line = [b'x'; 80];
+            line[79] = b'\n';
+            let lines_per_chunk = 64 * 1024 / line.len();
+            let chunk = line.repeat(lines_per_chunk);
+            // Same bytes as before: `total` rounded up to whole lines.
+            let mut lines_left = total.div_ceil(line.len());
+            while lines_left > 0 {
+                let n = lines_left.min(lines_per_chunk);
+                out.write_all(&chunk[..n * line.len()]).unwrap();
+                lines_left -= n;
             }
         }
         Some("cwd") => writeln!(out, "{}", std::env::current_dir().unwrap().display()).unwrap(),
