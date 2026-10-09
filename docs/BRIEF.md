@@ -12,6 +12,7 @@ Where the text below disagrees with this list, this list wins. `docs/PLAN.md` ho
   - `MARSHELL_` env prefix
   - `marshell-hook` bridge
   - The Departures board keeps its name.
+- **Icon.** The icon is two marshalling batons raised in a V, replacing the plane. The app icon is "Night shift": a charcoal tile, grey grips and orange lights. Its source is `assets/icon/app-night-shift.svg`.
 - **Decisions:**
   - pnpm
   - MIT open source

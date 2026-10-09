@@ -633,7 +633,7 @@ Tray mouse events are not emitted on Linux, so on Linux the tray is menu-only.
 ## 9. Milestones (phases 1–8 = v1)
 
 0. **Design (blocks UI work).**
-   - Deliverables: tokens (light, true-black dark, 8 accents with AA checks), the icon (plane on a rounded tile, SVG + 1024 PNG, mono tray variant), and Storybook mockups of the main window, every sidebar row state, the doctor report, the settings editor and onboarding.
+   - Deliverables: tokens (light, true-black dark, 8 accents with AA checks), the icon (done 2026-10-09: "Night shift" marshalling batons, `assets/icon/app-night-shift.svg`; alternates `alt-daylight.svg` and `alt-signal-tile.svg`; mono tray glyph `tray-mono.svg`), and Storybook mockups of the main window, every sidebar row state, the doctor report, the settings editor and onboarding.
    - Exit: your approval.
 1. **Scaffold + one live tab + gate.**
    - Scope: workspace, core thread, axum server with token, CORS/CSP/Host checks, pty WebSocket with coalescing, backpressure and the vt100 screen, xterm (fit, WebGL with DOM fallback) in a bare window with tokens only (no chrome until phase 0 is approved), CI on all three OSes, `brand.rs`.

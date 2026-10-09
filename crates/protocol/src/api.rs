@@ -23,12 +23,23 @@ impl Platform {
 }
 
 /// What the window needs to reach the core. Handed over by the Tauri command `core_endpoint`.
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[derive(Clone, Serialize, Deserialize, TS)]
 #[ts(export)]
 pub struct Endpoint {
     pub port: u16,
     pub token: String,
     pub platform: Platform,
+}
+
+/// Written by hand so the token never lands in a log or a panic message.
+impl std::fmt::Debug for Endpoint {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Endpoint")
+            .field("port", &self.port)
+            .field("token", &"<redacted>")
+            .field("platform", &self.platform)
+            .finish()
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -64,4 +75,22 @@ pub struct Resize {
 pub struct Health {
     pub app: String,
     pub version: String,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn endpoint_debug_redacts_the_token() {
+        let ep = Endpoint {
+            port: 1234,
+            token: "secret-token".into(),
+            platform: Platform::Linux,
+        };
+        let s = format!("{ep:?}");
+        assert!(!s.contains("secret-token"), "{s}");
+        assert!(s.contains("token: \"<redacted>\""), "{s}");
+        assert!(s.contains("port: 1234"), "{s}");
+    }
 }

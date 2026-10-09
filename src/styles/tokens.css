@@ -1,0 +1,56 @@
+:root {
+  color-scheme: light dark;
+
+  /* Surfaces: true black in dark, white and warm grays in light. */
+  --bg-base: light-dark(oklch(100% 0 none), oklch(0% 0 none));
+  --bg-raised: light-dark(oklch(98.2% 0.003 85), oklch(14.5% 0 none));
+  --bg-overlay: light-dark(oklch(95.6% 0.004 75), oklch(19.1% 0 none));
+
+  --text-1: light-dark(oklch(21.6% 0.006 56), oklch(92.2% 0 none));
+  --text-2: light-dark(oklch(44.4% 0.011 74), oklch(71.9% 0 none));
+  --text-3: light-dark(oklch(55.3% 0.013 58), oklch(63.3% 0 none));
+
+  --hairline: color-mix(in oklch, var(--text-1) 10%, transparent);
+  --hover: color-mix(in oklch, var(--text-1) 4%, transparent);
+  --selected: color-mix(in oklch, var(--text-1) 7%, transparent);
+
+  /* User-chosen accent (phase 2 makes it configurable). */
+  --accent: oklch(62% 0.19 255);
+
+  --error: light-dark(oklch(56% 0.22 27), oklch(67% 0.21 29));
+  --ok: light-dark(oklch(55% 0.14 147), oklch(76.5% 0.19 147));
+  --caution: light-dark(oklch(56% 0.14 52), oklch(88.5% 0.18 95));
+
+  --font-ui: "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, "Inter Variable", sans-serif;
+  --font-mono: "Cascadia Mono", "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+
+  /* Desktop chrome uses fixed sizes; 13 px is the base. */
+  --text-11: 0.6875rem;
+  --text-12: 0.75rem;
+  --text-13: 0.8125rem;
+  --text-15: 0.9375rem;
+  --text-20: 1.25rem;
+  --text-28: 1.75rem;
+  --leading: 1.5;
+
+  /* 8 px grid. */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-6: 24px;
+  --space-8: 32px;
+
+  --radius: 6px;
+  --ease-out: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --dur-fast: 120ms;
+  --dur: 180ms;
+  --dur-slow: 200ms;
+}
+
+[data-theme="light"] {
+  color-scheme: light;
+}
+[data-theme="dark"] {
+  color-scheme: dark;
+}
