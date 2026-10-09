@@ -67,7 +67,10 @@ fn main() {
         .plugin(tauri_plugin_window_state::Builder::default().build())
         .setup(|app| {
             let home = marshell_core::paths::home_dir()?;
-            let cfg = CoreConfig { home, allowed_origins: allowed_origins() };
+            let cfg = CoreConfig {
+                home,
+                allowed_origins: allowed_origins(),
+            };
             let core = tauri::async_runtime::block_on(marshell_core::server::start(cfg))?;
             app.manage(CoreHandle(Mutex::new(Some(core))));
             Ok(())

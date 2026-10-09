@@ -22,10 +22,7 @@ pub fn tokens_match(a: &str, b: &str) -> bool {
     if a.len() != b.len() {
         return false;
     }
-    a.bytes()
-        .zip(b.bytes())
-        .fold(0u8, |acc, (x, y)| acc | (x ^ y))
-        == 0
+    a.bytes().zip(b.bytes()).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
 }
 
 /// Writes the endpoint file atomically (temp file + rename) and creates it private from the start.
@@ -38,8 +35,8 @@ pub fn write_endpoint_file(path: &Path, ep: &Endpoint) -> anyhow::Result<()> {
         .ok_or_else(|| anyhow::anyhow!("endpoint path has no parent"))?;
     create_private_dir(dir)?;
     let tmp = dir.join(format!(".endpoint.{}.tmp", std::process::id()));
-    let result = write_private_file(&tmp, &serde_json::to_vec_pretty(ep)?)
-        .and_then(|()| Ok(std::fs::rename(&tmp, path)?));
+    let result =
+        write_private_file(&tmp, &serde_json::to_vec_pretty(ep)?).and_then(|()| Ok(std::fs::rename(&tmp, path)?));
     if result.is_err() {
         let _ = std::fs::remove_file(&tmp);
     }
@@ -50,10 +47,7 @@ fn create_private_dir(dir: &Path) -> anyhow::Result<()> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::DirBuilderExt;
-        std::fs::DirBuilder::new()
-            .recursive(true)
-            .mode(0o700)
-            .create(dir)?;
+        std::fs::DirBuilder::new().recursive(true).mode(0o700).create(dir)?;
     }
     #[cfg(not(unix))]
     std::fs::create_dir_all(dir)?;

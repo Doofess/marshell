@@ -1,6 +1,6 @@
-use super::buffer::{OutputBuffer, MAX_UNACKED, SCROLLBACK_BYTES};
-use super::dsr::{DsrFilter, DSR_REPLY};
-use portable_pty::{native_pty_system, CommandBuilder, MasterPty, PtySize};
+use super::buffer::{MAX_UNACKED, OutputBuffer, SCROLLBACK_BYTES};
+use super::dsr::{DSR_REPLY, DsrFilter};
+use portable_pty::{CommandBuilder, MasterPty, PtySize, native_pty_system};
 use std::ffi::OsString;
 use std::io::{Read, Write};
 use std::path::PathBuf;
@@ -19,9 +19,15 @@ pub struct SpawnSpec {
 
 /// What the WebSocket task should send next.
 pub enum Pull {
-    Data { seq: u64, bytes: Vec<u8> },
+    Data {
+        seq: u64,
+        bytes: Vec<u8>,
+    },
     /// The cursor fell out of the ring: send the screen, then continue from `seq`.
-    Reset { seq: u64, screen: Vec<u8> },
+    Reset {
+        seq: u64,
+        screen: Vec<u8>,
+    },
     Exit(i32),
     Idle,
 }
@@ -58,7 +64,12 @@ pub struct Session {
 
 impl Session {
     pub fn spawn(id: String, spec: SpawnSpec) -> anyhow::Result<Arc<Session>> {
-        let size = PtySize { rows: spec.rows.max(1), cols: spec.cols.max(1), pixel_width: 0, pixel_height: 0 };
+        let size = PtySize {
+            rows: spec.rows.max(1),
+            cols: spec.cols.max(1),
+            pixel_width: 0,
+            pixel_height: 0,
+        };
         let pair = native_pty_system().openpty(size)?;
         let mut cmd = CommandBuilder::from_argv(spec.argv.iter().map(OsString::from).collect());
         if let Some(cwd) = &spec.cwd {
@@ -96,22 +107,28 @@ impl Session {
             exited: Arc::new(AtomicBool::new(false)),
         });
 
-        std::thread::Builder::new().name(format!("pty-write-{id}")).spawn(move || {
-            for bytes in input_rx {
-                if writer.write_all(&bytes).and_then(|_| writer.flush()).is_err() {
-                    break;
+        std::thread::Builder::new()
+            .name(format!("pty-write-{id}"))
+            .spawn(move || {
+                for bytes in input_rx {
+                    if writer.write_all(&bytes).and_then(|_| writer.flush()).is_err() {
+                        break;
+                    }
                 }
-            }
-        })?;
+            })?;
 
         let s = session.clone();
-        std::thread::Builder::new().name(format!("pty-read-{id}")).spawn(move || s.read_loop(reader))?;
+        std::thread::Builder::new()
+            .name(format!("pty-read-{id}"))
+            .spawn(move || s.read_loop(reader))?;
 
         let s = session.clone();
-        std::thread::Builder::new().name(format!("pty-wait-{id}")).spawn(move || {
-            let code = child.wait().map(|st| st.exit_code() as i32).unwrap_or(-1);
-            s.on_exit(code);
-        })?;
+        std::thread::Builder::new()
+            .name(format!("pty-wait-{id}"))
+            .spawn(move || {
+                let code = child.wait().map(|st| st.exit_code() as i32).unwrap_or(-1);
+                s.on_exit(code);
+            })?;
 
         Ok(session)
     }
@@ -143,8 +160,11 @@ impl Session {
         // ConPTY holds back all output until its startup query is answered, and a client can attach
         // before that query arrives, so the core answers the first one even when attached.
         let startup_pending = cfg!(windows) && !out.startup_dsr_answered;
-        let (mut pass, answered) =
-            if out.attached && !startup_pending { (bytes.to_vec(), 0) } else { out.dsr.filter(bytes) };
+        let (mut pass, answered) = if out.attached && !startup_pending {
+            (bytes.to_vec(), 0)
+        } else {
+            out.dsr.filter(bytes)
+        };
         if answered > 0 && !out.startup_dsr_answered {
             out.startup_dsr_answered = true;
             if out.attached {
@@ -194,7 +214,12 @@ impl Session {
             return Ok(());
         }
         if let Some(m) = self.master.lock().unwrap().as_ref() {
-            m.resize(PtySize { rows, cols, pixel_width: 0, pixel_height: 0 })?;
+            m.resize(PtySize {
+                rows,
+                cols,
+                pixel_width: 0,
+                pixel_height: 0,
+            })?;
         }
         // vt100 0.16; on 0.15 this is `parser.set_size(rows, cols)`.
         self.output.lock().unwrap().screen.screen_mut().set_size(rows, cols);
@@ -245,7 +270,10 @@ impl Session {
     pub fn pull(&self, cursor: u64, max: usize) -> Pull {
         let out = self.output.lock().unwrap();
         match out.buf.read_from(cursor, max) {
-            None => Pull::Reset { seq: out.buf.end(), screen: out.screen.screen().state_formatted() },
+            None => Pull::Reset {
+                seq: out.buf.end(),
+                screen: out.screen.screen().state_formatted(),
+            },
             Some(bytes) if !bytes.is_empty() => Pull::Data { seq: cursor, bytes },
             Some(_) => match out.exit {
                 // All output is out once the reader is done; on Windows EOF can be late, so give up after 500 ms.

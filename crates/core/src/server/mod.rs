@@ -4,7 +4,7 @@ mod pty_ws;
 mod sessions;
 
 use crate::{auth, paths};
-use axum::http::{header, HeaderValue, Method};
+use axum::http::{HeaderValue, Method, header};
 use axum::routing::get;
 use axum::{Json, Router};
 use marshell_protocol::api::{Endpoint, Health, Platform};
@@ -53,7 +53,11 @@ impl AppState {
         self.0.sessions.lock().unwrap().get(tab).cloned()
     }
     pub fn insert_session(&self, session: Arc<crate::pty::Session>) {
-        self.0.sessions.lock().unwrap().insert(session.id().to_string(), session);
+        self.0
+            .sessions
+            .lock()
+            .unwrap()
+            .insert(session.id().to_string(), session);
     }
     pub fn origin_allowed(&self, origin: &str) -> bool {
         self.0.allowed_origins.iter().any(|o| o == origin)
@@ -78,7 +82,10 @@ pub fn router(state: AppState) -> Router {
 }
 
 async fn health() -> Json<Health> {
-    Json(Health { app: brand::APP_NAME.into(), version: env!("CARGO_PKG_VERSION").into() })
+    Json(Health {
+        app: brand::APP_NAME.into(),
+        version: env!("CARGO_PKG_VERSION").into(),
+    })
 }
 
 pub struct RunningCore {
@@ -102,7 +109,11 @@ impl RunningCore {
 pub async fn start(cfg: CoreConfig) -> anyhow::Result<RunningCore> {
     let listener = tokio::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await?;
     let port = listener.local_addr()?.port();
-    let endpoint = Endpoint { port, token: auth::new_token(), platform: Platform::current() };
+    let endpoint = Endpoint {
+        port,
+        token: auth::new_token(),
+        platform: Platform::current(),
+    };
     auth::write_endpoint_file(&paths::endpoint_file(&cfg.home), &endpoint)?;
     let state = AppState::new(endpoint.token.clone(), port, cfg.allowed_origins);
     let app = router(state.clone());
@@ -115,5 +126,9 @@ pub async fn start(cfg: CoreConfig) -> anyhow::Result<RunningCore> {
             tracing::error!("core server stopped: {e}");
         }
     });
-    Ok(RunningCore { endpoint, state, shutdown: tx })
+    Ok(RunningCore {
+        endpoint,
+        state,
+        shutdown: tx,
+    })
 }

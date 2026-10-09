@@ -4,7 +4,11 @@
 pub fn default_shell() -> Vec<String> {
     #[cfg(windows)]
     {
-        let exe = if on_path("pwsh.exe") { "pwsh.exe" } else { "powershell.exe" };
+        let exe = if on_path("pwsh.exe") {
+            "pwsh.exe"
+        } else {
+            "powershell.exe"
+        };
         vec![exe.to_string(), "-NoLogo".to_string()]
     }
     #[cfg(unix)]

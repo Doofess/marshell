@@ -1,6 +1,6 @@
 use axum::body::Body;
-use axum::http::{header, Request, StatusCode};
-use marshell_core::server::{router, AppState};
+use axum::http::{Request, StatusCode, header};
+use marshell_core::server::{AppState, router};
 use tower::ServiceExt;
 
 const TOKEN: &str = "test-token";
@@ -12,18 +12,26 @@ fn app() -> axum::Router {
 }
 
 fn get(path: &str) -> axum::http::request::Builder {
-    Request::builder().uri(path).header(header::HOST, format!("127.0.0.1:{PORT}"))
+    Request::builder()
+        .uri(path)
+        .header(header::HOST, format!("127.0.0.1:{PORT}"))
 }
 
 #[tokio::test]
 async fn health_requires_token() {
-    let res = app().oneshot(get("/v1/health").body(Body::empty()).unwrap()).await.unwrap();
+    let res = app()
+        .oneshot(get("/v1/health").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
     assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
 }
 
 #[tokio::test]
 async fn health_with_token_is_ok() {
-    let req = get("/v1/health").header(header::AUTHORIZATION, format!("Bearer {TOKEN}")).body(Body::empty()).unwrap();
+    let req = get("/v1/health")
+        .header(header::AUTHORIZATION, format!("Bearer {TOKEN}"))
+        .body(Body::empty())
+        .unwrap();
     let res = app().oneshot(req).await.unwrap();
     assert_eq!(res.status(), StatusCode::OK);
 }
@@ -87,7 +95,11 @@ async fn start_writes_endpoint_file_and_serves() {
     let url = format!("http://127.0.0.1:{}/v1/health", ep.port);
     let token = ep.token.clone();
     let status = tokio::task::spawn_blocking(move || {
-        ureq::get(&url).header("Authorization", &format!("Bearer {token}")).call().unwrap().status()
+        ureq::get(&url)
+            .header("Authorization", &format!("Bearer {token}"))
+            .call()
+            .unwrap()
+            .status()
     })
     .await
     .unwrap();
@@ -97,7 +109,10 @@ async fn start_writes_endpoint_file_and_serves() {
 
 #[tokio::test]
 async fn bad_bearer_token_is_unauthorized() {
-    let req = get("/v1/health").header(header::AUTHORIZATION, "Bearer nope").body(Body::empty()).unwrap();
+    let req = get("/v1/health")
+        .header(header::AUTHORIZATION, "Bearer nope")
+        .body(Body::empty())
+        .unwrap();
     assert_eq!(app().oneshot(req).await.unwrap().status(), StatusCode::UNAUTHORIZED);
 }
 

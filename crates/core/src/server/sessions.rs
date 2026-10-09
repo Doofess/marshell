@@ -1,9 +1,9 @@
 use super::AppState;
 use crate::pty::{Session, SpawnSpec};
 use crate::{auth, shell};
+use axum::Json;
 use axum::extract::State;
 use axum::http::StatusCode;
-use axum::Json;
 use marshell_protocol::api::{CreateSessionRequest, CreateSessionResponse};
 use marshell_protocol::brand;
 use std::path::PathBuf;
@@ -30,7 +30,12 @@ pub async fn create(
     let session = tokio::task::spawn_blocking(move || Session::spawn(id, spec))
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("could not start the shell: {e:#}")))?;
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("could not start the shell: {e:#}"),
+            )
+        })?;
     st.insert_session(session);
     Ok(Json(CreateSessionResponse { tab_id }))
 }

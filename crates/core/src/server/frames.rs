@@ -59,11 +59,20 @@ mod tests {
     #[test]
     fn decodes_client_frames() {
         assert_eq!(decode_client(&[0x10, b'a']), Some(ClientFrame::Input(b"a".to_vec())));
-        assert_eq!(decode_client(&[0x12, 0, 0, 0, 0, 0, 0, 0, 7]), Some(ClientFrame::Ack(7)));
-        assert_eq!(decode_client(&[0x13, 0, 0, 0, 0, 0, 0, 1, 0]), Some(ClientFrame::Resume(256)));
+        assert_eq!(
+            decode_client(&[0x12, 0, 0, 0, 0, 0, 0, 0, 7]),
+            Some(ClientFrame::Ack(7))
+        );
+        assert_eq!(
+            decode_client(&[0x13, 0, 0, 0, 0, 0, 0, 1, 0]),
+            Some(ClientFrame::Resume(256))
+        );
         let mut resize = vec![0x11];
         resize.extend_from_slice(br#"{"cols":120,"rows":40}"#);
-        assert_eq!(decode_client(&resize), Some(ClientFrame::Resize(Resize { cols: 120, rows: 40 })));
+        assert_eq!(
+            decode_client(&resize),
+            Some(ClientFrame::Resize(Resize { cols: 120, rows: 40 }))
+        );
     }
 
     #[test]

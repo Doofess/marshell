@@ -1,6 +1,6 @@
-use super::frames::{decode_client, encode_exit, encode_output, encode_reset, ClientFrame};
 use super::AppState;
-use crate::pty::{Pull, Session, FLUSH_BYTES};
+use super::frames::{ClientFrame, decode_client, encode_exit, encode_output, encode_reset};
+use crate::pty::{FLUSH_BYTES, Pull, Session};
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
@@ -35,7 +35,9 @@ pub async fn handler(State(st): State<AppState>, Path(tab): Path<String>, ws: We
         return StatusCode::NOT_FOUND.into_response();
     };
     // Echo our subprotocol, or browsers drop the connection.
-    ws.max_message_size(MAX_MESSAGE).protocols([brand::WS_SUBPROTOCOL]).on_upgrade(move |socket| run(socket, session))
+    ws.max_message_size(MAX_MESSAGE)
+        .protocols([brand::WS_SUBPROTOCOL])
+        .on_upgrade(move |socket| run(socket, session))
 }
 
 /// The flush rule. None: send what is pending now. Some(t): hold it until t.

@@ -17,7 +17,11 @@ pub struct OutputBuffer {
 
 impl OutputBuffer {
     pub fn new(cap: usize) -> Self {
-        Self { data: VecDeque::new(), start: 0, cap }
+        Self {
+            data: VecDeque::new(),
+            start: 0,
+            cap,
+        }
     }
     pub fn start(&self) -> u64 {
         self.start

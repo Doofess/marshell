@@ -6,8 +6,7 @@ pub fn home_dir() -> anyhow::Result<PathBuf> {
     if let Some(dir) = std::env::var_os(brand::env_var("HOME")) {
         return Ok(PathBuf::from(dir));
     }
-    let home = dirs::home_dir()
-        .ok_or_else(|| anyhow::anyhow!("could not find the user's home directory"))?;
+    let home = dirs::home_dir().ok_or_else(|| anyhow::anyhow!("could not find the user's home directory"))?;
     Ok(home.join(brand::HOME_DIR_NAME))
 }
 

@@ -1,13 +1,18 @@
 use futures_util::{SinkExt, StreamExt};
-use marshell_core::server::{start, CoreConfig, RunningCore};
+use marshell_core::server::{CoreConfig, RunningCore, start};
 use marshell_protocol::api::{CreateSessionRequest, CreateSessionResponse};
 use std::time::{Duration, Instant};
-use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use tokio_tungstenite::tungstenite::Message;
+use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 
 async fn core() -> (RunningCore, tempfile::TempDir) {
     let home = tempfile::tempdir().unwrap();
-    let core = start(CoreConfig { home: home.path().to_path_buf(), allowed_origins: vec![] }).await.unwrap();
+    let core = start(CoreConfig {
+        home: home.path().to_path_buf(),
+        allowed_origins: vec![],
+    })
+    .await
+    .unwrap();
     (core, home)
 }
 
@@ -20,7 +25,12 @@ fn fake(args: &[&str]) -> Vec<String> {
 async fn create(core: &RunningCore, shell: Vec<String>, cwd: Option<String>) -> Result<String, (u16, String)> {
     let url = format!("http://127.0.0.1:{}/v1/sessions", core.endpoint.port);
     let token = core.endpoint.token.clone();
-    let body = CreateSessionRequest { shell: Some(shell), cwd, cols: 80, rows: 24 };
+    let body = CreateSessionRequest {
+        shell: Some(shell),
+        cwd,
+        cols: 80,
+        rows: 24,
+    };
     tokio::task::spawn_blocking(move || {
         let res = ureq::post(&url)
             .header("Authorization", &format!("Bearer {token}"))
@@ -44,9 +54,13 @@ async fn create(core: &RunningCore, shell: Vec<String>, cwd: Option<String>) -> 
 type Ws = tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
 
 async fn connect(core: &RunningCore, tab: &str, resume_from: u64) -> Ws {
-    let mut req = format!("ws://127.0.0.1:{}/v1/pty/{tab}", core.endpoint.port).into_client_request().unwrap();
-    req.headers_mut()
-        .insert("Sec-WebSocket-Protocol", format!("marshell.v1, token.{}", core.endpoint.token).parse().unwrap());
+    let mut req = format!("ws://127.0.0.1:{}/v1/pty/{tab}", core.endpoint.port)
+        .into_client_request()
+        .unwrap();
+    req.headers_mut().insert(
+        "Sec-WebSocket-Protocol",
+        format!("marshell.v1, token.{}", core.endpoint.token).parse().unwrap(),
+    );
     let (mut ws, res) = tokio_tungstenite::connect_async(req).await.unwrap();
     assert_eq!(res.headers()["sec-websocket-protocol"], "marshell.v1");
     let mut resume = vec![0x13];
@@ -64,7 +78,12 @@ struct Received {
 
 /// Reads frames, acking each, until EXIT, `stop` matches, or the timeout passes.
 async fn read_until(ws: &mut Ws, timeout: Duration, stop: impl Fn(&[u8]) -> bool) -> Received {
-    let mut r = Received { bytes: vec![], exit: None, end: 0, resets: 0 };
+    let mut r = Received {
+        bytes: vec![],
+        exit: None,
+        end: 0,
+        resets: 0,
+    };
     let deadline = Instant::now() + timeout;
     while Instant::now() < deadline && !stop(&r.bytes) {
         let f = match tokio::time::timeout(Duration::from_millis(200), ws.next()).await {
@@ -122,7 +141,9 @@ async fn echo_round_trip_and_exit() {
 async fn cwd_with_space() {
     let (core, _home) = core().await;
     let dir = tempfile::Builder::new().prefix("has space ").tempdir().unwrap();
-    let tab = create(&core, fake(&["cwd"]), Some(dir.path().display().to_string())).await.unwrap();
+    let tab = create(&core, fake(&["cwd"]), Some(dir.path().display().to_string()))
+        .await
+        .unwrap();
     let mut ws = connect(&core, &tab, 0).await;
     let got = read_until(&mut ws, Duration::from_secs(10), |_| false).await;
     let name = dir.path().file_name().unwrap().to_string_lossy().into_owned();
@@ -141,7 +162,9 @@ async fn utf8_passthrough() {
 #[tokio::test]
 async fn bad_shell_is_an_error() {
     let (core, _home) = core().await;
-    let err = create(&core, vec!["definitely-not-a-shell-xyz".into()], None).await.unwrap_err();
+    let err = create(&core, vec!["definitely-not-a-shell-xyz".into()], None)
+        .await
+        .unwrap_err();
     assert!(err.0 >= 400, "status {}", err.0);
     assert!(!err.1.is_empty());
 }
@@ -161,7 +184,10 @@ async fn reconnect_resumes_without_duplicates() {
     input.extend_from_slice(b"two\r");
     ws.send(Message::Binary(input.into())).await.unwrap();
     let second = read_until(&mut ws, Duration::from_secs(10), |b| text(b).contains("got:two")).await;
-    assert!(!text(&second.bytes).contains("got:one"), "replayed output that was already acked");
+    assert!(
+        !text(&second.bytes).contains("got:one"),
+        "replayed output that was already acked"
+    );
     assert!(text(&second.bytes).contains("got:two"));
 }
 
@@ -257,18 +283,28 @@ async fn idle_echo_is_not_held_for_the_coalescing_window() {
         }
     }
     println!("held in core (pty arrival -> first frame): {held:?}, {unusable} unusable");
-    let best = held.iter().min().expect("every sample was unusable; the watcher thread never ran in time");
+    let best = held
+        .iter()
+        .min()
+        .expect("every sample was unusable; the watcher thread never ran in time");
     // Half the coalescing window: the old code could not produce any sample under 8 ms.
-    assert!(*best < Duration::from_millis(4), "idle output was held for the coalescing window: {held:?}");
+    assert!(
+        *best < Duration::from_millis(4),
+        "idle output was held for the coalescing window: {held:?}"
+    );
 }
 
 #[tokio::test]
 async fn no_resume_closes_socket() {
     let (core, _home) = core().await;
     let tab = create(&core, fake(&["echo"]), None).await.unwrap();
-    let mut req = format!("ws://127.0.0.1:{}/v1/pty/{tab}", core.endpoint.port).into_client_request().unwrap();
-    req.headers_mut()
-        .insert("Sec-WebSocket-Protocol", format!("marshell.v1, token.{}", core.endpoint.token).parse().unwrap());
+    let mut req = format!("ws://127.0.0.1:{}/v1/pty/{tab}", core.endpoint.port)
+        .into_client_request()
+        .unwrap();
+    req.headers_mut().insert(
+        "Sec-WebSocket-Protocol",
+        format!("marshell.v1, token.{}", core.endpoint.token).parse().unwrap(),
+    );
     let (mut ws, _) = tokio_tungstenite::connect_async(req).await.unwrap();
     let closed = tokio::time::timeout(Duration::from_secs(7), async {
         loop {

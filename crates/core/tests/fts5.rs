@@ -11,7 +11,11 @@ fn bundled_sqlite_has_fts5() {
         .unwrap();
     assert_eq!(hit, "fixed the login button");
     let snippet: String = db
-        .query_row("SELECT snippet(t, 0, '[', ']', '…', 4) FROM t WHERE t MATCH 'npm'", [], |r| r.get(0))
+        .query_row(
+            "SELECT snippet(t, 0, '[', ']', '…', 4) FROM t WHERE t MATCH 'npm'",
+            [],
+            |r| r.get(0),
+        )
         .unwrap();
     assert!(snippet.contains("[npm]"));
 }

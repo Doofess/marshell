@@ -1,11 +1,17 @@
-use marshell_core::pty::{Pull, Session, SpawnSpec, MAX_UNACKED};
+use marshell_core::pty::{MAX_UNACKED, Pull, Session, SpawnSpec};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 fn fake(args: &[&str]) -> SpawnSpec {
     let mut argv = vec![env!("CARGO_BIN_EXE_fake-agent").to_string()];
     argv.extend(args.iter().map(|s| s.to_string()));
-    SpawnSpec { argv, cwd: None, env: vec![], cols: 80, rows: 24 }
+    SpawnSpec {
+        argv,
+        cwd: None,
+        env: vec![],
+        cols: 80,
+        rows: 24,
+    }
 }
 
 /// Reads everything until Exit (or the timeout), acking as it goes. Returns (bytes, exit code).
@@ -73,12 +79,20 @@ fn backpressure_bounds_unacked_output() {
         if end - acked >= MAX_UNACKED / 2 {
             break;
         }
-        assert!(Instant::now() < deadline, "output never reached {} bytes", MAX_UNACKED / 2);
+        assert!(
+            Instant::now() < deadline,
+            "output never reached {} bytes",
+            MAX_UNACKED / 2
+        );
         std::thread::sleep(Duration::from_millis(10));
     }
     std::thread::sleep(Duration::from_millis(500));
     let (end, acked) = s.counters();
-    assert!(end - acked <= MAX_UNACKED + 64 * 1024, "unacked {} exceeds the limit", end - acked);
+    assert!(
+        end - acked <= MAX_UNACKED + 64 * 1024,
+        "unacked {} exceeds the limit",
+        end - acked
+    );
     s.detach(generation);
     s.kill();
 }
