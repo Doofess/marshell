@@ -7,7 +7,14 @@ fn main() -> anyhow::Result<()> {
     let args: Vec<String> = std::env::args().collect();
     match args.get(1).map(String::as_str) {
         Some("launch") => launch(),
-        Some("host") => host(args[2].parse()?, &args[3]),
+        Some("host") => {
+            // The helper window is hidden, so leave a trace of how it ended.
+            let r = host(args[2].parse()?, &args[3]);
+            let log = std::env::temp_dir().join("s8-host.log");
+            std::fs::write(log, format!("{r:?}
+")).ok();
+            r
+        }
         _ => anyhow::bail!("usage: elevated-host-spike launch"),
     }
 }
@@ -27,11 +34,17 @@ fn launch() -> anyhow::Result<()> {
     anyhow::ensure!(line.trim() == token, "helper sent a wrong token");
     println!("helper connected from {peer}; type commands (e.g. `whoami /groups | findstr Mandatory`)");
     let mut out = stream.try_clone()?;
+    let mut answer = stream.try_clone()?;
     std::thread::spawn(move || {
         let mut buf = [0u8; 8192];
         while let Ok(n) = out.read(&mut buf) {
             if n == 0 {
                 break;
+            }
+            // ConPTY (portable-pty 0.9) asks for the cursor position at startup and holds all
+            // output until it gets an answer; the Marshell core does the same (pty/dsr.rs).
+            if buf[..n].windows(4).any(|w| w == b"[6n") {
+                answer.write_all(b"[1;1R").ok();
             }
             std::io::stdout().write_all(&buf[..n]).ok();
             std::io::stdout().flush().ok();
