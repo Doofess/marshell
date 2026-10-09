@@ -35,12 +35,8 @@ pub async fn create(
     let session = tokio::task::spawn_blocking(move || Session::spawn(id, spec))
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
-        .map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("could not start the shell: {e:#}"),
-            )
-        })?;
+        // No prefix here: the UI already says "Couldn't start a shell." and appends this text.
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("{e:#}")))?;
     st.insert_session(session);
     Ok(Json(CreateSessionResponse { tab_id }))
 }
