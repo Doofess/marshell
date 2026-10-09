@@ -5,9 +5,14 @@
 .terminal-host {
   block-size: 100%;
   inline-size: 100%;
-  padding: var(--space-2);
   background: var(--bg-base);
   overflow: clip;
+}
+
+/* The gutter sits on xterm's own element: FitAddon subtracts that padding,
+   but measures the host at its border-box size, so padding there clips the last row. */
+.terminal-host .xterm {
+  padding: var(--space-2);
 }
 
 .startup-error {
