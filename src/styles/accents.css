@@ -1,1 +1,43 @@
-/* Accents: filled in by Task 2. */
+/*
+ * Eight accents. Amber is the default. The accent marks attention only: fills, badges, rings, focus.
+ * --accent-ink is the text colour on an accent fill (at least 4.5:1; src/design/contrast.test.ts).
+ */
+:root,
+[data-accent="amber"] {
+  --accent: light-dark(oklch(58% 0.15 65), oklch(80% 0.16 72));
+  --accent-ink: light-dark(oklch(0% 0 none), oklch(0% 0 none));
+}
+[data-accent="blue"] {
+  --accent: light-dark(oklch(54% 0.19 258), oklch(70% 0.15 250));
+  --accent-ink: light-dark(oklch(100% 0 none), oklch(0% 0 none));
+}
+[data-accent="indigo"] {
+  --accent: light-dark(oklch(50% 0.2 280), oklch(68% 0.16 280));
+  --accent-ink: light-dark(oklch(100% 0 none), oklch(0% 0 none));
+}
+[data-accent="violet"] {
+  --accent: light-dark(oklch(52% 0.21 305), oklch(70% 0.17 305));
+  --accent-ink: light-dark(oklch(100% 0 none), oklch(0% 0 none));
+}
+[data-accent="magenta"] {
+  --accent: light-dark(oklch(54% 0.22 350), oklch(70% 0.2 345));
+  --accent-ink: light-dark(oklch(100% 0 none), oklch(0% 0 none));
+}
+[data-accent="cyan"] {
+  --accent: light-dark(oklch(54% 0.1 215), oklch(78% 0.12 210));
+  --accent-ink: light-dark(oklch(100% 0 none), oklch(0% 0 none));
+}
+[data-accent="teal"] {
+  --accent: light-dark(oklch(52% 0.09 185), oklch(76% 0.12 180));
+  --accent-ink: light-dark(oklch(100% 0 none), oklch(0% 0 none));
+}
+[data-accent="slate"] {
+  --accent: light-dark(oklch(50% 0.05 255), oklch(74% 0.05 250));
+  --accent-ink: light-dark(oklch(100% 0 none), oklch(0% 0 none));
+}
+
+/* Derived from whichever accent is active. */
+:root {
+  --accent-tint: color-mix(in oklch, var(--accent) 6%, transparent);
+  --accent-flash: color-mix(in oklch, var(--accent) 12%, transparent);
+}

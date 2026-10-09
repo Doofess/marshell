@@ -1,0 +1,62 @@
+import { readFileSync } from "node:fs";
+import { describe, expect, it } from "vitest";
+import { parseTokens } from "./cssTokens";
+import { contrast, deltaE, minOnSurfaces } from "./contrast";
+
+const ACCENTS = ["amber", "blue", "indigo", "violet", "magenta", "cyan", "teal", "slate"] as const;
+const THEMES = ["dark", "light"] as const;
+// Read from disk: Vitest hands CSS imports (even ?raw) to tests as empty strings.
+const read = (f: string) => readFileSync(new URL(`../styles/${f}`, import.meta.url), "utf8");
+const tokensCss = read("tokens.css");
+const accentsCss = read("accents.css");
+const tokens = parseTokens(tokensCss, ":root");
+const accent = (name: string) => parseTokens(accentsCss, `[data-accent="${name}"]`);
+
+describe("text on surfaces", () => {
+  for (const theme of THEMES)
+    for (const t of ["--text-1", "--text-2", "--text-3"])
+      it(`${t} is at least 4.5:1 on every surface (${theme})`, () => {
+        expect(minOnSurfaces(tokens[t]![theme], tokens, theme)).toBeGreaterThanOrEqual(4.5);
+      });
+});
+
+describe("status and brand colours on surfaces", () => {
+  const names = ["--error", "--ok", "--caution", "--brand-claude", "--brand-codex", "--brand-gemini", "--brand-generic"];
+  for (const theme of THEMES)
+    for (const n of names)
+      it(`${n} is at least 3:1 on every surface (${theme})`, () => {
+        expect(minOnSurfaces(tokens[n]![theme], tokens, theme)).toBeGreaterThanOrEqual(3);
+      });
+});
+
+describe("accents", () => {
+  it("defines all eight", () => {
+    for (const a of ACCENTS) expect(accent(a)["--accent"], a).toBeDefined();
+  });
+  for (const theme of THEMES)
+    for (const a of ACCENTS) {
+      it(`${a} is at least 3:1 on every surface (${theme})`, () => {
+        expect(minOnSurfaces(accent(a)["--accent"]![theme], tokens, theme)).toBeGreaterThanOrEqual(3);
+      });
+      it(`${a} ink is at least 4.5:1 on the accent (${theme})`, () => {
+        const v = accent(a);
+        expect(contrast(v["--accent-ink"]![theme], v["--accent"]![theme])).toBeGreaterThanOrEqual(4.5);
+      });
+    }
+});
+
+describe("distinctness", () => {
+  for (const theme of THEMES)
+    for (const a of ACCENTS)
+      for (const s of ["--error", "--ok", "--caution"])
+        it(`${a} is ΔE ≥ 15 from ${s} (${theme})`, () => {
+          expect(deltaE(accent(a)["--accent"]![theme], tokens[s]![theme])).toBeGreaterThanOrEqual(15);
+        });
+  for (const theme of THEMES)
+    it(`default amber is ΔE ≥ 18 from Claude orange (${theme})`, () => {
+      expect(deltaE(accent("amber")["--accent"]![theme], tokens["--brand-claude"]![theme])).toBeGreaterThanOrEqual(18);
+    });
+  it("the :root default is amber", () => {
+    expect(parseTokens(accentsCss, ":root")["--accent"]).toEqual(accent("amber")["--accent"]);
+  });
+});

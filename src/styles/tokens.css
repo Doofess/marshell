@@ -1,25 +1,30 @@
 :root {
   color-scheme: light dark;
 
-  /* Surfaces: true black in dark, white and warm grays in light. */
+  /* Surfaces: true black in dark, white and warm greys in light. */
   --bg-base: light-dark(oklch(100% 0 none), oklch(0% 0 none));
   --bg-raised: light-dark(oklch(98.2% 0.003 85), oklch(14.5% 0 none));
   --bg-overlay: light-dark(oklch(95.6% 0.004 75), oklch(19.1% 0 none));
 
+  /* Text: every tier is at least 4.5:1 on every surface (src/design/contrast.test.ts). */
   --text-1: light-dark(oklch(21.6% 0.006 56), oklch(92.2% 0 none));
   --text-2: light-dark(oklch(44.4% 0.011 74), oklch(71.9% 0 none));
-  --text-3: light-dark(oklch(55.3% 0.013 58), oklch(63.3% 0 none));
+  --text-3: light-dark(oklch(53% 0.013 58), oklch(63.3% 0 none));
 
   --hairline: color-mix(in oklch, var(--text-1) 10%, transparent);
   --hover: color-mix(in oklch, var(--text-1) 4%, transparent);
   --selected: color-mix(in oklch, var(--text-1) 7%, transparent);
 
-  /* User-chosen accent (phase 2 makes it configurable). */
-  --accent: oklch(62% 0.19 255);
-
+  /* Status. Caution is yellow (dark) and olive (light) so it never reads as the amber accent. */
   --error: light-dark(oklch(56% 0.22 27), oklch(67% 0.21 29));
   --ok: light-dark(oklch(55% 0.14 147), oklch(76.5% 0.19 147));
-  --caution: light-dark(oklch(56% 0.14 52), oklch(88.5% 0.18 95));
+  --caution: light-dark(oklch(52% 0.11 100), oklch(90% 0.17 100));
+
+  /* Agent brand colours: stripes and dots only, never status. */
+  --brand-claude: light-dark(oklch(62% 0.14 42), oklch(68% 0.13 42));
+  --brand-codex: light-dark(oklch(32% 0 none), oklch(86% 0 none));
+  --brand-gemini: light-dark(oklch(52% 0.17 265), oklch(70% 0.14 265));
+  --brand-generic: light-dark(oklch(52% 0.02 250), oklch(65% 0.02 250));
 
   --font-ui: "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, "Inter Variable", sans-serif;
   --font-mono: "Cascadia Mono", "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
@@ -33,7 +38,7 @@
   --text-28: 1.75rem;
   --leading: 1.5;
 
-  /* 8 px grid. */
+  /* 4 px steps on an 8 px grid. */
   --space-1: 4px;
   --space-2: 8px;
   --space-3: 12px;
@@ -42,7 +47,30 @@
   --space-8: 32px;
 
   --radius: 6px;
+
+  /* Layout sizes from docs/PLAN.md "Layout" and "Sidebar rows". */
+  --sidebar: 264px;
+  --sidebar-min: 200px;
+  --row-compact: 36px;
+  --row-comfortable: 48px;
+  --stripe: 3px;
+  --glyph: 16px;
+  --glyph-small: 12px;
+
+  /* Motion from docs/PLAN.md "Motion". Exits use ease-out too: good-css rules out ease-in. */
   --ease-out: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --ease-spring: linear(0, 0.55 18%, 1.12 42%, 0.98 66%, 1.01 82%, 1);
+  --dur-palette: 100ms;
+  --dur-peek: 120ms;
+  --dur-exit: 140ms;
+  --dur-enter: 180ms;
+  --dur-check: 200ms;
+  --dur-drawer: 200ms;
+  --dur-bounce: 280ms;
+  --dur-flash: 600ms;
+  --dur-pulse: 1.6s;
+
+  /* Kept for existing components. */
   --dur-fast: 120ms;
   --dur: 180ms;
   --dur-slow: 200ms;
