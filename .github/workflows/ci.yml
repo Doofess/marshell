@@ -35,5 +35,8 @@ jobs:
       - run: pnpm test
       - run: pnpm build
       - run: pnpm tauri build --no-bundle
-      - name: S6 throughput (release)
-        run: cargo test -p marshell-core --release --test pty_ws -- --ignored --nocapture
+      # Both S6 numbers, filtered by name: `--ignored` alone would run every ignored test in the file.
+      - name: S6 raw pty throughput (release)
+        run: cargo test -p marshell-core --release --test session -- --ignored --nocapture s6_raw_conpty_50mb
+      - name: S6 pipeline throughput (release)
+        run: cargo test -p marshell-core --release --test pty_ws -- --ignored --nocapture s6_throughput_50mb
