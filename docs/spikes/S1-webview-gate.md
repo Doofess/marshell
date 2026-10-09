@@ -19,7 +19,7 @@ Known fixes to apply if needed: WebGL `preserveDrawingBuffer` (already on for Li
 ## Results
 | Platform | Machine / GPU / session | a | b1 | b2 | b3 | c1 | c2 | d | Variant | Notes |
 |---|---|---|---|---|---|---|---|---|---|---|
-| Windows 11 (WebView2), reference only | Dev box, 2026-10-10, Git Bash tab | Pass | Not run | Not run | n/a | No freeze. 2,000,000 lines took 2 min 40 s because MSYS `head` writes each line separately into the inbox ConPTY. Piped through `cat` it took 10.1 s. See S2 finding 3. | Pass: 52 MB in 5.9 s, responsive throughout | webgl | — | Typing p95 afterwards: pwsh 21.7 ms (pass); Git Bash 32.5 ms (fail, see below) |
+| Windows 11 (WebView2), reference only | Dev box, 2026-10-10, Git Bash tab | Pass | Not run | Not run | n/a | No freeze. 2,000,000 lines took 2 min 40 s because MSYS `head` writes each line separately into the inbox ConPTY. Piped through `cat` it took 10.1 s. See S2 finding 3. | Pass: 52 MB in 5.9 s, responsive throughout | webgl | — | Typing p95 afterwards: pwsh 7.5 ms, Git Bash 23.3 ms (both pass after `ef659b0`, see below) |
 | macOS | Pending: no Mac available yet | | | | | | | | | |
 | Linux (WSLg) | Pending: this machine has no WSL distribution installed | | | | | | | | | |
 | Linux desktop | Pending: no Linux machine available | | | | | | | | | |
@@ -29,9 +29,10 @@ Known fixes to apply if needed: WebGL `preserveDrawingBuffer` (already on for Li
 - "No freeze" means CDP `Runtime.evaluate` round-trips stayed at 113–185 ms throughout the flood, against a baseline of about 115 ms (mostly node startup).
 
 **Typing latency by shell.**
-- pwsh measures p50 16.1 / p95 21.7 ms. Git Bash measures p50 31.2 / p95 32.5 ms every time, i.e. two frames instead of one.
-- One known cause is on our side: the pty socket's coalescing holds even a lone echoed keystroke until its 8 ms deadline (`crates/core/src/server/pty_ws.rs`). That pushes paints into the next frame.
-- Fix: flush immediately when the stream was idle, and coalesce only sustained output. This is tracked in the phase 1 ledger.
+- Before the fix, pwsh measured p50 16.1 / p95 21.7 ms, and Git Bash measured p50 31.2 / p95 32.5 ms (two frames instead of one).
+- Cause: the pty socket's coalescing held even a lone echoed keystroke until its 8 ms deadline. On Windows that deadline is really about 15.6 ms, because tokio rounds sleeps up to the system timer tick.
+- Fixed in `ef659b0`: output after an idle stream is sent at once, and only sustained output is coalesced.
+- After the fix, pwsh measures p50 4.3 / p95 7.5 ms, and Git Bash measures p50 16.5 / p95 23.3 ms. Both pass.
 
 ## Decision
 - [ ] PASS: keep Tauri
