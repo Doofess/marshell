@@ -24,7 +24,7 @@ describe("ApproveCard: a safe request", () => {
   });
   it("is a labelled group a screen reader can find", () => {
     expect(h).toContain('role="group"');
-    expect(h).toMatch(/aria-label="billing: Run a command/);
+    expect(h).toMatch(/aria-label="Session 1, billing: Run a command/);
     expect(h).toContain('tabindex="0"');
   });
   it("does not show the cwd when it matches the session's", () => {

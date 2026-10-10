@@ -16,7 +16,8 @@ export type CardState =
   | { phase: "released"; afterMs: number };
 export type ApprovalRequest = {
   id: string;
-  session: { name: string; agent: AgentId };
+  /** `number` is the session's number, shown before its name ("3 · infra"); fixtures that predate numbering leave it out. */
+  session: { name: string; agent: AgentId; number?: number };
   sessionCwd: string;
   waitingMs: number;
   detail: ToolDetail;

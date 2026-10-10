@@ -192,3 +192,20 @@ describe("scoreArrangement", () => {
     expect(small).toBeGreaterThan(0);
   });
 });
+
+describe("paneCells with a prompt line per pane", () => {
+  it("gives a pane with no prompt line (a manual CLI) its rows back, and leaves the others alone", () => {
+    const plan = planFor(2, "columns");
+    const size = { w: 1400, h: 800 };
+    const all = paneCells(plan, size, {}, CELL.composer);
+    const mixed = paneCells(plan, size, {}, [CELL.composer, 0]);
+    expect(mixed[0]).toEqual(all[0]);
+    expect(mixed[1]!.cols).toBe(all[1]!.cols);
+    expect(mixed[1]!.rows - all[1]!.rows).toBe(Math.floor((CELL.composer + (800 - CELL.header - CELL.composer - CELL.padY) % CELL.h) / CELL.h));
+    expect(mixed[1]!.rows).toBeGreaterThan(all[1]!.rows);
+  });
+  it("treats a missing entry as no prompt line", () => {
+    const plan = planFor(2, "columns");
+    expect(paneCells(plan, { w: 1400, h: 800 }, {}, [CELL.composer])[1]!.rows).toBe(paneCells(plan, { w: 1400, h: 800 }, {}, 0)[1]!.rows);
+  });
+});

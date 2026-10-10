@@ -7,6 +7,8 @@ import { SCENARIO_REQUESTS, SCENARIO_ROWS } from "./scenario";
 const BIG = { width: 1700, height: 900 } as const;
 const html = (p: Partial<Parameters<typeof MainWindow>[0]> = {}) => renderToStaticMarkup(<MainWindow width={1180} height={800} selectedId="working" {...p} />);
 
+const NUM: Record<string, number> = { "api-server": 3, billing: 1, infra: 2, landing: 5, search: 6 };
+
 describe("MainWindow: default", () => {
   const h = html();
   it("has one unified 40 px top bar, a sidebar and one terminal", () => {
@@ -23,7 +25,7 @@ describe("MainWindow: default", () => {
     for (const s of ["Minimize", "Maximize", "Close", "Command palette"]) expect(h, s).toContain(`aria-label="${s}"`);
   });
   it("shows the session the user selected in the header", () => {
-    expect(h).toContain('aria-label="Session api-server"');
+    expect(h).toContain('aria-label="Session 3, api-server"');
   });
 });
 
@@ -146,8 +148,8 @@ describe("MainWindow: split view up to four", () => {
   });
   it("starts with the selected session and fills the rest from the others in order, never twice", () => {
     const h = html({ layout: "split", splitCount: 4, selectedId: "working", width: 1700, height: 900 });
-    expect(h.indexOf("Terminal: api-server")).toBeLessThan(h.indexOf("Terminal: billing"));
-    const names = [...h.matchAll(/aria-label="Terminal: ([^"]+)"/g)].map((m) => m[1]);
+    expect(h.indexOf("terminal: api-server")).toBeLessThan(h.indexOf("terminal: billing"));
+    const names = [...h.matchAll(/aria-label="Session \d+, terminal: ([^"]+)"/g)].map((m) => m[1]);
     expect(new Set(names).size).toBe(4);
   });
   it("sets the window accent from the active pane", () => {
@@ -216,14 +218,14 @@ describe("MainWindow: the prompt line", () => {
   });
   it("names each pane's own session on its own line, so text typed in a pane goes to that pane's session", () => {
     const h = html({ layout: "split", splitCount: 4, ...BIG });
-    const names = [...h.matchAll(/aria-label="Terminal: ([^"]+)"/g)].map((m) => m[1]);
+    const names = [...h.matchAll(/aria-label="Session \d+, terminal: ([^"]+)"/g)].map((m) => m[1]);
     expect(names).toHaveLength(4);
     for (const n of names) expect(h).toContain(`aria-label="Write to ${n}"`);
   });
   it("keeps the blocked state per pane: the pane whose session needs you is off while the others stay live", () => {
     const h = html({ layout: "split", splitCount: 3, ...BIG });
     const sections = h.split("</section>");
-    const off = (name: string) => /<textarea[^>]*disabled/.test(sections.find((x) => x.includes(`aria-label="Terminal: ${name}"`))!);
+    const off = (name: string) => /<textarea[^>]*disabled/.test(sections.find((x) => x.includes(`aria-label="Session ${NUM[name]}, terminal: ${name}"`))!);
     expect(off("billing")).toBe(true);
     expect(off("api-server")).toBe(false);
   });
@@ -270,8 +272,8 @@ describe("MainWindow: the review's critical findings", () => {
   const BIG = { width: 1700, height: 900 } as const;
   it("zoom makes the zoomed pane the focused one: header, accent bar, its prompt line and the status bar all agree", () => {
     const h = html({ layout: "split", splitCount: 4, zoomedPane: 1, activePane: 0, ...BIG });
-    expect(h).toContain('aria-label="Terminal: billing"');
-    expect(h).toMatch(/<section class="pane" data-active="true"[^>]*aria-label="Terminal: billing"/);
+    expect(h).toContain('aria-label="Session 1, terminal: billing"');
+    expect(h).toMatch(/<section class="pane" data-active="true"[^>]*aria-label="Session 1, terminal: billing"/);
     expect(h).toContain('aria-label="Write to billing"');
     expect(h).not.toContain('aria-label="Write to api-server"');
   });
@@ -288,7 +290,7 @@ describe("MainWindow: the review's critical findings", () => {
     for (const [activePane, name] of [[-1, "api-server"], [9, "billing"]] as const) {
       const h = html({ layout: "split", splitCount: 2, activePane, ...BIG });
       expect((h.match(/data-active="true"/g) ?? []).length, String(activePane)).toBe(1);
-      expect(h, String(activePane)).toMatch(new RegExp(`<section class="pane" data-active="true"[^>]*aria-label="Terminal: ${name}"`));
+      expect(h, String(activePane)).toMatch(new RegExp(`<section class="pane" data-active="true"[^>]*aria-label="Session ${NUM[name]}, terminal: ${name}"`));
     }
   });
   it("tells the layout menu how many sessions could be shown, not how many were asked for", () => {

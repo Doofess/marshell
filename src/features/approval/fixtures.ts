@@ -9,7 +9,7 @@ const longCommand = Array.from({ length: 40 }, (_, i) =>
 export const APPROVALS = {
   safeBash: {
     id: "safe-bash",
-    session: { name: "billing", agent: "claude" },
+    session: { name: "billing", agent: "claude", number: 1 },
     sessionCwd: "C:/dev/payments",
     waitingMs: 65_000,
     detail: { kind: "bash", command: "npm test" },
@@ -19,7 +19,7 @@ export const APPROVALS = {
   },
   riskyBash: {
     id: "risky-bash",
-    session: { name: "refactor", agent: "claude" },
+    session: { name: "refactor", agent: "claude", number: 17 },
     sessionCwd: "C:/dev/my-app",
     waitingMs: 12_000,
     detail: { kind: "bash", command: "rm -rf ../old-build", cwd: "C:/dev/my-app/packages/web" },
@@ -28,7 +28,7 @@ export const APPROVALS = {
   },
   edit: {
     id: "edit",
-    session: { name: "api-server", agent: "claude" },
+    session: { name: "api-server", agent: "claude", number: 3 },
     sessionCwd: "C:/dev/my-app",
     waitingMs: 31_000,
     detail: {
@@ -51,7 +51,7 @@ export const APPROVALS = {
   },
   writeNew: {
     id: "write-new",
-    session: { name: "landing", agent: "codex" },
+    session: { name: "landing", agent: "codex", number: 5 },
     sessionCwd: "C:/dev/marketing",
     waitingMs: 8_000,
     detail: { kind: "write", path: ".env.example", preview: "API_URL=http://localhost:3000\nSTRIPE_KEY=\nSENTRY_DSN=", isNew: true },
@@ -60,7 +60,7 @@ export const APPROVALS = {
   },
   mcp: {
     id: "mcp",
-    session: { name: "infra", agent: "claude" },
+    session: { name: "infra", agent: "claude", number: 2 },
     sessionCwd: "C:/dev/terraform",
     waitingMs: 95_000,
     detail: { kind: "mcp", server: "github", tool: "create_pr", args: { title: "Upgrade aws provider to 6.x", base: "main", head: "chore/upgrade-aws-provider", draft: "true" } },
@@ -70,7 +70,7 @@ export const APPROVALS = {
   },
   longCommand: {
     id: "long-command",
-    session: { name: "ci-fix", agent: "gemini" },
+    session: { name: "ci-fix", agent: "gemini", number: 27 },
     sessionCwd: "C:/dev/my-app",
     waitingMs: 2 * MIN,
     detail: { kind: "bash", command: longCommand },
@@ -79,7 +79,7 @@ export const APPROVALS = {
   },
   question: {
     id: "question",
-    session: { name: "infra", agent: "gemini" },
+    session: { name: "infra", agent: "gemini", number: 2 },
     sessionCwd: "C:/dev/terraform",
     waitingMs: 4 * MIN,
     detail: { kind: "question", question: "Which AWS region should the new provider config target?", options: ["us-east-1", "eu-west-1", "ap-southeast-2"] },
@@ -88,7 +88,7 @@ export const APPROVALS = {
   },
   receipt: {
     id: "receipt",
-    session: { name: "billing", agent: "claude" },
+    session: { name: "billing", agent: "claude", number: 1 },
     sessionCwd: "C:/dev/payments",
     waitingMs: 70_000,
     detail: { kind: "bash", command: "npm test" },
@@ -97,7 +97,7 @@ export const APPROVALS = {
   },
   answeredInTerminal: {
     id: "answered-in-terminal",
-    session: { name: "billing", agent: "claude" },
+    session: { name: "billing", agent: "claude", number: 1 },
     sessionCwd: "C:/dev/payments",
     waitingMs: 40_000,
     detail: { kind: "bash", command: "npm test" },
@@ -106,7 +106,7 @@ export const APPROVALS = {
   },
   released: {
     id: "released",
-    session: { name: "nightly", agent: "claude" },
+    session: { name: "nightly", agent: "claude", number: 26 },
     sessionCwd: "C:/dev/perf",
     waitingMs: 120_000,
     detail: { kind: "bash", command: "cargo bench" },

@@ -4,9 +4,9 @@ const MIN = 60_000;
 
 /** One row per state from docs/PLAN.md "Sidebar rows", plus the modifiers and awkward names. */
 export const FIXTURES: RowModel[] = [
-  { id: "idle", name: "docs-site", project: "marketing", branch: "main", agent: "codex", status: "idle", phrase: "Idle", model: "GPT-5.5", contextPct: 8 },
+  { id: "idle", number: 10, name: "docs-site", project: "marketing", branch: "main", agent: "codex", status: "idle", phrase: "Idle", model: "GPT-5.5", contextPct: 8 },
   {
-    id: "working",
+    id: "working", number: 3,
     name: "api-server",
     project: "my-app",
     branch: "feat/auth-flow",
@@ -28,7 +28,7 @@ export const FIXTURES: RowModel[] = [
     version: "2.1.296",
   },
   {
-    id: "needs-permission",
+    id: "needs-permission", number: 1,
     name: "billing",
     project: "payments",
     branch: "fix/retry-backoff",
@@ -46,7 +46,7 @@ export const FIXTURES: RowModel[] = [
     flash: true,
   },
   {
-    id: "needs-question",
+    id: "needs-question", number: 2,
     name: "infra",
     project: "terraform",
     branch: "chore/upgrade-aws-provider",
@@ -57,7 +57,7 @@ export const FIXTURES: RowModel[] = [
     contextPct: 18,
   },
   {
-    id: "done-unseen",
+    id: "done-unseen", number: 5,
     name: "landing",
     project: "marketing",
     branch: "feat/pricing-page",
@@ -71,9 +71,9 @@ export const FIXTURES: RowModel[] = [
     ageMs: 40_000,
     contextPct: 55,
   },
-  { id: "done-seen", name: "cli", project: "tools", branch: "main", agent: "codex", status: "done-seen", phrase: "Done 12m ago", ageMs: 12 * MIN, contextPct: 30 },
+  { id: "done-seen", number: 11, name: "cli", project: "tools", branch: "main", agent: "codex", status: "done-seen", phrase: "Done 12m ago", ageMs: 12 * MIN, contextPct: 30 },
   {
-    id: "error",
+    id: "error", number: 6,
     name: "search",
     project: "my-app",
     branch: "feat/fts",
@@ -84,7 +84,7 @@ export const FIXTURES: RowModel[] = [
     contextPct: 97,
   },
   {
-    id: "stuck",
+    id: "stuck", number: 12,
     name: "migrations",
     project: "db",
     branch: "feat/v2-schema",
@@ -93,9 +93,9 @@ export const FIXTURES: RowModel[] = [
     phrase: "Same command 9× in 4 min",
     contextPct: 88,
   },
-  { id: "ended", name: "scratch", project: "playground", agent: "generic", status: "ended", phrase: "Ended · exit 0", ageMs: 3 * 3_600_000 },
+  { id: "ended", number: 13, name: "scratch", project: "playground", agent: "generic", status: "ended", phrase: "Ended · exit 0", ageMs: 3 * 3_600_000 },
   {
-    id: "limited",
+    id: "limited", number: 14,
     name: "legacy",
     project: "monolith",
     branch: "develop",
@@ -104,7 +104,7 @@ export const FIXTURES: RowModel[] = [
     phrase: "Status limited · set up",
   },
   {
-    id: "muted",
+    id: "muted", number: 15,
     name: "nightly-bench",
     project: "perf",
     branch: "main",
@@ -115,7 +115,7 @@ export const FIXTURES: RowModel[] = [
     contextPct: 12,
   },
   {
-    id: "elevated",
+    id: "elevated", number: 16,
     name: "drivers",
     project: "windows-setup",
     agent: "generic",
@@ -124,7 +124,7 @@ export const FIXTURES: RowModel[] = [
     elevated: true,
   },
   {
-    id: "bypass",
+    id: "bypass", number: 17,
     name: "refactor",
     project: "my-app",
     branch: "refactor/extract-billing-module",
@@ -135,7 +135,7 @@ export const FIXTURES: RowModel[] = [
     contextPct: 71,
   },
   {
-    id: "unknown",
+    id: "unknown", number: 18,
     name: "new-session",
     project: "my-app",
     branch: "main",
@@ -144,7 +144,7 @@ export const FIXTURES: RowModel[] = [
     phrase: "Starting Gemini CLI in my-app…",
   },
   {
-    id: "long-names",
+    id: "long-names", number: 19,
     name: "a-very-long-session-name-that-will-not-fit",
     project: "an-equally-long-project-directory-name",
     branch: "feature/JIRA-12345-add-the-thing-everyone-asked-for",
@@ -155,7 +155,7 @@ export const FIXTURES: RowModel[] = [
     contextPct: 50,
   },
   {
-    id: "cjk-emoji",
+    id: "cjk-emoji", number: 20,
     name: "認証サーバー 🚀",
     project: "프로젝트",
     branch: "fix/絵文字-🚀",
@@ -166,7 +166,7 @@ export const FIXTURES: RowModel[] = [
     contextPct: 22,
   },
   {
-    id: "rtl",
+    id: "rtl", number: 21,
     name: "خادم-التحقق",
     project: "مشروع",
     branch: "main",
@@ -174,9 +174,9 @@ export const FIXTURES: RowModel[] = [
     status: "idle",
     phrase: "Idle",
   },
-  { id: "tiny", name: "x", project: "y", branch: "z", agent: "generic", status: "idle", phrase: "Idle" },
+  { id: "tiny", number: 22, name: "x", project: "y", branch: "z", agent: "generic", status: "idle", phrase: "Idle" },
   {
-    id: "crowded",
+    id: "crowded", number: 23,
     name: "refactor",
     project: "my-app",
     branch: "develop",
@@ -189,7 +189,7 @@ export const FIXTURES: RowModel[] = [
     contextPct: 71,
   },
   {
-    id: "emoji-name",
+    id: "emoji-name", number: 24,
     name: "✅✅✅✅✅✅✅✅",
     project: "checks",
     branch: "main",
@@ -199,7 +199,7 @@ export const FIXTURES: RowModel[] = [
     contextPct: 33,
   },
   {
-    id: "deepseek-working",
+    id: "deepseek-working", number: 25,
     name: "research",
     project: "papers",
     branch: "main",
@@ -210,7 +210,7 @@ export const FIXTURES: RowModel[] = [
     contextPct: 27,
   },
   {
-    id: "muted-needs-you",
+    id: "muted-needs-you", number: 26,
     name: "nightly",
     project: "perf",
     branch: "main",
@@ -221,4 +221,8 @@ export const FIXTURES: RowModel[] = [
     waitingMs: 3 * MIN,
     contextPct: 20,
   },
+  // Manual CLIs: plain terminals. No thinking, no context ring, no model, no prompt line. The numbers 7 to 9 leave 4 free, as if a session had been closed.
+  { id: "tool-powershell", number: 7, name: "pwsh", project: "my-app", branch: "main", agent: "powershell", status: "idle", phrase: "At the prompt", sessionMs: 18 * MIN, dirty: 2 },
+  { id: "tool-docker", number: 8, name: "compose", project: "my-app", branch: "main", agent: "docker", status: "running", phrase: "Running docker compose up", sessionMs: 6 * MIN, dirty: 2 },
+  { id: "tool-ssh", number: 9, name: "prod-box", project: "deploy", agent: "ssh", status: "ended", phrase: "Exited · code 255", ageMs: 90_000 },
 ];

@@ -11,10 +11,13 @@ import type { ApprovalRequest } from "../approval/types";
 import { pending } from "../lane/laneLayout";
 import type { RowModel } from "../sidebar/types";
 import { ScriptedTerminal } from "../terminal/ScriptedTerminal";
+import { SHELL_SIZE, shellSession } from "../terminal/scriptedShell";
 import type { TerminalThemeSetting } from "../terminal/terminalTheme";
 import { COMPOSER, DRAWER, STATUS_BAR_HEIGHT, drawerPlacement, sidebarMode, sidebarWidth, type SidebarPref } from "./layout";
 import { LayoutIcon, LayoutMenu } from "./LayoutMenu";
 import { SearchIcon } from "./SearchIcon";
+import { isTool } from "../../components/AgentMark/kinds";
+import { hasPromptLine } from "../sidebar/promptLine";
 import { Rail } from "./Rail";
 import { SCENARIO_FOOTER, SCENARIO_PLAN, SCENARIO_PORTS, SCENARIO_REQUESTS, SCENARIO_ROWS } from "./scenario";
 import { SessionHeader } from "./SessionHeader";
@@ -120,14 +123,17 @@ export function MainWindow({
   // Split view: the selected session first, then the others in order, never the same one twice.
   const split = layout === "split";
   const showComposer = composer && mode !== "focus";
+  // A manual CLI is a plain terminal: no full prompt line under a single one, and no compact line in its pane.
+  const showFull = showComposer && !split && hasPromptLine(selected);
   const showStatus = statusBar && mode !== "focus";
   const pushed = drawer && placement === "push" ? DRAWER.default : 0;
   // The status bar always takes its 24 px. A single terminal also gives up the full prompt line; in split view each pane's own
   // prompt line is counted inside the pane math (splitLayout), not here.
-  const lineH = split && showComposer ? COMPOSER.compact : 0;
-  const space = { w: width - sideW - pushed, h: height - BAR - (showStatus ? STATUS_BAR_HEIGHT : 0) - (!split && showComposer ? COMPOSER.full : 0) };
-  // Four only where four are usable: a window too small for the count shows fewer, and the rest keep running.
   const requested = Math.min(splitCount, rows.length);
+  const candidates = [selected, ...rows.filter((r) => r.id !== selected.id)].slice(0, requested);
+  const lineH = split && showComposer && candidates.some(hasPromptLine) ? COMPOSER.compact : 0;
+  const space = { w: width - sideW - pushed, h: height - BAR - (showStatus ? STATUS_BAR_HEIGHT : 0) - (showFull ? COMPOSER.full : 0) };
+  // Four only where four are usable: a window too small for the count shows fewer, and the rest keep running.
   const visible = split ? Math.min(requested, maxPanes(space, lineH)) : 1;
   const shown: (RowModel | null)[] = [selected, ...rows.filter((r) => r.id !== selected.id)].slice(0, visible);
   if (emptySlot && shown.length > 1) shown[shown.length - 1] = null;
@@ -202,7 +208,7 @@ export function MainWindow({
           {split ? (
             <SplitView panes={shown} size={{ w: space.w, h: space.h }} activeIndex={focusedIndex} hidden={hiddenCount} arrangement={chosen} ratios={ratios} zoomed={zoomIdx} choices={choices} composerValues={composerValues} composers={showComposer} setting={terminalSetting} os={os} />
           ) : (
-            <ScriptedTerminal setting={terminalSetting} label={`Terminal for ${selected.name}`} />
+            <ScriptedTerminal setting={terminalSetting} label={`Terminal for ${selected.name}`} {...(isTool(selected.agent) ? { script: shellSession({ cwd: selected.project }), size: SHELL_SIZE } : {})} />
           )}
 
           {mode === "focus" && waiting > 0 && (
@@ -221,14 +227,14 @@ export function MainWindow({
             </aside>
           )}
         </main>
-        {showComposer && !split && (
+        {showFull && (
           <div className="window__composer" style={{ blockSize: COMPOSER.full }}>
             <Composer row={selected} variant="full" value={composerValue} os={os} />
           </div>
         )}
         {showStatus && (
           <div className="window__status" style={{ blockSize: STATUS_BAR_HEIGHT }}>
-            <StatusBar row={split ? focused : selected} plan={SCENARIO_PLAN} ports={SCENARIO_PORTS} os={os} />
+            <StatusBar row={split ? focused : selected} plan={isTool((split ? focused : selected)?.agent ?? "") ? undefined : SCENARIO_PLAN} ports={SCENARIO_PORTS} os={os} />
           </div>
         )}
         </div>

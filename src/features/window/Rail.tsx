@@ -4,6 +4,7 @@ import { commandById, shortcutLabel, type Os } from "../../lib/keymap";
 import { rowLabel } from "../sidebar/labels";
 import { SearchIcon } from "./SearchIcon";
 import { monogram } from "../sidebar/monogram";
+import { SessionNumber } from "../../components/SessionNumber/SessionNumber";
 import type { RowModel } from "../sidebar/types";
 import "./Rail.css";
 
@@ -24,8 +25,11 @@ export function Rail({ rows, needsYou, selectedId, os = "windows" }: { rows: Row
           </div>
         )}
         {rows.map((r) => (
-          <button key={r.id} type="button" className="rail__item" data-agent={r.agent} data-mono={monogram(r.name)} aria-label={rowLabel(r)} aria-current={r.id === selectedId ? "true" : undefined}>
+          <button key={r.id} type="button" className="rail__item" data-agent={r.agent} data-mono={monogram(r.name)} data-number={r.number} aria-label={rowLabel(r)} aria-current={r.id === selectedId ? "true" : undefined}>
             <span className="rail__stripe" aria-hidden="true" />
+            <span className="rail__number">
+              <SessionNumber n={r.number} />
+            </span>
             {r.status === "working" ? <AgentMark agent={r.agent} working /> : <StatusGlyph kind={r.status} size={16} />}
           </button>
         ))}

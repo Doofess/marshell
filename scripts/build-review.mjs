@@ -27,6 +27,7 @@ const CSS = [
   "node_modules/@xterm/xterm/css/xterm.css",
   "src/features/terminal/ScriptedTerminal.css",
   "src/components/Chip/Chip.css",
+  "src/components/SessionNumber/SessionNumber.css",
   "src/components/Logo/Logo.css",
   "src/features/sidebar/SessionRow.css",
   "src/features/approval/ApproveCard.css",
@@ -41,6 +42,8 @@ const CSS = [
   "src/features/composer/Composer.css",
   "src/features/composer/StatusStrip.css",
   "src/features/composer/StatusBar.css",
+  "src/features/launcher/Launcher.css",
+  "src/features/palette/Palette.css",
   "src/features/window/ShellPanel.css",
 ];
 const ACCENTS = ["amber", "blue", "indigo", "violet", "magenta", "cyan", "teal", "slate"];
@@ -184,6 +187,16 @@ const META = {
       "It still reads well at 150% browser zoom, and the focus ring is visible in both themes.",
     ],
   },
+};
+META["2c"] = {
+  lede: "Sub-review C of 3 in batch 2: the launcher and the command palette. Sub-review B (main window) is below, awaiting sign-off; A and batch 1 are signed off.",
+  nav: [["launcher", "Launcher"], ["command-palette", "Palette"], ["main-window", "Window"], ["needs-you-lane", "Lane"], ["approve-card", "Approve card"], ["sign-off", "Sign-off"]],
+  checks: [
+    "The launcher reads as one sentence of chips; Tab and letters move between chips, Enter starts.",
+    "The first chip lists Agents, Shells and Tools; a shell has no mode, pace or worktree chips.",
+    "The palette jumps by number: type 6, #6 or session 6; a missing number says which are open.",
+    "Both sheets keep the flat prompt-line look, work with the keyboard alone, and read at 150% zoom.",
+  ],
 };
 META["2b"] = {
   lede: "Sub-review B of 3 in batch 2: the main window with a real terminal. Sub-review A (approve card) and batch 1 are signed off and sit below.",

@@ -88,6 +88,10 @@
 .session-row__line1 > .aux-glyph {
   margin-inline-end: var(--space-1);
 }
+/* The number sits between the mark and the name and never shrinks, so the names keep their room and their truncation order. */
+.session-row__line1 > .session-number {
+  margin-inline-end: var(--space-2);
+}
 
 /*
  * Truncation order (docs/PLAN.md): the branch head (middle, the tail stays), then the project, then the branch tail;

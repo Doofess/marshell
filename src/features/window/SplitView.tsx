@@ -1,5 +1,6 @@
 import type { CSSProperties } from "react";
 import type { Os } from "../../lib/keymap";
+import { hasPromptLine } from "../sidebar/promptLine";
 import type { RowModel } from "../sidebar/types";
 import type { TerminalThemeSetting } from "../terminal/terminalTheme";
 import { EmptyPane, Pane } from "./Pane";
@@ -61,11 +62,13 @@ export function SplitView({ panes, size, activeIndex = 0, arrangement, ratios = 
   // An arrangement for another number of panes falls back to automatic instead of throwing.
   const valid = arrangement !== undefined && ARRANGEMENTS[count]?.includes(arrangement);
   // Every pane carries its own prompt line, so each costs its height: the arrangement and the narrow warning count it.
-  const lineH = composers ? CELL.composer : 0;
+  const visible = isZoomed ? [{ row: panes[zoomed!]!, index: zoomed! }] : panes.map((row, index) => ({ row, index }));
+  // A manual CLI is a plain terminal with no prompt line, so its pane gets those rows back; the arrangement is still judged on the line the others carry.
+  const lines = visible.map(({ row }) => (composers && hasPromptLine(row) ? CELL.composer : 0));
+  const lineH = lines.some((h) => h > 0) ? CELL.composer : 0;
   const chosen = isZoomed ? "single" : valid ? arrangement : chooseArrangement(count, size, {}, lineH);
   const plan = planFor(count, chosen);
-  const cells = paneCells(plan, size, ratios, lineH);
-  const visible = isZoomed ? [{ row: panes[zoomed!]!, index: zoomed! }] : panes.map((row, index) => ({ row, index }));
+  const cells = paneCells(plan, size, ratios, lines);
 
   return (
     <div

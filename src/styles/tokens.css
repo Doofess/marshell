@@ -41,6 +41,10 @@
   --brand-deepseek: light-dark(oklch(42% 0.16 262), oklch(62% 0.16 258));
   --brand-violet: light-dark(oklch(50% 0.15 300), oklch(72% 0.13 300));
   --brand-generic: light-dark(oklch(52% 0.02 250), oklch(65% 0.02 250));
+  /* Manual CLIs (shells, dev tools, remote tools) are calm, low-chroma accents at the same lightness as the neutral generic mark. */
+  --tool-shell: light-dark(oklch(52% 0.03 250), oklch(65% 0.03 250));
+  --tool-dev: light-dark(oklch(52% 0.035 200), oklch(65% 0.035 200));
+  --tool-remote: light-dark(oklch(52% 0.035 300), oklch(65% 0.035 300));
 
   --font-ui: "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, "Inter Variable", sans-serif;
   --font-mono: "Cascadia Mono", "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;

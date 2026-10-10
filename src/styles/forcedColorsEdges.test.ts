@@ -14,6 +14,8 @@ const EDGES: Record<string, string[]> = {
   "features/composer/Composer.css": [".composer", ".composer__send"],
   "features/composer/StatusBar.css": [".status-bar"],
   "features/window/Rail.css": [".rail__tool"],
+  "features/launcher/Launcher.css": [".launcher__sheet", ".launcher__chip", ".launcher__input", ".launcher__start", ".launcher__program"],
+  "features/palette/Palette.css": [".palette__sheet", ".palette__input"],
 };
 
 const read = (f: string) => readFileSync(new URL(`../${f}`, import.meta.url), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");

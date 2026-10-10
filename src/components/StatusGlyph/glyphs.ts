@@ -1,6 +1,7 @@
 export type GlyphKind =
   | "idle"
   | "working"
+  | "running"
   | "needs-permission"
   | "needs-question"
   | "done-unseen"
@@ -17,6 +18,8 @@ export type GlyphSpec = { label: string; motion: Motion; reduced: string | null 
 export const GLYPHS: Record<GlyphKind, GlyphSpec> = {
   idle: { label: "Idle", motion: null, reduced: null },
   working: { label: "Working", motion: "pulse", reduced: "Static dot with a three-quarter arc" },
+  // A manual CLI is running a command. Nothing thinks, so nothing moves.
+  running: { label: "Running a command", motion: null, reduced: null },
   "needs-permission": { label: "Needs you: permission", motion: "bounce", reduced: "No bounce" },
   "needs-question": { label: "Needs you: question", motion: "bounce", reduced: "No bounce" },
   "done-unseen": { label: "Done, unseen", motion: "draw", reduced: "Check shown complete" },

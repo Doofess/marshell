@@ -1,5 +1,7 @@
 import { useId, type CSSProperties } from "react";
 import { AGENT_NAMES, AMP_PIECES, CURSOR_CUBE, CURSOR_POINTER, GENERIC_PIECES, MARK_PATHS, isAgentId, type AgentId } from "./agents";
+import { TOOL_NAMES, TOOL_PATHS, isToolId, type ToolId } from "./tools";
+import type { SessionKind } from "./kinds";
 import "./agent-colors.css";
 import "./AgentMark.css";
 
@@ -54,7 +56,21 @@ const ZONES = [
   { x: 5, y: 11, width: 14, height: 12, tempo: 1.25, phase: 0.02 },
 ] as const;
 
-export function AgentMark({ agent, size = 16, working = false }: { agent: AgentId; size?: 12 | 16 | 20; working?: boolean }) {
+export function AgentMark({ agent, size = 16, working = false }: { agent: SessionKind; size?: 12 | 16 | 20; working?: boolean }) {
+  // A manual CLI's mark is always still: it is drawn from its own path and `working` means nothing to it.
+  if (isToolId(agent)) return <ToolMark tool={agent} size={size} />;
+  return <VendorMark agent={agent} size={size} working={working} />;
+}
+
+function ToolMark({ tool, size }: { tool: ToolId; size: 12 | 16 | 20 }) {
+  return (
+    <svg className="agent-mark" data-agent={tool} data-tool="" role="img" aria-label={TOOL_NAMES[tool]} width={size} height={size} viewBox="0 0 24 24">
+      <path className="agent-mark__body" d={TOOL_PATHS[tool]} fill="currentColor" fillRule="evenodd" />
+    </svg>
+  );
+}
+
+function VendorMark({ agent, size, working }: { agent: AgentId; size: 12 | 16 | 20; working: boolean }) {
   const id: AgentId = isAgentId(agent) ? agent : "generic";
   const d = MARK_PATHS[id];
   const breath = BREATHING[id];

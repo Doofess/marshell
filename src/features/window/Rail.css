@@ -116,6 +116,18 @@
   inline-size: var(--stripe);
   background: var(--agent, var(--brand-generic));
 }
+/* The number rides the top corner of the item, over the stripe's side, and is the only text there apart from the monogram. */
+.rail__number {
+  position: absolute;
+  inset-block-start: 2px;
+  inset-inline-end: 3px;
+  line-height: 0;
+}
+.rail__number .session-number {
+  min-inline-size: 0;
+  padding-inline: 3px;
+  line-height: 1.25;
+}
 .rail__item::after {
   content: attr(data-mono);
   font-size: var(--text-11);

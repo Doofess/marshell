@@ -39,7 +39,7 @@ describe("StatusBar: the focused session's facts, in one row at the foot of the 
     expect(h).not.toContain("data-agent");
   });
   it("leaves out what is unknown rather than showing dashes", () => {
-    const h = renderToStaticMarkup(<StatusBar row={{ id: "x", name: "x", project: "p", agent: "claude", status: "idle", phrase: "Idle" }} />);
+    const h = renderToStaticMarkup(<StatusBar row={{ id: "x", number: 1, name: "x", project: "p", agent: "claude", status: "idle", phrase: "Idle" }} />);
     expect(h).not.toContain("status-strip__item");
     expect(h.replace(/<[^>]+>/g, " ")).not.toMatch(/–|--/);
   });

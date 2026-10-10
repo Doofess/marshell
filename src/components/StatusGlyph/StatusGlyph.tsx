@@ -11,6 +11,12 @@ const shapes: Record<GlyphKind, ReactNode> = {
       <circle className="g-working-dot" cx="8" cy="8" r="4" fill="currentColor" />
     </>
   ),
+  running: (
+    <>
+      <circle cx="8" cy="8" r="6.5" fill="none" stroke="currentColor" strokeWidth="1.25" strokeDasharray="3 1" pathLength="4" />
+      <circle cx="8" cy="8" r="4" fill="currentColor" />
+    </>
+  ),
   "needs-permission": (
     <>
       <rect className="g-badge" x="1.5" y="1.5" width="13" height="13" rx="4" fill="var(--agent-signal, var(--accent))" />

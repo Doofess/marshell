@@ -130,12 +130,13 @@ function spanSize(sizes: number[], start: number, end: number): number {
 }
 
 /** How many terminal columns and rows each pane really gets, after padding, its header, its prompt line and the handles. */
-export function paneCells(plan: Plan, size: Size, ratios: Ratios = {}, composer: number = CELL.composer): { cols: number; rows: number }[] {
+export function paneCells(plan: Plan, size: Size, ratios: Ratios = {}, composer: number | readonly number[] = CELL.composer): { cols: number; rows: number }[] {
   const widths = trackSizes(size.w, plan.colTracks, ratios.col);
   const heights = trackSizes(size.h, plan.rowTracks, ratios.row);
-  return plan.cells.map((c) => ({
+  // A number is the prompt line every pane carries; a list gives each pane its own, 0 for a manual CLI that has none.
+  return plan.cells.map((c, k) => ({
     cols: Math.max(0, Math.floor((spanSize(widths, c.colStart, c.colEnd) - CELL.padX) / CELL.w)),
-    rows: Math.max(0, Math.floor((spanSize(heights, c.rowStart, c.rowEnd) - CELL.header - composer - CELL.padY) / CELL.h)),
+    rows: Math.max(0, Math.floor((spanSize(heights, c.rowStart, c.rowEnd) - CELL.header - (typeof composer === "number" ? composer : (composer[k] ?? 0)) - CELL.padY) / CELL.h)),
   }));
 }
 

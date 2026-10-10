@@ -4,6 +4,7 @@ import type { RowModel } from "./types";
 
 const base: RowModel = {
   id: "1",
+  number: 6,
   name: "api-server",
   project: "my-app",
   branch: "feat/auth-flow",
@@ -15,8 +16,8 @@ const base: RowModel = {
 };
 
 describe("rowLabel", () => {
-  it("starts with the text on screen, in order, so the name contains the visible label", () => {
-    expect(rowLabel(base)).toBe("api-server my-app · feat/auth-flow 1m Wants to run npm test. Claude, Needs you: permission. Context 42% used.");
+  it("starts with the session number, then the text on screen in order, so the name contains the visible label", () => {
+    expect(rowLabel(base)).toBe("Session 6, api-server my-app · feat/auth-flow 1m Wants to run npm test. Claude, Needs you: permission. Context 42% used.");
   });
   it("puts the model and its separator where they are drawn, before the phrase", () => {
     expect(rowLabel({ ...base, model: "Opus 5.5" })).toContain("1m Opus 5.5 · Wants to run npm test.");
@@ -42,7 +43,7 @@ describe("rowLabel", () => {
     expect(rowTitle({ ...base, model: "Opus 5.5" })).toContain("\nClaude Opus 5.5\n");
   });
   it("keeps names that are not Latin", () => {
-    expect(rowLabel({ ...base, name: "認証サーバー \u{1F680}" }).startsWith("認証サーバー \u{1F680} my-app")).toBe(true);
+    expect(rowLabel({ ...base, name: "認証サーバー \u{1F680}" }).startsWith("Session 6, 認証サーバー \u{1F680} my-app")).toBe(true);
   });
   it("in the expanded row also starts with the extra lines shown there", () => {
     const l = rowLabel({ ...base, model: "Opus 5.5", effort: "high", subagents: 2, recap: { text: "Fixed the retry loop", ageMs: 120_000 } }, "expanded");
@@ -52,6 +53,15 @@ describe("rowLabel", () => {
 
 describe("rowTitle", () => {
   it("has the untruncated text on separate lines", () => {
-    expect(rowTitle(base)).toBe("api-server\nmy-app · feat/auth-flow\nClaude\nWants to run `npm test`");
+    expect(rowTitle(base)).toBe("Session 6\napi-server\nmy-app · feat/auth-flow\nClaude\nWants to run `npm test`");
+  });
+});
+
+describe("manual CLIs", () => {
+  const docker: RowModel = { id: "d", number: 8, name: "compose", project: "my-app", branch: "main", agent: "docker", status: "running", phrase: "Running docker compose up" };
+  it("are named by their program and say what they are doing, with no context or model", () => {
+    const l = rowLabel(docker);
+    expect(l).toBe("Session 8, compose my-app · main Running docker compose up. Docker, Running a command.");
+    expect(l).not.toContain("Context");
   });
 });

@@ -19,7 +19,7 @@ describe("SplitView: panes", () => {
   it("names every pane and terminal after its session", () => {
     const h = html({ panes: [api!, billing!, infra!] });
     for (const r of [api!, billing!, infra!]) {
-      expect(h).toContain(`aria-label="Terminal: ${r.name}"`);
+      expect(h).toContain(`aria-label="Session ${r.number}, terminal: ${r.name}"`);
       expect(h).toContain(`aria-label="Terminal for ${r.name}"`);
     }
   });
@@ -112,7 +112,7 @@ describe("SplitView: zoom", () => {
   const zoomed = html({ panes: [api!, billing!, infra!, docs!], zoomed: 2 });
   it("fills the space with the one zoomed pane", () => {
     expect(count(zoomed, /class="pane"/g)).toBe(1);
-    expect(zoomed).toContain('aria-label="Terminal: infra"');
+    expect(zoomed).toContain('aria-label="Session 2, terminal: infra"');
     expect(zoomed).toContain('data-arrangement="single"');
     expect(zoomed).not.toContain('role="separator"');
   });
@@ -128,7 +128,7 @@ describe("SplitView: an empty pane", () => {
   it("asks which session goes there, listing the ones not on screen", () => {
     expect(empty).toContain("Choose a session for this pane");
     for (const r of [infra!, docs!, bug!]) expect(empty).toContain(r.name);
-    expect(empty).not.toContain('aria-label="Terminal: null"');
+    expect(empty).not.toContain('terminal: null"');
   });
   it("offers to start a new one, with its shortcut", () => {
     expect(empty).toContain("Start a new session");
@@ -150,7 +150,7 @@ describe("SplitView: sessions with no room", () => {
   it("names how many are running out of sight in the focused pane's header only", () => {
     const h = html({ panes: [api!, billing!], hidden: 2, activeIndex: 1 });
     expect(count(h, /2 more running/g)).toBe(1);
-    expect(h.indexOf("2 more running")).toBeGreaterThan(h.indexOf('aria-label="Terminal: billing"'));
+    expect(h.indexOf("2 more running")).toBeGreaterThan(h.indexOf('aria-label="Session 1, terminal: billing"'));
     expect(html({ panes: [api!, billing!] })).not.toContain("more running");
   });
   it("lists at most five sessions in an empty pane and sends the rest to the command palette, since the window never scrolls", () => {
@@ -197,9 +197,9 @@ describe("SplitView: every pane has its own prompt line", () => {
     const h = html({ panes: [api!, billing!, docs!] });
     const sections = h.split("</section>");
     const off = (s: string) => /<textarea[^>]*disabled/.test(s);
-    expect(off(sections.find((s) => s.includes('aria-label="Terminal: billing"'))!)).toBe(true);
-    expect(off(sections.find((s) => s.includes('aria-label="Terminal: api-server"'))!)).toBe(false);
-    expect(off(sections.find((s) => s.includes('aria-label="Terminal: landing"'))!)).toBe(false);
+    expect(off(sections.find((s) => s.includes('aria-label="Session 1, terminal: billing"'))!)).toBe(true);
+    expect(off(sections.find((s) => s.includes('aria-label="Session 3, terminal: api-server"'))!)).toBe(false);
+    expect(off(sections.find((s) => s.includes('aria-label="Session 5, terminal: landing"'))!)).toBe(false);
   });
   it("gives each pane the text typed in that pane, by session id", () => {
     const h = html({ panes: [api!, billing!], composerValues: { [api!.id]: "also add tests" } });

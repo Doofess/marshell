@@ -60,3 +60,20 @@ describe("COMMANDS", () => {
     expect(() => commandById("nope")).toThrow("Unknown command: nope");
   });
 });
+
+describe("session numbers", () => {
+  it("goes to sessions 1 to 9 with Ctrl+1 to Ctrl+9 (Cmd on macOS), as the plan writes them", () => {
+    for (let n = 1; n <= 9; n++) {
+      const c = commandById(`focus-session-${n}`);
+      expect(c.label).toBe(`Go to session ${n}`);
+      expect(shortcutLabel(c.binding!, "windows")).toBe(`Ctrl+${n}`);
+      expect(shortcutLabel(c.binding!, "mac")).toBe(`⌘${n}`);
+    }
+  });
+  it("reaches sessions past nine from the palette, by their number", () => {
+    const c = commandById("go-to-session");
+    expect(c.binding).toBeUndefined();
+    expect(c.label).toContain("Go to session");
+    expect(c.label).toContain("12");
+  });
+});

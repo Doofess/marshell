@@ -1,5 +1,6 @@
 import { useId, type KeyboardEvent } from "react";
 import { AGENT_NAMES } from "../../components/AgentMark/agents";
+import { SessionNumber } from "../../components/SessionNumber/SessionNumber";
 import { AuxGlyph, StatusGlyph } from "../../components/StatusGlyph/StatusGlyph";
 import { formatDuration } from "../sidebar/format";
 import { keyAction, type CardAction } from "./arming";
@@ -119,7 +120,7 @@ export function ApproveCard({ request, expanded = false, armed = true, holdProgr
     <div
       className="approve-card"
       role="group"
-      aria-label={`${session.name}: ${headline(detail)}`}
+      aria-label={`${session.number !== undefined ? `Session ${session.number}, ` : ""}${session.name}: ${headline(detail)}`}
       tabIndex={0}
       data-agent={session.agent}
       data-phase="pending"
@@ -131,6 +132,7 @@ export function ApproveCard({ request, expanded = false, armed = true, holdProgr
     >
       <header className="approve-card__who">
         <StatusGlyph kind={isQuestion ? "needs-question" : "needs-permission"} />
+        {session.number !== undefined && <SessionNumber n={session.number} />}
         <span className="approve-card__name" dir="auto">
           {session.name}
         </span>

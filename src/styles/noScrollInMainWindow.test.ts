@@ -13,7 +13,7 @@ const FILES = [...walk(join(SRC, "features")), ...walk(join(SRC, "components"))]
  * Selectors that may scroll: menus and settings (`.scroll-menu`, `.layout-menu`), the request-details drawer (a menu-like
  * inspector for a 40-line command), and the prompt field, which scrolls past eight lines with its scrollbar hidden.
  */
-const ALLOWED = [/^\.drawer$/, /^\.composer__field$/, /^\.scroll-menu$/, /^\.layout-menu$/, /^\.sidebar__list$/, /^\.rail__list$/];
+const ALLOWED = [/^\.drawer$/, /^\.composer__field$/, /^\.scroll-menu$/, /^\.layout-menu$/, /^\.sidebar__list$/, /^\.rail__list$/, /^\.palette__list$/, /^\.launcher__list$/];
 
 const read = (f: string) => readFileSync(join(SRC, f), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
 const rules = (css: string) => [...css.matchAll(/([^{}]+)\{([^{}]*)\}/g)].map((m) => ({ selectors: m[1]!.split(",").map((s) => s.trim()), body: m[2]! }));
@@ -53,7 +53,13 @@ describe("the main window never scrolls", () => {
   });
 
   it("lets the session list and the rail scroll, with the scrollbar hidden: wheel, touch and keys, nothing drawn", () => {
-    for (const [f, sel] of [["features/window/Sidebar.css", ".sidebar__list"], ["features/window/Rail.css", ".rail__list"]] as const) {
+    // The palette's results and the launcher's folder list are the same kind of list, in the two sheets over the window.
+    for (const [f, sel] of [
+      ["features/window/Sidebar.css", ".sidebar__list"],
+      ["features/window/Rail.css", ".rail__list"],
+      ["features/palette/Palette.css", ".palette__list"],
+      ["features/launcher/Launcher.css", ".launcher__list"],
+    ] as const) {
       const css = read(f);
       const r = rules(css).find((x) => x.selectors.includes(sel))!;
       expect(r.body, sel).toMatch(/overflow-y:\s*auto/);

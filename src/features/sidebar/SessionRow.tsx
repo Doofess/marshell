@@ -1,8 +1,10 @@
 import { AgentMark } from "../../components/AgentMark/AgentMark";
 import { AuxGlyph, StatusGlyph } from "../../components/StatusGlyph/StatusGlyph";
 import { ContextRing } from "../../components/ContextRing/ContextRing";
+import { SessionNumber } from "../../components/SessionNumber/SessionNumber";
 import { formatDuration, formatUsage, modeCaution } from "./format";
 import { rowLabel, rowTitle } from "./labels";
+import { SESSION_NUMBER_HINT } from "./sessionNumber";
 import { splitForMiddle } from "./truncate";
 import type { Density, RowModel } from "./types";
 import "./SessionRow.css";
@@ -44,6 +46,7 @@ export function SessionRow({
       aria-label={rowLabel(row, density)}
       data-density={density}
       data-agent={row.agent}
+      data-number={row.number}
       data-status={row.status}
       data-needs-you={NEEDS_YOU.has(row.status) || undefined}
       data-blocked={blocked(row.status)}
@@ -56,6 +59,7 @@ export function SessionRow({
       <div className="session-row__line1" aria-hidden="true">
         <AgentMark agent={row.agent} working={row.status === "working"} />
         {row.elevated && <AuxGlyph kind="elevated" />}
+        <SessionNumber n={row.number} title={SESSION_NUMBER_HINT} />{" "}
         {/* The lead clips, so whatever happens to the names, the right cluster always stays in the row. */}
         <span className="session-row__lead">
           <span className="session-row__name" dir="auto">

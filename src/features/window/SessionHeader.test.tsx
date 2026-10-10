@@ -52,6 +52,6 @@ describe("SessionHeader", () => {
   });
   it("is a labelled banner-level region", () => {
     expect(h).toContain('role="group"');
-    expect(h).toContain('aria-label="Session api-server"');
+    expect(h).toContain('aria-label="Session 3, api-server"');
   });
 });

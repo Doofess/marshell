@@ -35,10 +35,10 @@
 .all-sessions__row {
   position: relative;
   display: grid;
-  grid-template-columns: auto minmax(0, auto) minmax(0, 1fr);
+  grid-template-columns: auto auto minmax(0, auto) minmax(0, 1fr);
   grid-template-areas:
-    "glyph name project"
-    "glyph phrase phrase";
+    "glyph number name project"
+    "glyph number phrase phrase";
   align-items: center;
   column-gap: var(--space-2);
   inline-size: 100%;
@@ -53,6 +53,9 @@
 }
 .all-sessions__row > .status-glyph {
   grid-area: glyph;
+}
+.all-sessions__row > .session-number {
+  grid-area: number;
 }
 .all-sessions__stripe {
   position: absolute;

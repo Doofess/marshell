@@ -10,6 +10,14 @@ export const SCENARIO_IDS = ["needs-permission", "needs-question", "working", "d
 
 export const SCENARIO_ROWS: RowModel[] = SCENARIO_IDS.map((id) => FIXTURES.find((f) => f.id === id)!);
 
+/**
+ * The same scenario plus three manual CLIs: PowerShell at its prompt, docker running a build, and an ssh session that
+ * exited. Their numbers (7, 8, 9) leave 4 free: the agents hold 1, 2, 3, 5 and 6, as if session 4 had been closed, and the
+ * next session started would take 4 (nextSessionNumber).
+ */
+export const SCENARIO_TOOL_IDS = ["tool-powershell", "tool-docker", "tool-ssh"] as const;
+export const SCENARIO_ROWS_WITH_TOOLS: RowModel[] = [...SCENARIO_ROWS, ...SCENARIO_TOOL_IDS.map((id) => FIXTURES.find((f) => f.id === id)!)];
+
 /** Session names match the rows: billing (65 s, a command) and infra (4 min, a question). */
 export const SCENARIO_REQUESTS: ApprovalRequest[] = [APPROVALS.safeBash, APPROVALS.question];
 

@@ -7,9 +7,9 @@ import { AuxGlyph, StatusGlyph } from "./StatusGlyph";
 const kinds = Object.keys(GLYPHS) as GlyphKind[];
 
 describe("glyph registry", () => {
-  it("covers the ten row states", () => {
+  it("covers the ten row states and the manual CLI's still \"running\"", () => {
     expect(kinds.sort()).toEqual(
-      ["done-seen", "done-unseen", "ended", "error", "idle", "limited", "needs-permission", "needs-question", "stuck", "working"],
+      ["done-seen", "done-unseen", "ended", "error", "idle", "limited", "needs-permission", "needs-question", "running", "stuck", "working"],
     );
   });
   it("every motion has a reduced form", () => {

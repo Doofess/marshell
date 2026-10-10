@@ -12,7 +12,8 @@
 .status-glyph[data-kind="limited"] {
   color: var(--text-3);
 }
-.status-glyph[data-kind="working"] {
+.status-glyph[data-kind="working"],
+.status-glyph[data-kind="running"] {
   color: var(--text-1);
 }
 /* Done, needs-you, error and caution all take the vendor's colour (agent-colors.css); outside a session they fall back to the app's. */

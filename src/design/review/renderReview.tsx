@@ -11,6 +11,9 @@ import * as Window from "../../features/window/MainWindow.stories";
 import * as Icon from "../../components/Logo/Logo.stories";
 import * as Overflow from "../../features/window/Overflow.stories";
 import * as PromptBar from "../../features/composer/Composer.stories";
+import * as ManualCli from "../../components/AgentMark/ManualCli.stories";
+import * as Launcher from "../../features/launcher/Launcher.stories";
+import * as Palette from "../../features/palette/Palette.stories";
 import * as Rows from "../../features/sidebar/SessionRow.stories";
 
 type StoryModule = { default: { title?: string } } & Record<string, unknown>;
@@ -38,10 +41,14 @@ const BATCHES: Record<UpTo, Array<[StoryModule, string]>> = {
     [Lane, "The lane header is always there at 28 px. The oldest waiting request is the target and shows as a full card; the rest are 36 px one-liners; it never takes more than 40% of the sidebar."],
     [Icon, "The app icon, and where it lives: the first thing in the window's top bar, where it opens the app menu."],
     [PromptBar, "The prompt line is a flat command line docked under the terminal, not a floating card. A single terminal has one full line; in split view every pane has its own compact line, so a line of text always goes to the session of its own pane. It takes that session's colour, is off while the session waits on you or has ended, and never changes height: notices sit in the line, so the terminals above do not resize when a session starts working. The strip of status data (model, context, plan limits, cost, MCP and more) lives in a thin status bar at the foot of the window, for the focused session."],
+    [ManualCli, "Terminals are not only AI agents. A manual CLI (a shell, a dev tool, a remote or cloud tool) gets its program's mark the same way an agent gets its vendor's, but it is a plain terminal: no thinking motion, no context ring, no model, no prompt line of ours. Every open terminal also has a number that stays with it until it closes, so you can tell an agent \"go talk to session 6\"."],
     [Overflow, "The session list in the sidebar and rail scrolls with no visible scrollbar, and a soft fade shows where more rows continue. The needs-you lane never scrolls: it shows what fits and a \"+N more\" button that opens a menu, and menus, unlike the window, keep a themed scrollbar."],
     [Window, "The window in the real layout, with a real xterm.js terminal that follows the theme. The accent follows the session's vendor. Split view shows up to four terminals at once and picks the arrangement that suits the window. Use the Terminal theme control above to pin the terminal dark or light, and Contrast protection to see what it rescues."],
   ],
-  "2c": [],
+  "2c": [
+    [Launcher, "One sentence of chips and a prompt line, 560 px wide, 20% from the top. The first chip lists agents, shells and tools. A shell or tool has no mode, pace or worktree: it is a plain terminal, so the line asks for a first command. The footer says which session number it will take."],
+    [Palette, "Open sessions come first with their number, mark, name and status, and the number is the fastest way in: type 6, #6 or session 6. A number nobody holds says which sessions are open. Commands follow, with their shortcuts."],
+  ],
 };
 
 /** "TruncationAt200" → "Truncation at 200". */

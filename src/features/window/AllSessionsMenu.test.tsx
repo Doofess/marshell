@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 import { FIXTURES } from "../sidebar/fixtures";
 import { AllSessionsMenu } from "./AllSessionsMenu";
 
-const twenty = Array.from({ length: 20 }, (_, i) => ({ ...FIXTURES[i % 5]!, id: `s${i}`, name: `session-${i + 1}` }));
+const twenty = Array.from({ length: 20 }, (_, i) => ({ ...FIXTURES[i % 5]!, id: `s${i}`, number: i + 1, name: `session-${i + 1}` }));
 const html = (p: Partial<Parameters<typeof AllSessionsMenu>[0]> = {}) => renderToStaticMarkup(<AllSessionsMenu rows={twenty} {...p} />);
 const css = readFileSync(new URL("./AllSessionsMenu.css", import.meta.url), "utf8");
 
@@ -24,7 +24,8 @@ describe("AllSessionsMenu", () => {
     const h = html();
     expect(h).toContain("status-glyph");
     expect(h).toContain("session-1");
-    expect(h).toMatch(/aria-label="session-1 /);
+    expect(h).toMatch(/aria-label="Session 1, session-1 /);
+    expect(h).toContain('class="session-number"');
   });
   it("marks the selected session", () => {
     expect(html({ selectedId: "s3" })).toContain('aria-current="true"');

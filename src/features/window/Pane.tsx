@@ -2,10 +2,14 @@ import type { CSSProperties } from "react";
 import { AgentMark } from "../../components/AgentMark/AgentMark";
 import { Chip } from "../../components/Chip/Chip";
 import { StatusGlyph } from "../../components/StatusGlyph/StatusGlyph";
+import { SessionNumber } from "../../components/SessionNumber/SessionNumber";
+import { hasPromptLine } from "../sidebar/promptLine";
+import { sessionWord } from "../sidebar/sessionNumber";
 import { commandById, shortcutLabel, type Os } from "../../lib/keymap";
 import { Composer } from "../composer/Composer";
 import type { RowModel } from "../sidebar/types";
 import { ScriptedTerminal } from "../terminal/ScriptedTerminal";
+import { SHELL_SIZE, shellSession } from "../terminal/scriptedShell";
 import type { TerminalThemeSetting } from "../terminal/terminalTheme";
 import { COMPOSER } from "./layout";
 import "./SplitView.css";
@@ -52,6 +56,8 @@ export type PaneProps = {
  */
 export function Pane({ row, active, setting, style, cells, zoomedOf, runningElsewhere, value, composer = true, os = "windows" }: PaneProps) {
   const needs = needsYou(row);
+  // A manual CLI is a plain terminal: no prompt line of ours, and its rows go to the terminal.
+  const line = composer && hasPromptLine(row);
   const zoomed = zoomedOf !== undefined;
   const zoomKeys = shortcutLabel(commandById("zoom-pane").binding!, os);
   const narrow = cells && cells.cols < NARROW;
@@ -60,12 +66,14 @@ export function Pane({ row, active, setting, style, cells, zoomedOf, runningElse
       className="pane"
       data-active={active}
       data-agent={row.agent}
-      style={composer ? { ...style, gridTemplateRows: `28px minmax(0, 1fr) ${COMPOSER.compact}px` } : style}
-      aria-label={`Terminal: ${row.name}`}
+      data-plain={!hasPromptLine(row) || undefined}
+      style={line ? { ...style, gridTemplateRows: `28px minmax(0, 1fr) ${COMPOSER.compact}px` } : style}
+      aria-label={`${sessionWord(row.number)}, terminal: ${row.name}`}
     >
       <header className="pane__header" data-needs={needs || undefined}>
         <span className="pane__stripe" aria-hidden="true" />
         {row.status === "working" ? <AgentMark agent={row.agent} size={16} working /> : <StatusGlyph kind={row.status} />}
+        <SessionNumber n={row.number} />
         <span className="pane__name" dir="auto">
           {row.name}
         </span>
@@ -93,8 +101,9 @@ export function Pane({ row, active, setting, style, cells, zoomedOf, runningElse
           {icon(CLOSE)}
         </button>
       </header>
-      <ScriptedTerminal setting={setting} label={`Terminal for ${row.name}`} />
-      {composer && (
+      {/* A plain terminal shows a plain shell, not an agent's conversation. */}
+      {hasPromptLine(row) ? <ScriptedTerminal setting={setting} label={`Terminal for ${row.name}`} /> : <ScriptedTerminal setting={setting} label={`Terminal for ${row.name}`} script={shellSession({ cwd: row.project })} size={SHELL_SIZE} />}
+      {line && (
         <div className="pane__composer" style={{ blockSize: COMPOSER.compact }}>
           <Composer row={row} variant="compact" value={value} os={os} />
         </div>
@@ -124,6 +133,7 @@ export function EmptyPane({ choices, active, style, os = "windows" }: { choices:
                 <button type="button" className="pane__choice" data-agent={r.agent}>
                   <span className="pane__stripe" aria-hidden="true" />
                   <StatusGlyph kind={r.status} />
+                  <SessionNumber n={r.number} />
                   <span className="pane__choice-name" dir="auto">
                     {r.name}
                   </span>

@@ -1,6 +1,8 @@
 import { AgentMark } from "../../components/AgentMark/AgentMark";
 import { Chip } from "../../components/Chip/Chip";
 import { ContextRing } from "../../components/ContextRing/ContextRing";
+import { SessionNumber } from "../../components/SessionNumber/SessionNumber";
+import { sessionWord, SESSION_NUMBER_HINT } from "../sidebar/sessionNumber";
 import { AuxGlyph } from "../../components/StatusGlyph/StatusGlyph";
 import { modeCaution } from "../sidebar/format";
 import type { Mode, RowModel } from "../sidebar/types";
@@ -21,9 +23,10 @@ export function SessionHeader({ row, ports = [] }: { row: RowModel; ports?: stri
   const caution = modeCaution(row.mode);
   const modelAndEffort = [row.model, row.effort].filter(Boolean).join(" · ");
   return (
-    <div className="session-header" role="group" aria-label={`Session ${row.name}`} data-outlined={headerOutlined(row.mode) || undefined} data-agent={row.agent}>
+    <div className="session-header" role="group" aria-label={`${sessionWord(row.number)}, ${row.name}`} data-outlined={headerOutlined(row.mode) || undefined} data-agent={row.agent}>
       <AgentMark agent={row.agent} />
       {row.elevated && <AuxGlyph kind="elevated" label="Administrator" />}
+      <SessionNumber n={row.number} title={SESSION_NUMBER_HINT} />
       <span className="session-header__name" dir="auto">
         {row.name}
       </span>

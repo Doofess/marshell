@@ -1,18 +1,20 @@
-import { AGENT_NAMES } from "../../components/AgentMark/agents";
+import { kindName } from "../../components/AgentMark/kinds";
 import { GLYPHS } from "../../components/StatusGlyph/glyphs";
 import { formatDuration, formatUsage, modeCaution } from "./format";
+import { sessionWord } from "./sessionNumber";
 import type { Density, RowModel } from "./types";
 
 /** Strips Markdown code ticks so screen readers don't read "backtick". */
 const plain = (s: string) => s.replace(/`/g, "");
 
 /** "Claude Opus 5.5", or just "Claude" when the CLI doesn't report a model. */
-const agentAndModel = (r: RowModel) => [AGENT_NAMES[r.agent], r.model].filter(Boolean).join(" ");
+const agentAndModel = (r: RowModel) => [kindName(r.agent), r.model].filter(Boolean).join(" ");
 
 /**
- * The row's accessible name. It starts with the text drawn in the row, in the order it is drawn, so the name always
- * contains the visible label (WCAG 2.5.3, and a voice-control user can say what they see); what only the glyphs say
- * (the agent, the state, the mode, muted, the context level) follows.
+ * The row's accessible name. It begins with the session's number ("Session 6", the words a person says to an agent),
+ * then the text drawn in the row, in the order it is drawn, so the name always contains the visible label (WCAG 2.5.3,
+ * and a voice-control user can say what they see); what only the glyphs say (the agent, the state, the mode, muted,
+ * the context level) follows.
  */
 export function rowLabel(r: RowModel, density: Density = "comfortable"): string {
   const time = r.waitingMs ?? (r.status === "done-unseen" || r.status === "done-seen" || r.status === "ended" ? r.ageMs : undefined);
@@ -29,7 +31,7 @@ export function rowLabel(r: RowModel, density: Density = "comfortable"): string 
     if (r.recap) seen.push(r.recap.text, `${formatDuration(r.recap.ageMs)} ago`);
     seen.push(formatUsage(r.usage));
   }
-  const parts = [`${seen.filter(Boolean).join(" ")}.`, `${agentAndModel(r)}, ${GLYPHS[r.status].label}.`];
+  const parts = [`${sessionWord(r.number)}, ${seen.filter(Boolean).join(" ")}.`, `${agentAndModel(r)}, ${GLYPHS[r.status].label}.`];
   if (r.elevated) parts.push("Administrator.");
   if (caution) parts.push(`${caution}.`);
   if (r.muted) parts.push("Muted.");
@@ -39,5 +41,5 @@ export function rowLabel(r: RowModel, density: Density = "comfortable"): string 
 }
 
 export function rowTitle(r: RowModel): string {
-  return [r.name, r.branch ? `${r.project} · ${r.branch}` : r.project, agentAndModel(r), r.phrase].join("\n");
+  return [sessionWord(r.number), r.name, r.branch ? `${r.project} · ${r.branch}` : r.project, agentAndModel(r), r.phrase].join("\n");
 }

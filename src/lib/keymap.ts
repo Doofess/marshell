@@ -10,9 +10,19 @@ export function shortcutLabel(b: Binding, os: Os): string {
   return `Ctrl+Shift+${b.alt ? "Alt+" : ""}${b.key}`;
 }
 
+/** Ctrl+1 to Ctrl+9 (Cmd+1 to Cmd+9) go to sessions 1 to 9 as written in the plan; any other number goes through "Go to session" in the palette. */
+const SESSION_SHORTCUTS: Command[] = Array.from({ length: 9 }, (_, i) => ({
+  id: `focus-session-${i + 1}`,
+  label: `Go to session ${i + 1}`,
+  group: "Sessions" as const,
+  binding: { key: String(i + 1), plain: { win: `Ctrl+${i + 1}`, mac: `⌘${i + 1}` } },
+}));
+
 export const COMMANDS: Command[] = [
   { id: "launcher", label: "Start a session", group: "Sessions", binding: { key: "T" } },
   { id: "focus-prompt", label: "Write a prompt to the active session", group: "Sessions", binding: { key: "M" } },
+  ...SESSION_SHORTCUTS,
+  { id: "go-to-session", label: "Go to session… (type its number, e.g. 12)", group: "Sessions" },
   { id: "next-waiting", label: "Go to the oldest waiting session", group: "Sessions", binding: { key: "N" } },
   { id: "close", label: "Close session", group: "Sessions", binding: { key: "W" } },
   { id: "reopen", label: "Reopen closed session", group: "Sessions", binding: { key: "T", alt: true } },

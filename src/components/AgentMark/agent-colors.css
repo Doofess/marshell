@@ -43,6 +43,40 @@
   --agent: var(--brand-generic);
   --agent-signal: var(--brand-generic);
 }
+/* Manual CLIs: one calm tone per group, so a plain terminal never competes with an AI agent for attention. */
+[data-agent="powershell"],
+[data-agent="bash"],
+[data-agent="zsh"],
+[data-agent="cmd"],
+[data-agent="gitbash"],
+[data-agent="wsl"] {
+  --agent: var(--tool-shell);
+  --agent-signal: var(--tool-shell);
+}
+[data-agent="git"],
+[data-agent="docker"],
+[data-agent="kubectl"],
+[data-agent="node"],
+[data-agent="python"],
+[data-agent="cargo"],
+[data-agent="gh"],
+[data-agent="terraform"] {
+  --agent: var(--tool-dev);
+  --agent-signal: var(--tool-dev);
+}
+[data-agent="ssh"],
+[data-agent="aws"],
+[data-agent="gcloud"],
+[data-agent="az"],
+[data-agent="supabase"],
+[data-agent="vercel"] {
+  --agent: var(--tool-remote);
+  --agent-signal: var(--tool-remote);
+}
+[data-agent="program"] {
+  --agent: var(--brand-generic);
+  --agent-signal: var(--brand-generic);
+}
 
 /*
  * The signal colour: needs-you and error glyphs and the blocked-row tint use the vendor's own colour instead of the

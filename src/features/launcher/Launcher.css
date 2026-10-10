@@ -1,0 +1,359 @@
+/*
+ * The launcher sheet: one sentence of chips over a prompt line. Chips, keys and lists are told apart by fill, never a box.
+ * The prompt line is the same flat command line the panes have: square, on the terminal's surface, an edge on top that takes
+ * the vendor's colour while it has focus. The sheet carries `data-agent`, so --accent is the agent's own (the shared
+ * [data-agent] rule); a shell or tool has none and keeps the app accent.
+ */
+@property --fade-start {
+  syntax: "<length>";
+  inherits: false;
+  initial-value: 0px;
+}
+@property --fade-end {
+  syntax: "<length>";
+  inherits: false;
+  initial-value: 0px;
+}
+@keyframes launcher-edges {
+  from {
+    --fade-start: 0px;
+    --fade-end: 20px;
+  }
+  10%,
+  90% {
+    --fade-start: 20px;
+    --fade-end: 20px;
+  }
+  to {
+    --fade-start: 20px;
+    --fade-end: 0px;
+  }
+}
+
+.launcher {
+  position: relative;
+  block-size: 100%;
+  min-block-size: 480px;
+  overflow: clip;
+  color: var(--text-1);
+  font-size: var(--text-13);
+  line-height: 20px;
+}
+.launcher__backdrop {
+  position: absolute;
+  inset: 0;
+  background: color-mix(in oklch, var(--bg-base) 55%, transparent);
+}
+.launcher__sheet {
+  position: absolute;
+  inset-block-start: 20%;
+  inset-inline: 0;
+  margin-inline: auto;
+  inline-size: min(560px, calc(100% - 32px));
+  display: grid;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  border-radius: 10px;
+  background: var(--bg-overlay);
+  box-shadow: 0 12px 40px color-mix(in oklch, var(--text-1) 22%, transparent);
+}
+
+.launcher__sentence {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0;
+  color: var(--text-2);
+  font-size: var(--text-15);
+}
+.launcher__chip,
+.launcher__input {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-block-size: 28px;
+  padding-inline: var(--space-2);
+  border: 0;
+  border-radius: var(--radius);
+  background: var(--fill);
+  color: var(--text-1);
+  font: inherit;
+  font-weight: 500;
+}
+.launcher__input {
+  inline-size: 14em;
+  background: var(--fill-strong);
+}
+.launcher__chip:focus-visible,
+.launcher__input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.launcher__chip:active {
+  background: var(--fill-strong);
+}
+.launcher__mark {
+  display: inline-flex;
+  color: var(--agent-mark, currentColor);
+}
+.launcher__box {
+  inline-size: 12px;
+  block-size: 12px;
+  border-radius: 3px;
+  background: var(--fill-strong);
+}
+.launcher__box[data-checked] {
+  background: var(--accent);
+}
+
+/* The first chip's list: agents, shells and tools in wrapping rows. The line under the active program is the shape that does not rely on colour. */
+.launcher__programs {
+  display: grid;
+  gap: var(--space-2);
+  padding: var(--space-2);
+  border-radius: var(--radius);
+  background: var(--bg-raised);
+}
+.launcher__group {
+  display: grid;
+  gap: 2px;
+}
+.launcher__group-name {
+  padding-inline: var(--space-2);
+  color: var(--text-2);
+  font-size: var(--text-11);
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.launcher__choices {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+}
+.launcher__program {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-block-size: 28px;
+  padding-inline: var(--space-2);
+  border-radius: var(--radius);
+  white-space: nowrap;
+}
+.launcher__program[data-current] {
+  background: var(--fill);
+  font-weight: 600;
+}
+.launcher__program[data-active] {
+  background: var(--selected);
+  box-shadow: inset 0 -2px var(--accent);
+}
+.launcher__program:active {
+  background: var(--fill-strong);
+}
+
+.launcher__list {
+  display: grid;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  max-block-size: 220px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: none;
+  border-radius: var(--radius);
+  background: var(--bg-raised);
+}
+.launcher__list::-webkit-scrollbar {
+  display: none;
+}
+@supports (animation-timeline: scroll()) {
+  .launcher__list {
+    animation: launcher-edges linear;
+    animation-timeline: scroll(self block);
+    mask-image: linear-gradient(to bottom, transparent, oklch(0% 0 none) var(--fade-start), oklch(0% 0 none) calc(100% - var(--fade-end)), transparent);
+  }
+}
+.launcher__opt {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding-block: 6px;
+  padding-inline: var(--space-3);
+  border-inline-start: 3px solid transparent;
+}
+.launcher__opt[data-active] {
+  background: var(--selected);
+  border-inline-start: 3px solid var(--accent);
+}
+.launcher__opt:active {
+  background: var(--selected);
+}
+.launcher__opt-name {
+  min-inline-size: 0;
+  overflow: clip;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 500;
+}
+.launcher__opt mark {
+  background: transparent;
+  color: var(--text-1);
+  font-weight: 700;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.launcher__opt-path {
+  min-inline-size: 0;
+  overflow: clip;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-2);
+  font-family: var(--font-mono);
+  font-size: var(--text-11);
+}
+/* The sentence is for screen readers only. */
+.launcher__sr {
+  position: absolute;
+  inline-size: 1px;
+  block-size: 1px;
+  margin: -1px;
+  overflow: clip;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+.launcher__empty {
+  margin: 0;
+  padding: var(--space-3);
+  color: var(--text-2);
+}
+
+.launcher__note {
+  margin: 0;
+  color: var(--text-2);
+  font-size: var(--text-12);
+}
+
+/* The prompt line: flat, edge to edge of the sheet, on the terminal's surface. */
+.launcher__line {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  margin-inline: calc(-1 * var(--space-4));
+  padding-block: var(--space-2);
+  padding-inline: var(--space-3);
+  border-block-start: 2px solid var(--hairline);
+  background: var(--bg-base);
+}
+.launcher__line:focus-within {
+  border-block-start-color: var(--focus, var(--accent));
+}
+.launcher__glyph {
+  flex: none;
+  margin-block-start: 2px;
+  color: var(--accent);
+}
+.launcher__prompt {
+  flex: 1 1 0;
+  min-inline-size: 0;
+  min-block-size: 44px;
+  padding: 0;
+  border: 0;
+  outline: 2px solid transparent;
+  background: transparent;
+  caret-color: var(--accent);
+  color: var(--text-1);
+  font-family: var(--font-mono);
+  font-size: var(--text-13);
+  line-height: 20px;
+  resize: none;
+}
+.launcher__prompt::placeholder {
+  color: var(--text-2);
+  opacity: 1;
+}
+
+.launcher__footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+.launcher__hint {
+  color: var(--text-2);
+  font-size: var(--text-12);
+}
+.launcher__go {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin-inline-start: auto;
+}
+.launcher__next {
+  color: var(--text-2);
+  font-size: var(--text-12);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.launcher kbd {
+  padding-inline: 4px;
+  border-radius: 3px;
+  background: var(--fill-strong);
+  font-family: var(--font-mono);
+  font-size: var(--text-11);
+  line-height: 16px;
+}
+.launcher__start {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-block-size: 32px;
+  padding-inline: var(--space-3);
+  border: 0;
+  border-radius: var(--radius);
+  background: var(--accent);
+  color: var(--accent-ink);
+  font: inherit;
+  font-weight: 500;
+}
+/* The key name sits on the accent itself, so it keeps the button's own contrast; a tinted chip behind it would lower that. */
+.launcher__start kbd {
+  padding-inline: 0;
+  background: none;
+}
+.launcher__start:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.launcher__start:active {
+  box-shadow: inset 0 0 0 100vmax var(--selected);
+}
+@media (hover: hover) and (pointer: fine) {
+  .launcher__chip:hover {
+    background: var(--fill-strong);
+  }
+  .launcher__start:hover {
+    box-shadow: inset 0 0 0 100vmax var(--hover);
+  }
+  .launcher__opt:hover,
+  .launcher__program:hover {
+    background: var(--hover);
+  }
+}
+
+@media (forced-colors: active) {
+  .launcher__sheet,
+  .launcher__chip,
+  .launcher__input,
+  .launcher__start,
+  .launcher__program {
+    outline: 1px solid CanvasText;
+  }
+  .launcher__opt[data-active],
+  .launcher__program[data-active] {
+    outline: 2px solid Highlight;
+  }
+}
