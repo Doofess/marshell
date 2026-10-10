@@ -78,16 +78,18 @@ describe("forced colours (final review)", () => {
 
 describe("StatusGlyph: minimal needs-you and error marks", () => {
   const mk = (k: Parameters<typeof StatusGlyph>[0]["kind"]) => renderToStaticMarkup(<StatusGlyph kind={k} />);
-  it("shows a permission request as an accent badge with a bare exclamation mark", () => {
+  it("shows a permission request as a vendor badge with a padlock: locked until you decide", () => {
     const h = mk("needs-permission");
     expect(h).toContain("g-badge");
-    expect(h).toContain("g-bang");
-    expect(h).not.toContain("M7.75 8h4.5");
+    expect(h).toContain("g-lock");
+    expect(h).not.toContain("g-bang");
+    expect(h).toContain('class="g-mark g-lock g-lock--shackle"');
+    expect(h).toContain('class="g-mark g-mark--fill g-lock g-lock--body"');
   });
   it("keeps the question mark in the same badge", () => {
     const h = mk("needs-question");
     expect(h).toContain("g-badge");
-    expect(h).not.toContain("g-bang");
+    expect(h).not.toContain("g-lock");
   });
   it("shows an error as a plain disc with a cut-out cross, not an octagon", () => {
     const h = mk("error");

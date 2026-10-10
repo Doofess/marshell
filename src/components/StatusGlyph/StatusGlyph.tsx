@@ -14,8 +14,8 @@ const shapes: Record<GlyphKind, ReactNode> = {
   "needs-permission": (
     <>
       <rect className="g-badge" x="1.5" y="1.5" width="13" height="13" rx="4" fill="var(--agent-signal, var(--accent))" />
-      <path className="g-mark g-bang" d="M8 4.5v4.25" fill="none" stroke="var(--agent-ink, var(--accent-ink))" strokeWidth="1.75" strokeLinecap="round" />
-      <circle className="g-mark g-mark--fill" cx="8" cy="11.4" r="1" fill="var(--agent-ink, var(--accent-ink))" />
+      <path className="g-mark g-lock g-lock--shackle" d="M6.4 7.4V6a1.6 1.6 0 0 1 3.2 0v1.4" fill="none" stroke="var(--agent-ink, var(--accent-ink))" strokeWidth="1.5" strokeLinecap="round" />
+      <rect className="g-mark g-mark--fill g-lock g-lock--body" x="4.9" y="7.4" width="6.2" height="5" rx="1.1" fill="var(--agent-ink, var(--accent-ink))" />
     </>
   ),
   "needs-question": (
