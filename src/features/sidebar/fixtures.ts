@@ -184,6 +184,17 @@ export const FIXTURES: RowModel[] = [
     contextPct: 33,
   },
   {
+    id: "deepseek-working",
+    name: "research",
+    project: "papers",
+    branch: "main",
+    agent: "deepseek",
+    status: "working",
+    phrase: "Reading 12 sources",
+    model: "V4",
+    contextPct: 27,
+  },
+  {
     id: "muted-needs-you",
     name: "nightly",
     project: "perf",

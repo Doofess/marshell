@@ -67,6 +67,10 @@
   0%, 100% { transform: rotate(-14deg); }
   50% { transform: rotate(14deg); }
 }
+@keyframes mark-swim {
+  0%, 100% { transform: translateY(1px) rotate(-6deg); }
+  50% { transform: translateY(-1px) rotate(6deg); }
+}
 @keyframes mark-cursor {
   0%, 49% { opacity: 1; }
   50%, 100% { opacity: 0.25; }
@@ -102,6 +106,9 @@
   }
   :root:not([data-motion="reduce"]) .agent-mark[data-working][data-agent="grok"] {
     animation: mark-spin-back var(--dur-loop-slow) linear infinite;
+  }
+  :root:not([data-motion="reduce"]) .agent-mark[data-working][data-agent="deepseek"] {
+    animation: mark-swim var(--dur-loop) ease-in-out infinite;
   }
   :root:not([data-motion="reduce"]) .agent-mark[data-working][data-agent="generic"] {
     animation: mark-cursor var(--dur-loop) steps(1, end) infinite;

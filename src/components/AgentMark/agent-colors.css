@@ -24,6 +24,10 @@
   --agent: var(--brand-codex);
   --agent-signal: var(--brand-codex);
 }
+[data-agent="deepseek"] {
+  --agent: var(--brand-deepseek);
+  --agent-signal: var(--brand-deepseek);
+}
 [data-agent="amp"],
 [data-agent="generic"] {
   --agent: var(--brand-generic);
