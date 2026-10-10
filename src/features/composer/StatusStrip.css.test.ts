@@ -87,3 +87,12 @@ describe("StatusStrip.css", () => {
     expect(css).toMatch(/@media \(forced-colors: active\)[\s\S]*CanvasText/);
   });
 });
+
+describe("StatusStrip: room to read", () => {
+  it("spaces the parts of an item with a gap (flex drops the typed spaces) and the items with a wide separator", () => {
+    const item = rule(".status-strip__item");
+    expect(item).toMatch(/gap:\s*6px/);
+    expect(item).toMatch(/margin-inline-start:\s*14px/);
+    expect(item).toMatch(/padding-inline-start:\s*15px/);
+  });
+});
