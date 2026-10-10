@@ -50,3 +50,11 @@ describe("AllSessionsMenu", () => {
     expect(html()).not.toMatch(/#[0-9a-f]{3,8}\b|rgb\(|oklch\(/i);
   });
 });
+
+describe("AllSessionsMenu: names and text agree", () => {
+  it("puts a space between the name, project and phrase, so the visible text is contained in the accessible name", () => {
+    const h = renderToStaticMarkup(<AllSessionsMenu rows={FIXTURES.slice(0, 3)} />);
+    expect(h).toMatch(/<\/span> <span class="all-sessions__project"/);
+    expect(h).toMatch(/<\/span> <span class="all-sessions__phrase"/);
+  });
+});

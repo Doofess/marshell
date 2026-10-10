@@ -24,10 +24,10 @@ export function AllSessionsMenu({ rows, selectedId, title = "All sessions" }: { 
             <StatusGlyph kind={r.status} />
             <span className="all-sessions__name" dir="auto">
               {r.name}
-            </span>
+            </span>{" "}
             <span className="all-sessions__project" dir="auto">
               {r.project}
-            </span>
+            </span>{" "}
             <span className="all-sessions__phrase" dir="auto">
               {r.phrase}
             </span>
