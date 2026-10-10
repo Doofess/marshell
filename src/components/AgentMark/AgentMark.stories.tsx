@@ -44,6 +44,30 @@ export const WorkingLoops: StoryObj = {
   ),
 };
 
+const ANTIGRAVITY_OPTIONS = [
+  ["lift", "Lift: floats up and settles back, weightless"],
+  ["stretch", "Stretch: the arch grows tall and slim, then squats, feet planted"],
+  ["legs", "Legs: the two feet draw up and in under the dome, then step back out"],
+  ["breath", "Breath: tips draw in more than the middle, like Claude and Gemini"],
+] as const;
+
+/** Antigravity's working loop, four ways to choose from. */
+export const AntigravityOptions: StoryObj = {
+  render: () => (
+    <ThemePair label="Antigravity: options">
+      <div style={grid}>
+        {ANTIGRAVITY_OPTIONS.map(([option, text]) => (
+          <figure key={option} style={{ ...cell, margin: 0 }}>
+            <AgentMark agent="antigravity" size={20} working option={option} />
+            <AgentMark agent="antigravity" size={16} working option={option} />
+            <figcaption>{text}</figcaption>
+          </figure>
+        ))}
+      </div>
+    </ThemePair>
+  ),
+};
+
 /** The needs-you and error glyphs take the vendor's colour, so a list stays one family of colours. */
 export const NeedsYouInVendorColours: StoryObj = {
   render: () => (

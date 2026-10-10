@@ -43,6 +43,19 @@
 @keyframes mark-spin-back {
   to { transform: rotate(-360deg); }
 }
+/* Antigravity options being compared */
+@keyframes mark-ag-lift {
+  0%, 100% { transform: translateY(2px); }
+  50% { transform: translateY(-3px); }
+}
+@keyframes mark-ag-stretch {
+  0%, 100% { transform: scale(1, 0.9); }
+  50% { transform: scale(0.92, 1.1); }
+}
+@keyframes mark-ag-feet {
+  0%, 100% { transform: translate(0, 0) scale(1, 1); }
+  50% { transform: translate(0, -3px) scale(0.85, 1); }
+}
 @keyframes mark-bob {
   0%, 100% { transform: translateY(1.5px); }
   50% { transform: translateY(-1.5px); }
@@ -83,6 +96,30 @@
   }
   :root:not([data-motion="reduce"]) .agent-mark[data-working][data-agent="antigravity"] {
     animation: mark-bob var(--dur-loop) ease-in-out infinite;
+  }
+  :root:not([data-motion="reduce"]) .agent-mark[data-working][data-agent="antigravity"][data-option="lift"] {
+    animation-name: mark-ag-lift;
+  }
+  :root:not([data-motion="reduce"]) .agent-mark[data-working][data-agent="antigravity"][data-option="stretch"] {
+    transform-origin: 12px 23px;
+    animation-name: mark-ag-stretch;
+  }
+  :root:not([data-motion="reduce"]) .agent-mark[data-working][data-agent="antigravity"][data-option="legs"] {
+    animation: none;
+  }
+  :root:not([data-motion="reduce"]) .agent-mark[data-working][data-agent="antigravity"][data-option="legs"] .agent-mark__body {
+    display: none;
+  }
+  :root:not([data-motion="reduce"]) .agent-mark[data-working][data-agent="antigravity"][data-option="legs"] .agent-mark__feet {
+    transform-origin: 12px 23px;
+    animation: mark-ag-feet var(--dur-loop) ease-in-out infinite;
+  }
+  :root:not([data-motion="reduce"]) .agent-mark[data-working][data-agent="antigravity"][data-option="breath"] {
+    animation: none;
+  }
+  :root:not([data-motion="reduce"]) .agent-mark[data-working][data-agent="antigravity"][data-option="breath"] :is(.agent-mark__body, .agent-mark__layer) {
+    transform-origin: 12px 12px;
+    animation: mark-breathe var(--dur-loop) ease-in-out infinite;
   }
   :root:not([data-motion="reduce"]) .agent-mark[data-working][data-agent="copilot"] {
     animation: mark-blink var(--dur-loop-slow) linear infinite;
