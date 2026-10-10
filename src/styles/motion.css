@@ -63,23 +63,21 @@
 .agent-mark__parts {
   display: none;
 }
-/* Copilot stays still while electricity crackles inside it: a short bright dash runs along each zigzag bolt, then the bolt rests. */
+/* Copilot stays still while electricity runs through it: parts of the face flash dark, one after another, with a flicker. */
 @keyframes mark-zap {
-  0% { stroke-dashoffset: 0.4; opacity: 1; }
-  55% { stroke-dashoffset: -1; opacity: 1; }
-  56%, 100% { stroke-dashoffset: -1; opacity: 0; }
+  0% { opacity: 0; }
+  5% { opacity: 1; }
+  11% { opacity: 0.25; }
+  17% { opacity: 1; }
+  24% { opacity: 0.6; }
+  30%, 100% { opacity: 0; }
 }
-.agent-mark__sparks {
+.agent-mark__charge {
   display: none;
 }
-.agent-mark__bolt {
-  stroke: color-mix(in oklch, currentColor 10%, white);
-  stroke-dasharray: 0.4 1;
-  stroke-dashoffset: -1;
-}
-.agent-mark__bolt[data-glow] {
-  stroke: color-mix(in oklch, currentColor 45%, white);
-  stroke-opacity: 0.6;
+.agent-mark__zone {
+  fill: color-mix(in oklch, currentColor 45%, black);
+  opacity: 0;
 }
 @keyframes mark-flip {
   0%, 100% { transform: scaleX(1); }
@@ -128,12 +126,12 @@
     transform-origin: 12px 13.5px;
     animation: mark-jelly-tentacles var(--dur-loop) linear infinite;
   }
-  :root:not([data-motion="reduce"]) .agent-mark[data-working][data-agent="copilot"] .agent-mark__sparks {
+  :root:not([data-motion="reduce"]) .agent-mark[data-working][data-agent="copilot"] .agent-mark__charge {
     display: inline;
   }
-  :root:not([data-motion="reduce"]) .agent-mark__bolt {
+  :root:not([data-motion="reduce"]) .agent-mark__zone {
     animation: mark-zap var(--dur-loop) linear infinite;
-    animation-delay: calc(var(--i) * var(--dur-loop) / -4);
+    animation-delay: calc(var(--i) * var(--dur-loop) / -6);
   }
   :root:not([data-motion="reduce"]) .agent-mark[data-working][data-agent="cursor"] {
     animation: mark-flip var(--dur-loop) ease-in-out infinite;
