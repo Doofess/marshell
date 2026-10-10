@@ -56,7 +56,7 @@
   --radius: 6px;
 
   /* Layout sizes from docs/PLAN.md "Layout" and "Sidebar rows". */
-  --sidebar: 264px;
+  --sidebar: 288px;
   --sidebar-min: 200px;
   --row-comfortable: 56px;
   --stripe: 3px;

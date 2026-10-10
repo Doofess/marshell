@@ -121,7 +121,7 @@ Stories are fed by `fake-agent` scenario scripts, so the same 5-agent run drives
 | Top bar, sidebar column | macOS: traffic lights, inset 78 px. Windows: app menu plus a palette button. |
 | Top bar, main column | Session header: name · project/branch · mode chip · model/effort · subagents · context ring · port chips. |
 | Window controls | Windows: 46×40 controls at the right. Linux: native decorations plus a 36 px header. |
-| Sidebar | Default 264 px, minimum 200, maximum 400, rail 52, focus mode 0. Drag the edge to resize; double-click resets. |
+| Sidebar | Default 288 px, minimum 200, maximum 400, rail 52, focus mode 0. Drag the edge to resize; double-click resets. |
 | Sidebar footer | 40 px: plan ring, 5h %, and doctor glyph with issue count. |
 | Needs-you lane | The header is **always present** at 28 px ("Needs you · 2" or "All clear"), so it never pops in or out. |
 | Lane cards | Accordion: only the targeted card (oldest waiting) is expanded, at 120–176 px. The others are 36 px one-liners. |

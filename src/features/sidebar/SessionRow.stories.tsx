@@ -20,16 +20,16 @@ function Column({ density, width, ids }: { density: Density; width: number; ids?
 
 export const Comfortable: StoryObj = {
   render: () => (
-    <ThemePair label="Comfortable rows at 264 px">
-      <Column density="comfortable" width={264} />
+    <ThemePair label="Comfortable rows at 288 px">
+      <Column density="comfortable" width={288} />
     </ThemePair>
   ),
 };
 
 export const Expanded: StoryObj = {
   render: () => (
-    <ThemePair label="Expanded rows at 264 px">
-      <Column density="expanded" width={264} ids={["working", "needs-permission", "bypass", "unknown", "error"]} />
+    <ThemePair label="Expanded rows at 288 px">
+      <Column density="expanded" width={288} ids={["working", "needs-permission", "bypass", "unknown", "error"]} />
     </ThemePair>
   ),
 };
