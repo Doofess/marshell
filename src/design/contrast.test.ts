@@ -131,3 +131,14 @@ describe("OpenAI's light yellow and Antigravity's cyan (agent colours)", () => {
     expect(tokens["--brand-openai-edge"]!.dark).toBe(tokens["--brand-openai"]!.dark);
   });
 });
+
+describe("text on hover and selected rows (batch 1 deferred minor)", () => {
+  for (const theme of THEMES)
+    for (const [state, alpha] of [["hover", 0.04], ["selected", 0.07]] as const)
+      for (const t of ["--text-2", "--text-3"])
+        for (const surface of ["--bg-base", "--bg-raised", "--bg-overlay"])
+          it(`${t} is at least 4.5:1 on ${surface} under ${state} (${theme})`, () => {
+            const bg = overlay(tokens["--text-1"]![theme], tokens[surface]![theme], alpha);
+            expect(contrast(tokens[t]![theme], bg)).toBeGreaterThanOrEqual(4.5);
+          });
+});

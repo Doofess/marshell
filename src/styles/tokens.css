@@ -9,7 +9,7 @@
   /* Text: every tier is at least 4.5:1 on every surface (src/design/contrast.test.ts). */
   --text-1: light-dark(oklch(21.6% 0.006 56), oklch(92.2% 0 none));
   --text-2: light-dark(oklch(44.4% 0.011 74), oklch(71.9% 0 none));
-  --text-3: light-dark(oklch(53% 0.013 58), oklch(63.3% 0 none));
+  --text-3: light-dark(oklch(50% 0.013 58), oklch(63.3% 0 none));
 
   --hairline: color-mix(in oklch, var(--text-1) 10%, transparent);
   --hover: color-mix(in oklch, var(--text-1) 4%, transparent);
