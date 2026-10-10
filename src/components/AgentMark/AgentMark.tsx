@@ -21,12 +21,12 @@ export const BREATHING: Partial<Record<AgentId, Breath>> = {
   },
   // Gemini's sides are smooth curves, so its steps between layers would show; more, finer layers keep them out of sight.
   gemini: {
-    outer: 0.68,
+    outer: 0.42,
     layers: [
-      { radius: 9, scale: 0.71 },
-      { radius: 6.5, scale: 0.75 },
-      { radius: 4.5, scale: 0.8 },
-      { radius: 3, scale: 0.86 },
+      { radius: 9, scale: 0.47 },
+      { radius: 6.5, scale: 0.52 },
+      { radius: 4.5, scale: 0.57 },
+      { radius: 3, scale: 0.63 },
     ],
   },
 };
