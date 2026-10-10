@@ -63,7 +63,7 @@ The user already has a Claude status line (`python ~/.claude/statusline.py`) and
 5. **portable-pty 0.9.0** sets `PSEUDOCONSOLE_INHERIT_CURSOR`. ConPTY then holds back all output until a cursor-position report (`ESC[6n`) is answered.
    - The core answers that query itself, until the renderer attaches.
    - Pinning 0.8.1 is the fallback.
-   - Child processes also need Job Objects so that killing a session kills its children.
+   - Child processes also need Job Objects (kill-on-close) so that killing a session, or a crash, kills its children; phase 1 used `taskkill /T /F`, the Job Object lands in phase 2.
 6. **Tauri notifications**
    - `tauri-plugin-notification` has **no action buttons on desktop** and no documented click callback.
    - On Windows, toasts only work properly for installed apps.
@@ -251,19 +251,12 @@ Content, top to bottom:
 | Scale | 11 / 12 / **13** / 15 / 20 / 28. Weights 400/500/600. Tabular figures for every number. |
 | Mono font | **Import the user's existing terminal font** from Windows Terminal or iTerm settings, so Nerd Font prompts keep working. Otherwise use bundled JetBrains Mono, 13 px. |
 
-**Colour tokens:**
-
-| Token | Dark | Light |
-|---|---|---|
-| bg.base / raised / overlay | `#000` / `#0A0A0A` / `#141414` | `#FFF` / `#FAF9F7` / `#F3F1EE` |
-| hover / selected | white 4% / 7% | `#1C1917` 4% / 7% |
-| hairline | white 10% | `#1C1917` 10% |
-| text 1 / 2 / 3 | `#E5E5E5` / `#A3A3A3` / `#8A8A8A` | `#1C1917` / `#57534E` / `#78716C` |
-| attention | the accent | the accent |
-| error | `#FF453A` | `#D70015` |
-| ok / caution | `#30D158` / `#FFD60A` | `#248A3D` / `#B25000` |
-
-Brand colours are used only on stripes and dots, and Claude orange is never a status colour.
+**Colour tokens:** the source of truth is `src/styles/tokens.css` (oklch, `light-dark()`), `accents.css` and the Storybook Colours story; this plan holds no hex values. Rules that stay binding:
+- Surfaces: true-black dark, warm-white light. Hover and selected are low-alpha overlays of the text colour. Text has three levels, and `--text-3` must pass AA on every surface.
+- **Default accent is signal amber** (8 accents: amber, blue, indigo, violet, magenta, cyan, teal, slate). The accent is the attention colour (needs-you tint, focus ring, selection).
+- Status colours (error, ok, caution) are separate from the accent. Caution is yellow (dark) or olive (light) so it stays distinct from amber; `contrast.test.ts` checks AA and CIEDE2000 distance for every pair, including amber vs caution.
+- Brand colours are used only on stripes and dots. Claude's is a muted terracotta, never a status colour; Codex and Gemini have their own tokens. All are user-changeable.
+- Custom accent hex: validated at pick time against both themes (AA for `--accent-ink`), rejected with the reason if it fails.
 
 **Motion:**
 
@@ -585,7 +578,7 @@ The Rust core is the only source of truth.
 
 | Area | Windows | macOS | Linux |
 |---|---|---|---|
-| PTY | ConPTY via portable-pty 0.9. Answer DSR; Job Object kills the process tree; treat exit code 259 as "still running" properly; optional sideloaded `conpty.dll` + OpenConsole next to the exe if the spike shows stock ConPTY bugs. | forkpty; kill the process group | forkpty; kill the process group |
+| PTY | ConPTY via portable-pty 0.9. Answer DSR; Job Object kills the process tree; treat exit code 259 as "still running" properly; sideloaded `conpty.dll` + OpenConsole next to the exe (ships in phase 2: about 4x throughput on short-line floods, MIT notice required). | forkpty; kill the process group | forkpty; kill the process group |
 | Shells | pwsh 7, Windows PowerShell, cmd, Git Bash (registry `GitForWindows\InstallPath`), WSL distros (`wsl -l -q` outputs UTF-16) | `/etc/shells`, login shell | `/etc/shells`, login shell |
 | PATH | Inherited | GUI apps lack the shell PATH, so resolve `$SHELL -lic env` once for `detect()` and headless runs | Same as macOS |
 | WSL agents | Separate config root per distro. Hooks inside WSL call the Windows bridge through interop (`/mnt/c/.../marshell-hook.exe`), with `WSLENV=MARSHELL_TAB_ID/u:MARSHELL_AGENT/u`. Spike. | n/a | n/a |
@@ -630,44 +623,76 @@ Tray mouse events are not emitted on Linux, so on Linux the tray is menu-only.
 | S10 | Windows hook path with spaces | A quoted bridge path under `C:\Users\Home Office` runs from Claude's hook runner and status line on this machine. |
 | S11 | WSL bridge | A hook from Claude inside WSL reaches the Windows core through interop, with the tab id carried by `WSLENV`. |
 
-## 9. Milestones (phases 1–8 = v1)
+## 9. Milestones (phases 1–9 = v1)
 
-0. **Design (blocks UI work).**
-   - Deliverables: tokens (light, true-black dark, 8 accents with AA checks), the icon (done 2026-10-09: "Night shift" marshalling batons, `assets/icon/app-night-shift.svg`; alternates `alt-daylight.svg` and `alt-signal-tile.svg`; mono tray glyph `tray-mono.svg`), and Storybook mockups of the main window, every sidebar row state, the doctor report, the settings editor and onboarding.
-   - Exit: your approval.
-1. **Scaffold + one live tab + gate.**
-   - Scope: workspace, core thread, axum server with token, CORS/CSP/Host checks, pty WebSocket with coalescing, backpressure and the vt100 screen, xterm (fit, WebGL with DOM fallback) in a bare window with tokens only (no chrome until phase 0 is approved), CI on all three OSes, `brand.rs`.
-   - Spikes S1, S2, S6 and S7 run here; S8 also runs here, as a spike only.
-   - Exit: typing feels instant, resize works, the gate passes, and all three OSes build in CI.
+Decisions from the 2026-10-10 coverage audit (`docs/superpowers/plan-coverage-audit.md`) are folded in below and in "Cross-cutting requirements".
+
+0. **Design (blocks UI work).** Three sign-off batches, each reviewed in Storybook and a published private preview:
+   - Batch 1: tokens + type, status glyphs + motion, sidebar rows (deliverables 1–3).
+   - Batch 2: approve card, main window composite, launcher + palette (4–6).
+   - Batch 3: onboarding + empty states, Departures, doctor, settings + editor, OS notification mocks + icon, tray menu (7–11).
+   - Also: sound drafts, the PR template file (10-item gate), demo mode as a `fake-agent` scenario, Playwright baseline from approved stories.
+   - Icon done 2026-10-09 ("Night shift"; `assets/icon/app-night-shift.svg`, alternates `alt-daylight.svg`, `alt-signal-tile.svg`, mono tray `tray-mono.svg`).
+   - Exit: your approval of each batch.
+1. **Scaffold + one live tab + gate.** (merged, PR #1)
+   - Scope: workspace, core thread, axum server with token, CORS/CSP/Host checks, pty WebSocket with coalescing, backpressure and the vt100 screen, xterm in a bare window, CI on all three OSes, `brand.rs`, `fake-agent`.
+   - Added by the audit: README, CONTRIBUTING, SECURITY.md, issue and PR templates; `docs/adr/` with a GLOSSARY; macOS and Linux smoke jobs in CI; a date for the S1 Mac/Linux runs and a written cost estimate for the Electron fallback.
+   - Spikes S1, S2, S6, S7 and S8 ran here. Open: S1 Mac/Linux rows. Exit: typing feels instant, resize works, the gate passes, all three OSes build in CI.
 2. **Tabs + sidebar + shell integration.**
    - Scope:
      - shell detection and profiles, the launcher, profile settings pages
      - app-owned init scripts (OSC 7/133, PSReadLine and prompt options) and "make permanent"
      - themes, accent, high-contrast and large-text modes, theme import (Windows Terminal, iTerm2, VS Code)
-     - split view, clickable paths, layout restore, F2 rename, reopen a closed session
+     - split view, clickable paths, layout restore, F2 rename, reopen a closed session, drag reorder and project grouping, focus mode and rail
      - asciicast v2 recording, palette basics, the keyboard routing above, the cheat sheet, brand colors
      - the structural UX rules, which are hard to retrofit: focus restoration, the hover-freeze rule, the permanent lane header, rows that never resize
-   - Exit: 5 tabs across 3 shells; restart restores the layout; a recording replays in asciinema-player; OSC 133 prompt jumps work.
+     - **Windows process hygiene (from S2):** Job Object with kill-on-close so a crash leaves no orphans; sideloaded `conpty.dll` + `OpenConsole.exe` with the MIT notice; WebView2 bootstrapper; arm64 build.
+     - **Resilience:** a core panic hook and supervisor with a "core restarted" UI state; every file in `~/.marshell` carries a `version` field, is written atomically and keeps a `.bak`; migrations run on load.
+     - **Restart behaviour:** on relaunch tabs come back as "Ended" with a one-click Resume (the agent's own `--resume`). Nothing relaunches itself or spends tokens unasked.
+   - Exit: 5 tabs across 3 shells; restart restores the layout; kill the app mid-task, relaunch, and every tab is back with Resume; no orphan processes after a crash; a recording replays in asciinema-player; OSC 133 prompt jumps work.
 3. **Config safety core + bridge + Claude adapter.**
    - Scope:
      - The **config service core**, built here because hook install depends on it: ChangeSet, preview diff, jsonc CST edits, atomic write, snapshot and restore, `managed.json`, watching, managed-path guard.
-     - Hook install flow, status, event recap, status line chain (S4, S10), pty heuristics fallback.
-     - Context ring and plan ring, approve-from-anywhere (S9), needs-you lane plus the screen-reader live region, Peek.
-     - Transcript archive copy, history index, Resume.
+     - Hook install flow, status, event recap, status line chain (S4, S10), pty heuristics fallback, the bridge's locked-exe rename update.
+     - Context ring and plan ring (green/yellow/red at 70% and 90%), approve-from-anywhere (S9), needs-you lane plus the screen-reader live region, Peek.
+     - Transcript archive copy, history index (SQLite `integrity_check` on start; rebuild from the archive if corrupt), Resume.
      - Pulled forward so the core loop can be used daily from phase 3: the onboarding consent flow, the taskbar/dock badge and flash, and the needs-you sound. Banners, batching and the full choreography stay in phase 4.
-   - Exit: a real Claude session shows correct model, effort, mode, subagents and context; approval from a card works; uninstall leaves zero byte diff.
+     - **Security:** an ADR threat model (loopback server, `/sessions/:id/input`, the `marshell://` link, instruction-library injection); owner-only permissions on all of `~/.marshell`; the deep link carries no authority (it only focuses); a security review gate before approve-from-anywhere ships.
+     - **Diagnostics:** `tracing` logs with rotation, a size cap and redaction; "Export diagnostics" in Settings → Advanced; the hidden perf panel.
+     - **Version drift:** adapters are version-gated; an unknown CLI version shows "Status limited" and a doctor note, with a per-CLI switch to turn normalisation off.
+     - `marshell uninstall` and Settings → Advanced → Remove all hooks; an "orphaned hooks" check for when the bridge is gone.
+     - Start code-signing procurement (Azure Artifact Signing, Apple Developer ID).
+   - Exit: a real Claude session shows correct model, effort, mode, subagents and context; approval from a card works; uninstall leaves zero byte diff; corrupting `index.sqlite` is repaired on start.
 4. **Notifications + choreography + Departures board + stuck detection** (S3).
-   - Exit: every rule in brief §5.5 is verified on all three OSes.
+   - Exit: every rule in brief §5.5 is verified on all three OSes. Every sound has a visual equivalent.
 5. **History view.**
-   - Scope: search, conversation view, recording replay, bookmarks, tags, export with redaction, import of sessions run outside the app.
-   - Exit: a 1000-session index searches in under 100 ms.
+   - Scope: search, conversation view, files-changed tab, recording replay, bookmarks, tags, archive and delete-copy, export with redaction, import of sessions run outside the app, retention limits (size and age), the optional backup-folder mirror, a disk-usage view, recording compression and cleanup.
+   - Exit: a 1000-session index searches in under 100 ms; recordings stay within a stated MB-per-hour budget.
 6. **Agents, integration and the elevated helper.**
-   - Scope: settings pane (read-only), Codex + Gemini/Antigravity adapters, custom agents, repo scripts (`marshell.json`), port chips, the `marshell` CLI and its built-in skill, project references, WSL (S11), and the `marshell-host` elevated helper, if S8 passed. Until it ships, elevated sessions open in a separate elevated Marshell window, as Windows Terminal does.
+   - Scope: settings pane (read-only), Codex + Gemini/Antigravity adapters (decision due before this phase starts; install both CLIs first), custom agents, repo scripts (`marshell.json`), port chips, the `marshell` CLI and its built-in skill (when the app is closed, `marshell new` says so and offers to start it), project references (`@` picker, alias learning), WSL (S11), "open in system terminal" and "copy resume command", and the `marshell-host` elevated helper. S8 passed with requirements: the token goes over a pipe, never the command line, and the decline and wrong-token paths get tested. Until it ships, elevated sessions open in a separate elevated Marshell window.
    - Exit: fixture suites from the real CLIs pass.
-7. **Doctor**: the fix actions, on top of the phase-3 config core: "Fix X issues" and one-click undo; folds in each CLI's own doctor; detects duplicate notifications; reports the tokens injected by project references; checks Codex hook trust.
+7. **Doctor**: the fix actions, on top of the phase-3 config core: "Fix X issues" and one-click undo; folds in each CLI's own doctor; detects duplicate notifications; reports the tokens injected by project references; checks Codex hook trust; waste checks (unused MCP servers and skills, long descriptions, broad scopes, a token-cost estimate); offers to raise `cleanupPeriodDays`.
    - Exit: a seeded broken config is fully repaired and fully undone.
 8. **Editors + instruction library** (wired per CLI with a content hash and drift check; settings raw mode validated against the SchemaStore schema), smart and native recaps, diff drawer, step timeline, saved prompts, broadcast.
-   - Exit: one doc wired into all three CLIs, verified by each CLI loading it.
+   - Instruction library items: frontmatter form, "what loads here" view, token estimate with a 4k warning, templates and one-click project profiles, per-project toggles, agent filter, globs, and "Improve this file" (headless, opt-in).
+   - Exit: one doc wired into all three CLIs, verified by each CLI loading it; the 32 KiB Codex limit warns before it truncates.
+9. **Release.**
+   - Scope: tagged-build workflow, signed and notarized artifacts (NSIS per-user + MSI, dmg, AppImage/deb/rpm), checksums, release notes, the Tauri updater with a signing key and a rollback path, installers that run the unhook on uninstall, a manual release checklist file (including the macOS run), `cargo-deny` and `pnpm audit`, licence notices for bundled fonts, sounds and OpenConsole, and the formal trademark search.
+   - Exit: a signed build installs, updates and uninstalls on all three OSes with zero trace left in any CLI config.
+
+## Cross-cutting requirements (every phase)
+
+- **Privacy:** no telemetry and no crash reporting, ever. The app makes no network calls except ones you start (updates, a model-backed recap you turned on). Crash information stays local in the diagnostics export. The onboarding says so in one line.
+- **Zero token cost by default:** no model call happens unless you enable a model-backed feature; a test asserts it.
+- **Secrets at rest:** transcripts and recordings are stored with owner-only permissions (0700 / owner ACL), not encrypted, so search stays fast. Redaction happens on export.
+- **Languages:** English only in v1. All user-facing copy lives in one string catalog so translation can be added later. Layout already handles right-to-left names.
+- **Accessibility:** besides Storybook axe, each UI phase ends with a keyboard-only walkthrough; the terminal ships with xterm's screen-reader mode available; one screen-reader pass before release.
+- **Budgets beyond latency:** memory per session, idle CPU and startup with 1000 sessions are measured in the perf panel and given numbers when phase 2 lands.
+- **OS integration:** autostart at login, `marshell://` registration and "Open in Marshell" are settings, all off by default.
+
+## v2 and later (not in v1)
+
+From brief §5.9 and §6: the installer runner (install and update CLIs), review-to-merge, start-from-issue, checkpoints, file tree, phone check-in, more than two panes, and the `marshelld` daemon. v1 keeps the core protocol-first so these are additions, not rewrites. Also deferred: Airport mode (relabel statuses), if wanted at all.
 
 ## 10. Testing strategy
 
