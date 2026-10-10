@@ -41,7 +41,7 @@
   background: color-mix(in oklch, var(--error) 16%, transparent);
 }
 .diff__line[data-kind="hunk"] {
-  color: var(--text-2);
+  color: var(--text-1);
   background: var(--fill-strong);
 }
 .diff__line[data-kind="meta"] {

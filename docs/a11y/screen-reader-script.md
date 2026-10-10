@@ -62,6 +62,19 @@ Go to the **Command palette** section.
 | C2 | Press the buttons inside the first half-second | Nothing happens (the buttons are inert for the first 500 ms), then they work | ☐ | ☐ |
 | C3 | Decide | The receipt is read once ("Allowed · npm test") | ☐ | ☐ |
 
+## D. Batch 3 A: onboarding
+
+Go to the **Onboarding** section.
+
+| # | Do | You should hear | Narrator | NVDA |
+| --- | --- | --- | :-: | :-: |
+| D1 | Tab through the Detected list | Each row as "Claude Code, version 2.1.296" with the whole config path; a missing one says "Not installed" | ☐ | ☐ |
+| D2 | Tab to a consent switch | "Approve from anywhere, switch, on" (or "off"); an unavailable switch is read as unavailable, with its reason as the description | ☐ | ☐ |
+| D3 | Tab to View exact changes and press Enter | The button is read as expanded; the diff is a figure labelled "Exact changes to <path>", and added and removed lines say "added" and "removed" | ☐ | ☐ |
+| D4 | Tab through the sounds | "Play Needs you sound", "Play Escalation sound", and so on, without reading the triangle | ☐ | ☐ |
+| D5 | Tab into the first-session launcher | The sheet is read as the launcher, and Enter starts a session | ☐ | ☐ |
+| D6 | Move between the four steps | The current step is read as "current step"; nothing is announced on its own | ☐ | ☐ |
+
 ## Recording the result
 
-In the review page's sign-off, answer with the table's letters: for example **"Screen reader: A pass, B fail (B6: focus went to the page, not the chip), C pass, Narrator and NVDA"**. A fail is a bug to fix before the sub-review is signed off, not a note for later. Put anything surprising (a phrase that is correct but long or odd) in `docs/IDEAS.md`.
+In the review page's sign-off, answer with the table's letters (A to D): for example **"Screen reader: A pass, B fail (B6: focus went to the page, not the chip), C pass, Narrator and NVDA"**. A fail is a bug to fix before the sub-review is signed off, not a note for later. Put anything surprising (a phrase that is correct but long or odd) in `docs/IDEAS.md`.

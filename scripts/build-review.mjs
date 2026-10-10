@@ -209,9 +209,16 @@ META["2c"] = {
   ],
 };
 META["3a"] = {
-  lede: "Sub-review A of 3 in batch 3: onboarding. Batch 2 (approve card, window, launcher, palette) is below.",
-  nav: [["onboarding", "Onboarding"], ["empty-states", "Empty states"], ["sign-off", "Sign-off"]],
-  checks: ["Placeholder: replaced in Task 7."],
+  lede: "Sub-review A of 3 in batch 3: onboarding. Batch 2 (approve card, window, launcher, palette) is signed off and sits below.",
+  nav: [["onboarding", "Onboarding"], ["empty-states", "Empty states"], ["diff-view", "Diff"], ["sign-off", "Sign-off"]],
+  checks: [
+    "In 60 seconds you can get from first launch to a running session, with the keyboard alone.",
+    "Each consent card says in one sentence what changes and where; View exact changes shows the exact diff; the backup and the way to undo are named.",
+    "A file that does not parse, is read-only or is managed is never offered for editing, and says why.",
+    "Zero CLIs found still has a clear way forward; Gemini says it has no approval hook instead of showing a dead switch.",
+    "Every empty state says what is empty and how to start.",
+    "It still reads well at 150% browser zoom, in Windows High Contrast, and the focus ring is visible in both themes (docs/a11y/screen-reader-script.md has the Narrator and NVDA steps for this batch).",
+  ],
 };
 META["3b"] = {
   lede: "Sub-review B of 3 in batch 3: the doctor and the settings page. Onboarding and batch 2 are below.",

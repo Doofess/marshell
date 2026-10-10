@@ -49,3 +49,12 @@ describe("renderReview 3a to 3c", () => {
     expect(() => renderReview("3c")).not.toThrow();
   });
 });
+
+describe("renderReview 3a content", () => {
+  it("renders onboarding and the empty states", () => {
+    const html = renderReview("3a");
+    expect(html).toContain('id="onboarding"');
+    expect(html).toContain('id="empty-states"');
+    for (const name of ["Detected all", "Consent claude diff open", "Notifications blocked", "First session"]) expect(html, name).toContain(name);
+  });
+});

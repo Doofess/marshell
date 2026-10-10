@@ -15,6 +15,9 @@ import * as PromptBar from "../../features/composer/Composer.stories";
 import * as ManualCli from "../../components/AgentMark/ManualCli.stories";
 import * as Launcher from "../../features/launcher/Launcher.stories";
 import * as Palette from "../../features/palette/Palette.stories";
+import * as Onboarding from "../../features/onboarding/Onboarding.stories";
+import * as EmptyStates from "../../features/onboarding/EmptyStates.stories";
+import * as DiffStories from "../../components/DiffView/DiffView.stories";
 import * as Rows from "../../features/sidebar/SessionRow.stories";
 
 type StoryModule = { default: { title?: string } } & Record<string, unknown>;
@@ -51,7 +54,11 @@ const BATCHES: Record<UpTo, Array<[StoryModule, string]>> = {
     [Launcher, "One sentence of chips and a prompt line, 560 px wide, 20% from the top. The first chip lists agents, shells and tools. A shell or tool has no mode, pace or worktree: it is a plain terminal, so the line asks for a first command. The footer says which session number it will take."],
     [Palette, "Open sessions come first with their number, mark, name and status, and the number is the fastest way in: type 6, #6 or session 6. A number nobody holds says which sessions are open. Commands follow, with their shortcuts."],
   ],
-  "3a": [],
+  "3a": [
+    [Onboarding, "Four screens, under 60 seconds: what was found, what Marshell may change (shown as the exact diff, with the backup and the way out), notifications with a preview of each sound, and the first session. Nothing is changed without a yes, and a file that does not parse is never edited."],
+    [EmptyStates, "Every empty state says what is empty and how to start."],
+    [DiffStories, "The one diff view used for consent, the doctor's fixes and settings changes."],
+  ],
   "3b": [],
   "3c": [],
 };

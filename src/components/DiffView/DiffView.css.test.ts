@@ -18,4 +18,7 @@ describe("DiffView.css", () => {
     expect(css).toMatch(/font-family:\s*var\(--font-mono\)/);
     expect(css).toMatch(/\.diff__sign\s*\{[^}]*inline-size/);
   });
+  it("keeps the hunk header readable on its stronger fill (AA): full-strength text, not the muted one", () => {
+    expect(css).toMatch(/\.diff__line\[data-kind="hunk"\]\s*\{[^}]*color:\s*var\(--text-1\)/);
+  });
 });
