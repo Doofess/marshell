@@ -70,7 +70,7 @@ export function Composer({ row, value = "", os = "windows", variant = "full", fo
   const notice = !row
     ? { glyph: null, text: "This pane is empty" }
     : state === "working"
-      ? { glyph: <AgentMark agent={row.agent} size={16} working />, text: `${row.name} is working · your message is queued` }
+      ? null // the button already says Queue; no extra words
       : state === "waiting"
         ? { glyph: <StatusGlyph kind={row.status} />, text: `${row.name} ${row.status === "needs-question" ? "has a question" : "is waiting for your approval"}` }
         : state === "ended"

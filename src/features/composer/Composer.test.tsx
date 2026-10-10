@@ -127,10 +127,10 @@ describe("Composer: states, in both variants", () => {
         expect(t).toContain("Add retry tests for billing");
         expect(t).toContain('data-state="typing"');
       });
-      it("working: the button says Queue, and the notice says the message is queued", () => {
+      it("working: the button says Queue, with no extra notice", () => {
         const w = h("working", "also add tests");
-        expect(w).toContain("api-server is working");
-        expect(w).toContain("queued");
+        expect(w).not.toContain("is working");
+        expect(w).not.toContain("composer__notice");
         expect(w).toMatch(/class="composer__send"[^>]*>[\s\S]*?Queue/);
       });
       it("waiting: the field is off, the reason is the placeholder and the notice, and Send is unavailable", () => {
@@ -161,7 +161,7 @@ describe("Composer: states, in both variants", () => {
           expect(count(s, /class="composer__line"/g), id).toBe(1);
           expect(count(s, /class="composer__tools"/g), id).toBe(v === "full" ? 1 : 0);
         }
-        expect(h("working")).toContain('class="composer__notice"');
+        expect(h("ended")).toContain('class="composer__notice"');
         expect(h("idle")).not.toContain("composer__notice");
       });
     });
