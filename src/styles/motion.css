@@ -40,6 +40,19 @@
 .agent-mark__rays {
   display: none;
 }
+/* Claude's in-and-out variants (data-loop): the same twelve rays, moving in other patterns. */
+@keyframes mark-breathe {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(0.78); }
+}
+@keyframes mark-ray-deep {
+  0%, 100% { transform: scale(1); opacity: 1; }
+  50% { transform: scale(0.3); opacity: 0.3; }
+}
+@keyframes mark-ray-retract {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(0.4); }
+}
 @keyframes mark-spin {
   to { transform: rotate(360deg); }
 }
@@ -90,6 +103,23 @@
     transform-origin: 12px 12px;
     animation: mark-ray var(--dur-loop) ease-in-out infinite;
     animation-delay: calc(var(--i) * var(--dur-loop) / -12);
+  }
+  :root:not([data-motion="reduce"]) .agent-mark[data-loop="breathe"] .agent-mark__ray {
+    animation: none;
+  }
+  :root:not([data-motion="reduce"]) .agent-mark[data-loop="breathe"] .agent-mark__rays {
+    transform-origin: 12px 12px;
+    animation: mark-breathe var(--dur-loop) ease-in-out infinite;
+  }
+  :root:not([data-motion="reduce"]) .agent-mark[data-loop="retract"] .agent-mark__ray {
+    animation: mark-ray-retract var(--dur-loop) ease-in-out infinite;
+    animation-delay: 0s;
+  }
+  :root:not([data-motion="reduce"]) .agent-mark[data-loop="alternate"] .agent-mark__ray {
+    animation-delay: calc(mod(var(--i), 2) * var(--dur-loop) / -2);
+  }
+  :root:not([data-motion="reduce"]) .agent-mark[data-loop="deep"] .agent-mark__ray {
+    animation-name: mark-ray-deep;
   }
   :root:not([data-motion="reduce"]) .agent-mark[data-working][data-agent="codex"] {
     animation: mark-spin var(--dur-loop) ease-in-out infinite;

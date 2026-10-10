@@ -10,12 +10,14 @@ import "./AgentMark.css";
  * another, so a working Claude also carries the rays as twelve wedge-clipped copies of the logo; they stay hidden
  * unless motion is allowed (motion.css), and the whole logo is what shows otherwise.
  */
-export function AgentMark({ agent, size = 16, working = false }: { agent: AgentId; size?: 12 | 16 | 20; working?: boolean }) {
+export type ClaudeLoop = "wave" | "breathe" | "retract" | "alternate" | "deep";
+
+export function AgentMark({ agent, size = 16, working = false, loop }: { agent: AgentId; size?: 12 | 16 | 20; working?: boolean; loop?: ClaudeLoop }) {
   const id: AgentId = isAgentId(agent) ? agent : "generic";
   const uid = useId().replace(/[^a-zA-Z0-9]/g, "");
   const d = MARK_PATHS[id];
   return (
-    <svg className="agent-mark" data-agent={id} data-working={working || undefined} role="img" aria-label={AGENT_NAMES[id]} width={size} height={size} viewBox="0 0 24 24">
+    <svg className="agent-mark" data-agent={id} data-working={working || undefined} data-loop={id === "claude" ? loop : undefined} role="img" aria-label={AGENT_NAMES[id]} width={size} height={size} viewBox="0 0 24 24">
       <path className="agent-mark__still" d={d} fill="currentColor" fillRule="evenodd" />
       {id === "claude" && working && (
         <g className="agent-mark__rays" aria-hidden="true">
