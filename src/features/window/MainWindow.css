@@ -1,0 +1,181 @@
+.window {
+  display: grid;
+  grid-template-rows: 40px minmax(0, 1fr);
+  min-inline-size: 0;
+  border: 1px solid var(--hairline);
+  border-radius: 8px;
+  background: var(--bg-base);
+  color: var(--text-1);
+  overflow: clip;
+}
+
+/* One unified 40 px bar: sidebar column | session header | window controls. */
+.window__bar {
+  display: grid;
+  grid-template-columns: var(--side-w) minmax(0, 1fr) auto;
+  align-items: center;
+  block-size: 40px;
+  border-block-end: 1px solid var(--hairline);
+  background: var(--bg-raised);
+}
+.window__bar-side {
+  display: flex;
+  align-items: center;
+  min-inline-size: 0;
+  padding-inline: var(--space-1);
+}
+.window[data-mode="focus"] .window__bar-side {
+  inline-size: 0;
+  padding-inline: 0;
+  overflow: clip;
+}
+.window__bar-main {
+  min-inline-size: 0;
+}
+.window__controls {
+  display: flex;
+}
+.window__control {
+  display: grid;
+  place-items: center;
+  inline-size: 46px;
+  block-size: 40px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-2);
+}
+.window__control--menu {
+  inline-size: 32px;
+  block-size: 32px;
+  border-radius: var(--radius);
+}
+.window__control:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+.window__control:active {
+  background: var(--selected);
+}
+@media (hover: hover) and (pointer: fine) {
+  .window__control:hover {
+    background: var(--hover);
+    color: var(--text-1);
+  }
+  .window__control--close:hover {
+    background: var(--error);
+    color: var(--bg-base);
+  }
+}
+
+.window__body {
+  display: flex;
+  min-block-size: 0;
+}
+.window__main {
+  position: relative;
+  display: grid;
+  flex: 1 1 0;
+  min-inline-size: 0;
+  min-block-size: 0;
+}
+
+.split {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 8px minmax(0, 1fr);
+  min-block-size: 0;
+}
+/* An 8 px hit area around a 1 px hairline. */
+.split__handle {
+  inline-size: 8px;
+  background: linear-gradient(to right, transparent 3.5px, var(--hairline) 3.5px, var(--hairline) 4.5px, transparent 4.5px);
+  cursor: col-resize;
+}
+.split__handle:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+.pane {
+  display: grid;
+  grid-template-rows: 28px minmax(0, 1fr);
+  min-inline-size: 0;
+  min-block-size: 0;
+}
+.pane__header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding-inline: var(--space-3);
+  border-block-end: 2px solid transparent;
+  font-size: var(--text-12);
+}
+.pane[data-active="true"] .pane__header {
+  border-block-end: 2px solid var(--accent);
+}
+/* The inactive header recedes; terminal text is never dimmed. */
+.pane[data-active="false"] .pane__header {
+  opacity: 0.6;
+}
+.pane__name {
+  font-weight: 600;
+}
+.pane__place {
+  color: var(--text-2);
+}
+
+.focus-pill {
+  position: absolute;
+  inset-block-start: var(--space-3);
+  inset-inline-end: var(--space-3);
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding-block: 4px;
+  padding-inline: var(--space-3);
+  border: 1px solid var(--hairline);
+  border-radius: 999px;
+  background: var(--bg-overlay);
+  color: var(--text-1);
+  font: inherit;
+  font-size: var(--text-12);
+}
+.focus-pill__kbd {
+  color: var(--text-2);
+  font-family: var(--font-mono);
+  font-size: var(--text-11);
+}
+.focus-pill:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.focus-pill:active {
+  box-shadow: inset 0 0 0 100vmax var(--selected);
+}
+
+/* The drawer pushes the terminal, or overlays it when the terminal would drop below 720 px. */
+.drawer {
+  display: grid;
+  align-content: start;
+  padding: var(--space-3);
+  overflow-y: auto;
+  background: var(--bg-raised);
+  border-inline-start: 1px solid var(--hairline);
+}
+.drawer[data-placement="overlay"] {
+  position: absolute;
+  inset-block: 0;
+  inset-inline-end: 0;
+  box-shadow: 0 0 24px color-mix(in oklch, var(--text-1) 25%, transparent);
+}
+.window__main[data-placement="push"] {
+  grid-auto-flow: column;
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+@media (forced-colors: active) {
+  .window,
+  .window__bar,
+  .drawer {
+    border-color: CanvasText;
+  }
+}

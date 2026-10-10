@@ -1,0 +1,32 @@
+.sidebar {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) 40px;
+  min-block-size: 0;
+  block-size: 100%;
+  background: var(--bg-raised);
+  border-inline-end: 1px solid var(--hairline);
+}
+.sidebar__list {
+  min-block-size: 0;
+  overflow-y: auto;
+}
+.sidebar__footer {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  block-size: 40px;
+  padding-inline: 14px 12px;
+  border-block-start: 1px solid var(--hairline);
+  color: var(--text-2);
+  font-size: var(--text-12);
+  font-variant-numeric: tabular-nums;
+}
+.sidebar__spacer {
+  flex: 1 1 0;
+}
+.sidebar__doctor {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  color: var(--text-1);
+}
