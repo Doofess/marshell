@@ -1,5 +1,6 @@
 import type { CSSProperties } from "react";
-import { AgentMark } from "../../components/AgentMark/AgentMark";
+import { Logo } from "../../components/Logo/Logo";
+import { Wordmark } from "../../components/Logo/Wordmark";
 import { StatusGlyph } from "../../components/StatusGlyph/StatusGlyph";
 import { commandById, shortcutLabel, type Os } from "../../lib/keymap";
 import { ApproveCard } from "../approval/ApproveCard";
@@ -10,14 +11,18 @@ import type { RowModel } from "../sidebar/types";
 import { ScriptedTerminal } from "../terminal/ScriptedTerminal";
 import type { TerminalThemeSetting } from "../terminal/terminalTheme";
 import { DRAWER, drawerPlacement, sidebarMode, sidebarWidth, type SidebarPref } from "./layout";
+import { LayoutIcon, LayoutMenu } from "./LayoutMenu";
 import { Rail } from "./Rail";
 import { SCENARIO_FOOTER, SCENARIO_PORTS, SCENARIO_REQUESTS, SCENARIO_ROWS } from "./scenario";
 import { SessionHeader } from "./SessionHeader";
 import { Sidebar } from "./Sidebar";
+import { chooseArrangement, type Arrangement, type PaneCount, type Ratios } from "./splitLayout";
+import { SplitView } from "./SplitView";
 import "./MainWindow.css";
 
 /** The drawer shows the request's full payload; the 40-line command is the long one. */
 const DRAWER_DETAIL = APPROVALS.longCommand.detail;
+const BAR = 40;
 
 export type WindowLayout = "default" | "split" | "focus" | "rail";
 export type MainWindowProps = {
@@ -32,6 +37,18 @@ export type MainWindowProps = {
   terminalSetting?: TerminalThemeSetting;
   headerPeek?: boolean;
   drawer?: boolean;
+  /** Split view: how many terminals are on screen (2 to 4). */
+  splitCount?: PaneCount;
+  /** Leave out to let the app pick from the space. */
+  arrangement?: Arrangement;
+  ratios?: Ratios;
+  activePane?: number;
+  /** Index of the pane that fills the view. */
+  zoomedPane?: number;
+  /** Make the last pane an empty slot that offers the sessions not on screen. */
+  emptySlot?: boolean;
+  /** Show the layout menu open. */
+  layoutMenu?: boolean;
 };
 
 const icon = (d: string) => (
@@ -39,23 +56,6 @@ const icon = (d: string) => (
     <path d={d} />
   </svg>
 );
-
-function Pane({ row, active, setting }: { row: RowModel; active: boolean; setting: TerminalThemeSetting }) {
-  return (
-    <section className="pane" data-active={active} aria-label={`Terminal: ${row.name}`}>
-      <header className="pane__header">
-        <AgentMark agent={row.agent} size={12} />
-        <span className="pane__name" dir="auto">
-          {row.name}
-        </span>
-        <span className="pane__place" dir="auto">
-          {row.project}
-        </span>
-      </header>
-      <ScriptedTerminal setting={setting} label={`Terminal for ${row.name}`} />
-    </section>
-  );
-}
 
 /** The main window composite (docs/PLAN.md deliverable 5): a Windows-style frame around the sidebar or rail, the session header and the terminal. */
 export function MainWindow({
@@ -70,53 +70,89 @@ export function MainWindow({
   terminalSetting = "follow-app",
   headerPeek = false,
   drawer = false,
+  splitCount = 2,
+  arrangement,
+  ratios,
+  activePane = 0,
+  zoomedPane,
+  emptySlot = false,
+  layoutMenu = false,
 }: MainWindowProps) {
   const pref: SidebarPref = sidebarPref ?? (layout === "focus" ? "focus" : layout === "rail" ? "rail" : "expanded");
   const mode = sidebarMode(width, pref);
   const sideW = sidebarWidth(mode);
   const selected = rows.find((r) => r.id === selectedId) ?? rows[0]!;
-  const second = rows.find((r) => r.id !== selected.id) ?? selected;
   const waiting = pending(requests).length;
   const showHeader = mode !== "focus" || headerPeek;
   const placement = drawerPlacement(width, mode, DRAWER.default);
   const pillKeys = shortcutLabel(commandById("next-waiting").binding!, os);
 
+  // Split view: the selected session first, then the others in order, never the same one twice.
+  const split = layout === "split";
+  const shown: (RowModel | null)[] = [selected, ...rows.filter((r) => r.id !== selected.id)].slice(0, splitCount);
+  if (emptySlot) shown[shown.length - 1] = null;
+  const choices = rows.filter((r) => !shown.some((s) => s?.id === r.id));
+  const active = split ? (shown[activePane] ?? selected) : selected;
+  const pushed = drawer && placement === "push" ? DRAWER.default : 0;
+  const space = { w: width - sideW - pushed, h: height - BAR };
+  const paneCount = (split ? shown.length : 1) as PaneCount;
+  const arranged = split ? (zoomedPane !== undefined ? "single" : (arrangement ?? chooseArrangement(paneCount, space))) : "single";
+  const menuCount = (split ? (zoomedPane !== undefined ? 1 : paneCount) : 1) as PaneCount;
+
   return (
-    <div className="window" style={{ inlineSize: width, blockSize: height, "--side-w": `${sideW}px` } as CSSProperties} data-mode={mode} data-layout={layout}>
+    <div className="window" style={{ inlineSize: width, blockSize: height, "--side-w": `${sideW}px` } as CSSProperties} data-mode={mode} data-layout={layout} data-agent={active.agent}>
       <header className="window__bar">
         <div className="window__bar-side">
-          <button type="button" className="window__control window__control--menu" aria-label="App menu">
-            {icon("M1 2.5h8M1 5h8M1 7.5h8")}
+          <button type="button" className="window__brand" aria-label="Marshell menu" aria-haspopup="menu">
+            <Logo size={22} decorative />
+            {mode === "expanded" && <Wordmark height={13} decorative />}
           </button>
-          <button type="button" className="window__control window__control--menu" aria-label="Command palette">
-            {icon("M1 5h8M5 1v8")}
-          </button>
+          {mode === "expanded" && (
+            <button type="button" className="window__control window__control--menu" aria-label="Command palette" title={`Command palette (${shortcutLabel(commandById("palette").binding!, os)})`}>
+              {icon("M1 5h8M5 1v8")}
+            </button>
+          )}
         </div>
-        <div className="window__bar-main">{showHeader && <SessionHeader row={selected} ports={SCENARIO_PORTS} />}</div>
-        <div className="window__controls">
-          <button type="button" className="window__control" aria-label="Minimize">
-            {icon("M0 5h10")}
-          </button>
-          <button type="button" className="window__control" aria-label="Maximize">
-            {icon("M0.5 0.5h9v9h-9z")}
-          </button>
-          <button type="button" className="window__control window__control--close" aria-label="Close">
-            {icon("M0 0l10 10M10 0L0 10")}
-          </button>
+        <div className="window__bar-main">{showHeader && <SessionHeader row={active} ports={SCENARIO_PORTS} />}</div>
+        <div className="window__bar-end">
+          <div className="window__layout">
+            <button
+              type="button"
+              className="window__control window__control--menu"
+              aria-label="Split layout"
+              aria-haspopup="dialog"
+              aria-expanded={layoutMenu}
+              title="Split layout: up to four terminals on screen"
+            >
+              <LayoutIcon count={menuCount} arrangement={arranged} size={18} />
+            </button>
+            {layoutMenu && (
+              <div className="window__popover">
+                <LayoutMenu count={menuCount} arrangement={arranged} auto={arrangement === undefined} os={os} />
+              </div>
+            )}
+          </div>
+          <div className="window__controls">
+            <button type="button" className="window__control" aria-label="Minimize">
+              {icon("M0 5h10")}
+            </button>
+            <button type="button" className="window__control" aria-label="Maximize">
+              {icon("M0.5 0.5h9v9h-9z")}
+            </button>
+            <button type="button" className="window__control window__control--close" aria-label="Close">
+              {icon("M0 0l10 10M10 0L0 10")}
+            </button>
+          </div>
         </div>
       </header>
 
       <div className="window__body">
-        {mode === "expanded" && <Sidebar rows={rows} requests={requests} height={height - 40} width={sideW} selectedId={selected.id} footer={SCENARIO_FOOTER} />}
-        {mode === "rail" && <Rail rows={rows} needsYou={waiting} selectedId={selected.id} />}
+        {mode === "expanded" && <Sidebar rows={rows} requests={requests} height={height - BAR} width={sideW} selectedId={selected.id} footer={SCENARIO_FOOTER} />}
+        {mode === "rail" && <Rail rows={rows} needsYou={waiting} selectedId={selected.id} os={os} />}
 
         <main className="window__main" data-placement={drawer ? placement : undefined}>
-          {layout === "split" ? (
-            <div className="split">
-              <Pane row={selected} active setting={terminalSetting} />
-              <div className="split__handle" role="separator" aria-orientation="vertical" aria-label="Resize panes" aria-valuenow={50} aria-valuemin={20} aria-valuemax={80} tabIndex={0} />
-              <Pane row={second} active={false} setting={terminalSetting} />
-            </div>
+          {split ? (
+            <SplitView panes={shown} size={{ w: space.w, h: space.h }} activeIndex={activePane} arrangement={arrangement} ratios={ratios} zoomed={zoomedPane} choices={choices} setting={terminalSetting} os={os} />
           ) : (
             <ScriptedTerminal setting={terminalSetting} label={`Terminal for ${selected.name}`} />
           )}

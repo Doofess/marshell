@@ -50,7 +50,7 @@
 }
 
 .session-row:focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--focus, var(--accent));
 }
 
 /* An ended row reads at --text-3 throughout, which passes AA on every surface (contrast.test.ts). */
@@ -223,8 +223,8 @@
 
 .session-row__pill {
   padding-inline: 6px;
-  border: 1px solid var(--hairline);
   border-radius: 999px;
+  background: var(--fill);
   color: var(--text-1);
   font-size: var(--text-11);
 }

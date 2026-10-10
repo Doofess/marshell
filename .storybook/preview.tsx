@@ -2,6 +2,7 @@ import type { Decorator, Preview } from "@storybook/react-vite";
 import { withThemeByDataAttribute } from "@storybook/addon-themes";
 import "../src/styles/tokens.css";
 import "../src/styles/accents.css";
+import "../src/styles/scrollbars.css";
 import "../src/styles/base.css";
 import "../src/styles/motion.css";
 import { syncPageHidden } from "../src/design/visibility";

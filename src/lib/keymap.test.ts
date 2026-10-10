@@ -33,6 +33,18 @@ describe("COMMANDS", () => {
     expect(win("next-waiting")).toBe("Ctrl+Shift+N");
     expect(win("rename")).toBe("F2");
   });
+  it("binds the split-view commands: add a pane, zoom one, and move between them", () => {
+    const win = (id: string) => shortcutLabel(commandById(id).binding!, "windows");
+    expect(win("zoom-pane")).toBe("Ctrl+Shift+Z");
+    expect(win("next-pane")).toBe("Ctrl+Shift+]");
+    expect(win("prev-pane")).toBe("Ctrl+Shift+[");
+    expect(shortcutLabel(commandById("zoom-pane").binding!, "mac")).toBe("⌘Z");
+    for (const id of ["layout", "unsplit"]) expect(commandById(id).group).toBe("View");
+  });
+  it("gives no two commands the same binding", () => {
+    const seen = COMMANDS.filter((c) => c.binding).map((c) => `${shortcutLabel(c.binding!, "windows")}`);
+    expect(new Set(seen).size).toBe(seen.length);
+  });
   it("has unique ids and a label for every command", () => {
     expect(new Set(COMMANDS.map((c) => c.id)).size).toBe(COMMANDS.length);
     for (const c of COMMANDS) expect(c.label.length, c.id).toBeGreaterThan(0);

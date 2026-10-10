@@ -8,6 +8,7 @@ import * as Marks from "../../components/AgentMark/AgentMark.stories";
 import * as Card from "../../features/approval/ApproveCard.stories";
 import * as Lane from "../../features/lane/Lane.stories";
 import * as Window from "../../features/window/MainWindow.stories";
+import * as Icon from "../../components/Logo/Logo.stories";
 import * as Rows from "../../features/sidebar/SessionRow.stories";
 
 type StoryModule = { default: { title?: string } } & Record<string, unknown>;
@@ -33,7 +34,8 @@ const BATCHES: Record<UpTo, Array<[StoryModule, string]>> = {
   "2a": BATCH_2A,
   "2b": [
     [Lane, "The lane header is always there at 28 px. The oldest waiting request is the target and shows as a full card; the rest are 36 px one-liners; it never takes more than 40% of the sidebar."],
-    [Window, "The 5-agent scenario in the real layout, with a real xterm.js terminal that follows the theme. Use the Terminal theme control above to pin it dark or light, and Contrast protection to see what it rescues."],
+    [Icon, "The app icon, and where it lives: the first thing in the window's top bar, where it opens the app menu."],
+    [Window, "The window in the real layout, with a real xterm.js terminal that follows the theme. The accent follows the session's vendor. Split view shows up to four terminals at once and picks the arrangement that suits the window. Use the Terminal theme control above to pin the terminal dark or light, and Contrast protection to see what it rescues."],
   ],
   "2c": [],
 };

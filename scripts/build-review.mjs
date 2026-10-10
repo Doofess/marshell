@@ -15,6 +15,7 @@ const batch = process.argv[3] ?? "2a";
 const CSS = [
   "src/styles/tokens.css",
   "src/styles/accents.css",
+  "src/styles/scrollbars.css",
   "src/styles/base.css",
   "src/styles/motion.css",
   "src/design/ThemePair.css",
@@ -26,6 +27,7 @@ const CSS = [
   "node_modules/@xterm/xterm/css/xterm.css",
   "src/features/terminal/ScriptedTerminal.css",
   "src/components/Chip/Chip.css",
+  "src/components/Logo/Logo.css",
   "src/features/sidebar/SessionRow.css",
   "src/features/approval/ApproveCard.css",
   "src/features/lane/Lane.css",
@@ -33,6 +35,8 @@ const CSS = [
   "src/features/window/SessionHeader.css",
   "src/features/window/Rail.css",
   "src/features/window/MainWindow.css",
+  "src/features/window/SplitView.css",
+  "src/features/window/LayoutMenu.css",
 ];
 const ACCENTS = ["amber", "blue", "indigo", "violet", "magenta", "cyan", "teal", "slate"];
 
@@ -121,7 +125,7 @@ const chrome = `
   gap: var(--space-4);
   scroll-margin-block-start: 64px;
 }
-.review__section h2 {
+.review__section > h2 {
   margin: 0;
   font-size: var(--text-20);
   font-weight: 600;

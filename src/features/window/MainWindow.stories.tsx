@@ -17,7 +17,16 @@ const stacked = (label: string, props: MainWindowProps): StoryObj => ({
 
 // 880 tall so the lane (header, the 256 px target card and one 36 px row = 320) fits inside its 40% cap of the 840 px sidebar.
 export const FiveAgents: StoryObj = stacked("The 5-agent scenario: two need you, one working, one done, one error", { width: 1180, height: 880 });
-export const SplitView: StoryObj = stacked("Split view: the active pane has the accent bar, the other header recedes, terminal text is never dimmed", { width: 1180, height: 800, layout: "split" });
+export const SplitTwo: StoryObj = stacked("Split, two terminals: side by side in a wide window. The active pane has the accent bar, the other header recedes, terminal text is never dimmed", { width: 1500, height: 800, layout: "split" });
+export const SplitTwoStacked: StoryObj = stacked("The same two in a 1180 wide window: side by side would leave 53 columns each, so the app stacks them (109 columns, 19 rows). Auto never starves a pane", { width: 1180, height: 800, layout: "split" });
+export const SplitThree: StoryObj = stacked("Split, three: one main pane beside two stacked, picked by the app for this window. A pane that needs you keeps its tint at full strength", { width: 1500, height: 860, layout: "split", splitCount: 3 });
+export const SplitFour: StoryObj = stacked("Split, four: a two by two grid. Each pane header shows its glyph, so the two that need you are visible without the sidebar", { width: 1700, height: 900, layout: "split", splitCount: 4, activePane: 2 });
+export const SplitFourTight: StoryObj = stacked("Four in the 720 by 480 minimum: the panes are too narrow for most CLIs, so each says its size (39 by 11) and the zoom shortcut", { width: 720, height: 480, layout: "split", splitCount: 4 });
+export const SplitStackedTall: StoryObj = stacked("A tall, narrow window stacks the panes instead, so none is starved of columns", { width: 760, height: 1000, layout: "split", splitCount: 3 });
+export const SplitZoomed: StoryObj = stacked("Zoomed: one pane fills the view; the other three keep running and the header says so. The same button restores them", { width: 1500, height: 860, layout: "split", splitCount: 4, zoomedPane: 1 });
+export const SplitEmptyPane: StoryObj = stacked("A new pane starts empty: choose a session that is not on screen, or start one", { width: 1500, height: 860, layout: "split", splitCount: 3, emptySlot: true, activePane: 2 });
+export const SplitDividerMoved: StoryObj = stacked("A dragged divider (70/30): the app keeps the arrangement while the user's hand is on it", { width: 1500, height: 700, layout: "split", ratios: { col: 0.7 } });
+export const LayoutMenuOpen: StoryObj = stacked("The layout menu: how many terminals you see at once (any number can run), how they are arranged, and the keys", { width: 1500, height: 760, layout: "split", splitCount: 3, layoutMenu: true });
 export const FocusMode: StoryObj = stacked("Focus mode: sidebar and header gone, a quiet pill top right", { width: 1180, height: 800, layout: "focus" });
 export const FocusModeHeaderRevealed: StoryObj = stacked("Focus mode with the pointer on the top edge: the header slides in", { width: 1180, height: 800, layout: "focus", headerPeek: true });
 export const CollapsedRail: StoryObj = stacked("Collapsed rail (52 px): stripe, glyph and monogram, needs-you badge stack on top", { width: 1180, height: 800, layout: "rail" });

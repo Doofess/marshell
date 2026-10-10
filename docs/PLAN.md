@@ -118,7 +118,7 @@ Stories are fed by `fake-agent` scenario scripts, so the same 5-agent run drives
 |---|---|
 | Window | Minimum 720×480. Below 960 px wide the sidebar auto-collapses to the rail. |
 | Top bar | **One unified 40 px bar**; no separate title bar. |
-| Top bar, sidebar column | macOS: traffic lights, inset 78 px. Windows: app menu plus a palette button. |
+| Top bar, sidebar column | macOS: traffic lights, inset 78 px. Windows: the app icon and the lowercase "marshell" wordmark (vector, Space Grotesk SemiBold) as one button that opens the app menu, then a palette button. In the 52 px rail only the icon fits, so the palette button moves to the foot of the rail. |
 | Top bar, main column | Session header: name · project/branch · mode chip · model/effort · subagents · context ring · port chips. |
 | Window controls | Windows: 46×40 controls at the right. Linux: native decorations plus a 36 px header. |
 | Sidebar | Default 288 px, minimum 200, maximum 400, rail 52, focus mode 0. Drag the edge to resize; double-click resets. |
@@ -127,7 +127,7 @@ Stories are fed by `fake-agent` scenario scripts, so the same 5-agent run drives
 | Lane cards | Accordion: only the targeted card (oldest waiting) is expanded, at about 250 px (measured: 246 for a question, 255 for a command with its Always and terminal links). The others are 36 px one-liners. |
 | Lane height | At most 40% of sidebar height. Beyond that it scrolls internally, with a fade and "+N more". |
 | Right drawer | Default 360 px, minimum 300, maximum 560. It pushes the terminal, and overlays instead when the terminal would drop below 720 px. |
-| Split view | 50/50 with a 1 px hairline and an 8 px hit area. The active pane has a 2 px accent bar under its header; the inactive header is at 60% opacity. Terminal text is **never** dimmed. |
+| Split view | **Up to four terminals on screen at once** (any number can run; this is only how many are visible). The layout button in the top bar opens a menu: 1 to 4 panes, an arrangement per count (2: side by side or stacked; 3: one main beside two, one main on top, side by side or stacked; 4: grid, side by side or stacked) and an Automatic switch. Automatic picks the arrangement that keeps the smallest pane closest to 80 by 24, judged on even panes so dragging a divider never flips it. Dividers are a 1 px hairline with an 8 px hit area that overhangs the panes, so a divider costs one pixel of terminal. Each pane header (28 px) has the brand stripe, the status glyph (the vendor mark moving while working), name, project, and zoom and remove buttons; a pane that needs you keeps a vendor tint at full strength while other inactive headers sit at 60%. A pane under 80 columns says its size ("39×11"). Zoom (Ctrl+Shift+Z) fills the view and the others keep running. A new pane starts empty and offers the sessions not on screen. The active pane has a 2 px bar in the vendor colour. Terminal text is **never** dimmed. |
 | Focus mode | Sidebar and header go to 0. The header reveals on an 8 px top-edge hover. A floating pill at top right reads "2 need you ⌃⇧N" and stays silent apart from its glyph bounce. |
 | Rail (52 px) | Brand stripe, the agent mark and a 2-letter monogram per session, with a small status glyph. While a session works, its vendor mark carries the working loop in place of any pulsing dot. Needs-you shows as a badge stack with a count at the top. |
 
@@ -257,9 +257,11 @@ Content, top to bottom:
 
 **Colour tokens:** the source of truth is `src/styles/tokens.css` (oklch, `light-dark()`), `accents.css` and the Storybook Colours story; this plan holds no hex values. Rules that stay binding:
 - Surfaces: true-black dark, warm-white light. Hover and selected are low-alpha overlays of the text colour. Text has three levels, and `--text-3` must pass AA on every surface.
-- **Default accent is signal amber** (8 accents: amber, blue, indigo, violet, magenta, cyan, teal, slate). The accent is the attention colour (needs-you tint, focus ring, selection).
+- **The accent follows the vendor.** Everything in a session's row, card, pane or window takes that CLI's signal colour: focus rings, the active-pane bar, primary buttons, the needs-you tint. Where no session is in play (onboarding, settings, doctor) the user's chosen accent applies; the default is signal amber (8 accents: amber, blue, indigo, violet, magenta, cyan, teal, slate). Vendor colours are checked for 4.5:1 text on their button fill and 3:1 for rings and bars on every surface (`accentFollowsVendor.test.ts`).
+- **No boxed outlines.** Cards, buttons, chips and keys are told apart by fill and tint, never by a 1 px box; a risky request is a tinted card with a red bar on its start edge. Hairlines stay as dividers between regions, and the keyboard focus ring stays. `noBoxedOutlines.test.ts` enforces it.
+- **Scrollbars** are a quiet 12 px pill that follows the theme and strengthens on hover and drag (xterm's own scrollbar included).
 - Status colours (error, ok, caution) are separate from the accent. Caution is yellow (dark) or olive (light) so it stays distinct from amber; `contrast.test.ts` checks AA and CIEDE2000 distance for every pair, including amber vs caution.
-- Brand colours are used only on stripes and dots. Claude's is a muted terracotta, never a status colour; Codex and Gemini have their own tokens. All are user-changeable.
+- Brand colours are used only on stripes and dots. Claude's is a muted terracotta, never a status colour; Codex and Gemini have their own tokens (OpenAI is a pale yellow in dark mode and a deep teal in light; a yellow that passes 3:1 on white looked like muddy gold). All are user-changeable.
 - Custom accent hex: validated at pick time against both themes (AA for `--accent-ink`), rejected with the reason if it fails.
 
 **Motion:**

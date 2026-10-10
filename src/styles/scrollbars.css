@@ -1,0 +1,55 @@
+/*
+ * Scrollbars: a quiet pill that follows the theme. WebView2 (Chromium) and WebKit draw the pill; once Chromium
+ * sees `scrollbar-color` it ignores the pill rules, so the standard thin bar is offered only where the pill is not.
+ */
+:root {
+  --scroll-thumb: color-mix(in oklch, var(--text-1) 24%, transparent);
+  --scroll-thumb-hover: color-mix(in oklch, var(--text-1) 42%, transparent);
+  --scroll-thumb-active: color-mix(in oklch, var(--text-1) 60%, transparent);
+}
+
+*::-webkit-scrollbar {
+  inline-size: 12px;
+  block-size: 12px;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+*::-webkit-scrollbar-thumb {
+  min-block-size: 36px;
+  min-inline-size: 36px;
+  border: 3px solid transparent;
+  border-radius: 999px;
+  background-color: var(--scroll-thumb);
+  background-clip: content-box;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background-color: var(--scroll-thumb-hover);
+}
+*::-webkit-scrollbar-thumb:active {
+  background-color: var(--scroll-thumb-active);
+}
+*::-webkit-scrollbar-button {
+  display: none;
+}
+*::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+@supports not selector(::-webkit-scrollbar) {
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--scroll-thumb) transparent;
+  }
+}
+
+@media (forced-colors: active) {
+  *::-webkit-scrollbar-thumb {
+    background-color: CanvasText;
+  }
+  @supports not selector(::-webkit-scrollbar) {
+    * {
+      scrollbar-color: CanvasText Canvas;
+    }
+  }
+}

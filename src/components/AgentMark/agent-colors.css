@@ -19,10 +19,6 @@
   --agent: var(--brand-openai);
   --agent-signal: var(--brand-openai);
 }
-/* OpenAI's yellow is outlined so it shows on light surfaces (see --brand-openai-edge in tokens.css). */
-[data-agent="codex"] :is(.agent-mark, .status-glyph, .aux-glyph, .context-ring) {
-  filter: drop-shadow(0 0 0.4px var(--brand-openai-edge)) drop-shadow(0 0 0.4px var(--brand-openai-edge));
-}
 [data-agent="copilot"],
 [data-agent="qwen"] {
   --agent: var(--brand-violet);
@@ -50,9 +46,14 @@
  */
 [data-agent] {
   --agent-ink: light-dark(oklch(100% 0 none), oklch(0% 0 none));
-}
-
-/* White ink on OpenAI's bright light-mode yellow is unreadable, so its badge mark is dark in both themes. */
-[data-agent="codex"] {
-  --agent-ink: oklch(22% 0 none);
+  /*
+   * The app accent follows the vendor: inside a session's element (row, card, pane, window) every ring, bar and
+   * primary button is that CLI's colour. Derived tokens are re-declared here because a derived custom property is
+   * fixed where it is declared, so the ones on :root would keep the default accent.
+   */
+  --accent: var(--agent-signal);
+  --accent-ink: var(--agent-ink);
+  --accent-tint: color-mix(in oklch, var(--accent) 12%, transparent);
+  --accent-flash: color-mix(in oklch, var(--accent) 24%, transparent);
+  --focus: var(--agent-focus, var(--agent-signal));
 }

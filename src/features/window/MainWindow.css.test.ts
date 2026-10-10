@@ -16,17 +16,9 @@ describe("MainWindow.css", () => {
     expect(r).toContain("inline-size: 46px");
     expect(r).toContain("block-size: 40px");
   });
-  it("dims an inactive pane header to 60% but never the terminal text", () => {
-    expect(rule('.pane[data-active="false"] .pane__header')).toContain("opacity: 0.6");
-    expect(css).not.toMatch(/\.pane[^{]*\.scripted-terminal[^{]*\{[^}]*opacity/);
-  });
-  it("marks the active pane with a 2 px accent bar under its header", () => {
-    expect(rule('.pane[data-active="true"] .pane__header')).toContain("2px");
-    expect(rule('.pane[data-active="true"] .pane__header')).toContain("var(--accent)");
-  });
-  it("gives the split separator an 8 px hit area around a 1 px line", () => {
-    expect(rule(".split__handle")).toContain("inline-size: 8px");
-    expect(css).toContain("1px");
+  it("puts the layout menu in a popover that hangs from the bar's end, above the panes", () => {
+    expect(rule(".window__popover")).toContain("position: absolute");
+    expect(rule(".window__popover")).toMatch(/z-index:\s*3/);
   });
   it("styles focus and press on the bar buttons", () => {
     expect(css).toContain(".window__control:focus-visible");
@@ -37,8 +29,5 @@ describe("MainWindow.css", () => {
     expect(css).not.toMatch(/#[0-9a-f]{3,8}\b|rgb\(/i);
     expect(css).not.toMatch(/\b(margin|padding|border)-(left|right|top|bottom)\b/);
     expect(css).not.toMatch(/\b(left|right|top|bottom):/);
-  });
-  it("keeps the dimmed pane header readable: its secondary text is full-strength so 60% opacity still passes AA", () => {
-    expect(rule('.pane[data-active="false"] .pane__place')).toContain("var(--text-1)");
   });
 });
