@@ -2,8 +2,8 @@ import { unifiedDiff } from "../../lib/diff";
 import type { DoctorItem, DoctorReport } from "./types";
 import type { UndoState } from "./undo";
 
-const HOME = "C:\Users\Home Office";
-const CLAUDE = `${HOME}\.claude\settings.json`;
+const HOME = "C:\\Users\\Home Office";
+const CLAUDE = `${HOME}\\.claude\\settings.json`;
 const NOW = 1_800_000_000_000;
 
 const hooksBefore = `{\n  "model": "opus",\n  "hooks": {}\n}\n`;
@@ -16,7 +16,8 @@ const cleanupAfter = `{\n  "cleanupPeriodDays": 365\n}\n`;
 const dupBefore = `{\n  "notifications": { "desktop": true }\n}\n`;
 const dupAfter = `{\n  "notifications": { "desktop": false }\n}\n`;
 
-const fixable = (i: Omit<DoctorItem, "fixable" | "file" | "diff" | "severity"> & { before: string; after: string; severity?: DoctorItem["severity"] }): DoctorItem => {
+type FixableInput = Omit<DoctorItem, "fixable" | "file" | "diff" | "severity"> & { before: string; after: string; severity?: DoctorItem["severity"] };
+const fixable = (i: FixableInput): DoctorItem => {
   const { before, after, severity = "warning", ...rest } = i;
   return { ...rest, severity, fixable: true, file: CLAUDE, diff: unifiedDiff(CLAUDE, before, after) };
 };
@@ -33,7 +34,7 @@ export const DOCTOR_REPORT: DoctorReport = {
       id: "managed-present",
       cli: "claude",
       title: "Managed settings apply on top of yours",
-      detail: "Your organisation manages some Claude settings in C:\Program Files\ClaudeCode\managed-settings.json. Marshell lists them and never changes them.",
+      detail: "Your organisation manages some Claude settings in C:\\Program Files\\ClaudeCode\\managed-settings.json. Marshell lists them and never changes them.",
       severity: "info",
       fixable: false,
     },
@@ -45,8 +46,8 @@ export const DOCTOR_PROBLEMS: DoctorReport = {
   durationMs: 2_100,
   items: [
     { id: "codex-hooks-untrusted", cli: "codex", title: "Codex has not trusted Marshell's hooks", detail: "Hooks added to Codex do not run until they are trusted by hash.", severity: "warning", fixable: false, unfixableReason: "Marshell can't trust hooks for you. Open /hooks in Codex and trust them." },
-    { id: "gemini-unparsable", cli: "gemini", title: "Gemini's settings file does not parse", detail: `${HOME}\.gemini\settings.json`, severity: "error", fixable: false, unfixableReason: "The file does not parse (line 14). Marshell never edits a file it can't read." },
-    { id: "codex-readonly", cli: "codex", title: "Codex's config file is read-only", detail: `${HOME}\.codex\config.toml`, severity: "warning", fixable: false, unfixableReason: "The file is read-only." },
+    { id: "gemini-unparsable", cli: "gemini", title: "Gemini's settings file does not parse", detail: `${HOME}\\.gemini\\settings.json`, severity: "error", fixable: false, unfixableReason: "The file does not parse (line 14). Marshell never edits a file it can't read." },
+    { id: "codex-readonly", cli: "codex", title: "Codex's config file is read-only", detail: `${HOME}\\.codex\\config.toml`, severity: "warning", fixable: false, unfixableReason: "The file is read-only." },
   ],
 };
 

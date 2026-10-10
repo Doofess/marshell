@@ -25,6 +25,7 @@ export type AnnounceKind =
   | "switched" // focus moved to another session
   | "none-selected" // nothing is selected
   | "on-request" // the user asked ("Read the focused session's status")
+  | "action-result" // the result of something the user just did (a fix, an undo): always said once, politely
   | "progress" // working, tool use, subagents: never announced
   | "working"
   | "done"
@@ -33,6 +34,7 @@ export type AnnounceKind =
 const NEEDS_YOU: ReadonlySet<AnnounceKind> = new Set(["request", "question", "stopped", "ended", "switched", "none-selected", "on-request"]);
 
 export function shouldAnnounce(kind: AnnounceKind, mode: AnnounceMode): boolean {
+  if (kind === "action-result") return true;
   if (mode === "on-request") return kind === "on-request";
   return NEEDS_YOU.has(kind);
 }
