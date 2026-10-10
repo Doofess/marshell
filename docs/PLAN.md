@@ -166,11 +166,11 @@ The full text is in the tooltip and the screen-reader label.
 |---|---|---|---|---|
 | Idle | Hollow circle | — | "Idle" | — |
 | Working | Filled dot | Opacity pulse .45↔1, 1.6 s (static dot with ¾ arc) | "Running npm test" | — |
-| Needs you: permission | Filled rounded-square badge with key | One bounce | "Wants to run `npm test`" | 12% attention tint, a 3 px accent band inside the brand stripe, reason line in full-contrast text, wait timer |
+| Needs you: permission | Filled rounded-square accent badge with a bare "!" | One bounce | "Wants to run `npm test`" | 12% attention tint, reason line in full-contrast text, wait timer |
 | Needs you: question | Badge with "?" | One bounce | "Has a question" | Same |
 | Done, unseen | Check drawn in 200 ms | Draw once | "Done · edited 4 files" | Name at 600 weight, plus a 6 px unread dot |
 | Done, seen | Check at 50% | — | "Done 12m ago" | Normal |
-| Error | Octagon with ✕ | One flash | "Stopped: rate limit" | 10% error tint, 3 px error band, reason line in full-contrast text |
+| Error | Filled disc with a cut-out ✕ | One flash | "Stopped: rate limit" | 10% error tint, reason line in full-contrast text |
 | Stuck | Dashed ring | — | "Same command 9× in 4 min" | No notification |
 | Muted | Bell-slash in the cluster | Badge does not bounce | suffix "muted" | Glyphs still shown |
 | Elevated | Shield before the name | — | "Administrator" | Header label for the whole session |

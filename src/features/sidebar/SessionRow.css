@@ -31,25 +31,12 @@
 }
 
 /*
- * Blocked rows (needs you, error) stand out from the rest: a stronger tint, a 3 px band just inside the brand
- * stripe, and the reason line in full-contrast text. Colour is never the only cue: the glyph and the phrase say it too.
+ * Blocked rows (needs you, error) stand out from the rest with a stronger tint and the reason line in full-contrast
+ * text. The edge keeps only the brand stripe; the status glyph at the right is the signal. Colour is never the only
+ * cue: the glyph shape and the phrase say it too.
  */
 .session-row[data-blocked="error"] {
   background-color: color-mix(in oklch, var(--error) 10%, transparent);
-}
-.session-row[data-blocked]::before {
-  content: "";
-  position: absolute;
-  inset-block: 0;
-  inset-inline-start: var(--stripe);
-}
-.session-row[data-blocked="needs-you"]::before {
-  inline-size: 3px;
-  background: var(--accent);
-}
-.session-row[data-blocked="error"]::before {
-  inline-size: 3px;
-  background: var(--error);
 }
 .session-row[data-blocked] .session-row__phrase {
   color: var(--text-1);
@@ -258,10 +245,6 @@
 
 /* Windows High Contrast: shadows and tints are dropped, so selection and the unread dot use system colours. */
 @media (forced-colors: active) {
-  .session-row[data-blocked]::before {
-    forced-color-adjust: none;
-    background: Highlight;
-  }
   .session-row[aria-selected="true"] {
     outline: 2px solid Highlight;
     outline-offset: -2px;

@@ -78,3 +78,29 @@ describe("forced colours (final review)", () => {
     expect(css).toMatch(/\[data-kind="done-seen"\][^{]*\{[^}]*var\(--ok-dim\)/);
   });
 });
+
+describe("StatusGlyph: minimal needs-you and error marks", () => {
+  const mk = (k: Parameters<typeof StatusGlyph>[0]["kind"]) => renderToStaticMarkup(<StatusGlyph kind={k} />);
+  it("shows a permission request as an accent badge with a bare exclamation mark", () => {
+    const h = mk("needs-permission");
+    expect(h).toContain("g-badge");
+    expect(h).toContain("g-bang");
+    expect(h).not.toContain("M7.75 8h4.5");
+  });
+  it("keeps the question mark in the same badge", () => {
+    const h = mk("needs-question");
+    expect(h).toContain("g-badge");
+    expect(h).not.toContain("g-bang");
+  });
+  it("shows an error as a plain disc with a cut-out cross, not an octagon", () => {
+    const h = mk("error");
+    expect(h).toContain("g-error-disc");
+    expect(h).not.toContain("<polygon");
+  });
+  it("uses one mark per glyph and no more than three shapes", () => {
+    for (const k of ["needs-permission", "needs-question", "error"] as const) expect((mk(k).match(/<(path|circle|rect|polygon)/g) ?? []).length, k).toBeLessThanOrEqual(3);
+  });
+  it("flashes the error disc on arrival", () => {
+    expect(readFileSync(new URL("../../styles/motion.css", import.meta.url), "utf8")).toContain(".g-error-disc");
+  });
+});

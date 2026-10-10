@@ -40,7 +40,7 @@
     stroke-dasharray: 1;
     animation: g-draw var(--dur-check) var(--ease-out) 1 both;
   }
-  :root:not([data-motion="reduce"]) .status-glyph[data-kind="error"] .g-octagon {
+  :root:not([data-motion="reduce"]) .status-glyph[data-kind="error"] .g-error-disc {
     animation: g-flash var(--dur-flash) var(--ease-out) 1;
   }
   :root:not([data-motion="reduce"]) .session-row[data-flash] {

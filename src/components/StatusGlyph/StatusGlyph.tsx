@@ -13,25 +13,23 @@ const shapes: Record<GlyphKind, ReactNode> = {
   ),
   "needs-permission": (
     <>
-      <rect className="g-badge" x="1.5" y="1.5" width="13" height="13" rx="3.5" fill="var(--accent)" />
-      <g className="g-mark" fill="none" stroke="var(--accent-ink)" strokeWidth="1.5" strokeLinecap="round">
-        <circle cx="5.75" cy="8" r="2" />
-        <path d="M7.75 8h4.5M10.75 8v1.75" />
-      </g>
+      <rect className="g-badge" x="1.5" y="1.5" width="13" height="13" rx="4" fill="var(--accent)" />
+      <path className="g-mark g-bang" d="M8 4.5v4.25" fill="none" stroke="var(--accent-ink)" strokeWidth="1.75" strokeLinecap="round" />
+      <circle className="g-mark g-mark--fill" cx="8" cy="11.4" r="1" fill="var(--accent-ink)" />
     </>
   ),
   "needs-question": (
     <>
-      <rect className="g-badge" x="1.5" y="1.5" width="13" height="13" rx="3.5" fill="var(--accent)" />
+      <rect className="g-badge" x="1.5" y="1.5" width="13" height="13" rx="4" fill="var(--accent)" />
       <path
         className="g-mark"
         d="M6.25 6.25a1.75 1.75 0 1 1 2.6 1.53c-.5.28-.85.62-.85 1.22v.25"
         fill="none"
         stroke="var(--accent-ink)"
-        strokeWidth="1.5"
+        strokeWidth="1.75"
         strokeLinecap="round"
       />
-      <circle className="g-mark g-mark--fill" cx="8" cy="11.4" r="0.9" fill="var(--accent-ink)" />
+      <circle className="g-mark g-mark--fill" cx="8" cy="11.4" r="1" fill="var(--accent-ink)" />
     </>
   ),
   "done-unseen": (
@@ -42,8 +40,8 @@ const shapes: Record<GlyphKind, ReactNode> = {
   ),
   error: (
     <>
-      <polygon className="g-octagon" points="5.2,1.5 10.8,1.5 14.5,5.2 14.5,10.8 10.8,14.5 5.2,14.5 1.5,10.8 1.5,5.2" fill="currentColor" />
-      <path className="g-cut" d="M6 6l4 4M10 6l-4 4" fill="none" stroke="var(--bg-base)" strokeWidth="1.5" strokeLinecap="round" />
+      <circle className="g-error-disc" cx="8" cy="8" r="6.5" fill="currentColor" />
+      <path className="g-cut" d="M5.9 5.9l4.2 4.2M10.1 5.9l-4.2 4.2" fill="none" stroke="var(--bg-base)" strokeWidth="1.6" strokeLinecap="round" />
     </>
   ),
   stuck: <circle cx="8" cy="8" r="5.25" fill="none" stroke="currentColor" strokeWidth="1.5" strokeDasharray="2.2 2" />,
