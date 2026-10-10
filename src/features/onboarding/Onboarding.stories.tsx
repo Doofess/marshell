@@ -2,6 +2,9 @@ import type { Meta, StoryObj } from "@storybook/react-vite";
 import { ThemePair } from "../../design/ThemePair";
 import { ConsentCard } from "./ConsentCard";
 import { Detected } from "./Detected";
+import { FirstSession } from "./FirstSession";
+import { NotificationsStep } from "./NotificationsStep";
+import { OnboardingFrame } from "./OnboardingFrame";
 import { CONSENT, DETECTIONS } from "./fixtures";
 
 const meta: Meta = { title: "Onboarding", parameters: { layout: "fullscreen" } };
@@ -29,3 +32,20 @@ export const ConsentGeminiLimited: StoryObj = { render: () => <ThemePair label="
 export const ConsentUnparsable: StoryObj = { render: () => <ThemePair label="Screen 2: a file that does not parse is never edited, and there are no switches" stack><div style={box}><ConsentCard scenario={CONSENT.unparsableGemini} on={ALL_ON} /></div></ThemePair> };
 export const ConsentManaged: StoryObj = { render: () => <ThemePair label="Screen 2: a managed file is listed read-only and has no control" stack><div style={box}><ConsentCard scenario={CONSENT.claudeManaged} on={ALL_ON} /></div></ThemePair> };
 export const ConsentLongDiff: StoryObj = { render: () => <ThemePair label="Screen 2: a 200-line change folds after 40 lines" stack><div style={box}><ConsentCard scenario={CONSENT.codex} on={ALL_ON} open /></div></ThemePair> };
+
+const notes = (permission: "not-asked" | "granted" | "denied", os: "windows" | "mac" | "linux") => (
+  <div style={box}>
+    <NotificationsStep permission={permission} os={os} />
+  </div>
+);
+export const NotificationsNotAsked: StoryObj = { render: () => <ThemePair label="Screen 3: ask once, preview every sound" stack>{notes("not-asked", "windows")}</ThemePair> };
+export const NotificationsAllowed: StoryObj = { render: () => <ThemePair label="Screen 3: allowed, and a banner never takes focus" stack>{notes("granted", "windows")}</ThemePair> };
+export const NotificationsBlocked: StoryObj = { render: () => <ThemePair label="Screen 3: blocked by the OS, with where to turn it on and what still works" stack>{notes("denied", "windows")}</ThemePair> };
+export const NotificationsMac: StoryObj = { render: () => <ThemePair label="Screen 3 on macOS (design only: Windows 11 is the only tested platform)" stack>{notes("not-asked", "mac")}</ThemePair> };
+export const NotificationsLinux: StoryObj = { render: () => <ThemePair label="Screen 3 on Linux (design only)" stack>{notes("denied", "linux")}</ThemePair> };
+export const FirstSessionScreen: StoryObj = { render: () => <ThemePair label="Screen 4: the launcher, pre-filled with the most recent git folder; Enter starts it" stack><div style={box}><FirstSession /></div></ThemePair> };
+
+export const FrameStep1: StoryObj = { render: () => <ThemePair label="The frame around screen 1: one primary button, no Back" stack><OnboardingFrame step="detected" title="What Marshell found" primary="Continue"><Detected detections={DETECTIONS.allThree} /></OnboardingFrame></ThemePair> };
+export const FrameStep2: StoryObj = { render: () => <ThemePair label="The frame around screen 2: Back appears; one card per CLI" stack><OnboardingFrame step="consent" title="What Marshell may change" primary="Allow these changes" secondary="Skip: use limited status"><ConsentCard scenario={CONSENT.claude} on={ALL_ON} /></OnboardingFrame></ThemePair> };
+export const FrameStep3: StoryObj = { render: () => <ThemePair label="The frame around screen 3" stack><OnboardingFrame step="notifications" title="Notifications" primary="Continue"><NotificationsStep permission="not-asked" os="windows" /></OnboardingFrame></ThemePair> };
+export const FrameStep4: StoryObj = { render: () => <ThemePair label="The frame around screen 4: the last step" stack><OnboardingFrame step="first-session" title="Start your first session" primary="Start"><FirstSession /></OnboardingFrame></ThemePair> };
