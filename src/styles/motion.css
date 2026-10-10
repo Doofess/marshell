@@ -37,6 +37,14 @@
   0%, 100% { transform: scale(1); }
   50% { transform: scale(0.78); }
 }
+/* Codex: keeps turning one way while it breathes in and out; its six petals repeat every 60 degrees, so a 120 degree turn per breath joins up without a jump. */
+@keyframes mark-codex-breathe {
+  0%, 100% { scale: 1; }
+  50% { scale: 0.7; }
+}
+@keyframes mark-codex-turn {
+  to { rotate: 120deg; }
+}
 @keyframes mark-spin {
   to { transform: rotate(360deg); }
 }
@@ -81,7 +89,7 @@
     animation: mark-breathe var(--dur-loop) ease-in-out infinite;
   }
   :root:not([data-motion="reduce"]) .agent-mark[data-working][data-agent="codex"] {
-    animation: mark-spin var(--dur-loop) ease-in-out infinite;
+    animation: mark-codex-breathe var(--dur-loop) ease-in-out infinite, mark-codex-turn var(--dur-loop) linear infinite;
   }
   :root:not([data-motion="reduce"]) .agent-mark[data-working][data-agent="gemini"] {
     animation: mark-twinkle var(--dur-loop) ease-in-out infinite;
