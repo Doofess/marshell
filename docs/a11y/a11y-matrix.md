@@ -31,6 +31,6 @@ Options: `--only forced,reduced,zoom,filters` and `--sections launcher,main-wind
 
 ## Known findings (phase 0, batch 2)
 
-- **F-1, focus on the full prompt line.** The single-terminal prompt line (`Composer variant="full"`) defaults to `focused`, so its vendor-coloured top edge is on before the field has focus, and focusing the field changes nothing visible. A keyboard user cannot see that the field has focus. The fix is a design choice (show the edge only on `:focus-within` for the full variant too, or add a focus-visible outline on the field), not a one-line change.
+- **F-1, focus on the full prompt line.** The single-terminal prompt line (`Composer variant="full"`) defaults to `focused`, so its vendor-coloured top edge is on before the field has focus, and focusing the field changes nothing visible. A keyboard user cannot see that the field has focus. The fix is a design choice (show the edge only on `:focus-within` for the full variant too, or add a focus-visible outline on the field), not a one-line change. **Resolved:** the edge now follows real focus (`:focus-within`) for the full variant too.
 
 Everything else the matrix checks was clean when it was first run on the 2c review page: forced colours, reduced motion and 150% zoom had no other findings.

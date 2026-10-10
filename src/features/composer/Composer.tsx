@@ -34,7 +34,7 @@ export type ComposerProps = {
   os?: Os;
   /** `full` under the terminal of a single-session window; `compact` inside each pane in split view. */
   variant?: ComposerVariant;
-  /** Whether this is the focused prompt, which gets the vendor-coloured edge. The full one always is; a compact one is when its pane is. */
+  /** Whether this is the focused prompt, which gets the vendor-coloured edge. Off by default for both: the edge follows real focus (:focus-within), and a pane's compact line is told when its pane is the active one. */
   focused?: boolean;
   /** Full variant, split view: which pane this is, so the target is never a guess. */
   pane?: { index: number; count: number };
@@ -47,7 +47,7 @@ export type ComposerProps = {
  * session's state (notices sit in the row), so the terminal above never resizes. The facts about the session are not here:
  * they are the status bar's.
  */
-export function Composer({ row, value = "", os = "windows", variant = "full", focused = variant === "full", pane }: ComposerProps) {
+export function Composer({ row, value = "", os = "windows", variant = "full", focused = false, pane }: ComposerProps) {
   const focusKeys = shortcutLabel(commandById("focus-prompt").binding!, os);
   const state: ComposerState = row ? composerState(row, value) : "waiting";
   const blocked = row === null || state === "waiting" || state === "ended";

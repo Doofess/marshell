@@ -63,7 +63,8 @@ describe("Composer: two variants of one command line", () => {
   });
   it("carries the vendor for the accent, and says whether it is the focused prompt", () => {
     for (const v of VARIANTS) expect(html("idle", "", "windows", v), v).toContain('data-agent="codex"');
-    expect(render("idle")).toContain('data-focused="true"');
+    expect(render("idle")).not.toContain('data-focused="true"');
+    expect(render("idle", { focused: true })).toContain('data-focused="true"');
     expect(render("idle", { variant: "compact" })).not.toContain('data-focused="true"');
     expect(render("idle", { variant: "compact", focused: true })).toContain('data-focused="true"');
   });
