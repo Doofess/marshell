@@ -20,6 +20,16 @@ Where the text below disagrees with this list, this list wins. `docs/PLAN.md` ho
     1. tokens, glyphs, rows
     2. approve card, main window, launcher
     3. onboarding, departures, doctor, settings, notifications
+- **Batch 2 design decisions (2026-10-10; details in `docs/PLAN.md`):**
+  - **Terminals are not only AI agents.** A manual CLI is any program that is not an LLM agent. It gets its program's mark, never animates, and has no prompt line of ours (you type in the terminal).
+  - **Session numbers.** Every open terminal has a number that is stable until it closes (a new one takes the lowest free number), shown on every surface, so "go talk to session 6" is unambiguous. Exposed to the session as `MARSHELL_SESSION_NUMBER`.
+  - **Prompt line.** Every session on screen has its own flat command-line prompt (full under a single terminal, compact in each pane); the status strip moved to a status bar for the focused session.
+  - **Split view** shows up to four terminals, chosen by what the window can fit (60 by 14 of terminal per pane).
+  - **No scrolling in the main window** (the session list scrolls with a hidden bar; the drawer and the prompt text keep scrolling), and **no boxed outlines** (fills and edge bars).
+  - **The accent follows the focused session's vendor.** OpenAI is pale yellow in dark and deep teal in light.
+  - **Keyboard.** Plain Tab, Esc and arrows always reach the program. Navigation uses a held Ctrl+Shift chord (a setting): its Tab cycles only the sessions on screen, one direction only; with arrows it reaches the side list too; Backspace selects none. Shortcuts match physical keys, use no punctuation, and avoid OS clashes (see the audit in PLAN).
+  - **Accessibility.** One screen-reader announcer for the window, announcing only what needs you; a safety net of shared blocks, rule tests, a forced-colours/zoom matrix and a screen-reader script.
+  - **Platforms.** Windows 11 is the only tested platform; Linux and macOS support is a plan.
 - **Decisions:**
   - pnpm
   - MIT open source
