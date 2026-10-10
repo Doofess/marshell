@@ -81,46 +81,52 @@
   fill: color-mix(in oklch, currentColor 45%, black);
   opacity: 0;
 }
-/* Cursor options being compared: the cube stays put, only the pointer cut out of it moves. */
+/* Cursor: the cube stays put, only the pointer cut out of it moves. It slides in, presses, and slides back, staying close to where the logo draws it so it never runs far past the cube's edges. */
 .agent-mark__cursor {
   display: none;
 }
-@keyframes mark-ptr-wander {
-  0%, 100% { transform: translate(0, 0); }
-  20% { transform: translate(3px, -2.2px); }
-  45% { transform: translate(3.4px, 2.6px); }
-  70% { transform: translate(-2.4px, 3px); }
-  88% { transform: translate(-3px, -0.6px); }
-}
 @keyframes mark-ptr-click {
-  0%, 12% { transform: translate(3px, 3px) scale(1); }
-  38% { transform: translate(-1.6px, -1.6px) scale(1); animation-timing-function: ease-out; }
-  46% { transform: translate(-1.6px, -1.6px) scale(0.78); }
-  56% { transform: translate(-1.6px, -1.6px) scale(1); }
-  100% { transform: translate(3px, 3px) scale(1); }
-}
-@keyframes mark-ptr-poke {
-  0%, 100% { transform: translate(1.4px, 1.4px); }
-  14% { transform: translate(-2.2px, -2.2px); }
-  26% { transform: translate(1px, 1px); }
-  38% { transform: translate(-2.2px, -2.2px); }
-  52% { transform: translate(1.4px, 1.4px); }
-}
-@keyframes mark-ptr-seek {
-  0%, 100% { transform: rotate(-22deg); }
-  50% { transform: rotate(22deg); }
+  0%, 12% { transform: translate(0.8px, 0.8px) scale(1); }
+  38% { transform: translate(-0.8px, -0.8px) scale(1); animation-timing-function: ease-out; }
+  46% { transform: translate(-0.8px, -0.8px) scale(0.8); }
+  56% { transform: translate(-0.8px, -0.8px) scale(1); }
+  100% { transform: translate(0.8px, 0.8px) scale(1); }
 }
 @keyframes mark-flip {
   0%, 100% { transform: scaleX(1); }
   50% { transform: scaleX(-1); }
 }
-@keyframes mark-slide {
-  0%, 100% { transform: translateX(-1.5px); }
-  50% { transform: translateX(1.5px); }
+/* Amp fires its two secondary arrows away from the main one, one after another, and they slide back in from it to be fired again.
+   The custom agent's options are still being compared. */
+.agent-mark__pieces {
+  display: none;
 }
-@keyframes mark-wobble {
-  0%, 100% { transform: rotate(-14deg); }
-  50% { transform: rotate(14deg); }
+.agent-mark__piece {
+  transform-box: fill-box;
+  transform-origin: center;
+}
+@keyframes mark-amp-shoot {
+  0%, 8% { transform: translate(0, 0); opacity: 1; animation-timing-function: cubic-bezier(0.1, 0.8, 0.3, 1); }
+  30% { transform: translate(7px, -7px); opacity: 0; }
+  31%, 58% { transform: translate(-4.4px, 4.4px); opacity: 0; animation-timing-function: cubic-bezier(0.2, 0.7, 0.3, 1); }
+  80%, 100% { transform: translate(0, 0); opacity: 1; }
+}
+@keyframes mark-gen-blink {
+  0%, 49% { opacity: 1; }
+  50%, 100% { opacity: 0; }
+}
+@keyframes mark-gen-type {
+  0% { transform: scaleX(0); }
+  70% { transform: scaleX(1); }
+  100% { transform: scaleX(1); }
+}
+@keyframes mark-gen-chevron {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(0.8); }
+}
+@keyframes mark-gen-frame {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(0.9); }
 }
 @keyframes mark-swim {
   0%, 100% { transform: translateY(1px) rotate(-6deg); }
@@ -176,25 +182,51 @@
   }
   :root:not([data-motion="reduce"]) .agent-mark__pointer {
     transform-origin: 12px 12px;
-    animation: mark-ptr-wander var(--dur-loop) ease-in-out infinite;
-  }
-  :root:not([data-motion="reduce"]) .agent-mark[data-option="click"] .agent-mark__pointer {
-    animation-name: mark-ptr-click;
-  }
-  :root:not([data-motion="reduce"]) .agent-mark[data-option="poke"] .agent-mark__pointer {
-    animation-name: mark-ptr-poke;
-  }
-  :root:not([data-motion="reduce"]) .agent-mark[data-option="seek"] .agent-mark__pointer {
-    animation-name: mark-ptr-seek;
+    animation: mark-ptr-click var(--dur-loop) ease-in-out infinite;
   }
   :root:not([data-motion="reduce"]) .agent-mark[data-working][data-agent="opencode"] {
     animation: mark-spin var(--dur-loop-slow) steps(4) infinite;
   }
   :root:not([data-motion="reduce"]) .agent-mark[data-working][data-agent="amp"] {
-    animation: mark-slide var(--dur-loop) ease-in-out infinite;
+    animation: none;
+  }
+  :root:not([data-motion="reduce"]) .agent-mark[data-working][data-agent="amp"] .agent-mark__body {
+    display: none;
+  }
+  :root:not([data-motion="reduce"]) .agent-mark[data-working][data-agent="amp"] .agent-mark__pieces {
+    display: inline;
+  }
+  :root:not([data-motion="reduce"]) .agent-mark[data-agent="amp"] .agent-mark__piece:nth-child(n + 2) {
+    animation: mark-amp-shoot var(--dur-loop) linear infinite;
+    animation-delay: calc((2 - var(--i)) * var(--dur-loop) * -0.14);
+  }
+  :root:not([data-motion="reduce"]) .agent-mark[data-working][data-option]:is([data-agent="generic"]) {
+    animation: none;
+  }
+  :root:not([data-motion="reduce"]) .agent-mark[data-working][data-option]:is([data-agent="generic"]) .agent-mark__body {
+    display: none;
+  }
+  :root:not([data-motion="reduce"]) .agent-mark[data-working][data-option]:is([data-agent="generic"]) .agent-mark__pieces {
+    display: inline;
+  }
+  :root:not([data-motion="reduce"]) .agent-mark[data-agent="generic"][data-option="blink"] .agent-mark__piece[style*="--i:2"] {
+    animation: mark-gen-blink var(--dur-loop) steps(1, end) infinite;
+  }
+  :root:not([data-motion="reduce"]) .agent-mark[data-agent="generic"][data-option="typing"] .agent-mark__piece[style*="--i:2"] {
+    transform-origin: left center;
+    animation: mark-gen-type var(--dur-loop) steps(5, end) infinite;
+  }
+  :root:not([data-motion="reduce"]) .agent-mark[data-agent="generic"][data-option="prompt"] .agent-mark__piece[style*="--i:1"] {
+    animation: mark-gen-chevron var(--dur-loop) ease-in-out infinite;
+  }
+  :root:not([data-motion="reduce"]) .agent-mark[data-agent="generic"][data-option="prompt"] .agent-mark__piece[style*="--i:2"] {
+    animation: mark-gen-blink var(--dur-loop) steps(1, end) infinite;
+  }
+  :root:not([data-motion="reduce"]) .agent-mark[data-agent="generic"][data-option="frame"] .agent-mark__piece[style*="--i:0"] {
+    animation: mark-gen-frame var(--dur-loop) ease-in-out infinite;
   }
   :root:not([data-motion="reduce"]) .agent-mark[data-working][data-agent="qwen"] {
-    animation: mark-wobble var(--dur-loop) ease-in-out infinite;
+    animation: mark-spin-back var(--dur-loop-slow) linear infinite;
   }
   :root:not([data-motion="reduce"]) .agent-mark[data-working][data-agent="grok"] {
     animation: mark-spin-back var(--dur-loop-slow) linear infinite;

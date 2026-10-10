@@ -1,5 +1,5 @@
 import { useId, type CSSProperties } from "react";
-import { AGENT_NAMES, CURSOR_CUBE, CURSOR_POINTER, MARK_PATHS, isAgentId, type AgentId } from "./agents";
+import { AGENT_NAMES, AMP_PIECES, CURSOR_CUBE, CURSOR_POINTER, GENERIC_PIECES, MARK_PATHS, isAgentId, type AgentId } from "./agents";
 import "./agent-colors.css";
 import "./AgentMark.css";
 
@@ -59,12 +59,20 @@ export function AgentMark({ agent, size = 16, working = false, option }: { agent
   const d = MARK_PATHS[id];
   const breath = BREATHING[id];
   const pointer = id === "cursor" && working;
+  const pieces = working ? (id === "amp" ? AMP_PIECES : id === "generic" && option ? GENERIC_PIECES : undefined) : undefined;
   const charge = id === "copilot" && working;
   const jelly = id === "antigravity" && working;
   const uid = useId().replace(/[^a-zA-Z0-9]/g, "");
   return (
     <svg className="agent-mark" data-agent={id} data-working={working || undefined} data-option={option} role="img" aria-label={AGENT_NAMES[id]} width={size} height={size} viewBox="0 0 24 24">
       <path className="agent-mark__body" style={breath ? ({ "--s": breath.outer } as CSSProperties) : undefined} d={d} fill="currentColor" fillRule="evenodd" />
+      {pieces && (
+        <g className="agent-mark__pieces" aria-hidden="true">
+          {pieces.map((piece, i) => (
+            <path key={i} className="agent-mark__piece" style={{ "--i": i } as CSSProperties} d={piece} fill="currentColor" fillRule="evenodd" />
+          ))}
+        </g>
+      )}
       {pointer && (
         <g className="agent-mark__cursor" aria-hidden="true">
           <mask id={`${uid}-cut`} maskUnits="userSpaceOnUse" x="-6" y="-6" width="36" height="36">

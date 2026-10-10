@@ -44,22 +44,22 @@ export const WorkingLoops: StoryObj = {
   ),
 };
 
-const CURSOR_OPTIONS = [
-  ["wander", "Wander: the pointer drifts around inside the cube, like a hand on a mouse"],
-  ["click", "Click: slides in, presses down, slides back"],
-  ["poke", "Poke: jabs forward twice, then settles"],
-  ["seek", "Seek: swings side to side like a compass needle"],
+const GENERIC_OPTIONS = [
+  ["blink", "Blink: only the underscore blinks"],
+  ["typing", "Typing: the underscore is typed out a step at a time, then starts again"],
+  ["prompt", "Prompt: the chevron pulses while the underscore blinks"],
+  ["frame", "Frame: the terminal frame breathes, the prompt holds still"],
 ] as const;
 
-/** Cursor's working loop, with only the pointer moving, to choose from. */
-export const CursorOptions: StoryObj = {
+/** The custom agent's working loop, with the parts of its mark moving separately. */
+export const CustomAgentOptions: StoryObj = {
   render: () => (
-    <ThemePair label="Cursor: options">
+    <ThemePair label="Custom agent: options">
       <div style={grid}>
-        {CURSOR_OPTIONS.map(([option, text]) => (
+        {GENERIC_OPTIONS.map(([option, text]) => (
           <figure key={option} style={{ ...cell, margin: 0 }}>
-            <AgentMark agent="cursor" size={20} working option={option} />
-            <AgentMark agent="cursor" size={16} working option={option} />
+            <AgentMark agent="generic" size={20} working option={option} />
+            <AgentMark agent="generic" size={16} working option={option} />
             <figcaption>{text}</figcaption>
           </figure>
         ))}

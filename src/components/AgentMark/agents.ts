@@ -61,3 +61,8 @@ const CURSOR_SPLIT = MARK_PATHS.cursor.indexOf("zm") + 1;
 export const CURSOR_CUBE = MARK_PATHS.cursor.slice(0, CURSOR_SPLIT);
 /** The pointer subpath, made absolute: the original starts with a relative `m-.603 1.176` from the cube's first point. */
 export const CURSOR_POINTER = `M21.503 6.856${MARK_PATHS.cursor.slice(MARK_PATHS.cursor.indexOf("L12.228"))}`;
+
+/** Amp's logo is three corner brackets and the custom agent's is a frame, a chevron and an underscore: separate shapes that can move on their own. */
+const SHAPES = /(?<=z)\s*(?=M)/;
+export const AMP_PIECES = MARK_PATHS.amp.split(SHAPES);
+export const GENERIC_PIECES = MARK_PATHS.generic.split(SHAPES);

@@ -6,12 +6,20 @@ import { AGENT_IDS } from "./agents";
 const motion = readFileSync(new URL("../../styles/motion.css", import.meta.url), "utf8");
 const tokens = readFileSync(new URL("../../styles/tokens.css", import.meta.url), "utf8");
 
+/** Vendors that deliberately share one loop: Claude and Gemini breathe the same way, Qwen turns like Grok. */
+const SHARED = [
+  ["claude", "gemini"],
+  ["grok", "qwen"],
+];
+
 /** Claude and Gemini share one breath: their tips draw in more than their centres (AgentMark.tsx). */
 const BREATH = ["claude", "gemini"];
 
 /** The `animation:` value of the rule for one vendor's working mark. */
 function animationOf(id: string): string | null {
   // Copilot stays still; its loop is on the parts of the face that flash inside it (copilotSpark.test.tsx).
+  // Amp's main arrow stays; its loop is on the two secondary arrows it fires away.
+  if (id === "amp") return motion.match(/\.agent-mark__piece:nth-child\(n \+ 2\)\s*\{[^}]*animation:\s*([^;]+);/)?.[1]?.trim() ?? null;
   // Cursor's cube stays still; its loop is on the pointer cut out of it.
   if (id === "cursor") return motion.match(/\.agent-mark__pointer\s*\{[^}]*animation:\s*([^;]+);/)?.[1]?.trim() ?? null;
   if (id === "copilot") return motion.match(/\.agent-mark__zone\s*\{[^}]*animation:\s*([^;]+);/)?.[1]?.trim() ?? null;
@@ -29,8 +37,8 @@ describe("a working session animates its vendor mark", () => {
     });
   it("gives every vendor a different animation", () => {
     const all = AGENT_IDS.map((id) => animationOf(id));
-    expect(new Set(all).size).toBe(AGENT_IDS.length - BREATH.length + 1);
-    expect(animationOf("gemini")).toBe(animationOf("claude"));
+    expect(new Set(all).size).toBe(AGENT_IDS.length - SHARED.reduce((n, g) => n + g.length - 1, 0));
+    for (const [first, ...rest] of SHARED) for (const id of rest) expect(animationOf(id), `${id} like ${first}`).toBe(animationOf(first!));
   });
   it("defines the keyframes each loop uses", () => {
     for (const id of AGENT_IDS) {
