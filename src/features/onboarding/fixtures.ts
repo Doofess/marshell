@@ -46,11 +46,24 @@ ${EVENTS.map((e) => `    "${e}": [{ "hooks": [{ "type": "command", "command": "$
 `;
 
 const codexBefore = 'model = "gpt-5"\napproval_policy = "on-request"\n';
-const CODEX_EVENTS = ["SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse", "Stop", "SessionEnd"];
-// The bridge path has a space, so the command quotes it inside the TOML literal string (which is itself in single quotes).
-const codexEntry = (event: string, role: "event" | "permission") => `\n[[hooks]]\nevent = "${event}"\ncommand = '${BRIDGE} ${role} --agent codex --tag mshl1'\ntimeout = ${role === "permission" ? 600 : 30}\n`;
-// Exactly the seven entries the card promises: six status events and the permission request.
-const codexAfter = codexBefore + CODEX_EVENTS.map((e) => codexEntry(e, "event")).join("") + codexEntry("PermissionRequest", "permission");
+// Codex hooks are event-nested TOML (docs/research/codex-cli.md, "Hook sources, trust, and config safety"): `[[hooks.<Event>]]` is a
+// matcher group and `[[hooks.<Event>.hooks]]` its handler. No matcher: Marshell wants every source and every tool. Timeouts are
+// seconds, explicit and short: 10 for telemetry, 120 for the permission decision (a person is in the loop), 3 for SessionEnd (Codex
+// caps it there). The bridge path has a space, so the command quotes it inside the TOML literal string (itself in single quotes).
+const CODEX_TIMEOUT: Record<string, number> = { PermissionRequest: 120, SessionEnd: 3 };
+const codexEntry = (event: string, role: "event" | "permission") =>
+  `\n[[hooks.${event}]]\n[[hooks.${event}.hooks]]\ntype = "command"\ncommand = '${BRIDGE} ${role} --agent codex --tag mshl1'\ntimeout = ${CODEX_TIMEOUT[event] ?? 10}\n`;
+// Exactly the seven documented events the card promises, in lifecycle order: six status events and the permission request.
+const CODEX_HOOKS: Array<[event: string, role: "event" | "permission"]> = [
+  ["SessionStart", "event"],
+  ["UserPromptSubmit", "event"],
+  ["PreToolUse", "event"],
+  ["PermissionRequest", "permission"],
+  ["PostToolUse", "event"],
+  ["Stop", "event"],
+  ["SessionEnd", "event"],
+];
+const codexAfter = codexBefore + CODEX_HOOKS.map(([e, role]) => codexEntry(e, role)).join("");
 // A stand-in, made long on purpose to show how a long change folds; its card says so in its own headline.
 const STAND_IN = 40;
 const codexStandIn = codexBefore + Array.from({ length: STAND_IN }, (_, i) => codexEntry(`StandIn${i + 1}`, "event")).join("");

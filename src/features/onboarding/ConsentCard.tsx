@@ -46,9 +46,14 @@ export function ConsentCard({ scenario, on, open = false }: { scenario: { detect
             A backup is saved first, in <code>{plan.backupPath}</code>. To undo: {plan.removal}
           </p>
           {plan.needsTrust && (
-            <p className="consent__trust">
-              Codex runs hooks only after you trust them. After you allow this, Marshell asks you to open <code>/hooks</code> and trust them there.
-            </p>
+            <>
+              <p className="consent__trust">
+                Codex runs hooks only after you trust them. After you allow this, Marshell asks you to open <code>/hooks</code> and trust them there.
+              </p>
+              <p className="consent__source">
+                The hook entries go in <code>config.toml</code> only, not in <code>hooks.json</code> as well: Codex reads both and would warn about duplicates.
+              </p>
+            </>
           )}
         </>
       ) : (
