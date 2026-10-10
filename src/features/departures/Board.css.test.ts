@@ -25,4 +25,14 @@ describe("Board.css", () => {
   it("colours the agent name from the session's accent", () => {
     expect(css).toMatch(/\.board__agent[^{]*\{[^}]*color:\s*var\(--accent\)/);
   });
+  it("marks a gate call in the window's attention colour, not the vendor's, so every session that needs you looks alike", () => {
+    expect(css).toMatch(/\.board\s*\{[^}]*--board-attention:\s*var\(--accent\)/);
+    expect(css).toMatch(/\.board__row\[data-gate="true"\]::after\s*\{[^}]*background:\s*var\(--board-attention\)/);
+    expect(css).toMatch(/\.board__row\[data-gate="true"\] \.board__status\s*\{[^}]*color:\s*var\(--board-attention\)/);
+    expect(css).not.toMatch(/var\(--signal/);
+  });
+  it("in forced colours a gate call's status is plain CanvasText, not the attention colour", () => {
+    const block = css.slice(css.indexOf("@media (forced-colors: active)"));
+    expect(block).toMatch(/\.board__row\[data-gate="true"\] \.board__status\s*\{[^}]*color:\s*CanvasText/);
+  });
 });

@@ -10,4 +10,7 @@ describe("review-departures.js", () => {
   it("skips the flipping when motion is reduced", () => {
     expect(js).toContain("prefers-reduced-motion");
   });
+  it("always cross-fades a cell the story marks as reduced, whatever the page's setting", () => {
+    expect(js).toContain("data-reduced");
+  });
 });

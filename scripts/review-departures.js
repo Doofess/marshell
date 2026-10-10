@@ -14,8 +14,10 @@
   function play() {
     for (const t of timers) cancelAnimationFrame(t);
     timers = [];
-    const reduced = reducedQuery.matches || reducedBox();
+    const pageReduced = reducedQuery.matches || reducedBox();
     for (const c of cells) {
+      // A cell the story marks as reduced (data-reduced) always cross-fades, whatever the page's own setting.
+      const reduced = pageReduced || c.el.hasAttribute("data-reduced");
       c.el.textContent = c.final;
       c.el.classList.remove("flip--fade");
       if (reduced) {

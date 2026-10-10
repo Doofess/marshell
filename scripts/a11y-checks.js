@@ -3,7 +3,7 @@
 //   window.a11yChecks()  ->  { mode, findings: [{ rule, where, detail }], counts }
 // It only reads; it moves focus (and puts it back) for the focus-ring check.
 (() => {
-  const PAGE = ".window, .launcher, .palette, .onboarding, .consent, .detected, .notify-step, .doctor, .settings, .fix-sheet";
+  const PAGE = ".window, .launcher, .palette, .onboarding, .consent, .detected, .notify-step, .doctor, .settings, .fix-sheet, .board, .os-banner, .tray-menu";
   const where = (el) => {
     const id = el.id ? `#${el.id}` : "";
     const cls = typeof el.className === "string" && el.className ? "." + el.className.trim().split(/\s+/).slice(0, 2).join(".") : "";

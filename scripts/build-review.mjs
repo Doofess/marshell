@@ -239,9 +239,17 @@ META["3b"] = {
   ],
 };
 META["3c"] = {
-  lede: "Sub-review C of 3 in batch 3: Departures, notifications and the tray. Everything signed off earlier is below.",
-  nav: [["departures", "Departures"], ["notifications", "Notifications"], ["tray-and-icon", "Tray"], ["sign-off", "Sign-off"]],
-  checks: ["Placeholder: replaced in Task 17."],
+  lede: "Sub-review C of 3 in batch 3: Departures, notifications and the tray. Onboarding, doctor and settings (A and B) and batch 2 are signed off and sit below.",
+  nav: [["departures", "Departures"], ["notifications", "Notifications"], ["tray-and-icon", "Tray"], ["doctor", "Doctor"], ["sign-off", "Sign-off"]],
+  checks: [
+    "Screen-reader pass (about 10 minutes, Narrator and NVDA): follow docs/a11y/screen-reader-script.md, batch 3 C (section F), and answer with its letters.",
+    "The board reads at a glance: you can say which sessions need you and for how long, from the gate group alone.",
+    "Press Replay animations: only the status and waiting cells flip, within 400 ms; with Reduced motion on they cross-fade.",
+    "Twelve sessions fit without scrolling the window and say how many more there are.",
+    "A risky banner offers only Review and does not show the command; no banner raises the window.",
+    "The icon is legible at 16 px on both light and dark taskbars; the overlay and dock badges follow each OS's rule.",
+    "Keyboard: the board moves with arrows, Enter jumps, Y or N opens the card inline; works at 150% zoom and in Windows High Contrast.",
+  ],
 };
 META["2b"] = {
   lede: "Sub-review B of 3 in batch 2: the main window with a real terminal. Sub-review A (approve card) and batch 1 are signed off and sit below.",

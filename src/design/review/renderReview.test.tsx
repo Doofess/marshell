@@ -79,3 +79,20 @@ describe("renderReview ids", () => {
     expect([...new Set(dup)]).toEqual([]);
   });
 });
+
+describe("renderReview 3c content", () => {
+  it("renders Departures, notifications and the tray", () => {
+    const html = renderReview("3c");
+    expect(html).toContain('id="departures"');
+    expect(html).toContain('id="notifications"');
+    expect(html).toContain('id="tray-and-icon"');
+    for (const name of ["Twelve sessions", "Motion clip", "Motion filmstrip", "Windows risky", "Windows batched", "Icon sizes", "Tray menu windows"]) expect(html, name).toContain(name);
+  });
+  it("is cumulative", () => {
+    expect(renderReview("3c")).toContain('id="doctor"');
+  });
+  it("never repeats an element id on the whole 3c page", () => {
+    const ids = [...renderReview("3c").matchAll(/\sid="([^"]+)"/g)].map((m) => m[1]!);
+    expect([...new Set(ids.filter((id, i) => ids.indexOf(id) !== i))]).toEqual([]);
+  });
+});

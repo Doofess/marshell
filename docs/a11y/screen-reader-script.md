@@ -90,6 +90,19 @@ Go to the **Doctor** section, then **Settings**.
 | E7 | Move through "Edit as" | "Edit as, radio group, Form, selected"; arrows move between Form and Raw | ☐ | ☐ |
 | E8 | In Raw mode with a mistake, Tab into the text area | The line and column of the mistake are read as the description ("Line 3, column 23: ...") | ☐ | ☐ |
 
+## F. Batch 3 C: Departures, banners and the tray
+
+Go to the **Departures** section, then **Notifications**, then **Tray and icon**.
+
+| # | Do | You should hear | Narrator | NVDA |
+| --- | --- | --- | :-: | :-: |
+| F1 | Tab into the board and arrow down to a gate row | "Session 3, api-server, needs you, ..." the whole row read from its cells, with the session number first, and "Gate calls" as the group | ☐ | ☐ |
+| F2 | Press Y on a row that needs you | The request opens inline under the row and is read as an approve card; Enter on the row jumps to the session and never answers it | ☐ | ☐ |
+| F3 | Press Replay animations | Nothing is announced: the flipping cells are not a live region; the new status is read only when you move to the row | ☐ | ☐ |
+| F4 | Read a banner (Notifications section) | The title, then the body ("api-server needs you. Wants to run npm test"), then the buttons Allow and Deny (Linux: Open); a risky one reads Review only | ☐ | ☐ |
+| F5 | Move through the tray menu | "Open Marshell, menu item", then each waiting session with its number, "Go to the oldest waiting session, Ctrl+Shift+N", and the disabled line as unavailable | ☐ | ☐ |
+| F6 | Move to the tray icon | "Marshell, 2 need you" as one image, with no drawing details read | ☐ | ☐ |
+
 ## Recording the result
 
-In the review page's sign-off, answer with the table's letters (A to E): for example **"Screen reader: A pass, B fail (B6: focus went to the page, not the chip), C pass, Narrator and NVDA"**. A fail is a bug to fix before the sub-review is signed off, not a note for later. Put anything surprising (a phrase that is correct but long or odd) in `docs/IDEAS.md`.
+In the review page's sign-off, answer with the table's letters (A to F): for example **"Screen reader: A pass, B fail (B6: focus went to the page, not the chip), C pass, Narrator and NVDA"**. A fail is a bug to fix before the sub-review is signed off, not a note for later. Put anything surprising (a phrase that is correct but long or odd) in `docs/IDEAS.md`.
