@@ -32,6 +32,23 @@ describe("bannerFor: what it says", () => {
   });
 });
 
+describe("bannerFor: Allow only when the whole command is shown", () => {
+  it("offers Allow and Deny only for a command that fits on one line", () => {
+    expect(bannerFor({ ...perm, detail: "x".repeat(160) }, "windows")!.actions).toEqual(["Allow", "Deny"]);
+  });
+  it("offers only Open for a command over 160 characters, so a cut-short command cannot be allowed", () => {
+    const b = bannerFor({ ...perm, detail: "x".repeat(161) }, "windows")!;
+    expect(b.actions).toEqual(["Open"]);
+    expect(b.body).not.toContain("xxxxx");
+  });
+  it("offers only Open for a multi-line command", () => {
+    expect(bannerFor({ ...perm, detail: "cd app\nrm file" }, "mac")!.actions).toEqual(["Open"]);
+  });
+  it("offers only Open when the command is not known", () => {
+    expect(bannerFor({ ...perm, detail: undefined }, "windows")!.actions).toEqual(["Open"]);
+  });
+});
+
 describe("bannerFor: when it stays quiet", () => {
   it("is silent while the window is focused", () => {
     expect(bannerFor({ ...perm, windowFocused: true }, "windows")).toBeNull();
@@ -69,7 +86,7 @@ describe("batching and escalation", () => {
   it("folds several requests within 3 seconds into one banner", () => {
     const b = batchBanner([perm, q, p2], "windows")!;
     expect(b.title).toBe("3 sessions need you");
-    expect(b.body).toBe("api-server, infra and billing");
+    expect(b.body).toBe("api-server (3), infra (2) and billing (1)");
     expect(b.actions).toEqual(["Open Marshell"]);
   });
   it("shows only Review when any of them is risky", () => {
@@ -81,5 +98,11 @@ describe("batching and escalation", () => {
   });
   it("escalates once with the wait in minutes", () => {
     expect(escalationBanner({ ...perm, waitedMs: 60_000 }, "windows").body).toBe("api-server has waited 1 min to run a command");
+  });
+  it("an escalation never offers Allow or Deny: its body no longer shows the command", () => {
+    for (const os of ["windows", "mac", "linux"] as const) {
+      expect(escalationBanner({ ...perm, waitedMs: 120_000 }, os).actions).toEqual(["Open"]);
+      expect(escalationBanner({ ...perm, risky: true, waitedMs: 120_000 }, os).actions).toEqual(["Review"]);
+    }
   });
 });

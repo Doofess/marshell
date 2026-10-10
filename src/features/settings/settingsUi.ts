@@ -22,4 +22,11 @@ export function settingsAnnouncement(state: SettingsState, changes: Record<strin
 }
 
 /** The file a category edits. Phase 0 shows Claude Code's; Marshell's own settings live in ~/.marshell/settings.json. */
-export const settingsPath = (category: string): string => (category === "claude" ? "C:\\Users\\Home Office\\.claude\\settings.json" : "~/.marshell/settings.json");
+export const settingsPath = (category: string): string =>
+  category === "claude"
+    ? "C:\\Users\\Home Office\\.claude\\settings.json"
+    : category === "codex"
+      ? "C:\\Users\\Home Office\\.codex\\config.toml"
+      : category === "gemini"
+        ? "C:\\Users\\Home Office\\.gemini\\settings.json"
+        : "~/.marshell/settings.json";

@@ -6,7 +6,7 @@ import { NotificationsStep } from "./NotificationsStep";
 describe("NotificationsStep", () => {
   it("previews every sound with a button named after it", () => {
     const h = renderToStaticMarkup(<NotificationsStep permission="not-asked" os="windows" />);
-    for (const s of ["Needs you", "Escalation", "Done", "Subagent done", "Error"]) expect(h).toContain(`Play ${s} sound`);
+    for (const s of ["Needs you", "Escalation", "Done", "Subagent done", "Error"]) expect(h).toContain(`Play sound: ${s}`);
     expect(h).toContain("Ask Windows to allow notifications");
   });
   it("says what still works when notifications are blocked, and where to turn them on", () => {

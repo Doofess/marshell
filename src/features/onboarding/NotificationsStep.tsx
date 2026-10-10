@@ -33,7 +33,7 @@ export function NotificationsStep({ permission, os }: { permission: Notification
           <li key={s} className="notify-step__sound">
             <span className="notify-step__sound-name">{s}</span>
             <button type="button" className="notify-step__play">
-              <span aria-hidden="true">▶</span> Play {s} sound
+              <span aria-hidden="true">▶</span> Play sound: {s}
             </button>
           </li>
         ))}

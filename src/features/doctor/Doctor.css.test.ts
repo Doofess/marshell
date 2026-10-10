@@ -21,7 +21,8 @@ describe("Doctor.css", () => {
     expect(css).toMatch(/@media \(prefers-reduced-motion: no-preference\)[\s\S]*?\.toast/);
     expect(css).toMatch(/@media \(prefers-reduced-motion: reduce\)[\s\S]*?80ms/);
   });
-  it("never scrolls on its own (the page body does)", () => {
-    expect(css).not.toMatch(/overflow(-x|-y)?:\s*(auto|scroll)/);
+  it("scrolls nothing except the fix sheet's body (the page body does the rest; see dialogBodies.test.ts)", () => {
+    expect([...css.matchAll(/overflow(-x|-y)?:\s*(auto|scroll)/g)]).toHaveLength(1);
+    expect(css).toMatch(/\.fix-sheet__body\s*\{[^}]*overflow-y:\s*auto/);
   });
 });

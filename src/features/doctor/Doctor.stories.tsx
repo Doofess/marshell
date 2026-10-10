@@ -38,3 +38,4 @@ const RTL: DoctorReport = {
   items: DOCTOR_REPORT.items.map((i) => (i.id === "claude-cleanup-period" ? { ...i, title: "Claude מוחק תמלולים אחרי 30 יום", file: "C:\\Users\\רותם\\.claude\\settings.json" } : i)),
 };
 export const RtlFilePath: StoryObj = { render: () => <ThemePair label="A Hebrew title and a path with Hebrew in it stay readable and wrap" stack>{page(RTL, "ready")}</ThemePair> };
+export const FixSheetSmallWindow: StoryObj = { render: () => <ThemePair label="Fix sheet in a 720 by 480 window: the changes scroll in the body; Cancel and the fix stay in view" stack><div style={{ inlineSize: 720, blockSize: 480 }}><FixSheet report={LONG} /></div></ThemePair> };

@@ -12,7 +12,7 @@ describe("ConsentCard", () => {
     expect(h).toContain("Add 9 hook entries and chain your status line");
     expect(h).toContain("A backup is saved first");
     expect(h).toContain(".marshell\\snapshots");
-    expect(h).toContain("Remove all hooks");
+    expect(h).toContain("removes only the entries Marshell added");
     expect(h).toContain("Skip: use limited status");
   });
   it("has a switch for each capability and explains an unavailable one", () => {
@@ -28,7 +28,7 @@ describe("ConsentCard", () => {
   });
   it("adds the trust step for Codex", () => {
     const h = renderToStaticMarkup(<ConsentCard scenario={CONSENT.codex} on={on} />);
-    expect(h).toContain("Trust these hooks in /hooks");
+    expect(h).toContain("trust them there");
   });
   it("replaces the controls with the reason when the file cannot be edited", () => {
     const h = renderToStaticMarkup(<ConsentCard scenario={CONSENT.unparsableGemini} on={on} />);

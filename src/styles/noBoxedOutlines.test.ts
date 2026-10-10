@@ -82,3 +82,10 @@ describe("no ring, box or stray outline either", () => {
       }
   });
 });
+
+describe("no browser-drawn box either", () => {
+  it("flattens text inputs, selects and text areas in base.css, since the browser's own inset border is a box no declaration scan can see (see formControls.test.ts)", () => {
+    const base = readFileSync(join(root, "styles/base.css"), "utf8");
+    expect(base).toMatch(/:where\(input:not\(\[type="checkbox"\]\):not\(\[type="radio"\]\), select, textarea\)\s*\{[^}]*border:\s*0/);
+  });
+});

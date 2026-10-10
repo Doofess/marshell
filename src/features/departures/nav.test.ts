@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { boardRows } from "./board";
 import { SCENARIO_ROWS } from "../window/scenario";
-import { reduceBoard } from "./nav";
+import { keyHint, reduceBoard } from "./nav";
 
 const rows = boardRows(SCENARIO_ROWS);
 const gateIdx = rows.findIndex((r) => r.gate);
@@ -28,5 +28,31 @@ describe("reduceBoard", () => {
   });
   it("copes with no rows", () => {
     expect(reduceBoard({ active: 0, card: null }, "ArrowDown", []).state.active).toBe(0);
+  });
+});
+
+describe("reduceBoard: where focus lands in the opened request", () => {
+  it("Y opens the request with focus on the card itself, never on Allow", () => {
+    expect(reduceBoard({ active: gateIdx, card: null }, "KeyY", rows).state.focus).toBe("title");
+  });
+  it("N opens the same request with focus on Deny, and never denies by itself", () => {
+    const r = reduceBoard({ active: gateIdx, card: null }, "KeyN", rows);
+    expect(r.state.card).toBe(rows[gateIdx]!.id);
+    expect(r.state.focus).toBe("deny");
+  });
+  it("closing the request forgets where focus was", () => {
+    expect(reduceBoard({ active: 1, card: "x", focus: "deny" }, "Escape", rows).state).toEqual({ active: 1, card: null });
+  });
+});
+
+describe("keyHint: the letter on the user's own key", () => {
+  it("is the letter the layout prints on the physical key, when the layout says so", () => {
+    const qwertz = new Map([["KeyY", "z"], ["KeyN", "n"]]);
+    expect(keyHint("KeyY", qwertz)).toBe("Z");
+    expect(keyHint("KeyN", qwertz)).toBe("N");
+  });
+  it("falls back to the code's own letter when the layout is not known", () => {
+    expect(keyHint("KeyY")).toBe("Y");
+    expect(keyHint("KeyN", new Map())).toBe("N");
   });
 });

@@ -22,7 +22,7 @@ export function ConsentCard({ scenario, on, open = false }: { scenario: { detect
         </h3>
       </header>
       <p className="consent__what" dir="auto">
-        {consentHeadline(d, on)}
+        {plan.headline ?? consentHeadline(d, on)}
       </p>
       {edit.ok ? (
         <>
@@ -37,12 +37,17 @@ export function ConsentCard({ scenario, on, open = false }: { scenario: { detect
             View exact changes
           </button>
           {open && <DiffView diff={plan.diff} label={`Exact changes to ${d.configPath}`} />}
+          {plan.chainPath && on.statusline && CAPABILITIES[d.cli].statusline.available && (
+            <p className="consent__chain">
+              Your own status line command is saved in <code>{plan.chainPath}</code> and keeps running: Marshell&apos;s runs first and then yours.
+            </p>
+          )}
           <p className="consent__meta">
             A backup is saved first, in <code>{plan.backupPath}</code>. To undo: {plan.removal}
           </p>
           {plan.needsTrust && (
             <p className="consent__trust">
-              Codex runs hooks only after you trust them. Marshell will ask you to open <code>/hooks</code>: Trust these hooks in /hooks.
+              Codex runs hooks only after you trust them. After you allow this, Marshell asks you to open <code>/hooks</code> and trust them there.
             </p>
           )}
         </>

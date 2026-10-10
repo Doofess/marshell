@@ -89,13 +89,27 @@ export function splitGroups(rows: BoardRow[]): { gate: BoardRow[]; others: Board
   return { gate, others };
 }
 
-/** Whole rows only: the board never shows a partial row, and counts the ones that did not fit. */
-export function fitRows(heightPx: number, g: { gate: BoardRow[]; others: BoardRow[] }): { gate: BoardRow[]; others: BoardRow[]; hidden: number } {
+/** The "+N more sessions" line. */
+export const MORE_PX = 44;
+/** An open request (the approve card) under its row, which is taller than any row. */
+export const CARD_PX = 220;
+
+/** Whole rows only: the board never shows a partial row, counts the ones that did not fit, and keeps room for the "+N more" line and an open request. */
+export function fitRows(heightPx: number, g: { gate: BoardRow[]; others: BoardRow[] }, cardOpen = false): { gate: BoardRow[]; others: BoardRow[]; hidden: number } {
+  const total = g.gate.length + g.others.length;
   const groups = (g.gate.length ? 1 : 0) + (g.others.length ? 1 : 0);
-  const room = Math.max(0, Math.floor((heightPx - HEAD_PX - groups * GROUP_PX) / ROW_PX));
+  const base = HEAD_PX + groups * GROUP_PX + (cardOpen ? CARD_PX : 0);
+  const rowsFor = (px: number) => Math.max(0, Math.floor(px / ROW_PX));
+  // Everything fits: no "+N more" line. Otherwise one line of the room goes to it.
+  const room = total <= rowsFor(heightPx - base) ? total : rowsFor(heightPx - base - MORE_PX);
   const gate = g.gate.slice(0, room);
   const others = g.others.slice(0, Math.max(0, room - gate.length));
-  return { gate, others, hidden: g.gate.length + g.others.length - gate.length - others.length };
+  return { gate, others, hidden: total - gate.length - others.length };
+}
+
+/** The height the board takes for a fit: the header, the group lines that show, the rows, the "+N more" line and an open request. */
+export function boardHeight(f: { gate: BoardRow[]; others: BoardRow[]; hidden: number }, cardOpen: boolean): number {
+  return HEAD_PX + (f.gate.length ? GROUP_PX : 0) + (f.others.length ? GROUP_PX : 0) + (f.gate.length + f.others.length) * ROW_PX + (f.hidden > 0 ? MORE_PX : 0) + (cardOpen ? CARD_PX : 0);
 }
 
 /** The accessible name: number first, then every value the row shows, so label-in-name holds. */

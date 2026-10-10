@@ -6,8 +6,8 @@ import type { SettingField } from "./fields";
 const before = '{\n  "model": "opus",\n  "cleanupPeriodDays": 30\n}\n';
 describe("edit", () => {
   it("sets keys and keeps the rest and the order", () => {
-    expect(JSON.parse(applyChanges(before, { cleanupPeriodDays: 365 }))).toEqual({ model: "opus", cleanupPeriodDays: 365 });
-    expect(Object.keys(JSON.parse(applyChanges(before, { theme: "dark" })))).toEqual(["model", "cleanupPeriodDays", "theme"]);
+    expect(JSON.parse(applyChanges(before, { cleanupPeriodDays: 365 })!)).toEqual({ model: "opus", cleanupPeriodDays: 365 });
+    expect(Object.keys(JSON.parse(applyChanges(before, { theme: "dark" })!))).toEqual(["model", "cleanupPeriodDays", "theme"]);
   });
   it("previews the exact change as a diff of the whole file", () => {
     const p = parseUnifiedDiff(previewChange("C:/Users/Home Office/.claude/settings.json", before, { cleanupPeriodDays: 365 }));

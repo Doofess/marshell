@@ -33,6 +33,10 @@ export type Banner = {
   sessionNumber: number;
 };
 
+/** A command is shown in a banner (and can be allowed from it) only when the whole of it fits on one line. */
+export const BANNER_COMMAND_MAX = 160;
+export const fitsOneLine = (cmd: string | undefined): cmd is string => cmd !== undefined && cmd.length > 0 && cmd.length <= BANNER_COMMAND_MAX && !/[\r\n]/.test(cmd);
+
 /** "Done" banners are only for sessions that have been in the background for more than 30 seconds. */
 export const DONE_MIN_BACKGROUND_MS = 30_000;
 /** Requests that arrive within this window fold into one banner. */
@@ -61,8 +65,10 @@ export function bannerFor(e: NotifyEvent, os: Os): Banner | null {
     case "needs-permission":
       // A risky request never shows its command in a banner: the user has to look at it in the window.
       if (e.risky) return { ...base(e), title: `${e.name} needs you`, body: "Needs a careful look.", actions: ["Review"] };
-      // Allow and Deny buttons need the OS to offer actions; on Linux only the click that opens the session is certain.
-      return { ...base(e), title: `${e.name} needs you`, body: `Wants to run \`${e.detail ?? "a command"}\``, actions: os === "linux" ? ["Open"] : ["Allow", "Deny"] };
+      // Allow and Deny need the OS to offer actions, and a command that is cut short or hidden must never be allowed
+      // from a banner: those only open the session, where the whole command can be read.
+      if (!fitsOneLine(e.detail)) return { ...base(e), title: `${e.name} needs you`, body: e.detail ? "Wants to run a command that does not fit here." : "Wants to run a command.", actions: ["Open"] };
+      return { ...base(e), title: `${e.name} needs you`, body: `Wants to run \`${e.detail}\``, actions: os === "linux" ? ["Open"] : ["Allow", "Deny"] };
   }
 }
 
@@ -74,7 +80,7 @@ export function batchBanner(events: NotifyEvent[], os: Os): Banner | null {
   if (live.length === 0) return null;
   if (live.length === 1) return bannerFor(live[0]!, os);
   const risky = live.some((e) => e.risky);
-  return { ...base(live[0]!), meta: `${live.length} sessions`, title: `${live.length} sessions need you`, body: list(live.map((e) => e.name)), actions: risky ? ["Review"] : ["Open Marshell"] };
+  return { ...base(live[0]!), meta: `${live.length} sessions`, title: `${live.length} sessions need you`, body: list(live.map((e) => `${e.name} (${e.number})`)), actions: risky ? ["Review"] : ["Open Marshell"] };
 }
 
 /** The one escalation, after a wait: how many minutes the session has been waiting. */
@@ -82,7 +88,8 @@ export function escalationBanner(e: NotifyEvent, os: Os): Banner {
   const min = Math.max(1, Math.round((e.waitedMs ?? 60_000) / 60_000));
   const what = e.kind === "needs-question" ? "for an answer" : "to run a command";
   const first = bannerFor({ ...e, windowFocused: false }, os) ?? { ...base(e), title: `${e.name} needs you`, actions: ["Open"], body: "" };
-  return { ...first, body: `${e.name} has waited ${min} min ${what}` };
+  // The body no longer shows the command, so the only things to offer are the ones that never decide it.
+  return { ...first, body: `${e.name} has waited ${min} min ${what}`, actions: e.risky ? ["Review"] : ["Open"] };
 }
 
 /** Banners are OS UI and sound: the window announces nothing extra for them. */

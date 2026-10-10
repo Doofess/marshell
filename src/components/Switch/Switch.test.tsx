@@ -17,3 +17,17 @@ describe("Switch", () => {
     expect(h).toMatch(/aria-describedby="([^"]+)"/);
   });
 });
+
+describe("Switch: state words", () => {
+  it("keeps the state words out of the accessible name, and shows the one that matches the control's own state", () => {
+    const h = renderToStaticMarkup(<Switch label="Play sounds" checked />);
+    expect(h).toMatch(/class="switch__state" aria-hidden="true"/);
+    expect(h).toContain(">On<");
+    expect(h).toContain(">Off<");
+  });
+  it("says the state is unknown with an en dash instead of guessing", () => {
+    const h = renderToStaticMarkup(<Switch label="Play sounds" checked={false} unknown disabled />);
+    expect(h).toContain("data-unknown");
+    expect(h).toContain(">–<");
+  });
+});

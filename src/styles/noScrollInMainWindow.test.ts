@@ -12,9 +12,11 @@ const FILES = [...walk(join(SRC, "features")), ...walk(join(SRC, "components")),
 /**
  * Selectors that may scroll: menus and settings (`.scroll-menu`, `.layout-menu`), the request-details drawer (a menu-like
  * inspector for a 40-line command), the prompt field, which scrolls past eight lines with its scrollbar hidden, and the raw
- * settings editor's text area (a text box scrolls its own text, like the prompt field; it is not the live window).
+ * settings editor's text area (a text box scrolls its own text, like the prompt field; it is not the live window), and the
+ * bodies of the fix sheet and the onboarding frame (a change or three consent cards can be longer than a 720 by 480 window;
+ * their actions sit in a row outside the scrolling body, with a visible themed scrollbar; see dialogBodies.test.ts).
  */
-const ALLOWED = [/^\.drawer$/, /^\.composer__field$/, /^\.scroll-menu$/, /^\.layout-menu$/, /^\.sidebar__list$/, /^\.rail__list$/, /^\.palette__list$/, /^\.launcher__list$/, /^\.page__body$/, /^\.raw-editor__text$/];
+const ALLOWED = [/^\.drawer$/, /^\.composer__field$/, /^\.scroll-menu$/, /^\.layout-menu$/, /^\.sidebar__list$/, /^\.rail__list$/, /^\.palette__list$/, /^\.launcher__list$/, /^\.page__body$/, /^\.raw-editor__text$/, /^\.fix-sheet__body$/, /^\.onboarding__body$/];
 
 const read = (f: string) => readFileSync(join(SRC, f), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
 const rules = (css: string) => [...css.matchAll(/([^{}]+)\{([^{}]*)\}/g)].map((m) => ({ selectors: m[1]!.split(",").map((s) => s.trim()), body: m[2]! }));

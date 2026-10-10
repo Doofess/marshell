@@ -26,4 +26,8 @@ export type ConsentPlan = {
   removal: string;
   diff: string;
   needsTrust: boolean;
+  /** Where the user's own status line command is kept when it is chained (shown on the card and in the diff). */
+  chainPath?: string;
+  /** Replaces the computed headline; only a stand-in change made long on purpose says so here. */
+  headline?: string;
 };

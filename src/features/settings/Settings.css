@@ -125,7 +125,16 @@
   color: var(--text-2);
 }
 
+.scope-badge__note {
+  position: absolute;
+  inline-size: 1px;
+  block-size: 1px;
+  overflow: clip;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
 .scope-badge {
+  position: relative;
   display: inline-flex;
   align-items: center;
   gap: var(--space-1);

@@ -19,7 +19,8 @@ describe("Onboarding.css", () => {
     expect(css).toMatch(/font-family:\s*var\(--font-mono\)/);
     expect(css).toMatch(/overflow-wrap:\s*anywhere/);
   });
-  it("never scrolls", () => {
-    expect(css).not.toMatch(/overflow(-x|-y)?:\s*(auto|scroll)/);
+  it("scrolls only its body, so the buttons are always reachable (see dialogBodies.test.ts)", () => {
+    expect(css).toMatch(/\.onboarding__body\s*\{[^}]*overflow-y:\s*auto/);
+    expect([...css.matchAll(/overflow(-x|-y)?:\s*(auto|scroll)/g)]).toHaveLength(1);
   });
 });

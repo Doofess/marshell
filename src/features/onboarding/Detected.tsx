@@ -4,7 +4,7 @@ import { CLI_NAME, type Detection } from "./consent";
 import "./Onboarding.css";
 
 function stateSentence(d: Detection): string | null {
-  if (d.configState === "unparsable") return `Its settings file does not parse (line ${d.parseError?.line ?? 0}), so Marshell will not edit it.`;
+  if (d.configState === "unparsable") return `Its settings file does not parse (line ${d.parseError?.line ?? "–"}), so Marshell will not edit it.`;
   if (d.configState === "read-only") return "Its settings file is read-only, so Marshell cannot add hooks to it.";
   return null;
 }

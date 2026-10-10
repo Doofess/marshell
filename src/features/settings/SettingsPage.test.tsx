@@ -69,7 +69,7 @@ describe("SettingsPage: changes", () => {
     expect(h).toContain("1 change");
     expect(h).toContain("diff__lines");
     expect(h).toContain("A backup is saved first");
-    expect(h).toContain("Settings → Advanced → Snapshots");
+    expect(h).toContain("Marshell puts that copy back for as long as the file is still as it was after this change");
     expect(h).toContain(">Apply<");
     expect(h).toContain(">Discard<");
   });
@@ -96,20 +96,20 @@ describe("SettingsPage: changes", () => {
 
 describe("SettingsPage: unsafe files", () => {
   it("read-only: says so and disables editing", () => {
-    const h = renderToStaticMarkup(<SettingsPage {...base} state={{ readOnly: true }} />);
+    const h = renderToStaticMarkup(<SettingsPage {...base} state={{ readOnly: true, changed: true, reviewing: true }} edits={{ cleanupPeriodDays: 365 }} />);
     expect(h).toContain(esc("This file is read-only, so Marshell can't save changes."));
     expect(h).not.toContain(">Apply<");
   });
   it("unparsable: fails closed, names the line, and leaves the form off", () => {
-    const h = renderToStaticMarkup(<SettingsPage {...base} state={{ unparsable: true }} opened={SETTINGS_TEXT_BROKEN} mode="raw" />);
-    expect(h).toContain(esc("This file does not parse, so Marshell won't edit it."));
+    const h = renderToStaticMarkup(<SettingsPage {...base} state={{ unparsable: true, changed: true, reviewing: true }} edits={{ model: "sonnet" }} opened={SETTINGS_TEXT_BROKEN} mode="raw" />);
+    expect(h).toContain(esc("does not parse (line 3, column ")); expect(h).toContain(esc("so Marshell won't edit it."));
     expect(h).toMatch(/Line 3/);
     expect(h).not.toContain(">Apply<");
   });
-  it("conflict: says the file changed on disk and offers three ways forward", () => {
+  it("conflict: says the file changed on disk and offers two ways forward and never to overwrite", () => {
     const h = renderToStaticMarkup(<SettingsPage {...base} state={{ conflict: true, changed: true }} />);
     expect(h).toContain("The file changed on disk since you opened it.");
-    for (const b of ["Show differences", "Keep mine", "Reload"]) expect(h).toContain(`>${b}<`);
+    for (const b of ["Review the difference", "Reload"]) expect(h).toContain(`>${b}<`);
     expect(h).not.toContain(">Apply<");
   });
 });

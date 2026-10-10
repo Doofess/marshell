@@ -125,6 +125,15 @@
   text-overflow: ellipsis;
   font-weight: 600;
 }
+.board__moves {
+  flex: none;
+  padding-inline: var(--space-2);
+  border-radius: 3px;
+  background: var(--fill);
+  color: var(--text-1);
+  font-size: var(--text-11);
+  white-space: nowrap;
+}
 .board__where,
 .board__recap {
   color: var(--text-2);

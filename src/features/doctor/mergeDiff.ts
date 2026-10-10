@@ -28,6 +28,8 @@ export function mergeDiffs(diffs: string[]): string {
   if (parts.length === 1) return parts[0]!;
   const header = split(parts[0]!).header;
   const hunks = parts.flatMap((d) => split(d).hunks).sort((a, b) => a.oldStart - b.oldStart);
+  // Two changes that touch the same lines cannot be one diff: they would not apply together. Keep each as its own section.
+  if (hunks.some((h, i) => i > 0 && h.oldStart < hunks[i - 1]!.oldStart + hunks[i - 1]!.oldLen)) return parts.join("");
   let delta = 0;
   const out = [...header];
   for (const h of hunks) {

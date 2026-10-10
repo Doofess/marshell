@@ -27,7 +27,11 @@ const FILE = `{
 }
 `;
 // Inside the JSON file the command's own quotes are written \"...\" (a quoted path, because the home folder has a space).
-const HOOK = String.raw`\"C:/Users/Home Office/.marshell/bin/marshell-hook\"`;
+const HOOK = String.raw`\"C:/Users/Home Office/.marshell/bin/marshell-hook.exe\"`;
+// The user's own status line command is kept verbatim in a new file next to Marshell's other data, so the fix shows it is not lost.
+const CHAIN_FILE = `${HOME}\\.marshell\\agents\\claude\\statusline-chain.json`;
+const CHAIN_BODY = '{ "type": "command", "command": "python ~/.claude/statusline.py" }\n';
+const chainKept = { file: CHAIN_FILE, diff: unifiedDiff(CHAIN_FILE, "", CHAIN_BODY).replace(/^--- a\/.*$/m, "--- /dev/null") };
 const hooksAfter = FILE.replace('"hooks": {}', `"hooks": {
     "PermissionRequest": [{ "hooks": [{ "type": "command", "command": "${HOOK} permission --agent claude --tag mshl1" }] }]
   }`);
@@ -47,7 +51,7 @@ export const DOCTOR_REPORT: DoctorReport = {
   durationMs: 1_840,
   items: [
     fixable({ id: "claude-permission-hook", cli: "claude", title: "Approve from anywhere is not installed", detail: "Claude Code's permission requests cannot reach Marshell's cards, so they only show in the terminal.", severity: "error", restartSessions: [3], after: hooksAfter }),
-    fixable({ id: "claude-statusline-chain", cli: "claude", title: "Your status line is no longer chained", detail: "Something replaced the status line command. Marshell puts itself in front and keeps yours running.", restartSessions: [3, 5], after: chainAfter }),
+    fixable({ id: "claude-statusline-chain", cli: "claude", title: "Your status line is no longer chained", detail: "Something replaced the status line command. Marshell puts itself in front and keeps yours running.", restartSessions: [3, 5], after: chainAfter, alsoWrites: [chainKept] }),
     fixable({ id: "claude-cleanup-period", cli: "claude", title: "Claude deletes transcripts after 30 days", detail: "Marshell keeps its own copy, but raising this to 365 days keeps Claude's own resume working.", after: cleanupAfter }),
     fixable({ id: "duplicate-notifications", cli: "marshell", title: "Two notifications for one request", detail: "Claude Code and Marshell both show a banner when a request arrives.", after: dupAfter }),
     {

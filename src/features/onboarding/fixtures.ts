@@ -45,9 +45,14 @@ ${EVENTS.map((e) => `    "${e}": [{ "hooks": [{ "type": "command", "command": "$
 `;
 
 const codexBefore = 'model = "gpt-5"\napproval_policy = "on-request"\n';
-const codexAfter =
-  codexBefore +
-  Array.from({ length: 40 }, (_, i) => `\n[[hooks]]\nevent = "Event${i}"\ncommand = '${BRIDGE.replace(/"/g, "")} event --agent codex --tag mshl1'\ntimeout = 30\n`).join("");
+const CODEX_EVENTS = ["SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse", "Stop", "SessionEnd"];
+// The bridge path has a space, so the command quotes it inside the TOML literal string (which is itself in single quotes).
+const codexEntry = (event: string, role: "event" | "permission") => `\n[[hooks]]\nevent = "${event}"\ncommand = '${BRIDGE} ${role} --agent codex --tag mshl1'\ntimeout = ${role === "permission" ? 600 : 30}\n`;
+// Exactly the seven entries the card promises: six status events and the permission request.
+const codexAfter = codexBefore + CODEX_EVENTS.map((e) => codexEntry(e, "event")).join("") + codexEntry("PermissionRequest", "permission");
+// A stand-in, made long on purpose to show how a long change folds; its card says so in its own headline.
+const STAND_IN = 40;
+const codexStandIn = codexBefore + Array.from({ length: STAND_IN }, (_, i) => codexEntry(`StandIn${i + 1}`, "event")).join("");
 
 const geminiBefore = '{\n  "theme": "dark"\n}\n';
 const geminiAfter = `{
@@ -59,16 +64,21 @@ ${EVENTS.slice(0, 7).map((e) => `    "${e}": [{ "hooks": [{ "type": "command", "
 }
 `;
 
+const CHAIN_PATH = `${HOME}\\.marshell\\agents\\claude\\statusline-chain.json`;
+// The user's own status line is saved verbatim in a new file, so the diff shows it is kept and where.
+const chainFile = '{ "type": "command", "command": "python ~/.claude/statusline.py" }\n';
+const newFile = (path: string, text: string) => unifiedDiff(path, "", text).replace(/^--- a\/.*$/m, "--- /dev/null");
+
 /** The exact change each CLI's consent card shows under "View exact changes". */
 export const CONSENT_DIFFS = {
-  claude: unifiedDiff(CLAUDE_PATH, claudeBefore, claudeAfter),
-  codex: unifiedDiff(CODEX_PATH, codexBefore, codexAfter.slice(0, codexBefore.length + 600)),
-  codexLong: unifiedDiff(CODEX_PATH, codexBefore, codexAfter),
+  claude: unifiedDiff(CLAUDE_PATH, claudeBefore, claudeAfter) + newFile(CHAIN_PATH, chainFile),
+  codex: unifiedDiff(CODEX_PATH, codexBefore, codexAfter),
+  codexLong: unifiedDiff(CODEX_PATH, codexBefore, codexStandIn),
   gemini: unifiedDiff(GEMINI_PATH, geminiBefore, geminiAfter),
 };
 
 const ALL_ON: Record<Capability, boolean> = { status: true, approve: true, statusline: true };
-const REMOVAL = "Settings → Advanced → Remove all hooks restores the file byte for byte.";
+const REMOVAL = "turning Marshell's hooks off, or uninstalling, removes only the entries Marshell added; the rest of the file stays as it is.";
 const plan = (d: Detection, diff: string, on: Record<Capability, boolean> = ALL_ON): ConsentPlan => ({
   cli: d.cli,
   on,
@@ -77,13 +87,16 @@ const plan = (d: Detection, diff: string, on: Record<Capability, boolean> = ALL_
   removal: REMOVAL,
   diff,
   needsTrust: d.cli === "codex" && (on.status || on.approve),
+  chainPath: d.cli === "claude" && on.statusline ? CHAIN_PATH : undefined,
 });
 
 /** A consent card's input: what was found, and what Marshell proposes. */
-export const CONSENT: Record<"claude" | "codex" | "gemini" | "unparsableGemini" | "claudeManaged", { detection: Detection; plan: ConsentPlan }> = {
+export const CONSENT: Record<"claude" | "codex" | "codexLong" | "gemini" | "unparsableGemini" | "readOnlyCodex" | "claudeManaged", { detection: Detection; plan: ConsentPlan }> = {
   claude: { detection: claude, plan: plan(claude, CONSENT_DIFFS.claude) },
-  codex: { detection: codex, plan: plan(codex, CONSENT_DIFFS.codexLong) },
+  codex: { detection: codex, plan: plan(codex, CONSENT_DIFFS.codex) },
+  codexLong: { detection: codex, plan: { ...plan(codex, CONSENT_DIFFS.codexLong), headline: `Add ${STAND_IN} hook entries in ${CODEX_PATH}. This is a stand-in change, made long on purpose to show how a long change folds.` } },
   gemini: { detection: gemini, plan: plan(gemini, CONSENT_DIFFS.gemini, { status: true, approve: false, statusline: false }) },
+  readOnlyCodex: { detection: DETECTIONS.readOnly[1]!, plan: plan(DETECTIONS.readOnly[1]!, "") },
   unparsableGemini: { detection: DETECTIONS.unparsable[2]!, plan: plan(DETECTIONS.unparsable[2]!, "") },
   claudeManaged: { detection: { ...claude, managed: MANAGED }, plan: plan({ ...claude, managed: MANAGED }, CONSENT_DIFFS.claude) },
 };

@@ -15,8 +15,8 @@ const SHAPES = {
 } as const;
 
 /**
- * Where a value comes from: a word, a shape (so it never depends on colour) and, on hover, what it means. The word is the
- * accessible name; the sentence is the description.
+ * Where a value comes from: a word, a shape (so it never depends on colour) and, on hover, what it means. The sentence is
+ * also in the markup, visually hidden, so a screen reader reads what the word means.
  */
 export function ScopeBadge({ scope }: { scope: Scope }) {
   return (
@@ -25,6 +25,8 @@ export function ScopeBadge({ scope }: { scope: Scope }) {
         {SHAPES[SCOPE_SHAPE[scope]]}
       </svg>
       {SCOPE_LABEL[scope]}
+      {/* Read after the word by a screen reader, since a tooltip is out of reach of a keyboard. */}
+      <span className="scope-badge__note">{SCOPE_NOTE[scope]}</span>
     </span>
   );
 }

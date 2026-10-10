@@ -32,6 +32,15 @@ describe("parseUnifiedDiff", () => {
     const d = parseUnifiedDiff(["--- a/x", "+++ b/x", "@@ -1,2 +1,1 @@", "--- not a header", " keep"].join("\n"));
     expect(d.removed).toBe(1);
   });
+  it("reads two files that follow each other without a 'diff ' line between them", () => {
+    const two = [
+      "--- a/a.json", "+++ b/a.json", "@@ -1,2 +1,2 @@", "-old a", "+new a", " same",
+      "--- /dev/null", "+++ b/b.json", "@@ -1,0 +1,1 @@", "+new b",
+    ].join("\n");
+    const d = parseUnifiedDiff(two);
+    expect(d.files).toEqual(["a.json", "b.json"]);
+    expect([d.added, d.removed]).toEqual([2, 1]);
+  });
   it("reads CRLF input and an empty diff", () => {
     expect(parseUnifiedDiff(SAMPLE.replace(/\n/g, "\r\n")).added).toBe(2);
     expect(parseUnifiedDiff("")).toEqual({ lines: [], added: 0, removed: 0, files: [] });

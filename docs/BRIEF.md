@@ -30,6 +30,7 @@ Where the text below disagrees with this list, this list wins. `docs/PLAN.md` ho
   - **Keyboard.** Plain Tab, Esc and arrows always reach the program. Navigation uses a held Ctrl+Shift chord (a setting): its Tab cycles only the sessions on screen, one direction only; with arrows it reaches the side list too; Backspace selects none. Shortcuts match physical keys, use no punctuation, and avoid OS clashes (see the audit in PLAN).
   - **Accessibility.** One screen-reader announcer for the window, announcing only what needs you; a safety net of shared blocks, rule tests, a forced-colours/zoom matrix and a screen-reader script.
   - **Platforms.** Windows 11 is the only tested platform; Linux and macOS support is a plan.
+  - **Batch 3 (onboarding, Departures, doctor, settings, banners, tray).** One consent card per CLI with the exact diff, backup and undo path; the user's own status line is kept in a visible file when chained; unknown values are left out of rows and the strip and shown as an en dash in tables and forms; pages scroll in their body with the actions outside it; an Allow button in a banner only for a command shown whole on one line.
 - **Decisions:**
   - pnpm
   - MIT open source

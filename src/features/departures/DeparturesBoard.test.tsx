@@ -70,3 +70,60 @@ describe("DeparturesBoard", () => {
     expect(row).toBeDefined();
   });
 });
+
+describe("DeparturesBoard: reachable by keyboard, with table semantics that survive the grid layout", () => {
+  const tabStops = (h: string) => (h.match(/<tr class="board__row[^"]*"[^>]*tabindex="0"/g) ?? []).length;
+  it("has exactly one tab stop, and it is the first row when no row is active", () => {
+    const h = html();
+    expect(tabStops(h)).toBe(1);
+    const first = h.match(/<tr class="board__row[^"]*"[^>]*>/)![0];
+    expect(first).toContain('tabindex="0"');
+  });
+  it("moves the single tab stop to the active row", () => {
+    const h = html({ active: 2 });
+    expect(tabStops(h)).toBe(1);
+    expect(h.match(/<tr class="board__row[^"]*"[^>]*tabindex="0"/)![0]).toContain('aria-current="true"');
+  });
+  it("says what every part is with explicit roles, because the grid layout drops the table's own in some browsers", () => {
+    const h = html();
+    expect(h).toMatch(/<table[^>]*role="table"/);
+    expect(h).toMatch(/<thead[^>]*role="rowgroup"/);
+    expect(h).toMatch(/<th[^>]*role="columnheader"[^>]*scope="col"|<th[^>]*scope="col"[^>]*role="columnheader"/);
+    expect(h).toMatch(/<tr class="board__row[^"]*"[^>]*role="row"/);
+    expect(h).toMatch(/<td[^>]*role="cell"/);
+  });
+  it("gives each group its own row group with a row-group header, not a column-group one", () => {
+    const h = html();
+    expect(h).not.toContain('scope="colgroup"');
+    const bodies = h.match(/<tbody[^>]*role="rowgroup"[^>]*>/g) ?? [];
+    expect(bodies).toHaveLength(2);
+    expect((h.match(/<th[^>]*scope="rowgroup"/g) ?? []).length).toBe(2);
+  });
+  it("puts the '+N more' line in a row group of its own", () => {
+    const twelve = Array.from({ length: 12 }, (_, i) => ({ ...FIXTURES[2]!, id: `s${i}`, number: i + 1 }));
+    const h = renderToStaticMarkup(<DeparturesBoard rows={twelve} heightPx={400} />);
+    expect(h).toMatch(/<tbody[^>]*role="rowgroup"[^>]*><tr class="board__more" role="row">/);
+  });
+  it("fits twelve sessions in 520 px with the '+N more' line included", () => {
+    const twelve = Array.from({ length: 12 }, (_, i) => ({ ...FIXTURES[2]!, id: `s${i}`, number: i + 1, status: "working" as const }));
+    const h = renderToStaticMarkup(<DeparturesBoard rows={twelve} heightPx={520} />);
+    const shown = (h.match(/<tr class="board__row/g) ?? []).length;
+    expect(shown).toBeGreaterThan(0);
+    expect(36 + 28 + shown * 44 + 44).toBeLessThanOrEqual(520);
+  });
+});
+
+describe("DeparturesBoard: a row that flipped to NEEDS YOU while the board is held still", () => {
+  it("says it moves up, so its status and its group do not seem to disagree", () => {
+    const working = SCENARIO_ROWS_WITH_TOOLS.find((r) => r.status === "working")!;
+    const h = html({ texts: { [working.id]: { status: "NEEDS YOU" } } });
+    const row = (h.match(/<tr class="board__row[^"]*"[\s\S]*?<\/tr>/g) ?? []).find((r) => r.includes(`title="Session ${working.number}, `))!;
+    expect(row).toContain("NEEDS YOU");
+    expect(row).toContain("board__moves");
+    expect(row).toContain("Moves up when you move away");
+  });
+  it("says nothing on a row that is already a gate call", () => {
+    const gate = html().match(/<tr class="board__row[^"]*"[^>]*data-gate="true"[\s\S]*?<\/tr>/)![0];
+    expect(gate).not.toContain("board__moves");
+  });
+});

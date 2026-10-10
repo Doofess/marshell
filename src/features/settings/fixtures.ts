@@ -23,7 +23,7 @@ export const SETTINGS_FIELDS: SettingField[] = [
   { category: "terminal", key: "contrast", label: "Contrast protection", help: "Lifts dim text so it stays readable on the terminal's background.", kind: "boolean", value: true, scope: "marshell", applies: "live" },
   { category: "claude", key: "model", label: "Default model", help: "The model a new Claude Code session starts with.", kind: "enum", options: ["opus", "sonnet", "haiku"], value: "opus", scope: "user", applies: "new-sessions" },
   { category: "claude", key: "cleanupPeriodDays", label: "Delete transcripts after (days)", help: "Claude deletes its own transcripts after this long. Marshell keeps its own copy.", kind: "number", value: 30, scope: "user", applies: "new-sessions" },
-  { category: "claude", key: "defaultMode", label: "Default permission mode", help: "How Claude Code asks before it acts.", kind: "enum", options: ["default", "acceptEdits", "plan"], value: "default", scope: "user", lockedBy: "managed", applies: "restart" },
+  { category: "claude", key: "defaultMode", label: "Default permission mode", help: "How Claude Code asks before it acts.", kind: "enum", options: ["default", "acceptEdits", "plan"], value: "default", scope: "user", lockedBy: "managed", managedValue: "plan", applies: "restart" },
 ];
 
 /** A fourteen-line Claude settings.json with the two keys the editor changes. */

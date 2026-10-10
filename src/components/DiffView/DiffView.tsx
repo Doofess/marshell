@@ -23,16 +23,18 @@ export function DiffView({ diff, label, limit = 40, expanded = false }: { diff: 
             <span className="diff__no" aria-hidden="true">
               {l.newNo ?? l.oldNo ?? ""}
             </span>
-            <span className="diff__sign">{SIGN[l.kind]}</span>
+            <span className="diff__sign" aria-hidden="true">
+              {SIGN[l.kind]}
+            </span>
             {l.kind === "add" && <span className="diff__sr">added </span>}
             {l.kind === "del" && <span className="diff__sr">removed </span>}
-            <code dir="auto">{l.text}</code>
+            <code dir="ltr">{l.text}</code>
           </li>
         ))}
       </ol>
       {hidden > 0 && (
         <button type="button" className="diff__more">
-          Show all {p.lines.length} lines
+          Show all {p.lines.filter((l) => l.kind !== "meta" && l.kind !== "hunk").length} lines
         </button>
       )}
     </figure>

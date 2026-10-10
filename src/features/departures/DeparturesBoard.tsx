@@ -39,7 +39,7 @@ const EMPTY = EMPTY_STATES.find((e) => e.id === "departures-empty")!;
  */
 export function DeparturesBoard({ rows, heightPx, active, card, stale = [], flips = {}, tracks = {}, texts = {}, reduced = false }: DeparturesBoardProps) {
   const groups = splitGroups(boardRows(rows));
-  const fit = fitRows(heightPx, groups);
+  const fit = fitRows(heightPx, groups, card !== undefined);
   const shown = [...fit.gate, ...fit.others];
 
   if (groups.gate.length + groups.others.length === 0) {
@@ -66,29 +66,33 @@ export function DeparturesBoard({ rows, heightPx, active, card, stale = [], flip
         data-agent={r.agent}
         data-stale={stale.includes(r.id) || undefined}
         title={boardRowLabel(r)}
-        tabIndex={active === index ? 0 : -1}
+        role="row"
+        // One tab stop for the whole board (a roving tabindex): the active row, or the first when none is.
+        tabIndex={(active ?? 0) === index ? 0 : -1}
       >
-        <td className="board__status">
+        <td role="cell" className="board__status">
           <FlipCell from={f?.status?.from ?? statusNow} to={statusNow} at={f?.status?.at} reduced={reduced} track={track?.status} />
         </td>
-        <td className="board__session">
+        <td role="cell" className="board__session">
           <span className="board__sr">Session </span>
           <SessionNumber n={r.number} title={SESSION_NUMBER_HINT} />{" "}
           <span className="board__name" dir="auto">
             {r.name}
           </span>
+          {/* Rows are held still while the pointer is over the board, so a row that now needs you says it will move. */}
+          {!r.gate && statusNow === "NEEDS YOU" && <span className="board__moves">Moves up when you move away</span>}
         </td>
-        <td className="board__where">
+        <td role="cell" className="board__where">
           <span dir="auto">{r.where}</span>
         </td>
-        <td className="board__agent" data-agent={r.agent}>
+        <td role="cell" className="board__agent" data-agent={r.agent}>
           <AgentMark agent={r.agent} size={12} /> <span>{r.agentName}</span>
         </td>
-        <td className="board__waiting">
+        <td role="cell" className="board__waiting">
           <FlipCell from={f?.waiting?.from ?? waitingNow} to={waitingNow} at={f?.waiting?.at} reduced={reduced} track={track?.waiting} />
         </td>
-        <td className="board__ctx">{r.ctxText}</td>
-        <td className="board__recap">
+        <td role="cell" className="board__ctx">{r.ctxText}</td>
+        <td role="cell" className="board__recap">
           <span dir="auto" title={source.recap?.text}>
             {r.recap}
           </span>
@@ -101,8 +105,8 @@ export function DeparturesBoard({ rows, heightPx, active, card, stale = [], flip
     card === r.id
       ? [
           row(r),
-          <tr key={`${r.id}-card`} className="board__card">
-            <td colSpan={COLUMNS.length}>
+          <tr key={`${r.id}-card`} className="board__card" role="row">
+            <td role="cell" colSpan={COLUMNS.length}>
               <ApproveCard request={APPROVALS.safeBash} />
             </td>
           </tr>,
@@ -111,44 +115,49 @@ export function DeparturesBoard({ rows, heightPx, active, card, stale = [], flip
 
   return (
     <section className="board" aria-label="Departures">
-      <table className="board__table">
-        <thead>
-          <tr>
+      {/* Explicit roles: the grid layout in Board.css would otherwise drop the table's own semantics in some browsers. */}
+      <table className="board__table" role="table" aria-label="Sessions">
+        <thead role="rowgroup">
+          <tr role="row">
             {COLUMNS.map((c, i) => (
-              <th key={c} scope="col" className={`board__th board__th--${i}`}>
+              <th key={c} role="columnheader" scope="col" className={`board__th board__th--${i}`}>
                 {c}
               </th>
             ))}
           </tr>
         </thead>
-        <tbody>
-          {fit.gate.length > 0 && (
-            <tr className="board__group">
-              <th scope="colgroup" colSpan={COLUMNS.length}>
+        {fit.gate.length > 0 && (
+          <tbody role="rowgroup">
+            <tr className="board__group" role="row">
+              <th role="rowheader" scope="rowgroup" colSpan={COLUMNS.length}>
                 Gate calls · {groups.gate.length}
               </th>
             </tr>
-          )}
-          {fit.gate.map(withCard)}
-          {fit.others.length > 0 && (
-            <tr className="board__group">
-              <th scope="colgroup" colSpan={COLUMNS.length}>
+            {fit.gate.map(withCard)}
+          </tbody>
+        )}
+        {fit.others.length > 0 && (
+          <tbody role="rowgroup">
+            <tr className="board__group" role="row">
+              <th role="rowheader" scope="rowgroup" colSpan={COLUMNS.length}>
                 Other sessions · {groups.others.length}
               </th>
             </tr>
-          )}
-          {fit.others.map(withCard)}
-          {fit.hidden > 0 && (
-            <tr className="board__more">
-              <td colSpan={COLUMNS.length}>
-                +{fit.hidden} more sessions{" "}
+            {fit.others.map(withCard)}
+          </tbody>
+        )}
+        {fit.hidden > 0 && (
+          <tbody role="rowgroup">
+            <tr className="board__more" role="row">
+              <td role="cell" colSpan={COLUMNS.length}>
+                +{fit.hidden} more {fit.hidden === 1 ? "session" : "sessions"}{" "}
                 <button type="button" className="board__all">
                   All sessions
                 </button>
               </td>
             </tr>
-          )}
-        </tbody>
+          </tbody>
+        )}
       </table>
     </section>
   );

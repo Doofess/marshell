@@ -57,6 +57,19 @@
   font-variant-numeric: tabular-nums;
   color: var(--text-2);
 }
+/* One of the three words shows: On or Off from the control's own checked state, or an en dash when the state is unknown. */
+.switch__unknown,
+.switch__input:checked ~ .switch__state .switch__off,
+.switch__input:not(:checked) ~ .switch__state .switch__on {
+  display: none;
+}
+.switch[data-unknown] .switch__unknown {
+  display: inline;
+}
+.switch[data-unknown] .switch__on,
+.switch[data-unknown] .switch__off {
+  display: none;
+}
 .switch__reason {
   margin: 0;
   padding-inline-start: calc(32px + var(--space-3));

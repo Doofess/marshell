@@ -3,6 +3,8 @@ import { selectedProps } from "../../components/a11y/SelectedMark";
 import { EmptyState } from "../../components/EmptyState/EmptyState";
 import { Page } from "../../components/Page/Page";
 import { EMPTY_STATES } from "../onboarding/emptyStates";
+import { pendingChanges } from "./edit";
+import { parseRaw } from "./raw";
 import { ChangeBar } from "./ChangeBar";
 import { FieldRow } from "./FieldRow";
 import { RawEditor } from "./RawEditor";
@@ -21,7 +23,10 @@ export function SettingsPage({ category, mode, state, edits, opened = SETTINGS_T
   const fields = SETTINGS_FIELDS.filter((f) => f.category === category);
   const path = settingsPath(category);
   const file = { readOnly: state.readOnly, unparsable: state.unparsable };
-  const reason = fileReason(file);
+  const parsed = state.unparsable ? parseRaw(opened) : undefined;
+  const reason = fileReason(file, path, parsed && !parsed.ok ? { line: parsed.line, column: parsed.column } : undefined);
+  // Only the edits that really differ from what is set count and are previewed.
+  const pending = edits ? pendingChanges(fields, edits) : undefined;
   const isAgent = category === "codex" || category === "gemini";
   const empty = EMPTY_STATES.find((e) => e.id === "no-agents")!;
 
@@ -65,10 +70,7 @@ export function SettingsPage({ category, mode, state, edits, opened = SETTINGS_T
                 <p>The file changed on disk since you opened it.</p>
                 <div className="settings__banner-actions">
                   <button type="button" className="settings__btn">
-                    Show differences
-                  </button>
-                  <button type="button" className="settings__btn">
-                    Keep mine
+                    Review the difference
                   </button>
                   <button type="button" className="settings__btn">
                     Reload
@@ -87,9 +89,9 @@ export function SettingsPage({ category, mode, state, edits, opened = SETTINGS_T
             ) : isAgent ? (
               <EmptyState title={empty.title} body={empty.body} action={empty.action ? { label: empty.action } : undefined} />
             ) : (
-              <EmptyState title="Nothing to set here yet" body="Snapshots, backups and removal are kept here in a later phase." />
+              <EmptyState title="Nothing to set here yet" body="Snapshots and removal will be listed here once Marshell has changed one of your files." />
             )}
-            <ChangeBar path={path} opened={opened} edits={edits} state={state} />
+            <ChangeBar path={path} opened={opened} edits={pending} count={pending ? Object.keys(pending).length : undefined} state={state} />
           </div>
         </div>
       </Page>

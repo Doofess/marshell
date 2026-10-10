@@ -209,6 +209,8 @@
 /* The fix sheet: a dialog drawn on the page, with the combined diff per file. */
 .fix-sheet {
   display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  max-block-size: 100%;
   gap: var(--space-3);
   padding: var(--space-4);
   max-inline-size: 760px;
@@ -221,6 +223,15 @@
   margin: 0;
   font-size: var(--text-15);
   font-weight: 600;
+}
+/* The changes scroll here, with a visible themed scrollbar; the actions are the last row and never leave the sheet. */
+.fix-sheet__body {
+  display: grid;
+  gap: var(--space-3);
+  align-content: start;
+  min-block-size: 0;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
 }
 .fix-sheet__groups {
   display: grid;

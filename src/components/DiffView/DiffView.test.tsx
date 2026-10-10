@@ -18,8 +18,20 @@ describe("DiffView", () => {
   });
   it("collapses a 200-line change to 40 lines and offers Show all 200 lines", () => {
     const h = renderToStaticMarkup(<DiffView diff={big} label="Changes" />);
-    expect(h).toContain("Show all 203 lines");
+    expect(h).toContain("Show all 200 lines");
     expect((h.match(/class="diff__line"/g) ?? []).length).toBe(40);
+  });
+  it("counts only the changed and context lines in Show all, never the file and hunk headers", () => {
+    expect(renderToStaticMarkup(<DiffView diff={big} label="Changes" />)).not.toContain("203");
+  });
+  it("hides the sign from a screen reader, which hears added or removed instead", () => {
+    const h = renderToStaticMarkup(<DiffView diff={small} label="x" />);
+    expect(h).toMatch(/class="diff__sign" aria-hidden="true"/);
+    expect(h).toContain("diff__sr");
+  });
+  it("reads code left to right whatever its first letter, so a JSON line that starts with Hebrew is not scrambled", () => {
+    const he = ["--- a/s.json", "+++ b/s.json", "@@ -1,1 +1,1 @@", '+שלום: "x"'].join("\n");
+    expect(renderToStaticMarkup(<DiffView diff={he} label="x" />)).toMatch(/<code dir="ltr">/);
   });
   it("shows everything when expanded and has no button", () => {
     const h = renderToStaticMarkup(<DiffView diff={big} label="Changes" expanded />);

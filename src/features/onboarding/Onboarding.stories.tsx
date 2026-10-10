@@ -31,7 +31,8 @@ export const ConsentCodexTrust: StoryObj = { render: () => <ThemePair label="Scr
 export const ConsentGeminiLimited: StoryObj = { render: () => <ThemePair label="Screen 2: Gemini has no approval hook and no status line to chain, and says so instead of a dead switch" stack><div style={box}><ConsentCard scenario={CONSENT.gemini} on={{ status: true, approve: false, statusline: false }} /></div></ThemePair> };
 export const ConsentUnparsable: StoryObj = { render: () => <ThemePair label="Screen 2: a file that does not parse is never edited, and there are no switches" stack><div style={box}><ConsentCard scenario={CONSENT.unparsableGemini} on={ALL_ON} /></div></ThemePair> };
 export const ConsentManaged: StoryObj = { render: () => <ThemePair label="Screen 2: a managed file is listed read-only and has no control" stack><div style={box}><ConsentCard scenario={CONSENT.claudeManaged} on={ALL_ON} /></div></ThemePair> };
-export const ConsentLongDiff: StoryObj = { render: () => <ThemePair label="Screen 2: a 200-line change folds after 40 lines" stack><div style={box}><ConsentCard scenario={CONSENT.codex} on={ALL_ON} open /></div></ThemePair> };
+export const ConsentLongDiff: StoryObj = { render: () => <ThemePair label="Screen 2: a long change folds after 40 lines (a stand-in of 40 entries, and its headline says so)" stack><div style={box}><ConsentCard scenario={CONSENT.codexLong} on={ALL_ON} open /></div></ThemePair> };
+export const ConsentReadOnly: StoryObj = { render: () => <ThemePair label="Screen 2: a read-only file is never described as about to change: the card says it is read-only and gives the reason" stack><div style={box}><ConsentCard scenario={CONSENT.readOnlyCodex} on={ALL_ON} /></div></ThemePair> };
 
 const notes = (permission: "not-asked" | "granted" | "denied", os: "windows" | "mac" | "linux") => (
   <div style={box}>
@@ -49,3 +50,16 @@ export const FrameStep1: StoryObj = { render: () => <ThemePair label="The frame 
 export const FrameStep2: StoryObj = { render: () => <ThemePair label="The frame around screen 2: Back appears; one card per CLI" stack><OnboardingFrame step="consent" title="What Marshell may change" primary="Allow these changes" secondary="Skip all: use limited status"><ConsentCard scenario={CONSENT.claude} on={ALL_ON} /></OnboardingFrame></ThemePair> };
 export const FrameStep3: StoryObj = { render: () => <ThemePair label="The frame around screen 3" stack><OnboardingFrame step="notifications" title="Notifications" primary="Continue"><NotificationsStep permission="not-asked" os="windows" /></OnboardingFrame></ThemePair> };
 export const FrameStep4: StoryObj = { render: () => <ThemePair label="The frame around screen 4: the last step" stack><OnboardingFrame step="first-session" title="Start your first session" primary="Start"><FirstSession /></OnboardingFrame></ThemePair> };
+export const FrameStep2SmallWindow: StoryObj = {
+  render: () => (
+    <ThemePair label="Screen 2 in a 720 by 480 window with three consent cards open: the cards scroll in the body; Skip and Allow these changes stay in view" stack>
+      <div style={{ inlineSize: 720, blockSize: 480 }}>
+        <OnboardingFrame step="consent" title="What Marshell may change" primary="Allow these changes" secondary="Skip all: use limited status">
+          <ConsentCard scenario={CONSENT.claude} on={ALL_ON} open />
+          <ConsentCard scenario={CONSENT.codex} on={ALL_ON} open />
+          <ConsentCard scenario={CONSENT.gemini} on={{ status: true, approve: false, statusline: false }} open />
+        </OnboardingFrame>
+      </div>
+    </ThemePair>
+  ),
+};

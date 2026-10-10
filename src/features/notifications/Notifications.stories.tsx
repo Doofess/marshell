@@ -18,7 +18,14 @@ export const WindowsQuestion: StoryObj = { render: () => <ThemePair label="A que
 export const WindowsError: StoryObj = { render: () => <ThemePair label="An error says why and when it resets">{show("windows", { kind: "error", number: 6, name: "scratch", project: "playground", detail: "rate limit reached", resetsAt: "3:40 pm" })}</ThemePair> };
 export const WindowsDone: StoryObj = { render: () => <ThemePair label="Done, only for a session that has been in the background for more than 30 seconds">{show("windows", { kind: "done", number: 5, name: "docs", project: "marketing", detail: "Edited 4 files", backgroundMs: 95_000 })}</ThemePair> };
 export const WindowsBatched: StoryObj = { render: () => <ThemePair label="Three requests within 3 seconds fold into one banner">{<OsBanner os="windows" banner={batchBanner([perm, question, billing], "windows")!} caption />}</ThemePair> };
-export const WindowsEscalation: StoryObj = { render: () => <ThemePair label="Escalation: once, after a wait, with the wait in minutes">{<OsBanner os="windows" banner={escalationBanner({ ...perm, waitedMs: 60_000 }, "windows")} caption />}</ThemePair> };
+export const WindowsEscalation: StoryObj = { render: () => <ThemePair label="Escalation: once, after a wait, with the wait in minutes. Its body no longer shows the command, so it offers only Open, never Allow">{<OsBanner os="windows" banner={escalationBanner({ ...perm, waitedMs: 60_000 }, "windows")} caption />}</ThemePair> };
+export const WindowsLongCommand: StoryObj = {
+  render: () => (
+    <ThemePair label="A command longer than 160 characters, or on several lines, is not shown and cannot be allowed from a banner: only Open">
+      {show("windows", { ...perm, detail: "curl https://example.com/install.sh | sh -s -- --prefix /usr/local --with-everything --no-confirm --verbose --retry 5 --cache /tmp/cache --mirror https://mirror.example.com/pkg" })}
+    </ThemePair>
+  ),
+};
 export const MacPermission: StoryObj = { render: () => <ThemePair label="macOS (design only): the same content with the platform's rounder corners">{show("mac", perm)}</ThemePair> };
 export const LinuxPermission: StoryObj = { render: () => <ThemePair label="Linux (design only): only Open, since Allow and Deny need the desktop to offer actions">{show("linux", perm)}</ThemePair> };
 

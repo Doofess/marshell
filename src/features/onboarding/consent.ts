@@ -24,11 +24,14 @@ export function canEdit(d: Detection): { ok: boolean; reason?: string } {
 }
 
 export function consentHeadline(d: Detection, on: Record<Capability, boolean>): string {
-  if (d.configState === "unparsable") return `${d.configPath} does not parse (line ${d.parseError?.line ?? 0}), so Marshell will not edit it.`;
+  if (d.configState === "unparsable") return `${d.configPath} does not parse (line ${d.parseError?.line ?? "–"}), so Marshell will not edit it.`;
+  if (d.configState === "read-only") return `${d.configPath} is read-only, so Marshell will not edit it.`;
   const n = entryCount(d.cli, on);
   const chain = on.statusline && CAPABILITIES[d.cli].statusline.available;
   if (n === 0 && !chain) return `Change nothing. ${CLI_NAME[d.cli]} will show limited status.`;
   const add = `Add ${n} hook ${n === 1 ? "entry" : "entries"}`;
-  const text = chain ? (n > 0 ? `${add} and chain your status line` : "Chain your status line") : add;
+  // Gemini's hooks sit behind hooksConfig.enabled, so the change names the setting it turns on.
+  const gemini = d.cli === "gemini" && n > 0 ? " and set hooksConfig.enabled" : "";
+  const text = chain ? (n > 0 ? `${add}${gemini} and chain your status line` : "Chain your status line") : `${add}${gemini}`;
   return `${text} in ${d.configPath}.`;
 }

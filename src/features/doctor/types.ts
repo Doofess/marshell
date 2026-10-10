@@ -12,6 +12,8 @@ export type DoctorItem = {
   unfixableReason?: string;
   file?: string;
   diff?: string;
+  /** Other files this fix writes besides `file` (such as where a chained status line's original is kept), each with its own diff. */
+  alsoWrites?: { file: string; diff: string }[];
   /** Session numbers that only pick the fix up after a restart. */
   restartSessions?: number[];
 };

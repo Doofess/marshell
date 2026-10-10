@@ -63,7 +63,7 @@ export function DoctorPage({ report, phase, undo, nowMs, elapsedMs = 0, failure 
           {listed && !clear && (
             <p className="doctor__summary">
               {c.issues} {plural(c.issues, "issue", "issues")}
-              {phase === "fixed" ? ` · all fixed` : c.fixable > 0 ? ` · ${c.fixable} can be fixed` : ""}
+              {phase === "fixed" ? (c.unfixable === 0 ? ` · all fixed` : ` · ${c.fixable} fixed · ${c.unfixable} remain`) : c.fixable > 0 ? ` · ${c.fixable} can be fixed` : ""}
               {phase !== "fixed" && c.fixable === 0 && c.issues > 0 ? ` · ${fixHeadline(report)}` : ""}
             </p>
           )}

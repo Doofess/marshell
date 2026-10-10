@@ -20,7 +20,7 @@ describe("fixHeadline", () => {
 describe("groupByFile", () => {
   it("groups fixable items by file with one combined diff and its counts", () => {
     const g = groupByFile(DOCTOR_REPORT.items);
-    expect(g.map((x) => x.file)).toEqual(["C:\\Users\\Home Office\\.claude\\settings.json"]);
+    expect(g.map((x) => x.file)).toEqual(["C:\\Users\\Home Office\\.claude\\settings.json", "C:\\Users\\Home Office\\.marshell\\agents\\claude\\statusline-chain.json"]);
     expect(g[0]!.items).toHaveLength(4);
     expect(g[0]!.added).toBeGreaterThan(0);
   });

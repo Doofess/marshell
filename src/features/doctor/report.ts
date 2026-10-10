@@ -16,10 +16,16 @@ export function fixHeadline(r: DoctorReport): string {
   return n === 0 ? "Nothing to fix" : `Fix ${n} ${plural(n, "issue", "issues")}`;
 }
 export function groupByFile(items: DoctorItem[]): FixGroup[] {
-  const by = new Map<string, DoctorItem[]>();
-  for (const i of items) if (i.fixable && i.file && i.diff) by.set(i.file, [...(by.get(i.file) ?? []), i]);
-  return [...by].map(([file, its]) => {
-    const diff = mergeDiffs(its.map((i) => i.diff!));
+  const by = new Map<string, { item: DoctorItem; diff: string }[]>();
+  const add = (file: string, item: DoctorItem, diff: string) => by.set(file, [...(by.get(file) ?? []), { item, diff }]);
+  for (const i of items) {
+    if (!i.fixable || !i.file || !i.diff) continue;
+    add(i.file, i, i.diff);
+    for (const w of i.alsoWrites ?? []) add(w.file, i, w.diff);
+  }
+  return [...by].map(([file, entries]) => {
+    const its = [...new Set(entries.map((e) => e.item))];
+    const diff = mergeDiffs(entries.map((e) => e.diff));
     const p = parseUnifiedDiff(diff);
     return { file, items: its, diff, added: p.added, removed: p.removed };
   });

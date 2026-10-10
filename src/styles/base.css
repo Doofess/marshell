@@ -39,3 +39,11 @@ button {
   color: inherit;
   font: inherit;
 }
+
+/* A text box, select or text area starts flat too: the browser's own inset border is a boxed outline nobody wrote. Zero specificity, so any class gives it a fill. Checkboxes and radios keep their native drawing. */
+:where(input:not([type="checkbox"]):not([type="radio"]), select, textarea) {
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+}
