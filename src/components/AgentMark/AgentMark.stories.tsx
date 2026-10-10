@@ -44,31 +44,6 @@ export const WorkingLoops: StoryObj = {
   ),
 };
 
-const IN_AND_OUT = [
-  ["breathe", "Breathe: the whole burst shrinks and grows"],
-  ["retract", "Retract: all rays pull in together"],
-  ["alternate", "Alternate: odd rays in while even rays out"],
-  ["wave", "Wave: in and out, one ray after another"],
-  ["deep", "Deep wave: rays nearly vanish"],
-] as const;
-
-/** Claude's working loop as in-and-out motions, to choose from. */
-export const ClaudeInAndOut: StoryObj = {
-  render: () => (
-    <ThemePair label="Claude: in-and-out options">
-      <div style={grid}>
-        {IN_AND_OUT.map(([loop, text]) => (
-          <figure key={loop} style={{ ...cell, margin: 0 }}>
-            <AgentMark agent="claude" size={20} working loop={loop} />
-            <AgentMark agent="claude" size={16} working loop={loop} />
-            <figcaption>{text}</figcaption>
-          </figure>
-        ))}
-      </div>
-    </ThemePair>
-  ),
-};
-
 /** The needs-you and error glyphs take the vendor's colour, so a list stays one family of colours. */
 export const NeedsYouInVendorColours: StoryObj = {
   render: () => (

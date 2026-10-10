@@ -32,26 +32,10 @@
 .agent-mark {
   transform-origin: center;
 }
-/* Claude: twelve rays pulse in a wave that travels clockwise round the burst (the logo is cut into wedges, see claudeRays.ts). */
-@keyframes mark-ray {
-  0%, 100% { transform: scale(1); opacity: 1; }
-  50% { transform: scale(0.55); opacity: 0.55; }
-}
-.agent-mark__rays {
-  display: none;
-}
-/* Claude's in-and-out variants (data-loop): the same twelve rays, moving in other patterns. */
+/* Claude breathes: the whole burst shrinks a little and grows back. */
 @keyframes mark-breathe {
   0%, 100% { transform: scale(1); }
   50% { transform: scale(0.78); }
-}
-@keyframes mark-ray-deep {
-  0%, 100% { transform: scale(1); opacity: 1; }
-  50% { transform: scale(0.3); opacity: 0.3; }
-}
-@keyframes mark-ray-retract {
-  0%, 100% { transform: scale(1); }
-  50% { transform: scale(0.4); }
 }
 @keyframes mark-spin {
   to { transform: rotate(360deg); }
@@ -93,33 +77,8 @@
 }
 
 @media (prefers-reduced-motion: no-preference) {
-  :root:not([data-motion="reduce"]) .agent-mark[data-working][data-agent="claude"] .agent-mark__still {
-    display: none;
-  }
-  :root:not([data-motion="reduce"]) .agent-mark[data-working][data-agent="claude"] .agent-mark__rays {
-    display: inline;
-  }
-  :root:not([data-motion="reduce"]) .agent-mark__ray {
-    transform-origin: 12px 12px;
-    animation: mark-ray var(--dur-loop) ease-in-out infinite;
-    animation-delay: calc(var(--i) * var(--dur-loop) / -12);
-  }
-  :root:not([data-motion="reduce"]) .agent-mark[data-loop="breathe"] .agent-mark__ray {
-    animation: none;
-  }
-  :root:not([data-motion="reduce"]) .agent-mark[data-loop="breathe"] .agent-mark__rays {
-    transform-origin: 12px 12px;
+  :root:not([data-motion="reduce"]) .agent-mark[data-working][data-agent="claude"] {
     animation: mark-breathe var(--dur-loop) ease-in-out infinite;
-  }
-  :root:not([data-motion="reduce"]) .agent-mark[data-loop="retract"] .agent-mark__ray {
-    animation: mark-ray-retract var(--dur-loop) ease-in-out infinite;
-    animation-delay: 0s;
-  }
-  :root:not([data-motion="reduce"]) .agent-mark[data-loop="alternate"] .agent-mark__ray {
-    animation-delay: calc(mod(var(--i), 2) * var(--dur-loop) / -2);
-  }
-  :root:not([data-motion="reduce"]) .agent-mark[data-loop="deep"] .agent-mark__ray {
-    animation-name: mark-ray-deep;
   }
   :root:not([data-motion="reduce"]) .agent-mark[data-working][data-agent="codex"] {
     animation: mark-spin var(--dur-loop) ease-in-out infinite;
