@@ -13,7 +13,7 @@ const FILES = [...walk(join(SRC, "features")), ...walk(join(SRC, "components")),
  * Selectors that may scroll: menus and settings (`.scroll-menu`, `.layout-menu`), the request-details drawer (a menu-like
  * inspector for a 40-line command), and the prompt field, which scrolls past eight lines with its scrollbar hidden.
  */
-const ALLOWED = [/^\.drawer$/, /^\.composer__field$/, /^\.scroll-menu$/, /^\.layout-menu$/, /^\.sidebar__list$/, /^\.rail__list$/, /^\.palette__list$/, /^\.launcher__list$/];
+const ALLOWED = [/^\.drawer$/, /^\.composer__field$/, /^\.scroll-menu$/, /^\.layout-menu$/, /^\.sidebar__list$/, /^\.rail__list$/, /^\.palette__list$/, /^\.launcher__list$/, /^\.page__body$/];
 
 const read = (f: string) => readFileSync(join(SRC, f), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
 const rules = (css: string) => [...css.matchAll(/([^{}]+)\{([^{}]*)\}/g)].map((m) => ({ selectors: m[1]!.split(",").map((s) => s.trim()), body: m[2]! }));
@@ -77,6 +77,14 @@ describe("the main window never scrolls", () => {
     expect(field.body).toMatch(/scrollbar-width:\s*none/);
     const hidden = rules(css).find((r) => r.selectors.includes(".composer__field::-webkit-scrollbar"));
     expect(hidden?.body).toMatch(/display:\s*none/);
+  });
+
+  it("lets the page body (Doctor, Settings, the diff sheet) scroll, with the scrollbar visible: not the live window, and the exception cannot spread", () => {
+    const css = read("components/Page/Page.css");
+    const r = rules(css).find((x) => x.selectors.includes(".page__body"))!;
+    expect(r.body).toMatch(/overflow-y:\s*auto/);
+    expect(css).not.toMatch(/scrollbar-width:\s*none/);
+    expect(css).not.toMatch(/::-webkit-scrollbar[^{]*\{[^}]*display:\s*none/);
   });
 
   it("keeps the themed scrollbar for menus, where scrolling is allowed", () => {
