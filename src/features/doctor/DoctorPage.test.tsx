@@ -56,6 +56,17 @@ describe("DoctorPage", () => {
     expect(later).not.toContain("Restart them");
     expect(later).toContain("Undo last fix");
   });
+  it("after the fix the fixed rows show a check, not their old error or warning glyph, and the summary says all were fixed", () => {
+    const h = renderToStaticMarkup(<DoctorPage report={DOCTOR_REPORT} phase="fixed" undo={UNDO_FIXED} nowMs={UNDO_FIXED.fixedAtMs + 2_000} />);
+    const rows = h.match(/<li class="doctor__row"[^>]*data-state="fixed"[\s\S]*?<\/li>/g) ?? [];
+    expect(rows).toHaveLength(4);
+    for (const r of rows) {
+      expect(r).toContain('data-kind="done-seen"');
+      expect(r).not.toContain('data-kind="error"');
+      expect(r).not.toContain("aux-glyph");
+    }
+    expect(h).toContain("4 issues · all fixed");
+  });
   it("a stale undo says why and shows no undo button", () => {
     const h = renderToStaticMarkup(<DoctorPage report={DOCTOR_REPORT} phase="fixed" undo={{ ...UNDO_FIXED, filesMatch: false }} nowMs={UNDO_FIXED.fixedAtMs + 60_000} />);
     expect(h).toContain("A file changed since the fix");
@@ -64,6 +75,10 @@ describe("DoctorPage", () => {
   it("names its buttons from the text they show", () => {
     const h = renderToStaticMarkup(<DoctorPage report={DOCTOR_REPORT} phase="ready" />);
     for (const b of h.match(/<button[\s\S]*?<\/button>/g) ?? []) expect(nameContainsLabel(b)).toBe(true);
+  });
+  it("hides the severity glyph from assistive technology: the severity is already a word beside it", () => {
+    const h = renderToStaticMarkup(<DoctorPage report={DOCTOR_REPORT} phase="ready" />);
+    expect((h.match(/class="doctor__mark" aria-hidden="true"/g) ?? []).length).toBe(DOCTOR_REPORT.items.length);
   });
   it("names the sessions that need a restart by number", () => {
     const h = renderToStaticMarkup(<DoctorPage report={DOCTOR_REPORT} phase="ready" />);

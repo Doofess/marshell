@@ -12,10 +12,10 @@ import type { SettingsState } from "./settingsUi";
 const meta: Meta = { title: "Settings", parameters: { layout: "fullscreen" } };
 export default meta;
 
-const frame = (children: ReactNode, width = 960, height = 620) => <div style={{ inlineSize: width, maxInlineSize: "100%", blockSize: height }}>{children}</div>;
+const frame = (children: ReactNode, width = 960, height = 940) => <div style={{ inlineSize: width, maxInlineSize: "100%", blockSize: height }}>{children}</div>;
 const page = (label: string, props: { category?: string; mode?: "form" | "raw"; state?: SettingsState; edits?: Record<string, unknown>; opened?: string } = {}, width?: number, height?: number) => (
   <ThemePair label={label} stack>
-    {frame(<SettingsPage category={props.category ?? "claude"} mode={props.mode ?? "form"} state={props.state ?? {}} edits={props.edits} opened={props.opened} />, width, height)}
+    {frame(<SettingsPage level={2} category={props.category ?? "claude"} mode={props.mode ?? "form"} state={props.state ?? {}} edits={props.edits} opened={props.opened} />, width, height)}
   </ThemePair>
 );
 
@@ -24,7 +24,7 @@ export const RawMode: StoryObj = { render: () => page("Raw mode: the file as tex
 export const RawModeWithError: StoryObj = { render: () => page("Raw mode: a mistake is named by line and column, and linked to the text area", { mode: "raw", opened: SETTINGS_TEXT_BROKEN }) };
 export const ManagedLocked: StoryObj = { render: () => page("A value set by your organisation is locked, with the reason, and cannot be edited") };
 export const PendingChange: StoryObj = { render: () => page("One change waiting: Review changes comes before any diff", { state: { changed: true }, edits: { cleanupPeriodDays: 365 }, opened: SETTINGS_TEXT }) };
-export const ReviewingChange: StoryObj = { render: () => page("Under review: the exact diff, where the backup goes and how to undo, then Apply and Discard", { state: { changed: true, reviewing: true }, edits: { cleanupPeriodDays: 365 }, opened: SETTINGS_TEXT }, 960, 760) };
+export const ReviewingChange: StoryObj = { render: () => page("Under review: the exact diff, where the backup goes and how to undo, then Apply and Discard", { state: { changed: true, reviewing: true }, edits: { cleanupPeriodDays: 365 }, opened: SETTINGS_TEXT }, 960, 1100) };
 export const ReviewingLongChange: StoryObj = { render: () => page("A change of 200 lines folds after 40 lines and stays inside the page", { state: { changed: true, reviewing: true }, edits: { hooks: Array.from({ length: 200 }, (_, i) => `entry-${i}`) }, opened: SETTINGS_TEXT_LONG }, 960, 760) };
 export const ReadOnlyFile: StoryObj = { render: () => page("A read-only file says so and nothing can be applied", { state: { readOnly: true } }) };
 export const UnparsableFile: StoryObj = { render: () => page("A file that does not parse fails closed: it is shown, never offered for editing", { mode: "raw", state: { unparsable: true }, opened: SETTINGS_TEXT_BROKEN }) };

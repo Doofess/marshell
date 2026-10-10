@@ -5,7 +5,8 @@ import "./Doctor.css";
 
 const WORD: Record<Severity, string> = { error: "Error", warning: "Warning", info: "Information" };
 
-function Mark({ severity }: { severity: Severity }) {
+function Mark({ severity, done }: { severity: Severity; done: boolean }) {
+  if (done) return <StatusGlyph kind="done-seen" size={16} label="" />;
   if (severity === "error") return <StatusGlyph kind="error" size={16} label="" />;
   if (severity === "warning") return <AuxGlyph kind="caution" label="" />;
   return (
@@ -25,8 +26,8 @@ export function DoctorRow({ item, fixed = false }: { item: DoctorItem; fixed?: b
   const done = fixed && item.fixable;
   return (
     <li className="doctor__row" data-severity={item.severity} data-state={done ? "fixed" : undefined}>
-      <span className="doctor__mark">
-        <Mark severity={item.severity} />
+      <span className="doctor__mark" aria-hidden="true">
+        <Mark severity={item.severity} done={done} />
       </span>
       <div className="doctor__main">
         <p className="doctor__title">

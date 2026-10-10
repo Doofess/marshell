@@ -1,3 +1,4 @@
+import { useId } from "react";
 import { AgentMark } from "../../components/AgentMark/AgentMark";
 import { DiffView } from "../../components/DiffView/DiffView";
 import { Switch } from "../../components/Switch/Switch";
@@ -9,13 +10,14 @@ const CAP_LABEL: Record<Capability, string> = { status: "Show status and context
 /** Screen 2: one card per CLI, in plain words: what changes and where, the exact diff on request, the backup and the way out. A file that cannot be edited gets the reason instead of controls. */
 export function ConsentCard({ scenario, on, open = false }: { scenario: { detection: Detection; plan: ConsentPlan }; on: Record<Capability, boolean>; open?: boolean }) {
   const { detection: d, plan } = scenario;
+  const titleId = useId();
   const edit = canEdit(d);
   const name = CLI_NAME[d.cli];
   return (
-    <article className="consent" data-agent={d.cli} data-blocked={edit.ok ? undefined : ""} aria-labelledby={`consent-${d.cli}`}>
+    <article className="consent" data-agent={d.cli} data-blocked={edit.ok ? undefined : ""} aria-labelledby={titleId}>
       <header className="consent__head">
         <AgentMark agent={d.cli} size={20} />
-        <h3 id={`consent-${d.cli}`} className="consent__name">
+        <h3 id={titleId} className="consent__name">
           {name}
         </h3>
       </header>

@@ -9,6 +9,9 @@ describe("DiffView.css", () => {
     expect(css).toMatch(/\.diff__line\[data-kind="del"\]\s*\{[^}]*color-mix\(in oklch, var\(--error\)/);
     expect(css).not.toMatch(/border(?!-radius)/);
   });
+  it("keeps the tint light enough that the line numbers (--text-2) stay at AA 4.5:1 over it, on the overlay surface of the fix sheet too", () => {
+    for (const m of css.matchAll(/color-mix\(in oklch, var\(--(?:ok|error)\) (\d+)%, transparent\)/g)) expect(Number(m[1]), m[0]).toBeLessThanOrEqual(12);
+  });
   it("wraps long lines instead of overflowing or scrolling sideways", () => {
     expect(css).toMatch(/white-space:\s*pre-wrap/);
     expect(css).toMatch(/overflow-wrap:\s*anywhere/);

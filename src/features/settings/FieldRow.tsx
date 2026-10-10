@@ -6,7 +6,8 @@ import "./Settings.css";
 
 /**
  * One setting: its name and where it comes from (scope badge), what it does, the control, and when a change takes effect.
- * A managed value, or any value in a file that must not be edited, has a disabled control and says why in words.
+ * A managed value, or any value in a file that must not be edited, has a disabled control and says why in words. The badge
+ * shows where the value is really read from, so a value a managed file locks says Managed.
  */
 export function FieldRow({ field, file = {}, value }: { field: SettingField; file?: FileState; value?: unknown }) {
   const id = useId();
@@ -23,7 +24,7 @@ export function FieldRow({ field, file = {}, value }: { field: SettingField; fil
             {field.label}
           </label>
         )}
-        <ScopeBadge scope={field.scope} />
+        <ScopeBadge scope={field.lockedBy ?? field.scope} />
       </div>
       <p className="field__help" dir="auto">
         {field.help}

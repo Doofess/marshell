@@ -15,6 +15,8 @@ import * as PromptBar from "../../features/composer/Composer.stories";
 import * as ManualCli from "../../components/AgentMark/ManualCli.stories";
 import * as Launcher from "../../features/launcher/Launcher.stories";
 import * as Palette from "../../features/palette/Palette.stories";
+import * as Doctor from "../../features/doctor/Doctor.stories";
+import * as Settings from "../../features/settings/Settings.stories";
 import * as Onboarding from "../../features/onboarding/Onboarding.stories";
 import * as EmptyStates from "../../features/onboarding/EmptyStates.stories";
 import * as DiffStories from "../../components/DiffView/DiffView.stories";
@@ -59,7 +61,10 @@ const BATCHES: Record<UpTo, Array<[StoryModule, string]>> = {
     [EmptyStates, "Every empty state says what is empty and how to start."],
     [DiffStories, "The one diff view used for consent, the doctor's fixes and settings changes."],
   ],
-  "3b": [],
+  "3b": [
+    [Doctor, "The report, the fix sheet with the combined diff grouped by file, the receipt toast with Restart them and Undo (10 seconds), and Undo last fix in the header afterwards. Problems Marshell cannot fix say why, and managed settings are listed, never changed."],
+    [Settings, "Form and raw editing of each CLI's settings, with a scope badge on every value (User, Project, Local, Managed, Marshell). Every change is shown as the exact diff, with the backup and the way to undo, before Apply. A file that does not parse, is read-only, or changed on disk is never overwritten."],
+  ],
   "3c": [],
 };
 
@@ -75,6 +80,8 @@ function isStory(v: unknown): v is { render: FC } {
 
 /** Server-renders every story up to and including the given batch into page sections. */
 export function renderReview(upTo: UpTo = "2a"): string {
+  // Each story is rendered on its own, so React would hand every one the same ids (and the same radio-group names); a prefix keeps them apart.
+  let storyNo = 0;
   const modules = ORDER.slice(0, ORDER.indexOf(upTo) + 1).flatMap((k) => BATCHES[k]);
   return modules.map(([mod, blurb]) => {
     const title = mod.default.title ?? "Untitled";
@@ -83,7 +90,7 @@ export function renderReview(upTo: UpTo = "2a"): string {
     const body = stories
       .map(([name, story]) => {
         const Render = story.render;
-        return `<article class="review__story"><h3>${humanize(name)}</h3><div class="review__canvas">${renderToStaticMarkup(<Render />)}</div></article>`;
+        return `<article class="review__story"><h3>${humanize(name)}</h3><div class="review__canvas">${renderToStaticMarkup(<Render />, { identifierPrefix: `s${++storyNo}-` })}</div></article>`;
       })
       .join("");
     return `<section class="review__section" id="${id}"><h2>${title.replace("/", " / ")}</h2><p class="review__blurb">${blurb}</p>${body}</section>`;

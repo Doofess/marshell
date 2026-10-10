@@ -223,9 +223,17 @@ META["3a"] = {
   ],
 };
 META["3b"] = {
-  lede: "Sub-review B of 3 in batch 3: the doctor and the settings page. Onboarding and batch 2 are below.",
+  lede: "Sub-review B of 3 in batch 3: the doctor and the settings page. Onboarding (A) and batch 2 are signed off and sit below.",
   nav: [["doctor", "Doctor"], ["settings", "Settings"], ["onboarding", "Onboarding"], ["sign-off", "Sign-off"]],
-  checks: ["Placeholder: replaced in Task 12."],
+  checks: [
+    "Screen-reader pass (about 10 minutes, Narrator and NVDA): follow docs/a11y/screen-reader-script.md, section E, and answer with its letters.",
+    "The doctor's four fixes are one sheet with one diff per file; Confirm ticks the rows off inline and the receipt names the sessions that need a restart.",
+    "Undo last fix stays in the header after the toast, and says why when a file changed since.",
+    "In settings every value shows where it comes from (scope badge: word, shape and tooltip); a managed value is locked with the reason.",
+    "Raw mode shows the exact line of a mistake; a file that does not parse is never offered for editing.",
+    "Review changes shows the exact diff, the backup path and the way to undo before Apply.",
+    "Works with the keyboard alone, at 150% zoom and in Windows High Contrast.",
+  ],
 };
 META["3c"] = {
   lede: "Sub-review C of 3 in batch 3: Departures, notifications and the tray. Everything signed off earlier is below.",

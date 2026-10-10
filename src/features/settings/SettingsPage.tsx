@@ -16,7 +16,7 @@ import "./Settings.css";
  * edited as a form or as the raw file. Every change is shown as the exact diff, with the backup and the way to undo,
  * before Apply. A file that does not parse, is read-only, or changed on disk is never overwritten.
  */
-export function SettingsPage({ category, mode, state, edits, opened = SETTINGS_TEXT }: { category: string; mode: "form" | "raw"; state: SettingsState; edits?: Record<string, unknown>; opened?: string }) {
+export function SettingsPage({ category, mode, state, edits, opened = SETTINGS_TEXT, level = 1 }: { category: string; mode: "form" | "raw"; state: SettingsState; edits?: Record<string, unknown>; opened?: string; level?: 1 | 2 }) {
   const modeId = useId();
   const fields = SETTINGS_FIELDS.filter((f) => f.category === category);
   const path = settingsPath(category);
@@ -29,18 +29,18 @@ export function SettingsPage({ category, mode, state, edits, opened = SETTINGS_T
     <div className="settings">
       <Page
         title="Settings"
-        level={1}
+        level={level}
         actions={
           <div className="edit-mode" role="radiogroup" aria-labelledby={modeId}>
             <span id={modeId} className="edit-mode__label">
               Edit as
             </span>
             <label className="edit-mode__option">
-              <input type="radio" name="edit-as" defaultChecked={mode === "form"} disabled={state.unparsable} />
+              <input type="radio" name={`${modeId}-edit-as`} defaultChecked={mode === "form"} disabled={state.unparsable} />
               <span>Form</span>
             </label>
             <label className="edit-mode__option">
-              <input type="radio" name="edit-as" defaultChecked={mode === "raw"} />
+              <input type="radio" name={`${modeId}-edit-as`} defaultChecked={mode === "raw"} />
               <span>Raw</span>
             </label>
           </div>

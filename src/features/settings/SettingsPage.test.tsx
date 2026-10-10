@@ -31,6 +31,24 @@ describe("SettingsPage: form mode", () => {
     expect(h).toContain("Edit as");
     expect(h.match(/type="radio"/g)).toHaveLength(2);
   });
+  it("is a level 1 heading in the app, and can sit lower when it is shown among other headings", () => {
+    expect(renderToStaticMarkup(<SettingsPage {...base} />)).toMatch(/<h1[^>]*>Settings<\/h1>/);
+    expect(renderToStaticMarkup(<SettingsPage {...base} level={2} />)).toMatch(/<h2[^>]*>Settings<\/h2>/);
+  });
+  it("shows the scope a value is really read from: a value a managed file locks says Managed, not User", () => {
+    const h = renderToStaticMarkup(<SettingsPage {...base} />);
+    expect(h).toMatch(/data-locked="true"[\s\S]*?data-scope="managed"/);
+  });
+  it("gives each page its own radio group name, so two pages in one document never share a choice", () => {
+    const h = renderToStaticMarkup(
+      <>
+        <SettingsPage {...base} />
+        <SettingsPage {...base} mode="raw" />
+      </>,
+    );
+    const names = [...h.matchAll(/type="radio" name="([^"]+)"/g)].map((m) => m[1]);
+    expect(new Set(names).size).toBe(2);
+  });
   it("says an empty category is empty, with a way forward", () => {
     const h = renderToStaticMarkup(<SettingsPage {...base} category="codex" />);
     expect(h).toContain("No coding agents found");

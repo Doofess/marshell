@@ -35,10 +35,10 @@
   overflow-wrap: anywhere;
 }
 .diff__line[data-kind="add"] {
-  background: color-mix(in oklch, var(--ok) 16%, transparent);
+  background: color-mix(in oklch, var(--ok) 12%, transparent);
 }
 .diff__line[data-kind="del"] {
-  background: color-mix(in oklch, var(--error) 16%, transparent);
+  background: color-mix(in oklch, var(--error) 12%, transparent);
 }
 .diff__line[data-kind="hunk"] {
   color: var(--text-1);

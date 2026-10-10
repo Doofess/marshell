@@ -58,3 +58,24 @@ describe("renderReview 3a content", () => {
     for (const name of ["Detected all", "Consent claude diff open", "Notifications blocked", "First session"]) expect(html, name).toContain(name);
   });
 });
+
+describe("renderReview 3b content", () => {
+  it("renders the doctor and the settings page", () => {
+    const html = renderReview("3b");
+    expect(html).toContain('id="doctor"');
+    expect(html).toContain('id="settings"');
+    for (const name of ["Fix sheet open", "Fixed later", "Undo stale", "Reviewing change", "Unparsable file", "Conflict", "Managed locked", "Raw mode with error"]) expect(html, name).toContain(name);
+  });
+  it("keeps sub-review A below it", () => {
+    expect(renderReview("3b")).toContain('id="onboarding"');
+  });
+});
+
+describe("renderReview ids", () => {
+  it("never repeats an element id across stories, so labels and radio groups stay with their own story", () => {
+    const html = renderReview("3b");
+    const ids = [...html.matchAll(/\sid="([^"]+)"/g)].map((m) => m[1]!);
+    const dup = ids.filter((id, i) => ids.indexOf(id) !== i);
+    expect([...new Set(dup)]).toEqual([]);
+  });
+});

@@ -1,4 +1,5 @@
 import { parseUnifiedDiff } from "../../components/DiffView/diff";
+import { mergeDiffs } from "./mergeDiff";
 import type { DoctorItem, DoctorReport, FixGroup } from "./types";
 export * from "./types";
 
@@ -18,7 +19,7 @@ export function groupByFile(items: DoctorItem[]): FixGroup[] {
   const by = new Map<string, DoctorItem[]>();
   for (const i of items) if (i.fixable && i.file && i.diff) by.set(i.file, [...(by.get(i.file) ?? []), i]);
   return [...by].map(([file, its]) => {
-    const diff = its.map((i) => i.diff!).join("");
+    const diff = mergeDiffs(its.map((i) => i.diff!));
     const p = parseUnifiedDiff(diff);
     return { file, items: its, diff, added: p.added, removed: p.removed };
   });

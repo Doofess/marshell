@@ -6,30 +6,50 @@ const HOME = "C:\\Users\\Home Office";
 const CLAUDE = `${HOME}\\.claude\\settings.json`;
 const NOW = 1_800_000_000_000;
 
-const hooksBefore = `{\n  "model": "opus",\n  "hooks": {}\n}\n`;
-const hooksAfter = `{\n  "model": "opus",\n  "hooks": {\n    "PermissionRequest": [{ "hooks": [{ "type": "command", "command": "\\"C:/Users/Home Office/.marshell/bin/marshell-hook\\" permission --agent claude --tag mshl1" }] }]\n  }\n}\n`;
-const chainBefore = `{\n  "statusLine": { "type": "command", "command": "python ~/.claude/statusline.py" }\n}\n`;
-const chainAfter = `{\n  "statusLine": { "type": "command", "command": "\\"C:/Users/Home Office/.marshell/bin/marshell-hook\\" statusline --agent claude --tag mshl1" }\n}\n`;
-const cleanupBefore = `{\n  "cleanupPeriodDays": 30\n}\n`;
-const cleanupAfter = `{\n  "cleanupPeriodDays": 365\n}\n`;
+// One settings file; each fix is a change to it, diffed against the file as it is now (the sheet merges them into one diff).
+const FILE = `{
+  "model": "opus",
+  "statusLine": { "type": "command", "command": "python ~/.claude/statusline.py" },
+  "env": {
+    "EDITOR": "code"
+  },
+  "permissions": {
+    "allow": ["Bash(npm test:*)"]
+  },
+  "cleanupPeriodDays": 30,
+  "includeCoAuthoredBy": true,
+  "theme": "dark",
+  "notifications": { "desktop": true },
+  "verbose": false,
+  "autoUpdates": true,
+  "editorMode": "normal",
+  "hooks": {}
+}
+`;
+// Inside the JSON file the command's own quotes are written \"...\" (a quoted path, because the home folder has a space).
+const HOOK = String.raw`\"C:/Users/Home Office/.marshell/bin/marshell-hook\"`;
+const hooksAfter = FILE.replace('"hooks": {}', `"hooks": {
+    "PermissionRequest": [{ "hooks": [{ "type": "command", "command": "${HOOK} permission --agent claude --tag mshl1" }] }]
+  }`);
+const chainAfter = FILE.replace('"python ~/.claude/statusline.py"', `"${HOOK} statusline --agent claude --tag mshl1"`);
+const cleanupAfter = FILE.replace('"cleanupPeriodDays": 30', '"cleanupPeriodDays": 365');
 // Illustrative until phase 7 verifies the real keys against each CLI's docs.
-const dupBefore = `{\n  "notifications": { "desktop": true }\n}\n`;
-const dupAfter = `{\n  "notifications": { "desktop": false }\n}\n`;
+const dupAfter = FILE.replace('"desktop": true', '"desktop": false');
 
-type FixableInput = Omit<DoctorItem, "fixable" | "file" | "diff" | "severity"> & { before: string; after: string; severity?: DoctorItem["severity"] };
+type FixableInput = Omit<DoctorItem, "fixable" | "file" | "diff" | "severity"> & { after: string; severity?: DoctorItem["severity"] };
 const fixable = (i: FixableInput): DoctorItem => {
-  const { before, after, severity = "warning", ...rest } = i;
-  return { ...rest, severity, fixable: true, file: CLAUDE, diff: unifiedDiff(CLAUDE, before, after) };
+  const { after, severity = "warning", ...rest } = i;
+  return { ...rest, severity, fixable: true, file: CLAUDE, diff: unifiedDiff(CLAUDE, FILE, after, 1) };
 };
 
 export const DOCTOR_REPORT: DoctorReport = {
   checkedAtMs: NOW - 12_000,
   durationMs: 1_840,
   items: [
-    fixable({ id: "claude-permission-hook", cli: "claude", title: "Approve from anywhere is not installed", detail: "Claude Code's permission requests cannot reach Marshell's cards, so they only show in the terminal.", severity: "error", restartSessions: [3], before: hooksBefore, after: hooksAfter }),
-    fixable({ id: "claude-statusline-chain", cli: "claude", title: "Your status line is no longer chained", detail: "Something replaced the status line command. Marshell puts itself in front and keeps yours running.", restartSessions: [3, 5], before: chainBefore, after: chainAfter }),
-    fixable({ id: "claude-cleanup-period", cli: "claude", title: "Claude deletes transcripts after 30 days", detail: "Marshell keeps its own copy, but raising this to 365 days keeps Claude's own resume working.", before: cleanupBefore, after: cleanupAfter }),
-    fixable({ id: "duplicate-notifications", cli: "marshell", title: "Two notifications for one request", detail: "Claude Code and Marshell both show a banner when a request arrives.", before: dupBefore, after: dupAfter }),
+    fixable({ id: "claude-permission-hook", cli: "claude", title: "Approve from anywhere is not installed", detail: "Claude Code's permission requests cannot reach Marshell's cards, so they only show in the terminal.", severity: "error", restartSessions: [3], after: hooksAfter }),
+    fixable({ id: "claude-statusline-chain", cli: "claude", title: "Your status line is no longer chained", detail: "Something replaced the status line command. Marshell puts itself in front and keeps yours running.", restartSessions: [3, 5], after: chainAfter }),
+    fixable({ id: "claude-cleanup-period", cli: "claude", title: "Claude deletes transcripts after 30 days", detail: "Marshell keeps its own copy, but raising this to 365 days keeps Claude's own resume working.", after: cleanupAfter }),
+    fixable({ id: "duplicate-notifications", cli: "marshell", title: "Two notifications for one request", detail: "Claude Code and Marshell both show a banner when a request arrives.", after: dupAfter }),
     {
       id: "managed-present",
       cli: "claude",

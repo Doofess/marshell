@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { parseUnifiedDiff } from "../../components/DiffView/diff";
 import { afterFixMessage, counts, fixHeadline, groupByFile, listNumbers, restartSessionsOf } from "./report";
 import { DOCTOR_CLEAR, DOCTOR_PROBLEMS, DOCTOR_REPORT } from "./fixtures";
 
@@ -22,6 +23,16 @@ describe("groupByFile", () => {
     expect(g.map((x) => x.file)).toEqual(["C:\\Users\\Home Office\\.claude\\settings.json"]);
     expect(g[0]!.items).toHaveLength(4);
     expect(g[0]!.added).toBeGreaterThan(0);
+  });
+  it("combines the items' diffs into one diff of the file: one header, hunks in file order, counts of all four", () => {
+    const g = groupByFile(DOCTOR_REPORT.items)[0]!;
+    expect((g.diff.match(/^--- /gm) ?? []).length).toBe(1);
+    const starts = [...g.diff.matchAll(/^@@ -(\d+)/gm)].map((m) => Number(m[1]));
+    expect(starts).toEqual([...starts].sort((a, b) => a - b));
+    expect(starts).toHaveLength(4);
+    const each = DOCTOR_REPORT.items.filter((i) => i.fixable).map((i) => parseUnifiedDiff(i.diff!));
+    expect(g.added).toBe(each.reduce((n, p) => n + p.added, 0));
+    expect(g.removed).toBe(each.reduce((n, p) => n + p.removed, 0));
   });
   it("never includes an item that cannot be fixed or has no file", () => {
     expect(groupByFile(DOCTOR_PROBLEMS.items)).toEqual([]);
