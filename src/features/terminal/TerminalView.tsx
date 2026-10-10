@@ -7,7 +7,7 @@ import { PtySocket } from "../../lib/api/ptySocket";
 import { LatencyMeter } from "../perf/latency";
 import { PerfOverlay } from "../perf/PerfOverlay";
 import { loadRenderer, type RendererKind } from "./renderer";
-import { currentTheme } from "./theme";
+import { appScheme, resolveScheme, terminalOptions } from "./terminalTheme";
 
 function isPerfToggle(e: KeyboardEvent): boolean {
   return e.type === "keydown" && e.shiftKey && e.altKey && (e.ctrlKey || e.metaKey) && e.code === "KeyP";
@@ -23,7 +23,8 @@ export function TerminalView({ endpoint, tabId }: { endpoint: Endpoint; tabId: s
     const el = host.current;
     if (!el) return;
     const fontFamily = getComputedStyle(document.documentElement).getPropertyValue("--font-mono").trim();
-    const term = new Terminal({ fontFamily, fontSize: 13, cursorBlink: true, scrollback: 10_000, theme: currentTheme() });
+    const apply = () => terminalOptions(resolveScheme("follow-app", appScheme()));
+    const term = new Terminal({ fontFamily, fontSize: 13, cursorBlink: true, scrollback: 10_000, ...apply() });
     const fit = new FitAddon();
     term.loadAddon(fit);
     term.open(el);
@@ -67,11 +68,16 @@ export function TerminalView({ endpoint, tabId }: { endpoint: Endpoint; tabId: s
 
     const scheme = matchMedia("(prefers-color-scheme: dark)");
     const onScheme = () => {
-      term.options.theme = currentTheme();
+      const o = apply();
+      term.options.theme = o.theme;
+      term.options.minimumContrastRatio = o.minimumContrastRatio;
     };
     scheme.addEventListener("change", onScheme);
+    const themeWatch = new MutationObserver(onScheme);
+    themeWatch.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
 
     return () => {
+      themeWatch.disconnect();
       scheme.removeEventListener("change", onScheme);
       observer.disconnect();
       cancelAnimationFrame(frame);

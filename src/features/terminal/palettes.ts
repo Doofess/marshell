@@ -1,0 +1,54 @@
+import type { ITheme } from "@xterm/xterm";
+
+export type Scheme = "dark" | "light";
+/** Passed to xterm's minimumContrastRatio so colours a program painted for the other scheme stay readable. */
+export const MIN_CONTRAST = 4.5;
+
+export const PALETTES: Record<Scheme, ITheme> = {
+  dark: {
+    background: "#000000",
+    foreground: "#e5e5e5",
+    cursor: "#e5e5e5",
+    cursorAccent: "#000000",
+    selectionBackground: "#3a3a3a",
+    black: "#3a3a3a",
+    red: "#ff6b6b",
+    green: "#5ad07a",
+    yellow: "#e5c14a",
+    blue: "#6ea8ff",
+    magenta: "#d28bff",
+    cyan: "#4fd1d1",
+    white: "#c9c9c9",
+    brightBlack: "#8a8a8a",
+    brightRed: "#ff8a8a",
+    brightGreen: "#7ee89a",
+    brightYellow: "#ffd866",
+    brightBlue: "#8fbaff",
+    brightMagenta: "#e0a8ff",
+    brightCyan: "#7de3e3",
+    brightWhite: "#ffffff",
+  },
+  light: {
+    background: "#ffffff",
+    foreground: "#1c1917",
+    cursor: "#1c1917",
+    cursorAccent: "#ffffff",
+    selectionBackground: "#d6d3d1",
+    black: "#1c1917",
+    red: "#c62828",
+    green: "#1b7a3a",
+    yellow: "#8a5a00",
+    blue: "#1f5fbf",
+    magenta: "#8e3bb8",
+    cyan: "#0e7a85",
+    white: "#6b6b6b",
+    brightBlack: "#6e6e6e",
+    brightRed: "#d32f2f",
+    brightGreen: "#2e7d32",
+    brightYellow: "#946200",
+    brightBlue: "#2b6fd6",
+    brightMagenta: "#a14fcc",
+    brightCyan: "#11808b",
+    brightWhite: "#4a4a4a",
+  },
+};
