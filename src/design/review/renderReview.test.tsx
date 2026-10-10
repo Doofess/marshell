@@ -37,3 +37,15 @@ describe("renderReview 2b", () => {
     expect(renderReview("2b")).toContain('class="scripted-terminal"');
   });
 });
+
+describe("renderReview 3a to 3c", () => {
+  it("is cumulative: 3a keeps everything up to 2c", () => {
+    const html = renderReview("3a");
+    expect(html).toContain('id="launcher"');
+    expect(html).toContain('id="command-palette"');
+  });
+  it("accepts 3b and 3c", () => {
+    expect(() => renderReview("3b")).not.toThrow();
+    expect(() => renderReview("3c")).not.toThrow();
+  });
+});

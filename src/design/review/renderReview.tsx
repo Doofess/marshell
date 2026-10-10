@@ -33,8 +33,8 @@ const BATCH_2A: Array<[StoryModule, string]> = [
   [Card, "The card in every state from the plan: safe and risky commands, edit with diff, new file, MCP, a 40-line command, a question, the receipt, answered in terminal and released on timeout. Interactive stories need Storybook."],
 ];
 
-export type UpTo = "1" | "2a" | "2b" | "2c";
-const ORDER: UpTo[] = ["1", "2a", "2b", "2c"];
+export type UpTo = "1" | "2a" | "2b" | "2c" | "3a" | "3b" | "3c";
+const ORDER: UpTo[] = ["1", "2a", "2b", "2c", "3a", "3b", "3c"];
 const BATCHES: Record<UpTo, Array<[StoryModule, string]>> = {
   "1": BATCH_1,
   "2a": BATCH_2A,
@@ -51,6 +51,9 @@ const BATCHES: Record<UpTo, Array<[StoryModule, string]>> = {
     [Launcher, "One sentence of chips and a prompt line, 560 px wide, 20% from the top. The first chip lists agents, shells and tools. A shell or tool has no mode, pace or worktree: it is a plain terminal, so the line asks for a first command. The footer says which session number it will take."],
     [Palette, "Open sessions come first with their number, mark, name and status, and the number is the fastest way in: type 6, #6 or session 6. A number nobody holds says which sessions are open. Commands follow, with their shortcuts."],
   ],
+  "3a": [],
+  "3b": [],
+  "3c": [],
 };
 
 /** "TruncationAt200" → "Truncation at 200". */

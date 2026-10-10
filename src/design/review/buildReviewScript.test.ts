@@ -8,6 +8,6 @@ describe("scripts/build-review.mjs", () => {
     expect(script).toMatch(/process\.argv\[3\] \?\? "2c"/);
   });
   it("says in its usage line that a batch can be given", () => {
-    expect(script).toMatch(/usage: node scripts\/build-review\.mjs <out\.html> \[1\|2a\|2b\|2c\]/);
+    expect(script).toMatch(/usage: node scripts\/build-review\.mjs <out\.html> \[1\|2a\|2b\|2c\|3a\|3b\|3c\]/);
   });
 });
