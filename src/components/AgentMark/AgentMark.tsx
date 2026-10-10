@@ -35,23 +35,22 @@ export const BREATHING: Partial<Record<AgentId, Breath>> = {
  * The vendor mark for a session's CLI, in the agent's brand colour. Unknown agents get the generic terminal mark.
  * `working` lets motion.css animate it with the vendor's own loop. A working Claude or Gemini is drawn in layers (BREATHING)
  * so its tips draw in more than its centre; a working Antigravity is drawn as a bell and tentacles that move separately; a working Copilot stays still while
- * parts of it flash dark, each on its own tempo, like a current.
+ * parts of it flash dark in turn, as if a current ran through them.
  */
 /** Where Antigravity's arch splits into bell and tentacles, in the 24-unit mark. Its working loop is a jellyfish swimming up. */
 const BELL_BOTTOM = 13.5;
 
 /**
- * Copilot's electricity: parts of the face (left ear, left goggle, nose bridge, right goggle, right ear, lower face). Each
- * is a box in the 24-unit mark, clipped to the shape of the mark, and flashes on its own tempo: `tempo` stretches the
- * loop (so the parts drift in and out of step and the rhythm never repeats) and `phase` is how far into its loop it starts.
+ * Copilot's electricity: parts of the face, in the order a current would run through them (left ear, left goggle, nose
+ * bridge, right goggle, right ear, lower face). Each is a box in the 24-unit mark, clipped to the shape of the mark.
  */
 const ZONES = [
-  { x: -1, y: 8, width: 6.2, height: 15, tempo: 0.62, phase: 0.1 },
-  { x: 5, y: 2, width: 6.3, height: 9, tempo: 1.1, phase: 0.55 },
-  { x: 10, y: 2, width: 4, height: 10, tempo: 0.85, phase: 0.3 },
-  { x: 12.7, y: 2, width: 6.3, height: 9, tempo: 1.45, phase: 0.8 },
-  { x: 18.8, y: 8, width: 6.2, height: 15, tempo: 0.72, phase: 0.45 },
-  { x: 5, y: 11, width: 14, height: 12, tempo: 1.25, phase: 0.02 },
+  { x: -1, y: 8, width: 6.2, height: 15 },
+  { x: 5, y: 2, width: 6.3, height: 9 },
+  { x: 10, y: 2, width: 4, height: 10 },
+  { x: 12.7, y: 2, width: 6.3, height: 9 },
+  { x: 18.8, y: 8, width: 6.2, height: 15 },
+  { x: 5, y: 11, width: 14, height: 12 },
 ] as const;
 
 export function AgentMark({ agent, size = 16, working = false }: { agent: AgentId; size?: 12 | 16 | 20; working?: boolean }) {
@@ -70,8 +69,8 @@ export function AgentMark({ agent, size = 16, working = false }: { agent: AgentI
             <path d={d} clipRule="evenodd" />
           </clipPath>
           <g clipPath={`url(#${uid}-shape)`}>
-            {ZONES.map(({ tempo, phase, ...box }, i) => (
-              <rect key={i} className="agent-mark__zone" style={{ "--k": tempo, "--d": phase } as CSSProperties} {...box} />
+            {ZONES.map((zone, i) => (
+              <rect key={i} className="agent-mark__zone" style={{ "--i": ZONES.length - 1 - i } as CSSProperties} {...zone} />
             ))}
           </g>
         </g>
