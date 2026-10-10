@@ -32,10 +32,13 @@
 .agent-mark {
   transform-origin: center;
 }
-@keyframes mark-breathe-spin {
-  0% { transform: rotate(0) scale(1); }
-  50% { transform: rotate(180deg) scale(1.12); }
-  100% { transform: rotate(360deg) scale(1); }
+/* Claude: twelve rays pulse in a wave that travels clockwise round the burst (the logo is cut into wedges, see claudeRays.ts). */
+@keyframes mark-ray {
+  0%, 100% { transform: scale(1); opacity: 1; }
+  50% { transform: scale(0.55); opacity: 0.55; }
+}
+.agent-mark__rays {
+  display: none;
 }
 @keyframes mark-spin {
   to { transform: rotate(360deg); }
@@ -77,8 +80,16 @@
 }
 
 @media (prefers-reduced-motion: no-preference) {
-  :root:not([data-motion="reduce"]) .agent-mark[data-working][data-agent="claude"] {
-    animation: mark-breathe-spin var(--dur-loop-slow) ease-in-out infinite;
+  :root:not([data-motion="reduce"]) .agent-mark[data-working][data-agent="claude"] .agent-mark__still {
+    display: none;
+  }
+  :root:not([data-motion="reduce"]) .agent-mark[data-working][data-agent="claude"] .agent-mark__rays {
+    display: inline;
+  }
+  :root:not([data-motion="reduce"]) .agent-mark__ray {
+    transform-origin: 12px 12px;
+    animation: mark-ray var(--dur-loop) ease-in-out infinite;
+    animation-delay: calc(var(--i) * var(--dur-loop) / -12);
   }
   :root:not([data-motion="reduce"]) .agent-mark[data-working][data-agent="codex"] {
     animation: mark-spin var(--dur-loop) ease-in-out infinite;

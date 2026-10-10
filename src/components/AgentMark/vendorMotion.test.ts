@@ -8,6 +8,8 @@ const tokens = readFileSync(new URL("../../styles/tokens.css", import.meta.url),
 
 /** The `animation:` value of the rule for one vendor's working mark. */
 function animationOf(id: string): string | null {
+  // Claude moves its twelve rays, not the whole mark (claudeRays.test.tsx).
+  if (id === "claude") return motion.match(/\.agent-mark__ray\s*\{[^}]*animation:\s*([^;]+);/)?.[1]?.trim() ?? null;
   const re = new RegExp(String.raw`\.agent-mark\[data-working\]\[data-agent="${id}"\]\s*\{([^}]*)\}`);
   const body = motion.match(re)?.[1] ?? "";
   return body.match(/animation:\s*([^;]+);/)?.[1]?.trim() ?? null;
