@@ -9,7 +9,11 @@ const css = readFileSync(new URL("./agent-colors.css", import.meta.url), "utf8")
 
 describe("AgentMark", () => {
   it("knows the CLIs people run, with a generic fallback", () => {
-    for (const id of ["claude", "codex", "gemini", "copilot", "cursor", "generic"]) expect(AGENT_IDS).toContain(id);
+    for (const id of ["claude", "codex", "antigravity", "copilot", "cursor", "generic"]) expect(AGENT_IDS).toContain(id);
+  });
+  it("has one Google agent, Antigravity: Gemini CLI is dropped", () => {
+    expect(AGENT_IDS).not.toContain("gemini");
+    expect(css).not.toMatch(/gemini/i);
   });
   for (const id of AGENT_IDS) {
     it(`draws ${id} with a name and an outline`, () => {

@@ -61,9 +61,9 @@ describe("what the strip counts and previews", () => {
 });
 
 describe("every file a category edits has its own path", () => {
-  it("points Codex and Gemini at their own files, not Marshell's", () => {
+  it("points Codex and Antigravity at their own files, not Marshell's", () => {
     expect(settingsPath("codex")).toContain(".codex");
-    expect(settingsPath("gemini")).toContain(".gemini");
+    expect(settingsPath("antigravity")).toBe("C:\\Users\\Home Office\\.gemini\\antigravity-cli\\settings.json");
     expect(settingsPath("general")).toContain(".marshell");
   });
 });

@@ -2,7 +2,7 @@
 
 ## Context
 
-`C:\dev\Airport\BRIEF.md` specifies a cross-platform desktop terminal session manager for AI coding-agent CLIs. It runs real terminal tabs for Claude Code, Codex, Gemini or any other CLI, alongside:
+`C:\dev\Airport\BRIEF.md` specifies a cross-platform desktop terminal session manager for AI coding-agent CLIs. It runs real terminal tabs for Claude Code, Codex, Antigravity or any other CLI, alongside:
 - a live-status sidebar with context rings
 - approve-from-anywhere permission cards
 - a config doctor
@@ -26,7 +26,7 @@ Every CLI fact below was checked against current docs on 2026-10-09; sources are
 | Repo | Empty |
 | Package manager | pnpm (via corepack) |
 | License | Open source, MIT |
-| Installed CLIs | Claude Code 2.1.295 only. Codex and Gemini get installed before phase 6, so fixtures are recorded from the real CLIs. |
+| Installed CLIs | Claude Code 2.1.295 only. Codex and Antigravity (`agy`) get installed before phase 6, so fixtures are recorded from the real CLIs. |
 | Approve-from-anywhere | On by default |
 | Project references | Off until enabled per project |
 | History | Keep everything; backup-folder mirror available but off |
@@ -39,12 +39,11 @@ The user already has a Claude status line (`python ~/.claude/statusline.py`) and
 
 ## Corrections to the brief (verified)
 
-1. **Gemini CLI**
-   - Hooks are on by default via `hooksConfig.enabled`, not `hooks.enabled`.
-   - Events include `Notification` and `PreCompress`.
-   - There is **no** permission-grant hook; `Notification` "cannot grant permissions". For Gemini, the approve card focuses the tab instead.
-   - Hook stdin has no `model` field.
-   - Google replaced Gemini CLI with **Antigravity CLI** for free-tier and Google One users on 2026-06-18. Before phase 6, decide whether to build a Gemini adapter, an Antigravity adapter, or both.
+1. **Antigravity CLI (`agy`) is Google's agent; Gemini CLI is dropped.** Decided 2026-10-10 ("scratch gemini, google is migrating to agy"). Gemini CLI is intentionally gone from Marshell: no adapter, mark, colour, fixture, launcher entry or copy. This paragraph is the git-greppable note; do not add Gemini back.
+   - Google replaced Gemini CLI with **Antigravity CLI** for free-tier and Google One users on 2026-06-18.
+   - Binary `agy`. The installer (`irm https://antigravity.google/cli/install.ps1 | iex` on Windows) puts it in `%LOCALAPPDATA%\agy\bin`; `~/.local/bin/agy` on macOS and Linux.
+   - Config `~/.gemini/antigravity-cli/settings.json` (the directory name is Google's, kept from Gemini). Its `statusLine` is `{ "type": "command", "command": "<script>" }` with optional `padding`, `enabled` and `stack_with_default`. The command gets JSON on stdin: `model`, `context_window` (`used_percentage`), `quota` (one bucket per model: `remaining_fraction`, `reset_time`), `agent_state` (idle, thinking, working, tool_use), `tool_confirmation_pending`, `pending_input_count`, `execution_mode`, `transcript_path`, `version`. Marshell chains it the way it chains Claude's, so model, context % and the plan meter come through the status line.
+   - Plugins (skills, agents, rules, MCP, hooks) live in `~/.gemini/antigravity-cli/plugins/<name>/`; `agy plugin list`. A plugin's `hooks.json` runs commands "before or after tool calls", and that is all the docs say: the event names, a settings-level hook config and any permission-grant hook are **unverified**, to be verified when the adapter is built from a real install. Until then the consent card offers only the status line (no hook entry count) and the approve card focuses the tab.
 2. **Codex CLI**
    - It **does** have a `PermissionRequest` hook (allow or deny), so approve-from-anywhere works for Codex too.
    - Non-managed hooks must be **trusted by hash** in `/hooks` before they run. Install therefore has to walk the user through trusting them, and the doctor has to check it.
@@ -162,7 +161,7 @@ Stories are fed by `fake-agent` scenario scripts, so the same 5-agent run drives
 
 **Comfortable row, 56 px** (there is no compact density; the two modes are comfortable and expanded):
 - 3 px brand stripe flush left
-- 14 px padding, then the **agent mark** in a 16 px box: the vendor logo (Claude, OpenAI, Gemini, Copilot, Cursor and others, a generic terminal mark for custom CLIs) in the agent's brand colour
+- 14 px padding, then the **agent mark** in a 16 px box: the vendor logo (Claude, OpenAI, Antigravity, Copilot, Cursor and others, a generic terminal mark for custom CLIs) in the agent's brand colour
 - 8 px gap, then the **name** (13/500)
 - 6 px gap, then project · branch (12, secondary)
 - flexible space, then the right cluster: caution 12, mute 12, the **status glyph** 16, wait time or age (11, tabular), context ring 16
@@ -185,7 +184,7 @@ The full text is in the tooltip and the screen-reader label.
 | State | Glyph | Motion (reduced-motion) | Text (line 2 / screen reader) | Row treatment |
 |---|---|---|---|---|
 | Idle | Hollow circle | — | "Idle" | — |
-| Working | The vendor mark itself moves, one loop per vendor, signed off in phase 0 (Claude and Gemini breathe: the tips draw in more than the centre, Gemini shallower so the star stays slim; Codex turns steadily; Antigravity swims up like a jellyfish, the bell squeezing and the tentacles trailing; Copilot stays still while parts of its face flash dark, each on its own tempo; Cursor's cube stays still while the pointer cut out of it slides in, clicks and slides back; opencode steps; Amp's main arrow stays while the two secondary arrows are fired away one after another and slide back; Grok and Qwen turn back slowly; DeepSeek swims; custom agents blink only the underscore, hard on and off); no glyph in the cluster | Mark stays still; the phrase and screen-reader label carry the state | "Running npm test" | — |
+| Working | The vendor mark itself moves, one loop per vendor, signed off in phase 0 (Claude breathes: the tips draw in more than the centre; Codex turns steadily; Antigravity swims up like a jellyfish, the bell squeezing and the tentacles trailing; Copilot stays still while parts of its face flash dark, each on its own tempo; Cursor's cube stays still while the pointer cut out of it slides in, clicks and slides back; opencode steps; Amp's main arrow stays while the two secondary arrows are fired away one after another and slide back; Grok and Qwen turn back slowly; DeepSeek swims; custom agents blink only the underscore, hard on and off); no glyph in the cluster | Mark stays still; the phrase and screen-reader label carry the state | "Running npm test" | — |
 | Needs you: permission | Filled rounded-square badge in the vendor's colour with a padlock (locked until you decide); "?" for a question | One bounce | "Wants to run `npm test`" | 12% tint in the vendor's colour, reason line in full-contrast text, wait timer |
 | Needs you: question | Badge in the vendor's colour with "?" | One bounce | "Has a question" | Same |
 | Done, unseen | Check in the vendor's colour, drawn in 200 ms | Draw once | "Done · edited 4 files" | Name at 600 weight, plus a 6 px unread dot |
@@ -281,7 +280,7 @@ Content, top to bottom:
 - **No boxed outlines.** Cards, buttons, chips and keys are told apart by fill and tint, never by a 1 px box; a risky request is a tinted card with a red bar on its start edge. Hairlines stay as dividers between regions, and the keyboard focus ring stays. `noBoxedOutlines.test.ts` enforces it.
 - **Scrollbars:** the main window never shows a scrollbar: only the terminal conversation and the session list scroll, both by wheel, keys and touch, with the bar invisible. Menus, settings and the request-details drawer, which may scroll, keep a quiet 12 px pill that follows the theme and strengthens on hover and drag. `noScrollInMainWindow.test.ts` scans every feature and component stylesheet.
 - Status colours (error, ok, caution) are separate from the accent. Caution is yellow (dark) or olive (light) so it stays distinct from amber; `contrast.test.ts` checks AA and CIEDE2000 distance for every pair, including amber vs caution.
-- Brand colours are for marks, stripes and dots and, as the accent, for the focused session's rings, bars and primary buttons (see the accent rule above). Claude's is a muted terracotta, never a status colour; Codex and Gemini have their own tokens (OpenAI is a pale yellow in dark mode and a deep teal in light; a yellow that passes 3:1 on white looked like muddy gold). All are user-changeable.
+- Brand colours are for marks, stripes and dots and, as the accent, for the focused session's rings, bars and primary buttons (see the accent rule above). Claude's is a muted terracotta, never a status colour; Codex and Antigravity have their own tokens (OpenAI is a pale yellow in dark mode and a deep teal in light; a yellow that passes 3:1 on white looked like muddy gold). All are user-changeable.
 - Custom accent hex: validated at pick time against both themes (AA for `--accent-ink`), rejected with the reason if it fails.
 
 **Motion:**
@@ -368,7 +367,7 @@ marshell/
   crates/
     protocol/                 # serde types shared by everything + ts-rs derives; brand.rs
     core/                     # the engine (lib): server, pty, sessions, adapters, config, history, doctor, notify
-      src/server/  pty/  session/  adapters/{claude,codex,gemini,generic}/  config/
+      src/server/  pty/  session/  adapters/{claude,codex,antigravity,generic}/  config/
           history/  doctor/  notify/  shells/  recap/  references/  ports/
     bridge/                   # two tiny console bins sharing a client module:
                               #   marshell-hook (hook + status line bridge), marshell (CLI: new/list/focus/send/uninstall)
@@ -401,7 +400,7 @@ Plain sync trait objects (`Box<dyn Adapter>`), no lifetimes or async in the trai
 
 ```rust
 pub trait Adapter: Send + Sync {
-    fn id(&self) -> AgentId;                         // "claude" | "codex" | "gemini" | "custom:<slug>"
+    fn id(&self) -> AgentId;                         // "claude" | "codex" | "antigravity" | "custom:<slug>"
     fn display_name(&self) -> &str;
     fn brand_color(&self) -> &str;                   // default; user-overridable
     fn capabilities(&self) -> Capabilities;          // hooks, permission_hook, context_injection, resume, fork, effort, statusline …
@@ -617,7 +616,7 @@ The Rust core is the only source of truth.
 | Title bar | Custom Fluent-like | Native traffic lights (Overlay) | Native decorations |
 | Claude paths | `%USERPROFILE%\.claude`; managed `C:\Program Files\ClaudeCode\managed-settings.json` | `~/.claude`; managed `/Library/Application Support/ClaudeCode/` | `~/.claude`; managed `/etc/claude-code/` |
 | Codex paths | `%USERPROFILE%\.codex` (or `CODEX_HOME`): `config.toml`, `hooks.json`, `AGENTS.md`, `sessions/YYYY/MM/DD/rollout-*.jsonl[.zst]`; admin `requirements.toml` is read-only to us | `~/.codex`, same layout | `~/.codex`, same layout |
-| Gemini paths | `%USERPROFILE%\.gemini\settings.json`, `GEMINI.md`, `tmp\<hash>\chats\session-*.jsonl`; system settings are read-only to us | `~/.gemini`, same layout; system `/Library/Application Support/GeminiCli/` (verify) | `~/.gemini`; system `/etc/gemini-cli/settings.json` |
+| Antigravity paths | `%USERPROFILE%\.gemini\antigravity-cli\settings.json`, `plugins\<name>\`; binary `%LOCALAPPDATA%\agy\bin\agy.exe`; the transcript location comes from the status line payload (`transcript_path`) | `~/.gemini/antigravity-cli`, same layout; `~/.local/bin/agy` | same as macOS |
 | Packaging | NSIS per-user (no admin) + MSI | dmg, universal binary | AppImage, deb, rpm |
 | Signing | Azure Artifact Signing | Developer ID + notarization, hardened runtime. Sidecar bins (`marshell-hook`, `marshell`, `marshell-host`) are signed too. | AppImage GPG, rpm key |
 | Elevated sessions | `marshell-host --elevated` via ShellExecute `runas`; token loopback; accepts only input and resize | `sudo -i` in the tab | `pkexec` / `sudo -i` |
@@ -740,7 +739,7 @@ Decisions from the 2026-10-10 coverage audit (`docs/superpowers/plan-coverage-au
    - Scope: search, conversation view, files-changed tab, recording replay, bookmarks, tags, archive and delete-copy, export with redaction, import of sessions run outside the app, retention limits (size and age), the optional backup-folder mirror, a disk-usage view, recording compression and cleanup.
    - Exit: a 1000-session index searches in under 100 ms; recordings stay within a stated MB-per-hour budget.
 6. **Agents, integration and the elevated helper.**
-   - Scope: settings pane (read-only), Codex + Gemini/Antigravity adapters (decision due before this phase starts; install both CLIs first), custom agents, repo scripts (`marshell.json`), port chips, the `marshell` CLI and its built-in skill (when the app is closed, `marshell new` says so and offers to start it), project references (`@` picker, alias learning), WSL (S11), "open in system terminal" and "copy resume command", and the `marshell-host` elevated helper. S8 passed with requirements: the token goes over a pipe, never the command line, and the decline and wrong-token paths get tested. Until it ships, elevated sessions open in a separate elevated Marshell window.
+   - Scope: settings pane (read-only), Codex + Antigravity adapters (install both CLIs first; the Antigravity adapter verifies its hook events and any permission hook against a real install), custom agents, repo scripts (`marshell.json`), port chips, the `marshell` CLI and its built-in skill (when the app is closed, `marshell new` says so and offers to start it), project references (`@` picker, alias learning), WSL (S11), "open in system terminal" and "copy resume command", and the `marshell-host` elevated helper. S8 passed with requirements: the token goes over a pipe, never the command line, and the decline and wrong-token paths get tested. Until it ships, elevated sessions open in a separate elevated Marshell window.
    - Exit: fixture suites from the real CLIs pass.
 7. **Doctor**: the fix actions, on top of the phase-3 config core: "Fix X issues" and one-click undo; folds in each CLI's own doctor; detects duplicate notifications; reports the tokens injected by project references; checks Codex hook trust; waste checks (unused MCP servers and skills, long descriptions, broad scopes, a token-cost estimate); offers to raise `cleanupPeriodDays`.
    - Exit: a seeded broken config is fully repaired and fully undone.
@@ -811,7 +810,7 @@ From brief §5.9 and §6: the installer runner (install and update CLIs), review
 - **CLI churn.** Claude's transcript format is officially unstable, and hooks and status fields change monthly. Mitigations: versioned fixtures, defensive parsing, and treating the raw archive copy as the durable artifact.
 - **PermissionRequest hold UX** (S9). A poorly chosen hold time could hide Claude's own prompt.
 - **Codex hook trust friction.** Installed hooks don't run until the user trusts them, so onboarding has to show this.
-- **Gemini → Antigravity transition.** The adapter target is open until phase 6.
+- **Antigravity CLI is young.** Its hook events and any permission hook are unverified (see "Corrections to the brief"); until the adapter confirms them against a real install, status comes through the chained status line and the approve card focuses the tab.
 - **Windows unpackaged toast limits** in dev builds.
 - **macOS notifications need signing**, which needs an Apple Developer account (Account Holder).
 - **The 30-day Claude cleanup** deletes transcripts if the app isn't opened for a month. The doctor offers to raise `cleanupPeriodDays`, with consent.
@@ -847,12 +846,10 @@ Each phase's exit criteria above are the checks. Before claiming any phase done:
   - https://learn.chatgpt.com/docs/config-file/config-reference
   - https://learn.chatgpt.com/docs/agent-configuration/agents-md
   - https://learn.chatgpt.com/docs/developer-commands?surface=cli
-- Gemini CLI docs:
-  - https://geminicli.com/docs/hooks/
-  - https://geminicli.com/docs/hooks/reference/
-  - https://geminicli.com/docs/reference/configuration/
-  - https://geminicli.com/docs/cli/session-management/
-  - https://geminicli.com/docs/reference/memport/
+- Antigravity CLI docs (Gemini CLI is dropped, so its docs are no longer sources):
+  - https://www.antigravity.google/docs/cli/statusline
+  - https://www.antigravity.google/docs/plugins?tab=cli
+  - https://www.antigravity.google/docs/getting-started?tab=cli
 - Tauri:
   - https://v2.tauri.app/plugin/notification/
   - https://v2.tauri.app/reference/javascript/api/namespacewindow/

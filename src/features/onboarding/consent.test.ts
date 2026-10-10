@@ -11,15 +11,21 @@ describe("entryCount", () => {
     expect(entryCount("claude", { status: false, approve: false, statusline: false })).toBe(0);
   });
   it("counts only what the CLI can do", () => {
-    expect(entryCount("gemini", { status: true, approve: true, statusline: true })).toBe(7);
+    expect(entryCount("antigravity", all)).toBe(0);
     expect(entryCount("codex", all)).toBe(7);
   });
 });
 
 describe("CAPABILITIES", () => {
-  it("says why Gemini has no approval and no status line", () => {
-    expect(CAPABILITIES.gemini.approve).toMatchObject({ available: false, reason: "Gemini has no approval hook, so Marshell focuses the tab instead." });
+  it("offers Antigravity only its status line, and says the rest is verified when the adapter is built", () => {
+    expect(CAPABILITIES.antigravity.statusline).toMatchObject({ available: true, entries: 0 });
+    expect(CAPABILITIES.antigravity.status.available).toBe(false);
+    expect(CAPABILITIES.antigravity.status.reason).toContain("verified when the adapter is built");
+    expect(CAPABILITIES.antigravity.approve).toMatchObject({ available: false, reason: "Antigravity has no verified approval hook, so Marshell focuses the tab instead (verified when the adapter is built)." });
     expect(CAPABILITIES.codex.statusline.available).toBe(false);
+  });
+  it("carries no Gemini copy: Gemini CLI is dropped and hooksConfig.enabled was its setting", () => {
+    for (const caps of Object.values(CAPABILITIES)) for (const c of Object.values(caps)) expect(c.reason ?? "").not.toMatch(/gemini|hooksConfig/i);
   });
 });
 

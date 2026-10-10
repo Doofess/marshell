@@ -27,7 +27,7 @@ describe("DoctorPage", () => {
   });
   it("running: says what is being checked and is busy, with no live region", () => {
     const h = renderToStaticMarkup(<DoctorPage report={DOCTOR_REPORT} phase="running" elapsedMs={400} />);
-    expect(h).toContain("Checking Claude Code, Codex and Gemini");
+    expect(h).toContain("Checking Claude Code, Codex and Antigravity");
     expect(h).toContain('aria-busy="true"');
     expect(h).not.toMatch(/aria-live|role="status"|role="alert"/);
   });

@@ -1,15 +1,24 @@
 import type { Capability, CliId, Detection } from "./types";
 export * from "./types";
 
-export const CLI_NAME: Record<CliId, string> = { claude: "Claude Code", codex: "Codex", gemini: "Gemini" };
+export const CLI_NAME: Record<CliId, string> = { claude: "Claude Code", codex: "Codex", antigravity: "Antigravity CLI" };
 
 const no = (reason: string) => ({ available: false, reason, entries: 0 });
 
-/** What each CLI can do and how many hook entries each capability adds (docs/PLAN.md section 2: the adapter's capabilities). */
+/**
+ * What each CLI can do and how many hook entries each capability adds (docs/PLAN.md section 2: the adapter's capabilities).
+ * Antigravity: only its status line is verified (`statusLine` in ~/.gemini/antigravity-cli/settings.json pushes model, context,
+ * quota and whether a tool waits for confirmation). Its hook events and any permission hook are verified when the adapter is
+ * built, so the card says so instead of promising entries it cannot count (docs/research/2026-10-10-cli-data-sources.md).
+ */
 export const CAPABILITIES: Record<CliId, Record<Capability, { available: boolean; reason?: string; entries: number }>> = {
   claude: { status: { available: true, entries: 8 }, approve: { available: true, entries: 1 }, statusline: { available: true, entries: 0 } },
   codex: { status: { available: true, entries: 6 }, approve: { available: true, entries: 1 }, statusline: no("Codex has no status line to chain.") },
-  gemini: { status: { available: true, entries: 7 }, approve: no("Gemini has no approval hook, so Marshell focuses the tab instead."), statusline: no("Gemini has no status line to chain.") },
+  antigravity: {
+    status: no("Antigravity's status and context come through its status line (the switch below). Its hook events are verified when the adapter is built."),
+    approve: no("Antigravity has no verified approval hook, so Marshell focuses the tab instead (verified when the adapter is built)."),
+    statusline: { available: true, entries: 0 },
+  },
 };
 
 export function entryCount(cli: CliId, on: Record<Capability, boolean>): number {
@@ -30,8 +39,6 @@ export function consentHeadline(d: Detection, on: Record<Capability, boolean>): 
   const chain = on.statusline && CAPABILITIES[d.cli].statusline.available;
   if (n === 0 && !chain) return `Change nothing. ${CLI_NAME[d.cli]} will show limited status.`;
   const add = `Add ${n} hook ${n === 1 ? "entry" : "entries"}`;
-  // Gemini's hooks sit behind hooksConfig.enabled, so the change names the setting it turns on.
-  const gemini = d.cli === "gemini" && n > 0 ? " and set hooksConfig.enabled" : "";
-  const text = chain ? (n > 0 ? `${add}${gemini} and chain your status line` : "Chain your status line") : `${add}${gemini}`;
+  const text = chain ? (n > 0 ? `${add} and chain your status line` : "Chain your status line") : add;
   return `${text} in ${d.configPath}.`;
 }

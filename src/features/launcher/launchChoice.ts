@@ -26,11 +26,10 @@ const agent = (id: SessionKind, label: string, cli: string): LaunchProgram => ({
 const shell = (id: ToolId): LaunchProgram => ({ id, label: TOOL_NAMES[id], cli: TOOL_NAMES[id], group: "Shells", first: "Run a command first (optional)" });
 const tool = (id: ToolId, first: string, label = TOOL_NAMES[id], cli = label): LaunchProgram => ({ id, label, cli, group: "Tools", first });
 
-/** Every AI agent CLI with a first-party command line. DeepSeek has none, so it is not listed. Which ones can be started still depends on the adapters of phase 6; the launcher lists them all. */
+/** Every AI agent CLI with a first-party command line. DeepSeek has none, so it is not listed; Google's is Antigravity (`agy`), Gemini CLI is dropped. Which ones can be started still depends on the adapters of phase 6; the launcher lists them all. */
 export const LAUNCH_PROGRAMS: LaunchProgram[] = [
   agent("claude", "Claude", "Claude Code"),
   agent("codex", "Codex", "Codex CLI"),
-  agent("gemini", "Gemini", "Gemini CLI"),
   agent("antigravity", "Antigravity", "Antigravity CLI"),
   agent("copilot", "GitHub Copilot", "Copilot CLI"),
   agent("cursor", "Cursor", "Cursor Agent"),

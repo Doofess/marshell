@@ -57,7 +57,7 @@ export function DoctorPage({ report, phase, undo, nowMs, elapsedMs = 0, failure 
     <div className="doctor">
       <Page title="Doctor" subtitle={`Checked ${checked}`} actions={actions}>
         <div className="doctor__body" aria-busy={phase === "running" || phase === "fixing" ? "true" : undefined}>
-          {phase === "running" && showProgress(elapsedMs) && <p className="doctor__progress">Checking Claude Code, Codex and Gemini…</p>}
+          {phase === "running" && showProgress(elapsedMs) && <p className="doctor__progress">Checking Claude Code, Codex and Antigravity…</p>}
           {phase === "failed" && <p className="doctor__failed">The doctor could not run: {failure}</p>}
           {clear && <EmptyState title={clearCopy.title} body={clearCopy.body} />}
           {listed && !clear && (

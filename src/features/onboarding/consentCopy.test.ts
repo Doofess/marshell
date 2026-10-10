@@ -17,9 +17,11 @@ describe("every consent headline tells the truth about its diff", () => {
     const d = s.detection;
     if (!canEdit(d).ok || s.plan.headline) continue;
     it(`${name}: the count in the headline is the number of hook entries the diff adds`, () => {
-      const on = name === "gemini" ? { status: true, approve: false, statusline: false } : ALL;
-      expect(entriesIn(s.plan.diff)).toBe(entryCount(d.cli, on));
-      expect(consentHeadline(d, on)).toContain(`Add ${entryCount(d.cli, on)} hook entries`);
+      const n = entryCount(d.cli, ALL);
+      expect(entriesIn(s.plan.diff)).toBe(n);
+      // A CLI with no verified hooks (Antigravity) adds none, so its headline never says "Add".
+      if (n > 0) expect(consentHeadline(d, ALL)).toContain(`Add ${n} hook entries`);
+      else expect(consentHeadline(d, ALL)).not.toMatch(/^Add /);
     });
   }
   it("a stand-in change used to show a long diff says so in its own headline", () => {
@@ -52,6 +54,18 @@ describe("chaining the status line keeps the user's own command visible", () => 
   it("the card says the original keeps running and names the file", () => {
     const h = renderToStaticMarkup(createElement(ConsentCard, { scenario: CONSENT.claude, on: ALL }));
     expect(h).toContain("statusline-chain.json");
+    expect(h).toContain("keeps running");
+  });
+  it("the Antigravity diff only chains the status line in ~/.gemini/antigravity-cli/settings.json and keeps the user's own command", () => {
+    const s = CONSENT.antigravity;
+    expect(s.detection.configPath).toBe("C:\\Users\\Home Office\\.gemini\\antigravity-cli\\settings.json");
+    const lines = added(s.plan.diff);
+    expect(lines.some((t) => t.includes("statusline --agent antigravity"))).toBe(true);
+    expect(lines.some((t) => t.includes("~/.gemini/antigravity-cli/statusline.sh"))).toBe(true);
+    expect(parseUnifiedDiff(s.plan.diff).files.some((f) => f.endsWith("agents\\antigravity\\statusline-chain.json"))).toBe(true);
+    expect(s.plan.diff).not.toMatch(/hooksConfig|"hooks"/);
+    const h = renderToStaticMarkup(createElement(ConsentCard, { scenario: s, on: s.plan.on }));
+    expect(h).toContain("antigravity\\statusline-chain.json");
     expect(h).toContain("keeps running");
   });
 });
@@ -93,9 +107,12 @@ describe("an unknown value is an en dash, never a guess", () => {
 });
 
 describe("headline and card wording", () => {
-  it("the Gemini headline names the setting it turns on", () => {
+  it("the Antigravity headline offers the status line alone, with no hook count and no Gemini-era setting", () => {
     const d = DETECTIONS.allThree[2]!;
-    expect(consentHeadline(d, { status: true, approve: false, statusline: false })).toContain("hooksConfig.enabled");
+    expect(d.cli).toBe("antigravity");
+    expect(consentHeadline(d, ALL)).toBe(`Chain your status line in ${d.configPath}.`);
+    expect(consentHeadline(d, { status: true, approve: true, statusline: false })).toBe("Change nothing. Antigravity CLI will show limited status.");
+    expect(consentHeadline(d, ALL)).not.toMatch(/hooksConfig|Gemini/);
   });
   it("the Codex trust sentence says /hooks once", () => {
     const h = renderToStaticMarkup(createElement(ConsentCard, { scenario: CONSENT.codex, on: ALL }));

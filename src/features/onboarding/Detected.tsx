@@ -12,7 +12,7 @@ function stateSentence(d: Detection): string | null {
 /** Screen 1: what Marshell found. One row per CLI, with the whole config path (a folder with a space is shown whole), and a way forward when nothing is installed. */
 export function Detected({ detections }: { detections: Detection[] }) {
   if (detections.every((d) => !d.installed)) {
-    return <EmptyState title="No coding agents found" body="Install Claude Code, Codex or Gemini, or continue with shells and tools." action={{ label: "Continue with shells and tools" }} />;
+    return <EmptyState title="No coding agents found" body="Install Claude Code, Codex or Antigravity, or continue with shells and tools." action={{ label: "Continue with shells and tools" }} />;
   }
   return (
     <ul className="detected" aria-label="Coding agents found">

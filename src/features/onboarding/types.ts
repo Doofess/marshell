@@ -1,4 +1,5 @@
-export type CliId = "claude" | "codex" | "gemini";
+/** The CLIs with an adapter planned: Claude Code, Codex and Google's Antigravity (`agy`). Gemini CLI is dropped (docs/PLAN.md). */
+export type CliId = "claude" | "codex" | "antigravity";
 export type ConfigState = "ok" | "missing" | "unparsable" | "read-only";
 
 /** What detection found for one CLI. Phase 3 fills this from the core; Phase 0 uses fixtures. */

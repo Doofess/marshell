@@ -84,10 +84,10 @@ describe("highlight", () => {
 });
 
 describe("pickByLetter", () => {
-  const labels = ["Claude", "Codex", "Gemini"];
+  const labels = ["Claude", "Codex", "Antigravity"];
   it("picks the first option starting with the letter", () => {
-    expect(pickByLetter(labels, "g")).toBe(2);
-    expect(pickByLetter(labels, "G")).toBe(2);
+    expect(pickByLetter(labels, "a")).toBe(2);
+    expect(pickByLetter(labels, "A")).toBe(2);
   });
   it("cycles through options that share the letter", () => {
     expect(pickByLetter(labels, "c", -1)).toBe(0);

@@ -70,7 +70,7 @@ export const DOCTOR_PROBLEMS: DoctorReport = {
   durationMs: 2_100,
   items: [
     { id: "codex-hooks-untrusted", cli: "codex", title: "Codex has not trusted Marshell's hooks", detail: "Hooks added to Codex do not run until they are trusted by hash.", severity: "warning", fixable: false, unfixableReason: "Marshell can't trust hooks for you. Open /hooks in Codex and trust them." },
-    { id: "gemini-unparsable", cli: "gemini", title: "Gemini's settings file does not parse", detail: `${HOME}\\.gemini\\settings.json`, severity: "error", fixable: false, unfixableReason: "The file does not parse (line 14). Marshell never edits a file it can't read." },
+    { id: "antigravity-unparsable", cli: "antigravity", title: "Antigravity's settings file does not parse", detail: `${HOME}\\.gemini\\antigravity-cli\\settings.json`, severity: "error", fixable: false, unfixableReason: "The file does not parse (line 14). Marshell never edits a file it can't read." },
     { id: "codex-readonly", cli: "codex", title: "Codex's config file is read-only", detail: `${HOME}\\.codex\\config.toml`, severity: "warning", fixable: false, unfixableReason: "The file is read-only." },
   ],
 };

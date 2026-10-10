@@ -70,7 +70,7 @@ export const APPROVALS = {
   },
   longCommand: {
     id: "long-command",
-    session: { name: "ci-fix", agent: "gemini", number: 27 },
+    session: { name: "ci-fix", agent: "antigravity", number: 27 },
     sessionCwd: "C:/dev/my-app",
     waitingMs: 2 * MIN,
     detail: { kind: "bash", command: longCommand },
@@ -79,7 +79,7 @@ export const APPROVALS = {
   },
   question: {
     id: "question",
-    session: { name: "infra", agent: "gemini", number: 2 },
+    session: { name: "infra", agent: "antigravity", number: 2 },
     sessionCwd: "C:/dev/terraform",
     waitingMs: 4 * MIN,
     detail: { kind: "question", question: "Which AWS region should the new provider config target?", options: ["us-east-1", "eu-west-1", "ap-southeast-2"] },

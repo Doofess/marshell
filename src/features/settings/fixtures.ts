@@ -6,11 +6,11 @@ export const SETTINGS_NAV: Array<{ id: string; label: string }> = [
   { id: "terminal", label: "Terminal" },
   { id: "claude", label: "Claude Code" },
   { id: "codex", label: "Codex" },
-  { id: "gemini", label: "Gemini" },
+  { id: "antigravity", label: "Antigravity" },
   { id: "advanced", label: "Advanced" },
 ];
 
-/** Twelve fields across four categories. Codex, Gemini and Advanced are empty in Phase 0 and show the empty state. */
+/** Twelve fields across four categories. Codex, Antigravity and Advanced are empty in Phase 0 and show the empty state. */
 export const SETTINGS_FIELDS: SettingField[] = [
   { category: "general", key: "theme", label: "Theme", help: "Follow the system, or always dark or light.", kind: "enum", options: ["follow-system", "dark", "light"], value: "follow-system", scope: "marshell", applies: "live" },
   { category: "general", key: "announce", label: "Screen reader announcements", help: "What the window says aloud. Only 'needs-you' is built for now: requests, questions, errors and the session you switch to.", kind: "enum", options: ["needs-you", "everything", "on-request"], value: "needs-you", scope: "marshell", applies: "live" },

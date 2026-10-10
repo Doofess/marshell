@@ -18,8 +18,8 @@ Source codes: a = Marshell computes it itself, b = pushed to a status-line comma
 |---|---|---|---|---|---|---|---|---|
 | Claude Code | `statusLine` in settings.json | b | b | b `rate_limits` 5h and 7d with resets | b | b once named | `claude mcp list`; live state g | c (hooks only) |
 | Codex CLI | none (built-in footer items only) | c model; effort unverified | d rollout `token_count` (unverified) | d rollout rate limits (unverified); e app-server | g | g | `codex mcp list --json` (config only) | c |
-| Gemini CLI | none (built-in footer toggles) | d telemetry model | d telemetry input tokens; window size needs a model table | f `/stats` | g | g | d telemetry (startup only) | d telemetry (startup only) |
-| Antigravity CLI | `statusLine` in `~/.gemini/antigravity-cli/settings.json` | b | b | b one quota bucket, not 5h/7d | g | g | g | b |
+| Gemini CLI (dropped 2026-10-10: Antigravity is Google's one agent in Marshell; row kept for the record) | none (built-in footer toggles) | d telemetry model | d telemetry input tokens; window size needs a model table | f `/stats` | g | g | d telemetry (startup only) | d telemetry (startup only) |
+| Antigravity CLI | `statusLine` in `~/.gemini/antigravity-cli/settings.json` | b | b | b one quota bucket, not 5h/7d | g | g | g | b `execution_mode` and `tool_confirmation_pending` (no permission-mode field) |
 | Copilot CLI | `statusLine` in `~/.copilot/settings.json` (experimental) | b model | b | f `/usage` | premium requests only (unverified) | unverified | `copilot mcp` | g |
 | Cursor Agent | `statusLine` in `cli-config.json` (undocumented) | b model | b | g | g | g | unverified | g |
 | opencode | none external (in-process plugins) | e local HTTP | e / d | g | e (unverified) | e | e `GET /mcp` | c |
@@ -38,8 +38,17 @@ Integration idea: install a Marshell relay as the `statusLine` command for Claud
 - **Universal today:** project, branch, dirty count, elapsed time, ports, env tag, CLI version.
 - **Easy per-vendor adapter:** model and context % for Claude, Antigravity, Copilot, Cursor, Qwen (through the relay).
 - **Medium:** Codex model, context and 5h/weekly meters (tail the rollout file, an unofficial format, or the app-server); opencode through its local HTTP server; permission mode for Claude and Codex through hooks.
-- **Hard or fragile, leave out:** anything for Gemini CLI beyond telemetry (Google replaced Gemini CLI with Antigravity CLI for free and Google One users on 2026-06-18); MCP health for any vendor but opencode; plan meters outside Claude, Codex and Antigravity; cost outside Claude.
+- **Hard or fragile, leave out:** Gemini CLI altogether (dropped 2026-10-10: Google replaced it with Antigravity CLI for free and Google One users on 2026-06-18, and Marshell follows); MCP health for any vendor but opencode; plan meters outside Claude, Codex and Antigravity; cost outside Claude.
 - **Recommended minimum common strip:** project · branch with dirty count · elapsed time · ports · env tag · CLI version. Add model and context % only where a push channel or structured source exists. This matches the design rule that unknown values are left out, never guessed.
+
+## Antigravity CLI (`agy`), verified against the vendor docs on 2026-10-10
+
+What the Phase 0 consent card and fixtures state, and where each fact comes from:
+
+- **Binary and install.** `agy`. `irm https://antigravity.google/cli/install.ps1 | iex` on Windows puts it in `%LOCALAPPDATA%\agy\bin`; `curl -fsSL https://antigravity.google/cli/install.sh | bash` puts it in `~/.local/bin/agy` on macOS and Linux. No npm package is named. ([getting started, CLI tab](https://www.antigravity.google/docs/getting-started?tab=cli))
+- **Status line.** `statusLine` in `~/.gemini/antigravity-cli/settings.json`: `{ "type": "command", "command": "~/.gemini/antigravity-cli/statusline.sh" }`, with optional `padding`, `enabled` (false suspends it) and `stack_with_default` (show it below the built-in line). The command gets JSON on stdin: `cwd`, `session_id`, `conversation_id`, `transcript_path`, `model` (`id`, `display_name`), `workspace`, `version`, `product`, `email`, `plan_tier`, `context_window` (token totals, `context_window_size`, `used_percentage`, `remaining_percentage`), `exceeds_200k_tokens`, `quota` (per model: `remaining_fraction`, `reset_time`, `reset_in_seconds`), `agent_state` (`idle`, `thinking`, `working`, `tool_use`, `initializing`), `vcs`, `sandbox`, `artifact_count`, `pending_input_count`, `tool_confirmation_pending`, `task_count`, `terminal_width`, `execution_mode` (`planning`, `fast`), `vim`. There is no permission-mode field. ([statusline](https://www.antigravity.google/docs/cli/statusline))
+- **Plugins.** Components: skills, agents, rules, MCP, and `hooks.json` ("event handlers executing shell commands before or after tool calls"). Stored in `~/.gemini/antigravity-cli/plugins/<plugin_name>/`; `agy plugin list` (or `/plugin list` inside the TUI). ([plugins, CLI tab](https://www.antigravity.google/docs/plugins?tab=cli))
+- **Unverified, to settle when the adapter is built:** hook event names; whether the CLI reads hooks from `settings.json` as well as from a plugin; whether any hook can grant or deny a tool confirmation; the CLI's version string; the instruction-file layout for rules. Until then the consent card offers only the status line, counts no hook entries, and the approve card focuses the tab.
 
 ## Each vendor's extension terms, and how to list them from outside
 
@@ -47,7 +56,7 @@ Integration idea: install a Marshell relay as the `statusLine` command for Claud
 |---|---|---|---|
 | Claude Code | plugins, marketplaces, skills, hooks, MCP servers, subagents, slash commands, output styles, statusLine, **mods** | mods only | `claude plugin list --json`, `claude mcp list`, `~/.claude/skills`, settings.json |
 | Codex | plugins, marketplaces, skills, hooks, MCP, `notify`, subagents | no | `codex mcp list --json`, `config.toml`, `hooks.json` |
-| Gemini CLI | extensions (bundle MCP, commands, context, skills, hooks, themes), custom commands, agents | no | `gemini extensions list`, `gemini mcp list`, `gemini skills list` |
+| Gemini CLI (dropped 2026-10-10) | extensions (bundle MCP, commands, context, skills, hooks, themes), custom commands, agents | no | `gemini extensions list`, `gemini mcp list`, `gemini skills list` |
 | Antigravity | plugins (skills, agents, rules, MCP, hooks), statusLine | no | `~/.gemini/antigravity-cli/plugins/`; `agy plugin list` (community source) |
 | Copilot CLI | plugins, marketplaces, skills, custom agents, hooks, MCP, statusLine | no | `copilot plugin`, `copilot skill`, `copilot mcp` |
 | Cursor Agent | rules, skills, MCP, hooks (unverified in the CLI), statusLine | no | `cli-config.json`, `.cursor/mcp.json` |

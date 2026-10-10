@@ -301,7 +301,7 @@ describe("MainWindow: the review's critical findings", () => {
   it("makes the accent test mean something: the focused pane's vendor, not the first pane's, sets the window accent", () => {
     const rows = SCENARIO_ROWS.map((r) => (r.id === "needs-question" ? r : { ...r, agent: "claude" as const }));
     const h = html({ layout: "split", splitCount: 3, rows, selectedId: "working", activePane: 2, ...BIG });
-    expect(h).toMatch(/class="window"[^>]*data-agent="gemini"/);
+    expect(h).toMatch(/class="window"[^>]*data-agent="antigravity"/);
   });
 });
 

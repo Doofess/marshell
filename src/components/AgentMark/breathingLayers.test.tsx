@@ -5,11 +5,11 @@ import { AgentMark, BREATHING } from "./AgentMark";
 
 const motion = readFileSync(new URL("../../styles/motion.css", import.meta.url), "utf8");
 
-describe("the tips of Claude and Gemini draw in more than their centres", () => {
-  it("covers Claude and Gemini", () => {
-    expect(Object.keys(BREATHING).sort()).toEqual(["claude", "gemini"]);
+describe("the tips of Claude's burst draw in more than its centre", () => {
+  it("covers Claude alone (Gemini's star breathed too; Gemini CLI is dropped)", () => {
+    expect(Object.keys(BREATHING)).toEqual(["claude"]);
   });
-  const agents = Object.keys(BREATHING) as ("claude" | "gemini")[];
+  const agents = Object.keys(BREATHING) as "claude"[];
   for (const agent of agents) {
     const { outer, layers } = BREATHING[agent]!;
     it(`draws ${agent} in less the nearer the centre`, () => {
@@ -22,14 +22,13 @@ describe("the tips of Claude and Gemini draw in more than their centres", () => 
       const reach = [12 * outer, ...layers.map((l) => l.radius * l.scale)];
       for (let i = 1; i < reach.length; i++) expect(reach[i]!, `layer ${i}`).toBeLessThan(reach[i - 1]!);
     });
-  }
-  for (const agent of ["claude", "gemini"] as const)
     it(`draws a clipped copy per layer on top of the whole ${agent} mark`, () => {
       const h = renderToStaticMarkup(<AgentMark agent={agent} working />);
       expect((h.match(/agent-mark__layer/g) ?? []).length).toBe(BREATHING[agent]!.layers.length);
       expect((h.match(/<clipPath/g) ?? []).length).toBe(BREATHING[agent]!.layers.length);
       expect(h.indexOf("agent-mark__layer")).toBeGreaterThan(h.indexOf("agent-mark__body"));
     });
+  }
   const h = renderToStaticMarkup(<AgentMark agent="claude" working />);
   it("hides the layers from assistive technology and gives each instance its own clip ids", () => {
     expect(h).toMatch(/<g[^>]*aria-hidden="true"/);
@@ -44,11 +43,12 @@ describe("the tips of Claude and Gemini draw in more than their centres", () => 
   });
   it("adds nothing for a session that is not working, or for other vendors", () => {
     expect(renderToStaticMarkup(<AgentMark agent="claude" />)).not.toContain("agent-mark__layer");
-    expect(renderToStaticMarkup(<AgentMark agent="gemini" />)).not.toContain("agent-mark__layer");
     expect(renderToStaticMarkup(<AgentMark agent="codex" working />)).not.toContain("agent-mark__layer");
+    expect(renderToStaticMarkup(<AgentMark agent="antigravity" working />)).not.toContain("agent-mark__layer");
   });
-  it("animates Gemini the same way as Claude", () => {
-    expect(motion).toMatch(/data-agent="gemini"\] :is\(\.agent-mark__body, \.agent-mark__layer\)/);
+  it("breathes only the body and the layers of the mark, and no other vendor shares the rule", () => {
+    expect(motion).toMatch(/data-agent="claude"\] :is\(\.agent-mark__body, \.agent-mark__layer\)/);
+    expect(motion).not.toMatch(/data-agent="gemini"/);
   });
   it("scales each layer by its own amount, about the centre of the mark", () => {
     expect(motion).toMatch(/scale\(var\(--s/);

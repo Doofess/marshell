@@ -16,9 +16,10 @@ describe("ConsentCard", () => {
     expect(h).toContain("Skip: use limited status");
   });
   it("has a switch for each capability and explains an unavailable one", () => {
-    const h = renderToStaticMarkup(<ConsentCard scenario={CONSENT.gemini} on={{ status: true, approve: false, statusline: false }} />);
+    const h = renderToStaticMarkup(<ConsentCard scenario={CONSENT.antigravity} on={{ status: false, approve: false, statusline: true }} />);
     expect(h.match(/role="switch"/g)).toHaveLength(3);
-    expect(h).toContain("Gemini has no approval hook, so Marshell focuses the tab instead.");
+    expect(h).toContain("Antigravity has no verified approval hook, so Marshell focuses the tab instead (verified when the adapter is built).");
+    expect(h).toContain("Its hook events are verified when the adapter is built.");
   });
   it("hides the diff until asked, then shows the exact change", () => {
     expect(renderToStaticMarkup(<ConsentCard scenario={CONSENT.claude} on={on} />)).not.toContain("diff__lines");
@@ -31,7 +32,7 @@ describe("ConsentCard", () => {
     expect(h).toContain("trust them there");
   });
   it("replaces the controls with the reason when the file cannot be edited", () => {
-    const h = renderToStaticMarkup(<ConsentCard scenario={CONSENT.unparsableGemini} on={on} />);
+    const h = renderToStaticMarkup(<ConsentCard scenario={CONSENT.unparsableAntigravity} on={on} />);
     expect(h).toContain("does not parse");
     expect(h).not.toContain('role="switch"');
     expect(h).toContain("Skip: use limited status");

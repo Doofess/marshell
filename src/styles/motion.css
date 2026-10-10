@@ -32,7 +32,7 @@
 .agent-mark {
   transform-origin: center;
 }
-/* Claude and Gemini breathe: the rays draw in towards the centre and back out, the tips by more than the centre (each layer sets its own --s, see AgentMark.tsx). */
+/* Claude breathes: the rays draw in towards the centre and back out, the tips by more than the centre (each layer sets its own --s, see AgentMark.tsx). */
 @keyframes mark-breathe {
   0%, 100% { transform: scale(1); }
   50% { transform: scale(var(--s, 0.55)); }
@@ -123,8 +123,7 @@
 }
 
 @media (prefers-reduced-motion: no-preference) {
-  :root:not([data-motion="reduce"]) .agent-mark[data-working][data-agent="claude"] :is(.agent-mark__body, .agent-mark__layer),
-  :root:not([data-motion="reduce"]) .agent-mark[data-working][data-agent="gemini"] :is(.agent-mark__body, .agent-mark__layer) {
+  :root:not([data-motion="reduce"]) .agent-mark[data-working][data-agent="claude"] :is(.agent-mark__body, .agent-mark__layer) {
     transform-origin: 12px 12px;
     animation: mark-breathe var(--dur-loop) ease-in-out infinite;
   }

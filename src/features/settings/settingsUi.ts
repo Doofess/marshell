@@ -27,6 +27,6 @@ export const settingsPath = (category: string): string =>
     ? "C:\\Users\\Home Office\\.claude\\settings.json"
     : category === "codex"
       ? "C:\\Users\\Home Office\\.codex\\config.toml"
-      : category === "gemini"
-        ? "C:\\Users\\Home Office\\.gemini\\settings.json"
+      : category === "antigravity"
+        ? "C:\\Users\\Home Office\\.gemini\\antigravity-cli\\settings.json"
         : "~/.marshell/settings.json";

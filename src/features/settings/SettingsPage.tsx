@@ -27,7 +27,7 @@ export function SettingsPage({ category, mode, state, edits, opened = SETTINGS_T
   const reason = fileReason(file, path, parsed && !parsed.ok ? { line: parsed.line, column: parsed.column } : undefined);
   // Only the edits that really differ from what is set count and are previewed.
   const pending = edits ? pendingChanges(fields, edits) : undefined;
-  const isAgent = category === "codex" || category === "gemini";
+  const isAgent = category === "codex" || category === "antigravity";
   const empty = EMPTY_STATES.find((e) => e.id === "no-agents")!;
 
   return (

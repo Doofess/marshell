@@ -11,10 +11,6 @@
   --agent-mark: var(--brand-claude-mark);
   --agent-signal: var(--brand-claude-mark);
 }
-[data-agent="gemini"] {
-  --agent: var(--brand-gemini);
-  --agent-signal: var(--brand-gemini);
-}
 [data-agent="antigravity"] {
   --agent: var(--brand-cyan);
   --agent-signal: var(--brand-cyan);

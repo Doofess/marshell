@@ -34,10 +34,9 @@
   --brand-codex: light-dark(oklch(32% 0 none), oklch(86% 0 none));
   /* OpenAI: its own pale yellow in dark mode; a deep teal green in light mode (the ChatGPT family), since a yellow that passes 3:1 on white is a muddy gold. */
   --brand-openai: light-dark(oklch(42% 0.08 168), oklch(96% 0.07 102));
-  /* Antigravity's cyan, clear of Gemini's and DeepSeek's blues. */
+  /* Antigravity's cyan (Google's one agent here), clear of DeepSeek's blue. */
   --brand-cyan: light-dark(oklch(52% 0.1 205), oklch(80% 0.12 205));
-  --brand-gemini: light-dark(oklch(52% 0.17 265), oklch(70% 0.14 265));
-  /* Deep blue, darker than Gemini's, so the two stay apart at a glance. */
+  /* DeepSeek's deep blue, darker and bluer than the cyan, so the two stay apart at a glance. */
   --brand-deepseek: light-dark(oklch(42% 0.16 262), oklch(62% 0.16 258));
   --brand-violet: light-dark(oklch(50% 0.15 300), oklch(72% 0.13 300));
   --brand-generic: light-dark(oklch(52% 0.02 250), oklch(65% 0.02 250));
