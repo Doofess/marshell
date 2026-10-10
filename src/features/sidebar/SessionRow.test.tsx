@@ -32,6 +32,12 @@ describe("SessionRow", () => {
     expect(renderToStaticMarkup(<SessionRow row={row} density="comfortable" />)).not.toContain(" in · ");
     expect(renderToStaticMarkup(<SessionRow row={row} density="expanded" />)).toContain(" in · ");
   });
+  it("shows no usage line and no context ring when the context data is unknown", () => {
+    const row = FIXTURES.find((f) => f.id === "unknown")!;
+    const html = renderToStaticMarkup(<SessionRow row={row} density="expanded" />);
+    expect(html).not.toContain("session-row__usage");
+    expect(html).not.toContain("context-ring");
+  });
   it("never puts a literal colour in markup", () => {
     for (const row of FIXTURES)
       expect(renderToStaticMarkup(<SessionRow row={row} density="expanded" />)).not.toMatch(/#[0-9a-f]{3,8}\b|rgb\(|oklch\(/i);

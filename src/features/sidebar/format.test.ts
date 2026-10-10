@@ -48,8 +48,8 @@ describe("formatUsage", () => {
   it("marks unknown parts with a dash", () => {
     expect(formatUsage({ inContext: 84_000, tokensIn: 312_000 })).toBe("84k / – · 312k in · – out · –");
   });
-  it("is a single dash when nothing is known", () => {
-    expect(formatUsage(undefined)).toBe("–");
+  it("is null when nothing is known, so no line is shown", () => {
+    expect(formatUsage(undefined)).toBeNull();
   });
 });
 

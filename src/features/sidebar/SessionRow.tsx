@@ -28,6 +28,7 @@ export function SessionRow({
   tabStop?: boolean;
 }) {
   const caution = modeCaution(row.mode);
+  const usage = formatUsage(row.usage);
   const time = row.waitingMs ?? (row.status === "done-unseen" || row.status === "done-seen" || row.status === "ended" ? row.ageMs : undefined);
   const branch = row.branch ? splitForMiddle(row.branch) : null;
 
@@ -111,7 +112,7 @@ export function SessionRow({
               {row.recap.text} <span className="session-row__age">{formatDuration(row.recap.ageMs)} ago</span>
             </p>
           )}
-          <div className="session-row__usage">{formatUsage(row.usage)}</div>
+          {usage && <div className="session-row__usage">{usage}</div>}
         </div>
       )}
     </div>

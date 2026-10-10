@@ -86,10 +86,6 @@ export const ContextRings: StoryObj = {
             <figcaption style={{ fontSize: "var(--text-11)", color: "var(--text-3)", fontVariantNumeric: "tabular-nums" }}>{p}%</figcaption>
           </figure>
         ))}
-        <figure style={{ margin: 0, display: "grid", justifyItems: "center", gap: "var(--space-1)" }}>
-          <span style={{ blockSize: 16, color: "var(--text-3)" }}>–</span>
-          <figcaption style={{ fontSize: "var(--text-11)", color: "var(--text-3)" }}>unknown</figcaption>
-        </figure>
       </div>
     </ThemePair>
   ),

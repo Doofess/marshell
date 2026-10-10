@@ -28,8 +28,9 @@ export function formatCost(n?: number): string {
   return usd.format(n);
 }
 
-export function formatUsage(u?: Usage): string {
-  if (!u || Object.values(u).every((v) => v === undefined)) return DASH;
+/** The usage line of an expanded row, or null when nothing about the session's usage is known (the row then shows none). */
+export function formatUsage(u?: Usage): string | null {
+  if (!u || Object.values(u).every((v) => v === undefined)) return null;
   return `${formatTokens(u.inContext)} / ${formatTokens(u.window)} · ${formatTokens(u.tokensIn)} in · ${formatTokens(u.tokensOut)} out · ${formatCost(u.costUsd)}`;
 }
 
