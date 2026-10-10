@@ -124,7 +124,7 @@ Stories are fed by `fake-agent` scenario scripts, so the same 5-agent run drives
 | Sidebar | Default 288 px, minimum 200, maximum 400, rail 52, focus mode 0. Drag the edge to resize; double-click resets. |
 | Sidebar footer | 40 px: plan ring, 5h %, and doctor glyph with issue count. |
 | Needs-you lane | The header is **always present** at 28 px ("Needs you · 2" or "All clear"), so it never pops in or out. |
-| Lane cards | Accordion: only the targeted card (oldest waiting) is expanded, at 120–176 px. The others are 36 px one-liners. |
+| Lane cards | Accordion: only the targeted card (oldest waiting) is expanded, at about 250 px (measured: 246 for a question, 255 for a command with its Always and terminal links). The others are 36 px one-liners. |
 | Lane height | At most 40% of sidebar height. Beyond that it scrolls internally, with a fade and "+N more". |
 | Right drawer | Default 360 px, minimum 300, maximum 560. It pushes the terminal, and overlays instead when the terminal would drop below 720 px. |
 | Split view | 50/50 with a 1 px hairline and an 8 px hit area. The active pane has a 2 px accent bar under its header; the inactive header is at 60% opacity. Terminal text is **never** dimmed. |

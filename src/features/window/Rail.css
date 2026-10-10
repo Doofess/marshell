@@ -41,7 +41,8 @@
   inline-size: var(--stripe);
   background: var(--agent, var(--brand-generic));
 }
-.rail__mono {
+.rail__item::after {
+  content: attr(data-mono);
   font-size: var(--text-11);
   font-weight: 600;
   letter-spacing: 0.04em;

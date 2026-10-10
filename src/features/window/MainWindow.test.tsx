@@ -75,3 +75,18 @@ describe("MainWindow: hygiene", () => {
       expect(html({ layout, sidebarPref: layout === "focus" ? "focus" : layout === "rail" ? "rail" : "expanded" })).not.toMatch(/#[0-9a-f]{3,8}\b|rgb\(|oklch\(/i);
   });
 });
+
+describe("MainWindow (accessibility gate)", () => {
+  it("gives the focusable split separator the values a separator needs", () => {
+    const h = html({ layout: "split" });
+    expect(h).toContain('role="separator"');
+    expect(h).toContain('aria-valuenow="50"');
+    expect(h).toContain('aria-valuemin="20"');
+    expect(h).toContain('aria-valuemax="80"');
+  });
+  it("names the focus pill with the text it shows", () => {
+    const h = html({ layout: "focus", sidebarPref: "focus" });
+    expect(h).toContain('aria-label="2 need you Ctrl+Shift+N"');
+    expect(h).toMatch(/<span>2 need you<\/span> <kbd/);
+  });
+});

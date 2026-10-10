@@ -23,16 +23,29 @@ const CSS = [
   "src/components/AgentMark/AgentMark.css",
   "src/components/StatusGlyph/StatusGlyph.css",
   "src/components/ContextRing/ContextRing.css",
+  "node_modules/@xterm/xterm/css/xterm.css",
+  "src/features/terminal/ScriptedTerminal.css",
+  "src/components/Chip/Chip.css",
   "src/features/sidebar/SessionRow.css",
   "src/features/approval/ApproveCard.css",
+  "src/features/lane/Lane.css",
+  "src/features/window/Sidebar.css",
+  "src/features/window/SessionHeader.css",
+  "src/features/window/Rail.css",
+  "src/features/window/MainWindow.css",
 ];
 const ACCENTS = ["amber", "blue", "indigo", "violet", "magenta", "cyan", "teal", "slate"];
 
 const server = await createServer({ appType: "custom", server: { middlewareMode: true }, logLevel: "error" });
 let sections;
+let terminalData;
 try {
   const { renderReview } = await server.ssrLoadModule("/src/design/review/renderReview.tsx");
   sections = renderReview(batch);
+  // The real xterm in the page needs the palettes and the canned session, read from the same sources as the app.
+  const t = await server.ssrLoadModule("/src/features/terminal/palettes.ts");
+  const sc = await server.ssrLoadModule("/src/features/terminal/scriptedSession.ts");
+  terminalData = { palettes: t.PALETTES, minContrast: t.MIN_CONTRAST, session: sc.SCRIPTED_SESSION, size: sc.SCRIPTED_SIZE };
 } finally {
   await server.close();
 }
@@ -163,11 +176,32 @@ const META = {
     ],
   },
 };
+META["2b"] = {
+  lede: "Sub-review B of 3 in batch 2: the main window with a real terminal. Sub-review A (approve card) and batch 1 are signed off and sit below.",
+  nav: [["needs-you-lane", "Lane"], ["main-window", "Window"], ["approve-card", "Approve card"], ["sidebar-session-rows", "Rows"], ["design-colours", "Colours"], ["sign-off", "Sign-off"]],
+  checks: [
+    "In 5 seconds you can name which two sessions need you and why (the 5-second test).",
+    "The lane header is always there; the oldest request is the expanded card; Twelve waiting scrolls and says +11 more.",
+    "Split view: the active pane is obvious, the other header recedes, terminal text is not dimmed.",
+    "Focus mode, the rail, the 940 px auto-collapse and the 720 px window all hold together.",
+    "Pin the terminal light while the app is dark (and the reverse) with the Terminal theme control: the palette changes at once, nothing re-flows, dim text is lifted by Contrast protection.",
+    "It still reads well at 150% browser zoom, and the focus ring is visible in both themes.",
+  ],
+};
 const meta = META[batch];
 if (!meta) {
   console.error(`no page text for batch "${batch}" in scripts/build-review.mjs (known: ${Object.keys(META).join(", ")})`);
   process.exit(1);
 }
+
+const withTerminal = ["2b", "2c"].includes(batch);
+const safeInline = (text) => text.replace(/<\/script/gi, "<\\/script");
+const terminalScripts = withTerminal
+  ? `<script>${safeInline(readFileSync("node_modules/@xterm/xterm/lib/xterm.js", "utf8"))}</script>
+<script>${safeInline(readFileSync("node_modules/@xterm/addon-fit/lib/addon-fit.js", "utf8"))}</script>
+<script type="application/json" id="terminal-data">${JSON.stringify(terminalData).replace(/<\//g, "<\\/")}</script>
+<script>${safeInline(readFileSync("scripts/review-terminal.js", "utf8"))}</script>`
+  : "";
 
 const options = ACCENTS.map((a) => `<option value="${a}">${a[0].toUpperCase()}${a.slice(1)}</option>`).join("");
 
@@ -185,6 +219,7 @@ ${chrome}
     <label for="accent">Accent <select id="accent">${options}</select></label>
     <label for="motion"><input type="checkbox" id="motion"> Reduced motion</label>
     <button type="button" id="replay">Replay animations</button>
+    ${withTerminal ? `<label for="terminal-theme">Terminal theme <select id="terminal-theme"><option value="follow-app">Follow app</option><option value="dark">Always dark</option><option value="light">Always light</option></select></label><label for="terminal-contrast"><input type="checkbox" id="terminal-contrast" checked> Contrast protection</label>` : ""}
     <nav aria-label="Sections">
       ${meta.nav.map(([id, text]) => `<a href="#${id}">${text}</a>`).join("\n      ")}
     </nav>
@@ -197,6 +232,7 @@ ${chrome}
     </ol>
   </section>
 </main>
+${terminalScripts}
 <script>
 (() => {
   const root = document.documentElement;

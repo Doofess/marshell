@@ -35,3 +35,16 @@ describe("Lane", () => {
     expect(html([APPROVALS.receipt])).toContain("All clear");
   });
 });
+
+describe("Lane (accessibility gate)", () => {
+  it("announces the count from a status wrapper, not by giving the heading a status role", () => {
+    const h = html();
+    expect(h).toMatch(/<div[^>]*role="status"[^>]*><h2 class="lane__heading">Needs you \u00b7 2<\/h2><\/div>/);
+    expect(h).not.toMatch(/<h2[^>]*role=/);
+  });
+  it("names a one-liner with the text it shows, in order, then what the glyph says", () => {
+    const h = html();
+    expect(h).toContain('aria-label="billing Run a command 1m. Needs permission."');
+    expect(h).toMatch(/lane-row__name"[^>]*>billing<\/span> <span class="lane-row__what"/);
+  });
+});

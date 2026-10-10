@@ -38,4 +38,7 @@ describe("MainWindow.css", () => {
     expect(css).not.toMatch(/\b(margin|padding|border)-(left|right|top|bottom)\b/);
     expect(css).not.toMatch(/\b(left|right|top|bottom):/);
   });
+  it("keeps the dimmed pane header readable: its secondary text is full-strength so 60% opacity still passes AA", () => {
+    expect(rule('.pane[data-active="false"] .pane__place')).toContain("var(--text-1)");
+  });
 });

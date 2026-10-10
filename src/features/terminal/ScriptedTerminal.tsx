@@ -41,11 +41,14 @@ export function ScriptedTerminal({ setting = "follow-app", label = "Terminal pre
       term.write(SCRIPTED_SESSION);
       fit.fit();
 
+      // The padded host takes the terminal's own background, so a terminal pinned light or dark has no mismatched edge.
       const apply = () => {
         const o = terminalOptions(scheme());
         term.options.theme = o.theme;
         term.options.minimumContrastRatio = o.minimumContrastRatio;
+        el.style.backgroundColor = o.theme.background ?? "";
       };
+      apply();
       const prefers = matchMedia("(prefers-color-scheme: dark)");
       prefers.addEventListener("change", apply);
       const watch = new MutationObserver(apply);

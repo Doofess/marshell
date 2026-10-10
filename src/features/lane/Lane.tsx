@@ -16,9 +16,9 @@ export function Lane({ requests, sidebarHeight }: { requests: ApprovalRequest[];
   return (
     <section className="lane" aria-label="Needs you" style={{ blockSize: layout.height }} data-scrolls={layout.scrolls || undefined} data-count={ordered.length}>
       <header className="lane__header">
-        <h2 className="lane__heading" role="status">
-          {heading}
-        </h2>
+        <div role="status">
+          <h2 className="lane__heading">{heading}</h2>
+        </div>
         {layout.hiddenCount > 0 && <span className="lane__more">+{layout.hiddenCount} more</span>}
       </header>
       {ordered.length > 0 && (

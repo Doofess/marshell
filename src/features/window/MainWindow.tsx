@@ -114,7 +114,7 @@ export function MainWindow({
           {layout === "split" ? (
             <div className="split">
               <Pane row={selected} active setting={terminalSetting} />
-              <div className="split__handle" role="separator" aria-orientation="vertical" aria-label="Resize panes" tabIndex={0} />
+              <div className="split__handle" role="separator" aria-orientation="vertical" aria-label="Resize panes" aria-valuenow={50} aria-valuemin={20} aria-valuemax={80} tabIndex={0} />
               <Pane row={second} active={false} setting={terminalSetting} />
             </div>
           ) : (
@@ -122,11 +122,11 @@ export function MainWindow({
           )}
 
           {mode === "focus" && waiting > 0 && (
-            <button type="button" className="focus-pill" aria-label={`${waiting} need you, ${pillKeys}`}>
+            <button type="button" className="focus-pill" aria-label={`${waiting} need you ${pillKeys}`}>
               <span aria-hidden="true">
                 <StatusGlyph kind="needs-permission" />
               </span>
-              <span>{waiting} need you</span>
+              <span>{waiting} need you</span>{" "}
               <kbd className="focus-pill__kbd">{pillKeys}</kbd>
             </button>
           )}

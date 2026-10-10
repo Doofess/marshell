@@ -6,6 +6,8 @@ import * as SpaceAndMotion from "../SpaceAndMotion.stories";
 import * as Glyphs from "../../components/StatusGlyph/StatusGlyph.stories";
 import * as Marks from "../../components/AgentMark/AgentMark.stories";
 import * as Card from "../../features/approval/ApproveCard.stories";
+import * as Lane from "../../features/lane/Lane.stories";
+import * as Window from "../../features/window/MainWindow.stories";
 import * as Rows from "../../features/sidebar/SessionRow.stories";
 
 type StoryModule = { default: { title?: string } } & Record<string, unknown>;
@@ -26,7 +28,15 @@ const BATCH_2A: Array<[StoryModule, string]> = [
 
 export type UpTo = "1" | "2a" | "2b" | "2c";
 const ORDER: UpTo[] = ["1", "2a", "2b", "2c"];
-const BATCHES: Record<UpTo, Array<[StoryModule, string]>> = { "1": BATCH_1, "2a": BATCH_2A, "2b": [], "2c": [] };
+const BATCHES: Record<UpTo, Array<[StoryModule, string]>> = {
+  "1": BATCH_1,
+  "2a": BATCH_2A,
+  "2b": [
+    [Lane, "The lane header is always there at 28 px. The oldest waiting request is the target and shows as a full card; the rest are 36 px one-liners; it never takes more than 40% of the sidebar."],
+    [Window, "The 5-agent scenario in the real layout, with a real xterm.js terminal that follows the theme. Use the Terminal theme control above to pin it dark or light, and Contrast protection to see what it rescues."],
+  ],
+  "2c": [],
+};
 
 /** "TruncationAt200" → "Truncation at 200". */
 function humanize(name: string): string {

@@ -38,3 +38,11 @@ describe("Rail", () => {
     expect(other).toContain('data-kind="done-unseen"');
   });
 });
+
+describe("Rail (accessibility gate)", () => {
+  it("draws the monogram from an attribute, so the button's name is not required to repeat letters that are only decoration", () => {
+    const h = renderToStaticMarkup(<Rail rows={rows} needsYou={0} />);
+    expect(h).toContain('data-mono="BI"');
+    expect(h).not.toContain("rail__mono");
+  });
+});

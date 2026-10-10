@@ -1,7 +1,7 @@
 import type { ApprovalRequest } from "../approval/types";
 
-/** docs/PLAN.md "Layout": header always 28 px; the targeted card expands (up to 176 px), the others are 36 px one-liners; at most 40% of the sidebar. */
-export const LANE = { header: 28, expanded: 176, collapsed: 36, maxShare: 0.4 } as const;
+/** docs/PLAN.md "Layout": header always 28 px; the targeted card expands (up to 256 px, the measured height of the real card), the others are 36 px one-liners; at most 40% of the sidebar. */
+export const LANE = { header: 28, expanded: 256, collapsed: 36, maxShare: 0.4 } as const;
 
 export const pending = (items: ApprovalRequest[]): ApprovalRequest[] => items.filter((r) => r.state.phase === "pending");
 

@@ -27,4 +27,9 @@ describe("Lane.css", () => {
     expect(css).not.toMatch(/#[0-9a-f]{3,8}\b|rgb\(/i);
     expect(css).not.toMatch(/\b(margin|padding|border)-(left|right|top|bottom)\b/);
   });
+  it("adds no gap or end padding to the list, so the lane's size (header + card + one-liners) is exactly what laneLayout says and nothing scrolls by a few pixels", () => {
+    const r = rule(".lane__list");
+    expect(r).toMatch(/gap:\s*0/);
+    expect(r).not.toMatch(/padding-block-end/);
+  });
 });

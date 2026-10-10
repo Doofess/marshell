@@ -119,6 +119,10 @@
 .pane__name {
   font-weight: 600;
 }
+/* At 60% opacity the secondary text would fall below AA, so the receding header uses full-strength text. */
+.pane[data-active="false"] .pane__place {
+  color: var(--text-1);
+}
 .pane__place {
   color: var(--text-2);
 }

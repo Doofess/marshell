@@ -15,7 +15,8 @@ const stacked = (label: string, props: MainWindowProps): StoryObj => ({
   ),
 });
 
-export const FiveAgents: StoryObj = stacked("The 5-agent scenario: two need you, one working, one done, one error", { width: 1180, height: 800 });
+// 880 tall so the lane (header, the 256 px target card and one 36 px row = 320) fits inside its 40% cap of the 840 px sidebar.
+export const FiveAgents: StoryObj = stacked("The 5-agent scenario: two need you, one working, one done, one error", { width: 1180, height: 880 });
 export const SplitView: StoryObj = stacked("Split view: the active pane has the accent bar, the other header recedes, terminal text is never dimmed", { width: 1180, height: 800, layout: "split" });
 export const FocusMode: StoryObj = stacked("Focus mode: sidebar and header gone, a quiet pill top right", { width: 1180, height: 800, layout: "focus" });
 export const FocusModeHeaderRevealed: StoryObj = stacked("Focus mode with the pointer on the top edge: the header slides in", { width: 1180, height: 800, layout: "focus", headerPeek: true });
