@@ -54,7 +54,7 @@ describe("programs the first chip offers", () => {
   });
   it("covers the shells and a spread of dev, remote and cloud tools, with a catch-all", () => {
     const ids = LAUNCH_PROGRAMS.map((p) => p.id);
-    for (const id of ["claude", "codex", "gemini", "powershell", "bash", "zsh", "cmd", "gitbash", "wsl", "python", "node", "docker", "kubectl", "terraform", "ssh", "aws", "program"]) expect(ids, id).toContain(id);
+    for (const id of ["claude", "codex", "gemini", "antigravity", "copilot", "cursor", "opencode", "amp", "qwen", "grok", "powershell", "bash", "zsh", "cmd", "gitbash", "wsl", "python", "node", "docker", "kubectl", "terraform", "ssh", "aws", "program"]) expect(ids, id).toContain(id);
   });
   it("has unique ids, labels and a first-line hint for each", () => {
     expect(new Set(LAUNCH_PROGRAMS.map((p) => p.id)).size).toBe(LAUNCH_PROGRAMS.length);
