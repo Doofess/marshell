@@ -32,10 +32,10 @@
 .agent-mark {
   transform-origin: center;
 }
-/* Claude breathes: the rays draw in towards the centre and back out, around a centre that stays put. */
+/* Claude breathes: the rays draw in towards the centre and back out, the tips by more than the centre (each layer sets its own --s, see AgentMark.tsx). */
 @keyframes mark-breathe {
   0%, 100% { transform: scale(1); }
-  50% { transform: scale(0.55); }
+  50% { transform: scale(var(--s, 0.55)); }
 }
 @keyframes mark-spin {
   to { transform: rotate(360deg); }
@@ -78,7 +78,7 @@
 }
 
 @media (prefers-reduced-motion: no-preference) {
-  :root:not([data-motion="reduce"]) .agent-mark[data-working][data-agent="claude"] .agent-mark__body {
+  :root:not([data-motion="reduce"]) .agent-mark[data-working][data-agent="claude"] :is(.agent-mark__body, .agent-mark__layer) {
     transform-origin: 12px 12px;
     animation: mark-breathe var(--dur-loop) ease-in-out infinite;
   }
