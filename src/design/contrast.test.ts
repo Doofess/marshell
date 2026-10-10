@@ -21,7 +21,7 @@ describe("text on surfaces", () => {
 });
 
 describe("status and brand colours on surfaces", () => {
-  const names = ["--error", "--ok", "--caution", "--brand-claude", "--brand-claude-mark", "--brand-codex", "--brand-gemini", "--brand-deepseek", "--brand-violet", "--brand-generic"];
+  const names = ["--error", "--ok", "--caution", "--brand-claude", "--brand-claude-mark", "--brand-codex", "--brand-openai", "--brand-cyan", "--brand-gemini", "--brand-deepseek", "--brand-violet", "--brand-generic"];
   for (const theme of THEMES)
     for (const n of names)
       it(`${n} is at least 3:1 on every surface (${theme})`, () => {
@@ -66,7 +66,7 @@ describe("composited and derived colours (final review)", () => {
     it(`--ok-dim (the seen check) is at least 3:1 on every surface (${theme})`, () => {
       expect(minOnSurfaces(tokens["--ok-dim"]![theme], tokens, theme)).toBeGreaterThanOrEqual(3);
     });
-  const brands = ["--brand-claude", "--brand-codex", "--brand-gemini", "--brand-deepseek", "--brand-violet", "--brand-generic"];
+  const brands = ["--brand-claude", "--brand-codex", "--brand-openai", "--brand-cyan", "--brand-gemini", "--brand-deepseek", "--brand-violet", "--brand-generic"];
   for (const theme of THEMES)
     for (const s of ["--error", "--ok", "--caution"])
       for (const b of brands)
@@ -91,4 +91,30 @@ describe("text on the blocked-row tints", () => {
           const bg = overlay(tokens["--error"]![theme], tokens[surface]![theme], 0.1);
           expect(contrast(tokens[t]![theme], bg)).toBeGreaterThanOrEqual(4.5);
         });
+});
+
+describe("OpenAI's light yellow and Antigravity's cyan (agent colours)", () => {
+  for (const theme of THEMES)
+    for (const [name, other] of [
+      ["--brand-openai", "--brand-codex"],
+      ["--brand-cyan", "--brand-gemini"],
+      ["--brand-cyan", "--brand-deepseek"],
+    ] as const)
+      it(`${name} is ΔE ≥ 15 from ${other} (${theme})`, () => {
+        expect(deltaE(tokens[name]![theme], tokens[other]![theme])).toBeGreaterThanOrEqual(15);
+      });
+  for (const theme of THEMES)
+    for (const name of ["--brand-openai", "--brand-cyan"])
+      for (const t of ["--text-1", "--text-2"])
+        for (const surface of ["--bg-base", "--bg-raised", "--bg-overlay"])
+          it(`${t} is at least 4.5:1 on the ${name} blocked-row tint (${theme}, ${surface})`, () => {
+            const bg = overlay(tokens[name]![theme], tokens[surface]![theme], 0.12);
+            expect(contrast(tokens[t]![theme], bg)).toBeGreaterThanOrEqual(4.5);
+          });
+  for (const theme of THEMES)
+    for (const name of ["--brand-openai", "--brand-cyan"])
+      it(`the mark on a ${name} badge (the needs-you ink) is at least 3:1 (${theme})`, () => {
+        const ink = theme === "dark" ? "oklch(0% 0 none)" : "oklch(100% 0 none)";
+        expect(contrast(ink, tokens[name]![theme])).toBeGreaterThanOrEqual(3);
+      });
 });

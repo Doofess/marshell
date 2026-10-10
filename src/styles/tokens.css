@@ -29,6 +29,10 @@
      row's start, never a status, and error is a disc with a cross at its end. The stripe keeps the muted terracotta above. */
   --brand-claude-mark: light-dark(oklch(58% 0.14 41), oklch(68% 0.135 40));
   --brand-codex: light-dark(oklch(32% 0 none), oklch(86% 0 none));
+  /* OpenAI's light yellow: pale in dark mode; in light mode as pale as still reaches 3:1 on white, so a golden yellow. */
+  --brand-openai: light-dark(oklch(62% 0.16 82), oklch(96% 0.07 102));
+  /* Antigravity's cyan, clear of Gemini's and DeepSeek's blues. */
+  --brand-cyan: light-dark(oklch(52% 0.1 205), oklch(80% 0.12 205));
   --brand-gemini: light-dark(oklch(52% 0.17 265), oklch(70% 0.14 265));
   /* Deep blue, darker than Gemini's, so the two stay apart at a glance. */
   --brand-deepseek: light-dark(oklch(42% 0.16 262), oklch(62% 0.16 258));

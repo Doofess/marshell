@@ -7,17 +7,23 @@
   --agent-mark: var(--brand-claude-mark);
   --agent-signal: var(--brand-claude-mark);
 }
-[data-agent="gemini"],
-[data-agent="antigravity"] {
+[data-agent="gemini"] {
   --agent: var(--brand-gemini);
   --agent-signal: var(--brand-gemini);
+}
+[data-agent="antigravity"] {
+  --agent: var(--brand-cyan);
+  --agent-signal: var(--brand-cyan);
+}
+[data-agent="codex"] {
+  --agent: var(--brand-openai);
+  --agent-signal: var(--brand-openai);
 }
 [data-agent="copilot"],
 [data-agent="qwen"] {
   --agent: var(--brand-violet);
   --agent-signal: var(--brand-violet);
 }
-[data-agent="codex"],
 [data-agent="cursor"],
 [data-agent="opencode"],
 [data-agent="grok"] {

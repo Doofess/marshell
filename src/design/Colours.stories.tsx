@@ -26,7 +26,7 @@ const groups: Array<[string, string[]]> = [
   ["Text", ["--text-1", "--text-2", "--text-3"]],
   ["Status", ["--error", "--ok", "--caution"]],
   ["Accent (toolbar)", ["--accent", "--accent-tint", "--accent-flash"]],
-  ["Agent brands (stripes and dots only)", ["--brand-claude", "--brand-codex", "--brand-gemini", "--brand-generic"]],
+  ["Agent brands (stripes and dots only)", ["--brand-claude", "--brand-codex", "--brand-openai", "--brand-cyan", "--brand-gemini", "--brand-generic"]],
 ];
 
 export const Palette: StoryObj = {
