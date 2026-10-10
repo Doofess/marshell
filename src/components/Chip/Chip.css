@@ -16,3 +16,9 @@
 .chip[data-tone="accent"] {
   background: color-mix(in oklch, var(--accent) 20%, transparent);
 }
+
+@media (forced-colors: active) {
+  .chip {
+    outline: 1px solid CanvasText;
+  }
+}

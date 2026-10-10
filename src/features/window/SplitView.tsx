@@ -3,7 +3,7 @@ import type { Os } from "../../lib/keymap";
 import type { RowModel } from "../sidebar/types";
 import type { TerminalThemeSetting } from "../terminal/terminalTheme";
 import { EmptyPane, Pane } from "./Pane";
-import { PANE_LIMIT, RATIO, chooseArrangement, paneCells, planFor, tracks, type Arrangement, type Handle, type PaneCount, type Plan, type Ratios, type Size } from "./splitLayout";
+import { ARRANGEMENTS, CELL, PANE_LIMIT, RATIO, chooseArrangement, paneCells, planFor, tracks, type Arrangement, type Handle, type PaneCount, type Plan, type Ratios, type Size } from "./splitLayout";
 import "./SplitView.css";
 
 export type SplitViewProps = {
@@ -21,6 +21,10 @@ export type SplitViewProps = {
   choices?: RowModel[];
   /** Sessions that are running but not shown because the window is too small for more panes. */
   hidden?: number;
+  /** What has been typed in each pane's own prompt line, by session id. */
+  composerValues?: Record<string, string>;
+  /** False turns every pane's prompt line off, and gives their rows back to the terminals. */
+  composers?: boolean;
   setting?: TerminalThemeSetting;
   os?: Os;
 };
@@ -50,25 +54,29 @@ function handleLabel(plan: Plan, h: Handle): string {
  * the user's choice stands once made. Dividers cost one pixel (the 8 px hit area overhangs the panes). A zoomed
  * pane fills the view and the others keep running.
  */
-export function SplitView({ panes, size, activeIndex = 0, arrangement, ratios = {}, zoomed, choices = [], hidden = 0, setting = "follow-app", os = "windows" }: SplitViewProps) {
+export function SplitView({ panes, size, activeIndex = 0, arrangement, ratios = {}, zoomed, choices = [], hidden = 0, composerValues = {}, composers = true, setting = "follow-app", os = "windows" }: SplitViewProps) {
   if (panes.length > PANE_LIMIT) throw new Error(`At most ${PANE_LIMIT} panes can be on screen`);
   const isZoomed = zoomed !== undefined && panes[zoomed] != null;
   const count = (isZoomed ? 1 : Math.max(1, panes.length)) as PaneCount;
-  const chosen = isZoomed ? "single" : (arrangement ?? chooseArrangement(count, size));
+  // An arrangement for another number of panes falls back to automatic instead of throwing.
+  const valid = arrangement !== undefined && ARRANGEMENTS[count]?.includes(arrangement);
+  // Every pane carries its own prompt line, so each costs its height: the arrangement and the narrow warning count it.
+  const lineH = composers ? CELL.composer : 0;
+  const chosen = isZoomed ? "single" : valid ? arrangement : chooseArrangement(count, size, {}, lineH);
   const plan = planFor(count, chosen);
-  const cells = paneCells(plan, size, ratios);
+  const cells = paneCells(plan, size, ratios, lineH);
   const visible = isZoomed ? [{ row: panes[zoomed!]!, index: zoomed! }] : panes.map((row, index) => ({ row, index }));
 
   return (
     <div
       className="split"
       data-arrangement={chosen}
-      data-auto={arrangement === undefined}
+      data-auto={!valid}
       style={{ gridTemplateColumns: tracks(plan.colTracks, ratios.col), gridTemplateRows: tracks(plan.rowTracks, ratios.row) }}
     >
       {visible.map(({ row, index }, k) =>
         row ? (
-          <Pane key={row.id} row={row} active={index === activeIndex} setting={setting} style={gridArea(plan.cells[k]!)} cells={cells[k]} zoomedOf={isZoomed ? panes.length : undefined} runningElsewhere={index === activeIndex && hidden > 0 ? hidden : undefined} os={os} />
+          <Pane key={row.id} row={row} active={index === activeIndex} setting={setting} style={gridArea(plan.cells[k]!)} cells={cells[k]} zoomedOf={isZoomed ? panes.length : undefined} runningElsewhere={index === activeIndex && hidden > 0 ? hidden : undefined} value={composerValues[row.id]} composer={composers} os={os} />
         ) : (
           <EmptyPane key={`empty-${index}`} choices={choices} active={index === activeIndex} style={gridArea(plan.cells[k]!)} os={os} />
         ),

@@ -101,3 +101,46 @@
     background: var(--hover);
   }
 }
+
+/*
+ * The lane reserves 256 px for the targeted card and clips what does not fit, so the card must never be taller than that:
+ * its long text is clamped here, the full text is in the drawer, and the actions row is the last thing and always shown.
+ */
+.lane .approve-card {
+  max-block-size: 256px;
+  overflow: clip;
+}
+.lane .approve-card__question,
+.lane .approve-card__what,
+.lane .approve-card__risk,
+.lane .approve-card__cwd {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  overflow: clip;
+}
+.lane .approve-card__question {
+  line-clamp: 3;
+  -webkit-line-clamp: 3;
+}
+.lane .approve-card__what {
+  line-clamp: 2;
+  -webkit-line-clamp: 2;
+}
+.lane .approve-card__risk {
+  line-clamp: 2;
+  -webkit-line-clamp: 2;
+}
+.lane .approve-card__cwd {
+  line-clamp: 1;
+  -webkit-line-clamp: 1;
+}
+.lane .approve-card__link > span {
+  min-inline-size: 0;
+  overflow: clip;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* Four answer options fit in two rows; the rest are in the full card. */
+.lane .approve-card__actions--options > :nth-child(n + 5) {
+  display: none;
+}

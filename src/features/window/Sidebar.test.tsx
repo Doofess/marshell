@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 import { SCENARIO_FOOTER, SCENARIO_REQUESTS, SCENARIO_ROWS } from "./scenario";
 import { laneLayout, pending } from "../lane/laneLayout";
 import { FIXTURES } from "../sidebar/fixtures";
-import { listLayout } from "./listLayout";
+import { shellLayout } from "./shellLayout";
 import { Sidebar, ROW_HEIGHT } from "./Sidebar";
 
 const html = (p: Partial<Parameters<typeof Sidebar>[0]> = {}) =>
@@ -42,34 +42,60 @@ describe("Sidebar", () => {
   });
 });
 
-describe("Sidebar: it never scrolls", () => {
+describe("Sidebar: the session list scrolls", () => {
   const twenty = Array.from({ length: 20 }, (_, i) => ({ ...FIXTURES[0]!, id: `s${i}`, name: `session-${i + 1}` }));
-  const list = (h: string) => h.slice(h.indexOf('class="sidebar__list"'), h.indexOf("sidebar__footer"));
   it("uses the real row height", () => {
     const tokens = readFileSync(new URL("../../styles/tokens.css", import.meta.url), "utf8");
     expect(tokens).toContain(`--row-comfortable: ${ROW_HEIGHT}px`);
   });
-  it("shows the rows that fit the space under the lane, and a button for the rest", () => {
+  it("renders every session, however many: the list scrolls instead of leaving rows out", () => {
     const h = html({ rows: twenty, height: 800 });
-    const lane = laneLayout(pending(SCENARIO_REQUESTS).length, 800);
-    const { visible, hidden } = listLayout(20, 800 - lane.height - 40, ROW_HEIGHT);
-    expect((h.match(/role="option"/g) ?? []).length).toBe(visible);
-    expect(hidden).toBeGreaterThan(0);
-    expect(h).toMatch(/aria-label="\+\d+ more sessions, show all 20"/);
-    expect(h).toContain(`+${hidden} more sessions`);
+    expect((h.match(/role="option"/g) ?? []).length).toBe(20);
+    expect(h).not.toContain("more sessions");
+    expect(h).not.toContain("sidebar__more");
   });
-  it("shows no button when everything fits", () => {
-    expect(html()).not.toMatch(/Show all d+ sessions/);
+  it("makes the list itself the listbox, so the scroller and the semantics are one element", () => {
+    expect(html()).toMatch(/<div class="sidebar__list" role="listbox" aria-label="Sessions">/);
   });
-  it("keeps the button outside the listbox, where only options belong", () => {
-    const h = list(html({ rows: twenty, height: 800 }));
-    const box = h.slice(h.indexOf('role="listbox"'), h.indexOf("</div>", h.lastIndexOf('role="option"')));
-    expect(box).not.toContain("<button");
-    expect(h.indexOf("sidebar__more")).toBeGreaterThan(h.lastIndexOf('role="option"'));
-  });
-  it("leaves no hidden row in the tab order: the one tab stop is on a row that is on screen", () => {
+  it("keeps one tab stop, on the selected row", () => {
     const h = html({ rows: twenty, height: 800, selectedId: "s19" });
-    expect((h.match(/tabindex="0"/g) ?? []).length).toBeGreaterThanOrEqual(1);
-    expect(h).not.toContain("session-20");
+    expect((h.match(/role="option"[^>]*tabindex="0"|tabindex="0"[^>]*role="option"/g) ?? []).length).toBe(1);
+  });
+});
+
+describe("Sidebar: the shell panel", () => {
+  const withShell = (p: Partial<Parameters<typeof Sidebar>[0]> = {}) => html({ height: 880, shell: { cwd: "my-app" }, ...p });
+  it("is not shown unless asked for, and then the grid has no extra row", () => {
+    const h = html();
+    expect(h).not.toContain('aria-label="Shell"');
+    expect(h).not.toContain("data-shell");
+  });
+  it("sits between the session list and the footer", () => {
+    const h = withShell();
+    expect(h.indexOf('role="listbox"')).toBeLessThan(h.indexOf('aria-label="Shell"'));
+    expect(h.indexOf('aria-label="Shell"')).toBeLessThan(h.indexOf("sidebar__footer"));
+    expect(h).toContain("data-shell");
+  });
+  it("gets exactly the height the layout gives it, so nothing in the sidebar is clipped", () => {
+    const lane = laneLayout(pending(SCENARIO_REQUESTS).length, 880);
+    const expected = shellLayout(880, lane.height).height;
+    const h = withShell();
+    expect(h).toContain(`--shell-h:${expected}px`);
+    expect(h).toContain(`block-size:${expected}px`);
+  });
+  it("collapses to its header by itself when the list would be squeezed", () => {
+    // Twelve waiting requests take the lane's 40% share, which leaves an open panel too little room for the list.
+    const many = Array.from({ length: 12 }, (_, i) => ({ ...SCENARIO_REQUESTS[0]!, id: `r${i}`, waitingMs: 1000 + i }));
+    const h = withShell({ height: 480, requests: many });
+    expect(h).toContain('data-collapsed="true"');
+    expect(h).toContain('data-auto="true"');
+  });
+  it("honours the user's choice to hide it", () => {
+    const h = withShell({ shell: { cwd: "my-app", collapsed: true } });
+    expect(h).toContain('data-collapsed="true"');
+    expect(h).not.toContain('data-auto="true"');
+  });
+  it("names the shell for the operating system it is given", () => {
+    expect(withShell({ shell: { cwd: "my-app", shellName: "zsh" } })).toContain("zsh");
   });
 });

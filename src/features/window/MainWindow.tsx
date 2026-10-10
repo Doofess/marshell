@@ -5,20 +5,22 @@ import { StatusGlyph } from "../../components/StatusGlyph/StatusGlyph";
 import { commandById, shortcutLabel, type Os } from "../../lib/keymap";
 import { ApproveCard } from "../approval/ApproveCard";
 import { Composer } from "../composer/Composer";
+import { StatusBar } from "../composer/StatusBar";
 import { APPROVALS } from "../approval/fixtures";
 import type { ApprovalRequest } from "../approval/types";
 import { pending } from "../lane/laneLayout";
 import type { RowModel } from "../sidebar/types";
 import { ScriptedTerminal } from "../terminal/ScriptedTerminal";
 import type { TerminalThemeSetting } from "../terminal/terminalTheme";
-import { COMPOSER_HEIGHT, DRAWER, drawerPlacement, sidebarMode, sidebarWidth, type SidebarPref } from "./layout";
+import { COMPOSER, DRAWER, STATUS_BAR_HEIGHT, drawerPlacement, sidebarMode, sidebarWidth, type SidebarPref } from "./layout";
 import { LayoutIcon, LayoutMenu } from "./LayoutMenu";
 import { SearchIcon } from "./SearchIcon";
 import { Rail } from "./Rail";
-import { SCENARIO_FOOTER, SCENARIO_PORTS, SCENARIO_REQUESTS, SCENARIO_ROWS } from "./scenario";
+import { SCENARIO_FOOTER, SCENARIO_PLAN, SCENARIO_PORTS, SCENARIO_REQUESTS, SCENARIO_ROWS } from "./scenario";
 import { SessionHeader } from "./SessionHeader";
 import { Sidebar } from "./Sidebar";
-import { chooseArrangement, maxPanes, type Arrangement, type PaneCount, type Ratios } from "./splitLayout";
+import { shellNameFor } from "./ShellPanel";
+import { ARRANGEMENTS, chooseArrangement, maxPanes, type Arrangement, type PaneCount, type Ratios } from "./splitLayout";
 import { SplitView } from "./SplitView";
 import "./MainWindow.css";
 
@@ -51,10 +53,18 @@ export type MainWindowProps = {
   emptySlot?: boolean;
   /** Show the layout menu open. */
   layoutMenu?: boolean;
-  /** The prompt bar under the terminals; on by default, never in focus mode. */
+  /** The prompt lines (one under a single terminal, one inside every pane in split view); on by default, never in focus mode. */
   composer?: boolean;
-  /** What has been typed in it. */
+  /** What has been typed in the single window's prompt line. */
   composerValue?: string;
+  /** What has been typed in each pane's own prompt line in split view, by session id. */
+  composerValues?: Record<string, string>;
+  /** The 24 px status bar at the foot of the window (the focused session's strip); on by default, never in focus mode. */
+  statusBar?: boolean;
+  /** The plain shell panel under the session list; on by default in the expanded sidebar. */
+  shell?: boolean;
+  /** The user hid the shell panel: header only. */
+  shellCollapsed?: boolean;
 };
 
 const icon = (d: string) => (
@@ -66,9 +76,11 @@ const icon = (d: string) => (
 /**
  * The main window composite (docs/PLAN.md deliverable 5): a Windows-style frame around the sidebar or rail, the session header and the terminal.
  *
- * Focus model for the prompt bar: the bar under the terminals writes to the FOCUSED pane's session. Focusing a pane (a click,
- * or Ctrl+Shift+[ and ] to move between panes) changes the target, the header's session and the vendor accent together;
- * Ctrl+Shift+M focuses the prompt bar and never changes which pane is focused. In a single terminal the target is that session.
+ * Prompt lines and focus. Every session on screen has its OWN prompt line: one full line under a single terminal, and in split view
+ * one compact line docked inside each pane, so a line of text always goes to the session of the pane it was typed in.
+ * Focus is still one thing: clicking a pane (or Ctrl+Shift+[ and ] to move between panes) focuses it, and the header's session,
+ * the vendor accent and the status bar at the foot of the window all follow the focused pane. Ctrl+Shift+M puts the cursor in the
+ * focused pane's prompt line and never changes which pane is focused. The status bar is the one thing that is not per pane.
  */
 export function MainWindow({
   width,
@@ -91,6 +103,10 @@ export function MainWindow({
   layoutMenu = false,
   composer = true,
   composerValue = "",
+  composerValues,
+  statusBar = true,
+  shell = true,
+  shellCollapsed = false,
 }: MainWindowProps) {
   const pref: SidebarPref = sidebarPref ?? (layout === "focus" ? "focus" : layout === "rail" ? "rail" : "expanded");
   const mode = sidebarMode(width, pref);
@@ -104,20 +120,29 @@ export function MainWindow({
   // Split view: the selected session first, then the others in order, never the same one twice.
   const split = layout === "split";
   const showComposer = composer && mode !== "focus";
+  const showStatus = statusBar && mode !== "focus";
   const pushed = drawer && placement === "push" ? DRAWER.default : 0;
-  const space = { w: width - sideW - pushed, h: height - BAR - (showComposer ? COMPOSER_HEIGHT : 0) };
+  // The status bar always takes its 24 px. A single terminal also gives up the full prompt line; in split view each pane's own
+  // prompt line is counted inside the pane math (splitLayout), not here.
+  const lineH = split && showComposer ? COMPOSER.compact : 0;
+  const space = { w: width - sideW - pushed, h: height - BAR - (showStatus ? STATUS_BAR_HEIGHT : 0) - (!split && showComposer ? COMPOSER.full : 0) };
   // Four only where four are usable: a window too small for the count shows fewer, and the rest keep running.
   const requested = Math.min(splitCount, rows.length);
-  const visible = split ? Math.min(requested, maxPanes(space)) : 1;
+  const visible = split ? Math.min(requested, maxPanes(space, lineH)) : 1;
   const shown: (RowModel | null)[] = [selected, ...rows.filter((r) => r.id !== selected.id)].slice(0, visible);
   if (emptySlot && shown.length > 1) shown[shown.length - 1] = null;
   const choices = rows.filter((r) => !shown.some((s) => s?.id === r.id));
-  const focusedIndex = activePane < shown.length ? activePane : 0;
+  // Zoom makes its pane the focused one, so the header, the accent bar and the prompt bar can never disagree about which pane is in play.
+  const zoomIdx = split && zoomedPane !== undefined && shown[zoomedPane] != null ? zoomedPane : undefined;
+  const clamped = Math.min(Math.max(0, Math.floor(Number.isFinite(activePane) ? activePane : 0)), Math.max(0, shown.length - 1));
+  const focusedIndex = zoomIdx ?? clamped;
   const focused = shown[focusedIndex] ?? null;
   const active = split ? (focused ?? selected) : selected;
   const paneCount = (split ? shown.length : 1) as PaneCount;
-  const arranged = split ? (zoomedPane !== undefined ? "single" : (arrangement ?? chooseArrangement(paneCount, space))) : "single";
-  const menuCount = (split ? (zoomedPane !== undefined ? 1 : paneCount) : 1) as PaneCount;
+  // An arrangement picked for another number of panes (the window shrank, or fewer sessions exist) gives way to automatic.
+  const chosen = arrangement && ARRANGEMENTS[zoomIdx !== undefined ? 1 : paneCount]?.includes(arrangement) ? arrangement : undefined;
+  const arranged = split ? (zoomIdx !== undefined ? "single" : (chosen ?? chooseArrangement(paneCount, space, {}, lineH))) : "single";
+  const menuCount = (split ? (zoomIdx !== undefined ? 1 : paneCount) : 1) as PaneCount;
   const hiddenCount = split ? requested - shown.length : 0;
 
   return (
@@ -150,7 +175,7 @@ export function MainWindow({
             </button>
             {layoutMenu && (
               <div className="window__popover">
-                <LayoutMenu count={menuCount} requested={split ? splitCount : 1} max={maxPanes(space)} arrangement={arranged} auto={arrangement === undefined} os={os} />
+                <LayoutMenu count={menuCount} requested={split ? requested : 1} max={maxPanes(space, lineH)} arrangement={arranged} auto={chosen === undefined} os={os} />
               </div>
             )}
           </div>
@@ -169,13 +194,13 @@ export function MainWindow({
       </header>
 
       <div className="window__body">
-        {mode === "expanded" && <Sidebar rows={rows} requests={requests} height={height - BAR} width={sideW} selectedId={selected.id} footer={SCENARIO_FOOTER} />}
-        {mode === "rail" && <Rail rows={rows} needsYou={waiting} selectedId={selected.id} os={os} height={height} />}
+        {mode === "expanded" && <Sidebar rows={rows} requests={requests} height={height - BAR} width={sideW} selectedId={selected.id} footer={SCENARIO_FOOTER} shell={shell ? { cwd: active.project, shellName: shellNameFor(os), collapsed: shellCollapsed, os } : undefined} />}
+        {mode === "rail" && <Rail rows={rows} needsYou={waiting} selectedId={selected.id} os={os} />}
 
         <div className="window__center">
         <main className="window__main" data-placement={drawer ? placement : undefined}>
           {split ? (
-            <SplitView panes={shown} size={{ w: space.w, h: space.h }} activeIndex={focusedIndex} hidden={hiddenCount} arrangement={arrangement} ratios={ratios} zoomed={zoomedPane} choices={choices} setting={terminalSetting} os={os} />
+            <SplitView panes={shown} size={{ w: space.w, h: space.h }} activeIndex={focusedIndex} hidden={hiddenCount} arrangement={chosen} ratios={ratios} zoomed={zoomIdx} choices={choices} composerValues={composerValues} composers={showComposer} setting={terminalSetting} os={os} />
           ) : (
             <ScriptedTerminal setting={terminalSetting} label={`Terminal for ${selected.name}`} />
           )}
@@ -196,8 +221,15 @@ export function MainWindow({
             </aside>
           )}
         </main>
-        {showComposer && (
-          <Composer row={split ? focused : selected} value={composerValue} os={os} pane={split ? { index: focusedIndex, count: shown.length } : undefined} />
+        {showComposer && !split && (
+          <div className="window__composer" style={{ blockSize: COMPOSER.full }}>
+            <Composer row={selected} variant="full" value={composerValue} os={os} />
+          </div>
+        )}
+        {showStatus && (
+          <div className="window__status" style={{ blockSize: STATUS_BAR_HEIGHT }}>
+            <StatusBar row={split ? focused : selected} plan={SCENARIO_PLAN} ports={SCENARIO_PORTS} os={os} />
+          </div>
         )}
         </div>
       </div>

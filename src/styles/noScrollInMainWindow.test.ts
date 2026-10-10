@@ -1,39 +1,66 @@
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
+import { join, relative } from "node:path";
 import { describe, expect, it } from "vitest";
 
 /** The main window scrolls nowhere except the session conversation (terminal scrollback), and shows no scrollbar. */
-const FILES = [
-  "features/lane/Lane.css",
-  "features/window/Sidebar.css",
-  "features/window/Rail.css",
-  "features/window/MainWindow.css",
-  "features/sidebar/SessionRow.css",
-  "features/approval/ApproveCard.css",
-  "features/composer/Composer.css",
-  "features/terminal/ScriptedTerminal.css",
-  "features/window/SplitView.css",
-];
+const SRC = new URL("..", import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1");
+const walk = (dir: string): string[] =>
+  readdirSync(dir, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? walk(join(dir, e.name)) : e.name.endsWith(".css") ? [join(dir, e.name)] : []));
+/** Every feature and component stylesheet: a new file is scanned without anyone remembering to list it. */
+const FILES = [...walk(join(SRC, "features")), ...walk(join(SRC, "components"))].map((f) => relative(SRC, f).replace(/\\/g, "/"));
+
 /**
  * Selectors that may scroll: menus and settings (`.scroll-menu`, `.layout-menu`), the request-details drawer (a menu-like
  * inspector for a 40-line command), and the prompt field, which scrolls past eight lines with its scrollbar hidden.
  */
-const ALLOWED = [/^\.drawer$/, /^\.composer__field$/, /^\.scroll-menu$/, /^\.layout-menu$/];
+const ALLOWED = [/^\.drawer$/, /^\.composer__field$/, /^\.scroll-menu$/, /^\.layout-menu$/, /^\.sidebar__list$/, /^\.rail__list$/];
 
-const read = (f: string) => readFileSync(new URL(`../${f}`, import.meta.url), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
+const read = (f: string) => readFileSync(join(SRC, f), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
 const rules = (css: string) => [...css.matchAll(/([^{}]+)\{([^{}]*)\}/g)].map((m) => ({ selectors: m[1]!.split(",").map((s) => s.trim()), body: m[2]! }));
-const scrolls = (body: string) => /(^|[;\s])overflow(-[xy])?:\s*(auto|scroll|overlay)/.test(body);
+
+const SCROLLY = String.raw`(?:auto|scroll|overlay)`;
+/** Any way to make an element scroll: the shorthand in either order, and every longhand, logical ones included. */
+const scrolls = (body: string) =>
+  new RegExp(String.raw`(^|[;\s])overflow(?:-(?:x|y|block|inline))?:\s*(?:[a-z-]+\s+)?${SCROLLY}\b`).test(body) ||
+  new RegExp(String.raw`(^|[;\s])overflow:\s*${SCROLLY}\s+[a-z-]+`).test(body);
+
+describe("the scroll detector", () => {
+  it("catches the shorthand, the two-value form in both orders, and every longhand", () => {
+    for (const d of ["overflow: auto", "overflow: scroll", "overflow-y: auto", "overflow-x: scroll", "overflow-block: auto", "overflow-inline: scroll", "overflow: hidden auto", "overflow: auto hidden", "overflow: hidden overlay"])
+      expect(scrolls(`color: red; ${d};`), d).toBe(true);
+  });
+  it("lets clipping through", () => {
+    for (const d of ["overflow: clip", "overflow: hidden", "overflow: visible", "overflow-y: clip", "overflow: clip clip", "overflow-block: hidden"]) expect(scrolls(`${d};`), d).toBe(false);
+  });
+});
 
 describe("the main window never scrolls", () => {
+  it("scans every feature and component stylesheet", () => {
+    expect(FILES.length).toBeGreaterThan(15);
+    expect(FILES).toContain("features/window/Sidebar.css");
+    expect(FILES).toContain("components/Chip/Chip.css");
+  });
+
   for (const f of FILES)
     it(`${f} lets nothing scroll except the allowed menus and the prompt field`, () => {
       for (const r of rules(read(f)))
         if (scrolls(r.body)) for (const sel of r.selectors) expect(ALLOWED.some((a) => a.test(sel)), `${f}: ${sel} scrolls`).toBe(true);
     });
 
-  it("clips the lane, sidebar list and rail list instead", () => {
-    for (const [f, sel] of [["features/lane/Lane.css", ".lane__list"], ["features/window/Sidebar.css", ".sidebar__list"], ["features/window/Rail.css", ".rail__list"]] as const) {
-      const r = rules(read(f)).find((x) => x.selectors.includes(sel));
-      expect(r?.body, sel).toMatch(/overflow:\s*clip/);
+  it("clips the lane instead: it shows whole rows and a +N more button", () => {
+    const r = rules(read("features/lane/Lane.css")).find((x) => x.selectors.includes(".lane__list"));
+    expect(r?.body).toMatch(/overflow:\s*clip/);
+  });
+
+  it("lets the session list and the rail scroll, with the scrollbar hidden: wheel, touch and keys, nothing drawn", () => {
+    for (const [f, sel] of [["features/window/Sidebar.css", ".sidebar__list"], ["features/window/Rail.css", ".rail__list"]] as const) {
+      const css = read(f);
+      const r = rules(css).find((x) => x.selectors.includes(sel))!;
+      expect(r.body, sel).toMatch(/overflow-y:\s*auto/);
+      expect(r.body, sel).toMatch(/scrollbar-width:\s*none/);
+      expect(r.body, sel).toMatch(/overscroll-behavior:\s*contain/);
+      const hidden = rules(css).find((x) => x.selectors.includes(`${sel}::-webkit-scrollbar`));
+      expect(hidden?.body, `${sel}::-webkit-scrollbar`).toMatch(/display:\s*none/);
     }
   });
 

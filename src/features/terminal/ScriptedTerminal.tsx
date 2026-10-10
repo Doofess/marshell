@@ -11,7 +11,19 @@ import "./ScriptedTerminal.css";
  * break server rendering and the node test environment. The host is a group, not an img: xterm puts a focusable
  * input inside it.
  */
-export function ScriptedTerminal({ setting = "follow-app", label = "Terminal preview" }: { setting?: TerminalThemeSetting; label?: string }) {
+export function ScriptedTerminal({
+  setting = "follow-app",
+  label = "Terminal preview",
+  script = SCRIPTED_SESSION,
+  size = SCRIPTED_SIZE,
+}: {
+  setting?: TerminalThemeSetting;
+  label?: string;
+  /** Raw terminal output to play; the Claude-style session by default. */
+  script?: string;
+  /** The terminal's starting size; it fits the host afterwards. */
+  size?: { cols: number; rows: number };
+}) {
   const host = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -28,17 +40,19 @@ export function ScriptedTerminal({ setting = "follow-app", label = "Terminal pre
       const term = new Terminal({
         fontFamily,
         fontSize: 13,
-        cols: SCRIPTED_SIZE.cols,
-        rows: SCRIPTED_SIZE.rows,
+        cols: size.cols,
+        rows: size.rows,
         disableStdin: true,
         cursorBlink: false,
+        // A plain shell shows where you type: a solid block at the prompt even while the terminal is not focused.
+        cursorInactiveStyle: script === SCRIPTED_SESSION ? "outline" : "block",
         scrollback: 1000,
         ...terminalOptions(scheme()),
       });
       const fit = new FitAddon();
       term.loadAddon(fit);
       term.open(el);
-      term.write(SCRIPTED_SESSION);
+      term.write(script);
       fit.fit();
 
       // The padded host takes the terminal's own background, so a terminal pinned light or dark has no mismatched edge.
@@ -68,7 +82,20 @@ export function ScriptedTerminal({ setting = "follow-app", label = "Terminal pre
       cancelled = true;
       dispose();
     };
-  }, [setting]);
+  }, [setting, script, size.cols, size.rows]);
 
-  return <div ref={host} className="scripted-terminal" role="group" aria-label={label} data-setting={setting} />;
+  // Another canned session (the shell panel's) travels in the markup, so the review page's script mounts that one.
+  const custom = script !== SCRIPTED_SESSION;
+  return (
+    <div
+      ref={host}
+      className="scripted-terminal"
+      role="group"
+      aria-label={label}
+      data-setting={setting}
+      data-script={custom ? JSON.stringify(script) : undefined}
+      data-cols={custom ? size.cols : undefined}
+      data-rows={custom ? size.rows : undefined}
+    />
+  );
 }

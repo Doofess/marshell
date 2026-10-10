@@ -2,10 +2,13 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { commandById, shortcutLabel } from "../../lib/keymap";
 import { FIXTURES } from "../sidebar/fixtures";
-import { Composer, composerState } from "./Composer";
+import { Composer, composerState, type ComposerProps } from "./Composer";
 
 const row = (id: string) => FIXTURES.find((f) => f.id === id)!;
-const html = (id: string, value = "", os: "windows" | "mac" = "windows") => renderToStaticMarkup(<Composer row={row(id)} value={value} os={os} />);
+const render = (id: string, p: Partial<ComposerProps> = {}) => renderToStaticMarkup(<Composer row={row(id)} {...p} />);
+const html = (id: string, value = "", os: "windows" | "mac" = "windows", variant: "full" | "compact" = "full") => render(id, { value, os, variant });
+const count = (h: string, re: RegExp) => (h.match(re) ?? []).length;
+const VARIANTS = ["full", "compact"] as const;
 
 describe("composerState", () => {
   it("is empty or typing for a session that can take a prompt, ignoring blank space", () => {
@@ -28,96 +31,156 @@ describe("composerState", () => {
   });
 });
 
-describe("Composer: it is obviously where you write", () => {
-  const h = html("idle");
-  it("is a labelled form around one multi-line field named for the session", () => {
-    expect(h).toContain("<form");
-    expect(h).toContain('aria-label="Write to docs-site"');
-    expect(h).toMatch(/<textarea[^>]*aria-label="Message docs-site"/);
-    expect(h).toContain('placeholder="Message docs-site…"');
+describe("Composer: two variants of one command line", () => {
+  it("renders the full variant by default, and says which it is", () => {
+    expect(html("idle")).toContain('data-variant="full"');
+    expect(html("idle", "", "windows", "compact")).toContain('data-variant="compact"');
   });
-  it("says how to send, in words, next to the field", () => {
+  it("full has the prompt line and a quiet tools row under it; compact is the prompt line alone", () => {
+    const full = html("idle");
+    expect(count(full, /class="composer__line"/g)).toBe(1);
+    expect(count(full, /class="composer__tools"/g)).toBe(1);
+    const compact = html("idle", "", "windows", "compact");
+    expect(count(compact, /class="composer__line"/g)).toBe(1);
+    expect(compact).not.toContain("composer__tools");
+    for (const hidden of ["composer__target", "composer__mode", "composer__hint", "commands", "files"]) expect(compact, hidden).not.toContain(hidden);
+  });
+  it("both write to the same kind of field: one multi-line field named for the session", () => {
+    for (const v of VARIANTS) {
+      const h = html("idle", "", "windows", v);
+      expect(h, v).toContain("<form");
+      expect(h, v).toContain('aria-label="Write to docs-site"');
+      expect(h, v).toMatch(/<textarea[^>]*aria-label="Message docs-site"/);
+      expect(h, v).toContain('placeholder="Message docs-site…"');
+    }
+  });
+  it("starts the line with a prompt glyph the screen reader skips, like a shell prompt", () => {
+    for (const v of VARIANTS) {
+      const h = html("idle", "", "windows", v);
+      expect(h, v).toMatch(/<svg[^>]*class="composer__prompt"[^>]*aria-hidden="true"/);
+      expect(h.indexOf("composer__prompt"), v).toBeLessThan(h.indexOf("<textarea"));
+    }
+  });
+  it("carries the vendor for the accent, and says whether it is the focused prompt", () => {
+    for (const v of VARIANTS) expect(html("idle", "", "windows", v), v).toContain('data-agent="codex"');
+    expect(render("idle")).toContain('data-focused="true"');
+    expect(render("idle", { variant: "compact" })).not.toContain('data-focused="true"');
+    expect(render("idle", { variant: "compact", focused: true })).toContain('data-focused="true"');
+  });
+  it("has a visible Send button with the Enter keycap drawn on it, in both", () => {
+    for (const v of VARIANTS) {
+      const h = html("idle", "", "windows", v);
+      expect(h, v).toMatch(/class="composer__send"[^>]*>[\s\S]*?Send/);
+      expect(h, v).toMatch(/class="composer__kbd"[^>]*aria-hidden="true"/);
+      expect(h, v).toContain("↵");
+    }
+  });
+  it("has no round icon button: no up-arrow send, no plus", () => {
+    for (const v of VARIANTS) {
+      const h = html("idle", "", "windows", v);
+      expect(h, v).not.toContain("M7 11.5v-9");
+      expect(h, v).not.toMatch(/aria-label="(Add|More|\+)[^"]*"/);
+    }
+  });
+});
+
+describe("Composer (full): the line and its quiet tools row", () => {
+  const h = html("idle");
+  it("says how to send, in words", () => {
     expect(h).toContain("Enter to send");
     expect(h).toContain("Shift+Enter for a new line");
   });
-  it("shows who it sends to, with the vendor mark, and carries the vendor for the accent", () => {
+  it("shows who it sends to, with the vendor mark, in plain text", () => {
     expect(h).toContain("composer__target");
-    expect(h).toContain('data-agent="codex"');
     expect(h).toContain("agent-mark");
+    expect(h).toContain("docs-site");
   });
-  it("offers slash commands and file mentions, each with a name and the character that opens it", () => {
-    expect(h).toContain('aria-label="Slash commands"');
-    expect(h).toContain('aria-label="Mention a file"');
-    expect(h).toContain('aria-label="Attach an image"');
+  it("offers slash commands, file mentions and attach as plain words, named by what they show", () => {
+    expect(h).toMatch(/class="composer__tool"[^>]*>[\s\S]*?commands<\/span>/);
+    expect(h).toContain(">files<");
+    expect(h).toContain(">attach<");
+    expect(h).not.toContain('aria-label="Slash commands"');
   });
-  it("has a visible Send button with Enter drawn on it", () => {
-    expect(h).toMatch(/class="composer__send"[^>]*>[\s\S]*?Send/);
-    expect(h).toContain("↵");
+  it("names the focused pane when more than one is on screen, and stays plain for one", () => {
+    expect(render("idle", { pane: { index: 1, count: 4 } })).toContain("Pane 2 of 4");
+    expect(h).not.toContain("Pane ");
+    expect(render("idle", { pane: { index: 0, count: 1 } })).not.toContain("Pane ");
+  });
+  it("shows the session's mode as plain text, a caution mark for a risky one, and leaves an unknown one out", () => {
+    expect(html("working")).toContain("Plan");
+    expect(html("working")).not.toMatch(/class="chip"/);
+    expect(html("idle")).not.toContain("composer__mode");
+    expect(html("bypass")).toMatch(/composer__mode[\s\S]*?aux-glyph/);
   });
 });
 
-describe("Composer: states", () => {
-  it("empty: Send is present but unavailable, and says why through aria-disabled rather than vanishing", () => {
-    expect(html("idle")).toMatch(/class="composer__send"[^>]*aria-disabled="true"/);
-  });
-  it("typing: Send is available and carries the vendor accent", () => {
-    const h = html("idle", "Add retry tests for billing");
-    expect(h).not.toMatch(/class="composer__send"[^>]*aria-disabled="true"/);
-    expect(h).toContain("Add retry tests for billing");
-    expect(h).toContain('data-state="typing"');
-  });
-  it("working: says the message will be queued, and the button says Queue", () => {
-    const h = html("working", "also add tests");
-    expect(h).toContain("api-server is working");
-    expect(h).toContain("queued");
-    expect(h).toMatch(/class="composer__send"[^>]*>[\s\S]*?Queue/);
-  });
-  it("waiting: the field is off, the reason is named, and Send is unavailable", () => {
-    const h = html("needs-permission", "yes");
-    expect(h).toMatch(/<textarea[^>]*disabled/);
-    expect(h).toContain("billing is waiting for your approval");
-    expect(h).toContain('placeholder="Answer the request in the lane, or in the terminal"');
-    expect(h).toMatch(/class="composer__send"[^>]*aria-disabled="true"/);
-  });
-  it("waiting on a question names a question, not an approval", () => {
-    expect(html("needs-question")).toContain("infra has a question");
-  });
-  it("keeps its height in every state: no banner row, the notice lives in the bar", () => {
-    for (const id of ["idle", "working", "needs-permission", "needs-question", "ended"]) {
-      const h = html(id);
-      expect(h, id).not.toContain("composer__banner");
-      expect((h.match(/class="composer__bar"/g) ?? []).length, id).toBe(1);
-    }
-    expect(html("working")).toContain('class="composer__notice"');
-    expect(html("idle")).not.toContain("composer__notice");
-  });
-  it("an empty pane: nothing to write to, so the field is off and it says why", () => {
-    const h = renderToStaticMarkup(<Composer row={null} pane={{ index: 2, count: 3 }} />);
-    expect(h).toMatch(/<textarea[^>]*disabled/);
-    expect(h).toContain("Choose a session for this pane first");
-    expect(h).toContain("This pane is empty");
-    expect(h).toMatch(/class="composer__send"[^>]*aria-disabled="true"/);
-  });
-  it("ended: the field is off and the way back is a button", () => {
-    const h = html("ended");
-    expect(h).toMatch(/<textarea[^>]*disabled/);
-    expect(h).toContain("scratch has ended");
-    expect(h).toContain("Resume");
-  });
-  it("shows the session's mode, and leaves an unknown one out", () => {
-    expect(html("working")).toContain("Plan");
-    expect(html("idle")).not.toContain("composer__mode");
-  });
+describe("Composer: states, in both variants", () => {
+  for (const v of VARIANTS) {
+    describe(v, () => {
+      const h = (id: string, value = "") => html(id, value, "windows", v);
+      it("empty: Send is present but unavailable, through aria-disabled rather than vanishing", () => {
+        expect(h("idle")).toMatch(/class="composer__send"[^>]*aria-disabled="true"/);
+      });
+      it("typing: Send is available", () => {
+        const t = h("idle", "Add retry tests for billing");
+        expect(t).not.toMatch(/class="composer__send"[^>]*aria-disabled="true"/);
+        expect(t).toContain("Add retry tests for billing");
+        expect(t).toContain('data-state="typing"');
+      });
+      it("working: the button says Queue, and the notice says the message is queued", () => {
+        const w = h("working", "also add tests");
+        expect(w).toContain("api-server is working");
+        expect(w).toContain("queued");
+        expect(w).toMatch(/class="composer__send"[^>]*>[\s\S]*?Queue/);
+      });
+      it("waiting: the field is off, the reason is the placeholder and the notice, and Send is unavailable", () => {
+        const w = h("needs-permission", "yes");
+        expect(w).toMatch(/<textarea[^>]*disabled/);
+        expect(w).toContain("billing is waiting for your approval");
+        expect(w).toContain('placeholder="Answer the request in the lane, or in the terminal"');
+        expect(w).toMatch(/class="composer__send"[^>]*aria-disabled="true"/);
+        expect(h("needs-question")).toContain("infra has a question");
+      });
+      it("ended: the field is off and the way back is a button", () => {
+        const e = h("ended");
+        expect(e).toMatch(/<textarea[^>]*disabled/);
+        expect(e).toContain("scratch has ended");
+        expect(e).toContain("Resume");
+      });
+      it("an empty pane: nothing to write to, so the field is off and it says why", () => {
+        const e = renderToStaticMarkup(<Composer row={null} variant={v} pane={{ index: 2, count: 3 }} />);
+        expect(e).toMatch(/<textarea[^>]*disabled/);
+        expect(e).toContain("Choose a session for this pane first");
+        expect(e).toContain("This pane is empty");
+        expect(e).toMatch(/class="composer__send"[^>]*aria-disabled="true"/);
+      });
+      it("keeps its height in every state: the notice lives in the line (compact) or the tools row (full), never a new row", () => {
+        for (const id of ["idle", "working", "needs-permission", "needs-question", "ended"]) {
+          const s = h(id);
+          expect(s, id).not.toContain("composer__banner");
+          expect(count(s, /class="composer__line"/g), id).toBe(1);
+          expect(count(s, /class="composer__tools"/g), id).toBe(v === "full" ? 1 : 0);
+        }
+        expect(h("working")).toContain('class="composer__notice"');
+        expect(h("idle")).not.toContain("composer__notice");
+      });
+    });
+  }
 });
 
 describe("Composer: hygiene", () => {
+  it("is no longer where the status strip lives: that is the status bar", () => {
+    for (const v of VARIANTS) expect(html("working", "", "windows", v)).not.toContain("status-strip");
+  });
   it("puts no literal colour in the markup", () => {
-    for (const id of ["idle", "working", "needs-permission", "ended"]) expect(html(id, "x")).not.toMatch(/#[0-9a-f]{3,8}\b|rgb\(|oklch\(/i);
+    for (const v of VARIANTS) for (const id of ["idle", "working", "needs-permission", "ended"]) expect(html(id, "x", "windows", v)).not.toMatch(/#[0-9a-f]{3,8}\b|rgb\(|oklch\(/i);
   });
   it("has a shortcut to focus it, listed with the other commands", () => {
     expect(shortcutLabel(commandById("focus-prompt").binding!, "windows")).toBe("Ctrl+Shift+M");
     expect(shortcutLabel(commandById("focus-prompt").binding!, "mac")).toBe("⌘M");
-    expect(html("idle")).toContain("Ctrl+Shift+M");
-    expect(html("idle", "", "mac")).toContain("⌘M");
+    for (const v of VARIANTS) {
+      expect(html("idle", "", "windows", v)).toContain("Ctrl+Shift+M");
+      expect(html("idle", "", "mac", v)).toContain("⌘M");
+    }
   });
 });

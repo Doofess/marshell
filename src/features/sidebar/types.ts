@@ -32,4 +32,16 @@ export type RowModel = {
   usage?: Usage;
   /** One-shot attention flash on the row. */
   flash?: boolean;
+  /** The prompt bar's status strip: connected MCP servers, and a named problem when one is failing. Unknown leaves the item out. */
+  mcp?: { connected: number; total: number; problem?: string };
+  /** Skills available to the session. */
+  skills?: number;
+  /** The active Python environment's name. */
+  venv?: string;
+  /** How long the session has been running. */
+  sessionMs?: number;
+  /** Uncommitted changes in the session's working tree. */
+  dirty?: number;
+  /** The CLI's version, e.g. "2.1.296". */
+  version?: string;
 };

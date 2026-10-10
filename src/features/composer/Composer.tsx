@@ -1,6 +1,5 @@
 import { AgentMark } from "../../components/AgentMark/AgentMark";
-import { Chip } from "../../components/Chip/Chip";
-import { StatusGlyph } from "../../components/StatusGlyph/StatusGlyph";
+import { AuxGlyph, StatusGlyph } from "../../components/StatusGlyph/StatusGlyph";
 import { commandById, shortcutLabel, type Os } from "../../lib/keymap";
 import { modeCaution } from "../sidebar/format";
 import type { RowModel } from "../sidebar/types";
@@ -20,34 +19,35 @@ export function composerState(row: RowModel, value: string): ComposerState {
   return value.trim() ? "typing" : "empty";
 }
 
-const slash = <span aria-hidden="true">/</span>;
-const at = <span aria-hidden="true">@</span>;
-const clip = (
-  <svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round">
-    <path d="M11.2 6.6L7 10.8a2.4 2.4 0 0 1-3.4-3.4l4.6-4.6a1.6 1.6 0 0 1 2.3 2.3L6 9.6a.8.8 0 0 1-1.1-1.1l3.9-3.9" />
-  </svg>
-);
-const arrow = (
-  <svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-    <path d="M7 11.5v-9M3 6.5l4-4 4 4" />
+const prompt = (
+  <svg className="composer__prompt" width="12" height="16" viewBox="0 0 12 16" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M3.5 3.5L8.5 8l-5 4.5" />
   </svg>
 );
 
+export type ComposerVariant = "full" | "compact";
+
 export type ComposerProps = {
-  /** The session of the focused pane; null when the focused pane is empty. */
+  /** The session this prompt writes to; null for an empty pane. */
   row: RowModel | null;
   value?: string;
   os?: Os;
-  /** Set in split view: which pane has the focus, so the target is never a guess. */
+  /** `full` under the terminal of a single-session window; `compact` inside each pane in split view. */
+  variant?: ComposerVariant;
+  /** Whether this is the focused prompt, which gets the vendor-coloured edge. The full one always is; a compact one is when its pane is. */
+  focused?: boolean;
+  /** Full variant, split view: which pane this is, so the target is never a guess. */
   pane?: { index: number; count: number };
 };
 
 /**
- * The prompt line: one field docked under the terminals that always writes to the focused pane's session. It is the
- * obvious place for a longer prompt; the terminal itself stays typeable. The accent is the session's vendor colour.
- * Its height never changes with the session's state (notices live in the bar row), so the terminals above never resize.
+ * The prompt line, set like a command line: a flat bar docked to the edge of its terminal, a prompt glyph in the session's
+ * colour, the field in the terminal's own mono font, and Send with the Enter key drawn on it. `full` adds a quiet row of
+ * tools under the line; `compact` is the line alone, for one inside every pane. The height never changes with the
+ * session's state (notices sit in the row), so the terminal above never resizes. The facts about the session are not here:
+ * they are the status bar's.
  */
-export function Composer({ row, value = "", os = "windows", pane }: ComposerProps) {
+export function Composer({ row, value = "", os = "windows", variant = "full", focused = variant === "full", pane }: ComposerProps) {
   const focusKeys = shortcutLabel(commandById("focus-prompt").binding!, os);
   const state: ComposerState = row ? composerState(row, value) : "waiting";
   const blocked = row === null || state === "waiting" || state === "ended";
@@ -55,6 +55,7 @@ export function Composer({ row, value = "", os = "windows", pane }: ComposerProp
   const name = row?.name ?? "this pane";
   const caution = row ? modeCaution(row.mode) : false;
   const inSplit = pane !== undefined && pane.count > 1;
+  const compact = variant === "compact";
 
   const placeholder = !row
     ? "Choose a session for this pane first"
@@ -76,68 +77,81 @@ export function Composer({ row, value = "", os = "windows", pane }: ComposerProp
           ? { glyph: <StatusGlyph kind="ended" />, text: `${row.name} has ended` }
           : null;
 
-  return (
-    <form className="composer" aria-label={`Write to ${name}`} data-agent={row?.agent} data-state={row ? state : "empty-pane"}>
-      <textarea
-        className="composer__field"
-        rows={1}
-        aria-label={`Message ${name}`}
-        placeholder={placeholder}
-        title={`Write a prompt (${focusKeys})`}
-        disabled={blocked}
-        defaultValue={value}
-      />
+  const noticeEl = notice && (
+    <p className="composer__notice" role="status" title={notice.text}>
+      {notice.glyph}
+      <span>{notice.text}</span>
+    </p>
+  );
+  const resume =
+    state === "ended" ? (
+      <button type="button" className="composer__resume">
+        Resume
+      </button>
+    ) : null;
+  // A compact prompt for an ended session offers the way back instead of a Send that can never work.
+  const showSend = !(compact && state === "ended");
 
-      <div className="composer__bar">
-        {row && (
-          <span className="composer__target" title={inSplit ? `Sends to the focused pane, ${row.name}` : `Sends to ${row.name}`}>
-            <AgentMark agent={row.agent} size={16} />
-            <span className="composer__target-name" dir="auto">
-              {row.name}
-            </span>
-            {inSplit && (
-              <span className="composer__pane">
-                Pane {pane.index + 1} of {pane.count}
-              </span>
-            )}
-          </span>
-        )}
-        {row?.mode && (
-          <span className="composer__mode">
-            <Chip tone={caution ? "caution" : "neutral"}>{modeLabel(row.mode)}</Chip>
-          </span>
-        )}
-        <button type="button" className="composer__tool" aria-label="Slash commands" title="Slash commands (/)" disabled={blocked}>
-          {slash}
-        </button>
-        <button type="button" className="composer__tool" aria-label="Mention a file" title="Mention a file (@)" disabled={blocked}>
-          {at}
-        </button>
-        <button type="button" className="composer__tool" aria-label="Attach an image" title="Attach an image" disabled={blocked}>
-          {clip}
-        </button>
-        <span className="composer__spacer" />
-        {notice ? (
-          <p className="composer__notice" role="status" title={notice.text}>
-            {notice.glyph}
-            <span>{notice.text}</span>
-          </p>
-        ) : (
-          <span className="composer__hint">Enter to send · Shift+Enter for a new line</span>
-        )}
-        {state === "ended" && (
-          <button type="button" className="composer__resume">
-            Resume
+  return (
+    <form className="composer" aria-label={`Write to ${name}`} data-agent={row?.agent} data-state={row ? state : "empty-pane"} data-variant={variant} data-focused={focused || undefined}>
+      <div className="composer__line">
+        {prompt}
+        <textarea
+          className="composer__field"
+          rows={1}
+          aria-label={`Message ${name}`}
+          placeholder={placeholder}
+          title={`Write a prompt (${focusKeys}). Enter sends, Shift+Enter adds a line.`}
+          disabled={blocked}
+          defaultValue={value}
+        />
+        {compact && noticeEl}
+        {compact && resume}
+        {showSend && (
+          <button type="submit" className="composer__send" aria-disabled={!canSend} title={canSend ? undefined : "Write something to send"}>
+            <span>{state === "working" ? "Queue" : "Send"}</span>
+            <kbd className="composer__kbd" aria-hidden="true">
+              ↵
+            </kbd>
           </button>
         )}
-        <button type="submit" className="composer__send" aria-disabled={!canSend} title={canSend ? undefined : "Write something to send"}>
-          {arrow}
-          <span>{state === "working" ? "Queue" : "Send"}</span>
-          <kbd className="composer__kbd" aria-hidden="true">
-            ↵
-          </kbd>
-        </button>
       </div>
+
+      {!compact && (
+        <div className="composer__tools">
+          {row && (
+            <span className="composer__target" title={inSplit ? `Sends to the focused pane, ${row.name}` : `Sends to ${row.name}`}>
+              <AgentMark agent={row.agent} size={16} />
+              <span className="composer__target-name" dir="auto">
+                {row.name}
+              </span>
+              {inSplit && (
+                <span className="composer__pane">
+                  Pane {pane.index + 1} of {pane.count}
+                </span>
+              )}
+            </span>
+          )}
+          {row?.mode && (
+            <span className="composer__mode" data-tone={caution ? "caution" : undefined}>
+              {caution && <AuxGlyph kind="caution" />}
+              {modeLabel(row.mode)}
+            </span>
+          )}
+          <button type="button" className="composer__tool" title="Slash commands (/)" disabled={blocked}>
+            <span className="composer__tool-key">/</span> <span>commands</span>
+          </button>
+          <button type="button" className="composer__tool" title="Mention a file (@)" disabled={blocked}>
+            <span className="composer__tool-key">@</span> <span>files</span>
+          </button>
+          <button type="button" className="composer__tool" title="Attach an image" disabled={blocked}>
+            <span>attach</span>
+          </button>
+          <span className="composer__spacer" />
+          {noticeEl ?? <span className="composer__hint">Enter to send · Shift+Enter for a new line</span>}
+          {resume}
+        </div>
+      )}
     </form>
   );
 }

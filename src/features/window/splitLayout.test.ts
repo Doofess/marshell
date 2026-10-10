@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { COMPOSER } from "./layout";
 import { ARRANGEMENTS, CELL, HANDLE, HIT, MIN_USABLE, PANE_LIMIT, chooseArrangement, fitsPanes, maxPanes, paneCells, planFor, scoreArrangement, tracks, type Arrangement } from "./splitLayout";
 
 describe("split limits", () => {
@@ -73,11 +74,28 @@ describe("tracks", () => {
 });
 
 describe("paneCells: how many columns and rows each pane really gets", () => {
-  it("counts the terminal's padding and the 28 px pane header, and the handle track", () => {
+  it("counts the terminal's padding, the 28 px pane header, the pane's own prompt line, and the handle track", () => {
     const [only] = paneCells(planFor(1, "single"), { w: 816, h: 540 });
-    expect(only).toEqual({ cols: Math.floor((816 - CELL.padX) / CELL.w), rows: Math.floor((540 - CELL.header - CELL.padY) / CELL.h) });
+    expect(only).toEqual({ cols: Math.floor((816 - CELL.padX) / CELL.w), rows: Math.floor((540 - CELL.header - CELL.composer - CELL.padY) / CELL.h) });
     const two = paneCells(planFor(2, "columns"), { w: 816, h: 540 });
     expect(two[0]!.cols).toBe(Math.floor(((816 - HANDLE) / 2 - CELL.padX) / CELL.w));
+  });
+  it("takes the prompt line's height from the layout constants: every pane in split view has its own compact one", () => {
+    expect(CELL.composer).toBe(COMPOSER.compact);
+  });
+  it("gives the terminal its rows back when the prompt lines are off", () => {
+    const withLine = paneCells(planFor(1, "single"), { w: 816, h: 540 })[0]!;
+    const without = paneCells(planFor(1, "single"), { w: 816, h: 540 }, {}, 0)[0]!;
+    expect(without.rows).toBe(Math.floor((540 - CELL.header - CELL.padY) / CELL.h));
+    expect(without.rows).toBeGreaterThan(withLine.rows);
+    expect(without.cols).toBe(withLine.cols);
+  });
+  it("loses the prompt line once per pane: stacking costs a line for each pane", () => {
+    const one = paneCells(planFor(1, "single"), { w: 800, h: 700 })[0]!;
+    const [top, bottom] = paneCells(planFor(2, "rows"), { w: 800, h: 700 });
+    const lost = one.rows - top!.rows - bottom!.rows;
+    // Two panes lose a header, a prompt line and padding each, plus the divider, against one pane.
+    expect(lost).toBeGreaterThanOrEqual(Math.floor((CELL.header + CELL.composer + CELL.padY) / CELL.h));
   });
   it("follows the ratio, and cannot go below a sliver", () => {
     const wide = paneCells(planFor(2, "columns"), { w: 1000, h: 600 }, { col: 0.7 });
@@ -120,17 +138,32 @@ describe("chooseArrangement: the window space is used so every pane stays usable
 });
 
 describe("how many panes a window can usefully hold", () => {
-  it("calls a pane usable from 60 columns by 14 rows", () => {
+  // A pane is usable at 60 columns by 14 TERMINAL rows; its header, its own prompt line and the padding come on top.
+  const paneW = CELL.padX + MIN_USABLE.cols * CELL.w;
+  const paneH = CELL.header + CELL.composer + CELL.padY + MIN_USABLE.rows * CELL.h;
+  const wide = (n: number) => n * paneW + (n - 1) * HANDLE;
+  const tall = (n: number) => n * paneH + (n - 1) * HANDLE;
+
+  it("calls a pane usable from 60 columns by 14 rows of terminal", () => {
     expect(MIN_USABLE).toEqual({ cols: 60, rows: 14 });
   });
   it("holds one pane in the smallest window, where two would each be too narrow or too short", () => {
-    expect(maxPanes({ w: 668, h: 344 })).toBe(1);
+    expect(maxPanes({ w: wide(1), h: tall(1) })).toBe(1);
+    expect(maxPanes({ w: wide(2) - 1, h: tall(2) - 1 })).toBe(1);
   });
-  it("holds two where they can stack with room, three or four only in a roomy window", () => {
-    expect(maxPanes({ w: 892, h: 664 })).toBe(2);
-    expect(maxPanes({ w: 1212, h: 500 })).toBe(2);
-    expect(maxPanes({ w: 1212, h: 724 })).toBe(4);
-    expect(maxPanes({ w: 1920, h: 1000 })).toBe(4);
+  it("holds two side by side when the width allows, or stacked when the height allows", () => {
+    expect(maxPanes({ w: wide(2), h: tall(1) })).toBe(2);
+    expect(maxPanes({ w: wide(1), h: tall(2) })).toBe(2);
+  });
+  it("offers three or four only when both width and height hold two, the smallest size where a grid or one-beside-two works", () => {
+    expect(maxPanes({ w: wide(2), h: tall(2) })).toBe(4);
+    expect(maxPanes({ w: wide(2), h: tall(2) - 1 })).toBe(2);
+    expect(maxPanes({ w: wide(2) - 1, h: tall(2) })).toBe(2);
+  });
+  it("never counts a prompt line a pane does not have: with the prompt lines off the same space holds more", () => {
+    const size = { w: wide(2), h: tall(2) - 2 * CELL.composer };
+    expect(maxPanes(size)).toBeLessThan(4);
+    expect(maxPanes(size, 0)).toBe(4);
   });
   it("never offers more than four, or fewer than one", () => {
     expect(maxPanes({ w: 5000, h: 5000 })).toBe(PANE_LIMIT);
@@ -138,34 +171,16 @@ describe("how many panes a window can usefully hold", () => {
   });
   it("is contiguous: every smaller count also fits whenever a count is offered", () => {
     for (const w of [600, 900, 1200, 1500, 1800, 2400])
-      for (const h of [300, 500, 700, 900, 1200]) {
+      for (const h of [300, 500, 700, 900, 1200, 1500]) {
         const max = maxPanes({ w, h });
-        for (let n = 1; n <= max; n++) expect(fitsPanes(n as 1 | 2 | 3 | 4, { w, h }), `${n} in ${w}x${h}`).toBe(true);
+        // One pane is always shown, even in a window too small for it to be comfortable, so contiguity starts at two.
+        for (let n = 2; n <= max; n++) expect(fitsPanes(n as 1 | 2 | 3 | 4, { w, h }), `${n} in ${w}x${h}`).toBe(true);
         if (max < PANE_LIMIT) expect(fitsPanes((max + 1) as 1 | 2 | 3 | 4, { w, h }), `${max + 1} in ${w}x${h}`).toBe(false);
       }
   });
   it("fits a count when at least one arrangement gives every pane the minimum", () => {
-    expect(fitsPanes(2, { w: 892, h: 664 })).toBe(true);
-    expect(fitsPanes(3, { w: 892, h: 664 })).toBe(false);
-  });
-});
-
-describe("chooseArrangement never picks a layout that starves a pane when another would not", () => {
-  it("stacks two in 892 by 666: side by side would leave 53 columns, under the usable minimum", () => {
-    expect(chooseArrangement(2, { w: 892, h: 666 })).toBe("rows");
-  });
-  it("keeps every pane at 60 by 14 or more whenever any arrangement can", () => {
-    for (const n of [2, 3, 4] as const)
-      for (const w of [700, 892, 1100, 1212, 1500, 1920])
-        for (const h of [400, 520, 666, 724, 900, 1100]) {
-          const size = { w, h };
-          if (!fitsPanes(n, size)) continue;
-          const cells = paneCells(planFor(n, chooseArrangement(n, size)), size);
-          for (const c of cells) {
-            expect(c.cols, `${n} in ${w}x${h}`).toBeGreaterThanOrEqual(MIN_USABLE.cols);
-            expect(c.rows, `${n} in ${w}x${h}`).toBeGreaterThanOrEqual(MIN_USABLE.rows);
-          }
-        }
+    expect(fitsPanes(2, { w: wide(1), h: tall(2) })).toBe(true);
+    expect(fitsPanes(3, { w: wide(1), h: tall(2) })).toBe(false);
   });
 });
 

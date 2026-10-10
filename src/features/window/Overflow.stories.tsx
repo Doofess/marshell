@@ -15,7 +15,7 @@ const HEIGHT = 800;
 
 export const SidebarWithTwentySessions: StoryObj = {
   render: () => (
-    <ThemePair label="Twenty sessions in an 800 px tall window: the sidebar never scrolls. It shows the rows that fit and a +N more sessions button; the lane does the same for requests">
+    <ThemePair label="Twenty sessions in an 800 px tall window: the list scrolls (wheel, touch, keys) with no scrollbar drawn, and fades at the edge that has more. The lane, by contrast, shows whole rows and a +N more button">
       <div style={{ blockSize: HEIGHT, display: "flex" }}>
         <Sidebar rows={twenty} requests={SCENARIO_REQUESTS} height={HEIGHT} width={288} selectedId="s0" footer={SCENARIO_FOOTER} />
       </div>
@@ -25,9 +25,9 @@ export const SidebarWithTwentySessions: StoryObj = {
 
 export const RailWithTwentySessions: StoryObj = {
   render: () => (
-    <ThemePair label="The same twenty in the 52 px rail: the sessions that fit, then +N. The palette stays at the foot">
+    <ThemePair label="The same twenty in the 52 px rail: it scrolls the same way, with the palette pinned at the foot">
       <div style={{ blockSize: HEIGHT, display: "flex" }}>
-        <Rail rows={twenty} needsYou={2} selectedId="s0" height={HEIGHT} />
+        <Rail rows={twenty} needsYou={2} selectedId="s0" />
       </div>
     </ThemePair>
   ),
@@ -35,7 +35,7 @@ export const RailWithTwentySessions: StoryObj = {
 
 export const AllSessionsMenuOpen: StoryObj = {
   render: () => (
-    <ThemePair label="Where +N more leads: every session in a menu. Menus may scroll, so this list does, with the themed scrollbar showing">
+    <ThemePair label="Where the lane's +N more leads: every request or session in a menu. Menus keep a themed scrollbar, so this list shows one">
       <div style={{ padding: 16 }}>
         <AllSessionsMenu rows={twenty} selectedId="s0" />
       </div>

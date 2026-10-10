@@ -3,8 +3,15 @@ export const SIDEBAR = { default: 288, min: 200, max: 400, rail: 52 } as const;
 export const AUTO_COLLAPSE_BELOW = 960;
 export const MIN_WINDOW = { width: 720, height: 480 } as const;
 export const DRAWER = { default: 360, min: 300, max: 560 } as const;
-/** The prompt bar under the terminals: one line of field, one row of tools, and its margins. Its height never changes with the session's state. */
-export const COMPOSER_HEIGHT = 94;
+/**
+ * The prompt line. One in a single-terminal window (`full`, under the terminal) and one inside every pane in split view
+ * (`compact`). Both are flat docked bars, not floating cards, and their height never changes with the session's state.
+ * The status bar under everything shows the focused session's strip.
+ */
+export const COMPOSER = { full: 66, compact: 42 } as const;
+export const STATUS_BAR_HEIGHT = 24;
+/** @deprecated the single-terminal prompt line; kept until every caller reads COMPOSER.full. */
+export const COMPOSER_HEIGHT: number = COMPOSER.full;
 
 export type SidebarPref = "expanded" | "rail" | "focus";
 export type SidebarMode = "expanded" | "rail" | "focus";

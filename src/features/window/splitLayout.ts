@@ -2,13 +2,19 @@
  * Split view: up to four terminals on screen at once (any number can run). The arrangement is a plain grid of
  * pane tracks with a 1 px hairline track between neighbours, so CSS grid does the sizing and each handle is one grid item.
  * The handle's 8 px hit area overhangs the neighbouring panes, so a divider costs one pixel of terminal, not eight.
- * `chooseArrangement` picks the layout that keeps the smallest pane closest to a comfortable 80 by 24.
+ * `chooseArrangement` picks the layout that keeps the smallest pane closest to a comfortable 80 by 24 of terminal.
+ * Every pane carries its own prompt line, so each costs `CELL.composer` of height; pass 0 when the prompt lines are off.
  */
 export const PANE_LIMIT = 4;
 export const HANDLE = 1;
 export const HIT = 8;
-/** Terminal cell metrics at 13 px mono, the pane header, and the terminal's own padding. */
-export const CELL = { w: 8, h: 17, header: 28, padX: 16, padY: 16 } as const;
+import { COMPOSER } from "./layout";
+
+/**
+ * Terminal cell metrics at 13 px mono, the pane header, the pane's own compact prompt line (every pane in split view has
+ * one), and the terminal's own padding.
+ */
+export const CELL = { w: 8, h: 17, header: 28, composer: COMPOSER.compact, padX: 16, padY: 16 } as const;
 const COMFORT = { cols: 80, rows: 24 } as const;
 /** Below this a pane is not worth showing: most CLIs wrap or scroll their own UI. A count is offered only if some arrangement keeps every pane at least this big. */
 export const MIN_USABLE = { cols: 60, rows: 14 } as const;
@@ -123,38 +129,38 @@ function spanSize(sizes: number[], start: number, end: number): number {
   return sum;
 }
 
-/** How many terminal columns and rows each pane really gets, after padding, its header and the handles. */
-export function paneCells(plan: Plan, size: Size, ratios: Ratios = {}): { cols: number; rows: number }[] {
+/** How many terminal columns and rows each pane really gets, after padding, its header, its prompt line and the handles. */
+export function paneCells(plan: Plan, size: Size, ratios: Ratios = {}, composer: number = CELL.composer): { cols: number; rows: number }[] {
   const widths = trackSizes(size.w, plan.colTracks, ratios.col);
   const heights = trackSizes(size.h, plan.rowTracks, ratios.row);
   return plan.cells.map((c) => ({
     cols: Math.max(0, Math.floor((spanSize(widths, c.colStart, c.colEnd) - CELL.padX) / CELL.w)),
-    rows: Math.max(0, Math.floor((spanSize(heights, c.rowStart, c.rowEnd) - CELL.header - CELL.padY) / CELL.h)),
+    rows: Math.max(0, Math.floor((spanSize(heights, c.rowStart, c.rowEnd) - CELL.header - composer - CELL.padY) / CELL.h)),
   }));
 }
 
 /** 1 when every pane is at least 80 by 24; otherwise the share the smallest pane reaches. */
-export function scoreArrangement(plan: Plan, size: Size, ratios: Ratios = {}): number {
-  return Math.min(...paneCells(plan, size, ratios).map((p) => (Math.min(p.cols, COMFORT.cols) / COMFORT.cols) * (Math.min(p.rows, COMFORT.rows) / COMFORT.rows)));
+export function scoreArrangement(plan: Plan, size: Size, ratios: Ratios = {}, composer: number = CELL.composer): number {
+  return Math.min(...paneCells(plan, size, ratios, composer).map((p) => (Math.min(p.cols, COMFORT.cols) / COMFORT.cols) * (Math.min(p.rows, COMFORT.rows) / COMFORT.rows)));
 }
 
 /** True when some arrangement of `count` panes gives every pane at least 60 columns by 14 rows. */
-export function fitsPanes(count: PaneCount, size: Size): boolean {
-  return ARRANGEMENTS[count].some((a) => paneCells(planFor(count, a), size).every((p) => p.cols >= MIN_USABLE.cols && p.rows >= MIN_USABLE.rows));
+export function fitsPanes(count: PaneCount, size: Size, composer: number = CELL.composer): boolean {
+  return ARRANGEMENTS[count].some((a) => paneCells(planFor(count, a), size, {}, composer).every((p) => p.cols >= MIN_USABLE.cols && p.rows >= MIN_USABLE.rows));
 }
 
 /** How many terminals the space can usefully show, one to four. A window too small for a count never offers it. */
-export function maxPanes(size: Size): PaneCount {
+export function maxPanes(size: Size, composer: number = CELL.composer): PaneCount {
   let n: PaneCount = 1;
-  while (n < PANE_LIMIT && fitsPanes((n + 1) as PaneCount, size)) n = (n + 1) as PaneCount;
+  while (n < PANE_LIMIT && fitsPanes((n + 1) as PaneCount, size, composer)) n = (n + 1) as PaneCount;
   return n;
 }
 
-export function chooseArrangement(count: PaneCount, size: Size, ratios: Ratios = {}): Arrangement {
+export function chooseArrangement(count: PaneCount, size: Size, ratios: Ratios = {}, composer: number = CELL.composer): Arrangement {
   const all = ARRANGEMENTS[count].map((a) => {
     const plan = planFor(count, a);
-    const usable = paneCells(plan, size, ratios).every((p) => p.cols >= MIN_USABLE.cols && p.rows >= MIN_USABLE.rows);
-    return { a, usable, score: scoreArrangement(plan, size, ratios) };
+    const usable = paneCells(plan, size, ratios, composer).every((p) => p.cols >= MIN_USABLE.cols && p.rows >= MIN_USABLE.rows);
+    return { a, usable, score: scoreArrangement(plan, size, ratios, composer) };
   });
   // An arrangement that keeps every pane usable always beats one that does not, however well the other scores.
   const scored = all.some((s) => s.usable) ? all.filter((s) => s.usable) : all;

@@ -1,6 +1,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { SCENARIO_ROWS } from "./scenario";
+import { COMPOSER } from "./layout";
 import { SplitView, type SplitViewProps } from "./SplitView";
 
 const [billing, infra, api, docs, bug] = SCENARIO_ROWS;
@@ -158,6 +159,71 @@ describe("SplitView: sessions with no room", () => {
     expect(count(h, /class="pane__choice"/g)).toBe(5);
     expect(h).toContain("+3 more, open the command palette (Ctrl+Shift+K)");
     expect(html({ panes: [api!, null], choices: many.slice(0, 5) })).not.toContain("more, open");
+  });
+});
+
+describe("SplitView: an arrangement that does not suit the count", () => {
+  it("falls back to automatic rather than throwing", () => {
+    const h = html({ panes: [api!, billing!], arrangement: "main-left" });
+    expect(h).toContain('data-auto="true"');
+    expect(["columns", "rows"]).toContain(/data-arrangement="([^"]+)"/.exec(h)![1]);
+  });
+  it("treats a zoomed empty slot as not zoomed, the same way the window does", () => {
+    const h = html({ panes: [api!, null], zoomed: 1, choices: [billing!] });
+    expect(count(h, /<section class="pane/g)).toBe(2);
+  });
+});
+
+describe("SplitView: every pane has its own prompt line", () => {
+  const forms = (h: string) => (h.match(/<form class="composer"/g) ?? []).length;
+  it("gives each pane with a session its own, named for that pane's session", () => {
+    const h = html({ panes: [api!, billing!, infra!, docs!], size: { w: 1700, h: 900 } });
+    expect(forms(h)).toBe(4);
+    for (const r of [api!, billing!, infra!, docs!]) expect(h).toContain(`aria-label="Write to ${r.name}"`);
+  });
+  it("docks it at the bottom of its own pane, in a fixed slot the terminal above never loses", () => {
+    const h = html({ panes: [api!, billing!] });
+    for (const m of h.split("</section>").slice(0, 2)) {
+      expect(m).toMatch(/<div class="pane__composer"[^>]*style="block-size:\d+px"[^>]*>\s*<form class="composer"/);
+      expect(m.indexOf('class="scripted-terminal"')).toBeLessThan(m.indexOf('class="pane__composer"'));
+    }
+  });
+  it("sizes the slot and the pane's rows from the layout constants, never from a literal", () => {
+    const h = html({ panes: [api!, billing!] });
+    expect(h).toContain(`block-size:${COMPOSER.compact}px`);
+    expect(h).toContain(`grid-template-rows:28px minmax(0, 1fr) ${COMPOSER.compact}px`);
+  });
+  it("is individual: a pane whose session needs the user has its line off, while the others stay live", () => {
+    const h = html({ panes: [api!, billing!, docs!] });
+    const sections = h.split("</section>");
+    const off = (s: string) => /<textarea[^>]*disabled/.test(s);
+    expect(off(sections.find((s) => s.includes('aria-label="Terminal: billing"'))!)).toBe(true);
+    expect(off(sections.find((s) => s.includes('aria-label="Terminal: api-server"'))!)).toBe(false);
+    expect(off(sections.find((s) => s.includes('aria-label="Terminal: landing"'))!)).toBe(false);
+  });
+  it("gives each pane the text typed in that pane, by session id", () => {
+    const h = html({ panes: [api!, billing!], composerValues: { [api!.id]: "also add tests" } });
+    expect(h).toContain("also add tests");
+    expect((h.match(/also add tests/g) ?? []).length).toBe(1);
+  });
+  it("keeps the zoomed pane's own prompt line, and only that one", () => {
+    const h = html({ panes: [api!, billing!, infra!], zoomed: 1, size: { w: 1700, h: 900 } });
+    expect(forms(h)).toBe(1);
+    expect(h).toContain('aria-label="Write to billing"');
+  });
+  it("gives an empty pane none: its picker is enough", () => {
+    const h = html({ panes: [api!, null], choices: [billing!] });
+    expect(forms(h)).toBe(1);
+    expect(h).not.toContain('aria-label="Write to this pane"');
+  });
+  it("can be turned off for every pane, and then counts no prompt line in the rows", () => {
+    const h = html({ panes: [api!, billing!], composers: false });
+    expect(forms(h)).toBe(0);
+    expect(h).not.toContain("pane__composer");
+    expect(h).not.toContain(`grid-template-rows:28px minmax(0, 1fr) ${COMPOSER.compact}px`);
+  });
+  it("does not say 'Pane 2 of 4': with a prompt line in each pane the pane itself is the target", () => {
+    expect(html({ panes: [api!, billing!, infra!, docs!], size: { w: 1700, h: 900 } })).not.toMatch(/Pane \d of \d/);
   });
 });
 

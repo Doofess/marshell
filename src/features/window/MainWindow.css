@@ -156,6 +156,32 @@
   min-block-size: 0;
 }
 
+/*
+ * The prompt bar sits in a fixed slot, so the terminals above never resize. A long prompt grows the bar upward over the
+ * terminal while it is being written, instead of pushing the terminal's size around.
+ */
+.window__center {
+  position: relative;
+}
+.window__composer {
+  position: relative;
+  flex: none;
+}
+/* The status bar at the foot of the centre column: the focused session's strip, the same 24 px in a single window and in split view. */
+.window__status {
+  flex: none;
+  min-inline-size: 0;
+  overflow: clip;
+}
+.window__composer > .composer {
+  position: absolute;
+  inset-inline: var(--space-3);
+  inset-block-end: var(--space-3);
+  z-index: 2;
+  margin: 0;
+  box-shadow: 0 4px 18px oklch(0% 0 none / 0.28);
+}
+
 .focus-pill {
   position: absolute;
   inset-block-start: var(--space-3);
@@ -207,9 +233,11 @@
 }
 
 @media (forced-colors: active) {
+  /* The window edge was a shadow and the palette button and pill are fills: High Contrast keeps them as outlines.
+     The bar and drawer dividers are real borders, which the system colours already. */
   .window,
-  .window__bar,
-  .drawer {
-    border-color: CanvasText;
+  .window__palette,
+  .focus-pill {
+    outline: 1px solid CanvasText;
   }
 }

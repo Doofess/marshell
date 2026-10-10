@@ -1,0 +1,61 @@
+import { readFileSync } from "node:fs";
+import { describe, expect, it } from "vitest";
+
+/**
+ * Windows High Contrast removes box-shadows and background fills, so a control told apart only by a fill would
+ * lose its edge. Each one gets a 1 px outline in system colours inside a forced-colors block.
+ */
+const EDGES: Record<string, string[]> = {
+  "features/approval/ApproveCard.css": [".approve-card", ".approve-card__btn"],
+  "components/Chip/Chip.css": [".chip"],
+  "features/window/SplitView.css": [".pane__new", ".pane__choice"],
+  "features/window/MainWindow.css": [".window", ".window__palette", ".focus-pill"],
+  "features/window/LayoutMenu.css": [".layout-menu", ".layout-menu__option", ".layout-menu__count"],
+  "features/composer/Composer.css": [".composer", ".composer__send"],
+  "features/composer/StatusBar.css": [".status-bar"],
+  "features/window/Rail.css": [".rail__tool"],
+};
+
+const read = (f: string) => readFileSync(new URL(`../${f}`, import.meta.url), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
+
+/** The bodies of every `@media (forced-colors: active) { … }` block, found by matching braces. */
+function forcedColorsBlocks(css: string): string[] {
+  const out: string[] = [];
+  let from = 0;
+  for (;;) {
+    const i = css.indexOf("@media (forced-colors: active)", from);
+    if (i < 0) return out;
+    const open = css.indexOf("{", i);
+    let depth = 0;
+    let j = open;
+    for (; j < css.length; j++) {
+      if (css[j] === "{") depth++;
+      else if (css[j] === "}" && --depth === 0) break;
+    }
+    out.push(css.slice(open + 1, j));
+    from = j;
+  }
+}
+
+/** True when `selector` is in a selector list whose declarations include the outline. */
+function hasOutline(block: string, selector: string): boolean {
+  for (const m of block.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+    const selectors = m[1]!.split(",").map((s) => s.trim());
+    if (selectors.includes(selector) && /outline:\s*1px solid CanvasText/.test(m[2]!)) return true;
+  }
+  return false;
+}
+
+describe("forced colours: every filled control keeps an edge", () => {
+  for (const [file, selectors] of Object.entries(EDGES))
+    for (const sel of selectors)
+      it(`${file}: ${sel} has a 1px CanvasText outline`, () => {
+        const blocks = forcedColorsBlocks(read(file));
+        expect(blocks.length, `${file} has a forced-colors block`).toBeGreaterThan(0);
+        expect(blocks.some((b) => hasOutline(b, sel))).toBe(true);
+      });
+
+  it("never leans on border-color there, since these elements no longer have borders", () => {
+    for (const file of Object.keys(EDGES)) for (const b of forcedColorsBlocks(read(file))) expect(b, file).not.toMatch(/border-color:/);
+  });
+});

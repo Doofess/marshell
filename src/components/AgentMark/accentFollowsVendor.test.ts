@@ -22,8 +22,8 @@ const declared = (selector: string, name: string) => {
 };
 const block = (selector: string) => rules.filter((r) => r.selectors.includes(selector)).map((r) => r.body).join("\n");
 const signalToken = (id: string) => declared(`[data-agent="${id}"]`, "--agent-signal")!.match(/var\((--[\w-]+)\)/)![1]!;
-/** The ring and bar colour: the signal colour, unless the vendor names a stronger one. */
-const focusToken = (id: string) => declared(`[data-agent="${id}"]`, "--agent-focus")?.match(/var\((--[\w-]+)\)/)?.[1] ?? signalToken(id);
+/** The ring and bar colour is the signal colour itself, so each vendor's 3:1 on every surface is checked below. */
+const focusToken = (id: string) => signalToken(id);
 /** The ink on a vendor-coloured button: the shared one, or the vendor's own. */
 const inkOf = (id: string, theme: "dark" | "light") => {
   const v = declared(`[data-agent="${id}"]`, "--agent-ink") ?? declared("[data-agent]", "--agent-ink")!;
@@ -41,7 +41,8 @@ describe("the app accent follows the vendor", () => {
     expect(shared).toMatch(/--accent-flash:\s*color-mix\(in oklch, var\(--accent\)/);
   });
   it("names a focus colour the rings and bars use", () => {
-    expect(shared).toMatch(/--focus:\s*var\(--agent-focus, var\(--agent-signal\)\)/);
+    expect(shared).toMatch(/--focus:\s*var\(--agent-signal\)/);
+    expect(colors).not.toContain("--agent-focus");
   });
   for (const theme of THEMES)
     for (const id of AGENT_IDS) {

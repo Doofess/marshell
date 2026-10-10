@@ -37,8 +37,8 @@ const BATCHES: Record<UpTo, Array<[StoryModule, string]>> = {
   "2b": [
     [Lane, "The lane header is always there at 28 px. The oldest waiting request is the target and shows as a full card; the rest are 36 px one-liners; it never takes more than 40% of the sidebar."],
     [Icon, "The app icon, and where it lives: the first thing in the window's top bar, where it opens the app menu."],
-    [PromptBar, "The prompt line under the terminals. It always writes to the focused pane's session, says which one, takes that session's colour, and never changes height: notices sit in the bar row, so the terminals above do not resize when a session starts working."],
-    [Overflow, "When there are more sessions or requests than fit, the main window never scrolls: it shows the ones that fit and a \"+N more\" button that opens a menu. Menus, unlike the window, keep a themed scrollbar."],
+    [PromptBar, "The prompt line is a flat command line docked under the terminal, not a floating card. A single terminal has one full line; in split view every pane has its own compact line, so a line of text always goes to the session of its own pane. It takes that session's colour, is off while the session waits on you or has ended, and never changes height: notices sit in the line, so the terminals above do not resize when a session starts working. The strip of status data (model, context, plan limits, cost, MCP and more) lives in a thin status bar at the foot of the window, for the focused session."],
+    [Overflow, "The session list in the sidebar and rail scrolls with no visible scrollbar, and a soft fade shows where more rows continue. The needs-you lane never scrolls: it shows what fits and a \"+N more\" button that opens a menu, and menus, unlike the window, keep a themed scrollbar."],
     [Window, "The window in the real layout, with a real xterm.js terminal that follows the theme. The accent follows the session's vendor. Split view shows up to four terminals at once and picks the arrangement that suits the window. Use the Terminal theme control above to pin the terminal dark or light, and Contrast protection to see what it rescues."],
   ],
   "2c": [],

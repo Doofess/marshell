@@ -1,7 +1,8 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { MainWindow } from "./MainWindow";
-import { SCENARIO_ROWS } from "./scenario";
+import { COMPOSER, STATUS_BAR_HEIGHT } from "./layout";
+import { SCENARIO_REQUESTS, SCENARIO_ROWS } from "./scenario";
 
 const BIG = { width: 1700, height: 900 } as const;
 const html = (p: Partial<Parameters<typeof MainWindow>[0]> = {}) => renderToStaticMarkup(<MainWindow width={1180} height={800} selectedId="working" {...p} />);
@@ -12,7 +13,7 @@ describe("MainWindow: default", () => {
     expect(h).toContain("window__bar");
     expect(h).toContain("session-header");
     expect(h).toContain('class="sidebar"');
-    expect((h.match(/class="scripted-terminal"/g) ?? []).length).toBe(1);
+    expect((h.match(/class="scripted-terminal" role="group" aria-label="Terminal for/g) ?? []).length).toBe(1);
   });
   it("shows the lane, with the oldest request expanded", () => {
     expect(h).toContain("Needs you · 2");
@@ -57,7 +58,7 @@ describe("MainWindow: layouts", () => {
   });
   it("split view has two panes, a separator and exactly one active pane", () => {
     const h = html({ layout: "split" });
-    expect((h.match(/class="scripted-terminal"/g) ?? []).length).toBe(2);
+    expect((h.match(/class="scripted-terminal" role="group" aria-label="Terminal for/g) ?? []).length).toBe(2);
     expect(h).toContain('role="separator"');
     expect((h.match(/data-active="true"/g) ?? []).length).toBe(1);
     expect(h).toContain('data-active="false"');
@@ -133,10 +134,15 @@ describe("MainWindow: split view up to four", () => {
     expect(html({ layout: "split", splitCount: 4, width: 720, height: 480 })).toContain("3 more running");
     expect(html({ layout: "split", splitCount: 3, width: 1180, height: 800 })).toContain("1 more running");
   });
-  it("counts the prompt bar's height when it decides what fits", () => {
-    // A 2 x 2 grid needs 565 px under the bar; at 650 px tall the 94 px prompt bar leaves 516, so four do not fit until it is off.
+  it("counts each pane's own prompt line when it decides what fits", () => {
+    // Four panes need two stacked panes' worth of height (header, prompt line, padding and 14 terminal rows each) under the bar and the status bar.
+    // At 650 px tall the window falls short with prompt lines on; with them off the terminals get those rows back.
     expect(panes(html({ layout: "split", splitCount: 4, width: 1500, height: 650 }))).toBeLessThan(4);
     expect(panes(html({ layout: "split", splitCount: 4, width: 1500, height: 650, composer: false }))).toBe(4);
+  });
+  it("counts the status bar's height too: the same window holds four once the bar is off", () => {
+    expect(panes(html({ layout: "split", splitCount: 4, width: 1500, height: 700 }))).toBeLessThan(4);
+    expect(panes(html({ layout: "split", splitCount: 4, width: 1500, height: 700, statusBar: false }))).toBe(4);
   });
   it("starts with the selected session and fills the rest from the others in order, never twice", () => {
     const h = html({ layout: "split", splitCount: 4, selectedId: "working", width: 1700, height: 900 });
@@ -186,35 +192,164 @@ describe("MainWindow: layout button", () => {
   });
 });
 
-describe("MainWindow: the prompt bar", () => {
-  it("sits under the terminal in every layout but focus mode, where the terminal has the whole window", () => {
-    for (const layout of ["default", "split", "rail"] as const) expect(html({ layout }), layout).toContain('class="composer"');
-    expect(html({ layout: "focus", sidebarPref: "focus" })).not.toContain('class="composer"');
-    expect(html({ composer: false })).not.toContain('class="composer"');
+describe("MainWindow: the prompt line", () => {
+  const BIG = { width: 1700, height: 900 } as const;
+  const forms = (h: string) => (h.match(/<form class="composer"/g) ?? []).length;
+  it("is one full line under a single terminal, in a fixed slot that grows upward over the terminal", () => {
+    const h = html();
+    expect(forms(h)).toBe(1);
+    expect(h).toContain('aria-label="Write to api-server"');
+    expect(h).toMatch(/class="window__composer"[^>]*style="block-size:\d+px"/);
+    expect(h).toContain(`block-size:${COMPOSER.full}px`);
   });
-  it("writes to the session of the single terminal", () => {
-    expect(html()).toContain('aria-label="Message api-server"');
+  it("is in the rail layout too, and gone in focus mode where the terminal has the whole window", () => {
+    expect(forms(html({ layout: "rail" }))).toBe(1);
+    expect(forms(html({ layout: "focus", sidebarPref: "focus" }))).toBe(0);
+    expect(forms(html({ composer: false }))).toBe(0);
   });
-  it("writes to the focused pane in split view, and names it", () => {
-    const first = html({ layout: "split", splitCount: 2, width: 1700, height: 900, activePane: 0 });
-    expect(first).toContain('aria-label="Message api-server"');
-    expect(first).toContain("Pane 1 of 2");
-    const second = html({ layout: "split", splitCount: 2, width: 1700, height: 900, activePane: 1 });
-    expect(second).toContain('aria-label="Message billing"');
-    expect(second).toContain("Pane 2 of 2");
+  it("in split view is individual: every pane has its own, and there is no window-level one", () => {
+    for (const n of [2, 3, 4] as const) {
+      const h = html({ layout: "split", splitCount: n, ...BIG });
+      expect(forms(h), String(n)).toBe(n);
+      expect(h, String(n)).not.toContain("window__composer");
+    }
   });
-  it("takes the accent from the focused pane's session, matching the pane's bar", () => {
-    const h = html({ layout: "split", splitCount: 4, width: 1700, height: 900, activePane: 3 });
-    const agentOfLastPane = /Terminal: ([^"]+)"/g;
-    const names = [...h.matchAll(agentOfLastPane)].map((m) => m[1]);
-    expect(h).toContain(`aria-label="Message ${names[3]}"`);
+  it("names each pane's own session on its own line, so text typed in a pane goes to that pane's session", () => {
+    const h = html({ layout: "split", splitCount: 4, ...BIG });
+    const names = [...h.matchAll(/aria-label="Terminal: ([^"]+)"/g)].map((m) => m[1]);
+    expect(names).toHaveLength(4);
+    for (const n of names) expect(h).toContain(`aria-label="Write to ${n}"`);
   });
-  it("is off, with the reason, when the focused pane is empty", () => {
-    const h = html({ layout: "split", splitCount: 3, emptySlot: true, activePane: 2, width: 1700, height: 900 });
-    expect(h).toContain("Choose a session for this pane first");
+  it("keeps the blocked state per pane: the pane whose session needs you is off while the others stay live", () => {
+    const h = html({ layout: "split", splitCount: 3, ...BIG });
+    const sections = h.split("</section>");
+    const off = (name: string) => /<textarea[^>]*disabled/.test(sections.find((x) => x.includes(`aria-label="Terminal: ${name}"`))!);
+    expect(off("billing")).toBe(true);
+    expect(off("api-server")).toBe(false);
   });
-  it("shows the text it was given", () => {
+  it("has none in an empty pane", () => {
+    const h = html({ layout: "split", splitCount: 3, emptySlot: true, ...BIG });
+    expect(forms(h)).toBe(2);
+    expect(h).toContain("Choose a session for this pane");
+  });
+  it("shows the text typed in a single window, and the text typed in each pane by session id", () => {
     expect(html({ composerValue: "Add retry tests" })).toContain("Add retry tests");
+    const h = html({ layout: "split", splitCount: 2, composerValues: { working: "run the tests again" }, ...BIG });
+    expect(h).toContain("run the tests again");
+    expect((h.match(/run the tests again/g) ?? []).length).toBe(1);
+  });
+  it("is off in every pane when the window turns prompt lines off", () => {
+    expect(forms(html({ layout: "split", splitCount: 4, composer: false, ...BIG }))).toBe(0);
+  });
+});
+
+describe("MainWindow: the status bar follows the focused pane", () => {
+  const BIG = { width: 1700, height: 900 } as const;
+  const bar = (h: string) => /<div class="window__status"[^>]*>([\s\S]*?)<\/div><\/div>/.exec(h)?.[0] ?? "";
+  it("is a 24 px bar at the foot of the centre column, with the window's own height from the layout constants", () => {
+    const h = html();
+    expect(h).toMatch(/class="window__status"[^>]*style="block-size:\d+px"/);
+    expect(h).toContain(`block-size:${STATUS_BAR_HEIGHT}px`);
+  });
+  it("shows in the single window and in split view, and is gone in focus mode or when turned off", () => {
+    expect(html()).toContain("window__status");
+    expect(html({ layout: "split", ...BIG })).toContain("window__status");
+    expect(html({ layout: "focus", sidebarPref: "focus" })).not.toContain("window__status");
+    expect(html({ statusBar: false })).not.toContain("window__status");
+  });
+  it("shows the focused pane's session: its model, not the first pane's", () => {
+    expect(bar(html({ layout: "split", splitCount: 2, activePane: 0, ...BIG }))).toContain("Opus 5.5");
+    expect(bar(html({ layout: "split", splitCount: 2, activePane: 1, ...BIG }))).toContain("Sonnet 5.5");
+  });
+  it("follows a zoom: the zoomed pane is the focused one", () => {
+    expect(bar(html({ layout: "split", splitCount: 4, zoomedPane: 1, activePane: 0, ...BIG }))).toContain("Sonnet 5.5");
+  });
+});
+
+describe("MainWindow: the review's critical findings", () => {
+  const BIG = { width: 1700, height: 900 } as const;
+  it("zoom makes the zoomed pane the focused one: header, accent bar, its prompt line and the status bar all agree", () => {
+    const h = html({ layout: "split", splitCount: 4, zoomedPane: 1, activePane: 0, ...BIG });
+    expect(h).toContain('aria-label="Terminal: billing"');
+    expect(h).toMatch(/<section class="pane" data-active="true"[^>]*aria-label="Terminal: billing"/);
+    expect(h).toContain('aria-label="Write to billing"');
+    expect(h).not.toContain('aria-label="Write to api-server"');
+  });
+  it("a chosen arrangement that no longer suits the number of panes falls back to automatic instead of crashing", () => {
+    expect(() => html({ layout: "split", splitCount: 3, arrangement: "main-left", width: 1180, height: 800 })).not.toThrow();
+    const h = html({ layout: "split", splitCount: 3, arrangement: "main-left", width: 1180, height: 800, layoutMenu: true });
+    expect(h).toContain('data-auto="true"');
+    expect(h).toContain("Showing 2 of 3");
+  });
+  it("copes with an arrangement picked for four after the window shrinks to one", () => {
+    expect(() => html({ layout: "split", splitCount: 4, arrangement: "grid", width: 720, height: 480 })).not.toThrow();
+  });
+  it("copes with a focused pane index that is out of range: it clamps to the first or the last pane", () => {
+    for (const [activePane, name] of [[-1, "api-server"], [9, "billing"]] as const) {
+      const h = html({ layout: "split", splitCount: 2, activePane, ...BIG });
+      expect((h.match(/data-active="true"/g) ?? []).length, String(activePane)).toBe(1);
+      expect(h, String(activePane)).toMatch(new RegExp(`<section class="pane" data-active="true"[^>]*aria-label="Terminal: ${name}"`));
+    }
+  });
+  it("tells the layout menu how many sessions could be shown, not how many were asked for", () => {
+    const two = SCENARIO_ROWS.slice(0, 2);
+    const h = html({ layout: "split", splitCount: 4, rows: two, layoutMenu: true, ...BIG });
+    expect(h).not.toContain("Showing 2 of 4");
+  });
+  it("makes the accent test mean something: the focused pane's vendor, not the first pane's, sets the window accent", () => {
+    const rows = SCENARIO_ROWS.map((r) => (r.id === "needs-question" ? r : { ...r, agent: "claude" as const }));
+    const h = html({ layout: "split", splitCount: 3, rows, selectedId: "working", activePane: 2, ...BIG });
+    expect(h).toMatch(/class="window"[^>]*data-agent="gemini"/);
+  });
+});
+
+describe("MainWindow: the shell panel in the sidebar", () => {
+  const shellOf = (h: string) => h.slice(h.indexOf('<section class="shell-panel"'), h.indexOf("</section>", h.indexOf('<section class="shell-panel"')));
+  const tall = { width: 1180, height: 880 } as const;
+  it("is in the expanded sidebar by default, under the session list and above the footer", () => {
+    const h = html(tall);
+    expect(h).toContain('aria-label="Shell"');
+    expect(h.indexOf('role="listbox"')).toBeLessThan(h.indexOf('aria-label="Shell"'));
+    expect(h.indexOf('aria-label="Shell"')).toBeLessThan(h.indexOf("sidebar__footer"));
+  });
+  it("is plain PowerShell on Windows, in the focused session's folder", () => {
+    const sh = shellOf(html(tall));
+    expect(sh).toContain("PowerShell");
+    expect(sh).toContain(">my-app<");
+  });
+  it("is not an agent: its panel carries no vendor, so the window's vendor accent does not make it look like a session", () => {
+    expect(shellOf(html(tall))).not.toContain("data-agent");
+  });
+  it("follows the focused pane in split view", () => {
+    const h = html({ layout: "split", splitCount: 2, activePane: 1, width: 1700, height: 900 });
+    expect(shellOf(h)).toContain(">payments<");
+  });
+  it("is zsh on macOS and bash on Linux", () => {
+    expect(shellOf(html({ ...tall, os: "mac" }))).toContain("zsh");
+    expect(shellOf(html({ ...tall, os: "linux" }))).toContain("bash");
+  });
+  it("is not in the rail or in focus mode, where there is no room for it", () => {
+    expect(html({ layout: "rail" })).not.toContain('aria-label="Shell"');
+    expect(html({ layout: "focus", sidebarPref: "focus" })).not.toContain('aria-label="Shell"');
+    expect(html({ width: 940 })).not.toContain('aria-label="Shell"');
+  });
+  it("can be left out", () => {
+    expect(html({ ...tall, shell: false })).not.toContain('aria-label="Shell"');
+  });
+  it("shows only its header when the user hid it", () => {
+    const sh = shellOf(html({ ...tall, shellCollapsed: true }));
+    expect(sh).toContain('data-collapsed="true"');
+    expect(sh).not.toContain("scripted-terminal");
+    expect(sh).toContain('aria-label="Show the shell"');
+  });
+  it("hides itself in a window too short to leave the list two rows, when the lane takes its 40%", () => {
+    const many = Array.from({ length: 12 }, (_, i) => ({ ...SCENARIO_REQUESTS[0]!, id: `r${i}`, waitingMs: 1000 + i }));
+    const sh = shellOf(html({ width: 1180, height: 520, requests: many }));
+    expect(sh).toContain('data-collapsed="true"');
+    expect(sh).toContain('data-auto="true"');
+  });
+  it("has its own button for opening it in a pane, named for the shell", () => {
+    expect(html(tall)).toContain('aria-label="Open PowerShell in a pane"');
   });
 });
 

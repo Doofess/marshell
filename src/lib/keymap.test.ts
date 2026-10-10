@@ -41,6 +41,13 @@ describe("COMMANDS", () => {
     expect(shortcutLabel(commandById("zoom-pane").binding!, "mac")).toBe("⌘Z");
     for (const id of ["layout", "unsplit"]) expect(commandById(id).group).toBe("View");
   });
+  it("binds the shell panel to Ctrl+Shift+J, Cmd+J on macOS, under Tools", () => {
+    const c = commandById("shell-panel");
+    expect(c.group).toBe("Tools");
+    expect(c.label).toBe("Show or focus the shell panel");
+    expect(shortcutLabel(c.binding!, "windows")).toBe("Ctrl+Shift+J");
+    expect(shortcutLabel(c.binding!, "mac")).toBe("⌘J");
+  });
   it("gives no two commands the same binding", () => {
     const seen = COMMANDS.filter((c) => c.binding).map((c) => `${shortcutLabel(c.binding!, "windows")}`);
     expect(new Set(seen).size).toBe(seen.length);

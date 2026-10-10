@@ -39,6 +39,9 @@ const CSS = [
   "src/features/window/LayoutMenu.css",
   "src/features/window/AllSessionsMenu.css",
   "src/features/composer/Composer.css",
+  "src/features/composer/StatusStrip.css",
+  "src/features/composer/StatusBar.css",
+  "src/features/window/ShellPanel.css",
 ];
 const ACCENTS = ["amber", "blue", "indigo", "violet", "magenta", "cyan", "teal", "slate"];
 

@@ -28,6 +28,12 @@ describe("SplitView.css", () => {
   it("keeps the receding header readable: its secondary text and buttons use full-strength ink so 60% opacity still passes AA", () => {
     expect(css).toMatch(/\.pane\[data-active="false"\] \.pane__place,[\s\S]*?\{\s*color: var\(--text-1\)/);
   });
+  it("says in its comment the tint percentage the code really uses", () => {
+    const pct = rule('.pane__header[data-needs="true"]').match(/(\d+)%/)?.[1];
+    const comment = css.match(/\/\*[^*]*attention tint[^*]*\*\//)?.[0] ?? "";
+    expect(pct).toBeDefined();
+    expect(comment).toContain(`${pct}%`);
+  });
   it("tints a pane that needs you with the vendor colour", () => {
     expect(rule('.pane__header[data-needs="true"]')).toContain("var(--agent-signal");
   });
@@ -45,6 +51,16 @@ describe("SplitView.css", () => {
   it("never scrolls an empty pane: it clips, because the main window scrolls nowhere but the conversation", () => {
     expect(rule(".pane__empty")).toContain("overflow: clip");
     expect(css).not.toMatch(/overflow(-[xy])?:\s*(auto|scroll)/);
+  });
+  it("docks each pane's prompt line in a fixed slot at the pane's foot, growing upward over its own terminal", () => {
+    const r = rule(".pane__composer");
+    expect(r).toContain("position: relative");
+    expect(r).toContain("flex: none");
+    const inner = rule(".pane__composer > .composer");
+    expect(inner).toContain("position: absolute");
+    expect(inner).toContain("inset-block-end: 0");
+    expect(inner).toContain("inset-inline: 0");
+    expect(inner).toMatch(/z-index:\s*2/);
   });
   it("uses tokens and logical properties only", () => {
     expect(css).not.toMatch(/#[0-9a-f]{3,8}\b|rgb\(/i);

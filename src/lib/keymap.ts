@@ -26,6 +26,7 @@ export const COMMANDS: Command[] = [
   { id: "focus-mode", label: "Focus mode", group: "View" },
   { id: "sidebar", label: "Collapse sidebar to the rail", group: "View" },
   { id: "palette", label: "Command palette", group: "Tools", binding: { key: "K" } },
+  { id: "shell-panel", label: "Show or focus the shell panel", group: "Tools", binding: { key: "J" } },
   { id: "history", label: "History", group: "Tools", binding: { key: "H" } },
   { id: "find", label: "Search in scrollback", group: "Tools", binding: { key: "F" } },
   { id: "global-search", label: "Search all sessions", group: "Tools", binding: { key: "F", alt: true } },

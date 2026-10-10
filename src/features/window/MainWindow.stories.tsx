@@ -1,6 +1,7 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import { ThemePair } from "../../design/ThemePair";
 import { MainWindow, type MainWindowProps } from "./MainWindow";
+import { SCENARIO_REQUESTS } from "./scenario";
 
 const meta: Meta = { title: "Main window", parameters: { layout: "fullscreen" } };
 export default meta;
@@ -23,8 +24,12 @@ export const SplitThree: StoryObj = stacked("Split, three: one main pane beside 
 export const SplitFour: StoryObj = stacked("Split, four: a two by two grid. Each pane header shows its glyph, so the two that need you are visible without the sidebar", { width: 1700, height: 900, layout: "split", splitCount: 4, activePane: 2 });
 export const SplitFourTooSmall: StoryObj = stacked("Asking for four in the 720 by 480 minimum shows one: four panes there would each be a sliver, so the app shows what is usable. The other three keep running, and the layout menu says so and turns the larger counts off", { width: 720, height: 480, layout: "split", splitCount: 4, layoutMenu: true });
 export const SplitThreeCappedAtTwo: StoryObj = stacked("Asking for three in a 1180 by 800 window shows two, stacked: three would leave a pane under 60 columns or 14 rows. The header of the focused pane says one more is running", { width: 1180, height: 800, layout: "split", splitCount: 3 });
-export const SplitNarrowWarning: StoryObj = stacked("A pane between 60 and 79 columns is allowed but says its size (73 by 18) and how to zoom: three panes in a 1500 wide window", { width: 1500, height: 860, layout: "split", splitCount: 3, arrangement: "columns" });
-export const SplitStackedTall: StoryObj = stacked("A tall, narrow window stacks the panes instead, so none is starved of columns", { width: 760, height: 1000, layout: "split", splitCount: 3 });
+export const SplitNarrowWarning: StoryObj = stacked("A pane between 60 and 79 columns is allowed but says its size (61 by 19) and how to zoom: three panes in a 1300 wide window", { width: 1300, height: 900, layout: "split", splitCount: 3 });
+export const SplitStackedTall: StoryObj = stacked("A tall, narrow window stacks the panes instead, so none is starved of columns", { width: 760, height: 1060, layout: "split", splitCount: 3 });
+export const SplitFourPromptLines: StoryObj = stacked(
+  "Split, four, and every pane has its own prompt line: billing and infra need the user, so theirs are off and say why; landing has text typed; api-server is working, so its line would queue. A line always goes to the session of its own pane",
+  { width: 1700, height: 900, layout: "split", splitCount: 4, activePane: 3, composerValues: { "done-unseen": "Now bump the changelog and tag 1.4.1" } },
+);
 export const SplitZoomed: StoryObj = stacked("Zoomed: one pane fills the view; the other three keep running and the header says so. The same button restores them", { width: 1500, height: 860, layout: "split", splitCount: 4, zoomedPane: 1 });
 export const SplitEmptyPane: StoryObj = stacked("A new pane starts empty: choose a session that is not on screen, or start one", { width: 1500, height: 860, layout: "split", splitCount: 3, emptySlot: true, activePane: 2 });
 export const SplitDividerMoved: StoryObj = stacked("A dragged divider (70/30): the app keeps the arrangement while the user's hand is on it", { width: 1500, height: 700, layout: "split", ratios: { col: 0.7 } });
@@ -44,3 +49,8 @@ export const LightTerminalInDarkApp: StoryObj = {
   ),
 };
 export const MacShortcuts: StoryObj = stacked("macOS shortcut labels (focus pill)", { width: 1180, height: 560, layout: "focus", os: "mac" });
+
+const twelve = Array.from({ length: 12 }, (_, i) => ({ ...SCENARIO_REQUESTS[0]!, id: `r${i}`, waitingMs: 60_000 + i * 1000 }));
+export const SidebarWithShell: StoryObj = stacked("The sidebar: the session list scrolls (wheel, touch, keys) with no scrollbar, a soft fade at an edge says there is more, and under it a plain PowerShell for commands you still run by hand. It belongs to no agent, so it carries no vendor colour", { width: 1180, height: 880 });
+export const ShellHidden: StoryObj = stacked("The same sidebar with the shell hidden by the user: just its header, and a button to show it again", { width: 1180, height: 880, shellCollapsed: true });
+export const ShellFoldsInShortWindow: StoryObj = stacked("In a short window with twelve requests waiting, the lane takes its 40% and the shell folds to its header by itself, so the list is never squeezed under two sessions", { width: 1180, height: 520, requests: twelve });

@@ -6,13 +6,51 @@
   background: var(--bg-raised);
   border-inline-end: 1px solid var(--hairline);
 }
+/* The list scrolls with no scrollbar; a fade at an edge says there is more that way, and only at an edge that has more. */
+@property --rail-fade-start {
+  syntax: "<length>";
+  inherits: false;
+  initial-value: 0px;
+}
+@property --rail-fade-end {
+  syntax: "<length>";
+  inherits: false;
+  initial-value: 0px;
+}
+@keyframes rail-edges {
+  from {
+    --rail-fade-start: 0px;
+    --rail-fade-end: 20px;
+  }
+  10%,
+  90% {
+    --rail-fade-start: 20px;
+    --rail-fade-end: 20px;
+  }
+  to {
+    --rail-fade-start: 20px;
+    --rail-fade-end: 0px;
+  }
+}
 .rail__list {
   display: grid;
   align-content: start;
   justify-items: center;
   min-block-size: 0;
   padding-block: var(--space-2);
-  overflow: clip;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: none;
+}
+.rail__list::-webkit-scrollbar {
+  display: none;
+}
+@supports (animation-timeline: scroll()) {
+  .rail__list {
+    animation: rail-edges linear;
+    animation-timeline: scroll(self block);
+    mask-image: linear-gradient(to bottom, transparent, oklch(0% 0 none) var(--rail-fade-start), oklch(0% 0 none) calc(100% - var(--rail-fade-end)), transparent);
+  }
 }
 .rail__tools {
   display: grid;
@@ -100,28 +138,8 @@
   }
 }
 
-/* The overflow button: how many sessions the rail had no room for. */
-.rail__more {
-  inline-size: 100%;
-  block-size: 36px;
-  padding: 0;
-  border: 0;
-  background: transparent;
-  color: var(--text-1);
-  font: inherit;
-  font-size: var(--text-11);
-  font-variant-numeric: tabular-nums;
-  font-weight: 600;
-}
-.rail__more:focus-visible {
-  outline: 2px solid var(--focus, var(--accent));
-  outline-offset: -2px;
-}
-.rail__more:active {
-  background: var(--selected);
-}
-@media (hover: hover) and (pointer: fine) {
-  .rail__more:hover {
-    background: var(--hover);
+@media (forced-colors: active) {
+  .rail__tool {
+    outline: 1px solid CanvasText;
   }
 }

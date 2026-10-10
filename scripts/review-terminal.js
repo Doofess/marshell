@@ -20,11 +20,14 @@
 
   function mount(el) {
     const fontFamily = getComputedStyle(document.documentElement).getPropertyValue("--font-mono").trim();
-    const term = new Terminal({ fontFamily, fontSize: 13, cols: data.size.cols, rows: data.size.rows, disableStdin: true, cursorBlink: false, scrollback: 1000, ...options(el) });
+    const script = el.dataset.script ? JSON.parse(el.dataset.script) : data.session;
+    const cols = Number(el.dataset.cols) || data.size.cols;
+    const rows = Number(el.dataset.rows) || data.size.rows;
+    const term = new Terminal({ fontFamily, fontSize: 13, cols, rows, disableStdin: true, cursorBlink: false, cursorInactiveStyle: el.dataset.script ? "block" : "outline", scrollback: 1000, ...options(el) });
     const fit = new FitAddon.FitAddon();
     term.loadAddon(fit);
     term.open(el);
-    term.write(data.session);
+    term.write(script);
     fit.fit();
     new ResizeObserver(() => fit.fit()).observe(el);
     el.style.backgroundColor = options(el).theme.background;

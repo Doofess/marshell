@@ -49,6 +49,22 @@
   min-inline-size: 0;
   min-block-size: 0;
 }
+/*
+ * Each pane's own prompt line sits in a fixed slot at its foot, so the terminal above never resizes. A long prompt grows the
+ * line upward over this pane's own terminal while it is being written.
+ */
+.pane__composer {
+  position: relative;
+  flex: none;
+}
+.pane__composer > .composer {
+  position: absolute;
+  inset-inline: 0;
+  inset-block-end: 0;
+  z-index: 2;
+  margin: 0;
+}
+
 .pane__header {
   position: relative;
   display: flex;
@@ -69,7 +85,7 @@
 .pane[data-active="true"] .pane__header {
   border-block-end: 2px solid var(--focus, var(--accent));
 }
-/* A pane that needs you carries the 6% attention tint of its sidebar row. */
+/* A pane that needs you carries the 12% attention tint of its sidebar row. */
 .pane__header[data-needs="true"] {
   background: color-mix(in oklch, var(--agent-signal, var(--accent)) 12%, transparent);
 }
@@ -227,5 +243,9 @@
   }
   .pane__header[data-needs="true"] {
     border-block-end-color: Highlight;
+  }
+  .pane__new,
+  .pane__choice {
+    outline: 1px solid CanvasText;
   }
 }

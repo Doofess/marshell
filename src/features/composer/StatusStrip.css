@@ -1,0 +1,185 @@
+/* One slim line of session facts: 11 px, tabular figures, never wraps. Separators are drawn here, not typed. */
+.status-strip {
+  display: flex;
+  align-items: center;
+  min-inline-size: 0;
+  block-size: 20px;
+  overflow: clip;
+  color: var(--text-2);
+  font-size: var(--text-11);
+  font-variant-numeric: tabular-nums;
+  line-height: 16px;
+  white-space: nowrap;
+}
+.status-strip__item {
+  position: relative;
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  margin-inline-start: 9px;
+  padding-inline-start: 10px;
+}
+.status-strip__item[data-first] {
+  margin-inline-start: 0;
+  padding-inline-start: 0;
+}
+.status-strip__item:not([data-first])::before {
+  content: "";
+  position: absolute;
+  inset-block: 3px;
+  inset-inline-start: 0;
+  inline-size: 1px;
+  background: var(--hairline);
+}
+.status-strip__label,
+.status-strip__detail {
+  color: var(--text-2);
+}
+.status-strip__value {
+  color: var(--text-1);
+}
+.status-strip__glyph {
+  flex: none;
+  margin-inline-end: 4px;
+}
+
+/* A meter's level shows in its bar and its weight, not in a colour alone: the percentage is always written. */
+.status-strip__bar {
+  display: inline-block;
+  inline-size: 28px;
+  block-size: 4px;
+  border-radius: 2px;
+  background: var(--fill-strong);
+  overflow: clip;
+}
+.status-strip__bar > i {
+  display: block;
+  block-size: 100%;
+  border-radius: 2px;
+  background: var(--agent-signal, var(--text-2));
+}
+.status-strip__item[data-tone="caution"] .status-strip__value,
+.status-strip__item[data-tone="error"] .status-strip__value {
+  font-weight: 600;
+}
+.status-strip__item[data-tone="caution"] .status-strip__bar > i {
+  background: var(--caution);
+}
+.status-strip__item[data-tone="error"] .status-strip__bar > i {
+  background: var(--error);
+}
+
+/* A health problem is the one item with a mark of its own: a caution triangle in front of its name. */
+.status-strip__item[data-kind="problem"] .status-strip__glyph {
+  color: var(--caution);
+}
+.status-strip__item[data-kind="problem"] .status-strip__value {
+  font-weight: 600;
+}
+.status-strip__item[data-kind="ok"] .status-strip__glyph {
+  color: var(--text-2);
+}
+
+/* Fitted in script (width given): the compaction level says what is shown. */
+.status-strip[data-fit="js"] [data-compact="1"] .status-strip__detail,
+.status-strip[data-fit="js"] [data-compact="2"] .status-strip__detail {
+  display: none;
+}
+.status-strip[data-fit="js"] [data-compact="2"] .status-strip__bar {
+  display: none;
+}
+
+/*
+ * Fitted by the bar's width (the status bar is the container): the least important item goes first, in the order fitItems
+ * degrades them (HIDE_BELOW and COMPACT_BELOW in stripItems.ts hold the same numbers, and a test keeps them equal).
+ * The first item is a core one and never hides, so a separator never leads the line.
+ */
+@container (inline-size < 1100px) {
+  .status-strip[data-fit="css"] [data-id="venv"]:not([data-first]) {
+    display: none;
+  }
+}
+@container (inline-size < 1020px) {
+  .status-strip[data-fit="css"] [data-id="version"]:not([data-first]) {
+    display: none;
+  }
+}
+@container (inline-size < 940px) {
+  .status-strip[data-fit="css"] [data-id="dirty"]:not([data-first]) {
+    display: none;
+  }
+}
+@container (inline-size < 860px) {
+  .status-strip[data-fit="css"] [data-id="skills"]:not([data-first]) {
+    display: none;
+  }
+}
+@container (inline-size < 780px) {
+  .status-strip[data-fit="css"] [data-id="ports"]:not([data-first]) {
+    display: none;
+  }
+}
+@container (inline-size < 700px) {
+  .status-strip[data-fit="css"] [data-id="mcp"][data-kind="ok"]:not([data-first]) {
+    display: none;
+  }
+}
+@container (inline-size < 620px) {
+  .status-strip[data-fit="css"] [data-id="time"]:not([data-first]) {
+    display: none;
+  }
+}
+@container (inline-size < 560px) {
+  .status-strip[data-fit="css"] [data-id="cost"]:not([data-first]) {
+    display: none;
+  }
+}
+@container (inline-size < 500px) {
+  .status-strip[data-fit="css"] [data-id="limit7"] .status-strip__detail {
+    display: none;
+  }
+}
+@container (inline-size < 460px) {
+  .status-strip[data-fit="css"] [data-id="limit7"] .status-strip__bar {
+    display: none;
+  }
+}
+@container (inline-size < 420px) {
+  .status-strip[data-fit="css"] [data-id="limit7"]:not([data-first]) {
+    display: none;
+  }
+}
+@container (inline-size < 380px) {
+  .status-strip[data-fit="css"] [data-id="model"] .status-strip__detail {
+    display: none;
+  }
+}
+@container (inline-size < 340px) {
+  .status-strip[data-fit="css"] [data-id="limit5"] .status-strip__detail {
+    display: none;
+  }
+}
+@container (inline-size < 300px) {
+  .status-strip[data-fit="css"] [data-id="limit5"] .status-strip__bar {
+    display: none;
+  }
+}
+@container (inline-size < 270px) {
+  .status-strip[data-fit="css"] [data-id="ctx"] .status-strip__detail {
+    display: none;
+  }
+}
+@container (inline-size < 240px) {
+  .status-strip[data-fit="css"] [data-id="ctx"] .status-strip__bar {
+    display: none;
+  }
+}
+
+@media (forced-colors: active) {
+  .status-strip__bar > i {
+    background: CanvasText;
+  }
+  .status-strip__item:not([data-first])::before {
+    background: CanvasText;
+  }
+}

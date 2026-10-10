@@ -3,9 +3,11 @@ import { AgentMark } from "../../components/AgentMark/AgentMark";
 import { Chip } from "../../components/Chip/Chip";
 import { StatusGlyph } from "../../components/StatusGlyph/StatusGlyph";
 import { commandById, shortcutLabel, type Os } from "../../lib/keymap";
+import { Composer } from "../composer/Composer";
 import type { RowModel } from "../sidebar/types";
 import { ScriptedTerminal } from "../terminal/ScriptedTerminal";
 import type { TerminalThemeSetting } from "../terminal/terminalTheme";
+import { COMPOSER } from "./layout";
 import "./SplitView.css";
 
 const NARROW = 80;
@@ -33,21 +35,34 @@ export type PaneProps = {
   zoomedOf?: number;
   /** Running sessions with no pane because the window is too small for more. */
   runningElsewhere?: number;
+  /** What has been typed in this pane's own prompt line. */
+  value?: string;
+  /** False leaves the pane's prompt line out (the window turned them off). */
+  composer?: boolean;
   os?: Os;
 };
 
 /**
+ * One terminal, its 28 px header and its OWN compact prompt line at the foot. Every session on screen has an individual
+ * prompt line, so there is never a question of which session a line of text goes to: the one in the pane it was typed in.
+ *
  * One terminal and its 28 px header. The header carries what the glance needs when the sidebar is not in sight:
  * the status glyph (the vendor mark moving, while working), the name, the project and, only when it applies,
  * how tight the pane is. A pane that needs you never recedes with the inactive headers.
  */
-export function Pane({ row, active, setting, style, cells, zoomedOf, runningElsewhere, os = "windows" }: PaneProps) {
+export function Pane({ row, active, setting, style, cells, zoomedOf, runningElsewhere, value, composer = true, os = "windows" }: PaneProps) {
   const needs = needsYou(row);
   const zoomed = zoomedOf !== undefined;
   const zoomKeys = shortcutLabel(commandById("zoom-pane").binding!, os);
   const narrow = cells && cells.cols < NARROW;
   return (
-    <section className="pane" data-active={active} data-agent={row.agent} style={style} aria-label={`Terminal: ${row.name}`}>
+    <section
+      className="pane"
+      data-active={active}
+      data-agent={row.agent}
+      style={composer ? { ...style, gridTemplateRows: `28px minmax(0, 1fr) ${COMPOSER.compact}px` } : style}
+      aria-label={`Terminal: ${row.name}`}
+    >
       <header className="pane__header" data-needs={needs || undefined}>
         <span className="pane__stripe" aria-hidden="true" />
         {row.status === "working" ? <AgentMark agent={row.agent} size={16} working /> : <StatusGlyph kind={row.status} />}
@@ -79,6 +94,11 @@ export function Pane({ row, active, setting, style, cells, zoomedOf, runningElse
         </button>
       </header>
       <ScriptedTerminal setting={setting} label={`Terminal for ${row.name}`} />
+      {composer && (
+        <div className="pane__composer" style={{ blockSize: COMPOSER.compact }}>
+          <Composer row={row} variant="compact" value={value} os={os} />
+        </div>
+      )}
     </section>
   );
 }
