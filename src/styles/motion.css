@@ -44,21 +44,21 @@
   to { transform: rotate(-360deg); }
 }
 /* Antigravity: a jellyfish swimming up. The bell squeezes and the whole body darts up, the tentacles trail a beat behind and
-   fold in, then everything relaxes and sinks slowly before the next stroke. */
+   fold in hard, then everything relaxes and sinks slowly before the next stroke. */
 @keyframes mark-jelly {
-  0% { transform: translateY(1.5px); animation-timing-function: ease-out; }
-  28% { transform: translateY(-2.5px); animation-timing-function: ease-in-out; }
-  100% { transform: translateY(1.5px); }
+  0% { transform: translateY(3px); animation-timing-function: cubic-bezier(0.1, 0.7, 0.3, 1); }
+  20% { transform: translateY(-4.5px); animation-timing-function: ease-in-out; }
+  100% { transform: translateY(3px); }
 }
 @keyframes mark-jelly-bell {
-  0% { transform: scale(1, 1); animation-timing-function: ease-out; }
-  22% { transform: scale(0.84, 1.08); animation-timing-function: ease-in-out; }
-  100% { transform: scale(1, 1); }
+  0% { transform: scale(1.04, 0.96); animation-timing-function: cubic-bezier(0.1, 0.7, 0.3, 1); }
+  14% { transform: scale(0.68, 1.18); animation-timing-function: ease-in-out; }
+  100% { transform: scale(1.04, 0.96); }
 }
 @keyframes mark-jelly-tentacles {
-  0% { transform: translateY(0) scale(1, 1); animation-timing-function: ease-out; }
-  36% { transform: translateY(-1.5px) scale(0.8, 1.1); animation-timing-function: ease-in-out; }
-  100% { transform: translateY(0) scale(1, 1); }
+  0% { transform: translateY(0) scale(1.04, 0.96); animation-timing-function: cubic-bezier(0.1, 0.7, 0.3, 1); }
+  30% { transform: translateY(-3px) scale(0.72, 1.18); animation-timing-function: ease-in-out; }
+  100% { transform: translateY(0) scale(1.04, 0.96); }
 }
 .agent-mark__parts {
   display: none;
