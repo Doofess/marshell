@@ -193,6 +193,11 @@
   position: sticky;
   inset-block-end: var(--space-4);
 }
+.change-review {
+  display: grid;
+  gap: var(--space-3);
+  padding-block-end: var(--space-3);
+}
 .change-bar__summary {
   margin: 0;
   font-size: var(--text-13);
