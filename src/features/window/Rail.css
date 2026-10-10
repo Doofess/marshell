@@ -1,0 +1,63 @@
+.rail {
+  display: grid;
+  align-content: start;
+  justify-items: center;
+  gap: var(--space-1);
+  inline-size: 52px;
+  block-size: 100%;
+  padding-block: var(--space-2);
+  overflow-y: auto;
+  background: var(--bg-raised);
+  border-inline-end: 1px solid var(--hairline);
+}
+.rail__badge {
+  display: grid;
+  justify-items: center;
+  gap: 2px;
+  padding-block-end: var(--space-2);
+}
+.rail__count {
+  color: var(--text-1);
+  font-size: var(--text-11);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.rail__item {
+  position: relative;
+  display: grid;
+  justify-items: center;
+  gap: 2px;
+  inline-size: 100%;
+  padding-block: 6px;
+  border: 0;
+  background: transparent;
+  color: var(--text-1);
+  font: inherit;
+}
+.rail__stripe {
+  position: absolute;
+  inset-block: 0;
+  inset-inline-start: 0;
+  inline-size: var(--stripe);
+  background: var(--agent, var(--brand-generic));
+}
+.rail__mono {
+  font-size: var(--text-11);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+.rail__item[aria-current="true"] {
+  box-shadow: inset 0 0 0 100vmax var(--selected);
+}
+.rail__item:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+.rail__item:active {
+  box-shadow: inset 0 0 0 100vmax var(--selected);
+}
+@media (hover: hover) and (pointer: fine) {
+  .rail__item:hover {
+    background: var(--hover);
+  }
+}

@@ -1,0 +1,18 @@
+.chip {
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+  padding-inline: 6px;
+  border: 1px solid var(--hairline);
+  border-radius: 999px;
+  color: var(--text-1);
+  font-size: var(--text-11);
+  line-height: 18px;
+  white-space: nowrap;
+}
+.chip[data-tone="caution"] {
+  border-color: var(--caution);
+}
+.chip[data-tone="accent"] {
+  border-color: var(--accent);
+}

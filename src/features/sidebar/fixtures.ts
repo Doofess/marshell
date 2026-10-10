@@ -17,6 +17,7 @@ export const FIXTURES: RowModel[] = [
     model: "Opus 5.5",
     effort: "high",
     subagents: 2,
+    mode: "plan",
     recap: { text: "Added token refresh to the auth client and is running the test suite.", ageMs: 2 * MIN },
     usage: { inContext: 84_000, window: 200_000, tokensIn: 312_000, tokensOut: 48_000, costUsd: 1.2 },
   },
