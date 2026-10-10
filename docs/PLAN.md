@@ -135,15 +135,15 @@ Stories are fed by `fake-agent` scenario scripts, so the same 5-agent run drives
 
 ### Sidebar rows
 
-**Compact row, 36 px:**
+**Compact row, 40 px:**
 - 3 px brand stripe flush left
-- 12 px padding, then the status glyph in a 16 px box
+- 14 px padding, then the status glyph in a 16 px box
 - 8 px gap, then the **name** (13/500)
 - 6 px gap, then project · branch (12, secondary)
 - flexible space, then the right cluster: caution 12, mute 12, wait time or age (11, tabular), context ring 16
-- 10 px right padding
+- 12 px right padding
 
-**Comfortable row, 48 px:** the same first line, plus a second line with the live status phrase in 12 px secondary, e.g. "Editing src/auth.ts · 2 subagents".
+**Comfortable row, 56 px:** the same first line, plus a second line with the live status phrase in 12 px secondary, e.g. "Editing src/auth.ts · 2 subagents".
 
 **Truncation order:**
 1. The branch truncates first, in the middle (`feat/au…-flow`).

@@ -2,7 +2,7 @@
   position: relative;
   display: grid;
   align-content: center;
-  padding-inline: var(--space-3) 10px;
+  padding-inline: 14px 12px;
   color: var(--text-1);
   font-size: var(--text-13);
   font-variant-numeric: tabular-nums;

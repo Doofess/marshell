@@ -54,8 +54,8 @@
   /* Layout sizes from docs/PLAN.md "Layout" and "Sidebar rows". */
   --sidebar: 264px;
   --sidebar-min: 200px;
-  --row-compact: 36px;
-  --row-comfortable: 48px;
+  --row-compact: 40px;
+  --row-comfortable: 56px;
   --stripe: 3px;
   --glyph: 16px;
   --glyph-small: 12px;
