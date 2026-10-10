@@ -16,7 +16,8 @@ function signalToken(id: string): string {
   if (!m) throw new Error(`no --agent-signal for ${id}`);
   return m[1]!;
 }
-const ink = (theme: "dark" | "light") => (theme === "dark" ? "#000000" : "#ffffff");
+// OpenAI's bright yellow has its own dark ink in both themes (agent-colors.css).
+const ink = (theme: "dark" | "light", id?: string) => (id === "codex" ? "#1c1c1c" : theme === "dark" ? "#000000" : "#ffffff");
 
 describe("vendor signal colour (needs-you and error accents)", () => {
   it("is defined for every vendor, from a brand token", () => {
@@ -28,7 +29,7 @@ describe("vendor signal colour (needs-you and error accents)", () => {
   for (const theme of THEMES)
     for (const id of AGENT_IDS) {
       it(`the mark on the ${id} badge holds 3:1 (${theme})`, () => {
-        expect(contrast(ink(theme), tokens[signalToken(id)]![theme])).toBeGreaterThanOrEqual(3);
+        expect(contrast(ink(theme, id), tokens[signalToken(id)]![theme])).toBeGreaterThanOrEqual(3);
       });
       for (const t of ["--text-1", "--text-2"])
         for (const s of SURFACES)

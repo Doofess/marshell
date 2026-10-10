@@ -19,6 +19,10 @@
   --agent: var(--brand-openai);
   --agent-signal: var(--brand-openai);
 }
+/* OpenAI's yellow is outlined so it shows on light surfaces (see --brand-openai-edge in tokens.css). */
+[data-agent="codex"] :is(.agent-mark, .status-glyph, .aux-glyph, .context-ring) {
+  filter: drop-shadow(0 0 0.4px var(--brand-openai-edge)) drop-shadow(0 0 0.4px var(--brand-openai-edge));
+}
 [data-agent="copilot"],
 [data-agent="qwen"] {
   --agent: var(--brand-violet);
@@ -46,4 +50,9 @@
  */
 [data-agent] {
   --agent-ink: light-dark(oklch(100% 0 none), oklch(0% 0 none));
+}
+
+/* White ink on OpenAI's bright light-mode yellow is unreadable, so its badge mark is dark in both themes. */
+[data-agent="codex"] {
+  --agent-ink: oklch(22% 0 none);
 }

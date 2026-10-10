@@ -23,10 +23,13 @@ describe("text on surfaces", () => {
 describe("status and brand colours on surfaces", () => {
   const names = ["--error", "--ok", "--caution", "--brand-claude", "--brand-claude-mark", "--brand-codex", "--brand-openai", "--brand-cyan", "--brand-gemini", "--brand-deepseek", "--brand-violet", "--brand-generic"];
   for (const theme of THEMES)
-    for (const n of names)
+    for (const n of names) {
+      // OpenAI's light-mode yellow is deliberately brighter than 3:1 allows; its edge carries the contrast (below).
+      if (n === "--brand-openai" && theme === "light") continue;
       it(`${n} is at least 3:1 on every surface (${theme})`, () => {
         expect(minOnSurfaces(tokens[n]![theme], tokens, theme)).toBeGreaterThanOrEqual(3);
       });
+    }
 });
 
 describe("accents", () => {
@@ -114,7 +117,17 @@ describe("OpenAI's light yellow and Antigravity's cyan (agent colours)", () => {
   for (const theme of THEMES)
     for (const name of ["--brand-openai", "--brand-cyan"])
       it(`the mark on a ${name} badge (the needs-you ink) is at least 3:1 (${theme})`, () => {
-        const ink = theme === "dark" ? "oklch(0% 0 none)" : "oklch(100% 0 none)";
+        const inkDark = "oklch(22% 0 none)";
+        const inkDefault = theme === "dark" ? "oklch(0% 0 none)" : "oklch(100% 0 none)";
+        const ink = name === "--brand-openai" ? inkDark : inkDefault; // agent-colors.css gives OpenAI's badge dark ink in both themes
         expect(contrast(ink, tokens[name]![theme])).toBeGreaterThanOrEqual(3);
       });
+  it("OpenAI's light-mode yellow is still clearly yellow, brighter than the 3:1 gold, and well apart from caution", () => {
+    expect(minOnSurfaces(tokens["--brand-openai"]!.light, tokens, "light")).toBeGreaterThanOrEqual(1.5);
+    expect(deltaE(tokens["--brand-openai"]!.light, tokens["--caution"]!.light)).toBeGreaterThanOrEqual(15);
+  });
+  it("OpenAI's edge carries the contrast in light mode (3:1 on every surface) and is invisible in dark mode", () => {
+    expect(minOnSurfaces(tokens["--brand-openai-edge"]!.light, tokens, "light")).toBeGreaterThanOrEqual(3);
+    expect(tokens["--brand-openai-edge"]!.dark).toBe(tokens["--brand-openai"]!.dark);
+  });
 });
