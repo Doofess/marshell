@@ -11,6 +11,7 @@ const EDGES: Record<string, string[]> = {
   "components/DiffView/DiffView.css": [".diff__more"],
   "components/EmptyState/EmptyState.css": [".empty-state__action"],
   "components/Switch/Switch.css": [".switch__track"],
+  "features/settings/Settings.css": [".scope-badge", ".field", ".settings__banner", ".settings__btn", ".settings__nav-item", ".change-bar", ".field__control", ".raw-editor__text"],
   "features/doctor/Doctor.css": [".doctor__row", ".doctor__failed", ".doctor__btn", ".doctor__link", ".toast", ".toast__btn", ".fix-sheet", ".fix-sheet__btn"],
   "features/onboarding/Onboarding.css": [".consent", ".detected__row", ".consent__toggle", ".consent__skip"],
   "features/window/SplitView.css": [".pane__new", ".pane__choice"],

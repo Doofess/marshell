@@ -51,6 +51,7 @@ const CSS = [
   "src/components/Switch/Switch.css",
   "src/features/onboarding/Onboarding.css",
   "src/features/doctor/Doctor.css",
+  "src/features/settings/Settings.css",
   "src/components/a11y/SelectedMark.css",
   "src/features/launcher/Launcher.css",
   "src/features/palette/Palette.css",

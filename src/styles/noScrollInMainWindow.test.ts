@@ -11,9 +11,10 @@ const FILES = [...walk(join(SRC, "features")), ...walk(join(SRC, "components")),
 
 /**
  * Selectors that may scroll: menus and settings (`.scroll-menu`, `.layout-menu`), the request-details drawer (a menu-like
- * inspector for a 40-line command), and the prompt field, which scrolls past eight lines with its scrollbar hidden.
+ * inspector for a 40-line command), the prompt field, which scrolls past eight lines with its scrollbar hidden, and the raw
+ * settings editor's text area (a text box scrolls its own text, like the prompt field; it is not the live window).
  */
-const ALLOWED = [/^\.drawer$/, /^\.composer__field$/, /^\.scroll-menu$/, /^\.layout-menu$/, /^\.sidebar__list$/, /^\.rail__list$/, /^\.palette__list$/, /^\.launcher__list$/, /^\.page__body$/];
+const ALLOWED = [/^\.drawer$/, /^\.composer__field$/, /^\.scroll-menu$/, /^\.layout-menu$/, /^\.sidebar__list$/, /^\.rail__list$/, /^\.palette__list$/, /^\.launcher__list$/, /^\.page__body$/, /^\.raw-editor__text$/];
 
 const read = (f: string) => readFileSync(join(SRC, f), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
 const rules = (css: string) => [...css.matchAll(/([^{}]+)\{([^{}]*)\}/g)].map((m) => ({ selectors: m[1]!.split(",").map((s) => s.trim()), body: m[2]! }));

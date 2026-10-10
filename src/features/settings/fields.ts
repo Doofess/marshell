@@ -24,3 +24,6 @@ export function isEditable(f: SettingField, file: FileState = {}): { ok: boolean
   return { ok: true };
 }
 export const appliesNote = (f: SettingField) => ({ live: "Applies at once.", "new-sessions": "Applies to new sessions.", restart: "Applies after you restart the session." })[f.applies];
+
+/** The reason a whole file cannot be edited, shown once at the top of the page; undefined when it can be. */
+export const fileReason = (file: FileState): string | undefined => (file.unparsable ? "This file does not parse, so Marshell won't edit it." : file.readOnly ? "This file is read-only, so Marshell can't save changes." : undefined);
