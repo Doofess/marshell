@@ -9,6 +9,9 @@ import "./SessionRow.css";
 
 const NEEDS_YOU = new Set(["needs-permission", "needs-question"]);
 
+/** Sessions that cannot continue without the user stand out from the rest of the list. */
+const blocked = (status: string) => (NEEDS_YOU.has(status) ? "needs-you" : status === "error" ? "error" : undefined);
+
 /**
  * One sidebar row (docs/PLAN.md "Sidebar rows"): an option in the sidebar's listbox. Height is fixed per density and
  * hover never changes it. Focus is roving: the list gives exactly one row `tabStop`, arrow keys move it (batch 2).
@@ -40,6 +43,7 @@ export function SessionRow({
       data-agent={row.agent}
       data-status={row.status}
       data-needs-you={NEEDS_YOU.has(row.status) || undefined}
+      data-blocked={blocked(row.status)}
       data-unseen={row.status === "done-unseen" || undefined}
       data-ended={row.status === "ended" || undefined}
       data-muted={row.muted || undefined}

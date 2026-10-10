@@ -105,3 +105,20 @@ describe("SessionRow (agent mark and model)", () => {
     expect(readFileSync(new URL("../../styles/tokens.css", import.meta.url), "utf8")).not.toContain("--row-compact");
   });
 });
+
+describe("SessionRow (blocked rows stand out)", () => {
+  const html = (id: string) => renderToStaticMarkup(<SessionRow row={FIXTURES.find((f) => f.id === id)!} density="comfortable" />);
+  it("marks sessions waiting on the user as blocked: needs-you", () => {
+    expect(html("needs-permission")).toContain('data-blocked="needs-you"');
+    expect(html("needs-question")).toContain('data-blocked="needs-you"');
+  });
+  it("marks a stopped session as blocked: error", () => {
+    expect(html("error")).toContain('data-blocked="error"');
+  });
+  it("leaves every other state alone", () => {
+    for (const id of ["idle", "working", "done-unseen", "done-seen", "stuck", "ended", "limited"]) expect(html(id), id).not.toContain("data-blocked");
+  });
+  it("keeps a muted session that needs you marked, because it still needs you", () => {
+    expect(html("muted-needs-you")).toContain('data-blocked="needs-you"');
+  });
+});

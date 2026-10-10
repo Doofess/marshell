@@ -30,3 +30,23 @@ describe("SessionRow.css (final review)", () => {
     expect(rule(".session-row")).toContain("tabular-nums");
   });
 });
+
+describe("SessionRow.css (blocked rows)", () => {
+  it("draws a 3 px accent band inside the brand stripe for needs-you", () => {
+    const r = rule('.session-row[data-blocked="needs-you"]::before');
+    expect(r).toContain("inline-size: 3px");
+    expect(r).toContain("var(--accent)");
+  });
+  it("draws the same band in the error colour for error", () => {
+    expect(rule('.session-row[data-blocked="error"]::before')).toContain("var(--error)");
+  });
+  it("shows the reason line in full-contrast text", () => {
+    expect(rule(".session-row[data-blocked] .session-row__phrase")).toContain("var(--text-1)");
+  });
+  it("tints the error row with the error colour", () => {
+    expect(rule('.session-row[data-blocked="error"]')).toContain("var(--error)");
+  });
+  it("keeps the band visible in Windows High Contrast", () => {
+    expect(css.slice(css.indexOf("@media (forced-colors: active)"))).toContain("Highlight");
+  });
+});

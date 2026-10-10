@@ -1,4 +1,4 @@
-import { differenceCiede2000, parse, wcagContrast } from "culori";
+import { differenceCiede2000, formatHex, interpolate, parse, wcagContrast } from "culori";
 import type { ThemeValue } from "./cssTokens";
 
 const ciede = differenceCiede2000();
@@ -24,4 +24,9 @@ export const SURFACES = ["--bg-base", "--bg-raised", "--bg-overlay"] as const;
 /** The lowest contrast of `c` against the three surfaces in one theme. */
 export function minOnSurfaces(c: string, tokens: Record<string, ThemeValue>, theme: "light" | "dark"): number {
   return Math.min(...SURFACES.map((s) => contrast(c, tokens[s]![theme])));
+}
+
+/** `fg` at `alpha` over `bg`, mixed in oklch the way CSS color-mix does; returns a hex string. */
+export function overlay(fg: string, bg: string, alpha: number): string {
+  return formatHex(interpolate([color(bg), color(fg)], "oklch")(alpha));
 }

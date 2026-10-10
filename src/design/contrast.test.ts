@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { parseTokens } from "./cssTokens";
-import { contrast, deltaE, minOnSurfaces } from "./contrast";
+import { contrast, deltaE, minOnSurfaces, overlay } from "./contrast";
 
 const ACCENTS = ["amber", "blue", "indigo", "violet", "magenta", "cyan", "teal", "slate"] as const;
 const THEMES = ["dark", "light"] as const;
@@ -72,5 +72,23 @@ describe("composited and derived colours (final review)", () => {
       for (const b of brands)
         it(`${s} is ΔE ≥ 15 from ${b} (${theme})`, () => {
           expect(deltaE(tokens[s]![theme], tokens[b]![theme])).toBeGreaterThanOrEqual(15);
+        });
+});
+
+describe("text on the blocked-row tints", () => {
+  for (const theme of THEMES)
+    for (const a of ACCENTS)
+      for (const t of ["--text-1", "--text-2"])
+        for (const surface of ["--bg-base", "--bg-raised", "--bg-overlay"])
+          it(`${t} is at least 4.5:1 on the ${a} needs-you tint (${theme}, ${surface})`, () => {
+            const bg = overlay(accent(a)["--accent"]![theme], tokens[surface]![theme], 0.12);
+            expect(contrast(tokens[t]![theme], bg)).toBeGreaterThanOrEqual(4.5);
+          });
+  for (const theme of THEMES)
+    for (const t of ["--text-1", "--text-2"])
+      for (const surface of ["--bg-base", "--bg-raised", "--bg-overlay"])
+        it(`${t} is at least 4.5:1 on the error tint (${theme}, ${surface})`, () => {
+          const bg = overlay(tokens["--error"]![theme], tokens[surface]![theme], 0.1);
+          expect(contrast(tokens[t]![theme], bg)).toBeGreaterThanOrEqual(4.5);
         });
 });

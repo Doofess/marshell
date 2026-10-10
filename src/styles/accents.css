@@ -38,6 +38,6 @@
 
 /* Derived from whichever accent is active. */
 :root {
-  --accent-tint: color-mix(in oklch, var(--accent) 6%, transparent);
-  --accent-flash: color-mix(in oklch, var(--accent) 12%, transparent);
+  --accent-tint: color-mix(in oklch, var(--accent) 12%, transparent);
+  --accent-flash: color-mix(in oklch, var(--accent) 24%, transparent);
 }
