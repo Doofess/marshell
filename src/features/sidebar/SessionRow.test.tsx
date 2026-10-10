@@ -122,3 +122,22 @@ describe("SessionRow (blocked rows stand out)", () => {
     expect(html("muted-needs-you")).toContain('data-blocked="needs-you"');
   });
 });
+
+describe("SessionRow (working shows as a moving logo)", () => {
+  const html = (id: string) => renderToStaticMarkup(<SessionRow row={FIXTURES.find((f) => f.id === id)!} density="comfortable" />);
+  it("animates the vendor mark and drops the glyph from the cluster", () => {
+    const h = html("working");
+    expect(h).toContain("data-working");
+    expect(h.slice(h.indexOf("session-row__cluster"))).not.toContain('data-kind="working"');
+  });
+  it("still says Working to a screen reader", () => {
+    expect(html("working")).toContain("Working");
+  });
+  it("leaves the mark still on every other state", () => {
+    for (const id of ["idle", "needs-permission", "done-unseen", "error", "ended"]) expect(html(id), id).not.toContain("data-working");
+  });
+  it("keeps the other states' glyph in the cluster", () => {
+    const h = html("needs-permission");
+    expect(h.slice(h.indexOf("session-row__cluster"))).toContain('data-kind="needs-permission"');
+  });
+});

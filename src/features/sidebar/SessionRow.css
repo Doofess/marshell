@@ -1,4 +1,8 @@
 .session-row {
+  /* The vendor's colour (or the accent outside a session) tints a blocked row and flashes on arrival. */
+  --signal: var(--agent-signal, var(--accent));
+  --signal-tint: color-mix(in oklch, var(--signal) 12%, transparent);
+  --signal-flash: color-mix(in oklch, var(--signal) 24%, transparent);
   position: relative;
   display: grid;
   align-content: center;
@@ -20,12 +24,9 @@
 }
 
 /*
- * Backgrounds layer instead of replacing each other: the needs-you tint is the background colour (the flash
+ * Backgrounds layer instead of replacing each other: the blocked-row tint is the background colour (the flash
  * animates it), hover is a background image on top, and selection is an inset shadow on top of both.
  */
-.session-row[data-needs-you] {
-  background-color: var(--accent-tint);
-}
 .session-row[aria-selected="true"] {
   box-shadow: inset 0 0 0 100vmax var(--selected);
 }
@@ -35,8 +36,8 @@
  * text. The edge keeps only the brand stripe; the status glyph at the right is the signal. Colour is never the only
  * cue: the glyph shape and the phrase say it too.
  */
-.session-row[data-blocked="error"] {
-  background-color: color-mix(in oklch, var(--error) 10%, transparent);
+.session-row[data-blocked] {
+  background-color: var(--signal-tint);
 }
 .session-row[data-blocked] .session-row__phrase {
   color: var(--text-1);

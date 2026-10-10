@@ -75,6 +75,9 @@
   --dur-bounce: 280ms;
   --dur-flash: 600ms;
   --dur-pulse: 1.6s;
+  /* Vendor-mark loops while a session works (motion.css). */
+  --dur-loop: 2s;
+  --dur-loop-slow: 3.2s;
 
   /* Kept for existing components. */
   --dur-fast: 120ms;

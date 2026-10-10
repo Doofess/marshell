@@ -16,7 +16,7 @@
 ## Already done before this plan was executed
 
 - Sidebar default is 288 px (`--sidebar`), compact density removed, the agent mark leads each row and the status glyph sits in the right cluster, the model is on line 2 (commits `0153366`, `1c53cd0`).
-- Rows that stop the workflow (needs you, error) stand out with a stronger tint (12% accent, 10% error) and the reason line in full-contrast text. There is no second edge line: the brand stripe is the only mark at the edge. The needs-you and error glyphs are redrawn minimally: an accent badge with a bare "!" (permission) or "?" (question), and a plain disc with a cut-out cross (error). `--accent-tint` is 12% and `--accent-flash` 24%.
+- Rows that stop the workflow (needs you, error) stand out with a 12% tint in the vendor's own colour and the reason line in full-contrast text; no second edge line. The needs-you and error glyphs are minimal (a badge with "!" or "?", a disc with a cross) and take the vendor's colour (`--agent-signal`, `--agent-ink`; fall back to the accent outside a session). A working session shows no glyph: its vendor mark moves with its own loop (`--dur-loop`, `--dur-loop-slow`, motion.css); the rail still shows the working dot.
 - `docs/PLAN.md` carries the "Terminal theme" section (commit `0e99fbc`).
 
 ## Global Constraints

@@ -21,14 +21,91 @@
 }
 /* No "to" frame: the flash fades into whatever background the row has (needs-you tint, selection, none). */
 @keyframes row-flash {
-  from { background-color: var(--accent-flash); }
+  from { background-color: var(--signal-flash); }
 }
 /* Reduced motion: an instant tint held for 300 ms, then gone; nothing moves or fades. */
 @keyframes row-flash-reduced {
-  from, to { background-color: var(--accent-flash); }
+  from, to { background-color: var(--signal-flash); }
+}
+
+/* Vendor marks: while a session works, its logo moves with its own loop (reduced motion: the mark stays still). */
+.agent-mark {
+  transform-origin: center;
+}
+@keyframes mark-breathe-spin {
+  0% { transform: rotate(0) scale(1); }
+  50% { transform: rotate(180deg) scale(1.12); }
+  100% { transform: rotate(360deg) scale(1); }
+}
+@keyframes mark-spin {
+  to { transform: rotate(360deg); }
+}
+@keyframes mark-spin-back {
+  to { transform: rotate(-360deg); }
+}
+@keyframes mark-twinkle {
+  0%, 100% { transform: scale(0.82) rotate(0); opacity: 0.7; }
+  50% { transform: scale(1.12) rotate(90deg); opacity: 1; }
+}
+@keyframes mark-bob {
+  0%, 100% { transform: translateY(1.5px); }
+  50% { transform: translateY(-1.5px); }
+}
+@keyframes mark-blink {
+  0%, 86%, 100% { transform: scaleY(1); }
+  93% { transform: scaleY(0.12); }
+}
+@keyframes mark-flip {
+  0%, 100% { transform: scaleX(1); }
+  50% { transform: scaleX(-1); }
+}
+@keyframes mark-slide {
+  0%, 100% { transform: translateX(-1.5px); }
+  50% { transform: translateX(1.5px); }
+}
+@keyframes mark-wobble {
+  0%, 100% { transform: rotate(-14deg); }
+  50% { transform: rotate(14deg); }
+}
+@keyframes mark-cursor {
+  0%, 49% { opacity: 1; }
+  50%, 100% { opacity: 0.25; }
 }
 
 @media (prefers-reduced-motion: no-preference) {
+  :root:not([data-motion="reduce"]) .agent-mark[data-working][data-agent="claude"] {
+    animation: mark-breathe-spin var(--dur-loop-slow) ease-in-out infinite;
+  }
+  :root:not([data-motion="reduce"]) .agent-mark[data-working][data-agent="codex"] {
+    animation: mark-spin var(--dur-loop) ease-in-out infinite;
+  }
+  :root:not([data-motion="reduce"]) .agent-mark[data-working][data-agent="gemini"] {
+    animation: mark-twinkle var(--dur-loop) ease-in-out infinite;
+  }
+  :root:not([data-motion="reduce"]) .agent-mark[data-working][data-agent="antigravity"] {
+    animation: mark-bob var(--dur-loop) ease-in-out infinite;
+  }
+  :root:not([data-motion="reduce"]) .agent-mark[data-working][data-agent="copilot"] {
+    animation: mark-blink var(--dur-loop-slow) linear infinite;
+  }
+  :root:not([data-motion="reduce"]) .agent-mark[data-working][data-agent="cursor"] {
+    animation: mark-flip var(--dur-loop) ease-in-out infinite;
+  }
+  :root:not([data-motion="reduce"]) .agent-mark[data-working][data-agent="opencode"] {
+    animation: mark-spin var(--dur-loop-slow) steps(4) infinite;
+  }
+  :root:not([data-motion="reduce"]) .agent-mark[data-working][data-agent="amp"] {
+    animation: mark-slide var(--dur-loop) ease-in-out infinite;
+  }
+  :root:not([data-motion="reduce"]) .agent-mark[data-working][data-agent="qwen"] {
+    animation: mark-wobble var(--dur-loop) ease-in-out infinite;
+  }
+  :root:not([data-motion="reduce"]) .agent-mark[data-working][data-agent="grok"] {
+    animation: mark-spin-back var(--dur-loop-slow) linear infinite;
+  }
+  :root:not([data-motion="reduce"]) .agent-mark[data-working][data-agent="generic"] {
+    animation: mark-cursor var(--dur-loop) steps(1, end) infinite;
+  }
   :root:not([data-motion="reduce"]) .status-glyph[data-kind="working"] .g-working-dot {
     animation: g-pulse var(--dur-pulse) var(--ease-out) infinite alternate;
   }

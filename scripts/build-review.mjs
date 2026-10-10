@@ -167,6 +167,7 @@ ${chrome}
       <a href="#design-type">Type</a>
       <a href="#design-space-and-motion">Space</a>
       <a href="#components-status-glyphs">Glyphs</a>
+      <a href="#agent-marks">Marks</a>
       <a href="#sidebar-session-rows">Rows</a>
       <a href="#sign-off">Sign-off</a>
     </nav>

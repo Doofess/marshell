@@ -5,22 +5,35 @@
 [data-agent="claude"] {
   --agent: var(--brand-claude);
   --agent-mark: var(--brand-claude-mark);
+  --agent-signal: var(--brand-claude-mark);
 }
 [data-agent="gemini"],
 [data-agent="antigravity"] {
   --agent: var(--brand-gemini);
+  --agent-signal: var(--brand-gemini);
 }
 [data-agent="copilot"],
 [data-agent="qwen"] {
   --agent: var(--brand-violet);
+  --agent-signal: var(--brand-violet);
 }
 [data-agent="codex"],
 [data-agent="cursor"],
 [data-agent="opencode"],
 [data-agent="grok"] {
   --agent: var(--brand-codex);
+  --agent-signal: var(--brand-codex);
 }
 [data-agent="amp"],
 [data-agent="generic"] {
   --agent: var(--brand-generic);
+  --agent-signal: var(--brand-generic);
+}
+
+/*
+ * The signal colour: needs-you and error glyphs and the blocked-row tint use the vendor's own colour instead of the
+ * app accent or red, so a list stays one family of colours. --agent-ink is the mark on that fill (3:1 or better).
+ */
+[data-agent] {
+  --agent-ink: light-dark(oklch(100% 0 none), oklch(0% 0 none));
 }

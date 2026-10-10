@@ -21,8 +21,9 @@
 .status-glyph[data-kind="done-seen"] {
   color: var(--ok-dim);
 }
+/* Needs-you and error take the vendor's colour (agent-colors.css); outside a session they fall back to the app's. */
 .status-glyph[data-kind="error"] {
-  color: var(--error);
+  color: var(--agent-signal, var(--error));
 }
 .aux-glyph[data-kind="caution"] {
   color: var(--caution);

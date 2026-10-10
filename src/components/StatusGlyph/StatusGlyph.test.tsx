@@ -104,3 +104,17 @@ describe("StatusGlyph: minimal needs-you and error marks", () => {
     expect(readFileSync(new URL("../../styles/motion.css", import.meta.url), "utf8")).toContain(".g-error-disc");
   });
 });
+
+describe("StatusGlyph: vendor accent", () => {
+  const css = readFileSync(new URL("./StatusGlyph.css", import.meta.url), "utf8");
+  it("fills the needs-you badge with the vendor's signal colour, falling back to the accent", () => {
+    for (const k of ["needs-permission", "needs-question"] as const) {
+      const h = renderToStaticMarkup(<StatusGlyph kind={k} />);
+      expect(h).toContain('fill="var(--agent-signal, var(--accent))"');
+      expect(h).toContain('stroke="var(--agent-ink, var(--accent-ink))"');
+    }
+  });
+  it("draws the error disc in the vendor's signal colour too", () => {
+    expect(css).toMatch(/\.status-glyph\[data-kind="error"\]\s*\{[^}]*var\(--agent-signal, var\(--error\)\)/);
+  });
+});

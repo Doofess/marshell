@@ -13,23 +13,23 @@ const shapes: Record<GlyphKind, ReactNode> = {
   ),
   "needs-permission": (
     <>
-      <rect className="g-badge" x="1.5" y="1.5" width="13" height="13" rx="4" fill="var(--accent)" />
-      <path className="g-mark g-bang" d="M8 4.5v4.25" fill="none" stroke="var(--accent-ink)" strokeWidth="1.75" strokeLinecap="round" />
-      <circle className="g-mark g-mark--fill" cx="8" cy="11.4" r="1" fill="var(--accent-ink)" />
+      <rect className="g-badge" x="1.5" y="1.5" width="13" height="13" rx="4" fill="var(--agent-signal, var(--accent))" />
+      <path className="g-mark g-bang" d="M8 4.5v4.25" fill="none" stroke="var(--agent-ink, var(--accent-ink))" strokeWidth="1.75" strokeLinecap="round" />
+      <circle className="g-mark g-mark--fill" cx="8" cy="11.4" r="1" fill="var(--agent-ink, var(--accent-ink))" />
     </>
   ),
   "needs-question": (
     <>
-      <rect className="g-badge" x="1.5" y="1.5" width="13" height="13" rx="4" fill="var(--accent)" />
+      <rect className="g-badge" x="1.5" y="1.5" width="13" height="13" rx="4" fill="var(--agent-signal, var(--accent))" />
       <path
         className="g-mark"
         d="M6.25 6.25a1.75 1.75 0 1 1 2.6 1.53c-.5.28-.85.62-.85 1.22v.25"
         fill="none"
-        stroke="var(--accent-ink)"
+        stroke="var(--agent-ink, var(--accent-ink))"
         strokeWidth="1.75"
         strokeLinecap="round"
       />
-      <circle className="g-mark g-mark--fill" cx="8" cy="11.4" r="1" fill="var(--accent-ink)" />
+      <circle className="g-mark g-mark--fill" cx="8" cy="11.4" r="1" fill="var(--agent-ink, var(--accent-ink))" />
     </>
   ),
   "done-unseen": (

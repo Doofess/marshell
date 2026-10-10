@@ -33,4 +33,8 @@ describe("AgentMark", () => {
     const html = renderToStaticMarkup(<AgentMark agent={"made-up" as never} />);
     expect(html).toContain('data-agent="generic"');
   });
+  it("marks a working session so its logo can animate", () => {
+    expect(renderToStaticMarkup(<AgentMark agent="claude" working />)).toContain("data-working");
+    expect(renderToStaticMarkup(<AgentMark agent="claude" />)).not.toContain("data-working");
+  });
 });

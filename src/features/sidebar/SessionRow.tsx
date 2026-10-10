@@ -51,7 +51,7 @@ export function SessionRow({
     >
       <span className="session-row__stripe" aria-hidden="true" />
       <div className="session-row__line1" aria-hidden="true">
-        <AgentMark agent={row.agent} />
+        <AgentMark agent={row.agent} working={row.status === "working"} />
         {row.elevated && <AuxGlyph kind="elevated" />}
         {/* The lead clips, so whatever happens to the names, the right cluster always stays in the row. */}
         <span className="session-row__lead">
@@ -79,7 +79,8 @@ export function SessionRow({
         <span className="session-row__cluster">
           {caution && <AuxGlyph kind="caution" label={caution} />}
           {row.muted && <AuxGlyph kind="muted" />}
-          <StatusGlyph kind={row.status} />
+          {/* A working session shows as its vendor mark moving, so it needs no glyph. */}
+          {row.status !== "working" && <StatusGlyph kind={row.status} />}
           {time !== undefined && <span className="session-row__time">{formatDuration(time)}</span>}
           <ContextRing pct={row.contextPct} />
         </span>

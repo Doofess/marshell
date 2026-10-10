@@ -165,12 +165,12 @@ The full text is in the tooltip and the screen-reader label.
 | State | Glyph | Motion (reduced-motion) | Text (line 2 / screen reader) | Row treatment |
 |---|---|---|---|---|
 | Idle | Hollow circle | — | "Idle" | — |
-| Working | Filled dot | Opacity pulse .45↔1, 1.6 s (static dot with ¾ arc) | "Running npm test" | — |
-| Needs you: permission | Filled rounded-square accent badge with a bare "!" | One bounce | "Wants to run `npm test`" | 12% attention tint, reason line in full-contrast text, wait timer |
-| Needs you: question | Badge with "?" | One bounce | "Has a question" | Same |
+| Working | The vendor mark itself moves, one loop per vendor (Claude breathes and turns, OpenAI turns, Gemini twinkles, Antigravity bobs, Copilot blinks, Cursor flips, opencode steps, Amp slides, Qwen wobbles, Grok turns back, custom agents blink a cursor); no glyph in the cluster | Mark stays still; the phrase and screen-reader label carry the state | "Running npm test" | — |
+| Needs you: permission | Filled rounded-square badge in the vendor's colour with a bare "!" | One bounce | "Wants to run `npm test`" | 12% tint in the vendor's colour, reason line in full-contrast text, wait timer |
+| Needs you: question | Badge in the vendor's colour with "?" | One bounce | "Has a question" | Same |
 | Done, unseen | Check drawn in 200 ms | Draw once | "Done · edited 4 files" | Name at 600 weight, plus a 6 px unread dot |
 | Done, seen | Check at 50% | — | "Done 12m ago" | Normal |
-| Error | Filled disc with a cut-out ✕ | One flash | "Stopped: rate limit" | 10% error tint, reason line in full-contrast text |
+| Error | Filled disc in the vendor's colour with a cut-out ✕ | One flash | "Stopped: rate limit" | 12% tint in the vendor's colour, reason line in full-contrast text |
 | Stuck | Dashed ring | — | "Same command 9× in 4 min" | No notification |
 | Muted | Bell-slash in the cluster | Badge does not bounce | suffix "muted" | Glyphs still shown |
 | Elevated | Shield before the name | — | "Administrator" | Header label for the whole session |

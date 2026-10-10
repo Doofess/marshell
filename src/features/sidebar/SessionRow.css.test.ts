@@ -36,9 +36,16 @@ describe("SessionRow.css (blocked rows)", () => {
     expect(css).not.toContain("::before");
     expect(css).not.toContain("::after");
   });
-  it("tints a needs-you row with the accent and an error row with the error colour", () => {
-    expect(rule(".session-row[data-needs-you]")).toContain("var(--accent-tint)");
-    expect(rule('.session-row[data-blocked="error"]')).toContain("var(--error)");
+  it("tints every blocked row with the vendor's own colour, so a list stays one family of colours", () => {
+    expect(rule(".session-row[data-blocked]")).toContain("var(--signal-tint)");
+    expect(css).not.toContain("var(--accent-tint)");
+    expect(css).not.toMatch(/color-mix\(in oklch, var\(--error\)/);
+  });
+  it("derives the tint and the flash from the vendor signal, falling back to the accent", () => {
+    const r = rule(".session-row");
+    expect(r).toContain("--signal: var(--agent-signal, var(--accent))");
+    expect(r).toMatch(/--signal-tint:\s*color-mix\(in oklch, var\(--signal\) 12%/);
+    expect(r).toMatch(/--signal-flash:\s*color-mix\(in oklch, var\(--signal\) 24%/);
   });
   it("shows the reason line in full-contrast text", () => {
     expect(rule(".session-row[data-blocked] .session-row__phrase")).toContain("var(--text-1)");
