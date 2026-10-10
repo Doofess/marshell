@@ -36,14 +36,17 @@ export function keyAction(key: string, ctx: KeyContext): CardAction | null {
   if (key === "Enter") return "jump";
   if (key === " ") return ctx.truncated && !ctx.expanded ? "expand" : null;
   if (!ctx.armed) return null;
+  // Lines below the fold are lines the user has not seen: Allow and Always first expand the payload, on any request.
+  const hidden = ctx.truncated && !ctx.expanded;
   switch (key.toLowerCase()) {
     case "y":
-      if (!ctx.risky) return "allow";
-      return ctx.truncated && !ctx.expanded ? "expand" : "hold-allow";
+      if (hidden) return "expand";
+      return ctx.risky ? "hold-allow" : "allow";
     case "n":
       return "deny";
     case "a":
-      return ctx.risky || !ctx.hasAlways ? null : "always";
+      if (ctx.risky || !ctx.hasAlways) return null;
+      return hidden ? "expand" : "always";
     case "t":
       return "terminal";
     default:

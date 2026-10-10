@@ -1,5 +1,5 @@
 // Builds one self-contained design-review page from the batch's Storybook stories.
-// Usage: node scripts/build-review.mjs <out.html>
+// Usage: node scripts/build-review.mjs <out.html> [1|2a|2b|2c]   (the page shows every batch up to and including the last)
 // The stories are server-rendered with Vite's SSR loader; the CSS is the shipped token and component CSS, inlined.
 import { readFileSync, writeFileSync } from "node:fs";
 import { createServer } from "vite";
@@ -9,6 +9,8 @@ if (!out) {
   console.error("usage: node scripts/build-review.mjs <out.html>");
   process.exit(1);
 }
+
+const batch = process.argv[3] ?? "2a";
 
 const CSS = [
   "src/styles/tokens.css",
@@ -22,6 +24,7 @@ const CSS = [
   "src/components/StatusGlyph/StatusGlyph.css",
   "src/components/ContextRing/ContextRing.css",
   "src/features/sidebar/SessionRow.css",
+  "src/features/approval/ApproveCard.css",
 ];
 const ACCENTS = ["amber", "blue", "indigo", "violet", "magenta", "cyan", "teal", "slate"];
 
@@ -29,7 +32,7 @@ const server = await createServer({ appType: "custom", server: { middlewareMode:
 let sections;
 try {
   const { renderReview } = await server.ssrLoadModule("/src/design/review/renderReview.tsx");
-  sections = renderReview();
+  sections = renderReview(batch);
 } finally {
   await server.close();
 }
@@ -146,6 +149,26 @@ const chrome = `
 }
 `;
 
+const META = {
+  "2a": {
+    lede: "Sub-review A of 3 in batch 2: the approve card in every state. Batch 1 (tokens, glyphs, rows) is below it, signed off. Windows and launcher follow once this is approved.",
+    nav: [["approve-card", "Approve card"], ["sidebar-session-rows", "Rows"], ["design-colours", "Colours"], ["sign-off", "Sign-off"]],
+    checks: [
+      "From a glance you can tell who is asking, what for and how long they have waited.",
+      "The risky card is unmistakable without colour: the warning line, the Hold to allow label and the missing Always.",
+      "The 40-line command fades after four lines and Show all reveals it; a long unbroken token wraps instead of overflowing.",
+      "The receipt, answered in terminal and timed-out states read as finished, with no hint of an undo.",
+      "In Storybook: Tab to the interactive card, press Y before 500 ms (nothing happens), then Y, N, A, T, Space; Enter never allows.",
+      "It still reads well at 150% browser zoom, and the focus ring is visible in both themes.",
+    ],
+  },
+};
+const meta = META[batch];
+if (!meta) {
+  console.error(`no page text for batch "${batch}" in scripts/build-review.mjs (known: ${Object.keys(META).join(", ")})`);
+  process.exit(1);
+}
+
 const options = ACCENTS.map((a) => `<option value="${a}">${a[0].toUpperCase()}${a.slice(1)}</option>`).join("");
 
 const html = `<title>Marshell design review</title>
@@ -156,31 +179,21 @@ ${chrome}
 <main class="review">
   <header>
     <h1>Marshell design review</h1>
-    <p class="review__lede">Batch 1 of 3: tokens, status glyphs and sidebar rows. Batch 2 (approve card, main window, launcher) builds on what is signed off here.</p>
+    <p class="review__lede">${meta.lede}</p>
   </header>
   <div class="review__bar">
     <label for="accent">Accent <select id="accent">${options}</select></label>
     <label for="motion"><input type="checkbox" id="motion"> Reduced motion</label>
     <button type="button" id="replay">Replay animations</button>
     <nav aria-label="Sections">
-      <a href="#design-colours">Colours</a>
-      <a href="#design-type">Type</a>
-      <a href="#design-space-and-motion">Space</a>
-      <a href="#components-status-glyphs">Glyphs</a>
-      <a href="#agent-marks">Marks</a>
-      <a href="#sidebar-session-rows">Rows</a>
-      <a href="#sign-off">Sign-off</a>
+      ${meta.nav.map(([id, text]) => `<a href="#${id}">${text}</a>`).join("\n      ")}
     </nav>
   </div>
   ${sections}
   <section class="review__section" id="sign-off">
     <h2>Sign-off checklist</h2>
     <ol class="review__check">
-      <li>The colour matrices show no red cells, and amber, caution, error and Claude orange read as four different things.</li>
-      <li>Each of the ten states is recognisable at 12 px without relying on colour, and the reduced-motion forms make sense.</li>
-      <li>Compact, comfortable and expanded rows read well, and truncation holds at 200 px, including CJK, emoji and Arabic names.</li>
-      <li>It still reads well at 150% browser zoom.</li>
-      <li>Tab reaches every row, and the focus ring is visible in both themes.</li>
+      ${meta.checks.map((c) => `<li>${c}</li>`).join("\n      ")}
     </ol>
   </section>
 </main>

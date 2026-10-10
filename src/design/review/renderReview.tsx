@@ -5,6 +5,7 @@ import * as Type from "../Type.stories";
 import * as SpaceAndMotion from "../SpaceAndMotion.stories";
 import * as Glyphs from "../../components/StatusGlyph/StatusGlyph.stories";
 import * as Marks from "../../components/AgentMark/AgentMark.stories";
+import * as Card from "../../features/approval/ApproveCard.stories";
 import * as Rows from "../../features/sidebar/SessionRow.stories";
 
 type StoryModule = { default: { title?: string } } & Record<string, unknown>;
@@ -19,6 +20,14 @@ const BATCH_1: Array<[StoryModule, string]> = [
   [Rows, "Every row state in each density, and the truncation order down to the 200 px minimum sidebar."],
 ];
 
+const BATCH_2A: Array<[StoryModule, string]> = [
+  [Card, "The card in every state from the plan: safe and risky commands, edit with diff, new file, MCP, a 40-line command, a question, the receipt, answered in terminal and released on timeout. Interactive stories need Storybook."],
+];
+
+export type UpTo = "1" | "2a" | "2b" | "2c";
+const ORDER: UpTo[] = ["1", "2a", "2b", "2c"];
+const BATCHES: Record<UpTo, Array<[StoryModule, string]>> = { "1": BATCH_1, "2a": BATCH_2A, "2b": [], "2c": [] };
+
 /** "TruncationAt200" → "Truncation at 200". */
 function humanize(name: string): string {
   const words = name.replace(/([a-z])([A-Z0-9])/g, "$1 $2").replace(/([0-9])([A-Z])/g, "$1 $2");
@@ -29,9 +38,10 @@ function isStory(v: unknown): v is { render: FC } {
   return typeof v === "object" && v !== null && typeof (v as { render?: unknown }).render === "function";
 }
 
-/** Server-renders every story of the batch into page sections. */
-export function renderReview(): string {
-  return BATCH_1.map(([mod, blurb]) => {
+/** Server-renders every story up to and including the given batch into page sections. */
+export function renderReview(upTo: UpTo = "2a"): string {
+  const modules = ORDER.slice(0, ORDER.indexOf(upTo) + 1).flatMap((k) => BATCHES[k]);
+  return modules.map(([mod, blurb]) => {
     const title = mod.default.title ?? "Untitled";
     const stories = Object.entries(mod).filter(([k, v]) => k !== "default" && isStory(v)) as Array<[string, { render: FC }]>;
     const id = title.toLowerCase().replace(/[^a-z0-9]+/g, "-");

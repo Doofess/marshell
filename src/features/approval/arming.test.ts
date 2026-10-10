@@ -68,6 +68,24 @@ describe("risky requests", () => {
   });
 });
 
+describe("a truncated payload hides lines the user has not seen (spoofing guard)", () => {
+  it("must be expanded before Allow works, on a safe request too", () => {
+    const long = { ...safe, truncated: true, expanded: false };
+    expect(keyAction("y", long)).toBe("expand");
+    expect(keyAction("y", { ...long, expanded: true })).toBe("allow");
+  });
+  it("must be expanded before Always works", () => {
+    const long = { ...safe, truncated: true, expanded: false };
+    expect(keyAction("a", long)).toBe("expand");
+    expect(keyAction("a", { ...long, expanded: true })).toBe("always");
+  });
+  it("never blocks Deny or the terminal", () => {
+    const long = { ...safe, truncated: true, expanded: false };
+    expect(keyAction("n", long)).toBe("deny");
+    expect(keyAction("t", long)).toBe("terminal");
+  });
+});
+
 describe("Space", () => {
   it("expands a truncated payload and does nothing otherwise", () => {
     expect(keyAction(" ", { ...safe, truncated: true })).toBe("expand");

@@ -146,3 +146,12 @@ describe("ApproveCard: markup hygiene", () => {
     }
   });
 });
+
+describe("ApproveCard: the vendor's colour", () => {
+  it("carries the session's agent, so its badge and receipt glyphs take the vendor's colour like the rows do", () => {
+    expect(html(APPROVALS.safeBash)).toContain('data-agent="claude"');
+    expect(html(APPROVALS.longCommand)).toContain('data-agent="gemini"');
+    expect(html(APPROVALS.writeNew)).toContain('data-agent="codex"');
+    for (const r of [APPROVALS.receipt, APPROVALS.answeredInTerminal, APPROVALS.released]) expect(html(r)).toContain(`data-agent="${r.session.agent}"`);
+  });
+});

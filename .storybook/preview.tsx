@@ -41,7 +41,7 @@ const preview: Preview = {
   parameters: {
     layout: "padded",
     backgrounds: { disable: true },
-    a11y: { test: "todo" },
+    a11y: { test: "error" },
   },
 };
 export default preview;

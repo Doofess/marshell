@@ -166,3 +166,20 @@ describe("SessionRow (unknown values are not shown)", () => {
     expect(h).not.toContain(">–<");
   });
 });
+
+describe("SessionRow (words stay separate for assistive technology)", () => {
+  const row = FIXTURES.find((f) => f.id === "needs-permission")!;
+  const h = renderToStaticMarkup(<SessionRow row={{ ...row, model: "Opus 5.5", effort: "high", subagents: 2, recap: { text: "Fixed it", ageMs: 60_000 }, usage: { inContext: 1000, window: 2000, tokensIn: 5, tokensOut: 6, costUsd: 0.1 } }} density="expanded" />);
+  it("puts a space between the text spans of the first line, the phrase line and the details, so they are not read as one run", () => {
+    expect(h).toMatch(/session-row__name"[^>]*>[^<]*<\/span> <span class="session-row__project"/);
+    expect(h).toMatch(/session-row__model">[^<]*<\/span> <span class="session-row__sep">/);
+    expect(h).toMatch(/<\/span> <span class="session-row__status-text">/);
+    expect(h).toMatch(/<span>Opus 5\.5<\/span> <span>high<\/span> <span>2 subagents<\/span>/);
+    expect(h).toMatch(/<\/div> <p class="session-row__recap">/);
+    expect(h).toMatch(/<\/p> <div class="session-row__usage">/);
+    expect(h).toMatch(/<\/div> <div class="session-row__details"/);
+  });
+  it("does not split a branch name in two", () => {
+    expect(h).toMatch(/session-row__branch-head"[^>]*>[^<]*<\/span><span class="session-row__branch-tail"/);
+  });
+});

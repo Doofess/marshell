@@ -61,7 +61,7 @@ export function ApproveCard({ request, expanded = false, armed = true, holdProgr
 
   if (state.phase === "decided") {
     return (
-      <div className="approve-card approve-card--receipt" role="status" data-phase="decided" data-verdict={state.verdict} data-exiting={exiting || undefined}>
+      <div className="approve-card approve-card--receipt" role="status" data-agent={session.agent} data-phase="decided" data-verdict={state.verdict} data-exiting={exiting || undefined}>
         <span aria-hidden="true">
           <StatusGlyph kind={state.verdict === "allowed" ? "done-seen" : "error"} size={12} />
         </span>
@@ -73,7 +73,7 @@ export function ApproveCard({ request, expanded = false, armed = true, holdProgr
   }
   if (state.phase === "terminal") {
     return (
-      <div className="approve-card approve-card--receipt" role="status" data-phase="terminal">
+      <div className="approve-card approve-card--receipt" role="status" data-agent={session.agent} data-phase="terminal">
         <span className="approve-card__receipt-text" dir="auto">
           Answered in terminal {"·"} {subject(detail)}
         </span>
@@ -82,7 +82,7 @@ export function ApproveCard({ request, expanded = false, armed = true, holdProgr
   }
   if (state.phase === "released") {
     return (
-      <div className="approve-card approve-card--receipt" role="status" data-phase="released">
+      <div className="approve-card approve-card--receipt" role="status" data-agent={session.agent} data-phase="released">
         <span className="approve-card__receipt-text">
           Timed out after {formatDuration(state.afterMs)}. {agent} is asking in its own terminal now.
         </span>
@@ -116,11 +116,12 @@ export function ApproveCard({ request, expanded = false, armed = true, holdProgr
   const disabled = armed ? undefined : true;
 
   return (
-    <article
+    <div
       className="approve-card"
       role="group"
       aria-label={`${session.name}: ${headline(detail)}`}
       tabIndex={0}
+      data-agent={session.agent}
       data-phase="pending"
       data-risk={risk.level}
       data-armed={armed}
@@ -214,7 +215,7 @@ export function ApproveCard({ request, expanded = false, armed = true, holdProgr
               Hold to allow <Kbd k="Y" />
             </button>
           ) : (
-            <button type="button" className="approve-card__btn" data-kind="allow" aria-disabled={disabled} aria-keyshortcuts="Y" onClick={() => fire("allow")}>
+            <button type="button" className="approve-card__btn" data-kind="allow" aria-disabled={disabled} aria-keyshortcuts="Y" onClick={() => fire(collapsed ? "expand" : "allow")}>
               Allow once <Kbd k="Y" />
             </button>
           )}
@@ -222,7 +223,7 @@ export function ApproveCard({ request, expanded = false, armed = true, holdProgr
       )}
 
       {!risky && !isQuestion && request.alwaysRule && (
-        <button type="button" className="approve-card__link" aria-disabled={disabled} aria-keyshortcuts="A" onClick={() => fire("always")}>
+        <button type="button" className="approve-card__link" aria-disabled={disabled} aria-keyshortcuts="A" onClick={() => fire(collapsed ? "expand" : "always")}>
           <span>
             Always allow <code>{request.alwaysRule}</code> in this project
           </span>
@@ -233,6 +234,6 @@ export function ApproveCard({ request, expanded = false, armed = true, holdProgr
         <span>Answer in terminal</span>
         <Kbd k="T" />
       </button>
-    </article>
+    </div>
   );
 }

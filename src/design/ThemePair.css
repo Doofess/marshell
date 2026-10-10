@@ -19,3 +19,13 @@
   text-transform: uppercase;
   letter-spacing: 0.06em;
 }
+
+.theme-pair[data-stack] {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+/* Without a doctype tables do not inherit colour or font, so a dark panel would show light-theme text. */
+.theme-pair__panel table {
+  color: inherit;
+  font: inherit;
+}

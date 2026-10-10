@@ -41,7 +41,7 @@ export function SessionRow({
       aria-selected={selected}
       tabIndex={tabStop ? 0 : -1}
       title={rowTitle(row)}
-      aria-label={rowLabel(row)}
+      aria-label={rowLabel(row, density)}
       data-density={density}
       data-agent={row.agent}
       data-status={row.status}
@@ -60,14 +60,15 @@ export function SessionRow({
         <span className="session-row__lead">
           <span className="session-row__name" dir="auto">
             {row.name}
-          </span>
+          </span>{" "}
           {row.status === "done-unseen" && <span className="session-row__unread" />}
           <span className="session-row__project" dir="auto">
             {row.project}
           </span>
           {branch && (
             <>
-              <span className="session-row__sep">·</span>
+              {" "}
+              <span className="session-row__sep">·</span>{" "}
               {branch.head && (
                 <span className="session-row__branch-head" dir="auto">
                   {branch.head}
@@ -84,38 +85,38 @@ export function SessionRow({
           {row.muted && <AuxGlyph kind="muted" />}
           {/* A working session shows as its vendor mark moving, so it needs no glyph. */}
           {row.status !== "working" && <StatusGlyph kind={row.status} />}
-          {time !== undefined && <span className="session-row__time">{formatDuration(time)}</span>}
+          {time !== undefined && <> <span className="session-row__time">{formatDuration(time)}</span></>}
           <ContextRing pct={row.contextPct} />
         </span>
-      </div>
+      </div>{" "}
       <div className="session-row__phrase" aria-hidden="true">
         {row.model && (
           <>
-            <span className="session-row__model">{row.model}</span>
-            <span className="session-row__sep">·</span>
+            <span className="session-row__model">{row.model}</span>{" "}
+            <span className="session-row__sep">·</span>{" "}
           </>
         )}
         <span className="session-row__status-text">
           {row.phrase}
           {row.muted && <span className="session-row__suffix"> · muted</span>}
         </span>
-      </div>
+      </div>{" "}
       {density === "expanded" && (
         <div className="session-row__details" aria-hidden="true">
           {hasMeta && (
             <div className="session-row__meta">
               {row.model && <span>{row.model}</span>}
-              {row.effort && <span>{row.effort}</span>}
-              {row.mode === "plan" && <span className="session-row__pill">Plan</span>}
-              {caution && <span className="session-row__caution-text">{caution}</span>}
-              {row.subagents !== undefined && <span>{`${row.subagents} subagents`}</span>}
+              {row.effort && <> <span>{row.effort}</span></>}
+              {row.mode === "plan" && <> <span className="session-row__pill">Plan</span></>}
+              {caution && <> <span className="session-row__caution-text">{caution}</span></>}
+              {row.subagents !== undefined && <> <span>{`${row.subagents} subagents`}</span></>}
             </div>
-          )}
+          )}{" "}
           {row.recap && (
             <p className="session-row__recap">
               {row.recap.text} <span className="session-row__age">{formatDuration(row.recap.ageMs)} ago</span>
             </p>
-          )}
+          )}{" "}
           {usage && <div className="session-row__usage">{usage}</div>}
         </div>
       )}
