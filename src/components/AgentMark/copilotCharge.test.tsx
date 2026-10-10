@@ -5,7 +5,7 @@ import { AgentMark } from "./AgentMark";
 
 const motion = readFileSync(new URL("../../styles/motion.css", import.meta.url), "utf8");
 
-describe("a working Copilot mark flashes dark in parts, as if a current ran through it, and does not move", () => {
+describe("a working Copilot mark flashes dark in parts, each on its own tempo, and does not move", () => {
   const h = renderToStaticMarkup(<AgentMark agent="copilot" working />);
   it("draws six zones of the face, clipped to the shape of the mark so they stay inside it", () => {
     expect(h).toContain("agent-mark__charge");
@@ -13,9 +13,18 @@ describe("a working Copilot mark flashes dark in parts, as if a current ran thro
     expect(h).toMatch(/<clipPath id="[^"]+"><path[^>]*clip-rule="evenodd"/);
     expect(h).toMatch(/class="agent-mark__charge"[^>]*aria-hidden="true"/);
   });
-  it("numbers the zones so the current runs from one end to the other", () => {
-    const order = [...h.matchAll(/--i:(\d+)/g)].map((m) => Number(m[1]));
-    expect(order).toEqual([5, 4, 3, 2, 1, 0]);
+  it("gives each zone its own tempo and starting point, so the flashes drift apart and never fall into a fixed beat", () => {
+    const tempos = [...h.matchAll(/--k:([\d.]+)/g)].map((m) => Number(m[1]));
+    const phases = [...h.matchAll(/--d:([\d.]+)/g)].map((m) => Number(m[1]));
+    expect(tempos.length).toBe(6);
+    expect(new Set(tempos).size).toBe(6);
+    expect(new Set(phases).size).toBe(6);
+    expect(Math.max(...tempos) / Math.min(...tempos)).toBeGreaterThan(1.5);
+    expect(phases.every((p) => p >= 0 && p < 1)).toBe(true);
+  });
+  it("stretches the loop and offsets it by those amounts, from the duration token", () => {
+    expect(motion).toMatch(/animation-duration:\s*calc\(var\(--dur-loop\) \* var\(--k\)\)/);
+    expect(motion).toMatch(/animation-delay:\s*calc\(var\(--dur-loop\) \* var\(--k\) \* var\(--d\) \* -1\)/);
   });
   it("gives every instance its own clip id", () => {
     const two = renderToStaticMarkup(
