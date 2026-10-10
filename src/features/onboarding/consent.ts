@@ -1,0 +1,34 @@
+import type { Capability, CliId, Detection } from "./types";
+export * from "./types";
+
+export const CLI_NAME: Record<CliId, string> = { claude: "Claude Code", codex: "Codex", gemini: "Gemini" };
+
+const no = (reason: string) => ({ available: false, reason, entries: 0 });
+
+/** What each CLI can do and how many hook entries each capability adds (docs/PLAN.md section 2: the adapter's capabilities). */
+export const CAPABILITIES: Record<CliId, Record<Capability, { available: boolean; reason?: string; entries: number }>> = {
+  claude: { status: { available: true, entries: 8 }, approve: { available: true, entries: 1 }, statusline: { available: true, entries: 0 } },
+  codex: { status: { available: true, entries: 6 }, approve: { available: true, entries: 1 }, statusline: no("Codex has no status line to chain.") },
+  gemini: { status: { available: true, entries: 7 }, approve: no("Gemini has no approval hook, so Marshell focuses the tab instead."), statusline: no("Gemini has no status line to chain.") },
+};
+
+export function entryCount(cli: CliId, on: Record<Capability, boolean>): number {
+  return (Object.keys(CAPABILITIES[cli]) as Capability[]).reduce((n, c) => n + (on[c] && CAPABILITIES[cli][c].available ? CAPABILITIES[cli][c].entries : 0), 0);
+}
+
+/** Fails closed: a file that does not parse, or cannot be written, is never offered for editing. A managed file does not stop the user-level edit. */
+export function canEdit(d: Detection): { ok: boolean; reason?: string } {
+  if (d.configState === "unparsable") return { ok: false, reason: "The file does not parse." };
+  if (d.configState === "read-only") return { ok: false, reason: "The file is read-only." };
+  return { ok: true };
+}
+
+export function consentHeadline(d: Detection, on: Record<Capability, boolean>): string {
+  if (d.configState === "unparsable") return `${d.configPath} does not parse (line ${d.parseError?.line ?? 0}), so Marshell will not edit it.`;
+  const n = entryCount(d.cli, on);
+  const chain = on.statusline && CAPABILITIES[d.cli].statusline.available;
+  if (n === 0 && !chain) return `Change nothing. ${CLI_NAME[d.cli]} will show limited status.`;
+  const add = `Add ${n} hook ${n === 1 ? "entry" : "entries"}`;
+  const text = chain ? (n > 0 ? `${add} and chain your status line` : "Chain your status line") : add;
+  return `${text} in ${d.configPath}.`;
+}
