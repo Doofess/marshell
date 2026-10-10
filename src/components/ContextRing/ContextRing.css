@@ -5,14 +5,14 @@
 .context-ring__track {
   stroke: var(--hairline);
 }
-.context-ring__value {
-  stroke: var(--text-2);
+/* The ring is the vendor's colour at every level; the level shows in its shape (ContextRing.tsx): thicker from 80%, a centre dot from 95%. */
+.context-ring__value,
+.context-ring__dot {
+  stroke: var(--agent-signal, var(--text-2));
 }
-.context-ring[data-tone="caution"] .context-ring__value {
-  stroke: var(--caution);
-}
-.context-ring[data-tone="error"] .context-ring__value {
-  stroke: var(--error);
+.context-ring__dot {
+  fill: var(--agent-signal, var(--text-2));
+  stroke: none;
 }
 @media (forced-colors: active) {
   .context-ring__value {

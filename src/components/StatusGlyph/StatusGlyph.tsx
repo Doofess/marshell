@@ -36,7 +36,7 @@ const shapes: Record<GlyphKind, ReactNode> = {
     <path className="g-check" d="M3.75 8.25l2.75 2.75L12.25 5.25" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" pathLength="1" />
   ),
   "done-seen": (
-    <path d="M3.75 8.25l2.75 2.75L12.25 5.25" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" />
+    <path d="M3.75 8.25l2.75 2.75L12.25 5.25" fill="none" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round" strokeLinejoin="round" />
   ),
   error: (
     <>

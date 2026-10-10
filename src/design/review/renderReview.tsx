@@ -15,7 +15,7 @@ const BATCH_1: Array<[StoryModule, string]> = [
   [Type, "The 11–28 px scale with real copy, tabular figures and the mono stack."],
   [SpaceAndMotion, "Spacing steps and the motion durations every animation uses."],
   [Glyphs, "Ten states plus muted, administrator and caution, at 16 and 12 px, with their reduced-motion forms."],
-  [Marks, "The vendor marks, how each one moves while its session works, and the needs-you and error glyphs in each vendor's colour."],
+  [Marks, "The vendor marks, how each one moves while its session works, and the status glyphs and context ring in each vendor's colour."],
   [Rows, "Every row state in each density, and the truncation order down to the 200 px minimum sidebar."],
 ];
 

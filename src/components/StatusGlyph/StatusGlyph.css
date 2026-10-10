@@ -15,18 +15,18 @@
 .status-glyph[data-kind="working"] {
   color: var(--text-1);
 }
+/* Done, needs-you, error and caution all take the vendor's colour (agent-colors.css); outside a session they fall back to the app's. */
 .status-glyph[data-kind="done-unseen"] {
-  color: var(--ok);
+  color: var(--agent-signal, var(--ok));
 }
 .status-glyph[data-kind="done-seen"] {
-  color: var(--ok-dim);
+  color: var(--agent-signal, var(--ok-dim));
 }
-/* Needs-you and error take the vendor's colour (agent-colors.css); outside a session they fall back to the app's. */
 .status-glyph[data-kind="error"] {
   color: var(--agent-signal, var(--error));
 }
 .aux-glyph[data-kind="caution"] {
-  color: var(--caution);
+  color: var(--agent-signal, var(--caution));
 }
 .aux-glyph:is([data-kind="muted"], [data-kind="elevated"]) {
   color: var(--text-2);

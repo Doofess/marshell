@@ -105,7 +105,7 @@ Stories are fed by `fake-agent` scenario scripts, so the same 5-agent run drives
 2. Is no keyboard focus moved and no window raised by anything except a user action?
 3. Does no row change height or position unless the user did something?
 4. Is every new action in the palette, with a shortcut shown and rebindable?
-5. Are unknown values shown as "–", with nothing guessed?
+5. Are unknown values left out (the context ring, usage line, model, effort and subagent count simply do not appear), with nothing guessed?
 6. Is every state covered: empty, loading (over 150 ms only), error, offline core?
 7. Does every motion have a reduced-motion version and use tokens only?
 8. Is the copy clean: sentence case, no "successfully", no "Oops", undo path named?
@@ -129,7 +129,7 @@ Stories are fed by `fake-agent` scenario scripts, so the same 5-agent run drives
 | Right drawer | Default 360 px, minimum 300, maximum 560. It pushes the terminal, and overlays instead when the terminal would drop below 720 px. |
 | Split view | 50/50 with a 1 px hairline and an 8 px hit area. The active pane has a 2 px accent bar under its header; the inactive header is at 60% opacity. Terminal text is **never** dimmed. |
 | Focus mode | Sidebar and header go to 0. The header reveals on an 8 px top-edge hover. A floating pill at top right reads "2 need you ⌃⇧N" and stays silent apart from its glyph bounce. |
-| Rail (52 px) | Brand stripe, the agent mark and a 2-letter monogram per session, with a small status glyph. Needs-you shows as a badge stack with a count at the top. |
+| Rail (52 px) | Brand stripe, the agent mark and a 2-letter monogram per session, with a small status glyph. While a session works, its vendor mark carries the working loop in place of any pulsing dot. Needs-you shows as a badge stack with a count at the top. |
 
 **Terminal theme.** The terminal has its own palette, separate from the app theme.
 - Setting: **Follow app** (default), **Always dark**, **Always light**, or an imported theme; a profile can override it. Switching applies to every open terminal at once through xterm's live `options.theme`, keeping scrollback.
@@ -168,8 +168,8 @@ The full text is in the tooltip and the screen-reader label.
 | Working | The vendor mark itself moves, one loop per vendor, signed off in phase 0 (Claude and Gemini breathe: the tips draw in more than the centre, Gemini shallower so the star stays slim; Codex turns steadily; Antigravity swims up like a jellyfish, the bell squeezing and the tentacles trailing; Copilot stays still while parts of its face flash dark, each on its own tempo; Cursor's cube stays still while the pointer cut out of it slides in, clicks and slides back; opencode steps; Amp's main arrow stays while the two secondary arrows are fired away one after another and slide back; Grok and Qwen turn back slowly; DeepSeek swims; custom agents blink only the underscore, hard on and off); no glyph in the cluster | Mark stays still; the phrase and screen-reader label carry the state | "Running npm test" | — |
 | Needs you: permission | Filled rounded-square badge in the vendor's colour with a bare "!" | One bounce | "Wants to run `npm test`" | 12% tint in the vendor's colour, reason line in full-contrast text, wait timer |
 | Needs you: question | Badge in the vendor's colour with "?" | One bounce | "Has a question" | Same |
-| Done, unseen | Check drawn in 200 ms | Draw once | "Done · edited 4 files" | Name at 600 weight, plus a 6 px unread dot |
-| Done, seen | Check at 50% | — | "Done 12m ago" | Normal |
+| Done, unseen | Check in the vendor's colour, drawn in 200 ms | Draw once | "Done · edited 4 files" | Name at 600 weight, plus a 6 px unread dot |
+| Done, seen | Thinner check in the vendor's colour | — | "Done 12m ago" | Normal |
 | Error | Filled disc in the vendor's colour with a cut-out ✕ | One flash | "Stopped: rate limit" | 12% tint in the vendor's colour, reason line in full-contrast text |
 | Stuck | Dashed ring | — | "Same command 9× in 4 min" | No notification |
 | Muted | Bell-slash in the cluster | Badge does not bounce | suffix "muted" | Glyphs still shown |
@@ -177,7 +177,7 @@ The full text is in the tooltip and the screen-reader label.
 | Auto / dontAsk / bypass | ⚠, **always visible** | — | "Full auto" | Header outlined red (bypass, auto) |
 | Ended | Hollow square | — | "Ended · exit 0" | Text 60% |
 | Limited (no hooks) | Dotted circle | — | "Status limited · set up" | Links to setup |
-| Unknown values | "–" | — | "unknown" | Ring hidden |
+| Unknown values | Nothing: the ring, usage line, model, effort and subagent count are left out, not shown as a dash | — | — | Ring hidden |
 
 ### The approve card
 
@@ -436,7 +436,7 @@ pub enum SessionEvent {
 
 `PermissionMode` is the shared set {Manual, Plan, AutoEdit, FullAuto}; the CLI's own label is kept in `raw`.
 
-Session state is exactly as in brief §4, plus `unseen_done`, `waiting_since_ms` and `seen_at`. These live in Rust and are driven by `ClientState`. `subagents` is a `HashSet<String>`, and unknown values are `None`, which the UI renders as "–".
+Session state is exactly as in brief §4, plus `unseen_done`, `waiting_since_ms` and `seen_at`. These live in Rust and are driven by `ClientState`. `subagents` is a `HashSet<String>`, and unknown values are `None`, which the UI leaves out.
 
 ## 3. IPC contract
 

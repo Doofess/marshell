@@ -147,3 +147,22 @@ describe("SessionRow (working shows as a moving logo)", () => {
     expect(h.slice(h.indexOf("session-row__cluster"))).toContain('data-kind="needs-permission"');
   });
 });
+
+describe("SessionRow (unknown values are not shown)", () => {
+  const unknown = FIXTURES.find((f) => f.id === "unknown")!;
+  const expanded = (row: typeof unknown) => renderToStaticMarkup(<SessionRow row={row} density="expanded" />);
+  it("shows no dash for a model, effort or subagent count that is not known", () => {
+    const h = expanded(unknown);
+    expect(h).not.toContain(">–<");
+    expect(h).not.toContain("subagents");
+  });
+  it("shows no details line at all when nothing about the session is known", () => {
+    expect(expanded({ ...unknown, mode: undefined })).not.toContain("session-row__meta");
+  });
+  it("still shows what is known, with nothing in place of the rest", () => {
+    const h = expanded({ ...unknown, model: "Opus 5.5", subagents: 2 });
+    expect(h).toContain("Opus 5.5");
+    expect(h).toContain("2 subagents");
+    expect(h).not.toContain(">–<");
+  });
+});

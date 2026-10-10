@@ -74,9 +74,6 @@ describe("forced colours (final review)", () => {
     expect(renderToStaticMarkup(<StatusGlyph kind="error" />)).toContain('class="g-cut');
     expect(renderToStaticMarkup(<AuxGlyph kind="caution" />)).toContain('class="g-cut');
   });
-  it("draws the seen check with the dimmed ok token, not transparency", () => {
-    expect(css).toMatch(/\[data-kind="done-seen"\][^{]*\{[^}]*var\(--ok-dim\)/);
-  });
 });
 
 describe("StatusGlyph: minimal needs-you and error marks", () => {

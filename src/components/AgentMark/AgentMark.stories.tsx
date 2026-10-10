@@ -1,6 +1,7 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import { ThemePair } from "../../design/ThemePair";
-import { StatusGlyph } from "../StatusGlyph/StatusGlyph";
+import { ContextRing } from "../ContextRing/ContextRing";
+import { AuxGlyph, StatusGlyph } from "../StatusGlyph/StatusGlyph";
 import { AGENT_IDS, AGENT_NAMES } from "./agents";
 import { AgentMark } from "./AgentMark";
 
@@ -44,17 +45,25 @@ export const WorkingLoops: StoryObj = {
   ),
 };
 
-/** The needs-you and error glyphs take the vendor's colour, so a list stays one family of colours. */
-export const NeedsYouInVendorColours: StoryObj = {
+/** Needs-you, error, done, caution and the context ring all take the vendor's colour, so a list stays one family of colours. */
+export const StatusInVendorColours: StoryObj = {
   render: () => (
-    <ThemePair label="Needs you and error, in each vendor's colour">
-      <div style={grid}>
+    <ThemePair label="Status glyphs and context ring, in each vendor's colour">
+      <div style={{ ...grid, gridTemplateColumns: "repeat(auto-fill, minmax(150px, 1fr))" }}>
         {AGENT_IDS.map((id) => (
           <figure key={id} data-agent={id} style={{ ...cell, margin: 0 }}>
             <span style={{ display: "flex", gap: "var(--space-2)", alignItems: "center" }}>
               <StatusGlyph kind="needs-permission" />
               <StatusGlyph kind="needs-question" />
               <StatusGlyph kind="error" />
+              <StatusGlyph kind="done-unseen" />
+              <StatusGlyph kind="done-seen" />
+            </span>
+            <span style={{ display: "flex", gap: "var(--space-2)", alignItems: "center" }}>
+              <AuxGlyph kind="caution" />
+              <ContextRing pct={42} />
+              <ContextRing pct={85} />
+              <ContextRing pct={97} />
             </span>
             <figcaption>{AGENT_NAMES[id]}</figcaption>
           </figure>

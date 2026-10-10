@@ -29,6 +29,8 @@ export function SessionRow({
 }) {
   const caution = modeCaution(row.mode);
   const usage = formatUsage(row.usage);
+  // Unknown values are left out, not shown as a dash.
+  const hasMeta = Boolean(row.model || row.effort || row.mode === "plan" || caution || row.subagents !== undefined);
   const time = row.waitingMs ?? (row.status === "done-unseen" || row.status === "done-seen" || row.status === "ended" ? row.ageMs : undefined);
   const branch = row.branch ? splitForMiddle(row.branch) : null;
 
@@ -100,13 +102,15 @@ export function SessionRow({
       </div>
       {density === "expanded" && (
         <div className="session-row__details" aria-hidden="true">
-          <div className="session-row__meta">
-            <span>{row.model ?? "–"}</span>
-            <span>{row.effort ?? "–"}</span>
-            {row.mode === "plan" && <span className="session-row__pill">Plan</span>}
-            {caution && <span className="session-row__caution-text">{caution}</span>}
-            <span>{row.subagents !== undefined ? `${row.subagents} subagents` : "–"}</span>
-          </div>
+          {hasMeta && (
+            <div className="session-row__meta">
+              {row.model && <span>{row.model}</span>}
+              {row.effort && <span>{row.effort}</span>}
+              {row.mode === "plan" && <span className="session-row__pill">Plan</span>}
+              {caution && <span className="session-row__caution-text">{caution}</span>}
+              {row.subagents !== undefined && <span>{`${row.subagents} subagents`}</span>}
+            </div>
+          )}
           {row.recap && (
             <p className="session-row__recap">
               {row.recap.text} <span className="session-row__age">{formatDuration(row.recap.ageMs)} ago</span>
