@@ -16,6 +16,7 @@ const EDGES: Record<string, string[]> = {
   "features/onboarding/Onboarding.css": [".consent", ".detected__row", ".consent__toggle", ".consent__skip"],
   "features/departures/Board.css": [".board__status", ".board__waiting", ".board__all"],
   "features/notifications/OsBanner.css": [".os-banner", ".os-banner__btn"],
+  "features/tray/Tray.css": [".tray-menu"],
   "features/window/SplitView.css": [".pane__new", ".pane__choice"],
   "features/window/MainWindow.css": [".window", ".window__palette", ".focus-pill"],
   "features/window/LayoutMenu.css": [".layout-menu", ".layout-menu__option", ".layout-menu__count"],

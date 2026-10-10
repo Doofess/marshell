@@ -14,6 +14,7 @@ import * as KeyboardNav from "../../features/window/NavCursor.stories";
 import * as PromptBar from "../../features/composer/Composer.stories";
 import * as Departures from "../../features/departures/Departures.stories";
 import * as Notifications from "../../features/notifications/Notifications.stories";
+import * as Tray from "../../features/tray/Tray.stories";
 import * as ManualCli from "../../components/AgentMark/ManualCli.stories";
 import * as Launcher from "../../features/launcher/Launcher.stories";
 import * as Palette from "../../features/palette/Palette.stories";
@@ -70,6 +71,7 @@ const BATCHES: Record<UpTo, Array<[StoryModule, string]>> = {
   "3c": [
     [Departures, "A sign, true black in both themes, with 44 px rows. Sessions that need you are Gate calls at the top, oldest waiting first. Only the status and waiting cells flip, like split-flap tiles (60 ms a character, 15 ms apart, 400 ms at most); with reduced motion they cross-fade instead. Rows never move while the pointer is over the board. The keyboard moves with the arrows, Enter jumps to the session, and Y or N opens the request inline; Enter never answers it. Press Replay animations to play the 10-second clip."],
     [Notifications, "Banners follow the plan: silent (Marshell plays its own sound), never raise the window, and a click only focuses the session. Buttons are only what the OS can really offer (Windows and macOS: Allow and Deny; Linux: Open). A risky request shows only Review and never the command. Requests within 3 seconds fold into one banner; a session in the foreground, a stuck session and a finished subagent stay quiet. The frames are neutral layouts, not copies of the system styling; macOS and Linux are design only."],
+    [Tray, "The tray icon is the mono marshalling wands in the current colour, at 16 and 32 px on a light and a dark panel, with an accent dot when something waits. The menu opens Marshell and Departures, lists who needs you with their numbers (five at most, then how many more), and ends with pause, the doctor, settings and quit. Windows shows the count as an overlay icon (9+ at most), macOS as a dock badge; Linux's tray is menu-only. macOS and Linux are design only."],
   ],
 };
 
