@@ -32,7 +32,7 @@
 .agent-mark {
   transform-origin: center;
 }
-/* Claude breathes: the rays draw in towards the centre and back out, the tips by more than the centre (each layer sets its own --s, see AgentMark.tsx). */
+/* Claude and Gemini breathe: the rays draw in towards the centre and back out, the tips by more than the centre (each layer sets its own --s, see AgentMark.tsx). */
 @keyframes mark-breathe {
   0%, 100% { transform: scale(1); }
   50% { transform: scale(var(--s, 0.55)); }
@@ -42,11 +42,6 @@
 }
 @keyframes mark-spin-back {
   to { transform: rotate(-360deg); }
-}
-/* Gemini: the star grows and shrinks smoothly, without turning. */
-@keyframes mark-grow {
-  0%, 100% { transform: scale(0.8); }
-  50% { transform: scale(1.12); }
 }
 @keyframes mark-bob {
   0%, 100% { transform: translateY(1.5px); }
@@ -78,15 +73,13 @@
 }
 
 @media (prefers-reduced-motion: no-preference) {
-  :root:not([data-motion="reduce"]) .agent-mark[data-working][data-agent="claude"] :is(.agent-mark__body, .agent-mark__layer) {
+  :root:not([data-motion="reduce"]) .agent-mark[data-working][data-agent="claude"] :is(.agent-mark__body, .agent-mark__layer),
+  :root:not([data-motion="reduce"]) .agent-mark[data-working][data-agent="gemini"] :is(.agent-mark__body, .agent-mark__layer) {
     transform-origin: 12px 12px;
     animation: mark-breathe var(--dur-loop) ease-in-out infinite;
   }
   :root:not([data-motion="reduce"]) .agent-mark[data-working][data-agent="codex"] {
     animation: mark-spin var(--dur-loop) linear infinite;
-  }
-  :root:not([data-motion="reduce"]) .agent-mark[data-working][data-agent="gemini"] {
-    animation: mark-grow var(--dur-loop) ease-in-out infinite;
   }
   :root:not([data-motion="reduce"]) .agent-mark[data-working][data-agent="antigravity"] {
     animation: mark-bob var(--dur-loop) ease-in-out infinite;

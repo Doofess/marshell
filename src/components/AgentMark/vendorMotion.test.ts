@@ -6,11 +6,14 @@ import { AGENT_IDS } from "./agents";
 const motion = readFileSync(new URL("../../styles/motion.css", import.meta.url), "utf8");
 const tokens = readFileSync(new URL("../../styles/tokens.css", import.meta.url), "utf8");
 
+/** Claude and Gemini share one breath: their tips draw in more than their centres (AgentMark.tsx). */
+const BREATH = ["claude", "gemini"];
+
 /** The `animation:` value of the rule for one vendor's working mark. */
 function animationOf(id: string): string | null {
-  // Claude draws its rays in and out around a centre that stays put, so its loop sits on the body of the mark and its layers.
-  const target = id === "claude" ? String.raw` :is\(\.agent-mark__body, \.agent-mark__layer\)` : "";
-  const re = new RegExp(String.raw`\.agent-mark\[data-working\]\[data-agent="${id}"\]${target}\s*\{([^}]*)\}`);
+  // Claude and Gemini draw their tips in and out around a centre that stays put, so the loop sits on the body of the mark and its layers (one rule, listed under both vendors).
+  const target = BREATH.includes(id) ? String.raw` :is\(\.agent-mark__body, \.agent-mark__layer\)` : "";
+  const re = new RegExp(String.raw`\.agent-mark\[data-working\]\[data-agent="${id}"\]${target}(?:,[^{]*)?\s*\{([^}]*)\}`);
   const body = motion.match(re)?.[1] ?? "";
   return body.match(/animation:\s*([^;]+);/)?.[1]?.trim() ?? null;
 }
@@ -22,7 +25,8 @@ describe("a working session animates its vendor mark", () => {
     });
   it("gives every vendor a different animation", () => {
     const all = AGENT_IDS.map((id) => animationOf(id));
-    expect(new Set(all).size).toBe(AGENT_IDS.length);
+    expect(new Set(all).size).toBe(AGENT_IDS.length - BREATH.length + 1);
+    expect(animationOf("gemini")).toBe(animationOf("claude"));
   });
   it("defines the keyframes each loop uses", () => {
     for (const id of AGENT_IDS) {
