@@ -44,6 +44,9 @@ export function unifiedDiff(path: string, before: string, after: string, context
     }
     const oldLen = slice.filter((o) => o.k !== "+").length;
     const newLen = slice.filter((o) => o.k !== "-").length;
+    // As git writes it: a side with no lines in the hunk starts at the line before it, so a new file is "-0,0" and an emptied one "+0,0".
+    if (oldLen === 0) oldStart--;
+    if (newLen === 0) newStart--;
     out.push(`@@ -${oldStart},${oldLen} +${newStart},${newLen} @@`);
     for (const o of slice) out.push(o.k + o.s);
   }

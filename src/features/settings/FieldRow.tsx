@@ -9,7 +9,8 @@ import "./Settings.css";
  * A managed value, or any value in a file that must not be edited, has a disabled control and says why in words. The badge
  * shows where the value is really read from, so a value a managed file locks says Managed, and the control shows the value the
  * organisation enforces (the one that applies), not the user's own. When the file cannot be read, a value is an en dash, never
- * a guess from what the broken file used to say.
+ * a guess from what the broken file used to say: every kind, a boolean included, shows the en dash text control then, since
+ * an off switch would read as a value.
  */
 export function FieldRow({ field, file = {}, value }: { field: SettingField; file?: FileState; value?: unknown }) {
   const id = useId();
@@ -22,8 +23,8 @@ export function FieldRow({ field, file = {}, value }: { field: SettingField; fil
   return (
     <li className="field" data-locked={locked || undefined}>
       <div className="field__head">
-        {field.kind === "boolean" ? (
-          <Switch label={field.label} checked={Boolean(shown)} disabled={locked} unknown={unknown} />
+        {field.kind === "boolean" && !unknown ? (
+          <Switch label={field.label} checked={Boolean(shown)} disabled={locked} />
         ) : (
           <label htmlFor={id} className="field__label" dir="auto">
             {field.label}
@@ -34,7 +35,7 @@ export function FieldRow({ field, file = {}, value }: { field: SettingField; fil
       <p className="field__help" dir="auto">
         {field.help}
       </p>
-      {unknown && field.kind !== "boolean" && <input id={id} className="field__control" type="text" value="–" readOnly disabled data-unknown="" />}
+      {unknown && <input id={id} className="field__control" type="text" value="–" readOnly disabled data-unknown="" />}
       {!unknown && field.kind === "enum" && (
         <select id={id} className="field__control" defaultValue={String(shown ?? "")} disabled={locked}>
           {(field.options ?? []).map((o) => (

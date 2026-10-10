@@ -1,5 +1,6 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
+import { focusOrder } from "../../lib/focusOrder";
 import { nameContainsLabel } from "../../lib/labelInName";
 import { OnboardingFrame } from "./OnboardingFrame";
 
@@ -22,6 +23,11 @@ describe("OnboardingFrame", () => {
     const h = frame("notifications");
     expect(h).toContain("Step 3 of 4");
     expect((h.match(/aria-current="step"/g) ?? []).length).toBe(1);
+  });
+  it("its scrolling body is a focusable labelled region, first in the tab order before Back, the secondary and the primary", () => {
+    const h = frame("consent");
+    expect(h).toMatch(/<div class="onboarding__body" role="region" aria-label="Step content" tabindex="0">/);
+    expect(focusOrder(h)).toEqual(["Step content", "Back", "Skip", "Continue"]);
   });
   it("has no live region and names its buttons from their text", () => {
     const h = frame("consent");

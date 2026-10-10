@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 import { parseUnifiedDiff } from "../../components/DiffView/diff";
 import { ConsentCard } from "./ConsentCard";
 import { Detected } from "./Detected";
-import { canEdit, consentHeadline, entryCount, type Capability, type Detection } from "./consent";
+import { canEdit, consentHeadline, entryCount, removalCopy, type Capability, type Detection } from "./consent";
 import { emptyStatesFor } from "./emptyStates";
 import { CONSENT, DETECTIONS } from "./fixtures";
 
@@ -70,12 +70,24 @@ describe("chaining the status line keeps the user's own command visible", () => 
   });
 });
 
-describe("undo copy only names things that exist, and promises only what holds", () => {
-  it("never names a settings page that does not exist, or a byte-exact restore of an uninstall", () => {
-    for (const s of Object.values(CONSENT)) {
-      expect(s.plan.removal).not.toMatch(/byte for byte|Remove all hooks|Advanced/);
-      expect(s.plan.removal).toMatch(/only the entries Marshell added|only what Marshell added/i);
-    }
+describe("undo copy says what removal does for each CLI, and promises nothing more", () => {
+  it("Claude: removes the hook entries and puts the user's own status line back from the chain file", () => {
+    expect(CONSENT.claude.plan.removal).toBe("Marshell removes the hook entries it added and puts your own status line back from statusline-chain.json; the rest of the file stays as it is.");
+  });
+  it("Codex: removes its hook entries, and says nothing about a status line it never chained", () => {
+    expect(CONSENT.codex.plan.removal).toBe("Marshell removes the hook entries it added; the rest of the file stays as it is.");
+    expect(CONSENT.codex.plan.removal).not.toContain("status line");
+  });
+  it("Antigravity: puts the status line back from its chain file, and says nothing about hook entries it never added", () => {
+    expect(CONSENT.antigravity.plan.removal).toBe("Marshell puts your own status line back from statusline-chain.json; the rest of the file stays as it is.");
+    expect(CONSENT.antigravity.plan.removal).not.toContain("entries");
+  });
+  it("follows the switches: with the status line off, Claude's undo does not mention the chain file", () => {
+    expect(removalCopy("claude", { status: true, approve: true, statusline: false })).toBe("Marshell removes the hook entries it added; the rest of the file stays as it is.");
+    expect(removalCopy("claude", { status: false, approve: false, statusline: false })).toBe("Marshell changes nothing, so there is nothing to undo.");
+  });
+  it("never claims that only added entries are removed when a status line command was replaced, and never names a page that does not exist", () => {
+    for (const s of Object.values(CONSENT)) expect(s.plan.removal).not.toMatch(/byte for byte|Remove all hooks|Advanced|removes only the entries/);
   });
 });
 

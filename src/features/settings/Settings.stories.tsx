@@ -25,10 +25,10 @@ export const RawModeWithError: StoryObj = { render: () => page("Raw mode: a mist
 export const ManagedLocked: StoryObj = { render: () => page("A value set by your organisation is locked, with the reason, and cannot be edited") };
 export const PendingChange: StoryObj = { render: () => page("One change waiting: Review changes comes before any diff", { state: { changed: true }, edits: { cleanupPeriodDays: 365 }, opened: SETTINGS_TEXT }) };
 export const ReviewingChange: StoryObj = { render: () => page("Under review: the exact diff, where the backup goes and how to undo, then Apply and Discard", { state: { changed: true, reviewing: true }, edits: { cleanupPeriodDays: 365 }, opened: SETTINGS_TEXT }, 960, 1100) };
-export const ReviewingLongChange: StoryObj = { render: () => page("A change of 200 lines folds after 40 lines and stays inside the page", { state: { changed: true, reviewing: true }, edits: { hooks: Array.from({ length: 200 }, (_, i) => `entry-${i}`) }, opened: SETTINGS_TEXT_LONG }, 960, 760) };
+export const ReviewingLongChange: StoryObj = { render: () => page("A change of 200 lines folds after 40 lines and stays inside the page", { state: { changed: true, reviewing: true }, edits: { cleanupPeriodDays: 365 }, opened: SETTINGS_TEXT_LONG }, 960, 760) };
 export const ReadOnlyFile: StoryObj = { render: () => page("A read-only file says so and nothing can be applied", { state: { readOnly: true } }) };
 export const UnparsableFile: StoryObj = { render: () => page("A file that does not parse fails closed: it is shown, never offered for editing", { mode: "raw", state: { unparsable: true }, opened: SETTINGS_TEXT_BROKEN }) };
-export const Conflict: StoryObj = { render: () => page("The file changed on disk after it was opened: show differences, keep mine or reload; nothing is overwritten", { state: { conflict: true, changed: true }, edits: { cleanupPeriodDays: 365 } }) };
+export const Conflict: StoryObj = { render: () => page("The file changed on disk after it was opened: review the difference or reload; nothing is overwritten and there is no Keep mine", { state: { conflict: true, changed: true }, edits: { cleanupPeriodDays: 365 } }) };
 export const NoAgents: StoryObj = { render: () => page("A section with nothing to show says so and offers a way forward", { category: "codex" }) };
 export const NarrowWindow: StoryObj = { render: () => page("At 640 px wide the sections sit above the values and wrap", {}, 640, 680) };
 

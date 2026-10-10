@@ -38,3 +38,7 @@
   scrollbar-gutter: stable;
   padding: var(--space-4) var(--space-6);
 }
+/* The body takes focus (it is how the keyboard scrolls it); its ring sits inside, where the page cannot clip it. */
+.page__body:focus-visible {
+  outline-offset: -2px;
+}

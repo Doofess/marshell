@@ -13,6 +13,12 @@ describe("unifiedDiff", () => {
     expect(p.added).toBe(2);
     expect(p.removed).toBe(1);
   });
+  it("writes a new file's hunk header as git does, @@ -0,0 +1,N @@, and an emptied file's as @@ -1,N +0,0 @@", () => {
+    const made = unifiedDiff("f.json", "", "a\nb\n");
+    expect(made).toContain("@@ -0,0 +1,2 @@");
+    expect(parseUnifiedDiff(made)).toMatchObject({ added: 2, removed: 0, files: ["f.json"] });
+    expect(unifiedDiff("f.json", "a\nb\n", "")).toContain("@@ -1,2 +0,0 @@");
+  });
   it("keeps three lines of context around a change in a long file", () => {
     const before = Array.from({ length: 40 }, (_, i) => `line ${i}`).join("\n") + "\n";
     const after = before.replace("line 20", "LINE 20");

@@ -9,8 +9,9 @@ import "./Doctor.css";
 /**
  * The sheet before a fix: the combined change grouped by file, the backup, how to undo and which sessions need a restart.
  * Focus lands on the title, not on an action, so Enter cannot apply anything by reflex. In the app (useDialogFocus) Tab stays
- * inside, Escape calls onClose and focus returns to whatever opened the sheet. The changes scroll in the body; the actions sit
- * below it, so Cancel and the fix are reachable however long the change is.
+ * inside, Escape calls onClose and focus returns to whatever opened the sheet. The changes scroll in the body, which is itself
+ * a focusable region (so the keyboard can scroll it, and the trap reaches it); the actions sit below it, so Cancel and the fix
+ * are reachable however long the change is.
  */
 export function FixSheet({ report, onClose }: { report: DoctorReport; onClose?: () => void }) {
   const id = useId();
@@ -26,7 +27,7 @@ export function FixSheet({ report, onClose }: { report: DoctorReport; onClose?: 
       <h2 id={id} ref={title} className="fix-sheet__title" tabIndex={-1}>
         {headline}
       </h2>
-      <div className="fix-sheet__body">
+      <div className="fix-sheet__body" role="region" aria-label="Changes to review" tabIndex={0}>
         <div className="fix-sheet__groups">
           {groups.map((g) => (
             <div key={g.file} className="fix-sheet__group">
@@ -38,7 +39,7 @@ export function FixSheet({ report, onClose }: { report: DoctorReport; onClose?: 
           ))}
         </div>
         <p className="fix-sheet__note">
-          A backup is saved first, in <code>~/.marshell/snapshots/</code>. To undo: Undo last fix in the Doctor header, for as long as the files still match.
+          A backup is saved first, in <code>~/.marshell/snapshots/</code>. To undo: Undo last fix in the Doctor header puts that backup back, for as long as the files are unchanged since this fix.
         </p>
         {restart.length > 0 && <p className="fix-sheet__note">{restartNote(restart)}.</p>}
       </div>

@@ -69,12 +69,16 @@ describe("SettingsPage: changes", () => {
     expect(h).toContain("1 change");
     expect(h).toContain("diff__lines");
     expect(h).toContain("A backup is saved first");
-    expect(h).toContain("Marshell puts that copy back for as long as the file is still as it was after this change");
+    expect(h).toContain("Marshell puts that backup back, for as long as the file is unchanged since this change");
+    const note = /<p class="change-bar__note">([\s\S]*?)<\/p>/.exec(h)![1]!;
+    expect(note).not.toMatch(/only the entries|byte for byte|Advanced/);
     expect(h).toContain(">Apply<");
     expect(h).toContain(">Discard<");
   });
   it("keeps a 200-line change inside the page (collapsed), not the window", () => {
-    const h = renderToStaticMarkup(<SettingsPage {...base} state={{ changed: true, reviewing: true }} edits={{ hooks: Array.from({ length: 200 }, (_, i) => `h${i}`) }} opened={SETTINGS_TEXT_LONG} />);
+    // A real field edit against the long file: the change strip counts it, and the preview is the long diff.
+    const h = renderToStaticMarkup(<SettingsPage {...base} state={{ changed: true, reviewing: true }} edits={{ cleanupPeriodDays: 365 }} opened={SETTINGS_TEXT_LONG} />);
+    expect(h).toContain(">1 change<");
     expect(h).toContain("Show all");
   });
   it("keeps the sticky strip small: the diff sits in the page above it, never inside it", () => {

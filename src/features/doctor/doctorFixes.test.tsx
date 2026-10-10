@@ -7,10 +7,18 @@ import { FixSheet } from "./FixSheet";
 import { DOCTOR_PROBLEMS, DOCTOR_REPORT, UNDO_FIXED } from "./fixtures";
 import { mergeDiffs } from "./mergeDiff";
 import { groupByFile } from "./report";
+import { UndoToast } from "./UndoToast";
 
 const at = (ms: number) => UNDO_FIXED.fixedAtMs + ms;
 
 describe("the toast offers Undo only while undo is safe", () => {
+  it("renders no empty actions strip when undo is withdrawn and nothing needs a restart", () => {
+    const stale = { ...UNDO_FIXED, filesMatch: false };
+    const h = renderToStaticMarkup(<UndoToast undo={stale} nowMs={at(2_000)} restart={[]} />);
+    expect(h).toContain("toast__text");
+    expect(h).not.toContain("toast__actions");
+    expect(renderToStaticMarkup(<UndoToast undo={stale} nowMs={at(2_000)} restart={[3]} />)).toContain("Restart them");
+  });
   it("has no Undo button once a file changed, and the page says why", () => {
     const stale = { ...UNDO_FIXED, filesMatch: false };
     const h = renderToStaticMarkup(<DoctorPage report={DOCTOR_REPORT} phase="fixed" undo={stale} nowMs={at(2_000)} />);
@@ -81,8 +89,8 @@ describe("mergeDiffs", () => {
 describe("FixSheet", () => {
   it("scrolls its body, and keeps the actions outside it so Cancel and the fix are always reachable", () => {
     const h = renderToStaticMarkup(<FixSheet report={DOCTOR_REPORT} />);
-    expect(h).toMatch(/<div class="fix-sheet__body">[\s\S]*<\/div><footer class="fix-sheet__foot">/);
-    const body = /<div class="fix-sheet__body">([\s\S]*)<\/div><footer/.exec(h)![1]!;
+    expect(h).toMatch(/<div class="fix-sheet__body"[^>]*>[\s\S]*<\/div><footer class="fix-sheet__foot">/);
+    const body = /<div class="fix-sheet__body"[^>]*>([\s\S]*)<\/div><footer/.exec(h)![1]!;
     expect(body).not.toContain("fix-sheet__foot");
     expect(body).not.toContain("fix-sheet__btn");
   });

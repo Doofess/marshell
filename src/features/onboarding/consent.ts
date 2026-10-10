@@ -32,6 +32,20 @@ export function canEdit(d: Detection): { ok: boolean; reason?: string } {
   return { ok: true };
 }
 
+/**
+ * What turning Marshell's hooks off, or uninstalling, does to this CLI's file, given the switches: hook entries it added are
+ * removed, and a chained status line is put back from the chain file (its command was replaced, not added, so "removes only
+ * what it added" would not be true of it). Nothing else in the file is touched.
+ */
+export function removalCopy(cli: CliId, on: Record<Capability, boolean>): string {
+  const parts = [
+    entryCount(cli, on) > 0 && "removes the hook entries it added",
+    on.statusline && CAPABILITIES[cli].statusline.available && "puts your own status line back from statusline-chain.json",
+  ].filter((p): p is string => typeof p === "string");
+  if (parts.length === 0) return "Marshell changes nothing, so there is nothing to undo.";
+  return `Marshell ${parts.join(" and ")}; the rest of the file stays as it is.`;
+}
+
 export function consentHeadline(d: Detection, on: Record<Capability, boolean>): string {
   if (d.configState === "unparsable") return `${d.configPath} does not parse (line ${d.parseError?.line ?? "–"}), so Marshell will not edit it.`;
   if (d.configState === "read-only") return `${d.configPath} is read-only, so Marshell will not edit it.`;

@@ -25,9 +25,9 @@ describe("Switch: state words", () => {
     expect(h).toContain(">On<");
     expect(h).toContain(">Off<");
   });
-  it("says the state is unknown with an en dash instead of guessing", () => {
-    const h = renderToStaticMarkup(<Switch label="Play sounds" checked={false} unknown disabled />);
-    expect(h).toContain("data-unknown");
-    expect(h).toContain(">–<");
+  it("has no unknown state of its own: a value that cannot be read is the field row's en dash control, never an off switch", () => {
+    const h = renderToStaticMarkup(<Switch label="Play sounds" checked={false} />);
+    expect(h).not.toContain("switch__unknown");
+    expect(h).not.toContain("–");
   });
 });

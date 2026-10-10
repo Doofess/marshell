@@ -33,9 +33,12 @@ export type Banner = {
   sessionNumber: number;
 };
 
-/** A command is shown in a banner (and can be allowed from it) only when the whole of it fits on one line. */
-export const BANNER_COMMAND_MAX = 160;
-export const fitsOneLine = (cmd: string | undefined): cmd is string => cmd !== undefined && cmd.length > 0 && cmd.length <= BANNER_COMMAND_MAX && !/[\r\n]/.test(cmd);
+/**
+ * A command is shown in a banner (and can be allowed from it) only when the whole of it fits on one line. How much fits is
+ * the system's: a macOS banner is narrower than a Windows toast or a Linux notification.
+ */
+export const BANNER_COMMAND_MAX: Record<Os, number> = { windows: 160, mac: 120, linux: 160 };
+export const fitsOneLine = (cmd: string | undefined, os: Os): cmd is string => cmd !== undefined && cmd.length > 0 && cmd.length <= BANNER_COMMAND_MAX[os] && !/[\r\n]/.test(cmd);
 
 /** "Done" banners are only for sessions that have been in the background for more than 30 seconds. */
 export const DONE_MIN_BACKGROUND_MS = 30_000;
@@ -67,20 +70,23 @@ export function bannerFor(e: NotifyEvent, os: Os): Banner | null {
       if (e.risky) return { ...base(e), title: `${e.name} needs you`, body: "Needs a careful look.", actions: ["Review"] };
       // Allow and Deny need the OS to offer actions, and a command that is cut short or hidden must never be allowed
       // from a banner: those only open the session, where the whole command can be read.
-      if (!fitsOneLine(e.detail)) return { ...base(e), title: `${e.name} needs you`, body: e.detail ? "Wants to run a command that does not fit here." : "Wants to run a command.", actions: ["Open"] };
+      if (!fitsOneLine(e.detail, os)) return { ...base(e), title: `${e.name} needs you`, body: e.detail ? "Wants to run a command that does not fit here." : "Wants to run a command.", actions: ["Open"] };
       return { ...base(e), title: `${e.name} needs you`, body: `Wants to run \`${e.detail}\``, actions: os === "linux" ? ["Open"] : ["Allow", "Deny"] };
   }
 }
 
 const list = (names: string[]) => (names.length <= 1 ? names.join("") : `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`);
 
-/** Several requests within BATCH_WINDOW_MS become one banner, and any risky one in it makes the only action Review. */
+/**
+ * Several requests within BATCH_WINDOW_MS become one banner, and any risky one in it makes the only action Review. The body
+ * names each session number first, as every other place does ("Session 3, api-server"), so a number never reads as a count.
+ */
 export function batchBanner(events: NotifyEvent[], os: Os): Banner | null {
   const live = events.filter((e) => bannerFor(e, os));
   if (live.length === 0) return null;
   if (live.length === 1) return bannerFor(live[0]!, os);
   const risky = live.some((e) => e.risky);
-  return { ...base(live[0]!), meta: `${live.length} sessions`, title: `${live.length} sessions need you`, body: list(live.map((e) => `${e.name} (${e.number})`)), actions: risky ? ["Review"] : ["Open Marshell"] };
+  return { ...base(live[0]!), meta: `${live.length} sessions`, title: `${live.length} sessions need you`, body: `Sessions ${list(live.map((e) => `${e.number} ${e.name}`))}`, actions: risky ? ["Review"] : ["Open Marshell"] };
 }
 
 /** The one escalation, after a wait: how many minutes the session has been waiting. */

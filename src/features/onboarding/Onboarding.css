@@ -184,6 +184,10 @@
   overflow-y: auto;
   scrollbar-gutter: stable;
 }
+/* The body takes focus (it is how the keyboard scrolls it); its ring sits inside, where the frame cannot clip it. */
+.onboarding__body:focus-visible {
+  outline-offset: -2px;
+}
 .onboarding__foot {
   display: flex;
   flex-wrap: wrap;

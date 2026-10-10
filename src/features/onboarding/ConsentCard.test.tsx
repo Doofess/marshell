@@ -12,7 +12,7 @@ describe("ConsentCard", () => {
     expect(h).toContain("Add 9 hook entries and chain your status line");
     expect(h).toContain("A backup is saved first");
     expect(h).toContain(".marshell\\snapshots");
-    expect(h).toContain("removes only the entries Marshell added");
+    expect(h).toContain("removes the hook entries it added and puts your own status line back from statusline-chain.json");
     expect(h).toContain("Skip: use limited status");
   });
   it("has a switch for each capability and explains an unavailable one", () => {

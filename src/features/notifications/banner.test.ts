@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { batchBanner, bannerFor, DONE_MIN_BACKGROUND_MS, escalationBanner, type NotifyEvent } from "./banner";
+import { BANNER_COMMAND_MAX, batchBanner, bannerFor, DONE_MIN_BACKGROUND_MS, escalationBanner, type NotifyEvent } from "./banner";
 
 const perm: NotifyEvent = { kind: "needs-permission", number: 3, name: "api-server", project: "my-app", detail: "npm test" };
 describe("bannerFor: what it says", () => {
@@ -33,13 +33,28 @@ describe("bannerFor: what it says", () => {
 });
 
 describe("bannerFor: Allow only when the whole command is shown", () => {
+  it("has a cap per system: 160 characters on Windows and Linux, 120 on macOS", () => {
+    expect(BANNER_COMMAND_MAX).toEqual({ windows: 160, mac: 120, linux: 160 });
+  });
   it("offers Allow and Deny only for a command that fits on one line", () => {
     expect(bannerFor({ ...perm, detail: "x".repeat(160) }, "windows")!.actions).toEqual(["Allow", "Deny"]);
+    expect(bannerFor({ ...perm, detail: "x".repeat(120) }, "mac")!.actions).toEqual(["Allow", "Deny"]);
   });
-  it("offers only Open for a command over 160 characters, so a cut-short command cannot be allowed", () => {
+  it("offers only Open for a command over the cap, so a cut-short command cannot be allowed", () => {
     const b = bannerFor({ ...perm, detail: "x".repeat(161) }, "windows")!;
     expect(b.actions).toEqual(["Open"]);
     expect(b.body).not.toContain("xxxxx");
+  });
+  it("a 121-character command is over the cap on macOS and within it on Windows", () => {
+    const cmd = "x".repeat(121);
+    expect(bannerFor({ ...perm, detail: cmd }, "mac")!.actions).toEqual(["Open"]);
+    expect(bannerFor({ ...perm, detail: cmd }, "mac")!.body).toBe("Wants to run a command that does not fit here.");
+    expect(bannerFor({ ...perm, detail: cmd }, "windows")!.actions).toEqual(["Allow", "Deny"]);
+  });
+  it("Linux shows a command up to 160 characters in the body, with Open as the only action either way", () => {
+    expect(bannerFor({ ...perm, detail: "x".repeat(160) }, "linux")!.body).toContain("xxxxx");
+    expect(bannerFor({ ...perm, detail: "x".repeat(161) }, "linux")!.body).toBe("Wants to run a command that does not fit here.");
+    expect(bannerFor({ ...perm, detail: "x".repeat(161) }, "linux")!.actions).toEqual(["Open"]);
   });
   it("offers only Open for a multi-line command", () => {
     expect(bannerFor({ ...perm, detail: "cd app\nrm file" }, "mac")!.actions).toEqual(["Open"]);
@@ -86,8 +101,13 @@ describe("batching and escalation", () => {
   it("folds several requests within 3 seconds into one banner", () => {
     const b = batchBanner([perm, q, p2], "windows")!;
     expect(b.title).toBe("3 sessions need you");
-    expect(b.body).toBe("api-server (3), infra (2) and billing (1)");
+    expect(b.body).toBe("Sessions 3 api-server, 2 infra and 1 billing");
     expect(b.actions).toEqual(["Open Marshell"]);
+  });
+  it("leads each session with its number, as everywhere else, so a number is never read as a count", () => {
+    const b = batchBanner([perm, q], "windows")!;
+    expect(b.body).toMatch(/^Sessions 3 api-server and 2 infra$/);
+    expect(b.body).not.toContain("(3)");
   });
   it("shows only Review when any of them is risky", () => {
     expect(batchBanner([perm, { ...p2, risky: true }], "windows")!.actions).toEqual(["Review"]);

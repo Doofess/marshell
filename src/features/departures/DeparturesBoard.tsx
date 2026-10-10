@@ -8,6 +8,7 @@ import { APPROVALS } from "../approval/fixtures";
 import type { RowModel } from "../sidebar/types";
 import { boardRowLabel, boardRows, COLUMNS, fitRows, splitGroups, type BoardRow } from "./board";
 import { FlipCell } from "./FlipCell";
+import { keyHint } from "./nav";
 import { EMPTY_STATES } from "../onboarding/emptyStates";
 import "./Board.css";
 
@@ -15,8 +16,10 @@ export type DeparturesBoardProps = {
   rows: RowModel[];
   /** The height the board has to fill, in px: only whole rows are shown and the rest are counted. */
   heightPx: number;
-  /** Index (in display order) of the row the keyboard is on. */
+  /** Index (in display order) of the row the keyboard is on; clamped to the rows shown, so the board always has its one tab stop. */
   active?: number;
+  /** The user's own keyboard layout (code to printed key), when the browser can tell; the key hints use it. */
+  layout?: ReadonlyMap<string, string>;
   /** The row whose request is open inline. */
   card?: string;
   /** Rows that closed while the pointer was over the board: kept in place, dimmed. */
@@ -35,12 +38,15 @@ const EMPTY = EMPTY_STATES.find((e) => e.id === "departures-empty")!;
 /**
  * Departures: a sign, true black with 44 px rows, in both themes. Gate calls (sessions that need you, oldest waiting first)
  * sit on top. Only the status and waiting cells flip. Rows never reorder under the pointer (see freeze.ts), the keyboard
- * moves with the arrows, Enter jumps to the session and Y or N opens the request inline, but Enter never answers it.
+ * moves with the arrows, Enter jumps to the session and Y or N opens the request inline, but Enter never answers it. The
+ * gate-call header says which keys those are, with the letter the user's own layout prints on them.
  */
-export function DeparturesBoard({ rows, heightPx, active, card, stale = [], flips = {}, tracks = {}, texts = {}, reduced = false }: DeparturesBoardProps) {
+export function DeparturesBoard({ rows, heightPx, active, layout, card, stale = [], flips = {}, tracks = {}, texts = {}, reduced = false }: DeparturesBoardProps) {
   const groups = splitGroups(boardRows(rows));
   const fit = fitRows(heightPx, groups, card !== undefined);
   const shown = [...fit.gate, ...fit.others];
+  // One tab stop for the whole board (a roving tabindex): the active row, clamped to the rows shown, or the first when none is.
+  const current = Math.min(Math.max(0, active ?? 0), Math.max(0, shown.length - 1));
 
   if (groups.gate.length + groups.others.length === 0) {
     return (
@@ -61,14 +67,13 @@ export function DeparturesBoard({ rows, heightPx, active, card, stale = [], flip
     return (
       <tr
         key={r.id}
-        {...selectedProps(active === index, "current", "board__row")}
+        {...selectedProps(active !== undefined && current === index, "current", "board__row")}
         data-gate={r.gate}
         data-agent={r.agent}
         data-stale={stale.includes(r.id) || undefined}
         title={boardRowLabel(r)}
         role="row"
-        // One tab stop for the whole board (a roving tabindex): the active row, or the first when none is.
-        tabIndex={(active ?? 0) === index ? 0 : -1}
+        tabIndex={current === index ? 0 : -1}
       >
         <td role="cell" className="board__status">
           <FlipCell from={f?.status?.from ?? statusNow} to={statusNow} at={f?.status?.at} reduced={reduced} track={track?.status} />
@@ -131,6 +136,9 @@ export function DeparturesBoard({ rows, heightPx, active, card, stale = [], flip
             <tr className="board__group" role="row">
               <th role="rowheader" scope="rowgroup" colSpan={COLUMNS.length}>
                 Gate calls · {groups.gate.length}
+                <span className="board__keys">
+                  {keyHint("KeyY", layout)} opens the request, {keyHint("KeyN", layout)} opens it on Deny
+                </span>
               </th>
             </tr>
             {fit.gate.map(withCard)}

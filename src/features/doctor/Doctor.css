@@ -233,6 +233,10 @@
   overflow-y: auto;
   scrollbar-gutter: stable;
 }
+/* The body takes focus (it is how the keyboard scrolls it); its ring sits inside, where the sheet cannot clip it. */
+.fix-sheet__body:focus-visible {
+  outline-offset: -2px;
+}
 .fix-sheet__groups {
   display: grid;
   gap: var(--space-3);

@@ -47,8 +47,10 @@ describe("what the strip counts and previews", () => {
     const h = page({ state: { changed: true }, edits: { cleanupPeriodDays: 365, model: "opus" } });
     expect(h).toContain(">1 change<");
   });
-  it("calls an edit equal to the current value no change", () => {
-    expect(page({ state: { changed: true }, edits: { cleanupPeriodDays: 30 } })).toContain(">No changes<");
+  it("renders no strip at all when every edit equals the current value: there is nothing to review or apply", () => {
+    const h = page({ state: { changed: true }, edits: { cleanupPeriodDays: 30 } });
+    expect(h).not.toContain("change-bar");
+    expect(h).not.toContain("No changes");
   });
   it("says 'Changes to the file' for raw text, which has no field edits to count", () => {
     expect(page({ mode: "raw", state: { changed: true } })).toContain(">Changes to the file<");
@@ -82,6 +84,14 @@ describe("an unknown value is an en dash, not a zero", () => {
     const h = renderToStaticMarkup(<FieldRow field={field} />);
     expect(h).toContain('placeholder="–"');
     expect(h).not.toContain('value="0"');
+  });
+  it("shows an en dash text control for a boolean it cannot read, never an off switch", () => {
+    const bool: SettingField = { category: "x", key: "b", label: "Play sounds", help: "h", kind: "boolean", scope: "user", applies: "live" };
+    const h = renderToStaticMarkup(<FieldRow field={bool} file={{ unparsable: true }} />);
+    expect(h).not.toContain("switch");
+    expect(h).toContain('value="–"');
+    expect(h).toContain("data-unknown");
+    expect(h).toMatch(/<label for="([^"]+)"[^>]*>Play sounds<\/label>/);
   });
 });
 

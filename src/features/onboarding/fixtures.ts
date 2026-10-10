@@ -1,5 +1,5 @@
 import { unifiedDiff } from "../../lib/diff";
-import { CAPABILITIES, CLI_NAME, type Capability, type CliId, type ConsentPlan, type Detection } from "./consent";
+import { CAPABILITIES, CLI_NAME, removalCopy, type Capability, type CliId, type ConsentPlan, type Detection } from "./consent";
 
 const HOME = "C:\\Users\\Home Office";
 const CLAUDE_PATH = `${HOME}\\.claude\\settings.json`;
@@ -86,13 +86,12 @@ export const CONSENT_DIFFS = {
 const ALL_ON: Record<Capability, boolean> = { status: true, approve: true, statusline: true };
 /** Antigravity's card: only the status line is verified, so only that switch starts on. */
 const STATUSLINE_ONLY: Record<Capability, boolean> = { status: false, approve: false, statusline: true };
-const REMOVAL = "turning Marshell's hooks off, or uninstalling, removes only the entries Marshell added; the rest of the file stays as it is.";
 const plan = (d: Detection, diff: string, on: Record<Capability, boolean> = ALL_ON): ConsentPlan => ({
   cli: d.cli,
   on,
   configPath: d.configPath,
   backupPath: `${HOME}\\.marshell\\snapshots\\2026-10-10T20-15\\${CLI_NAME[d.cli].toLowerCase().replace(/ /g, "-")}-${d.configPath.split("\\").pop()}`,
-  removal: REMOVAL,
+  removal: removalCopy(d.cli, on),
   diff,
   needsTrust: d.cli === "codex" && (on.status || on.approve),
   chainPath: on.statusline && CAPABILITIES[d.cli].statusline.available ? chainPath(d.cli) : undefined,

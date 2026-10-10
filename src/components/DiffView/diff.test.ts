@@ -35,7 +35,7 @@ describe("parseUnifiedDiff", () => {
   it("reads two files that follow each other without a 'diff ' line between them", () => {
     const two = [
       "--- a/a.json", "+++ b/a.json", "@@ -1,2 +1,2 @@", "-old a", "+new a", " same",
-      "--- /dev/null", "+++ b/b.json", "@@ -1,0 +1,1 @@", "+new b",
+      "--- /dev/null", "+++ b/b.json", "@@ -0,0 +1,1 @@", "+new b",
     ].join("\n");
     const d = parseUnifiedDiff(two);
     expect(d.files).toEqual(["a.json", "b.json"]);

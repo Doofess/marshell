@@ -49,6 +49,14 @@
   block-size: 28px;
   background: var(--fill);
 }
+/* The key hint in the gate-call header: plain text next to the uppercase group name, with the user's own letters. */
+.board__keys {
+  margin-inline-start: var(--space-4);
+  font-weight: 400;
+  letter-spacing: normal;
+  text-transform: none;
+  color: var(--text-2);
+}
 .board__group th {
   grid-column: 1 / -1;
   font-family: var(--font-mono);

@@ -84,6 +84,19 @@ describe("DeparturesBoard: reachable by keyboard, with table semantics that surv
     expect(tabStops(h)).toBe(1);
     expect(h.match(/<tr class="board__row[^"]*"[^>]*tabindex="0"/)![0]).toContain('aria-current="true"');
   });
+  it("keeps one tab stop when the active index is past the shown rows: it clamps to the last row shown", () => {
+    const h = html({ active: 99 });
+    expect(tabStops(h)).toBe(1);
+    const last = h.match(/<tr class="board__row[^"]*"[^>]*>/g)!.at(-1)!;
+    expect(last).toContain('tabindex="0"');
+    expect(last).toContain('aria-current="true"');
+  });
+  it("clamps to a row that is shown, never to one counted under +N more", () => {
+    const twelve = Array.from({ length: 12 }, (_, i) => ({ ...FIXTURES[2]!, id: `s${i}`, number: i + 1 }));
+    const h = renderToStaticMarkup(<DeparturesBoard rows={twelve} heightPx={400} active={11} />);
+    expect(h).toMatch(/\+\d+ more sessions/);
+    expect(tabStops(h)).toBe(1);
+  });
   it("says what every part is with explicit roles, because the grid layout drops the table's own in some browsers", () => {
     const h = html();
     expect(h).toMatch(/<table[^>]*role="table"/);
@@ -110,6 +123,25 @@ describe("DeparturesBoard: reachable by keyboard, with table semantics that surv
     const shown = (h.match(/<tr class="board__row/g) ?? []).length;
     expect(shown).toBeGreaterThan(0);
     expect(36 + 28 + shown * 44 + 44).toBeLessThanOrEqual(520);
+  });
+});
+
+describe("DeparturesBoard: the gate-call header says which keys open a request", () => {
+  it("shows the letters, from the key's own code when the layout is not known", () => {
+    expect(html()).toContain("Y opens the request, N opens it on Deny");
+  });
+  it("shows the letter the user's own layout prints on the key (Z where a German keyboard has KeyY)", () => {
+    const h = html({ layout: new Map([["KeyY", "z"], ["KeyN", "n"]]) });
+    expect(h).toContain("Z opens the request, N opens it on Deny");
+    expect(h).not.toContain("Y opens");
+  });
+  it("keeps the hint in the gate-call header, so it costs no row of the fixed height", () => {
+    const h = html();
+    expect(h).toMatch(/<th[^>]*scope="rowgroup"[^>]*>Gate calls · 2[\s\S]*?opens the request[\s\S]*?<\/th>/);
+  });
+  it("says nothing about the keys when no row needs you", () => {
+    const calm = SCENARIO_ROWS_WITH_TOOLS.filter((r) => r.status !== "needs-permission" && r.status !== "needs-question");
+    expect(renderToStaticMarkup(<DeparturesBoard rows={calm} heightPx={800} />)).not.toContain("opens the request");
   });
 });
 
