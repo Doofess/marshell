@@ -10,10 +10,9 @@
   display: grid;
   align-content: start;
   justify-items: center;
-  gap: var(--space-1);
   min-block-size: 0;
   padding-block: var(--space-2);
-  overflow-y: auto;
+  overflow: clip;
 }
 .rail__tools {
   display: grid;
@@ -47,9 +46,10 @@
 }
 .rail__badge {
   display: grid;
+  align-content: center;
   justify-items: center;
   gap: 2px;
-  padding-block-end: var(--space-2);
+  block-size: 56px;
 }
 .rail__count {
   color: var(--text-1);
@@ -60,10 +60,12 @@
 .rail__item {
   position: relative;
   display: grid;
+  align-content: center;
   justify-items: center;
   gap: 2px;
   inline-size: 100%;
-  padding-block: 6px;
+  block-size: 48px;
+  padding-block: 0;
   border: 0;
   background: transparent;
   color: var(--text-1);
@@ -94,6 +96,32 @@
 }
 @media (hover: hover) and (pointer: fine) {
   .rail__item:hover {
+    background: var(--hover);
+  }
+}
+
+/* The overflow button: how many sessions the rail had no room for. */
+.rail__more {
+  inline-size: 100%;
+  block-size: 36px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-1);
+  font: inherit;
+  font-size: var(--text-11);
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+.rail__more:focus-visible {
+  outline: 2px solid var(--focus, var(--accent));
+  outline-offset: -2px;
+}
+.rail__more:active {
+  background: var(--selected);
+}
+@media (hover: hover) and (pointer: fine) {
+  .rail__more:hover {
     background: var(--hover);
   }
 }

@@ -25,8 +25,27 @@
   color: var(--text-1);
 }
 .lane__more {
-  color: var(--text-2);
+  padding-block: 2px;
+  padding-inline: var(--space-2);
+  border: 0;
+  border-radius: 999px;
+  background: var(--fill);
+  color: var(--text-1);
+  font: inherit;
   font-size: var(--text-11);
+  font-variant-numeric: tabular-nums;
+}
+.lane__more:focus-visible {
+  outline: 2px solid var(--focus, var(--accent));
+  outline-offset: 1px;
+}
+.lane__more:active {
+  background: var(--fill-strong);
+}
+@media (hover: hover) and (pointer: fine) {
+  .lane__more:hover {
+    background: var(--fill-strong);
+  }
 }
 
 .lane__list {
@@ -35,11 +54,7 @@
   gap: 0;
   min-block-size: 0;
   padding-inline: var(--space-2);
-  overflow-y: auto;
-  overscroll-behavior: contain;
-}
-.lane[data-scrolls] .lane__list {
-  mask-image: linear-gradient(to bottom, oklch(0% 0 none) calc(100% - 24px), transparent);
+  overflow: clip;
 }
 
 .lane-row {

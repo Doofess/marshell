@@ -37,12 +37,16 @@ export type LayoutMenuProps = {
   /** True while the app picks the arrangement from the window. */
   auto: boolean;
   os?: Os;
+  /** How many the user asked for, when the window is too small to show them all. */
+  requested?: number;
+  /** The most the window can usefully hold; counts above it are off. */
+  max?: PaneCount;
 };
 
 const COUNTS: PaneCount[] = [1, 2, 3, 4];
 
 /** The popover behind the bar's layout button: how many terminals are on screen, how they are arranged, and the keys. */
-export function LayoutMenu({ count, arrangement, auto, os = "windows" }: LayoutMenuProps) {
+export function LayoutMenu({ count, arrangement, auto, os = "windows", requested = count, max = 4 }: LayoutMenuProps) {
   const key = (id: string) => shortcutLabel(commandById(id).binding!, os);
   return (
     <div className="layout-menu" role="dialog" aria-label="Split layout">
@@ -50,12 +54,27 @@ export function LayoutMenu({ count, arrangement, auto, os = "windows" }: LayoutM
         <span className="layout-menu__label">Terminals on screen</span>
         <div className="layout-menu__counts" role="radiogroup" aria-label="Terminals on screen">
           {COUNTS.map((n) => (
-            <button key={n} type="button" role="radio" className="layout-menu__count" aria-checked={n === count} aria-label={`${n} ${n === 1 ? "pane" : "panes"}`}>
+            <button
+              key={n}
+              type="button"
+              role="radio"
+              className="layout-menu__count"
+              aria-checked={n === requested}
+              aria-disabled={n > max ? true : undefined}
+              aria-label={`${n} ${n === 1 ? "pane" : "panes"}`}
+              title={n > max ? `This window is too small for ${n} useful terminals` : undefined}
+            >
               {n}
             </button>
           ))}
         </div>
         <span className="layout-menu__hint">Any number can run. This is how many you see at once.</span>
+        {max < 4 && <span className="layout-menu__note">This window fits {max}. To see more, make it larger.</span>}
+        {requested > count && (
+          <span className="layout-menu__note">
+            Showing {count} of {requested}. The other {requested - count} keep running.
+          </span>
+        )}
       </div>
 
       {count > 1 && (

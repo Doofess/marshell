@@ -1,0 +1,103 @@
+.all-sessions {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  inline-size: 360px;
+  max-block-size: 420px;
+  border-radius: 10px;
+  background: var(--bg-overlay);
+  box-shadow: 0 8px 28px oklch(0% 0 none / 0.35);
+  color: var(--text-1);
+  font-size: var(--text-12);
+}
+.all-sessions__header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  padding: var(--space-3) var(--space-3) var(--space-2);
+}
+.all-sessions__title {
+  font-size: var(--text-13);
+  font-weight: 600;
+}
+.all-sessions__count {
+  color: var(--text-2);
+  font-size: var(--text-11);
+  font-variant-numeric: tabular-nums;
+}
+
+/* The one scrolling list around the main window: a menu's, with the themed scrollbar showing. */
+.scroll-menu {
+  min-block-size: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-block-end: var(--space-2);
+}
+.all-sessions__row {
+  position: relative;
+  display: grid;
+  grid-template-columns: auto minmax(0, auto) minmax(0, 1fr);
+  grid-template-areas:
+    "glyph name project"
+    "glyph phrase phrase";
+  align-items: center;
+  column-gap: var(--space-2);
+  inline-size: 100%;
+  min-block-size: 44px;
+  padding-block: 4px;
+  padding-inline: 14px var(--space-3);
+  border: 0;
+  background: transparent;
+  color: var(--text-1);
+  font: inherit;
+  text-align: start;
+}
+.all-sessions__row > .status-glyph {
+  grid-area: glyph;
+}
+.all-sessions__stripe {
+  position: absolute;
+  inset-block: 0;
+  inset-inline-start: 0;
+  inline-size: var(--stripe);
+  background: var(--agent, var(--brand-generic));
+}
+.all-sessions__name {
+  grid-area: name;
+  min-inline-size: 0;
+  overflow: clip;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 500;
+}
+.all-sessions__project {
+  grid-area: project;
+  min-inline-size: 0;
+  overflow: clip;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-2);
+}
+.all-sessions__phrase {
+  grid-area: phrase;
+  min-inline-size: 0;
+  overflow: clip;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-2);
+  font-size: var(--text-11);
+}
+.all-sessions__row[aria-current="true"] {
+  box-shadow: inset 0 0 0 100vmax var(--selected);
+}
+.all-sessions__row:focus-visible {
+  outline: 2px solid var(--focus, var(--accent));
+  outline-offset: -2px;
+}
+.all-sessions__row:active {
+  box-shadow: inset 0 0 0 100vmax var(--selected);
+}
+@media (hover: hover) and (pointer: fine) {
+  .all-sessions__row:hover {
+    background: var(--hover);
+  }
+}

@@ -9,6 +9,8 @@ import * as Card from "../../features/approval/ApproveCard.stories";
 import * as Lane from "../../features/lane/Lane.stories";
 import * as Window from "../../features/window/MainWindow.stories";
 import * as Icon from "../../components/Logo/Logo.stories";
+import * as Overflow from "../../features/window/Overflow.stories";
+import * as PromptBar from "../../features/composer/Composer.stories";
 import * as Rows from "../../features/sidebar/SessionRow.stories";
 
 type StoryModule = { default: { title?: string } } & Record<string, unknown>;
@@ -35,6 +37,8 @@ const BATCHES: Record<UpTo, Array<[StoryModule, string]>> = {
   "2b": [
     [Lane, "The lane header is always there at 28 px. The oldest waiting request is the target and shows as a full card; the rest are 36 px one-liners; it never takes more than 40% of the sidebar."],
     [Icon, "The app icon, and where it lives: the first thing in the window's top bar, where it opens the app menu."],
+    [PromptBar, "The prompt line under the terminals. It always writes to the focused pane's session, says which one, takes that session's colour, and never changes height: notices sit in the bar row, so the terminals above do not resize when a session starts working."],
+    [Overflow, "When there are more sessions or requests than fit, the main window never scrolls: it shows the ones that fit and a \"+N more\" button that opens a menu. Menus, unlike the window, keep a themed scrollbar."],
     [Window, "The window in the real layout, with a real xterm.js terminal that follows the theme. The accent follows the session's vendor. Split view shows up to four terminals at once and picks the arrangement that suits the window. Use the Terminal theme control above to pin the terminal dark or light, and Contrast protection to see what it rescues."],
   ],
   "2c": [],

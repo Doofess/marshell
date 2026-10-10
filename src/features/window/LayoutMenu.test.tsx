@@ -25,6 +25,27 @@ describe("LayoutIcon", () => {
   });
 });
 
+describe("LayoutMenu: counts the window cannot hold", () => {
+  it("turns off the counts above what fits, and says what it would take", () => {
+    const h = menu({ count: 2, arrangement: "rows", max: 2 });
+    expect(h).toMatch(/aria-label="3 panes"[^>]*aria-disabled="true"|aria-disabled="true"[^>]*aria-label="3 panes"/);
+    expect(h).toMatch(/aria-disabled="true"[^>]*aria-label="4 panes"|aria-label="4 panes"[^>]*aria-disabled="true"/);
+    expect(h).not.toMatch(/aria-disabled="true"[^>]*aria-label="2 panes"/);
+    expect(h).toContain("This window fits 2");
+    expect(h).toContain("make it larger");
+  });
+  it("says so when fewer are shown than asked for, so a missing pane is never a mystery", () => {
+    const h = menu({ count: 2, requested: 4, arrangement: "rows", max: 2 });
+    expect(h).toContain("Showing 2 of 4");
+    expect(h).toContain("The other 2 keep running");
+  });
+  it("is quiet when everything asked for is on screen, and when all four fit", () => {
+    expect(menu({ max: 4 })).not.toContain("This window fits");
+    expect(menu({ count: 2, requested: 2, max: 2 })).not.toContain("Showing");
+    expect(menu({ count: 2, arrangement: "columns", max: 4 })).not.toMatch(/aria-disabled="true"[^>]*aria-label="\d panes?"/);
+  });
+});
+
 describe("LayoutMenu", () => {
   it("is a named dialog with the pane count as a radio group of one to four", () => {
     const h = menu({ count: 3, arrangement: "main-left" });

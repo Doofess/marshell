@@ -16,4 +16,4 @@ export const TwoWaiting: StoryObj = {
   render: () => <ThemePair label="Two waiting: the oldest is expanded">{frame(<Lane requests={[APPROVALS.safeBash, APPROVALS.question]} sidebarHeight={800} />)}</ThemePair>,
 };
 const many = Array.from({ length: 12 }, (_, i) => ({ ...APPROVALS.safeBash, id: `r${i}`, session: { ...APPROVALS.safeBash.session, name: `session-${i + 1}` }, waitingMs: 60_000 * (i + 1) }));
-export const TwelveWaiting: StoryObj = { render: () => <ThemePair label="Twelve waiting in a 520 px sidebar: scrolls, +N more">{frame(<Lane requests={many} sidebarHeight={520} />)}</ThemePair> };
+export const TwelveWaiting: StoryObj = { render: () => <ThemePair label="Twelve waiting in a 520 px sidebar: whole rows only, no scrolling, the rest behind +N more">{frame(<Lane requests={many} sidebarHeight={520} />)}</ThemePair> };

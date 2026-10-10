@@ -42,6 +42,10 @@ describe("SplitView.css", () => {
     expect(css).toContain(".split__handle:focus-visible");
     expect(css).toMatch(/@media \(hover: hover\) and \(pointer: fine\)/);
   });
+  it("never scrolls an empty pane: it clips, because the main window scrolls nowhere but the conversation", () => {
+    expect(rule(".pane__empty")).toContain("overflow: clip");
+    expect(css).not.toMatch(/overflow(-[xy])?:\s*(auto|scroll)/);
+  });
   it("uses tokens and logical properties only", () => {
     expect(css).not.toMatch(/#[0-9a-f]{3,8}\b|rgb\(/i);
     expect(css).not.toMatch(/\b(margin|padding|border)-(left|right|top|bottom)\b/);

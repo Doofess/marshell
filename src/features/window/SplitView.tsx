@@ -19,6 +19,8 @@ export type SplitViewProps = {
   zoomed?: number;
   /** Sessions not on screen, offered by an empty pane. */
   choices?: RowModel[];
+  /** Sessions that are running but not shown because the window is too small for more panes. */
+  hidden?: number;
   setting?: TerminalThemeSetting;
   os?: Os;
 };
@@ -48,7 +50,7 @@ function handleLabel(plan: Plan, h: Handle): string {
  * the user's choice stands once made. Dividers cost one pixel (the 8 px hit area overhangs the panes). A zoomed
  * pane fills the view and the others keep running.
  */
-export function SplitView({ panes, size, activeIndex = 0, arrangement, ratios = {}, zoomed, choices = [], setting = "follow-app", os = "windows" }: SplitViewProps) {
+export function SplitView({ panes, size, activeIndex = 0, arrangement, ratios = {}, zoomed, choices = [], hidden = 0, setting = "follow-app", os = "windows" }: SplitViewProps) {
   if (panes.length > PANE_LIMIT) throw new Error(`At most ${PANE_LIMIT} panes can be on screen`);
   const isZoomed = zoomed !== undefined && panes[zoomed] != null;
   const count = (isZoomed ? 1 : Math.max(1, panes.length)) as PaneCount;
@@ -66,7 +68,7 @@ export function SplitView({ panes, size, activeIndex = 0, arrangement, ratios = 
     >
       {visible.map(({ row, index }, k) =>
         row ? (
-          <Pane key={row.id} row={row} active={index === activeIndex} setting={setting} style={gridArea(plan.cells[k]!)} cells={cells[k]} zoomedOf={isZoomed ? panes.length : undefined} os={os} />
+          <Pane key={row.id} row={row} active={index === activeIndex} setting={setting} style={gridArea(plan.cells[k]!)} cells={cells[k]} zoomedOf={isZoomed ? panes.length : undefined} runningElsewhere={index === activeIndex && hidden > 0 ? hidden : undefined} os={os} />
         ) : (
           <EmptyPane key={`empty-${index}`} choices={choices} active={index === activeIndex} style={gridArea(plan.cells[k]!)} os={os} />
         ),

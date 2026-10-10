@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ARRANGEMENTS, CELL, HANDLE, HIT, PANE_LIMIT, chooseArrangement, paneCells, planFor, scoreArrangement, tracks, type Arrangement } from "./splitLayout";
+import { ARRANGEMENTS, CELL, HANDLE, HIT, MIN_USABLE, PANE_LIMIT, chooseArrangement, fitsPanes, maxPanes, paneCells, planFor, scoreArrangement, tracks, type Arrangement } from "./splitLayout";
 
 describe("split limits", () => {
   it("shows at most four terminals at once", () => {
@@ -116,6 +116,56 @@ describe("chooseArrangement: the window space is used so every pane stays usable
   it("never picks an arrangement that suits another count", () => {
     for (const n of [1, 2, 3, 4] as const)
       for (const [w, h] of [[720, 440], [1000, 700], [1920, 1000], [500, 900]] as const) expect(ARRANGEMENTS[n]).toContain(pick(n, w, h));
+  });
+});
+
+describe("how many panes a window can usefully hold", () => {
+  it("calls a pane usable from 60 columns by 14 rows", () => {
+    expect(MIN_USABLE).toEqual({ cols: 60, rows: 14 });
+  });
+  it("holds one pane in the smallest window, where two would each be too narrow or too short", () => {
+    expect(maxPanes({ w: 668, h: 344 })).toBe(1);
+  });
+  it("holds two where they can stack with room, three or four only in a roomy window", () => {
+    expect(maxPanes({ w: 892, h: 664 })).toBe(2);
+    expect(maxPanes({ w: 1212, h: 500 })).toBe(2);
+    expect(maxPanes({ w: 1212, h: 724 })).toBe(4);
+    expect(maxPanes({ w: 1920, h: 1000 })).toBe(4);
+  });
+  it("never offers more than four, or fewer than one", () => {
+    expect(maxPanes({ w: 5000, h: 5000 })).toBe(PANE_LIMIT);
+    expect(maxPanes({ w: 0, h: 0 })).toBe(1);
+  });
+  it("is contiguous: every smaller count also fits whenever a count is offered", () => {
+    for (const w of [600, 900, 1200, 1500, 1800, 2400])
+      for (const h of [300, 500, 700, 900, 1200]) {
+        const max = maxPanes({ w, h });
+        for (let n = 1; n <= max; n++) expect(fitsPanes(n as 1 | 2 | 3 | 4, { w, h }), `${n} in ${w}x${h}`).toBe(true);
+        if (max < PANE_LIMIT) expect(fitsPanes((max + 1) as 1 | 2 | 3 | 4, { w, h }), `${max + 1} in ${w}x${h}`).toBe(false);
+      }
+  });
+  it("fits a count when at least one arrangement gives every pane the minimum", () => {
+    expect(fitsPanes(2, { w: 892, h: 664 })).toBe(true);
+    expect(fitsPanes(3, { w: 892, h: 664 })).toBe(false);
+  });
+});
+
+describe("chooseArrangement never picks a layout that starves a pane when another would not", () => {
+  it("stacks two in 892 by 666: side by side would leave 53 columns, under the usable minimum", () => {
+    expect(chooseArrangement(2, { w: 892, h: 666 })).toBe("rows");
+  });
+  it("keeps every pane at 60 by 14 or more whenever any arrangement can", () => {
+    for (const n of [2, 3, 4] as const)
+      for (const w of [700, 892, 1100, 1212, 1500, 1920])
+        for (const h of [400, 520, 666, 724, 900, 1100]) {
+          const size = { w, h };
+          if (!fitsPanes(n, size)) continue;
+          const cells = paneCells(planFor(n, chooseArrangement(n, size)), size);
+          for (const c of cells) {
+            expect(c.cols, `${n} in ${w}x${h}`).toBeGreaterThanOrEqual(MIN_USABLE.cols);
+            expect(c.rows, `${n} in ${w}x${h}`).toBeGreaterThanOrEqual(MIN_USABLE.rows);
+          }
+        }
   });
 });
 

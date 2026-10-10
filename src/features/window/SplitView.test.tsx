@@ -145,6 +145,22 @@ describe("SplitView: an empty pane", () => {
   });
 });
 
+describe("SplitView: sessions with no room", () => {
+  it("names how many are running out of sight in the focused pane's header only", () => {
+    const h = html({ panes: [api!, billing!], hidden: 2, activeIndex: 1 });
+    expect(count(h, /2 more running/g)).toBe(1);
+    expect(h.indexOf("2 more running")).toBeGreaterThan(h.indexOf('aria-label="Terminal: billing"'));
+    expect(html({ panes: [api!, billing!] })).not.toContain("more running");
+  });
+  it("lists at most five sessions in an empty pane and sends the rest to the command palette, since the window never scrolls", () => {
+    const many = Array.from({ length: 8 }, (_, i) => ({ ...infra!, id: `x${i}`, name: `session-${i}` }));
+    const h = html({ panes: [api!, null], choices: many });
+    expect(count(h, /class="pane__choice"/g)).toBe(5);
+    expect(h).toContain("+3 more, open the command palette (Ctrl+Shift+K)");
+    expect(html({ panes: [api!, null], choices: many.slice(0, 5) })).not.toContain("more, open");
+  });
+});
+
 describe("SplitView: hygiene", () => {
   it("puts no literal colour in the markup", () => {
     expect(html({ panes: [api!, billing!, infra!, docs!] })).not.toMatch(/#[0-9a-f]{3,8}\b|rgb\(|oklch\(/i);

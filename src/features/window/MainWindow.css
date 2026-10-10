@@ -60,6 +60,35 @@
   background: transparent;
   color: var(--text-2);
 }
+/* A wide, labelled button, so nobody has to guess what an icon means. */
+.window__palette {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  block-size: 28px;
+  margin-inline-start: var(--space-1);
+  padding-inline: var(--space-2) var(--space-3);
+  border: 0;
+  border-radius: var(--radius);
+  background: var(--fill);
+  color: var(--text-2);
+  font: inherit;
+  font-size: var(--text-12);
+  white-space: nowrap;
+}
+.window__palette:focus-visible {
+  outline: 2px solid var(--focus, var(--accent));
+  outline-offset: 1px;
+}
+.window__palette:active {
+  background: var(--fill-strong);
+}
+@media (hover: hover) and (pointer: fine) {
+  .window__palette:hover {
+    background: var(--fill-strong);
+    color: var(--text-1);
+  }
+}
 .window__control--menu {
   inline-size: 32px;
   block-size: 32px;
@@ -109,6 +138,14 @@
 
 .window__body {
   display: flex;
+  min-block-size: 0;
+}
+/* The terminals and, under them, the prompt bar. Nothing in here scrolls except the conversation. */
+.window__center {
+  display: flex;
+  flex: 1 1 0;
+  flex-direction: column;
+  min-inline-size: 0;
   min-block-size: 0;
 }
 .window__main {

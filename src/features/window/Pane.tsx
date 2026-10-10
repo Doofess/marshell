@@ -9,6 +9,8 @@ import type { TerminalThemeSetting } from "../terminal/terminalTheme";
 import "./SplitView.css";
 
 const NARROW = 80;
+/** The main window never scrolls, so an empty pane lists what fits and sends the rest to the command palette. */
+const CHOICE_LIMIT = 5;
 export const needsYou = (r: RowModel) => r.status === "needs-permission" || r.status === "needs-question";
 
 const icon = (d: string) => (
@@ -29,6 +31,8 @@ export type PaneProps = {
   cells?: { cols: number; rows: number };
   /** Set while this pane fills the view: how many panes it stands in for. */
   zoomedOf?: number;
+  /** Running sessions with no pane because the window is too small for more. */
+  runningElsewhere?: number;
   os?: Os;
 };
 
@@ -37,7 +41,7 @@ export type PaneProps = {
  * the status glyph (the vendor mark moving, while working), the name, the project and, only when it applies,
  * how tight the pane is. A pane that needs you never recedes with the inactive headers.
  */
-export function Pane({ row, active, setting, style, cells, zoomedOf, os = "windows" }: PaneProps) {
+export function Pane({ row, active, setting, style, cells, zoomedOf, runningElsewhere, os = "windows" }: PaneProps) {
   const needs = needsYou(row);
   const zoomed = zoomedOf !== undefined;
   const zoomKeys = shortcutLabel(commandById("zoom-pane").binding!, os);
@@ -55,6 +59,7 @@ export function Pane({ row, active, setting, style, cells, zoomedOf, os = "windo
         </span>
         <span className="pane__spacer" />
         {zoomed && zoomedOf > 1 && <span className="pane__running">{zoomedOf - 1} more running</span>}
+        {!zoomed && runningElsewhere !== undefined && runningElsewhere > 0 && <span className="pane__running">{runningElsewhere} more running</span>}
         {narrow && (
           <Chip tone="caution" title={`This pane is narrower than ${NARROW} columns, which many CLIs need. Zoom it (${zoomKeys}) or change the layout.`}>
             {cells.cols}×{cells.rows}
@@ -94,7 +99,7 @@ export function EmptyPane({ choices, active, style, os = "windows" }: { choices:
         <p className="pane__empty-title">Choose a session for this pane</p>
         {choices.length > 0 ? (
           <ul className="pane__choices">
-            {choices.map((r) => (
+            {choices.slice(0, CHOICE_LIMIT).map((r) => (
               <li key={r.id}>
                 <button type="button" className="pane__choice" data-agent={r.agent}>
                   <span className="pane__stripe" aria-hidden="true" />
@@ -108,6 +113,11 @@ export function EmptyPane({ choices, active, style, os = "windows" }: { choices:
                 </button>
               </li>
             ))}
+            {choices.length > CHOICE_LIMIT && (
+              <li className="pane__more">
+                +{choices.length - CHOICE_LIMIT} more, open the command palette ({shortcutLabel(commandById("palette").binding!, os)})
+              </li>
+            )}
           </ul>
         ) : (
           <p className="pane__empty-note">Every session is already on screen.</p>

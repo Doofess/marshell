@@ -14,9 +14,15 @@ describe("Lane.css", () => {
   it("makes one-liners 36 px", () => {
     expect(rule(".lane-row")).toContain("block-size: 36px");
   });
-  it("scrolls internally and fades the cut edge", () => {
-    expect(rule(".lane__list")).toMatch(/overflow-y:\s*auto/);
-    expect(css).toContain("mask-image");
+  it("never scrolls and never fades: it shows whole rows, so there is no cut edge to hint at", () => {
+    expect(rule(".lane__list")).toMatch(/overflow:\s*clip/);
+    expect(css).not.toMatch(/overflow(-[xy])?:\s*(auto|scroll)/);
+    expect(css).not.toContain("mask-image");
+  });
+  it("makes the +N more a real button: a fine-pointer hover, a press state, a focus ring", () => {
+    expect(css).toContain(".lane__more:focus-visible");
+    expect(css).toContain(".lane__more:active");
+    expect(css).toMatch(/\.lane__more:hover/);
   });
   it("styles focus and press", () => {
     expect(css).toContain(".lane-row:focus-visible");
@@ -27,7 +33,7 @@ describe("Lane.css", () => {
     expect(css).not.toMatch(/#[0-9a-f]{3,8}\b|rgb\(/i);
     expect(css).not.toMatch(/\b(margin|padding|border)-(left|right|top|bottom)\b/);
   });
-  it("adds no gap or end padding to the list, so the lane's size (header + card + one-liners) is exactly what laneLayout says and nothing scrolls by a few pixels", () => {
+  it("adds no gap or end padding to the list, so the lane's size (header + card + one-liners) is exactly what laneLayout says", () => {
     const r = rule(".lane__list");
     expect(r).toMatch(/gap:\s*0/);
     expect(r).not.toMatch(/padding-block-end/);

@@ -1,7 +1,8 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { FIXTURES } from "../sidebar/fixtures";
-import { Rail } from "./Rail";
+import { listLayout } from "./listLayout";
+import { RAIL_ITEM, RAIL_BADGE, Rail } from "./Rail";
 
 const rows = ["needs-permission", "working", "done-unseen"].map((id) => FIXTURES.find((f) => f.id === id)!);
 
@@ -44,5 +45,26 @@ describe("Rail (accessibility gate)", () => {
     const h = renderToStaticMarkup(<Rail rows={rows} needsYou={0} />);
     expect(h).toContain('data-mono="BI"');
     expect(h).not.toContain("rail__mono");
+  });
+});
+
+describe("Rail: it never scrolls", () => {
+  const twenty = Array.from({ length: 20 }, (_, i) => ({ ...FIXTURES[0]!, id: `s${i}`, name: `session-${i + 1}` }));
+  it("shows the sessions that fit between the bar and the tools, and a +N button for the rest", () => {
+    const h = renderToStaticMarkup(<Rail rows={twenty} needsYou={0} height={800} />);
+    const { visible, hidden } = listLayout(20, 800 - 40 - 40 - 16, RAIL_ITEM);
+    expect((h.match(/class="rail__item"/g) ?? []).length).toBe(visible);
+    expect(h).toMatch(/aria-label="\+\d+, show all 20 sessions"/);
+    expect(h).toContain(`+${hidden}`);
+  });
+  it("gives the needs-you badge stack its room before counting rows", () => {
+    const without = renderToStaticMarkup(<Rail rows={twenty} needsYou={0} height={800} />);
+    const withBadge = renderToStaticMarkup(<Rail rows={twenty} needsYou={2} height={800} />);
+    expect((withBadge.match(/class="rail__item"/g) ?? []).length).toBeLessThan((without.match(/class="rail__item"/g) ?? []).length + 1);
+    expect(RAIL_BADGE).toBeGreaterThan(0);
+  });
+  it("shows no button when the sessions fit", () => {
+    expect(renderToStaticMarkup(<Rail rows={rows} needsYou={0} height={800} />)).not.toContain("Show all");
+    expect(renderToStaticMarkup(<Rail rows={rows} needsYou={0} />)).not.toContain("Show all");
   });
 });

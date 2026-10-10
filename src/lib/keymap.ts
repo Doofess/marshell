@@ -12,6 +12,7 @@ export function shortcutLabel(b: Binding, os: Os): string {
 
 export const COMMANDS: Command[] = [
   { id: "launcher", label: "Start a session", group: "Sessions", binding: { key: "T" } },
+  { id: "focus-prompt", label: "Write a prompt to the active session", group: "Sessions", binding: { key: "M" } },
   { id: "next-waiting", label: "Go to the oldest waiting session", group: "Sessions", binding: { key: "N" } },
   { id: "close", label: "Close session", group: "Sessions", binding: { key: "W" } },
   { id: "reopen", label: "Reopen closed session", group: "Sessions", binding: { key: "T", alt: true } },

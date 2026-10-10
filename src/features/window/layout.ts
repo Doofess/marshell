@@ -3,6 +3,8 @@ export const SIDEBAR = { default: 288, min: 200, max: 400, rail: 52 } as const;
 export const AUTO_COLLAPSE_BELOW = 960;
 export const MIN_WINDOW = { width: 720, height: 480 } as const;
 export const DRAWER = { default: 360, min: 300, max: 560 } as const;
+/** The prompt bar under the terminals: one line of field, one row of tools, and its margins. Its height never changes with the session's state. */
+export const COMPOSER_HEIGHT = 94;
 
 export type SidebarPref = "expanded" | "rail" | "focus";
 export type SidebarMode = "expanded" | "rail" | "focus";

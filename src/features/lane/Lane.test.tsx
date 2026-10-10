@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { APPROVALS } from "../approval/fixtures";
 import type { ApprovalRequest } from "../approval/types";
 import { Lane } from "./Lane";
+import { laneLayout } from "./laneLayout";
 
 const html = (requests: ApprovalRequest[] = [APPROVALS.safeBash, APPROVALS.question], h = 800) => renderToStaticMarkup(<Lane requests={requests} sidebarHeight={h} />);
 
@@ -24,12 +25,23 @@ describe("Lane", () => {
     expect(html()).toContain('role="status"');
     expect(html()).toContain("Needs you · 2");
   });
-  it("shows +N more only when it scrolls", () => {
+  const many = Array.from({ length: 12 }, (_, i) => ({ ...APPROVALS.safeBash, id: `r${i}`, waitingMs: 1000 * (i + 1) }));
+  it("shows +N more, as a button, only when it had to leave requests out", () => {
     expect(html()).not.toContain("more");
-    const many = Array.from({ length: 12 }, (_, i) => ({ ...APPROVALS.safeBash, id: `r${i}`, waitingMs: 1000 * (i + 1) }));
+    const h = html(many, 800);
+    expect(h).toMatch(/<button[^>]*class="lane__more"[^>]*aria-label="\+\d+ more, show all 12 requests"[^>]*>\+\d+ more<\/button>/);
+    expect(h).toContain('data-clipped="true"');
+  });
+  it("renders only the requests that fit, so nothing hidden can take keyboard focus", () => {
+    const h = html(many, 800);
+    const shown = (h.match(/class="lane-row"/g) ?? []).length + (h.match(/data-phase="pending"/g) ?? []).length;
+    expect(shown).toBe(laneLayout(12, 800).visible);
+    expect(shown).toBeLessThan(12);
+  });
+  it("never offers a scroll: no scrolling attribute, and the count in the button matches what is left out", () => {
     const h = html(many, 400);
-    expect(h).toContain("+11 more");
-    expect(h).toContain('data-scrolls="true"');
+    expect(h).not.toContain("data-scrolls");
+    expect(h).toContain(`+${laneLayout(12, 400).hiddenCount} more`);
   });
   it("ignores requests that are no longer pending", () => {
     expect(html([APPROVALS.receipt])).toContain("All clear");

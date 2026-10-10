@@ -32,6 +32,17 @@
   line-height: 16px;
 }
 
+.layout-menu__note {
+  padding: var(--space-2);
+  border-radius: 6px;
+  background: var(--accent-tint);
+  font-size: var(--text-11);
+  line-height: 16px;
+}
+.layout-menu__count[aria-disabled="true"] {
+  color: var(--text-2);
+  opacity: 0.55;
+}
 /* One segmented control: a single fill with the chosen segment raised in the accent. */
 .layout-menu__counts {
   display: grid;

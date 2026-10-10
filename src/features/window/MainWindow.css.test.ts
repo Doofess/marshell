@@ -20,6 +20,11 @@ describe("MainWindow.css", () => {
     expect(rule(".window__popover")).toContain("position: absolute");
     expect(rule(".window__popover")).toMatch(/z-index:\s*3/);
   });
+  it("stacks the terminals above the prompt bar in one centre column", () => {
+    const r = rule(".window__center");
+    expect(r).toContain("flex-direction: column");
+    expect(r).toContain("flex: 1 1 0");
+  });
   it("styles focus and press on the bar buttons", () => {
     expect(css).toContain(".window__control:focus-visible");
     expect(css).toContain(".window__control:active");

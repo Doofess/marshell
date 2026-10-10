@@ -10,6 +10,8 @@ export const HIT = 8;
 /** Terminal cell metrics at 13 px mono, the pane header, and the terminal's own padding. */
 export const CELL = { w: 8, h: 17, header: 28, padX: 16, padY: 16 } as const;
 const COMFORT = { cols: 80, rows: 24 } as const;
+/** Below this a pane is not worth showing: most CLIs wrap or scroll their own UI. A count is offered only if some arrangement keeps every pane at least this big. */
+export const MIN_USABLE = { cols: 60, rows: 14 } as const;
 /** A layout this close to the best wins if it comes first in the preference order, so the choice does not flicker between near-equals. */
 const TOLERANCE = 0.1;
 export const RATIO = { min: 0.2, max: 0.8, default: 0.5 } as const;
@@ -136,8 +138,26 @@ export function scoreArrangement(plan: Plan, size: Size, ratios: Ratios = {}): n
   return Math.min(...paneCells(plan, size, ratios).map((p) => (Math.min(p.cols, COMFORT.cols) / COMFORT.cols) * (Math.min(p.rows, COMFORT.rows) / COMFORT.rows)));
 }
 
+/** True when some arrangement of `count` panes gives every pane at least 60 columns by 14 rows. */
+export function fitsPanes(count: PaneCount, size: Size): boolean {
+  return ARRANGEMENTS[count].some((a) => paneCells(planFor(count, a), size).every((p) => p.cols >= MIN_USABLE.cols && p.rows >= MIN_USABLE.rows));
+}
+
+/** How many terminals the space can usefully show, one to four. A window too small for a count never offers it. */
+export function maxPanes(size: Size): PaneCount {
+  let n: PaneCount = 1;
+  while (n < PANE_LIMIT && fitsPanes((n + 1) as PaneCount, size)) n = (n + 1) as PaneCount;
+  return n;
+}
+
 export function chooseArrangement(count: PaneCount, size: Size, ratios: Ratios = {}): Arrangement {
-  const scored = ARRANGEMENTS[count].map((a) => ({ a, score: scoreArrangement(planFor(count, a), size, ratios) }));
+  const all = ARRANGEMENTS[count].map((a) => {
+    const plan = planFor(count, a);
+    const usable = paneCells(plan, size, ratios).every((p) => p.cols >= MIN_USABLE.cols && p.rows >= MIN_USABLE.rows);
+    return { a, usable, score: scoreArrangement(plan, size, ratios) };
+  });
+  // An arrangement that keeps every pane usable always beats one that does not, however well the other scores.
+  const scored = all.some((s) => s.usable) ? all.filter((s) => s.usable) : all;
   const best = Math.max(...scored.map((s) => s.score));
   return scored.find((s) => s.score >= best - TOLERANCE)!.a;
 }

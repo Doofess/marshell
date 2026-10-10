@@ -37,12 +37,9 @@ describe("scrollbars.css", () => {
 
 describe("terminal scrollbar", () => {
   for (const scheme of ["dark", "light"] as const)
-    it(`styles xterm's own scrollbar in the ${scheme} palette, stronger on hover and drag`, () => {
+    it(`draws no scrollbar in the ${scheme} palette: the conversation scrolls by wheel, keys and touch, with nothing to see`, () => {
       const p = PALETTES[scheme];
       for (const k of ["scrollbarSliderBackground", "scrollbarSliderHoverBackground", "scrollbarSliderActiveBackground"] as const)
-        expect(p[k], k).toMatch(/^#[0-9a-f]{8}$/);
-      const alpha = (c: string) => parseInt(c.slice(7), 16);
-      expect(alpha(p.scrollbarSliderHoverBackground!)).toBeGreaterThan(alpha(p.scrollbarSliderBackground!));
-      expect(alpha(p.scrollbarSliderActiveBackground!)).toBeGreaterThan(alpha(p.scrollbarSliderHoverBackground!));
+        expect(p[k], k).toBe("#00000000");
     });
 });
