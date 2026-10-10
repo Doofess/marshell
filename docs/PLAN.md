@@ -81,7 +81,7 @@ Each step builds on the one before it, so do them in this order. All of them are
 |---|---|---|
 | 1 | Tokens + type specimen | Colours, spacing, radii. AA matrix for the 8 accents in both themes. Type scale with real strings. |
 | 2 | Status glyph set + motion | Every glyph at 12/16 px. Live animations, plus their reduced-motion versions. |
-| 3 | Sidebar row matrix | Every state in the row table below, in compact, comfortable and expanded. Truncation at a 200 px sidebar. |
+| 3 | Sidebar row matrix | Every state in the row table below, in comfortable and expanded (there is no compact density). Truncation at a 200 px sidebar. |
 | 4 | Approve card | Safe Bash, risky Bash, Edit with diff, Write of a new file, MCP tool, a 40-line command, question card, after-decision receipt, "Answered in terminal", released on timeout. |
 | 5 | Main window composite | The **5-agent scenario**: 2 cards in the lane, 1 working, 1 done-unseen, 1 error. Also split view, focus mode, collapsed rail, and the 720 px minimum width. |
 | 6 | Launcher + command palette | Empty, filtering, and "remembered for this project" states. |
@@ -129,21 +129,20 @@ Stories are fed by `fake-agent` scenario scripts, so the same 5-agent run drives
 | Right drawer | Default 360 px, minimum 300, maximum 560. It pushes the terminal, and overlays instead when the terminal would drop below 720 px. |
 | Split view | 50/50 with a 1 px hairline and an 8 px hit area. The active pane has a 2 px accent bar under its header; the inactive header is at 60% opacity. Terminal text is **never** dimmed. |
 | Focus mode | Sidebar and header go to 0. The header reveals on an 8 px top-edge hover. A floating pill at top right reads "2 need you ⌃⇧N" and stays silent apart from its glyph bounce. |
-| Rail (52 px) | Brand stripe, status glyph and a 2-letter monogram per session. Needs-you shows as a badge stack with a count at the top. |
+| Rail (52 px) | Brand stripe, the agent mark and a 2-letter monogram per session, with a small status glyph. Needs-you shows as a badge stack with a count at the top. |
 
 **Hover-freeze rule.** While the pointer is inside the sidebar, lane height changes are deferred until the pointer leaves, with a 3 s cap. Meanwhile a "1 new" chip appears in the lane header.
 
 ### Sidebar rows
 
-**Compact row, 40 px:**
+**Comfortable row, 56 px** (there is no compact density; the two modes are comfortable and expanded):
 - 3 px brand stripe flush left
-- 14 px padding, then the status glyph in a 16 px box
+- 14 px padding, then the **agent mark** in a 16 px box: the vendor logo (Claude, OpenAI, Gemini, Copilot, Cursor and others, a generic terminal mark for custom CLIs) in the agent's brand colour
 - 8 px gap, then the **name** (13/500)
 - 6 px gap, then project · branch (12, secondary)
-- flexible space, then the right cluster: caution 12, mute 12, wait time or age (11, tabular), context ring 16
+- flexible space, then the right cluster: caution 12, mute 12, the **status glyph** 16, wait time or age (11, tabular), context ring 16
 - 12 px right padding
-
-**Comfortable row, 56 px:** the same first line, plus a second line with the live status phrase in 12 px secondary, e.g. "Editing src/auth.ts · 2 subagents".
+- a second line: the **model** (12/500, e.g. "Opus 5.5", left out when the CLI does not report one) · the live status phrase in 12 px secondary, e.g. "Editing src/auth.ts · 2 subagents"
 
 **Truncation order:**
 1. The branch truncates first, in the middle (`feat/au…-flow`).

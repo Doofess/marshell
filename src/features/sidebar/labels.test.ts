@@ -17,7 +17,7 @@ const base: RowModel = {
 describe("rowLabel", () => {
   it("reads name, state, phrase, place and wait", () => {
     expect(rowLabel(base)).toBe(
-      "api-server, Needs you: permission. Wants to run npm test. my-app, branch feat/auth-flow. Waiting 1m. Context 42% used.",
+      "api-server, Claude, Needs you: permission. Wants to run npm test. my-app, branch feat/auth-flow. Waiting 1m. Context 42% used.",
     );
   });
   it("mentions muted, elevated and the caution mode", () => {
@@ -29,6 +29,10 @@ describe("rowLabel", () => {
     expect(l).not.toContain("Context");
     expect(l).not.toContain("Waiting");
   });
+  it("names the agent and the model when the CLI reports one", () => {
+    expect(rowLabel({ ...base, model: "Opus 5.5" })).toContain("api-server, Claude Opus 5.5, Needs you");
+    expect(rowTitle({ ...base, model: "Opus 5.5" })).toContain("\nClaude Opus 5.5\n");
+  });
   it("keeps names that are not Latin", () => {
     expect(rowLabel({ ...base, name: "認証サーバー 🚀" })).toContain("認証サーバー 🚀,");
   });
@@ -36,6 +40,6 @@ describe("rowLabel", () => {
 
 describe("rowTitle", () => {
   it("has the untruncated text on separate lines", () => {
-    expect(rowTitle(base)).toBe("api-server\nmy-app · feat/auth-flow\nWants to run `npm test`");
+    expect(rowTitle(base)).toBe("api-server\nmy-app · feat/auth-flow\nClaude\nWants to run `npm test`");
   });
 });

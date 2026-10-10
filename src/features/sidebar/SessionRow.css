@@ -11,9 +11,6 @@
   cursor: default;
 }
 
-.session-row[data-density="compact"] {
-  block-size: var(--row-compact);
-}
 .session-row[data-density="comfortable"] {
   block-size: var(--row-comfortable);
 }
@@ -47,26 +44,21 @@
 .session-row[data-ended] {
   color: var(--text-3);
 }
-.session-row[data-ended] :is(.session-row__project, .session-row__sep, .session-row__branch-head, .session-row__branch-tail, .session-row__phrase, .session-row__time) {
+.session-row[data-ended] :is(.session-row__project, .session-row__sep, .session-row__branch-head, .session-row__branch-tail, .session-row__phrase, .session-row__model, .session-row__time) {
   color: inherit;
 }
 
-/* Brand stripe, flush to the inline start. */
+.session-row[data-ended] .agent-mark {
+  color: inherit;
+}
+
+/* Brand stripe, flush to the inline start; --agent comes from components/AgentMark/agent-colors.css. */
 .session-row__stripe {
   position: absolute;
   inset-block: 0;
   inset-inline-start: 0;
   inline-size: var(--stripe);
-  background: var(--brand-generic);
-}
-.session-row[data-agent="claude"] .session-row__stripe {
-  background: var(--brand-claude);
-}
-.session-row[data-agent="codex"] .session-row__stripe {
-  background: var(--brand-codex);
-}
-.session-row[data-agent="gemini"] .session-row__stripe {
-  background: var(--brand-gemini);
+  background: var(--agent, var(--brand-generic));
 }
 
 .session-row__line1 {
@@ -76,7 +68,8 @@
   white-space: nowrap;
 }
 
-.session-row__line1 > .status-glyph {
+/* The agent mark leads; the gap after it (and after the shield) is what the status glyph used to have. */
+.session-row__line1 > .agent-mark {
   margin-inline-end: var(--space-2);
 }
 .session-row__line1 > .aux-glyph {
@@ -174,14 +167,29 @@
   font-weight: 500;
 }
 
+/* Line 2 starts under the name: the model (never cut), then the live status phrase, which is. */
 .session-row__phrase {
+  display: flex;
+  align-items: baseline;
   padding-inline-start: calc(var(--glyph) + var(--space-2));
-  overflow: clip;
-  text-overflow: ellipsis;
   white-space: nowrap;
   color: var(--text-2);
   font-size: var(--text-12);
   line-height: 16px;
+}
+
+.session-row__model {
+  flex: none;
+  color: var(--text-1);
+  font-weight: 500;
+}
+.session-row__phrase > .session-row__sep {
+  padding-inline: 6px;
+}
+.session-row__status-text {
+  min-inline-size: 0;
+  overflow: clip;
+  text-overflow: ellipsis;
 }
 
 .session-row__details {

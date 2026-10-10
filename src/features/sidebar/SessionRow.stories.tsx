@@ -18,14 +18,6 @@ function Column({ density, width, ids }: { density: Density; width: number; ids?
   );
 }
 
-export const Compact: StoryObj = {
-  render: () => (
-    <ThemePair label="Compact rows at 264 px">
-      <Column density="compact" width={264} />
-    </ThemePair>
-  ),
-};
-
 export const Comfortable: StoryObj = {
   render: () => (
     <ThemePair label="Comfortable rows at 264 px">
@@ -58,7 +50,7 @@ export const TruncationSteps: StoryObj = {
       {[400, 330, 280, 240, 200].map((w) => (
         <div key={w} style={{ marginBlockEnd: "var(--space-2)" }}>
           <div style={{ fontSize: "var(--text-11)", color: "var(--text-3)" }}>{w} px</div>
-          <Column density="compact" width={w} ids={["long-names"]} />
+          <Column density="comfortable" width={w} ids={["long-names"]} />
         </div>
       ))}
     </ThemePair>

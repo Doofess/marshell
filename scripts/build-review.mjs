@@ -17,6 +17,8 @@ const CSS = [
   "src/styles/motion.css",
   "src/design/ThemePair.css",
   "src/design/specimen.css",
+  "src/components/AgentMark/agent-colors.css",
+  "src/components/AgentMark/AgentMark.css",
   "src/components/StatusGlyph/StatusGlyph.css",
   "src/components/ContextRing/ContextRing.css",
   "src/features/sidebar/SessionRow.css",

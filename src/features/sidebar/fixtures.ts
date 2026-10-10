@@ -4,7 +4,7 @@ const MIN = 60_000;
 
 /** One row per state from docs/PLAN.md "Sidebar rows", plus the modifiers and awkward names. */
 export const FIXTURES: RowModel[] = [
-  { id: "idle", name: "docs-site", project: "marketing", branch: "main", agent: "codex", status: "idle", phrase: "Idle", contextPct: 8 },
+  { id: "idle", name: "docs-site", project: "marketing", branch: "main", agent: "codex", status: "idle", phrase: "Idle", model: "GPT-5.5", contextPct: 8 },
   {
     id: "working",
     name: "api-server",
@@ -28,6 +28,7 @@ export const FIXTURES: RowModel[] = [
     agent: "claude",
     status: "needs-permission",
     phrase: "Wants to run `npm test`",
+    model: "Sonnet 5.5",
     waitingMs: 65_000,
     contextPct: 61,
     flash: true,
@@ -51,6 +52,7 @@ export const FIXTURES: RowModel[] = [
     agent: "claude",
     status: "done-unseen",
     phrase: "Done · edited 4 files",
+    model: "Opus 5.5",
     ageMs: 40_000,
     contextPct: 55,
   },
@@ -63,6 +65,7 @@ export const FIXTURES: RowModel[] = [
     agent: "claude",
     status: "error",
     phrase: "Stopped: rate limit reached. Resets at 3:40 pm.",
+    model: "Opus 5.5",
     contextPct: 97,
   },
   {

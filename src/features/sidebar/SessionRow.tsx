@@ -1,3 +1,4 @@
+import { AgentMark } from "../../components/AgentMark/AgentMark";
 import { AuxGlyph, StatusGlyph } from "../../components/StatusGlyph/StatusGlyph";
 import { ContextRing } from "../../components/ContextRing/ContextRing";
 import { formatDuration, formatUsage, modeCaution } from "./format";
@@ -46,7 +47,7 @@ export function SessionRow({
     >
       <span className="session-row__stripe" aria-hidden="true" />
       <div className="session-row__line1" aria-hidden="true">
-        <StatusGlyph kind={row.status} />
+        <AgentMark agent={row.agent} />
         {row.elevated && <AuxGlyph kind="elevated" />}
         {/* The lead clips, so whatever happens to the names, the right cluster always stays in the row. */}
         <span className="session-row__lead">
@@ -74,16 +75,23 @@ export function SessionRow({
         <span className="session-row__cluster">
           {caution && <AuxGlyph kind="caution" label={caution} />}
           {row.muted && <AuxGlyph kind="muted" />}
+          <StatusGlyph kind={row.status} />
           {time !== undefined && <span className="session-row__time">{formatDuration(time)}</span>}
           <ContextRing pct={row.contextPct} />
         </span>
       </div>
-      {density !== "compact" && (
-        <div className="session-row__phrase" aria-hidden="true">
+      <div className="session-row__phrase" aria-hidden="true">
+        {row.model && (
+          <>
+            <span className="session-row__model">{row.model}</span>
+            <span className="session-row__sep">·</span>
+          </>
+        )}
+        <span className="session-row__status-text">
           {row.phrase}
           {row.muted && <span className="session-row__suffix"> · muted</span>}
-        </div>
-      )}
+        </span>
+      </div>
       {density === "expanded" && (
         <div className="session-row__details" aria-hidden="true">
           <div className="session-row__meta">

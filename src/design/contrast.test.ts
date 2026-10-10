@@ -21,7 +21,7 @@ describe("text on surfaces", () => {
 });
 
 describe("status and brand colours on surfaces", () => {
-  const names = ["--error", "--ok", "--caution", "--brand-claude", "--brand-codex", "--brand-gemini", "--brand-generic"];
+  const names = ["--error", "--ok", "--caution", "--brand-claude", "--brand-claude-mark", "--brand-codex", "--brand-gemini", "--brand-violet", "--brand-generic"];
   for (const theme of THEMES)
     for (const n of names)
       it(`${n} is at least 3:1 on every surface (${theme})`, () => {
@@ -66,7 +66,7 @@ describe("composited and derived colours (final review)", () => {
     it(`--ok-dim (the seen check) is at least 3:1 on every surface (${theme})`, () => {
       expect(minOnSurfaces(tokens["--ok-dim"]![theme], tokens, theme)).toBeGreaterThanOrEqual(3);
     });
-  const brands = ["--brand-claude", "--brand-codex", "--brand-gemini", "--brand-generic"];
+  const brands = ["--brand-claude", "--brand-codex", "--brand-gemini", "--brand-violet", "--brand-generic"];
   for (const theme of THEMES)
     for (const s of ["--error", "--ok", "--caution"])
       for (const b of brands)

@@ -1,3 +1,4 @@
+import { AGENT_NAMES } from "../../components/AgentMark/agents";
 import { GLYPHS } from "../../components/StatusGlyph/glyphs";
 import { formatDuration, modeCaution } from "./format";
 import type { RowModel } from "./types";
@@ -5,8 +6,11 @@ import type { RowModel } from "./types";
 /** Strips Markdown code ticks so screen readers don't read "backtick". */
 const plain = (s: string) => s.replace(/`/g, "");
 
+/** "Claude Opus 5.5", or just "Claude" when the CLI doesn't report a model. */
+const agentAndModel = (r: RowModel) => [AGENT_NAMES[r.agent], r.model].filter(Boolean).join(" ");
+
 export function rowLabel(r: RowModel): string {
-  const parts = [`${r.name}, ${GLYPHS[r.status].label}.`, `${plain(r.phrase)}.`];
+  const parts = [`${r.name}, ${agentAndModel(r)}, ${GLYPHS[r.status].label}.`, `${plain(r.phrase)}.`];
   parts.push(r.branch ? `${r.project}, branch ${r.branch}.` : `${r.project}.`);
   if (r.elevated) parts.push("Administrator.");
   const caution = modeCaution(r.mode);
@@ -19,5 +23,5 @@ export function rowLabel(r: RowModel): string {
 }
 
 export function rowTitle(r: RowModel): string {
-  return [r.name, r.branch ? `${r.project} · ${r.branch}` : r.project, r.phrase].join("\n");
+  return [r.name, r.branch ? `${r.project} · ${r.branch}` : r.project, agentAndModel(r), r.phrase].join("\n");
 }

@@ -1,7 +1,8 @@
+import type { AgentId } from "../../components/AgentMark/agents";
 import type { GlyphKind } from "../../components/StatusGlyph/glyphs";
 
-export type Density = "compact" | "comfortable" | "expanded";
-export type AgentId = "claude" | "codex" | "gemini" | "generic";
+export type { AgentId };
+export type Density = "comfortable" | "expanded";
 export type Mode = "manual" | "plan" | "auto-edit" | "full-auto" | "bypass";
 export type Usage = { inContext?: number; window?: number; tokensIn?: number; tokensOut?: number; costUsd?: number };
 

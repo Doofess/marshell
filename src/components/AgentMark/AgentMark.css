@@ -1,0 +1,5 @@
+.agent-mark {
+  flex: none;
+  display: block;
+  color: var(--agent-mark, var(--agent, var(--brand-generic)));
+}

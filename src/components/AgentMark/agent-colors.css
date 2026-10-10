@@ -1,0 +1,26 @@
+/*
+ * One brand colour per agent, shared by the mark and the row stripe. Brand colours are for marks and stripes only,
+ * never status (docs/PLAN.md "Visual system"). Vendors with a black or white logo use the neutral ink.
+ */
+[data-agent="claude"] {
+  --agent: var(--brand-claude);
+  --agent-mark: var(--brand-claude-mark);
+}
+[data-agent="gemini"],
+[data-agent="antigravity"] {
+  --agent: var(--brand-gemini);
+}
+[data-agent="copilot"],
+[data-agent="qwen"] {
+  --agent: var(--brand-violet);
+}
+[data-agent="codex"],
+[data-agent="cursor"],
+[data-agent="opencode"],
+[data-agent="grok"] {
+  --agent: var(--brand-codex);
+}
+[data-agent="amp"],
+[data-agent="generic"] {
+  --agent: var(--brand-generic);
+}
