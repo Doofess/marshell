@@ -77,6 +77,13 @@ describe("SettingsPage: changes", () => {
     const h = renderToStaticMarkup(<SettingsPage {...base} state={{ changed: true, reviewing: true }} edits={{ hooks: Array.from({ length: 200 }, (_, i) => `h${i}`) }} opened={SETTINGS_TEXT_LONG} />);
     expect(h).toContain("Show all");
   });
+  it("keeps the sticky strip small: the diff sits in the page above it, never inside it", () => {
+    const h = renderToStaticMarkup(<SettingsPage {...base} state={{ changed: true, reviewing: true }} edits={{ cleanupPeriodDays: 365 }} opened={SETTINGS_TEXT} />);
+    const bar = h.slice(h.indexOf('class="change-bar"'));
+    expect(bar).not.toContain("diff");
+    expect(h.indexOf('class="change-review"')).toBeGreaterThan(-1);
+    expect(h.indexOf('class="change-review"')).toBeLessThan(h.indexOf('class="change-bar"'));
+  });
   it("has no Apply when nothing changed", () => {
     expect(renderToStaticMarkup(<SettingsPage {...base} />)).not.toContain(">Apply<");
   });
