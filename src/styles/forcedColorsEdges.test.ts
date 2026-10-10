@@ -8,6 +8,7 @@ import { describe, expect, it } from "vitest";
 const EDGES: Record<string, string[]> = {
   "features/approval/ApproveCard.css": [".approve-card", ".approve-card__btn"],
   "components/Chip/Chip.css": [".chip"],
+  "components/DiffView/DiffView.css": [".diff__more"],
   "features/window/SplitView.css": [".pane__new", ".pane__choice"],
   "features/window/MainWindow.css": [".window", ".window__palette", ".focus-pill"],
   "features/window/LayoutMenu.css": [".layout-menu", ".layout-menu__option", ".layout-menu__count"],

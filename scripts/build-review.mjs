@@ -45,6 +45,7 @@ const CSS = [
   "src/features/composer/Composer.css",
   "src/features/composer/StatusStrip.css",
   "src/features/composer/StatusBar.css",
+  "src/components/DiffView/DiffView.css",
   "src/components/a11y/SelectedMark.css",
   "src/features/launcher/Launcher.css",
   "src/features/palette/Palette.css",
