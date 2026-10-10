@@ -1,0 +1,274 @@
+.approve-card {
+  display: grid;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius);
+  background: var(--bg-raised);
+  color: var(--text-1);
+  font-size: var(--text-13);
+  line-height: 20px;
+  font-variant-numeric: tabular-nums;
+  outline-offset: 2px;
+}
+.approve-card:focus-visible {
+  outline: 2px solid var(--accent);
+}
+.approve-card[data-risk="risky"] {
+  border-color: var(--error);
+}
+
+.approve-card__who {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+.approve-card__name {
+  flex: 1 1 auto;
+  min-inline-size: 0;
+  overflow: clip;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+}
+.approve-card__wait {
+  flex: none;
+  color: var(--text-2);
+  font-size: var(--text-11);
+}
+.approve-card__menu {
+  display: grid;
+  place-items: center;
+  flex: none;
+  inline-size: 24px;
+  block-size: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--text-2);
+}
+.approve-card__menu:focus-visible {
+  outline: 2px solid var(--accent);
+}
+.approve-card__menu:active {
+  background: var(--selected);
+}
+
+.approve-card__what {
+  margin: 0;
+  font-size: var(--text-13);
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+
+.approve-card__payload {
+  margin: 0;
+  padding: var(--space-2);
+  border-radius: 4px;
+  background: var(--bg-overlay);
+  font-family: var(--font-mono);
+  font-size: var(--text-12);
+  line-height: 18px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  unicode-bidi: plaintext;
+}
+/* After four lines the payload fades; "Show all N lines" opens the rest. */
+.approve-card__payload[data-collapsed] {
+  max-block-size: calc(4 * 18px + 2 * var(--space-2));
+  overflow: clip;
+  mask-image: linear-gradient(to bottom, oklch(0% 0 none) 55%, transparent);
+}
+.approve-card__line {
+  display: block;
+  font: inherit;
+}
+.approve-card__line[data-kind="add"] {
+  background: color-mix(in oklch, var(--ok) 16%, transparent);
+}
+.approve-card__line[data-kind="del"] {
+  background: color-mix(in oklch, var(--error) 16%, transparent);
+}
+
+.approve-card__question {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.approve-card__expand,
+.approve-card__link {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding-block: 4px;
+  padding-inline: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-2);
+  font: inherit;
+  font-size: var(--text-12);
+  text-align: start;
+}
+.approve-card__expand {
+  justify-content: flex-start;
+}
+.approve-card__link code {
+  font-family: var(--font-mono);
+  color: var(--text-1);
+}
+.approve-card__expand:focus-visible,
+.approve-card__link:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.approve-card__expand:active,
+.approve-card__link:active {
+  color: var(--text-1);
+}
+
+.approve-card__cwd {
+  margin: 0;
+  color: var(--text-3);
+  font-family: var(--font-mono);
+  font-size: var(--text-11);
+  overflow-wrap: anywhere;
+}
+
+.approve-card__risk {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  margin: 0;
+  color: var(--text-1);
+  font-size: var(--text-12);
+  line-height: 16px;
+}
+.approve-card__risk > .aux-glyph {
+  margin-block-start: 2px;
+}
+
+.approve-card__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+}
+.approve-card__actions--options {
+  flex-wrap: wrap;
+  justify-content: flex-start;
+}
+
+.approve-card__btn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-block-size: 32px;
+  padding-block: 6px;
+  padding-inline: var(--space-3);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius);
+  background: var(--bg-overlay);
+  color: var(--text-1);
+  font: inherit;
+  font-weight: 500;
+}
+.approve-card__btn[data-kind="allow"] {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+.approve-card__btn[aria-disabled="true"] {
+  opacity: 0.55;
+}
+.approve-card__btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.approve-card__btn:active:not([aria-disabled="true"]) {
+  box-shadow: inset 0 0 0 100vmax var(--selected);
+}
+@media (hover: hover) and (pointer: fine) {
+  .approve-card__btn:hover:not([aria-disabled="true"]) {
+    box-shadow: inset 0 0 0 100vmax var(--hover);
+  }
+  .approve-card__expand:hover,
+  .approve-card__link:hover {
+    color: var(--text-1);
+  }
+  .approve-card__menu:hover {
+    background: var(--hover);
+  }
+}
+
+.approve-card__kbd {
+  padding-inline: 4px;
+  border: 1px solid color-mix(in oklch, currentColor 40%, transparent);
+  border-radius: 3px;
+  font-family: var(--font-mono);
+  font-size: var(--text-11);
+  font-weight: 400;
+  line-height: 16px;
+}
+
+.approve-card__ring {
+  flex: none;
+}
+.approve-card__ring-track {
+  stroke: color-mix(in oklch, var(--accent-ink) 30%, transparent);
+}
+.approve-card__ring-value {
+  stroke: var(--accent-ink);
+}
+
+/* After the request: a one-line receipt, no buttons. */
+.approve-card--receipt {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding-block: var(--space-2);
+  background: var(--bg-base);
+  color: var(--text-2);
+  font-size: var(--text-12);
+  line-height: 16px;
+}
+.approve-card__receipt-text {
+  min-inline-size: 0;
+  overflow-wrap: anywhere;
+}
+
+@keyframes approve-card-out {
+  to {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+}
+@media (prefers-reduced-motion: no-preference) {
+  :root:not([data-motion="reduce"]) .approve-card--receipt[data-exiting] {
+    animation: approve-card-out var(--dur-exit) var(--ease-out) forwards;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .approve-card--receipt[data-exiting] {
+    opacity: 0;
+  }
+}
+:root[data-motion="reduce"] .approve-card--receipt[data-exiting] {
+  opacity: 0;
+}
+
+/* Windows High Contrast: borders and the allow button use system colours. */
+@media (forced-colors: active) {
+  .approve-card,
+  .approve-card__btn {
+    border-color: CanvasText;
+  }
+  .approve-card__btn[data-kind="allow"] {
+    forced-color-adjust: none;
+    background: Highlight;
+    color: HighlightText;
+  }
+  .approve-card__ring-value {
+    stroke: HighlightText;
+  }
+}
