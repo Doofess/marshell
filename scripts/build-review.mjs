@@ -50,6 +50,7 @@ const CSS = [
   "src/components/EmptyState/EmptyState.css",
   "src/components/Switch/Switch.css",
   "src/features/onboarding/Onboarding.css",
+  "src/features/departures/Board.css",
   "src/features/doctor/Doctor.css",
   "src/features/settings/Settings.css",
   "src/components/a11y/SelectedMark.css",
@@ -267,6 +268,8 @@ const terminalScripts = withTerminal
 <script type="application/json" id="terminal-data">${JSON.stringify(terminalData).replace(/<\//g, "<\\/")}</script>
 <script>${safeInline(readFileSync("scripts/review-terminal.js", "utf8"))}</script>`
   : "";
+// The Departures board's flip cells play on the batch 3c page; the markup already holds every cell's final text.
+const departuresScript = batch === "3c" ? `<script>${safeInline(readFileSync("scripts/review-departures.js", "utf8"))}</script>` : "";
 
 const options = ACCENTS.map((a) => `<option value="${a}">${a[0].toUpperCase()}${a.slice(1)}</option>`).join("");
 
@@ -298,6 +301,7 @@ ${chrome}
   </section>
 </main>
 ${terminalScripts}
+${departuresScript}
 <script>
 (() => {
   const root = document.documentElement;

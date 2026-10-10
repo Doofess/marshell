@@ -1,0 +1,251 @@
+/*
+ * Departures: a sign. True black with 44 px rows in both themes (color-scheme: dark on the root, so every token resolves
+ * to its dark value and the contrast tests keep applying to those). Status and waiting are tiles split at half their
+ * height by a hairline gradient (not a border); only those two cells flip. The table's own spacing is switched off by
+ * laying rows out as grids, so no border property is needed anywhere in this file.
+ */
+.board {
+  color-scheme: dark;
+  background: var(--bg-base);
+  color: var(--text-1);
+  container-type: inline-size;
+  font-size: var(--text-13);
+  line-height: 20px;
+  min-inline-size: 0;
+}
+
+.board__table {
+  --board-cols: minmax(96px, 8rem) minmax(120px, 1.2fr) minmax(120px, 1.4fr) minmax(104px, 0.9fr) minmax(76px, 6rem) minmax(48px, 4rem) minmax(120px, 2fr);
+  display: grid;
+  inline-size: 100%;
+}
+.board__table thead,
+.board__table tbody {
+  display: contents;
+}
+.board__table tr {
+  display: grid;
+  grid-template-columns: var(--board-cols);
+  align-items: center;
+  column-gap: var(--space-3);
+  padding-inline: var(--space-3);
+}
+
+.board__th {
+  block-size: 36px;
+  display: flex;
+  align-items: center;
+  font-family: var(--font-mono);
+  font-size: var(--text-11);
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-align: start;
+  color: var(--text-2);
+}
+
+.board__group {
+  block-size: 28px;
+  background: var(--fill);
+}
+.board__group th {
+  grid-column: 1 / -1;
+  font-family: var(--font-mono);
+  font-size: var(--text-11);
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-align: start;
+  text-transform: uppercase;
+  color: var(--text-1);
+}
+
+.board__row {
+  block-size: 44px;
+  position: relative;
+}
+/* A session that needs you has a start-edge bar and a tint, never a box. */
+.board__row[data-gate="true"] {
+  background: color-mix(in oklch, var(--signal, var(--accent)) 8%, var(--bg-base));
+}
+.board__row[data-gate="true"]::after {
+  content: "";
+  position: absolute;
+  inset-block: 0;
+  inset-inline-start: 0;
+  inline-size: 3px;
+  background: var(--signal, var(--accent));
+  pointer-events: none;
+}
+.board__row[data-stale] {
+  opacity: 0.6;
+}
+.board__row:focus-visible {
+  outline: 2px solid var(--focus, var(--accent));
+  outline-offset: -2px;
+}
+
+.board__row > td,
+.board__more > td,
+.board__card > td {
+  min-inline-size: 0;
+  overflow: clip;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Tiles: uppercase mono, tabular figures, a hairline across the middle like the gap between two flaps. */
+.board__status,
+.board__waiting {
+  display: flex;
+  align-items: center;
+  padding-inline: var(--space-2);
+  block-size: 32px;
+  border-radius: 3px;
+  background-color: var(--bg-raised);
+  background-image: linear-gradient(to bottom, transparent calc(50% - 0.5px), var(--hairline) calc(50% - 0.5px) calc(50% + 0.5px), transparent calc(50% + 0.5px));
+  font-family: var(--font-mono);
+  font-size: var(--text-12);
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  font-variant-numeric: tabular-nums;
+}
+.board__row[data-gate="true"] .board__status {
+  color: var(--signal, var(--accent));
+}
+
+.board__session {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+.board__name {
+  overflow: clip;
+  text-overflow: ellipsis;
+  font-weight: 600;
+}
+.board__where,
+.board__recap {
+  color: var(--text-2);
+  overflow: clip;
+  text-overflow: ellipsis;
+}
+.board__agent {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-family: var(--font-mono);
+  font-size: var(--text-12);
+  text-transform: uppercase;
+  color: var(--accent);
+}
+.board__ctx {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-2);
+}
+
+.board__more {
+  block-size: 44px;
+  color: var(--text-2);
+}
+.board__more > td {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+.board__all {
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius);
+  background: var(--fill-strong);
+  color: var(--text-1);
+}
+.board__all:focus-visible {
+  outline: 2px solid var(--focus, var(--accent));
+  outline-offset: 2px;
+}
+.board__all:active {
+  background: var(--fill);
+}
+@media (hover: hover) and (pointer: fine) {
+  .board__all:hover {
+    background: var(--selected);
+  }
+}
+
+.board__card > td {
+  grid-column: 1 / -1;
+  padding-block: var(--space-2);
+  white-space: normal;
+}
+.board__card {
+  display: block;
+}
+
+/* Visible to screen readers only: the word that makes the number read as "Session 3". */
+.board__sr {
+  position: absolute;
+  inline-size: 1px;
+  block-size: 1px;
+  overflow: clip;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* Narrow: context and recap go first, so the five columns that name and date a session stay whole. */
+@container (inline-size < 760px) {
+  .board__table {
+    --board-cols: minmax(88px, 7rem) minmax(100px, 1.2fr) minmax(100px, 1.3fr) minmax(92px, 0.9fr) minmax(64px, 5rem);
+  }
+  .board__th--5,
+  .board__th--6,
+  .board__ctx,
+  .board__recap {
+    display: none;
+  }
+}
+
+/* A flipping cell: the script swaps the characters frame by frame. Nothing moves without it. */
+@media (prefers-reduced-motion: no-preference) {
+  .flip {
+    display: inline-block;
+    white-space: pre;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .flip[data-frames] {
+    animation: board-crossfade 200ms ease-out;
+  }
+}
+/* The page's own Reduced motion checkbox adds this class; the media rule above is the real preference. */
+.flip--fade {
+  animation: board-crossfade 200ms ease-out;
+}
+@keyframes board-crossfade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@media (forced-colors: active) {
+  .board__status,
+  .board__waiting {
+    forced-color-adjust: none;
+    background: Canvas;
+    color: CanvasText;
+    outline: 1px solid CanvasText;
+  }
+  .board__row[data-gate="true"]::after {
+    forced-color-adjust: none;
+    background: Highlight;
+  }
+  .board__row:focus-visible {
+    outline: 2px solid Highlight;
+  }
+  .board__all {
+    outline: 1px solid CanvasText;
+  }
+}

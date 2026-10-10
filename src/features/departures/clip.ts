@@ -21,3 +21,18 @@ export function cellAt(rowId: string, cell: "status" | "waiting", baseline: stri
   for (const e of CLIP_EVENTS) if (e.rowId === rowId && e.cell === cell && t >= e.at) text = flipFrame(e.from, e.to, t - e.at);
   return text;
 }
+
+/**
+ * One cell's whole clip as frames, for a cell that flips more than once (the review page plays them from the start of the
+ * clip). It lists a frame only where the text changes, so a still cell is just its baseline.
+ */
+export function clipTrack(rowId: string, cell: "status" | "waiting", baseline: string, stepMs = 16): Array<{ t: number; text: string }> {
+  const track: Array<{ t: number; text: string }> = [{ t: 0, text: baseline }];
+  for (let t = stepMs; t <= CLIP_DURATION_MS; t += stepMs) {
+    const text = cellAt(rowId, cell, baseline, t);
+    if (text !== track[track.length - 1]!.text) track.push({ t, text });
+  }
+  const end = cellAt(rowId, cell, baseline, CLIP_DURATION_MS);
+  if (end !== track[track.length - 1]!.text) track.push({ t: CLIP_DURATION_MS, text: end });
+  return track;
+}

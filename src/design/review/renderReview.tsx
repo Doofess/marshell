@@ -12,6 +12,7 @@ import * as Icon from "../../components/Logo/Logo.stories";
 import * as Overflow from "../../features/window/Overflow.stories";
 import * as KeyboardNav from "../../features/window/NavCursor.stories";
 import * as PromptBar from "../../features/composer/Composer.stories";
+import * as Departures from "../../features/departures/Departures.stories";
 import * as ManualCli from "../../components/AgentMark/ManualCli.stories";
 import * as Launcher from "../../features/launcher/Launcher.stories";
 import * as Palette from "../../features/palette/Palette.stories";
@@ -65,7 +66,9 @@ const BATCHES: Record<UpTo, Array<[StoryModule, string]>> = {
     [Doctor, "The report, the fix sheet with the combined diff grouped by file, the receipt toast with Restart them and Undo (10 seconds), and Undo last fix in the header afterwards. Problems Marshell cannot fix say why, and managed settings are listed, never changed."],
     [Settings, "Form and raw editing of each CLI's settings, with a scope badge on every value (User, Project, Local, Managed, Marshell). Every change is shown as the exact diff, with the backup and the way to undo, before Apply. A file that does not parse, is read-only, or changed on disk is never overwritten."],
   ],
-  "3c": [],
+  "3c": [
+    [Departures, "A sign, true black in both themes, with 44 px rows. Sessions that need you are Gate calls at the top, oldest waiting first. Only the status and waiting cells flip, like split-flap tiles (60 ms a character, 15 ms apart, 400 ms at most); with reduced motion they cross-fade instead. Rows never move while the pointer is over the board. The keyboard moves with the arrows, Enter jumps to the session, and Y or N opens the request inline; Enter never answers it. Press Replay animations to play the 10-second clip."],
+  ],
 };
 
 /** "TruncationAt200" → "Truncation at 200". */
