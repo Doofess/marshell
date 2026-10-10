@@ -1,4 +1,4 @@
-import type { KeyboardEvent } from "react";
+import { useEffect, useId, useRef, type KeyboardEvent } from "react";
 import { AgentMark } from "../../components/AgentMark/AgentMark";
 import { filterProjects, highlight, pickByLetter, projectLabel, type Project, type Range } from "./filter";
 import {
@@ -14,6 +14,7 @@ import {
   type LauncherChoice,
   type Remembered,
 } from "./launchChoice";
+import { focusFellOut, listNavKeys, stepActive } from "./launcherKeys";
 import "./Launcher.css";
 
 export type LauncherView = {
@@ -76,6 +77,18 @@ export function Launcher({ view, onChange, onQuery, onPick, onPrograms, onActive
   const programsOpen = !folderOpen && view.programsOpen === true;
   const options = folderOpen ? filterProjects(query, projects) : [];
   const listSize = programsOpen ? LAUNCH_PROGRAMS.length : options.length;
+  // Ids belong to one launcher (the review page shows many at once).
+  const uid = useId();
+  const id = (name: string) => `${uid}-${name}`;
+
+  // Esc or a pick closes the folder field, which swaps an input for a button; focus must not fall to the page, or Esc and Enter go dead.
+  const folderChip = useRef<HTMLButtonElement>(null);
+  const wasOpen = useRef(folderOpen);
+  useEffect(() => {
+    const body = typeof document !== "undefined" && (document.activeElement === null || document.activeElement === document.body);
+    if (focusFellOut({ wasOpen: wasOpen.current, isOpen: folderOpen, activeIsBody: body })) folderChip.current?.focus();
+    wasOpen.current = folderOpen;
+  }, [folderOpen]);
 
   const letter = (labels: string[], current: number, key: string, set: (i: number) => void) => {
     const i = pickByLetter(labels, key, current);
@@ -91,10 +104,9 @@ export function Launcher({ view, onChange, onQuery, onPick, onPrograms, onActive
       else onClose?.();
       return;
     }
-    if (listOpen && listSize > 0 && ["ArrowDown", "ArrowUp", "ArrowRight", "ArrowLeft"].includes(e.key)) {
+    if (listOpen && listSize > 0 && listNavKeys(programsOpen ? "programs" : "folder").includes(e.key)) {
       e.preventDefault();
-      const step = e.key === "ArrowDown" || e.key === "ArrowRight" ? 1 : -1;
-      onActive?.((activeIndex + step + listSize) % listSize);
+      onActive?.(stepActive(activeIndex, e.key, listSize));
       return;
     }
     if (e.key !== "Enter" || e.shiftKey) return;
@@ -125,7 +137,7 @@ export function Launcher({ view, onChange, onQuery, onPick, onPrograms, onActive
         role="dialog"
         aria-modal="true"
         aria-label="Start a session"
-        aria-describedby="launcher-desc"
+        aria-describedby={id("desc")}
         data-agent={agentRun ? choice.program : undefined}
         data-manual={!agentRun || undefined}
         onKeyDown={onSheetKey}
@@ -138,8 +150,8 @@ export function Launcher({ view, onChange, onQuery, onPick, onPrograms, onActive
             aria-label={`Program: ${program.label}`}
             aria-haspopup="listbox"
             aria-expanded={programsOpen}
-            aria-controls={programsOpen ? "launcher-programs" : undefined}
-            aria-activedescendant={programsOpen ? `launcher-prog-${activeIndex}` : undefined}
+            aria-controls={programsOpen ? id("programs") : undefined}
+            aria-activedescendant={programsOpen ? id(`prog-${activeIndex}`) : undefined}
             onClick={() => onPrograms?.(!programsOpen)}
             onKeyDown={chipKeys(
               LAUNCH_PROGRAMS.map((p) => p.label),
@@ -158,15 +170,15 @@ export function Launcher({ view, onChange, onQuery, onPick, onPrograms, onActive
               className="launcher__input"
               role="combobox"
               aria-expanded={options.length > 0}
-              aria-controls={options.length > 0 ? "launcher-list" : undefined}
-              aria-activedescendant={options.length > 0 ? `launcher-opt-${activeIndex}` : undefined}
+              aria-controls={options.length > 0 ? id("list") : undefined}
+              aria-activedescendant={options.length > 0 ? id(`opt-${activeIndex}`) : undefined}
               aria-label="Folder"
               value={query}
               onChange={(e) => onQuery?.(e.target.value)}
               autoFocus
             />
           ) : (
-            <button type="button" className="launcher__chip" aria-haspopup="listbox" onClick={() => onQuery?.("")}>
+            <button ref={folderChip} type="button" className="launcher__chip" aria-haspopup="listbox" onClick={() => onQuery?.("")}>
               {project ? projectLabel(project) : "Choose a folder"}
             </button>
           )}
@@ -176,6 +188,7 @@ export function Launcher({ view, onChange, onQuery, onPick, onPrograms, onActive
               <button
                 type="button"
                 className="launcher__chip"
+                aria-label={`Mode: ${choice.mode}`}
                 onClick={() => onChange?.({ mode: cycle(MODES, choice.mode) })}
                 onKeyDown={chipKeys(MODES, MODES.indexOf(choice.mode), (i) => onChange?.({ mode: MODES[i]! }))}
               >
@@ -185,6 +198,7 @@ export function Launcher({ view, onChange, onQuery, onPick, onPrograms, onActive
               <button
                 type="button"
                 className="launcher__chip"
+                aria-label={`Pace: ${choice.pace}`}
                 onClick={() => onChange?.({ pace: cycle(PACES, choice.pace) })}
                 onKeyDown={chipKeys(PACES, PACES.indexOf(choice.pace), (i) => onChange?.({ pace: PACES[i]! }))}
               >
@@ -200,10 +214,10 @@ export function Launcher({ view, onChange, onQuery, onPick, onPrograms, onActive
         </p>
 
         {programsOpen && (
-          <div className="launcher__programs" id="launcher-programs" role="listbox" aria-label="Agents, shells and tools">
+          <div className="launcher__programs" id={id("programs")} role="listbox" aria-label="Agents, shells and tools">
             {LAUNCH_GROUPS.map((g) => (
-              <div key={g} className="launcher__group" role="group" aria-labelledby={`launcher-group-${g}`}>
-                <span className="launcher__group-name" id={`launcher-group-${g}`}>
+              <div key={g} className="launcher__group" role="group" aria-labelledby={id(`group-${g}`)}>
+                <span className="launcher__group-name" id={id(`group-${g}`)}>
                   {g}
                 </span>
                 <div className="launcher__choices">
@@ -212,7 +226,7 @@ export function Launcher({ view, onChange, onQuery, onPick, onPrograms, onActive
                     return (
                       <div
                         key={p.id}
-                        id={`launcher-prog-${i}`}
+                        id={id(`prog-${i}`)}
                         role="option"
                         aria-selected={i === activeIndex}
                         className="launcher__program"
@@ -245,11 +259,11 @@ export function Launcher({ view, onChange, onQuery, onPick, onPrograms, onActive
           </p>
         )}
         {folderOpen && options.length > 0 && (
-          <ul className="launcher__list" id="launcher-list" role="listbox" aria-label="Folders">
+          <ul className="launcher__list" id={id("list")} role="listbox" aria-label="Folders">
             {options.map((h, i) => (
               <li
                 key={h.item.id}
-                id={`launcher-opt-${i}`}
+                id={id(`opt-${i}`)}
                 role="option"
                 aria-selected={i === activeIndex}
                 className="launcher__opt"
@@ -294,7 +308,7 @@ export function Launcher({ view, onChange, onQuery, onPick, onPrograms, onActive
             </button>
           </span>
         </footer>
-        <p className="launcher__sr" id="launcher-desc">
+        <p className="launcher__sr" id={id("desc")}>
           {launcherSentence(choice, projects)}
           {nextNumber !== undefined ? `. It becomes session ${nextNumber}` : ""}
         </p>

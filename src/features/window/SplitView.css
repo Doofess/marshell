@@ -93,14 +93,20 @@
 .pane[data-active="false"] .pane__header:not([data-needs="true"]) > :not(.chip) {
   opacity: 0.6;
 }
+/* The header is the pane's title bar: the number and the name are the last things to give way. The project shrinks first. */
+.pane__header > .session-number {
+  flex: none;
+}
 .pane__name {
-  min-inline-size: 0;
+  flex-shrink: 1;
+  min-inline-size: min(8ch, 100%);
   overflow: clip;
   text-overflow: ellipsis;
   white-space: nowrap;
   font-weight: 600;
 }
 .pane__place {
+  flex-shrink: 100;
   min-inline-size: 0;
   overflow: clip;
   text-overflow: ellipsis;
@@ -109,6 +115,7 @@
 }
 /* At 60% opacity the secondary text and the buttons would fall below AA, so the receding header uses full-strength ink. */
 .pane[data-active="false"] .pane__place,
+.pane[data-active="false"] .session-number,
 .pane[data-active="false"] .pane__button,
 .pane[data-active="false"] .pane__running {
   color: var(--text-1);
@@ -241,8 +248,10 @@
   .split__handle {
     background: CanvasText;
   }
+  /* The attention tint is dropped, so the header of a pane that needs you is outlined in the system's highlight colour. */
   .pane__header[data-needs="true"] {
-    border-block-end-color: Highlight;
+    outline: 1px solid Highlight;
+    outline-offset: -1px;
   }
   .pane__new,
   .pane__choice {

@@ -342,7 +342,7 @@ describe("MainWindow: the shell panel in the sidebar", () => {
     const sh = shellOf(html({ ...tall, shellCollapsed: true }));
     expect(sh).toContain('data-collapsed="true"');
     expect(sh).not.toContain("scripted-terminal");
-    expect(sh).toContain('aria-label="Show the shell"');
+    expect(sh).toContain('aria-label="Shell panel"');
   });
   it("hides itself in a window too short to leave the list two rows, when the lane takes its 40%", () => {
     const many = Array.from({ length: 12 }, (_, i) => ({ ...SCENARIO_REQUESTS[0]!, id: `r${i}`, waitingMs: 1000 + i }));
@@ -374,5 +374,75 @@ describe("MainWindow (accessibility gate)", () => {
     const h = html({ layout: "focus", sidebarPref: "focus" });
     expect(h).toContain('aria-label="2 need you Ctrl+Shift+N"');
     expect(h).toMatch(/<span>2 need you<\/span> <kbd/);
+  });
+});
+
+describe("MainWindow: with no sessions", () => {
+  const variants = {
+    single: {},
+    split: { layout: "split" as const, splitCount: 3 as const },
+    rail: { layout: "rail" as const },
+    focus: { layout: "focus" as const, sidebarPref: "focus" as const },
+    "split in a small window": { layout: "split" as const, splitCount: 4 as const, width: 720, height: 480 },
+  };
+  for (const [name, p] of Object.entries(variants)) {
+    it(`renders the empty state instead of throwing (${name})`, () => {
+      const h = html({ rows: [], requests: [], selectedId: "none", ...p });
+      expect(h).toContain("No sessions yet. Start one with Ctrl+Shift+T.");
+      expect(h).not.toContain('aria-label="Terminal for');
+      expect(h).not.toContain('<form class="composer"');
+    });
+  }
+  it("says the launcher shortcut for the platform", () => {
+    expect(html({ rows: [], requests: [], selectedId: "none", os: "mac" })).toContain("No sessions yet. Start one with ⌘T.");
+  });
+  it("still has the bar, the layout button and the window controls", () => {
+    const h = html({ rows: [], requests: [], selectedId: "none" });
+    for (const s of ["Marshell menu", "Split layout", "Minimize", "Command palette"]) expect(h, s).toContain(`aria-label="${s}"`);
+    expect(h).not.toContain("session-header");
+  });
+});
+
+describe("MainWindow: the layout menu while a pane is zoomed", () => {
+  it("does not say 'Showing 1 of N' as if the window were too small: the pane header already says the others keep running", () => {
+    const h = html({ layout: "split", splitCount: 3, width: 1700, height: 900, zoomedPane: 0, layoutMenu: true });
+    expect(h).toContain("more running");
+    expect(h).not.toMatch(/Showing \d+ of \d+/);
+  });
+  it("still says it when the window really is too small for the count asked for", () => {
+    expect(html({ layout: "split", splitCount: 4, width: 720, height: 480, layoutMenu: true })).toMatch(/Showing 1 of 4/);
+  });
+});
+
+describe("MainWindow: the brand button in focus mode", () => {
+  it("is not rendered when the bar's side column is hidden, so keyboard focus can never land on something nobody sees", () => {
+    const h = html({ layout: "focus", sidebarPref: "focus" });
+    expect(h).not.toContain("window__brand");
+    expect(h).not.toContain("Marshell menu");
+    expect(h).not.toContain("Command palette");
+  });
+  it("is there in the expanded sidebar and in the rail", () => {
+    expect(html()).toContain("Marshell menu");
+    expect(html({ layout: "rail" })).toContain("Marshell menu");
+  });
+});
+
+describe("MainWindow: one live region, and the window's title follows the focused session", () => {
+  const live = (h: string) => (h.match(/data-session-announcer/g) ?? []).length;
+  it("has exactly one session announcer, whether it shows one terminal or four, and none of its prompt lines or panes is a live region", () => {
+    for (const p of [{}, { layout: "split" as const, splitCount: 2 as const, ...BIG }, { layout: "split" as const, splitCount: 4 as const, ...BIG }]) {
+      const h = html(p);
+      expect(live(h)).toBe(1);
+      const body = h.slice(h.indexOf('class="window__body"'));
+      for (const sec of body.match(/<section class="pane[\s\S]*?<\/section>/g) ?? []) expect(sec).not.toMatch(/role="status"|aria-live=/);
+      expect(body.match(/<form class="composer"[\s\S]*?<\/form>/g)?.join("") ?? "").not.toMatch(/role="status"|aria-live=/);
+    }
+  });
+  it("renders the announcer empty on first render, so nothing is read out as the window opens", () => {
+    const h = html({ selectedId: "needs-permission" });
+    expect(/<div[^>]*data-session-announcer[^>]*>([^<]*)<\/div>/.exec(h)?.[1]).toBe("");
+  });
+  it("is a polite status region that is hidden visually", () => {
+    expect(html()).toMatch(/<div class="window__announcer" role="status" aria-live="polite" aria-atomic="true" data-session-announcer/);
   });
 });

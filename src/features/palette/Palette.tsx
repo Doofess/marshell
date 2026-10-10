@@ -1,4 +1,5 @@
-import type { KeyboardEvent } from "react";
+import { useId, type KeyboardEvent } from "react";
+import { selectedProps } from "../../components/a11y/SelectedMark";
 import { AgentMark } from "../../components/AgentMark/AgentMark";
 import { StatusGlyph } from "../../components/StatusGlyph/StatusGlyph";
 import { GLYPHS } from "../../components/StatusGlyph/glyphs";
@@ -30,12 +31,12 @@ const Marked = ({ text, ranges }: { text: string; ranges: Range[] }) => (
   </>
 );
 
-type OptionProps = { index: number; active: boolean; os: Os; onRun?: (id: string) => void };
+type OptionProps = { id: string; active: boolean; os: Os; onRun?: (id: string) => void };
 
-function CommandOption({ hit, index, active, os, onRun }: OptionProps & { hit: Hit<Command> }) {
+function CommandOption({ hit, id, active, os, onRun }: OptionProps & { hit: Hit<Command> }) {
   const c = hit.item;
   return (
-    <li id={`palette-opt-${index}`} role="option" aria-selected={active} className="palette__opt" data-active={active || undefined} onClick={() => onRun?.(c.id)}>
+    <li id={id} role="option" {...selectedProps(active, "selected", "palette__opt")} data-active={active || undefined} onClick={() => onRun?.(c.id)}>
       <span className="palette__label" dir="auto">
         <Marked text={c.label} ranges={hit.ranges} />
       </span>
@@ -45,17 +46,17 @@ function CommandOption({ hit, index, active, os, onRun }: OptionProps & { hit: H
 }
 
 /** One open session: its number first, then its mark, name and where it runs. Sessions 1 to 9 show the Ctrl+digit that goes there. */
-function SessionOption({ hit, index, active, os, onRun }: OptionProps & { hit: SessionHit<PaletteSession> }) {
+function SessionOption({ hit, id, active, os, onRun }: OptionProps & { hit: SessionHit<PaletteSession> }) {
   const s = hit.item;
   const detail = sessionDetail(s);
-  const key = s.number <= 9 ? commandById(`focus-session-${s.number}`).binding : undefined;
+  // Only a whole number from 1 to 9 has a Ctrl+digit command; 0, negatives, fractions and 10 and up are reached by typing their number.
+  const key = Number.isInteger(s.number) && s.number >= 1 && s.number <= 9 ? commandById(`focus-session-${s.number}`).binding : undefined;
   return (
     <li
-      id={`palette-opt-${index}`}
+      id={id}
       role="option"
-      aria-selected={active}
+      {...selectedProps(active, "selected", "palette__opt")}
       aria-label={`Go to session ${s.number}, ${s.name} ${detail}${key ? ` ${shortcutLabel(key, os)}` : ""}, ${GLYPHS[s.status].label}`}
-      className="palette__opt"
       data-kind="session"
       data-active={active || undefined}
       data-exact={hit.exact || undefined}
@@ -106,7 +107,11 @@ export function Palette({
   onActive?: (index: number) => void;
   onClose?: () => void;
 }) {
-  const { query, activeIndex } = view;
+  const { query } = view;
+  // Ids are per palette (the review page shows many at once), so two never share an id.
+  const uid = useId();
+  const optId = (i: number) => `${uid}-opt-${i}`;
+  const listId = `${uid}-list`;
   const filtering = query.trim() !== "";
   const wanted = sessions ? parseSessionNumber(query) : null;
 
@@ -116,11 +121,14 @@ export function Palette({
   const commandHits = wanted !== null ? [] : filterCommands(query, pool);
   const items: Item[] = [...sessionHits.map((hit): Item => ({ type: "session", hit })), ...commandHits.map((hit): Item => ({ type: "command", hit }))];
 
+  // A stale or odd active index (the list got shorter, a NaN) falls back to a row that exists.
+  const activeIndex = items.length === 0 ? 0 : Number.isFinite(view.activeIndex) ? Math.min(Math.max(0, Math.floor(view.activeIndex)), items.length - 1) : 0;
+
   const option = (item: Item, index: number) =>
     item.type === "session" ? (
-      <SessionOption key={itemId(item)} hit={item.hit} index={index} active={index === activeIndex} os={os} onRun={onRun} />
+      <SessionOption key={itemId(item)} hit={item.hit} id={optId(index)} active={index === activeIndex} os={os} onRun={onRun} />
     ) : (
-      <CommandOption key={itemId(item)} hit={item.hit} index={index} active={index === activeIndex} os={os} onRun={onRun} />
+      <CommandOption key={itemId(item)} hit={item.hit} id={optId(index)} active={index === activeIndex} os={os} onRun={onRun} />
     );
 
   const numbers = sessions ? [...sessions].map((s) => s.number).sort((a, b) => a - b) : [];
@@ -155,8 +163,8 @@ export function Palette({
           className="palette__input"
           role="combobox"
           aria-expanded={items.length > 0}
-          aria-controls={items.length > 0 ? "palette-list" : undefined}
-          aria-activedescendant={items.length > 0 ? `palette-opt-${activeIndex}` : undefined}
+          aria-controls={items.length > 0 ? listId : undefined}
+          aria-activedescendant={items.length > 0 ? optId(activeIndex) : undefined}
           aria-label={prompt}
           placeholder={prompt}
           value={query}
@@ -167,7 +175,7 @@ export function Palette({
             {empty}
           </p>
         ) : (
-          <ul className="palette__list" id="palette-list" role="listbox" aria-label={sessions ? "Sessions and commands" : "Commands"}>
+          <ul className="palette__list" id={listId} role="listbox" aria-label={sessions ? "Sessions and commands" : "Commands"}>
             {filtering ? (
               items.map((item) => option(item, ++index))
             ) : (

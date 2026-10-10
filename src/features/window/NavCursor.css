@@ -1,0 +1,87 @@
+.nav-cursor {
+  position: absolute;
+  z-index: 40;
+  box-sizing: border-box;
+  pointer-events: none;
+  border-radius: var(--radius);
+  background: color-mix(in oklch, var(--accent) 16%, transparent);
+}
+
+/* The bar on the start edge says "here" without colour: it is a shape, 3 px wide like the vendor stripe. */
+.nav-cursor::before {
+  content: "";
+  position: absolute;
+  inset-block: 0;
+  inset-inline-start: 0;
+  inline-size: var(--stripe);
+  border-start-start-radius: inherit;
+  border-end-start-radius: inherit;
+  background: var(--accent);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .nav-cursor {
+    transition-property: inset-inline-start, inset-block-start, inline-size, block-size;
+    transition-duration: var(--dur-fast);
+    transition-timing-function: var(--ease-out);
+  }
+}
+
+.nav-hint {
+  position: absolute;
+  z-index: 41;
+  inset-block-end: var(--space-4);
+  inset-inline: 0;
+  margin-inline: auto;
+  inline-size: fit-content;
+  max-inline-size: calc(100% - 2 * var(--space-4));
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-3);
+  border-radius: var(--radius);
+  background: var(--bg-overlay);
+  color: var(--text-1);
+  box-shadow: var(--shadow-pill);
+  font-size: var(--text-12);
+  pointer-events: none;
+}
+
+.nav-hint__target {
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: clip;
+  text-overflow: ellipsis;
+}
+
+.nav-hint__keys {
+  color: var(--text-2);
+  white-space: nowrap;
+}
+
+/* Visually hidden, still read out. */
+.nav-announcer {
+  position: absolute;
+  inline-size: 1px;
+  block-size: 1px;
+  margin: -1px;
+  overflow: clip;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* High Contrast drops fills and shadows: the cursor keeps a 2 px system-colour edge and the hint a plain one. */
+@media (forced-colors: active) {
+  .nav-cursor {
+    forced-color-adjust: none;
+    background: transparent;
+    outline: 2px solid Highlight;
+    outline-offset: -2px;
+  }
+  .nav-cursor::before {
+    background: Highlight;
+  }
+  .nav-hint {
+    outline: 1px solid CanvasText;
+  }
+}

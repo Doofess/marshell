@@ -112,9 +112,9 @@ export function LayoutMenu({ count, arrangement, auto, os = "windows", requested
           </dd>
         </div>
         <div>
-          <dt>Next pane</dt>
+          <dt>Select the next terminal</dt>
           <dd>
-            <kbd>{key("next-pane")}</kbd>
+            <kbd>{key("nav-next-pane")}</kbd>
           </dd>
         </div>
       </dl>

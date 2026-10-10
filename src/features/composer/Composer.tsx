@@ -78,7 +78,7 @@ export function Composer({ row, value = "", os = "windows", variant = "full", fo
           : null;
 
   const noticeEl = notice && (
-    <p className="composer__notice" role="status" title={notice.text}>
+    <p className="composer__notice" title={notice.text}>
       {notice.glyph}
       <span>{notice.text}</span>
     </p>

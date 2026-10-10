@@ -8,7 +8,7 @@ const rows = ["needs-permission", "working", "done-unseen"].map((id) => FIXTURES
 describe("Rail", () => {
   it("has one button per session with the monogram and the status glyph", () => {
     const h = renderToStaticMarkup(<Rail rows={rows} needsYou={1} />);
-    expect((h.match(/class="rail__item"/g) ?? []).length).toBe(3);
+    expect((h.match(/class="rail__item[ "]/g) ?? []).length).toBe(3);
     expect(h).toContain("BI");
     expect(h).toContain("AS");
     expect(h).toContain("status-glyph");
@@ -51,7 +51,7 @@ describe("Rail: the list scrolls", () => {
   const twenty = Array.from({ length: 20 }, (_, i) => ({ ...FIXTURES[0]!, id: `s${i}`, name: `session-${i + 1}` }));
   it("renders every session, however many, and no overflow button", () => {
     const h = renderToStaticMarkup(<Rail rows={twenty} needsYou={0} />);
-    expect((h.match(/class="rail__item"/g) ?? []).length).toBe(20);
+    expect((h.match(/class="rail__item[ "]/g) ?? []).length).toBe(20);
     expect(h).not.toContain("rail__more");
     expect(h).not.toContain("show all");
   });

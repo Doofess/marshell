@@ -17,9 +17,7 @@ export function Lane({ requests, sidebarHeight }: { requests: ApprovalRequest[];
   return (
     <section className="lane" aria-label="Needs you" style={{ blockSize: layout.height }} data-clipped={layout.clipped || undefined} data-count={ordered.length}>
       <header className="lane__header">
-        <div role="status">
-          <h2 className="lane__heading">{heading}</h2>
-        </div>
+        <h2 className="lane__heading">{heading}</h2>
         {layout.hiddenCount > 0 && (
           <button type="button" className="lane__more" aria-label={`+${layout.hiddenCount} more, show all ${ordered.length} requests`} aria-haspopup="dialog">
             +{layout.hiddenCount} more

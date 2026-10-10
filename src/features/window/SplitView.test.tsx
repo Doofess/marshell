@@ -1,5 +1,6 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
+import { nameContainsLabel } from "../../lib/labelInName";
 import { SCENARIO_ROWS } from "./scenario";
 import { COMPOSER } from "./layout";
 import { SplitView, type SplitViewProps } from "./SplitView";
@@ -118,8 +119,17 @@ describe("SplitView: zoom", () => {
   });
   it("offers the way back and names how many are still running", () => {
     expect(zoomed).toContain('aria-pressed="true"');
-    expect(zoomed).toContain('aria-label="Restore the 4 panes"');
     expect(zoomed).toContain("3 more running");
+  });
+  it("keeps one name on the zoom button whether or not it is pressed (a toggle's state is aria-pressed, not its label)", () => {
+    expect(zoomed).toContain('aria-label="Zoom infra"');
+    expect(zoomed).not.toContain('aria-label="Restore');
+    expect(zoomed).toContain('title="Restore the panes');
+  });
+  it("does not count an empty slot as a running session", () => {
+    const h = html({ panes: [api!, null, billing!], zoomed: 0 });
+    expect(h).toContain("1 more running");
+    expect(h).not.toContain("2 more running");
   });
 });
 
@@ -230,5 +240,31 @@ describe("SplitView: every pane has its own prompt line", () => {
 describe("SplitView: hygiene", () => {
   it("puts no literal colour in the markup", () => {
     expect(html({ panes: [api!, billing!, infra!, docs!] })).not.toMatch(/#[0-9a-f]{3,8}\b|rgb\(|oklch\(/i);
+  });
+});
+
+describe("SplitView: the focused pane's prompt line", () => {
+  const focusedLines = (h: string) => count(h, /<form class="composer"[^>]*data-focused="true"/g);
+  it("is edged in the vendor colour only in the active pane", () => {
+    const h = html({ panes: [api!, billing!, infra!], activeIndex: 1, size: { w: 1500, h: 860 } });
+    expect(focusedLines(h)).toBe(1);
+    const active = h.split("</section>").find((x) => x.includes('data-active="true"'))!;
+    expect(active).toContain('data-focused="true"');
+    for (const other of h.split("</section>").filter((x) => x.includes('data-active="false"'))) expect(other).not.toContain("data-focused");
+  });
+  it("follows a zoomed pane", () => {
+    expect(focusedLines(html({ panes: [api!, billing!, infra!], activeIndex: 2, zoomed: 2, size: { w: 1500, h: 860 } }))).toBe(1);
+  });
+});
+
+describe("SplitView: an empty pane's session choices", () => {
+  const h = html({ panes: [api!, null], choices: [billing!, infra!], size: { w: 1500, h: 860 } });
+  const choices = [...h.matchAll(/<button type="button" class="pane__choice"[\s\S]*?<\/button>/g)].map((m) => m[0]);
+  it("are named from 'Session N,' like every other control that names a session", () => {
+    expect(choices).toHaveLength(2);
+    for (const c of choices) expect(c).toMatch(/aria-label="Session \d+, /);
+  });
+  it("contain the text they show in their name (label in name)", () => {
+    expect(choices.filter((c) => !nameContainsLabel(c))).toEqual([]);
   });
 });

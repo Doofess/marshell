@@ -3,6 +3,7 @@ import { AgentMark } from "../../components/AgentMark/AgentMark";
 import { Chip } from "../../components/Chip/Chip";
 import { StatusGlyph } from "../../components/StatusGlyph/StatusGlyph";
 import { SessionNumber } from "../../components/SessionNumber/SessionNumber";
+import { GLYPHS } from "../../components/StatusGlyph/glyphs";
 import { hasPromptLine } from "../sidebar/promptLine";
 import { sessionWord } from "../sidebar/sessionNumber";
 import { commandById, shortcutLabel, type Os } from "../../lib/keymap";
@@ -37,6 +38,8 @@ export type PaneProps = {
   cells?: { cols: number; rows: number };
   /** Set while this pane fills the view: how many panes it stands in for. */
   zoomedOf?: number;
+  /** While zoomed: the other sessions still running (an empty slot is not one). Defaults to the other panes. */
+  othersRunning?: number;
   /** Running sessions with no pane because the window is too small for more. */
   runningElsewhere?: number;
   /** What has been typed in this pane's own prompt line. */
@@ -54,11 +57,12 @@ export type PaneProps = {
  * the status glyph (the vendor mark moving, while working), the name, the project and, only when it applies,
  * how tight the pane is. A pane that needs you never recedes with the inactive headers.
  */
-export function Pane({ row, active, setting, style, cells, zoomedOf, runningElsewhere, value, composer = true, os = "windows" }: PaneProps) {
+export function Pane({ row, active, setting, style, cells, zoomedOf, othersRunning, runningElsewhere, value, composer = true, os = "windows" }: PaneProps) {
   const needs = needsYou(row);
   // A manual CLI is a plain terminal: no prompt line of ours, and its rows go to the terminal.
   const line = composer && hasPromptLine(row);
   const zoomed = zoomedOf !== undefined;
+  const running = zoomed ? (othersRunning ?? zoomedOf - 1) : 0;
   const zoomKeys = shortcutLabel(commandById("zoom-pane").binding!, os);
   const narrow = cells && cells.cols < NARROW;
   return (
@@ -81,7 +85,7 @@ export function Pane({ row, active, setting, style, cells, zoomedOf, runningElse
           {row.project}
         </span>
         <span className="pane__spacer" />
-        {zoomed && zoomedOf > 1 && <span className="pane__running">{zoomedOf - 1} more running</span>}
+        {zoomed && running > 0 && <span className="pane__running">{running} more running</span>}
         {!zoomed && runningElsewhere !== undefined && runningElsewhere > 0 && <span className="pane__running">{runningElsewhere} more running</span>}
         {narrow && (
           <Chip tone="caution" title={`This pane is narrower than ${NARROW} columns, which many CLIs need. Zoom it (${zoomKeys}) or change the layout.`}>
@@ -91,7 +95,7 @@ export function Pane({ row, active, setting, style, cells, zoomedOf, runningElse
         <button
           type="button"
           className="pane__button"
-          aria-label={zoomed ? `Restore the ${zoomedOf} panes` : `Zoom ${row.name}`}
+          aria-label={`Zoom ${row.name}`}
           aria-pressed={zoomed}
           title={`${zoomed ? "Restore the panes" : "Zoom this pane"} (${zoomKeys})`}
         >
@@ -105,7 +109,7 @@ export function Pane({ row, active, setting, style, cells, zoomedOf, runningElse
       {hasPromptLine(row) ? <ScriptedTerminal setting={setting} label={`Terminal for ${row.name}`} /> : <ScriptedTerminal setting={setting} label={`Terminal for ${row.name}`} script={shellSession({ cwd: row.project })} size={SHELL_SIZE} />}
       {line && (
         <div className="pane__composer" style={{ blockSize: COMPOSER.compact }}>
-          <Composer row={row} variant="compact" value={value} os={os} />
+          <Composer row={row} variant="compact" value={value} os={os} focused={active} />
         </div>
       )}
     </section>
@@ -130,13 +134,13 @@ export function EmptyPane({ choices, active, style, os = "windows" }: { choices:
           <ul className="pane__choices">
             {choices.slice(0, CHOICE_LIMIT).map((r) => (
               <li key={r.id}>
-                <button type="button" className="pane__choice" data-agent={r.agent}>
+                <button type="button" className="pane__choice" data-agent={r.agent} aria-label={`${sessionWord(r.number)}, ${r.name} ${r.project}, ${GLYPHS[r.status].label}`}>
                   <span className="pane__stripe" aria-hidden="true" />
                   <StatusGlyph kind={r.status} />
-                  <SessionNumber n={r.number} />
+                  <SessionNumber n={r.number} />{" "}
                   <span className="pane__choice-name" dir="auto">
                     {r.name}
-                  </span>
+                  </span>{" "}
                   <span className="pane__place" dir="auto">
                     {r.project}
                   </span>

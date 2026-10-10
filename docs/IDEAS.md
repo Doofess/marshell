@@ -10,6 +10,7 @@ How to add one: put it at the top of Inbox, newest first. A date is optional.
 
 ## Inbox
 
+- **User-configurable navigation modifier, with an onboarding hint.** The chord for moving the selection (Ctrl+Shift by default, see PLAN "Keyboard navigation and shortcuts") is a setting that lists each choice with where it clashes; the first run shows a three-second hint ("Hold Ctrl+Shift, press Tab") and the empty selection keeps teaching it. Later: a visible "hold" indicator in the status bar while the chord is down.
 <!-- new ideas go here, newest first -->
 
 - 2026-10-10 **Detect the foreground program of each terminal and show its mark.** A session is not always an AI agent: Marshell reads the foreground process of the terminal (its executable name) and picks a mark from a table (shells, dev tools, remote and cloud tools, then a neutral fallback that shows the executable's name). When the foreground command changes (PowerShell, then ssh, then back) the mark changes with it, and a command that leaves behind a known agent (running `claude` inside PowerShell) is promoted to that agent's own row. Open: how often to poll, wrappers and aliases (`npx`, `winpty`), and sourcing the real logos with their licences.
@@ -39,6 +40,8 @@ Looked at, liked, not now. Say why in a few words so future us remembers.
 ## Planned
 
 Promoted to `docs/PLAN.md` or a ticket. Leave a pointer.
+
+- **Catch accessibility problems early** (2026-10-10): shared Announcer and SelectedMark blocks, lint-style rules, a forced-colours/zoom/colour-vision matrix and a screen-reader script. Done for phase 0, see `docs/PLAN.md` "Accessibility safety net" and `docs/a11y/`. Later: run the matrix in CI once Playwright is a dev dependency, and build the `everything` and `on-request` announce modes.
 
 ## Dropped
 

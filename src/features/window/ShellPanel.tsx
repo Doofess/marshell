@@ -54,7 +54,7 @@ export function ShellPanel({ height, cwd, shellName = "PowerShell", collapsed = 
         <button
           type="button"
           className="shell-panel__button"
-          aria-label={collapsed ? "Show the shell" : "Hide the shell"}
+          aria-label="Shell panel"
           aria-expanded={!collapsed}
           title={`${collapsed ? "Show" : "Hide"} the shell (${keys})`}
         >

@@ -1,0 +1,42 @@
+/*
+ * The one way to show "this is the selected one" (docs/PLAN.md, "Accessibility safety net"). A selected item carries three
+ * cues that do not depend on each other, so losing one (colour, shadows, a theme) never loses the selection:
+ *   1. a fill (an inset shadow over any background, so a tint or a hover underneath still shows),
+ *   2. a 2px bar on the end edge (a shape; the start edge belongs to the vendor stripe),
+ *   3. in Windows High Contrast, where fills and shadows are dropped, a Highlight outline.
+ * Put the class on the element and let aria-selected, aria-current or data-selected switch it on (see SelectedMark.tsx).
+ */
+.is-selected-mark {
+  position: relative;
+}
+.is-selected-mark[aria-selected="true"],
+.is-selected-mark[aria-current="true"],
+.is-selected-mark[data-selected="true"] {
+  box-shadow: inset 0 0 0 100vmax var(--selected);
+}
+.is-selected-mark[aria-selected="true"]::before,
+.is-selected-mark[aria-current="true"]::before,
+.is-selected-mark[data-selected="true"]::before {
+  content: "";
+  position: absolute;
+  inset-block: 0;
+  inset-inline-end: 0;
+  inline-size: 2px;
+  background: var(--accent);
+  pointer-events: none;
+}
+
+@media (forced-colors: active) {
+  .is-selected-mark[aria-selected="true"],
+  .is-selected-mark[aria-current="true"],
+  .is-selected-mark[data-selected="true"] {
+    outline: 2px solid Highlight;
+    outline-offset: -2px;
+  }
+  .is-selected-mark[aria-selected="true"]::before,
+  .is-selected-mark[aria-current="true"]::before,
+  .is-selected-mark[data-selected="true"]::before {
+    forced-color-adjust: none;
+    background: Highlight;
+  }
+}

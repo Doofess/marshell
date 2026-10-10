@@ -25,6 +25,13 @@ describe("MainWindow.css", () => {
     expect(r).toContain("flex-direction: column");
     expect(r).toContain("flex: 1 1 0");
   });
+  it("docks the full prompt line flat at the foot of its slot, like the compact one: no inset, no lift, no shadow", () => {
+    const r = rule(".window__composer > .composer");
+    expect(r).toContain("inset-inline: 0");
+    expect(r).toContain("inset-block-end: 0");
+    expect(r).not.toMatch(/box-shadow/);
+    expect(r).not.toMatch(/var\(--space-\d\)/);
+  });
   it("styles focus and press on the bar buttons", () => {
     expect(css).toContain(".window__control:focus-visible");
     expect(css).toContain(".window__control:active");

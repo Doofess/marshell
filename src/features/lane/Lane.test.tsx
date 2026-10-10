@@ -21,8 +21,8 @@ describe("Lane", () => {
     expect((h.match(/class="lane-row"/g) ?? []).length).toBe(1);
     expect(h.indexOf("Which AWS region")).toBeLessThan(h.indexOf("lane-row"));
   });
-  it("tells a screen reader how many need you", () => {
-    expect(html()).toContain('role="status"');
+  it("shows how many need you as plain text: the window's one announcer says it aloud", () => {
+    expect(html()).not.toMatch(/role="status"|aria-live/);
     expect(html()).toContain("Needs you · 2");
   });
   const many = Array.from({ length: 12 }, (_, i) => ({ ...APPROVALS.safeBash, id: `r${i}`, waitingMs: 1000 * (i + 1) }));
@@ -49,10 +49,10 @@ describe("Lane", () => {
 });
 
 describe("Lane (accessibility gate)", () => {
-  it("announces the count from a status wrapper, not by giving the heading a status role", () => {
+  it("keeps the count in the heading, and is not a live region itself", () => {
     const h = html();
-    expect(h).toMatch(/<div[^>]*role="status"[^>]*><h2 class="lane__heading">Needs you \u00b7 2<\/h2><\/div>/);
-    expect(h).not.toMatch(/<h2[^>]*role=/);
+    expect(h).toMatch(/<h2 class="lane__heading">Needs you · 2<\/h2>/);
+    expect(h).not.toMatch(/role="status"|aria-live|<h2[^>]*role=/);
   });
   it("names a one-liner with the text it shows, in order, then what the glyph says", () => {
     const h = html();

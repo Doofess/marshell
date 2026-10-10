@@ -154,4 +154,9 @@
   .rail__tool {
     outline: 1px solid CanvasText;
   }
+  /* The selected item is told apart by an inset fill, which High Contrast drops, so it takes a system-colour outline like a selected row. */
+  .rail__item[aria-current="true"] {
+    outline: 2px solid Highlight;
+    outline-offset: -2px;
+  }
 }

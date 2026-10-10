@@ -67,7 +67,7 @@ describe("LayoutMenu", () => {
     const h = menu({ count: 1, arrangement: "single" });
     expect(h).not.toContain('aria-label="Side by side"');
     expect(h).toContain("Add a pane");
-    expect(h).toContain("Ctrl+Shift+\\");
+    expect(h).toContain("Ctrl+Shift+D");
   });
   it("lets the user hand the arrangement back to the app, and says what automatic does", () => {
     const h = menu();
@@ -79,9 +79,11 @@ describe("LayoutMenu", () => {
   it("lists zoom and moving between panes with their shortcuts", () => {
     const h = menu();
     expect(h).toContain("Zoom the active pane");
-    expect(h).toContain("Ctrl+Shift+Z");
-    expect(h).toContain("Ctrl+Shift+]");
-    expect(menu({ os: "mac" })).toContain("⌘Z");
+    expect(h).toContain("Ctrl+Shift+P");
+    expect(h).toContain("Select the next terminal");
+    expect(h).toContain("Ctrl+Shift+Tab");
+    expect(menu({ os: "mac" })).toContain("⌘P");
+    expect(menu({ os: "mac" })).toContain("⌃⇧Tab");
   });
   it("puts no literal colour in the markup", () => {
     expect(menu()).not.toMatch(/#[0-9a-f]{3,8}\b|rgb\(|oklch\(/i);

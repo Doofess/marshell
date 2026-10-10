@@ -57,7 +57,7 @@ describe("Launcher: empty", () => {
 describe("Launcher: the first chip offers agents, shells and tools", () => {
   const h = html(view({ programsOpen: true }));
   it("opens a listbox grouped under Agents, Shells and Tools", () => {
-    expect(h).toContain('id="launcher-programs"');
+    expect(h).toMatch(/id="[^"]*-programs"/);
     expect(h).toContain('aria-expanded="true"');
     for (const g of LAUNCH_GROUPS) expect(h, g).toContain(`>${g}<`);
     const order = LAUNCH_GROUPS.map((g) => h.indexOf(`>${g}<`));
@@ -66,12 +66,12 @@ describe("Launcher: the first chip offers agents, shells and tools", () => {
   it("lists every program as an option with its mark, and says which is the current one", () => {
     expect(count(h, /role="option"/g)).toBe(LAUNCH_PROGRAMS.length);
     for (const p of LAUNCH_PROGRAMS) expect(h, p.id).toContain(p.label);
-    expect(h).toMatch(/role="option"[^>]*aria-selected="true"[^>]*id="launcher-prog-0"|id="launcher-prog-0"[^>]*aria-selected="true"/);
-    expect(h).toContain('aria-activedescendant="launcher-prog-0"');
+    expect(h).toMatch(/role="option"[^>]*aria-selected="true"[^>]*id="[^"]*-prog-0"|id="[^"]*-prog-0"[^>]*aria-selected="true"/);
+    expect(h).toMatch(/aria-activedescendant="[^"]*-prog-0"/);
   });
   it("closed, it points at nothing, so no dangling reference", () => {
     const closed = html();
-    expect(closed).not.toContain("launcher-programs");
+    expect(closed).not.toMatch(/-programs/);
     expect(closed).not.toContain("aria-activedescendant");
   });
   it("keeps the folder list closed while it is open", () => {
@@ -115,8 +115,9 @@ describe("Launcher: filtering", () => {
   });
   it("highlights what matched, and points at the active option", () => {
     expect(h).toContain("<mark");
-    expect(h).toMatch(/aria-activedescendant="launcher-opt-0"/);
-    expect(h).toContain('id="launcher-opt-0"');
+    const target = /aria-activedescendant="([^"]*-opt-0)"/.exec(h)?.[1];
+    expect(target).toBeTruthy();
+    expect(h).toContain(`id="${target}"`);
   });
   it("shows an empty state when nothing matches", () => {
     expect(html(view({ query: "zzz" }))).toContain("No folder matches");
@@ -125,7 +126,7 @@ describe("Launcher: filtering", () => {
     const empty = html(view({ query: "zzz" }));
     expect(empty).not.toContain('role="listbox"');
     expect(empty).toMatch(/<p class="launcher__empty" role="status">No folder matches/);
-    expect(empty).not.toContain('aria-controls="launcher-list"');
+    expect(empty).not.toMatch(/aria-controls=/);
     expect(empty).not.toContain("aria-activedescendant");
   });
   it("renders hostile text as text", () => {
@@ -163,5 +164,31 @@ describe("Launcher: hygiene", () => {
   });
   it("uses sentence case, with no exclamation marks", () => {
     expect(html()).not.toContain("!");
+  });
+});
+
+describe("Launcher: ids and chip names", () => {
+  it("uses ids that are unique when several launchers are on one page (the review page shows many)", () => {
+    const h = renderToStaticMarkup(
+      <>
+        <Launcher view={view({ programsOpen: true })} />
+        <Launcher view={view({ programsOpen: true })} />
+        <Launcher view={view({ query: "ap" })} />
+        <Launcher view={view({ query: "ap" })} />
+      </>,
+    );
+    const ids = [...h.matchAll(/ id="([^"]+)"/g)].map((m) => m[1]);
+    expect(new Set(ids).size).toBe(ids.length);
+  });
+  it("names the mode and pace chips so a screen reader knows what each one is, with the visible word inside the name", () => {
+    const h = html();
+    expect(h).toContain('aria-label="Mode: Manual"');
+    expect(h).toContain('aria-label="Pace: Balanced"');
+  });
+  it("points its description at an element that exists", () => {
+    const h = html();
+    const ref = /aria-describedby="([^"]+)"/.exec(h)?.[1];
+    expect(ref).toBeTruthy();
+    expect(h).toContain(`id="${ref}"`);
   });
 });

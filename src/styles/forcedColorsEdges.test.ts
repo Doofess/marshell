@@ -57,7 +57,27 @@ describe("forced colours: every filled control keeps an edge", () => {
         expect(blocks.some((b) => hasOutline(b, sel))).toBe(true);
       });
 
-  it("never leans on border-color there, since these elements no longer have borders", () => {
-    for (const file of Object.keys(EDGES)) for (const b of forcedColorsBlocks(read(file))) expect(b, file).not.toMatch(/border-color:/);
+  it("never leans on a border colour there (border-color or any side's longhand), since these elements no longer have borders", () => {
+    for (const file of Object.keys(EDGES)) for (const b of forcedColorsBlocks(read(file))) expect(b, file).not.toMatch(/border(?:-[a-z]+)*-color\s*:/);
   });
+  it("recognises the longhands the rule is about", () => {
+    for (const d of ["border-color: Highlight", "border-block-end-color: Highlight", "border-inline-start-color: CanvasText"]) expect(d).toMatch(/border(?:-[a-z]+)*-color\s*:/);
+    expect("outline: 1px solid Highlight").not.toMatch(/border(?:-[a-z]+)*-color\s*:/);
+  });
+
+  /** A session in a risky mode (bypass, full auto) is a tinted header with a red bar on its start edge; High Contrast drops both, so it takes a 2 px outline. */
+  it("features/window/SessionHeader.css: a risky-mode header keeps a 2px CanvasText outline", () => {
+    const blocks = forcedColorsBlocks(read("features/window/SessionHeader.css"));
+    expect(blocks.some((b) => /\.session-header\[data-danger\]\s*\{[^}]*outline:\s*2px solid CanvasText/.test(b))).toBe(true);
+  });
+
+  /** The selected rail item and the selected session row are marked by an inset fill, which High Contrast drops, so each takes a 2 px Highlight outline. */
+  for (const [file, selector] of [
+    ["features/window/Rail.css", '.rail__item[aria-current="true"]'],
+    ["features/sidebar/SessionRow.css", '.session-row[aria-selected="true"]'],
+  ] as const)
+    it(`${file}: ${selector} keeps a 2px Highlight outline`, () => {
+      const ok = forcedColorsBlocks(read(file)).some((b) => [...b.matchAll(/([^{}]+)\{([^{}]*)\}/g)].some((m) => m[1]!.split(",").map((x) => x.trim()).includes(selector) && /outline:\s*2px solid Highlight/.test(m[2]!)));
+      expect(ok).toBe(true);
+    });
 });

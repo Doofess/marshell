@@ -17,6 +17,15 @@ describe("the individual prompt line stories", () => {
   });
 });
 
+describe("the empty window story", () => {
+  it("shows the first-run state in dark and light: no terminal, no prompt line, and how to start a session", () => {
+    const h = render("NoSessions");
+    expect((h.match(/No sessions yet\. Start one with Ctrl\+Shift\+T\./g) ?? []).length).toBe(2);
+    expect(h).not.toContain('aria-label="Terminal for');
+    expect(h).not.toContain('<form class="composer"');
+  });
+});
+
 describe("the shell panel stories", () => {
   it("show the sidebar with the panel open, in dark and light", () => {
     const h = render("SidebarWithShell");

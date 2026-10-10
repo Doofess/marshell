@@ -1,11 +1,11 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { FIXTURES } from "../sidebar/fixtures";
-import { SessionHeader, headerOutlined, modeLabel } from "./SessionHeader";
+import { SessionHeader, headerDanger, modeLabel } from "./SessionHeader";
 
 const row = (id: string) => FIXTURES.find((f) => f.id === id)!;
 
-describe("modeLabel / headerOutlined", () => {
+describe("modeLabel / headerDanger", () => {
   it("names each mode", () => {
     expect(modeLabel("manual")).toBe("Manual");
     expect(modeLabel("plan")).toBe("Plan");
@@ -15,11 +15,11 @@ describe("modeLabel / headerOutlined", () => {
     expect(modeLabel(undefined)).toBe("–");
   });
   it("outlines the header in red only for bypass and auto", () => {
-    expect(headerOutlined("bypass")).toBe(true);
-    expect(headerOutlined("full-auto")).toBe(true);
-    expect(headerOutlined("auto-edit")).toBe(false);
-    expect(headerOutlined("plan")).toBe(false);
-    expect(headerOutlined(undefined)).toBe(false);
+    expect(headerDanger("bypass")).toBe(true);
+    expect(headerDanger("full-auto")).toBe(true);
+    expect(headerDanger("auto-edit")).toBe(false);
+    expect(headerDanger("plan")).toBe(false);
+    expect(headerDanger(undefined)).toBe(false);
   });
 });
 
@@ -43,9 +43,9 @@ describe("SessionHeader", () => {
     expect(e).toContain(">high<");
     expect(e).not.toContain("· high");
   });
-  it("is outlined for a bypass session", () => {
-    expect(renderToStaticMarkup(<SessionHeader row={row("bypass")} />)).toContain("data-outlined");
-    expect(h).not.toContain("data-outlined");
+  it("is marked red for a bypass session", () => {
+    expect(renderToStaticMarkup(<SessionHeader row={row("bypass")} />)).toContain("data-danger");
+    expect(h).not.toContain("data-danger");
   });
   it("labels an elevated session for the whole header", () => {
     expect(renderToStaticMarkup(<SessionHeader row={row("elevated")} />)).toContain("Administrator");

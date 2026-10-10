@@ -68,6 +68,10 @@
 
   --radius: 6px;
 
+  /* Elevation: a menu or sheet over the window, and a small floating pill. Black at fixed strength in both themes. */
+  --shadow-menu: 0 8px 28px oklch(0% 0 none / 0.35);
+  --shadow-pill: 0 2px 10px oklch(0% 0 none / 0.28);
+
   /* Layout sizes from docs/PLAN.md "Layout" and "Sidebar rows". */
   --sidebar: 288px;
   --sidebar-min: 200px;

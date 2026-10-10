@@ -38,11 +38,13 @@ describe("ShellPanel", () => {
     expect(html()).toContain('aria-label="Open PowerShell in a pane"');
     expect(html({ shellName: "bash" })).toContain('aria-label="Open bash in a pane"');
   });
-  it("hides and shows with one toggle that says its state and what it will do", () => {
+  it("hides and shows with one toggle that keeps one name; its state is aria-expanded, and its tooltip says what it will do", () => {
     const open = html();
-    expect(open).toMatch(/aria-label="Hide the shell"[^>]*aria-expanded="true"|aria-expanded="true"[^>]*aria-label="Hide the shell"/);
+    expect(open).toMatch(/aria-label="Shell panel"[^>]*aria-expanded="true"|aria-expanded="true"[^>]*aria-label="Shell panel"/);
+    expect(open).toContain('title="Hide the shell');
     const shut = html({ collapsed: true, height: 32 });
-    expect(shut).toMatch(/aria-label="Show the shell"[^>]*aria-expanded="false"|aria-expanded="false"[^>]*aria-label="Show the shell"/);
+    expect(shut).toMatch(/aria-label="Shell panel"[^>]*aria-expanded="false"|aria-expanded="false"[^>]*aria-label="Shell panel"/);
+    expect(shut).toContain('title="Show the shell');
   });
   it("shows only the header when collapsed, and says when it collapsed itself", () => {
     const shut = html({ collapsed: true, height: 32 });
@@ -55,8 +57,8 @@ describe("ShellPanel", () => {
     expect(html({ height: 300 })).toContain("block-size:300px");
   });
   it("puts the shortcut in the toggle's tooltip, per operating system", () => {
-    expect(html()).toContain("Ctrl+Shift+J");
-    expect(html({ os: "mac" })).toContain("⌘J");
+    expect(html()).toContain("Ctrl+Shift+S");
+    expect(html({ os: "mac" })).toContain("⌘S");
   });
   it("carries no literal colour in its markup", () => {
     expect(html()).not.toMatch(/#[0-9a-f]{3,8}\b|rgb\(|oklch\(/i);

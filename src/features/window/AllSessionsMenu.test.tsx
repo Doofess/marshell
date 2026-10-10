@@ -13,7 +13,7 @@ describe("AllSessionsMenu", () => {
     const h = html();
     expect(h).toContain('role="dialog"');
     expect(h).toContain('aria-label="All sessions"');
-    expect((h.match(/class="all-sessions__row"/g) ?? []).length).toBe(20);
+    expect((h.match(/class="all-sessions__row[ "]/g) ?? []).length).toBe(20);
   });
   it("takes its own title, and counts what it holds", () => {
     const h = html({ title: "Needs you" });

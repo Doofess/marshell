@@ -79,7 +79,7 @@ export function SplitView({ panes, size, activeIndex = 0, arrangement, ratios = 
     >
       {visible.map(({ row, index }, k) =>
         row ? (
-          <Pane key={row.id} row={row} active={index === activeIndex} setting={setting} style={gridArea(plan.cells[k]!)} cells={cells[k]} zoomedOf={isZoomed ? panes.length : undefined} runningElsewhere={index === activeIndex && hidden > 0 ? hidden : undefined} value={composerValues[row.id]} composer={composers} os={os} />
+          <Pane key={row.id} row={row} active={index === activeIndex} setting={setting} style={gridArea(plan.cells[k]!)} cells={cells[k]} zoomedOf={isZoomed ? panes.length : undefined} othersRunning={isZoomed ? panes.filter(Boolean).length - 1 : undefined} runningElsewhere={index === activeIndex && hidden > 0 ? hidden : undefined} value={composerValues[row.id]} composer={composers} os={os} />
         ) : (
           <EmptyPane key={`empty-${index}`} choices={choices} active={index === activeIndex} style={gridArea(plan.cells[k]!)} os={os} />
         ),

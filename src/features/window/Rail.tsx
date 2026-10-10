@@ -6,6 +6,7 @@ import { SearchIcon } from "./SearchIcon";
 import { monogram } from "../sidebar/monogram";
 import { SessionNumber } from "../../components/SessionNumber/SessionNumber";
 import type { RowModel } from "../sidebar/types";
+import { selectedProps } from "../../components/a11y/SelectedMark";
 import "./Rail.css";
 
 /**
@@ -19,13 +20,13 @@ export function Rail({ rows, needsYou, selectedId, os = "windows" }: { rows: Row
     <nav className="rail" aria-label="Sessions">
       <div className="rail__list">
         {needsYou > 0 && (
-          <div className="rail__badge" role="status" aria-label={`${needsYou} need you`}>
+          <div className="rail__badge" role="img" aria-label={`${needsYou} need you`}>
             <StatusGlyph kind="needs-permission" label="Needs you" />
             <span className="rail__count">{needsYou}</span>
           </div>
         )}
         {rows.map((r) => (
-          <button key={r.id} type="button" className="rail__item" data-agent={r.agent} data-mono={monogram(r.name)} data-number={r.number} aria-label={rowLabel(r)} aria-current={r.id === selectedId ? "true" : undefined}>
+          <button key={r.id} type="button" {...selectedProps(r.id === selectedId, "current", "rail__item")} data-agent={r.agent} data-mono={monogram(r.name)} data-number={r.number} aria-label={rowLabel(r)}>
             <span className="rail__stripe" aria-hidden="true" />
             <span className="rail__number">
               <SessionNumber n={r.number} />

@@ -1,0 +1,70 @@
+.shortcuts {
+  display: grid;
+  gap: var(--space-4);
+  padding: var(--space-6);
+  max-inline-size: 560px;
+  border-radius: var(--radius);
+  background: var(--bg-overlay);
+  color: var(--text-1);
+  font-size: var(--text-13);
+}
+
+.shortcuts__title {
+  margin: 0;
+  font-size: var(--text-15);
+  font-weight: 600;
+}
+
+.shortcuts__intro {
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius);
+  background: var(--fill);
+  color: var(--text-2);
+  line-height: var(--leading);
+}
+
+.shortcuts__group {
+  display: grid;
+  gap: var(--space-1);
+}
+
+.shortcuts__heading {
+  margin: 0;
+  color: var(--text-2);
+  font-size: var(--text-11);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.shortcuts__list {
+  display: grid;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.shortcuts__row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-4);
+  padding-block: var(--space-1);
+}
+
+.shortcuts__label {
+  min-inline-size: 0;
+  overflow-wrap: anywhere;
+}
+
+.shortcuts__keys {
+  flex: none;
+  padding: 1px var(--space-2);
+  border-radius: calc(var(--radius) / 2);
+  background: var(--fill);
+  color: var(--text-1);
+  font-family: var(--font-mono);
+  font-size: var(--text-12);
+  white-space: nowrap;
+}

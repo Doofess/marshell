@@ -28,6 +28,9 @@ describe("SplitView.css", () => {
   it("keeps the receding header readable: its secondary text and buttons use full-strength ink so 60% opacity still passes AA", () => {
     expect(css).toMatch(/\.pane\[data-active="false"\] \.pane__place,[\s\S]*?\{\s*color: var\(--text-1\)/);
   });
+  it("re-inks the session number in the receding header too, so the numeral keeps AA at 60%", () => {
+    expect(css).toMatch(/\.pane\[data-active="false"\] \.session-number[\s\S]*?\{\s*color: var\(--text-1\)/);
+  });
   it("says in its comment the tint percentage the code really uses", () => {
     const pct = rule('.pane__header[data-needs="true"]').match(/(\d+)%/)?.[1];
     const comment = css.match(/\/\*[^*]*attention tint[^*]*\*\//)?.[0] ?? "";
@@ -66,5 +69,17 @@ describe("SplitView.css", () => {
     expect(css).not.toMatch(/#[0-9a-f]{3,8}\b|rgb\(/i);
     expect(css).not.toMatch(/\b(margin|padding|border)-(left|right|top|bottom)\b/);
     expect(css).not.toMatch(/\b(left|right|top|bottom):/);
+  });
+});
+
+describe("SplitView.css: a pane header is a title bar, so the session's name is the last thing to give way", () => {
+  it("lets the project shrink long before the name (a much larger shrink factor), and gives the name a floor", () => {
+    const place = Number(/flex-shrink:\s*(\d+)/.exec(rule(".pane__place"))?.[1] ?? 1);
+    const name = Number(/flex-shrink:\s*(\d+)/.exec(rule(".pane__name"))?.[1] ?? 1);
+    expect(place).toBeGreaterThan(name);
+    expect(rule(".pane__name")).toMatch(/min-inline-size:\s*(?!0[;\s])[^;]+/);
+  });
+  it("never lets the number or the status glyph shrink", () => {
+    expect(rule(".pane__header > .session-number")).toContain("flex: none");
   });
 });

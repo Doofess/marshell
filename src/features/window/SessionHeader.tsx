@@ -12,8 +12,8 @@ const DASH = "–";
 const MODE_LABELS: Record<Mode, string> = { manual: "Manual", plan: "Plan", "auto-edit": "Auto-edit", "full-auto": "Full auto", bypass: "Bypass" };
 
 export const modeLabel = (mode?: Mode) => (mode ? MODE_LABELS[mode] : DASH);
-/** docs/PLAN.md "Sidebar rows": the header is outlined red for bypass and auto. */
-export const headerOutlined = (mode?: Mode) => mode === "bypass" || mode === "full-auto";
+/** docs/PLAN.md "Sidebar rows": the header is marked red for bypass and auto, with a tint and a start-edge bar (never a box). */
+export const headerDanger = (mode?: Mode) => mode === "bypass" || mode === "full-auto";
 
 /**
  * The session header in the unified 40 px top bar: name, place, mode, model and effort, subagents, context, ports.
@@ -23,7 +23,7 @@ export function SessionHeader({ row, ports = [] }: { row: RowModel; ports?: stri
   const caution = modeCaution(row.mode);
   const modelAndEffort = [row.model, row.effort].filter(Boolean).join(" · ");
   return (
-    <div className="session-header" role="group" aria-label={`${sessionWord(row.number)}, ${row.name}`} data-outlined={headerOutlined(row.mode) || undefined} data-agent={row.agent}>
+    <div className="session-header" role="group" aria-label={`${sessionWord(row.number)}, ${row.name}`} data-danger={headerDanger(row.mode) || undefined} data-agent={row.agent}>
       <AgentMark agent={row.agent} />
       {row.elevated && <AuxGlyph kind="elevated" label="Administrator" />}
       <SessionNumber n={row.number} title={SESSION_NUMBER_HINT} />

@@ -6,8 +6,8 @@ import { describe, expect, it } from "vitest";
 const SRC = new URL("..", import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1");
 const walk = (dir: string): string[] =>
   readdirSync(dir, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? walk(join(dir, e.name)) : e.name.endsWith(".css") ? [join(dir, e.name)] : []));
-/** Every feature and component stylesheet: a new file is scanned without anyone remembering to list it. */
-const FILES = [...walk(join(SRC, "features")), ...walk(join(SRC, "components"))].map((f) => relative(SRC, f).replace(/\\/g, "/"));
+/** Every feature, component and global stylesheet (tokens, base, app): a new file is scanned without anyone remembering to list it. */
+const FILES = [...walk(join(SRC, "features")), ...walk(join(SRC, "components")), ...walk(join(SRC, "styles"))].map((f) => relative(SRC, f).replace(/\\/g, "/"));
 
 /**
  * Selectors that may scroll: menus and settings (`.scroll-menu`, `.layout-menu`), the request-details drawer (a menu-like
@@ -39,6 +39,7 @@ describe("the main window never scrolls", () => {
     expect(FILES.length).toBeGreaterThan(15);
     expect(FILES).toContain("features/window/Sidebar.css");
     expect(FILES).toContain("components/Chip/Chip.css");
+    expect(FILES).toContain("styles/base.css");
   });
 
   for (const f of FILES)

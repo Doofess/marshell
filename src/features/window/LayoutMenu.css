@@ -10,7 +10,7 @@
   padding: var(--space-3);
   border-radius: 10px;
   background: var(--bg-overlay);
-  box-shadow: 0 8px 28px oklch(0% 0 none / 0.35);
+  box-shadow: var(--shadow-menu);
   color: var(--text-1);
   font-size: var(--text-12);
 }

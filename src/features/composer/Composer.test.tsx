@@ -168,6 +168,17 @@ describe("Composer: states, in both variants", () => {
   }
 });
 
+describe("Composer: one live region for the whole window, not one per prompt line", () => {
+  it("never carries a live region of its own, in any state or variant (the window announces the focused session once)", () => {
+    for (const id of ["idle", "working", "needs-permission", "needs-question", "ended"])
+      for (const v of VARIANTS) {
+        const s = html(id, "", "windows", v);
+        expect(s, `${id} ${v}`).not.toMatch(/role="(status|alert|log)"|aria-live=/);
+      }
+    for (const v of VARIANTS) expect(renderToStaticMarkup(<Composer row={null} variant={v} />)).not.toMatch(/role="status"|aria-live=/);
+  });
+});
+
 describe("Composer: hygiene", () => {
   it("is no longer where the status strip lives: that is the status bar", () => {
     for (const v of VARIANTS) expect(html("working", "", "windows", v)).not.toContain("status-strip");
@@ -176,11 +187,11 @@ describe("Composer: hygiene", () => {
     for (const v of VARIANTS) for (const id of ["idle", "working", "needs-permission", "ended"]) expect(html(id, "x", "windows", v)).not.toMatch(/#[0-9a-f]{3,8}\b|rgb\(|oklch\(/i);
   });
   it("has a shortcut to focus it, listed with the other commands", () => {
-    expect(shortcutLabel(commandById("focus-prompt").binding!, "windows")).toBe("Ctrl+Shift+M");
-    expect(shortcutLabel(commandById("focus-prompt").binding!, "mac")).toBe("⌘M");
+    expect(shortcutLabel(commandById("focus-prompt").binding!, "windows")).toBe("Ctrl+Shift+L");
+    expect(shortcutLabel(commandById("focus-prompt").binding!, "mac")).toBe("⌘L");
     for (const v of VARIANTS) {
-      expect(html("idle", "", "windows", v)).toContain("Ctrl+Shift+M");
-      expect(html("idle", "", "mac", v)).toContain("⌘M");
+      expect(html("idle", "", "windows", v)).toContain("Ctrl+Shift+L");
+      expect(html("idle", "", "mac", v)).toContain("⌘L");
     }
   });
 });

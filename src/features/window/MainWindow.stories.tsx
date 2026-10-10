@@ -49,6 +49,7 @@ export const LightTerminalInDarkApp: StoryObj = {
     </ThemePair>
   ),
 };
+export const NoSessions: StoryObj = stacked("First run, or everything closed: no sessions yet, and the window says how to start one. The sidebar, header and bar stay where they are, so nothing jumps when the first session appears", { width: 1180, height: 640, rows: [], requests: [] });
 export const MacShortcuts: StoryObj = stacked("macOS shortcut labels (focus pill)", { width: 1180, height: 560, layout: "focus", os: "mac" });
 
 const twelve = Array.from({ length: 12 }, (_, i) => ({ ...SCENARIO_REQUESTS[0]!, id: `r${i}`, waitingMs: 60_000 + i * 1000 }));

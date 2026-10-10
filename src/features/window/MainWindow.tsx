@@ -1,4 +1,4 @@
-import type { CSSProperties } from "react";
+import { useEffect, type CSSProperties } from "react";
 import { Logo } from "../../components/Logo/Logo";
 import { Wordmark } from "../../components/Logo/Wordmark";
 import { StatusGlyph } from "../../components/StatusGlyph/StatusGlyph";
@@ -20,7 +20,9 @@ import { isTool } from "../../components/AgentMark/kinds";
 import { hasPromptLine } from "../sidebar/promptLine";
 import { Rail } from "./Rail";
 import { SCENARIO_FOOTER, SCENARIO_PLAN, SCENARIO_PORTS, SCENARIO_REQUESTS, SCENARIO_ROWS } from "./scenario";
+import { SessionAnnouncer } from "./SessionAnnouncer";
 import { SessionHeader } from "./SessionHeader";
+import { windowTitle } from "./windowTitle";
 import { Sidebar } from "./Sidebar";
 import { shellNameFor } from "./ShellPanel";
 import { ARRANGEMENTS, chooseArrangement, maxPanes, type Arrangement, type PaneCount, type Ratios } from "./splitLayout";
@@ -114,7 +116,9 @@ export function MainWindow({
   const pref: SidebarPref = sidebarPref ?? (layout === "focus" ? "focus" : layout === "rail" ? "rail" : "expanded");
   const mode = sidebarMode(width, pref);
   const sideW = sidebarWidth(mode);
-  const selected = rows.find((r) => r.id === selectedId) ?? rows[0]!;
+  // No sessions at all is a real state (first run, everything closed): the window shows its empty state, never a missing row.
+  const selected: RowModel | null = rows.find((r) => r.id === selectedId) ?? rows[0] ?? null;
+  const empty = selected === null;
   const waiting = pending(requests).length;
   const showHeader = mode !== "focus" || headerPeek;
   const placement = drawerPlacement(width, mode, DRAWER.default);
@@ -124,18 +128,19 @@ export function MainWindow({
   const split = layout === "split";
   const showComposer = composer && mode !== "focus";
   // A manual CLI is a plain terminal: no full prompt line under a single one, and no compact line in its pane.
-  const showFull = showComposer && !split && hasPromptLine(selected);
+  const showFull = showComposer && !split && selected !== null && hasPromptLine(selected);
   const showStatus = statusBar && mode !== "focus";
   const pushed = drawer && placement === "push" ? DRAWER.default : 0;
   // The status bar always takes its 24 px. A single terminal also gives up the full prompt line; in split view each pane's own
   // prompt line is counted inside the pane math (splitLayout), not here.
   const requested = Math.min(splitCount, rows.length);
-  const candidates = [selected, ...rows.filter((r) => r.id !== selected.id)].slice(0, requested);
+  const ordered = selected ? [selected, ...rows.filter((r) => r.id !== selected.id)] : [];
+  const candidates = ordered.slice(0, requested);
   const lineH = split && showComposer && candidates.some(hasPromptLine) ? COMPOSER.compact : 0;
   const space = { w: width - sideW - pushed, h: height - BAR - (showStatus ? STATUS_BAR_HEIGHT : 0) - (showFull ? COMPOSER.full : 0) };
   // Four only where four are usable: a window too small for the count shows fewer, and the rest keep running.
   const visible = split ? Math.min(requested, maxPanes(space, lineH)) : 1;
-  const shown: (RowModel | null)[] = [selected, ...rows.filter((r) => r.id !== selected.id)].slice(0, visible);
+  const shown: (RowModel | null)[] = ordered.slice(0, visible);
   if (emptySlot && shown.length > 1) shown[shown.length - 1] = null;
   const choices = rows.filter((r) => !shown.some((s) => s?.id === r.id));
   // Zoom makes its pane the focused one, so the header, the accent bar and the prompt bar can never disagree about which pane is in play.
@@ -144,21 +149,30 @@ export function MainWindow({
   const focusedIndex = zoomIdx ?? clamped;
   const focused = shown[focusedIndex] ?? null;
   const active = split ? (focused ?? selected) : selected;
-  const paneCount = (split ? shown.length : 1) as PaneCount;
+  const paneCount = (split && !empty ? shown.length : 1) as PaneCount;
   // An arrangement picked for another number of panes (the window shrank, or fewer sessions exist) gives way to automatic.
   const chosen = arrangement && ARRANGEMENTS[zoomIdx !== undefined ? 1 : paneCount]?.includes(arrangement) ? arrangement : undefined;
-  const arranged = split ? (zoomIdx !== undefined ? "single" : (chosen ?? chooseArrangement(paneCount, space, {}, lineH))) : "single";
-  const menuCount = (split ? (zoomIdx !== undefined ? 1 : paneCount) : 1) as PaneCount;
+  const arranged = split && !empty ? (zoomIdx !== undefined ? "single" : (chosen ?? chooseArrangement(paneCount, space, {}, lineH))) : "single";
+  const menuCount = (split && !empty ? (zoomIdx !== undefined ? 1 : paneCount) : 1) as PaneCount;
   const hiddenCount = split ? requested - shown.length : 0;
+  // The OS title bar and the taskbar name the focused session, like any window named for its document.
+  const title = windowTitle(active);
+  useEffect(() => {
+    if (typeof document !== "undefined") document.title = title;
+  }, [title]);
 
   return (
-    <div className="window" style={{ inlineSize: width, blockSize: height, "--side-w": `${sideW}px` } as CSSProperties} data-mode={mode} data-layout={layout} data-agent={active.agent}>
+    <div className="window" style={{ inlineSize: width, blockSize: height, "--side-w": `${sideW}px` } as CSSProperties} data-mode={mode} data-layout={layout} data-agent={active?.agent}>
+      <SessionAnnouncer row={active} needsYou={waiting} />
       <header className="window__bar">
         <div className="window__bar-side">
-          <button type="button" className="window__brand" aria-label="Marshell menu" aria-haspopup="menu">
-            <Logo size={22} decorative />
-            {mode === "expanded" && <Wordmark height={13} decorative />}
-          </button>
+          {/* In focus mode this column has no width: its buttons are not rendered, so keyboard focus can never land on something nobody sees. */}
+          {mode !== "focus" && (
+            <button type="button" className="window__brand" aria-label="Marshell menu" aria-haspopup="menu">
+              <Logo size={22} decorative />
+              {mode === "expanded" && <Wordmark height={13} decorative />}
+            </button>
+          )}
           {mode === "expanded" && (
             <button type="button" className="window__palette" aria-label="Command palette" title={`Search sessions, projects and commands (${shortcutLabel(commandById("palette").binding!, os)})`}>
               <SearchIcon />
@@ -166,7 +180,7 @@ export function MainWindow({
             </button>
           )}
         </div>
-        <div className="window__bar-main">{showHeader && <SessionHeader row={active} ports={SCENARIO_PORTS} />}</div>
+        <div className="window__bar-main">{showHeader && active && <SessionHeader row={active} ports={SCENARIO_PORTS} />}</div>
         <div className="window__bar-end">
           <div className="window__layout">
             <button
@@ -181,7 +195,7 @@ export function MainWindow({
             </button>
             {layoutMenu && (
               <div className="window__popover">
-                <LayoutMenu count={menuCount} requested={split ? requested : 1} max={maxPanes(space, lineH)} arrangement={arranged} auto={chosen === undefined} os={os} />
+                <LayoutMenu count={menuCount} requested={split && zoomIdx === undefined ? requested : 1} max={maxPanes(space, lineH)} arrangement={arranged} auto={chosen === undefined} os={os} />
               </div>
             )}
           </div>
@@ -200,12 +214,16 @@ export function MainWindow({
       </header>
 
       <div className="window__body">
-        {mode === "expanded" && <Sidebar rows={rows} requests={requests} height={height - BAR} width={sideW} selectedId={selected.id} footer={SCENARIO_FOOTER} shell={shell ? { cwd: active.project, shellName: shellNameFor(os), collapsed: shellCollapsed, os } : undefined} />}
-        {mode === "rail" && <Rail rows={rows} needsYou={waiting} selectedId={selected.id} os={os} />}
+        {mode === "expanded" && <Sidebar rows={rows} requests={requests} height={height - BAR} width={sideW} selectedId={selected?.id} footer={SCENARIO_FOOTER} shell={shell ? { cwd: active?.project, shellName: shellNameFor(os), collapsed: shellCollapsed, os } : undefined} />}
+        {mode === "rail" && <Rail rows={rows} needsYou={waiting} selectedId={selected?.id} os={os} />}
 
         <div className="window__center">
         <main className="window__main" data-placement={drawer ? placement : undefined}>
-          {split ? (
+          {empty ? (
+            <div className="window__empty">
+              No sessions yet. Start one with {shortcutLabel(commandById("launcher").binding!, os)}.
+            </div>
+          ) : split ? (
             <SplitView panes={shown} size={{ w: space.w, h: space.h }} activeIndex={focusedIndex} hidden={hiddenCount} arrangement={chosen} ratios={ratios} zoomed={zoomIdx} choices={choices} composerValues={composerValues} composers={showComposer} setting={terminalSetting} os={os} />
           ) : (
             <ScriptedTerminal setting={terminalSetting} label={`Terminal for ${selected.name}`} {...(isTool(selected.agent) ? { script: shellSession({ cwd: selected.project }), size: SHELL_SIZE } : {})} />
@@ -227,7 +245,7 @@ export function MainWindow({
             </aside>
           )}
         </main>
-        {showFull && (
+        {showFull && selected && (
           <div className="window__composer" style={{ blockSize: COMPOSER.full }}>
             <Composer row={selected} variant="full" value={composerValue} os={os} />
           </div>

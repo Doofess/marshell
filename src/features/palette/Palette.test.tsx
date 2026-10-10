@@ -19,7 +19,7 @@ describe("Palette: empty", () => {
     expect(h).toContain('role="listbox"');
   });
   it("lists every command, grouped, in the keymap's order", () => {
-    for (const c of COMMANDS) expect(h, c.id).toContain(c.label);
+    for (const c of COMMANDS) expect(h, c.id).toContain(c.label.replace(/'/g, "&#x27;"));
     for (const g of ["Sessions", "View", "Tools"]) expect(h).toContain(g);
   });
   it("shows each command's shortcut, rebindable, per OS", () => {
@@ -28,7 +28,7 @@ describe("Palette: empty", () => {
     expect(h).toContain("Rebind in Settings");
   });
   it("gives every option an id and points the input at the active one", () => {
-    expect(h).toMatch(/aria-activedescendant="palette-opt-0"/);
+    expect(h).toMatch(/aria-activedescendant="[^"]*-opt-0"/);
     expect(options(h)).toBe(COMMANDS.length);
   });
   it("shows commands that have no shortcut without a gap or a dash", () => {
@@ -80,16 +80,17 @@ describe("Palette: open sessions, each with its number", () => {
     expect(options(h)).toBe(PALETTE_SESSIONS.length + COMMANDS.filter((c) => !c.id.startsWith("focus-session-")).length);
     expect(h).toContain("Go to session…");
   });
-  it("shows Ctrl+N for sessions 1 to 9 and nothing for 10 and up, per OS", () => {
-    expect(h).toContain("Ctrl+6");
+  it("shows Ctrl+Shift+N for sessions 1 to 9 and nothing for 10 and up, per OS", () => {
+    expect(h).toContain("Ctrl+Shift+6");
     expect(withSessions("", "mac")).toContain("⌘6");
     const twelve = PALETTE_SESSIONS.find((s) => s.number === 12)!;
     expect(h).toContain(`Go to session 12, ${twelve.name}`);
     expect(h).not.toContain("Ctrl+12");
   });
   it("gives every option an id and points the input at the active one", () => {
-    expect(h).toMatch(/aria-activedescendant="palette-opt-0"/);
-    expect(h).toContain('id="palette-opt-0"');
+    const target = /aria-activedescendant="([^"]*-opt-0)"/.exec(h)?.[1];
+    expect(target).toBeTruthy();
+    expect(h).toContain(`id="${target}"`);
   });
   it("asks for a command or a session number", () => {
     expect(h).toContain('placeholder="Type a command, or a session number"');
@@ -100,7 +101,7 @@ describe("Palette: say session 6 and it knows which terminal you mean", () => {
   it("puts the session with that number first for 6, #6 and session 6", () => {
     for (const q of ["6", "#6", "session 6", "go to session 6"]) {
       const h = withSessions(q);
-      const first = /id="palette-opt-0"[^>]*aria-label="([^"]*)"|aria-label="([^"]*)"[^>]*id="palette-opt-0"/.exec(h);
+      const first = /id="[^"]*-opt-0"[^>]*aria-label="([^"]*)"|aria-label="([^"]*)"[^>]*id="[^"]*-opt-0"/.exec(h);
       expect(first?.[1] ?? first?.[2], q).toContain("Go to session 6,");
     }
   });
@@ -139,5 +140,35 @@ describe("Palette: hygiene", () => {
   it("never puts a literal colour in markup", () => {
     expect(html()).not.toMatch(/#[0-9a-f]{3,8}\b|rgb\(|oklch\(/i);
     expect(withSessions()).not.toMatch(/#[0-9a-f]{3,8}\b|rgb\(|oklch\(/i);
+  });
+});
+
+describe("Palette: odd session numbers and a stale active row", () => {
+  const odd = (n: number) => [{ ...PALETTE_SESSIONS[0]!, id: `odd${n}`, number: n }];
+  for (const n of [0, -1, 2.5, 10, 12]) {
+    it(`lists a session numbered ${n} without throwing, and gives it no Ctrl+digit`, () => {
+      const h = renderToStaticMarkup(<Palette view={{ query: "", activeIndex: 0 }} sessions={odd(n)} />);
+      expect(h).toContain(`Go to session ${n},`);
+      expect(h).not.toContain("<kbd class=\"palette__kbd\">Ctrl+Shift+" + n);
+    });
+  }
+  it("clamps an active index that no longer exists, so the input never points at a missing option and one row is selected", () => {
+    for (const idx of [999, -3, 1.5, Number.NaN]) {
+      const h = withSessions("", "windows", idx);
+      const target = /aria-activedescendant="([^"]*)"/.exec(h)?.[1];
+      expect(target, String(idx)).toBeTruthy();
+      expect(h, String(idx)).toContain(`id="${target}"`);
+      expect(count(h, /aria-selected="true"/g), String(idx)).toBe(1);
+    }
+  });
+  it("uses ids that are unique when two palettes are on one page (the review page shows many)", () => {
+    const h = renderToStaticMarkup(
+      <>
+        <Palette view={{ query: "", activeIndex: 0 }} />
+        <Palette view={{ query: "", activeIndex: 0 }} />
+      </>,
+    );
+    const ids = [...h.matchAll(/ id="([^"]+)"/g)].map((m) => m[1]);
+    expect(new Set(ids).size).toBe(ids.length);
   });
 });

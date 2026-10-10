@@ -30,14 +30,14 @@ describe("label in name: every control's name contains the text it shows", () =>
 
   it("all-sessions menu rows", () => {
     const html = renderToStaticMarkup(<AllSessionsMenu rows={FIXTURES} />);
-    const rows = html.split('<button type="button" class="all-sessions__row"').slice(1).map((s) => '<button type="button" class="all-sessions__row"' + s.split("</button>")[0] + "</button>");
+    const rows = html.split('<button type="button" class="all-sessions__row is-selected-mark"').slice(1).map((s) => '<button type="button" class="all-sessions__row is-selected-mark"' + s.split("</button>")[0] + "</button>");
     expect(rows.length).toBe(FIXTURES.length);
     expect(rows.filter((r) => !nameContainsLabel(r))).toEqual([]);
   });
 
   it("palette session rows, with their Ctrl+digit", () => {
     const html = renderToStaticMarkup(<Palette view={{ query: "", activeIndex: 0 }} sessions={PALETTE_SESSIONS} />);
-    const rows = html.split('<li id="palette-opt-').slice(1).map((s) => '<li id="palette-opt-' + s.split("</li>")[0] + "</li>").filter((r) => r.includes('data-kind="session"'));
+    const rows = html.split(/<li id="[^"]*-opt-/).slice(1).map((s) => "<li " + s.split("</li>")[0] + "</li>").filter((r) => r.includes('data-kind="session"'));
     expect(rows.length).toBeGreaterThan(0);
     expect(rows.filter((r) => !nameContainsLabel(r))).toEqual([]);
   });

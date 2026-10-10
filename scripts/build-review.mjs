@@ -6,11 +6,11 @@ import { createServer } from "vite";
 
 const out = process.argv[2];
 if (!out) {
-  console.error("usage: node scripts/build-review.mjs <out.html>");
+  console.error("usage: node scripts/build-review.mjs <out.html> [1|2a|2b|2c]   (default: 2c, the latest batch)");
   process.exit(1);
 }
 
-const batch = process.argv[3] ?? "2a";
+const batch = process.argv[3] ?? "2c";
 
 const CSS = [
   "src/styles/tokens.css",
@@ -19,6 +19,9 @@ const CSS = [
   "src/styles/base.css",
   "src/styles/motion.css",
   "src/design/ThemePair.css",
+  "src/design/NavDemo.css",
+  "src/features/window/NavCursor.css",
+  "src/features/shortcuts/ShortcutSheet.css",
   "src/design/specimen.css",
   "src/components/AgentMark/agent-colors.css",
   "src/components/AgentMark/AgentMark.css",
@@ -42,6 +45,7 @@ const CSS = [
   "src/features/composer/Composer.css",
   "src/features/composer/StatusStrip.css",
   "src/features/composer/StatusBar.css",
+  "src/components/a11y/SelectedMark.css",
   "src/features/launcher/Launcher.css",
   "src/features/palette/Palette.css",
   "src/features/window/ShellPanel.css",
@@ -192,6 +196,7 @@ META["2c"] = {
   lede: "Sub-review C of 3 in batch 2: the launcher and the command palette. Sub-review B (main window) is below, awaiting sign-off; A and batch 1 are signed off.",
   nav: [["launcher", "Launcher"], ["command-palette", "Palette"], ["main-window", "Window"], ["needs-you-lane", "Lane"], ["approve-card", "Approve card"], ["sign-off", "Sign-off"]],
   checks: [
+    "Screen-reader pass (about 10 minutes, Narrator and NVDA): follow docs/a11y/screen-reader-script.md and answer with its letters, e.g. \"A pass, B fail (B6)\".",
     "The launcher reads as one sentence of chips; Tab and letters move between chips, Enter starts.",
     "The first chip lists Agents, Shells and Tools; a shell has no mode, pace or worktree chips.",
     "The palette jumps by number: type 6, #6 or session 6; a missing number says which are open.",
@@ -202,6 +207,7 @@ META["2b"] = {
   lede: "Sub-review B of 3 in batch 2: the main window with a real terminal. Sub-review A (approve card) and batch 1 are signed off and sit below.",
   nav: [["needs-you-lane", "Lane"], ["main-window", "Window"], ["approve-card", "Approve card"], ["sidebar-session-rows", "Rows"], ["design-colours", "Colours"], ["sign-off", "Sign-off"]],
   checks: [
+    "Screen-reader pass (about 10 minutes, Narrator and NVDA): follow docs/a11y/screen-reader-script.md and answer with its letters, e.g. \"A pass, B fail (B6)\".",
     "In 5 seconds you can name which two sessions need you and why (the 5-second test).",
     "The lane header is always there; the oldest request is the expanded card; Twelve waiting scrolls and says +11 more.",
     "Split view: the active pane is obvious, the other header recedes, terminal text is not dimmed.",

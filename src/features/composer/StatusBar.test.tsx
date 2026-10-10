@@ -88,3 +88,31 @@ describe("StatusBar.css", () => {
     expect(css).not.toMatch(/\b(margin|padding|border)-(left|right|top|bottom)\b/);
   });
 });
+
+describe("StatusBar: it says whose facts they are", () => {
+  it("starts with the focused session's number and name, before every fact", () => {
+    const h = html("working");
+    expect(h).toContain('class="status-bar__session"');
+    expect(h.indexOf("status-bar__session")).toBeLessThan(h.indexOf("status-strip"));
+    expect(h).toContain('aria-label="Session 3, api-server"');
+    expect(h).toMatch(/class="status-bar__name"[^>]*>api-server</);
+  });
+  it("keeps the name when the strip is down to its last item, and for a plain terminal with no facts at all", () => {
+    expect(html("working", 40)).toContain("status-bar__name");
+    const h = renderToStaticMarkup(<StatusBar row={{ id: "x", number: 7, name: "plain", project: "p", agent: "powershell", status: "idle", phrase: "Idle" }} />);
+    expect(h).toContain("status-bar__name");
+    expect(h).not.toContain("status-strip__item");
+  });
+  it("shows no name for an empty pane", () => {
+    expect(html(null)).not.toContain("status-bar__session");
+  });
+  it("is the one item that is never dropped: it does not shrink, and only ellipsizes at its own cap", () => {
+    const r = (s: string) => {
+      const i = css.indexOf(`${s} {`);
+      return i < 0 ? "" : css.slice(i, css.indexOf("}", i));
+    };
+    expect(r(".status-bar__session")).toContain("flex: none");
+    expect(r(".status-bar__name")).toContain("text-overflow: ellipsis");
+    expect(r(".status-bar__facts")).toContain("container-type: inline-size");
+  });
+});

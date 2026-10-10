@@ -4,6 +4,7 @@ import { SessionNumber } from "../../components/SessionNumber/SessionNumber";
 import { sessionWord } from "../sidebar/sessionNumber";
 import { GLYPHS } from "../../components/StatusGlyph/glyphs";
 import type { RowModel } from "../sidebar/types";
+import { selectedProps } from "../../components/a11y/SelectedMark";
 import "./AllSessionsMenu.css";
 
 /**
@@ -21,7 +22,7 @@ export function AllSessionsMenu({ rows, selectedId, title = "All sessions" }: { 
       </header>
       <div className="all-sessions__list scroll-menu">
         {rows.map((r) => (
-          <button key={r.id} type="button" className="all-sessions__row" data-agent={r.agent} aria-label={`${sessionWord(r.number)}, ${r.name} ${r.project} ${r.phrase.replace(/`/g, "")}. ${kindName(r.agent)}, ${GLYPHS[r.status].label}.`} aria-current={r.id === selectedId ? "true" : undefined}>
+          <button key={r.id} type="button" {...selectedProps(r.id === selectedId, "current", "all-sessions__row")} data-agent={r.agent} aria-label={`${sessionWord(r.number)}, ${r.name} ${r.project} ${r.phrase.replace(/`/g, "")}. ${kindName(r.agent)}, ${GLYPHS[r.status].label}.`}>
             <span className="all-sessions__stripe" aria-hidden="true" />
             <StatusGlyph kind={r.status} />
             <SessionNumber n={r.number} />{" "}

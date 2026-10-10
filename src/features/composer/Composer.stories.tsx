@@ -78,7 +78,7 @@ const barStory = (label: string, node: React.ReactNode, width = 1160): StoryObj 
 });
 
 export const StatusBarFull = barStory(
-  "The status bar, wide: model and effort, context with its bar and tokens, the 5-hour and 7-day limits with when they reset, cost, session time, uncommitted changes, MCP health, version, skills, environment and ports. It is one row for the focused session, whatever the layout",
+  "The status bar, wide: it starts with the session's number and name, so the facts always say whose they are; then model and effort, context with its bar and tokens, the 5-hour and 7-day limits with when they reset, cost, session time, uncommitted changes, MCP health, version, skills, environment and ports. It is one row for the focused session, whatever the layout",
   <StatusBar row={row("working")} {...data} />,
 );
 export const StatusBarNarrower = barStory(

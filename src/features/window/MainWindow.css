@@ -173,13 +173,26 @@
   min-inline-size: 0;
   overflow: clip;
 }
+/* Flat and docked, like the compact line in a pane: the whole slot, edge to edge, with nothing lifted off the bottom and no shadow,
+   so the status bar sits directly under it and it never covers a terminal row. A long prompt grows it upward from the slot's foot. */
 .window__composer > .composer {
   position: absolute;
-  inset-inline: var(--space-3);
-  inset-block-end: var(--space-3);
+  inset-inline: 0;
+  inset-block-end: 0;
   z-index: 2;
   margin: 0;
-  box-shadow: 0 4px 18px oklch(0% 0 none / 0.28);
+}
+
+/* No sessions: the terminal area says how to start one. */
+.window__empty {
+  display: grid;
+  place-content: center;
+  padding: var(--space-4);
+  background: var(--bg-base);
+  color: var(--text-2);
+  font-size: var(--text-20);
+  font-weight: 600;
+  text-align: center;
 }
 
 .focus-pill {
@@ -194,7 +207,7 @@
   border: 0;
   border-radius: 999px;
   background: var(--bg-overlay);
-  box-shadow: 0 2px 10px oklch(0% 0 none / 0.28);
+  box-shadow: var(--shadow-pill);
   color: var(--text-1);
   font: inherit;
   font-size: var(--text-12);
@@ -240,4 +253,14 @@
   .focus-pill {
     outline: 1px solid CanvasText;
   }
+}
+
+/* The window's one live region: there for screen readers, never seen. */
+.window__announcer {
+  position: absolute;
+  inline-size: 1px;
+  block-size: 1px;
+  overflow: clip;
+  clip-path: inset(50%);
+  white-space: nowrap;
 }
