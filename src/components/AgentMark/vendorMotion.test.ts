@@ -12,6 +12,8 @@ const BREATH = ["claude", "gemini"];
 /** The `animation:` value of the rule for one vendor's working mark. */
 function animationOf(id: string): string | null {
   // Copilot stays still; its loop is on the parts of the face that flash inside it (copilotSpark.test.tsx).
+  // Cursor's cube stays still; its loop is on the pointer cut out of it.
+  if (id === "cursor") return motion.match(/\.agent-mark__pointer\s*\{[^}]*animation:\s*([^;]+);/)?.[1]?.trim() ?? null;
   if (id === "copilot") return motion.match(/\.agent-mark__zone\s*\{[^}]*animation:\s*([^;]+);/)?.[1]?.trim() ?? null;
   // Claude and Gemini draw their tips in and out around a centre that stays put, so the loop sits on the body of the mark and its layers (one rule, listed under both vendors).
   const target = BREATH.includes(id) ? String.raw` :is\(\.agent-mark__body, \.agent-mark__layer\)` : "";

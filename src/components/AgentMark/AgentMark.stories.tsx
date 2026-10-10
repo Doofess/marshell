@@ -44,6 +44,30 @@ export const WorkingLoops: StoryObj = {
   ),
 };
 
+const CURSOR_OPTIONS = [
+  ["wander", "Wander: the pointer drifts around inside the cube, like a hand on a mouse"],
+  ["click", "Click: slides in, presses down, slides back"],
+  ["poke", "Poke: jabs forward twice, then settles"],
+  ["seek", "Seek: swings side to side like a compass needle"],
+] as const;
+
+/** Cursor's working loop, with only the pointer moving, to choose from. */
+export const CursorOptions: StoryObj = {
+  render: () => (
+    <ThemePair label="Cursor: options">
+      <div style={grid}>
+        {CURSOR_OPTIONS.map(([option, text]) => (
+          <figure key={option} style={{ ...cell, margin: 0 }}>
+            <AgentMark agent="cursor" size={20} working option={option} />
+            <AgentMark agent="cursor" size={16} working option={option} />
+            <figcaption>{text}</figcaption>
+          </figure>
+        ))}
+      </div>
+    </ThemePair>
+  ),
+};
+
 /** The needs-you and error glyphs take the vendor's colour, so a list stays one family of colours. */
 export const NeedsYouInVendorColours: StoryObj = {
   render: () => (

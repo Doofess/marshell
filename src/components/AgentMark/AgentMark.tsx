@@ -1,5 +1,5 @@
 import { useId, type CSSProperties } from "react";
-import { AGENT_NAMES, MARK_PATHS, isAgentId, type AgentId } from "./agents";
+import { AGENT_NAMES, CURSOR_CUBE, CURSOR_POINTER, MARK_PATHS, isAgentId, type AgentId } from "./agents";
 import "./agent-colors.css";
 import "./AgentMark.css";
 
@@ -54,16 +54,26 @@ const ZONES = [
   { x: 5, y: 11, width: 14, height: 12, tempo: 1.25, phase: 0.02 },
 ] as const;
 
-export function AgentMark({ agent, size = 16, working = false }: { agent: AgentId; size?: 12 | 16 | 20; working?: boolean }) {
+export function AgentMark({ agent, size = 16, working = false, option }: { agent: AgentId; size?: 12 | 16 | 20; working?: boolean; option?: string }) {
   const id: AgentId = isAgentId(agent) ? agent : "generic";
   const d = MARK_PATHS[id];
   const breath = BREATHING[id];
+  const pointer = id === "cursor" && working;
   const charge = id === "copilot" && working;
   const jelly = id === "antigravity" && working;
   const uid = useId().replace(/[^a-zA-Z0-9]/g, "");
   return (
-    <svg className="agent-mark" data-agent={id} data-working={working || undefined} role="img" aria-label={AGENT_NAMES[id]} width={size} height={size} viewBox="0 0 24 24">
+    <svg className="agent-mark" data-agent={id} data-working={working || undefined} data-option={option} role="img" aria-label={AGENT_NAMES[id]} width={size} height={size} viewBox="0 0 24 24">
       <path className="agent-mark__body" style={breath ? ({ "--s": breath.outer } as CSSProperties) : undefined} d={d} fill="currentColor" fillRule="evenodd" />
+      {pointer && (
+        <g className="agent-mark__cursor" aria-hidden="true">
+          <mask id={`${uid}-cut`} maskUnits="userSpaceOnUse" x="-6" y="-6" width="36" height="36">
+            <rect x="-6" y="-6" width="36" height="36" fill="white" />
+            <path className="agent-mark__pointer" d={CURSOR_POINTER} fill="black" />
+          </mask>
+          <path d={CURSOR_CUBE} mask={`url(#${uid}-cut)`} fill="currentColor" />
+        </g>
+      )}
       {charge && (
         <g className="agent-mark__charge" aria-hidden="true">
           <clipPath id={`${uid}-shape`}>

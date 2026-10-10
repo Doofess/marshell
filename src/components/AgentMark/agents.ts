@@ -52,3 +52,12 @@ export const MARK_PATHS: Record<AgentId, string> = {
 export function isAgentId(v: string): v is AgentId {
   return (AGENT_IDS as readonly string[]).includes(v);
 }
+
+/**
+ * Cursor's logo is a solid cube with a pointer cut out of it (the two subpaths of its outline). Drawn apart, the cube
+ * can stay still while the pointer moves: the pointer is cut out of the cube with a mask.
+ */
+const CURSOR_SPLIT = MARK_PATHS.cursor.indexOf("zm") + 1;
+export const CURSOR_CUBE = MARK_PATHS.cursor.slice(0, CURSOR_SPLIT);
+/** The pointer subpath, made absolute: the original starts with a relative `m-.603 1.176` from the cube's first point. */
+export const CURSOR_POINTER = `M21.503 6.856${MARK_PATHS.cursor.slice(MARK_PATHS.cursor.indexOf("L12.228"))}`;
