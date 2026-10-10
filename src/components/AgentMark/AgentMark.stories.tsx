@@ -44,30 +44,6 @@ export const WorkingLoops: StoryObj = {
   ),
 };
 
-const GENERIC_OPTIONS = [
-  ["blink", "Blink: only the underscore blinks"],
-  ["typing", "Typing: the underscore is typed out a step at a time, then starts again"],
-  ["prompt", "Prompt: the chevron pulses while the underscore blinks"],
-  ["frame", "Frame: the terminal frame breathes, the prompt holds still"],
-] as const;
-
-/** The custom agent's working loop, with the parts of its mark moving separately. */
-export const CustomAgentOptions: StoryObj = {
-  render: () => (
-    <ThemePair label="Custom agent: options">
-      <div style={grid}>
-        {GENERIC_OPTIONS.map(([option, text]) => (
-          <figure key={option} style={{ ...cell, margin: 0 }}>
-            <AgentMark agent="generic" size={20} working option={option} />
-            <AgentMark agent="generic" size={16} working option={option} />
-            <figcaption>{text}</figcaption>
-          </figure>
-        ))}
-      </div>
-    </ThemePair>
-  ),
-};
-
 /** The needs-you and error glyphs take the vendor's colour, so a list stays one family of colours. */
 export const NeedsYouInVendorColours: StoryObj = {
   render: () => (

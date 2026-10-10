@@ -97,7 +97,7 @@
   50% { transform: scaleX(-1); }
 }
 /* Amp fires its two secondary arrows away from the main one, one after another, and they slide back in from it to be fired again.
-   The custom agent's options are still being compared. */
+   The custom agent keeps its frame and prompt still while only the underscore blinks, hard on and off like an old terminal cursor. */
 .agent-mark__pieces {
   display: none;
 }
@@ -112,29 +112,14 @@
   80%, 100% { transform: translate(0, 0); opacity: 1; }
 }
 @keyframes mark-gen-blink {
-  0%, 49% { opacity: 1; }
-  50%, 100% { opacity: 0; }
-}
-@keyframes mark-gen-type {
-  0% { transform: scaleX(0); }
-  70% { transform: scaleX(1); }
-  100% { transform: scaleX(1); }
-}
-@keyframes mark-gen-chevron {
-  0%, 100% { transform: scale(1); }
-  50% { transform: scale(0.8); }
-}
-@keyframes mark-gen-frame {
-  0%, 100% { transform: scale(1); }
-  50% { transform: scale(0.9); }
+  0%, 24% { opacity: 1; }
+  25%, 49% { opacity: 0; }
+  50%, 74% { opacity: 1; }
+  75%, 100% { opacity: 0; }
 }
 @keyframes mark-swim {
   0%, 100% { transform: translateY(1px) rotate(-6deg); }
   50% { transform: translateY(-1px) rotate(6deg); }
-}
-@keyframes mark-cursor {
-  0%, 49% { opacity: 1; }
-  50%, 100% { opacity: 0.25; }
 }
 
 @media (prefers-reduced-motion: no-preference) {
@@ -200,30 +185,17 @@
     animation: mark-amp-shoot var(--dur-loop) linear infinite;
     animation-delay: calc((2 - var(--i)) * var(--dur-loop) * -0.14);
   }
-  :root:not([data-motion="reduce"]) .agent-mark[data-working][data-option]:is([data-agent="generic"]) {
+  :root:not([data-motion="reduce"]) .agent-mark[data-working][data-agent="generic"] {
     animation: none;
   }
-  :root:not([data-motion="reduce"]) .agent-mark[data-working][data-option]:is([data-agent="generic"]) .agent-mark__body {
+  :root:not([data-motion="reduce"]) .agent-mark[data-working][data-agent="generic"] .agent-mark__body {
     display: none;
   }
-  :root:not([data-motion="reduce"]) .agent-mark[data-working][data-option]:is([data-agent="generic"]) .agent-mark__pieces {
+  :root:not([data-motion="reduce"]) .agent-mark[data-working][data-agent="generic"] .agent-mark__pieces {
     display: inline;
   }
-  :root:not([data-motion="reduce"]) .agent-mark[data-agent="generic"][data-option="blink"] .agent-mark__piece[style*="--i:2"] {
+  :root:not([data-motion="reduce"]) .agent-mark[data-agent="generic"] .agent-mark__piece:nth-child(3) {
     animation: mark-gen-blink var(--dur-loop) steps(1, end) infinite;
-  }
-  :root:not([data-motion="reduce"]) .agent-mark[data-agent="generic"][data-option="typing"] .agent-mark__piece[style*="--i:2"] {
-    transform-origin: left center;
-    animation: mark-gen-type var(--dur-loop) steps(5, end) infinite;
-  }
-  :root:not([data-motion="reduce"]) .agent-mark[data-agent="generic"][data-option="prompt"] .agent-mark__piece[style*="--i:1"] {
-    animation: mark-gen-chevron var(--dur-loop) ease-in-out infinite;
-  }
-  :root:not([data-motion="reduce"]) .agent-mark[data-agent="generic"][data-option="prompt"] .agent-mark__piece[style*="--i:2"] {
-    animation: mark-gen-blink var(--dur-loop) steps(1, end) infinite;
-  }
-  :root:not([data-motion="reduce"]) .agent-mark[data-agent="generic"][data-option="frame"] .agent-mark__piece[style*="--i:0"] {
-    animation: mark-gen-frame var(--dur-loop) ease-in-out infinite;
   }
   :root:not([data-motion="reduce"]) .agent-mark[data-working][data-agent="qwen"] {
     animation: mark-spin-back var(--dur-loop-slow) linear infinite;
@@ -233,9 +205,6 @@
   }
   :root:not([data-motion="reduce"]) .agent-mark[data-working][data-agent="deepseek"] {
     animation: mark-swim var(--dur-loop) ease-in-out infinite;
-  }
-  :root:not([data-motion="reduce"]) .agent-mark[data-working][data-agent="generic"] {
-    animation: mark-cursor var(--dur-loop) steps(1, end) infinite;
   }
   :root:not([data-motion="reduce"]) .status-glyph[data-kind="working"] .g-working-dot {
     animation: g-pulse var(--dur-pulse) var(--ease-out) infinite alternate;

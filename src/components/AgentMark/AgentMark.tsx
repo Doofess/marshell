@@ -34,7 +34,7 @@ export const BREATHING: Partial<Record<AgentId, Breath>> = {
 /**
  * The vendor mark for a session's CLI, in the agent's brand colour. Unknown agents get the generic terminal mark.
  * `working` lets motion.css animate it with the vendor's own loop. A working Claude or Gemini is drawn in layers (BREATHING)
- * so its tips draw in more than its centre; a working Antigravity is drawn as a bell and tentacles that move separately; a working Copilot stays still while
+ * so its tips draw in more than its centre; a working Antigravity is drawn as a bell and tentacles that move separately; a working custom agent keeps its frame and prompt still while only the underscore blinks; a working Copilot stays still while
  * parts of it flash dark, each on its own tempo, like a current.
  */
 /** Where Antigravity's arch splits into bell and tentacles, in the 24-unit mark. Its working loop is a jellyfish swimming up. */
@@ -54,17 +54,17 @@ const ZONES = [
   { x: 5, y: 11, width: 14, height: 12, tempo: 1.25, phase: 0.02 },
 ] as const;
 
-export function AgentMark({ agent, size = 16, working = false, option }: { agent: AgentId; size?: 12 | 16 | 20; working?: boolean; option?: string }) {
+export function AgentMark({ agent, size = 16, working = false }: { agent: AgentId; size?: 12 | 16 | 20; working?: boolean }) {
   const id: AgentId = isAgentId(agent) ? agent : "generic";
   const d = MARK_PATHS[id];
   const breath = BREATHING[id];
   const pointer = id === "cursor" && working;
-  const pieces = working ? (id === "amp" ? AMP_PIECES : id === "generic" && option ? GENERIC_PIECES : undefined) : undefined;
+  const pieces = working ? (id === "amp" ? AMP_PIECES : id === "generic" ? GENERIC_PIECES : undefined) : undefined;
   const charge = id === "copilot" && working;
   const jelly = id === "antigravity" && working;
   const uid = useId().replace(/[^a-zA-Z0-9]/g, "");
   return (
-    <svg className="agent-mark" data-agent={id} data-working={working || undefined} data-option={option} role="img" aria-label={AGENT_NAMES[id]} width={size} height={size} viewBox="0 0 24 24">
+    <svg className="agent-mark" data-agent={id} data-working={working || undefined} role="img" aria-label={AGENT_NAMES[id]} width={size} height={size} viewBox="0 0 24 24">
       <path className="agent-mark__body" style={breath ? ({ "--s": breath.outer } as CSSProperties) : undefined} d={d} fill="currentColor" fillRule="evenodd" />
       {pieces && (
         <g className="agent-mark__pieces" aria-hidden="true">

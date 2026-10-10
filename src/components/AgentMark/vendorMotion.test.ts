@@ -18,6 +18,8 @@ const BREATH = ["claude", "gemini"];
 /** The `animation:` value of the rule for one vendor's working mark. */
 function animationOf(id: string): string | null {
   // Copilot stays still; its loop is on the parts of the face that flash inside it (copilotSpark.test.tsx).
+  // The custom agent keeps its frame and prompt still; its loop is on the underscore alone.
+  if (id === "generic") return motion.match(/\.agent-mark__piece:nth-child\(3\)\s*\{[^}]*animation:\s*([^;]+);/)?.[1]?.trim() ?? null;
   // Amp's main arrow stays; its loop is on the two secondary arrows it fires away.
   if (id === "amp") return motion.match(/\.agent-mark__piece:nth-child\(n \+ 2\)\s*\{[^}]*animation:\s*([^;]+);/)?.[1]?.trim() ?? null;
   // Cursor's cube stays still; its loop is on the pointer cut out of it.
