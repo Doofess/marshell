@@ -83,7 +83,7 @@ Each step builds on the one before it, so do them in this order. All of them are
 | 2 | Status glyph set + motion | Every glyph at 12/16 px. Live animations, plus their reduced-motion versions. |
 | 3 | Sidebar row matrix | Every state in the row table below, in comfortable and expanded (there is no compact density). Truncation at a 200 px sidebar. |
 | 4 | Approve card | Safe Bash, risky Bash, Edit with diff, Write of a new file, MCP tool, a 40-line command, question card, after-decision receipt, "Answered in terminal", released on timeout. |
-| 5 | Main window composite | The **5-agent scenario**: 2 cards in the lane, 1 working, 1 done-unseen, 1 error. Also split view, focus mode, collapsed rail, and the 720 px minimum width. |
+| 5 | Main window composite | The **5-agent scenario**: 2 cards in the lane, 1 working, 1 done-unseen, 1 error. Also split view, focus mode, collapsed rail, the 720 px minimum width, and the terminal theme switching between dark and light (see "Terminal theme"). |
 | 6 | Launcher + command palette | Empty, filtering, and "remembered for this project" states. |
 | 7 | Onboarding | 4 screens, including the consent diff, plus every empty state. |
 | 8 | Departures board | Static design plus a 10 s motion clip. |
@@ -130,6 +130,11 @@ Stories are fed by `fake-agent` scenario scripts, so the same 5-agent run drives
 | Split view | 50/50 with a 1 px hairline and an 8 px hit area. The active pane has a 2 px accent bar under its header; the inactive header is at 60% opacity. Terminal text is **never** dimmed. |
 | Focus mode | Sidebar and header go to 0. The header reveals on an 8 px top-edge hover. A floating pill at top right reads "2 need you ⌃⇧N" and stays silent apart from its glyph bounce. |
 | Rail (52 px) | Brand stripe, the agent mark and a 2-letter monogram per session, with a small status glyph. Needs-you shows as a badge stack with a count at the top. |
+
+**Terminal theme.** The terminal has its own palette, separate from the app theme.
+- Setting: **Follow app** (default), **Always dark**, **Always light**, or an imported theme; a profile can override it. Switching applies to every open terminal at once through xterm's live `options.theme`, keeping scrollback.
+- Switching changes the default foreground and background, cursor, selection and the 16 ANSI colours. Colours a program painted in 24-bit RGB stay as drawn, so `minimumContrastRatio` (default 4.5) is on to keep them readable.
+- Programs that read the background once at startup keep their old look until restarted. Marshell helps in three ways: it answers OSC 10/11 colour queries with the current theme, sets `COLORFGBG` at launch, and sends the colour-scheme-change notice (mode 2031) to programs that opt in. The setting's help text says what a running program may not pick up.
 
 **Hover-freeze rule.** While the pointer is inside the sidebar, lane height changes are deferred until the pointer leaves, with a 3 s cap. Meanwhile a "1 new" chip appears in the lane header.
 
@@ -642,6 +647,7 @@ Decisions from the 2026-10-10 coverage audit (`docs/superpowers/plan-coverage-au
      - shell detection and profiles, the launcher, profile settings pages
      - app-owned init scripts (OSC 7/133, PSReadLine and prompt options) and "make permanent"
      - themes, accent, high-contrast and large-text modes, theme import (Windows Terminal, iTerm2, VS Code)
+     - **terminal theme** (below): follow-app default, per-profile override, live switch, contrast protection, background-colour answers
      - split view, clickable paths, layout restore, F2 rename, reopen a closed session, drag reorder and project grouping, focus mode and rail
      - asciicast v2 recording, palette basics, the keyboard routing above, the cheat sheet, brand colors
      - the structural UX rules, which are hard to retrofit: focus restoration, the hover-freeze rule, the permanent lane header, rows that never resize
