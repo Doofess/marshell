@@ -32,10 +32,10 @@
 .agent-mark {
   transform-origin: center;
 }
-/* Claude breathes: the whole burst shrinks a little and grows back. */
+/* Claude breathes: the rays draw in towards the centre and back out, around a centre that stays put. */
 @keyframes mark-breathe {
   0%, 100% { transform: scale(1); }
-  50% { transform: scale(0.78); }
+  50% { transform: scale(0.55); }
 }
 @keyframes mark-spin {
   to { transform: rotate(360deg); }
@@ -78,7 +78,8 @@
 }
 
 @media (prefers-reduced-motion: no-preference) {
-  :root:not([data-motion="reduce"]) .agent-mark[data-working][data-agent="claude"] {
+  :root:not([data-motion="reduce"]) .agent-mark[data-working][data-agent="claude"] .agent-mark__body {
+    transform-origin: 12px 12px;
     animation: mark-breathe var(--dur-loop) ease-in-out infinite;
   }
   :root:not([data-motion="reduce"]) .agent-mark[data-working][data-agent="codex"] {
