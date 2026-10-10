@@ -43,9 +43,25 @@
 @keyframes mark-spin-back {
   to { transform: rotate(-360deg); }
 }
-@keyframes mark-bob {
-  0%, 100% { transform: translateY(1.5px); }
-  50% { transform: translateY(-1.5px); }
+/* Antigravity: a jellyfish swimming up. The bell squeezes and the whole body darts up, the tentacles trail a beat behind and
+   fold in, then everything relaxes and sinks slowly before the next stroke. */
+@keyframes mark-jelly {
+  0% { transform: translateY(1.5px); animation-timing-function: ease-out; }
+  28% { transform: translateY(-2.5px); animation-timing-function: ease-in-out; }
+  100% { transform: translateY(1.5px); }
+}
+@keyframes mark-jelly-bell {
+  0% { transform: scale(1, 1); animation-timing-function: ease-out; }
+  22% { transform: scale(0.84, 1.08); animation-timing-function: ease-in-out; }
+  100% { transform: scale(1, 1); }
+}
+@keyframes mark-jelly-tentacles {
+  0% { transform: translateY(0) scale(1, 1); animation-timing-function: ease-out; }
+  36% { transform: translateY(-1.5px) scale(0.8, 1.1); animation-timing-function: ease-in-out; }
+  100% { transform: translateY(0) scale(1, 1); }
+}
+.agent-mark__parts {
+  display: none;
 }
 @keyframes mark-blink {
   0%, 86%, 100% { transform: scaleY(1); }
@@ -82,7 +98,21 @@
     animation: mark-spin var(--dur-loop) linear infinite;
   }
   :root:not([data-motion="reduce"]) .agent-mark[data-working][data-agent="antigravity"] {
-    animation: mark-bob var(--dur-loop) ease-in-out infinite;
+    animation: mark-jelly var(--dur-loop) linear infinite;
+  }
+  :root:not([data-motion="reduce"]) .agent-mark[data-working][data-agent="antigravity"] .agent-mark__body {
+    display: none;
+  }
+  :root:not([data-motion="reduce"]) .agent-mark[data-working][data-agent="antigravity"] .agent-mark__parts {
+    display: inline;
+  }
+  :root:not([data-motion="reduce"]) .agent-mark__bell {
+    transform-origin: 12px 13.5px;
+    animation: mark-jelly-bell var(--dur-loop) linear infinite;
+  }
+  :root:not([data-motion="reduce"]) .agent-mark__tentacles {
+    transform-origin: 12px 13.5px;
+    animation: mark-jelly-tentacles var(--dur-loop) linear infinite;
   }
   :root:not([data-motion="reduce"]) .agent-mark[data-working][data-agent="copilot"] {
     animation: mark-blink var(--dur-loop-slow) linear infinite;

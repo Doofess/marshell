@@ -34,16 +34,36 @@ export const BREATHING: Partial<Record<AgentId, Breath>> = {
 /**
  * The vendor mark for a session's CLI, in the agent's brand colour. Unknown agents get the generic terminal mark.
  * `working` lets motion.css animate it with the vendor's own loop. A working Claude or Gemini is drawn in layers (BREATHING)
- * so its tips draw in more than its centre.
+ * so its tips draw in more than its centre; a working Antigravity is drawn as a bell and tentacles that move separately.
  */
+/** Where Antigravity's arch splits into bell and tentacles, in the 24-unit mark. Its working loop is a jellyfish swimming up. */
+const BELL_BOTTOM = 13.5;
+
 export function AgentMark({ agent, size = 16, working = false }: { agent: AgentId; size?: 12 | 16 | 20; working?: boolean }) {
   const id: AgentId = isAgentId(agent) ? agent : "generic";
   const d = MARK_PATHS[id];
   const breath = BREATHING[id];
+  const jelly = id === "antigravity" && working;
   const uid = useId().replace(/[^a-zA-Z0-9]/g, "");
   return (
     <svg className="agent-mark" data-agent={id} data-working={working || undefined} role="img" aria-label={AGENT_NAMES[id]} width={size} height={size} viewBox="0 0 24 24">
       <path className="agent-mark__body" style={breath ? ({ "--s": breath.outer } as CSSProperties) : undefined} d={d} fill="currentColor" fillRule="evenodd" />
+      {jelly && (
+        <g className="agent-mark__parts" aria-hidden="true">
+          <clipPath id={`${uid}-bell`}>
+            <rect x="-4" y="-4" width="32" height={BELL_BOTTOM + 4} />
+          </clipPath>
+          <clipPath id={`${uid}-tentacles`}>
+            <rect x="-4" y={BELL_BOTTOM} width="32" height={28 - BELL_BOTTOM} />
+          </clipPath>
+          <g clipPath={`url(#${uid}-bell)`}>
+            <path className="agent-mark__bell" d={d} fill="currentColor" fillRule="evenodd" />
+          </g>
+          <g clipPath={`url(#${uid}-tentacles)`}>
+            <path className="agent-mark__tentacles" d={d} fill="currentColor" fillRule="evenodd" />
+          </g>
+        </g>
+      )}
       {breath &&
         working &&
         breath.layers.map((layer, i) => (
