@@ -63,14 +63,16 @@
 .agent-mark__parts {
   display: none;
 }
-/* Copilot stays still while electricity runs through it: parts of the face flash dark, one after another, with a flicker. */
+/* Copilot stays still while electricity runs through it: parts of the face flash dark in bursts of flicker, each on its own tempo
+   (--k stretches the loop, --d offsets it), so the rhythm keeps changing instead of repeating. */
 @keyframes mark-zap {
   0% { opacity: 0; }
-  5% { opacity: 1; }
-  11% { opacity: 0.25; }
-  17% { opacity: 1; }
-  24% { opacity: 0.6; }
-  30%, 100% { opacity: 0; }
+  3% { opacity: 1; }
+  7% { opacity: 0.15; }
+  11% { opacity: 1; }
+  14% { opacity: 0.4; }
+  17% { opacity: 0.9; }
+  22%, 100% { opacity: 0; }
 }
 .agent-mark__charge {
   display: none;
@@ -131,7 +133,8 @@
   }
   :root:not([data-motion="reduce"]) .agent-mark__zone {
     animation: mark-zap var(--dur-loop) linear infinite;
-    animation-delay: calc(var(--i) * var(--dur-loop) / -6);
+    animation-duration: calc(var(--dur-loop) * var(--k));
+    animation-delay: calc(var(--dur-loop) * var(--k) * var(--d) * -1);
   }
   :root:not([data-motion="reduce"]) .agent-mark[data-working][data-agent="cursor"] {
     animation: mark-flip var(--dur-loop) ease-in-out infinite;
