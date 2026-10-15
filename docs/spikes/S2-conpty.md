@@ -59,6 +59,6 @@ Also check:
 - [x] Stock ConPTY is functionally fine: every shell renders, resizes, takes keys and exits cleanly.
 - [x] Ship a sideloaded conpty.dll + OpenConsole for throughput. The reason is not a bug: the inbox ConPTY is about 4× slower than OpenConsole on short-line floods.
   - This is packaging work for phase 2: bundle the two x64/arm64 files as resources next to the exe and add the MIT notice.
-  - Until then, dev builds use the inbox ConPTY.
+  - **Done in phase 2a.** `pnpm fetch:conpty` (`scripts/fetch-conpty.mjs`) downloads the pinned package, checks its SHA-512, and puts the x64 and arm64 files in `src-tauri/resources/conpty/`, which git ignores. `tauri.windows.conf.json` bundles the x64 pair and the MIT licence; arm64 waits for phase 9. In dev, tauri-build copies them next to the exe. Checked on 2026-10-15: the app's `OpenConsole` runs from `target\debug`. CI fetches them on Windows. Without the fetch, the build warns and uses the inbox ConPTY.
 
 The WSL row is still open. It needs a distribution installed (see S1, which needs one for WSLg too).
