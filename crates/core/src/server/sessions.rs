@@ -1,6 +1,7 @@
 use super::AppState;
+use crate::auth;
+use crate::profiles::detect::default_shell;
 use crate::pty::{Session, SpawnSpec};
-use crate::{auth, shell};
 use axum::Json;
 use axum::extract::State;
 use axum::http::StatusCode;
@@ -12,7 +13,7 @@ pub async fn create(
     State(st): State<AppState>,
     Json(req): Json<CreateSessionRequest>,
 ) -> Result<Json<CreateSessionResponse>, (StatusCode, String)> {
-    let argv = req.shell.unwrap_or_else(shell::default_shell);
+    let argv = req.shell.unwrap_or_else(default_shell);
     if argv.is_empty() {
         // `CommandBuilder::from_argv` would panic on an empty argv; refuse it before spawning.
         return Err((StatusCode::BAD_REQUEST, "The shell argv is empty.".into()));
