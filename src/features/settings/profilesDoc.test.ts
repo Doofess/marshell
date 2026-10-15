@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { Profile } from "../../generated/Profile";
 import type { ProfilesDoc } from "../../generated/ProfilesDoc";
-import { changeCount, deleteProfile, duplicateProfile, forSave, joinCommand, makeDefault, profileKind, resetProfile, splitCommand, updateProfile } from "./profilesDoc";
+import { changeCount, commandRoundTrips, deleteProfile, duplicateEnvKeys, duplicateProfile, forSave, joinCommand, makeDefault, profileKind, resetProfile, splitCommand, updateProfile } from "./profilesDoc";
 
 const profile = (id: string, patch: Partial<Profile> = {}): Profile => ({ id, name: id.toUpperCase(), command: [`${id}.exe`], family: "cmd", cwd: null, env: [], detected: false, ...patch });
 const FOUND: Profile[] = [profile("pwsh", { detected: true }), profile("cmd", { detected: true })];
@@ -71,6 +71,21 @@ describe("saving", () => {
   it("drops env rows with no name", () => {
     const d = updateProfile(doc(), "cmd", { env: [["A", "1"], ["  ", "x"], ["", ""]] });
     expect(forSave(d).profiles[1]!.env).toEqual([["A", "1"]]);
+  });
+  it("trims the names of environment variables before they are sent", () => {
+    const d = updateProfile(doc(), "cmd", { env: [["  A ", "1"]] });
+    expect(forSave(d).profiles[1]!.env).toEqual([["A", "1"]]);
+  });
+  it("finds environment variables named twice (trimmed, any letter case, as Windows reads them)", () => {
+    expect(duplicateEnvKeys([["A", "1"], ["B", "2"]])).toEqual([]);
+    expect(duplicateEnvKeys([["Path", "1"], [" PATH ", "2"], ["B", ""]])).toEqual(["Path"]);
+    expect(duplicateEnvKeys([["", "1"], ["  ", "2"]])).toEqual([]);
+  });
+  it("knows which commands the one-line field can write back unchanged", () => {
+    expect(commandRoundTrips(["C:\\Program Files\\Git\\bin\\bash.exe", "-l"])).toBe(true);
+    expect(commandRoundTrips([])).toBe(true);
+    expect(commandRoundTrips(["sh", "-c", 'echo "hi"'])).toBe(false);
+    expect(commandRoundTrips(['a"b'])).toBe(false);
   });
   it("counts what changed against the saved document", () => {
     expect(changeCount(doc(), doc())).toBe(0);

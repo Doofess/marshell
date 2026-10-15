@@ -5,7 +5,7 @@ import type { Profile } from "../../generated/Profile";
 import type { ProfilesDoc } from "../../generated/ProfilesDoc";
 import { ApiError } from "../../lib/api/client";
 import { splitCommand, joinCommand } from "./profilesDoc";
-import { ProfilesPageView, type ProfilesHandlers } from "./ProfilesPage";
+import { canClose, ProfilesPageView, type ProfilesHandlers } from "./ProfilesPage";
 import { ProfilesStore } from "./ProfilesStore";
 
 const ep: Endpoint = { port: 1, token: "t", platform: "windows" };
@@ -151,5 +151,60 @@ describe("ProfilesPage: the rest of the page", () => {
     const store = new ProfilesStore(api, ep);
     await store.load();
     expect(html(store)).toContain("Couldn&#x27;t load the profiles: offline");
+  });
+});
+
+describe("ProfilesPage: a command the one-line field cannot write", () => {
+  // The kind of argv a hand-edited profiles.json holds.
+  const QUOTED = ["sh", "-c", 'echo "hi"'];
+  it("renders (no re-render loop), read-only, with a note, and keeps the argv", async () => {
+    const { store } = setup({ doc: { profiles: [profile("pwsh", { detected: true }), profile("cmd", { detected: true, command: QUOTED })], default_id: "pwsh" } });
+    await store.load();
+    store.select("cmd");
+    const h = html(store);
+    expect(h).toMatch(/<input[^>]*readOnly=""[^>]*value="sh -c echo/);
+    expect(h).toContain("quote mark");
+    expect(store.getState().draft!.profiles[1]!.command).toEqual(QUOTED);
+  });
+  it("a command that can be written has no note and an editable box", async () => {
+    const { store } = setup();
+    await store.load();
+    const h = html(store);
+    expect(h).not.toContain("quote mark");
+    expect(h).not.toMatch(/<input[^>]*readOnly=""[^>]*value="pwsh.exe"/);
+  });
+});
+
+describe("ProfilesPage: leaving with unsaved edits", () => {
+  const closeButton = /<button[^>]*>Close<\/button>/;
+  const withClose = (store: ProfilesStore) => renderToStaticMarkup(<ProfilesPageView state={store.getState()} handlers={{ ...handlers, onClose: noop }} />);
+  it("Close works when nothing changed", async () => {
+    const { store } = setup();
+    await store.load();
+    expect(withClose(store).match(closeButton)![0]).not.toContain("disabled");
+    expect(canClose(store.getState())).toBe(true);
+  });
+  it("Close does nothing while there are unsaved edits, and the page says why", async () => {
+    const { store } = setup();
+    await store.load();
+    store.patch({ name: "Edited" });
+    const h = withClose(store);
+    expect(h.match(closeButton)![0]).toContain('disabled=""');
+    expect(h).toContain("Save or discard");
+    expect(h).toContain("change-bar");
+    expect(canClose(store.getState())).toBe(false);
+    store.discard();
+    expect(canClose(store.getState())).toBe(true);
+  });
+});
+
+describe("ProfilesPage: environment variables named twice", () => {
+  it("says which one, and not otherwise", async () => {
+    const { store } = setup();
+    await store.load();
+    store.patch({ env: [["Path", "1"], [" PATH", "2"]] });
+    expect(html(store)).toContain("Path is listed twice");
+    store.patch({ env: [["Path", "1"], ["Other", "2"]] });
+    expect(html(store)).not.toContain("listed twice");
   });
 });

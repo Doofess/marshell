@@ -243,7 +243,7 @@ pub fn load(home: &Path, detected: Vec<Profile>) -> ProfilesDoc; // merge: file 
 pub fn save(home: &Path, doc: &ProfilesDoc, detected: &[Profile]) -> anyhow::Result<()>; // writes only entries that differ from detection or are custom
 pub fn validate(doc: &ProfilesDoc) -> Result<(), String>; // unique non-empty ids and names, non-empty command, default_id present
 ```
-`PUT /v1/profiles` validates and saves, then replaces the in-memory doc and returns it. A failed validation → 400 with the message. `GET` returns the doc.
+`PUT /v1/profiles` validates and saves, then replaces the in-memory doc and returns it. A failed validation → 400 with the message. `GET` returns the doc. `GET /v1/profiles/detected` returns what detection found, unedited, so the settings page can mark an edited detected profile and reset it (the server flags such a profile `detected: false`).
 
 - [ ] **Step 1: Write failing tests.**
   - Unit tests in `store.rs`:

@@ -32,6 +32,9 @@ export function splitCommand(text: string): string[] {
 /** The argv as the command field shows it: an argument with a space (or none at all) is quoted. */
 export const joinCommand = (argv: string[]): string => argv.map((a) => (a === "" || /[\s"]/.test(a) ? `"${a}"` : a)).join(" ");
 
+/** Whether the command field can show this argv and give the same argv back. An argument with a double quote of its own cannot. */
+export const commandRoundTrips = (argv: string[]): boolean => JSON.stringify(splitCommand(joinCommand(argv))) === JSON.stringify(argv);
+
 /** Two profiles with the same values; the server's `detected` flag does not count. */
 const sameValues = (a: Profile, b: Profile): boolean =>
   a.id === b.id && a.name === b.name && a.family === b.family && a.cwd === b.cwd && JSON.stringify(a.command) === JSON.stringify(b.command) && JSON.stringify(a.env) === JSON.stringify(b.env);
@@ -85,8 +88,23 @@ export function resetProfile(doc: ProfilesDoc, id: string, detected: Profile[]):
 /** What goes to the core: environment rows still without a name are left out. */
 export const forSave = (doc: ProfilesDoc): ProfilesDoc => ({
   ...doc,
-  profiles: doc.profiles.map((p) => ({ ...p, env: p.env.filter(([k]) => k.trim() !== "") })),
+  profiles: doc.profiles.map((p) => ({ ...p, env: p.env.filter(([k]) => k.trim() !== "").map(([k, v]): [string, string] => [k.trim(), v]) })),
 });
+
+/** Variable names that appear more than once (trimmed, ignoring letter case as Windows does), as first written. Rows without a name do not count. */
+export function duplicateEnvKeys(env: Array<[string, string]>): string[] {
+  const seen = new Set<string>();
+  const dups: string[] = [];
+  for (const [k] of env) {
+    const name = k.trim();
+    if (name === "") continue;
+    const key = name.toLowerCase();
+    if (seen.has(key)) {
+      if (!dups.some((d) => d.toLowerCase() === key)) dups.push(env.map(([x]) => x.trim()).find((x) => x.toLowerCase() === key)!);
+    } else seen.add(key);
+  }
+  return dups;
+}
 
 /** How many profiles were added, removed or changed, plus one when the default moved. Zero means nothing to save. */
 export function changeCount(saved: ProfilesDoc, draft: ProfilesDoc): number {

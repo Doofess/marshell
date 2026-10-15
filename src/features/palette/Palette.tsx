@@ -92,6 +92,7 @@ function SessionOption({ hit, id, active, os, onRun }: OptionProps & { hit: Sess
 export function Palette({
   view,
   sessions,
+  commands = COMMANDS,
   os = "windows",
   onQuery,
   onRun,
@@ -100,6 +101,8 @@ export function Palette({
 }: {
   view: PaletteView;
   sessions?: PaletteSession[];
+  /** The commands to list; all of them when left out. A window that runs only some of them passes just those. */
+  commands?: Command[];
   os?: Os;
   onQuery?: (q: string) => void;
   /** Receives a command's id, or `session:<id>` for a session row. */
@@ -116,7 +119,7 @@ export function Palette({
   const wanted = sessions ? parseSessionNumber(query) : null;
 
   const sessionHits = sessions ? filterSessions(query, sessions) : [];
-  const pool = sessions ? COMMANDS.filter((c) => !FOCUS_SESSION.test(c.id)) : COMMANDS;
+  const pool = sessions ? commands.filter((c) => !FOCUS_SESSION.test(c.id)) : commands;
   // A number means a session: no command should answer to "4" because its label says "up to 4".
   const commandHits = wanted !== null ? [] : filterCommands(query, pool);
   const items: Item[] = [...sessionHits.map((hit): Item => ({ type: "session", hit })), ...commandHits.map((hit): Item => ({ type: "command", hit }))];

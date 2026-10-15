@@ -123,7 +123,7 @@ export function LiveApp() {
     return () => window.removeEventListener("keydown", onKey);
   }, [os, launcherOpen, overlay, actions]);
 
-  // A palette row: a session to go to, the profiles page, or a command the window already runs (the rest do nothing yet).
+  // A palette row: a session to go to, the profiles page, or a command the window runs (LivePalette lists only those).
   const runFromPalette = (id: string) => {
     setOverlay(id === "profiles" ? "profiles" : null);
     if (id.startsWith("session:")) return select(id.slice("session:".length));
