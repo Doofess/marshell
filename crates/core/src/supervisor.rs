@@ -205,7 +205,10 @@ mod tests {
     fn event_payloads_match_the_window_events() {
         let restarted = serde_json::to_value(CoreEvent::Restarted { generation: 2 }).unwrap();
         assert_eq!(restarted, serde_json::json!({ "generation": 2 }));
-        assert_eq!(serde_json::to_value(CoreEvent::Failed).unwrap(), serde_json::Value::Null);
+        assert_eq!(
+            serde_json::to_value(CoreEvent::Failed).unwrap(),
+            serde_json::Value::Null
+        );
     }
 
     #[tokio::test]
