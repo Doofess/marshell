@@ -5,6 +5,7 @@ use crate::store::{self, Versioned};
 use marshell_protocol::api::ProjectInfo;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 
 /// The most projects kept; the oldest fall off.
 const MAX_PROJECTS: usize = 30;
@@ -28,14 +29,33 @@ fn file(home: &Path) -> PathBuf {
     home.join("projects.json")
 }
 
+/// Drops trailing `/` and `\`, but keeps a root: `/`, `C:\` and `C:/` stay as they are.
+fn trim_separators(path: &str) -> &str {
+    let trimmed = path.trim_end_matches(['/', '\\']);
+    if trimmed.len() == path.len() {
+        return path;
+    }
+    // All separators (a root), or just a drive letter ("C:"): keep one separator.
+    if trimmed.is_empty() || (trimmed.len() == 2 && trimmed.ends_with(':')) {
+        return &path[..trimmed.len() + 1];
+    }
+    trimmed
+}
+
 /// Windows paths ignore case, so `C:\Dev\App` and `c:\dev\app` are one project there.
+/// A trailing separator does not make a different folder.
 fn same_path(a: &str, b: &str) -> bool {
+    let (a, b) = (trim_separators(a), trim_separators(b));
     if cfg!(windows) {
         a.eq_ignore_ascii_case(b)
     } else {
         a == b
     }
 }
+
+/// `record` reads, changes and writes the file; two at once would lose an entry or
+/// collide on the temp file. Held for that whole read-modify-write.
+static RECORD_LOCK: Mutex<()> = Mutex::new(());
 
 /// The current branch of the git repository that holds `dir`, if any.
 /// A detached HEAD gives the first 7 characters of the commit.
@@ -68,9 +88,10 @@ pub fn record(home: &Path, cwd: &Path, now_ms: u64) -> anyhow::Result<()> {
     if dirs::home_dir().is_some_and(|user_home| same_path(&user_home.to_string_lossy(), &cwd.to_string_lossy())) {
         return Ok(());
     }
+    let _guard = RECORD_LOCK.lock().unwrap();
     let path = file(home);
     let mut doc = store::read::<FileDoc>(&path)?.unwrap_or_default();
-    let cwd = cwd.to_string_lossy().into_owned();
+    let cwd = trim_separators(&cwd.to_string_lossy()).to_string();
     doc.projects.retain(|p| !same_path(&p.path, &cwd));
     doc.projects.insert(
         0,
@@ -201,6 +222,58 @@ mod tests {
         let user_home = dirs::home_dir().unwrap();
         record(home.path(), &user_home, 1).unwrap();
         assert!(!file(home.path()).exists());
+    }
+
+    #[test]
+    fn home_with_trailing_separator_is_not_recorded() {
+        let home = tempfile::tempdir().unwrap();
+        let user_home = dirs::home_dir().unwrap().to_string_lossy().into_owned();
+        for suffix in ["/", "\\", "//"] {
+            record(home.path(), Path::new(&format!("{user_home}{suffix}")), 1).unwrap();
+        }
+        assert!(!file(home.path()).exists());
+    }
+
+    #[test]
+    fn trailing_separator_dedups_to_one_entry() {
+        let home = tempfile::tempdir().unwrap();
+        let projects = tempfile::tempdir().unwrap();
+        let plain = projects.path().to_string_lossy().into_owned();
+        record(home.path(), Path::new(&plain), 1).unwrap();
+        record(home.path(), Path::new(&format!("{plain}/")), 2).unwrap();
+        record(home.path(), Path::new(&format!("{plain}\\")), 3).unwrap();
+        let list = list(home.path());
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].path, plain);
+        assert_eq!(list[0].last_used_ms, 3);
+    }
+
+    #[test]
+    fn trim_keeps_roots() {
+        assert_eq!(trim_separators("/"), "/");
+        assert_eq!(trim_separators("C:\\"), "C:\\");
+        assert_eq!(trim_separators("C:/"), "C:/");
+        assert_eq!(trim_separators("/a/b//"), "/a/b");
+        assert_eq!(trim_separators("C:\\a\\"), "C:\\a");
+        assert_eq!(trim_separators("/a"), "/a");
+    }
+
+    #[test]
+    fn concurrent_records_all_survive() {
+        let home = tempfile::tempdir().unwrap();
+        let projects = tempfile::tempdir().unwrap();
+        let handles: Vec<_> = (0..12)
+            .map(|i| {
+                let home = home.path().to_path_buf();
+                let dir = projects.path().join(format!("p{i}"));
+                std::fs::create_dir(&dir).unwrap();
+                std::thread::spawn(move || record(&home, &dir, i as u64).unwrap())
+            })
+            .collect();
+        for h in handles {
+            h.join().unwrap();
+        }
+        assert_eq!(list(home.path()).len(), 12);
     }
 
     #[test]
