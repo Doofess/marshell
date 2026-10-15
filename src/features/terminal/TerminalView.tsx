@@ -3,9 +3,11 @@ import { FitAddon } from "@xterm/addon-fit";
 import { Terminal } from "@xterm/xterm";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { Endpoint } from "../../generated/Endpoint";
+import { onCoreEvent } from "../../lib/api/coreEvents";
 import { PtySocket } from "../../lib/api/ptySocket";
 import { LatencyMeter } from "../perf/latency";
 import { PerfOverlay } from "../perf/PerfOverlay";
+import { ENDED_LINE, FAILED_LINE } from "./coreRestart";
 import { loadRenderer, type RendererKind } from "./renderer";
 import { appScheme, resolveScheme, terminalOptions } from "./terminalTheme";
 
@@ -13,7 +15,8 @@ function isPerfToggle(e: KeyboardEvent): boolean {
   return e.type === "keydown" && e.shiftKey && e.altKey && (e.ctrlKey || e.metaKey) && e.code === "KeyP";
 }
 
-export function TerminalView({ endpoint, tabId }: { endpoint: Endpoint; tabId: string }) {
+/** `onNewShell` runs when the user presses Enter after the core restarted and ended this session. */
+export function TerminalView({ endpoint, tabId, onNewShell }: { endpoint: Endpoint; tabId: string; onNewShell: () => void }) {
   const host = useRef<HTMLDivElement>(null);
   const meter = useMemo(() => new LatencyMeter(), []);
   const [renderer, setRenderer] = useState<RendererKind>("dom");
@@ -46,12 +49,23 @@ export function TerminalView({ endpoint, tabId }: { endpoint: Endpoint; tabId: s
       onExit: (code) => term.write(`\r\n\x1b[2mProcess exited with code ${code}.\x1b[0m\r\n`),
     });
 
+    // "ended": the core restarted, so only Enter does something (a new shell). "failed": no input goes anywhere.
+    let core: "live" | "ended" | "failed" = "live";
+    const stopCoreEvents = onCoreEvent((e) => {
+      if (core !== "live") return;
+      core = e.kind === "restarted" ? "ended" : "failed";
+      socket.close();
+      term.write(e.kind === "restarted" ? ENDED_LINE : FAILED_LINE);
+    }).catch(() => () => {}); // Outside Tauri (tests, a plain browser) there are no core events.
+
     const subs = [
       term.onData((d) => {
+        if (core === "ended" && d === "\r") onNewShell();
+        if (core !== "live") return;
         meter.markInput();
         socket.sendInput(d);
       }),
-      term.onBinary((d) => socket.sendBytes(d)),
+      term.onBinary((d) => core === "live" && socket.sendBytes(d)),
       term.onResize(({ cols, rows }) => socket.resize(cols, rows)),
       term.onWriteParsed(() => meter.markOutput()),
     ];
@@ -77,6 +91,7 @@ export function TerminalView({ endpoint, tabId }: { endpoint: Endpoint; tabId: s
     themeWatch.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
 
     return () => {
+      void stopCoreEvents.then((stop) => stop());
       themeWatch.disconnect();
       scheme.removeEventListener("change", onScheme);
       observer.disconnect();
@@ -85,7 +100,7 @@ export function TerminalView({ endpoint, tabId }: { endpoint: Endpoint; tabId: s
       socket.close();
       term.dispose();
     };
-  }, [endpoint, tabId, meter]);
+  }, [endpoint, tabId, meter, onNewShell]);
 
   return (
     <>

@@ -1,5 +1,5 @@
-import { useEffect, useState } from "react";
-import { type StartResult, startSession } from "./lib/api/session";
+import { useCallback, useEffect, useState } from "react";
+import { forgetSession, type StartResult, startSession } from "./lib/api/session";
 import { TerminalView } from "./features/terminal/TerminalView";
 
 export function App() {
@@ -11,6 +11,11 @@ export function App() {
       live = false;
     };
   }, []);
+  // After a core restart: a new tab on the new core, in a fresh TerminalView (new key).
+  const newShell = useCallback(() => {
+    forgetSession();
+    void startSession().then(setState);
+  }, []);
 
   // Startup is well under 150 ms, so no spinner (UX gate: loading states only past 150 ms).
   if (state === null) return null;
@@ -21,5 +26,5 @@ export function App() {
       </p>
     );
   }
-  return <TerminalView endpoint={state.endpoint} tabId={state.tabId} />;
+  return <TerminalView key={state.tabId} endpoint={state.endpoint} tabId={state.tabId} onNewShell={newShell} />;
 }
