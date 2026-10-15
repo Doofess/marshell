@@ -41,6 +41,8 @@ impl Versioned for EndpointFile {
 /// On Windows the file inherits the ACL of its directory, which is user-only under the default
 /// `~/.marshell`. An explicit owner-only ACL comes when the hook bridge starts reading this file (phase 3).
 pub fn write_endpoint_file(path: &Path, ep: &Endpoint) -> anyhow::Result<()> {
+    // The old file only names a core that is gone, even one from a newer Marshell, so it is never kept.
+    let _ = std::fs::remove_file(path);
     store::write(path, &EndpointFile(ep.clone()))
 }
 
@@ -92,6 +94,23 @@ mod tests {
             let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
             assert_eq!(mode, 0o600);
         }
+    }
+
+    #[test]
+    fn endpoint_file_replaces_one_from_a_newer_marshell() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("run").join("endpoint.json");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, r#"{"version":99,"port":1,"token":"old"}"#).unwrap();
+        let ep = Endpoint {
+            port: 4242,
+            token: "t0k".into(),
+            platform: Platform::current(),
+        };
+        write_endpoint_file(&path, &ep).unwrap();
+        let raw: serde_json::Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        assert_eq!(raw["version"], 1);
+        assert_eq!(raw["token"], "t0k");
     }
 
     #[test]

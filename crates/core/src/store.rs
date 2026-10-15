@@ -41,8 +41,16 @@ pub fn write<T: Versioned>(path: &Path, value: &T) -> anyhow::Result<()> {
         .with_context(|| format!("{} has no parent folder", path.display()))?;
     create_private_dir(dir)?;
     if let Ok(old) = std::fs::read(path)
-        && serde_json::from_slice::<Value>(&old).is_ok()
+        && let Ok(old) = serde_json::from_slice::<Value>(&old)
     {
+        let version = old.get("version").and_then(Value::as_u64).unwrap_or(0);
+        if version > u64::from(T::VERSION) {
+            anyhow::bail!(
+                "{} was written by a newer Marshell (version {version}); this one knows up to {}",
+                path.display(),
+                T::VERSION
+            );
+        }
         std::fs::copy(path, bak_path(path))?;
     }
 
@@ -234,6 +242,18 @@ mod tests {
         let err = read::<Prefs>(&path).unwrap_err();
         assert!(err.to_string().contains("newer Marshell"), "{err}");
         assert_eq!(std::fs::read_to_string(&path).unwrap(), newer);
+    }
+
+    #[test]
+    fn write_refuses_to_replace_a_newer_version() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("prefs.json");
+        let newer = r#"{"version":3,"name":"x"}"#;
+        std::fs::write(&path, newer).unwrap();
+        let err = write(&path, &Prefs { name: "old".into() }).unwrap_err();
+        assert!(err.to_string().contains("newer Marshell"), "{err}");
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), newer);
+        assert!(!bak_path(&path).exists());
     }
 
     #[test]
