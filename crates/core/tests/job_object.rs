@@ -36,6 +36,27 @@ fn child_dies_when_app_is_killed() {
 }
 
 #[test]
+fn child_outlives_a_normal_exit() {
+    let mut probe = Command::new(env!("CARGO_BIN_EXE_job-probe"))
+        .arg("release")
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut lines = BufReader::new(probe.stdout.take().unwrap()).lines();
+    assert_eq!(lines.next().unwrap().unwrap(), "ok");
+    let pid = lines.next().unwrap().unwrap();
+    assert_eq!(lines.next().unwrap().unwrap(), "released");
+
+    probe.kill().unwrap();
+    let _ = probe.wait();
+
+    std::thread::sleep(Duration::from_secs(1));
+    let survived = ping_is_running(&pid);
+    let _ = Command::new("taskkill").args(["/PID", &pid, "/F"]).output();
+    assert!(survived, "a child died although the app released it before exiting");
+}
+
+#[test]
 fn job_failure_is_not_fatal() {
     let _ = marshell_core::job::tie_children_to_app();
     let _ = marshell_core::job::tie_children_to_app();

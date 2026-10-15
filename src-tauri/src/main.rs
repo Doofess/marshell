@@ -100,6 +100,8 @@ fn main() {
     app.run(|handle, event| {
         if let tauri::RunEvent::Exit = event {
             handle.state::<CoreHandle>().0.shutdown();
+            // The sessions have ended; anything else started from a shell (VS Code, a browser) keeps running.
+            marshell_core::job::release_children();
         }
     });
 }
