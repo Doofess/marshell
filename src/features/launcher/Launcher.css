@@ -282,6 +282,15 @@
   justify-content: space-between;
   gap: var(--space-3);
 }
+.launcher__error {
+  margin: 0;
+  color: var(--error);
+  font-size: var(--text-13);
+  overflow-wrap: anywhere;
+}
+.launcher__start:disabled {
+  opacity: 0.6;
+}
 .launcher__hint {
   color: var(--text-2);
   font-size: var(--text-12);

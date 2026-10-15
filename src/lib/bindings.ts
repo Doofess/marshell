@@ -11,9 +11,10 @@ const NAV_KEYS: Record<NavModifier, Pick<Chord, "ctrl" | "shift" | "alt">> = {
   "alt+shift": { ctrl: false, shift: true, alt: true },
 };
 
-/** The exact keys a binding needs: Ctrl+Shift (Cmd on macOS) plus Alt when asked, the key alone, or the navigation modifier. */
+/** The exact keys a binding needs: Ctrl+Shift (Cmd on macOS) plus Alt when asked, the key alone, Shift (plus Alt) without the app modifier, or the navigation modifier. */
 export function chordOf(b: Binding, os: Os, nav: NavModifier = DEFAULT_NAV_MODIFIER): Chord {
   if (b.plain) return { code: b.code, ctrl: false, shift: false, alt: false, meta: false };
+  if (b.shift) return { code: b.code, ctrl: false, shift: true, alt: !!b.alt, meta: false };
   if (b.nav) return { code: b.code, ...NAV_KEYS[nav], meta: false };
   if (os === "mac") return { code: b.code, ctrl: false, shift: false, alt: !!b.alt, meta: true };
   return { code: b.code, ctrl: true, shift: true, alt: !!b.alt, meta: false };

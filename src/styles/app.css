@@ -15,6 +15,38 @@
   padding: var(--space-2);
 }
 
+.live-app {
+  position: relative;
+  block-size: 100%;
+  inline-size: 100%;
+  overflow: clip;
+}
+
+/* The launcher sheet sits over the whole window while there are no sessions. */
+.live-app__launcher {
+  position: absolute;
+  inset: 0;
+}
+
+/* The command palette, like the launcher, sits over the whole window. */
+.live-app__palette {
+  position: absolute;
+  inset: 0;
+}
+
+/* "Starting Claude Code in my-app…": over the terminal until its first output, in line with the terminal's own gutter. */
+.terminal-placeholder {
+  position: absolute;
+  inset-block-start: var(--space-2);
+  inset-inline-start: var(--space-2);
+  margin: 0;
+  padding: var(--space-2);
+  color: var(--text-2);
+  font-family: var(--font-mono);
+  font-size: var(--text-13);
+  pointer-events: none;
+}
+
 .startup-error {
   margin: 0;
   padding: var(--space-6);

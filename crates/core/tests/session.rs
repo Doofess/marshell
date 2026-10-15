@@ -11,6 +11,7 @@ fn fake(args: &[&str]) -> SpawnSpec {
         env: vec![],
         cols: 80,
         rows: 24,
+        on_exit: None,
     }
 }
 
@@ -173,4 +174,26 @@ fn process_alive(pid: u32) -> bool {
 #[cfg(unix)]
 fn process_alive(pid: u32) -> bool {
     unsafe { libc::kill(pid as i32, 0) == 0 }
+}
+
+#[test]
+fn on_exit_callback_gets_the_code() {
+    let argv: &[&str] = if cfg!(windows) {
+        &["cmd", "/c", "exit 3"]
+    } else {
+        &["sh", "-c", "exit 3"]
+    };
+    let (tx, rx) = std::sync::mpsc::channel();
+    let spec = SpawnSpec {
+        argv: argv.iter().map(|s| s.to_string()).collect(),
+        cwd: None,
+        env: vec![],
+        cols: 80,
+        rows: 24,
+        on_exit: Some(Box::new(move |code| {
+            let _ = tx.send(code);
+        })),
+    };
+    let _session = Session::spawn("t-exit-cb".into(), spec).unwrap();
+    assert_eq!(rx.recv_timeout(Duration::from_secs(5)), Ok(3));
 }

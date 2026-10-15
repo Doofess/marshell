@@ -6,6 +6,9 @@ import { laneLayout, pending } from "../lane/laneLayout";
 import { FIXTURES } from "../sidebar/fixtures";
 import { shellLayout } from "./shellLayout";
 import { Sidebar, ROW_HEIGHT } from "./Sidebar";
+import { sessionShortcut } from "../../lib/appShortcuts";
+import { moveBy } from "../sidebar/reorder";
+import { renameOutcome } from "../sidebar/rename";
 
 const html = (p: Partial<Parameters<typeof Sidebar>[0]> = {}) =>
   renderToStaticMarkup(<Sidebar rows={SCENARIO_ROWS} requests={SCENARIO_REQUESTS} height={760} width={288} footer={SCENARIO_FOOTER} {...p} />);
@@ -34,6 +37,13 @@ describe("Sidebar", () => {
     expect(h).not.toContain("–");
     expect(h).toContain("Doctor: no issues");
   });
+  it("has no footer when none is given, and gives its row back", () => {
+    const h = html({ footer: undefined });
+    expect(h).not.toContain("sidebar__footer");
+    expect(h).not.toContain("Doctor:");
+    expect(h).toContain("--footer-h:0px");
+    expect(html()).not.toContain("--footer-h");
+  });
   it("keeps the lane header when nothing waits", () => {
     expect(html({ requests: [] })).toContain("All clear");
   });
@@ -60,6 +70,45 @@ describe("Sidebar: the session list scrolls", () => {
   it("keeps one tab stop, on the selected row", () => {
     const h = html({ rows: twenty, height: 800, selectedId: "s19" });
     expect((h.match(/role="option"[^>]*tabindex="0"|tabindex="0"[^>]*role="option"/g) ?? []).length).toBe(1);
+  });
+});
+
+// No DOM here: the keys go through the pure helpers the sidebar and the app use, and the rest is read from static markup.
+describe("Sidebar: rename and reorder", () => {
+  const keyEvent = (init: Partial<KeyboardEvent> & { code: string }) => ({ key: init.code, ctrlKey: false, shiftKey: false, altKey: false, metaKey: false, ...init }) as KeyboardEvent;
+  const target = SCENARIO_ROWS[1]!;
+
+  it("F2 edits name inline and enter renames", () => {
+    expect(sessionShortcut(keyEvent({ code: "F2", key: "F2" }), "windows")).toEqual({ kind: "rename" });
+    const h = html({ selectedId: target.id, renamingId: target.id, onRename: () => {}, onRenameCancel: () => {} });
+    expect(h).toContain('class="session-row__rename"');
+    expect(h).toContain(`value="${target.name}"`);
+    expect((h.match(/session-row__rename/g) ?? []).length).toBe(1);
+    expect(renameOutcome("Enter", "Build server", target.name)).toEqual({ kind: "commit", name: "Build server" });
+  });
+  it("empty rename keeps the old name", () => {
+    expect(renameOutcome("Enter", "   ", target.name)).toEqual({ kind: "cancel" });
+    expect(renameOutcome("Escape", "Something else", target.name)).toEqual({ kind: "cancel" });
+  });
+  it("alt+shift+arrow moves the row", () => {
+    const ids = SCENARIO_ROWS.map((r) => r.id);
+    expect(sessionShortcut(keyEvent({ code: "ArrowUp", altKey: true, shiftKey: true }), "windows")).toEqual({ kind: "move", by: -1 });
+    expect(moveBy(ids, ids[1]!, -1)?.[0]).toBe(ids[1]);
+    expect(moveBy(ids, ids[0]!, -1)).toBeNull();
+  });
+  it("makes rows draggable only when it can reorder them, and marks the drop edge", () => {
+    expect(html()).not.toContain("draggable");
+    expect(html({ onReorder: () => {} })).toContain('draggable="true"');
+  });
+  it("does not change the markup when no rename or reorder props are given", () => {
+    const h = html();
+    expect(h).not.toContain("session-row__rename");
+    expect(h).not.toContain("data-renaming");
+    expect(h).not.toContain("data-drop");
+  });
+  it("does not make a row draggable while its name is being edited", () => {
+    const h = html({ onReorder: () => {}, renamingId: target.id, onRename: () => {}, onRenameCancel: () => {} });
+    expect((h.match(/draggable="true"/g) ?? []).length).toBe(SCENARIO_ROWS.length - 1);
   });
 });
 

@@ -2,6 +2,8 @@ import { AgentMark } from "../../components/AgentMark/AgentMark";
 import { AuxGlyph, StatusGlyph } from "../../components/StatusGlyph/StatusGlyph";
 import { ContextRing } from "../../components/ContextRing/ContextRing";
 import { SessionNumber } from "../../components/SessionNumber/SessionNumber";
+import type { DragEventHandler } from "react";
+import { RenameBox } from "./RenameBox";
 import { formatDuration, formatUsage, modeCaution } from "./format";
 import { rowLabel, rowTitle } from "./labels";
 import { SESSION_NUMBER_HINT } from "./sessionNumber";
@@ -14,20 +16,40 @@ const NEEDS_YOU = new Set(["needs-permission", "needs-question"]);
 /** Sessions that cannot continue without the user stand out from the rest of the list. */
 const blocked = (status: string) => (NEEDS_YOU.has(status) ? "needs-you" : status === "error" ? "error" : undefined);
 
+/** What a row needs to be dragged to a new place in the list (native HTML5 drag and drop). Left out, the row is not draggable. */
+export type RowDrag = {
+  onDragStart: DragEventHandler<HTMLDivElement>;
+  onDragOver: DragEventHandler<HTMLDivElement>;
+  onDrop: DragEventHandler<HTMLDivElement>;
+  onDragEnd: DragEventHandler<HTMLDivElement>;
+  /** Where a dragged row would land relative to this one: a line is drawn on that edge. */
+  dropEdge?: "before" | "after";
+};
+/** F2: the name is a text box. */
+export type RowRename = { onCommit: (name: string) => void; onCancel: (opts: { refocus: boolean }) => void };
+
 /**
  * One sidebar row (docs/PLAN.md "Sidebar rows"): an option in the sidebar's listbox. Height is fixed per density and
  * hover never changes it. Focus is roving: the list gives exactly one row `tabStop`, arrow keys move it (batch 2).
+ * `drag` makes the row draggable, and `rename` turns its name into a text box.
  */
 export function SessionRow({
   row,
   density,
   selected = false,
   tabStop = false,
+  drag,
+  rename,
+  onSelect,
 }: {
   row: RowModel;
   density: Density;
   selected?: boolean;
   tabStop?: boolean;
+  drag?: RowDrag;
+  rename?: RowRename;
+  /** A click on the row. Left out, a click does nothing (stories). */
+  onSelect?: () => void;
 }) {
   const caution = modeCaution(row.mode);
   const usage = formatUsage(row.usage);
@@ -54,8 +76,17 @@ export function SessionRow({
       data-ended={row.status === "ended" || undefined}
       data-muted={row.muted || undefined}
       data-flash={row.flash || undefined}
+      data-renaming={rename ? "" : undefined}
+      draggable={drag && !rename ? true : undefined}
+      data-drop={drag?.dropEdge}
+      onClick={onSelect}
+      onDragStart={drag?.onDragStart}
+      onDragOver={drag?.onDragOver}
+      onDrop={drag?.onDrop}
+      onDragEnd={drag?.onDragEnd}
     >
       <span className="session-row__stripe" aria-hidden="true" />
+      {rename && <RenameBox original={row.name} onCommit={rename.onCommit} onCancel={rename.onCancel} />}
       <div className="session-row__line1" aria-hidden="true">
         <AgentMark agent={row.agent} working={row.status === "working"} />
         {row.elevated && <AuxGlyph kind="elevated" />}

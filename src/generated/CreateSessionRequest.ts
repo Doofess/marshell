@@ -8,4 +8,20 @@ shell?: Array<string>,
 /**
  * Absent means the user's home directory.
  */
-cwd?: string, cols: number, rows: number, };
+cwd?: string, cols: number, rows: number, 
+/**
+ * The profile this session was launched from. Absent means the default profile.
+ */
+profile_id?: string, 
+/**
+ * "claude", "codex" or "antigravity". Absent means a plain shell.
+ */
+agent?: string, 
+/**
+ * Display name for the session. Absent means the core picks one.
+ */
+name?: string, 
+/**
+ * Text typed into the agent once it starts. Absent means nothing is typed.
+ */
+prompt?: string, };

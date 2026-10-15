@@ -172,3 +172,18 @@ describe("Palette: odd session numbers and a stale active row", () => {
     expect(new Set(ids).size).toBe(ids.length);
   });
 });
+
+describe("Palette: commands", () => {
+  it("lists the commands it is given and no others", () => {
+    const some = COMMANDS.filter((c) => c.id === "launcher" || c.id === "profiles");
+    const h = renderToStaticMarkup(<Palette view={{ query: "", activeIndex: 0 }} commands={some} os="windows" />);
+    expect(options(h)).toBe(2);
+    expect(h).toContain("Shell profiles");
+    expect(h).not.toContain("Open Doctor");
+    // A search only finds among them.
+    expect(renderToStaticMarkup(<Palette view={{ query: "doctor", activeIndex: 0 }} commands={some} os="windows" />)).toContain("No command matches");
+  });
+  it("lists every command when none are given", () => {
+    expect(options(html())).toBe(COMMANDS.length);
+  });
+});

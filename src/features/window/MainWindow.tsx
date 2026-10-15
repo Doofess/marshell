@@ -1,4 +1,4 @@
-import { useEffect, type CSSProperties } from "react";
+import { useEffect, type CSSProperties, type ReactNode } from "react";
 import { Logo } from "../../components/Logo/Logo";
 import { Wordmark } from "../../components/Logo/Wordmark";
 import { StatusGlyph } from "../../components/StatusGlyph/StatusGlyph";
@@ -18,12 +18,13 @@ import { LayoutIcon, LayoutMenu } from "./LayoutMenu";
 import { SearchIcon } from "./SearchIcon";
 import { isTool } from "../../components/AgentMark/kinds";
 import { hasPromptLine } from "../sidebar/promptLine";
+import { KeptTerminals } from "./keptTerminals";
 import { Rail } from "./Rail";
 import { SCENARIO_FOOTER, SCENARIO_PLAN, SCENARIO_PORTS, SCENARIO_REQUESTS, SCENARIO_ROWS } from "./scenario";
 import { SessionAnnouncer } from "./SessionAnnouncer";
 import { SessionHeader } from "./SessionHeader";
 import { windowTitle } from "./windowTitle";
-import { Sidebar } from "./Sidebar";
+import { Sidebar, type SidebarFooter } from "./Sidebar";
 import { shellNameFor } from "./ShellPanel";
 import { ARRANGEMENTS, chooseArrangement, maxPanes, type Arrangement, type PaneCount, type Ratios } from "./splitLayout";
 import { SplitView } from "./SplitView";
@@ -64,12 +65,34 @@ export type MainWindowProps = {
   composerValue?: string;
   /** What has been typed in each pane's own prompt line in split view, by session id. */
   composerValues?: Record<string, string>;
+  /** Replaces the scripted terminal of every pane with the real one. Leave out in stories. `shown` is false for a kept terminal behind the selected one (single window only). */
+  renderTerminal?: (row: RowModel, shown?: boolean) => ReactNode;
+  /** The ports the session header lists; defaults to the scenario's. */
+  ports?: string[];
+  /** What the sidebar footer shows; defaults to the scenario's plan and doctor numbers. `null` leaves the footer out (the live app has none to show yet). */
+  footer?: SidebarFooter | null;
   /** The 24 px status bar at the foot of the window (the focused session's strip); on by default, never in focus mode. */
   statusBar?: boolean;
   /** The plain shell panel under the session list; on by default in the expanded sidebar. */
   shell?: boolean;
   /** The user hid the shell panel: header only. */
   shellCollapsed?: boolean;
+  /** Takes the place of the session header while it is set (the busy-close question). Shown even where the header is hidden. */
+  headerBar?: ReactNode;
+  /** A receipt over the lower start corner of the terminal column. Plain markup: `notice` is what gets announced. */
+  toast?: ReactNode;
+  /** Text for the window's one announcer to say; a new `id` says it again, even if the text is the same. */
+  notice?: { id: number; text: string } | null;
+  /** F2: the sidebar row whose name is a text box, and what its Enter and its Escape or blur do. */
+  renamingId?: string | null;
+  onRename?: (id: string, name: string) => void;
+  onRenameCancel?: (opts: { refocus: boolean }) => void;
+  /** Dragging a sidebar row gives the whole new order. Left out, rows are not draggable. */
+  onReorder?: (ids: string[]) => void;
+  /** A click on a sidebar row or a rail button gives that session's id. Left out, they do nothing (stories). */
+  onSelect?: (id: string) => void;
+  /** The click on the Command palette button, in the top bar and in the rail. */
+  onPalette?: () => void;
 };
 
 const icon = (d: string) => (
@@ -112,6 +135,18 @@ export function MainWindow({
   statusBar = true,
   shell = true,
   shellCollapsed = false,
+  renderTerminal,
+  ports = SCENARIO_PORTS,
+  footer = SCENARIO_FOOTER,
+  headerBar,
+  toast,
+  notice,
+  renamingId,
+  onRename,
+  onRenameCancel,
+  onReorder,
+  onSelect,
+  onPalette,
 }: MainWindowProps) {
   const pref: SidebarPref = sidebarPref ?? (layout === "focus" ? "focus" : layout === "rail" ? "rail" : "expanded");
   const mode = sidebarMode(width, pref);
@@ -163,7 +198,7 @@ export function MainWindow({
 
   return (
     <div className="window" style={{ inlineSize: width, blockSize: height, "--side-w": `${sideW}px` } as CSSProperties} data-mode={mode} data-layout={layout} data-agent={active?.agent}>
-      <SessionAnnouncer row={active} needsYou={waiting} />
+      <SessionAnnouncer row={active} needsYou={waiting} notice={notice} />
       <header className="window__bar">
         <div className="window__bar-side">
           {/* In focus mode this column has no width: its buttons are not rendered, so keyboard focus can never land on something nobody sees. */}
@@ -174,13 +209,13 @@ export function MainWindow({
             </button>
           )}
           {mode === "expanded" && (
-            <button type="button" className="window__palette" aria-label="Command palette" title={`Search sessions, projects and commands (${shortcutLabel(commandById("palette").binding!, os)})`}>
+            <button type="button" className="window__palette" aria-label="Command palette" title={`Search sessions, projects and commands (${shortcutLabel(commandById("palette").binding!, os)})`} onClick={onPalette}>
               <SearchIcon />
               <span>Command palette</span>
             </button>
           )}
         </div>
-        <div className="window__bar-main">{showHeader && active && <SessionHeader row={active} ports={SCENARIO_PORTS} />}</div>
+        <div className="window__bar-main">{headerBar ?? (showHeader && active && <SessionHeader row={active} ports={ports} />)}</div>
         <div className="window__bar-end">
           <div className="window__layout">
             <button
@@ -214,8 +249,8 @@ export function MainWindow({
       </header>
 
       <div className="window__body">
-        {mode === "expanded" && <Sidebar rows={rows} requests={requests} height={height - BAR} width={sideW} selectedId={selected?.id} footer={SCENARIO_FOOTER} shell={shell ? { cwd: active?.project, shellName: shellNameFor(os), collapsed: shellCollapsed, os } : undefined} />}
-        {mode === "rail" && <Rail rows={rows} needsYou={waiting} selectedId={selected?.id} os={os} />}
+        {mode === "expanded" && <Sidebar rows={rows} requests={requests} height={height - BAR} width={sideW} selectedId={selected?.id} footer={footer ?? undefined} shell={shell ? { cwd: active?.project, shellName: shellNameFor(os), collapsed: shellCollapsed, os } : undefined} renamingId={renamingId} onRename={onRename} onRenameCancel={onRenameCancel} onReorder={onReorder} onSelect={onSelect} />}
+        {mode === "rail" && <Rail rows={rows} needsYou={waiting} selectedId={selected?.id} os={os} onSelect={onSelect} onPalette={onPalette} />}
 
         <div className="window__center">
         <main className="window__main" data-placement={drawer ? placement : undefined}>
@@ -224,7 +259,9 @@ export function MainWindow({
               No sessions yet. Start one with {shortcutLabel(commandById("launcher").binding!, os)}.
             </div>
           ) : split ? (
-            <SplitView panes={shown} size={{ w: space.w, h: space.h }} activeIndex={focusedIndex} hidden={hiddenCount} arrangement={chosen} ratios={ratios} zoomed={zoomIdx} choices={choices} composerValues={composerValues} composers={showComposer} setting={terminalSetting} os={os} />
+            <SplitView panes={shown} size={{ w: space.w, h: space.h }} activeIndex={focusedIndex} hidden={hiddenCount} arrangement={chosen} ratios={ratios} zoomed={zoomIdx} choices={choices} composerValues={composerValues} composers={showComposer} setting={terminalSetting} os={os} renderTerminal={renderTerminal} />
+          ) : renderTerminal ? (
+            <KeptTerminals rows={rows} selectedId={selected.id} render={renderTerminal} />
           ) : (
             <ScriptedTerminal setting={terminalSetting} label={`Terminal for ${selected.name}`} {...(isTool(selected.agent) ? { script: shellSession({ cwd: selected.project }), size: SHELL_SIZE } : {})} />
           )}
@@ -245,6 +282,7 @@ export function MainWindow({
             </aside>
           )}
         </main>
+        {toast}
         {showFull && selected && (
           <div className="window__composer" style={{ blockSize: COMPOSER.full }}>
             <Composer row={selected} variant="full" value={composerValue} os={os} />
@@ -252,7 +290,7 @@ export function MainWindow({
         )}
         {showStatus && (
           <div className="window__status" style={{ blockSize: STATUS_BAR_HEIGHT }}>
-            <StatusBar row={split ? focused : selected} plan={isTool((split ? focused : selected)?.agent ?? "") ? undefined : SCENARIO_PLAN} ports={SCENARIO_PORTS} os={os} />
+            <StatusBar row={split ? focused : selected} plan={isTool((split ? focused : selected)?.agent ?? "") ? undefined : SCENARIO_PLAN} ports={ports} os={os} />
           </div>
         )}
         </div>

@@ -248,8 +248,65 @@
   font-size: var(--text-11);
 }
 
+/* F2: the name is a text box laid over line 1, which stays in place (hidden) so the row never changes height. */
+.session-row[data-renaming] .session-row__line1 {
+  visibility: hidden;
+}
+.session-row__rename {
+  position: absolute;
+  inset-inline: 10px 8px;
+  /* Line 1 is the upper of the two lines the row centres; the box sits on it. */
+  inset-block-end: 50%;
+  block-size: 24px;
+  min-inline-size: 0;
+  padding-inline: var(--space-2);
+  border: 0;
+  border-radius: var(--radius);
+  background: var(--bg-overlay);
+  color: var(--text-1);
+  font: inherit;
+  font-weight: 500;
+  z-index: 1;
+}
+.session-row__rename:focus {
+  outline: 2px solid var(--focus, var(--accent));
+  outline-offset: 0;
+}
+.session-row[data-density="expanded"] .session-row__rename {
+  inset-block-start: var(--space-2);
+  inset-block-end: auto;
+}
+
+/* Dragging a row: a line on the edge where it would land. */
+.session-row[draggable="true"] {
+  cursor: grab;
+}
+.session-row[data-drop="before"] {
+  box-shadow: inset 0 2px 0 var(--accent);
+}
+.session-row[data-drop="after"] {
+  box-shadow: inset 0 -2px 0 var(--accent);
+}
+
 /* Windows High Contrast: shadows and tints are dropped, so selection and the unread dot use system colours. */
 @media (forced-colors: active) {
+  .session-row__rename:focus {
+    outline-color: Highlight;
+  }
+  /* Shadows are dropped here, so the drop line is a painted strip on the edge instead. */
+  .session-row[data-drop] {
+    forced-color-adjust: none;
+    background-repeat: no-repeat;
+    background-size: 100% 2px;
+  }
+  .session-row[data-drop="before"] {
+    background-image: linear-gradient(Highlight, Highlight);
+    background-position: top;
+  }
+  .session-row[data-drop="after"] {
+    background-image: linear-gradient(Highlight, Highlight);
+    background-position: bottom;
+  }
   .session-row[aria-selected="true"] {
     outline: 2px solid Highlight;
     outline-offset: -2px;

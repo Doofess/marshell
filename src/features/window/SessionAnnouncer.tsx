@@ -10,7 +10,7 @@ import { laneAnnouncement, nextAnnouncement, statusSentence, type Announced } fr
  * The prompt lines in the panes are plain text; this is the one place anything is announced. `statusRequest` is a counter
  * the "Read the focused session's status" command bumps; each bump reads the focused session's state aloud.
  */
-export function SessionAnnouncer({ row, mode = "needs-you", statusRequest = 0, needsYou }: { row: RowModel | null; mode?: AnnounceMode; statusRequest?: number; needsYou?: number }) {
+export function SessionAnnouncer({ row, mode = "needs-you", statusRequest = 0, needsYou, notice }: { row: RowModel | null; mode?: AnnounceMode; statusRequest?: number; needsYou?: number; notice?: { id: number; text: string } | null }) {
   const { announcer, message } = useAnnouncer();
   const said = useRef<Announced | null>(null);
   useEffect(() => {
@@ -31,5 +31,9 @@ export function SessionAnnouncer({ row, mode = "needs-you", statusRequest = 0, n
     lastRequest.current = statusRequest;
     announcer.say(statusSentence(row), { repeat: true });
   }, [statusRequest]); // eslint-disable-line react-hooks/exhaustive-deps
+  // A receipt shown on screen ("Closed Shell 1.") is also said here, so it needs no live region of its own.
+  useEffect(() => {
+    if (notice) announcer.say(notice.text, { repeat: true });
+  }, [notice?.id]); // eslint-disable-line react-hooks/exhaustive-deps -- a new id is a new notice
   return <Announcer message={message} className="window__announcer" data-session-announcer />;
 }

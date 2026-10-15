@@ -9,12 +9,17 @@ use std::sync::mpsc;
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 
+/// Runs once with the exit code when the process ends.
+pub type ExitCallback = Box<dyn FnOnce(i32) + Send>;
+
 pub struct SpawnSpec {
     pub argv: Vec<String>,
     pub cwd: Option<PathBuf>,
     pub env: Vec<(String, String)>,
     pub cols: u16,
     pub rows: u16,
+    /// Called once, from the wait thread, with the exit code. Runs outside every session lock.
+    pub on_exit: Option<ExitCallback>,
 }
 
 /// What the WebSocket task should send next.
@@ -60,10 +65,12 @@ pub struct Session {
     pid: Option<u32>,
     /// Set when the child has exited, so a late kill cannot hit a reused pid.
     exited: Arc<AtomicBool>,
+    /// Taken and called once when the child exits.
+    exit_callback: Mutex<Option<ExitCallback>>,
 }
 
 impl Session {
-    pub fn spawn(id: String, spec: SpawnSpec) -> anyhow::Result<Arc<Session>> {
+    pub fn spawn(id: String, mut spec: SpawnSpec) -> anyhow::Result<Arc<Session>> {
         let size = PtySize {
             rows: spec.rows.max(1),
             cols: spec.cols.max(1),
@@ -105,6 +112,7 @@ impl Session {
             master: Mutex::new(Some(pair.master)),
             pid,
             exited: Arc::new(AtomicBool::new(false)),
+            exit_callback: Mutex::new(spec.on_exit.take()),
         });
 
         std::thread::Builder::new()
@@ -202,6 +210,12 @@ impl Session {
             std::thread::sleep(Duration::from_millis(550));
             s.notify.notify_one();
         });
+        // Take the callback out of its mutex, then call it with no session lock held:
+        // the registry's callback takes its own lock.
+        let callback = self.exit_callback.lock().unwrap().take();
+        if let Some(callback) = callback {
+            callback(code);
+        }
     }
 
     pub fn write_input(&self, bytes: Vec<u8>) {

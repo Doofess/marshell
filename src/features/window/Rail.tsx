@@ -15,7 +15,7 @@ import "./Rail.css";
  * A working session shows its vendor mark moving instead of a glyph, as in the full rows. The list scrolls (wheel, touch,
  * keys) with no scrollbar drawn; the palette tool stays pinned at the foot.
  */
-export function Rail({ rows, needsYou, selectedId, os = "windows" }: { rows: RowModel[]; needsYou: number; selectedId?: string; os?: Os }) {
+export function Rail({ rows, needsYou, selectedId, os = "windows", onSelect, onPalette }: { rows: RowModel[]; needsYou: number; selectedId?: string; os?: Os; onSelect?: (id: string) => void; onPalette?: () => void }) {
   return (
     <nav className="rail" aria-label="Sessions">
       <div className="rail__list">
@@ -26,7 +26,7 @@ export function Rail({ rows, needsYou, selectedId, os = "windows" }: { rows: Row
           </div>
         )}
         {rows.map((r) => (
-          <button key={r.id} type="button" {...selectedProps(r.id === selectedId, "current", "rail__item")} data-agent={r.agent} data-mono={monogram(r.name)} data-number={r.number} aria-label={rowLabel(r)}>
+          <button key={r.id} type="button" {...selectedProps(r.id === selectedId, "current", "rail__item")} data-agent={r.agent} data-mono={monogram(r.name)} data-number={r.number} aria-label={rowLabel(r)} onClick={onSelect && (() => onSelect(r.id))}>
             <span className="rail__stripe" aria-hidden="true" />
             <span className="rail__number">
               <SessionNumber n={r.number} />
@@ -37,7 +37,7 @@ export function Rail({ rows, needsYou, selectedId, os = "windows" }: { rows: Row
       </div>
       {/* The bar's 52 px column holds only the logo, so the palette lives here, where the rail's own tools go. */}
       <div className="rail__tools">
-        <button type="button" className="rail__tool" aria-label="Command palette" title={`Search sessions, projects and commands (${shortcutLabel(commandById("palette").binding!, os)})`}>
+        <button type="button" className="rail__tool" aria-label="Command palette" title={`Search sessions, projects and commands (${shortcutLabel(commandById("palette").binding!, os)})`} onClick={onPalette}>
           <SearchIcon />
         </button>
       </div>

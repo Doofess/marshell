@@ -1,13 +1,18 @@
+mod events;
 pub mod frames;
 mod guard;
+mod profiles;
+mod projects;
 mod pty_ws;
 mod sessions;
 
+use crate::profiles::detect::{Probe, detect_profiles};
+use crate::registry::Registry;
 use crate::{auth, paths};
 use axum::http::{HeaderValue, Method, header};
-use axum::routing::get;
+use axum::routing::{get, patch, post};
 use axum::{Json, Router};
-use marshell_protocol::api::{Endpoint, Health, Platform};
+use marshell_protocol::api::{Endpoint, Health, Platform, Profile, ProfilesDoc};
 use marshell_protocol::brand;
 use std::collections::HashMap;
 use std::net::Ipv4Addr;
@@ -31,18 +36,41 @@ struct Inner {
     token: String,
     host: String,
     allowed_origins: Vec<String>,
+    /// Where `profiles.json` lives.
+    home: PathBuf,
+    /// The shells found at startup. Detection runs once, not per request.
+    detected: Vec<Profile>,
+    /// Detected profiles merged with `profiles.json`.
+    profiles: Mutex<ProfilesDoc>,
+    /// Open and recently closed sessions. Shared with each session's exit callback.
+    registry: Arc<Registry>,
     // Kept here so every handler reaches it through one State.
     sessions: Mutex<HashMap<String, Arc<crate::pty::Session>>>,
+    /// Whether an agent's command (`claude`, `codex`, `agy`) runs from PATH. Tests swap it.
+    agent_on_path: fn(&str) -> bool,
 }
 
 impl AppState {
-    pub fn new(token: String, port: u16, allowed_origins: Vec<String>) -> Self {
+    pub fn new(token: String, port: u16, allowed_origins: Vec<String>, home: PathBuf, detected: Vec<Profile>) -> Self {
+        let profiles = crate::profiles::store::load(&home, detected.clone());
         Self(Arc::new(Inner {
             token,
             host: format!("127.0.0.1:{port}"),
             allowed_origins,
+            home,
+            detected,
+            profiles: Mutex::new(profiles),
+            registry: Arc::new(Registry::new()),
             sessions: Mutex::new(HashMap::new()),
+            agent_on_path: crate::profiles::detect::command_on_path,
         }))
+    }
+    /// Replaces the PATH check for agent commands. Call it before the state is cloned.
+    pub fn with_agent_check(mut self, check: fn(&str) -> bool) -> Self {
+        Arc::get_mut(&mut self.0)
+            .expect("with_agent_check runs before the state is shared")
+            .agent_on_path = check;
+        self
     }
     pub fn token(&self) -> &str {
         &self.0.token
@@ -60,6 +88,10 @@ impl AppState {
             .unwrap()
             .insert(session.id().to_string(), session);
     }
+    /// Forgets the session so no new socket can attach; the caller kills it.
+    pub fn remove_session(&self, tab: &str) -> Option<Arc<crate::pty::Session>> {
+        self.0.sessions.lock().unwrap().remove(tab)
+    }
     pub fn origin_allowed(&self, origin: &str) -> bool {
         self.0.allowed_origins.iter().any(|o| o == origin)
     }
@@ -69,11 +101,18 @@ pub fn router(state: AppState) -> Router {
     let origins: Vec<HeaderValue> = state.0.allowed_origins.iter().filter_map(|o| o.parse().ok()).collect();
     let cors = CorsLayer::new()
         .allow_origin(AllowOrigin::list(origins))
-        .allow_methods([Method::GET, Method::POST, Method::PATCH, Method::DELETE])
+        .allow_methods([Method::GET, Method::POST, Method::PUT, Method::PATCH, Method::DELETE])
         .allow_headers([header::AUTHORIZATION, header::CONTENT_TYPE]);
     Router::new()
         .route("/v1/health", get(health))
-        .route("/v1/sessions", axum::routing::post(sessions::create))
+        .route("/v1/profiles", get(profiles::get).put(profiles::put))
+        .route("/v1/profiles/detected", get(profiles::detected))
+        .route("/v1/projects", get(projects::get))
+        .route("/v1/sessions", get(sessions::list).post(sessions::create))
+        .route("/v1/sessions/reorder", post(sessions::reorder))
+        .route("/v1/sessions/reopen", post(sessions::reopen))
+        .route("/v1/sessions/{tab}", patch(sessions::rename).delete(sessions::close))
+        .route("/v1/events", get(events::handler))
         .route("/v1/pty/{tab}", get(pty_ws::handler))
         .layer(axum::middleware::from_fn_with_state(state.clone(), guard::auth_guard))
         .layer(cors)
@@ -148,8 +187,12 @@ pub async fn start(cfg: CoreConfig) -> anyhow::Result<RunningCore> {
         token: auth::new_token(),
         platform: Platform::current(),
     };
-    auth::write_endpoint_file(&paths::endpoint_file(&cfg.home), &endpoint)?;
-    let state = AppState::new(endpoint.token.clone(), port, cfg.allowed_origins);
+    // Looking for shells runs programs (wsl.exe can take up to 2 s): keep it off the async threads.
+    let detected = tokio::task::spawn_blocking(|| detect_profiles(&Probe::system())).await?;
+    let endpoint_file = paths::endpoint_file(&cfg.home);
+    let state = AppState::new(endpoint.token.clone(), port, cfg.allowed_origins, cfg.home, detected);
+    // Last, so the endpoint is only advertised once the state is ready to serve.
+    auth::write_endpoint_file(&endpoint_file, &endpoint)?;
     let app = router(state.clone());
     let (tx, rx) = tokio::sync::oneshot::channel::<()>();
     let serve = tokio::spawn(async move {

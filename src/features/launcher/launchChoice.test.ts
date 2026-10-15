@@ -69,7 +69,7 @@ describe("programs the first chip offers", () => {
     expect(isAgentProgram("claude")).toBe(true);
     expect(isAgentProgram("powershell")).toBe(false);
     expect(isAgentProgram("program")).toBe(false);
-    expect(programById("nope")).toBeUndefined();
+    expect(programById("profile:nope")).toBeUndefined();
   });
 });
 

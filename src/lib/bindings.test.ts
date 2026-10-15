@@ -11,6 +11,9 @@ describe("chordOf", () => {
     expect(chordOf({ code: "KeyK" }, "mac")).toEqual({ code: "KeyK", ctrl: false, shift: false, alt: false, meta: true });
     expect(chordOf({ code: "KeyT", alt: true }, "linux").alt).toBe(true);
   });
+  it("is Alt+Shift with no Ctrl or Cmd for a shift binding, on every system", () => {
+    for (const os of OSES) expect(chordOf({ code: "ArrowUp", alt: true, shift: true }, os)).toEqual({ code: "ArrowUp", ctrl: false, shift: true, alt: true, meta: false });
+  });
   it("is the key alone for a plain binding and the navigation modifier for a navigation chord", () => {
     expect(chordOf({ code: "F2", plain: true }, "windows")).toEqual({ code: "F2", ctrl: false, shift: false, alt: false, meta: false });
     expect(chordOf({ code: "Tab", nav: true }, "mac")).toEqual({ code: "Tab", ctrl: true, shift: true, alt: false, meta: false });
@@ -108,5 +111,20 @@ describe("the shipped commands", () => {
     expect(p).toHaveLength(2);
     expect(p[0]).toMatch(/a and b/);
     expect(p[1]).toMatch(/c.*Minimize/);
+  });
+});
+
+describe("move-up and move-down", () => {
+  it("match Alt+Shift+arrow only, so Ctrl+Shift+arrow and a bare arrow stay with the terminal", () => {
+    for (const os of OSES) {
+      expect(findCommand(ev("ArrowUp", { altKey: true, shiftKey: true }), os)?.id).toBe("move-up");
+      expect(findCommand(ev("ArrowDown", { altKey: true, shiftKey: true }), os)?.id).toBe("move-down");
+      expect(findCommand(ev("ArrowUp"), os)).toBeUndefined();
+      expect(findCommand(ev("ArrowUp", { ctrlKey: true, shiftKey: true }), os)).toBeUndefined();
+      expect(findCommand(ev("ArrowUp", { ctrlKey: true, altKey: true, shiftKey: true }), os)).toBeUndefined();
+    }
+  });
+  it("keep the keymap free of duplicates and reserved keys", () => {
+    for (const os of OSES) expect(problemsIn(COMMANDS, os)).toEqual([]);
   });
 });

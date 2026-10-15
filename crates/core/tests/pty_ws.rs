@@ -31,6 +31,10 @@ async fn create(core: &RunningCore, shell: Vec<String>, cwd: Option<String>) -> 
         cwd,
         cols: 80,
         rows: 24,
+        profile_id: None,
+        agent: None,
+        name: None,
+        prompt: None,
     };
     tokio::task::spawn_blocking(move || {
         let res = ureq::post(&url)
@@ -149,6 +153,37 @@ async fn cwd_with_space() {
     let got = read_until(&mut ws, Duration::from_secs(10), |_| false).await;
     let name = dir.path().file_name().unwrap().to_string_lossy().into_owned();
     assert!(text(&got.bytes).contains(&name), "cwd output: {}", text(&got.bytes));
+}
+
+/// The session sees its number and agent in its environment.
+#[cfg(windows)]
+#[tokio::test]
+async fn session_env_has_number() {
+    let (core, _home) = core().await;
+    let shell = vec![
+        "cmd".to_string(),
+        "/c".to_string(),
+        "echo env=%MARSHELL_SESSION_NUMBER%,%MARSHELL_AGENT%".to_string(),
+    ];
+    let tab = create(&core, shell, None).await.unwrap();
+    let mut ws = connect(&core, &tab, 0).await;
+    let got = read_until(&mut ws, Duration::from_secs(10), |b| text(b).contains("env=1,shell")).await;
+    assert!(text(&got.bytes).contains("env=1,shell"), "output: {}", text(&got.bytes));
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn session_env_has_number() {
+    let (core, _home) = core().await;
+    let shell = vec![
+        "sh".to_string(),
+        "-c".to_string(),
+        "echo env=$MARSHELL_SESSION_NUMBER,$MARSHELL_AGENT".to_string(),
+    ];
+    let tab = create(&core, shell, None).await.unwrap();
+    let mut ws = connect(&core, &tab, 0).await;
+    let got = read_until(&mut ws, Duration::from_secs(10), |b| text(b).contains("env=1,shell")).await;
+    assert!(text(&got.bytes).contains("env=1,shell"), "output: {}", text(&got.bytes));
 }
 
 #[tokio::test]

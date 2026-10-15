@@ -11,6 +11,7 @@ import {
   programById,
   programsIn,
   rememberedNote,
+  type LaunchProgram,
   type LauncherChoice,
   type Remembered,
 } from "./launchChoice";
@@ -40,8 +41,17 @@ type Props = {
   onPick?: (projectId: string) => void;
   onPrograms?: (open: boolean) => void;
   onActive?: (index: number) => void;
+  onPrompt?: (text: string) => void;
   onStart?: () => void;
   onClose?: () => void;
+  /** False hides the mode, pace and worktree chips (the live app, until phases 3 and 6 give them an effect). Default true. */
+  chips?: boolean;
+  /** What the first chip lists. Defaults to every program in `LAUNCH_PROGRAMS`. */
+  programs?: LaunchProgram[];
+  /** Why the core refused the launch, shown under Start. */
+  error?: string;
+  /** A launch is in flight: Start is disabled and keeps its label. */
+  busy?: boolean;
 };
 
 const Marked = ({ text, ranges }: { text: string; ranges: Range[] }) => (
@@ -67,16 +77,16 @@ const cycle = <T,>(all: T[], now: T) => all[(all.indexOf(now) + 1) % all.length]
  * first command. The prompt line is set like the one in every pane (a flat command line), in the vendor's colour for an
  * agent. Presentational: the parent owns the state.
  */
-export function Launcher({ view, onChange, onQuery, onPick, onPrograms, onActive, onStart, onClose }: Props) {
+export function Launcher({ view, onChange, onQuery, onPick, onPrograms, onActive, onPrompt, onStart, onClose, chips = true, programs = LAUNCH_PROGRAMS, error, busy = false }: Props) {
   const { choice, projects, query, activeIndex, remembered, nextNumber } = view;
   const project = projects.find((p) => p.id === choice.projectId);
-  const agentRun = isAgentProgram(choice.program);
-  const program = programById(choice.program) ?? LAUNCH_PROGRAMS[0]!;
+  const agentRun = isAgentProgram(choice.program, programs);
+  const program = programById(choice.program, programs) ?? programs[0] ?? LAUNCH_PROGRAMS[0]!;
   const note = agentRun ? rememberedNote(project?.name ?? "this folder", remembered) : null;
   const folderOpen = query !== null;
   const programsOpen = !folderOpen && view.programsOpen === true;
   const options = folderOpen ? filterProjects(query, projects) : [];
-  const listSize = programsOpen ? LAUNCH_PROGRAMS.length : options.length;
+  const listSize = programsOpen ? programs.length : options.length;
   // Ids belong to one launcher (the review page shows many at once).
   const uid = useId();
   const id = (name: string) => `${uid}-${name}`;
@@ -114,7 +124,7 @@ export function Launcher({ view, onChange, onQuery, onPick, onPrograms, onActive
     if (listOpen) {
       e.preventDefault();
       if (programsOpen) {
-        const p = LAUNCH_PROGRAMS[activeIndex];
+        const p = programs[activeIndex];
         if (p) onChange?.({ program: p.id });
         onPrograms?.(false);
       } else {
@@ -138,7 +148,7 @@ export function Launcher({ view, onChange, onQuery, onPick, onPrograms, onActive
         aria-modal="true"
         aria-label="Start a session"
         aria-describedby={id("desc")}
-        data-agent={agentRun ? choice.program : undefined}
+        data-agent={agentRun ? program.kind : undefined}
         data-manual={!agentRun || undefined}
         onKeyDown={onSheetKey}
       >
@@ -154,13 +164,13 @@ export function Launcher({ view, onChange, onQuery, onPick, onPrograms, onActive
             aria-activedescendant={programsOpen ? id(`prog-${activeIndex}`) : undefined}
             onClick={() => onPrograms?.(!programsOpen)}
             onKeyDown={chipKeys(
-              LAUNCH_PROGRAMS.map((p) => p.label),
-              LAUNCH_PROGRAMS.indexOf(program),
-              (i) => onChange?.({ program: LAUNCH_PROGRAMS[i]!.id }),
+              programs.map((p) => p.label),
+              programs.indexOf(program),
+              (i) => onChange?.({ program: programs[i]!.id }),
             )}
           >
             <span aria-hidden="true" className="launcher__mark">
-              <AgentMark agent={program.id} size={12} />
+              <AgentMark agent={program.kind} size={12} />
             </span>
             {program.label}
           </button>
@@ -182,7 +192,7 @@ export function Launcher({ view, onChange, onQuery, onPick, onPrograms, onActive
               {project ? projectLabel(project) : "Choose a folder"}
             </button>
           )}
-          {agentRun && (
+          {agentRun && chips && (
             <>
               <span> {"·"} </span>
               <button
@@ -215,14 +225,14 @@ export function Launcher({ view, onChange, onQuery, onPick, onPrograms, onActive
 
         {programsOpen && (
           <div className="launcher__programs" id={id("programs")} role="listbox" aria-label="Agents, shells and tools">
-            {LAUNCH_GROUPS.map((g) => (
+            {LAUNCH_GROUPS.filter((g) => programsIn(g, programs).length > 0).map((g) => (
               <div key={g} className="launcher__group" role="group" aria-labelledby={id(`group-${g}`)}>
                 <span className="launcher__group-name" id={id(`group-${g}`)}>
                   {g}
                 </span>
                 <div className="launcher__choices">
-                  {programsIn(g).map((p) => {
-                    const i = LAUNCH_PROGRAMS.indexOf(p);
+                  {programsIn(g, programs).map((p) => {
+                    const i = programs.indexOf(p);
                     return (
                       <div
                         key={p.id}
@@ -238,7 +248,7 @@ export function Launcher({ view, onChange, onQuery, onPick, onPrograms, onActive
                         }}
                       >
                         <span aria-hidden="true" className="launcher__mark">
-                          <AgentMark agent={p.id} size={16} />
+                          <AgentMark agent={p.kind} size={16} />
                         </span>
                         {p.label}
                       </div>
@@ -283,19 +293,22 @@ export function Launcher({ view, onChange, onQuery, onPick, onPrograms, onActive
 
         {note && !folderOpen && !programsOpen && <p className="launcher__note">{note}</p>}
 
-        <div className="launcher__line">
-          {/* A drawn chevron, as in the prompt line: a drawing needs 3:1, a text glyph would need 4.5:1 in the vendor colour. */}
-          <svg className="launcher__glyph" width="12" height="16" viewBox="0 0 12 16" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M3.5 3.5L8.5 8l-5 4.5" />
-          </svg>
-          <textarea
-            className="launcher__prompt"
-            aria-label={agentRun ? "First prompt (optional)" : "First command (optional)"}
-            placeholder={program.first}
-            rows={2}
-            defaultValue={view.prompt}
-          />
-        </div>
+        {!program.noFirst && (
+          <div className="launcher__line">
+            {/* A drawn chevron, as in the prompt line: a drawing needs 3:1, a text glyph would need 4.5:1 in the vendor colour. */}
+            <svg className="launcher__glyph" width="12" height="16" viewBox="0 0 12 16" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M3.5 3.5L8.5 8l-5 4.5" />
+            </svg>
+            <textarea
+              className="launcher__prompt"
+              aria-label={agentRun ? "First prompt (optional)" : "First command (optional)"}
+              placeholder={program.first}
+              rows={2}
+              defaultValue={view.prompt}
+              onChange={(e) => onPrompt?.(e.target.value)}
+            />
+          </div>
+        )}
 
         <footer className="launcher__footer">
           <span className="launcher__hint">
@@ -303,13 +316,18 @@ export function Launcher({ view, onChange, onQuery, onPick, onPrograms, onActive
           </span>
           <span className="launcher__go">
             {nextNumber !== undefined && <span className="launcher__next">Session {nextNumber}</span>}
-            <button type="button" className="launcher__start" onClick={onStart}>
+            <button type="button" className="launcher__start" disabled={busy} onClick={onStart}>
               Start <kbd>Enter</kbd>
             </button>
           </span>
         </footer>
+        {error && (
+          <p className="launcher__error" role="alert">
+            {error}
+          </p>
+        )}
         <p className="launcher__sr" id={id("desc")}>
-          {launcherSentence(choice, projects)}
+          {launcherSentence(choice, projects, programs)}
           {nextNumber !== undefined ? `. It becomes session ${nextNumber}` : ""}
         </p>
       </div>

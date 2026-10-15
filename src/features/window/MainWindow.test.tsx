@@ -305,6 +305,23 @@ describe("MainWindow: the review's critical findings", () => {
   });
 });
 
+describe("MainWindow: the sidebar footer", () => {
+  it("defaults to the scenario's plan and doctor numbers, so the stories do not change", () => {
+    const h = html();
+    expect(h).toContain("5h 38%");
+    expect(h).toContain("Doctor: 4 issues");
+  });
+  it("shows no footer, and no made-up plan or doctor numbers, when given null", () => {
+    const h = html({ footer: null });
+    expect(h).not.toContain("sidebar__footer");
+    expect(h).not.toContain("Doctor:");
+    expect(h).not.toContain("5h ");
+  });
+  it("shows the numbers it is given", () => {
+    expect(html({ footer: { doctorIssues: 2 } })).toContain("Doctor: 2 issues");
+  });
+});
+
 describe("MainWindow: the shell panel in the sidebar", () => {
   const shellOf = (h: string) => h.slice(h.indexOf('<section class="shell-panel"'), h.indexOf("</section>", h.indexOf('<section class="shell-panel"')));
   const tall = { width: 1180, height: 880 } as const;
@@ -424,6 +441,29 @@ describe("MainWindow: the brand button in focus mode", () => {
   it("is there in the expanded sidebar and in the rail", () => {
     expect(html()).toContain("Marshell menu");
     expect(html({ layout: "rail" })).toContain("Marshell menu");
+  });
+});
+
+describe("MainWindow: renderTerminal", () => {
+  const live = (row: { id: string }) => <div data-live={row.id} />;
+  it("renderTerminal replaces the scripted terminal", () => {
+    const h = html({ renderTerminal: live });
+    expect(h).toContain('data-live="working"');
+    expect(h).not.toContain("aria-label=\"Terminal for");
+  });
+  it("keeps the single window's terminal in a wrapper that can be hidden, and shows the selected one", () => {
+    const h = html({ renderTerminal: live });
+    expect(h).toMatch(/<div class="window__terminal"><div data-live="working"/);
+    expect(h).not.toMatch(/<div[^>]* hidden[ =>][^>]*><div data-live/);
+  });
+  it("replaces the scripted terminal in every pane of the split view", () => {
+    const h = html({ layout: "split", splitCount: 2, ...BIG, renderTerminal: live });
+    expect((h.match(/data-live="/g) ?? []).length).toBe(2);
+    expect(h).not.toContain("aria-label=\"Terminal for");
+  });
+  it("shows the ports it is given instead of the scenario's", () => {
+    expect(html()).toContain("localhost:3000");
+    expect(html({ ports: [] })).not.toContain("localhost:3000");
   });
 });
 

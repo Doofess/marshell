@@ -1,4 +1,4 @@
-import type { CSSProperties } from "react";
+import type { CSSProperties, ReactNode } from "react";
 import { AgentMark } from "../../components/AgentMark/AgentMark";
 import { Chip } from "../../components/Chip/Chip";
 import { StatusGlyph } from "../../components/StatusGlyph/StatusGlyph";
@@ -47,6 +47,8 @@ export type PaneProps = {
   /** False leaves the pane's prompt line out (the window turned them off). */
   composer?: boolean;
   os?: Os;
+  /** Replaces the scripted terminal with the real one. */
+  renderTerminal?: (row: RowModel) => ReactNode;
 };
 
 /**
@@ -57,7 +59,7 @@ export type PaneProps = {
  * the status glyph (the vendor mark moving, while working), the name, the project and, only when it applies,
  * how tight the pane is. A pane that needs you never recedes with the inactive headers.
  */
-export function Pane({ row, active, setting, style, cells, zoomedOf, othersRunning, runningElsewhere, value, composer = true, os = "windows" }: PaneProps) {
+export function Pane({ row, active, setting, style, cells, zoomedOf, othersRunning, runningElsewhere, value, composer = true, os = "windows", renderTerminal }: PaneProps) {
   const needs = needsYou(row);
   // A manual CLI is a plain terminal: no prompt line of ours, and its rows go to the terminal.
   const line = composer && hasPromptLine(row);
@@ -106,7 +108,7 @@ export function Pane({ row, active, setting, style, cells, zoomedOf, othersRunni
         </button>
       </header>
       {/* A plain terminal shows a plain shell, not an agent's conversation. */}
-      {hasPromptLine(row) ? <ScriptedTerminal setting={setting} label={`Terminal for ${row.name}`} /> : <ScriptedTerminal setting={setting} label={`Terminal for ${row.name}`} script={shellSession({ cwd: row.project })} size={SHELL_SIZE} />}
+      {renderTerminal ? renderTerminal(row) : hasPromptLine(row) ? <ScriptedTerminal setting={setting} label={`Terminal for ${row.name}`} /> : <ScriptedTerminal setting={setting} label={`Terminal for ${row.name}`} script={shellSession({ cwd: row.project })} size={SHELL_SIZE} />}
       {line && (
         <div className="pane__composer" style={{ blockSize: COMPOSER.compact }}>
           <Composer row={row} variant="compact" value={value} os={os} focused={active} />

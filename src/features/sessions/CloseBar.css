@@ -1,0 +1,65 @@
+/*
+ * The busy-close question, in the place of the session header. It borrows the risky header's language (a tint and a bar on
+ * the start edge, never a box) in the caution colour: nothing has gone wrong, it only needs a second look.
+ */
+.close-bar {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-inline-size: 0;
+  block-size: 40px;
+  padding-inline: var(--space-3);
+  overflow: clip;
+  white-space: nowrap;
+  font-size: var(--text-13);
+  background: color-mix(in oklch, var(--caution) 10%, transparent);
+}
+.close-bar::before {
+  content: "";
+  position: absolute;
+  inset-block: 0;
+  inset-inline-start: 0;
+  inline-size: 3px;
+  background: var(--caution);
+}
+.close-bar__text {
+  min-inline-size: 0;
+  overflow: clip;
+  text-overflow: ellipsis;
+  color: var(--text-1);
+}
+.close-bar__btn {
+  flex: none;
+  padding: var(--space-1) var(--space-3);
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--text-1);
+  font-size: var(--text-13);
+}
+/* Cancel is the answer that changes nothing, so it is the one that looks like the way forward. */
+.close-bar__btn[data-primary] {
+  background: var(--fill-strong);
+  font-weight: 600;
+}
+.close-bar__btn:focus-visible {
+  outline: 2px solid var(--focus, var(--accent));
+  outline-offset: 2px;
+}
+.close-bar__btn:active {
+  background: var(--selected, var(--fill-strong));
+}
+@media (hover: hover) and (pointer: fine) {
+  .close-bar__btn:hover {
+    background: var(--selected, var(--fill-strong));
+  }
+}
+@media (forced-colors: active) {
+  .close-bar {
+    outline: 2px solid CanvasText;
+    outline-offset: -2px;
+  }
+  .close-bar__btn {
+    outline: 1px solid CanvasText;
+  }
+}
