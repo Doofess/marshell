@@ -17,11 +17,21 @@ function isPerfToggle(e: KeyboardEvent): boolean {
   return e.type === "keydown" && e.shiftKey && e.altKey && (e.ctrlKey || e.metaKey) && e.code === "KeyP";
 }
 
-/**
- * One session's terminal. `placeholder` is a line shown over it until the first output arrives ("Starting Claude Code in
- * my-app…"). `onSize` hears the terminal's size once it is measured and whenever it changes.
- */
-export function TerminalView({ endpoint, tabId, placeholder, onSize }: { endpoint: Endpoint; tabId: string; placeholder?: string; onSize?: (cols: number, rows: number) => void }) {
+type Props = {
+  endpoint: Endpoint;
+  tabId: string;
+  /** A line shown over the terminal until the first output arrives ("Starting Claude Code in my-app…"). */
+  placeholder?: string;
+  /** Hears the first output. The owner of `placeholder` drops it then, so it stays gone when this terminal is mounted again. */
+  onOutput?: () => void;
+  /** Hears the terminal's size once it is measured and whenever it changes. */
+  onSize?: (cols: number, rows: number) => void;
+  /** False while something else (the launcher) has the keys: the terminal takes focus when this turns true. Default true. */
+  autoFocus?: boolean;
+};
+
+/** One session's terminal. */
+export function TerminalView({ endpoint, tabId, placeholder, onOutput, onSize, autoFocus = true }: Props) {
   const host = useRef<HTMLDivElement>(null);
   const meter = useMemo(() => new LatencyMeter(), []);
   const [renderer, setRenderer] = useState<RendererKind>("dom");
@@ -30,6 +40,9 @@ export function TerminalView({ endpoint, tabId, placeholder, onSize }: { endpoin
   // The effect below must not restart when the parent passes a new callback.
   const sizeRef = useRef(onSize);
   sizeRef.current = onSize;
+  const outputRef = useRef(onOutput);
+  outputRef.current = onOutput;
+  const termRef = useRef<Terminal | null>(null);
 
   useEffect(() => {
     const el = host.current;
@@ -40,6 +53,7 @@ export function TerminalView({ endpoint, tabId, placeholder, onSize }: { endpoin
     const fit = new FitAddon();
     term.loadAddon(fit);
     term.open(el);
+    termRef.current = term;
     loadRenderer(term, endpoint.platform, setRenderer);
     term.attachCustomKeyEventHandler((e) => {
       if (isPerfToggle(e)) {
@@ -53,11 +67,17 @@ export function TerminalView({ endpoint, tabId, placeholder, onSize }: { endpoin
 
     const socket = new PtySocket(endpoint, tabId, {
       onOutput: (seq, bytes) => {
-        if (bytes.length > 0) setGotOutput(true);
+        if (bytes.length > 0) {
+          setGotOutput(true);
+          outputRef.current?.();
+        }
         term.write(bytes, () => socket.processed(seq + bytes.length));
       },
       onReset: (seq, screen) => {
-        if (screen.length > 0) setGotOutput(true);
+        if (screen.length > 0) {
+          setGotOutput(true);
+          outputRef.current?.();
+        }
         term.reset();
         term.write(screen, () => socket.processed(seq));
       },
@@ -96,7 +116,6 @@ export function TerminalView({ endpoint, tabId, placeholder, onSize }: { endpoin
     fit.fit();
     socket.resize(term.cols, term.rows);
     sizeRef.current?.(term.cols, term.rows);
-    term.focus();
 
     const scheme = matchMedia("(prefers-color-scheme: dark)");
     const onScheme = () => {
@@ -117,8 +136,14 @@ export function TerminalView({ endpoint, tabId, placeholder, onSize }: { endpoin
       subs.forEach((s) => s.dispose());
       socket.close();
       term.dispose();
+      termRef.current = null;
     };
   }, [endpoint, tabId, meter]);
+
+  // Declared after the effect above so a new terminal exists by the time this runs.
+  useEffect(() => {
+    if (autoFocus) termRef.current?.focus();
+  }, [autoFocus, endpoint, tabId]);
 
   return (
     <>

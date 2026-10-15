@@ -45,6 +45,11 @@ export function launchRequest(
   return isAgentProgram(id, programs) && prompt.trim() !== "" ? { ...withAgent, prompt } : withAgent;
 }
 
+/** What takes focus when the launcher opens: the prompt, where Enter starts. A shell has no prompt, so the Start button (the program chip would open its list). */
+export function initialFocus(root: { querySelector(selector: string): HTMLElement | null }): HTMLElement | null {
+  return root.querySelector(".launcher__prompt") ?? root.querySelector(".launcher__start");
+}
+
 /** What the launcher says when starting failed. The core's own text (a 4xx explaining a refusal) is shown as it is. */
 export function startFailure(e: unknown): string {
   return e instanceof ApiError ? e.message : `Couldn't start the session: ${String(e)}`;

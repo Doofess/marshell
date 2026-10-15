@@ -7,6 +7,7 @@ import type { RowModel } from "../sidebar/types";
 import { TerminalView } from "../terminal/TerminalView";
 import { MainWindow } from "../window/MainWindow";
 import { LiveLauncher } from "./LiveLauncher";
+import { pruneClosed, without, type StartingTexts } from "./startingTexts";
 import { useSessions } from "./useSessions";
 
 /** The size a new session starts at until a terminal has been measured. */
@@ -34,7 +35,9 @@ export function LiveApp() {
   const { ref, width, height } = useElementSize();
   const [launcherOpen, setLauncherOpen] = useState(false);
   // What each new tab says until its first output, by tab id.
-  const [startingTexts, setStartingTexts] = useState<Record<string, string>>({});
+  const [startingTexts, setStartingTexts] = useState<StartingTexts>({});
+  // Every tab the core has listed, to tell a tab closed before it printed from one not listed yet.
+  const listed = useRef(new Set<string>());
   const size = useRef(DEFAULT_SIZE);
   const onSize = useCallback((cols: number, lines: number) => {
     if (cols > 0 && lines > 0) size.current = { cols, rows: lines };
@@ -47,6 +50,12 @@ export function LiveApp() {
   useEffect(() => {
     if (restarts > 0) setLauncherOpen(true);
   }, [restarts]);
+
+  useEffect(() => {
+    const current = new Set(rows.map((r) => r.id));
+    setStartingTexts((t) => pruneClosed(t, current, listed.current));
+    current.forEach((id) => listed.current.add(id));
+  }, [rows]);
 
   // Ctrl+Shift+T opens it from anywhere; the terminal lets that key through (TerminalView).
   const os = endpoint ? osOfPlatform(endpoint.platform) : undefined;
@@ -68,8 +77,19 @@ export function LiveApp() {
   };
 
   const renderTerminal = useCallback(
-    (row: RowModel) => (endpoint ? <TerminalView key={row.id} endpoint={endpoint} tabId={row.id} placeholder={startingTexts[row.id]} onSize={onSize} /> : null),
-    [endpoint, startingTexts, onSize],
+    (row: RowModel) =>
+      endpoint ? (
+        <TerminalView
+          key={row.id}
+          endpoint={endpoint}
+          tabId={row.id}
+          placeholder={startingTexts[row.id]}
+          onOutput={() => setStartingTexts((t) => without(t, row.id))}
+          onSize={onSize}
+          autoFocus={!launcherOpen}
+        />
+      ) : null,
+    [endpoint, startingTexts, onSize, launcherOpen],
   );
 
   if (error) {

@@ -2,16 +2,16 @@ import { describe, expect, it } from "vitest";
 import type { Profile } from "../../generated/Profile";
 import type { ProfilesDoc } from "../../generated/ProfilesDoc";
 import type { Project } from "../launcher/filter";
-import { startingText, type LauncherChoice } from "../launcher/launchChoice";
+import { startingText, type LauncherChoice, type ProgramId } from "../launcher/launchChoice";
 import { ApiError } from "../../lib/api/client";
-import { launchRequest, livePrograms, startFailure, toLauncherProject } from "./launchPrograms";
+import { initialFocus, launchRequest, livePrograms, startFailure, toLauncherProject } from "./launchPrograms";
 
 const profile = (id: string, family: Profile["family"], name = id): Profile => ({ id, name, command: [id], family, cwd: null, env: [], detected: true });
 const PROFILES: Profile[] = [profile("pwsh", "power_shell", "PowerShell 7"), profile("cmd", "cmd", "Command Prompt"), profile("git-bash", "posix", "Git Bash"), profile("wsl-ubuntu", "wsl", "Ubuntu")];
 const DOC: ProfilesDoc = { profiles: PROFILES, default_id: "pwsh" };
 const PROJECTS: Project[] = [{ id: "C:/dev/my-app", name: "my-app", branch: "main", path: "C:/dev/my-app", lastUsedMs: 1 }];
 const SIZE = { cols: 120, rows: 30 };
-const choice = (program: string): LauncherChoice => ({ program, projectId: "C:/dev/my-app", mode: "Manual", pace: "Balanced", worktree: false });
+const choice = (program: ProgramId): LauncherChoice => ({ program, projectId: "C:/dev/my-app", mode: "Manual", pace: "Balanced", worktree: false });
 
 describe("livePrograms", () => {
   it("agents come first and only the three", () => {
@@ -60,6 +60,17 @@ describe("launchRequest", () => {
   });
   it("leaves the folder out when none is chosen, so the core uses the home folder", () => {
     expect(launchRequest({ ...choice("claude"), projectId: "" }, "", programs, DOC, PROJECTS, SIZE)).not.toHaveProperty("cwd");
+  });
+});
+
+describe("initialFocus", () => {
+  const el = (name: string) => ({ name }) as unknown as HTMLElement;
+  const root = (present: string[]) => ({ querySelector: (s: string) => (present.includes(s) ? el(s) : null) });
+  it("is the prompt when there is one, so Enter starts", () => {
+    expect(initialFocus(root([".launcher__prompt", ".launcher__start"]))).toEqual(el(".launcher__prompt"));
+  });
+  it("is the Start button for a shell profile, which has no prompt, so Enter still starts (not the program chip, which opens a list)", () => {
+    expect(initialFocus(root([".launcher__chip", ".launcher__start"]))).toEqual(el(".launcher__start"));
   });
 });
 

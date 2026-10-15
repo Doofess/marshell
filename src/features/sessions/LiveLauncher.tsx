@@ -8,7 +8,7 @@ import { sessions as sessionsApi } from "../../lib/api/sessions";
 import type { Project } from "../launcher/filter";
 import { Launcher } from "../launcher/Launcher";
 import { startingText, type LauncherChoice } from "../launcher/launchChoice";
-import { launchRequest, livePrograms, startFailure, toLauncherProject } from "./launchPrograms";
+import { initialFocus, launchRequest, livePrograms, startFailure, toLauncherProject } from "./launchPrograms";
 
 const INITIAL: LauncherChoice = { program: "claude", projectId: "", mode: "Manual", pace: "Balanced", worktree: false };
 
@@ -37,6 +37,8 @@ export function LiveLauncher({ endpoint, nextNumber, size, onStarted, onClose }:
   const [programsOpen, setProgramsOpen] = useState(false);
   const [prompt, setPrompt] = useState("");
   const [error, setError] = useState<string>();
+  // Why the lists did not load. Unlike `error` no edit clears it: Start stays disabled until they do.
+  const [loadError, setLoadError] = useState<string>();
   const [starting, setStarting] = useState(false);
   const inFlight = useRef(false);
   const root = useRef<HTMLDivElement>(null);
@@ -44,7 +46,7 @@ export function LiveLauncher({ endpoint, nextNumber, size, onStarted, onClose }:
   // Keys go to the launcher, not the terminal behind it; closing hands focus back if that terminal is still there.
   useEffect(() => {
     const before = document.activeElement;
-    root.current?.querySelector<HTMLElement>(".launcher__prompt, .launcher__chip")?.focus();
+    if (root.current) initialFocus(root.current)?.focus();
     return () => {
       if (before instanceof HTMLElement && before !== document.body && before.isConnected) before.focus();
     };
@@ -54,9 +56,10 @@ export function LiveLauncher({ endpoint, nextNumber, size, onStarted, onClose }:
     if (!endpoint) return;
     let current = true;
     setLoaded(null);
+    setLoadError(undefined);
     Promise.all([projectsApi.list(endpoint), profilesApi.get(endpoint)])
       .then(([list, doc]) => current && setLoaded({ projects: list.map(toLauncherProject), doc }))
-      .catch((e: unknown) => current && setError(`Couldn't load the launcher: ${startFailure(e)}`));
+      .catch((e: unknown) => current && setLoadError(`Couldn't load the launcher: ${startFailure(e)}`));
     return () => {
       current = false;
     };
@@ -94,7 +97,7 @@ export function LiveLauncher({ endpoint, nextNumber, size, onStarted, onClose }:
         view={{ choice: shown, projects, query, activeIndex, programsOpen, prompt, nextNumber }}
         programs={programs}
         chips={false}
-        error={error}
+        error={error ?? loadError}
         busy={starting || loaded === null}
         onChange={patch}
         onQuery={(q) => {
@@ -110,7 +113,10 @@ export function LiveLauncher({ endpoint, nextNumber, size, onStarted, onClose }:
           if (open) setActiveIndex(Math.max(0, programs.findIndex((p) => p.id === shown.program)));
         }}
         onActive={setActiveIndex}
-        onPrompt={setPrompt}
+        onPrompt={(text) => {
+          setPrompt(text);
+          setError(undefined);
+        }}
         onStart={() => void start()}
         onClose={onClose}
       />

@@ -11,10 +11,13 @@ export const PACES: Pace[] = ["Quick", "Balanced", "Deep"];
 export const LAUNCH_GROUPS = ["Agents", "Shells", "Tools"] as const;
 export type LaunchGroup = (typeof LAUNCH_GROUPS)[number];
 
+/** What the launcher picks by: a built-in agent or tool, or a live shell profile as `profile:<id>`. */
+export type ProgramId = SessionKind | `profile:${string}`;
+
 /** Something the launcher can start: an AI agent, or a manual CLI that is just a terminal. */
 export type LaunchProgram = {
-  /** What the launcher picks by. The built-in programs use their kind; a live shell profile is `profile:<id>`. */
-  id: string;
+  /** The built-in programs use their kind. */
+  id: ProgramId;
   /** The mark and accent: the agent or tool this program is. */
   kind: SessionKind;
   label: string;
@@ -59,14 +62,14 @@ export const LAUNCH_PROGRAMS: LaunchProgram[] = [
 ];
 
 export const programsIn = (group: LaunchGroup, programs: LaunchProgram[] = LAUNCH_PROGRAMS) => programs.filter((p) => p.group === group);
-export const programById = (id: string, programs: LaunchProgram[] = LAUNCH_PROGRAMS) => programs.find((p) => p.id === id);
+export const programById = (id: ProgramId, programs: LaunchProgram[] = LAUNCH_PROGRAMS) => programs.find((p) => p.id === id);
 /** Only AI agents have a mode, a pace and a worktree choice; a manual CLI is a plain terminal. */
-export const isAgentProgram = (id: string, programs: LaunchProgram[] = LAUNCH_PROGRAMS) => {
+export const isAgentProgram = (id: ProgramId, programs: LaunchProgram[] = LAUNCH_PROGRAMS) => {
   const p = programById(id, programs);
   return p ? p.group === "Agents" : !isTool(id);
 };
 
-export type LauncherChoice = { program: string; projectId: string; mode: Mode; pace: Pace; worktree: boolean };
+export type LauncherChoice = { program: ProgramId; projectId: string; mode: Mode; pace: Pace; worktree: boolean };
 export type Remembered = Partial<Pick<LauncherChoice, "mode" | "pace" | "worktree">>;
 
 /** The launcher as one sentence, for the dialog's accessible description. */
@@ -79,7 +82,7 @@ export function launcherSentence(c: LauncherChoice, projects: Project[], program
 }
 
 /** What the new tab shows within 100 ms, before the process answers. */
-export function startingText(program: string, projectName: string, programs: LaunchProgram[] = LAUNCH_PROGRAMS): string {
+export function startingText(program: ProgramId, projectName: string, programs: LaunchProgram[] = LAUNCH_PROGRAMS): string {
   return `Starting ${programById(program, programs)?.cli ?? program} in ${projectName}…`;
 }
 
