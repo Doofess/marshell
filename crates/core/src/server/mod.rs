@@ -166,10 +166,12 @@ pub async fn start(cfg: CoreConfig) -> anyhow::Result<RunningCore> {
         token: auth::new_token(),
         platform: Platform::current(),
     };
-    auth::write_endpoint_file(&paths::endpoint_file(&cfg.home), &endpoint)?;
     // Looking for shells runs programs (wsl.exe can take up to 2 s): keep it off the async threads.
     let detected = tokio::task::spawn_blocking(|| detect_profiles(&Probe::system())).await?;
+    let endpoint_file = paths::endpoint_file(&cfg.home);
     let state = AppState::new(endpoint.token.clone(), port, cfg.allowed_origins, cfg.home, detected);
+    // Last, so the endpoint is only advertised once the state is ready to serve.
+    auth::write_endpoint_file(&endpoint_file, &endpoint)?;
     let app = router(state.clone());
     let (tx, rx) = tokio::sync::oneshot::channel::<()>();
     let serve = tokio::spawn(async move {
