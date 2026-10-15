@@ -284,3 +284,288 @@ async fn empty_shell_argv_is_a_bad_request() {
     let text = String::from_utf8_lossy(&body);
     assert!(text.contains("empty"), "body: {text}");
 }
+
+// ---- session endpoints ----
+
+/// A profile that starts the fake agent in `sleep` mode, so a session stays open until closed.
+fn sleeper_profile() -> marshell_protocol::api::Profile {
+    marshell_protocol::api::Profile {
+        id: "sleeper".into(),
+        name: "Sleeper".into(),
+        command: vec![env!("CARGO_BIN_EXE_fake-agent").into(), "sleep".into()],
+        family: marshell_protocol::api::ShellFamily::Posix,
+        cwd: None,
+        env: Vec::new(),
+        detected: true,
+    }
+}
+
+fn sessions_app() -> axum::Router {
+    router(AppState::new(
+        TOKEN.into(),
+        PORT,
+        vec![ORIGIN.into()],
+        std::path::PathBuf::from("no-such-marshell-home"),
+        vec![sleeper_profile()],
+    ))
+}
+
+fn fake_argv(args: &[&str]) -> Vec<String> {
+    let mut v = vec![env!("CARGO_BIN_EXE_fake-agent").to_string()];
+    v.extend(args.iter().map(|s| s.to_string()));
+    v
+}
+
+fn api(method: &str, path: &str, body: Option<serde_json::Value>) -> Request<Body> {
+    let builder = get(path)
+        .method(method)
+        .header(header::AUTHORIZATION, format!("Bearer {TOKEN}"));
+    match body {
+        Some(json) => builder
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(json.to_string()))
+            .unwrap(),
+        None => builder.body(Body::empty()).unwrap(),
+    }
+}
+
+/// POST /v1/sessions with the sleeper profile unless `extra` overrides it.
+async fn create_session(app: &axum::Router, extra: serde_json::Value) -> (StatusCode, serde_json::Value) {
+    let mut body = serde_json::json!({ "cols": 80, "rows": 24, "profile_id": "sleeper" });
+    for (k, v) in extra.as_object().unwrap() {
+        body[k] = v.clone();
+    }
+    let res = app
+        .clone()
+        .oneshot(api("POST", "/v1/sessions", Some(body)))
+        .await
+        .unwrap();
+    let status = res.status();
+    let bytes = axum::body::to_bytes(res.into_body(), 64 * 1024).await.unwrap();
+    let json = serde_json::from_slice(&bytes)
+        .unwrap_or_else(|_| serde_json::Value::String(String::from_utf8_lossy(&bytes).into_owned()));
+    (status, json)
+}
+
+async fn list_sessions(app: &axum::Router) -> serde_json::Value {
+    let res = app.clone().oneshot(api("GET", "/v1/sessions", None)).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    json_body(res).await
+}
+
+async fn status_of(app: &axum::Router, req: Request<Body>) -> StatusCode {
+    app.clone().oneshot(req).await.unwrap().status()
+}
+
+#[tokio::test]
+async fn create_returns_number_and_lists_session() {
+    let app = sessions_app();
+    let (s1, a) = create_session(&app, serde_json::json!({})).await;
+    let (s2, b) = create_session(&app, serde_json::json!({})).await;
+    assert_eq!((s1, s2), (StatusCode::OK, StatusCode::OK));
+    assert_eq!((a["number"].as_u64(), b["number"].as_u64()), (Some(1), Some(2)));
+
+    let list = list_sessions(&app).await;
+    let rows = list["sessions"].as_array().unwrap();
+    assert_eq!(rows.len(), 2);
+    assert_eq!(rows[0]["tab_id"], a["tab_id"]);
+    assert_eq!(rows[1]["tab_id"], b["tab_id"]);
+    assert_eq!(rows[0]["name"], "Sleeper");
+    assert_eq!(rows[1]["name"], "Sleeper 2");
+    assert_eq!(rows[0]["profile_id"], "sleeper");
+    assert_eq!(rows[0]["state"]["kind"], "running");
+    assert_eq!(list["closed"].as_array().unwrap().len(), 0);
+}
+
+#[tokio::test]
+async fn failed_spawn_releases_number() {
+    let app = sessions_app();
+    let (status, _) = create_session(&app, serde_json::json!({ "shell": ["definitely-not-a-program-xyz"] })).await;
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+    assert_eq!(list_sessions(&app).await["sessions"].as_array().unwrap().len(), 0);
+
+    let (status, ok) = create_session(&app, serde_json::json!({})).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(ok["number"], 1);
+}
+
+#[tokio::test]
+async fn rename_and_reorder() {
+    let app = sessions_app();
+    let (_, a) = create_session(&app, serde_json::json!({})).await;
+    let (_, b) = create_session(&app, serde_json::json!({})).await;
+    let (a_id, b_id) = (a["tab_id"].as_str().unwrap(), b["tab_id"].as_str().unwrap());
+
+    let rename = |name: &str| {
+        api(
+            "PATCH",
+            &format!("/v1/sessions/{a_id}"),
+            Some(serde_json::json!({ "name": name })),
+        )
+    };
+    assert_eq!(status_of(&app, rename("  api  ")).await, StatusCode::NO_CONTENT);
+    assert_eq!(status_of(&app, rename("   ")).await, StatusCode::BAD_REQUEST);
+    let unknown = api("PATCH", "/v1/sessions/t_nope", Some(serde_json::json!({ "name": "x" })));
+    assert_eq!(status_of(&app, unknown).await, StatusCode::NOT_FOUND);
+
+    let reorder = |ids: &[&str]| {
+        api(
+            "POST",
+            "/v1/sessions/reorder",
+            Some(serde_json::json!({ "tab_ids": ids })),
+        )
+    };
+    assert_eq!(status_of(&app, reorder(&[b_id, a_id])).await, StatusCode::NO_CONTENT);
+    assert_eq!(status_of(&app, reorder(&[b_id])).await, StatusCode::BAD_REQUEST);
+    assert_eq!(status_of(&app, reorder(&[a_id, a_id])).await, StatusCode::BAD_REQUEST);
+
+    let rows = list_sessions(&app).await["sessions"].clone();
+    assert_eq!(rows[0]["tab_id"], b["tab_id"]);
+    assert_eq!(rows[1]["tab_id"], a["tab_id"]);
+    assert_eq!(rows[1]["name"], "api");
+    // Numbers stay with their sessions.
+    assert_eq!(
+        (rows[0]["number"].as_u64(), rows[1]["number"].as_u64()),
+        (Some(2), Some(1))
+    );
+}
+
+#[tokio::test]
+async fn close_twice_is_ok_and_unknown_tab_404() {
+    let app = sessions_app();
+    let (_, a) = create_session(&app, serde_json::json!({})).await;
+    let path = format!("/v1/sessions/{}", a["tab_id"].as_str().unwrap());
+    assert_eq!(
+        status_of(&app, api("DELETE", &path, None)).await,
+        StatusCode::NO_CONTENT
+    );
+    assert_eq!(
+        status_of(&app, api("DELETE", &path, None)).await,
+        StatusCode::NO_CONTENT
+    );
+    assert_eq!(
+        status_of(&app, api("DELETE", "/v1/sessions/t_never", None)).await,
+        StatusCode::NO_CONTENT
+    );
+    let rename = api("PATCH", &path, Some(serde_json::json!({ "name": "x" })));
+    assert_eq!(status_of(&app, rename).await, StatusCode::NOT_FOUND);
+
+    let list = list_sessions(&app).await;
+    assert_eq!(list["sessions"].as_array().unwrap().len(), 0);
+    assert_eq!(list["closed"].as_array().unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn reopen_restores_profile_and_name() {
+    let app = sessions_app();
+    let (_, a) = create_session(&app, serde_json::json!({})).await;
+    let a_id = a["tab_id"].as_str().unwrap();
+    let rename = api(
+        "PATCH",
+        &format!("/v1/sessions/{a_id}"),
+        Some(serde_json::json!({ "name": "api" })),
+    );
+    assert_eq!(status_of(&app, rename).await, StatusCode::NO_CONTENT);
+    let close = api("DELETE", &format!("/v1/sessions/{a_id}"), None);
+    assert_eq!(status_of(&app, close).await, StatusCode::NO_CONTENT);
+
+    let res = app
+        .clone()
+        .oneshot(api("POST", "/v1/sessions/reopen", None))
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let reopened = json_body(res).await;
+    assert_ne!(reopened["tab_id"], a["tab_id"]);
+    assert_eq!(reopened["number"], 1);
+
+    let list = list_sessions(&app).await;
+    let rows = list["sessions"].as_array().unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0]["tab_id"], reopened["tab_id"]);
+    assert_eq!(rows[0]["name"], "api");
+    assert_eq!(rows[0]["profile_id"], "sleeper");
+    assert_eq!(rows[0]["state"]["kind"], "running");
+    assert_eq!(list["closed"].as_array().unwrap().len(), 0);
+
+    // Nothing left to reopen.
+    let res = app
+        .clone()
+        .oneshot(api("POST", "/v1/sessions/reopen", None))
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn reopen_by_tab_id() {
+    let app = sessions_app();
+    let (_, a) = create_session(&app, serde_json::json!({ "name": "first" })).await;
+    let (_, b) = create_session(&app, serde_json::json!({ "name": "second" })).await;
+    for t in [&a, &b] {
+        let path = format!("/v1/sessions/{}", t["tab_id"].as_str().unwrap());
+        assert_eq!(
+            status_of(&app, api("DELETE", &path, None)).await,
+            StatusCode::NO_CONTENT
+        );
+    }
+    // The most recent close is b; ask for a.
+    let body = serde_json::json!({ "tab_id": a["tab_id"] });
+    let res = app
+        .clone()
+        .oneshot(api("POST", "/v1/sessions/reopen", Some(body)))
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let list = list_sessions(&app).await;
+    assert_eq!(list["sessions"][0]["name"], "first");
+    assert_eq!(list["closed"][0]["tab_id"], b["tab_id"]);
+}
+
+#[tokio::test]
+async fn exited_session_is_ended_in_snapshot() {
+    let app = sessions_app();
+    let (status, a) = create_session(&app, serde_json::json!({ "shell": fake_argv(&["exit", "0"]) })).await;
+    assert_eq!(status, StatusCode::OK);
+    let mut kind = String::new();
+    for _ in 0..50 {
+        let list = list_sessions(&app).await;
+        kind = list["sessions"][0]["state"]["kind"].as_str().unwrap().to_string();
+        if kind == "exited" {
+            assert_eq!(list["sessions"][0]["state"]["code"], 0);
+            assert_eq!(list["sessions"][0]["tab_id"], a["tab_id"]);
+            return;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+    panic!("session never showed as exited, last state: {kind}");
+}
+
+#[tokio::test]
+async fn unknown_agent_is_400() {
+    let app = sessions_app();
+    let (status, body) = create_session(&app, serde_json::json!({ "agent": "emacs" })).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert!(body.as_str().unwrap().contains("Unknown agent"), "body: {body}");
+    assert_eq!(list_sessions(&app).await["sessions"].as_array().unwrap().len(), 0);
+}
+
+#[tokio::test]
+async fn unknown_profile_is_400() {
+    let app = sessions_app();
+    let (status, body) = create_session(&app, serde_json::json!({ "profile_id": "nope" })).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert!(body.as_str().unwrap().contains("Unknown profile"), "body: {body}");
+}
+
+#[tokio::test]
+async fn agent_session_is_named_after_the_agent() {
+    let app = sessions_app();
+    // The sleeper profile is POSIX family, so this runs `fake-agent sleep -c "claude; ..."`.
+    // The fake agent ignores its args and sleeps, so the session starts: that is all we check.
+    let (status, _) = create_session(&app, serde_json::json!({ "agent": "claude" })).await;
+    assert_eq!(status, StatusCode::OK);
+    let list = list_sessions(&app).await;
+    assert_eq!(list["sessions"][0]["name"], "Claude Code");
+    assert_eq!(list["sessions"][0]["agent"], "claude");
+}

@@ -8,7 +8,7 @@ use crate::profiles::detect::{Probe, detect_profiles};
 use crate::registry::Registry;
 use crate::{auth, paths};
 use axum::http::{HeaderValue, Method, header};
-use axum::routing::get;
+use axum::routing::{get, patch, post};
 use axum::{Json, Router};
 use marshell_protocol::api::{Endpoint, Health, Platform, Profile, ProfilesDoc};
 use marshell_protocol::brand;
@@ -40,9 +40,8 @@ struct Inner {
     detected: Vec<Profile>,
     /// Detected profiles merged with `profiles.json`.
     profiles: Mutex<ProfilesDoc>,
-    /// Open and recently closed sessions. Task 6 wires it into the session endpoints.
-    #[allow(dead_code)]
-    registry: Registry,
+    /// Open and recently closed sessions. Shared with each session's exit callback.
+    registry: Arc<Registry>,
     // Kept here so every handler reaches it through one State.
     sessions: Mutex<HashMap<String, Arc<crate::pty::Session>>>,
 }
@@ -57,7 +56,7 @@ impl AppState {
             home,
             detected,
             profiles: Mutex::new(profiles),
-            registry: Registry::new(),
+            registry: Arc::new(Registry::new()),
             sessions: Mutex::new(HashMap::new()),
         }))
     }
@@ -77,6 +76,10 @@ impl AppState {
             .unwrap()
             .insert(session.id().to_string(), session);
     }
+    /// Forgets the session so no new socket can attach; the caller kills it.
+    pub fn remove_session(&self, tab: &str) -> Option<Arc<crate::pty::Session>> {
+        self.0.sessions.lock().unwrap().remove(tab)
+    }
     pub fn origin_allowed(&self, origin: &str) -> bool {
         self.0.allowed_origins.iter().any(|o| o == origin)
     }
@@ -91,7 +94,10 @@ pub fn router(state: AppState) -> Router {
     Router::new()
         .route("/v1/health", get(health))
         .route("/v1/profiles", get(profiles::get).put(profiles::put))
-        .route("/v1/sessions", axum::routing::post(sessions::create))
+        .route("/v1/sessions", get(sessions::list).post(sessions::create))
+        .route("/v1/sessions/reorder", post(sessions::reorder))
+        .route("/v1/sessions/reopen", post(sessions::reopen))
+        .route("/v1/sessions/{tab}", patch(sessions::rename).delete(sessions::close))
         .route("/v1/pty/{tab}", get(pty_ws::handler))
         .layer(axum::middleware::from_fn_with_state(state.clone(), guard::auth_guard))
         .layer(cors)
