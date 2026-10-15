@@ -7,8 +7,8 @@ import { projects as projectsApi } from "../../lib/api/projects";
 import { sessions as sessionsApi } from "../../lib/api/sessions";
 import type { Project } from "../launcher/filter";
 import { Launcher } from "../launcher/Launcher";
-import { startingText, type LauncherChoice } from "../launcher/launchChoice";
-import { initialFocus, launchRequest, livePrograms, startFailure, toLauncherProject } from "./launchPrograms";
+import { programById, startingText, type LauncherChoice } from "../launcher/launchChoice";
+import { initialFocus, launchRequest, refocus, type FocusState, livePrograms, startFailure, toLauncherProject } from "./launchPrograms";
 
 const INITIAL: LauncherChoice = { program: "claude", projectId: "", mode: "Manual", pace: "Balanced", worktree: false };
 
@@ -69,6 +69,16 @@ export function LiveLauncher({ endpoint, nextNumber, size, onStarted, onClose }:
   const programs = useMemo(() => livePrograms(loaded?.doc.profiles ?? []), [loaded]);
   // The most recent folder until one is picked.
   const shown: LauncherChoice = { ...choice, projectId: projects.some((p) => p.id === choice.projectId) ? choice.projectId : (projects[0]?.id ?? "") };
+
+  // A pick leaves focus on the program chip, where Enter reopens the list; and Start is disabled until the lists load.
+  const focusState: FocusState = { program: shown.program, prompt: !programById(shown.program, programs)?.noFirst, ready: loaded !== null };
+  const lastFocus = useRef<FocusState | null>(null);
+  useEffect(() => {
+    const target = refocus(lastFocus.current, focusState);
+    lastFocus.current = focusState;
+    if (target) root.current?.querySelector<HTMLElement>(target === "prompt" ? ".launcher__prompt" : ".launcher__start")?.focus();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- focusState is rebuilt every render; its three fields are the dependencies.
+  }, [focusState.program, focusState.prompt, focusState.ready]);
 
   const patch = (p: Partial<LauncherChoice>) => {
     setChoice((c) => ({ ...c, ...p }));

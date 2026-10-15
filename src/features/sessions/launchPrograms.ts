@@ -50,6 +50,19 @@ export function initialFocus(root: { querySelector(selector: string): HTMLElemen
   return root.querySelector(".launcher__prompt") ?? root.querySelector(".launcher__start");
 }
 
+/** What the focus depends on: the chosen program, whether it takes a prompt, and whether Start is enabled. */
+export type FocusState = { program: string; prompt: boolean; ready: boolean };
+
+/**
+ * Where focus goes after the choice changed, so Enter starts. After a pick the focus is on the program chip, where Enter reopens
+ * the list. A program without a prompt takes focus to Start once it is enabled; one with a prompt, to the prompt.
+ */
+export function refocus(prev: FocusState | null, next: FocusState): "prompt" | "start" | null {
+  if (prev === null || (prev.program === next.program && prev.ready === next.ready)) return null;
+  if (next.prompt) return prev.program === next.program ? null : "prompt";
+  return next.ready ? "start" : null;
+}
+
 /** What the launcher says when starting failed. The core's own text (a 4xx explaining a refusal) is shown as it is. */
 export function startFailure(e: unknown): string {
   return e instanceof ApiError ? e.message : `Couldn't start the session: ${String(e)}`;

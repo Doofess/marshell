@@ -4,7 +4,7 @@ import type { ProfilesDoc } from "../../generated/ProfilesDoc";
 import type { Project } from "../launcher/filter";
 import { startingText, type LauncherChoice, type ProgramId } from "../launcher/launchChoice";
 import { ApiError } from "../../lib/api/client";
-import { initialFocus, launchRequest, livePrograms, startFailure, toLauncherProject } from "./launchPrograms";
+import { initialFocus, launchRequest, refocus, livePrograms, startFailure, toLauncherProject } from "./launchPrograms";
 
 const profile = (id: string, family: Profile["family"], name = id): Profile => ({ id, name, command: [id], family, cwd: null, env: [], detected: true });
 const PROFILES: Profile[] = [profile("pwsh", "power_shell", "PowerShell 7"), profile("cmd", "cmd", "Command Prompt"), profile("git-bash", "posix", "Git Bash"), profile("wsl-ubuntu", "wsl", "Ubuntu")];
@@ -71,6 +71,29 @@ describe("initialFocus", () => {
   });
   it("is the Start button for a shell profile, which has no prompt, so Enter still starts (not the program chip, which opens a list)", () => {
     expect(initialFocus(root([".launcher__chip", ".launcher__start"]))).toEqual(el(".launcher__start"));
+  });
+});
+
+describe("refocus", () => {
+  const at = (program: string, prompt: boolean, ready: boolean) => ({ program, prompt, ready });
+  it("does nothing on the first look or when neither the program nor readiness changed", () => {
+    expect(refocus(null, at("claude", true, false))).toBeNull();
+    expect(refocus(at("claude", true, true), at("claude", true, true))).toBeNull();
+  });
+  it("moves to Start when a program without a prompt is picked, so Enter starts it (not the chip, where Enter reopens the list)", () => {
+    expect(refocus(at("claude", true, true), at("profile:cmd", false, true))).toBe("start");
+    expect(refocus(at("profile:cmd", false, true), at("profile:pwsh", false, true))).toBe("start");
+  });
+  it("waits for Start to be enabled, then moves to it", () => {
+    expect(refocus(at("profile:cmd", false, false), at("profile:cmd", false, false))).toBeNull();
+    expect(refocus(at("profile:cmd", false, false), at("profile:cmd", false, true))).toBe("start");
+  });
+  it("moves to the prompt when an agent is picked", () => {
+    expect(refocus(at("profile:cmd", false, true), at("claude", true, true))).toBe("prompt");
+    expect(refocus(at("claude", true, true), at("codex", true, true))).toBe("prompt");
+  });
+  it("leaves the prompt alone when only readiness changed", () => {
+    expect(refocus(at("claude", true, false), at("claude", true, true))).toBeNull();
   });
 });
 
