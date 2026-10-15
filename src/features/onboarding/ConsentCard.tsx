@@ -2,7 +2,7 @@ import { useId } from "react";
 import { AgentMark } from "../../components/AgentMark/AgentMark";
 import { DiffView } from "../../components/DiffView/DiffView";
 import { Switch } from "../../components/Switch/Switch";
-import { canEdit, CAPABILITIES, CLI_NAME, consentHeadline, type Capability, type ConsentPlan, type Detection } from "./consent";
+import { canEdit, CAPABILITIES, CLI_NAME, consentHeadline, fileName, folderOf, type Capability, type ConsentPlan, type Detection } from "./consent";
 import "./Onboarding.css";
 
 const CAP_LABEL: Record<Capability, string> = { status: "Show status and context", approve: "Approve from anywhere", statusline: "Keep my status line working" };
@@ -54,11 +54,19 @@ export function ConsentCard({ scenario, on, open = false }: { scenario: { detect
             </p>
           )}
           <p className="consent__meta">
-            A backup is saved first, in <code>{plan.backupPath}</code>.
+            {d.hooks?.exists ? (
+              <>
+                Backups of both files are saved first, in <code>{folderOf(plan.backupPath)}</code>.
+              </>
+            ) : (
+              <>
+                A backup is saved first, in <code>{plan.backupPath}</code>.
+              </>
+            )}
             {d.hooks && !d.hooks.exists && (
               <>
                 {" "}
-                <code>{d.hooks.path.split("\\").pop()}</code> is a new file, so it needs no backup.
+                <code>{fileName(d.hooks.path)}</code> is a new file, so it needs no backup.
               </>
             )}{" "}
             To undo: {plan.removal}

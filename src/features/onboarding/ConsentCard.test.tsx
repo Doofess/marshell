@@ -28,6 +28,14 @@ describe("ConsentCard", () => {
     expect(h).not.toContain("verified when the adapter is built");
     expect(h).not.toContain("/hooks");
   });
+  it("backs up an existing hooks.json too, and names files the same way with either slash", () => {
+    const d = CONSENT.antigravity.detection;
+    const h = renderToStaticMarkup(<ConsentCard scenario={{ ...CONSENT.antigravity, detection: { ...d, hooks: { path: "/home/u/.gemini/config/hooks.json", exists: true } } }} on={on} />);
+    expect(h).toContain("Backups of both files are saved first, in <code>C:\\Users\\Home Office\\.marshell\\snapshots\\2026-10-10T20-15</code>.");
+    expect(h).not.toContain("is a new file");
+    const fresh = renderToStaticMarkup(<ConsentCard scenario={{ ...CONSENT.antigravity, detection: { ...d, hooks: { path: "/home/u/.gemini/config/hooks.json", exists: false } } }} on={on} />);
+    expect(fresh).toContain("<code>hooks.json</code> is a new file, so it needs no backup.");
+  });
   it("offers to hand the mode to Marshell when the CLI's own settings skip every prompt, and says what that setting does", () => {
     const h = renderToStaticMarkup(<ConsentCard scenario={CONSENT.antigravityHandOver} on={on} />);
     expect(h).toContain("Let Marshell set the mode");

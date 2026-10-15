@@ -1,5 +1,5 @@
 import { unifiedDiff } from "../../lib/diff";
-import { CAPABILITIES, CLI_NAME, removalCopy, type Capability, type CliId, type ConsentPlan, type Detection } from "./consent";
+import { CAPABILITIES, CLI_NAME, fileName, removalCopy, type Capability, type CliId, type ConsentPlan, type Detection } from "./consent";
 
 const HOME = "C:\\Users\\Home Office";
 const CLAUDE_PATH = `${HOME}\\.claude\\settings.json`;
@@ -120,8 +120,9 @@ const chainPath = (cli: CliId) => `${HOME}\\.marshell\\agents\\${cli}\\statuslin
 // The user's own status line is saved verbatim in a new file, so the diff shows it is kept and where.
 const chainFile = '{ "type": "command", "command": "python ~/.claude/statusline.py" }\n';
 // The dev machine's own settings skip every prompt; handing the mode to Marshell removes that one line (docs/PLAN.md "Session modes").
-const antigravitySkipsBefore = antigravityBefore.replace("{\n", '{\n  "dangerouslySkipPermissions": true,\n');
-const antigravityChainFile =`{ "type": "command", "command": "${antigravityLine}" }\n`;
+const antigravitySkipsBefore = antigravityBefore.replace(/^\{\n/, '{\n  "dangerouslySkipPermissions": true,\n');
+if (antigravitySkipsBefore === antigravityBefore) throw new Error("antigravityBefore must start with an opening brace on its own line");
+const antigravityChainFile = `{ "type": "command", "command": "${antigravityLine}" }\n`;
 const newFile = (path: string, text: string) => unifiedDiff(path, "", text).replace(/^--- a\/.*$/m, "--- /dev/null");
 
 /** The exact change each CLI's consent card shows under "View exact changes". */
@@ -146,8 +147,8 @@ const plan = (d: Detection, diff: string, on: Record<Capability, boolean> = ALL_
   on,
   handOver: d.skipsAll ? handOver : undefined,
   configPath: d.configPath,
-  backupPath: `${HOME}\\.marshell\\snapshots\\2026-10-10T20-15\\${CLI_NAME[d.cli].toLowerCase().replace(/ /g, "-")}-${d.configPath.split("\\").pop()}`,
-  removal: removalCopy(d.cli, on, d.hooks && { hooksFile: d.hooks.path.split("\\").pop()!, created: !d.hooks.exists }, handOver ? d.skipsAll?.setting : undefined),
+  backupPath: `${HOME}\\.marshell\\snapshots\\2026-10-10T20-15\\${CLI_NAME[d.cli].toLowerCase().replace(/ /g, "-")}-${fileName(d.configPath)}`,
+  removal: removalCopy(d.cli, on, d.hooks && { hooksFile: fileName(d.hooks.path), created: !d.hooks.exists }, handOver ? d.skipsAll?.setting : undefined),
   diff,
   needsTrust: d.cli === "codex" && (on.status || on.approve),
   chainPath: on.statusline && CAPABILITIES[d.cli].statusline.available ? chainPath(d.cli) : undefined,

@@ -47,13 +47,17 @@ const NATIVE: Record<CliId, Record<Mode, string[] | null>> = {
   },
 };
 
+/** A stand-in that needs no hook: Codex's read-only sandbox, where nothing can change, for Plan. */
+const STAND_IN: Partial<Record<CliId, Partial<Record<Mode, string[]>>>> = { codex: { plan: STRICT.codex } };
+
 /** The modes whose meaning lives in the CLI itself, so the session must start in them even with Marshell's hook on. */
 const KEEPS_NATIVE: Mode[] = ["plan", "full-auto"];
 
 /** How to start a CLI in a mode. With the hook on, the strictest start unless the mode needs the CLI's own; null when the mode can't be had. */
 export function launchArgs(cli: CliId, mode: Mode, hooksOn: boolean): Launch | null {
   const own = NATIVE[cli][mode];
-  if (!hooksOn) return own ? { args: own, native: true } : null;
+  const standIn = STAND_IN[cli]?.[mode];
+  if (!hooksOn) return own ? { args: own, native: true } : standIn ? { args: standIn, native: false } : null;
   if (KEEPS_NATIVE.includes(mode)) return own ? { args: own, native: true } : { args: STRICT[cli], native: false };
   return { args: STRICT[cli], native: mode === "manual" };
 }
@@ -79,9 +83,15 @@ export function decide(cli: CliId, mode: Mode, request: Request, risky: boolean)
 }
 
 /** Changing mode mid-session: instant when only Marshell's answer changes, native when the CLI's own mode must change too. */
-export function switchKind(cli: CliId, from: Mode, to: Mode, hooksOn: boolean): "instant" | "native" {
+export function switchKind(cli: CliId, from: Mode, to: Mode, hooksOn: boolean): "instant" | "native" | "unavailable" {
+  if (!launchArgs(cli, to, hooksOn)) return "unavailable";
   if (!hooksOn) return "native";
   const a = launchArgs(cli, from, true)!;
   const b = launchArgs(cli, to, true)!;
   return a.args.join(" ") === b.args.join(" ") ? "instant" : "native";
+}
+
+/** A CLI setting that skips every prompt (e.g. Antigravity's dangerouslySkipPermissions) makes the session Bypass whatever was picked. */
+export function effectiveMode(mode: Mode, skipsAll: boolean): Mode {
+  return skipsAll ? "bypass" : mode;
 }

@@ -22,6 +22,11 @@ export function entryCount(cli: CliId, on: Record<Capability, boolean>): number 
 }
 
 /** Fails closed: a file that does not parse, or cannot be written, is never offered for editing. A managed file does not stop the user-level edit. */
+/** The last part of a path, with either slash (Windows, macOS, Linux). */
+export const fileName = (path: string) => path.split(/[\\/]/).pop() ?? path;
+/** The folder part of a path, with either slash. */
+export const folderOf = (path: string) => path.slice(0, Math.max(path.lastIndexOf("\\"), path.lastIndexOf("/")));
+
 export function canEdit(d: Detection): { ok: boolean; reason?: string } {
   if (d.configState === "unparsable") return { ok: false, reason: "The file does not parse." };
   if (d.configState === "read-only") return { ok: false, reason: "The file is read-only." };

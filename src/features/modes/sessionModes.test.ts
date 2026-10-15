@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { commandById } from "../../lib/keymap";
-import { decide, launchArgs, MODES, switchKind, type Request } from "./sessionModes";
+import { decide, effectiveMode, launchArgs, MODES, switchKind, type Request } from "./sessionModes";
 
 const edit: Request = { kind: "edit", inProject: true };
 const editOutside: Request = { kind: "edit", inProject: false };
@@ -32,6 +32,7 @@ describe("launchArgs: with Marshell's hooks on, a session starts strict and the 
     expect(launchArgs("claude", "plan", true)).toEqual({ args: ["--permission-mode", "plan"], native: true });
     expect(launchArgs("antigravity", "plan", true)).toEqual({ args: ["--mode", "plan"], native: true });
     expect(launchArgs("codex", "plan", true)).toEqual({ args: ["--sandbox", "read-only", "--ask-for-approval", "on-request"], native: false });
+    expect(launchArgs("codex", "plan", false)).toEqual({ args: ["--sandbox", "read-only", "--ask-for-approval", "on-request"], native: false });
   });
   it("Full auto uses the CLI's own classifier where it has one; Antigravity has none, so Marshell's risk check stands in", () => {
     expect(launchArgs("claude", "full-auto", true)).toEqual({ args: ["--permission-mode", "auto"], native: true });
@@ -90,5 +91,17 @@ describe("switchKind: changing mode mid-session", () => {
   });
   it("is always native with the hooks off", () => {
     expect(switchKind("claude", "manual", "auto-edit", false)).toBe("native");
+  });
+  it("is unavailable when the CLI can't have the target mode", () => {
+    expect(switchKind("antigravity", "manual", "full-auto", false)).toBe("unavailable");
+  });
+});
+
+describe("effectiveMode: a CLI setting that skips every prompt", () => {
+  it("makes the session Bypass whatever mode was picked", () => {
+    for (const mode of MODES) expect(effectiveMode(mode, true), mode).toBe("bypass");
+  });
+  it("leaves the mode alone otherwise", () => {
+    for (const mode of MODES) expect(effectiveMode(mode, false), mode).toBe(mode);
   });
 });
