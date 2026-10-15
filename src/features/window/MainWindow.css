@@ -155,6 +155,12 @@
   min-inline-size: 0;
   min-block-size: 0;
 }
+/* One kept terminal. The `hidden` attribute (no display set here) takes the ones behind the selected session off screen. */
+.window__terminal {
+  position: relative;
+  min-inline-size: 0;
+  min-block-size: 0;
+}
 
 /*
  * The prompt bar sits in a fixed slot, so the terminals above never resize. A long prompt grows the bar upward over the

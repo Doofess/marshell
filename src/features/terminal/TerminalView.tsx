@@ -30,10 +30,12 @@ type Props = {
   autoFocus?: boolean;
   /** Bumping this takes focus back to the terminal (a closed question or a finished rename hands the keys back). */
   focusToken?: number;
+  /** False while the terminal is kept mounted but hidden behind another session's. It fits and takes focus when this turns true. Default true. */
+  visible?: boolean;
 };
 
 /** One session's terminal. */
-export function TerminalView({ endpoint, tabId, placeholder, onOutput, onSize, autoFocus = true, focusToken = 0 }: Props) {
+export function TerminalView({ endpoint, tabId, placeholder, onOutput, onSize, autoFocus = true, focusToken = 0, visible = true }: Props) {
   const host = useRef<HTMLDivElement>(null);
   const meter = useMemo(() => new LatencyMeter(), []);
   const [renderer, setRenderer] = useState<RendererKind>("dom");
@@ -45,6 +47,7 @@ export function TerminalView({ endpoint, tabId, placeholder, onOutput, onSize, a
   const outputRef = useRef(onOutput);
   outputRef.current = onOutput;
   const termRef = useRef<Terminal | null>(null);
+  const fitRef = useRef<FitAddon | null>(null);
 
   useEffect(() => {
     const el = host.current;
@@ -54,6 +57,7 @@ export function TerminalView({ endpoint, tabId, placeholder, onOutput, onSize, a
     const term = new Terminal({ fontFamily, fontSize: 13, cursorBlink: true, scrollback: 10_000, ...apply() });
     const fit = new FitAddon();
     term.loadAddon(fit);
+    fitRef.current = fit;
     term.open(el);
     termRef.current = term;
     loadRenderer(term, endpoint.platform, setRenderer);
@@ -140,13 +144,17 @@ export function TerminalView({ endpoint, tabId, placeholder, onOutput, onSize, a
       socket.close();
       term.dispose();
       termRef.current = null;
+      fitRef.current = null;
     };
   }, [endpoint, tabId, meter]);
 
   // Declared after the effect above so a new terminal exists by the time this runs.
   useEffect(() => {
+    if (!visible) return;
+    // Shown again after being hidden: the window may have changed size meanwhile, and a hidden host measures as zero.
+    fitRef.current?.fit();
     if (autoFocus) termRef.current?.focus();
-  }, [autoFocus, endpoint, tabId, focusToken]);
+  }, [autoFocus, visible, endpoint, tabId, focusToken]);
 
   return (
     <>

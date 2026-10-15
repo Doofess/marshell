@@ -18,6 +18,7 @@ import { LayoutIcon, LayoutMenu } from "./LayoutMenu";
 import { SearchIcon } from "./SearchIcon";
 import { isTool } from "../../components/AgentMark/kinds";
 import { hasPromptLine } from "../sidebar/promptLine";
+import { KeptTerminals } from "./keptTerminals";
 import { Rail } from "./Rail";
 import { SCENARIO_FOOTER, SCENARIO_PLAN, SCENARIO_PORTS, SCENARIO_REQUESTS, SCENARIO_ROWS } from "./scenario";
 import { SessionAnnouncer } from "./SessionAnnouncer";
@@ -64,8 +65,8 @@ export type MainWindowProps = {
   composerValue?: string;
   /** What has been typed in each pane's own prompt line in split view, by session id. */
   composerValues?: Record<string, string>;
-  /** Replaces the scripted terminal of every pane with the real one. Leave out in stories. */
-  renderTerminal?: (row: RowModel) => ReactNode;
+  /** Replaces the scripted terminal of every pane with the real one. Leave out in stories. `shown` is false for a kept terminal behind the selected one (single window only). */
+  renderTerminal?: (row: RowModel, shown?: boolean) => ReactNode;
   /** The ports the session header lists; defaults to the scenario's. */
   ports?: string[];
   /** What the sidebar footer shows; defaults to the scenario's plan and doctor numbers. `null` leaves the footer out (the live app has none to show yet). */
@@ -260,7 +261,7 @@ export function MainWindow({
           ) : split ? (
             <SplitView panes={shown} size={{ w: space.w, h: space.h }} activeIndex={focusedIndex} hidden={hiddenCount} arrangement={chosen} ratios={ratios} zoomed={zoomIdx} choices={choices} composerValues={composerValues} composers={showComposer} setting={terminalSetting} os={os} renderTerminal={renderTerminal} />
           ) : renderTerminal ? (
-            renderTerminal(selected)
+            <KeptTerminals rows={rows} selectedId={selected.id} render={renderTerminal} />
           ) : (
             <ScriptedTerminal setting={terminalSetting} label={`Terminal for ${selected.name}`} {...(isTool(selected.agent) ? { script: shellSession({ cwd: selected.project }), size: SHELL_SIZE } : {})} />
           )}

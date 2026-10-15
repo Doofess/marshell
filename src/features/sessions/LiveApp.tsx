@@ -142,7 +142,7 @@ export function LiveApp() {
   };
 
   const renderTerminal = useCallback(
-    (row: RowModel) =>
+    (row: RowModel, shown = true) =>
       endpoint ? (
         <TerminalView
           key={row.id}
@@ -152,6 +152,7 @@ export function LiveApp() {
           onOutput={() => setStartingTexts((t) => without(t, row.id))}
           onSize={onSize}
           autoFocus={!launcherOpen && overlay === null}
+          visible={shown}
           focusToken={focusToken}
         />
       ) : null,

@@ -451,6 +451,11 @@ describe("MainWindow: renderTerminal", () => {
     expect(h).toContain('data-live="working"');
     expect(h).not.toContain("aria-label=\"Terminal for");
   });
+  it("keeps the single window's terminal in a wrapper that can be hidden, and shows the selected one", () => {
+    const h = html({ renderTerminal: live });
+    expect(h).toMatch(/<div class="window__terminal"><div data-live="working"/);
+    expect(h).not.toMatch(/<div[^>]* hidden[ =>][^>]*><div data-live/);
+  });
   it("replaces the scripted terminal in every pane of the split view", () => {
     const h = html({ layout: "split", splitCount: 2, ...BIG, renderTerminal: live });
     expect((h.match(/data-live="/g) ?? []).length).toBe(2);
