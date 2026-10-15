@@ -36,7 +36,7 @@ const ALLOWED: Record<string, { reason: string; migrate?: true }> = {
   "features/approval/ApproveCard.tsx": { reason: "the receipt line confirms the user's own decision (Allowed · npm test) and is not announced anywhere else" },
   "features/launcher/Launcher.tsx": { reason: "'No folder matches' while typing in a modal sheet that owns focus; the window's announcer is quiet while it is open" },
   "features/palette/Palette.tsx": { reason: "'No command matches' while typing in a modal sheet that owns focus; the window's announcer is quiet while it is open" },
-  "App.tsx": { reason: "the startup failure screen: there is no window yet, so no announcer" },
+  "features/sessions/LiveApp.tsx": { reason: "the startup failure screen: there is no window yet, so no announcer" },
   "features/perf/PerfOverlay.tsx": { reason: 'aria-live="off": a developer overlay that explicitly stays silent' },
   "features/window/NavCursor.tsx": { reason: "migrate: the navigation cursor's own region says 'Selected session 6' and must go through the Announcer so the window has one", migrate: true },
 };

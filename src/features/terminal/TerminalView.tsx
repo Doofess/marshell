@@ -7,7 +7,7 @@ import { onCoreEvent } from "../../lib/api/coreEvents";
 import { PtySocket } from "../../lib/api/ptySocket";
 import { LatencyMeter } from "../perf/latency";
 import { PerfOverlay } from "../perf/PerfOverlay";
-import { ENDED_LINE, FAILED_LINE } from "./coreRestart";
+import { ENDED_LINE, FAILED_LINE, SESSION_ENDED } from "./coreRestart";
 import { loadRenderer, type RendererKind } from "./renderer";
 import { appScheme, resolveScheme, terminalOptions } from "./terminalTheme";
 
@@ -15,8 +15,7 @@ function isPerfToggle(e: KeyboardEvent): boolean {
   return e.type === "keydown" && e.shiftKey && e.altKey && (e.ctrlKey || e.metaKey) && e.code === "KeyP";
 }
 
-/** `onNewShell` runs when the user presses Enter after the core restarted and ended this session. */
-export function TerminalView({ endpoint, tabId, onNewShell }: { endpoint: Endpoint; tabId: string; onNewShell: () => void }) {
+export function TerminalView({ endpoint, tabId }: { endpoint: Endpoint; tabId: string }) {
   const host = useRef<HTMLDivElement>(null);
   const meter = useMemo(() => new LatencyMeter(), []);
   const [renderer, setRenderer] = useState<RendererKind>("dom");
@@ -46,10 +45,10 @@ export function TerminalView({ endpoint, tabId, onNewShell }: { endpoint: Endpoi
         term.reset();
         term.write(screen, () => socket.processed(seq));
       },
-      onExit: (code) => term.write(`\r\n\x1b[2mProcess exited with code ${code}.\x1b[0m\r\n`),
+      onExit: (code) => term.write(`\r\n\x1b[2mProcess exited with code ${code}. ${SESSION_ENDED}\x1b[0m\r\n`),
     });
 
-    // "ended": the core restarted, so only Enter does something (a new shell). "failed": no input goes anywhere.
+    // After a core restart ("ended") or failure ("failed") the session is gone, so no input goes anywhere.
     let core: "live" | "ended" | "failed" = "live";
     const stopCoreEvents = onCoreEvent((e) => {
       if (core !== "live") return;
@@ -60,7 +59,6 @@ export function TerminalView({ endpoint, tabId, onNewShell }: { endpoint: Endpoi
 
     const subs = [
       term.onData((d) => {
-        if (core === "ended" && d === "\r") onNewShell();
         if (core !== "live") return;
         meter.markInput();
         socket.sendInput(d);
@@ -100,7 +98,7 @@ export function TerminalView({ endpoint, tabId, onNewShell }: { endpoint: Endpoi
       socket.close();
       term.dispose();
     };
-  }, [endpoint, tabId, meter, onNewShell]);
+  }, [endpoint, tabId, meter]);
 
   return (
     <>

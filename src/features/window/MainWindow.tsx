@@ -1,4 +1,4 @@
-import { useEffect, type CSSProperties } from "react";
+import { useEffect, type CSSProperties, type ReactNode } from "react";
 import { Logo } from "../../components/Logo/Logo";
 import { Wordmark } from "../../components/Logo/Wordmark";
 import { StatusGlyph } from "../../components/StatusGlyph/StatusGlyph";
@@ -64,6 +64,10 @@ export type MainWindowProps = {
   composerValue?: string;
   /** What has been typed in each pane's own prompt line in split view, by session id. */
   composerValues?: Record<string, string>;
+  /** Replaces the scripted terminal of every pane with the real one. Leave out in stories. */
+  renderTerminal?: (row: RowModel) => ReactNode;
+  /** The ports the session header lists; defaults to the scenario's. */
+  ports?: string[];
   /** The 24 px status bar at the foot of the window (the focused session's strip); on by default, never in focus mode. */
   statusBar?: boolean;
   /** The plain shell panel under the session list; on by default in the expanded sidebar. */
@@ -112,6 +116,8 @@ export function MainWindow({
   statusBar = true,
   shell = true,
   shellCollapsed = false,
+  renderTerminal,
+  ports = SCENARIO_PORTS,
 }: MainWindowProps) {
   const pref: SidebarPref = sidebarPref ?? (layout === "focus" ? "focus" : layout === "rail" ? "rail" : "expanded");
   const mode = sidebarMode(width, pref);
@@ -180,7 +186,7 @@ export function MainWindow({
             </button>
           )}
         </div>
-        <div className="window__bar-main">{showHeader && active && <SessionHeader row={active} ports={SCENARIO_PORTS} />}</div>
+        <div className="window__bar-main">{showHeader && active && <SessionHeader row={active} ports={ports} />}</div>
         <div className="window__bar-end">
           <div className="window__layout">
             <button
@@ -224,7 +230,9 @@ export function MainWindow({
               No sessions yet. Start one with {shortcutLabel(commandById("launcher").binding!, os)}.
             </div>
           ) : split ? (
-            <SplitView panes={shown} size={{ w: space.w, h: space.h }} activeIndex={focusedIndex} hidden={hiddenCount} arrangement={chosen} ratios={ratios} zoomed={zoomIdx} choices={choices} composerValues={composerValues} composers={showComposer} setting={terminalSetting} os={os} />
+            <SplitView panes={shown} size={{ w: space.w, h: space.h }} activeIndex={focusedIndex} hidden={hiddenCount} arrangement={chosen} ratios={ratios} zoomed={zoomIdx} choices={choices} composerValues={composerValues} composers={showComposer} setting={terminalSetting} os={os} renderTerminal={renderTerminal} />
+          ) : renderTerminal ? (
+            renderTerminal(selected)
           ) : (
             <ScriptedTerminal setting={terminalSetting} label={`Terminal for ${selected.name}`} {...(isTool(selected.agent) ? { script: shellSession({ cwd: selected.project }), size: SHELL_SIZE } : {})} />
           )}
@@ -252,7 +260,7 @@ export function MainWindow({
         )}
         {showStatus && (
           <div className="window__status" style={{ blockSize: STATUS_BAR_HEIGHT }}>
-            <StatusBar row={split ? focused : selected} plan={isTool((split ? focused : selected)?.agent ?? "") ? undefined : SCENARIO_PLAN} ports={SCENARIO_PORTS} os={os} />
+            <StatusBar row={split ? focused : selected} plan={isTool((split ? focused : selected)?.agent ?? "") ? undefined : SCENARIO_PLAN} ports={ports} os={os} />
           </div>
         )}
         </div>

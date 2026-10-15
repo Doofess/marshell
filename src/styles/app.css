@@ -15,6 +15,19 @@
   padding: var(--space-2);
 }
 
+.live-app {
+  position: relative;
+  block-size: 100%;
+  inline-size: 100%;
+  overflow: clip;
+}
+
+/* The launcher sheet sits over the whole window while there are no sessions. */
+.live-app__launcher {
+  position: absolute;
+  inset: 0;
+}
+
 .startup-error {
   margin: 0;
   padding: var(--space-6);

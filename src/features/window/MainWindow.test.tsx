@@ -427,6 +427,24 @@ describe("MainWindow: the brand button in focus mode", () => {
   });
 });
 
+describe("MainWindow: renderTerminal", () => {
+  const live = (row: { id: string }) => <div data-live={row.id} />;
+  it("renderTerminal replaces the scripted terminal", () => {
+    const h = html({ renderTerminal: live });
+    expect(h).toContain('data-live="working"');
+    expect(h).not.toContain("aria-label=\"Terminal for");
+  });
+  it("replaces the scripted terminal in every pane of the split view", () => {
+    const h = html({ layout: "split", splitCount: 2, ...BIG, renderTerminal: live });
+    expect((h.match(/data-live="/g) ?? []).length).toBe(2);
+    expect(h).not.toContain("aria-label=\"Terminal for");
+  });
+  it("shows the ports it is given instead of the scenario's", () => {
+    expect(html()).toContain("localhost:3000");
+    expect(html({ ports: [] })).not.toContain("localhost:3000");
+  });
+});
+
 describe("MainWindow: one live region, and the window's title follows the focused session", () => {
   const live = (h: string) => (h.match(/data-session-announcer/g) ?? []).length;
   it("has exactly one session announcer, whether it shows one terminal or four, and none of its prompt lines or panes is a live region", () => {
