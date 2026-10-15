@@ -45,9 +45,8 @@ pub fn command_on_path(name: &str) -> bool {
 
 /// True when a directory holds `name` itself or `name` plus one of the endings.
 fn found_in(dirs: &[PathBuf], name: &str, exts: &[&str]) -> bool {
-    dirs.iter().any(|dir| {
-        dir.join(name).is_file() || exts.iter().any(|ext| dir.join(format!("{name}{ext}")).is_file())
-    })
+    dirs.iter()
+        .any(|dir| dir.join(name).is_file() || exts.iter().any(|ext| dir.join(format!("{name}{ext}")).is_file()))
 }
 
 /// What detection asks the machine. Tests pass fakes; `Probe::system()` is the real thing.

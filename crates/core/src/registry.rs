@@ -142,13 +142,8 @@ impl Registry {
         let mut state = self.state.lock().unwrap();
         // Same length, every id open, no repeats: that is a permutation.
         let is_permutation = tab_ids.len() == state.open.len()
-            && tab_ids
-                .iter()
-                .all(|id| state.open.iter().any(|e| &e.info.tab_id == id))
-            && tab_ids
-                .iter()
-                .enumerate()
-                .all(|(i, id)| !tab_ids[..i].contains(id));
+            && tab_ids.iter().all(|id| state.open.iter().any(|e| &e.info.tab_id == id))
+            && tab_ids.iter().enumerate().all(|(i, id)| !tab_ids[..i].contains(id));
         if !is_permutation {
             return false;
         }
@@ -257,10 +252,7 @@ mod tests {
         reg.reserve("b", relaunch("B"));
         reg.reserve("c", relaunch("C"));
         assert!(reg.reorder(&["c".into(), "a".into(), "b".into()]));
-        assert_eq!(
-            numbers(&reg),
-            vec![("c".into(), 3), ("a".into(), 1), ("b".into(), 2)]
-        );
+        assert_eq!(numbers(&reg), vec![("c".into(), 3), ("a".into(), 1), ("b".into(), 2)]);
     }
 
     #[test]
@@ -341,12 +333,7 @@ mod tests {
         reg.reserve("a", relaunch("Claude Code"));
         reg.reserve("b", relaunch("Claude Code"));
         reg.reserve("c", relaunch("Codex"));
-        let names: Vec<String> = reg
-            .snapshot()
-            .sessions
-            .into_iter()
-            .map(|s| s.name)
-            .collect();
+        let names: Vec<String> = reg.snapshot().sessions.into_iter().map(|s| s.name).collect();
         assert_eq!(names, vec!["Claude Code", "Claude Code 2", "Codex"]);
     }
 
@@ -401,12 +388,7 @@ mod tests {
         }
         assert_eq!(reg.take_closed(Some("b")).unwrap().name, "b");
         assert!(reg.take_closed(Some("b")).is_none());
-        let ids: Vec<String> = reg
-            .snapshot()
-            .closed
-            .into_iter()
-            .map(|s| s.tab_id)
-            .collect();
+        let ids: Vec<String> = reg.snapshot().closed.into_iter().map(|s| s.tab_id).collect();
         assert_eq!(ids, vec!["c", "a"]);
         reg.reserve("d", relaunch("d"));
         reg.clear();

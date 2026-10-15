@@ -298,10 +298,16 @@ mod tests {
                 })
                 .collect();
             for handle in handles {
-                handle.join().unwrap().unwrap_or_else(|e| panic!("round {round}: {e:#}"));
+                handle
+                    .join()
+                    .unwrap()
+                    .unwrap_or_else(|e| panic!("round {round}: {e:#}"));
             }
             let saved = read::<Prefs>(&path).unwrap().unwrap();
-            assert!(saved == prefs("one") || saved == prefs("two"), "round {round}: {saved:?}");
+            assert!(
+                saved == prefs("one") || saved == prefs("two"),
+                "round {round}: {saved:?}"
+            );
         }
     }
 }

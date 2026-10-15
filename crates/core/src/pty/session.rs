@@ -9,6 +9,9 @@ use std::sync::mpsc;
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 
+/// Runs once with the exit code when the process ends.
+pub type ExitCallback = Box<dyn FnOnce(i32) + Send>;
+
 pub struct SpawnSpec {
     pub argv: Vec<String>,
     pub cwd: Option<PathBuf>,
@@ -16,7 +19,7 @@ pub struct SpawnSpec {
     pub cols: u16,
     pub rows: u16,
     /// Called once, from the wait thread, with the exit code. Runs outside every session lock.
-    pub on_exit: Option<Box<dyn FnOnce(i32) + Send>>,
+    pub on_exit: Option<ExitCallback>,
 }
 
 /// What the WebSocket task should send next.
@@ -63,7 +66,7 @@ pub struct Session {
     /// Set when the child has exited, so a late kill cannot hit a reused pid.
     exited: Arc<AtomicBool>,
     /// Taken and called once when the child exits.
-    exit_callback: Mutex<Option<Box<dyn FnOnce(i32) + Send>>>,
+    exit_callback: Mutex<Option<ExitCallback>>,
 }
 
 impl Session {
