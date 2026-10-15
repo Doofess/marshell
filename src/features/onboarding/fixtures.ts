@@ -5,12 +5,22 @@ const HOME = "C:\\Users\\Home Office";
 const CLAUDE_PATH = `${HOME}\\.claude\\settings.json`;
 const CODEX_PATH = `${HOME}\\.codex\\config.toml`;
 const ANTIGRAVITY_PATH = `${HOME}\\.gemini\\antigravity-cli\\settings.json`;
+// Antigravity reads global hooks from the shared ~/.gemini/config/ folder, not from its settings (agy 1.3.3's bundled hooks doc).
+const ANTIGRAVITY_HOOKS_PATH = `${HOME}\\.gemini\\config\\hooks.json`;
 const MANAGED = { path: "C:\\Program Files\\ClaudeCode\\managed-settings.json" };
 
+// Versions and paths as found on the dev machine on 2026-10-15 (docs/research/2026-10-15-local-install-check.md).
 const claude: Detection = { cli: "claude", installed: true, version: "2.1.296", exePath: `${HOME}\\.local\\bin\\claude.exe`, configPath: CLAUDE_PATH, configState: "ok" };
-const codex: Detection = { cli: "codex", installed: true, version: "0.9.3", exePath: `${HOME}\\AppData\\Roaming\\npm\\codex.cmd`, configPath: CODEX_PATH, configState: "ok" };
-// agy's installer puts it in %LOCALAPPDATA%\agy\bin (antigravity.google/docs/getting-started?tab=cli). The version is a stand-in until the CLI is installed (docs/PLAN.md: before phase 6).
-const antigravity: Detection = { cli: "antigravity", installed: true, version: "1.0.0", exePath: `${HOME}\\AppData\\Local\\agy\\bin\\agy.exe`, configPath: ANTIGRAVITY_PATH, configState: "ok" };
+const codex: Detection = { cli: "codex", installed: true, version: "0.162.1", exePath: `${HOME}\\AppData\\Local\\Programs\\OpenAI\\Codex\\bin\\codex.exe`, configPath: CODEX_PATH, configState: "ok" };
+const antigravity: Detection = {
+  cli: "antigravity",
+  installed: true,
+  version: "1.3.3",
+  exePath: `${HOME}\\AppData\\Local\\agy\\bin\\agy.exe`,
+  configPath: ANTIGRAVITY_PATH,
+  configState: "ok",
+  hooks: { path: ANTIGRAVITY_HOOKS_PATH, exists: false },
+};
 const absent = (d: Detection): Detection => ({ ...d, installed: false, version: undefined, exePath: undefined, configState: "missing" });
 
 /** The scenarios the stories show. A list is what detection returns: one entry per CLI Marshell knows. */
@@ -45,7 +55,8 @@ ${EVENTS.map((e) => `    "${e}": [{ "hooks": [{ "type": "command", "command": "$
 }
 `;
 
-const codexBefore = 'model = "gpt-5"\napproval_policy = "on-request"\n';
+// `notify` is often taken already (the Codex desktop app points it at its computer-use helper), so the diff leaves it alone.
+const codexBefore = 'model = "gpt-5"\napproval_policy = "on-request"\nnotify = ["C:\\\\Users\\\\Home Office\\\\AppData\\\\Local\\\\OpenAI\\\\Codex\\\\codex-computer-use.exe", "turn-ended"]\n';
 // Codex hooks are event-nested TOML (docs/research/codex-cli.md, "Hook sources, trust, and config safety"): `[[hooks.<Event>]]` is a
 // matcher group and `[[hooks.<Event>.hooks]]` its handler. No matcher: Marshell wants every source and every tool. Timeouts are
 // seconds, explicit and short: 10 for telemetry, 120 for the permission decision (a person is in the loop), 3 for SessionEnd (Codex
@@ -68,9 +79,32 @@ const codexAfter = codexBefore + CODEX_HOOKS.map(([e, role]) => codexEntry(e, ro
 const STAND_IN = 40;
 const codexStandIn = codexBefore + Array.from({ length: STAND_IN }, (_, i) => codexEntry(`StandIn${i + 1}`, "event")).join("");
 
-// Antigravity: the only verified change is its status line (antigravity.google/docs/cli/statusline: `statusLine` is
-// `{ "type": "command", "command": ... }` in ~/.gemini/antigravity-cli/settings.json). The user's own command is the one the
-// docs show; Marshell puts the bridge in front of it and keeps it in the chain file. No hooks: their events are unverified.
+// Antigravity hooks (agy 1.3.3's bundled hooks doc, docs/research/2026-10-15-local-install-check.md): hooks.json holds named hooks,
+// each with `enabled` and its events. PreToolUse and PostToolUse are matcher groups (a regex on the tool name; `.*` takes every
+// tool), PreInvocation, PostInvocation and Stop are flat handler lists. The payload names no event, so each command says which
+// one it is. Timeouts are seconds and default to 30: PreToolUse gets 600 because a person answers it (the bridge releases it
+// earlier, answering "ask" so Antigravity's own prompt takes over); the rest are telemetry, capped at 10. Windows runs each
+// command through `cmd /c`, and the quoted path with its space is the case spike S10 checks.
+const ANTIGRAVITY_HOOKS: Array<[event: string, role: "event" | "permission", grouped: boolean]> = [
+  ["PreToolUse", "permission", true],
+  ["PostToolUse", "event", true],
+  ["PreInvocation", "event", false],
+  ["PostInvocation", "event", false],
+  ["Stop", "event", false],
+];
+const agyHandler = (event: string, role: "event" | "permission") =>
+  `{ "type": "command", "command": "${BRIDGE.replace(/"/g, '\\"')} ${role} --agent antigravity --event ${event} --tag mshl1", "timeout": ${role === "permission" ? 600 : 10} }`;
+const antigravityHooks = `{
+  "marshell": {
+    "enabled": true,
+${ANTIGRAVITY_HOOKS.map(([e, role, grouped]) => `    "${e}": [${grouped ? `{ "matcher": ".*", "hooks": [${agyHandler(e, role)}] }` : agyHandler(e, role)}]`).join(",\n")}
+  }
+}
+`;
+
+// Antigravity's status line (antigravity.google/docs/cli/statusline: `statusLine` is `{ "type": "command", "command": ... }` in
+// ~/.gemini/antigravity-cli/settings.json). The user's own command is the one the docs show; Marshell puts the bridge in front
+// of it and keeps it in the chain file.
 const antigravityLine = "~/.gemini/antigravity-cli/statusline.sh";
 const antigravityBefore = `{
   "statusLine": { "type": "command", "command": "${antigravityLine}" }
@@ -93,18 +127,19 @@ export const CONSENT_DIFFS = {
   claude: unifiedDiff(CLAUDE_PATH, claudeBefore, claudeAfter) + newFile(chainPath("claude"), chainFile),
   codex: unifiedDiff(CODEX_PATH, codexBefore, codexAfter),
   codexLong: unifiedDiff(CODEX_PATH, codexBefore, codexStandIn),
-  antigravity: unifiedDiff(ANTIGRAVITY_PATH, antigravityBefore, antigravityAfter) + newFile(chainPath("antigravity"), antigravityChainFile),
+  antigravity:
+    newFile(ANTIGRAVITY_HOOKS_PATH, antigravityHooks) +
+    unifiedDiff(ANTIGRAVITY_PATH, antigravityBefore, antigravityAfter) +
+    newFile(chainPath("antigravity"), antigravityChainFile),
 };
 
 const ALL_ON: Record<Capability, boolean> = { status: true, approve: true, statusline: true };
-/** Antigravity's card: only the status line is verified, so only that switch starts on. */
-const STATUSLINE_ONLY: Record<Capability, boolean> = { status: false, approve: false, statusline: true };
 const plan = (d: Detection, diff: string, on: Record<Capability, boolean> = ALL_ON): ConsentPlan => ({
   cli: d.cli,
   on,
   configPath: d.configPath,
   backupPath: `${HOME}\\.marshell\\snapshots\\2026-10-10T20-15\\${CLI_NAME[d.cli].toLowerCase().replace(/ /g, "-")}-${d.configPath.split("\\").pop()}`,
-  removal: removalCopy(d.cli, on),
+  removal: removalCopy(d.cli, on, d.hooks && { hooksFile: d.hooks.path.split("\\").pop()!, created: !d.hooks.exists }),
   diff,
   needsTrust: d.cli === "codex" && (on.status || on.approve),
   chainPath: on.statusline && CAPABILITIES[d.cli].statusline.available ? chainPath(d.cli) : undefined,
@@ -115,7 +150,7 @@ export const CONSENT: Record<"claude" | "codex" | "codexLong" | "antigravity" | 
   claude: { detection: claude, plan: plan(claude, CONSENT_DIFFS.claude) },
   codex: { detection: codex, plan: plan(codex, CONSENT_DIFFS.codex) },
   codexLong: { detection: codex, plan: { ...plan(codex, CONSENT_DIFFS.codexLong), headline: `Add ${STAND_IN} hook entries in ${CODEX_PATH}. This is a stand-in change, made long on purpose to show how a long change folds.` } },
-  antigravity: { detection: antigravity, plan: plan(antigravity, CONSENT_DIFFS.antigravity, STATUSLINE_ONLY) },
+  antigravity: { detection: antigravity, plan: plan(antigravity, CONSENT_DIFFS.antigravity) },
   readOnlyCodex: { detection: DETECTIONS.readOnly[1]!, plan: plan(DETECTIONS.readOnly[1]!, "") },
   unparsableAntigravity: { detection: DETECTIONS.unparsable[2]!, plan: plan(DETECTIONS.unparsable[2]!, "") },
   claudeManaged: { detection: { ...claude, managed: MANAGED }, plan: plan({ ...claude, managed: MANAGED }, CONSENT_DIFFS.claude) },

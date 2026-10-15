@@ -28,7 +28,7 @@ export const DetectedProblems: StoryObj = {
 export const ConsentClaude: StoryObj = { render: () => <ThemePair label="Screen 2: one sentence says what changes and where; the backup and the way out are named" stack><div style={box}><ConsentCard scenario={CONSENT.claude} on={ALL_ON} /></div></ThemePair> };
 export const ConsentClaudeDiffOpen: StoryObj = { render: () => <ThemePair label="Screen 2: View exact changes shows the unified diff" stack><div style={box}><ConsentCard scenario={CONSENT.claude} on={ALL_ON} open /></div></ThemePair> };
 export const ConsentCodexTrust: StoryObj = { render: () => <ThemePair label="Screen 2: Codex adds the step of trusting the hooks in /hooks" stack><div style={box}><ConsentCard scenario={CONSENT.codex} on={ALL_ON} /></div></ThemePair> };
-export const ConsentAntigravityStatusLine: StoryObj = { render: () => <ThemePair label="Screen 2: Antigravity offers only its status line; its hooks are verified when the adapter is built, and the card says so instead of a dead switch" stack><div style={box}><ConsentCard scenario={CONSENT.antigravity} on={{ status: false, approve: false, statusline: true }} /></div></ThemePair> };
+export const ConsentAntigravity: StoryObj = { render: () => <ThemePair label="Screen 2: Antigravity names both of its files: the hooks in a new ~/.gemini/config/hooks.json, the status line in its own settings" stack><div style={box}><ConsentCard scenario={CONSENT.antigravity} on={ALL_ON} open /></div></ThemePair> };
 export const ConsentUnparsable: StoryObj = { render: () => <ThemePair label="Screen 2: a file that does not parse is never edited, and there are no switches" stack><div style={box}><ConsentCard scenario={CONSENT.unparsableAntigravity} on={ALL_ON} /></div></ThemePair> };
 export const ConsentManaged: StoryObj = { render: () => <ThemePair label="Screen 2: a managed file is listed read-only and has no control" stack><div style={box}><ConsentCard scenario={CONSENT.claudeManaged} on={ALL_ON} /></div></ThemePair> };
 export const ConsentLongDiff: StoryObj = { render: () => <ThemePair label="Screen 2: a long change folds after 40 lines (a stand-in of 40 entries, and its headline says so)" stack><div style={box}><ConsentCard scenario={CONSENT.codexLong} on={ALL_ON} open /></div></ThemePair> };
@@ -57,7 +57,7 @@ export const FrameStep2SmallWindow: StoryObj = {
         <OnboardingFrame step="consent" title="What Marshell may change" primary="Allow these changes" secondary="Skip all: use limited status">
           <ConsentCard scenario={CONSENT.claude} on={ALL_ON} open />
           <ConsentCard scenario={CONSENT.codex} on={ALL_ON} open />
-          <ConsentCard scenario={CONSENT.antigravity} on={{ status: false, approve: false, statusline: true }} open />
+          <ConsentCard scenario={CONSENT.antigravity} on={ALL_ON} open />
         </OnboardingFrame>
       </div>
     </ThemePair>

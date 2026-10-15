@@ -7,18 +7,14 @@ const no = (reason: string) => ({ available: false, reason, entries: 0 });
 
 /**
  * What each CLI can do and how many hook entries each capability adds (docs/PLAN.md section 2: the adapter's capabilities).
- * Antigravity: only its status line is verified (`statusLine` in ~/.gemini/antigravity-cli/settings.json pushes model, context,
- * quota and whether a tool waits for confirmation). Its hook events and any permission hook are verified when the adapter is
- * built, so the card says so instead of promising entries it cannot count (docs/research/2026-10-10-cli-data-sources.md).
+ * Antigravity (checked against agy 1.3.3 and its bundled hooks doc, docs/research/2026-10-15-local-install-check.md): status is
+ * PostToolUse, PreInvocation, PostInvocation and Stop; approval is PreToolUse, whose decision can allow, deny or ask; the status
+ * line is `statusLine` in ~/.gemini/antigravity-cli/settings.json.
  */
 export const CAPABILITIES: Record<CliId, Record<Capability, { available: boolean; reason?: string; entries: number }>> = {
   claude: { status: { available: true, entries: 8 }, approve: { available: true, entries: 1 }, statusline: { available: true, entries: 0 } },
   codex: { status: { available: true, entries: 6 }, approve: { available: true, entries: 1 }, statusline: no("Codex has no status line to chain.") },
-  antigravity: {
-    status: no("Antigravity's status and context come through its status line (the switch below). Its hook events are verified when the adapter is built."),
-    approve: no("Antigravity has no verified approval hook, so Marshell focuses the tab instead (verified when the adapter is built)."),
-    statusline: { available: true, entries: 0 },
-  },
+  antigravity: { status: { available: true, entries: 4 }, approve: { available: true, entries: 1 }, statusline: { available: true, entries: 0 } },
 };
 
 export function entryCount(cli: CliId, on: Record<Capability, boolean>): number {
@@ -35,15 +31,21 @@ export function canEdit(d: Detection): { ok: boolean; reason?: string } {
 /**
  * What turning Marshell's hooks off, or uninstalling, does to this CLI's file, given the switches: hook entries it added are
  * removed, and a chained status line is put back from the chain file (its command was replaced, not added, so "removes only
- * what it added" would not be true of it). Nothing else in the file is touched.
+ * what it added" would not be true of it). Nothing else in the file is touched. When the hooks go in a file of their own that
+ * Marshell creates, removal deletes that file too, but only if nothing else was put in it since.
  */
-export function removalCopy(cli: CliId, on: Record<Capability, boolean>): string {
+export function removalCopy(cli: CliId, on: Record<Capability, boolean>, hooks?: { hooksFile: string; created: boolean }): string {
+  const entries = entryCount(cli, on) > 0;
+  const chain = on.statusline && CAPABILITIES[cli].statusline.available;
   const parts = [
-    entryCount(cli, on) > 0 && "removes the hook entries it added",
-    on.statusline && CAPABILITIES[cli].statusline.available && "puts your own status line back from statusline-chain.json",
+    entries && "removes the hook entries it added",
+    entries && hooks?.created && `deletes ${hooks.hooksFile} if nothing else is in it`,
+    chain && "puts your own status line back from statusline-chain.json",
   ].filter((p): p is string => typeof p === "string");
   if (parts.length === 0) return "Marshell changes nothing, so there is nothing to undo.";
-  return `Marshell ${parts.join(" and ")}; the rest of the file stays as it is.`;
+  const list = parts.length > 2 ? `${parts.slice(0, -1).join(", ")}, and ${parts.at(-1)}` : parts.join(" and ");
+  const twoFiles = entries && chain && hooks !== undefined;
+  return `Marshell ${list}; the rest of ${twoFiles ? "each" : "the"} file stays as it is.`;
 }
 
 export function consentHeadline(d: Detection, on: Record<Capability, boolean>): string {
@@ -53,6 +55,13 @@ export function consentHeadline(d: Detection, on: Record<Capability, boolean>): 
   const chain = on.statusline && CAPABILITIES[d.cli].statusline.available;
   if (n === 0 && !chain) return `Change nothing. ${CLI_NAME[d.cli]} will show limited status.`;
   const add = `Add ${n} hook ${n === 1 ? "entry" : "entries"}`;
+  if (d.hooks) {
+    // Two files: each named with what goes in it.
+    const text = [n > 0 && `${add} in ${d.hooks.path}${d.hooks.exists ? "" : " (a new file)"}`, chain && `chain your status line in ${d.configPath}`]
+      .filter((p): p is string => typeof p === "string")
+      .join(" and ");
+    return `${text.charAt(0).toUpperCase()}${text.slice(1)}.`;
+  }
   const text = chain ? (n > 0 ? `${add} and chain your status line` : "Chain your status line") : add;
   return `${text} in ${d.configPath}.`;
 }

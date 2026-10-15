@@ -13,6 +13,8 @@ export type Detection = {
   parseError?: { line: number; message: string };
   /** A managed or organisation settings file that applies on top of the user's; listed read-only, never edited. */
   managed?: { path: string };
+  /** Where the hook entries go when that is not `configPath` (Antigravity reads its hooks from ~/.gemini/config/hooks.json), and whether the file exists yet. */
+  hooks?: { path: string; exists: boolean };
 };
 
 export type Capability = "status" | "approve" | "statusline";

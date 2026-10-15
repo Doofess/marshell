@@ -36,14 +36,21 @@ export function ConsentCard({ scenario, on, open = false }: { scenario: { detect
           <button type="button" className="consent__toggle" aria-expanded={open}>
             View exact changes
           </button>
-          {open && <DiffView diff={plan.diff} label={`Exact changes to ${d.configPath}`} />}
+          {open && <DiffView diff={plan.diff} label={`Exact changes to ${d.hooks ? `${d.hooks.path} and ${d.configPath}` : d.configPath}`} />}
           {plan.chainPath && on.statusline && CAPABILITIES[d.cli].statusline.available && (
             <p className="consent__chain">
               Your own status line command is saved in <code>{plan.chainPath}</code> and keeps running: Marshell&apos;s runs first and then yours.
             </p>
           )}
           <p className="consent__meta">
-            A backup is saved first, in <code>{plan.backupPath}</code>. To undo: {plan.removal}
+            A backup is saved first, in <code>{plan.backupPath}</code>.
+            {d.hooks && !d.hooks.exists && (
+              <>
+                {" "}
+                <code>{d.hooks.path.split("\\").pop()}</code> is a new file, so it needs no backup.
+              </>
+            )}{" "}
+            To undo: {plan.removal}
           </p>
           {plan.needsTrust && (
             <>

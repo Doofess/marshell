@@ -16,10 +16,17 @@ describe("ConsentCard", () => {
     expect(h).toContain("Skip: use limited status");
   });
   it("has a switch for each capability and explains an unavailable one", () => {
-    const h = renderToStaticMarkup(<ConsentCard scenario={CONSENT.antigravity} on={{ status: false, approve: false, statusline: true }} />);
+    const h = renderToStaticMarkup(<ConsentCard scenario={CONSENT.codex} on={on} />);
     expect(h.match(/role="switch"/g)).toHaveLength(3);
-    expect(h).toContain("Antigravity has no verified approval hook, so Marshell focuses the tab instead (verified when the adapter is built).");
-    expect(h).toContain("Its hook events are verified when the adapter is built.");
+    expect(h).toContain("Codex has no status line to chain.");
+  });
+  it("names both Antigravity files: hooks in its shared hooks.json, the status line in its own settings", () => {
+    const h = renderToStaticMarkup(<ConsentCard scenario={CONSENT.antigravity} on={on} open />);
+    expect(h).toContain("Add 5 hook entries in C:\\Users\\Home Office\\.gemini\\config\\hooks.json (a new file) and chain your status line in C:\\Users\\Home Office\\.gemini\\antigravity-cli\\settings.json.");
+    expect(h).toContain("Exact changes to C:\\Users\\Home Office\\.gemini\\config\\hooks.json and C:\\Users\\Home Office\\.gemini\\antigravity-cli\\settings.json");
+    expect(h).toContain("<code>hooks.json</code> is a new file, so it needs no backup.");
+    expect(h).not.toContain("verified when the adapter is built");
+    expect(h).not.toContain("/hooks");
   });
   it("hides the diff until asked, then shows the exact change", () => {
     expect(renderToStaticMarkup(<ConsentCard scenario={CONSENT.claude} on={on} />)).not.toContain("diff__lines");
