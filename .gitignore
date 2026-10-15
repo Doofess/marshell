@@ -9,3 +9,6 @@ storybook-static/
 .a11y-matrix/
 
 .playwright-mcp/
+
+# Superpowers plan execution scratch
+.superpowers/
