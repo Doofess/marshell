@@ -10,7 +10,8 @@ fn main() {
 /// Before `pnpm fetch:conpty` they are missing: then this removes them from the config so the
 /// build still works, and the app uses the ConPTY built into Windows.
 fn drop_conpty_if_not_fetched() {
-    println!("cargo:rerun-if-changed=resources/conpty");
+    // `resources` is always there (it holds a README); a missing path would rerun on every build.
+    println!("cargo:rerun-if-changed=resources");
     if std::env::var("CARGO_CFG_TARGET_OS").as_deref() != Ok("windows") {
         return;
     }
