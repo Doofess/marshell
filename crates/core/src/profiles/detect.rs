@@ -170,6 +170,10 @@ pub fn detect_profiles(probe: &Probe) -> Vec<Profile> {
             ));
         }
         for distro in parse_wsl_list(&(probe.wsl_list)()) {
+            // Docker Desktop's internal distros are not shells to launch in.
+            if distro == "docker-desktop" || distro == "docker-desktop-data" {
+                continue;
+            }
             found.push(detected(
                 &format!("wsl-{}", distro.to_lowercase()),
                 &distro,
@@ -202,14 +206,32 @@ pub fn agent_command(agent: &str) -> Option<&'static str> {
     }
 }
 
-/// `'text'` for PowerShell, where a quote inside is doubled.
+/// `'text'` for PowerShell, where a quote inside is doubled. PowerShell also treats the
+/// curly single quotes (U+2018 to U+201B) as quotes, so those are doubled too.
 fn powershell_quote(text: &str) -> String {
-    format!("'{}'", text.replace('\'', "''"))
+    let mut quoted = String::from("'");
+    for c in text.chars() {
+        quoted.push(c);
+        if matches!(c, '\'' | '\u{2018}' | '\u{2019}' | '\u{201A}' | '\u{201B}') {
+            quoted.push(c);
+        }
+    }
+    quoted.push('\'');
+    quoted
 }
 
 /// `'text'` for POSIX shells, where a quote inside becomes `'\''`.
 fn posix_quote(text: &str) -> String {
     format!("'{}'", text.replace('\'', "'\\''"))
+}
+
+/// True when the profile runs `powershell.exe` (Windows PowerShell 5, not `pwsh.exe`).
+fn is_windows_powershell_5(profile: &Profile) -> bool {
+    profile
+        .command
+        .first()
+        .and_then(|exe| exe.rsplit(['\\', '/']).next())
+        .is_some_and(|name| name.eq_ignore_ascii_case("powershell.exe"))
 }
 
 /// The argv that starts `agent` (with an optional first prompt) inside `profile`'s shell.
@@ -227,22 +249,26 @@ pub fn launch_argv(profile: &Profile, agent: Option<&str>, prompt: Option<&str>)
         ShellFamily::PowerShell => {
             let mut line = format!("& {program}");
             if let Some(p) = prompt {
+                // Windows PowerShell 5 mangles double quotes when it calls a native command.
+                if p.contains('"') && is_windows_powershell_5(profile) {
+                    return Err(
+                        "Windows PowerShell 5 can't pass double quotes to the agent. Use PowerShell 7 or remove the quotes."
+                            .into(),
+                    );
+                }
                 line.push_str(&format!(" {flag}{}", powershell_quote(p)));
             }
             argv.extend(["-NoExit".into(), "-Command".into(), line]);
         }
         ShellFamily::Cmd => {
-            let mut line = program.to_string();
-            if let Some(p) = prompt {
-                if p.contains(['"', '%', '^', '&', '|', '<', '>', '\r', '\n']) {
-                    return Err(
-                        "This prompt has characters cmd can't pass safely. Use PowerShell or start without a prompt."
-                            .into(),
-                    );
-                }
-                line.push_str(&format!(" {flag}\"{p}\""));
+            // The `/k` string gets quoted on its way to cmd, which splits a prompt into
+            // broken arguments. So cmd starts agents only without a prompt.
+            if prompt.is_some() {
+                return Err(
+                    "Command Prompt can't pass a prompt safely. Use PowerShell or start without a prompt.".into(),
+                );
             }
-            argv.extend(["/k".into(), line]);
+            argv.extend(["/k".into(), program.to_string()]);
         }
         ShellFamily::Posix | ShellFamily::Wsl => {
             let mut line = program.to_string();
@@ -251,7 +277,9 @@ pub fn launch_argv(profile: &Profile, agent: Option<&str>, prompt: Option<&str>)
             }
             if profile.family == ShellFamily::Wsl {
                 line.push_str("; exec bash -l");
-                argv.extend(["--".into(), "bash".into(), "-lc".into(), line]);
+                // --exec starts bash directly; plain `--` would run the line through the
+                // distro's default shell first, which expands $(...) inside the prompt.
+                argv.extend(["--exec".into(), "bash".into(), "-lc".into(), line]);
             } else {
                 // Git Bash returns to itself by path; other login shells use $SHELL.
                 if profile.id == "git-bash" {
@@ -402,10 +430,8 @@ mod tests {
     }
 
     #[test]
-    fn cmd_builds_k_line() {
+    fn cmd_without_prompt_builds_k_line() {
         let cmd = profile("cmd", &["cmd.exe"], ShellFamily::Cmd);
-        let argv = launch_argv(&cmd, Some("codex"), Some("fix the bug")).unwrap();
-        assert_eq!(argv, ["cmd.exe", "/k", "codex \"fix the bug\""]);
         assert_eq!(
             launch_argv(&cmd, Some("codex"), None).unwrap(),
             ["cmd.exe", "/k", "codex"]
@@ -413,15 +439,62 @@ mod tests {
     }
 
     #[test]
-    fn cmd_rejects_unsafe_prompt() {
+    fn cmd_rejects_any_prompt() {
         let cmd = profile("cmd", &["cmd.exe"], ShellFamily::Cmd);
-        for bad in ["a\"b", "100%", "a^b", "a&b", "a|b", "a<b", "a>b"] {
-            let err = launch_argv(&cmd, Some("claude"), Some(bad)).unwrap_err();
+        for prompt in ["fix the bug", "a\"b", "100%"] {
+            let err = launch_argv(&cmd, Some("claude"), Some(prompt)).unwrap_err();
             assert_eq!(
                 err,
-                "This prompt has characters cmd can't pass safely. Use PowerShell or start without a prompt."
+                "Command Prompt can't pass a prompt safely. Use PowerShell or start without a prompt."
             );
         }
+    }
+
+    #[test]
+    fn powershell_doubles_curly_quotes() {
+        let ps = profile("pwsh", &["pwsh.exe"], ShellFamily::PowerShell);
+        let argv = launch_argv(&ps, Some("claude"), Some("x\u{2019}; Write-Output INJECTED; \u{2019}")).unwrap();
+        assert_eq!(
+            argv.last().unwrap(),
+            "& claude 'x\u{2019}\u{2019}; Write-Output INJECTED; \u{2019}\u{2019}'"
+        );
+        for q in ['\u{2018}', '\u{201A}', '\u{201B}'] {
+            let argv = launch_argv(&ps, Some("claude"), Some(&format!("a{q}b"))).unwrap();
+            assert_eq!(argv.last().unwrap(), &format!("& claude 'a{q}{q}b'"));
+        }
+    }
+
+    #[test]
+    fn windows_powershell_5_rejects_double_quotes() {
+        let ps5 = profile("powershell", &["powershell.exe", "-NoLogo"], ShellFamily::PowerShell);
+        let err = launch_argv(&ps5, Some("claude"), Some("say \"hi\"")).unwrap_err();
+        assert_eq!(
+            err,
+            "Windows PowerShell 5 can't pass double quotes to the agent. Use PowerShell 7 or remove the quotes."
+        );
+        // The file name is matched without regard to case; a prompt without quotes is fine.
+        let shouting = profile("powershell", &["C:\\Windows\\POWERSHELL.EXE"], ShellFamily::PowerShell);
+        assert!(launch_argv(&shouting, Some("claude"), Some("a\"b")).is_err());
+        assert!(launch_argv(&ps5, Some("claude"), Some("hi")).is_ok());
+        // PowerShell 7 is unaffected.
+        let pwsh = profile("pwsh", &["pwsh.exe"], ShellFamily::PowerShell);
+        assert!(launch_argv(&pwsh, Some("claude"), Some("say \"hi\"")).is_ok());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn docker_desktop_distros_are_not_profiles() {
+        fn distros() -> Vec<u8> {
+            utf16le("\u{feff}Ubuntu\r\ndocker-desktop\r\ndocker-desktop-data\r\nDebian\r\n")
+        }
+        let probe = Probe {
+            on_path: |_| false,
+            wsl_list: distros,
+            program_roots: Vec::new(),
+            login_shell: None,
+        };
+        let ids: Vec<String> = detect_profiles(&probe).into_iter().map(|p| p.id).collect();
+        assert_eq!(ids, ["wsl-ubuntu", "wsl-debian"]);
     }
 
     #[test]
@@ -448,7 +521,7 @@ mod tests {
                 "wsl.exe",
                 "-d",
                 "Ubuntu",
-                "--",
+                "--exec",
                 "bash",
                 "-lc",
                 "codex 'hi'; exec bash -l"
