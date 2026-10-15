@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { COMMANDS, NAV_COMMAND_IDS, commandById, keyText, shortcutLabel } from "./keymap";
+import { COMMANDS, NAV_COMMAND_IDS, commandById, keyText, osOfPlatform, shortcutLabel } from "./keymap";
+
+describe("osOfPlatform", () => {
+  it("maps the core's platform names to the shortcut families", () => {
+    expect([osOfPlatform("windows"), osOfPlatform("macos"), osOfPlatform("linux")]).toEqual(["windows", "mac", "linux"]);
+  });
+});
 
 describe("keyText", () => {
   it("names a physical key the way it is printed on the keycap", () => {

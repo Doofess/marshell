@@ -1,6 +1,8 @@
 import { DEFAULT_NAV_MODIFIER, navModifierLabel, type NavModifier } from "./navigation/modifier";
 
 export type Os = "windows" | "mac" | "linux";
+/** The shortcut family for the core's platform name ("windows", "macos" or "linux"). */
+export const osOfPlatform = (platform: "windows" | "macos" | "linux"): Os => (platform === "macos" ? "mac" : platform);
 /**
  * A key by its PHYSICAL position (`KeyboardEvent.code`: "KeyK", "Digit1", "F2", "Tab"), not by the character it types, so the
  * same shortcut sits on the same key of a French, German, Dvorak, Hebrew or Cyrillic keyboard. Punctuation never appears here.

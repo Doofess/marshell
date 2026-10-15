@@ -139,6 +139,19 @@ describe("SessionsStore", () => {
     expect(store.getState().selectedId).toBe("t1");
   });
 
+  it("counts core restarts, so the window can open the launcher before the first snapshot", async () => {
+    const { store, socket } = await started();
+    expect(store.getState().restarts).toBe(0);
+    socket().onSnapshot(snap([1]));
+    coreCb!({ kind: "restarted", generation: 2 });
+    expect(store.getState().restarts).toBe(1);
+    expect(store.getState().loaded).toBe(false);
+    await vi.waitFor(() => expect(sockets.length).toBe(2));
+    sockets[1]!.onSnapshot(snap([]));
+    coreCb!({ kind: "restarted", generation: 3 });
+    expect(store.getState().restarts).toBe(2);
+  });
+
   it("a failed core stops the socket and says so", async () => {
     const { store, socket } = await started();
     coreCb!({ kind: "failed" });

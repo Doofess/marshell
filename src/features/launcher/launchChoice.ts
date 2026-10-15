@@ -13,18 +13,23 @@ export type LaunchGroup = (typeof LAUNCH_GROUPS)[number];
 
 /** Something the launcher can start: an AI agent, or a manual CLI that is just a terminal. */
 export type LaunchProgram = {
-  id: SessionKind;
+  /** What the launcher picks by. The built-in programs use their kind; a live shell profile is `profile:<id>`. */
+  id: string;
+  /** The mark and accent: the agent or tool this program is. */
+  kind: SessionKind;
   label: string;
   /** What the tab says while it starts, e.g. "Starting Claude Code in my-app…". */
   cli: string;
   group: LaunchGroup;
   /** The hint in the box under the sentence: what to say first, or the command to run first. */
   first: string;
+  /** True when there is nothing to type first: a shell profile takes no prompt. */
+  noFirst?: boolean;
 };
 
-const agent = (id: SessionKind, label: string, cli: string): LaunchProgram => ({ id, label, cli, group: "Agents", first: `What should ${label} do first? (optional)` });
-const shell = (id: ToolId): LaunchProgram => ({ id, label: TOOL_NAMES[id], cli: TOOL_NAMES[id], group: "Shells", first: "Run a command first (optional)" });
-const tool = (id: ToolId, first: string, label = TOOL_NAMES[id], cli = label): LaunchProgram => ({ id, label, cli, group: "Tools", first });
+const agent = (id: SessionKind, label: string, cli: string): LaunchProgram => ({ id, kind: id, label, cli, group: "Agents", first: `What should ${label} do first? (optional)` });
+const shell = (id: ToolId): LaunchProgram => ({ id, kind: id, label: TOOL_NAMES[id], cli: TOOL_NAMES[id], group: "Shells", first: "Run a command first (optional)" });
+const tool = (id: ToolId, first: string, label = TOOL_NAMES[id], cli = label): LaunchProgram => ({ id, kind: id, label, cli, group: "Tools", first });
 
 /** Every AI agent CLI with a first-party command line. DeepSeek has none, so it is not listed; Google's is Antigravity (`agy`), Gemini CLI is dropped. Which ones can be started still depends on the adapters of phase 6; the launcher lists them all. */
 export const LAUNCH_PROGRAMS: LaunchProgram[] = [
@@ -53,26 +58,29 @@ export const LAUNCH_PROGRAMS: LaunchProgram[] = [
   tool("program", "Executable and arguments, e.g. htop", "Other program", "your program"),
 ];
 
-export const programsIn = (group: LaunchGroup) => LAUNCH_PROGRAMS.filter((p) => p.group === group);
-export const programById = (id: string) => LAUNCH_PROGRAMS.find((p) => p.id === id);
+export const programsIn = (group: LaunchGroup, programs: LaunchProgram[] = LAUNCH_PROGRAMS) => programs.filter((p) => p.group === group);
+export const programById = (id: string, programs: LaunchProgram[] = LAUNCH_PROGRAMS) => programs.find((p) => p.id === id);
 /** Only AI agents have a mode, a pace and a worktree choice; a manual CLI is a plain terminal. */
-export const isAgentProgram = (id: string) => !isTool(id);
+export const isAgentProgram = (id: string, programs: LaunchProgram[] = LAUNCH_PROGRAMS) => {
+  const p = programById(id, programs);
+  return p ? p.group === "Agents" : !isTool(id);
+};
 
-export type LauncherChoice = { program: SessionKind; projectId: string; mode: Mode; pace: Pace; worktree: boolean };
+export type LauncherChoice = { program: string; projectId: string; mode: Mode; pace: Pace; worktree: boolean };
 export type Remembered = Partial<Pick<LauncherChoice, "mode" | "pace" | "worktree">>;
 
 /** The launcher as one sentence, for the dialog's accessible description. */
-export function launcherSentence(c: LauncherChoice, projects: Project[]): string {
-  const label = programById(c.program)?.label ?? c.program;
+export function launcherSentence(c: LauncherChoice, projects: Project[], programs: LaunchProgram[] = LAUNCH_PROGRAMS): string {
+  const label = programById(c.program, programs)?.label ?? c.program;
   const p = projects.find((x) => x.id === c.projectId);
   const where = p ? (p.branch ? `${p.name} on ${p.branch}` : p.name) : "an unknown folder";
   const start = `Start ${label} in ${where}`;
-  return isAgentProgram(c.program) ? `${start}, ${c.mode} mode, ${c.pace}, ${c.worktree ? "in a new worktree" : "no worktree"}` : start;
+  return isAgentProgram(c.program, programs) ? `${start}, ${c.mode} mode, ${c.pace}, ${c.worktree ? "in a new worktree" : "no worktree"}` : start;
 }
 
 /** What the new tab shows within 100 ms, before the process answers. */
-export function startingText(program: SessionKind, projectName: string): string {
-  return `Starting ${programById(program)?.cli ?? program} in ${projectName}…`;
+export function startingText(program: string, projectName: string, programs: LaunchProgram[] = LAUNCH_PROGRAMS): string {
+  return `Starting ${programById(program, programs)?.cli ?? program} in ${projectName}…`;
 }
 
 export function applyRemembered(c: LauncherChoice, r: Remembered | undefined): LauncherChoice {

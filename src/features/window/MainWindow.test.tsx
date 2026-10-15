@@ -305,6 +305,23 @@ describe("MainWindow: the review's critical findings", () => {
   });
 });
 
+describe("MainWindow: the sidebar footer", () => {
+  it("defaults to the scenario's plan and doctor numbers, so the stories do not change", () => {
+    const h = html();
+    expect(h).toContain("5h 38%");
+    expect(h).toContain("Doctor: 4 issues");
+  });
+  it("shows no footer, and no made-up plan or doctor numbers, when given null", () => {
+    const h = html({ footer: null });
+    expect(h).not.toContain("sidebar__footer");
+    expect(h).not.toContain("Doctor:");
+    expect(h).not.toContain("5h ");
+  });
+  it("shows the numbers it is given", () => {
+    expect(html({ footer: { doctorIssues: 2 } })).toContain("Doctor: 2 issues");
+  });
+});
+
 describe("MainWindow: the shell panel in the sidebar", () => {
   const shellOf = (h: string) => h.slice(h.indexOf('<section class="shell-panel"'), h.indexOf("</section>", h.indexOf('<section class="shell-panel"')));
   const tall = { width: 1180, height: 880 } as const;

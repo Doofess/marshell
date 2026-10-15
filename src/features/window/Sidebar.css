@@ -1,6 +1,6 @@
 .sidebar {
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr) 40px;
+  grid-template-rows: auto minmax(0, 1fr) var(--footer-h, 40px);
   min-block-size: 0;
   block-size: 100%;
   background: var(--bg-raised);
@@ -53,7 +53,7 @@
 }
 /* With the shell panel the grid has a fourth row, sized from shellLayout so nothing is clipped. */
 .sidebar[data-shell] {
-  grid-template-rows: auto minmax(0, 1fr) var(--shell-h) 40px;
+  grid-template-rows: auto minmax(0, 1fr) var(--shell-h) var(--footer-h, 40px);
 }
 .sidebar__footer {
   display: flex;

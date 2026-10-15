@@ -28,6 +28,19 @@
   inset: 0;
 }
 
+/* "Starting Claude Code in my-app…": over the terminal until its first output, in line with the terminal's own gutter. */
+.terminal-placeholder {
+  position: absolute;
+  inset-block-start: var(--space-2);
+  inset-inline-start: var(--space-2);
+  margin: 0;
+  padding: var(--space-2);
+  color: var(--text-2);
+  font-family: var(--font-mono);
+  font-size: var(--text-13);
+  pointer-events: none;
+}
+
 .startup-error {
   margin: 0;
   padding: var(--space-6);

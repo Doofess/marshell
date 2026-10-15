@@ -1,7 +1,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { DEFAULT_CHOICE, PROJECTS, REMEMBERED } from "./fixtures";
-import { LAUNCH_GROUPS, LAUNCH_PROGRAMS, applyRemembered } from "./launchChoice";
+import { LAUNCH_GROUPS, LAUNCH_PROGRAMS, applyRemembered, type LaunchProgram, type LauncherChoice } from "./launchChoice";
 import { Launcher, type LauncherView } from "./Launcher";
 
 const view = (p: Partial<LauncherView> = {}): LauncherView => ({ choice: DEFAULT_CHOICE, projects: PROJECTS, query: null, activeIndex: 0, ...p });
@@ -154,6 +154,64 @@ describe("Launcher: the number the new session takes", () => {
   });
   it("says nothing when the parent does not know it", () => {
     expect(html()).not.toContain("launcher__next");
+  });
+});
+
+describe("Launcher: chips", () => {
+  it("shows the mode, pace and worktree chips by default", () => {
+    const h = html();
+    expect(h).toContain("Mode: Manual");
+    expect(h).toContain('role="checkbox"');
+  });
+  it("chips hidden when chips is false", () => {
+    const h = renderToStaticMarkup(<Launcher view={view()} chips={false} />);
+    expect(count(h, /class="launcher__chip"/g)).toBe(2);
+    expect(h).not.toContain("Mode:");
+    expect(h).not.toContain("Pace:");
+    expect(h).not.toContain('role="checkbox"');
+    expect(h).toContain("Start Claude in my-app on main");
+  });
+});
+
+describe("Launcher: errors and busy", () => {
+  const withError = renderToStaticMarkup(<Launcher view={view()} error="Command Prompt can't pass a prompt safely." />);
+  it("launcher shows the error and stays open", () => {
+    expect(withError).toMatch(/<p class="launcher__error" role="alert">Command Prompt can&#x27;t pass a prompt safely\.<\/p>/);
+    expect(withError).toContain('role="dialog"');
+    expect(withError.indexOf("launcher__start")).toBeLessThan(withError.indexOf("launcher__error"));
+  });
+  it("shows no alert when there is no error", () => {
+    expect(html()).not.toContain('role="alert"');
+  });
+  it("disables Start while busy and keeps its label", () => {
+    const h = renderToStaticMarkup(<Launcher view={view()} busy />);
+    expect(h).toMatch(/<button type="button" class="launcher__start" disabled="">Start <kbd>Enter<\/kbd><\/button>/);
+    expect(html()).not.toContain("disabled");
+  });
+});
+
+describe("Launcher: live programs", () => {
+  const programs: LaunchProgram[] = [
+    LAUNCH_PROGRAMS[0]!,
+    { id: "profile:cmd", kind: "cmd", label: "Command Prompt", cli: "Command Prompt", group: "Shells", first: "", noFirst: true },
+  ];
+  const live = (choice: LauncherChoice, open = false) => renderToStaticMarkup(<Launcher view={view({ choice, programsOpen: open })} programs={programs} chips={false} />);
+  it("names a profile program with its label and treats it as a plain terminal", () => {
+    const h = live({ ...DEFAULT_CHOICE, program: "profile:cmd" });
+    expect(h).toContain('aria-label="Program: Command Prompt"');
+    expect(h).toContain("Start Command Prompt in my-app on main");
+    expect(h).toContain('data-manual="true"');
+  });
+  it("hides the first-prompt box for a shell profile, since only agents take a prompt", () => {
+    expect(live({ ...DEFAULT_CHOICE, program: "profile:cmd" })).not.toContain("<textarea");
+    expect(live(DEFAULT_CHOICE)).toContain("<textarea");
+  });
+  it("lists only the programs it was given, and no empty group", () => {
+    const h = live(DEFAULT_CHOICE, true);
+    expect(count(h, /role="option"/g)).toBe(2);
+    expect(h).toContain(">Agents<");
+    expect(h).toContain(">Shells<");
+    expect(h).not.toContain(">Tools<");
   });
 });
 

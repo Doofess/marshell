@@ -23,7 +23,7 @@ import { SCENARIO_FOOTER, SCENARIO_PLAN, SCENARIO_PORTS, SCENARIO_REQUESTS, SCEN
 import { SessionAnnouncer } from "./SessionAnnouncer";
 import { SessionHeader } from "./SessionHeader";
 import { windowTitle } from "./windowTitle";
-import { Sidebar } from "./Sidebar";
+import { Sidebar, type SidebarFooter } from "./Sidebar";
 import { shellNameFor } from "./ShellPanel";
 import { ARRANGEMENTS, chooseArrangement, maxPanes, type Arrangement, type PaneCount, type Ratios } from "./splitLayout";
 import { SplitView } from "./SplitView";
@@ -68,6 +68,8 @@ export type MainWindowProps = {
   renderTerminal?: (row: RowModel) => ReactNode;
   /** The ports the session header lists; defaults to the scenario's. */
   ports?: string[];
+  /** What the sidebar footer shows; defaults to the scenario's plan and doctor numbers. `null` leaves the footer out (the live app has none to show yet). */
+  footer?: SidebarFooter | null;
   /** The 24 px status bar at the foot of the window (the focused session's strip); on by default, never in focus mode. */
   statusBar?: boolean;
   /** The plain shell panel under the session list; on by default in the expanded sidebar. */
@@ -118,6 +120,7 @@ export function MainWindow({
   shellCollapsed = false,
   renderTerminal,
   ports = SCENARIO_PORTS,
+  footer = SCENARIO_FOOTER,
 }: MainWindowProps) {
   const pref: SidebarPref = sidebarPref ?? (layout === "focus" ? "focus" : layout === "rail" ? "rail" : "expanded");
   const mode = sidebarMode(width, pref);
@@ -220,7 +223,7 @@ export function MainWindow({
       </header>
 
       <div className="window__body">
-        {mode === "expanded" && <Sidebar rows={rows} requests={requests} height={height - BAR} width={sideW} selectedId={selected?.id} footer={SCENARIO_FOOTER} shell={shell ? { cwd: active?.project, shellName: shellNameFor(os), collapsed: shellCollapsed, os } : undefined} />}
+        {mode === "expanded" && <Sidebar rows={rows} requests={requests} height={height - BAR} width={sideW} selectedId={selected?.id} footer={footer ?? undefined} shell={shell ? { cwd: active?.project, shellName: shellNameFor(os), collapsed: shellCollapsed, os } : undefined} />}
         {mode === "rail" && <Rail rows={rows} needsYou={waiting} selectedId={selected?.id} os={os} />}
 
         <div className="window__center">

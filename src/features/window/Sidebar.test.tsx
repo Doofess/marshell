@@ -34,6 +34,13 @@ describe("Sidebar", () => {
     expect(h).not.toContain("–");
     expect(h).toContain("Doctor: no issues");
   });
+  it("has no footer when none is given, and gives its row back", () => {
+    const h = html({ footer: undefined });
+    expect(h).not.toContain("sidebar__footer");
+    expect(h).not.toContain("Doctor:");
+    expect(h).toContain("--footer-h:0px");
+    expect(html()).not.toContain("--footer-h");
+  });
   it("keeps the lane header when nothing waits", () => {
     expect(html({ requests: [] })).toContain("All clear");
   });

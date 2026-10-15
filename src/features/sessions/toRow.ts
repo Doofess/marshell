@@ -5,7 +5,7 @@ import type { SessionInfo } from "../../generated/SessionInfo";
 import type { RowModel } from "../sidebar/types";
 
 /** The mark for a shell session, from its profile's family. A profile that no longer exists gets the generic program mark. */
-function shellKind(profile: Profile | undefined): SessionKind {
+export function shellKind(profile: Profile | undefined): SessionKind {
   switch (profile?.family) {
     case "power_shell":
       return "powershell";

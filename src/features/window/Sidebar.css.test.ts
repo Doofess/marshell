@@ -27,7 +27,7 @@ describe("Sidebar.css", () => {
     expect(css).toContain("@supports (animation-timeline: scroll())");
   });
   it("gives the grid a fourth row for the shell panel, sized by one custom property", () => {
-    expect(rule(".sidebar[data-shell]")).toMatch(/grid-template-rows:\s*auto minmax\(0, 1fr\) var\(--shell-h\) 40px/);
+    expect(rule(".sidebar[data-shell]")).toMatch(/grid-template-rows:\s*auto minmax\(0, 1fr\) var\(--shell-h\) var\(--footer-h, 40px\)/);
   });
   it("no longer has the overflow button's styles", () => {
     expect(css).not.toContain("sidebar__more");

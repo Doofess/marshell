@@ -20,10 +20,12 @@ export type SessionsState = {
   selectedId: string | undefined;
   /** True once the core has sent the list on this connection, so an empty list really is empty. */
   loaded: boolean;
+  /** How many times the core restarted. The window opens the launcher on a change: the new core has no sessions. */
+  restarts: number;
   error: string | null;
 };
 
-const EMPTY: SessionsState = { endpoint: null, profiles: [], infos: [], closed: [], selectedId: undefined, loaded: false, error: null };
+const EMPTY: SessionsState = { endpoint: null, profiles: [], infos: [], closed: [], selectedId: undefined, loaded: false, restarts: 0, error: null };
 const FAILED_TEXT = "Marshell's core stopped and could not restart. Restart Marshell to continue.";
 
 /** Which session is selected after the list changed: the newest one, else the same one, else its neighbour. */
@@ -81,7 +83,7 @@ export class SessionsStore {
       if (e.kind === "restarted") {
         resetEndpoint();
         this.disconnect();
-        this.set({ ...EMPTY });
+        this.set({ ...EMPTY, restarts: this.state.restarts + 1 });
         void this.connect();
       } else {
         this.disconnect();
@@ -135,6 +137,7 @@ export function useSessions(): {
   closed: SessionInfo[];
   selectedId: string | undefined;
   loaded: boolean;
+  restarts: number;
   select: (id: string) => void;
   error: string | null;
 } {

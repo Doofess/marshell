@@ -3,6 +3,8 @@ import { FitAddon } from "@xterm/addon-fit";
 import { Terminal } from "@xterm/xterm";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { Endpoint } from "../../generated/Endpoint";
+import { findCommand } from "../../lib/bindings";
+import { osOfPlatform } from "../../lib/keymap";
 import { onCoreEvent } from "../../lib/api/coreEvents";
 import { PtySocket } from "../../lib/api/ptySocket";
 import { LatencyMeter } from "../perf/latency";
@@ -15,11 +17,19 @@ function isPerfToggle(e: KeyboardEvent): boolean {
   return e.type === "keydown" && e.shiftKey && e.altKey && (e.ctrlKey || e.metaKey) && e.code === "KeyP";
 }
 
-export function TerminalView({ endpoint, tabId }: { endpoint: Endpoint; tabId: string }) {
+/**
+ * One session's terminal. `placeholder` is a line shown over it until the first output arrives ("Starting Claude Code in
+ * my-app…"). `onSize` hears the terminal's size once it is measured and whenever it changes.
+ */
+export function TerminalView({ endpoint, tabId, placeholder, onSize }: { endpoint: Endpoint; tabId: string; placeholder?: string; onSize?: (cols: number, rows: number) => void }) {
   const host = useRef<HTMLDivElement>(null);
   const meter = useMemo(() => new LatencyMeter(), []);
   const [renderer, setRenderer] = useState<RendererKind>("dom");
   const [perfOpen, setPerfOpen] = useState(false);
+  const [gotOutput, setGotOutput] = useState(false);
+  // The effect below must not restart when the parent passes a new callback.
+  const sizeRef = useRef(onSize);
+  sizeRef.current = onSize;
 
   useEffect(() => {
     const el = host.current;
@@ -36,12 +46,18 @@ export function TerminalView({ endpoint, tabId }: { endpoint: Endpoint; tabId: s
         setPerfOpen((open) => !open);
         return false;
       }
+      // The launcher shortcut belongs to the app: the terminal must not type it (Ctrl+T is a control code).
+      if (e.type === "keydown" && findCommand(e, osOfPlatform(endpoint.platform))?.id === "launcher") return false;
       return true;
     });
 
     const socket = new PtySocket(endpoint, tabId, {
-      onOutput: (seq, bytes) => term.write(bytes, () => socket.processed(seq + bytes.length)),
+      onOutput: (seq, bytes) => {
+        if (bytes.length > 0) setGotOutput(true);
+        term.write(bytes, () => socket.processed(seq + bytes.length));
+      },
       onReset: (seq, screen) => {
+        if (screen.length > 0) setGotOutput(true);
         term.reset();
         term.write(screen, () => socket.processed(seq));
       },
@@ -64,7 +80,10 @@ export function TerminalView({ endpoint, tabId }: { endpoint: Endpoint; tabId: s
         socket.sendInput(d);
       }),
       term.onBinary((d) => core === "live" && socket.sendBytes(d)),
-      term.onResize(({ cols, rows }) => socket.resize(cols, rows)),
+      term.onResize(({ cols, rows }) => {
+        socket.resize(cols, rows);
+        sizeRef.current?.(cols, rows);
+      }),
       term.onWriteParsed(() => meter.markOutput()),
     ];
 
@@ -76,6 +95,7 @@ export function TerminalView({ endpoint, tabId }: { endpoint: Endpoint; tabId: s
     observer.observe(el);
     fit.fit();
     socket.resize(term.cols, term.rows);
+    sizeRef.current?.(term.cols, term.rows);
     term.focus();
 
     const scheme = matchMedia("(prefers-color-scheme: dark)");
@@ -103,6 +123,9 @@ export function TerminalView({ endpoint, tabId }: { endpoint: Endpoint; tabId: s
   return (
     <>
       <div ref={host} className="terminal-host" />
+      {placeholder && !gotOutput && (
+        <p className="terminal-placeholder">{placeholder}</p>
+      )}
       {perfOpen && <PerfOverlay meter={meter} renderer={renderer} />}
     </>
   );
