@@ -1,4 +1,5 @@
 pub mod auth;
+pub mod crash;
 pub mod paths;
 pub mod pty;
 pub mod server;
