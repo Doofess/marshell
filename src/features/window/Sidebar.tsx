@@ -38,6 +38,7 @@ export function Sidebar({
   onRename,
   onRenameCancel,
   onReorder,
+  onSelect,
 }: {
   rows: RowModel[];
   requests: ApprovalRequest[];
@@ -52,6 +53,8 @@ export function Sidebar({
   onRenameCancel?: (opts: { refocus: boolean }) => void;
   /** Dragging a row to a new place gives the whole new order. Left out, rows are not draggable. */
   onReorder?: (ids: string[]) => void;
+  /** A click on a row gives its session id. */
+  onSelect?: (id: string) => void;
 }) {
   const issues = footer?.doctorIssues ?? 0;
   const [drag, setDrag] = useState<DragState | null>(null);
@@ -101,6 +104,7 @@ export function Sidebar({
             selected={r.id === selectedId}
             tabStop={r.id === tabStop}
             drag={dragFor(r.id)}
+            onSelect={onSelect && (() => onSelect(r.id))}
             rename={r.id === renamingId && onRename && onRenameCancel ? { onCommit: (name) => onRename(r.id, name), onCancel: onRenameCancel } : undefined}
           />
         ))}

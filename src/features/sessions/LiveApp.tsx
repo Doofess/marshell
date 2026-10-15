@@ -188,6 +188,8 @@ export function LiveApp() {
           onRename={(id, name) => void actions.commitRename(id, name)}
           onRenameCancel={(opts) => actions.cancelRename(opts)}
           onReorder={(ids) => actions.reorder(ids)}
+          onSelect={select}
+          onPalette={() => setOverlay("palette")}
         />
       )}
       {overlay === "palette" && os && <LivePalette sessions={paletteSessions(rows)} os={os} onRun={runFromPalette} onClose={() => setOverlay(null)} />}

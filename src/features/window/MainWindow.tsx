@@ -88,6 +88,10 @@ export type MainWindowProps = {
   onRenameCancel?: (opts: { refocus: boolean }) => void;
   /** Dragging a sidebar row gives the whole new order. Left out, rows are not draggable. */
   onReorder?: (ids: string[]) => void;
+  /** A click on a sidebar row or a rail button gives that session's id. Left out, they do nothing (stories). */
+  onSelect?: (id: string) => void;
+  /** The click on the Command palette button, in the top bar and in the rail. */
+  onPalette?: () => void;
 };
 
 const icon = (d: string) => (
@@ -140,6 +144,8 @@ export function MainWindow({
   onRename,
   onRenameCancel,
   onReorder,
+  onSelect,
+  onPalette,
 }: MainWindowProps) {
   const pref: SidebarPref = sidebarPref ?? (layout === "focus" ? "focus" : layout === "rail" ? "rail" : "expanded");
   const mode = sidebarMode(width, pref);
@@ -202,7 +208,7 @@ export function MainWindow({
             </button>
           )}
           {mode === "expanded" && (
-            <button type="button" className="window__palette" aria-label="Command palette" title={`Search sessions, projects and commands (${shortcutLabel(commandById("palette").binding!, os)})`}>
+            <button type="button" className="window__palette" aria-label="Command palette" title={`Search sessions, projects and commands (${shortcutLabel(commandById("palette").binding!, os)})`} onClick={onPalette}>
               <SearchIcon />
               <span>Command palette</span>
             </button>
@@ -242,8 +248,8 @@ export function MainWindow({
       </header>
 
       <div className="window__body">
-        {mode === "expanded" && <Sidebar rows={rows} requests={requests} height={height - BAR} width={sideW} selectedId={selected?.id} footer={footer ?? undefined} shell={shell ? { cwd: active?.project, shellName: shellNameFor(os), collapsed: shellCollapsed, os } : undefined} renamingId={renamingId} onRename={onRename} onRenameCancel={onRenameCancel} onReorder={onReorder} />}
-        {mode === "rail" && <Rail rows={rows} needsYou={waiting} selectedId={selected?.id} os={os} />}
+        {mode === "expanded" && <Sidebar rows={rows} requests={requests} height={height - BAR} width={sideW} selectedId={selected?.id} footer={footer ?? undefined} shell={shell ? { cwd: active?.project, shellName: shellNameFor(os), collapsed: shellCollapsed, os } : undefined} renamingId={renamingId} onRename={onRename} onRenameCancel={onRenameCancel} onReorder={onReorder} onSelect={onSelect} />}
+        {mode === "rail" && <Rail rows={rows} needsYou={waiting} selectedId={selected?.id} os={os} onSelect={onSelect} onPalette={onPalette} />}
 
         <div className="window__center">
         <main className="window__main" data-placement={drawer ? placement : undefined}>

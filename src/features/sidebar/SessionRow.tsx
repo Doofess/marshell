@@ -40,6 +40,7 @@ export function SessionRow({
   tabStop = false,
   drag,
   rename,
+  onSelect,
 }: {
   row: RowModel;
   density: Density;
@@ -47,6 +48,8 @@ export function SessionRow({
   tabStop?: boolean;
   drag?: RowDrag;
   rename?: RowRename;
+  /** A click on the row. Left out, a click does nothing (stories). */
+  onSelect?: () => void;
 }) {
   const caution = modeCaution(row.mode);
   const usage = formatUsage(row.usage);
@@ -76,6 +79,7 @@ export function SessionRow({
       data-renaming={rename ? "" : undefined}
       draggable={drag && !rename ? true : undefined}
       data-drop={drag?.dropEdge}
+      onClick={onSelect}
       onDragStart={drag?.onDragStart}
       onDragOver={drag?.onDragOver}
       onDrop={drag?.onDrop}
