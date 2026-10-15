@@ -3,9 +3,10 @@ import { AuxGlyph, StatusGlyph } from "../../components/StatusGlyph/StatusGlyph"
 import type { ApprovalRequest } from "../approval/types";
 import { Lane } from "../lane/Lane";
 import { laneLayout, pending } from "../lane/laneLayout";
-import { SessionRow } from "../sidebar/SessionRow";
+import { SessionRow, type RowDrag } from "../sidebar/SessionRow";
+import { dropOrder } from "../sidebar/reorder";
 import type { RowModel } from "../sidebar/types";
-import type { CSSProperties } from "react";
+import { useState, type CSSProperties } from "react";
 import type { Os } from "../../lib/keymap";
 import type { ShellName } from "../terminal/scriptedShell";
 import { shellLayout } from "./shellLayout";
@@ -25,8 +26,62 @@ export type SidebarShell = { shellName?: ShellName; cwd?: string; collapsed?: bo
  * and the doctor (left out when `footer` is). The list scrolls (wheel, touch, keys) with no scrollbar drawn, and every session is in it; the selected
  * row is the one tab stop and scrolls into view when it takes focus. Unknown plan usage is left out of the footer.
  */
-export function Sidebar({ rows, requests, height, width, selectedId, footer, shell }: { rows: RowModel[]; requests: ApprovalRequest[]; height: number; width: number; selectedId?: string; footer?: SidebarFooter; shell?: SidebarShell }) {
+export function Sidebar({
+  rows,
+  requests,
+  height,
+  width,
+  selectedId,
+  footer,
+  shell,
+  renamingId,
+  onRename,
+  onRenameCancel,
+  onReorder,
+}: {
+  rows: RowModel[];
+  requests: ApprovalRequest[];
+  height: number;
+  width: number;
+  selectedId?: string;
+  footer?: SidebarFooter;
+  shell?: SidebarShell;
+  /** F2: the row whose name is a text box, and what its Enter and its Escape or blur do. */
+  renamingId?: string | null;
+  onRename?: (id: string, name: string) => void;
+  onRenameCancel?: (opts: { refocus: boolean }) => void;
+  /** Dragging a row to a new place gives the whole new order. Left out, rows are not draggable. */
+  onReorder?: (ids: string[]) => void;
+}) {
   const issues = footer?.doctorIssues ?? 0;
+  const [drag, setDrag] = useState<{ id: string; over?: { id: string; edge: "before" | "after" } } | null>(null);
+  const ids = rows.map((r) => r.id);
+  const dragFor = (id: string): RowDrag | undefined => {
+    if (!onReorder) return undefined;
+    return {
+      dropEdge: drag?.over?.id === id ? drag.over.edge : undefined,
+      onDragStart: (e) => {
+        e.dataTransfer.effectAllowed = "move";
+        e.dataTransfer.setData("text/plain", id);
+        setDrag({ id });
+      },
+      onDragOver: (e) => {
+        if (!drag || drag.id === id) return;
+        e.preventDefault();
+        e.dataTransfer.dropEffect = "move";
+        const box = e.currentTarget.getBoundingClientRect();
+        const edge = e.clientY < box.top + box.height / 2 ? "before" : "after";
+        if (drag.over?.id !== id || drag.over.edge !== edge) setDrag({ id: drag.id, over: { id, edge } });
+      },
+      onDrop: (e) => {
+        e.preventDefault();
+        const next = drag?.over && dropOrder(ids, drag.id, drag.over.id, drag.over.edge);
+        setDrag(null);
+        if (next) onReorder(next);
+      },
+      onDragEnd: () => setDrag(null),
+    };
+  };
   const tabStop = rows.some((r) => r.id === selectedId) ? selectedId : rows[0]?.id;
   const lane = laneLayout(pending(requests).length, height);
   const panel = shell ? shellLayout(height, lane.height, shell.collapsed, ROW_HEIGHT) : null;
@@ -36,7 +91,15 @@ export function Sidebar({ rows, requests, height, width, selectedId, footer, she
       <Lane requests={requests} sidebarHeight={height} />
       <div className="sidebar__list" role="listbox" aria-label="Sessions">
         {rows.map((r) => (
-          <SessionRow key={r.id} row={r} density="comfortable" selected={r.id === selectedId} tabStop={r.id === tabStop} />
+          <SessionRow
+            key={r.id}
+            row={r}
+            density="comfortable"
+            selected={r.id === selectedId}
+            tabStop={r.id === tabStop}
+            drag={dragFor(r.id)}
+            rename={r.id === renamingId && onRename && onRenameCancel ? { onCommit: (name) => onRename(r.id, name), onCancel: onRenameCancel } : undefined}
+          />
         ))}
       </div>
       {panel && shell && <ShellPanel height={panel.height} collapsed={panel.collapsed} auto={panel.auto} cwd={shell.cwd} shellName={shell.shellName} os={shell.os} />}

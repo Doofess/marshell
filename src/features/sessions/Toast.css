@@ -1,0 +1,11 @@
+/* The Doctor's toast floats in a scrolling page; in the window it sits over the lower start corner of the terminal column. */
+.toast[data-placement="window"] {
+  position: absolute;
+  inset-block-end: var(--space-4);
+  inset-inline-start: var(--space-4);
+  margin: 0;
+  grid-auto-flow: column;
+  align-items: center;
+  gap: var(--space-4);
+  z-index: 2;
+}

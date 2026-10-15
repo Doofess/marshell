@@ -76,6 +76,18 @@ export type MainWindowProps = {
   shell?: boolean;
   /** The user hid the shell panel: header only. */
   shellCollapsed?: boolean;
+  /** Takes the place of the session header while it is set (the busy-close question). Shown even where the header is hidden. */
+  headerBar?: ReactNode;
+  /** A receipt over the lower start corner of the terminal column. Plain markup: `notice` is what gets announced. */
+  toast?: ReactNode;
+  /** Text for the window's one announcer to say; a new `id` says it again, even if the text is the same. */
+  notice?: { id: number; text: string } | null;
+  /** F2: the sidebar row whose name is a text box, and what its Enter and its Escape or blur do. */
+  renamingId?: string | null;
+  onRename?: (id: string, name: string) => void;
+  onRenameCancel?: (opts: { refocus: boolean }) => void;
+  /** Dragging a sidebar row gives the whole new order. Left out, rows are not draggable. */
+  onReorder?: (ids: string[]) => void;
 };
 
 const icon = (d: string) => (
@@ -121,6 +133,13 @@ export function MainWindow({
   renderTerminal,
   ports = SCENARIO_PORTS,
   footer = SCENARIO_FOOTER,
+  headerBar,
+  toast,
+  notice,
+  renamingId,
+  onRename,
+  onRenameCancel,
+  onReorder,
 }: MainWindowProps) {
   const pref: SidebarPref = sidebarPref ?? (layout === "focus" ? "focus" : layout === "rail" ? "rail" : "expanded");
   const mode = sidebarMode(width, pref);
@@ -172,7 +191,7 @@ export function MainWindow({
 
   return (
     <div className="window" style={{ inlineSize: width, blockSize: height, "--side-w": `${sideW}px` } as CSSProperties} data-mode={mode} data-layout={layout} data-agent={active?.agent}>
-      <SessionAnnouncer row={active} needsYou={waiting} />
+      <SessionAnnouncer row={active} needsYou={waiting} notice={notice} />
       <header className="window__bar">
         <div className="window__bar-side">
           {/* In focus mode this column has no width: its buttons are not rendered, so keyboard focus can never land on something nobody sees. */}
@@ -189,7 +208,7 @@ export function MainWindow({
             </button>
           )}
         </div>
-        <div className="window__bar-main">{showHeader && active && <SessionHeader row={active} ports={ports} />}</div>
+        <div className="window__bar-main">{headerBar ?? (showHeader && active && <SessionHeader row={active} ports={ports} />)}</div>
         <div className="window__bar-end">
           <div className="window__layout">
             <button
@@ -223,7 +242,7 @@ export function MainWindow({
       </header>
 
       <div className="window__body">
-        {mode === "expanded" && <Sidebar rows={rows} requests={requests} height={height - BAR} width={sideW} selectedId={selected?.id} footer={footer ?? undefined} shell={shell ? { cwd: active?.project, shellName: shellNameFor(os), collapsed: shellCollapsed, os } : undefined} />}
+        {mode === "expanded" && <Sidebar rows={rows} requests={requests} height={height - BAR} width={sideW} selectedId={selected?.id} footer={footer ?? undefined} shell={shell ? { cwd: active?.project, shellName: shellNameFor(os), collapsed: shellCollapsed, os } : undefined} renamingId={renamingId} onRename={onRename} onRenameCancel={onRenameCancel} onReorder={onReorder} />}
         {mode === "rail" && <Rail rows={rows} needsYou={waiting} selectedId={selected?.id} os={os} />}
 
         <div className="window__center">
@@ -256,6 +275,7 @@ export function MainWindow({
             </aside>
           )}
         </main>
+        {toast}
         {showFull && selected && (
           <div className="window__composer" style={{ blockSize: COMPOSER.full }}>
             <Composer row={selected} variant="full" value={composerValue} os={os} />

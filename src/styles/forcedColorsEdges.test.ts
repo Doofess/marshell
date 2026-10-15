@@ -13,6 +13,7 @@ const EDGES: Record<string, string[]> = {
   "components/Switch/Switch.css": [".switch__track"],
   "features/settings/Settings.css": [".scope-badge", ".field", ".settings__banner", ".settings__btn", ".settings__nav-item", ".change-bar", ".field__control", ".raw-editor__text"],
   "features/doctor/Doctor.css": [".doctor__row", ".doctor__failed", ".doctor__btn", ".doctor__link", ".toast", ".toast__btn", ".fix-sheet", ".fix-sheet__btn"],
+  "features/sessions/CloseBar.css": [".close-bar__btn"],
   "features/onboarding/Onboarding.css": [".consent", ".detected__row", ".consent__toggle", ".consent__skip"],
   "features/departures/Board.css": [".board__status", ".board__waiting", ".board__all"],
   "features/notifications/OsBanner.css": [".os-banner", ".os-banner__btn"],

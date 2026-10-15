@@ -3,7 +3,7 @@ import { FitAddon } from "@xterm/addon-fit";
 import { Terminal } from "@xterm/xterm";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { Endpoint } from "../../generated/Endpoint";
-import { findCommand } from "../../lib/bindings";
+import { sessionShortcut } from "../../lib/appShortcuts";
 import { osOfPlatform } from "../../lib/keymap";
 import { onCoreEvent } from "../../lib/api/coreEvents";
 import { PtySocket } from "../../lib/api/ptySocket";
@@ -28,10 +28,12 @@ type Props = {
   onSize?: (cols: number, rows: number) => void;
   /** False while something else (the launcher) has the keys: the terminal takes focus when this turns true. Default true. */
   autoFocus?: boolean;
+  /** Bumping this takes focus back to the terminal (a closed question or a finished rename hands the keys back). */
+  focusToken?: number;
 };
 
 /** One session's terminal. */
-export function TerminalView({ endpoint, tabId, placeholder, onOutput, onSize, autoFocus = true }: Props) {
+export function TerminalView({ endpoint, tabId, placeholder, onOutput, onSize, autoFocus = true, focusToken = 0 }: Props) {
   const host = useRef<HTMLDivElement>(null);
   const meter = useMemo(() => new LatencyMeter(), []);
   const [renderer, setRenderer] = useState<RendererKind>("dom");
@@ -60,8 +62,9 @@ export function TerminalView({ endpoint, tabId, placeholder, onOutput, onSize, a
         setPerfOpen((open) => !open);
         return false;
       }
-      // The launcher shortcut belongs to the app: the terminal must not type it (Ctrl+T is a control code).
-      if (e.type === "keydown" && findCommand(e, osOfPlatform(endpoint.platform))?.id === "launcher") return false;
+      // The app's session shortcuts (launcher, close, reopen, rename, go to, move) belong to the app: the terminal must not type
+      // them (Ctrl+T and Ctrl+W are control codes). The app hears the same key on the window.
+      if (e.type === "keydown" && sessionShortcut(e, osOfPlatform(endpoint.platform)) !== null) return false;
       return true;
     });
 
@@ -143,7 +146,7 @@ export function TerminalView({ endpoint, tabId, placeholder, onOutput, onSize, a
   // Declared after the effect above so a new terminal exists by the time this runs.
   useEffect(() => {
     if (autoFocus) termRef.current?.focus();
-  }, [autoFocus, endpoint, tabId]);
+  }, [autoFocus, endpoint, tabId, focusToken]);
 
   return (
     <>

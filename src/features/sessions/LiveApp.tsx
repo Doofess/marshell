@@ -1,12 +1,16 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import type { CreateSessionResponse } from "../../generated/CreateSessionResponse";
-import { findCommand } from "../../lib/bindings";
+import { sessions } from "../../lib/api/sessions";
+import { sessionShortcut } from "../../lib/appShortcuts";
 import { osOfPlatform } from "../../lib/keymap";
 import { nextSessionNumber } from "../sidebar/sessionNumber";
 import type { RowModel } from "../sidebar/types";
 import { TerminalView } from "../terminal/TerminalView";
 import { MainWindow } from "../window/MainWindow";
+import { CloseBar } from "./CloseBar";
 import { LiveLauncher } from "./LiveLauncher";
+import { SessionActions, closeBarText } from "./sessionActions";
+import { Toast } from "./Toast";
 import { pruneClosed, without, type StartingTexts } from "./startingTexts";
 import { useSessions } from "./useSessions";
 
@@ -57,18 +61,43 @@ export function LiveApp() {
     current.forEach((id) => listed.current.add(id));
   }, [rows]);
 
-  // Ctrl+Shift+T opens it from anywhere; the terminal lets that key through (TerminalView).
+  // Close, reopen, rename, reorder and go to: see sessionActions. The class reads the latest list through this ref.
+  const context = useRef({ endpoint, infos, selectedId });
+  context.current = { endpoint, infos, selectedId };
+  const selectRef = useRef(select);
+  selectRef.current = select;
+  const actions = useMemo(() => new SessionActions({ api: sessions, context: () => context.current, select: (id) => selectRef.current(id) }), []);
+  useEffect(() => () => actions.dispose(), [actions]);
+  const { toast, closing, renaming, focusToken } = useSyncExternalStore(actions.subscribe, actions.getState);
+  // A question about a session that is no longer the selected one, or is gone, has nothing left to ask.
+  useEffect(() => {
+    if (closing !== null && (closing !== selectedId || !infos.some((i) => i.tab_id === closing))) actions.cancelClose();
+  }, [closing, selectedId, infos, actions]);
+  useEffect(() => {
+    if (renaming !== null && !infos.some((i) => i.tab_id === renaming)) actions.cancelRename({ refocus: false });
+  }, [renaming, infos, actions]);
+
+  // The app's shortcuts work from anywhere, the terminal included; the terminal lets these keys through (TerminalView).
   const os = endpoint ? osOfPlatform(endpoint.platform) : undefined;
   useEffect(() => {
-    if (!os) return;
+    if (!os || launcherOpen) return;
     const onKey = (e: KeyboardEvent) => {
-      if (findCommand(e, os)?.id !== "launcher") return;
+      const shortcut = sessionShortcut(e, os);
+      if (!shortcut) return;
+      // A text box (the rename box, the launcher's fields) keeps its own keys; xterm's own hidden textarea is the terminal, not a box.
+      const t = e.target;
+      if ((t instanceof HTMLInputElement || t instanceof HTMLTextAreaElement) && !t.classList.contains("xterm-helper-textarea")) return;
       e.preventDefault();
-      setLauncherOpen(true);
+      // Holding the key repeats it; only moving a session along the list should.
+      if (e.repeat && shortcut.kind !== "move") return;
+      if (shortcut.kind === "launcher") setLauncherOpen(true);
+      else actions.handle(shortcut);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [os]);
+  }, [os, launcherOpen, actions]);
+
+  const closingInfo = closing === null ? undefined : infos.find((i) => i.tab_id === closing);
 
   const started = (created: CreateSessionResponse, text: string) => {
     setStartingTexts((t) => ({ ...t, [created.tab_id]: text }));
@@ -87,9 +116,10 @@ export function LiveApp() {
           onOutput={() => setStartingTexts((t) => without(t, row.id))}
           onSize={onSize}
           autoFocus={!launcherOpen}
+          focusToken={focusToken}
         />
       ) : null,
-    [endpoint, startingTexts, onSize, launcherOpen],
+    [endpoint, startingTexts, onSize, launcherOpen, focusToken],
   );
 
   if (error) {
@@ -115,6 +145,13 @@ export function LiveApp() {
           composer={false}
           statusBar={false}
           renderTerminal={renderTerminal}
+          headerBar={closingInfo && <CloseBar text={closeBarText(closingInfo)} onCancel={actions.cancelClose.bind(actions)} onCloseNow={() => void actions.confirmClose()} />}
+          toast={toast && <Toast text={toast.text} actionLabel={toast.reopenId ? "Reopen" : undefined} onAction={() => void actions.reopenFromToast()} />}
+          notice={toast && { id: toast.id, text: toast.text }}
+          renamingId={renaming}
+          onRename={(id, name) => void actions.commitRename(id, name)}
+          onRenameCancel={(opts) => actions.cancelRename(opts)}
+          onReorder={(ids) => actions.reorder(ids)}
         />
       )}
       {launcherOpen && (

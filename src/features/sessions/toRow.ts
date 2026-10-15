@@ -21,7 +21,7 @@ export function shellKind(profile: Profile | undefined): SessionKind {
 }
 
 /** The last folder of a path, with either kind of separator and any trailing ones. */
-function lastSegment(path: string): string {
+export function lastSegment(path: string): string {
   return path.split(/[\\/]+/).filter(Boolean).pop() ?? path;
 }
 

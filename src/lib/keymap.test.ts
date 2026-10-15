@@ -28,6 +28,11 @@ describe("shortcutLabel", () => {
     expect(shortcutLabel({ code: "KeyT", alt: true }, "windows")).toBe("Ctrl+Shift+Alt+T");
     expect(shortcutLabel({ code: "KeyT", alt: true }, "mac")).toBe("⌘⌥T");
   });
+  it("writes Alt+Shift without the app modifier for a shift binding", () => {
+    expect(shortcutLabel({ code: "ArrowUp", alt: true, shift: true }, "windows")).toBe("Alt+Shift+↑");
+    expect(shortcutLabel({ code: "ArrowDown", alt: true, shift: true }, "linux")).toBe("Alt+Shift+↓");
+    expect(shortcutLabel({ code: "ArrowUp", alt: true, shift: true }, "mac")).toBe("⌥⇧↑");
+  });
   it("keeps a plain key as it is (F2)", () => {
     expect(shortcutLabel({ code: "F2", plain: true }, "windows")).toBe("F2");
     expect(shortcutLabel({ code: "F2", plain: true }, "mac")).toBe("F2");
@@ -82,6 +87,12 @@ describe("COMMANDS", () => {
     expect(win("nav-none")).toBe("Ctrl+Shift+Backspace");
     expect(commandById("nav-none").label).toBe("Select no terminal");
     expect(NAV_COMMAND_IDS).toEqual(["nav-next-pane", "nav-none"]);
+  });
+
+  it("moves a session up or down the list with Alt+Shift+Up and Down", () => {
+    expect(win("move-up")).toBe("Alt+Shift+↑");
+    expect(win("move-down")).toBe("Alt+Shift+↓");
+    expect(commandById("move-up").group).toBe("Sessions");
   });
 
   it("keeps the other split commands", () => {

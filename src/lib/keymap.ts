@@ -7,8 +7,9 @@ export const osOfPlatform = (platform: "windows" | "macos" | "linux"): Os => (pl
  * A key by its PHYSICAL position (`KeyboardEvent.code`: "KeyK", "Digit1", "F2", "Tab"), not by the character it types, so the
  * same shortcut sits on the same key of a French, German, Dvorak, Hebrew or Cyrillic keyboard. Punctuation never appears here.
  * By default the platform's app modifier is implied; `plain` is the key alone and `nav` is the navigation chord.
+ * `shift` is Shift (plus Alt when `alt` is set) WITHOUT the app modifier: Alt+Shift+arrow moves a session in the list.
  */
-export type Binding = { code: string; alt?: boolean; plain?: boolean; nav?: boolean };
+export type Binding = { code: string; alt?: boolean; plain?: boolean; nav?: boolean; shift?: boolean };
 export type Command = { id: string; label: string; binding?: Binding; group: "Sessions" | "View" | "Tools" };
 
 const KEY_TEXT: Record<string, string> = { ArrowLeft: "←", ArrowRight: "→", ArrowUp: "↑", ArrowDown: "↓" };
@@ -22,6 +23,7 @@ export function keyText(code: string): string {
 export function shortcutLabel(b: Binding, os: Os, nav: NavModifier = DEFAULT_NAV_MODIFIER): string {
   const key = keyText(b.code);
   if (b.plain) return key;
+  if (b.shift) return os === "mac" ? `${b.alt ? "⌥" : ""}⇧${key}` : `${b.alt ? "Alt+" : ""}Shift+${key}`;
   if (b.nav) return os === "mac" ? `${navModifierLabel(os, nav)}${key}` : `${navModifierLabel(os, nav)}+${key}`;
   if (os === "mac") return `⌘${b.alt ? "⌥" : ""}${key}`;
   return `Ctrl+Shift+${b.alt ? "Alt+" : ""}${key}`;
@@ -50,6 +52,8 @@ export const COMMANDS: Command[] = [
   { id: "close", label: "Close session", group: "Sessions", binding: { code: "KeyW" } },
   { id: "reopen", label: "Reopen closed session", group: "Sessions", binding: { code: "KeyT", alt: true } },
   { id: "rename", label: "Rename session", group: "Sessions", binding: { code: "F2", plain: true } },
+  { id: "move-up", label: "Move session up the list", group: "Sessions", binding: { code: "ArrowUp", alt: true, shift: true } },
+  { id: "move-down", label: "Move session down the list", group: "Sessions", binding: { code: "ArrowDown", alt: true, shift: true } },
   // Session modes, the same five for every agent CLI (docs/PLAN.md "Session modes"); unbound, so a person picks the keys.
   { id: "mode-manual", label: "Mode: Manual, ask before each change", group: "Sessions" },
   { id: "mode-plan", label: "Mode: Plan, read and plan without changing anything", group: "Sessions" },
