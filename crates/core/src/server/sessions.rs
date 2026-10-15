@@ -38,5 +38,9 @@ pub async fn create(
         // No prefix here: the UI already says "Couldn't start a shell." and appends this text.
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("{e:#}")))?;
     st.insert_session(session);
-    Ok(Json(CreateSessionResponse { tab_id }))
+    Ok(Json(CreateSessionResponse {
+        tab_id,
+        // Placeholder until the session registry assigns real numbers (phase 2b, Task 6).
+        number: 0,
+    }))
 }

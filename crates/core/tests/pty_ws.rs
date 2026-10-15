@@ -31,6 +31,10 @@ async fn create(core: &RunningCore, shell: Vec<String>, cwd: Option<String>) -> 
         cwd,
         cols: 80,
         rows: 24,
+        profile_id: None,
+        agent: None,
+        name: None,
+        prompt: None,
     };
     tokio::task::spawn_blocking(move || {
         let res = ureq::post(&url)
