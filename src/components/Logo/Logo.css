@@ -1,0 +1,8 @@
+/* Brand colours of the app icon, the same in both themes: it is an app tile, not UI chrome. */
+.logo {
+  --logo-tile: oklch(21% 0.008 265);
+  --logo-hand: oklch(89% 0.006 255);
+  --logo-signal: oklch(72% 0.19 55);
+  flex: none;
+  display: block;
+}

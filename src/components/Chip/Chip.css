@@ -1,0 +1,24 @@
+.chip {
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+  padding-inline: 6px;
+  border-radius: 999px;
+  background: var(--fill);
+  color: var(--text-1);
+  font-size: var(--text-11);
+  line-height: 18px;
+  white-space: nowrap;
+}
+.chip[data-tone="caution"] {
+  background: color-mix(in oklch, var(--caution) 20%, transparent);
+}
+.chip[data-tone="accent"] {
+  background: color-mix(in oklch, var(--accent) 20%, transparent);
+}
+
+@media (forced-colors: active) {
+  .chip {
+    outline: 1px solid CanvasText;
+  }
+}

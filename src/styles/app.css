@@ -26,9 +26,9 @@
   inset-block-start: var(--space-2);
   inset-inline-end: var(--space-2);
   padding: var(--space-2) var(--space-3);
-  border: 1px solid var(--hairline);
   border-radius: var(--radius);
   background: var(--bg-overlay);
+  box-shadow: var(--shadow-pill);
   color: var(--text-2);
   font-family: var(--font-mono);
   font-size: var(--text-11);

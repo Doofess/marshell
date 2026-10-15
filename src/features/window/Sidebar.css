@@ -1,0 +1,77 @@
+.sidebar {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) 40px;
+  min-block-size: 0;
+  block-size: 100%;
+  background: var(--bg-raised);
+  border-inline-end: 1px solid var(--hairline);
+}
+/*
+ * The list scrolls (wheel, touch, keys) and draws no scrollbar. A soft fade at an edge says there is more that way, and
+ * only at an edge that has more: the scroll position drives two registered lengths, so a list that fits has no fade.
+ */
+@property --fade-start {
+  syntax: "<length>";
+  inherits: false;
+  initial-value: 0px;
+}
+@property --fade-end {
+  syntax: "<length>";
+  inherits: false;
+  initial-value: 0px;
+}
+@keyframes sidebar-edges {
+  from {
+    --fade-start: 0px;
+    --fade-end: 24px;
+  }
+  10%,
+  90% {
+    --fade-start: 24px;
+    --fade-end: 24px;
+  }
+  to {
+    --fade-start: 24px;
+    --fade-end: 0px;
+  }
+}
+.sidebar__list {
+  min-block-size: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: none;
+}
+.sidebar__list::-webkit-scrollbar {
+  display: none;
+}
+@supports (animation-timeline: scroll()) {
+  .sidebar__list {
+    animation: sidebar-edges linear;
+    animation-timeline: scroll(self block);
+    mask-image: linear-gradient(to bottom, transparent, oklch(0% 0 none) var(--fade-start), oklch(0% 0 none) calc(100% - var(--fade-end)), transparent);
+  }
+}
+/* With the shell panel the grid has a fourth row, sized from shellLayout so nothing is clipped. */
+.sidebar[data-shell] {
+  grid-template-rows: auto minmax(0, 1fr) var(--shell-h) 40px;
+}
+.sidebar__footer {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  block-size: 40px;
+  padding-inline: 14px 12px;
+  border-block-start: 1px solid var(--hairline);
+  color: var(--text-2);
+  font-size: var(--text-12);
+  font-variant-numeric: tabular-nums;
+}
+.sidebar__spacer {
+  flex: 1 1 0;
+}
+.sidebar__doctor {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  color: var(--text-1);
+}

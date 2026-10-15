@@ -1,0 +1,18 @@
+.session-number {
+  flex: none;
+  display: inline-grid;
+  place-items: center;
+  box-sizing: border-box;
+  min-inline-size: 1.75ch;
+  padding-inline: 0.5ch;
+  border-radius: calc(var(--radius) / 2);
+  background: var(--fill);
+  color: var(--text-2);
+  font-size: var(--text-11);
+  font-variant-numeric: tabular-nums;
+  font-weight: 500;
+  line-height: 1.5;
+  white-space: nowrap;
+}
+
+/* In Windows High Contrast the fill is dropped and the numeral keeps the system text colour, so nothing else is needed. */

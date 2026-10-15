@@ -1,25 +1,50 @@
 :root {
   color-scheme: light dark;
 
-  /* Surfaces: true black in dark, white and warm grays in light. */
+  /* Surfaces: true black in dark, white and warm greys in light. */
   --bg-base: light-dark(oklch(100% 0 none), oklch(0% 0 none));
   --bg-raised: light-dark(oklch(98.2% 0.003 85), oklch(14.5% 0 none));
   --bg-overlay: light-dark(oklch(95.6% 0.004 75), oklch(19.1% 0 none));
 
+  /* Text: every tier is at least 4.5:1 on every surface (src/design/contrast.test.ts). */
   --text-1: light-dark(oklch(21.6% 0.006 56), oklch(92.2% 0 none));
   --text-2: light-dark(oklch(44.4% 0.011 74), oklch(71.9% 0 none));
-  --text-3: light-dark(oklch(55.3% 0.013 58), oklch(63.3% 0 none));
+  --text-3: light-dark(oklch(50% 0.013 58), oklch(63.3% 0 none));
 
   --hairline: color-mix(in oklch, var(--text-1) 10%, transparent);
+  /* Controls, chips and keys are told apart by a fill, never a box. */
+  --fill: color-mix(in oklch, var(--text-1) 8%, transparent);
+  --fill-strong: color-mix(in oklch, var(--text-1) 14%, transparent);
   --hover: color-mix(in oklch, var(--text-1) 4%, transparent);
   --selected: color-mix(in oklch, var(--text-1) 7%, transparent);
 
-  /* User-chosen accent (phase 2 makes it configurable). */
-  --accent: oklch(62% 0.19 255);
-
+  /* Status. Caution is yellow (dark) and olive (light) so it never reads as the amber accent. */
   --error: light-dark(oklch(56% 0.22 27), oklch(67% 0.21 29));
   --ok: light-dark(oklch(55% 0.14 147), oklch(76.5% 0.19 147));
-  --caution: light-dark(oklch(56% 0.14 52), oklch(88.5% 0.18 95));
+  --caution: light-dark(oklch(52% 0.11 100), oklch(90% 0.17 100));
+  /* A quieter ok for "done, seen": still at least 3:1 on every surface, unlike ok at 50% opacity. */
+  --ok-dim: light-dark(oklch(60% 0.07 147), oklch(58% 0.09 147));
+
+  /* Agent brand colours: stripes and dots only, never status. */
+  /* Claude is a muted terracotta so it stays ΔE ≥ 15 from --error and ≥ 18 from the amber accent. */
+  --brand-claude: light-dark(oklch(56% 0.08 45), oklch(70% 0.08 45));
+  /* The logo itself uses Claude's real orange. It is ΔE < 15 from --error, which is fine: the mark is a logo-shaped glyph at the
+     row's start, never a status, and error is a disc with a cross at its end. The stripe keeps the muted terracotta above. */
+  --brand-claude-mark: light-dark(oklch(58% 0.14 41), oklch(68% 0.135 40));
+  --brand-codex: light-dark(oklch(32% 0 none), oklch(86% 0 none));
+  /* OpenAI: its own pale yellow in dark mode; a deep teal green in light mode (the ChatGPT family), since a yellow that passes 3:1 on white is a muddy gold. */
+  --brand-openai: light-dark(oklch(42% 0.08 168), oklch(96% 0.07 102));
+  /* Antigravity's cyan, clear of Gemini's and DeepSeek's blues. */
+  --brand-cyan: light-dark(oklch(52% 0.1 205), oklch(80% 0.12 205));
+  --brand-gemini: light-dark(oklch(52% 0.17 265), oklch(70% 0.14 265));
+  /* Deep blue, darker than Gemini's, so the two stay apart at a glance. */
+  --brand-deepseek: light-dark(oklch(42% 0.16 262), oklch(62% 0.16 258));
+  --brand-violet: light-dark(oklch(50% 0.15 300), oklch(72% 0.13 300));
+  --brand-generic: light-dark(oklch(52% 0.02 250), oklch(65% 0.02 250));
+  /* Manual CLIs (shells, dev tools, remote tools) are calm, low-chroma accents at the same lightness as the neutral generic mark. */
+  --tool-shell: light-dark(oklch(52% 0.03 250), oklch(65% 0.03 250));
+  --tool-dev: light-dark(oklch(52% 0.035 200), oklch(65% 0.035 200));
+  --tool-remote: light-dark(oklch(52% 0.035 300), oklch(65% 0.035 300));
 
   --font-ui: "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, "Inter Variable", sans-serif;
   --font-mono: "Cascadia Mono", "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
@@ -33,7 +58,7 @@
   --text-28: 1.75rem;
   --leading: 1.5;
 
-  /* 8 px grid. */
+  /* 4 px steps on an 8 px grid. */
   --space-1: 4px;
   --space-2: 8px;
   --space-3: 12px;
@@ -42,7 +67,36 @@
   --space-8: 32px;
 
   --radius: 6px;
+
+  /* Elevation: a menu or sheet over the window, and a small floating pill. Black at fixed strength in both themes. */
+  --shadow-menu: 0 8px 28px oklch(0% 0 none / 0.35);
+  --shadow-pill: 0 2px 10px oklch(0% 0 none / 0.28);
+
+  /* Layout sizes from docs/PLAN.md "Layout" and "Sidebar rows". */
+  --sidebar: 288px;
+  --sidebar-min: 200px;
+  --row-comfortable: 56px;
+  --stripe: 3px;
+  --glyph: 16px;
+  --glyph-small: 12px;
+
+  /* Motion from docs/PLAN.md "Motion". Exits use ease-out too: good-css rules out ease-in. */
   --ease-out: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --ease-spring: linear(0, 0.55 18%, 1.12 42%, 0.98 66%, 1.01 82%, 1);
+  --dur-palette: 100ms;
+  --dur-peek: 120ms;
+  --dur-exit: 140ms;
+  --dur-enter: 180ms;
+  --dur-check: 200ms;
+  --dur-drawer: 200ms;
+  --dur-bounce: 280ms;
+  --dur-flash: 600ms;
+  --dur-pulse: 1.6s;
+  /* Vendor-mark loops while a session works (motion.css). */
+  --dur-loop: 2s;
+  --dur-loop-slow: 3.2s;
+
+  /* Kept for existing components. */
   --dur-fast: 120ms;
   --dur: 180ms;
   --dur-slow: 200ms;

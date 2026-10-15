@@ -1,0 +1,261 @@
+.session-row {
+  /* The vendor's colour (or the accent outside a session) tints a blocked row and flashes on arrival. */
+  --signal: var(--agent-signal, var(--accent));
+  --signal-tint: color-mix(in oklch, var(--signal) 12%, transparent);
+  --signal-flash: color-mix(in oklch, var(--signal) 24%, transparent);
+  position: relative;
+  display: grid;
+  align-content: center;
+  padding-inline: 14px 12px;
+  color: var(--text-1);
+  font-size: var(--text-13);
+  font-variant-numeric: tabular-nums;
+  line-height: 20px;
+  outline-offset: -2px;
+  cursor: default;
+}
+
+.session-row[data-density="comfortable"] {
+  block-size: var(--row-comfortable);
+}
+.session-row[data-density="expanded"] {
+  min-block-size: var(--row-comfortable);
+  padding-block: var(--space-2);
+}
+
+/*
+ * Backgrounds layer instead of replacing each other: the blocked-row tint is the background colour (the flash
+ * animates it), hover is a background image on top, and selection is an inset shadow on top of both.
+ */
+.session-row[aria-selected="true"] {
+  box-shadow: inset 0 0 0 100vmax var(--selected);
+}
+
+/*
+ * Blocked rows (needs you, error) stand out from the rest with a stronger tint and the reason line in full-contrast
+ * text. The edge keeps only the brand stripe; the status glyph at the right is the signal. Colour is never the only
+ * cue: the glyph shape and the phrase say it too.
+ */
+.session-row[data-blocked] {
+  background-color: var(--signal-tint);
+}
+.session-row[data-blocked] .session-row__phrase {
+  color: var(--text-1);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .session-row:hover {
+    background-image: linear-gradient(var(--hover), var(--hover));
+  }
+}
+
+.session-row:focus-visible {
+  outline: 2px solid var(--focus, var(--accent));
+}
+
+/* An ended row reads at --text-3 throughout, which passes AA on every surface (contrast.test.ts). */
+.session-row[data-ended] {
+  color: var(--text-3);
+}
+.session-row[data-ended] :is(.session-row__project, .session-row__sep, .session-row__branch-head, .session-row__branch-tail, .session-row__phrase, .session-row__model, .session-row__time) {
+  color: inherit;
+}
+
+.session-row[data-ended] .agent-mark {
+  color: inherit;
+}
+
+/* Brand stripe, flush to the inline start; --agent comes from components/AgentMark/agent-colors.css. */
+.session-row__stripe {
+  position: absolute;
+  inset-block: 0;
+  inset-inline-start: 0;
+  inline-size: var(--stripe);
+  background: var(--agent, var(--brand-generic));
+}
+
+.session-row__line1 {
+  display: flex;
+  align-items: center;
+  min-inline-size: 0;
+  white-space: nowrap;
+}
+
+/* The agent mark leads; the gap after it (and after the shield) is what the status glyph used to have. */
+.session-row__line1 > .agent-mark {
+  margin-inline-end: var(--space-2);
+}
+.session-row__line1 > .aux-glyph {
+  margin-inline-end: var(--space-1);
+}
+/* The number sits between the mark and the name and never shrinks, so the names keep their room and their truncation order. */
+.session-row__line1 > .session-number {
+  margin-inline-end: var(--space-2);
+}
+
+/*
+ * Truncation order (docs/PLAN.md): the branch head (middle, the tail stays), then the project, then the branch tail;
+ * the name never shrinks and is only capped at the lead's width, so it is cut last and shows as much as fits. The
+ * lead clips at its end, so the right cluster always stays whole.
+ */
+.session-row__lead {
+  display: flex;
+  align-items: center;
+  flex: 1 1 auto;
+  min-inline-size: 0;
+  overflow: clip;
+}
+
+.session-row__name {
+  flex: none;
+  max-inline-size: 100%;
+  overflow: clip;
+  text-overflow: ellipsis;
+  unicode-bidi: plaintext;
+  font-weight: 500;
+}
+.session-row[data-unseen] .session-row__name {
+  max-inline-size: calc(100% - 10px);
+  font-weight: 600;
+}
+
+.session-row__unread {
+  flex: none;
+  inline-size: 6px;
+  block-size: 6px;
+  margin-inline-start: var(--space-1);
+  border-radius: 50%;
+  background: var(--text-1);
+}
+
+.session-row__project {
+  flex: 0 100 auto;
+  min-inline-size: 0;
+  margin-inline-start: 6px;
+  overflow: clip;
+  text-overflow: ellipsis;
+  unicode-bidi: plaintext;
+  color: var(--text-2);
+  font-size: var(--text-12);
+}
+
+.session-row__sep {
+  flex: none;
+  padding-inline: var(--space-1);
+  color: var(--text-3);
+  font-size: var(--text-12);
+}
+
+/* Never below 1.5ch, so a collapsed head still shows its ellipsis before the tail. */
+.session-row__branch-head {
+  flex: 0 10000 auto;
+  min-inline-size: 1.5ch;
+  overflow: clip;
+  text-overflow: ellipsis;
+  unicode-bidi: plaintext;
+  color: var(--text-2);
+  font-size: var(--text-12);
+}
+.session-row__branch-tail {
+  flex: 0 50 auto;
+  min-inline-size: 0;
+  overflow: clip;
+  text-overflow: ellipsis;
+  unicode-bidi: plaintext;
+  color: var(--text-2);
+  font-size: var(--text-12);
+}
+
+/* The right cluster never truncates. */
+.session-row__cluster {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding-inline-start: var(--space-2);
+}
+
+.session-row__time {
+  color: var(--text-2);
+  font-size: var(--text-11);
+}
+.session-row[data-needs-you] .session-row__time {
+  color: var(--text-1);
+  font-weight: 500;
+}
+
+/* Line 2 starts under the name: the model (never cut), then the live status phrase, which is. */
+.session-row__phrase {
+  display: flex;
+  align-items: baseline;
+  padding-inline-start: calc(var(--glyph) + var(--space-2));
+  white-space: nowrap;
+  color: var(--text-2);
+  font-size: var(--text-12);
+  line-height: 16px;
+}
+
+.session-row__model {
+  flex: none;
+  color: var(--text-1);
+  font-weight: 500;
+}
+.session-row__phrase > .session-row__sep {
+  padding-inline: 6px;
+}
+.session-row__status-text {
+  min-inline-size: 0;
+  overflow: clip;
+  text-overflow: ellipsis;
+}
+
+.session-row__details {
+  display: grid;
+  gap: var(--space-1);
+  padding-inline-start: calc(var(--glyph) + var(--space-2));
+  margin-block-start: var(--space-1);
+  color: var(--text-2);
+  font-size: var(--text-12);
+  line-height: 16px;
+}
+
+.session-row__meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-2);
+}
+
+.session-row__pill {
+  padding-inline: 6px;
+  border-radius: 999px;
+  background: var(--fill);
+  color: var(--text-1);
+  font-size: var(--text-11);
+}
+
+.session-row__caution-text {
+  color: var(--text-1);
+}
+
+.session-row__recap {
+  margin: 0;
+  color: var(--text-1);
+}
+
+.session-row__age,
+.session-row__usage {
+  color: var(--text-3);
+  font-size: var(--text-11);
+}
+
+/* Windows High Contrast: shadows and tints are dropped, so selection and the unread dot use system colours. */
+@media (forced-colors: active) {
+  .session-row[aria-selected="true"] {
+    outline: 2px solid Highlight;
+    outline-offset: -2px;
+  }
+  .session-row__unread {
+    forced-color-adjust: none;
+    background: CanvasText;
+  }
+}

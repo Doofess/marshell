@@ -1,0 +1,146 @@
+.lane {
+  display: grid;
+  grid-template-rows: 28px minmax(0, 1fr);
+  min-block-size: 0;
+  border-block-end: 1px solid var(--hairline);
+  background: var(--bg-raised);
+}
+
+.lane__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  block-size: 28px;
+  padding-inline: 14px 12px;
+}
+.lane__heading {
+  margin: 0;
+  color: var(--text-2);
+  font-size: var(--text-11);
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.lane[data-count]:not([data-count="0"]) .lane__heading {
+  color: var(--text-1);
+}
+.lane__more {
+  padding-block: 2px;
+  padding-inline: var(--space-2);
+  border: 0;
+  border-radius: 999px;
+  background: var(--fill);
+  color: var(--text-1);
+  font: inherit;
+  font-size: var(--text-11);
+  font-variant-numeric: tabular-nums;
+}
+.lane__more:focus-visible {
+  outline: 2px solid var(--focus, var(--accent));
+  outline-offset: 1px;
+}
+.lane__more:active {
+  background: var(--fill-strong);
+}
+@media (hover: hover) and (pointer: fine) {
+  .lane__more:hover {
+    background: var(--fill-strong);
+  }
+}
+
+.lane__list {
+  display: grid;
+  align-content: start;
+  gap: 0;
+  min-block-size: 0;
+  padding-inline: var(--space-2);
+  overflow: clip;
+}
+
+.lane-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, auto) minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--space-2);
+  block-size: 36px;
+  padding-inline: var(--space-2);
+  border: 0;
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--text-1);
+  font: inherit;
+  font-size: var(--text-13);
+  text-align: start;
+  white-space: nowrap;
+}
+.lane-row__name {
+  overflow: clip;
+  text-overflow: ellipsis;
+  font-weight: 500;
+}
+.lane-row__what {
+  overflow: clip;
+  text-overflow: ellipsis;
+  color: var(--text-2);
+  font-size: var(--text-12);
+}
+.lane-row__time {
+  color: var(--text-1);
+  font-size: var(--text-11);
+  font-variant-numeric: tabular-nums;
+}
+.lane-row:focus-visible {
+  outline: 2px solid var(--focus, var(--accent));
+  outline-offset: -2px;
+}
+.lane-row:active {
+  box-shadow: inset 0 0 0 100vmax var(--selected);
+}
+@media (hover: hover) and (pointer: fine) {
+  .lane-row:hover {
+    background: var(--hover);
+  }
+}
+
+/*
+ * The lane reserves 256 px for the targeted card and clips what does not fit, so the card must never be taller than that:
+ * its long text is clamped here, the full text is in the drawer, and the actions row is the last thing and always shown.
+ */
+.lane .approve-card {
+  max-block-size: 256px;
+  overflow: clip;
+}
+.lane .approve-card__question,
+.lane .approve-card__what,
+.lane .approve-card__risk,
+.lane .approve-card__cwd {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  overflow: clip;
+}
+.lane .approve-card__question {
+  line-clamp: 3;
+  -webkit-line-clamp: 3;
+}
+.lane .approve-card__what {
+  line-clamp: 2;
+  -webkit-line-clamp: 2;
+}
+.lane .approve-card__risk {
+  line-clamp: 2;
+  -webkit-line-clamp: 2;
+}
+.lane .approve-card__cwd {
+  line-clamp: 1;
+  -webkit-line-clamp: 1;
+}
+.lane .approve-card__link > span {
+  min-inline-size: 0;
+  overflow: clip;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* Four answer options fit in two rows; the rest are in the full card. */
+.lane .approve-card__actions--options > :nth-child(n + 5) {
+  display: none;
+}

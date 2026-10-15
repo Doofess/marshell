@@ -1,0 +1,217 @@
+/*
+ * The command palette: the same 560 px sheet, 20% from the top, as the launcher. Rows are told apart by fill and a bar down
+ * the side of the active one; the field and the footer are separated by a hairline rule, never a box. A session row leads
+ * with its number in a fixed column so 6 and 12 line up, then its mark.
+ */
+@property --fade-start {
+  syntax: "<length>";
+  inherits: false;
+  initial-value: 0px;
+}
+@property --fade-end {
+  syntax: "<length>";
+  inherits: false;
+  initial-value: 0px;
+}
+@keyframes palette-edges {
+  from {
+    --fade-start: 0px;
+    --fade-end: 20px;
+  }
+  10%,
+  90% {
+    --fade-start: 20px;
+    --fade-end: 20px;
+  }
+  to {
+    --fade-start: 20px;
+    --fade-end: 0px;
+  }
+}
+
+.palette {
+  position: relative;
+  block-size: 100%;
+  min-block-size: 480px;
+  overflow: clip;
+  color: var(--text-1);
+  font-size: var(--text-13);
+  line-height: 20px;
+}
+.palette__backdrop {
+  position: absolute;
+  inset: 0;
+  background: color-mix(in oklch, var(--bg-base) 55%, transparent);
+}
+.palette__sheet {
+  position: absolute;
+  inset-block-start: 20%;
+  inset-inline: 0;
+  margin-inline: auto;
+  inline-size: min(560px, calc(100% - 32px));
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  max-block-size: 70%;
+  border-radius: 10px;
+  background: var(--bg-overlay);
+  box-shadow: 0 12px 40px color-mix(in oklch, var(--text-1) 22%, transparent);
+  overflow: clip;
+}
+.palette__input {
+  padding: var(--space-3) var(--space-4);
+  border: 0;
+  border-block-end: 1px solid var(--hairline);
+  background: transparent;
+  color: var(--text-1);
+  font: inherit;
+  font-size: var(--text-15);
+}
+.palette__input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+/* Results scroll, with no scrollbar drawn; a soft fade at each end says there is more. */
+.palette__list {
+  margin: 0;
+  padding: var(--space-1) 0;
+  list-style: none;
+  min-block-size: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: none;
+}
+.palette__list::-webkit-scrollbar {
+  display: none;
+}
+@supports (animation-timeline: scroll()) {
+  .palette__list {
+    animation: palette-edges linear;
+    animation-timeline: scroll(self block);
+    mask-image: linear-gradient(to bottom, transparent, oklch(0% 0 none) var(--fade-start), oklch(0% 0 none) calc(100% - var(--fade-end)), transparent);
+  }
+}
+.palette__group-item {
+  list-style: none;
+}
+.palette__sub {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.palette__group {
+  display: block;
+  padding-block: var(--space-2) var(--space-1);
+  padding-inline: var(--space-4);
+  color: var(--text-2);
+  font-size: var(--text-11);
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.palette__opt {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding-block: 6px;
+  padding-inline: var(--space-4);
+  border-inline-start: 3px solid transparent;
+}
+.palette__opt[data-active] {
+  background: var(--selected);
+  border-inline-start: 3px solid var(--accent);
+}
+.palette__opt:active {
+  background: var(--selected);
+}
+.palette__label {
+  flex: 1 1 0;
+  min-inline-size: 0;
+  overflow: clip;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.palette__opt mark {
+  background: transparent;
+  color: var(--text-1);
+  font-weight: 700;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+/* A session row: number, mark, name and where it runs, its state, and the shortcut when it has one. */
+.palette__num {
+  flex: none;
+  inline-size: 2ch;
+  color: var(--text-2);
+  font-family: var(--font-mono);
+  font-size: var(--text-12);
+  font-variant-numeric: tabular-nums;
+  text-align: end;
+}
+.palette__opt[data-exact] .palette__num {
+  color: var(--text-1);
+  font-weight: 700;
+}
+.palette__mark,
+.palette__status {
+  display: inline-flex;
+  flex: none;
+  color: var(--agent-mark, currentColor);
+}
+.palette__status {
+  color: var(--text-2);
+}
+.palette__name {
+  font-weight: 500;
+}
+.palette__detail {
+  margin-inline-start: var(--space-2);
+  color: var(--text-2);
+  font-size: var(--text-12);
+}
+.palette__opt[data-kind="session"] {
+  gap: var(--space-2);
+}
+
+.palette__kbd,
+.palette__footer kbd {
+  flex: none;
+  padding-inline: 4px;
+  border-radius: 3px;
+  background: var(--fill-strong);
+  color: var(--text-1);
+  font-family: var(--font-mono);
+  font-size: var(--text-11);
+  line-height: 16px;
+}
+.palette__empty {
+  margin: 0;
+  padding: var(--space-4);
+  color: var(--text-2);
+}
+.palette__footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding-block: var(--space-2);
+  padding-inline: var(--space-4);
+  border-block-start: 1px solid var(--hairline);
+  color: var(--text-2);
+  font-size: var(--text-12);
+}
+@media (hover: hover) and (pointer: fine) {
+  .palette__opt:hover {
+    background: var(--hover);
+  }
+}
+@media (forced-colors: active) {
+  .palette__sheet,
+  .palette__input {
+    outline: 1px solid CanvasText;
+  }
+  .palette__opt[data-active] {
+    outline: 2px solid Highlight;
+  }
+}

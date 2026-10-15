@@ -1,0 +1,267 @@
+/*
+ * The prompt line, set like a command line and not like a chat card: a flat bar docked to the edge of its terminal on the
+ * terminal's own surface, a 2 px edge on top that is the vendor's colour while this prompt is the focused one, a prompt glyph
+ * in that colour, the field in the terminal's mono font, and Send with the Enter key drawn on it. Fills and the edge tell
+ * things apart, never a box or a shadow. `full` (one session) adds a quiet row of tools; `compact` (one in each pane) is the line.
+ */
+.composer {
+  container-type: inline-size;
+  display: grid;
+  row-gap: var(--space-1);
+  padding-block: var(--space-2) var(--space-1);
+  padding-inline: var(--space-3);
+  border-block-start: 2px solid var(--hairline);
+  background: var(--bg-base);
+  color: var(--text-1);
+}
+.composer[data-variant="compact"] {
+  padding-block: var(--space-2);
+}
+.composer[data-focused="true"],
+.composer:focus-within {
+  border-block-start-color: var(--focus, var(--accent));
+}
+
+.composer__line {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--space-2);
+  min-block-size: 24px;
+}
+.composer__prompt {
+  flex: none;
+  align-self: flex-start;
+  margin-block-start: 4px;
+  color: var(--accent);
+}
+
+.composer__field {
+  flex: 1 1 0;
+  min-inline-size: 0;
+  min-block-size: 24px;
+  max-block-size: calc(8 * 20px + 4px);
+  padding-block: 2px;
+  padding-inline: 0;
+  border: 0;
+  outline: 2px solid transparent;
+  background: transparent;
+  caret-color: var(--accent);
+  color: var(--text-1);
+  font-family: var(--font-mono);
+  font-size: var(--text-13);
+  line-height: 20px;
+  resize: none;
+  field-sizing: content;
+  /* It scrolls past eight lines, with no scrollbar: the main window shows none. */
+  overflow-y: auto;
+  scrollbar-width: none;
+}
+.composer__field::-webkit-scrollbar {
+  display: none;
+}
+.composer__field::placeholder {
+  color: var(--text-2);
+  opacity: 1;
+}
+.composer__field:disabled {
+  color: var(--text-2);
+}
+
+.composer__send {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  align-self: flex-end;
+  gap: var(--space-2);
+  min-block-size: 24px;
+  padding-inline: var(--space-2) var(--space-1);
+  border: 0;
+  background: transparent;
+  color: var(--text-1);
+  font: inherit;
+  font-size: var(--text-12);
+  font-weight: 600;
+}
+.composer__send[aria-disabled="true"] {
+  color: var(--text-2);
+}
+/* The Enter key, drawn on the button: the one place the accent is a fill here, with the ink the accent already guarantees. */
+.composer__kbd {
+  display: grid;
+  place-items: center;
+  min-inline-size: 20px;
+  block-size: 18px;
+  padding-inline: 4px;
+  border-radius: 3px;
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-family: var(--font-mono);
+  font-size: var(--text-11);
+  font-weight: 400;
+  line-height: 1;
+}
+.composer__send[aria-disabled="true"] .composer__kbd {
+  background: var(--fill-strong);
+  color: var(--text-2);
+}
+
+/* The quiet row: who it writes to, the mode, three plain-word tools, and the hint or the reason. */
+.composer__tools {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-block-size: 24px;
+  min-inline-size: 0;
+  color: var(--text-2);
+  font-size: var(--text-12);
+}
+.composer__target {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-inline-size: 0;
+  color: var(--text-1);
+  font-weight: 600;
+}
+.composer__target-name {
+  min-inline-size: 0;
+  overflow: clip;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.composer__pane {
+  flex: none;
+  color: var(--text-2);
+  font-size: var(--text-11);
+  font-weight: 400;
+  white-space: nowrap;
+}
+.composer__mode {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: var(--space-1);
+  color: var(--text-1);
+}
+.composer__mode[data-tone="caution"] {
+  font-weight: 600;
+}
+.composer__tool {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: var(--space-1);
+  min-block-size: 24px;
+  padding-inline: var(--space-1);
+  border: 0;
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--text-2);
+  font: inherit;
+  font-size: var(--text-12);
+}
+.composer__tool-key {
+  color: var(--text-1);
+  font-family: var(--font-mono);
+}
+.composer__tool:disabled {
+  opacity: 0.4;
+}
+.composer__spacer {
+  flex: 1 1 0;
+}
+.composer__hint {
+  min-inline-size: 0;
+  overflow: clip;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-2);
+  font-size: var(--text-11);
+}
+@container (inline-size < 640px) {
+  .composer__hint {
+    display: none;
+  }
+}
+
+/* The reason a prompt is off, or that a message will queue: plain text with its glyph, no fill, never a new row. */
+.composer__notice {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-inline-size: 0;
+  margin: 0;
+  color: var(--text-1);
+  font-size: var(--text-12);
+  line-height: 24px;
+}
+.composer__notice > span {
+  min-inline-size: 0;
+  overflow: clip;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.composer[data-variant="compact"] .composer__notice {
+  flex: 0 1 auto;
+  max-inline-size: 45%;
+}
+/* A narrow pane keeps the glyph and leaves the words to screen readers; the placeholder already says why. */
+@container (inline-size < 520px) {
+  .composer[data-variant="compact"] .composer__notice > span {
+    position: absolute;
+    inline-size: 1px;
+    block-size: 1px;
+    clip-path: inset(50%);
+  }
+}
+.composer__resume {
+  flex: none;
+  min-block-size: 24px;
+  padding-inline: var(--space-3);
+  border: 0;
+  border-radius: var(--radius);
+  background: var(--fill-strong);
+  color: var(--text-1);
+  font: inherit;
+  font-size: var(--text-12);
+  font-weight: 500;
+}
+
+.composer__tool:focus-visible,
+.composer__send:focus-visible,
+.composer__resume:focus-visible {
+  outline: 2px solid var(--focus, var(--accent));
+  outline-offset: 1px;
+}
+.composer__tool:active:not(:disabled),
+.composer__resume:active {
+  background: var(--selected);
+}
+.composer__send:active:not([aria-disabled="true"]) {
+  color: var(--text-2);
+}
+@media (hover: hover) and (pointer: fine) {
+  .composer__tool:hover:not(:disabled) {
+    background: var(--hover);
+    color: var(--text-1);
+  }
+  .composer__send:hover:not([aria-disabled="true"]) .composer__kbd {
+    box-shadow: inset 0 0 0 100vmax var(--hover);
+  }
+}
+
+@media (forced-colors: active) {
+  .composer,
+  .composer__send {
+    outline: 1px solid CanvasText;
+  }
+  .composer__kbd {
+    forced-color-adjust: none;
+    background: Highlight;
+    color: HighlightText;
+  }
+  .composer__send[aria-disabled="true"] .composer__kbd {
+    background: transparent;
+    color: GrayText;
+  }
+}

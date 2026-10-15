@@ -1,0 +1,68 @@
+.status-glyph,
+.aux-glyph {
+  display: block;
+  flex: none;
+  overflow: visible;
+}
+
+/* Colour per state; shapes use currentColor. */
+.status-glyph[data-kind="idle"],
+.status-glyph[data-kind="stuck"],
+.status-glyph[data-kind="ended"],
+.status-glyph[data-kind="limited"] {
+  color: var(--text-3);
+}
+.status-glyph[data-kind="working"],
+.status-glyph[data-kind="running"] {
+  color: var(--text-1);
+}
+/* Done, needs-you, error and caution all take the vendor's colour (agent-colors.css); outside a session they fall back to the app's. */
+.status-glyph[data-kind="done-unseen"] {
+  color: var(--agent-signal, var(--ok));
+}
+.status-glyph[data-kind="done-seen"] {
+  color: var(--agent-signal, var(--ok-dim));
+}
+.status-glyph[data-kind="error"] {
+  color: var(--agent-signal, var(--error));
+}
+.aux-glyph[data-kind="caution"] {
+  color: var(--agent-signal, var(--caution));
+}
+.aux-glyph:is([data-kind="muted"], [data-kind="elevated"]) {
+  color: var(--text-2);
+}
+
+/* The ¾ arc is the reduced-motion stand-in for the pulse. */
+.g-working-arc {
+  opacity: 0;
+}
+
+/*
+ * Windows High Contrast: draw every glyph in system colours. The [data-kind] selectors match the specificity of the
+ * per-kind colour rules above, and come later, so they win. Badge marks sit on Highlight; cut-outs show Canvas.
+ */
+@media (forced-colors: active) {
+  .status-glyph[data-kind],
+  .aux-glyph[data-kind] {
+    color: CanvasText;
+    forced-color-adjust: none;
+  }
+  .status-glyph .g-badge {
+    fill: Highlight;
+  }
+  .status-glyph .g-mark {
+    stroke: HighlightText;
+  }
+  .status-glyph .g-mark--fill {
+    stroke: none;
+    fill: HighlightText;
+  }
+  :is(.status-glyph, .aux-glyph) .g-cut {
+    stroke: Canvas;
+  }
+  :is(.status-glyph, .aux-glyph) .g-cut--fill {
+    stroke: none;
+    fill: Canvas;
+  }
+}

@@ -63,7 +63,7 @@ The user already has a Claude status line (`python ~/.claude/statusline.py`) and
 5. **portable-pty 0.9.0** sets `PSEUDOCONSOLE_INHERIT_CURSOR`. ConPTY then holds back all output until a cursor-position report (`ESC[6n`) is answered.
    - The core answers that query itself, until the renderer attaches.
    - Pinning 0.8.1 is the fallback.
-   - Child processes also need Job Objects so that killing a session kills its children.
+   - Child processes also need Job Objects (kill-on-close) so that killing a session, or a crash, kills its children; phase 1 used `taskkill /T /F`, the Job Object lands in phase 2.
 6. **Tauri notifications**
    - `tauri-plugin-notification` has **no action buttons on desktop** and no documented click callback.
    - On Windows, toasts only work properly for installed apps.
@@ -81,9 +81,9 @@ Each step builds on the one before it, so do them in this order. All of them are
 |---|---|---|
 | 1 | Tokens + type specimen | Colours, spacing, radii. AA matrix for the 8 accents in both themes. Type scale with real strings. |
 | 2 | Status glyph set + motion | Every glyph at 12/16 px. Live animations, plus their reduced-motion versions. |
-| 3 | Sidebar row matrix | Every state in the row table below, in compact, comfortable and expanded. Truncation at a 200 px sidebar. |
+| 3 | Sidebar row matrix | Every state in the row table below, in comfortable and expanded (there is no compact density). Truncation at a 200 px sidebar. |
 | 4 | Approve card | Safe Bash, risky Bash, Edit with diff, Write of a new file, MCP tool, a 40-line command, question card, after-decision receipt, "Answered in terminal", released on timeout. |
-| 5 | Main window composite | The **5-agent scenario**: 2 cards in the lane, 1 working, 1 done-unseen, 1 error. Also split view, focus mode, collapsed rail, and the 720 px minimum width. |
+| 5 | Main window composite | The **5-agent scenario**: 2 cards in the lane, 1 working, 1 done-unseen, 1 error. Also split view, focus mode, collapsed rail, the 720 px minimum width, and the terminal theme switching between dark and light (see "Terminal theme"). |
 | 6 | Launcher + command palette | Empty, filtering, and "remembered for this project" states. |
 | 7 | Onboarding | 4 screens, including the consent diff, plus every empty state. |
 | 8 | Departures board | Static design plus a 10 s motion clip. |
@@ -105,7 +105,7 @@ Stories are fed by `fake-agent` scenario scripts, so the same 5-agent run drives
 2. Is no keyboard focus moved and no window raised by anything except a user action?
 3. Does no row change height or position unless the user did something?
 4. Is every new action in the palette, with a shortcut shown and rebindable?
-5. Are unknown values shown as "–", with nothing guessed?
+5. Are unknown values left out (the context ring, usage line, model, effort and subagent count simply do not appear), with nothing guessed?
 6. Is every state covered: empty, loading (over 150 ms only), error, offline core?
 7. Does every motion have a reduced-motion version and use tokens only?
 8. Is the copy clean: sentence case, no "successfully", no "Oops", undo path named?
@@ -118,32 +118,54 @@ Stories are fed by `fake-agent` scenario scripts, so the same 5-agent run drives
 |---|---|
 | Window | Minimum 720×480. Below 960 px wide the sidebar auto-collapses to the rail. |
 | Top bar | **One unified 40 px bar**; no separate title bar. |
-| Top bar, sidebar column | macOS: traffic lights, inset 78 px. Windows: app menu plus a palette button. |
+| Top bar, sidebar column | macOS: traffic lights, inset 78 px. Windows: the app icon and the lowercase "marshell" wordmark (vector, Space Grotesk SemiBold) as one button that opens the app menu, then a palette button. In the 52 px rail only the icon fits, so the palette button moves to the foot of the rail. |
 | Top bar, main column | Session header: name · project/branch · mode chip · model/effort · subagents · context ring · port chips. |
 | Window controls | Windows: 46×40 controls at the right. Linux: native decorations plus a 36 px header. |
-| Sidebar | Default 264 px, minimum 200, maximum 400, rail 52, focus mode 0. Drag the edge to resize; double-click resets. |
+| Sidebar | Default 288 px, minimum 200, maximum 400, rail 52, focus mode 0. Drag the edge to resize; double-click resets. |
 | Sidebar footer | 40 px: plan ring, 5h %, and doctor glyph with issue count. |
 | Needs-you lane | The header is **always present** at 28 px ("Needs you · 2" or "All clear"), so it never pops in or out. |
-| Lane cards | Accordion: only the targeted card (oldest waiting) is expanded, at 120–176 px. The others are 36 px one-liners. |
-| Lane height | At most 40% of sidebar height. Beyond that it scrolls internally, with a fade and "+N more". |
+| Lane cards | Accordion: only the targeted card (oldest waiting) is expanded, at about 250 px (measured: 246 for a question, 255 for a command with its Always and terminal links). The others are 36 px one-liners. |
+| Lane height | At most 40% of sidebar height, in whole rows, and it **never scrolls**: it shows the targeted card and as many 36 px one-liners as fit, and a "+N more" button in its header opens a menu with every waiting request. If even one 256 px card does not fit in 40% (a sidebar under about 640 px tall), it shows one-liners only. |
+| Sidebar list and rail | The **session list scrolls** (the sidebar list and the rail list), with **no visible scrollbar**: wheel, touch and keys, and a soft fade at an edge only while more rows continue that way. Everything else in the main window never scrolls; the lane keeps its "+N more" button, and the all-requests menu may scroll with the themed scrollbar. |
+| Shell panel | A plain shell (PowerShell on Windows, zsh on macOS, bash on Linux) in the expanded sidebar between the list and the footer, for running manual commands. It is not tied to any agent: no vendor colour, no prompt line, typing there never reaches a session. Header 32 px with the shell name, the focused session's folder, "Open in a pane" and hide/show; body 30% of the sidebar (120 to 280 px), a real terminal about 34 columns wide. It folds to its header by itself when the list would be left with under two rows, and the user's choice to hide it always wins. Ctrl+Shift+S (Cmd+S) shows or focuses it. Not in the rail, focus mode or below 960 px. |
 | Right drawer | Default 360 px, minimum 300, maximum 560. It pushes the terminal, and overlays instead when the terminal would drop below 720 px. |
-| Split view | 50/50 with a 1 px hairline and an 8 px hit area. The active pane has a 2 px accent bar under its header; the inactive header is at 60% opacity. Terminal text is **never** dimmed. |
+| Split view | **Up to four terminals on screen at once** (any number can run; this is only how many are visible). The layout button in the top bar opens a menu: 1 to 4 panes, an arrangement per count (2: side by side or stacked; 3: one main beside two, one main on top, side by side or stacked; 4: grid, side by side or stacked) and an Automatic switch. Automatic picks the arrangement that keeps the smallest pane closest to 80 by 24, judged on even panes so dragging a divider never flips it. **Every pane for an AI agent carries its own prompt line** (see Prompt line; a pane for a manual CLI has none and gives those rows to its terminal), so each such pane's terminal is its height minus the 28 px header, its prompt line and the padding. Dividers are a 1 px hairline with an 8 px hit area that overhangs the panes, so a divider costs one pixel of terminal. Each pane header (28 px) has the brand stripe, the status glyph (the vendor mark moving while working), name, project, and zoom and remove buttons; a pane that needs you keeps a vendor tint at full strength while other inactive headers sit at 60%. **Four only when the window is big enough to use them:** a count is offered only if some arrangement gives every pane at least 60 columns by 14 rows **of terminal** (each pane's header and own prompt line come on top, and the status bar's height counts). Below that the layout shows fewer (the smallest window shows one), the layout menu greys out the counts that do not fit and says "Showing 2 of 3", and the sessions not shown keep running (the focused pane's header says "N more running"). A pane under 80 columns says its size ("39×11"). Zoom (Ctrl+Shift+P, Cmd+P on macOS) fills the view and the others keep running. A new pane starts empty and offers the sessions not on screen. The active pane has a 2 px bar in the vendor colour. Terminal text is **never** dimmed. **A pane header is that pane's title bar:** the number and the name are the last things to give way (the project shrinks first). The app window's own title in the OS title bar and taskbar follows the focused session ("billing — Marshell", or "Marshell" when none is focused). The window has **one** screen-reader live region, for the focused session (empty on first render, announces only a change, never a repeat); the prompt lines in the panes are plain text. |
 | Focus mode | Sidebar and header go to 0. The header reveals on an 8 px top-edge hover. A floating pill at top right reads "2 need you ⌃⇧N" and stays silent apart from its glyph bounce. |
-| Rail (52 px) | Brand stripe, status glyph and a 2-letter monogram per session. Needs-you shows as a badge stack with a count at the top. |
+| Prompt line | Every session on screen has its **own** prompt line, so a line of text always goes to the session of the pane it was typed in. A single terminal has one **full** line under it (**66 px**); in split view every pane has a **compact** line docked at its foot (**42 px**), including a zoomed pane. An empty pane has none, and **neither does a manual CLI** (a shell or dev tool is a plain terminal: you type in the terminal, see Session numbers and manual CLIs). The look is a **flat command-line**, not a floating card or a rounded composer: a docked bar with a prompt marker and a field, separated from the terminal by a hairline and a vendor-coloured top edge on the focused one, so it reads as part of the terminal rather than a chat box. The height is fixed in a slot, so the terminals never resize when a session starts or stops working; a long prompt grows the line upward over its own terminal while it is written, then scrolls with its scrollbar hidden. It takes its session's vendor colour. It is blocked while that session waits on the user or has ended, so typed text can never answer a request by accident; the reason sits in the line ("billing is waiting for your approval"). Only that pane's line is off: the others stay live. Enter sends (Queue while the session is working), Shift+Enter adds a line, Ctrl+Shift+L (Cmd+L on macOS) puts the cursor in the focused pane's prompt line without changing which pane is focused. Hidden in focus mode. The terminal itself stays typeable. |
+| Status bar | One **24 px** bar at the foot of the centre column, the same in a single window and in split view. It carries the status strip (inspired by the user's statusline.py) for the **focused** pane's session: model and effort, context % with a tiny bar and used/size, the 5-hour and 7-day limits with "resets in", cost, session time, uncommitted changes, MCP health, version, skills, venv and ports. Unknown values are left out, never a dash; items drop by priority as the window narrows (the model, context and 5-hour limit last) and never wrap; an MCP problem replaces the healthy count and outranks everything. Hidden in focus mode. Which items every CLI can supply is in `docs/research/2026-10-10-cli-data-sources.md`: only project, branch, elapsed time, ports, venv and version are universal. **It starts with the focused session's number and name** (never dropped, ellipsized only at its own 24-character cap), so the facts always say whose they are; the strip fits in what is left. |
+| Rail (52 px) | Brand stripe, the agent mark and a 2-letter monogram per session, with a small status glyph. While a session works, its vendor mark carries the working loop in place of any pulsing dot. Needs-you shows as a badge stack with a count at the top. It shows the items that fit and a "+N" button for the rest; the command palette button sits at its foot, since the bar's 52 px column holds only the logo. |
+
+**Terminal theme.** The terminal has its own palette, separate from the app theme.
+- Setting: **Follow app** (default), **Always dark**, **Always light**, or an imported theme; a profile can override it. Switching applies to every open terminal at once through xterm's live `options.theme`, keeping scrollback.
+- Switching changes the default foreground and background, cursor, selection and the 16 ANSI colours. Colours a program painted in 24-bit RGB stay as drawn, so `minimumContrastRatio` (default 4.5) is on to keep them readable.
+- Programs that read the background once at startup keep their old look until restarted. Marshell helps in three ways: it answers OSC 10/11 colour queries with the current theme, sets `COLORFGBG` at launch, and sends the colour-scheme-change notice (mode 2031) to programs that opt in. The setting's help text says what a running program may not pick up.
 
 **Hover-freeze rule.** While the pointer is inside the sidebar, lane height changes are deferred until the pointer leaves, with a 3 s cap. Meanwhile a "1 new" chip appears in the lane header.
 
+### Session numbers and manual CLIs
+
+**Session numbers.** Every open terminal has a number, so "go talk to session 6" names one terminal.
+- **Stable, lowest free.** A session keeps its number until it closes. A new session takes the lowest number nobody holds (`nextSessionNumber`), so with 1, 2, 3, 5 and 6 open the next one is 4, and a number never moves while its session lives. Numbers are never renumbered when the list is reordered.
+- **Shown on every surface that names a session:** the sidebar row (a quiet tabular numeral between the mark and the name), the rail item (a small numeral on the mark), the session header, every pane header, the lane card ("1 · billing") and so the drawer, the all-sessions menu, and the palette and launcher results. It is a numeral on a quiet fill, never an outline, and it never decides truncation: the name keeps its room. Accessible names start with it: "Session 6, billing, ...". Its tooltip teaches the phrase: "Say 'session 6' to an agent and Marshell knows which terminal you mean."
+- **Keys.** Ctrl+Shift+1 to 9 (Cmd+1 to 9 on macOS) go to sessions 1 to 9, as written in section 7. A higher number is "Go to session..." in the palette (type 12).
+- **Data contract (design level).** The core owns the number (`crates/protocol`, later): it is part of the session record, assigned when the session starts and released when it closes. Each session's process gets `MARSHELL_SESSION_NUMBER` (and `MARSHELL_TAB_ID`) in its environment. The future Marshell skill, plugin and `marshell` CLI resolve "session 6" through `marshell list` and `marshell send 6 ...`, so an agent in one terminal can message another.
+
+**Manual CLIs.** A terminal is not always an AI agent. A manual CLI is **any program that is not an LLM agent**: a shell, a dev tool, a remote tool, or anything else you run by hand. The named marks below are only the ones with a known mark; every other program is still a manual CLI and gets the neutral mark with its own name.
+- **Mark.** Marshell picks the mark from the session's foreground process (its executable name) and draws it the way an AI vendor's is drawn: shells (PowerShell, Bash, Zsh, Command Prompt, Git Bash, WSL), dev tools (Git, Docker, kubectl, Node.js, Python, Cargo, GitHub CLI, Terraform), remote and cloud tools (SSH, AWS, Google Cloud, Azure, Supabase, Vercel), and a neutral "terminal program" mark for anything else, which shows the executable's name. The mark changes when the foreground command changes (PowerShell, then ssh). The Phase 0 marks are simple glyphs drawn here; the programs' own logos are sourced and checked before release.
+- **Still.** No thinking motion at all: the mark never animates and `working` means nothing to it. No context ring, no model or effort, no mode chip, no approve card, no plan meters. The only states are *at the prompt* (idle), *running a command* (a still glyph and "Running docker compose up") and *exited* ("Exited · code 255"). The strip and header show only what is known (project, branch, uncommitted changes, elapsed time, ports, environment), as everywhere else.
+- **Colour.** One calm, low-chroma tone per group (shells, dev tools, remote tools) so a plain terminal never competes with an agent for attention; the accent still follows the focused session, and every tone holds AA like the vendor colours.
+- **No prompt line.** It is a plain terminal, so the terminal itself is where you type. A manual CLI has no Marshell prompt line: no full line under a single terminal, no compact line in its pane (its pane's terminal takes those 42 px back, and the pane math counts it per pane).
+
 ### Sidebar rows
 
-**Compact row, 36 px:**
+**Comfortable row, 56 px** (there is no compact density; the two modes are comfortable and expanded):
 - 3 px brand stripe flush left
-- 12 px padding, then the status glyph in a 16 px box
+- 14 px padding, then the **agent mark** in a 16 px box: the vendor logo (Claude, OpenAI, Gemini, Copilot, Cursor and others, a generic terminal mark for custom CLIs) in the agent's brand colour
 - 8 px gap, then the **name** (13/500)
 - 6 px gap, then project · branch (12, secondary)
-- flexible space, then the right cluster: caution 12, mute 12, wait time or age (11, tabular), context ring 16
-- 10 px right padding
-
-**Comfortable row, 48 px:** the same first line, plus a second line with the live status phrase in 12 px secondary, e.g. "Editing src/auth.ts · 2 subagents".
+- flexible space, then the right cluster: caution 12, mute 12, the **status glyph** 16, wait time or age (11, tabular), context ring 16
+- 12 px right padding
+- a second line: the **model** (12/500, e.g. "Opus 5.5", left out when the CLI does not report one) · the live status phrase in 12 px secondary, e.g. "Editing src/auth.ts · 2 subagents"
 
 **Truncation order:**
 1. The branch truncates first, in the middle (`feat/au…-flow`).
@@ -161,19 +183,19 @@ The full text is in the tooltip and the screen-reader label.
 | State | Glyph | Motion (reduced-motion) | Text (line 2 / screen reader) | Row treatment |
 |---|---|---|---|---|
 | Idle | Hollow circle | — | "Idle" | — |
-| Working | Filled dot | Opacity pulse .45↔1, 1.6 s (static dot with ¾ arc) | "Running npm test" | — |
-| Needs you: permission | Filled rounded-square badge with key | One bounce | "Wants to run `npm test`" | 6% attention tint, wait timer |
-| Needs you: question | Badge with "?" | One bounce | "Has a question" | Same |
-| Done, unseen | Check drawn in 200 ms | Draw once | "Done · edited 4 files" | Name at 600 weight, plus a 6 px unread dot |
-| Done, seen | Check at 50% | — | "Done 12m ago" | Normal |
-| Error | Octagon with ✕ | One flash | "Stopped: rate limit" | — |
+| Working | The vendor mark itself moves, one loop per vendor, signed off in phase 0 (Claude and Gemini breathe: the tips draw in more than the centre, Gemini shallower so the star stays slim; Codex turns steadily; Antigravity swims up like a jellyfish, the bell squeezing and the tentacles trailing; Copilot stays still while parts of its face flash dark, each on its own tempo; Cursor's cube stays still while the pointer cut out of it slides in, clicks and slides back; opencode steps; Amp's main arrow stays while the two secondary arrows are fired away one after another and slide back; Grok and Qwen turn back slowly; DeepSeek swims; custom agents blink only the underscore, hard on and off); no glyph in the cluster | Mark stays still; the phrase and screen-reader label carry the state | "Running npm test" | — |
+| Needs you: permission | Filled rounded-square badge in the vendor's colour with a padlock (locked until you decide); "?" for a question | One bounce | "Wants to run `npm test`" | 12% tint in the vendor's colour, reason line in full-contrast text, wait timer |
+| Needs you: question | Badge in the vendor's colour with "?" | One bounce | "Has a question" | Same |
+| Done, unseen | Check in the vendor's colour, drawn in 200 ms | Draw once | "Done · edited 4 files" | Name at 600 weight, plus a 6 px unread dot |
+| Done, seen | Thinner check in the vendor's colour | — | "Done 12m ago" | Normal |
+| Error | Filled disc in the vendor's colour with a cut-out ✕ | One flash | "Stopped: rate limit" | 12% tint in the vendor's colour, reason line in full-contrast text |
 | Stuck | Dashed ring | — | "Same command 9× in 4 min" | No notification |
 | Muted | Bell-slash in the cluster | Badge does not bounce | suffix "muted" | Glyphs still shown |
 | Elevated | Shield before the name | — | "Administrator" | Header label for the whole session |
-| Auto / dontAsk / bypass | ⚠, **always visible** | — | "Full auto" | Header outlined red (bypass, auto) |
+| Auto / dontAsk / bypass | ⚠, **always visible** | — | "Full auto" | Header tinted red with a red bar on its start edge (bypass, auto) |
 | Ended | Hollow square | — | "Ended · exit 0" | Text 60% |
 | Limited (no hooks) | Dotted circle | — | "Status limited · set up" | Links to setup |
-| Unknown values | "–" | — | "unknown" | Ring hidden |
+| Unknown values | Nothing: the ring, usage line, model, effort and subagent count are left out, not shown as a dash | — | — | Ring hidden |
 
 ### The approve card
 
@@ -189,7 +211,7 @@ Content, top to bottom:
 5. **Actions:** `Deny  N`, then `Allow once  Y` as the primary, at the right on every OS. Below them is a text button that **spells out the exact rule** it would add: "Always allow `Bash(npm test:*)` in this project  A". Then "Answer in terminal  T".
 
 **Keyboard safety:**
-- The card is reachable only by deliberate focus: Ctrl+Shift+N (Cmd+Shift+N), a click, or Tab inside the lane. Terminal keystrokes can never reach it.
+- The card is reachable only by deliberate focus: Ctrl+Shift+N (Cmd+N), a click, or Tab inside the lane. Terminal keystrokes can never reach it.
 - **Enter never allows.**
 - Buttons stay inert for 500 ms after the card gains focus or its content changes.
 - There is **no global approve shortcut**.
@@ -251,19 +273,14 @@ Content, top to bottom:
 | Scale | 11 / 12 / **13** / 15 / 20 / 28. Weights 400/500/600. Tabular figures for every number. |
 | Mono font | **Import the user's existing terminal font** from Windows Terminal or iTerm settings, so Nerd Font prompts keep working. Otherwise use bundled JetBrains Mono, 13 px. |
 
-**Colour tokens:**
-
-| Token | Dark | Light |
-|---|---|---|
-| bg.base / raised / overlay | `#000` / `#0A0A0A` / `#141414` | `#FFF` / `#FAF9F7` / `#F3F1EE` |
-| hover / selected | white 4% / 7% | `#1C1917` 4% / 7% |
-| hairline | white 10% | `#1C1917` 10% |
-| text 1 / 2 / 3 | `#E5E5E5` / `#A3A3A3` / `#8A8A8A` | `#1C1917` / `#57534E` / `#78716C` |
-| attention | the accent | the accent |
-| error | `#FF453A` | `#D70015` |
-| ok / caution | `#30D158` / `#FFD60A` | `#248A3D` / `#B25000` |
-
-Brand colours are used only on stripes and dots, and Claude orange is never a status colour.
+**Colour tokens:** the source of truth is `src/styles/tokens.css` (oklch, `light-dark()`), `accents.css` and the Storybook Colours story; this plan holds no hex values. Rules that stay binding:
+- Surfaces: true-black dark, warm-white light. Hover and selected are low-alpha overlays of the text colour. Text has three levels, and `--text-3` must pass AA on every surface.
+- **The accent follows the vendor.** Everything in a session's row, card, pane or window takes that CLI's signal colour: focus rings, the active-pane bar, primary buttons, the needs-you tint. Where no session is in play (onboarding, settings, doctor) the user's chosen accent applies; the default is signal amber (8 accents: amber, blue, indigo, violet, magenta, cyan, teal, slate). Vendor colours are checked for 4.5:1 text on their button fill and 3:1 for rings and bars on every surface (`accentFollowsVendor.test.ts`).
+- **No boxed outlines.** Cards, buttons, chips and keys are told apart by fill and tint, never by a 1 px box; a risky request is a tinted card with a red bar on its start edge. Hairlines stay as dividers between regions, and the keyboard focus ring stays. `noBoxedOutlines.test.ts` enforces it.
+- **Scrollbars:** the main window never shows a scrollbar: only the terminal conversation and the session list scroll, both by wheel, keys and touch, with the bar invisible. Menus, settings and the request-details drawer, which may scroll, keep a quiet 12 px pill that follows the theme and strengthens on hover and drag. `noScrollInMainWindow.test.ts` scans every feature and component stylesheet.
+- Status colours (error, ok, caution) are separate from the accent. Caution is yellow (dark) or olive (light) so it stays distinct from amber; `contrast.test.ts` checks AA and CIEDE2000 distance for every pair, including amber vs caution.
+- Brand colours are for marks, stripes and dots and, as the accent, for the focused session's rings, bars and primary buttons (see the accent rule above). Claude's is a muted terracotta, never a status colour; Codex and Gemini have their own tokens (OpenAI is a pale yellow in dark mode and a deep teal in light; a yellow that passes 3:1 on white looked like muddy gold). All are user-changeable.
+- Custom accent hex: validated at pick time against both themes (AA for `--accent-ink`), rejected with the reason if it fails.
 
 **Motion:**
 
@@ -439,7 +456,7 @@ pub enum SessionEvent {
 
 `PermissionMode` is the shared set {Manual, Plan, AutoEdit, FullAuto}; the CLI's own label is kept in `raw`.
 
-Session state is exactly as in brief §4, plus `unseen_done`, `waiting_since_ms` and `seen_at`. These live in Rust and are driven by `ClientState`. `subagents` is a `HashSet<String>`, and unknown values are `None`, which the UI renders as "–".
+Session state is exactly as in brief §4, plus `unseen_done`, `waiting_since_ms` and `seen_at`. These live in Rust and are driven by `ClientState`. `subagents` is a `HashSet<String>`, and unknown values are `None`, which the UI leaves out.
 
 ## 3. IPC contract
 
@@ -583,9 +600,11 @@ The Rust core is the only source of truth.
 
 ## 7. Per-OS notes
 
+**Platform status.** Windows 11 is the only platform hand-tested for now. Linux and macOS are planned and designed for (the table below, the Mac shortcut labels in the stories, the three-OS CI matrix), but nothing is signed off on them until the owner has hardware to test on. Treat every macOS and Linux row as a plan, not a verified fact.
+
 | Area | Windows | macOS | Linux |
 |---|---|---|---|
-| PTY | ConPTY via portable-pty 0.9. Answer DSR; Job Object kills the process tree; treat exit code 259 as "still running" properly; optional sideloaded `conpty.dll` + OpenConsole next to the exe if the spike shows stock ConPTY bugs. | forkpty; kill the process group | forkpty; kill the process group |
+| PTY | ConPTY via portable-pty 0.9. Answer DSR; Job Object kills the process tree; treat exit code 259 as "still running" properly; sideloaded `conpty.dll` + OpenConsole next to the exe (ships in phase 2: about 4x throughput on short-line floods, MIT notice required). | forkpty; kill the process group | forkpty; kill the process group |
 | Shells | pwsh 7, Windows PowerShell, cmd, Git Bash (registry `GitForWindows\InstallPath`), WSL distros (`wsl -l -q` outputs UTF-16) | `/etc/shells`, login shell | `/etc/shells`, login shell |
 | PATH | Inherited | GUI apps lack the shell PATH, so resolve `$SHELL -lic env` once for `detect()` and headless runs | Same as macOS |
 | WSL agents | Separate config root per distro. Hooks inside WSL call the Windows bridge through interop (`/mnt/c/.../marshell-hook.exe`), with `WSLENV=MARSHELL_TAB_ID/u:MARSHELL_AGENT/u`. Spike. | n/a | n/a |
@@ -606,13 +625,55 @@ Tray mouse events are not emitted on Linux, so on Linux the tray is menu-only.
 
 **Keyboard routing (a recorded deviation from the brief).** Several brief shortcuts are terminal control keys: Ctrl+H is Backspace, Ctrl+K kills a line, Ctrl+B and Ctrl+F move the cursor, and Ctrl+\ is SIGQUIT. So:
 - Every key goes through xterm's `attachCustomKeyEventHandler` and a single keymap.
-- App shortcuts are **Cmd+key on macOS** and **Ctrl+Shift+key on Windows and Linux**, as in Windows Terminal and VS Code's terminal. Examples: palette Ctrl+Shift+K, history Ctrl+Shift+H, search in scrollback Ctrl+Shift+F, split Ctrl+Shift+\, bookmark Ctrl+Shift+B, launcher Ctrl+Shift+T, reopen closed Ctrl+Shift+Alt+T, close Ctrl+Shift+W.
-- Cheat sheet: Ctrl+Shift+/ (Cmd+/ on macOS), because Ctrl+/ sends `^_`, which is readline undo.
-- Ctrl+1–9 and F2 stay as written. Peek is Space on a focused row.
+- App shortcuts are **Cmd+key on macOS** and **Ctrl+Shift+key on Windows and Linux**, as in Windows Terminal and VS Code's terminal. Examples: palette Ctrl+Shift+K, history Ctrl+Shift+Y, search in scrollback Ctrl+Shift+F, split Ctrl+Shift+D, bookmark Ctrl+Shift+B, launcher Ctrl+Shift+T, reopen closed Ctrl+Shift+Alt+T, close Ctrl+Shift+W.
+- Cheat sheet: Ctrl+Shift+O (Cmd+O on macOS). It was Ctrl+Shift+/, but punctuation keys sit elsewhere (or behind AltGr) on other layouts, so no shortcut uses punctuation.
+- Sessions 1 to 9 are Ctrl+Shift+1 to 9 (Cmd+1 to 9 on macOS), not Ctrl+1 to 9: terminals read Ctrl+2 to Ctrl+7 as control codes (NUL, ESC, FS, GS, RS, and US, which is readline's undo) and vim uses Ctrl+6. F2 stays as written. Peek is Space on a focused row.
 - The approve-card keys Y/N/A/T are active only while the card has focus.
 - Global search moves to Ctrl+Shift+Alt+F.
 - The cheat sheet shows the real bindings per OS, and all bindings are rebindable.
 - **The needs-you lane is ordered oldest-waiting first** (a deviation from the brief's "newest first"), so waiting is first-in, first-out; Ctrl+Shift+N follows that order.
+
+### Keyboard navigation and shortcuts
+
+Two layers, so that nothing the app does ever takes a key a terminal program needs.
+
+**1. The app layer** is one chord per command: **Ctrl+Shift+key** on Windows and Linux, **Cmd+key** on macOS. Keys are matched by **physical position** (`KeyboardEvent.code`: `KeyK`, `Digit1`, `F2`), never by the character they type, so a shortcut sits on the same key of a French, German, Dvorak, Hebrew or Cyrillic keyboard, and a Hebrew layout cannot make "K" disappear. **No shortcut uses punctuation**, because punctuation moves between layouts or needs AltGr. Bindings are rebindable and every rebinding is checked by a pure function against the other bindings and a reserved list (below), which gives the reason in a sentence.
+
+**2. The navigation layer** moves the selection. It lives on a **navigation modifier that terminals never need: Ctrl+Shift, on every system** (shown as ⌃⇧ on macOS). It is a setting; the settings page shows each choice with the systems where it clashes:
+
+| Modifier | Windows | macOS | Linux |
+|---|---|---|---|
+| **Ctrl+Shift** (default) | Free. Ctrl+Shift alone changes the input language only when released with no other key, so holding it with Tab is safe. | Free. Cmd+Tab is the system app switcher and never reaches an app, so the chord cannot use Cmd. | Free. |
+| Ctrl+Alt | Taken: Windows reads it as AltGr, which types @ { [ on many layouts. | Taken when VoiceOver is on (Ctrl+Option is its key). | Taken: workspace switching on GNOME and KDE. |
+| Alt+Shift | Taken: switches the keyboard layout. | Taken: types symbols. | Taken: switches the keyboard layout. |
+
+How it works (a pure, tested state machine; the window only measures rectangles and applies effects):
+- **Terminals are selected, not just focused.** Exactly one terminal on screen is selected, or none. Selecting means it gets the keyboard, its pane takes the accent, the header and the status bar show it. Plain keys always go to the program in the terminal; Tab, Esc and the arrows are never taken there.
+- **Modifier+Tab** selects the next terminal **on screen**, in order, and wraps. Empty slots are skipped (nothing to select in them). It never reaches the sidebar, however often it is pressed. The modifier already holds Shift, so Tab cannot also mean "backwards"; the arrows go the other way.
+- **Hold the modifier and use the arrows** to move a **cursor** anywhere by where things are on screen: across the (up to four) panes, down the sidebar list, up to the top bar. The cursor is a tinted fill with a bar on its start edge and a one-line hint ("Release Ctrl+Shift to select · Backspace for none"). **Releasing the modifier selects what the cursor is on.** Leaving a pane to the left lands on that pane's own session in the list. A session that is not on screen is **brought into the focused pane** (the first empty slot when none is focused, the first slot when all are taken), then selected; the session it replaces keeps running. A top-bar control is activated, and the selection stays.
+- **Only the modifier and the arrows reach the sidebar list**, or the mouse. Tab alone never does. Inside a terminal or the prompt line, Ctrl+Shift+arrow selects a word, so the arrows start navigation only after a Tab has been pressed in that hold; on a button or on nothing, they start it directly.
+- **Select none:** **Modifier+Backspace** (works everywhere: Ctrl+Shift+Esc is Windows Task Manager and never arrives). Plain **Esc** also selects none when focus is on a control or nothing, never inside a terminal (Esc interrupts Claude Code, closes vim and fzf). While a cursor is out, Esc (macOS, Linux) cancels the move and keeps the selection; on Windows, move the cursor back or release on the pane you came from.
+- **With nothing selected:** no pane is lit, the accent is neutral, typing goes nowhere, and the status bar says "No session selected · Tab to select a terminal". Plain Tab on nothing selects the first terminal; plain Tab on a button keeps moving through the page, so it stays keyboard-reachable.
+- **Screen readers:** one polite live region says "Selected session 6, billing", "Cursor on session 3, api-server", "No session selected". Nothing is announced when the window opens.
+- Losing window focus while the modifier is down cancels the cursor (the key-up never arrives).
+- The prerequisites: the webview's own accelerators (reload, print, find, devtools, zoom) are switched off, so no browser shortcut shadows an app one (Tauri/WebView2 `AreBrowserAcceleratorKeysEnabled = false`; the equivalents on WKWebView and WebKitGTK).
+
+**The audit.** Every command checked against the system, the webview, text boxes and terminal programs. Moved commands are in bold.
+
+| Command | Was | Now (Win/Linux · macOS) | Why |
+|---|---|---|---|
+| Prompt line focus | M | **L** · ⌘L | ⌘M is Minimize on macOS. |
+| History | H | **Y** · ⌘Y | ⌘H is Hide on macOS (and Y matches browsers' history key). |
+| Zoom pane | Z | **P** · ⌘P (Pane) | ⌘Z is Undo and Ctrl+Shift+Z is Redo in the prompt line. E was rejected: Ctrl+Shift+E is the IBus emoji picker on Linux. |
+| Shell panel | J | **S** · ⌘S (Shell) | Ctrl+Shift+J opens the devtools console in a development webview. |
+| Split | \ | **D** · ⌘D | Punctuation. D matches iTerm2's split. |
+| Cheat sheet | / | **O** · ⌘O (Overview) | Punctuation. |
+| Sessions 1 to 9 | Ctrl+1 to 9 | **Ctrl+Shift+1 to 9** · ⌘1 to 9 | Terminals read Ctrl+2 to Ctrl+7 as control codes; vim uses Ctrl+6. |
+| Next / previous pane | ] [ | **Modifier+Tab** (no previous: the arrows) | Punctuation; needs AltGr on many keyboards. |
+| Start session, close, reopen, find, global search, bookmark, palette, next waiting, rename (F2) | unchanged | unchanged | No clash found. Ctrl+Shift+U and Ctrl+Shift+E (GTK/IBus), Ctrl+Shift+C and V (terminal copy and paste), Ctrl+Shift+Esc and Z were avoided on purpose. |
+
+Known soft spots, left as they are: on a Mac laptop F2 needs Fn unless "use F-keys as standard" is set (the palette has Rename); Ctrl+Shift+N is "new incognito window" in browsers but the webview has no such command.
+
 
 ## 8. Spikes first (each has pass/fail)
 
@@ -630,44 +691,88 @@ Tray mouse events are not emitted on Linux, so on Linux the tray is menu-only.
 | S10 | Windows hook path with spaces | A quoted bridge path under `C:\Users\Home Office` runs from Claude's hook runner and status line on this machine. |
 | S11 | WSL bridge | A hook from Claude inside WSL reaches the Windows core through interop, with the tab id carried by `WSLENV`. |
 
-## 9. Milestones (phases 1–8 = v1)
+## 9. Milestones (phases 1–9 = v1)
 
-0. **Design (blocks UI work).**
-   - Deliverables: tokens (light, true-black dark, 8 accents with AA checks), the icon (done 2026-10-09: "Night shift" marshalling batons, `assets/icon/app-night-shift.svg`; alternates `alt-daylight.svg` and `alt-signal-tile.svg`; mono tray glyph `tray-mono.svg`), and Storybook mockups of the main window, every sidebar row state, the doctor report, the settings editor and onboarding.
-   - Exit: your approval.
-1. **Scaffold + one live tab + gate.**
-   - Scope: workspace, core thread, axum server with token, CORS/CSP/Host checks, pty WebSocket with coalescing, backpressure and the vt100 screen, xterm (fit, WebGL with DOM fallback) in a bare window with tokens only (no chrome until phase 0 is approved), CI on all three OSes, `brand.rs`.
-   - Spikes S1, S2, S6 and S7 run here; S8 also runs here, as a spike only.
-   - Exit: typing feels instant, resize works, the gate passes, and all three OSes build in CI.
+Decisions from the 2026-10-10 coverage audit (`docs/superpowers/plan-coverage-audit.md`) are folded in below and in "Cross-cutting requirements".
+
+0. **Design (blocks UI work).** Three sign-off batches, each reviewed in Storybook and a published private preview:
+   - Batch 1: tokens + type, status glyphs + motion, sidebar rows (deliverables 1–3).
+   - Batch 2: approve card, main window composite, launcher + palette (4–6).
+   - Batch 3: onboarding + empty states, Departures, doctor, settings + editor, OS notification mocks + icon, tray menu (7–11).
+   - Also: sound drafts, the PR template file (10-item gate), demo mode as a `fake-agent` scenario, Playwright baseline from approved stories.
+   - Icon done 2026-10-09 ("Night shift"; `assets/icon/app-night-shift.svg`, alternates `alt-daylight.svg`, `alt-signal-tile.svg`, mono tray `tray-mono.svg`).
+   - Exit: your approval of each batch.
+1. **Scaffold + one live tab + gate.** (merged, PR #1)
+   - Scope: workspace, core thread, axum server with token, CORS/CSP/Host checks, pty WebSocket with coalescing, backpressure and the vt100 screen, xterm in a bare window, CI on all three OSes, `brand.rs`, `fake-agent`.
+   - Added by the audit: README, CONTRIBUTING, SECURITY.md, issue and PR templates; `docs/adr/` with a GLOSSARY; macOS and Linux smoke jobs in CI; a date for the S1 Mac/Linux runs and a written cost estimate for the Electron fallback.
+   - Spikes S1, S2, S6, S7 and S8 ran here. Open: S1 Mac/Linux rows. Exit: typing feels instant, resize works, the gate passes, all three OSes build in CI.
 2. **Tabs + sidebar + shell integration.**
    - Scope:
      - shell detection and profiles, the launcher, profile settings pages
      - app-owned init scripts (OSC 7/133, PSReadLine and prompt options) and "make permanent"
      - themes, accent, high-contrast and large-text modes, theme import (Windows Terminal, iTerm2, VS Code)
-     - split view, clickable paths, layout restore, F2 rename, reopen a closed session
+     - **terminal theme** (below): follow-app default, per-profile override, live switch, contrast protection, background-colour answers
+     - split view, clickable paths, layout restore, F2 rename, reopen a closed session, drag reorder and project grouping, focus mode and rail
      - asciicast v2 recording, palette basics, the keyboard routing above, the cheat sheet, brand colors
      - the structural UX rules, which are hard to retrofit: focus restoration, the hover-freeze rule, the permanent lane header, rows that never resize
-   - Exit: 5 tabs across 3 shells; restart restores the layout; a recording replays in asciinema-player; OSC 133 prompt jumps work.
+     - **Windows process hygiene (from S2):** Job Object with kill-on-close so a crash leaves no orphans; sideloaded `conpty.dll` + `OpenConsole.exe` with the MIT notice; WebView2 bootstrapper; arm64 build.
+     - **Resilience:** a core panic hook and supervisor with a "core restarted" UI state; every file in `~/.marshell` carries a `version` field, is written atomically and keeps a `.bak`; migrations run on load.
+     - **Restart behaviour:** on relaunch tabs come back as "Ended" with a one-click Resume (the agent's own `--resume`). Nothing relaunches itself or spends tokens unasked.
+   - Exit: 5 tabs across 3 shells; restart restores the layout; kill the app mid-task, relaunch, and every tab is back with Resume; no orphan processes after a crash; a recording replays in asciinema-player; OSC 133 prompt jumps work.
 3. **Config safety core + bridge + Claude adapter.**
    - Scope:
      - The **config service core**, built here because hook install depends on it: ChangeSet, preview diff, jsonc CST edits, atomic write, snapshot and restore, `managed.json`, watching, managed-path guard.
-     - Hook install flow, status, event recap, status line chain (S4, S10), pty heuristics fallback.
-     - Context ring and plan ring, approve-from-anywhere (S9), needs-you lane plus the screen-reader live region, Peek.
-     - Transcript archive copy, history index, Resume.
+     - Hook install flow, status, event recap, status line chain (S4, S10), pty heuristics fallback, the bridge's locked-exe rename update.
+     - Context ring and plan ring (green/yellow/red at 70% and 90%), approve-from-anywhere (S9), needs-you lane plus the screen-reader live region, Peek.
+     - Transcript archive copy, history index (SQLite `integrity_check` on start; rebuild from the archive if corrupt), Resume.
      - Pulled forward so the core loop can be used daily from phase 3: the onboarding consent flow, the taskbar/dock badge and flash, and the needs-you sound. Banners, batching and the full choreography stay in phase 4.
-   - Exit: a real Claude session shows correct model, effort, mode, subagents and context; approval from a card works; uninstall leaves zero byte diff.
+     - **Security:** an ADR threat model (loopback server, `/sessions/:id/input`, the `marshell://` link, instruction-library injection); owner-only permissions on all of `~/.marshell`; the deep link carries no authority (it only focuses); a security review gate before approve-from-anywhere ships.
+     - **Diagnostics:** `tracing` logs with rotation, a size cap and redaction; "Export diagnostics" in Settings → Advanced; the hidden perf panel.
+     - **Version drift:** adapters are version-gated; an unknown CLI version shows "Status limited" and a doctor note, with a per-CLI switch to turn normalisation off.
+     - `marshell uninstall` and Settings → Advanced → Remove all hooks; an "orphaned hooks" check for when the bridge is gone.
+     - Start code-signing procurement (Azure Artifact Signing, Apple Developer ID).
+   - Exit: a real Claude session shows correct model, effort, mode, subagents and context; approval from a card works; uninstall leaves zero byte diff; corrupting `index.sqlite` is repaired on start.
 4. **Notifications + choreography + Departures board + stuck detection** (S3).
-   - Exit: every rule in brief §5.5 is verified on all three OSes.
+   - Exit: every rule in brief §5.5 is verified on all three OSes. Every sound has a visual equivalent.
 5. **History view.**
-   - Scope: search, conversation view, recording replay, bookmarks, tags, export with redaction, import of sessions run outside the app.
-   - Exit: a 1000-session index searches in under 100 ms.
+   - Scope: search, conversation view, files-changed tab, recording replay, bookmarks, tags, archive and delete-copy, export with redaction, import of sessions run outside the app, retention limits (size and age), the optional backup-folder mirror, a disk-usage view, recording compression and cleanup.
+   - Exit: a 1000-session index searches in under 100 ms; recordings stay within a stated MB-per-hour budget.
 6. **Agents, integration and the elevated helper.**
-   - Scope: settings pane (read-only), Codex + Gemini/Antigravity adapters, custom agents, repo scripts (`marshell.json`), port chips, the `marshell` CLI and its built-in skill, project references, WSL (S11), and the `marshell-host` elevated helper, if S8 passed. Until it ships, elevated sessions open in a separate elevated Marshell window, as Windows Terminal does.
+   - Scope: settings pane (read-only), Codex + Gemini/Antigravity adapters (decision due before this phase starts; install both CLIs first), custom agents, repo scripts (`marshell.json`), port chips, the `marshell` CLI and its built-in skill (when the app is closed, `marshell new` says so and offers to start it), project references (`@` picker, alias learning), WSL (S11), "open in system terminal" and "copy resume command", and the `marshell-host` elevated helper. S8 passed with requirements: the token goes over a pipe, never the command line, and the decline and wrong-token paths get tested. Until it ships, elevated sessions open in a separate elevated Marshell window.
    - Exit: fixture suites from the real CLIs pass.
-7. **Doctor**: the fix actions, on top of the phase-3 config core: "Fix X issues" and one-click undo; folds in each CLI's own doctor; detects duplicate notifications; reports the tokens injected by project references; checks Codex hook trust.
+7. **Doctor**: the fix actions, on top of the phase-3 config core: "Fix X issues" and one-click undo; folds in each CLI's own doctor; detects duplicate notifications; reports the tokens injected by project references; checks Codex hook trust; waste checks (unused MCP servers and skills, long descriptions, broad scopes, a token-cost estimate); offers to raise `cleanupPeriodDays`.
    - Exit: a seeded broken config is fully repaired and fully undone.
 8. **Editors + instruction library** (wired per CLI with a content hash and drift check; settings raw mode validated against the SchemaStore schema), smart and native recaps, diff drawer, step timeline, saved prompts, broadcast.
-   - Exit: one doc wired into all three CLIs, verified by each CLI loading it.
+   - Instruction library items: frontmatter form, "what loads here" view, token estimate with a 4k warning, templates and one-click project profiles, per-project toggles, agent filter, globs, and "Improve this file" (headless, opt-in).
+   - Exit: one doc wired into all three CLIs, verified by each CLI loading it; the 32 KiB Codex limit warns before it truncates.
+9. **Release.**
+   - Scope: tagged-build workflow, signed and notarized artifacts (NSIS per-user + MSI, dmg, AppImage/deb/rpm), checksums, release notes, the Tauri updater with a signing key and a rollback path, installers that run the unhook on uninstall, a manual release checklist file (including the macOS run), `cargo-deny` and `pnpm audit`, licence notices for bundled fonts, sounds and OpenConsole, and the formal trademark search.
+   - Exit: a signed build installs, updates and uninstalls on all three OSes with zero trace left in any CLI config.
+
+### Accessibility safety net
+
+Two bugs (a prompt line announced twice, a selected rail item that vanished in Windows High Contrast) were found by a late review, not by a test. Four layers now catch that kind of problem early.
+
+1. **Shared building blocks** (`src/components/a11y/`). `Announcer` is the only live region in the app: silent on first render, never the same words twice running, at most one message per 1.5 s with the latest winning, and an assertive message is not held back. `SelectedMark` (`.is-selected-mark`, `selectedProps()`) gives every selected state three independent cues: a fill, a 2 px bar on the end edge and, in forced colours, a Highlight outline. Features use these and do not draw their own.
+2. **Automated rules** (`sharedBlocks.test.ts`, `rules.test.tsx`). Fail the build when a file other than the Announcer adds a live region (the few exceptions are listed with reasons, and a debt list may only shrink); when a selected-state selector has no forced-colors rule in its file; when a status lacks a drawn shape or words, or shares them with another; when a toggle changes its name with its state; when a window renders more than one live region; or when a forced-colors rule uses a non-system colour or a border colour.
+3. **Matrix** (`pnpm a11y:matrix`, `docs/a11y/a11y-matrix.md`). Windows High Contrast, reduced motion, 150% zoom and four colour-vision filters, with screenshots and in-page checks for selected markers, focus rings, clipped text, looping motion and live regions.
+4. **Screen-reader script** (`docs/a11y/screen-reader-script.md`). Ten minutes with Narrator and NVDA at every sub-review sign-off, with the exact phrases expected. A fail is fixed before sign-off.
+
+**What is announced (the setting `announce`).** The default, `needs-you`, announces a request or question arriving (for the focused session by name, and "N sessions need you" when the count rises anywhere), a stop or an end, the session you switch to ("Session 6, billing", plus what it needs), and "No session selected". It never announces progress, "working", a finished turn or anything in a pane you are not in. "Read the focused session's status" (Ctrl+Shift+G, ⌘G) says the focused session's state on request, every time. `everything` (every status change in every visible pane) and `on-request` (nothing until asked) are typed in the setting but not built: until they are, `everything` behaves like `needs-you`.
+
+## Cross-cutting requirements (every phase)
+
+- **Privacy:** no telemetry and no crash reporting, ever. The app makes no network calls except ones you start (updates, a model-backed recap you turned on). Crash information stays local in the diagnostics export. The onboarding says so in one line.
+- **Zero token cost by default:** no model call happens unless you enable a model-backed feature; a test asserts it.
+- **Secrets at rest:** transcripts and recordings are stored with owner-only permissions (0700 / owner ACL), not encrypted, so search stays fast. Redaction happens on export.
+- **Languages:** English only in v1. All user-facing copy lives in one string catalog so translation can be added later. Layout already handles right-to-left names.
+- **Accessibility:** besides Storybook axe, each UI phase ends with a keyboard-only walkthrough; the terminal ships with xterm's screen-reader mode available; one screen-reader pass before release.
+- **Budgets beyond latency:** memory per session, idle CPU and startup with 1000 sessions are measured in the perf panel and given numbers when phase 2 lands.
+- **OS integration:** autostart at login, `marshell://` registration and "Open in Marshell" are settings, all off by default.
+
+## v2 and later (not in v1)
+
+From brief §5.9 and §6: the installer runner (install and update CLIs), review-to-merge, start-from-issue, checkpoints, file tree, phone check-in, more than two panes, and the `marshelld` daemon. v1 keeps the core protocol-first so these are additions, not rewrites. Also deferred: Airport mode (relabel statuses), if wanted at all.
 
 ## 10. Testing strategy
 

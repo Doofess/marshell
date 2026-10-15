@@ -1,0 +1,52 @@
+.session-header {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-inline-size: 0;
+  block-size: 40px;
+  padding-inline: var(--space-3);
+  overflow: clip;
+  white-space: nowrap;
+  font-size: var(--text-13);
+}
+/* A risky mode (bypass, full auto) is a tinted header with a red bar on its start edge, like the risky approve card, not a red box. */
+.session-header[data-danger] {
+  background: color-mix(in oklch, var(--error) 9%, transparent);
+}
+.session-header[data-danger]::before {
+  content: "";
+  position: absolute;
+  inset-block: 0;
+  inset-inline-start: 0;
+  inline-size: 3px;
+  background: var(--error);
+}
+.session-header__name {
+  flex: 0 1 auto;
+  min-inline-size: 0;
+  overflow: clip;
+  text-overflow: ellipsis;
+  font-weight: 600;
+}
+.session-header__label {
+  color: var(--text-2);
+  font-size: var(--text-12);
+}
+.session-header__place,
+.session-header__meta {
+  min-inline-size: 0;
+  overflow: clip;
+  text-overflow: ellipsis;
+  color: var(--text-2);
+  font-size: var(--text-12);
+}
+.session-header__spacer {
+  flex: 1 1 0;
+}
+@media (forced-colors: active) {
+  .session-header[data-danger] {
+    outline: 2px solid CanvasText;
+    outline-offset: -2px;
+  }
+}

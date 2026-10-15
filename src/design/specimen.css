@@ -1,0 +1,62 @@
+.specimen-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: var(--space-3);
+}
+
+.swatch {
+  display: grid;
+  gap: var(--space-1);
+  font-size: var(--text-11);
+  color: var(--text-2);
+}
+
+.swatch__chip {
+  block-size: 40px;
+  border-radius: var(--radius);
+  border: 1px solid var(--hairline);
+}
+
+.swatch__name {
+  color: var(--text-1);
+  font-family: var(--font-mono);
+}
+
+.matrix {
+  inline-size: 100%;
+  border-collapse: collapse;
+  font-size: var(--text-12);
+  font-variant-numeric: tabular-nums;
+}
+
+.matrix :is(th, td) {
+  padding-block: var(--space-1);
+  padding-inline: var(--space-2);
+  border-block-end: 1px solid var(--hairline);
+  text-align: start;
+}
+
+.matrix th {
+  color: var(--text-3);
+  font-weight: 500;
+}
+
+.matrix__fail {
+  color: var(--error);
+  font-weight: 600;
+}
+
+.type-row {
+  display: grid;
+  grid-template-columns: 72px 1fr;
+  align-items: baseline;
+  gap: var(--space-3);
+  padding-block: var(--space-2);
+  border-block-end: 1px solid var(--hairline);
+}
+
+.type-row__meta {
+  color: var(--text-3);
+  font-size: var(--text-11);
+  font-family: var(--font-mono);
+}

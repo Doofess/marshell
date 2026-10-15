@@ -1,0 +1,266 @@
+.window {
+  display: grid;
+  grid-template-rows: 40px minmax(0, 1fr);
+  min-inline-size: 0;
+  /* The window's own edge (what the OS draws around a real window), not a control outline. */
+  border-radius: 8px;
+  box-shadow: 0 0 0 1px var(--hairline);
+  background: var(--bg-base);
+  color: var(--text-1);
+  overflow: clip;
+}
+
+/* One unified 40 px bar: sidebar column | session header | window controls. */
+.window__bar {
+  display: grid;
+  grid-template-columns: var(--side-w) minmax(0, 1fr) auto;
+  align-items: center;
+  block-size: 40px;
+  border-block-end: 1px solid var(--hairline);
+  background: var(--bg-raised);
+}
+.window__bar-side {
+  display: flex;
+  align-items: center;
+  min-inline-size: 0;
+  padding-inline: var(--space-1);
+}
+.window[data-mode="focus"] .window__bar-side {
+  inline-size: 0;
+  padding-inline: 0;
+  overflow: clip;
+}
+.window__bar-main {
+  min-inline-size: 0;
+}
+.window__bar-end {
+  display: flex;
+  align-items: center;
+}
+.window__layout {
+  position: relative;
+  padding-inline: var(--space-1);
+}
+.window__popover {
+  position: absolute;
+  inset-block-start: calc(100% + var(--space-1));
+  inset-inline-end: 0;
+  z-index: 3;
+}
+.window__controls {
+  display: flex;
+}
+.window__control {
+  display: grid;
+  place-items: center;
+  inline-size: 46px;
+  block-size: 40px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-2);
+}
+/* A wide, labelled button, so nobody has to guess what an icon means. */
+.window__palette {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  block-size: 28px;
+  margin-inline-start: var(--space-1);
+  padding-inline: var(--space-2) var(--space-3);
+  border: 0;
+  border-radius: var(--radius);
+  background: var(--fill);
+  color: var(--text-2);
+  font: inherit;
+  font-size: var(--text-12);
+  white-space: nowrap;
+}
+.window__palette:focus-visible {
+  outline: 2px solid var(--focus, var(--accent));
+  outline-offset: 1px;
+}
+.window__palette:active {
+  background: var(--fill-strong);
+}
+@media (hover: hover) and (pointer: fine) {
+  .window__palette:hover {
+    background: var(--fill-strong);
+    color: var(--text-1);
+  }
+}
+.window__control--menu {
+  inline-size: 32px;
+  block-size: 32px;
+  border-radius: var(--radius);
+}
+/* The icon and the name are one button: the app menu. In the 52 px rail only the icon fits. */
+.window__brand {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  block-size: 32px;
+  padding-inline: 7px var(--space-2);
+  border: 0;
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--text-1);
+}
+.window__brand:focus-visible {
+  outline: 2px solid var(--focus, var(--accent));
+  outline-offset: -2px;
+}
+.window__brand:active {
+  background: var(--selected);
+}
+@media (hover: hover) and (pointer: fine) {
+  .window__brand:hover {
+    background: var(--hover);
+  }
+}
+.window__control:focus-visible {
+  outline: 2px solid var(--focus, var(--accent));
+  outline-offset: -2px;
+}
+.window__control:active {
+  background: var(--selected);
+}
+@media (hover: hover) and (pointer: fine) {
+  .window__control:hover {
+    background: var(--hover);
+    color: var(--text-1);
+  }
+  .window__control--close:hover {
+    background: var(--error);
+    color: var(--bg-base);
+  }
+}
+
+.window__body {
+  display: flex;
+  min-block-size: 0;
+}
+/* The terminals and, under them, the prompt bar. Nothing in here scrolls except the conversation. */
+.window__center {
+  display: flex;
+  flex: 1 1 0;
+  flex-direction: column;
+  min-inline-size: 0;
+  min-block-size: 0;
+}
+.window__main {
+  position: relative;
+  display: grid;
+  flex: 1 1 0;
+  min-inline-size: 0;
+  min-block-size: 0;
+}
+
+/*
+ * The prompt bar sits in a fixed slot, so the terminals above never resize. A long prompt grows the bar upward over the
+ * terminal while it is being written, instead of pushing the terminal's size around.
+ */
+.window__center {
+  position: relative;
+}
+.window__composer {
+  position: relative;
+  flex: none;
+}
+/* The status bar at the foot of the centre column: the focused session's strip, the same 24 px in a single window and in split view. */
+.window__status {
+  flex: none;
+  min-inline-size: 0;
+  overflow: clip;
+}
+/* Flat and docked, like the compact line in a pane: the whole slot, edge to edge, with nothing lifted off the bottom and no shadow,
+   so the status bar sits directly under it and it never covers a terminal row. A long prompt grows it upward from the slot's foot. */
+.window__composer > .composer {
+  position: absolute;
+  inset-inline: 0;
+  inset-block-end: 0;
+  z-index: 2;
+  margin: 0;
+}
+
+/* No sessions: the terminal area says how to start one. */
+.window__empty {
+  display: grid;
+  place-content: center;
+  padding: var(--space-4);
+  background: var(--bg-base);
+  color: var(--text-2);
+  font-size: var(--text-20);
+  font-weight: 600;
+  text-align: center;
+}
+
+.focus-pill {
+  position: absolute;
+  inset-block-start: var(--space-3);
+  inset-inline-end: var(--space-3);
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding-block: 4px;
+  padding-inline: var(--space-3);
+  border: 0;
+  border-radius: 999px;
+  background: var(--bg-overlay);
+  box-shadow: var(--shadow-pill);
+  color: var(--text-1);
+  font: inherit;
+  font-size: var(--text-12);
+}
+.focus-pill__kbd {
+  color: var(--text-2);
+  font-family: var(--font-mono);
+  font-size: var(--text-11);
+}
+.focus-pill:focus-visible {
+  outline: 2px solid var(--focus, var(--accent));
+  outline-offset: 2px;
+}
+.focus-pill:active {
+  box-shadow: inset 0 0 0 100vmax var(--selected);
+}
+
+/* The drawer pushes the terminal, or overlays it when the terminal would drop below 720 px. */
+.drawer {
+  display: grid;
+  align-content: start;
+  padding: var(--space-3);
+  overflow-y: auto;
+  background: var(--bg-raised);
+  border-inline-start: 1px solid var(--hairline);
+}
+.drawer[data-placement="overlay"] {
+  position: absolute;
+  inset-block: 0;
+  inset-inline-end: 0;
+  box-shadow: 0 0 24px color-mix(in oklch, var(--text-1) 25%, transparent);
+}
+.window__main[data-placement="push"] {
+  grid-auto-flow: column;
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+@media (forced-colors: active) {
+  /* The window edge was a shadow and the palette button and pill are fills: High Contrast keeps them as outlines.
+     The bar and drawer dividers are real borders, which the system colours already. */
+  .window,
+  .window__palette,
+  .focus-pill {
+    outline: 1px solid CanvasText;
+  }
+}
+
+/* The window's one live region: there for screen readers, never seen. */
+.window__announcer {
+  position: absolute;
+  inline-size: 1px;
+  block-size: 1px;
+  overflow: clip;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}

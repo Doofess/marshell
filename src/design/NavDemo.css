@@ -1,0 +1,92 @@
+.nav-demo {
+  position: relative;
+  box-sizing: border-box;
+  overflow: clip;
+  border-radius: var(--radius);
+  background: var(--bg-base);
+  color: var(--text-1);
+  font-size: var(--text-12);
+}
+
+.nav-demo > * {
+  position: absolute;
+  box-sizing: border-box;
+}
+
+.nav-demo__top {
+  display: grid;
+  place-items: center;
+  background: var(--fill);
+  color: var(--text-2);
+}
+
+.nav-demo__row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding-inline: var(--space-3);
+  background: var(--bg-raised);
+  color: var(--text-1);
+}
+
+.nav-demo__row[data-on-screen="false"] {
+  color: var(--text-2);
+}
+
+.nav-demo__number {
+  padding-inline: 0.5ch;
+  border-radius: calc(var(--radius) / 2);
+  background: var(--fill);
+  color: var(--text-2);
+  font-variant-numeric: tabular-nums;
+}
+
+.nav-demo__pane {
+  background: var(--bg-base);
+}
+
+.nav-demo__pane[data-selected="true"] {
+  background: color-mix(in oklch, var(--accent) 6%, var(--bg-base));
+}
+
+.nav-demo__pane-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  block-size: 28px;
+  padding-inline: var(--space-3);
+  background: var(--fill);
+  color: var(--text-1);
+  font-weight: 600;
+}
+
+.nav-demo__pane[data-selected="true"] .nav-demo__pane-head {
+  box-shadow: inset 0 -2px 0 var(--accent);
+}
+
+.nav-demo__selected {
+  margin-inline-start: auto;
+  color: var(--text-2);
+  font-weight: 400;
+}
+
+.nav-demo__status {
+  display: flex;
+  align-items: center;
+  block-size: 24px;
+  padding-inline: var(--space-3);
+  background: var(--bg-overlay);
+  color: var(--text-2);
+}
+
+/* Windows High Contrast drops the tint and the shadow, so the selected pane takes a system-colour outline. */
+@media (forced-colors: active) {
+  .nav-demo__pane[data-selected="true"] {
+    outline: 2px solid Highlight;
+    outline-offset: -2px;
+  }
+  .nav-demo__pane[data-selected="true"] .nav-demo__pane-head {
+    outline: 2px solid Highlight;
+    outline-offset: -2px;
+  }
+}

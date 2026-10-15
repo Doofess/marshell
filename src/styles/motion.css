@@ -1,0 +1,253 @@
+/*
+ * Motion for glyphs and rows (docs/PLAN.md "Motion").
+ * Full motion runs only when the OS allows it AND the Storybook/app switch is not "reduce".
+ * Looping animation pauses while the page is hidden (src/design/visibility.ts sets data-page-hidden).
+ */
+@keyframes g-pulse {
+  from { opacity: 0.45; }
+  to { opacity: 1; }
+}
+@keyframes g-bounce {
+  0%, 100% { transform: scale(1); }
+  45% { transform: scale(1.2); }
+}
+@keyframes g-draw {
+  from { stroke-dashoffset: 1; }
+  to { stroke-dashoffset: 0; }
+}
+@keyframes g-flash {
+  0%, 100% { opacity: 1; }
+  40% { opacity: 0.35; }
+}
+/* No "to" frame: the flash fades into whatever background the row has (needs-you tint, selection, none). */
+@keyframes row-flash {
+  from { background-color: var(--signal-flash); }
+}
+/* Reduced motion: an instant tint held for 300 ms, then gone; nothing moves or fades. */
+@keyframes row-flash-reduced {
+  from, to { background-color: var(--signal-flash); }
+}
+
+/* Vendor marks: while a session works, its logo moves with its own loop (reduced motion: the mark stays still). */
+.agent-mark {
+  transform-origin: center;
+}
+/* Claude and Gemini breathe: the rays draw in towards the centre and back out, the tips by more than the centre (each layer sets its own --s, see AgentMark.tsx). */
+@keyframes mark-breathe {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(var(--s, 0.55)); }
+}
+@keyframes mark-spin {
+  to { transform: rotate(360deg); }
+}
+@keyframes mark-spin-back {
+  to { transform: rotate(-360deg); }
+}
+/* Antigravity: a jellyfish swimming up. The bell squeezes and the whole body darts up, the tentacles trail a beat behind and
+   fold in hard, then everything relaxes and sinks slowly before the next stroke. */
+@keyframes mark-jelly {
+  0% { transform: translateY(3px); animation-timing-function: cubic-bezier(0.1, 0.7, 0.3, 1); }
+  20% { transform: translateY(-4.5px); animation-timing-function: ease-in-out; }
+  100% { transform: translateY(3px); }
+}
+@keyframes mark-jelly-bell {
+  0% { transform: scale(1.04, 0.96); animation-timing-function: cubic-bezier(0.1, 0.7, 0.3, 1); }
+  14% { transform: scale(0.68, 1.18); animation-timing-function: ease-in-out; }
+  100% { transform: scale(1.04, 0.96); }
+}
+@keyframes mark-jelly-tentacles {
+  0% { transform: translateY(0) scale(1.04, 0.96); animation-timing-function: cubic-bezier(0.1, 0.7, 0.3, 1); }
+  30% { transform: translateY(-3px) scale(0.72, 1.18); animation-timing-function: ease-in-out; }
+  100% { transform: translateY(0) scale(1.04, 0.96); }
+}
+.agent-mark__parts {
+  display: none;
+}
+/* Copilot stays still while electricity runs through it: parts of the face flash dark in bursts of flicker, each on its own tempo
+   (--k stretches the loop, --d offsets it), so the rhythm keeps changing instead of repeating. */
+@keyframes mark-zap {
+  0% { opacity: 0; }
+  3% { opacity: 1; }
+  7% { opacity: 0.15; }
+  11% { opacity: 1; }
+  14% { opacity: 0.4; }
+  17% { opacity: 0.9; }
+  22%, 100% { opacity: 0; }
+}
+.agent-mark__charge {
+  display: none;
+}
+.agent-mark__zone {
+  fill: color-mix(in oklch, currentColor 45%, black);
+  opacity: 0;
+}
+/* Cursor: the cube stays put, only the pointer cut out of it moves. It slides in, presses, and slides back, staying close to where the logo draws it so it never runs far past the cube's edges. */
+.agent-mark__cursor {
+  display: none;
+}
+@keyframes mark-ptr-click {
+  0%, 12% { transform: translate(0.8px, 0.8px) scale(1); }
+  38% { transform: translate(-0.8px, -0.8px) scale(1); animation-timing-function: ease-out; }
+  46% { transform: translate(-0.8px, -0.8px) scale(0.8); }
+  56% { transform: translate(-0.8px, -0.8px) scale(1); }
+  100% { transform: translate(0.8px, 0.8px) scale(1); }
+}
+@keyframes mark-flip {
+  0%, 100% { transform: scaleX(1); }
+  50% { transform: scaleX(-1); }
+}
+/* Amp fires its two secondary arrows away from the main one, one after another, and they slide back in from it to be fired again.
+   The custom agent keeps its frame and prompt still while only the underscore blinks, hard on and off like an old terminal cursor. */
+.agent-mark__pieces {
+  display: none;
+}
+.agent-mark__piece {
+  transform-box: fill-box;
+  transform-origin: center;
+}
+@keyframes mark-amp-shoot {
+  0%, 8% { transform: translate(0, 0); opacity: 1; animation-timing-function: cubic-bezier(0.1, 0.8, 0.3, 1); }
+  30% { transform: translate(7px, -7px); opacity: 0; }
+  31%, 58% { transform: translate(-4.4px, 4.4px); opacity: 0; animation-timing-function: cubic-bezier(0.2, 0.7, 0.3, 1); }
+  80%, 100% { transform: translate(0, 0); opacity: 1; }
+}
+@keyframes mark-gen-blink {
+  0%, 24% { opacity: 1; }
+  25%, 49% { opacity: 0; }
+  50%, 74% { opacity: 1; }
+  75%, 100% { opacity: 0; }
+}
+@keyframes mark-swim {
+  0%, 100% { transform: translateY(1px) rotate(-6deg); }
+  50% { transform: translateY(-1px) rotate(6deg); }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  :root:not([data-motion="reduce"]) .agent-mark[data-working][data-agent="claude"] :is(.agent-mark__body, .agent-mark__layer),
+  :root:not([data-motion="reduce"]) .agent-mark[data-working][data-agent="gemini"] :is(.agent-mark__body, .agent-mark__layer) {
+    transform-origin: 12px 12px;
+    animation: mark-breathe var(--dur-loop) ease-in-out infinite;
+  }
+  :root:not([data-motion="reduce"]) .agent-mark[data-working][data-agent="codex"] {
+    animation: mark-spin var(--dur-loop) linear infinite;
+  }
+  :root:not([data-motion="reduce"]) .agent-mark[data-working][data-agent="antigravity"] {
+    animation: mark-jelly var(--dur-loop) linear infinite;
+  }
+  :root:not([data-motion="reduce"]) .agent-mark[data-working][data-agent="antigravity"] .agent-mark__body {
+    display: none;
+  }
+  :root:not([data-motion="reduce"]) .agent-mark[data-working][data-agent="antigravity"] .agent-mark__parts {
+    display: inline;
+  }
+  :root:not([data-motion="reduce"]) .agent-mark__bell {
+    transform-origin: 12px 13.5px;
+    animation: mark-jelly-bell var(--dur-loop) linear infinite;
+  }
+  :root:not([data-motion="reduce"]) .agent-mark__tentacles {
+    transform-origin: 12px 13.5px;
+    animation: mark-jelly-tentacles var(--dur-loop) linear infinite;
+  }
+  :root:not([data-motion="reduce"]) .agent-mark[data-working][data-agent="copilot"] .agent-mark__charge {
+    display: inline;
+  }
+  :root:not([data-motion="reduce"]) .agent-mark__zone {
+    animation: mark-zap var(--dur-loop) linear infinite;
+    animation-duration: calc(var(--dur-loop) * var(--k));
+    animation-delay: calc(var(--dur-loop) * var(--k) * var(--d) * -1);
+  }
+  :root:not([data-motion="reduce"]) .agent-mark[data-working][data-agent="cursor"] {
+    animation: none;
+  }
+  :root:not([data-motion="reduce"]) .agent-mark[data-working][data-agent="cursor"] .agent-mark__body {
+    display: none;
+  }
+  :root:not([data-motion="reduce"]) .agent-mark[data-working][data-agent="cursor"] .agent-mark__cursor {
+    display: inline;
+  }
+  :root:not([data-motion="reduce"]) .agent-mark__pointer {
+    transform-origin: 12px 12px;
+    animation: mark-ptr-click var(--dur-loop) ease-in-out infinite;
+  }
+  :root:not([data-motion="reduce"]) .agent-mark[data-working][data-agent="opencode"] {
+    animation: mark-spin var(--dur-loop-slow) steps(4) infinite;
+  }
+  :root:not([data-motion="reduce"]) .agent-mark[data-working][data-agent="amp"] {
+    animation: none;
+  }
+  :root:not([data-motion="reduce"]) .agent-mark[data-working][data-agent="amp"] .agent-mark__body {
+    display: none;
+  }
+  :root:not([data-motion="reduce"]) .agent-mark[data-working][data-agent="amp"] .agent-mark__pieces {
+    display: inline;
+  }
+  :root:not([data-motion="reduce"]) .agent-mark[data-agent="amp"] .agent-mark__piece:nth-child(n + 2) {
+    animation: mark-amp-shoot var(--dur-loop) linear infinite;
+    animation-delay: calc((2 - var(--i)) * var(--dur-loop) * -0.14);
+  }
+  :root:not([data-motion="reduce"]) .agent-mark[data-working][data-agent="generic"] {
+    animation: none;
+  }
+  :root:not([data-motion="reduce"]) .agent-mark[data-working][data-agent="generic"] .agent-mark__body {
+    display: none;
+  }
+  :root:not([data-motion="reduce"]) .agent-mark[data-working][data-agent="generic"] .agent-mark__pieces {
+    display: inline;
+  }
+  :root:not([data-motion="reduce"]) .agent-mark[data-agent="generic"] .agent-mark__piece:nth-child(3) {
+    animation: mark-gen-blink var(--dur-loop) steps(1, end) infinite;
+  }
+  :root:not([data-motion="reduce"]) .agent-mark[data-working][data-agent="qwen"] {
+    animation: mark-spin-back var(--dur-loop-slow) linear infinite;
+  }
+  :root:not([data-motion="reduce"]) .agent-mark[data-working][data-agent="grok"] {
+    animation: mark-spin-back var(--dur-loop-slow) linear infinite;
+  }
+  :root:not([data-motion="reduce"]) .agent-mark[data-working][data-agent="deepseek"] {
+    animation: mark-swim var(--dur-loop) ease-in-out infinite;
+  }
+  :root:not([data-motion="reduce"]) .status-glyph[data-kind="working"] .g-working-dot {
+    animation: g-pulse var(--dur-pulse) var(--ease-out) infinite alternate;
+  }
+  :root:not([data-motion="reduce"]) .status-glyph:is([data-kind="needs-permission"], [data-kind="needs-question"]) {
+    transform-origin: center;
+    animation: g-bounce var(--dur-bounce) var(--ease-spring) 1;
+  }
+  :root:not([data-motion="reduce"]) .status-glyph[data-kind="done-unseen"] .g-check {
+    stroke-dasharray: 1;
+    animation: g-draw var(--dur-check) var(--ease-out) 1 both;
+  }
+  :root:not([data-motion="reduce"]) .status-glyph[data-kind="error"] .g-error-disc {
+    animation: g-flash var(--dur-flash) var(--ease-out) 1;
+  }
+  :root:not([data-motion="reduce"]) .session-row[data-flash] {
+    animation: row-flash var(--dur-flash) var(--ease-out) 1;
+  }
+  /* A muted session's badge does not bounce (docs/PLAN.md "Sidebar rows"). */
+  :root:not([data-motion="reduce"]) .session-row[data-muted] .status-glyph {
+    animation: none;
+  }
+}
+
+/* Reduced: the working dot holds still and the ¾ arc shows instead. */
+@media (prefers-reduced-motion: reduce) {
+  .status-glyph[data-kind="working"] .g-working-arc {
+    opacity: 1;
+  }
+}
+:root[data-motion="reduce"] .status-glyph[data-kind="working"] .g-working-arc {
+  opacity: 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .session-row[data-flash] {
+    animation: row-flash-reduced 300ms step-end 1;
+  }
+}
+:root[data-motion="reduce"] .session-row[data-flash] {
+  animation: row-flash-reduced 300ms step-end 1;
+}
+
+:root[data-page-hidden] * {
+  animation-play-state: paused !important;
+}

@@ -1,0 +1,51 @@
+import type { AgentId } from "../../components/AgentMark/agents";
+import type { SessionKind } from "../../components/AgentMark/kinds";
+import type { GlyphKind } from "../../components/StatusGlyph/glyphs";
+
+export type { AgentId, SessionKind };
+export type Density = "comfortable" | "expanded";
+export type Mode = "manual" | "plan" | "auto-edit" | "full-auto" | "bypass";
+export type Usage = { inContext?: number; window?: number; tokensIn?: number; tokensOut?: number; costUsd?: number };
+
+/** Phase 0 view model for one sidebar row; phase 3 maps the core's generated session types onto it. */
+export type RowModel = {
+  id: string;
+  /** The session's number: 1-based, stable until it closes, the lowest free one when a session starts (sessionNumber.ts). */
+  number: number;
+  name: string;
+  project: string;
+  branch?: string;
+  /** An AI agent, or a manual CLI (a plain terminal: no animation, ring, model or prompt line). */
+  agent: SessionKind;
+  status: GlyphKind;
+  /** Line 2, e.g. "Wants to run `npm test`". */
+  phrase: string;
+  /** Needs-you only: how long it has waited. */
+  waitingMs?: number;
+  /** Done or ended: time since. */
+  ageMs?: number;
+  /** Undefined hides the ring. */
+  contextPct?: number;
+  muted?: boolean;
+  elevated?: boolean;
+  mode?: Mode;
+  model?: string;
+  effort?: string;
+  subagents?: number;
+  recap?: { text: string; ageMs: number };
+  usage?: Usage;
+  /** One-shot attention flash on the row. */
+  flash?: boolean;
+  /** The prompt bar's status strip: connected MCP servers, and a named problem when one is failing. Unknown leaves the item out. */
+  mcp?: { connected: number; total: number; problem?: string };
+  /** Skills available to the session. */
+  skills?: number;
+  /** The active Python environment's name. */
+  venv?: string;
+  /** How long the session has been running. */
+  sessionMs?: number;
+  /** Uncommitted changes in the session's working tree. */
+  dirty?: number;
+  /** The CLI's version, e.g. "2.1.296". */
+  version?: string;
+};
