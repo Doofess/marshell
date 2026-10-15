@@ -120,6 +120,7 @@ export class SessionActions {
         break;
       }
       case "launcher":
+      case "palette":
         break;
     }
   }

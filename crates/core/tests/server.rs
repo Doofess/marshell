@@ -84,6 +84,30 @@ async fn profiles_get_then_put_roundtrip() {
 }
 
 #[tokio::test]
+async fn detected_profiles_keep_their_original_values_after_an_edit() {
+    let home = tempfile::tempdir().unwrap();
+    let app = app_in(home.path());
+
+    // Edit the detected profile: the saved list now shows it as the user's own.
+    let mut doc = json_body(app.clone().oneshot(profiles_request("GET", None)).await.unwrap()).await;
+    doc["profiles"][0]["command"] = serde_json::json!(["cmd.exe", "/k"]);
+    let res = app.clone().oneshot(profiles_request("PUT", Some(doc))).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    assert_eq!(json_body(res).await["profiles"][0]["detected"], false);
+
+    // The detected list still has what detection found, so the page can reset to it.
+    let mut req = profiles_request("GET", None);
+    *req.uri_mut() = "/v1/profiles/detected".parse().unwrap();
+    let res = app.oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let found = json_body(res).await;
+    assert_eq!(found.as_array().unwrap().len(), 1);
+    assert_eq!(found[0]["id"], "cmd");
+    assert_eq!(found[0]["command"], serde_json::json!(["cmd.exe"]));
+    assert_eq!(found[0]["detected"], true);
+}
+
+#[tokio::test]
 async fn profiles_put_invalid_is_400() {
     let home = tempfile::tempdir().unwrap();
     let doc = serde_json::json!({

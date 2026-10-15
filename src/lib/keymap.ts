@@ -76,6 +76,7 @@ export const COMMANDS: Command[] = [
   { id: "global-search", label: "Search all sessions", group: "Tools", binding: { code: "KeyF", alt: true } },
   { id: "bookmark", label: "Bookmark this point", group: "Tools", binding: { code: "KeyB" } },
   { id: "cheatsheet", label: "Keyboard shortcuts", group: "Tools", binding: { code: "KeyO" } },
+  { id: "profiles", label: "Shell profiles…", group: "Tools" },
   { id: "doctor", label: "Open Doctor", group: "Tools" },
   { id: "departures", label: "Open Departures board", group: "Tools" },
 ];

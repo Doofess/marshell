@@ -229,6 +229,18 @@
   color: var(--text-1);
   font-size: var(--text-13);
 }
+.change-bar__error {
+  margin: 0;
+  padding-inline-start: var(--space-3);
+  border-inline-start: 3px solid var(--error);
+  font-size: var(--text-13);
+  color: var(--text-1);
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+.settings__btn:disabled {
+  color: var(--text-3);
+}
 .settings__btn[data-primary] {
   background: var(--accent);
   color: var(--accent-ink);

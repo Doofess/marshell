@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import type { CreateSessionResponse } from "../../generated/CreateSessionResponse";
 import { sessions } from "../../lib/api/sessions";
-import { cancelsCloseBar, sessionShortcut } from "../../lib/appShortcuts";
+import { cancelsCloseBar, commandShortcut, sessionShortcut } from "../../lib/appShortcuts";
 import { osOfPlatform } from "../../lib/keymap";
+import { paletteSessions } from "../palette/sessions";
+import { ProfilesDialog } from "../settings/ProfilesPage";
 import { nextSessionNumber } from "../sidebar/sessionNumber";
 import type { RowModel } from "../sidebar/types";
 import { TerminalView } from "../terminal/TerminalView";
@@ -10,6 +12,7 @@ import { sidebarMode } from "../window/layout";
 import { MainWindow } from "../window/MainWindow";
 import { CloseBar } from "./CloseBar";
 import { LiveLauncher } from "./LiveLauncher";
+import { LivePalette } from "./LivePalette";
 import { SessionActions, closeBarText } from "./sessionActions";
 import { Toast } from "./Toast";
 import { pruneClosed, without, type StartingTexts } from "./startingTexts";
@@ -39,6 +42,11 @@ export function LiveApp() {
   const { endpoint, rows, infos, selectedId, loaded, restarts, select, error } = useSessions();
   const { ref, width, height } = useElementSize();
   const [launcherOpen, setLauncherOpen] = useState(false);
+  // The command palette, or the shell profiles page opened from it, over the window.
+  const [overlay, setOverlay] = useState<"palette" | "profiles" | null>(null);
+  // What the profiles page says aloud through the window's announcer. Negative ids never meet a toast's.
+  const [profilesNotice, setProfilesNotice] = useState<{ id: number; text: string } | null>(null);
+  const noticeCount = useRef(0);
   // What each new tab says until its first output, by tab id.
   const [startingTexts, setStartingTexts] = useState<StartingTexts>({});
   // Every tab the core has listed, to tell a tab closed before it printed from one not listed yet.
@@ -97,7 +105,7 @@ export function LiveApp() {
   // The app's shortcuts work from anywhere, the terminal included; the terminal lets these keys through (TerminalView).
   const os = endpoint ? osOfPlatform(endpoint.platform) : undefined;
   useEffect(() => {
-    if (!os || launcherOpen) return;
+    if (!os || launcherOpen || overlay !== null) return;
     const onKey = (e: KeyboardEvent) => {
       const shortcut = sessionShortcut(e, os);
       if (!shortcut) return;
@@ -108,11 +116,22 @@ export function LiveApp() {
       // Holding the key repeats it; only moving a session along the list should.
       if (e.repeat && shortcut.kind !== "move") return;
       if (shortcut.kind === "launcher") setLauncherOpen(true);
+      else if (shortcut.kind === "palette") setOverlay("palette");
       else actions.handle(shortcut);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [os, launcherOpen, actions]);
+  }, [os, launcherOpen, overlay, actions]);
+
+  // A palette row: a session to go to, the profiles page, or a command the window already runs (the rest do nothing yet).
+  const runFromPalette = (id: string) => {
+    setOverlay(id === "profiles" ? "profiles" : null);
+    if (id.startsWith("session:")) return select(id.slice("session:".length));
+    const shortcut = commandShortcut(id);
+    if (shortcut?.kind === "launcher") setLauncherOpen(true);
+    // After the palette has given focus back, so a rename box or the terminal keeps the focus it is given.
+    else if (shortcut && shortcut.kind !== "palette") setTimeout(() => actions.handle(shortcut), 0);
+  };
 
   const closingInfo = closing === null ? undefined : infos.find((i) => i.tab_id === closing);
 
@@ -132,11 +151,11 @@ export function LiveApp() {
           placeholder={startingTexts[row.id]}
           onOutput={() => setStartingTexts((t) => without(t, row.id))}
           onSize={onSize}
-          autoFocus={!launcherOpen}
+          autoFocus={!launcherOpen && overlay === null}
           focusToken={focusToken}
         />
       ) : null,
-    [endpoint, startingTexts, onSize, launcherOpen, focusToken],
+    [endpoint, startingTexts, onSize, launcherOpen, overlay, focusToken],
   );
 
   if (error) {
@@ -164,13 +183,15 @@ export function LiveApp() {
           renderTerminal={renderTerminal}
           headerBar={closingInfo && <CloseBar text={closeBarText(closingInfo)} onCancel={actions.cancelClose.bind(actions)} onCloseNow={() => void actions.confirmClose()} />}
           toast={toast && <Toast text={toast.text} actionLabel={toast.reopenId ? "Reopen" : undefined} onAction={() => void actions.reopenFromToast()} />}
-          notice={toast && { id: toast.id, text: toast.text }}
+          notice={toast ? { id: toast.id, text: toast.text } : profilesNotice}
           renamingId={renaming}
           onRename={(id, name) => void actions.commitRename(id, name)}
           onRenameCancel={(opts) => actions.cancelRename(opts)}
           onReorder={(ids) => actions.reorder(ids)}
         />
       )}
+      {overlay === "palette" && os && <LivePalette sessions={paletteSessions(rows)} os={os} onRun={runFromPalette} onClose={() => setOverlay(null)} />}
+      {overlay === "profiles" && endpoint && <ProfilesDialog endpoint={endpoint} onClose={() => setOverlay(null)} onNotice={(text) => setProfilesNotice({ id: -++noticeCount.current, text })} />}
       {launcherOpen && (
         <LiveLauncher
           endpoint={endpoint}

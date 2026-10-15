@@ -3,10 +3,15 @@ use crate::profiles::store;
 use axum::Json;
 use axum::extract::State;
 use axum::http::StatusCode;
-use marshell_protocol::api::ProfilesDoc;
+use marshell_protocol::api::{Profile, ProfilesDoc};
 
 pub async fn get(State(st): State<AppState>) -> Json<ProfilesDoc> {
     Json(st.0.profiles.lock().unwrap().clone())
+}
+
+/// The shells detection found, as they were found. The profiles page resets an edited one to these.
+pub async fn detected(State(st): State<AppState>) -> Json<Vec<Profile>> {
+    Json(st.0.detected.clone())
 }
 
 pub async fn put(

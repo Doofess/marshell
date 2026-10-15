@@ -4,6 +4,7 @@ import type { Os } from "./keymap";
 /** A shortcut the app takes even while a terminal has focus. Everything else goes to the program in the terminal. */
 export type SessionShortcut =
   | { kind: "launcher" }
+  | { kind: "palette" }
   | { kind: "close" }
   | { kind: "reopen" }
   | { kind: "rename" }
@@ -20,9 +21,14 @@ const FOCUS_SESSION = /^focus-session-([1-9])$/;
 /** Which app shortcut a key press is, or null when it belongs to the terminal. Matching is by physical key (lib/bindings). */
 export function sessionShortcut(e: KeyEventLike, os: Os): SessionShortcut | null {
   const id = findCommand(e, os)?.id;
-  if (id === undefined) return null;
+  return id === undefined ? null : commandShortcut(id);
+}
+
+/** The shortcut a palette command id stands for, or null for a command the live window does not run yet. */
+export function commandShortcut(id: string): SessionShortcut | null {
   switch (id) {
     case "launcher":
+    case "palette":
     case "close":
     case "reopen":
     case "rename":

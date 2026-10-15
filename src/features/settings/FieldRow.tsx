@@ -11,8 +11,9 @@ import "./Settings.css";
  * organisation enforces (the one that applies), not the user's own. When the file cannot be read, a value is an en dash, never
  * a guess from what the broken file used to say: every kind, a boolean included, shows the en dash text control then, since
  * an off switch would read as a value.
+ * A text field with `onChange` is a controlled box (the profiles page edits its values); without it the box only shows its value.
  */
-export function FieldRow({ field, file = {}, value }: { field: SettingField; file?: FileState; value?: unknown }) {
+export function FieldRow({ field, file = {}, value, onChange }: { field: SettingField; file?: FileState; value?: unknown; onChange?: (value: string) => void }) {
   const id = useId();
   const can = isEditable(field, file);
   const locked = !can.ok;
@@ -46,7 +47,8 @@ export function FieldRow({ field, file = {}, value }: { field: SettingField; fil
         </select>
       )}
       {!unknown && field.kind === "number" && <input id={id} className="field__control" type="number" defaultValue={shown === undefined ? undefined : Number(shown)} placeholder="–" disabled={locked} />}
-      {!unknown && field.kind === "text" && <input id={id} className="field__control" type="text" defaultValue={String(shown ?? "")} placeholder="–" disabled={locked} />}
+      {!unknown && field.kind === "text" && !onChange && <input id={id} className="field__control" type="text" defaultValue={String(shown ?? "")} placeholder="–" disabled={locked} />}
+      {!unknown && field.kind === "text" && onChange && <input id={id} className="field__control" type="text" value={String(shown ?? "")} onChange={(e) => onChange(e.target.value)} placeholder="–" disabled={locked} spellCheck={false} />}
       {locked && (
         <p className="field__why">
           {can.reason}
