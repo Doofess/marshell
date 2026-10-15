@@ -62,6 +62,7 @@ describe("sessions", () => {
     vi.stubGlobal("fetch", latest);
     await sessions.reopen(endpoint);
     expect(call(latest)).toMatchObject({ url: "http://127.0.0.1:9/v1/sessions/reopen", method: "POST" });
+    expect(call(latest).body).toBeUndefined();
 
     const given = respond({ tab_id: "t3", number: 3 });
     vi.stubGlobal("fetch", given);

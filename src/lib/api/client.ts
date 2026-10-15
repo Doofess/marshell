@@ -16,11 +16,14 @@ let endpoint: Promise<Endpoint> | null = null;
 
 /** The core's port and token, fetched once. Call `resetEndpoint()` after the core restarts. */
 export function getEndpoint(): Promise<Endpoint> {
-  endpoint ??= invoke<Endpoint>("core_endpoint").catch((e: unknown) => {
-    endpoint = null; // a failed lookup must not stick
+  if (endpoint) return endpoint;
+  const p: Promise<Endpoint> = invoke<Endpoint>("core_endpoint").catch((e: unknown) => {
+    // A failed lookup must not stick, but a newer lookup (after resetEndpoint) must survive.
+    if (endpoint === p) endpoint = null;
     throw e;
   });
-  return endpoint;
+  endpoint = p;
+  return p;
 }
 
 export function resetEndpoint(): void {

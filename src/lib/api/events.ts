@@ -30,6 +30,7 @@ export class EventSocket {
       this.retries = 0;
     };
     ws.onmessage = (ev) => {
+      if (this.done) return; // a closing socket can still deliver a frame
       const snapshot = parseSnapshot(ev.data);
       if (snapshot) this.onSnapshot(snapshot);
     };

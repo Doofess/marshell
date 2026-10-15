@@ -77,4 +77,19 @@ describe("getEndpoint", () => {
     await expect(getEndpoint()).rejects.toBe("no core");
     await expect(getEndpoint()).resolves.toEqual(endpoint);
   });
+
+  it("a stale failure does not drop a newer lookup", async () => {
+    let failFirst: (e: unknown) => void = () => {};
+    invoke.mockReturnValueOnce(new Promise((_, reject) => (failFirst = reject)));
+    const first = getEndpoint().catch(() => undefined);
+
+    resetEndpoint();
+    invoke.mockResolvedValueOnce(endpoint);
+    await getEndpoint();
+    failFirst("late");
+    await first;
+    await getEndpoint();
+
+    expect(invoke).toHaveBeenCalledTimes(2);
+  });
 });

@@ -131,4 +131,16 @@ describe("EventSocket", () => {
     vi.advanceTimersByTime(10_000);
     expect(FakeWebSocket.instances).toHaveLength(1);
   });
+
+  it("delivers nothing after close(), even from a late message", () => {
+    const onSnapshot = vi.fn();
+    const socket = new EventSocket(endpoint, onSnapshot);
+    const ws = FakeWebSocket.instances[0]!;
+    ws.open();
+    socket.close();
+    // A real socket in CLOSING can still deliver a frame; receive() does not fire onclose.
+    ws.receive(frame(snapshot(["late"])));
+
+    expect(onSnapshot).not.toHaveBeenCalled();
+  });
 });
