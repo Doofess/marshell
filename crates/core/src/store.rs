@@ -27,6 +27,8 @@ pub fn bak_path(path: &Path) -> PathBuf {
     path.with_file_name(name)
 }
 
+static TEMP_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
 /// Writes `value` with its version. The file that was there before is kept as `.bak`
 /// (unless it was not valid JSON, so a good backup is never replaced by a broken file).
 pub fn write<T: Versioned>(path: &Path, value: &T) -> anyhow::Result<()> {
@@ -55,7 +57,9 @@ pub fn write<T: Versioned>(path: &Path, value: &T) -> anyhow::Result<()> {
     }
 
     let name = path.file_name().unwrap_or_default().to_string_lossy();
-    let tmp = dir.join(format!(".{name}.{}.tmp", std::process::id()));
+    // Unique per call, so two writers in this process never share a temp file.
+    let n = TEMP_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let tmp = dir.join(format!(".{name}.{}.{n}.tmp", std::process::id()));
     let result =
         write_private_file(&tmp, &serde_json::to_vec_pretty(&json)?).and_then(|()| Ok(std::fs::rename(&tmp, path)?));
     if result.is_err() {
@@ -274,5 +278,30 @@ mod tests {
             .collect();
         names.sort();
         assert_eq!(names, ["prefs.json", "prefs.json.bak"]);
+    }
+
+    #[test]
+    fn concurrent_writes_to_one_path_both_succeed() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("prefs.json");
+        write(&path, &prefs("seed")).unwrap();
+        for round in 0..20 {
+            let barrier = std::sync::Arc::new(std::sync::Barrier::new(2));
+            let handles: Vec<_> = ["one", "two"]
+                .into_iter()
+                .map(|name| {
+                    let (path, barrier) = (path.clone(), barrier.clone());
+                    std::thread::spawn(move || {
+                        barrier.wait();
+                        write(&path, &prefs(name))
+                    })
+                })
+                .collect();
+            for handle in handles {
+                handle.join().unwrap().unwrap_or_else(|e| panic!("round {round}: {e:#}"));
+            }
+            let saved = read::<Prefs>(&path).unwrap().unwrap();
+            assert!(saved == prefs("one") || saved == prefs("two"), "round {round}: {saved:?}");
+        }
     }
 }
