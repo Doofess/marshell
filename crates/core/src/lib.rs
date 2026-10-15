@@ -5,3 +5,4 @@ pub mod pty;
 pub mod server;
 pub mod shell;
 pub mod store;
+pub mod supervisor;
