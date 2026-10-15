@@ -455,7 +455,7 @@ async fn rename_and_reorder() {
 }
 
 #[tokio::test]
-async fn close_twice_is_ok_and_unknown_tab_404() {
+async fn close_twice_and_unknown_tab_are_204() {
     let app = sessions_app();
     let (_, a) = create_session(&app, serde_json::json!({})).await;
     let path = format!("/v1/sessions/{}", a["tab_id"].as_str().unwrap());
