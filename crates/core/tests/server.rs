@@ -8,7 +8,99 @@ const PORT: u16 = 5555;
 const ORIGIN: &str = "http://tauri.localhost";
 
 fn app() -> axum::Router {
-    router(AppState::new(TOKEN.into(), PORT, vec![ORIGIN.into()]))
+    // Tests that call this never touch the disk, so the home folder does not need to exist.
+    app_in(std::path::Path::new("no-such-marshell-home"))
+}
+
+fn app_in(home: &std::path::Path) -> axum::Router {
+    router(AppState::new(
+        TOKEN.into(),
+        PORT,
+        vec![ORIGIN.into()],
+        home.to_path_buf(),
+        vec![detected_profile()],
+    ))
+}
+
+fn detected_profile() -> marshell_protocol::api::Profile {
+    marshell_protocol::api::Profile {
+        id: "cmd".into(),
+        name: "Command Prompt".into(),
+        command: vec!["cmd.exe".into()],
+        family: marshell_protocol::api::ShellFamily::Cmd,
+        cwd: None,
+        env: Vec::new(),
+        detected: true,
+    }
+}
+
+fn profiles_request(method: &str, body: Option<serde_json::Value>) -> Request<Body> {
+    let builder = get("/v1/profiles")
+        .method(method)
+        .header(header::AUTHORIZATION, format!("Bearer {TOKEN}"));
+    match body {
+        Some(json) => builder
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(json.to_string()))
+            .unwrap(),
+        None => builder.body(Body::empty()).unwrap(),
+    }
+}
+
+async fn json_body(res: axum::response::Response) -> serde_json::Value {
+    let bytes = axum::body::to_bytes(res.into_body(), 64 * 1024).await.unwrap();
+    serde_json::from_slice(&bytes).unwrap()
+}
+
+#[tokio::test]
+async fn profiles_get_then_put_roundtrip() {
+    let home = tempfile::tempdir().unwrap();
+    let app = app_in(home.path());
+
+    let res = app.clone().oneshot(profiles_request("GET", None)).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let before = json_body(res).await;
+    assert_eq!(before["default_id"], "cmd");
+    assert_eq!(before["profiles"].as_array().unwrap().len(), 1);
+
+    let mut doc = before.clone();
+    doc["profiles"].as_array_mut().unwrap().push(serde_json::json!({
+        "id": "my-pwsh", "name": "My PowerShell", "command": ["pwsh.exe", "-NoLogo"],
+        "family": "power_shell", "cwd": null, "env": [["FOO", "bar"]], "detected": false
+    }));
+    let res = app.clone().oneshot(profiles_request("PUT", Some(doc))).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    assert_eq!(json_body(res).await["profiles"].as_array().unwrap().len(), 2);
+
+    let res = app.oneshot(profiles_request("GET", None)).await.unwrap();
+    let after = json_body(res).await;
+    assert_eq!(after["profiles"][1]["id"], "my-pwsh");
+    assert_eq!(after["profiles"][0]["detected"], true);
+
+    let saved: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(home.path().join("profiles.json")).unwrap()).unwrap();
+    assert_eq!(saved["profiles"].as_array().unwrap().len(), 1);
+    assert_eq!(saved["profiles"][0]["id"], "my-pwsh");
+}
+
+#[tokio::test]
+async fn profiles_put_invalid_is_400() {
+    let home = tempfile::tempdir().unwrap();
+    let doc = serde_json::json!({
+        "profiles": [{
+            "id": "bad", "name": "Bad", "command": [],
+            "family": "cmd", "cwd": null, "env": [], "detected": false
+        }],
+        "default_id": "bad"
+    });
+    let res = app_in(home.path())
+        .oneshot(profiles_request("PUT", Some(doc)))
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+    let bytes = axum::body::to_bytes(res.into_body(), 1024).await.unwrap();
+    assert!(String::from_utf8_lossy(&bytes).contains("command"));
+    assert!(!home.path().join("profiles.json").exists());
 }
 
 fn get(path: &str) -> axum::http::request::Builder {
