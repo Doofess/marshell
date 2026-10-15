@@ -123,6 +123,16 @@ pub struct RenameRequest {
     pub name: String,
 }
 
+/// POST /v1/sessions/reopen body. The whole body is optional.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct ReopenRequest {
+    /// The closed session to reopen. Absent means the most recently closed one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub tab_id: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export)]
 pub struct ReorderRequest {

@@ -172,6 +172,23 @@ impl Registry {
         Some(spec)
     }
 
+    /// True while the tab is in the open list.
+    pub fn is_open(&self, tab_id: &str) -> bool {
+        let state = self.state.lock().unwrap();
+        state.open.iter().any(|e| e.info.tab_id == tab_id)
+    }
+
+    /// Looks at a closed entry without removing it: its tab id and how to relaunch it.
+    /// None means the most recent. Reopen peeks first, so a failed start loses nothing.
+    pub fn peek_closed(&self, tab_id: Option<&str>) -> Option<(String, Relaunch)> {
+        let state = self.state.lock().unwrap();
+        let entry = match tab_id {
+            Some(id) => state.closed.iter().find(|e| e.info.tab_id == id)?,
+            None => state.closed.front()?,
+        };
+        Some((entry.info.tab_id.clone(), entry.spec.clone()))
+    }
+
     /// Removes a closed entry for Reopen. None means the most recent.
     pub fn take_closed(&self, tab_id: Option<&str>) -> Option<Relaunch> {
         let mut state = self.state.lock().unwrap();
@@ -345,6 +362,34 @@ mod tests {
         assert_eq!(again.name, "api");
         assert!(reg.snapshot().closed.is_empty());
         assert!(reg.take_closed(None).is_none());
+    }
+
+    #[test]
+    fn peek_closed_leaves_the_entry_in_place() {
+        let reg = Registry::new();
+        for id in ["a", "b"] {
+            reg.reserve(id, relaunch(id));
+            reg.close(id);
+        }
+        let (id, spec) = reg.peek_closed(None).unwrap();
+        assert_eq!((id.as_str(), spec.name.as_str()), ("b", "b"));
+        let (id, _) = reg.peek_closed(Some("a")).unwrap();
+        assert_eq!(id, "a");
+        assert!(reg.peek_closed(Some("zzz")).is_none());
+        assert_eq!(reg.snapshot().closed.len(), 2);
+    }
+
+    #[test]
+    fn is_open_follows_reserve_close_and_release() {
+        let reg = Registry::new();
+        assert!(!reg.is_open("a"));
+        reg.reserve("a", relaunch("a"));
+        assert!(reg.is_open("a"));
+        reg.close("a");
+        assert!(!reg.is_open("a"));
+        reg.reserve("b", relaunch("b"));
+        reg.release("b");
+        assert!(!reg.is_open("b"));
     }
 
     #[test]

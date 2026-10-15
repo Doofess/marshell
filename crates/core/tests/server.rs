@@ -569,3 +569,73 @@ async fn agent_session_is_named_after_the_agent() {
     assert_eq!(list["sessions"][0]["name"], "Claude Code");
     assert_eq!(list["sessions"][0]["agent"], "claude");
 }
+
+/// PUT /v1/profiles with the detected profiles plus `extra` custom ones.
+async fn put_profiles(app: &axum::Router, extra: Vec<serde_json::Value>) {
+    let res = app.clone().oneshot(profiles_request("GET", None)).await.unwrap();
+    let mut doc = json_body(res).await;
+    doc["profiles"] = serde_json::Value::Array(
+        doc["profiles"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|p| p["detected"] == true)
+            .cloned()
+            .chain(extra)
+            .collect(),
+    );
+    let res = app.clone().oneshot(profiles_request("PUT", Some(doc))).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+}
+
+fn temp_profile() -> serde_json::Value {
+    serde_json::json!({
+        "id": "temp", "name": "Temp", "command": fake_argv(&["sleep"]),
+        "family": "posix", "cwd": null, "env": [], "detected": false
+    })
+}
+
+#[tokio::test]
+async fn failed_reopen_keeps_the_closed_entry() {
+    let home = tempfile::tempdir().unwrap();
+    let app = router(AppState::new(
+        TOKEN.into(),
+        PORT,
+        vec![ORIGIN.into()],
+        home.path().to_path_buf(),
+        vec![sleeper_profile()],
+    ));
+    put_profiles(&app, vec![temp_profile()]).await;
+    let (status, a) = create_session(&app, serde_json::json!({ "profile_id": "temp" })).await;
+    assert_eq!(status, StatusCode::OK);
+    let path = format!("/v1/sessions/{}", a["tab_id"].as_str().unwrap());
+    assert_eq!(
+        status_of(&app, api("DELETE", &path, None)).await,
+        StatusCode::NO_CONTENT
+    );
+
+    // The profile goes away, so the reopen cannot start.
+    put_profiles(&app, vec![]).await;
+    let res = app
+        .clone()
+        .oneshot(api("POST", "/v1/sessions/reopen", None))
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+
+    let list = list_sessions(&app).await;
+    assert_eq!(list["sessions"].as_array().unwrap().len(), 0);
+    let closed = list["closed"].as_array().unwrap();
+    assert_eq!(closed.len(), 1);
+    assert_eq!(closed[0]["tab_id"], a["tab_id"]);
+
+    // With the profile back, the same entry reopens.
+    put_profiles(&app, vec![temp_profile()]).await;
+    let res = app
+        .clone()
+        .oneshot(api("POST", "/v1/sessions/reopen", None))
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    assert_eq!(list_sessions(&app).await["closed"].as_array().unwrap().len(), 0);
+}

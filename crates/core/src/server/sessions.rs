@@ -8,10 +8,9 @@ use axum::body::Bytes;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use marshell_protocol::api::{
-    CreateSessionRequest, CreateSessionResponse, RenameRequest, ReorderRequest, SessionsSnapshot,
+    CreateSessionRequest, CreateSessionResponse, RenameRequest, ReopenRequest, ReorderRequest, SessionsSnapshot,
 };
 use marshell_protocol::brand;
-use serde::Deserialize;
 use std::path::PathBuf;
 
 type ApiError = (StatusCode, String);
@@ -20,11 +19,13 @@ type ApiError = (StatusCode, String);
 const CUSTOM_PROFILE: &str = "custom";
 
 /// The name an agent session gets when the request names none.
-fn agent_display_name(agent: &str) -> &'static str {
+/// None for an id that is not a launcher agent; callers validate the id first.
+fn agent_display_name(agent: &str) -> Option<&'static str> {
     match agent {
-        "claude" => "Claude Code",
-        "codex" => "Codex",
-        _ => "Antigravity",
+        "claude" => Some("Claude Code"),
+        "codex" => Some("Codex"),
+        "antigravity" => Some("Antigravity"),
+        _ => None,
     }
 }
 
@@ -95,9 +96,9 @@ async fn start_session(
     let name = name
         .map(|n| n.trim().to_string())
         .filter(|n| !n.is_empty())
-        .unwrap_or_else(|| match &agent {
-            Some(a) => agent_display_name(a).to_string(),
-            None => run.profile_name,
+        .unwrap_or_else(|| {
+            let agent_name = agent.as_deref().and_then(agent_display_name);
+            agent_name.map_or(run.profile_name, String::from)
         });
 
     let tab_id = auth::new_id("t");
@@ -146,6 +147,17 @@ async fn start_session(
         }
     };
     st.insert_session(session);
+    // A close can land between reserve and insert, when the map has nothing to kill yet.
+    // Checking after the insert catches it: a later close finds the session in the map.
+    if !st.0.registry.is_open(&tab_id) {
+        if let Some(session) = st.remove_session(&tab_id) {
+            session.kill();
+        }
+        return Err((
+            StatusCode::CONFLICT,
+            "The session was closed while it was starting.".into(),
+        ));
+    }
     Ok(CreateSessionResponse { tab_id, number })
 }
 
@@ -218,12 +230,6 @@ pub async fn close(State(st): State<AppState>, Path(tab): Path<String>) -> Statu
     StatusCode::NO_CONTENT
 }
 
-#[derive(Deserialize)]
-struct ReopenRequest {
-    /// Absent means the most recently closed session.
-    tab_id: Option<String>,
-}
-
 /// The body is optional: an empty body reopens the most recently closed session.
 pub async fn reopen(State(st): State<AppState>, body: Bytes) -> Result<Json<CreateSessionResponse>, ApiError> {
     let wanted = if body.iter().all(u8::is_ascii_whitespace) {
@@ -233,12 +239,21 @@ pub async fn reopen(State(st): State<AppState>, body: Bytes) -> Result<Json<Crea
             .map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?
             .tab_id
     };
-    let Some(saved) = st.0.registry.take_closed(wanted.as_deref()) else {
+    // Peek, not take: if the start fails below, the entry stays in the closed list.
+    let Some((closed_id, saved)) = st.0.registry.peek_closed(wanted.as_deref()) else {
         return Err((StatusCode::NOT_FOUND, "Nothing to reopen.".into()));
     };
     // A fresh session from the saved profile, agent, folder and name (not the old row).
     let run = resolve(&st, Some(&saved.profile_id), saved.agent.as_deref(), None)?;
     // The window resizes the terminal as soon as it attaches.
     let created = start_session(&st, run, saved.agent, Some(saved.name), Some(saved.cwd), (80, 24)).await?;
+    // Only now remove the entry. If another reopen took it first, drop the duplicate we started.
+    if st.0.registry.take_closed(Some(&closed_id)).is_none() {
+        st.0.registry.release(&created.tab_id);
+        if let Some(session) = st.remove_session(&created.tab_id) {
+            session.kill();
+        }
+        return Err((StatusCode::NOT_FOUND, "Nothing to reopen.".into()));
+    }
     Ok(Json(created))
 }
