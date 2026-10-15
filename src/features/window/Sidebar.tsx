@@ -4,7 +4,7 @@ import type { ApprovalRequest } from "../approval/types";
 import { Lane } from "../lane/Lane";
 import { laneLayout, pending } from "../lane/laneLayout";
 import { SessionRow, type RowDrag } from "../sidebar/SessionRow";
-import { dropOrder } from "../sidebar/reorder";
+import { dragOver, dropOrder, TAB_MIME, type DragState } from "../sidebar/reorder";
 import type { RowModel } from "../sidebar/types";
 import { useState, type CSSProperties } from "react";
 import type { Os } from "../../lib/keymap";
@@ -54,7 +54,7 @@ export function Sidebar({
   onReorder?: (ids: string[]) => void;
 }) {
   const issues = footer?.doctorIssues ?? 0;
-  const [drag, setDrag] = useState<{ id: string; over?: { id: string; edge: "before" | "after" } } | null>(null);
+  const [drag, setDrag] = useState<DragState | null>(null);
   const ids = rows.map((r) => r.id);
   const dragFor = (id: string): RowDrag | undefined => {
     if (!onReorder) return undefined;
@@ -62,16 +62,19 @@ export function Sidebar({
       dropEdge: drag?.over?.id === id ? drag.over.edge : undefined,
       onDragStart: (e) => {
         e.dataTransfer.effectAllowed = "move";
-        e.dataTransfer.setData("text/plain", id);
+        // A custom type only: dropping the row on a text field must not insert the tab id there.
+        e.dataTransfer.setData(TAB_MIME, id);
         setDrag({ id });
       },
       onDragOver: (e) => {
-        if (!drag || drag.id === id) return;
+        if (!drag) return;
+        const box = e.currentTarget.getBoundingClientRect();
+        const next = dragOver(drag, id, e.clientY < box.top + box.height / 2 ? "before" : "after");
+        if (next.over?.id !== drag.over?.id || next.over?.edge !== drag.over?.edge) setDrag(next);
+        // Over its own row there is nowhere to drop.
+        if (id === drag.id) return;
         e.preventDefault();
         e.dataTransfer.dropEffect = "move";
-        const box = e.currentTarget.getBoundingClientRect();
-        const edge = e.clientY < box.top + box.height / 2 ? "before" : "after";
-        if (drag.over?.id !== id || drag.over.edge !== edge) setDrag({ id: drag.id, over: { id, edge } });
       },
       onDrop: (e) => {
         e.preventDefault();

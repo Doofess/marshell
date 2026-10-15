@@ -224,6 +224,73 @@ describe("LiveApp: rename and reorder", () => {
   });
 });
 
+describe("LiveApp: fix round 1", () => {
+  const deferred = () => {
+    let resolve!: () => void;
+    const promise = new Promise<void>((res) => (resolve = res));
+    return { promise, resolve };
+  };
+
+  it("Close now hands focus back to the terminal", async () => {
+    const { actions } = setup([claude(1)]);
+    await actions.requestClose();
+    const before = actions.getState().focusToken;
+    await actions.confirmClose();
+    expect(actions.getState().closing).toBeNull();
+    expect(actions.getState().focusToken).toBeGreaterThan(before);
+  });
+
+  it("Close now hands focus back even when the close fails", async () => {
+    const { api, actions } = setup([claude(1)]);
+    api.close.mockRejectedValueOnce(new Error("gone"));
+    await actions.requestClose();
+    const before = actions.getState().focusToken;
+    await actions.confirmClose();
+    expect(actions.getState().toast?.text).toBe("Couldn't close Claude Code.");
+    expect(actions.getState().focusToken).toBeGreaterThan(before);
+  });
+
+  it("a second close press while the first is in flight does nothing", async () => {
+    const { api, actions } = setup([info(1), info(2)]);
+    const slow = deferred();
+    api.close.mockReturnValueOnce(slow.promise);
+    const first = actions.requestClose();
+    await actions.requestClose();
+    expect(api.close).toHaveBeenCalledTimes(1);
+    slow.resolve();
+    await first;
+    expect(actions.getState().toast).toMatchObject({ text: "Closed Shell 1." });
+  });
+
+  it("Close now is not sent twice for a tab already being closed", async () => {
+    const { api, actions } = setup([claude(1)]);
+    await actions.requestClose();
+    const slow = deferred();
+    api.close.mockReturnValueOnce(slow.promise);
+    const first = actions.confirmClose();
+    await actions.requestClose();
+    expect(api.close).toHaveBeenCalledTimes(1);
+    slow.resolve();
+    await first;
+  });
+
+  it("a tab can be closed again after a failed close", async () => {
+    const { api, actions } = setup([info(1)]);
+    api.close.mockRejectedValueOnce(new Error("busy"));
+    await actions.requestClose();
+    await actions.requestClose();
+    expect(api.close).toHaveBeenCalledTimes(2);
+  });
+
+  it("F2 does nothing when the sidebar is not expanded, so no rename box is left pending", () => {
+    const infos = [info(1)];
+    const api = { close: vi.fn(async () => {}), reopen: vi.fn(), rename: vi.fn(), reorder: vi.fn() };
+    const actions = new SessionActions({ api, context: () => ({ endpoint: ep, infos, selectedId: "t1", sidebarExpanded: false }), select: vi.fn() });
+    actions.startRename();
+    expect(actions.getState().renaming).toBeNull();
+  });
+});
+
 describe("Toast", () => {
   it("shows the text and a Reopen button, and is not a live region (the window's announcer says it)", () => {
     const h = renderToStaticMarkup(<Toast text="Closed Shell 1." actionLabel="Reopen" onAction={() => {}} />);

@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import type { CreateSessionResponse } from "../../generated/CreateSessionResponse";
 import { sessions } from "../../lib/api/sessions";
-import { sessionShortcut } from "../../lib/appShortcuts";
+import { cancelsCloseBar, sessionShortcut } from "../../lib/appShortcuts";
 import { osOfPlatform } from "../../lib/keymap";
 import { nextSessionNumber } from "../sidebar/sessionNumber";
 import type { RowModel } from "../sidebar/types";
 import { TerminalView } from "../terminal/TerminalView";
+import { sidebarMode } from "../window/layout";
 import { MainWindow } from "../window/MainWindow";
 import { CloseBar } from "./CloseBar";
 import { LiveLauncher } from "./LiveLauncher";
@@ -62,8 +63,10 @@ export function LiveApp() {
   }, [rows]);
 
   // Close, reopen, rename, reorder and go to: see sessionActions. The class reads the latest list through this ref.
-  const context = useRef({ endpoint, infos, selectedId });
-  context.current = { endpoint, infos, selectedId };
+  // Only the expanded sidebar has rows to rename (MainWindow shows the rail or nothing below that).
+  const sidebarExpanded = sidebarMode(width, "expanded") === "expanded";
+  const context = useRef({ endpoint, infos, selectedId, sidebarExpanded });
+  context.current = { endpoint, infos, selectedId, sidebarExpanded };
   const selectRef = useRef(select);
   selectRef.current = select;
   const actions = useMemo(() => new SessionActions({ api: sessions, context: () => context.current, select: (id) => selectRef.current(id) }), []);
@@ -74,8 +77,22 @@ export function LiveApp() {
     if (closing !== null && (closing !== selectedId || !infos.some((i) => i.tab_id === closing))) actions.cancelClose();
   }, [closing, selectedId, infos, actions]);
   useEffect(() => {
-    if (renaming !== null && !infos.some((i) => i.tab_id === renaming)) actions.cancelRename({ refocus: false });
-  }, [renaming, infos, actions]);
+    // The session went away, or the window shrank to a layout without the sidebar's rows.
+    if (renaming !== null && (!sidebarExpanded || !infos.some((i) => i.tab_id === renaming))) actions.cancelRename({ refocus: false });
+  }, [renaming, infos, sidebarExpanded, actions]);
+  // Escape cancels the bar from anywhere. Captured, so it never reaches the terminal: Escape would interrupt the agent the bar is about.
+  const barOpen = closing !== null;
+  useEffect(() => {
+    if (!barOpen) return;
+    const onEscape = (e: KeyboardEvent) => {
+      if (!cancelsCloseBar(e, true)) return;
+      e.preventDefault();
+      e.stopPropagation();
+      actions.cancelClose();
+    };
+    window.addEventListener("keydown", onEscape, true);
+    return () => window.removeEventListener("keydown", onEscape, true);
+  }, [barOpen, actions]);
 
   // The app's shortcuts work from anywhere, the terminal included; the terminal lets these keys through (TerminalView).
   const os = endpoint ? osOfPlatform(endpoint.platform) : undefined;

@@ -1,9 +1,24 @@
 import { describe, expect, it } from "vitest";
-import { sessionShortcut } from "./appShortcuts";
+import { cancelsCloseBar, sessionShortcut } from "./appShortcuts";
 import type { KeyEventLike } from "./bindings";
 
 const ev = (code: string, m: Partial<Omit<KeyEventLike, "code">> = {}): KeyEventLike => ({ code, ctrlKey: false, shiftKey: false, altKey: false, metaKey: false, ...m });
 const cs = { ctrlKey: true, shiftKey: true };
+
+describe("cancelsCloseBar", () => {
+  const key = (k: string, m: Partial<{ ctrlKey: boolean; shiftKey: boolean; altKey: boolean; metaKey: boolean; isComposing: boolean }> = {}) => ({ key: k, ctrlKey: false, shiftKey: false, altKey: false, metaKey: false, ...m });
+  it("is a plain Escape while the bar is up, wherever focus is", () => {
+    expect(cancelsCloseBar(key("Escape"), true)).toBe(true);
+  });
+  it("is nothing when the bar is not up, so Escape still reaches the terminal", () => {
+    expect(cancelsCloseBar(key("Escape"), false)).toBe(false);
+  });
+  it("ignores other keys, modified Escape and an Escape inside an input method", () => {
+    expect(cancelsCloseBar(key("Enter"), true)).toBe(false);
+    expect(cancelsCloseBar(key("Escape", { shiftKey: true }), true)).toBe(false);
+    expect(cancelsCloseBar(key("Escape", { isComposing: true }), true)).toBe(false);
+  });
+});
 
 describe("sessionShortcut", () => {
   it("names the keys the app takes from a focused terminal", () => {

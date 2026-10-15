@@ -15,4 +15,8 @@ describe("renameOutcome", () => {
   it("other keys do nothing", () => {
     expect(renameOutcome("a", "api work", "Shell 1")).toBeNull();
   });
+  it("does not commit or cancel while an input method is composing: that Enter or Escape belongs to the composition", () => {
+    expect(renameOutcome("Enter", "api work", "Shell 1", true)).toBeNull();
+    expect(renameOutcome("Escape", "api work", "Shell 1", true)).toBeNull();
+  });
 });

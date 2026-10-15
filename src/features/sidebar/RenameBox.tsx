@@ -14,7 +14,7 @@ export function RenameBox({ original, onCommit, onCancel }: { original: string; 
     input.current?.select();
   }, []);
   const onKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
-    const outcome = renameOutcome(e.key, e.currentTarget.value, original);
+    const outcome = renameOutcome(e.key, e.currentTarget.value, original, e.nativeEvent.isComposing);
     if (!outcome) return;
     e.preventDefault();
     done.current = true;

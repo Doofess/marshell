@@ -10,6 +10,11 @@ export type SessionShortcut =
   | { kind: "goto"; number: number }
   | { kind: "move"; by: -1 | 1 };
 
+/** Escape while the busy-close bar is up cancels it, even with focus in the terminal (where the window takes the key first). */
+export function cancelsCloseBar(e: { key: string; ctrlKey: boolean; shiftKey: boolean; altKey: boolean; metaKey: boolean; isComposing?: boolean }, barOpen: boolean): boolean {
+  return barOpen && e.key === "Escape" && !e.ctrlKey && !e.shiftKey && !e.altKey && !e.metaKey && !e.isComposing;
+}
+
 const FOCUS_SESSION = /^focus-session-([1-9])$/;
 
 /** Which app shortcut a key press is, or null when it belongs to the terminal. Matching is by physical key (lib/bindings). */

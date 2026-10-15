@@ -38,7 +38,13 @@ export type ActionsState = {
 };
 
 type Api = Pick<typeof sessions, "close" | "reopen" | "rename" | "reorder">;
-type Context = { endpoint: Endpoint | null; infos: SessionInfo[]; selectedId: string | undefined };
+type Context = {
+  endpoint: Endpoint | null;
+  infos: SessionInfo[];
+  selectedId: string | undefined;
+  /** False in the rail and focus layouts, which have no row to edit. Left out means expanded. */
+  sidebarExpanded?: boolean;
+};
 type Deps = { api: Api; context: () => Context; select: (tabId: string) => void };
 
 const reason = (e: unknown): string => (e instanceof ApiError ? e.message : String(e));
@@ -53,6 +59,8 @@ export class SessionActions {
   private listeners = new Set<() => void>();
   private timer: ReturnType<typeof setTimeout> | undefined;
   private toastId = 0;
+  /** Tabs with a close request in flight. */
+  private closingNow = new Set<string>();
 
   constructor(private deps: Deps) {}
 
@@ -121,16 +129,19 @@ export class SessionActions {
     const { infos, selectedId } = this.deps.context();
     const info = infos.find((i) => i.tab_id === selectedId);
     // While the bar is up, the key does nothing: closing must stay a deliberate press on "Close now".
-    if (!info || this.state.closing === info.tab_id) return;
+    if (!info || this.state.closing === info.tab_id || this.closingNow.has(info.tab_id)) return;
     if (needsCloseConfirm(info)) this.set({ closing: info.tab_id });
     else await this.close(info);
   }
 
-  /** "Close now" on the bar. */
+  /**
+   * "Close now" on the bar. The bar (and the button that had focus) goes away, so focus is handed back to the terminal whether
+   * or not the close works; when it was the last session the launcher opens and takes the keys itself.
+   */
   async confirmClose(): Promise<void> {
     const { infos } = this.deps.context();
     const info = infos.find((i) => i.tab_id === this.state.closing);
-    this.set({ closing: null });
+    this.set({ closing: null, focusToken: this.refocus() });
     if (info) await this.close(info);
   }
 
@@ -141,12 +152,16 @@ export class SessionActions {
 
   private async close(info: SessionInfo): Promise<void> {
     const { endpoint } = this.deps.context();
-    if (!endpoint) return;
+    // One close per tab at a time: a second press must not turn the first one's "Closed" receipt into "Couldn't close".
+    if (!endpoint || this.closingNow.has(info.tab_id)) return;
+    this.closingNow.add(info.tab_id);
     try {
       await this.deps.api.close(endpoint, info.tab_id);
       this.showToast(`Closed ${info.name}.`, info.tab_id);
     } catch {
       this.showToast(`Couldn't close ${info.name}.`);
+    } finally {
+      this.closingNow.delete(info.tab_id);
     }
   }
 
@@ -173,10 +188,10 @@ export class SessionActions {
     }
   }
 
-  /** F2 on the selected session. */
+  /** F2 on the selected session. It does nothing where the sidebar is not expanded: there is no row to turn into a text box. */
   startRename(): void {
-    const { infos, selectedId } = this.deps.context();
-    if (infos.some((i) => i.tab_id === selectedId)) this.set({ renaming: selectedId ?? null });
+    const { infos, selectedId, sidebarExpanded = true } = this.deps.context();
+    if (sidebarExpanded && infos.some((i) => i.tab_id === selectedId)) this.set({ renaming: selectedId ?? null });
   }
 
   async commitRename(tabId: string, name: string): Promise<void> {
