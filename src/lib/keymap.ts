@@ -48,6 +48,12 @@ export const COMMANDS: Command[] = [
   { id: "close", label: "Close session", group: "Sessions", binding: { code: "KeyW" } },
   { id: "reopen", label: "Reopen closed session", group: "Sessions", binding: { code: "KeyT", alt: true } },
   { id: "rename", label: "Rename session", group: "Sessions", binding: { code: "F2", plain: true } },
+  // Session modes, the same five for every agent CLI (docs/PLAN.md "Session modes"); unbound, so a person picks the keys.
+  { id: "mode-manual", label: "Mode: Manual, ask before each change", group: "Sessions" },
+  { id: "mode-plan", label: "Mode: Plan, read and plan without changing anything", group: "Sessions" },
+  { id: "mode-auto-edit", label: "Mode: Auto-edit, edits in the project go ahead", group: "Sessions" },
+  { id: "mode-full-auto", label: "Mode: Full auto, a safety check decides what asks", group: "Sessions" },
+  { id: "mode-bypass", label: "Mode: Bypass, only risky commands ask", group: "Sessions" },
   { id: "split", label: "Split: add a pane (up to 4)", group: "View", binding: { code: "KeyD" } },
   { id: "unsplit", label: "Remove this pane from the view", group: "View" },
   { id: "layout", label: "Change split layout", group: "View" },

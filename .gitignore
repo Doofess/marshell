@@ -6,3 +6,5 @@
 .remember/
 storybook-static/
 .a11y-matrix/
+
+.playwright-mcp/

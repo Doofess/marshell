@@ -2,7 +2,7 @@ import { useId } from "react";
 import { AgentMark } from "../../components/AgentMark/AgentMark";
 import { DiffView } from "../../components/DiffView/DiffView";
 import { Switch } from "../../components/Switch/Switch";
-import { canEdit, CAPABILITIES, CLI_NAME, consentHeadline, type Capability, type ConsentPlan, type Detection } from "./consent";
+import { canEdit, CAPABILITIES, CLI_NAME, consentHeadline, fileName, folderOf, type Capability, type ConsentPlan, type Detection } from "./consent";
 import "./Onboarding.css";
 
 const CAP_LABEL: Record<Capability, string> = { status: "Show status and context", approve: "Approve from anywhere", statusline: "Keep my status line working" };
@@ -22,7 +22,7 @@ export function ConsentCard({ scenario, on, open = false }: { scenario: { detect
         </h3>
       </header>
       <p className="consent__what" dir="auto">
-        {plan.headline ?? consentHeadline(d, on)}
+        {plan.headline ?? consentHeadline(d, on, plan.handOver)}
       </p>
       {edit.ok ? (
         <>
@@ -32,18 +32,44 @@ export function ConsentCard({ scenario, on, open = false }: { scenario: { detect
                 <Switch label={CAP_LABEL[c]} checked={on[c] && CAPABILITIES[d.cli][c].available} disabled={!CAPABILITIES[d.cli][c].available} reason={CAPABILITIES[d.cli][c].reason} />
               </li>
             ))}
+            {d.skipsAll && (
+              <li>
+                <Switch label="Let Marshell set the mode" checked={plan.handOver ?? false} />
+              </li>
+            )}
           </ul>
+          {d.skipsAll && (
+            <p className="consent__handover">
+              {name} is set to skip every permission prompt (<code>{d.skipsAll.setting}</code>), so Marshell can&apos;t ask you about anything. Turning it off lets each
+              session&apos;s mode decide; Bypass keeps today&apos;s behaviour.
+            </p>
+          )}
           <button type="button" className="consent__toggle" aria-expanded={open}>
             View exact changes
           </button>
-          {open && <DiffView diff={plan.diff} label={`Exact changes to ${d.configPath}`} />}
+          {open && <DiffView diff={plan.diff} label={`Exact changes to ${d.hooks ? `${d.hooks.path} and ${d.configPath}` : d.configPath}`} />}
           {plan.chainPath && on.statusline && CAPABILITIES[d.cli].statusline.available && (
             <p className="consent__chain">
               Your own status line command is saved in <code>{plan.chainPath}</code> and keeps running: Marshell&apos;s runs first and then yours.
             </p>
           )}
           <p className="consent__meta">
-            A backup is saved first, in <code>{plan.backupPath}</code>. To undo: {plan.removal}
+            {d.hooks?.exists ? (
+              <>
+                Backups of both files are saved first, in <code>{folderOf(plan.backupPath)}</code>.
+              </>
+            ) : (
+              <>
+                A backup is saved first, in <code>{plan.backupPath}</code>.
+              </>
+            )}
+            {d.hooks && !d.hooks.exists && (
+              <>
+                {" "}
+                <code>{fileName(d.hooks.path)}</code> is a new file, so it needs no backup.
+              </>
+            )}{" "}
+            To undo: {plan.removal}
           </p>
           {plan.needsTrust && (
             <>

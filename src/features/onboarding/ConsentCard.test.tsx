@@ -16,10 +16,38 @@ describe("ConsentCard", () => {
     expect(h).toContain("Skip: use limited status");
   });
   it("has a switch for each capability and explains an unavailable one", () => {
-    const h = renderToStaticMarkup(<ConsentCard scenario={CONSENT.antigravity} on={{ status: false, approve: false, statusline: true }} />);
+    const h = renderToStaticMarkup(<ConsentCard scenario={CONSENT.codex} on={on} />);
     expect(h.match(/role="switch"/g)).toHaveLength(3);
-    expect(h).toContain("Antigravity has no verified approval hook, so Marshell focuses the tab instead (verified when the adapter is built).");
-    expect(h).toContain("Its hook events are verified when the adapter is built.");
+    expect(h).toContain("Codex has no status line to chain.");
+  });
+  it("names both Antigravity files: hooks in its shared hooks.json, the status line in its own settings", () => {
+    const h = renderToStaticMarkup(<ConsentCard scenario={CONSENT.antigravity} on={on} open />);
+    expect(h).toContain("Add 5 hook entries in C:\\Users\\Home Office\\.gemini\\config\\hooks.json (a new file) and chain your status line in C:\\Users\\Home Office\\.gemini\\antigravity-cli\\settings.json.");
+    expect(h).toContain("Exact changes to C:\\Users\\Home Office\\.gemini\\config\\hooks.json and C:\\Users\\Home Office\\.gemini\\antigravity-cli\\settings.json");
+    expect(h).toContain("<code>hooks.json</code> is a new file, so it needs no backup.");
+    expect(h).not.toContain("verified when the adapter is built");
+    expect(h).not.toContain("/hooks");
+  });
+  it("backs up an existing hooks.json too, and names files the same way with either slash", () => {
+    const d = CONSENT.antigravity.detection;
+    const h = renderToStaticMarkup(<ConsentCard scenario={{ ...CONSENT.antigravity, detection: { ...d, hooks: { path: "/home/u/.gemini/config/hooks.json", exists: true } } }} on={on} />);
+    expect(h).toContain("Backups of both files are saved first, in <code>C:\\Users\\Home Office\\.marshell\\snapshots\\2026-10-10T20-15</code>.");
+    expect(h).not.toContain("is a new file");
+    const fresh = renderToStaticMarkup(<ConsentCard scenario={{ ...CONSENT.antigravity, detection: { ...d, hooks: { path: "/home/u/.gemini/config/hooks.json", exists: false } } }} on={on} />);
+    expect(fresh).toContain("<code>hooks.json</code> is a new file, so it needs no backup.");
+  });
+  it("offers to hand the mode to Marshell when the CLI's own settings skip every prompt, and says what that setting does", () => {
+    const h = renderToStaticMarkup(<ConsentCard scenario={CONSENT.antigravityHandOver} on={on} />);
+    expect(h).toContain("Let Marshell set the mode");
+    expect(h).toContain("Antigravity CLI is set to skip every permission prompt (<code>dangerouslySkipPermissions</code>), so Marshell can&#x27;t ask you about anything.");
+    expect(h).toContain("Turning it off lets each session&#x27;s mode decide; Bypass keeps today&#x27;s behaviour.");
+    expect(h.match(/role="switch"/g)).toHaveLength(4);
+    // The switch shows the plan's choice: on here, so the headline and the diff turn the setting off.
+    const handOver = /<input([^>]*)>(?:(?!<input)[\s\S])*?Let Marshell set the mode/.exec(h)![1]!;
+    expect(handOver).toContain('checked=""');
+    // Without such a setting there is nothing to hand over.
+    expect(renderToStaticMarkup(<ConsentCard scenario={CONSENT.antigravity} on={on} />)).not.toContain("Let Marshell set the mode");
+    expect(renderToStaticMarkup(<ConsentCard scenario={CONSENT.claude} on={on} />)).not.toContain("Let Marshell set the mode");
   });
   it("hides the diff until asked, then shows the exact change", () => {
     expect(renderToStaticMarkup(<ConsentCard scenario={CONSENT.claude} on={on} />)).not.toContain("diff__lines");

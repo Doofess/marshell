@@ -19,7 +19,7 @@ describe("every consent headline tells the truth about its diff", () => {
     it(`${name}: the count in the headline is the number of hook entries the diff adds`, () => {
       const n = entryCount(d.cli, ALL);
       expect(entriesIn(s.plan.diff)).toBe(n);
-      // A CLI with no verified hooks (Antigravity) adds none, so its headline never says "Add".
+      // A CLI with no hooks to add says so: its headline never says "Add".
       if (n > 0) expect(consentHeadline(d, ALL)).toContain(`Add ${n} hook entries`);
       else expect(consentHeadline(d, ALL)).not.toMatch(/^Add /);
     });
@@ -110,8 +110,77 @@ describe("the Codex diff writes hooks in the event-nested TOML shape Codex docum
     expect(h).toMatch(/<p class="consent__source">.*?not in <code>hooks\.json<\/code> as well.*?<\/p>/);
     expect(h).toContain("would warn about duplicates");
     expect(/<p class="consent__trust">(.*?)<\/p>/.exec(h)![1]!.match(/\/hooks/g)).toHaveLength(1);
-    // The note is Codex's alone: the other cards never mention hooks.json.
-    for (const s of [CONSENT.claude, CONSENT.antigravity]) expect(renderToStaticMarkup(createElement(ConsentCard, { scenario: s, on: s.plan.on }))).not.toContain("hooks.json");
+    // The note is Codex's alone: Claude's card never mentions hooks.json, and Antigravity's names it only as the file it writes.
+    expect(renderToStaticMarkup(createElement(ConsentCard, { scenario: CONSENT.claude, on: ALL }))).not.toContain("hooks.json");
+    expect(renderToStaticMarkup(createElement(ConsentCard, { scenario: CONSENT.antigravity, on: ALL }))).not.toContain('class="consent__source"');
+  });
+  it("leaves the user's notify program alone: the Codex desktop app already uses it", () => {
+    const d = parseUnifiedDiff(CONSENT.codex.plan.diff).lines;
+    expect(d.some((l) => l.kind === "context" && l.text.startsWith("notify = "))).toBe(true);
+    expect(d.some((l) => (l.kind === "add" || l.kind === "del") && /notify/.test(l.text))).toBe(false);
+  });
+});
+
+describe("the Antigravity diff writes ~/.gemini/config/hooks.json in the shape its bundled docs give", () => {
+  // docs/research/2026-10-15-local-install-check.md, "Hooks": one named hook with `enabled`; PreToolUse and PostToolUse are matcher
+  // groups, PreInvocation, PostInvocation and Stop are flat handler lists; `timeout` is seconds and defaults to 30.
+  const HOOKS_PATH = "C:\\Users\\Home Office\\.gemini\\config\\hooks.json";
+  /** One file's part of a multi-file diff: from its `---` line up to the next file's. */
+  const section = (path: string): string => {
+    const text = CONSENT.antigravity.plan.diff;
+    const at = text.indexOf(`+++ b/${path}`);
+    expect(at, path).toBeGreaterThan(-1);
+    const end = text.indexOf("\n--- ", at);
+    return text.slice(text.lastIndexOf("--- ", at), end === -1 ? undefined : end + 1);
+  };
+  /** The new hooks.json, read back from the diff: the added lines of that file, in order. */
+  const hooksJson = (): Record<string, Record<string, unknown>> => JSON.parse(added(section(HOOKS_PATH)).join("\n"));
+  type Handler = { type: string; command: string; timeout: number };
+  const handlers = (event: string): Handler[] => {
+    const v = hooksJson().marshell![event] as Array<Handler | { matcher: string; hooks: Handler[] }>;
+    return v.flatMap((x) => ("hooks" in x ? x.hooks : [x]));
+  };
+
+  it("is a new file holding one named hook, marshell, that is on", () => {
+    expect(parseUnifiedDiff(CONSENT.antigravity.plan.diff).files).toContain(HOOKS_PATH);
+    expect(section(HOOKS_PATH)).toMatch(/^--- \/dev\/null$/m);
+    expect(Object.keys(hooksJson())).toEqual(["marshell"]);
+    expect(hooksJson().marshell!.enabled).toBe(true);
+  });
+  it("groups the tool events by a matcher that takes every tool, and lists the other three flat", () => {
+    const m = hooksJson().marshell!;
+    for (const e of ["PreToolUse", "PostToolUse"]) expect(m[e], e).toEqual([{ matcher: ".*", hooks: expect.any(Array) }]);
+    for (const e of ["PreInvocation", "PostInvocation", "Stop"]) for (const h of m[e] as Handler[]) expect(h.type, e).toBe("command");
+  });
+  it("one command per event, and each names its event: Antigravity's payload does not say which event fired", () => {
+    const events = ["PreToolUse", "PostToolUse", "PreInvocation", "PostInvocation", "Stop"];
+    expect(Object.keys(hooksJson().marshell!).filter((k) => k !== "enabled")).toEqual(events);
+    for (const e of events) {
+      expect(handlers(e), e).toHaveLength(1);
+      expect(handlers(e)[0]!.command).toMatch(new RegExp(`^"C:/Users/Home Office/\\.marshell/bin/marshell-hook\\.exe" (?:event|permission) --agent antigravity --event ${e} --tag mshl1$`));
+    }
+  });
+  it("PreToolUse is the permission hook with a 600 s timeout (the default 30 would cut a person off); the rest are events capped at 10 s", () => {
+    expect(handlers("PreToolUse")[0]).toMatchObject({ command: expect.stringContaining(" permission --agent antigravity"), timeout: 600 });
+    for (const e of ["PostToolUse", "PreInvocation", "PostInvocation", "Stop"]) expect(handlers(e)[0], e).toMatchObject({ command: expect.stringContaining(" event --agent antigravity"), timeout: 10 });
+  });
+  it("with the mode handed over, the settings diff removes dangerouslySkipPermissions and nothing else of the user's", () => {
+    const s = CONSENT.antigravityHandOver;
+    const lines = parseUnifiedDiff(s.plan.diff).lines;
+    expect(lines.filter((l) => l.kind === "del").map((l) => l.text.trim())).toEqual(['"dangerouslySkipPermissions": true,', '"statusLine": { "type": "command", "command": "~/.gemini/antigravity-cli/statusline.sh" }']);
+    expect(lines.some((l) => l.kind === "add" && /dangerouslySkipPermissions/.test(l.text))).toBe(false);
+    expect(consentHeadline(s.detection, ALL, true)).toBe(
+      "Add 5 hook entries in C:\\Users\\Home Office\\.gemini\\config\\hooks.json (a new file). In C:\\Users\\Home Office\\.gemini\\antigravity-cli\\settings.json, chain your status line and turn off dangerouslySkipPermissions.",
+    );
+    expect(consentHeadline(s.detection, { status: false, approve: false, statusline: false }, true)).toBe(
+      "Turn off dangerouslySkipPermissions in C:\\Users\\Home Office\\.gemini\\antigravity-cli\\settings.json.",
+    );
+    expect(s.plan.removal).toBe(
+      "Marshell removes the hook entries it added, deletes hooks.json if nothing else is in it, puts your own status line back from statusline-chain.json, and turns dangerouslySkipPermissions back on; the rest of each file stays as it is.",
+    );
+  });
+  it("puts no hooks in settings.json: Antigravity reads them only from hooks.json", () => {
+    expect(section("C:\\Users\\Home Office\\.gemini\\antigravity-cli\\settings.json")).not.toMatch(/"hooks"|PreToolUse|hooksConfig/);
   });
 });
 
@@ -126,14 +195,13 @@ describe("chaining the status line keeps the user's own command visible", () => 
     expect(h).toContain("statusline-chain.json");
     expect(h).toContain("keeps running");
   });
-  it("the Antigravity diff only chains the status line in ~/.gemini/antigravity-cli/settings.json and keeps the user's own command", () => {
+  it("the Antigravity diff chains the status line in ~/.gemini/antigravity-cli/settings.json and keeps the user's own command", () => {
     const s = CONSENT.antigravity;
     expect(s.detection.configPath).toBe("C:\\Users\\Home Office\\.gemini\\antigravity-cli\\settings.json");
     const lines = added(s.plan.diff);
     expect(lines.some((t) => t.includes("statusline --agent antigravity"))).toBe(true);
     expect(lines.some((t) => t.includes("~/.gemini/antigravity-cli/statusline.sh"))).toBe(true);
     expect(parseUnifiedDiff(s.plan.diff).files.some((f) => f.endsWith("agents\\antigravity\\statusline-chain.json"))).toBe(true);
-    expect(s.plan.diff).not.toMatch(/hooksConfig|"hooks"/);
     const h = renderToStaticMarkup(createElement(ConsentCard, { scenario: s, on: s.plan.on }));
     expect(h).toContain("antigravity\\statusline-chain.json");
     expect(h).toContain("keeps running");
@@ -148,9 +216,16 @@ describe("undo copy says what removal does for each CLI, and promises nothing mo
     expect(CONSENT.codex.plan.removal).toBe("Marshell removes the hook entries it added; the rest of the file stays as it is.");
     expect(CONSENT.codex.plan.removal).not.toContain("status line");
   });
-  it("Antigravity: puts the status line back from its chain file, and says nothing about hook entries it never added", () => {
-    expect(CONSENT.antigravity.plan.removal).toBe("Marshell puts your own status line back from statusline-chain.json; the rest of the file stays as it is.");
-    expect(CONSENT.antigravity.plan.removal).not.toContain("entries");
+  it("Antigravity: removes its hook from the hooks.json it created (deleting the file only if nothing else is in it) and puts the status line back", () => {
+    expect(CONSENT.antigravity.plan.removal).toBe(
+      "Marshell removes the hook entries it added, deletes hooks.json if nothing else is in it, and puts your own status line back from statusline-chain.json; the rest of each file stays as it is.",
+    );
+    expect(removalCopy("antigravity", { status: false, approve: false, statusline: true }, { hooksFile: "hooks.json", created: true })).toBe(
+      "Marshell puts your own status line back from statusline-chain.json; the rest of the file stays as it is.",
+    );
+    expect(removalCopy("antigravity", { status: true, approve: true, statusline: false }, { hooksFile: "hooks.json", created: false })).toBe(
+      "Marshell removes the hook entries it added; the rest of the file stays as it is.",
+    );
   });
   it("follows the switches: with the status line off, Claude's undo does not mention the chain file", () => {
     expect(removalCopy("claude", { status: true, approve: true, statusline: false })).toBe("Marshell removes the hook entries it added; the rest of the file stays as it is.");
@@ -189,11 +264,15 @@ describe("an unknown value is an en dash, never a guess", () => {
 });
 
 describe("headline and card wording", () => {
-  it("the Antigravity headline offers the status line alone, with no hook count and no Gemini-era setting", () => {
+  it("the Antigravity headline names each file with what goes in it, and no Gemini-era setting", () => {
     const d = DETECTIONS.allThree[2]!;
     expect(d.cli).toBe("antigravity");
-    expect(consentHeadline(d, ALL)).toBe(`Chain your status line in ${d.configPath}.`);
-    expect(consentHeadline(d, { status: true, approve: true, statusline: false })).toBe("Change nothing. Antigravity CLI will show limited status.");
+    const hooks = "C:\\Users\\Home Office\\.gemini\\config\\hooks.json";
+    expect(consentHeadline(d, ALL)).toBe(`Add 5 hook entries in ${hooks} (a new file) and chain your status line in ${d.configPath}.`);
+    expect(consentHeadline(d, { status: true, approve: true, statusline: false })).toBe(`Add 5 hook entries in ${hooks} (a new file).`);
+    expect(consentHeadline(d, { status: false, approve: false, statusline: true })).toBe(`Chain your status line in ${d.configPath}.`);
+    expect(consentHeadline({ ...d, hooks: { path: hooks, exists: true } }, { status: true, approve: false, statusline: false })).toBe(`Add 4 hook entries in ${hooks}.`);
+    expect(consentHeadline(d, { status: false, approve: false, statusline: false })).toBe("Change nothing. Antigravity CLI will show limited status.");
     expect(consentHeadline(d, ALL)).not.toMatch(/hooksConfig|Gemini/);
   });
   it("the Codex trust sentence says /hooks once", () => {

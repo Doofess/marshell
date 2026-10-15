@@ -11,9 +11,9 @@ describe("Switch", () => {
     expect(renderToStaticMarkup(<Switch label="Approve from anywhere" checked={false} />)).toContain(">Off<");
   });
   it("explains why it is unavailable and names the reason in the control's description", () => {
-    const h = renderToStaticMarkup(<Switch label="Approve from anywhere" checked={false} disabled reason="Antigravity has no verified approval hook, so Marshell focuses the tab instead." />);
+    const h = renderToStaticMarkup(<Switch label="Approve from anywhere" checked={false} disabled reason="Codex has no status line to chain." />);
     expect(h).toContain("disabled");
-    expect(h).toContain("Antigravity has no verified approval hook");
+    expect(h).toContain("Codex has no status line to chain.");
     expect(h).toMatch(/aria-describedby="([^"]+)"/);
   });
 });
