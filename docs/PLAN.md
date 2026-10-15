@@ -747,6 +747,23 @@ Decisions from the 2026-10-10 coverage audit (`docs/superpowers/plan-coverage-au
    - Slices: 2a hygiene and resilience; 2b tabs, sidebar, profiles and launcher; 2c shell integration; 2d themes; 2e split, layout restore and Resume; 2f recording, palette and cheat sheet.
    - A core restart ends the running sessions. The Ended + Resume tab state arrives in 2e; until then the terminal says the session ended and Enter starts a new shell.
    - Exit: 5 tabs across 3 shells; restart restores the layout; kill the app mid-task, relaunch, and every tab is back with Resume; no orphan processes after a crash; a recording replays in asciinema-player; OSC 133 prompt jumps work.
+2.5. **Context and preview** (added 2026-10-15, inspired by the features of the Codex desktop app, not its infrastructure; numbered 2.5 so later phases keep their numbers).
+   - Scope:
+     - **Preview pane.** Read-only preview of code (syntax highlighted), Markdown (rendered, with a source toggle), images, PDF and HTML.
+       - Opened from a clickable path in terminal output, by dropping a file on the window, or with quick open (fuzzy find in the focused session's folder). Its shortcut is picked in this phase's plan from the free letters in the shortcut table. P is taken by Zoom pane, I opens WebView DevTools and R reloads, so H, M, Q and X are the candidates. There is no file tree; that stays in v2.
+       - Layout: the preview takes the space split view would use. Opening it shows the focused session and the preview side by side, and closing it brings the split back. This is the user's decision (2026-10-15): one session at a time while previewing.
+     - **Region to prompt.** In a PDF or image preview, drag a box and type a comment. Marshell saves the crop as a PNG and puts the image reference, the file name and page, and the comment into the session's prompt line.
+     - **Screenshot and image drop.** Paste or drop an image on a session, or capture a screen region. Marshell saves it and puts its reference into the prompt line.
+     - **Delivery rule.** Every feature here only fills the prompt line; the user edits it and presses Enter. Marshell still never types into a terminal on its own. A manual CLI has no prompt line, so the reference is copied to the clipboard and a toast says so. While a session waits on the user, the prompt line keeps its block, and the filled text waits until it can be sent.
+     - **Multi-CLI.** How an image is referenced is an adapter method (`attachment_ref(path) -> String`). The default is the quoted absolute path. Claude Code and Codex each get theirs after their current docs are checked. A CLI that cannot read images gets the path and a note in the toast.
+     - **Storage.** Crops and screenshots go in `~/.marshell/attachments/<session>/`, with owner-only permissions. They are kept with the session's history and follow its retention (phase 5).
+     - **Security.** The core reads files for the preview only through the token-checked API. HTML previews render in a sandboxed frame without scripts or network access.
+     - **New dependencies** (the concrete need is this phase): a PDF renderer (pdf.js), a syntax highlighter, and a Markdown renderer that sanitizes its output. Each is chosen and justified in the phase's plan.
+   - Exit:
+     - A path clicked in Claude Code output opens in the preview within 200 ms.
+     - A PDF region reaches the prompt line, and the agent reads the crop, in both Claude Code and Codex.
+     - A manual shell gets the clipboard fallback.
+     - The whole flow works with the keyboard alone (open, select a region with the arrow keys, comment, fill).
 3. **Config safety core + bridge + Claude adapter.**
    - Scope:
      - The **config service core**, built here because hook install depends on it: ChangeSet, preview diff, jsonc CST edits, atomic write, snapshot and restore, `managed.json`, watching, managed-path guard.
@@ -771,6 +788,7 @@ Decisions from the 2026-10-10 coverage audit (`docs/superpowers/plan-coverage-au
 7. **Doctor**: the fix actions, on top of the phase-3 config core: "Fix X issues" and one-click undo; folds in each CLI's own doctor; detects duplicate notifications; reports the tokens injected by project references; checks Codex hook trust; waste checks (unused MCP servers and skills, long descriptions, broad scopes, a token-cost estimate); offers to raise `cleanupPeriodDays`.
    - Exit: a seeded broken config is fully repaired and fully undone.
 8. **Editors + instruction library** (wired per CLI with a content hash and drift check; settings raw mode validated against the SchemaStore schema), smart and native recaps, diff drawer, step timeline, saved prompts, broadcast.
+   - Diff drawer comments (added 2026-10-15, after the Codex app's review pane): a **+** on a diff line adds a comment. "Send comments" puts them all in the prompt line as one message, with `file:line` before each. Like phase 2.5, it fills the prompt line and never sends on its own.
    - Instruction library items: frontmatter form, "what loads here" view, token estimate with a 4k warning, templates and one-click project profiles, per-project toggles, agent filter, globs, and "Improve this file" (headless, opt-in).
    - Exit: one doc wired into all three CLIs, verified by each CLI loading it; the 32 KiB Codex limit warns before it truncates.
 9. **Release.**
