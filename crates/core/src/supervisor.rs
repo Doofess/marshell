@@ -179,6 +179,7 @@ mod tests {
             env: vec![],
             cols: 80,
             rows: 24,
+            on_exit: None,
         }
     }
 

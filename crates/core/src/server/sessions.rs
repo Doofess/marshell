@@ -29,6 +29,7 @@ pub async fn create(
         ],
         cols: req.cols,
         rows: req.rows,
+        on_exit: None,
     };
     let id = tab_id.clone();
     // Spawning touches the OS (process creation): keep it off the async worker threads.
