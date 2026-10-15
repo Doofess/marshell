@@ -16,8 +16,9 @@
   display: inline-flex;
   flex: none;
   align-items: center;
-  margin-inline-start: 9px;
-  padding-inline-start: 10px;
+  gap: 6px;
+  margin-inline-start: 14px;
+  padding-inline-start: 15px;
 }
 .status-strip__item[data-first] {
   margin-inline-start: 0;
@@ -40,13 +41,13 @@
 }
 .status-strip__glyph {
   flex: none;
-  margin-inline-end: 4px;
+  margin-inline-end: 0;
 }
 
 /* A meter's level shows in its bar and its weight, not in a colour alone: the percentage is always written. */
 .status-strip__bar {
   display: inline-block;
-  inline-size: 28px;
+  inline-size: 32px;
   block-size: 4px;
   border-radius: 2px;
   background: var(--fill-strong);
@@ -94,82 +95,82 @@
  * degrades them (HIDE_BELOW and COMPACT_BELOW in stripItems.ts hold the same numbers, and a test keeps them equal).
  * The first item is a core one and never hides, so a separator never leads the line.
  */
-@container (inline-size < 1100px) {
+@container (inline-size < 1320px) {
   .status-strip[data-fit="css"] [data-id="venv"]:not([data-first]) {
     display: none;
   }
 }
-@container (inline-size < 1020px) {
+@container (inline-size < 1220px) {
   .status-strip[data-fit="css"] [data-id="version"]:not([data-first]) {
     display: none;
   }
 }
-@container (inline-size < 940px) {
+@container (inline-size < 1130px) {
   .status-strip[data-fit="css"] [data-id="dirty"]:not([data-first]) {
     display: none;
   }
 }
-@container (inline-size < 860px) {
+@container (inline-size < 1030px) {
   .status-strip[data-fit="css"] [data-id="skills"]:not([data-first]) {
     display: none;
   }
 }
-@container (inline-size < 780px) {
+@container (inline-size < 940px) {
   .status-strip[data-fit="css"] [data-id="ports"]:not([data-first]) {
     display: none;
   }
 }
-@container (inline-size < 700px) {
+@container (inline-size < 840px) {
   .status-strip[data-fit="css"] [data-id="mcp"][data-kind="ok"]:not([data-first]) {
     display: none;
   }
 }
-@container (inline-size < 620px) {
+@container (inline-size < 740px) {
   .status-strip[data-fit="css"] [data-id="time"]:not([data-first]) {
     display: none;
   }
 }
-@container (inline-size < 560px) {
+@container (inline-size < 670px) {
   .status-strip[data-fit="css"] [data-id="cost"]:not([data-first]) {
     display: none;
   }
 }
-@container (inline-size < 500px) {
+@container (inline-size < 600px) {
   .status-strip[data-fit="css"] [data-id="limit7"] .status-strip__detail {
     display: none;
   }
 }
-@container (inline-size < 460px) {
+@container (inline-size < 550px) {
   .status-strip[data-fit="css"] [data-id="limit7"] .status-strip__bar {
     display: none;
   }
 }
-@container (inline-size < 420px) {
+@container (inline-size < 500px) {
   .status-strip[data-fit="css"] [data-id="limit7"]:not([data-first]) {
     display: none;
   }
 }
-@container (inline-size < 380px) {
+@container (inline-size < 460px) {
   .status-strip[data-fit="css"] [data-id="model"] .status-strip__detail {
     display: none;
   }
 }
-@container (inline-size < 340px) {
+@container (inline-size < 410px) {
   .status-strip[data-fit="css"] [data-id="limit5"] .status-strip__detail {
     display: none;
   }
 }
-@container (inline-size < 300px) {
+@container (inline-size < 360px) {
   .status-strip[data-fit="css"] [data-id="limit5"] .status-strip__bar {
     display: none;
   }
 }
-@container (inline-size < 270px) {
+@container (inline-size < 320px) {
   .status-strip[data-fit="css"] [data-id="ctx"] .status-strip__detail {
     display: none;
   }
 }
-@container (inline-size < 240px) {
+@container (inline-size < 290px) {
   .status-strip[data-fit="css"] [data-id="ctx"] .status-strip__bar {
     display: none;
   }

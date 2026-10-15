@@ -2,7 +2,7 @@
 
 ## Context
 
-`C:\dev\Airport\BRIEF.md` specifies a cross-platform desktop terminal session manager for AI coding-agent CLIs. It runs real terminal tabs for Claude Code, Codex, Gemini or any other CLI, alongside:
+`C:\dev\Airport\BRIEF.md` specifies a cross-platform desktop terminal session manager for AI coding-agent CLIs. It runs real terminal tabs for Claude Code, Codex, Antigravity or any other CLI, alongside:
 - a live-status sidebar with context rings
 - approve-from-anywhere permission cards
 - a config doctor
@@ -26,7 +26,7 @@ Every CLI fact below was checked against current docs on 2026-10-09; sources are
 | Repo | Empty |
 | Package manager | pnpm (via corepack) |
 | License | Open source, MIT |
-| Installed CLIs | Claude Code 2.1.295 only. Codex and Gemini get installed before phase 6, so fixtures are recorded from the real CLIs. |
+| Installed CLIs | Claude Code 2.1.295 only. Codex and Antigravity (`agy`) get installed before phase 6, so fixtures are recorded from the real CLIs. |
 | Approve-from-anywhere | On by default |
 | Project references | Off until enabled per project |
 | History | Keep everything; backup-folder mirror available but off |
@@ -39,17 +39,20 @@ The user already has a Claude status line (`python ~/.claude/statusline.py`) and
 
 ## Corrections to the brief (verified)
 
-1. **Gemini CLI**
-   - Hooks are on by default via `hooksConfig.enabled`, not `hooks.enabled`.
-   - Events include `Notification` and `PreCompress`.
-   - There is **no** permission-grant hook; `Notification` "cannot grant permissions". For Gemini, the approve card focuses the tab instead.
-   - Hook stdin has no `model` field.
-   - Google replaced Gemini CLI with **Antigravity CLI** for free-tier and Google One users on 2026-06-18. Before phase 6, decide whether to build a Gemini adapter, an Antigravity adapter, or both.
+1. **Antigravity CLI (`agy`) is Google's agent; Gemini CLI is dropped.** Decided 2026-10-10 ("scratch gemini, google is migrating to agy"). Gemini CLI is intentionally gone from Marshell: no adapter, mark, colour, fixture, launcher entry or copy. This paragraph is the git-greppable note; do not add Gemini back.
+   - Google replaced Gemini CLI with **Antigravity CLI** for free-tier and Google One users on 2026-06-18.
+   - Binary `agy`. The installer (`irm https://antigravity.google/cli/install.ps1 | iex` on Windows) puts it in `%LOCALAPPDATA%\agy\bin`; `~/.local/bin/agy` on macOS and Linux.
+   - Config `~/.gemini/antigravity-cli/settings.json` (the directory name is Google's, kept from Gemini). Its `statusLine` is `{ "type": "command", "command": "<script>" }` with optional `padding`, `enabled` and `stack_with_default`. The command gets JSON on stdin: `model`, `context_window` (`used_percentage`), `quota` (one bucket per model: `remaining_fraction`, `reset_time`), `agent_state` (idle, thinking, working, tool_use), `tool_confirmation_pending`, `pending_input_count`, `execution_mode`, `transcript_path`, `version`. Marshell chains it the way it chains Claude's, so model, context % and the plan meter come through the status line.
+   - Plugins (skills, agents, rules, MCP, hooks) live in `~/.gemini/antigravity-cli/plugins/<name>/`; `agy plugin list`. A plugin's `hooks.json` runs commands "before or after tool calls", and that is all the docs say: the event names, a settings-level hook config and any permission-grant hook are **unverified**, to be verified when the adapter is built from a real install. Until then the consent card offers only the status line (no hook entry count) and the approve card focuses the tab.
 2. **Codex CLI**
    - It **does** have a `PermissionRequest` hook (allow or deny), so approve-from-anywhere works for Codex too.
-   - Non-managed hooks must be **trusted by hash** in `/hooks` before they run. Install therefore has to walk the user through trusting them, and the doctor has to check it.
-   - Codex docs moved to `learn.chatgpt.com/docs`.
-   - `AGENTS.md` has **no import syntax**, so the instruction library inlines content into a tagged managed block. Codex stops loading at 32 KiB (`project_doc_max_bytes`).
+   - Current official docs (checked 2026-10-10) specify the exact permission output contract, hook sources, event payloads, `/hooks` trust-by-current-hash flow, and the 32 KiB default **combined** instruction limit. See `docs/research/codex-cli.md` for the implementation handoff and primary links.
+   - Hook integration is opt-in and user-level by default. Do not edit managed/org policy or project `.codex/` files silently. A file containing a hook is not proof the hook is trusted or running; the user must inspect and trust the current definition in `/hooks`.
+   - Install into one hook representation per config layer. Codex discovers `hooks.json` and inline TOML hook tables, loads matching sources additively, and warns if both representations appear at one layer. Project hooks also require the project `.codex/` layer to be trusted.
+   - `PermissionRequest` must answer with `hookSpecificOutput.hookEventName = "PermissionRequest"` and `decision.behavior = "allow" | "deny"`; no decision leaves Codex's normal prompt in place. Any deny wins across matching hooks. `PreToolUse` is not the permission grant path.
+   - Hook JSON arrives on stdin. Documented events include `SessionStart`, `SessionEnd`, `SubagentStart`, `SubagentStop`, `PreToolUse`, `PermissionRequest`, `PostToolUse`, `PreCompact`, `PostCompact`, `UserPromptSubmit`, `Stop`, and `Interrupt`. Use documented fields only and preserve raw fixtures. Most hooks default to 600 s; `SessionEnd` and `Interrupt` have a 1 s default and 3 s maximum. Set explicit bounded timeouts.
+   - Codex reads one global instruction file, then at most one file per directory from project root to cwd; `AGENTS.override.md` has precedence at each level. The default 32 KiB (`project_doc_max_bytes`) cap is combined across discovered instructions. For the instruction library, inline only a previewed, tagged managed block and warn against the effective combined cap. Never replace user-authored root or nested `AGENTS.md`, or rename/convert Claude instruction files.
+   - Launch the interactive `codex` CLI in Marshell's PTY. App-server is a separate JSON-RPC integration with a documented remote-TUI pairing, not an attach-to-existing-process API in the docs; do not treat its thread id as the PTY session id. App-server documents model/effort discovery, per-thread token-usage updates, and ChatGPT account rate-limit methods, but the usage payload and authentication-dependent availability require versioned verification. Real CLI fixtures must settle Windows command quoting, trust UX, transcript schema, context denominator, and resume behavior before claiming full Codex support.
 3. **Claude Code**
    - `model` arrives only on `SessionStart`, not on every event.
    - `effort.level` appears only on tool-context events. Values: low, medium, high, xhigh, max; the CLI also accepts `ultracode`.
@@ -91,6 +94,8 @@ Each step builds on the one before it, so do them in this order. All of them are
 | 10 | Settings page + editor | Form mode, raw mode, scope badges. |
 | 11 | OS notification mocks + icon | Banners per OS. The icon at 16/32 px on light and dark backgrounds. |
 
+Rows 7 to 11 are designed in batch 3; the decisions are recorded in "Batch 3 design decisions" below.
+
 Stories are fed by `fake-agent` scenario scripts, so the same 5-agent run drives the stories, the E2E tests and demo mode. Motion prototypes and sound drafts are part of phase 0.
 
 **"Approved" means all of these pass:**
@@ -105,7 +110,7 @@ Stories are fed by `fake-agent` scenario scripts, so the same 5-agent run drives
 2. Is no keyboard focus moved and no window raised by anything except a user action?
 3. Does no row change height or position unless the user did something?
 4. Is every new action in the palette, with a shortcut shown and rebindable?
-5. Are unknown values left out (the context ring, usage line, model, effort and subagent count simply do not appear), with nothing guessed?
+5. Are unknown values left out of rows and the status strip (the context ring, usage line, model, effort and subagent count simply do not appear) and shown as an en dash in tables and forms (Departures, doctor, settings), with nothing guessed?
 6. Is every state covered: empty, loading (over 150 ms only), error, offline core?
 7. Does every motion have a reduced-motion version and use tokens only?
 8. Is the copy clean: sentence case, no "successfully", no "Oops", undo path named?
@@ -132,7 +137,7 @@ Stories are fed by `fake-agent` scenario scripts, so the same 5-agent run drives
 | Split view | **Up to four terminals on screen at once** (any number can run; this is only how many are visible). The layout button in the top bar opens a menu: 1 to 4 panes, an arrangement per count (2: side by side or stacked; 3: one main beside two, one main on top, side by side or stacked; 4: grid, side by side or stacked) and an Automatic switch. Automatic picks the arrangement that keeps the smallest pane closest to 80 by 24, judged on even panes so dragging a divider never flips it. **Every pane for an AI agent carries its own prompt line** (see Prompt line; a pane for a manual CLI has none and gives those rows to its terminal), so each such pane's terminal is its height minus the 28 px header, its prompt line and the padding. Dividers are a 1 px hairline with an 8 px hit area that overhangs the panes, so a divider costs one pixel of terminal. Each pane header (28 px) has the brand stripe, the status glyph (the vendor mark moving while working), name, project, and zoom and remove buttons; a pane that needs you keeps a vendor tint at full strength while other inactive headers sit at 60%. **Four only when the window is big enough to use them:** a count is offered only if some arrangement gives every pane at least 60 columns by 14 rows **of terminal** (each pane's header and own prompt line come on top, and the status bar's height counts). Below that the layout shows fewer (the smallest window shows one), the layout menu greys out the counts that do not fit and says "Showing 2 of 3", and the sessions not shown keep running (the focused pane's header says "N more running"). A pane under 80 columns says its size ("39×11"). Zoom (Ctrl+Shift+P, Cmd+P on macOS) fills the view and the others keep running. A new pane starts empty and offers the sessions not on screen. The active pane has a 2 px bar in the vendor colour. Terminal text is **never** dimmed. **A pane header is that pane's title bar:** the number and the name are the last things to give way (the project shrinks first). The app window's own title in the OS title bar and taskbar follows the focused session ("billing — Marshell", or "Marshell" when none is focused). The window has **one** screen-reader live region, for the focused session (empty on first render, announces only a change, never a repeat); the prompt lines in the panes are plain text. |
 | Focus mode | Sidebar and header go to 0. The header reveals on an 8 px top-edge hover. A floating pill at top right reads "2 need you ⌃⇧N" and stays silent apart from its glyph bounce. |
 | Prompt line | Every session on screen has its **own** prompt line, so a line of text always goes to the session of the pane it was typed in. A single terminal has one **full** line under it (**66 px**); in split view every pane has a **compact** line docked at its foot (**42 px**), including a zoomed pane. An empty pane has none, and **neither does a manual CLI** (a shell or dev tool is a plain terminal: you type in the terminal, see Session numbers and manual CLIs). The look is a **flat command-line**, not a floating card or a rounded composer: a docked bar with a prompt marker and a field, separated from the terminal by a hairline and a vendor-coloured top edge on the focused one, so it reads as part of the terminal rather than a chat box. The height is fixed in a slot, so the terminals never resize when a session starts or stops working; a long prompt grows the line upward over its own terminal while it is written, then scrolls with its scrollbar hidden. It takes its session's vendor colour. It is blocked while that session waits on the user or has ended, so typed text can never answer a request by accident; the reason sits in the line ("billing is waiting for your approval"). Only that pane's line is off: the others stay live. Enter sends (Queue while the session is working), Shift+Enter adds a line, Ctrl+Shift+L (Cmd+L on macOS) puts the cursor in the focused pane's prompt line without changing which pane is focused. Hidden in focus mode. The terminal itself stays typeable. |
-| Status bar | One **24 px** bar at the foot of the centre column, the same in a single window and in split view. It carries the status strip (inspired by the user's statusline.py) for the **focused** pane's session: model and effort, context % with a tiny bar and used/size, the 5-hour and 7-day limits with "resets in", cost, session time, uncommitted changes, MCP health, version, skills, venv and ports. Unknown values are left out, never a dash; items drop by priority as the window narrows (the model, context and 5-hour limit last) and never wrap; an MCP problem replaces the healthy count and outranks everything. Hidden in focus mode. Which items every CLI can supply is in `docs/research/2026-10-10-cli-data-sources.md`: only project, branch, elapsed time, ports, venv and version are universal. **It starts with the focused session's number and name** (never dropped, ellipsized only at its own 24-character cap), so the facts always say whose they are; the strip fits in what is left. |
+| Status bar | One **24 px** bar at the foot of the centre column, the same in a single window and in split view. It carries the status strip (inspired by the user's statusline.py) for the **focused** pane's session: model and effort, context % with a tiny bar and used/size, the 5-hour and 7-day limits with "resets in", cost, session time, uncommitted changes, MCP health, version, skills, venv and ports. Unknown values are left out of the strip, never shown as a dash; items drop by priority as the window narrows (the model, context and 5-hour limit last) and never wrap; an MCP problem replaces the healthy count and outranks everything. Hidden in focus mode. Which items every CLI can supply is in `docs/research/2026-10-10-cli-data-sources.md`: only project, branch, elapsed time, ports, venv and version are universal. **It starts with the focused session's number and name** (never dropped, ellipsized only at its own 24-character cap), so the facts always say whose they are; the strip fits in what is left. |
 | Rail (52 px) | Brand stripe, the agent mark and a 2-letter monogram per session, with a small status glyph. While a session works, its vendor mark carries the working loop in place of any pulsing dot. Needs-you shows as a badge stack with a count at the top. It shows the items that fit and a "+N" button for the rest; the command palette button sits at its foot, since the bar's 52 px column holds only the logo. |
 
 **Terminal theme.** The terminal has its own palette, separate from the app theme.
@@ -160,7 +165,7 @@ Stories are fed by `fake-agent` scenario scripts, so the same 5-agent run drives
 
 **Comfortable row, 56 px** (there is no compact density; the two modes are comfortable and expanded):
 - 3 px brand stripe flush left
-- 14 px padding, then the **agent mark** in a 16 px box: the vendor logo (Claude, OpenAI, Gemini, Copilot, Cursor and others, a generic terminal mark for custom CLIs) in the agent's brand colour
+- 14 px padding, then the **agent mark** in a 16 px box: the vendor logo (Claude, OpenAI, Antigravity, Copilot, Cursor and others, a generic terminal mark for custom CLIs) in the agent's brand colour
 - 8 px gap, then the **name** (13/500)
 - 6 px gap, then project · branch (12, secondary)
 - flexible space, then the right cluster: caution 12, mute 12, the **status glyph** 16, wait time or age (11, tabular), context ring 16
@@ -183,7 +188,7 @@ The full text is in the tooltip and the screen-reader label.
 | State | Glyph | Motion (reduced-motion) | Text (line 2 / screen reader) | Row treatment |
 |---|---|---|---|---|
 | Idle | Hollow circle | — | "Idle" | — |
-| Working | The vendor mark itself moves, one loop per vendor, signed off in phase 0 (Claude and Gemini breathe: the tips draw in more than the centre, Gemini shallower so the star stays slim; Codex turns steadily; Antigravity swims up like a jellyfish, the bell squeezing and the tentacles trailing; Copilot stays still while parts of its face flash dark, each on its own tempo; Cursor's cube stays still while the pointer cut out of it slides in, clicks and slides back; opencode steps; Amp's main arrow stays while the two secondary arrows are fired away one after another and slide back; Grok and Qwen turn back slowly; DeepSeek swims; custom agents blink only the underscore, hard on and off); no glyph in the cluster | Mark stays still; the phrase and screen-reader label carry the state | "Running npm test" | — |
+| Working | The vendor mark itself moves, one loop per vendor, signed off in phase 0 (Claude breathes: the tips draw in more than the centre; Codex turns steadily; Antigravity swims up like a jellyfish, the bell squeezing and the tentacles trailing; Copilot stays still while parts of its face flash dark, each on its own tempo; Cursor's cube stays still while the pointer cut out of it slides in, clicks and slides back; opencode steps; Amp's main arrow stays while the two secondary arrows are fired away one after another and slide back; Grok and Qwen turn back slowly; DeepSeek swims; custom agents blink only the underscore, hard on and off); no glyph in the cluster | Mark stays still; the phrase and screen-reader label carry the state | "Running npm test" | — |
 | Needs you: permission | Filled rounded-square badge in the vendor's colour with a padlock (locked until you decide); "?" for a question | One bounce | "Wants to run `npm test`" | 12% tint in the vendor's colour, reason line in full-contrast text, wait timer |
 | Needs you: question | Badge in the vendor's colour with "?" | One bounce | "Has a question" | Same |
 | Done, unseen | Check in the vendor's colour, drawn in 200 ms | Draw once | "Done · edited 4 files" | Name at 600 weight, plus a 6 px unread dot |
@@ -195,7 +200,7 @@ The full text is in the tooltip and the screen-reader label.
 | Auto / dontAsk / bypass | ⚠, **always visible** | — | "Full auto" | Header tinted red with a red bar on its start edge (bypass, auto) |
 | Ended | Hollow square | — | "Ended · exit 0" | Text 60% |
 | Limited (no hooks) | Dotted circle | — | "Status limited · set up" | Links to setup |
-| Unknown values | Nothing: the ring, usage line, model, effort and subagent count are left out, not shown as a dash | — | — | Ring hidden |
+| Unknown values | Nothing in a row or the strip: the ring, usage line, model, effort and subagent count are left out, not shown as a dash. (A table or a form shows an en dash instead; see Batch 3 design decisions.) | — | — | Ring hidden |
 
 ### The approve card
 
@@ -279,7 +284,7 @@ Content, top to bottom:
 - **No boxed outlines.** Cards, buttons, chips and keys are told apart by fill and tint, never by a 1 px box; a risky request is a tinted card with a red bar on its start edge. Hairlines stay as dividers between regions, and the keyboard focus ring stays. `noBoxedOutlines.test.ts` enforces it.
 - **Scrollbars:** the main window never shows a scrollbar: only the terminal conversation and the session list scroll, both by wheel, keys and touch, with the bar invisible. Menus, settings and the request-details drawer, which may scroll, keep a quiet 12 px pill that follows the theme and strengthens on hover and drag. `noScrollInMainWindow.test.ts` scans every feature and component stylesheet.
 - Status colours (error, ok, caution) are separate from the accent. Caution is yellow (dark) or olive (light) so it stays distinct from amber; `contrast.test.ts` checks AA and CIEDE2000 distance for every pair, including amber vs caution.
-- Brand colours are for marks, stripes and dots and, as the accent, for the focused session's rings, bars and primary buttons (see the accent rule above). Claude's is a muted terracotta, never a status colour; Codex and Gemini have their own tokens (OpenAI is a pale yellow in dark mode and a deep teal in light; a yellow that passes 3:1 on white looked like muddy gold). All are user-changeable.
+- Brand colours are for marks, stripes and dots and, as the accent, for the focused session's rings, bars and primary buttons (see the accent rule above). Claude's is a muted terracotta, never a status colour; Codex and Antigravity have their own tokens (OpenAI is a pale yellow in dark mode and a deep teal in light; a yellow that passes 3:1 on white looked like muddy gold). All are user-changeable.
 - Custom accent hex: validated at pick time against both themes (AA for `--accent-ink`), rejected with the reason if it fails.
 
 **Motion:**
@@ -304,7 +309,7 @@ Pause all looping animation when the window is hidden.
 - At most one sound per category per 3 s.
 
 **Departures board:**
-- True black with 44 px rows.
+- True black with 44 px rows, in both themes (it is a sign, not a page).
 - Columns: STATUS · SESSION · PROJECT/BRANCH · AGENT (text label in brand colour) · WAITING · CTX · RECAP.
 - Uppercase mono for status and times.
 - Tiles are `#0F0F0F` with a hairline split at 50% height. No yellow Solari pastiche.
@@ -366,7 +371,7 @@ marshell/
   crates/
     protocol/                 # serde types shared by everything + ts-rs derives; brand.rs
     core/                     # the engine (lib): server, pty, sessions, adapters, config, history, doctor, notify
-      src/server/  pty/  session/  adapters/{claude,codex,gemini,generic}/  config/
+      src/server/  pty/  session/  adapters/{claude,codex,antigravity,generic}/  config/
           history/  doctor/  notify/  shells/  recap/  references/  ports/
     bridge/                   # two tiny console bins sharing a client module:
                               #   marshell-hook (hook + status line bridge), marshell (CLI: new/list/focus/send/uninstall)
@@ -399,7 +404,7 @@ Plain sync trait objects (`Box<dyn Adapter>`), no lifetimes or async in the trai
 
 ```rust
 pub trait Adapter: Send + Sync {
-    fn id(&self) -> AgentId;                         // "claude" | "codex" | "gemini" | "custom:<slug>"
+    fn id(&self) -> AgentId;                         // "claude" | "codex" | "antigravity" | "custom:<slug>"
     fn display_name(&self) -> &str;
     fn brand_color(&self) -> &str;                   // default; user-overridable
     fn capabilities(&self) -> Capabilities;          // hooks, permission_hook, context_injection, resume, fork, effort, statusline …
@@ -615,7 +620,7 @@ The Rust core is the only source of truth.
 | Title bar | Custom Fluent-like | Native traffic lights (Overlay) | Native decorations |
 | Claude paths | `%USERPROFILE%\.claude`; managed `C:\Program Files\ClaudeCode\managed-settings.json` | `~/.claude`; managed `/Library/Application Support/ClaudeCode/` | `~/.claude`; managed `/etc/claude-code/` |
 | Codex paths | `%USERPROFILE%\.codex` (or `CODEX_HOME`): `config.toml`, `hooks.json`, `AGENTS.md`, `sessions/YYYY/MM/DD/rollout-*.jsonl[.zst]`; admin `requirements.toml` is read-only to us | `~/.codex`, same layout | `~/.codex`, same layout |
-| Gemini paths | `%USERPROFILE%\.gemini\settings.json`, `GEMINI.md`, `tmp\<hash>\chats\session-*.jsonl`; system settings are read-only to us | `~/.gemini`, same layout; system `/Library/Application Support/GeminiCli/` (verify) | `~/.gemini`; system `/etc/gemini-cli/settings.json` |
+| Antigravity paths | `%USERPROFILE%\.gemini\antigravity-cli\settings.json`, `plugins\<name>\`; binary `%LOCALAPPDATA%\agy\bin\agy.exe`; the transcript location comes from the status line payload (`transcript_path`) | `~/.gemini/antigravity-cli`, same layout; `~/.local/bin/agy` | same as macOS |
 | Packaging | NSIS per-user (no admin) + MSI | dmg, universal binary | AppImage, deb, rpm |
 | Signing | Azure Artifact Signing | Developer ID + notarization, hardened runtime. Sidecar bins (`marshell-hook`, `marshell`, `marshell-host`) are signed too. | AppImage GPG, rpm key |
 | Elevated sessions | `marshell-host --elevated` via ShellExecute `runas`; token loopback; accepts only input and resize | `sudo -i` in the tab | `pkexec` / `sudo -i` |
@@ -729,7 +734,7 @@ Decisions from the 2026-10-10 coverage audit (`docs/superpowers/plan-coverage-au
      - **Security:** an ADR threat model (loopback server, `/sessions/:id/input`, the `marshell://` link, instruction-library injection); owner-only permissions on all of `~/.marshell`; the deep link carries no authority (it only focuses); a security review gate before approve-from-anywhere ships.
      - **Diagnostics:** `tracing` logs with rotation, a size cap and redaction; "Export diagnostics" in Settings → Advanced; the hidden perf panel.
      - **Version drift:** adapters are version-gated; an unknown CLI version shows "Status limited" and a doctor note, with a per-CLI switch to turn normalisation off.
-     - `marshell uninstall` and Settings → Advanced → Remove all hooks; an "orphaned hooks" check for when the bridge is gone.
+     - `marshell uninstall` and, per CLI, turning Marshell's hooks off in Settings (each removes the hook entries Marshell added and puts the user's own status line back from that CLI's `statusline-chain.json`; nothing else in the file is touched); an "orphaned hooks" check for when the bridge is gone.
      - Start code-signing procurement (Azure Artifact Signing, Apple Developer ID).
    - Exit: a real Claude session shows correct model, effort, mode, subagents and context; approval from a card works; uninstall leaves zero byte diff; corrupting `index.sqlite` is repaired on start.
 4. **Notifications + choreography + Departures board + stuck detection** (S3).
@@ -738,7 +743,7 @@ Decisions from the 2026-10-10 coverage audit (`docs/superpowers/plan-coverage-au
    - Scope: search, conversation view, files-changed tab, recording replay, bookmarks, tags, archive and delete-copy, export with redaction, import of sessions run outside the app, retention limits (size and age), the optional backup-folder mirror, a disk-usage view, recording compression and cleanup.
    - Exit: a 1000-session index searches in under 100 ms; recordings stay within a stated MB-per-hour budget.
 6. **Agents, integration and the elevated helper.**
-   - Scope: settings pane (read-only), Codex + Gemini/Antigravity adapters (decision due before this phase starts; install both CLIs first), custom agents, repo scripts (`marshell.json`), port chips, the `marshell` CLI and its built-in skill (when the app is closed, `marshell new` says so and offers to start it), project references (`@` picker, alias learning), WSL (S11), "open in system terminal" and "copy resume command", and the `marshell-host` elevated helper. S8 passed with requirements: the token goes over a pipe, never the command line, and the decline and wrong-token paths get tested. Until it ships, elevated sessions open in a separate elevated Marshell window.
+   - Scope: settings pane (read-only), Codex + Antigravity adapters (install both CLIs first; the Antigravity adapter verifies its hook events and any permission hook against a real install), custom agents, repo scripts (`marshell.json`), port chips, the `marshell` CLI and its built-in skill (when the app is closed, `marshell new` says so and offers to start it), project references (`@` picker, alias learning), WSL (S11), "open in system terminal" and "copy resume command", and the `marshell-host` elevated helper. S8 passed with requirements: the token goes over a pipe, never the command line, and the decline and wrong-token paths get tested. Until it ships, elevated sessions open in a separate elevated Marshell window.
    - Exit: fixture suites from the real CLIs pass.
 7. **Doctor**: the fix actions, on top of the phase-3 config core: "Fix X issues" and one-click undo; folds in each CLI's own doctor; detects duplicate notifications; reports the tokens injected by project references; checks Codex hook trust; waste checks (unused MCP servers and skills, long descriptions, broad scopes, a token-cost estimate); offers to raise `cleanupPeriodDays`.
    - Exit: a seeded broken config is fully repaired and fully undone.
@@ -759,6 +764,20 @@ Two bugs (a prompt line announced twice, a selected rail item that vanished in W
 4. **Screen-reader script** (`docs/a11y/screen-reader-script.md`). Ten minutes with Narrator and NVDA at every sub-review sign-off, with the exact phrases expected. A fail is fixed before sign-off.
 
 **What is announced (the setting `announce`).** The default, `needs-you`, announces a request or question arriving (for the focused session by name, and "N sessions need you" when the count rises anywhere), a stop or an end, the session you switch to ("Session 6, billing", plus what it needs), and "No session selected". It never announces progress, "working", a finished turn or anything in a pane you are not in. "Read the focused session's status" (Ctrl+Shift+G, ⌘G) says the focused session's state on request, every time. `everything` (every status change in every visible pane) and `on-request` (nothing until asked) are typed in the setting but not built: until they are, `everything` behaves like `needs-you`.
+
+### Batch 3 design decisions
+
+Onboarding, Departures, the doctor, the settings page, the banners and the tray (phase-0 rows 7 to 11), as they were designed and reviewed.
+
+- **Unknown values.** Rows and the status strip leave an unknown value out (nothing guessed). A table or a form, where a missing cell would break the shape, shows an en dash: Departures, the doctor, the settings page, the consent card ("line –").
+- **Pages scroll in their body.** A page (Doctor, Settings) scrolls in `.page__body`; the fix sheet scrolls in `.fix-sheet__body`; the onboarding frame scrolls in `.onboarding__body`. Each has a visible themed scrollbar (like the drawer, since these are not the live window) and its actions are a last row outside the scrolling part, so Cancel, the fix and "Allow these changes" are reachable however long the change is, even at 720 by 480. `dialogBodies.test.ts` guards the exception so it cannot spread.
+- **Announcing.** An action the user caused (a fix, an apply) is announced in every announce mode, as the `action-result` kind. The pages add no live region of their own.
+- **Config safety copy.** A card or a strip says exactly what changes and where. Undo copy only names things that exist and says what removal does for that CLI, built from its switches (`removalCopy` in `consent.ts`): Claude, "Marshell removes the hook entries it added and puts your own status line back from statusline-chain.json; the rest of the file stays as it is"; Codex, "Marshell removes the hook entries it added; the rest of the file stays as it is"; Antigravity, "Marshell puts your own status line back from statusline-chain.json; the rest of the file stays as it is". It never says "removes only the entries it added" where a status line command was replaced rather than added. A restore from a snapshot (the fix sheet, the settings change strip) is only promised for the snapshot taken by that same apply, for as long as the file is unchanged since. A chained status line shows where the user's own command is kept (`~/.marshell/agents/claude/statusline-chain.json`) as an added file in the diff. A file that is read-only, does not parse, or is managed is never described as about to change. A conflict offers "Review the difference" and "Reload", never an overwrite.
+- **Consent and the diff.** One card per CLI, each with its own diff; no bulk "allow all". The count in the headline is the number of entries in the diff (a test), the bridge path is quoted inside every command (it has a space), and a stand-in made long on purpose says so in its own headline.
+- **Fix sheet.** Focus starts on the title (never an action); Tab stays inside, Escape closes and focus returns to the opener (`useDialogFocus`, the pure `trapKey`).
+- **Settings.** The change strip is small and sticky; Review opens the exact diff in the page above it, so a long change never covers the form. A managed field shows the value the organisation enforces and says the user's own is not used.
+- **Banners.** Allow and Deny appear only when the whole command fits on one line (160 characters) and is shown; an escalation, a long or multi-line command and a risky request offer only Open or Review. Linux shows just Open.
+- **Departures.** Rows are held while the pointer is over the board; a row that now needs you says it moves up. Y opens the request with focus on the card, N with focus on Deny (neither answers); the letter shown comes from the user's own layout when the browser can tell. The board has explicit table roles (the grid layout would drop them in some browsers), one row group per group, a roving tab stop, and counts its "+N more" line and an open request in the height it fits.
 
 ## Cross-cutting requirements (every phase)
 
@@ -795,7 +814,7 @@ From brief §5.9 and §6: the installer runner (install and update CLIs), review
 - **CLI churn.** Claude's transcript format is officially unstable, and hooks and status fields change monthly. Mitigations: versioned fixtures, defensive parsing, and treating the raw archive copy as the durable artifact.
 - **PermissionRequest hold UX** (S9). A poorly chosen hold time could hide Claude's own prompt.
 - **Codex hook trust friction.** Installed hooks don't run until the user trusts them, so onboarding has to show this.
-- **Gemini → Antigravity transition.** The adapter target is open until phase 6.
+- **Antigravity CLI is young.** Its hook events and any permission hook are unverified (see "Corrections to the brief"); until the adapter confirms them against a real install, status comes through the chained status line and the approve card focuses the tab.
 - **Windows unpackaged toast limits** in dev builds.
 - **macOS notifications need signing**, which needs an Apple Developer account (Account Holder).
 - **The 30-day Claude cleanup** deletes transcripts if the app isn't opened for a month. The doctor offers to raise `cleanupPeriodDays`, with consent.
@@ -831,12 +850,10 @@ Each phase's exit criteria above are the checks. Before claiming any phase done:
   - https://learn.chatgpt.com/docs/config-file/config-reference
   - https://learn.chatgpt.com/docs/agent-configuration/agents-md
   - https://learn.chatgpt.com/docs/developer-commands?surface=cli
-- Gemini CLI docs:
-  - https://geminicli.com/docs/hooks/
-  - https://geminicli.com/docs/hooks/reference/
-  - https://geminicli.com/docs/reference/configuration/
-  - https://geminicli.com/docs/cli/session-management/
-  - https://geminicli.com/docs/reference/memport/
+- Antigravity CLI docs (Gemini CLI is dropped, so its docs are no longer sources):
+  - https://www.antigravity.google/docs/cli/statusline
+  - https://www.antigravity.google/docs/plugins?tab=cli
+  - https://www.antigravity.google/docs/getting-started?tab=cli
 - Tauri:
   - https://v2.tauri.app/plugin/notification/
   - https://v2.tauri.app/reference/javascript/api/namespacewindow/

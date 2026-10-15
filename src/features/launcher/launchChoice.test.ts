@@ -54,7 +54,11 @@ describe("programs the first chip offers", () => {
   });
   it("covers the shells and a spread of dev, remote and cloud tools, with a catch-all", () => {
     const ids = LAUNCH_PROGRAMS.map((p) => p.id);
-    for (const id of ["claude", "codex", "gemini", "antigravity", "copilot", "cursor", "opencode", "amp", "qwen", "grok", "powershell", "bash", "zsh", "cmd", "gitbash", "wsl", "python", "node", "docker", "kubectl", "terraform", "ssh", "aws", "program"]) expect(ids, id).toContain(id);
+    for (const id of ["claude", "codex", "antigravity", "copilot", "cursor", "opencode", "amp", "qwen", "grok", "powershell", "bash", "zsh", "cmd", "gitbash", "wsl", "python", "node", "docker", "kubectl", "terraform", "ssh", "aws", "program"]) expect(ids, id).toContain(id);
+  });
+  it("lists Google's one agent, Antigravity: Gemini CLI is dropped", () => {
+    expect(LAUNCH_PROGRAMS.filter((p) => p.group === "Agents").map((p) => p.label)).toEqual(["Claude", "Codex", "Antigravity", "GitHub Copilot", "Cursor", "opencode", "Amp", "Qwen", "Grok"]);
+    expect(LAUNCH_PROGRAMS.map((p) => p.id)).not.toContain("gemini");
   });
   it("has unique ids, labels and a first-line hint for each", () => {
     expect(new Set(LAUNCH_PROGRAMS.map((p) => p.id)).size).toBe(LAUNCH_PROGRAMS.length);
@@ -72,7 +76,7 @@ describe("programs the first chip offers", () => {
 describe("startingText", () => {
   it("is what the tab shows at once, before the process answers", () => {
     expect(startingText("claude", "my-app")).toBe("Starting Claude Code in my-app…");
-    expect(startingText("gemini", "my-app")).toBe("Starting Gemini CLI in my-app…");
+    expect(startingText("antigravity", "my-app")).toBe("Starting Antigravity CLI in my-app…");
     expect(startingText("codex", "my-app")).toBe("Starting Codex CLI in my-app…");
     expect(startingText("powershell", "my-app")).toBe("Starting PowerShell in my-app…");
   });

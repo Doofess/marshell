@@ -1,0 +1,95 @@
+/*
+ * A banner as the OS would show it, as a neutral layout: a raised fill and the menu shadow, no border, and a corner radius
+ * that follows the platform's habit. The content and the buttons are the design; the system's own styling is not copied.
+ */
+.os-banner-frame {
+  margin: 0;
+  display: grid;
+  gap: var(--space-2);
+  inline-size: min(100%, 380px);
+}
+.os-banner {
+  display: grid;
+  gap: var(--space-1);
+  padding: var(--space-3) var(--space-4);
+  background: var(--bg-overlay);
+  box-shadow: var(--shadow-menu);
+  color: var(--text-1);
+  font-size: var(--text-13);
+  line-height: 20px;
+  overflow-wrap: anywhere;
+}
+.os-banner[data-os="windows"] {
+  border-radius: 8px;
+}
+.os-banner[data-os="mac"] {
+  border-radius: 14px;
+}
+.os-banner[data-os="linux"] {
+  border-radius: 6px;
+}
+
+.os-banner__head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--text-2);
+  font-size: var(--text-12);
+}
+.os-banner__head p {
+  margin: 0;
+}
+.os-banner__app {
+  font-weight: 600;
+}
+.os-banner__meta {
+  margin-inline-start: auto;
+  font-variant-numeric: tabular-nums;
+}
+.os-banner__title {
+  margin: 0;
+  font-weight: 600;
+}
+.os-banner__body {
+  margin: 0;
+  color: var(--text-2);
+}
+
+.os-banner__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-block-start: var(--space-2);
+}
+.os-banner__btn {
+  padding: var(--space-1) var(--space-3);
+  border-radius: var(--radius);
+  background: var(--fill-strong);
+  color: var(--text-1);
+  font-size: var(--text-13);
+}
+.os-banner__btn:focus-visible {
+  outline: 2px solid var(--focus, var(--accent));
+  outline-offset: 2px;
+}
+.os-banner__btn:active {
+  background: var(--fill);
+}
+@media (hover: hover) and (pointer: fine) {
+  .os-banner__btn:hover {
+    background: var(--selected);
+  }
+}
+
+.os-banner__note {
+  color: var(--text-3);
+  font-size: var(--text-12);
+  text-wrap: pretty;
+}
+
+@media (forced-colors: active) {
+  .os-banner,
+  .os-banner__btn {
+    outline: 1px solid CanvasText;
+  }
+}

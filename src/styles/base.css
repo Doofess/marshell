@@ -31,3 +31,19 @@ body {
   outline: 2px solid var(--focus, var(--accent));
   outline-offset: 2px;
 }
+
+/* A button starts flat: no raised browser border, the page's own type and colour. Each component gives it a fill. Low specificity, so any class wins. */
+button {
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+}
+
+/* A text box, select or text area starts flat too: the browser's own inset border is a boxed outline nobody wrote. Zero specificity, so any class gives it a fill. Checkboxes and radios keep their native drawing. */
+:where(input:not([type="checkbox"]):not([type="radio"]), select, textarea) {
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+}

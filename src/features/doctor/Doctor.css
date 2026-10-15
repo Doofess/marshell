@@ -1,0 +1,278 @@
+/* The Doctor. Findings are told from the page by a fill and a start-edge bar, never a box. The page body scrolls (Page.css); nothing here does. */
+.doctor {
+  block-size: 100%;
+  min-block-size: 0;
+  position: relative;
+}
+.doctor__body {
+  display: grid;
+  gap: var(--space-3);
+  max-inline-size: 760px;
+}
+.doctor__summary,
+.doctor__progress,
+.doctor__failed,
+.doctor__stale {
+  margin: 0;
+  font-size: var(--text-13);
+  color: var(--text-2);
+}
+.doctor__failed {
+  color: var(--text-1);
+  padding: var(--space-3);
+  border-radius: var(--radius);
+  background: var(--fill);
+  border-inline-start: 3px solid var(--error);
+}
+.doctor__list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: var(--space-2);
+}
+.doctor__row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: var(--space-3);
+  align-items: start;
+  padding: var(--space-3);
+  border-radius: var(--radius);
+  background: var(--fill);
+  color: var(--text-1);
+}
+.doctor__row[data-severity="error"] {
+  border-inline-start: 3px solid var(--error);
+}
+.doctor__row[data-severity="warning"] {
+  border-inline-start: 3px solid var(--caution);
+}
+.doctor__row[data-severity="info"] {
+  border-inline-start: 3px solid var(--text-3);
+}
+.doctor__row[data-state="fixed"] {
+  border-inline-start: 3px solid var(--ok);
+  background: color-mix(in oklch, var(--ok) 8%, var(--fill));
+}
+.doctor__mark {
+  display: grid;
+  place-items: center;
+  min-inline-size: 16px;
+  min-block-size: 20px;
+}
+.doctor__info-mark {
+  display: grid;
+  place-items: center;
+  inline-size: 16px;
+  block-size: 16px;
+  border-radius: 50%;
+  background: var(--fill-strong);
+  color: var(--text-1);
+  font-size: var(--text-11);
+  font-weight: 600;
+  font-style: italic;
+}
+.doctor__main {
+  min-inline-size: 0;
+  display: grid;
+  gap: var(--space-1);
+}
+.doctor__title {
+  margin: 0;
+  font-size: var(--text-13);
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+.doctor__word {
+  font-size: var(--text-11);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-2);
+  margin-inline-end: var(--space-1);
+}
+.doctor__detail,
+.doctor__file,
+.doctor__restart,
+.doctor__why {
+  margin: 0;
+  font-size: var(--text-12);
+  color: var(--text-2);
+  overflow-wrap: anywhere;
+  text-wrap: pretty;
+}
+.doctor__why {
+  color: var(--text-1);
+}
+.doctor__file code,
+.fix-sheet code {
+  font-family: var(--font-mono);
+  overflow-wrap: anywhere;
+}
+
+/* Buttons are plain fills; the primary one takes the accent. */
+.doctor__btn,
+.doctor__link,
+.toast__btn,
+.fix-sheet__btn {
+  padding: var(--space-1) var(--space-3);
+  border-radius: var(--radius);
+  background: var(--fill-strong);
+  color: var(--text-1);
+  font-size: var(--text-13);
+}
+.doctor__btn[data-primary],
+.fix-sheet__btn[data-primary] {
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-weight: 600;
+}
+.doctor__btn[aria-disabled="true"] {
+  color: var(--text-2);
+  background: var(--fill);
+}
+.doctor__link {
+  display: inline;
+  padding-inline: var(--space-2);
+}
+.doctor__btn:focus-visible,
+.doctor__link:focus-visible,
+.toast__btn:focus-visible,
+.fix-sheet__btn:focus-visible,
+.fix-sheet__title:focus-visible {
+  outline: 2px solid var(--focus, var(--accent));
+  outline-offset: 2px;
+}
+.doctor__btn:active,
+.doctor__link:active,
+.toast__btn:active,
+.fix-sheet__btn:active {
+  background: var(--selected, var(--fill-strong));
+}
+@media (hover: hover) and (pointer: fine) {
+  .doctor__btn:not([data-primary]):hover,
+  .doctor__link:hover,
+  .toast__btn:hover,
+  .fix-sheet__btn:not([data-primary]):hover {
+    background: var(--selected, var(--fill-strong));
+  }
+}
+
+/* The receipt: floats at the foot of the page's scrolling body for 10 s (the page decides when to drop it). */
+.toast {
+  position: sticky;
+  inset-block-end: var(--space-4);
+  inline-size: fit-content;
+  max-inline-size: min(100%, 520px);
+  margin-block-start: var(--space-4);
+  margin-inline-start: auto;
+  display: grid;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius);
+  background: var(--bg-overlay);
+  color: var(--text-1);
+  box-shadow: var(--shadow-pill);
+}
+.toast__text {
+  margin: 0;
+  font-size: var(--text-13);
+  text-wrap: pretty;
+}
+.toast__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+@media (prefers-reduced-motion: no-preference) {
+  .toast {
+    animation: toast-in var(--dur-enter) var(--ease-out) both;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .toast {
+    animation: toast-fade 80ms linear both;
+  }
+}
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+}
+@keyframes toast-fade {
+  from {
+    opacity: 0;
+  }
+}
+
+/* The fix sheet: a dialog drawn on the page, with the combined diff per file. */
+.fix-sheet {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  max-block-size: 100%;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  max-inline-size: 760px;
+  border-radius: var(--radius);
+  background: var(--bg-overlay);
+  color: var(--text-1);
+  box-shadow: var(--shadow-menu);
+}
+.fix-sheet__title {
+  margin: 0;
+  font-size: var(--text-15);
+  font-weight: 600;
+}
+/* The changes scroll here, with a visible themed scrollbar; the actions are the last row and never leave the sheet. */
+.fix-sheet__body {
+  display: grid;
+  gap: var(--space-3);
+  align-content: start;
+  min-block-size: 0;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+}
+/* The body takes focus (it is how the keyboard scrolls it); its ring sits inside, where the sheet cannot clip it. */
+.fix-sheet__body:focus-visible {
+  outline-offset: -2px;
+}
+.fix-sheet__groups {
+  display: grid;
+  gap: var(--space-3);
+}
+.fix-sheet__group {
+  display: grid;
+  gap: var(--space-1);
+}
+.fix-sheet__file,
+.fix-sheet__note {
+  margin: 0;
+  font-size: var(--text-12);
+  color: var(--text-2);
+  overflow-wrap: anywhere;
+  text-wrap: pretty;
+}
+.fix-sheet__foot {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+}
+
+@media (forced-colors: active) {
+  .doctor__row,
+  .doctor__failed {
+    outline: 1px solid CanvasText;
+  }
+  .doctor__row[data-state="fixed"] {
+    outline: 2px solid Highlight;
+  }
+  .doctor__btn,
+  .doctor__link,
+  .toast__btn,
+  .fix-sheet__btn,
+  .toast,
+  .fix-sheet {
+    outline: 1px solid CanvasText;
+  }
+}

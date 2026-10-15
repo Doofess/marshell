@@ -1,0 +1,308 @@
+/* Onboarding. Cards are told from the page by a fill, never a 1 px box. A blocked card gets a start-edge bar. Nothing here scrolls. */
+.detected {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: var(--space-2);
+}
+.detected__row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: var(--space-3);
+  align-items: start;
+  padding: var(--space-3);
+  border-radius: var(--radius);
+  background: var(--fill);
+}
+.detected__row[data-installed="false"] {
+  color: var(--text-2);
+}
+.detected__name {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  align-items: baseline;
+  margin: 0;
+  font-size: var(--text-13);
+  font-weight: 500;
+}
+.detected__version {
+  font-size: var(--text-12);
+  font-weight: 400;
+  color: var(--text-2);
+  font-variant-numeric: tabular-nums;
+}
+.detected__path,
+.detected__problem {
+  margin: 0;
+  font-size: var(--text-12);
+  color: var(--text-2);
+  overflow-wrap: anywhere;
+}
+.detected__path code,
+.detected__problem code,
+.consent code {
+  font-family: var(--font-mono);
+  overflow-wrap: anywhere;
+}
+
+.consent {
+  display: grid;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  border-radius: var(--radius);
+  background: var(--fill);
+  color: var(--text-1);
+}
+.consent[data-blocked] {
+  border-inline-start: 3px solid var(--caution);
+}
+.consent__head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+.consent__name {
+  margin: 0;
+  font-size: var(--text-15);
+  font-weight: 600;
+}
+.consent__what {
+  margin: 0;
+  font-size: var(--text-13);
+  overflow-wrap: anywhere;
+  text-wrap: pretty;
+}
+.consent__switches {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: var(--space-2);
+}
+.consent__meta,
+.consent__chain,
+.consent__trust,
+.consent__source,
+.consent__why,
+.consent__managed {
+  margin: 0;
+  font-size: var(--text-12);
+  color: var(--text-2);
+  overflow-wrap: anywhere;
+  text-wrap: pretty;
+}
+.consent__toggle,
+.consent__skip {
+  justify-self: start;
+  padding: var(--space-1) var(--space-3);
+  border-radius: var(--radius);
+  background: var(--fill-strong);
+  color: var(--text-1);
+  font-size: var(--text-13);
+}
+.consent__toggle:focus-visible,
+.consent__skip:focus-visible {
+  outline: 2px solid var(--focus, var(--accent));
+  outline-offset: 2px;
+}
+.consent__toggle:active,
+.consent__skip:active {
+  background: var(--selected, var(--fill-strong));
+}
+@media (hover: hover) and (pointer: fine) {
+  .consent__toggle:hover,
+  .consent__skip:hover {
+    background: var(--selected, var(--fill-strong));
+  }
+}
+@media (forced-colors: active) {
+  .consent,
+  .detected__row {
+    outline: 1px solid CanvasText;
+  }
+  .consent[data-blocked] {
+    outline: 2px solid CanvasText;
+  }
+  .consent__toggle,
+  .consent__skip {
+    outline: 1px solid CanvasText;
+  }
+}
+
+/* The frame: a four-segment progress bar of fills (not a live region), one primary button, and the step's body. */
+.onboarding {
+  display: grid;
+  grid-template-rows: auto auto auto minmax(0, 1fr) auto;
+  max-block-size: 100%;
+  gap: var(--space-3);
+  padding: var(--space-6);
+  max-inline-size: 640px;
+  color: var(--text-1);
+}
+.onboarding__progress {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--space-1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.onboarding__segment {
+  padding-block: var(--space-1);
+  padding-inline: var(--space-2);
+  border-radius: var(--radius);
+  background: var(--fill);
+  color: var(--text-2);
+  font-size: var(--text-11);
+}
+.onboarding__segment[data-done] {
+  background: var(--fill-strong);
+  color: var(--text-1);
+}
+.onboarding__segment[aria-current="step"] {
+  border-inline-start: 3px solid var(--accent);
+  color: var(--text-1);
+}
+.onboarding__step {
+  margin: 0;
+  color: var(--text-2);
+  font-size: var(--text-12);
+  font-variant-numeric: tabular-nums;
+}
+.onboarding__title {
+  margin: 0;
+  font-size: var(--text-20);
+  font-weight: 600;
+}
+/* The step's body scrolls, with a visible themed scrollbar, so the buttons in the footer are always reachable. */
+.onboarding__body {
+  display: grid;
+  gap: var(--space-3);
+  align-content: start;
+  min-block-size: 0;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+}
+/* The body takes focus (it is how the keyboard scrolls it); its ring sits inside, where the frame cannot clip it. */
+.onboarding__body:focus-visible {
+  outline-offset: -2px;
+}
+.onboarding__foot {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  justify-content: end;
+}
+.onboarding__back {
+  margin-inline-end: auto;
+}
+.onboarding__back,
+.onboarding__secondary,
+.onboarding__primary,
+.notify-step__allow,
+.notify-step__play {
+  padding: var(--space-1) var(--space-3);
+  border-radius: var(--radius);
+  background: var(--fill-strong);
+  color: var(--text-1);
+  font-size: var(--text-13);
+}
+.onboarding__primary {
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+.onboarding__back:focus-visible,
+.onboarding__secondary:focus-visible,
+.onboarding__primary:focus-visible,
+.notify-step__allow:focus-visible,
+.notify-step__play:focus-visible {
+  outline: 2px solid var(--focus, var(--accent));
+  outline-offset: 2px;
+}
+.onboarding__back:active,
+.onboarding__secondary:active,
+.notify-step__allow:active,
+.notify-step__play:active {
+  background: var(--selected, var(--fill-strong));
+}
+.onboarding__primary:active {
+  background: color-mix(in oklch, var(--accent) 80%, var(--text-1));
+}
+@media (hover: hover) and (pointer: fine) {
+  .onboarding__back:hover,
+  .onboarding__secondary:hover,
+  .notify-step__allow:hover,
+  .notify-step__play:hover {
+    background: var(--selected, var(--fill-strong));
+  }
+  .onboarding__primary:hover {
+    background: color-mix(in oklch, var(--accent) 88%, var(--text-1));
+  }
+}
+
+.notify-step {
+  display: grid;
+  gap: var(--space-3);
+}
+.notify-step__ask,
+.notify-step__state {
+  margin: 0;
+  font-size: var(--text-13);
+  text-wrap: pretty;
+}
+.notify-step__state[data-problem] {
+  padding: var(--space-3);
+  border-radius: var(--radius);
+  border-inline-start: 3px solid var(--caution);
+  background: var(--fill);
+}
+.notify-step__sounds {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: var(--space-1);
+}
+.notify-step__sound {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius);
+  background: var(--fill);
+  font-size: var(--text-13);
+}
+
+.first-session {
+  display: grid;
+  gap: var(--space-2);
+}
+.first-session__hint {
+  margin: 0;
+  color: var(--text-2);
+  font-size: var(--text-12);
+}
+.first-session__frame {
+  position: relative;
+  block-size: 420px;
+  border-radius: var(--radius);
+  background: var(--bg-base);
+  overflow: clip;
+}
+@media (forced-colors: active) {
+  .onboarding__segment[aria-current="step"],
+  .notify-step__state[data-problem] {
+    outline: 2px solid CanvasText;
+  }
+  .onboarding__back,
+  .onboarding__secondary,
+  .onboarding__primary,
+  .notify-step__allow,
+  .notify-step__play,
+  .notify-step__sound {
+    outline: 1px solid CanvasText;
+  }
+}

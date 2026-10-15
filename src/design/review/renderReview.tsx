@@ -12,9 +12,17 @@ import * as Icon from "../../components/Logo/Logo.stories";
 import * as Overflow from "../../features/window/Overflow.stories";
 import * as KeyboardNav from "../../features/window/NavCursor.stories";
 import * as PromptBar from "../../features/composer/Composer.stories";
+import * as Departures from "../../features/departures/Departures.stories";
+import * as Notifications from "../../features/notifications/Notifications.stories";
+import * as Tray from "../../features/tray/Tray.stories";
 import * as ManualCli from "../../components/AgentMark/ManualCli.stories";
 import * as Launcher from "../../features/launcher/Launcher.stories";
 import * as Palette from "../../features/palette/Palette.stories";
+import * as Doctor from "../../features/doctor/Doctor.stories";
+import * as Settings from "../../features/settings/Settings.stories";
+import * as Onboarding from "../../features/onboarding/Onboarding.stories";
+import * as EmptyStates from "../../features/onboarding/EmptyStates.stories";
+import * as DiffStories from "../../components/DiffView/DiffView.stories";
 import * as Rows from "../../features/sidebar/SessionRow.stories";
 
 type StoryModule = { default: { title?: string } } & Record<string, unknown>;
@@ -33,8 +41,8 @@ const BATCH_2A: Array<[StoryModule, string]> = [
   [Card, "The card in every state from the plan: safe and risky commands, edit with diff, new file, MCP, a 40-line command, a question, the receipt, answered in terminal and released on timeout. Interactive stories need Storybook."],
 ];
 
-export type UpTo = "1" | "2a" | "2b" | "2c";
-const ORDER: UpTo[] = ["1", "2a", "2b", "2c"];
+export type UpTo = "1" | "2a" | "2b" | "2c" | "3a" | "3b" | "3c";
+const ORDER: UpTo[] = ["1", "2a", "2b", "2c", "3a", "3b", "3c"];
 const BATCHES: Record<UpTo, Array<[StoryModule, string]>> = {
   "1": BATCH_1,
   "2a": BATCH_2A,
@@ -51,6 +59,20 @@ const BATCHES: Record<UpTo, Array<[StoryModule, string]>> = {
     [Launcher, "One sentence of chips and a prompt line, 560 px wide, 20% from the top. The first chip lists agents, shells and tools. A shell or tool has no mode, pace or worktree: it is a plain terminal, so the line asks for a first command. The footer says which session number it will take."],
     [Palette, "Open sessions come first with their number, mark, name and status, and the number is the fastest way in: type 6, #6 or session 6. A number nobody holds says which sessions are open. Commands follow, with their shortcuts."],
   ],
+  "3a": [
+    [Onboarding, "Four screens, under 60 seconds: what was found, what Marshell may change (shown as the exact diff, with the backup and the way out), notifications with a preview of each sound, and the first session. Nothing is changed without a yes, and a file that does not parse is never edited."],
+    [EmptyStates, "Every empty state says what is empty and how to start."],
+    [DiffStories, "The one diff view used for consent, the doctor's fixes and settings changes."],
+  ],
+  "3b": [
+    [Doctor, "The report, the fix sheet with the combined diff grouped by file, the receipt toast with Restart them and Undo (10 seconds), and Undo last fix in the header afterwards. Problems Marshell cannot fix say why, and managed settings are listed, never changed."],
+    [Settings, "Form and raw editing of each CLI's settings, with a scope badge on every value (User, Project, Local, Managed, Marshell). Every change is shown as the exact diff, with the backup and the way to undo, before Apply. A file that does not parse, is read-only, or changed on disk is never overwritten."],
+  ],
+  "3c": [
+    [Departures, "A sign, true black in both themes, with 44 px rows. Sessions that need you are Gate calls at the top, oldest waiting first. Only the status and waiting cells flip, like split-flap tiles (60 ms a character, 15 ms apart, 400 ms at most); with reduced motion they cross-fade instead. Rows never move while the pointer is over the board. The keyboard moves with the arrows, Enter jumps to the session, and Y or N opens the request inline; Enter never answers it. Press Replay animations to play the 10-second clip."],
+    [Notifications, "Banners follow the plan: silent (Marshell plays its own sound), never raise the window, and a click only focuses the session. Buttons are only what the OS can really offer (Windows and macOS: Allow and Deny; Linux: Open). A risky request shows only Review and never the command. Requests within 3 seconds fold into one banner; a session in the foreground, a stuck session and a finished subagent stay quiet. The frames are neutral layouts, not copies of the system styling; macOS and Linux are design only."],
+    [Tray, "The tray icon is the mono marshalling wands in the current colour, at 16 and 32 px on a light and a dark panel, with an accent dot when something waits. The menu opens Marshell and Departures, lists who needs you with their numbers (five at most, then how many more), and ends with pause, the doctor, settings and quit. Windows shows the count as an overlay icon (9+ at most), macOS as a dock badge; Linux's tray is menu-only. macOS and Linux are design only."],
+  ],
 };
 
 /** "TruncationAt200" → "Truncation at 200". */
@@ -65,6 +87,8 @@ function isStory(v: unknown): v is { render: FC } {
 
 /** Server-renders every story up to and including the given batch into page sections. */
 export function renderReview(upTo: UpTo = "2a"): string {
+  // Each story is rendered on its own, so React would hand every one the same ids (and the same radio-group names); a prefix keeps them apart.
+  let storyNo = 0;
   const modules = ORDER.slice(0, ORDER.indexOf(upTo) + 1).flatMap((k) => BATCHES[k]);
   return modules.map(([mod, blurb]) => {
     const title = mod.default.title ?? "Untitled";
@@ -73,7 +97,7 @@ export function renderReview(upTo: UpTo = "2a"): string {
     const body = stories
       .map(([name, story]) => {
         const Render = story.render;
-        return `<article class="review__story"><h3>${humanize(name)}</h3><div class="review__canvas">${renderToStaticMarkup(<Render />)}</div></article>`;
+        return `<article class="review__story"><h3>${humanize(name)}</h3><div class="review__canvas">${renderToStaticMarkup(<Render />, { identifierPrefix: `s${++storyNo}-` })}</div></article>`;
       })
       .join("");
     return `<section class="review__section" id="${id}"><h2>${title.replace("/", " / ")}</h2><p class="review__blurb">${blurb}</p>${body}</section>`;

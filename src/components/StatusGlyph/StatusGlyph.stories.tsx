@@ -78,8 +78,8 @@ export const MotionReplay: StoryObj = {
 
 export const ContextRings: StoryObj = {
   render: () => (
-    <ThemePair label="Context ring (Gemini blue; thicker from 80%, a centre dot from 95%)">
-      <div data-agent="gemini" style={{ display: "flex", gap: "var(--space-4)", alignItems: "center" }}>
+    <ThemePair label="Context ring (Antigravity cyan; thicker from 80%, a centre dot from 95%)">
+      <div data-agent="antigravity" style={{ display: "flex", gap: "var(--space-4)", alignItems: "center" }}>
         {[0, 12, 42, 79, 80, 94, 95, 100].map((p) => (
           <figure key={p} style={{ margin: 0, display: "grid", justifyItems: "center", gap: "var(--space-1)" }}>
             <ContextRing pct={p} />
@@ -106,7 +106,7 @@ export const PermissionMarks: StoryObj = {
       <div style={{ display: "flex", gap: "var(--space-6)", alignItems: "flex-start", flexWrap: "wrap" }}>
         {PERMISSION_MARKS.map(([name, mark]) => (
           <figure key={name} style={{ margin: 0, display: "grid", justifyItems: "center", gap: "var(--space-2)" }}>
-            {(["claude", "gemini"] as const).map((vendor) => (
+            {(["claude", "antigravity"] as const).map((vendor) => (
               <span key={vendor} data-agent={vendor} style={{ display: "flex", gap: "var(--space-3)", alignItems: "center" }}>
                 {([16, 12] as const).map((size) => (
                   <svg key={size} width={size} height={size} viewBox="0 0 16 16" role="img" aria-label={name}>

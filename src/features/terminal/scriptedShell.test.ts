@@ -40,6 +40,6 @@ describe("the scripted plain shell", () => {
     expect(shellSession({ cwd: "my-app" })).not.toMatch(/[^\r]\n/);
   });
   it("says nothing about any agent: it is a plain shell", () => {
-    expect(plain(shellSession({ cwd: "my-app" })).toLowerCase()).not.toMatch(/claude|codex|gemini|agent/);
+    expect(plain(shellSession({ cwd: "my-app" })).toLowerCase()).not.toMatch(/claude|codex|antigravity|agent/);
   });
 });

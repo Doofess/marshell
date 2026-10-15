@@ -37,3 +37,62 @@ describe("renderReview 2b", () => {
     expect(renderReview("2b")).toContain('class="scripted-terminal"');
   });
 });
+
+describe("renderReview 3a to 3c", () => {
+  it("is cumulative: 3a keeps everything up to 2c", () => {
+    const html = renderReview("3a");
+    expect(html).toContain('id="launcher"');
+    expect(html).toContain('id="command-palette"');
+  });
+  it("accepts 3b and 3c", () => {
+    expect(() => renderReview("3b")).not.toThrow();
+    expect(() => renderReview("3c")).not.toThrow();
+  });
+});
+
+describe("renderReview 3a content", () => {
+  it("renders onboarding and the empty states", () => {
+    const html = renderReview("3a");
+    expect(html).toContain('id="onboarding"');
+    expect(html).toContain('id="empty-states"');
+    for (const name of ["Detected all", "Consent claude diff open", "Notifications blocked", "First session"]) expect(html, name).toContain(name);
+  });
+});
+
+describe("renderReview 3b content", () => {
+  it("renders the doctor and the settings page", () => {
+    const html = renderReview("3b");
+    expect(html).toContain('id="doctor"');
+    expect(html).toContain('id="settings"');
+    for (const name of ["Fix sheet open", "Fixed later", "Undo stale", "Reviewing change", "Unparsable file", "Conflict", "Managed locked", "Raw mode with error"]) expect(html, name).toContain(name);
+  });
+  it("keeps sub-review A below it", () => {
+    expect(renderReview("3b")).toContain('id="onboarding"');
+  });
+});
+
+describe("renderReview ids", () => {
+  it("never repeats an element id across stories, so labels and radio groups stay with their own story", () => {
+    const html = renderReview("3b");
+    const ids = [...html.matchAll(/\sid="([^"]+)"/g)].map((m) => m[1]!);
+    const dup = ids.filter((id, i) => ids.indexOf(id) !== i);
+    expect([...new Set(dup)]).toEqual([]);
+  });
+});
+
+describe("renderReview 3c content", () => {
+  it("renders Departures, notifications and the tray", () => {
+    const html = renderReview("3c");
+    expect(html).toContain('id="departures"');
+    expect(html).toContain('id="notifications"');
+    expect(html).toContain('id="tray-and-icon"');
+    for (const name of ["Twelve sessions", "Motion clip", "Motion filmstrip", "Windows risky", "Windows batched", "Icon sizes", "Tray menu windows"]) expect(html, name).toContain(name);
+  });
+  it("is cumulative", () => {
+    expect(renderReview("3c")).toContain('id="doctor"');
+  });
+  it("never repeats an element id on the whole 3c page", () => {
+    const ids = [...renderReview("3c").matchAll(/\sid="([^"]+)"/g)].map((m) => m[1]!);
+    expect([...new Set(ids.filter((id, i) => ids.indexOf(id) !== i))]).toEqual([]);
+  });
+});

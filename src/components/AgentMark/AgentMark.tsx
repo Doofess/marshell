@@ -6,11 +6,12 @@ import "./agent-colors.css";
 import "./AgentMark.css";
 
 /**
- * Claude's burst and Gemini's star draw in more at the tips than at the centre. The mark is drawn once for each layer
+ * Claude's burst draws in more at the tips than at the centre. The mark is drawn once for each layer
  * below plus once whole, each copy clipped to a
  * disc and drawn in by its own amount: the whole mark by the most, the inner part by less, the centre by least. Radii
  * are in the 24-unit mark and the amounts are the scale each copy reaches at the deepest point of the breath. Each
- * copy's reach at that point (radius x scale) stays inside the copy beneath it, so no cut edge shows.
+ * copy's reach at that point (radius x scale) stays inside the copy beneath it, so no cut edge shows. The table is
+ * per vendor so another rayed mark can breathe the same way.
  */
 export type Breath = { outer: number; layers: readonly { radius: number; scale: number }[] };
 export const BREATHING: Partial<Record<AgentId, Breath>> = {
@@ -21,21 +22,11 @@ export const BREATHING: Partial<Record<AgentId, Breath>> = {
       { radius: 4.5, scale: 0.92 },
     ],
   },
-  // Gemini's sides are smooth curves, so its steps between layers would show; more, finer layers keep them out of sight.
-  gemini: {
-    outer: 0.42,
-    layers: [
-      { radius: 9, scale: 0.47 },
-      { radius: 6.5, scale: 0.52 },
-      { radius: 4.5, scale: 0.57 },
-      { radius: 3, scale: 0.63 },
-    ],
-  },
 };
 
 /**
  * The vendor mark for a session's CLI, in the agent's brand colour. Unknown agents get the generic terminal mark.
- * `working` lets motion.css animate it with the vendor's own loop. A working Claude or Gemini is drawn in layers (BREATHING)
+ * `working` lets motion.css animate it with the vendor's own loop. A working Claude is drawn in layers (BREATHING)
  * so its tips draw in more than its centre; a working Antigravity is drawn as a bell and tentacles that move separately; a working custom agent keeps its frame and prompt still while only the underscore blinks; a working Copilot stays still while
  * parts of it flash dark, each on its own tempo, like a current.
  */

@@ -1,0 +1,101 @@
+/*
+ * The tray menu and the tray icon on a light and a dark panel. The menu is a raised overlay with the menu shadow and no
+ * border; separators are a 1 px fill; disabled lines use the third text colour (which holds AA on the overlay).
+ */
+.tray-frame {
+  margin: 0;
+  display: grid;
+  gap: var(--space-2);
+  inline-size: min(100%, 320px);
+}
+.tray-menu {
+  display: grid;
+  padding: var(--space-1);
+  border-radius: 8px;
+  background: var(--bg-overlay);
+  box-shadow: var(--shadow-menu);
+  color: var(--text-1);
+  font-size: var(--text-13);
+  line-height: 20px;
+}
+.tray-menu__item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-inline-size: 0;
+  padding: var(--space-1) var(--space-3);
+  border-radius: var(--radius);
+  background: transparent;
+  color: inherit;
+  text-align: start;
+}
+.tray-menu__label {
+  flex: 1 1 auto;
+  min-inline-size: 0;
+  overflow: clip;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tray-menu__kbd {
+  margin-inline-start: auto;
+  color: var(--text-2);
+  font-family: var(--font-mono);
+  font-size: var(--text-12);
+}
+.tray-menu__item[aria-disabled="true"] {
+  color: var(--text-3);
+}
+.tray-menu__item:focus-visible {
+  outline: 2px solid var(--focus, var(--accent));
+  outline-offset: -2px;
+}
+.tray-menu__item:active {
+  background: var(--fill-strong);
+}
+@media (hover: hover) and (pointer: fine) {
+  .tray-menu__item:hover {
+    background: var(--hover);
+  }
+}
+.tray-menu__sep {
+  block-size: 1px;
+  margin-block: var(--space-1);
+  margin-inline: var(--space-2);
+  background: var(--hairline);
+}
+
+.tray-frame__note {
+  color: var(--text-3);
+  font-size: var(--text-12);
+  text-wrap: pretty;
+}
+
+/* The icon on a panel as the OS would paint it: a light or a dark one, with the same raised fill. */
+.tray-panel {
+  display: inline-grid;
+  place-items: center;
+  padding: var(--space-3);
+  border-radius: var(--radius);
+  background: var(--bg-raised);
+  color: var(--text-1);
+}
+.tray-panel[data-panel="light"] {
+  color-scheme: light;
+}
+.tray-panel[data-panel="dark"] {
+  color-scheme: dark;
+}
+.tray-icon {
+  display: inline-grid;
+  line-height: 0;
+}
+
+@media (forced-colors: active) {
+  .tray-menu,
+  .tray-menu__item[aria-disabled="true"] {
+    outline: 1px solid CanvasText;
+  }
+  .tray-menu__item[aria-disabled="true"] {
+    color: GrayText;
+  }
+}

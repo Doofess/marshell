@@ -115,3 +115,11 @@ describe("shouldAnnounce: 'only what needs you'", () => {
     expect(shouldAnnounce("request", "everything")).toBe(true);
   });
 });
+
+describe("action-result", () => {
+  it("is said in every mode: a result the user caused is always heard once", () => {
+    expect(shouldAnnounce("action-result", "needs-you")).toBe(true);
+    expect(shouldAnnounce("action-result", "everything")).toBe(true);
+    expect(shouldAnnounce("action-result", "on-request")).toBe(true);
+  });
+});

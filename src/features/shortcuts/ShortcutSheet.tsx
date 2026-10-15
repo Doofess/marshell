@@ -1,3 +1,4 @@
+import { useId } from "react";
 import { COMMANDS, NAV_COMMAND_IDS, shortcutLabel, type Command, type Os } from "../../lib/keymap";
 import { DEFAULT_NAV_MODIFIER, navModifierLabel, type NavModifier } from "../../lib/navigation/modifier";
 import "./ShortcutSheet.css";
@@ -35,10 +36,11 @@ export function sheetGroups(os: Os, nav: NavModifier = DEFAULT_NAV_MODIFIER): Gr
  * commands: it works on a modifier you hold.
  */
 export function ShortcutSheet({ os, nav = DEFAULT_NAV_MODIFIER }: { os: Os; nav?: NavModifier }) {
+  const titleId = useId();
   const mod = navModifierLabel(os, nav);
   return (
-    <section className="shortcuts" aria-labelledby="shortcuts-title">
-      <h2 id="shortcuts-title" className="shortcuts__title">
+    <section className="shortcuts" aria-labelledby={titleId}>
+      <h2 id={titleId} className="shortcuts__title">
         Keyboard shortcuts
       </h2>
       <p className="shortcuts__intro">

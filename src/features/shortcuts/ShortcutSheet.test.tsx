@@ -43,8 +43,8 @@ describe("ShortcutSheet", () => {
   });
   it("gives the whole sheet an accessible name and each group a heading", () => {
     const w = html("linux");
-    expect(w).toContain('aria-labelledby="shortcuts-title"');
-    expect(w).toContain('id="shortcuts-title"');
+    const id = /aria-labelledby="([^"]+)"/.exec(w)![1]!;
+    expect(w).toContain(`id="${id}"`);
     expect((w.match(/<h3/g) ?? []).length).toBe(4);
   });
   it("names the navigation modifier that is set", () => {

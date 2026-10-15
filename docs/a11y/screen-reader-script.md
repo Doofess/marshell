@@ -62,6 +62,47 @@ Go to the **Command palette** section.
 | C2 | Press the buttons inside the first half-second | Nothing happens (the buttons are inert for the first 500 ms), then they work | ☐ | ☐ |
 | C3 | Decide | The receipt is read once ("Allowed · npm test") | ☐ | ☐ |
 
+## D. Batch 3 A: onboarding
+
+Go to the **Onboarding** section.
+
+| # | Do | You should hear | Narrator | NVDA |
+| --- | --- | --- | :-: | :-: |
+| D1 | Tab through the Detected list | Each row as "Claude Code, version 2.1.296" with the whole config path; a missing one says "Not installed" | ☐ | ☐ |
+| D2 | Tab to a consent switch | "Approve from anywhere, switch, on" (or "off"); an unavailable switch is read as unavailable, with its reason as the description | ☐ | ☐ |
+| D3 | Tab to View exact changes and press Enter | The button is read as expanded; the diff is a figure labelled "Exact changes to <path>", and added and removed lines say "added" and "removed" | ☐ | ☐ |
+| D4 | Tab through the sounds | "Play Needs you sound", "Play Escalation sound", and so on, without reading the triangle | ☐ | ☐ |
+| D5 | Tab into the first-session launcher | The sheet is read as the launcher, and Enter starts a session | ☐ | ☐ |
+| D6 | Move between the four steps | The current step is read as "current step"; nothing is announced on its own | ☐ | ☐ |
+
+## E. Batch 3 B: doctor and settings
+
+Go to the **Doctor** section, then **Settings**.
+
+| # | Do | You should hear | Narrator | NVDA |
+| --- | --- | --- | :-: | :-: |
+| E1 | Tab through the Doctor rows | Each row as "Warning, Approve from anywhere is not installed" (severity word first), then what it means and the file | ☐ | ☐ |
+| E2 | Open the fix sheet (Fix 4 issues) | The dialog's title is read on open ("Fix 4 issues"), and focus is on the title, not on a button | ☐ | ☐ |
+| E3 | Tab through the fix sheet | The diff is a figure labelled "Changes to <path>"; Cancel, then Fix 4 issues; nothing is applied by Enter on the title | ☐ | ☐ |
+| E4 | Apply the fix (the story's Fixed state) | The receipt is said once: "Fixed 4 issues. 2 sessions pick this up after a restart." and nothing is read twice | ☐ | ☐ |
+| E5 | Tab to a scope badge in Settings | "Managed" with its description "Set by your organisation. Marshell can't change it." | ☐ | ☐ |
+| E6 | Tab to a locked value | It is read as unavailable, followed by the reason | ☐ | ☐ |
+| E7 | Move through "Edit as" | "Edit as, radio group, Form, selected"; arrows move between Form and Raw | ☐ | ☐ |
+| E8 | In Raw mode with a mistake, Tab into the text area | The line and column of the mistake are read as the description ("Line 3, column 23: ...") | ☐ | ☐ |
+
+## F. Batch 3 C: Departures, banners and the tray
+
+Go to the **Departures** section, then **Notifications**, then **Tray and icon**.
+
+| # | Do | You should hear | Narrator | NVDA |
+| --- | --- | --- | :-: | :-: |
+| F1 | Tab into the board and arrow down to a gate row | "Session 3, api-server, needs you, ..." the whole row read from its cells, with the session number first, and "Gate calls" as the group | ☐ | ☐ |
+| F2 | Press Y on a row that needs you | The request opens inline under the row and is read as an approve card; Enter on the row jumps to the session and never answers it | ☐ | ☐ |
+| F3 | Press Replay animations | Nothing is announced: the flipping cells are not a live region; the new status is read only when you move to the row | ☐ | ☐ |
+| F4 | Read a banner (Notifications section) | The title, then the body ("api-server needs you. Wants to run npm test"), then the buttons Allow and Deny (Linux: Open); a risky one reads Review only | ☐ | ☐ |
+| F5 | Move through the tray menu | "Open Marshell, menu item", then each waiting session with its number, "Go to the oldest waiting session, Ctrl+Shift+N", and the disabled line as unavailable | ☐ | ☐ |
+| F6 | Move to the tray icon | "Marshell, 2 need you" as one image, with no drawing details read | ☐ | ☐ |
+
 ## Recording the result
 
-In the review page's sign-off, answer with the table's letters: for example **"Screen reader: A pass, B fail (B6: focus went to the page, not the chip), C pass, Narrator and NVDA"**. A fail is a bug to fix before the sub-review is signed off, not a note for later. Put anything surprising (a phrase that is correct but long or odd) in `docs/IDEAS.md`.
+In the review page's sign-off, answer with the table's letters (A to F): for example **"Screen reader: A pass, B fail (B6: focus went to the page, not the chip), C pass, Narrator and NVDA"**. A fail is a bug to fix before the sub-review is signed off, not a note for later. Put anything surprising (a phrase that is correct but long or odd) in `docs/IDEAS.md`.

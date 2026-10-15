@@ -178,6 +178,6 @@ export function fitItems(items: StripItem[], width: number): FitItem[] {
  * gone. It follows the same order as fitItems degrades them, least important first, so server rendering fits without script.
  * Items missing here never hide: a problem, and the core model, context and 5-hour limit.
  */
-export const HIDE_BELOW = { venv: 1100, version: 1020, dirty: 940, skills: 860, ports: 780, mcp: 700, time: 620, cost: 560, limit7: 420 } as const;
+export const HIDE_BELOW = { venv: 1320, version: 1220, dirty: 1130, skills: 1030, ports: 940, mcp: 840, time: 740, cost: 670, limit7: 500 } as const;
 /** Where an item's detail, then its bar, goes. */
-export const COMPACT_BELOW = { limit7Detail: 500, limit7Bar: 460, modelDetail: 380, limit5Detail: 340, limit5Bar: 300, ctxDetail: 270, ctxBar: 240 } as const;
+export const COMPACT_BELOW = { limit7Detail: 600, limit7Bar: 550, modelDetail: 460, limit5Detail: 410, limit5Bar: 360, ctxDetail: 320, ctxBar: 290 } as const;

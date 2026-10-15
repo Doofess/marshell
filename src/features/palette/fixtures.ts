@@ -13,7 +13,7 @@ export const PALETTE_SESSIONS: PaletteSession[] = [
   { id: "s1", number: 1, name: "api-server", project: "my-app", branch: "feat/auth-flow", kind: "claude", status: "working" },
   { id: "s2", number: 2, name: "billing", project: "payments", branch: "fix/retry-backoff", kind: "claude", status: "needs-permission" },
   { id: "s3", number: 3, name: "infra", project: "terraform", branch: "chore/upgrade-aws-provider", kind: "codex", status: "needs-question" },
-  { id: "s5", number: 5, name: "docs", project: "my-app", branch: "main", kind: "gemini", status: "done-unseen" },
+  { id: "s5", number: 5, name: "docs", project: "my-app", branch: "main", kind: "antigravity", status: "done-unseen" },
   { id: "s6", number: 6, name: "PowerShell", project: "my-app", branch: "main", kind: "powershell", status: "idle" },
   { id: "s7", number: 7, name: "docker compose up", project: "my-app", branch: "main", kind: "docker", status: "running" },
   { id: "s8", number: 8, name: "ssh prod-eu", project: "ops", kind: "ssh", status: "ended" },

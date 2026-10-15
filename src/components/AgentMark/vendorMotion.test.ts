@@ -6,14 +6,11 @@ import { AGENT_IDS } from "./agents";
 const motion = readFileSync(new URL("../../styles/motion.css", import.meta.url), "utf8");
 const tokens = readFileSync(new URL("../../styles/tokens.css", import.meta.url), "utf8");
 
-/** Vendors that deliberately share one loop: Claude and Gemini breathe the same way, Qwen turns like Grok. */
-const SHARED = [
-  ["claude", "gemini"],
-  ["grok", "qwen"],
-];
+/** Vendors that deliberately share one loop: Qwen turns like Grok. */
+const SHARED = [["grok", "qwen"]];
 
-/** Claude and Gemini share one breath: their tips draw in more than their centres (AgentMark.tsx). */
-const BREATH = ["claude", "gemini"];
+/** Claude breathes: its tips draw in more than its centre (AgentMark.tsx). */
+const BREATH = ["claude"];
 
 /** The `animation:` value of the rule for one vendor's working mark. */
 function animationOf(id: string): string | null {
@@ -25,7 +22,7 @@ function animationOf(id: string): string | null {
   // Cursor's cube stays still; its loop is on the pointer cut out of it.
   if (id === "cursor") return motion.match(/\.agent-mark__pointer\s*\{[^}]*animation:\s*([^;]+);/)?.[1]?.trim() ?? null;
   if (id === "copilot") return motion.match(/\.agent-mark__zone\s*\{[^}]*animation:\s*([^;]+);/)?.[1]?.trim() ?? null;
-  // Claude and Gemini draw their tips in and out around a centre that stays put, so the loop sits on the body of the mark and its layers (one rule, listed under both vendors).
+  // Claude draws its tips in and out around a centre that stays put, so the loop sits on the body of the mark and its layers.
   const target = BREATH.includes(id) ? String.raw` :is\(\.agent-mark__body, \.agent-mark__layer\)` : "";
   const re = new RegExp(String.raw`\.agent-mark\[data-working\]\[data-agent="${id}"\]${target}(?:,[^{]*)?\s*\{([^}]*)\}`);
   const body = motion.match(re)?.[1] ?? "";

@@ -1,12 +1,12 @@
 // Builds one self-contained design-review page from the batch's Storybook stories.
-// Usage: node scripts/build-review.mjs <out.html> [1|2a|2b|2c]   (the page shows every batch up to and including the last)
+// Usage: node scripts/build-review.mjs <out.html> [1|2a|2b|2c|3a|3b|3c]   (the page shows every batch up to and including the last)
 // The stories are server-rendered with Vite's SSR loader; the CSS is the shipped token and component CSS, inlined.
 import { readFileSync, writeFileSync } from "node:fs";
 import { createServer } from "vite";
 
 const out = process.argv[2];
 if (!out) {
-  console.error("usage: node scripts/build-review.mjs <out.html> [1|2a|2b|2c]   (default: 2c, the latest batch)");
+  console.error("usage: node scripts/build-review.mjs <out.html> [1|2a|2b|2c|3a|3b|3c]   (default: 2c; pass 3a to 3c for batch 3)");
   process.exit(1);
 }
 
@@ -45,6 +45,16 @@ const CSS = [
   "src/features/composer/Composer.css",
   "src/features/composer/StatusStrip.css",
   "src/features/composer/StatusBar.css",
+  "src/components/DiffView/DiffView.css",
+  "src/components/Page/Page.css",
+  "src/components/EmptyState/EmptyState.css",
+  "src/components/Switch/Switch.css",
+  "src/features/onboarding/Onboarding.css",
+  "src/features/departures/Board.css",
+  "src/features/notifications/OsBanner.css",
+  "src/features/tray/Tray.css",
+  "src/features/doctor/Doctor.css",
+  "src/features/settings/Settings.css",
   "src/components/a11y/SelectedMark.css",
   "src/features/launcher/Launcher.css",
   "src/features/palette/Palette.css",
@@ -203,6 +213,44 @@ META["2c"] = {
     "Both sheets keep the flat prompt-line look, work with the keyboard alone, and read at 150% zoom.",
   ],
 };
+META["3a"] = {
+  lede: "Sub-review A of 3 in batch 3: onboarding. Batch 2 (approve card, window, launcher, palette) is signed off and sits below.",
+  nav: [["onboarding", "Onboarding"], ["empty-states", "Empty states"], ["diff-view", "Diff"], ["sign-off", "Sign-off"]],
+  checks: [
+    "In 60 seconds you can get from first launch to a running session, with the keyboard alone.",
+    "Each consent card says in one sentence what changes and where; View exact changes shows the exact diff; the backup and the way to undo are named.",
+    "A file that does not parse, is read-only or is managed is never offered for editing, and says why.",
+    "Zero CLIs found still has a clear way forward; Antigravity offers only its status line and says its hooks are verified when the adapter is built, instead of showing a dead switch.",
+    "Every empty state says what is empty and how to start.",
+    "It still reads well at 150% browser zoom, in Windows High Contrast, and the focus ring is visible in both themes (docs/a11y/screen-reader-script.md has the Narrator and NVDA steps for this batch).",
+  ],
+};
+META["3b"] = {
+  lede: "Sub-review B of 3 in batch 3: the doctor and the settings page. Onboarding (A) and batch 2 are signed off and sit below.",
+  nav: [["doctor", "Doctor"], ["settings", "Settings"], ["onboarding", "Onboarding"], ["sign-off", "Sign-off"]],
+  checks: [
+    "Screen-reader pass (about 10 minutes, Narrator and NVDA): follow docs/a11y/screen-reader-script.md, section E, and answer with its letters.",
+    "The doctor's four fixes are one sheet with one diff per file; Confirm ticks the rows off inline and the receipt names the sessions that need a restart.",
+    "Undo last fix stays in the header after the toast, and says why when a file changed since.",
+    "In settings every value shows where it comes from (scope badge: word, shape and tooltip); a managed value is locked with the reason.",
+    "Raw mode shows the exact line of a mistake; a file that does not parse is never offered for editing.",
+    "Review changes shows the exact diff, the backup path and the way to undo before Apply.",
+    "Works with the keyboard alone, at 150% zoom and in Windows High Contrast.",
+  ],
+};
+META["3c"] = {
+  lede: "Sub-review C of 3 in batch 3: Departures, notifications and the tray. Onboarding, doctor and settings (A and B) and batch 2 are signed off and sit below.",
+  nav: [["departures", "Departures"], ["notifications", "Notifications"], ["tray-and-icon", "Tray"], ["doctor", "Doctor"], ["sign-off", "Sign-off"]],
+  checks: [
+    "Screen-reader pass (about 10 minutes, Narrator and NVDA): follow docs/a11y/screen-reader-script.md, batch 3 C (section F), and answer with its letters.",
+    "The board reads at a glance: you can say which sessions need you and for how long, from the gate group alone.",
+    "Press Replay animations: only the status and waiting cells flip, within 400 ms; with Reduced motion on they cross-fade.",
+    "Twelve sessions fit without scrolling the window and say how many more there are.",
+    "A risky banner offers only Review and does not show the command; no banner raises the window.",
+    "The icon is legible at 16 px on both light and dark taskbars; the overlay and dock badges follow each OS's rule.",
+    "Keyboard: the board moves with arrows, Enter jumps, Y or N opens the card inline; works at 150% zoom and in Windows High Contrast.",
+  ],
+};
 META["2b"] = {
   lede: "Sub-review B of 3 in batch 2: the main window with a real terminal. Sub-review A (approve card) and batch 1 are signed off and sit below.",
   nav: [["needs-you-lane", "Lane"], ["main-window", "Window"], ["approve-card", "Approve card"], ["sidebar-session-rows", "Rows"], ["design-colours", "Colours"], ["sign-off", "Sign-off"]],
@@ -222,7 +270,7 @@ if (!meta) {
   process.exit(1);
 }
 
-const withTerminal = ["2b", "2c"].includes(batch);
+const withTerminal = ["2b", "2c", "3a", "3b", "3c"].includes(batch);
 const safeInline = (text) => text.replace(/<\/script/gi, "<\\/script");
 const terminalScripts = withTerminal
   ? `<script>${safeInline(readFileSync("node_modules/@xterm/xterm/lib/xterm.js", "utf8"))}</script>
@@ -230,6 +278,8 @@ const terminalScripts = withTerminal
 <script type="application/json" id="terminal-data">${JSON.stringify(terminalData).replace(/<\//g, "<\\/")}</script>
 <script>${safeInline(readFileSync("scripts/review-terminal.js", "utf8"))}</script>`
   : "";
+// The Departures board's flip cells play on the batch 3c page; the markup already holds every cell's final text.
+const departuresScript = batch === "3c" ? `<script>${safeInline(readFileSync("scripts/review-departures.js", "utf8"))}</script>` : "";
 
 const options = ACCENTS.map((a) => `<option value="${a}">${a[0].toUpperCase()}${a.slice(1)}</option>`).join("");
 
@@ -261,6 +311,7 @@ ${chrome}
   </section>
 </main>
 ${terminalScripts}
+${departuresScript}
 <script>
 (() => {
   const root = document.documentElement;
