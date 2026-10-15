@@ -1,4 +1,6 @@
+use crate::store::{self, Versioned};
 use marshell_protocol::api::Endpoint;
+use serde::{Deserialize, Serialize};
 use std::path::Path;
 
 fn random_hex(bytes: usize) -> String {
@@ -25,48 +27,21 @@ pub fn tokens_match(a: &str, b: &str) -> bool {
     a.bytes().zip(b.bytes()).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
 }
 
-/// Writes the endpoint file atomically (temp file + rename) and creates it private from the start.
+/// `endpoint.json` on disk: the endpoint plus a top-level `"version"`.
+#[derive(Serialize, Deserialize)]
+#[serde(transparent)]
+struct EndpointFile(Endpoint);
+
+impl Versioned for EndpointFile {
+    const VERSION: u32 = 1;
+}
+
+/// Writes the endpoint file through `store::write`: atomic (temp file + rename), private from the start.
 /// On unix the directory is 0700 and the file 0600, so no other user can read it, not even briefly.
 /// On Windows the file inherits the ACL of its directory, which is user-only under the default
 /// `~/.marshell`. An explicit owner-only ACL comes when the hook bridge starts reading this file (phase 3).
 pub fn write_endpoint_file(path: &Path, ep: &Endpoint) -> anyhow::Result<()> {
-    let dir = path
-        .parent()
-        .ok_or_else(|| anyhow::anyhow!("endpoint path has no parent"))?;
-    create_private_dir(dir)?;
-    let tmp = dir.join(format!(".endpoint.{}.tmp", std::process::id()));
-    let result =
-        write_private_file(&tmp, &serde_json::to_vec_pretty(ep)?).and_then(|()| Ok(std::fs::rename(&tmp, path)?));
-    if result.is_err() {
-        let _ = std::fs::remove_file(&tmp);
-    }
-    result
-}
-
-fn create_private_dir(dir: &Path) -> anyhow::Result<()> {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::DirBuilderExt;
-        std::fs::DirBuilder::new().recursive(true).mode(0o700).create(dir)?;
-    }
-    #[cfg(not(unix))]
-    std::fs::create_dir_all(dir)?;
-    Ok(())
-}
-
-fn write_private_file(path: &Path, bytes: &[u8]) -> anyhow::Result<()> {
-    use std::io::Write;
-    let mut options = std::fs::OpenOptions::new();
-    options.write(true).create(true).truncate(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.mode(0o600);
-    }
-    let mut file = options.open(path)?;
-    file.write_all(bytes)?;
-    file.sync_all()?;
-    Ok(())
+    store::write(path, &EndpointFile(ep.clone()))
 }
 
 #[cfg(test)]
@@ -117,6 +92,22 @@ mod tests {
             let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
             assert_eq!(mode, 0o600);
         }
+    }
+
+    #[test]
+    fn endpoint_file_has_version_1() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("run").join("endpoint.json");
+        let ep = Endpoint {
+            port: 4242,
+            token: "t0k".into(),
+            platform: Platform::current(),
+        };
+        write_endpoint_file(&path, &ep).unwrap();
+        let raw: serde_json::Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        assert_eq!(raw["version"], 1);
+        let back: Endpoint = serde_json::from_value(raw).unwrap();
+        assert_eq!(back.port, 4242);
     }
 
     #[test]
