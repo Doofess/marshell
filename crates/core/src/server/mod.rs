@@ -46,6 +46,8 @@ struct Inner {
     registry: Arc<Registry>,
     // Kept here so every handler reaches it through one State.
     sessions: Mutex<HashMap<String, Arc<crate::pty::Session>>>,
+    /// Whether an agent's command (`claude`, `codex`, `agy`) runs from PATH. Tests swap it.
+    agent_on_path: fn(&str) -> bool,
 }
 
 impl AppState {
@@ -60,7 +62,15 @@ impl AppState {
             profiles: Mutex::new(profiles),
             registry: Arc::new(Registry::new()),
             sessions: Mutex::new(HashMap::new()),
+            agent_on_path: crate::profiles::detect::command_on_path,
         }))
+    }
+    /// Replaces the PATH check for agent commands. Call it before the state is cloned.
+    pub fn with_agent_check(mut self, check: fn(&str) -> bool) -> Self {
+        Arc::get_mut(&mut self.0)
+            .expect("with_agent_check runs before the state is shared")
+            .agent_on_path = check;
+        self
     }
     pub fn token(&self) -> &str {
         &self.0.token

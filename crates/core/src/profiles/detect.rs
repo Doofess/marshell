@@ -27,6 +27,29 @@ pub fn on_path(exe: &str) -> bool {
         .unwrap_or(false)
 }
 
+/// True when `name` runs from one of the PATH directories. On Windows that includes the
+/// PATHEXT endings, so `claude` finds `claude.cmd` and `agy` finds `agy.exe`.
+pub fn command_on_path(name: &str) -> bool {
+    let Some(path) = std::env::var_os("PATH") else {
+        return false;
+    };
+    let dirs: Vec<PathBuf> = std::env::split_paths(&path).collect();
+    let pathext = std::env::var("PATHEXT").unwrap_or_else(|_| ".COM;.EXE;.BAT;.CMD".to_string());
+    let exts: Vec<&str> = if cfg!(windows) {
+        pathext.split(';').filter(|e| !e.is_empty()).collect()
+    } else {
+        Vec::new()
+    };
+    found_in(&dirs, name, &exts)
+}
+
+/// True when a directory holds `name` itself or `name` plus one of the endings.
+fn found_in(dirs: &[PathBuf], name: &str, exts: &[&str]) -> bool {
+    dirs.iter().any(|dir| {
+        dir.join(name).is_file() || exts.iter().any(|ext| dir.join(format!("{name}{ext}")).is_file())
+    })
+}
+
 /// What detection asks the machine. Tests pass fakes; `Probe::system()` is the real thing.
 pub struct Probe {
     pub on_path: fn(&str) -> bool,
@@ -298,6 +321,18 @@ pub fn launch_argv(profile: &Profile, agent: Option<&str>, prompt: Option<&str>)
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn found_in_tries_the_endings() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("claude.cmd"), "").unwrap();
+        std::fs::write(dir.path().join("plain"), "").unwrap();
+        let dirs = vec![dir.path().to_path_buf()];
+        assert!(found_in(&dirs, "claude", &[".EXE", ".cmd"]));
+        assert!(found_in(&dirs, "plain", &[]));
+        assert!(!found_in(&dirs, "claude", &[".EXE"]));
+        assert!(!found_in(&dirs, "agy", &[".EXE", ".cmd"]));
+    }
 
     fn utf16le(text: &str) -> Vec<u8> {
         text.encode_utf16().flat_map(|u| u.to_le_bytes()).collect()

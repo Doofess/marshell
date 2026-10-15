@@ -9,6 +9,7 @@ use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use marshell_protocol::api::{
     CreateSessionRequest, CreateSessionResponse, RenameRequest, ReopenRequest, ReorderRequest, SessionsSnapshot,
+    ShellFamily,
 };
 use marshell_protocol::brand;
 use std::path::PathBuf;
@@ -33,6 +34,7 @@ fn agent_display_name(agent: &str) -> Option<&'static str> {
 struct Resolved {
     profile_id: String,
     profile_name: String,
+    family: ShellFamily,
     argv: Vec<String>,
     env: Vec<(String, String)>,
     cwd: Option<String>,
@@ -57,6 +59,7 @@ fn resolve(
             Ok(Resolved {
                 profile_id: p.id,
                 profile_name: p.name,
+                family: p.family,
                 argv,
                 env: p.env,
                 cwd: p.cwd,
@@ -75,6 +78,7 @@ fn custom(argv: Vec<String>) -> Resolved {
     Resolved {
         profile_id: CUSTOM_PROFILE.into(),
         profile_name: "Shell".into(),
+        family: ShellFamily::Posix,
         argv,
         env: Vec::new(),
         cwd: None,
@@ -90,6 +94,19 @@ async fn start_session(
     cwd: Option<String>,
     size: (u16, u16),
 ) -> Result<CreateSessionResponse, ApiError> {
+    // The shell starts even when the agent is missing, so look for the agent first.
+    // A WSL distro has its own PATH, which the check cannot see: those are not checked.
+    if let Some(agent) = agent.as_deref()
+        && run.family != ShellFamily::Wsl
+        && let Some(command) = agent_command(agent)
+        && !(st.0.agent_on_path)(command)
+    {
+        let name = agent_display_name(agent).unwrap_or(command);
+        return Err((
+            StatusCode::BAD_REQUEST,
+            format!("{name} isn't installed or isn't on PATH."),
+        ));
+    }
     let home = dirs::home_dir().map(|p| p.to_string_lossy().into_owned());
     let cwd = cwd.filter(|c| !c.is_empty()).or(run.cwd).or(home).unwrap_or_default();
     // The base name: the requested one, else the agent, else the profile.

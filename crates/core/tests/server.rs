@@ -325,13 +325,21 @@ fn sleeper_profile() -> marshell_protocol::api::Profile {
 }
 
 fn sessions_app() -> axum::Router {
-    router(AppState::new(
-        TOKEN.into(),
-        PORT,
-        vec![ORIGIN.into()],
-        std::path::PathBuf::from("no-such-marshell-home"),
-        vec![sleeper_profile()],
-    ))
+    // Every agent counts as installed, so the test does not depend on this machine's PATH.
+    sessions_app_with(|_| true)
+}
+
+fn sessions_app_with(agent_on_path: fn(&str) -> bool) -> axum::Router {
+    router(
+        AppState::new(
+            TOKEN.into(),
+            PORT,
+            vec![ORIGIN.into()],
+            std::path::PathBuf::from("no-such-marshell-home"),
+            vec![sleeper_profile()],
+        )
+        .with_agent_check(agent_on_path),
+    )
 }
 
 fn fake_argv(args: &[&str]) -> Vec<String> {
@@ -572,6 +580,21 @@ async fn unknown_agent_is_400() {
     assert_eq!(status, StatusCode::BAD_REQUEST);
     assert!(body.as_str().unwrap().contains("Unknown agent"), "body: {body}");
     assert_eq!(list_sessions(&app).await["sessions"].as_array().unwrap().len(), 0);
+}
+
+#[tokio::test]
+async fn missing_agent_binary_is_400_and_takes_no_number() {
+    // Only codex is "installed".
+    let app = sessions_app_with(|command| command == "codex");
+    let (status, body) = create_session(&app, serde_json::json!({ "agent": "claude" })).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(body.as_str().unwrap(), "Claude Code isn't installed or isn't on PATH.");
+    assert_eq!(list_sessions(&app).await["sessions"].as_array().unwrap().len(), 0);
+
+    // The refused request left number 1 free.
+    let (status, ok) = create_session(&app, serde_json::json!({ "agent": "codex" })).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(ok["number"], 1);
 }
 
 #[tokio::test]
