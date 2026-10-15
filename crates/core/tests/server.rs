@@ -639,3 +639,39 @@ async fn failed_reopen_keeps_the_closed_entry() {
     assert_eq!(res.status(), StatusCode::OK);
     assert_eq!(list_sessions(&app).await["closed"].as_array().unwrap().len(), 0);
 }
+
+#[tokio::test]
+async fn created_session_records_its_folder_as_a_project() {
+    let home = tempfile::tempdir().unwrap();
+    let project = tempfile::tempdir().unwrap();
+    let app = router(AppState::new(
+        TOKEN.into(),
+        PORT,
+        vec![ORIGIN.into()],
+        home.path().to_path_buf(),
+        vec![sleeper_profile()],
+    ));
+
+    // Nothing yet.
+    let res = app.clone().oneshot(api("GET", "/v1/projects", None)).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    assert_eq!(json_body(res).await, serde_json::json!([]));
+
+    let cwd = project.path().to_string_lossy().into_owned();
+    let (status, _) = create_session(&app, serde_json::json!({ "cwd": cwd })).await;
+    assert_eq!(status, StatusCode::OK);
+    // A session with no cwd runs in the user's home, which is not a project.
+    let (status, _) = create_session(&app, serde_json::json!({})).await;
+    assert_eq!(status, StatusCode::OK);
+
+    let res = app.clone().oneshot(api("GET", "/v1/projects", None)).await.unwrap();
+    let projects = json_body(res).await;
+    let rows = projects.as_array().unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0]["path"], cwd);
+    assert_eq!(
+        rows[0]["name"],
+        project.path().file_name().unwrap().to_string_lossy().as_ref()
+    );
+    assert!(rows[0]["branch"].is_null());
+}

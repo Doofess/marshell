@@ -2,6 +2,7 @@ mod events;
 pub mod frames;
 mod guard;
 mod profiles;
+mod projects;
 mod pty_ws;
 mod sessions;
 
@@ -95,6 +96,7 @@ pub fn router(state: AppState) -> Router {
     Router::new()
         .route("/v1/health", get(health))
         .route("/v1/profiles", get(profiles::get).put(profiles::put))
+        .route("/v1/projects", get(projects::get))
         .route("/v1/sessions", get(sessions::list).post(sessions::create))
         .route("/v1/sessions/reorder", post(sessions::reorder))
         .route("/v1/sessions/reopen", post(sessions::reopen))

@@ -123,6 +123,9 @@ async fn start_session(
     ]);
     let registry = st.0.registry.clone();
     let exited_tab = tab_id.clone();
+    // `spec` takes the cwd; the closure below records the same folder.
+    let marshell_home = st.0.home.clone();
+    let project = cwd.clone();
     let spec = SpawnSpec {
         argv: run.argv,
         cwd: (!cwd.is_empty()).then(|| PathBuf::from(cwd)),
@@ -132,8 +135,22 @@ async fn start_session(
         on_exit: Some(Box::new(move |code| registry.mark_exited(&exited_tab, code))),
     };
     let id = tab_id.clone();
-    // Spawning touches the OS (process creation): keep it off the async worker threads.
-    let spawned = tokio::task::spawn_blocking(move || Session::spawn(id, spec)).await;
+    // Spawning touches the OS (process creation) and recording writes a file:
+    // keep both off the async worker threads.
+    let spawned = tokio::task::spawn_blocking(move || {
+        let session = Session::spawn(id, spec)?;
+        if !project.is_empty() {
+            // The folder the process really started in. `record` skips the user's home folder.
+            let now_ms = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |d| d.as_millis() as u64);
+            if let Err(err) = crate::projects::record(&marshell_home, std::path::Path::new(&project), now_ms) {
+                tracing::warn!("could not record the project: {err:#}");
+            }
+        }
+        Ok::<_, anyhow::Error>(session)
+    })
+    .await;
     let session = match spawned {
         Ok(Ok(session)) => session,
         Ok(Err(e)) => {
