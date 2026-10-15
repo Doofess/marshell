@@ -5,6 +5,9 @@ import { renderReview } from "./renderReview";
 // the real page is built and checked by `pnpm review:build`.
 vi.mock("../Colours.stories", () => ({ default: { title: "Design / Colours" }, Palette: { render: () => null } }));
 
+// Each test renders whole review pages: well under a second locally, but past the 5 s default on a busy Windows CI runner.
+vi.setConfig({ testTimeout: 30_000 });
+
 describe("renderReview", () => {
   it("is cumulative: 2a contains batch 1 and the approve card", () => {
     const html = renderReview("2a");
