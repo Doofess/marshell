@@ -41,6 +41,7 @@ Where the text below disagrees with this list, this list wins. `docs/PLAN.md` ho
   - soft original chimes
   - install Codex and Antigravity (`agy`) before phase 6
 - **Gemini CLI is dropped; Google's Antigravity CLI (`agy`) replaces it (2026-10-10).** Its config is `~/.gemini/antigravity-cli/settings.json`, whose `statusLine` Marshell chains. Its hooks live in `~/.gemini/config/hooks.json`, and a `PreToolUse` hook can allow, deny or ask, so approve-from-anywhere works for it too (checked against agy 1.3.3 on 2026-10-15, `docs/research/2026-10-15-local-install-check.md`). Details and sources in `docs/PLAN.md`, "Corrections to the brief".
+- **Session modes (2026-10-15).** Marshell sets the mode, the same five for every agent CLI: Manual, Plan, Auto-edit, Full auto, Bypass. With its permission hook on, a session starts strict and the hook answers by the mode, so most switches are instant; Plan and a CLI's own classifier use the CLI's mode. A risky request asks in every mode. A CLI setting that skips every prompt is offered for hand-over on the consent card. Details in `docs/PLAN.md`, "Session modes".
 - **Codex CLI:**
   - It has a `PermissionRequest` hook, so approve-from-anywhere works for Codex too.
   - Non-managed hooks need user review and trust in `/hooks`, bound to the current hook hash; hook definitions load additively across active config sources. See the current implementation notes in `docs/research/codex-cli.md`.

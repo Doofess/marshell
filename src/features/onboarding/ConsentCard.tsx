@@ -22,7 +22,7 @@ export function ConsentCard({ scenario, on, open = false }: { scenario: { detect
         </h3>
       </header>
       <p className="consent__what" dir="auto">
-        {plan.headline ?? consentHeadline(d, on)}
+        {plan.headline ?? consentHeadline(d, on, plan.handOver)}
       </p>
       {edit.ok ? (
         <>
@@ -32,7 +32,18 @@ export function ConsentCard({ scenario, on, open = false }: { scenario: { detect
                 <Switch label={CAP_LABEL[c]} checked={on[c] && CAPABILITIES[d.cli][c].available} disabled={!CAPABILITIES[d.cli][c].available} reason={CAPABILITIES[d.cli][c].reason} />
               </li>
             ))}
+            {d.skipsAll && (
+              <li>
+                <Switch label="Let Marshell set the mode" checked={plan.handOver ?? false} />
+              </li>
+            )}
           </ul>
+          {d.skipsAll && (
+            <p className="consent__handover">
+              {name} is set to skip every permission prompt (<code>{d.skipsAll.setting}</code>), so Marshell can&apos;t ask you about anything. Turning it off lets each
+              session&apos;s mode decide; Bypass keeps today&apos;s behaviour.
+            </p>
+          )}
           <button type="button" className="consent__toggle" aria-expanded={open}>
             View exact changes
           </button>

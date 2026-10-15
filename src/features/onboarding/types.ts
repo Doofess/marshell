@@ -15,6 +15,8 @@ export type Detection = {
   managed?: { path: string };
   /** Where the hook entries go when that is not `configPath` (Antigravity reads its hooks from ~/.gemini/config/hooks.json), and whether the file exists yet. */
   hooks?: { path: string; exists: boolean };
+  /** A setting in `configPath` that skips every permission prompt (Antigravity's `dangerouslySkipPermissions: true`); while it is on, no mode below Bypass can work. */
+  skipsAll?: { setting: string };
 };
 
 export type Capability = "status" | "approve" | "statusline";
@@ -31,6 +33,8 @@ export type ConsentPlan = {
   needsTrust: boolean;
   /** Where the user's own status line command is kept when it is chained (shown on the card and in the diff). */
   chainPath?: string;
+  /** Turn the detection's `skipsAll` setting off, so Marshell's session mode decides (docs/PLAN.md "Session modes"). */
+  handOver?: boolean;
   /** Replaces the computed headline; only a stand-in change made long on purpose says so here. */
   headline?: string;
 };

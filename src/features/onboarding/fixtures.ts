@@ -119,7 +119,9 @@ const antigravityAfter = `{
 const chainPath = (cli: CliId) => `${HOME}\\.marshell\\agents\\${cli}\\statusline-chain.json`;
 // The user's own status line is saved verbatim in a new file, so the diff shows it is kept and where.
 const chainFile = '{ "type": "command", "command": "python ~/.claude/statusline.py" }\n';
-const antigravityChainFile = `{ "type": "command", "command": "${antigravityLine}" }\n`;
+// The dev machine's own settings skip every prompt; handing the mode to Marshell removes that one line (docs/PLAN.md "Session modes").
+const antigravitySkipsBefore = antigravityBefore.replace("{\n", '{\n  "dangerouslySkipPermissions": true,\n');
+const antigravityChainFile =`{ "type": "command", "command": "${antigravityLine}" }\n`;
 const newFile = (path: string, text: string) => unifiedDiff(path, "", text).replace(/^--- a\/.*$/m, "--- /dev/null");
 
 /** The exact change each CLI's consent card shows under "View exact changes". */
@@ -131,22 +133,29 @@ export const CONSENT_DIFFS = {
     newFile(ANTIGRAVITY_HOOKS_PATH, antigravityHooks) +
     unifiedDiff(ANTIGRAVITY_PATH, antigravityBefore, antigravityAfter) +
     newFile(chainPath("antigravity"), antigravityChainFile),
+  antigravityHandOver:
+    newFile(ANTIGRAVITY_HOOKS_PATH, antigravityHooks) +
+    unifiedDiff(ANTIGRAVITY_PATH, antigravitySkipsBefore, antigravityAfter) +
+    newFile(chainPath("antigravity"), antigravityChainFile),
 };
+const antigravitySkips: Detection = { ...antigravity, skipsAll: { setting: "dangerouslySkipPermissions" } };
 
 const ALL_ON: Record<Capability, boolean> = { status: true, approve: true, statusline: true };
-const plan = (d: Detection, diff: string, on: Record<Capability, boolean> = ALL_ON): ConsentPlan => ({
+const plan = (d: Detection, diff: string, on: Record<Capability, boolean> = ALL_ON, handOver = false): ConsentPlan => ({
   cli: d.cli,
   on,
+  handOver: d.skipsAll ? handOver : undefined,
   configPath: d.configPath,
   backupPath: `${HOME}\\.marshell\\snapshots\\2026-10-10T20-15\\${CLI_NAME[d.cli].toLowerCase().replace(/ /g, "-")}-${d.configPath.split("\\").pop()}`,
-  removal: removalCopy(d.cli, on, d.hooks && { hooksFile: d.hooks.path.split("\\").pop()!, created: !d.hooks.exists }),
+  removal: removalCopy(d.cli, on, d.hooks && { hooksFile: d.hooks.path.split("\\").pop()!, created: !d.hooks.exists }, handOver ? d.skipsAll?.setting : undefined),
   diff,
   needsTrust: d.cli === "codex" && (on.status || on.approve),
   chainPath: on.statusline && CAPABILITIES[d.cli].statusline.available ? chainPath(d.cli) : undefined,
 });
 
 /** A consent card's input: what was found, and what Marshell proposes. */
-export const CONSENT: Record<"claude" | "codex" | "codexLong" | "antigravity" | "unparsableAntigravity" | "readOnlyCodex" | "claudeManaged", { detection: Detection; plan: ConsentPlan }> = {
+export const CONSENT: Record<"claude" | "codex" | "codexLong" | "antigravity" | "antigravityHandOver" | "unparsableAntigravity" | "readOnlyCodex" | "claudeManaged", { detection: Detection; plan: ConsentPlan }> = {
+  antigravityHandOver: { detection: antigravitySkips, plan: plan(antigravitySkips, CONSENT_DIFFS.antigravityHandOver, ALL_ON, true) },
   claude: { detection: claude, plan: plan(claude, CONSENT_DIFFS.claude) },
   codex: { detection: codex, plan: plan(codex, CONSENT_DIFFS.codex) },
   codexLong: { detection: codex, plan: { ...plan(codex, CONSENT_DIFFS.codexLong), headline: `Add ${STAND_IN} hook entries in ${CODEX_PATH}. This is a stand-in change, made long on purpose to show how a long change folds.` } },

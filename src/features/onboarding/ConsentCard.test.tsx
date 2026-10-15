@@ -28,6 +28,19 @@ describe("ConsentCard", () => {
     expect(h).not.toContain("verified when the adapter is built");
     expect(h).not.toContain("/hooks");
   });
+  it("offers to hand the mode to Marshell when the CLI's own settings skip every prompt, and says what that setting does", () => {
+    const h = renderToStaticMarkup(<ConsentCard scenario={CONSENT.antigravityHandOver} on={on} />);
+    expect(h).toContain("Let Marshell set the mode");
+    expect(h).toContain("Antigravity CLI is set to skip every permission prompt (<code>dangerouslySkipPermissions</code>), so Marshell can&#x27;t ask you about anything.");
+    expect(h).toContain("Turning it off lets each session&#x27;s mode decide; Bypass keeps today&#x27;s behaviour.");
+    expect(h.match(/role="switch"/g)).toHaveLength(4);
+    // The switch shows the plan's choice: on here, so the headline and the diff turn the setting off.
+    const handOver = /<input([^>]*)>(?:(?!<input)[\s\S])*?Let Marshell set the mode/.exec(h)![1]!;
+    expect(handOver).toContain('checked=""');
+    // Without such a setting there is nothing to hand over.
+    expect(renderToStaticMarkup(<ConsentCard scenario={CONSENT.antigravity} on={on} />)).not.toContain("Let Marshell set the mode");
+    expect(renderToStaticMarkup(<ConsentCard scenario={CONSENT.claude} on={on} />)).not.toContain("Let Marshell set the mode");
+  });
   it("hides the diff until asked, then shows the exact change", () => {
     expect(renderToStaticMarkup(<ConsentCard scenario={CONSENT.claude} on={on} />)).not.toContain("diff__lines");
     const h = renderToStaticMarkup(<ConsentCard scenario={CONSENT.claude} on={on} open />);

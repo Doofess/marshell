@@ -164,6 +164,21 @@ describe("the Antigravity diff writes ~/.gemini/config/hooks.json in the shape i
     expect(handlers("PreToolUse")[0]).toMatchObject({ command: expect.stringContaining(" permission --agent antigravity"), timeout: 600 });
     for (const e of ["PostToolUse", "PreInvocation", "PostInvocation", "Stop"]) expect(handlers(e)[0], e).toMatchObject({ command: expect.stringContaining(" event --agent antigravity"), timeout: 10 });
   });
+  it("with the mode handed over, the settings diff removes dangerouslySkipPermissions and nothing else of the user's", () => {
+    const s = CONSENT.antigravityHandOver;
+    const lines = parseUnifiedDiff(s.plan.diff).lines;
+    expect(lines.filter((l) => l.kind === "del").map((l) => l.text.trim())).toEqual(['"dangerouslySkipPermissions": true,', '"statusLine": { "type": "command", "command": "~/.gemini/antigravity-cli/statusline.sh" }']);
+    expect(lines.some((l) => l.kind === "add" && /dangerouslySkipPermissions/.test(l.text))).toBe(false);
+    expect(consentHeadline(s.detection, ALL, true)).toBe(
+      "Add 5 hook entries in C:\\Users\\Home Office\\.gemini\\config\\hooks.json (a new file). In C:\\Users\\Home Office\\.gemini\\antigravity-cli\\settings.json, chain your status line and turn off dangerouslySkipPermissions.",
+    );
+    expect(consentHeadline(s.detection, { status: false, approve: false, statusline: false }, true)).toBe(
+      "Turn off dangerouslySkipPermissions in C:\\Users\\Home Office\\.gemini\\antigravity-cli\\settings.json.",
+    );
+    expect(s.plan.removal).toBe(
+      "Marshell removes the hook entries it added, deletes hooks.json if nothing else is in it, puts your own status line back from statusline-chain.json, and turns dangerouslySkipPermissions back on; the rest of each file stays as it is.",
+    );
+  });
   it("puts no hooks in settings.json: Antigravity reads them only from hooks.json", () => {
     expect(section("C:\\Users\\Home Office\\.gemini\\antigravity-cli\\settings.json")).not.toMatch(/"hooks"|PreToolUse|hooksConfig/);
   });

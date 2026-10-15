@@ -45,7 +45,7 @@ The user already has a Claude status line (`python ~/.claude/statusline.py`) and
    - Config `~/.gemini/antigravity-cli/settings.json` (the directory name is Google's, kept from Gemini). Its `statusLine` is `{ "type": "command", "command": "<script>" }` with optional `padding`, `enabled` and `stack_with_default`. The command gets JSON on stdin: `model`, `context_window` (`used_percentage`), `quota` (one bucket per model: `remaining_fraction`, `reset_time`), `agent_state` (idle, thinking, working, tool_use), `tool_confirmation_pending`, `pending_input_count`, `execution_mode`, `transcript_path`, `version`. Marshell chains it the way it chains Claude's, so model, context % and the plan meter come through the status line.
    - Plugins (skills, agents, rules, MCP, hooks) live in `~/.gemini/antigravity-cli/plugins/<name>/`; `agy plugin list`.
    - **Hooks, checked against agy 1.3.3 and its bundled hooks doc on 2026-10-15** (`docs/research/2026-10-15-local-install-check.md`). Global hooks live in `~/.gemini/config/hooks.json` (workspace ones in `<repo>/.agents/hooks.json`), never in `settings.json`. The file holds named hooks, each `{ "enabled": true, <Event>: [...] }`. Events: `PreToolUse` and `PostToolUse` (matcher groups, `matcher` a regex on the tool name), `PreInvocation`, `PostInvocation` and `Stop` (flat handler lists). Handlers are `{ "type": "command", "command", "timeout" }`, seconds, default 30; Windows runs them through `cmd /c`. Payloads are camelCase (`conversationId`, `transcriptPath`, `modelName`, `toolCall`) and carry **no event name**, so each Marshell command passes `--event <Name>`. `PreToolUse` answers `decision: allow | deny | ask | force_ask`, so approve-from-anywhere works for Antigravity: Marshell's entry is the permission role with a 600 s timeout, and a release answers `ask` so Antigravity's own prompt takes over (to confirm in the capture). `Stop` can answer `decision: continue` and `PreInvocation` can inject steps; the bridge never sends either. The consent card adds 5 entries (4 status, 1 approve) in a new `hooks.json` under one hook named `marshell`, and chains the status line in `settings.json`; undo removes that hook and deletes `hooks.json` only if nothing else is in it.
-   - Still open (needs one live capture in a throwaway profile; ask the owner first): whether an empty `PreToolUse` answer leaves the native prompt, the status line's exact keys, the transcript schema (`brain/<conversationId>/.system_generated/logs/transcript.jsonl`), the undocumented `deny_unless_prior_grant` decision, and what Marshell does when the user runs with `dangerouslySkipPermissions` (on, on the dev machine): holding `PreToolUse` there would bring back prompts the user turned off.
+   - Still open (needs one live capture in a throwaway profile; ask the owner first): whether an empty `PreToolUse` answer leaves the native prompt, the status line's exact keys, the transcript schema (`brain/<conversationId>/.system_generated/logs/transcript.jsonl`), the undocumented `deny_unless_prior_grant` decision. A `dangerouslySkipPermissions: true` setting (on, on the dev machine) is handled by "Session modes": the consent card offers to hand the mode to Marshell.
 2. **Codex CLI**
    - It **does** have a `PermissionRequest` hook (allow or deny), so approve-from-anywhere works for Codex too.
    - Current official docs (checked 2026-10-10) specify the exact permission output contract, hook sources, event payloads, `/hooks` trust-by-current-hash flow, and the 32 KiB default **combined** instruction limit. See `docs/research/codex-cli.md` for the implementation handoff and primary links.
@@ -234,6 +234,25 @@ Content, top to bottom:
 - The card becomes a one-line receipt ("Allowed · npm test") for 1.5 s, then exits in 140 ms. There is no undo, and the copy never implies one.
 - Focus **returns to wherever you were typing**.
 - Enter on a card jumps to the session instead.
+
+### Session modes
+
+Decided 2026-10-15: **Marshell sets the mode**, the same five for every agent CLI, instead of each CLI keeping its own. The logic is `src/features/modes/sessionModes.ts`; the flags were read from `--help` of Claude Code, codex-cli 0.162.1 and agy 1.3.3.
+
+| Mode | What asks | Claude Code | Codex | Antigravity |
+|---|---|---|---|---|
+| Manual | every change | `--permission-mode manual` | `--sandbox read-only --ask-for-approval on-request` | default |
+| Plan | everything; the agent only reads and plans | `--permission-mode plan` | no plan flag: read-only sandbox stands in (same start as Manual) | `--mode plan` |
+| Auto-edit | everything but edits inside the project | `acceptEdits` | `--sandbox workspace-write --ask-for-approval on-request` | `--mode accept-edits` |
+| Full auto | what a safety check holds back | `--permission-mode auto` (its classifier) | `--approve-for-me` (automatic review) | no classifier: Marshell's risk check stands in |
+| Bypass | only risky requests | `bypassPermissions` | `--dangerously-bypass-approvals-and-sandbox` | `--dangerously-skip-permissions` |
+
+- **Hybrid.** With Marshell's permission hook on, Manual, Auto-edit and Bypass start the CLI in its strictest native mode, so every request reaches the hook, and the hook answers by the mode (`decide`). Plan and Full auto keep the CLI's own mode, because their meaning lives in the CLI (planning, a classifier). With the hook off, each mode is the CLI's own flag, and Antigravity has no Full auto.
+- **Guard rail.** A risky request (the deterministic list in "The approve card") gets a card with hold-to-allow in every mode, Bypass included. Full auto and Bypass differ in the middle: in Full auto, what the CLI's classifier holds back comes to you; in Bypass, only the risky list does. For Antigravity both use Marshell's risk check, so they behave the same until it has a classifier.
+- **Switching mid-session.** From the mode chip in the session header, the launcher's mode chip, or the palette (`Mode: …`, unbound until a person picks keys). When only Marshell's answer changes (`switchKind` says "instant"), it applies at once, with no keystrokes sent to the terminal. When the CLI's own mode must change (into or out of Plan, or a classifier), the chip says how to switch in the CLI (Claude: Shift+Tab), and Marshell reflects the change when the CLI reports it (`permission_mode` in Claude and Codex hook payloads); it never types into the terminal for you.
+- **Default and memory.** A new session starts in Manual unless the launcher remembers another mode for that project.
+- **A CLI setting that skips every prompt** (Antigravity's `dangerouslySkipPermissions: true`, which is on on the dev machine; the same idea as Claude's `permissions.defaultMode: "bypassPermissions"` or Codex's `approval_policy = "never"`) makes every mode below Bypass impossible. The consent card offers "Let Marshell set the mode": the diff removes that one line, with the backup and the undo ("turns dangerouslySkipPermissions back on"). If the person keeps it, those sessions show as Bypass and the mode chip says why it can't go lower.
+- **To verify in the capture** (ask first; throwaway config): that a strict start plus an `allow` answer suppresses each CLI's own prompt; that Codex's read-only sandbox raises a `PermissionRequest` for edits, so Auto-edit can allow them; that Antigravity's `force_ask` reaches a person while skip-all is on; and Codex's plan mode, if it has one.
 
 ### Key flows
 
@@ -461,7 +480,7 @@ pub enum SessionEvent {
 // Envelope: EventEnvelope { tab_id: Option<TabId>, agent: AgentId, at_ms: u64, source: Hook|StatusLine|Pty|Transcript|Core, event }
 ```
 
-`PermissionMode` is the shared set {Manual, Plan, AutoEdit, FullAuto}; the CLI's own label is kept in `raw`.
+`PermissionMode` is the shared set {Manual, Plan, AutoEdit, FullAuto, Bypass} that Marshell sets (see "Session modes"); the CLI's own label is kept in `raw`.
 
 Session state is exactly as in brief §4, plus `unseen_done`, `waiting_since_ms` and `seen_at`. These live in Rust and are driven by `ClientState`. `subagents` is a `HashSet<String>`, and unknown values are `None`, which the UI leaves out.
 
