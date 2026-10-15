@@ -744,7 +744,7 @@ Decisions from the 2026-10-10 coverage audit (`docs/superpowers/plan-coverage-au
      - **Windows process hygiene (from S2):** Job Object with kill-on-close so a crash leaves no orphans; sideloaded `conpty.dll` + `OpenConsole.exe` with the MIT notice.
      - **Resilience:** a core panic hook and supervisor with a "core restarted" UI state; every file in `~/.marshell` carries a `version` field, is written atomically and keeps a `.bak`; migrations run on load.
      - **Restart behaviour:** on relaunch tabs come back as "Ended" with a one-click Resume (the agent's own `--resume`). Nothing relaunches itself or spends tokens unasked.
-   - Slices: 2a hygiene and resilience; 2b tabs, sidebar, profiles and launcher; 2c shell integration; 2d themes; 2e split, layout restore and Resume; 2f recording, palette and cheat sheet.
+   - Slices: 2a hygiene and resilience; 2b tabs, sidebar, profiles and launcher (agents run inside a shell profile; status limited until phase 3); 2c shell integration; 2d themes; 2e split, layout restore and Resume, plus the sidebar shell panel, project grouping and focus mode; 2f recording, palette and cheat sheet.
    - A core restart ends the running sessions. The Ended + Resume tab state arrives in 2e; until then the terminal says the session ended and Enter starts a new shell.
    - Exit: 5 tabs across 3 shells; restart restores the layout; kill the app mid-task, relaunch, and every tab is back with Resume; no orphan processes after a crash; a recording replays in asciinema-player; OSC 133 prompt jumps work.
 2.5. **Context and preview** (added 2026-10-15, inspired by the features of the Codex desktop app, not its infrastructure; numbered 2.5 so later phases keep their numbers).
