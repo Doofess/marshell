@@ -64,6 +64,10 @@ fn linux_webview_workarounds() {
 }
 
 fn main() {
+    // First, so every process Marshell starts dies with it, even after a crash (Windows only).
+    if let Err(e) = marshell_core::job::tie_children_to_app() {
+        eprintln!("Marshell: children may outlive a crash: {e}");
+    }
     linux_webview_workarounds();
     let app = tauri::Builder::default()
         // Must be the first plugin: a second launch focuses the existing window instead.

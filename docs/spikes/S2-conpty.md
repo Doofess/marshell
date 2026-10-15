@@ -53,6 +53,7 @@ Also check:
    - Long lines were unaffected: the S6 raw run measured 38 MB/s both ways.
 
 4. **Deviation from PLAN §7: phase 1 kills the Windows process tree with `taskkill /T /F`, not a Job Object.** The orphan check above passed with it. It only runs while the app is alive, so it does nothing if the app crashes. A Job Object with `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` is planned for phase 2, when tabs become closable.
+   - **Done in phase 2a** (`crates/core/src/job.rs`). Marshell puts itself in one app-wide job at startup, so every child process joins it. Checked on 2026-10-15 on Windows 11: in `pnpm tauri dev`, `Stop-Process -Force` on `marshell-app` (a hard kill, like Task Manager's End task) left none of its children (`pwsh`, `conhost`) running. `crates/core/tests/job_object.rs` repeats that check automatically. `taskkill /T /F` still ends a single session's tree while the app runs.
 
 ## Decision
 - [x] Stock ConPTY is functionally fine: every shell renders, resizes, takes keys and exits cleanly.
