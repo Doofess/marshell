@@ -15,6 +15,11 @@ pub fn endpoint_file(home: &Path) -> PathBuf {
     home.join("run").join("endpoint.json")
 }
 
+/// `<home>/logs/crash.log`: one line per panic.
+pub fn crash_log(home: &Path) -> PathBuf {
+    home.join("logs").join("crash.log")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

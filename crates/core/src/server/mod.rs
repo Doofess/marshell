@@ -15,6 +15,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use tower_http::cors::{AllowOrigin, CorsLayer};
 
+#[derive(Clone)]
 pub struct CoreConfig {
     /// Usually `paths::home_dir()`; a temp dir in tests.
     pub home: PathBuf,
@@ -92,16 +93,49 @@ pub struct RunningCore {
     pub endpoint: Endpoint,
     pub state: AppState,
     shutdown: tokio::sync::oneshot::Sender<()>,
+    serve: tokio::task::JoinHandle<()>,
 }
 
 impl RunningCore {
-    /// Kills every session's process tree, then stops the server.
+    /// False once the server task has stopped, or when a panic left the sessions lock poisoned.
+    pub fn is_healthy(&self) -> bool {
+        !self.serve.is_finished() && !self.state.0.sessions.is_poisoned()
+    }
+
+    /// Kills every session's process tree, then stops the server. Works on a poisoned lock too.
     pub fn shutdown(self) {
-        let sessions: Vec<_> = self.state.0.sessions.lock().unwrap().values().cloned().collect();
+        let sessions: Vec<_> = self
+            .state
+            .0
+            .sessions
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .values()
+            .cloned()
+            .collect();
         for s in sessions {
             s.force_kill();
         }
         let _ = self.shutdown.send(());
+    }
+
+    /// Panics in another thread while it holds the sessions lock, so the lock is poisoned.
+    #[cfg(test)]
+    pub(crate) fn poison_for_test(&self) {
+        std::thread::scope(|s| {
+            let _ = s
+                .spawn(|| {
+                    let _held = self.state.0.sessions.lock();
+                    panic!("poisoning the sessions lock for a test");
+                })
+                .join();
+        });
+    }
+
+    /// Stops the server task as a crash would; the sessions keep running.
+    #[cfg(test)]
+    pub(crate) fn stop_server_for_test(&self) {
+        self.serve.abort();
     }
 }
 
@@ -118,7 +152,7 @@ pub async fn start(cfg: CoreConfig) -> anyhow::Result<RunningCore> {
     let state = AppState::new(endpoint.token.clone(), port, cfg.allowed_origins);
     let app = router(state.clone());
     let (tx, rx) = tokio::sync::oneshot::channel::<()>();
-    tokio::spawn(async move {
+    let serve = tokio::spawn(async move {
         let serve = axum::serve(listener, app).with_graceful_shutdown(async {
             let _ = rx.await;
         });
@@ -130,5 +164,6 @@ pub async fn start(cfg: CoreConfig) -> anyhow::Result<RunningCore> {
         endpoint,
         state,
         shutdown: tx,
+        serve,
     })
 }

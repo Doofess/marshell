@@ -28,6 +28,9 @@ jobs:
           node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - name: Fetch ConPTY (Windows)
+        if: runner.os == 'Windows'
+        run: pnpm fetch:conpty
       - run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo test --workspace

@@ -53,11 +53,12 @@ Also check:
    - Long lines were unaffected: the S6 raw run measured 38 MB/s both ways.
 
 4. **Deviation from PLAN §7: phase 1 kills the Windows process tree with `taskkill /T /F`, not a Job Object.** The orphan check above passed with it. It only runs while the app is alive, so it does nothing if the app crashes. A Job Object with `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` is planned for phase 2, when tabs become closable.
+   - **Done in phase 2a** (`crates/core/src/job.rs`). Marshell puts itself in one app-wide job at startup, so every child process joins it. Checked on 2026-10-15 on Windows 11: in `pnpm tauri dev`, `Stop-Process -Force` on `marshell-app` (a hard kill, like Task Manager's End task) left none of its children (`pwsh`, `conhost`) running. `crates/core/tests/job_object.rs` repeats that check automatically. `taskkill /T /F` still ends a single session's tree while the app runs. On a normal exit Marshell ends its sessions and then switches kill-on-close off (`release_children`), so programs started from a shell that outlive it on purpose (VS Code via `code .`, a browser opened for a login) keep running. Only a crash or a kill takes down the whole job (decided 2026-10-15).
 
 ## Decision
 - [x] Stock ConPTY is functionally fine: every shell renders, resizes, takes keys and exits cleanly.
 - [x] Ship a sideloaded conpty.dll + OpenConsole for throughput. The reason is not a bug: the inbox ConPTY is about 4× slower than OpenConsole on short-line floods.
   - This is packaging work for phase 2: bundle the two x64/arm64 files as resources next to the exe and add the MIT notice.
-  - Until then, dev builds use the inbox ConPTY.
+  - **Done in phase 2a.** `pnpm fetch:conpty` (`scripts/fetch-conpty.mjs`) downloads the pinned package, checks its SHA-512, and puts the x64 and arm64 files in `src-tauri/resources/conpty/`, which git ignores. `tauri.windows.conf.json` bundles the x64 pair and the MIT licence; arm64 waits for phase 9. In dev, tauri-build copies them next to the exe. Checked on 2026-10-15: the app's `OpenConsole` runs from `target\debug`. CI fetches them on Windows. Without the fetch, the build warns and uses the inbox ConPTY.
 
 The WSL row is still open. It needs a distribution installed (see S1, which needs one for WSLg too).

@@ -15,6 +15,11 @@ export function startSession(): Promise<StartResult> {
   return pending;
 }
 
+/** Drops the cached tab, so the next `startSession()` creates a new one (after the core restarted). */
+export function forgetSession(): void {
+  pending = null;
+}
+
 async function create(): Promise<StartResult> {
   let endpoint: Endpoint;
   try {

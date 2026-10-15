@@ -1,24 +1,33 @@
 // No console window behind the app in release builds on Windows.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use marshell_core::server::{CoreConfig, RunningCore};
+use marshell_core::server::CoreConfig;
+use marshell_core::supervisor::{CoreEvent, Supervisor};
 use marshell_protocol::api::Endpoint;
 #[cfg_attr(not(target_os = "linux"), allow(unused_imports))]
 use marshell_protocol::brand;
-use std::sync::Mutex;
-use tauri::Manager;
+use std::sync::Arc;
+use std::time::Duration;
+use tauri::{Emitter, Manager};
 
-/// Keeps the core alive for the app's lifetime; taken on exit to shut it down.
-struct CoreHandle(Mutex<Option<RunningCore>>);
+/// Keeps the core running for the app's lifetime (restarting it if it fails); shut down on exit.
+struct CoreHandle(Arc<Supervisor>);
 
 #[tauri::command]
 fn core_endpoint(core: tauri::State<'_, CoreHandle>) -> Result<Endpoint, String> {
-    core.0
-        .lock()
-        .unwrap()
-        .as_ref()
-        .map(|c| c.endpoint.clone())
-        .ok_or_else(|| "the core is not running".to_string())
+    core.0.endpoint().ok_or_else(|| "the core is not running".to_string())
+}
+
+/// Tells the window when the core restarted (its sessions ended) or gave up.
+fn emit_core_event(app: &tauri::AppHandle, event: CoreEvent) {
+    let name = match event {
+        CoreEvent::Restarted { .. } => "core-restarted",
+        CoreEvent::Failed => "core-failed",
+    };
+    let sent = app.emit(name, event);
+    if let Err(e) = sent {
+        eprintln!("could not tell the window about the core: {e}");
+    }
 }
 
 fn allowed_origins() -> Vec<String> {
@@ -55,6 +64,10 @@ fn linux_webview_workarounds() {
 }
 
 fn main() {
+    // First, so every process Marshell starts dies with it, even after a crash (Windows only).
+    if let Err(e) = marshell_core::job::tie_children_to_app() {
+        eprintln!("Marshell: children may outlive a crash: {e}");
+    }
     linux_webview_workarounds();
     let app = tauri::Builder::default()
         // Must be the first plugin: a second launch focuses the existing window instead.
@@ -67,12 +80,17 @@ fn main() {
         .plugin(tauri_plugin_window_state::Builder::default().build())
         .setup(|app| {
             let home = marshell_core::paths::home_dir()?;
+            marshell_core::crash::install_panic_hook(&home);
             let cfg = CoreConfig {
                 home,
                 allowed_origins: allowed_origins(),
             };
-            let core = tauri::async_runtime::block_on(marshell_core::server::start(cfg))?;
-            app.manage(CoreHandle(Mutex::new(Some(core))));
+            let handle = app.handle().clone();
+            let supervisor =
+                tauri::async_runtime::block_on(Supervisor::start(cfg, move |event| emit_core_event(&handle, event)))?;
+            // Inside block_on so the watch task spawns on Tauri's tokio runtime.
+            tauri::async_runtime::block_on(async { supervisor.watch(Duration::from_secs(1)) });
+            app.manage(CoreHandle(supervisor));
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![core_endpoint])
@@ -80,10 +98,10 @@ fn main() {
         .expect("failed to build the app");
 
     app.run(|handle, event| {
-        if let tauri::RunEvent::Exit = event
-            && let Some(core) = handle.state::<CoreHandle>().0.lock().unwrap().take()
-        {
-            core.shutdown();
+        if let tauri::RunEvent::Exit = event {
+            handle.state::<CoreHandle>().0.shutdown();
+            // The sessions have ended; anything else started from a shell (VS Code, a browser) keeps running.
+            marshell_core::job::release_children();
         }
     });
 }
