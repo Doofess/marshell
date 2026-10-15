@@ -1,3 +1,4 @@
+mod events;
 pub mod frames;
 mod guard;
 mod profiles;
@@ -98,6 +99,7 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/sessions/reorder", post(sessions::reorder))
         .route("/v1/sessions/reopen", post(sessions::reopen))
         .route("/v1/sessions/{tab}", patch(sessions::rename).delete(sessions::close))
+        .route("/v1/events", get(events::handler))
         .route("/v1/pty/{tab}", get(pty_ws::handler))
         .layer(axum::middleware::from_fn_with_state(state.clone(), guard::auth_guard))
         .layer(cors)
