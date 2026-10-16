@@ -44,7 +44,7 @@ function useElementSize() {
 
 /** The real app: the main window on the core's live session list, and the launcher that adds to it. */
 export function LiveApp() {
-  const { endpoint, profiles, rows, infos, selectedId, loaded, restarts, select, error } = useSessions();
+  const { endpoint, profiles, rows, infos, selectedId, loaded, restarts, select, reloadProfiles, error } = useSessions();
   const { ref, width, height } = useElementSize();
   const { appearance, wtFiles } = useAppearance();
   // A session's theme is the setting with its profile's override. One object per override, kept until the setting changes,
@@ -245,7 +245,7 @@ export function LiveApp() {
         />
       )}
       {overlay === "palette" && os && <LivePalette sessions={paletteSessions(rows)} os={os} onRun={runFromPalette} onClose={() => setOverlay(null)} />}
-      {overlay === "profiles" && endpoint && <ProfilesDialog endpoint={endpoint} onClose={() => setOverlay(null)} onNotice={announce} />}
+      {overlay === "profiles" && endpoint && <ProfilesDialog endpoint={endpoint} onClose={() => setOverlay(null)} onNotice={announce} onSaved={reloadProfiles} />}
       {overlay === "appearance" && <AppearanceDialog onClose={() => setOverlay(null)} onNotice={announce} />}
       {launcherOpen && (
         <LiveLauncher

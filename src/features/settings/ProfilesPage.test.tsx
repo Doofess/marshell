@@ -87,6 +87,22 @@ describe("ProfilesPage", () => {
     expect(broken.store.getState().error).toBeNull();
   });
 
+  it("tells the window after a save, so new sessions use the saved profiles, and not after a refusal", async () => {
+    const onSaved = vi.fn();
+    const ok = setup();
+    const store = new ProfilesStore(ok.api, ep, onSaved);
+    await store.load();
+    store.patch({ name: "x" });
+    await store.save();
+    expect(onSaved).toHaveBeenCalledTimes(1);
+    const refused = setup({ put: async () => Promise.reject(new ApiError(400, "no")) });
+    const failing = new ProfilesStore(refused.api, ep, onSaved);
+    await failing.load();
+    failing.patch({ name: "y" });
+    await failing.save();
+    expect(onSaved).toHaveBeenCalledTimes(1);
+  });
+
   it("command field round-trips quoted args", () => {
     const text = '"C:\\Program Files\\Git\\bin\\bash.exe" -l';
     const argv = ["C:\\Program Files\\Git\\bin\\bash.exe", "-l"];

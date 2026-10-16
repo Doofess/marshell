@@ -41,6 +41,7 @@ vi.mock("../../lib/api/coreEvents", () => ({
 }));
 
 const { SessionsStore } = await import("./useSessions");
+const { profiles: profilesApi } = await import("../../lib/api/profiles");
 
 const info = (n: number, patch: Partial<SessionInfo> = {}): SessionInfo => ({
   tab_id: `t${n}`,
@@ -151,6 +152,19 @@ describe("SessionsStore", () => {
     sockets[1]!.onSnapshot(snap([]));
     coreCb!({ kind: "restarted", generation: 3 });
     expect(store.getState().restarts).toBe(2);
+  });
+
+  it("reloading the profiles picks up a saved change, so new sessions start with the saved theme", async () => {
+    const { store } = await started();
+    expect(store.getState().profiles[0]!.terminal_theme).toBeUndefined();
+    const saved = { default_id: "pwsh", profiles: [{ ...(await profilesApi.get(endpoints[0]!)).profiles[0]!, terminal_theme: "dark" }] };
+    vi.mocked(profilesApi.get).mockResolvedValueOnce(saved);
+    await store.reloadProfiles();
+    expect(store.getState().profiles[0]!.terminal_theme).toBe("dark");
+    // A reload that fails keeps the list it had.
+    vi.mocked(profilesApi.get).mockRejectedValueOnce(new Error("down"));
+    await store.reloadProfiles();
+    expect(store.getState().profiles[0]!.terminal_theme).toBe("dark");
   });
 
   it("a failed core stops the socket and says so", async () => {

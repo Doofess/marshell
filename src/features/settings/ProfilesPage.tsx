@@ -267,8 +267,8 @@ export function ProfilesPageView({ state, handlers, level = 2, themes = [] }: { 
 }
 
 /** The shell profiles on the core. Mounted only while open, so each opening loads afresh. */
-export function ProfilesPage({ endpoint, onClose, onNotice, onCanClose }: { endpoint: Endpoint; onClose?: () => void; onNotice?: (text: string) => void; onCanClose?: (can: boolean) => void }) {
-  const store = useMemo(() => new ProfilesStore(profilesApi, endpoint), [endpoint]);
+export function ProfilesPage({ endpoint, onClose, onNotice, onCanClose, onSaved }: { endpoint: Endpoint; onClose?: () => void; onNotice?: (text: string) => void; onCanClose?: (can: boolean) => void; onSaved?: () => void }) {
+  const store = useMemo(() => new ProfilesStore(profilesApi, endpoint, onSaved), [endpoint, onSaved]);
   useEffect(() => {
     void store.load();
   }, [store]);
@@ -305,7 +305,7 @@ export function ProfilesPage({ endpoint, onClose, onNotice, onCanClose }: { endp
 }
 
 /** The page as a dialog over the window: focus moves in, Tab stays inside, Escape closes and focus goes back to where it was. */
-export function ProfilesDialog({ endpoint, onClose, onNotice }: { endpoint: Endpoint; onClose: () => void; onNotice?: (text: string) => void }) {
+export function ProfilesDialog({ endpoint, onClose, onNotice, onSaved }: { endpoint: Endpoint; onClose: () => void; onNotice?: (text: string) => void; onSaved?: () => void }) {
   const dialog = useRef<HTMLDivElement>(null);
   const closable = useRef(true);
   // Escape does nothing while there are unsaved edits (the change bar stays); Close is off then too.
@@ -314,7 +314,7 @@ export function ProfilesDialog({ endpoint, onClose, onNotice }: { endpoint: Endp
   });
   return (
     <div ref={dialog} className="profiles-dialog" role="dialog" aria-modal="true" aria-label="Shell profiles" tabIndex={-1}>
-      <ProfilesPage endpoint={endpoint} onClose={onClose} onNotice={onNotice} onCanClose={(can) => (closable.current = can)} />
+      <ProfilesPage endpoint={endpoint} onClose={onClose} onNotice={onNotice} onSaved={onSaved} onCanClose={(can) => (closable.current = can)} />
     </div>
   );
 }
