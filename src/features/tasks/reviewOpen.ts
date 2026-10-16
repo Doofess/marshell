@@ -9,13 +9,41 @@ import { taskOf } from "./taskOf";
 /** What the announcer says when Review is asked for on a session that does not run in a task's folder. */
 export const NOT_A_TASK = "This session isn't a task.";
 
-export type ReviewTarget = { kind: "open"; tabId: string; task: Task } | { kind: "none"; message: string };
+/** What the announcer says when the core's task list could not be read, so a real task is never called "not a task". */
+export const taskListFailed = (reason: string): string => `Couldn't load the task list. ${reason}`;
 
-/** The task to review for the session in focus, or the sentence to say when there is none. */
-export function reviewTarget(infos: SessionInfo[], focusedId: string | undefined, tasks: Task[]): ReviewTarget {
+/** `open`: review this task. `none`: say `message`. `load`: the task list has not loaded (or failed), so ask for it again and decide then (resolveTarget). */
+export type ReviewTarget = { kind: "open"; tabId: string; task: Task } | { kind: "none"; message: string } | { kind: "load"; tabId: string };
+
+/**
+ * The task to review for the session in focus, or the sentence to say when there is none. `tasks` is null while the list has not
+ * loaded: that is not "not a task", so the answer is to load it.
+ */
+export function reviewTarget(infos: SessionInfo[], focusedId: string | undefined, tasks: Task[] | null): ReviewTarget {
   const info = infos.find((i) => i.tab_id === focusedId);
-  const task = info && taskOf(info, tasks);
-  return info && task ? { kind: "open", tabId: info.tab_id, task } : { kind: "none", message: NOT_A_TASK };
+  if (!info) return { kind: "none", message: NOT_A_TASK };
+  if (tasks === null) return { kind: "load", tabId: info.tab_id };
+  const task = taskOf(info, tasks);
+  return task ? { kind: "open", tabId: info.tab_id, task } : { kind: "none", message: NOT_A_TASK };
+}
+
+/** The core's answer to a task list request: the list, or the reason there is none. */
+export type TaskListResult = { kind: "ok"; tasks: Task[] } | { kind: "failed"; reason: string };
+
+/** Loads the list for a `load` target and decides with it; any other target is returned as it is. Failing to load is said as such, never as "not a task". */
+export async function resolveTarget(target: ReviewTarget, infos: () => SessionInfo[], reload: () => Promise<TaskListResult>): Promise<Exclude<ReviewTarget, { kind: "load" }>> {
+  if (target.kind !== "load") return target;
+  const result = await reload();
+  if (result.kind === "failed") return { kind: "none", message: taskListFailed(result.reason) };
+  // The list was asked for a moment ago; the session in focus is read again, in case it went away meanwhile.
+  const next = reviewTarget(infos(), target.tabId, result.tasks);
+  return next.kind === "load" ? { kind: "none", message: NOT_A_TASK } : next;
+}
+
+/** A text box keeps its own keys. xterm's hidden textarea is the terminal, not a box. Duck-typed, so it needs no DOM to test. */
+export function isTextBox(target: { tagName?: string; classList?: { contains(name: string): boolean } } | null): boolean {
+  if (!target) return false;
+  return (target.tagName === "INPUT" || target.tagName === "TEXTAREA") && !target.classList?.contains("xterm-helper-textarea");
 }
 
 /** The key press the window reads for Review: the code and modifiers (lib/bindings), whether it is a held key, and the way to cancel its default. */
@@ -34,7 +62,7 @@ export function keyBlocked(s: { launcherOpen: boolean; overlay: string | null; r
 export function reviewKeyDown(
   e: ReviewKeyEvent,
   os: Os,
-  ctx: { infos: SessionInfo[]; focusedId: string | undefined; tasks: Task[]; blocked: boolean },
+  ctx: { infos: SessionInfo[]; focusedId: string | undefined; tasks: Task[] | null; blocked: boolean },
 ): ReviewTarget | { kind: "ignored" } | null {
   if (findCommand(e, os)?.id !== "review-task") return null;
   e.preventDefault();
@@ -46,8 +74,8 @@ export function reviewKeyDown(
  * The rows with the Task tag on those whose session runs in a task's folder. A row that is not a task is the same object, and with
  * no task (or none matching) the same array, so the sidebar does not redraw for it.
  */
-export function markTasks(rows: RowModel[], infos: SessionInfo[], tasks: Task[]): RowModel[] {
-  if (tasks.length === 0) return rows;
+export function markTasks(rows: RowModel[], infos: SessionInfo[], tasks: Task[] | null): RowModel[] {
+  if (tasks === null || tasks.length === 0) return rows;
   let changed = false;
   const marked = rows.map((r) => {
     const info = infos.find((i) => i.tab_id === r.id);
@@ -75,18 +103,21 @@ export function paletteHidden({ resumable, isTask }: { resumable: boolean; isTas
 }
 
 /**
- * Asks the core for the task list each time it is called (on start, and after every create, merge or remove). The newest answer wins:
- * a slower, older one that arrives later is dropped. When the core does not answer, the list on screen stays.
+ * Asks the core for the task list each time it is called (on start, after every create, merge or remove, and when a review is asked
+ * for while the list has not loaded). The newest answer wins: a slower, older one that arrives later is not set. When the core does
+ * not answer, the list on screen stays, and the call says why (the next call tries again).
  */
-export function taskRefresher(list: () => Promise<Task[]>, set: (tasks: Task[]) => void): () => Promise<void> {
+export function taskRefresher(list: () => Promise<Task[]>, set: (tasks: Task[]) => void): () => Promise<TaskListResult> {
   let latest = 0;
   return async () => {
     const mine = ++latest;
     try {
       const tasks = await list();
       if (mine === latest) set(tasks);
+      return { kind: "ok", tasks };
     } catch (e) {
       console.warn("Could not load the task list", e);
+      return { kind: "failed", reason: e instanceof Error ? e.message : String(e) };
     }
   };
 }

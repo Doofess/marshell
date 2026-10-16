@@ -60,6 +60,7 @@ export function SessionRow({
   const hasMeta = Boolean(row.model || row.effort || row.mode === "plan" || caution || row.subagents !== undefined);
   const time = row.waitingMs ?? (row.status === "done-unseen" || row.status === "done-seen" || row.status === "ended" ? row.ageMs : undefined);
   const branch = row.branch ? splitForMiddle(row.branch) : null;
+  const reviewable = Boolean(row.task && onReview && !rename);
 
   return (
     <div
@@ -80,6 +81,7 @@ export function SessionRow({
       data-muted={row.muted || undefined}
       data-flash={row.flash || undefined}
       data-renaming={rename ? "" : undefined}
+      data-review={reviewable ? (selected ? "open" : "") : undefined}
       draggable={drag && !rename ? true : undefined}
       data-drop={drag?.dropEdge}
       onClick={onSelect}
@@ -166,8 +168,8 @@ export function SessionRow({
           {usage && <div className="session-row__usage">{usage}</div>}
         </div>
       )}
-      {/* Outside the aria-hidden lines so it is read and reachable. It follows the row's tab stop: Tab from the row lands here, and the arrow keys never do. */}
-      {row.task && onReview && !rename && (
+      {/* Outside the aria-hidden lines. Rows have no other in-row actions (close, rename and move are keys and palette commands), so this is the one nested control: ARIA treats an option's children as presentational, so a screen reader reaches it by focus (Tab from the row), and reaches the review without it by Ctrl+Shift+R (Cmd+R) and the palette. It follows the row's tab stop: Tab from the row lands here, and the arrow keys never do. */}
+      {reviewable && (
         <button
           type="button"
           className="session-row__review"
@@ -175,7 +177,7 @@ export function SessionRow({
           tabIndex={tabStop ? 0 : -1}
           onClick={(e) => {
             e.stopPropagation();
-            onReview();
+            onReview?.();
           }}
         >
           Review changes

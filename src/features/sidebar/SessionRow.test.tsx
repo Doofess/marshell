@@ -205,6 +205,12 @@ describe("SessionRow: a task", () => {
     expect(plain).not.toContain("Review changes");
     expect(renderToStaticMarkup(<SessionRow row={task} density="comfortable" />)).not.toContain("Review changes");
   });
+  it("marks a row that has the button, so its text under line 1 keeps clear of it (open when selected)", () => {
+    expect(renderToStaticMarkup(<SessionRow row={task} density="comfortable" onReview={() => {}} />)).toMatch(/data-review=""/);
+    expect(renderToStaticMarkup(<SessionRow row={task} density="comfortable" selected onReview={() => {}} />)).toMatch(/data-review="open"/);
+    expect(renderToStaticMarkup(<SessionRow row={task} density="comfortable" />)).not.toContain("data-review");
+    expect(renderToStaticMarkup(<SessionRow row={base} density="comfortable" onReview={() => {}} />)).not.toContain("data-review");
+  });
   it("leaves the button out while the name is being edited", () => {
     expect(renderToStaticMarkup(<SessionRow row={task} density="comfortable" tabStop onReview={() => {}} rename={{ onCommit: () => {}, onCancel: () => {} }} />)).not.toContain("Review changes");
   });

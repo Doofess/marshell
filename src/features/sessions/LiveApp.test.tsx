@@ -4,7 +4,7 @@ import type { Endpoint } from "../../generated/Endpoint";
 import type { SessionInfo } from "../../generated/SessionInfo";
 import type { Task } from "../../generated/Task";
 import { FIXTURES } from "../sidebar/fixtures";
-import { NOT_A_TASK, keyBlocked, markTasks, paletteHidden, reviewAgentName, reviewKeyDown, reviewTarget, taskRefresher } from "../tasks/reviewOpen";
+import { NOT_A_TASK, isTextBox, keyBlocked, markTasks, paletteHidden, resolveTarget, reviewAgentName, reviewKeyDown, reviewTarget, taskListFailed, taskRefresher } from "../tasks/reviewOpen";
 import { ApiError } from "../../lib/api/client";
 import type { RowModel } from "../sidebar/types";
 import { CloseBar } from "./CloseBar";
@@ -556,5 +556,66 @@ describe("LiveApp: the sheet hands the focus to the agent's terminal", () => {
     const before = actions.getState().focusToken;
     actions.focusTerminal();
     expect(actions.getState().focusToken).toBe(before + 1);
+  });
+});
+
+describe("LiveApp: what counts as a text box", () => {
+  const el = (tagName: string, xterm = false) => ({ tagName, classList: { contains: (c: string) => xterm && c === "xterm-helper-textarea" } });
+  it("is an input or a textarea, but not xterm's own hidden textarea (that is the terminal)", () => {
+    expect(isTextBox(el("INPUT"))).toBe(true);
+    expect(isTextBox(el("TEXTAREA"))).toBe(true);
+    expect(isTextBox(el("TEXTAREA", true))).toBe(false);
+    expect(isTextBox(el("DIV"))).toBe(false);
+    expect(isTextBox(el("BUTTON"))).toBe(false);
+    expect(isTextBox(null)).toBe(false);
+    expect(isTextBox({})).toBe(false);
+  });
+});
+
+describe("LiveApp: a task list that has not loaded", () => {
+  const ctx = (tasks: Task[] | null) => ({ infos: [info(1), inTask(2)], focusedId: "t2", tasks, blocked: false });
+
+  it("is not the same as 'not a task': the review has to load the list first", () => {
+    expect(reviewTarget([info(1), inTask(2)], "t2", null)).toEqual({ kind: "load", tabId: "t2" });
+    // With no session in focus there is nothing to look up.
+    expect(reviewTarget([info(1)], undefined, null)).toEqual({ kind: "none", message: NOT_A_TASK });
+  });
+  it("still prevents the hard reload on Ctrl+Shift+R, and asks for the list to be loaded", () => {
+    const e = keydown(CTRL_SHIFT_R);
+    expect(reviewKeyDown(e, "windows", ctx(null))).toEqual({ kind: "load", tabId: "t2" });
+    expect(e.defaultPrevented).toBe(true);
+  });
+  it("marks no row, and the palette's Review stays offered for a session in focus (so choosing it can retry)", () => {
+    const rows = [{ ...FIXTURES[0]!, id: "t1" }];
+    expect(markTasks(rows, [info(1)], null)).toBe(rows);
+    expect(reviewTarget([inTask(2)], "t2", null).kind).not.toBe("none");
+  });
+  it("reports the core's answer: the list, or why there is none", async () => {
+    const seen: Task[][] = [];
+    expect(await taskRefresher(async () => [TASK], (t) => seen.push(t))()).toEqual({ kind: "ok", tasks: [TASK] });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    expect(await taskRefresher(async () => Promise.reject(new ApiError(500, "core is busy")), (t) => seen.push(t))()).toEqual({ kind: "failed", reason: "core is busy" });
+    expect(await taskRefresher(async () => Promise.reject(new Error("down")), (t) => seen.push(t))()).toEqual({ kind: "failed", reason: "down" });
+    warn.mockRestore();
+    expect(seen).toEqual([[TASK]]);
+  });
+  it("loads the list, then decides: a task opens, anything else says it isn't one", async () => {
+    const infos = () => [info(1), inTask(2)];
+    const reload = vi.fn(async () => ({ kind: "ok" as const, tasks: [TASK] }));
+    expect(await resolveTarget({ kind: "load", tabId: "t2" }, infos, reload)).toEqual({ kind: "open", tabId: "t2", task: TASK });
+    expect(await resolveTarget({ kind: "load", tabId: "t1" }, infos, reload)).toEqual({ kind: "none", message: NOT_A_TASK });
+    expect(reload).toHaveBeenCalledTimes(2);
+  });
+  it("says the list could not be loaded, in one sentence with the reason, instead of 'This session isn't a task.'", async () => {
+    const reload = async () => ({ kind: "failed" as const, reason: "down" });
+    const result = await resolveTarget({ kind: "load", tabId: "t2" }, () => [inTask(2)], reload);
+    expect(result).toEqual({ kind: "none", message: "Couldn't load the task list. down" });
+    expect(taskListFailed("down")).toBe("Couldn't load the task list. down");
+  });
+  it("leaves an answer that needs no list alone", async () => {
+    const reload = vi.fn(async () => ({ kind: "ok" as const, tasks: [] }));
+    const open = { kind: "open" as const, tabId: "t2", task: TASK };
+    expect(await resolveTarget(open, () => [], reload)).toBe(open);
+    expect(reload).not.toHaveBeenCalled();
   });
 });

@@ -105,7 +105,7 @@ export class SessionActions {
 
   /** Hands the focus back to the focused session's terminal (after a sheet that typed into it closes). */
   focusTerminal(): void {
-    this.set({ focusToken: this.state.focusToken + 1 });
+    this.set({ focusToken: this.refocus() });
   }
 
   /** Shows a receipt as a toast (and the window's announcer says it): a merge or a removal that finished in the Review sheet. */

@@ -250,11 +250,15 @@
  * selected or holds focus (and always where there is no hover), so a keyboard user who tabs to it always sees it.
  */
 .session-row__review {
+  --review-size: 7.5rem;
   position: absolute;
   inset-inline-end: 8px;
   inset-block-end: 4px;
+  inline-size: var(--review-size);
   block-size: 24px;
-  padding-inline: var(--space-2);
+  padding-inline: 0;
+  white-space: nowrap;
+  text-align: center;
   border-radius: var(--radius);
   background: var(--fill-strong);
   color: var(--text-1);
@@ -272,6 +276,21 @@
 @media (hover: none) {
   .session-row__review {
     opacity: 1;
+  }
+}
+/*
+ * While the button shows, the text under line 1 gives up its inline end to it, so it never sits over the status phrase or the
+ * details (the phrase truncates with an ellipsis; nothing reflows). data-review is "open" on the selected row; the others are
+ * covered by :hover and :focus-within, and without a hover by every task row.
+ */
+.session-row[data-review="open"] :is(.session-row__phrase, .session-row__details),
+.session-row[data-review]:hover :is(.session-row__phrase, .session-row__details),
+.session-row[data-review]:focus-within :is(.session-row__phrase, .session-row__details) {
+  padding-inline-end: calc(7.5rem + 8px + var(--space-2));
+}
+@media (hover: none) {
+  .session-row[data-review] :is(.session-row__phrase, .session-row__details) {
+    padding-inline-end: calc(7.5rem + 8px + var(--space-2));
   }
 }
 .session-row__review:focus-visible {

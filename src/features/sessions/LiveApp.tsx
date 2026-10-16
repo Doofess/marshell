@@ -15,7 +15,7 @@ import type { RowModel } from "../sidebar/types";
 import { AppearanceDialog } from "../appearance/AppearanceDialog";
 import { useAppearance } from "../appearance/AppearanceProvider";
 import { terminalThemeOf, wtFont } from "../appearance/terminalSettings";
-import { keyBlocked, markTasks, paletteHidden, reviewAgentName, reviewKeyDown, reviewTarget, taskRefresher } from "../tasks/reviewOpen";
+import { isTextBox, keyBlocked, markTasks, paletteHidden, resolveTarget, reviewAgentName, reviewKeyDown, reviewTarget, taskRefresher, type ReviewTarget } from "../tasks/reviewOpen";
 import { ReviewSheet } from "../tasks/ReviewSheet";
 import { reviewApi } from "../tasks/reviewRun";
 import { jumpWords } from "../terminal/promptMarks";
@@ -209,8 +209,9 @@ export function LiveApp() {
   const resumable = focusedRow?.status === "ended";
 
   // The core's tasks (worktrees). A session whose folder is a task's is a task: its row says so and offers its review. Asked on start
-  // and again after every create, merge and remove; the core has no push for them.
-  const [tasks, setTasks] = useState<Task[]>([]);
+  // and again after every create, merge and remove; the core has no push for them. Null means it has not loaded (or never answered):
+  // that is not "no tasks", so a review asked for then loads it again first (actOn) instead of saying "This session isn't a task."
+  const [tasks, setTasks] = useState<Task[] | null>(null);
   const endpointRef = useRef(endpoint);
   endpointRef.current = endpoint;
   const refreshTasks = useMemo(() => taskRefresher(() => (endpointRef.current ? tasksApi.list(endpointRef.current) : Promise.resolve([])), setTasks), []);
@@ -218,7 +219,8 @@ export function LiveApp() {
     if (endpoint) void refreshTasks();
   }, [endpoint, refreshTasks]);
   const taskRows = useMemo(() => markTasks(rows, infos, tasks), [rows, infos, tasks]);
-  const focusedIsTask = reviewTarget(infos, focusedId, tasks).kind === "open";
+  // While the list is unknown the palette keeps Review for the session in focus, so choosing it can load the list again.
+  const focusedIsTask = reviewTarget(infos, focusedId, tasks).kind !== "none";
   const hiddenCommands = paletteHidden({ resumable, isTask: focusedIsTask });
 
   // The Review sheet. It holds its own snapshot (the task, its changes, the session it was opened for), not a view of the lists above,
@@ -245,14 +247,21 @@ export function LiveApp() {
   // Review the session in `tabId`, or say it isn't a task. What the state was when the key or button was pressed is read from refs.
   const stateRef = useRef({ infos, tasks, focusedId, launcherOpen, overlay, review });
   stateRef.current = { infos, tasks, focusedId, launcherOpen, overlay, review };
+  // Does what a review request came to: opens the sheet, or says why not (it isn't a task, or the task list can't be loaded).
+  const actOn = useCallback(
+    async (target: ReviewTarget) => {
+      const t = await resolveTarget(target, () => stateRef.current.infos, refreshTasks);
+      if (t.kind === "open") void openReview(t.tabId, t.task);
+      else announce(t.message);
+    },
+    [openReview, announce, refreshTasks],
+  );
   const reviewSession = useCallback(
     (tabId: string | undefined) => {
       const s = stateRef.current;
-      const target = reviewTarget(s.infos, tabId, s.tasks);
-      if (target.kind === "open") void openReview(target.tabId, target.task);
-      else announce(target.message);
+      void actOn(reviewTarget(s.infos, tabId, s.tasks));
     },
-    [openReview, announce],
+    [actOn],
   );
   const reviewReason = (e: unknown) => (e instanceof ApiError ? e.message : String(e));
   // "Ask <agent> to fix them": the prompt is typed into the task's session, never sent (no Enter), and the terminal gets the focus.
@@ -461,17 +470,14 @@ export function LiveApp() {
   useEffect(() => {
     if (!os) return;
     const onKey = (e: KeyboardEvent) => {
-      const t = e.target;
-      const inTextBox = (t instanceof HTMLInputElement || t instanceof HTMLTextAreaElement) && !t.classList.contains("xterm-helper-textarea");
       const s = stateRef.current;
-      const result = reviewKeyDown(e, os, { infos: s.infos, focusedId: s.focusedId, tasks: s.tasks, blocked: keyBlocked({ launcherOpen: s.launcherOpen, overlay: s.overlay, review: s.review !== null, inTextBox }) });
+      const result = reviewKeyDown(e, os, { infos: s.infos, focusedId: s.focusedId, tasks: s.tasks, blocked: keyBlocked({ launcherOpen: s.launcherOpen, overlay: s.overlay, review: s.review !== null, inTextBox: isTextBox(e.target as HTMLElement | null) }) });
       if (result === null || result.kind === "ignored") return;
-      if (result.kind === "open") void openReview(result.tabId, result.task);
-      else announce(result.message);
+      void actOn(result);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [os, openReview, announce]);
+  }, [os, actOn]);
 
   useEffect(() => {
     // While the sheet is up it has the keys: Esc, Tab and the lists are its own.
@@ -481,8 +487,7 @@ export function LiveApp() {
       // Review is read above.
       if (!shortcut || shortcut.kind === "review") return;
       // A text box (the rename box, the launcher's fields) keeps its own keys; xterm's own hidden textarea is the terminal, not a box.
-      const t = e.target;
-      if ((t instanceof HTMLInputElement || t instanceof HTMLTextAreaElement) && !t.classList.contains("xterm-helper-textarea")) return;
+      if (isTextBox(e.target as HTMLElement | null)) return;
       e.preventDefault();
       // Holding the key repeats it; only moving a session along the list, or from prompt to prompt, should.
       if (e.repeat && shortcut.kind !== "move" && shortcut.kind !== "prompt") return;
