@@ -82,6 +82,8 @@ export type MainWindowProps = {
   onLayoutMenu?: (open: boolean) => void;
   /** How many panes the window really shows (fewer than the layout holds when it is small); the focus follows the shown panes. */
   onVisible?: (count: number) => void;
+  /** How many panes this window has room for now (up to four), shown or not. A split past it would only add a pane out of sight. */
+  onFit?: (count: number) => void;
   /** The prompt lines (one under a single terminal, one inside every pane in split view); on by default, never in focus mode. */
   composer?: boolean;
   /** What has been typed in the single window's prompt line. */
@@ -170,6 +172,7 @@ export function MainWindow({
   onPane,
   onLayoutMenu,
   onVisible,
+  onFit,
   composer = true,
   composerValue = "",
   composerValues,
@@ -253,6 +256,10 @@ export function MainWindow({
   useEffect(() => {
     onVisible?.(shownCount);
   }, [onVisible, shownCount]);
+  const fitCount = maxPanes(space, lineH);
+  useEffect(() => {
+    onFit?.(fitCount);
+  }, [onFit, fitCount]);
 
   // The layout menu closes on Escape (the focus goes back to its button) and on a press anywhere outside it.
   const layoutRoot = useRef<HTMLDivElement>(null);

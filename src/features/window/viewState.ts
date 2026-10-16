@@ -6,10 +6,12 @@ import { ARRANGEMENTS, type Arrangement, PANE_LIMIT, type PaneCount, RATIO, type
 export type ViewState = ViewLayout & { lastPref?: SidebarPref };
 
 export type ViewAction =
-  | { type: "split" }
+  /** `fit` is how many panes the window can show now; a split past it does nothing. */
+  | { type: "split"; fit?: number }
   | { type: "remove"; index: number }
   | { type: "assign"; index: number; tabId: string }
-  | { type: "select"; tabId: string }
+  /** `visible` is how many panes the window shows; the selection then never lands in a pane out of sight. */
+  | { type: "select"; tabId: string; visible?: number }
   | { type: "focusPane"; index: number }
   | { type: "nextPane" }
   | { type: "zoom" }
@@ -104,6 +106,23 @@ export function focusedIndex(shown: readonly unknown[], active: number, zoomed: 
   return Math.min(Math.max(0, Math.floor(Number.isFinite(active) ? active : 0)), Math.max(0, shown.length - 1));
 }
 
+/** Whether one more pane can be added: below the pane limit, and below how many the window can show (`fit`, when known). */
+export function roomForPane(count: number, fit: number | undefined): boolean {
+  return count < Math.min(PANE_LIMIT, fit ?? PANE_LIMIT);
+}
+
+/**
+ * Where "Open in a pane" puts a new session: the first empty pane on screen; else a new pane, if the window has room; else the
+ * focused pane on screen (the session it held stays in the sidebar). `split` means the pane at `index` is yet to be added.
+ */
+export function adoptTarget(view: Pick<ViewLayout, "panes" | "active" | "zoomed">, visible: number, fit: number): { index: number; split: boolean } {
+  const shown = view.panes.slice(0, visible);
+  const empty = shown.indexOf(null);
+  if (empty >= 0) return { index: empty, split: false };
+  if (roomForPane(view.panes.length, fit)) return { index: view.panes.length, split: true };
+  return { index: focusedIndex(shown, view.active, view.zoomed), split: false };
+}
+
 /** After the pane count changed: the focus stays on a real pane, and an arrangement that does not suit the count goes back to automatic. */
 function fit(s: ViewState, panes: (string | null)[]): ViewState {
   return { ...s, panes, arrangement: arrangementFor(panes, s.arrangement), active: Math.min(s.active, panes.length - 1) };
@@ -119,7 +138,7 @@ function setSidebar(s: ViewState, pref: SidebarPref): ViewState {
 export function viewReducer(s: ViewState, a: ViewAction): ViewState {
   switch (a.type) {
     case "split": {
-      if (s.panes.length >= PANE_LIMIT) return s;
+      if (!roomForPane(s.panes.length, a.fit)) return s;
       return { ...fit(s, [...s.panes, null]), active: s.panes.length };
     }
     case "remove": {
@@ -142,10 +161,21 @@ export function viewReducer(s: ViewState, a: ViewAction): ViewState {
     }
     case "select": {
       const at = s.panes.indexOf(a.tabId);
-      if (at >= 0) return { ...s, active: at };
+      if (a.visible === undefined) {
+        if (at >= 0) return { ...s, active: at };
+        const panes = [...s.panes];
+        panes[s.active] = a.tabId;
+        return { ...s, panes };
+      }
+      // The active pane may be out of sight (the window shrank, or a pane was added past what fits): the selection goes to one on screen.
+      const last = clamp(Math.floor(a.visible) - 1, 0, s.panes.length - 1);
+      const active = Math.min(s.active, last);
+      if (at >= 0 && at <= last) return { ...s, active: at };
       const panes = [...s.panes];
-      panes[s.active] = a.tabId;
-      return { ...s, panes };
+      // A session in a pane out of sight trades places with the one in the focused pane, so neither is dropped.
+      if (at >= 0) panes[at] = panes[active]!;
+      panes[active] = a.tabId;
+      return { ...s, panes, active };
     }
     case "focusPane":
       return a.index < 0 || a.index >= s.panes.length ? s : { ...s, active: a.index };

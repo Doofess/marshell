@@ -18,8 +18,9 @@ import { sidebarMode } from "../window/layout";
 import { MainWindow } from "../window/MainWindow";
 import { PANE_LIMIT, type Arrangement } from "../window/splitLayout";
 import { useViewState } from "../window/useViewState";
-import { fillsEmptyPane, focusedIndex, railToggle, ratiosOf, sidebarPrefOf } from "../window/viewState";
+import { adoptTarget, fillsEmptyPane, focusedIndex, railToggle, ratiosOf, roomForPane, sidebarPrefOf } from "../window/viewState";
 import { CloseBar } from "./CloseBar";
+import { launcherOpens } from "./launcherOpens";
 import { LiveLauncher } from "./LiveLauncher";
 import { LivePalette } from "./LivePalette";
 import { ResumeBar } from "./ResumeBar";
@@ -41,6 +42,8 @@ const HIDE_RESUME = ["resume"];
 const CUSTOM_PROFILE = "custom";
 /** What the announcer says when the shell panel is asked for where it is not drawn: the rail, focus mode, or a window under 960 px. */
 const SHELL_PANEL_ELSEWHERE = "The shell panel is in the expanded sidebar.";
+/** What the announcer says when a split is asked for and the window has no room to show another pane. */
+const NO_PANE_ROOM = "No room for another pane.";
 
 /** The size of the element, kept up to date with a ResizeObserver. Starts at the window's size. */
 function useElementSize() {
@@ -60,7 +63,7 @@ function useElementSize() {
 
 /** The real app: the main window on the core's live session list, and the launcher that adds to it. */
 export function LiveApp() {
-  const { endpoint, profiles, rows, infos, selectedId, loaded, restarts, select, reloadProfiles, error } = useSessions();
+  const { endpoint, profiles, rows, infos, selectedId, loaded, select, reloadProfiles, error } = useSessions();
   // The window's saved layout: which sessions are in which pane. `undefined` until the list has answered, so an empty first list is never "everything closed".
   const [view, dispatch, , settled] = useViewState(endpoint, loaded ? infos.map((i) => i.tab_id) : undefined);
   const viewRef = useRef(view);
@@ -68,6 +71,12 @@ export function LiveApp() {
   // The session the window is about is the one in the focused pane; the store's choice only stands in for an empty pane.
   // A small window shows fewer panes than the layout holds; the focus is the pane it shows, never one out of sight (MainWindow reports how many).
   const [shownCount, setShownCount] = useState<number | undefined>(undefined);
+  // How many panes the window has room for (the most it could show). Both counts are also kept in refs, for the callbacks below.
+  const [fitCount, setFitCount] = useState<number | undefined>(undefined);
+  const shownRef = useRef(shownCount);
+  shownRef.current = shownCount;
+  const fitRef = useRef(fitCount);
+  fitRef.current = fitCount;
   const shownPanes = view.panes.slice(0, shownCount ?? view.panes.length);
   const focusIdx = focusedIndex(shownPanes, view.active, view.zoomed);
   const focusIdxRef = useRef(focusIdx);
@@ -79,7 +88,8 @@ export function LiveApp() {
   const pick = useCallback(
     (id: string) => {
       selectRef.current(id);
-      dispatch({ type: "select", tabId: id });
+      // The view is told how many panes are on screen, so the session never lands in one that is not.
+      dispatch({ type: "select", tabId: id, visible: shownRef.current });
     },
     [dispatch],
   );
@@ -127,13 +137,10 @@ export function LiveApp() {
     if (cols > 0 && lines > 0) size.current = { cols, rows: lines };
   }, []);
 
-  // No sessions (first run, everything closed): the launcher opens. So does a core restart, even before its first list arrives.
+  // No sessions (first run, everything closed): the launcher opens. A restarted core seeds the saved tabs, so it opens only if there are none.
   useEffect(() => {
-    if (loaded && rows.length === 0) setLauncherOpen(true);
+    if (launcherOpens(loaded, rows.length)) setLauncherOpen(true);
   }, [loaded, rows.length]);
-  useEffect(() => {
-    if (restarts > 0) setLauncherOpen(true);
-  }, [restarts]);
 
   useEffect(() => {
     const current = new Set(rows.map((r) => r.id));
@@ -296,8 +303,9 @@ export function LiveApp() {
       adopting.current = false;
     }
   }, [endpoint, panelTab]);
-  // The adopted tab is listed: in one update the panel lets go of its terminal and a pane takes the tab, so the pty only ever has one
-  // terminal attached. (Adopting earlier would let the view's own clean-up drop an id the list does not hold yet.)
+  // The adopted tab is listed: in one update the panel lets go of its terminal and a pane takes the tab. Until then the window draws
+  // nothing for that tab (see renderTerminal), so the pty only ever has one terminal attached. (Adopting earlier would let the
+  // view's own clean-up drop an id the list does not hold yet.)
   useEffect(() => {
     if (!adopted) return;
     if (adopted.endpoint !== endpoint) return void setAdopted(null);
@@ -306,15 +314,18 @@ export function LiveApp() {
     setAdopted(null);
     setPanel(null);
     const v = viewRef.current;
-    if (v.panes.includes(id) || v.panes.length >= PANE_LIMIT) {
-      // No room for another pane: the tab goes where the focus is.
+    if (v.panes.includes(id)) {
       pick(id);
       return;
     }
-    // A zoomed pane would hide the one being added.
-    if (v.zoomed !== null) dispatch({ type: "zoom" });
-    dispatch({ type: "split" });
-    dispatch({ type: "assign", index: v.panes.length, tabId: id });
+    // An empty pane on screen, else a new pane if the window has room, else the focused pane (what it held stays in the sidebar).
+    const fit = fitRef.current ?? PANE_LIMIT;
+    const target = adoptTarget(v, shownRef.current ?? v.panes.length, fit);
+    // A zoomed pane would hide a different one.
+    if (v.zoomed !== null && target.index !== v.zoomed) dispatch({ type: "zoom" });
+    if (target.split) dispatch({ type: "split", fit });
+    dispatch({ type: "assign", index: target.index, tabId: id });
+    if (!target.split) dispatch({ type: "focusPane", index: target.index });
     selectRef.current(id);
   }, [adopted, endpoint, infos, pick, dispatch]);
   const shellTerminal = useMemo(
@@ -328,9 +339,13 @@ export function LiveApp() {
       const v = viewRef.current;
       switch (shortcut?.kind) {
         case "split":
+          if (!roomForPane(v.panes.length, fitRef.current)) {
+            announce(NO_PANE_ROOM);
+            return true;
+          }
           // A zoomed pane would hide the one being added.
           if (v.zoomed !== null) dispatch({ type: "zoom" });
-          dispatch({ type: "split" });
+          dispatch({ type: "split", fit: fitRef.current });
           return true;
         case "zoom":
           if (v.zoomed !== null) dispatch({ type: "zoom" });
@@ -429,6 +444,8 @@ export function LiveApp() {
   const renderTerminal = useCallback(
     (row: RowModel, shown = true) => {
       if (!endpoint) return null;
+      // The shell panel's terminal still holds this tab's pty (it was just adopted): a pane draws the tab once the panel lets go.
+      if (panelTab?.tabId === row.id) return null;
       // While Resume is out the core already says Running, but the strip stays and the terminal waits (see `resuming` in sessionActions).
       const bar = heldRow(row) ?? (row.status === "ended" ? row : undefined);
       const hasTerminal = bar === undefined || bar.phrase !== ENDED_PHRASE;
@@ -469,7 +486,7 @@ export function LiveApp() {
         </div>
       );
     },
-    [endpoint, heldRow, resumed, infos, profiles, startResume, startingTexts, onSize, launcherOpen, overlay, focusedId, focusToken, promptJump, onPromptJump, themeFor, overrideOf, terminalFont],
+    [endpoint, panelTab?.tabId, heldRow, resumed, infos, profiles, startResume, startingTexts, onSize, launcherOpen, overlay, focusedId, focusToken, promptJump, onPromptJump, themeFor, overrideOf, terminalFont],
   );
 
   if (error) {
@@ -498,6 +515,7 @@ export function LiveApp() {
           layoutMenu={layoutMenu}
           onLayoutMenu={setLayoutMenu}
           onVisible={setShownCount}
+          onFit={setFitCount}
           onLayout={(count, arrangement) => {
             if (count !== viewRef.current.panes.length) dispatch({ type: "count", count });
             dispatch({ type: "arrange", arrangement });

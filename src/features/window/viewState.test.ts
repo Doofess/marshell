@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { ViewLayout } from "../../generated/ViewLayout";
 import { RATIO } from "./splitLayout";
-import { type ViewAction, type ViewState, checkedView, fillsEmptyPane, focusedIndex, railToggle, ratiosOf, sidebarPrefOf, toRatioList, toSaved, viewReducer } from "./viewState";
+import { type ViewAction, type ViewState, adoptTarget, checkedView, fillsEmptyPane, focusedIndex, railToggle, ratiosOf, roomForPane, sidebarPrefOf, toRatioList, toSaved, viewReducer } from "./viewState";
 
 const base: ViewLayout = {
   panes: ["a"],
@@ -152,6 +152,64 @@ describe("viewReducer", () => {
     const saved = toSaved(run(state({ sidebar: "rail" }), { type: "toggleFocus" }));
     expect("lastPref" in saved).toBe(false);
     expect(saved).toEqual({ ...base, sidebar: "focus" });
+  });
+
+  it("select while active is hidden fills a visible pane", () => {
+    // Two panes are shown of four; the active one is the hidden fourth.
+    const s = run(state({ panes: ["a", "b", "c", "d"], active: 3 }), { type: "select", tabId: "x", visible: 2 });
+    expect(s.panes).toEqual(["a", "x", "c", "d"]);
+    expect(s.active).toBe(1);
+  });
+
+  it("select of a tab in a hidden pane swaps it into view", () => {
+    const s = run(state({ panes: ["a", "b", "c", "d"], active: 1 }), { type: "select", tabId: "d", visible: 2 });
+    expect(s.panes).toEqual(["a", "d", "c", "b"]);
+    expect(s.active).toBe(1);
+    // The active pane was hidden too: the swap goes into the clamped one.
+    const hidden = run(state({ panes: ["a", "b", "c", "d"], active: 3 }), { type: "select", tabId: "c", visible: 2 });
+    expect(hidden.panes).toEqual(["a", "c", "b", "d"]);
+    expect(hidden.active).toBe(1);
+  });
+
+  it("select of a tab in a visible pane still focuses it when visible is given", () => {
+    const s = run(state({ panes: ["a", "b", "c"], active: 2 }), { type: "select", tabId: "a", visible: 2 });
+    expect(s.panes).toEqual(["a", "b", "c"]);
+    expect(s.active).toBe(0);
+  });
+
+  it("split at the fit limit does nothing", () => {
+    const two = state({ panes: ["a", "b"], active: 0 });
+    expect(run(two, { type: "split", fit: 2 })).toBe(two);
+    expect(run(two, { type: "split", fit: 1 })).toBe(two);
+    expect(run(two, { type: "split", fit: 3 }).panes).toEqual(["a", "b", null]);
+  });
+
+  it("roomForPane is true only below both the fit and the limit", () => {
+    expect(roomForPane(1, 2)).toBe(true);
+    expect(roomForPane(2, 2)).toBe(false);
+    expect(roomForPane(3, undefined)).toBe(true);
+    expect(roomForPane(4, 9)).toBe(false);
+  });
+});
+
+describe("adoptTarget", () => {
+  const view = (panes: (string | null)[], active = 0): ViewState => state({ panes, active });
+
+  it("takes the first visible empty pane", () => {
+    expect(adoptTarget(view(["a", null, null], 0), 3, 4)).toEqual({ index: 1, split: false });
+    // An empty pane out of sight does not count.
+    expect(adoptTarget(view(["a", "b", null], 0), 2, 2)).toEqual({ index: 0, split: false });
+  });
+
+  it("splits when no visible pane is empty and there is room", () => {
+    expect(adoptTarget(view(["a", "b"], 1), 2, 3)).toEqual({ index: 2, split: true });
+  });
+
+  it("goes into the focused visible pane when there is no room", () => {
+    expect(adoptTarget(view(["a", "b"], 1), 2, 2)).toEqual({ index: 1, split: false });
+    // The active pane is hidden: the last visible one is focused.
+    expect(adoptTarget(view(["a", "b", "c"], 2), 2, 2)).toEqual({ index: 1, split: false });
+    expect(adoptTarget(view(["a", "b", "c", "d"], 0), 4, 4)).toEqual({ index: 0, split: false });
   });
 });
 
