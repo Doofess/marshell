@@ -1,6 +1,7 @@
 pub mod buffer;
 pub mod dsr;
 pub mod osc133;
+pub mod record;
 mod session;
 
 pub use buffer::{FLUSH_BYTES, MAX_UNACKED, SCROLLBACK_BYTES};
