@@ -71,6 +71,19 @@ pub struct CreateSessionRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub prompt: Option<String>,
+    /// The terminal's colour scheme right now. Absent means the core sets no `COLORFGBG`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub color_scheme: Option<ColorScheme>,
+}
+
+/// Whether a terminal's background is dark or light.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "kebab-case")]
+#[ts(export)]
+pub enum ColorScheme {
+    Dark,
+    Light,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -181,6 +194,11 @@ pub struct Profile {
     /// Start plain shell sessions through Marshell's init script (prompt marks, command status).
     #[serde(default = "default_true")]
     pub shell_integration: bool,
+    /// This profile's terminal theme: "dark", "light" or an imported theme's id.
+    /// Absent means the app's terminal theme setting.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub terminal_theme: Option<String>,
     /// True for profiles found on this machine and not edited by the user.
     pub detected: bool,
 }
@@ -399,5 +417,25 @@ mod tests {
         assert!(req.shell.is_none() && req.cwd.is_none());
         assert!(req.profile_id.is_none() && req.agent.is_none());
         assert!(req.name.is_none() && req.prompt.is_none());
+    }
+
+    #[test]
+    fn create_request_color_scheme_is_kebab_case() {
+        let req: CreateSessionRequest =
+            serde_json::from_str(r#"{"cols":80,"rows":24,"color_scheme":"light"}"#).unwrap();
+        assert_eq!(req.color_scheme, Some(ColorScheme::Light));
+        let req: CreateSessionRequest = serde_json::from_str(r#"{"cols":80,"rows":24}"#).unwrap();
+        assert_eq!(req.color_scheme, None);
+    }
+
+    #[test]
+    fn profile_terminal_theme_is_optional() {
+        let p: Profile = serde_json::from_str(
+            r#"{"id":"pwsh","name":"PowerShell","command":["pwsh.exe"],"family":"power_shell","cwd":null,"env":[],"detected":true}"#,
+        )
+        .unwrap();
+        assert_eq!(p.terminal_theme, None);
+        // Absent stays absent when written back.
+        assert!(!serde_json::to_string(&p).unwrap().contains("terminal_theme"));
     }
 }

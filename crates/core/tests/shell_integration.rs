@@ -20,6 +20,7 @@ fn profile(command: &str, family: ShellFamily) -> Profile {
         cwd: None,
         env: vec![],
         shell_integration: true,
+        terminal_theme: None,
         detected: true,
     }
 }

@@ -255,6 +255,7 @@ mod tests {
             cwd: None,
             env: Vec::new(),
             shell_integration: true,
+            terminal_theme: None,
             detected: true,
         }
     }

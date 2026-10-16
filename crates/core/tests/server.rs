@@ -43,6 +43,7 @@ fn detected_profile() -> marshell_protocol::api::Profile {
         cwd: None,
         env: Vec::new(),
         shell_integration: true,
+        terminal_theme: None,
         detected: true,
     }
 }
@@ -373,6 +374,7 @@ fn sleeper_profile() -> marshell_protocol::api::Profile {
         cwd: None,
         env: Vec::new(),
         shell_integration: true,
+        terminal_theme: None,
         detected: true,
     }
 }

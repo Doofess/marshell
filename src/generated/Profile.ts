@@ -22,6 +22,11 @@ env: Array<[string, string]>,
  */
 shell_integration: boolean, 
 /**
+ * This profile's terminal theme: "dark", "light" or an imported theme's id.
+ * Absent means the app's terminal theme setting.
+ */
+terminal_theme?: string, 
+/**
  * True for profiles found on this machine and not edited by the user.
  */
 detected: boolean, };
