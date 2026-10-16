@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { ViewLayout } from "../../generated/ViewLayout";
 import { RATIO } from "./splitLayout";
-import { type ViewAction, type ViewState, ratiosOf, toRatioList, toSaved, viewReducer } from "./viewState";
+import { type ViewAction, type ViewState, checkedView, ratiosOf, toRatioList, toSaved, viewReducer } from "./viewState";
 
 const base: ViewLayout = {
   panes: ["a"],
@@ -121,6 +121,25 @@ describe("viewReducer", () => {
     expect(ratiosOf(state({ ratios: [0.3, 0.7] }))).toEqual({ col: 0.3, row: 0.7 });
     expect(ratiosOf(state())).toEqual({});
     expect(toRatioList({ col: 0.4 })).toEqual([0.4, RATIO.default]);
+  });
+
+  it("ratios outside the range are clamped and a non-finite side is even", () => {
+    expect(run(state(), { type: "ratios", ratios: { col: 0.05, row: 0.99 } }).ratios).toEqual([RATIO.min, RATIO.max]);
+    expect(run(state(), { type: "ratios", ratios: { col: Number.NaN, row: 0.6 } }).ratios).toEqual([RATIO.default, 0.6]);
+    expect(run(state({ ratios: [0.3, 0.7] }), { type: "ratios", ratios: { col: Number.NaN, row: Infinity } }).ratios).toEqual([]);
+  });
+
+  it("arrange keeps only an arrangement that suits the pane count", () => {
+    const two = state({ panes: ["a", "b"] });
+    expect(run(two, { type: "arrange", arrangement: "grid" }).arrangement).toBeNull();
+    expect(run(two, { type: "arrange", arrangement: "columns" }).arrangement).toBe("columns");
+  });
+
+  it("a loaded view keeps only an arrangement that suits its panes", () => {
+    const view = { ...base, panes: ["a", "b"], arrangement: "grid" };
+    expect(checkedView(view).arrangement).toBeNull();
+    expect(checkedView({ ...view, arrangement: "rows" })).toEqual({ ...view, arrangement: "rows" });
+    expect(checkedView({ ...view, panes: [] }).arrangement).toBeNull();
   });
 
   it("the sidebar pref, shell panel and grouping toggle", () => {

@@ -48,19 +48,38 @@ export function ratiosOf(view: Pick<ViewLayout, "ratios">): Ratios {
   return r;
 }
 
-/** `Ratios` as the saved list: both sides, the missing one even. Nothing set is the empty list. */
+/** A ratio within RATIO.min..RATIO.max, or undefined for a missing or non-finite one. */
+const cleanRatio = (n: number | undefined): number | undefined =>
+  n === undefined || !Number.isFinite(n) ? undefined : Math.min(RATIO.max, Math.max(RATIO.min, n));
+
+/**
+ * `Ratios` as the saved list: both sides, each kept within RATIO.min..RATIO.max. A missing or non-finite side is even;
+ * when neither side is usable the list is empty.
+ */
 export function toRatioList(r: Ratios): number[] {
-  if (r.col === undefined && r.row === undefined) return [];
-  return [r.col ?? RATIO.default, r.row ?? RATIO.default];
+  const col = cleanRatio(r.col);
+  const row = cleanRatio(r.row);
+  if (col === undefined && row === undefined) return [];
+  return [col ?? RATIO.default, row ?? RATIO.default];
+}
+
+/** The arrangement if it suits the number of panes, else null (automatic). */
+export function arrangementFor(panes: readonly unknown[], arrangement: string | null): string | null {
+  const allowed = ARRANGEMENTS[panes.length as PaneCount] as string[] | undefined;
+  return arrangement !== null && allowed?.includes(arrangement) ? arrangement : null;
+}
+
+/** A view read from the core, with an arrangement that does not suit its panes set back to automatic. */
+export function checkedView(view: ViewLayout): ViewLayout {
+  const arrangement = arrangementFor(view.panes, view.arrangement);
+  return arrangement === view.arrangement ? view : { ...view, arrangement };
 }
 
 const clamp = (n: number, min: number, max: number) => Math.min(max, Math.max(min, n));
 
 /** After the pane count changed: the focus stays on a real pane, and an arrangement that does not suit the count goes back to automatic. */
 function fit(s: ViewState, panes: (string | null)[]): ViewState {
-  const count = panes.length as PaneCount;
-  const arrangement = s.arrangement !== null && !(ARRANGEMENTS[count] as string[]).includes(s.arrangement) ? null : s.arrangement;
-  return { ...s, panes, arrangement, active: Math.min(s.active, panes.length - 1) };
+  return { ...s, panes, arrangement: arrangementFor(panes, s.arrangement), active: Math.min(s.active, panes.length - 1) };
 }
 
 function setSidebar(s: ViewState, pref: SidebarPref): ViewState {
@@ -119,7 +138,7 @@ export function viewReducer(s: ViewState, a: ViewAction): ViewState {
       return { ...fit(s, panes), zoomed: null };
     }
     case "arrange":
-      return { ...s, arrangement: a.arrangement };
+      return { ...s, arrangement: arrangementFor(s.panes, a.arrangement) };
     case "ratios":
       return { ...s, ratios: toRatioList(a.ratios) };
     case "sessions": {
