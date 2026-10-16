@@ -3,7 +3,6 @@ import type { CreateSessionResponse } from "../../generated/CreateSessionRespons
 import type { Endpoint } from "../../generated/Endpoint";
 import type { LayoutDoc } from "../../generated/LayoutDoc";
 import type { ProfilesDoc } from "../../generated/ProfilesDoc";
-import type { Task } from "../../generated/Task";
 import { layout as layoutApi } from "../../lib/api/layout";
 import { profiles as profilesApi } from "../../lib/api/profiles";
 import { projects as projectsApi } from "../../lib/api/projects";
@@ -16,7 +15,7 @@ import { Launcher, type TaskConfirm } from "../launcher/Launcher";
 import { taskNameFor } from "../tasks/taskName";
 import { appScheme } from "../terminal/terminalTheme";
 import { programById, startingText, type LauncherChoice } from "../launcher/launchChoice";
-import { createThenLaunch, initialFocus, launchRequest, refocus, type FocusState, livePrograms, preselect, startFailure, taskRequest, toLauncherProject, wantsTask } from "./launchPrograms";
+import { createThenLaunch, initialFocus, launchRequest, progressText, refocus, rememberTasks, type FocusState, livePrograms, preselect, startFailure, taskRequest, toLauncherProject, wantsTask } from "./launchPrograms";
 
 // The worktree flag is part of this state and nothing else: it is never read from or written to the remembered choices, so the chip starts off every time.
 const INITIAL: LauncherChoice = { program: "claude", projectId: "", mode: "Manual", pace: "Balanced", worktree: false };
@@ -59,8 +58,10 @@ export function LiveLauncher({ endpoint, nextNumber, size, onStarted, onClose }:
   const [confirm, setConfirm] = useState<TaskConfirm | null>(null);
   // Each plan request gets a number, so a late answer to a plan the user has left is dropped.
   const planSeq = useRef(0);
-  // A task already made for this request: if the session then fails to start, trying again must not make a second worktree.
-  const made = useRef<{ key: string; task: Task } | null>(null);
+  // A task already made for this request: if the session then fails to start, trying again must not make a second worktree. Back forgets it.
+  const tasks = useMemo(rememberTasks, []);
+  // What the confirm view says while it works: the worktree being made, then the program starting in it.
+  const [phase, setPhase] = useState<"creating" | "starting">("creating");
   const inFlight = useRef(false);
   const root = useRef<HTMLDivElement>(null);
 
@@ -137,6 +138,8 @@ export function LiveLauncher({ endpoint, nextNumber, size, onStarted, onClose }:
 
   const back = () => {
     planSeq.current++;
+    // The next plan may show other commands (another free name), so a task made for these ones must not be reused for them.
+    tasks.forget();
     setConfirm(null);
     setError(undefined);
   };
@@ -146,18 +149,16 @@ export function LiveLauncher({ endpoint, nextNumber, size, onStarted, onClose }:
     if (!endpoint || !loaded || inFlight.current) return;
     inFlight.current = true;
     setStarting(true);
+    setPhase("creating");
     setError(undefined);
     const req = taskRequest(shown, projects, taskName);
-    const key = JSON.stringify(req);
     try {
       const created = await createThenLaunch(
-        async () => {
-          if (made.current?.key === key) return made.current.task;
-          const task = await tasksApi.create(endpoint, req);
-          made.current = { key, task };
-          return task;
+        () => tasks.get(req, () => tasksApi.create(endpoint, req)),
+        (task) => {
+          setPhase("starting");
+          return sessionsApi.create(endpoint, withColorScheme(launchRequest(shown, prompt, programs, loaded.doc, projects, size(), task.path), loaded.doc.profiles, appearance, appScheme()));
         },
-        (task) => sessionsApi.create(endpoint, withColorScheme(launchRequest(shown, prompt, programs, loaded.doc, projects, size(), task.path), loaded.doc.profiles, appearance, appScheme())),
       );
       const folder = projects.find((p) => p.id === shown.projectId)?.name ?? "your home folder";
       onStarted(created, startingText(shown.program, folder, programs));
@@ -197,6 +198,7 @@ export function LiveLauncher({ endpoint, nextNumber, size, onStarted, onClose }:
         chips={false}
         error={error ?? loadError}
         busy={starting || loaded === null}
+        busyText={progressText(phase, programById(shown.program, programs)?.label ?? shown.program)}
         onChange={patch}
         onQuery={(q) => {
           setQuery(q);

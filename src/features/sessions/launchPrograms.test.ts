@@ -6,7 +6,7 @@ import type { Project } from "../launcher/filter";
 import { startingText, type LauncherChoice, type ProgramId } from "../launcher/launchChoice";
 import { ApiError } from "../../lib/api/client";
 import type { LayoutDoc } from "../../generated/LayoutDoc";
-import { createThenLaunch, initialFocus, launchRequest, preselect, refocus, livePrograms, startFailure, taskRequest, toLauncherProject, wantsTask } from "./launchPrograms";
+import { createThenLaunch, initialFocus, launchRequest, preselect, progressText, refocus, rememberTasks, livePrograms, startFailure, taskRequest, toLauncherProject, wantsTask } from "./launchPrograms";
 
 const profile = (id: string, family: Profile["family"], name = id): Profile => ({ id, name, command: [id], family, cwd: null, env: [], shell_integration: true, detected: true });
 const PROFILES: Profile[] = [profile("pwsh", "power_shell", "PowerShell 7"), profile("cmd", "cmd", "Command Prompt"), profile("git-bash", "posix", "Git Bash"), profile("wsl-ubuntu", "wsl", "Ubuntu")];
@@ -174,6 +174,46 @@ describe("starting a task in a worktree", () => {
     const launch = vi.fn();
     await expect(createThenLaunch(() => Promise.reject(new ApiError(409, "No free name.")), launch)).rejects.toMatchObject({ message: "No free name." });
     expect(launch).not.toHaveBeenCalled();
+  });
+
+  it("makes one worktree per request: a retry after a failed start reuses it", async () => {
+    const memo = rememberTasks();
+    const create = vi.fn(async () => task);
+    const req = { cwd: "C:/dev/my-app", name: "fix-login" };
+    await memo.get(req, create);
+    await memo.get({ ...req }, create);
+    expect(create).toHaveBeenCalledTimes(1);
+  });
+
+  it("makes a new worktree for a different request", async () => {
+    const memo = rememberTasks();
+    const create = vi.fn(async () => task);
+    await memo.get({ cwd: "C:/dev/my-app", name: "fix-login" }, create);
+    await memo.get({ cwd: "C:/dev/my-app", name: "fix-logout" }, create);
+    expect(create).toHaveBeenCalledTimes(2);
+  });
+
+  it("forgets the task on Back, so the next create runs the commands that were shown", async () => {
+    const memo = rememberTasks();
+    const create = vi.fn(async () => task);
+    const req = { cwd: "C:/dev/my-app", name: "fix-login" };
+    await memo.get(req, create);
+    memo.forget();
+    await memo.get(req, create);
+    expect(create).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not remember a create that failed", async () => {
+    const memo = rememberTasks();
+    const create = vi.fn().mockRejectedValueOnce(new ApiError(409, "No free name.")).mockResolvedValueOnce(task);
+    const req = { cwd: "C:/dev/my-app", name: "fix-login" };
+    await expect(memo.get(req, create)).rejects.toMatchObject({ message: "No free name." });
+    await expect(memo.get(req, create)).resolves.toBe(task);
+  });
+
+  it("says what is happening: the worktree first, then the program", () => {
+    expect(progressText("creating", "Claude")).toBe("Creating the worktree…");
+    expect(progressText("starting", "Claude")).toBe("Starting Claude…");
   });
 
   it("launchRequest takes the task folder over the project's, and changes nothing without one", () => {

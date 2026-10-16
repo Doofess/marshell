@@ -80,6 +80,31 @@ export async function createThenLaunch<T>(create: () => Promise<Task>, launch: (
   return launch(await create());
 }
 
+/**
+ * The task made for the request being confirmed. If the session then fails to start, trying again must not make a second
+ * worktree; but leaving the confirm view with Back forgets it, because the next plan may show other commands (another free name).
+ */
+export function rememberTasks() {
+  let made: { key: string; task: Task } | null = null;
+  return {
+    async get(req: TaskPlanRequest, create: () => Promise<Task>): Promise<Task> {
+      const key = JSON.stringify(req);
+      if (made?.key === key) return made.task;
+      const task = await create();
+      made = { key, task };
+      return task;
+    },
+    forget() {
+      made = null;
+    },
+  };
+}
+
+/** The one status line of the confirm view while it works: the worktree first, then the program in it. */
+export function progressText(phase: "creating" | "starting", program: string): string {
+  return phase === "creating" ? "Creating the worktree…" : `Starting ${program}…`;
+}
+
 /** What takes focus when the launcher opens: the prompt, where Enter starts. A shell has no prompt, so the Start button (the program chip would open its list). */
 export function initialFocus(root: { querySelector(selector: string): HTMLElement | null }): HTMLElement | null {
   return root.querySelector(".launcher__prompt") ?? root.querySelector(".launcher__start");

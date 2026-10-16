@@ -350,7 +350,7 @@
 .launcher__back:active {
   background: var(--fill-strong);
 }
-.launcher__back:disabled {
+.launcher__back[aria-disabled="true"] {
   opacity: 0.6;
 }
 
@@ -367,7 +367,8 @@
   font-size: var(--text-13);
   overflow-wrap: anywhere;
 }
-.launcher__start:disabled {
+.launcher__start:disabled,
+.launcher__start[aria-disabled="true"] {
   opacity: 0.6;
 }
 .launcher__hint {
@@ -421,7 +422,7 @@
 }
 @media (hover: hover) and (pointer: fine) {
   .launcher__chip:hover,
-  .launcher__back:hover:not(:disabled) {
+  .launcher__back:hover:not([aria-disabled="true"]) {
     background: var(--fill-strong);
   }
   .launcher__start:hover {

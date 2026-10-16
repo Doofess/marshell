@@ -66,6 +66,8 @@ type Props = {
   error?: string;
   /** A launch is in flight: Start is disabled and keeps its label. In the confirm view it is the worktree being made. */
   busy?: boolean;
+  /** The confirm view's one status line while busy: the worktree being made, then the program starting. Default "Creating the worktree…". */
+  busyText?: string;
 };
 
 const CONFIRM_TITLE = "Start a task in a new worktree";
@@ -93,7 +95,7 @@ const cycle = <T,>(all: T[], now: T) => all[(all.indexOf(now) + 1) % all.length]
  * first command. The prompt line is set like the one in every pane (a flat command line), in the vendor's colour for an
  * agent. Presentational: the parent owns the state.
  */
-export function Launcher({ view, onChange, onQuery, onPick, onPrograms, onActive, onPrompt, onStart, onTaskName, onConfirm, onBack, onClose, chips = true, programs = LAUNCH_PROGRAMS, error, busy = false }: Props) {
+export function Launcher({ view, onChange, onQuery, onPick, onPrograms, onActive, onPrompt, onStart, onTaskName, onConfirm, onBack, onClose, chips = true, programs = LAUNCH_PROGRAMS, error, busy = false, busyText = "Creating the worktree…" }: Props) {
   const { choice, projects, query, activeIndex, remembered, nextNumber, taskName, confirm } = view;
   const project = projects.find((p) => p.id === choice.projectId);
   const agentRun = isAgentProgram(choice.program, programs);
@@ -125,23 +127,31 @@ export function Launcher({ view, onChange, onQuery, onPick, onPrograms, onActive
     if (i >= 0) set(i);
   };
 
-  // The confirm view: Enter on the default creates, and focus goes to whichever button can be used (a disabled one cannot hold it).
+  // The confirm view: Enter on the default creates. Focus stays on Create (it is aria-disabled, never `disabled`, while the plan
+  // or the launch is pending, so it keeps focus and an Enter or key repeat does nothing); only a refusal moves it to Back.
   const createButton = useRef<HTMLButtonElement>(null);
   const backButton = useRef<HTMLButtonElement>(null);
   const confirmState = confirm?.state;
   useEffect(() => {
     if (confirmState === undefined) return;
-    (confirmState === "ready" && !busy ? createButton.current : backButton.current)?.focus();
-  }, [confirmState, busy]);
+    (confirmState === "refused" ? backButton.current : createButton.current)?.focus();
+  }, [confirmState]);
+  const canCreate = confirm?.state === "ready" && !busy;
+  const create = () => {
+    if (canCreate) onConfirm?.();
+  };
+  const back = () => {
+    if (!busy) onBack?.();
+  };
 
   const onSheetKey = (e: KeyboardEvent<HTMLDivElement>) => {
     if (confirm) {
       if (e.key === "Escape") {
         e.preventDefault();
-        if (!busy) onBack?.();
+        back();
       } else if (e.key === "Enter" && !e.shiftKey && (e.target as HTMLElement).closest("button") === null) {
         e.preventDefault();
-        if (confirm.state === "ready" && !busy) onConfirm?.();
+        create();
       }
       return;
     }
@@ -195,9 +205,7 @@ export function Launcher({ view, onChange, onQuery, onPick, onPrograms, onActive
           <>
             <h2 className="launcher__title">{CONFIRM_TITLE}</h2>
             {confirm.state === "loading" && (
-              <p className="launcher__pending" role="status">
-                Checking the folder…
-              </p>
+              <p className="launcher__pending">Checking the folder…</p>
             )}
             {confirm.state === "refused" && (
               <p className="launcher__error" role="alert">
@@ -212,14 +220,14 @@ export function Launcher({ view, onChange, onQuery, onPick, onPrograms, onActive
             )}
             {busy && (
               <p className="launcher__pending" role="status">
-                Creating the worktree…
+                {busyText}
               </p>
             )}
             <div className="launcher__actions">
-              <button ref={createButton} type="button" className="launcher__start" disabled={confirm.state !== "ready" || busy} onClick={onConfirm}>
+              <button ref={createButton} type="button" className="launcher__start" aria-disabled={!canCreate || undefined} onClick={create}>
                 Create and start
               </button>
-              <button ref={backButton} type="button" className="launcher__back" disabled={busy} onClick={onBack}>
+              <button ref={backButton} type="button" className="launcher__back" aria-disabled={busy || undefined} onClick={back}>
                 Back
               </button>
               <span className="launcher__hint">

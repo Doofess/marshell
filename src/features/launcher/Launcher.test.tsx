@@ -247,23 +247,37 @@ describe("Launcher: confirm a task", () => {
     expect(out).toContain('role="dialog"');
     expect(out).toContain('aria-label="Start a task in a new worktree"');
   });
-  it("shows the plan's refusal in place of the commands, with Create and start disabled", () => {
+  const unavailable = (label: string) => new RegExp(`<button[^>]*aria-disabled="true"[^>]*>${label}</button>`);
+  it("shows the plan's refusal in place of the commands, with Create and start unavailable", () => {
     const out = h({ state: "refused", reason: "That folder is not a git repository." });
     expect(out).toMatch(/<p class="launcher__error" role="alert">That folder is not a git repository\.<\/p>/);
     expect(out).not.toContain("<ol");
-    expect(out).toMatch(/<button[^>]*disabled=""[^>]*>Create and start<\/button>/);
-    expect(out).not.toMatch(/<button[^>]*disabled=""[^>]*>Back<\/button>/);
+    expect(out).toMatch(unavailable("Create and start"));
+    expect(out).not.toMatch(unavailable("Back"));
   });
-  it("waits for the plan with Create and start disabled", () => {
+  it("waits for the plan with plain text, not a live message, and Create and start unavailable", () => {
     const out = h({ state: "loading" });
-    expect(out).toMatch(/<button[^>]*disabled=""[^>]*>Create and start<\/button>/);
+    expect(out).toMatch(unavailable("Create and start"));
+    expect(out).toMatch(/<p class="launcher__pending">Checking the folder…<\/p>/);
     expect(out).not.toContain("<ol");
   });
-  it("says Creating the worktree… while the create is pending, and disables both buttons", () => {
+  it("never uses the disabled attribute in the confirm view: a disabled button drops focus", () => {
+    for (const out of [h({ state: "loading" }), h({ state: "refused", reason: "x" }), h({ state: "ready", commands: cmds }, { busy: true })]) expect(out).not.toMatch(/<button[^>]*\sdisabled=/);
+  });
+  it("says Creating the worktree… while the create is pending, and makes both buttons unavailable", () => {
     const out = h({ state: "ready", commands: cmds }, { busy: true });
     expect(out).toMatch(/<p[^>]*role="status"[^>]*>Creating the worktree…<\/p>/);
-    expect(out).toMatch(/<button[^>]*disabled=""[^>]*>Create and start<\/button>/);
-    expect(out).toMatch(/<button[^>]*disabled=""[^>]*>Back<\/button>/);
+    expect(out).toMatch(unavailable("Create and start"));
+    expect(out).toMatch(unavailable("Back"));
+  });
+  it("shows the parent's text in the one status line once the worktree exists and the session is starting", () => {
+    const out = h({ state: "ready", commands: cmds }, { busy: true, busyText: "Starting Claude…" });
+    expect(count(out, /role="status"/g)).toBe(1);
+    expect(out).toMatch(/<p[^>]*role="status"[^>]*>Starting Claude…<\/p>/);
+    expect(out).not.toContain("Creating the worktree…");
+  });
+  it("leaves both buttons available when the plan is ready", () => {
+    expect(h({ state: "ready", commands: cmds })).not.toContain("aria-disabled");
   });
   it("shows a create failure once, as an alert, under the buttons", () => {
     const out = h({ state: "ready", commands: cmds }, { error: "Git said: fatal: a branch named 'marshell/x' already exists" });
