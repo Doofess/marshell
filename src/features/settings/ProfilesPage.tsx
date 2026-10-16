@@ -7,7 +7,8 @@ import type { Profile } from "../../generated/Profile";
 import { profiles as profilesApi } from "../../lib/api/profiles";
 import { useDialogFocus } from "../../lib/useDialogFocus";
 import { changeCount, commandRoundTrips, duplicateEnvKeys, forSave, joinCommand, profileKind, splitCommand, type ProfilePatch } from "./profilesDoc";
-import { isDirty, ProfilesStore, type ProfilesState } from "./ProfilesStore";
+import { Switch } from "../../components/Switch/Switch";
+import { isDirty, ProfilesStore, type ProfilesState, type ScriptView } from "./ProfilesStore";
 import { ChangeBar } from "./ChangeBar";
 import { FieldRow } from "./FieldRow";
 import type { SettingField } from "./fields";
@@ -26,6 +27,7 @@ export type ProfilesHandlers = {
   onReset: () => void;
   onSave: () => void;
   onDiscard: () => void;
+  onToggleScript: () => void;
   onClose?: () => void;
 };
 
@@ -100,6 +102,42 @@ function EnvRows({ env, onPatch }: { env: Array<[string, string]>; onPatch: (pat
   );
 }
 
+/** The integration switch, and a read-only look at what it loads: nothing here writes a file or the person's shell profile. */
+function IntegrationRow({ on, script, onPatch, onToggleScript }: { on: boolean; script: ScriptView; onPatch: (patch: ProfilePatch) => void; onToggleScript: () => void }) {
+  const open = script.phase !== "closed";
+  return (
+    <li className="field">
+      <Switch label="Shell integration" checked={on} onChange={(checked) => onPatch({ shell_integration: checked })} />
+      <p className="field__help">Marshell loads a small script of its own when the shell starts, so it can tell when a command runs, how it ended, and where each prompt is. Your shell&apos;s own files are left as they are.</p>
+      <div>
+        <button type="button" className="settings__btn" aria-expanded={open} aria-controls="profile-script" onClick={onToggleScript}>
+          View script
+        </button>
+      </div>
+      {open && (
+        <div id="profile-script" className="profiles__script">
+          {script.phase === "loading" && <p className="profiles__status">Loading the script…</p>}
+          {script.phase === "failed" && <p className="field__why">Couldn&apos;t load the script.</p>}
+          {script.phase === "ready" && !script.info.applies && <p className="field__why">{script.info.reason}</p>}
+          {script.phase === "ready" && script.info.applies && (
+            <>
+              {script.info.script_path && (
+                <p className="field__help">
+                  <code className="profiles__path" dir="ltr">
+                    {script.info.script_path}
+                  </code>
+                </p>
+              )}
+              <pre className="profiles__script-text" tabIndex={0} aria-label="Integration script" dir="ltr">{script.info.script}</pre>
+            </>
+          )}
+        </div>
+      )}
+      <p className="field__applies">Applies to new sessions.</p>
+    </li>
+  );
+}
+
 const KIND_NOTE = {
   custom: "A profile you added.",
   detected: "Found on this machine. It can't be deleted: detection would bring it back.",
@@ -161,6 +199,7 @@ export function ProfilesPageView({ state, handlers, level = 2 }: { state: Profil
               <CommandRow command={selected.command} onPatch={handlers.onPatch} />
               <FieldRow field={FOLDER} value={selected.cwd ?? ""} onChange={(cwd) => handlers.onPatch({ cwd: cwd === "" ? null : cwd })} />
               <EnvRows env={selected.env} onPatch={handlers.onPatch} />
+              <IntegrationRow on={selected.shell_integration} script={state.script} onPatch={handlers.onPatch} onToggleScript={handlers.onToggleScript} />
             </ul>
             <div className="profiles__actions">
               <button type="button" className="settings__btn" disabled={selected.id === draft.default_id} onClick={handlers.onMakeDefault}>
@@ -229,6 +268,7 @@ export function ProfilesPage({ endpoint, onClose, onNotice, onCanClose }: { endp
       onReset: () => store.reset(),
       onSave: () => void store.save(),
       onDiscard: () => store.discard(),
+      onToggleScript: () => void store.toggleScript(),
       onClose,
     }),
     [store, onClose],

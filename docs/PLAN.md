@@ -735,7 +735,7 @@ Decisions from the 2026-10-10 coverage audit (`docs/superpowers/plan-coverage-au
 2. **Tabs + sidebar + shell integration.**
    - Scope:
      - shell detection and profiles, the launcher, profile settings pages
-     - app-owned init scripts (OSC 7/133, PSReadLine and prompt options) and "make permanent"
+     - app-owned init scripts (OSC 133 prompt and command marks; OSC 7 cwd). "Make permanent" moves to phase 3 with the config safety core; PSReadLine and prompt options come later
      - themes, accent, high-contrast and large-text modes, theme import (Windows Terminal, iTerm2, VS Code)
      - **terminal theme** (below): follow-app default, per-profile override, live switch, contrast protection, background-colour answers
      - split view, clickable paths, layout restore, F2 rename, reopen a closed session, drag reorder and project grouping, focus mode and rail

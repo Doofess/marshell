@@ -37,7 +37,13 @@ export const commandRoundTrips = (argv: string[]): boolean => JSON.stringify(spl
 
 /** Two profiles with the same values; the server's `detected` flag does not count. */
 const sameValues = (a: Profile, b: Profile): boolean =>
-  a.id === b.id && a.name === b.name && a.family === b.family && a.cwd === b.cwd && JSON.stringify(a.command) === JSON.stringify(b.command) && JSON.stringify(a.env) === JSON.stringify(b.env);
+  a.id === b.id &&
+  a.name === b.name &&
+  a.family === b.family &&
+  a.cwd === b.cwd &&
+  a.shell_integration === b.shell_integration &&
+  JSON.stringify(a.command) === JSON.stringify(b.command) &&
+  JSON.stringify(a.env) === JSON.stringify(b.env);
 
 export type ProfileKind = "custom" | "detected" | "edited";
 
@@ -51,7 +57,7 @@ export function profileKind(p: Profile, detected: Profile[]): ProfileKind {
   return sameValues(p, original) ? "detected" : "edited";
 }
 
-export type ProfilePatch = Partial<Pick<Profile, "name" | "command" | "cwd" | "env">>;
+export type ProfilePatch = Partial<Pick<Profile, "name" | "command" | "cwd" | "env" | "shell_integration">>;
 
 export const updateProfile = (doc: ProfilesDoc, id: string, patch: ProfilePatch): ProfilesDoc => ({
   ...doc,

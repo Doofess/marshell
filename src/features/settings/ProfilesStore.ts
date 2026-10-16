@@ -1,10 +1,14 @@
 import type { Endpoint } from "../../generated/Endpoint";
+import type { IntegrationInfo } from "../../generated/IntegrationInfo";
 import type { Profile } from "../../generated/Profile";
 import type { ProfilesDoc } from "../../generated/ProfilesDoc";
 import type { profiles } from "../../lib/api/profiles";
 import { changeCount, deleteProfile, duplicateProfile, forSave, makeDefault, resetProfile, updateProfile, type ProfilePatch } from "./profilesDoc";
 
-type Api = Pick<typeof profiles, "get" | "detected" | "put">;
+type Api = Pick<typeof profiles, "get" | "detected" | "put" | "integration">;
+
+/** The "View script" disclosure of the selected profile: closed, asking the core, its answer, or a failed ask. */
+export type ScriptView = { phase: "closed" } | { phase: "loading" } | { phase: "ready"; info: IntegrationInfo } | { phase: "failed" };
 
 export type ProfilesState = {
   phase: "loading" | "ready" | "failed";
@@ -22,9 +26,11 @@ export type ProfilesState = {
   error: string | null;
   /** The last save worked and nothing has changed since. */
   justSaved: boolean;
+  script: ScriptView;
 };
 
-const INITIAL: ProfilesState = { phase: "loading", loadError: null, saved: null, draft: null, detected: [], selectedId: "", saving: false, error: null, justSaved: false };
+const CLOSED: ScriptView = { phase: "closed" };
+const INITIAL: ProfilesState = { phase: "loading", loadError: null, saved: null, draft: null, detected: [], selectedId: "", saving: false, error: null, justSaved: false, script: CLOSED };
 
 const reason = (e: unknown): string => (e instanceof Error ? e.message : String(e));
 
@@ -56,9 +62,9 @@ export class ProfilesStore {
     this.listeners.forEach((l) => l());
   }
 
-  /** Edits the draft; any earlier refusal or "Saved." is stale after that. */
+  /** Edits the draft; any earlier refusal, "Saved." or script shown is stale after that. */
   private edit(draft: ProfilesDoc, selectedId = this.state.selectedId): void {
-    this.set({ draft, selectedId, error: null, justSaved: false });
+    this.set({ draft, selectedId, error: null, justSaved: false, script: CLOSED });
   }
 
   async load(): Promise<void> {
@@ -72,7 +78,23 @@ export class ProfilesStore {
   }
 
   select(id: string): void {
-    this.set({ selectedId: id });
+    this.set({ selectedId: id, script: CLOSED });
+  }
+
+  /** Opens "View script" for the selected profile as edited (asking the core what integration would load), or closes it. */
+  async toggleScript(): Promise<void> {
+    const { draft, selectedId, script } = this.state;
+    const profile = draft?.profiles.find((p) => p.id === selectedId);
+    if (script.phase !== "closed" || !profile) return this.set({ script: CLOSED });
+    this.set({ script: { phase: "loading" } });
+    let next: ScriptView;
+    try {
+      next = { phase: "ready", info: await this.api.integration(this.endpoint, profile) };
+    } catch {
+      next = { phase: "failed" };
+    }
+    // Only if the view still waits for this answer: an edit, another profile or Close since then leaves it alone.
+    if (this.state.script.phase === "loading" && this.state.selectedId === selectedId && this.state.draft === draft) this.set({ script: next });
   }
 
   /** Edits the selected profile. */
@@ -114,7 +136,7 @@ export class ProfilesStore {
   discard(): void {
     const { saved, selectedId } = this.state;
     if (!saved) return;
-    this.set({ draft: saved, selectedId: saved.profiles.some((p) => p.id === selectedId) ? selectedId : (saved.profiles[0]?.id ?? ""), error: null, justSaved: false });
+    this.set({ draft: saved, selectedId: saved.profiles.some((p) => p.id === selectedId) ? selectedId : (saved.profiles[0]?.id ?? ""), error: null, justSaved: false, script: CLOSED });
   }
 
   /** Sends the draft. A refusal (400 for a document that fails validation, 500 for a file the core cannot write) stays as text in `error`. */

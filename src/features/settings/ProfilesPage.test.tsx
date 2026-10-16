@@ -1,6 +1,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import type { Endpoint } from "../../generated/Endpoint";
+import type { IntegrationInfo } from "../../generated/IntegrationInfo";
 import type { Profile } from "../../generated/Profile";
 import type { ProfilesDoc } from "../../generated/ProfilesDoc";
 import { ApiError } from "../../lib/api/client";
@@ -13,14 +14,17 @@ const profile = (id: string, patch: Partial<Profile> = {}): Profile => ({ id, na
 const FOUND: Profile[] = [profile("pwsh", { detected: true }), profile("cmd", { detected: true })];
 const DOC: ProfilesDoc = { profiles: FOUND, default_id: "pwsh" };
 
-function setup(over: { put?: (ep: Endpoint, doc: ProfilesDoc) => Promise<ProfilesDoc>; doc?: ProfilesDoc } = {}) {
+const SCRIPT: IntegrationInfo = { applies: true, reason: null, script_path: "C:\\Users\\me\\.marshell\\shell\\marshell.ps1", script: "function prompt { }" };
+
+function setup(over: { put?: (ep: Endpoint, doc: ProfilesDoc) => Promise<ProfilesDoc>; doc?: ProfilesDoc; integration?: (ep: Endpoint, p: Profile) => Promise<IntegrationInfo> } = {}) {
   const put = vi.fn(over.put ?? (async (_: Endpoint, doc: ProfilesDoc) => doc));
-  const api = { get: vi.fn(async () => over.doc ?? DOC), detected: vi.fn(async () => FOUND), put };
-  return { api, put, store: new ProfilesStore(api, ep) };
+  const integration = vi.fn(over.integration ?? (async () => SCRIPT));
+  const api = { get: vi.fn(async () => over.doc ?? DOC), detected: vi.fn(async () => FOUND), put, integration };
+  return { api, put, integration, store: new ProfilesStore(api, ep) };
 }
 
 const noop = () => {};
-const handlers: ProfilesHandlers = { onSelect: noop, onPatch: noop, onAdd: noop, onRemove: noop, onMakeDefault: noop, onReset: noop, onSave: noop, onDiscard: noop };
+const handlers: ProfilesHandlers = { onSelect: noop, onPatch: noop, onAdd: noop, onRemove: noop, onMakeDefault: noop, onReset: noop, onSave: noop, onDiscard: noop, onToggleScript: noop };
 const html = (store: ProfilesStore) => renderToStaticMarkup(<ProfilesPageView state={store.getState()} handlers={handlers} />);
 
 describe("ProfilesPage", () => {
@@ -147,7 +151,7 @@ describe("ProfilesPage: the rest of the page", () => {
   });
 
   it("says why it could not load", async () => {
-    const api = { get: vi.fn(async () => Promise.reject(new Error("offline"))), detected: vi.fn(async () => []), put: vi.fn() };
+    const api = { get: vi.fn(async () => Promise.reject(new Error("offline"))), detected: vi.fn(async () => []), put: vi.fn(), integration: vi.fn() };
     const store = new ProfilesStore(api, ep);
     await store.load();
     expect(html(store)).toContain("Couldn&#x27;t load the profiles: offline");
@@ -195,6 +199,54 @@ describe("ProfilesPage: leaving with unsaved edits", () => {
     expect(canClose(store.getState())).toBe(false);
     store.discard();
     expect(canClose(store.getState())).toBe(true);
+  });
+});
+
+describe("ProfilesPage: shell integration", () => {
+  it("shows a Shell integration switch that turns it off in the saved doc", async () => {
+    const { store, put } = setup();
+    await store.load();
+    expect(html(store)).toMatch(/<input[^>]*role="switch"[^>]*checked=""[^>]*>[\s\S]*?Shell integration/);
+    store.patch({ shell_integration: false });
+    expect(html(store)).not.toMatch(/<input[^>]*role="switch"[^>]*checked=""/);
+    await store.save();
+    expect(put.mock.calls[0]![1].profiles[0]!.shell_integration).toBe(false);
+  });
+
+  it("View script asks the core about the edited profile and shows the path and the script, read-only", async () => {
+    const { store, integration } = setup();
+    await store.load();
+    expect(html(store)).toMatch(/<button[^>]*aria-expanded="false"[^>]*>View script<\/button>/);
+    store.patch({ name: "Edited pwsh" });
+    await store.toggleScript();
+    expect(integration).toHaveBeenCalledTimes(1);
+    expect(integration.mock.calls[0]![1]).toMatchObject({ id: "pwsh", name: "Edited pwsh" });
+    const h = html(store);
+    expect(h).toMatch(/<button[^>]*aria-expanded="true"[^>]*>View script<\/button>/);
+    expect(h).toContain("C:\\Users\\me\\.marshell\\shell\\marshell.ps1");
+    expect(h).toMatch(/<pre[^>]*>function prompt \{ \}<\/pre>/);
+    // Closing it hides the script; another profile starts closed.
+    await store.toggleScript();
+    expect(html(store)).not.toContain("<pre");
+    await store.toggleScript();
+    store.select("cmd");
+    expect(html(store)).not.toContain("<pre");
+  });
+
+  it("says why when integration doesn't apply", async () => {
+    const { store } = setup({ integration: async () => ({ applies: false, reason: "This shell has no integration script yet.", script_path: null, script: null }) });
+    await store.load();
+    await store.toggleScript();
+    const h = html(store);
+    expect(h).toContain("This shell has no integration script yet.");
+    expect(h).not.toContain("<pre");
+  });
+
+  it("a failed fetch says so and does not throw", async () => {
+    const { store } = setup({ integration: async () => Promise.reject(new Error("offline")) });
+    await store.load();
+    await expect(store.toggleScript()).resolves.toBeUndefined();
+    expect(html(store)).toContain("Couldn&#x27;t load the script.");
   });
 });
 

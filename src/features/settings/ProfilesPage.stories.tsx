@@ -32,12 +32,13 @@ const state = (over: Partial<ProfilesState> = {}): ProfilesState => ({
   saving: false,
   error: null,
   justSaved: false,
+  script: { phase: "closed" },
   ...over,
 });
 const withDoc = (doc: ProfilesDoc, over: Partial<ProfilesState> = {}) => state({ saved: doc, draft: doc, ...over });
 
 const noop = () => {};
-const handlers: ProfilesHandlers = { onSelect: noop, onPatch: noop, onAdd: noop, onRemove: noop, onMakeDefault: noop, onReset: noop, onSave: noop, onDiscard: noop, onClose: noop };
+const handlers: ProfilesHandlers = { onSelect: noop, onPatch: noop, onAdd: noop, onRemove: noop, onMakeDefault: noop, onReset: noop, onSave: noop, onDiscard: noop, onToggleScript: noop, onClose: noop };
 const show = (label: string, s: ProfilesState, height = 760) => (
   <ThemePair label={label} stack>
     <div style={{ inlineSize: 960, maxInlineSize: "100%", blockSize: height }}>
@@ -57,6 +58,20 @@ export const RefusedSave: StoryObj = {
 };
 export const FileCannotBeWritten: StoryObj = {
   render: () => show("The profiles file cannot be written: the core's message shows as it is", state({ draft: edited, selectedId: "cmd", error: "profiles.json was written by a newer Marshell (version 9)" })),
+};
+const SCRIPT = [
+  "# Marshell shell integration for PowerShell. Loaded by Marshell; your $PROFILE is not changed.",
+  "$global:__marshellLastHistory = -1",
+  "function global:prompt {",
+  '  $esc = [char]27',
+  '  "$esc]133;D;$global:LASTEXITCODE$([char]7)$esc]133;A$([char]7)" + (__marshell_original_prompt)',
+  "}",
+].join("\n");
+export const ScriptShown: StoryObj = {
+  render: () => show("View script: where it lives and what it does, read-only", state({ script: { phase: "ready", info: { applies: true, reason: null, script_path: "C:\\Users\\me\\.marshell\\shell\\marshell.ps1", script: SCRIPT } } }), 1100),
+};
+export const ScriptNotApplicable: StoryObj = {
+  render: () => show("Integration off for this shell: the reason, no script", state({ selectedId: "cmd", script: { phase: "ready", info: { applies: false, reason: "Shell integration is off for this profile.", script_path: null, script: null } } }), 1000),
 };
 export const Saved: StoryObj = { render: () => show("Saved: the bar is gone and the page says so", state({ justSaved: true })) };
 export const NotLoaded: StoryObj = { render: () => show("The profiles didn't load", state({ phase: "failed", loadError: "Failed to fetch", saved: null, draft: null, selectedId: "" }), 420) };
