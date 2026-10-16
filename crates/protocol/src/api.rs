@@ -207,7 +207,7 @@ pub struct LauncherChoice {
 }
 
 /// The whole of layout.json.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize, TS)]
 #[ts(export)]
 pub struct LayoutDoc {
     pub tabs: Vec<SavedTab>,
@@ -481,7 +481,10 @@ mod tests {
 
     #[test]
     fn ended_state_serializes_as_kind_ended() {
-        assert_eq!(serde_json::to_string(&SessionState::Ended).unwrap(), r#"{"kind":"ended"}"#);
+        assert_eq!(
+            serde_json::to_string(&SessionState::Ended).unwrap(),
+            r#"{"kind":"ended"}"#
+        );
     }
 
     #[test]

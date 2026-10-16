@@ -1,6 +1,7 @@
 mod events;
 pub mod frames;
 mod guard;
+mod layout;
 mod profiles;
 mod projects;
 mod pty_ws;
@@ -11,9 +12,9 @@ use crate::profiles::detect::{Probe, detect_profiles};
 use crate::registry::Registry;
 use crate::{auth, paths};
 use axum::http::{HeaderValue, Method, header};
-use axum::routing::{get, patch, post};
+use axum::routing::{get, patch, post, put};
 use axum::{Json, Router};
-use marshell_protocol::api::{Endpoint, Health, Platform, Profile, ProfilesDoc, Settings};
+use marshell_protocol::api::{Endpoint, Health, LayoutDoc, Platform, Profile, ProfilesDoc, Settings};
 use marshell_protocol::brand;
 use std::collections::HashMap;
 use std::net::Ipv4Addr;
@@ -48,6 +49,8 @@ struct Inner {
     profiles: Mutex<ProfilesDoc>,
     /// The contents of `settings.json`, or the defaults.
     settings: Mutex<Settings>,
+    /// The contents of `layout.json`, or the defaults.
+    layout: Mutex<LayoutDoc>,
     /// Open and recently closed sessions. Shared with each session's exit callback.
     registry: Arc<Registry>,
     // Kept here so every handler reaches it through one State.
@@ -60,6 +63,7 @@ impl AppState {
     pub fn new(token: String, port: u16, allowed_origins: Vec<String>, home: PathBuf, detected: Vec<Profile>) -> Self {
         let profiles = crate::profiles::store::load(&home, detected.clone());
         let settings = crate::settings::load(&home);
+        let layout = crate::layout::load(&home);
         let shell_dir = match crate::shell::install(&home) {
             Ok(dir) => Some(dir),
             Err(err) => {
@@ -76,6 +80,7 @@ impl AppState {
             detected,
             profiles: Mutex::new(profiles),
             settings: Mutex::new(settings),
+            layout: Mutex::new(layout),
             registry: Arc::new(Registry::new()),
             sessions: Mutex::new(HashMap::new()),
             agent_on_path: crate::profiles::detect::command_on_path,
@@ -125,6 +130,8 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/profiles/detected", get(profiles::detected))
         .route("/v1/profiles/integration", post(profiles::integration))
         .route("/v1/settings", get(settings::get).put(settings::put))
+        .route("/v1/layout", get(layout::get))
+        .route("/v1/layout/view", put(layout::put_view))
         .route("/v1/import/windows-terminal", get(settings::windows_terminal))
         .route("/v1/projects", get(projects::get))
         .route("/v1/sessions", get(sessions::list).post(sessions::create))

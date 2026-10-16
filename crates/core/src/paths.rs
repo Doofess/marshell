@@ -20,6 +20,11 @@ pub fn settings_file(home: &Path) -> PathBuf {
     home.join("settings.json")
 }
 
+/// `<home>/layout.json`: the tabs that were open and how the window was laid out.
+pub fn layout_file(home: &Path) -> PathBuf {
+    home.join("layout.json")
+}
+
 /// `<home>/logs/crash.log`: one line per panic.
 pub fn crash_log(home: &Path) -> PathBuf {
     home.join("logs").join("crash.log")
