@@ -81,11 +81,12 @@ pub struct TaskPlan { pub name: String, pub branch: String, pub base_branch: Str
 pub struct ChangedFile { pub path: String, pub status: String }           // "added" | "modified" | "deleted" | "renamed" | "untracked"
 pub struct TaskChanges { pub files: Vec<ChangedFile>, pub diff: String, pub truncated: bool,
                          pub ahead: u32, pub uncommitted: bool }
-pub struct MergeRequest { pub message: String, pub remove: bool }
+pub struct MergeRequest { pub message: String, pub remove: bool, pub commands: Vec<String> }  // commands = what the user saw; merge refuses on mismatch
 pub struct MergePlan { pub commands: Vec<String>, pub blocker: Option<String> }
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum MergeOutcome { Merged { removed: bool }, Conflict { files: Vec<String> }, Failed { reason: String } }
 pub struct RemovePlan { pub commands: Vec<String>, pub warnings: Vec<String>, pub sessions: u32 }
+pub struct RemoveRequest { pub commands: Vec<String> }                 // what the user saw; remove refuses on mismatch
 pub struct InputRequest { pub text: String }
 // SessionInfo gains: pub project: String   // the git repo root of cwd, or cwd itself outside git
 ```
@@ -102,7 +103,7 @@ pub struct InputRequest { pub text: String }
 | `POST /v1/tasks/{id}/merge` | `MergeRequest` → `MergeOutcome` | 4 |
 | `POST /v1/sessions/{tab}/input` | `InputRequest` → 204 · 400 when the text has `\r`/`\n` · 404 | 4 |
 | `POST /v1/tasks/{id}/remove/plan` | → `RemovePlan` | 5 |
-| `POST /v1/tasks/{id}/remove` | → 204 · 409 `{reason}` | 5 |
+| `POST /v1/tasks/{id}/remove` | `RemoveRequest` → 204 · 409 `{reason}` | 5 |
 
 The 409 body reuses the existing `ResumeError { reason }` shape. Its name stays as it is.
 
