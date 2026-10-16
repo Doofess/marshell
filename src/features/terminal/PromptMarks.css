@@ -1,0 +1,35 @@
+/* Exit-code marks. xterm places the decoration over the prompt's first cell; the mark itself is drawn in the gutter
+   (xterm's padding) to its left, so it never covers the prompt. A finished command is a thin tick, a failed one a
+   wedge: the two differ by shape, and colour only adds to it. */
+.prompt-mark {
+  pointer-events: auto;
+}
+
+.prompt-mark::before {
+  content: "";
+  position: absolute;
+  inset-inline-start: calc(-1 * var(--space-2) + 2px);
+  inset-block: 25%;
+  inline-size: 2px;
+  background: var(--text-3);
+  opacity: 0.6;
+}
+
+.prompt-mark--failed::before {
+  inset-block: 20%;
+  inline-size: 5px;
+  background: var(--error);
+  opacity: 1;
+  clip-path: polygon(0 0, 100% 50%, 0 100%);
+}
+
+@media (forced-colors: active) {
+  .prompt-mark::before {
+    forced-color-adjust: none;
+    background: GrayText;
+    opacity: 1;
+  }
+  .prompt-mark--failed::before {
+    background: CanvasText;
+  }
+}

@@ -27,7 +27,8 @@ export function lastSegment(path: string): string {
 
 /**
  * The sidebar row for one open session the core lists. Before the hooks arrive (phase 3) the core knows nothing about
- * what an agent is doing, so a running agent is "limited" and a running shell is "idle": never "working".
+ * what an agent is doing, so a running agent is "limited". A shell row's status comes from its prompt marks: "working"
+ * while a command runs, and "idle" at the prompt (or before any mark), naming a failed last command.
  */
 export function toRow(info: SessionInfo, profiles: Profile[]): RowModel {
   const profile = profiles.find((p) => p.id === info.profile_id);
@@ -35,5 +36,10 @@ export function toRow(info: SessionInfo, profiles: Profile[]): RowModel {
   const base = { id: info.tab_id, number: info.number, name: info.name, project: lastSegment(info.cwd), agent };
   if (info.state.kind === "exited") return { ...base, status: "ended", phrase: `Exited with code ${info.state.code}` };
   if (info.agent !== null) return { ...base, status: "limited", phrase: "Status arrives with hooks" };
+  const command = info.command;
+  if (command.kind === "running") return { ...base, status: "working", phrase: "Running a command" };
+  if (command.kind === "prompt" && command.last_exit !== null && command.last_exit !== 0) {
+    return { ...base, status: "idle", phrase: `Last command failed (exit ${command.last_exit})` };
+  }
   return { ...base, status: "idle", phrase: "" };
 }

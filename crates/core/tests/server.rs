@@ -8,8 +8,12 @@ const PORT: u16 = 5555;
 const ORIGIN: &str = "http://tauri.localhost";
 
 fn app() -> axum::Router {
-    // Tests that call this never touch the disk, so the home folder does not need to exist.
-    app_in(std::path::Path::new("no-such-marshell-home"))
+    app_in(&temp_home())
+}
+
+/// A home of its own that outlives the router. The core installs its shell scripts there at start.
+fn temp_home() -> std::path::PathBuf {
+    tempfile::tempdir().unwrap().keep()
 }
 
 fn app_in(home: &std::path::Path) -> axum::Router {
@@ -22,6 +26,14 @@ fn app_in(home: &std::path::Path) -> axum::Router {
     ))
 }
 
+#[test]
+fn test_apps_write_nothing_into_the_crate() {
+    let _ = app();
+    let _ = sessions_app();
+    // The core installs its shell scripts into the home at start; a relative home put them in this crate.
+    assert!(!std::path::Path::new("no-such-marshell-home").exists());
+}
+
 fn detected_profile() -> marshell_protocol::api::Profile {
     marshell_protocol::api::Profile {
         id: "cmd".into(),
@@ -30,6 +42,7 @@ fn detected_profile() -> marshell_protocol::api::Profile {
         family: marshell_protocol::api::ShellFamily::Cmd,
         cwd: None,
         env: Vec::new(),
+        shell_integration: true,
         detected: true,
     }
 }
@@ -320,6 +333,7 @@ fn sleeper_profile() -> marshell_protocol::api::Profile {
         family: marshell_protocol::api::ShellFamily::Posix,
         cwd: None,
         env: Vec::new(),
+        shell_integration: true,
         detected: true,
     }
 }
@@ -335,7 +349,7 @@ fn sessions_app_with(agent_on_path: fn(&str) -> bool) -> axum::Router {
             TOKEN.into(),
             PORT,
             vec![ORIGIN.into()],
-            std::path::PathBuf::from("no-such-marshell-home"),
+            temp_home(),
             vec![sleeper_profile()],
         )
         .with_agent_check(agent_on_path),

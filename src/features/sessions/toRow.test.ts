@@ -3,7 +3,7 @@ import type { Profile } from "../../generated/Profile";
 import type { SessionInfo } from "../../generated/SessionInfo";
 import { toRow } from "./toRow";
 
-const profile = (id: string, family: Profile["family"]): Profile => ({ id, name: id, command: [id], family, cwd: null, env: [], detected: true });
+const profile = (id: string, family: Profile["family"]): Profile => ({ id, name: id, command: [id], family, cwd: null, env: [], shell_integration: true, detected: true });
 const PROFILES: Profile[] = [
   profile("pwsh", "power_shell"),
   profile("cmd", "cmd"),
@@ -19,6 +19,7 @@ const info = (patch: Partial<SessionInfo> = {}): SessionInfo => ({
   profile_id: "pwsh",
   cwd: "C:\\dev\\my-app",
   state: { kind: "running" },
+  command: { kind: "unknown" },
   ...patch,
 });
 
@@ -66,5 +67,35 @@ describe("toRow", () => {
     const row = toRow(info({ tab_id: "abc", number: 4, name: "api", cwd: "C:\\dev\\my-app\\" }), PROFILES);
     expect(row).toMatchObject({ id: "abc", number: 4, name: "api", project: "my-app" });
     expect(toRow(info({ cwd: "/home/me/proj" }), PROFILES).project).toBe("proj");
+  });
+
+  describe("shell command state", () => {
+    const row = (command: SessionInfo["command"]) => toRow(info({ command }), PROFILES);
+
+    it("before any mark the shell is idle with no phrase", () => {
+      expect(row({ kind: "unknown" })).toMatchObject({ status: "idle", phrase: "" });
+    });
+
+    it("a running command is working", () => {
+      expect(row({ kind: "running" })).toMatchObject({ status: "working", phrase: "Running a command" });
+    });
+
+    it("a failed last command is idle with the exit code", () => {
+      expect(row({ kind: "prompt", last_exit: 2 })).toMatchObject({ status: "idle", phrase: "Last command failed (exit 2)" });
+    });
+
+    it("a prompt after success or with no code is idle with no phrase", () => {
+      expect(row({ kind: "prompt", last_exit: 0 })).toMatchObject({ status: "idle", phrase: "" });
+      expect(row({ kind: "prompt", last_exit: null })).toMatchObject({ status: "idle", phrase: "" });
+    });
+
+    it("an exited shell is ended whatever its command state", () => {
+      const ended = toRow(info({ state: { kind: "exited", code: 0 }, command: { kind: "running" } }), PROFILES);
+      expect(ended).toMatchObject({ status: "ended", phrase: "Exited with code 0" });
+    });
+
+    it("an agent session ignores command state", () => {
+      expect(toRow(info({ agent: "claude", command: { kind: "running" } }), PROFILES).status).toBe("limited");
+    });
   });
 });

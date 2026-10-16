@@ -38,6 +38,8 @@ struct Resolved {
     argv: Vec<String>,
     env: Vec<(String, String)>,
     cwd: Option<String>,
+    /// Shell integration is on, so the output carries prompt marks.
+    marks: bool,
 }
 
 /// Finds the profile (the default when `profile_id` is None) and builds the argv for the agent.
@@ -55,14 +57,27 @@ fn resolve(
     };
     match (profile, profile_id) {
         (Some(p), _) => {
-            let argv = launch_argv(&p, agent, prompt).map_err(|msg| (StatusCode::BAD_REQUEST, msg))?;
+            let mut argv = launch_argv(&p, agent, prompt).map_err(|msg| (StatusCode::BAD_REQUEST, msg))?;
+            let mut env = p.env.clone();
+            let mut marks = false;
+            // Shell integration is for a plain shell; an agent session runs the agent instead.
+            if agent.is_none()
+                && let Some(dir) = &st.0.shell_dir
+                && let Ok(applied) = crate::shell::integrate(&p, dir, &|k| std::env::var(k).ok())
+            {
+                argv = applied.argv;
+                // After the profile's env, so ours win.
+                env.extend(applied.env);
+                marks = true;
+            }
             Ok(Resolved {
                 profile_id: p.id,
                 profile_name: p.name,
                 family: p.family,
                 argv,
-                env: p.env,
+                env,
                 cwd: p.cwd,
+                marks,
             })
         }
         // A reopened session that started from an explicit argv has no argv to restore.
@@ -82,6 +97,7 @@ fn custom(argv: Vec<String>) -> Resolved {
         argv,
         env: Vec::new(),
         cwd: None,
+        marks: false,
     }
 }
 
@@ -140,6 +156,13 @@ async fn start_session(
     ]);
     let registry = st.0.registry.clone();
     let exited_tab = tab_id.clone();
+    let on_mark: Option<crate::pty::MarkCallback> = if run.marks {
+        let registry = st.0.registry.clone();
+        let tab = tab_id.clone();
+        Some(Box::new(move |mark| registry.mark(&tab, mark)))
+    } else {
+        None
+    };
     // `spec` takes the cwd; the closure below records the same folder.
     let marshell_home = st.0.home.clone();
     let project = cwd.clone();
@@ -150,6 +173,7 @@ async fn start_session(
         cols: size.0,
         rows: size.1,
         on_exit: Some(Box::new(move |code| registry.mark_exited(&exited_tab, code))),
+        on_mark,
     };
     let id = tab_id.clone();
     // Spawning touches the OS (process creation) and recording writes a file:

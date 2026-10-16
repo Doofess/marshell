@@ -10,6 +10,8 @@ import { PtySocket } from "../../lib/api/ptySocket";
 import { LatencyMeter } from "../perf/latency";
 import { PerfOverlay } from "../perf/PerfOverlay";
 import { ENDED_LINE, FAILED_LINE, SESSION_ENDED } from "./coreRestart";
+import { jumpFrom, promptTarget, trackPrompts, type Prompt } from "./promptMarks";
+import "./PromptMarks.css";
 import { loadRenderer, type RendererKind } from "./renderer";
 import { appScheme, resolveScheme, terminalOptions } from "./terminalTheme";
 
@@ -32,10 +34,14 @@ type Props = {
   focusToken?: number;
   /** False while the terminal is kept mounted but hidden behind another session's. It fits and takes focus when this turns true. Default true. */
   visible?: boolean;
+  /** Each new token scrolls once to the previous (-1) or next (1) shell prompt. */
+  promptJump?: { token: number; by: -1 | 1 };
+  /** Hears where a prompt jump landed (1-based index, count, the exit code of that prompt's command), or null when there was no prompt that way. */
+  onPromptJump?: (result: { index: number; total: number; exit: number | null } | null) => void;
 };
 
 /** One session's terminal. */
-export function TerminalView({ endpoint, tabId, placeholder, onOutput, onSize, autoFocus = true, focusToken = 0, visible = true }: Props) {
+export function TerminalView({ endpoint, tabId, placeholder, onOutput, onSize, autoFocus = true, focusToken = 0, visible = true, promptJump, onPromptJump }: Props) {
   const host = useRef<HTMLDivElement>(null);
   const meter = useMemo(() => new LatencyMeter(), []);
   const [renderer, setRenderer] = useState<RendererKind>("dom");
@@ -48,6 +54,11 @@ export function TerminalView({ endpoint, tabId, placeholder, onOutput, onSize, a
   outputRef.current = onOutput;
   const termRef = useRef<Terminal | null>(null);
   const fitRef = useRef<FitAddon | null>(null);
+  const promptsRef = useRef<Prompt[]>([]);
+  const jumpRef = useRef(onPromptJump);
+  jumpRef.current = onPromptJump;
+  const lastJump = useRef<number | null>(null);
+  const landedRef = useRef<number | null>(null);
 
   useEffect(() => {
     const el = host.current;
@@ -72,6 +83,10 @@ export function TerminalView({ endpoint, tabId, placeholder, onOutput, onSize, a
       return true;
     });
 
+    // Shell integration marks (OSC 133): remember each prompt's line, and mark a finished command's exit code beside it.
+    const tracker = trackPrompts(term);
+    promptsRef.current = tracker.prompts;
+
     const socket = new PtySocket(endpoint, tabId, {
       onOutput: (seq, bytes) => {
         if (bytes.length > 0) {
@@ -86,6 +101,8 @@ export function TerminalView({ endpoint, tabId, placeholder, onOutput, onSize, a
           outputRef.current?.();
         }
         term.reset();
+        tracker.reset();
+        landedRef.current = null;
         term.write(screen, () => socket.processed(seq));
       },
       onExit: (code) => term.write(`\r\n\x1b[2mProcess exited with code ${code}. ${SESSION_ENDED}\x1b[0m\r\n`),
@@ -112,6 +129,7 @@ export function TerminalView({ endpoint, tabId, placeholder, onOutput, onSize, a
         sizeRef.current?.(cols, rows);
       }),
       term.onWriteParsed(() => meter.markOutput()),
+      tracker,
     ];
 
     let frame = 0;
@@ -155,6 +173,26 @@ export function TerminalView({ endpoint, tabId, placeholder, onOutput, onSize, a
     fitRef.current?.fit();
     if (autoFocus) termRef.current?.focus();
   }, [autoFocus, visible, endpoint, tabId, focusToken]);
+
+  useEffect(() => {
+    if (!promptJump || promptJump.token === lastJump.current) return;
+    lastJump.current = promptJump.token;
+    const term = termRef.current;
+    if (!term) return;
+    const live = promptsRef.current.filter((p) => p.marker.line >= 0);
+    const buffer = term.buffer.active;
+    const from = jumpFrom(landedRef.current, buffer.baseY, buffer.viewportY);
+    const target = promptTarget(
+      live.map((p) => p.marker.line),
+      from,
+      promptJump.by,
+    );
+    if (target === null) return jumpRef.current?.(null);
+    landedRef.current = target;
+    term.scrollToLine(target);
+    const index = live.findIndex((p) => p.marker.line === target);
+    jumpRef.current?.({ index: index + 1, total: live.length, exit: live[index]?.exit ?? null });
+  }, [promptJump]);
 
   return (
     <>

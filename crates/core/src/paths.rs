@@ -20,6 +20,11 @@ pub fn crash_log(home: &Path) -> PathBuf {
     home.join("logs").join("crash.log")
 }
 
+/// `<home>/shell`: the shell integration scripts, owned and rewritten by Marshell.
+pub fn shell_dir(home: &Path) -> PathBuf {
+    home.join("shell")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

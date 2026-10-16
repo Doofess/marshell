@@ -30,6 +30,8 @@ describe("sessionShortcut", () => {
     expect(sessionShortcut(ev("Digit3", cs), "windows")).toEqual({ kind: "goto", number: 3 });
     expect(sessionShortcut(ev("ArrowUp", { altKey: true, shiftKey: true }), "linux")).toEqual({ kind: "move", by: -1 });
     expect(sessionShortcut(ev("ArrowDown", { altKey: true, shiftKey: true }), "linux")).toEqual({ kind: "move", by: 1 });
+    expect(sessionShortcut(ev("PageUp", cs), "windows")).toEqual({ kind: "prompt", by: -1 });
+    expect(sessionShortcut(ev("PageDown", { metaKey: true }), "mac")).toEqual({ kind: "prompt", by: 1 });
   });
   it("uses Cmd on macOS", () => {
     expect(sessionShortcut(ev("KeyW", { metaKey: true }), "mac")).toEqual({ kind: "close" });
@@ -50,6 +52,8 @@ describe("commandShortcut", () => {
     expect(commandShortcut("close")).toEqual({ kind: "close" });
     expect(commandShortcut("focus-session-4")).toEqual({ kind: "goto", number: 4 });
     expect(commandShortcut("move-down")).toEqual({ kind: "move", by: 1 });
+    expect(commandShortcut("prompt-prev")).toEqual({ kind: "prompt", by: -1 });
+    expect(commandShortcut("prompt-next")).toEqual({ kind: "prompt", by: 1 });
     expect(commandShortcut("split")).toBeNull();
     expect(commandShortcut("profiles")).toBeNull();
   });

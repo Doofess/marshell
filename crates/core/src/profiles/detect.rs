@@ -151,6 +151,7 @@ fn detected(id: &str, name: &str, command: Vec<String>, family: ShellFamily) -> 
         family,
         cwd: None,
         env: Vec::new(),
+        shell_integration: true,
         detected: true,
     }
 }
@@ -230,7 +231,7 @@ pub fn agent_command(agent: &str) -> Option<&'static str> {
 
 /// `'text'` for PowerShell, where a quote inside is doubled. PowerShell also treats the
 /// curly single quotes (U+2018 to U+201B) as quotes, so those are doubled too.
-fn powershell_quote(text: &str) -> String {
+pub(crate) fn powershell_quote(text: &str) -> String {
     let mut quoted = String::from("'");
     for c in text.chars() {
         quoted.push(c);
@@ -243,7 +244,7 @@ fn powershell_quote(text: &str) -> String {
 }
 
 /// `'text'` for POSIX shells, where a quote inside becomes `'\''`.
-fn posix_quote(text: &str) -> String {
+pub(crate) fn posix_quote(text: &str) -> String {
     format!("'{}'", text.replace('\'', "'\\''"))
 }
 
@@ -345,6 +346,7 @@ mod tests {
             family,
             cwd: None,
             env: Vec::new(),
+            shell_integration: true,
             detected: true,
         }
     }

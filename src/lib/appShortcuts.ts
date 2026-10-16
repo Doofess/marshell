@@ -9,7 +9,8 @@ export type SessionShortcut =
   | { kind: "reopen" }
   | { kind: "rename" }
   | { kind: "goto"; number: number }
-  | { kind: "move"; by: -1 | 1 };
+  | { kind: "move"; by: -1 | 1 }
+  | { kind: "prompt"; by: -1 | 1 };
 
 /** Escape while the busy-close bar is up cancels it, even with focus in the terminal (where the window takes the key first). */
 export function cancelsCloseBar(e: { key: string; ctrlKey: boolean; shiftKey: boolean; altKey: boolean; metaKey: boolean; isComposing?: boolean }, barOpen: boolean): boolean {
@@ -37,6 +38,10 @@ export function commandShortcut(id: string): SessionShortcut | null {
       return { kind: "move", by: -1 };
     case "move-down":
       return { kind: "move", by: 1 };
+    case "prompt-prev":
+      return { kind: "prompt", by: -1 };
+    case "prompt-next":
+      return { kind: "prompt", by: 1 };
   }
   const n = FOCUS_SESSION.exec(id)?.[1];
   return n === undefined ? null : { kind: "goto", number: Number(n) };

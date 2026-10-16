@@ -119,8 +119,10 @@ export class SessionActions {
         if (next) this.reorder(next);
         break;
       }
+      // The window opens these, and the terminal jumps between its own prompts.
       case "launcher":
       case "palette":
+      case "prompt":
         break;
     }
   }

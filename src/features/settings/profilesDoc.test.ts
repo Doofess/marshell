@@ -3,7 +3,7 @@ import type { Profile } from "../../generated/Profile";
 import type { ProfilesDoc } from "../../generated/ProfilesDoc";
 import { changeCount, commandRoundTrips, deleteProfile, duplicateEnvKeys, duplicateProfile, forSave, joinCommand, makeDefault, profileKind, resetProfile, splitCommand, updateProfile } from "./profilesDoc";
 
-const profile = (id: string, patch: Partial<Profile> = {}): Profile => ({ id, name: id.toUpperCase(), command: [`${id}.exe`], family: "cmd", cwd: null, env: [], detected: false, ...patch });
+const profile = (id: string, patch: Partial<Profile> = {}): Profile => ({ id, name: id.toUpperCase(), command: [`${id}.exe`], family: "cmd", cwd: null, env: [], shell_integration: true, detected: false, ...patch });
 const FOUND: Profile[] = [profile("pwsh", { detected: true }), profile("cmd", { detected: true })];
 const doc = (...extra: Profile[]): ProfilesDoc => ({ profiles: [...FOUND, ...extra], default_id: "pwsh" });
 

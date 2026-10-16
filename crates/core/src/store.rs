@@ -55,13 +55,21 @@ pub fn write<T: Versioned>(path: &Path, value: &T) -> anyhow::Result<()> {
         }
         std::fs::copy(path, bak_path(path))?;
     }
+    write_bytes_atomic(path, &serde_json::to_vec_pretty(&json)?)
+}
 
+/// Writes `bytes` to a temp file next to `path`, then renames it over `path`, so a reader never
+/// sees half a file. Creates the folder if needed. Keeps no backup.
+pub fn write_bytes_atomic(path: &Path, bytes: &[u8]) -> anyhow::Result<()> {
+    let dir = path
+        .parent()
+        .with_context(|| format!("{} has no parent folder", path.display()))?;
+    create_private_dir(dir)?;
     let name = path.file_name().unwrap_or_default().to_string_lossy();
     // Unique per call, so two writers in this process never share a temp file.
     let n = TEMP_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let tmp = dir.join(format!(".{name}.{}.{n}.tmp", std::process::id()));
-    let result =
-        write_private_file(&tmp, &serde_json::to_vec_pretty(&json)?).and_then(|()| Ok(std::fs::rename(&tmp, path)?));
+    let result = write_private_file(&tmp, bytes).and_then(|()| Ok(std::fs::rename(&tmp, path)?));
     if result.is_err() {
         let _ = std::fs::remove_file(&tmp);
     }

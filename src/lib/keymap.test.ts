@@ -73,7 +73,7 @@ describe("COMMANDS", () => {
   });
 
   it("uses no punctuation key anywhere, because punctuation sits on different keys (or behind AltGr) on other layouts", () => {
-    for (const c of COMMANDS) if (c.binding) expect(c.binding.code, c.id).toMatch(/^(Key[A-Z]|Digit[0-9]|F[0-9]{1,2}|Tab|Space|Backspace|Arrow(Left|Right|Up|Down))$/);
+    for (const c of COMMANDS) if (c.binding) expect(c.binding.code, c.id).toMatch(/^(Key[A-Z]|Digit[0-9]|F[0-9]{1,2}|Tab|Space|Backspace|Arrow(Left|Right|Up|Down)|Page(Up|Down))$/);
   });
 
   it("moves between panes with the navigation chord, not with a bracket key", () => {
@@ -105,6 +105,15 @@ describe("COMMANDS", () => {
     const c = commandById("shell-panel");
     expect(c.group).toBe("Tools");
     expect(c.label).toBe("Show or focus the shell panel");
+  });
+
+  it("jumps between prompts with PageUp and PageDown under Tools", () => {
+    const prev = commandById("prompt-prev");
+    const next = commandById("prompt-next");
+    expect(prev).toMatchObject({ label: "Jump to the previous prompt", group: "Tools", binding: { code: "PageUp" } });
+    expect(next).toMatchObject({ label: "Jump to the next prompt", group: "Tools", binding: { code: "PageDown" } });
+    expect(shortcutLabel(prev.binding!, "windows")).toBe("Ctrl+Shift+PageUp");
+    expect(shortcutLabel(next.binding!, "mac")).toBe("⌘PageDown");
   });
 
   it("gives no two commands the same binding on any system", () => {

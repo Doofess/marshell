@@ -180,6 +180,7 @@ mod tests {
             cols: 80,
             rows: 24,
             on_exit: None,
+            on_mark: None,
         }
     }
 

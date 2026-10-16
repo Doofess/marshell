@@ -38,6 +38,9 @@ struct Inner {
     allowed_origins: Vec<String>,
     /// Where `profiles.json` lives.
     home: PathBuf,
+    /// Where the shell integration scripts were written. None when writing them failed,
+    /// so shells start without integration.
+    shell_dir: Option<PathBuf>,
     /// The shells found at startup. Detection runs once, not per request.
     detected: Vec<Profile>,
     /// Detected profiles merged with `profiles.json`.
@@ -53,11 +56,19 @@ struct Inner {
 impl AppState {
     pub fn new(token: String, port: u16, allowed_origins: Vec<String>, home: PathBuf, detected: Vec<Profile>) -> Self {
         let profiles = crate::profiles::store::load(&home, detected.clone());
+        let shell_dir = match crate::shell::install(&home) {
+            Ok(dir) => Some(dir),
+            Err(err) => {
+                tracing::warn!("shell integration scripts were not written: {err:#}");
+                None
+            }
+        };
         Self(Arc::new(Inner {
             token,
             host: format!("127.0.0.1:{port}"),
             allowed_origins,
             home,
+            shell_dir,
             detected,
             profiles: Mutex::new(profiles),
             registry: Arc::new(Registry::new()),
@@ -107,6 +118,7 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/health", get(health))
         .route("/v1/profiles", get(profiles::get).put(profiles::put))
         .route("/v1/profiles/detected", get(profiles::detected))
+        .route("/v1/profiles/integration", post(profiles::integration))
         .route("/v1/projects", get(projects::get))
         .route("/v1/sessions", get(sessions::list).post(sessions::create))
         .route("/v1/sessions/reorder", post(sessions::reorder))
