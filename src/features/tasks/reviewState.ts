@@ -33,6 +33,9 @@ export type ReviewAction =
 /** The core is working: nothing else may start, and the sheet may not close. */
 export const isBusy = (step: ReviewStep): boolean => step === "merging" || step === "removing";
 
+/** Esc and Close work on every step except while the core is working: a merge or a removal cannot be walked away from. */
+export const canClose = (step: ReviewStep): boolean => !isBusy(step);
+
 /**
  * What takes focus when the step changes, as a selector inside the sheet (null: leave focus where it is). A step the user opens
  * puts focus on its first thing to do: the message field, or the button that confirms (it is aria-disabled, never `disabled`,
@@ -54,7 +57,7 @@ export function stepFocus(prev: ReviewStep, next: ReviewStep): string | null {
   }
 }
 
-export const initialReview =(): ReviewState => ({ step: "changes", selected: 0 });
+export const initialReview = (): ReviewState => ({ step: "changes", selected: 0 });
 
 export function reviewReducer(state: ReviewState, action: ReviewAction): ReviewState {
   const { step } = state;

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { initialReview, isBusy, reviewReducer, stepFocus, type ReviewAction, type ReviewState } from "./reviewState";
+import { canClose, initialReview, isBusy, reviewReducer, stepFocus, type ReviewAction, type ReviewState } from "./reviewState";
 
 const run = (state: ReviewState, ...actions: ReviewAction[]) => actions.reduce(reviewReducer, state);
 const at = (selected: number): ReviewState => ({ step: "changes", selected });
@@ -98,5 +98,16 @@ describe("stepFocus: where focus goes when the step changes", () => {
     expect(stepFocus("merge", "merging")).toBeNull();
     expect(stepFocus("remove", "removing")).toBeNull();
     expect(stepFocus("merging", "done")).toBeNull();
+  });
+});
+
+
+describe("canClose: Esc and Close", () => {
+  it("is allowed on every step where the core is not working", () => {
+    for (const step of ["changes", "merge", "conflict", "remove", "done"] as const) expect(canClose(step), step).toBe(true);
+  });
+  it("is refused while merging or removing", () => {
+    expect(canClose("merging")).toBe(false);
+    expect(canClose("removing")).toBe(false);
   });
 });

@@ -339,3 +339,35 @@ describe("the remove step", () => {
     expect(step("remove", { remove: { ...REMOVE, error: "The task changed while you were reading the commands. Review them again." } })).toMatch(/role="alert"[^>]*>The task changed/);
   });
 });
+
+describe("commands that no longer match what is on screen", () => {
+  const cue = "Updating the commands…";
+  it("marks the merge commands as stale, with a words cue above the list, while a refetch is pending or out", () => {
+    const h = step("merge", { merge: { ...MERGE, ready: false } });
+    expect(h).toContain(cue);
+    expect(h).toContain('data-stale="true"');
+    expect(h.indexOf(cue)).toBeLessThan(h.indexOf('class="command-list"'));
+  });
+  it("says it politely, as the one status line", () => {
+    expect(step("merge", { merge: { ...MERGE, ready: false } })).toMatch(/<p[^>]*role="status"[^>]*>Updating the commands…<\/p>/);
+  });
+  it("shows no cue and no stale mark when the commands are current", () => {
+    const h = step("merge", { merge: MERGE });
+    expect(h).not.toContain(cue);
+    expect(h).not.toContain("data-stale");
+  });
+  it("shows no cue before the first plan has come: there is nothing on screen to be stale", () => {
+    expect(step("merge", { merge: { ...MERGE, plan: null, ready: false } })).not.toContain(cue);
+  });
+  it("does the same on the remove step", () => {
+    const stale = step("remove", { remove: { ...REMOVE, ready: false } });
+    expect(stale).toContain(cue);
+    expect(stale).toContain('data-stale="true"');
+    expect(step("remove", { remove: REMOVE })).not.toContain(cue);
+  });
+  it("shows only Merging…, not the cue, while the merge runs", () => {
+    const h = step("merging", { merge: { ...MERGE, ready: false } });
+    expect(h).toContain("Merging…");
+    expect(h).not.toContain(cue);
+  });
+});

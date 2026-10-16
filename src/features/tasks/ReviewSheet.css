@@ -165,6 +165,23 @@
   overflow-wrap: anywhere;
 }
 
+/* Commands that no longer match the message or the checkbox are dimmed, and a line of words says why (the dimming is not the only cue). */
+.review__commands {
+  display: grid;
+  gap: var(--space-2);
+}
+.review__commands[data-stale="true"] .command-list {
+  opacity: 0.6;
+}
+.review__stale {
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  border-inline-start: 3px solid var(--accent);
+  background: var(--fill);
+  font-size: var(--text-13);
+  color: var(--text-1);
+}
+
 /* A button that cannot act yet (the commands are loading, or the core is working) stays focusable, so it is dimmed, not disabled. */
 .review .settings__btn[aria-disabled="true"] {
   opacity: 0.6;
@@ -191,6 +208,7 @@
   .review__blocker,
   .review__error,
   .review__progress,
+  .review__stale,
   .review__warnings,
   .review__conflicts {
     outline: 1px solid CanvasText;

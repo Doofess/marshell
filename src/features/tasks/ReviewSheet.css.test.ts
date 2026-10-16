@@ -30,6 +30,10 @@ describe("ReviewSheet.css", () => {
     expect(rule('.review .settings__btn[aria-disabled="true"]')).toMatch(/opacity:\s*0\.6/);
     expect(css.slice(css.indexOf("@media (forced-colors: active)"))).toContain('[aria-disabled="true"]');
   });
+  it("dims commands that are stale, and the cue above them has a bar on the start edge as well as the words", () => {
+    expect(rule('.review__commands[data-stale="true"] .command-list')).toMatch(/opacity:\s*0\.6/);
+    expect(rule(".review__stale")).toContain("border-inline-start: 3px solid var(--accent)");
+  });
   it("marks a failure with a bar on the start edge as well as the words", () => {
     expect(rule(".review__error")).toContain("border-inline-start: 3px solid var(--error)");
   });

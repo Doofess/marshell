@@ -2,32 +2,41 @@ import { useEffect, useEffectEvent, useId, useMemo, useReducer, useRef, useState
 import { DiffView } from "../../components/DiffView/DiffView";
 import { EmptyState } from "../../components/EmptyState/EmptyState";
 import { Page } from "../../components/Page/Page";
-import type { MergePlan } from "../../generated/MergePlan";
-import type { RemovePlan } from "../../generated/RemovePlan";
 import type { Task } from "../../generated/Task";
 import type { TaskChanges } from "../../generated/TaskChanges";
 import { useDialogFocus } from "../../lib/useDialogFocus";
+import type { MergePlan } from "../../generated/MergePlan";
+import type { RemovePlan } from "../../generated/RemovePlan";
 import { CommandList } from "./CommandList";
 import {
   PLAN_DELAY_MS,
+  REMOVE_KEY,
+  canConfirm,
   conflictHeading,
   conflictPrompt,
+  confirmMergeRequest,
+  confirmRemoveRequest,
+  currentLoad,
+  initialRun,
+  isStale,
   mergePlanRequest,
-  mergeRequest,
   mergedToast,
   planFailure,
   planKey,
   readableMessage,
   removeLabel,
-  removeRequest,
   removedToast,
+  runEdited,
+  runFailed,
   runMerge,
+  runOpened,
   runRemove,
   type MergeView,
+  type PlanLoad,
   type RemoveView,
   type ReviewApi,
 } from "./reviewRun";
-import { initialReview, isBusy, reviewReducer, stepFocus, type ReviewAction, type ReviewState } from "./reviewState";
+import { canClose, initialReview, isBusy, reviewReducer, stepFocus, type ReviewAction, type ReviewState } from "./reviewState";
 import { sectionNote, splitDiff } from "./splitDiff";
 import "../settings/Settings.css";
 import "./ReviewSheet.css";
@@ -115,6 +124,23 @@ function Progress({ text }: { text: string }) {
   );
 }
 
+/**
+ * The commands, dimmed and marked while they are not the current plan (the message or the checkbox changed, or the task may have).
+ * The words above them are a polite status line: it stays mounted through a burst of typing, so it is said once, not per key.
+ */
+function Commands({ commands, stale }: { commands: string[]; stale: boolean }) {
+  return (
+    <div className="review__commands" data-stale={stale || undefined} aria-busy={stale || undefined}>
+      {stale && (
+        <p className="review__stale" role="status">
+          Updating the commands…
+        </p>
+      )}
+      <CommandList commands={commands} />
+    </div>
+  );
+}
+
 /** What went wrong, in the core's words. A bar on the start edge says "problem" as well as the colour does. */
 function Failure({ text }: { text: string }) {
   return (
@@ -152,7 +178,7 @@ function MergeStep({ merge, busy }: { merge: MergeView; busy: boolean }) {
       {merge.plan && (
         <>
           <p className="review__lede">Marshell will run these commands.</p>
-          <CommandList commands={merge.plan.commands} />
+          <Commands commands={merge.plan.commands} stale={!busy && isStale(merge.plan, merge.ready)} />
         </>
       )}
       {busy && <Progress text="Merging…" />}
@@ -176,7 +202,7 @@ function RemoveStep({ remove, busy }: { remove: RemoveView; busy: boolean }) {
       {remove.plan && (
         <>
           <p className="review__lede">Marshell will run these commands.</p>
-          <CommandList commands={remove.plan.commands} />
+          <Commands commands={remove.plan.commands} stale={!busy && isStale(remove.plan, remove.ready)} />
         </>
       )}
       {busy && <Progress text="Removing…" />}
@@ -230,8 +256,8 @@ export function ReviewView({ task, changes, state, dispatch, merge = NO_MERGE, r
   const { step } = state;
   const busy = isBusy(step);
   // aria-disabled, never `disabled`: the button that was pressed keeps focus while the core works or the commands load.
-  const canMerge = step === "merge" && merge.ready && !merge.plan?.blocker;
-  const canRemove = step === "remove" && remove.ready;
+  const canMerge = canConfirm({ step, ready: merge.ready, blocker: merge.plan?.blocker ?? null, running: false });
+  const canRemove = canConfirm({ step, ready: remove.ready, blocker: null, running: false });
   const back = (
     <button type="button" className="settings__btn" aria-disabled={busy || undefined} onClick={() => !busy && dispatch({ type: "back" })}>
       Back
@@ -319,7 +345,7 @@ export type ReviewSheetProps = {
   changes: TaskChanges;
   /** The display name of the task's running agent session, or null when it has none (a shell, or an agent that has exited). */
   agentName: string | null;
-  /** The core, for this task. Keep it stable between renders (memoise it): the sheet asks the core again when it changes. */
+  /** The core, for this task. The sheet reads it when it asks, so a changed `api` is used from the next request on; it does not make the sheet ask again. */
   api: ReviewApi;
   /** Closes the sheet. Called by Close and Esc, never while the core is merging or removing. */
   onClose: () => void;
@@ -328,10 +354,6 @@ export type ReviewSheetProps = {
   /** Types a prompt into the task's agent session, without Enter. The sheet closes right after; the caller moves focus to that terminal. */
   onAskAgent: (text: string) => void;
 };
-
-/** What the core said about a merge plan, and for which message and checkbox and which round of asking. */
-type MergeLoad = { key: string; round: number; plan: MergePlan | null; error: string | null };
-type RemoveLoad = { round: number; plan: RemovePlan | null; error: string | null };
 
 /**
  * Review a task: its changed files and the diff of each, then, in the same sheet, the merge and the removal. It is a modal
@@ -346,16 +368,16 @@ export function ReviewSheet({ task, changes, agentName, api, onClose, onDone, on
   const { step } = state;
   const busy = isBusy(step);
   const dialog = useRef<HTMLDivElement>(null);
-  // Esc does not close the sheet while the core works.
-  useDialogFocus(dialog, dialog, busy ? undefined : onClose);
+  // Esc and Close do nothing while the core works.
+  const close = canClose(step) ? onClose : undefined;
+  useDialogFocus(dialog, dialog, close);
 
   const [message, setMessage] = useState(() => readableMessage(task.name));
   const [removeAfter, setRemoveAfter] = useState(true);
-  /** Bumped to make every plan on screen stale: when a step opens, and after a run failed. */
-  const [round, setRound] = useState(0);
-  const [mergeLoad, setMergeLoad] = useState<MergeLoad | null>(null);
-  const [removeLoad, setRemoveLoad] = useState<RemoveLoad | null>(null);
-  const [failure, setFailure] = useState<string | null>(null);
+  /** The round of asking for plans (bumped when a step opens and when a run fails, so every plan on screen is stale) and why the last run was refused. */
+  const [{ round, failure }, setRun] = useState(initialRun);
+  const [mergeLoad, setMergeLoad] = useState<PlanLoad<MergePlan> | null>(null);
+  const [removeLoad, setRemoveLoad] = useState<PlanLoad<RemovePlan> | null>(null);
   const [conflicts, setConflicts] = useState<string[]>([]);
   const typed = useRef(false);
   const running = useRef(false);
@@ -368,8 +390,8 @@ export function ReviewSheet({ task, changes, agentName, api, onClose, onDone, on
   }, []);
 
   const send = (action: ReviewAction) => {
-    if (action.type === "open") setRound((r) => r + 1);
-    if (action.type === "open" || action.type === "back" || action.type === "start") setFailure(null);
+    if (action.type === "open") setRun(runOpened);
+    else if (action.type === "back" || action.type === "start") setRun(runEdited);
     dispatch(action);
   };
 
@@ -398,8 +420,8 @@ export function ReviewSheet({ task, changes, agentName, api, onClose, onDone, on
     if (step !== "remove") return;
     let live = true;
     askRemovePlan().then(
-      (plan) => live && setRemoveLoad({ round, plan, error: null }),
-      (e) => live && setRemoveLoad({ round, plan: null, error: planFailure(e) }),
+      (plan) => live && setRemoveLoad({ key: REMOVE_KEY, round, plan, error: null }),
+      (e) => live && setRemoveLoad({ key: REMOVE_KEY, round, plan: null, error: planFailure(e) }),
     );
     return () => {
       live = false;
@@ -414,12 +436,12 @@ export function ReviewSheet({ task, changes, agentName, api, onClose, onDone, on
     if (target) dialog.current?.querySelector<HTMLElement>(target)?.focus();
   }, [step]);
 
-  const currentMerge = mergeLoad && mergeLoad.key === key && mergeLoad.round === round ? mergeLoad : null;
-  const currentRemove = removeLoad && removeLoad.round === round ? removeLoad : null;
+  const currentMerge = currentLoad(mergeLoad, key, round);
+  const currentRemove = currentLoad(removeLoad, REMOVE_KEY, round);
 
   const confirmMerge = () => {
-    const req = mergeRequest(message, removeAfter, currentMerge?.plan ? { key, plan: currentMerge.plan } : null);
-    if (!req || step !== "merge" || running.current) return;
+    const req = confirmMergeRequest({ step, running: running.current, message, remove: removeAfter, key, round, load: mergeLoad });
+    if (!req) return;
     running.current = true;
     send({ type: "start" });
     void runMerge(api, req).then((outcome) => {
@@ -434,16 +456,15 @@ export function ReviewSheet({ task, changes, agentName, api, onClose, onDone, on
         dispatch({ type: "conflict" });
       } else {
         // Back on the merge step with the reason; the plan is asked for again, because the task may have changed.
-        setFailure(outcome.reason);
-        setRound((r) => r + 1);
+        setRun((s) => runFailed(s, outcome.reason));
         dispatch({ type: "fail" });
       }
     });
   };
 
   const confirmRemove = () => {
-    const req = removeRequest(currentRemove?.plan ?? null);
-    if (!req || step !== "remove" || running.current) return;
+    const req = confirmRemoveRequest({ step, running: running.current, round, load: removeLoad });
+    if (!req) return;
     running.current = true;
     send({ type: "start" });
     void runRemove(api, req).then((result) => {
@@ -454,8 +475,7 @@ export function ReviewSheet({ task, changes, agentName, api, onClose, onDone, on
         onDone(removedToast(task));
         onClose();
       } else {
-        setFailure(result.reason);
-        setRound((r) => r + 1);
+        setRun((s) => runFailed(s, result.reason));
         dispatch({ type: "fail" });
       }
     });
@@ -464,18 +484,18 @@ export function ReviewSheet({ task, changes, agentName, api, onClose, onDone, on
   const merge: MergeView = {
     message,
     remove: removeAfter,
-    // A plan for an earlier message stays up (dimmed by the disabled Merge) until the new one arrives.
+    // A plan for an earlier message stays up, dimmed and marked as updating (see Commands), until the new one arrives.
     plan: (currentMerge ?? mergeLoad)?.plan ?? null,
     ready: currentMerge?.plan != null,
     error: failure ?? currentMerge?.error ?? null,
     onMessage: (m) => {
       typed.current = true;
-      setFailure(null);
+      setRun(runEdited);
       setMessage(m);
     },
     onRemoveChange: (r) => {
       typed.current = true;
-      setFailure(null);
+      setRun(runEdited);
       setRemoveAfter(r);
     },
     onConfirm: confirmMerge,
@@ -499,7 +519,7 @@ export function ReviewSheet({ task, changes, agentName, api, onClose, onDone, on
         conflictFiles={conflicts}
         agentName={agentName}
         onAskAgent={onAskAgent}
-        onClose={busy ? undefined : onClose}
+        onClose={close}
       />
     </div>
   );

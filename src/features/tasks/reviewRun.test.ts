@@ -5,8 +5,15 @@ import type { Task } from "../../generated/Task";
 import { ApiError } from "../../lib/api/client";
 import {
   PLAN_DELAY_MS,
+  REMOVE_KEY,
+  canConfirm,
   conflictHeading,
   conflictPrompt,
+  confirmMergeRequest,
+  confirmRemoveRequest,
+  currentLoad,
+  initialRun,
+  isStale,
   mergePlanRequest,
   mergeRequest,
   mergedToast,
@@ -16,8 +23,12 @@ import {
   removeLabel,
   removeRequest,
   removedToast,
+  runEdited,
+  runFailed,
   runMerge,
+  runOpened,
   runRemove,
+  type PlanLoad,
   type ReviewApi,
 } from "./reviewRun";
 
@@ -140,5 +151,127 @@ describe("runRemove", () => {
   it("returns the core's reason on a refusal, and a sentence on any other error", async () => {
     expect(await runRemove(api({ remove: throws(new ApiError(409, "Changed.")) }), { commands: [], warnings: [] })).toEqual({ ok: false, reason: "Changed." });
     expect(await runRemove(api({ remove: throws(new Error("x")) }), { commands: [], warnings: [] })).toEqual({ ok: false, reason: "Couldn't remove: Error: x" });
+  });
+});
+
+
+const MP = (commands: string[], blocker: string | null = null): MergePlan => ({ commands, blocker });
+const load = (key: string, round: number, plan: MergePlan | null, error: string | null = null): PlanLoad<MergePlan> => ({ key, round, plan, error });
+const K = planKey("Fix login", true);
+
+describe("currentLoad: is the plan on screen the plan for what is on screen now", () => {
+  it("is the load when key and round both match", () => {
+    const l = load(K, 2, MP(["git merge a"]));
+    expect(currentLoad(l, K, 2)).toBe(l);
+  });
+  it("is null when the message or the checkbox changed since (an older key)", () => {
+    expect(currentLoad(load(planKey("Fix", true), 2, MP(["x"])), K, 2)).toBeNull();
+    expect(currentLoad(load(planKey("Fix login", false), 2, MP(["x"])), K, 2)).toBeNull();
+  });
+  it("is null when the round moved on (a failed run, or a step opened again)", () => {
+    expect(currentLoad(load(K, 1, MP(["x"])), K, 2)).toBeNull();
+  });
+  it("is null when nothing has come back yet (the debounce is pending or the fetch is out)", () => {
+    expect(currentLoad(null, K, 2)).toBeNull();
+  });
+  it("keeps an error load that is current, so its sentence shows", () => {
+    const l = load(K, 2, null, "Could not load the commands: boom");
+    expect(currentLoad(l, K, 2)).toBe(l);
+  });
+});
+
+describe("canConfirm: when Merge or Remove can act", () => {
+  const ok = { step: "merge" as const, ready: true, blocker: null, running: false };
+  it("can when the step is open, the plan is current, nothing blocks and nothing runs", () => {
+    expect(canConfirm(ok)).toBe(true);
+  });
+  it("cannot while the plan is not current (pending debounce, a fetch in flight, a stale plan)", () => {
+    expect(canConfirm({ ...ok, ready: false })).toBe(false);
+  });
+  it("cannot while a blocker shows", () => {
+    expect(canConfirm({ ...ok, blocker: "main has uncommitted changes" })).toBe(false);
+  });
+  it("cannot while a run is going, and cannot on a step that is not merge or remove", () => {
+    expect(canConfirm({ ...ok, running: true })).toBe(false);
+    expect(canConfirm({ ...ok, step: "merging" })).toBe(false);
+    expect(canConfirm({ ...ok, step: "changes" })).toBe(false);
+    expect(canConfirm({ ...ok, step: "conflict" })).toBe(false);
+  });
+  it("lets the remove step act too", () => {
+    expect(canConfirm({ ...ok, step: "remove" })).toBe(true);
+    expect(canConfirm({ ...ok, step: "removing" })).toBe(false);
+  });
+});
+
+describe("confirmMergeRequest: the request comes from the current plan only", () => {
+  const plan = MP(["git add -A", "git merge a"]);
+  const args = { step: "merge" as const, running: false, message: "Fix login", remove: true, key: K, round: 2 };
+  it("builds the request from a current plan", () => {
+    expect(confirmMergeRequest({ ...args, load: load(K, 2, plan) })).toEqual({ message: "Fix login", remove: true, commands: plan.commands });
+  });
+  it("is null for a plan of an older key", () => {
+    expect(confirmMergeRequest({ ...args, load: load(planKey("Fix", true), 2, plan) })).toBeNull();
+  });
+  it("is null for a plan of an older round", () => {
+    expect(confirmMergeRequest({ ...args, load: load(K, 1, plan) })).toBeNull();
+  });
+  it("is null while the plan has not arrived, or the last fetch failed", () => {
+    expect(confirmMergeRequest({ ...args, load: null })).toBeNull();
+    expect(confirmMergeRequest({ ...args, load: load(K, 2, null, "boom") })).toBeNull();
+  });
+  it("is null with a blocker", () => {
+    expect(confirmMergeRequest({ ...args, load: load(K, 2, MP(["x"], "blocked")) })).toBeNull();
+  });
+  it("is null while a run is going, so a second press does nothing", () => {
+    expect(confirmMergeRequest({ ...args, running: true, load: load(K, 2, plan) })).toBeNull();
+  });
+  it("is null off the merge step", () => {
+    expect(confirmMergeRequest({ ...args, step: "merging", load: load(K, 2, plan) })).toBeNull();
+  });
+});
+
+describe("confirmRemoveRequest", () => {
+  const plan: RemovePlan = { commands: ["git worktree remove w"], warnings: ["2 commits are not merged."], sessions: 0 };
+  const rl = (round: number, p: RemovePlan | null = plan): PlanLoad<RemovePlan> => ({ key: REMOVE_KEY, round, plan: p, error: null });
+  const args = { step: "remove" as const, running: false, round: 3 };
+  it("sends the commands and warnings of the current plan, as shown", () => {
+    expect(confirmRemoveRequest({ ...args, load: rl(3) })).toEqual({ commands: plan.commands, warnings: plan.warnings });
+  });
+  it("is null for an older round, no plan, a run going, or another step", () => {
+    expect(confirmRemoveRequest({ ...args, load: rl(2) })).toBeNull();
+    expect(confirmRemoveRequest({ ...args, load: null })).toBeNull();
+    expect(confirmRemoveRequest({ ...args, load: rl(3, null) })).toBeNull();
+    expect(confirmRemoveRequest({ ...args, running: true, load: rl(3) })).toBeNull();
+    expect(confirmRemoveRequest({ ...args, step: "removing", load: rl(3) })).toBeNull();
+  });
+});
+
+describe("the run state: a refusal shows its reason and makes every plan stale", () => {
+  it("starts on round 0 with no failure", () => {
+    expect(initialRun).toEqual({ round: 0, failure: null });
+  });
+  it("a failed run (a 409, or any error) keeps the reason and bumps the round, so the plan is asked for again", () => {
+    const reason = "The task changed while you were reading the commands. Review them again.";
+    expect(runFailed({ round: 2, failure: null }, reason)).toEqual({ round: 3, failure: reason });
+  });
+  it("opening a step bumps the round and clears an old reason", () => {
+    expect(runOpened({ round: 3, failure: "old" })).toEqual({ round: 4, failure: null });
+  });
+  it("editing the message or the checkbox clears the reason but keeps the round", () => {
+    expect(runEdited({ round: 3, failure: "old" })).toEqual({ round: 3, failure: null });
+  });
+  it("editing with no reason up changes nothing (the same object, so no render)", () => {
+    const s = { round: 3, failure: null };
+    expect(runEdited(s)).toBe(s);
+  });
+});
+
+describe("isStale: commands on screen that no longer match", () => {
+  it("is true when a plan shows and it is not the current one", () => {
+    expect(isStale(MP(["x"]), false)).toBe(true);
+  });
+  it("is false for a current plan, and when no plan shows at all", () => {
+    expect(isStale(MP(["x"]), true)).toBe(false);
+    expect(isStale(null, false)).toBe(false);
   });
 });
