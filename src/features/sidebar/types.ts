@@ -18,6 +18,8 @@ export type RowModel = {
   /** What groups rows: the repository root, so two repositories that share a folder name stay apart. */
   projectKey: string;
   branch?: string;
+  /** The session runs in a task's worktree: the row says "Task" and offers its review. Set by the window from the core's task list. */
+  task?: boolean;
   /** An AI agent, or a manual CLI (a plain terminal: no animation, ring, model or prompt line). */
   agent: SessionKind;
   status: GlyphKind;

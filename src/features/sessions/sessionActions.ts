@@ -103,6 +103,16 @@ export class SessionActions {
     return this.state.focusToken + 1;
   }
 
+  /** Hands the focus back to the focused session's terminal (after a sheet that typed into it closes). */
+  focusTerminal(): void {
+    this.set({ focusToken: this.state.focusToken + 1 });
+  }
+
+  /** Shows a receipt as a toast (and the window's announcer says it): a merge or a removal that finished in the Review sheet. */
+  notify(text: string): void {
+    this.showToast(text);
+  }
+
   /** Stops the toast timer. Call when the window goes away. */
   dispose(): void {
     clearTimeout(this.timer);
@@ -153,6 +163,7 @@ export class SessionActions {
       case "nonePane":
       case "focusMode":
       case "sidebar":
+      case "review":
         break;
     }
   }

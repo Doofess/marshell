@@ -41,6 +41,7 @@ export function SessionRow({
   drag,
   rename,
   onSelect,
+  onReview,
 }: {
   row: RowModel;
   density: Density;
@@ -50,6 +51,8 @@ export function SessionRow({
   rename?: RowRename;
   /** A click on the row. Left out, a click does nothing (stories). */
   onSelect?: () => void;
+  /** Opens the review of this row's task. Left out, a task row shows its tag but no button (stories). */
+  onReview?: () => void;
 }) {
   const caution = modeCaution(row.mode);
   const usage = formatUsage(row.usage);
@@ -100,6 +103,14 @@ export function SessionRow({
           <span className="session-row__project" dir="auto">
             {row.project}
           </span>
+          {row.task && (
+            <>
+              {" "}
+              <span className="session-row__task" title={row.branch ? `Task on ${row.branch}` : "Task"}>
+                Task
+              </span>
+            </>
+          )}
           {branch && (
             <>
               {" "}
@@ -154,6 +165,21 @@ export function SessionRow({
           )}{" "}
           {usage && <div className="session-row__usage">{usage}</div>}
         </div>
+      )}
+      {/* Outside the aria-hidden lines so it is read and reachable. It follows the row's tab stop: Tab from the row lands here, and the arrow keys never do. */}
+      {row.task && onReview && !rename && (
+        <button
+          type="button"
+          className="session-row__review"
+          aria-label={`Review changes, ${row.name}`}
+          tabIndex={tabStop ? 0 : -1}
+          onClick={(e) => {
+            e.stopPropagation();
+            onReview();
+          }}
+        >
+          Review changes
+        </button>
       )}
     </div>
   );

@@ -2,6 +2,9 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Endpoint } from "../../generated/Endpoint";
 import type { SessionInfo } from "../../generated/SessionInfo";
+import type { Task } from "../../generated/Task";
+import { FIXTURES } from "../sidebar/fixtures";
+import { NOT_A_TASK, keyBlocked, markTasks, paletteHidden, reviewAgentName, reviewKeyDown, reviewTarget, taskRefresher } from "../tasks/reviewOpen";
 import { ApiError } from "../../lib/api/client";
 import type { RowModel } from "../sidebar/types";
 import { CloseBar } from "./CloseBar";
@@ -399,5 +402,159 @@ describe("Toast", () => {
   });
   it("has no button when there is nothing to do", () => {
     expect(renderToStaticMarkup(<Toast text="Nothing to reopen." />)).not.toContain("<button");
+  });
+});
+
+const TASK: Task = { id: "k1", name: "fix-login", branch: "marshell/fix-login", base_branch: "main", repo_root: "C:\\dev\\my-app", path: "C:\\dev\\my-app-task", created_ms: 1 };
+const inTask = (n: number, patch: Partial<SessionInfo> = {}) => claude(n, { cwd: "C:\\dev\\my-app-task", ...patch });
+
+/** A key event that records preventDefault, like a real one's defaultPrevented. */
+function keydown(init: { code: string; ctrlKey?: boolean; shiftKey?: boolean; metaKey?: boolean; repeat?: boolean }) {
+  const e = {
+    ctrlKey: false,
+    shiftKey: false,
+    altKey: false,
+    metaKey: false,
+    repeat: false,
+    ...init,
+    defaultPrevented: false,
+    preventDefault() {
+      e.defaultPrevented = true;
+    },
+  };
+  return e;
+}
+const CTRL_SHIFT_R = { code: "KeyR", ctrlKey: true, shiftKey: true };
+
+describe("LiveApp: Review this task's changes (Ctrl+Shift+R)", () => {
+  const ctx = (infos: SessionInfo[], focusedId: string | undefined, tasks: Task[], blocked = false) => ({ infos, focusedId, tasks, blocked });
+
+  it("opens the sheet for the active session in a task, and prevents the webview's hard reload", () => {
+    const e = keydown(CTRL_SHIFT_R);
+    const result = reviewKeyDown(e, "windows", ctx([info(1), inTask(2)], "t2", [TASK]));
+    expect(result).toEqual({ kind: "open", tabId: "t2", task: TASK });
+    expect(e.defaultPrevented).toBe(true);
+  });
+
+  it("does nothing for a session that is not a task, says so, and still prevents the hard reload", () => {
+    const e = keydown(CTRL_SHIFT_R);
+    const result = reviewKeyDown(e, "windows", ctx([info(1), inTask(2)], "t1", [TASK]));
+    expect(result).toEqual({ kind: "none", message: "This session isn't a task." });
+    expect(NOT_A_TASK).toBe("This session isn't a task.");
+    expect(e.defaultPrevented).toBe(true);
+  });
+
+  it("says the same with no session at all", () => {
+    expect(reviewTarget([], undefined, [TASK])).toEqual({ kind: "none", message: NOT_A_TASK });
+    expect(reviewTarget([info(1)], "gone", [TASK])).toEqual({ kind: "none", message: NOT_A_TASK });
+  });
+
+  it("owns the key on every system: Cmd+R on macOS is prevented too", () => {
+    const e = keydown({ code: "KeyR", metaKey: true });
+    expect(reviewKeyDown(e, "mac", ctx([inTask(1)], "t1", [TASK]))).toMatchObject({ kind: "open" });
+    expect(e.defaultPrevented).toBe(true);
+  });
+
+  it("is prevented but ignored while something else holds the keys (the launcher, the palette, the sheet, a text box) and on a held key", () => {
+    const e = keydown(CTRL_SHIFT_R);
+    expect(reviewKeyDown(e, "windows", ctx([inTask(1)], "t1", [TASK], true))).toEqual({ kind: "ignored" });
+    expect(e.defaultPrevented).toBe(true);
+    const held = keydown({ ...CTRL_SHIFT_R, repeat: true });
+    expect(reviewKeyDown(held, "windows", ctx([inTask(1)], "t1", [TASK]))).toEqual({ kind: "ignored" });
+    expect(held.defaultPrevented).toBe(true);
+  });
+
+  it("leaves every other key alone", () => {
+    for (const init of [{ code: "KeyR" }, { code: "KeyR", ctrlKey: true }, { code: "KeyK", ctrlKey: true, shiftKey: true }]) {
+      const e = keydown(init);
+      expect(reviewKeyDown(e, "windows", ctx([inTask(1)], "t1", [TASK]))).toBeNull();
+      expect(e.defaultPrevented).toBe(false);
+    }
+  });
+
+  it("is blocked by an open launcher, palette, profiles page or review sheet, and by a text box", () => {
+    const none = { launcherOpen: false, overlay: null, review: false, inTextBox: false };
+    expect(keyBlocked(none)).toBe(false);
+    expect(keyBlocked({ ...none, launcherOpen: true })).toBe(true);
+    expect(keyBlocked({ ...none, overlay: "palette" })).toBe(true);
+    expect(keyBlocked({ ...none, review: true })).toBe(true);
+    expect(keyBlocked({ ...none, inTextBox: true })).toBe(true);
+  });
+});
+
+describe("LiveApp: which sessions are tasks", () => {
+  it("marks the rows of sessions that run in a task's folder, and only those", () => {
+    const rows = [
+      { ...FIXTURES[0]!, id: "t1" },
+      { ...FIXTURES[1]!, id: "t2" },
+    ];
+    const marked = markTasks(rows, [info(1), inTask(2)], [TASK]);
+    expect(marked.map((r) => r.task)).toEqual([undefined, true]);
+    // A row that is not a task is the very same object, so the sidebar does not redraw it.
+    expect(marked[0]).toBe(rows[0]);
+    expect(markTasks(rows, [info(1), inTask(2)], [])).toBe(rows);
+  });
+  it("names the agent only when the task's session is a running agent", () => {
+    expect(reviewAgentName(inTask(1))).toBe("Claude Code");
+    expect(reviewAgentName(inTask(1, { state: { kind: "exited", code: 0 } }))).toBeNull();
+    expect(reviewAgentName(info(1, { cwd: "C:\\dev\\my-app-task" }))).toBeNull();
+    expect(reviewAgentName(undefined)).toBeNull();
+  });
+});
+
+describe("LiveApp: the palette's Review command", () => {
+  it("is hidden unless the active session is a task, and Resume is hidden unless it can resume", () => {
+    expect(paletteHidden({ resumable: false, isTask: false })).toEqual(["resume", "review-task"]);
+    expect(paletteHidden({ resumable: false, isTask: true })).toEqual(["resume"]);
+    expect(paletteHidden({ resumable: true, isTask: false })).toEqual(["review-task"]);
+    expect(paletteHidden({ resumable: true, isTask: true })).toEqual([]);
+  });
+});
+
+describe("LiveApp: the task list", () => {
+  const other: Task = { ...TASK, id: "k2", branch: "marshell/other" };
+  it("asks the core every time it is refreshed (on start, and after every create, merge or remove)", async () => {
+    const list = vi.fn(async () => [TASK]);
+    const seen: Task[][] = [];
+    const refresh = taskRefresher(list, (t) => seen.push(t));
+    await refresh();
+    await refresh();
+    await refresh();
+    expect(list).toHaveBeenCalledTimes(3);
+    expect(seen).toHaveLength(3);
+  });
+  it("shows the newest answer: an older, slower one that arrives later is dropped", async () => {
+    let slow!: (t: Task[]) => void;
+    const answers = [new Promise<Task[]>((r) => (slow = r)), Promise.resolve([other])];
+    const seen: Task[][] = [];
+    const refresh = taskRefresher(() => answers.shift()!, (t) => seen.push(t));
+    const first = refresh();
+    await refresh();
+    slow([TASK]);
+    await first;
+    expect(seen).toEqual([[other]]);
+  });
+  it("keeps the list it has when the core does not answer", async () => {
+    const seen: Task[][] = [];
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    await taskRefresher(async () => Promise.reject(new Error("down")), (t) => seen.push(t))();
+    expect(seen).toEqual([]);
+    warn.mockRestore();
+  });
+});
+
+describe("LiveApp: the sheet hands the focus to the agent's terminal", () => {
+  it("notify shows the receipt as a toast with no action", () => {
+    const { actions } = setup([claude(1)]);
+    actions.notify("Merged marshell/fix-login into main.");
+    expect(actions.getState().toast).toMatchObject({ text: "Merged marshell/fix-login into main." });
+    expect(actions.getState().toast?.reopenId).toBeUndefined();
+    actions.dispose();
+  });
+  it("focusTerminal bumps the focus token once", () => {
+    const { actions } = setup([claude(1)]);
+    const before = actions.getState().focusToken;
+    actions.focusTerminal();
+    expect(actions.getState().focusToken).toBe(before + 1);
   });
 });

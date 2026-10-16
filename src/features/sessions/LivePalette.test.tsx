@@ -17,6 +17,12 @@ describe("LivePalette", () => {
     expect(show()).toContain("Resume this session");
     expect(show(["resume"])).not.toContain("Resume this session");
   });
+  it("offers Review this task's changes unless the window hides it (the active session is not a task)", () => {
+    const show = (hidden?: string[]) => renderToStaticMarkup(<LivePalette sessions={PALETTE_SESSIONS} os="windows" hidden={hidden} onRun={() => {}} onClose={() => {}} />);
+    expect(show()).toContain("Review this task");
+    expect(show(["review-task"])).not.toContain("Review this task");
+    expect(LIVE_COMMANDS.map((c) => c.id)).toContain("review-task");
+  });
   it("shows those commands and not the inert ones", () => {
     const h = renderToStaticMarkup(<LivePalette sessions={PALETTE_SESSIONS} os="windows" onRun={() => {}} onClose={() => {}} />);
     expect(h).toContain("Shell profiles");
