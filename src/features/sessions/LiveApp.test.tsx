@@ -5,7 +5,7 @@ import type { SessionInfo } from "../../generated/SessionInfo";
 import { ApiError } from "../../lib/api/client";
 import type { RowModel } from "../sidebar/types";
 import { CloseBar } from "./CloseBar";
-import { SessionActions, closeBarText, needsCloseConfirm, tabIdOfNumber, TOAST_MS } from "./sessionActions";
+import { SessionActions, agentLabel, closeBarText, needsCloseConfirm, tabIdOfNumber, TOAST_MS } from "./sessionActions";
 import { Toast } from "./Toast";
 
 const ep: Endpoint = { port: 1, token: "t", platform: "windows" };
@@ -79,6 +79,12 @@ describe("LiveApp: close", () => {
   it("names Codex and Antigravity by their display names", () => {
     expect(closeBarText(info(1, { agent: "codex", cwd: "/home/me/api/" }))).toBe("Codex may be mid-task in api.");
     expect(closeBarText(info(1, { agent: "antigravity" }))).toBe("Antigravity may be mid-task in my-app.");
+  });
+
+  it("names an agent for a sentence: the CLI's own name, the mark's name, or the id", () => {
+    expect(agentLabel("claude")).toBe("Claude Code");
+    expect(agentLabel("copilot")).toBe("GitHub Copilot");
+    expect(agentLabel("my-cli")).toBe("my-cli");
   });
 
   it("only a running agent session asks", () => {

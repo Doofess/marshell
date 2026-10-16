@@ -36,6 +36,7 @@ const ALLOWED: Record<string, { reason: string; migrate?: true }> = {
   "features/approval/ApproveCard.tsx": { reason: "the receipt line confirms the user's own decision (Allowed · npm test) and is not announced anywhere else" },
   "features/launcher/Launcher.tsx": { reason: "'No folder matches' while typing, and the task confirm's single progress line ('Creating the worktree…', then 'Starting <program>…'), in a modal sheet that owns focus; the window's announcer is quiet while it is open" },
   "features/palette/Palette.tsx": { reason: "'No command matches' while typing in a modal sheet that owns focus; the window's announcer is quiet while it is open" },
+  "features/tasks/ReviewSheet.tsx": { reason: "the merge step's single progress line ('Merging…', 'Removing…') and its error alerts, in a modal sheet that owns focus; the window's announcer is quiet while it is open" },
   "features/sessions/LiveApp.tsx": { reason: "the startup failure screen: there is no window yet, so no announcer" },
   "features/sessions/CloseBar.tsx": { reason: "the busy-close question owns keyboard focus while it is up and exists only then; it is not a status message, and the window's Announcer cannot say a question that is still open" },
   "features/perf/PerfOverlay.tsx": { reason: 'aria-live="off": a developer overlay that explicitly stays silent' },

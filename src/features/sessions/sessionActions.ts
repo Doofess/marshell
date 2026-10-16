@@ -18,11 +18,14 @@ export const needsCloseConfirm = (info: SessionInfo): boolean => info.agent !== 
 /** The names the close bar uses; the sidebar's own mark names ("OpenAI Codex") are longer than the CLIs are known by. */
 const CLOSE_BAR_NAMES: Record<string, string> = { claude: "Claude Code", codex: "Codex", antigravity: "Antigravity" };
 
+/** An agent's name in a sentence ("Claude Code"): the only thing about the agent the sheets use. An unknown agent is named by its id. */
+export function agentLabel(agent: string): string {
+  return CLOSE_BAR_NAMES[agent] ?? (isAgentId(agent) ? AGENT_NAMES[agent] : agent);
+}
+
 /** "Claude Code may be mid-task in my-app." The project is the last folder of the session's cwd. */
 export function closeBarText(info: SessionInfo): string {
-  const agent = info.agent ?? "";
-  const name = CLOSE_BAR_NAMES[agent] ?? (isAgentId(agent) ? AGENT_NAMES[agent] : agent);
-  return `${name} may be mid-task in ${lastSegment(info.cwd)}.`;
+  return `${agentLabel(info.agent ?? "")} may be mid-task in ${lastSegment(info.cwd)}.`;
 }
 
 /** The tab of the session whose NUMBER is `number` (not the one in that position), or undefined. */

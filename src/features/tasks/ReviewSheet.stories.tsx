@@ -2,8 +2,10 @@ import type { Meta, StoryObj } from "@storybook/react-vite";
 import { ThemePair } from "../../design/ThemePair";
 import type { Task } from "../../generated/Task";
 import type { TaskChanges } from "../../generated/TaskChanges";
-import { ReviewView } from "./ReviewSheet";
-import { initialReview } from "./reviewState";
+import type { MergePlan } from "../../generated/MergePlan";
+import type { RemovePlan } from "../../generated/RemovePlan";
+import { ReviewView, type ReviewViewProps } from "./ReviewSheet";
+import { initialReview, type ReviewStep } from "./reviewState";
 
 const meta: Meta = { title: "Tasks/Review sheet", parameters: { layout: "fullscreen" } };
 export default meta;
@@ -44,10 +46,10 @@ const CHANGES: TaskChanges = {
 };
 
 const noop = () => {};
-const show = (label: string, changes: TaskChanges, selected = 0) => (
+const show = (label: string, changes: TaskChanges, selected = 0, step: ReviewStep = "changes", extra: Partial<ReviewViewProps> = {}) => (
   <ThemePair label={label} stack>
     <div style={{ position: "relative", inlineSize: 900, maxInlineSize: "100%", blockSize: 520 }}>
-      <ReviewView task={TASK} changes={changes} state={{ ...initialReview(), selected }} dispatch={noop} onMerge={noop} onRemove={noop} onClose={noop} />
+      <ReviewView task={TASK} changes={changes} state={{ ...initialReview(), selected, step }} dispatch={noop} onClose={noop} {...extra} />
     </div>
   </ThemePair>
 );
@@ -57,3 +59,18 @@ export const NewFile: StoryObj = { render: () => show("A new file, not committed
 export const BinaryFile: StoryObj = { render: () => show("A binary file: a sentence instead of a diff", CHANGES, 0) };
 export const Truncated: StoryObj = { render: () => show("The diff was cut at the size limit", { ...CHANGES, truncated: true }, 3) };
 export const Empty: StoryObj = { render: () => show("No changes yet: Merge back is disabled", { files: [], diff: "", truncated: false, ahead: 0, uncommitted: false }) };
+
+const MERGE_PLAN: MergePlan = { blocker: null, commands: ["git add -A", 'git merge --no-ff -m "Fix login" marshell/fix-login'] };
+const REMOVE_PLAN: RemovePlan = { warnings: [], sessions: 0, commands: ["git worktree remove C:\Users\me\.marshell\worktrees\my-app\fix-login", "git branch -d marshell/fix-login"] };
+const merge = (over: Partial<NonNullable<ReviewViewProps["merge"]>> = {}) => ({ message: "Fix login", remove: true, plan: MERGE_PLAN, ready: true, error: null, onMessage: noop, onRemoveChange: noop, onConfirm: noop, ...over });
+
+export const MergeStep: StoryObj = { render: () => show("Merge: the message, the checkbox and the commands that will run", CHANGES, 3, "merge", { merge: merge() }) };
+export const MergeBlocked: StoryObj = {
+  render: () => show("Merge blocked: the reason above the commands, Merge dimmed", CHANGES, 3, "merge", { merge: merge({ plan: { ...MERGE_PLAN, blocker: "main has uncommitted changes. Commit or stash them first." } }) }),
+};
+export const Conflict: StoryObj = {
+  render: () => show("Merging stopped on a conflict, with the agent's button", CHANGES, 3, "conflict", { conflictFiles: ["src/login.ts", "src/session.ts"], agentName: "Claude Code", onAskAgent: noop }),
+};
+export const RemoveWithWarnings: StoryObj = {
+  render: () => show("Remove with warnings: the button says Remove anyway", CHANGES, 3, "remove", { remove: { plan: { ...REMOVE_PLAN, warnings: ["2 commits on marshell/fix-login are not merged."] }, ready: true, error: null, onConfirm: noop } }),
+};

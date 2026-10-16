@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { initialReview, reviewReducer, type ReviewAction, type ReviewState } from "./reviewState";
+import { initialReview, isBusy, reviewReducer, stepFocus, type ReviewAction, type ReviewState } from "./reviewState";
 
 const run = (state: ReviewState, ...actions: ReviewAction[]) => actions.reduce(reviewReducer, state);
 const at = (selected: number): ReviewState => ({ step: "changes", selected });
@@ -68,5 +68,35 @@ describe("reviewReducer: the steps", () => {
     expect(run(at(0), { type: "finish" }).step).toBe("changes");
     expect(run(at(0), { type: "conflict" }).step).toBe("changes");
     expect(run(at(0), { type: "start" }).step).toBe("changes");
+  });
+});
+
+describe("isBusy", () => {
+  it("is true only while the core is merging or removing", () => {
+    expect(isBusy("merging")).toBe(true);
+    expect(isBusy("removing")).toBe(true);
+    for (const s of ["changes", "merge", "remove", "conflict", "done"] as const) expect(isBusy(s), s).toBe(false);
+  });
+});
+
+describe("stepFocus: where focus goes when the step changes", () => {
+  it("goes to the message field on the merge step, and to the confirming button on remove and conflict", () => {
+    expect(stepFocus("changes", "merge")).toBe(".review__message");
+    expect(stepFocus("changes", "remove")).toBe(".review__confirm");
+    expect(stepFocus("merging", "conflict")).toBe(".review__confirm");
+  });
+  it("goes back to the file list from a step the user left with Back", () => {
+    expect(stepFocus("merge", "changes")).toBe(".review__files");
+    expect(stepFocus("conflict", "changes")).toBe(".review__files");
+  });
+  it("stays put when a run ends back on its step, so the button that has focus keeps it", () => {
+    expect(stepFocus("merging", "merge")).toBeNull();
+    expect(stepFocus("removing", "remove")).toBeNull();
+  });
+  it("does not move on the same step, or into the busy and done steps", () => {
+    expect(stepFocus("merge", "merge")).toBeNull();
+    expect(stepFocus("merge", "merging")).toBeNull();
+    expect(stepFocus("remove", "removing")).toBeNull();
+    expect(stepFocus("merging", "done")).toBeNull();
   });
 });

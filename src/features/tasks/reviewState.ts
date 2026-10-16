@@ -30,7 +30,31 @@ export type ReviewAction =
   /** The core refused or git failed: back to the step that asked, to try again. */
   | { type: "fail" };
 
-export const initialReview = (): ReviewState => ({ step: "changes", selected: 0 });
+/** The core is working: nothing else may start, and the sheet may not close. */
+export const isBusy = (step: ReviewStep): boolean => step === "merging" || step === "removing";
+
+/**
+ * What takes focus when the step changes, as a selector inside the sheet (null: leave focus where it is). A step the user opens
+ * puts focus on its first thing to do: the message field, or the button that confirms (it is aria-disabled, never `disabled`,
+ * while the commands load, so it keeps focus). Back returns to the file list. A run that ends back on its own step leaves focus
+ * alone: the button that was pressed still has it.
+ */
+export function stepFocus(prev: ReviewStep, next: ReviewStep): string | null {
+  if (prev === next || (isBusy(prev) && (next === "merge" || next === "remove"))) return null;
+  switch (next) {
+    case "merge":
+      return ".review__message";
+    case "remove":
+    case "conflict":
+      return ".review__confirm";
+    case "changes":
+      return ".review__files";
+    default:
+      return null;
+  }
+}
+
+export const initialReview =(): ReviewState => ({ step: "changes", selected: 0 });
 
 export function reviewReducer(state: ReviewState, action: ReviewAction): ReviewState {
   const { step } = state;

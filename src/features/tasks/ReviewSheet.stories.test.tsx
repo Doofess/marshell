@@ -8,7 +8,7 @@ const render = (name: keyof typeof stories) => renderToStaticMarkup((stories[nam
 
 describe("the Review sheet stories", () => {
   it("render, each in a dark and a light panel", () => {
-    expect(names.length).toBe(5);
+    expect(names.length).toBe(9);
     for (const n of names) expect((render(n).match(/class="theme-pair__panel"/g) ?? []).length, n).toBe(2);
   });
   it("show what each case is about", () => {

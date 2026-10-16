@@ -23,6 +23,10 @@
   padding-block: var(--space-1);
   border-radius: var(--radius);
   background: var(--fill);
+  /* The list scrolls inside its own cap, so a long one never pushes the diff out of view. */
+  max-block-size: calc(12 * var(--space-6));
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 .review__files:focus-visible {
   outline: 2px solid var(--focus, var(--accent));
@@ -93,6 +97,80 @@
   color: var(--text-1);
 }
 
+/* Merge, remove and conflict steps: a column of the field, the checkbox, the notices and the commands. */
+.review__step {
+  display: grid;
+  gap: var(--space-3);
+  max-inline-size: 720px;
+}
+.review__message {
+  inline-size: 100%;
+}
+.review__check {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--text-13);
+  color: var(--text-1);
+}
+.review__lede {
+  margin: 0;
+  font-size: var(--text-13);
+  color: var(--text-2);
+}
+.review__heading {
+  margin: 0;
+  font-size: var(--text-15);
+  color: var(--text-1);
+}
+.review__blocker,
+.review__error,
+.review__progress {
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  background: var(--fill);
+  font-size: var(--text-13);
+  color: var(--text-1);
+}
+.review__blocker {
+  border-inline-start: 3px solid var(--accent);
+}
+.review__error {
+  border-inline-start: 3px solid var(--error);
+}
+.review__warnings {
+  display: grid;
+  gap: var(--space-1);
+  margin: 0;
+  padding-block: var(--space-2);
+  padding-inline: var(--space-6) var(--space-3);
+  border-inline-start: 3px solid var(--error);
+  background: var(--fill);
+  font-size: var(--text-13);
+  color: var(--text-1);
+}
+.review__conflicts {
+  display: grid;
+  gap: var(--space-1);
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  list-style: none;
+  border-radius: var(--radius);
+  background: var(--fill);
+}
+.review__conflict {
+  font-family: var(--font-mono);
+  font-size: var(--text-12);
+  color: var(--text-1);
+  overflow-wrap: anywhere;
+}
+
+/* A button that cannot act yet (the commands are loading, or the core is working) stays focusable, so it is dimmed, not disabled. */
+.review .settings__btn[aria-disabled="true"] {
+  opacity: 0.6;
+  cursor: default;
+}
+
 @media (hover: hover) and (pointer: fine) {
   .review__file:hover:not([data-selected]) {
     background: var(--hover, var(--fill-strong));
@@ -109,8 +187,17 @@
 @media (forced-colors: active) {
   .review__files,
   .review__note,
-  .review__banner {
+  .review__banner,
+  .review__blocker,
+  .review__error,
+  .review__progress,
+  .review__warnings,
+  .review__conflicts {
     outline: 1px solid CanvasText;
+  }
+  .review .settings__btn[aria-disabled="true"] {
+    opacity: 1;
+    color: GrayText;
   }
   .review__file[data-selected] {
     outline: 2px solid Highlight;
