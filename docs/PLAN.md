@@ -756,7 +756,7 @@ Decisions from the 2026-10-10 coverage audit (`docs/superpowers/plan-coverage-au
      - the structural UX rules, which are hard to retrofit: focus restoration, the hover-freeze rule, the permanent lane header, rows that never resize
      - **Windows process hygiene (from S2):** Job Object with kill-on-close so a crash leaves no orphans; sideloaded `conpty.dll` + `OpenConsole.exe` with the MIT notice.
      - **Resilience:** a core panic hook and supervisor with a "core restarted" UI state; every file in `~/.marshell` carries a `version` field, is written atomically and keeps a `.bak`; migrations run on load.
-     - **Restart behaviour:** on relaunch tabs come back as "Ended" with a one-click Resume (the agent's own `--resume`). Nothing relaunches itself or spends tokens unasked.
+     - **Restart behaviour:** on relaunch tabs come back as "Ended" with a one-click Resume (the CLI's own continue-last-here; see slice 2e below). Nothing relaunches itself or spends tokens unasked.
    - Slices: 2a hygiene and resilience; 2b tabs, sidebar, profiles and launcher (agents run inside a shell profile; status limited until phase 3); 2c shell integration; 2d themes; 2e split up to four panes, focus mode, the sidebar shell panel, project grouping, `layout.json` restore, and Ended tabs with Resume; 2e+ projects and task worktrees (below); 2f recording, palette and cheat sheet.
    - Slice 2c (shell integration) ships first and is unchanged by the roadmap additions of 2026-10-16.
    - **Slice 2d (themes) is built.** User decisions of 2026-10-16:
@@ -766,7 +766,7 @@ Decisions from the 2026-10-10 coverage audit (`docs/superpowers/plan-coverage-au
      - Text size is Default, Large or Larger, which move the UI type scale up one or two steps (13, 15, 17 px body). The terminal font size is its own setting (8–32).
      - What shipped: the Appearance dialog from the palette ("Appearance…"); presets plus a custom accent checked against both themes (3:1 on every surface, 4.5:1 for text); terminal theme Follow app, Always dark, Always light or imported, with a per-profile override in Shell profiles; contrast protection (`minimumContrastRatio`); `COLORFGBG` set at session start from the scheme the terminal will show; terminal font from your setting, else Windows Terminal's default profile font, else the bundled JetBrains Mono.
    - **Projects and task worktrees (slice 2e+, widened 2026-10-16; research in `docs/research/2026-10-16-accounts-cloud-extensions.md`).** A project is a folder, so projects are universal across CLIs and need no adapter. Projects are listed and grouped in the sidebar. A task can start in its own git worktree, as in the Codex desktop app, and Marshell then lets the user review its changes and merge it back in the app. This pulls the v2 "review-to-merge" item forward for worktree tasks; start-from-issue stays in v2. Worktree creation, merge and removal are git operations that show their command first and never run silently. **2e+** covers create, review the diff, merge back and remove; every git command is shown first.
-   - A core restart ends the running sessions. A core restart or a relaunch brings the tabs back as **Ended** with a Resume button. Resume runs the CLI's own continue-last-here in the tab's folder: `claude --continue`, `codex resume --last`, and plain `agy` for Antigravity. A plain shell just restarts. Resume is refused, with the reason shown, if the profile was removed or the folder is missing. Exact-id resume is phase 3.
+   - A core restart ends the running sessions. A restart or a relaunch brings the tabs back as **Ended** with a Resume button. Resume runs the CLI's own continue-last-here in the tab's folder: `claude --continue`, `codex resume --last`, and plain `agy` for Antigravity. A plain shell just restarts. Resume is refused, with the reason shown, if the profile was removed or the folder is missing. Exact-id resume is phase 3.
    - **Slice 2e decisions (2026-10-16).**
      1. The closed list is not saved. Reopen covers this run only, and only open tabs go to `layout.json`.
      2. Focus mode is Ctrl+Shift+I (Cmd+I on macOS). The shell panel is Ctrl+Shift+S, split is Ctrl+Shift+D and zoom pane is Ctrl+Shift+P. Grouping by project is an unbound palette command.
@@ -878,7 +878,7 @@ Onboarding, Departures, the doctor, the settings page, the banners and the tray 
 
 ## v2 and later (not in v1)
 
-From brief §5.9 and §6: the installer runner (install CLIs; the update button and version display moved to phase 6 on 2026-10-16), review-to-merge (for worktree tasks it moved to slice 2e on 2026-10-16), start-from-issue, checkpoints, file tree, phone check-in, and the `marshelld` daemon. v1 keeps the core protocol-first so these are additions, not rewrites. Also deferred: Airport mode (relabel statuses), if wanted at all.
+From brief §5.9 and §6: the installer runner (install CLIs; the update button and version display moved to phase 6 on 2026-10-16), review-to-merge (for worktree tasks it moved to slice 2e+ on 2026-10-16), start-from-issue, checkpoints, file tree, phone check-in, and the `marshelld` daemon. v1 keeps the core protocol-first so these are additions, not rewrites. Also deferred: Airport mode (relabel statuses), if wanted at all.
 
 ## 10. Testing strategy
 
