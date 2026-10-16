@@ -7,9 +7,9 @@ import { LIVE_COMMANDS, LivePalette } from "./LivePalette";
 describe("LivePalette", () => {
   it("lists only commands the window runs", () => {
     const ids = LIVE_COMMANDS.map((c) => c.id);
-    for (const id of ["launcher", "close", "reopen", "rename", "move-up", "move-down", "profiles"]) expect(ids, id).toContain(id);
+    for (const id of ["launcher", "close", "reopen", "rename", "move-up", "move-down", "profiles", "appearance"]) expect(ids, id).toContain(id);
     // Every other row would do nothing when chosen.
-    for (const id of ids) expect(id === "profiles" || commandShortcut(id) !== null, id).toBe(true);
+    for (const id of ids) expect(id === "profiles" || id === "appearance" || commandShortcut(id) !== null, id).toBe(true);
     for (const id of ["doctor", "history", "split", "mode-plan", "go-to-session"]) expect(ids, id).not.toContain(id);
   });
   it("shows those commands and not the inert ones", () => {

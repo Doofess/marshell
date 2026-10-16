@@ -7,6 +7,7 @@ import { paletteSessions } from "../palette/sessions";
 import { ProfilesDialog } from "../settings/ProfilesPage";
 import { nextSessionNumber } from "../sidebar/sessionNumber";
 import type { RowModel } from "../sidebar/types";
+import { AppearanceDialog } from "../appearance/AppearanceDialog";
 import { useAppearance } from "../appearance/AppearanceProvider";
 import { terminalThemeOf, wtFont } from "../appearance/terminalSettings";
 import { jumpWords } from "../terminal/promptMarks";
@@ -70,7 +71,7 @@ export function LiveApp() {
   const terminalFont = useMemo(() => ({ family: font.family, size: font.size }), [font.family, font.size]);
   const [launcherOpen, setLauncherOpen] = useState(false);
   // The command palette, or the shell profiles page opened from it, over the window.
-  const [overlay, setOverlay] = useState<"palette" | "profiles" | null>(null);
+  const [overlay, setOverlay] = useState<"palette" | "profiles" | "appearance" | null>(null);
   // What the profiles page and the prompt jumps say aloud through the window's announcer. Negative ids never meet a toast's.
   const [notice, setNotice] = useState<{ id: number; text: string } | null>(null);
   const noticeCount = useRef(0);
@@ -170,7 +171,7 @@ export function LiveApp() {
 
   // A palette row: a session to go to, the profiles page, or a command the window runs (LivePalette lists only those).
   const runFromPalette = (id: string) => {
-    setOverlay(id === "profiles" ? "profiles" : null);
+    setOverlay(id === "profiles" || id === "appearance" ? id : null);
     if (id.startsWith("session:")) return select(id.slice("session:".length));
     const shortcut = commandShortcut(id);
     if (shortcut?.kind === "launcher") setLauncherOpen(true);
@@ -245,6 +246,7 @@ export function LiveApp() {
       )}
       {overlay === "palette" && os && <LivePalette sessions={paletteSessions(rows)} os={os} onRun={runFromPalette} onClose={() => setOverlay(null)} />}
       {overlay === "profiles" && endpoint && <ProfilesDialog endpoint={endpoint} onClose={() => setOverlay(null)} onNotice={announce} />}
+      {overlay === "appearance" && <AppearanceDialog onClose={() => setOverlay(null)} onNotice={announce} />}
       {launcherOpen && (
         <LiveLauncher
           endpoint={endpoint}

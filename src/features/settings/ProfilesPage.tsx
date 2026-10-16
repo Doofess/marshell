@@ -6,6 +6,7 @@ import type { Endpoint } from "../../generated/Endpoint";
 import type { Profile } from "../../generated/Profile";
 import { profiles as profilesApi } from "../../lib/api/profiles";
 import { useDialogFocus } from "../../lib/useDialogFocus";
+import { useAppearance } from "../appearance/AppearanceProvider";
 import { changeCount, commandRoundTrips, duplicateEnvKeys, forSave, joinCommand, profileKind, splitCommand, type ProfilePatch } from "./profilesDoc";
 import { Switch } from "../../components/Switch/Switch";
 import { isDirty, ProfilesStore, type ProfilesState, type ScriptView } from "./ProfilesStore";
@@ -138,6 +139,31 @@ function IntegrationRow({ on, script, onPatch, onToggleScript }: { on: boolean; 
   );
 }
 
+/** The profile's own terminal theme; "" is no override, so its terminals follow the Appearance setting. */
+function TerminalThemeRow({ value, themes, onPatch }: { value: string | undefined; themes: { id: string; name: string }[]; onPatch: (patch: ProfilePatch) => void }) {
+  return (
+    <li className="field">
+      <label className="field__label" htmlFor="profile-terminal-theme">
+        Terminal theme
+      </label>
+      <p id="profile-terminal-theme-help" className="field__help">
+        Overrides the Appearance setting for this profile&apos;s terminals.
+      </p>
+      <select id="profile-terminal-theme" className="field__control" aria-describedby="profile-terminal-theme-help" value={value ?? ""} onChange={(e) => onPatch({ terminal_theme: e.target.value === "" ? undefined : e.target.value })}>
+        <option value="">Same as the app setting</option>
+        <option value="dark">Dark</option>
+        <option value="light">Light</option>
+        {themes.map((t) => (
+          <option key={t.id} value={t.id}>
+            {t.name}
+          </option>
+        ))}
+      </select>
+      <p className="field__applies">Applies to new sessions.</p>
+    </li>
+  );
+}
+
 const KIND_NOTE = {
   custom: "A profile you added.",
   detected: "Found on this machine. It can't be deleted: detection would bring it back.",
@@ -148,7 +174,7 @@ const KIND_NOTE = {
  * The shell profiles: the list on one side, the selected profile's form on the other. Presentational: ProfilesPage owns the
  * store. Nothing is saved until Save; the bar shows what the core said when it refused.
  */
-export function ProfilesPageView({ state, handlers, level = 2 }: { state: ProfilesState; handlers: ProfilesHandlers; level?: 1 | 2 }) {
+export function ProfilesPageView({ state, handlers, level = 2, themes = [] }: { state: ProfilesState; handlers: ProfilesHandlers; level?: 1 | 2; themes?: { id: string; name: string }[] }) {
   const { draft, detected, selectedId } = state;
   const selected: Profile | undefined = draft?.profiles.find((p) => p.id === selectedId);
   const kind = selected ? profileKind(selected, detected) : "custom";
@@ -200,6 +226,7 @@ export function ProfilesPageView({ state, handlers, level = 2 }: { state: Profil
               <FieldRow field={FOLDER} value={selected.cwd ?? ""} onChange={(cwd) => handlers.onPatch({ cwd: cwd === "" ? null : cwd })} />
               <EnvRows env={selected.env} onPatch={handlers.onPatch} />
               <IntegrationRow on={selected.shell_integration} script={state.script} onPatch={handlers.onPatch} onToggleScript={handlers.onToggleScript} />
+              <TerminalThemeRow value={selected.terminal_theme} themes={themes} onPatch={handlers.onPatch} />
             </ul>
             <div className="profiles__actions">
               <button type="button" className="settings__btn" disabled={selected.id === draft.default_id} onClick={handlers.onMakeDefault}>
@@ -246,6 +273,7 @@ export function ProfilesPage({ endpoint, onClose, onNotice, onCanClose }: { endp
     void store.load();
   }, [store]);
   const state = useSyncExternalStore(store.subscribe, store.getState);
+  const { appearance } = useAppearance();
   // The window has one live region (its announcer); the result of Save goes there instead of a region of this page.
   const say = useEffectEvent((text: string) => onNotice?.(text));
   // The dialog around the page needs to know too, so Escape leaves unsaved edits alone as Close does.
@@ -273,7 +301,7 @@ export function ProfilesPage({ endpoint, onClose, onNotice, onCanClose }: { endp
     }),
     [store, onClose],
   );
-  return <ProfilesPageView state={state} handlers={handlers} />;
+  return <ProfilesPageView state={state} handlers={handlers} themes={appearance.imported_themes} />;
 }
 
 /** The page as a dialog over the window: focus moves in, Tab stays inside, Escape closes and focus goes back to where it was. */

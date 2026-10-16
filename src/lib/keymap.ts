@@ -79,6 +79,7 @@ export const COMMANDS: Command[] = [
   { id: "prompt-next", label: "Jump to the next prompt", group: "Tools", binding: { code: "PageDown" } },
   { id: "cheatsheet", label: "Keyboard shortcuts", group: "Tools", binding: { code: "KeyO" } },
   { id: "profiles", label: "Shell profiles…", group: "Tools" },
+  { id: "appearance", label: "Appearance…", group: "Tools" },
   { id: "doctor", label: "Open Doctor", group: "Tools" },
   { id: "departures", label: "Open Departures board", group: "Tools" },
 ];

@@ -42,6 +42,7 @@ const sameValues = (a: Profile, b: Profile): boolean =>
   a.family === b.family &&
   a.cwd === b.cwd &&
   a.shell_integration === b.shell_integration &&
+  (a.terminal_theme ?? null) === (b.terminal_theme ?? null) &&
   JSON.stringify(a.command) === JSON.stringify(b.command) &&
   JSON.stringify(a.env) === JSON.stringify(b.env);
 
@@ -57,7 +58,7 @@ export function profileKind(p: Profile, detected: Profile[]): ProfileKind {
   return sameValues(p, original) ? "detected" : "edited";
 }
 
-export type ProfilePatch = Partial<Pick<Profile, "name" | "command" | "cwd" | "env" | "shell_integration">>;
+export type ProfilePatch = Partial<Pick<Profile, "name" | "command" | "cwd" | "env" | "shell_integration" | "terminal_theme">>;
 
 export const updateProfile = (doc: ProfilesDoc, id: string, patch: ProfilePatch): ProfilesDoc => ({
   ...doc,

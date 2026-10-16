@@ -260,3 +260,24 @@ describe("ProfilesPage: environment variables named twice", () => {
     expect(html(store)).not.toContain("listed twice");
   });
 });
+
+describe("ProfilesPage: terminal theme", () => {
+  it("profile terminal theme select offers same-as-app and imported themes", async () => {
+    const { store } = setup({ doc: { profiles: [profile("pwsh", { detected: true, terminal_theme: "wt:nord" }), profile("cmd", { detected: true })], default_id: "pwsh" } });
+    await store.load();
+    const h = renderToStaticMarkup(<ProfilesPageView state={store.getState()} handlers={handlers} themes={[{ id: "wt:nord", name: "Nord" }]} />);
+    const select = h.match(/<select[^>]*>.*?<\/select>/s)?.[0] ?? "";
+    expect(select).toContain('<option value="">Same as the app setting</option>');
+    expect(select).toContain('<option value="dark">Dark</option>');
+    expect(select).toContain('<option value="light">Light</option>');
+    expect(select).toMatch(/<option value="wt:nord" selected="">Nord<\/option>/);
+    expect(h).toContain("Terminal theme");
+  });
+  it("a terminal theme change counts as an unsaved change", async () => {
+    const { store } = setup();
+    await store.load();
+    store.patch({ terminal_theme: "light" });
+    expect(store.getState().draft!.profiles[0]!.terminal_theme).toBe("light");
+    expect(canClose(store.getState())).toBe(false);
+  });
+});
