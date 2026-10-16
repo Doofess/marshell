@@ -70,7 +70,8 @@ export const isAgentProgram = (id: ProgramId, programs: LaunchProgram[] = LAUNCH
 };
 
 export type LauncherChoice = { program: ProgramId; projectId: string; mode: Mode; pace: Pace; worktree: boolean };
-export type Remembered = Partial<Pick<LauncherChoice, "mode" | "pace" | "worktree">>;
+/** What is remembered per folder. The worktree choice is never remembered: the chip starts off every time. */
+export type Remembered = Partial<Pick<LauncherChoice, "mode" | "pace">>;
 
 /** The launcher as one sentence, for the dialog's accessible description. */
 export function launcherSentence(c: LauncherChoice, projects: Project[], programs: LaunchProgram[] = LAUNCH_PROGRAMS): string {
@@ -87,11 +88,12 @@ export function startingText(program: ProgramId, projectName: string, programs: 
 }
 
 export function applyRemembered(c: LauncherChoice, r: Remembered | undefined): LauncherChoice {
-  return { ...c, ...r };
+  // Only mode and pace: an old entry that still carries a worktree flag must not turn the chip on.
+  return { ...c, ...(r?.mode === undefined ? {} : { mode: r.mode }), ...(r?.pace === undefined ? {} : { pace: r.pace }) };
 }
 
 export function rememberedNote(projectName: string, r: Remembered | undefined): string | null {
   if (!r) return null;
-  const parts = [r.mode, r.pace, r.worktree ? "worktree" : undefined].filter((x): x is string => Boolean(x));
+  const parts: string[] = [r.mode, r.pace].filter((x) => x !== undefined);
   return parts.length === 0 ? null : `Remembered for ${projectName}: ${parts.join(" · ")}. Change a choice to update it.`;
 }

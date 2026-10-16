@@ -1,11 +1,12 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import type { Task } from "../../generated/Task";
 import type { Profile } from "../../generated/Profile";
 import type { ProfilesDoc } from "../../generated/ProfilesDoc";
 import type { Project } from "../launcher/filter";
 import { startingText, type LauncherChoice, type ProgramId } from "../launcher/launchChoice";
 import { ApiError } from "../../lib/api/client";
 import type { LayoutDoc } from "../../generated/LayoutDoc";
-import { initialFocus, launchRequest, preselect, refocus, livePrograms, startFailure, toLauncherProject } from "./launchPrograms";
+import { createThenLaunch, initialFocus, launchRequest, preselect, refocus, livePrograms, startFailure, taskRequest, toLauncherProject, wantsTask } from "./launchPrograms";
 
 const profile = (id: string, family: Profile["family"], name = id): Profile => ({ id, name, command: [id], family, cwd: null, env: [], shell_integration: true, detected: true });
 const PROFILES: Profile[] = [profile("pwsh", "power_shell", "PowerShell 7"), profile("cmd", "cmd", "Command Prompt"), profile("git-bash", "posix", "Git Bash"), profile("wsl-ubuntu", "wsl", "Ubuntu")];
@@ -131,5 +132,60 @@ describe("preselect", () => {
     expect(preselect(doc, "C:/old-agent", programs)).toBeUndefined();
     expect(preselect(doc, "C:/never-used", programs)).toBeUndefined();
     expect(preselect(null, "C:/shell", programs)).toBeUndefined();
+  });
+});
+
+describe("starting a task in a worktree", () => {
+  const programs = livePrograms(PROFILES);
+  const task: Task = { id: "t1", name: "fix-login", branch: "marshell/fix-login", base_branch: "main", repo_root: "C:/dev/my-app", path: "C:/dev/.marshell/my-app/fix-login", created_ms: 1 };
+  const on = (program: ProgramId): LauncherChoice => ({ ...choice(program), worktree: true });
+  const NO_GIT: Project[] = [{ id: "C:/dev/scratch", name: "scratch", path: "C:/dev/scratch", lastUsedMs: 1 }];
+
+  it("goes through a confirm step only for an agent in a git folder with the worktree on", () => {
+    expect(wantsTask(on("claude"), PROJECTS, programs)).toBe(true);
+    expect(wantsTask(choice("claude"), PROJECTS, programs)).toBe(false);
+    expect(wantsTask(on("profile:cmd"), PROJECTS, programs)).toBe(false);
+    expect(wantsTask({ ...on("claude"), projectId: "C:/dev/scratch" }, NO_GIT, programs)).toBe(false);
+    expect(wantsTask({ ...on("claude"), projectId: "" }, PROJECTS, programs)).toBe(false);
+  });
+
+  it("asks the core to plan and create in the chosen folder with the name as typed", () => {
+    expect(taskRequest(on("claude"), PROJECTS, "fix-login")).toEqual({ cwd: "C:/dev/my-app", name: "fix-login" });
+  });
+
+  it("launches in the task's folder, and only after the create resolved", async () => {
+    const log: string[] = [];
+    let release: (t: Task) => void = () => {};
+    const create = vi.fn(() => new Promise<Task>((resolve) => (release = resolve)));
+    const launch = vi.fn(async (t: Task) => {
+      log.push(`launch ${launchRequest(on("claude"), "", programs, DOC, PROJECTS, SIZE, t.path).cwd}`);
+      return "started";
+    });
+    const done = createThenLaunch(create, launch);
+    await Promise.resolve();
+    expect(create).toHaveBeenCalledTimes(1);
+    expect(launch).not.toHaveBeenCalled();
+    release(task);
+    await expect(done).resolves.toBe("started");
+    expect(log).toEqual(["launch C:/dev/.marshell/my-app/fix-login"]);
+  });
+
+  it("does not launch when the create fails, and passes the failure on", async () => {
+    const launch = vi.fn();
+    await expect(createThenLaunch(() => Promise.reject(new ApiError(409, "No free name.")), launch)).rejects.toMatchObject({ message: "No free name." });
+    expect(launch).not.toHaveBeenCalled();
+  });
+
+  it("launchRequest takes the task folder over the project's, and changes nothing without one", () => {
+    expect(launchRequest(on("claude"), "go", programs, DOC, PROJECTS, SIZE, task.path)).toEqual({
+      agent: "claude",
+      profile_id: "pwsh",
+      cwd: task.path,
+      prompt: "go",
+      cols: 120,
+      rows: 30,
+    });
+    // With the worktree flag on and no task, nothing about the request changes: the flag is never sent.
+    expect(launchRequest(on("claude"), "go", programs, DOC, PROJECTS, SIZE)).toEqual(launchRequest(choice("claude"), "go", programs, DOC, PROJECTS, SIZE));
   });
 });

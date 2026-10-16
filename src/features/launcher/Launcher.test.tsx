@@ -1,3 +1,4 @@
+import type { ComponentProps } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { DEFAULT_CHOICE, PROJECTS, REMEMBERED } from "./fixtures";
@@ -163,13 +164,116 @@ describe("Launcher: chips", () => {
     expect(h).toContain("Mode: Manual");
     expect(h).toContain('role="checkbox"');
   });
-  it("chips hidden when chips is false", () => {
-    const h = renderToStaticMarkup(<Launcher view={view()} chips={false} />);
+  it("mode and pace chips hidden when chips is false (the worktree chip is covered below)", () => {
+    const h = renderToStaticMarkup(<Launcher view={view({ choice: { ...DEFAULT_CHOICE, projectId: "scratch" } })} chips={false} />);
     expect(count(h, /class="launcher__chip"/g)).toBe(2);
     expect(h).not.toContain("Mode:");
     expect(h).not.toContain("Pace:");
+    expect(h).toContain("Start Claude in scratch");
+  });
+});
+
+describe("Launcher: the worktree chip in the live launcher", () => {
+  const live = (v: LauncherView = view(), chips = false) => renderToStaticMarkup(<Launcher view={v} chips={chips} />);
+  const inScratch = { ...DEFAULT_CHOICE, projectId: "scratch" };
+  it("is shown when the folder is in git, and the mode and pace chips stay hidden", () => {
+    const h = live();
+    expect(h).toContain('role="checkbox"');
+    expect(h).toContain('aria-checked="false"');
+    expect(count(h, /class="launcher__chip"/g)).toBe(3);
+    expect(h).not.toContain("Mode:");
+    expect(h).not.toContain("Pace:");
+  });
+  it("is hidden for a folder with no branch", () => {
+    const h = live(view({ choice: inScratch }));
     expect(h).not.toContain('role="checkbox"');
-    expect(h).toContain("Start Claude in my-app on main");
+    expect(count(h, /class="launcher__chip"/g)).toBe(2);
+  });
+  it("is hidden for a shell, which is a plain terminal", () => {
+    expect(live(view({ choice: { ...DEFAULT_CHOICE, program: "powershell" } }))).not.toContain('role="checkbox"');
+  });
+});
+
+describe("Launcher: the task name", () => {
+  const on = { ...DEFAULT_CHOICE, worktree: true };
+  const h = (v: Partial<LauncherView> = {}, chips = false) => renderToStaticMarkup(<Launcher view={view({ choice: on, taskName: "fix-login", ...v })} chips={chips} />);
+  it("shows a labelled text field with the name once the chip is on", () => {
+    const out = h();
+    const forId = /<label[^>]*for="([^"]+)"[^>]*>Task name<\/label>/.exec(out)?.[1];
+    expect(forId).toBeTruthy();
+    expect(out).toMatch(new RegExp(`<input[^>]*id="${forId}"[^>]*value="fix-login"|<input[^>]*value="fix-login"[^>]*id="${forId}"`));
+  });
+  it("is not there while the chip is off, in a folder with no branch, or for a shell", () => {
+    expect(h({ choice: DEFAULT_CHOICE })).not.toContain("Task name");
+    expect(h({ choice: { ...on, projectId: "scratch" } })).not.toContain("Task name");
+    expect(h({ choice: { ...on, program: "powershell" } })).not.toContain("Task name");
+  });
+  it("hints at the branch below the field, and at task-… when the name is empty", () => {
+    const out = h();
+    expect(out).toContain("Branch marshell/fix-login");
+    expect(out.indexOf("Task name")).toBeLessThan(out.indexOf("Branch marshell/fix-login"));
+    expect(h({ taskName: "" })).toContain("Branch marshell/task-…");
+  });
+  it("hints at the name the core will make, not the raw text", () => {
+    expect(h({ taskName: "Fix Login!" })).toContain("Branch marshell/fix-login");
+  });
+  it("the hint is tied to the field for a screen reader", () => {
+    const out = h();
+    const hint = /aria-describedby="([^"]+)"/.exec(out.slice(out.indexOf("Task name")))?.[1];
+    expect(hint).toBeTruthy();
+    expect(out).toContain(`id="${hint}"`);
+  });
+});
+
+describe("Launcher: confirm a task", () => {
+  const on = { ...DEFAULT_CHOICE, worktree: true };
+  const cmds = ["git worktree add -b marshell/x C:/w/x main", "git status"];
+  const h = (confirm: LauncherView["confirm"], extra: Partial<ComponentProps<typeof Launcher>> = {}) =>
+    renderToStaticMarkup(<Launcher view={view({ choice: on, taskName: "x", confirm })} chips={false} {...extra} />);
+  it("swaps the sentence for a titled view with the commands and two buttons", () => {
+    const out = h({ state: "ready", commands: cmds });
+    expect(out).toContain("Start a task in a new worktree");
+    expect(out).toContain('aria-label="Commands Marshell will run"');
+    expect(count(out, /<code[ >]/g)).toBe(2);
+    expect(out).toContain(">Create and start<");
+    expect(out).toContain(">Back<");
+    expect(out.indexOf("Create and start")).toBeLessThan(out.indexOf(">Back<"));
+    expect(out).not.toContain("launcher__sentence");
+    expect(out).not.toContain("<textarea");
+    expect(out).not.toContain("Task name");
+  });
+  it("names the dialog for the task, and keeps it modal", () => {
+    const out = h({ state: "ready", commands: cmds });
+    expect(out).toContain('role="dialog"');
+    expect(out).toContain('aria-label="Start a task in a new worktree"');
+  });
+  it("shows the plan's refusal in place of the commands, with Create and start disabled", () => {
+    const out = h({ state: "refused", reason: "That folder is not a git repository." });
+    expect(out).toMatch(/<p class="launcher__error" role="alert">That folder is not a git repository\.<\/p>/);
+    expect(out).not.toContain("<ol");
+    expect(out).toMatch(/<button[^>]*disabled=""[^>]*>Create and start<\/button>/);
+    expect(out).not.toMatch(/<button[^>]*disabled=""[^>]*>Back<\/button>/);
+  });
+  it("waits for the plan with Create and start disabled", () => {
+    const out = h({ state: "loading" });
+    expect(out).toMatch(/<button[^>]*disabled=""[^>]*>Create and start<\/button>/);
+    expect(out).not.toContain("<ol");
+  });
+  it("says Creating the worktree… while the create is pending, and disables both buttons", () => {
+    const out = h({ state: "ready", commands: cmds }, { busy: true });
+    expect(out).toMatch(/<p[^>]*role="status"[^>]*>Creating the worktree…<\/p>/);
+    expect(out).toMatch(/<button[^>]*disabled=""[^>]*>Create and start<\/button>/);
+    expect(out).toMatch(/<button[^>]*disabled=""[^>]*>Back<\/button>/);
+  });
+  it("shows a create failure once, as an alert, under the buttons", () => {
+    const out = h({ state: "ready", commands: cmds }, { error: "Git said: fatal: a branch named 'marshell/x' already exists" });
+    expect(count(out, /role="alert"/g)).toBe(1);
+    expect(out.indexOf(">Back<")).toBeLessThan(out.indexOf('role="alert"'));
+  });
+  it("says its keys: Enter creates, Esc goes back", () => {
+    const out = h({ state: "ready", commands: cmds });
+    expect(out).toMatch(/<kbd>Enter<\/kbd>/);
+    expect(out).toMatch(/<kbd>Esc<\/kbd>/);
   });
 });
 

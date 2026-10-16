@@ -3,6 +3,8 @@ import type { LayoutDoc } from "../../generated/LayoutDoc";
 import type { Profile } from "../../generated/Profile";
 import type { ProfilesDoc } from "../../generated/ProfilesDoc";
 import type { ProjectInfo } from "../../generated/ProjectInfo";
+import type { Task } from "../../generated/Task";
+import type { TaskPlanRequest } from "../../generated/TaskPlanRequest";
 import { ApiError } from "../../lib/api/client";
 import type { Project } from "../launcher/filter";
 import { LAUNCH_PROGRAMS, isAgentProgram, programById, type LaunchProgram, type LauncherChoice, type ProgramId } from "../launcher/launchChoice";
@@ -48,13 +50,34 @@ export function launchRequest(
   profiles: ProfilesDoc,
   projects: Project[],
   size: { cols: number; rows: number },
+  /** The folder of a task made for this launch; it takes the place of the chosen folder. */
+  taskPath?: string,
 ): CreateSessionRequest {
-  const cwd = projects.find((p) => p.id === choice.projectId)?.path;
+  const cwd = taskPath ?? projects.find((p) => p.id === choice.projectId)?.path;
   const base: CreateSessionRequest = { cols: size.cols, rows: size.rows, ...(cwd === undefined ? {} : { cwd }) };
   const id = programById(choice.program, programs)?.id ?? choice.program;
   if (id.startsWith(PROFILE_PREFIX)) return { ...base, profile_id: id.slice(PROFILE_PREFIX.length) };
   const withAgent = { ...base, agent: id, profile_id: profiles.default_id };
   return isAgentProgram(id, programs) && prompt.trim() !== "" ? { ...withAgent, prompt } : withAgent;
+}
+
+/**
+ * True when Start must first show the worktree commands: the worktree chip is on, the program is an agent, and the chosen
+ * folder is in git (it has a branch). The chip is not offered otherwise, so a stale flag never counts.
+ */
+export function wantsTask(choice: LauncherChoice, projects: Project[], programs: LaunchProgram[]): boolean {
+  const inGit = projects.find((p) => p.id === choice.projectId)?.branch !== undefined;
+  return choice.worktree && inGit && isAgentProgram(choice.program, programs);
+}
+
+/** What the core is asked to plan and to create: the chosen folder and the name as typed (the core slugs it). */
+export function taskRequest(choice: LauncherChoice, projects: Project[], name: string): TaskPlanRequest {
+  return { cwd: projects.find((p) => p.id === choice.projectId)?.path ?? "", name };
+}
+
+/** Creates the task, and only when that has answered starts the session in its folder. A failed create never launches. */
+export async function createThenLaunch<T>(create: () => Promise<Task>, launch: (task: Task) => Promise<T>): Promise<T> {
+  return launch(await create());
 }
 
 /** What takes focus when the launcher opens: the prompt, where Enter starts. A shell has no prompt, so the Start button (the program chip would open its list). */
