@@ -2,7 +2,7 @@
 //! broken or newer-version file means the defaults, and `load` never writes.
 
 use crate::store::{self, Versioned};
-use marshell_protocol::api::{LayoutDoc, ViewLayout};
+use marshell_protocol::api::{LauncherChoice, LayoutDoc, ViewLayout};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
@@ -38,6 +38,24 @@ pub fn load(home: &Path) -> LayoutDoc {
 
 pub fn save(home: &Path, doc: &LayoutDoc) -> anyhow::Result<()> {
     store::write(&crate::paths::layout_file(home), &FileDoc(doc.clone()))
+}
+
+/// How many folders the launcher remembers a choice for.
+const MAX_LAUNCHER_FOLDERS: usize = 32;
+
+/// Notes the profile and agent just used in `folder`. The choice gets a number one higher than any
+/// other, so the order of use survives a restart; past 32 folders the one used longest ago is dropped.
+pub fn remember(doc: &mut LayoutDoc, folder: &str, profile_id: String, agent: Option<String>) {
+    let newest = doc.launcher.values().map(|c| c.seq).max().unwrap_or(0);
+    let seq = newest.saturating_add(1);
+    doc.launcher.insert(folder.to_string(), LauncherChoice { profile_id, agent, seq });
+    while doc.launcher.len() > MAX_LAUNCHER_FOLDERS {
+        let oldest = doc.launcher.iter().min_by_key(|(_, c)| c.seq).map(|(k, _)| k.clone());
+        match oldest {
+            Some(key) => doc.launcher.remove(&key),
+            None => break,
+        };
+    }
 }
 
 /// Pulls a hand-edited or stale document back into range, so the frontend never gets a layout it cannot draw.
@@ -247,5 +265,41 @@ mod tests {
         assert!(bad(|v| v.sidebar = "x".into()).contains("sidebar"));
         assert!(bad(|v| v.ratios = vec![0.05]).contains("ratios"));
         assert!(bad(|v| v.arrangement = Some("x".into())).contains("arrangement"));
+    }
+
+    #[test]
+    fn remember_numbers_choices_and_keeps_the_newest_32() {
+        let mut doc = LayoutDoc::default();
+        for i in 0..40 {
+            remember(&mut doc, &format!("C:/work/{i}"), "cmd".into(), None);
+        }
+        assert_eq!(doc.launcher.len(), 32);
+        // The eight oldest folders are gone; the newest is numbered 40.
+        assert!(!doc.launcher.contains_key("C:/work/7"));
+        assert!(doc.launcher.contains_key("C:/work/8"));
+        assert_eq!(doc.launcher["C:/work/39"].seq, 40);
+    }
+
+    #[test]
+    fn remember_replaces_a_folders_choice_and_makes_it_the_newest() {
+        let mut doc = LayoutDoc::default();
+        remember(&mut doc, "C:/a", "cmd".into(), None);
+        remember(&mut doc, "C:/b", "cmd".into(), None);
+        remember(&mut doc, "C:/a", "pwsh".into(), Some("claude".into()));
+        assert_eq!(doc.launcher.len(), 2);
+        let a = &doc.launcher["C:/a"];
+        assert_eq!((a.profile_id.as_str(), a.agent.as_deref(), a.seq), ("pwsh", Some("claude"), 3));
+    }
+
+    #[test]
+    fn a_layout_file_from_before_seq_still_loads() {
+        let home = tempfile::tempdir().unwrap();
+        let old = r#"{"version":1,"tabs":[],"view":{"panes":[null],"arrangement":null,"ratios":[],"active":0,
+            "zoomed":null,"sidebar":"expanded","sidebar_width":288,"shell_hidden":false,"grouped":false},
+            "launcher":{"C:/a":{"profile_id":"cmd","agent":null}}}"#;
+        std::fs::write(home.path().join("layout.json"), old).unwrap();
+        let doc = load(home.path());
+        assert_eq!(doc.launcher["C:/a"].seq, 0);
+        assert_eq!(doc.launcher["C:/a"].profile_id, "cmd");
     }
 }

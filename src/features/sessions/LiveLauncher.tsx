@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { CreateSessionResponse } from "../../generated/CreateSessionResponse";
 import type { Endpoint } from "../../generated/Endpoint";
+import type { LayoutDoc } from "../../generated/LayoutDoc";
 import type { ProfilesDoc } from "../../generated/ProfilesDoc";
+import { layout as layoutApi } from "../../lib/api/layout";
 import { profiles as profilesApi } from "../../lib/api/profiles";
 import { projects as projectsApi } from "../../lib/api/projects";
 import { sessions as sessionsApi } from "../../lib/api/sessions";
@@ -11,11 +13,12 @@ import type { Project } from "../launcher/filter";
 import { Launcher } from "../launcher/Launcher";
 import { appScheme } from "../terminal/terminalTheme";
 import { programById, startingText, type LauncherChoice } from "../launcher/launchChoice";
-import { initialFocus, launchRequest, refocus, type FocusState, livePrograms, startFailure, toLauncherProject } from "./launchPrograms";
+import { initialFocus, launchRequest, refocus, type FocusState, livePrograms, preselect, startFailure, toLauncherProject } from "./launchPrograms";
 
 const INITIAL: LauncherChoice = { program: "claude", projectId: "", mode: "Manual", pace: "Balanced", worktree: false };
 
-type Loaded = { projects: Project[]; doc: ProfilesDoc };
+/** `layout` is read on every opening, so a folder used a moment ago is already remembered; null when it could not be read. */
+type Loaded = { projects: Project[]; doc: ProfilesDoc; layout: LayoutDoc | null };
 
 type Props = {
   endpoint: Endpoint | null;
@@ -36,6 +39,8 @@ export function LiveLauncher({ endpoint, nextNumber, size, onStarted, onClose }:
   const [loaded, setLoaded] = useState<Loaded | null>(null);
   const { appearance } = useAppearance();
   const [choice, setChoice] = useState(INITIAL);
+  // Once the user picks a program here, the remembered one no longer applies.
+  const [programPicked, setProgramPicked] = useState(false);
   const [query, setQuery] = useState<string | null>(null);
   const [activeIndex, setActiveIndex] = useState(0);
   const [programsOpen, setProgramsOpen] = useState(false);
@@ -61,8 +66,10 @@ export function LiveLauncher({ endpoint, nextNumber, size, onStarted, onClose }:
     let current = true;
     setLoaded(null);
     setLoadError(undefined);
-    Promise.all([projectsApi.list(endpoint), profilesApi.get(endpoint)])
-      .then(([list, doc]) => current && setLoaded({ projects: list.map(toLauncherProject), doc }))
+    // The remembered choices are a convenience: if they cannot be read the launcher still opens, with its default.
+    const remembered = layoutApi.get(endpoint).catch(() => null);
+    Promise.all([projectsApi.list(endpoint), profilesApi.get(endpoint), remembered])
+      .then(([list, doc, layout]) => current && setLoaded({ projects: list.map(toLauncherProject), doc, layout }))
       .catch((e: unknown) => current && setLoadError(`Couldn't load the launcher: ${startFailure(e)}`));
     return () => {
       current = false;
@@ -72,7 +79,10 @@ export function LiveLauncher({ endpoint, nextNumber, size, onStarted, onClose }:
   const projects = useMemo(() => loaded?.projects ?? [], [loaded]);
   const programs = useMemo(() => livePrograms(loaded?.doc.profiles ?? []), [loaded]);
   // The most recent folder until one is picked.
-  const shown: LauncherChoice = { ...choice, projectId: projects.some((p) => p.id === choice.projectId) ? choice.projectId : (projects[0]?.id ?? "") };
+  const projectId = projects.some((p) => p.id === choice.projectId) ? choice.projectId : (projects[0]?.id ?? "");
+  // The program last started in this folder, unless the user has picked one themselves.
+  const program = programPicked ? choice.program : (preselect(loaded?.layout ?? null, projectId, programs) ?? choice.program);
+  const shown: LauncherChoice = { ...choice, projectId, program };
 
   // A pick leaves focus on the program chip, where Enter reopens the list; and Start is disabled until the lists load.
   const focusState: FocusState = { program: shown.program, prompt: !programById(shown.program, programs)?.noFirst, ready: loaded !== null };
@@ -85,6 +95,7 @@ export function LiveLauncher({ endpoint, nextNumber, size, onStarted, onClose }:
   }, [focusState.program, focusState.prompt, focusState.ready]);
 
   const patch = (p: Partial<LauncherChoice>) => {
+    if (p.program !== undefined) setProgramPicked(true);
     setChoice((c) => ({ ...c, ...p }));
     setError(undefined);
   };

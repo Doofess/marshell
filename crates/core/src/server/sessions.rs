@@ -323,8 +323,35 @@ pub async fn create(
         ),
     };
     let size = (req.cols, req.rows);
+    // What the launcher offers next time for this folder. An explicit argv is not a launcher choice.
+    let folder = req.cwd.clone().filter(|c| !c.is_empty() && run.profile_id != CUSTOM_PROFILE);
+    let choice = folder.map(|folder| (folder, run.profile_id.clone(), agent.clone()));
     let created = start_session(&st, run, agent, req.name, req.cwd, size, req.color_scheme).await?;
+    if let Some((folder, profile_id, agent)) = choice {
+        remember_choice(&st, folder, profile_id, agent).await;
+    }
     Ok(Json(created))
+}
+
+/// Saves the launcher choice in layout.json under the layout lock, like `put_view`.
+/// The session is already running, so a failed save is only logged.
+async fn remember_choice(st: &AppState, folder: String, profile_id: String, agent: Option<String>) {
+    let state = st.clone();
+    let saved = tokio::task::spawn_blocking(move || {
+        let mut current = state.0.layout.lock().unwrap_or_else(|e| e.into_inner());
+        let mut next = current.clone();
+        crate::layout::remember(&mut next, &folder, profile_id, agent);
+        let result = crate::layout::save(&state.0.home, &next);
+        // The memory is updated even when the save failed, so the launcher still remembers this run.
+        *current = next;
+        result
+    })
+    .await;
+    match saved {
+        Ok(Ok(())) => {}
+        Ok(Err(err)) => tracing::warn!("could not save the launcher choice: {err:#}"),
+        Err(err) => tracing::warn!("saving the launcher choice failed: {err}"),
+    }
 }
 
 pub async fn list(State(st): State<AppState>) -> Json<SessionsSnapshot> {

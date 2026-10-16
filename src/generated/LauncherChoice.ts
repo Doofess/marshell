@@ -3,4 +3,9 @@
 /**
  * The last profile and agent picked for a folder in the launcher.
  */
-export type LauncherChoice = { profile_id: string, agent: string | null, };
+export type LauncherChoice = { profile_id: string, agent: string | null, 
+/**
+ * A counter that says which folder was used last: the newest choice has the highest number.
+ * A layout.json from before this field existed reads as 0.
+ */
+seq: number, };

@@ -204,6 +204,10 @@ impl Default for ViewLayout {
 pub struct LauncherChoice {
     pub profile_id: String,
     pub agent: Option<String>,
+    /// A counter that says which folder was used last: the newest choice has the highest number.
+    /// A layout.json from before this field existed reads as 0.
+    #[serde(default)]
+    pub seq: u32,
 }
 
 /// The whole of layout.json.
