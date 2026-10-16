@@ -321,6 +321,14 @@ pub struct RemovePlan {
     pub sessions: u32,
 }
 
+/// POST /v1/tasks/{id}/remove body.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct RemoveRequest {
+    /// The commands the user was shown. Removing refuses to run when planning again gives others.
+    pub commands: Vec<String>,
+}
+
 /// POST /v1/sessions/{tab}/input body.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[ts(export)]

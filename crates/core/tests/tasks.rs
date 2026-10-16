@@ -5,7 +5,7 @@ use axum::http::{Request, StatusCode, header};
 use marshell_core::git::{GitStep, display, run};
 use marshell_core::server::{AppState, router};
 use marshell_core::{projects, tasks};
-use marshell_protocol::api::{MergeOutcome, MergeRequest, Profile, ShellFamily, TaskPlanRequest};
+use marshell_protocol::api::{MergeOutcome, MergeRequest, Profile, RemoveRequest, ShellFamily, TaskPlanRequest};
 use std::path::{Path, PathBuf};
 use tower::ServiceExt;
 
@@ -1097,4 +1097,318 @@ async fn input_types_text_without_enter() {
         .await
         .unwrap();
     assert_eq!(res.status(), StatusCode::NO_CONTENT);
+}
+
+// ---- removing a task ----
+
+fn remove_req(task: &marshell_protocol::api::Task, sessions: u32) -> RemoveRequest {
+    RemoveRequest {
+        commands: tasks::plan_remove(task, sessions).0.commands,
+    }
+}
+
+fn branch_is_there(task: &marshell_protocol::api::Task) -> bool {
+    let reference = format!("refs/heads/{}", task.branch);
+    run(
+        Path::new(&task.repo_root),
+        &["rev-parse", "--verify", "--quiet", &reference],
+    )
+    .unwrap()
+    .ok
+}
+
+#[test]
+fn remove_plan_commands_and_warnings() {
+    let tmp = spaced_tmp();
+    let (home, task) = new_task(&tmp);
+    let dir = PathBuf::from(&task.path);
+    let repo = PathBuf::from(&task.repo_root);
+
+    // A clean task with nothing on its branch: the plain commands and no warnings.
+    let (plan, steps) = tasks::plan_remove(&task, 0);
+    assert_eq!(
+        plan.commands,
+        vec![
+            format!("git -C \"{}\" worktree remove \"{}\"", task.repo_root, task.path),
+            format!("git -C \"{}\" branch -D marshell/fix-login", task.repo_root),
+        ]
+    );
+    assert!(plan.warnings.is_empty(), "{:?}", plan.warnings);
+    assert_eq!(plan.sessions, 0);
+    // The steps that run are the steps that are shown.
+    let shown: Vec<String> = steps.iter().map(display).collect();
+    assert_eq!(shown, plan.commands);
+
+    // Uncommitted work: --force, and a warning.
+    std::fs::write(dir.join("a.txt"), "edited\n").unwrap();
+    let (plan, _) = tasks::plan_remove(&task, 0);
+    assert_eq!(
+        plan.commands[0],
+        format!(
+            "git -C \"{}\" worktree remove --force \"{}\"",
+            task.repo_root, task.path
+        )
+    );
+    assert!(
+        plan.warnings
+            .contains(&"The worktree has uncommitted changes. Removing deletes them.".to_string()),
+        "{:?}",
+        plan.warnings
+    );
+    assert!(run(&dir, &["checkout", "--", "a.txt"]).unwrap().ok);
+
+    // One commit that is not on main.
+    std::fs::write(dir.join("b.txt"), "b\n").unwrap();
+    commit_all(&dir, "add b");
+    let (plan, _) = tasks::plan_remove(&task, 0);
+    assert_eq!(
+        plan.warnings,
+        vec!["marshell/fix-login has 1 commit that isn't on main. Removing deletes it.".to_string()]
+    );
+    // Two.
+    std::fs::write(dir.join("c.txt"), "c\n").unwrap();
+    commit_all(&dir, "add c");
+    let (plan, _) = tasks::plan_remove(&task, 0);
+    assert_eq!(
+        plan.warnings,
+        vec!["marshell/fix-login has 2 commits that aren't on main. Removing deletes them.".to_string()]
+    );
+
+    // Squash-merged: main holds the same files, so nothing is lost.
+    let merged = tasks::merge(&state_in(&home), &task, &planned(&task, "Fix login"));
+    assert_eq!(merged, MergeOutcome::Merged { removed: false });
+    assert!(
+        run(&repo, &["diff", "--quiet", "main", "marshell/fix-login"])
+            .unwrap()
+            .ok
+    );
+    let (plan, _) = tasks::plan_remove(&task, 0);
+    assert!(plan.warnings.is_empty(), "{:?}", plan.warnings);
+
+    // Sessions are counted.
+    let (plan, _) = tasks::plan_remove(&task, 1);
+    assert_eq!(
+        plan.warnings,
+        vec!["Closes 1 session running in this worktree.".to_string()]
+    );
+    assert_eq!(plan.sessions, 1);
+    let (plan, _) = tasks::plan_remove(&task, 2);
+    assert_eq!(
+        plan.warnings,
+        vec!["Closes 2 sessions running in this worktree.".to_string()]
+    );
+}
+
+#[tokio::test]
+async fn remove_closes_sessions_and_deletes_everything() {
+    let tmp = spaced_tmp();
+    let (home, task) = new_task(&tmp);
+    let repo = PathBuf::from(&task.repo_root);
+    let sub = Path::new(&task.path).join("deep").join("er");
+    std::fs::create_dir_all(&sub).unwrap();
+    let state = state_in(&home);
+    let app = router(state.clone());
+    let in_task = start_in(&app, Path::new(&task.path)).await;
+    let in_sub = start_in(&app, &sub).await;
+    let outside = start_in(&app, &repo).await;
+    // A tab from an earlier run of the app, in the task folder.
+    let old = marshell_protocol::api::SavedTab {
+        tab_id: "old".into(),
+        number: 9,
+        name: "Old".into(),
+        agent: None,
+        profile_id: "sleeper".into(),
+        cwd: task.path.clone(),
+    };
+    state
+        .registry()
+        .seed_ended(&[old], |tab| marshell_core::registry::Relaunch {
+            profile_id: tab.profile_id.clone(),
+            agent: None,
+            cwd: tab.cwd.clone(),
+            name: tab.name.clone(),
+        });
+    assert_eq!(state.registry().snapshot().sessions.len(), 4);
+
+    // The route's plan counts the two running sessions.
+    let res = app
+        .clone()
+        .oneshot(api("POST", &format!("/v1/tasks/{}/remove/plan", task.id), None))
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let plan = json_of(res).await;
+    assert_eq!(plan["sessions"], 2);
+
+    let req = RemoveRequest {
+        commands: serde_json::from_value(plan["commands"].clone()).unwrap(),
+    };
+    let (st, t) = (state.clone(), task.clone());
+    tokio::task::spawn_blocking(move || tasks::remove(&st, &t, &req))
+        .await
+        .unwrap()
+        .unwrap();
+
+    let snapshot = state.registry().snapshot();
+    let ids: Vec<&str> = snapshot.sessions.iter().map(|s| s.tab_id.as_str()).collect();
+    assert_eq!(ids, vec![outside.as_str()], "{snapshot:?}");
+    assert!(state.session(&in_task).is_none());
+    assert!(state.session(&in_sub).is_none());
+    assert!(state.session(&outside).is_some());
+    assert!(!Path::new(&task.path).exists());
+    assert!(!branch_is_there(&task));
+    assert!(tasks::list(&home).is_empty());
+}
+
+#[test]
+fn remove_refuses_when_commands_changed() {
+    let tmp = spaced_tmp();
+    let (home, task) = new_task(&tmp);
+    let dir = PathBuf::from(&task.path);
+    let shown = remove_req(&task, 0);
+    // Work arrives after the commands were shown: the plan now has --force.
+    std::fs::write(dir.join("new.txt"), "x\n").unwrap();
+
+    let err = tasks::remove(&state_in(&home), &task, &shown).unwrap_err();
+    assert_eq!(
+        err,
+        "The task changed while you were reading the commands. Review them again."
+    );
+    assert!(dir.exists());
+    assert_eq!(tasks::list(&home).len(), 1);
+    assert!(branch_is_there(&task));
+}
+
+#[test]
+fn merge_with_remove_cleans_up() {
+    let tmp = spaced_tmp();
+    let (home, task) = new_task(&tmp);
+    let dir = PathBuf::from(&task.path);
+    let repo = PathBuf::from(&task.repo_root);
+    std::fs::write(dir.join("b.txt"), "b\n").unwrap();
+
+    // Uncommitted work is committed by the merge, so the shown removal is the clean one.
+    let mut req = merge_req("Fix login");
+    req.remove = true;
+    let (plan, _) = tasks::plan_merge(&task, &req);
+    assert_eq!(plan.commands.len(), 6, "{:?}", plan.commands);
+    assert_eq!(
+        plan.commands[4],
+        format!("git -C \"{}\" worktree remove \"{}\"", task.repo_root, task.path)
+    );
+    assert_eq!(
+        plan.commands[5],
+        format!("git -C \"{}\" branch -D marshell/fix-login", task.repo_root)
+    );
+    req.commands = plan.commands;
+
+    let outcome = tasks::merge(&state_in(&home), &task, &req);
+    assert_eq!(outcome, MergeOutcome::Merged { removed: true });
+    assert_eq!(text_of(&repo.join("b.txt")), "b\n");
+    assert!(!dir.exists());
+    assert!(!branch_is_there(&task));
+    assert!(tasks::list(&home).is_empty());
+}
+
+#[cfg(windows)]
+#[test]
+fn a_removal_that_fails_after_a_merge_still_reports_the_merge() {
+    use std::os::windows::fs::OpenOptionsExt;
+    let tmp = spaced_tmp();
+    let (home, task) = new_task(&tmp);
+    let dir = PathBuf::from(&task.path);
+    let repo = PathBuf::from(&task.repo_root);
+    // An ignored file, so the merge and the clean removal plan don't see it.
+    std::fs::write(repo.join(".git").join("info").join("exclude"), "held.txt\n").unwrap();
+    std::fs::write(dir.join("b.txt"), "b\n").unwrap();
+    let _held = std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .share_mode(0)
+        .open(dir.join("held.txt"))
+        .unwrap();
+
+    let mut req = merge_req("Fix login");
+    req.remove = true;
+    req.commands = tasks::plan_merge(&task, &req).0.commands;
+    let outcome = tasks::merge(&state_in(&home), &task, &req);
+    assert_eq!(outcome, MergeOutcome::Merged { removed: false });
+    assert_eq!(text_of(&repo.join("b.txt")), "b\n");
+    assert_eq!(tasks::list(&home).len(), 1);
+}
+
+#[cfg(windows)]
+#[test]
+fn remove_failure_keeps_the_task() {
+    use std::os::windows::fs::OpenOptionsExt;
+    let tmp = spaced_tmp();
+    let (home, task) = new_task(&tmp);
+    let dir = PathBuf::from(&task.path);
+    // std opens files so that they can be deleted; share_mode(0) forbids it.
+    let _held = std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .share_mode(0)
+        .open(dir.join("held.txt"))
+        .unwrap();
+    let shown = remove_req(&task, 0);
+
+    let err = tasks::remove(&state_in(&home), &task, &shown).unwrap_err();
+    assert!(err.starts_with("Couldn't remove the worktree. Git said: "), "{err}");
+    assert_eq!(tasks::list(&home).len(), 1);
+    assert!(branch_is_there(&task));
+}
+
+#[tokio::test]
+async fn remove_routes_plan_remove_refuse_and_404() {
+    let tmp = spaced_tmp();
+    let (home, task) = new_task(&tmp);
+    let app = router(state_in(&home));
+    let route = |what: &str| format!("/v1/tasks/{}/{what}", task.id);
+
+    // A stale list is refused with a reason, and nothing is removed.
+    let res = app
+        .clone()
+        .oneshot(api(
+            "POST",
+            &route("remove"),
+            Some(serde_json::json!({ "commands": ["git status"] })),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::CONFLICT);
+    assert_eq!(
+        json_of(res).await["reason"],
+        "The task changed while you were reading the commands. Review them again."
+    );
+    assert!(Path::new(&task.path).exists());
+
+    let res = app
+        .clone()
+        .oneshot(api("POST", &route("remove/plan"), None))
+        .await
+        .unwrap();
+    let plan = json_of(res).await;
+    assert_eq!(plan["commands"].as_array().unwrap().len(), 2);
+    let res = app
+        .clone()
+        .oneshot(api(
+            "POST",
+            &route("remove"),
+            Some(serde_json::json!({ "commands": plan["commands"] })),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::NO_CONTENT);
+    assert!(!Path::new(&task.path).exists());
+
+    for (path, body) in [
+        ("/v1/tasks/nope/remove/plan", None),
+        ("/v1/tasks/nope/remove", Some(serde_json::json!({ "commands": [] }))),
+    ] {
+        let res = app.clone().oneshot(api("POST", path, body)).await.unwrap();
+        assert_eq!(res.status(), StatusCode::NOT_FOUND, "{path}");
+    }
 }

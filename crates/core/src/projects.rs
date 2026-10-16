@@ -53,6 +53,25 @@ pub(crate) fn same_path(a: &str, b: &str) -> bool {
     }
 }
 
+/// Whether `path` is `folder` or inside it. Both are tidied and resolved first, and compared the
+/// way `same_path` does, so a path that has gone from the disk is still placed by its text.
+pub(crate) fn is_inside(path: &str, folder: &str) -> bool {
+    let path = canonical(Path::new(path)).to_string_lossy().into_owned();
+    let folder = canonical(Path::new(folder)).to_string_lossy().into_owned();
+    let (path, folder) = (trim_separators(&path), trim_separators(&folder));
+    if same_path(path, folder) {
+        return true;
+    }
+    // The next character after the folder's text must be a separator, so `task-2` is not in `task`.
+    let (path, folder) = if cfg!(windows) {
+        (path.to_ascii_lowercase(), folder.to_ascii_lowercase())
+    } else {
+        (path.to_string(), folder.to_string())
+    };
+    path.strip_prefix(folder.trim_end_matches(['/', '\\']))
+        .is_some_and(|rest| rest.starts_with(['/', '\\']))
+}
+
 /// `record` reads, changes and writes the file; two at once would lose an entry or
 /// collide on the temp file. Held for that whole read-modify-write.
 static RECORD_LOCK: Mutex<()> = Mutex::new(());
@@ -219,6 +238,19 @@ pub fn list(home: &Path) -> Vec<ProjectInfo> {
 mod tests {
     use super::*;
     use std::fs;
+
+    #[test]
+    fn is_inside_means_the_folder_or_below_it() {
+        assert!(is_inside("/w/task", "/w/task"));
+        assert!(is_inside("/w/task/", "/w/task"));
+        assert!(is_inside("/w/task/src/deep", "/w/task"));
+        assert!(!is_inside("/w/task-2", "/w/task"));
+        assert!(!is_inside("/w", "/w/task"));
+        assert!(!is_inside("", "/w/task"));
+        if cfg!(windows) {
+            assert!(is_inside(r"C:\W\Task\src", r"c:\w\task"));
+        }
+    }
 
     fn repo_with_head(head: &str) -> tempfile::TempDir {
         let dir = tempfile::tempdir().unwrap();

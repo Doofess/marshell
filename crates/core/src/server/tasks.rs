@@ -3,7 +3,7 @@ use axum::Json;
 use axum::extract::{Path as UrlPath, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
-use marshell_protocol::api::{MergeRequest, ResumeError, TaskPlanRequest};
+use marshell_protocol::api::{MergeRequest, RemoveRequest, ResumeError, TaskPlanRequest};
 use std::path::Path;
 
 fn refused(reason: String) -> Response {
@@ -99,6 +99,41 @@ pub async fn merge(
     .await;
     match merged {
         Ok(Some(outcome)) => Json(outcome).into_response(),
+        Ok(None) => StatusCode::NOT_FOUND.into_response(),
+        Err(e) => failed(e),
+    }
+}
+
+/// What removing the task would run and lose, and how many running sessions it would close.
+/// 404 for an id we do not know.
+pub async fn remove_plan(State(st): State<AppState>, UrlPath(id): UrlPath<String>) -> Response {
+    let planned = tokio::task::spawn_blocking(move || {
+        crate::tasks::find(&st.0.home, &id).map(|task| {
+            let sessions = crate::tasks::running_sessions(&st, &task);
+            crate::tasks::plan_remove(&task, sessions).0
+        })
+    })
+    .await;
+    match planned {
+        Ok(Some(plan)) => Json(plan).into_response(),
+        Ok(None) => StatusCode::NOT_FOUND.into_response(),
+        Err(e) => failed(e),
+    }
+}
+
+/// Removes the task. 409 with a reason when the commands changed or git could not remove it.
+pub async fn remove(
+    State(st): State<AppState>,
+    UrlPath(id): UrlPath<String>,
+    Json(req): Json<RemoveRequest>,
+) -> Response {
+    let removed = tokio::task::spawn_blocking(move || {
+        crate::tasks::find(&st.0.home, &id).map(|task| crate::tasks::remove(&st, &task, &req))
+    })
+    .await;
+    match removed {
+        Ok(Some(Ok(()))) => StatusCode::NO_CONTENT.into_response(),
+        Ok(Some(Err(reason))) => refused(reason),
         Ok(None) => StatusCode::NOT_FOUND.into_response(),
         Err(e) => failed(e),
     }

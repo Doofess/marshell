@@ -107,6 +107,14 @@ impl AppState {
             .agent_on_path = check;
         self
     }
+    /// The folder holding `profiles.json`, `tasks.json` and the other files Marshell keeps.
+    pub fn home(&self) -> &std::path::Path {
+        &self.0.home
+    }
+    /// The open and recently closed sessions.
+    pub fn registry(&self) -> &Registry {
+        &self.0.registry
+    }
     pub fn token(&self) -> &str {
         &self.0.token
     }
@@ -159,6 +167,8 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/tasks/{id}/changes", get(tasks::changes))
         .route("/v1/tasks/{id}/merge/plan", post(tasks::merge_plan))
         .route("/v1/tasks/{id}/merge", post(tasks::merge))
+        .route("/v1/tasks/{id}/remove/plan", post(tasks::remove_plan))
+        .route("/v1/tasks/{id}/remove", post(tasks::remove))
         .route("/v1/sessions", get(sessions::list).post(sessions::create))
         .route("/v1/sessions/reorder", post(sessions::reorder))
         .route("/v1/sessions/reopen", post(sessions::reopen))

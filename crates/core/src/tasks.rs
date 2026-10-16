@@ -6,7 +6,8 @@ use crate::projects;
 use crate::server::AppState;
 use crate::store::{self, Versioned};
 use marshell_protocol::api::{
-    ChangedFile, MergeOutcome, MergePlan, MergeRequest, Task, TaskChanges, TaskPlan, TaskPlanRequest,
+    ChangedFile, MergeOutcome, MergePlan, MergeRequest, RemovePlan, RemoveRequest, SessionState, Task, TaskChanges,
+    TaskPlan, TaskPlanRequest,
 };
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -330,8 +331,9 @@ pub fn changes(task: &Task) -> Result<TaskChanges, String> {
     })
 }
 
-/// Two merges into the same checkout at once would trip over each other. Held for all of `merge`.
-/// Separate from `TASKS_LOCK` so Task 5's removal, which takes that one, can run inside a merge.
+/// Two merges into the same checkout at once would trip over each other, and a removal must not
+/// start under a merge. Held for all of `merge` and all of `remove`. Always taken before
+/// `TASKS_LOCK`, never after it.
 static MERGE_LOCK: Mutex<()> = Mutex::new(());
 
 /// A read-only git question asked in `dir`; the error is one sentence.
@@ -404,6 +406,11 @@ pub fn plan_merge(task: &Task, req: &MergeRequest) -> (MergePlan, Vec<GitStep>) 
     }
     steps.push(step(&task.repo_root, &["merge", "--squash", &task.branch]));
     steps.push(step(&task.repo_root, &["commit", "-q", "-m", message]));
+    if req.remove {
+        // By then the merge has committed the folder's work and the branch is in the base, so
+        // the removal is the plain one whatever the folder holds now.
+        steps.extend(removal_steps(task, false, true, true));
+    }
 
     let blocker = merge_blocker(task, message).unwrap_or_else(Some);
     let plan = MergePlan {
@@ -443,14 +450,16 @@ pub fn merge(st: &AppState, task: &Task, req: &MergeRequest) -> MergeOutcome {
     let failed = |reason: String| MergeOutcome::Failed { reason };
     let (plan, steps) = plan_merge(task, req);
     if plan.commands != req.commands {
-        return failed("The task changed while you were reading the commands. Review them again.".into());
+        return failed(CHANGED.into());
     }
     if let Some(blocker) = plan.blocker {
         return failed(blocker);
     }
     let repo = Path::new(&task.repo_root);
-    // The last two steps are the base checkout's squash and commit.
-    let (worktree_steps, base_steps) = steps.split_at(steps.len() - 2);
+    // The removal steps (when asked for) come last, after the base checkout's squash and commit.
+    let removal_len = if req.remove { 2 } else { 0 };
+    let (merge_steps, removal_steps) = steps.split_at(steps.len() - removal_len);
+    let (worktree_steps, base_steps) = merge_steps.split_at(merge_steps.len() - 2);
 
     if let Err(f) = git::run_steps(worktree_steps) {
         return failed(format!(
@@ -495,18 +504,188 @@ pub fn merge(st: &AppState, task: &Task, req: &MergeRequest) -> MergeOutcome {
         );
     }
 
-    let removed = if req.remove {
-        // Task 5: remove the task here (its worktree, branch, sessions and registry row) and
-        // report whether that worked. Until then nothing is removed.
-        let _ = st;
-        false
-    } else {
-        false
-    };
+    // The merge is done. When the removal fails the merge still stands, so it is not a failure.
+    let removed = req.remove
+        && match run_removal(st, task, removal_steps) {
+            Ok(()) => true,
+            Err(reason) => {
+                tracing::warn!("merged {}, but removing it failed: {reason}", task.branch);
+                false
+            }
+        };
     MergeOutcome::Merged { removed }
 }
+
+/// What `merge` and `remove` say when the commands they plan are not the ones the user saw.
+const CHANGED: &str = "The task changed while you were reading the commands. Review them again.";
 
 /// The sentence for a merge with nothing to merge. Also the blocker's.
 fn no_changes(task: &Task) -> String {
     format!("{} has no changes to merge.", task.branch)
+}
+
+/// The git steps that remove a task: its worktree (`--force` when it holds work that git would
+/// refuse to delete), then its branch. Both run in the repository, not in the folder going away.
+fn removal_steps(task: &Task, force: bool, worktree: bool, branch: bool) -> Vec<GitStep> {
+    let step = |args: Vec<String>| GitStep {
+        dir: PathBuf::from(&task.repo_root),
+        args,
+    };
+    let mut steps = Vec::new();
+    if worktree {
+        let mut args = vec!["worktree".to_string(), "remove".to_string()];
+        if force {
+            args.push("--force".into());
+        }
+        args.push(task.path.clone());
+        steps.push(step(args));
+    }
+    if branch {
+        steps.push(step(vec!["branch".into(), "-D".into(), task.branch.clone()]));
+    }
+    steps
+}
+
+/// How many commits the branch has that its base lacks, when the base doesn't already hold the
+/// same files (a squash merge leaves the commits behind but the files in the base). None when git
+/// can't say.
+fn unmerged_commits(task: &Task) -> Option<u32> {
+    let repo = Path::new(&task.repo_root);
+    let range = format!("{}..{}", task.base_branch, task.branch);
+    let count = git::run(repo, &["rev-list", "--count", &range]).ok().filter(|o| o.ok)?;
+    let count: u32 = count.stdout.trim().parse().ok()?;
+    let same_files = git::run(repo, &["diff", "--quiet", &task.base_branch, &task.branch, "--"])
+        .ok()
+        .is_some_and(|o| o.ok);
+    Some(if same_files { 0 } else { count })
+}
+
+/// What removing the task would run and lose, with the git steps that run it. `open_sessions` is
+/// how many running sessions the removal would close. The steps shown are the steps run.
+pub fn plan_remove(task: &Task, open_sessions: u32) -> (RemovePlan, Vec<GitStep>) {
+    let dir = Path::new(&task.path);
+    let repo = Path::new(&task.repo_root);
+    // A folder or branch that is already gone leaves nothing to run for it, so a removal that
+    // stopped halfway can be finished.
+    let folder_there = dir.exists();
+    let branch_there = branch_exists(repo, &task.branch).unwrap_or(true);
+    let dirty = folder_there && worktree_dirty(dir).unwrap_or(false);
+    let steps = removal_steps(task, dirty, folder_there, branch_there);
+
+    let mut warnings = Vec::new();
+    if dirty {
+        warnings.push("The worktree has uncommitted changes. Removing deletes them.".to_string());
+    }
+    if branch_there {
+        match unmerged_commits(task) {
+            Some(1) => warnings.push(format!(
+                "{} has 1 commit that isn't on {}. Removing deletes it.",
+                task.branch, task.base_branch
+            )),
+            Some(n) if n > 1 => warnings.push(format!(
+                "{} has {n} commits that aren't on {}. Removing deletes them.",
+                task.branch, task.base_branch
+            )),
+            _ => {}
+        }
+    }
+    match open_sessions {
+        0 => {}
+        1 => warnings.push("Closes 1 session running in this worktree.".into()),
+        n => warnings.push(format!("Closes {n} sessions running in this worktree.")),
+    }
+    let plan = RemovePlan {
+        commands: steps.iter().map(git::display).collect(),
+        warnings,
+        sessions: open_sessions,
+    };
+    (plan, steps)
+}
+
+/// Whether a session started in `cwd` holds the task's folder: it is there, or in a folder below.
+fn in_task(task: &Task, cwd: &str) -> bool {
+    projects::is_inside(cwd, &task.path)
+}
+
+/// How many sessions with a running process are in the task's folder.
+pub fn running_sessions(st: &AppState, task: &Task) -> u32 {
+    let rows = st.registry().sessions_where(|cwd| in_task(task, cwd));
+    rows.iter().filter(|s| s.state == SessionState::Running).count() as u32
+}
+
+/// Windows lets go of a folder a just-killed process held a moment later, so the worktree step
+/// is tried again.
+const REMOVE_RETRIES: u32 = 5;
+const REMOVE_RETRY_WAIT: std::time::Duration = std::time::Duration::from_millis(200);
+
+/// Closes the task's sessions, runs the removal steps, and forgets the task. The task is forgotten
+/// only when every step worked. The caller holds `MERGE_LOCK`; `TASKS_LOCK` is taken only for the
+/// last write, not while git runs.
+fn run_removal(st: &AppState, task: &Task, steps: &[GitStep]) -> Result<(), String> {
+    // The rows go first, so a dying session's exit callback finds nothing to update.
+    for tab in st.registry().drop_where(|cwd| in_task(task, cwd)) {
+        if let Some(session) = st.remove_session(&tab) {
+            // Waits for the process tree to die (we are on a blocking thread), so it no longer
+            // holds the folder when git deletes it.
+            session.force_kill();
+        }
+    }
+    let repo = Path::new(&task.repo_root);
+    for step in steps {
+        let step = std::slice::from_ref(step);
+        if step[0].args.first().map(String::as_str) == Some("worktree") {
+            // The first failure is the one that says why; after a half-done removal git's later
+            // answers are about the leftovers ("is not a working tree").
+            let mut first_failure = None;
+            for attempt in 0..=REMOVE_RETRIES {
+                if attempt > 0 {
+                    std::thread::sleep(REMOVE_RETRY_WAIT);
+                }
+                match git::run_steps(step) {
+                    Ok(()) => {
+                        first_failure = None;
+                        break;
+                    }
+                    Err(f) => {
+                        first_failure.get_or_insert(f);
+                    }
+                }
+            }
+            if let Some(f) = first_failure {
+                return Err(format!(
+                    "Couldn't remove the worktree. Git said: {}",
+                    git::said(&f.output)
+                ));
+            }
+        } else {
+            // Not shown: housekeeping, so a worktree whose folder is already gone doesn't keep the
+            // branch "checked out".
+            let _ = git::run(repo, &["worktree", "prune"]);
+            git::run_steps(step).map_err(|f| {
+                format!(
+                    "Couldn't delete the branch {}. Git said: {}",
+                    task.branch,
+                    git::said(&f.output)
+                )
+            })?;
+        }
+    }
+    let _guard = TASKS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let mut doc = store::read::<FileDoc>(&file(st.home()))
+        .map_err(|e| format!("The task was removed, but the task list couldn't be read: {e:#}"))?
+        .unwrap_or_default();
+    doc.tasks.retain(|t| t.id != task.id);
+    store::write(&file(st.home()), &doc)
+        .map_err(|e| format!("The task was removed, but the task list couldn't be saved: {e:#}"))
+}
+
+/// Removes the task: closes its sessions, deletes its worktree and branch, and forgets it. Plans
+/// again first and stops when the commands differ from the ones the user was shown.
+pub fn remove(st: &AppState, task: &Task, req: &RemoveRequest) -> Result<(), String> {
+    let _guard = MERGE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let (plan, steps) = plan_remove(task, running_sessions(st, task));
+    if plan.commands != req.commands {
+        return Err(CHANGED.into());
+    }
+    run_removal(st, task, &steps)
 }
