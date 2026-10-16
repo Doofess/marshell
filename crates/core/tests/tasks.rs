@@ -1735,3 +1735,89 @@ fn remove_finishes_when_git_no_longer_lists_the_worktree() {
     assert!(tasks::list(&home).is_empty());
     assert!(Path::new(&task.path).exists());
 }
+
+// ---- the task folder mid-rebase, mid-merge or off its branch ----
+
+/// A task whose a.txt conflicts with a commit on main.
+fn conflicting_task(tmp: &tempfile::TempDir) -> (PathBuf, marshell_protocol::api::Task) {
+    let (home, task) = new_task(tmp);
+    let dir = PathBuf::from(&task.path);
+    let repo = PathBuf::from(&task.repo_root);
+    std::fs::write(dir.join("a.txt"), "task\n").unwrap();
+    commit_all(&dir, "task edit");
+    std::fs::write(repo.join("a.txt"), "main\n").unwrap();
+    commit_all(&repo, "main edit");
+    (home, task)
+}
+
+#[test]
+fn a_rebase_stopped_in_the_task_folder_blocks_the_merge_and_warns_the_removal() {
+    let tmp = spaced_tmp();
+    let (home, task) = conflicting_task(&tmp);
+    let dir = PathBuf::from(&task.path);
+    // The rebase stops on the conflict with HEAD detached.
+    assert!(!run(&dir, &["rebase", "main"]).unwrap().ok);
+
+    let (plan, _) = tasks::plan_merge(&task, &merge_req("Fix login"));
+    assert_eq!(
+        plan.blocker.as_deref(),
+        Some("A rebase is in progress in the task folder. Finish or abort it there, then merge.")
+    );
+    let main_before = head_of(Path::new(&task.repo_root));
+    let outcome = tasks::merge(&state_in(&home), &task, &planned(&task, "Fix login"));
+    assert!(matches!(outcome, MergeOutcome::Failed { .. }), "{outcome:?}");
+    assert_eq!(head_of(Path::new(&task.repo_root)), main_before);
+
+    let (plan, _) = tasks::plan_remove(&task, 0);
+    assert!(
+        plan.warnings
+            .contains(&"A rebase is in progress in the task folder. Removing abandons it.".to_string()),
+        "{:?}",
+        plan.warnings
+    );
+}
+
+#[test]
+fn a_merge_stopped_in_the_task_folder_blocks_the_merge_and_warns_the_removal() {
+    let tmp = spaced_tmp();
+    let (_home, task) = conflicting_task(&tmp);
+    let dir = PathBuf::from(&task.path);
+    assert!(!run(&dir, &["merge", "--no-ff", "-q", "main"]).unwrap().ok);
+
+    let (plan, _) = tasks::plan_merge(&task, &merge_req("Fix login"));
+    assert_eq!(
+        plan.blocker.as_deref(),
+        Some("A merge is in progress in the task folder. Finish or abort it there, then merge.")
+    );
+    let (plan, _) = tasks::plan_remove(&task, 0);
+    assert!(
+        plan.warnings
+            .contains(&"A merge is in progress in the task folder. Removing abandons it.".to_string()),
+        "{:?}",
+        plan.warnings
+    );
+}
+
+#[test]
+fn a_task_folder_off_its_branch_blocks_the_merge_and_counts_its_commits() {
+    let tmp = spaced_tmp();
+    let (_home, task) = new_task(&tmp);
+    let dir = PathBuf::from(&task.path);
+    assert!(run(&dir, &["checkout", "-q", "--detach"]).unwrap().ok);
+    std::fs::write(dir.join("b.txt"), "b\n").unwrap();
+    commit_all(&dir, "on a detached HEAD");
+
+    let (plan, _) = tasks::plan_merge(&task, &merge_req("Fix login"));
+    assert_eq!(
+        plan.blocker.as_deref(),
+        Some("marshell/fix-login isn't checked out in the task folder. Check it out there, then merge.")
+    );
+    let (plan, _) = tasks::plan_remove(&task, 0);
+    assert_eq!(
+        plan.warnings,
+        vec![
+            "marshell/fix-login isn't checked out in the task folder.".to_string(),
+            "The task folder has 1 commit that isn't on main or marshell/fix-login. Removing deletes it.".to_string(),
+        ]
+    );
+}

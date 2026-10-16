@@ -373,6 +373,27 @@ fn merge_blocker(task: &Task, message: &str) -> Result<Option<String>, String> {
         )));
     }
     let dir = Path::new(&task.path);
+    // Mid-rebase or off the branch, `add -A` would commit conflict markers to some other HEAD and
+    // the squash of the branch would leave that work out.
+    match folder_state(task)? {
+        FolderState::OnBranch => {}
+        FolderState::Rebasing => {
+            return Ok(Some(
+                "A rebase is in progress in the task folder. Finish or abort it there, then merge.".into(),
+            ));
+        }
+        FolderState::Merging => {
+            return Ok(Some(
+                "A merge is in progress in the task folder. Finish or abort it there, then merge.".into(),
+            ));
+        }
+        FolderState::OffBranch => {
+            return Ok(Some(format!(
+                "{} isn't checked out in the task folder. Check it out there, then merge.",
+                task.branch
+            )));
+        }
+    }
     let ahead = ask(dir, &["rev-list", "--count", &format!("{}..HEAD", task.base_branch)])?;
     if ahead.trim() == "0" && !worktree_dirty(dir)? {
         return Ok(Some(no_changes(task)));
@@ -381,6 +402,57 @@ fn merge_blocker(task: &Task, message: &str) -> Result<Option<String>, String> {
         return Ok(Some("Write a commit message.".into()));
     }
     Ok(None)
+}
+
+/// Where the task folder's checkout stands.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum FolderState {
+    /// HEAD is the task branch and nothing is halfway.
+    OnBranch,
+    /// A rebase stopped halfway (git's `rebase-merge` or `rebase-apply` folder is there).
+    Rebasing,
+    /// A merge stopped halfway (`MERGE_HEAD` is there).
+    Merging,
+    /// HEAD is detached or on another branch.
+    OffBranch,
+}
+
+/// Reads the task folder's state with read-only git calls and a look in its git folder.
+fn folder_state(task: &Task) -> Result<FolderState, String> {
+    let dir = Path::new(&task.path);
+    let git_dir = ask(dir, &["rev-parse", "--git-dir"])?;
+    let git_dir = Path::new(git_dir.trim());
+    // A worktree answers with an absolute path; a relative one is relative to the folder.
+    let git_dir = if git_dir.is_absolute() {
+        git_dir.to_path_buf()
+    } else {
+        dir.join(git_dir)
+    };
+    if git_dir.join("rebase-merge").exists() || git_dir.join("rebase-apply").exists() {
+        return Ok(FolderState::Rebasing);
+    }
+    if git_dir.join("MERGE_HEAD").exists() {
+        return Ok(FolderState::Merging);
+    }
+    // `symbolic-ref -q` prints nothing and fails on a detached HEAD; that is an answer, not an error.
+    let head = git::run(dir, &["symbolic-ref", "-q", "HEAD"]).map_err(|e| format!("{e:#}"))?;
+    let on = head.ok && head.stdout.trim() == format!("refs/heads/{}", task.branch);
+    Ok(if on {
+        FolderState::OnBranch
+    } else {
+        FolderState::OffBranch
+    })
+}
+
+/// How many commits the folder's HEAD has that neither the base nor the branch holds (made on a
+/// detached HEAD or during a rebase). None when git can't say.
+fn head_only_commits(task: &Task, branch_there: bool) -> Option<u32> {
+    let mut args = vec!["rev-list", "--count", "HEAD", "--not", task.base_branch.as_str()];
+    if branch_there {
+        args.push(task.branch.as_str());
+    }
+    let out = git::run(Path::new(&task.path), &args).ok().filter(|o| o.ok)?;
+    out.stdout.trim().parse().ok()
 }
 
 /// Whether the task folder has anything `git add -A` would commit.
@@ -662,6 +734,46 @@ pub fn plan_remove(task: &Task, open_sessions: u32) -> (RemovePlan, Vec<GitStep>
             "Git no longer lists the worktree. Its folder {} is left on disk.",
             task.path
         ));
+    }
+    if folder_there && listed {
+        // Fail closed: a folder whose state can't be read may hold work the branch doesn't.
+        let state = folder_state(task);
+        match state {
+            Ok(FolderState::OnBranch) => {}
+            Ok(FolderState::Rebasing) => {
+                warnings.push("A rebase is in progress in the task folder. Removing abandons it.".into())
+            }
+            Ok(FolderState::Merging) => {
+                warnings.push("A merge is in progress in the task folder. Removing abandons it.".into())
+            }
+            Ok(FolderState::OffBranch) => {
+                warnings.push(format!("{} isn't checked out in the task folder.", task.branch))
+            }
+            Err(_) => warnings.push("Couldn't read the task folder's state. Removing may lose work in it.".into()),
+        }
+        let also = if branch_there {
+            format!("{} or {}", task.base_branch, task.branch)
+        } else {
+            task.base_branch.clone()
+        };
+        // On the branch, HEAD is the branch: the branch's own line below counts its commits.
+        let counted = if state == Ok(FolderState::OnBranch) && branch_there {
+            Some(0)
+        } else {
+            head_only_commits(task, branch_there)
+        };
+        match counted {
+            Some(0) => {}
+            Some(1) => warnings.push(format!(
+                "The task folder has 1 commit that isn't on {also}. Removing deletes it."
+            )),
+            Some(n) => warnings.push(format!(
+                "The task folder has {n} commits that aren't on {also}. Removing deletes them."
+            )),
+            None => warnings.push(format!(
+                "Couldn't tell whether the task folder has commits that aren't on {also}. Removing may delete them."
+            )),
+        }
     }
     if branch_there {
         match unmerged_commits(task) {
