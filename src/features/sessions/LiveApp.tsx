@@ -17,7 +17,7 @@ import { sidebarMode } from "../window/layout";
 import { MainWindow } from "../window/MainWindow";
 import type { Arrangement } from "../window/splitLayout";
 import { useViewState } from "../window/useViewState";
-import { ratiosOf } from "../window/viewState";
+import { fillsEmptyPane, focusedIndex, ratiosOf } from "../window/viewState";
 import { CloseBar } from "./CloseBar";
 import { LiveLauncher } from "./LiveLauncher";
 import { LivePalette } from "./LivePalette";
@@ -53,7 +53,13 @@ export function LiveApp() {
   const viewRef = useRef(view);
   viewRef.current = view;
   // The session the window is about is the one in the focused pane; the store's choice only stands in for an empty pane.
-  const focusedId = view.panes[view.active] ?? selectedId;
+  // A small window shows fewer panes than the layout holds; the focus is the pane it shows, never one out of sight (MainWindow reports how many).
+  const [shownCount, setShownCount] = useState<number | undefined>(undefined);
+  const shownPanes = view.panes.slice(0, shownCount ?? view.panes.length);
+  const focusIdx = focusedIndex(shownPanes, view.active, view.zoomed);
+  const focusIdxRef = useRef(focusIdx);
+  focusIdxRef.current = focusIdx;
+  const focusedId = view.panes[focusIdx] ?? selectedId;
   // Going to a session is two things: the store's selection and the view's, where it focuses the pane showing it or fills the focused one.
   const selectRef = useRef(select);
   selectRef.current = select;
@@ -131,10 +137,11 @@ export function LiveApp() {
   pickRef.current = pick;
   const actions = useMemo(() => new SessionActions({ api: sessions, context: () => context.current, select: (id) => pickRef.current(id) }), []);
 
-  // An empty focused pane takes the store's selection: closing the only open session, or a first start with a saved layout of nothing.
+  // A window of one empty pane takes the store's selection (a first start, or the only open session closed and another opened).
+  // With several panes a closed session's pane stays empty.
   useEffect(() => {
-    if (settled && loaded && selectedId !== undefined && view.panes[view.active] === null && !view.panes.includes(selectedId)) dispatch({ type: "select", tabId: selectedId });
-  }, [settled, loaded, selectedId, view.panes, view.active, dispatch]);
+    if (settled && loaded && fillsEmptyPane(view.panes, selectedId)) dispatch({ type: "select", tabId: selectedId! });
+  }, [settled, loaded, selectedId, view.panes, dispatch]);
   useEffect(() => () => actions.dispose(), [actions]);
   const { toast, closing, renaming, focusToken } = useSyncExternalStore(actions.subscribe, actions.getState);
   // A question about a session that is no longer the selected one, or is gone, has nothing left to ask.
@@ -183,7 +190,12 @@ export function LiveApp() {
           dispatch({ type: "split" });
           return true;
         case "zoom":
-          if (v.panes.length > 1 && (v.zoomed !== null || v.panes[v.active] !== null)) dispatch({ type: "zoom" });
+          if (v.zoomed !== null) dispatch({ type: "zoom" });
+          else if (v.panes.length > 1 && v.panes[focusIdxRef.current] !== null) {
+            // The zoom applies to the active pane, so the one in view is made active first.
+            dispatch({ type: "focusPane", index: focusIdxRef.current });
+            dispatch({ type: "zoom" });
+          }
           return true;
         case "nextPane":
           dispatch({ type: "nextPane" });
@@ -227,7 +239,7 @@ export function LiveApp() {
     setOverlay(id === "profiles" || id === "appearance" ? id : null);
     if (id.startsWith("session:")) return pick(id.slice("session:".length));
     // Palette-only commands. The menu opens after the palette has given the focus back, so it keeps the focus it takes.
-    if (id === "unsplit") return dispatch({ type: "remove", index: viewRef.current.active });
+    if (id === "unsplit") return dispatch({ type: "remove", index: focusIdxRef.current });
     if (id === "layout") return void setTimeout(() => setLayoutMenu(true), 0);
     const shortcut = commandShortcut(id);
     if (shortcut?.kind === "nonePane") return void setTimeout(() => paneCommand(shortcut), 0);
@@ -289,6 +301,7 @@ export function LiveApp() {
           ratios={ratiosOf(view)}
           layoutMenu={layoutMenu}
           onLayoutMenu={setLayoutMenu}
+          onVisible={setShownCount}
           onLayout={(count, arrangement) => {
             if (count !== viewRef.current.panes.length) dispatch({ type: "count", count });
             dispatch({ type: "arrange", arrangement });

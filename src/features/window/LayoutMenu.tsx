@@ -70,16 +70,25 @@ export function radioTarget(key: string, from: number, enabled: readonly boolean
   return null;
 }
 
-/** Arrow keys inside a radiogroup move the focus to the next radio and choose it, like a native one. */
-function radioKeys(e: KeyboardEvent<HTMLElement>, enabled: readonly boolean[], choose: (index: number) => void) {
+/**
+ * What an arrow key, Home or End does in a radiogroup: where the focus goes, and whether that radio is chosen too. Only the
+ * arrangements choose as the focus moves; in the counts a choice drops panes, so it waits for Space or Enter.
+ */
+export function radioMove(key: string, from: number, enabled: readonly boolean[], chooses: boolean): { focus: number; choose: boolean } | null {
+  const focus = radioTarget(key, from, enabled);
+  return focus === null ? null : { focus, choose: chooses && focus !== from };
+}
+
+/** Arrow keys inside a radiogroup move the focus to the next radio; `choose` (when given) also chooses it, like a native one. */
+function radioKeys(e: KeyboardEvent<HTMLElement>, enabled: readonly boolean[], choose?: (index: number) => void) {
   if (e.ctrlKey || e.altKey || e.metaKey) return;
   const radios = Array.from(e.currentTarget.parentElement?.querySelectorAll<HTMLElement>('[role="radio"]') ?? []);
   const from = radios.indexOf(e.currentTarget);
-  const to = from < 0 ? null : radioTarget(e.key, from, enabled);
-  if (to === null) return;
+  const move = from < 0 ? null : radioMove(e.key, from, enabled, choose !== undefined);
+  if (move === null) return;
   e.preventDefault();
-  if (to !== from) choose(to);
-  radios[to]?.focus();
+  if (move.choose) choose?.(move.focus);
+  radios[move.focus]?.focus();
 }
 
 /** The popover behind the bar's layout button: how many terminals are on screen, how they are arranged, and the keys. */
@@ -108,7 +117,7 @@ export function LayoutMenu({ count, arrangement, auto, os = "windows", requested
               aria-label={`${n} ${n === 1 ? "pane" : "panes"}`}
               title={n > max ? `This window is too small for ${n} useful terminals` : undefined}
               onClick={() => n <= max && n !== requested && onCount?.(n)}
-              onKeyDown={(e) => radioKeys(e, countsOn, (i) => onCount?.(COUNTS[i]!))}
+              onKeyDown={(e) => radioKeys(e, countsOn)}
             >
               {n}
             </button>

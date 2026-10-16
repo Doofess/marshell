@@ -1,6 +1,6 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { LayoutIcon, LayoutMenu, radioTarget, type LayoutMenuProps } from "./LayoutMenu";
+import { LayoutIcon, LayoutMenu, radioMove, radioTarget, type LayoutMenuProps } from "./LayoutMenu";
 import { ARRANGEMENTS } from "./splitLayout";
 
 const menu = (p: Partial<LayoutMenuProps> = {}) => renderToStaticMarkup(<LayoutMenu count={4} arrangement="grid" auto {...p} />);
@@ -121,5 +121,20 @@ describe("LayoutMenu", () => {
   });
   it("puts no literal colour in the markup", () => {
     expect(menu()).not.toMatch(/#[0-9a-f]{3,8}\b|rgb\(|oklch\(/i);
+  });
+});
+
+describe("radioMove: what an arrow key does in each radiogroup", () => {
+  const all = [true, true, true, true];
+  it("only moves the focus in the counts, so arrowing from 4 to 1 drops no pane; Space and Enter choose", () => {
+    expect(radioMove("ArrowLeft", 3, all, false)).toEqual({ focus: 2, choose: false });
+    expect(radioMove("Home", 3, all, false)).toEqual({ focus: 0, choose: false });
+  });
+  it("moves and chooses in the arrangements", () => {
+    expect(radioMove("ArrowRight", 0, all, true)).toEqual({ focus: 1, choose: true });
+  });
+  it("leaves other keys alone, and a lone radio stays where it is", () => {
+    expect(radioMove("Enter", 0, all, true)).toBeNull();
+    expect(radioMove("ArrowRight", 0, [true], true)).toEqual({ focus: 0, choose: false });
   });
 });

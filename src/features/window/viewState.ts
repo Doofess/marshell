@@ -77,6 +77,23 @@ export function checkedView(view: ViewLayout): ViewLayout {
 
 const clamp = (n: number, min: number, max: number) => Math.min(max, Math.max(min, n));
 
+/**
+ * Whether the window should put the store's selected session into an empty pane. Only a window of one empty pane does: it has
+ * nothing else to show. In a split, a pane whose session closed stays empty, for the user to fill.
+ */
+export function fillsEmptyPane(panes: readonly (string | null)[], selectedId: string | undefined): boolean {
+  return panes.length === 1 && panes[0] === null && selectedId !== undefined;
+}
+
+/**
+ * Which of the panes on screen is the focused one: the zoomed pane while it is shown, else the active pane, held to the panes
+ * that are shown (the window can hold fewer than the saved layout). The window and the app both ask this, so they agree.
+ */
+export function focusedIndex(shown: readonly unknown[], active: number, zoomed: number | null | undefined): number {
+  if (zoomed !== null && zoomed !== undefined && shown[zoomed] != null) return zoomed;
+  return Math.min(Math.max(0, Math.floor(Number.isFinite(active) ? active : 0)), Math.max(0, shown.length - 1));
+}
+
 /** After the pane count changed: the focus stays on a real pane, and an arrangement that does not suit the count goes back to automatic. */
 function fit(s: ViewState, panes: (string | null)[]): ViewState {
   return { ...s, panes, arrangement: arrangementFor(panes, s.arrangement), active: Math.min(s.active, panes.length - 1) };

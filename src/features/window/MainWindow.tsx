@@ -28,7 +28,7 @@ import { Sidebar, type SidebarFooter } from "./Sidebar";
 import { shellNameFor } from "./ShellPanel";
 import { ARRANGEMENTS, chooseArrangement, maxPanes, type Arrangement, type PaneCount, type Ratios } from "./splitLayout";
 import { SplitView } from "./SplitView";
-import type { ViewAction } from "./viewState";
+import { focusedIndex, type ViewAction } from "./viewState";
 import "./MainWindow.css";
 
 /** The drawer shows the request's full payload; the 40-line command is the long one. */
@@ -71,6 +71,8 @@ export type MainWindowProps = {
   onPane?: (action: ViewAction) => void;
   /** The layout button, a click outside the menu, or Escape asks for the menu to open or close. */
   onLayoutMenu?: (open: boolean) => void;
+  /** How many panes the window really shows (fewer than the layout holds when it is small); the focus follows the shown panes. */
+  onVisible?: (count: number) => void;
   /** The prompt lines (one under a single terminal, one inside every pane in split view); on by default, never in focus mode. */
   composer?: boolean;
   /** What has been typed in the single window's prompt line. */
@@ -145,6 +147,7 @@ export function MainWindow({
   onLayout,
   onPane,
   onLayoutMenu,
+  onVisible,
   composer = true,
   composerValue = "",
   composerValues,
@@ -199,9 +202,8 @@ export function MainWindow({
   const choices = rows.filter((r) => !(paneIds ? wanted : shown).some((s) => s?.id === r.id));
   // Zoom makes its pane the focused one, so the header, the accent bar and the prompt bar can never disagree about which pane is in play.
   const zoomIdx = split && zoomedPane !== undefined && shown[zoomedPane] != null ? zoomedPane : undefined;
-  const clamped = Math.min(Math.max(0, Math.floor(Number.isFinite(activePane) ? activePane : 0)), Math.max(0, shown.length - 1));
-  const focusedIndex = zoomIdx ?? clamped;
-  const focused = shown[focusedIndex] ?? null;
+  const focusedIdx = focusedIndex(shown, activePane, zoomIdx);
+  const focused = shown[focusedIdx] ?? null;
   const active = split ? (focused ?? selected) : selected;
   const paneCount = (split && !empty ? Math.max(1, shown.length) : 1) as PaneCount;
   // An arrangement picked for another number of panes (the window shrank, or fewer sessions exist) gives way to automatic.
@@ -214,6 +216,11 @@ export function MainWindow({
   useEffect(() => {
     if (typeof document !== "undefined") document.title = title;
   }, [title]);
+
+  const shownCount = shown.length;
+  useEffect(() => {
+    onVisible?.(shownCount);
+  }, [onVisible, shownCount]);
 
   // The layout menu closes on Escape (the focus goes back to its button) and on a press anywhere outside it.
   const layoutRoot = useRef<HTMLDivElement>(null);
@@ -321,7 +328,7 @@ export function MainWindow({
               No sessions yet. Start one with {shortcutLabel(commandById("launcher").binding!, os)}.
             </div>
           ) : split ? (
-            <SplitView panes={shown} size={{ w: space.w, h: space.h }} activeIndex={focusedIndex} hidden={hiddenCount} arrangement={chosen} ratios={ratios} zoomed={zoomIdx} choices={choices} composerValues={composerValues} composers={showComposer} setting={terminalSetting} os={os} renderTerminal={renderTerminal} {...paneHandlers} />
+            <SplitView panes={shown} size={{ w: space.w, h: space.h }} activeIndex={focusedIdx} hidden={hiddenCount} arrangement={chosen} ratios={ratios} zoomed={zoomIdx} choices={choices} composerValues={composerValues} composers={showComposer} setting={terminalSetting} os={os} renderTerminal={renderTerminal} {...paneHandlers} />
           ) : renderTerminal ? (
             <KeptTerminals rows={rows} selectedId={selected.id} render={renderTerminal} />
           ) : (

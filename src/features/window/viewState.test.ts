@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { ViewLayout } from "../../generated/ViewLayout";
 import { RATIO } from "./splitLayout";
-import { type ViewAction, type ViewState, checkedView, ratiosOf, toRatioList, toSaved, viewReducer } from "./viewState";
+import { type ViewAction, type ViewState, checkedView, fillsEmptyPane, focusedIndex, ratiosOf, toRatioList, toSaved, viewReducer } from "./viewState";
 
 const base: ViewLayout = {
   panes: ["a"],
@@ -152,5 +152,35 @@ describe("viewReducer", () => {
     const saved = toSaved(run(state({ sidebar: "rail" }), { type: "toggleFocus" }));
     expect("lastPref" in saved).toBe(false);
     expect(saved).toEqual({ ...base, sidebar: "focus" });
+  });
+});
+
+describe("fillsEmptyPane", () => {
+  it("fills the one pane of a window that has nothing in it", () => {
+    expect(fillsEmptyPane([null], "c")).toBe(true);
+  });
+  it("leaves a closed session's pane empty when there are several panes", () => {
+    expect(fillsEmptyPane(["a", null], "c")).toBe(false);
+    expect(fillsEmptyPane([null, null], "c")).toBe(false);
+  });
+  it("needs a selection, and an empty pane", () => {
+    expect(fillsEmptyPane([null], undefined)).toBe(false);
+    expect(fillsEmptyPane(["a"], "c")).toBe(false);
+  });
+});
+
+describe("focusedIndex", () => {
+  it("is the active pane when it is on screen", () => {
+    expect(focusedIndex(["a", "b", "c"], 1, null)).toBe(1);
+  });
+  it("is the last pane on screen when the active one is hidden", () => {
+    expect(focusedIndex(["a", "b"], 3, null)).toBe(1);
+    expect(focusedIndex(["a", "b"], -1, null)).toBe(0);
+    expect(focusedIndex(["a", "b"], Number.NaN, null)).toBe(0);
+  });
+  it("is the zoomed pane while it is on screen", () => {
+    expect(focusedIndex(["a", "b", "c"], 0, 2)).toBe(2);
+    expect(focusedIndex(["a", "b"], 0, 3)).toBe(0);
+    expect(focusedIndex(["a", null], 0, 1)).toBe(0);
   });
 });
