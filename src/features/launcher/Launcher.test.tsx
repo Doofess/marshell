@@ -1,3 +1,4 @@
+import type { ComponentProps } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { DEFAULT_CHOICE, PROJECTS, REMEMBERED } from "./fixtures";
@@ -82,11 +83,10 @@ describe("Launcher: the first chip offers agents, shells and tools", () => {
 describe("Launcher: a manual CLI is a plain terminal", () => {
   const manual = view({ choice: { ...DEFAULT_CHOICE, program: "powershell" } });
   const h = html(manual);
-  it("has only the program and the folder chips: no mode, pace or worktree", () => {
-    expect(count(h, /class="launcher__chip"/g)).toBe(2);
+  it("has the program, the folder and the worktree chips: no mode or pace", () => {
+    expect(count(h, /class="launcher__chip"/g)).toBe(3);
     expect(h).not.toContain("Balanced");
-    expect(h).not.toContain("worktree");
-    expect(h).not.toContain('role="checkbox"');
+    expect(h).toContain('role="checkbox"');
   });
   it("says what it starts, in a shorter sentence", () => {
     expect(h).toContain("Start PowerShell in my-app on main");
@@ -163,13 +163,135 @@ describe("Launcher: chips", () => {
     expect(h).toContain("Mode: Manual");
     expect(h).toContain('role="checkbox"');
   });
-  it("chips hidden when chips is false", () => {
-    const h = renderToStaticMarkup(<Launcher view={view()} chips={false} />);
+  it("mode and pace chips hidden when chips is false (the worktree chip is covered below)", () => {
+    const h = renderToStaticMarkup(<Launcher view={view({ choice: { ...DEFAULT_CHOICE, projectId: "scratch" } })} chips={false} />);
     expect(count(h, /class="launcher__chip"/g)).toBe(2);
     expect(h).not.toContain("Mode:");
     expect(h).not.toContain("Pace:");
+    expect(h).toContain("Start Claude in scratch");
+  });
+});
+
+describe("Launcher: the worktree chip in the live launcher", () => {
+  const live = (v: LauncherView = view(), chips = false) => renderToStaticMarkup(<Launcher view={v} chips={chips} />);
+  const inScratch = { ...DEFAULT_CHOICE, projectId: "scratch" };
+  it("is shown when the folder is in git, and the mode and pace chips stay hidden", () => {
+    const h = live();
+    expect(h).toContain('role="checkbox"');
+    expect(h).toContain('aria-checked="false"');
+    expect(count(h, /class="launcher__chip"/g)).toBe(3);
+    expect(h).not.toContain("Mode:");
+    expect(h).not.toContain("Pace:");
+  });
+  it("is hidden for a folder with no branch", () => {
+    const h = live(view({ choice: inScratch }));
     expect(h).not.toContain('role="checkbox"');
-    expect(h).toContain("Start Claude in my-app on main");
+    expect(count(h, /class="launcher__chip"/g)).toBe(2);
+  });
+  it("is offered for a shell too: a worktree works for any program", () => {
+    expect(live(view({ choice: { ...DEFAULT_CHOICE, program: "powershell" } }))).toContain('role="checkbox"');
+    expect(live(view({ choice: { ...DEFAULT_CHOICE, program: "powershell", projectId: "scratch" } }))).not.toContain('role="checkbox"');
+  });
+});
+
+describe("Launcher: the task name", () => {
+  const on = { ...DEFAULT_CHOICE, worktree: true };
+  const h = (v: Partial<LauncherView> = {}, chips = false) => renderToStaticMarkup(<Launcher view={view({ choice: on, taskName: "fix-login", ...v })} chips={chips} />);
+  it("shows a labelled text field with the name once the chip is on", () => {
+    const out = h();
+    const forId = /<label[^>]*for="([^"]+)"[^>]*>Task name<\/label>/.exec(out)?.[1];
+    expect(forId).toBeTruthy();
+    expect(out).toMatch(new RegExp(`<input[^>]*id="${forId}"[^>]*value="fix-login"|<input[^>]*value="fix-login"[^>]*id="${forId}"`));
+  });
+  it("is not there while the chip is off or in a folder with no branch", () => {
+    expect(h({ choice: DEFAULT_CHOICE })).not.toContain("Task name");
+    expect(h({ choice: { ...on, projectId: "scratch" } })).not.toContain("Task name");
+  });
+  it("is there for a shell, which has no prompt to name it from: an empty name hints at task-…", () => {
+    const out = h({ choice: { ...on, program: "powershell" }, taskName: "" });
+    expect(out).toContain("Task name");
+    expect(out).toContain("Branch marshell/task-…");
+  });
+  it("hints at the branch below the field, and at task-… when the name is empty", () => {
+    const out = h();
+    expect(out).toContain("Branch marshell/fix-login");
+    expect(out.indexOf("Task name")).toBeLessThan(out.indexOf("Branch marshell/fix-login"));
+    expect(h({ taskName: "" })).toContain("Branch marshell/task-…");
+  });
+  it("hints at the name the core will make, not the raw text", () => {
+    expect(h({ taskName: "Fix Login!" })).toContain("Branch marshell/fix-login");
+  });
+  it("the hint is tied to the field for a screen reader", () => {
+    const out = h();
+    const hint = /aria-describedby="([^"]+)"/.exec(out.slice(out.indexOf("Task name")))?.[1];
+    expect(hint).toBeTruthy();
+    expect(out).toContain(`id="${hint}"`);
+  });
+});
+
+describe("Launcher: confirm a task", () => {
+  const on = { ...DEFAULT_CHOICE, worktree: true };
+  const cmds = ["git worktree add -b marshell/x C:/w/x main", "git status"];
+  const h = (confirm: LauncherView["confirm"], extra: Partial<ComponentProps<typeof Launcher>> = {}) =>
+    renderToStaticMarkup(<Launcher view={view({ choice: on, taskName: "x", confirm })} chips={false} {...extra} />);
+  it("swaps the sentence for a titled view with the commands and two buttons", () => {
+    const out = h({ state: "ready", commands: cmds });
+    expect(out).toContain("Start a task in a new worktree");
+    expect(out).toContain('aria-label="Commands Marshell will run"');
+    expect(count(out, /<code[ >]/g)).toBe(2);
+    expect(out).toContain(">Create and start<");
+    expect(out).toContain(">Back<");
+    expect(out.indexOf("Create and start")).toBeLessThan(out.indexOf(">Back<"));
+    expect(out).not.toContain("launcher__sentence");
+    expect(out).not.toContain("<textarea");
+    expect(out).not.toContain("Task name");
+  });
+  it("names the dialog for the task, and keeps it modal", () => {
+    const out = h({ state: "ready", commands: cmds });
+    expect(out).toContain('role="dialog"');
+    expect(out).toContain('aria-label="Start a task in a new worktree"');
+  });
+  const unavailable = (label: string) => new RegExp(`<button[^>]*aria-disabled="true"[^>]*>${label}</button>`);
+  it("shows the plan's refusal in place of the commands, with Create and start unavailable", () => {
+    const out = h({ state: "refused", reason: "That folder is not a git repository." });
+    expect(out).toMatch(/<p class="launcher__error" role="alert">That folder is not a git repository\.<\/p>/);
+    expect(out).not.toContain("<ol");
+    expect(out).toMatch(unavailable("Create and start"));
+    expect(out).not.toMatch(unavailable("Back"));
+  });
+  it("waits for the plan with plain text, not a live message, and Create and start unavailable", () => {
+    const out = h({ state: "loading" });
+    expect(out).toMatch(unavailable("Create and start"));
+    expect(out).toMatch(/<p class="launcher__pending">Checking the folder…<\/p>/);
+    expect(out).not.toContain("<ol");
+  });
+  it("never uses the disabled attribute in the confirm view: a disabled button drops focus", () => {
+    for (const out of [h({ state: "loading" }), h({ state: "refused", reason: "x" }), h({ state: "ready", commands: cmds }, { busy: true })]) expect(out).not.toMatch(/<button[^>]*\sdisabled=/);
+  });
+  it("says Creating the worktree… while the create is pending, and makes both buttons unavailable", () => {
+    const out = h({ state: "ready", commands: cmds }, { busy: true });
+    expect(out).toMatch(/<p[^>]*role="status"[^>]*>Creating the worktree…<\/p>/);
+    expect(out).toMatch(unavailable("Create and start"));
+    expect(out).toMatch(unavailable("Back"));
+  });
+  it("shows the parent's text in the one status line once the worktree exists and the session is starting", () => {
+    const out = h({ state: "ready", commands: cmds }, { busy: true, busyText: "Starting Claude…" });
+    expect(count(out, /role="status"/g)).toBe(1);
+    expect(out).toMatch(/<p[^>]*role="status"[^>]*>Starting Claude…<\/p>/);
+    expect(out).not.toContain("Creating the worktree…");
+  });
+  it("leaves both buttons available when the plan is ready", () => {
+    expect(h({ state: "ready", commands: cmds })).not.toContain("aria-disabled");
+  });
+  it("shows a create failure once, as an alert, under the buttons", () => {
+    const out = h({ state: "ready", commands: cmds }, { error: "Git said: fatal: a branch named 'marshell/x' already exists" });
+    expect(count(out, /role="alert"/g)).toBe(1);
+    expect(out.indexOf(">Back<")).toBeLessThan(out.indexOf('role="alert"'));
+  });
+  it("says its keys: Enter creates, Esc goes back", () => {
+    const out = h({ state: "ready", commands: cmds });
+    expect(out).toMatch(/<kbd>Enter<\/kbd>/);
+    expect(out).toMatch(/<kbd>Esc<\/kbd>/);
   });
 });
 

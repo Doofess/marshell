@@ -52,6 +52,26 @@ fn alive_panel(st: &AppState) -> Option<String> {
     None
 }
 
+impl AppState {
+    /// Whether the panel shell is running in a folder `in_folder` accepts.
+    pub(crate) fn panel_running_where(&self, in_folder: impl Fn(&str) -> bool) -> bool {
+        let panel = self.0.shell_panel.lock().unwrap();
+        panel
+            .as_ref()
+            .is_some_and(|p| in_folder(&p.cwd) && is_alive(self, &p.tab_id))
+    }
+
+    /// Takes the panel shell out of the panel (so it is free again) when it started in a folder
+    /// `in_folder` accepts, and returns its id. The caller closes the session.
+    pub(crate) fn take_panel_where(&self, in_folder: impl Fn(&str) -> bool) -> Option<String> {
+        let mut panel = self.0.shell_panel.lock().unwrap();
+        if !panel.as_ref().is_some_and(|p| in_folder(&p.cwd)) {
+            return None;
+        }
+        panel.take().map(|p| p.tab_id)
+    }
+}
+
 /// Starts the default shell in the folder, or returns the one that is already running.
 /// It never changes folder later: a second call with another folder returns the same shell.
 pub async fn open(State(st): State<AppState>, Json(req): Json<PanelRequest>) -> Result<Json<PanelResponse>, ApiError> {

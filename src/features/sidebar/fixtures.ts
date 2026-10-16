@@ -4,11 +4,11 @@ const MIN = 60_000;
 
 /** One row per state from docs/PLAN.md "Sidebar rows", plus the modifiers and awkward names. */
 export const FIXTURES: RowModel[] = [
-  { id: "idle", number: 10, name: "docs-site", project: "marketing", branch: "main", agent: "codex", status: "idle", phrase: "Idle", model: "GPT-5.5", contextPct: 8 },
+  { id: "idle", number: 10, name: "docs-site", project: "marketing", projectKey: "marketing", branch: "main", agent: "codex", status: "idle", phrase: "Idle", model: "GPT-5.5", contextPct: 8 },
   {
     id: "working", number: 3,
     name: "api-server",
-    project: "my-app",
+    project: "my-app", projectKey: "my-app",
     branch: "feat/auth-flow",
     agent: "claude",
     status: "working",
@@ -30,7 +30,7 @@ export const FIXTURES: RowModel[] = [
   {
     id: "needs-permission", number: 1,
     name: "billing",
-    project: "payments",
+    project: "payments", projectKey: "payments",
     branch: "fix/retry-backoff",
     agent: "claude",
     status: "needs-permission",
@@ -48,7 +48,7 @@ export const FIXTURES: RowModel[] = [
   {
     id: "needs-question", number: 2,
     name: "infra",
-    project: "terraform",
+    project: "terraform", projectKey: "terraform",
     branch: "chore/upgrade-aws-provider",
     agent: "antigravity",
     status: "needs-question",
@@ -59,7 +59,7 @@ export const FIXTURES: RowModel[] = [
   {
     id: "done-unseen", number: 5,
     name: "landing",
-    project: "marketing",
+    project: "marketing", projectKey: "marketing",
     branch: "feat/pricing-page",
     agent: "claude",
     status: "done-unseen",
@@ -71,11 +71,11 @@ export const FIXTURES: RowModel[] = [
     ageMs: 40_000,
     contextPct: 55,
   },
-  { id: "done-seen", number: 11, name: "cli", project: "tools", branch: "main", agent: "codex", status: "done-seen", phrase: "Done 12m ago", ageMs: 12 * MIN, contextPct: 30 },
+  { id: "done-seen", number: 11, name: "cli", project: "tools", projectKey: "tools", branch: "main", agent: "codex", status: "done-seen", phrase: "Done 12m ago", ageMs: 12 * MIN, contextPct: 30 },
   {
     id: "error", number: 6,
     name: "search",
-    project: "my-app",
+    project: "my-app", projectKey: "my-app",
     branch: "feat/fts",
     agent: "claude",
     status: "error",
@@ -86,18 +86,18 @@ export const FIXTURES: RowModel[] = [
   {
     id: "stuck", number: 12,
     name: "migrations",
-    project: "db",
+    project: "db", projectKey: "db",
     branch: "feat/v2-schema",
     agent: "generic",
     status: "stuck",
     phrase: "Same command 9× in 4 min",
     contextPct: 88,
   },
-  { id: "ended", number: 13, name: "scratch", project: "playground", agent: "generic", status: "ended", phrase: "Ended · exit 0", ageMs: 3 * 3_600_000 },
+  { id: "ended", number: 13, name: "scratch", project: "playground", projectKey: "playground", agent: "generic", status: "ended", phrase: "Ended · exit 0", ageMs: 3 * 3_600_000 },
   {
     id: "limited", number: 14,
     name: "legacy",
-    project: "monolith",
+    project: "monolith", projectKey: "monolith",
     branch: "develop",
     agent: "codex",
     status: "limited",
@@ -106,7 +106,7 @@ export const FIXTURES: RowModel[] = [
   {
     id: "muted", number: 15,
     name: "nightly-bench",
-    project: "perf",
+    project: "perf", projectKey: "perf",
     branch: "main",
     agent: "claude",
     status: "working",
@@ -117,7 +117,7 @@ export const FIXTURES: RowModel[] = [
   {
     id: "elevated", number: 16,
     name: "drivers",
-    project: "windows-setup",
+    project: "windows-setup", projectKey: "windows-setup",
     agent: "generic",
     status: "idle",
     phrase: "Administrator",
@@ -126,7 +126,7 @@ export const FIXTURES: RowModel[] = [
   {
     id: "bypass", number: 17,
     name: "refactor",
-    project: "my-app",
+    project: "my-app", projectKey: "my-app",
     branch: "refactor/extract-billing-module",
     agent: "claude",
     status: "working",
@@ -137,7 +137,7 @@ export const FIXTURES: RowModel[] = [
   {
     id: "unknown", number: 18,
     name: "new-session",
-    project: "my-app",
+    project: "my-app", projectKey: "my-app",
     branch: "main",
     agent: "antigravity",
     status: "working",
@@ -146,7 +146,7 @@ export const FIXTURES: RowModel[] = [
   {
     id: "long-names", number: 19,
     name: "a-very-long-session-name-that-will-not-fit",
-    project: "an-equally-long-project-directory-name",
+    project: "an-equally-long-project-directory-name", projectKey: "an-equally-long-project-directory-name",
     branch: "feature/JIRA-12345-add-the-thing-everyone-asked-for",
     agent: "claude",
     status: "needs-permission",
@@ -157,7 +157,7 @@ export const FIXTURES: RowModel[] = [
   {
     id: "cjk-emoji", number: 20,
     name: "認証サーバー 🚀",
-    project: "프로젝트",
+    project: "프로젝트", projectKey: "프로젝트",
     branch: "fix/絵文字-🚀",
     agent: "claude",
     status: "done-unseen",
@@ -168,17 +168,17 @@ export const FIXTURES: RowModel[] = [
   {
     id: "rtl", number: 21,
     name: "خادم-التحقق",
-    project: "مشروع",
+    project: "مشروع", projectKey: "مشروع",
     branch: "main",
     agent: "codex",
     status: "idle",
     phrase: "Idle",
   },
-  { id: "tiny", number: 22, name: "x", project: "y", branch: "z", agent: "generic", status: "idle", phrase: "Idle" },
+  { id: "tiny", number: 22, name: "x", project: "y", projectKey: "y", branch: "z", agent: "generic", status: "idle", phrase: "Idle" },
   {
     id: "crowded", number: 23,
     name: "refactor",
-    project: "my-app",
+    project: "my-app", projectKey: "my-app",
     branch: "develop",
     agent: "claude",
     status: "needs-permission",
@@ -191,7 +191,7 @@ export const FIXTURES: RowModel[] = [
   {
     id: "emoji-name", number: 24,
     name: "✅✅✅✅✅✅✅✅",
-    project: "checks",
+    project: "checks", projectKey: "checks",
     branch: "main",
     agent: "codex",
     status: "working",
@@ -201,7 +201,7 @@ export const FIXTURES: RowModel[] = [
   {
     id: "deepseek-working", number: 25,
     name: "research",
-    project: "papers",
+    project: "papers", projectKey: "papers",
     branch: "main",
     agent: "deepseek",
     status: "working",
@@ -212,7 +212,7 @@ export const FIXTURES: RowModel[] = [
   {
     id: "muted-needs-you", number: 26,
     name: "nightly",
-    project: "perf",
+    project: "perf", projectKey: "perf",
     branch: "main",
     agent: "claude",
     status: "needs-permission",
@@ -222,7 +222,7 @@ export const FIXTURES: RowModel[] = [
     contextPct: 20,
   },
   // Manual CLIs: plain terminals. No thinking, no context ring, no model, no prompt line. The numbers 7 to 9 leave 4 free, as if a session had been closed.
-  { id: "tool-powershell", number: 7, name: "pwsh", project: "my-app", branch: "main", agent: "powershell", status: "idle", phrase: "At the prompt", sessionMs: 18 * MIN, dirty: 2 },
-  { id: "tool-docker", number: 8, name: "compose", project: "my-app", branch: "main", agent: "docker", status: "running", phrase: "Running docker compose up", sessionMs: 6 * MIN, dirty: 2 },
-  { id: "tool-ssh", number: 9, name: "prod-box", project: "deploy", agent: "ssh", status: "ended", phrase: "Exited · code 255", ageMs: 90_000 },
+  { id: "tool-powershell", number: 7, name: "pwsh", project: "my-app", projectKey: "my-app", branch: "main", agent: "powershell", status: "idle", phrase: "At the prompt", sessionMs: 18 * MIN, dirty: 2 },
+  { id: "tool-docker", number: 8, name: "compose", project: "my-app", projectKey: "my-app", branch: "main", agent: "docker", status: "running", phrase: "Running docker compose up", sessionMs: 6 * MIN, dirty: 2 },
+  { id: "tool-ssh", number: 9, name: "prod-box", project: "deploy", projectKey: "deploy", agent: "ssh", status: "ended", phrase: "Exited · code 255", ageMs: 90_000 },
 ];

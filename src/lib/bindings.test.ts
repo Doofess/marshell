@@ -114,6 +114,15 @@ describe("the shipped commands", () => {
   });
 });
 
+describe("review-task", () => {
+  it("is Ctrl+Shift+R or Cmd+R, and neither the duplicate checker nor the reserved list objects on any system", () => {
+    for (const os of OSES) {
+      expect(findCommand(ev("KeyR", os === "mac" ? { metaKey: true } : { ctrlKey: true, shiftKey: true }), os)?.id).toBe("review-task");
+      expect(problemsIn(COMMANDS, os), os).toEqual([]);
+    }
+  });
+});
+
 describe("move-up and move-down", () => {
   it("match Alt+Shift+arrow only, so Ctrl+Shift+arrow and a bare arrow stay with the terminal", () => {
     for (const os of OSES) {

@@ -1,0 +1,41 @@
+/*
+ * The commands a sheet is about to run: numbered, one per row, set in the terminal's own face on a raised surface. A long
+ * command wraps instead of scrolling sideways, so nothing the user must read is hidden. The number is drawn text, so the
+ * order does not depend on colour.
+ */
+.command-list {
+  display: grid;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  counter-reset: command;
+  border-radius: var(--radius);
+  background: var(--bg-raised);
+}
+.command-list__item {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  padding-block: var(--space-2);
+  padding-inline: var(--space-3);
+  counter-increment: command;
+}
+.command-list__item::before {
+  flex: none;
+  min-inline-size: 2ch;
+  color: var(--text-2);
+  font-family: var(--font-mono);
+  font-size: var(--text-11);
+  font-variant-numeric: tabular-nums;
+  content: counter(command) ".";
+}
+.command-list__item code {
+  min-inline-size: 0;
+  color: var(--text-1);
+  font-family: var(--font-mono);
+  font-size: var(--text-12);
+  line-height: 18px;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}

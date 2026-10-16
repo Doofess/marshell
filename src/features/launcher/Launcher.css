@@ -275,6 +275,85 @@
   opacity: 1;
 }
 
+/* The task name: only with the worktree chip on. A label above a field, and the branch it makes underneath. */
+.launcher__task {
+  display: grid;
+  gap: var(--space-1);
+}
+.launcher__task-label {
+  color: var(--text-2);
+  font-size: var(--text-12);
+  font-weight: 600;
+}
+.launcher__task-input {
+  inline-size: 100%;
+  min-block-size: 28px;
+  padding-inline: var(--space-2);
+  border: 0;
+  border-radius: var(--radius);
+  background: var(--fill-strong);
+  color: var(--text-1);
+  font-family: var(--font-mono);
+  font-size: var(--text-13);
+}
+.launcher__task-input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.launcher__task-hint {
+  margin: 0;
+  color: var(--text-2);
+  font-family: var(--font-mono);
+  font-size: var(--text-12);
+  overflow-wrap: anywhere;
+}
+
+/* The confirm view replaces the sentence: a title, the commands, and two buttons with the default first. */
+.launcher__title {
+  margin: 0;
+  color: var(--text-1);
+  font-size: var(--text-15);
+  font-weight: 600;
+}
+.launcher__lede {
+  margin: 0;
+  color: var(--text-2);
+  font-size: var(--text-12);
+}
+.launcher__pending {
+  margin: 0;
+  color: var(--text-2);
+  font-size: var(--text-13);
+}
+.launcher__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+}
+.launcher__back {
+  display: inline-flex;
+  align-items: center;
+  min-block-size: 32px;
+  padding-inline: var(--space-3);
+  border: 0;
+  border-radius: var(--radius);
+  background: var(--fill);
+  color: var(--text-1);
+  font: inherit;
+  font-weight: 500;
+}
+.launcher__back:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.launcher__back:active {
+  background: var(--fill-strong);
+}
+.launcher__back[aria-disabled="true"] {
+  opacity: 0.6;
+}
+
 .launcher__footer {
   display: flex;
   flex-wrap: wrap;
@@ -288,7 +367,8 @@
   font-size: var(--text-13);
   overflow-wrap: anywhere;
 }
-.launcher__start:disabled {
+.launcher__start:disabled,
+.launcher__start[aria-disabled="true"] {
   opacity: 0.6;
 }
 .launcher__hint {
@@ -341,7 +421,8 @@
   box-shadow: inset 0 0 0 100vmax var(--selected);
 }
 @media (hover: hover) and (pointer: fine) {
-  .launcher__chip:hover {
+  .launcher__chip:hover,
+  .launcher__back:hover:not([aria-disabled="true"]) {
     background: var(--fill-strong);
   }
   .launcher__start:hover {
@@ -358,6 +439,8 @@
   .launcher__chip,
   .launcher__input,
   .launcher__start,
+  .launcher__back,
+  .launcher__task-input,
   .launcher__program {
     outline: 1px solid CanvasText;
   }

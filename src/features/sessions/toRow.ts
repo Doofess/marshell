@@ -36,7 +36,14 @@ export const ENDED_PHRASE = "Ended last time";
 export function toRow(info: SessionInfo, profiles: Profile[]): RowModel {
   const profile = profiles.find((p) => p.id === info.profile_id);
   const agent: SessionKind = info.agent === null ? shellKind(profile) : isAgentId(info.agent) ? info.agent : "generic";
-  const base = { id: info.tab_id, number: info.number, name: info.name, project: lastSegment(info.cwd), agent };
+  const base = {
+    id: info.tab_id,
+    number: info.number,
+    name: info.name,
+    project: lastSegment(info.project),
+    projectKey: info.project,
+    agent,
+  };
   if (info.state.kind === "ended") return { ...base, status: "ended", phrase: ENDED_PHRASE };
   if (info.state.kind === "exited") return { ...base, status: "ended", phrase: `Exited with code ${info.state.code}` };
   if (info.agent !== null) return { ...base, status: "limited", phrase: "Status arrives with hooks" };

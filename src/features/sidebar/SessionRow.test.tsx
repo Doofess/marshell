@@ -183,3 +183,35 @@ describe("SessionRow (words stay separate for assistive technology)", () => {
     expect(h).toMatch(/session-row__branch-head"[^>]*>[^<]*<\/span><span class="session-row__branch-tail"/);
   });
 });
+
+describe("SessionRow: a task", () => {
+  const base = FIXTURES.find((f) => f.id === "working")!;
+  const task = { ...base, task: true };
+  it("shows a Task tag after the project name, as text, with the branch in the title and the accessible name", () => {
+    const html = renderToStaticMarkup(<SessionRow row={task} density="comfortable" />);
+    expect(html).toMatch(/session-row__project"[^>]*>my-app<\/span> <span class="session-row__task"[^>]*>Task<\/span>/);
+    expect(html).toMatch(/title="[^"]*feat\/auth-flow/);
+    expect(html).toMatch(/aria-label="[^"]*my-app Task · feat\/auth-flow/);
+  });
+  it("has a Review changes button, reachable by keyboard with the row's tab stop", () => {
+    const onRow = renderToStaticMarkup(<SessionRow row={task} density="comfortable" tabStop onReview={() => {}} />);
+    expect(onRow).toMatch(/<button[^>]*class="session-row__review"[^>]*tabindex="0"[^>]*>Review changes<\/button>/);
+    const off = renderToStaticMarkup(<SessionRow row={task} density="comfortable" onReview={() => {}} />);
+    expect(off).toMatch(/<button[^>]*tabindex="-1"[^>]*>Review changes<\/button>/);
+  });
+  it("shows neither the tag nor the button on a row that is not a task, or where nothing can open a review", () => {
+    const plain = renderToStaticMarkup(<SessionRow row={base} density="comfortable" onReview={() => {}} />);
+    expect(plain).not.toContain("session-row__task");
+    expect(plain).not.toContain("Review changes");
+    expect(renderToStaticMarkup(<SessionRow row={task} density="comfortable" />)).not.toContain("Review changes");
+  });
+  it("marks a row that has the button, so its text under line 1 keeps clear of it (open when selected)", () => {
+    expect(renderToStaticMarkup(<SessionRow row={task} density="comfortable" onReview={() => {}} />)).toMatch(/data-review=""/);
+    expect(renderToStaticMarkup(<SessionRow row={task} density="comfortable" selected onReview={() => {}} />)).toMatch(/data-review="open"/);
+    expect(renderToStaticMarkup(<SessionRow row={task} density="comfortable" />)).not.toContain("data-review");
+    expect(renderToStaticMarkup(<SessionRow row={base} density="comfortable" onReview={() => {}} />)).not.toContain("data-review");
+  });
+  it("leaves the button out while the name is being edited", () => {
+    expect(renderToStaticMarkup(<SessionRow row={task} density="comfortable" tabStop onReview={() => {}} rename={{ onCommit: () => {}, onCancel: () => {} }} />)).not.toContain("Review changes");
+  });
+});

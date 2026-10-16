@@ -1,0 +1,224 @@
+/* The Review sheet. Like Appearance it fills the space it is given as a page; the changes step is a list of files beside the diff of
+   the one chosen. Surfaces are told apart by fill, and the chosen file by a bar down its start edge as well as a fill. */
+.review {
+  position: absolute;
+  inset: 0;
+  container: review / inline-size;
+}
+.review__changes {
+  display: grid;
+  gap: var(--space-3);
+}
+.review__split {
+  display: grid;
+  grid-template-columns: minmax(180px, 30%) minmax(0, 1fr);
+  gap: var(--space-4);
+  align-items: start;
+}
+
+/* The files: one option per file, the status in words above the path (the word is the signal; nothing relies on colour). */
+.review__files {
+  display: grid;
+  align-content: start;
+  padding-block: var(--space-1);
+  border-radius: var(--radius);
+  background: var(--fill);
+  /* The list scrolls inside its own cap, so a long one never pushes the diff out of view. */
+  max-block-size: calc(12 * var(--space-6));
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.review__files:focus-visible {
+  outline: 2px solid var(--focus, var(--accent));
+  outline-offset: 2px;
+}
+.review__file {
+  display: grid;
+  gap: 2px;
+  padding-block: 6px;
+  padding-inline: var(--space-3);
+  border-inline-start: 3px solid transparent;
+  cursor: pointer;
+}
+.review__file[data-selected] {
+  background: var(--selected);
+  border-inline-start: 3px solid var(--accent);
+}
+.review__file:active {
+  background: var(--selected);
+}
+.review__status {
+  font-size: var(--text-12);
+  color: var(--text-2);
+}
+.review__file[data-selected] .review__status {
+  color: var(--text-1);
+  font-weight: 600;
+}
+.review__path {
+  min-inline-size: 0;
+  font-family: var(--font-mono);
+  font-size: var(--text-12);
+  color: var(--text-1);
+  overflow-wrap: anywhere;
+}
+
+/* The diff side: DiffView draws the diff; a binary, large or missing file gets a path and one sentence in the same place. */
+.review__diff {
+  min-inline-size: 0;
+}
+.review__note {
+  display: grid;
+  gap: var(--space-1);
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius);
+  background: var(--fill);
+}
+.review__note-path {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: var(--text-12);
+  color: var(--text-2);
+  overflow-wrap: anywhere;
+}
+.review__note-text {
+  margin: 0;
+  font-size: var(--text-13);
+  color: var(--text-1);
+}
+
+/* The diff was cut: a bar on the start edge, like the error lines in the settings sheets. */
+.review__banner {
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  border-inline-start: 3px solid var(--accent);
+  background: var(--fill);
+  font-size: var(--text-13);
+  color: var(--text-1);
+}
+
+/* Merge, remove and conflict steps: a column of the field, the checkbox, the notices and the commands. */
+.review__step {
+  display: grid;
+  gap: var(--space-3);
+  max-inline-size: 720px;
+}
+.review__message {
+  inline-size: 100%;
+}
+.review__check {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--text-13);
+  color: var(--text-1);
+}
+.review__lede {
+  margin: 0;
+  font-size: var(--text-13);
+  color: var(--text-2);
+}
+.review__heading {
+  margin: 0;
+  font-size: var(--text-15);
+  color: var(--text-1);
+}
+.review__blocker,
+.review__error,
+.review__progress {
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  background: var(--fill);
+  font-size: var(--text-13);
+  color: var(--text-1);
+}
+.review__blocker {
+  border-inline-start: 3px solid var(--accent);
+}
+.review__error {
+  border-inline-start: 3px solid var(--error);
+}
+.review__warnings {
+  display: grid;
+  gap: var(--space-1);
+  margin: 0;
+  padding-block: var(--space-2);
+  padding-inline: var(--space-6) var(--space-3);
+  border-inline-start: 3px solid var(--error);
+  background: var(--fill);
+  font-size: var(--text-13);
+  color: var(--text-1);
+}
+.review__conflicts {
+  display: grid;
+  gap: var(--space-1);
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  list-style: none;
+  border-radius: var(--radius);
+  background: var(--fill);
+}
+.review__conflict {
+  font-family: var(--font-mono);
+  font-size: var(--text-12);
+  color: var(--text-1);
+  overflow-wrap: anywhere;
+}
+
+/* Commands that no longer match the message or the checkbox are dimmed, and a line of words says why (the dimming is not the only cue). */
+.review__commands {
+  display: grid;
+  gap: var(--space-2);
+}
+.review__commands[data-stale="true"] .command-list {
+  opacity: 0.6;
+}
+.review__stale {
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  border-inline-start: 3px solid var(--accent);
+  background: var(--fill);
+  font-size: var(--text-13);
+  color: var(--text-1);
+}
+
+/* A button that cannot act yet (the commands are loading, or the core is working) stays focusable, so it is dimmed, not disabled. */
+.review .settings__btn[aria-disabled="true"] {
+  opacity: 0.6;
+  cursor: default;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .review__file:hover:not([data-selected]) {
+    background: var(--hover, var(--fill-strong));
+  }
+}
+
+/* A narrow sheet puts the diff under the list. */
+@container review (inline-size < 640px) {
+  .review__split {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (forced-colors: active) {
+  .review__files,
+  .review__note,
+  .review__banner,
+  .review__blocker,
+  .review__error,
+  .review__progress,
+  .review__stale,
+  .review__warnings,
+  .review__conflicts {
+    outline: 1px solid CanvasText;
+  }
+  .review .settings__btn[aria-disabled="true"] {
+    opacity: 1;
+    color: GrayText;
+  }
+  .review__file[data-selected] {
+    outline: 2px solid Highlight;
+    outline-offset: -2px;
+  }
+}

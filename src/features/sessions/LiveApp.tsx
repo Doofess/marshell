@@ -1,7 +1,11 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import type { CreateSessionResponse } from "../../generated/CreateSessionResponse";
 import type { Endpoint } from "../../generated/Endpoint";
+import type { Task } from "../../generated/Task";
+import type { TaskChanges } from "../../generated/TaskChanges";
+import { ApiError } from "../../lib/api/client";
 import { sessions } from "../../lib/api/sessions";
+import { tasksApi } from "../../lib/api/tasks";
 import { cancelsCloseBar, commandShortcut, sessionShortcut, type SessionShortcut } from "../../lib/appShortcuts";
 import { osOfPlatform } from "../../lib/keymap";
 import { paletteSessions } from "../palette/sessions";
@@ -11,6 +15,9 @@ import type { RowModel } from "../sidebar/types";
 import { AppearanceDialog } from "../appearance/AppearanceDialog";
 import { useAppearance } from "../appearance/AppearanceProvider";
 import { terminalThemeOf, wtFont } from "../appearance/terminalSettings";
+import { changesFor, isTextBox, keyBlocked, markTasks, missingTask, paletteHidden, resolveTarget, reviewAgentName, reviewKeyDown, reviewTarget, taskRefresher, type ReviewTarget } from "../tasks/reviewOpen";
+import { ReviewSheet } from "../tasks/ReviewSheet";
+import { reviewApi } from "../tasks/reviewRun";
 import { jumpWords } from "../terminal/promptMarks";
 import { resolveTerminalFont } from "../terminal/terminalFont";
 import { TerminalView, type TerminalThemeProp } from "../terminal/TerminalView";
@@ -36,8 +43,6 @@ import { useSessions } from "./useSessions";
 
 /** The size a new session starts at until a terminal has been measured. */
 const DEFAULT_SIZE = { cols: 120, rows: 30 };
-/** The palette leaves Resume out unless the focused session is Ended or Exited. A constant, so the palette's command list is not rebuilt for it. */
-const HIDE_RESUME = ["resume"];
 /** The core's id for a session started outside any saved shell profile; it never has a profile to lose. */
 const CUSTOM_PROFILE = "custom";
 /** What the announcer says when the shell panel is asked for where it is not drawn: the rail, focus mode, or a window under 960 px. */
@@ -202,6 +207,75 @@ export function LiveApp() {
   }, [rows, heldRow]);
   const focusedRow = rows.find((r) => r.id === focusedId);
   const resumable = focusedRow?.status === "ended";
+
+  // The core's tasks (worktrees). A session whose folder is a task's is a task: its row says so and offers its review. Asked on start
+  // and again after every create, merge and remove; the core has no push for them. Null means it has not loaded (or never answered):
+  // that is not "no tasks", so a review asked for then loads it again first (actOn) instead of saying "This session isn't a task."
+  const [tasks, setTasks] = useState<Task[] | null>(null);
+  const endpointRef = useRef(endpoint);
+  endpointRef.current = endpoint;
+  const refreshTasks = useMemo(() => taskRefresher(() => (endpointRef.current ? tasksApi.list(endpointRef.current) : Promise.resolve([])), setTasks), []);
+  useEffect(() => {
+    if (endpoint) void refreshTasks();
+  }, [endpoint, refreshTasks]);
+  const taskRows = useMemo(() => markTasks(rows, infos, tasks), [rows, infos, tasks]);
+  // While the list is unknown the palette keeps Review for the session in focus, so choosing it can load the list again.
+  const focusedIsTask = reviewTarget(infos, focusedId, tasks).kind !== "none";
+  const hiddenCommands = paletteHidden({ resumable, isTask: focusedIsTask, missing: missingTask(tasks) !== null });
+
+  // The Review sheet. It holds its own snapshot (the task, its changes, the session it was opened for), not a view of the lists above,
+  // so a task list or a session list that changes under it, a merge removing the task included, never unmounts it while the core works.
+  const [review, setReview] = useState<{ endpoint: Endpoint; tabId: string; task: Task; changes: TaskChanges } | null>(null);
+  const reviewRef = useRef(review);
+  reviewRef.current = review;
+  const opening = useRef(false);
+  const openReview = useCallback(
+    async (tabId: string, task: Task) => {
+      const ep = endpointRef.current;
+      if (!ep || opening.current || reviewRef.current) return;
+      opening.current = true;
+      try {
+        setReview({ endpoint: ep, tabId, task, changes: await changesFor(task, () => tasksApi.changes(ep, task.id)) });
+      } catch (e) {
+        announce(`Couldn't open the review: ${e instanceof ApiError ? e.message : String(e)}`);
+      } finally {
+        opening.current = false;
+      }
+    },
+    [announce],
+  );
+  // Review the session in `tabId`, or say it isn't a task. What the state was when the key or button was pressed is read from refs.
+  const stateRef = useRef({ infos, tasks, focusedId, launcherOpen, overlay, review });
+  stateRef.current = { infos, tasks, focusedId, launcherOpen, overlay, review };
+  // Does what a review request came to: opens the sheet, or says why not (it isn't a task, or the task list can't be loaded).
+  const actOn = useCallback(
+    async (target: ReviewTarget) => {
+      const t = await resolveTarget(target, () => stateRef.current.infos, refreshTasks);
+      if (t.kind === "open") void openReview(t.tabId, t.task);
+      else announce(t.message);
+    },
+    [openReview, announce, refreshTasks],
+  );
+  const reviewSession = useCallback(
+    (tabId: string | undefined) => {
+      const s = stateRef.current;
+      void actOn(reviewTarget(s.infos, tabId, s.tasks));
+    },
+    [actOn],
+  );
+  const reviewReason = (e: unknown) => (e instanceof ApiError ? e.message : String(e));
+  // "Ask <agent> to fix them": the prompt is typed into the task's session, never sent (no Enter), and the terminal gets the focus.
+  const askAgent = (text: string) => {
+    const r = reviewRef.current;
+    if (!r) return;
+    sessions.input(r.endpoint, r.tabId, text).then(
+      () => {
+        pick(r.tabId);
+        actions.focusTerminal();
+      },
+      (e: unknown) => announce(`Couldn't type that into the agent's terminal: ${reviewReason(e)}`),
+    );
+  };
   // A question about a session that is no longer the selected one, or is gone, has nothing left to ask.
   useEffect(() => {
     if (closing !== null && (closing !== focusedId || !infos.some((i) => i.tab_id === closing))) actions.cancelClose();
@@ -391,14 +465,29 @@ export function LiveApp() {
 
   // The app's shortcuts work from anywhere, the terminal included; the terminal lets these keys through (TerminalView).
   const os = endpoint ? osOfPlatform(endpoint.platform) : undefined;
+  // Review (Ctrl+Shift+R) is read apart from the rest because the window owns the key everywhere, the launcher, the overlays and the
+  // sheet included: it is always prevented (it is the webview's hard reload), and acted on only when nothing else holds the keys.
   useEffect(() => {
-    if (!os || launcherOpen || overlay !== null) return;
+    if (!os) return;
+    const onKey = (e: KeyboardEvent) => {
+      const s = stateRef.current;
+      const result = reviewKeyDown(e, os, { infos: s.infos, focusedId: s.focusedId, tasks: s.tasks, blocked: keyBlocked({ launcherOpen: s.launcherOpen, overlay: s.overlay, review: s.review !== null, inTextBox: isTextBox(e.target as HTMLElement | null) }) });
+      if (result === null || result.kind === "ignored") return;
+      void actOn(result);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [os, actOn]);
+
+  useEffect(() => {
+    // While the sheet is up it has the keys: Esc, Tab and the lists are its own.
+    if (!os || launcherOpen || overlay !== null || review !== null) return;
     const onKey = (e: KeyboardEvent) => {
       const shortcut = sessionShortcut(e, os);
-      if (!shortcut) return;
+      // Review is read above.
+      if (!shortcut || shortcut.kind === "review") return;
       // A text box (the rename box, the launcher's fields) keeps its own keys; xterm's own hidden textarea is the terminal, not a box.
-      const t = e.target;
-      if ((t instanceof HTMLInputElement || t instanceof HTMLTextAreaElement) && !t.classList.contains("xterm-helper-textarea")) return;
+      if (isTextBox(e.target as HTMLElement | null)) return;
       e.preventDefault();
       // Holding the key repeats it; only moving a session along the list, or from prompt to prompt, should.
       if (e.repeat && shortcut.kind !== "move" && shortcut.kind !== "prompt") return;
@@ -409,7 +498,7 @@ export function LiveApp() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [os, launcherOpen, overlay, actions, jumpPrompt, paneCommand]);
+  }, [os, launcherOpen, overlay, review, actions, jumpPrompt, paneCommand]);
 
   // A palette row: a session to go to, the profiles page, or a command the window runs (LivePalette lists only those).
   const runFromPalette = (id: string) => {
@@ -420,6 +509,13 @@ export function LiveApp() {
     if (id === "layout") return void setTimeout(() => setLayoutMenu(true), 0);
     if (id === "group-by-project") return dispatch({ type: "toggleGrouped" });
     if (id === "resume") return void (focusedRow && startResume(focusedRow));
+    // After the palette has given focus back, so the sheet takes it from the right place and returns it there.
+    if (id === "review-task") return void setTimeout(() => reviewSession(focusedId), 0);
+    // A task whose folder is gone has no session: its sheet (only the remove step) opens for no tab.
+    if (id === "clean-up-task") {
+      const gone = missingTask(stateRef.current.tasks);
+      return void (gone && setTimeout(() => void openReview("", gone), 0));
+    }
     const shortcut = commandShortcut(id);
     // Both move the focus, so they wait for the palette to hand it back first.
     if (shortcut?.kind === "nonePane" || shortcut?.kind === "shellPanel") return void setTimeout(() => paneCommand(shortcut), 0);
@@ -436,6 +532,8 @@ export function LiveApp() {
     setStartingTexts((t) => ({ ...t, [created.tab_id]: text }));
     pick(created.tab_id);
     setLauncherOpen(false);
+    // A task may have been made with it.
+    void refreshTasks();
   };
 
   // One tab's content, in the single window and in every split pane: its terminal, and under it the Resume strip while it is Ended or
@@ -464,7 +562,7 @@ export function LiveApp() {
                 placeholder={startingTexts[row.id]}
                 onOutput={() => setStartingTexts((t) => without(t, row.id))}
                 onSize={onSize}
-                autoFocus={!launcherOpen && overlay === null && row.id === focusedId}
+                autoFocus={!launcherOpen && overlay === null && review === null && row.id === focusedId}
                 visible={shown}
                 focusToken={focusToken}
                 promptJump={promptJump?.tabId === row.id ? promptJump : undefined}
@@ -486,7 +584,7 @@ export function LiveApp() {
         </div>
       );
     },
-    [endpoint, panelTab?.tabId, heldRow, resumed, infos, profiles, startResume, startingTexts, onSize, launcherOpen, overlay, focusedId, focusToken, promptJump, onPromptJump, themeFor, overrideOf, terminalFont],
+    [endpoint, panelTab?.tabId, heldRow, resumed, infos, profiles, startResume, startingTexts, onSize, launcherOpen, overlay, review, focusedId, focusToken, promptJump, onPromptJump, themeFor, overrideOf, terminalFont],
   );
 
   if (error) {
@@ -521,7 +619,7 @@ export function LiveApp() {
             dispatch({ type: "arrange", arrangement });
           }}
           onPane={dispatch}
-          rows={rows}
+          rows={taskRows}
           selectedId={focusedId}
           requests={[]}
           ports={[]}
@@ -539,10 +637,25 @@ export function LiveApp() {
           onReorder={(ids) => actions.reorder(ids)}
           grouped={view.grouped}
           onSelect={pick}
+          onReview={reviewSession}
           onPalette={() => setOverlay("palette")}
         />
       )}
-      {overlay === "palette" && os && <LivePalette sessions={paletteSessions(rows)} os={os} labels={paletteLabels} hidden={resumable ? undefined : HIDE_RESUME} onRun={runFromPalette} onClose={() => setOverlay(null)} />}
+      {overlay === "palette" && os && <LivePalette sessions={paletteSessions(rows)} os={os} labels={paletteLabels} hidden={hiddenCommands} onRun={runFromPalette} onClose={() => setOverlay(null)} />}
+      {review && (
+        <ReviewSheet
+          task={review.task}
+          changes={review.changes}
+          agentName={reviewAgentName(infos.find((i) => i.tab_id === review.tabId))}
+          api={reviewApi(review.endpoint, review.task.id)}
+          onClose={() => setReview(null)}
+          onDone={(message) => {
+            actions.notify(message);
+            void refreshTasks();
+          }}
+          onAskAgent={askAgent}
+        />
+      )}
       {overlay === "profiles" && endpoint && <ProfilesDialog endpoint={endpoint} onClose={() => setOverlay(null)} onNotice={announce} onSaved={reloadProfiles} />}
       {overlay === "appearance" && <AppearanceDialog onClose={() => setOverlay(null)} onNotice={announce} />}
       {launcherOpen && (

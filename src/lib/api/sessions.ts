@@ -1,6 +1,7 @@
 import type { CreateSessionRequest } from "../../generated/CreateSessionRequest";
 import type { CreateSessionResponse } from "../../generated/CreateSessionResponse";
 import type { Endpoint } from "../../generated/Endpoint";
+import type { InputRequest } from "../../generated/InputRequest";
 import type { RenameRequest } from "../../generated/RenameRequest";
 import type { ReopenRequest } from "../../generated/ReopenRequest";
 import type { ReorderRequest } from "../../generated/ReorderRequest";
@@ -19,6 +20,11 @@ export const sessions = {
   reorder: (ep: Endpoint, tabIds: string[]) =>
     api<void>(ep, "POST", "/v1/sessions/reorder", { tab_ids: tabIds } satisfies ReorderRequest),
   close: (ep: Endpoint, tabId: string) => api<void>(ep, "DELETE", tab(tabId)),
+  /**
+   * Types `text` into the session as if the user had typed it, with no Enter: the user reads it and sends it. The core
+   * refuses text with a line break (400) and an unknown tab (404); both reject with an ApiError.
+   */
+  input: (ep: Endpoint, tabId: string, text: string) => api<void>(ep, "POST", `${tab(tabId)}/input`, { text } satisfies InputRequest),
   /** Without a tab id, reopens the most recently closed session. Rejects with a 404 ApiError when none is left. */
   reopen: (ep: Endpoint, tabId?: string) =>
     api<CreateSessionResponse>(

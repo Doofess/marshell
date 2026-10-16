@@ -41,6 +41,7 @@ export function SessionRow({
   drag,
   rename,
   onSelect,
+  onReview,
 }: {
   row: RowModel;
   density: Density;
@@ -50,6 +51,8 @@ export function SessionRow({
   rename?: RowRename;
   /** A click on the row. Left out, a click does nothing (stories). */
   onSelect?: () => void;
+  /** Opens the review of this row's task. Left out, a task row shows its tag but no button (stories). */
+  onReview?: () => void;
 }) {
   const caution = modeCaution(row.mode);
   const usage = formatUsage(row.usage);
@@ -57,6 +60,7 @@ export function SessionRow({
   const hasMeta = Boolean(row.model || row.effort || row.mode === "plan" || caution || row.subagents !== undefined);
   const time = row.waitingMs ?? (row.status === "done-unseen" || row.status === "done-seen" || row.status === "ended" ? row.ageMs : undefined);
   const branch = row.branch ? splitForMiddle(row.branch) : null;
+  const reviewable = Boolean(row.task && onReview && !rename);
 
   return (
     <div
@@ -77,6 +81,7 @@ export function SessionRow({
       data-muted={row.muted || undefined}
       data-flash={row.flash || undefined}
       data-renaming={rename ? "" : undefined}
+      data-review={reviewable ? (selected ? "open" : "") : undefined}
       draggable={drag && !rename ? true : undefined}
       data-drop={drag?.dropEdge}
       onClick={onSelect}
@@ -100,6 +105,14 @@ export function SessionRow({
           <span className="session-row__project" dir="auto">
             {row.project}
           </span>
+          {row.task && (
+            <>
+              {" "}
+              <span className="session-row__task" title={row.branch ? `Task on ${row.branch}` : "Task"}>
+                Task
+              </span>
+            </>
+          )}
           {branch && (
             <>
               {" "}
@@ -154,6 +167,21 @@ export function SessionRow({
           )}{" "}
           {usage && <div className="session-row__usage">{usage}</div>}
         </div>
+      )}
+      {/* Outside the aria-hidden lines. Rows have no other in-row actions (close, rename and move are keys and palette commands), so this is the one nested control: ARIA treats an option's children as presentational, so a screen reader reaches it by focus (Tab from the row), and reaches the review without it by Ctrl+Shift+R (Cmd+R) and the palette. It follows the row's tab stop: Tab from the row lands here, and the arrow keys never do. */}
+      {reviewable && (
+        <button
+          type="button"
+          className="session-row__review"
+          aria-label={`Review changes, ${row.name}`}
+          tabIndex={tabStop ? 0 : -1}
+          onClick={(e) => {
+            e.stopPropagation();
+            onReview?.();
+          }}
+        >
+          Review changes
+        </button>
       )}
     </div>
   );

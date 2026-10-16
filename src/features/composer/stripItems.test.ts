@@ -13,7 +13,7 @@ describe("statusItems: what the strip says, from known data only", () => {
     expect(ids(full)).toEqual(["model", "ctx", "limit5", "limit7", "cost", "time", "dirty", "mcp", "version", "skills", "venv", "ports"]);
   });
   it("leaves out whatever is unknown, and never shows a dash", () => {
-    const bare = statusItems({ id: "x", number: 1, name: "x", project: "p", agent: "claude", status: "idle", phrase: "Idle" }, undefined, []);
+    const bare = statusItems({ id: "x", number: 1, name: "x", project: "p", projectKey: "p", agent: "claude", status: "idle", phrase: "Idle" }, undefined, []);
     expect(bare).toEqual([]);
     const noModel = statusItems({ ...row("working"), model: undefined, effort: undefined, usage: undefined, contextPct: undefined }, undefined, []);
     for (const gone of ["model", "ctx", "cost", "limit5", "limit7", "ports"]) expect(ids(noModel)).not.toContain(gone);

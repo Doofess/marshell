@@ -13,7 +13,11 @@ number: number, name: string,
 /**
  * "claude", "codex" or "antigravity". None means a plain shell.
  */
-agent: string | null, profile_id: string, cwd: string, state: SessionState, 
+agent: string | null, profile_id: string, cwd: string, 
+/**
+ * The git repo root of `cwd` (the main checkout, for a task worktree), or `cwd` itself outside git.
+ */
+project: string, state: SessionState, 
 /**
  * What the shell is doing, from its prompt marks. Unknown without shell integration.
  */

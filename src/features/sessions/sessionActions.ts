@@ -18,11 +18,14 @@ export const needsCloseConfirm = (info: SessionInfo): boolean => info.agent !== 
 /** The names the close bar uses; the sidebar's own mark names ("OpenAI Codex") are longer than the CLIs are known by. */
 const CLOSE_BAR_NAMES: Record<string, string> = { claude: "Claude Code", codex: "Codex", antigravity: "Antigravity" };
 
+/** An agent's name in a sentence ("Claude Code"): the only thing about the agent the sheets use. An unknown agent is named by its id. */
+export function agentLabel(agent: string): string {
+  return CLOSE_BAR_NAMES[agent] ?? (isAgentId(agent) ? AGENT_NAMES[agent] : agent);
+}
+
 /** "Claude Code may be mid-task in my-app." The project is the last folder of the session's cwd. */
 export function closeBarText(info: SessionInfo): string {
-  const agent = info.agent ?? "";
-  const name = CLOSE_BAR_NAMES[agent] ?? (isAgentId(agent) ? AGENT_NAMES[agent] : agent);
-  return `${name} may be mid-task in ${lastSegment(info.cwd)}.`;
+  return `${agentLabel(info.agent ?? "")} may be mid-task in ${lastSegment(info.cwd)}.`;
 }
 
 /** The tab of the session whose NUMBER is `number` (not the one in that position), or undefined. */
@@ -100,6 +103,16 @@ export class SessionActions {
     return this.state.focusToken + 1;
   }
 
+  /** Hands the focus back to the focused session's terminal (after a sheet that typed into it closes). */
+  focusTerminal(): void {
+    this.set({ focusToken: this.refocus() });
+  }
+
+  /** Shows a receipt as a toast (and the window's announcer says it): a merge or a removal that finished in the Review sheet. */
+  notify(text: string): void {
+    this.showToast(text);
+  }
+
   /** Stops the toast timer. Call when the window goes away. */
   dispose(): void {
     clearTimeout(this.timer);
@@ -150,6 +163,7 @@ export class SessionActions {
       case "nonePane":
       case "focusMode":
       case "sidebar":
+      case "review":
         break;
     }
   }

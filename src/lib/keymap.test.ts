@@ -72,6 +72,15 @@ describe("COMMANDS", () => {
     expect(win("shell-panel")).toBe("Ctrl+Shift+S");
   });
 
+  it("binds Review this task's changes to Ctrl+Shift+R (Cmd+R on macOS) in the Sessions group", () => {
+    const c = commandById("review-task");
+    expect(c).toMatchObject({ label: "Review this task's changes", group: "Sessions", binding: { code: "KeyR" } });
+    expect(win("review-task")).toBe("Ctrl+Shift+R");
+    expect(mac("review-task")).toBe("⌘R");
+    // The cheat sheet lists every command in COMMANDS, so this one is on it.
+    expect(COMMANDS.some((x) => x.id === "review-task")).toBe(true);
+  });
+
   it("uses no punctuation key anywhere, because punctuation sits on different keys (or behind AltGr) on other layouts", () => {
     for (const c of COMMANDS) if (c.binding) expect(c.binding.code, c.id).toMatch(/^(Key[A-Z]|Digit[0-9]|F[0-9]{1,2}|Tab|Space|Backspace|Arrow(Left|Right|Up|Down)|Page(Up|Down))$/);
   });

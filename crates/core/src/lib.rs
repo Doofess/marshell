@@ -1,5 +1,6 @@
 pub mod auth;
 pub mod crash;
+pub mod git;
 pub mod job;
 pub mod layout;
 pub mod paths;
@@ -12,4 +13,5 @@ pub mod settings;
 pub mod shell;
 pub mod store;
 pub mod supervisor;
+pub mod tasks;
 pub mod wt;

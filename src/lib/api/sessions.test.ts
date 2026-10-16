@@ -76,6 +76,21 @@ describe("sessions", () => {
   });
 });
 
+describe("sessions.input", () => {
+  it("posts the text to the tab's input route, encoding the id, and adds no Enter", async () => {
+    const input = respond(null, 204);
+    vi.stubGlobal("fetch", input);
+    await sessions.input(endpoint, "a/b", "Merging x into main conflicts in a.txt.");
+    expect(call(input)).toMatchObject({ url: "http://127.0.0.1:9/v1/sessions/a%2Fb/input", method: "POST", body: { text: "Merging x into main conflicts in a.txt." } });
+  });
+  it("rejects with the core's status when the tab is unknown or the text has a line break", async () => {
+    vi.stubGlobal("fetch", respond(null, 404));
+    await expect(sessions.input(endpoint, "t1", "x")).rejects.toMatchObject({ status: 404 });
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response("The text can't contain a line break.", { status: 400 })));
+    await expect(sessions.input(endpoint, "t1", "a\nb")).rejects.toBeInstanceOf(ApiError);
+  });
+});
+
 describe("sessions.resume", () => {
   it("posts the size and resolves ok", async () => {
     const ok = respond({ tab_id: "t 1", number: 1 });

@@ -40,6 +40,7 @@ export function Sidebar({
   onRenameCancel,
   onReorder,
   onSelect,
+  onReview,
   grouped = false,
 }: {
   rows: RowModel[];
@@ -57,6 +58,8 @@ export function Sidebar({
   onReorder?: (ids: string[]) => void;
   /** A click on a row gives its session id. */
   onSelect?: (id: string) => void;
+  /** Opens the review of a task row's session (its Review changes button). */
+  onReview?: (id: string) => void;
   /** Rows under a heading per project (name and count); a drag moves a row only inside its group. Off by default. */
   grouped?: boolean;
 }) {
@@ -111,6 +114,7 @@ export function Sidebar({
       tabStop={r.id === tabStop}
       drag={dragFor(r.id)}
       onSelect={onSelect && (() => onSelect(r.id))}
+      onReview={onReview && (() => onReview(r.id))}
       rename={r.id === renamingId && onRename && onRenameCancel ? { onCommit: (name) => onRename(r.id, name), onCancel: onRenameCancel } : undefined}
     />
   );

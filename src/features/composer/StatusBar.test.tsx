@@ -39,7 +39,7 @@ describe("StatusBar: the focused session's facts, in one row at the foot of the 
     expect(h).not.toContain("data-agent");
   });
   it("leaves out what is unknown rather than showing dashes", () => {
-    const h = renderToStaticMarkup(<StatusBar row={{ id: "x", number: 1, name: "x", project: "p", agent: "claude", status: "idle", phrase: "Idle" }} />);
+    const h = renderToStaticMarkup(<StatusBar row={{ id: "x", number: 1, name: "x", project: "p", projectKey: "p", agent: "claude", status: "idle", phrase: "Idle" }} />);
     expect(h).not.toContain("status-strip__item");
     expect(h.replace(/<[^>]+>/g, " ")).not.toMatch(/–|--/);
   });
@@ -99,7 +99,7 @@ describe("StatusBar: it says whose facts they are", () => {
   });
   it("keeps the name when the strip is down to its last item, and for a plain terminal with no facts at all", () => {
     expect(html("working", 40)).toContain("status-bar__name");
-    const h = renderToStaticMarkup(<StatusBar row={{ id: "x", number: 7, name: "plain", project: "p", agent: "powershell", status: "idle", phrase: "Idle" }} />);
+    const h = renderToStaticMarkup(<StatusBar row={{ id: "x", number: 7, name: "plain", project: "p", projectKey: "p", agent: "powershell", status: "idle", phrase: "Idle" }} />);
     expect(h).toContain("status-bar__name");
     expect(h).not.toContain("status-strip__item");
   });

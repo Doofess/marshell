@@ -3,8 +3,12 @@ import type { LayoutDoc } from "../../generated/LayoutDoc";
 import type { Profile } from "../../generated/Profile";
 import type { ProfilesDoc } from "../../generated/ProfilesDoc";
 import type { ProjectInfo } from "../../generated/ProjectInfo";
+import type { Task } from "../../generated/Task";
+import type { TaskCreateRequest } from "../../generated/TaskCreateRequest";
+import type { TaskPlanRequest } from "../../generated/TaskPlanRequest";
 import { ApiError } from "../../lib/api/client";
 import type { Project } from "../launcher/filter";
+import type { TaskConfirm } from "../launcher/Launcher";
 import { LAUNCH_PROGRAMS, isAgentProgram, programById, type LaunchProgram, type LauncherChoice, type ProgramId } from "../launcher/launchChoice";
 import { shellKind } from "./toRow";
 
@@ -48,13 +52,74 @@ export function launchRequest(
   profiles: ProfilesDoc,
   projects: Project[],
   size: { cols: number; rows: number },
+  /** The folder of a task made for this launch; it takes the place of the chosen folder. */
+  taskPath?: string,
 ): CreateSessionRequest {
-  const cwd = projects.find((p) => p.id === choice.projectId)?.path;
+  const cwd = taskPath ?? projects.find((p) => p.id === choice.projectId)?.path;
   const base: CreateSessionRequest = { cols: size.cols, rows: size.rows, ...(cwd === undefined ? {} : { cwd }) };
   const id = programById(choice.program, programs)?.id ?? choice.program;
   if (id.startsWith(PROFILE_PREFIX)) return { ...base, profile_id: id.slice(PROFILE_PREFIX.length) };
   const withAgent = { ...base, agent: id, profile_id: profiles.default_id };
   return isAgentProgram(id, programs) && prompt.trim() !== "" ? { ...withAgent, prompt } : withAgent;
+}
+
+/**
+ * True when Start must first show the worktree commands: the worktree chip is on and the chosen folder is in git (it has a
+ * branch). Any program can start in a worktree, a plain shell too. The chip is not offered outside git, so a stale flag never counts.
+ */
+export function wantsTask(choice: LauncherChoice, projects: Project[]): boolean {
+  const inGit = projects.find((p) => p.id === choice.projectId)?.branch !== undefined;
+  return choice.worktree && inGit;
+}
+
+/** The text the task is named from until the user types a name: the first prompt, or nothing for a program that takes none. */
+export function nameSource(choice: LauncherChoice, prompt: string, programs: LaunchProgram[]): string {
+  return programById(choice.program, programs)?.noFirst ? "" : prompt;
+}
+
+/** What the core is asked to plan: the chosen folder and the name as typed (the core slugs it). */
+export function taskRequest(choice: LauncherChoice, projects: Project[], name: string): TaskPlanRequest {
+  return { cwd: projects.find((p) => p.id === choice.projectId)?.path ?? "", name };
+}
+
+/** The create request: the plan request plus the commands the confirm view shows. Null until it shows some. */
+export function createRequest(plan: TaskPlanRequest, confirm: TaskConfirm | null): TaskCreateRequest | null {
+  return confirm?.state === "ready" ? { ...plan, commands: confirm.commands } : null;
+}
+
+/** A create the core refused (409: the commands changed, or it can't be made now): show why and plan again, so the next try shows what would run. */
+export function replansAfter(e: unknown): boolean {
+  return e instanceof ApiError && e.status === 409;
+}
+
+/** Creates the task, and only when that has answered starts the session in its folder. A failed create never launches. */
+export async function createThenLaunch<T>(create: () => Promise<Task>, launch: (task: Task) => Promise<T>): Promise<T> {
+  return launch(await create());
+}
+
+/**
+ * The task made for the request being confirmed. If the session then fails to start, trying again must not make a second
+ * worktree; but leaving the confirm view with Back forgets it, because the next plan may show other commands (another free name).
+ */
+export function rememberTasks() {
+  let made: { key: string; task: Task } | null = null;
+  return {
+    async get(req: TaskCreateRequest, create: () => Promise<Task>): Promise<Task> {
+      const key = JSON.stringify(req);
+      if (made?.key === key) return made.task;
+      const task = await create();
+      made = { key, task };
+      return task;
+    },
+    forget() {
+      made = null;
+    },
+  };
+}
+
+/** The one status line of the confirm view while it works: the worktree first, then the program in it. */
+export function progressText(phase: "creating" | "starting", program: string): string {
+  return phase === "creating" ? "Creating the worktree…" : `Starting ${program}…`;
 }
 
 /** What takes focus when the launcher opens: the prompt, where Enter starts. A shell has no prompt, so the Start button (the program chip would open its list). */

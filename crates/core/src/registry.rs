@@ -102,6 +102,7 @@ impl Registry {
                 agent: relaunch.agent.clone(),
                 profile_id: relaunch.profile_id.clone(),
                 cwd: relaunch.cwd.clone(),
+                project: crate::projects::project_of(&relaunch.cwd),
                 state: SessionState::Running,
                 command: CommandState::Unknown,
             },
@@ -136,6 +137,7 @@ impl Registry {
                     agent: tab.agent.clone(),
                     profile_id: tab.profile_id.clone(),
                     cwd: tab.cwd.clone(),
+                    project: crate::projects::project_of(&tab.cwd),
                     state: SessionState::Ended,
                     command: CommandState::Unknown,
                 },
@@ -282,6 +284,34 @@ impl Registry {
         Some(spec)
     }
 
+    /// The open rows (any state) whose cwd `in_folder` accepts.
+    pub fn sessions_where(&self, in_folder: impl Fn(&str) -> bool) -> Vec<SessionInfo> {
+        let state = self.state.lock().unwrap();
+        state
+            .open
+            .iter()
+            .filter(|e| in_folder(&e.info.cwd))
+            .map(|e| e.info.clone())
+            .collect()
+    }
+
+    /// Drops every row whose cwd `in_folder` accepts, Ended and Exited ones too, and the closed
+    /// entries (they could only reopen into a folder that is going away). Returns the tab ids of
+    /// the open rows dropped. Not added to the closed list.
+    pub fn drop_where(&self, in_folder: impl Fn(&str) -> bool) -> Vec<String> {
+        let mut state = self.state.lock().unwrap();
+        let (gone, kept): (Vec<_>, Vec<_>) = std::mem::take(&mut state.open)
+            .into_iter()
+            .partition(|e| in_folder(&e.info.cwd));
+        state.open = kept;
+        let closed_before = state.closed.len();
+        state.closed.retain(|e| !in_folder(&e.info.cwd));
+        if !gone.is_empty() || state.closed.len() != closed_before {
+            self.tx.send_replace(state.snapshot());
+        }
+        gone.into_iter().map(|e| e.info.tab_id).collect()
+    }
+
     /// True while the tab is in the open list.
     pub fn is_open(&self, tab_id: &str) -> bool {
         let state = self.state.lock().unwrap();
@@ -340,6 +370,31 @@ mod tests {
             cwd: "C:/work".into(),
             name: name.into(),
         }
+    }
+
+    #[test]
+    fn drop_where_removes_open_and_closed_rows_in_the_folder() {
+        let reg = Registry::new();
+        let at = |name: &str, cwd: &str| Relaunch {
+            cwd: cwd.into(),
+            ..relaunch(name)
+        };
+        reg.reserve("a", at("a", "/in"));
+        reg.reserve("b", at("b", "/out"));
+        reg.reserve("c", at("c", "/in"));
+        reg.reserve("d", at("d", "/in"));
+        reg.close("d");
+        reg.mark_exited("c", 0);
+
+        assert_eq!(reg.sessions_where(|cwd| cwd == "/in").len(), 2);
+        assert_eq!(
+            reg.drop_where(|cwd| cwd == "/in"),
+            vec!["a".to_string(), "c".to_string()]
+        );
+        let snapshot = reg.snapshot();
+        assert_eq!(snapshot.sessions.len(), 1);
+        assert_eq!(snapshot.sessions[0].tab_id, "b");
+        assert!(snapshot.closed.is_empty());
     }
 
     fn numbers(reg: &Registry) -> Vec<(String, u32)> {

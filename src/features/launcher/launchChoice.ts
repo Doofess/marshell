@@ -63,14 +63,15 @@ export const LAUNCH_PROGRAMS: LaunchProgram[] = [
 
 export const programsIn = (group: LaunchGroup, programs: LaunchProgram[] = LAUNCH_PROGRAMS) => programs.filter((p) => p.group === group);
 export const programById = (id: ProgramId, programs: LaunchProgram[] = LAUNCH_PROGRAMS) => programs.find((p) => p.id === id);
-/** Only AI agents have a mode, a pace and a worktree choice; a manual CLI is a plain terminal. */
+/** Only AI agents have a mode and a pace; a manual CLI is a plain terminal. Any program can start in a worktree. */
 export const isAgentProgram = (id: ProgramId, programs: LaunchProgram[] = LAUNCH_PROGRAMS) => {
   const p = programById(id, programs);
   return p ? p.group === "Agents" : !isTool(id);
 };
 
 export type LauncherChoice = { program: ProgramId; projectId: string; mode: Mode; pace: Pace; worktree: boolean };
-export type Remembered = Partial<Pick<LauncherChoice, "mode" | "pace" | "worktree">>;
+/** What is remembered per folder. The worktree choice is never remembered: the chip starts off every time. */
+export type Remembered = Partial<Pick<LauncherChoice, "mode" | "pace">>;
 
 /** The launcher as one sentence, for the dialog's accessible description. */
 export function launcherSentence(c: LauncherChoice, projects: Project[], programs: LaunchProgram[] = LAUNCH_PROGRAMS): string {
@@ -78,7 +79,8 @@ export function launcherSentence(c: LauncherChoice, projects: Project[], program
   const p = projects.find((x) => x.id === c.projectId);
   const where = p ? (p.branch ? `${p.name} on ${p.branch}` : p.name) : "an unknown folder";
   const start = `Start ${label} in ${where}`;
-  return isAgentProgram(c.program, programs) ? `${start}, ${c.mode} mode, ${c.pace}, ${c.worktree ? "in a new worktree" : "no worktree"}` : start;
+  if (isAgentProgram(c.program, programs)) return `${start}, ${c.mode} mode, ${c.pace}, ${c.worktree ? "in a new worktree" : "no worktree"}`;
+  return c.worktree ? `${start}, in a new worktree` : start;
 }
 
 /** What the new tab shows within 100 ms, before the process answers. */
@@ -87,11 +89,12 @@ export function startingText(program: ProgramId, projectName: string, programs: 
 }
 
 export function applyRemembered(c: LauncherChoice, r: Remembered | undefined): LauncherChoice {
-  return { ...c, ...r };
+  // Only mode and pace: an old entry that still carries a worktree flag must not turn the chip on.
+  return { ...c, ...(r?.mode === undefined ? {} : { mode: r.mode }), ...(r?.pace === undefined ? {} : { pace: r.pace }) };
 }
 
 export function rememberedNote(projectName: string, r: Remembered | undefined): string | null {
   if (!r) return null;
-  const parts = [r.mode, r.pace, r.worktree ? "worktree" : undefined].filter((x): x is string => Boolean(x));
+  const parts: string[] = [r.mode, r.pace].filter((x) => x !== undefined);
   return parts.length === 0 ? null : `Remembered for ${projectName}: ${parts.join(" · ")}. Change a choice to update it.`;
 }

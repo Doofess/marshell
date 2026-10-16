@@ -150,7 +150,7 @@ describe("Sidebar: the shell panel", () => {
 });
 
 describe("Sidebar: grouped by project", () => {
-  const mk = (id: string, project: string) => ({ ...FIXTURES[0]!, id, name: id, project });
+  const mk = (id: string, project: string) => ({ ...FIXTURES[0]!, id, name: id, project, projectKey: project });
   const rows = [mk("a1", "alpha"), mk("b1", "beta"), mk("a2", "alpha")];
   it("grouped shows one heading per project with its count", () => {
     const h = html({ rows, grouped: true });

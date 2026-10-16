@@ -8,13 +8,13 @@ export type Group = { project: string; rows: RowModel[]; start: number };
 export function groupRows(rows: RowModel[]): Group[] {
   const byProject = new Map<string, RowModel[]>();
   for (const row of rows) {
-    const group = byProject.get(row.project);
+    const group = byProject.get(row.projectKey);
     if (group) group.push(row);
-    else byProject.set(row.project, [row]);
+    else byProject.set(row.projectKey, [row]);
   }
   let start = 0;
-  return [...byProject].map(([project, rs]) => {
-    const group = { project, rows: rs, start };
+  return [...byProject.values()].map((rs) => {
+    const group = { project: rs[0]?.project ?? "", rows: rs, start };
     start += rs.length;
     return group;
   });

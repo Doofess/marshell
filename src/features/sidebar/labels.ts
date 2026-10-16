@@ -10,6 +10,12 @@ const plain = (s: string) => s.replace(/`/g, "");
 /** "Claude Opus 5.5", or just "Claude" when the CLI doesn't report a model. */
 const agentAndModel = (r: RowModel) => [kindName(r.agent), r.model].filter(Boolean).join(" ");
 
+/** "my-app · main", with the Task tag right after the project when the row shows it ("my-app Task · marshell/fix-login"), as it is drawn. */
+const projectAndBranch = (r: RowModel) => {
+  const project = r.task ? `${r.project} Task` : r.project;
+  return r.branch ? `${project} · ${r.branch}` : project;
+};
+
 /**
  * The row's accessible name. It begins with the session's number ("Session 6", the words a person says to an agent),
  * then the text drawn in the row, in the order it is drawn, so the name always contains the visible label (WCAG 2.5.3,
@@ -21,7 +27,7 @@ export function rowLabel(r: RowModel, density: Density = "comfortable"): string 
   const phrase = `${plain(r.phrase)}${r.muted ? " \u00b7 muted" : ""}`;
   const seen: Array<string | null | undefined> = [
     r.name,
-    r.branch ? `${r.project} \u00b7 ${r.branch}` : r.project,
+    projectAndBranch(r),
     time !== undefined ? formatDuration(time) : null,
     r.model ? `${r.model} \u00b7 ${phrase}` : phrase,
   ];
@@ -41,5 +47,5 @@ export function rowLabel(r: RowModel, density: Density = "comfortable"): string 
 }
 
 export function rowTitle(r: RowModel): string {
-  return [sessionWord(r.number), r.name, r.branch ? `${r.project} · ${r.branch}` : r.project, agentAndModel(r), r.phrase].join("\n");
+  return [sessionWord(r.number), r.name, projectAndBranch(r), agentAndModel(r), r.phrase].join("\n");
 }

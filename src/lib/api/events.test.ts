@@ -35,6 +35,7 @@ const snapshot = (names: string[]): SessionsSnapshot => ({
     agent: null,
     profile_id: "p",
     cwd: "C:/x",
+    project: "C:/x",
     state: { kind: "running" },
     command: { kind: "unknown" },
   })),

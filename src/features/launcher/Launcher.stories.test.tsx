@@ -14,13 +14,13 @@ describe("the launcher stories", () => {
   it("show the new session's number, 4, because 4 is the lowest one free", () => {
     expect(render("Empty")).toContain("Session 4");
   });
-  it("show the program list with all three headings, and a shell and a tool without agent chips", () => {
+  it("show the program list with all three headings, and a shell and a tool without mode and pace chips, but with the worktree chip", () => {
     const open = render("AgentsShellsAndTools");
     for (const g of ["Agents", "Shells", "Tools"]) expect(open).toContain(`>${g}<`);
     for (const n of ["ShellPicked", "SshPicked"] as const) {
       const h = render(n);
       expect(h, n).not.toContain("Balanced");
-      expect(h, n).not.toContain('role="checkbox"');
+      expect(h, n).toContain('role="checkbox"');
     }
   });
 });

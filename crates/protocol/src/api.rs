@@ -120,6 +120,8 @@ pub struct SessionInfo {
     pub agent: Option<String>,
     pub profile_id: String,
     pub cwd: String,
+    /// The git repo root of `cwd` (the main checkout, for a task worktree), or `cwd` itself outside git.
+    pub project: String,
     pub state: SessionState,
     /// What the shell is doing, from its prompt marks. Unknown without shell integration.
     pub command: CommandState,
@@ -225,6 +227,146 @@ pub struct LayoutDoc {
 #[ts(export)]
 pub struct ResumeError {
     pub reason: String,
+}
+
+/// One task: a git worktree on its own branch, made by Marshell.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct Task {
+    pub id: String,
+    pub name: String,
+    pub branch: String,
+    pub base_branch: String,
+    /// The main checkout the worktree belongs to.
+    pub repo_root: String,
+    /// The worktree folder.
+    pub path: String,
+    /// Milliseconds since the Unix epoch.
+    #[ts(type = "number")]
+    pub created_ms: u64,
+    /// The worktree folder is gone (deleted by hand). Set by GET /v1/tasks when it answers; such a
+    /// task can only be removed. Stored as false, and a file without it reads as false.
+    #[serde(default)]
+    pub folder_missing: bool,
+}
+
+/// POST /v1/tasks/plan body.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct TaskPlanRequest {
+    /// A folder inside the repository.
+    pub cwd: String,
+    /// Raw text or a prompt; the core makes the task name from it.
+    pub name: String,
+}
+
+/// POST /v1/tasks body: the plan request plus the commands the user was shown. The core plans again and refuses
+/// when its commands differ, so only what was shown runs.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct TaskCreateRequest {
+    /// A folder inside the repository.
+    pub cwd: String,
+    /// Raw text or a prompt; the core makes the task name from it.
+    pub name: String,
+    /// The commands from the plan the user confirmed.
+    pub commands: Vec<String>,
+}
+
+/// What creating a task would do, shown before it runs.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct TaskPlan {
+    pub name: String,
+    pub branch: String,
+    pub base_branch: String,
+    pub repo_root: String,
+    pub path: String,
+    /// The git commands, as the user reads them.
+    pub commands: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct ChangedFile {
+    pub path: String,
+    /// "added", "modified", "deleted", "renamed" or "untracked".
+    pub status: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct TaskChanges {
+    pub files: Vec<ChangedFile>,
+    pub diff: String,
+    pub truncated: bool,
+    pub ahead: u32,
+    pub uncommitted: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct MergeRequest {
+    pub message: String,
+    pub remove: bool,
+    /// The commands the user was shown. A merge refuses to run when planning again gives others.
+    /// Ignored when only planning.
+    pub commands: Vec<String>,
+    /// The warnings the user was shown, under the same rule (the sessions a removal closes).
+    /// Ignored when only planning.
+    pub warnings: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct MergePlan {
+    pub commands: Vec<String>,
+    /// What the merge would close or lose, shown with the commands: the sessions a removal closes.
+    pub warnings: Vec<String>,
+    pub blocker: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+#[ts(export)]
+pub enum MergeOutcome {
+    /// `removal_note`: why the worktree was kept when a removal was asked for, in one sentence.
+    Merged {
+        removed: bool,
+        removal_note: Option<String>,
+    },
+    Conflict {
+        files: Vec<String>,
+    },
+    Failed {
+        reason: String,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct RemovePlan {
+    pub commands: Vec<String>,
+    pub warnings: Vec<String>,
+    pub sessions: u32,
+}
+
+/// POST /v1/tasks/{id}/remove body.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct RemoveRequest {
+    /// The commands the user was shown. Removing refuses to run when planning again gives others.
+    pub commands: Vec<String>,
+    /// The warnings the user was shown, under the same rule: what would be lost is part of what
+    /// they agreed to.
+    pub warnings: Vec<String>,
+}
+
+/// POST /v1/sessions/{tab}/input body.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct InputRequest {
+    pub text: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
