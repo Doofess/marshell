@@ -92,12 +92,24 @@ async fn wait_for_saved(home: &Path, count: usize) {
 /// same home with `profile_id` as its only profile, so both come back Ended. Returns the new
 /// state, its router and the two tab ids.
 async fn restarted(home: &Path, cwd: &Path, profile_id: &str) -> (AppState, axum::Router, String, String) {
-    let first = state_in(home, "sleeper");
+    restarted_with(home, cwd, profile_id, None, |_| true).await
+}
+
+/// Like `restarted`, but the tabs run `agent` and the restarted core finds agents with `agent_on_path`.
+async fn restarted_with(
+    home: &Path,
+    cwd: &Path,
+    profile_id: &str,
+    agent: Option<&str>,
+    agent_on_path: fn(&str) -> bool,
+) -> (AppState, axum::Router, String, String) {
+    let first = state_in(home, "sleeper").with_agent_check(|_| true);
     let app = router(first.clone());
     let mut ids = Vec::new();
     for name in ["alpha", "beta"] {
         let body = serde_json::json!({
             "cols": 80, "rows": 24, "profile_id": "sleeper", "name": name, "cwd": cwd.to_string_lossy(),
+            "agent": agent,
         });
         let res = app
             .clone()
@@ -115,7 +127,7 @@ async fn restarted(home: &Path, cwd: &Path, profile_id: &str) -> (AppState, axum
     }
     drop(app);
     drop(first);
-    let second = state_in(home, profile_id);
+    let second = state_in(home, profile_id).with_agent_check(agent_on_path);
     let app = router(second.clone());
     (second, app, ids[0].clone(), ids[1].clone())
 }
@@ -157,13 +169,20 @@ async fn resume_restarts_ended_tab_in_place() {
     stop_all(&state, &[&a, &b]);
 }
 
-#[tokio::test]
+// Several worker threads, so the two requests really run at the same time and one of them
+// reaches begin_resume while the other is inside it. On one thread the second request would
+// always be turned away by the early state check, and begin_resume's own check would go untested.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn resume_twice_starts_one_process() {
     let home = tempfile::tempdir().unwrap();
     let work = tempfile::tempdir().unwrap();
     let (state, app, a, b) = restarted(home.path(), work.path(), "sleeper").await;
 
-    let (one, two) = tokio::join!(resume(&app, &b), resume(&app, &b));
+    let (first, second) = (app.clone(), app.clone());
+    let (tab_one, tab_two) = (b.clone(), b.clone());
+    let one = tokio::spawn(async move { resume(&first, &tab_one).await });
+    let two = tokio::spawn(async move { resume(&second, &tab_two).await });
+    let (one, two) = (one.await.unwrap(), two.await.unwrap());
     let mut codes = [one.status(), two.status()];
     codes.sort();
     assert_eq!(codes, [StatusCode::OK, StatusCode::CONFLICT]);
@@ -212,4 +231,20 @@ async fn resume_unknown_tab_is_404() {
     let state = state_in(home.path(), "sleeper");
     let app = router(state);
     assert_eq!(resume(&app, "nope").await.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn resume_refuses_an_agent_that_is_not_installed() {
+    let home = tempfile::tempdir().unwrap();
+    let work = tempfile::tempdir().unwrap();
+    let (state, app, _a, b) = restarted_with(home.path(), work.path(), "sleeper", Some("claude"), |_| false).await;
+
+    let res = resume(&app, &b).await;
+    assert_eq!(res.status(), StatusCode::CONFLICT);
+    assert_eq!(
+        json_of(res).await["reason"],
+        "Claude Code isn't installed or isn't on PATH."
+    );
+    assert_eq!(sessions(&app).await["sessions"][1]["state"]["kind"], "ended");
+    assert_eq!(state.live_session_count(), 0);
 }

@@ -411,8 +411,8 @@ pub async fn resume(State(st): State<AppState>, Path(tab): Path<String>, Json(re
         Ok(run) => run,
         Err(err) => return err.into_response(),
     };
-    if let Err(err) = check_agent_installed(&st, &run, info.agent.as_deref()) {
-        return err.into_response();
+    if let Err((_, message)) = check_agent_installed(&st, &run, info.agent.as_deref()) {
+        return cannot_resume(message);
     }
     // The check and the change to Running happen under one lock: of two resumes at once, one wins.
     let (saved, previous) = match st.0.registry.begin_resume(&tab) {
