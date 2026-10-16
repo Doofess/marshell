@@ -143,8 +143,38 @@ impl Shell {
         }
     }
 
-    fn type_line(&self, line: &str) {
-        self.session.write_input(line.as_bytes().to_vec());
+    fn type_line(&mut self, line: &str) {
+        if cfg!(windows) {
+            self.session.write_input(line.as_bytes().to_vec());
+            return;
+        }
+        // Off Windows, PSReadLine reads keys while it waits for a cursor reply, and can drop the Enter. So type once
+        // the shell is quiet, and press Enter on its own.
+        let (text, enter) = match line.strip_suffix('\r') {
+            Some(text) => (text, true),
+            None => (line, false),
+        };
+        self.settle();
+        self.session.write_input(text.as_bytes().to_vec());
+        if enter {
+            self.settle();
+            self.session.write_input(b"\r".to_vec());
+        }
+    }
+
+    /// Reads until the shell has printed nothing for a moment.
+    fn settle(&mut self) {
+        let quiet = Duration::from_millis(300);
+        let deadline = Instant::now() + TIMEOUT;
+        let mut len = self.output.len();
+        let mut since = Instant::now();
+        while since.elapsed() < quiet && Instant::now() < deadline {
+            self.read_some();
+            if self.output.len() != len {
+                len = self.output.len();
+                since = Instant::now();
+            }
+        }
     }
 }
 
