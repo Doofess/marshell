@@ -8,6 +8,7 @@ import { ProfilesDialog } from "../settings/ProfilesPage";
 import { nextSessionNumber } from "../sidebar/sessionNumber";
 import type { RowModel } from "../sidebar/types";
 import { useAppearance } from "../appearance/AppearanceProvider";
+import { terminalThemeOf, wtFont } from "../appearance/terminalSettings";
 import { jumpWords } from "../terminal/promptMarks";
 import { resolveTerminalFont } from "../terminal/terminalFont";
 import { TerminalView, type TerminalThemeProp } from "../terminal/TerminalView";
@@ -42,15 +43,30 @@ function useElementSize() {
 
 /** The real app: the main window on the core's live session list, and the launcher that adds to it. */
 export function LiveApp() {
-  const { endpoint, rows, infos, selectedId, loaded, restarts, select, error } = useSessions();
+  const { endpoint, profiles, rows, infos, selectedId, loaded, restarts, select, error } = useSessions();
   const { ref, width, height } = useElementSize();
-  const { appearance } = useAppearance();
-  // Memoized so a terminal restyles or changes font only when the setting does.
-  const terminalTheme = useMemo<TerminalThemeProp>(
-    () => ({ setting: appearance.terminal_theme, imported: appearance.imported_themes, protection: appearance.contrast_protection }),
-    [appearance.terminal_theme, appearance.imported_themes, appearance.contrast_protection],
+  const { appearance, wtFiles } = useAppearance();
+  // A session's theme is the setting with its profile's override. One object per override, kept until the setting changes,
+  // so a terminal restyles only when its theme really does (the session list updates far more often).
+  const themeFor = useMemo(() => {
+    const cache = new Map<string, TerminalThemeProp>();
+    return (override: string | undefined) => {
+      const key = override ?? "";
+      let theme = cache.get(key);
+      if (!theme) cache.set(key, (theme = terminalThemeOf(appearance, override)));
+      return theme;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- only the terminal parts of the appearance count.
+  }, [appearance.terminal_theme, appearance.imported_themes, appearance.contrast_protection]);
+  const overrideOf = useCallback(
+    (tabId: string) => {
+      const profileId = infos.find((i) => i.tab_id === tabId)?.profile_id;
+      return profiles.find((p) => p.id === profileId)?.terminal_theme;
+    },
+    [infos, profiles],
   );
-  const font = resolveTerminalFont(appearance.terminal_font, null);
+  const wt = useMemo(() => (wtFiles ? wtFont(wtFiles) : null), [wtFiles]);
+  const font = resolveTerminalFont(appearance.terminal_font, wt);
   const terminalFont = useMemo(() => ({ family: font.family, size: font.size }), [font.family, font.size]);
   const [launcherOpen, setLauncherOpen] = useState(false);
   // The command palette, or the shell profiles page opened from it, over the window.
@@ -186,11 +202,11 @@ export function LiveApp() {
           focusToken={focusToken}
           promptJump={promptJump?.tabId === row.id ? promptJump : undefined}
           onPromptJump={(result) => promptJump && onPromptJump(promptJump.by, result)}
-          theme={terminalTheme}
+          theme={themeFor(overrideOf(row.id))}
           font={terminalFont}
         />
       ) : null,
-    [endpoint, startingTexts, onSize, launcherOpen, overlay, focusToken, promptJump, onPromptJump, terminalTheme, terminalFont],
+    [endpoint, startingTexts, onSize, launcherOpen, overlay, focusToken, promptJump, onPromptJump, themeFor, overrideOf, terminalFont],
   );
 
   if (error) {

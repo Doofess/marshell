@@ -1,5 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { Appearance } from "../../generated/Appearance";
+import type { FoundFile } from "../../generated/FoundFile";
 import { getEndpoint } from "../../lib/api/client";
 import { settings as settingsApi } from "../../lib/api/settings";
 import { applyRootState, DEFAULT_APPEARANCE, rootState } from "./rootState";
@@ -9,9 +10,11 @@ type AppearanceContext = {
   /** Applies at once; rolls back and sets `error` if the core refuses or can't be reached. */
   save(next: Appearance): Promise<void>;
   error: string | null;
+  /** Windows Terminal's settings files, for its font and colour schemes; null until read (or when they can't be). */
+  wtFiles: FoundFile[] | null;
 };
 
-const Ctx = createContext<AppearanceContext>({ appearance: DEFAULT_APPEARANCE, save: async () => {}, error: null });
+const Ctx = createContext<AppearanceContext>({ appearance: DEFAULT_APPEARANCE, save: async () => {}, error: null, wtFiles: null });
 
 export function useAppearance(): AppearanceContext {
   return useContext(Ctx);
@@ -23,6 +26,7 @@ const CONTRAST_QUERY = "(prefers-contrast: more)";
 export function AppearanceProvider({ children }: { children: ReactNode }) {
   const [appearance, setAppearance] = useState(DEFAULT_APPEARANCE);
   const [error, setError] = useState<string | null>(null);
+  const [wtFiles, setWtFiles] = useState<FoundFile[] | null>(null);
   const [contrastMore, setContrastMore] = useState(() => matchMedia(CONTRAST_QUERY).matches);
   // The last settings the core accepted, to roll back to.
   const saved = useRef(DEFAULT_APPEARANCE);
@@ -37,6 +41,11 @@ export function AppearanceProvider({ children }: { children: ReactNode }) {
         saved.current = s.appearance;
         setAppearance(s.appearance);
       })
+      .catch(() => {});
+    // Read once, only to show the font and schemes found there; nothing is ever written back.
+    getEndpoint()
+      .then((ep) => settingsApi.windowsTerminal(ep))
+      .then((files) => live && setWtFiles(files))
       .catch(() => {});
     return () => {
       live = false;
@@ -68,6 +77,6 @@ export function AppearanceProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
-  const value = useMemo(() => ({ appearance, save, error }), [appearance, save, error]);
+  const value = useMemo(() => ({ appearance, save, error, wtFiles }), [appearance, save, error, wtFiles]);
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }

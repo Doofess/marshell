@@ -5,8 +5,11 @@ import type { ProfilesDoc } from "../../generated/ProfilesDoc";
 import { profiles as profilesApi } from "../../lib/api/profiles";
 import { projects as projectsApi } from "../../lib/api/projects";
 import { sessions as sessionsApi } from "../../lib/api/sessions";
+import { useAppearance } from "../appearance/AppearanceProvider";
+import { withColorScheme } from "../appearance/terminalSettings";
 import type { Project } from "../launcher/filter";
 import { Launcher } from "../launcher/Launcher";
+import { appScheme } from "../terminal/terminalTheme";
 import { programById, startingText, type LauncherChoice } from "../launcher/launchChoice";
 import { initialFocus, launchRequest, refocus, type FocusState, livePrograms, startFailure, toLauncherProject } from "./launchPrograms";
 
@@ -31,6 +34,7 @@ type Props = {
  */
 export function LiveLauncher({ endpoint, nextNumber, size, onStarted, onClose }: Props) {
   const [loaded, setLoaded] = useState<Loaded | null>(null);
+  const { appearance } = useAppearance();
   const [choice, setChoice] = useState(INITIAL);
   const [query, setQuery] = useState<string | null>(null);
   const [activeIndex, setActiveIndex] = useState(0);
@@ -91,7 +95,8 @@ export function LiveLauncher({ endpoint, nextNumber, size, onStarted, onClose }:
     setStarting(true);
     setError(undefined);
     try {
-      const created = await sessionsApi.create(endpoint, launchRequest(shown, prompt, programs, loaded.doc, projects, size()));
+      const request = launchRequest(shown, prompt, programs, loaded.doc, projects, size());
+      const created = await sessionsApi.create(endpoint, withColorScheme(request, loaded.doc.profiles, appearance, appScheme()));
       const folder = projects.find((p) => p.id === shown.projectId)?.name ?? "your home folder";
       onStarted(created, startingText(shown.program, folder, programs));
     } catch (e) {
