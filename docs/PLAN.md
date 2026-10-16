@@ -408,7 +408,7 @@ marshell/
   stories/                    # Storybook mockups (approval gate before UI code)
   assets/{icon,sounds}/
   docs/                       # BRIEF.md (updated living spec), adr/, fixtures notes
-  .github/workflows/ci.yml    # Win/macOS/Linux matrix
+  .github/workflows/ci.yml    # Win/Linux matrix; macOS paused until there is a Mac to test on
 ```
 
 - **Type generation:** use ts-rs 12, not specta (specta 2 is still at rc.25, and its strength is tauri-specta command bindings, which we don't use).
