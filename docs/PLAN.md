@@ -706,6 +706,7 @@ How it works (a pure, tested state machine; the window only measures rectangles 
 | Shell panel | J | **S** · ⌘S (Shell) | Ctrl+Shift+J opens the devtools console in a development webview. |
 | Split | \ | **D** · ⌘D | Punctuation. D matches iTerm2's split. |
 | Focus mode | (none) | **I** · ⌘I | Decided 2026-10-16. M, H, Q and A are window or app actions on macOS, X is cut, and U, E, C, V, Z and J are taken as above. Grouping by project has no key: it is a palette command. |
+| Review task | (none) | **R** · ⌘R | Decided 2026-10-16; the only free letter left. Its keydown is always prevented, so it never reloads the webview. |
 | Cheat sheet | / | **O** · ⌘O (Overview) | Punctuation. |
 | Sessions 1 to 9 | Ctrl+1 to 9 | **Ctrl+Shift+1 to 9** · ⌘1 to 9 | Terminals read Ctrl+2 to Ctrl+7 as control codes; vim uses Ctrl+6. |
 | Next / previous pane | ] [ | **Modifier+Tab** (no previous: the arrows) | Punctuation; needs AltGr on many keyboards. |
@@ -779,6 +780,37 @@ Decisions from the 2026-10-10 coverage audit (`docs/superpowers/plan-coverage-au
      9. The focus-mode pill and next-waiting (N) stay hidden or unbound until phase 3 supplies real needs-you status.
      10. With grouping on, drag and Alt+Shift+arrow move a session only within its project group. The order inside a group is the core's order.
      11. The launcher remembers the last profile and agent per folder (the 32 most recent folders) in `layout.json`.
+   - **Slice 2e+ decisions (2026-10-16).**
+     1. Marshell runs git itself (`git worktree add -b …`) and shows every command first. This works for any CLI and for plain shells. No CLI's own `--worktree` flag is used.
+     2. Worktrees live at `~/.marshell/worktrees/<repo-name>/<task-name>`, never inside the repo.
+     3. Merge back commits any uncommitted changes in the worktree first. Then `git merge --squash <branch>` runs in the base checkout, followed by one commit on the base branch with a message the user can edit.
+     4. A project is the git repository root. Subfolders and task worktrees group under their main repo. A folder outside git is its own project.
+     5. Before merging, the base checkout must have no tracked changes. On a conflict the merge is undone so the base is left as it was, and the conflicting files are listed. The sheet offers to type a prompt asking the task's agent to fix them. The prompt is typed without Enter, so the user reads it and presses Enter.
+     6. After a merge, "Remove the worktree and branch afterwards" is ticked by default. The removal commands are shown next to the merge commands.
+     7. The task name is a slug of the first prompt, editable before launch. The branch is `marshell/<name>`. With no usable prompt (Hebrew, emoji) the name is `task-<n>`.
+     8. "Review changes" is a sheet opened from a task tab's sidebar row, the palette, or Ctrl+Shift+R (Cmd+R on macOS). It holds the changed files, the diff against the base, Merge back and Remove.
+     9. **Hidden git calls.** Only read-only calls run without being shown: `merge-base`, `diff`, `status`, `rev-list`, `rev-parse --verify` and `ls-files`. Every call sets `GIT_OPTIONAL_LOCKS=0`, so reads never take `index.lock` while an agent runs git. The `reset --merge` restores that follow a failed shown command are also not shown, because they only undo it.
+     10. **Shown equals run.** Merge and remove send back the exact commands and warnings the user saw. If the core's fresh plan differs, it refuses with "The task changed while you were reading the commands. Review them again." and the sheet reloads the commands. Merge stays disabled while the commands are being refetched.
+     11. When git no longer lists a task's worktree but its folder is still there, the plan shows `git -C "<repo>" worktree prune` as a step and warns that the folder is left on disk. Marshell never deletes a folder outside a shown git command.
+     12. Remove closes the task's sessions first, including the shell-panel session and any session whose folder is inside the task folder, because a running shell holds the folder on Windows. It then re-plans, and refuses if the branch gained commits after the user saw the sheet. If git can't tell whether the branch has unmerged commits, the plan warns "Removing deletes the branch."
+     13. Remove only accepts branches named `marshell/…`.
+     14. If the merge succeeded but the removal after it failed, the result is "Merged" with removal not done. The merge is never reported as failed. Merging a task twice, or one with nothing to merge, fails with "<branch> has no changes to merge."
+     15. A failed git call shows git's last `error:` or `fatal:` line after "Git said: ", else its last non-empty line. If the base can't be put back after a failed merge, the message adds the `git reset --merge` command to run.
+     16. Large diffs are cut at 4 MiB on a file boundary. Binary and large untracked files show as a one-line note, not as text.
+     17. The "Review changes" button sits inside the sidebar row. Ctrl+Shift+R and the palette are the keyboard and screen reader routes. A by-eye and NVDA check of the button is still open.
+     - Routes (all under `/v1`):
+
+       | Route | Does |
+       |---|---|
+       | `GET /tasks` | List the tasks. |
+       | `POST /tasks/plan` | Show the commands that would create a task. |
+       | `POST /tasks` | Create a task and its worktree. |
+       | `GET /tasks/{id}/changes` | The changed files and the diff against the base. |
+       | `POST /tasks/{id}/merge/plan` | Show the merge commands, with or without removal. |
+       | `POST /tasks/{id}/merge` | Run the merge. Needs the commands the user saw. |
+       | `POST /tasks/{id}/remove/plan` | Show the removal commands and warnings. |
+       | `POST /tasks/{id}/remove` | Run the removal. Needs the commands and warnings the user saw. |
+       | `POST /sessions/{tab}/input` | Type text into a session with no Enter. Used for the conflict prompt. |
    - Exit: 5 tabs across 3 shells; restart restores the layout; kill the app mid-task, relaunch, and every tab is back with Resume; no orphan processes after a crash; a recording replays in asciinema-player; OSC 133 prompt jumps work.
 2.5. **Context and preview** (added 2026-10-15, inspired by the features of the Codex desktop app, not its infrastructure; numbered 2.5 so later phases keep their numbers).
    - Scope:
