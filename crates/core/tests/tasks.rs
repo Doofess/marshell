@@ -369,3 +369,171 @@ async fn task_routes_plan_create_list_and_refuse() {
         );
     }
 }
+
+// ---- a task's changes ----
+
+fn commit_all(dir: &Path, message: &str) {
+    assert!(run(dir, &["add", "-A"]).unwrap().ok);
+    assert!(run(dir, &["commit", "-q", "-m", message]).unwrap().ok);
+}
+
+fn new_task(tmp: &tempfile::TempDir) -> (PathBuf, marshell_protocol::api::Task) {
+    let repo = repo(&base(tmp));
+    let home = base(tmp).join("home");
+    let task = tasks::create(&home, &request(&repo, "Fix login"), 1).unwrap();
+    (home, task)
+}
+
+#[test]
+fn changes_cover_committed_uncommitted_and_untracked() {
+    let tmp = spaced_tmp();
+    let (_home, task) = new_task(&tmp);
+    let dir = PathBuf::from(&task.path);
+
+    std::fs::write(dir.join("a.txt"), "a\nmore\n").unwrap();
+    commit_all(&dir, "edit a");
+    std::fs::write(dir.join("b.txt"), "b\n").unwrap();
+    commit_all(&dir, "add b");
+    std::fs::write(dir.join("b.txt"), "b\nchanged\n").unwrap();
+    std::fs::create_dir(dir.join("new dir")).unwrap();
+    std::fs::write(dir.join("new dir").join("c.txt"), "one\ntwo\n").unwrap();
+
+    let changes = tasks::changes(&task).unwrap();
+    let files: Vec<(&str, &str)> = changes
+        .files
+        .iter()
+        .map(|f| (f.path.as_str(), f.status.as_str()))
+        .collect();
+    assert_eq!(
+        files,
+        vec![
+            ("a.txt", "modified"),
+            ("b.txt", "added"),
+            ("new dir/c.txt", "untracked")
+        ]
+    );
+    assert_eq!(changes.ahead, 2);
+    assert!(changes.uncommitted);
+    assert!(!changes.truncated);
+    assert!(changes.diff.contains("+++ b/new dir/c.txt"), "{}", changes.diff);
+    assert!(changes.diff.contains("@@ -0,0 +1,2 @@"), "{}", changes.diff);
+    assert!(changes.diff.contains("+one\n+two\n"), "{}", changes.diff);
+}
+
+#[test]
+fn changes_of_a_clean_task_are_empty() {
+    let tmp = spaced_tmp();
+    let (_home, task) = new_task(&tmp);
+
+    let changes = tasks::changes(&task).unwrap();
+    assert!(changes.files.is_empty());
+    assert_eq!(changes.diff, "");
+    assert_eq!(changes.ahead, 0);
+    assert!(!changes.uncommitted);
+    assert!(!changes.truncated);
+}
+
+#[test]
+fn binary_untracked_file_is_named_not_dumped() {
+    let tmp = spaced_tmp();
+    let (_home, task) = new_task(&tmp);
+    let dir = PathBuf::from(&task.path);
+    std::fs::write(dir.join("blob.bin"), b"AAAA\0BBBBsecret").unwrap();
+
+    let changes = tasks::changes(&task).unwrap();
+    assert_eq!(changes.files.len(), 1);
+    assert_eq!(changes.files[0].path, "blob.bin");
+    assert_eq!(changes.files[0].status, "untracked");
+    assert!(
+        changes.diff.lines().any(|l| l == "Binary file blob.bin"),
+        "{}",
+        changes.diff
+    );
+    assert!(!changes.diff.contains("AAAA") && !changes.diff.contains("secret"));
+}
+
+#[test]
+fn untracked_line_count_includes_a_last_line_without_newline() {
+    let tmp = spaced_tmp();
+    let (_home, task) = new_task(&tmp);
+    let dir = PathBuf::from(&task.path);
+    std::fs::write(dir.join("tail.txt"), "one\ntwo\nthree").unwrap();
+
+    let changes = tasks::changes(&task).unwrap();
+    assert!(changes.diff.contains("@@ -0,0 +1,3 @@"), "{}", changes.diff);
+    assert!(changes.diff.contains("+three"), "{}", changes.diff);
+}
+
+#[test]
+fn deleted_renamed_and_large_files_are_reported() {
+    let tmp = spaced_tmp();
+    // Files that exist on the base branch, so the task can delete and rename them.
+    let repo = repo(&base(&tmp));
+    std::fs::write(repo.join("gone.txt"), "bye\n").unwrap();
+    std::fs::write(repo.join("old.txt"), "keep me\nkeep me too\nand me\n").unwrap();
+    commit_all(&repo, "more files");
+    let home = base(&tmp).join("home");
+    let task = tasks::create(&home, &request(&repo, "Fix login"), 1).unwrap();
+    let dir = PathBuf::from(&task.path);
+    std::fs::remove_file(dir.join("gone.txt")).unwrap();
+    std::fs::rename(dir.join("old.txt"), dir.join("new.txt")).unwrap();
+    assert!(run(&dir, &["add", "-A"]).unwrap().ok);
+    std::fs::write(dir.join("huge.txt"), "z".repeat(300 * 1024)).unwrap();
+
+    let changes = tasks::changes(&task).unwrap();
+    let status = |p: &str| changes.files.iter().find(|f| f.path == p).map(|f| f.status.clone());
+    assert_eq!(status("gone.txt").as_deref(), Some("deleted"));
+    assert_eq!(status("new.txt").as_deref(), Some("renamed"));
+    assert_eq!(status("huge.txt").as_deref(), Some("untracked"));
+    assert!(
+        changes.diff.lines().any(|l| l == "Large file huge.txt"),
+        "{}",
+        changes.diff
+    );
+    assert!(!changes.diff.contains("zzzz"));
+}
+
+#[test]
+fn a_huge_diff_is_cut_at_a_line_boundary() {
+    let tmp = spaced_tmp();
+    let (_home, task) = new_task(&tmp);
+    let dir = PathBuf::from(&task.path);
+    // 25 untracked files of about 190 KiB each (under the large-file limit) pass the 4 MiB cap.
+    for i in 0..25 {
+        let line = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\n";
+        std::fs::write(dir.join(format!("f{i:02}.txt")), line.repeat(3000)).unwrap();
+    }
+
+    let changes = tasks::changes(&task).unwrap();
+    assert!(changes.truncated);
+    assert!(changes.diff.len() <= 4 * 1024 * 1024);
+    assert!(changes.diff.len() > 4 * 1024 * 1024 - 1024);
+    assert!(changes.diff.ends_with('\n'));
+    assert_eq!(changes.files.len(), 25);
+}
+
+#[tokio::test]
+async fn changes_route_returns_changes_or_404() {
+    let tmp = spaced_tmp();
+    let (home, task) = new_task(&tmp);
+    std::fs::write(Path::new(&task.path).join("n.txt"), "x\n").unwrap();
+    let app = router(state_in(&home));
+
+    let res = app
+        .clone()
+        .oneshot(api("GET", &format!("/v1/tasks/{}/changes", task.id), None))
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let body = json_of(res).await;
+    assert_eq!(body["files"][0]["path"], "n.txt");
+    assert_eq!(body["files"][0]["status"], "untracked");
+    assert_eq!(body["uncommitted"], true);
+
+    let res = app
+        .clone()
+        .oneshot(api("GET", "/v1/tasks/nope/changes", None))
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::NOT_FOUND);
+}

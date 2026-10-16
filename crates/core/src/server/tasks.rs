@@ -1,6 +1,6 @@
 use super::AppState;
 use axum::Json;
-use axum::extract::State;
+use axum::extract::{Path as UrlPath, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use marshell_protocol::api::{ResumeError, TaskPlanRequest};
@@ -52,6 +52,20 @@ pub async fn create(State(st): State<AppState>, Json(req): Json<TaskPlanRequest>
     match made {
         Ok(Ok(task)) => Json(task).into_response(),
         Ok(Err(reason)) => refused(reason),
+        Err(e) => failed(e),
+    }
+}
+
+/// The task's changes against its base branch. 404 for an id we don't know.
+pub async fn changes(State(st): State<AppState>, UrlPath(id): UrlPath<String>) -> Response {
+    let read = tokio::task::spawn_blocking(move || {
+        crate::tasks::find(&st.0.home, &id).map(|task| crate::tasks::changes(&task))
+    })
+    .await;
+    match read {
+        Ok(Some(Ok(changes))) => Json(changes).into_response(),
+        Ok(Some(Err(reason))) => refused(reason),
+        Ok(None) => StatusCode::NOT_FOUND.into_response(),
         Err(e) => failed(e),
     }
 }
