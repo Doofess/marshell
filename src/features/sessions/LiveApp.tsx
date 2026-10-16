@@ -7,8 +7,10 @@ import { paletteSessions } from "../palette/sessions";
 import { ProfilesDialog } from "../settings/ProfilesPage";
 import { nextSessionNumber } from "../sidebar/sessionNumber";
 import type { RowModel } from "../sidebar/types";
+import { useAppearance } from "../appearance/AppearanceProvider";
 import { jumpWords } from "../terminal/promptMarks";
-import { TerminalView } from "../terminal/TerminalView";
+import { resolveTerminalFont } from "../terminal/terminalFont";
+import { TerminalView, type TerminalThemeProp } from "../terminal/TerminalView";
 import { sidebarMode } from "../window/layout";
 import { MainWindow } from "../window/MainWindow";
 import { CloseBar } from "./CloseBar";
@@ -42,6 +44,14 @@ function useElementSize() {
 export function LiveApp() {
   const { endpoint, rows, infos, selectedId, loaded, restarts, select, error } = useSessions();
   const { ref, width, height } = useElementSize();
+  const { appearance } = useAppearance();
+  // Memoized so a terminal restyles or changes font only when the setting does.
+  const terminalTheme = useMemo<TerminalThemeProp>(
+    () => ({ setting: appearance.terminal_theme, imported: appearance.imported_themes, protection: appearance.contrast_protection }),
+    [appearance.terminal_theme, appearance.imported_themes, appearance.contrast_protection],
+  );
+  const font = resolveTerminalFont(appearance.terminal_font, null);
+  const terminalFont = useMemo(() => ({ family: font.family, size: font.size }), [font.family, font.size]);
   const [launcherOpen, setLauncherOpen] = useState(false);
   // The command palette, or the shell profiles page opened from it, over the window.
   const [overlay, setOverlay] = useState<"palette" | "profiles" | null>(null);
@@ -176,9 +186,11 @@ export function LiveApp() {
           focusToken={focusToken}
           promptJump={promptJump?.tabId === row.id ? promptJump : undefined}
           onPromptJump={(result) => promptJump && onPromptJump(promptJump.by, result)}
+          theme={terminalTheme}
+          font={terminalFont}
         />
       ) : null,
-    [endpoint, startingTexts, onSize, launcherOpen, overlay, focusToken, promptJump, onPromptJump],
+    [endpoint, startingTexts, onSize, launcherOpen, overlay, focusToken, promptJump, onPromptJump, terminalTheme, terminalFont],
   );
 
   if (error) {

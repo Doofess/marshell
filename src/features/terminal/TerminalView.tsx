@@ -14,6 +14,7 @@ import { jumpFrom, promptTarget, trackPrompts, type Prompt } from "./promptMarks
 import "./PromptMarks.css";
 import { loadRenderer, type RendererKind } from "./renderer";
 import { trackColorSchemeMode } from "./colorSchemeMode";
+import { BUNDLED_FONT, fontStack } from "./terminalFont";
 import { appScheme, resolveTerminalTheme, type TerminalThemeInput } from "./terminalTheme";
 
 /** The terminal theme settings, without the app's scheme, which the terminal reads itself. */
@@ -45,10 +46,21 @@ type Props = {
   onPromptJump?: (result: { index: number; total: number; exit: number | null } | null) => void;
   /** The Appearance terminal theme and this profile's override. A change applies at once. Default: follow the app. */
   theme?: TerminalThemeProp;
+  /** The resolved terminal font (terminalFont.ts). A change applies at once. Default: the bundled font at 13 px. */
+  font?: { family: string; size: number };
 };
 
+const BUNDLED = { family: BUNDLED_FONT, size: 13 };
+
+/** Waits for a font so xterm measures its cells with the right glyphs. Gives up after a second; a missing font is not an error. */
+function loadFont(family: string, size: number): Promise<void> {
+  const load = document.fonts.load(`${size}px ${fontStack(family)}`).then(() => {});
+  const timeout = new Promise<void>((done) => setTimeout(done, 1000));
+  return Promise.race([load, timeout]).catch(() => {});
+}
+
 /** One session's terminal. */
-export function TerminalView({ endpoint, tabId, placeholder, onOutput, onSize, autoFocus = true, focusToken = 0, visible = true, promptJump, onPromptJump, theme = FOLLOW_APP }: Props) {
+export function TerminalView({ endpoint, tabId, placeholder, onOutput, onSize, autoFocus = true, focusToken = 0, visible = true, promptJump, onPromptJump, theme = FOLLOW_APP, font = BUNDLED }: Props) {
   const host = useRef<HTMLDivElement>(null);
   const meter = useMemo(() => new LatencyMeter(), []);
   const [renderer, setRenderer] = useState<RendererKind>("dom");
@@ -70,15 +82,27 @@ export function TerminalView({ endpoint, tabId, placeholder, onOutput, onSize, a
   themeRef.current = theme;
   // Re-applies the theme to the live terminal; set while a terminal exists.
   const restyleRef = useRef<(() => void) | null>(null);
+  const fontRef = useRef(font);
+  fontRef.current = font;
+  // The first terminal waits for its font once; later font changes apply to the running terminal.
+  const [fontReady, setFontReady] = useState(false);
+  useEffect(() => {
+    let live = true;
+    void loadFont(fontRef.current.family, fontRef.current.size).then(() => live && setFontReady(true));
+    return () => {
+      live = false;
+    };
+  }, []);
 
   useEffect(() => {
     const el = host.current;
-    if (!el) return;
-    const fontFamily = getComputedStyle(document.documentElement).getPropertyValue("--font-mono").trim();
+    if (!el || !fontReady) return;
+    const fontFamily = fontStack(fontRef.current.family);
+    const fontSize = fontRef.current.size;
     const resolve = () => resolveTerminalTheme({ ...themeRef.current, app: appScheme() });
     const first = resolve();
     let current = first.scheme;
-    const term = new Terminal({ fontFamily, fontSize: 13, cursorBlink: true, scrollback: 10_000, theme: first.theme, minimumContrastRatio: first.minimumContrastRatio });
+    const term = new Terminal({ fontFamily, fontSize, cursorBlink: true, scrollback: 10_000, theme: first.theme, minimumContrastRatio: first.minimumContrastRatio });
     const fit = new FitAddon();
     term.loadAddon(fit);
     fitRef.current = fit;
@@ -184,7 +208,22 @@ export function TerminalView({ endpoint, tabId, placeholder, onOutput, onSize, a
       termRef.current = null;
       fitRef.current = null;
     };
-  }, [endpoint, tabId, meter]);
+  }, [endpoint, tabId, meter, fontReady]);
+
+  // A changed font applies to the running terminal once it has loaded, then the grid is re-fitted to the new cell size.
+  useEffect(() => {
+    let live = true;
+    void loadFont(font.family, font.size).then(() => {
+      const term = termRef.current;
+      if (!live || !term) return;
+      term.options.fontFamily = fontStack(font.family);
+      term.options.fontSize = font.size;
+      fitRef.current?.fit();
+    });
+    return () => {
+      live = false;
+    };
+  }, [font.family, font.size]);
 
   // A changed setting or override restyles the running terminal; no restart.
   useEffect(() => {
