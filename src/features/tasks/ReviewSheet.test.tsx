@@ -28,7 +28,7 @@ const view = (selected: number, changes: Partial<TaskChanges> = {}) =>
   renderToStaticMarkup(<ReviewView task={TASK} changes={{ ...CHANGES, ...changes }} state={{ ...initialReview(), selected }} dispatch={() => {}} />);
 
 const noop = () => {};
-const CMDS = ['git -C "C:\\w\\app\\fix-login" add -A', 'git -C "C:\\w\\app\\fix-login" commit -q -m "Fix login"', 'git -C "C:\\dev\\app" merge --squash marshell/fix-login'];
+const CMDS = ['git -C "C:\\w\\app\\fix-login" add -A', 'git -C "C:\\w\\app\\fix-login" commit -q -m "Fix login"', 'git -C "C:\\dev\\app" merge --squash --ff marshell/fix-login'];
 const MERGE: MergeView = { message: "Fix login", remove: true, plan: { commands: CMDS, blocker: null }, ready: true, error: null, onMessage: noop, onRemoveChange: noop, onConfirm: noop };
 const REMOVE: RemoveView = { plan: { commands: ['git -C "C:\\dev\\app" worktree remove "C:\\w\\app\\fix-login"'], warnings: [], sessions: 0 }, ready: true, error: null, onConfirm: noop };
 const stepProps = (step: ReviewState["step"], extra: Partial<ReviewViewProps> = {}): ReviewViewProps => ({ task: TASK, changes: CHANGES, state: { step, selected: 0 }, dispatch: noop, onClose: noop, ...extra });
@@ -188,7 +188,7 @@ describe("the merge step", () => {
   });
   it("shows the commands from the plan", () => {
     expect(h).toContain('class="command-list"');
-    expect(h).toContain("merge --squash marshell/fix-login");
+    expect(h).toContain("merge --squash --ff marshell/fix-login");
   });
   it("names the step in the heading, with the branch and what it merges into", () => {
     expect(h).toContain("Merge marshell/fix-login into main");

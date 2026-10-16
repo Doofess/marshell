@@ -608,7 +608,7 @@ fn merge_plan_lists_commands_in_order() {
         vec![
             format!("git -C \"{}\" add -A", task.path),
             format!("git -C \"{}\" commit -q -m \"Fix login\"", task.path),
-            format!("git -C \"{}\" merge --squash marshell/fix-login", task.repo_root),
+            format!("git -C \"{}\" merge --squash --ff marshell/fix-login", task.repo_root),
             format!("git -C \"{}\" commit -q -m \"Fix login\"", task.repo_root),
         ]
     );
@@ -624,7 +624,7 @@ fn merge_plan_lists_commands_in_order() {
     assert_eq!(
         plan.commands,
         vec![
-            format!("git -C \"{}\" merge --squash marshell/fix-login", task.repo_root),
+            format!("git -C \"{}\" merge --squash --ff marshell/fix-login", task.repo_root),
             format!("git -C \"{}\" commit -q -m \"Fix login\"", task.repo_root),
         ]
     );
@@ -701,6 +701,40 @@ fn merge_squashes_into_one_commit() {
     assert_eq!(run(&repo, &["status", "--porcelain"]).unwrap().stdout, "");
     // The task's folder was committed too.
     assert_eq!(run(&dir, &["status", "--porcelain"]).unwrap().stdout, "");
+}
+
+#[test]
+fn merge_ignores_the_users_merge_ff_setting() {
+    // Many people set merge.ff globally; `--squash` refuses `--no-ff`, and `only` would refuse a squash
+    // that isn't a fast-forward. The shown step says `--ff`, which overrides both.
+    for setting in ["false", "only"] {
+        let tmp = spaced_tmp();
+        let (home, task) = new_task(&tmp);
+        let dir = PathBuf::from(&task.path);
+        let repo = PathBuf::from(&task.repo_root);
+        assert!(run(&repo, &["config", "merge.ff", setting]).unwrap().ok);
+        std::fs::write(dir.join("b.txt"), "b\n").unwrap();
+        commit_all(&dir, "add b");
+        // main moves on too, so the squash is not a fast-forward.
+        std::fs::write(repo.join("c.txt"), "c\n").unwrap();
+        commit_all(&repo, "add c");
+
+        let req = planned(&task, "Fix login");
+        assert!(
+            req.commands.contains(&format!(
+                "git -C \"{}\" merge --squash --ff marshell/fix-login",
+                task.repo_root
+            )),
+            "{:?}",
+            req.commands
+        );
+        let outcome = tasks::merge(&state_in(&home), &task, &req);
+        assert!(
+            matches!(outcome, MergeOutcome::Merged { .. }),
+            "merge.ff={setting}: {outcome:?}"
+        );
+        assert_eq!(text_of(&repo.join("b.txt")), "b\n");
+    }
 }
 
 #[test]

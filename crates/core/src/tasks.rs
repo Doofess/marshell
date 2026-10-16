@@ -404,7 +404,7 @@ pub fn plan_merge(task: &Task, req: &MergeRequest) -> (MergePlan, Vec<GitStep>) 
         steps.push(step(&task.path, &["add", "-A"]));
         steps.push(step(&task.path, &["commit", "-q", "-m", message]));
     }
-    steps.push(step(&task.repo_root, &["merge", "--squash", &task.branch]));
+    steps.push(step(&task.repo_root, &["merge", "--squash", "--ff", &task.branch]));
     steps.push(step(&task.repo_root, &["commit", "-q", "-m", message]));
     if req.remove && own_branch(task) {
         // By then the merge has committed the folder's work and the branch is in the base, so
