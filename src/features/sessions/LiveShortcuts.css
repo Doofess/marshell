@@ -1,0 +1,27 @@
+/* The cheat sheet over the live window: the palette's backdrop and placement, with the sheet scrolling when the window is short. */
+.live-shortcuts {
+  position: absolute;
+  inset: 0;
+}
+.live-shortcuts__backdrop {
+  position: absolute;
+  inset: 0;
+  background: color-mix(in oklch, var(--bg-base) 55%, transparent);
+}
+.live-shortcuts__sheet {
+  position: absolute;
+  inset-block-start: 10%;
+  inset-inline: 0;
+  margin-inline: auto;
+  inline-size: min(560px, calc(100% - 32px));
+  max-block-size: 80%;
+  min-block-size: 0;
+  /* The one scroller here, with its scrollbar visible: the sheet can be longer than a short window (noScrollInMainWindow.test.ts). */
+  overflow-y: auto;
+  border-radius: 10px;
+  box-shadow: 0 12px 40px color-mix(in oklch, var(--text-1) 22%, transparent);
+}
+.live-shortcuts__sheet:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}

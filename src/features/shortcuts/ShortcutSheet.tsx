@@ -9,8 +9,11 @@ type Group = { title: string; rows: Row[] };
 const GROUPS: Array<Command["group"]> = ["Sessions", "View", "Tools"];
 const isNav = (c: Command) => (NAV_COMMAND_IDS as readonly string[]).includes(c.id);
 
-/** The cheat sheet's rows, grouped. The nine "Go to session N" keys are one row, and the navigation chords come first. */
-export function sheetGroups(os: Os, nav: NavModifier = DEFAULT_NAV_MODIFIER): Group[] {
+/**
+ * The cheat sheet's rows, grouped. The nine "Go to session N" keys are one row, and the navigation chords come first. With `runs`,
+ * only the commands it says the window runs are listed, and a group left empty is dropped: a key that does nothing is not taught.
+ */
+export function sheetGroups(os: Os, nav: NavModifier = DEFAULT_NAV_MODIFIER, runs: (id: string) => boolean = () => true): Group[] {
   const mod = navModifierLabel(os, nav);
   const join = (key: string) => (os === "mac" ? `${mod}${key}` : `${mod}+${key}`);
   const row = (c: Command): Row => ({ key: c.id, label: c.label, keys: shortcutLabel(c.binding!, os, nav) });
@@ -19,24 +22,25 @@ export function sheetGroups(os: Os, nav: NavModifier = DEFAULT_NAV_MODIFIER): Gr
   const navigation: Group = {
     title: "Navigation",
     rows: [
-      ...COMMANDS.filter(isNav).map(row),
-      { key: "nav-arrows", label: "Move the cursor to any terminal, session or control", keys: join("←↑↓→") },
+      ...COMMANDS.filter((c) => isNav(c) && runs(c.id)).map(row),
+      ...(runs("nav-next-pane") ? [{ key: "nav-arrows", label: "Move the cursor to any terminal, session or control", keys: join("←↑↓→") }] : []),
     ],
   };
   const rest = GROUPS.map((title): Group => {
-    const rows = COMMANDS.filter((c) => c.group === title && c.binding && !isNav(c) && !c.id.startsWith("focus-session-")).map(row);
-    if (title === "Sessions") rows.splice(1, 0, { key: "focus-sessions", label: "Go to session 1 to 9", keys: `${first} to 9` });
+    const rows = COMMANDS.filter((c) => c.group === title && c.binding && !isNav(c) && !c.id.startsWith("focus-session-") && runs(c.id)).map(row);
+    if (title === "Sessions" && runs("focus-session-1")) rows.splice(1, 0, { key: "focus-sessions", label: "Go to session 1 to 9", keys: `${first} to 9` });
     return { title, rows };
   });
-  return [navigation, ...rest];
+  return [navigation, ...rest].filter((g) => g.rows.length > 0);
 }
 
 /**
  * The keyboard shortcuts for this system. Navigation is explained first because it is the one layer that is not a list of
  * commands: it works on a modifier you hold.
  */
-export function ShortcutSheet({ os, nav = DEFAULT_NAV_MODIFIER }: { os: Os; nav?: NavModifier }) {
-  const titleId = useId();
+export function ShortcutSheet({ os, nav = DEFAULT_NAV_MODIFIER, runs, titleId: givenId }: { os: Os; nav?: NavModifier; runs?: (id: string) => boolean; titleId?: string }) {
+  const ownId = useId();
+  const titleId = givenId ?? ownId;
   const mod = navModifierLabel(os, nav);
   return (
     <section className="shortcuts" aria-labelledby={titleId}>
@@ -46,7 +50,7 @@ export function ShortcutSheet({ os, nav = DEFAULT_NAV_MODIFIER }: { os: Os; nav?
       <p className="shortcuts__intro">
         Hold {mod}, then press Tab or an arrow key. Release to select. Plain Tab, Esc and the arrow keys always go to the program in the terminal.
       </p>
-      {sheetGroups(os, nav).map((g) => (
+      {sheetGroups(os, nav, runs).map((g) => (
         <div key={g.title} className="shortcuts__group">
           <h3 className="shortcuts__heading">{g.title}</h3>
           <ul className="shortcuts__list">

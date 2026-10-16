@@ -31,6 +31,7 @@ import { CloseBar } from "./CloseBar";
 import { launcherOpens } from "./launcherOpens";
 import { LiveLauncher } from "./LiveLauncher";
 import { LivePalette } from "./LivePalette";
+import { LiveShortcuts } from "./LiveShortcuts";
 import { ResumeBar } from "./ResumeBar";
 import { resumeCommand } from "./resumeCommand";
 import { holdsResume, resumeDisabledReason, resumeStateOf } from "./resumeState";
@@ -126,7 +127,7 @@ export function LiveApp() {
   const terminalFont = useMemo(() => ({ family: font.family, size: font.size }), [font.family, font.size]);
   const [launcherOpen, setLauncherOpen] = useState(false);
   // The command palette, or the shell profiles page opened from it, over the window.
-  const [overlay, setOverlay] = useState<"palette" | "profiles" | "appearance" | null>(null);
+  const [overlay, setOverlay] = useState<"palette" | "profiles" | "appearance" | "shortcuts" | null>(null);
   // What the profiles page and the prompt jumps say aloud through the window's announcer. Negative ids never meet a toast's.
   const [notice, setNotice] = useState<{ id: number; text: string } | null>(null);
   const noticeCount = useRef(0);
@@ -494,6 +495,7 @@ export function LiveApp() {
       if (e.repeat && shortcut.kind !== "move" && shortcut.kind !== "prompt") return;
       if (shortcut.kind === "launcher") setLauncherOpen(true);
       else if (shortcut.kind === "palette") setOverlay("palette");
+      else if (shortcut.kind === "cheatsheet") setOverlay("shortcuts");
       else if (shortcut.kind === "prompt") jumpPrompt(shortcut.by);
       else if (!paneCommand(shortcut)) actions.handle(shortcut);
     };
@@ -503,7 +505,7 @@ export function LiveApp() {
 
   // A palette row: a session to go to, the profiles page, or a command the window runs (LivePalette lists only those).
   const runFromPalette = (id: string) => {
-    setOverlay(id === "profiles" || id === "appearance" ? id : null);
+    setOverlay(id === "profiles" || id === "appearance" ? id : id === "cheatsheet" ? "shortcuts" : null);
     if (id.startsWith("session:")) return pick(id.slice("session:".length));
     // Palette-only commands. The menu opens after the palette has given the focus back, so it keeps the focus it takes.
     if (id === "unsplit") return dispatch({ type: "remove", index: focusIdxRef.current });
@@ -660,6 +662,7 @@ export function LiveApp() {
       )}
       {overlay === "profiles" && endpoint && <ProfilesDialog endpoint={endpoint} onClose={() => setOverlay(null)} onNotice={announce} onSaved={reloadProfiles} />}
       {overlay === "appearance" && <AppearanceDialog onClose={() => setOverlay(null)} onNotice={announce} />}
+      {overlay === "shortcuts" && os && <LiveShortcuts os={os} onClose={() => setOverlay(null)} />}
       {launcherOpen && (
         <LiveLauncher
           endpoint={endpoint}

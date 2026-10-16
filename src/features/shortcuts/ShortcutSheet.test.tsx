@@ -50,4 +50,18 @@ describe("ShortcutSheet", () => {
   it("names the navigation modifier that is set", () => {
     expect(renderToStaticMarkup(<ShortcutSheet os="linux" nav="ctrl+alt" />)).toContain("Hold Ctrl+Alt, then");
   });
+  it("lists only the commands that run, when told which do", () => {
+    const off = ["history", "find", "global-search", "bookmark", "next-waiting"];
+    const labels = sheetGroups("windows", undefined, (id) => !off.includes(id)).flatMap((g) => g.rows.map((r) => r.label));
+    for (const id of off) expect(labels).not.toContain(COMMANDS.find((c) => c.id === id)!.label);
+    expect(labels).toContain("Command palette");
+    expect(labels).toContain("Keyboard shortcuts");
+    expect(labels).toContain("Go to session 1 to 9");
+  });
+  it("drops a group with nothing left in it, and the rows that stand for commands that do not run", () => {
+    const groups = sheetGroups("windows", undefined, (id) => COMMANDS.find((c) => c.id === id)?.group === "Tools");
+    expect(groups.map((g) => g.title)).toEqual(["Tools"]);
+    const none = sheetGroups("windows", undefined, () => false);
+    expect(none).toEqual([]);
+  });
 });

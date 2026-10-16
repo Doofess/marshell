@@ -25,7 +25,9 @@ export type SessionShortcut =
   /** Show the shell panel, or focus its terminal (Ctrl+Shift+S). */
   | { kind: "shellPanel" }
   /** Open the Review sheet for the session in focus, when it is a task (Ctrl+Shift+R). The window owns the key even when there is nothing to review: the webview's hard reload must never run. */
-  | { kind: "review" };
+  | { kind: "review" }
+  /** Open the keyboard shortcuts sheet (Ctrl+Shift+O); pressed again while it is open, it closes it. */
+  | { kind: "cheatsheet" };
 
 /** Escape while the busy-close bar is up cancels it, even with focus in the terminal (where the window takes the key first). */
 export function cancelsCloseBar(e: { key: string; ctrlKey: boolean; shiftKey: boolean; altKey: boolean; metaKey: boolean; isComposing?: boolean }, barOpen: boolean): boolean {
@@ -73,6 +75,8 @@ export function commandShortcut(id: string): SessionShortcut | null {
       return { kind: "shellPanel" };
     case "review-task":
       return { kind: "review" };
+    case "cheatsheet":
+      return { kind: "cheatsheet" };
   }
   const n = FOCUS_SESSION.exec(id)?.[1];
   return n === undefined ? null : { kind: "goto", number: Number(n) };

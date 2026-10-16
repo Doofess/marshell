@@ -73,6 +73,14 @@ describe("the shell panel shortcut", () => {
   });
 });
 
+describe("the cheat sheet shortcut", () => {
+  it("Ctrl+Shift+O (Cmd+O) is the cheat sheet", () => {
+    expect(sessionShortcut(ev("KeyO", cs), "windows")).toEqual({ kind: "cheatsheet" });
+    expect(sessionShortcut(ev("KeyO", { metaKey: true }), "mac")).toEqual({ kind: "cheatsheet" });
+    expect(commandShortcut("cheatsheet")).toEqual({ kind: "cheatsheet" });
+  });
+});
+
 describe("commandShortcut", () => {
   it("maps the palette commands the live window runs, and nothing else", () => {
     expect(commandShortcut("close")).toEqual({ kind: "close" });
