@@ -121,6 +121,25 @@ async fn panel_shell_is_not_listed() {
     state.session(&panel).unwrap().force_kill();
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn two_panel_requests_at_once_share_one_shell() {
+    let home = tempfile::tempdir().unwrap();
+    let state = state_in(home.path());
+    let app = router(state.clone());
+    let mut tasks = Vec::new();
+    for _ in 0..2 {
+        let app = app.clone();
+        let cwd = home.path().to_path_buf();
+        tasks.push(tokio::spawn(async move { open_panel(&app, &cwd).await }));
+    }
+    let first = tasks.remove(0).await.unwrap();
+    let second = tasks.remove(0).await.unwrap();
+    assert_eq!(first, second);
+    // The loser's extra pty is gone from the map.
+    assert_eq!(state.live_session_count(), 1);
+    state.session(&first).unwrap().force_kill();
+}
+
 #[tokio::test]
 async fn panel_shell_is_reused() {
     let home = tempfile::tempdir().unwrap();

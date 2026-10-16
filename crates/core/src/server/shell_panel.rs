@@ -4,7 +4,8 @@
 use super::AppState;
 use super::sessions::{resolve, spawn_into_map, start_folder};
 use crate::auth;
-use crate::registry::Relaunch;
+use crate::pty::Session;
+use crate::registry::{Registry, Relaunch};
 use axum::Json;
 use axum::extract::State;
 use axum::http::StatusCode;
@@ -70,14 +71,16 @@ pub async fn open(State(st): State<AppState>, Json(req): Json<PanelRequest>) -> 
     spawn_into_map(&st, &tab_id, 0, run, None, cwd, (req.cols, req.rows), None).await?;
     // Two requests can both start a shell; the first to store its id wins.
     let mut panel = st.0.shell_panel.lock().unwrap();
-    if let Some(other) = panel.as_ref().map(|p| p.tab_id.clone())
-        && is_alive(&st, &other)
-    {
-        drop(panel);
-        if let Some(extra) = st.remove_session(&tab_id) {
-            extra.kill();
+    if let Some(other) = panel.as_ref().map(|p| p.tab_id.clone()) {
+        if is_alive(&st, &other) {
+            drop(panel);
+            if let Some(extra) = st.remove_session(&tab_id) {
+                extra.kill();
+            }
+            return Ok(Json(PanelResponse { tab_id: other }));
         }
-        return Ok(Json(PanelResponse { tab_id: other }));
+        // The stored one has exited: ours replaces it, and the finished process leaves the map.
+        st.remove_session(&other);
     }
     *panel = Some(shell);
     Ok(Json(PanelResponse { tab_id }))
@@ -85,16 +88,18 @@ pub async fn open(State(st): State<AppState>, Json(req): Json<PanelRequest>) -> 
 
 /// Turns the panel shell into a tab at the end of the list, still running. The panel is free again.
 pub async fn adopt(State(st): State<AppState>) -> Result<Json<PanelResponse>, ApiError> {
-    if alive_panel(&st).is_none() {
-        return Err((StatusCode::NOT_FOUND, "There is no shell in the panel.".into()));
-    }
-    let Some(shell) = st.0.shell_panel.lock().unwrap().take() else {
-        // Another adopt took it between the check and here.
-        return Err((StatusCode::NOT_FOUND, "There is no shell in the panel.".into()));
+    let no_shell = || (StatusCode::NOT_FOUND, "There is no shell in the panel.".to_string());
+    // One critical section: take the panel, check it, and register the row.
+    let mut panel = st.0.shell_panel.lock().unwrap();
+    let shell = panel.take().ok_or_else(no_shell)?;
+    let Some(session) = st.session(&shell.tab_id).filter(|s| !s.has_exited()) else {
+        st.remove_session(&shell.tab_id);
+        return Err(no_shell());
     };
     let tab_id = shell.tab_id;
-    st.0.registry.adopt(
-        &tab_id,
+    adopt_session(
+        &st.0.registry,
+        &session,
         Relaunch {
             profile_id: shell.profile_id,
             agent: None,
@@ -102,5 +107,64 @@ pub async fn adopt(State(st): State<AppState>) -> Result<Json<PanelResponse>, Ap
             name: shell.name,
         },
     );
+    drop(panel);
     Ok(Json(PanelResponse { tab_id }))
+}
+
+/// Gives a running pty a registry row. If the process exited before the row existed, its exit
+/// callback found nothing to mark, so mark the row here. The exit code is read after the row is
+/// added: `None` then means the callback has not run yet and will find the row.
+fn adopt_session(registry: &Registry, session: &Session, relaunch: Relaunch) {
+    let tab_id = session.id().to_string();
+    registry.adopt(&tab_id, relaunch);
+    if let Some(code) = session.exit_code() {
+        registry.mark_exited(&tab_id, code);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::pty::SpawnSpec;
+    use marshell_protocol::api::SessionState;
+
+    #[test]
+    fn a_shell_that_exited_before_adoption_is_adopted_as_exited() {
+        let argv: Vec<String> = if cfg!(windows) {
+            ["cmd", "/c", "exit 3"].map(String::from).to_vec()
+        } else {
+            ["sh", "-c", "exit 3"].map(String::from).to_vec()
+        };
+        // No exit callback: it already ran in the race, and found no row to mark.
+        let session = Session::spawn(
+            "t1".into(),
+            SpawnSpec {
+                argv,
+                cwd: None,
+                env: Vec::new(),
+                cols: 80,
+                rows: 24,
+                on_exit: None,
+                on_mark: None,
+            },
+        )
+        .unwrap();
+        let start = std::time::Instant::now();
+        while session.exit_code().is_none() {
+            assert!(start.elapsed() < std::time::Duration::from_secs(10), "it never exited");
+            std::thread::sleep(std::time::Duration::from_millis(25));
+        }
+
+        let registry = Registry::new();
+        let relaunch = Relaunch {
+            profile_id: "p".into(),
+            agent: None,
+            cwd: String::new(),
+            name: "Shell".into(),
+        };
+        adopt_session(&registry, &session, relaunch);
+        let row = registry.snapshot().sessions.remove(0);
+        assert_eq!(row.tab_id, "t1");
+        assert_eq!(row.state, SessionState::Exited { code: 3 });
+    }
 }
