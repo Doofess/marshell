@@ -11,7 +11,7 @@ import { addImported, removeImported } from "./appearanceEdits";
 import { useAppearance } from "./AppearanceProvider";
 import { blurAccent, commitAccent, draftsOf, pickPreset, refill, type Draft, type Drafts, type Field } from "./drafts";
 import { importThemeFile, MAX_THEME_FILE } from "./import/importTheme";
-import { parseWtSchemes } from "./import/windowsTerminal";
+import { schemesInFiles } from "./import/windowsTerminal";
 import { terminalThemeOf, wtFont } from "./terminalSettings";
 import "../settings/Settings.css";
 import "./AppearanceDialog.css";
@@ -67,17 +67,6 @@ const onEnter = (commit: () => void) => (e: KeyboardEvent) => {
   if (e.key === "Enter") commit();
 };
 
-/** The schemes in Windows Terminal's settings files; a file that doesn't parse adds none. */
-function wtSchemes(files: FoundFile[]): ImportedTheme[] {
-  return files.flatMap((f) => {
-    try {
-      return parseWtSchemes(f.text);
-    } catch {
-      return [];
-    }
-  });
-}
-
 function ErrorAt({ at, error }: { at: AppearanceSection; error: AppearanceViewState["error"] }) {
   return error?.at === at ? (
     <p className="appearance__error">{error.text}</p>
@@ -126,7 +115,7 @@ export function AppearanceView({ state, handlers }: { state: AppearanceViewState
   const custom = a.accent.startsWith("#");
   const preview = resolveTerminalTheme({ ...terminalThemeOf(a, null), app: state.app }).theme;
   const font = resolveTerminalFont(a.terminal_font, wtFont(state.wtFiles ?? []));
-  const found = useMemo(() => wtSchemes(state.wtFiles ?? []), [state.wtFiles]);
+  const { themes: found, note: skippedNote } = useMemo(() => schemesInFiles((state.wtFiles ?? []).map((f) => f.text)), [state.wtFiles]);
   const have = new Set(a.imported_themes.map((t) => t.id));
   const set = (patch: Partial<Appearance>, at: AppearanceSection) => handlers.save({ ...a, ...patch }, at);
 
@@ -305,7 +294,7 @@ export function AppearanceView({ state, handlers }: { state: AppearanceViewState
 
           <h4 className="field__label">In your Windows Terminal settings</h4>
           {found.length === 0 ? (
-            <p className="field__help">{state.wtFiles?.length ? "Your Windows Terminal settings have no colour schemes." : "No Windows Terminal settings found."}</p>
+            <p className="field__help">{skippedNote ?? (state.wtFiles?.length ? "Your Windows Terminal settings have no colour schemes." : "No Windows Terminal settings found.")}</p>
           ) : (
             <ul className="appearance__list" aria-label="Schemes in your Windows Terminal settings">
               {found.map((t, i) => (
@@ -319,6 +308,7 @@ export function AppearanceView({ state, handlers }: { state: AppearanceViewState
               ))}
             </ul>
           )}
+          {found.length > 0 && skippedNote && <p className="field__help">{skippedNote}</p>}
           <ErrorAt at="imported" error={error} />
         </Section>
       </div>
@@ -405,7 +395,8 @@ export function AppearanceDialog({ onClose, onNotice }: { onClose: () => void; o
           const result = importThemeFile(file.name, text);
           if (!result.ok) return setImportError(result.reason);
           handlers.save(addImported(appearance, result.themes), "imported");
-          onNotice?.(result.themes.length === 1 ? `Imported ${result.themes[0]!.name}.` : `Imported ${result.themes.length} themes.`);
+          const imported = result.themes.length === 1 ? `Imported ${result.themes[0]!.name}.` : `Imported ${result.themes.length} themes.`;
+          onNotice?.(result.note ? `${imported} ${result.note}` : imported);
         })
         .catch(() => setImportError(`Couldn't read ${file.name}.`));
     },

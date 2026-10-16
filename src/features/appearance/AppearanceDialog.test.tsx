@@ -39,6 +39,18 @@ describe("AppearanceView", () => {
     expect(m).toMatch(/aria-label="Add Campbell"/);
   });
 
+  it("one bad Windows Terminal scheme is skipped and the others still list, with a note", () => {
+    const bad = { path: "x", text: JSON.stringify({ schemes: [{ name: "Foo", foreground: "#ffffff" }, JSON.parse(WT.text).schemes[0]] }) };
+    const m = html({ wtFiles: [bad] });
+    expect(m).toMatch(/aria-label="Add Campbell"/);
+    expect(m).toContain("Skipped 1 scheme: Foo is missing black.");
+    expect(m).not.toContain("have no colour schemes");
+    // When nothing in the files can be read the list says why instead of claiming there are no schemes.
+    const none = html({ wtFiles: [{ path: "x", text: JSON.stringify({ schemes: [{ name: "Foo" }] }) }] });
+    expect(none).toContain("Skipped 1 scheme: Foo is missing black.");
+    expect(none).not.toContain("have no colour schemes");
+  });
+
   it("empty Windows Terminal list says so", () => {
     expect(html({ wtFiles: [] })).toContain("No Windows Terminal settings found.");
   });

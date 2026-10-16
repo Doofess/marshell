@@ -34,14 +34,74 @@ function schemeToTheme(s: unknown, used: Set<string>): ImportedTheme {
   return makeTheme("windows-terminal", s.name.trim(), colors, used);
 }
 
-/** Reads the colour schemes of a Windows Terminal settings.json (`schemes[]`) or a single scheme object. */
-export function parseWtSchemes(text: string): ImportedTheme[] {
+/** A scheme that could not be read, and why, worded to follow its name: "Foo" + "is missing brightPurple". */
+export type SkippedScheme = { name: string; reason: string };
+
+/** Thrown when a file has colour schemes but none of them can be read. The message is the first problem found. */
+export class NoReadableSchemes extends Error {
+  constructor(
+    message: string,
+    readonly skipped: SkippedScheme[],
+  ) {
+    super(message);
+  }
+}
+
+function skipOf(s: unknown, err: Error): SkippedScheme {
+  const name = isObject(s) && typeof s.name === "string" ? s.name.trim() : "";
+  if (name === "") return { name: "A scheme", reason: "has no name" };
+  const missing = /^The theme is missing "(.+?)"/.exec(err.message);
+  if (missing) return { name, reason: `is missing ${missing[1]}` };
+  const bad = /^"(.+?)" is not a colour/.exec(err.message);
+  if (bad) return { name, reason: `has a ${bad[1]} that isn't a colour` };
+  return { name, reason: err.message };
+}
+
+/** One line for the schemes that were left out, for example "Skipped 2 schemes: Foo is missing brightPurple; Bar has no name." */
+export function skippedNote(skipped: SkippedScheme[]): string {
+  return `Skipped ${skipped.length} ${skipped.length === 1 ? "scheme" : "schemes"}: ${skipped.map((s) => `${s.name} ${s.reason}`).join("; ")}.`;
+}
+
+/**
+ * Reads the colour schemes of a Windows Terminal settings.json (`schemes[]`) or a single scheme object. A scheme that can't be
+ * read is skipped on its own; throws only when there are schemes and none can be read.
+ */
+export function parseWtSchemes(text: string): { themes: ImportedTheme[]; skipped: SkippedScheme[] } {
   const data = parseJsonc(text);
   if (!isObject(data)) throw new Error("This file is not a Windows Terminal settings file or colour scheme.");
   const list = Array.isArray(data.schemes) ? data.schemes : data.schemes === undefined ? [data] : null;
   if (!list || list.length === 0) throw new Error("This Windows Terminal file has no colour schemes.");
   const used = new Set<string>();
-  return list.map((s) => schemeToTheme(s, used));
+  const themes: ImportedTheme[] = [];
+  const skipped: SkippedScheme[] = [];
+  let first: Error | null = null;
+  for (const s of list) {
+    try {
+      themes.push(schemeToTheme(s, used));
+    } catch (e) {
+      const err = e instanceof Error ? e : new Error(String(e));
+      first ??= err;
+      skipped.push(skipOf(s, err));
+    }
+  }
+  if (themes.length === 0) throw new NoReadableSchemes(first!.message, skipped);
+  return { themes, skipped };
+}
+
+/** The schemes in several Windows Terminal files, and one note for those skipped. A file with no schemes at all adds nothing. */
+export function schemesInFiles(texts: string[]): { themes: ImportedTheme[]; note: string | null } {
+  const themes: ImportedTheme[] = [];
+  const skipped: SkippedScheme[] = [];
+  for (const text of texts) {
+    try {
+      const out = parseWtSchemes(text);
+      themes.push(...out.themes);
+      skipped.push(...out.skipped);
+    } catch (e) {
+      if (e instanceof NoReadableSchemes) skipped.push(...e.skipped);
+    }
+  }
+  return { themes, note: skipped.length > 0 ? skippedNote(skipped) : null };
 }
 
 /** The default profile font of a Windows Terminal settings.json: the `font` object, else the older `fontFace` and `fontSize`. */

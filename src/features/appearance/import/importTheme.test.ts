@@ -41,6 +41,17 @@ describe("importThemeFile", () => {
     expect(r.ok && r.themes.map((t) => t.id)).toEqual(["wt:short"]);
   });
 
+  it("imports the good schemes of a WT file and says which it skipped", () => {
+    const r = importThemeFile("settings.json", `{"schemes":[${wtScheme("#111111")},{"name":"Foo","foreground":"#111111"}]}`);
+    expect(r.ok && r.themes.map((t) => t.id)).toEqual(["wt:short"]);
+    expect(r.ok && r.note).toBe("Skipped 1 scheme: Foo is missing black.");
+    // A file with nothing to skip has no note, and one where nothing can be read is still refused with the first problem.
+    const clean = importThemeFile("settings.json", `{"schemes":[${wtScheme("#111111")}]}`);
+    expect(clean.ok && clean.note).toBeUndefined();
+    const none = importThemeFile("settings.json", `{"schemes":[{"name":"Foo","foreground":"#111111"}]}`);
+    expect(none).toEqual({ ok: false, reason: 'The theme is missing "black". Add it as #rrggbb and import again.' });
+  });
+
   it("sends a VS Code theme to the VS Code parser", () => {
     const r = importThemeFile("t.json", '{"name":"Plain","colors":{}}');
     expect(r).toEqual({ ok: false, reason: "This VS Code theme has no terminal colours." });

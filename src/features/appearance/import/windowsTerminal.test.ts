@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseWtSchemes, wtDefaultFont } from "./windowsTerminal";
+import { NoReadableSchemes, parseWtSchemes, schemesInFiles, skippedNote, wtDefaultFont } from "./windowsTerminal";
 
 const ANSI = [
   "black", "red", "green", "yellow", "blue", "purple", "cyan", "white",
@@ -27,7 +27,8 @@ describe("parseWtSchemes", () => {
         ${JSON.stringify(scheme("Campbell"))},
       ],
     }`;
-    const themes = parseWtSchemes(text);
+    const { themes, skipped } = parseWtSchemes(text);
+    expect(skipped).toEqual([]);
     expect(themes.map((t) => t.id)).toEqual(["wt:one-half-dark", "wt:campbell"]);
     expect(themes[0]).toMatchObject({
       name: "One Half Dark",
@@ -42,13 +43,13 @@ describe("parseWtSchemes", () => {
   });
 
   it("reads a single scheme object", () => {
-    const themes = parseWtSchemes(JSON.stringify(scheme("Solo")));
+    const { themes } = parseWtSchemes(JSON.stringify(scheme("Solo")));
     expect(themes).toHaveLength(1);
     expect(themes[0]!.id).toBe("wt:solo");
   });
 
   it("gives a duplicate id a -2", () => {
-    const themes = parseWtSchemes(JSON.stringify({ schemes: [scheme("Same"), scheme("Same")] }));
+    const { themes } = parseWtSchemes(JSON.stringify({ schemes: [scheme("Same"), scheme("Same")] }));
     expect(themes.map((t) => t.id)).toEqual(["wt:same", "wt:same-2"]);
   });
 
@@ -56,6 +57,60 @@ describe("parseWtSchemes", () => {
     const s = scheme("Broken");
     delete s.brightPurple;
     expect(() => parseWtSchemes(JSON.stringify(s))).toThrow(/brightPurple/);
+  });
+
+  it("one bad scheme is skipped and the others are kept", () => {
+    const foo = scheme("Foo");
+    delete foo.brightPurple;
+    const bar = scheme("Bar", { red: "red" });
+    const { themes, skipped } = parseWtSchemes(JSON.stringify({ schemes: [scheme("Good"), foo, bar, { red: "#ff0000" }] }));
+    expect(themes.map((t) => t.name)).toEqual(["Good"]);
+    expect(skipped).toEqual([
+      { name: "Foo", reason: "is missing brightPurple" },
+      { name: "Bar", reason: "has a red that isn't a colour" },
+      { name: "A scheme", reason: "has no name" },
+    ]);
+    expect(skippedNote(skipped)).toBe("Skipped 3 schemes: Foo is missing brightPurple; Bar has a red that isn't a colour; A scheme has no name.");
+    expect(skippedNote(skipped.slice(0, 1))).toBe("Skipped 1 scheme: Foo is missing brightPurple.");
+  });
+
+  it("throws when there are schemes but none can be read, with the first problem", () => {
+    const foo = scheme("Foo");
+    delete foo.brightPurple;
+    const bar = scheme("Bar");
+    delete bar.red;
+    try {
+      parseWtSchemes(JSON.stringify({ schemes: [foo, bar] }));
+      expect.unreachable();
+    } catch (e) {
+      expect(e).toBeInstanceOf(NoReadableSchemes);
+      expect((e as Error).message).toMatch(/brightPurple/);
+      expect((e as NoReadableSchemes).skipped.map((s) => s.name)).toEqual(["Foo", "Bar"]);
+    }
+  });
+});
+
+describe("schemesInFiles", () => {
+  it("lists the good schemes of every file and notes what was skipped", () => {
+    const foo = scheme("Foo");
+    delete foo.brightPurple;
+    const a = JSON.stringify({ schemes: [scheme("One"), foo] });
+    const b = JSON.stringify({ schemes: [scheme("Two")] });
+    const out = schemesInFiles([a, b]);
+    expect(out.themes.map((t) => t.name)).toEqual(["One", "Two"]);
+    expect(out.note).toBe("Skipped 1 scheme: Foo is missing brightPurple.");
+  });
+
+  it("a file where nothing can be read still says which schemes were skipped", () => {
+    const foo = scheme("Foo");
+    delete foo.brightPurple;
+    const out = schemesInFiles([JSON.stringify({ schemes: [foo] }), "{ not json", JSON.stringify({ profiles: {}, schemes: [] })]);
+    expect(out.themes).toEqual([]);
+    expect(out.note).toBe("Skipped 1 scheme: Foo is missing brightPurple.");
+  });
+
+  it("files with no schemes give no note", () => {
+    expect(schemesInFiles(["{ not json"])).toEqual({ themes: [], note: null });
   });
 });
 
