@@ -7,6 +7,8 @@ pub mod projects;
 pub mod pty;
 pub mod registry;
 pub mod server;
+pub mod settings;
 pub mod shell;
 pub mod store;
 pub mod supervisor;
+pub mod wt;

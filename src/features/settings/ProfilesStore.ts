@@ -48,6 +48,8 @@ export class ProfilesStore {
   constructor(
     private api: Api,
     private endpoint: Endpoint,
+    /** Called after the core accepted a save, so the rest of the window can read the profiles again. */
+    private onSaved?: () => void,
   ) {}
 
   subscribe = (listener: () => void): (() => void) => {
@@ -147,6 +149,7 @@ export class ProfilesStore {
     try {
       const doc = await this.api.put(this.endpoint, forSave(draft));
       this.set({ saving: false, saved: doc, draft: doc, selectedId: doc.profiles.some((p) => p.id === selectedId) ? selectedId : (doc.profiles[0]?.id ?? ""), justSaved: true });
+      this.onSaved?.();
     } catch (e) {
       this.set({ saving: false, error: reason(e) });
     }

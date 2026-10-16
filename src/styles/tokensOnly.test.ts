@@ -13,7 +13,7 @@ const walk = (dir: string): string[] =>
 const FILES = [...walk(join(SRC, "features")), ...walk(join(SRC, "components")), ...walk(join(SRC, "styles"))].map((f) => relative(SRC, f).replace(/\\/g, "/"));
 
 /** Where colours are defined. */
-const DEFINITIONS = new Set(["styles/tokens.css", "styles/accents.css", "components/AgentMark/agent-colors.css"]);
+const DEFINITIONS = new Set(["styles/tokens.css", "styles/accents.css", "styles/appearance.css", "components/AgentMark/agent-colors.css"]);
 
 /** Files that hold a colour of their own, each with its reason. A file that stops needing it must leave this list. */
 const ALLOWED: Record<string, string> = {

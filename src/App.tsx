@@ -1,5 +1,10 @@
+import { AppearanceProvider } from "./features/appearance/AppearanceProvider";
 import { LiveApp } from "./features/sessions/LiveApp";
 
 export function App() {
-  return <LiveApp />;
+  return (
+    <AppearanceProvider>
+      <LiveApp />
+    </AppearanceProvider>
+  );
 }

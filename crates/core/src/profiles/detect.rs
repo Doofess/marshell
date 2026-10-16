@@ -152,6 +152,7 @@ fn detected(id: &str, name: &str, command: Vec<String>, family: ShellFamily) -> 
         cwd: None,
         env: Vec::new(),
         shell_integration: true,
+        terminal_theme: None,
         detected: true,
     }
 }
@@ -347,6 +348,7 @@ mod tests {
             cwd: None,
             env: Vec::new(),
             shell_integration: true,
+            terminal_theme: None,
             detected: true,
         }
     }

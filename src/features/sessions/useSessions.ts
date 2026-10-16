@@ -74,6 +74,15 @@ export class SessionsStore {
     if (this.state.infos.some((s) => s.tab_id === id)) this.set({ selectedId: id });
   };
 
+  /** Reads the profile list again, after the profiles page saved, so new sessions start with what was saved. A failed read keeps the old list. */
+  reloadProfiles = async (): Promise<void> => {
+    const { endpoint } = this.state;
+    const gen = this.generation;
+    if (!endpoint) return;
+    const doc = await profilesApi.get(endpoint).catch(() => null);
+    if (doc && gen === this.generation) this.set({ profiles: doc.profiles });
+  };
+
   /** Connects, and listens for core restarts. Returns the function that stops both. */
   start(): () => void {
     let stopped = false;
@@ -139,11 +148,12 @@ export function useSessions(): {
   loaded: boolean;
   restarts: number;
   select: (id: string) => void;
+  reloadProfiles: () => Promise<void>;
   error: string | null;
 } {
   const store = useMemo(() => new SessionsStore(), []);
   useEffect(() => store.start(), [store]);
   const state = useSyncExternalStore(store.subscribe, store.getState);
   const rows = useMemo(() => state.infos.map((i) => toRow(i, state.profiles)), [state.infos, state.profiles]);
-  return { ...state, rows, select: store.select };
+  return { ...state, rows, select: store.select, reloadProfiles: store.reloadProfiles };
 }

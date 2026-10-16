@@ -71,6 +71,19 @@ pub struct CreateSessionRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub prompt: Option<String>,
+    /// The terminal's colour scheme right now. Absent means the core sets no `COLORFGBG`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub color_scheme: Option<ColorScheme>,
+}
+
+/// Whether a terminal's background is dark or light.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "kebab-case")]
+#[ts(export)]
+pub enum ColorScheme {
+    Dark,
+    Light,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -181,6 +194,11 @@ pub struct Profile {
     /// Start plain shell sessions through Marshell's init script (prompt marks, command status).
     #[serde(default = "default_true")]
     pub shell_integration: bool,
+    /// This profile's terminal theme: "dark", "light" or an imported theme's id.
+    /// Absent means the app's terminal theme setting.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub terminal_theme: Option<String>,
     /// True for profiles found on this machine and not edited by the user.
     pub detected: bool,
 }
@@ -208,6 +226,128 @@ pub struct IntegrationInfo {
 pub struct ProfilesDoc {
     pub profiles: Vec<Profile>,
     pub default_id: String,
+}
+
+/// The app's light or dark look. Follow system tracks the operating system.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "kebab-case")]
+#[ts(export)]
+pub enum AppTheme {
+    #[default]
+    FollowSystem,
+    Dark,
+    Light,
+}
+
+/// High contrast: follow the system setting, or force it on or off.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "kebab-case")]
+#[ts(export)]
+pub enum ContrastMode {
+    #[default]
+    FollowSystem,
+    On,
+    Off,
+}
+
+/// The size of the app's own text (the terminal font size is separate).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "kebab-case")]
+#[ts(export)]
+pub enum TextSize {
+    #[default]
+    Default,
+    Large,
+    Larger,
+}
+
+/// The terminal's font. `family: None` means the bundled font.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(default)]
+#[ts(export)]
+pub struct TerminalFont {
+    pub family: Option<String>,
+    pub size: u16,
+}
+
+impl Default for TerminalFont {
+    fn default() -> Self {
+        Self { family: None, size: 13 }
+    }
+}
+
+/// A terminal colour scheme. Every colour is `#rrggbb`, lower case.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(default)]
+#[ts(export)]
+pub struct TerminalColors {
+    pub foreground: String,
+    pub background: String,
+    pub cursor: String,
+    pub selection: String,
+    /// The 16 ANSI colours, black first.
+    pub ansi: Vec<String>,
+}
+
+/// A colour scheme the user imported from another terminal.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(default)]
+#[ts(export)]
+pub struct ImportedTheme {
+    pub id: String,
+    pub name: String,
+    /// "windows-terminal", "iterm2" or "vscode".
+    pub source: String,
+    pub colors: TerminalColors,
+}
+
+/// How the app and its terminals look.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(default)]
+#[ts(export)]
+pub struct Appearance {
+    pub theme: AppTheme,
+    /// A preset name (amber, blue, indigo, violet, magenta, cyan, teal, slate) or `#rrggbb`.
+    pub accent: String,
+    pub contrast: ContrastMode,
+    pub text_size: TextSize,
+    /// "follow-app", "dark", "light" or the id of an imported theme.
+    pub terminal_theme: String,
+    pub terminal_font: TerminalFont,
+    /// Lift terminal text that would be hard to read against its background.
+    pub contrast_protection: bool,
+    pub imported_themes: Vec<ImportedTheme>,
+}
+
+impl Default for Appearance {
+    fn default() -> Self {
+        Self {
+            theme: AppTheme::default(),
+            accent: "amber".into(),
+            contrast: ContrastMode::default(),
+            text_size: TextSize::default(),
+            terminal_theme: "follow-app".into(),
+            terminal_font: TerminalFont::default(),
+            contrast_protection: true,
+            imported_themes: Vec::new(),
+        }
+    }
+}
+
+/// GET/PUT /v1/settings body.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(default)]
+#[ts(export)]
+pub struct Settings {
+    pub appearance: Appearance,
+}
+
+/// A file the core found for the user to import from (the core only reads it).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct FoundFile {
+    pub path: String,
+    pub text: String,
 }
 
 /// A project folder offered by the launcher.
@@ -285,5 +425,25 @@ mod tests {
         assert!(req.shell.is_none() && req.cwd.is_none());
         assert!(req.profile_id.is_none() && req.agent.is_none());
         assert!(req.name.is_none() && req.prompt.is_none());
+    }
+
+    #[test]
+    fn create_request_color_scheme_is_kebab_case() {
+        let req: CreateSessionRequest =
+            serde_json::from_str(r#"{"cols":80,"rows":24,"color_scheme":"light"}"#).unwrap();
+        assert_eq!(req.color_scheme, Some(ColorScheme::Light));
+        let req: CreateSessionRequest = serde_json::from_str(r#"{"cols":80,"rows":24}"#).unwrap();
+        assert_eq!(req.color_scheme, None);
+    }
+
+    #[test]
+    fn profile_terminal_theme_is_optional() {
+        let p: Profile = serde_json::from_str(
+            r#"{"id":"pwsh","name":"PowerShell","command":["pwsh.exe"],"family":"power_shell","cwd":null,"env":[],"detected":true}"#,
+        )
+        .unwrap();
+        assert_eq!(p.terminal_theme, None);
+        // Absent stays absent when written back.
+        assert!(!serde_json::to_string(&p).unwrap().contains("terminal_theme"));
     }
 }

@@ -8,8 +8,8 @@ use axum::body::Bytes;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use marshell_protocol::api::{
-    CreateSessionRequest, CreateSessionResponse, RenameRequest, ReopenRequest, ReorderRequest, SessionsSnapshot,
-    ShellFamily,
+    ColorScheme, CreateSessionRequest, CreateSessionResponse, RenameRequest, ReopenRequest, ReorderRequest,
+    SessionsSnapshot, ShellFamily,
 };
 use marshell_protocol::brand;
 use std::path::PathBuf;
@@ -28,6 +28,26 @@ fn agent_display_name(agent: &str) -> Option<&'static str> {
         "antigravity" => Some("Antigravity"),
         _ => None,
     }
+}
+
+/// The `COLORFGBG` value (foreground;background as ANSI palette numbers) for a terminal's scheme.
+/// Some programs read it at start to choose a dark or light look.
+fn colorfgbg(scheme: ColorScheme) -> &'static str {
+    match scheme {
+        ColorScheme::Dark => "15;0",
+        ColorScheme::Light => "0;15",
+    }
+}
+
+/// The variables a session starts with before ours: `COLORFGBG` for the scheme (none when the
+/// scheme is unknown), then the profile's own, which come after so a profile can override it.
+fn spawn_env(scheme: Option<ColorScheme>, profile_env: &[(String, String)]) -> Vec<(String, String)> {
+    let mut env = Vec::new();
+    if let Some(scheme) = scheme {
+        env.push(("COLORFGBG".to_string(), colorfgbg(scheme).to_string()));
+    }
+    env.extend(profile_env.iter().cloned());
+    env
 }
 
 /// What to run: the profile it came from, the argv, and the profile's env and folder.
@@ -109,6 +129,7 @@ async fn start_session(
     name: Option<String>,
     cwd: Option<String>,
     size: (u16, u16),
+    scheme: Option<ColorScheme>,
 ) -> Result<CreateSessionResponse, ApiError> {
     // The shell starts even when the agent is missing, so look for the agent first.
     // A WSL distro has its own PATH, which the check cannot see: those are not checked.
@@ -146,7 +167,7 @@ async fn start_session(
     );
 
     // The profile's variables first, so ours win.
-    let mut env = run.env;
+    let mut env = spawn_env(scheme, &run.env);
     env.extend([
         (brand::env_var("TAB_ID"), tab_id.clone()),
         (brand::env_var("SESSION_NUMBER"), number.to_string()),
@@ -245,7 +266,8 @@ pub async fn create(
             req.agent,
         ),
     };
-    let created = start_session(&st, run, agent, req.name, req.cwd, (req.cols, req.rows)).await?;
+    let size = (req.cols, req.rows);
+    let created = start_session(&st, run, agent, req.name, req.cwd, size, req.color_scheme).await?;
     Ok(Json(created))
 }
 
@@ -304,7 +326,8 @@ pub async fn reopen(State(st): State<AppState>, body: Bytes) -> Result<Json<Crea
     // A fresh session from the saved profile, agent, folder and name (not the old row).
     let run = resolve(&st, Some(&saved.profile_id), saved.agent.as_deref(), None)?;
     // The window resizes the terminal as soon as it attaches.
-    let created = start_session(&st, run, saved.agent, Some(saved.name), Some(saved.cwd), (80, 24)).await?;
+    // The saved session has no colour scheme, so a reopened one starts without COLORFGBG.
+    let created = start_session(&st, run, saved.agent, Some(saved.name), Some(saved.cwd), (80, 24), None).await?;
     // Only now remove the entry. If another reopen took it first, drop the duplicate we started.
     if st.0.registry.take_closed(Some(&closed_id)).is_none() {
         st.0.registry.release(&created.tab_id);
@@ -314,4 +337,36 @@ pub async fn reopen(State(st): State<AppState>, body: Bytes) -> Result<Json<Crea
         return Err((StatusCode::NOT_FOUND, "Nothing to reopen.".into()));
     }
     Ok(Json(created))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn var(name: &str, value: &str) -> (String, String) {
+        (name.to_string(), value.to_string())
+    }
+
+    #[test]
+    fn colorfgbg_values() {
+        assert_eq!(colorfgbg(ColorScheme::Dark), "15;0");
+        assert_eq!(colorfgbg(ColorScheme::Light), "0;15");
+    }
+
+    #[test]
+    fn spawn_env_puts_colorfgbg_before_profile_env() {
+        // The profile sets its own COLORFGBG: it comes last, so it wins.
+        let env = spawn_env(Some(ColorScheme::Dark), &[var("COLORFGBG", "7;0")]);
+        let last = env.iter().rev().find(|(k, _)| k == "COLORFGBG").unwrap();
+        assert_eq!(last.1, "7;0");
+
+        let env = spawn_env(Some(ColorScheme::Dark), &[]);
+        assert!(env.contains(&var("COLORFGBG", "15;0")));
+    }
+
+    #[test]
+    fn spawn_env_without_a_scheme_sets_no_colorfgbg() {
+        let env = spawn_env(None, &[var("A", "1")]);
+        assert_eq!(env, vec![var("A", "1")]);
+    }
 }

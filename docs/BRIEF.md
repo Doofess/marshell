@@ -59,6 +59,7 @@ Where the text below disagrees with this list, this list wins. `docs/PLAN.md` ho
   - **Instruction-file check (phase 7, beside the doctor).** For CLAUDE.md, AGENTS.md, GEMINI.md and the like, checks per CLI for size, stale paths, contradictions and that CLI's conventions, and shows suggested edits with a preview. Nothing is written until the user accepts; backup and undo apply.
   - **Antigravity (`agy`) is terminal only.** No account status, doctor or automation, because it has no login or status command and Google's consumer terms ban wrapping it in other agents. The Accounts page says why.
   - **Order.** Slice 2c (shell integration) still ships first, unchanged.
+- **Appearance (slice 2d, 2026-10-16).** Settings live in a real store, `~/.marshell/settings.json`. Theme import takes Windows Terminal, iTerm2 and VS Code files, and lists the schemes in the user's Windows Terminal settings (read only). High contrast is Follow system, On or Off. Text size has three steps (Default, Large, Larger). Details in `docs/PLAN.md`, phase 2.
 - **Codex CLI:**
   - It has a `PermissionRequest` hook, so approve-from-anywhere works for Codex too.
   - Non-managed hooks need user review and trust in `/hooks`, bound to the current hook hash; hook definitions load additively across active config sources. See the current implementation notes in `docs/research/codex-cli.md`.

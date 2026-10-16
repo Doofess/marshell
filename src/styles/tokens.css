@@ -46,7 +46,8 @@
   --tool-remote: light-dark(oklch(52% 0.035 300), oklch(65% 0.035 300));
 
   --font-ui: "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, "Inter Variable", sans-serif;
-  --font-mono: "Cascadia Mono", "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  /* JetBrains Mono is bundled (fonts.css), so it comes first: the same glyphs on every machine. */
+  --font-mono: "JetBrains Mono", "Cascadia Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
 
   /* Desktop chrome uses fixed sizes; 13 px is the base. */
   --text-11: 0.6875rem;

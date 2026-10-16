@@ -1,0 +1,193 @@
+/* Appearance. One column of sections; choices are fill chips (the selected mark shows the pick), and the terminal preview is
+   the one piece drawn in the terminal's own colours and font. */
+.appearance-dialog {
+  position: absolute;
+  inset: 0;
+}
+.appearance {
+  display: grid;
+  gap: var(--space-8);
+  max-inline-size: 640px;
+}
+.appearance__section {
+  display: grid;
+  gap: var(--space-4);
+}
+.appearance__heading {
+  margin: 0;
+  font-size: var(--text-15);
+  font-weight: 600;
+  color: var(--text-1);
+}
+.appearance__group {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  min-inline-size: 0;
+  display: grid;
+  gap: var(--space-2);
+}
+.appearance__group > legend {
+  padding: 0;
+  margin-block-end: var(--space-2);
+}
+.appearance__group .field__help,
+.appearance__section .field__help,
+.appearance__group .field__why {
+  margin: 0;
+}
+
+.appearance__chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+.appearance__chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-block-size: 32px;
+  padding: var(--space-1) var(--space-3);
+  border-radius: var(--radius);
+  background: var(--fill);
+  font-size: var(--text-13);
+  color: var(--text-1);
+  cursor: pointer;
+}
+/* The native radio stays in the tab order and the accessibility tree; the chip is what is seen. */
+.appearance__chip input {
+  position: absolute;
+  opacity: 0;
+  inline-size: 1px;
+  block-size: 1px;
+  margin: 0;
+}
+.appearance__chip:has(input:focus-visible) {
+  outline: 2px solid var(--focus, var(--accent));
+  outline-offset: 2px;
+}
+@media (hover: hover) and (pointer: fine) {
+  .appearance__chip:hover {
+    background: var(--hover, var(--fill-strong));
+  }
+}
+.appearance__swatch {
+  inline-size: 14px;
+  block-size: 14px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+.appearance__swatch--custom {
+  background: conic-gradient(var(--text-3) 0 25%, transparent 0 50%, var(--text-3) 0 75%, transparent 0) 0 0 / 6px 6px;
+}
+
+.appearance__inline {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+  font-size: var(--text-13);
+  color: var(--text-2);
+}
+.appearance__hex {
+  inline-size: 12ch;
+  font-family: var(--font-mono);
+}
+.appearance__size {
+  inline-size: 8ch;
+}
+.appearance__error {
+  margin: 0;
+  padding-inline-start: var(--space-3);
+  border-inline-start: 3px solid var(--error);
+  font-size: var(--text-13);
+  color: var(--text-1);
+}
+
+/* The preview: a prompt line over a ribbon of the sixteen colours, normal above bright. */
+.appearance__preview {
+  display: grid;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius);
+  font-size: var(--text-13);
+  line-height: var(--leading);
+}
+.appearance__ansi {
+  display: grid;
+  grid-template-columns: repeat(8, 1fr);
+  border-radius: calc(var(--radius) / 2);
+  overflow: hidden;
+}
+.appearance__ansi-cell {
+  block-size: 14px;
+}
+
+.appearance__file {
+  justify-self: start;
+  max-inline-size: 100%;
+  padding: var(--space-1);
+  border-radius: var(--radius);
+  background: var(--fill);
+  font-size: var(--text-13);
+  color: var(--text-2);
+}
+.appearance__file::file-selector-button {
+  margin-inline-end: var(--space-3);
+  padding: var(--space-1) var(--space-3);
+  border: 0;
+  border-radius: var(--radius);
+  background: var(--fill-strong);
+  font: inherit;
+  color: var(--text-1);
+}
+.appearance__file:focus-visible {
+  outline: 2px solid var(--focus, var(--accent));
+  outline-offset: 2px;
+}
+.appearance__list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: var(--space-1);
+}
+.appearance__row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-block-size: 36px;
+  padding: var(--space-1) var(--space-2) var(--space-1) var(--space-3);
+  border-radius: var(--radius);
+  background: var(--fill);
+  font-size: var(--text-13);
+}
+.appearance__row-name {
+  flex: 1;
+  min-inline-size: 0;
+  overflow-wrap: anywhere;
+}
+.appearance__dots {
+  display: inline-flex;
+  gap: 2px;
+  padding: 3px;
+  border-radius: calc(var(--radius) / 2);
+}
+.appearance__dots span {
+  inline-size: 6px;
+  block-size: 10px;
+  border-radius: 1px;
+}
+
+@media (forced-colors: active) {
+  .appearance__chip,
+  .appearance__row,
+  .appearance__preview {
+    border: 1px solid CanvasText;
+  }
+  .appearance__swatch,
+  .appearance__preview,
+  .appearance__dots {
+    forced-color-adjust: none;
+  }
+}

@@ -5,6 +5,7 @@ import { contrast, deltaE, minOnSurfaces, overlay } from "./contrast";
 
 const ACCENTS = ["amber", "blue", "indigo", "violet", "magenta", "cyan", "teal", "slate"] as const;
 const THEMES = ["dark", "light"] as const;
+const SURFACE_NAMES = ["--bg-base", "--bg-raised", "--bg-overlay"] as const;
 // Read from disk: Vitest hands CSS imports (even ?raw) to tests as empty strings.
 const read = (f: string) => readFileSync(new URL(`../styles/${f}`, import.meta.url), "utf8");
 const tokensCss = read("tokens.css");
@@ -127,4 +128,40 @@ describe("text on hover and selected rows (batch 1 deferred minor)", () => {
             const bg = overlay(tokens["--text-1"]![theme], tokens[surface]![theme], alpha);
             expect(contrast(tokens[t]![theme], bg)).toBeGreaterThanOrEqual(4.5);
           });
+});
+
+describe("high contrast", () => {
+  const appearanceCss = read("appearance.css").replace(/\/\*[\s\S]*?\*\//g, "");
+  const hc = { ...tokens, ...parseTokens(appearanceCss, ':root[data-contrast="more"]') };
+  // The overlays mix --text-1 into transparent, so their strength is the percentage in the block.
+  const block = /:root\[data-contrast="more"\]\s*\{([^}]*)\}/.exec(appearanceCss)?.[1] ?? "";
+  const alpha = (name: string) => {
+    const m = new RegExp(`${name}:\\s*color-mix\\(in oklch, var\\(--text-1\\) (\\d+)%, transparent\\)`).exec(block);
+    return m ? Number(m[1]) / 100 : undefined;
+  };
+  const OVERLAYS = ["--hairline", "--fill", "--fill-strong", "--hover", "--selected"];
+  const TEXT = ["--text-1", "--text-2", "--text-3"];
+
+  for (const theme of THEMES)
+    for (const t of TEXT)
+      it(`high contrast text reaches 7:1: ${t} on every surface (${theme})`, () => {
+        expect(minOnSurfaces(hc[t]![theme], hc, theme)).toBeGreaterThanOrEqual(7);
+      });
+  for (const name of OVERLAYS)
+    it(`${name} is at least 20% in high contrast`, () => {
+      expect(alpha(name)).toBeGreaterThanOrEqual(0.2);
+    });
+  for (const theme of THEMES)
+    for (const surface of SURFACE_NAMES)
+      it(`the hairline divider is at least 3:1 on ${surface} in high contrast (${theme})`, () => {
+        const line = overlay(hc["--text-1"]![theme], hc[surface]![theme], alpha("--hairline")!);
+        expect(contrast(line, hc[surface]![theme])).toBeGreaterThanOrEqual(3);
+      });
+  for (const theme of THEMES)
+    for (const state of ["--hover", "--selected", "--fill"])
+      for (const t of TEXT)
+        it(`${t} stays at least 7:1 under ${state} in high contrast (${theme})`, () => {
+          const bg = overlay(hc["--text-1"]![theme], hc["--bg-overlay"]![theme], alpha(state)!);
+          expect(contrast(hc[t]![theme], bg)).toBeGreaterThanOrEqual(7);
+        });
 });

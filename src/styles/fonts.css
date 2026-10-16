@@ -1,0 +1,16 @@
+/* JetBrains Mono 2.304, under the SIL Open Font License (src/assets/fonts/OFL.txt). The terminal's font when neither you nor
+   Windows Terminal name one. `block` so xterm never measures its cells with a fallback face. */
+@font-face {
+  font-family: "JetBrains Mono";
+  src: url("../assets/fonts/JetBrainsMono-Regular.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: block;
+}
+@font-face {
+  font-family: "JetBrains Mono";
+  src: url("../assets/fonts/JetBrainsMono-Bold.woff2") format("woff2");
+  font-weight: 700;
+  font-style: normal;
+  font-display: block;
+}
