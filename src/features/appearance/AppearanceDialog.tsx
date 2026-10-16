@@ -10,6 +10,7 @@ import { appScheme, resolveTerminalTheme, type Scheme } from "../terminal/termin
 import { addImported, removeImported } from "./appearanceEdits";
 import { useAppearance } from "./AppearanceProvider";
 import { checkAccent } from "./customAccent";
+import { draftsOf, refill, type Draft, type Field } from "./drafts";
 import { importThemeFile, MAX_THEME_FILE } from "./import/importTheme";
 import { parseWtSchemes } from "./import/windowsTerminal";
 import { terminalThemeOf, wtFont } from "./terminalSettings";
@@ -18,8 +19,6 @@ import "./AppearanceDialog.css";
 
 /** Where a failed save is shown: next to the part that was changed. */
 export type AppearanceSection = "theme" | "accent" | "terminal" | "imported";
-
-type Draft = { text: string; reason: string | null };
 
 export type AppearanceViewState = {
   appearance: Appearance;
@@ -169,6 +168,7 @@ export function AppearanceView({ state, handlers }: { state: AppearanceViewState
               <input
                 type="text"
                 className="field__control appearance__hex"
+                data-field="accent"
                 spellCheck={false}
                 placeholder="#3a7bd5"
                 value={state.accent.text}
@@ -226,7 +226,7 @@ export function AppearanceView({ state, handlers }: { state: AppearanceViewState
               {FONT_SOURCE[font.source]}: {font.family}. Leave the field empty to use {state.wtFiles?.length ? "Windows Terminal's font, or " : ""}
               {BUNDLED_FONT}.
             </p>
-            <input id={ids.font} type="text" className="field__control" spellCheck={false} placeholder="Automatic" value={state.font} aria-describedby={ids.fontHelp} onChange={(e) => handlers.onFontText(e.target.value)} onBlur={handlers.commitFont} onKeyDown={onEnter(handlers.commitFont)} />
+            <input id={ids.font} type="text" className="field__control" data-field="font" spellCheck={false} placeholder="Automatic" value={state.font} aria-describedby={ids.fontHelp} onChange={(e) => handlers.onFontText(e.target.value)} onBlur={handlers.commitFont} onKeyDown={onEnter(handlers.commitFont)} />
           </div>
 
           <div className="appearance__group">
@@ -240,6 +240,7 @@ export function AppearanceView({ state, handlers }: { state: AppearanceViewState
               max={32}
               step={1}
               className="field__control appearance__size"
+              data-field="size"
               value={state.size.text}
               aria-invalid={state.size.reason ? true : undefined}
               aria-describedby={state.size.reason ? ids.sizeWhy : undefined}
@@ -341,10 +342,20 @@ export function AppearanceDialog({ onClose, onNotice }: { onClose: () => void; o
   useDialogFocus(dialog, dialog, onClose);
   const { appearance, save, error, wtFiles } = useAppearance();
   const [at, setAt] = useState<AppearanceSection>("theme");
-  const [accent, setAccent] = useState<Draft>({ text: appearance.accent.startsWith("#") ? appearance.accent : "", reason: null });
-  const [font, setFont] = useState(appearance.terminal_font.family ?? "");
-  const [size, setSize] = useState<Draft>({ text: String(appearance.terminal_font.size), reason: null });
+  const [drafts, setDrafts] = useState(() => draftsOf(appearance));
+  const { accent, font, size } = drafts;
+  const setAccent = (next: Draft) => setDrafts((d) => ({ ...d, accent: next }));
+  const setFont = (next: string) => setDrafts((d) => ({ ...d, font: next }));
+  const setSize = (next: Draft) => setDrafts((d) => ({ ...d, size: next }));
   const [importError, setImportError] = useState<string | null>(null);
+  // The settings may arrive after the dialog opened: the fields then take the saved values, except one being typed in.
+  const refillNow = useEffectEvent(() => {
+    const focused = document.activeElement instanceof HTMLElement ? (document.activeElement.dataset.field as Field | undefined) : undefined;
+    setDrafts((d) => refill(d, appearance, focused ?? null));
+  });
+  useEffect(() => {
+    refillNow();
+  }, [appearance.accent, appearance.terminal_font.family, appearance.terminal_font.size]);
   // The window has one live region (its announcer): failures are said there and shown in words beside their section.
   const say = useEffectEvent((text: string) => onNotice?.(text));
   useEffect(() => {
