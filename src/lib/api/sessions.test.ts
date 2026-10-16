@@ -99,6 +99,26 @@ describe("sessions.resume", () => {
   });
 });
 
+describe("the shell panel", () => {
+  it("opens it with a folder and size, and returns the tab id", async () => {
+    const open = respond({ tab_id: "p1" });
+    vi.stubGlobal("fetch", open);
+    await expect(sessions.shellPanel(endpoint, "C:\\work", { cols: 70, rows: 20 })).resolves.toBe("p1");
+    expect(call(open)).toMatchObject({
+      url: "http://127.0.0.1:9/v1/shell-panel",
+      method: "POST",
+      body: { cwd: "C:\\work", cols: 70, rows: 20 },
+    });
+  });
+
+  it("adopts it and returns the tab id", async () => {
+    const adopt = respond({ tab_id: "p1" });
+    vi.stubGlobal("fetch", adopt);
+    await expect(sessions.adoptShellPanel(endpoint)).resolves.toBe("p1");
+    expect(call(adopt)).toMatchObject({ url: "http://127.0.0.1:9/v1/shell-panel/adopt", method: "POST" });
+  });
+});
+
 describe("profiles and projects", () => {
   it("gets and puts profiles", async () => {
     const doc = { profiles: [], default_id: "x" };

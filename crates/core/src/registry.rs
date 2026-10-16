@@ -111,6 +111,12 @@ impl Registry {
         number
     }
 
+    /// Adds a Running row at the end for a process that is already running (the shell panel's),
+    /// and returns its number. Same naming rule as `reserve`.
+    pub fn adopt(&self, tab_id: &str, relaunch: Relaunch) -> u32 {
+        self.reserve(tab_id, relaunch)
+    }
+
     /// Adds the saved tabs as Ended rows, in the given order, with their ids and numbers.
     /// Nothing is started. If two tabs share a number, the later one gets the lowest free number.
     /// `relaunch_of` says how each tab would be started again.

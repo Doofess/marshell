@@ -155,6 +155,11 @@ impl Session {
         &self.id
     }
 
+    /// True once the child process has exited.
+    pub fn has_exited(&self) -> bool {
+        self.exited.load(Ordering::SeqCst)
+    }
+
     fn read_loop(&self, mut reader: Box<dyn Read + Send>) {
         let mut chunk = vec![0u8; 16 * 1024];
         loop {

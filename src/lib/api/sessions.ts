@@ -28,6 +28,15 @@ export const sessions = {
       tabId === undefined ? undefined : ({ tab_id: tabId } satisfies ReopenRequest),
     ),
   /**
+   * The sidebar shell panel's own pty: started in `cwd` on the first call, the same one after that
+   * while it runs. It is not a tab. Returns the id to attach a terminal to.
+   */
+  shellPanel: async (ep: Endpoint, cwd: string, size: { cols: number; rows: number }): Promise<string> =>
+    (await api<{ tab_id: string }>(ep, "POST", "/v1/shell-panel", { cwd, ...size })).tab_id,
+  /** Turns the panel shell into a tab ("Open in a pane"). Rejects with a 404 ApiError when there is none. */
+  adoptShellPanel: async (ep: Endpoint): Promise<string> =>
+    (await api<{ tab_id: string }>(ep, "POST", "/v1/shell-panel/adopt")).tab_id,
+  /**
    * Starts an Ended or Exited tab again in place. A 409 comes back as `{ ok: false, reason }`
    * with the core's own words; any other failure rejects with an ApiError.
    */

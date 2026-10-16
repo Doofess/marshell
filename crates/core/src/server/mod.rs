@@ -7,6 +7,7 @@ mod projects;
 mod pty_ws;
 mod sessions;
 mod settings;
+mod shell_panel;
 
 use crate::profiles::detect::{Probe, detect_profiles};
 use crate::registry::{Registry, Relaunch};
@@ -55,6 +56,8 @@ struct Inner {
     registry: Arc<Registry>,
     // Kept here so every handler reaches it through one State.
     sessions: Mutex<HashMap<String, Arc<crate::pty::Session>>>,
+    /// The sidebar's shell, while there is one. It is in `sessions` but has no registry row.
+    shell_panel: Mutex<Option<shell_panel::PanelShell>>,
     /// Whether an agent's command (`claude`, `codex`, `agy`) runs from PATH. Tests swap it.
     agent_on_path: fn(&str) -> bool,
 }
@@ -92,6 +95,7 @@ impl AppState {
             layout: Mutex::new(layout),
             registry: Arc::new(registry),
             sessions: Mutex::new(HashMap::new()),
+            shell_panel: Mutex::new(None),
             agent_on_path: crate::profiles::detect::command_on_path,
         }))
     }
@@ -154,6 +158,8 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/sessions/reopen", post(sessions::reopen))
         .route("/v1/sessions/{tab}/resume", post(sessions::resume))
         .route("/v1/sessions/{tab}", patch(sessions::rename).delete(sessions::close))
+        .route("/v1/shell-panel", post(shell_panel::open))
+        .route("/v1/shell-panel/adopt", post(shell_panel::adopt))
         .route("/v1/events", get(events::handler))
         .route("/v1/pty/{tab}", get(pty_ws::handler))
         .layer(axum::middleware::from_fn_with_state(state.clone(), guard::auth_guard))

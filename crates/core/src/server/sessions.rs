@@ -53,9 +53,9 @@ fn spawn_env(scheme: Option<ColorScheme>, profile_env: &[(String, String)]) -> V
 }
 
 /// What to run: the profile it came from, the argv, and the profile's env and folder.
-struct Resolved {
-    profile_id: String,
-    profile_name: String,
+pub(super) struct Resolved {
+    pub(super) profile_id: String,
+    pub(super) profile_name: String,
     family: ShellFamily,
     argv: Vec<String>,
     env: Vec<(String, String)>,
@@ -66,7 +66,7 @@ struct Resolved {
 
 /// Finds the profile (the default when `profile_id` is None) and builds the argv for the agent.
 /// With `resume` the agent is told to continue its last conversation, and there is no prompt.
-fn resolve(
+pub(super) fn resolve(
     st: &AppState,
     profile_id: Option<&str>,
     agent: Option<&str>,
@@ -147,6 +147,16 @@ fn check_agent_installed(st: &AppState, run: &Resolved, agent: Option<&str>) -> 
     Ok(())
 }
 
+/// The folder a session starts in: the requested one, else the profile's, else the home folder.
+pub(super) fn start_folder(run: &Resolved, requested: Option<String>) -> String {
+    let home = dirs::home_dir().map(|p| p.to_string_lossy().into_owned());
+    requested
+        .filter(|c| !c.is_empty())
+        .or(run.cwd.clone())
+        .or(home)
+        .unwrap_or_default()
+}
+
 /// Reserves a number, starts the process and records it. A failed spawn gives the number back.
 async fn start_session(
     st: &AppState,
@@ -158,12 +168,7 @@ async fn start_session(
     scheme: Option<ColorScheme>,
 ) -> Result<CreateSessionResponse, ApiError> {
     check_agent_installed(st, &run, agent.as_deref())?;
-    let home = dirs::home_dir().map(|p| p.to_string_lossy().into_owned());
-    let cwd = cwd
-        .filter(|c| !c.is_empty())
-        .or(run.cwd.clone())
-        .or(home)
-        .unwrap_or_default();
+    let cwd = start_folder(&run, cwd);
     // The base name: the requested one, else the agent, else the profile.
     let name = name
         .map(|n| n.trim().to_string())
@@ -195,6 +200,35 @@ async fn start_session(
 /// The caller undoes the registry change when this fails.
 #[allow(clippy::too_many_arguments)]
 async fn launch(
+    st: &AppState,
+    tab_id: &str,
+    number: u32,
+    run: Resolved,
+    agent: Option<String>,
+    cwd: String,
+    size: (u16, u16),
+    scheme: Option<ColorScheme>,
+) -> Result<(), ApiError> {
+    spawn_into_map(st, tab_id, number, run, agent, cwd, size, scheme).await?;
+    // A close can land between reserve and insert, when the map has nothing to kill yet.
+    // Checking after the insert catches it: a later close finds the session in the map.
+    if !st.0.registry.is_open(tab_id) {
+        if let Some(session) = st.remove_session(tab_id) {
+            session.kill();
+        }
+        return Err((
+            StatusCode::CONFLICT,
+            "The session was closed while it was starting.".into(),
+        ));
+    }
+    Ok(())
+}
+
+/// Starts the process and stores its session in the sessions map, without touching the registry.
+/// The exit and mark callbacks name the tab in the registry and do nothing while it has no row:
+/// the shell panel starts here and only gets a row when it is adopted.
+#[allow(clippy::too_many_arguments)]
+pub(super) async fn spawn_into_map(
     st: &AppState,
     tab_id: &str,
     number: u32,
@@ -258,17 +292,6 @@ async fn launch(
         Err(e) => return Err((StatusCode::INTERNAL_SERVER_ERROR, e.to_string())),
     };
     st.insert_session(session);
-    // A close can land between reserve and insert, when the map has nothing to kill yet.
-    // Checking after the insert catches it: a later close finds the session in the map.
-    if !st.0.registry.is_open(tab_id) {
-        if let Some(session) = st.remove_session(tab_id) {
-            session.kill();
-        }
-        return Err((
-            StatusCode::CONFLICT,
-            "The session was closed while it was starting.".into(),
-        ));
-    }
     Ok(())
 }
 
