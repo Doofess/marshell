@@ -49,6 +49,12 @@ export type PaneProps = {
   os?: Os;
   /** Replaces the scripted terminal with the real one. */
   renderTerminal?: (row: RowModel) => ReactNode;
+  /** A click anywhere in the pane, or the focus moving into it, makes it the focused pane. */
+  onFocus?: () => void;
+  /** The header's zoom button (it restores the panes while zoomed). */
+  onZoom?: () => void;
+  /** The header's remove button: the pane leaves the view, the session keeps running. */
+  onRemove?: () => void;
 };
 
 /**
@@ -59,7 +65,7 @@ export type PaneProps = {
  * the status glyph (the vendor mark moving, while working), the name, the project and, only when it applies,
  * how tight the pane is. A pane that needs you never recedes with the inactive headers.
  */
-export function Pane({ row, active, setting, style, cells, zoomedOf, othersRunning, runningElsewhere, value, composer = true, os = "windows", renderTerminal }: PaneProps) {
+export function Pane({ row, active, setting, style, cells, zoomedOf, othersRunning, runningElsewhere, value, composer = true, os = "windows", renderTerminal, onFocus, onZoom, onRemove }: PaneProps) {
   const needs = needsYou(row);
   // A manual CLI is a plain terminal: no prompt line of ours, and its rows go to the terminal.
   const line = composer && hasPromptLine(row);
@@ -75,6 +81,8 @@ export function Pane({ row, active, setting, style, cells, zoomedOf, othersRunni
       data-plain={!hasPromptLine(row) || undefined}
       style={line ? { ...style, gridTemplateRows: `28px minmax(0, 1fr) ${COMPOSER.compact}px` } : style}
       aria-label={`${sessionWord(row.number)}, terminal: ${row.name}`}
+      onPointerDown={onFocus}
+      onFocus={onFocus}
     >
       <header className="pane__header" data-needs={needs || undefined}>
         <span className="pane__stripe" aria-hidden="true" />
@@ -100,10 +108,11 @@ export function Pane({ row, active, setting, style, cells, zoomedOf, othersRunni
           aria-label={`Zoom ${row.name}`}
           aria-pressed={zoomed}
           title={`${zoomed ? "Restore the panes" : "Zoom this pane"} (${zoomKeys})`}
+          onClick={onZoom}
         >
           {icon(zoomed ? ZOOM_OUT : ZOOM_IN)}
         </button>
-        <button type="button" className="pane__button" aria-label={`Remove ${row.name} from the view`} title="Remove from the view. The session keeps running.">
+        <button type="button" className="pane__button" aria-label={`Remove ${row.name} from the view`} title="Remove from the view. The session keeps running." onClick={onRemove}>
           {icon(CLOSE)}
         </button>
       </header>
@@ -119,14 +128,14 @@ export function Pane({ row, active, setting, style, cells, zoomedOf, othersRunni
 }
 
 /** A slot with no session yet: pick one that is not on screen, or start a new one. */
-export function EmptyPane({ choices, active, style, os = "windows" }: { choices: RowModel[]; active: boolean; style?: CSSProperties; os?: Os }) {
+export function EmptyPane({ choices, active, style, os = "windows", onFocus, onRemove, onPick }: { choices: RowModel[]; active: boolean; style?: CSSProperties; os?: Os; onFocus?: () => void; onRemove?: () => void; onPick?: (tabId: string) => void }) {
   const keys = shortcutLabel(commandById("launcher").binding!, os);
   return (
-    <section className="pane pane--empty" data-active={active} style={style} aria-label="Empty pane">
+    <section className="pane pane--empty" data-active={active} style={style} aria-label="Empty pane" onPointerDown={onFocus} onFocus={onFocus}>
       <header className="pane__header">
         <span className="pane__name">Empty pane</span>
         <span className="pane__spacer" />
-        <button type="button" className="pane__button" aria-label="Remove the empty pane from the view" title="Remove from the view">
+        <button type="button" className="pane__button" aria-label="Remove the empty pane from the view" title="Remove from the view" onClick={onRemove}>
           {icon(CLOSE)}
         </button>
       </header>
@@ -136,7 +145,7 @@ export function EmptyPane({ choices, active, style, os = "windows" }: { choices:
           <ul className="pane__choices">
             {choices.slice(0, CHOICE_LIMIT).map((r) => (
               <li key={r.id}>
-                <button type="button" className="pane__choice" data-agent={r.agent} aria-label={`${sessionWord(r.number)}, ${r.name} ${r.project}, ${GLYPHS[r.status].label}`}>
+                <button type="button" className="pane__choice" data-agent={r.agent} aria-label={`${sessionWord(r.number)}, ${r.name} ${r.project}, ${GLYPHS[r.status].label}`} onClick={() => onPick?.(r.id)}>
                   <span className="pane__stripe" aria-hidden="true" />
                   <StatusGlyph kind={r.status} />
                   <SessionNumber n={r.number} />{" "}

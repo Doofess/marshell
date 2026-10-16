@@ -1,6 +1,6 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { LayoutIcon, LayoutMenu, type LayoutMenuProps } from "./LayoutMenu";
+import { LayoutIcon, LayoutMenu, radioTarget, type LayoutMenuProps } from "./LayoutMenu";
 import { ARRANGEMENTS } from "./splitLayout";
 
 const menu = (p: Partial<LayoutMenuProps> = {}) => renderToStaticMarkup(<LayoutMenu count={4} arrangement="grid" auto {...p} />);
@@ -43,6 +43,40 @@ describe("LayoutMenu: counts the window cannot hold", () => {
     expect(menu({ max: 4 })).not.toContain("This window fits");
     expect(menu({ count: 2, requested: 2, max: 2 })).not.toContain("Showing");
     expect(menu({ count: 2, arrangement: "columns", max: 4 })).not.toMatch(/aria-disabled="true"[^>]*aria-label="\d panes?"/);
+  });
+});
+
+describe("LayoutMenu: counts above max are disabled", () => {
+  it("counts above max are disabled", () => {
+    const h = menu({ count: 2, arrangement: "columns", max: 2 });
+    for (const n of [3, 4]) expect(h).toMatch(new RegExp(`aria-disabled="true"[^>]*aria-label="${n} panes"`));
+    expect(h).not.toMatch(/aria-disabled="true"[^>]*aria-label="[12] panes?"/);
+  });
+  it("keeps the checked radio of each group in the tab order and the rest out of it", () => {
+    const h = menu({ count: 3, arrangement: "main-top", requested: 3 });
+    expect(h).toMatch(/tabindex="0"[^>]*aria-label="3 panes"/);
+    expect(h).toMatch(/tabindex="-1"[^>]*aria-label="2 panes"/);
+    expect(h).toMatch(/tabindex="0"[^>]*aria-label="One main on top"/);
+    expect(h).toMatch(/tabindex="-1"[^>]*aria-label="Stacked"/);
+  });
+});
+
+describe("radioTarget: arrow keys inside a radiogroup", () => {
+  const all = [true, true, true, true];
+  it("moves to the next and previous radio, and wraps", () => {
+    expect(radioTarget("ArrowRight", 0, all)).toBe(1);
+    expect(radioTarget("ArrowDown", 3, all)).toBe(0);
+    expect(radioTarget("ArrowLeft", 0, all)).toBe(3);
+    expect(radioTarget("ArrowUp", 2, all)).toBe(1);
+  });
+  it("skips a disabled radio", () => {
+    expect(radioTarget("ArrowRight", 1, [true, true, false, false])).toBe(0);
+    expect(radioTarget("ArrowLeft", 0, [true, true, false, false])).toBe(1);
+  });
+  it("goes to the ends on Home and End, and ignores other keys", () => {
+    expect(radioTarget("Home", 2, all)).toBe(0);
+    expect(radioTarget("End", 1, [true, true, true, false])).toBe(2);
+    expect(radioTarget("a", 1, all)).toBeNull();
   });
 });
 

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { cancelsCloseBar, commandShortcut, sessionShortcut } from "./appShortcuts";
 import type { KeyEventLike } from "./bindings";
+import { DEFAULT_NAV_MODIFIER } from "./navigation/modifier";
 
 const ev = (code: string, m: Partial<Omit<KeyEventLike, "code">> = {}): KeyEventLike => ({ code, ctrlKey: false, shiftKey: false, altKey: false, metaKey: false, ...m });
 const cs = { ctrlKey: true, shiftKey: true };
@@ -33,6 +34,18 @@ describe("sessionShortcut", () => {
     expect(sessionShortcut(ev("PageUp", cs), "windows")).toEqual({ kind: "prompt", by: -1 });
     expect(sessionShortcut(ev("PageDown", { metaKey: true }), "mac")).toEqual({ kind: "prompt", by: 1 });
   });
+  it("Ctrl+Shift+D is split and Ctrl+Shift+P is zoom on Windows", () => {
+    expect(sessionShortcut(ev("KeyD", cs), "windows")).toEqual({ kind: "split" });
+    expect(sessionShortcut(ev("KeyP", cs), "windows")).toEqual({ kind: "zoom" });
+    expect(sessionShortcut(ev("KeyD", { metaKey: true }), "mac")).toEqual({ kind: "split" });
+  });
+  it("moves between panes with the navigation modifier", () => {
+    expect(DEFAULT_NAV_MODIFIER).toBe("ctrl+shift");
+    expect(sessionShortcut(ev("Tab", cs), "windows")).toEqual({ kind: "nextPane" });
+    expect(sessionShortcut(ev("Backspace", cs), "windows")).toEqual({ kind: "nonePane" });
+    expect(sessionShortcut(ev("Tab", cs), "mac")).toEqual({ kind: "nextPane" });
+    expect(sessionShortcut(ev("Tab"), "windows")).toBeNull();
+  });
   it("uses Cmd on macOS", () => {
     expect(sessionShortcut(ev("KeyW", { metaKey: true }), "mac")).toEqual({ kind: "close" });
     expect(sessionShortcut(ev("Digit9", { metaKey: true }), "mac")).toEqual({ kind: "goto", number: 9 });
@@ -54,7 +67,11 @@ describe("commandShortcut", () => {
     expect(commandShortcut("move-down")).toEqual({ kind: "move", by: 1 });
     expect(commandShortcut("prompt-prev")).toEqual({ kind: "prompt", by: -1 });
     expect(commandShortcut("prompt-next")).toEqual({ kind: "prompt", by: 1 });
-    expect(commandShortcut("split")).toBeNull();
+    expect(commandShortcut("split")).toEqual({ kind: "split" });
+    expect(commandShortcut("zoom-pane")).toEqual({ kind: "zoom" });
+    expect(commandShortcut("nav-next-pane")).toEqual({ kind: "nextPane" });
+    expect(commandShortcut("nav-none")).toEqual({ kind: "nonePane" });
+    expect(commandShortcut("doctor")).toBeNull();
     expect(commandShortcut("profiles")).toBeNull();
   });
 });

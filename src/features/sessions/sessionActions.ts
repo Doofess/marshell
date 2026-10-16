@@ -119,10 +119,14 @@ export class SessionActions {
         if (next) this.reorder(next);
         break;
       }
-      // The window opens these, and the terminal jumps between its own prompts.
+      // The window opens these, and the terminal jumps between its own prompts. The panes belong to the window's view state.
       case "launcher":
       case "palette":
       case "prompt":
+      case "split":
+      case "zoom":
+      case "nextPane":
+      case "nonePane":
         break;
     }
   }

@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { MainWindow } from "./MainWindow";
 import { COMPOSER, STATUS_BAR_HEIGHT } from "./layout";
 import { SCENARIO_REQUESTS, SCENARIO_ROWS } from "./scenario";
+import { windowTitle } from "./windowTitle";
 
 const BIG = { width: 1700, height: 900 } as const;
 const html = (p: Partial<Parameters<typeof MainWindow>[0]> = {}) => renderToStaticMarkup(<MainWindow width={1180} height={800} selectedId="working" {...p} />);
@@ -484,5 +485,53 @@ describe("MainWindow: one live region, and the window's title follows the focuse
   });
   it("is a polite status region that is hidden visually", () => {
     expect(html()).toMatch(/<div class="window__announcer" role="status" aria-live="polite" aria-atomic="true" data-session-announcer/);
+  });
+});
+
+describe("MainWindow: panes from the view state", () => {
+  const ids = SCENARIO_ROWS.map((r) => r.id);
+  const panes = (h: string) => (h.match(/<section class="pane"/g) ?? []).length;
+  it("paneIds beyond the fit are hidden, not dropped", () => {
+    const h = html({ layout: "split", paneIds: ids.slice(0, 4), layoutMenu: true, width: 760, height: 520 });
+    expect(panes(h)).toBeLessThan(4);
+    expect(h).toContain("Showing");
+    const focused = h.split("</header>").find((part) => part.includes('data-active="true"'))!;
+    expect(focused).toContain("more running");
+  });
+  it("shows the panes in paneIds order, not selected-first", () => {
+    const [a, b] = [SCENARIO_ROWS[0]!, SCENARIO_ROWS[1]!];
+    const h = html({ layout: "split", paneIds: [b.id, a.id], selectedId: a.id, ...BIG });
+    const labels = [...h.matchAll(/<section class="pane"[^>]*aria-label="([^"]+)"/g)].map((m) => m[1]);
+    expect(labels[0]).toContain(`terminal: ${b.name}`);
+    expect(labels[1]).toContain(`terminal: ${a.name}`);
+  });
+  it("paneIds null renders the empty pane with the other sessions", () => {
+    const h = html({ layout: "split", paneIds: [ids[0]!, null], ...BIG });
+    expect(panes(h)).toBe(1);
+    expect(h).toContain("pane--empty");
+    const choices = h.slice(h.indexOf("pane--empty"));
+    expect(choices).toContain("pane__choices");
+    for (const r of SCENARIO_ROWS.slice(1, 3)) expect(choices).toContain(r.name);
+  });
+  it("a pane id that is no longer a session is an empty pane, not a crash", () => {
+    const h = html({ layout: "split", paneIds: [ids[0]!, "gone"], ...BIG });
+    expect(h).toContain("pane--empty");
+  });
+  it("window title follows the focused pane", () => {
+    const [a, b] = [SCENARIO_ROWS[0]!, SCENARIO_ROWS[1]!];
+    const title = (activePane: number) => html({ layout: "split", paneIds: [a.id, b.id], activePane, ...BIG }).match(/class="window"[^>]*data-title="([^"]*)"/)?.[1];
+    expect(title(0)).toBe(windowTitle(a));
+    expect(title(1)).toBe(windowTitle(b));
+  });
+  it("drives the arrangement, ratios and zoom from its props", () => {
+    const h = html({ layout: "split", paneIds: ids.slice(0, 2), arrangement: "rows", ratios: { row: 0.3 }, ...BIG });
+    expect(h).toContain('data-arrangement="rows"');
+    expect(h).toContain("0.3fr");
+    const z = html({ layout: "split", paneIds: ids.slice(0, 3), zoomedPane: 1, ...BIG });
+    expect(panes(z)).toBe(1);
+    expect(z).toContain('data-arrangement="single"');
+  });
+  it("makes the main area a focus target for the no-terminal shortcut", () => {
+    expect(html({ layout: "split", paneIds: ids.slice(0, 2), ...BIG })).toMatch(/<main class="window__main"[^>]*tabindex="-1"/);
   });
 });

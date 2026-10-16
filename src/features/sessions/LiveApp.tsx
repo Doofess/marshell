@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import type { CreateSessionResponse } from "../../generated/CreateSessionResponse";
 import { sessions } from "../../lib/api/sessions";
-import { cancelsCloseBar, commandShortcut, sessionShortcut } from "../../lib/appShortcuts";
+import { cancelsCloseBar, commandShortcut, sessionShortcut, type SessionShortcut } from "../../lib/appShortcuts";
 import { osOfPlatform } from "../../lib/keymap";
 import { paletteSessions } from "../palette/sessions";
 import { ProfilesDialog } from "../settings/ProfilesPage";
@@ -15,6 +15,9 @@ import { resolveTerminalFont } from "../terminal/terminalFont";
 import { TerminalView, type TerminalThemeProp } from "../terminal/TerminalView";
 import { sidebarMode } from "../window/layout";
 import { MainWindow } from "../window/MainWindow";
+import type { Arrangement } from "../window/splitLayout";
+import { useViewState } from "../window/useViewState";
+import { ratiosOf } from "../window/viewState";
 import { CloseBar } from "./CloseBar";
 import { LiveLauncher } from "./LiveLauncher";
 import { LivePalette } from "./LivePalette";
@@ -45,6 +48,23 @@ function useElementSize() {
 /** The real app: the main window on the core's live session list, and the launcher that adds to it. */
 export function LiveApp() {
   const { endpoint, profiles, rows, infos, selectedId, loaded, restarts, select, reloadProfiles, error } = useSessions();
+  // The window's saved layout: which sessions are in which pane. `undefined` until the list has answered, so an empty first list is never "everything closed".
+  const [view, dispatch, , settled] = useViewState(endpoint, loaded ? infos.map((i) => i.tab_id) : undefined);
+  const viewRef = useRef(view);
+  viewRef.current = view;
+  // The session the window is about is the one in the focused pane; the store's choice only stands in for an empty pane.
+  const focusedId = view.panes[view.active] ?? selectedId;
+  // Going to a session is two things: the store's selection and the view's, where it focuses the pane showing it or fills the focused one.
+  const selectRef = useRef(select);
+  selectRef.current = select;
+  const pick = useCallback(
+    (id: string) => {
+      selectRef.current(id);
+      dispatch({ type: "select", tabId: id });
+    },
+    [dispatch],
+  );
+  const [layoutMenu, setLayoutMenu] = useState(false);
   const { ref, width, height } = useElementSize();
   const { appearance, wtFiles } = useAppearance();
   // A session's theme is the setting with its profile's override. One object per override, kept until the setting changes,
@@ -105,17 +125,22 @@ export function LiveApp() {
   // Close, reopen, rename, reorder and go to: see sessionActions. The class reads the latest list through this ref.
   // Only the expanded sidebar has rows to rename (MainWindow shows the rail or nothing below that).
   const sidebarExpanded = sidebarMode(width, "expanded") === "expanded";
-  const context = useRef({ endpoint, infos, selectedId, sidebarExpanded });
-  context.current = { endpoint, infos, selectedId, sidebarExpanded };
-  const selectRef = useRef(select);
-  selectRef.current = select;
-  const actions = useMemo(() => new SessionActions({ api: sessions, context: () => context.current, select: (id) => selectRef.current(id) }), []);
+  const context = useRef({ endpoint, infos, selectedId: focusedId, sidebarExpanded });
+  context.current = { endpoint, infos, selectedId: focusedId, sidebarExpanded };
+  const pickRef = useRef(pick);
+  pickRef.current = pick;
+  const actions = useMemo(() => new SessionActions({ api: sessions, context: () => context.current, select: (id) => pickRef.current(id) }), []);
+
+  // An empty focused pane takes the store's selection: closing the only open session, or a first start with a saved layout of nothing.
+  useEffect(() => {
+    if (settled && loaded && selectedId !== undefined && view.panes[view.active] === null && !view.panes.includes(selectedId)) dispatch({ type: "select", tabId: selectedId });
+  }, [settled, loaded, selectedId, view.panes, view.active, dispatch]);
   useEffect(() => () => actions.dispose(), [actions]);
   const { toast, closing, renaming, focusToken } = useSyncExternalStore(actions.subscribe, actions.getState);
   // A question about a session that is no longer the selected one, or is gone, has nothing left to ask.
   useEffect(() => {
-    if (closing !== null && (closing !== selectedId || !infos.some((i) => i.tab_id === closing))) actions.cancelClose();
-  }, [closing, selectedId, infos, actions]);
+    if (closing !== null && (closing !== focusedId || !infos.some((i) => i.tab_id === closing))) actions.cancelClose();
+  }, [closing, focusedId, infos, actions]);
   useEffect(() => {
     // The session went away, or the window shrank to a layout without the sidebar's rows.
     if (renaming !== null && (!sidebarExpanded || !infos.some((i) => i.tab_id === renaming))) actions.cancelRename({ refocus: false });
@@ -134,8 +159,8 @@ export function LiveApp() {
     return () => window.removeEventListener("keydown", onEscape, true);
   }, [barOpen, actions]);
 
-  const selectedRef = useRef(selectedId);
-  selectedRef.current = selectedId;
+  const selectedRef = useRef(focusedId);
+  selectedRef.current = focusedId;
   const jumpPrompt = useCallback((by: -1 | 1) => {
     const tabId = selectedRef.current;
     if (tabId !== undefined) setPromptJump({ token: ++jumpCount.current, by, tabId });
@@ -145,6 +170,34 @@ export function LiveApp() {
       announce(jumpWords(by, result));
     },
     [announce],
+  );
+
+  // The split view's shortcuts and commands. True when it was one of them.
+  const paneCommand = useCallback(
+    (shortcut: SessionShortcut | null): boolean => {
+      const v = viewRef.current;
+      switch (shortcut?.kind) {
+        case "split":
+          // A zoomed pane would hide the one being added.
+          if (v.zoomed !== null) dispatch({ type: "zoom" });
+          dispatch({ type: "split" });
+          return true;
+        case "zoom":
+          if (v.panes.length > 1 && (v.zoomed !== null || v.panes[v.active] !== null)) dispatch({ type: "zoom" });
+          return true;
+        case "nextPane":
+          dispatch({ type: "nextPane" });
+          return true;
+        case "nonePane":
+          // No terminal selected: the keys stop going to a program until a pane is chosen again.
+          if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
+          document.querySelector<HTMLElement>(".window__main")?.focus();
+          return true;
+        default:
+          return false;
+      }
+    },
+    [dispatch],
   );
 
   // The app's shortcuts work from anywhere, the terminal included; the terminal lets these keys through (TerminalView).
@@ -163,17 +216,22 @@ export function LiveApp() {
       if (shortcut.kind === "launcher") setLauncherOpen(true);
       else if (shortcut.kind === "palette") setOverlay("palette");
       else if (shortcut.kind === "prompt") jumpPrompt(shortcut.by);
-      else actions.handle(shortcut);
+      else if (!paneCommand(shortcut)) actions.handle(shortcut);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [os, launcherOpen, overlay, actions, jumpPrompt]);
+  }, [os, launcherOpen, overlay, actions, jumpPrompt, paneCommand]);
 
   // A palette row: a session to go to, the profiles page, or a command the window runs (LivePalette lists only those).
   const runFromPalette = (id: string) => {
     setOverlay(id === "profiles" || id === "appearance" ? id : null);
-    if (id.startsWith("session:")) return select(id.slice("session:".length));
+    if (id.startsWith("session:")) return pick(id.slice("session:".length));
+    // Palette-only commands. The menu opens after the palette has given the focus back, so it keeps the focus it takes.
+    if (id === "unsplit") return dispatch({ type: "remove", index: viewRef.current.active });
+    if (id === "layout") return void setTimeout(() => setLayoutMenu(true), 0);
     const shortcut = commandShortcut(id);
+    if (shortcut?.kind === "nonePane") return void setTimeout(() => paneCommand(shortcut), 0);
+    if (paneCommand(shortcut)) return;
     if (shortcut?.kind === "launcher") setLauncherOpen(true);
     else if (shortcut?.kind === "prompt") jumpPrompt(shortcut.by);
     // After the palette has given focus back, so a rename box or the terminal keeps the focus it is given.
@@ -184,7 +242,7 @@ export function LiveApp() {
 
   const started = (created: CreateSessionResponse, text: string) => {
     setStartingTexts((t) => ({ ...t, [created.tab_id]: text }));
-    select(created.tab_id);
+    pick(created.tab_id);
     setLauncherOpen(false);
   };
 
@@ -198,7 +256,7 @@ export function LiveApp() {
           placeholder={startingTexts[row.id]}
           onOutput={() => setStartingTexts((t) => without(t, row.id))}
           onSize={onSize}
-          autoFocus={!launcherOpen && overlay === null}
+          autoFocus={!launcherOpen && overlay === null && row.id === focusedId}
           visible={shown}
           focusToken={focusToken}
           promptJump={promptJump?.tabId === row.id ? promptJump : undefined}
@@ -207,7 +265,7 @@ export function LiveApp() {
           font={terminalFont}
         />
       ) : null,
-    [endpoint, startingTexts, onSize, launcherOpen, overlay, focusToken, promptJump, onPromptJump, themeFor, overrideOf, terminalFont],
+    [endpoint, startingTexts, onSize, launcherOpen, overlay, focusedId, focusToken, promptJump, onPromptJump, themeFor, overrideOf, terminalFont],
   );
 
   if (error) {
@@ -219,13 +277,25 @@ export function LiveApp() {
   }
   return (
     <div ref={ref} className="live-app">
-      {endpoint && (
+      {endpoint && settled && loaded && (
         <MainWindow
           width={width}
           height={height}
-          layout="default"
+          layout={view.panes.length > 1 ? "split" : "default"}
+          paneIds={view.panes}
+          activePane={view.active}
+          zoomedPane={view.zoomed ?? undefined}
+          arrangement={(view.arrangement ?? undefined) as Arrangement | undefined}
+          ratios={ratiosOf(view)}
+          layoutMenu={layoutMenu}
+          onLayoutMenu={setLayoutMenu}
+          onLayout={(count, arrangement) => {
+            if (count !== viewRef.current.panes.length) dispatch({ type: "count", count });
+            dispatch({ type: "arrange", arrangement });
+          }}
+          onPane={dispatch}
           rows={rows}
-          selectedId={selectedId}
+          selectedId={focusedId}
           requests={[]}
           ports={[]}
           footer={null}
@@ -240,7 +310,7 @@ export function LiveApp() {
           onRename={(id, name) => void actions.commitRename(id, name)}
           onRenameCancel={(opts) => actions.cancelRename(opts)}
           onReorder={(ids) => actions.reorder(ids)}
-          onSelect={select}
+          onSelect={pick}
           onPalette={() => setOverlay("palette")}
         />
       )}

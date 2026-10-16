@@ -10,7 +10,14 @@ export type SessionShortcut =
   | { kind: "rename" }
   | { kind: "goto"; number: number }
   | { kind: "move"; by: -1 | 1 }
-  | { kind: "prompt"; by: -1 | 1 };
+  | { kind: "prompt"; by: -1 | 1 }
+  /** Add a pane (Ctrl+Shift+D). */
+  | { kind: "split" }
+  /** Zoom the focused pane, or restore the panes (Ctrl+Shift+P). */
+  | { kind: "zoom" }
+  /** The next terminal on screen, and selecting no terminal: the navigation modifier with Tab and Backspace. */
+  | { kind: "nextPane" }
+  | { kind: "nonePane" };
 
 /** Escape while the busy-close bar is up cancels it, even with focus in the terminal (where the window takes the key first). */
 export function cancelsCloseBar(e: { key: string; ctrlKey: boolean; shiftKey: boolean; altKey: boolean; metaKey: boolean; isComposing?: boolean }, barOpen: boolean): boolean {
@@ -42,6 +49,14 @@ export function commandShortcut(id: string): SessionShortcut | null {
       return { kind: "prompt", by: -1 };
     case "prompt-next":
       return { kind: "prompt", by: 1 };
+    case "split":
+      return { kind: "split" };
+    case "zoom-pane":
+      return { kind: "zoom" };
+    case "nav-next-pane":
+      return { kind: "nextPane" };
+    case "nav-none":
+      return { kind: "nonePane" };
   }
   const n = FOCUS_SESSION.exec(id)?.[1];
   return n === undefined ? null : { kind: "goto", number: Number(n) };
