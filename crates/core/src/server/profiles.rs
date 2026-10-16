@@ -3,7 +3,7 @@ use crate::profiles::store;
 use axum::Json;
 use axum::extract::State;
 use axum::http::StatusCode;
-use marshell_protocol::api::{Profile, ProfilesDoc};
+use marshell_protocol::api::{IntegrationInfo, Profile, ProfilesDoc};
 
 pub async fn get(State(st): State<AppState>) -> Json<ProfilesDoc> {
     Json(st.0.profiles.lock().unwrap().clone())
@@ -12,6 +12,14 @@ pub async fn get(State(st): State<AppState>) -> Json<ProfilesDoc> {
 /// The shells detection found, as they were found. The profiles page resets an edited one to these.
 pub async fn detected(State(st): State<AppState>) -> Json<Vec<Profile>> {
     Json(st.0.detected.clone())
+}
+
+/// Whether shell integration applies to this (possibly unsaved) profile, and the script it runs.
+pub async fn integration(State(st): State<AppState>, Json(profile): Json<Profile>) -> Json<IntegrationInfo> {
+    let dir = st.0.shell_dir.clone();
+    Json(crate::shell::describe(&profile, dir.as_deref(), &|k| {
+        std::env::var(k).ok()
+    }))
 }
 
 pub async fn put(

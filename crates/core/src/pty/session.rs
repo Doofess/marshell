@@ -192,7 +192,11 @@ impl Session {
             }
         }
         // Scan the raw bytes: the DSR filter may hold some back, but marks never contain ESC[6n.
-        let marks = if self.mark_callback.is_some() { out.marks.scan(bytes) } else { Vec::new() };
+        let marks = if self.mark_callback.is_some() {
+            out.marks.scan(bytes)
+        } else {
+            Vec::new()
+        };
         out.screen.process(&pass);
         out.buf.push(&pass);
         drop(out);

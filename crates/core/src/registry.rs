@@ -5,6 +5,7 @@
 use std::collections::VecDeque;
 use std::sync::Mutex;
 
+use crate::pty::Mark;
 use marshell_protocol::api::{CommandState, SessionInfo, SessionState, SessionsSnapshot};
 use tokio::sync::watch;
 
@@ -117,6 +118,32 @@ impl Registry {
         let mut state = self.state.lock().unwrap();
         if let Some(entry) = state.open.iter_mut().find(|e| e.info.tab_id == tab_id) {
             entry.info.state = SessionState::Exited { code };
+            self.tx.send_replace(state.snapshot());
+        }
+    }
+
+    /// Folds a shell-integration mark into the tab's command state. Marks for
+    /// an exited or unknown tab are ignored. Broadcasts only on a change.
+    pub fn mark(&self, tab_id: &str, mark: Mark) {
+        let mut state = self.state.lock().unwrap();
+        let Some(entry) = state.open.iter_mut().find(|e| e.info.tab_id == tab_id) else {
+            return;
+        };
+        if entry.info.state != SessionState::Running {
+            return;
+        }
+        let last_exit = match entry.info.command {
+            CommandState::Prompt { last_exit } => last_exit,
+            _ => None,
+        };
+        let next = match mark {
+            Mark::Executed => CommandState::Running,
+            Mark::Finished(Some(code)) => CommandState::Prompt { last_exit: Some(code) },
+            Mark::Finished(None) | Mark::PromptStart => CommandState::Prompt { last_exit },
+            Mark::CommandStart => return,
+        };
+        if entry.info.command != next {
+            entry.info.command = next;
             self.tx.send_replace(state.snapshot());
         }
     }
@@ -326,6 +353,60 @@ mod tests {
         assert_eq!(rx.borrow_and_update().sessions.len(), 1);
         reg.mark_exited("a", 0);
         assert!(rx.has_changed().unwrap());
+    }
+
+    fn command(reg: &Registry) -> CommandState {
+        reg.snapshot().sessions[0].command.clone()
+    }
+
+    #[test]
+    fn mark_folds_into_command_state() {
+        let reg = Registry::new();
+        reg.reserve("a", relaunch("A"));
+        assert_eq!(command(&reg), CommandState::Unknown);
+        reg.mark("a", Mark::Finished(None));
+        assert_eq!(command(&reg), CommandState::Prompt { last_exit: None });
+        reg.mark("a", Mark::PromptStart);
+        assert_eq!(command(&reg), CommandState::Prompt { last_exit: None });
+        reg.mark("a", Mark::CommandStart);
+        assert_eq!(command(&reg), CommandState::Prompt { last_exit: None });
+        reg.mark("a", Mark::Executed);
+        assert_eq!(command(&reg), CommandState::Running);
+        reg.mark("a", Mark::Finished(Some(2)));
+        assert_eq!(command(&reg), CommandState::Prompt { last_exit: Some(2) });
+        reg.mark("a", Mark::PromptStart);
+        assert_eq!(command(&reg), CommandState::Prompt { last_exit: Some(2) });
+        // An empty Enter (D without a code) keeps the last code.
+        reg.mark("a", Mark::Finished(None));
+        assert_eq!(command(&reg), CommandState::Prompt { last_exit: Some(2) });
+        reg.mark("a", Mark::Executed);
+        reg.mark("a", Mark::Finished(Some(0)));
+        assert_eq!(command(&reg), CommandState::Prompt { last_exit: Some(0) });
+    }
+
+    #[test]
+    fn marks_after_exit_are_ignored() {
+        let reg = Registry::new();
+        reg.reserve("a", relaunch("A"));
+        reg.mark("a", Mark::Executed);
+        reg.mark_exited("a", 1);
+        reg.mark("a", Mark::Finished(Some(1)));
+        assert_eq!(command(&reg), CommandState::Running);
+        reg.mark("missing", Mark::PromptStart);
+    }
+
+    #[test]
+    fn unchanged_state_does_not_broadcast() {
+        let reg = Registry::new();
+        reg.reserve("a", relaunch("A"));
+        let mut rx = reg.subscribe();
+        reg.mark("a", Mark::PromptStart);
+        assert!(rx.has_changed().unwrap());
+        rx.borrow_and_update();
+        reg.mark("a", Mark::PromptStart);
+        reg.mark("a", Mark::CommandStart);
+        reg.mark("a", Mark::Finished(None));
+        assert!(!rx.has_changed().unwrap());
     }
 
     #[test]

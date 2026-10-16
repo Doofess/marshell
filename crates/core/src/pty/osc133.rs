@@ -61,7 +61,10 @@ impl Osc133Scanner {
 
 enum End {
     /// The body is `body_len` bytes; the body plus its terminator is `total`.
-    Found { body_len: usize, total: usize },
+    Found {
+        body_len: usize,
+        total: usize,
+    },
     /// Another escape sequence began at this offset, cancelling the OSC.
     Aborted(usize),
     Incomplete,
@@ -70,10 +73,18 @@ enum End {
 fn terminator(after: &[u8]) -> End {
     for (j, &b) in after.iter().enumerate() {
         match b {
-            0x07 => return End::Found { body_len: j, total: j + 1 },
+            0x07 => {
+                return End::Found {
+                    body_len: j,
+                    total: j + 1,
+                };
+            }
             0x1b => {
                 return match after.get(j + 1) {
-                    Some(b'\\') => End::Found { body_len: j, total: j + 2 },
+                    Some(b'\\') => End::Found {
+                        body_len: j,
+                        total: j + 2,
+                    },
                     Some(_) => End::Aborted(j),
                     None => End::Incomplete,
                 };
@@ -116,7 +127,15 @@ mod tests {
     #[test]
     fn finds_all_four_marks() {
         let out = scan(b"\x1b]133;A\x07$ \x1b]133;B\x1b\\ls\r\n\x1b]133;C\x07files\x1b]133;D;0\x1b\\");
-        assert_eq!(out, [Mark::PromptStart, Mark::CommandStart, Mark::Executed, Mark::Finished(Some(0))]);
+        assert_eq!(
+            out,
+            [
+                Mark::PromptStart,
+                Mark::CommandStart,
+                Mark::Executed,
+                Mark::Finished(Some(0))
+            ]
+        );
     }
 
     #[test]

@@ -99,7 +99,13 @@ fn env_or_outer(
         .env
         .iter()
         .rev()
-        .find(|(k, _)| if ignore_case { k.eq_ignore_ascii_case(name) } else { k == name })
+        .find(|(k, _)| {
+            if ignore_case {
+                k.eq_ignore_ascii_case(name)
+            } else {
+                k == name
+            }
+        })
         .map(|(_, v)| v.clone())
         .or_else(|| outer_env(name))
 }
@@ -179,11 +185,7 @@ fn build(kind: Kind, profile: &Profile, dir: &Path, outer_env: &dyn Fn(&str) -> 
 
 /// The argv and env that start a plain shell session from `profile` with integration.
 /// Err is the reason shown on the profile page; the session then runs the profile as written.
-pub fn integrate(
-    profile: &Profile,
-    dir: &Path,
-    outer_env: &dyn Fn(&str) -> Option<String>,
-) -> Result<Applied, String> {
+pub fn integrate(profile: &Profile, dir: &Path, outer_env: &dyn Fn(&str) -> Option<String>) -> Result<Applied, String> {
     Ok(build(kind(profile)?, profile, dir, outer_env))
 }
 
@@ -288,14 +290,20 @@ mod tests {
         let mut p = p;
         p.env.push(("prompt".into(), "> ".into()));
         let applied = integrate(&p, Path::new(DIR), &outer).unwrap();
-        assert_eq!(env_value(&applied, "PROMPT"), Some(r"$e]133;D$e\$e]133;A$e\$e]9;9;$P$e\> "));
+        assert_eq!(
+            env_value(&applied, "PROMPT"),
+            Some(r"$e]133;D$e\$e]133;A$e\$e]9;9;$P$e\> ")
+        );
     }
 
     #[test]
     fn cmd_default_prompt() {
         let p = profile(&["cmd.exe"], ShellFamily::Cmd);
         let applied = integrate(&p, Path::new(DIR), &no_env).unwrap();
-        assert_eq!(env_value(&applied, "PROMPT"), Some(r"$e]133;D$e\$e]133;A$e\$e]9;9;$P$e\$P$G"));
+        assert_eq!(
+            env_value(&applied, "PROMPT"),
+            Some(r"$e]133;D$e\$e]133;A$e\$e]9;9;$P$e\$P$G")
+        );
     }
 
     #[test]
@@ -304,7 +312,10 @@ mod tests {
         let wrapped = r"$e]133;D$e\$e]133;A$e\$e]9;9;$P$e\$P$G".to_string();
         let outer = move |name: &str| (name == "PROMPT").then(|| wrapped.clone());
         let applied = integrate(&p, Path::new(DIR), &outer).unwrap();
-        assert_eq!(env_value(&applied, "PROMPT"), Some(r"$e]133;D$e\$e]133;A$e\$e]9;9;$P$e\$P$G"));
+        assert_eq!(
+            env_value(&applied, "PROMPT"),
+            Some(r"$e]133;D$e\$e]133;A$e\$e]9;9;$P$e\$P$G")
+        );
     }
 
     #[test]
@@ -333,7 +344,10 @@ mod tests {
         let applied = integrate(&p, Path::new("/home/me/.marshell/shell"), &outer).unwrap();
         assert_eq!(applied.argv, ["/bin/zsh", "-l"]);
         assert_eq!(env_value(&applied, "ZDOTDIR"), Some("/home/me/.marshell/shell/zsh"));
-        assert_eq!(env_value(&applied, "MARSHELL_USER_ZDOTDIR"), Some("/home/me/.config/zsh"));
+        assert_eq!(
+            env_value(&applied, "MARSHELL_USER_ZDOTDIR"),
+            Some("/home/me/.config/zsh")
+        );
         let applied = integrate(&p, Path::new("/home/me/.marshell/shell"), &no_env).unwrap();
         assert_eq!(env_value(&applied, "MARSHELL_USER_ZDOTDIR"), Some(""));
     }
@@ -344,7 +358,12 @@ mod tests {
         let applied = integrate(&p, Path::new("/home/o'b/.marshell/shell"), &no_env).unwrap();
         assert_eq!(
             applied.argv,
-            ["/usr/bin/fish", "-l", "-C", r"source '/home/o'\''b/.marshell/shell/marshell.fish'"]
+            [
+                "/usr/bin/fish",
+                "-l",
+                "-C",
+                r"source '/home/o'\''b/.marshell/shell/marshell.fish'"
+            ]
         );
     }
 
@@ -353,7 +372,10 @@ mod tests {
         let p = profile(&["wsl.exe", "-d", "Ubuntu"], ShellFamily::Wsl);
         let dir = r"C:\Users\Home Office\.marshell\shell";
         let applied = integrate(&p, Path::new(dir), &no_env).unwrap();
-        assert_eq!(applied.argv[..6], ["wsl.exe", "-d", "Ubuntu", "--exec", "/bin/sh", "-c"]);
+        assert_eq!(
+            applied.argv[..6],
+            ["wsl.exe", "-d", "Ubuntu", "--exec", "/bin/sh", "-c"]
+        );
         let dispatcher = &applied.argv[6];
         assert!(
             dispatcher.contains(r"wslpath -u 'C:\Users\Home Office\.marshell\shell'"),
@@ -382,14 +404,20 @@ mod tests {
         );
         let info = describe(&p, Some(Path::new(DIR)), &no_env);
         assert!(!info.applies);
-        assert_eq!(info.reason.as_deref(), Some("Shell integration is off for this profile."));
+        assert_eq!(
+            info.reason.as_deref(),
+            Some("Shell integration is off for this profile.")
+        );
     }
 
     #[test]
     fn describe_without_dir_and_with_script() {
         let p = profile(&["pwsh.exe"], ShellFamily::PowerShell);
         let info = describe(&p, None, &no_env);
-        assert_eq!(info.reason.as_deref(), Some("The integration scripts could not be written."));
+        assert_eq!(
+            info.reason.as_deref(),
+            Some("The integration scripts could not be written.")
+        );
         let info = describe(&p, Some(Path::new(DIR)), &no_env);
         assert!(info.applies && info.reason.is_none());
         assert!(info.script.unwrap().contains("133;A"));
