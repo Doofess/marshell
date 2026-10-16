@@ -52,6 +52,7 @@ export const COMMANDS: Command[] = [
   { id: "close", label: "Close session", group: "Sessions", binding: { code: "KeyW" } },
   { id: "reopen", label: "Reopen closed session", group: "Sessions", binding: { code: "KeyT", alt: true } },
   { id: "rename", label: "Rename session", group: "Sessions", binding: { code: "F2", plain: true } },
+  { id: "resume", label: "Resume this session", group: "Sessions" },
   { id: "move-up", label: "Move session up the list", group: "Sessions", binding: { code: "ArrowUp", alt: true, shift: true } },
   { id: "move-down", label: "Move session down the list", group: "Sessions", binding: { code: "ArrowDown", alt: true, shift: true } },
   // Session modes, the same five for every agent CLI (docs/PLAN.md "Session modes"); unbound, so a person picks the keys.

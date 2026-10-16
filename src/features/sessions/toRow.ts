@@ -25,6 +25,9 @@ export function lastSegment(path: string): string {
   return path.split(/[\\/]+/).filter(Boolean).pop() ?? path;
 }
 
+/** The row phrase of a tab with no process: it was open when the app last closed. The Resume strip tells it from an Exited tab by this. */
+export const ENDED_PHRASE = "Ended last time";
+
 /**
  * The sidebar row for one open session the core lists. Before the hooks arrive (phase 3) the core knows nothing about
  * what an agent is doing, so a running agent is "limited". A shell row's status comes from its prompt marks: "working"
@@ -34,7 +37,7 @@ export function toRow(info: SessionInfo, profiles: Profile[]): RowModel {
   const profile = profiles.find((p) => p.id === info.profile_id);
   const agent: SessionKind = info.agent === null ? shellKind(profile) : isAgentId(info.agent) ? info.agent : "generic";
   const base = { id: info.tab_id, number: info.number, name: info.name, project: lastSegment(info.cwd), agent };
-  if (info.state.kind === "ended") return { ...base, status: "ended", phrase: "Ended last time" };
+  if (info.state.kind === "ended") return { ...base, status: "ended", phrase: ENDED_PHRASE };
   if (info.state.kind === "exited") return { ...base, status: "ended", phrase: `Exited with code ${info.state.code}` };
   if (info.agent !== null) return { ...base, status: "limited", phrase: "Status arrives with hooks" };
   const command = info.command;

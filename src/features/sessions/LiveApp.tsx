@@ -21,13 +21,20 @@ import { fillsEmptyPane, focusedIndex, railToggle, ratiosOf, sidebarPrefOf } fro
 import { CloseBar } from "./CloseBar";
 import { LiveLauncher } from "./LiveLauncher";
 import { LivePalette } from "./LivePalette";
+import { ResumeBar } from "./ResumeBar";
+import { resumeCommand } from "./resumeCommand";
 import { SessionActions, closeBarText } from "./sessionActions";
 import { Toast } from "./Toast";
 import { pruneClosed, without, type StartingTexts } from "./startingTexts";
+import { ENDED_PHRASE } from "./toRow";
 import { useSessions } from "./useSessions";
 
 /** The size a new session starts at until a terminal has been measured. */
 const DEFAULT_SIZE = { cols: 120, rows: 30 };
+/** The palette leaves Resume out unless the focused session is Ended or Exited. A constant, so the palette's command list is not rebuilt for it. */
+const HIDE_RESUME = ["resume"];
+/** The core's id for a session started outside any saved shell profile; it never has a profile to lose. */
+const CUSTOM_PROFILE = "custom";
 
 /** The size of the element, kept up to date with a ResizeObserver. Starts at the window's size. */
 function useElementSize() {
@@ -138,7 +145,7 @@ export function LiveApp() {
   context.current = { endpoint, infos, selectedId: focusedId, sidebarExpanded };
   const pickRef = useRef(pick);
   pickRef.current = pick;
-  const actions = useMemo(() => new SessionActions({ api: sessions, context: () => context.current, select: (id) => pickRef.current(id) }), []);
+  const actions = useMemo(() => new SessionActions({ api: sessions, context: () => context.current, select: (id) => pickRef.current(id), size: () => size.current }), []);
 
   // A window of one empty pane takes the store's selection (a first start, or the only open session closed and another opened).
   // With several panes a closed session's pane stays empty.
@@ -146,7 +153,19 @@ export function LiveApp() {
     if (settled && loaded && fillsEmptyPane(view.panes, selectedId)) dispatch({ type: "select", tabId: selectedId! });
   }, [settled, loaded, selectedId, view.panes, dispatch]);
   useEffect(() => () => actions.dispose(), [actions]);
-  const { toast, closing, renaming, focusToken } = useSyncExternalStore(actions.subscribe, actions.getState);
+  const { toast, closing, renaming, focusToken, resuming, resumed } = useSyncExternalStore(actions.subscribe, actions.getState);
+  // The Ended or Exited row each tab had when Resume was pressed. While the request is out the core already says Running, but the strip
+  // (and the button that has the focus) must stay put until the answer comes, so it is drawn from this.
+  const resumeRows = useRef(new Map<string, RowModel>());
+  const startResume = useCallback(
+    (row: RowModel) => {
+      if (row.status === "ended") resumeRows.current.set(row.id, row);
+      void actions.resume(row.id);
+    },
+    [actions],
+  );
+  const focusedRow = rows.find((r) => r.id === focusedId);
+  const resumable = focusedRow?.status === "ended";
   // A question about a session that is no longer the selected one, or is gone, has nothing left to ask.
   useEffect(() => {
     if (closing !== null && (closing !== focusedId || !infos.some((i) => i.tab_id === closing))) actions.cancelClose();
@@ -250,6 +269,7 @@ export function LiveApp() {
     // Palette-only commands. The menu opens after the palette has given the focus back, so it keeps the focus it takes.
     if (id === "unsplit") return dispatch({ type: "remove", index: focusIdxRef.current });
     if (id === "layout") return void setTimeout(() => setLayoutMenu(true), 0);
+    if (id === "resume") return void (focusedRow && startResume(focusedRow));
     const shortcut = commandShortcut(id);
     if (shortcut?.kind === "nonePane") return void setTimeout(() => paneCommand(shortcut), 0);
     if (paneCommand(shortcut)) return;
@@ -267,26 +287,53 @@ export function LiveApp() {
     setLauncherOpen(false);
   };
 
+  // One tab's content, in the single window and in every split pane: its terminal, and under it the Resume strip while it is Ended or
+  // Exited. An Ended tab has no terminal at all. The wrapper is the same for every state, so a session that exits keeps its terminal
+  // (and its scrollback) mounted when the strip appears.
   const renderTerminal = useCallback(
-    (row: RowModel, shown = true) =>
-      endpoint ? (
-        <TerminalView
-          key={row.id}
-          endpoint={endpoint}
-          tabId={row.id}
-          placeholder={startingTexts[row.id]}
-          onOutput={() => setStartingTexts((t) => without(t, row.id))}
-          onSize={onSize}
-          autoFocus={!launcherOpen && overlay === null && row.id === focusedId}
-          visible={shown}
-          focusToken={focusToken}
-          promptJump={promptJump?.tabId === row.id ? promptJump : undefined}
-          onPromptJump={(result) => promptJump && onPromptJump(promptJump.by, result)}
-          theme={themeFor(overrideOf(row.id))}
-          font={terminalFont}
-        />
-      ) : null,
-    [endpoint, startingTexts, onSize, launcherOpen, overlay, focusedId, focusToken, promptJump, onPromptJump, themeFor, overrideOf, terminalFont],
+    (row: RowModel, shown = true) => {
+      if (!endpoint) return null;
+      // While Resume is out the core already says Running, but the strip stays and the terminal waits (see `resuming` in sessionActions).
+      const held = resuming.includes(row.id) ? resumeRows.current.get(row.id) : undefined;
+      const bar = held ?? (row.status === "ended" ? row : undefined);
+      const hasTerminal = bar === undefined || bar.phrase !== ENDED_PHRASE;
+      const info = infos.find((i) => i.tab_id === row.id);
+      const profile = profiles.find((p) => p.id === info?.profile_id);
+      return (
+        <div className="resume-pane">
+          {hasTerminal && (
+            <div className="resume-pane__terminal">
+              <TerminalView
+                // A resumed tab gets a new terminal, attached after the response (the key moves then, not at Running).
+                key={`${row.id}:${resumed[row.id] ?? 0}`}
+                endpoint={endpoint}
+                tabId={row.id}
+                placeholder={startingTexts[row.id]}
+                onOutput={() => setStartingTexts((t) => without(t, row.id))}
+                onSize={onSize}
+                autoFocus={!launcherOpen && overlay === null && row.id === focusedId}
+                visible={shown}
+                focusToken={focusToken}
+                promptJump={promptJump?.tabId === row.id ? promptJump : undefined}
+                onPromptJump={(result) => promptJump && onPromptJump(promptJump.by, result)}
+                theme={themeFor(overrideOf(row.id))}
+                font={terminalFont}
+              />
+            </div>
+          )}
+          {bar && info && (
+            <ResumeBar
+              row={bar}
+              command={resumeCommand(info.agent, profile?.name ?? info.profile_id)}
+              folder={info.cwd}
+              disabledReason={profile || info.profile_id === CUSTOM_PROFILE ? undefined : "Its shell profile was removed."}
+              onResume={() => startResume(bar)}
+            />
+          )}
+        </div>
+      );
+    },
+    [endpoint, resuming, resumed, infos, profiles, startResume, startingTexts, onSize, launcherOpen, overlay, focusedId, focusToken, promptJump, onPromptJump, themeFor, overrideOf, terminalFont],
   );
 
   if (error) {
@@ -340,7 +387,7 @@ export function LiveApp() {
           onPalette={() => setOverlay("palette")}
         />
       )}
-      {overlay === "palette" && os && <LivePalette sessions={paletteSessions(rows)} os={os} labels={paletteLabels} onRun={runFromPalette} onClose={() => setOverlay(null)} />}
+      {overlay === "palette" && os && <LivePalette sessions={paletteSessions(rows)} os={os} labels={paletteLabels} hidden={resumable ? undefined : HIDE_RESUME} onRun={runFromPalette} onClose={() => setOverlay(null)} />}
       {overlay === "profiles" && endpoint && <ProfilesDialog endpoint={endpoint} onClose={() => setOverlay(null)} onNotice={announce} onSaved={reloadProfiles} />}
       {overlay === "appearance" && <AppearanceDialog onClose={() => setOverlay(null)} onNotice={announce} />}
       {launcherOpen && (

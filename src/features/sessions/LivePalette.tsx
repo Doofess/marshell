@@ -4,8 +4,8 @@ import { COMMANDS, type Os } from "../../lib/keymap";
 import { Palette } from "../palette/Palette";
 import type { PaletteSession } from "../palette/fixtures";
 
-/** Commands the window runs from the palette that have no key of their own: remove the focused pane, and open the layout menu. */
-const PALETTE_ONLY = ["profiles", "appearance", "unsplit", "layout"];
+/** Commands the window runs from the palette that have no key of their own: remove the focused pane, open the layout menu, and resume an Ended or Exited session. */
+const PALETTE_ONLY = ["profiles", "appearance", "unsplit", "layout", "resume"];
 
 /**
  * The commands the live window runs: the ones with a session shortcut, the pane commands, and the shell profiles and Appearance pages. Listing any other would
@@ -18,9 +18,13 @@ export const LIVE_COMMANDS = COMMANDS.filter((c) => PALETTE_ONLY.includes(c.id) 
  * does (`onRun` gets a command id, or `session:<id>`). Mounted only while open. Focus goes to the box and, on close, back to
  * where it was (usually the terminal).
  */
-export function LivePalette({ sessions, os, labels, onRun, onClose }: { sessions: PaletteSession[]; os: Os; labels?: Record<string, string>; onRun: (id: string) => void; onClose: () => void }) {
+export function LivePalette({ sessions, os, labels, hidden, onRun, onClose }: { sessions: PaletteSession[]; os: Os; labels?: Record<string, string>; hidden?: readonly string[]; onRun: (id: string) => void; onClose: () => void }) {
   // A command whose words depend on the window's state (the sidebar command names what it will do next) gets its label from the window.
-  const commands = useMemo(() => (labels ? LIVE_COMMANDS.map((c) => (labels[c.id] === undefined ? c : { ...c, label: labels[c.id]! })) : LIVE_COMMANDS), [labels]);
+  // One that has nothing to do right now (Resume, with a running session focused) is left out, not listed as a row that does nothing.
+  const commands = useMemo(() => {
+    const shown = hidden?.length ? LIVE_COMMANDS.filter((c) => !hidden.includes(c.id)) : LIVE_COMMANDS;
+    return labels ? shown.map((c) => (labels[c.id] === undefined ? c : { ...c, label: labels[c.id]! })) : shown;
+  }, [labels, hidden]);
   const [query, setQuery] = useState("");
   const [activeIndex, setActiveIndex] = useState(0);
   const root = useRef<HTMLDivElement>(null);
