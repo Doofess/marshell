@@ -7,7 +7,7 @@ use crate::server::AppState;
 use crate::store::{self, Versioned};
 use marshell_protocol::api::{
     ChangedFile, MergeOutcome, MergePlan, MergeRequest, RemovePlan, RemoveRequest, SessionState, Task, TaskChanges,
-    TaskPlan, TaskPlanRequest,
+    TaskCreateRequest, TaskPlan,
 };
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -149,9 +149,9 @@ pub fn plan_create(home: &Path, cwd: &Path, name: &str, _now_ms: u64) -> Result<
     Ok((plan, vec![step]))
 }
 
-/// Makes the worktree and records the task. Plans again first, so the name is free right now.
-/// Nothing is recorded when git fails.
-pub fn create(home: &Path, req: &TaskPlanRequest, now_ms: u64) -> Result<Task, String> {
+/// Makes the worktree and records the task. Plans again first, so the name is free right now, and
+/// refuses when that plan's commands aren't the ones the user was shown. Nothing is recorded when git fails.
+pub fn create(home: &Path, req: &TaskCreateRequest, now_ms: u64) -> Result<Task, String> {
     let _guard = TASKS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     // A file we can't read (broken, or from a newer Marshell) stops us before anything is made.
     let mut doc = store::read::<FileDoc>(&file(home))
@@ -159,6 +159,9 @@ pub fn create(home: &Path, req: &TaskPlanRequest, now_ms: u64) -> Result<Task, S
         .unwrap_or_default();
 
     let (plan, steps) = plan_create(home, Path::new(&req.cwd), &req.name, now_ms)?;
+    if plan.commands != req.commands {
+        return Err(CHANGED.into());
+    }
     git::run_steps(&steps)
         .map_err(|failure| format!("Couldn't create the worktree. Git said: {}", git::said(&failure.output)))?;
 

@@ -27,8 +27,8 @@ describe("tasks api", () => {
 
     const create = respond({ id: "t1", path: "C:/w" });
     vi.stubGlobal("fetch", create);
-    await expect(tasksApi.create(endpoint, { cwd: "C:/a", name: "x" })).resolves.toEqual({ id: "t1", path: "C:/w" });
-    expect(call(create)).toMatchObject({ url: "http://127.0.0.1:9/v1/tasks", method: "POST", body: { cwd: "C:/a", name: "x" } });
+    await expect(tasksApi.create(endpoint, { cwd: "C:/a", name: "x", commands: ["git y"] })).resolves.toEqual({ id: "t1", path: "C:/w" });
+    expect(call(create)).toMatchObject({ url: "http://127.0.0.1:9/v1/tasks", method: "POST", body: { cwd: "C:/a", name: "x", commands: ["git y"] } });
   });
 
   it("reads changes and plans merge and remove, encoding the id", async () => {

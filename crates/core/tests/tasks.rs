@@ -5,7 +5,7 @@ use axum::http::{Request, StatusCode, header};
 use marshell_core::git::{GitStep, display, run};
 use marshell_core::server::{AppState, router};
 use marshell_core::{projects, tasks};
-use marshell_protocol::api::{MergeOutcome, MergeRequest, Profile, RemoveRequest, ShellFamily, TaskPlanRequest};
+use marshell_protocol::api::{MergeOutcome, MergeRequest, Profile, RemoveRequest, ShellFamily, TaskCreateRequest};
 use std::path::{Path, PathBuf};
 use tower::ServiceExt;
 
@@ -36,11 +36,18 @@ fn repo(parent: &Path) -> PathBuf {
     dir
 }
 
-fn request(cwd: &Path, name: &str) -> TaskPlanRequest {
-    TaskPlanRequest {
+fn request(cwd: &Path, name: &str, commands: Vec<String>) -> TaskCreateRequest {
+    TaskCreateRequest {
         cwd: cwd.to_string_lossy().into_owned(),
         name: name.into(),
+        commands,
     }
+}
+
+/// Plans the task, then creates it with the commands that plan showed, as the launcher does.
+fn make(home: &Path, repo: &Path, name: &str, now_ms: u64) -> Result<marshell_protocol::api::Task, String> {
+    let (plan, _) = tasks::plan_create(home, repo, name, now_ms).unwrap();
+    tasks::create(home, &request(repo, name, plan.commands), now_ms)
 }
 
 #[test]
@@ -113,7 +120,7 @@ fn plan_falls_back_and_deduplicates() {
     assert_eq!(plan.name, "task-1");
 
     // With task-1 in the registry the next is task-2.
-    let first = tasks::create(&home, &request(&repo, "🙂"), 5).unwrap();
+    let first = make(&home, &repo, "🙂", 5).unwrap();
     assert_eq!(first.name, "task-1");
     let (plan, _) = tasks::plan_create(&home, &repo, "🙂", 6).unwrap();
     assert_eq!(plan.name, "task-2");
@@ -155,7 +162,7 @@ fn create_makes_the_worktree_and_records_it() {
     let repo = repo(&base(&tmp));
     let home = base(&tmp).join("home");
 
-    let task = tasks::create(&home, &request(&repo, "Fix login"), 42).unwrap();
+    let task = make(&home, &repo, "Fix login", 42).unwrap();
     let path = PathBuf::from(&task.path);
     assert!(path.join("a.txt").exists());
     let head = run(&path, &["rev-parse", "--abbrev-ref", "HEAD"]).unwrap();
@@ -183,7 +190,7 @@ fn create_runs_exactly_the_planned_steps() {
     assert_eq!(shown, plan.commands);
 
     // `create` plans again and runs that plan: what it made is what was shown.
-    let task = tasks::create(&home, &request(&repo, "Fix login"), 1).unwrap();
+    let task = make(&home, &repo, "Fix login", 1).unwrap();
     assert_eq!(task.path, plan.path);
     assert_eq!(task.branch, plan.branch);
     assert!(
@@ -206,9 +213,44 @@ fn failed_create_records_nothing() {
     std::fs::create_dir_all(home.join("worktrees")).unwrap();
     std::fs::write(home.join("worktrees").join("my repo"), "in the way").unwrap();
 
-    let err = tasks::create(&home, &request(&repo, "Fix login"), 1).unwrap_err();
+    let err = make(&home, &repo, "Fix login", 1).unwrap_err();
     assert!(err.starts_with("Couldn't create the worktree. Git said: "), "{err}");
     assert!(tasks::list(&home).is_empty());
+}
+
+#[test]
+fn create_runs_only_the_commands_that_were_shown() {
+    let tmp = spaced_tmp();
+    let repo = repo(&base(&tmp));
+    let home = base(&tmp).join("home");
+    let (shown, _) = tasks::plan_create(&home, &repo, "Fix login", 1).unwrap();
+
+    // The name was taken while the user read the command: the re-plan says fix-login-2, so nothing runs.
+    assert!(run(&repo, &["branch", "marshell/fix-login"]).unwrap().ok);
+    let err = tasks::create(&home, &request(&repo, "Fix login", shown.commands.clone()), 2).unwrap_err();
+    assert_eq!(err, CHANGED);
+    assert!(tasks::list(&home).is_empty());
+    assert!(!Path::new(&shown.path).exists());
+    assert!(!branch_exists(&repo, "marshell/fix-login-2"));
+
+    // Commands that were never shown are refused the same way.
+    let err = tasks::create(&home, &request(&repo, "Fix login", Vec::new()), 3).unwrap_err();
+    assert_eq!(err, CHANGED);
+    assert!(tasks::list(&home).is_empty());
+
+    // The fresh plan's commands go through.
+    let (again, _) = tasks::plan_create(&home, &repo, "Fix login", 4).unwrap();
+    let task = tasks::create(&home, &request(&repo, "Fix login", again.commands), 4).unwrap();
+    assert_eq!(task.branch, "marshell/fix-login-2");
+}
+
+fn branch_exists(repo: &Path, branch: &str) -> bool {
+    run(
+        repo,
+        &["rev-parse", "--verify", "--quiet", &format!("refs/heads/{branch}")],
+    )
+    .unwrap()
+    .ok
 }
 
 #[test]
@@ -216,7 +258,7 @@ fn a_task_cwd_records_its_repo_as_the_project() {
     let tmp = spaced_tmp();
     let repo = repo(&base(&tmp));
     let home = base(&tmp).join("home");
-    let task = tasks::create(&home, &request(&repo, "Fix login"), 1).unwrap();
+    let task = make(&home, &repo, "Fix login", 1).unwrap();
 
     projects::record(&home, Path::new(&task.path), 9).unwrap();
     let recent = projects::list(&home);
@@ -309,7 +351,7 @@ async fn session_info_carries_project() {
     let tmp = spaced_tmp();
     let repo = repo(&base(&tmp));
     let home = base(&tmp).join("home");
-    let task = tasks::create(&home, &request(&repo, "Fix login"), 1).unwrap();
+    let task = make(&home, &repo, "Fix login", 1).unwrap();
     let plain = base(&tmp).join("plain dir");
     std::fs::create_dir(&plain).unwrap();
 
@@ -340,7 +382,25 @@ async fn task_routes_plan_create_list_and_refuse() {
     assert_eq!(plan["branch"], "marshell/fix-login");
     assert_eq!(plan["commands"].as_array().unwrap().len(), 1);
 
-    let res = app.clone().oneshot(api("POST", "/v1/tasks", Some(body))).await.unwrap();
+    // Commands the user never saw: 409 with the changed reason, and nothing is made.
+    let mut unseen = body.clone();
+    unseen["commands"] = serde_json::json!(["git worktree add somewhere-else"]);
+    let res = app
+        .clone()
+        .oneshot(api("POST", "/v1/tasks", Some(unseen)))
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::CONFLICT);
+    assert_eq!(json_of(res).await["reason"], CHANGED);
+    assert!(tasks::list(&home).is_empty());
+
+    let mut shown = body.clone();
+    shown["commands"] = plan["commands"].clone();
+    let res = app
+        .clone()
+        .oneshot(api("POST", "/v1/tasks", Some(shown)))
+        .await
+        .unwrap();
     assert_eq!(res.status(), StatusCode::OK);
     let task = json_of(res).await;
     assert_eq!(task["path"], plan["path"]);
@@ -355,7 +415,7 @@ async fn task_routes_plan_create_list_and_refuse() {
     assert_eq!(tasks::list(&home).len(), 1);
 
     // Outside git: 409 with a reason.
-    let body = serde_json::json!({ "cwd": plain.to_string_lossy(), "name": "x" });
+    let body = serde_json::json!({ "cwd": plain.to_string_lossy(), "name": "x", "commands": [] });
     for route in ["/v1/tasks/plan", "/v1/tasks"] {
         let res = app
             .clone()
@@ -380,7 +440,7 @@ fn commit_all(dir: &Path, message: &str) {
 fn new_task(tmp: &tempfile::TempDir) -> (PathBuf, marshell_protocol::api::Task) {
     let repo = repo(&base(tmp));
     let home = base(tmp).join("home");
-    let task = tasks::create(&home, &request(&repo, "Fix login"), 1).unwrap();
+    let task = make(&home, &repo, "Fix login", 1).unwrap();
     (home, task)
 }
 
@@ -481,7 +541,7 @@ fn deleted_renamed_and_large_files_are_reported() {
     std::fs::write(repo.join("old.txt"), "keep me\nkeep me too\nand me\n").unwrap();
     commit_all(&repo, "more files");
     let home = base(&tmp).join("home");
-    let task = tasks::create(&home, &request(&repo, "Fix login"), 1).unwrap();
+    let task = make(&home, &repo, "Fix login", 1).unwrap();
     let dir = PathBuf::from(&task.path);
     std::fs::remove_file(dir.join("gone.txt")).unwrap();
     std::fs::rename(dir.join("old.txt"), dir.join("new.txt")).unwrap();
@@ -1744,7 +1804,7 @@ fn remove_finishes_when_the_folder_is_already_gone() {
     assert!(tasks::list(&home).is_empty());
 
     // Deleted by hand and already pruned: only the branch is left.
-    let again = tasks::create(&home, &request(&repo, "Second"), 2).unwrap();
+    let again = make(&home, &repo, "Second", 2).unwrap();
     std::fs::remove_dir_all(&again.path).unwrap();
     assert!(run(&repo, &["worktree", "prune"]).unwrap().ok);
     let (plan, _) = tasks::plan_remove(&again, 0);

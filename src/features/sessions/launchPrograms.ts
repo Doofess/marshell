@@ -4,9 +4,11 @@ import type { Profile } from "../../generated/Profile";
 import type { ProfilesDoc } from "../../generated/ProfilesDoc";
 import type { ProjectInfo } from "../../generated/ProjectInfo";
 import type { Task } from "../../generated/Task";
+import type { TaskCreateRequest } from "../../generated/TaskCreateRequest";
 import type { TaskPlanRequest } from "../../generated/TaskPlanRequest";
 import { ApiError } from "../../lib/api/client";
 import type { Project } from "../launcher/filter";
+import type { TaskConfirm } from "../launcher/Launcher";
 import { LAUNCH_PROGRAMS, isAgentProgram, programById, type LaunchProgram, type LauncherChoice, type ProgramId } from "../launcher/launchChoice";
 import { shellKind } from "./toRow";
 
@@ -70,9 +72,19 @@ export function wantsTask(choice: LauncherChoice, projects: Project[], programs:
   return choice.worktree && inGit && isAgentProgram(choice.program, programs);
 }
 
-/** What the core is asked to plan and to create: the chosen folder and the name as typed (the core slugs it). */
+/** What the core is asked to plan: the chosen folder and the name as typed (the core slugs it). */
 export function taskRequest(choice: LauncherChoice, projects: Project[], name: string): TaskPlanRequest {
   return { cwd: projects.find((p) => p.id === choice.projectId)?.path ?? "", name };
+}
+
+/** The create request: the plan request plus the commands the confirm view shows. Null until it shows some. */
+export function createRequest(plan: TaskPlanRequest, confirm: TaskConfirm | null): TaskCreateRequest | null {
+  return confirm?.state === "ready" ? { ...plan, commands: confirm.commands } : null;
+}
+
+/** A create the core refused (409: the commands changed, or it can't be made now): show why and plan again, so the next try shows what would run. */
+export function replansAfter(e: unknown): boolean {
+  return e instanceof ApiError && e.status === 409;
 }
 
 /** Creates the task, and only when that has answered starts the session in its folder. A failed create never launches. */
@@ -87,7 +99,7 @@ export async function createThenLaunch<T>(create: () => Promise<Task>, launch: (
 export function rememberTasks() {
   let made: { key: string; task: Task } | null = null;
   return {
-    async get(req: TaskPlanRequest, create: () => Promise<Task>): Promise<Task> {
+    async get(req: TaskCreateRequest, create: () => Promise<Task>): Promise<Task> {
       const key = JSON.stringify(req);
       if (made?.key === key) return made.task;
       const task = await create();

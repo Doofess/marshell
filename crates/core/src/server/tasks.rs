@@ -3,7 +3,7 @@ use axum::Json;
 use axum::extract::{Path as UrlPath, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
-use marshell_protocol::api::{MergeRequest, RemoveRequest, ResumeError, TaskPlanRequest};
+use marshell_protocol::api::{MergeRequest, RemoveRequest, ResumeError, TaskCreateRequest, TaskPlanRequest};
 use std::path::Path;
 
 fn refused(reason: String) -> Response {
@@ -47,7 +47,8 @@ pub async fn plan(State(st): State<AppState>, Json(req): Json<TaskPlanRequest>) 
     }
 }
 
-pub async fn create(State(st): State<AppState>, Json(req): Json<TaskPlanRequest>) -> Response {
+/// Makes the task, but only with the commands the user was shown; otherwise 409 with the reason.
+pub async fn create(State(st): State<AppState>, Json(req): Json<TaskCreateRequest>) -> Response {
     let made = tokio::task::spawn_blocking(move || crate::tasks::create(&st.0.home, &req, now_ms())).await;
     match made {
         Ok(Ok(task)) => Json(task).into_response(),

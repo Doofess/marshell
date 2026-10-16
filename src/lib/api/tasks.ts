@@ -7,6 +7,7 @@ import type { RemoveRequest } from "../../generated/RemoveRequest";
 import type { ResumeError } from "../../generated/ResumeError";
 import type { Task } from "../../generated/Task";
 import type { TaskChanges } from "../../generated/TaskChanges";
+import type { TaskCreateRequest } from "../../generated/TaskCreateRequest";
 import type { TaskPlan } from "../../generated/TaskPlan";
 import type { TaskPlanRequest } from "../../generated/TaskPlanRequest";
 import { ApiError, api } from "./client";
@@ -35,14 +36,15 @@ async function refusal<T>(call: Promise<T>): Promise<T> {
 }
 
 /**
- * Task worktrees. Merge and remove requests carry the commands (and, for remove, the warnings) the user was shown; the core
+ * Task worktrees. Create, merge and remove requests carry the commands (and, for merge and remove, the warnings) the user was shown; the core
  * refuses when a fresh plan differs. A 404 (an id the core does not know) rejects with an ApiError.
  */
 export const tasksApi = {
   list: (ep: Endpoint) => api<Task[]>(ep, "GET", "/v1/tasks"),
   /** What creating the task would run. Rejects with a 409 ApiError (the reason) when it cannot be made. */
   plan: (ep: Endpoint, req: TaskPlanRequest) => refusal(api<TaskPlan>(ep, "POST", "/v1/tasks/plan", req)),
-  create: (ep: Endpoint, req: TaskPlanRequest) => refusal(api<Task>(ep, "POST", "/v1/tasks", req)),
+  /** Creates it with the commands the user was shown. Rejects with a 409 ApiError when they are no longer what the core would run. */
+  create: (ep: Endpoint, req: TaskCreateRequest) => refusal(api<Task>(ep, "POST", "/v1/tasks", req)),
   changes: (ep: Endpoint, id: string) => refusal(api<TaskChanges>(ep, "GET", `${task(id)}/changes`)),
   mergePlan: (ep: Endpoint, id: string, req: MergeRequest) => api<MergePlan>(ep, "POST", `${task(id)}/merge/plan`, req),
   /** A conflict or a git failure comes back as the outcome; only a refusal to start rejects. */

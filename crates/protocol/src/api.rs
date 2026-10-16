@@ -246,7 +246,7 @@ pub struct Task {
     pub created_ms: u64,
 }
 
-/// POST /v1/tasks/plan and POST /v1/tasks body.
+/// POST /v1/tasks/plan body.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[ts(export)]
 pub struct TaskPlanRequest {
@@ -254,6 +254,19 @@ pub struct TaskPlanRequest {
     pub cwd: String,
     /// Raw text or a prompt; the core makes the task name from it.
     pub name: String,
+}
+
+/// POST /v1/tasks body: the plan request plus the commands the user was shown. The core plans again and refuses
+/// when its commands differ, so only what was shown runs.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct TaskCreateRequest {
+    /// A folder inside the repository.
+    pub cwd: String,
+    /// Raw text or a prompt; the core makes the task name from it.
+    pub name: String,
+    /// The commands from the plan the user confirmed.
+    pub commands: Vec<String>,
 }
 
 /// What creating a task would do, shown before it runs.

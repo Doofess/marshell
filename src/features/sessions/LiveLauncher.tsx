@@ -15,7 +15,7 @@ import { Launcher, type TaskConfirm } from "../launcher/Launcher";
 import { taskNameFor } from "../tasks/taskName";
 import { appScheme } from "../terminal/terminalTheme";
 import { programById, startingText, type LauncherChoice } from "../launcher/launchChoice";
-import { createThenLaunch, initialFocus, launchRequest, progressText, refocus, rememberTasks, type FocusState, livePrograms, preselect, startFailure, taskRequest, toLauncherProject, wantsTask } from "./launchPrograms";
+import { createRequest, createThenLaunch, initialFocus, launchRequest, progressText, refocus, rememberTasks, replansAfter, type FocusState, livePrograms, preselect, startFailure, taskRequest, toLauncherProject, wantsTask } from "./launchPrograms";
 
 // The worktree flag is part of this state and nothing else: it is never read from or written to the remembered choices, so the chip starts off every time.
 const INITIAL: LauncherChoice = { program: "claude", projectId: "", mode: "Manual", pace: "Balanced", worktree: false };
@@ -124,16 +124,23 @@ export function LiveLauncher({ endpoint, nextNumber, size, onStarted, onClose }:
     wasConfirming.current = confirm !== null;
   }, [confirm]);
 
-  /** With the worktree chip on, Start first asks the core what it would run and shows it. */
-  const plan = () => {
+  /**
+   * With the worktree chip on, Start first asks the core what it would run and shows it. After a refused create, `reason`
+   * stays on screen above the fresh commands; a plan that is refused too shows its own reason instead.
+   */
+  const plan = (reason?: string) => {
     if (!endpoint) return;
     const seq = ++planSeq.current;
     setConfirm({ state: "loading" });
-    setError(undefined);
+    setError(reason);
     tasksApi
       .plan(endpoint, taskRequest(shown, projects, taskName))
       .then((p) => seq === planSeq.current && setConfirm({ state: "ready", commands: p.commands }))
-      .catch((e: unknown) => seq === planSeq.current && setConfirm({ state: "refused", reason: startFailure(e) }));
+      .catch((e: unknown) => {
+        if (seq !== planSeq.current) return;
+        setError(undefined);
+        setConfirm({ state: "refused", reason: startFailure(e) });
+      });
   };
 
   const back = () => {
@@ -146,16 +153,19 @@ export function LiveLauncher({ endpoint, nextNumber, size, onStarted, onClose }:
 
   /** Create and start: the worktree first, then the session in its folder. */
   const createAndStart = async () => {
-    if (!endpoint || !loaded || inFlight.current) return;
+    // Only the commands on screen are sent; the core refuses them if they are no longer what it would run.
+    const req = createRequest(taskRequest(shown, projects, taskName), confirm);
+    if (!endpoint || !loaded || inFlight.current || req === null) return;
     inFlight.current = true;
     setStarting(true);
     setPhase("creating");
     setError(undefined);
-    const req = taskRequest(shown, projects, taskName);
+    let made = false;
     try {
       const created = await createThenLaunch(
         () => tasks.get(req, () => tasksApi.create(endpoint, req)),
         (task) => {
+          made = true;
           setPhase("starting");
           return sessionsApi.create(endpoint, withColorScheme(launchRequest(shown, prompt, programs, loaded.doc, projects, size(), task.path), loaded.doc.profiles, appearance, appScheme()));
         },
@@ -163,9 +173,11 @@ export function LiveLauncher({ endpoint, nextNumber, size, onStarted, onClose }:
       const folder = projects.find((p) => p.id === shown.projectId)?.name ?? "your home folder";
       onStarted(created, startingText(shown.program, folder, programs));
     } catch (e) {
-      setError(startFailure(e));
       inFlight.current = false;
       setStarting(false);
+      // A refused create: say why, and show what the core would run now.
+      if (!made && replansAfter(e)) plan(startFailure(e));
+      else setError(startFailure(e));
     }
   };
 
