@@ -193,7 +193,10 @@ fn powershells() -> Vec<&'static str> {
     if cfg!(windows) {
         names.push("powershell");
     }
-    names.into_iter().filter(|n| command_on_path(n) || (skipped(n), false).1).collect()
+    names
+        .into_iter()
+        .filter(|n| command_on_path(n) || (skipped(n), false).1)
+        .collect()
 }
 
 /// PowerShell's profile lives in the Documents folder, which a temp HOME does not move. So the test skips the real
@@ -208,7 +211,9 @@ fn pwsh_with_profile(name: &str, body: &str) -> Shell {
             let load = argv.pop().unwrap();
             let path = home.join("profile.ps1").to_string_lossy().replace('\'', "''");
             // As a scriptblock, like Marshell's own script: a Restricted ExecutionPolicy blocks only script files.
-            argv.push(format!(". ([scriptblock]::Create([IO.File]::ReadAllText('{path}'))); {load}"));
+            argv.push(format!(
+                ". ([scriptblock]::Create([IO.File]::ReadAllText('{path}'))); {load}"
+            ));
         },
     )
 }

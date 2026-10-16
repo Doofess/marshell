@@ -22,6 +22,8 @@ const FILES: [(&str, &str); 8] = [
 const OFF: &str = "Shell integration is off for this profile.";
 const OWN_ARGS: &str = "This command has its own arguments, so Marshell runs it as written.";
 const NOT_WRITTEN: &str = "The integration scripts could not be written.";
+const WSL_BASH: &str =
+    "This bash may be WSL's launcher, which can't read Marshell's script. Use a WSL profile, or Git Bash's full path.";
 
 /// Writes the scripts to `<home>/shell`, touching only files whose text differs. Returns the folder.
 pub fn install(home: &Path) -> anyhow::Result<PathBuf> {
@@ -85,7 +87,21 @@ fn kind(profile: &Profile) -> Result<Kind, String> {
     if !known {
         return Err(OWN_ARGS.into());
     }
+    if kind == Kind::Bash && cfg!(windows) && may_be_wsl_launcher(exe) {
+        return Err(WSL_BASH.into());
+    }
     Ok(kind)
+}
+
+/// On Windows, whether `exe` may be WSL's `bash.exe` launcher, which can't read a Windows script path.
+/// A bare `bash` usually is: System32 comes early on PATH. Git Bash is detected by its full path.
+fn may_be_wsl_launcher(exe: &str) -> bool {
+    let path = exe.replace('/', "\\").to_lowercase();
+    let full = path.as_bytes().get(1..3) == Some(b":\\".as_slice()) || path.starts_with("\\\\");
+    !full
+        || ["\\windows\\system32\\", "\\windows\\sysnative\\", "\\windowsapps\\"]
+            .iter()
+            .any(|d| path.contains(d))
 }
 
 /// The value of `name` in the profile's env, else in Marshell's own environment.
@@ -254,6 +270,37 @@ mod tests {
     const DIR: &str = r"C:\Users\O'Brien Home\.marshell\shell";
 
     #[test]
+    fn windows_bash_that_may_be_wsl_launcher_is_refused() {
+        for exe in [
+            "bash",
+            "bash.exe",
+            r"C:\Windows\System32\bash.exe",
+            r"C:\WINDOWS\system32\bash.exe",
+            r"C:\Windows\Sysnative\bash.exe",
+            r"C:\Users\me\AppData\Local\Microsoft\WindowsApps\bash.exe",
+        ] {
+            assert!(may_be_wsl_launcher(exe), "{exe}");
+        }
+        for exe in [
+            r"C:\Program Files\Git\bin\bash.exe",
+            "C:/msys64/usr/bin/bash.exe",
+            r"D:\tools\Git\usr\bin\bash.exe",
+        ] {
+            assert!(!may_be_wsl_launcher(exe), "{exe}");
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_system32_bash_runs_as_written_with_a_reason() {
+        let p = profile(&[r"C:\Windows\System32\bash.exe"], ShellFamily::Posix);
+        let reason = integrate(&p, Path::new(DIR), &no_env).err().unwrap();
+        assert!(reason.contains("WSL"), "{reason}");
+        let git = profile(&[r"C:\Program Files\Git\bin\bash.exe"], ShellFamily::Posix);
+        assert!(integrate(&git, Path::new(DIR), &no_env).is_ok());
+    }
+
+    #[test]
     fn pwsh_appends_scriptblock_load() {
         let p = profile(&["pwsh.exe", "-NoLogo"], ShellFamily::PowerShell);
         let applied = integrate(&p, Path::new(DIR), &no_env).unwrap();
@@ -332,7 +379,7 @@ mod tests {
             ]
         );
         assert_eq!(env_value(&applied, "MARSHELL_BASH_LOGIN"), Some("1"));
-        let p = profile(&["bash"], ShellFamily::Posix);
+        let p = profile(&["C:/Program Files/Git/bin/bash.exe"], ShellFamily::Posix);
         let applied = integrate(&p, Path::new(DIR), &no_env).unwrap();
         assert_eq!(env_value(&applied, "MARSHELL_BASH_LOGIN"), None);
     }
