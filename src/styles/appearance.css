@@ -1,0 +1,37 @@
+/*
+ * Appearance modes, set on the root by src/features/appearance/rootState.ts. Each block only overrides tokens from tokens.css.
+ * `:root[...]` outranks the plain `:root` rules, whatever the import order.
+ */
+
+/* High contrast: text at least 7:1 on every surface, dividers at least 3:1, and no fill fainter than 20%
+   (src/design/contrast.test.ts). The three text tiers draw close together; size and weight carry the hierarchy. */
+:root[data-contrast="more"] {
+  --text-1: light-dark(oklch(0% 0 none), oklch(100% 0 none));
+  --text-2: light-dark(oklch(22% 0.006 56), oklch(92% 0 none));
+  --text-3: light-dark(oklch(26% 0.008 58), oklch(88% 0 none));
+
+  --hairline: color-mix(in oklch, var(--text-1) 55%, transparent);
+  --fill: color-mix(in oklch, var(--text-1) 20%, transparent);
+  --fill-strong: color-mix(in oklch, var(--text-1) 30%, transparent);
+  --hover: color-mix(in oklch, var(--text-1) 20%, transparent);
+  --selected: color-mix(in oklch, var(--text-1) 20%, transparent);
+}
+
+/* Text size: the UI type scale moves up one step (Large) or two (Larger). Body text (--text-13) is 15 px, then 17 px.
+   The terminal font size is its own setting. */
+:root[data-text-size="large"] {
+  --text-11: 0.75rem;
+  --text-12: 0.8125rem;
+  --text-13: 0.9375rem;
+  --text-15: 1.0625rem;
+  --text-20: 1.375rem;
+  --text-28: 1.875rem;
+}
+:root[data-text-size="larger"] {
+  --text-11: 0.8125rem;
+  --text-12: 0.9375rem;
+  --text-13: 1.0625rem;
+  --text-15: 1.25rem;
+  --text-20: 1.5rem;
+  --text-28: 2rem;
+}
