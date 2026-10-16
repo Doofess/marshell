@@ -9,8 +9,7 @@ import { BUNDLED_FONT, fontStack, resolveTerminalFont } from "../terminal/termin
 import { appScheme, resolveTerminalTheme, type Scheme } from "../terminal/terminalTheme";
 import { addImported, removeImported } from "./appearanceEdits";
 import { useAppearance } from "./AppearanceProvider";
-import { checkAccent } from "./customAccent";
-import { draftsOf, refill, type Draft, type Field } from "./drafts";
+import { blurAccent, commitAccent, draftsOf, pickPreset, refill, type Draft, type Drafts, type Field } from "./drafts";
 import { importThemeFile, MAX_THEME_FILE } from "./import/importTheme";
 import { parseWtSchemes } from "./import/windowsTerminal";
 import { terminalThemeOf, wtFont } from "./terminalSettings";
@@ -37,6 +36,10 @@ export type AppearanceHandlers = {
   onAccentText(text: string): void;
   /** Saves the custom accent if it passes the check; otherwise the reason shows and the accent stays. */
   commitAccent(): void;
+  /** Leaving the custom colour field: commits only text that changed, and says nothing about empty text. */
+  blurAccent(): void;
+  /** Picks one of the preset accents and empties the custom colour field. */
+  pickAccent(accent: string): void;
   onFontText(text: string): void;
   commitFont(): void;
   onSizeText(text: string): void;
@@ -152,7 +155,7 @@ export function AppearanceView({ state, handlers }: { state: AppearanceViewState
             <div className="appearance__chips">
               {ACCENTS.map(([v, label]) => (
                 <label key={v} className="appearance__chip is-selected-mark" data-selected={a.accent === v ? "true" : undefined}>
-                  <input type="radio" name="accent" value={v} checked={a.accent === v} onChange={() => set({ accent: v }, "accent")} />
+                  <input type="radio" name="accent" value={v} checked={a.accent === v} onChange={() => handlers.pickAccent(v)} />
                   <span className="appearance__swatch" data-accent={v} aria-hidden="true" />
                   <span>{label}</span>
                 </label>
@@ -175,7 +178,7 @@ export function AppearanceView({ state, handlers }: { state: AppearanceViewState
                 aria-invalid={state.accent.reason ? true : undefined}
                 aria-describedby={state.accent.reason ? ids.accentWhy : undefined}
                 onChange={(e) => handlers.onAccentText(e.target.value)}
-                onBlur={handlers.commitAccent}
+                onBlur={handlers.blurAccent}
                 onKeyDown={onEnter(handlers.commitAccent)}
               />
             </label>
@@ -365,17 +368,22 @@ export function AppearanceDialog({ onClose, onNotice }: { onClose: () => void; o
     if (importError) say(importError);
   }, [importError]);
 
+  const applyAccent = ({ drafts: next, hex }: { drafts: Drafts; hex: string | null }) => {
+    setDrafts(next);
+    if (hex !== null && hex !== appearance.accent) handlers.save({ ...appearance, accent: hex }, "accent");
+  };
+
   const handlers: AppearanceHandlers = {
     save(next, section) {
       setAt(section);
       void save(next);
     },
     onAccentText: (text) => setAccent({ text, reason: null }),
-    commitAccent() {
-      const check = checkAccent(accent.text);
-      if (!check.ok) return setAccent({ ...accent, reason: check.reason });
-      setAccent({ text: check.hex, reason: null });
-      if (check.hex !== appearance.accent) handlers.save({ ...appearance, accent: check.hex }, "accent");
+    commitAccent: () => applyAccent(commitAccent(drafts)),
+    blurAccent: () => applyAccent(blurAccent(drafts)),
+    pickAccent(accent) {
+      setDrafts(pickPreset(drafts));
+      handlers.save({ ...appearance, accent }, "accent");
     },
     onFontText: setFont,
     commitFont() {

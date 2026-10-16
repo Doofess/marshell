@@ -6,7 +6,7 @@ import { AppearanceView, type AppearanceHandlers, type AppearanceViewState } fro
 import { DEFAULT_APPEARANCE } from "./rootState";
 
 const noop = () => {};
-const handlers: AppearanceHandlers = { save: noop, onAccentText: noop, commitAccent: noop, onFontText: noop, commitFont: noop, onSizeText: noop, commitSize: noop, importFile: noop };
+const handlers: AppearanceHandlers = { save: noop, onAccentText: noop, commitAccent: noop, blurAccent: noop, pickAccent: noop, onFontText: noop, commitFont: noop, onSizeText: noop, commitSize: noop, importFile: noop };
 const STATE: AppearanceViewState = { appearance: DEFAULT_APPEARANCE, app: "dark", wtFiles: [], error: null, accent: { text: "", reason: null }, font: "", size: { text: "13", reason: null }, importError: null };
 const html = (over: Partial<AppearanceViewState> = {}) => renderToStaticMarkup(<AppearanceView state={{ ...STATE, ...over }} handlers={handlers} />);
 
