@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Endpoint } from "../../generated/Endpoint";
 import type { SessionInfo } from "../../generated/SessionInfo";
 import { ApiError } from "../../lib/api/client";
+import type { RowModel } from "../sidebar/types";
 import { CloseBar } from "./CloseBar";
 import { SessionActions, closeBarText, needsCloseConfirm, tabIdOfNumber, TOAST_MS } from "./sessionActions";
 import { Toast } from "./Toast";
@@ -211,6 +212,22 @@ describe("LiveApp: rename and reorder", () => {
     const { api, actions } = setup([info(1), info(2), info(3)], "t2");
     actions.handle({ kind: "move", by: -1 });
     expect(api.reorder).toHaveBeenCalledWith(ep, ["t2", "t1", "t3"]);
+  });
+
+  it("while grouped, Alt+Shift+arrow moves a session only inside its project and sends the displayed order", () => {
+    const infos = [info(1), info(2), info(3), info(4)];
+    const groupedRows = [{ id: "t1", project: "a" }, { id: "t2", project: "b" }, { id: "t3", project: "a" }, { id: "t4", project: "b" }] as RowModel[];
+    const api = { close: vi.fn(async () => {}), reopen: vi.fn(), rename: vi.fn(), reorder: vi.fn(async () => {}), resume: vi.fn() };
+    let selectedId = "t3";
+    const actions = new SessionActions({ api, context: () => ({ endpoint: ep, infos, selectedId, groupedRows }), select: vi.fn() });
+    actions.handle({ kind: "move", by: -1 });
+    expect(api.reorder).toHaveBeenCalledWith(ep, ["t3", "t1", "t2", "t4"]);
+    // The group edge: t3 is last of a (displayed t1, t3, t2, t4), so down goes nowhere, and t2 cannot move up into a.
+    api.reorder.mockClear();
+    actions.handle({ kind: "move", by: 1 });
+    selectedId = "t2";
+    actions.handle({ kind: "move", by: -1 });
+    expect(api.reorder).not.toHaveBeenCalled();
   });
 
   it("does not send a move past the end of the list", () => {

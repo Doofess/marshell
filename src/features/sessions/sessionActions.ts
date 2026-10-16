@@ -4,7 +4,9 @@ import type { SessionInfo } from "../../generated/SessionInfo";
 import { ApiError } from "../../lib/api/client";
 import type { sessions } from "../../lib/api/sessions";
 import type { SessionShortcut } from "../../lib/appShortcuts";
+import { moveWithinGroup } from "../sidebar/grouping";
 import { moveBy } from "../sidebar/reorder";
+import type { RowModel } from "../sidebar/types";
 import { lastSegment } from "./toRow";
 
 /** How long the "Closed <name>." toast stays, in milliseconds. */
@@ -51,6 +53,8 @@ type Context = {
   selectedId: string | undefined;
   /** False in the rail and focus layouts, which have no row to edit. Left out means expanded. */
   sidebarExpanded?: boolean;
+  /** The sidebar's rows while it is grouped by project (left out otherwise): moves follow their displayed order. */
+  groupedRows?: RowModel[];
 };
 type Deps = {
   api: Api;
@@ -130,8 +134,9 @@ export class SessionActions {
         break;
       }
       case "move": {
-        const { infos, selectedId } = this.deps.context();
-        const next = selectedId === undefined ? null : moveBy(infos.map((i) => i.tab_id), selectedId, shortcut.by);
+        const { infos, selectedId, groupedRows } = this.deps.context();
+        // Grouped, the list the person sees is the groups one after another, and a move stays inside the session's project.
+        const next = selectedId === undefined ? null : groupedRows ? moveWithinGroup(groupedRows, selectedId, shortcut.by) : moveBy(infos.map((i) => i.tab_id), selectedId, shortcut.by);
         if (next) this.reorder(next);
         break;
       }

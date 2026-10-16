@@ -146,9 +146,12 @@ export function LiveApp() {
   const sidebarPref = sidebarPrefOf(view);
   const sidebarExpanded = sidebarMode(width, sidebarPref) === "expanded";
   // The sidebar command says what it will do now: fold the expanded sidebar, or open it again.
-  const paletteLabels = useMemo(() => ({ sidebar: sidebarPref === "expanded" ? "Collapse sidebar to the rail" : "Expand the sidebar" }), [sidebarPref]);
-  const context = useRef({ endpoint, infos, selectedId: focusedId, sidebarExpanded });
-  context.current = { endpoint, infos, selectedId: focusedId, sidebarExpanded };
+  // The grouping command does the same: it names what it does next.
+  const paletteLabels = useMemo(() => ({ sidebar: sidebarPref === "expanded" ? "Collapse sidebar to the rail" : "Expand the sidebar", "group-by-project": view.grouped ? "Stop grouping by project" : "Group sessions by project" }), [sidebarPref, view.grouped]);
+  // Grouping shows in the expanded sidebar only; the rail and focus layouts keep the core's order, and so do their moves.
+  const groupedRows = view.grouped && sidebarExpanded ? rows : undefined;
+  const context = useRef({ endpoint, infos, selectedId: focusedId, sidebarExpanded, groupedRows });
+  context.current = { endpoint, infos, selectedId: focusedId, sidebarExpanded, groupedRows };
   const pickRef = useRef(pick);
   pickRef.current = pick;
   const actions = useMemo(() => new SessionActions({ api: sessions, context: () => context.current, select: (id) => pickRef.current(id), size: () => size.current }), []);
@@ -400,6 +403,7 @@ export function LiveApp() {
     // Palette-only commands. The menu opens after the palette has given the focus back, so it keeps the focus it takes.
     if (id === "unsplit") return dispatch({ type: "remove", index: focusIdxRef.current });
     if (id === "layout") return void setTimeout(() => setLayoutMenu(true), 0);
+    if (id === "group-by-project") return dispatch({ type: "toggleGrouped" });
     if (id === "resume") return void (focusedRow && startResume(focusedRow));
     const shortcut = commandShortcut(id);
     // Both move the focus, so they wait for the palette to hand it back first.
@@ -515,6 +519,7 @@ export function LiveApp() {
           onRename={(id, name) => void actions.commitRename(id, name)}
           onRenameCancel={(opts) => actions.cancelRename(opts)}
           onReorder={(ids) => actions.reorder(ids)}
+          grouped={view.grouped}
           onSelect={pick}
           onPalette={() => setOverlay("palette")}
         />

@@ -4,8 +4,8 @@ import { COMMANDS, type Os } from "../../lib/keymap";
 import { Palette } from "../palette/Palette";
 import type { PaletteSession } from "../palette/fixtures";
 
-/** Commands the window runs from the palette that have no key of their own: remove the focused pane, open the layout menu, and resume an Ended or Exited session. */
-const PALETTE_ONLY = ["profiles", "appearance", "unsplit", "layout", "resume"];
+/** Commands the window runs from the palette that have no key of their own: remove the focused pane, open the layout menu, resume an Ended or Exited session, and group the sidebar by project. */
+const PALETTE_ONLY = ["profiles", "appearance", "unsplit", "layout", "resume", "group-by-project"];
 
 /**
  * The commands the live window runs: the ones with a session shortcut, the pane commands, and the shell profiles and Appearance pages. Listing any other would

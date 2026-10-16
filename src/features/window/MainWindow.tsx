@@ -118,6 +118,8 @@ export type MainWindowProps = {
   onRenameCancel?: (opts: { refocus: boolean }) => void;
   /** Dragging a sidebar row gives the whole new order. Left out, rows are not draggable. */
   onReorder?: (ids: string[]) => void;
+  /** The sidebar groups its rows under a heading per project. Off by default. */
+  grouped?: boolean;
   /** The sidebar's drag handle, or its arrow keys, ask for a width. The view state holds it to 200 to 400. Left out, the handle does nothing. */
   onSidebarWidth?: (width: number) => void;
   /** A double click on the sidebar's drag handle asks for the default width. */
@@ -184,6 +186,7 @@ export function MainWindow({
   onRename,
   onRenameCancel,
   onReorder,
+  grouped,
   onSelect,
   onPalette,
   onSidebarWidth,
@@ -370,7 +373,7 @@ export function MainWindow({
       </header>
 
       <div ref={bodyRef} className="window__body">
-        {mode === "expanded" && <Sidebar rows={rows} requests={requests} height={height - BAR} width={sideW} selectedId={selected?.id} footer={footer ?? undefined} shell={shell ? { cwd: shellOptions.cwd ?? active?.project, shellName: shellNameFor(os), collapsed: shellCollapsed || shellOptions.hidden === true, os, terminal: shellOptions.terminal, failed: shellOptions.failed, onRetry: shellOptions.onRetry, openDisabled: shellOptions.openDisabled, forceOpen: shellOptions.forceOpen, onToggle: shellOptions.onToggle, onOpenInPane: shellOptions.onOpenInPane } : undefined} renamingId={renamingId} onRename={onRename} onRenameCancel={onRenameCancel} onReorder={onReorder} onSelect={onSelect} />}
+        {mode === "expanded" && <Sidebar rows={rows} requests={requests} height={height - BAR} width={sideW} selectedId={selected?.id} footer={footer ?? undefined} shell={shell ? { cwd: shellOptions.cwd ?? active?.project, shellName: shellNameFor(os), collapsed: shellCollapsed || shellOptions.hidden === true, os, terminal: shellOptions.terminal, failed: shellOptions.failed, onRetry: shellOptions.onRetry, openDisabled: shellOptions.openDisabled, forceOpen: shellOptions.forceOpen, onToggle: shellOptions.onToggle, onOpenInPane: shellOptions.onOpenInPane } : undefined} renamingId={renamingId} onRename={onRename} onRenameCancel={onRenameCancel} onReorder={onReorder} onSelect={onSelect} grouped={grouped} />}
         {mode === "expanded" && (
           <div
             className="window__side-handle"

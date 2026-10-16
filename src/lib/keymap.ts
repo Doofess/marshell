@@ -69,6 +69,7 @@ export const COMMANDS: Command[] = [
   { id: "nav-none", label: "Select no terminal", group: "View", binding: { code: "Backspace", nav: true } },
   { id: "focus-mode", label: "Focus mode", group: "View", binding: { code: "KeyI" } },
   { id: "sidebar", label: "Collapse sidebar to the rail", group: "View" },
+  { id: "group-by-project", label: "Group sessions by project", group: "View" },
   { id: "palette", label: "Command palette", group: "Tools", binding: { code: "KeyK" } },
   { id: "shell-panel", label: "Show or focus the shell panel", group: "Tools", binding: { code: "KeyS" } },
   { id: "announce-status", label: "Read the focused session's status", group: "Tools", binding: { code: "KeyG" } },

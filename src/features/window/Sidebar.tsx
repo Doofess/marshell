@@ -6,7 +6,8 @@ import { laneLayout, pending } from "../lane/laneLayout";
 import { SessionRow, type RowDrag } from "../sidebar/SessionRow";
 import { dragOver, dropOrder, TAB_MIME, type DragState } from "../sidebar/reorder";
 import type { RowModel } from "../sidebar/types";
-import { useState, type CSSProperties, type ReactNode } from "react";
+import { groupBounds, groupedOrder, groupRows } from "../sidebar/grouping";
+import { Fragment, useState, type CSSProperties, type ReactNode } from "react";
 import type { Os } from "../../lib/keymap";
 import type { ShellName } from "../terminal/scriptedShell";
 import { shellLayout } from "./shellLayout";
@@ -39,6 +40,7 @@ export function Sidebar({
   onRenameCancel,
   onReorder,
   onSelect,
+  grouped = false,
 }: {
   rows: RowModel[];
   requests: ApprovalRequest[];
@@ -55,10 +57,15 @@ export function Sidebar({
   onReorder?: (ids: string[]) => void;
   /** A click on a row gives its session id. */
   onSelect?: (id: string) => void;
+  /** Rows under a heading per project (name and count); a drag moves a row only inside its group. Off by default. */
+  grouped?: boolean;
 }) {
   const issues = footer?.doctorIssues ?? 0;
   const [drag, setDrag] = useState<DragState | null>(null);
-  const ids = rows.map((r) => r.id);
+  // Grouped, the list is the groups one after another, and a move or a drop stays inside the dragged row's group.
+  const groups = grouped ? groupRows(rows) : null;
+  const shown = groups ? groupedOrder(groups) : rows;
+  const ids = shown.map((r) => r.id);
   const dragFor = (id: string): RowDrag | undefined => {
     if (!onReorder) return undefined;
     return {
@@ -71,6 +78,12 @@ export function Sidebar({
       },
       onDragOver: (e) => {
         if (!drag) return;
+        // Another project's row is not a place to drop: no indicator, and the drop is not allowed.
+        const bounds = groups ? groupBounds(groups, drag.id) : undefined;
+        if (bounds && (ids.indexOf(id) < bounds.start || ids.indexOf(id) >= bounds.end)) {
+          if (drag.over) setDrag({ id: drag.id });
+          return;
+        }
         const box = e.currentTarget.getBoundingClientRect();
         const next = dragOver(drag, id, e.clientY < box.top + box.height / 2 ? "before" : "after");
         if (next.over?.id !== drag.over?.id || next.over?.edge !== drag.over?.edge) setDrag(next);
@@ -81,14 +94,26 @@ export function Sidebar({
       },
       onDrop: (e) => {
         e.preventDefault();
-        const next = drag?.over && dropOrder(ids, drag.id, drag.over.id, drag.over.edge);
+        const next = drag?.over && dropOrder(ids, drag.id, drag.over.id, drag.over.edge, groups ? groupBounds(groups, drag.id) : undefined);
         setDrag(null);
         if (next) onReorder(next);
       },
       onDragEnd: () => setDrag(null),
     };
   };
-  const tabStop = rows.some((r) => r.id === selectedId) ? selectedId : rows[0]?.id;
+  const tabStop = shown.some((r) => r.id === selectedId) ? selectedId : shown[0]?.id;
+  const row = (r: RowModel) => (
+    <SessionRow
+      key={r.id}
+      row={r}
+      density="comfortable"
+      selected={r.id === selectedId}
+      tabStop={r.id === tabStop}
+      drag={dragFor(r.id)}
+      onSelect={onSelect && (() => onSelect(r.id))}
+      rename={r.id === renamingId && onRename && onRenameCancel ? { onCommit: (name) => onRename(r.id, name), onCancel: onRenameCancel } : undefined}
+    />
+  );
   const lane = laneLayout(pending(requests).length, height);
   const panel = shell ? shellLayout(height, lane.height, shell.collapsed, ROW_HEIGHT, shell.forceOpen) : null;
   const style = { inlineSize: width, ...(panel ? { "--shell-h": `${panel.height}px` } : {}), ...(footer ? {} : { "--footer-h": "0px" }) } as CSSProperties;
@@ -96,18 +121,17 @@ export function Sidebar({
     <aside className="sidebar" style={style} data-shell={panel ? "" : undefined} aria-label="Sessions and approvals">
       <Lane requests={requests} sidebarHeight={height} />
       <div className="sidebar__list" role="listbox" aria-label="Sessions">
-        {rows.map((r) => (
-          <SessionRow
-            key={r.id}
-            row={r}
-            density="comfortable"
-            selected={r.id === selectedId}
-            tabStop={r.id === tabStop}
-            drag={dragFor(r.id)}
-            onSelect={onSelect && (() => onSelect(r.id))}
-            rename={r.id === renamingId && onRename && onRenameCancel ? { onCommit: (name) => onRename(r.id, name), onCancel: onRenameCancel } : undefined}
-          />
-        ))}
+        {groups
+          ? groups.map((g) => (
+              <Fragment key={g.project}>
+                <div className="sidebar__group" role="presentation">
+                  <span className="sidebar__group-name">{g.project}</span>
+                  <span className="sidebar__group-count">{g.rows.length}</span>
+                </div>
+                {g.rows.map(row)}
+              </Fragment>
+            ))
+          : rows.map(row)}
       </div>
       {panel && shell && <ShellPanel height={panel.height} collapsed={panel.collapsed} auto={panel.auto} cwd={shell.cwd} shellName={shell.shellName} os={shell.os} terminal={shell.terminal} failed={shell.failed} onRetry={shell.onRetry} openDisabled={shell.openDisabled} onToggle={shell.onToggle} onOpenInPane={shell.onOpenInPane} />}
       {footer && (
