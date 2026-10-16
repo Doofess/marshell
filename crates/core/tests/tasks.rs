@@ -1594,6 +1594,13 @@ async fn remove_closes_the_shell_panel_in_the_task_folder() {
 fn only_marshell_branches_are_removed() {
     let tmp = spaced_tmp();
     let (home, mut task) = new_task(&tmp);
+    // The branch really is named something else.
+    let repo = PathBuf::from(&task.repo_root);
+    assert!(
+        run(&repo, &["branch", "-m", "marshell/fix-login", "feature/other"])
+            .unwrap()
+            .ok
+    );
     task.branch = "feature/other".into();
 
     let (plan, steps) = tasks::plan_remove(&task, 0);
@@ -1612,9 +1619,21 @@ fn only_marshell_branches_are_removed() {
     assert!(Path::new(&task.path).exists());
 
     // A merge asked to remove it merges and leaves the branch alone.
+    let dir = PathBuf::from(&task.path);
+    std::fs::write(dir.join("b.txt"), "b\n").unwrap();
+    commit_all(&dir, "add b");
     let mut req = merge_req("Fix login");
     req.remove = true;
-    assert_eq!(tasks::plan_merge(&task, &req).0.commands.len(), 2);
+    let (plan, _) = tasks::plan_merge(&task, &req);
+    assert_eq!(plan.commands.len(), 2);
+    req.commands = plan.commands;
+    assert_eq!(
+        tasks::merge(&state_in(&home), &task, &req),
+        MergeOutcome::Merged { removed: false }
+    );
+    assert!(branch_is_there(&task));
+    assert!(dir.exists());
+    assert_eq!(tasks::list(&home).len(), 1);
 }
 
 #[test]

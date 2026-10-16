@@ -511,13 +511,14 @@ pub fn merge(st: &AppState, task: &Task, req: &MergeRequest) -> MergeOutcome {
     let removed = !removal_steps.is_empty() && {
         // Work that reached the task after the merge took its branch is not in the merge. Deleting
         // the branch or the folder would lose it, and the user never saw that in the commands.
+        // The sessions go first: a live agent could otherwise commit between the check and the kill.
+        close_sessions(st, task);
         let moved = merged_tip.is_none() || branch_tip(repo, &task.branch) != merged_tip;
         let dirty = worktree_dirty(Path::new(&task.path)).unwrap_or(true);
         if moved || dirty {
             tracing::warn!("merged {}, but it changed since, so it was not removed", task.branch);
             false
         } else {
-            close_sessions(st, task);
             match run_removal(st, task, removal_steps) {
                 Ok(()) => true,
                 Err(reason) => {
