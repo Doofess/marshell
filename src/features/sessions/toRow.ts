@@ -34,6 +34,7 @@ export function toRow(info: SessionInfo, profiles: Profile[]): RowModel {
   const profile = profiles.find((p) => p.id === info.profile_id);
   const agent: SessionKind = info.agent === null ? shellKind(profile) : isAgentId(info.agent) ? info.agent : "generic";
   const base = { id: info.tab_id, number: info.number, name: info.name, project: lastSegment(info.cwd), agent };
+  if (info.state.kind === "ended") return { ...base, status: "ended", phrase: "Ended last time" };
   if (info.state.kind === "exited") return { ...base, status: "ended", phrase: `Exited with code ${info.state.code}` };
   if (info.agent !== null) return { ...base, status: "limited", phrase: "Status arrives with hooks" };
   const command = info.command;

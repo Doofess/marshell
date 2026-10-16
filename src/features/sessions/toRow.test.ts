@@ -30,6 +30,12 @@ describe("toRow", () => {
     expect(row.phrase).toBe("Exited with code 3");
   });
 
+  it("an ended tab reads Ended", () => {
+    const row = toRow(info({ state: { kind: "ended" } }), PROFILES);
+    expect(row.status).toBe("ended");
+    expect(row.phrase).toContain("Ended");
+  });
+
   it("agent session is limited, never working", () => {
     const row = toRow(info({ agent: "claude", name: "Claude Code" }), PROFILES);
     expect(row.agent).toBe("claude");
