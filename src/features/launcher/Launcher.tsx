@@ -91,8 +91,8 @@ const cycle = <T,>(all: T[], now: T) => all[(all.indexOf(now) + 1) % all.length]
 /**
  * The launcher sheet (docs/PLAN.md "Launch a session"): one sentence of chips and a prompt line. Tab moves between the
  * chips, typing in the folder chip filters folders, letters pick values, Enter starts. The first chip lists AI agents,
- * shells and tools: a shell or tool is a plain terminal, so it has no mode, pace or worktree chip and its line asks for a
- * first command. The prompt line is set like the one in every pane (a flat command line), in the vendor's colour for an
+ * shells and tools: a shell or tool is a plain terminal, so it has no mode or pace chip and its line asks for a
+ * first command (it can still run in a worktree). The prompt line is set like the one in every pane (a flat command line), in the vendor's colour for an
  * agent. Presentational: the parent owns the state.
  */
 export function Launcher({ view, onChange, onQuery, onPick, onPrograms, onActive, onPrompt, onStart, onTaskName, onConfirm, onBack, onClose, chips = true, programs = LAUNCH_PROGRAMS, error, busy = false, busyText = "Creating the worktree…" }: Props) {

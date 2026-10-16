@@ -377,7 +377,7 @@ fn merge_blocker(task: &Task, message: &str) -> Result<Option<String>, String> {
         )));
     }
     let dir = Path::new(&task.path);
-    // Mid-rebase or off the branch, `add -A` would commit conflict markers to some other HEAD and
+    // Mid-rebase, mid-pick, with conflicts left or off the branch, `add -A` would commit conflict markers to some other HEAD and
     // the squash of the branch would leave that work out.
     match folder_state(task)? {
         FolderState::OnBranch => {}
@@ -389,6 +389,17 @@ fn merge_blocker(task: &Task, message: &str) -> Result<Option<String>, String> {
         FolderState::Merging => {
             return Ok(Some(
                 "A merge is in progress in the task folder. Finish or abort it there, then merge.".into(),
+            ));
+        }
+        FolderState::Picking => {
+            return Ok(Some(
+                "A cherry-pick or revert is in progress in the task folder. Finish or abort it there, then merge."
+                    .into(),
+            ));
+        }
+        FolderState::Conflicted => {
+            return Ok(Some(
+                "The task folder has files with unresolved conflicts. Resolve them there, then merge.".into(),
             ));
         }
         FolderState::OffBranch => {
@@ -417,6 +428,10 @@ enum FolderState {
     Rebasing,
     /// A merge stopped halfway (`MERGE_HEAD` is there).
     Merging,
+    /// A cherry-pick or revert stopped halfway (`CHERRY_PICK_HEAD`, `REVERT_HEAD` or `sequencer`).
+    Picking,
+    /// Files still have unresolved conflicts, with nothing halfway (for example after `stash pop`).
+    Conflicted,
     /// HEAD is detached or on another branch.
     OffBranch,
 }
@@ -437,6 +452,15 @@ fn folder_state(task: &Task) -> Result<FolderState, String> {
     }
     if git_dir.join("MERGE_HEAD").exists() {
         return Ok(FolderState::Merging);
+    }
+    if ["CHERRY_PICK_HEAD", "REVERT_HEAD", "sequencer"]
+        .iter()
+        .any(|name| git_dir.join(name).exists())
+    {
+        return Ok(FolderState::Picking);
+    }
+    if !ask(dir, &["ls-files", "-u"])?.trim().is_empty() {
+        return Ok(FolderState::Conflicted);
     }
     // `symbolic-ref -q` prints nothing and fails on a detached HEAD; that is an answer, not an error.
     let head = git::run(dir, &["symbolic-ref", "-q", "HEAD"]).map_err(|e| format!("{e:#}"))?;
@@ -780,6 +804,10 @@ pub fn plan_remove(task: &Task, open_sessions: u32) -> (RemovePlan, Vec<GitStep>
             Ok(FolderState::Merging) => {
                 warnings.push("A merge is in progress in the task folder. Removing abandons it.".into())
             }
+            Ok(FolderState::Picking) => {
+                warnings.push("A cherry-pick or revert is in progress in the task folder. Removing abandons it.".into())
+            }
+            Ok(FolderState::Conflicted) => warnings.push("The task folder has files with unresolved conflicts.".into()),
             Ok(FolderState::OffBranch) => {
                 warnings.push(format!("{} isn't checked out in the task folder.", task.branch))
             }

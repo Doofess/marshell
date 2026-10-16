@@ -1913,6 +1913,61 @@ fn a_rebase_stopped_in_the_task_folder_blocks_the_merge_and_warns_the_removal() 
 }
 
 #[test]
+fn a_cherry_pick_stopped_in_the_task_folder_blocks_the_merge_and_warns_the_removal() {
+    let tmp = spaced_tmp();
+    let (home, task) = conflicting_task(&tmp);
+    let dir = PathBuf::from(&task.path);
+    // Stops on the conflict while HEAD stays on the task branch.
+    assert!(!run(&dir, &["cherry-pick", "main"]).unwrap().ok);
+
+    let (plan, _) = tasks::plan_merge(&task, &merge_req("Fix login"), 0);
+    assert_eq!(
+        plan.blocker.as_deref(),
+        Some("A cherry-pick or revert is in progress in the task folder. Finish or abort it there, then merge.")
+    );
+    let main_before = head_of(Path::new(&task.repo_root));
+    let outcome = tasks::merge(&state_in(&home), &task, &planned(&task, "Fix login"));
+    assert!(matches!(outcome, MergeOutcome::Failed { .. }), "{outcome:?}");
+    assert_eq!(head_of(Path::new(&task.repo_root)), main_before);
+
+    let (plan, _) = tasks::plan_remove(&task, 0);
+    assert!(
+        plan.warnings
+            .contains(&"A cherry-pick or revert is in progress in the task folder. Removing abandons it.".to_string()),
+        "{:?}",
+        plan.warnings
+    );
+}
+
+#[test]
+fn unresolved_conflicts_in_the_task_folder_block_the_merge_and_warn_the_removal() {
+    let tmp = spaced_tmp();
+    let (home, task) = conflicting_task(&tmp);
+    let dir = PathBuf::from(&task.path);
+    // `--quit` drops the cherry-pick state but leaves the conflicted files, as `stash pop` does.
+    assert!(!run(&dir, &["cherry-pick", "main"]).unwrap().ok);
+    assert!(run(&dir, &["cherry-pick", "--quit"]).unwrap().ok);
+
+    let (plan, _) = tasks::plan_merge(&task, &merge_req("Fix login"), 0);
+    assert_eq!(
+        plan.blocker.as_deref(),
+        Some("The task folder has files with unresolved conflicts. Resolve them there, then merge.")
+    );
+    let main_before = head_of(Path::new(&task.repo_root));
+    let outcome = tasks::merge(&state_in(&home), &task, &planned(&task, "Fix login"));
+    assert!(matches!(outcome, MergeOutcome::Failed { .. }), "{outcome:?}");
+    assert_eq!(head_of(Path::new(&task.repo_root)), main_before);
+
+    let (plan, _) = tasks::plan_remove(&task, 0);
+    assert!(
+        plan.warnings
+            .contains(&"The task folder has files with unresolved conflicts.".to_string()),
+        "{:?}",
+        plan.warnings
+    );
+}
+
+#[test]
 fn a_merge_stopped_in_the_task_folder_blocks_the_merge_and_warns_the_removal() {
     let tmp = spaced_tmp();
     let (_home, task) = conflicting_task(&tmp);
