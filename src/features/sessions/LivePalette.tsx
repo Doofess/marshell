@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { commandShortcut } from "../../lib/appShortcuts";
 import { COMMANDS, type Os } from "../../lib/keymap";
 import { Palette } from "../palette/Palette";
@@ -18,7 +18,9 @@ export const LIVE_COMMANDS = COMMANDS.filter((c) => PALETTE_ONLY.includes(c.id) 
  * does (`onRun` gets a command id, or `session:<id>`). Mounted only while open. Focus goes to the box and, on close, back to
  * where it was (usually the terminal).
  */
-export function LivePalette({ sessions, os, onRun, onClose }: { sessions: PaletteSession[]; os: Os; onRun: (id: string) => void; onClose: () => void }) {
+export function LivePalette({ sessions, os, labels, onRun, onClose }: { sessions: PaletteSession[]; os: Os; labels?: Record<string, string>; onRun: (id: string) => void; onClose: () => void }) {
+  // A command whose words depend on the window's state (the sidebar command names what it will do next) gets its label from the window.
+  const commands = useMemo(() => (labels ? LIVE_COMMANDS.map((c) => (labels[c.id] === undefined ? c : { ...c, label: labels[c.id]! })) : LIVE_COMMANDS), [labels]);
   const [query, setQuery] = useState("");
   const [activeIndex, setActiveIndex] = useState(0);
   const root = useRef<HTMLDivElement>(null);
@@ -34,7 +36,7 @@ export function LivePalette({ sessions, os, onRun, onClose }: { sessions: Palett
       <Palette
         view={{ query, activeIndex }}
         sessions={sessions}
-        commands={LIVE_COMMANDS}
+        commands={commands}
         os={os}
         onQuery={(q) => {
           setQuery(q);

@@ -132,6 +132,8 @@ export function LiveApp() {
   // Only the expanded sidebar has rows to rename (MainWindow shows the rail, or nothing in focus mode, instead).
   const sidebarPref = sidebarPrefOf(view);
   const sidebarExpanded = sidebarMode(width, sidebarPref) === "expanded";
+  // The sidebar command says what it will do now: fold the expanded sidebar, or open it again.
+  const paletteLabels = useMemo(() => ({ sidebar: sidebarPref === "expanded" ? "Collapse sidebar to the rail" : "Expand the sidebar" }), [sidebarPref]);
   const context = useRef({ endpoint, infos, selectedId: focusedId, sidebarExpanded });
   context.current = { endpoint, infos, selectedId: focusedId, sidebarExpanded };
   const pickRef = useRef(pick);
@@ -338,7 +340,7 @@ export function LiveApp() {
           onPalette={() => setOverlay("palette")}
         />
       )}
-      {overlay === "palette" && os && <LivePalette sessions={paletteSessions(rows)} os={os} onRun={runFromPalette} onClose={() => setOverlay(null)} />}
+      {overlay === "palette" && os && <LivePalette sessions={paletteSessions(rows)} os={os} labels={paletteLabels} onRun={runFromPalette} onClose={() => setOverlay(null)} />}
       {overlay === "profiles" && endpoint && <ProfilesDialog endpoint={endpoint} onClose={() => setOverlay(null)} onNotice={announce} onSaved={reloadProfiles} />}
       {overlay === "appearance" && <AppearanceDialog onClose={() => setOverlay(null)} onNotice={announce} />}
       {launcherOpen && (

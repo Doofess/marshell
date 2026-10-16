@@ -189,6 +189,10 @@ export function MainWindow({
   const waiting = pending(requests).length;
   // Focus mode hides the session header until the pointer reaches the top edge; the pane headers stay. Keyboard users leave focus mode instead.
   const [peeking, setPeeking] = useState(false);
+  // Leaving focus mode with the pointer on the bar must not leave the peek set for the next time focus mode starts.
+  useEffect(() => {
+    if (mode !== "focus") setPeeking(false);
+  }, [mode]);
   const showHeader = mode !== "focus" || headerPeekProp || peeking;
   const placement = drawerPlacement(width, mode, DRAWER.default);
   const pillKeys = shortcutLabel(commandById("next-waiting").binding!, os);

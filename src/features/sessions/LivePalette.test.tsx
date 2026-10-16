@@ -19,4 +19,11 @@ describe("LivePalette", () => {
     expect(h).not.toContain("Open Doctor");
     expect(h).toContain("Split: add a pane");
   });
+  it("shows the label the window gives a command, and the keymap's own when it gives none", () => {
+    const show = (labels?: Record<string, string>) => renderToStaticMarkup(<LivePalette sessions={PALETTE_SESSIONS} os="windows" labels={labels} onRun={() => {}} onClose={() => {}} />);
+    expect(show()).toContain("Collapse sidebar to the rail");
+    const h = show({ sidebar: "Expand the sidebar" });
+    expect(h).toContain("Expand the sidebar");
+    expect(h).not.toContain("Collapse sidebar to the rail");
+  });
 });
