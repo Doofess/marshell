@@ -407,6 +407,14 @@ pub async fn input(State(st): State<AppState>, Path(tab): Path<String>, Json(req
     StatusCode::NO_CONTENT.into_response()
 }
 
+/// Where the session's asciicast recording is. 404 for an unknown tab, and for one that has no recording.
+pub async fn recording(State(st): State<AppState>, Path(tab): Path<String>) -> Response {
+    match st.session(&tab).and_then(|s| s.recording_path()) {
+        Some(path) => Json(serde_json::json!({ "path": path })).into_response(),
+        None => (StatusCode::NOT_FOUND, "This session has no recording.").into_response(),
+    }
+}
+
 /// Always 204, also when the tab is already closed or unknown, so a retry is harmless.
 pub async fn close(State(st): State<AppState>, Path(tab): Path<String>) -> StatusCode {
     st.0.registry.close(&tab);

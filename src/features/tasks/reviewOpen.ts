@@ -96,13 +96,13 @@ const HIDDEN = new Map<string, readonly string[]>();
 
 /**
  * The palette commands left out now: Resume unless the session in focus can resume, Review unless it is a task, and Clean up a
- * missing task unless a task's folder is gone. The same array for the same answers, so the palette's list is not rebuilt for them.
+ * missing task unless a task's folder is gone, and Copy the recording path when no session is in focus. The same array for the same answers, so the palette's list is not rebuilt for them.
  */
-export function paletteHidden({ resumable, isTask, missing }: { resumable: boolean; isTask: boolean; missing: boolean }): readonly string[] {
-  const key = `${resumable}${isTask}${missing}`;
+export function paletteHidden({ resumable, isTask, missing, focused = true }: { resumable: boolean; isTask: boolean; missing: boolean; focused?: boolean }): readonly string[] {
+  const key = `${resumable}${isTask}${missing}${focused}`;
   let hidden = HIDDEN.get(key);
   if (!hidden) {
-    hidden = [...(resumable ? [] : ["resume"]), ...(isTask ? [] : ["review-task"]), ...(missing ? [] : ["clean-up-task"])];
+    hidden = [...(resumable ? [] : ["resume"]), ...(isTask ? [] : ["review-task"]), ...(missing ? [] : ["clean-up-task"]), ...(focused ? [] : ["copy-recording-path"])];
     HIDDEN.set(key, hidden);
   }
   return hidden;

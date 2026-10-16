@@ -8,7 +8,7 @@ import type { PaletteSession } from "../palette/fixtures";
  * Commands the window runs from the palette that have no key of their own: remove the focused pane, open the layout menu, resume an
  * Ended or Exited session, group the sidebar by project, and open the removal of a task whose folder is gone.
  */
-const PALETTE_ONLY = ["profiles", "appearance", "unsplit", "layout", "resume", "group-by-project", "clean-up-task"];
+const PALETTE_ONLY = ["profiles", "appearance", "unsplit", "layout", "resume", "group-by-project", "clean-up-task", "copy-recording-path"];
 
 /**
  * The commands the live window runs: the ones with a session shortcut, the pane commands, and the shell profiles and Appearance pages. Listing any other would
