@@ -397,6 +397,9 @@ marshell/
           history/  doctor/  notify/  shells/  recap/  references/  ports/
       src/settings.rs         # the settings store (~/.marshell/settings.json) and its validation
       src/wt.rs               # finds Windows Terminal settings files (read only)
+      src/layout.rs           # the layout store (~/.marshell/layout.json): open tabs, panes, sidebar, last launcher choice per folder
+      src/server/layout.rs    # GET/PUT /v1/layout
+      src/server/shell_panel.rs  # the sidebar shell panel's own pty session, kept out of the registry
     bridge/                   # two tiny console bins sharing a client module:
                               #   marshell-hook (hook + status line bridge), marshell (CLI: new/list/focus/send/uninstall)
     host/                     # marshell-host: Windows elevated pty helper (spike S8 in phase 1, ships in phase 6)
@@ -411,6 +414,9 @@ marshell/
     components/               # primitives over radix-ui
     features/                 # sidebar, terminal, launcher, palette, departures, history, doctor, settings, editors
       appearance/             # Appearance dialog, provider, theme import parsers, custom accent check
+      sessions/ResumeBar.tsx  # the Resume view for Ended tabs and the bar under an Exited terminal
+      sidebar/grouping.ts     # project grouping of the session list (pure)
+      window/viewState.ts     # split, focus mode, zoom and sidebar state, and what goes to layout.json (pure)
   stories/                    # Storybook mockups (approval gate before UI code)
   assets/{icon,sounds}/
   docs/                       # BRIEF.md (updated living spec), adr/, fixtures notes
@@ -699,6 +705,7 @@ How it works (a pure, tested state machine; the window only measures rectangles 
 | Zoom pane | Z | **P** · ⌘P (Pane) | ⌘Z is Undo and Ctrl+Shift+Z is Redo in the prompt line. E was rejected: Ctrl+Shift+E is the IBus emoji picker on Linux. |
 | Shell panel | J | **S** · ⌘S (Shell) | Ctrl+Shift+J opens the devtools console in a development webview. |
 | Split | \ | **D** · ⌘D | Punctuation. D matches iTerm2's split. |
+| Focus mode | (none) | **I** · ⌘I | Decided 2026-10-16. M, H, Q and A are window or app actions on macOS, X is cut, and U, E, C, V, Z and J are taken as above. Grouping by project has no key: it is a palette command. |
 | Cheat sheet | / | **O** · ⌘O (Overview) | Punctuation. |
 | Sessions 1 to 9 | Ctrl+1 to 9 | **Ctrl+Shift+1 to 9** · ⌘1 to 9 | Terminals read Ctrl+2 to Ctrl+7 as control codes; vim uses Ctrl+6. |
 | Next / previous pane | ] [ | **Modifier+Tab** (no previous: the arrows) | Punctuation; needs AltGr on many keyboards. |
@@ -750,7 +757,7 @@ Decisions from the 2026-10-10 coverage audit (`docs/superpowers/plan-coverage-au
      - **Windows process hygiene (from S2):** Job Object with kill-on-close so a crash leaves no orphans; sideloaded `conpty.dll` + `OpenConsole.exe` with the MIT notice.
      - **Resilience:** a core panic hook and supervisor with a "core restarted" UI state; every file in `~/.marshell` carries a `version` field, is written atomically and keeps a `.bak`; migrations run on load.
      - **Restart behaviour:** on relaunch tabs come back as "Ended" with a one-click Resume (the agent's own `--resume`). Nothing relaunches itself or spends tokens unasked.
-   - Slices: 2a hygiene and resilience; 2b tabs, sidebar, profiles and launcher (agents run inside a shell profile; status limited until phase 3); 2c shell integration; 2d themes; 2e split, layout restore and Resume, plus the sidebar shell panel, project grouping and focus mode; 2f recording, palette and cheat sheet.
+   - Slices: 2a hygiene and resilience; 2b tabs, sidebar, profiles and launcher (agents run inside a shell profile; status limited until phase 3); 2c shell integration; 2d themes; 2e split up to four panes, focus mode, the sidebar shell panel, project grouping, `layout.json` restore, and Ended tabs with Resume; 2e+ projects and task worktrees (below); 2f recording, palette and cheat sheet.
    - Slice 2c (shell integration) ships first and is unchanged by the roadmap additions of 2026-10-16.
    - **Slice 2d (themes) is built.** User decisions of 2026-10-16:
      - Settings live in a real store, `~/.marshell/settings.json`, with `GET`/`PUT /v1/settings`. Only the Appearance fields are wired so far.
@@ -758,8 +765,20 @@ Decisions from the 2026-10-10 coverage audit (`docs/superpowers/plan-coverage-au
      - High contrast is Follow system (`prefers-contrast: more`), On or Off.
      - Text size is Default, Large or Larger, which move the UI type scale up one or two steps (13, 15, 17 px body). The terminal font size is its own setting (8–32).
      - What shipped: the Appearance dialog from the palette ("Appearance…"); presets plus a custom accent checked against both themes (3:1 on every surface, 4.5:1 for text); terminal theme Follow app, Always dark, Always light or imported, with a per-profile override in Shell profiles; contrast protection (`minimumContrastRatio`); `COLORFGBG` set at session start from the scheme the terminal will show; terminal font from your setting, else Windows Terminal's default profile font, else the bundled JetBrains Mono.
-   - **Projects and task worktrees (slice 2e, widened 2026-10-16; research in `docs/research/2026-10-16-accounts-cloud-extensions.md`).** A project is a folder, so projects are universal across CLIs and need no adapter. Projects are listed and grouped in the sidebar. A task can start in its own git worktree, as in the Codex desktop app, and Marshell then lets the user review its changes and merge it back in the app. This pulls the v2 "review-to-merge" item forward for worktree tasks; start-from-issue stays in v2. Worktree creation, merge and removal are git operations that show their command first and never run silently.
-   - A core restart ends the running sessions. The Ended + Resume tab state arrives in 2e; until then the terminal says the session ended and Enter starts a new shell.
+   - **Projects and task worktrees (slice 2e+, widened 2026-10-16; research in `docs/research/2026-10-16-accounts-cloud-extensions.md`).** A project is a folder, so projects are universal across CLIs and need no adapter. Projects are listed and grouped in the sidebar. A task can start in its own git worktree, as in the Codex desktop app, and Marshell then lets the user review its changes and merge it back in the app. This pulls the v2 "review-to-merge" item forward for worktree tasks; start-from-issue stays in v2. Worktree creation, merge and removal are git operations that show their command first and never run silently. **2e+** covers create, review the diff, merge back and remove; every git command is shown first.
+   - A core restart ends the running sessions. A core restart or a relaunch brings the tabs back as **Ended** with a Resume button. Resume runs the CLI's own continue-last-here in the tab's folder: `claude --continue`, `codex resume --last`, and plain `agy` for Antigravity. A plain shell just restarts. Resume is refused, with the reason shown, if the profile was removed or the folder is missing. Exact-id resume is phase 3.
+   - **Slice 2e decisions (2026-10-16).**
+     1. The closed list is not saved. Reopen covers this run only, and only open tabs go to `layout.json`.
+     2. Focus mode is Ctrl+Shift+I (Cmd+I on macOS). The shell panel is Ctrl+Shift+S, split is Ctrl+Shift+D and zoom pane is Ctrl+Shift+P. Grouping by project is an unbound palette command.
+     3. Ended means "restored from the last run, nothing has run here yet": no terminal, only the Resume view. Exited keeps its terminal so the output can be read, with the same Resume bar under it. Resume replaces the old "Enter starts a new shell" text.
+     4. Resume of `agy` is unverified, so it starts fresh with no flag. Claude uses `--continue` and Codex uses `resume --last`.
+     5. If a restored tab's profile was deleted or its folder is gone, Resume is disabled and says why. It never falls back to another profile or folder.
+     6. The shell panel is its own pty session, kept out of the registry, so typing there can never reach a tab. It starts in the focused session's folder, never types `cd` into itself, and uses the default shell profile. "Open in a pane" adopts that pty as a normal tab with its history, and the panel starts a fresh shell the next time it is shown. It folds itself when the sidebar is short.
+     7. Panes remount when the layout changes. The core replays the buffered output, so scrollback is kept but the scroll position resets. Terminals never remount when the selection moves inside a layout.
+     8. The arrow navigation cursor moves to 2f with the palette and cheat sheet. The Tab and Backspace chords ship in 2e.
+     9. The focus-mode pill and next-waiting (N) stay hidden or unbound until phase 3 supplies real needs-you status.
+     10. With grouping on, drag and Alt+Shift+arrow move a session only within its project group. The order inside a group is the core's order.
+     11. The launcher remembers the last profile and agent per folder (the 32 most recent folders) in `layout.json`.
    - Exit: 5 tabs across 3 shells; restart restores the layout; kill the app mid-task, relaunch, and every tab is back with Resume; no orphan processes after a crash; a recording replays in asciinema-player; OSC 133 prompt jumps work.
 2.5. **Context and preview** (added 2026-10-15, inspired by the features of the Codex desktop app, not its infrastructure; numbered 2.5 so later phases keep their numbers).
    - Scope:
@@ -859,7 +878,7 @@ Onboarding, Departures, the doctor, the settings page, the banners and the tray 
 
 ## v2 and later (not in v1)
 
-From brief §5.9 and §6: the installer runner (install CLIs; the update button and version display moved to phase 6 on 2026-10-16), review-to-merge (for worktree tasks it moved to slice 2e on 2026-10-16), start-from-issue, checkpoints, file tree, phone check-in, more than two panes, and the `marshelld` daemon. v1 keeps the core protocol-first so these are additions, not rewrites. Also deferred: Airport mode (relabel statuses), if wanted at all.
+From brief §5.9 and §6: the installer runner (install CLIs; the update button and version display moved to phase 6 on 2026-10-16), review-to-merge (for worktree tasks it moved to slice 2e on 2026-10-16), start-from-issue, checkpoints, file tree, phone check-in, and the `marshelld` daemon. v1 keeps the core protocol-first so these are additions, not rewrites. Also deferred: Airport mode (relabel statuses), if wanted at all.
 
 ## 10. Testing strategy
 
