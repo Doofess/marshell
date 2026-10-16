@@ -1,5 +1,6 @@
 use super::buffer::{MAX_UNACKED, OutputBuffer, SCROLLBACK_BYTES};
 use super::dsr::{DSR_REPLY, DsrFilter};
+use super::osc133::{Mark, Osc133Scanner};
 use portable_pty::{CommandBuilder, MasterPty, PtySize, native_pty_system};
 use std::ffi::OsString;
 use std::io::{Read, Write};
@@ -12,6 +13,9 @@ use std::time::{Duration, Instant};
 /// Runs once with the exit code when the process ends.
 pub type ExitCallback = Box<dyn FnOnce(i32) + Send>;
 
+/// Called with each OSC 133 mark the shell prints, from the reader thread, outside every session lock.
+pub type MarkCallback = Box<dyn Fn(Mark) + Send + Sync>;
+
 pub struct SpawnSpec {
     pub argv: Vec<String>,
     pub cwd: Option<PathBuf>,
@@ -20,6 +24,8 @@ pub struct SpawnSpec {
     pub rows: u16,
     /// Called once, from the wait thread, with the exit code. Runs outside every session lock.
     pub on_exit: Option<ExitCallback>,
+    /// Called for each OSC 133 prompt or command mark in the output.
+    pub on_mark: Option<MarkCallback>,
 }
 
 /// What the WebSocket task should send next.
@@ -43,6 +49,7 @@ struct Output {
     buf: OutputBuffer,
     screen: vt100::Parser,
     dsr: DsrFilter,
+    marks: Osc133Scanner,
     attached: bool,
     generation: u64,
     acked: u64,
@@ -67,6 +74,7 @@ pub struct Session {
     exited: Arc<AtomicBool>,
     /// Taken and called once when the child exits.
     exit_callback: Mutex<Option<ExitCallback>>,
+    mark_callback: Option<MarkCallback>,
 }
 
 impl Session {
@@ -99,6 +107,7 @@ impl Session {
                 buf: OutputBuffer::new(SCROLLBACK_BYTES),
                 screen: vt100::Parser::new(size.rows, size.cols, 0),
                 dsr: DsrFilter::default(),
+                marks: Osc133Scanner::default(),
                 attached: false,
                 generation: 0,
                 acked: 0,
@@ -113,6 +122,7 @@ impl Session {
             pid,
             exited: Arc::new(AtomicBool::new(false)),
             exit_callback: Mutex::new(spec.on_exit.take()),
+            mark_callback: spec.on_mark.take(),
         });
 
         std::thread::Builder::new()
@@ -181,10 +191,17 @@ impl Session {
                 pass.extend(carry);
             }
         }
+        // Scan the raw bytes: the DSR filter may hold some back, but marks never contain ESC[6n.
+        let marks = if self.mark_callback.is_some() { out.marks.scan(bytes) } else { Vec::new() };
         out.screen.process(&pass);
         out.buf.push(&pass);
         drop(out);
         self.notify.notify_one();
+        if let Some(cb) = &self.mark_callback {
+            for mark in marks {
+                cb(mark);
+            }
+        }
         answered
     }
 

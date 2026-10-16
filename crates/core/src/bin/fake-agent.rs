@@ -6,6 +6,7 @@
 //!   fake-agent spawn-child         start a sleeping grandchild, print "child:<pid>", sleep
 //!   fake-agent sleep               sleep 60 s
 //!   fake-agent exit <code>         exit with <code>
+//!   fake-agent osc133              print the OSC 133 marks A, C and D;7, exit 0
 use std::io::{BufRead, Write};
 
 fn main() {
@@ -51,6 +52,7 @@ fn main() {
         }
         Some("sleep") => std::thread::sleep(std::time::Duration::from_secs(60)),
         Some("exit") => std::process::exit(args[1].parse().unwrap()),
+        Some("osc133") => write!(out, "\x1b]133;A\x07$ \x1b]133;C\x07out\r\n\x1b]133;D;7\x1b\\").unwrap(),
         _ => eprintln!("unknown mode"),
     }
     out.flush().unwrap();

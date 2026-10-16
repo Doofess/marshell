@@ -1,4 +1,4 @@
-use marshell_core::pty::{MAX_UNACKED, Pull, Session, SpawnSpec};
+use marshell_core::pty::{MAX_UNACKED, Mark, Pull, Session, SpawnSpec};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -12,6 +12,7 @@ fn fake(args: &[&str]) -> SpawnSpec {
         cols: 80,
         rows: 24,
         on_exit: None,
+        on_mark: None,
     }
 }
 
@@ -193,7 +194,26 @@ fn on_exit_callback_gets_the_code() {
         on_exit: Some(Box::new(move |code| {
             let _ = tx.send(code);
         })),
+        on_mark: None,
     };
     let _session = Session::spawn("t-exit-cb".into(), spec).unwrap();
     assert_eq!(rx.recv_timeout(Duration::from_secs(5)), Ok(3));
+}
+
+#[test]
+fn marks_reach_the_callback() {
+    let (tx, rx) = std::sync::mpsc::channel();
+    let mut spec = fake(&["osc133"]);
+    spec.on_mark = Some(Box::new(move |mark| {
+        let _ = tx.send(mark);
+    }));
+    let _session = Session::spawn("t-marks".into(), spec).unwrap();
+    let mut got = Vec::new();
+    while let Ok(mark) = rx.recv_timeout(Duration::from_secs(10)) {
+        got.push(mark);
+        if got.len() == 3 {
+            break;
+        }
+    }
+    assert_eq!(got, [Mark::PromptStart, Mark::Executed, Mark::Finished(Some(7))]);
 }

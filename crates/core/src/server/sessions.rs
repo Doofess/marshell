@@ -150,6 +150,7 @@ async fn start_session(
         cols: size.0,
         rows: size.1,
         on_exit: Some(Box::new(move |code| registry.mark_exited(&exited_tab, code))),
+        on_mark: None,
     };
     let id = tab_id.clone();
     // Spawning touches the OS (process creation) and recording writes a file:
