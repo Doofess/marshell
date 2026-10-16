@@ -130,7 +130,7 @@ function Progress({ text }: { text: string }) {
  */
 function Commands({ commands, stale }: { commands: string[]; stale: boolean }) {
   return (
-    <div className="review__commands" data-stale={stale || undefined} aria-busy={stale || undefined}>
+    <div className="review__commands" data-stale={stale || undefined}>
       {stale && (
         <p className="review__stale" role="status">
           Updating the commands…
