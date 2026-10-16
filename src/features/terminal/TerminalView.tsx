@@ -13,7 +13,12 @@ import { ENDED_LINE, FAILED_LINE, SESSION_ENDED } from "./coreRestart";
 import { jumpFrom, promptTarget, trackPrompts, type Prompt } from "./promptMarks";
 import "./PromptMarks.css";
 import { loadRenderer, type RendererKind } from "./renderer";
-import { appScheme, resolveScheme, terminalOptions } from "./terminalTheme";
+import { trackColorSchemeMode } from "./colorSchemeMode";
+import { appScheme, resolveTerminalTheme, type TerminalThemeInput } from "./terminalTheme";
+
+/** The terminal theme settings, without the app's scheme, which the terminal reads itself. */
+export type TerminalThemeProp = Omit<TerminalThemeInput, "app">;
+const FOLLOW_APP: TerminalThemeProp = { setting: "follow-app", imported: [], protection: true };
 
 function isPerfToggle(e: KeyboardEvent): boolean {
   return e.type === "keydown" && e.shiftKey && e.altKey && (e.ctrlKey || e.metaKey) && e.code === "KeyP";
@@ -38,10 +43,12 @@ type Props = {
   promptJump?: { token: number; by: -1 | 1 };
   /** Hears where a prompt jump landed (1-based index, count, the exit code of that prompt's command), or null when there was no prompt that way. */
   onPromptJump?: (result: { index: number; total: number; exit: number | null } | null) => void;
+  /** The Appearance terminal theme and this profile's override. A change applies at once. Default: follow the app. */
+  theme?: TerminalThemeProp;
 };
 
 /** One session's terminal. */
-export function TerminalView({ endpoint, tabId, placeholder, onOutput, onSize, autoFocus = true, focusToken = 0, visible = true, promptJump, onPromptJump }: Props) {
+export function TerminalView({ endpoint, tabId, placeholder, onOutput, onSize, autoFocus = true, focusToken = 0, visible = true, promptJump, onPromptJump, theme = FOLLOW_APP }: Props) {
   const host = useRef<HTMLDivElement>(null);
   const meter = useMemo(() => new LatencyMeter(), []);
   const [renderer, setRenderer] = useState<RendererKind>("dom");
@@ -59,13 +66,19 @@ export function TerminalView({ endpoint, tabId, placeholder, onOutput, onSize, a
   jumpRef.current = onPromptJump;
   const lastJump = useRef<number | null>(null);
   const landedRef = useRef<number | null>(null);
+  const themeRef = useRef(theme);
+  themeRef.current = theme;
+  // Re-applies the theme to the live terminal; set while a terminal exists.
+  const restyleRef = useRef<(() => void) | null>(null);
 
   useEffect(() => {
     const el = host.current;
     if (!el) return;
     const fontFamily = getComputedStyle(document.documentElement).getPropertyValue("--font-mono").trim();
-    const apply = () => terminalOptions(resolveScheme("follow-app", appScheme()));
-    const term = new Terminal({ fontFamily, fontSize: 13, cursorBlink: true, scrollback: 10_000, ...apply() });
+    const resolve = () => resolveTerminalTheme({ ...themeRef.current, app: appScheme() });
+    const first = resolve();
+    let current = first.scheme;
+    const term = new Terminal({ fontFamily, fontSize: 13, cursorBlink: true, scrollback: 10_000, theme: first.theme, minimumContrastRatio: first.minimumContrastRatio });
     const fit = new FitAddon();
     term.loadAddon(fit);
     fitRef.current = fit;
@@ -86,6 +99,8 @@ export function TerminalView({ endpoint, tabId, placeholder, onOutput, onSize, a
     // Shell integration marks (OSC 133): remember each prompt's line, and mark a finished command's exit code beside it.
     const tracker = trackPrompts(term);
     promptsRef.current = tracker.prompts;
+    // Mode 2031: tell a program that asked when the terminal switches between dark and light.
+    const schemeMode = trackColorSchemeMode(term, (d) => core === "live" && socket.sendInput(d), () => current);
 
     const socket = new PtySocket(endpoint, tabId, {
       onOutput: (seq, bytes) => {
@@ -130,6 +145,7 @@ export function TerminalView({ endpoint, tabId, placeholder, onOutput, onSize, a
       }),
       term.onWriteParsed(() => meter.markOutput()),
       tracker,
+      schemeMode,
     ];
 
     let frame = 0;
@@ -144,16 +160,20 @@ export function TerminalView({ endpoint, tabId, placeholder, onOutput, onSize, a
 
     const scheme = matchMedia("(prefers-color-scheme: dark)");
     const onScheme = () => {
-      const o = apply();
+      const o = resolve();
       term.options.theme = o.theme;
       term.options.minimumContrastRatio = o.minimumContrastRatio;
+      current = o.scheme;
+      schemeMode.notify(o.scheme);
     };
+    restyleRef.current = onScheme;
     scheme.addEventListener("change", onScheme);
     const themeWatch = new MutationObserver(onScheme);
     themeWatch.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
 
     return () => {
       void stopCoreEvents.then((stop) => stop());
+      restyleRef.current = null;
       themeWatch.disconnect();
       scheme.removeEventListener("change", onScheme);
       observer.disconnect();
@@ -165,6 +185,11 @@ export function TerminalView({ endpoint, tabId, placeholder, onOutput, onSize, a
       fitRef.current = null;
     };
   }, [endpoint, tabId, meter]);
+
+  // A changed setting or override restyles the running terminal; no restart.
+  useEffect(() => {
+    restyleRef.current?.();
+  }, [theme]);
 
   // Declared after the effect above so a new terminal exists by the time this runs.
   useEffect(() => {
