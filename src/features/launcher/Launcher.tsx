@@ -99,9 +99,9 @@ export function Launcher({ view, onChange, onQuery, onPick, onPrograms, onActive
   const { choice, projects, query, activeIndex, remembered, nextNumber, taskName, confirm } = view;
   const project = projects.find((p) => p.id === choice.projectId);
   const agentRun = isAgentProgram(choice.program, programs);
-  // A worktree needs git: without chips the chip is offered only for a folder that has a branch.
+  // A worktree needs git: without chips the chip is offered only for a folder that has a branch. Any program can use one.
   const inGit = project?.branch !== undefined;
-  const showWorktree = agentRun && (chips || inGit);
+  const showWorktree = chips || inGit;
   const showTask = showWorktree && choice.worktree && inGit && taskName !== undefined;
   const program = programById(choice.program, programs) ?? programs[0] ?? LAUNCH_PROGRAMS[0]!;
   const note = agentRun ? rememberedNote(project?.name ?? "this folder", remembered) : null;

@@ -29,9 +29,10 @@ describe("launcherSentence", () => {
   it("copes with a project that is not in the list", () => {
     expect(launcherSentence({ ...base, projectId: "gone" }, PROJECTS)).toContain("in an unknown folder");
   });
-  it("is shorter for a manual CLI: no mode, no pace, no worktree", () => {
+  it("is shorter for a manual CLI: no mode, no pace, and the worktree only when it is on", () => {
     expect(launcherSentence({ ...base, program: "powershell" }, PROJECTS)).toBe("Start PowerShell in my-app on main");
     expect(launcherSentence({ ...base, program: "ssh", projectId: "scratch" }, PROJECTS)).toBe("Start SSH in scratch");
+    expect(launcherSentence({ ...base, program: "powershell", worktree: true }, PROJECTS)).toBe("Start PowerShell in my-app on main, in a new worktree");
   });
 });
 

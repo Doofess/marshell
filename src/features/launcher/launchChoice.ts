@@ -63,7 +63,7 @@ export const LAUNCH_PROGRAMS: LaunchProgram[] = [
 
 export const programsIn = (group: LaunchGroup, programs: LaunchProgram[] = LAUNCH_PROGRAMS) => programs.filter((p) => p.group === group);
 export const programById = (id: ProgramId, programs: LaunchProgram[] = LAUNCH_PROGRAMS) => programs.find((p) => p.id === id);
-/** Only AI agents have a mode, a pace and a worktree choice; a manual CLI is a plain terminal. */
+/** Only AI agents have a mode and a pace; a manual CLI is a plain terminal. Any program can start in a worktree. */
 export const isAgentProgram = (id: ProgramId, programs: LaunchProgram[] = LAUNCH_PROGRAMS) => {
   const p = programById(id, programs);
   return p ? p.group === "Agents" : !isTool(id);
@@ -79,7 +79,8 @@ export function launcherSentence(c: LauncherChoice, projects: Project[], program
   const p = projects.find((x) => x.id === c.projectId);
   const where = p ? (p.branch ? `${p.name} on ${p.branch}` : p.name) : "an unknown folder";
   const start = `Start ${label} in ${where}`;
-  return isAgentProgram(c.program, programs) ? `${start}, ${c.mode} mode, ${c.pace}, ${c.worktree ? "in a new worktree" : "no worktree"}` : start;
+  if (isAgentProgram(c.program, programs)) return `${start}, ${c.mode} mode, ${c.pace}, ${c.worktree ? "in a new worktree" : "no worktree"}`;
+  return c.worktree ? `${start}, in a new worktree` : start;
 }
 
 /** What the new tab shows within 100 ms, before the process answers. */

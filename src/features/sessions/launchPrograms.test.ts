@@ -6,7 +6,7 @@ import type { Project } from "../launcher/filter";
 import { startingText, type LauncherChoice, type ProgramId } from "../launcher/launchChoice";
 import { ApiError } from "../../lib/api/client";
 import type { LayoutDoc } from "../../generated/LayoutDoc";
-import { createRequest, createThenLaunch, initialFocus, launchRequest, preselect, progressText, refocus, rememberTasks, livePrograms, replansAfter, startFailure, taskRequest, toLauncherProject, wantsTask } from "./launchPrograms";
+import { createRequest, createThenLaunch, initialFocus, launchRequest, nameSource, preselect, progressText, refocus, rememberTasks, livePrograms, replansAfter, startFailure, taskRequest, toLauncherProject, wantsTask } from "./launchPrograms";
 
 const profile = (id: string, family: Profile["family"], name = id): Profile => ({ id, name, command: [id], family, cwd: null, env: [], shell_integration: true, detected: true });
 const PROFILES: Profile[] = [profile("pwsh", "power_shell", "PowerShell 7"), profile("cmd", "cmd", "Command Prompt"), profile("git-bash", "posix", "Git Bash"), profile("wsl-ubuntu", "wsl", "Ubuntu")];
@@ -141,12 +141,19 @@ describe("starting a task in a worktree", () => {
   const on = (program: ProgramId): LauncherChoice => ({ ...choice(program), worktree: true });
   const NO_GIT: Project[] = [{ id: "C:/dev/scratch", name: "scratch", path: "C:/dev/scratch", lastUsedMs: 1 }];
 
-  it("goes through a confirm step only for an agent in a git folder with the worktree on", () => {
-    expect(wantsTask(on("claude"), PROJECTS, programs)).toBe(true);
-    expect(wantsTask(choice("claude"), PROJECTS, programs)).toBe(false);
-    expect(wantsTask(on("profile:cmd"), PROJECTS, programs)).toBe(false);
-    expect(wantsTask({ ...on("claude"), projectId: "C:/dev/scratch" }, NO_GIT, programs)).toBe(false);
-    expect(wantsTask({ ...on("claude"), projectId: "" }, PROJECTS, programs)).toBe(false);
+  it("goes through a confirm step for any program in a git folder with the worktree on", () => {
+    expect(wantsTask(on("claude"), PROJECTS)).toBe(true);
+    expect(wantsTask(choice("claude"), PROJECTS)).toBe(false);
+    expect(wantsTask(on("profile:cmd"), PROJECTS)).toBe(true);
+    expect(wantsTask(choice("profile:cmd"), PROJECTS)).toBe(false);
+    expect(wantsTask({ ...on("claude"), projectId: "C:/dev/scratch" }, NO_GIT)).toBe(false);
+    expect(wantsTask({ ...on("claude"), projectId: "" }, PROJECTS)).toBe(false);
+  });
+
+  it("names the task from the prompt, and from nothing for a shell, which has none (the core then picks task-<n>)", () => {
+    expect(nameSource(on("claude"), "Fix login", programs)).toBe("Fix login");
+    // Text typed for an agent before switching to a shell is not sent, so it doesn't name the task either.
+    expect(nameSource(on("profile:cmd"), "Fix login", programs)).toBe("");
   });
 
   it("asks the core to plan and create in the chosen folder with the name as typed", () => {

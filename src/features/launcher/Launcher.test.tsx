@@ -83,11 +83,10 @@ describe("Launcher: the first chip offers agents, shells and tools", () => {
 describe("Launcher: a manual CLI is a plain terminal", () => {
   const manual = view({ choice: { ...DEFAULT_CHOICE, program: "powershell" } });
   const h = html(manual);
-  it("has only the program and the folder chips: no mode, pace or worktree", () => {
-    expect(count(h, /class="launcher__chip"/g)).toBe(2);
+  it("has the program, the folder and the worktree chips: no mode or pace", () => {
+    expect(count(h, /class="launcher__chip"/g)).toBe(3);
     expect(h).not.toContain("Balanced");
-    expect(h).not.toContain("worktree");
-    expect(h).not.toContain('role="checkbox"');
+    expect(h).toContain('role="checkbox"');
   });
   it("says what it starts, in a shorter sentence", () => {
     expect(h).toContain("Start PowerShell in my-app on main");
@@ -189,8 +188,9 @@ describe("Launcher: the worktree chip in the live launcher", () => {
     expect(h).not.toContain('role="checkbox"');
     expect(count(h, /class="launcher__chip"/g)).toBe(2);
   });
-  it("is hidden for a shell, which is a plain terminal", () => {
-    expect(live(view({ choice: { ...DEFAULT_CHOICE, program: "powershell" } }))).not.toContain('role="checkbox"');
+  it("is offered for a shell too: a worktree works for any program", () => {
+    expect(live(view({ choice: { ...DEFAULT_CHOICE, program: "powershell" } }))).toContain('role="checkbox"');
+    expect(live(view({ choice: { ...DEFAULT_CHOICE, program: "powershell", projectId: "scratch" } }))).not.toContain('role="checkbox"');
   });
 });
 
@@ -203,10 +203,14 @@ describe("Launcher: the task name", () => {
     expect(forId).toBeTruthy();
     expect(out).toMatch(new RegExp(`<input[^>]*id="${forId}"[^>]*value="fix-login"|<input[^>]*value="fix-login"[^>]*id="${forId}"`));
   });
-  it("is not there while the chip is off, in a folder with no branch, or for a shell", () => {
+  it("is not there while the chip is off or in a folder with no branch", () => {
     expect(h({ choice: DEFAULT_CHOICE })).not.toContain("Task name");
     expect(h({ choice: { ...on, projectId: "scratch" } })).not.toContain("Task name");
-    expect(h({ choice: { ...on, program: "powershell" } })).not.toContain("Task name");
+  });
+  it("is there for a shell, which has no prompt to name it from: an empty name hints at task-…", () => {
+    const out = h({ choice: { ...on, program: "powershell" }, taskName: "" });
+    expect(out).toContain("Task name");
+    expect(out).toContain("Branch marshell/task-…");
   });
   it("hints at the branch below the field, and at task-… when the name is empty", () => {
     const out = h();

@@ -15,7 +15,7 @@ import { Launcher, type TaskConfirm } from "../launcher/Launcher";
 import { taskNameFor } from "../tasks/taskName";
 import { appScheme } from "../terminal/terminalTheme";
 import { programById, startingText, type LauncherChoice } from "../launcher/launchChoice";
-import { createRequest, createThenLaunch, initialFocus, launchRequest, progressText, refocus, rememberTasks, replansAfter, type FocusState, livePrograms, preselect, startFailure, taskRequest, toLauncherProject, wantsTask } from "./launchPrograms";
+import { createRequest, createThenLaunch, initialFocus, launchRequest, progressText, refocus, rememberTasks, replansAfter, type FocusState, livePrograms, nameSource, preselect, startFailure, taskRequest, toLauncherProject, wantsTask } from "./launchPrograms";
 
 // The worktree flag is part of this state and nothing else: it is never read from or written to the remembered choices, so the chip starts off every time.
 const INITIAL: LauncherChoice = { program: "claude", projectId: "", mode: "Manual", pace: "Balanced", worktree: false };
@@ -115,7 +115,8 @@ export function LiveLauncher({ endpoint, nextNumber, size, onStarted, onClose }:
     setError(undefined);
   };
 
-  const taskName = taskNameFor(nameEdit, prompt);
+  // A shell takes no first prompt, so text typed for an agent before switching doesn't name its task.
+  const taskName = taskNameFor(nameEdit, nameSource(shown, prompt, programs));
 
   // Back from the confirm view puts focus where Enter starts again.
   const wasConfirming = useRef(false);
@@ -183,7 +184,7 @@ export function LiveLauncher({ endpoint, nextNumber, size, onStarted, onClose }:
 
   const start = async () => {
     if (!endpoint || !loaded || inFlight.current) return;
-    if (wantsTask(shown, projects, programs)) {
+    if (wantsTask(shown, projects)) {
       plan();
       return;
     }

@@ -64,12 +64,17 @@ export function launchRequest(
 }
 
 /**
- * True when Start must first show the worktree commands: the worktree chip is on, the program is an agent, and the chosen
- * folder is in git (it has a branch). The chip is not offered otherwise, so a stale flag never counts.
+ * True when Start must first show the worktree commands: the worktree chip is on and the chosen folder is in git (it has a
+ * branch). Any program can start in a worktree, a plain shell too. The chip is not offered outside git, so a stale flag never counts.
  */
-export function wantsTask(choice: LauncherChoice, projects: Project[], programs: LaunchProgram[]): boolean {
+export function wantsTask(choice: LauncherChoice, projects: Project[]): boolean {
   const inGit = projects.find((p) => p.id === choice.projectId)?.branch !== undefined;
-  return choice.worktree && inGit && isAgentProgram(choice.program, programs);
+  return choice.worktree && inGit;
+}
+
+/** The text the task is named from until the user types a name: the first prompt, or nothing for a program that takes none. */
+export function nameSource(choice: LauncherChoice, prompt: string, programs: LaunchProgram[]): string {
+  return programById(choice.program, programs)?.noFirst ? "" : prompt;
 }
 
 /** What the core is asked to plan: the chosen folder and the name as typed (the core slugs it). */
