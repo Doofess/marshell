@@ -146,6 +146,7 @@ Stories are fed by `fake-agent` scenario scripts, so the same 5-agent run drives
 - Setting: **Follow app** (default), **Always dark**, **Always light**, or an imported theme; a profile can override it. Switching applies to every open terminal at once through xterm's live `options.theme`, keeping scrollback.
 - Switching changes the default foreground and background, cursor, selection and the 16 ANSI colours. Colours a program painted in 24-bit RGB stay as drawn, so `minimumContrastRatio` (default 4.5) is on to keep them readable.
 - Programs that read the background once at startup keep their old look until restarted. Marshell helps in three ways: it answers OSC 10/11 colour queries with the current theme, sets `COLORFGBG` at launch, and sends the colour-scheme-change notice (mode 2031) to programs that opt in. The setting's help text says what a running program may not pick up.
+- xterm.js answers the OSC 10/11 queries while a renderer is attached. Before one attaches, or with none attached, nothing answers, so a program that asks at that moment gets no reply.
 
 **Hover-freeze rule.** While the pointer is inside the sidebar, lane height changes are deferred until the pointer leaves, with a 3 s cap. Meanwhile a "1 new" chip appears in the lane header.
 
@@ -394,6 +395,8 @@ marshell/
     core/                     # the engine (lib): server, pty, sessions, adapters, config, history, doctor, notify
       src/server/  pty/  session/  adapters/{claude,codex,antigravity,generic}/  config/
           history/  doctor/  notify/  shells/  recap/  references/  ports/
+      src/settings.rs         # the settings store (~/.marshell/settings.json) and its validation
+      src/wt.rs               # finds Windows Terminal settings files (read only)
     bridge/                   # two tiny console bins sharing a client module:
                               #   marshell-hook (hook + status line bridge), marshell (CLI: new/list/focus/send/uninstall)
     host/                     # marshell-host: Windows elevated pty helper (spike S8 in phase 1, ships in phase 6)
@@ -403,8 +406,11 @@ marshell/
     generated/                # ts-rs output, committed, CI checks it is fresh
     lib/api/                  # http client, pty socket, status socket
     tokens/                   # tokens.css (design tokens), themes
+    styles/appearance.css     # root attributes for theme, contrast and text size
+    styles/fonts.css          # the bundled JetBrains Mono
     components/               # primitives over radix-ui
     features/                 # sidebar, terminal, launcher, palette, departures, history, doctor, settings, editors
+      appearance/             # Appearance dialog, provider, theme import parsers, custom accent check
   stories/                    # Storybook mockups (approval gate before UI code)
   assets/{icon,sounds}/
   docs/                       # BRIEF.md (updated living spec), adr/, fixtures notes
@@ -746,6 +752,12 @@ Decisions from the 2026-10-10 coverage audit (`docs/superpowers/plan-coverage-au
      - **Restart behaviour:** on relaunch tabs come back as "Ended" with a one-click Resume (the agent's own `--resume`). Nothing relaunches itself or spends tokens unasked.
    - Slices: 2a hygiene and resilience; 2b tabs, sidebar, profiles and launcher (agents run inside a shell profile; status limited until phase 3); 2c shell integration; 2d themes; 2e split, layout restore and Resume, plus the sidebar shell panel, project grouping and focus mode; 2f recording, palette and cheat sheet.
    - Slice 2c (shell integration) ships first and is unchanged by the roadmap additions of 2026-10-16.
+   - **Slice 2d (themes) is built.** User decisions of 2026-10-16:
+     - Settings live in a real store, `~/.marshell/settings.json`, with `GET`/`PUT /v1/settings`. Only the Appearance fields are wired so far.
+     - Theme import takes Windows Terminal, iTerm2 (`.itermcolors`) and VS Code theme files from a file picker. It also lists the schemes found in the user's Windows Terminal settings, read only and never written.
+     - High contrast is Follow system (`prefers-contrast: more`), On or Off.
+     - Text size is Default, Large or Larger, which move the UI type scale up one or two steps (13, 15, 17 px body). The terminal font size is its own setting (8–32).
+     - What shipped: the Appearance dialog from the palette ("Appearance…"); presets plus a custom accent checked against both themes (3:1 on every surface, 4.5:1 for text); terminal theme Follow app, Always dark, Always light or imported, with a per-profile override in Shell profiles; contrast protection (`minimumContrastRatio`); `COLORFGBG` set at session start from the scheme the terminal will show; terminal font from your setting, else Windows Terminal's default profile font, else the bundled JetBrains Mono.
    - **Projects and task worktrees (slice 2e, widened 2026-10-16; research in `docs/research/2026-10-16-accounts-cloud-extensions.md`).** A project is a folder, so projects are universal across CLIs and need no adapter. Projects are listed and grouped in the sidebar. A task can start in its own git worktree, as in the Codex desktop app, and Marshell then lets the user review its changes and merge it back in the app. This pulls the v2 "review-to-merge" item forward for worktree tasks; start-from-issue stays in v2. Worktree creation, merge and removal are git operations that show their command first and never run silently.
    - A core restart ends the running sessions. The Ended + Resume tab state arrives in 2e; until then the terminal says the session ended and Enter starts a new shell.
    - Exit: 5 tabs across 3 shells; restart restores the layout; kill the app mid-task, relaunch, and every tab is back with Resume; no orphan processes after a crash; a recording replays in asciinema-player; OSC 133 prompt jumps work.
