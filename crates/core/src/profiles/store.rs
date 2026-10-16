@@ -128,6 +128,7 @@ mod tests {
             family: ShellFamily::PowerShell,
             cwd: None,
             env: Vec::new(),
+            shell_integration: true,
             detected,
         }
     }

@@ -16,6 +16,7 @@ const info = (n: number, patch: Partial<SessionInfo> = {}): SessionInfo => ({
   profile_id: "pwsh",
   cwd: "C:\\dev\\my-app",
   state: { kind: "running" },
+  command: { kind: "unknown" },
   ...patch,
 });
 const claude = (n: number, patch: Partial<SessionInfo> = {}) => info(n, { name: "Claude Code", agent: "claude", ...patch });

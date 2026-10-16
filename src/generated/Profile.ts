@@ -18,6 +18,10 @@ cwd: string | null,
  */
 env: Array<[string, string]>, 
 /**
+ * Start plain shell sessions through Marshell's init script (prompt marks, command status).
+ */
+shell_integration: boolean, 
+/**
  * True for profiles found on this machine and not edited by the user.
  */
 detected: boolean, };

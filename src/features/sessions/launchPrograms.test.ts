@@ -6,7 +6,7 @@ import { startingText, type LauncherChoice, type ProgramId } from "../launcher/l
 import { ApiError } from "../../lib/api/client";
 import { initialFocus, launchRequest, refocus, livePrograms, startFailure, toLauncherProject } from "./launchPrograms";
 
-const profile = (id: string, family: Profile["family"], name = id): Profile => ({ id, name, command: [id], family, cwd: null, env: [], detected: true });
+const profile = (id: string, family: Profile["family"], name = id): Profile => ({ id, name, command: [id], family, cwd: null, env: [], shell_integration: true, detected: true });
 const PROFILES: Profile[] = [profile("pwsh", "power_shell", "PowerShell 7"), profile("cmd", "cmd", "Command Prompt"), profile("git-bash", "posix", "Git Bash"), profile("wsl-ubuntu", "wsl", "Ubuntu")];
 const DOC: ProfilesDoc = { profiles: PROFILES, default_id: "pwsh" };
 const PROJECTS: Project[] = [{ id: "C:/dev/my-app", name: "my-app", branch: "main", path: "C:/dev/my-app", lastUsedMs: 1 }];

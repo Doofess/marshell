@@ -30,6 +30,7 @@ fn detected_profile() -> marshell_protocol::api::Profile {
         family: marshell_protocol::api::ShellFamily::Cmd,
         cwd: None,
         env: Vec::new(),
+        shell_integration: true,
         detected: true,
     }
 }
@@ -320,6 +321,7 @@ fn sleeper_profile() -> marshell_protocol::api::Profile {
         family: marshell_protocol::api::ShellFamily::Posix,
         cwd: None,
         env: Vec::new(),
+        shell_integration: true,
         detected: true,
     }
 }

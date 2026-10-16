@@ -105,6 +105,21 @@ pub struct SessionInfo {
     pub profile_id: String,
     pub cwd: String,
     pub state: SessionState,
+    /// What the shell is doing, from its prompt marks. Unknown without shell integration.
+    pub command: CommandState,
+}
+
+/// A shell session's command state, folded from OSC 133 marks.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+#[ts(export)]
+pub enum CommandState {
+    /// No prompt mark seen: no integration, or the shell hasn't drawn its first prompt.
+    Unknown,
+    /// At the prompt. `last_exit` is the most recent finished command's code, if the shell reports one.
+    Prompt { last_exit: Option<i32> },
+    /// A command is running (an OSC 133 C mark arrived).
+    Running,
 }
 
 /// GET /v1/sessions body.
@@ -163,8 +178,28 @@ pub struct Profile {
     pub cwd: Option<String>,
     /// Extra environment variables as (name, value) pairs.
     pub env: Vec<(String, String)>,
+    /// Start plain shell sessions through Marshell's init script (prompt marks, command status).
+    #[serde(default = "default_true")]
+    pub shell_integration: bool,
     /// True for profiles found on this machine and not edited by the user.
     pub detected: bool,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+/// POST /v1/profiles/integration body: what integration would do for this profile.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct IntegrationInfo {
+    pub applies: bool,
+    /// Why it doesn't apply; None when it does.
+    pub reason: Option<String>,
+    /// Where the script lives, for the read-only view.
+    pub script_path: Option<String>,
+    /// The script text (for cmd, the PROMPT value; for WSL, the dispatcher).
+    pub script: Option<String>,
 }
 
 /// GET/PUT /v1/profiles body.
@@ -223,6 +258,23 @@ mod tests {
         let json = serde_json::to_string(&SessionState::Exited { code: 2 }).unwrap();
         assert_eq!(json, r#"{"kind":"exited","code":2}"#);
         let json = serde_json::to_string(&SessionState::Running).unwrap();
+        assert_eq!(json, r#"{"kind":"running"}"#);
+    }
+
+    #[test]
+    fn profile_without_shell_integration_loads_as_on() {
+        let p: Profile = serde_json::from_str(
+            r#"{"id":"pwsh","name":"PowerShell","command":["pwsh.exe"],"family":"power_shell","cwd":null,"env":[],"detected":true}"#,
+        )
+        .unwrap();
+        assert!(p.shell_integration);
+    }
+
+    #[test]
+    fn command_state_serializes_tagged() {
+        let json = serde_json::to_string(&CommandState::Prompt { last_exit: Some(1) }).unwrap();
+        assert_eq!(json, r#"{"kind":"prompt","last_exit":1}"#);
+        let json = serde_json::to_string(&CommandState::Running).unwrap();
         assert_eq!(json, r#"{"kind":"running"}"#);
     }
 

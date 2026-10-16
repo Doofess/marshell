@@ -3,7 +3,7 @@ import type { Profile } from "../../generated/Profile";
 import type { SessionInfo } from "../../generated/SessionInfo";
 import { toRow } from "./toRow";
 
-const profile = (id: string, family: Profile["family"]): Profile => ({ id, name: id, command: [id], family, cwd: null, env: [], detected: true });
+const profile = (id: string, family: Profile["family"]): Profile => ({ id, name: id, command: [id], family, cwd: null, env: [], shell_integration: true, detected: true });
 const PROFILES: Profile[] = [
   profile("pwsh", "power_shell"),
   profile("cmd", "cmd"),
@@ -19,6 +19,7 @@ const info = (patch: Partial<SessionInfo> = {}): SessionInfo => ({
   profile_id: "pwsh",
   cwd: "C:\\dev\\my-app",
   state: { kind: "running" },
+  command: { kind: "unknown" },
   ...patch,
 });
 

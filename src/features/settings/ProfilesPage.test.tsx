@@ -9,7 +9,7 @@ import { canClose, ProfilesPageView, type ProfilesHandlers } from "./ProfilesPag
 import { ProfilesStore } from "./ProfilesStore";
 
 const ep: Endpoint = { port: 1, token: "t", platform: "windows" };
-const profile = (id: string, patch: Partial<Profile> = {}): Profile => ({ id, name: `Name ${id}`, command: [`${id}.exe`], family: "cmd", cwd: null, env: [], detected: false, ...patch });
+const profile = (id: string, patch: Partial<Profile> = {}): Profile => ({ id, name: `Name ${id}`, command: [`${id}.exe`], family: "cmd", cwd: null, env: [], shell_integration: true, detected: false, ...patch });
 const FOUND: Profile[] = [profile("pwsh", { detected: true }), profile("cmd", { detected: true })];
 const DOC: ProfilesDoc = { profiles: FOUND, default_id: "pwsh" };
 

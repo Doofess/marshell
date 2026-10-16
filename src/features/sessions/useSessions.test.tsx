@@ -21,7 +21,7 @@ vi.mock("../../lib/api/profiles", () => ({
   profiles: {
     get: vi.fn(async () => ({
       default_id: "pwsh",
-      profiles: [{ id: "pwsh", name: "PowerShell", command: ["pwsh"], family: "power_shell", cwd: null, env: [], detected: true }],
+      profiles: [{ id: "pwsh", name: "PowerShell", command: ["pwsh"], family: "power_shell", cwd: null, env: [], shell_integration: true, detected: true }],
     })),
   },
 }));
@@ -50,6 +50,7 @@ const info = (n: number, patch: Partial<SessionInfo> = {}): SessionInfo => ({
   profile_id: "pwsh",
   cwd: "C:\\dev\\app",
   state: { kind: "running" },
+  command: { kind: "unknown" },
   ...patch,
 });
 const snap = (open: number[], closed: SessionInfo[] = []): SessionsSnapshot => ({ sessions: open.map((n) => info(n)), closed });

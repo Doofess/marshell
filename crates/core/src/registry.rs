@@ -5,7 +5,7 @@
 use std::collections::VecDeque;
 use std::sync::Mutex;
 
-use marshell_protocol::api::{SessionInfo, SessionState, SessionsSnapshot};
+use marshell_protocol::api::{CommandState, SessionInfo, SessionState, SessionsSnapshot};
 use tokio::sync::watch;
 
 /// How many closed sessions we remember for Reopen.
@@ -95,6 +95,7 @@ impl Registry {
                 profile_id: relaunch.profile_id.clone(),
                 cwd: relaunch.cwd.clone(),
                 state: SessionState::Running,
+                command: CommandState::Unknown,
             },
             spec: relaunch,
         });

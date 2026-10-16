@@ -9,7 +9,7 @@ import type { ProfilesState } from "./ProfilesStore";
 const meta: Meta = { title: "Settings/Shell profiles", parameters: { layout: "fullscreen" } };
 export default meta;
 
-const profile = (id: string, name: string, command: string[], patch: Partial<Profile> = {}): Profile => ({ id, name, command, family: "power_shell", cwd: null, env: [], detected: true, ...patch });
+const profile = (id: string, name: string, command: string[], patch: Partial<Profile> = {}): Profile => ({ id, name, command, family: "power_shell", cwd: null, env: [], shell_integration: true, detected: true, ...patch });
 const DETECTED: Profile[] = [
   profile("pwsh", "PowerShell 7", ["C:\\Program Files\\PowerShell\\7\\pwsh.exe", "-NoLogo"]),
   profile("powershell", "Windows PowerShell", ["C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe"]),
