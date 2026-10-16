@@ -55,6 +55,9 @@ pub fn run(dir: &Path, args: &[&str]) -> anyhow::Result<GitOutput> {
         .args(["-c", "core.quotepath=off"])
         .args(args)
         .env("GIT_TERMINAL_PROMPT", "0")
+        // Reading (`status`, `diff`) must not refresh the index, or it could take `index.lock`
+        // and make a git command running in the same folder fail.
+        .env("GIT_OPTIONAL_LOCKS", "0")
         .stdin(Stdio::null());
     #[cfg(windows)]
     {

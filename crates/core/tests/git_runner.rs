@@ -50,6 +50,19 @@ fn run_reports_status_and_output() {
 }
 
 #[test]
+fn run_forbids_optional_index_locks() {
+    let tmp = tempfile::tempdir().unwrap();
+    // A shell alias echoes the environment git passes to its children.
+    let out = run(
+        tmp.path(),
+        &["-c", "alias.showenv=!echo lock=$GIT_OPTIONAL_LOCKS", "showenv"],
+    )
+    .unwrap();
+    assert!(out.ok, "{}", out.stderr);
+    assert_eq!(out.stdout.trim(), "lock=0");
+}
+
+#[test]
 fn last_line_is_the_last_non_empty_trimmed_line() {
     assert_eq!(last_line("first\n  second  \n\n"), "second");
     assert_eq!(last_line(""), "");

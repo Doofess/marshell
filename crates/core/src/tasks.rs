@@ -233,17 +233,18 @@ fn untracked_diff(dir: &Path, path: &str) -> String {
         return String::new();
     };
     if meta.len() > MAX_UNTRACKED {
-        return format!("Large file {path}\n");
+        return format!("{}Large file {path}\n", new_file_header(path));
     }
     let Ok(bytes) = std::fs::read(&full) else {
         return String::new();
     };
     if bytes[..bytes.len().min(BINARY_SNIFF)].contains(&0) {
-        return format!("Binary file {path}\n");
+        return format!("{}Binary file {path}\n", new_file_header(path));
     }
     let text = String::from_utf8_lossy(&bytes);
     let lines: Vec<&str> = text.split_inclusive('\n').collect();
-    let mut out = format!("diff --git a/{path} b/{path}\nnew file mode 100644\n--- /dev/null\n+++ b/{path}\n");
+    let mut out = new_file_header(path);
+    out.push_str(&format!("--- /dev/null\n+++ b/{path}\n"));
     if lines.is_empty() {
         // An empty file has no hunk.
         return out;
@@ -259,12 +260,22 @@ fn untracked_diff(dir: &Path, path: &str) -> String {
     out
 }
 
-/// Cuts the text to at most `max` bytes, ending after a line break.
-fn cut_at_line(text: &mut String, max: usize) {
-    let keep = text.as_bytes()[..max]
-        .iter()
-        .rposition(|&b| b == b'\n')
-        .map_or(0, |i| i + 1);
+/// The header lines that open one file's section of a diff, for a new file.
+fn new_file_header(path: &str) -> String {
+    format!("diff --git a/{path} b/{path}\nnew file mode 100644\n")
+}
+
+/// Cuts the diff to at most `max` bytes without leaving half a file: back to the start of the last
+/// `diff --git` line that begins inside the cap. When that is the first line (one huge file), the
+/// cut is just after the last line break.
+fn cut_diff(text: &mut String, max: usize) {
+    let head = &text.as_bytes()[..max];
+    let marker = b"\ndiff --git ";
+    let section = head.windows(marker.len()).rposition(|w| w == marker);
+    let keep = match section {
+        Some(i) => i + 1,
+        None => head.iter().rposition(|&b| b == b'\n').map_or(0, |i| i + 1),
+    };
     text.truncate(keep);
 }
 
@@ -276,7 +287,17 @@ pub fn changes(task: &Task) -> Result<TaskChanges, String> {
     let merge_base = read(dir, &["merge-base", base, "HEAD"])?;
     let merge_base = merge_base.trim();
 
-    let mut diff = read(dir, &["diff", "--no-color", "--no-ext-diff", merge_base])?;
+    // Prefixes and textconv are set here so a user's git config can't change the section headers.
+    let diff_args = [
+        "diff",
+        "--no-color",
+        "--no-ext-diff",
+        "--no-textconv",
+        "--src-prefix=a/",
+        "--dst-prefix=b/",
+        merge_base,
+    ];
+    let mut diff = read(dir, &diff_args)?;
     let mut files = tracked_files(&read(dir, &["diff", "--name-status", "-z", merge_base])?);
 
     let untracked = read(dir, &["ls-files", "--others", "--exclude-standard", "-z"])?;
@@ -292,7 +313,7 @@ pub fn changes(task: &Task) -> Result<TaskChanges, String> {
     }
     let truncated = diff.len() > MAX_DIFF;
     if truncated {
-        cut_at_line(&mut diff, MAX_DIFF);
+        cut_diff(&mut diff, MAX_DIFF);
     }
     files.sort_by(|a, b| a.path.cmp(&b.path));
 

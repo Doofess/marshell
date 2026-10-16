@@ -450,6 +450,14 @@ fn binary_untracked_file_is_named_not_dumped() {
         changes.diff
     );
     assert!(!changes.diff.contains("AAAA") && !changes.diff.contains("secret"));
+    // A section of its own, so a splitter on `diff --git` lines doesn't fold it into the last file.
+    assert!(
+        changes
+            .diff
+            .contains("diff --git a/blob.bin b/blob.bin\nnew file mode 100644\nBinary file blob.bin\n"),
+        "{}",
+        changes.diff
+    );
 }
 
 #[test]
@@ -494,7 +502,7 @@ fn deleted_renamed_and_large_files_are_reported() {
 }
 
 #[test]
-fn a_huge_diff_is_cut_at_a_line_boundary() {
+fn a_huge_diff_is_cut_at_a_file_boundary() {
     let tmp = spaced_tmp();
     let (_home, task) = new_task(&tmp);
     let dir = PathBuf::from(&task.path);
@@ -507,8 +515,14 @@ fn a_huge_diff_is_cut_at_a_line_boundary() {
     let changes = tasks::changes(&task).unwrap();
     assert!(changes.truncated);
     assert!(changes.diff.len() <= 4 * 1024 * 1024);
-    assert!(changes.diff.len() > 4 * 1024 * 1024 - 1024);
+    // Cut back to the start of a file section: at most one section (about 195 KB) is lost.
+    assert!(changes.diff.len() > 4 * 1024 * 1024 - 200_000);
     assert!(changes.diff.ends_with('\n'));
+    // Every section that is left is whole.
+    let sections = changes.diff.lines().filter(|l| l.starts_with("diff --git ")).count();
+    let body = changes.diff.lines().filter(|l| l.starts_with("+0123")).count();
+    assert!(sections > 0);
+    assert_eq!(body, sections * 3000);
     assert_eq!(changes.files.len(), 25);
 }
 
