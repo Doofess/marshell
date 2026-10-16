@@ -7,6 +7,7 @@ import { paletteSessions } from "../palette/sessions";
 import { ProfilesDialog } from "../settings/ProfilesPage";
 import { nextSessionNumber } from "../sidebar/sessionNumber";
 import type { RowModel } from "../sidebar/types";
+import { jumpWords } from "../terminal/promptMarks";
 import { TerminalView } from "../terminal/TerminalView";
 import { sidebarMode } from "../window/layout";
 import { MainWindow } from "../window/MainWindow";
@@ -114,8 +115,7 @@ export function LiveApp() {
   }, []);
   const onPromptJump = useCallback(
     (by: -1 | 1, result: { index: number; total: number; exit: number | null } | null) => {
-      if (!result) announce(by < 0 ? "No earlier prompt" : "No later prompt");
-      else announce(`Prompt ${result.index} of ${result.total}${result.exit !== null && result.exit !== 0 ? `, exit ${result.exit}` : ""}`);
+      announce(jumpWords(by, result));
     },
     [announce],
   );
