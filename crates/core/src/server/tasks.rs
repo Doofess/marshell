@@ -3,7 +3,7 @@ use axum::Json;
 use axum::extract::{Path as UrlPath, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
-use marshell_protocol::api::{ResumeError, TaskPlanRequest};
+use marshell_protocol::api::{MergeRequest, ResumeError, TaskPlanRequest};
 use std::path::Path;
 
 fn refused(reason: String) -> Response {
@@ -65,6 +65,40 @@ pub async fn changes(State(st): State<AppState>, UrlPath(id): UrlPath<String>) -
     match read {
         Ok(Some(Ok(changes))) => Json(changes).into_response(),
         Ok(Some(Err(reason))) => refused(reason),
+        Ok(None) => StatusCode::NOT_FOUND.into_response(),
+        Err(e) => failed(e),
+    }
+}
+
+/// What merging the task would run, and what stops it. 404 for an id we don't know.
+pub async fn merge_plan(
+    State(st): State<AppState>,
+    UrlPath(id): UrlPath<String>,
+    Json(req): Json<MergeRequest>,
+) -> Response {
+    let planned = tokio::task::spawn_blocking(move || {
+        crate::tasks::find(&st.0.home, &id).map(|task| crate::tasks::plan_merge(&task, &req).0)
+    })
+    .await;
+    match planned {
+        Ok(Some(plan)) => Json(plan).into_response(),
+        Ok(None) => StatusCode::NOT_FOUND.into_response(),
+        Err(e) => failed(e),
+    }
+}
+
+/// Merges the task into its base branch. A conflict or a git failure is an answer, not an error.
+pub async fn merge(
+    State(st): State<AppState>,
+    UrlPath(id): UrlPath<String>,
+    Json(req): Json<MergeRequest>,
+) -> Response {
+    let merged = tokio::task::spawn_blocking(move || {
+        crate::tasks::find(&st.0.home, &id).map(|task| crate::tasks::merge(&st, &task, &req))
+    })
+    .await;
+    match merged {
+        Ok(Some(outcome)) => Json(outcome).into_response(),
         Ok(None) => StatusCode::NOT_FOUND.into_response(),
         Err(e) => failed(e),
     }

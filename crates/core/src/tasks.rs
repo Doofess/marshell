@@ -3,8 +3,11 @@
 
 use crate::git::{self, GitStep};
 use crate::projects;
+use crate::server::AppState;
 use crate::store::{self, Versioned};
-use marshell_protocol::api::{ChangedFile, Task, TaskChanges, TaskPlan, TaskPlanRequest};
+use marshell_protocol::api::{
+    ChangedFile, MergeOutcome, MergePlan, MergeRequest, Task, TaskChanges, TaskPlan, TaskPlanRequest,
+};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
@@ -329,4 +332,153 @@ pub fn changes(task: &Task) -> Result<TaskChanges, String> {
         ahead,
         uncommitted,
     })
+}
+
+/// Two merges into the same checkout at once would trip over each other. Held for all of `merge`.
+/// Separate from `TASKS_LOCK` so Task 5's removal, which takes that one, can run inside a merge.
+static MERGE_LOCK: Mutex<()> = Mutex::new(());
+
+/// A read-only git question asked in `dir`; the error is one sentence.
+fn ask(dir: &Path, args: &[&str]) -> Result<String, String> {
+    let out = git::run(dir, args).map_err(|e| format!("{e:#}"))?;
+    if out.ok {
+        Ok(out.stdout)
+    } else {
+        Err(format!(
+            "Couldn't read {}. Git said: {}",
+            folder_name(dir),
+            git::last_line(&out.stderr)
+        ))
+    }
+}
+
+/// The first reason the merge can't go ahead, or None.
+fn merge_blocker(task: &Task, message: &str) -> Result<Option<String>, String> {
+    let repo = Path::new(&task.repo_root);
+    let repo_name = folder_name(repo);
+    // Tracked changes in the base would be mixed into the squash commit. Untracked files are the
+    // user's own and stay out of it.
+    if !ask(repo, &["status", "--porcelain", "--untracked-files=no"])?
+        .trim()
+        .is_empty()
+    {
+        return Ok(Some(format!(
+            "{repo_name} has uncommitted changes. Commit or stash them, then merge."
+        )));
+    }
+    let on = projects::head_branch(repo);
+    if on.as_deref() != Some(task.base_branch.as_str()) {
+        let on = on.unwrap_or_else(|| "a detached HEAD".into());
+        return Ok(Some(format!(
+            "{repo_name} is on {on}, not {}. Switch it to {}, then merge.",
+            task.base_branch, task.base_branch
+        )));
+    }
+    let dir = Path::new(&task.path);
+    let ahead = ask(dir, &["rev-list", "--count", &format!("{}..HEAD", task.base_branch)])?;
+    if ahead.trim() == "0" && !worktree_dirty(dir)? {
+        return Ok(Some(format!("{} has no changes to merge.", task.branch)));
+    }
+    if message.is_empty() {
+        return Ok(Some("Write a commit message.".into()));
+    }
+    Ok(None)
+}
+
+/// Whether the task folder has anything `git add -A` would commit.
+fn worktree_dirty(dir: &Path) -> Result<bool, String> {
+    Ok(!ask(dir, &["status", "--porcelain"])?.trim().is_empty())
+}
+
+/// What merging the task into its base branch would run, with the git steps that run it. The
+/// steps are the task folder's own commit (when it has uncommitted work), then the squash and the
+/// commit in the base checkout; the last two are always the base checkout's. A blocker is a
+/// reason it can't go ahead; the commands are still listed so the sheet can show them.
+pub fn plan_merge(task: &Task, req: &MergeRequest) -> (MergePlan, Vec<GitStep>) {
+    let message = req.message.trim();
+    let step = |dir: &str, args: &[&str]| GitStep {
+        dir: PathBuf::from(dir),
+        args: args.iter().map(|a| a.to_string()).collect(),
+    };
+    let mut steps = Vec::new();
+    // If the folder can't be read the question comes back below as the blocker.
+    if worktree_dirty(Path::new(&task.path)).unwrap_or(false) {
+        steps.push(step(&task.path, &["add", "-A"]));
+        steps.push(step(&task.path, &["commit", "-q", "-m", message]));
+    }
+    steps.push(step(&task.repo_root, &["merge", "--squash", &task.branch]));
+    steps.push(step(&task.repo_root, &["commit", "-q", "-m", message]));
+
+    let blocker = merge_blocker(task, message).unwrap_or_else(Some);
+    let plan = MergePlan {
+        commands: steps.iter().map(git::display).collect(),
+        blocker,
+    };
+    (plan, steps)
+}
+
+/// Puts the base checkout back after a squash or commit that failed halfway. Not a shown
+/// command: it only undoes what the shown command changed, in a checkout that was clean.
+fn restore_base(repo: &Path) {
+    let _ = git::run(repo, &["reset", "-q", "--merge"]);
+}
+
+/// Squashes the task into its base branch as one commit. Plans again first and stops at a
+/// blocker. When the squash or the commit fails, the base checkout is put back as it was.
+pub fn merge(st: &AppState, task: &Task, req: &MergeRequest) -> MergeOutcome {
+    let _guard = MERGE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let failed = |reason: String| MergeOutcome::Failed { reason };
+    let (plan, steps) = plan_merge(task, req);
+    if let Some(blocker) = plan.blocker {
+        return failed(blocker);
+    }
+    let repo = Path::new(&task.repo_root);
+    // The last two steps are the base checkout's squash and commit.
+    let (worktree_steps, base_steps) = steps.split_at(steps.len() - 2);
+
+    if let Err(f) = git::run_steps(worktree_steps) {
+        return failed(format!(
+            "Couldn't commit the task's changes. Git said: {}",
+            git::last_line(&f.output.stderr)
+        ));
+    }
+
+    if let Err(f) = git::run_steps(&base_steps[..1]) {
+        // A conflict leaves the files git couldn't merge in the index; list them, then undo.
+        let conflicts = git::run(repo, &["diff", "--name-only", "--diff-filter=U"])
+            .map(|out| out.stdout)
+            .unwrap_or_default();
+        let files: Vec<String> = conflicts
+            .lines()
+            .map(str::to_string)
+            .filter(|l| !l.is_empty())
+            .collect();
+        restore_base(repo);
+        if files.is_empty() {
+            return failed(format!(
+                "Couldn't merge. Git said: {}",
+                git::last_line(&f.output.stderr)
+            ));
+        }
+        return MergeOutcome::Conflict { files };
+    }
+
+    if let Err(f) = git::run_steps(&base_steps[1..]) {
+        restore_base(repo);
+        return failed(format!(
+            "Couldn't commit on {}. Git said: {}",
+            task.base_branch,
+            git::last_line(&f.output.stderr)
+        ));
+    }
+
+    let removed = if req.remove {
+        // Task 5: remove the task here (its worktree, branch, sessions and registry row) and
+        // report whether that worked. Until then nothing is removed.
+        let _ = st;
+        false
+    } else {
+        false
+    };
+    MergeOutcome::Merged { removed }
 }

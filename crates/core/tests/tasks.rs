@@ -5,7 +5,7 @@ use axum::http::{Request, StatusCode, header};
 use marshell_core::git::{GitStep, display, run};
 use marshell_core::server::{AppState, router};
 use marshell_core::{projects, tasks};
-use marshell_protocol::api::{Profile, ShellFamily, TaskPlanRequest};
+use marshell_protocol::api::{MergeOutcome, MergeRequest, Profile, ShellFamily, TaskPlanRequest};
 use std::path::{Path, PathBuf};
 use tower::ServiceExt;
 
@@ -550,4 +550,405 @@ async fn changes_route_returns_changes_or_404() {
         .await
         .unwrap();
     assert_eq!(res.status(), StatusCode::NOT_FOUND);
+}
+
+// ---- merging a task back ----
+
+fn merge_req(message: &str) -> MergeRequest {
+    MergeRequest {
+        message: message.into(),
+        remove: false,
+    }
+}
+
+/// A file's text with Windows line endings read as `\n` (git may check files out with `\r\n`).
+fn text_of(path: &Path) -> String {
+    std::fs::read_to_string(path).unwrap().replace("\r\n", "\n")
+}
+
+fn head_of(dir: &Path) -> String {
+    run(dir, &["rev-parse", "HEAD"]).unwrap().stdout.trim().to_string()
+}
+
+fn tracked_status(dir: &Path) -> String {
+    run(dir, &["status", "--porcelain", "--untracked-files=no"])
+        .unwrap()
+        .stdout
+}
+
+fn commit_count(dir: &Path) -> usize {
+    run(dir, &["rev-list", "--count", "HEAD"])
+        .unwrap()
+        .stdout
+        .trim()
+        .parse()
+        .unwrap()
+}
+
+#[test]
+fn merge_plan_lists_commands_in_order() {
+    let tmp = spaced_tmp();
+    let (_home, task) = new_task(&tmp);
+    let dir = PathBuf::from(&task.path);
+    std::fs::write(dir.join("a.txt"), "task\n").unwrap();
+
+    let (plan, steps) = tasks::plan_merge(&task, &merge_req("Fix login"));
+    assert_eq!(plan.blocker, None);
+    assert_eq!(
+        plan.commands,
+        vec![
+            format!("git -C \"{}\" add -A", task.path),
+            format!("git -C \"{}\" commit -q -m \"Fix login\"", task.path),
+            format!("git -C \"{}\" merge --squash marshell/fix-login", task.repo_root),
+            format!("git -C \"{}\" commit -q -m \"Fix login\"", task.repo_root),
+        ]
+    );
+    assert_eq!(plan.commands.len(), 4);
+    // The steps that run are the steps that are shown.
+    let shown: Vec<String> = steps.iter().map(display).collect();
+    assert_eq!(shown, plan.commands);
+
+    // A clean worktree has nothing to add or commit; the message is trimmed.
+    commit_all(&dir, "edit a");
+    let (plan, _) = tasks::plan_merge(&task, &merge_req("  Fix login \n"));
+    assert_eq!(plan.blocker, None);
+    assert_eq!(
+        plan.commands,
+        vec![
+            format!("git -C \"{}\" merge --squash marshell/fix-login", task.repo_root),
+            format!("git -C \"{}\" commit -q -m \"Fix login\"", task.repo_root),
+        ]
+    );
+}
+
+#[test]
+fn merge_plan_blockers() {
+    // A tracked edit in the base checkout.
+    let tmp = spaced_tmp();
+    let (_home, task) = new_task(&tmp);
+    let repo = PathBuf::from(&task.repo_root);
+    std::fs::write(Path::new(&task.path).join("b.txt"), "b\n").unwrap();
+    std::fs::write(repo.join("a.txt"), "edited in the base\n").unwrap();
+    let (plan, _) = tasks::plan_merge(&task, &merge_req("Fix login"));
+    assert_eq!(
+        plan.blocker.as_deref(),
+        Some("my repo has uncommitted changes. Commit or stash them, then merge.")
+    );
+    assert_eq!(plan.commands.len(), 4);
+
+    // The base on another branch.
+    let tmp = spaced_tmp();
+    let (_home, task) = new_task(&tmp);
+    let repo = PathBuf::from(&task.repo_root);
+    std::fs::write(Path::new(&task.path).join("b.txt"), "b\n").unwrap();
+    assert!(run(&repo, &["checkout", "-q", "-b", "other"]).unwrap().ok);
+    let (plan, _) = tasks::plan_merge(&task, &merge_req("Fix login"));
+    assert_eq!(
+        plan.blocker.as_deref(),
+        Some("my repo is on other, not main. Switch it to main, then merge.")
+    );
+    assert_eq!(plan.commands.len(), 4);
+
+    // Nothing ahead and nothing uncommitted.
+    let tmp = spaced_tmp();
+    let (_home, task) = new_task(&tmp);
+    let (plan, _) = tasks::plan_merge(&task, &merge_req("Fix login"));
+    assert_eq!(
+        plan.blocker.as_deref(),
+        Some("marshell/fix-login has no changes to merge.")
+    );
+    assert_eq!(plan.commands.len(), 2);
+
+    // An empty message.
+    let tmp = spaced_tmp();
+    let (_home, task) = new_task(&tmp);
+    std::fs::write(Path::new(&task.path).join("b.txt"), "b\n").unwrap();
+    let (plan, _) = tasks::plan_merge(&task, &merge_req(" \t "));
+    assert_eq!(plan.blocker.as_deref(), Some("Write a commit message."));
+    assert_eq!(plan.commands.len(), 4);
+}
+
+#[test]
+fn merge_squashes_into_one_commit() {
+    let tmp = spaced_tmp();
+    let (home, task) = new_task(&tmp);
+    let dir = PathBuf::from(&task.path);
+    let repo = PathBuf::from(&task.repo_root);
+    // Two commits and one uncommitted edit become one commit on main.
+    std::fs::write(dir.join("a.txt"), "one\n").unwrap();
+    commit_all(&dir, "step 1");
+    std::fs::write(dir.join("b.txt"), "b\n").unwrap();
+    commit_all(&dir, "step 2");
+    std::fs::write(dir.join("a.txt"), "task\n").unwrap();
+    let before = commit_count(&repo);
+
+    let outcome = tasks::merge(&state_in(&home), &task, &merge_req("Fix login"));
+    assert_eq!(outcome, MergeOutcome::Merged { removed: false });
+    assert_eq!(commit_count(&repo), before + 1);
+    let subject = run(&repo, &["log", "-1", "--format=%s"]).unwrap().stdout;
+    assert_eq!(subject.trim(), "Fix login");
+    assert_eq!(text_of(&repo.join("a.txt")), "task\n");
+    assert_eq!(text_of(&repo.join("b.txt")), "b\n");
+    assert_eq!(run(&repo, &["status", "--porcelain"]).unwrap().stdout, "");
+    // The task's folder was committed too.
+    assert_eq!(run(&dir, &["status", "--porcelain"]).unwrap().stdout, "");
+}
+
+#[test]
+fn merge_refuses_when_blocked() {
+    let tmp = spaced_tmp();
+    let (home, task) = new_task(&tmp);
+    let repo = PathBuf::from(&task.repo_root);
+    let head = head_of(&repo);
+    std::fs::write(Path::new(&task.path).join("b.txt"), "b\n").unwrap();
+
+    let outcome = tasks::merge(&state_in(&home), &task, &merge_req(""));
+    assert_eq!(
+        outcome,
+        MergeOutcome::Failed {
+            reason: "Write a commit message.".into()
+        }
+    );
+    // Nothing ran: the task's file is still uncommitted and main is where it was.
+    assert_eq!(head_of(&repo), head);
+    assert!(
+        !run(Path::new(&task.path), &["status", "--porcelain"])
+            .unwrap()
+            .stdout
+            .is_empty()
+    );
+}
+
+#[test]
+fn untracked_files_in_base_do_not_block() {
+    let tmp = spaced_tmp();
+    let (home, task) = new_task(&tmp);
+    let repo = PathBuf::from(&task.repo_root);
+    std::fs::write(repo.join("notes.txt"), "mine\n").unwrap();
+    std::fs::write(Path::new(&task.path).join("b.txt"), "b\n").unwrap();
+
+    let (plan, _) = tasks::plan_merge(&task, &merge_req("Fix login"));
+    assert_eq!(plan.blocker, None);
+    let outcome = tasks::merge(&state_in(&home), &task, &merge_req("Fix login"));
+    assert_eq!(outcome, MergeOutcome::Merged { removed: false });
+    assert_eq!(std::fs::read_to_string(repo.join("notes.txt")).unwrap(), "mine\n");
+}
+
+#[test]
+fn untracked_file_in_the_way_restores_base() {
+    let tmp = spaced_tmp();
+    let (home, task) = new_task(&tmp);
+    let dir = PathBuf::from(&task.path);
+    let repo = PathBuf::from(&task.repo_root);
+    std::fs::write(dir.join("n.txt"), "from the task\n").unwrap();
+    commit_all(&dir, "add n");
+    std::fs::write(repo.join("n.txt"), "untracked in the base\n").unwrap();
+    let head = head_of(&repo);
+
+    let outcome = tasks::merge(&state_in(&home), &task, &merge_req("Fix login"));
+    let MergeOutcome::Failed { reason } = outcome else {
+        panic!("expected Failed, got {outcome:?}");
+    };
+    assert!(reason.starts_with("Couldn't merge. Git said: "), "{reason}");
+    assert_eq!(tracked_status(&repo), "");
+    assert_eq!(head_of(&repo), head);
+    // The user's own file is untouched.
+    assert_eq!(
+        std::fs::read_to_string(repo.join("n.txt")).unwrap(),
+        "untracked in the base\n"
+    );
+}
+
+#[test]
+fn conflict_is_undone_and_listed() {
+    let tmp = spaced_tmp();
+    let (home, task) = new_task(&tmp);
+    let dir = PathBuf::from(&task.path);
+    let repo = PathBuf::from(&task.repo_root);
+    std::fs::write(dir.join("a.txt"), "task\n").unwrap();
+    commit_all(&dir, "task edit");
+    std::fs::write(repo.join("a.txt"), "main\n").unwrap();
+    commit_all(&repo, "main edit");
+    let head = head_of(&repo);
+
+    let outcome = tasks::merge(&state_in(&home), &task, &merge_req("Fix login"));
+    assert_eq!(
+        outcome,
+        MergeOutcome::Conflict {
+            files: vec!["a.txt".into()]
+        }
+    );
+    assert_eq!(head_of(&repo), head);
+    assert_eq!(tracked_status(&repo), "");
+    assert_eq!(text_of(&repo.join("a.txt")), "main\n");
+}
+
+#[test]
+fn failing_commit_hook_restores_base() {
+    let tmp = spaced_tmp();
+    let (home, task) = new_task(&tmp);
+    let dir = PathBuf::from(&task.path);
+    let repo = PathBuf::from(&task.repo_root);
+    std::fs::write(dir.join("b.txt"), "b\n").unwrap();
+    commit_all(&dir, "add b");
+    // Written after the task's own commit, so only the commit on main is refused.
+    let hook = repo.join(".git").join("hooks").join("pre-commit");
+    std::fs::write(&hook, "#!/bin/sh\nexit 1\n").unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    let head = head_of(&repo);
+
+    let outcome = tasks::merge(&state_in(&home), &task, &merge_req("Fix login"));
+    let MergeOutcome::Failed { reason } = outcome else {
+        panic!("expected Failed, got {outcome:?}");
+    };
+    assert!(reason.starts_with("Couldn't commit on main. Git said: "), "{reason}");
+    assert_eq!(head_of(&repo), head);
+    assert_eq!(tracked_status(&repo), "");
+    assert!(!repo.join("b.txt").exists());
+}
+
+#[tokio::test]
+async fn merge_routes_plan_merge_and_404() {
+    let tmp = spaced_tmp();
+    let (home, task) = new_task(&tmp);
+    std::fs::write(Path::new(&task.path).join("b.txt"), "b\n").unwrap();
+    let app = router(state_in(&home));
+    let body = serde_json::json!({ "message": "Fix login", "remove": false });
+
+    let res = app
+        .clone()
+        .oneshot(api(
+            "POST",
+            &format!("/v1/tasks/{}/merge/plan", task.id),
+            Some(body.clone()),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let plan = json_of(res).await;
+    assert_eq!(plan["commands"].as_array().unwrap().len(), 4);
+    assert!(plan["blocker"].is_null());
+
+    let res = app
+        .clone()
+        .oneshot(api("POST", &format!("/v1/tasks/{}/merge", task.id), Some(body.clone())))
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let outcome = json_of(res).await;
+    assert_eq!(outcome["kind"], "merged");
+    assert_eq!(outcome["removed"], false);
+
+    for route in ["/v1/tasks/nope/merge/plan", "/v1/tasks/nope/merge"] {
+        let res = app
+            .clone()
+            .oneshot(api("POST", route, Some(body.clone())))
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::NOT_FOUND, "{route}");
+    }
+}
+
+// ---- typing into a session ----
+
+fn echo_state(home: &Path) -> AppState {
+    let profile = Profile {
+        id: "echoer".into(),
+        name: "Echoer".into(),
+        command: vec![env!("CARGO_BIN_EXE_fake-agent").into(), "echo".into()],
+        family: ShellFamily::Posix,
+        cwd: None,
+        env: Vec::new(),
+        shell_integration: true,
+        terminal_theme: None,
+        detected: true,
+    };
+    AppState::new(
+        TOKEN.into(),
+        PORT,
+        vec!["http://tauri.localhost".into()],
+        home.to_path_buf(),
+        vec![profile],
+    )
+}
+
+/// Whether the session's output holds `needle` within `wait`.
+fn output_has(session: &marshell_core::pty::Session, needle: &str, wait: std::time::Duration) -> bool {
+    let deadline = std::time::Instant::now() + wait;
+    loop {
+        if let marshell_core::pty::Pull::Data { bytes, .. } = session.pull(0, 64 * 1024)
+            && String::from_utf8_lossy(&bytes).contains(needle)
+        {
+            return true;
+        }
+        if std::time::Instant::now() >= deadline {
+            return false;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+}
+
+#[tokio::test]
+async fn input_types_text_without_enter() {
+    let tmp = spaced_tmp();
+    let home = base(&tmp).join("home");
+    let state = echo_state(&home);
+    let app = router(state.clone());
+    let body =
+        serde_json::json!({ "cols": 80, "rows": 24, "profile_id": "echoer", "cwd": base(&tmp).to_string_lossy() });
+    let res = app
+        .clone()
+        .oneshot(api("POST", "/v1/sessions", Some(body)))
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let tab = json_of(res).await["tab_id"].as_str().unwrap().to_string();
+    let session = state.session(&tab).unwrap();
+    let route = format!("/v1/sessions/{tab}/input");
+
+    let res = app
+        .clone()
+        .oneshot(api("POST", &route, Some(serde_json::json!({ "text": "hello" }))))
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::NO_CONTENT);
+    // No Enter was added: the agent has not seen a whole line yet.
+    std::thread::sleep(std::time::Duration::from_millis(400));
+    assert!(!output_has(&session, "got:hello", std::time::Duration::ZERO));
+    // The user presses Enter, and the line arrives whole.
+    session.write_input(b"\r".to_vec());
+    assert!(output_has(&session, "got:hello", std::time::Duration::from_secs(10)));
+
+    for text in ["a\nb", "a\rb"] {
+        let res = app
+            .clone()
+            .oneshot(api("POST", &route, Some(serde_json::json!({ "text": text }))))
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+        let bytes = axum::body::to_bytes(res.into_body(), 4096).await.unwrap();
+        assert_eq!(&bytes[..], "The text can't contain a line break.".as_bytes());
+    }
+
+    let res = app
+        .clone()
+        .oneshot(api(
+            "POST",
+            "/v1/sessions/nope/input",
+            Some(serde_json::json!({ "text": "x" })),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::NOT_FOUND);
+
+    let res = app
+        .clone()
+        .oneshot(api("DELETE", &format!("/v1/sessions/{tab}"), None))
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::NO_CONTENT);
 }

@@ -9,8 +9,8 @@ use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use marshell_protocol::api::{
-    ColorScheme, CreateSessionRequest, CreateSessionResponse, RenameRequest, ReopenRequest, ReorderRequest,
-    ResumeError, SessionState, SessionsSnapshot, ShellFamily,
+    ColorScheme, CreateSessionRequest, CreateSessionResponse, InputRequest, RenameRequest, ReopenRequest,
+    ReorderRequest, ResumeError, SessionState, SessionsSnapshot, ShellFamily,
 };
 use marshell_protocol::brand;
 use serde::Deserialize;
@@ -385,6 +385,20 @@ pub async fn reorder(State(st): State<AppState>, Json(req): Json<ReorderRequest>
             "The list must hold every open session exactly once.".into(),
         ))
     }
+}
+
+/// Types text into the session as if the user had typed it. The bytes go to the pty as they are;
+/// no Enter is added, so the user reads it first and presses Enter themselves. A line break in the
+/// text would submit it, so that is refused.
+pub async fn input(State(st): State<AppState>, Path(tab): Path<String>, Json(req): Json<InputRequest>) -> Response {
+    let Some(session) = st.session(&tab) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    if req.text.contains(['\r', '\n']) {
+        return (StatusCode::BAD_REQUEST, "The text can't contain a line break.").into_response();
+    }
+    session.write_input(req.text.into_bytes());
+    StatusCode::NO_CONTENT.into_response()
 }
 
 /// Always 204, also when the tab is already closed or unknown, so a retry is harmless.
