@@ -295,12 +295,17 @@ pub struct MergeRequest {
     /// The commands the user was shown. A merge refuses to run when planning again gives others.
     /// Ignored when only planning.
     pub commands: Vec<String>,
+    /// The warnings the user was shown, under the same rule (the sessions a removal closes).
+    /// Ignored when only planning.
+    pub warnings: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[ts(export)]
 pub struct MergePlan {
     pub commands: Vec<String>,
+    /// What the merge would close or lose, shown with the commands: the sessions a removal closes.
+    pub warnings: Vec<String>,
     pub blocker: Option<String>,
 }
 
@@ -308,9 +313,17 @@ pub struct MergePlan {
 #[serde(tag = "kind", rename_all = "snake_case")]
 #[ts(export)]
 pub enum MergeOutcome {
-    Merged { removed: bool },
-    Conflict { files: Vec<String> },
-    Failed { reason: String },
+    /// `removal_note`: why the worktree was kept when a removal was asked for, in one sentence.
+    Merged {
+        removed: bool,
+        removal_note: Option<String>,
+    },
+    Conflict {
+        files: Vec<String>,
+    },
+    Failed {
+        reason: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]

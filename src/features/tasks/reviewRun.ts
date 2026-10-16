@@ -59,8 +59,8 @@ export function readableMessage(name: string): string {
 /** What a plan is for. A plan whose key differs from the message and checkbox now on screen is stale. */
 export const planKey = (message: string, remove: boolean): string => JSON.stringify([message, remove]);
 
-/** The request that asks for the commands: no commands yet, because none have been shown. */
-export const mergePlanRequest = (message: string, remove: boolean): MergeRequest => ({ message, remove, commands: [] });
+/** The request that asks for the commands: no commands or warnings yet, because none have been shown. */
+export const mergePlanRequest = (message: string, remove: boolean): MergeRequest => ({ message, remove, commands: [], warnings: [] });
 
 /**
  * The request to merge, built from the plan on screen and nothing else (what is shown is what runs). It is null unless that plan
@@ -68,7 +68,7 @@ export const mergePlanRequest = (message: string, remove: boolean): MergeRequest
  */
 export function mergeRequest(message: string, remove: boolean, shown: { key: string; plan: MergePlan } | null): MergeRequest | null {
   if (!shown || shown.key !== planKey(message, remove) || shown.plan.blocker) return null;
-  return { message, remove, commands: shown.plan.commands };
+  return { message, remove, commands: shown.plan.commands, warnings: shown.plan.warnings };
 }
 
 /** The request to remove, built from the plan on screen: its commands and its warnings, as shown. */
@@ -83,7 +83,9 @@ export function conflictPrompt(task: Task, files: string[]): string {
   return `Merging ${task.branch} into ${task.base_branch} conflicts in ${names}. Rebase this branch on ${task.base_branch} and resolve those conflicts, then commit.`;
 }
 
-export const mergedToast = (task: Task, removed: boolean): string => `Merged ${task.branch} into ${task.base_branch}.${removed ? " Removed the worktree." : ""}`;
+/** The merge, then the removal: done, or the core's one sentence on why the worktree was kept. */
+export const mergedToast = (task: Task, removed: boolean, removalNote: string | null): string =>
+  `Merged ${task.branch} into ${task.base_branch}.${removed ? " Removed the worktree." : ""}${removalNote ? ` ${removalNote}` : ""}`;
 export const removedToast = (task: Task): string => `Removed ${task.branch}.`;
 export const removeLabel = (warnings: string[]): string => (warnings.length > 0 ? "Remove anyway" : "Remove");
 

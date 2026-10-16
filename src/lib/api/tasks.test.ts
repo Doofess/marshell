@@ -37,15 +37,15 @@ describe("tasks api", () => {
     await tasksApi.changes(endpoint, "a/b");
     expect(call(changes)).toMatchObject({ url: "http://127.0.0.1:9/v1/tasks/a%2Fb/changes", method: "GET" });
 
-    const req = { message: "m", remove: true, commands: ["git merge"] };
-    const mergePlan = respond({ commands: [], blocker: null });
+    const req = { message: "m", remove: true, commands: ["git merge"], warnings: ["Closes 1 session running in this worktree."] };
+    const mergePlan = respond({ commands: [], warnings: [], blocker: null });
     vi.stubGlobal("fetch", mergePlan);
     await tasksApi.mergePlan(endpoint, "t1", req);
     expect(call(mergePlan)).toMatchObject({ url: "http://127.0.0.1:9/v1/tasks/t1/merge/plan", method: "POST", body: req });
 
-    const merge = respond({ kind: "merged", removed: true });
+    const merge = respond({ kind: "merged", removed: true, removal_note: null });
     vi.stubGlobal("fetch", merge);
-    await expect(tasksApi.merge(endpoint, "t1", req)).resolves.toEqual({ kind: "merged", removed: true });
+    await expect(tasksApi.merge(endpoint, "t1", req)).resolves.toEqual({ kind: "merged", removed: true, removal_note: null });
     expect(call(merge)).toMatchObject({ url: "http://127.0.0.1:9/v1/tasks/t1/merge", method: "POST", body: req });
 
     const removePlan = respond({ commands: [], warnings: [], sessions: 0 });

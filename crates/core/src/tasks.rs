@@ -464,7 +464,8 @@ fn worktree_dirty(dir: &Path) -> Result<bool, String> {
 /// steps are the task folder's own commit (when it has uncommitted work), then the squash and the
 /// commit in the base checkout; the last two are always the base checkout's. A blocker is a
 /// reason it can't go ahead; the commands are still listed so the sheet can show them.
-pub fn plan_merge(task: &Task, req: &MergeRequest) -> (MergePlan, Vec<GitStep>) {
+/// `open_sessions` is how many running sessions the removal (when asked for) would close.
+pub fn plan_merge(task: &Task, req: &MergeRequest, open_sessions: u32) -> (MergePlan, Vec<GitStep>) {
     let message = req.message.trim();
     let step = |dir: &str, args: &[&str]| GitStep {
         dir: PathBuf::from(dir),
@@ -478,15 +479,18 @@ pub fn plan_merge(task: &Task, req: &MergeRequest) -> (MergePlan, Vec<GitStep>) 
     }
     steps.push(step(&task.repo_root, &["merge", "--squash", "--ff", &task.branch]));
     steps.push(step(&task.repo_root, &["commit", "-q", "-m", message]));
+    let mut warnings = Vec::new();
     if req.remove && own_branch(task) {
         // By then the merge has committed the folder's work and the branch is in the base, so
         // the removal is the plain one whatever the folder holds now.
         steps.extend(removal_steps(task, Worktree::Remove { force: false }, true));
+        warnings.extend(sessions_line(open_sessions));
     }
 
     let blocker = merge_blocker(task, message).unwrap_or_else(Some);
     let plan = MergePlan {
         commands: steps.iter().map(git::display).collect(),
+        warnings,
         blocker,
     };
     (plan, steps)
@@ -515,13 +519,13 @@ fn with_restore_note(reason: String, note: Option<String>) -> MergeOutcome {
 }
 
 /// Squashes the task into its base branch as one commit. Plans again first and stops when the
-/// commands differ from the ones the user was shown, or at a blocker. When the squash or the
-/// commit fails, the base checkout is put back as it was.
+/// commands or warnings differ from the ones the user was shown, or at a blocker. When the
+/// squash or the commit fails, the base checkout is put back as it was.
 pub fn merge(st: &AppState, task: &Task, req: &MergeRequest) -> MergeOutcome {
     let _guard = MERGE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let failed = |reason: String| MergeOutcome::Failed { reason };
-    let (plan, steps) = plan_merge(task, req);
-    if plan.commands != req.commands {
+    let (plan, steps) = plan_merge(task, req, running_sessions(st, task));
+    if plan.commands != req.commands || plan.warnings != req.warnings {
         return failed(CHANGED.into());
     }
     if let Some(blocker) = plan.blocker {
@@ -580,27 +584,53 @@ pub fn merge(st: &AppState, task: &Task, req: &MergeRequest) -> MergeOutcome {
     }
 
     // The merge is done. When the removal fails the merge still stands, so it is not a failure.
-    let removed = !removal_steps.is_empty() && {
-        // Work that reached the task after the merge took its branch is not in the merge. Deleting
-        // the branch or the folder would lose it, and the user never saw that in the commands.
-        // The sessions go first: a live agent could otherwise commit between the check and the kill.
-        close_sessions(st, task);
-        let moved = merged_tip.is_none() || branch_tip(repo, &task.branch) != merged_tip;
-        let dirty = worktree_dirty(Path::new(&task.path)).unwrap_or(true);
-        if moved || dirty {
-            tracing::warn!("merged {}, but it changed since, so it was not removed", task.branch);
-            false
-        } else {
-            match run_removal(st, task, removal_steps) {
-                Ok(()) => true,
-                Err(reason) => {
-                    tracing::warn!("merged {}, but removing it failed: {reason}", task.branch);
-                    false
-                }
-            }
+    if removal_steps.is_empty() {
+        return MergeOutcome::Merged {
+            removed: false,
+            removal_note: None,
+        };
+    }
+    // Work that reached the task after the merge took its branch is not in the merge. Deleting the
+    // branch or the folder would lose it, and the user never saw that in the commands. Checked
+    // before the sessions are closed, so a removal that won't happen closes nothing; and again
+    // after, because a live agent could commit between the first check and the kill.
+    let kept = |why: String| {
+        tracing::warn!("merged {}, but kept it: {why}", task.branch);
+        MergeOutcome::Merged {
+            removed: false,
+            removal_note: Some(why),
         }
     };
-    MergeOutcome::Merged { removed }
+    if let Some(why) = changed_since(task, merged_tip.as_deref()) {
+        return kept(why);
+    }
+    close_sessions(st, task);
+    if let Some(why) = changed_since(task, merged_tip.as_deref()) {
+        return kept(why);
+    }
+    match run_removal(st, task, removal_steps) {
+        Ok(()) => MergeOutcome::Merged {
+            removed: true,
+            removal_note: None,
+        },
+        Err(reason) => kept(reason),
+    }
+}
+
+/// Why the task can't be removed after its merge, in one sentence: its branch moved on from the
+/// commit the merge took, or its folder holds something new. None when it is as the merge left it.
+fn changed_since(task: &Task, merged_tip: Option<&str>) -> Option<String> {
+    let repo = Path::new(&task.repo_root);
+    if merged_tip.is_none() || branch_tip(repo, &task.branch).as_deref() != merged_tip {
+        return Some(format!(
+            "{} got new commits during the merge, so the worktree was kept.",
+            task.branch
+        ));
+    }
+    if worktree_dirty(Path::new(&task.path)).unwrap_or(true) {
+        return Some("The task folder changed during the merge, so the worktree was kept.".into());
+    }
+    None
 }
 
 /// What `merge` and `remove` say when the commands they plan are not the ones the user saw.
@@ -793,11 +823,7 @@ pub fn plan_remove(task: &Task, open_sessions: u32) -> (RemovePlan, Vec<GitStep>
             )),
         }
     }
-    match open_sessions {
-        0 => {}
-        1 => warnings.push("Closes 1 session running in this worktree.".into()),
-        n => warnings.push(format!("Closes {n} sessions running in this worktree.")),
-    }
+    warnings.extend(sessions_line(open_sessions));
     let plan = RemovePlan {
         commands: steps.iter().map(git::display).collect(),
         warnings,
@@ -923,6 +949,15 @@ pub fn remove(st: &AppState, task: &Task, req: &RemoveRequest) -> Result<(), Str
         return Err(CHANGED.into());
     }
     run_removal(st, task, &steps)
+}
+
+/// The warning for the sessions a removal closes, when there are any.
+fn sessions_line(open_sessions: u32) -> Option<String> {
+    match open_sessions {
+        0 => None,
+        1 => Some("Closes 1 session running in this worktree.".into()),
+        n => Some(format!("Closes {n} sessions running in this worktree.")),
+    }
 }
 
 /// The "Closes N session(s) running in this worktree." warning.

@@ -5,4 +5,9 @@ export type MergeRequest = { message: string, remove: boolean,
  * The commands the user was shown. A merge refuses to run when planning again gives others.
  * Ignored when only planning.
  */
-commands: Array<string>, };
+commands: Array<string>, 
+/**
+ * The warnings the user was shown, under the same rule (the sessions a removal closes).
+ * Ignored when only planning.
+ */
+warnings: Array<string>, };

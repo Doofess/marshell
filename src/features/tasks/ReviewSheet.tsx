@@ -150,6 +150,18 @@ function Failure({ text }: { text: string }) {
   );
 }
 
+/** What would be closed or lost, as a list above the commands. Nothing when there is nothing to say. */
+function Warnings({ warnings }: { warnings: string[] }) {
+  if (warnings.length === 0) return null;
+  return (
+    <ul className="review__warnings" aria-label="Warnings">
+      {warnings.map((w, i) => (
+        <li key={i}>{w}</li>
+      ))}
+    </ul>
+  );
+}
+
 /** The merge step: the commit message, the checkbox, and the commands the merge will run. The commands shown are the ones that run. */
 function MergeStep({ merge, busy }: { merge: MergeView; busy: boolean }) {
   const id = useId();
@@ -175,6 +187,7 @@ function MergeStep({ merge, busy }: { merge: MergeView; busy: boolean }) {
       </label>
       {merge.error && <Failure text={merge.error} />}
       {merge.plan?.blocker && <p className="review__blocker">{merge.plan.blocker}</p>}
+      <Warnings warnings={merge.plan?.warnings ?? []} />
       {merge.plan && (
         <>
           <p className="review__lede">Marshell will run these commands.</p>
@@ -192,13 +205,7 @@ function RemoveStep({ remove, busy }: { remove: RemoveView; busy: boolean }) {
   return (
     <div className="review__step">
       {remove.error && <Failure text={remove.error} />}
-      {warnings.length > 0 && (
-        <ul className="review__warnings" aria-label="Warnings">
-          {warnings.map((w, i) => (
-            <li key={i}>{w}</li>
-          ))}
-        </ul>
-      )}
+      <Warnings warnings={warnings} />
       {remove.plan && (
         <>
           <p className="review__lede">Marshell will run these commands.</p>
@@ -449,7 +456,7 @@ export function ReviewSheet({ task, changes, agentName, api, onClose, onDone, on
       if (!mounted.current) return;
       if (outcome.kind === "merged") {
         dispatch({ type: "finish" });
-        onDone(mergedToast(task, outcome.removed));
+        onDone(mergedToast(task, outcome.removed, outcome.removal_note));
         onClose();
       } else if (outcome.kind === "conflict") {
         setConflicts(outcome.files);

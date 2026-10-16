@@ -60,7 +60,7 @@ export const BinaryFile: StoryObj = { render: () => show("A binary file: a sente
 export const Truncated: StoryObj = { render: () => show("The diff was cut at the size limit", { ...CHANGES, truncated: true }, 3) };
 export const Empty: StoryObj = { render: () => show("No changes yet: Merge back is disabled", { files: [], diff: "", truncated: false, ahead: 0, uncommitted: false }) };
 
-const MERGE_PLAN: MergePlan = { blocker: null, commands: ["git add -A", 'git merge --no-ff -m "Fix login" marshell/fix-login'] };
+const MERGE_PLAN: MergePlan = { blocker: null, warnings: [], commands: ["git add -A", 'git merge --no-ff -m "Fix login" marshell/fix-login'] };
 const REMOVE_PLAN: RemovePlan = { warnings: [], sessions: 0, commands: ["git worktree remove C:\Users\me\.marshell\worktrees\my-app\fix-login", "git branch -d marshell/fix-login"] };
 const merge = (over: Partial<NonNullable<ReviewViewProps["merge"]>> = {}) => ({ message: "Fix login", remove: true, plan: MERGE_PLAN, ready: true, error: null, onMessage: noop, onRemoveChange: noop, onConfirm: noop, ...over });
 

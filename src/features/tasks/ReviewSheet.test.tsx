@@ -21,7 +21,7 @@ const CHANGES: TaskChanges = {
   ahead: 2,
   uncommitted: true,
 };
-const API: ReviewApi = { mergePlan: async () => ({ commands: [], blocker: null }), merge: async () => ({ kind: "merged", removed: false }), removePlan: async () => ({ commands: [], warnings: [], sessions: 0 }), remove: async () => {} };
+const API: ReviewApi = { mergePlan: async () => ({ commands: [], warnings: [], blocker: null }), merge: async () => ({ kind: "merged", removed: false, removal_note: null }), removePlan: async () => ({ commands: [], warnings: [], sessions: 0 }), remove: async () => {} };
 const sheet = (changes: Partial<TaskChanges> = {}, props: Partial<Parameters<typeof ReviewSheet>[0]> = {}) =>
   renderToStaticMarkup(<ReviewSheet task={TASK} changes={{ ...CHANGES, ...changes }} agentName="Claude Code" api={API} onClose={() => {}} onDone={() => {}} onAskAgent={() => {}} {...props} />);
 const view = (selected: number, changes: Partial<TaskChanges> = {}) =>
@@ -29,7 +29,7 @@ const view = (selected: number, changes: Partial<TaskChanges> = {}) =>
 
 const noop = () => {};
 const CMDS = ['git -C "C:\\w\\app\\fix-login" add -A', 'git -C "C:\\w\\app\\fix-login" commit -q -m "Fix login"', 'git -C "C:\\dev\\app" merge --squash --ff marshell/fix-login'];
-const MERGE: MergeView = { message: "Fix login", remove: true, plan: { commands: CMDS, blocker: null }, ready: true, error: null, onMessage: noop, onRemoveChange: noop, onConfirm: noop };
+const MERGE: MergeView = { message: "Fix login", remove: true, plan: { commands: CMDS, warnings: [], blocker: null }, ready: true, error: null, onMessage: noop, onRemoveChange: noop, onConfirm: noop };
 const REMOVE: RemoveView = { plan: { commands: ['git -C "C:\\dev\\app" worktree remove "C:\\w\\app\\fix-login"'], warnings: [], sessions: 0 }, ready: true, error: null, onConfirm: noop };
 const stepProps = (step: ReviewState["step"], extra: Partial<ReviewViewProps> = {}): ReviewViewProps => ({ task: TASK, changes: CHANGES, state: { step, selected: 0 }, dispatch: noop, onClose: noop, ...extra });
 const step = (s: ReviewState["step"], extra: Partial<ReviewViewProps> = {}) => renderToStaticMarkup(<ReviewView {...stepProps(s, extra)} />);
@@ -190,6 +190,12 @@ describe("the merge step", () => {
     expect(h).toContain('class="command-list"');
     expect(h).toContain("merge --squash --ff marshell/fix-login");
   });
+  it("lists what the removal afterwards closes, above the commands, like the remove step", () => {
+    const warned = step("merge", { merge: { ...MERGE, plan: { commands: CMDS, warnings: ["Closes 2 sessions running in this worktree."], blocker: null } } });
+    expect(warned).toMatch(/<ul[^>]*aria-label="Warnings"[^>]*>[\s\S]*<li[^>]*>Closes 2 sessions running in this worktree\.<\/li>/);
+    expect(warned.indexOf("Closes 2 sessions")).toBeLessThan(warned.indexOf('class="command-list"'));
+    expect(h).not.toContain("<ul");
+  });
   it("names the step in the heading, with the branch and what it merges into", () => {
     expect(h).toContain("Merge marshell/fix-login into main");
   });
@@ -202,7 +208,7 @@ describe("the merge step", () => {
     expect(b).not.toMatch(/(?<!aria-)disabled=/);
   });
   it("shows the blocker above the commands and disables Merge", () => {
-    const blocked = step("merge", { merge: { ...MERGE, plan: { commands: CMDS, blocker: "Write a commit message." } } });
+    const blocked = step("merge", { merge: { ...MERGE, plan: { commands: CMDS, warnings: [], blocker: "Write a commit message." } } });
     expect(blocked).toContain("Write a commit message.");
     expect(blocked.indexOf("Write a commit message.")).toBeLessThan(blocked.indexOf('class="command-list"'));
     expect(blocked.match(/<button[^>]*>Merge<\/button>/)![0]).toContain('aria-disabled="true"');
@@ -225,7 +231,7 @@ describe("the merge step", () => {
   it("confirms only when the commands on screen are current", () => {
     const onConfirm = vi.fn();
     click(stepProps("merge", { merge: { ...MERGE, ready: false, onConfirm } }), "Merge");
-    click(stepProps("merge", { merge: { ...MERGE, plan: { commands: CMDS, blocker: "Write a commit message." }, onConfirm } }), "Merge");
+    click(stepProps("merge", { merge: { ...MERGE, plan: { commands: CMDS, warnings: [], blocker: "Write a commit message." }, onConfirm } }), "Merge");
     expect(onConfirm).not.toHaveBeenCalled();
     click(stepProps("merge", { merge: { ...MERGE, onConfirm } }), "Merge");
     expect(onConfirm).toHaveBeenCalledTimes(1);

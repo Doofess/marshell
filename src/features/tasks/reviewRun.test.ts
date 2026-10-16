@@ -52,7 +52,7 @@ describe("the plan request", () => {
     expect(PLAN_DELAY_MS).toBe(250);
   });
   it("sends an empty command list: a plan is asked for, not confirmed", () => {
-    expect(mergePlanRequest("Fix login", true)).toEqual({ message: "Fix login", remove: true, commands: [] });
+    expect(mergePlanRequest("Fix login", true)).toEqual({ message: "Fix login", remove: true, commands: [], warnings: [] });
   });
   it("keys a plan by its message and checkbox, so a changed one is never mistaken for the shown one", () => {
     expect(planKey("a", true)).toBe(planKey("a", true));
@@ -62,10 +62,15 @@ describe("the plan request", () => {
 });
 
 describe("shown is run: what is sent is the list on screen", () => {
-  const plan: MergePlan = { commands: ["git add -A", "git commit -m x"], blocker: null };
+  const plan: MergePlan = { commands: ["git add -A", "git commit -m x"], warnings: ["Closes 1 session running in this worktree."], blocker: null };
   const shown = (message: string, remove: boolean, p: MergePlan = plan) => ({ key: planKey(message, remove), plan: p });
-  it("sends the message, the checkbox and the shown commands as they are", () => {
-    expect(mergeRequest("Fix login", true, shown("Fix login", true))).toEqual({ message: "Fix login", remove: true, commands: ["git add -A", "git commit -m x"] });
+  it("sends the message, the checkbox and the shown commands and warnings as they are", () => {
+    expect(mergeRequest("Fix login", true, shown("Fix login", true))).toEqual({
+      message: "Fix login",
+      remove: true,
+      commands: ["git add -A", "git commit -m x"],
+      warnings: ["Closes 1 session running in this worktree."],
+    });
   });
   it("sends nothing when there is no plan, or the plan is for another message or checkbox", () => {
     expect(mergeRequest("Fix login", true, null)).toBeNull();
@@ -73,7 +78,7 @@ describe("shown is run: what is sent is the list on screen", () => {
     expect(mergeRequest("Fix login", false, shown("Fix login", true))).toBeNull();
   });
   it("sends nothing while a blocker is shown", () => {
-    expect(mergeRequest("", true, shown("", true, { commands: [], blocker: "Write a commit message." }))).toBeNull();
+    expect(mergeRequest("", true, shown("", true, { commands: [], warnings: [], blocker: "Write a commit message." }))).toBeNull();
   });
   it("sends the removal's commands and warnings exactly as shown", () => {
     const rp: RemovePlan = { commands: ["git worktree remove x"], warnings: ["A session is open."], sessions: 1 };
@@ -96,8 +101,13 @@ describe("the words", () => {
     expect(conflictPrompt(TASK, ["a\nb.txt", "c\r\nd"])).not.toMatch(/[\r\n]/);
   });
   it("reports a merge, and the removal when it happened", () => {
-    expect(mergedToast(TASK, false)).toBe("Merged marshell/fix-login into main.");
-    expect(mergedToast(TASK, true)).toBe("Merged marshell/fix-login into main. Removed the worktree.");
+    expect(mergedToast(TASK, false, null)).toBe("Merged marshell/fix-login into main.");
+    expect(mergedToast(TASK, true, null)).toBe("Merged marshell/fix-login into main. Removed the worktree.");
+  });
+  it("says why the worktree was kept when the removal didn't happen", () => {
+    expect(mergedToast(TASK, false, "The task folder changed during the merge, so the worktree was kept.")).toBe(
+      "Merged marshell/fix-login into main. The task folder changed during the merge, so the worktree was kept.",
+    );
     expect(removedToast(TASK)).toBe("Removed marshell/fix-login.");
   });
   it("labels the removal 'Remove anyway' when there are warnings", () => {
@@ -117,19 +127,19 @@ const api = (over: Partial<ReviewApi>): ReviewApi => ({
   remove: vi.fn(),
   ...over,
 });
-const REQ = { message: "m", remove: true, commands: ["git x"] };
+const REQ = { message: "m", remove: true, commands: ["git x"], warnings: [] };
 const throws = (e: unknown) => async () => {
   throw e;
 };
 
 describe("runMerge", () => {
   it("passes the core's outcome through", async () => {
-    expect(await runMerge(api({ merge: async () => ({ kind: "merged", removed: true }) }), REQ)).toEqual({ kind: "merged", removed: true });
+    expect(await runMerge(api({ merge: async () => ({ kind: "merged", removed: true, removal_note: null }) }), REQ)).toEqual({ kind: "merged", removed: true, removal_note: null });
     expect(await runMerge(api({ merge: async () => ({ kind: "conflict", files: ["a.txt"] }) }), REQ)).toEqual({ kind: "conflict", files: ["a.txt"] });
     expect(await runMerge(api({ merge: async () => ({ kind: "failed", reason: "Git said: no" }) }), REQ)).toEqual({ kind: "failed", reason: "Git said: no" });
   });
   it("sends the request it was given, untouched", async () => {
-    const merge = vi.fn().mockResolvedValue({ kind: "merged", removed: false });
+    const merge = vi.fn().mockResolvedValue({ kind: "merged", removed: false, removal_note: null });
     await runMerge(api({ merge }), REQ);
     expect(merge).toHaveBeenCalledWith(REQ);
   });
@@ -155,7 +165,7 @@ describe("runRemove", () => {
 });
 
 
-const MP = (commands: string[], blocker: string | null = null): MergePlan => ({ commands, blocker });
+const MP = (commands: string[], blocker: string | null = null): MergePlan => ({ commands, warnings: [], blocker });
 const load = (key: string, round: number, plan: MergePlan | null, error: string | null = null): PlanLoad<MergePlan> => ({ key, round, plan, error });
 const K = planKey("Fix login", true);
 
@@ -204,10 +214,10 @@ describe("canConfirm: when Merge or Remove can act", () => {
 });
 
 describe("confirmMergeRequest: the request comes from the current plan only", () => {
-  const plan = MP(["git add -A", "git merge a"]);
+  const plan: MergePlan = { commands: ["git add -A", "git merge a"], warnings: ["Closes 2 sessions running in this worktree."], blocker: null };
   const args = { step: "merge" as const, running: false, message: "Fix login", remove: true, key: K, round: 2 };
   it("builds the request from a current plan", () => {
-    expect(confirmMergeRequest({ ...args, load: load(K, 2, plan) })).toEqual({ message: "Fix login", remove: true, commands: plan.commands });
+    expect(confirmMergeRequest({ ...args, load: load(K, 2, plan) })).toEqual({ message: "Fix login", remove: true, commands: plan.commands, warnings: plan.warnings });
   });
   it("is null for a plan of an older key", () => {
     expect(confirmMergeRequest({ ...args, load: load(planKey("Fix", true), 2, plan) })).toBeNull();

@@ -560,13 +560,14 @@ fn merge_req(message: &str) -> MergeRequest {
         message: message.into(),
         remove: false,
         commands: Vec::new(),
+        warnings: Vec::new(),
     }
 }
 
 /// The request the dialog sends: the message and the commands the plan showed for it.
 fn planned(task: &marshell_protocol::api::Task, message: &str) -> MergeRequest {
     let mut req = merge_req(message);
-    req.commands = tasks::plan_merge(task, &req).0.commands;
+    req.commands = tasks::plan_merge(task, &req, 0).0.commands;
     req
 }
 
@@ -601,7 +602,7 @@ fn merge_plan_lists_commands_in_order() {
     let dir = PathBuf::from(&task.path);
     std::fs::write(dir.join("a.txt"), "task\n").unwrap();
 
-    let (plan, steps) = tasks::plan_merge(&task, &merge_req("Fix login"));
+    let (plan, steps) = tasks::plan_merge(&task, &merge_req("Fix login"), 0);
     assert_eq!(plan.blocker, None);
     assert_eq!(
         plan.commands,
@@ -619,7 +620,7 @@ fn merge_plan_lists_commands_in_order() {
 
     // A clean worktree has nothing to add or commit; the message is trimmed.
     commit_all(&dir, "edit a");
-    let (plan, _) = tasks::plan_merge(&task, &merge_req("  Fix login \n"));
+    let (plan, _) = tasks::plan_merge(&task, &merge_req("  Fix login \n"), 0);
     assert_eq!(plan.blocker, None);
     assert_eq!(
         plan.commands,
@@ -638,7 +639,7 @@ fn merge_plan_blockers() {
     let repo = PathBuf::from(&task.repo_root);
     std::fs::write(Path::new(&task.path).join("b.txt"), "b\n").unwrap();
     std::fs::write(repo.join("a.txt"), "edited in the base\n").unwrap();
-    let (plan, _) = tasks::plan_merge(&task, &merge_req("Fix login"));
+    let (plan, _) = tasks::plan_merge(&task, &merge_req("Fix login"), 0);
     assert_eq!(
         plan.blocker.as_deref(),
         Some("my repo has uncommitted changes. Commit or stash them, then merge.")
@@ -651,7 +652,7 @@ fn merge_plan_blockers() {
     let repo = PathBuf::from(&task.repo_root);
     std::fs::write(Path::new(&task.path).join("b.txt"), "b\n").unwrap();
     assert!(run(&repo, &["checkout", "-q", "-b", "other"]).unwrap().ok);
-    let (plan, _) = tasks::plan_merge(&task, &merge_req("Fix login"));
+    let (plan, _) = tasks::plan_merge(&task, &merge_req("Fix login"), 0);
     assert_eq!(
         plan.blocker.as_deref(),
         Some("my repo is on other, not main. Switch it to main, then merge.")
@@ -661,7 +662,7 @@ fn merge_plan_blockers() {
     // Nothing ahead and nothing uncommitted.
     let tmp = spaced_tmp();
     let (_home, task) = new_task(&tmp);
-    let (plan, _) = tasks::plan_merge(&task, &merge_req("Fix login"));
+    let (plan, _) = tasks::plan_merge(&task, &merge_req("Fix login"), 0);
     assert_eq!(
         plan.blocker.as_deref(),
         Some("marshell/fix-login has no changes to merge.")
@@ -672,7 +673,7 @@ fn merge_plan_blockers() {
     let tmp = spaced_tmp();
     let (_home, task) = new_task(&tmp);
     std::fs::write(Path::new(&task.path).join("b.txt"), "b\n").unwrap();
-    let (plan, _) = tasks::plan_merge(&task, &merge_req(" \t "));
+    let (plan, _) = tasks::plan_merge(&task, &merge_req(" \t "), 0);
     assert_eq!(plan.blocker.as_deref(), Some("Write a commit message."));
     assert_eq!(plan.commands.len(), 4);
 }
@@ -692,7 +693,13 @@ fn merge_squashes_into_one_commit() {
     let before = commit_count(&repo);
 
     let outcome = tasks::merge(&state_in(&home), &task, &planned(&task, "Fix login"));
-    assert_eq!(outcome, MergeOutcome::Merged { removed: false });
+    assert_eq!(
+        outcome,
+        MergeOutcome::Merged {
+            removed: false,
+            removal_note: None
+        }
+    );
     assert_eq!(commit_count(&repo), before + 1);
     let subject = run(&repo, &["log", "-1", "--format=%s"]).unwrap().stdout;
     assert_eq!(subject.trim(), "Fix login");
@@ -770,10 +777,16 @@ fn untracked_files_in_base_do_not_block() {
     std::fs::write(repo.join("notes.txt"), "mine\n").unwrap();
     std::fs::write(Path::new(&task.path).join("b.txt"), "b\n").unwrap();
 
-    let (plan, _) = tasks::plan_merge(&task, &merge_req("Fix login"));
+    let (plan, _) = tasks::plan_merge(&task, &merge_req("Fix login"), 0);
     assert_eq!(plan.blocker, None);
     let outcome = tasks::merge(&state_in(&home), &task, &planned(&task, "Fix login"));
-    assert_eq!(outcome, MergeOutcome::Merged { removed: false });
+    assert_eq!(
+        outcome,
+        MergeOutcome::Merged {
+            removed: false,
+            removal_note: None
+        }
+    );
     assert_eq!(std::fs::read_to_string(repo.join("notes.txt")).unwrap(), "mine\n");
 }
 
@@ -909,7 +922,10 @@ fn merging_twice_reports_no_changes() {
     let state = state_in(&home);
     assert_eq!(
         tasks::merge(&state, &task, &planned(&task, "Fix login")),
-        MergeOutcome::Merged { removed: false }
+        MergeOutcome::Merged {
+            removed: false,
+            removal_note: None
+        }
     );
     let head = head_of(&repo);
     let none = MergeOutcome::Failed {
@@ -931,7 +947,7 @@ fn merging_twice_reports_no_changes() {
     let head = head_of(&repo);
     let shown = planned(&task, "Fix login again");
     assert_eq!(shown.commands.len(), 2);
-    assert_eq!(tasks::plan_merge(&task, &shown).0.blocker, None);
+    assert_eq!(tasks::plan_merge(&task, &shown, 0).0.blocker, None);
 
     assert_eq!(tasks::merge(&state, &task, &shown), none);
     assert_eq!(head_of(&repo), head);
@@ -993,7 +1009,7 @@ async fn merge_routes_plan_merge_and_404() {
     let (home, task) = new_task(&tmp);
     std::fs::write(Path::new(&task.path).join("b.txt"), "b\n").unwrap();
     let app = router(state_in(&home));
-    let body = serde_json::json!({ "message": "Fix login", "remove": false, "commands": [] });
+    let body = serde_json::json!({ "message": "Fix login", "remove": false, "commands": [], "warnings": [] });
 
     let res = app
         .clone()
@@ -1014,7 +1030,7 @@ async fn merge_routes_plan_merge_and_404() {
         .oneshot(api(
             "POST",
             &format!("/v1/tasks/{}/merge", task.id),
-            Some(serde_json::json!({ "message": "Fix login", "remove": false, "commands": plan["commands"] })),
+            Some(serde_json::json!({ "message": "Fix login", "remove": false, "commands": plan["commands"], "warnings": [] })),
         ))
         .await
         .unwrap();
@@ -1212,7 +1228,13 @@ fn remove_plan_commands_and_warnings() {
 
     // Squash-merged: main holds the same files, so nothing is lost.
     let merged = tasks::merge(&state_in(&home), &task, &planned(&task, "Fix login"));
-    assert_eq!(merged, MergeOutcome::Merged { removed: false });
+    assert_eq!(
+        merged,
+        MergeOutcome::Merged {
+            removed: false,
+            removal_note: None
+        }
+    );
     assert!(
         run(&repo, &["diff", "--quiet", "main", "marshell/fix-login"])
             .unwrap()
@@ -1327,7 +1349,7 @@ fn merge_with_remove_cleans_up() {
     // Uncommitted work is committed by the merge, so the shown removal is the clean one.
     let mut req = merge_req("Fix login");
     req.remove = true;
-    let (plan, _) = tasks::plan_merge(&task, &req);
+    let (plan, _) = tasks::plan_merge(&task, &req, 0);
     assert_eq!(plan.commands.len(), 6, "{:?}", plan.commands);
     assert_eq!(
         plan.commands[4],
@@ -1340,7 +1362,13 @@ fn merge_with_remove_cleans_up() {
     req.commands = plan.commands;
 
     let outcome = tasks::merge(&state_in(&home), &task, &req);
-    assert_eq!(outcome, MergeOutcome::Merged { removed: true });
+    assert_eq!(
+        outcome,
+        MergeOutcome::Merged {
+            removed: true,
+            removal_note: None
+        }
+    );
     assert_eq!(text_of(&repo.join("b.txt")), "b\n");
     assert!(!dir.exists());
     assert!(!branch_is_there(&task));
@@ -1368,9 +1396,17 @@ fn a_removal_that_fails_after_a_merge_still_reports_the_merge() {
 
     let mut req = merge_req("Fix login");
     req.remove = true;
-    req.commands = tasks::plan_merge(&task, &req).0.commands;
+    req.commands = tasks::plan_merge(&task, &req, 0).0.commands;
     let outcome = tasks::merge(&state_in(&home), &task, &req);
-    assert_eq!(outcome, MergeOutcome::Merged { removed: false });
+    let MergeOutcome::Merged {
+        removed: false,
+        removal_note: Some(note),
+    } = outcome
+    else {
+        panic!("{outcome:?}");
+    };
+    // The toast says why the worktree is still there.
+    assert!(note.starts_with("Couldn't remove the worktree. Git said: "), "{note}");
     assert_eq!(text_of(&repo.join("b.txt")), "b\n");
     assert_eq!(tasks::list(&home).len(), 1);
 }
@@ -1532,7 +1568,7 @@ fn merge_with_remove_after(
     commit_all(&dir, "add b");
     let mut req = merge_req("Fix login");
     req.remove = true;
-    req.commands = tasks::plan_merge(&task, &req).0.commands;
+    req.commands = tasks::plan_merge(&task, &req, 0).0.commands;
     // Something lands in the task folder after the merge's own commit.
     install_once_hook(&repo, &base(&tmp).join("ran"), &late(&dir));
 
@@ -1549,8 +1585,14 @@ fn merge_keeps_the_task_when_its_branch_moved_before_the_removal() {
             dir.to_string_lossy().replace('\\', "/")
         )
     });
-    // The merge happened; the new commit is not in it, so nothing is deleted.
-    assert_eq!(outcome, MergeOutcome::Merged { removed: false });
+    // The merge happened; the new commit is not in it, so nothing is deleted, and the note says why.
+    assert_eq!(
+        outcome,
+        MergeOutcome::Merged {
+            removed: false,
+            removal_note: Some("marshell/fix-login got new commits during the merge, so the worktree was kept.".into())
+        }
+    );
     assert!(dir.exists());
     assert!(branch_is_there(&task));
     assert_eq!(run(&dir, &["log", "-1", "--format=%s"]).unwrap().stdout.trim(), "late");
@@ -1560,7 +1602,13 @@ fn merge_keeps_the_task_when_its_branch_moved_before_the_removal() {
 fn merge_keeps_the_task_when_its_folder_got_dirty_before_the_removal() {
     let (_tmp, task, dir, outcome) =
         merge_with_remove_after(|dir| format!("echo late > \"{}/late.txt\"", dir.to_string_lossy().replace('\\', "/")));
-    assert_eq!(outcome, MergeOutcome::Merged { removed: false });
+    assert_eq!(
+        outcome,
+        MergeOutcome::Merged {
+            removed: false,
+            removal_note: Some("The task folder changed during the merge, so the worktree was kept.".into())
+        }
+    );
     assert!(dir.join("late.txt").exists());
     assert!(branch_is_there(&task));
 }
@@ -1658,12 +1706,15 @@ fn only_marshell_branches_are_removed() {
     commit_all(&dir, "add b");
     let mut req = merge_req("Fix login");
     req.remove = true;
-    let (plan, _) = tasks::plan_merge(&task, &req);
+    let (plan, _) = tasks::plan_merge(&task, &req, 0);
     assert_eq!(plan.commands.len(), 2);
     req.commands = plan.commands;
     assert_eq!(
         tasks::merge(&state_in(&home), &task, &req),
-        MergeOutcome::Merged { removed: false }
+        MergeOutcome::Merged {
+            removed: false,
+            removal_note: None
+        }
     );
     assert!(branch_is_there(&task));
     assert!(dir.exists());
@@ -1758,7 +1809,7 @@ fn a_rebase_stopped_in_the_task_folder_blocks_the_merge_and_warns_the_removal() 
     // The rebase stops on the conflict with HEAD detached.
     assert!(!run(&dir, &["rebase", "main"]).unwrap().ok);
 
-    let (plan, _) = tasks::plan_merge(&task, &merge_req("Fix login"));
+    let (plan, _) = tasks::plan_merge(&task, &merge_req("Fix login"), 0);
     assert_eq!(
         plan.blocker.as_deref(),
         Some("A rebase is in progress in the task folder. Finish or abort it there, then merge.")
@@ -1784,7 +1835,7 @@ fn a_merge_stopped_in_the_task_folder_blocks_the_merge_and_warns_the_removal() {
     let dir = PathBuf::from(&task.path);
     assert!(!run(&dir, &["merge", "--no-ff", "-q", "main"]).unwrap().ok);
 
-    let (plan, _) = tasks::plan_merge(&task, &merge_req("Fix login"));
+    let (plan, _) = tasks::plan_merge(&task, &merge_req("Fix login"), 0);
     assert_eq!(
         plan.blocker.as_deref(),
         Some("A merge is in progress in the task folder. Finish or abort it there, then merge.")
@@ -1807,7 +1858,7 @@ fn a_task_folder_off_its_branch_blocks_the_merge_and_counts_its_commits() {
     std::fs::write(dir.join("b.txt"), "b\n").unwrap();
     commit_all(&dir, "on a detached HEAD");
 
-    let (plan, _) = tasks::plan_merge(&task, &merge_req("Fix login"));
+    let (plan, _) = tasks::plan_merge(&task, &merge_req("Fix login"), 0);
     assert_eq!(
         plan.blocker.as_deref(),
         Some("marshell/fix-login isn't checked out in the task folder. Check it out there, then merge.")
@@ -1820,4 +1871,107 @@ fn a_task_folder_off_its_branch_blocks_the_merge_and_counts_its_commits() {
             "The task folder has 1 commit that isn't on main or marshell/fix-login. Removing deletes it.".to_string(),
         ]
     );
+}
+
+// ---- merge with remove: the sessions it closes, and why a removal didn't happen ----
+
+async fn merge_plan_of(app: &axum::Router, task: &marshell_protocol::api::Task, remove: bool) -> serde_json::Value {
+    let body = serde_json::json!({ "message": "Fix login", "remove": remove, "commands": [], "warnings": [] });
+    let res = app
+        .clone()
+        .oneshot(api("POST", &format!("/v1/tasks/{}/merge/plan", task.id), Some(body)))
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    json_of(res).await
+}
+
+fn merge_req_from(plan: &serde_json::Value, remove: bool) -> MergeRequest {
+    MergeRequest {
+        message: "Fix login".into(),
+        remove,
+        commands: serde_json::from_value(plan["commands"].clone()).unwrap(),
+        warnings: serde_json::from_value(plan["warnings"].clone()).unwrap(),
+    }
+}
+
+#[tokio::test]
+async fn merge_with_remove_shows_and_checks_the_sessions_it_closes() {
+    let tmp = spaced_tmp();
+    let (home, task) = new_task(&tmp);
+    std::fs::write(Path::new(&task.path).join("b.txt"), "b\n").unwrap();
+    let state = state_in(&home);
+    let app = router(state.clone());
+    let tab = start_in(&app, Path::new(&task.path)).await;
+
+    // Without the removal nothing is closed, so nothing is said.
+    let plan = merge_plan_of(&app, &task, false).await;
+    assert_eq!(plan["warnings"], serde_json::json!([]));
+    // With it, the sessions line Remove shows.
+    let plan = merge_plan_of(&app, &task, true).await;
+    assert_eq!(
+        plan["warnings"],
+        serde_json::json!(["Closes 1 session running in this worktree."])
+    );
+
+    // A request that didn't show the line is refused, and nothing is closed or merged.
+    let mut unseen = merge_req_from(&plan, true);
+    unseen.warnings.clear();
+    let (st, t) = (state.clone(), task.clone());
+    let outcome = tokio::task::spawn_blocking(move || tasks::merge(&st, &t, &unseen))
+        .await
+        .unwrap();
+    assert_eq!(outcome, MergeOutcome::Failed { reason: CHANGED.into() });
+    assert!(state.session(&tab).is_some());
+    assert!(!PathBuf::from(&task.repo_root).join("b.txt").exists());
+
+    let req = merge_req_from(&plan, true);
+    let (st, t) = (state.clone(), task.clone());
+    let outcome = tokio::task::spawn_blocking(move || tasks::merge(&st, &t, &req))
+        .await
+        .unwrap();
+    assert_eq!(
+        outcome,
+        MergeOutcome::Merged {
+            removed: true,
+            removal_note: None
+        }
+    );
+    assert!(state.session(&tab).is_none());
+    assert!(!Path::new(&task.path).exists());
+}
+
+#[tokio::test]
+async fn a_skipped_removal_after_a_merge_leaves_the_sessions_running() {
+    let tmp = spaced_tmp();
+    let (home, task) = new_task(&tmp);
+    let dir = PathBuf::from(&task.path);
+    let repo = PathBuf::from(&task.repo_root);
+    std::fs::write(dir.join("b.txt"), "b\n").unwrap();
+    commit_all(&dir, "add b");
+    let state = state_in(&home);
+    let app = router(state.clone());
+    let tab = start_in(&app, &dir).await;
+    let plan = merge_plan_of(&app, &task, true).await;
+    // The folder gets a new file after the merge's commit, so the removal won't go ahead.
+    let late = format!("echo late > \"{}/late.txt\"", dir.to_string_lossy().replace('\\', "/"));
+    install_once_hook(&repo, &base(&tmp).join("ran"), &late);
+
+    let req = merge_req_from(&plan, true);
+    let (st, t) = (state.clone(), task.clone());
+    let outcome = tokio::task::spawn_blocking(move || tasks::merge(&st, &t, &req))
+        .await
+        .unwrap();
+    assert_eq!(
+        outcome,
+        MergeOutcome::Merged {
+            removed: false,
+            removal_note: Some("The task folder changed during the merge, so the worktree was kept.".into())
+        }
+    );
+    assert!(
+        state.session(&tab).is_some(),
+        "a removal that is skipped must not close sessions"
+    );
+    assert!(dir.exists());
 }
