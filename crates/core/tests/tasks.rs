@@ -554,11 +554,20 @@ async fn changes_route_returns_changes_or_404() {
 
 // ---- merging a task back ----
 
+/// A request that only asks for a plan.
 fn merge_req(message: &str) -> MergeRequest {
     MergeRequest {
         message: message.into(),
         remove: false,
+        commands: Vec::new(),
     }
+}
+
+/// The request the dialog sends: the message and the commands the plan showed for it.
+fn planned(task: &marshell_protocol::api::Task, message: &str) -> MergeRequest {
+    let mut req = merge_req(message);
+    req.commands = tasks::plan_merge(task, &req).0.commands;
+    req
 }
 
 /// A file's text with Windows line endings read as `\n` (git may check files out with `\r\n`).
@@ -682,7 +691,7 @@ fn merge_squashes_into_one_commit() {
     std::fs::write(dir.join("a.txt"), "task\n").unwrap();
     let before = commit_count(&repo);
 
-    let outcome = tasks::merge(&state_in(&home), &task, &merge_req("Fix login"));
+    let outcome = tasks::merge(&state_in(&home), &task, &planned(&task, "Fix login"));
     assert_eq!(outcome, MergeOutcome::Merged { removed: false });
     assert_eq!(commit_count(&repo), before + 1);
     let subject = run(&repo, &["log", "-1", "--format=%s"]).unwrap().stdout;
@@ -702,7 +711,7 @@ fn merge_refuses_when_blocked() {
     let head = head_of(&repo);
     std::fs::write(Path::new(&task.path).join("b.txt"), "b\n").unwrap();
 
-    let outcome = tasks::merge(&state_in(&home), &task, &merge_req(""));
+    let outcome = tasks::merge(&state_in(&home), &task, &planned(&task, ""));
     assert_eq!(
         outcome,
         MergeOutcome::Failed {
@@ -729,7 +738,7 @@ fn untracked_files_in_base_do_not_block() {
 
     let (plan, _) = tasks::plan_merge(&task, &merge_req("Fix login"));
     assert_eq!(plan.blocker, None);
-    let outcome = tasks::merge(&state_in(&home), &task, &merge_req("Fix login"));
+    let outcome = tasks::merge(&state_in(&home), &task, &planned(&task, "Fix login"));
     assert_eq!(outcome, MergeOutcome::Merged { removed: false });
     assert_eq!(std::fs::read_to_string(repo.join("notes.txt")).unwrap(), "mine\n");
 }
@@ -745,11 +754,14 @@ fn untracked_file_in_the_way_restores_base() {
     std::fs::write(repo.join("n.txt"), "untracked in the base\n").unwrap();
     let head = head_of(&repo);
 
-    let outcome = tasks::merge(&state_in(&home), &task, &merge_req("Fix login"));
+    let outcome = tasks::merge(&state_in(&home), &task, &planned(&task, "Fix login"));
     let MergeOutcome::Failed { reason } = outcome else {
         panic!("expected Failed, got {outcome:?}");
     };
     assert!(reason.starts_with("Couldn't merge. Git said: "), "{reason}");
+    // Git's own error line, not just its closing "Aborting".
+    assert!(reason.contains("untracked working tree files"), "{reason}");
+    assert!(!reason.ends_with("Aborting"), "{reason}");
     assert_eq!(tracked_status(&repo), "");
     assert_eq!(head_of(&repo), head);
     // The user's own file is untouched.
@@ -771,7 +783,7 @@ fn conflict_is_undone_and_listed() {
     commit_all(&repo, "main edit");
     let head = head_of(&repo);
 
-    let outcome = tasks::merge(&state_in(&home), &task, &merge_req("Fix login"));
+    let outcome = tasks::merge(&state_in(&home), &task, &planned(&task, "Fix login"));
     assert_eq!(
         outcome,
         MergeOutcome::Conflict {
@@ -801,14 +813,144 @@ fn failing_commit_hook_restores_base() {
     }
     let head = head_of(&repo);
 
-    let outcome = tasks::merge(&state_in(&home), &task, &merge_req("Fix login"));
+    let outcome = tasks::merge(&state_in(&home), &task, &planned(&task, "Fix login"));
     let MergeOutcome::Failed { reason } = outcome else {
         panic!("expected Failed, got {outcome:?}");
     };
     assert!(reason.starts_with("Couldn't commit on main. Git said: "), "{reason}");
+    // The hook said nothing, but the sentence still ends with something.
+    assert!(!reason.trim_end().ends_with("Git said:"), "{reason}");
     assert_eq!(head_of(&repo), head);
     assert_eq!(tracked_status(&repo), "");
     assert!(!repo.join("b.txt").exists());
+}
+
+/// Writes a hook into the repo's shared hooks folder.
+fn install_hook(repo: &Path, name: &str, script: &str) {
+    let hook = repo.join(".git").join("hooks").join(name);
+    std::fs::write(&hook, script).unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+}
+
+#[test]
+fn worktree_commit_failure_leaves_base_untouched() {
+    let tmp = spaced_tmp();
+    let (home, task) = new_task(&tmp);
+    let dir = PathBuf::from(&task.path);
+    let repo = PathBuf::from(&task.repo_root);
+    std::fs::write(dir.join("b.txt"), "b\n").unwrap();
+    // Hooks are shared by every worktree, so this one refuses only inside a task folder.
+    install_hook(
+        &repo,
+        "pre-commit",
+        "#!/bin/sh\ncase \"$(git rev-parse --show-toplevel)\" in */worktrees/*) exit 1;; esac\n",
+    );
+    let shown = planned(&task, "Fix login");
+    let head = head_of(&repo);
+
+    let outcome = tasks::merge(&state_in(&home), &task, &shown);
+    let MergeOutcome::Failed { reason } = outcome else {
+        panic!("expected Failed, got {outcome:?}");
+    };
+    assert!(
+        reason.starts_with("Couldn't commit the task's changes. Git said: "),
+        "{reason}"
+    );
+    assert!(!reason.trim_end().ends_with("Git said:"), "{reason}");
+    assert_eq!(head_of(&repo), head);
+    assert_eq!(tracked_status(&repo), "");
+    assert!(!repo.join("b.txt").exists());
+}
+
+#[test]
+fn merging_twice_reports_no_changes() {
+    let tmp = spaced_tmp();
+    let (home, task) = new_task(&tmp);
+    let repo = PathBuf::from(&task.repo_root);
+    std::fs::write(Path::new(&task.path).join("b.txt"), "b\n").unwrap();
+    let state = state_in(&home);
+    assert_eq!(
+        tasks::merge(&state, &task, &planned(&task, "Fix login")),
+        MergeOutcome::Merged { removed: false }
+    );
+    let head = head_of(&repo);
+    let none = MergeOutcome::Failed {
+        reason: "marshell/fix-login has no changes to merge.".into(),
+    };
+
+    // Straight away nothing is ahead (same tree, parent, message and second: the same commit),
+    // so the plan already says so.
+    assert_eq!(tasks::merge(&state, &task, &planned(&task, "Again")), none);
+    assert_eq!(head_of(&repo), head);
+
+    // The task has a commit main lacks, but main already holds the same work: the squash stages
+    // nothing, so there is no commit to make.
+    let dir = PathBuf::from(&task.path);
+    std::fs::write(dir.join("c.txt"), "c\n").unwrap();
+    commit_all(&dir, "add c in the task");
+    std::fs::write(repo.join("c.txt"), "c\n").unwrap();
+    commit_all(&repo, "add c in main");
+    let head = head_of(&repo);
+    let shown = planned(&task, "Fix login again");
+    assert_eq!(shown.commands.len(), 2);
+    assert_eq!(tasks::plan_merge(&task, &shown).0.blocker, None);
+
+    assert_eq!(tasks::merge(&state, &task, &shown), none);
+    assert_eq!(head_of(&repo), head);
+    assert_eq!(run(&repo, &["status", "--porcelain"]).unwrap().stdout, "");
+}
+
+#[test]
+fn merge_refuses_when_commands_changed() {
+    let tmp = spaced_tmp();
+    let (home, task) = new_task(&tmp);
+    let dir = PathBuf::from(&task.path);
+    let repo = PathBuf::from(&task.repo_root);
+    std::fs::write(dir.join("b.txt"), "b\n").unwrap();
+    commit_all(&dir, "add b");
+    // Shown while the folder was clean: two commands.
+    let shown = planned(&task, "Fix login");
+    assert_eq!(shown.commands.len(), 2);
+    // Then more work arrives, so the plan now has four.
+    std::fs::write(dir.join("c.txt"), "c\n").unwrap();
+    let head = head_of(&repo);
+
+    let outcome = tasks::merge(&state_in(&home), &task, &shown);
+    assert_eq!(
+        outcome,
+        MergeOutcome::Failed {
+            reason: "The task changed while you were reading the commands. Review them again.".into()
+        }
+    );
+    assert_eq!(head_of(&repo), head);
+    assert_eq!(run(&repo, &["status", "--porcelain"]).unwrap().stdout, "");
+    // Nothing ran in the task folder either.
+    assert!(run(&dir, &["status", "--porcelain"]).unwrap().stdout.contains("c.txt"));
+}
+
+#[test]
+fn a_restore_that_fails_is_reported() {
+    let tmp = spaced_tmp();
+    let (home, task) = new_task(&tmp);
+    let repo = PathBuf::from(&task.repo_root);
+    std::fs::write(Path::new(&task.path).join("b.txt"), "b\n").unwrap();
+    let shown = planned(&task, "Fix login");
+    // Another git process holds the base's index: the squash fails, and so does the reset.
+    std::fs::write(repo.join(".git").join("index.lock"), "").unwrap();
+
+    let outcome = tasks::merge(&state_in(&home), &task, &shown);
+    let MergeOutcome::Failed { reason } = outcome else {
+        panic!("expected Failed, got {outcome:?}");
+    };
+    assert!(reason.starts_with("Couldn't merge. Git said: "), "{reason}");
+    assert!(
+        reason.ends_with(" Couldn't put my repo back. Run git reset --merge in my repo."),
+        "{reason}"
+    );
 }
 
 #[tokio::test]
@@ -817,7 +959,7 @@ async fn merge_routes_plan_merge_and_404() {
     let (home, task) = new_task(&tmp);
     std::fs::write(Path::new(&task.path).join("b.txt"), "b\n").unwrap();
     let app = router(state_in(&home));
-    let body = serde_json::json!({ "message": "Fix login", "remove": false });
+    let body = serde_json::json!({ "message": "Fix login", "remove": false, "commands": [] });
 
     let res = app
         .clone()
@@ -835,7 +977,11 @@ async fn merge_routes_plan_merge_and_404() {
 
     let res = app
         .clone()
-        .oneshot(api("POST", &format!("/v1/tasks/{}/merge", task.id), Some(body.clone())))
+        .oneshot(api(
+            "POST",
+            &format!("/v1/tasks/{}/merge", task.id),
+            Some(serde_json::json!({ "message": "Fix login", "remove": false, "commands": plan["commands"] })),
+        ))
         .await
         .unwrap();
     assert_eq!(res.status(), StatusCode::OK);

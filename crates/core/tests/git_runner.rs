@@ -1,4 +1,4 @@
-use marshell_core::git::{GitStep, display, last_line, run, run_steps};
+use marshell_core::git::{GitOutput, GitStep, display, last_line, run, run_steps, said};
 use std::path::{Path, PathBuf};
 
 fn step(dir: &Path, args: &[&str]) -> GitStep {
@@ -93,4 +93,39 @@ fn run_steps_succeeds_when_every_step_is_ok() {
     ];
     run_steps(&steps).unwrap();
     assert!(dir.join("marker").exists());
+}
+
+#[test]
+fn display_quotes_line_breaks() {
+    let s = step(Path::new("repo"), &["commit", "-m", "one\ntwo", "a\rb"]);
+    assert_eq!(display(&s), "git -C repo commit -m \"one\ntwo\" \"a\rb\"");
+}
+
+fn output(stdout: &str, stderr: &str) -> GitOutput {
+    GitOutput {
+        ok: false,
+        stdout: stdout.into(),
+        stderr: stderr.into(),
+    }
+}
+
+#[test]
+fn said_prefers_the_last_error_or_fatal_line() {
+    let out = output(
+        "",
+        "error: The following untracked working tree files would be overwritten by merge:\n\tn.txt\nPlease move or remove them.\nAborting\n",
+    );
+    assert_eq!(
+        said(&out),
+        "The following untracked working tree files would be overwritten by merge:"
+    );
+    let out = output("", "error: first\nfatal:  second \nhint: try again\n");
+    assert_eq!(said(&out), "second");
+}
+
+#[test]
+fn said_falls_back_to_the_last_line_then_stdout_then_a_sentence() {
+    assert_eq!(said(&output("", "hint: x\n  plain  \n\n")), "plain");
+    assert_eq!(said(&output("nothing added\n\n", "")), "nothing added");
+    assert_eq!(said(&output("", "  \n")), "it failed without saying why");
 }

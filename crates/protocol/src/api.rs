@@ -292,6 +292,9 @@ pub struct TaskChanges {
 pub struct MergeRequest {
     pub message: String,
     pub remove: bool,
+    /// The commands the user was shown. A merge refuses to run when planning again gives others.
+    /// Ignored when only planning.
+    pub commands: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]

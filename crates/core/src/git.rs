@@ -27,10 +27,10 @@ pub struct StepFailure {
 
 const NOT_INSTALLED: &str = "Git isn't installed, or isn't on PATH.";
 
-/// Wraps an argument in quotes when it is empty or holds a space, a tab or a
-/// quote. An inner quote becomes `\"`.
+/// Wraps an argument in quotes when it is empty or holds a space, a tab, a
+/// line break or a quote. An inner quote becomes `\"`.
 fn quote(arg: &str) -> String {
-    if arg.is_empty() || arg.contains([' ', '\t', '"']) {
+    if arg.is_empty() || arg.contains([' ', '\t', '\n', '\r', '"']) {
         format!("\"{}\"", arg.replace('"', "\\\""))
     } else {
         arg.to_string()
@@ -103,4 +103,19 @@ pub fn last_line(stderr: &str) -> &str {
         .map(str::trim)
         .rfind(|line| !line.is_empty())
         .unwrap_or("")
+}
+
+/// Why a git call failed, in one line for "Git said: ...". The last `error:` or `fatal:` line of
+/// stderr with that prefix removed (git's closing "Aborting" and its hints say less), else the
+/// last non-empty stderr line, else the last non-empty stdout line (`commit` reports some
+/// failures there), else a sentence saying git gave no reason.
+pub fn said(out: &GitOutput) -> &str {
+    let stderr_lines = || out.stderr.lines().map(str::trim);
+    stderr_lines()
+        .rfind(|l| l.starts_with("error:") || l.starts_with("fatal:"))
+        .map(|l| l.split_once(':').map_or(l, |(_, rest)| rest.trim()))
+        .filter(|l| !l.is_empty())
+        .or_else(|| stderr_lines().rfind(|l| !l.is_empty()))
+        .or_else(|| out.stdout.lines().map(str::trim).rfind(|l| !l.is_empty()))
+        .unwrap_or("it failed without saying why")
 }

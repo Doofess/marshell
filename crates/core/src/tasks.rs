@@ -158,12 +158,8 @@ pub fn create(home: &Path, req: &TaskPlanRequest, now_ms: u64) -> Result<Task, S
         .unwrap_or_default();
 
     let (plan, steps) = plan_create(home, Path::new(&req.cwd), &req.name, now_ms)?;
-    git::run_steps(&steps).map_err(|failure| {
-        format!(
-            "Couldn't create the worktree. Git said: {}",
-            git::last_line(&failure.output.stderr)
-        )
-    })?;
+    git::run_steps(&steps)
+        .map_err(|failure| format!("Couldn't create the worktree. Git said: {}", git::said(&failure.output)))?;
 
     let task = Task {
         id: new_id(),
@@ -195,7 +191,7 @@ fn read(dir: &Path, args: &[&str]) -> Result<String, String> {
     } else {
         Err(format!(
             "Couldn't list the task's changes. Git said: {}",
-            git::last_line(&out.stderr)
+            git::said(&out)
         ))
     }
 }
@@ -347,7 +343,7 @@ fn ask(dir: &Path, args: &[&str]) -> Result<String, String> {
         Err(format!(
             "Couldn't read {}. Git said: {}",
             folder_name(dir),
-            git::last_line(&out.stderr)
+            git::said(&out)
         ))
     }
 }
@@ -377,7 +373,7 @@ fn merge_blocker(task: &Task, message: &str) -> Result<Option<String>, String> {
     let dir = Path::new(&task.path);
     let ahead = ask(dir, &["rev-list", "--count", &format!("{}..HEAD", task.base_branch)])?;
     if ahead.trim() == "0" && !worktree_dirty(dir)? {
-        return Ok(Some(format!("{} has no changes to merge.", task.branch)));
+        return Ok(Some(no_changes(task)));
     }
     if message.is_empty() {
         return Ok(Some("Write a commit message.".into()));
@@ -419,16 +415,36 @@ pub fn plan_merge(task: &Task, req: &MergeRequest) -> (MergePlan, Vec<GitStep>) 
 
 /// Puts the base checkout back after a squash or commit that failed halfway. Not a shown
 /// command: it only undoes what the shown command changed, in a checkout that was clean.
-fn restore_base(repo: &Path) {
-    let _ = git::run(repo, &["reset", "-q", "--merge"]);
+/// When that fails too, the sentence that tells the user what to run themselves.
+fn restore_base(repo: &Path) -> Option<String> {
+    match git::run(repo, &["reset", "-q", "--merge"]) {
+        Ok(out) if out.ok => None,
+        _ => {
+            let name = folder_name(repo);
+            Some(format!("Couldn't put {name} back. Run git reset --merge in {name}."))
+        }
+    }
 }
 
-/// Squashes the task into its base branch as one commit. Plans again first and stops at a
-/// blocker. When the squash or the commit fails, the base checkout is put back as it was.
+/// `reason`, followed by the restore sentence when the restore failed.
+fn with_restore_note(reason: String, note: Option<String>) -> MergeOutcome {
+    let reason = match note {
+        Some(note) => format!("{reason} {note}"),
+        None => reason,
+    };
+    MergeOutcome::Failed { reason }
+}
+
+/// Squashes the task into its base branch as one commit. Plans again first and stops when the
+/// commands differ from the ones the user was shown, or at a blocker. When the squash or the
+/// commit fails, the base checkout is put back as it was.
 pub fn merge(st: &AppState, task: &Task, req: &MergeRequest) -> MergeOutcome {
     let _guard = MERGE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let failed = |reason: String| MergeOutcome::Failed { reason };
     let (plan, steps) = plan_merge(task, req);
+    if plan.commands != req.commands {
+        return failed("The task changed while you were reading the commands. Review them again.".into());
+    }
     if let Some(blocker) = plan.blocker {
         return failed(blocker);
     }
@@ -439,7 +455,7 @@ pub fn merge(st: &AppState, task: &Task, req: &MergeRequest) -> MergeOutcome {
     if let Err(f) = git::run_steps(worktree_steps) {
         return failed(format!(
             "Couldn't commit the task's changes. Git said: {}",
-            git::last_line(&f.output.stderr)
+            git::said(&f.output)
         ));
     }
 
@@ -453,23 +469,30 @@ pub fn merge(st: &AppState, task: &Task, req: &MergeRequest) -> MergeOutcome {
             .map(str::to_string)
             .filter(|l| !l.is_empty())
             .collect();
-        restore_base(repo);
-        if files.is_empty() {
-            return failed(format!(
-                "Couldn't merge. Git said: {}",
-                git::last_line(&f.output.stderr)
-            ));
-        }
-        return MergeOutcome::Conflict { files };
+        let note = restore_base(repo);
+        return match (files.is_empty(), note) {
+            (false, None) => MergeOutcome::Conflict { files },
+            // The file list doesn't help when the base wasn't put back.
+            (false, note) => with_restore_note("Couldn't merge.".into(), note),
+            (true, note) => with_restore_note(format!("Couldn't merge. Git said: {}", git::said(&f.output)), note),
+        };
+    }
+
+    // A squash that stages nothing (the task's work is already in the base) has nothing to commit.
+    if git::run(repo, &["diff", "--cached", "--quiet"]).is_ok_and(|out| out.ok) {
+        return with_restore_note(no_changes(task), restore_base(repo));
     }
 
     if let Err(f) = git::run_steps(&base_steps[1..]) {
-        restore_base(repo);
-        return failed(format!(
-            "Couldn't commit on {}. Git said: {}",
-            task.base_branch,
-            git::last_line(&f.output.stderr)
-        ));
+        let note = restore_base(repo);
+        return with_restore_note(
+            format!(
+                "Couldn't commit on {}. Git said: {}",
+                task.base_branch,
+                git::said(&f.output)
+            ),
+            note,
+        );
     }
 
     let removed = if req.remove {
@@ -481,4 +504,9 @@ pub fn merge(st: &AppState, task: &Task, req: &MergeRequest) -> MergeOutcome {
         false
     };
     MergeOutcome::Merged { removed }
+}
+
+/// The sentence for a merge with nothing to merge. Also the blocker's.
+fn no_changes(task: &Task) -> String {
+    format!("{} has no changes to merge.", task.branch)
 }
