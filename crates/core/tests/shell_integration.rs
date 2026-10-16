@@ -84,6 +84,7 @@ impl Shell {
         match self.session.pull(self.cursor, 64 * 1024) {
             Pull::Data { seq, bytes } => {
                 self.cursor = seq + bytes.len() as u64;
+                self.answer_cursor_queries(&bytes);
                 self.output.extend(bytes);
                 self.session.ack(self.cursor);
             }
@@ -94,6 +95,18 @@ impl Shell {
             }
             Pull::Exit(code) => panic!("the shell exited ({code}): {}", self.text()),
             Pull::Idle => std::thread::sleep(Duration::from_millis(10)),
+        }
+    }
+
+    /// PSReadLine asks where the cursor is (`ESC[6n`) and waits for the answer. A terminal (xterm.js in the app,
+    /// ConPTY on Windows) replies; off Windows nothing else does here, so the test replies. A query split across two
+    /// reads goes unanswered, and PSReadLine asks again.
+    fn answer_cursor_queries(&self, bytes: &[u8]) {
+        if cfg!(windows) {
+            return;
+        }
+        for _ in bytes.windows(4).filter(|w| *w == b"\x1b[6n") {
+            self.session.write_input(b"\x1b[1;1R".to_vec());
         }
     }
 
