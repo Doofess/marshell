@@ -76,6 +76,29 @@ describe("sessions", () => {
   });
 });
 
+describe("sessions.resume", () => {
+  it("posts the size and resolves ok", async () => {
+    const ok = respond({ tab_id: "t 1", number: 1 });
+    vi.stubGlobal("fetch", ok);
+    await expect(sessions.resume(endpoint, "t 1", { cols: 90, rows: 30 })).resolves.toEqual({ ok: true });
+    expect(call(ok)).toMatchObject({
+      url: "http://127.0.0.1:9/v1/sessions/t%201/resume",
+      method: "POST",
+      body: { cols: 90, rows: 30 },
+    });
+  });
+
+  it("returns the core's reason on a 409 and rejects on other errors", async () => {
+    vi.stubGlobal("fetch", respond({ reason: "Its shell profile was removed." }, 409));
+    await expect(sessions.resume(endpoint, "t1", { cols: 80, rows: 24 })).resolves.toEqual({
+      ok: false,
+      reason: "Its shell profile was removed.",
+    });
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response("No such session.", { status: 404 })));
+    await expect(sessions.resume(endpoint, "t1", { cols: 80, rows: 24 })).rejects.toBeInstanceOf(ApiError);
+  });
+});
+
 describe("profiles and projects", () => {
   it("gets and puts profiles", async () => {
     const doc = { profiles: [], default_id: "x" };

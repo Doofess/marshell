@@ -1,17 +1,19 @@
 use super::AppState;
 use crate::auth;
-use crate::profiles::detect::{agent_command, default_shell, launch_argv};
+use crate::profiles::detect::{agent_command, default_shell, launch_argv, launch_argv_resume};
 use crate::pty::{Session, SpawnSpec};
-use crate::registry::Relaunch;
+use crate::registry::{Relaunch, ResumeRefusal};
 use axum::Json;
 use axum::body::Bytes;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
+use axum::response::{IntoResponse, Response};
 use marshell_protocol::api::{
     ColorScheme, CreateSessionRequest, CreateSessionResponse, RenameRequest, ReopenRequest, ReorderRequest,
-    SessionsSnapshot, ShellFamily,
+    ResumeError, SessionState, SessionsSnapshot, ShellFamily,
 };
 use marshell_protocol::brand;
+use serde::Deserialize;
 use std::path::PathBuf;
 
 type ApiError = (StatusCode, String);
@@ -63,11 +65,13 @@ struct Resolved {
 }
 
 /// Finds the profile (the default when `profile_id` is None) and builds the argv for the agent.
+/// With `resume` the agent is told to continue its last conversation, and there is no prompt.
 fn resolve(
     st: &AppState,
     profile_id: Option<&str>,
     agent: Option<&str>,
     prompt: Option<&str>,
+    resume: bool,
 ) -> Result<Resolved, ApiError> {
     // Copy the profile out so the lock is gone before any await.
     let profile = {
@@ -77,7 +81,12 @@ fn resolve(
     };
     match (profile, profile_id) {
         (Some(p), _) => {
-            let mut argv = launch_argv(&p, agent, prompt).map_err(|msg| (StatusCode::BAD_REQUEST, msg))?;
+            let argv = if resume {
+                launch_argv_resume(&p, agent)
+            } else {
+                launch_argv(&p, agent, prompt)
+            };
+            let mut argv = argv.map_err(|msg| (StatusCode::BAD_REQUEST, msg))?;
             let mut env = p.env.clone();
             let mut marks = false;
             // Shell integration is for a plain shell; an agent session runs the agent instead.
@@ -121,19 +130,10 @@ fn custom(argv: Vec<String>) -> Resolved {
     }
 }
 
-/// Reserves a number, starts the process and records it. A failed spawn gives the number back.
-async fn start_session(
-    st: &AppState,
-    run: Resolved,
-    agent: Option<String>,
-    name: Option<String>,
-    cwd: Option<String>,
-    size: (u16, u16),
-    scheme: Option<ColorScheme>,
-) -> Result<CreateSessionResponse, ApiError> {
-    // The shell starts even when the agent is missing, so look for the agent first.
-    // A WSL distro has its own PATH, which the check cannot see: those are not checked.
-    if let Some(agent) = agent.as_deref()
+/// Refuses an agent whose program is not on PATH. The shell would start anyway and say so
+/// itself, so look for the agent first. A WSL distro has its own PATH: those are not checked.
+fn check_agent_installed(st: &AppState, run: &Resolved, agent: Option<&str>) -> Result<(), ApiError> {
+    if let Some(agent) = agent
         && run.family != ShellFamily::Wsl
         && let Some(command) = agent_command(agent)
         && !(st.0.agent_on_path)(command)
@@ -144,42 +144,80 @@ async fn start_session(
             format!("{name} isn't installed or isn't on PATH."),
         ));
     }
+    Ok(())
+}
+
+/// Reserves a number, starts the process and records it. A failed spawn gives the number back.
+async fn start_session(
+    st: &AppState,
+    run: Resolved,
+    agent: Option<String>,
+    name: Option<String>,
+    cwd: Option<String>,
+    size: (u16, u16),
+    scheme: Option<ColorScheme>,
+) -> Result<CreateSessionResponse, ApiError> {
+    check_agent_installed(st, &run, agent.as_deref())?;
     let home = dirs::home_dir().map(|p| p.to_string_lossy().into_owned());
-    let cwd = cwd.filter(|c| !c.is_empty()).or(run.cwd).or(home).unwrap_or_default();
+    let cwd = cwd
+        .filter(|c| !c.is_empty())
+        .or(run.cwd.clone())
+        .or(home)
+        .unwrap_or_default();
     // The base name: the requested one, else the agent, else the profile.
     let name = name
         .map(|n| n.trim().to_string())
         .filter(|n| !n.is_empty())
         .unwrap_or_else(|| {
             let agent_name = agent.as_deref().and_then(agent_display_name);
-            agent_name.map_or(run.profile_name, String::from)
+            agent_name.map_or_else(|| run.profile_name.clone(), String::from)
         });
 
     let tab_id = auth::new_id("t");
     let number = st.0.registry.reserve(
         &tab_id,
         Relaunch {
-            profile_id: run.profile_id,
+            profile_id: run.profile_id.clone(),
             agent: agent.clone(),
             cwd: cwd.clone(),
             name,
         },
     );
+    if let Err(err) = launch(st, &tab_id, number, run, agent, cwd, size, scheme).await {
+        // A spawn failed, or the tab was closed while it started (then there is no open row to release).
+        st.0.registry.release(&tab_id);
+        return Err(err);
+    }
+    Ok(CreateSessionResponse { tab_id, number })
+}
 
+/// Starts the process for a tab that is already in the registry, and stores its session.
+/// The caller undoes the registry change when this fails.
+#[allow(clippy::too_many_arguments)]
+async fn launch(
+    st: &AppState,
+    tab_id: &str,
+    number: u32,
+    run: Resolved,
+    agent: Option<String>,
+    cwd: String,
+    size: (u16, u16),
+    scheme: Option<ColorScheme>,
+) -> Result<(), ApiError> {
     // The profile's variables first, so ours win.
     let mut env = spawn_env(scheme, &run.env);
     env.extend([
-        (brand::env_var("TAB_ID"), tab_id.clone()),
+        (brand::env_var("TAB_ID"), tab_id.to_string()),
         (brand::env_var("SESSION_NUMBER"), number.to_string()),
         (brand::env_var("AGENT"), agent.unwrap_or_else(|| "shell".into())),
         ("TERM".into(), "xterm-256color".into()),
         ("COLORTERM".into(), "truecolor".into()),
     ]);
     let registry = st.0.registry.clone();
-    let exited_tab = tab_id.clone();
+    let exited_tab = tab_id.to_string();
     let on_mark: Option<crate::pty::MarkCallback> = if run.marks {
         let registry = st.0.registry.clone();
-        let tab = tab_id.clone();
+        let tab = tab_id.to_string();
         Some(Box::new(move |mark| registry.mark(&tab, mark)))
     } else {
         None
@@ -196,7 +234,7 @@ async fn start_session(
         on_exit: Some(Box::new(move |code| registry.mark_exited(&exited_tab, code))),
         on_mark,
     };
-    let id = tab_id.clone();
+    let id = tab_id.to_string();
     // Spawning touches the OS (process creation) and recording writes a file:
     // keep both off the async worker threads.
     let spawned = tokio::task::spawn_blocking(move || {
@@ -215,21 +253,15 @@ async fn start_session(
     .await;
     let session = match spawned {
         Ok(Ok(session)) => session,
-        Ok(Err(e)) => {
-            st.0.registry.release(&tab_id);
-            // No prefix here: the UI already says "Couldn't start a shell." and appends this text.
-            return Err((StatusCode::INTERNAL_SERVER_ERROR, format!("{e:#}")));
-        }
-        Err(e) => {
-            st.0.registry.release(&tab_id);
-            return Err((StatusCode::INTERNAL_SERVER_ERROR, e.to_string()));
-        }
+        // No prefix here: the UI already says "Couldn't start a shell." and appends this text.
+        Ok(Err(e)) => return Err((StatusCode::INTERNAL_SERVER_ERROR, format!("{e:#}"))),
+        Err(e) => return Err((StatusCode::INTERNAL_SERVER_ERROR, e.to_string())),
     };
     st.insert_session(session);
     // A close can land between reserve and insert, when the map has nothing to kill yet.
     // Checking after the insert catches it: a later close finds the session in the map.
-    if !st.0.registry.is_open(&tab_id) {
-        if let Some(session) = st.remove_session(&tab_id) {
+    if !st.0.registry.is_open(tab_id) {
+        if let Some(session) = st.remove_session(tab_id) {
             session.kill();
         }
         return Err((
@@ -237,7 +269,7 @@ async fn start_session(
             "The session was closed while it was starting.".into(),
         ));
     }
-    Ok(CreateSessionResponse { tab_id, number })
+    Ok(())
 }
 
 pub async fn create(
@@ -262,6 +294,7 @@ pub async fn create(
                 req.profile_id.as_deref(),
                 req.agent.as_deref(),
                 req.prompt.as_deref(),
+                false,
             )?,
             req.agent,
         ),
@@ -324,7 +357,7 @@ pub async fn reopen(State(st): State<AppState>, body: Bytes) -> Result<Json<Crea
         return Err((StatusCode::NOT_FOUND, "Nothing to reopen.".into()));
     };
     // A fresh session from the saved profile, agent, folder and name (not the old row).
-    let run = resolve(&st, Some(&saved.profile_id), saved.agent.as_deref(), None)?;
+    let run = resolve(&st, Some(&saved.profile_id), saved.agent.as_deref(), None, false)?;
     // The window resizes the terminal as soon as it attaches.
     // The saved session has no colour scheme, so a reopened one starts without COLORFGBG.
     let created = start_session(&st, run, saved.agent, Some(saved.name), Some(saved.cwd), (80, 24), None).await?;
@@ -337,6 +370,84 @@ pub async fn reopen(State(st): State<AppState>, body: Bytes) -> Result<Json<Crea
         return Err((StatusCode::NOT_FOUND, "Nothing to reopen.".into()));
     }
     Ok(Json(created))
+}
+
+#[derive(Deserialize)]
+pub struct ResumeRequest {
+    cols: u16,
+    rows: u16,
+}
+
+/// A 409 whose body tells the user why Resume cannot start the tab.
+fn cannot_resume(reason: impl Into<String>) -> Response {
+    (StatusCode::CONFLICT, Json(ResumeError { reason: reason.into() })).into_response()
+}
+
+/// Starts an Ended or Exited tab again in the same row, with the CLI's own continue flag for an agent.
+pub async fn resume(State(st): State<AppState>, Path(tab): Path<String>, Json(req): Json<ResumeRequest>) -> Response {
+    let Some(info) = st.0.registry.snapshot().sessions.into_iter().find(|s| s.tab_id == tab) else {
+        return (StatusCode::NOT_FOUND, "No such session.").into_response();
+    };
+    // These checks come before begin_resume, so a refusal leaves the tab as it was.
+    if info.state == SessionState::Running {
+        return cannot_resume("It is already running.");
+    }
+    let profile_known = info.profile_id == CUSTOM_PROFILE
+        || st
+            .0
+            .profiles
+            .lock()
+            .unwrap()
+            .profiles
+            .iter()
+            .any(|p| p.id == info.profile_id);
+    if !profile_known {
+        return cannot_resume("Its shell profile was removed.");
+    }
+    if !info.cwd.is_empty() && !std::path::Path::new(&info.cwd).is_dir() {
+        return cannot_resume(format!("Its folder no longer exists: {}", info.cwd));
+    }
+    let run = match resolve(&st, Some(&info.profile_id), info.agent.as_deref(), None, true) {
+        Ok(run) => run,
+        Err(err) => return err.into_response(),
+    };
+    if let Err(err) = check_agent_installed(&st, &run, info.agent.as_deref()) {
+        return err.into_response();
+    }
+    // The check and the change to Running happen under one lock: of two resumes at once, one wins.
+    let (saved, previous) = match st.0.registry.begin_resume(&tab) {
+        Ok(started) => started,
+        Err(ResumeRefusal::NotFound) => return (StatusCode::NOT_FOUND, "No such session.").into_response(),
+        Err(ResumeRefusal::AlreadyRunning) => return cannot_resume("It is already running."),
+    };
+    // An Exited tab still has its old (finished) process in the map.
+    if let Some(old) = st.remove_session(&tab) {
+        old.kill();
+    }
+    // The tab keeps its row, so its name is not touched: no naming path runs here.
+    // The saved tab has no colour scheme, so a resumed session starts without COLORFGBG.
+    match launch(
+        &st,
+        &tab,
+        info.number,
+        run,
+        saved.agent,
+        saved.cwd,
+        (req.cols, req.rows),
+        None,
+    )
+    .await
+    {
+        Ok(()) => Json(CreateSessionResponse {
+            tab_id: tab,
+            number: info.number,
+        })
+        .into_response(),
+        Err(err) => {
+            st.0.registry.set_state(&tab, previous);
+            err.into_response()
+        }
+    }
 }
 
 #[cfg(test)]

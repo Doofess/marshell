@@ -152,6 +152,7 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/sessions", get(sessions::list).post(sessions::create))
         .route("/v1/sessions/reorder", post(sessions::reorder))
         .route("/v1/sessions/reopen", post(sessions::reopen))
+        .route("/v1/sessions/{tab}/resume", post(sessions::resume))
         .route("/v1/sessions/{tab}", patch(sessions::rename).delete(sessions::close))
         .route("/v1/events", get(events::handler))
         .route("/v1/pty/{tab}", get(pty_ws::handler))

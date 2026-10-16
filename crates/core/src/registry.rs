@@ -22,6 +22,13 @@ pub struct Relaunch {
     pub name: String,
 }
 
+/// Why `begin_resume` said no.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ResumeRefusal {
+    NotFound,
+    AlreadyRunning,
+}
+
 pub struct Entry {
     pub info: SessionInfo,
     /// How to reopen this session.
@@ -147,6 +154,35 @@ impl Registry {
                 cwd: e.info.cwd.clone(),
             })
             .collect()
+    }
+
+    /// Starts a Resume: an Ended or Exited tab becomes Running, in the same row (same id, number,
+    /// name and place). The check and the change happen under one lock, so of two calls at once
+    /// only one succeeds. Returns how to start it and the state it had, for `set_state` if the start fails.
+    pub fn begin_resume(&self, tab_id: &str) -> Result<(Relaunch, SessionState), ResumeRefusal> {
+        let mut state = self.state.lock().unwrap();
+        let entry = state
+            .open
+            .iter_mut()
+            .find(|e| e.info.tab_id == tab_id)
+            .ok_or(ResumeRefusal::NotFound)?;
+        if entry.info.state == SessionState::Running {
+            return Err(ResumeRefusal::AlreadyRunning);
+        }
+        let previous = std::mem::replace(&mut entry.info.state, SessionState::Running);
+        entry.info.command = CommandState::Unknown;
+        let relaunch = entry.spec.clone();
+        self.tx.send_replace(state.snapshot());
+        Ok((relaunch, previous))
+    }
+
+    /// Puts a tab's state back, when a Resume could not start its process.
+    pub fn set_state(&self, tab_id: &str, new_state: SessionState) {
+        let mut state = self.state.lock().unwrap();
+        if let Some(entry) = state.open.iter_mut().find(|e| e.info.tab_id == tab_id) {
+            entry.info.state = new_state;
+            self.tx.send_replace(state.snapshot());
+        }
     }
 
     /// A spawn failed: drop the row and free its number. Not added to closed.
@@ -306,6 +342,25 @@ mod tests {
             .iter()
             .map(|s| (s.tab_id.clone(), s.number))
             .collect()
+    }
+
+    #[test]
+    fn begin_resume_refuses_running() {
+        let reg = Registry::new();
+        reg.reserve("t1", relaunch("Shell"));
+        assert_eq!(reg.begin_resume("t1").unwrap_err(), ResumeRefusal::AlreadyRunning);
+        assert_eq!(reg.begin_resume("nope").unwrap_err(), ResumeRefusal::NotFound);
+
+        reg.mark_exited("t1", 2);
+        let (spec, previous) = reg.begin_resume("t1").unwrap();
+        assert_eq!(spec.name, "Shell");
+        assert_eq!(previous, SessionState::Exited { code: 2 });
+        assert_eq!(reg.snapshot().sessions[0].state, SessionState::Running);
+        // The second call finds it Running.
+        assert_eq!(reg.begin_resume("t1").unwrap_err(), ResumeRefusal::AlreadyRunning);
+
+        reg.set_state("t1", previous);
+        assert_eq!(reg.snapshot().sessions[0].state, SessionState::Exited { code: 2 });
     }
 
     #[test]
