@@ -44,7 +44,7 @@ fn trim_separators(path: &str) -> &str {
 
 /// Windows paths ignore case, so `C:\Dev\App` and `c:\dev\app` are one project there.
 /// A trailing separator does not make a different folder.
-fn same_path(a: &str, b: &str) -> bool {
+pub(crate) fn same_path(a: &str, b: &str) -> bool {
     let (a, b) = (trim_separators(a), trim_separators(b));
     if cfg!(windows) {
         a.eq_ignore_ascii_case(b)
@@ -57,12 +57,11 @@ fn same_path(a: &str, b: &str) -> bool {
 /// collide on the temp file. Held for that whole read-modify-write.
 static RECORD_LOCK: Mutex<()> = Mutex::new(());
 
-/// The current branch of the git repository that holds `dir`, if any.
-/// A detached HEAD gives the first 7 characters of the commit.
-pub fn git_branch(dir: &Path) -> Option<String> {
+/// The folder with the `.git` entry that holds `dir`, and the git folder that entry stands for.
+/// A linked worktree or submodule has a `.git` file that points at its git folder.
+fn locate_git(dir: &Path) -> Option<(&Path, PathBuf)> {
     let repo = dir.ancestors().find(|d| d.join(".git").exists())?;
     let dot_git = repo.join(".git");
-    // A worktree has a `.git` file that points at the real git folder.
     let git_dir = if dot_git.is_file() {
         let text = std::fs::read_to_string(&dot_git).ok()?;
         let target = text.trim().strip_prefix("gitdir:")?.trim();
@@ -70,15 +69,98 @@ pub fn git_branch(dir: &Path) -> Option<String> {
     } else {
         dot_git
     };
+    Some((repo, git_dir))
+}
+
+/// What `HEAD` says: the branch it points at, or the commit when detached.
+enum Head {
+    Branch(String),
+    Detached(String),
+}
+
+fn read_head(dir: &Path) -> Option<Head> {
+    let (_, git_dir) = locate_git(dir)?;
     let head = std::fs::read_to_string(git_dir.join("HEAD")).ok()?;
     let head = head.trim();
     match head.strip_prefix("ref:") {
         Some(reference) => {
             let reference = reference.trim();
-            Some(reference.strip_prefix("refs/heads/").unwrap_or(reference).to_string())
+            Some(Head::Branch(
+                reference.strip_prefix("refs/heads/").unwrap_or(reference).to_string(),
+            ))
         }
-        None => (!head.is_empty()).then(|| head.chars().take(7).collect()),
+        None => (!head.is_empty()).then(|| Head::Detached(head.chars().take(7).collect())),
     }
+}
+
+/// The current branch of the git repository that holds `dir`, if any.
+/// A detached HEAD gives the first 7 characters of the commit.
+pub fn git_branch(dir: &Path) -> Option<String> {
+    match read_head(dir)? {
+        Head::Branch(name) | Head::Detached(name) => Some(name),
+    }
+}
+
+/// Like `git_branch`, but `None` when HEAD is detached (or there is no repository).
+pub fn head_branch(dir: &Path) -> Option<String> {
+    match read_head(dir)? {
+        Head::Branch(name) => Some(name),
+        Head::Detached(_) => None,
+    }
+}
+
+/// Resolves `.` and `..` in the path text alone, without touching the disk (no `\\?\` paths on Windows).
+fn tidy(path: &Path) -> PathBuf {
+    use std::path::Component;
+    let mut out = PathBuf::new();
+    for part in path.components() {
+        match part {
+            Component::ParentDir => {
+                out.pop();
+            }
+            Component::CurDir => {}
+            other => out.push(other),
+        }
+    }
+    out
+}
+
+/// The path as the disk spells it: short Windows names (`HOMEOF~1`) and case are resolved, so two
+/// spellings of one folder compare equal. A path that does not exist is only tidied.
+pub fn canonical(path: &Path) -> PathBuf {
+    let tidy = tidy(path);
+    let Ok(real) = std::fs::canonicalize(&tidy) else {
+        return tidy;
+    };
+    // Windows gives `\\?\C:\dir`; the plain `C:\dir` is what everything else uses. A UNC share stays as it is.
+    let text = real.to_string_lossy();
+    match text.strip_prefix(r"\\?\") {
+        Some(rest) if rest.as_bytes().get(1) == Some(&b':') => PathBuf::from(rest),
+        _ => real,
+    }
+}
+
+/// The root of the **main** checkout of the repository that holds `dir`: for a linked worktree, not the
+/// worktree itself. Reads files only, and never runs git. `None` outside a repository.
+pub fn repo_root(dir: &Path) -> Option<PathBuf> {
+    let (checkout, git_dir) = locate_git(dir)?;
+    // A linked worktree's git folder has a `commondir` file naming the main `.git` folder. A plain
+    // checkout and a submodule have none: the checkout is its own root.
+    if let Ok(text) = std::fs::read_to_string(git_dir.join("commondir")) {
+        let common = tidy(&git_dir.join(text.trim()));
+        if let Some(root) = common.parent() {
+            return Some(canonical(root));
+        }
+    }
+    Some(canonical(checkout))
+}
+
+/// The key sessions are grouped under: the repository root of `cwd`, or `cwd` itself outside git.
+pub fn project_of(cwd: &str) -> String {
+    if cwd.is_empty() {
+        return String::new();
+    }
+    repo_root(Path::new(cwd)).map_or_else(|| cwd.to_string(), |root| root.to_string_lossy().into_owned())
 }
 
 /// Puts `cwd` at the top of the recent list. The user's home folder is never recorded.
@@ -88,6 +170,10 @@ pub fn record(home: &Path, cwd: &Path, now_ms: u64) -> anyhow::Result<()> {
     if dirs::home_dir().is_some_and(|user_home| same_path(&user_home.to_string_lossy(), &cwd.to_string_lossy())) {
         return Ok(());
     }
+    // A task worktree is not a project of its own: its repository is.
+    let in_task = cwd.starts_with(home.join("worktrees"));
+    let root = in_task.then(|| repo_root(cwd)).flatten();
+    let cwd = root.as_deref().unwrap_or(cwd);
     let _guard = RECORD_LOCK.lock().unwrap();
     let path = file(home);
     let mut doc = store::read::<FileDoc>(&path)?.unwrap_or_default();

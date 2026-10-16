@@ -6,7 +6,7 @@ const base: RowModel = {
   id: "1",
   number: 6,
   name: "api-server",
-  project: "my-app",
+  project: "my-app", projectKey: "my-app",
   branch: "feat/auth-flow",
   agent: "claude",
   status: "needs-permission",
@@ -58,7 +58,7 @@ describe("rowTitle", () => {
 });
 
 describe("manual CLIs", () => {
-  const docker: RowModel = { id: "d", number: 8, name: "compose", project: "my-app", branch: "main", agent: "docker", status: "running", phrase: "Running docker compose up" };
+  const docker: RowModel = { id: "d", number: 8, name: "compose", project: "my-app", projectKey: "my-app", branch: "main", agent: "docker", status: "running", phrase: "Running docker compose up" };
   it("are named by their program and say what they are doing, with no context or model", () => {
     const l = rowLabel(docker);
     expect(l).toBe("Session 8, compose my-app · main Running docker compose up. Docker, Running a command.");

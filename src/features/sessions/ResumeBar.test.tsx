@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { RowModel } from "../sidebar/types";
 import { ResumeBar } from "./ResumeBar";
 
-const row = (patch: Partial<RowModel> = {}): RowModel => ({ id: "t1", number: 1, name: "Claude Code", project: "billing", agent: "claude", status: "ended", phrase: "Ended last time", ...patch });
+const row = (patch: Partial<RowModel> = {}): RowModel => ({ id: "t1", number: 1, name: "Claude Code", project: "billing", projectKey: "billing", agent: "claude", status: "ended", phrase: "Ended last time", ...patch });
 const bar = (props: Partial<Parameters<typeof ResumeBar>[0]> = {}) =>
   renderToStaticMarkup(<ResumeBar row={row()} command="claude --continue" folder={"C:\\dev\\billing"} onResume={() => {}} {...props} />);
 

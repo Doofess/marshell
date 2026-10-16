@@ -13,7 +13,10 @@ export type RowModel = {
   /** The session's number: 1-based, stable until it closes, the lowest free one when a session starts (sessionNumber.ts). */
   number: number;
   name: string;
+  /** The label: the last folder of the repository (or of the folder, outside git). */
   project: string;
+  /** What groups rows: the repository root, so two repositories that share a folder name stay apart. */
+  projectKey: string;
   branch?: string;
   /** An AI agent, or a manual CLI (a plain terminal: no animation, ring, model or prompt line). */
   agent: SessionKind;

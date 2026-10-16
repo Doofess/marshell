@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { groupBounds, groupedOrder, groupRows, moveWithinGroup } from "./grouping";
 import type { RowModel } from "./types";
 
-const row = (id: string, project: string) => ({ id, project }) as RowModel;
+const row = (id: string, project: string, projectKey = project) => ({ id, project, projectKey }) as RowModel;
 const rows = [row("a1", "A"), row("b1", "B"), row("a2", "A"), row("c1", "C")];
 
 describe("groupRows", () => {
@@ -14,6 +14,13 @@ describe("groupRows", () => {
       ["C", ["c1"], 3],
     ]);
     expect(groupedOrder(groups).map((r) => r.id)).toEqual(["a1", "a2", "b1", "c1"]);
+  });
+  it("two repositories with the same folder name are two groups", () => {
+    const groups = groupRows([row("a1", "app", "C:\\w\\app"), row("b1", "app", "C:\\x\\app"), row("a2", "app", "C:\\w\\app")]);
+    expect(groups.map((g) => [g.project, g.rows.map((r) => r.id)])).toEqual([
+      ["app", ["a1", "a2"]],
+      ["app", ["b1"]],
+    ]);
   });
   it("has no groups for no rows", () => {
     expect(groupRows([])).toEqual([]);

@@ -8,6 +8,7 @@ mod pty_ws;
 mod sessions;
 mod settings;
 mod shell_panel;
+mod tasks;
 
 use crate::profiles::detect::{Probe, detect_profiles};
 use crate::registry::{Registry, Relaunch};
@@ -153,6 +154,8 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/layout/view", put(layout::put_view))
         .route("/v1/import/windows-terminal", get(settings::windows_terminal))
         .route("/v1/projects", get(projects::get))
+        .route("/v1/tasks", get(tasks::list).post(tasks::create))
+        .route("/v1/tasks/plan", post(tasks::plan))
         .route("/v1/sessions", get(sessions::list).post(sessions::create))
         .route("/v1/sessions/reorder", post(sessions::reorder))
         .route("/v1/sessions/reopen", post(sessions::reopen))

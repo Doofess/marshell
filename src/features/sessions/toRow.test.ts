@@ -18,12 +18,19 @@ const info = (patch: Partial<SessionInfo> = {}): SessionInfo => ({
   agent: null,
   profile_id: "pwsh",
   cwd: "C:\\dev\\my-app",
+  project: "C:\\dev\\my-app",
   state: { kind: "running" },
   command: { kind: "unknown" },
   ...patch,
 });
 
 describe("toRow", () => {
+  it("names the project after the repository, not the sub folder", () => {
+    const row = toRow(info({ cwd: "C:\\w\\app\\src", project: "C:\\w\\app" }), PROFILES);
+    expect(row.project).toBe("app");
+    expect(row.projectKey).toBe("C:\\w\\app");
+  });
+
   it("maps exited to ended with code phrase", () => {
     const row = toRow(info({ state: { kind: "exited", code: 3 } }), PROFILES);
     expect(row.status).toBe("ended");
@@ -72,7 +79,7 @@ describe("toRow", () => {
   it("carries id, number, name and the last folder of the cwd", () => {
     const row = toRow(info({ tab_id: "abc", number: 4, name: "api", cwd: "C:\\dev\\my-app\\" }), PROFILES);
     expect(row).toMatchObject({ id: "abc", number: 4, name: "api", project: "my-app" });
-    expect(toRow(info({ cwd: "/home/me/proj" }), PROFILES).project).toBe("proj");
+    expect(toRow(info({ project: "/home/me/proj" }), PROFILES).project).toBe("proj");
   });
 
   describe("shell command state", () => {

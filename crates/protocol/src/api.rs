@@ -120,6 +120,8 @@ pub struct SessionInfo {
     pub agent: Option<String>,
     pub profile_id: String,
     pub cwd: String,
+    /// The git repo root of `cwd` (the main checkout, for a task worktree), or `cwd` itself outside git.
+    pub project: String,
     pub state: SessionState,
     /// What the shell is doing, from its prompt marks. Unknown without shell integration.
     pub command: CommandState,
@@ -225,6 +227,102 @@ pub struct LayoutDoc {
 #[ts(export)]
 pub struct ResumeError {
     pub reason: String,
+}
+
+/// One task: a git worktree on its own branch, made by Marshell.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct Task {
+    pub id: String,
+    pub name: String,
+    pub branch: String,
+    pub base_branch: String,
+    /// The main checkout the worktree belongs to.
+    pub repo_root: String,
+    /// The worktree folder.
+    pub path: String,
+    /// Milliseconds since the Unix epoch.
+    #[ts(type = "number")]
+    pub created_ms: u64,
+}
+
+/// POST /v1/tasks/plan and POST /v1/tasks body.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct TaskPlanRequest {
+    /// A folder inside the repository.
+    pub cwd: String,
+    /// Raw text or a prompt; the core makes the task name from it.
+    pub name: String,
+}
+
+/// What creating a task would do, shown before it runs.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct TaskPlan {
+    pub name: String,
+    pub branch: String,
+    pub base_branch: String,
+    pub repo_root: String,
+    pub path: String,
+    /// The git commands, as the user reads them.
+    pub commands: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct ChangedFile {
+    pub path: String,
+    /// "added", "modified", "deleted", "renamed" or "untracked".
+    pub status: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct TaskChanges {
+    pub files: Vec<ChangedFile>,
+    pub diff: String,
+    pub truncated: bool,
+    pub ahead: u32,
+    pub uncommitted: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct MergeRequest {
+    pub message: String,
+    pub remove: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct MergePlan {
+    pub commands: Vec<String>,
+    pub blocker: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+#[ts(export)]
+pub enum MergeOutcome {
+    Merged { removed: bool },
+    Conflict { files: Vec<String> },
+    Failed { reason: String },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct RemovePlan {
+    pub commands: Vec<String>,
+    pub warnings: Vec<String>,
+    pub sessions: u32,
+}
+
+/// POST /v1/sessions/{tab}/input body.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct InputRequest {
+    pub text: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]

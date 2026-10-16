@@ -49,7 +49,7 @@ describe("StatusStrip", () => {
     expect(count(sick, /status-strip__glyph/g)).toBe(1);
   });
   it("leaves out what is unknown, and is empty, with no group role, when nothing is known", () => {
-    const bare = renderToStaticMarkup(<StatusStrip row={{ id: "x", number: 1, name: "x", project: "p", agent: "claude", status: "idle", phrase: "Idle" }} />);
+    const bare = renderToStaticMarkup(<StatusStrip row={{ id: "x", number: 1, name: "x", project: "p", projectKey: "p", agent: "claude", status: "idle", phrase: "Idle" }} />);
     expect(bare).toContain('class="status-strip"');
     expect(bare).not.toContain("role=");
     expect(bare).not.toMatch(/status-strip__item/);

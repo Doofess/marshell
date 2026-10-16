@@ -16,6 +16,7 @@ const info = (n: number, patch: Partial<SessionInfo> = {}): SessionInfo => ({
   agent: null,
   profile_id: "pwsh",
   cwd: "C:\\dev\\my-app",
+  project: "C:\\dev\\my-app",
   state: { kind: "running" },
   command: { kind: "unknown" },
   ...patch,
@@ -216,7 +217,7 @@ describe("LiveApp: rename and reorder", () => {
 
   it("while grouped, Alt+Shift+arrow moves a session only inside its project and sends the displayed order", () => {
     const infos = [info(1), info(2), info(3), info(4)];
-    const groupedRows = [{ id: "t1", project: "a" }, { id: "t2", project: "b" }, { id: "t3", project: "a" }, { id: "t4", project: "b" }] as RowModel[];
+    const groupedRows = [{ id: "t1", project: "a", projectKey: "a" }, { id: "t2", project: "b", projectKey: "b" }, { id: "t3", project: "a", projectKey: "a" }, { id: "t4", project: "b", projectKey: "b" }] as RowModel[];
     const api = { close: vi.fn(async () => {}), reopen: vi.fn(), rename: vi.fn(), reorder: vi.fn(async () => {}), resume: vi.fn() };
     let selectedId = "t3";
     const actions = new SessionActions({ api, context: () => ({ endpoint: ep, infos, selectedId, groupedRows }), select: vi.fn() });
