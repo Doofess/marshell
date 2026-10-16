@@ -4,8 +4,9 @@ import type { Endpoint } from "../../generated/Endpoint";
 import type { RenameRequest } from "../../generated/RenameRequest";
 import type { ReopenRequest } from "../../generated/ReopenRequest";
 import type { ReorderRequest } from "../../generated/ReorderRequest";
+import type { ResumeError } from "../../generated/ResumeError";
 import type { SessionsSnapshot } from "../../generated/SessionsSnapshot";
-import { api } from "./client";
+import { ApiError, api } from "./client";
 
 const tab = (tabId: string) => `/v1/sessions/${encodeURIComponent(tabId)}`;
 
@@ -26,4 +27,38 @@ export const sessions = {
       "/v1/sessions/reopen",
       tabId === undefined ? undefined : ({ tab_id: tabId } satisfies ReopenRequest),
     ),
+  /**
+   * The sidebar shell panel's own pty: started in `cwd` on the first call, the same one after that
+   * while it runs. It is not a tab. Returns the id to attach a terminal to.
+   */
+  shellPanel: async (ep: Endpoint, cwd: string, size: { cols: number; rows: number }): Promise<string> =>
+    (await api<{ tab_id: string }>(ep, "POST", "/v1/shell-panel", { cwd, ...size })).tab_id,
+  /** Turns the panel shell into a tab ("Open in a pane"). Rejects with a 404 ApiError when there is none. */
+  adoptShellPanel: async (ep: Endpoint): Promise<string> =>
+    (await api<{ tab_id: string }>(ep, "POST", "/v1/shell-panel/adopt")).tab_id,
+  /**
+   * Starts an Ended or Exited tab again in place. A 409 comes back as `{ ok: false, reason }`
+   * with the core's own words; any other failure rejects with an ApiError.
+   */
+  resume: async (
+    ep: Endpoint,
+    tabId: string,
+    size: { cols: number; rows: number },
+  ): Promise<{ ok: true } | { ok: false; reason: string }> => {
+    try {
+      await api<CreateSessionResponse>(ep, "POST", `${tab(tabId)}/resume`, size);
+      return { ok: true };
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 409) {
+        try {
+          const body = JSON.parse(e.message) as Partial<ResumeError>;
+          if (typeof body.reason === "string") return { ok: false, reason: body.reason };
+        } catch {
+          // Not our JSON body: fall through to the plain text.
+        }
+        return { ok: false, reason: e.message };
+      }
+      throw e;
+    }
+  },
 };

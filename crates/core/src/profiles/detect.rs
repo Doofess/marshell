@@ -230,6 +230,16 @@ pub fn agent_command(agent: &str) -> Option<&'static str> {
     }
 }
 
+/// The arguments that make an agent continue its last conversation in the current folder.
+/// Antigravity has none that is verified, so it resumes as a fresh start.
+pub fn resume_args(agent: &str) -> &'static [&'static str] {
+    match agent {
+        "claude" => &["--continue"],
+        "codex" => &["resume", "--last"],
+        _ => &[],
+    }
+}
+
 /// `'text'` for PowerShell, where a quote inside is doubled. PowerShell also treats the
 /// curly single quotes (U+2018 to U+201B) as quotes, so those are doubled too.
 pub(crate) fn powershell_quote(text: &str) -> String {
@@ -261,17 +271,39 @@ fn is_windows_powershell_5(profile: &Profile) -> bool {
 /// The argv that starts `agent` (with an optional first prompt) inside `profile`'s shell.
 /// With no agent it is the profile's own command.
 pub fn launch_argv(profile: &Profile, agent: Option<&str>, prompt: Option<&str>) -> Result<Vec<String>, String> {
+    build_argv(profile, agent, prompt, &[])
+}
+
+/// Like `launch_argv` with no prompt, but the agent is told to continue its last conversation.
+/// With no agent it is the profile's own command.
+pub fn launch_argv_resume(profile: &Profile, agent: Option<&str>) -> Result<Vec<String>, String> {
+    let extra = agent.map_or(&[][..], resume_args);
+    build_argv(profile, agent, None, extra)
+}
+
+/// `extra` goes right after the agent's program name, before any prompt.
+fn build_argv(
+    profile: &Profile,
+    agent: Option<&str>,
+    prompt: Option<&str>,
+    extra: &[&str],
+) -> Result<Vec<String>, String> {
     let Some(agent) = agent else {
         return Ok(profile.command.clone());
     };
     let program = agent_command(agent).ok_or_else(|| format!("Unknown agent: {agent}."))?;
+    let mut program_line = program.to_string();
+    for arg in extra {
+        program_line.push(' ');
+        program_line.push_str(arg);
+    }
     let prompt = prompt.filter(|p| !p.is_empty());
     // agy takes the first prompt after -i; Claude and Codex take it as one positional argument.
     let flag = if program == "agy" { "-i " } else { "" };
     let mut argv = profile.command.clone();
     match profile.family {
         ShellFamily::PowerShell => {
-            let mut line = format!("& {program}");
+            let mut line = format!("& {program_line}");
             if let Some(p) = prompt {
                 // Windows PowerShell 5 mangles double quotes when it calls a native command.
                 if p.contains('"') && is_windows_powershell_5(profile) {
@@ -292,10 +324,10 @@ pub fn launch_argv(profile: &Profile, agent: Option<&str>, prompt: Option<&str>)
                     "Command Prompt can't pass a prompt safely. Use PowerShell or start without a prompt.".into(),
                 );
             }
-            argv.extend(["/k".into(), program.to_string()]);
+            argv.extend(["/k".into(), program_line]);
         }
         ShellFamily::Posix | ShellFamily::Wsl => {
-            let mut line = program.to_string();
+            let mut line = program_line;
             if let Some(p) = prompt {
                 line.push_str(&format!(" {flag}{}", posix_quote(p)));
             }
@@ -571,6 +603,33 @@ mod tests {
     fn no_agent_returns_profile_command() {
         let ps = profile("pwsh", &["pwsh.exe", "-NoLogo"], ShellFamily::PowerShell);
         assert_eq!(launch_argv(&ps, None, Some("ignored")).unwrap(), ps.command);
+    }
+
+    #[test]
+    fn resume_args_per_agent() {
+        assert_eq!(resume_args("claude"), ["--continue"]);
+        assert_eq!(resume_args("codex"), ["resume", "--last"]);
+        assert!(resume_args("antigravity").is_empty());
+        assert!(resume_args("aider").is_empty());
+    }
+
+    #[test]
+    fn resume_argv_adds_the_continue_flag_and_no_prompt() {
+        let ps = profile("pwsh", &["pwsh.exe"], ShellFamily::PowerShell);
+        let argv = launch_argv_resume(&ps, Some("claude")).unwrap();
+        assert_eq!(argv.last().unwrap(), "& claude --continue");
+        let sh = profile("bash", &["bash"], ShellFamily::Posix);
+        let argv = launch_argv_resume(&sh, Some("codex")).unwrap();
+        assert!(argv.last().unwrap().starts_with("codex resume --last; exec"));
+        let cmd = profile("cmd", &["cmd.exe"], ShellFamily::Cmd);
+        assert_eq!(
+            launch_argv_resume(&cmd, Some("claude")).unwrap(),
+            ["cmd.exe", "/k", "claude --continue"]
+        );
+        // Antigravity starts fresh; a plain shell is just its own command.
+        let argv = launch_argv_resume(&ps, Some("antigravity")).unwrap();
+        assert_eq!(argv.last().unwrap(), "& agy");
+        assert_eq!(launch_argv_resume(&ps, None).unwrap(), ps.command);
     }
 
     #[test]

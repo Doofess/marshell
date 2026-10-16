@@ -1,3 +1,4 @@
+import { useEffect, useRef, type KeyboardEvent } from "react";
 import { commandById, shortcutLabel, type Os } from "../../lib/keymap";
 import { ARRANGEMENTS, planFor, type Arrangement, type PaneCount } from "./splitLayout";
 import "./LayoutMenu.css";
@@ -41,15 +42,66 @@ export type LayoutMenuProps = {
   requested?: number;
   /** The most the window can usefully hold; counts above it are off. */
   max?: PaneCount;
+  /** The user picked a count. Left out (stories), the radios do nothing. */
+  onCount?: (n: PaneCount) => void;
+  /** The user picked an arrangement, or `null` for automatic. */
+  onArrange?: (a: Arrangement | null) => void;
+  /** Move the focus into the menu (to the checked count) when it appears. */
+  focusOnOpen?: boolean;
 };
 
 const COUNTS: PaneCount[] = [1, 2, 3, 4];
 
+/**
+ * Where an arrow key, Home or End takes the focus inside a radiogroup: the index of the next enabled radio (wrapping),
+ * or null for any other key. Disabled radios are skipped.
+ */
+export function radioTarget(key: string, from: number, enabled: readonly boolean[]): number | null {
+  const n = enabled.length;
+  const orNull = (i: number) => (i >= 0 ? i : null);
+  if (key === "Home") return orNull(enabled.indexOf(true));
+  if (key === "End") return orNull(enabled.lastIndexOf(true));
+  const step = key === "ArrowRight" || key === "ArrowDown" ? 1 : key === "ArrowLeft" || key === "ArrowUp" ? -1 : 0;
+  if (step === 0) return null;
+  for (let i = 1; i <= n; i++) {
+    const to = (((from + step * i) % n) + n) % n;
+    if (enabled[to]) return to;
+  }
+  return null;
+}
+
+/**
+ * What an arrow key, Home or End does in a radiogroup: where the focus goes, and whether that radio is chosen too. Only the
+ * arrangements choose as the focus moves; in the counts a choice drops panes, so it waits for Space or Enter.
+ */
+export function radioMove(key: string, from: number, enabled: readonly boolean[], chooses: boolean): { focus: number; choose: boolean } | null {
+  const focus = radioTarget(key, from, enabled);
+  return focus === null ? null : { focus, choose: chooses && focus !== from };
+}
+
+/** Arrow keys inside a radiogroup move the focus to the next radio; `choose` (when given) also chooses it, like a native one. */
+function radioKeys(e: KeyboardEvent<HTMLElement>, enabled: readonly boolean[], choose?: (index: number) => void) {
+  if (e.ctrlKey || e.altKey || e.metaKey) return;
+  const radios = Array.from(e.currentTarget.parentElement?.querySelectorAll<HTMLElement>('[role="radio"]') ?? []);
+  const from = radios.indexOf(e.currentTarget);
+  const move = from < 0 ? null : radioMove(e.key, from, enabled, choose !== undefined);
+  if (move === null) return;
+  e.preventDefault();
+  if (move.choose) choose?.(move.focus);
+  radios[move.focus]?.focus();
+}
+
 /** The popover behind the bar's layout button: how many terminals are on screen, how they are arranged, and the keys. */
-export function LayoutMenu({ count, arrangement, auto, os = "windows", requested = count, max = 4 }: LayoutMenuProps) {
+export function LayoutMenu({ count, arrangement, auto, os = "windows", requested = count, max = 4, onCount, onArrange, focusOnOpen = false }: LayoutMenuProps) {
   const key = (id: string) => shortcutLabel(commandById(id).binding!, os);
+  const root = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (focusOnOpen) root.current?.querySelector<HTMLElement>('[role="radio"][aria-checked="true"]')?.focus();
+  }, [focusOnOpen]);
+  const countsOn = COUNTS.map((n) => n <= max);
+  const options = ARRANGEMENTS[count];
   return (
-    <div className="layout-menu" role="dialog" aria-label="Split layout">
+    <div ref={root} className="layout-menu" role="dialog" aria-label="Split layout">
       <div className="layout-menu__section">
         <span className="layout-menu__label">Terminals on screen</span>
         <div className="layout-menu__counts" role="radiogroup" aria-label="Terminals on screen">
@@ -61,8 +113,11 @@ export function LayoutMenu({ count, arrangement, auto, os = "windows", requested
               className="layout-menu__count"
               aria-checked={n === requested}
               aria-disabled={n > max ? true : undefined}
+              tabIndex={n === requested ? 0 : -1}
               aria-label={`${n} ${n === 1 ? "pane" : "panes"}`}
               title={n > max ? `This window is too small for ${n} useful terminals` : undefined}
+              onClick={() => n <= max && n !== requested && onCount?.(n)}
+              onKeyDown={(e) => radioKeys(e, countsOn)}
             >
               {n}
             </button>
@@ -81,14 +136,30 @@ export function LayoutMenu({ count, arrangement, auto, os = "windows", requested
         <div className="layout-menu__section">
           <span className="layout-menu__label">Arrangement</span>
           <div className="layout-menu__options" role="radiogroup" aria-label="Arrangement">
-            {ARRANGEMENTS[count].map((a) => (
-              <button key={a} type="button" role="radio" className="layout-menu__option" aria-checked={a === arrangement} aria-label={ARRANGEMENT_LABEL[a]}>
+            {options.map((a) => (
+              <button
+                key={a}
+                type="button"
+                role="radio"
+                className="layout-menu__option"
+                aria-checked={a === arrangement}
+                tabIndex={a === arrangement ? 0 : -1}
+                aria-label={ARRANGEMENT_LABEL[a]}
+                onClick={() => onArrange?.(a)}
+                onKeyDown={(e) =>
+                  radioKeys(
+                    e,
+                    options.map(() => true),
+                    (i) => onArrange?.(options[i]!),
+                  )
+                }
+              >
                 <LayoutIcon count={count} arrangement={a} />
                 <span>{ARRANGEMENT_LABEL[a]}</span>
               </button>
             ))}
           </div>
-          <button type="button" role="checkbox" className="layout-menu__auto" aria-checked={auto}>
+          <button type="button" role="checkbox" className="layout-menu__auto" aria-checked={auto} onClick={() => !auto && onArrange?.(null)}>
             <span className="layout-menu__box" aria-hidden="true" />
             <span>
               <span className="layout-menu__auto-title">Automatic</span>

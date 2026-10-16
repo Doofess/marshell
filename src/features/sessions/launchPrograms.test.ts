@@ -4,7 +4,8 @@ import type { ProfilesDoc } from "../../generated/ProfilesDoc";
 import type { Project } from "../launcher/filter";
 import { startingText, type LauncherChoice, type ProgramId } from "../launcher/launchChoice";
 import { ApiError } from "../../lib/api/client";
-import { initialFocus, launchRequest, refocus, livePrograms, startFailure, toLauncherProject } from "./launchPrograms";
+import type { LayoutDoc } from "../../generated/LayoutDoc";
+import { initialFocus, launchRequest, preselect, refocus, livePrograms, startFailure, toLauncherProject } from "./launchPrograms";
 
 const profile = (id: string, family: Profile["family"], name = id): Profile => ({ id, name, command: [id], family, cwd: null, env: [], shell_integration: true, detected: true });
 const PROFILES: Profile[] = [profile("pwsh", "power_shell", "PowerShell 7"), profile("cmd", "cmd", "Command Prompt"), profile("git-bash", "posix", "Git Bash"), profile("wsl-ubuntu", "wsl", "Ubuntu")];
@@ -111,5 +112,24 @@ describe("toLauncherProject", () => {
   it("uses the path as the id and drops a missing branch", () => {
     expect(toLauncherProject({ path: "C:/a", name: "a", branch: null, last_used_ms: 5 })).toEqual({ id: "C:/a", name: "a", path: "C:/a", lastUsedMs: 5 });
     expect(toLauncherProject({ path: "C:/b", name: "b", branch: "main", last_used_ms: 6 }).branch).toBe("main");
+  });
+});
+
+describe("preselect", () => {
+  const programs = livePrograms(PROFILES);
+  const docWith = (launcher: LayoutDoc["launcher"]): LayoutDoc => ({ tabs: [], view: {} as LayoutDoc["view"], launcher });
+  it("remembered choice preselects only when its profile exists", () => {
+    const doc = docWith({
+      "C:/shell": { profile_id: "cmd", agent: null, seq: 1 },
+      "C:/gone": { profile_id: "removed", agent: null, seq: 2 },
+      "C:/agent": { profile_id: "pwsh", agent: "codex", seq: 3 },
+      "C:/old-agent": { profile_id: "pwsh", agent: "aider", seq: 4 },
+    });
+    expect(preselect(doc, "C:/shell", programs)).toBe("profile:cmd");
+    expect(preselect(doc, "C:/agent", programs)).toBe("codex");
+    expect(preselect(doc, "C:/gone", programs)).toBeUndefined();
+    expect(preselect(doc, "C:/old-agent", programs)).toBeUndefined();
+    expect(preselect(doc, "C:/never-used", programs)).toBeUndefined();
+    expect(preselect(null, "C:/shell", programs)).toBeUndefined();
   });
 });

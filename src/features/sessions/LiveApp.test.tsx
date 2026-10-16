@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Endpoint } from "../../generated/Endpoint";
 import type { SessionInfo } from "../../generated/SessionInfo";
 import { ApiError } from "../../lib/api/client";
+import type { RowModel } from "../sidebar/types";
 import { CloseBar } from "./CloseBar";
 import { SessionActions, closeBarText, needsCloseConfirm, tabIdOfNumber, TOAST_MS } from "./sessionActions";
 import { Toast } from "./Toast";
@@ -27,6 +28,7 @@ function setup(infos: SessionInfo[], selectedId: string | undefined = infos[0]?.
     reopen: vi.fn(async () => ({ tab_id: "new", number: 1 })),
     rename: vi.fn(async () => {}),
     reorder: vi.fn(async () => {}),
+    resume: vi.fn(async (): Promise<{ ok: true } | { ok: false; reason: string }> => ({ ok: true })),
   };
   const select = vi.fn();
   const actions = new SessionActions({ api, context: () => ({ endpoint: ep, infos, selectedId }), select });
@@ -212,6 +214,22 @@ describe("LiveApp: rename and reorder", () => {
     expect(api.reorder).toHaveBeenCalledWith(ep, ["t2", "t1", "t3"]);
   });
 
+  it("while grouped, Alt+Shift+arrow moves a session only inside its project and sends the displayed order", () => {
+    const infos = [info(1), info(2), info(3), info(4)];
+    const groupedRows = [{ id: "t1", project: "a" }, { id: "t2", project: "b" }, { id: "t3", project: "a" }, { id: "t4", project: "b" }] as RowModel[];
+    const api = { close: vi.fn(async () => {}), reopen: vi.fn(), rename: vi.fn(), reorder: vi.fn(async () => {}), resume: vi.fn() };
+    let selectedId = "t3";
+    const actions = new SessionActions({ api, context: () => ({ endpoint: ep, infos, selectedId, groupedRows }), select: vi.fn() });
+    actions.handle({ kind: "move", by: -1 });
+    expect(api.reorder).toHaveBeenCalledWith(ep, ["t3", "t1", "t2", "t4"]);
+    // The group edge: t3 is last of a (displayed t1, t3, t2, t4), so down goes nowhere, and t2 cannot move up into a.
+    api.reorder.mockClear();
+    actions.handle({ kind: "move", by: 1 });
+    selectedId = "t2";
+    actions.handle({ kind: "move", by: -1 });
+    expect(api.reorder).not.toHaveBeenCalled();
+  });
+
   it("does not send a move past the end of the list", () => {
     const { api, actions } = setup([info(1), info(2)], "t1");
     actions.handle({ kind: "move", by: -1 });
@@ -285,10 +303,83 @@ describe("LiveApp: fix round 1", () => {
 
   it("F2 does nothing when the sidebar is not expanded, so no rename box is left pending", () => {
     const infos = [info(1)];
-    const api = { close: vi.fn(async () => {}), reopen: vi.fn(), rename: vi.fn(), reorder: vi.fn() };
+    const api = { close: vi.fn(async () => {}), reopen: vi.fn(), rename: vi.fn(), reorder: vi.fn(), resume: vi.fn() };
     const actions = new SessionActions({ api, context: () => ({ endpoint: ep, infos, selectedId: "t1", sidebarExpanded: false }), select: vi.fn() });
     actions.startRename();
     expect(actions.getState().renaming).toBeNull();
+  });
+});
+
+describe("LiveApp: resume", () => {
+  const ended = (n: number, patch: Partial<SessionInfo> = {}) => claude(n, { state: { kind: "ended" }, ...patch });
+  const deferred = <T,>() => {
+    let resolve!: (value: T) => void;
+    const promise = new Promise<T>((res) => (resolve = res));
+    return { promise, resolve };
+  };
+
+  it("sends the last measured size and says Resumed", async () => {
+    const infos = [ended(1)];
+    const api = { close: vi.fn(), reopen: vi.fn(), rename: vi.fn(), reorder: vi.fn(), resume: vi.fn(async (): Promise<{ ok: true }> => ({ ok: true })) };
+    const actions = new SessionActions({ api, context: () => ({ endpoint: ep, infos, selectedId: "t1" }), select: vi.fn(), size: () => ({ cols: 90, rows: 24 }) });
+    await actions.resume("t1");
+    expect(api.resume).toHaveBeenCalledWith(ep, "t1", { cols: 90, rows: 24 });
+    expect(actions.getState().toast).toMatchObject({ text: "Resumed" });
+    expect(actions.getState().toast?.reopenId).toBeUndefined();
+  });
+
+  it("a refused resume announces the reason", async () => {
+    const { api, actions } = setup([ended(1)]);
+    api.resume.mockResolvedValueOnce({ ok: false, reason: "Claude Code isn't installed or isn't on PATH." });
+    await actions.resume("t1");
+    // The window's announcer says the toast's text; the reason is the core's own words.
+    expect(actions.getState().toast).toMatchObject({ text: "Claude Code isn't installed or isn't on PATH." });
+    expect(actions.getState().resuming).toEqual([]);
+    expect(actions.getState().resumed).toEqual({});
+  });
+
+  it("a failed request says so, and the tab can be resumed again", async () => {
+    const { api, actions } = setup([ended(1)]);
+    api.resume.mockRejectedValueOnce(new ApiError(500, "boom"));
+    await actions.resume("t1");
+    expect(actions.getState().toast?.text).toMatch(/^Couldn't resume the session/);
+    await actions.resume("t1");
+    expect(api.resume).toHaveBeenCalledTimes(2);
+  });
+
+  it("is sent once for a tab already being resumed, and a second press shows no error", async () => {
+    const { api, actions } = setup([ended(1)]);
+    const slow = deferred<{ ok: true }>();
+    api.resume.mockReturnValueOnce(slow.promise);
+    const first = actions.resume("t1");
+    await actions.resume("t1");
+    expect(api.resume).toHaveBeenCalledTimes(1);
+    expect(actions.getState().toast).toBeNull();
+    slow.resolve({ ok: true });
+    await first;
+    expect(actions.getState().toast).toMatchObject({ text: "Resumed" });
+  });
+
+  it("lets the terminal attach only once the response is back: the core announces Running before the session exists", async () => {
+    const { api, actions } = setup([ended(1)]);
+    const slow = deferred<{ ok: true }>();
+    api.resume.mockReturnValueOnce(slow.promise);
+    const pending = actions.resume("t1");
+    // While the request is out, the tab is held back and its terminal key has not moved.
+    expect(actions.getState().resuming).toEqual(["t1"]);
+    expect(actions.getState().resumed.t1 ?? 0).toBe(0);
+    slow.resolve({ ok: true });
+    await pending;
+    // One state change both frees the tab and moves its key, so the terminal never mounts in between.
+    expect(actions.getState().resuming).toEqual([]);
+    expect(actions.getState().resumed.t1).toBe(1);
+  });
+
+  it("does nothing for a session that is running or gone", async () => {
+    const { api, actions } = setup([claude(1)]);
+    await actions.resume("t1");
+    await actions.resume("nope");
+    expect(api.resume).not.toHaveBeenCalled();
   });
 });
 

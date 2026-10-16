@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { MainWindow } from "./MainWindow";
 import { COMPOSER, STATUS_BAR_HEIGHT } from "./layout";
 import { SCENARIO_REQUESTS, SCENARIO_ROWS } from "./scenario";
+import { windowTitle } from "./windowTitle";
 
 const BIG = { width: 1700, height: 900 } as const;
 const html = (p: Partial<Parameters<typeof MainWindow>[0]> = {}) => renderToStaticMarkup(<MainWindow width={1180} height={800} selectedId="working" {...p} />);
@@ -367,6 +368,35 @@ describe("MainWindow: the shell panel in the sidebar", () => {
     expect(sh).toContain('data-collapsed="true"');
     expect(sh).toContain('data-auto="true"');
   });
+  it("a hidden shell panel stays folded even when there is room", () => {
+    const sh = shellOf(html({ ...tall, shell: { hidden: true } }));
+    expect(sh).toContain('data-collapsed="true"');
+    // The user's choice, not the list running out of room.
+    expect(sh).not.toContain("data-auto");
+    expect(shellOf(html({ ...tall, shell: { hidden: false } }))).not.toContain("data-collapsed");
+  });
+  it("opens an auto-folded panel when the user asked for it", () => {
+    const many = Array.from({ length: 12 }, (_, i) => ({ ...SCENARIO_REQUESTS[0]!, id: `r${i}`, waitingMs: 1000 + i }));
+    const short = { width: 1180, height: 520, requests: many } as const;
+    expect(shellOf(html(short))).toContain('data-auto="true"');
+    const sh = shellOf(html({ ...short, shell: { forceOpen: true } }));
+    expect(sh).not.toContain("data-collapsed");
+    expect(shellOf(html({ ...short, shell: { forceOpen: true, hidden: true } }))).toContain('data-collapsed="true"');
+  });
+  it("shows the live terminal it is given, in the folder it is given", () => {
+    const sh = shellOf(html({ ...tall, shell: { terminal: <div data-testid="live" />, cwd: "elsewhere" } }));
+    expect(sh).toContain('data-testid="live"');
+    expect(sh).not.toContain("scripted-terminal");
+    expect(sh).toContain(">elsewhere<");
+  });
+  it("no shell panel in the rail or focus mode", () => {
+    const live = { terminal: <div data-testid="live" /> };
+    for (const p of [{ layout: "rail" as const }, { layout: "focus" as const, sidebarPref: "focus" as const }, { sidebarPref: "rail" as const }, { width: 940 }]) {
+      const h = html({ ...tall, ...p, shell: live });
+      expect(h).not.toContain('aria-label="Shell"');
+      expect(h).not.toContain('data-testid="live"');
+    }
+  });
   it("has its own button for opening it in a pane, named for the shell", () => {
     expect(html(tall)).toContain('aria-label="Open PowerShell in a pane"');
   });
@@ -484,5 +514,99 @@ describe("MainWindow: one live region, and the window's title follows the focuse
   });
   it("is a polite status region that is hidden visually", () => {
     expect(html()).toMatch(/<div class="window__announcer" role="status" aria-live="polite" aria-atomic="true" data-session-announcer/);
+  });
+});
+
+describe("MainWindow: panes from the view state", () => {
+  const ids = SCENARIO_ROWS.map((r) => r.id);
+  const panes = (h: string) => (h.match(/<section class="pane"/g) ?? []).length;
+  it("paneIds beyond the fit are hidden, not dropped", () => {
+    const h = html({ layout: "split", paneIds: ids.slice(0, 4), layoutMenu: true, width: 760, height: 520 });
+    expect(panes(h)).toBeLessThan(4);
+    expect(h).toContain("Showing");
+    const focused = h.split("</header>").find((part) => part.includes('data-active="true"'))!;
+    expect(focused).toContain("more running");
+  });
+  it("shows the panes in paneIds order, not selected-first", () => {
+    const [a, b] = [SCENARIO_ROWS[0]!, SCENARIO_ROWS[1]!];
+    const h = html({ layout: "split", paneIds: [b.id, a.id], selectedId: a.id, ...BIG });
+    const labels = [...h.matchAll(/<section class="pane"[^>]*aria-label="([^"]+)"/g)].map((m) => m[1]);
+    expect(labels[0]).toContain(`terminal: ${b.name}`);
+    expect(labels[1]).toContain(`terminal: ${a.name}`);
+  });
+  it("paneIds null renders the empty pane with the other sessions", () => {
+    const h = html({ layout: "split", paneIds: [ids[0]!, null], ...BIG });
+    expect(panes(h)).toBe(1);
+    expect(h).toContain("pane--empty");
+    const choices = h.slice(h.indexOf("pane--empty"));
+    expect(choices).toContain("pane__choices");
+    for (const r of SCENARIO_ROWS.slice(1, 3)) expect(choices).toContain(r.name);
+  });
+  it("a pane id that is no longer a session is an empty pane, not a crash", () => {
+    const h = html({ layout: "split", paneIds: [ids[0]!, "gone"], ...BIG });
+    expect(h).toContain("pane--empty");
+  });
+  it("window title follows the focused pane", () => {
+    const [a, b] = [SCENARIO_ROWS[0]!, SCENARIO_ROWS[1]!];
+    const title = (activePane: number) => html({ layout: "split", paneIds: [a.id, b.id], activePane, ...BIG }).match(/class="window"[^>]*data-title="([^"]*)"/)?.[1];
+    expect(title(0)).toBe(windowTitle(a));
+    expect(title(1)).toBe(windowTitle(b));
+  });
+  it("drives the arrangement, ratios and zoom from its props", () => {
+    const h = html({ layout: "split", paneIds: ids.slice(0, 2), arrangement: "rows", ratios: { row: 0.3 }, ...BIG });
+    expect(h).toContain('data-arrangement="rows"');
+    expect(h).toContain("0.3fr");
+    const z = html({ layout: "split", paneIds: ids.slice(0, 3), zoomedPane: 1, ...BIG });
+    expect(panes(z)).toBe(1);
+    expect(z).toContain('data-arrangement="single"');
+  });
+  it("makes the main area a focus target for the no-terminal shortcut", () => {
+    expect(html({ layout: "split", paneIds: ids.slice(0, 2), ...BIG })).toMatch(/<main class="window__main"[^>]*tabindex="-1"/);
+  });
+});
+
+describe("MainWindow: focus mode and the sidebar width", () => {
+  it("focus mode renders no sidebar, no rail and no prompt line", () => {
+    const h = html({ width: 1280, height: 800, sidebarPref: "focus" });
+    expect(h).toContain('data-mode="focus"');
+    expect(h).not.toContain('class="sidebar"');
+    expect(h).not.toContain('class="rail"');
+    expect(h).not.toContain("window__composer");
+    expect(h).not.toContain('role="separator"');
+    expect(h).toContain("--side-w:0px");
+  });
+  it("keeps the pane headers in focus mode", () => {
+    const h = html({ width: 1280, height: 800, sidebarPref: "focus", layout: "split" });
+    expect(h).toContain("pane__header");
+  });
+  it("offers an 8 px strip at the top edge to peek at the header, in focus mode only", () => {
+    expect(html({ sidebarPref: "focus" })).toContain("window__peek");
+    expect(html({ sidebarPref: "expanded" })).not.toContain("window__peek");
+    expect(html({ sidebarPref: "focus", headerPeek: true })).not.toContain("window__peek");
+  });
+  it("the sidebar handle reports its width", () => {
+    const h = html({ width: 1280, sidebarWidth: 320 });
+    expect(h).toContain("--side-w:320px");
+    expect(h).toMatch(/<div class="window__side-handle"[^>]*role="separator"[^>]*aria-orientation="vertical"[^>]*aria-valuenow="320"/);
+    expect(h).toContain('aria-valuemin="200"');
+    expect(h).toContain('aria-valuemax="400"');
+    expect(h).toContain('aria-label="Resize the sidebar"');
+  });
+  it("holds a stored width to 200 to 400", () => {
+    expect(html({ width: 1280, sidebarWidth: 120 })).toContain("--side-w:200px");
+    expect(html({ width: 1280, sidebarWidth: 900 })).toContain("--side-w:400px");
+  });
+  it("below 960 the stored width does not apply: the rail is 52", () => {
+    const h = html({ width: 900, sidebarWidth: 360 });
+    expect(h).toContain("--side-w:52px");
+    expect(h).toContain('class="rail"');
+    expect(h).not.toContain("window__side-handle");
+  });
+  it("has no handle on the rail", () => {
+    expect(html({ width: 1280, sidebarPref: "rail" })).not.toContain("window__side-handle");
+  });
+  it("makes the handle a tab stop only when it can be used", () => {
+    expect(html({ sidebarWidth: 320 })).not.toMatch(/window__side-handle[^>]*tabindex/);
+    expect(html({ sidebarWidth: 320, onSidebarWidth: () => {} })).toMatch(/window__side-handle[^>]*tabindex="0"/);
   });
 });

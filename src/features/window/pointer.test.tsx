@@ -5,7 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 // Their hooks do nothing here, which is enough because nothing below the top call is rendered.
 vi.mock("react", async (importOriginal) => {
   const actual = await importOriginal<typeof import("react")>();
-  return { ...actual, useEffect: () => {}, useState: (init: unknown) => [typeof init === "function" ? init() : init, () => {}] };
+  return { ...actual, useEffect: () => {}, useRef: (init: unknown) => ({ current: init }), useState: (init: unknown) => [typeof init === "function" ? init() : init, () => {}] };
 });
 
 const { FIXTURES } = await import("../sidebar/fixtures");

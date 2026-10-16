@@ -26,6 +26,24 @@ describe("moveBy", () => {
     expect(moveBy(["a", "b", "c"], "c", 1)).toBeNull();
     expect(moveBy(["a", "b", "c"], "x", 1)).toBeNull();
   });
+  it("moveBy stops at the group edge", () => {
+    const ids = ["a", "b", "c", "d"];
+    expect(moveBy(ids, "c", -1, { start: 2, end: 4 })).toBeNull();
+    expect(moveBy(ids, "d", 1, { start: 2, end: 4 })).toBeNull();
+    expect(moveBy(ids, "c", 1, { start: 2, end: 4 })).toEqual(["a", "b", "d", "c"]);
+    expect(moveBy(ids, "a", 1, { start: 2, end: 4 })).toBeNull();
+  });
+});
+
+describe("dropOrder with bounds", () => {
+  const ids = ["a", "b", "c", "d"];
+  it("drops inside the bounds as usual", () => {
+    expect(dropOrder(ids, "c", "d", "after", { start: 2, end: 4 })).toEqual(["a", "b", "d", "c"]);
+  });
+  it("refuses a drop on or from a row outside the bounds", () => {
+    expect(dropOrder(ids, "c", "b", "after", { start: 2, end: 4 })).toBeNull();
+    expect(dropOrder(ids, "a", "d", "after", { start: 2, end: 4 })).toBeNull();
+  });
 });
 
 describe("dropOrder", () => {

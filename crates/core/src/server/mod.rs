@@ -1,19 +1,21 @@
 mod events;
 pub mod frames;
 mod guard;
+mod layout;
 mod profiles;
 mod projects;
 mod pty_ws;
 mod sessions;
 mod settings;
+mod shell_panel;
 
 use crate::profiles::detect::{Probe, detect_profiles};
-use crate::registry::Registry;
+use crate::registry::{Registry, Relaunch};
 use crate::{auth, paths};
 use axum::http::{HeaderValue, Method, header};
-use axum::routing::{get, patch, post};
+use axum::routing::{get, patch, post, put};
 use axum::{Json, Router};
-use marshell_protocol::api::{Endpoint, Health, Platform, Profile, ProfilesDoc, Settings};
+use marshell_protocol::api::{Endpoint, Health, LayoutDoc, Platform, Profile, ProfilesDoc, Settings};
 use marshell_protocol::brand;
 use std::collections::HashMap;
 use std::net::Ipv4Addr;
@@ -48,10 +50,14 @@ struct Inner {
     profiles: Mutex<ProfilesDoc>,
     /// The contents of `settings.json`, or the defaults.
     settings: Mutex<Settings>,
+    /// The contents of `layout.json`, or the defaults.
+    layout: Mutex<LayoutDoc>,
     /// Open and recently closed sessions. Shared with each session's exit callback.
     registry: Arc<Registry>,
     // Kept here so every handler reaches it through one State.
     sessions: Mutex<HashMap<String, Arc<crate::pty::Session>>>,
+    /// The sidebar's shell, while there is one. It is in `sessions` but has no registry row.
+    shell_panel: Mutex<Option<shell_panel::PanelShell>>,
     /// Whether an agent's command (`claude`, `codex`, `agy`) runs from PATH. Tests swap it.
     agent_on_path: fn(&str) -> bool,
 }
@@ -60,6 +66,16 @@ impl AppState {
     pub fn new(token: String, port: u16, allowed_origins: Vec<String>, home: PathBuf, detected: Vec<Profile>) -> Self {
         let profiles = crate::profiles::store::load(&home, detected.clone());
         let settings = crate::settings::load(&home);
+        let layout = crate::layout::load(&home);
+        // The tabs of the last run come back as Ended rows. Nothing is started, and this runs before
+        // the saver subscribes, so seeding never writes the file.
+        let registry = Registry::new();
+        registry.seed_ended(&layout.tabs, |tab| Relaunch {
+            profile_id: tab.profile_id.clone(),
+            agent: tab.agent.clone(),
+            cwd: tab.cwd.clone(),
+            name: tab.name.clone(),
+        });
         let shell_dir = match crate::shell::install(&home) {
             Ok(dir) => Some(dir),
             Err(err) => {
@@ -76,8 +92,10 @@ impl AppState {
             detected,
             profiles: Mutex::new(profiles),
             settings: Mutex::new(settings),
-            registry: Arc::new(Registry::new()),
+            layout: Mutex::new(layout),
+            registry: Arc::new(registry),
             sessions: Mutex::new(HashMap::new()),
+            shell_panel: Mutex::new(None),
             agent_on_path: crate::profiles::detect::command_on_path,
         }))
     }
@@ -97,6 +115,10 @@ impl AppState {
     pub fn session(&self, tab: &str) -> Option<Arc<crate::pty::Session>> {
         self.0.sessions.lock().unwrap().get(tab).cloned()
     }
+    /// How many sessions have a running process. Ended tabs have none.
+    pub fn live_session_count(&self) -> usize {
+        self.0.sessions.lock().unwrap().len()
+    }
     pub fn insert_session(&self, session: Arc<crate::pty::Session>) {
         self.0
             .sessions
@@ -114,6 +136,8 @@ impl AppState {
 }
 
 pub fn router(state: AppState) -> Router {
+    // Here and not in `AppState::new`, which `with_agent_check` needs to be the only owner of.
+    layout::spawn_layout_saver(&state);
     let origins: Vec<HeaderValue> = state.0.allowed_origins.iter().filter_map(|o| o.parse().ok()).collect();
     let cors = CorsLayer::new()
         .allow_origin(AllowOrigin::list(origins))
@@ -125,12 +149,17 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/profiles/detected", get(profiles::detected))
         .route("/v1/profiles/integration", post(profiles::integration))
         .route("/v1/settings", get(settings::get).put(settings::put))
+        .route("/v1/layout", get(layout::get))
+        .route("/v1/layout/view", put(layout::put_view))
         .route("/v1/import/windows-terminal", get(settings::windows_terminal))
         .route("/v1/projects", get(projects::get))
         .route("/v1/sessions", get(sessions::list).post(sessions::create))
         .route("/v1/sessions/reorder", post(sessions::reorder))
         .route("/v1/sessions/reopen", post(sessions::reopen))
+        .route("/v1/sessions/{tab}/resume", post(sessions::resume))
         .route("/v1/sessions/{tab}", patch(sessions::rename).delete(sessions::close))
+        .route("/v1/shell-panel", post(shell_panel::open))
+        .route("/v1/shell-panel/adopt", post(shell_panel::adopt))
         .route("/v1/events", get(events::handler))
         .route("/v1/pty/{tab}", get(pty_ws::handler))
         .layer(axum::middleware::from_fn_with_state(state.clone(), guard::auth_guard))

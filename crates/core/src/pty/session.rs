@@ -155,6 +155,17 @@ impl Session {
         &self.id
     }
 
+    /// True once the child process has exited.
+    pub fn has_exited(&self) -> bool {
+        self.exited.load(Ordering::SeqCst)
+    }
+
+    /// The exit code once the child has exited. It is set before the exit callback runs,
+    /// so `None` means the callback has not run yet.
+    pub fn exit_code(&self) -> Option<i32> {
+        self.output.lock().unwrap().exit.map(|(code, _)| code)
+    }
+
     fn read_loop(&self, mut reader: Box<dyn Read + Send>) {
         let mut chunk = vec![0u8; 16 * 1024];
         loop {

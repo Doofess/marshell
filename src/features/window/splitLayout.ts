@@ -157,6 +157,21 @@ export function maxPanes(size: Size, composer: number = CELL.composer): PaneCoun
   return n;
 }
 
+/**
+ * Where a divider drag may stop. `wanted` is the pointer's position as a share of the axis; the answer is that share within
+ * RATIO.min..RATIO.max and, where an even split keeps every pane usable, pulled back toward the middle until every pane
+ * still has MIN_USABLE columns and rows. When even an even split is too small, only the range limits it.
+ */
+export function dragRatio(plan: Plan, size: Size, ratios: Ratios, composer: number | readonly number[], axis: "col" | "row", wanted: number): number {
+  const usable = (r: number) => paneCells(plan, size, { ...ratios, [axis]: r }, composer).every((p) => p.cols >= MIN_USABLE.cols && p.rows >= MIN_USABLE.rows);
+  const start = clampRatio(wanted);
+  if (usable(start) || !usable(RATIO.default)) return start;
+  const step = start < RATIO.default ? 0.005 : -0.005;
+  let r = start;
+  for (let i = 0; i < 200 && !usable(r); i++) r = round(r + step);
+  return r;
+}
+
 export function chooseArrangement(count: PaneCount, size: Size, ratios: Ratios = {}, composer: number = CELL.composer): Arrangement {
   const all = ARRANGEMENTS[count].map((a) => {
     const plan = planFor(count, a);

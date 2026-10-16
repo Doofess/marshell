@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use ts_rs::TS;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -103,6 +104,8 @@ pub enum SessionState {
         /// The process exit code.
         code: i32,
     },
+    /// A tab restored from layout.json whose process is not running: it ended in an earlier run of the app.
+    Ended,
 }
 
 /// One session as the core lists it. The core owns number, name and order.
@@ -143,6 +146,85 @@ pub struct SessionsSnapshot {
     pub sessions: Vec<SessionInfo>,
     /// Recently closed sessions, newest first.
     pub closed: Vec<SessionInfo>,
+}
+
+/// One tab as layout.json remembers it. Enough to list it as Ended and to start it again with Resume.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct SavedTab {
+    pub tab_id: String,
+    pub number: u32,
+    pub name: String,
+    /// "claude", "codex" or "antigravity". None means a plain shell.
+    pub agent: Option<String>,
+    pub profile_id: String,
+    pub cwd: String,
+}
+
+/// How the window was laid out: which tabs sit in which panes, and the sidebar.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct ViewLayout {
+    /// One entry per pane (1 to 4): the tab shown there, or None for an empty pane.
+    pub panes: Vec<Option<String>>,
+    /// An Arrangement name, or None for automatic.
+    pub arrangement: Option<String>,
+    /// Pane size ratios. Empty means even.
+    pub ratios: Vec<f32>,
+    /// Index of the focused pane.
+    pub active: u32,
+    /// Index of the zoomed pane, if one is zoomed.
+    pub zoomed: Option<u32>,
+    /// "expanded", "rail" or "focus".
+    pub sidebar: String,
+    pub sidebar_width: u32,
+    pub shell_hidden: bool,
+    pub grouped: bool,
+}
+
+impl Default for ViewLayout {
+    fn default() -> Self {
+        Self {
+            panes: vec![None],
+            arrangement: None,
+            ratios: Vec::new(),
+            active: 0,
+            zoomed: None,
+            sidebar: "expanded".into(),
+            sidebar_width: 288,
+            shell_hidden: false,
+            grouped: false,
+        }
+    }
+}
+
+/// The last profile and agent picked for a folder in the launcher.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct LauncherChoice {
+    pub profile_id: String,
+    pub agent: Option<String>,
+    /// A counter that says which folder was used last: the newest choice has the highest number.
+    /// A layout.json from before this field existed reads as 0.
+    #[serde(default)]
+    pub seq: u32,
+}
+
+/// The whole of layout.json.
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct LayoutDoc {
+    pub tabs: Vec<SavedTab>,
+    pub view: ViewLayout,
+    /// Keyed by folder path.
+    pub launcher: BTreeMap<String, LauncherChoice>,
+}
+
+/// The 409 body when Resume cannot start a tab.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct ResumeError {
+    pub reason: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -399,6 +481,22 @@ mod tests {
         assert_eq!(json, r#"{"kind":"exited","code":2}"#);
         let json = serde_json::to_string(&SessionState::Running).unwrap();
         assert_eq!(json, r#"{"kind":"running"}"#);
+    }
+
+    #[test]
+    fn ended_state_serializes_as_kind_ended() {
+        assert_eq!(
+            serde_json::to_string(&SessionState::Ended).unwrap(),
+            r#"{"kind":"ended"}"#
+        );
+    }
+
+    #[test]
+    fn view_layout_default_matches_plan() {
+        let view = ViewLayout::default();
+        assert_eq!(view.sidebar_width, 288);
+        assert_eq!(view.panes, vec![None::<String>]);
+        assert!(!view.grouped);
     }
 
     #[test]

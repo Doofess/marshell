@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { COMPOSER } from "./layout";
-import { ARRANGEMENTS, CELL, HANDLE, HIT, MIN_USABLE, PANE_LIMIT, chooseArrangement, fitsPanes, maxPanes, paneCells, planFor, scoreArrangement, tracks, type Arrangement } from "./splitLayout";
+import { ARRANGEMENTS, CELL, HANDLE, HIT, MIN_USABLE, PANE_LIMIT, RATIO, chooseArrangement, dragRatio, fitsPanes, maxPanes, paneCells, planFor, scoreArrangement, tracks, type Arrangement } from "./splitLayout";
 
 describe("split limits", () => {
   it("shows at most four terminals at once", () => {
@@ -207,5 +207,41 @@ describe("paneCells with a prompt line per pane", () => {
   it("treats a missing entry as no prompt line", () => {
     const plan = planFor(2, "columns");
     expect(paneCells(plan, { w: 1400, h: 800 }, {}, [CELL.composer])[1]!.rows).toBe(paneCells(plan, { w: 1400, h: 800 }, {}, 0)[1]!.rows);
+  });
+});
+
+describe("dragRatio", () => {
+  const size = { w: 1400, h: 800 };
+  const plan = planFor(2, "columns");
+  const usable = (r: number) => paneCells(plan, size, { col: r }, CELL.composer).every((p) => p.cols >= MIN_USABLE.cols && p.rows >= MIN_USABLE.rows);
+  it("follows the pointer within the allowed range", () => {
+    expect(dragRatio(plan, size, {}, CELL.composer, "col", 0.4)).toBeCloseTo(0.4, 5);
+  });
+  it("never goes past RATIO.min and RATIO.max", () => {
+    expect(dragRatio(plan, { w: 4000, h: 800 }, {}, CELL.composer, "col", 0.01)).toBe(RATIO.min);
+    expect(dragRatio(plan, { w: 4000, h: 800 }, {}, CELL.composer, "col", 0.99)).toBe(RATIO.max);
+  });
+  it("stops where the smaller pane would fall under the usable size", () => {
+    expect(usable(0.2)).toBe(false);
+    const lo = dragRatio(plan, size, {}, CELL.composer, "col", 0.2);
+    expect(lo).toBeGreaterThan(0.2);
+    expect(usable(lo)).toBe(true);
+    expect(usable(lo - 0.01)).toBe(false);
+    const hi = dragRatio(plan, size, {}, CELL.composer, "col", 0.8);
+    expect(hi).toBeLessThan(0.8);
+    expect(usable(hi)).toBe(true);
+  });
+  it("is limited by the range alone when even an even split is too small", () => {
+    expect(dragRatio(plan, { w: 600, h: 800 }, {}, CELL.composer, "col", 0.1)).toBe(RATIO.min);
+  });
+  it("treats a non-finite pointer position as the middle", () => {
+    expect(dragRatio(plan, size, {}, CELL.composer, "col", Number.NaN)).toBe(0.5);
+  });
+  it("judges every pane of a grid, the other axis included", () => {
+    const grid = planFor(4, "grid");
+    const big = { w: 1800, h: 1000 };
+    const r = dragRatio(grid, big, { row: 0.5 }, CELL.composer, "col", 0.2);
+    expect(r).toBeGreaterThan(0.2);
+    expect(paneCells(grid, big, { col: r, row: 0.5 }, CELL.composer).every((p) => p.cols >= MIN_USABLE.cols)).toBe(true);
   });
 });

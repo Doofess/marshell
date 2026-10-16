@@ -76,6 +76,49 @@ describe("sessions", () => {
   });
 });
 
+describe("sessions.resume", () => {
+  it("posts the size and resolves ok", async () => {
+    const ok = respond({ tab_id: "t 1", number: 1 });
+    vi.stubGlobal("fetch", ok);
+    await expect(sessions.resume(endpoint, "t 1", { cols: 90, rows: 30 })).resolves.toEqual({ ok: true });
+    expect(call(ok)).toMatchObject({
+      url: "http://127.0.0.1:9/v1/sessions/t%201/resume",
+      method: "POST",
+      body: { cols: 90, rows: 30 },
+    });
+  });
+
+  it("returns the core's reason on a 409 and rejects on other errors", async () => {
+    vi.stubGlobal("fetch", respond({ reason: "Its shell profile was removed." }, 409));
+    await expect(sessions.resume(endpoint, "t1", { cols: 80, rows: 24 })).resolves.toEqual({
+      ok: false,
+      reason: "Its shell profile was removed.",
+    });
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response("No such session.", { status: 404 })));
+    await expect(sessions.resume(endpoint, "t1", { cols: 80, rows: 24 })).rejects.toBeInstanceOf(ApiError);
+  });
+});
+
+describe("the shell panel", () => {
+  it("opens it with a folder and size, and returns the tab id", async () => {
+    const open = respond({ tab_id: "p1" });
+    vi.stubGlobal("fetch", open);
+    await expect(sessions.shellPanel(endpoint, "C:\\work", { cols: 70, rows: 20 })).resolves.toBe("p1");
+    expect(call(open)).toMatchObject({
+      url: "http://127.0.0.1:9/v1/shell-panel",
+      method: "POST",
+      body: { cwd: "C:\\work", cols: 70, rows: 20 },
+    });
+  });
+
+  it("adopts it and returns the tab id", async () => {
+    const adopt = respond({ tab_id: "p1" });
+    vi.stubGlobal("fetch", adopt);
+    await expect(sessions.adoptShellPanel(endpoint)).resolves.toBe("p1");
+    expect(call(adopt)).toMatchObject({ url: "http://127.0.0.1:9/v1/shell-panel/adopt", method: "POST" });
+  });
+});
+
 describe("profiles and projects", () => {
   it("gets and puts profiles", async () => {
     const doc = { profiles: [], default_id: "x" };

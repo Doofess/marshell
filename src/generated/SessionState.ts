@@ -4,4 +4,4 @@ export type SessionState = { "kind": "running" } | { "kind": "exited",
 /**
  * The process exit code.
  */
-code: number, };
+code: number, } | { "kind": "ended" };

@@ -148,3 +148,32 @@ describe("Sidebar: the shell panel", () => {
     expect(withShell({ shell: { cwd: "my-app", shellName: "zsh" } })).toContain("zsh");
   });
 });
+
+describe("Sidebar: grouped by project", () => {
+  const mk = (id: string, project: string) => ({ ...FIXTURES[0]!, id, name: id, project });
+  const rows = [mk("a1", "alpha"), mk("b1", "beta"), mk("a2", "alpha")];
+  it("grouped shows one heading per project with its count", () => {
+    const h = html({ rows, grouped: true });
+    expect((h.match(/class="sidebar__group"/g) ?? []).length).toBe(2);
+    expect(h).toMatch(/sidebar__group-name">alpha<[^]*sidebar__group-count">2</);
+    expect(h).toMatch(/sidebar__group-name">beta<[^]*sidebar__group-count">1</);
+    expect(h).toContain(`role="presentation"`);
+  });
+  it("lists the rows group by group, in the displayed order", () => {
+    const h = html({ rows, grouped: true, selectedId: "a1" });
+    const at = (n: string) => h.indexOf(`>${n}<`);
+    expect(at("a1")).toBeLessThan(at("a2"));
+    expect(at("a2")).toBeLessThan(at("b1"));
+    expect((h.match(/role="option"/g) ?? []).length).toBe(3);
+  });
+  it("headings take no focus and add no live region", () => {
+    const heading = html({ rows, grouped: true }).match(/<div class="sidebar__group"[^>]*>/g) ?? [];
+    expect(heading.length).toBe(2);
+    for (const tag of heading) expect(tag).not.toMatch(/tabindex|aria-live|role="alert"|role="status"/);
+  });
+  it("ungrouped renders no headings", () => {
+    expect(html({ rows })).not.toContain("sidebar__group");
+    expect(html({ rows, grouped: false })).not.toContain("sidebar__group");
+    expect(html()).not.toContain("sidebar__group");
+  });
+});

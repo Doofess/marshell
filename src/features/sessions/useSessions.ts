@@ -20,7 +20,7 @@ export type SessionsState = {
   selectedId: string | undefined;
   /** True once the core has sent the list on this connection, so an empty list really is empty. */
   loaded: boolean;
-  /** How many times the core restarted. The window opens the launcher on a change: the new core has no sessions. */
+  /** How many times the core restarted. The new core seeds the saved tabs as Ended, so a restart does not by itself open the launcher. */
   restarts: number;
   error: string | null;
 };

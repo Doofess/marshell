@@ -4,7 +4,9 @@ import type { SessionInfo } from "../../generated/SessionInfo";
 import { ApiError } from "../../lib/api/client";
 import type { sessions } from "../../lib/api/sessions";
 import type { SessionShortcut } from "../../lib/appShortcuts";
+import { moveWithinGroup } from "../sidebar/grouping";
 import { moveBy } from "../sidebar/reorder";
+import type { RowModel } from "../sidebar/types";
 import { lastSegment } from "./toRow";
 
 /** How long the "Closed <name>." toast stays, in milliseconds. */
@@ -35,17 +37,35 @@ export type ActionsState = {
   renaming: string | null;
   /** Bumped when focus should go back to the terminal. */
   focusToken: number;
+  /**
+   * The tabs with a resume request out. The core announces Running before the new session exists, so a terminal for such a tab
+   * must not attach yet: the window holds it back until the response is in.
+   */
+  resuming: string[];
+  /** Per tab, how many times a resume has come back ok. The window keys the tab's terminal on it, so a resumed tab gets a fresh attach. */
+  resumed: Record<string, number>;
 };
 
-type Api = Pick<typeof sessions, "close" | "reopen" | "rename" | "reorder">;
+type Api = Pick<typeof sessions, "close" | "reopen" | "rename" | "reorder" | "resume">;
 type Context = {
   endpoint: Endpoint | null;
   infos: SessionInfo[];
   selectedId: string | undefined;
   /** False in the rail and focus layouts, which have no row to edit. Left out means expanded. */
   sidebarExpanded?: boolean;
+  /** The sidebar's rows while it is grouped by project (left out otherwise): moves follow their displayed order. */
+  groupedRows?: RowModel[];
 };
-type Deps = { api: Api; context: () => Context; select: (tabId: string) => void };
+type Deps = {
+  api: Api;
+  context: () => Context;
+  select: (tabId: string) => void;
+  /** The last measured terminal size, which a resumed session starts at. Left out means the default. */
+  size?: () => { cols: number; rows: number };
+};
+
+/** The size a resumed session starts at until a terminal has been measured. */
+const DEFAULT_SIZE = { cols: 120, rows: 30 };
 
 const reason = (e: unknown): string => (e instanceof ApiError ? e.message : String(e));
 
@@ -55,7 +75,7 @@ const reason = (e: unknown): string => (e instanceof ApiError ? e.message : Stri
  * core's next snapshot, so nothing here is optimistic. Plain class so it can be tested without a DOM; LiveApp wraps it.
  */
 export class SessionActions {
-  private state: ActionsState = { toast: null, closing: null, renaming: null, focusToken: 0 };
+  private state: ActionsState = { toast: null, closing: null, renaming: null, focusToken: 0, resuming: [], resumed: {} };
   private listeners = new Set<() => void>();
   private timer: ReturnType<typeof setTimeout> | undefined;
   private toastId = 0;
@@ -114,15 +134,22 @@ export class SessionActions {
         break;
       }
       case "move": {
-        const { infos, selectedId } = this.deps.context();
-        const next = selectedId === undefined ? null : moveBy(infos.map((i) => i.tab_id), selectedId, shortcut.by);
+        const { infos, selectedId, groupedRows } = this.deps.context();
+        // Grouped, the list the person sees is the groups one after another, and a move stays inside the session's project.
+        const next = selectedId === undefined ? null : groupedRows ? moveWithinGroup(groupedRows, selectedId, shortcut.by) : moveBy(infos.map((i) => i.tab_id), selectedId, shortcut.by);
         if (next) this.reorder(next);
         break;
       }
-      // The window opens these, and the terminal jumps between its own prompts.
+      // The window opens these, and the terminal jumps between its own prompts. The panes belong to the window's view state.
       case "launcher":
       case "palette":
       case "prompt":
+      case "split":
+      case "zoom":
+      case "nextPane":
+      case "nonePane":
+      case "focusMode":
+      case "sidebar":
         break;
     }
   }
@@ -189,6 +216,32 @@ export class SessionActions {
     } catch (e) {
       this.showToast(e instanceof ApiError && e.status === 404 ? "Nothing to reopen." : `Couldn't reopen the session: ${reason(e)}`);
     }
+  }
+
+  /**
+   * Resume on an Ended or Exited tab (the button, or the palette). One request per tab at a time: a second press while one is out
+   * does nothing, and shows no error. A refusal (the core's 409) is announced in the core's own words; the button keeps its focus,
+   * since nothing here moves it. Only a response that says ok frees the tab's terminal to attach (see `resuming`).
+   */
+  async resume(tabId: string): Promise<void> {
+    const { endpoint, infos } = this.deps.context();
+    const info = infos.find((i) => i.tab_id === tabId);
+    // Gone, or already running: there is nothing to start. (The core would refuse a running one too, but that is no news to show.)
+    if (!endpoint || !info || info.state.kind === "running" || this.state.resuming.includes(tabId)) return;
+    this.set({ resuming: [...this.state.resuming, tabId] });
+    let text: string;
+    let ok = false;
+    try {
+      const result = await this.deps.api.resume(endpoint, tabId, this.deps.size?.() ?? DEFAULT_SIZE);
+      ok = result.ok;
+      text = result.ok ? "Resumed" : result.reason;
+    } catch (e) {
+      text = `Couldn't resume the session: ${reason(e)}`;
+    }
+    // One change frees the tab and, when it worked, moves the key of its terminal: the terminal mounts after the response, never before.
+    const resuming = this.state.resuming.filter((id) => id !== tabId);
+    this.set(ok ? { resuming, resumed: { ...this.state.resumed, [tabId]: (this.state.resumed[tabId] ?? 0) + 1 } } : { resuming });
+    this.showToast(text);
   }
 
   /** F2 on the selected session. It does nothing where the sidebar is not expanded: there is no row to turn into a text box. */

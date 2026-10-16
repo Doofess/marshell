@@ -31,6 +31,9 @@
   overflow: clip;
 }
 .window__bar-main {
+  /* Stretched to the bar's height, so the focus-mode peek strip has a top edge to sit on. */
+  position: relative;
+  align-self: stretch;
   min-inline-size: 0;
 }
 .window__bar-end {
@@ -137,6 +140,8 @@
 }
 
 .window__body {
+  /* The sidebar's drag handle is placed against this box. */
+  position: relative;
   display: flex;
   min-block-size: 0;
 }
@@ -269,4 +274,54 @@
   overflow: clip;
   clip-path: inset(50%);
   white-space: nowrap;
+}
+
+/* Focus mode: an 8 px strip along the top of the header column. The pointer on it brings the session header up. */
+.window__peek {
+  position: absolute;
+  inset-block-start: 0;
+  inset-inline: 0;
+  block-size: 8px;
+  z-index: 1;
+}
+
+/*
+ * The sidebar's drag handle: a hairline on its end edge whose 8 px hit area straddles the sidebar and the terminal column.
+ * It follows the width, and flips with the writing direction.
+ */
+.window__side-handle {
+  position: absolute;
+  inset-block: 0;
+  inset-inline-start: calc(var(--side-w) - 4px);
+  inline-size: 8px;
+  z-index: 2;
+  cursor: col-resize;
+  /* A drag moves the edge; it must not scroll the page or select text. */
+  touch-action: none;
+  user-select: none;
+}
+.window__side-handle::before {
+  content: "";
+  position: absolute;
+  inset-block: 0;
+  inset-inline-start: 3.5px;
+  inline-size: 1px;
+}
+.window__side-handle:focus-visible {
+  outline: 2px solid var(--focus, var(--accent));
+  outline-offset: -2px;
+}
+.window__side-handle:active::before {
+  background: var(--accent);
+}
+@media (hover: hover) and (pointer: fine) {
+  .window__side-handle:hover::before {
+    background: var(--accent);
+  }
+}
+@media (forced-colors: active) {
+  .window__side-handle:hover::before,
+  .window__side-handle:active::before {
+    background: Highlight;
+  }
 }

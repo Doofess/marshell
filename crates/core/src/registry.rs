@@ -6,7 +6,7 @@ use std::collections::VecDeque;
 use std::sync::Mutex;
 
 use crate::pty::Mark;
-use marshell_protocol::api::{CommandState, SessionInfo, SessionState, SessionsSnapshot};
+use marshell_protocol::api::{CommandState, SavedTab, SessionInfo, SessionState, SessionsSnapshot};
 use tokio::sync::watch;
 
 /// How many closed sessions we remember for Reopen.
@@ -20,6 +20,13 @@ pub struct Relaunch {
     pub cwd: String,
     /// The base name, as given (a renamed name when the user renamed it).
     pub name: String,
+}
+
+/// Why `begin_resume` said no.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ResumeRefusal {
+    NotFound,
+    AlreadyRunning,
 }
 
 pub struct Entry {
@@ -102,6 +109,86 @@ impl Registry {
         });
         self.tx.send_replace(state.snapshot());
         number
+    }
+
+    /// Adds a Running row at the end for a process that is already running (the shell panel's),
+    /// and returns its number. Same naming rule as `reserve`.
+    pub fn adopt(&self, tab_id: &str, relaunch: Relaunch) -> u32 {
+        self.reserve(tab_id, relaunch)
+    }
+
+    /// Adds the saved tabs as Ended rows, in the given order, with their ids and numbers.
+    /// Nothing is started. If two tabs share a number, the later one gets the lowest free number.
+    /// `relaunch_of` says how each tab would be started again.
+    pub fn seed_ended(&self, tabs: &[SavedTab], relaunch_of: impl Fn(&SavedTab) -> Relaunch) {
+        let mut state = self.state.lock().unwrap();
+        for tab in tabs {
+            let number = if state.open.iter().any(|e| e.info.number == tab.number) {
+                state.lowest_free_number()
+            } else {
+                tab.number
+            };
+            state.open.push(Entry {
+                info: SessionInfo {
+                    tab_id: tab.tab_id.clone(),
+                    number,
+                    name: tab.name.clone(),
+                    agent: tab.agent.clone(),
+                    profile_id: tab.profile_id.clone(),
+                    cwd: tab.cwd.clone(),
+                    state: SessionState::Ended,
+                    command: CommandState::Unknown,
+                },
+                spec: relaunch_of(tab),
+            });
+        }
+        self.tx.send_replace(state.snapshot());
+    }
+
+    /// The open rows in tab order, whatever their state: what layout.json keeps.
+    pub fn saved_tabs(&self) -> Vec<SavedTab> {
+        let state = self.state.lock().unwrap();
+        state
+            .open
+            .iter()
+            .map(|e| SavedTab {
+                tab_id: e.info.tab_id.clone(),
+                number: e.info.number,
+                name: e.info.name.clone(),
+                agent: e.info.agent.clone(),
+                profile_id: e.info.profile_id.clone(),
+                cwd: e.info.cwd.clone(),
+            })
+            .collect()
+    }
+
+    /// Starts a Resume: an Ended or Exited tab becomes Running, in the same row (same id, number,
+    /// name and place). The check and the change happen under one lock, so of two calls at once
+    /// only one succeeds. Returns how to start it and the state it had, for `set_state` if the start fails.
+    pub fn begin_resume(&self, tab_id: &str) -> Result<(Relaunch, SessionState), ResumeRefusal> {
+        let mut state = self.state.lock().unwrap();
+        let entry = state
+            .open
+            .iter_mut()
+            .find(|e| e.info.tab_id == tab_id)
+            .ok_or(ResumeRefusal::NotFound)?;
+        if entry.info.state == SessionState::Running {
+            return Err(ResumeRefusal::AlreadyRunning);
+        }
+        let previous = std::mem::replace(&mut entry.info.state, SessionState::Running);
+        entry.info.command = CommandState::Unknown;
+        let relaunch = entry.spec.clone();
+        self.tx.send_replace(state.snapshot());
+        Ok((relaunch, previous))
+    }
+
+    /// Puts a tab's state back, when a Resume could not start its process.
+    pub fn set_state(&self, tab_id: &str, new_state: SessionState) {
+        let mut state = self.state.lock().unwrap();
+        if let Some(entry) = state.open.iter_mut().find(|e| e.info.tab_id == tab_id) {
+            entry.info.state = new_state;
+            self.tx.send_replace(state.snapshot());
+        }
     }
 
     /// A spawn failed: drop the row and free its number. Not added to closed.
@@ -261,6 +348,25 @@ mod tests {
             .iter()
             .map(|s| (s.tab_id.clone(), s.number))
             .collect()
+    }
+
+    #[test]
+    fn begin_resume_refuses_running() {
+        let reg = Registry::new();
+        reg.reserve("t1", relaunch("Shell"));
+        assert_eq!(reg.begin_resume("t1").unwrap_err(), ResumeRefusal::AlreadyRunning);
+        assert_eq!(reg.begin_resume("nope").unwrap_err(), ResumeRefusal::NotFound);
+
+        reg.mark_exited("t1", 2);
+        let (spec, previous) = reg.begin_resume("t1").unwrap();
+        assert_eq!(spec.name, "Shell");
+        assert_eq!(previous, SessionState::Exited { code: 2 });
+        assert_eq!(reg.snapshot().sessions[0].state, SessionState::Running);
+        // The second call finds it Running.
+        assert_eq!(reg.begin_resume("t1").unwrap_err(), ResumeRefusal::AlreadyRunning);
+
+        reg.set_state("t1", previous);
+        assert_eq!(reg.snapshot().sessions[0].state, SessionState::Exited { code: 2 });
     }
 
     #[test]
@@ -476,5 +582,78 @@ mod tests {
         reg.clear();
         let snap = reg.snapshot();
         assert!(snap.sessions.is_empty() && snap.closed.is_empty());
+    }
+
+    fn saved(id: &str, number: u32, name: &str) -> SavedTab {
+        SavedTab {
+            tab_id: id.into(),
+            number,
+            name: name.into(),
+            agent: Some("claude".into()),
+            profile_id: "pwsh".into(),
+            cwd: "C:/work".into(),
+        }
+    }
+
+    fn seed(reg: &Registry, tabs: &[SavedTab]) {
+        reg.seed_ended(tabs, |t| Relaunch {
+            profile_id: t.profile_id.clone(),
+            agent: t.agent.clone(),
+            cwd: t.cwd.clone(),
+            name: t.name.clone(),
+        });
+    }
+
+    #[test]
+    fn seed_ended_keeps_order_ids_and_numbers() {
+        let reg = Registry::new();
+        seed(&reg, &[saved("b", 5, "Beta"), saved("a", 2, "Alpha")]);
+        let snap = reg.snapshot();
+        let rows: Vec<_> = snap
+            .sessions
+            .iter()
+            .map(|s| (s.tab_id.as_str(), s.number, s.name.as_str()))
+            .collect();
+        assert_eq!(rows, vec![("b", 5, "Beta"), ("a", 2, "Alpha")]);
+        for row in &snap.sessions {
+            assert_eq!(row.state, SessionState::Ended);
+            assert_eq!(row.command, CommandState::Unknown);
+            assert_eq!(row.agent.as_deref(), Some("claude"));
+            assert_eq!((row.profile_id.as_str(), row.cwd.as_str()), ("pwsh", "C:/work"));
+        }
+        // The numbers stay taken: the next new tab takes the lowest free one.
+        assert_eq!(reg.reserve("c", relaunch("C")), 1);
+        assert_eq!(
+            reg.saved_tabs().iter().map(|t| t.number).collect::<Vec<_>>(),
+            vec![5, 2, 1]
+        );
+    }
+
+    #[test]
+    fn seed_ended_renumbers_a_duplicate_number() {
+        let reg = Registry::new();
+        seed(&reg, &[saved("a", 1, "A"), saved("b", 1, "B"), saved("c", 3, "C")]);
+        let numbers: Vec<u32> = reg.snapshot().sessions.iter().map(|s| s.number).collect();
+        assert_eq!(numbers, vec![1, 2, 3]);
+    }
+
+    #[test]
+    fn saved_tabs_lists_open_entries_of_any_state_in_order() {
+        let reg = Registry::new();
+        reg.reserve("a", relaunch("A"));
+        reg.reserve("b", relaunch("B"));
+        reg.reserve("c", relaunch("C"));
+        reg.mark_exited("b", 1);
+        reg.close("c");
+        reg.reorder(&["b".into(), "a".into()]);
+        let tabs = reg.saved_tabs();
+        assert_eq!(
+            tabs.iter().map(|t| t.tab_id.as_str()).collect::<Vec<_>>(),
+            vec!["b", "a"]
+        );
+        assert_eq!(
+            (tabs[0].number, tabs[0].name.as_str(), tabs[0].cwd.as_str()),
+            (2, "B", "C:/work")
+        );
     }
 }

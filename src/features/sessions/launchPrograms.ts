@@ -1,10 +1,11 @@
 import type { CreateSessionRequest } from "../../generated/CreateSessionRequest";
+import type { LayoutDoc } from "../../generated/LayoutDoc";
 import type { Profile } from "../../generated/Profile";
 import type { ProfilesDoc } from "../../generated/ProfilesDoc";
 import type { ProjectInfo } from "../../generated/ProjectInfo";
 import { ApiError } from "../../lib/api/client";
 import type { Project } from "../launcher/filter";
-import { LAUNCH_PROGRAMS, isAgentProgram, programById, type LaunchProgram, type LauncherChoice } from "../launcher/launchChoice";
+import { LAUNCH_PROGRAMS, isAgentProgram, programById, type LaunchProgram, type LauncherChoice, type ProgramId } from "../launcher/launchChoice";
 import { shellKind } from "./toRow";
 
 /** The agents the core can start today. The rest of `LAUNCH_PROGRAMS` stays hidden until their adapters exist. */
@@ -23,6 +24,17 @@ export function livePrograms(profiles: Profile[]): LaunchProgram[] {
 /** The launcher's folder for one of the core's recent projects. The path is the id: the core knows no other. */
 export function toLauncherProject(p: ProjectInfo): Project {
   return { id: p.path, name: p.name, path: p.path, lastUsedMs: p.last_used_ms, ...(p.branch === null ? {} : { branch: p.branch }) };
+}
+
+/**
+ * The program last started in this folder, when the launcher can still offer it: an agent the launcher lists, or a shell
+ * whose profile still exists. Undefined means nothing is remembered, or what was remembered is gone.
+ */
+export function preselect(doc: LayoutDoc | null, projectPath: string, programs: LaunchProgram[]): ProgramId | undefined {
+  const remembered = doc?.launcher[projectPath];
+  if (!remembered) return undefined;
+  const id: ProgramId = remembered.agent === null ? `${PROFILE_PREFIX}${remembered.profile_id}` : (remembered.agent as ProgramId);
+  return programById(id, programs)?.id;
 }
 
 /**

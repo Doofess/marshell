@@ -9,20 +9,25 @@ export function dragOver(drag: DragState, overId: string, edge: "before" | "afte
   return overId === drag.id ? { id: drag.id } : { id: drag.id, over: { id: overId, edge } };
 }
 
-/** The order after moving `id` one place (-1 up, +1 down), or null when it is at the end, unknown, or nothing would change. */
-export function moveBy(ids: string[], id: string, by: -1 | 1): string[] | null {
+/** A stretch of the list a move must stay inside (a project group): `start` is its first index, `end` one past its last. */
+export type Bounds = { start: number; end: number };
+
+/** The order after moving `id` one place (-1 up, +1 down), or null when it is at the end (of `bounds`, when given), unknown, or nothing would change. */
+export function moveBy(ids: string[], id: string, by: -1 | 1, bounds?: Bounds): string[] | null {
   const from = ids.indexOf(id);
   const to = from + by;
-  if (from < 0 || to < 0 || to >= ids.length) return null;
+  const { start, end } = bounds ?? { start: 0, end: ids.length };
+  if (from < start || from >= end || to < start || to >= end) return null;
   const next = [...ids];
   next[from] = next[to]!;
   next[to] = id;
   return next;
 }
 
-/** The order after dropping `dragId` before or after the row `overId`, or null when the order would stay the same. */
-export function dropOrder(ids: string[], dragId: string, overId: string, edge: "before" | "after"): string[] | null {
+/** The order after dropping `dragId` before or after the row `overId`, or null when the order would stay the same (or either row is outside `bounds`). */
+export function dropOrder(ids: string[], dragId: string, overId: string, edge: "before" | "after", bounds?: Bounds): string[] | null {
   if (dragId === overId || !ids.includes(dragId) || !ids.includes(overId)) return null;
+  if (bounds && ![dragId, overId].every((id) => ids.indexOf(id) >= bounds.start && ids.indexOf(id) < bounds.end)) return null;
   const rest = ids.filter((i) => i !== dragId);
   const at = rest.indexOf(overId) + (edge === "after" ? 1 : 0);
   const next = [...rest.slice(0, at), dragId, ...rest.slice(at)];

@@ -10,6 +10,9 @@
   position: relative;
   z-index: 1;
   background: var(--hairline);
+  /* A drag moves the divider; it must not scroll the page or select text. */
+  touch-action: none;
+  user-select: none;
 }
 .split__handle::before {
   content: "";

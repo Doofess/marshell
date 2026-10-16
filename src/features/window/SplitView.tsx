@@ -1,10 +1,10 @@
-import type { CSSProperties, ReactNode } from "react";
+import { useRef, type CSSProperties, type KeyboardEvent, type PointerEvent, type ReactNode } from "react";
 import type { Os } from "../../lib/keymap";
 import { hasPromptLine } from "../sidebar/promptLine";
 import type { RowModel } from "../sidebar/types";
 import type { TerminalThemeSetting } from "../terminal/terminalTheme";
 import { EmptyPane, Pane } from "./Pane";
-import { ARRANGEMENTS, CELL, PANE_LIMIT, RATIO, chooseArrangement, paneCells, planFor, tracks, type Arrangement, type Handle, type PaneCount, type Plan, type Ratios, type Size } from "./splitLayout";
+import { ARRANGEMENTS, CELL, HANDLE, PANE_LIMIT, RATIO, chooseArrangement, dragRatio, paneCells, planFor, tracks, type Arrangement, type Handle, type PaneCount, type Plan, type Ratios, type Size } from "./splitLayout";
 import "./SplitView.css";
 
 export type SplitViewProps = {
@@ -30,7 +30,20 @@ export type SplitViewProps = {
   os?: Os;
   /** Replaces each pane's scripted terminal with the real one. */
   renderTerminal?: (row: RowModel) => ReactNode;
+  /** A click in a pane, or the focus moving into it, gives its index. */
+  onFocus?: (index: number) => void;
+  /** A pane header's zoom button gives the pane's index. */
+  onZoom?: (index: number) => void;
+  /** A pane header's remove button gives the pane's index. */
+  onRemove?: (index: number) => void;
+  /** A choice in an empty pane gives the pane's index and the session. */
+  onPick?: (index: number, tabId: string) => void;
+  /** A divider dragged or moved with the arrow keys gives the whole new ratios, kept so every pane stays usable. */
+  onRatios?: (ratios: Ratios) => void;
 };
+
+/** How far one arrow key press moves a divider. */
+const NUDGE = 0.02;
 
 const gridArea = (a: { rowStart: number; colStart: number; rowEnd: number; colEnd: number }): CSSProperties => ({ gridArea: `${a.rowStart} / ${a.colStart} / ${a.rowEnd} / ${a.colEnd}` });
 
@@ -57,7 +70,8 @@ function handleLabel(plan: Plan, h: Handle): string {
  * the user's choice stands once made. Dividers cost one pixel (the 8 px hit area overhangs the panes). A zoomed
  * pane fills the view and the others keep running.
  */
-export function SplitView({ panes, size, activeIndex = 0, arrangement, ratios = {}, zoomed, choices = [], hidden = 0, composerValues = {}, composers = true, setting = "follow-app", os = "windows", renderTerminal }: SplitViewProps) {
+export function SplitView({ panes, size, activeIndex = 0, arrangement, ratios = {}, zoomed, choices = [], hidden = 0, composerValues = {}, composers = true, setting = "follow-app", os = "windows", renderTerminal, onFocus, onZoom, onRemove, onPick, onRatios }: SplitViewProps) {
+  const splitRef = useRef<HTMLDivElement>(null);
   if (panes.length > PANE_LIMIT) throw new Error(`At most ${PANE_LIMIT} panes can be on screen`);
   const isZoomed = zoomed !== undefined && panes[zoomed] != null;
   const count = (isZoomed ? 1 : Math.max(1, panes.length)) as PaneCount;
@@ -72,8 +86,40 @@ export function SplitView({ panes, size, activeIndex = 0, arrangement, ratios = 
   const plan = planFor(count, chosen);
   const cells = paneCells(plan, size, ratios, lines);
 
+  /** Only a two-way split follows a ratio; three or more equal tracks have nothing to drag. */
+  const draggable = (h: Handle) => onRatios !== undefined && (h.orientation === "vertical" ? plan.colTracks : plan.rowTracks) === 2;
+  const move = (h: Handle, wanted: number) => {
+    const axis = h.orientation === "vertical" ? "col" : "row";
+    onRatios?.({ ...ratios, [axis]: dragRatio(plan, size, ratios, lines, axis, wanted) });
+  };
+  /** The pointer's place along the divider's axis, as a share of the two tracks. Counted from the right edge in a right-to-left window. */
+  const dragTo = (h: Handle, e: PointerEvent<HTMLElement>) => {
+    const el = splitRef.current;
+    if (!el || !e.currentTarget.hasPointerCapture(e.pointerId)) return;
+    const rect = el.getBoundingClientRect();
+    const vertical = h.orientation === "vertical";
+    const total = (vertical ? rect.width : rect.height) - HANDLE;
+    if (total <= 0) return;
+    const rtl = vertical && getComputedStyle(el).direction === "rtl";
+    const offset = vertical ? (rtl ? rect.right - e.clientX : e.clientX - rect.left) : e.clientY - rect.top;
+    move(h, offset / total);
+  };
+  const nudge = (h: Handle, e: KeyboardEvent<HTMLElement>) => {
+    if (e.ctrlKey || e.altKey || e.metaKey) return;
+    const vertical = h.orientation === "vertical";
+    const rtl = vertical && splitRef.current !== null && getComputedStyle(splitRef.current).direction === "rtl";
+    const back = vertical ? (rtl ? "ArrowRight" : "ArrowLeft") : "ArrowUp";
+    const forward = vertical ? (rtl ? "ArrowLeft" : "ArrowRight") : "ArrowDown";
+    if (e.key !== back && e.key !== forward) return;
+    e.preventDefault();
+    const now = (vertical ? ratios.col : ratios.row) ?? RATIO.default;
+    move(h, now + (e.key === forward ? NUDGE : -NUDGE));
+  };
+  const at = <A extends unknown[]>(f: ((index: number, ...a: A) => void) | undefined, index: number) => (f ? (...a: A) => f(index, ...a) : undefined);
+
   return (
     <div
+      ref={splitRef}
       className="split"
       data-arrangement={chosen}
       data-auto={!valid}
@@ -81,18 +127,22 @@ export function SplitView({ panes, size, activeIndex = 0, arrangement, ratios = 
     >
       {visible.map(({ row, index }, k) =>
         row ? (
-          <Pane key={row.id} row={row} active={index === activeIndex} setting={setting} style={gridArea(plan.cells[k]!)} cells={cells[k]} zoomedOf={isZoomed ? panes.length : undefined} othersRunning={isZoomed ? panes.filter(Boolean).length - 1 : undefined} runningElsewhere={index === activeIndex && hidden > 0 ? hidden : undefined} value={composerValues[row.id]} composer={composers} os={os} renderTerminal={renderTerminal} />
+          <Pane key={row.id} row={row} active={index === activeIndex} setting={setting} style={gridArea(plan.cells[k]!)} cells={cells[k]} zoomedOf={isZoomed ? panes.length : undefined} othersRunning={isZoomed ? panes.filter(Boolean).length - 1 : undefined} runningElsewhere={index === activeIndex && hidden > 0 ? hidden : undefined} value={composerValues[row.id]} composer={composers} os={os} renderTerminal={renderTerminal} onFocus={at(onFocus, index)} onZoom={at(onZoom, index)} onRemove={at(onRemove, index)} />
         ) : (
-          <EmptyPane key={`empty-${index}`} choices={choices} active={index === activeIndex} style={gridArea(plan.cells[k]!)} os={os} />
+          <EmptyPane key={`empty-${index}`} choices={choices} active={index === activeIndex} style={gridArea(plan.cells[k]!)} os={os} onFocus={at(onFocus, index)} onRemove={at(onRemove, index)} onPick={at(onPick, index)} />
         ),
       )}
       {plan.handles.map((h, i) => {
         const v = handleValues(plan, h, ratios);
+        const drags = draggable(h);
         return (
           <div
             key={i}
             className="split__handle"
             data-orientation={h.orientation}
+            onPointerDown={drags ? (e) => e.button === 0 && e.currentTarget.setPointerCapture(e.pointerId) : undefined}
+            onPointerMove={drags ? (e) => dragTo(h, e) : undefined}
+            onKeyDown={drags ? (e) => nudge(h, e) : undefined}
             style={gridArea(h)}
             role="separator"
             aria-orientation={h.orientation}

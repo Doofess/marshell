@@ -52,6 +52,7 @@ export const COMMANDS: Command[] = [
   { id: "close", label: "Close session", group: "Sessions", binding: { code: "KeyW" } },
   { id: "reopen", label: "Reopen closed session", group: "Sessions", binding: { code: "KeyT", alt: true } },
   { id: "rename", label: "Rename session", group: "Sessions", binding: { code: "F2", plain: true } },
+  { id: "resume", label: "Resume this session", group: "Sessions" },
   { id: "move-up", label: "Move session up the list", group: "Sessions", binding: { code: "ArrowUp", alt: true, shift: true } },
   { id: "move-down", label: "Move session down the list", group: "Sessions", binding: { code: "ArrowDown", alt: true, shift: true } },
   // Session modes, the same five for every agent CLI (docs/PLAN.md "Session modes"); unbound, so a person picks the keys.
@@ -66,8 +67,9 @@ export const COMMANDS: Command[] = [
   { id: "zoom-pane", label: "Zoom pane", group: "View", binding: { code: "KeyP" } },
   { id: "nav-next-pane", label: "Select the next terminal on screen", group: "View", binding: { code: "Tab", nav: true } },
   { id: "nav-none", label: "Select no terminal", group: "View", binding: { code: "Backspace", nav: true } },
-  { id: "focus-mode", label: "Focus mode", group: "View" },
+  { id: "focus-mode", label: "Focus mode", group: "View", binding: { code: "KeyI" } },
   { id: "sidebar", label: "Collapse sidebar to the rail", group: "View" },
+  { id: "group-by-project", label: "Group sessions by project", group: "View" },
   { id: "palette", label: "Command palette", group: "Tools", binding: { code: "KeyK" } },
   { id: "shell-panel", label: "Show or focus the shell panel", group: "Tools", binding: { code: "KeyS" } },
   { id: "announce-status", label: "Read the focused session's status", group: "Tools", binding: { code: "KeyG" } },
