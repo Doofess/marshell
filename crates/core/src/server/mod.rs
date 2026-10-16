@@ -9,7 +9,7 @@ mod sessions;
 mod settings;
 
 use crate::profiles::detect::{Probe, detect_profiles};
-use crate::registry::Registry;
+use crate::registry::{Registry, Relaunch};
 use crate::{auth, paths};
 use axum::http::{HeaderValue, Method, header};
 use axum::routing::{get, patch, post, put};
@@ -64,6 +64,15 @@ impl AppState {
         let profiles = crate::profiles::store::load(&home, detected.clone());
         let settings = crate::settings::load(&home);
         let layout = crate::layout::load(&home);
+        // The tabs of the last run come back as Ended rows. Nothing is started, and this runs before
+        // the saver subscribes, so seeding never writes the file.
+        let registry = Registry::new();
+        registry.seed_ended(&layout.tabs, |tab| Relaunch {
+            profile_id: tab.profile_id.clone(),
+            agent: tab.agent.clone(),
+            cwd: tab.cwd.clone(),
+            name: tab.name.clone(),
+        });
         let shell_dir = match crate::shell::install(&home) {
             Ok(dir) => Some(dir),
             Err(err) => {
@@ -81,7 +90,7 @@ impl AppState {
             profiles: Mutex::new(profiles),
             settings: Mutex::new(settings),
             layout: Mutex::new(layout),
-            registry: Arc::new(Registry::new()),
+            registry: Arc::new(registry),
             sessions: Mutex::new(HashMap::new()),
             agent_on_path: crate::profiles::detect::command_on_path,
         }))
@@ -102,6 +111,10 @@ impl AppState {
     pub fn session(&self, tab: &str) -> Option<Arc<crate::pty::Session>> {
         self.0.sessions.lock().unwrap().get(tab).cloned()
     }
+    /// How many sessions have a running process. Ended tabs have none.
+    pub fn live_session_count(&self) -> usize {
+        self.0.sessions.lock().unwrap().len()
+    }
     pub fn insert_session(&self, session: Arc<crate::pty::Session>) {
         self.0
             .sessions
@@ -119,6 +132,8 @@ impl AppState {
 }
 
 pub fn router(state: AppState) -> Router {
+    // Here and not in `AppState::new`, which `with_agent_check` needs to be the only owner of.
+    layout::spawn_layout_saver(&state);
     let origins: Vec<HeaderValue> = state.0.allowed_origins.iter().filter_map(|o| o.parse().ok()).collect();
     let cors = CorsLayer::new()
         .allow_origin(AllowOrigin::list(origins))
