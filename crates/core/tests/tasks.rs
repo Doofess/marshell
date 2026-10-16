@@ -406,13 +406,37 @@ async fn task_routes_plan_create_list_and_refuse() {
     assert_eq!(task["path"], plan["path"]);
 
     let res = app.clone().oneshot(api("GET", "/v1/tasks", None)).await.unwrap();
-    assert_eq!(json_of(res).await.as_array().unwrap().len(), 1);
+    let listed = json_of(res).await;
+    assert_eq!(listed.as_array().unwrap().len(), 1);
+    assert_eq!(listed[0]["folder_missing"], false);
 
-    // A task whose folder is gone drops out of the list, not out of the file.
+    // A task whose folder is gone stays listed, marked, so it can still be cleaned up.
     std::fs::remove_dir_all(task["path"].as_str().unwrap()).unwrap();
     let res = app.clone().oneshot(api("GET", "/v1/tasks", None)).await.unwrap();
-    assert!(json_of(res).await.as_array().unwrap().is_empty());
+    let listed = json_of(res).await;
+    assert_eq!(listed.as_array().unwrap().len(), 1);
+    assert_eq!(listed[0]["id"], task["id"]);
+    assert_eq!(listed[0]["folder_missing"], true);
     assert_eq!(tasks::list(&home).len(), 1);
+
+    // Its remove plan works without the folder; removing it takes it off the list.
+    let id = task["id"].as_str().unwrap();
+    let res = app
+        .clone()
+        .oneshot(api("POST", &format!("/v1/tasks/{id}/remove/plan"), None))
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let plan = json_of(res).await;
+    let body = serde_json::json!({ "commands": plan["commands"], "warnings": plan["warnings"] });
+    let res = app
+        .clone()
+        .oneshot(api("POST", &format!("/v1/tasks/{id}/remove"), Some(body)))
+        .await
+        .unwrap();
+    assert!(res.status().is_success(), "{}", res.status());
+    let res = app.clone().oneshot(api("GET", "/v1/tasks", None)).await.unwrap();
+    assert!(json_of(res).await.as_array().unwrap().is_empty());
 
     // Outside git: 409 with a reason.
     let body = serde_json::json!({ "cwd": plain.to_string_lossy(), "name": "x", "commands": [] });

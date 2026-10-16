@@ -54,6 +54,8 @@ export const COMMANDS: Command[] = [
   { id: "rename", label: "Rename session", group: "Sessions", binding: { code: "F2", plain: true } },
   { id: "resume", label: "Resume this session", group: "Sessions" },
   { id: "review-task", label: "Review this task's changes", group: "Sessions", binding: { code: "KeyR" } },
+  // A task whose folder was deleted by hand has no session to review it from; this opens its removal.
+  { id: "clean-up-task", label: "Clean up a missing task…", group: "Sessions" },
   { id: "move-up", label: "Move session up the list", group: "Sessions", binding: { code: "ArrowUp", alt: true, shift: true } },
   { id: "move-down", label: "Move session down the list", group: "Sessions", binding: { code: "ArrowDown", alt: true, shift: true } },
   // Session modes, the same five for every agent CLI (docs/PLAN.md "Session modes"); unbound, so a person picks the keys.

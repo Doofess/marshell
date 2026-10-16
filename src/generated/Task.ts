@@ -15,4 +15,9 @@ path: string,
 /**
  * Milliseconds since the Unix epoch.
  */
-created_ms: number, };
+created_ms: number, 
+/**
+ * The worktree folder is gone (deleted by hand). Set by GET /v1/tasks when it answers; such a
+ * task can only be removed. Stored as false, and a file without it reads as false.
+ */
+folder_missing: boolean, };

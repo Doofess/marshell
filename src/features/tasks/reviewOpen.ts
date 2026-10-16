@@ -1,5 +1,6 @@
 import type { SessionInfo } from "../../generated/SessionInfo";
 import type { Task } from "../../generated/Task";
+import type { TaskChanges } from "../../generated/TaskChanges";
 import { findCommand, type KeyEventLike } from "../../lib/bindings";
 import type { Os } from "../../lib/keymap";
 import { agentLabel } from "../sessions/sessionActions";
@@ -91,15 +92,32 @@ export function reviewAgentName(info: SessionInfo | undefined): string | null {
   return info && info.agent !== null && info.state.kind === "running" ? agentLabel(info.agent) : null;
 }
 
-const HIDE_NONE: readonly string[] = [];
-const HIDE_RESUME: readonly string[] = ["resume"];
-const HIDE_REVIEW: readonly string[] = ["review-task"];
-const HIDE_BOTH: readonly string[] = ["resume", "review-task"];
+const HIDDEN = new Map<string, readonly string[]>();
 
-/** The palette commands left out now: Resume unless the session in focus can resume, Review unless it is a task. Constants, so the palette's list is not rebuilt for them. */
-export function paletteHidden({ resumable, isTask }: { resumable: boolean; isTask: boolean }): readonly string[] {
-  if (resumable) return isTask ? HIDE_NONE : HIDE_REVIEW;
-  return isTask ? HIDE_RESUME : HIDE_BOTH;
+/**
+ * The palette commands left out now: Resume unless the session in focus can resume, Review unless it is a task, and Clean up a
+ * missing task unless a task's folder is gone. The same array for the same answers, so the palette's list is not rebuilt for them.
+ */
+export function paletteHidden({ resumable, isTask, missing }: { resumable: boolean; isTask: boolean; missing: boolean }): readonly string[] {
+  const key = `${resumable}${isTask}${missing}`;
+  let hidden = HIDDEN.get(key);
+  if (!hidden) {
+    hidden = [...(resumable ? [] : ["resume"]), ...(isTask ? [] : ["review-task"]), ...(missing ? [] : ["clean-up-task"])];
+    HIDDEN.set(key, hidden);
+  }
+  return hidden;
+}
+
+/** The task "Clean up a missing task…" opens: the first one whose folder is gone. After it is removed the next one is offered. */
+export function missingTask(tasks: Task[] | null): Task | null {
+  return tasks?.find((t) => t.folder_missing) ?? null;
+}
+
+const NO_CHANGES: TaskChanges = { files: [], diff: "", truncated: false, ahead: 0, uncommitted: false };
+
+/** The changes the sheet opens with. A task whose folder is gone has none to read; its sheet is only the remove step. */
+export function changesFor(task: Task, load: () => Promise<TaskChanges>): Promise<TaskChanges> {
+  return task.folder_missing ? Promise.resolve(NO_CHANGES) : load();
 }
 
 /**

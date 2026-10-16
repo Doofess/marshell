@@ -20,11 +20,13 @@ fn now_ms() -> u64 {
         .map_or(0, |d| d.as_millis() as u64)
 }
 
-/// The tasks whose folder still exists. A task whose folder was deleted stays in the file.
+/// Every task, each marked when its folder is gone, so a task deleted by hand can still be removed.
 pub async fn list(State(st): State<AppState>) -> Response {
     let listed = tokio::task::spawn_blocking(move || {
         let mut tasks = crate::tasks::list(&st.0.home);
-        tasks.retain(|t| Path::new(&t.path).exists());
+        for t in &mut tasks {
+            t.folder_missing = !Path::new(&t.path).exists();
+        }
         tasks
     })
     .await;

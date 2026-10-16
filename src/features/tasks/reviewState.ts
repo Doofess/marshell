@@ -57,7 +57,8 @@ export function stepFocus(prev: ReviewStep, next: ReviewStep): string | null {
   }
 }
 
-export const initialReview = (): ReviewState => ({ step: "changes", selected: 0 });
+/** The changes step, or for a task whose folder is gone the remove step: without the folder there is nothing to review or merge. */
+export const initialReview = (folderMissing = false): ReviewState => ({ step: folderMissing ? "remove" : "changes", selected: 0 });
 
 export function reviewReducer(state: ReviewState, action: ReviewAction): ReviewState {
   const { step } = state;

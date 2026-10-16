@@ -3,7 +3,7 @@ import type { SessionInfo } from "../../generated/SessionInfo";
 import type { Task } from "../../generated/Task";
 import { samePath, taskOf } from "./taskOf";
 
-const task = (id: string, path: string): Task => ({ id, name: id, branch: `marshell/${id}`, base_branch: "main", repo_root: "C:\\dev\\app", path, created_ms: 1 });
+const task = (id: string, path: string): Task => ({ id, name: id, branch: `marshell/${id}`, base_branch: "main", repo_root: "C:\\dev\\app", path, created_ms: 1, folder_missing: false });
 const session = (cwd: string) => ({ tab_id: "t1", number: 1, name: "one", agent: null, profile_id: "p", cwd, project: "C:\\dev\\app" }) as unknown as SessionInfo;
 
 const TASKS = [task("a", "C:\\Users\\Home Office\\.marshell\\worktrees\\app\\x"), task("b", "C:\\Users\\Home Office\\.marshell\\worktrees\\app\\x-2")];

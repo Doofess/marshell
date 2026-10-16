@@ -15,7 +15,7 @@ import type { RowModel } from "../sidebar/types";
 import { AppearanceDialog } from "../appearance/AppearanceDialog";
 import { useAppearance } from "../appearance/AppearanceProvider";
 import { terminalThemeOf, wtFont } from "../appearance/terminalSettings";
-import { isTextBox, keyBlocked, markTasks, paletteHidden, resolveTarget, reviewAgentName, reviewKeyDown, reviewTarget, taskRefresher, type ReviewTarget } from "../tasks/reviewOpen";
+import { changesFor, isTextBox, keyBlocked, markTasks, missingTask, paletteHidden, resolveTarget, reviewAgentName, reviewKeyDown, reviewTarget, taskRefresher, type ReviewTarget } from "../tasks/reviewOpen";
 import { ReviewSheet } from "../tasks/ReviewSheet";
 import { reviewApi } from "../tasks/reviewRun";
 import { jumpWords } from "../terminal/promptMarks";
@@ -221,7 +221,7 @@ export function LiveApp() {
   const taskRows = useMemo(() => markTasks(rows, infos, tasks), [rows, infos, tasks]);
   // While the list is unknown the palette keeps Review for the session in focus, so choosing it can load the list again.
   const focusedIsTask = reviewTarget(infos, focusedId, tasks).kind !== "none";
-  const hiddenCommands = paletteHidden({ resumable, isTask: focusedIsTask });
+  const hiddenCommands = paletteHidden({ resumable, isTask: focusedIsTask, missing: missingTask(tasks) !== null });
 
   // The Review sheet. It holds its own snapshot (the task, its changes, the session it was opened for), not a view of the lists above,
   // so a task list or a session list that changes under it, a merge removing the task included, never unmounts it while the core works.
@@ -235,7 +235,7 @@ export function LiveApp() {
       if (!ep || opening.current || reviewRef.current) return;
       opening.current = true;
       try {
-        setReview({ endpoint: ep, tabId, task, changes: await tasksApi.changes(ep, task.id) });
+        setReview({ endpoint: ep, tabId, task, changes: await changesFor(task, () => tasksApi.changes(ep, task.id)) });
       } catch (e) {
         announce(`Couldn't open the review: ${e instanceof ApiError ? e.message : String(e)}`);
       } finally {
@@ -511,6 +511,11 @@ export function LiveApp() {
     if (id === "resume") return void (focusedRow && startResume(focusedRow));
     // After the palette has given focus back, so the sheet takes it from the right place and returns it there.
     if (id === "review-task") return void setTimeout(() => reviewSession(focusedId), 0);
+    // A task whose folder is gone has no session: its sheet (only the remove step) opens for no tab.
+    if (id === "clean-up-task") {
+      const gone = missingTask(stateRef.current.tasks);
+      return void (gone && setTimeout(() => void openReview("", gone), 0));
+    }
     const shortcut = commandShortcut(id);
     // Both move the focus, so they wait for the palette to hand it back first.
     if (shortcut?.kind === "nonePane" || shortcut?.kind === "shellPanel") return void setTimeout(() => paneCommand(shortcut), 0);

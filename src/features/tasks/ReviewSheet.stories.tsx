@@ -10,7 +10,7 @@ import { initialReview, type ReviewStep } from "./reviewState";
 const meta: Meta = { title: "Tasks/Review sheet", parameters: { layout: "fullscreen" } };
 export default meta;
 
-const TASK: Task = { id: "t1", name: "fix-login", branch: "marshell/fix-login", base_branch: "main", repo_root: "C:\\dev\\my-app", path: "C:\\Users\\me\\.marshell\\worktrees\\my-app\\fix-login", created_ms: 1 };
+const TASK: Task = { id: "t1", name: "fix-login", branch: "marshell/fix-login", base_branch: "main", repo_root: "C:\\dev\\my-app", path: "C:\\Users\\me\\.marshell\\worktrees\\my-app\\fix-login", created_ms: 1, folder_missing: false };
 
 const MODIFIED = [
   "diff --git a/src/login.ts b/src/login.ts",

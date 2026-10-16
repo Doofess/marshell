@@ -32,7 +32,7 @@ import {
   type ReviewApi,
 } from "./reviewRun";
 
-const TASK: Task = { id: "t1", name: "fix-login", branch: "marshell/fix-login", base_branch: "main", repo_root: "C:\\dev\\app", path: "C:\\w\\app\\fix-login", created_ms: 1 };
+const TASK: Task = { id: "t1", name: "fix-login", branch: "marshell/fix-login", base_branch: "main", repo_root: "C:\\dev\\app", path: "C:\\w\\app\\fix-login", created_ms: 1, folder_missing: false };
 
 describe("readableMessage", () => {
   it("turns hyphens into spaces and capitalises the first letter", () => {

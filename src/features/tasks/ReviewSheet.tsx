@@ -200,10 +200,11 @@ function MergeStep({ merge, busy }: { merge: MergeView; busy: boolean }) {
 }
 
 /** The remove step: what would be lost, then the commands that remove the folder and the branch. */
-function RemoveStep({ remove, busy }: { remove: RemoveView; busy: boolean }) {
+function RemoveStep({ remove, busy, folderMissing }: { remove: RemoveView; busy: boolean; folderMissing: boolean }) {
   const warnings = remove.plan?.warnings ?? [];
   return (
     <div className="review__step">
+      {folderMissing && <p className="review__lede">The task folder is gone, so there is nothing to review or merge.</p>}
       {remove.error && <Failure text={remove.error} />}
       <Warnings warnings={warnings} />
       {remove.plan && (
@@ -311,10 +312,17 @@ export function ReviewView({ task, changes, state, dispatch, merge = NO_MERGE, r
         <button type="button" className="settings__btn review__confirm" data-primary aria-disabled={!canRemove || undefined} onClick={() => canRemove && remove.onConfirm()}>
           {removeLabel(remove.plan?.warnings ?? [])}
         </button>
-        {back}
+        {/* With the folder gone the sheet is only this step, so there is nothing to go back to. */}
+        {task.folder_missing
+          ? onClose && (
+              <button type="button" className="settings__btn" onClick={onClose}>
+                Close
+              </button>
+            )
+          : back}
       </>
     );
-    body = <RemoveStep remove={remove} busy={busy} />;
+    body = <RemoveStep remove={remove} busy={busy} folderMissing={task.folder_missing} />;
   } else if (step === "conflict") {
     title = `Merge ${task.branch} into ${task.base_branch}`;
     subtitle = undefined;
@@ -371,7 +379,7 @@ export type ReviewSheetProps = {
  * after the plan was drawn; that reason is shown and the plan is asked for again.
  */
 export function ReviewSheet({ task, changes, agentName, api, onClose, onDone, onAskAgent }: ReviewSheetProps) {
-  const [state, dispatch] = useReducer(reviewReducer, undefined, initialReview);
+  const [state, dispatch] = useReducer(reviewReducer, task.folder_missing, initialReview);
   const { step } = state;
   const busy = isBusy(step);
   const dialog = useRef<HTMLDivElement>(null);
@@ -515,7 +523,7 @@ export function ReviewSheet({ task, changes, agentName, api, onClose, onDone, on
   };
 
   return (
-    <div ref={dialog} className="review" role="dialog" aria-modal="true" aria-label={`Changes in ${task.branch}`} tabIndex={-1}>
+    <div ref={dialog} className="review" role="dialog" aria-modal="true" aria-label={task.folder_missing ? `Remove ${task.branch}` : `Changes in ${task.branch}`} tabIndex={-1}>
       <ReviewView
         task={task}
         changes={changes}

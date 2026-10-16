@@ -7,7 +7,7 @@ import { ReviewSheet, ReviewView, statusWord, type ReviewViewProps } from "./Rev
 import type { MergeView, RemoveView, ReviewApi } from "./reviewRun";
 import { initialReview, type ReviewState } from "./reviewState";
 
-const TASK: Task = { id: "t1", name: "fix-login", branch: "marshell/fix-login", base_branch: "main", repo_root: "C:\\dev\\app", path: "C:\\w\\app\\fix-login", created_ms: 1 };
+const TASK: Task = { id: "t1", name: "fix-login", branch: "marshell/fix-login", base_branch: "main", repo_root: "C:\\dev\\app", path: "C:\\w\\app\\fix-login", created_ms: 1, folder_missing: false };
 const A = "diff --git a/src/a.ts b/src/a.ts\nindex 1..2 100644\n--- a/src/a.ts\n+++ b/src/a.ts\n@@ -1,1 +1,1 @@\n-one\n+two\n";
 const C = "diff --git a/new dir/c.txt b/new dir/c.txt\nnew file mode 100644\n--- /dev/null\n+++ b/new dir/c.txt\n@@ -0,0 +1,1 @@\n+hello\n";
 const BIN = "diff --git a/img/logo.png b/img/logo.png\nnew file mode 100644\nBinary file img/logo.png\n";
@@ -375,5 +375,29 @@ describe("commands that no longer match what is on screen", () => {
     const h = step("merging", { merge: { ...MERGE, ready: false } });
     expect(h).toContain("Merging…");
     expect(h).not.toContain(cue);
+  });
+});
+
+describe("ReviewSheet: a task whose folder is gone", () => {
+  const GONE: Task = { ...TASK, folder_missing: true };
+  const EMPTY: TaskChanges = { files: [], diff: "", truncated: false, ahead: 0, uncommitted: false };
+  it("opens on the remove step, says why, and offers Close instead of Back", () => {
+    const out = renderToStaticMarkup(<ReviewView {...stepProps("remove", { task: GONE, changes: EMPTY, remove: REMOVE })} />);
+    expect(out).toContain("Remove marshell/fix-login");
+    expect(out).toContain("The task folder is gone, so there is nothing to review or merge.");
+    expect(out).toContain("Close");
+    expect(out).not.toContain("Back");
+    expect(out).not.toContain("Merge back");
+  });
+  it("starts the sheet there", () => {
+    const out = renderToStaticMarkup(<ReviewSheet task={GONE} changes={EMPTY} agentName={null} api={API} onClose={() => {}} onDone={() => {}} onAskAgent={() => {}} />);
+    expect(out).toContain("Remove marshell/fix-login");
+    expect(out).not.toContain("Merge back");
+  });
+  it("Close closes it", () => {
+    const onClose = vi.fn();
+    const close = buttonsOf(stepProps("remove", { task: GONE, changes: EMPTY, remove: REMOVE, onClose })).find((b) => labelOf(b) === "Close");
+    close?.props.onClick?.();
+    expect(onClose).toHaveBeenCalledTimes(1);
   });
 });

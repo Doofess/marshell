@@ -244,6 +244,10 @@ pub struct Task {
     /// Milliseconds since the Unix epoch.
     #[ts(type = "number")]
     pub created_ms: u64,
+    /// The worktree folder is gone (deleted by hand). Set by GET /v1/tasks when it answers; such a
+    /// task can only be removed. Stored as false, and a file without it reads as false.
+    #[serde(default)]
+    pub folder_missing: bool,
 }
 
 /// POST /v1/tasks/plan body.

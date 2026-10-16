@@ -173,6 +173,7 @@ pub fn create(home: &Path, req: &TaskCreateRequest, now_ms: u64) -> Result<Task,
         repo_root: plan.repo_root,
         path: plan.path,
         created_ms: now_ms,
+        folder_missing: false,
     };
     doc.tasks.push(task.clone());
     store::write(&file(home), &doc)

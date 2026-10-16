@@ -137,7 +137,7 @@ describe("preselect", () => {
 
 describe("starting a task in a worktree", () => {
   const programs = livePrograms(PROFILES);
-  const task: Task = { id: "t1", name: "fix-login", branch: "marshell/fix-login", base_branch: "main", repo_root: "C:/dev/my-app", path: "C:/dev/.marshell/my-app/fix-login", created_ms: 1 };
+  const task: Task = { id: "t1", name: "fix-login", branch: "marshell/fix-login", base_branch: "main", repo_root: "C:/dev/my-app", path: "C:/dev/.marshell/my-app/fix-login", created_ms: 1, folder_missing: false };
   const on = (program: ProgramId): LauncherChoice => ({ ...choice(program), worktree: true });
   const NO_GIT: Project[] = [{ id: "C:/dev/scratch", name: "scratch", path: "C:/dev/scratch", lastUsedMs: 1 }];
 

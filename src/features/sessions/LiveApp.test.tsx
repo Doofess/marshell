@@ -4,7 +4,7 @@ import type { Endpoint } from "../../generated/Endpoint";
 import type { SessionInfo } from "../../generated/SessionInfo";
 import type { Task } from "../../generated/Task";
 import { FIXTURES } from "../sidebar/fixtures";
-import { NOT_A_TASK, isTextBox, keyBlocked, markTasks, paletteHidden, resolveTarget, reviewAgentName, reviewKeyDown, reviewTarget, taskListFailed, taskRefresher } from "../tasks/reviewOpen";
+import { NOT_A_TASK, changesFor, isTextBox, keyBlocked, markTasks, missingTask, paletteHidden, resolveTarget, reviewAgentName, reviewKeyDown, reviewTarget, taskListFailed, taskRefresher } from "../tasks/reviewOpen";
 import { ApiError } from "../../lib/api/client";
 import type { RowModel } from "../sidebar/types";
 import { CloseBar } from "./CloseBar";
@@ -405,7 +405,7 @@ describe("Toast", () => {
   });
 });
 
-const TASK: Task = { id: "k1", name: "fix-login", branch: "marshell/fix-login", base_branch: "main", repo_root: "C:\\dev\\my-app", path: "C:\\dev\\my-app-task", created_ms: 1 };
+const TASK: Task = { id: "k1", name: "fix-login", branch: "marshell/fix-login", base_branch: "main", repo_root: "C:\\dev\\my-app", path: "C:\\dev\\my-app-task", created_ms: 1, folder_missing: false };
 const inTask = (n: number, patch: Partial<SessionInfo> = {}) => claude(n, { cwd: "C:\\dev\\my-app-task", ...patch });
 
 /** A key event that records preventDefault, like a real one's defaultPrevented. */
@@ -504,10 +504,30 @@ describe("LiveApp: which sessions are tasks", () => {
 
 describe("LiveApp: the palette's Review command", () => {
   it("is hidden unless the active session is a task, and Resume is hidden unless it can resume", () => {
-    expect(paletteHidden({ resumable: false, isTask: false })).toEqual(["resume", "review-task"]);
-    expect(paletteHidden({ resumable: false, isTask: true })).toEqual(["resume"]);
-    expect(paletteHidden({ resumable: true, isTask: false })).toEqual(["review-task"]);
-    expect(paletteHidden({ resumable: true, isTask: true })).toEqual([]);
+    expect(paletteHidden({ resumable: false, isTask: false, missing: true })).toEqual(["resume", "review-task"]);
+    expect(paletteHidden({ resumable: false, isTask: true, missing: true })).toEqual(["resume"]);
+    expect(paletteHidden({ resumable: true, isTask: false, missing: true })).toEqual(["review-task"]);
+    expect(paletteHidden({ resumable: true, isTask: true, missing: true })).toEqual([]);
+  });
+  it("hides Clean up a missing task unless a task's folder is gone, and gives the same list each time", () => {
+    expect(paletteHidden({ resumable: true, isTask: true, missing: false })).toEqual(["clean-up-task"]);
+    expect(paletteHidden({ resumable: false, isTask: false, missing: false })).toEqual(["resume", "review-task", "clean-up-task"]);
+    expect(paletteHidden({ resumable: false, isTask: true, missing: false })).toBe(paletteHidden({ resumable: false, isTask: true, missing: false }));
+  });
+});
+
+describe("LiveApp: a task whose folder is gone", () => {
+  const gone: Task = { ...TASK, id: "k9", folder_missing: true };
+  it("is the one Clean up a missing task opens: the first such task, or none", () => {
+    expect(missingTask([TASK, gone, { ...gone, id: "k10" }])).toBe(gone);
+    expect(missingTask([TASK])).toBeNull();
+    expect(missingTask(null)).toBeNull();
+  });
+  it("opens without asking for its changes, which can't be read without the folder", async () => {
+    const load = vi.fn(async () => ({ files: [], diff: "x", truncated: false, ahead: 1, uncommitted: false }));
+    await expect(changesFor(gone, load)).resolves.toEqual({ files: [], diff: "", truncated: false, ahead: 0, uncommitted: false });
+    expect(load).not.toHaveBeenCalled();
+    await expect(changesFor(TASK, load)).resolves.toMatchObject({ diff: "x" });
   });
 });
 

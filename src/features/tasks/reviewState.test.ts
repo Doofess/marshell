@@ -8,6 +8,9 @@ describe("reviewReducer: the file list", () => {
   it("starts on the changes step with the first file selected", () => {
     expect(initialReview()).toEqual({ step: "changes", selected: 0 });
   });
+  it("starts on the remove step for a task whose folder is gone: there is nothing to review or merge", () => {
+    expect(initialReview(true)).toEqual({ step: "remove", selected: 0 });
+  });
   it("moves down and up with the arrow keys", () => {
     expect(run(at(0), { type: "move", key: "ArrowDown", count: 3 }).selected).toBe(1);
     expect(run(at(2), { type: "move", key: "ArrowUp", count: 3 }).selected).toBe(1);
