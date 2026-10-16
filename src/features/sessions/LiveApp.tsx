@@ -23,6 +23,7 @@ import { LiveLauncher } from "./LiveLauncher";
 import { LivePalette } from "./LivePalette";
 import { ResumeBar } from "./ResumeBar";
 import { resumeCommand } from "./resumeCommand";
+import { holdsResume, resumeDisabledReason, resumeStateOf } from "./resumeState";
 import { SessionActions, closeBarText } from "./sessionActions";
 import { Toast } from "./Toast";
 import { pruneClosed, without, type StartingTexts } from "./startingTexts";
@@ -154,16 +155,36 @@ export function LiveApp() {
   }, [settled, loaded, selectedId, view.panes, dispatch]);
   useEffect(() => () => actions.dispose(), [actions]);
   const { toast, closing, renaming, focusToken, resuming, resumed } = useSyncExternalStore(actions.subscribe, actions.getState);
-  // The Ended or Exited row each tab had when Resume was pressed. While the request is out the core already says Running, but the strip
-  // (and the button that has the focus) must stay put until the answer comes, so it is drawn from this.
-  const resumeRows = useRef(new Map<string, RowModel>());
+  // The Ended or Exited row each tab had when Resume was pressed, and how many resumes of it had come back ok by then. The core says
+  // Running before the session exists (and may say it after the answer), but the strip, and the button that has the focus, stay put
+  // until a snapshot shows the tab has really moved on (holdsResume), so it is drawn from this. Presence of an entry means "held".
+  const resumeRows = useRef(new Map<string, { row: RowModel; resumed: number }>());
   const startResume = useCallback(
     (row: RowModel) => {
-      if (row.status === "ended") resumeRows.current.set(row.id, row);
+      // One press at a time: while a tab is held its request is out, or answered and not yet seen as Running.
+      if (resumeRows.current.has(row.id)) return;
+      if (row.status === "ended") resumeRows.current.set(row.id, { row, resumed: actions.getState().resumed[row.id] ?? 0 });
       void actions.resume(row.id);
     },
     [actions],
   );
+  // The held row of a tab, or undefined once the hold is over.
+  const heldRow = useCallback(
+    (live: RowModel): RowModel | undefined => {
+      const held = resumeRows.current.get(live.id);
+      if (!held) return undefined;
+      const response = resuming.includes(live.id) ? "pending" : (resumed[live.id] ?? 0) > held.resumed ? "ok" : "refused";
+      return holdsResume(resumeStateOf(held.row), resumeStateOf(live), response) ? held.row : undefined;
+    },
+    [resuming, resumed],
+  );
+  // A hold that is over (refused, or the snapshot shows the new state) is forgotten, so the tab can be resumed again later.
+  useEffect(() => {
+    for (const id of [...resumeRows.current.keys()]) {
+      const live = rows.find((r) => r.id === id);
+      if (!live || !heldRow(live)) resumeRows.current.delete(id);
+    }
+  }, [rows, heldRow]);
   const focusedRow = rows.find((r) => r.id === focusedId);
   const resumable = focusedRow?.status === "ended";
   // A question about a session that is no longer the selected one, or is gone, has nothing left to ask.
@@ -294,11 +315,11 @@ export function LiveApp() {
     (row: RowModel, shown = true) => {
       if (!endpoint) return null;
       // While Resume is out the core already says Running, but the strip stays and the terminal waits (see `resuming` in sessionActions).
-      const held = resuming.includes(row.id) ? resumeRows.current.get(row.id) : undefined;
-      const bar = held ?? (row.status === "ended" ? row : undefined);
+      const bar = heldRow(row) ?? (row.status === "ended" ? row : undefined);
       const hasTerminal = bar === undefined || bar.phrase !== ENDED_PHRASE;
       const info = infos.find((i) => i.tab_id === row.id);
       const profile = profiles.find((p) => p.id === info?.profile_id);
+      const profileGone = info && info.profile_id !== CUSTOM_PROFILE ? resumeDisabledReason(info.profile_id, profiles) : undefined;
       return (
         <div className="resume-pane">
           {hasTerminal && (
@@ -326,14 +347,14 @@ export function LiveApp() {
               row={bar}
               command={resumeCommand(info.agent, profile?.name ?? info.profile_id)}
               folder={info.cwd}
-              disabledReason={profile || info.profile_id === CUSTOM_PROFILE ? undefined : "Its shell profile was removed."}
+              disabledReason={profileGone}
               onResume={() => startResume(bar)}
             />
           )}
         </div>
       );
     },
-    [endpoint, resuming, resumed, infos, profiles, startResume, startingTexts, onSize, launcherOpen, overlay, focusedId, focusToken, promptJump, onPromptJump, themeFor, overrideOf, terminalFont],
+    [endpoint, heldRow, resumed, infos, profiles, startResume, startingTexts, onSize, launcherOpen, overlay, focusedId, focusToken, promptJump, onPromptJump, themeFor, overrideOf, terminalFont],
   );
 
   if (error) {
