@@ -10,8 +10,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # No macOS runner until there is a Mac to check its failures on.
-        os: [windows-latest, ubuntu-24.04]
+        # Windows only for now: macOS waits for a Mac, Linux for the Ubuntu test VM.
+        # Add ubuntu-24.04 back here (and as a required check on main) when it is set up.
+        os: [windows-latest]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
