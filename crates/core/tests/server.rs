@@ -162,6 +162,20 @@ async fn settings_put_invalid_is_400() {
 }
 
 #[tokio::test]
+async fn windows_terminal_import_lists_files_as_an_array() {
+    let mut req = profiles_request("GET", None);
+    *req.uri_mut() = "/v1/import/windows-terminal".parse().unwrap();
+    let res = app().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    // Which files exist depends on this machine; each one has a path and its text.
+    let bytes = axum::body::to_bytes(res.into_body(), 4 * 1024 * 1024).await.unwrap();
+    let list: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    for file in list.as_array().unwrap() {
+        assert!(file["path"].is_string() && file["text"].is_string());
+    }
+}
+
+#[tokio::test]
 async fn settings_put_then_get_returns_it() {
     let home = tempfile::tempdir().unwrap();
     let app = app_in(home.path());

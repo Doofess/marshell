@@ -342,6 +342,14 @@ pub struct Settings {
     pub appearance: Appearance,
 }
 
+/// A file the core found for the user to import from (the core only reads it).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct FoundFile {
+    pub path: String,
+    pub text: String,
+}
+
 /// A project folder offered by the launcher.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[ts(export)]

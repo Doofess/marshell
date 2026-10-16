@@ -11,3 +11,4 @@ pub mod settings;
 pub mod shell;
 pub mod store;
 pub mod supervisor;
+pub mod wt;

@@ -125,6 +125,7 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/profiles/detected", get(profiles::detected))
         .route("/v1/profiles/integration", post(profiles::integration))
         .route("/v1/settings", get(settings::get).put(settings::put))
+        .route("/v1/import/windows-terminal", get(settings::windows_terminal))
         .route("/v1/projects", get(projects::get))
         .route("/v1/sessions", get(sessions::list).post(sessions::create))
         .route("/v1/sessions/reorder", post(sessions::reorder))
