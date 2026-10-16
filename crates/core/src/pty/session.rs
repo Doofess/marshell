@@ -1,6 +1,7 @@
 use super::buffer::{MAX_UNACKED, OutputBuffer, SCROLLBACK_BYTES};
 use super::dsr::{DSR_REPLY, DsrFilter};
 use super::osc133::{Mark, Osc133Scanner};
+use super::record::{CastHeader, Recorder};
 use portable_pty::{CommandBuilder, MasterPty, PtySize, native_pty_system};
 use std::ffi::OsString;
 use std::io::{Read, Write};
@@ -26,6 +27,9 @@ pub struct SpawnSpec {
     pub on_exit: Option<ExitCallback>,
     /// Called for each OSC 133 prompt or command mark in the output.
     pub on_mark: Option<MarkCallback>,
+    /// Where to write the asciicast recording, and the SHELL value for its header. A path that cannot
+    /// be written leaves the session running without a recording.
+    pub record: Option<(PathBuf, Option<String>)>,
 }
 
 /// What the WebSocket task should send next.
@@ -75,6 +79,7 @@ pub struct Session {
     /// Taken and called once when the child exits.
     exit_callback: Mutex<Option<ExitCallback>>,
     mark_callback: Option<MarkCallback>,
+    recorder: Option<Recorder>,
 }
 
 impl Session {
@@ -100,6 +105,19 @@ impl Session {
         let reader = pair.master.try_clone_reader()?;
         let mut writer = pair.master.take_writer()?;
         let (input_tx, input_rx) = mpsc::channel::<Vec<u8>>();
+        let recorder = spec.record.take().and_then(|(path, shell)| {
+            let header = CastHeader {
+                cols: size.cols,
+                rows: size.rows,
+                started_unix: std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map_or(0, |d| d.as_secs()),
+                shell,
+            };
+            Recorder::start(path.clone(), header)
+                .inspect_err(|e| tracing::warn!("session {id} is not recorded to {}: {e}", path.display()))
+                .ok()
+        });
 
         let session = Arc::new(Session {
             id: id.clone(),
@@ -123,6 +141,7 @@ impl Session {
             exited: Arc::new(AtomicBool::new(false)),
             exit_callback: Mutex::new(spec.on_exit.take()),
             mark_callback: spec.on_mark.take(),
+            recorder,
         });
 
         std::thread::Builder::new()
@@ -203,7 +222,7 @@ impl Session {
             }
         }
         // Scan the raw bytes: the DSR filter may hold some back, but marks never contain ESC[6n.
-        let marks = if self.mark_callback.is_some() {
+        let marks = if self.mark_callback.is_some() || self.recorder.is_some() {
             out.marks.scan(bytes)
         } else {
             Vec::new()
@@ -212,6 +231,17 @@ impl Session {
         out.buf.push(&pass);
         drop(out);
         self.notify.notify_one();
+        // The recording gets what the terminal got, after the lock is dropped.
+        if let Some(rec) = &self.recorder {
+            if !pass.is_empty() {
+                rec.output(&pass);
+            }
+            for mark in &marks {
+                if *mark == Mark::PromptStart {
+                    rec.marker("prompt");
+                }
+            }
+        }
         if let Some(cb) = &self.mark_callback {
             for mark in marks {
                 cb(mark);
@@ -268,8 +298,24 @@ impl Session {
             })?;
         }
         // vt100 0.16; on 0.15 this is `parser.set_size(rows, cols)`.
-        self.output.lock().unwrap().screen.screen_mut().set_size(rows, cols);
+        let changed = {
+            let mut out = self.output.lock().unwrap();
+            let changed = out.screen.screen().size() != (rows, cols);
+            out.screen.screen_mut().set_size(rows, cols);
+            changed
+        };
+        if changed && let Some(rec) = &self.recorder {
+            rec.resize(cols, rows);
+        }
         Ok(())
+    }
+
+    /// The file this session is recorded to. `None` when recording never started or a disk error stopped it.
+    pub fn recording_path(&self) -> Option<PathBuf> {
+        self.recorder
+            .as_ref()
+            .filter(|r| r.is_recording())
+            .map(|r| r.path().to_path_buf())
     }
 
     /// A renderer connected. Returns a generation number for `detach`.

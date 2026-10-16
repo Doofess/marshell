@@ -259,6 +259,11 @@ pub(super) async fn spawn_into_map(
     // `spec` takes the cwd; the closure below records the same folder.
     let marshell_home = st.0.home.clone();
     let project = cwd.clone();
+    let unix_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_millis());
+    let recording = crate::paths::recordings_dir(&st.0.home).join(format!("{tab_id}-{unix_ms}.cast"));
+    let shell = run.argv.first().cloned();
     let spec = SpawnSpec {
         argv: run.argv,
         cwd: (!cwd.is_empty()).then(|| PathBuf::from(cwd)),
@@ -267,6 +272,7 @@ pub(super) async fn spawn_into_map(
         rows: size.1,
         on_exit: Some(Box::new(move |code| registry.mark_exited(&exited_tab, code))),
         on_mark,
+        record: Some((recording, shell)),
     };
     let id = tab_id.to_string();
     // Spawning touches the OS (process creation) and recording writes a file:
