@@ -210,6 +210,120 @@ pub struct ProfilesDoc {
     pub default_id: String,
 }
 
+/// The app's light or dark look. Follow system tracks the operating system.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "kebab-case")]
+#[ts(export)]
+pub enum AppTheme {
+    #[default]
+    FollowSystem,
+    Dark,
+    Light,
+}
+
+/// High contrast: follow the system setting, or force it on or off.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "kebab-case")]
+#[ts(export)]
+pub enum ContrastMode {
+    #[default]
+    FollowSystem,
+    On,
+    Off,
+}
+
+/// The size of the app's own text (the terminal font size is separate).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "kebab-case")]
+#[ts(export)]
+pub enum TextSize {
+    #[default]
+    Default,
+    Large,
+    Larger,
+}
+
+/// The terminal's font. `family: None` means the bundled font.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(default)]
+#[ts(export)]
+pub struct TerminalFont {
+    pub family: Option<String>,
+    pub size: u16,
+}
+
+impl Default for TerminalFont {
+    fn default() -> Self {
+        Self { family: None, size: 13 }
+    }
+}
+
+/// A terminal colour scheme. Every colour is `#rrggbb`, lower case.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(default)]
+#[ts(export)]
+pub struct TerminalColors {
+    pub foreground: String,
+    pub background: String,
+    pub cursor: String,
+    pub selection: String,
+    /// The 16 ANSI colours, black first.
+    pub ansi: Vec<String>,
+}
+
+/// A colour scheme the user imported from another terminal.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(default)]
+#[ts(export)]
+pub struct ImportedTheme {
+    pub id: String,
+    pub name: String,
+    /// "windows-terminal", "iterm2" or "vscode".
+    pub source: String,
+    pub colors: TerminalColors,
+}
+
+/// How the app and its terminals look.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(default)]
+#[ts(export)]
+pub struct Appearance {
+    pub theme: AppTheme,
+    /// A preset name (amber, blue, indigo, violet, magenta, cyan, teal, slate) or `#rrggbb`.
+    pub accent: String,
+    pub contrast: ContrastMode,
+    pub text_size: TextSize,
+    /// "follow-app", "dark", "light" or the id of an imported theme.
+    pub terminal_theme: String,
+    pub terminal_font: TerminalFont,
+    /// Lift terminal text that would be hard to read against its background.
+    pub contrast_protection: bool,
+    pub imported_themes: Vec<ImportedTheme>,
+}
+
+impl Default for Appearance {
+    fn default() -> Self {
+        Self {
+            theme: AppTheme::default(),
+            accent: "amber".into(),
+            contrast: ContrastMode::default(),
+            text_size: TextSize::default(),
+            terminal_theme: "follow-app".into(),
+            terminal_font: TerminalFont::default(),
+            contrast_protection: true,
+            imported_themes: Vec::new(),
+        }
+    }
+}
+
+/// GET/PUT /v1/settings body.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(default)]
+#[ts(export)]
+pub struct Settings {
+    pub appearance: Appearance,
+}
+
 /// A project folder offered by the launcher.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[ts(export)]

@@ -5,6 +5,7 @@ mod profiles;
 mod projects;
 mod pty_ws;
 mod sessions;
+mod settings;
 
 use crate::profiles::detect::{Probe, detect_profiles};
 use crate::registry::Registry;
@@ -12,7 +13,7 @@ use crate::{auth, paths};
 use axum::http::{HeaderValue, Method, header};
 use axum::routing::{get, patch, post};
 use axum::{Json, Router};
-use marshell_protocol::api::{Endpoint, Health, Platform, Profile, ProfilesDoc};
+use marshell_protocol::api::{Endpoint, Health, Platform, Profile, ProfilesDoc, Settings};
 use marshell_protocol::brand;
 use std::collections::HashMap;
 use std::net::Ipv4Addr;
@@ -45,6 +46,8 @@ struct Inner {
     detected: Vec<Profile>,
     /// Detected profiles merged with `profiles.json`.
     profiles: Mutex<ProfilesDoc>,
+    /// The contents of `settings.json`, or the defaults.
+    settings: Mutex<Settings>,
     /// Open and recently closed sessions. Shared with each session's exit callback.
     registry: Arc<Registry>,
     // Kept here so every handler reaches it through one State.
@@ -56,6 +59,7 @@ struct Inner {
 impl AppState {
     pub fn new(token: String, port: u16, allowed_origins: Vec<String>, home: PathBuf, detected: Vec<Profile>) -> Self {
         let profiles = crate::profiles::store::load(&home, detected.clone());
+        let settings = crate::settings::load(&home);
         let shell_dir = match crate::shell::install(&home) {
             Ok(dir) => Some(dir),
             Err(err) => {
@@ -71,6 +75,7 @@ impl AppState {
             shell_dir,
             detected,
             profiles: Mutex::new(profiles),
+            settings: Mutex::new(settings),
             registry: Arc::new(Registry::new()),
             sessions: Mutex::new(HashMap::new()),
             agent_on_path: crate::profiles::detect::command_on_path,
@@ -119,6 +124,7 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/profiles", get(profiles::get).put(profiles::put))
         .route("/v1/profiles/detected", get(profiles::detected))
         .route("/v1/profiles/integration", post(profiles::integration))
+        .route("/v1/settings", get(settings::get).put(settings::put))
         .route("/v1/projects", get(projects::get))
         .route("/v1/sessions", get(sessions::list).post(sessions::create))
         .route("/v1/sessions/reorder", post(sessions::reorder))

@@ -140,6 +140,45 @@ async fn profiles_put_invalid_is_400() {
     assert!(!home.path().join("profiles.json").exists());
 }
 
+fn settings_request(method: &str, body: Option<serde_json::Value>) -> Request<Body> {
+    let mut req = profiles_request(method, body);
+    *req.uri_mut() = "/v1/settings".parse().unwrap();
+    req
+}
+
+#[tokio::test]
+async fn settings_put_invalid_is_400() {
+    let home = tempfile::tempdir().unwrap();
+    let app = app_in(home.path());
+    let mut settings = json_body(app.clone().oneshot(settings_request("GET", None)).await.unwrap()).await;
+    assert_eq!(settings["appearance"]["accent"], "amber");
+    settings["appearance"]["accent"] = "pink".into();
+    let res = app.oneshot(settings_request("PUT", Some(settings))).await.unwrap();
+    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+    let bytes = axum::body::to_bytes(res.into_body(), 1024).await.unwrap();
+    assert!(String::from_utf8_lossy(&bytes).contains("accent"));
+    assert!(!home.path().join("settings.json").exists());
+}
+
+#[tokio::test]
+async fn settings_put_then_get_returns_it() {
+    let home = tempfile::tempdir().unwrap();
+    let app = app_in(home.path());
+    let body = serde_json::json!({ "appearance": { "theme": "dark", "accent": "#3366cc", "text_size": "large" } });
+    let res = app.clone().oneshot(settings_request("PUT", Some(body))).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let after = json_body(app.oneshot(settings_request("GET", None)).await.unwrap()).await;
+    assert_eq!(after["appearance"]["theme"], "dark");
+    assert_eq!(after["appearance"]["accent"], "#3366cc");
+    assert_eq!(after["appearance"]["text_size"], "large");
+    // Fields the body left out come back as their defaults.
+    assert_eq!(after["appearance"]["terminal_theme"], "follow-app");
+    let saved: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(home.path().join("settings.json")).unwrap()).unwrap();
+    assert_eq!(saved["version"], 1);
+    assert_eq!(saved["appearance"]["accent"], "#3366cc");
+}
+
 fn get(path: &str) -> axum::http::request::Builder {
     Request::builder()
         .uri(path)
