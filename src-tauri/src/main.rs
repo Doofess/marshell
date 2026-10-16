@@ -79,7 +79,7 @@ fn disable_browser_shortcuts(window: &tauri::WebviewWindow) {
                     .CoreWebView2()
                     .and_then(|core| core.Settings())
                     .and_then(|settings| settings.cast::<ICoreWebView2Settings3>())
-                    .and_then(|settings| settings.SetAreBrowserAcceleratorKeysEnabled(false.into()))
+                    .and_then(|settings| settings.SetAreBrowserAcceleratorKeysEnabled(false))
             };
             if let Err(e) = off {
                 eprintln!("Marshell: the browser's own shortcuts stay on: {e}");
