@@ -1102,8 +1102,10 @@ async fn input_types_text_without_enter() {
 // ---- removing a task ----
 
 fn remove_req(task: &marshell_protocol::api::Task, sessions: u32) -> RemoveRequest {
+    let plan = tasks::plan_remove(task, sessions).0;
     RemoveRequest {
-        commands: tasks::plan_remove(task, sessions).0.commands,
+        commands: plan.commands,
+        warnings: plan.warnings,
     }
 }
 
@@ -1242,6 +1244,7 @@ async fn remove_closes_sessions_and_deletes_everything() {
 
     let req = RemoveRequest {
         commands: serde_json::from_value(plan["commands"].clone()).unwrap(),
+        warnings: serde_json::from_value(plan["warnings"].clone()).unwrap(),
     };
     let (st, t) = (state.clone(), task.clone());
     tokio::task::spawn_blocking(move || tasks::remove(&st, &t, &req))
@@ -1346,7 +1349,7 @@ fn remove_failure_keeps_the_task() {
     let (home, task) = new_task(&tmp);
     let dir = PathBuf::from(&task.path);
     // std opens files so that they can be deleted; share_mode(0) forbids it.
-    let _held = std::fs::OpenOptions::new()
+    let held = std::fs::OpenOptions::new()
         .write(true)
         .create(true)
         .truncate(true)
@@ -1357,8 +1360,25 @@ fn remove_failure_keeps_the_task() {
 
     let err = tasks::remove(&state_in(&home), &task, &shown).unwrap_err();
     assert!(err.starts_with("Couldn't remove the worktree. Git said: "), "{err}");
+    // The folder that is still there is named.
+    assert!(
+        err.ends_with(&format!("The folder {} is left on disk.", task.path)),
+        "{err}"
+    );
     assert_eq!(tasks::list(&home).len(), 1);
     assert!(branch_is_there(&task));
+
+    // Git may have let go of the worktree before it failed on the folder. Once the file is free,
+    // the task can still be removed, from whatever state git is in now.
+    drop(held);
+    let (plan, _) = tasks::plan_remove(&task, 0);
+    let again = RemoveRequest {
+        commands: plan.commands.clone(),
+        warnings: plan.warnings.clone(),
+    };
+    tasks::remove(&state_in(&home), &task, &again).unwrap_or_else(|e| panic!("{e} for {plan:?}"));
+    assert!(tasks::list(&home).is_empty());
+    assert!(!branch_is_there(&task));
 }
 
 #[tokio::test]
@@ -1374,7 +1394,7 @@ async fn remove_routes_plan_remove_refuse_and_404() {
         .oneshot(api(
             "POST",
             &route("remove"),
-            Some(serde_json::json!({ "commands": ["git status"] })),
+            Some(serde_json::json!({ "commands": ["git status"], "warnings": [] })),
         ))
         .await
         .unwrap();
@@ -1397,7 +1417,7 @@ async fn remove_routes_plan_remove_refuse_and_404() {
         .oneshot(api(
             "POST",
             &route("remove"),
-            Some(serde_json::json!({ "commands": plan["commands"] })),
+            Some(serde_json::json!({ "commands": plan["commands"], "warnings": plan["warnings"] })),
         ))
         .await
         .unwrap();
@@ -1406,9 +1426,259 @@ async fn remove_routes_plan_remove_refuse_and_404() {
 
     for (path, body) in [
         ("/v1/tasks/nope/remove/plan", None),
-        ("/v1/tasks/nope/remove", Some(serde_json::json!({ "commands": [] }))),
+        (
+            "/v1/tasks/nope/remove",
+            Some(serde_json::json!({ "commands": [], "warnings": [] })),
+        ),
     ] {
         let res = app.clone().oneshot(api("POST", path, body)).await.unwrap();
         assert_eq!(res.status(), StatusCode::NOT_FOUND, "{path}");
     }
+}
+
+// ---- removing a task: fix round 1 ----
+
+const CHANGED: &str = "The task changed while you were reading the commands. Review them again.";
+
+#[test]
+fn remove_plan_fails_closed_when_it_cannot_tell() {
+    let tmp = spaced_tmp();
+    let (_home, task) = new_task(&tmp);
+    let repo = PathBuf::from(&task.repo_root);
+    // The base branch is renamed, so "commits not on main" can't be asked.
+    assert!(run(&repo, &["branch", "-m", "main", "trunk"]).unwrap().ok);
+
+    let (plan, _) = tasks::plan_remove(&task, 0);
+    assert_eq!(
+        plan.warnings,
+        vec![
+            "Couldn't tell whether marshell/fix-login has commits that aren't on main. Removing deletes the branch."
+                .to_string()
+        ]
+    );
+}
+
+#[test]
+fn remove_refuses_when_what_would_be_lost_changed() {
+    let tmp = spaced_tmp();
+    let (home, task) = new_task(&tmp);
+    let dir = PathBuf::from(&task.path);
+    let shown = remove_req(&task, 0);
+    assert!(shown.warnings.is_empty());
+    // A commit lands: the tree is still clean and the commands are the same, but the branch now
+    // holds work the user did not see warned about.
+    std::fs::write(dir.join("b.txt"), "b\n").unwrap();
+    commit_all(&dir, "add b");
+    assert_eq!(tasks::plan_remove(&task, 0).0.commands, shown.commands);
+
+    let err = tasks::remove(&state_in(&home), &task, &shown).unwrap_err();
+    assert_eq!(err, CHANGED);
+    assert!(dir.exists());
+    assert!(branch_is_there(&task));
+    assert_eq!(tasks::list(&home).len(), 1);
+}
+
+/// A post-commit hook that runs `body` once, on the first commit anywhere in the repository.
+fn install_once_hook(repo: &Path, marker: &Path, body: &str) {
+    let marker = marker.to_string_lossy().replace('\\', "/");
+    let script = format!(
+        "#!/bin/sh\nunset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE\n[ -e \"{marker}\" ] && exit 0\n: > \"{marker}\"\n{body}\n"
+    );
+    install_hook(repo, "post-commit", &script);
+}
+
+fn merge_with_remove_after(
+    late: impl Fn(&Path) -> String,
+) -> (tempfile::TempDir, marshell_protocol::api::Task, PathBuf, MergeOutcome) {
+    let tmp = spaced_tmp();
+    let (home, task) = new_task(&tmp);
+    let dir = PathBuf::from(&task.path);
+    let repo = PathBuf::from(&task.repo_root);
+    std::fs::write(dir.join("b.txt"), "b\n").unwrap();
+    commit_all(&dir, "add b");
+    let mut req = merge_req("Fix login");
+    req.remove = true;
+    req.commands = tasks::plan_merge(&task, &req).0.commands;
+    // Something lands in the task folder after the merge's own commit.
+    install_once_hook(&repo, &base(&tmp).join("ran"), &late(&dir));
+
+    let outcome = tasks::merge(&state_in(&home), &task, &req);
+    assert_eq!(tasks::list(&home).len(), 1);
+    (tmp, task, dir, outcome)
+}
+
+#[test]
+fn merge_keeps_the_task_when_its_branch_moved_before_the_removal() {
+    let (_tmp, task, dir, outcome) = merge_with_remove_after(|dir| {
+        format!(
+            "git -C \"{}\" commit --allow-empty -q -m late",
+            dir.to_string_lossy().replace('\\', "/")
+        )
+    });
+    // The merge happened; the new commit is not in it, so nothing is deleted.
+    assert_eq!(outcome, MergeOutcome::Merged { removed: false });
+    assert!(dir.exists());
+    assert!(branch_is_there(&task));
+    assert_eq!(run(&dir, &["log", "-1", "--format=%s"]).unwrap().stdout.trim(), "late");
+}
+
+#[test]
+fn merge_keeps_the_task_when_its_folder_got_dirty_before_the_removal() {
+    let (_tmp, task, dir, outcome) =
+        merge_with_remove_after(|dir| format!("echo late > \"{}/late.txt\"", dir.to_string_lossy().replace('\\', "/")));
+    assert_eq!(outcome, MergeOutcome::Merged { removed: false });
+    assert!(dir.join("late.txt").exists());
+    assert!(branch_is_there(&task));
+}
+
+#[tokio::test]
+async fn remove_closes_the_shell_panel_in_the_task_folder() {
+    let tmp = spaced_tmp();
+    let (home, task) = new_task(&tmp);
+    let repo = PathBuf::from(&task.repo_root);
+    let state = state_in(&home);
+    let app = router(state.clone());
+    let sub = Path::new(&task.path).join("sub");
+    std::fs::create_dir_all(&sub).unwrap();
+    let body = serde_json::json!({ "cwd": sub.to_string_lossy(), "cols": 80, "rows": 24 });
+    let res = app
+        .clone()
+        .oneshot(api("POST", "/v1/shell-panel", Some(body)))
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let panel = json_of(res).await["tab_id"].as_str().unwrap().to_string();
+    assert!(state.session(&panel).is_some());
+
+    let (st, t) = (state.clone(), task.clone());
+    let plan = tokio::task::spawn_blocking(move || tasks::plan_remove(&t, tasks::running_sessions(&st, &t)).0)
+        .await
+        .unwrap();
+    assert_eq!(plan.sessions, 1);
+    assert_eq!(
+        plan.warnings,
+        vec!["Closes 1 session running in this worktree.".to_string()]
+    );
+
+    let req = RemoveRequest {
+        commands: plan.commands,
+        warnings: plan.warnings,
+    };
+    let (st, t) = (state.clone(), task.clone());
+    tokio::task::spawn_blocking(move || tasks::remove(&st, &t, &req))
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(state.session(&panel).is_none());
+    assert!(!Path::new(&task.path).exists());
+    // The panel is free again.
+    let res = app
+        .clone()
+        .oneshot(api("POST", "/v1/shell-panel/adopt", None))
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::NOT_FOUND);
+
+    // A panel somewhere else is left alone.
+    let elsewhere = serde_json::json!({ "cwd": repo.to_string_lossy(), "cols": 80, "rows": 24 });
+    let res = app
+        .clone()
+        .oneshot(api("POST", "/v1/shell-panel", Some(elsewhere)))
+        .await
+        .unwrap();
+    let other = json_of(res).await["tab_id"].as_str().unwrap().to_string();
+    assert!(state.session(&other).is_some());
+}
+
+#[test]
+fn only_marshell_branches_are_removed() {
+    let tmp = spaced_tmp();
+    let (home, mut task) = new_task(&tmp);
+    task.branch = "feature/other".into();
+
+    let (plan, steps) = tasks::plan_remove(&task, 0);
+    assert!(plan.commands.is_empty());
+    assert!(steps.is_empty());
+    assert_eq!(
+        plan.warnings,
+        vec!["Marshell only removes its own marshell/ branches.".to_string()]
+    );
+    let shown = RemoveRequest {
+        commands: plan.commands,
+        warnings: plan.warnings,
+    };
+    let err = tasks::remove(&state_in(&home), &task, &shown).unwrap_err();
+    assert_eq!(err, "Marshell only removes its own marshell/ branches.");
+    assert!(Path::new(&task.path).exists());
+
+    // A merge asked to remove it merges and leaves the branch alone.
+    let mut req = merge_req("Fix login");
+    req.remove = true;
+    assert_eq!(tasks::plan_merge(&task, &req).0.commands.len(), 2);
+}
+
+#[test]
+fn remove_finishes_when_the_folder_is_already_gone() {
+    let tmp = spaced_tmp();
+    let (home, task) = new_task(&tmp);
+    let repo = PathBuf::from(&task.repo_root);
+
+    // Deleted by hand: git still lists the worktree, as prunable.
+    std::fs::remove_dir_all(&task.path).unwrap();
+    let (plan, steps) = tasks::plan_remove(&task, 0);
+    assert_eq!(
+        plan.commands,
+        vec![
+            format!("git -C \"{}\" worktree prune", task.repo_root),
+            format!("git -C \"{}\" branch -D marshell/fix-login", task.repo_root),
+        ]
+    );
+    assert_eq!(steps.iter().map(display).collect::<Vec<_>>(), plan.commands);
+    assert!(plan.warnings.is_empty(), "{:?}", plan.warnings);
+    tasks::remove(&state_in(&home), &task, &remove_req(&task, 0)).unwrap();
+    assert!(!branch_is_there(&task));
+    assert!(tasks::list(&home).is_empty());
+
+    // Deleted by hand and already pruned: only the branch is left.
+    let again = tasks::create(&home, &request(&repo, "Second"), 2).unwrap();
+    std::fs::remove_dir_all(&again.path).unwrap();
+    assert!(run(&repo, &["worktree", "prune"]).unwrap().ok);
+    let (plan, _) = tasks::plan_remove(&again, 0);
+    assert_eq!(
+        plan.commands,
+        vec![format!("git -C \"{}\" branch -D marshell/second", again.repo_root)]
+    );
+    tasks::remove(&state_in(&home), &again, &remove_req(&again, 0)).unwrap();
+    assert!(!branch_is_there(&again));
+    assert!(tasks::list(&home).is_empty());
+}
+
+#[test]
+fn remove_finishes_when_git_no_longer_lists_the_worktree() {
+    let tmp = spaced_tmp();
+    let (home, task) = new_task(&tmp);
+    let repo = PathBuf::from(&task.repo_root);
+    // What a half-done `worktree remove` leaves: git's record is gone, the folder is not.
+    std::fs::remove_dir_all(repo.join(".git").join("worktrees")).unwrap();
+    assert!(Path::new(&task.path).exists());
+
+    let (plan, _) = tasks::plan_remove(&task, 0);
+    assert_eq!(
+        plan.commands,
+        vec![
+            format!("git -C \"{}\" worktree prune", task.repo_root),
+            format!("git -C \"{}\" branch -D marshell/fix-login", task.repo_root),
+        ]
+    );
+    assert_eq!(
+        plan.warnings,
+        vec![format!(
+            "Git no longer lists the worktree. Its folder {} is left on disk.",
+            task.path
+        )]
+    );
+    tasks::remove(&state_in(&home), &task, &remove_req(&task, 0)).unwrap();
+    assert!(!branch_is_there(&task));
+    assert!(tasks::list(&home).is_empty());
+    assert!(Path::new(&task.path).exists());
 }

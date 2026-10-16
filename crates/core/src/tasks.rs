@@ -406,10 +406,10 @@ pub fn plan_merge(task: &Task, req: &MergeRequest) -> (MergePlan, Vec<GitStep>) 
     }
     steps.push(step(&task.repo_root, &["merge", "--squash", &task.branch]));
     steps.push(step(&task.repo_root, &["commit", "-q", "-m", message]));
-    if req.remove {
+    if req.remove && own_branch(task) {
         // By then the merge has committed the folder's work and the branch is in the base, so
         // the removal is the plain one whatever the folder holds now.
-        steps.extend(removal_steps(task, false, true, true));
+        steps.extend(removal_steps(task, Worktree::Remove { force: false }, true));
     }
 
     let blocker = merge_blocker(task, message).unwrap_or_else(Some);
@@ -457,7 +457,7 @@ pub fn merge(st: &AppState, task: &Task, req: &MergeRequest) -> MergeOutcome {
     }
     let repo = Path::new(&task.repo_root);
     // The removal steps (when asked for) come last, after the base checkout's squash and commit.
-    let removal_len = if req.remove { 2 } else { 0 };
+    let removal_len = if req.remove && own_branch(task) { 2 } else { 0 };
     let (merge_steps, removal_steps) = steps.split_at(steps.len() - removal_len);
     let (worktree_steps, base_steps) = merge_steps.split_at(merge_steps.len() - 2);
 
@@ -467,6 +467,9 @@ pub fn merge(st: &AppState, task: &Task, req: &MergeRequest) -> MergeOutcome {
             git::said(&f.output)
         ));
     }
+
+    // The branch as the merge is about to take it. A removal only goes ahead if it is still here.
+    let merged_tip = branch_tip(repo, &task.branch);
 
     if let Err(f) = git::run_steps(&base_steps[..1]) {
         // A conflict leaves the files git couldn't merge in the index; list them, then undo.
@@ -505,14 +508,25 @@ pub fn merge(st: &AppState, task: &Task, req: &MergeRequest) -> MergeOutcome {
     }
 
     // The merge is done. When the removal fails the merge still stands, so it is not a failure.
-    let removed = req.remove
-        && match run_removal(st, task, removal_steps) {
-            Ok(()) => true,
-            Err(reason) => {
-                tracing::warn!("merged {}, but removing it failed: {reason}", task.branch);
-                false
+    let removed = !removal_steps.is_empty() && {
+        // Work that reached the task after the merge took its branch is not in the merge. Deleting
+        // the branch or the folder would lose it, and the user never saw that in the commands.
+        let moved = merged_tip.is_none() || branch_tip(repo, &task.branch) != merged_tip;
+        let dirty = worktree_dirty(Path::new(&task.path)).unwrap_or(true);
+        if moved || dirty {
+            tracing::warn!("merged {}, but it changed since, so it was not removed", task.branch);
+            false
+        } else {
+            close_sessions(st, task);
+            match run_removal(st, task, removal_steps) {
+                Ok(()) => true,
+                Err(reason) => {
+                    tracing::warn!("merged {}, but removing it failed: {reason}", task.branch);
+                    false
+                }
             }
-        };
+        }
+    };
     MergeOutcome::Merged { removed }
 }
 
@@ -526,24 +540,71 @@ fn no_changes(task: &Task) -> String {
 
 /// The git steps that remove a task: its worktree (`--force` when it holds work that git would
 /// refuse to delete), then its branch. Both run in the repository, not in the folder going away.
-fn removal_steps(task: &Task, force: bool, worktree: bool, branch: bool) -> Vec<GitStep> {
+fn removal_steps(task: &Task, worktree: Worktree, branch: bool) -> Vec<GitStep> {
     let step = |args: Vec<String>| GitStep {
         dir: PathBuf::from(&task.repo_root),
         args,
     };
     let mut steps = Vec::new();
-    if worktree {
-        let mut args = vec!["worktree".to_string(), "remove".to_string()];
-        if force {
-            args.push("--force".into());
+    match worktree {
+        Worktree::Remove { force } => {
+            let mut args = vec!["worktree".to_string(), "remove".to_string()];
+            if force {
+                args.push("--force".into());
+            }
+            args.push(task.path.clone());
+            steps.push(step(args));
         }
-        args.push(task.path.clone());
-        steps.push(step(args));
+        Worktree::Prune => steps.push(step(vec!["worktree".into(), "prune".into()])),
+        Worktree::Keep => {}
     }
     if branch {
         steps.push(step(vec!["branch".into(), "-D".into(), task.branch.clone()]));
     }
     steps
+}
+
+/// What the removal does about the worktree.
+#[derive(Clone, Copy)]
+enum Worktree {
+    /// Nothing is left of it.
+    Keep,
+    /// Git lists it and its folder is there.
+    Remove { force: bool },
+    /// Git's record of it is stale (its folder is gone), or git has already dropped the record.
+    Prune,
+}
+
+/// Marshell only creates `marshell/` branches, and only removes those.
+const OWN_BRANCH_ONLY: &str = "Marshell only removes its own marshell/ branches.";
+
+fn own_branch(task: &Task) -> bool {
+    task.branch.starts_with("marshell/")
+}
+
+/// Whether git lists a worktree at the task's folder. Git prints the paths with forward slashes.
+fn worktree_listed(task: &Task) -> Result<bool, String> {
+    let out =
+        git::run(Path::new(&task.repo_root), &["worktree", "list", "--porcelain"]).map_err(|e| format!("{e:#}"))?;
+    if !out.ok {
+        return Err(git::said(&out).to_string());
+    }
+    let slashed = |p: &str| p.replace('\\', "/").trim_start_matches("//?/").to_string();
+    let ours = slashed(&task.path);
+    Ok(out
+        .stdout
+        .lines()
+        .filter_map(|l| l.strip_prefix("worktree "))
+        .any(|p| projects::same_path(&slashed(p), &ours)))
+}
+
+/// The commit the branch points at, when it can be read.
+fn branch_tip(repo: &Path, branch: &str) -> Option<String> {
+    let reference = format!("refs/heads/{branch}");
+    let out = git::run(repo, &["rev-parse", "--verify", "--quiet", &reference])
+        .ok()
+        .filter(|o| o.ok)?;
+    Some(out.stdout.trim().to_string())
 }
 
 /// How many commits the branch has that its base lacks, when the base doesn't already hold the
@@ -563,18 +624,43 @@ fn unmerged_commits(task: &Task) -> Option<u32> {
 /// What removing the task would run and lose, with the git steps that run it. `open_sessions` is
 /// how many running sessions the removal would close. The steps shown are the steps run.
 pub fn plan_remove(task: &Task, open_sessions: u32) -> (RemovePlan, Vec<GitStep>) {
+    if !own_branch(task) {
+        let plan = RemovePlan {
+            commands: Vec::new(),
+            warnings: vec![OWN_BRANCH_ONLY.to_string()],
+            sessions: 0,
+        };
+        return (plan, Vec::new());
+    }
     let dir = Path::new(&task.path);
     let repo = Path::new(&task.repo_root);
     // A folder or branch that is already gone leaves nothing to run for it, so a removal that
     // stopped halfway can be finished.
     let folder_there = dir.exists();
     let branch_there = branch_exists(repo, &task.branch).unwrap_or(true);
-    let dirty = folder_there && worktree_dirty(dir).unwrap_or(false);
-    let steps = removal_steps(task, dirty, folder_there, branch_there);
+    // When git can't say, it is taken as listed: the plain removal is the one that fails loudly.
+    let listed = worktree_listed(task).unwrap_or(true);
+    let worktree = match (folder_there, listed) {
+        (true, true) => Worktree::Remove {
+            force: worktree_dirty(dir).unwrap_or(false),
+        },
+        // A half-done removal: git let go of the worktree but the folder stayed behind.
+        (true, false) => Worktree::Prune,
+        // Deleted by hand: git still lists it as prunable.
+        (false, true) => Worktree::Prune,
+        (false, false) => Worktree::Keep,
+    };
+    let steps = removal_steps(task, worktree, branch_there);
 
     let mut warnings = Vec::new();
-    if dirty {
+    if matches!(worktree, Worktree::Remove { force: true }) {
         warnings.push("The worktree has uncommitted changes. Removing deletes them.".to_string());
+    }
+    if folder_there && !listed {
+        warnings.push(format!(
+            "Git no longer lists the worktree. Its folder {} is left on disk.",
+            task.path
+        ));
     }
     if branch_there {
         match unmerged_commits(task) {
@@ -586,7 +672,12 @@ pub fn plan_remove(task: &Task, open_sessions: u32) -> (RemovePlan, Vec<GitStep>
                 "{} has {n} commits that aren't on {}. Removing deletes them.",
                 task.branch, task.base_branch
             )),
-            _ => {}
+            Some(_) => {}
+            // Fail closed: if git can't say, the user is told the branch may hold unseen work.
+            None => warnings.push(format!(
+                "Couldn't tell whether {} has commits that aren't on {}. Removing deletes the branch.",
+                task.branch, task.base_branch
+            )),
         }
     }
     match open_sessions {
@@ -610,7 +701,23 @@ fn in_task(task: &Task, cwd: &str) -> bool {
 /// How many sessions with a running process are in the task's folder.
 pub fn running_sessions(st: &AppState, task: &Task) -> u32 {
     let rows = st.registry().sessions_where(|cwd| in_task(task, cwd));
-    rows.iter().filter(|s| s.state == SessionState::Running).count() as u32
+    let tabs = rows.iter().filter(|s| s.state == SessionState::Running).count() as u32;
+    // The shell panel has no registry row, but its shell holds the folder the same way.
+    tabs + u32::from(st.panel_running_where(|cwd| in_task(task, cwd)))
+}
+
+/// Closes every session in the task's folder, the shell panel's included, and waits for their
+/// processes to die so they no longer hold the folder.
+fn close_sessions(st: &AppState, task: &Task) {
+    // The rows go first, so a dying session's exit callback finds nothing to update.
+    let mut tabs = st.registry().drop_where(|cwd| in_task(task, cwd));
+    tabs.extend(st.take_panel_where(|cwd| in_task(task, cwd)));
+    for tab in tabs {
+        if let Some(session) = st.remove_session(&tab) {
+            // Blocking (we are on a blocking thread), unlike the async kill.
+            session.force_kill();
+        }
+    }
 }
 
 /// Windows lets go of a folder a just-killed process held a moment later, so the worktree step
@@ -618,22 +725,21 @@ pub fn running_sessions(st: &AppState, task: &Task) -> u32 {
 const REMOVE_RETRIES: u32 = 5;
 const REMOVE_RETRY_WAIT: std::time::Duration = std::time::Duration::from_millis(200);
 
-/// Closes the task's sessions, runs the removal steps, and forgets the task. The task is forgotten
-/// only when every step worked. The caller holds `MERGE_LOCK`; `TASKS_LOCK` is taken only for the
-/// last write, not while git runs.
+/// Runs the removal steps and forgets the task. The task is forgotten only when every step worked.
+/// The sessions are closed already. The caller holds `MERGE_LOCK`; `TASKS_LOCK` is taken only for
+/// the last write, not while git runs.
 fn run_removal(st: &AppState, task: &Task, steps: &[GitStep]) -> Result<(), String> {
-    // The rows go first, so a dying session's exit callback finds nothing to update.
-    for tab in st.registry().drop_where(|cwd| in_task(task, cwd)) {
-        if let Some(session) = st.remove_session(&tab) {
-            // Waits for the process tree to die (we are on a blocking thread), so it no longer
-            // holds the folder when git deletes it.
-            session.force_kill();
+    let leftover = |reason: String| {
+        if Path::new(&task.path).exists() {
+            format!("{reason} The folder {} is left on disk.", task.path)
+        } else {
+            reason
         }
-    }
-    let repo = Path::new(&task.repo_root);
+    };
     for step in steps {
         let step = std::slice::from_ref(step);
-        if step[0].args.first().map(String::as_str) == Some("worktree") {
+        let args: Vec<&str> = step[0].args.iter().map(String::as_str).collect();
+        if args.starts_with(&["worktree", "remove"]) {
             // The first failure is the one that says why; after a half-done removal git's later
             // answers are about the leftovers ("is not a working tree").
             let mut first_failure = None;
@@ -652,21 +758,25 @@ fn run_removal(st: &AppState, task: &Task, steps: &[GitStep]) -> Result<(), Stri
                 }
             }
             if let Some(f) = first_failure {
-                return Err(format!(
+                return Err(leftover(format!(
                     "Couldn't remove the worktree. Git said: {}",
                     git::said(&f.output)
-                ));
+                )));
             }
-        } else {
-            // Not shown: housekeeping, so a worktree whose folder is already gone doesn't keep the
-            // branch "checked out".
-            let _ = git::run(repo, &["worktree", "prune"]);
+        } else if args.starts_with(&["worktree", "prune"]) {
             git::run_steps(step).map_err(|f| {
-                format!(
+                leftover(format!(
+                    "Couldn't clear git's record of the worktree. Git said: {}",
+                    git::said(&f.output)
+                ))
+            })?;
+        } else {
+            git::run_steps(step).map_err(|f| {
+                leftover(format!(
                     "Couldn't delete the branch {}. Git said: {}",
                     task.branch,
                     git::said(&f.output)
-                )
+                ))
             })?;
         }
     }
@@ -683,9 +793,26 @@ fn run_removal(st: &AppState, task: &Task, steps: &[GitStep]) -> Result<(), Stri
 /// again first and stops when the commands differ from the ones the user was shown.
 pub fn remove(st: &AppState, task: &Task, req: &RemoveRequest) -> Result<(), String> {
     let _guard = MERGE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    let (plan, steps) = plan_remove(task, running_sessions(st, task));
-    if plan.commands != req.commands {
+    if !own_branch(task) {
+        return Err(OWN_BRANCH_ONLY.into());
+    }
+    let (plan, _) = plan_remove(task, running_sessions(st, task));
+    if plan.commands != req.commands || plan.warnings != req.warnings {
+        return Err(CHANGED.into());
+    }
+    close_sessions(st, task);
+    // Closing the sessions can change what the folder holds. The user saw the plan with the
+    // "Closes N sessions" line, and that line is the only one allowed to be gone now. When this
+    // refuses, the sessions are already closed.
+    let (plan, steps) = plan_remove(task, 0);
+    let seen: Vec<&String> = req.warnings.iter().filter(|w| !is_sessions_line(w)).collect();
+    if plan.commands != req.commands || plan.warnings.iter().ne(seen) {
         return Err(CHANGED.into());
     }
     run_removal(st, task, &steps)
+}
+
+/// The "Closes N session(s) running in this worktree." warning.
+fn is_sessions_line(warning: &str) -> bool {
+    warning.starts_with("Closes ") && warning.ends_with(" running in this worktree.")
 }

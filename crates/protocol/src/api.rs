@@ -327,6 +327,9 @@ pub struct RemovePlan {
 pub struct RemoveRequest {
     /// The commands the user was shown. Removing refuses to run when planning again gives others.
     pub commands: Vec<String>,
+    /// The warnings the user was shown, under the same rule: what would be lost is part of what
+    /// they agreed to.
+    pub warnings: Vec<String>,
 }
 
 /// POST /v1/sessions/{tab}/input body.

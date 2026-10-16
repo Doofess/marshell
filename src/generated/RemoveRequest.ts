@@ -7,4 +7,9 @@ export type RemoveRequest = {
 /**
  * The commands the user was shown. Removing refuses to run when planning again gives others.
  */
-commands: Array<string>, };
+commands: Array<string>, 
+/**
+ * The warnings the user was shown, under the same rule: what would be lost is part of what
+ * they agreed to.
+ */
+warnings: Array<string>, };
