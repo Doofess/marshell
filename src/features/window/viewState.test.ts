@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { ViewLayout } from "../../generated/ViewLayout";
 import { RATIO } from "./splitLayout";
-import { type ViewAction, type ViewState, checkedView, fillsEmptyPane, focusedIndex, ratiosOf, toRatioList, toSaved, viewReducer } from "./viewState";
+import { type ViewAction, type ViewState, checkedView, fillsEmptyPane, focusedIndex, railToggle, ratiosOf, sidebarPrefOf, toRatioList, toSaved, viewReducer } from "./viewState";
 
 const base: ViewLayout = {
   panes: ["a"],
@@ -182,5 +182,19 @@ describe("focusedIndex", () => {
     expect(focusedIndex(["a", "b", "c"], 0, 2)).toBe(2);
     expect(focusedIndex(["a", "b"], 0, 3)).toBe(0);
     expect(focusedIndex(["a", null], 0, 1)).toBe(0);
+  });
+});
+
+describe("sidebarPrefOf and railToggle", () => {
+  it("reads the saved sidebar, and anything unknown as expanded", () => {
+    expect(sidebarPrefOf({ sidebar: "rail" })).toBe("rail");
+    expect(sidebarPrefOf({ sidebar: "focus" })).toBe("focus");
+    expect(sidebarPrefOf({ sidebar: "expanded" })).toBe("expanded");
+    expect(sidebarPrefOf({ sidebar: "wide" })).toBe("expanded");
+  });
+  it("the sidebar command folds the expanded sidebar to the rail, and the rail or focus back to expanded", () => {
+    expect(railToggle("expanded")).toBe("rail");
+    expect(railToggle("rail")).toBe("expanded");
+    expect(railToggle("focus")).toBe("expanded");
   });
 });

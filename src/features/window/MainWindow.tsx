@@ -1,4 +1,4 @@
-import { useEffect, useRef, type CSSProperties, type KeyboardEvent, type ReactNode } from "react";
+import { useEffect, useRef, useState, type CSSProperties, type KeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import { Logo } from "../../components/Logo/Logo";
 import { Wordmark } from "../../components/Logo/Wordmark";
 import { StatusGlyph } from "../../components/StatusGlyph/StatusGlyph";
@@ -13,7 +13,7 @@ import type { RowModel } from "../sidebar/types";
 import { ScriptedTerminal } from "../terminal/ScriptedTerminal";
 import { SHELL_SIZE, shellSession } from "../terminal/scriptedShell";
 import type { TerminalThemeSetting } from "../terminal/terminalTheme";
-import { COMPOSER, DRAWER, STATUS_BAR_HEIGHT, drawerPlacement, sidebarMode, sidebarWidth, type SidebarPref } from "./layout";
+import { COMPOSER, DRAWER, STATUS_BAR_HEIGHT, SIDEBAR, drawerPlacement, sidebarMode, sidebarWidth as widthFor, type SidebarPref } from "./layout";
 import { LayoutIcon, LayoutMenu } from "./LayoutMenu";
 import { SearchIcon } from "./SearchIcon";
 import { isTool } from "../../components/AgentMark/kinds";
@@ -34,6 +34,9 @@ import "./MainWindow.css";
 /** The drawer shows the request's full payload; the 40-line command is the long one. */
 const DRAWER_DETAIL = APPROVALS.longCommand.detail;
 const BAR = 40;
+/** How far one arrow key press moves the sidebar's edge. */
+const SIDEBAR_STEP = 8;
+const clampSidebar = (w: number) => Math.round(Math.min(SIDEBAR.max, Math.max(SIDEBAR.min, w)));
 
 export type WindowLayout = "default" | "split" | "focus" | "rail";
 export type MainWindowProps = {
@@ -41,11 +44,14 @@ export type MainWindowProps = {
   height: number;
   layout?: WindowLayout;
   sidebarPref?: SidebarPref;
+  /** The width the user dragged the expanded sidebar to (held to 200 to 400). It does not apply to the rail or in focus mode. */
+  sidebarWidth?: number;
   rows?: RowModel[];
   requests?: ApprovalRequest[];
   selectedId?: string;
   os?: Os;
   terminalSetting?: TerminalThemeSetting;
+  /** Shows the session header in focus mode, as hovering the top edge does (stories). */
   headerPeek?: boolean;
   drawer?: boolean;
   /** Split view: how many terminals are on screen (2 to 4). */
@@ -103,6 +109,10 @@ export type MainWindowProps = {
   onRenameCancel?: (opts: { refocus: boolean }) => void;
   /** Dragging a sidebar row gives the whole new order. Left out, rows are not draggable. */
   onReorder?: (ids: string[]) => void;
+  /** The sidebar's drag handle, or its arrow keys, ask for a width. The view state holds it to 200 to 400. Left out, the handle does nothing. */
+  onSidebarWidth?: (width: number) => void;
+  /** A double click on the sidebar's drag handle asks for the default width. */
+  onSidebarReset?: () => void;
   /** A click on a sidebar row or a rail button gives that session's id. Left out, they do nothing (stories). */
   onSelect?: (id: string) => void;
   /** The click on the Command palette button, in the top bar and in the rail. */
@@ -129,12 +139,13 @@ export function MainWindow({
   height,
   layout = "default",
   sidebarPref,
+  sidebarWidth,
   rows = SCENARIO_ROWS,
   requests = SCENARIO_REQUESTS,
   selectedId = "working",
   os = "windows",
   terminalSetting = "follow-app",
-  headerPeek = false,
+  headerPeek: headerPeekProp = false,
   drawer = false,
   splitCount = 2,
   arrangement,
@@ -166,15 +177,19 @@ export function MainWindow({
   onReorder,
   onSelect,
   onPalette,
+  onSidebarWidth,
+  onSidebarReset,
 }: MainWindowProps) {
   const pref: SidebarPref = sidebarPref ?? (layout === "focus" ? "focus" : layout === "rail" ? "rail" : "expanded");
   const mode = sidebarMode(width, pref);
-  const sideW = sidebarWidth(mode);
+  const sideW = widthFor(mode, sidebarWidth);
   // No sessions at all is a real state (first run, everything closed): the window shows its empty state, never a missing row.
   const selected: RowModel | null = rows.find((r) => r.id === selectedId) ?? rows[0] ?? null;
   const empty = selected === null;
   const waiting = pending(requests).length;
-  const showHeader = mode !== "focus" || headerPeek;
+  // Focus mode hides the session header until the pointer reaches the top edge; the pane headers stay. Keyboard users leave focus mode instead.
+  const [peeking, setPeeking] = useState(false);
+  const showHeader = mode !== "focus" || headerPeekProp || peeking;
   const placement = drawerPlacement(width, mode, DRAWER.default);
   const pillKeys = shortcutLabel(commandById("next-waiting").binding!, os);
 
@@ -239,6 +254,25 @@ export function MainWindow({
     onLayoutMenu(false);
     layoutButton.current?.focus();
   };
+  // The sidebar's drag handle: the pointer's distance from the window's start edge is the width; the arrow keys step it by 8 px.
+  const bodyRef = useRef<HTMLDivElement>(null);
+  const dragSidebar = (e: ReactPointerEvent<HTMLElement>) => {
+    const body = bodyRef.current;
+    if (!body || !onSidebarWidth || !e.currentTarget.hasPointerCapture(e.pointerId)) return;
+    const rect = body.getBoundingClientRect();
+    // In a right-to-left window the sidebar is on the right, so the width is counted from the right edge.
+    const rtl = getComputedStyle(body).direction === "rtl";
+    onSidebarWidth(clampSidebar(rtl ? rect.right - e.clientX : e.clientX - rect.left));
+  };
+  const nudgeSidebar = (e: KeyboardEvent<HTMLElement>) => {
+    if (!onSidebarWidth || e.ctrlKey || e.altKey || e.metaKey) return;
+    const rtl = bodyRef.current !== null && getComputedStyle(bodyRef.current).direction === "rtl";
+    const grow = rtl ? "ArrowLeft" : "ArrowRight";
+    const shrink = rtl ? "ArrowRight" : "ArrowLeft";
+    if (e.key !== grow && e.key !== shrink) return;
+    e.preventDefault();
+    onSidebarWidth(clampSidebar(sideW + (e.key === grow ? SIDEBAR_STEP : -SIDEBAR_STEP)));
+  };
   // The pane clicks go out as view actions. Zooming makes the pane the focused one first, so it is the pane the zoom applies to.
   const paneHandlers = onPane && {
     onFocus: (index: number) => onPane({ type: "focusPane", index }),
@@ -272,7 +306,11 @@ export function MainWindow({
             </button>
           )}
         </div>
-        <div className="window__bar-main">{headerBar ?? (showHeader && active && <SessionHeader row={active} ports={ports} />)}</div>
+        <div className="window__bar-main" onPointerLeave={mode === "focus" ? () => setPeeking(false) : undefined}>
+          {headerBar ?? (showHeader && active && <SessionHeader row={active} ports={ports} />)}
+          {/* Focus mode: the pointer at the top edge brings the header up, and leaving the bar puts it away. A pointer affordance only; the keyboard leaves focus mode. */}
+          {mode === "focus" && !showHeader && <div className="window__peek" aria-hidden="true" onPointerEnter={() => setPeeking(true)} />}
+        </div>
         <div className="window__bar-end">
           <div ref={layoutRoot} className="window__layout" onKeyDown={layoutKeys}>
             <button
@@ -317,8 +355,24 @@ export function MainWindow({
         </div>
       </header>
 
-      <div className="window__body">
+      <div ref={bodyRef} className="window__body">
         {mode === "expanded" && <Sidebar rows={rows} requests={requests} height={height - BAR} width={sideW} selectedId={selected?.id} footer={footer ?? undefined} shell={shell ? { cwd: active?.project, shellName: shellNameFor(os), collapsed: shellCollapsed, os } : undefined} renamingId={renamingId} onRename={onRename} onRenameCancel={onRenameCancel} onReorder={onReorder} onSelect={onSelect} />}
+        {mode === "expanded" && (
+          <div
+            className="window__side-handle"
+            role="separator"
+            aria-orientation="vertical"
+            aria-label="Resize the sidebar"
+            aria-valuemin={SIDEBAR.min}
+            aria-valuemax={SIDEBAR.max}
+            aria-valuenow={sideW}
+            tabIndex={onSidebarWidth ? 0 : undefined}
+            onPointerDown={onSidebarWidth ? (e) => e.button === 0 && e.currentTarget.setPointerCapture(e.pointerId) : undefined}
+            onPointerMove={onSidebarWidth ? dragSidebar : undefined}
+            onKeyDown={onSidebarWidth ? nudgeSidebar : undefined}
+            onDoubleClick={onSidebarReset}
+          />
+        )}
         {mode === "rail" && <Rail rows={rows} needsYou={waiting} selectedId={selected?.id} os={os} onSelect={onSelect} onPalette={onPalette} />}
 
         <div className="window__center">

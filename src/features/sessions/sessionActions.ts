@@ -127,6 +127,8 @@ export class SessionActions {
       case "zoom":
       case "nextPane":
       case "nonePane":
+      case "focusMode":
+      case "sidebar":
         break;
     }
   }

@@ -17,7 +17,7 @@ import { sidebarMode } from "../window/layout";
 import { MainWindow } from "../window/MainWindow";
 import type { Arrangement } from "../window/splitLayout";
 import { useViewState } from "../window/useViewState";
-import { fillsEmptyPane, focusedIndex, ratiosOf } from "../window/viewState";
+import { fillsEmptyPane, focusedIndex, railToggle, ratiosOf, sidebarPrefOf } from "../window/viewState";
 import { CloseBar } from "./CloseBar";
 import { LiveLauncher } from "./LiveLauncher";
 import { LivePalette } from "./LivePalette";
@@ -129,8 +129,9 @@ export function LiveApp() {
   }, [rows]);
 
   // Close, reopen, rename, reorder and go to: see sessionActions. The class reads the latest list through this ref.
-  // Only the expanded sidebar has rows to rename (MainWindow shows the rail or nothing below that).
-  const sidebarExpanded = sidebarMode(width, "expanded") === "expanded";
+  // Only the expanded sidebar has rows to rename (MainWindow shows the rail, or nothing in focus mode, instead).
+  const sidebarPref = sidebarPrefOf(view);
+  const sidebarExpanded = sidebarMode(width, sidebarPref) === "expanded";
   const context = useRef({ endpoint, infos, selectedId: focusedId, sidebarExpanded });
   context.current = { endpoint, infos, selectedId: focusedId, sidebarExpanded };
   const pickRef = useRef(pick);
@@ -199,6 +200,12 @@ export function LiveApp() {
           return true;
         case "nextPane":
           dispatch({ type: "nextPane" });
+          return true;
+        case "focusMode":
+          dispatch({ type: "toggleFocus" });
+          return true;
+        case "sidebar":
+          dispatch({ type: "sidebar", pref: railToggle(sidebarPrefOf(v)) });
           return true;
         case "nonePane":
           // No terminal selected: the keys stop going to a program until a pane is chosen again.
@@ -294,6 +301,10 @@ export function LiveApp() {
           width={width}
           height={height}
           layout={view.panes.length > 1 ? "split" : "default"}
+          sidebarPref={sidebarPref}
+          sidebarWidth={view.sidebar_width}
+          onSidebarWidth={(w) => dispatch({ type: "sidebarWidth", width: w })}
+          onSidebarReset={() => dispatch({ type: "resetSidebarWidth" })}
           paneIds={view.panes}
           activePane={view.active}
           zoomedPane={view.zoomed ?? undefined}

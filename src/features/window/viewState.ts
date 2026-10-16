@@ -39,6 +39,16 @@ export const DEFAULT_VIEW: ViewLayout = {
   grouped: false,
 };
 
+/** The saved sidebar choice; a value this build does not know is the expanded sidebar. */
+export function sidebarPrefOf(view: Pick<ViewLayout, "sidebar">): SidebarPref {
+  return view.sidebar === "rail" || view.sidebar === "focus" ? view.sidebar : "expanded";
+}
+
+/** The sidebar command: the expanded sidebar folds to the rail; the rail, or focus mode, opens the sidebar. */
+export function railToggle(pref: SidebarPref): SidebarPref {
+  return pref === "expanded" ? "rail" : "expanded";
+}
+
 /** The saved `[col, row]` pair as splitLayout's `Ratios`; an empty list means even. */
 export function ratiosOf(view: Pick<ViewLayout, "ratios">): Ratios {
   const [col, row] = view.ratios;

@@ -535,3 +535,49 @@ describe("MainWindow: panes from the view state", () => {
     expect(html({ layout: "split", paneIds: ids.slice(0, 2), ...BIG })).toMatch(/<main class="window__main"[^>]*tabindex="-1"/);
   });
 });
+
+describe("MainWindow: focus mode and the sidebar width", () => {
+  it("focus mode renders no sidebar, no rail and no prompt line", () => {
+    const h = html({ width: 1280, height: 800, sidebarPref: "focus" });
+    expect(h).toContain('data-mode="focus"');
+    expect(h).not.toContain('class="sidebar"');
+    expect(h).not.toContain('class="rail"');
+    expect(h).not.toContain("window__composer");
+    expect(h).not.toContain('role="separator"');
+    expect(h).toContain("--side-w:0px");
+  });
+  it("keeps the pane headers in focus mode", () => {
+    const h = html({ width: 1280, height: 800, sidebarPref: "focus", layout: "split" });
+    expect(h).toContain("pane__header");
+  });
+  it("offers an 8 px strip at the top edge to peek at the header, in focus mode only", () => {
+    expect(html({ sidebarPref: "focus" })).toContain("window__peek");
+    expect(html({ sidebarPref: "expanded" })).not.toContain("window__peek");
+    expect(html({ sidebarPref: "focus", headerPeek: true })).not.toContain("window__peek");
+  });
+  it("the sidebar handle reports its width", () => {
+    const h = html({ width: 1280, sidebarWidth: 320 });
+    expect(h).toContain("--side-w:320px");
+    expect(h).toMatch(/<div class="window__side-handle"[^>]*role="separator"[^>]*aria-orientation="vertical"[^>]*aria-valuenow="320"/);
+    expect(h).toContain('aria-valuemin="200"');
+    expect(h).toContain('aria-valuemax="400"');
+    expect(h).toContain('aria-label="Resize the sidebar"');
+  });
+  it("holds a stored width to 200 to 400", () => {
+    expect(html({ width: 1280, sidebarWidth: 120 })).toContain("--side-w:200px");
+    expect(html({ width: 1280, sidebarWidth: 900 })).toContain("--side-w:400px");
+  });
+  it("below 960 the stored width does not apply: the rail is 52", () => {
+    const h = html({ width: 900, sidebarWidth: 360 });
+    expect(h).toContain("--side-w:52px");
+    expect(h).toContain('class="rail"');
+    expect(h).not.toContain("window__side-handle");
+  });
+  it("has no handle on the rail", () => {
+    expect(html({ width: 1280, sidebarPref: "rail" })).not.toContain("window__side-handle");
+  });
+  it("makes the handle a tab stop only when it can be used", () => {
+    expect(html({ sidebarWidth: 320 })).not.toMatch(/window__side-handle[^>]*tabindex/);
+    expect(html({ sidebarWidth: 320, onSidebarWidth: () => {} })).toMatch(/window__side-handle[^>]*tabindex="0"/);
+  });
+});

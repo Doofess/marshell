@@ -148,3 +148,16 @@ describe("session numbers", () => {
     expect(c.label).toContain("12");
   });
 });
+
+describe("focus mode key", () => {
+  it("Ctrl+Shift+I is focus mode (Cmd+I on macOS), and the sidebar command has no key of its own", () => {
+    const c = commandById("focus-mode");
+    expect(c.binding).toEqual({ code: "KeyI" });
+    expect(shortcutLabel(c.binding!, "windows")).toBe("Ctrl+Shift+I");
+    expect(shortcutLabel(c.binding!, "mac")).toBe("⌘I");
+    expect(commandById("sidebar").binding).toBeUndefined();
+  });
+  it("no binding uses U, E, C, V, Z or J, which the platforms or the terminal take", () => {
+    for (const c of COMMANDS) expect(["KeyU", "KeyE", "KeyC", "KeyV", "KeyZ", "KeyJ"], c.id).not.toContain(c.binding?.code);
+  });
+});

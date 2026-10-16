@@ -60,8 +60,6 @@ export const RESERVED: Reserved[] = [
   { os: "linux", chord: { code: "KeyZ", ...ctrlShift }, reason: "Ctrl+Shift+Z is Redo in a text box." },
   { os: "all", chord: { code: "KeyC", ...ctrlShift }, reason: "Ctrl+Shift+C is how a terminal copies; terminals never use plain Ctrl+C for that." },
   { os: "all", chord: { code: "KeyV", ...ctrlShift }, reason: "Ctrl+Shift+V is how a terminal pastes." },
-  { os: "windows", chord: { code: "KeyI", ...ctrlShift }, reason: "Ctrl+Shift+I opens the webview's developer tools in a development build." },
-  { os: "linux", chord: { code: "KeyI", ...ctrlShift }, reason: "Ctrl+Shift+I opens the webview's developer tools in a development build." },
   { os: "windows", chord: { code: "KeyJ", ...ctrlShift }, reason: "Ctrl+Shift+J opens the webview's developer console in a development build." },
   { os: "linux", chord: { code: "KeyJ", ...ctrlShift }, reason: "Ctrl+Shift+J opens the webview's developer console in a development build." },
   { os: "linux", chord: { code: "KeyU", ...ctrlShift }, reason: "Ctrl+Shift+U starts Unicode entry in GTK and IBus." },

@@ -66,7 +66,7 @@ export const COMMANDS: Command[] = [
   { id: "zoom-pane", label: "Zoom pane", group: "View", binding: { code: "KeyP" } },
   { id: "nav-next-pane", label: "Select the next terminal on screen", group: "View", binding: { code: "Tab", nav: true } },
   { id: "nav-none", label: "Select no terminal", group: "View", binding: { code: "Backspace", nav: true } },
-  { id: "focus-mode", label: "Focus mode", group: "View" },
+  { id: "focus-mode", label: "Focus mode", group: "View", binding: { code: "KeyI" } },
   { id: "sidebar", label: "Collapse sidebar to the rail", group: "View" },
   { id: "palette", label: "Command palette", group: "Tools", binding: { code: "KeyK" } },
   { id: "shell-panel", label: "Show or focus the shell panel", group: "Tools", binding: { code: "KeyS" } },

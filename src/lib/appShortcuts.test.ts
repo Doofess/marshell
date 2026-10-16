@@ -46,6 +46,12 @@ describe("sessionShortcut", () => {
     expect(sessionShortcut(ev("Tab", cs), "mac")).toEqual({ kind: "nextPane" });
     expect(sessionShortcut(ev("Tab"), "windows")).toBeNull();
   });
+  it("Ctrl+Shift+I is focus mode on Windows and Linux and Cmd+I on macOS", () => {
+    expect(sessionShortcut(ev("KeyI", cs), "windows")).toEqual({ kind: "focusMode" });
+    expect(sessionShortcut(ev("KeyI", cs), "linux")).toEqual({ kind: "focusMode" });
+    expect(sessionShortcut(ev("KeyI", { metaKey: true }), "mac")).toEqual({ kind: "focusMode" });
+    expect(sessionShortcut(ev("KeyI"), "windows")).toBeNull();
+  });
   it("uses Cmd on macOS", () => {
     expect(sessionShortcut(ev("KeyW", { metaKey: true }), "mac")).toEqual({ kind: "close" });
     expect(sessionShortcut(ev("Digit9", { metaKey: true }), "mac")).toEqual({ kind: "goto", number: 9 });
@@ -71,6 +77,8 @@ describe("commandShortcut", () => {
     expect(commandShortcut("zoom-pane")).toEqual({ kind: "zoom" });
     expect(commandShortcut("nav-next-pane")).toEqual({ kind: "nextPane" });
     expect(commandShortcut("nav-none")).toEqual({ kind: "nonePane" });
+    expect(commandShortcut("focus-mode")).toEqual({ kind: "focusMode" });
+    expect(commandShortcut("sidebar")).toEqual({ kind: "sidebar" });
     expect(commandShortcut("doctor")).toBeNull();
     expect(commandShortcut("profiles")).toBeNull();
   });

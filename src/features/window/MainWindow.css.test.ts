@@ -37,6 +37,15 @@ describe("MainWindow.css", () => {
     expect(css).toContain(".window__control:active");
     expect(css).not.toMatch(/outline:\s*none/);
   });
+  it("makes the sidebar handle an 8 px strip that a touch drag cannot scroll, with a focus ring", () => {
+    const r = rule(".window__side-handle");
+    expect(r).toContain("inline-size: 8px");
+    expect(r).toContain("touch-action: none");
+    expect(css).toContain(".window__side-handle:focus-visible");
+  });
+  it("makes the focus-mode peek strip 8 px", () => {
+    expect(rule(".window__peek")).toContain("block-size: 8px");
+  });
   it("uses tokens and logical properties only", () => {
     expect(css).not.toMatch(/#[0-9a-f]{3,8}\b|rgb\(/i);
     expect(css).not.toMatch(/\b(margin|padding|border)-(left|right|top|bottom)\b/);

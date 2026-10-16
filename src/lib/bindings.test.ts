@@ -82,7 +82,7 @@ describe("reservedReason: keys the system, a text box or a terminal program alre
     expect(reason({ code: "Escape", nav: true }, "windows")).toMatch(/Task Manager/);
     expect(reason({ code: "KeyU" }, "linux")).toMatch(/Unicode/i);
     expect(reason({ code: "KeyE" }, "linux")).toMatch(/emoji/i);
-    expect(reason({ code: "KeyI" }, "windows")).toMatch(/developer tools/);
+    expect(reason({ code: "KeyI" }, "windows")).toBeNull();
     expect(reason({ code: "KeyJ" }, "linux")).toMatch(/developer console/);
   });
   it("knows a bare key a terminal program needs", () => {
