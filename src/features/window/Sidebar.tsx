@@ -6,7 +6,7 @@ import { laneLayout, pending } from "../lane/laneLayout";
 import { SessionRow, type RowDrag } from "../sidebar/SessionRow";
 import { dragOver, dropOrder, TAB_MIME, type DragState } from "../sidebar/reorder";
 import type { RowModel } from "../sidebar/types";
-import { useState, type CSSProperties } from "react";
+import { useState, type CSSProperties, type ReactNode } from "react";
 import type { Os } from "../../lib/keymap";
 import type { ShellName } from "../terminal/scriptedShell";
 import { shellLayout } from "./shellLayout";
@@ -19,7 +19,7 @@ export const ROW_HEIGHT = 56;
 export type SidebarFooter = { planPct?: number; fiveHourPct?: number; doctorIssues?: number };
 
 /** The plain shell under the list. Left out, the sidebar is just the lane, the list and the footer. */
-export type SidebarShell = { shellName?: ShellName; cwd?: string; collapsed?: boolean; os?: Os };
+export type SidebarShell = { shellName?: ShellName; cwd?: string; collapsed?: boolean; os?: Os; terminal?: ReactNode; onToggle?: () => void; onOpenInPane?: () => void };
 
 /**
  * The expanded sidebar: the needs-you lane, the session list, an optional plain shell, and a 40 px footer with plan use
@@ -109,7 +109,7 @@ export function Sidebar({
           />
         ))}
       </div>
-      {panel && shell && <ShellPanel height={panel.height} collapsed={panel.collapsed} auto={panel.auto} cwd={shell.cwd} shellName={shell.shellName} os={shell.os} />}
+      {panel && shell && <ShellPanel height={panel.height} collapsed={panel.collapsed} auto={panel.auto} cwd={shell.cwd} shellName={shell.shellName} os={shell.os} terminal={shell.terminal} onToggle={shell.onToggle} onOpenInPane={shell.onOpenInPane} />}
       {footer && (
         <footer className="sidebar__footer">
           <ContextRing pct={footer.planPct} />

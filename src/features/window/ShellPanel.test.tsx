@@ -13,6 +13,15 @@ describe("ShellPanel", () => {
     expect(h).toContain('class="scripted-terminal"');
     expect(h).toContain('aria-label="PowerShell terminal"');
   });
+  it("a live terminal replaces the scripted one", () => {
+    const h = html({ terminal: <div data-testid="live" /> });
+    expect(h).toContain('data-testid="live"');
+    expect(h).not.toContain("scripted-terminal");
+    expect(h).not.toContain("shell-panel__stripe");
+  });
+  it("shows no live terminal while it is folded to its header", () => {
+    expect(html({ terminal: <div data-testid="live" />, collapsed: true, height: 32 })).not.toContain('data-testid="live"');
+  });
   it("has a 32 px header with the shell's name and the working folder", () => {
     const h = html();
     expect(h).toContain("PowerShell");

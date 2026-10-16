@@ -368,6 +368,27 @@ describe("MainWindow: the shell panel in the sidebar", () => {
     expect(sh).toContain('data-collapsed="true"');
     expect(sh).toContain('data-auto="true"');
   });
+  it("a hidden shell panel stays folded even when there is room", () => {
+    const sh = shellOf(html({ ...tall, shell: { hidden: true } }));
+    expect(sh).toContain('data-collapsed="true"');
+    // The user's choice, not the list running out of room.
+    expect(sh).not.toContain("data-auto");
+    expect(shellOf(html({ ...tall, shell: { hidden: false } }))).not.toContain("data-collapsed");
+  });
+  it("shows the live terminal it is given, in the folder it is given", () => {
+    const sh = shellOf(html({ ...tall, shell: { terminal: <div data-testid="live" />, cwd: "elsewhere" } }));
+    expect(sh).toContain('data-testid="live"');
+    expect(sh).not.toContain("scripted-terminal");
+    expect(sh).toContain(">elsewhere<");
+  });
+  it("no shell panel in the rail or focus mode", () => {
+    const live = { terminal: <div data-testid="live" /> };
+    for (const p of [{ layout: "rail" as const }, { layout: "focus" as const, sidebarPref: "focus" as const }, { sidebarPref: "rail" as const }, { width: 940 }]) {
+      const h = html({ ...tall, ...p, shell: live });
+      expect(h).not.toContain('aria-label="Shell"');
+      expect(h).not.toContain('data-testid="live"');
+    }
+  });
   it("has its own button for opening it in a pane, named for the shell", () => {
     expect(html(tall)).toContain('aria-label="Open PowerShell in a pane"');
   });

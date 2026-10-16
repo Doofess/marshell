@@ -39,6 +39,9 @@ const SIDEBAR_STEP = 8;
 const clampSidebar = (w: number) => Math.round(Math.min(SIDEBAR.max, Math.max(SIDEBAR.min, w)));
 
 export type WindowLayout = "default" | "split" | "focus" | "rail";
+/** What makes the sidebar's shell panel live (see `MainWindowProps.shell`). */
+export type ShellOptions = { terminal?: ReactNode; cwd?: string; hidden?: boolean; onToggle?: () => void; onOpenInPane?: () => void };
+
 export type MainWindowProps = {
   width: number;
   height: number;
@@ -93,8 +96,12 @@ export type MainWindowProps = {
   footer?: SidebarFooter | null;
   /** The 24 px status bar at the foot of the window (the focused session's strip); on by default, never in focus mode. */
   statusBar?: boolean;
-  /** The plain shell panel under the session list; on by default in the expanded sidebar. */
-  shell?: boolean;
+  /**
+   * The plain shell panel under the session list; on by default in the expanded sidebar. Left as `true` it shows the scripted
+   * terminal. An object makes it live: `terminal` replaces the scripted one, `cwd` replaces the focused session's folder,
+   * `hidden` is the user's choice to fold it (it stands even with room to spare), and the two callbacks are its buttons.
+   */
+  shell?: boolean | ShellOptions;
   /** The user hid the shell panel: header only. */
   shellCollapsed?: boolean;
   /** Takes the place of the session header while it is set (the busy-close question). Shown even where the header is hidden. */
@@ -182,6 +189,7 @@ export function MainWindow({
 }: MainWindowProps) {
   const pref: SidebarPref = sidebarPref ?? (layout === "focus" ? "focus" : layout === "rail" ? "rail" : "expanded");
   const mode = sidebarMode(width, pref);
+  const shellOptions: ShellOptions = typeof shell === "object" ? shell : {};
   const sideW = widthFor(mode, sidebarWidth);
   // No sessions at all is a real state (first run, everything closed): the window shows its empty state, never a missing row.
   const selected: RowModel | null = rows.find((r) => r.id === selectedId) ?? rows[0] ?? null;
@@ -360,7 +368,7 @@ export function MainWindow({
       </header>
 
       <div ref={bodyRef} className="window__body">
-        {mode === "expanded" && <Sidebar rows={rows} requests={requests} height={height - BAR} width={sideW} selectedId={selected?.id} footer={footer ?? undefined} shell={shell ? { cwd: active?.project, shellName: shellNameFor(os), collapsed: shellCollapsed, os } : undefined} renamingId={renamingId} onRename={onRename} onRenameCancel={onRenameCancel} onReorder={onReorder} onSelect={onSelect} />}
+        {mode === "expanded" && <Sidebar rows={rows} requests={requests} height={height - BAR} width={sideW} selectedId={selected?.id} footer={footer ?? undefined} shell={shell ? { cwd: shellOptions.cwd ?? active?.project, shellName: shellNameFor(os), collapsed: shellCollapsed || shellOptions.hidden === true, os, terminal: shellOptions.terminal, onToggle: shellOptions.onToggle, onOpenInPane: shellOptions.onOpenInPane } : undefined} renamingId={renamingId} onRename={onRename} onRenameCancel={onRenameCancel} onReorder={onReorder} onSelect={onSelect} />}
         {mode === "expanded" && (
           <div
             className="window__side-handle"

@@ -21,7 +21,9 @@ export type SessionShortcut =
   /** Hide the sidebar, the rail and the prompt lines, or bring them back (Ctrl+Shift+I). */
   | { kind: "focusMode" }
   /** Fold the sidebar to the rail, or open it again. Has no key of its own: the palette runs it. */
-  | { kind: "sidebar" };
+  | { kind: "sidebar" }
+  /** Show the shell panel, or focus its terminal (Ctrl+Shift+S). */
+  | { kind: "shellPanel" };
 
 /** Escape while the busy-close bar is up cancels it, even with focus in the terminal (where the window takes the key first). */
 export function cancelsCloseBar(e: { key: string; ctrlKey: boolean; shiftKey: boolean; altKey: boolean; metaKey: boolean; isComposing?: boolean }, barOpen: boolean): boolean {
@@ -65,6 +67,8 @@ export function commandShortcut(id: string): SessionShortcut | null {
       return { kind: "focusMode" };
     case "sidebar":
       return { kind: "sidebar" };
+    case "shell-panel":
+      return { kind: "shellPanel" };
   }
   const n = FOCUS_SESSION.exec(id)?.[1];
   return n === undefined ? null : { kind: "goto", number: Number(n) };

@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { commandById, shortcutLabel, type Os } from "../../lib/keymap";
 import { ScriptedTerminal } from "../terminal/ScriptedTerminal";
 import { SHELL_SIZE, shellSession, type ShellName } from "../terminal/scriptedShell";
@@ -29,13 +30,19 @@ export type ShellPanelProps = {
   auto?: boolean;
   os?: Os;
   setting?: TerminalThemeSetting;
+  /** The live terminal, shown instead of the scripted one while the panel is open. */
+  terminal?: ReactNode;
+  /** The toggle button: hide the panel, or show it again. */
+  onToggle?: () => void;
+  /** The "open in a pane" button. */
+  onOpenInPane?: () => void;
 };
 
 /**
  * A plain command prompt in the sidebar, for the commands a person still runs by hand. It belongs to no agent: no vendor
  * stripe or accent, no prompt bar, and nothing typed here ever reaches a session. It can open in a pane, and it can hide.
  */
-export function ShellPanel({ height, cwd, shellName = "PowerShell", collapsed = false, auto = false, os = "windows", setting = "follow-app" }: ShellPanelProps) {
+export function ShellPanel({ height, cwd, shellName = "PowerShell", collapsed = false, auto = false, os = "windows", setting = "follow-app", terminal, onToggle, onOpenInPane }: ShellPanelProps) {
   const keys = shortcutLabel(commandById("shell-panel").binding!, os);
   return (
     <section className="shell-panel" aria-label="Shell" style={{ blockSize: height }} data-collapsed={collapsed || undefined} data-auto={(collapsed && auto) || undefined}>
@@ -48,7 +55,7 @@ export function ShellPanel({ height, cwd, shellName = "PowerShell", collapsed = 
           </span>
         )}
         <span className="shell-panel__spacer" />
-        <button type="button" className="shell-panel__button" aria-label={`Open ${shellName} in a pane`} title={`Open ${shellName} in a pane`}>
+        <button type="button" className="shell-panel__button" aria-label={`Open ${shellName} in a pane`} title={`Open ${shellName} in a pane`} onClick={onOpenInPane}>
           {icon(SPLIT)}
         </button>
         <button
@@ -57,11 +64,17 @@ export function ShellPanel({ height, cwd, shellName = "PowerShell", collapsed = 
           aria-label="Shell panel"
           aria-expanded={!collapsed}
           title={`${collapsed ? "Show" : "Hide"} the shell (${keys})`}
+          onClick={onToggle}
         >
           {icon(collapsed ? CHEVRON_UP : CHEVRON_DOWN)}
         </button>
       </header>
-      {!collapsed && <ScriptedTerminal setting={setting} label={`${shellName} terminal`} script={shellSession({ shell: shellName, cwd })} size={SHELL_SIZE} />}
+      {!collapsed &&
+        (terminal !== undefined ? (
+          <div className="shell-panel__terminal">{terminal}</div>
+        ) : (
+          <ScriptedTerminal setting={setting} label={`${shellName} terminal`} script={shellSession({ shell: shellName, cwd })} size={SHELL_SIZE} />
+        ))}
     </section>
   );
 }

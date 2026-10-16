@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import type { CreateSessionResponse } from "../../generated/CreateSessionResponse";
+import type { Endpoint } from "../../generated/Endpoint";
 import { sessions } from "../../lib/api/sessions";
 import { cancelsCloseBar, commandShortcut, sessionShortcut, type SessionShortcut } from "../../lib/appShortcuts";
 import { osOfPlatform } from "../../lib/keymap";
@@ -15,7 +16,7 @@ import { resolveTerminalFont } from "../terminal/terminalFont";
 import { TerminalView, type TerminalThemeProp } from "../terminal/TerminalView";
 import { sidebarMode } from "../window/layout";
 import { MainWindow } from "../window/MainWindow";
-import type { Arrangement } from "../window/splitLayout";
+import { PANE_LIMIT, type Arrangement } from "../window/splitLayout";
 import { useViewState } from "../window/useViewState";
 import { fillsEmptyPane, focusedIndex, railToggle, ratiosOf, sidebarPrefOf } from "../window/viewState";
 import { CloseBar } from "./CloseBar";
@@ -27,7 +28,8 @@ import { holdsResume, resumeDisabledReason, resumeStateOf } from "./resumeState"
 import { SessionActions, closeBarText } from "./sessionActions";
 import { Toast } from "./Toast";
 import { pruneClosed, without, type StartingTexts } from "./startingTexts";
-import { ENDED_PHRASE } from "./toRow";
+import { focusShellTerminal, shellTerminalFocused } from "./shellPanelFocus";
+import { ENDED_PHRASE, lastSegment } from "./toRow";
 import { useSessions } from "./useSessions";
 
 /** The size a new session starts at until a terminal has been measured. */
@@ -36,6 +38,8 @@ const DEFAULT_SIZE = { cols: 120, rows: 30 };
 const HIDE_RESUME = ["resume"];
 /** The core's id for a session started outside any saved shell profile; it never has a profile to lose. */
 const CUSTOM_PROFILE = "custom";
+/** What the announcer says when the shell panel is asked for where it is not drawn: the rail, focus mode, or a window under 960 px. */
+const SHELL_PANEL_ELSEWHERE = "The shell panel is in the expanded sidebar.";
 
 /** The size of the element, kept up to date with a ResizeObserver. Starts at the window's size. */
 function useElementSize() {
@@ -222,6 +226,74 @@ export function LiveApp() {
     [announce],
   );
 
+  // The shell panel in the sidebar. Its shell is a pty the core keeps out of the tab list. It is asked for the first time the panel is
+  // shown, in the folder of the session in focus then, and is never moved after that. Hiding the panel only folds it: the shell keeps
+  // running and the same terminal comes back, with no second request. "Open in a pane" turns the shell into a tab; the panel then has
+  // no shell, and asks for a fresh one (in whatever folder is focused by then) while it is shown.
+  const [panel, setPanel] = useState<{ endpoint: Endpoint; tabId: string; folder: string } | null>(null);
+  // The shell the core has turned into a tab, waiting to be listed so a pane can show it.
+  const [adopted, setAdopted] = useState<{ endpoint: Endpoint; tabId: string } | null>(null);
+  const shellShown = settled && loaded && sidebarExpanded && !view.shell_hidden;
+  const focusedCwd = infos.find((i) => i.tab_id === focusedId)?.cwd;
+  const focusedCwdRef = useRef(focusedCwd);
+  focusedCwdRef.current = focusedCwd;
+  const hasFocusedCwd = focusedCwd !== undefined;
+  const asking = useRef<Endpoint | null>(null);
+  useEffect(() => {
+    const cwd = focusedCwdRef.current;
+    if (!endpoint || !shellShown || cwd === undefined || panel?.endpoint === endpoint || asking.current === endpoint) return;
+    const ep = endpoint;
+    asking.current = ep;
+    sessions
+      .shellPanel(ep, cwd, size.current)
+      .then((tabId) => setPanel({ endpoint: ep, tabId, folder: lastSegment(cwd) }))
+      // No place for an error in a window with one live region: the panel stays empty, and showing it again asks again.
+      .catch((e: unknown) => console.warn("Could not start the shell panel", e))
+      .finally(() => {
+        if (asking.current === ep) asking.current = null;
+      });
+  }, [endpoint, shellShown, hasFocusedCwd, panel]);
+  const panelTab = panel && panel.endpoint === endpoint ? panel : null;
+
+  const adopting = useRef(false);
+  const openInPane = useCallback(async () => {
+    if (!endpoint || adopting.current) return;
+    adopting.current = true;
+    try {
+      setAdopted({ endpoint, tabId: await sessions.adoptShellPanel(endpoint) });
+    } catch (e) {
+      // A 404 means the core has no panel shell (it was adopted already): there is nothing to open.
+      console.warn("Could not open the shell in a pane", e);
+    } finally {
+      adopting.current = false;
+    }
+  }, [endpoint]);
+  // The adopted tab is listed: in one update the panel lets go of its terminal and a pane takes the tab, so the pty only ever has one
+  // terminal attached. (Adopting earlier would let the view's own clean-up drop an id the list does not hold yet.)
+  useEffect(() => {
+    if (!adopted) return;
+    if (adopted.endpoint !== endpoint) return void setAdopted(null);
+    const id = adopted.tabId;
+    if (!infos.some((i) => i.tab_id === id)) return;
+    setAdopted(null);
+    setPanel(null);
+    const v = viewRef.current;
+    if (v.panes.includes(id) || v.panes.length >= PANE_LIMIT) {
+      // No room for another pane: the tab goes where the focus is.
+      pick(id);
+      return;
+    }
+    // A zoomed pane would hide the one being added.
+    if (v.zoomed !== null) dispatch({ type: "zoom" });
+    dispatch({ type: "split" });
+    dispatch({ type: "assign", index: v.panes.length, tabId: id });
+    selectRef.current(id);
+  }, [adopted, endpoint, infos, pick, dispatch]);
+  const shellTerminal = useMemo(
+    () => (panelTab && endpoint ? <TerminalView key={panelTab.tabId} endpoint={endpoint} tabId={panelTab.tabId} autoFocus={false} theme={themeFor(undefined)} font={terminalFont} /> : null),
+    [endpoint, panelTab, themeFor, terminalFont],
+  );
+
   // The split view's shortcuts and commands. True when it was one of them.
   const paneCommand = useCallback(
     (shortcut: SessionShortcut | null): boolean => {
@@ -249,6 +321,14 @@ export function LiveApp() {
         case "sidebar":
           dispatch({ type: "sidebar", pref: railToggle(sidebarPrefOf(v)) });
           return true;
+        case "shellPanel":
+          if (!context.current.sidebarExpanded) announce(SHELL_PANEL_ELSEWHERE);
+          // Hidden: show it, and its terminal takes the focus once it is drawn. Shown but elsewhere: focus it. Already in it: nothing to do.
+          else if (v.shell_hidden || !shellTerminalFocused(document)) {
+            if (v.shell_hidden) dispatch({ type: "toggleShell" });
+            focusShellTerminal(document);
+          }
+          return true;
         case "nonePane":
           // No terminal selected: the keys stop going to a program until a pane is chosen again.
           if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
@@ -258,7 +338,7 @@ export function LiveApp() {
           return false;
       }
     },
-    [dispatch],
+    [dispatch, announce],
   );
 
   // The app's shortcuts work from anywhere, the terminal included; the terminal lets these keys through (TerminalView).
@@ -292,7 +372,8 @@ export function LiveApp() {
     if (id === "layout") return void setTimeout(() => setLayoutMenu(true), 0);
     if (id === "resume") return void (focusedRow && startResume(focusedRow));
     const shortcut = commandShortcut(id);
-    if (shortcut?.kind === "nonePane") return void setTimeout(() => paneCommand(shortcut), 0);
+    // Both move the focus, so they wait for the palette to hand it back first.
+    if (shortcut?.kind === "nonePane" || shortcut?.kind === "shellPanel") return void setTimeout(() => paneCommand(shortcut), 0);
     if (paneCommand(shortcut)) return;
     if (shortcut?.kind === "launcher") setLauncherOpen(true);
     else if (shortcut?.kind === "prompt") jumpPrompt(shortcut.by);
@@ -393,7 +474,7 @@ export function LiveApp() {
           requests={[]}
           ports={[]}
           footer={null}
-          shell={false}
+          shell={{ terminal: shellTerminal, cwd: panelTab?.folder, hidden: view.shell_hidden, onToggle: () => dispatch({ type: "toggleShell" }), onOpenInPane: () => void openInPane() }}
           composer={false}
           statusBar={false}
           renderTerminal={renderTerminal}

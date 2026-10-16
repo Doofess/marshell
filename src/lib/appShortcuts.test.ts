@@ -58,11 +58,18 @@ describe("sessionShortcut", () => {
   });
   it("leaves every other key to the program in the terminal", () => {
     expect(sessionShortcut(ev("KeyW", { ctrlKey: true }), "windows")).toBeNull();
-    expect(sessionShortcut(ev("KeyS", cs), "windows")).toBeNull();
     expect(sessionShortcut(ev("ArrowUp"), "windows")).toBeNull();
     expect(sessionShortcut(ev("ArrowUp", { ctrlKey: true, shiftKey: true }), "windows")).toBeNull();
     expect(sessionShortcut(ev("F3"), "windows")).toBeNull();
     expect(sessionShortcut(ev("Digit0", cs), "windows")).toBeNull();
+  });
+});
+
+describe("the shell panel shortcut", () => {
+  it("Ctrl+Shift+S is the shell panel", () => {
+    expect(sessionShortcut(ev("KeyS", cs), "windows")).toEqual({ kind: "shellPanel" });
+    expect(sessionShortcut(ev("KeyS", { metaKey: true }), "mac")).toEqual({ kind: "shellPanel" });
+    expect(commandShortcut("shell-panel")).toEqual({ kind: "shellPanel" });
   });
 });
 

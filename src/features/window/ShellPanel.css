@@ -65,3 +65,12 @@
     color: var(--text-1);
   }
 }
+
+/* The live terminal: it fills the body, and its host (app.css) sizes the cells to it. */
+.shell-panel__terminal {
+  position: relative;
+  min-inline-size: 0;
+  min-block-size: 0;
+  overflow: clip;
+  background: var(--bg-base);
+}
