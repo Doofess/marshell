@@ -19,6 +19,23 @@ describe("ShellPanel", () => {
     expect(h).not.toContain("scripted-terminal");
     expect(h).not.toContain("shell-panel__stripe");
   });
+  it("says when its shell didn't start, with a button that asks again", () => {
+    const h = html({ terminal: <div data-testid="live" />, failed: true });
+    expect(h).toContain("The shell didn&#x27;t start.");
+    expect(h).toMatch(/<button[^>]*class="shell-panel__retry"[^>]*>Try again<\/button>/);
+    expect(h).not.toContain("scripted-terminal");
+    expect(h).not.toContain('data-testid="live"');
+    expect(html({ failed: true, collapsed: true, height: 32 })).not.toContain("didn&#x27;t start");
+    // Loading is not failing: an empty body, no message.
+    const loading = html({ terminal: null });
+    expect(loading).not.toContain("didn&#x27;t start");
+    expect(loading).toContain("shell-panel__terminal");
+  });
+  it("can't open in a pane while there is no live shell", () => {
+    const open = html({ openDisabled: true });
+    expect(open).toMatch(/aria-label="Open PowerShell in a pane"[^>]*aria-disabled="true"|aria-disabled="true"[^>]*aria-label="Open PowerShell in a pane"/);
+    expect(html()).not.toContain("aria-disabled");
+  });
   it("shows no live terminal while it is folded to its header", () => {
     expect(html({ terminal: <div data-testid="live" />, collapsed: true, height: 32 })).not.toContain('data-testid="live"');
   });
@@ -96,6 +113,13 @@ describe("ShellPanel.css", () => {
     expect(css).not.toMatch(/#[0-9a-f]{3,8}\b|rgb\(/i);
     expect(css).not.toMatch(/\b(margin|padding|border)-(left|right|top|bottom)\b/);
     expect(css).not.toMatch(/\b(left|right|top|bottom):/);
+  });
+  it("gives the failure line and its button a background, in tokens", () => {
+    expect(rule(".shell-panel__failed")).toContain("background: var(--");
+    expect(rule(".shell-panel__failed-text")).toContain("background: var(--");
+    expect(rule(".shell-panel__retry")).toContain("background: var(--");
+    expect(css).toContain(".shell-panel__retry:focus-visible");
+    expect(css).toContain('.shell-panel__button[aria-disabled="true"]');
   });
   it("never scrolls itself: the terminal inside has its own scrollback", () => {
     expect(css).not.toMatch(/overflow(-[xy])?:\s*(auto|scroll)/);

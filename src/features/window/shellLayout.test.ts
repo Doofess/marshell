@@ -25,6 +25,18 @@ describe("shellLayout: how tall the shell panel is", () => {
     expect(shellLayout(500, 200, true).auto).toBe(false);
     expect(shellLayout(1200, 28).auto).toBe(false);
   });
+  it("opens an auto-folded panel when the user asked for it, leaving the list at least one row", () => {
+    expect(shellLayout(500, 200)).toMatchObject({ collapsed: true, auto: true });
+    const open = shellLayout(500, 200, false, 56, true);
+    expect(open).toMatchObject({ collapsed: false, auto: false });
+    expect(500 - 200 - 40 - open.height).toBeGreaterThanOrEqual(56);
+    // With room, asking changes nothing.
+    expect(shellLayout(1200, 28, false, 56, true)).toEqual(shellLayout(1200, 28));
+    // Hiding is still the user's, and a window with no room at all still folds.
+    expect(shellLayout(1200, 28, true, 56, true)).toEqual({ height: 32, collapsed: true, auto: false });
+    expect(shellLayout(300, 200, false, 56, true)).toEqual({ height: 32, collapsed: true, auto: true });
+    expect(shellLayout(Number.NaN, 28, false, 56, true)).toMatchObject({ collapsed: true });
+  });
   it("collapses, never throws, for nonsense heights", () => {
     for (const h of [0, -5, Number.NaN, Number.POSITIVE_INFINITY, 40, 100]) {
       const l = shellLayout(h, 28);

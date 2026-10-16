@@ -375,6 +375,14 @@ describe("MainWindow: the shell panel in the sidebar", () => {
     expect(sh).not.toContain("data-auto");
     expect(shellOf(html({ ...tall, shell: { hidden: false } }))).not.toContain("data-collapsed");
   });
+  it("opens an auto-folded panel when the user asked for it", () => {
+    const many = Array.from({ length: 12 }, (_, i) => ({ ...SCENARIO_REQUESTS[0]!, id: `r${i}`, waitingMs: 1000 + i }));
+    const short = { width: 1180, height: 520, requests: many } as const;
+    expect(shellOf(html(short))).toContain('data-auto="true"');
+    const sh = shellOf(html({ ...short, shell: { forceOpen: true } }));
+    expect(sh).not.toContain("data-collapsed");
+    expect(shellOf(html({ ...short, shell: { forceOpen: true, hidden: true } }))).toContain('data-collapsed="true"');
+  });
   it("shows the live terminal it is given, in the folder it is given", () => {
     const sh = shellOf(html({ ...tall, shell: { terminal: <div data-testid="live" />, cwd: "elsewhere" } }));
     expect(sh).toContain('data-testid="live"');

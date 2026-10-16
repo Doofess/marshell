@@ -28,7 +28,8 @@ import { holdsResume, resumeDisabledReason, resumeStateOf } from "./resumeState"
 import { SessionActions, closeBarText } from "./sessionActions";
 import { Toast } from "./Toast";
 import { pruneClosed, without, type StartingTexts } from "./startingTexts";
-import { focusShellTerminal, shellTerminalFocused } from "./shellPanelFocus";
+import { SHELL_FAILED } from "../window/ShellPanel";
+import { focusShellTerminal, shellAutoFolded, shellTerminalFocused } from "./shellPanelFocus";
 import { ENDED_PHRASE, lastSegment } from "./toRow";
 import { useSessions } from "./useSessions";
 
@@ -239,25 +240,49 @@ export function LiveApp() {
   focusedCwdRef.current = focusedCwd;
   const hasFocusedCwd = focusedCwd !== undefined;
   const asking = useRef<Endpoint | null>(null);
+  // The endpoint whose shell could not be started: the panel says so, with a Try again button. `attempt` is that button.
+  const [failedFor, setFailedFor] = useState<Endpoint | null>(null);
+  const [attempt, setAttempt] = useState(0);
   useEffect(() => {
     const cwd = focusedCwdRef.current;
     if (!endpoint || !shellShown || cwd === undefined || panel?.endpoint === endpoint || asking.current === endpoint) return;
     const ep = endpoint;
     asking.current = ep;
+    setFailedFor(null);
     sessions
       .shellPanel(ep, cwd, size.current)
       .then((tabId) => setPanel({ endpoint: ep, tabId, folder: lastSegment(cwd) }))
-      // No place for an error in a window with one live region: the panel stays empty, and showing it again asks again.
-      .catch((e: unknown) => console.warn("Could not start the shell panel", e))
+      .catch((e: unknown) => {
+        // Said once, here: the failure stands until the person asks again (Try again, or hiding and showing the panel).
+        console.warn("Could not start the shell panel", e);
+        setFailedFor(ep);
+        announce(SHELL_FAILED);
+      })
       .finally(() => {
         if (asking.current === ep) asking.current = null;
       });
-  }, [endpoint, shellShown, hasFocusedCwd, panel]);
+  }, [endpoint, shellShown, hasFocusedCwd, panel, attempt, announce]);
   const panelTab = panel && panel.endpoint === endpoint ? panel : null;
+  const shellFailed = failedFor !== null && failedFor === endpoint && !panelTab;
+  const retryShell = useCallback(() => {
+    setFailedFor(null);
+    setAttempt((n) => n + 1);
+  }, []);
+  // The user asked for the panel while it was folded for lack of room: it opens with less than its usual share (see `shellLayout`).
+  const [shellForced, setShellForced] = useState(false);
+  // The header button: show it (forcing it open if it had folded itself), or hide it.
+  const toggleShell = useCallback(() => {
+    const hidden = viewRef.current.shell_hidden;
+    const folded = hidden || shellAutoFolded(document);
+    // Only a panel folded for lack of room has nothing to toggle in the view: it just opens.
+    if (hidden || !folded) dispatch({ type: "toggleShell" });
+    setShellForced(folded);
+  }, [dispatch]);
 
   const adopting = useRef(false);
   const openInPane = useCallback(async () => {
-    if (!endpoint || adopting.current) return;
+    // Nothing to open while the shell is still starting or failed to start.
+    if (!endpoint || !panelTab || adopting.current) return;
     adopting.current = true;
     try {
       setAdopted({ endpoint, tabId: await sessions.adoptShellPanel(endpoint) });
@@ -267,7 +292,7 @@ export function LiveApp() {
     } finally {
       adopting.current = false;
     }
-  }, [endpoint]);
+  }, [endpoint, panelTab]);
   // The adopted tab is listed: in one update the panel lets go of its terminal and a pane takes the tab, so the pty only ever has one
   // terminal attached. (Adopting earlier would let the view's own clean-up drop an id the list does not hold yet.)
   useEffect(() => {
@@ -323,10 +348,15 @@ export function LiveApp() {
           return true;
         case "shellPanel":
           if (!context.current.sidebarExpanded) announce(SHELL_PANEL_ELSEWHERE);
-          // Hidden: show it, and its terminal takes the focus once it is drawn. Shown but elsewhere: focus it. Already in it: nothing to do.
-          else if (v.shell_hidden || !shellTerminalFocused(document)) {
-            if (v.shell_hidden) dispatch({ type: "toggleShell" });
-            focusShellTerminal(document);
+          // Hidden, or folded for lack of room: open it (the user asked, so it keeps one row of the list instead of two), and its
+          // terminal takes the focus once it is drawn. Shown but elsewhere: focus it. Already in it: nothing to do.
+          else {
+            const folded = v.shell_hidden || shellAutoFolded(document);
+            if (folded || !shellTerminalFocused(document)) {
+              if (v.shell_hidden) dispatch({ type: "toggleShell" });
+              if (folded) setShellForced(true);
+              focusShellTerminal(document);
+            }
           }
           return true;
         case "nonePane":
@@ -474,7 +504,7 @@ export function LiveApp() {
           requests={[]}
           ports={[]}
           footer={null}
-          shell={{ terminal: shellTerminal, cwd: panelTab?.folder, hidden: view.shell_hidden, onToggle: () => dispatch({ type: "toggleShell" }), onOpenInPane: () => void openInPane() }}
+          shell={{ terminal: shellTerminal, cwd: panelTab?.folder, hidden: view.shell_hidden, failed: shellFailed, onRetry: retryShell, openDisabled: !panelTab, forceOpen: shellForced, onToggle: toggleShell, onOpenInPane: () => void openInPane() }}
           composer={false}
           statusBar={false}
           renderTerminal={renderTerminal}

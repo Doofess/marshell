@@ -13,6 +13,8 @@ const icon = (d: string) => (
     <path d={d} />
   </svg>
 );
+/** Also what the window announces when the shell panel's shell could not be started. */
+export const SHELL_FAILED = "The shell didn't start.";
 const PROMPT = "M2 3.5L5 6L2 8.5M6.5 9h3.5";
 const SPLIT = "M1.5 2.5h9v7h-9zM6 2.5v7";
 const CHEVRON_DOWN = "M3 4.5L6 7.5L9 4.5";
@@ -32,6 +34,11 @@ export type ShellPanelProps = {
   setting?: TerminalThemeSetting;
   /** The live terminal, shown instead of the scripted one while the panel is open. */
   terminal?: ReactNode;
+  /** The shell could not be started: the body says so, with a button that asks again. */
+  failed?: boolean;
+  onRetry?: () => void;
+  /** There is no live shell to open (still starting, or failed): the button is there but does nothing. */
+  openDisabled?: boolean;
   /** The toggle button: hide the panel, or show it again. */
   onToggle?: () => void;
   /** The "open in a pane" button. */
@@ -42,7 +49,7 @@ export type ShellPanelProps = {
  * A plain command prompt in the sidebar, for the commands a person still runs by hand. It belongs to no agent: no vendor
  * stripe or accent, no prompt bar, and nothing typed here ever reaches a session. It can open in a pane, and it can hide.
  */
-export function ShellPanel({ height, cwd, shellName = "PowerShell", collapsed = false, auto = false, os = "windows", setting = "follow-app", terminal, onToggle, onOpenInPane }: ShellPanelProps) {
+export function ShellPanel({ height, cwd, shellName = "PowerShell", collapsed = false, auto = false, os = "windows", setting = "follow-app", terminal, failed = false, onRetry, openDisabled = false, onToggle, onOpenInPane }: ShellPanelProps) {
   const keys = shortcutLabel(commandById("shell-panel").binding!, os);
   return (
     <section className="shell-panel" aria-label="Shell" style={{ blockSize: height }} data-collapsed={collapsed || undefined} data-auto={(collapsed && auto) || undefined}>
@@ -55,7 +62,7 @@ export function ShellPanel({ height, cwd, shellName = "PowerShell", collapsed = 
           </span>
         )}
         <span className="shell-panel__spacer" />
-        <button type="button" className="shell-panel__button" aria-label={`Open ${shellName} in a pane`} title={`Open ${shellName} in a pane`} onClick={onOpenInPane}>
+        <button type="button" className="shell-panel__button" aria-label={`Open ${shellName} in a pane`} title={`Open ${shellName} in a pane`} aria-disabled={openDisabled || undefined} onClick={openDisabled ? undefined : onOpenInPane}>
           {icon(SPLIT)}
         </button>
         <button
@@ -70,7 +77,14 @@ export function ShellPanel({ height, cwd, shellName = "PowerShell", collapsed = 
         </button>
       </header>
       {!collapsed &&
-        (terminal !== undefined ? (
+        (failed ? (
+          <div className="shell-panel__failed">
+            <p className="shell-panel__failed-text">{SHELL_FAILED}</p>
+            <button type="button" className="shell-panel__retry" onClick={onRetry}>
+              Try again
+            </button>
+          </div>
+        ) : terminal !== undefined ? (
           <div className="shell-panel__terminal">{terminal}</div>
         ) : (
           <ScriptedTerminal setting={setting} label={`${shellName} terminal`} script={shellSession({ shell: shellName, cwd })} size={SHELL_SIZE} />

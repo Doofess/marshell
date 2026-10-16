@@ -19,7 +19,7 @@ export const ROW_HEIGHT = 56;
 export type SidebarFooter = { planPct?: number; fiveHourPct?: number; doctorIssues?: number };
 
 /** The plain shell under the list. Left out, the sidebar is just the lane, the list and the footer. */
-export type SidebarShell = { shellName?: ShellName; cwd?: string; collapsed?: boolean; os?: Os; terminal?: ReactNode; onToggle?: () => void; onOpenInPane?: () => void };
+export type SidebarShell = { shellName?: ShellName; cwd?: string; collapsed?: boolean; os?: Os; terminal?: ReactNode; failed?: boolean; onRetry?: () => void; openDisabled?: boolean; forceOpen?: boolean; onToggle?: () => void; onOpenInPane?: () => void };
 
 /**
  * The expanded sidebar: the needs-you lane, the session list, an optional plain shell, and a 40 px footer with plan use
@@ -90,7 +90,7 @@ export function Sidebar({
   };
   const tabStop = rows.some((r) => r.id === selectedId) ? selectedId : rows[0]?.id;
   const lane = laneLayout(pending(requests).length, height);
-  const panel = shell ? shellLayout(height, lane.height, shell.collapsed, ROW_HEIGHT) : null;
+  const panel = shell ? shellLayout(height, lane.height, shell.collapsed, ROW_HEIGHT, shell.forceOpen) : null;
   const style = { inlineSize: width, ...(panel ? { "--shell-h": `${panel.height}px` } : {}), ...(footer ? {} : { "--footer-h": "0px" }) } as CSSProperties;
   return (
     <aside className="sidebar" style={style} data-shell={panel ? "" : undefined} aria-label="Sessions and approvals">
@@ -109,7 +109,7 @@ export function Sidebar({
           />
         ))}
       </div>
-      {panel && shell && <ShellPanel height={panel.height} collapsed={panel.collapsed} auto={panel.auto} cwd={shell.cwd} shellName={shell.shellName} os={shell.os} terminal={shell.terminal} onToggle={shell.onToggle} onOpenInPane={shell.onOpenInPane} />}
+      {panel && shell && <ShellPanel height={panel.height} collapsed={panel.collapsed} auto={panel.auto} cwd={shell.cwd} shellName={shell.shellName} os={shell.os} terminal={shell.terminal} failed={shell.failed} onRetry={shell.onRetry} openDisabled={shell.openDisabled} onToggle={shell.onToggle} onOpenInPane={shell.onOpenInPane} />}
       {footer && (
         <footer className="sidebar__footer">
           <ContextRing pct={footer.planPct} />

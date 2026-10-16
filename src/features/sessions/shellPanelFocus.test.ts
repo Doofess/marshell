@@ -1,5 +1,15 @@
 import { describe, expect, it, vi } from "vitest";
-import { focusShellTerminal, shellTerminalFocused, SHELL_TERMINAL_INPUT } from "./shellPanelFocus";
+import { focusShellTerminal, shellAutoFolded, shellTerminalFocused, SHELL_TERMINAL_INPUT } from "./shellPanelFocus";
+
+describe("shellAutoFolded", () => {
+  it("looks for the panel that folded itself, and nothing else", () => {
+    const asked: string[] = [];
+    const doc = (found: boolean) => ({ querySelector: (s: string) => (asked.push(s), found ? {} : null) }) as never;
+    expect(shellAutoFolded(doc(true))).toBe(true);
+    expect(shellAutoFolded(doc(false))).toBe(false);
+    expect(asked[0]).toBe(".shell-panel[data-auto]");
+  });
+});
 
 type Fake = { classList: { contains: (c: string) => boolean }; closest: (s: string) => unknown; focus: () => void };
 const input = (inPanel: boolean, focus = vi.fn()): Fake => ({

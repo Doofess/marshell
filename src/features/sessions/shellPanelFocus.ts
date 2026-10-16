@@ -9,6 +9,11 @@ export function shellTerminalFocused(doc: Pick<Document, "activeElement">): bool
   return el !== null && el.classList.contains("xterm-helper-textarea") && el.closest(".shell-panel") !== null;
 }
 
+/** True when the panel is drawn folded to its header because the list needed the room (it marks that with `data-auto`). */
+export function shellAutoFolded(doc: Pick<Document, "querySelector">): boolean {
+  return doc.querySelector(".shell-panel[data-auto]") !== null;
+}
+
 /**
  * Puts the keyboard focus in the shell panel's terminal. The terminal may not exist yet (the panel was just shown, so the
  * shell is still being asked for), so it looks again every frame for a few seconds.
