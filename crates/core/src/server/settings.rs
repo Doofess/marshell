@@ -69,7 +69,8 @@ mod tests {
         );
         drop(held);
 
-        task.await.unwrap().unwrap();
+        let Json(answer) = task.await.unwrap().unwrap();
+        assert_eq!(answer.appearance.accent, "teal");
         assert!(file.exists());
         assert_eq!(st.0.settings.lock().unwrap().appearance.accent, "teal");
     }
