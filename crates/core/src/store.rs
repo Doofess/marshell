@@ -28,10 +28,13 @@ pub fn bak_path(path: &Path) -> PathBuf {
 }
 
 static TEMP_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+static WRITE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 /// Writes `value` with its version. The file that was there before is kept as `.bak`
 /// (unless it was not valid JSON, so a good backup is never replaced by a broken file).
 pub fn write<T: Versioned>(path: &Path, value: &T) -> anyhow::Result<()> {
+    // One write at a time: on Windows two writers copying onto the same `.bak` at once can fail (os error 32).
+    let _guard = WRITE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let mut json = serde_json::to_value(value)?;
     let fields = json
         .as_object_mut()
@@ -53,7 +56,7 @@ pub fn write<T: Versioned>(path: &Path, value: &T) -> anyhow::Result<()> {
                 T::VERSION
             );
         }
-        std::fs::copy(path, bak_path(path))?;
+        std::fs::copy(path, bak_path(path)).with_context(|| format!("backing up {}", path.display()))?;
     }
     write_bytes_atomic(path, &serde_json::to_vec_pretty(&json)?)
 }
@@ -69,7 +72,8 @@ pub fn write_bytes_atomic(path: &Path, bytes: &[u8]) -> anyhow::Result<()> {
     // Unique per call, so two writers in this process never share a temp file.
     let n = TEMP_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let tmp = dir.join(format!(".{name}.{}.{n}.tmp", std::process::id()));
-    let result = write_private_file(&tmp, bytes).and_then(|()| Ok(std::fs::rename(&tmp, path)?));
+    let result = write_private_file(&tmp, bytes)
+        .and_then(|()| std::fs::rename(&tmp, path).with_context(|| format!("replacing {}", path.display())));
     if result.is_err() {
         let _ = std::fs::remove_file(&tmp);
     }
