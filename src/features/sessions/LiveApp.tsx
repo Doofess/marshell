@@ -44,9 +44,13 @@ export function LiveApp() {
   const [launcherOpen, setLauncherOpen] = useState(false);
   // The command palette, or the shell profiles page opened from it, over the window.
   const [overlay, setOverlay] = useState<"palette" | "profiles" | null>(null);
-  // What the profiles page says aloud through the window's announcer. Negative ids never meet a toast's.
-  const [profilesNotice, setProfilesNotice] = useState<{ id: number; text: string } | null>(null);
+  // What the profiles page and the prompt jumps say aloud through the window's announcer. Negative ids never meet a toast's.
+  const [notice, setNotice] = useState<{ id: number; text: string } | null>(null);
   const noticeCount = useRef(0);
+  const announce = useCallback((text: string) => setNotice({ id: -++noticeCount.current, text }), []);
+  // A prompt jump asked of one session's terminal; each token is one jump.
+  const [promptJump, setPromptJump] = useState<{ token: number; by: -1 | 1; tabId: string } | null>(null);
+  const jumpCount = useRef(0);
   // What each new tab says until its first output, by tab id.
   const [startingTexts, setStartingTexts] = useState<StartingTexts>({});
   // Every tab the core has listed, to tell a tab closed before it printed from one not listed yet.
@@ -102,6 +106,20 @@ export function LiveApp() {
     return () => window.removeEventListener("keydown", onEscape, true);
   }, [barOpen, actions]);
 
+  const selectedRef = useRef(selectedId);
+  selectedRef.current = selectedId;
+  const jumpPrompt = useCallback((by: -1 | 1) => {
+    const tabId = selectedRef.current;
+    if (tabId !== undefined) setPromptJump({ token: ++jumpCount.current, by, tabId });
+  }, []);
+  const onPromptJump = useCallback(
+    (by: -1 | 1, result: { index: number; total: number; exit: number | null } | null) => {
+      if (!result) announce(by < 0 ? "No earlier prompt" : "No later prompt");
+      else announce(`Prompt ${result.index} of ${result.total}${result.exit !== null && result.exit !== 0 ? `, exit ${result.exit}` : ""}`);
+    },
+    [announce],
+  );
+
   // The app's shortcuts work from anywhere, the terminal included; the terminal lets these keys through (TerminalView).
   const os = endpoint ? osOfPlatform(endpoint.platform) : undefined;
   useEffect(() => {
@@ -113,15 +131,16 @@ export function LiveApp() {
       const t = e.target;
       if ((t instanceof HTMLInputElement || t instanceof HTMLTextAreaElement) && !t.classList.contains("xterm-helper-textarea")) return;
       e.preventDefault();
-      // Holding the key repeats it; only moving a session along the list should.
-      if (e.repeat && shortcut.kind !== "move") return;
+      // Holding the key repeats it; only moving a session along the list, or from prompt to prompt, should.
+      if (e.repeat && shortcut.kind !== "move" && shortcut.kind !== "prompt") return;
       if (shortcut.kind === "launcher") setLauncherOpen(true);
       else if (shortcut.kind === "palette") setOverlay("palette");
+      else if (shortcut.kind === "prompt") jumpPrompt(shortcut.by);
       else actions.handle(shortcut);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [os, launcherOpen, overlay, actions]);
+  }, [os, launcherOpen, overlay, actions, jumpPrompt]);
 
   // A palette row: a session to go to, the profiles page, or a command the window runs (LivePalette lists only those).
   const runFromPalette = (id: string) => {
@@ -129,6 +148,7 @@ export function LiveApp() {
     if (id.startsWith("session:")) return select(id.slice("session:".length));
     const shortcut = commandShortcut(id);
     if (shortcut?.kind === "launcher") setLauncherOpen(true);
+    else if (shortcut?.kind === "prompt") jumpPrompt(shortcut.by);
     // After the palette has given focus back, so a rename box or the terminal keeps the focus it is given.
     else if (shortcut && shortcut.kind !== "palette") setTimeout(() => actions.handle(shortcut), 0);
   };
@@ -154,9 +174,11 @@ export function LiveApp() {
           autoFocus={!launcherOpen && overlay === null}
           visible={shown}
           focusToken={focusToken}
+          promptJump={promptJump?.tabId === row.id ? promptJump : undefined}
+          onPromptJump={(result) => promptJump && onPromptJump(promptJump.by, result)}
         />
       ) : null,
-    [endpoint, startingTexts, onSize, launcherOpen, overlay, focusToken],
+    [endpoint, startingTexts, onSize, launcherOpen, overlay, focusToken, promptJump, onPromptJump],
   );
 
   if (error) {
@@ -184,7 +206,7 @@ export function LiveApp() {
           renderTerminal={renderTerminal}
           headerBar={closingInfo && <CloseBar text={closeBarText(closingInfo)} onCancel={actions.cancelClose.bind(actions)} onCloseNow={() => void actions.confirmClose()} />}
           toast={toast && <Toast text={toast.text} actionLabel={toast.reopenId ? "Reopen" : undefined} onAction={() => void actions.reopenFromToast()} />}
-          notice={toast ? { id: toast.id, text: toast.text } : profilesNotice}
+          notice={toast ? { id: toast.id, text: toast.text } : notice}
           renamingId={renaming}
           onRename={(id, name) => void actions.commitRename(id, name)}
           onRenameCancel={(opts) => actions.cancelRename(opts)}
@@ -194,7 +216,7 @@ export function LiveApp() {
         />
       )}
       {overlay === "palette" && os && <LivePalette sessions={paletteSessions(rows)} os={os} onRun={runFromPalette} onClose={() => setOverlay(null)} />}
-      {overlay === "profiles" && endpoint && <ProfilesDialog endpoint={endpoint} onClose={() => setOverlay(null)} onNotice={(text) => setProfilesNotice({ id: -++noticeCount.current, text })} />}
+      {overlay === "profiles" && endpoint && <ProfilesDialog endpoint={endpoint} onClose={() => setOverlay(null)} onNotice={announce} />}
       {launcherOpen && (
         <LiveLauncher
           endpoint={endpoint}
