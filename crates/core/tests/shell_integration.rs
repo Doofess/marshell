@@ -38,10 +38,16 @@ struct Shell {
 impl Shell {
     /// `setup` writes rc files into the temp home before the shell starts.
     fn start(profile: Profile, setup: impl FnOnce(&Path)) -> Shell {
+        Shell::start_with(profile, setup, |_, _| {})
+    }
+
+    /// Like `start`, and `tweak` may change the integrated argv (given the temp home) before the shell starts.
+    fn start_with(profile: Profile, setup: impl FnOnce(&Path), tweak: impl FnOnce(&mut Vec<String>, &Path)) -> Shell {
         let home = tempfile::tempdir().unwrap();
         setup(home.path());
         let dir = shell::install(&home.path().join(".marshell")).unwrap();
-        let applied = shell::integrate(&profile, &dir, &|k| std::env::var(k).ok()).unwrap();
+        let mut applied = shell::integrate(&profile, &dir, &|k| std::env::var(k).ok()).unwrap();
+        tweak(&mut applied.argv, home.path());
         let home_str = home.path().to_string_lossy().into_owned();
         // The temp home first, so the runner's own rc files don't load; integration env after.
         let mut env = vec![
@@ -178,6 +184,76 @@ fn pwsh_reports_prompt_running_and_exit() {
             "sh -c 'exit 3'\r"
         };
         exit_code_cycle(sh, command, 3);
+    }
+}
+
+/// The PowerShells on this machine.
+fn powershells() -> Vec<&'static str> {
+    let mut names = vec!["pwsh"];
+    if cfg!(windows) {
+        names.push("powershell");
+    }
+    names.into_iter().filter(|n| command_on_path(n) || (skipped(n), false).1).collect()
+}
+
+/// PowerShell's profile lives in the Documents folder, which a temp HOME does not move. So the test skips the real
+/// profile and loads `profile.ps1` from the temp home the way PowerShell would: before Marshell's script.
+fn pwsh_with_profile(name: &str, body: &str) -> Shell {
+    let body = body.to_string();
+    Shell::start_with(
+        profile(name, ShellFamily::PowerShell),
+        |home| std::fs::write(home.join("profile.ps1"), body).unwrap(),
+        |argv, home| {
+            argv.insert(1, "-NoProfile".into());
+            let load = argv.pop().unwrap();
+            let path = home.join("profile.ps1").to_string_lossy().replace('\'', "''");
+            // As a scriptblock, like Marshell's own script: a Restricted ExecutionPolicy blocks only script files.
+            argv.push(format!(". ([scriptblock]::Create([IO.File]::ReadAllText('{path}'))); {load}"));
+        },
+    )
+}
+
+fn exit_3() -> &'static str {
+    if cfg!(windows) {
+        "cmd /c exit 3\r"
+    } else {
+        "sh -c 'exit 3'\r"
+    }
+}
+
+#[test]
+fn pwsh_strict_mode_profile_still_marks() {
+    for name in powershells() {
+        let mut sh = pwsh_with_profile(name, "Set-StrictMode -Version Latest\n");
+        sh.expect(Mark::PromptStart);
+        sh.type_line(exit_3());
+        sh.expect(Mark::Executed);
+        sh.expect(Mark::Finished(Some(3)));
+        sh.expect(Mark::PromptStart);
+        assert!(!sh.text().contains("cannot be retrieved"), "{name}: {}", sh.text());
+    }
+}
+
+#[test]
+fn pwsh_user_prompt_still_sees_a_failure() {
+    for name in powershells() {
+        let mut sh = pwsh_with_profile(name, "function prompt { \"ok=$($global:?)> \" }\n");
+        sh.expect(Mark::PromptStart);
+        sh.type_line("Get-Item ./no-such-marshell-file\r");
+        sh.expect(Mark::Finished(Some(1)));
+        sh.expect_text("ok=False");
+    }
+}
+
+#[test]
+fn pwsh_failed_cmdlet_after_native_exit_reports_1() {
+    for name in powershells() {
+        let mut sh = pwsh_with_profile(name, "");
+        sh.expect(Mark::PromptStart);
+        sh.type_line(exit_3());
+        sh.expect(Mark::Finished(Some(3)));
+        sh.type_line("Get-Item ./no-such-marshell-file\r");
+        sh.expect(Mark::Finished(Some(1)));
     }
 }
 
