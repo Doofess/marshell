@@ -48,7 +48,8 @@ const MAX_LAUNCHER_FOLDERS: usize = 32;
 pub fn remember(doc: &mut LayoutDoc, folder: &str, profile_id: String, agent: Option<String>) {
     let newest = doc.launcher.values().map(|c| c.seq).max().unwrap_or(0);
     let seq = newest.saturating_add(1);
-    doc.launcher.insert(folder.to_string(), LauncherChoice { profile_id, agent, seq });
+    doc.launcher
+        .insert(folder.to_string(), LauncherChoice { profile_id, agent, seq });
     while doc.launcher.len() > MAX_LAUNCHER_FOLDERS {
         let oldest = doc.launcher.iter().min_by_key(|(_, c)| c.seq).map(|(k, _)| k.clone());
         match oldest {
@@ -288,7 +289,10 @@ mod tests {
         remember(&mut doc, "C:/a", "pwsh".into(), Some("claude".into()));
         assert_eq!(doc.launcher.len(), 2);
         let a = &doc.launcher["C:/a"];
-        assert_eq!((a.profile_id.as_str(), a.agent.as_deref(), a.seq), ("pwsh", Some("claude"), 3));
+        assert_eq!(
+            (a.profile_id.as_str(), a.agent.as_deref(), a.seq),
+            ("pwsh", Some("claude"), 3)
+        );
     }
 
     #[test]

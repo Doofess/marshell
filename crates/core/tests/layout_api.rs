@@ -122,11 +122,18 @@ async fn create_records_launcher_choice() {
         vec![sleeper_profile()],
     ));
     let body = serde_json::json!({ "cols": 80, "rows": 24, "profile_id": "sleeper", "cwd": folder_path });
-    let res = app.clone().oneshot(request("POST", "/v1/sessions", Some(body))).await.unwrap();
+    let res = app
+        .clone()
+        .oneshot(request("POST", "/v1/sessions", Some(body)))
+        .await
+        .unwrap();
     assert_eq!(res.status(), StatusCode::OK);
 
     let choice = layout_of(&app).await["launcher"][&folder_path].clone();
-    assert_eq!(choice, serde_json::json!({ "profile_id": "sleeper", "agent": null, "seq": 1 }));
+    assert_eq!(
+        choice,
+        serde_json::json!({ "profile_id": "sleeper", "agent": null, "seq": 1 })
+    );
     // It is on disk too, not only in memory.
     let saved: serde_json::Value =
         serde_json::from_slice(&std::fs::read(home.path().join("layout.json")).unwrap()).unwrap();
@@ -138,7 +145,11 @@ async fn a_failed_create_records_nothing() {
     let home = tempfile::tempdir().unwrap();
     let app = app_in(home.path());
     let body = serde_json::json!({ "cols": 80, "rows": 24, "profile_id": "nope", "cwd": "C:/work" });
-    let res = app.clone().oneshot(request("POST", "/v1/sessions", Some(body))).await.unwrap();
+    let res = app
+        .clone()
+        .oneshot(request("POST", "/v1/sessions", Some(body)))
+        .await
+        .unwrap();
     assert_eq!(res.status(), StatusCode::BAD_REQUEST);
     assert_eq!(layout_of(&app).await["launcher"], serde_json::json!({}));
 }

@@ -324,7 +324,10 @@ pub async fn create(
     };
     let size = (req.cols, req.rows);
     // What the launcher offers next time for this folder. An explicit argv is not a launcher choice.
-    let folder = req.cwd.clone().filter(|c| !c.is_empty() && run.profile_id != CUSTOM_PROFILE);
+    let folder = req
+        .cwd
+        .clone()
+        .filter(|c| !c.is_empty() && run.profile_id != CUSTOM_PROFILE);
     let choice = folder.map(|folder| (folder, run.profile_id.clone(), agent.clone()));
     let created = start_session(&st, run, agent, req.name, req.cwd, size, req.color_scheme).await?;
     if let Some((folder, profile_id, agent)) = choice {
