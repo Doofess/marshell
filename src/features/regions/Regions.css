@@ -108,6 +108,11 @@
 }
 
 @media (forced-colors: active) {
+  /* No dimming here, and the focus outline goes when focus moves to the comment: the box keeps its own dashed edge. */
+  .region-box {
+    outline: 2px dashed CanvasText;
+    outline-offset: -2px;
+  }
   .region-box:focus,
   .region-box:focus-visible {
     outline: 3px double Highlight;
