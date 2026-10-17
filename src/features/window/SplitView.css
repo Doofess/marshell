@@ -88,6 +88,18 @@
 .pane[data-active="true"] .pane__header {
   border-block-end: 2px solid var(--focus, var(--accent));
 }
+/* A risky mode (bypass, full auto) tints the header red with a red bar beside the brand stripe, as the single-pane session header does. */
+.pane__header[data-danger] {
+  background: color-mix(in oklch, var(--error) 9%, transparent);
+}
+.pane__header[data-danger]::after {
+  content: "";
+  position: absolute;
+  inset-block: 0;
+  inset-inline-start: var(--stripe);
+  inline-size: 3px;
+  background: var(--error);
+}
 /* A pane that needs you carries the 12% attention tint of its sidebar row. */
 .pane__header[data-needs="true"] {
   background: color-mix(in oklch, var(--agent-signal, var(--accent)) 12%, transparent);
@@ -255,6 +267,11 @@
   .pane__header[data-needs="true"] {
     outline: 1px solid Highlight;
     outline-offset: -1px;
+  }
+  /* The red tint and bar are dropped too, so a risky-mode header takes the session header's 2px outline. */
+  .pane__header[data-danger] {
+    outline: 2px solid CanvasText;
+    outline-offset: -2px;
   }
   .pane__new,
   .pane__choice {

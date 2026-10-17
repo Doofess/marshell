@@ -126,7 +126,7 @@ Stories are fed by `fake-agent` scenario scripts, so the same 5-agent run drives
 | Window | Minimum 720×480. Below 960 px wide the sidebar auto-collapses to the rail. |
 | Top bar | **One unified 40 px bar**; no separate title bar. |
 | Top bar, sidebar column | macOS: traffic lights, inset 78 px. Windows: the app icon and the lowercase "marshell" wordmark (vector, Space Grotesk SemiBold) as one button that opens the app menu, then a palette button. In the 52 px rail only the icon fits, so the palette button moves to the foot of the rail. |
-| Top bar, main column | Session header: name · project/branch · mode chip · model/effort · subagents · context ring · port chips. |
+| Top bar, main column | Session header: name · project/branch · mode chip · model/effort · subagents · context ring · port chips. Hidden while two or more panes are on screen: each pane's header names its session, and a header above the first pane read as that pane's title. A zoomed pane, or a split with room for one, keeps it. |
 | Window controls | Windows: 46×40 controls at the right. Linux: native decorations plus a 36 px header. |
 | Sidebar | Default 288 px, minimum 200, maximum 400, rail 52, focus mode 0. Drag the edge to resize; double-click resets. |
 | Sidebar footer | 40 px: plan ring, 5h %, and doctor glyph with issue count. |
@@ -200,7 +200,7 @@ The full text is in the tooltip and the screen-reader label.
 | Stuck | Dashed ring | — | "Same command 9× in 4 min" | No notification |
 | Muted | Bell-slash in the cluster | Badge does not bounce | suffix "muted" | Glyphs still shown |
 | Elevated | Shield before the name | — | "Administrator" | Header label for the whole session |
-| Auto / dontAsk / bypass | ⚠, **always visible** | — | "Full auto" | Header tinted red with a red bar on its start edge (bypass, auto) |
+| Auto / dontAsk / bypass | ⚠, **always visible** | — | "Full auto" | Header tinted red with a red bar on its start edge (bypass, auto); in split view each pane header carries the same tint and bar |
 | Ended | Hollow square | — | "Ended · exit 0" | Text 60% |
 | Limited (no hooks) | Dotted circle | — | "Status limited · set up" | Links to setup |
 | Unknown values | Nothing in a row or the strip: the ring, usage line, model, effort and subagent count are left out, not shown as a dash. (A table or a form shows an en dash instead; see Batch 3 design decisions.) | — | — | Ring hidden |

@@ -277,6 +277,8 @@ export function MainWindow({
   }, [title]);
 
   const shownCount = shown.length;
+  // With two or more panes on screen each pane's header names its session, so the top bar names none: above the first pane it read as that pane's title.
+  const manyPanes = split && !empty && zoomIdx === undefined && shownCount > 1;
   useEffect(() => {
     onVisible?.(shownCount);
   }, [onVisible, shownCount]);
@@ -355,9 +357,9 @@ export function MainWindow({
           )}
         </div>
         <div className="window__bar-main" onPointerLeave={mode === "focus" ? () => setPeeking(false) : undefined}>
-          {headerBar ?? (showHeader && active && <SessionHeader row={active} ports={ports} />)}
+          {headerBar ?? (showHeader && !manyPanes && active && <SessionHeader row={active} ports={ports} />)}
           {/* Focus mode: the pointer at the top edge brings the header up, and leaving the bar puts it away. A pointer affordance only; the keyboard leaves focus mode. */}
-          {mode === "focus" && !showHeader && <div className="window__peek" aria-hidden="true" onPointerEnter={() => setPeeking(true)} />}
+          {mode === "focus" && !showHeader && !manyPanes && <div className="window__peek" aria-hidden="true" onPointerEnter={() => setPeeking(true)} />}
         </div>
         <div className="window__bar-end">
           <div ref={layoutRoot} className="window__layout" onKeyDown={layoutKeys}>

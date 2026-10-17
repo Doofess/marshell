@@ -80,6 +80,10 @@ describe("forced colours: every filled control keeps an edge", () => {
     const blocks = forcedColorsBlocks(read("features/window/SessionHeader.css"));
     expect(blocks.some((b) => /\.session-header\[data-danger\]\s*\{[^}]*outline:\s*2px solid CanvasText/.test(b))).toBe(true);
   });
+  it("features/window/SplitView.css: a risky-mode pane header keeps the same 2px CanvasText outline", () => {
+    const blocks = forcedColorsBlocks(read("features/window/SplitView.css"));
+    expect(blocks.some((b) => /\.pane__header\[data-danger\]\s*\{[^}]*outline:\s*2px solid CanvasText/.test(b))).toBe(true);
+  });
 
   /** The selected rail item and the selected session row are marked by an inset fill, which High Contrast drops, so each takes a 2 px Highlight outline. */
   for (const [file, selector] of [

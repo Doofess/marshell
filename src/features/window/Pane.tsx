@@ -8,6 +8,7 @@ import { hasPromptLine } from "../sidebar/promptLine";
 import { sessionWord } from "../sidebar/sessionNumber";
 import { commandById, shortcutLabel, type Os } from "../../lib/keymap";
 import { Composer } from "../composer/Composer";
+import { headerDanger } from "./SessionHeader";
 import type { RowModel } from "../sidebar/types";
 import { ScriptedTerminal } from "../terminal/ScriptedTerminal";
 import { SHELL_SIZE, shellSession } from "../terminal/scriptedShell";
@@ -87,7 +88,7 @@ export function Pane({ row, active, navIndex, setting, style, cells, zoomedOf, o
       onPointerDown={onFocus}
       onFocus={onFocus}
     >
-      <header className="pane__header" data-needs={needs || undefined}>
+      <header className="pane__header" data-needs={needs || undefined} data-danger={headerDanger(row.mode) || undefined}>
         <span className="pane__stripe" aria-hidden="true" />
         {row.status === "working" ? <AgentMark agent={row.agent} size={16} working /> : <StatusGlyph kind={row.status} />}
         <SessionNumber n={row.number} />

@@ -66,6 +66,19 @@ describe("MainWindow: layouts", () => {
     expect((h.match(/data-active="true"/g) ?? []).length).toBe(1);
     expect(h).toContain('data-active="false"');
   });
+  it("with two or more panes on screen, the top bar names no session: each pane's own header does", () => {
+    expect(html({ layout: "split" })).not.toContain("session-header");
+    expect(html({ layout: "split", splitCount: 4, ...BIG })).not.toContain("session-header");
+  });
+  it("keeps the top bar's session header when one pane is on screen: zoomed, or a split too small for two", () => {
+    expect(html({ layout: "split", splitCount: 4, zoomedPane: 1, ...BIG })).toContain("session-header");
+    expect(html({ layout: "split", splitCount: 2, width: 720, height: 480 })).toContain("session-header");
+  });
+  it("tints a bypass or auto session's pane header, since the top bar no longer carries the warning", () => {
+    const rows = SCENARIO_ROWS.map((r) => (r.name === "billing" ? { ...r, mode: "bypass" as const } : r));
+    const h = html({ layout: "split", splitCount: 2, rows, ...BIG });
+    expect((h.match(/<header class="pane__header"[^>]*data-danger="true"/g) ?? []).length).toBe(1);
+  });
   it("the drawer shows the first request in full and pushes or overlays by width", () => {
     expect(html({ drawer: true, width: 1700 })).toContain('data-placement="push"');
     expect(html({ drawer: true, width: 1180 })).toContain('data-placement="overlay"');
