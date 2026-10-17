@@ -138,3 +138,14 @@ fn main() {
         }
     });
 }
+
+#[cfg(test)]
+mod tests {
+    /// Debug builds inject Tauri's own Ctrl+Shift+I listener (toggle-devtools.js), which opens DevTools
+    /// through a command, past the WebView2 shortcut switch. Denying the command leaves the key to focus mode.
+    #[test]
+    fn ctrl_shift_i_cannot_open_devtools() {
+        let caps = include_str!("../capabilities/default.json");
+        assert!(caps.contains("\"core:webview:deny-internal-toggle-devtools\""));
+    }
+}
