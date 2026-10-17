@@ -1,6 +1,6 @@
 import "@xterm/xterm/css/xterm.css";
 import { FitAddon } from "@xterm/addon-fit";
-import { Terminal } from "@xterm/xterm";
+import { Terminal, type ITerminalOptions } from "@xterm/xterm";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { Endpoint } from "../../generated/Endpoint";
 import { sessionShortcut } from "../../lib/appShortcuts";
@@ -52,6 +52,11 @@ type Props = {
 };
 
 const BUNDLED = { family: BUNDLED_FONT, size: 13 };
+
+/** The options every session's terminal starts with. The exit-code marks (promptMarks.ts) draw with registerDecoration, a proposed API. */
+export function terminalOptions(o: Pick<ITerminalOptions, "fontFamily" | "fontSize" | "theme" | "minimumContrastRatio">): ITerminalOptions {
+  return { ...o, cursorBlink: true, scrollback: 10_000, allowProposedApi: true };
+}
 
 /** Waits for a font so xterm measures its cells with the right glyphs. Gives up after a second; a missing font is not an error. */
 function loadFont(family: string, size: number): Promise<void> {
@@ -106,7 +111,7 @@ export function TerminalView({ endpoint, tabId, placeholder, onOutput, onSize, a
     const paintGutter = (background: string | undefined) => el.style.setProperty("--terminal-bg", background ?? null);
     paintGutter(first.theme.background);
     let current = first.scheme;
-    const term = new Terminal({ fontFamily, fontSize, cursorBlink: true, scrollback: 10_000, theme: first.theme, minimumContrastRatio: first.minimumContrastRatio });
+    const term = new Terminal(terminalOptions({ fontFamily, fontSize, theme: first.theme, minimumContrastRatio: first.minimumContrastRatio }));
     const fit = new FitAddon();
     term.loadAddon(fit);
     fitRef.current = fit;
