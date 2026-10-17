@@ -6,6 +6,9 @@ type Size = { w: number; h: number };
 const MAX_PIXELS = 16_777_216;
 const MAX_SCALE = 3;
 const MAX_SIDE = 4096;
+/** The most the core takes for an attachment (the image cap, 20 MB). */
+export const MAX_PNG_BYTES = 20 * 1024 * 1024;
+const MAX_ENCODES = 4;
 
 /** How far to render a page: sharp (up to 3x), but never more than 16 Mpx for the whole page. `page1` is its size at scale 1. */
 export function cropScale(page1: Size): number {
@@ -27,6 +30,12 @@ export function outputSize(sw: number, sh: number): Size {
   return { w: Math.max(1, Math.round(sw * k)), h: Math.max(1, Math.round(sh * k)) };
 }
 
+/** The next size to try for a PNG of `bytes` that is over the cap: both sides by sqrt(cap / bytes) x 0.9 (the PNG size follows the pixel count), the ratio kept. */
+export function smallerSize(size: Size, bytes: number): Size {
+  const k = Math.sqrt(MAX_PNG_BYTES / bytes) * 0.9;
+  return { w: Math.max(1, Math.round(size.w * k)), h: Math.max(1, Math.round(size.h * k)) };
+}
+
 function makeCanvas(w: number, h: number): HTMLCanvasElement | OffscreenCanvas {
   if (typeof OffscreenCanvas !== "undefined") return new OffscreenCanvas(w, h);
   const c = document.createElement("canvas");
@@ -45,20 +54,30 @@ function toBlob(c: HTMLCanvasElement | OffscreenCanvas): Promise<Blob> {
   return new Promise((resolve, reject) => c.toBlob((b) => (b ? resolve(b) : reject(new Error("The crop could not be encoded."))), "image/png"));
 }
 
-/** Crops `r` out of a source `src` pixels large and encodes it as a PNG. */
-export async function cropToPng(source: CanvasImageSource, src: Size, r: Region): Promise<Blob> {
-  const { sx, sy, sw, sh } = cropRect(r, src);
-  const out = outputSize(sw, sh);
+/** Draws the source rectangle into a canvas of `out` pixels and encodes it as a PNG. */
+async function encode(source: CanvasImageSource, rect: { sx: number; sy: number; sw: number; sh: number }, out: Size): Promise<Blob> {
   const canvas = makeCanvas(out.w, out.h);
   try {
     const ctx = canvas.getContext("2d") as CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D | null;
     if (!ctx) throw new Error("The crop could not be drawn.");
     ctx.imageSmoothingQuality = "high";
-    ctx.drawImage(source, sx, sy, sw, sh, 0, 0, out.w, out.h);
+    ctx.drawImage(source, rect.sx, rect.sy, rect.sw, rect.sh, 0, 0, out.w, out.h);
     return await toBlob(canvas);
   } finally {
     release(canvas);
   }
+}
+
+/** Crops `r` out of a source `src` pixels large and encodes it as a PNG; a photographic crop the core would refuse (over 20 MB) is encoded again, smaller. */
+export async function cropToPng(source: CanvasImageSource, src: Size, r: Region): Promise<Blob> {
+  const rect = cropRect(r, src);
+  let out = outputSize(rect.sw, rect.sh);
+  let png = await encode(source, rect, out);
+  for (let tries = 1; png.size > MAX_PNG_BYTES && tries < MAX_ENCODES; tries++) {
+    out = smallerSize(out, png.size);
+    png = await encode(source, rect, out);
+  }
+  return png;
 }
 
 /** Crops `r` out of the image at `url`, at its natural size. */

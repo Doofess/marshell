@@ -1,5 +1,20 @@
 import { describe, expect, it } from "vitest";
-import { cropRect, cropScale, outputSize } from "./crop";
+import { MAX_PNG_BYTES, cropRect, cropScale, outputSize, smallerSize } from "./crop";
+
+describe("smallerSize", () => {
+  it("is the 20 MB cap the core enforces", () => {
+    expect(MAX_PNG_BYTES).toBe(20 * 1024 * 1024);
+  });
+  it("shrinks both sides by sqrt(cap / size) x 0.9, the ratio kept", () => {
+    const next = smallerSize({ w: 4096, h: 2730 }, 4 * MAX_PNG_BYTES);
+    const k = 0.5 * 0.9;
+    expect(next).toEqual({ w: Math.round(4096 * k), h: Math.round(2730 * k) });
+  });
+  it("never goes under one pixel", () => {
+    expect(smallerSize({ w: 1, h: 1 }, 1000 * MAX_PNG_BYTES)).toEqual({ w: 1, h: 1 });
+    expect(smallerSize({ w: 3, h: 2000 }, 1000 * MAX_PNG_BYTES).w).toBe(1);
+  });
+});
 
 describe("crop", () => {
   it("renders a page at up to 3x, less when it would be too many pixels", () => {
