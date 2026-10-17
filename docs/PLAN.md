@@ -840,6 +840,13 @@ Decisions from the 2026-10-10 coverage audit (`docs/superpowers/plan-coverage-au
      5. After Add, focus goes to the session's terminal and the preview stays open.
      6. One region per Add. The comment is one line of at most 2000 characters with no control characters; the core refuses anything else.
      7. Crops go in `<home>/attachments/<tab>/<unix ms>.png` with owner-only permissions, at most 20 MB, rendered at up to 3× and at most 4096 px on the longest side. Every agent's `attachment_ref` is the quoted absolute path for now (docs/research/attachment-ref.md).
+   - **Slice 2.5c decisions (2026-10-18).**
+     1. Capture (Ctrl+Shift+X, ⌘⌥X on macOS) opens the Windows snipping tool, waits up to 60 s for an image on the clipboard, and delivers it like a region to the focused pane's session. Esc in the snipping tool cancels. The image is read in the Rust shell, since the page has no focus while the snipping overlay is up. Off Windows the command says it isn't available yet.
+     2. An image-only paste with Ctrl+Shift+V is saved and its path pasted. Ctrl+V stays the CLI's own, so Codex keeps attaching clipboard images natively.
+     3. A drop on a session's terminal pastes the quoted path or paths with no Enter, and focuses that terminal. A drop anywhere else opens the file in the preview; a folder can't be shown there.
+     4. Native drop is on, and the sidebar reorder is rewritten with pointer events, since native drop turns off HTML5 drag and drop on Windows.
+     5. A plain shell's terminal, the shell panel included, gets the dropped path pasted too, as Windows Terminal does.
+     6. The live check and its fixes are in docs/research/drop-paste-capture.md.
    - **Window frame (2026-10-17).** Windows runs frameless with the system shadow and rounded corners, and the 40 px bar is the title bar: its empty space drags the window, double-click maximizes or restores, and Maximize becomes Restore while maximized. Snap Layouts' hover flyout on Maximize is a follow-up, because the buttons are HTML and Windows does not see a maximize button; Win+Z and edge snapping work. macOS and Linux keep their native frames.
    - **Session row menu (2026-10-17).**
      1. Right-clicking a session row, or Shift+F10 or the Menu key on a focused row, opens its menu: Rename (F2), Split into a pane, Resume, Review changes (Ctrl+Shift+R), then Close (Ctrl+Shift+W) after a separator. On macOS the shortcuts show as Cmd+key.
@@ -856,10 +863,10 @@ Decisions from the 2026-10-10 coverage audit (`docs/superpowers/plan-coverage-au
 2.5. **Context and preview** (added 2026-10-15, inspired by the features of the Codex desktop app, not its infrastructure; numbered 2.5 so later phases keep their numbers).
    - Scope:
      - **Preview pane.** Read-only preview of code (syntax highlighted), Markdown (rendered, with a source toggle), images, PDF and HTML.
-       - Opened from a clickable path in terminal output, by dropping a file on the window, or with quick open (fuzzy find in the focused session's folder). Its toggle is Ctrl+Shift+Q (⌘⌥Q on macOS, since ⌘Q is Quit). Dropping a file on the window moved to slice 2.5c. There is no file tree; that stays in v2.
+       - Opened from a clickable path in terminal output, by dropping a file on the window, or with quick open (fuzzy find in the focused session's folder). Its toggle is Ctrl+Shift+Q (⌘⌥Q on macOS, since ⌘Q is Quit). Dropping a file on the window is done in slice 2.5c. There is no file tree; that stays in v2.
        - Layout: the preview takes the space split view would use. Opening it shows the focused session and the preview side by side, and closing it brings the split back. This is the user's decision (2026-10-15): one session at a time while previewing.
      - **Region to prompt.** In a PDF or image preview, drag a box and type a comment. Marshell saves the crop as a PNG and puts the image reference, the file name and page, and the comment into the session's prompt line. Done in slice 2.5b, delivered by a paste with no Enter until phase 3 (see the slice 2.5b decisions).
-     - **Screenshot and image drop.** Paste or drop an image on a session, or capture a screen region. Marshell saves it and puts its reference into the prompt line.
+     - **Screenshot and image drop.** Paste or drop an image on a session, or capture a screen region. Marshell saves it and puts its reference into the prompt line. Done in slice 2.5c (see the slice 2.5c decisions).
      - **Delivery rule.** Every feature here only fills the prompt line; the user edits it and presses Enter. Marshell still never types into a terminal on its own. A manual CLI has no prompt line, so the reference is copied to the clipboard and a toast says so. While a session waits on the user, the prompt line keeps its block, and the filled text waits until it can be sent.
      - **Multi-CLI.** How an image is referenced is an adapter method (`attachment_ref(path) -> String`). The default is the quoted absolute path. Claude Code and Codex each get theirs after their current docs are checked. A CLI that cannot read images gets the path and a note in the toast.
      - **Storage.** Crops and screenshots go in `~/.marshell/attachments/<session>/`, with owner-only permissions. They are kept with the session's history and follow its retention (phase 5).
