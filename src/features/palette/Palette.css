@@ -54,7 +54,7 @@
   max-block-size: 70%;
   border-radius: 10px;
   background: var(--bg-overlay);
-  box-shadow: 0 12px 40px color-mix(in oklch, var(--text-1) 22%, transparent);
+  box-shadow: 0 8px 28px color-mix(in oklch, var(--text-1) 10%, transparent);
   overflow: clip;
 }
 .palette__input {
