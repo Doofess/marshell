@@ -1,0 +1,66 @@
+/*
+ * The context menu: an overlay-filled list with the palette's shadow. Vendor-neutral, so the active item takes the app
+ * accent, never the agent signal. The menu draws no ring; the active item shows where focus is.
+ */
+.context-menu {
+  z-index: 10;
+  min-inline-size: 180px;
+  margin: 0;
+  padding: var(--space-1);
+  list-style: none;
+  border-radius: var(--radius);
+  background: var(--bg-overlay);
+  box-shadow: var(--shadow-pill);
+  color: var(--text-1);
+  font-size: var(--text-13);
+  line-height: 20px;
+}
+.context-menu:focus {
+  outline: 2px solid transparent;
+}
+.context-menu [role="menuitem"] {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  box-sizing: border-box;
+  block-size: 28px;
+  padding-inline: var(--space-2);
+  border-inline-start: 3px solid transparent;
+  border-radius: calc(var(--radius) - 2px);
+  cursor: default;
+  user-select: none;
+}
+/* Transparent outline, not none, so Windows high contrast still draws focus. */
+.context-menu [role="menuitem"]:focus {
+  background: var(--selected);
+  border-inline-start-color: var(--accent);
+  outline: 2px solid transparent;
+}
+.context-menu [role="menuitem"]:active {
+  background: var(--selected);
+}
+.context-menu__shortcut {
+  margin-inline-start: auto;
+  color: var(--text-2);
+  text-align: end;
+}
+.context-menu__sep {
+  block-size: 1px;
+  margin-block: var(--space-1);
+  background: var(--hairline);
+}
+
+@media (forced-colors: active) {
+  .context-menu {
+    outline: 1px solid CanvasText;
+  }
+  .context-menu [role="menuitem"]:focus {
+    background: Highlight;
+    color: HighlightText;
+    forced-color-adjust: none;
+  }
+  .context-menu [role="menuitem"]:focus .context-menu__shortcut {
+    color: HighlightText;
+  }
+}
