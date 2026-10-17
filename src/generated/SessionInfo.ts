@@ -26,4 +26,8 @@ mode: SessionMode | null, state: SessionState,
 /**
  * What the shell is doing, from its prompt marks. Unknown without shell integration.
  */
-command: CommandState, };
+command: CommandState, 
+/**
+ * True while the core has frozen the process tree. Always false once the session has ended.
+ */
+paused: boolean, };

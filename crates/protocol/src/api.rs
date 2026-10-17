@@ -143,6 +143,9 @@ pub struct SessionInfo {
     pub state: SessionState,
     /// What the shell is doing, from its prompt marks. Unknown without shell integration.
     pub command: CommandState,
+    /// True while the core has frozen the process tree. Always false once the session has ended.
+    #[serde(default)]
+    pub paused: bool,
 }
 
 /// A shell session's command state, folded from OSC 133 marks.
@@ -597,6 +600,8 @@ impl Default for Appearance {
 #[ts(export)]
 pub struct Settings {
     pub appearance: Appearance,
+    /// True once the user has seen the network warning that comes with the first Pause.
+    pub pause_warned: bool,
 }
 
 /// A file the core found for the user to import from (the core only reads it).

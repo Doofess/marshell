@@ -22,6 +22,8 @@ type SettingsApi = {
  */
 export class SettingsSync {
   private hasRead = false;
+  /** Kept from the last read, so an appearance save sends it back unchanged. */
+  private pauseWarned = false;
 
   constructor(
     private api: SettingsApi,
@@ -33,6 +35,7 @@ export class SettingsSync {
     // Asked each time: a restarted core listens on a new endpoint.
     const s = await this.api.get(await this.getEndpoint());
     this.hasRead = true;
+    this.pauseWarned = s.pause_warned;
     return s.appearance;
   }
 
@@ -45,7 +48,8 @@ export class SettingsSync {
         throw new SettingsReadError();
       }
     }
-    const s = await this.api.put(await this.getEndpoint(), { appearance: next });
+    const s = await this.api.put(await this.getEndpoint(), { appearance: next, pause_warned: this.pauseWarned });
+    this.pauseWarned = s.pause_warned;
     return s.appearance;
   }
 }

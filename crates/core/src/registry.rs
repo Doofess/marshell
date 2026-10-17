@@ -127,6 +127,7 @@ impl Registry {
                 mode: relaunch.mode,
                 state: SessionState::Running,
                 command: CommandState::Unknown,
+                paused: false,
             },
             spec: relaunch,
             generation,
@@ -159,6 +160,7 @@ impl Registry {
                     mode: tab.mode,
                     state: SessionState::Ended,
                     command: CommandState::Unknown,
+                    paused: false,
                 },
                 spec: relaunch_of(tab),
                 generation,
@@ -202,6 +204,7 @@ impl Registry {
         }
         let previous = std::mem::replace(&mut entry.info.state, SessionState::Running);
         entry.info.command = CommandState::Unknown;
+        entry.info.paused = false;
         entry.generation = generation;
         let relaunch = entry.spec.clone();
         self.tx.send_replace(state.snapshot());
@@ -224,6 +227,7 @@ impl Registry {
         entry.spec.mode = Some(mode);
         entry.info.state = SessionState::Running;
         entry.info.command = CommandState::Unknown;
+        entry.info.paused = false;
         entry.generation = generation;
         let relaunch = entry.spec.clone();
         self.tx.send_replace(state.snapshot());
@@ -259,6 +263,34 @@ impl Registry {
             .find(|e| e.info.tab_id == tab_id && e.generation == generation)
         {
             entry.info.state = SessionState::Exited { code };
+            entry.info.paused = false;
+            self.tx.send_replace(state.snapshot());
+        }
+    }
+
+    /// The generation of the tab's current process, if the tab is open.
+    pub fn generation(&self, tab_id: &str) -> Option<u64> {
+        let state = self.state.lock().unwrap();
+        state
+            .open
+            .iter()
+            .find(|e| e.info.tab_id == tab_id)
+            .map(|e| e.generation)
+    }
+
+    /// The process was frozen or thawed. Ignored when `generation` is not the entry's current one:
+    /// the row belongs to a newer process. A row that is not Running is never paused. Broadcasts
+    /// only on a change.
+    pub fn set_paused(&self, tab_id: &str, generation: u64, paused: bool) {
+        let mut state = self.state.lock().unwrap();
+        if let Some(entry) = state
+            .open
+            .iter_mut()
+            .find(|e| e.info.tab_id == tab_id && e.generation == generation)
+            && entry.info.paused != paused
+            && (!paused || entry.info.state == SessionState::Running)
+        {
+            entry.info.paused = paused;
             self.tx.send_replace(state.snapshot());
         }
     }
@@ -328,7 +360,9 @@ impl Registry {
     pub fn close(&self, tab_id: &str) -> Option<Relaunch> {
         let mut state = self.state.lock().unwrap();
         let index = state.open.iter().position(|e| e.info.tab_id == tab_id)?;
-        let entry = state.open.remove(index);
+        let mut entry = state.open.remove(index);
+        // Closing kills the process, which thaws it first.
+        entry.info.paused = false;
         let spec = entry.spec.clone();
         state.closed.push_front(entry);
         state.closed.truncate(MAX_CLOSED);
@@ -504,6 +538,57 @@ mod tests {
         assert_eq!(row.mode, Some(SessionMode::Plan));
         reg.mark_exited("t1", second, 3);
         assert_eq!(reg.snapshot().sessions[0].state, SessionState::Exited { code: 3 });
+    }
+
+    #[test]
+    fn set_paused_publishes() {
+        let reg = Registry::new();
+        reg.reserve("a", relaunch("A"));
+        let generation = generation_of(&reg, "a");
+        let mut rx = reg.subscribe();
+        rx.borrow_and_update();
+        reg.set_paused("a", generation, true);
+        assert!(rx.has_changed().unwrap());
+        assert!(reg.snapshot().sessions[0].paused);
+        reg.set_paused("a", generation, false);
+        assert!(!reg.snapshot().sessions[0].paused);
+    }
+
+    #[test]
+    fn set_paused_ignores_a_stale_generation() {
+        let reg = Registry::new();
+        reg.reserve("a", relaunch("A"));
+        let generation = generation_of(&reg, "a");
+        reg.set_paused("a", generation + 1, true);
+        assert!(!reg.snapshot().sessions[0].paused);
+        reg.set_paused("nope", generation, true);
+    }
+
+    #[test]
+    fn exit_clears_paused() {
+        let reg = Registry::new();
+        reg.reserve("a", relaunch("A"));
+        let generation = generation_of(&reg, "a");
+        reg.set_paused("a", generation, true);
+        reg.mark_exited("a", generation, 1);
+        let row = &reg.snapshot().sessions[0];
+        assert_eq!(row.state, SessionState::Exited { code: 1 });
+        assert!(!row.paused);
+    }
+
+    #[test]
+    fn restart_clears_paused() {
+        let reg = Registry::new();
+        reg.reserve(
+            "a",
+            Relaunch {
+                agent: Some("claude".into()),
+                ..relaunch("A")
+            },
+        );
+        reg.set_paused("a", generation_of(&reg, "a"), true);
+        reg.begin_restart("a", SessionMode::Plan).unwrap();
+        assert!(!reg.snapshot().sessions[0].paused);
     }
 
     #[test]
