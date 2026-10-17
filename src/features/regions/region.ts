@@ -51,6 +51,9 @@ export function nudge(
   return { ...r, x: clamp(r.x + dx, 0, 1 - r.w), y: clamp(r.y + dy, 0, 1 - r.h) };
 }
 
+/** Whether there is a page to mark: an image, or a PDF whose document has loaded (not one still loading, or one that failed). */
+export const canMarkRegion = (phase: string, documentLoaded: boolean): boolean => phase === "image" || (phase === "pdf" && documentLoaded);
+
 /** False once the document has fewer pages than the box's page (a reload that changed the file). */
 export function regionStillValid(r: Region, pageCount: number): boolean {
   return Number.isInteger(r.page) && r.page >= 1 && r.page <= pageCount;

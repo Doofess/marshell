@@ -7,7 +7,7 @@ import { cropImage, cropPdfPage } from "../regions/crop";
 import { placePopover } from "../regions/placement";
 import { RegionComment, type RegionTarget } from "../regions/RegionComment";
 import { RegionLayer } from "../regions/RegionLayer";
-import { fromDrag, initialRegion, regionLabel, regionStillValid, type Region } from "../regions/region";
+import { canMarkRegion, fromDrag, initialRegion, regionLabel, regionStillValid, type Region } from "../regions/region";
 import { commandById, shortcutLabel, type Os } from "../../lib/keymap";
 import { CodeView } from "./CodeView";
 import { themeVariables } from "./highlight";
@@ -151,10 +151,10 @@ export function PreviewPane({ entry, file, updated, theme, os, canBack, canForwa
   };
 
   // Marking a region: only an image or a PDF has pages to mark.
-  const canMark = shown.phase === "image" || shown.phase === "pdf";
+  const [pdf, setPdf] = useState<PDFDocumentProxy | null>(null);
+  const canMark = canMarkRegion(shown.phase, pdf !== null);
   const [select, setSelect] = useState<Select | null>(null);
   const [currentPage, setCurrentPage] = useState(1);
-  const [pdf, setPdf] = useState<PDFDocumentProxy | null>(null);
   const [focusBox, setFocusBox] = useState(0);
   const box = useRef<HTMLDivElement>(null);
   const drag = useRef<{ page: number; from: { x: number; y: number } } | null>(null);

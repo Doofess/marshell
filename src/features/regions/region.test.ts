@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { describeRegion, fromDrag, initialRegion, nudge, regionLabel, regionStillValid, regionText } from "./region";
+import { canMarkRegion, describeRegion, fromDrag, initialRegion, nudge, regionLabel, regionStillValid, regionText } from "./region";
 
 describe("region", () => {
   it("starts 40% x 25%, centred in the visible part of the page", () => {
@@ -34,5 +34,16 @@ describe("region", () => {
 
   it("describes the box for a screen reader", () => {
     expect(describeRegion({ page: 3, x: 0.3, y: 0.2, w: 0.4, h: 0.25 })).toBe("Box 40% wide, 25% high, 30% across, 20% down, page 3");
+  });
+});
+
+describe("canMarkRegion", () => {
+  it("marks an image, and a PDF only once its document is loaded", () => {
+    expect(canMarkRegion("image", false)).toBe(true);
+    expect(canMarkRegion("pdf", true)).toBe(true);
+    expect(canMarkRegion("pdf", false)).toBe(false);
+  });
+  it("marks nothing else", () => {
+    for (const phase of ["text", "loading", "error", "deleted", "missing"]) expect(canMarkRegion(phase, true)).toBe(false);
   });
 });

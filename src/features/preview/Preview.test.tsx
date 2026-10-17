@@ -143,10 +143,10 @@ describe("PreviewPane: select region", () => {
     const image = html({ phase: "image", url: "blob:x" }, { entry: { path: "C:\\a\\p.png", view: "rendered" } });
     const pdf = html({ phase: "pdf", bytes: new ArrayBuffer(0), version: 1 }, { entry: { path: "C:\\a\\p.pdf", view: "rendered" } });
     const md = html({ phase: "text", text: "# hi" }, { entry: { path: "C:\\a\\p.md", view: "source" } });
-    for (const out of [image, pdf]) {
-      expect(out).toContain("Select region");
-      expect(out).toContain('title="Select region (R)"');
-    }
+    expect(image).toContain("Select region");
+    expect(image).toContain('title="Select region (R)"');
+    // A PDF is offered it once its document has loaded, not while it is loading or when it failed (the first render has none).
+    expect(pdf).not.toContain("Select region");
     expect(md).not.toContain("Select region");
   });
 });
