@@ -805,15 +805,6 @@ Decisions from the 2026-10-10 coverage audit (`docs/superpowers/plan-coverage-au
      4. The cheat sheet (Ctrl+Shift+O) reads the live keymap and lists only the keys the window actually runs, so it can never show a binding that does nothing.
      5. The navigation cursor ships to the full spec: hold Ctrl+Shift, Tab starts it, the arrows move it across panes, the session list and the top bar, and releasing selects or brings that session into the focused pane. Ctrl+Shift+Backspace selects nothing. Until Tab starts navigation, Ctrl+Shift+arrow still reaches the terminal (word selection in the shell). Blur or Esc cancels with nothing selected.
      6. On Windows the webview's own browser shortcuts (Ctrl+Shift+I devtools, F5 and Ctrl+R reload, Ctrl+F find, Ctrl+P print) are switched off in every build, debug included, so app shortcuts behave the same while developing. WebKit on macOS and Linux has none of these.
-   - **Slice 2.5a decisions (2026-10-17).**
-     1. The preview toggles with Ctrl+Shift+Q. On macOS, ⌘Q is Quit, so a binding may carry a `mac` override and the preview uses ⌘⌥Q there (macOS is untested). Ctrl+click is ⌘+click on macOS.
-     2. A path opens with Ctrl+click, and only a path that exists becomes a link. Quick open lists the paths seen in the session's output first, for keyboard use.
-     3. Quick open is a mixed "Files in <folder>" group in the palette after 2 or more characters, with "Seen in output" before it, plus an "Open file…" command that shows files only.
-     4. The preview reads any file the user can read, through the token-checked API. Regular files only; the caps are 2 MB for text and 20 MB for images.
-     5. File drop moved to slice 2.5c.
-     6. A relative path resolves against the shell's current folder, then the launch folder, then the project root. A session in a worktree lists and resolves against its own worktree, not the main repo.
-     7. A changed file reloads automatically and keeps its scroll position.
-     8. Links in documents: a local link opens in the preview with Back, a web link asks before it opens the browser, and an anchor scrolls.
      15. A failed git call shows git's last `error:` or `fatal:` line after "Git said: ", else its last non-empty line. If the base can't be put back after a failed merge, the message adds the `git reset --merge` command to run.
      16. Large diffs are cut at 4 MiB on a file boundary. Binary and large untracked files show as a one-line note, not as text.
      17. The "Review changes" button sits inside the sidebar row. Ctrl+Shift+R and the palette are the keyboard and screen reader routes. A by-eye and NVDA check of the button is still open.
@@ -830,6 +821,15 @@ Decisions from the 2026-10-10 coverage audit (`docs/superpowers/plan-coverage-au
        | `POST /tasks/{id}/remove/plan` | Show the removal commands and warnings. |
        | `POST /tasks/{id}/remove` | Run the removal. Needs the commands and warnings the user saw. |
        | `POST /sessions/{tab}/input` | Type text into a session with no Enter. Used for the conflict prompt. |
+   - **Slice 2.5a decisions (2026-10-17).**
+     1. The preview toggles with Ctrl+Shift+Q. On macOS, ⌘Q is Quit, so a binding may carry a `mac` override and the preview uses ⌘⌥Q there (macOS is untested). Ctrl+click is ⌘+click on macOS.
+     2. A path opens with Ctrl+click, and only a path that exists becomes a link. Quick open lists the paths seen in the session's output first, for keyboard use.
+     3. Quick open is a mixed "Files in <folder>" group in the palette after 2 or more characters, with "Seen in output" before it, plus an "Open file…" command that shows files only.
+     4. The preview reads any file the user can read, through the token-checked API. Regular files only; the caps are 2 MB for text and 20 MB for images.
+     5. File drop moved to slice 2.5c.
+     6. A relative path resolves against the shell's current folder, then the launch folder, then the project root. A session in a worktree lists and resolves against its own worktree, not the main repo.
+     7. A changed file reloads automatically and keeps its scroll position.
+     8. Links in documents: a local link opens in the preview with Back, a web link asks before it opens the browser, and an anchor scrolls.
    - **Session row menu (2026-10-17).**
      1. Right-clicking a session row, or Shift+F10 or the Menu key on a focused row, opens its menu: Rename (F2), Split into a pane, Resume, Review changes (Ctrl+Shift+R), then Close (Ctrl+Shift+W) after a separator. On macOS the shortcuts show as Cmd+key.
      2. An item that doesn't apply is hidden, never disabled: Split only for a session not already in a pane on screen while a pane is free, Resume only on an exited or ended row, Review changes only on a task row.
