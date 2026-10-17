@@ -1,13 +1,31 @@
 /* The pane (or the preview) under a dragged file. The label is generated content, so it is not in the accessibility tree; the drop is announced.
- * The label uses ::before, since a pane's ::after is its focus ring (SplitView.css). */
-[data-drop-over] {
+ * The frame is drawn on an ::after layer, never on the element itself: xterm's viewport is positioned and opaque, and paints over its host's
+ * own outline. A pane already has that layer for its focus ring (SplitView.css), so a drop over a pane turns it on with the dashed line. */
+.preview[data-drop-over],
+.terminal-host[data-drop-over] {
+  position: relative;
+}
+
+.terminal-host[data-drop-over]::after,
+.preview[data-drop-over]::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  outline: 2px dashed var(--accent);
+  outline-offset: -2px;
+  pointer-events: none;
+  z-index: 19;
+}
+
+.pane[data-drop-over]::after {
+  opacity: 1;
   outline: 2px dashed var(--accent);
   outline-offset: -2px;
 }
 
-.preview[data-drop-over],
-.terminal-host[data-drop-over] {
-  position: relative;
+/* The dashed line replaces the focused pane's ring while a file is over it. */
+.pane[data-split][data-drop-over]::after {
+  box-shadow: none;
 }
 
 [data-drop-over]::before {
@@ -26,7 +44,9 @@
 }
 
 @media (forced-colors: active) {
-  [data-drop-over] {
+  .terminal-host[data-drop-over]::after,
+  .preview[data-drop-over]::after,
+  .pane[data-drop-over]::after {
     outline-color: Highlight;
   }
 
