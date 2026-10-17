@@ -18,7 +18,9 @@ impl Versioned for FileDoc {
 }
 
 /// The accent colours that have a name.
-const ACCENT_PRESETS: [&str; 9] = ["sand", "amber", "blue", "indigo", "violet", "magenta", "cyan", "teal", "slate"];
+const ACCENT_PRESETS: [&str; 9] = [
+    "sand", "amber", "blue", "indigo", "violet", "magenta", "cyan", "teal", "slate",
+];
 
 /// Terminal themes that are always there; any other value must be an imported theme's id.
 const BUILT_IN_TERMINAL_THEMES: [&str; 3] = ["follow-app", "dark", "light"];
