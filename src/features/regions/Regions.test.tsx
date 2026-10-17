@@ -75,4 +75,9 @@ describe("RegionLayer", () => {
     expect(out).toContain('aria-roledescription="region"');
     expect(out).toContain(`aria-label="${describeRegion(r)}"`);
   });
+  it("gives the box a role, so its name and role description are not ignored", () => {
+    const r = { page: 2, x: 0.1, y: 0.2, w: 0.4, h: 0.25 };
+    const out = renderToStaticMarkup(<RegionLayer region={r} onChange={noop} onConfirm={noop} onCancel={noop} />);
+    expect(out.match(/<div[^>]*class="region-box"[^>]*>/)![0]).toContain('role="group"');
+  });
 });

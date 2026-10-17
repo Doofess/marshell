@@ -49,6 +49,7 @@ export const RegionLayer = forwardRef<HTMLDivElement, Props>(function RegionLaye
       }}
       className="region-box"
       tabIndex={0}
+      role="group"
       aria-roledescription="region"
       aria-label={describeRegion(region)}
       style={{ left: `${region.x * 100}%`, top: `${region.y * 100}%`, width: `${region.w * 100}%`, height: `${region.h * 100}%` }}
