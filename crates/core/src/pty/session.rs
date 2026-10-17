@@ -379,6 +379,11 @@ impl Session {
         let _ = self.input.send(bytes);
     }
 
+    /// Whether the program in the session asked for bracketed paste (DECSET 2004).
+    pub fn bracketed_paste(&self) -> bool {
+        self.output.lock().unwrap().screen.screen().bracketed_paste()
+    }
+
     /// Ignores 0x0 (a minimized window reports it).
     pub fn resize(&self, cols: u16, rows: u16) -> anyhow::Result<()> {
         if cols == 0 || rows == 0 {

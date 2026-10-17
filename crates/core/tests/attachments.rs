@@ -162,3 +162,56 @@ async fn refuses_a_body_over_20_mb() {
     let res = post_png(&s.app, &tab, body).await;
     assert_eq!(res.status(), StatusCode::PAYLOAD_TOO_LARGE);
 }
+
+async fn paste(app: &axum::Router, tab: &str, attachment: &str, text: &str) -> axum::response::Response {
+    let body = serde_json::json!({ "attachment": attachment, "text": text });
+    call(app, "POST", &format!("/v1/sessions/{tab}/paste"), Some(body)).await
+}
+
+#[tokio::test]
+async fn paste_refuses_a_name_that_isnt_a_saved_attachment() {
+    let s = setup();
+    let tab = session(&s.app, s.dir.path()).await;
+    for name in ["../x.png", "a.txt", "1.png"] {
+        let res = paste(&s.app, &tab, name, "hi").await;
+        assert_eq!(res.status(), StatusCode::BAD_REQUEST, "{name}");
+    }
+}
+
+#[tokio::test]
+async fn paste_refuses_a_comment_with_a_line_break() {
+    let s = setup();
+    let tab = session(&s.app, s.dir.path()).await;
+    let out = saved(post_png(&s.app, &tab, png_body(b"rest")).await).await;
+    let res = paste(&s.app, &tab, &out.name, "a\nb").await;
+    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn paste_of_a_saved_attachment_is_accepted() {
+    let s = setup();
+    let tab = session(&s.app, s.dir.path()).await;
+    let out = saved(post_png(&s.app, &tab, png_body(b"rest")).await).await;
+    let res = paste(&s.app, &tab, &out.name, "x.pdf, page 1: is this right?").await;
+    assert_eq!(res.status(), StatusCode::NO_CONTENT);
+    let res = paste(&s.app, &tab, &out.name, "").await;
+    assert_eq!(res.status(), StatusCode::NO_CONTENT);
+}
+
+#[tokio::test]
+async fn paste_into_a_paused_session_is_refused() {
+    let s = setup();
+    let tab = session(&s.app, s.dir.path()).await;
+    let out = saved(post_png(&s.app, &tab, png_body(b"rest")).await).await;
+    let res = call(&s.app, "POST", &format!("/v1/sessions/{tab}/pause"), None).await;
+    assert_eq!(res.status(), StatusCode::NO_CONTENT);
+    let res = paste(&s.app, &tab, &out.name, "hi").await;
+    assert_eq!(res.status(), StatusCode::CONFLICT);
+}
+
+#[tokio::test]
+async fn paste_to_an_unknown_tab_is_refused() {
+    let s = setup();
+    let res = paste(&s.app, "nope", "1.png", "hi").await;
+    assert_eq!(res.status(), StatusCode::NOT_FOUND);
+}

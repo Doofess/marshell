@@ -511,7 +511,7 @@ pub struct ResumeRequest {
 }
 
 /// A 409 whose body tells the user why Resume cannot start the tab.
-fn cannot_resume(reason: impl Into<String>) -> Response {
+pub(super) fn cannot_resume(reason: impl Into<String>) -> Response {
     (StatusCode::CONFLICT, Json(ResumeError { reason: reason.into() })).into_response()
 }
 

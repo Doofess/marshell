@@ -460,6 +460,16 @@ pub struct AttachmentSaved {
     pub reference: String,
 }
 
+/// POST /v1/sessions/{tab}/paste body: paste a saved attachment's reference and a comment into the session.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct PasteRequest {
+    /// The `name` from `AttachmentSaved`.
+    pub attachment: String,
+    /// The comment to follow the reference; may be empty. No control characters, at most 2000 characters.
+    pub text: String,
+}
+
 /// GET /v1/sessions/{tab}/files reply: the files of the session's project, for quick open.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[ts(export)]
