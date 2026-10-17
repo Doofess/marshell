@@ -12,6 +12,12 @@
   overflow: clip;
 }
 
+/* In the desktop app the OS draws the window's edge (system border, rounded corners, shadow), so the stand-in is not drawn twice. */
+:root[data-host="desktop"] .window {
+  border-radius: 0;
+  box-shadow: none;
+}
+
 /* One unified 40 px bar: sidebar column | session header | window controls. */
 .window__bar {
   display: grid;

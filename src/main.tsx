@@ -9,8 +9,10 @@ import "./styles/scrollbars.css";
 import "./styles/base.css";
 import "./styles/app.css";
 import { syncPageHidden } from "./design/visibility";
+import { markDesktopHost } from "./lib/window/appWindow";
 
 syncPageHidden(document);
+markDesktopHost();
 
 const root = document.getElementById("root");
 if (root) {

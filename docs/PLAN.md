@@ -830,6 +830,7 @@ Decisions from the 2026-10-10 coverage audit (`docs/superpowers/plan-coverage-au
      6. A relative path resolves against the shell's current folder, then the launch folder, then the project root. A session in a worktree lists and resolves against its own worktree, not the main repo.
      7. A changed file reloads automatically and keeps its scroll position.
      8. Links in documents: a local link opens in the preview with Back, a web link asks before it opens the browser, and an anchor scrolls.
+   - **Window frame (2026-10-17).** Windows runs frameless with the system shadow and rounded corners, and the 40 px bar is the title bar: its empty space drags the window, double-click maximizes or restores, and Maximize becomes Restore while maximized. Snap Layouts' hover flyout on Maximize is a follow-up, because the buttons are HTML and Windows does not see a maximize button; Win+Z and edge snapping work. macOS and Linux keep their native frames.
    - **Session row menu (2026-10-17).**
      1. Right-clicking a session row, or Shift+F10 or the Menu key on a focused row, opens its menu: Rename (F2), Split into a pane, Resume, Review changes (Ctrl+Shift+R), then Close (Ctrl+Shift+W) after a separator. On macOS the shortcuts show as Cmd+key.
      2. An item that doesn't apply is hidden, never disabled: Split only for a session not already in a pane on screen while a pane is free, Resume only on an exited or ended row, Review changes only on a task row.
