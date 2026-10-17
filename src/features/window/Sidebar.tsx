@@ -134,8 +134,8 @@ export function Sidebar({
       onMenu={
         menuItems &&
         ((anchor) => {
-          // A right-click selects the row first (as Windows does), so the menu acts on the row under it.
-          onSelect?.(r.id);
+          // The menu acts on the row under it by id and leaves the selection alone: selecting would put the session in the
+          // focused pane, which would make "Split into a pane" pointless.
           setMenu({ id: r.id, anchor, items: menuItems(r.id) });
         })
       }
