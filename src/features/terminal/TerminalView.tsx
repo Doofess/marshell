@@ -26,6 +26,9 @@ function isPerfToggle(e: KeyboardEvent): boolean {
   return e.type === "keydown" && e.shiftKey && e.altKey && (e.ctrlKey || e.metaKey) && e.code === "KeyP";
 }
 
+/** Whether a key press is turned into the "Paused. Continue to type." bar instead of being sent: a live session that is frozen. */
+export const blockedInput = (core: "live" | "ended" | "failed", paused: boolean): boolean => core === "live" && paused;
+
 type Props = {
   endpoint: Endpoint;
   tabId: string;
@@ -41,6 +44,10 @@ type Props = {
   focusToken?: number;
   /** False while the terminal is kept mounted but hidden behind another session's. It fits and takes focus when this turns true. Default true. */
   visible?: boolean;
+  /** True while the session is paused: typing sends nothing and calls `onBlockedInput`. */
+  paused?: boolean;
+  /** Hears a key press that was not sent because the session is paused. */
+  onBlockedInput?: () => void;
   /** Each new token scrolls once to the previous (-1) or next (1) shell prompt. */
   promptJump?: { token: number; by: -1 | 1 };
   /** Hears where a prompt jump landed (1-based index, count, the exit code of that prompt's command), or null when there was no prompt that way. */
@@ -66,7 +73,7 @@ function loadFont(family: string, size: number): Promise<void> {
 }
 
 /** One session's terminal. */
-export function TerminalView({ endpoint, tabId, placeholder, onOutput, onSize, autoFocus = true, focusToken = 0, visible = true, promptJump, onPromptJump, theme = FOLLOW_APP, font = BUNDLED }: Props) {
+export function TerminalView({ endpoint, tabId, placeholder, onOutput, onSize, autoFocus = true, focusToken = 0, visible = true, paused = false, onBlockedInput, promptJump, onPromptJump, theme = FOLLOW_APP, font = BUNDLED }: Props) {
   const host = useRef<HTMLDivElement>(null);
   const meter = useMemo(() => new LatencyMeter(), []);
   const [renderer, setRenderer] = useState<RendererKind>("dom");
@@ -77,6 +84,10 @@ export function TerminalView({ endpoint, tabId, placeholder, onOutput, onSize, a
   sizeRef.current = onSize;
   const outputRef = useRef(onOutput);
   outputRef.current = onOutput;
+  const pausedRef = useRef(paused);
+  pausedRef.current = paused;
+  const blockedRef = useRef(onBlockedInput);
+  blockedRef.current = onBlockedInput;
   const termRef = useRef<Terminal | null>(null);
   const fitRef = useRef<FitAddon | null>(null);
   const promptsRef = useRef<Prompt[]>([]);
@@ -170,10 +181,11 @@ export function TerminalView({ endpoint, tabId, placeholder, onOutput, onSize, a
     const subs = [
       term.onData((d) => {
         if (core !== "live") return;
+        if (blockedInput(core, pausedRef.current)) return blockedRef.current?.();
         meter.markInput();
         socket.sendInput(d);
       }),
-      term.onBinary((d) => core === "live" && socket.sendBytes(d)),
+      term.onBinary((d) => core === "live" && !pausedRef.current && socket.sendBytes(d)),
       term.onResize(({ cols, rows }) => {
         socket.resize(cols, rows);
         sizeRef.current?.(cols, rows);

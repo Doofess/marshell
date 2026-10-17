@@ -46,6 +46,22 @@ export function restartBarStale(s: { id: string; closing: string | null; focused
   return s.id !== s.focusedId && s.id !== s.showing;
 }
 
+/** "Pause 3 billing? It freezes the program and everything it started. Network connections can time out while it's paused." */
+export function pauseBarText(info: SessionInfo): string {
+  return `Pause ${info.number} ${info.name}? It freezes the program and everything it started. Network connections can time out while it's paused.`;
+}
+
+/** The typing bar's words: shown when keys are typed into a paused session, which sends none of them. */
+export const PAUSED_TYPING_TEXT = "Paused. Continue to type.";
+
+/**
+ * Whether a Pause bar has nothing left to ask. The restart bar's rules (session gone, a close question up, focus elsewhere), and
+ * the snapshot already agreeing: the confirm bar is moot once the session is paused, the typing bar once it is running again.
+ */
+export function pauseBarStale(s: { id: string; closing: string | null; focusedId: string | undefined; ids: string[]; showing: string | null; kind: "confirm" | "typing"; paused: boolean }): boolean {
+  return restartBarStale(s) || (s.kind === "confirm" ? s.paused : !s.paused);
+}
+
 /** The tab of the session whose NUMBER is `number` (not the one in that position), or undefined. */
 export const tabIdOfNumber = (infos: SessionInfo[], number: number): string | undefined => infos.find((i) => i.number === number)?.tab_id;
 
@@ -56,6 +72,8 @@ export type ActionsState = {
   closing: string | null;
   /** The tab whose restart bar is up, and the mode it would start in. */
   restarting: { id: string; mode: Mode } | null;
+  /** The tab whose Pause bar is up: the first-time question, or the "Paused. Continue to type." bar. Never up with a close or restart question. */
+  pauseBar: { id: string; kind: "confirm" | "typing" } | null;
   /** The tab whose name is being edited. */
   renaming: string | null;
   /** Bumped when focus should go back to the terminal. */
@@ -69,7 +87,7 @@ export type ActionsState = {
   resumed: Record<string, number>;
 };
 
-type Api = Pick<typeof sessions, "close" | "reopen" | "rename" | "reorder" | "restart" | "resume">;
+type Api = Pick<typeof sessions, "close" | "reopen" | "rename" | "reorder" | "restart" | "resume" | "pause" | "cont">;
 type Context = {
   endpoint: Endpoint | null;
   infos: SessionInfo[];
@@ -85,6 +103,8 @@ type Deps = {
   select: (tabId: string) => void;
   /** The last measured terminal size, which a resumed session starts at. Left out means the default. */
   size?: () => { cols: number; rows: number };
+  /** The settings writer's view of the first-Pause warning. Left out means it was never shown and nothing is saved. */
+  settings?: { readonly pauseWarned: boolean; markPauseWarned(): Promise<void> };
 };
 
 /** The size a resumed session starts at until a terminal has been measured. */
@@ -98,7 +118,7 @@ const reason = (e: unknown): string => (e instanceof ApiError ? e.message : Stri
  * core's next snapshot, so nothing here is optimistic. Plain class so it can be tested without a DOM; LiveApp wraps it.
  */
 export class SessionActions {
-  private state: ActionsState = { toast: null, closing: null, restarting: null, renaming: null, focusToken: 0, resuming: [], resumed: {} };
+  private state: ActionsState = { toast: null, closing: null, restarting: null, pauseBar: null, renaming: null, focusToken: 0, resuming: [], resumed: {} };
   private listeners = new Set<() => void>();
   private timer: ReturnType<typeof setTimeout> | undefined;
   private toastId = 0;
@@ -195,7 +215,7 @@ export class SessionActions {
     const info = infos.find((i) => i.tab_id === (tabId ?? selectedId));
     // While the bar is up, the key does nothing: closing must stay a deliberate press on "Close now".
     if (!info || this.state.closing === info.tab_id || this.closingNow.has(info.tab_id)) return;
-    if (needsCloseConfirm(info)) this.set({ closing: info.tab_id });
+    if (needsCloseConfirm(info)) this.set({ closing: info.tab_id, pauseBar: null });
     else await this.close(info);
   }
 
@@ -287,7 +307,7 @@ export class SessionActions {
   askRestart(id: string, mode: Mode): boolean {
     const info = this.deps.context().infos.find((i) => i.tab_id === id);
     if (!info || info.agent === null || info.mode === mode) return false;
-    this.set({ restarting: { id, mode } });
+    this.set({ restarting: { id, mode }, pauseBar: null });
     return true;
   }
 
@@ -314,6 +334,82 @@ export class SessionActions {
     } catch (e) {
       this.showToast(`Couldn't restart the session: ${reason(e)}`);
     }
+  }
+
+  /**
+   * Pause (the row menu or the palette). The first Pause ever puts the confirm bar up and says "asked"; after that it sends at once
+   * and says "sent". Null for a session that is not running, already paused, or unknown: nothing happens. One question at a time:
+   * the bar replaces a close or restart question.
+   */
+  pause(id: string): "asked" | "sent" | null {
+    const info = this.deps.context().infos.find((i) => i.tab_id === id);
+    if (!info || info.state.kind !== "running" || info.paused) return null;
+    if (this.deps.settings?.pauseWarned !== true) {
+      this.set({ pauseBar: { id, kind: "confirm" }, closing: null, restarting: null });
+      return "asked";
+    }
+    void this.sendPause(id);
+    return "sent";
+  }
+
+  /** "Pause" on the confirm bar: the warning is remembered first, then the request goes. A settings write that fails does not stop it; the person confirmed. */
+  async confirmPause(): Promise<void> {
+    const ask = this.state.pauseBar;
+    if (ask?.kind !== "confirm") return;
+    this.set({ pauseBar: null, focusToken: this.refocus() });
+    try {
+      await this.deps.settings?.markPauseWarned();
+    } catch {
+      // Asked again next time; nothing to tell the person now.
+    }
+    await this.sendPause(ask.id);
+  }
+
+  private async sendPause(id: string): Promise<void> {
+    const { endpoint } = this.deps.context();
+    if (!endpoint) return;
+    try {
+      const result = await this.deps.api.pause(endpoint, id);
+      if (!result.ok) this.showToast(`Couldn't pause the session: ${result.reason}`);
+    } catch (e) {
+      this.showToast(`Couldn't pause the session: ${reason(e)}`);
+    }
+  }
+
+  /** Continue (the row menu, the palette, or the typing bar). Nothing happens for a session that is not paused. The row follows the core's next snapshot. */
+  async cont(id: string): Promise<void> {
+    const { endpoint, infos } = this.deps.context();
+    const info = infos.find((i) => i.tab_id === id);
+    if (!endpoint || !info || !info.paused) return;
+    try {
+      const result = await this.deps.api.cont(endpoint, id);
+      if (!result.ok) this.showToast(`Couldn't continue the session: ${result.reason}`);
+    } catch (e) {
+      this.showToast(`Couldn't continue the session: ${reason(e)}`);
+    }
+  }
+
+  /**
+   * Keys were typed into paused session `id`: puts the "Paused. Continue to type." bar up. A close or restart question that is
+   * already up stays; a dismissed bar comes back with the next key.
+   */
+  showPausedBar(id: string): void {
+    const info = this.deps.context().infos.find((i) => i.tab_id === id);
+    const bar = this.state.pauseBar;
+    if (!info || !info.paused || this.state.closing !== null || this.state.restarting !== null) return;
+    if (bar?.id === id && bar.kind === "typing") return;
+    this.set({ pauseBar: { id, kind: "typing" } });
+  }
+
+  /** "Continue" on the typing bar. The bar stays until the snapshot says the session is running (LiveApp then cancels it, which hands the focus back). */
+  async continueFromBar(): Promise<void> {
+    const bar = this.state.pauseBar;
+    if (bar?.kind === "typing") await this.cont(bar.id);
+  }
+
+  /** Cancel, Dismiss or Escape on either Pause bar: nothing is sent, and focus goes back to the terminal. */
+  cancelPause(): void {
+    if (this.state.pauseBar !== null) this.set({ pauseBar: null, focusToken: this.refocus() });
   }
 
   /** F2 on the selected session (or the row menu's Rename, on `tabId`). It does nothing where the sidebar is not expanded: there is no row to turn into a text box. */

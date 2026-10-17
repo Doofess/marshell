@@ -47,6 +47,7 @@ export function toRow(info: SessionInfo, profiles: Profile[]): RowModel {
   };
   if (info.state.kind === "ended") return { ...base, status: "ended", phrase: ENDED_PHRASE };
   if (info.state.kind === "exited") return { ...base, status: "ended", phrase: `Exited with code ${info.state.code}` };
+  if (info.paused) return { ...base, status: "paused", phrase: "" };
   if (info.agent !== null) return { ...base, status: "limited", phrase: "Status arrives with hooks" };
   const command = info.command;
   if (command.kind === "running") return { ...base, status: "working", phrase: "Running a command" };

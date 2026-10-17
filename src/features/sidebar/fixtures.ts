@@ -93,6 +93,7 @@ export const FIXTURES: RowModel[] = [
     phrase: "Same command 9× in 4 min",
     contextPct: 88,
   },
+  { id: "paused", number: 28, name: "migration", project: "my-app", projectKey: "my-app", branch: "main", agent: "claude", status: "paused", phrase: "" },
   { id: "ended", number: 13, name: "scratch", project: "playground", projectKey: "playground", agent: "generic", status: "ended", phrase: "Ended · exit 0", ageMs: 3 * 3_600_000 },
   {
     id: "limited", number: 14,

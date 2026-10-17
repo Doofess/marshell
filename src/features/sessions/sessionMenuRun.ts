@@ -20,6 +20,8 @@ export function menuFacts(
     resumable: info !== undefined && info.state.kind !== "running" && resumeBlockedReason(info.profile_id, ctx.profiles) === undefined,
     task: ctx.rows.find((r) => r.id === id)?.task === true,
     inShownPane: onScreen.includes(id),
+    pausable: info !== undefined && info.state.kind === "running" && !info.paused,
+    paused: info !== undefined && info.state.kind === "running" && info.paused,
     paneAvailable: onScreen.includes(null) || roomForPane(ctx.panes.length, ctx.fit),
   };
 }
@@ -33,6 +35,7 @@ export function focusAfterMenu(itemId: string, confirms: boolean): "row" | "term
     case "resume":
       return "row";
     case "split":
+    case "continue":
       return "terminal";
     case "close":
       return confirms ? null : "terminal";

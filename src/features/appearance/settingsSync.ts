@@ -23,7 +23,9 @@ type SettingsApi = {
 export class SettingsSync {
   private hasRead = false;
   /** Kept from the last read, so an appearance save sends it back unchanged. */
-  private pauseWarned = false;
+  private warned = false;
+  /** The appearance the core last stored, which a pause-warning write sends back unchanged. */
+  private appearance: Appearance | null = null;
 
   constructor(
     private api: SettingsApi,
@@ -35,8 +37,14 @@ export class SettingsSync {
     // Asked each time: a restarted core listens on a new endpoint.
     const s = await this.api.get(await this.getEndpoint());
     this.hasRead = true;
-    this.pauseWarned = s.pause_warned;
+    this.warned = s.pause_warned;
+    this.appearance = s.appearance;
     return s.appearance;
+  }
+
+  /** Whether the first-Pause warning has been confirmed, as of the last read or write. False until a read works. */
+  get pauseWarned(): boolean {
+    return this.warned;
   }
 
   /** Saves `next` and returns what the core stored. Rejects with a SettingsReadError when nothing has been read yet and a read fails. */
@@ -48,8 +56,23 @@ export class SettingsSync {
         throw new SettingsReadError();
       }
     }
-    const s = await this.api.put(await this.getEndpoint(), { appearance: next, pause_warned: this.pauseWarned });
-    this.pauseWarned = s.pause_warned;
+    const s = await this.api.put(await this.getEndpoint(), { appearance: next, pause_warned: this.warned });
+    this.warned = s.pause_warned;
+    this.appearance = s.appearance;
     return s.appearance;
+  }
+
+  /** Records that the first-Pause warning was confirmed. Reads first, like `save`, and sends the appearance last read back unchanged. */
+  async markPauseWarned(): Promise<void> {
+    if (!this.hasRead) {
+      try {
+        await this.load();
+      } catch {
+        throw new SettingsReadError();
+      }
+    }
+    const s = await this.api.put(await this.getEndpoint(), { appearance: this.appearance!, pause_warned: true });
+    this.warned = s.pause_warned;
+    this.appearance = s.appearance;
   }
 }

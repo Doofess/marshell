@@ -49,4 +49,28 @@ describe("SettingsSync", () => {
     expect(api.get).toHaveBeenCalledTimes(1);
     expect(api.put).toHaveBeenCalledTimes(1);
   });
+
+  it("markPauseWarned sends the last appearance with pause_warned true, and the getter follows", async () => {
+    const { api, sync } = setup(async () => ({ appearance: teal, pause_warned: false }));
+    await sync.load();
+    expect(sync.pauseWarned).toBe(false);
+    await sync.markPauseWarned();
+    expect(api.put).toHaveBeenCalledWith(ep, { appearance: teal, pause_warned: true });
+    expect(sync.pauseWarned).toBe(true);
+  });
+
+  it("markPauseWarned reads first when nothing was read, and sends nothing if that fails", async () => {
+    const { api, sync } = setup(async () => {
+      throw new Error("no core");
+    });
+    await expect(sync.markPauseWarned()).rejects.toBeInstanceOf(SettingsReadError);
+    expect(api.put).not.toHaveBeenCalled();
+  });
+
+  it("an appearance save after markPauseWarned keeps the warning", async () => {
+    const { api, sync } = setup(async () => ({ appearance: teal, pause_warned: false }));
+    await sync.markPauseWarned();
+    await sync.save(teal);
+    expect(api.put).toHaveBeenLastCalledWith(ep, { appearance: teal, pause_warned: true });
+  });
 });

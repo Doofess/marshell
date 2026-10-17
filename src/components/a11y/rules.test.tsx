@@ -19,7 +19,7 @@ import { rules } from "./cssRules";
  */
 
 // 1. Every status is readable without colour: a glyph SHAPE plus words.
-const STATUSES: GlyphKind[] = ["needs-permission", "needs-question", "error", "done-unseen", "done-seen", "working", "stuck", "idle", "ended", "running"];
+const STATUSES: GlyphKind[] = ["needs-permission", "needs-question", "error", "done-unseen", "done-seen", "working", "stuck", "idle", "ended", "running", "paused"];
 
 describe("every status is readable without colour", () => {
   const svg = (k: GlyphKind) => renderToStaticMarkup(<StatusGlyph kind={k} />);

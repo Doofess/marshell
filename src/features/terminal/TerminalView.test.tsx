@@ -1,7 +1,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import type { Endpoint } from "../../generated/Endpoint";
-import { TerminalView, terminalOptions } from "./TerminalView";
+import { TerminalView, blockedInput, terminalOptions } from "./TerminalView";
 
 const endpoint: Endpoint = { port: 1, token: "t", platform: "windows" };
 
@@ -24,5 +24,16 @@ describe("TerminalView: options", () => {
     const o = terminalOptions({ fontFamily: "x", fontSize: 13, theme: {}, minimumContrastRatio: 1 });
     expect(o.allowProposedApi).toBe(true);
     expect(o.scrollback).toBe(10_000);
+  });
+});
+
+describe("blockedInput", () => {
+  it("is true for a live core while the session is paused: the keys are not sent, the bar is shown", () => {
+    expect(blockedInput("live", true)).toBe(true);
+  });
+  it("is false for a running session, and false once the core is gone (nothing to say there)", () => {
+    expect(blockedInput("live", false)).toBe(false);
+    expect(blockedInput("ended", true)).toBe(false);
+    expect(blockedInput("failed", true)).toBe(false);
   });
 });
