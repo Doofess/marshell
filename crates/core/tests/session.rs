@@ -247,6 +247,32 @@ fn command_line_is_tracked_from_the_shell_marks() {
 }
 
 #[test]
+fn the_command_epoch_moves_on_every_c_d_and_a_mark() {
+    let (tx, rx) = std::sync::mpsc::channel();
+    let mut spec = fake(&["cmdline", "git status"]);
+    spec.on_mark = Some(Box::new(move |mark| {
+        let _ = tx.send(mark);
+    }));
+    let session = Session::spawn("t-epoch".into(), spec).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(3);
+    while Instant::now() < deadline && !session.command_running() {
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    assert!(session.command_running());
+    // A reading taken now is stale once the D mark arrives.
+    let during = session.command_epoch();
+    assert!(during > 0, "the C mark did not move the epoch");
+    // The session updates its tracking before the callback sees the mark.
+    while let Ok(mark) = rx.recv_timeout(Duration::from_secs(10)) {
+        if matches!(mark, Mark::Finished(_)) {
+            break;
+        }
+    }
+    assert!(!session.command_running());
+    assert_ne!(session.command_epoch(), during, "the D mark did not move the epoch");
+}
+
+#[test]
 fn command_line_keeps_only_the_first_line_capped_at_200_chars() {
     let text = format!("{}\\nsecond", "x".repeat(300));
     let session = Session::spawn("t-cmdline-cap".into(), fake(&["cmdline", &text])).unwrap();

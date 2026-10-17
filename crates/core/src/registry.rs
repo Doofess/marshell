@@ -305,6 +305,8 @@ impl Registry {
     /// Sets what a plain shell session is running. Applied only to a Running row that was not
     /// launched as an agent, is not paused (a frozen session keeps what it showed) and whose
     /// `generation` is current: a result computed before a restart belongs to the old process.
+    /// A program is refused while the row's shell is at its prompt: nothing runs in its foreground,
+    /// and a reading that lost a race with the D mark, or a GUI child left behind, must not stick.
     /// Broadcasts only on a change.
     pub fn set_foreground(&self, tab_id: &str, generation: u64, foreground: Option<Foreground>) {
         let mut state = self.state.lock().unwrap();
@@ -315,6 +317,7 @@ impl Registry {
             && entry.info.state == SessionState::Running
             && entry.info.agent.is_none()
             && !entry.info.paused
+            && !(foreground.is_some() && matches!(entry.info.command, CommandState::Prompt { .. }))
             && entry.info.foreground != foreground
         {
             entry.info.foreground = foreground;
@@ -1038,6 +1041,25 @@ mod tests {
         reg.set_foreground("stale", generation + 1, running("docker"));
         assert_eq!(foreground(&reg, "stale"), None);
         reg.set_foreground("nope", generation, running("docker"));
+    }
+
+    #[test]
+    fn a_row_at_its_prompt_refuses_a_foreground() {
+        let reg = Registry::new();
+        reg.reserve("a", relaunch("A"));
+        let generation = generation_of(&reg, "a");
+        reg.mark("a", Mark::Executed);
+        reg.set_foreground("a", generation, running("git"));
+        assert_eq!(foreground(&reg, "a"), running("git"));
+        // The command finished while the reading was on its way: it must not land after the D mark.
+        reg.mark("a", Mark::Finished(Some(0)));
+        assert_eq!(foreground(&reg, "a"), None);
+        reg.set_foreground("a", generation, running("notepad"));
+        assert_eq!(foreground(&reg, "a"), None);
+        // A new command shows its program again.
+        reg.mark("a", Mark::Executed);
+        reg.set_foreground("a", generation, running("notepad"));
+        assert_eq!(foreground(&reg, "a"), running("notepad"));
     }
 
     #[test]

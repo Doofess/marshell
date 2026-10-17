@@ -57,19 +57,22 @@ fn polled(session: &Session, shows_foreground: bool) -> bool {
 /// One pass. The registry and the sessions map are locked only while the work list is made and
 /// while the results are applied, never across the blocking process reads or an `.await`.
 async fn tick(st: &AppState) {
-    let mut work: Vec<(Target, Arc<Session>)> = Vec::new();
+    let mut work: Vec<(Target, Arc<Session>, u64)> = Vec::new();
     for (tab, generation, shows) in st.0.registry.foreground_candidates() {
         if let Some(session) = st.session(&tab)
             && polled(&session, shows)
         {
-            work.push((Target::Row { tab, generation }, session));
+            // The epoch comes before the reading, so a mark that lands during it is noticed.
+            let epoch = session.command_epoch();
+            work.push((Target::Row { tab, generation }, session, epoch));
         }
     }
     if let Some(tab) = st.panel_tab()
         && let Some(session) = st.session(&tab)
         && polled(&session, false)
     {
-        work.push((Target::Panel { tab }, session));
+        let epoch = session.command_epoch();
+        work.push((Target::Panel { tab }, session, epoch));
     }
     if work.is_empty() {
         return;
@@ -77,16 +80,22 @@ async fn tick(st: &AppState) {
     // One blocking task for the whole pass: reading a process list is not async.
     let readings = tokio::task::spawn_blocking(move || {
         work.into_iter()
-            .map(|(target, session)| (target, read(&session)))
+            .map(|(target, session, epoch)| {
+                let prompt = at_prompt(session.ever_executed(), session.command_running());
+                let reading = reading_for(prompt, || read(&session));
+                // The session comes back for its epoch at apply time.
+                (target, session, epoch, reading)
+            })
             .collect::<Vec<_>>()
     })
     .await;
     let Ok(readings) = readings else {
         return;
     };
-    for (target, reading) in readings {
-        // `None`: the program could not be named, so leave the row as it is.
-        let Some(foreground) = reading else {
+    for (target, session, epoch, reading) in readings {
+        // `None`: the program could not be named, or a C, D or A mark came while it was being
+        // read. Either way leave the row as it is: the marks, and the next pass, have the say.
+        let Some(foreground) = fresh(epoch, session.command_epoch(), reading) else {
             continue;
         };
         match target {
@@ -104,6 +113,28 @@ async fn tick(st: &AppState) {
             }
         }
     }
+}
+
+/// What a pass learned about one session: `Some(None)` nothing runs, `Some(Some(_))` a program,
+/// `None` something runs that cannot be named.
+type Reading = Option<Option<Foreground>>;
+
+/// A shell with integration (it has sent a C mark) that is not running a command is at its prompt.
+/// By definition it runs nothing in the foreground: a GUI program it started, like notepad, is
+/// not its foreground, but is still a live child that a chain read would find.
+fn at_prompt(ever_executed: bool, command_running: bool) -> bool {
+    ever_executed && !command_running
+}
+
+/// The reading for a session: nothing at its prompt, without looking at the chain, else `read()`.
+fn reading_for(at_prompt: bool, read: impl FnOnce() -> Reading) -> Reading {
+    if at_prompt { Some(None) } else { read() }
+}
+
+/// The reading to apply, or `None` to apply nothing: a reading taken at one command epoch is stale
+/// at another, because a C, D or A mark came while it was being made.
+fn fresh(taken_at: u64, now: u64, reading: Reading) -> Reading {
+    if taken_at == now { reading } else { None }
 }
 
 /// Reads the session's process chain and command line. Blocking.
@@ -133,6 +164,34 @@ fn foreground_of(chain: Option<&[String]>, command_line: Option<String>) -> Opti
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn shown(program: &str) -> Foreground {
+        Foreground {
+            program: program.into(),
+            command_line: None,
+            agent: None,
+        }
+    }
+
+    #[test]
+    fn a_shell_at_its_prompt_has_no_foreground_and_is_not_read() {
+        assert!(at_prompt(true, false));
+        assert!(!at_prompt(true, true));
+        // No integration: no C mark yet, so the chain is the only source.
+        assert!(!at_prompt(false, false));
+        let reading = reading_for(true, || panic!("the chain was read at the prompt"));
+        assert_eq!(reading, Some(None));
+        let reading = reading_for(false, || Some(Some(shown("notepad"))));
+        assert_eq!(reading, Some(Some(shown("notepad"))));
+    }
+
+    #[test]
+    fn a_reading_that_lost_a_race_with_a_mark_is_dropped() {
+        let late = Some(Some(shown("git")));
+        assert_eq!(fresh(4, 5, late.clone()), None);
+        assert_eq!(fresh(4, 5, Some(None)), None);
+        assert_eq!(fresh(4, 4, late.clone()), late);
+    }
 
     fn names(items: &[&str]) -> Vec<String> {
         items.iter().map(|s| s.to_string()).collect()

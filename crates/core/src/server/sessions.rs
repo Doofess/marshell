@@ -265,11 +265,13 @@ pub(super) async fn spawn_into_map(
         let wake = st.0.foreground_wake.clone();
         let tab = tab_id.to_string();
         Some(Box::new(move |mark| {
-            // A command just started: look at what it runs now, not up to a second later.
-            if mark == crate::pty::Mark::Executed {
+            let started = mark == crate::pty::Mark::Executed;
+            registry.mark(&tab, mark);
+            // A command just started: look at what it runs now, not up to a second later. After the
+            // registry knows the command runs, which is what lets a program be shown for the row.
+            if started {
                 wake.notify_one();
             }
-            registry.mark(&tab, mark)
         }))
     } else {
         None

@@ -70,6 +70,8 @@ struct CommandTrack {
     running: bool,
     ever_executed: bool,
     line: Option<String>,
+    /// Counts the C, D and A marks, so a reading taken before one can tell it is stale.
+    epoch: u64,
 }
 
 /// The longest command line that leaves the core, in chars.
@@ -291,10 +293,12 @@ impl Session {
                 Mark::Executed => {
                     track.running = true;
                     track.ever_executed = true;
+                    track.epoch += 1;
                 }
                 Mark::Finished(_) | Mark::PromptStart => {
                     track.running = false;
                     track.line = None;
+                    track.epoch += 1;
                 }
                 Mark::CommandStart => {}
             }
@@ -309,6 +313,11 @@ impl Session {
     /// True once the shell has sent a C mark. A shell that never does has no integration.
     pub fn ever_executed(&self) -> bool {
         self.command.lock().unwrap().ever_executed
+    }
+
+    /// How many C, D and A marks the shell has sent. A reading taken at one value is stale at another.
+    pub fn command_epoch(&self) -> u64 {
+        self.command.lock().unwrap().epoch
     }
 
     /// The command line the shell reported for the running command, as shown: its first line,
