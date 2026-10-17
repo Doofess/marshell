@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { ViewLayout } from "../../generated/ViewLayout";
 import { RATIO } from "./splitLayout";
-import { type ViewAction, type ViewState, adoptTarget, checkedView, fillsEmptyPane, focusedIndex, paneToggle, railToggle, ratiosOf, roomForPane, sidebarPrefOf, toRatioList, toSaved, viewReducer, visibleSessions } from "./viewState";
+import { type ViewAction, type ViewState, adoptTarget, checkedView, fillsEmptyPane, focusedIndex, paneToggle, railToggle, ratiosOf, roomForPane, sidebarPrefOf, sidebarToggleFor, toRatioList, toSaved, viewReducer, visibleSessions } from "./viewState";
 
 const base: ViewLayout = {
   panes: ["a"],
@@ -282,6 +282,17 @@ describe("sidebarPrefOf and railToggle", () => {
     expect(railToggle("expanded")).toBe("rail");
     expect(railToggle("rail")).toBe("expanded");
     expect(railToggle("focus")).toBe("expanded");
+  });
+});
+
+describe("sidebarToggleFor", () => {
+  it("folds the expanded sidebar and opens the rail or focus mode", () => {
+    expect(sidebarToggleFor("expanded", "expanded")).toBe("rail");
+    expect(sidebarToggleFor("rail", "rail")).toBe("expanded");
+    expect(sidebarToggleFor("focus", "focus")).toBe("expanded");
+  });
+  it("is blocked (null) when the expanded sidebar is auto-collapsed by a narrow window", () => {
+    expect(sidebarToggleFor("expanded", "rail")).toBeNull();
   });
 });
 

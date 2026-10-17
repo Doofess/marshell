@@ -76,10 +76,17 @@ describe("pointer: the command palette button", () => {
     expect(onPalette).toHaveBeenCalledTimes(1);
   });
 
-  it("the rail's palette tool calls onPalette", () => {
+  it("the palette button stays in the bar in the rail, and calls onPalette", () => {
     const onPalette = vi.fn();
-    (button(Rail({ rows, needsYou: 0, onPalette }), "Command palette").props.onClick as () => void)();
+    (button(MainWindow({ width: 1180, height: 800, rows, selectedId: row(0).id, sidebarPref: "rail", onPalette }), "Command palette").props.onClick as () => void)();
     expect(onPalette).toHaveBeenCalledTimes(1);
+  });
+
+  it("the sidebar button calls onToggleSidebar, unless a narrow window blocks it", () => {
+    const onToggleSidebar = vi.fn();
+    (button(MainWindow({ width: 1180, height: 800, rows, selectedId: row(0).id, onToggleSidebar }), "Sidebar").props.onClick as () => void)();
+    expect(onToggleSidebar).toHaveBeenCalledTimes(1);
+    expect(button(MainWindow({ width: 900, height: 800, rows, selectedId: row(0).id, onToggleSidebar }), "Sidebar").props.onClick).toBeUndefined();
   });
 
   it("without a callback the buttons stay as they were (stories)", () => {

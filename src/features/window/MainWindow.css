@@ -27,6 +27,10 @@
   border-block-end: 1px solid var(--hairline);
   background: var(--bg-raised);
 }
+/* The rail's column is not 52 px: it holds the logo, the icon-only palette button and the sidebar button, and sizes to them. */
+.window[data-mode="rail"] .window__bar {
+  grid-template-columns: max-content minmax(0, 1fr) auto;
+}
 .window__bar-side {
   display: flex;
   align-items: center;
@@ -77,6 +81,7 @@
   align-items: center;
   gap: var(--space-2);
   block-size: 28px;
+  min-inline-size: 0;
   margin-inline-start: var(--space-1);
   padding-inline: var(--space-2) var(--space-3);
   border: 0;
@@ -86,6 +91,22 @@
   font: inherit;
   font-size: var(--text-12);
   white-space: nowrap;
+}
+/* At the 200 px sidebar the words give way (the logo and the sidebar button stay whole). */
+.window__palette span {
+  min-inline-size: 0;
+  overflow: clip;
+  text-overflow: ellipsis;
+}
+.window__palette svg {
+  flex: none;
+}
+/* In the rail there are no words: a 32 by 28 px button, the size of the sidebar button beside it. */
+.window[data-mode="rail"] .window__palette {
+  flex: none;
+  justify-content: center;
+  inline-size: 32px;
+  padding: 0;
 }
 .window__palette:focus-visible {
   outline: 2px solid var(--focus, var(--accent));
@@ -97,6 +118,36 @@
 @media (hover: hover) and (pointer: fine) {
   .window__palette:hover {
     background: var(--fill-strong);
+    color: var(--text-1);
+  }
+}
+/* Folds the sidebar to the rail and opens it again. Always the app's own colours, never a session's vendor colour. */
+.window__sidebar-toggle {
+  display: grid;
+  place-items: center;
+  flex: none;
+  inline-size: 32px;
+  block-size: 28px;
+  margin-inline-start: var(--space-1);
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--text-2);
+}
+.window__sidebar-toggle:focus-visible {
+  outline: 2px solid var(--focus, var(--accent));
+  outline-offset: -2px;
+}
+.window__sidebar-toggle:active {
+  background: var(--selected);
+}
+.window__sidebar-toggle[aria-disabled="true"] {
+  opacity: 0.5;
+}
+@media (hover: hover) and (pointer: fine) {
+  .window__sidebar-toggle:hover {
+    background: var(--hover);
     color: var(--text-1);
   }
 }
@@ -295,6 +346,7 @@
      The bar and drawer dividers are real borders, which the system colours already. */
   .window,
   .window__palette,
+  .window__sidebar-toggle,
   .focus-pill {
     outline: 1px solid CanvasText;
   }

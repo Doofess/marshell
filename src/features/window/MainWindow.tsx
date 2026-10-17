@@ -18,6 +18,7 @@ import type { TerminalThemeSetting } from "../terminal/terminalTheme";
 import { COMPOSER, DRAWER, STATUS_BAR_HEIGHT, SIDEBAR, drawerPlacement, sidebarMode, sidebarWidth as widthFor, type SidebarPref } from "./layout";
 import { LayoutIcon, LayoutMenu } from "./LayoutMenu";
 import { SearchIcon } from "./SearchIcon";
+import { SidebarIcon } from "./SidebarIcon";
 import { isTool } from "../../components/AgentMark/kinds";
 import { hasPromptLine } from "../sidebar/promptLine";
 import type { Rect } from "../../lib/navigation/types";
@@ -34,7 +35,7 @@ import { shellNameFor } from "./ShellPanel";
 import { ARRANGEMENTS, chooseArrangement, maxPanes, type Arrangement, type PaneCount, type Ratios } from "./splitLayout";
 import { PREVIEW_RATIO, clampPreviewRatio, previewLayout, previewTracks } from "./previewLayout";
 import { SplitView } from "./SplitView";
-import { focusedIndex, type ViewAction } from "./viewState";
+import { focusedIndex, sidebarToggleFor, type ViewAction } from "./viewState";
 import "./MainWindow.css";
 
 /** The drawer shows the request's full payload; the 40-line command is the long one. */
@@ -154,6 +155,8 @@ export type MainWindowProps = {
   onMenuRun?: (id: string, itemId: string, anchor: { x: number; y: number }) => void;
   /** The click on the Command palette button, in the top bar and in the rail. */
   onPalette?: () => void;
+  /** The click on the sidebar button next to it: fold the sidebar to the rail, or open it. Not called when a narrow window cannot open it. */
+  onToggleSidebar?: () => void;
   /** No terminal is selected (Ctrl+Shift+Backspace): no pane is marked focused, and the window says how to pick one. */
   noneSelected?: boolean;
   /** The keyboard cursor while Ctrl+Shift is held, measured against the window. */
@@ -233,6 +236,7 @@ export function MainWindow({
   menuItems,
   onMenuRun,
   onPalette,
+  onToggleSidebar,
   onSidebarWidth,
   onSidebarReset,
   noneSelected = false,
@@ -241,6 +245,8 @@ export function MainWindow({
 }: MainWindowProps) {
   const pref: SidebarPref = sidebarPref ?? (layout === "focus" ? "focus" : layout === "rail" ? "rail" : "expanded");
   const mode = sidebarMode(width, pref);
+  // An expanded preference in a window under 960 px is shown as the rail, and the sidebar cannot open there.
+  const blocked = sidebarToggleFor(pref, mode) === null;
   const shellOptions: ShellOptions = typeof shell === "object" ? shell : {};
   const sideW = widthFor(mode, sidebarWidth);
   // No sessions at all is a real state (first run, everything closed): the window shows its empty state, never a missing row.
@@ -398,11 +404,18 @@ export function MainWindow({
               {mode === "expanded" && <Wordmark height={13} decorative />}
             </button>
           )}
-          {mode === "expanded" && (
-            <button type="button" className="window__palette" data-nav-top="palette" aria-label="Command palette" title={`Search sessions, projects and commands (${shortcutLabel(commandById("palette").binding!, os)})`} onClick={onPalette}>
-              <SearchIcon />
-              <span>Command palette</span>
-            </button>
+          {mode !== "focus" && (
+            <>
+              {/* The words go in the expanded bar; the rail's column has room for the icon only. */}
+              <button type="button" className="window__palette" data-nav-top="palette" aria-label="Command palette" title={`Search sessions, projects and commands (${shortcutLabel(commandById("palette").binding!, os)})`} onClick={onPalette}>
+                <SearchIcon />
+                {mode === "expanded" && <span>Command palette</span>}
+              </button>
+              {/* aria-disabled, not disabled: the button keeps its place in the tab order and says why it does nothing. */}
+              <button type="button" className="window__sidebar-toggle" data-nav-top="sidebar" aria-label="Sidebar" aria-expanded={mode === "expanded"} aria-disabled={blocked || undefined} title={blocked ? "Widen the window to open the sidebar" : mode === "expanded" ? "Collapse sidebar" : "Expand sidebar"} onClick={blocked ? undefined : onToggleSidebar}>
+                <SidebarIcon open={mode === "expanded"} />
+              </button>
+            </>
           )}
         </div>
         <div className="window__bar-main" data-tauri-drag-region="deep" onPointerLeave={mode === "focus" ? () => setPeeking(false) : undefined}>
@@ -475,7 +488,7 @@ export function MainWindow({
             onDoubleClick={onSidebarReset}
           />
         )}
-        {mode === "rail" && <Rail rows={rows} needsYou={waiting} selectedId={selected?.id} visibleIds={visibleIds} os={os} onSelect={onSelect} onToggle={onToggle} onPalette={onPalette} />}
+        {mode === "rail" && <Rail rows={rows} needsYou={waiting} selectedId={selected?.id} visibleIds={visibleIds} os={os} onSelect={onSelect} onToggle={onToggle} />}
 
         <div className="window__center">
         {/* A single terminal is slot 0 to the keyboard cursor; in split view each pane is its own slot. */}

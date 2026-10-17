@@ -68,10 +68,10 @@ describe("Rail: the list scrolls", () => {
     expect(h).not.toContain("rail__more");
     expect(h).not.toContain("show all");
   });
-  it("keeps the palette tool outside the scrolling list, pinned at the foot", () => {
+  it("has no palette tool: the top bar keeps it", () => {
     const h = renderToStaticMarkup(<Rail rows={twenty} needsYou={2} />);
-    expect(h.indexOf('class="rail__list"')).toBeLessThan(h.indexOf('class="rail__tools"'));
-    expect(h.slice(h.indexOf('class="rail__list"'), h.indexOf('class="rail__tools"'))).not.toContain("Command palette");
+    expect(h).not.toContain("rail__tools");
+    expect(h).not.toContain("Command palette");
   });
   it("keeps the needs-you badge stack inside the list, at its top", () => {
     const h = renderToStaticMarkup(<Rail rows={twenty} needsYou={2} />);

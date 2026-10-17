@@ -1,9 +1,8 @@
 import { AgentMark } from "../../components/AgentMark/AgentMark";
 import { StatusGlyph } from "../../components/StatusGlyph/StatusGlyph";
-import { commandById, shortcutLabel, type Os } from "../../lib/keymap";
+import type { Os } from "../../lib/keymap";
 import { togglesPane, togglesPaneKey } from "../sidebar/rowPick";
 import { rowLabel } from "../sidebar/labels";
-import { SearchIcon } from "./SearchIcon";
 import { monogram } from "../sidebar/monogram";
 import { SessionNumber } from "../../components/SessionNumber/SessionNumber";
 import type { RowModel } from "../sidebar/types";
@@ -14,9 +13,9 @@ import "./Rail.css";
  * The 52 px rail: the brand stripe, status glyph and a monogram per session, with a needs-you badge stack on top. The
  * monogram is drawn from `data-mono` by CSS, so it is decoration the button's name does not have to repeat.
  * A working session shows its vendor mark moving instead of a glyph, as in the full rows. The list scrolls (wheel, touch,
- * keys) with no scrollbar drawn; the palette tool stays pinned at the foot.
+ * keys) with no scrollbar drawn. The palette and sidebar buttons live in the top bar, so they stay put when the rail is shown.
  */
-export function Rail({ rows, needsYou, selectedId, visibleIds, os = "windows", onSelect, onToggle, onPalette }: { rows: RowModel[]; needsYou: number; selectedId?: string; visibleIds?: readonly string[]; os?: Os; onSelect?: (id: string) => void; onToggle?: (id: string) => void; onPalette?: () => void }) {
+export function Rail({ rows, needsYou, selectedId, visibleIds, os = "windows", onSelect, onToggle }: { rows: RowModel[]; needsYou: number; selectedId?: string; visibleIds?: readonly string[]; os?: Os; onSelect?: (id: string) => void; onToggle?: (id: string) => void }) {
   return (
     <nav className="rail" aria-label="Sessions">
       <div className="rail__list">
@@ -41,12 +40,6 @@ export function Rail({ rows, needsYou, selectedId, visibleIds, os = "windows", o
             {r.status === "working" ? <AgentMark agent={r.agent} working /> : <StatusGlyph kind={r.status} size={16} />}
           </button>
         ))}
-      </div>
-      {/* The bar's 52 px column holds only the logo, so the palette lives here, where the rail's own tools go. */}
-      <div className="rail__tools">
-        <button type="button" className="rail__tool" data-nav-top="palette" aria-label="Command palette" title={`Search sessions, projects and commands (${shortcutLabel(commandById("palette").binding!, os)})`} onClick={onPalette}>
-          <SearchIcon />
-        </button>
       </div>
     </nav>
   );

@@ -125,10 +125,10 @@ Stories are fed by `fake-agent` scenario scripts, so the same 5-agent run drives
 |---|---|
 | Window | Minimum 720×480. Below 960 px wide the sidebar auto-collapses to the rail. |
 | Top bar | **One unified 40 px bar**; no separate title bar. |
-| Top bar, sidebar column | macOS: traffic lights, inset 78 px. Windows: the app icon and the lowercase "marshell" wordmark (vector, Space Grotesk SemiBold) as one button that opens the app menu, then a palette button. In the 52 px rail only the icon fits, so the palette button moves to the foot of the rail. |
+| Top bar, sidebar column | macOS: traffic lights, inset 78 px. Windows: the app icon and the lowercase "marshell" wordmark (vector, Space Grotesk SemiBold) as one button that opens the app menu, then a palette button, then the sidebar toggle (folds the sidebar to the rail and opens it again). Both stay in the bar in the rail: the palette button is icon-only there and the column sizes to its content. In a window under 960 px the sidebar cannot open, so the toggle is aria-disabled and says "Widen the window to open the sidebar". |
 | Top bar, main column | Session header: name · project/branch · mode chip · model/effort · subagents · context ring · port chips. Hidden while two or more panes are on screen: each pane's header names its session, and a header above the first pane read as that pane's title. A zoomed pane, or a split with room for one, keeps it. |
 | Window controls | Windows: 46×40 controls at the right. Linux: native decorations plus a 36 px header. |
-| Sidebar | Default 288 px, minimum 200, maximum 400, rail 52, focus mode 0. Drag the edge to resize; double-click resets. |
+| Sidebar | Default 288 px, minimum 200, maximum 400, rail 52, focus mode 0. Drag the edge to resize; double-click resets. The top bar's sidebar toggle (or the "sidebar" palette command) folds it to the rail. |
 | Sidebar footer | 40 px: plan ring, 5h %, and doctor glyph with issue count. |
 | Needs-you lane | The header is **always present** at 28 px ("Needs you · 2" or "All clear"), so it never pops in or out. |
 | Lane cards | Accordion: only the targeted card (oldest waiting) is expanded, at about 250 px (measured: 246 for a question, 255 for a command with its Always and terminal links). The others are 36 px one-liners. |

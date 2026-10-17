@@ -101,14 +101,16 @@ describe("MainWindow: logo and accent", () => {
   it("hides the logo's own name inside that button, so it is not announced twice", () => {
     expect(html()).not.toContain('aria-label="Marshell"');
   });
-  it("keeps the logo when the sidebar is the rail, where the 52 px column has room for only it", () => {
+  it("keeps the logo when the sidebar is the rail, with the palette button as an icon only", () => {
     const h = html({ sidebarPref: "rail" });
     expect(h).toContain('class="logo"');
-    expect(h.slice(h.indexOf("window__bar-side"), h.indexOf("window__bar-main"))).not.toContain("Command palette");
+    const side = h.slice(h.indexOf("window__bar-side"), h.indexOf("window__bar-main"));
+    expect(side).toContain('aria-label="Command palette"');
+    expect(side).not.toContain("<span>Command palette</span>");
   });
-  it("moves the palette button to the bottom of the rail so it is never lost", () => {
+  it("keeps the palette button in the bar, not the rail", () => {
     const h = html({ sidebarPref: "rail" });
-    expect(h.slice(h.indexOf('class="rail"'))).toContain('aria-label="Command palette"');
+    expect(h.slice(h.indexOf('class="rail"'))).not.toContain('aria-label="Command palette"');
   });
   it("keeps the window's own controls (the layout menu, the panel, the cursor) in the app accent: only a session's own elements take its vendor's", () => {
     expect(html()).not.toMatch(/class="window"[^>]*data-agent/);
@@ -128,7 +130,7 @@ describe("MainWindow: the palette button says what it is", () => {
   });
   it("uses the same magnifier in the rail, where there is room for the icon only", () => {
     const h = html({ sidebarPref: "rail" });
-    expect(h.slice(h.indexOf('class="rail"'))).toContain('data-icon="search"');
+    expect(h.slice(h.indexOf("window__bar-side"), h.indexOf("window__bar-main"))).toContain('data-icon="search"');
     expect(h).not.toContain("M2.5 4.5L6 7l-3.5 2.5M7.5 10h4");
   });
 });
@@ -666,5 +668,44 @@ describe("MainWindow: the restart bar", () => {
   it("a bar for a session on no pane on screen goes in the top bar too", () => {
     const h = html({ layout: "split", splitCount: 2, ...BIG, paneBar: { id: "not-shown", node: bar } });
     expect((h.match(/close-bar/g) ?? []).length).toBe(1);
+  });
+});
+
+describe("MainWindow: the sidebar toggle", () => {
+  const toggle = (h: string) => h.match(/<button[^>]*class="window__sidebar-toggle"[^>]*>/)?.[0];
+  it("follows the palette button in the expanded bar, with aria-expanded true", () => {
+    const h = html({ width: 1280 });
+    expect(h.indexOf("window__sidebar-toggle")).toBeGreaterThan(h.indexOf("window__palette"));
+    const t = toggle(h)!;
+    expect(t).toContain('data-nav-top="sidebar"');
+    expect(t).toContain('aria-label="Sidebar"');
+    expect(t).toContain('aria-expanded="true"');
+    expect(t).toContain('title="Collapse sidebar"');
+    expect(t).not.toContain("aria-disabled");
+  });
+  it("stays in the rail's bar with aria-expanded false, beside an icon-only palette button", () => {
+    const h = html({ width: 1280, sidebarPref: "rail" });
+    const t = toggle(h)!;
+    expect(t).toContain('aria-expanded="false"');
+    expect(t).toContain('title="Expand sidebar"');
+    expect(h).toMatch(/class="window__palette"[^>]*aria-label="Command palette"/);
+    expect(h).not.toContain("<span>Command palette</span>");
+  });
+  it("has no buttons in the bar's side column in focus mode", () => {
+    const h = html({ sidebarPref: "focus" });
+    expect(h).not.toContain("window__sidebar-toggle");
+    expect(h).not.toContain("window__palette");
+  });
+  it("is aria-disabled, still focusable, when a narrow window keeps the sidebar from opening", () => {
+    const t = toggle(html({ width: 900, sidebarPref: "expanded" }))!;
+    expect(t).toContain('aria-disabled="true"');
+    expect(t).not.toMatch(/\sdisabled/);
+    expect(t).toContain('title="Widen the window to open the sidebar"');
+  });
+  it("is not disabled in the rail the user chose, even in a narrow window", () => {
+    expect(toggle(html({ width: 900, sidebarPref: "rail" }))).not.toContain("aria-disabled");
+  });
+  it("the rail no longer renders a palette button", () => {
+    expect(html({ width: 1280, sidebarPref: "rail" })).not.toContain("rail__tool");
   });
 });
