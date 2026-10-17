@@ -668,6 +668,7 @@ Tray mouse events are not emitted on Linux, so on Linux the tray is menu-only.
 - Sessions 1 to 9 are Ctrl+Shift+1 to 9 (Cmd+1 to 9 on macOS), not Ctrl+1 to 9: terminals read Ctrl+2 to Ctrl+7 as control codes (NUL, ESC, FS, GS, RS, and US, which is readline's undo) and vim uses Ctrl+6. F2 stays as written. Peek is Space on a focused row.
 - The approve-card keys Y/N/A/T are active only while the card has focus.
 - Global search moves to Ctrl+Shift+Alt+F.
+- Shift+F10 or the Menu key opens the focused session row's menu, as in Windows Explorer.
 - The cheat sheet shows the real bindings per OS, and all bindings are rebindable.
 - **The needs-you lane is ordered oldest-waiting first** (a deviation from the brief's "newest first"), so waiting is first-in, first-out; Ctrl+Shift+N follows that order.
 
@@ -818,6 +819,12 @@ Decisions from the 2026-10-10 coverage audit (`docs/superpowers/plan-coverage-au
        | `POST /tasks/{id}/remove/plan` | Show the removal commands and warnings. |
        | `POST /tasks/{id}/remove` | Run the removal. Needs the commands and warnings the user saw. |
        | `POST /sessions/{tab}/input` | Type text into a session with no Enter. Used for the conflict prompt. |
+   - **Session row menu (2026-10-17).**
+     1. Right-clicking a session row, or Shift+F10 or the Menu key on a focused row, opens its menu: Rename (F2), Split into a pane, Resume, Review changes (Ctrl+Shift+R), then Close (Ctrl+Shift+W) after a separator. On macOS the shortcuts show as Cmd+key.
+     2. An item that doesn't apply is hidden, never disabled: Split only for a session not already in a pane on screen while a pane is free, Resume only on an exited or ended row, Review changes only on a task row.
+     3. Opening the menu does not select the row, so Split can bring a session that isn't shown into a pane. Every item acts on the row the menu was opened from. Close on an unselected agent that needs the confirm bar selects it first.
+     4. Arrows move with wrap-around, Home and End jump, Enter or Space runs, typing a letter jumps to the item that starts with it. Esc closes and returns focus to the row; Tab or a click outside closes without moving focus. The menu closes by itself if its row goes away. It stays fully on screen near the window's edges.
+     5. Later: Mode ▸ (restart the agent in another mode) in the modes-at-launch PR, Pause in its own PR right after, and Bookmark with phase 5.
    - Exit: 5 tabs across 3 shells; restart restores the layout; kill the app mid-task, relaunch, and every tab is back with Resume; no orphan processes after a crash; a recording replays in asciinema-player; OSC 133 prompt jumps work.
 2.5. **Context and preview** (added 2026-10-15, inspired by the features of the Codex desktop app, not its infrastructure; numbered 2.5 so later phases keep their numbers).
    - Scope:
