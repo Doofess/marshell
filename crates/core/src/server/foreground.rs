@@ -34,6 +34,8 @@ pub(super) fn spawn_watcher(state: &AppState) {
     // A weak handle, so this task does not keep a dropped core alive.
     let inner = Arc::downgrade(&state.0);
     runtime.spawn(async move {
+        // The panel's agent sighting that has not been confirmed yet. See `seen_twice`.
+        let mut pending: Option<(String, u64)> = None;
         loop {
             tokio::select! {
                 _ = tokio::time::sleep(POLL) => {}
@@ -42,7 +44,7 @@ pub(super) fn spawn_watcher(state: &AppState) {
             let Some(inner) = inner.upgrade() else {
                 return;
             };
-            tick(&AppState(inner)).await;
+            tick(&AppState(inner), &mut pending).await;
         }
     });
 }
@@ -56,7 +58,7 @@ fn polled(session: &Session, shows_foreground: bool) -> bool {
 
 /// One pass. The registry and the sessions map are locked only while the work list is made and
 /// while the results are applied, never across the blocking process reads or an `.await`.
-async fn tick(st: &AppState) {
+async fn tick(st: &AppState, pending: &mut Option<(String, u64)>) {
     let mut work: Vec<(Target, Arc<Session>, u64)> = Vec::new();
     for (tab, generation, shows) in st.0.registry.foreground_candidates() {
         if let Some(session) = st.session(&tab)
@@ -75,6 +77,7 @@ async fn tick(st: &AppState) {
         work.push((Target::Panel { tab }, session, epoch));
     }
     if work.is_empty() {
+        *pending = None;
         return;
     }
     // One blocking task for the whole pass: reading a process list is not async.
@@ -90,8 +93,11 @@ async fn tick(st: &AppState) {
     })
     .await;
     let Ok(readings) = readings else {
+        *pending = None;
         return;
     };
+    // The panel's agent in this pass, if any: the tab, the epoch it was read at and what it runs.
+    let mut panel_agent: Option<(String, u64, Foreground)> = None;
     for (target, session, epoch, reading) in readings {
         // `None`: the program could not be named, or a C, D or A mark came while it was being
         // read. Either way leave the row as it is: the marks, and the next pass, have the say.
@@ -101,17 +107,26 @@ async fn tick(st: &AppState) {
         match target {
             Target::Row { tab, generation } => st.0.registry.set_foreground(&tab, generation, foreground),
             Target::Panel { tab } => {
-                // An agent in the panel moves to the list. Only if the panel still holds this shell
-                // and nobody (the "Open in a pane" button) adopted it first.
                 if let Some(foreground) = foreground
                     && foreground.agent.is_some()
-                    && let Some(adopted) = take_and_adopt(st, Some(&tab))
                 {
-                    st.0.registry
-                        .set_foreground(&adopted, PANEL_GENERATION, Some(foreground));
+                    panel_agent = Some((tab, epoch, foreground));
                 }
             }
         }
+    }
+    // An agent in the panel moves to the list, once it is confirmed on a second reading. Only if
+    // the panel still holds this shell and nobody (the "Open in a pane" button) adopted it first.
+    match panel_agent {
+        Some((tab, epoch, foreground)) => {
+            if seen_twice(pending, &tab, epoch)
+                && let Some(adopted) = take_and_adopt(st, Some(&tab))
+            {
+                st.0.registry
+                    .set_foreground(&adopted, PANEL_GENERATION, Some(foreground));
+            }
+        }
+        None => *pending = None,
     }
 }
 
@@ -135,6 +150,20 @@ fn reading_for(at_prompt: bool, read: impl FnOnce() -> Reading) -> Reading {
 /// at another, because a C, D or A mark came while it was being made.
 fn fresh(taken_at: u64, now: u64, reading: Reading) -> Reading {
     if taken_at == now { reading } else { None }
+}
+
+/// The panel hand-off gate. A command line alone must not move focus: `claude --version` names an
+/// agent and ends a second later. The hand-off waits for the same panel tab, at the same command
+/// epoch, on two readings in a row, so the command was still running at the next tick.
+/// `pending` is the first sighting. The agent need not be in the process chain: an npm-installed
+/// claude runs as node, so only the command line names it.
+fn seen_twice(pending: &mut Option<(String, u64)>, tab: &str, epoch: u64) -> bool {
+    if pending.as_ref().is_some_and(|(t, e)| t == tab && *e == epoch) {
+        *pending = None;
+        return true;
+    }
+    *pending = Some((tab.to_string(), epoch));
+    false
 }
 
 /// Reads the session's process chain and command line. Blocking.
@@ -183,6 +212,25 @@ mod tests {
         assert_eq!(reading, Some(None));
         let reading = reading_for(false, || Some(Some(shown("notepad"))));
         assert_eq!(reading, Some(Some(shown("notepad"))));
+    }
+
+    #[test]
+    fn the_panel_hand_off_needs_the_same_tab_and_epoch_twice_in_a_row() {
+        let mut pending = None;
+        assert!(
+            !seen_twice(&mut pending, "t1", 3),
+            "the first sighting must not hand off"
+        );
+        assert!(seen_twice(&mut pending, "t1", 3));
+        // A changed epoch (a new command) starts over, and so does another tab.
+        let mut pending = None;
+        assert!(!seen_twice(&mut pending, "t1", 3));
+        assert!(!seen_twice(&mut pending, "t1", 4));
+        assert!(seen_twice(&mut pending, "t1", 4));
+        let mut pending = None;
+        assert!(!seen_twice(&mut pending, "t1", 4));
+        assert!(!seen_twice(&mut pending, "t2", 4));
+        assert!(seen_twice(&mut pending, "t2", 4));
     }
 
     #[test]
