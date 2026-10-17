@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { dragOver, dropOrder, moveBy, TAB_MIME } from "./reorder";
+import { dragOver, dragStarted, dropOrder, edgeAt, moveBy, rowIdAt } from "./reorder";
 
 describe("dragOver", () => {
   it("marks the edge of the row the pointer is over", () => {
@@ -10,9 +10,30 @@ describe("dragOver", () => {
   });
 });
 
-describe("TAB_MIME", () => {
-  it("is a custom type, so a dropped row never lands as text in a field", () => {
-    expect(TAB_MIME).toBe("application/x-marshell-tab");
+describe("dragStarted", () => {
+  it("starts only once the pointer has moved 4 px from the press", () => {
+    expect(dragStarted(0, 0)).toBe(false);
+    expect(dragStarted(3, 0)).toBe(false);
+    expect(dragStarted(4, 0)).toBe(true);
+    expect(dragStarted(3, 3)).toBe(true);
+    expect(dragStarted(-3, -3)).toBe(true);
+  });
+});
+
+describe("edgeAt", () => {
+  it("is before in the top half of the row and after in the bottom half", () => {
+    expect(edgeAt(10, 0, 30)).toBe("before");
+    expect(edgeAt(16, 0, 30)).toBe("after");
+    expect(edgeAt(115, 100, 30)).toBe("after");
+  });
+});
+
+describe("rowIdAt", () => {
+  it("reads the id of the closest row, and is null for nothing or a non-row", () => {
+    expect(rowIdAt(null)).toBeNull();
+    const row = { getAttribute: (n: string) => (n === "data-row-id" ? "s1" : null) };
+    expect(rowIdAt({ closest: (sel: string) => (sel === "[data-row-id]" ? row : null) } as unknown as Element)).toBe("s1");
+    expect(rowIdAt({ closest: () => null } as unknown as Element)).toBeNull();
   });
 });
 

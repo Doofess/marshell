@@ -365,8 +365,15 @@
 }
 
 /* Dragging a row: a line on the edge where it would land. */
-.session-row[draggable="true"] {
+.session-row[data-row-id]:not([data-renaming]) {
   cursor: grab;
+}
+.session-row[data-dragging] {
+  cursor: grabbing;
+}
+/* The pointer drag must not select the text it crosses. */
+.sidebar__list:has([data-dragging]) {
+  user-select: none;
 }
 .session-row[data-drop="before"] {
   box-shadow: inset 0 2px 0 var(--accent);

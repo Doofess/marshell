@@ -5,8 +5,8 @@ import type { ApprovalRequest } from "../approval/types";
 import { Lane } from "../lane/Lane";
 import { laneLayout, pending } from "../lane/laneLayout";
 import { SessionRow, type RowDrag } from "../sidebar/SessionRow";
-import { dragOver, dropOrder, TAB_MIME, type DragState } from "../sidebar/reorder";
-import { menuStillValid, sameMenuItems } from "../sidebar/rowMenu";
+import { dragOver, dragStarted, dropOrder, edgeAt, rowIdAt, type DragState } from "../sidebar/reorder";
+import { inRenameBox, menuStillValid, sameMenuItems } from "../sidebar/rowMenu";
 import type { RowModel } from "../sidebar/types";
 import { groupBounds, groupedOrder, groupRows } from "../sidebar/grouping";
 import { Fragment, useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
@@ -96,39 +96,103 @@ export function Sidebar({
   useEffect(() => {
     if (menu && !menuValid) setMenu(null);
   }, [menu, menuValid]);
+  // The window listeners of a drag in progress read the current rows and groups through this, since the render that started it is stale.
+  const live = useRef({ ids, groups, onReorder });
+  live.current = { ids, groups, onReorder };
+  const endDrag = useRef<(() => void) | null>(null);
+  const dropClick = useRef<(() => void) | null>(null);
+  // Leaving mid-drag removes the listeners.
+  useEffect(
+    () => () => {
+      endDrag.current?.();
+      dropClick.current?.();
+    },
+    [],
+  );
+  // The click that follows a real drag's release is ignored, once: the next click or a short timeout clears this, so it never leaks to a later click.
+  const swallowNextClick = () => {
+    dropClick.current?.();
+    const clear = () => {
+      window.removeEventListener("click", swallow, true);
+      clearTimeout(timer);
+      dropClick.current = null;
+    };
+    const swallow = (e: MouseEvent) => {
+      e.stopPropagation();
+      e.preventDefault();
+      clear();
+    };
+    const timer = setTimeout(clear, 100);
+    window.addEventListener("click", swallow, true);
+    dropClick.current = clear;
+  };
+  const startPress = (id: string, startX: number, startY: number) => {
+    endDrag.current?.();
+    let state: DragState | null = null;
+    let cancelled = false;
+    const finish = () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("pointercancel", onCancel);
+      window.removeEventListener("keydown", onKey);
+      endDrag.current = null;
+      setDrag(null);
+    };
+    const onMove = (e: PointerEvent) => {
+      if (cancelled) return;
+      if (!state) {
+        if (!dragStarted(e.clientX - startX, e.clientY - startY)) return;
+        state = { id };
+        setDrag(state);
+      }
+      const { ids, groups } = live.current;
+      const hit = document.elementFromPoint(e.clientX, e.clientY);
+      const overId = rowIdAt(hit);
+      const bounds = groups ? groupBounds(groups, id) : undefined;
+      let next: DragState = { id };
+      // Not over a row, or over another project's row, is no place to drop: no indicator.
+      if (overId !== null && !(bounds && (ids.indexOf(overId) < bounds.start || ids.indexOf(overId) >= bounds.end))) {
+        const box = hit!.closest("[data-row-id]")!.getBoundingClientRect();
+        next = dragOver(state, overId, edgeAt(e.clientY, box.top, box.height));
+      }
+      if (next.over?.id !== state.over?.id || next.over?.edge !== state.over?.edge) {
+        state = next;
+        setDrag(next);
+      }
+    };
+    const onUp = () => {
+      const moved = state !== null;
+      const { ids, groups, onReorder } = live.current;
+      const over = (state as DragState | null)?.over;
+      const order = !cancelled && over ? dropOrder(ids, id, over.id, over.edge, groups ? groupBounds(groups, id) : undefined) : null;
+      finish();
+      if (moved) swallowNextClick();
+      if (order) onReorder?.(order);
+    };
+    // A cancelled pointer sends no click, so there is nothing to swallow.
+    const onCancel = () => finish();
+    // Escape drops the drag with no change; the release that follows still ends it and swallows its click.
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape" || !state) return;
+      cancelled = true;
+      setDrag(null);
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    window.addEventListener("pointercancel", onCancel);
+    window.addEventListener("keydown", onKey);
+    endDrag.current = finish;
+  };
   const dragFor = (id: string): RowDrag | undefined => {
     if (!onReorder) return undefined;
     return {
       dropEdge: drag?.over?.id === id ? drag.over.edge : undefined,
-      onDragStart: (e) => {
-        e.dataTransfer.effectAllowed = "move";
-        // A custom type only: dropping the row on a text field must not insert the tab id there.
-        e.dataTransfer.setData(TAB_MIME, id);
-        setDrag({ id });
+      dragging: drag?.id === id,
+      onPointerDown: (e) => {
+        // The primary button alone, and no modifier (Ctrl+click toggles a pane): a right-click, a menu or a rename press is not a drag.
+        if (e.button !== 0 || !e.isPrimary || e.ctrlKey || e.metaKey || e.altKey || e.shiftKey || inRenameBox(e.target)) return;
+        startPress(id, e.clientX, e.clientY);
       },
-      onDragOver: (e) => {
-        if (!drag) return;
-        // Another project's row is not a place to drop: no indicator, and the drop is not allowed.
-        const bounds = groups ? groupBounds(groups, drag.id) : undefined;
-        if (bounds && (ids.indexOf(id) < bounds.start || ids.indexOf(id) >= bounds.end)) {
-          if (drag.over) setDrag({ id: drag.id });
-          return;
-        }
-        const box = e.currentTarget.getBoundingClientRect();
-        const next = dragOver(drag, id, e.clientY < box.top + box.height / 2 ? "before" : "after");
-        if (next.over?.id !== drag.over?.id || next.over?.edge !== drag.over?.edge) setDrag(next);
-        // Over its own row there is nowhere to drop.
-        if (id === drag.id) return;
-        e.preventDefault();
-        e.dataTransfer.dropEffect = "move";
-      },
-      onDrop: (e) => {
-        e.preventDefault();
-        const next = drag?.over && dropOrder(ids, drag.id, drag.over.id, drag.over.edge, groups ? groupBounds(groups, drag.id) : undefined);
-        setDrag(null);
-        if (next) onReorder(next);
-      },
-      onDragEnd: () => setDrag(null),
     };
   };
   const tabStop = shown.some((r) => r.id === selectedId) ? selectedId : shown[0]?.id;
