@@ -6,7 +6,7 @@ use std::collections::VecDeque;
 use std::sync::Mutex;
 
 use crate::pty::Mark;
-use marshell_protocol::api::{CommandState, SavedTab, SessionInfo, SessionState, SessionsSnapshot};
+use marshell_protocol::api::{CommandState, SavedTab, SessionInfo, SessionMode, SessionState, SessionsSnapshot};
 use tokio::sync::watch;
 
 /// How many closed sessions we remember for Reopen.
@@ -18,6 +18,8 @@ pub struct Relaunch {
     pub profile_id: String,
     pub agent: Option<String>,
     pub cwd: String,
+    /// The mode it started in. None for a plain shell.
+    pub mode: Option<SessionMode>,
     /// The base name, as given (a renamed name when the user renamed it).
     pub name: String,
 }
@@ -103,6 +105,7 @@ impl Registry {
                 profile_id: relaunch.profile_id.clone(),
                 cwd: relaunch.cwd.clone(),
                 project: crate::projects::project_of(&relaunch.cwd),
+                mode: relaunch.mode,
                 state: SessionState::Running,
                 command: CommandState::Unknown,
             },
@@ -138,6 +141,7 @@ impl Registry {
                     profile_id: tab.profile_id.clone(),
                     cwd: tab.cwd.clone(),
                     project: crate::projects::project_of(&tab.cwd),
+                    mode: tab.mode,
                     state: SessionState::Ended,
                     command: CommandState::Unknown,
                 },
@@ -160,6 +164,7 @@ impl Registry {
                 agent: e.info.agent.clone(),
                 profile_id: e.info.profile_id.clone(),
                 cwd: e.info.cwd.clone(),
+                mode: e.info.mode,
             })
             .collect()
     }
@@ -368,6 +373,7 @@ mod tests {
             profile_id: "pwsh".into(),
             agent: None,
             cwd: "C:/work".into(),
+            mode: None,
             name: name.into(),
         }
     }
@@ -647,6 +653,7 @@ mod tests {
             agent: Some("claude".into()),
             profile_id: "pwsh".into(),
             cwd: "C:/work".into(),
+            mode: None,
         }
     }
 
@@ -655,8 +662,24 @@ mod tests {
             profile_id: t.profile_id.clone(),
             agent: t.agent.clone(),
             cwd: t.cwd.clone(),
+            mode: t.mode,
             name: t.name.clone(),
         });
+    }
+
+    #[test]
+    fn snapshot_carries_mode() {
+        let reg = Registry::new();
+        reg.reserve(
+            "t1",
+            Relaunch {
+                agent: Some("claude".into()),
+                mode: Some(SessionMode::Plan),
+                ..relaunch("Claude")
+            },
+        );
+        assert_eq!(reg.snapshot().sessions[0].mode, Some(SessionMode::Plan));
+        assert_eq!(reg.saved_tabs()[0].mode, Some(SessionMode::Plan));
     }
 
     #[test]

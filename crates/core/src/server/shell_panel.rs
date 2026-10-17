@@ -78,7 +78,7 @@ pub async fn open(State(st): State<AppState>, Json(req): Json<PanelRequest>) -> 
     if let Some(tab_id) = alive_panel(&st) {
         return Ok(Json(PanelResponse { tab_id }));
     }
-    let run = resolve(&st, None, None, None, false)?;
+    let run = resolve(&st, None, None, None, false, None)?;
     let cwd = start_folder(&run, Some(req.cwd));
     let tab_id = auth::new_id("t");
     let shell = PanelShell {
@@ -124,6 +124,7 @@ pub async fn adopt(State(st): State<AppState>) -> Result<Json<PanelResponse>, Ap
             profile_id: shell.profile_id,
             agent: None,
             cwd: shell.cwd,
+            mode: None,
             name: shell.name,
         },
     );
@@ -181,6 +182,7 @@ mod tests {
             profile_id: "p".into(),
             agent: None,
             cwd: String::new(),
+            mode: None,
             name: "Shell".into(),
         };
         adopt_session(&registry, &session, relaunch);

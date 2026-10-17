@@ -121,10 +121,10 @@ describe("preselect", () => {
   const docWith = (launcher: LayoutDoc["launcher"]): LayoutDoc => ({ tabs: [], view: {} as LayoutDoc["view"], launcher });
   it("remembered choice preselects only when its profile exists", () => {
     const doc = docWith({
-      "C:/shell": { profile_id: "cmd", agent: null, seq: 1 },
-      "C:/gone": { profile_id: "removed", agent: null, seq: 2 },
-      "C:/agent": { profile_id: "pwsh", agent: "codex", seq: 3 },
-      "C:/old-agent": { profile_id: "pwsh", agent: "aider", seq: 4 },
+      "C:/shell": { profile_id: "cmd", agent: null, seq: 1, mode: null },
+      "C:/gone": { profile_id: "removed", agent: null, seq: 2, mode: null },
+      "C:/agent": { profile_id: "pwsh", agent: "codex", seq: 3, mode: null },
+      "C:/old-agent": { profile_id: "pwsh", agent: "aider", seq: 4, mode: null },
     });
     expect(preselect(doc, "C:/shell", programs)).toBe("profile:cmd");
     expect(preselect(doc, "C:/agent", programs)).toBe("codex");

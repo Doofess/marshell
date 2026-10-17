@@ -1,4 +1,4 @@
-use marshell_protocol::api::{Profile, ShellFamily};
+use marshell_protocol::api::{Profile, SessionMode, ShellFamily};
 use std::path::PathBuf;
 
 /// The shell a new tab runs when the request names none.
@@ -231,11 +231,34 @@ pub fn agent_command(agent: &str) -> Option<&'static str> {
 }
 
 /// The arguments that make an agent continue its last conversation in the current folder.
-/// Antigravity has none that is verified, so it resumes as a fresh start.
 pub fn resume_args(agent: &str) -> &'static [&'static str] {
     match agent {
         "claude" => &["--continue"],
         "codex" => &["resume", "--last"],
+        "antigravity" => &["--continue"],
+        _ => &[],
+    }
+}
+
+/// The CLI's own flags for starting `agent` in `mode`. Hooks are off, so these are the native column of
+/// PLAN "Session modes". `sessionModes.ts` (`launchArgs` with hooks off) must show the same flags.
+/// Codex has no plan flag, so Plan starts like Manual.
+pub fn mode_args(agent: &str, mode: SessionMode) -> &'static [&'static str] {
+    use SessionMode::*;
+    match (agent, mode) {
+        ("claude", Manual) => &["--permission-mode", "manual"],
+        ("claude", Plan) => &["--permission-mode", "plan"],
+        ("claude", AutoEdit) => &["--permission-mode", "acceptEdits"],
+        ("claude", FullAuto) => &["--permission-mode", "auto"],
+        ("claude", Bypass) => &["--permission-mode", "bypassPermissions"],
+        ("codex", Manual | Plan) => &["--sandbox", "read-only", "--ask-for-approval", "on-request"],
+        ("codex", AutoEdit) => &["--sandbox", "workspace-write", "--ask-for-approval", "on-request"],
+        ("codex", FullAuto) => &["--approve-for-me"],
+        ("codex", Bypass) => &["--dangerously-bypass-approvals-and-sandbox"],
+        ("antigravity", Plan) => &["--mode", "plan"],
+        ("antigravity", AutoEdit) => &["--mode", "accept-edits"],
+        ("antigravity", FullAuto) => &["--mode", "auto"],
+        ("antigravity", Bypass) => &["--dangerously-skip-permissions"],
         _ => &[],
     }
 }
@@ -268,32 +291,43 @@ fn is_windows_powershell_5(profile: &Profile) -> bool {
         .is_some_and(|name| name.eq_ignore_ascii_case("powershell.exe"))
 }
 
-/// The argv that starts `agent` (with an optional first prompt) inside `profile`'s shell.
+/// The argv that starts `agent` (with an optional first prompt and mode) inside `profile`'s shell.
 /// With no agent it is the profile's own command.
-pub fn launch_argv(profile: &Profile, agent: Option<&str>, prompt: Option<&str>) -> Result<Vec<String>, String> {
-    build_argv(profile, agent, prompt, &[])
+pub fn launch_argv(
+    profile: &Profile,
+    agent: Option<&str>,
+    prompt: Option<&str>,
+    mode: Option<SessionMode>,
+) -> Result<Vec<String>, String> {
+    build_argv(profile, agent, prompt, &[], mode)
 }
 
 /// Like `launch_argv` with no prompt, but the agent is told to continue its last conversation.
 /// With no agent it is the profile's own command.
-pub fn launch_argv_resume(profile: &Profile, agent: Option<&str>) -> Result<Vec<String>, String> {
+pub fn launch_argv_resume(
+    profile: &Profile,
+    agent: Option<&str>,
+    mode: Option<SessionMode>,
+) -> Result<Vec<String>, String> {
     let extra = agent.map_or(&[][..], resume_args);
-    build_argv(profile, agent, None, extra)
+    build_argv(profile, agent, None, extra, mode)
 }
 
-/// `extra` goes right after the agent's program name, before any prompt.
+/// `extra` goes right after the agent's program name, then the mode flags, then any prompt.
 fn build_argv(
     profile: &Profile,
     agent: Option<&str>,
     prompt: Option<&str>,
     extra: &[&str],
+    mode: Option<SessionMode>,
 ) -> Result<Vec<String>, String> {
     let Some(agent) = agent else {
         return Ok(profile.command.clone());
     };
     let program = agent_command(agent).ok_or_else(|| format!("Unknown agent: {agent}."))?;
     let mut program_line = program.to_string();
-    for arg in extra {
+    let mode_flags = mode.map_or(&[][..], |m| mode_args(agent, m));
+    for arg in extra.iter().chain(mode_flags) {
         program_line.push(' ');
         program_line.push_str(arg);
     }
@@ -483,7 +517,7 @@ mod tests {
     #[test]
     fn powershell_agent_argv_quotes_prompt() {
         let ps = profile("pwsh", &["pwsh.exe", "-NoLogo"], ShellFamily::PowerShell);
-        let argv = launch_argv(&ps, Some("claude"), Some("it's")).unwrap();
+        let argv = launch_argv(&ps, Some("claude"), Some("it's"), None).unwrap();
         assert_eq!(&argv[..3], ["pwsh.exe", "-NoLogo", "-NoExit"]);
         assert_eq!(argv[3], "-Command");
         assert_eq!(argv.last().unwrap(), "& claude 'it''s'");
@@ -492,10 +526,10 @@ mod tests {
     #[test]
     fn agy_prompt_uses_dash_i() {
         let ps = profile("pwsh", &["pwsh.exe"], ShellFamily::PowerShell);
-        let argv = launch_argv(&ps, Some("antigravity"), Some("hi")).unwrap();
+        let argv = launch_argv(&ps, Some("antigravity"), Some("hi"), None).unwrap();
         assert_eq!(argv.last().unwrap(), "& agy -i 'hi'");
         let sh = profile("login-shell", &["/bin/zsh", "-l"], ShellFamily::Posix);
-        let argv = launch_argv(&sh, Some("antigravity"), Some("hi")).unwrap();
+        let argv = launch_argv(&sh, Some("antigravity"), Some("hi"), None).unwrap();
         assert!(argv.last().unwrap().starts_with("agy -i 'hi';"));
     }
 
@@ -503,7 +537,7 @@ mod tests {
     fn cmd_without_prompt_builds_k_line() {
         let cmd = profile("cmd", &["cmd.exe"], ShellFamily::Cmd);
         assert_eq!(
-            launch_argv(&cmd, Some("codex"), None).unwrap(),
+            launch_argv(&cmd, Some("codex"), None, None).unwrap(),
             ["cmd.exe", "/k", "codex"]
         );
     }
@@ -512,7 +546,7 @@ mod tests {
     fn cmd_rejects_any_prompt() {
         let cmd = profile("cmd", &["cmd.exe"], ShellFamily::Cmd);
         for prompt in ["fix the bug", "a\"b", "100%"] {
-            let err = launch_argv(&cmd, Some("claude"), Some(prompt)).unwrap_err();
+            let err = launch_argv(&cmd, Some("claude"), Some(prompt), None).unwrap_err();
             assert_eq!(
                 err,
                 "Command Prompt can't pass a prompt safely. Use PowerShell or start without a prompt."
@@ -523,13 +557,19 @@ mod tests {
     #[test]
     fn powershell_doubles_curly_quotes() {
         let ps = profile("pwsh", &["pwsh.exe"], ShellFamily::PowerShell);
-        let argv = launch_argv(&ps, Some("claude"), Some("x\u{2019}; Write-Output INJECTED; \u{2019}")).unwrap();
+        let argv = launch_argv(
+            &ps,
+            Some("claude"),
+            Some("x\u{2019}; Write-Output INJECTED; \u{2019}"),
+            None,
+        )
+        .unwrap();
         assert_eq!(
             argv.last().unwrap(),
             "& claude 'x\u{2019}\u{2019}; Write-Output INJECTED; \u{2019}\u{2019}'"
         );
         for q in ['\u{2018}', '\u{201A}', '\u{201B}'] {
-            let argv = launch_argv(&ps, Some("claude"), Some(&format!("a{q}b"))).unwrap();
+            let argv = launch_argv(&ps, Some("claude"), Some(&format!("a{q}b")), None).unwrap();
             assert_eq!(argv.last().unwrap(), &format!("& claude 'a{q}{q}b'"));
         }
     }
@@ -537,18 +577,18 @@ mod tests {
     #[test]
     fn windows_powershell_5_rejects_double_quotes() {
         let ps5 = profile("powershell", &["powershell.exe", "-NoLogo"], ShellFamily::PowerShell);
-        let err = launch_argv(&ps5, Some("claude"), Some("say \"hi\"")).unwrap_err();
+        let err = launch_argv(&ps5, Some("claude"), Some("say \"hi\""), None).unwrap_err();
         assert_eq!(
             err,
             "Windows PowerShell 5 can't pass double quotes to the agent. Use PowerShell 7 or remove the quotes."
         );
         // The file name is matched without regard to case; a prompt without quotes is fine.
         let shouting = profile("powershell", &["C:\\Windows\\POWERSHELL.EXE"], ShellFamily::PowerShell);
-        assert!(launch_argv(&shouting, Some("claude"), Some("a\"b")).is_err());
-        assert!(launch_argv(&ps5, Some("claude"), Some("hi")).is_ok());
+        assert!(launch_argv(&shouting, Some("claude"), Some("a\"b"), None).is_err());
+        assert!(launch_argv(&ps5, Some("claude"), Some("hi"), None).is_ok());
         // PowerShell 7 is unaffected.
         let pwsh = profile("pwsh", &["pwsh.exe"], ShellFamily::PowerShell);
-        assert!(launch_argv(&pwsh, Some("claude"), Some("say \"hi\"")).is_ok());
+        assert!(launch_argv(&pwsh, Some("claude"), Some("say \"hi\""), None).is_ok());
     }
 
     #[cfg(windows)]
@@ -570,21 +610,21 @@ mod tests {
     #[test]
     fn posix_agent_argv_returns_to_shell() {
         let sh = profile("login-shell", &["/bin/zsh", "-l"], ShellFamily::Posix);
-        let argv = launch_argv(&sh, Some("claude"), Some("it's")).unwrap();
+        let argv = launch_argv(&sh, Some("claude"), Some("it's"), None).unwrap();
         assert_eq!(argv, ["/bin/zsh", "-l", "-c", "claude 'it'\\''s'; exec \"$SHELL\" -l"]);
     }
 
     #[test]
     fn git_bash_returns_to_its_own_path() {
         let gb = profile("git-bash", &["C:\\Git\\bin\\bash.exe", "-l"], ShellFamily::Posix);
-        let argv = launch_argv(&gb, Some("claude"), None).unwrap();
+        let argv = launch_argv(&gb, Some("claude"), None, None).unwrap();
         assert_eq!(argv.last().unwrap(), "claude; exec 'C:\\Git\\bin\\bash.exe' -l");
     }
 
     #[test]
     fn wsl_agent_argv_runs_bash_login() {
         let wsl = profile("wsl-ubuntu", &["wsl.exe", "-d", "Ubuntu"], ShellFamily::Wsl);
-        let argv = launch_argv(&wsl, Some("codex"), Some("hi")).unwrap();
+        let argv = launch_argv(&wsl, Some("codex"), Some("hi"), None).unwrap();
         assert_eq!(
             argv,
             [
@@ -602,40 +642,96 @@ mod tests {
     #[test]
     fn no_agent_returns_profile_command() {
         let ps = profile("pwsh", &["pwsh.exe", "-NoLogo"], ShellFamily::PowerShell);
-        assert_eq!(launch_argv(&ps, None, Some("ignored")).unwrap(), ps.command);
+        assert_eq!(launch_argv(&ps, None, Some("ignored"), None).unwrap(), ps.command);
     }
 
     #[test]
     fn resume_args_per_agent() {
         assert_eq!(resume_args("claude"), ["--continue"]);
         assert_eq!(resume_args("codex"), ["resume", "--last"]);
-        assert!(resume_args("antigravity").is_empty());
+        assert_eq!(resume_args("antigravity"), ["--continue"]);
         assert!(resume_args("aider").is_empty());
     }
 
     #[test]
     fn resume_argv_adds_the_continue_flag_and_no_prompt() {
         let ps = profile("pwsh", &["pwsh.exe"], ShellFamily::PowerShell);
-        let argv = launch_argv_resume(&ps, Some("claude")).unwrap();
+        let argv = launch_argv_resume(&ps, Some("claude"), None).unwrap();
         assert_eq!(argv.last().unwrap(), "& claude --continue");
         let sh = profile("bash", &["bash"], ShellFamily::Posix);
-        let argv = launch_argv_resume(&sh, Some("codex")).unwrap();
+        let argv = launch_argv_resume(&sh, Some("codex"), None).unwrap();
         assert!(argv.last().unwrap().starts_with("codex resume --last; exec"));
         let cmd = profile("cmd", &["cmd.exe"], ShellFamily::Cmd);
         assert_eq!(
-            launch_argv_resume(&cmd, Some("claude")).unwrap(),
+            launch_argv_resume(&cmd, Some("claude"), None).unwrap(),
             ["cmd.exe", "/k", "claude --continue"]
         );
-        // Antigravity starts fresh; a plain shell is just its own command.
-        let argv = launch_argv_resume(&ps, Some("antigravity")).unwrap();
-        assert_eq!(argv.last().unwrap(), "& agy");
-        assert_eq!(launch_argv_resume(&ps, None).unwrap(), ps.command);
+        let argv = launch_argv_resume(&ps, Some("antigravity"), None).unwrap();
+        assert_eq!(argv.last().unwrap(), "& agy --continue");
+        // A plain shell is just its own command.
+        assert_eq!(launch_argv_resume(&ps, None, None).unwrap(), ps.command);
+    }
+
+    #[test]
+    fn mode_args_match_the_plan_table() {
+        use SessionMode::*;
+        assert_eq!(mode_args("claude", Manual), ["--permission-mode", "manual"]);
+        assert_eq!(mode_args("claude", Plan), ["--permission-mode", "plan"]);
+        assert_eq!(mode_args("claude", AutoEdit), ["--permission-mode", "acceptEdits"]);
+        assert_eq!(mode_args("claude", FullAuto), ["--permission-mode", "auto"]);
+        assert_eq!(mode_args("claude", Bypass), ["--permission-mode", "bypassPermissions"]);
+        let manual = ["--sandbox", "read-only", "--ask-for-approval", "on-request"];
+        assert_eq!(mode_args("codex", Manual), manual);
+        assert_eq!(mode_args("codex", Plan), mode_args("codex", Manual));
+        assert_eq!(
+            mode_args("codex", AutoEdit),
+            ["--sandbox", "workspace-write", "--ask-for-approval", "on-request"]
+        );
+        assert_eq!(mode_args("codex", FullAuto), ["--approve-for-me"]);
+        assert_eq!(
+            mode_args("codex", Bypass),
+            ["--dangerously-bypass-approvals-and-sandbox"]
+        );
+        assert!(mode_args("antigravity", Manual).is_empty());
+        assert_eq!(mode_args("antigravity", Plan), ["--mode", "plan"]);
+        assert_eq!(mode_args("antigravity", AutoEdit), ["--mode", "accept-edits"]);
+        assert_eq!(mode_args("antigravity", FullAuto), ["--mode", "auto"]);
+        assert_eq!(mode_args("antigravity", Bypass), ["--dangerously-skip-permissions"]);
+        assert!(mode_args("aider", Bypass).is_empty());
+    }
+
+    #[test]
+    fn resume_puts_the_mode_flags_after_the_resume_args() {
+        let ps = profile("pwsh", &["pwsh.exe"], ShellFamily::PowerShell);
+        let argv = launch_argv_resume(&ps, Some("claude"), Some(SessionMode::Bypass)).unwrap();
+        assert_eq!(
+            argv.last().unwrap(),
+            "& claude --continue --permission-mode bypassPermissions"
+        );
+        let argv = launch_argv_resume(&ps, Some("codex"), Some(SessionMode::FullAuto)).unwrap();
+        assert_eq!(argv.last().unwrap(), "& codex resume --last --approve-for-me");
+    }
+
+    #[test]
+    fn a_new_agent_session_starts_with_its_mode_flags_before_the_prompt() {
+        let ps = profile("pwsh", &["pwsh.exe"], ShellFamily::PowerShell);
+        let argv = launch_argv(&ps, Some("claude"), Some("hi"), Some(SessionMode::Plan)).unwrap();
+        assert_eq!(argv.last().unwrap(), "& claude --permission-mode plan 'hi'");
+    }
+
+    #[test]
+    fn a_plain_shell_ignores_the_mode() {
+        let ps = profile("pwsh", &["pwsh.exe", "-NoLogo"], ShellFamily::PowerShell);
+        assert_eq!(
+            launch_argv(&ps, None, None, Some(SessionMode::Plan)).unwrap(),
+            ps.command
+        );
     }
 
     #[test]
     fn unknown_agent_is_an_error() {
         let ps = profile("pwsh", &["pwsh.exe"], ShellFamily::PowerShell);
-        assert!(launch_argv(&ps, Some("aider"), None).is_err());
+        assert!(launch_argv(&ps, Some("aider"), None, None).is_err());
         assert_eq!(agent_command("antigravity"), Some("agy"));
         assert_eq!(agent_command("aider"), None);
     }

@@ -20,6 +20,7 @@ const info = (n: number, patch: Partial<SessionInfo> = {}): SessionInfo => ({
   profile_id: "pwsh",
   cwd: "C:\\dev\\my-app",
   project: "C:\\dev\\my-app",
+  mode: null,
   state: { kind: "running" },
   command: { kind: "unknown" },
   ...patch,

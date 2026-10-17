@@ -10,7 +10,7 @@ use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use marshell_protocol::api::{
     ColorScheme, CreateSessionRequest, CreateSessionResponse, InputRequest, RenameRequest, ReopenRequest,
-    ReorderRequest, ResumeError, SessionState, SessionsSnapshot, ShellFamily,
+    ReorderRequest, ResumeError, SessionMode, SessionState, SessionsSnapshot, ShellFamily,
 };
 use marshell_protocol::brand;
 use serde::Deserialize;
@@ -66,12 +66,14 @@ pub(super) struct Resolved {
 
 /// Finds the profile (the default when `profile_id` is None) and builds the argv for the agent.
 /// With `resume` the agent is told to continue its last conversation, and there is no prompt.
+/// The mode becomes the agent's own flags; a plain shell has none.
 pub(super) fn resolve(
     st: &AppState,
     profile_id: Option<&str>,
     agent: Option<&str>,
     prompt: Option<&str>,
     resume: bool,
+    mode: Option<SessionMode>,
 ) -> Result<Resolved, ApiError> {
     // Copy the profile out so the lock is gone before any await.
     let profile = {
@@ -82,9 +84,9 @@ pub(super) fn resolve(
     match (profile, profile_id) {
         (Some(p), _) => {
             let argv = if resume {
-                launch_argv_resume(&p, agent)
+                launch_argv_resume(&p, agent, mode)
             } else {
-                launch_argv(&p, agent, prompt)
+                launch_argv(&p, agent, prompt, mode)
             };
             let mut argv = argv.map_err(|msg| (StatusCode::BAD_REQUEST, msg))?;
             let mut env = p.env.clone();
@@ -158,6 +160,7 @@ pub(super) fn start_folder(run: &Resolved, requested: Option<String>) -> String 
 }
 
 /// Reserves a number, starts the process and records it. A failed spawn gives the number back.
+#[allow(clippy::too_many_arguments)]
 async fn start_session(
     st: &AppState,
     run: Resolved,
@@ -166,6 +169,7 @@ async fn start_session(
     cwd: Option<String>,
     size: (u16, u16),
     scheme: Option<ColorScheme>,
+    mode: Option<SessionMode>,
 ) -> Result<CreateSessionResponse, ApiError> {
     check_agent_installed(st, &run, agent.as_deref())?;
     let cwd = start_folder(&run, cwd);
@@ -185,6 +189,7 @@ async fn start_session(
             profile_id: run.profile_id.clone(),
             agent: agent.clone(),
             cwd: cwd.clone(),
+            mode,
             name,
         },
     );
@@ -309,6 +314,8 @@ pub async fn create(
         return Err((StatusCode::BAD_REQUEST, format!("Unknown agent: {agent}.")));
     }
     // An explicit argv keeps the old behaviour: run it as given, as a custom profile.
+    // A plain shell has no mode.
+    let mode = req.mode.filter(|_| req.agent.is_some() && req.shell.is_none());
     let (run, agent) = match req.shell {
         Some(argv) => {
             if argv.is_empty() {
@@ -324,6 +331,7 @@ pub async fn create(
                 req.agent.as_deref(),
                 req.prompt.as_deref(),
                 false,
+                mode,
             )?,
             req.agent,
         ),
@@ -335,21 +343,27 @@ pub async fn create(
         .clone()
         .filter(|c| !c.is_empty() && run.profile_id != CUSTOM_PROFILE);
     let choice = folder.map(|folder| (folder, run.profile_id.clone(), agent.clone()));
-    let created = start_session(&st, run, agent, req.name, req.cwd, size, req.color_scheme).await?;
+    let created = start_session(&st, run, agent, req.name, req.cwd, size, req.color_scheme, mode).await?;
     if let Some((folder, profile_id, agent)) = choice {
-        remember_choice(&st, folder, profile_id, agent).await;
+        remember_choice(&st, folder, profile_id, agent, mode).await;
     }
     Ok(Json(created))
 }
 
 /// Saves the launcher choice in layout.json under the layout lock, like `put_view`.
 /// The session is already running, so a failed save is only logged.
-async fn remember_choice(st: &AppState, folder: String, profile_id: String, agent: Option<String>) {
+async fn remember_choice(
+    st: &AppState,
+    folder: String,
+    profile_id: String,
+    agent: Option<String>,
+    mode: Option<SessionMode>,
+) {
     let state = st.clone();
     let saved = tokio::task::spawn_blocking(move || {
         let mut current = state.0.layout.lock().unwrap_or_else(|e| e.into_inner());
         let mut next = current.clone();
-        crate::layout::remember(&mut next, &folder, profile_id, agent);
+        crate::layout::remember(&mut next, &folder, profile_id, agent, mode);
         let result = crate::layout::save(&state.0.home, &next);
         // The memory is updated even when the save failed, so the launcher still remembers this run.
         *current = next;
@@ -438,10 +452,27 @@ pub async fn reopen(State(st): State<AppState>, body: Bytes) -> Result<Json<Crea
         return Err((StatusCode::NOT_FOUND, "Nothing to reopen.".into()));
     };
     // A fresh session from the saved profile, agent, folder and name (not the old row).
-    let run = resolve(&st, Some(&saved.profile_id), saved.agent.as_deref(), None, false)?;
+    let run = resolve(
+        &st,
+        Some(&saved.profile_id),
+        saved.agent.as_deref(),
+        None,
+        false,
+        saved.mode,
+    )?;
     // The window resizes the terminal as soon as it attaches.
     // The saved session has no colour scheme, so a reopened one starts without COLORFGBG.
-    let created = start_session(&st, run, saved.agent, Some(saved.name), Some(saved.cwd), (80, 24), None).await?;
+    let created = start_session(
+        &st,
+        run,
+        saved.agent,
+        Some(saved.name),
+        Some(saved.cwd),
+        (80, 24),
+        None,
+        saved.mode,
+    )
+    .await?;
     // Only now remove the entry. If another reopen took it first, drop the duplicate we started.
     if st.0.registry.take_closed(Some(&closed_id)).is_none() {
         st.0.registry.release(&created.tab_id);
@@ -488,7 +519,14 @@ pub async fn resume(State(st): State<AppState>, Path(tab): Path<String>, Json(re
     if !info.cwd.is_empty() && !std::path::Path::new(&info.cwd).is_dir() {
         return cannot_resume(format!("Its folder no longer exists: {}", info.cwd));
     }
-    let run = match resolve(&st, Some(&info.profile_id), info.agent.as_deref(), None, true) {
+    let run = match resolve(
+        &st,
+        Some(&info.profile_id),
+        info.agent.as_deref(),
+        None,
+        true,
+        info.mode,
+    ) {
         Ok(run) => run,
         Err(err) => return err.into_response(),
     };

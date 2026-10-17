@@ -1361,6 +1361,7 @@ async fn remove_closes_sessions_and_deletes_everything() {
         agent: None,
         profile_id: "sleeper".into(),
         cwd: task.path.clone(),
+        mode: None,
     };
     state
         .registry()
@@ -1368,6 +1369,7 @@ async fn remove_closes_sessions_and_deletes_everything() {
             profile_id: tab.profile_id.clone(),
             agent: None,
             cwd: tab.cwd.clone(),
+            mode: None,
             name: tab.name.clone(),
         });
     assert_eq!(state.registry().snapshot().sessions.len(), 4);

@@ -36,6 +36,7 @@ const snapshot = (names: string[]): SessionsSnapshot => ({
     profile_id: "p",
     cwd: "C:/x",
     project: "C:/x",
+    mode: null,
     state: { kind: "running" },
     command: { kind: "unknown" },
   })),

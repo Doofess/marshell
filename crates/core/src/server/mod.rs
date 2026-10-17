@@ -75,6 +75,7 @@ impl AppState {
             profile_id: tab.profile_id.clone(),
             agent: tab.agent.clone(),
             cwd: tab.cwd.clone(),
+            mode: tab.mode,
             name: tab.name.clone(),
         });
         let shell_dir = match crate::shell::install(&home) {

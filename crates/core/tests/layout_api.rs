@@ -132,7 +132,7 @@ async fn create_records_launcher_choice() {
     let choice = layout_of(&app).await["launcher"][&folder_path].clone();
     assert_eq!(
         choice,
-        serde_json::json!({ "profile_id": "sleeper", "agent": null, "seq": 1 })
+        serde_json::json!({ "profile_id": "sleeper", "agent": null, "seq": 1, "mode": null })
     );
     // It is on disk too, not only in memory.
     let saved: serde_json::Value =
