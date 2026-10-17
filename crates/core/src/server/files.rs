@@ -103,6 +103,110 @@ fn strip_verbatim(path: &std::path::Path) -> Option<String> {
     Some(text.strip_prefix(r"\\?\").unwrap_or(text).to_string())
 }
 
+/// The most links one path may pass through before it is refused as a loop.
+const MAX_LINK_HOPS: usize = 40;
+
+/// A link target as text for `refused`. Windows writes a junction's or a symlink's local target as
+/// `\??\C:\x` or `\\?\C:\x`, which are not network paths, so those lose the prefix. The UNC forms
+/// keep theirs and stay refused.
+fn link_target_text(target: &std::path::Path) -> Option<String> {
+    let text = target.to_str()?;
+    for prefix in [r"\??\", r"\\?\"] {
+        if let Some(rest) = text.strip_prefix(prefix) {
+            let b = rest.as_bytes();
+            let drive = b.len() >= 3 && b[0].is_ascii_alphabetic() && b[1] == b':' && (b[2] == b'\\' || b[2] == b'/');
+            if drive {
+                return Some(rest.to_string());
+            }
+        }
+    }
+    Some(text.to_string())
+}
+
+/// Whether following `path` would pass through a link whose target is refused, or through more than
+/// `MAX_LINK_HOPS` links. It walks the components from the root and asks `read` about each folder
+/// or file reached: `Some(target)` for a link, `None` for anything else. A missing path is not a
+/// link; any other error refuses. Nothing is asked past a refused target, and `read` must not follow
+/// links itself.
+fn links_refused_with(
+    path: &std::path::Path,
+    read: &impl Fn(&std::path::Path) -> std::io::Result<Option<PathBuf>>,
+) -> bool {
+    use std::collections::VecDeque;
+    use std::ffi::OsString;
+    use std::path::Component;
+
+    /// A path component that owns its text, so a link's target can be put in front of the rest.
+    enum Part {
+        Prefix(OsString),
+        Root,
+        Current,
+        Parent,
+        Name(OsString),
+    }
+    fn parts(path: &std::path::Path) -> impl Iterator<Item = Part> + '_ {
+        path.components().map(|c| match c {
+            Component::Prefix(p) => Part::Prefix(p.as_os_str().to_os_string()),
+            Component::RootDir => Part::Root,
+            Component::CurDir => Part::Current,
+            Component::ParentDir => Part::Parent,
+            Component::Normal(n) => Part::Name(n.to_os_string()),
+        })
+    }
+
+    let mut rest: VecDeque<Part> = parts(path).collect();
+    let mut current = PathBuf::new();
+    let mut hops = 0;
+    while let Some(part) = rest.pop_front() {
+        match part {
+            Part::Prefix(p) => current = PathBuf::from(p),
+            Part::Root => current.push(Component::RootDir.as_os_str()),
+            Part::Current => {}
+            Part::Parent => {
+                current.pop();
+            }
+            Part::Name(name) => {
+                current.push(name);
+                let target = match read(&current) {
+                    Ok(Some(target)) => target,
+                    Ok(None) => continue,
+                    Err(e)
+                        if matches!(
+                            e.kind(),
+                            std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory
+                        ) =>
+                    {
+                        continue;
+                    }
+                    Err(_) => return true,
+                };
+                hops += 1;
+                if hops > MAX_LINK_HOPS || link_target_text(&target).is_none_or(|t| refused(&t)) {
+                    return true;
+                }
+                // The target replaces the link: a relative one starts in the folder holding it.
+                current.pop();
+                for part in parts(&target).collect::<Vec<_>>().into_iter().rev() {
+                    rest.push_front(part);
+                }
+            }
+        }
+    }
+    false
+}
+
+/// `links_refused_with` against the disk: `symlink_metadata` never follows, and a Windows junction
+/// counts as a link. A link `read_link` can't read is an error, so the path is refused.
+fn links_refused(path: &std::path::Path) -> bool {
+    links_refused_with(path, &|p| {
+        if std::fs::symlink_metadata(p)?.file_type().is_symlink() {
+            std::fs::read_link(p).map(Some)
+        } else {
+            Ok(None)
+        }
+    })
+}
+
 fn home_dir() -> Option<PathBuf> {
     let var = if cfg!(windows) { "USERPROFILE" } else { "HOME" };
     std::env::var_os(var).filter(|v| !v.is_empty()).map(PathBuf::from)
@@ -123,7 +227,8 @@ fn expand_home(candidate: &str) -> Option<String> {
 
 /// The canonical path of `path` when it is a regular file (after following symlinks).
 fn existing_file(path: &str) -> Option<String> {
-    if refused(path) {
+    // A link on the way may lead to a network path, so the links are read before anything follows them.
+    if refused(path) || links_refused(std::path::Path::new(path)) {
         return None;
     }
     let canonical = std::fs::canonicalize(path).ok()?;
@@ -158,7 +263,7 @@ fn resolve_one(candidate: &str, bases: &[PathBuf]) -> Option<String> {
 /// itself) with a `.git` folder or file. A linked worktree has a `.git` file, so this is the
 /// worktree, where `projects::repo_root` gives the main checkout. None outside git.
 fn checkout_of(row: &SessionInfo) -> Option<PathBuf> {
-    if row.cwd.is_empty() || refused(&row.cwd) {
+    if row.cwd.is_empty() || refused(&row.cwd) || links_refused(std::path::Path::new(&row.cwd)) {
         return None;
     }
     let root = std::path::Path::new(&row.cwd)
@@ -257,9 +362,20 @@ fn open_regular(path: &std::path::Path) -> Option<(std::fs::File, std::fs::Metad
     meta.is_file().then_some((file, meta))
 }
 
+/// `checked`, and the links on the way are read too, off the async threads.
+async fn checked_links(path: &str) -> Result<PathBuf, (StatusCode, &'static str)> {
+    let path = checked(path)?;
+    let probe = path.clone();
+    match tokio::task::spawn_blocking(move || links_refused(&probe)).await {
+        Ok(false) => Ok(path),
+        Ok(true) => Err((StatusCode::BAD_REQUEST, "That path can't be read.")),
+        Err(_) => Err((StatusCode::INTERNAL_SERVER_ERROR, "The path could not be checked.")),
+    }
+}
+
 /// GET /v1/files/stat
 pub async fn stat(Query(q): Query<FileQuery>) -> Response {
-    let path = match checked(&q.path) {
+    let path = match checked_links(&q.path).await {
         Ok(p) => p,
         Err(refusal) => return refusal.into_response(),
     };
@@ -328,7 +444,7 @@ fn read_capped(path: &std::path::Path, cap: u64) -> Outcome {
 
 /// GET /v1/files/content
 pub async fn content(Query(q): Query<FileQuery>) -> Response {
-    let path = match checked(&q.path) {
+    let path = match checked_links(&q.path).await {
         Ok(p) => p,
         Err(refusal) => return refusal.into_response(),
     };
@@ -366,6 +482,26 @@ fn relative(root: &std::path::Path, path: &std::path::Path) -> Option<String> {
     Some(parts?.join("/"))
 }
 
+/// Whether `path` is a regular file the list may show. A link is followed only after its target is
+/// checked, and the folders above the file are checked once each (`safe_folders` remembers them).
+fn is_listable(path: &std::path::Path, safe_folders: &mut std::collections::HashSet<PathBuf>) -> bool {
+    if let Some(folder) = path.parent()
+        && !safe_folders.contains(folder)
+    {
+        if links_refused(folder) {
+            return false;
+        }
+        safe_folders.insert(folder.to_path_buf());
+    }
+    let Ok(meta) = std::fs::symlink_metadata(path) else {
+        return false;
+    };
+    if meta.file_type().is_symlink() {
+        return !links_refused(path) && std::fs::metadata(path).is_ok_and(|m| m.is_file());
+    }
+    meta.is_file()
+}
+
 /// Tracked and untracked files, minus the ignored ones. None when `root` is not in a repo or git
 /// is not installed. Files the index lists but the disk lacks, and submodule folders, are left out.
 fn git_files(root: &std::path::Path) -> Option<(Vec<String>, bool)> {
@@ -375,19 +511,22 @@ fn git_files(root: &std::path::Path) -> Option<(Vec<String>, bool)> {
     }
     let started = Instant::now();
     let mut seen = std::collections::HashSet::new();
+    // Folders already read link by link, so a big repo costs one check per folder.
+    let mut safe_folders = std::collections::HashSet::new();
     let mut files = Vec::new();
     for name in out.stdout.split('\0').filter(|n| !n.is_empty()) {
         if files.len() >= MAX_LIST_FILES || started.elapsed() > LIST_BUDGET {
             return Some((files, true));
         }
-        if seen.insert(name) && std::fs::metadata(root.join(name)).is_ok_and(|m| m.is_file()) {
+        if seen.insert(name) && is_listable(&root.join(name), &mut safe_folders) {
             files.push(name.to_string());
         }
     }
     Some((files, false))
 }
 
-/// The files under `root` outside a repo. Symlinked and junctioned folders are not entered.
+/// The files under `root` outside a repo. Symlinked and junctioned folders are not entered, and a
+/// linked file is listed only when its target passes `links_refused` and is a file.
 fn walk_files(root: &std::path::Path) -> (Vec<String>, bool) {
     let started = Instant::now();
     let mut files = Vec::new();
@@ -410,7 +549,9 @@ fn walk_files(root: &std::path::Path) -> (Vec<String>, bool) {
                 if !skipped {
                     folders.push(path);
                 }
-            } else if kind.is_file() || (kind.is_symlink() && std::fs::metadata(&path).is_ok_and(|m| m.is_file())) {
+            } else if kind.is_file()
+                || (kind.is_symlink() && !links_refused(&path) && std::fs::metadata(&path).is_ok_and(|m| m.is_file()))
+            {
                 files.extend(relative(root, &path));
             }
         }
@@ -423,7 +564,7 @@ fn walk_files(root: &std::path::Path) -> (Vec<String>, bool) {
 fn first_folder(candidates: impl IntoIterator<Item = PathBuf>) -> Option<PathBuf> {
     candidates
         .into_iter()
-        .find(|p| p.to_str().is_some_and(|s| !s.is_empty() && !refused(s)) && p.is_dir())
+        .find(|p| p.to_str().is_some_and(|s| !s.is_empty() && !refused(s)) && !links_refused(p) && p.is_dir())
         .map(|p| crate::projects::canonical(&p))
         // A symlink may have led somewhere the string did not show.
         .filter(|p| p.to_str().is_some_and(|s| !refused(s)))
@@ -538,6 +679,111 @@ mod tests {
         assert_eq!(p(r"\\?\C:\a\b").as_deref(), Some(r"C:\a\b"));
         assert_eq!(p(r"C:\a\b").as_deref(), Some(r"C:\a\b"));
         assert_eq!(p(r"\\?\UNC\srv\share\a"), None);
+    }
+
+    /// A link reader over a table: Some(target) for a listed link, None for anything else. It logs
+    /// every path it is asked about.
+    struct Links {
+        table: Vec<(PathBuf, PathBuf)>,
+        asked: std::cell::RefCell<Vec<PathBuf>>,
+    }
+
+    impl Links {
+        fn new(table: &[(&PathBuf, &str)]) -> Self {
+            Links {
+                table: table.iter().map(|(l, t)| ((*l).clone(), PathBuf::from(t))).collect(),
+                asked: Default::default(),
+            }
+        }
+
+        fn refused(&self, path: &std::path::Path) -> bool {
+            links_refused_with(path, &|p: &std::path::Path| {
+                self.asked.borrow_mut().push(p.to_path_buf());
+                Ok(self.table.iter().find(|(l, _)| l == p).map(|(_, t)| t.clone()))
+            })
+        }
+    }
+
+    fn base() -> PathBuf {
+        PathBuf::from(if cfg!(windows) { r"C:\" } else { "/" })
+    }
+
+    #[test]
+    fn a_link_to_a_unc_share_refuses_the_path_and_nothing_past_it_is_asked() {
+        let link = base().join("proj").join("link");
+        let links = Links::new(&[(&link, r"\\192.0.2.1\share")]);
+        assert!(links.refused(&link.join("deep").join("x.txt")));
+        let asked = links.asked.borrow();
+        assert_eq!(asked.last(), Some(&link), "asked {asked:?}");
+        assert!(
+            !asked.iter().any(|p| p.starts_with(&link) && p != &link),
+            "asked {asked:?}"
+        );
+    }
+
+    #[test]
+    fn a_link_whose_target_is_a_device_or_nt_path_is_refused() {
+        let link = base().join("link");
+        for target in [
+            r"\\?\UNC\192.0.2.1\share",
+            r"\??\UNC\192.0.2.1\share",
+            "//192.0.2.1/share",
+        ] {
+            let links = Links::new(&[(&link, target)]);
+            assert!(links.refused(&link), "{target}");
+        }
+    }
+
+    #[test]
+    fn a_link_to_a_local_folder_is_followed_and_the_rest_is_checked_there() {
+        let (link, real) = (base().join("a").join("link"), base().join("b").join("real"));
+        let links = Links::new(&[(&link, real.to_str().unwrap())]);
+        assert!(!links.refused(&link.join("x.txt")));
+        assert!(links.asked.borrow().contains(&real.join("x.txt")));
+        // A relative target is read against the folder holding the link.
+        let rel = Links::new(&[(&link, "sibling")]);
+        assert!(!rel.refused(&link.join("x.txt")));
+        assert!(
+            rel.asked
+                .borrow()
+                .contains(&base().join("a").join("sibling").join("x.txt"))
+        );
+        // A link further along the way is found too.
+        let (inner, bad) = (real.join("inner"), r"\\192.0.2.1\share");
+        let chain = Links::new(&[(&link, real.to_str().unwrap()), (&inner, bad)]);
+        assert!(chain.refused(&link.join("inner").join("x.txt")));
+    }
+
+    #[test]
+    fn a_junction_style_nt_target_to_a_drive_is_not_a_network_path() {
+        let link = base().join("link");
+        for target in [r"\??\C:\work\x", r"\\?\C:\work\x"] {
+            let links = Links::new(&[(&link, target)]);
+            assert!(!links.refused(&link), "{target}");
+        }
+    }
+
+    #[test]
+    fn link_loops_and_long_chains_are_refused() {
+        let (a, b) = (base().join("a"), base().join("b"));
+        let looped = Links::new(&[(&a, b.to_str().unwrap()), (&b, a.to_str().unwrap())]);
+        assert!(looped.refused(&a.join("x")));
+        let itself = Links::new(&[(&a, a.to_str().unwrap())]);
+        assert!(itself.refused(&a));
+        // 41 links in a row is one too many; 40 is fine.
+        let names: Vec<PathBuf> = (0..=41).map(|i| base().join(format!("l{i}"))).collect();
+        let table: Vec<(&PathBuf, &str)> = (0..41).map(|i| (&names[i], names[i + 1].to_str().unwrap())).collect();
+        assert!(Links::new(&table).refused(&names[0]));
+        assert!(!Links::new(&table[1..]).refused(&names[1]));
+    }
+
+    #[test]
+    fn a_reader_error_other_than_missing_refuses_and_missing_is_fine() {
+        let p = base().join("a").join("b");
+        let missing = |_: &std::path::Path| Err(std::io::ErrorKind::NotFound.into());
+        assert!(!links_refused_with(&p, &missing));
+        let denied = |_: &std::path::Path| Err(std::io::ErrorKind::PermissionDenied.into());
+        assert!(links_refused_with(&p, &denied));
     }
 
     #[test]

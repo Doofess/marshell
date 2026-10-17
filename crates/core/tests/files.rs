@@ -269,6 +269,75 @@ async fn refused_paths_are_null_in_resolve_and_400_in_stat_and_content() {
     assert_eq!(call(&s.app, "GET", &uri, None).await.status(), StatusCode::BAD_REQUEST);
 }
 
+/// Tries a real link to `target`. False when the machine won't make one (Windows without developer
+/// mode or elevation).
+fn make_link(target: &str, link: &Path, dir: bool) -> bool {
+    #[cfg(windows)]
+    let made = if dir {
+        std::os::windows::fs::symlink_dir(target, link)
+    } else {
+        std::os::windows::fs::symlink_file(target, link)
+    };
+    #[cfg(unix)]
+    let made = {
+        let _ = dir;
+        std::os::unix::fs::symlink(target, link)
+    };
+    made.is_ok()
+}
+
+/// Reading through a link to a network share is refused like the share's own path, and fast: the
+/// core never opens the connection that would leak the person's NTLM hash.
+#[tokio::test]
+async fn links_to_a_network_share_are_refused_without_touching_the_network() {
+    let s = setup("reported");
+    let root = s.dir.path();
+    let file_link = root.join("file-link.txt");
+    let dir_link = root.join("dir-link");
+    let share = r"\\192.0.2.1\share";
+    if !make_link(&format!(r"{share}\x.txt"), &file_link, false) || !make_link(share, &dir_link, true) {
+        eprintln!("skipped: this machine can't create symlinks");
+        return;
+    }
+    write(&root.join("plain.txt"), "p");
+    let tab = session(&s.app, "sleeper", root).await;
+    let started = Instant::now();
+    let real_root = PathBuf::from(canon(root));
+    let file_link = real_root.join("file-link.txt").to_string_lossy().into_owned();
+    let through = real_root.join("dir-link").join("x.txt").to_string_lossy().into_owned();
+    for path in [&file_link, &through] {
+        for route in ["stat", "content"] {
+            let uri = format!("/v1/files/{route}?path={}&kind=text", enc(path));
+            assert_eq!(
+                call(&s.app, "GET", &uri, None).await.status(),
+                StatusCode::BAD_REQUEST,
+                "{route} {path}"
+            );
+        }
+    }
+    let got = resolve(
+        &s.app,
+        &tab,
+        &["file-link.txt", "dir-link/x.txt", &file_link, &through, "plain.txt"],
+    )
+    .await;
+    assert_eq!(got[..4], [None, None, None, None]);
+    assert_eq!(got[4], Some(canon(&root.join("plain.txt"))));
+    let list = names(&files_of(&s.app, &tab).await);
+    assert!(list.contains(&"plain.txt".to_string()), "{list:?}");
+    assert!(!list.iter().any(|f| f.contains("link")), "{list:?}");
+    // The same folder as a repo: the git listing checks each file too.
+    git(root, &["init", "-q"]);
+    let list = names(&files_of(&s.app, &tab).await);
+    assert!(list.contains(&"plain.txt".to_string()), "{list:?}");
+    assert!(!list.iter().any(|f| f.contains("link")), "{list:?}");
+    assert!(
+        started.elapsed() < Duration::from_secs(2),
+        "took {:?}",
+        started.elapsed()
+    );
+}
+
 #[cfg(windows)]
 #[tokio::test]
 async fn windows_device_names_are_refused() {
