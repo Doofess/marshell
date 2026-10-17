@@ -29,6 +29,9 @@ function isPerfToggle(e: KeyboardEvent): boolean {
 /** Whether a key press is turned into the "Paused. Continue to type." bar instead of being sent: a live session that is frozen. */
 export const blockedInput = (core: "live" | "ended" | "failed", paused: boolean): boolean => core === "live" && paused;
 
+/** Focus reports (`CSI I`/`CSI O`) and mouse reports (SGR, or X10's `CSI M` plus three bytes): the terminal sends these itself, so they are not typing. */
+export const isTerminalReport = (data: string): boolean => /^\x1b\[(?:[IO]|<\d+;\d+;\d+[Mm]|M[\s\S]{3})$/.test(data);
+
 type Props = {
   endpoint: Endpoint;
   tabId: string;
@@ -181,7 +184,7 @@ export function TerminalView({ endpoint, tabId, placeholder, onOutput, onSize, a
     const subs = [
       term.onData((d) => {
         if (core !== "live") return;
-        if (blockedInput(core, pausedRef.current)) return blockedRef.current?.();
+        if (blockedInput(core, pausedRef.current)) return isTerminalReport(d) ? undefined : blockedRef.current?.();
         meter.markInput();
         socket.sendInput(d);
       }),

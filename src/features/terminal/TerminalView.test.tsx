@@ -1,7 +1,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import type { Endpoint } from "../../generated/Endpoint";
-import { TerminalView, blockedInput, terminalOptions } from "./TerminalView";
+import { TerminalView, blockedInput, isTerminalReport, terminalOptions } from "./TerminalView";
 
 const endpoint: Endpoint = { port: 1, token: "t", platform: "windows" };
 
@@ -37,3 +37,20 @@ describe("blockedInput", () => {
     expect(blockedInput("failed", true)).toBe(false);
   });
 });
+
+describe("isTerminalReport", () => {
+  it("is true for focus reports and mouse reports, which the terminal sends by itself", () => {
+    expect(isTerminalReport("\x1b[I")).toBe(true);
+    expect(isTerminalReport("\x1b[O")).toBe(true);
+    expect(isTerminalReport("\x1b[<0;12;5M")).toBe(true);
+    expect(isTerminalReport("\x1b[<0;12;5m")).toBe(true);
+    expect(isTerminalReport("\x1b[M !!")).toBe(true);
+  });
+  it("is false for keystrokes and pastes", () => {
+    expect(isTerminalReport("a")).toBe(false);
+    expect(isTerminalReport("\r")).toBe(false);
+    expect(isTerminalReport("hello world")).toBe(false);
+    expect(isTerminalReport("\x1b[A")).toBe(false);
+  });
+});
+
