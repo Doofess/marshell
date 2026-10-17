@@ -12,10 +12,14 @@ use crate::profiles::detect::{agent_in, program_of};
 use crate::pty::Session;
 use marshell_protocol::api::Foreground;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 /// How often a running command is looked at, at most. A command that starts wakes the watcher early.
 const POLL: Duration = Duration::from_secs(1);
+
+/// How long an agent in the shell panel must keep running before the panel hands it off. A bit
+/// under `POLL`, so the next regular tick confirms it.
+const CONFIRM: Duration = Duration::from_millis(900);
 
 /// Which session a reading is for.
 enum Target {
@@ -35,7 +39,7 @@ pub(super) fn spawn_watcher(state: &AppState) {
     let inner = Arc::downgrade(&state.0);
     runtime.spawn(async move {
         // The panel's agent sighting that has not been confirmed yet. See `seen_twice`.
-        let mut pending: Option<(String, u64)> = None;
+        let mut pending: Option<(String, u64, Instant)> = None;
         loop {
             tokio::select! {
                 _ = tokio::time::sleep(POLL) => {}
@@ -58,7 +62,7 @@ fn polled(session: &Session, shows_foreground: bool) -> bool {
 
 /// One pass. The registry and the sessions map are locked only while the work list is made and
 /// while the results are applied, never across the blocking process reads or an `.await`.
-async fn tick(st: &AppState, pending: &mut Option<(String, u64)>) {
+async fn tick(st: &AppState, pending: &mut Option<(String, u64, Instant)>) {
     let mut work: Vec<(Target, Arc<Session>, u64)> = Vec::new();
     for (tab, generation, shows) in st.0.registry.foreground_candidates() {
         if let Some(session) = st.session(&tab)
@@ -119,7 +123,7 @@ async fn tick(st: &AppState, pending: &mut Option<(String, u64)>) {
     // the panel still holds this shell and nobody (the "Open in a pane" button) adopted it first.
     match panel_agent {
         Some((tab, epoch, foreground)) => {
-            if seen_twice(pending, &tab, epoch)
+            if seen_twice(pending, &tab, epoch, Instant::now())
                 && let Some(adopted) = take_and_adopt(st, Some(&tab))
             {
                 st.0.registry
@@ -154,16 +158,24 @@ fn fresh(taken_at: u64, now: u64, reading: Reading) -> Reading {
 
 /// The panel hand-off gate. A command line alone must not move focus: `claude --version` names an
 /// agent and ends a second later. The hand-off waits for the same panel tab, at the same command
-/// epoch, on two readings in a row, so the command was still running at the next tick.
+/// epoch, on two readings at least `CONFIRM` apart, so the command was still running a tick later
+/// (another session's C mark can wake the watcher twice within that).
 /// `pending` is the first sighting. The agent need not be in the process chain: an npm-installed
 /// claude runs as node, so only the command line names it.
-fn seen_twice(pending: &mut Option<(String, u64)>, tab: &str, epoch: u64) -> bool {
-    if pending.as_ref().is_some_and(|(t, e)| t == tab && *e == epoch) {
-        *pending = None;
-        return true;
+fn seen_twice(pending: &mut Option<(String, u64, Instant)>, tab: &str, epoch: u64, now: Instant) -> bool {
+    match pending {
+        Some((t, e, first)) if t == tab && *e == epoch => {
+            if now.duration_since(*first) < CONFIRM {
+                return false;
+            }
+            *pending = None;
+            true
+        }
+        _ => {
+            *pending = Some((tab.to_string(), epoch, now));
+            false
+        }
     }
-    *pending = Some((tab.to_string(), epoch));
-    false
 }
 
 /// Reads the session's process chain and command line. Blocking.
@@ -216,21 +228,33 @@ mod tests {
 
     #[test]
     fn the_panel_hand_off_needs_the_same_tab_and_epoch_twice_in_a_row() {
+        let t0 = Instant::now();
+        let later = |n: u64| t0 + Duration::from_secs(n);
         let mut pending = None;
         assert!(
-            !seen_twice(&mut pending, "t1", 3),
+            !seen_twice(&mut pending, "t1", 3, later(0)),
             "the first sighting must not hand off"
         );
-        assert!(seen_twice(&mut pending, "t1", 3));
+        assert!(seen_twice(&mut pending, "t1", 3, later(1)));
         // A changed epoch (a new command) starts over, and so does another tab.
         let mut pending = None;
-        assert!(!seen_twice(&mut pending, "t1", 3));
-        assert!(!seen_twice(&mut pending, "t1", 4));
-        assert!(seen_twice(&mut pending, "t1", 4));
+        assert!(!seen_twice(&mut pending, "t1", 3, later(0)));
+        assert!(!seen_twice(&mut pending, "t1", 4, later(1)));
+        assert!(seen_twice(&mut pending, "t1", 4, later(2)));
         let mut pending = None;
-        assert!(!seen_twice(&mut pending, "t1", 4));
-        assert!(!seen_twice(&mut pending, "t2", 4));
-        assert!(seen_twice(&mut pending, "t2", 4));
+        assert!(!seen_twice(&mut pending, "t1", 4, later(0)));
+        assert!(!seen_twice(&mut pending, "t2", 4, later(1)));
+        assert!(seen_twice(&mut pending, "t2", 4, later(2)));
+    }
+
+    #[test]
+    fn a_second_sighting_soon_after_the_first_does_not_hand_off() {
+        // Another session's C mark can wake the watcher twice within a second.
+        let t0 = Instant::now();
+        let mut pending = None;
+        assert!(!seen_twice(&mut pending, "t1", 3, t0));
+        assert!(!seen_twice(&mut pending, "t1", 3, t0 + Duration::from_millis(100)));
+        assert!(seen_twice(&mut pending, "t1", 3, t0 + Duration::from_millis(1000)));
     }
 
     #[test]
