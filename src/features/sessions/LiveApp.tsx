@@ -10,7 +10,8 @@ import { copyRecordingPath } from "./recording";
 import { addFailure, clipboardText, deliveryFor, noticeFor } from "../regions/deliver";
 import { regionText } from "../regions/region";
 import { pasteAttachment, pastePaths, saveAttachment } from "../regions/regionsApi";
-import { dropDelivery, type DropTarget } from "../drop/dropTarget";
+import { toPng } from "../regions/imagePaste";
+import { deliveryTo, type DropTarget } from "../drop/dropTarget";
 import { useFileDrop } from "../drop/useFileDrop";
 import { statFile } from "../preview/previewApi";
 import { inMenu } from "../../components/ContextMenu/menuKeys";
@@ -368,8 +369,7 @@ export function LiveApp() {
       return;
     }
     const ep = endpointRef.current;
-    const row = stateRef.current.rows.find((x) => x.id === target.tabId) ?? null;
-    const delivery = ep ? dropDelivery(row) : null;
+    const delivery = ep ? deliveryTo(target.tabId, stateRef.current.rows, panelIdRef.current) : null;
     if (!ep || !delivery) return announce("No session to add it to.");
     if (delivery.refused !== undefined) return announce(delivery.refused);
     try {
@@ -378,8 +378,29 @@ export function LiveApp() {
       return announce(`Couldn't paste the path: ${addFailure(e)}`);
     }
     announce(paths.length === 1 ? `Pasted ${lastSegment(paths[0] ?? "")} into ${delivery.name}.` : `Pasted ${paths.length} paths into ${delivery.name}.`);
-    pick(target.tabId);
+    focusDelivered(target.tabId, delivery);
+  };
+  // The shell panel's tab has no row to select, and focusTerminal would move the keys to the selected session, so only a pane's session is picked.
+  const panelIdRef = useRef<string | undefined>(undefined);
+  const focusDelivered = (tabId: string, delivery: { name: string; panel?: true }) => {
+    if (delivery.panel) return;
+    pick(tabId);
     setTimeout(() => actions.focusTerminal(), 0);
+  };
+  // An image pasted into a terminal (Ctrl+Shift+V): saved, and its reference pasted into that session, agent or shell. Never Enter.
+  const addImage = async (tabId: string, image: Blob): Promise<void> => {
+    const ep = endpointRef.current;
+    const delivery = ep ? deliveryTo(tabId, stateRef.current.rows, panelIdRef.current) : null;
+    if (!ep || !delivery) return announce("No session to add it to.");
+    if (delivery.refused !== undefined) return announce(delivery.refused);
+    try {
+      const saved = await saveAttachment(ep, tabId, await toPng(image));
+      await pasteAttachment(ep, tabId, { attachment: saved.name, text: "" });
+    } catch (e) {
+      return announce(`Couldn't add the image: ${addFailure(e)}`);
+    }
+    announce(`Added the image to ${delivery.name}.`);
+    focusDelivered(tabId, delivery);
   };
   // The pane under a dragged file gets the dashed outline and its label (Drop.css).
   const dropOver = useRef<Element | null>(null);
@@ -388,7 +409,7 @@ export function LiveApp() {
     let label = "";
     if (target?.kind === "terminal") {
       const host = Array.from(document.querySelectorAll("[data-drop-tab]")).find((h) => h.getAttribute("data-drop-tab") === target.tabId);
-      const name = stateRef.current.rows.find((x) => x.id === target.tabId)?.name;
+      const name = deliveryTo(target.tabId, stateRef.current.rows, panelIdRef.current)?.name;
       next = host?.closest(".pane") ?? host ?? null;
       label = `Drop to paste the path into ${name ?? "the session"}`;
     } else if (target) {
@@ -496,6 +517,7 @@ export function LiveApp() {
       });
   }, [endpoint, shellShown, hasFocusedCwd, panel, attempt, announce]);
   const panelTab = panel && panel.endpoint === endpoint ? panel : null;
+  panelIdRef.current = panelTab?.tabId;
   const shellFailed = failedFor !== null && failedFor === endpoint && !panelTab;
   const retryShell = useCallback(() => {
     setFailedFor(null);
@@ -582,7 +604,7 @@ export function LiveApp() {
     if (handed && endpoint) setAdopted({ endpoint, tabId: handed });
   }, [handed, endpoint]);
   const shellTerminal = useMemo(
-    () => (panelTab && endpoint ? <TerminalView key={panelTab.tabId} endpoint={endpoint} tabId={panelTab.tabId} autoFocus={false} theme={themeFor(undefined)} font={terminalFont} /> : null),
+    () => (panelTab && endpoint ? <TerminalView key={panelTab.tabId} endpoint={endpoint} tabId={panelTab.tabId} autoFocus={false} theme={themeFor(undefined)} font={terminalFont} onImagePaste={(image) => void addImage(panelTab.tabId, image)} /> : null),
     [endpoint, panelTab, themeFor, terminalFont],
   );
 
@@ -906,6 +928,7 @@ export function LiveApp() {
                 focusToken={focusToken}
                 promptJump={promptJump?.tabId === row.id ? promptJump : undefined}
                 onPromptJump={(result) => promptJump && onPromptJump(promptJump.by, result)}
+                onImagePaste={(image) => void addImage(row.id, image)}
                 theme={themeFor(overrideOf(row.id))}
                 font={terminalFont}
               />

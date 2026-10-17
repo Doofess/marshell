@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { RowModel } from "../sidebar/types";
-import { dropDelivery, dropTarget, toCss } from "./dropTarget";
+import { deliveryTo, dropDelivery, dropTarget, toCss } from "./dropTarget";
 
 const row = (status: string, agent = "claude"): RowModel => ({ name: "api", status, agent }) as unknown as RowModel;
 
@@ -32,5 +32,16 @@ describe("dropDelivery", () => {
   });
   it("is null with no row", () => {
     expect(dropDelivery(null)).toBeNull();
+  });
+});
+
+describe("deliveryTo", () => {
+  const rows = [{ ...row("paused"), id: "t1" }] as unknown as RowModel[];
+  it("is the shell panel for its tab, which has no sidebar row", () => {
+    expect(deliveryTo("p9", rows, "p9")).toEqual({ name: "the shell panel", panel: true });
+  });
+  it("is the row's delivery for any other tab", () => {
+    expect(deliveryTo("t1", rows, "p9")).toEqual({ name: "api", refused: "api is paused." });
+    expect(deliveryTo("t2", rows, undefined)).toBeNull();
   });
 });

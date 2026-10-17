@@ -24,3 +24,13 @@ export function dropDelivery(row: RowModel | null): { name: string; refused?: un
   if (row.status === "ended") return { name: row.name, refused: `${row.name} has ended.` };
   return { name: row.name };
 }
+
+/** Who takes a drop or a pasted image on this tab. The shell panel's session has no sidebar row, but it is a live shell and takes it too. */
+export function deliveryTo(
+  tabId: string,
+  rows: readonly RowModel[],
+  panelTabId: string | undefined,
+): { name: string; panel: true; refused?: undefined } | ReturnType<typeof dropDelivery> {
+  if (tabId === panelTabId) return { name: "the shell panel", panel: true };
+  return dropDelivery(rows.find((r) => r.id === tabId) ?? null);
+}

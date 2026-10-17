@@ -7,6 +7,7 @@ import { sessionShortcut } from "../../lib/appShortcuts";
 import { osOfPlatform } from "../../lib/keymap";
 import { onCoreEvent } from "../../lib/api/coreEvents";
 import { claimsKey } from "../sessions/useNavigation";
+import { imageOnlyPaste } from "../regions/imagePaste";
 import { PtySocket } from "../../lib/api/ptySocket";
 import { LatencyMeter } from "../perf/latency";
 import { useOpenPreview } from "../preview/PreviewContext";
@@ -62,6 +63,8 @@ type Props = {
   theme?: TerminalThemeProp;
   /** The resolved terminal font (terminalFont.ts). A change applies at once. Default: the bundled font at 13 px. */
   font?: { family: string; size: number };
+  /** Hears an image-only paste (Ctrl+Shift+V with an image on the clipboard). Any other paste goes to the terminal as before. */
+  onImagePaste?: (image: Blob) => void;
 };
 
 const BUNDLED = { family: BUNDLED_FONT, size: 13 };
@@ -79,7 +82,7 @@ function loadFont(family: string, size: number): Promise<void> {
 }
 
 /** One session's terminal. */
-export function TerminalView({ endpoint, tabId, placeholder, onOutput, onSize, autoFocus = true, focusToken = 0, visible = true, paused = false, onBlockedInput, promptJump, onPromptJump, theme = FOLLOW_APP, font = BUNDLED }: Props) {
+export function TerminalView({ endpoint, tabId, placeholder, onOutput, onSize, autoFocus = true, focusToken = 0, visible = true, paused = false, onBlockedInput, promptJump, onPromptJump, theme = FOLLOW_APP, font = BUNDLED, onImagePaste }: Props) {
   const host = useRef<HTMLDivElement>(null);
   const meter = useMemo(() => new LatencyMeter(), []);
   const [renderer, setRenderer] = useState<RendererKind>("dom");
@@ -92,6 +95,8 @@ export function TerminalView({ endpoint, tabId, placeholder, onOutput, onSize, a
   outputRef.current = onOutput;
   const pausedRef = useRef(paused);
   pausedRef.current = paused;
+  const imagePasteRef = useRef(onImagePaste);
+  imagePasteRef.current = onImagePaste;
   const blockedRef = useRef(onBlockedInput);
   blockedRef.current = onBlockedInput;
   const termRef = useRef<Terminal | null>(null);
@@ -218,6 +223,20 @@ export function TerminalView({ endpoint, tabId, placeholder, onOutput, onSize, a
     socket.resize(term.cols, term.rows);
     sizeRef.current?.(term.cols, term.rows);
 
+    // Capture phase, so an image-only paste is taken before xterm sees it; every other paste reaches xterm unchanged.
+    const onPaste = (e: ClipboardEvent) => {
+      const data = e.clipboardData;
+      const handler = imagePasteRef.current;
+      if (!data || !handler) return;
+      const index = imageOnlyPaste(data);
+      const file = index === null ? null : data.files[index];
+      if (!file) return;
+      e.preventDefault();
+      e.stopPropagation();
+      handler(file);
+    };
+    el.addEventListener("paste", onPaste, true);
+
     const scheme = matchMedia("(prefers-color-scheme: dark)");
     const onScheme = () => {
       const o = resolve();
@@ -235,6 +254,7 @@ export function TerminalView({ endpoint, tabId, placeholder, onOutput, onSize, a
     return () => {
       void stopCoreEvents.then((stop) => stop());
       restyleRef.current = null;
+      el.removeEventListener("paste", onPaste, true);
       themeWatch.disconnect();
       scheme.removeEventListener("change", onScheme);
       observer.disconnect();
