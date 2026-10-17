@@ -43,6 +43,7 @@ const STRAY_OUTLINE = /(?:^|[\s;])outline:\s*(?=\S)(?!none\b|0\b)(?![^;]*\btrans
  */
 const ALLOWED: Record<string, Record<string, string>> = {
   "features/window/MainWindow.css": { ".window": "The OS window's own edge, which a real window has; not a control." },
+  "features/window/SplitView.css": { '.pane[data-split]::after': "The focused pane's ring says which terminal gets your keys; the user chose a ring over the header bar (2026-10-17)." },
   "features/window/LayoutMenu.css": { ".layout-menu__box": "The checkbox's box is the control itself: without it an unchecked box is invisible (WCAG 1.4.11 asks 3:1 for the control's boundary)." },
 };
 

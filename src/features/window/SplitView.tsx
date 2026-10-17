@@ -85,6 +85,7 @@ export function SplitView({ panes, size, activeIndex = 0, arrangement, ratios = 
   const lines = visible.map(({ row }) => (composers && hasPromptLine(row) ? CELL.composer : 0));
   const lineH = lines.some((h) => h > 0) ? CELL.composer : 0;
   const chosen = isZoomed ? "single" : valid ? arrangement : chooseArrangement(count, size, {}, lineH);
+  const split = !isZoomed && panes.length >= 2;
   const plan = planFor(count, chosen);
   const cells = paneCells(plan, size, ratios, lines);
 
@@ -129,9 +130,9 @@ export function SplitView({ panes, size, activeIndex = 0, arrangement, ratios = 
     >
       {visible.map(({ row, index }, k) =>
         row ? (
-          <Pane key={row.id} row={row} active={index === activeIndex} navIndex={index} setting={setting} style={gridArea(plan.cells[k]!)} cells={cells[k]} zoomedOf={isZoomed ? panes.length : undefined} othersRunning={isZoomed ? panes.filter(Boolean).length - 1 : undefined} runningElsewhere={index === activeIndex && hidden > 0 ? hidden : undefined} value={composerValues[row.id]} composer={composers} os={os} renderTerminal={renderTerminal} bar={paneBar?.id === row.id ? paneBar.node : undefined} onFocus={at(onFocus, index)} onZoom={at(onZoom, index)} onRemove={at(onRemove, index)} />
+          <Pane key={row.id} row={row} active={index === activeIndex} split={split} navIndex={index} setting={setting} style={gridArea(plan.cells[k]!)} cells={cells[k]} zoomedOf={isZoomed ? panes.length : undefined} othersRunning={isZoomed ? panes.filter(Boolean).length - 1 : undefined} runningElsewhere={index === activeIndex && hidden > 0 ? hidden : undefined} value={composerValues[row.id]} composer={composers} os={os} renderTerminal={renderTerminal} bar={paneBar?.id === row.id ? paneBar.node : undefined} onFocus={at(onFocus, index)} onZoom={at(onZoom, index)} onRemove={at(onRemove, index)} />
         ) : (
-          <EmptyPane key={`empty-${index}`} choices={choices} active={index === activeIndex} navIndex={index} style={gridArea(plan.cells[k]!)} os={os} onFocus={at(onFocus, index)} onRemove={at(onRemove, index)} onPick={at(onPick, index)} />
+          <EmptyPane key={`empty-${index}`} choices={choices} active={index === activeIndex} split={split} navIndex={index} style={gridArea(plan.cells[k]!)} os={os} onFocus={at(onFocus, index)} onRemove={at(onRemove, index)} onPick={at(onPick, index)} />
         ),
       )}
       {plan.handles.map((h, i) => {

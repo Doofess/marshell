@@ -268,3 +268,15 @@ describe("SplitView: an empty pane's session choices", () => {
     expect(choices.filter((c) => !nameContainsLabel(c))).toEqual([]);
   });
 });
+
+describe("SplitView: the focus ring", () => {
+  const rung = (h: string) => count(h, /<section[^>]*data-split="true"/g);
+  it("marks every pane of a split, so the active one can carry the ring", () => {
+    expect(rung(html({ panes: [api!, billing!] }))).toBe(2);
+    expect(rung(html({ panes: [api!, null] }))).toBe(2);
+  });
+  it("marks nothing for a single pane or a zoomed one", () => {
+    expect(rung(html({ panes: [api!] }))).toBe(0);
+    expect(rung(html({ panes: [api!, billing!], zoomed: 0 }))).toBe(0);
+  });
+});
