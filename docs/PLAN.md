@@ -821,6 +821,8 @@ Decisions from the 2026-10-10 coverage audit (`docs/superpowers/plan-coverage-au
        | `POST /tasks/{id}/remove/plan` | Show the removal commands and warnings. |
        | `POST /tasks/{id}/remove` | Run the removal. Needs the commands and warnings the user saw. |
        | `POST /sessions/{tab}/input` | Type text into a session with no Enter. Used for the conflict prompt. |
+       | `POST /sessions/{tab}/attachments` | Save a region's PNG under the session and return its path and the agent's reference for it. |
+       | `POST /sessions/{tab}/paste` | Paste a saved attachment's reference and a one-line comment as bracketed pastes, never Enter. |
    - **Slice 2.5a decisions (2026-10-17).**
      1. The preview toggles with Ctrl+Shift+Q. On macOS, ⌘Q is Quit, so a binding may carry a `mac` override and the preview uses ⌘⌥Q there (macOS is untested). Ctrl+click is ⌘+click on macOS.
      2. A path opens with Ctrl+click, and only a path that exists becomes a link. Quick open lists the paths seen in the session's output first, for keyboard use.
@@ -830,6 +832,14 @@ Decisions from the 2026-10-10 coverage audit (`docs/superpowers/plan-coverage-au
      6. A relative path resolves against the shell's current folder, then the launch folder, then the project root. A session in a worktree lists and resolves against its own worktree, not the main repo.
      7. A changed file reloads automatically and keeps its scroll position.
      8. Links in documents: a local link opens in the preview with Back, a web link asks before it opens the browser, and an anchor scrolls.
+   - **Slice 2.5b decisions (2026-10-17).**
+     1. Delivery is a bracketed paste into the agent's terminal input, never Enter. The image's quoted path goes as its own paste so Codex attaches it, then ` <file>, page <n>: <comment>` as a second one. A session with no prompt line gets `"<path>" <label>: <comment>` on the clipboard and a notice. This stands in for "fills the prompt line" until the phase 3 composer exists; without phase 3 status a paste can still land on an agent's approval prompt.
+     2. A PDF scrolls continuously and renders pages lazily, with a "Page n of N" field, fit width, zoom steps from 50% to 300%, and selectable text. pdf.js runs without eval or WebAssembly, so the CSP is unchanged; files up to 50 MB.
+     3. The comment is a small popover anchored to the box that flips to stay on screen: Add (Enter) and Cancel (Esc).
+     4. Keyboard: "Select region" or R while the preview has focus. Arrows move the box 10 px, Ctrl+arrows 1 px, Shift+arrows resize; Enter opens the comment, Esc cancels. With the mouse, drag in select mode.
+     5. After Add, focus goes to the session's terminal and the preview stays open.
+     6. One region per Add. The comment is one line of at most 2000 characters with no control characters; the core refuses anything else.
+     7. Crops go in `<home>/attachments/<tab>/<unix ms>.png` with owner-only permissions, at most 20 MB, rendered at up to 3× and at most 4096 px on the longest side. Every agent's `attachment_ref` is the quoted absolute path for now (docs/research/attachment-ref.md).
    - **Window frame (2026-10-17).** Windows runs frameless with the system shadow and rounded corners, and the 40 px bar is the title bar: its empty space drags the window, double-click maximizes or restores, and Maximize becomes Restore while maximized. Snap Layouts' hover flyout on Maximize is a follow-up, because the buttons are HTML and Windows does not see a maximize button; Win+Z and edge snapping work. macOS and Linux keep their native frames.
    - **Session row menu (2026-10-17).**
      1. Right-clicking a session row, or Shift+F10 or the Menu key on a focused row, opens its menu: Rename (F2), Split into a pane, Resume, Review changes (Ctrl+Shift+R), then Close (Ctrl+Shift+W) after a separator. On macOS the shortcuts show as Cmd+key.
@@ -848,7 +858,7 @@ Decisions from the 2026-10-10 coverage audit (`docs/superpowers/plan-coverage-au
      - **Preview pane.** Read-only preview of code (syntax highlighted), Markdown (rendered, with a source toggle), images, PDF and HTML.
        - Opened from a clickable path in terminal output, by dropping a file on the window, or with quick open (fuzzy find in the focused session's folder). Its toggle is Ctrl+Shift+Q (⌘⌥Q on macOS, since ⌘Q is Quit). Dropping a file on the window moved to slice 2.5c. There is no file tree; that stays in v2.
        - Layout: the preview takes the space split view would use. Opening it shows the focused session and the preview side by side, and closing it brings the split back. This is the user's decision (2026-10-15): one session at a time while previewing.
-     - **Region to prompt.** In a PDF or image preview, drag a box and type a comment. Marshell saves the crop as a PNG and puts the image reference, the file name and page, and the comment into the session's prompt line.
+     - **Region to prompt.** In a PDF or image preview, drag a box and type a comment. Marshell saves the crop as a PNG and puts the image reference, the file name and page, and the comment into the session's prompt line. Done in slice 2.5b, delivered by a paste with no Enter until phase 3 (see the slice 2.5b decisions).
      - **Screenshot and image drop.** Paste or drop an image on a session, or capture a screen region. Marshell saves it and puts its reference into the prompt line.
      - **Delivery rule.** Every feature here only fills the prompt line; the user edits it and presses Enter. Marshell still never types into a terminal on its own. A manual CLI has no prompt line, so the reference is copied to the clipboard and a toast says so. While a session waits on the user, the prompt line keeps its block, and the filled text waits until it can be sent.
      - **Multi-CLI.** How an image is referenced is an adapter method (`attachment_ref(path) -> String`). The default is the quoted absolute path. Claude Code and Codex each get theirs after their current docs are checked. A CLI that cannot read images gets the path and a note in the toast.
