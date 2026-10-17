@@ -197,7 +197,8 @@ export function PdfView({ bytes, version, name, onPages, onCurrentPage, onDocume
   const jump = (n: number) => {
     const el = pageEls()[n - 1];
     if (!el || !scroller) return;
-    const bar = root.current?.querySelector<HTMLElement>(".pdf__bar")?.offsetHeight ?? 0;
+    // What is stuck above the pages: the toolbar, and the "deleted" notice when it is there.
+    const bar = (root.current?.querySelector<HTMLElement>(".pdf__bar")?.offsetHeight ?? 0) + (scroller.querySelector<HTMLElement>(".preview__notice")?.offsetHeight ?? 0);
     scroller.scrollTop += el.getBoundingClientRect().top - scroller.getBoundingClientRect().top - bar - SIDE;
     setCurrent(n);
   };

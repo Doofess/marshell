@@ -93,6 +93,8 @@
 
 /* The one scroll area of the pane. It takes the keyboard (arrows, Page Up and Down, Home and End) once focused. */
 .preview__body {
+  /* The height of the "deleted" notice; a sticky toolbar under it starts here, so neither covers the other. */
+  --notice-h: 28px;
   position: relative;
   overflow: auto;
   min-inline-size: 0;
@@ -124,7 +126,14 @@
   inset-block-start: 0;
   z-index: 1;
   grid-column: 1 / -1;
-  padding: var(--space-1) var(--space-4);
+  display: flex;
+  align-items: center;
+  box-sizing: border-box;
+  block-size: var(--notice-h);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  padding-inline: var(--space-4);
   border-block-end: 1px solid var(--hairline);
   background: var(--bg-raised);
   color: var(--text-1);

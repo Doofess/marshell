@@ -1,6 +1,6 @@
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it } from "vitest";
-import { RegionComment } from "./RegionComment";
+import { describe, expect, it, vi } from "vitest";
+import { RegionComment, popoverKeyDown } from "./RegionComment";
 import { RegionLayer } from "./RegionLayer";
 import { describeRegion } from "./region";
 
@@ -27,6 +27,38 @@ describe("RegionComment", () => {
   });
   it("shows an error in an alert", () => {
     expect(comment({ error: "It is paused." })).toMatch(/role="alert"[^>]*>It is paused\./);
+  });
+});
+
+describe("RegionComment while Add is in flight", () => {
+  it("keeps the input focusable: read-only, not disabled, and Add says it is disabled", () => {
+    const out = comment({ busy: true });
+    const input = out.match(/<input[^>]*>/)![0];
+    expect(input).not.toMatch(/\sdisabled/);
+    expect(input).toMatch(/readOnly|readonly/);
+    expect(out).toContain('aria-disabled="true"');
+  });
+  it("is editable otherwise", () => {
+    expect(comment().match(/<input[^>]*>/)![0]).not.toMatch(/readOnly|readonly/);
+  });
+});
+
+describe("popoverKeyDown", () => {
+  const key = (k: string) => ({ key: k, preventDefault: vi.fn(), stopPropagation: vi.fn() });
+  it("Esc goes back to the box from anywhere in the popover", () => {
+    const onCancel = vi.fn();
+    const e = key("Escape");
+    popoverKeyDown(e, onCancel);
+    expect(onCancel).toHaveBeenCalledTimes(1);
+    expect(e.preventDefault).toHaveBeenCalled();
+    expect(e.stopPropagation).toHaveBeenCalled();
+  });
+  it("other keys do not cancel, and none reach the pane", () => {
+    const onCancel = vi.fn();
+    const e = key("a");
+    popoverKeyDown(e, onCancel);
+    expect(onCancel).not.toHaveBeenCalled();
+    expect(e.stopPropagation).toHaveBeenCalled();
   });
 });
 

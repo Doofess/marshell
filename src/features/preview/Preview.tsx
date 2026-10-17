@@ -351,7 +351,7 @@ export function PreviewPane({ entry, file, updated, theme, os, canBack, canForwa
   );
 }
 
-/** The comment box beside the marked region, placed below or above it and kept inside the pane's body. */
+/** The comment box beside the marked region, placed below or above it and kept inside the pane's body. It follows the body's scroll and any resize. */
 function RegionPopover({ boxEl, body, region, children }: { boxEl: HTMLElement | null; body: HTMLElement; region: Region; children: ReactNode }) {
   const holder = useRef<HTMLDivElement>(null);
   const [at, setAt] = useState<{ left: number; top: number } | null>(null);
@@ -366,12 +366,27 @@ function RegionPopover({ boxEl, body, region, children }: { boxEl: HTMLElement |
         { w: pop.offsetWidth, h: pop.offsetHeight },
         { left: v.left, top: v.top, width: v.width, height: v.height },
       );
-      setAt({ left: p.left, top: p.top });
+      setAt((prev) => (prev && prev.left === p.left && prev.top === p.top ? prev : { left: p.left, top: p.top }));
     };
     place();
     body.addEventListener("scroll", place, { passive: true });
-    return () => body.removeEventListener("scroll", place);
+    window.addEventListener("resize", place);
+    // The pane, the page under the box and the popover itself can all change size without the window moving (a split dragged, a zoom, an error line appearing).
+    const watch = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(place);
+    for (const el of [body, boxEl, boxEl?.parentElement, holder.current]) if (el) watch?.observe(el);
+    return () => {
+      body.removeEventListener("scroll", place);
+      window.removeEventListener("resize", place);
+      watch?.disconnect();
+    };
   }, [boxEl, body, region]);
+  // The popover is hidden until it is placed, and a hidden input cannot take focus; so focus moves in once it shows.
+  const focused = useRef(false);
+  useEffect(() => {
+    if (!at || focused.current) return;
+    focused.current = true;
+    holder.current?.querySelector<HTMLInputElement>("input")?.focus({ preventScroll: true });
+  }, [at]);
   return (
     <div ref={holder} className="region-popover" style={at ? { left: at.left, top: at.top } : { left: 0, top: 0, visibility: "hidden" }}>
       {children}

@@ -22,6 +22,10 @@
   font-size: var(--text-12);
   white-space: nowrap;
 }
+/* With the "deleted" notice stuck above it, the toolbar sticks just under the notice. */
+.preview__body:has(.preview__notice) .pdf__bar {
+  inset-block-start: var(--notice-h);
+}
 .pdf__spacer {
   flex: 1 1 0;
 }
