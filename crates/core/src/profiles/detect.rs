@@ -230,6 +230,106 @@ pub fn agent_command(agent: &str) -> Option<&'static str> {
     }
 }
 
+/// A program's name as the agent table knows it: the basename, lowercase, with one `.exe`, `.cmd`,
+/// `.bat`, `.ps1` or `.com` removed.
+pub fn program_name(exe: &str) -> String {
+    let base = exe.rsplit(['/', '\\']).next().unwrap_or(exe).to_lowercase();
+    for ending in [".exe", ".cmd", ".bat", ".ps1", ".com"] {
+        if let Some(stem) = base.strip_suffix(ending) {
+            return stem.to_string();
+        }
+    }
+    base
+}
+
+/// The words of a command line, with single and double quotes removed.
+fn words(line: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let (mut word, mut quote, mut open) = (String::new(), None, false);
+    for c in line.chars() {
+        match (quote, c) {
+            (Some(q), c) if c == q => quote = None,
+            (Some(_), c) => word.push(c),
+            (None, '\'' | '"') => {
+                quote = Some(c);
+                open = true;
+            }
+            (None, c) if c.is_whitespace() => {
+                if open || !word.is_empty() {
+                    out.push(std::mem::take(&mut word));
+                }
+                open = false;
+            }
+            (None, c) => word.push(c),
+        }
+    }
+    if open || !word.is_empty() {
+        out.push(word);
+    }
+    out
+}
+
+/// The program a command line runs, skipping launchers such as `npx`, `pnpm dlx` and `&`.
+/// An npm package (`@scope/name`) is returned as written, without a version.
+pub fn program_of(command_line: &str) -> Option<String> {
+    let words = words(command_line);
+    let mut rest = words.iter().map(String::as_str).peekable();
+    while let Some(&word) = rest.peek() {
+        let lower = word.to_lowercase();
+        let skip = match lower.as_str() {
+            "&" | "npx" | "bunx" | "winpty" => 1,
+            "pnpm" | "yarn" => {
+                let next = rest.clone().nth(1).map(str::to_lowercase);
+                match (lower.as_str(), next.as_deref()) {
+                    ("pnpm", Some("dlx" | "exec")) | ("yarn", Some("dlx")) => 2,
+                    _ => 0,
+                }
+            }
+            _ => 0,
+        };
+        if skip == 0 {
+            break;
+        }
+        rest.nth(skip - 1);
+    }
+    let first = rest.next()?;
+    if let Some(scoped) = first.strip_prefix('@') {
+        let name = scoped.split('@').next().unwrap_or(scoped);
+        return Some(format!("@{}", name.to_lowercase()));
+    }
+    Some(program_name(first))
+}
+
+/// The agent CLI an executable name belongs to.
+fn agent_of_exe(name: &str) -> Option<&'static str> {
+    match name {
+        "claude" => Some("claude"),
+        "codex" => Some("codex"),
+        "agy" => Some("antigravity"),
+        _ if name.starts_with("codex-") => Some("codex"),
+        _ => None,
+    }
+}
+
+/// The agent CLI an npm package belongs to.
+fn agent_of_package(name: &str) -> Option<&'static str> {
+    match name {
+        "@anthropic-ai/claude-code" => Some("claude"),
+        "@openai/codex" => Some("codex"),
+        _ => None,
+    }
+}
+
+/// The agent a foreground process chain (outermost first) or a typed command line runs, if any.
+/// The chain is checked first, deepest process first, then the command line.
+pub fn agent_in(chain: &[String], command_line: Option<&str>) -> Option<&'static str> {
+    if let Some(agent) = chain.iter().rev().find_map(|name| agent_of_exe(name)) {
+        return Some(agent);
+    }
+    let program = program_of(command_line?)?;
+    agent_of_exe(&program).or_else(|| agent_of_package(&program))
+}
+
 /// The arguments that make an agent continue its last conversation in the current folder.
 pub fn resume_args(agent: &str) -> &'static [&'static str] {
     match agent {
@@ -734,5 +834,44 @@ mod tests {
         assert!(launch_argv(&ps, Some("aider"), None, None).is_err());
         assert_eq!(agent_command("antigravity"), Some("agy"));
         assert_eq!(agent_command("aider"), None);
+    }
+
+    #[test]
+    fn program_name_is_the_lowercase_basename_without_one_ending() {
+        assert_eq!(program_name("C:\\x\\Codex.EXE"), "codex");
+        assert_eq!(program_name("/usr/bin/claude"), "claude");
+        assert_eq!(program_name("run.cmd"), "run");
+        assert_eq!(program_name("a.exe.exe"), "a.exe");
+    }
+
+    #[test]
+    fn program_of_skips_wrappers_and_quotes() {
+        assert_eq!(program_of("docker compose up").as_deref(), Some("docker"));
+        assert_eq!(program_of("npx @openai/codex").as_deref(), Some("@openai/codex"));
+        assert_eq!(program_of("pnpm dlx @openai/codex").as_deref(), Some("@openai/codex"));
+        assert_eq!(program_of("pnpm exec codex").as_deref(), Some("codex"));
+        assert_eq!(program_of("yarn dlx codex").as_deref(), Some("codex"));
+        assert_eq!(program_of("bunx codex").as_deref(), Some("codex"));
+        assert_eq!(program_of("winpty claude").as_deref(), Some("claude"));
+        assert_eq!(program_of(".\\codex.exe").as_deref(), Some("codex"));
+        assert_eq!(program_of("./codex").as_deref(), Some("codex"));
+        assert_eq!(program_of("& 'C:\\a b\\claude.cmd' -c").as_deref(), Some("claude"));
+        assert_eq!(program_of("pnpm test").as_deref(), Some("pnpm"));
+        assert_eq!(program_of("   "), None);
+    }
+
+    #[test]
+    fn agent_in_reads_the_chain_then_the_command_line() {
+        let chain = |names: &[&str]| names.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        assert_eq!(
+            agent_in(&chain(&["cmd", "node", "codex-x86_64-pc-windows-msvc"]), None),
+            Some("codex")
+        );
+        assert_eq!(agent_in(&chain(&["claude"]), None), Some("claude"));
+        assert_eq!(agent_in(&chain(&["agy"]), None), Some("antigravity"));
+        assert_eq!(agent_in(&[], Some("npx @anthropic-ai/claude-code")), Some("claude"));
+        assert_eq!(agent_in(&chain(&["node"]), Some("git status")), None);
+        assert_eq!(agent_in(&chain(&["claude-helper"]), None), None);
+        assert_eq!(agent_in(&chain(&["codex"]), None), Some("codex"));
     }
 }

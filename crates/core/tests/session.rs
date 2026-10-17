@@ -463,3 +463,53 @@ fn a_root_that_exits_while_paused_does_not_leave_descendants_suspended() {
         .output();
     assert!(settled, "the grandchild lingered suspended after the root exited");
 }
+
+/// Polls `foreground_chain` until it equals `want` or 3 s pass. Returns the last chain read.
+#[cfg(windows)]
+fn chain_settles(s: &Session, want: &[&str]) -> Option<Vec<String>> {
+    let deadline = Instant::now() + Duration::from_secs(3);
+    loop {
+        let chain = s.foreground_chain();
+        if chain.as_deref().is_some_and(|c| c == want) || Instant::now() >= deadline {
+            return chain;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}
+
+#[cfg(windows)]
+#[test]
+fn foreground_chain_names_the_running_child() {
+    let mut spec = fake(&[]);
+    spec.argv = vec![
+        "cmd.exe".into(),
+        "/d".into(),
+        "/c".into(),
+        format!("{} sleep", env!("CARGO_BIN_EXE_fake-agent")),
+    ];
+    let s = Session::spawn("t-chain".into(), spec).unwrap();
+    assert_eq!(chain_settles(&s, &["fake-agent"]), Some(vec!["fake-agent".to_string()]));
+    s.kill();
+    std::thread::sleep(Duration::from_millis(500));
+    assert!(s.foreground_chain().is_none_or(|c| c.is_empty()));
+}
+
+#[cfg(windows)]
+#[test]
+fn a_renamed_agent_binary_is_found() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::copy(env!("CARGO_BIN_EXE_fake-agent"), dir.path().join("codex.exe")).unwrap();
+    let mut spec = fake(&[]);
+    spec.argv = vec!["cmd.exe".into(), "/d".into(), "/c".into(), "codex.exe sleep".into()];
+    spec.cwd = Some(dir.path().to_path_buf());
+    let s = Session::spawn("t-renamed".into(), spec).unwrap();
+    let chain = chain_settles(&s, &["codex"]).unwrap_or_default();
+    s.kill();
+    assert_eq!(
+        marshell_core::profiles::detect::agent_in(&chain, None),
+        Some("codex"),
+        "chain was {chain:?}"
+    );
+    std::thread::sleep(Duration::from_millis(500));
+    std::fs::remove_dir_all(dir.path()).ok();
+}

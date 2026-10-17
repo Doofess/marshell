@@ -2,6 +2,8 @@ pub mod buffer;
 pub mod dsr;
 mod freeze;
 pub mod osc133;
+#[cfg(windows)]
+mod proctree;
 pub mod record;
 mod session;
 

@@ -97,36 +97,15 @@ fn signal_group(group: i32, signal: i32) -> Result<(), i32> {
 
 #[cfg(windows)]
 mod windows {
-    use std::collections::HashMap;
-    use windows_sys::Win32::Foundation::{
-        CloseHandle, ERROR_ACCESS_DENIED, ERROR_INVALID_PARAMETER, FILETIME, HANDLE, INVALID_HANDLE_VALUE,
-    };
+    use super::super::proctree::{Owned, descendants, snapshot};
+    use windows_sys::Win32::Foundation::ERROR_INVALID_PARAMETER;
     use windows_sys::Win32::System::Diagnostics::ToolHelp::{
-        CreateToolhelp32Snapshot, PROCESSENTRY32W, Process32FirstW, Process32NextW, TH32CS_SNAPPROCESS,
         TH32CS_SNAPTHREAD, THREADENTRY32, Thread32First, Thread32Next,
     };
-    use windows_sys::Win32::System::Threading::{
-        GetProcessTimes, OpenProcess, OpenThread, PROCESS_QUERY_LIMITED_INFORMATION, ResumeThread, SuspendThread,
-        THREAD_SUSPEND_RESUME,
-    };
+    use windows_sys::Win32::System::Threading::{OpenThread, ResumeThread, SuspendThread, THREAD_SUSPEND_RESUME};
 
     /// A pass that finds no new thread ends the walk. A tree still growing after this many is refused.
     const MAX_PASSES: usize = 5;
-
-    /// A handle that closes itself.
-    struct Owned(HANDLE);
-
-    impl Drop for Owned {
-        fn drop(&mut self) {
-            // SAFETY: the handle is valid and nothing else closes it.
-            unsafe { CloseHandle(self.0) };
-        }
-    }
-
-    // SAFETY: a kernel handle is only a number the kernel looks up; any thread may use or close it.
-    unsafe impl Send for Owned {}
-    // SAFETY: as above.
-    unsafe impl Sync for Owned {}
 
     /// A thread this module suspended. The open handle keeps its id from being reused.
     pub struct Suspended {
@@ -193,88 +172,6 @@ mod windows {
             return Err(());
         }
         Ok(Some(Suspended { id: tid, handle }))
-    }
-
-    fn snapshot(flags: u32) -> Option<Owned> {
-        // SAFETY: process id 0 means every process; the result is checked.
-        let handle = unsafe { CreateToolhelp32Snapshot(flags, 0) };
-        (handle != INVALID_HANDLE_VALUE).then_some(Owned(handle))
-    }
-
-    /// (pid, parent pid) of every process. `None` if the snapshot cannot be taken.
-    fn processes() -> Option<Vec<(u32, u32)>> {
-        let snap = snapshot(TH32CS_SNAPPROCESS)?;
-        // SAFETY: an all-zero PROCESSENTRY32W is valid (plain integers and arrays).
-        let mut entry: PROCESSENTRY32W = unsafe { std::mem::zeroed() };
-        entry.dwSize = size_of::<PROCESSENTRY32W>() as u32;
-        // SAFETY: `snap` is a valid snapshot and `entry` has its size set.
-        let mut more = unsafe { Process32FirstW(snap.0, &mut entry) } != 0;
-        if !more {
-            return None;
-        }
-        let mut out = Vec::new();
-        while more {
-            out.push((entry.th32ProcessID, entry.th32ParentProcessID));
-            // SAFETY: as above.
-            more = unsafe { Process32NextW(snap.0, &mut entry) } != 0;
-        }
-        Some(out)
-    }
-
-    /// When the process started. `Ok(None)` if it is gone. `Err` if it exists but cannot be queried,
-    /// such as a process running as administrator.
-    fn creation_time(pid: u32) -> Result<Option<u64>, ()> {
-        // SAFETY: the result is checked; the handle is closed by `Owned`.
-        let handle = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) };
-        if handle.is_null() {
-            return match std::io::Error::last_os_error().raw_os_error() {
-                Some(code) if code == ERROR_ACCESS_DENIED as i32 => Err(()),
-                _ => Ok(None),
-            };
-        }
-        let handle = Owned(handle);
-        let zero = FILETIME {
-            dwLowDateTime: 0,
-            dwHighDateTime: 0,
-        };
-        let (mut created, mut exited, mut kernel, mut user) = (zero, zero, zero, zero);
-        // SAFETY: `handle` is a valid process handle; the four pointers are valid FILETIMEs.
-        let ok = unsafe { GetProcessTimes(handle.0, &mut created, &mut exited, &mut kernel, &mut user) } != 0;
-        // The process exists but cannot be timed, so it cannot be told apart from a reused pid.
-        if !ok {
-            return Err(());
-        }
-        Ok(Some(
-            (u64::from(created.dwHighDateTime) << 32) | u64::from(created.dwLowDateTime),
-        ))
-    }
-
-    /// `root` and every process it started. A child counts only if it did not start before its parent (they can share a clock tick), so a
-    /// process whose recorded parent pid was reused by one of ours is left alone. A child that is gone
-    /// is skipped. `None` if `root` or a child cannot be queried, so the tree is never frozen in part.
-    fn descendants(root: u32) -> Option<Vec<u32>> {
-        let procs = processes()?;
-        let mut tree: HashMap<u32, u64> = HashMap::from([(root, creation_time(root).ok()??)]);
-        loop {
-            let mut grew = false;
-            for &(pid, parent) in &procs {
-                if pid == parent || tree.contains_key(&pid) {
-                    continue;
-                }
-                let Some(&parent_born) = tree.get(&parent) else {
-                    continue;
-                };
-                if let Some(born) = creation_time(pid).ok()?
-                    && born >= parent_born
-                {
-                    tree.insert(pid, born);
-                    grew = true;
-                }
-            }
-            if !grew {
-                return Some(tree.into_keys().collect());
-            }
-        }
     }
 
     /// Ids of every thread owned by one of `pids`. `None` if the snapshot cannot be taken.

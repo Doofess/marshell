@@ -525,6 +525,36 @@ impl Session {
     pub fn is_frozen(&self) -> bool {
         self.frozen.lock().unwrap().is_some()
     }
+
+    /// The programs running in front of the shell, outermost first, as `detect::program_name` names them.
+    /// Empty when the shell has no child. `None` when this cannot be read.
+    pub fn foreground_chain(&self) -> Option<Vec<String>> {
+        let pid = self.pid.filter(|_| !self.exited.load(Ordering::SeqCst))?;
+        #[cfg(windows)]
+        {
+            super::proctree::foreground_chain(pid)
+        }
+        #[cfg(target_os = "linux")]
+        {
+            let group = self
+                .master
+                .lock()
+                .unwrap()
+                .as_ref()
+                .and_then(|m| m.process_group_leader())
+                .and_then(|g| u32::try_from(g).ok())?;
+            if group == pid {
+                return Some(Vec::new());
+            }
+            let comm = std::fs::read_to_string(format!("/proc/{group}/comm")).ok()?;
+            Some(vec![crate::profiles::detect::program_name(comm.trim())])
+        }
+        #[cfg(not(any(windows, target_os = "linux")))]
+        {
+            let _ = pid;
+            None
+        }
+    }
 }
 
 #[cfg(windows)]
