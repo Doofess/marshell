@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import type { PDFDocumentProxy } from "pdfjs-dist";
-import { loadPdf, pdfErrorMessage, renderPage, renderTextLayer } from "./pdfjs";
+import { afterLoadFailure } from "./loadFailure";
+import { loadPdf, renderPage, renderTextLayer } from "./pdfjs";
 import { parsePageField, scaleFor, zoomIn, zoomOut, type Zoom } from "./zoom";
 import "./PdfView.css";
 
@@ -124,12 +125,14 @@ export function PdfView({ bytes, version, name, onPages, onCurrentPage, onDocume
         cb.current.onDocument?.(loaded);
       } catch (e) {
         if (dead) return;
+        const after = afterLoadFailure(docRef.current !== null, e);
+        if (after.keepDocument) return;
         const old = docRef.current;
         docRef.current = null;
         setDoc(null);
         void old?.loadingTask.destroy();
         setSizes([]);
-        setError(pdfErrorMessage(e));
+        setError(after.error);
         cb.current.onDocument?.(null);
       }
     })();
