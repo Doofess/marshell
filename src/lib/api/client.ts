@@ -30,6 +30,10 @@ export function resetEndpoint(): void {
   endpoint = null;
 }
 
+/** The core's address for a path, and the bearer header every request carries. */
+export const coreUrl = (ep: Endpoint, path: string) => `http://127.0.0.1:${ep.port}${path}`;
+export const bearer = (ep: Endpoint): Record<string, string> => ({ Authorization: `Bearer ${ep.token}` });
+
 /** One authenticated request to the core, answered as it came, for a caller that reads headers or raw bytes. `api()` is built on it. */
 export async function coreFetch(
   ep: Endpoint,
@@ -37,9 +41,9 @@ export async function coreFetch(
   path: string,
   body?: unknown,
 ): Promise<Response> {
-  const headers: Record<string, string> = { Authorization: `Bearer ${ep.token}` };
+  const headers = bearer(ep);
   if (body !== undefined) headers["Content-Type"] = "application/json";
-  return fetch(`http://127.0.0.1:${ep.port}${path}`, {
+  return fetch(coreUrl(ep, path), {
     method,
     headers,
     body: body === undefined ? undefined : JSON.stringify(body),
