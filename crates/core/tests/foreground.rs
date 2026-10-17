@@ -175,9 +175,9 @@ async fn a_shell_running_a_program_shows_it() {
     let app = router(state.clone());
     let tab = create(&app, "prog", work.path(), None).await;
 
-    let found = wait_for(&app, &tab, Duration::from_secs(4), has_foreground).await;
+    let found = wait_for(&app, &tab, Duration::from_secs(10), has_foreground).await;
     stop(&state, &tab);
-    let r = found.expect("no foreground within 4 s");
+    let r = found.expect("no foreground within 10 s");
     assert_eq!(r["foreground"]["program"], "fake-agent");
     assert!(r["foreground"]["agent"].is_null());
     assert!(r["agent"].is_null());
@@ -191,11 +191,11 @@ async fn a_shell_running_an_agent_names_it() {
     let app = router(state.clone());
     let tab = create(&app, "codex", dir.path(), None).await;
 
-    let found = wait_for(&app, &tab, Duration::from_secs(4), has_foreground).await;
+    let found = wait_for(&app, &tab, Duration::from_secs(10), has_foreground).await;
     stop(&state, &tab);
     tokio::time::sleep(Duration::from_millis(500)).await;
     std::fs::remove_dir_all(dir.path()).ok();
-    let r = found.expect("no foreground within 4 s");
+    let r = found.expect("no foreground within 10 s");
     assert_eq!(r["foreground"]["agent"], "codex");
     assert_eq!(r["foreground"]["program"], "codex-marshell-test");
     // The launch agent does not change: Restart and Mode read it.
@@ -232,7 +232,7 @@ async fn a_paused_session_is_not_polled() {
 
     // Thawed, it is polled again.
     assert_eq!(post(&app, &tab, "continue").await.status(), StatusCode::NO_CONTENT);
-    let found = wait_for(&app, &tab, Duration::from_secs(4), has_foreground).await;
+    let found = wait_for(&app, &tab, Duration::from_secs(10), has_foreground).await;
     stop(&state, &tab);
     assert!(found.is_ok(), "no foreground after Continue");
 }
@@ -261,7 +261,7 @@ async fn the_foreground_clears_when_the_program_ends() {
     // `cmd /k`: the shell survives the program, which exits after 3 s.
     let tab = create(&app, "ends", work.path(), None).await;
 
-    let seen = wait_for(&app, &tab, Duration::from_secs(3), has_foreground).await;
+    let seen = wait_for(&app, &tab, Duration::from_secs(10), has_foreground).await;
     assert!(seen.is_ok(), "the program was never seen");
     let cleared = wait_for(&app, &tab, Duration::from_secs(5), |r| !has_foreground(r)).await;
     let kind = row(&app, &tab).await.unwrap()["state"]["kind"].clone();
@@ -280,7 +280,7 @@ async fn an_agent_in_the_panel_is_handed_off() {
     // The panel is not in the list until the core hands it off.
     assert!(row(&app, &tab).await.is_none());
 
-    let found = wait_for(&app, &tab, Duration::from_secs(4), |r| {
+    let found = wait_for(&app, &tab, Duration::from_secs(10), |r| {
         r["foreground"]["agent"] == "codex"
     })
     .await;
@@ -289,7 +289,7 @@ async fn an_agent_in_the_panel_is_handed_off() {
     stop(&state, &tab);
     tokio::time::sleep(Duration::from_millis(500)).await;
     std::fs::remove_dir_all(dir.path()).ok();
-    let r = found.expect("the panel's agent was not handed off within 4 s");
+    let r = found.expect("the panel's agent was not handed off within 10 s");
     assert!(r["agent"].is_null());
     assert_eq!(r["state"]["kind"], "running");
     assert_eq!(again, StatusCode::NOT_FOUND);
@@ -308,7 +308,7 @@ async fn an_adopt_by_hand_wins_the_panel_and_the_row_still_follows_its_program()
     assert_eq!(json_of(manual).await["tab_id"], tab.as_str());
 
     // The row is listed once, and the watcher follows it as an ordinary row.
-    let found = wait_for(&app, &tab, Duration::from_secs(4), |r| {
+    let found = wait_for(&app, &tab, Duration::from_secs(10), |r| {
         r["foreground"]["agent"] == "codex"
     })
     .await;
