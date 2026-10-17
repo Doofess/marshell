@@ -13,6 +13,9 @@ const MODE_LABELS: Record<Mode, string> = { manual: "Manual", plan: "Plan", "aut
 
 export const modeLabel = (mode?: Mode) => (mode ? MODE_LABELS[mode] : DASH);
 /** docs/PLAN.md "Sidebar rows": the header is marked red for bypass and auto, with a tint and a start-edge bar (never a box). */
+/** What the mode chip says: the mode a session started in is all Marshell knows until the CLI reports changes. */
+const startedIn = (mode: Mode) => `Started in ${modeLabel(mode)}. A change made inside the CLI isn't shown yet.`;
+
 export const headerDanger = (mode?: Mode) => mode === "bypass" || mode === "full-auto";
 
 /**
@@ -34,7 +37,11 @@ export function SessionHeader({ row, ports = [] }: { row: RowModel; ports?: stri
       <span className="session-header__place" dir="auto">
         {row.branch ? `${row.project} · ${row.branch}` : row.project}
       </span>
-      {row.mode && <Chip tone={caution ? "caution" : "neutral"}>{modeLabel(row.mode)}</Chip>}
+      {row.mode && (
+        <Chip tone={caution ? "caution" : "neutral"} title={startedIn(row.mode)} label={startedIn(row.mode)}>
+          {modeLabel(row.mode)}
+        </Chip>
+      )}
       {modelAndEffort && <span className="session-header__meta">{modelAndEffort}</span>}
       {row.subagents !== undefined && <span className="session-header__meta">{row.subagents} subagents</span>}
       <span className="session-header__spacer" />

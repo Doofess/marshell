@@ -17,7 +17,7 @@ import {
   type LauncherChoice,
 } from "./launchChoice";
 
-const base: LauncherChoice = { program: "claude", projectId: "my-app", mode: "Plan", pace: "Quick", worktree: false };
+const base: LauncherChoice = { program: "claude", projectId: "my-app", mode: "plan", pace: "Quick", worktree: false };
 
 describe("launcherSentence", () => {
   it("reads as one sentence", () => {
@@ -38,7 +38,7 @@ describe("launcherSentence", () => {
 
 describe("options", () => {
   it("has the modes and paces the sentence uses", () => {
-    expect(MODES).toEqual(["Manual", "Plan", "Auto-edit"]);
+    expect(MODES).toEqual(["manual", "plan", "auto-edit", "full-auto", "bypass"]);
     expect(PACES).toEqual(["Quick", "Balanced", "Deep"]);
   });
 });
@@ -85,17 +85,17 @@ describe("startingText", () => {
 
 describe("remembered choices", () => {
   it("applies what was remembered for the project and leaves the rest", () => {
-    expect(applyRemembered(base, { mode: "Auto-edit" })).toEqual({ ...base, mode: "Auto-edit" });
+    expect(applyRemembered(base, { mode: "auto-edit" })).toEqual({ ...base, mode: "auto-edit" });
     expect(applyRemembered(base, undefined)).toEqual(base);
   });
   it("never brings the worktree flag back: the chip starts off every time", () => {
     // A stale entry that still carries the flag is ignored, and the note does not mention it.
-    const stale = { mode: "Plan", worktree: true } as Parameters<typeof applyRemembered>[1];
-    expect(applyRemembered(base, stale)).toEqual({ ...base, mode: "Plan", worktree: false });
+    const stale = { mode: "plan", worktree: true } as Parameters<typeof applyRemembered>[1];
+    expect(applyRemembered(base, stale)).toEqual({ ...base, mode: "plan", worktree: false });
     expect(rememberedNote("my-app", stale)).toBe("Remembered for my-app: Plan. Change a choice to update it.");
   });
   it("explains what it applied, naming the project", () => {
-    expect(rememberedNote("my-app", { mode: "Plan", pace: "Quick" })).toBe("Remembered for my-app: Plan · Quick. Change a choice to update it.");
+    expect(rememberedNote("my-app", { mode: "plan", pace: "Quick" })).toBe("Remembered for my-app: Plan · Quick. Change a choice to update it.");
   });
   it("says nothing when nothing was remembered", () => {
     expect(rememberedNote("my-app", undefined)).toBeNull();

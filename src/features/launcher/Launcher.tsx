@@ -2,6 +2,7 @@ import { useEffect, useId, useRef, type KeyboardEvent } from "react";
 import { AgentMark } from "../../components/AgentMark/AgentMark";
 import { CommandList } from "../tasks/CommandList";
 import { branchHint } from "../tasks/taskName";
+import { headerDanger, modeLabel } from "../window/SessionHeader";
 import { filterProjects, highlight, pickByLetter, projectLabel, type Project, type Range } from "./filter";
 import {
   LAUNCH_GROUPS,
@@ -58,8 +59,8 @@ type Props = {
   /** Back to the sentence, in the confirm view. */
   onBack?: () => void;
   onClose?: () => void;
-  /** False hides the mode and pace chips (the live app, until phases 3 and 6 give them an effect); the worktree chip then shows only for a folder in git. Default true. */
-  chips?: boolean;
+  /** False hides the pace chip (the live app, until pace has an effect); the mode chip always shows for an agent, and the worktree chip then shows only for a folder in git. Default true. */
+  paceChip?: boolean;
   /** What the first chip lists. Defaults to every program in `LAUNCH_PROGRAMS`. */
   programs?: LaunchProgram[];
   /** Why the core refused the launch, shown under Start. */
@@ -95,13 +96,13 @@ const cycle = <T,>(all: T[], now: T) => all[(all.indexOf(now) + 1) % all.length]
  * first command (it can still run in a worktree). The prompt line is set like the one in every pane (a flat command line), in the vendor's colour for an
  * agent. Presentational: the parent owns the state.
  */
-export function Launcher({ view, onChange, onQuery, onPick, onPrograms, onActive, onPrompt, onStart, onTaskName, onConfirm, onBack, onClose, chips = true, programs = LAUNCH_PROGRAMS, error, busy = false, busyText = "Creating the worktree…" }: Props) {
+export function Launcher({ view, onChange, onQuery, onPick, onPrograms, onActive, onPrompt, onStart, onTaskName, onConfirm, onBack, onClose, paceChip = true, programs = LAUNCH_PROGRAMS, error, busy = false, busyText = "Creating the worktree…" }: Props) {
   const { choice, projects, query, activeIndex, remembered, nextNumber, taskName, confirm } = view;
   const project = projects.find((p) => p.id === choice.projectId);
   const agentRun = isAgentProgram(choice.program, programs);
-  // A worktree needs git: without chips the chip is offered only for a folder that has a branch. Any program can use one.
+  // A worktree needs git: without the pace chip the chip is offered only for a folder that has a branch. Any program can use one.
   const inGit = project?.branch !== undefined;
-  const showWorktree = chips || inGit;
+  const showWorktree = paceChip || inGit;
   const showTask = showWorktree && choice.worktree && inGit && taskName !== undefined;
   const program = programById(choice.program, programs) ?? programs[0] ?? LAUNCH_PROGRAMS[0]!;
   const note = agentRun ? rememberedNote(project?.name ?? "this folder", remembered) : null;
@@ -277,18 +278,27 @@ export function Launcher({ view, onChange, onQuery, onPick, onPrograms, onActive
                   {project ? projectLabel(project) : "Choose a folder"}
                 </button>
               )}
-              {agentRun && chips && (
+              {agentRun && (
                 <>
                   <span> {"·"} </span>
                   <button
                     type="button"
                     className="launcher__chip"
-                    aria-label={`Mode: ${choice.mode}`}
+                    aria-label={`Mode: ${modeLabel(choice.mode)}`}
                     onClick={() => onChange?.({ mode: cycle(MODES, choice.mode) })}
                     onKeyDown={chipKeys(MODES, MODES.indexOf(choice.mode), (i) => onChange?.({ mode: MODES[i]! }))}
                   >
-                    {choice.mode}
+                    {headerDanger(choice.mode) && (
+                      <span className="launcher__risk" aria-hidden="true">
+                        {"⚠ "}
+                      </span>
+                    )}
+                    {modeLabel(choice.mode)}
                   </button>
+                </>
+              )}
+              {agentRun && paceChip && (
+                <>
                   <span> {"·"} </span>
                   <button
                     type="button"

@@ -6,8 +6,16 @@ describe("resumeCommand", () => {
     expect(resumeCommand("claude", "PowerShell")).toBe("claude --continue");
     expect(resumeCommand("codex", "PowerShell")).toBe("codex resume --last");
   });
-  it("is a plain agy for Antigravity, which resumes as a fresh start", () => {
-    expect(resumeCommand("antigravity", "PowerShell")).toBe("agy");
+  it("is agy --continue for Antigravity", () => {
+    expect(resumeCommand("antigravity", "pwsh")).toBe("agy --continue");
+  });
+  it("appends the CLI's own flags for the mode the session started in", () => {
+    expect(resumeCommand("claude", "pwsh", "bypass")).toBe("claude --continue --permission-mode bypassPermissions");
+    expect(resumeCommand("codex", "pwsh", "auto-edit")).toBe("codex resume --last --sandbox workspace-write --ask-for-approval on-request");
+    expect(resumeCommand("antigravity", "pwsh", "full-auto")).toBe("agy --continue --mode auto");
+  });
+  it("adds nothing for a plain shell, whatever the mode", () => {
+    expect(resumeCommand(null, "Git Bash", "plan")).toBe("Git Bash");
   });
   it("is the profile's name for a plain shell", () => {
     expect(resumeCommand(null, "Git Bash")).toBe("Git Bash");

@@ -1,21 +1,19 @@
+import type { CliId } from "../onboarding/types";
+import { launchArgs } from "../modes/sessionModes";
+import type { Mode } from "../sidebar/types";
+
+const isCliId = (agent: string): agent is CliId => agent === "claude" || agent === "codex" || agent === "antigravity";
+
 /**
  * The command Resume will run for a session, for display only. It mirrors `resume_args` in
  * crates/core/src/profiles/detect.rs, which is what the core really runs; keep the two together.
- * Antigravity has no verified continue flag, so it resumes as a fresh start. A plain shell has no agent,
- * so it starts again as its profile.
+ * A plain shell has no agent, so it starts again as its profile. With a mode, the CLI's own flags for it follow.
  */
-export function resumeCommand(agent: string | null, profileName: string): string {
-  switch (agent) {
-    case null:
-      return profileName;
-    case "claude":
-      return "claude --continue";
-    case "codex":
-      return "codex resume --last";
-    case "antigravity":
-      return "agy";
-    default:
-      // The core refuses an agent it does not know, with its own words; show the name until then.
-      return agent;
-  }
+export function resumeCommand(agent: string | null, profileName: string, mode?: Mode): string {
+  if (agent === null) return profileName;
+  if (!isCliId(agent)) return agent; // The core refuses an agent it does not know, with its own words; show the name until then.
+  const base = { claude: "claude --continue", codex: "codex resume --last", antigravity: "agy --continue" }[agent];
+  // The mode's own flags, as `mode_args` gives them; a mode the CLI can't have adds nothing.
+  const flags = mode === undefined ? [] : (launchArgs(agent, mode, false)?.args ?? []);
+  return [base, ...flags].join(" ");
 }

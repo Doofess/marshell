@@ -93,6 +93,10 @@
 .launcher__chip:active {
   background: var(--fill-strong);
 }
+/* A mode that runs without asking carries a caution triangle in front of its name. */
+.launcher__risk {
+  color: var(--caution);
+}
 .launcher__mark {
   display: inline-flex;
   color: var(--agent-mark, currentColor);

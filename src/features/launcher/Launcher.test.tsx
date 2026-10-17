@@ -2,7 +2,7 @@ import type { ComponentProps } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { DEFAULT_CHOICE, PROJECTS, REMEMBERED } from "./fixtures";
-import { LAUNCH_GROUPS, LAUNCH_PROGRAMS, applyRemembered, type LaunchProgram, type LauncherChoice } from "./launchChoice";
+import { LAUNCH_GROUPS, LAUNCH_PROGRAMS, MODES, applyRemembered, type LaunchProgram, type LauncherChoice } from "./launchChoice";
 import { Launcher, type LauncherView } from "./Launcher";
 
 const view = (p: Partial<LauncherView> = {}): LauncherView => ({ choice: DEFAULT_CHOICE, projects: PROJECTS, query: null, activeIndex: 0, ...p });
@@ -163,30 +163,41 @@ describe("Launcher: chips", () => {
     expect(h).toContain("Mode: Manual");
     expect(h).toContain('role="checkbox"');
   });
-  it("mode and pace chips hidden when chips is false (the worktree chip is covered below)", () => {
-    const h = renderToStaticMarkup(<Launcher view={view({ choice: { ...DEFAULT_CHOICE, projectId: "scratch" } })} chips={false} />);
-    expect(count(h, /class="launcher__chip"/g)).toBe(2);
-    expect(h).not.toContain("Mode:");
+  it("keeps the mode chip and drops the pace chip when paceChip is false (the worktree chip is covered below)", () => {
+    const h = renderToStaticMarkup(<Launcher view={view({ choice: { ...DEFAULT_CHOICE, projectId: "scratch" } })} paceChip={false} />);
+    expect(count(h, /class="launcher__chip"/g)).toBe(3);
+    expect(h).toContain("Mode: Manual");
     expect(h).not.toContain("Pace:");
     expect(h).toContain("Start Claude in scratch");
+  });
+  it("shows a caution mark in the chip for a mode that runs without asking, and not for the others", () => {
+    const chip = (mode: LauncherChoice["mode"]) => html(view({ choice: { ...DEFAULT_CHOICE, mode } }));
+    expect(chip("bypass")).toContain("Mode: Bypass");
+    expect(chip("bypass")).toContain("⚠");
+    expect(chip("full-auto")).toContain("⚠");
+    for (const m of ["manual", "plan", "auto-edit"] as const) expect(chip(m), m).not.toContain("⚠");
+  });
+  it("shows each of the five modes by its label", () => {
+    const labels = ["Manual", "Plan", "Auto-edit", "Full auto", "Bypass"];
+    MODES.forEach((m, i) => expect(html(view({ choice: { ...DEFAULT_CHOICE, mode: m } }))).toContain(`Mode: ${labels[i]}`));
   });
 });
 
 describe("Launcher: the worktree chip in the live launcher", () => {
-  const live = (v: LauncherView = view(), chips = false) => renderToStaticMarkup(<Launcher view={v} chips={chips} />);
+  const live = (v: LauncherView = view(), paceChip = false) => renderToStaticMarkup(<Launcher view={v} paceChip={paceChip} />);
   const inScratch = { ...DEFAULT_CHOICE, projectId: "scratch" };
-  it("is shown when the folder is in git, and the mode and pace chips stay hidden", () => {
+  it("is shown when the folder is in git, with the mode chip but no pace chip", () => {
     const h = live();
     expect(h).toContain('role="checkbox"');
     expect(h).toContain('aria-checked="false"');
-    expect(count(h, /class="launcher__chip"/g)).toBe(3);
-    expect(h).not.toContain("Mode:");
+    expect(count(h, /class="launcher__chip"/g)).toBe(4);
+    expect(h).toContain("Mode: Manual");
     expect(h).not.toContain("Pace:");
   });
   it("is hidden for a folder with no branch", () => {
     const h = live(view({ choice: inScratch }));
     expect(h).not.toContain('role="checkbox"');
-    expect(count(h, /class="launcher__chip"/g)).toBe(2);
+    expect(count(h, /class="launcher__chip"/g)).toBe(3);
   });
   it("is offered for a shell too: a worktree works for any program", () => {
     expect(live(view({ choice: { ...DEFAULT_CHOICE, program: "powershell" } }))).toContain('role="checkbox"');
@@ -196,7 +207,7 @@ describe("Launcher: the worktree chip in the live launcher", () => {
 
 describe("Launcher: the task name", () => {
   const on = { ...DEFAULT_CHOICE, worktree: true };
-  const h = (v: Partial<LauncherView> = {}, chips = false) => renderToStaticMarkup(<Launcher view={view({ choice: on, taskName: "fix-login", ...v })} chips={chips} />);
+  const h = (v: Partial<LauncherView> = {}, paceChip = false) => renderToStaticMarkup(<Launcher view={view({ choice: on, taskName: "fix-login", ...v })} paceChip={paceChip} />);
   it("shows a labelled text field with the name once the chip is on", () => {
     const out = h();
     const forId = /<label[^>]*for="([^"]+)"[^>]*>Task name<\/label>/.exec(out)?.[1];
@@ -233,7 +244,7 @@ describe("Launcher: confirm a task", () => {
   const on = { ...DEFAULT_CHOICE, worktree: true };
   const cmds = ["git worktree add -b marshell/x C:/w/x main", "git status"];
   const h = (confirm: LauncherView["confirm"], extra: Partial<ComponentProps<typeof Launcher>> = {}) =>
-    renderToStaticMarkup(<Launcher view={view({ choice: on, taskName: "x", confirm })} chips={false} {...extra} />);
+    renderToStaticMarkup(<Launcher view={view({ choice: on, taskName: "x", confirm })} paceChip={false} {...extra} />);
   it("swaps the sentence for a titled view with the commands and two buttons", () => {
     const out = h({ state: "ready", commands: cmds });
     expect(out).toContain("Start a task in a new worktree");
@@ -317,7 +328,7 @@ describe("Launcher: live programs", () => {
     LAUNCH_PROGRAMS[0]!,
     { id: "profile:cmd", kind: "cmd", label: "Command Prompt", cli: "Command Prompt", group: "Shells", first: "", noFirst: true },
   ];
-  const live = (choice: LauncherChoice, open = false) => renderToStaticMarkup(<Launcher view={view({ choice, programsOpen: open })} programs={programs} chips={false} />);
+  const live = (choice: LauncherChoice, open = false) => renderToStaticMarkup(<Launcher view={view({ choice, programsOpen: open })} programs={programs} paceChip={false} />);
   it("names a profile program with its label and treats it as a plain terminal", () => {
     const h = live({ ...DEFAULT_CHOICE, program: "profile:cmd" });
     expect(h).toContain('aria-label="Program: Command Prompt"');

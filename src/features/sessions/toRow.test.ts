@@ -83,6 +83,11 @@ describe("toRow", () => {
     expect(toRow(info({ project: "/home/me/proj" }), PROFILES).project).toBe("proj");
   });
 
+  it("carries the mode the session started in, and none when the core has none", () => {
+    expect(toRow(info({ agent: "claude", mode: "bypass" }), PROFILES).mode).toBe("bypass");
+    expect(toRow(info({ agent: "claude", mode: null }), PROFILES).mode).toBeUndefined();
+  });
+
   describe("shell command state", () => {
     const row = (command: SessionInfo["command"]) => toRow(info({ command }), PROFILES);
 

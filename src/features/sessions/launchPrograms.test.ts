@@ -6,14 +6,14 @@ import type { Project } from "../launcher/filter";
 import { startingText, type LauncherChoice, type ProgramId } from "../launcher/launchChoice";
 import { ApiError } from "../../lib/api/client";
 import type { LayoutDoc } from "../../generated/LayoutDoc";
-import { createRequest, createThenLaunch, initialFocus, launchRequest, nameSource, preselect, progressText, refocus, rememberTasks, livePrograms, replansAfter, startFailure, taskRequest, toLauncherProject, wantsTask } from "./launchPrograms";
+import { createRequest, createThenLaunch, initialFocus, launchRequest, nameSource, preselect, preselectMode, progressText, refocus, rememberTasks, livePrograms, replansAfter, startFailure, taskRequest, toLauncherProject, wantsTask } from "./launchPrograms";
 
 const profile = (id: string, family: Profile["family"], name = id): Profile => ({ id, name, command: [id], family, cwd: null, env: [], shell_integration: true, detected: true });
 const PROFILES: Profile[] = [profile("pwsh", "power_shell", "PowerShell 7"), profile("cmd", "cmd", "Command Prompt"), profile("git-bash", "posix", "Git Bash"), profile("wsl-ubuntu", "wsl", "Ubuntu")];
 const DOC: ProfilesDoc = { profiles: PROFILES, default_id: "pwsh" };
 const PROJECTS: Project[] = [{ id: "C:/dev/my-app", name: "my-app", branch: "main", path: "C:/dev/my-app", lastUsedMs: 1 }];
 const SIZE = { cols: 120, rows: 30 };
-const choice = (program: ProgramId): LauncherChoice => ({ program, projectId: "C:/dev/my-app", mode: "Manual", pace: "Balanced", worktree: false });
+const choice = (program: ProgramId): LauncherChoice => ({ program, projectId: "C:/dev/my-app", mode: "manual", pace: "Balanced", worktree: false });
 
 describe("livePrograms", () => {
   it("agents come first and only the three", () => {
@@ -46,9 +46,14 @@ describe("launchRequest", () => {
       profile_id: "pwsh",
       cwd: "C:/dev/my-app",
       prompt: "fix the bug",
+      mode: "manual",
       cols: 120,
       rows: 30,
     });
+  });
+  it("carries the chosen mode for an agent, and none for a shell", () => {
+    expect(launchRequest({ ...choice("claude"), mode: "plan" }, "", programs, DOC, PROJECTS, SIZE).mode).toBe("plan");
+    expect("mode" in launchRequest({ ...choice("profile:pwsh"), mode: "plan" }, "", programs, DOC, PROJECTS, SIZE)).toBe(false);
   });
   it("leaves the prompt out when it is empty or blank", () => {
     expect(launchRequest(choice("claude"), "", programs, DOC, PROJECTS, SIZE)).not.toHaveProperty("prompt");
@@ -132,6 +137,20 @@ describe("preselect", () => {
     expect(preselect(doc, "C:/old-agent", programs)).toBeUndefined();
     expect(preselect(doc, "C:/never-used", programs)).toBeUndefined();
     expect(preselect(null, "C:/shell", programs)).toBeUndefined();
+  });
+});
+
+describe("preselectMode", () => {
+  const docWith = (launcher: LayoutDoc["launcher"]): LayoutDoc => ({ tabs: [], view: {} as LayoutDoc["view"], launcher });
+  it("is the mode last used in the folder, and nothing when none is remembered", () => {
+    const doc = docWith({
+      "C:/a": { profile_id: "pwsh", agent: "claude", seq: 1, mode: "plan" },
+      "C:/b": { profile_id: "pwsh", agent: "claude", seq: 2, mode: null },
+    });
+    expect(preselectMode(doc, "C:/a")).toBe("plan");
+    expect(preselectMode(doc, "C:/b")).toBeUndefined();
+    expect(preselectMode(doc, "C:/never-used")).toBeUndefined();
+    expect(preselectMode(null, "C:/a")).toBeUndefined();
   });
 });
 
@@ -244,6 +263,7 @@ describe("starting a task in a worktree", () => {
       profile_id: "pwsh",
       cwd: task.path,
       prompt: "go",
+      mode: "manual",
       cols: 120,
       rows: 30,
     });

@@ -20,7 +20,7 @@ const STRICT: Record<CliId, string[]> = {
   antigravity: [],
 };
 
-/** Each CLI's own flag per mode; null where the CLI has no such mode. */
+/** Each CLI's own flag per mode; null where the CLI has no such mode. `mode_args` in crates/core/src/profiles/detect.rs is what the core really runs: keep the two together. */
 const NATIVE: Record<CliId, Record<Mode, string[] | null>> = {
   claude: {
     manual: STRICT.claude,
@@ -41,8 +41,7 @@ const NATIVE: Record<CliId, Record<Mode, string[] | null>> = {
     manual: STRICT.antigravity,
     plan: ["--mode", "plan"],
     "auto-edit": ["--mode", "accept-edits"],
-    // No classifier of its own: Full auto is Marshell's risk check, so it needs the hook.
-    "full-auto": null,
+    "full-auto": ["--mode", "auto"],
     bypass: ["--dangerously-skip-permissions"],
   },
 };
@@ -62,8 +61,8 @@ export function launchArgs(cli: CliId, mode: Mode, hooksOn: boolean): Launch | n
   return { args: STRICT[cli], native: mode === "manual" };
 }
 
-/** Whether the CLI judges requests itself in this mode (Full auto with a classifier of its own). */
-const classifies = (cli: CliId, mode: Mode) => mode === "full-auto" && NATIVE[cli]["full-auto"] !== null;
+/** Whether the CLI judges requests itself in this mode (Full auto with a classifier of its own; none is known for Antigravity's `--mode auto`, so Marshell's risk check stands in). */
+const classifies = (cli: CliId, mode: Mode) => mode === "full-auto" && cli !== "antigravity";
 
 /** What Marshell's hook answers when a CLI asks: allow, or ask (a card; the CLI's own prompt if approval is off). */
 export function decide(cli: CliId, mode: Mode, request: Request, risky: boolean): "allow" | "ask" {
