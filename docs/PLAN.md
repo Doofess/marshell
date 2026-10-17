@@ -669,6 +669,7 @@ Tray mouse events are not emitted on Linux, so on Linux the tray is menu-only.
 - The approve-card keys Y/N/A/T are active only while the card has focus.
 - Global search moves to Ctrl+Shift+Alt+F.
 - Shift+F10 or the Menu key opens the focused session row's menu, as in Windows Explorer.
+- Ctrl+Space on a focused session row (and Ctrl+click, Cmd+click on macOS) adds that session in a pane, or removes its pane if it is on screen.
 - The cheat sheet shows the real bindings per OS, and all bindings are rebindable.
 - **The needs-you lane is ordered oldest-waiting first** (a deviation from the brief's "newest first"), so waiting is first-in, first-out; Ctrl+Shift+N follows that order.
 
@@ -825,6 +826,11 @@ Decisions from the 2026-10-10 coverage audit (`docs/superpowers/plan-coverage-au
      3. Opening the menu does not select the row, so Split can bring a session that isn't shown into a pane. Every item acts on the row the menu was opened from. Close on an unselected agent that needs the confirm bar selects it first.
      4. Arrows move with wrap-around, Home and End jump, Enter or Space runs, typing a letter jumps to the item that starts with it. Esc closes and returns focus to the row; Tab or a click outside closes without moving focus. The menu closes by itself if its row goes away. It stays fully on screen near the window's edges.
      5. Later: Mode ▸ (restart the agent in another mode) in the modes-at-launch PR, Pause in its own PR right after, and Bookmark with phase 5.
+   - **Sidebar pane marks (2026-10-17).**
+     1. The session list marks every session that is visible: `aria-selected` and the selected fill on each row, and the list is `aria-multiselectable`. The focused pane's row also gets a 3px accent bar on its inline-end edge, and keeps the single tab stop. While a pane is zoomed only its session is visible; sessions in panes cut off by a small window, and empty panes, are not. The rail marks the same sessions.
+     2. A plain click on a session that isn't visible fills the first empty visible pane and focuses it, or else replaces the focused pane's session. While zoomed it replaces the zoomed pane's session. A click on a visible session focuses its pane.
+     3. Ctrl+click (Cmd+click on macOS, where Ctrl+click is a right-click), or Ctrl+Space on a focused row on every OS, toggles a pane: on a visible session it removes that pane, unless it is the only one; on any other session it shows it the way Split into a pane does. When the window fits no more panes nothing changes and the announcer says "No room for another pane."
+     4. In forced colors a visible row has a 1px dashed outline, the focused row a 2px solid one and the keyboard focus a 3px double one, so they differ in shape and not only in colour. The rail's items follow the same rules, Ctrl+Space included.
    - Exit: 5 tabs across 3 shells; restart restores the layout; kill the app mid-task, relaunch, and every tab is back with Resume; no orphan processes after a crash; a recording replays in asciinema-player; OSC 133 prompt jumps work.
 2.5. **Context and preview** (added 2026-10-15, inspired by the features of the Codex desktop app, not its infrastructure; numbered 2.5 so later phases keep their numbers).
    - Scope:

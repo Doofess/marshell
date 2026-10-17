@@ -35,6 +35,8 @@ export function Sidebar({
   height,
   width,
   selectedId,
+  visibleIds,
+  os,
   footer,
   shell,
   renamingId,
@@ -42,6 +44,7 @@ export function Sidebar({
   onRenameCancel,
   onReorder,
   onSelect,
+  onToggle,
   onReview,
   menuItems,
   onMenuRun,
@@ -51,7 +54,12 @@ export function Sidebar({
   requests: ApprovalRequest[];
   height: number;
   width: number;
+  /** The focused pane's session. */
   selectedId?: string;
+  /** Every session on screen: each is marked selected and the list becomes multi-select. Left out, only `selectedId` is marked. */
+  visibleIds?: readonly string[];
+  /** Decides which click toggles a pane. Defaults to Windows (Ctrl+click). */
+  os?: Os;
   footer?: SidebarFooter;
   shell?: SidebarShell;
   /** F2: the row whose name is a text box, and what its Enter and its Escape or blur do. */
@@ -62,6 +70,8 @@ export function Sidebar({
   onReorder?: (ids: string[]) => void;
   /** A click on a row gives its session id. */
   onSelect?: (id: string) => void;
+  /** Ctrl+click (Cmd on macOS) or Ctrl+Space on a row gives its session id: add or remove its pane. */
+  onToggle?: (id: string) => void;
   /** Opens the review of a task row's session (its Review changes button). */
   onReview?: (id: string) => void;
   /** The items of a row's right-click menu. Left out, rows have no menu. */
@@ -127,10 +137,14 @@ export function Sidebar({
       key={r.id}
       row={r}
       density="comfortable"
-      selected={r.id === selectedId}
+      // With visible ids, a session in no pane on screen (the store's choice standing in for an empty pane) is not marked.
+      selected={visibleIds ? visibleIds.includes(r.id) : r.id === selectedId}
+      focused={visibleIds ? visibleIds.includes(r.id) && r.id === selectedId : false}
+      os={os}
       tabStop={r.id === tabStop}
       drag={dragFor(r.id)}
       onSelect={onSelect && (() => onSelect(r.id))}
+      onToggle={onToggle && (() => onToggle(r.id))}
       onReview={onReview && (() => onReview(r.id))}
       onMenu={
         menuItems &&
@@ -149,7 +163,7 @@ export function Sidebar({
   return (
     <aside ref={root} className="sidebar" style={style} data-shell={panel ? "" : undefined} aria-label="Sessions and approvals">
       <Lane requests={requests} sidebarHeight={height} />
-      <div className="sidebar__list" role="listbox" aria-label="Sessions">
+      <div className="sidebar__list" role="listbox" aria-label="Sessions" aria-multiselectable={visibleIds ? true : undefined}>
         {groups
           ? groups.map((g) => (
               <Fragment key={g.project}>

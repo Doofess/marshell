@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { ViewLayout } from "../../generated/ViewLayout";
 import { RATIO } from "./splitLayout";
-import { type ViewAction, type ViewState, adoptTarget, checkedView, fillsEmptyPane, focusedIndex, railToggle, ratiosOf, roomForPane, sidebarPrefOf, toRatioList, toSaved, viewReducer } from "./viewState";
+import { type ViewAction, type ViewState, adoptTarget, checkedView, fillsEmptyPane, focusedIndex, paneToggle, railToggle, ratiosOf, roomForPane, sidebarPrefOf, toRatioList, toSaved, viewReducer, visibleSessions } from "./viewState";
 
 const base: ViewLayout = {
   panes: ["a"],
@@ -190,6 +190,34 @@ describe("viewReducer", () => {
     expect(roomForPane(3, undefined)).toBe(true);
     expect(roomForPane(4, 9)).toBe(false);
   });
+
+  it("select off screen fills the first empty visible pane and focuses it", () => {
+    const s = run(state({ panes: ["a", null], active: 0 }), { type: "select", tabId: "x", visible: 2 });
+    expect(s.panes).toEqual(["a", "x"]);
+    expect(s.active).toBe(1);
+  });
+
+  it("select while zoomed replaces the zoomed pane, not an empty one behind it", () => {
+    const s = run(state({ panes: ["a", null], active: 0, zoomed: 0 }), { type: "select", tabId: "x", visible: 2 });
+    expect(s.panes).toEqual(["x", null]);
+  });
+
+  it("select of a session in a pane out of sight moves it into an empty visible pane", () => {
+    const s = run(state({ panes: ["a", null, "c"], active: 0 }), { type: "select", tabId: "c", visible: 2 });
+    expect(s.panes).toEqual(["a", "c", null]);
+    expect(s.active).toBe(1);
+  });
+
+  it("select of a session behind the zoom moves the zoom to its pane", () => {
+    const s = run(state({ panes: ["a", "b"], active: 0, zoomed: 0 }), { type: "select", tabId: "b", visible: 2 });
+    expect(s.panes).toEqual(["a", "b"]);
+    expect(s.active).toBe(1);
+    expect(s.zoomed).toBe(1);
+    // A new session goes into the zoomed pane, even when the active one is another.
+    const into = run(state({ panes: ["a", "b"], active: 1, zoomed: 0 }), { type: "select", tabId: "x", visible: 2 });
+    expect(into.panes).toEqual(["x", "b"]);
+    expect(into.active).toBe(0);
+  });
 });
 
 describe("adoptTarget", () => {
@@ -254,5 +282,48 @@ describe("sidebarPrefOf and railToggle", () => {
     expect(railToggle("expanded")).toBe("rail");
     expect(railToggle("rail")).toBe("expanded");
     expect(railToggle("focus")).toBe("expanded");
+  });
+});
+
+describe("visibleSessions", () => {
+  it("lists the sessions in shown panes, skipping empty ones", () => {
+    expect(visibleSessions(["a", "b", null], 3, null)).toEqual(["a", "b"]);
+    expect(visibleSessions(["a", "b", "c"], 2, null)).toEqual(["a", "b"]);
+  });
+
+  it("lists only the zoomed pane while one is zoomed", () => {
+    expect(visibleSessions(["a", "b"], 2, 1)).toEqual(["b"]);
+    // A zoomed pane that isn't shown is ignored.
+    expect(visibleSessions(["a", "b", "c"], 2, 2)).toEqual(["a", "b"]);
+  });
+});
+
+describe("paneToggle", () => {
+  const view = (panes: (string | null)[], zoomed: number | null = null) => ({ panes, active: 0, zoomed });
+
+  it("removes a visible session's pane", () => {
+    expect(paneToggle(view(["a", "b"]), "b", 2, 2)).toEqual({ kind: "remove", index: 1 });
+  });
+
+  it("does nothing to the only pane", () => {
+    expect(paneToggle(view(["a"]), "a", 1, 2)).toEqual({ kind: "only" });
+    // Nor to the only pane with a session in it: the rest are empty.
+    expect(paneToggle(view(["a", null]), "a", 2, 2)).toEqual({ kind: "only" });
+    expect(paneToggle(view(["a", null, "b"]), "a", 3, 3)).toEqual({ kind: "remove", index: 0 });
+  });
+
+  it("shows a session from a hidden pane", () => {
+    expect(paneToggle(view(["a", "b", "c"]), "c", 2, 2)).toEqual({ kind: "show" });
+    // Zoomed on a: b's pane is not visible.
+    expect(paneToggle(view(["a", "b"], 0), "b", 2, 2)).toEqual({ kind: "show" });
+  });
+
+  it("shows a session in an empty or a new pane", () => {
+    expect(paneToggle(view(["a", null]), "x", 2, 2)).toEqual({ kind: "show" });
+    expect(paneToggle(view(["a"]), "x", 1, 2)).toEqual({ kind: "show" });
+  });
+
+  it("reports a full window", () => {
+    expect(paneToggle(view(["a", "b"]), "x", 2, 2)).toEqual({ kind: "full" });
   });
 });

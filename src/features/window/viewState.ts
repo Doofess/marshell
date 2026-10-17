@@ -123,6 +123,27 @@ export function adoptTarget(view: Pick<ViewLayout, "panes" | "active" | "zoomed"
   return { index: focusedIndex(shown, view.active, view.zoomed), split: false };
 }
 
+/** The sessions the window shows now: only the zoomed pane's while one is zoomed, and none from a pane out of sight. */
+export function visibleSessions(panes: readonly (string | null)[], shown: number, zoomed: number | null | undefined): string[] {
+  const inSight = panes.slice(0, shown);
+  const zoomedId = zoomed !== null && zoomed !== undefined ? inSight[zoomed] : undefined;
+  if (zoomedId) return [zoomedId];
+  return inSight.filter((id): id is string => id !== null);
+}
+
+export type PaneToggle = { kind: "remove"; index: number } | { kind: "only" } | { kind: "show" } | { kind: "full" };
+
+/** What a Ctrl+click on a session's row does: drop its pane if it is visible, otherwise bring it into view if there is room. */
+export function paneToggle(view: Pick<ViewLayout, "panes" | "active" | "zoomed">, id: string, shown: number, fit: number): PaneToggle {
+  if (visibleSessions(view.panes, shown, view.zoomed).includes(id)) {
+    // Never the last pane with a session in it: the window would be left empty, and an empty single pane takes the selection back.
+    return view.panes.some((p) => p !== null && p !== id) ? { kind: "remove", index: view.panes.indexOf(id) } : { kind: "only" };
+  }
+  if (view.panes.includes(id)) return { kind: "show" };
+  const target = adoptTarget(view, shown, fit);
+  return target.split || view.panes[target.index] === null ? { kind: "show" } : { kind: "full" };
+}
+
 /** After the pane count changed: the focus stays on a real pane, and an arrangement that does not suit the count goes back to automatic. */
 function fit(s: ViewState, panes: (string | null)[]): ViewState {
   return { ...s, panes, arrangement: arrangementFor(panes, s.arrangement), active: Math.min(s.active, panes.length - 1) };
@@ -169,13 +190,19 @@ export function viewReducer(s: ViewState, a: ViewAction): ViewState {
       }
       // The active pane may be out of sight (the window shrank, or a pane was added past what fits): the selection goes to one on screen.
       const last = clamp(Math.floor(a.visible) - 1, 0, s.panes.length - 1);
-      const active = Math.min(s.active, last);
-      if (at >= 0 && at <= last) return { ...s, active: at };
+      // While a shown pane is zoomed it is the focused one; the zoom moves with the selection, so the session picked is the one on screen.
+      const shown = s.panes.slice(0, last + 1);
+      const zoomed = s.zoomed !== null && shown[s.zoomed] != null;
+      const active = focusedIndex(shown, s.active, s.zoomed);
+      if (at >= 0 && at <= last) return { ...s, active: at, zoomed: zoomed ? at : s.zoomed };
+      // It goes into the first empty pane on screen (none shows behind a zoom), else into the focused pane.
+      const empty = zoomed ? -1 : shown.indexOf(null);
+      const into = empty >= 0 ? empty : active;
       const panes = [...s.panes];
-      // A session in a pane out of sight trades places with the one in the focused pane, so neither is dropped.
-      if (at >= 0) panes[at] = panes[active]!;
-      panes[active] = a.tabId;
-      return { ...s, panes, active };
+      // A session in a pane out of sight trades places with the pane it goes into, so nothing is dropped.
+      if (at >= 0) panes[at] = panes[into]!;
+      panes[into] = a.tabId;
+      return { ...s, panes, active: into };
     }
     case "focusPane":
       return a.index < 0 || a.index >= s.panes.length ? s : { ...s, active: a.index };

@@ -1,6 +1,7 @@
 import { AgentMark } from "../../components/AgentMark/AgentMark";
 import { StatusGlyph } from "../../components/StatusGlyph/StatusGlyph";
 import { commandById, shortcutLabel, type Os } from "../../lib/keymap";
+import { togglesPane, togglesPaneKey } from "../sidebar/rowPick";
 import { rowLabel } from "../sidebar/labels";
 import { SearchIcon } from "./SearchIcon";
 import { monogram } from "../sidebar/monogram";
@@ -15,7 +16,7 @@ import "./Rail.css";
  * A working session shows its vendor mark moving instead of a glyph, as in the full rows. The list scrolls (wheel, touch,
  * keys) with no scrollbar drawn; the palette tool stays pinned at the foot.
  */
-export function Rail({ rows, needsYou, selectedId, os = "windows", onSelect, onPalette }: { rows: RowModel[]; needsYou: number; selectedId?: string; os?: Os; onSelect?: (id: string) => void; onPalette?: () => void }) {
+export function Rail({ rows, needsYou, selectedId, visibleIds, os = "windows", onSelect, onToggle, onPalette }: { rows: RowModel[]; needsYou: number; selectedId?: string; visibleIds?: readonly string[]; os?: Os; onSelect?: (id: string) => void; onToggle?: (id: string) => void; onPalette?: () => void }) {
   return (
     <nav className="rail" aria-label="Sessions">
       <div className="rail__list">
@@ -26,7 +27,13 @@ export function Rail({ rows, needsYou, selectedId, os = "windows", onSelect, onP
           </div>
         )}
         {rows.map((r) => (
-          <button key={r.id} type="button" {...selectedProps(r.id === selectedId, "current", "rail__item")} data-agent={r.agent} data-mono={monogram(r.name)} data-number={r.number} data-nav-row={r.number} aria-label={rowLabel(r)} onClick={onSelect && (() => onSelect(r.id))}>
+          <button key={r.id} type="button" {...selectedProps(r.id === selectedId && (!visibleIds || visibleIds.includes(r.id)), "current", "rail__item")} data-visible={visibleIds?.includes(r.id) || undefined} data-agent={r.agent} data-mono={monogram(r.name)} data-number={r.number} data-nav-row={r.number} aria-label={rowLabel(r)} onClick={(onSelect || onToggle) && ((e) => (onToggle && togglesPane(e, os) ? onToggle(r.id) : onSelect?.(r.id)))}
+            onKeyDown={onToggle && ((e) => {
+              if (!togglesPaneKey(e)) return;
+              // Held off the button's own Space press, which would also click it.
+              e.preventDefault();
+              onToggle(r.id);
+            })}>
             <span className="rail__stripe" aria-hidden="true" />
             <span className="rail__number">
               <SessionNumber n={r.number} />

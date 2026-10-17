@@ -30,7 +30,7 @@ import { sidebarMode } from "../window/layout";
 import { MainWindow } from "../window/MainWindow";
 import { PANE_LIMIT, type Arrangement } from "../window/splitLayout";
 import { useViewState } from "../window/useViewState";
-import { adoptTarget, fillsEmptyPane, focusedIndex, railToggle, ratiosOf, roomForPane, sidebarPrefOf } from "../window/viewState";
+import { adoptTarget, fillsEmptyPane, focusedIndex, paneToggle, railToggle, ratiosOf, roomForPane, sidebarPrefOf, viewReducer, visibleSessions } from "../window/viewState";
 import { CloseBar } from "./CloseBar";
 import { launcherOpens } from "./launcherOpens";
 import { LiveLauncher } from "./LiveLauncher";
@@ -93,6 +93,8 @@ export function LiveApp() {
   const focusIdxRef = useRef(focusIdx);
   focusIdxRef.current = focusIdx;
   const focusedId = view.panes[focusIdx] ?? selectedId;
+  // Every session on screen, which the sidebar and the rail mark.
+  const visibleIds = useMemo(() => visibleSessions(view.panes, shownCount ?? view.panes.length, view.zoomed), [view.panes, shownCount, view.zoomed]);
   // Going to a session is two things: the store's selection and the view's, where it focuses the pane showing it or fills the focused one.
   const selectRef = useRef(select);
   selectRef.current = select;
@@ -403,6 +405,23 @@ export function LiveApp() {
       selectRef.current(id);
     },
     [pick, dispatch],
+  );
+  // Ctrl+click or Ctrl+Space on a session: drop its pane if it is on screen (never the last one), else show it as Split does.
+  const togglePane = useCallback(
+    (id: string) => {
+      const v = viewRef.current;
+      const toggle = paneToggle(v, id, shownRef.current ?? v.panes.length, fitRef.current ?? PANE_LIMIT);
+      if (toggle.kind === "remove") {
+        const action = { type: "remove", index: toggle.index } as const;
+        dispatch(action);
+        // The store's selection follows the pane that has the focus now, so it never names the session whose pane went.
+        const after = viewReducer(v, action);
+        const next = after.panes[focusedIndex(after.panes.slice(0, shownRef.current ?? after.panes.length), after.active, after.zoomed)];
+        if (next) selectRef.current(next);
+      } else if (toggle.kind === "show") showInPane(id);
+      else if (toggle.kind === "full") announce(NO_PANE_ROOM);
+    },
+    [dispatch, showInPane, announce],
   );
   // The adopted tab is listed: in one update the panel lets go of its terminal and a pane takes the tab. Until then the window draws
   // nothing for that tab (see renderTerminal), so the pty only ever has one terminal attached. (Adopting earlier would let the
@@ -724,6 +743,8 @@ export function LiveApp() {
           onPane={dispatch}
           rows={taskRows}
           selectedId={focusedId}
+          visibleIds={visibleIds}
+          os={os}
           requests={[]}
           ports={[]}
           footer={null}
@@ -740,6 +761,7 @@ export function LiveApp() {
           onReorder={(ids) => actions.reorder(ids)}
           grouped={view.grouped}
           onSelect={pick}
+          onToggle={togglePane}
           onReview={reviewSession}
           menuItems={os ? menuItems : undefined}
           onMenuRun={onMenuRun}

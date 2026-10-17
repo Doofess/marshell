@@ -84,10 +84,25 @@ describe("forced colours: every filled control keeps an edge", () => {
   /** The selected rail item and the selected session row are marked by an inset fill, which High Contrast drops, so each takes a 2 px Highlight outline. */
   for (const [file, selector] of [
     ["features/window/Rail.css", '.rail__item[aria-current="true"]'],
-    ["features/sidebar/SessionRow.css", '.session-row[aria-selected="true"]'],
+    // Every visible row is dashed (1px); the focused pane's row is the solid 2px one.
+    ["features/sidebar/SessionRow.css", ".session-row[data-focused]"],
   ] as const)
     it(`${file}: ${selector} keeps a 2px Highlight outline`, () => {
       const ok = forcedColorsBlocks(read(file)).some((b) => [...b.matchAll(/([^{}]+)\{([^{}]*)\}/g)].some((m) => m[1]!.split(",").map((x) => x.trim()).includes(selector) && /outline:\s*2px solid Highlight/.test(m[2]!)));
       expect(ok).toBe(true);
+    });
+
+  /** Several rows and rail items carry a selection outline, so the keyboard focus takes a third shape, placed after them so it wins. */
+  for (const [file, focus, marks] of [
+    ["features/window/Rail.css", ".rail__item:focus-visible", ['.rail__item[aria-current="true"]', ".rail__item[data-visible]"]],
+    ["features/sidebar/SessionRow.css", ".session-row:focus-visible", ['.session-row[aria-selected="true"]', ".session-row[data-focused]"]],
+  ] as const)
+    it(`${file}: ${focus} draws a 3px double Highlight outline after the selection outlines`, () => {
+      const block = forcedColorsBlocks(read(file)).find((b) => b.includes(focus)) ?? "";
+      const rules = [...block.matchAll(/([^{}]+)\{([^{}]*)\}/g)].map((m) => ({ sel: m[1]!.split(",").map((x) => x.trim()), body: m[2]! }));
+      const at = rules.findIndex((r) => r.sel.includes(focus));
+      expect(at).toBeGreaterThanOrEqual(0);
+      expect(rules[at]!.body).toMatch(/outline:\s*3px double Highlight/);
+      for (const mark of marks) expect(rules.findIndex((r) => r.sel.includes(mark))).toBeLessThan(at);
     });
 });
