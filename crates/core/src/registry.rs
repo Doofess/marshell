@@ -6,7 +6,9 @@ use std::collections::VecDeque;
 use std::sync::Mutex;
 
 use crate::pty::Mark;
-use marshell_protocol::api::{CommandState, SavedTab, SessionInfo, SessionMode, SessionState, SessionsSnapshot};
+use marshell_protocol::api::{
+    CommandState, Foreground, SavedTab, SessionInfo, SessionMode, SessionState, SessionsSnapshot,
+};
 use tokio::sync::watch;
 
 /// How many closed sessions we remember for Reopen.
@@ -128,6 +130,7 @@ impl Registry {
                 state: SessionState::Running,
                 command: CommandState::Unknown,
                 paused: false,
+                foreground: None,
             },
             spec: relaunch,
             generation,
@@ -161,6 +164,7 @@ impl Registry {
                     state: SessionState::Ended,
                     command: CommandState::Unknown,
                     paused: false,
+                    foreground: None,
                 },
                 spec: relaunch_of(tab),
                 generation,
@@ -205,6 +209,7 @@ impl Registry {
         let previous = std::mem::replace(&mut entry.info.state, SessionState::Running);
         entry.info.command = CommandState::Unknown;
         entry.info.paused = false;
+        entry.info.foreground = None;
         entry.generation = generation;
         let relaunch = entry.spec.clone();
         self.tx.send_replace(state.snapshot());
@@ -228,6 +233,7 @@ impl Registry {
         entry.info.state = SessionState::Running;
         entry.info.command = CommandState::Unknown;
         entry.info.paused = false;
+        entry.info.foreground = None;
         entry.generation = generation;
         let relaunch = entry.spec.clone();
         self.tx.send_replace(state.snapshot());
@@ -264,6 +270,7 @@ impl Registry {
         {
             entry.info.state = SessionState::Exited { code };
             entry.info.paused = false;
+            entry.info.foreground = None;
             self.tx.send_replace(state.snapshot());
         }
     }
@@ -295,6 +302,38 @@ impl Registry {
         }
     }
 
+    /// Sets what a plain shell session is running. Applied only to a Running row that was not
+    /// launched as an agent, is not paused (a frozen session keeps what it showed) and whose
+    /// `generation` is current: a result computed before a restart belongs to the old process.
+    /// Broadcasts only on a change.
+    pub fn set_foreground(&self, tab_id: &str, generation: u64, foreground: Option<Foreground>) {
+        let mut state = self.state.lock().unwrap();
+        if let Some(entry) = state
+            .open
+            .iter_mut()
+            .find(|e| e.info.tab_id == tab_id && e.generation == generation)
+            && entry.info.state == SessionState::Running
+            && entry.info.agent.is_none()
+            && !entry.info.paused
+            && entry.info.foreground != foreground
+        {
+            entry.info.foreground = foreground;
+            self.tx.send_replace(state.snapshot());
+        }
+    }
+
+    /// The rows the foreground watcher may look at: Running, not paused, not launched as an agent.
+    /// Each is the tab id, its generation and whether it already shows a foreground program.
+    pub fn foreground_candidates(&self) -> Vec<(String, u64, bool)> {
+        let state = self.state.lock().unwrap();
+        state
+            .open
+            .iter()
+            .filter(|e| e.info.state == SessionState::Running && !e.info.paused && e.info.agent.is_none())
+            .map(|e| (e.info.tab_id.clone(), e.generation, e.info.foreground.is_some()))
+            .collect()
+    }
+
     /// Folds a shell-integration mark into the tab's command state. Marks for
     /// an exited or unknown tab are ignored. Broadcasts only on a change.
     pub fn mark(&self, tab_id: &str, mark: Mark) {
@@ -309,14 +348,19 @@ impl Registry {
             CommandState::Prompt { last_exit } => last_exit,
             _ => None,
         };
+        // The command is over or the prompt is back: whatever ran is gone.
+        let cleared = matches!(mark, Mark::Finished(_) | Mark::PromptStart) && entry.info.foreground.take().is_some();
         let next = match mark {
             Mark::Executed => CommandState::Running,
             Mark::Finished(Some(code)) => CommandState::Prompt { last_exit: Some(code) },
             Mark::Finished(None) | Mark::PromptStart => CommandState::Prompt { last_exit },
             Mark::CommandStart | Mark::CommandLine(_) => return,
         };
-        if entry.info.command != next {
+        let changed = entry.info.command != next;
+        if changed {
             entry.info.command = next;
+        }
+        if changed || cleared {
             self.tx.send_replace(state.snapshot());
         }
     }
@@ -363,6 +407,7 @@ impl Registry {
         let mut entry = state.open.remove(index);
         // Closing kills the process, which thaws it first.
         entry.info.paused = false;
+        entry.info.foreground = None;
         let spec = entry.spec.clone();
         state.closed.push_front(entry);
         state.closed.truncate(MAX_CLOSED);
@@ -932,5 +977,146 @@ mod tests {
             (tabs[0].number, tabs[0].name.as_str(), tabs[0].cwd.as_str()),
             (2, "B", "C:/work")
         );
+    }
+
+    fn running(program: &str) -> Option<Foreground> {
+        Some(Foreground {
+            program: program.into(),
+            command_line: None,
+            agent: None,
+        })
+    }
+
+    fn foreground(reg: &Registry, tab_id: &str) -> Option<Foreground> {
+        let snap = reg.snapshot();
+        snap.sessions
+            .iter()
+            .find(|s| s.tab_id == tab_id)
+            .unwrap()
+            .foreground
+            .clone()
+    }
+
+    #[test]
+    fn set_foreground_applies_to_a_running_shell_row() {
+        let reg = Registry::new();
+        reg.reserve("a", relaunch("A"));
+        reg.set_foreground("a", generation_of(&reg, "a"), running("docker"));
+        assert_eq!(foreground(&reg, "a"), running("docker"));
+        reg.set_foreground("a", generation_of(&reg, "a"), None);
+        assert_eq!(foreground(&reg, "a"), None);
+    }
+
+    #[test]
+    fn set_foreground_is_ignored_for_an_agent_an_exited_row_a_paused_row_and_a_stale_generation() {
+        let reg = Registry::new();
+        reg.reserve(
+            "agent",
+            Relaunch {
+                agent: Some("claude".into()),
+                ..relaunch("Claude")
+            },
+        );
+        reg.set_foreground("agent", generation_of(&reg, "agent"), running("docker"));
+        assert_eq!(foreground(&reg, "agent"), None);
+
+        reg.reserve("exited", relaunch("E"));
+        let generation = generation_of(&reg, "exited");
+        reg.mark_exited("exited", generation, 0);
+        reg.set_foreground("exited", generation, running("docker"));
+        assert_eq!(foreground(&reg, "exited"), None);
+
+        reg.reserve("paused", relaunch("P"));
+        let generation = generation_of(&reg, "paused");
+        reg.set_foreground("paused", generation, running("docker"));
+        reg.set_paused("paused", generation, true);
+        reg.set_foreground("paused", generation, None);
+        assert_eq!(foreground(&reg, "paused"), running("docker"));
+
+        reg.reserve("stale", relaunch("S"));
+        let generation = generation_of(&reg, "stale");
+        reg.set_foreground("stale", generation + 1, running("docker"));
+        assert_eq!(foreground(&reg, "stale"), None);
+        reg.set_foreground("nope", generation, running("docker"));
+    }
+
+    #[test]
+    fn set_foreground_broadcasts_only_on_a_change() {
+        let reg = Registry::new();
+        reg.reserve("a", relaunch("A"));
+        let generation = generation_of(&reg, "a");
+        let mut rx = reg.subscribe();
+        rx.borrow_and_update();
+        reg.set_foreground("a", generation, None);
+        assert!(!rx.has_changed().unwrap());
+        reg.set_foreground("a", generation, running("docker"));
+        assert!(rx.has_changed().unwrap());
+        rx.borrow_and_update();
+        reg.set_foreground("a", generation, running("docker"));
+        assert!(!rx.has_changed().unwrap());
+    }
+
+    #[test]
+    fn the_end_of_a_command_or_the_prompt_clears_the_foreground() {
+        for mark in [Mark::Finished(Some(0)), Mark::Finished(None), Mark::PromptStart] {
+            let reg = Registry::new();
+            reg.reserve("a", relaunch("A"));
+            reg.mark("a", Mark::Executed);
+            reg.set_foreground("a", generation_of(&reg, "a"), running("docker"));
+            // Marks that do not end the command leave it.
+            reg.mark("a", Mark::CommandStart);
+            assert_eq!(foreground(&reg, "a"), running("docker"));
+            let mut rx = reg.subscribe();
+            rx.borrow_and_update();
+            reg.mark("a", mark);
+            assert_eq!(foreground(&reg, "a"), None);
+            assert!(rx.has_changed().unwrap());
+        }
+    }
+
+    #[test]
+    fn exit_restart_resume_and_close_clear_the_foreground() {
+        let reg = Registry::new();
+        for id in ["exit", "restart", "resume", "close"] {
+            reg.reserve(id, relaunch(id));
+            reg.set_foreground(id, generation_of(&reg, id), running("docker"));
+        }
+        reg.mark_exited("exit", generation_of(&reg, "exit"), 0);
+        assert_eq!(foreground(&reg, "exit"), None);
+
+        reg.begin_restart("restart", SessionMode::Plan).unwrap();
+        assert_eq!(foreground(&reg, "restart"), None);
+
+        // A shell that exited without clearing, as a race could leave it, still resumes clean.
+        reg.mark_exited("resume", generation_of(&reg, "resume"), 0);
+        reg.begin_resume("resume").unwrap();
+        assert_eq!(foreground(&reg, "resume"), None);
+
+        reg.close("close");
+        assert_eq!(reg.snapshot().closed[0].foreground, None);
+    }
+
+    #[test]
+    fn foreground_candidates_are_running_unpaused_shell_rows() {
+        let reg = Registry::new();
+        reg.reserve("shell", relaunch("A"));
+        reg.reserve(
+            "agent",
+            Relaunch {
+                agent: Some("claude".into()),
+                ..relaunch("B")
+            },
+        );
+        reg.reserve("paused", relaunch("C"));
+        reg.reserve("exited", relaunch("D"));
+        reg.set_paused("paused", generation_of(&reg, "paused"), true);
+        reg.mark_exited("exited", generation_of(&reg, "exited"), 0);
+        reg.set_foreground("shell", generation_of(&reg, "shell"), running("docker"));
+        let ids: Vec<_> = reg
+            .foreground_candidates()
+            .into_iter()
+            .map(|(id, _, has)| (id, has))
+            .collect();
+        assert_eq!(ids, vec![("shell".to_string(), true)]);
     }
 }

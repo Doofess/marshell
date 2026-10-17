@@ -262,8 +262,15 @@ pub(super) async fn spawn_into_map(
     let exited_tab = tab_id.to_string();
     let on_mark: Option<crate::pty::MarkCallback> = if run.marks {
         let registry = st.0.registry.clone();
+        let wake = st.0.foreground_wake.clone();
         let tab = tab_id.to_string();
-        Some(Box::new(move |mark| registry.mark(&tab, mark)))
+        Some(Box::new(move |mark| {
+            // A command just started: look at what it runs now, not up to a second later.
+            if mark == crate::pty::Mark::Executed {
+                wake.notify_one();
+            }
+            registry.mark(&tab, mark)
+        }))
     } else {
         None
     };

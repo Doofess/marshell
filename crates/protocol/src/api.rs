@@ -146,6 +146,22 @@ pub struct SessionInfo {
     /// True while the core has frozen the process tree. Always false once the session has ended.
     #[serde(default)]
     pub paused: bool,
+    /// The program a plain shell session is running in front of its shell, found by the core.
+    /// None at the prompt, and always None for a session launched as an agent.
+    #[serde(default)]
+    pub foreground: Option<Foreground>,
+}
+
+/// What a shell session is running right now.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct Foreground {
+    /// The program's name, lowercase and without `.exe`, as the agent table knows it.
+    pub program: String,
+    /// The command line the shell reported: its first line, trimmed and capped at 200 chars.
+    pub command_line: Option<String>,
+    /// "claude", "codex" or "antigravity" when the program is a known agent CLI.
+    pub agent: Option<String>,
 }
 
 /// A shell session's command state, folded from OSC 133 marks.
