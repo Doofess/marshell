@@ -1,4 +1,5 @@
 mod events;
+mod files;
 mod foreground;
 pub mod frames;
 mod guard;
@@ -14,7 +15,7 @@ mod tasks;
 use crate::profiles::detect::{Probe, detect_profiles};
 use crate::registry::{Registry, Relaunch};
 use crate::{auth, paths};
-use axum::http::{HeaderValue, Method, header};
+use axum::http::{HeaderName, HeaderValue, Method, header};
 use axum::routing::{get, patch, post, put};
 use axum::{Json, Router};
 use marshell_protocol::api::{Endpoint, Health, LayoutDoc, Platform, Profile, ProfilesDoc, Settings};
@@ -185,7 +186,9 @@ pub fn router(state: AppState) -> Router {
     let cors = CorsLayer::new()
         .allow_origin(AllowOrigin::list(origins))
         .allow_methods([Method::GET, Method::POST, Method::PUT, Method::PATCH, Method::DELETE])
-        .allow_headers([header::AUTHORIZATION, header::CONTENT_TYPE]);
+        .allow_headers([header::AUTHORIZATION, header::CONTENT_TYPE])
+        // The webview is another origin and reads this from a content reply.
+        .expose_headers([HeaderName::from_static("x-modified-ms")]);
     Router::new()
         .route("/v1/health", get(health))
         .route("/v1/profiles", get(profiles::get).put(profiles::put))
@@ -212,6 +215,10 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/sessions/{tab}/continue", post(sessions::cont))
         .route("/v1/sessions/{tab}/input", post(sessions::input))
         .route("/v1/sessions/{tab}/recording", get(sessions::recording))
+        .route("/v1/sessions/{tab}/resolve", post(files::resolve))
+        .route("/v1/sessions/{tab}/files", get(files::list))
+        .route("/v1/files/stat", get(files::stat))
+        .route("/v1/files/content", get(files::content))
         .route("/v1/sessions/{tab}", patch(sessions::rename).delete(sessions::close))
         .route("/v1/shell-panel", post(shell_panel::open))
         .route("/v1/shell-panel/adopt", post(shell_panel::adopt))
