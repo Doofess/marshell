@@ -1,3 +1,4 @@
+import { ContextMenu, type MenuItem } from "../../components/ContextMenu/ContextMenu";
 import { ContextRing } from "../../components/ContextRing/ContextRing";
 import { AuxGlyph, StatusGlyph } from "../../components/StatusGlyph/StatusGlyph";
 import type { ApprovalRequest } from "../approval/types";
@@ -5,9 +6,10 @@ import { Lane } from "../lane/Lane";
 import { laneLayout, pending } from "../lane/laneLayout";
 import { SessionRow, type RowDrag } from "../sidebar/SessionRow";
 import { dragOver, dropOrder, TAB_MIME, type DragState } from "../sidebar/reorder";
+import { menuStillValid } from "../sidebar/rowMenu";
 import type { RowModel } from "../sidebar/types";
 import { groupBounds, groupedOrder, groupRows } from "../sidebar/grouping";
-import { Fragment, useState, type CSSProperties, type ReactNode } from "react";
+import { Fragment, useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import type { Os } from "../../lib/keymap";
 import type { ShellName } from "../terminal/scriptedShell";
 import { shellLayout } from "./shellLayout";
@@ -41,6 +43,8 @@ export function Sidebar({
   onReorder,
   onSelect,
   onReview,
+  menuItems,
+  onMenuRun,
   grouped = false,
 }: {
   rows: RowModel[];
@@ -60,15 +64,27 @@ export function Sidebar({
   onSelect?: (id: string) => void;
   /** Opens the review of a task row's session (its Review changes button). */
   onReview?: (id: string) => void;
+  /** The items of a row's right-click menu. Left out, rows have no menu. */
+  menuItems?: (id: string) => MenuItem[];
+  /** A menu item was chosen: the row's session id and the item's id. */
+  onMenuRun?: (id: string, itemId: string) => void;
   /** Rows under a heading per project (name and count); a drag moves a row only inside its group. Off by default. */
   grouped?: boolean;
 }) {
   const issues = footer?.doctorIssues ?? 0;
   const [drag, setDrag] = useState<DragState | null>(null);
+  // The open menu keeps the items it opened with, so they stay the same objects while it is open.
+  const [menu, setMenu] = useState<{ id: string; anchor: { x: number; y: number }; items: MenuItem[] } | null>(null);
+  const root = useRef<HTMLElement>(null);
   // Grouped, the list is the groups one after another, and a move or a drop stays inside the dragged row's group.
   const groups = grouped ? groupRows(rows) : null;
   const shown = groups ? groupedOrder(groups) : rows;
   const ids = shown.map((r) => r.id);
+  const menuValid = menuStillValid(menu?.id ?? null, ids);
+  // The row closed or went away while its menu was open: the menu goes too, and never acts on it.
+  useEffect(() => {
+    if (menu && !menuValid) setMenu(null);
+  }, [menu, menuValid]);
   const dragFor = (id: string): RowDrag | undefined => {
     if (!onReorder) return undefined;
     return {
@@ -115,6 +131,14 @@ export function Sidebar({
       drag={dragFor(r.id)}
       onSelect={onSelect && (() => onSelect(r.id))}
       onReview={onReview && (() => onReview(r.id))}
+      onMenu={
+        menuItems &&
+        ((anchor) => {
+          // A right-click selects the row first (as Windows does), so the menu acts on the row under it.
+          onSelect?.(r.id);
+          setMenu({ id: r.id, anchor, items: menuItems(r.id) });
+        })
+      }
       rename={r.id === renamingId && onRename && onRenameCancel ? { onCommit: (name) => onRename(r.id, name), onCancel: onRenameCancel } : undefined}
     />
   );
@@ -122,7 +146,7 @@ export function Sidebar({
   const panel = shell ? shellLayout(height, lane.height, shell.collapsed, ROW_HEIGHT, shell.forceOpen) : null;
   const style = { inlineSize: width, ...(panel ? { "--shell-h": `${panel.height}px` } : {}), ...(footer ? {} : { "--footer-h": "0px" }) } as CSSProperties;
   return (
-    <aside className="sidebar" style={style} data-shell={panel ? "" : undefined} aria-label="Sessions and approvals">
+    <aside ref={root} className="sidebar" style={style} data-shell={panel ? "" : undefined} aria-label="Sessions and approvals">
       <Lane requests={requests} sidebarHeight={height} />
       <div className="sidebar__list" role="listbox" aria-label="Sessions">
         {groups
@@ -138,6 +162,22 @@ export function Sidebar({
           : rows.map(row)}
       </div>
       {panel && shell && <ShellPanel height={panel.height} collapsed={panel.collapsed} auto={panel.auto} cwd={shell.cwd} shellName={shell.shellName} os={shell.os} terminal={shell.terminal} failed={shell.failed} onRetry={shell.onRetry} openDisabled={shell.openDisabled} onToggle={shell.onToggle} onOpenInPane={shell.onOpenInPane} />}
+      {menu && menuValid && onMenuRun !== undefined && (
+        <ContextMenu
+          label={`Session ${rows.find((r) => r.id === menu.id)?.name ?? ""}`}
+          items={menu.items}
+          anchor={menu.anchor}
+          onRun={(itemId) => {
+            setMenu(null);
+            onMenuRun(menu.id, itemId);
+          }}
+          onClose={({ refocus }) => {
+            setMenu(null);
+            const n = rows.find((r) => r.id === menu.id)?.number;
+            if (refocus && n !== undefined) root.current?.querySelector<HTMLElement>(`[data-nav-row="${n}"]`)?.focus();
+          }}
+        />
+      )}
       {footer && (
         <footer className="sidebar__footer">
           <ContextRing pct={footer.planPct} />
