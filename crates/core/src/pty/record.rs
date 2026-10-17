@@ -5,7 +5,7 @@ use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::{Receiver, RecvTimeoutError, SyncSender, sync_channel};
+use std::sync::mpsc::{Receiver, RecvTimeoutError, SyncSender, TrySendError, sync_channel};
 use std::time::{Duration, Instant};
 
 /// What the first line of a recording says about the session.
@@ -85,6 +85,11 @@ pub const MAX_RECORDING_BYTES: u64 = 256 * 1024 * 1024;
 
 const LIMIT_MARKER: &str = "Recording stopped: it reached the size limit.";
 
+const BEHIND_MARKER: &str = "Recording stopped: it fell behind.";
+
+/// Events waiting for the writer. A full queue means the disk is not keeping up.
+const QUEUE: usize = 1024;
+
 enum Event {
     Output(f64, Vec<u8>),
     Resize(f64, u16, u16),
@@ -99,6 +104,8 @@ pub struct Recorder {
     tx: SyncSender<Event>,
     /// Set by the writer when an I/O error stopped it, or by a sender that found the writer gone.
     failed: Arc<AtomicBool>,
+    /// Set by a sender that found the queue full. Nothing more is sent; the writer ends the file with a marker.
+    behind: Arc<AtomicBool>,
     #[cfg(test)]
     thread: Option<std::thread::JoinHandle<()>>,
 }
@@ -109,6 +116,17 @@ impl Recorder {
     }
 
     pub fn start_with_limit(path: PathBuf, header: CastHeader, limit: u64) -> anyhow::Result<Recorder> {
+        Self::start_inner(path, header, limit, QUEUE, None)
+    }
+
+    /// `gate`, in tests only, holds the writer back until it receives, as a disk that hangs would.
+    fn start_inner(
+        path: PathBuf,
+        header: CastHeader,
+        limit: u64,
+        queue: usize,
+        gate: Option<Receiver<()>>,
+    ) -> anyhow::Result<Recorder> {
         if let Some(dir) = path.parent() {
             create_private_dir(dir)?;
         }
@@ -123,13 +141,15 @@ impl Recorder {
         let head = header_line(&header);
         file.write_all(head.as_bytes())?;
         file.flush()?;
-        let (tx, rx) = sync_channel::<Event>(1024);
+        let (tx, rx) = sync_channel::<Event>(queue);
         let failed = Arc::new(AtomicBool::new(false));
+        let behind = Arc::new(AtomicBool::new(false));
         let writer = Writer {
             file,
             written: head.len() as u64,
             limit,
             limited: false,
+            behind: behind.clone(),
             last_t: 0.0,
             encoder: CastEncoder::default(),
         };
@@ -140,6 +160,9 @@ impl Recorder {
         let thread_failed = failed.clone();
         let thread_path = path.clone();
         let _handle = std::thread::Builder::new().name(format!("rec-{stem}")).spawn(move || {
+            if let Some(gate) = gate {
+                let _ = gate.recv();
+            }
             if let Err(e) = writer.run(rx) {
                 thread_failed.store(true, Ordering::SeqCst);
                 tracing::warn!("recording {} stopped: {e}", thread_path.display());
@@ -150,6 +173,7 @@ impl Recorder {
             started: Instant::now(),
             tx,
             failed,
+            behind,
             #[cfg(test)]
             thread: Some(_handle),
         })
@@ -180,13 +204,16 @@ impl Recorder {
         self.started.elapsed().as_secs_f64()
     }
 
-    /// Blocks while the channel is full, as the reader already does for backpressure.
+    /// Never waits: a disk that hangs must not hold up the session. A full queue stops the recording
+    /// rather than dropping single events, which would leave a gap in the replay.
     fn send(&self, event: Event) {
-        if self.failed.load(Ordering::Relaxed) {
+        if self.failed.load(Ordering::Relaxed) || self.behind.load(Ordering::Relaxed) {
             return;
         }
-        if self.tx.send(event).is_err() {
-            self.failed.store(true, Ordering::SeqCst);
+        match self.tx.try_send(event) {
+            Ok(()) => {}
+            Err(TrySendError::Full(_)) => self.behind.store(true, Ordering::SeqCst),
+            Err(TrySendError::Disconnected(_)) => self.failed.store(true, Ordering::SeqCst),
         }
     }
 
@@ -206,6 +233,7 @@ struct Writer {
     written: u64,
     limit: u64,
     limited: bool,
+    behind: Arc<AtomicBool>,
     /// Events come from more than one thread; a time never goes backwards in the file.
     last_t: f64,
     encoder: CastEncoder,
@@ -217,10 +245,26 @@ impl Writer {
         loop {
             match rx.recv_timeout(Duration::from_secs(1)) {
                 Ok(event) => self.write(event)?,
-                Err(RecvTimeoutError::Timeout) => self.file.flush()?,
-                Err(RecvTimeoutError::Disconnected) => return self.file.flush(),
+                Err(RecvTimeoutError::Timeout) => {
+                    self.stop_if_behind()?;
+                    self.file.flush()?
+                }
+                Err(RecvTimeoutError::Disconnected) => {
+                    self.stop_if_behind()?;
+                    return self.file.flush();
+                }
             }
         }
+    }
+
+    /// Once the sender gave up, the queue holds only what came before; when it is empty the file ends here.
+    fn stop_if_behind(&mut self) -> std::io::Result<()> {
+        if self.limited || !self.behind.load(Ordering::SeqCst) {
+            return Ok(());
+        }
+        self.limited = true;
+        self.file
+            .write_all(CastEncoder::marker(self.last_t, BEHIND_MARKER).as_bytes())
     }
 
     fn write(&mut self, event: Event) -> std::io::Result<()> {
@@ -371,6 +415,35 @@ mod tests {
         assert_eq!(v[1], "m");
         assert_eq!(v[2], "Recording stopped: it reached the size limit.");
         assert!(text.len() <= 200 + last.len() + 1, "{} bytes", text.len());
+    }
+
+    #[test]
+    fn a_stalled_disk_never_blocks_the_session() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("t-3.cast");
+        // The writer waits on `gate` before reading anything: a disk that hangs without failing.
+        let (open, gate) = sync_channel::<()>(0);
+        let rec = Recorder::start_inner(path.clone(), header(), MAX_RECORDING_BYTES, 4, Some(gate)).unwrap();
+        let (done_tx, done) = sync_channel::<Recorder>(1);
+        std::thread::spawn(move || {
+            for _ in 0..100 {
+                rec.output(b"y\r\n");
+            }
+            done_tx.send(rec).unwrap();
+        });
+        let rec = done
+            .recv_timeout(Duration::from_secs(5))
+            .expect("output blocked behind a stalled recording");
+        assert!(rec.is_recording(), "the file is still valid, so its path stays offered");
+        open.send(()).unwrap();
+        rec.finish();
+        let text = std::fs::read_to_string(&path).unwrap();
+        let lines: Vec<&str> = text.lines().collect();
+        let v: serde_json::Value = serde_json::from_str(lines.last().unwrap()).unwrap();
+        assert_eq!(v[1], "m");
+        assert_eq!(v[2], "Recording stopped: it fell behind.");
+        // Only the events queued before the drop are written: no gap inside the replay.
+        assert_eq!(lines.len(), 1 + 4 + 1, "{text}");
     }
 
     #[test]
