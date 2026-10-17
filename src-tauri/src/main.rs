@@ -93,6 +93,12 @@ fn disable_browser_shortcuts(window: &tauri::WebviewWindow) {
     let _ = window;
 }
 
+/// What the window keeps between runs: everything but the frame, which the config sets (none on Windows, where the
+/// app draws its own title bar). Restoring a frame saved before that would draw the system's bar over the app's.
+fn window_state_flags() -> tauri_plugin_window_state::StateFlags {
+    tauri_plugin_window_state::StateFlags::all() - tauri_plugin_window_state::StateFlags::DECORATIONS
+}
+
 fn main() {
     // First, so every process Marshell starts dies with it, even after a crash (Windows only).
     if let Err(e) = marshell_core::job::tie_children_to_app() {
@@ -107,7 +113,11 @@ fn main() {
                 let _ = w.set_focus();
             }
         }))
-        .plugin(tauri_plugin_window_state::Builder::default().build())
+        .plugin(
+            tauri_plugin_window_state::Builder::default()
+                .with_state_flags(window_state_flags())
+                .build(),
+        )
         // Opens a web link in the person's browser, only after the preview's confirm; the capability limits it to http(s).
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
@@ -149,5 +159,13 @@ mod tests {
     fn ctrl_shift_i_cannot_open_devtools() {
         let caps = include_str!("../capabilities/default.json");
         assert!(caps.contains("\"core:webview:deny-internal-toggle-devtools\""));
+    }
+
+    /// A window saved while it still had the system frame must not get it back: the config decides the frame.
+    #[test]
+    fn saved_window_state_leaves_the_frame_to_the_config() {
+        use tauri_plugin_window_state::StateFlags;
+        assert!(!super::window_state_flags().contains(StateFlags::DECORATIONS));
+        assert!(super::window_state_flags().contains(StateFlags::SIZE | StateFlags::POSITION | StateFlags::MAXIMIZED));
     }
 }

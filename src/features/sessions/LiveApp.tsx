@@ -5,6 +5,7 @@ import type { Task } from "../../generated/Task";
 import type { TaskChanges } from "../../generated/TaskChanges";
 import { ApiError } from "../../lib/api/client";
 import { sessions } from "../../lib/api/sessions";
+import { close as closeWindow, minimize as minimizeWindow, onMaximizedChange, toggleMaximize } from "../../lib/window/appWindow";
 import { copyRecordingPath } from "./recording";
 import { inMenu } from "../../components/ContextMenu/menuKeys";
 import { focusAfterMenu, menuFacts, modeOfItem } from "./sessionMenuRun";
@@ -83,6 +84,8 @@ function useElementSize() {
 /** The real app: the main window on the core's live session list, and the launcher that adds to it. */
 export function LiveApp() {
   const { endpoint, profiles, rows, infos, selectedId, loaded, select, reloadProfiles, error } = useSessions();
+  const [maximized, setMaximized] = useState(false);
+  useEffect(() => onMaximizedChange(setMaximized), []);
   // The window's saved layout: which sessions are in which pane. `undefined` until the list has answered, so an empty first list is never "everything closed".
   const [view, dispatch, , settled] = useViewState(endpoint, loaded ? infos.map((i) => i.tab_id) : undefined);
   const viewRef = useRef(view);
@@ -891,6 +894,7 @@ export function LiveApp() {
           visibleIds={previewPane && focusedId ? [focusedId] : visibleIds}
           preview={previewPane}
           os={os}
+          windowControls={{ maximized, onMinimize: () => void minimizeWindow(), onToggleMaximize: () => void toggleMaximize(), onClose: () => void closeWindow() }}
           requests={[]}
           ports={[]}
           footer={null}

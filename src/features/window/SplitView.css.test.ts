@@ -12,10 +12,44 @@ describe("SplitView.css", () => {
     expect(rule('.pane[data-active="false"] .pane__header:not([data-needs="true"]) > :not(.chip)')).toContain("opacity: 0.6");
     expect(css).not.toMatch(/\.pane[^{]*\.scripted-terminal[^{]*\{[^}]*opacity/);
   });
-  it("marks the active pane with a 2 px bar under its header, in the focus colour (the vendor's, with its own 3:1 check)", () => {
-    const r = rule('.pane[data-active="true"] .pane__header');
-    expect(r).toContain("2px");
-    expect(r).toContain("var(--focus");
+  it("rings the focused pane with a 1 px focus inset and a 4 px 14% halo, on an overlay that is invisible on every other pane", () => {
+    const base = rule(".pane::after");
+    expect(base).toContain('content: ""');
+    expect(base).toContain("pointer-events: none");
+    expect(base).toContain("border-radius: var(--radius)");
+    expect(base).toContain("opacity: 0");
+    expect(base).toContain("opacity 120ms ease-out");
+    // The ring is drawn on every pane of a split and only its opacity follows focus, so it fades out as well as in.
+    const ring = rule(".pane[data-split]::after");
+    expect(ring).toContain("inset 0 0 0 1px var(--focus, var(--accent))");
+    expect(ring).toContain("inset 0 0 0 4px color-mix(in oklch, var(--focus, var(--accent)) 14%, transparent)");
+    const on = rule('.pane[data-active="true"][data-split]::after');
+    expect(on).toContain("opacity: 1");
+    expect(on).not.toContain("box-shadow");
+  });
+  it("keeps the ring above the pane's own layers (xterm up to z 11) without letting it past the pane", () => {
+    expect(Number(/z-index:\s*(\d+)/.exec(rule(".pane::after"))?.[1])).toBeGreaterThan(11);
+    expect(rule(".pane")).toContain("isolation: isolate");
+  });
+  it("raises the focused header with the fill, with no bar under any header", () => {
+    expect(rule('.pane[data-active="true"] .pane__header')).toContain("background-color: var(--fill)");
+    expect(css).not.toContain("border-block-end");
+    expect(rule(".pane__header")).toContain("transition: background-color 120ms ease-out");
+  });
+  it("lays the danger and needs tints over the fill instead of replacing it", () => {
+    for (const s of ['.pane__header[data-danger]', '.pane__header[data-needs="true"]']) {
+      expect(rule(s)).toMatch(/background-image:\s*linear-gradient\(/);
+      expect(rule(s)).not.toMatch(/background:/);
+    }
+  });
+  it("turns the crossfade off under reduced motion", () => {
+    const m = css.slice(css.indexOf("@media (prefers-reduced-motion: reduce)"));
+    expect(m).toMatch(/\.pane::after[\s\S]*?transition: none/);
+    expect(m).toMatch(/\.pane__header[\s\S]*?transition: none/);
+  });
+  it("outlines the focused pane in Highlight in forced colours, where shadows vanish", () => {
+    const m = css.slice(css.indexOf("@media (forced-colors: active)"));
+    expect(m).toMatch(/\.pane\[data-active="true"\]\[data-split\]::after\s*\{[^}]*outline: 2px solid Highlight;[^}]*outline-offset: -2px/);
   });
   it("makes a divider one pixel of hairline with an 8 px hit area that overhangs the panes", () => {
     expect(rule(".split__handle")).toContain("--hit: 8px");

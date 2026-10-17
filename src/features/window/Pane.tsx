@@ -33,6 +33,8 @@ const CLOSE = "M2 2l6 6M8 2L2 8";
 export type PaneProps = {
   row: RowModel;
   active: boolean;
+  /** True when the view shows two or more panes, so the focused one carries the ring (`data-split`). */
+  split?: boolean;
   /** The pane's slot in the view, which the keyboard cursor reaches it by (`data-nav-pane`). */
   navIndex?: number;
   setting: TerminalThemeSetting;
@@ -70,7 +72,7 @@ export type PaneProps = {
  * the status glyph (the vendor mark moving, while working), the name, the project and, only when it applies,
  * how tight the pane is. A pane that needs you never recedes with the inactive headers.
  */
-export function Pane({ row, active, navIndex, setting, style, cells, zoomedOf, othersRunning, runningElsewhere, value, composer = true, os = "windows", renderTerminal, onFocus, onZoom, onRemove, bar }: PaneProps) {
+export function Pane({ row, active, split, navIndex, setting, style, cells, zoomedOf, othersRunning, runningElsewhere, value, composer = true, os = "windows", renderTerminal, onFocus, onZoom, onRemove, bar }: PaneProps) {
   const needs = needsYou(row);
   // A manual CLI is a plain terminal: no prompt line of ours, and its rows go to the terminal.
   const line = composer && hasPromptLine(row);
@@ -82,6 +84,7 @@ export function Pane({ row, active, navIndex, setting, style, cells, zoomedOf, o
     <section
       className="pane"
       data-active={active}
+      data-split={split || undefined}
       data-nav-pane={navIndex}
       data-agent={row.agent}
       data-plain={!hasPromptLine(row) || undefined}
@@ -136,10 +139,11 @@ export function Pane({ row, active, navIndex, setting, style, cells, zoomedOf, o
 }
 
 /** A slot with no session yet: pick one that is not on screen, or start a new one. */
-export function EmptyPane({ choices, active, navIndex, style, os = "windows", onFocus, onRemove, onPick }: { choices: RowModel[]; active: boolean; navIndex?: number; style?: CSSProperties; os?: Os; onFocus?: () => void; onRemove?: () => void; onPick?: (tabId: string) => void }) {
+export function EmptyPane({ choices, active, split, navIndex, style, os = "windows", onFocus, onRemove, onPick }: { choices: RowModel[]; active: boolean; split?: boolean; navIndex?: number; style?: CSSProperties; os?: Os; onFocus?: () => void; onRemove?: () => void; onPick?: (tabId: string) => void }) {
   const keys = shortcutLabel(commandById("launcher").binding!, os);
   return (
-    <section className="pane pane--empty" data-active={active} data-nav-pane={navIndex} style={style} aria-label="Empty pane" onPointerDown={onFocus} onFocus={onFocus}>
+    <section className="pane pane--empty" data-active={active}
+      data-split={split || undefined} data-nav-pane={navIndex} style={style} aria-label="Empty pane" onPointerDown={onFocus} onFocus={onFocus}>
       <header className="pane__header">
         <span className="pane__name">Empty pane</span>
         <span className="pane__spacer" />

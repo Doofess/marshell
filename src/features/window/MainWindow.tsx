@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type CSSProperties, type KeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import type { MenuItem } from "../../components/ContextMenu/ContextMenu";
+import { setTitle as setWindowTitle } from "../../lib/window/appWindow";
 import { Logo } from "../../components/Logo/Logo";
 import { Wordmark } from "../../components/Logo/Wordmark";
 import { StatusGlyph } from "../../components/StatusGlyph/StatusGlyph";
@@ -60,6 +61,8 @@ export type MainWindowProps = {
   /** Every session on screen (the panes' sessions). Left out, only `selectedId` is marked. */
   visibleIds?: readonly string[];
   os?: Os;
+  /** Wires the Windows minimize, maximize and close buttons. Left out they are drawn but do nothing (stories). */
+  windowControls?: { maximized: boolean; onMinimize(): void; onToggleMaximize(): void; onClose(): void };
   terminalSetting?: TerminalThemeSetting;
   /** Shows the session header in focus mode, as hovering the top edge does (stories). */
   headerPeek?: boolean;
@@ -188,6 +191,7 @@ export function MainWindow({
   selectedId = "working",
   visibleIds,
   os = "windows",
+  windowControls,
   terminalSetting = "follow-app",
   headerPeek: headerPeekProp = false,
   drawer = false,
@@ -290,6 +294,8 @@ export function MainWindow({
   const title = windowTitle(active);
   useEffect(() => {
     if (typeof document !== "undefined") document.title = title;
+    // Tauri does not pass document.title on to the window, so the title bar and the taskbar are told as well (a no-op outside the app).
+    void setWindowTitle(title).catch(() => {});
   }, [title]);
 
   const shownCount = shown.length;
@@ -381,8 +387,10 @@ export function MainWindow({
   return (
     <div className="window" style={{ inlineSize: width, blockSize: height, "--side-w": `${sideW}px` } as CSSProperties} data-mode={mode} data-layout={layout} data-title={title}>
       <SessionAnnouncer row={active} needsYou={waiting} notice={notice} />
-      <header className="window__bar">
-        <div className="window__bar-side">
+      {/* data-tauri-drag-region: a bare attribute moves the window only when the press lands on that very element, so buttons and
+          the text inside never start a drag; "deep" (the session header's area) also takes its text, while buttons still refuse. */}
+      <header className="window__bar" data-tauri-drag-region>
+        <div className="window__bar-side" data-tauri-drag-region>
           {/* In focus mode this column has no width: its buttons are not rendered, so keyboard focus can never land on something nobody sees. */}
           {mode !== "focus" && (
             <button type="button" className="window__brand" aria-label="Marshell menu" aria-haspopup="menu">
@@ -397,13 +405,13 @@ export function MainWindow({
             </button>
           )}
         </div>
-        <div className="window__bar-main" onPointerLeave={mode === "focus" ? () => setPeeking(false) : undefined}>
+        <div className="window__bar-main" data-tauri-drag-region="deep" onPointerLeave={mode === "focus" ? () => setPeeking(false) : undefined}>
           {topBar ?? (showHeader && !manyPanes && active && <SessionHeader row={active} ports={ports} onMode={onModeMenu && ((anchor) => onModeMenu(active.id, anchor))} />)}
           {/* Focus mode: the pointer at the top edge brings the header up, and leaving the bar puts it away. A pointer affordance only; the keyboard leaves focus mode. */}
           {mode === "focus" && !showHeader && !manyPanes && <div className="window__peek" aria-hidden="true" onPointerEnter={() => setPeeking(true)} />}
         </div>
-        <div className="window__bar-end">
-          <div ref={layoutRoot} className="window__layout" onKeyDown={layoutKeys}>
+        <div className="window__bar-end" data-tauri-drag-region>
+          <div ref={layoutRoot} className="window__layout" data-tauri-drag-region onKeyDown={layoutKeys}>
             <button
               ref={layoutButton}
               type="button"
@@ -433,17 +441,19 @@ export function MainWindow({
               </div>
             )}
           </div>
-          <div className="window__controls">
-            <button type="button" className="window__control" aria-label="Minimize">
-              {icon("M0 5h10")}
-            </button>
-            <button type="button" className="window__control" aria-label="Maximize">
-              {icon("M0.5 0.5h9v9h-9z")}
-            </button>
-            <button type="button" className="window__control window__control--close" aria-label="Close">
-              {icon("M0 0l10 10M10 0L0 10")}
-            </button>
-          </div>
+          {os === "windows" && (
+            <div className="window__controls">
+              <button type="button" className="window__control" aria-label="Minimize" onClick={windowControls?.onMinimize}>
+                {icon("M0 5h10")}
+              </button>
+              <button type="button" className="window__control" aria-label={windowControls?.maximized ? "Restore" : "Maximize"} onClick={windowControls?.onToggleMaximize}>
+                {icon(windowControls?.maximized ? "M2.5 2.5v-2h7v7h-2M0.5 2.5h7v7h-7z" : "M0.5 0.5h9v9h-9z")}
+              </button>
+              <button type="button" className="window__control window__control--close" aria-label="Close" onClick={windowControls?.onClose}>
+                {icon("M0 0l10 10M10 0L0 10")}
+              </button>
+            </div>
+          )}
         </div>
       </header>
 

@@ -1,4 +1,20 @@
 {
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "Marshell",
+        "width": 1200,
+        "height": 780,
+        "minWidth": 720,
+        "minHeight": 480,
+        "transparent": false,
+        "dragDropEnabled": false,
+        "decorations": false,
+        "shadow": true
+      }
+    ]
+  },
   "bundle": {
     "resources": {
       "resources/conpty/x64/conpty.dll": "conpty.dll",
