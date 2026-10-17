@@ -31,12 +31,19 @@
   box-shadow: inset 0 0 0 100vmax var(--selected);
 }
 
-/* Every visible row has the fill; the focused pane's row also gets a bar on the inline end (the inline start is the brand stripe). */
+/*
+ * Every visible row has the fill; the focused pane's row also gets a bar on the inline end (the inline start is the brand
+ * stripe). It is a short pill set in from the edge: a full-height bar would sit against the focused pane's ring across the
+ * seam and read as one thick, uneven line.
+ */
 .session-row__bar {
   position: absolute;
   inset-block: 0;
-  inset-inline-end: 0;
+  inset-inline-end: var(--space-1);
   inline-size: 3px;
+  block-size: 16px;
+  margin-block: auto;
+  border-radius: 1.5px;
   background: var(--accent);
   pointer-events: none;
 }

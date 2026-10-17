@@ -56,6 +56,13 @@ describe("SessionRow.css (blocked rows)", () => {
     expect(r).toContain("var(--accent)");
     expect(css).not.toMatch(/(^|[\s;{])(left|right)\s*:/m);
   });
+  it("makes that bar a short rounded pill set in from the row's edge, so it never runs into the focused pane's ring across the seam", () => {
+    const r = rule(".session-row__bar");
+    expect(r).toMatch(/inset-inline-end:\s*(?!0[;\s])[^;]+/);
+    expect(r).toContain("block-size: 16px");
+    expect(r).toContain("margin-block: auto");
+    expect(r).toMatch(/border-radius:\s*(?!0[;\s])[^;]+/);
+  });
   it("tells visible and focused rows apart by outline shape in forced colours", () => {
     const fc = css.slice(css.indexOf("@media (forced-colors: active)"));
     const r = (sel: string) => {
