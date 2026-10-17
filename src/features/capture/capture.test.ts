@@ -1,6 +1,31 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { RowModel } from "../sidebar/types";
-import { cancelAfterFocus, captureFailure, captureRefusal, watchFocusCancel } from "./capture";
+import { cancelAfterFocus, captureFailure, captureRefusal, imageBlob, watchFocusCancel } from "./capture";
+
+const buffer = (...bytes: number[]): ArrayBuffer => new Uint8Array(bytes).buffer;
+
+describe("imageBlob", () => {
+  it("is null for an empty buffer", () => {
+    expect(imageBlob(new ArrayBuffer(0))).toBeNull();
+  });
+
+  it("types a buffer that starts with the PNG signature as image/png", () => {
+    const blob = imageBlob(buffer(0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a));
+    expect(blob?.type).toBe("image/png");
+    expect(blob?.size).toBe(6);
+  });
+
+  it("types a buffer that starts with BM as image/bmp", () => {
+    const blob = imageBlob(buffer(0x42, 0x4d, 1, 2, 3));
+    expect(blob?.type).toBe("image/bmp");
+    expect(blob?.size).toBe(5);
+  });
+
+  it("is null for bytes that are neither", () => {
+    expect(imageBlob(buffer(0x47, 0x49, 0x46, 0x38))).toBeNull();
+    expect(imageBlob(buffer(0x42))).toBeNull();
+  });
+});
 
 describe("cancelAfterFocus", () => {
   it("waits until the window has had focus back for 1500 ms", () => {

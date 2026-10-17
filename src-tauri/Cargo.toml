@@ -15,10 +15,10 @@ tauri-plugin-opener = "2"
 tauri-plugin-single-instance = "2"
 tauri-plugin-window-state = "2"
 
-# Reaches the WebView2 settings Tauri does not expose (main.rs: the browser's own shortcuts, the clipboard-read permission).
+# Reaches the WebView2 settings Tauri does not expose (main.rs: the browser's own shortcuts).
 [target."cfg(windows)".dependencies]
 webview2-com = "0.39.1"
 windows-core = "0.62"
-# capture.rs: the clipboard's change counter and which formats it holds (a polling timer; see the ruling there).
+# capture.rs: the clipboard's change counter, its formats and the image's memory (a polling timer; see the ruling there).
 tokio = { version = "1", features = ["time"] }
-windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_DataExchange"] }
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_DataExchange", "Win32_System_Memory"] }

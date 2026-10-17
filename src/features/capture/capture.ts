@@ -17,13 +17,19 @@ export const captureScreenRegion = (): Promise<boolean> => invoke<boolean>("capt
 /** Ends the running capture early. With none running it does nothing. */
 export const cancelCapture = (): Promise<void> => invoke<void>("cancel_capture");
 
-/** The first image on the clipboard, or null when it holds none. */
-export async function readClipboardImage(): Promise<Blob | null> {
-  for (const item of await navigator.clipboard.read()) {
-    const type = item.types.find((t) => t.startsWith("image/"));
-    if (type !== undefined) return item.getType(type);
+/** The clipboard image's bytes as a typed Blob: PNG by its signature, BMP by its "BM"; null for no bytes or any other data. */
+export function imageBlob(bytes: ArrayBuffer): Blob | null {
+  const head = new Uint8Array(bytes, 0, Math.min(4, bytes.byteLength));
+  if (head.length >= 4 && head[0] === 0x89 && head[1] === 0x50 && head[2] === 0x4e && head[3] === 0x47) {
+    return new Blob([bytes], { type: "image/png" });
   }
+  if (head.length >= 2 && head[0] === 0x42 && head[1] === 0x4d) return new Blob([bytes], { type: "image/bmp" });
   return null;
+}
+
+/** The image on the clipboard, read in Rust (the page has no focus while the snipping overlay is up), or null when there is none. */
+export async function readClipboardImage(): Promise<Blob | null> {
+  return imageBlob(await invoke<ArrayBuffer>("read_clipboard_image"));
 }
 
 /** A failure as a sentence: Tauri rejects with the command's own text, the browser with an Error. */
