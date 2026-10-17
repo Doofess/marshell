@@ -9,6 +9,7 @@ import { ImageView } from "./ImageView";
 import { kindOf, languageOf, splitPath } from "./kinds";
 import type { LinkTarget } from "./links";
 import { MarkdownView } from "./MarkdownView";
+import { PdfView } from "./pdf/PdfView";
 import type { OpenPreview } from "./PreviewContext";
 import type { PreviewEntry } from "./previewState";
 import { usePreviewFile, type FileState } from "./usePreviewFile";
@@ -60,11 +61,12 @@ type BodyProps = {
   entry: PreviewEntry;
   file: FileState;
   onImageSize: (url: string, w: number, h: number) => void;
+  onPages: (count: number) => void;
   onLink: (link: Outbound) => void;
   onKey: (e: Key) => void;
 };
 
-function Body({ entry, file, onImageSize, onLink, onKey }: BodyProps) {
+function Body({ entry, file, onImageSize, onPages, onLink, onKey }: BodyProps) {
   const { name } = splitPath(entry.path);
   switch (file.phase) {
     case "loading":
@@ -82,10 +84,10 @@ function Body({ entry, file, onImageSize, onLink, onKey }: BodyProps) {
     case "binary":
       return <p className="preview__message">This file isn't text.</p>;
     case "pdf":
-      return <p className="preview__message">PDF preview comes in a later update.</p>;
+      return <PdfView bytes={file.bytes} version={file.version} name={name} onPages={onPages} />;
     case "deleted":
       // With something that was shown, the content stays and the notice sits above it (see PreviewPane); this is the plain case.
-      return file.last ? <Body entry={entry} file={file.last} onImageSize={onImageSize} onLink={onLink} onKey={onKey} /> : <p className="preview__message">This file was deleted.</p>;
+      return file.last ? <Body entry={entry} file={file.last} onImageSize={onImageSize} onPages={onPages} onLink={onLink} onKey={onKey} /> : <p className="preview__message">This file was deleted.</p>;
     case "error":
       return <p className="preview__message">This file can't be previewed.</p>;
   }
@@ -105,7 +107,13 @@ export function PreviewPane({ entry, file, updated, theme, os, canBack, canForwa
   // A deleted file keeps showing what it last was; the notice below says so.
   const shown = file.phase === "deleted" && file.last ? file.last : file;
   const gone = file.phase === "deleted" && file.last !== undefined;
-  const dims = shown.phase === "image" && size?.url === shown.url ? `${size.w} × ${size.h}` : null;
+  const [pages, setPages] = useState<{ path: string; count: number } | null>(null);
+  const dims =
+    shown.phase === "image" && size?.url === shown.url
+      ? `${size.w} × ${size.h}`
+      : shown.phase === "pdf" && pages?.path === entry.path
+        ? `${pages.count} ${pages.count === 1 ? "page" : "pages"}`
+        : null;
 
   // A web link waits here for the person's answer; moving to another file drops the question.
   const [web, setWeb] = useState<string | null>(null);
@@ -189,7 +197,7 @@ export function PreviewPane({ entry, file, updated, theme, os, canBack, canForwa
             This file was deleted.
           </div>
         )}
-        <Body entry={entry} file={file} onImageSize={(url, w, h) => setSize({ url, w, h })} onLink={follow} onKey={keys} />
+        <Body entry={entry} file={file} onImageSize={(url, w, h) => setSize({ url, w, h })} onPages={(count) => setPages({ path: entry.path, count })} onLink={follow} onKey={keys} />
       </div>
     </section>
   );

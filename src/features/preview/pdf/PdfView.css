@@ -1,0 +1,174 @@
+/*
+ * A PDF in the preview: a toolbar that stays at the top of the scrolling body, then the pages one under another on the
+ * body's own paper. A page is always white, as printed; the text layer above it is invisible and only takes the selection.
+ */
+.pdf {
+  display: grid;
+  min-inline-size: 0;
+}
+
+.pdf__bar {
+  position: sticky;
+  inset-block-start: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  block-size: 28px;
+  padding-inline: var(--space-2);
+  border-block-end: 1px solid var(--hairline);
+  background: var(--bg-raised);
+  color: var(--text-2);
+  font-size: var(--text-12);
+  white-space: nowrap;
+}
+.pdf__spacer {
+  flex: 1 1 0;
+}
+.pdf__pages {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+.pdf__field {
+  inline-size: 5ch;
+  block-size: 20px;
+  padding-inline: var(--space-1);
+  border-radius: var(--radius);
+  background: var(--fill);
+  color: var(--text-1);
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+.pdf__field:focus-visible,
+.pdf__button:focus-visible {
+  outline: 2px solid var(--focus, var(--accent));
+  outline-offset: -2px;
+}
+.pdf__percent {
+  min-inline-size: 5ch;
+  color: var(--text-1);
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+.pdf__button {
+  block-size: 20px;
+  padding-inline: var(--space-2);
+  border: 0;
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--text-2);
+  font: inherit;
+}
+.pdf__button:disabled,
+.pdf__field:disabled {
+  opacity: 0.4;
+}
+.pdf__button[aria-pressed="true"] {
+  background: var(--fill-strong);
+  color: var(--text-1);
+}
+@media (hover: hover) and (pointer: fine) {
+  .pdf__button:not(:disabled):not([aria-pressed="true"]):hover {
+    background: var(--hover);
+    color: var(--text-1);
+  }
+}
+
+/* The pages are centred in the column; one wider than the body scrolls sideways with it. */
+.pdf__pagelist {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  inline-size: max-content;
+  min-inline-size: 100%;
+  padding: var(--space-3);
+  gap: var(--space-3);
+  background: color-mix(in srgb, var(--ink) 7%, var(--paper));
+}
+.pdf__page {
+  position: relative;
+  flex: none;
+  margin-inline: auto;
+  background: Canvas;
+  color-scheme: light;
+}
+.pdf__sheet {
+  position: absolute;
+  inset: 0;
+}
+.pdf__sheet canvas {
+  display: block;
+}
+
+/*
+ * The text layer: spans that pdf.js places and scales over the canvas, invisible until selected.
+ * Adapted from pdfjs-dist/web/pdf_viewer.css, Copyright 2014 Mozilla Foundation, licensed under the Apache License,
+ * Version 2.0 (http://www.apache.org/licenses/LICENSE-2.0); reduced to the rules a text layer needs here.
+ */
+.textLayer {
+  position: absolute;
+  inset: 0;
+  overflow: clip;
+  opacity: 1;
+  line-height: 1;
+  text-align: initial;
+  text-size-adjust: none;
+  forced-color-adjust: none;
+  transform-origin: 0 0;
+  caret-color: CanvasText;
+  z-index: 0;
+  --min-font-size: 1;
+  --text-scale-factor: calc(var(--total-scale-factor) * var(--min-font-size));
+  --min-font-size-inv: calc(1 / var(--min-font-size));
+}
+.textLayer :is(span, br) {
+  position: absolute;
+  color: transparent;
+  white-space: pre;
+  cursor: text;
+  transform-origin: 0% 0%;
+  user-select: text;
+}
+.textLayer > :not(.markedContent),
+.textLayer .markedContent span:not(.markedContent) {
+  z-index: 1;
+  --font-height: 0;
+  font-size: calc(var(--text-scale-factor) * var(--font-height));
+  --scale-x: 1;
+  --rotate: 0deg;
+  transform: rotate(var(--rotate)) scaleX(var(--scale-x)) scale(var(--min-font-size-inv));
+}
+.textLayer .markedContent {
+  display: contents;
+}
+.textLayer span[role="img"] {
+  user-select: none;
+  cursor: default;
+}
+.textLayer ::selection {
+  background: color-mix(in srgb, var(--accent) 40%, transparent);
+  color: transparent;
+}
+.textLayer .endOfContent {
+  display: block;
+  position: absolute;
+  inset: 100% 0 0;
+  z-index: 0;
+  cursor: default;
+  user-select: none;
+}
+.textLayer.selecting .endOfContent {
+  top: 0;
+}
+
+@media (forced-colors: active) {
+  .pdf__button[aria-pressed="true"] {
+    outline: 1px solid ButtonText;
+    outline-offset: -1px;
+  }
+  .pdf__field {
+    outline: 1px solid ButtonText;
+    outline-offset: -1px;
+  }
+}

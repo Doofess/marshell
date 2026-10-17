@@ -62,8 +62,10 @@ describe("PreviewPane", () => {
   it("says a file isn't text", () => {
     expect(html({ phase: "binary" })).toContain("This file isn&#x27;t text.");
   });
-  it("shows the PDF placeholder", () => {
-    expect(html({ phase: "pdf", bytes: new ArrayBuffer(0), version: 0 })).toContain("PDF preview comes in a later update.");
+  it("shows a PDF in the PDF view, not the old placeholder", () => {
+    const out = html({ phase: "pdf", bytes: new ArrayBuffer(8), version: 0 }, { entry: { path: "C:\\docs\\a.pdf", view: "rendered" } });
+    expect(out).not.toContain("later update");
+    expect(out).toContain('data-kind="pdf"');
   });
   it("says a file was deleted", () => {
     expect(html({ phase: "deleted" })).toContain("This file was deleted.");
