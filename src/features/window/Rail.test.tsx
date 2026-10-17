@@ -6,12 +6,13 @@ import { Rail } from "./Rail";
 const rows = ["needs-permission", "working", "done-unseen"].map((id) => FIXTURES.find((f) => f.id === id)!);
 
 describe("Rail", () => {
-  it("has one button per session with the monogram and the status glyph", () => {
+  it("has one button per session with its vendor mark and a small status glyph, and no letters", () => {
     const h = renderToStaticMarkup(<Rail rows={rows} needsYou={1} />);
-    expect((h.match(/class="rail__item[ "]/g) ?? []).length).toBe(3);
-    expect(h).toContain("BI");
-    expect(h).toContain("AS");
-    expect(h).toContain("status-glyph");
+    const items = h.match(/<button[^>]*rail__item[\s\S]*?<\/button>/g)!;
+    expect(items.length).toBe(3);
+    for (const item of items) expect(item).toMatch(/class="agent-mark"[^>]*width="20"/);
+    expect(items[0]).toMatch(/class="status-glyph"[^>]*width="12"/);
+    expect(h).not.toContain("data-mono");
   });
   it("labels each button with the same text the row has", () => {
     const h = renderToStaticMarkup(<Rail rows={rows} needsYou={1} />);
@@ -53,10 +54,10 @@ describe("Rail", () => {
 });
 
 describe("Rail (accessibility gate)", () => {
-  it("draws the monogram from an attribute, so the button's name is not required to repeat letters that are only decoration", () => {
+  it("keeps the marks out of the button's name: the label says the session, the marks are pictures of it", () => {
     const h = renderToStaticMarkup(<Rail rows={rows} needsYou={0} />);
-    expect(h).toContain('data-mono="BI"');
-    expect(h).not.toContain("rail__mono");
+    expect(h).toContain('aria-label="Session 1, ');
+    expect(h.match(/<span class="rail__mark" aria-hidden="true">/g)?.length).toBe(3);
   });
 });
 
@@ -68,10 +69,10 @@ describe("Rail: the list scrolls", () => {
     expect(h).not.toContain("rail__more");
     expect(h).not.toContain("show all");
   });
-  it("keeps the palette tool outside the scrolling list, pinned at the foot", () => {
+  it("has no palette tool: the top bar keeps it", () => {
     const h = renderToStaticMarkup(<Rail rows={twenty} needsYou={2} />);
-    expect(h.indexOf('class="rail__list"')).toBeLessThan(h.indexOf('class="rail__tools"'));
-    expect(h.slice(h.indexOf('class="rail__list"'), h.indexOf('class="rail__tools"'))).not.toContain("Command palette");
+    expect(h).not.toContain("rail__tools");
+    expect(h).not.toContain("Command palette");
   });
   it("keeps the needs-you badge stack inside the list, at its top", () => {
     const h = renderToStaticMarkup(<Rail rows={twenty} needsYou={2} />);

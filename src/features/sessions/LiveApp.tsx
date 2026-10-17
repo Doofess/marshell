@@ -36,7 +36,7 @@ import { sidebarMode } from "../window/layout";
 import { MainWindow } from "../window/MainWindow";
 import { PANE_LIMIT, type Arrangement } from "../window/splitLayout";
 import { useViewState } from "../window/useViewState";
-import { adoptTarget, fillsEmptyPane, focusedIndex, paneToggle, railToggle, ratiosOf, roomForPane, sidebarPrefOf, viewReducer, visibleSessions } from "../window/viewState";
+import { adoptTarget, fillsEmptyPane, focusedIndex, paneToggle, ratiosOf, roomForPane, sidebarPrefOf, sidebarToggleFor, viewReducer, visibleSessions, type ViewState } from "../window/viewState";
 import { CloseBar } from "./CloseBar";
 import { PauseBar } from "./PauseBar";
 import { RestartBar } from "./RestartBar";
@@ -60,6 +60,8 @@ import { useSessions } from "./useSessions";
 
 /** The size a new session starts at until a terminal has been measured. */
 const DEFAULT_SIZE = { cols: 120, rows: 30 };
+/** What the announcer says when the sidebar is asked to open in a window under 960 px, where it cannot. */
+const SIDEBAR_NEEDS_WIDTH = "Widen the window to open the sidebar.";
 /** What the announcer says when the shell panel is asked for where it is not drawn: the rail, focus mode, or a window under 960 px. */
 const SHELL_PANEL_ELSEWHERE = "The shell panel is in the expanded sidebar.";
 /** What the announcer says when a split is asked for and the window has no room to show another pane. */
@@ -195,6 +197,16 @@ export function LiveApp() {
   context.current = { endpoint, infos, selectedId: focusedId, sidebarExpanded, groupedRows };
   const pickRef = useRef(pick);
   pickRef.current = pick;
+  // The sidebar command and the top bar's sidebar button: fold to the rail or open, or say why a narrow window cannot open it.
+  const toggleSidebar = useCallback(
+    (v: ViewState) => {
+      const pref = sidebarPrefOf(v);
+      const next = sidebarToggleFor(pref, context.current.sidebarExpanded ? "expanded" : pref === "expanded" ? "rail" : pref);
+      if (next === null) announce(SIDEBAR_NEEDS_WIDTH);
+      else dispatch({ type: "sidebar", pref: next });
+    },
+    [announce, dispatch],
+  );
   const actions = useMemo(() => new SessionActions({ api: sessions, context: () => context.current, select: (id) => pickRef.current(id), size: () => size.current, settings: sync ?? undefined }), []);
 
   // A window of one empty pane takes the store's selection (a first start, or the only open session closed and another opened).
@@ -678,7 +690,7 @@ export function LiveApp() {
           dispatch({ type: "toggleFocus" });
           return true;
         case "sidebar":
-          dispatch({ type: "sidebar", pref: railToggle(sidebarPrefOf(v)) });
+          toggleSidebar(v);
           return true;
         case "shellPanel":
           if (!context.current.sidebarExpanded) announce(SHELL_PANEL_ELSEWHERE);
@@ -700,7 +712,7 @@ export function LiveApp() {
           return false;
       }
     },
-    [dispatch, announce, sendNav],
+    [dispatch, announce, sendNav, toggleSidebar],
   );
   // Review (Ctrl+Shift+R) is read apart from the rest because the window owns the key everywhere, the launcher, the overlays and the
   // sheet included: it is always prevented (it is the webview's hard reload), and acted on only when nothing else holds the keys.
@@ -932,6 +944,7 @@ export function LiveApp() {
           menuItems={os ? menuItems : undefined}
           onMenuRun={onMenuRun}
           onPalette={() => setOverlay("palette")}
+          onToggleSidebar={() => toggleSidebar(view)}
           noneSelected={nav.noneSelected}
           navCursor={nav.cursor}
         />

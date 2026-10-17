@@ -1,5 +1,5 @@
 import type { ViewLayout } from "../../generated/ViewLayout";
-import { SIDEBAR, type SidebarPref } from "./layout";
+import { SIDEBAR, type SidebarMode, type SidebarPref } from "./layout";
 import { ARRANGEMENTS, type Arrangement, PANE_LIMIT, type PaneCount, RATIO, type Ratios } from "./splitLayout";
 
 /** What the window remembers: the saved layout, plus the sidebar pref to return to when focus mode ends (not saved). */
@@ -49,6 +49,15 @@ export function sidebarPrefOf(view: Pick<ViewLayout, "sidebar">): SidebarPref {
 /** The sidebar command: the expanded sidebar folds to the rail; the rail, or focus mode, opens the sidebar. */
 export function railToggle(pref: SidebarPref): SidebarPref {
   return pref === "expanded" ? "rail" : "expanded";
+}
+
+/**
+ * What the sidebar button sets: `railToggle`, except that an expanded preference shown as the rail (a window under 960 px wide)
+ * cannot open, so there is nothing to set (null).
+ */
+export function sidebarToggleFor(pref: SidebarPref, mode: SidebarMode): SidebarPref | null {
+  if (pref === "expanded" && mode !== "expanded") return null;
+  return railToggle(pref);
 }
 
 /** The saved `[col, row]` pair as splitLayout's `Ratios`; an empty list means even. */

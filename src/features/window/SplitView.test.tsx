@@ -77,10 +77,10 @@ describe("SplitView: arrangement", () => {
 });
 
 describe("SplitView: what each pane header says", () => {
-  it("shows the status glyph, name and project, with the brand stripe", () => {
+  it("shows the status glyph, name and project, with no stripe on its edge", () => {
     const h = html({ panes: [billing!, api!] });
     expect(h).toContain("billing");
-    expect(h).toContain("pane__stripe");
+    expect(h).not.toContain("pane__stripe");
     expect(h).toContain('data-agent="claude"');
     expect(h).toContain("status-glyph");
   });

@@ -95,7 +95,6 @@ export function Pane({ row, active, split, navIndex, setting, style, cells, zoom
     >
       {bar ?? (
       <header className="pane__header" data-needs={needs || undefined} data-danger={headerDanger(row.mode) || undefined}>
-        <span className="pane__stripe" aria-hidden="true" />
         {row.status === "working" ? <AgentMark agent={row.agent} size={16} working /> : <StatusGlyph kind={row.status} />}
         <SessionNumber n={row.number} />
         <span className="pane__name" dir="auto">

@@ -107,7 +107,7 @@
   font-size: var(--text-12);
   transition: background-color 120ms ease-out;
 }
-/* The brand stripe says which vendor this is, as in the rail and the rows. */
+/* The brand stripe says which vendor a session in an empty pane's list is, as in the rail and the rows. The header has none: the glyph names the vendor. */
 .pane__stripe {
   position: absolute;
   inset-block: 0;
@@ -119,7 +119,7 @@
 .pane[data-active="true"] .pane__header {
   background-color: var(--fill);
 }
-/* A risky mode (bypass, full auto) tints the header red with a red bar beside the brand stripe, as the single-pane session header does. */
+/* A risky mode (bypass, full auto) tints the header red with a red bar on its start edge, as the single-pane session header does. */
 .pane__header[data-danger] {
   background-image: linear-gradient(color-mix(in oklch, var(--error) 9%, transparent), color-mix(in oklch, var(--error) 9%, transparent));
 }
@@ -127,7 +127,7 @@
   content: "";
   position: absolute;
   inset-block: 0;
-  inset-inline-start: var(--stripe);
+  inset-inline-start: 0;
   inline-size: 3px;
   background: var(--error);
 }
