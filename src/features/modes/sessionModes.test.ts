@@ -34,10 +34,10 @@ describe("launchArgs: with Marshell's hooks on, a session starts strict and the 
     expect(launchArgs("codex", "plan", true)).toEqual({ args: ["--sandbox", "read-only", "--ask-for-approval", "on-request"], native: false });
     expect(launchArgs("codex", "plan", false)).toEqual({ args: ["--sandbox", "read-only", "--ask-for-approval", "on-request"], native: false });
   });
-  it("Full auto uses the CLI's own classifier where it has one; Antigravity has none, so Marshell's risk check stands in", () => {
+  it("Full auto starts the CLI in its own auto mode", () => {
     expect(launchArgs("claude", "full-auto", true)).toEqual({ args: ["--permission-mode", "auto"], native: true });
     expect(launchArgs("codex", "full-auto", true)).toEqual({ args: ["--approve-for-me"], native: true });
-    expect(launchArgs("antigravity", "full-auto", true)).toEqual({ args: [], native: false });
+    expect(launchArgs("antigravity", "full-auto", true)).toEqual({ args: ["--mode", "auto"], native: true });
   });
 });
 
@@ -50,10 +50,10 @@ describe("launchArgs: with the hooks off, each mode is the CLI's own flag, or no
     expect(launchArgs("codex", "auto-edit", false)).toEqual({ args: ["--sandbox", "workspace-write", "--ask-for-approval", "on-request"], native: true });
     expect(launchArgs("codex", "bypass", false)).toEqual({ args: ["--dangerously-bypass-approvals-and-sandbox"], native: true });
   });
-  it("Antigravity: no Full auto without Marshell's hook, since it has no classifier of its own", () => {
+  it("Antigravity", () => {
     expect(launchArgs("antigravity", "auto-edit", false)).toEqual({ args: ["--mode", "accept-edits"], native: true });
     expect(launchArgs("antigravity", "bypass", false)).toEqual({ args: ["--dangerously-skip-permissions"], native: true });
-    expect(launchArgs("antigravity", "full-auto", false)).toBeNull();
+    expect(launchArgs("antigravity", "full-auto", false)).toEqual({ args: ["--mode", "auto"], native: true });
   });
 });
 
@@ -82,7 +82,7 @@ describe("decide: what Marshell's hook answers when a CLI asks", () => {
 describe("switchKind: changing mode mid-session", () => {
   it("is instant when the session's native start stays the same (only Marshell's answer changes)", () => {
     expect(switchKind("claude", "manual", "bypass", true)).toBe("instant");
-    expect(switchKind("antigravity", "auto-edit", "full-auto", true)).toBe("instant");
+    expect(switchKind("antigravity", "auto-edit", "bypass", true)).toBe("instant");
   });
   it("needs the CLI's own mode when the native start differs (Plan, or a classifier)", () => {
     expect(switchKind("claude", "manual", "plan", true)).toBe("native");
@@ -92,8 +92,8 @@ describe("switchKind: changing mode mid-session", () => {
   it("is always native with the hooks off", () => {
     expect(switchKind("claude", "manual", "auto-edit", false)).toBe("native");
   });
-  it("is unavailable when the CLI can't have the target mode", () => {
-    expect(switchKind("antigravity", "manual", "full-auto", false)).toBe("unavailable");
+  it("is native for Antigravity's Full auto, which is its own --mode auto", () => {
+    expect(switchKind("antigravity", "manual", "full-auto", false)).toBe("native");
   });
 });
 

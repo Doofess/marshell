@@ -58,6 +58,8 @@ export type PaneProps = {
   onZoom?: () => void;
   /** The header's remove button: the pane leaves the view, the session keeps running. */
   onRemove?: () => void;
+  /** A question about this session (the restart bar), drawn in the place of the pane's header. */
+  bar?: ReactNode;
 };
 
 /**
@@ -68,7 +70,7 @@ export type PaneProps = {
  * the status glyph (the vendor mark moving, while working), the name, the project and, only when it applies,
  * how tight the pane is. A pane that needs you never recedes with the inactive headers.
  */
-export function Pane({ row, active, navIndex, setting, style, cells, zoomedOf, othersRunning, runningElsewhere, value, composer = true, os = "windows", renderTerminal, onFocus, onZoom, onRemove }: PaneProps) {
+export function Pane({ row, active, navIndex, setting, style, cells, zoomedOf, othersRunning, runningElsewhere, value, composer = true, os = "windows", renderTerminal, onFocus, onZoom, onRemove, bar }: PaneProps) {
   const needs = needsYou(row);
   // A manual CLI is a plain terminal: no prompt line of ours, and its rows go to the terminal.
   const line = composer && hasPromptLine(row);
@@ -88,6 +90,7 @@ export function Pane({ row, active, navIndex, setting, style, cells, zoomedOf, o
       onPointerDown={onFocus}
       onFocus={onFocus}
     >
+      {bar ?? (
       <header className="pane__header" data-needs={needs || undefined} data-danger={headerDanger(row.mode) || undefined}>
         <span className="pane__stripe" aria-hidden="true" />
         {row.status === "working" ? <AgentMark agent={row.agent} size={16} working /> : <StatusGlyph kind={row.status} />}
@@ -120,6 +123,7 @@ export function Pane({ row, active, navIndex, setting, style, cells, zoomedOf, o
           {icon(CLOSE)}
         </button>
       </header>
+      )}
       {/* A plain terminal shows a plain shell, not an agent's conversation. */}
       {renderTerminal ? renderTerminal(row) : hasPromptLine(row) ? <ScriptedTerminal setting={setting} label={`Terminal for ${row.name}`} /> : <ScriptedTerminal setting={setting} label={`Terminal for ${row.name}`} script={shellSession({ cwd: row.project })} size={SHELL_SIZE} />}
       {line && (

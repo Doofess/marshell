@@ -5,11 +5,34 @@ import type { InputRequest } from "../../generated/InputRequest";
 import type { RenameRequest } from "../../generated/RenameRequest";
 import type { ReopenRequest } from "../../generated/ReopenRequest";
 import type { ReorderRequest } from "../../generated/ReorderRequest";
+import type { RestartRequest } from "../../generated/RestartRequest";
 import type { ResumeError } from "../../generated/ResumeError";
+import type { SessionMode } from "../../generated/SessionMode";
 import type { SessionsSnapshot } from "../../generated/SessionsSnapshot";
 import { ApiError, api } from "./client";
 
 const tab = (tabId: string) => `/v1/sessions/${encodeURIComponent(tabId)}`;
+
+export type Started = { ok: true } | { ok: false; reason: string };
+
+/** Runs a start request: a 409 becomes `{ ok: false, reason }` in the core's words, anything else rejects. */
+async function refusable(request: () => Promise<unknown>): Promise<Started> {
+  try {
+    await request();
+    return { ok: true };
+  } catch (e) {
+    if (e instanceof ApiError && e.status === 409) {
+      try {
+        const body = JSON.parse(e.message) as Partial<ResumeError>;
+        if (typeof body.reason === "string") return { ok: false, reason: body.reason };
+      } catch {
+        // Not our JSON body: fall through to the plain text.
+      }
+      return { ok: false, reason: e.message };
+    }
+    throw e;
+  }
+}
 
 export const sessions = {
   list: (ep: Endpoint) => api<SessionsSnapshot>(ep, "GET", "/v1/sessions"),
@@ -49,25 +72,9 @@ export const sessions = {
    * Starts an Ended or Exited tab again in place. A 409 comes back as `{ ok: false, reason }`
    * with the core's own words; any other failure rejects with an ApiError.
    */
-  resume: async (
-    ep: Endpoint,
-    tabId: string,
-    size: { cols: number; rows: number },
-  ): Promise<{ ok: true } | { ok: false; reason: string }> => {
-    try {
-      await api<CreateSessionResponse>(ep, "POST", `${tab(tabId)}/resume`, size);
-      return { ok: true };
-    } catch (e) {
-      if (e instanceof ApiError && e.status === 409) {
-        try {
-          const body = JSON.parse(e.message) as Partial<ResumeError>;
-          if (typeof body.reason === "string") return { ok: false, reason: body.reason };
-        } catch {
-          // Not our JSON body: fall through to the plain text.
-        }
-        return { ok: false, reason: e.message };
-      }
-      throw e;
-    }
-  },
+  resume: (ep: Endpoint, tabId: string, size: { cols: number; rows: number }): Promise<Started> =>
+    refusable(() => api<CreateSessionResponse>(ep, "POST", `${tab(tabId)}/resume`, size)),
+  /** Ends an agent tab's process and starts it again in `mode`, in the same row. Answers like `resume`. */
+  restart: (ep: Endpoint, tabId: string, mode: SessionMode, size: { cols: number; rows: number }): Promise<Started> =>
+    refusable(() => api<CreateSessionResponse>(ep, "POST", `${tab(tabId)}/restart`, { mode, ...size } satisfies RestartRequest)),
 };

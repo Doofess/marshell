@@ -1,10 +1,14 @@
 import { isTool, type SessionKind } from "../../components/AgentMark/kinds";
 import { TOOL_NAMES, type ToolId } from "../../components/AgentMark/tools";
+import { MODES } from "../modes/sessionModes";
+import type { Mode } from "../sidebar/types";
+import { modeLabel } from "../window/SessionHeader";
 import type { Project } from "./filter";
 
-export type Mode = "Manual" | "Plan" | "Auto-edit";
+export type { Mode };
 export type Pace = "Quick" | "Balanced" | "Deep";
-export const MODES: Mode[] = ["Manual", "Plan", "Auto-edit"];
+/** The five modes every agent CLI shares, in the order the chip cycles. */
+export { MODES };
 export const PACES: Pace[] = ["Quick", "Balanced", "Deep"];
 
 /** The first chip lists AI agents, shells and tools under these headings. Dev tools and cloud tools share "Tools". */
@@ -79,7 +83,7 @@ export function launcherSentence(c: LauncherChoice, projects: Project[], program
   const p = projects.find((x) => x.id === c.projectId);
   const where = p ? (p.branch ? `${p.name} on ${p.branch}` : p.name) : "an unknown folder";
   const start = `Start ${label} in ${where}`;
-  if (isAgentProgram(c.program, programs)) return `${start}, ${c.mode} mode, ${c.pace}, ${c.worktree ? "in a new worktree" : "no worktree"}`;
+  if (isAgentProgram(c.program, programs)) return `${start}, ${modeLabel(c.mode)} mode, ${c.pace}, ${c.worktree ? "in a new worktree" : "no worktree"}`;
   return c.worktree ? `${start}, in a new worktree` : start;
 }
 
@@ -95,6 +99,6 @@ export function applyRemembered(c: LauncherChoice, r: Remembered | undefined): L
 
 export function rememberedNote(projectName: string, r: Remembered | undefined): string | null {
   if (!r) return null;
-  const parts: string[] = [r.mode, r.pace].filter((x) => x !== undefined);
+  const parts: string[] = [r.mode === undefined ? undefined : modeLabel(r.mode), r.pace].filter((x) => x !== undefined);
   return parts.length === 0 ? null : `Remembered for ${projectName}: ${parts.join(" · ")}. Change a choice to update it.`;
 }

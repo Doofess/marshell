@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { commandById, shortcutLabel } from "../../lib/keymap";
-import { sessionMenuItems, type SessionMenuFacts } from "./sessionMenu";
+import { modeMenuItems, sessionMenuItems, type SessionMenuFacts } from "./sessionMenu";
 
-const all: SessionMenuFacts = { resumable: true, task: true, inShownPane: false, paneAvailable: true };
-const none: SessionMenuFacts = { resumable: false, task: false, inShownPane: false, paneAvailable: false };
+const all: SessionMenuFacts = { agent: true, resumable: true, task: true, inShownPane: false, paneAvailable: true };
+const none: SessionMenuFacts = { agent: false, resumable: false, task: false, inShownPane: false, paneAvailable: false };
 
 const ids = (facts: SessionMenuFacts) =>
   sessionMenuItems(facts, "windows").map((i) => ("separator" in i ? "-" : i.id));
@@ -11,9 +11,10 @@ const ids = (facts: SessionMenuFacts) =>
 describe("sessionMenuItems", () => {
   it("shows every item in order with its shortcut", () => {
     const items = sessionMenuItems(all, "windows");
-    expect(ids(all)).toEqual(["rename", "split", "resume", "review-task", "-", "close"]);
+    expect(ids(all)).toEqual(["rename", "split", "resume", "mode", "review-task", "-", "close"]);
     expect(items.map((i) => ("separator" in i ? undefined : i.shortcut))).toEqual([
       "F2",
+      undefined,
       undefined,
       undefined,
       "Ctrl+Shift+R",
@@ -39,5 +40,21 @@ describe("sessionMenuItems", () => {
   it("uses the platform's close shortcut", () => {
     const close = sessionMenuItems(all, "mac").find((i) => "id" in i && i.id === "close");
     expect(close).toMatchObject({ shortcut: shortcutLabel(commandById("close").binding!, "mac") });
+  });
+});
+
+describe("Mode ▸", () => {
+  it("is offered for an agent session and not for a plain shell", () => {
+    const labels = sessionMenuItems(all, "windows").map((i) => ("separator" in i ? "-" : i.label));
+    expect(labels).toContain("Mode ▸");
+    expect(ids({ ...all, agent: false })).not.toContain("mode");
+  });
+  it("modeMenuItems lists the five modes and marks the one it started in", () => {
+    const items = modeMenuItems("plan");
+    expect(items.map((i) => ("separator" in i ? "-" : i.id))).toEqual(["mode-manual", "mode-plan", "mode-auto-edit", "mode-full-auto", "mode-bypass"]);
+    expect(items.map((i) => ("separator" in i ? "-" : i.label))).toEqual(["Manual", "Plan (current)", "Auto-edit", "Full auto", "Bypass"]);
+  });
+  it("marks none as current when the mode is unknown", () => {
+    expect(modeMenuItems(undefined).map((i) => ("separator" in i ? "-" : i.label)).join()).not.toContain("current");
   });
 });

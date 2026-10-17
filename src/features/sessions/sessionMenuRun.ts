@@ -3,6 +3,8 @@ import type { SessionInfo } from "../../generated/SessionInfo";
 import type { SessionMenuFacts } from "../sidebar/sessionMenu";
 import type { RowModel } from "../sidebar/types";
 import { roomForPane } from "../window/viewState";
+import { MODES } from "../modes/sessionModes";
+import type { Mode } from "../sidebar/types";
 import { resumeBlockedReason } from "./resumeState";
 
 /** What the window knows about a session, as the row menu's item list needs it. `shown` panes are on screen; `fit` is the most the window has room for. */
@@ -13,6 +15,7 @@ export function menuFacts(
   const onScreen = ctx.panes.slice(0, ctx.shown);
   const info = ctx.infos.find((i) => i.tab_id === id);
   return {
+    agent: info?.agent != null,
     // Not where the Resume bar would be disabled (its profile was removed): an item that can't apply is left out, never offered to fail.
     resumable: info !== undefined && info.state.kind !== "running" && resumeBlockedReason(info.profile_id, ctx.profiles) === undefined,
     task: ctx.rows.find((r) => r.id === id)?.task === true,
@@ -37,3 +40,6 @@ export function focusAfterMenu(itemId: string, confirms: boolean): "row" | "term
       return null;
   }
 }
+
+/** The mode a menu item or palette command names ("mode-plan"), or null for anything else (including "mode", which opens the menu). */
+export const modeOfItem = (id: string): Mode | null => MODES.find((m) => id === `mode-${m}`) ?? null;

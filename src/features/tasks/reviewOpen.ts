@@ -92,17 +92,19 @@ export function reviewAgentName(info: SessionInfo | undefined): string | null {
   return info && info.agent !== null && info.state.kind === "running" ? agentLabel(info.agent) : null;
 }
 
+/** The palette's Mode commands: only an agent session has a mode to restart in, so a plain shell in focus is not offered them. */
+const MODE_COMMANDS = ["mode-manual", "mode-plan", "mode-auto-edit", "mode-full-auto", "mode-bypass"];
 const HIDDEN = new Map<string, readonly string[]>();
 
 /**
  * The palette commands left out now: Resume unless the session in focus can resume, Review unless it is a task, and Clean up a
- * missing task unless a task's folder is gone, and Copy the recording path when no session is in focus. The same array for the same answers, so the palette's list is not rebuilt for them.
+ * missing task unless a task's folder is gone, Copy the recording path when no session is in focus, and the Mode commands unless the session in focus is an agent. The same array for the same answers, so the palette's list is not rebuilt for them.
  */
-export function paletteHidden({ resumable, isTask, missing, focused = true }: { resumable: boolean; isTask: boolean; missing: boolean; focused?: boolean }): readonly string[] {
-  const key = `${resumable}${isTask}${missing}${focused}`;
+export function paletteHidden({ resumable, isTask, missing, focused = true, agent = true }: { resumable: boolean; isTask: boolean; missing: boolean; focused?: boolean; agent?: boolean }): readonly string[] {
+  const key = `${resumable}${isTask}${missing}${focused}${agent}`;
   let hidden = HIDDEN.get(key);
   if (!hidden) {
-    hidden = [...(resumable ? [] : ["resume"]), ...(isTask ? [] : ["review-task"]), ...(missing ? [] : ["clean-up-task"]), ...(focused ? [] : ["copy-recording-path"])];
+    hidden = [...(resumable ? [] : ["resume"]), ...(isTask ? [] : ["review-task"]), ...(missing ? [] : ["clean-up-task"]), ...(focused ? [] : ["copy-recording-path"]), ...(agent ? [] : MODE_COMMANDS)];
     HIDDEN.set(key, hidden);
   }
   return hidden;

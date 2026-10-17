@@ -114,6 +114,21 @@ describe("sessions.resume", () => {
   });
 });
 
+describe("sessions.restart", () => {
+  it("posts the mode and size and resolves ok", async () => {
+    const ok = respond({ tab_id: "t 1", number: 1 });
+    vi.stubGlobal("fetch", ok);
+    await expect(sessions.restart(endpoint, "t 1", "bypass", { cols: 90, rows: 30 })).resolves.toEqual({ ok: true });
+    expect(call(ok)).toMatchObject({ url: "http://127.0.0.1:9/v1/sessions/t%201/restart", method: "POST", body: { mode: "bypass", cols: 90, rows: 30 } });
+  });
+  it("returns the core's reason on a 409 and rejects on other errors", async () => {
+    vi.stubGlobal("fetch", respond({ reason: "Only an agent session has a mode." }, 409));
+    await expect(sessions.restart(endpoint, "t1", "plan", { cols: 80, rows: 24 })).resolves.toEqual({ ok: false, reason: "Only an agent session has a mode." });
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response("No such session.", { status: 404 })));
+    await expect(sessions.restart(endpoint, "t1", "plan", { cols: 80, rows: 24 })).rejects.toBeInstanceOf(ApiError);
+  });
+});
+
 describe("the shell panel", () => {
   it("opens it with a folder and size, and returns the tab id", async () => {
     const open = respond({ tab_id: "p1" });

@@ -116,6 +116,13 @@ export type MainWindowProps = {
   shellCollapsed?: boolean;
   /** Takes the place of the session header while it is set (the busy-close question). Shown even where the header is hidden. */
   headerBar?: ReactNode;
+  /**
+   * A bar for one session (the restart question). With two or more panes on screen it replaces that pane's header; otherwise it
+   * takes the place of the session header, like `headerBar`.
+   */
+  paneBar?: { id: string; node: ReactNode };
+  /** The session header's mode chip becomes a button that gives the session's id and where it is, to open the mode menu. */
+  onModeMenu?: (id: string, anchor: { x: number; y: number }) => void;
   /** A receipt over the lower start corner of the terminal column. Plain markup: `notice` is what gets announced. */
   toast?: ReactNode;
   /** Text for the window's one announcer to say; a new `id` says it again, even if the text is the same. */
@@ -140,7 +147,7 @@ export type MainWindowProps = {
   onReview?: (id: string) => void;
   /** The items of a sidebar row's menu, and what choosing one does. Left out, rows have no menu. */
   menuItems?: (id: string) => MenuItem[];
-  onMenuRun?: (id: string, itemId: string) => void;
+  onMenuRun?: (id: string, itemId: string, anchor: { x: number; y: number }) => void;
   /** The click on the Command palette button, in the top bar and in the rail. */
   onPalette?: () => void;
   /** No terminal is selected (Ctrl+Shift+Backspace): no pane is marked focused, and the window says how to pick one. */
@@ -201,6 +208,8 @@ export function MainWindow({
   ports = SCENARIO_PORTS,
   footer = SCENARIO_FOOTER,
   headerBar,
+  paneBar,
+  onModeMenu,
   toast,
   notice,
   renamingId,
@@ -279,6 +288,9 @@ export function MainWindow({
   const shownCount = shown.length;
   // With two or more panes on screen each pane's header names its session, so the top bar names none: above the first pane it read as that pane's title.
   const manyPanes = split && !empty && zoomIdx === undefined && shownCount > 1;
+  // A pane bar belongs to its pane's header when that pane is one of several; alone, or for a session with no pane here, it is the top bar's.
+  const barInPane = paneBar !== undefined && manyPanes && shown.some((r) => r?.id === paneBar.id);
+  const topBar = headerBar ?? (paneBar && !barInPane ? paneBar.node : undefined);
   useEffect(() => {
     onVisible?.(shownCount);
   }, [onVisible, shownCount]);
@@ -357,7 +369,7 @@ export function MainWindow({
           )}
         </div>
         <div className="window__bar-main" onPointerLeave={mode === "focus" ? () => setPeeking(false) : undefined}>
-          {headerBar ?? (showHeader && !manyPanes && active && <SessionHeader row={active} ports={ports} />)}
+          {topBar ?? (showHeader && !manyPanes && active && <SessionHeader row={active} ports={ports} onMode={onModeMenu && ((anchor) => onModeMenu(active.id, anchor))} />)}
           {/* Focus mode: the pointer at the top edge brings the header up, and leaving the bar puts it away. A pointer affordance only; the keyboard leaves focus mode. */}
           {mode === "focus" && !showHeader && !manyPanes && <div className="window__peek" aria-hidden="true" onPointerEnter={() => setPeeking(true)} />}
         </div>
@@ -434,7 +446,7 @@ export function MainWindow({
               No sessions yet. Start one with {shortcutLabel(commandById("launcher").binding!, os)}.
             </div>
           ) : split ? (
-            <SplitView panes={shown} size={{ w: space.w, h: space.h }} activeIndex={noneSelected ? -1 : focusedIdx} hidden={hiddenCount} arrangement={chosen} ratios={ratios} zoomed={zoomIdx} choices={choices} composerValues={composerValues} composers={showComposer} setting={terminalSetting} os={os} renderTerminal={renderTerminal} {...paneHandlers} />
+            <SplitView panes={shown} size={{ w: space.w, h: space.h }} activeIndex={noneSelected ? -1 : focusedIdx} hidden={hiddenCount} arrangement={chosen} ratios={ratios} zoomed={zoomIdx} choices={choices} composerValues={composerValues} composers={showComposer} setting={terminalSetting} os={os} renderTerminal={renderTerminal} paneBar={barInPane ? paneBar : undefined} {...paneHandlers} />
           ) : renderTerminal ? (
             <KeptTerminals rows={rows} selectedId={selected.id} render={renderTerminal} />
           ) : (

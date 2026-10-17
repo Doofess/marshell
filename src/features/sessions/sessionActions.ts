@@ -7,6 +7,9 @@ import type { SessionShortcut } from "../../lib/appShortcuts";
 import { moveWithinGroup } from "../sidebar/grouping";
 import { moveBy } from "../sidebar/reorder";
 import type { RowModel } from "../sidebar/types";
+import { modeLabel } from "../window/SessionHeader";
+import type { Mode } from "../sidebar/types";
+import { resumeCommand } from "./resumeCommand";
 import { lastSegment } from "./toRow";
 
 /** How long the "Closed <name>." toast stays, in milliseconds. */
@@ -28,6 +31,21 @@ export function closeBarText(info: SessionInfo): string {
   return `${agentLabel(info.agent ?? "")} may be mid-task in ${lastSegment(info.cwd)}.`;
 }
 
+/** "Restart 3 billing in Bypass? It ends and runs claude --continue --permission-mode bypassPermissions." The command is what the core runs. */
+export function restartBarText(info: SessionInfo, mode: Mode, working: boolean): string {
+  const text = `Restart ${info.number} ${info.name} in ${modeLabel(mode)}? It ends and runs ${resumeCommand(info.agent, info.profile_id, mode)}.`;
+  return working ? `${text} ${agentLabel(info.agent ?? "")} may be mid-task.` : text;
+}
+
+/**
+ * Whether the restart bar has nothing left to ask: its session is gone, a close question is up, or the focus is on
+ * another session. `showing` is a session being brought on screen for the bar; until it is focused, that is not a move away.
+ */
+export function restartBarStale(s: { id: string; closing: string | null; focusedId: string | undefined; ids: string[]; showing: string | null }): boolean {
+  if (!s.ids.includes(s.id) || s.closing !== null) return true;
+  return s.id !== s.focusedId && s.id !== s.showing;
+}
+
 /** The tab of the session whose NUMBER is `number` (not the one in that position), or undefined. */
 export const tabIdOfNumber = (infos: SessionInfo[], number: number): string | undefined => infos.find((i) => i.number === number)?.tab_id;
 
@@ -36,6 +54,8 @@ export type ActionsState = {
   toast: Toast | null;
   /** The tab whose close bar is up. */
   closing: string | null;
+  /** The tab whose restart bar is up, and the mode it would start in. */
+  restarting: { id: string; mode: Mode } | null;
   /** The tab whose name is being edited. */
   renaming: string | null;
   /** Bumped when focus should go back to the terminal. */
@@ -49,7 +69,7 @@ export type ActionsState = {
   resumed: Record<string, number>;
 };
 
-type Api = Pick<typeof sessions, "close" | "reopen" | "rename" | "reorder" | "resume">;
+type Api = Pick<typeof sessions, "close" | "reopen" | "rename" | "reorder" | "restart" | "resume">;
 type Context = {
   endpoint: Endpoint | null;
   infos: SessionInfo[];
@@ -78,7 +98,7 @@ const reason = (e: unknown): string => (e instanceof ApiError ? e.message : Stri
  * core's next snapshot, so nothing here is optimistic. Plain class so it can be tested without a DOM; LiveApp wraps it.
  */
 export class SessionActions {
-  private state: ActionsState = { toast: null, closing: null, renaming: null, focusToken: 0, resuming: [], resumed: {} };
+  private state: ActionsState = { toast: null, closing: null, restarting: null, renaming: null, focusToken: 0, resuming: [], resumed: {} };
   private listeners = new Set<() => void>();
   private timer: ReturnType<typeof setTimeout> | undefined;
   private toastId = 0;
@@ -257,6 +277,43 @@ export class SessionActions {
     const resuming = this.state.resuming.filter((id) => id !== tabId);
     this.set(ok ? { resuming, resumed: { ...this.state.resumed, [tabId]: (this.state.resumed[tabId] ?? 0) + 1 } } : { resuming });
     this.showToast(text);
+  }
+
+  /**
+   * Mode ▸ (the row menu, the header chip, or a palette Mode command): puts the restart bar up for `id` in `mode`. It does nothing,
+   * and says false, for a plain shell (it has no mode), an unknown tab, and the mode the session is already in; the caller then
+   * keeps the focus where it is. One question at a time: a new one replaces the one up.
+   */
+  askRestart(id: string, mode: Mode): boolean {
+    const info = this.deps.context().infos.find((i) => i.tab_id === id);
+    if (!info || info.agent === null || info.mode === mode) return false;
+    this.set({ restarting: { id, mode } });
+    return true;
+  }
+
+  /** Cancel or Escape on the restart bar: nothing is sent, and focus goes back to the session's terminal. */
+  cancelRestart(): void {
+    if (this.state.restarting !== null) this.set({ restarting: null, focusToken: this.refocus() });
+  }
+
+  /**
+   * "Restart" on the bar. The bar goes away at once, and focus goes to the terminal whether or not it works. On success the tab's
+   * `resumed` count moves, so the window gives it a new terminal, attached after the response; a refusal (the core's 409) shows
+   * its own words in the toast and changes nothing.
+   */
+  async confirmRestart(): Promise<void> {
+    const ask = this.state.restarting;
+    const { endpoint } = this.deps.context();
+    if (!ask) return;
+    this.set({ restarting: null, focusToken: this.refocus() });
+    if (!endpoint) return;
+    try {
+      const result = await this.deps.api.restart(endpoint, ask.id, ask.mode, this.deps.size?.() ?? DEFAULT_SIZE);
+      if (result.ok) this.set({ resumed: { ...this.state.resumed, [ask.id]: (this.state.resumed[ask.id] ?? 0) + 1 }, focusToken: this.refocus() });
+      else this.showToast(result.reason);
+    } catch (e) {
+      this.showToast(`Couldn't restart the session: ${reason(e)}`);
+    }
   }
 
   /** F2 on the selected session (or the row menu's Rename, on `tabId`). It does nothing where the sidebar is not expanded: there is no row to turn into a text box. */

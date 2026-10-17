@@ -12,8 +12,8 @@ export const PROJECTS: Project[] = [
   { id: "tools", name: "tools", branch: "main", path: "C:/dev/tools", lastUsedMs: 4 * DAY },
 ];
 
-export const DEFAULT_CHOICE: LauncherChoice = { program: "claude", projectId: "my-app", mode: "Manual", pace: "Balanced", worktree: false };
-export const REMEMBERED: Record<string, Remembered> = { "my-app": { mode: "Plan", pace: "Quick" } };
+export const DEFAULT_CHOICE: LauncherChoice = { program: "claude", projectId: "my-app", mode: "manual", pace: "Balanced", worktree: false };
+export const REMEMBERED: Record<string, Remembered> = { "my-app": { mode: "plan", pace: "Quick" } };
 
 /** The numbers sessions hold in the launcher stories: 4 is free, as after closing a session, so a new one becomes session 4. */
 export const TAKEN_NUMBERS = [1, 2, 3, 5, 6, 7, 8, 9];

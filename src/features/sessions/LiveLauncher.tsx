@@ -15,10 +15,10 @@ import { Launcher, type TaskConfirm } from "../launcher/Launcher";
 import { taskNameFor } from "../tasks/taskName";
 import { appScheme } from "../terminal/terminalTheme";
 import { programById, startingText, type LauncherChoice } from "../launcher/launchChoice";
-import { createRequest, createThenLaunch, initialFocus, launchRequest, progressText, refocus, rememberTasks, replansAfter, type FocusState, livePrograms, nameSource, preselect, startFailure, taskRequest, toLauncherProject, wantsTask } from "./launchPrograms";
+import { createRequest, createThenLaunch, initialFocus, launchRequest, progressText, refocus, rememberTasks, replansAfter, type FocusState, livePrograms, nameSource, preselect, preselectMode, startFailure, taskRequest, toLauncherProject, wantsTask } from "./launchPrograms";
 
 // The worktree flag is part of this state and nothing else: it is never read from or written to the remembered choices, so the chip starts off every time.
-const INITIAL: LauncherChoice = { program: "claude", projectId: "", mode: "Manual", pace: "Balanced", worktree: false };
+const INITIAL: LauncherChoice = { program: "claude", projectId: "", mode: "manual", pace: "Balanced", worktree: false };
 
 /** `layout` is read on every opening, so a folder used a moment ago is already remembered; null when it could not be read. */
 type Loaded = { projects: Project[]; doc: ProfilesDoc; layout: LayoutDoc | null };
@@ -44,6 +44,7 @@ export function LiveLauncher({ endpoint, nextNumber, size, onStarted, onClose }:
   const [choice, setChoice] = useState(INITIAL);
   // Once the user picks a program here, the remembered one no longer applies.
   const [programPicked, setProgramPicked] = useState(false);
+  const [modePicked, setModePicked] = useState(false);
   const [query, setQuery] = useState<string | null>(null);
   const [activeIndex, setActiveIndex] = useState(0);
   const [programsOpen, setProgramsOpen] = useState(false);
@@ -96,8 +97,9 @@ export function LiveLauncher({ endpoint, nextNumber, size, onStarted, onClose }:
   // The program last started in this folder, unless the user has picked one themselves.
   const program = programPicked ? choice.program : (preselect(loaded?.layout ?? null, projectId, programs) ?? choice.program);
   // The worktree chip is offered only in a folder in git: leaving for another folder must not keep a flag the user can no longer see.
+  const mode = modePicked ? choice.mode : (preselectMode(loaded?.layout ?? null, projectId) ?? choice.mode);
   const worktree = choice.worktree && projects.find((p) => p.id === projectId)?.branch !== undefined;
-  const shown: LauncherChoice = { ...choice, projectId, program, worktree };
+  const shown: LauncherChoice = { ...choice, projectId, program, mode, worktree };
 
   // A pick leaves focus on the program chip, where Enter reopens the list; and Start is disabled until the lists load.
   const focusState: FocusState = { program: shown.program, prompt: !programById(shown.program, programs)?.noFirst, ready: loaded !== null };
@@ -111,6 +113,7 @@ export function LiveLauncher({ endpoint, nextNumber, size, onStarted, onClose }:
 
   const patch = (p: Partial<LauncherChoice>) => {
     if (p.program !== undefined) setProgramPicked(true);
+    if (p.mode !== undefined) setModePicked(true);
     setChoice((c) => ({ ...c, ...p }));
     setError(undefined);
   };
@@ -208,7 +211,7 @@ export function LiveLauncher({ endpoint, nextNumber, size, onStarted, onClose }:
       <Launcher
         view={{ choice: shown, projects, query, activeIndex, programsOpen, prompt, nextNumber, taskName, ...(confirm === null ? {} : { confirm }) }}
         programs={programs}
-        chips={false}
+        paceChip={false}
         error={error ?? loadError}
         busy={starting || loaded === null}
         busyText={progressText(phase, programById(shown.program, programs)?.label ?? shown.program)}

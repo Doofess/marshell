@@ -18,7 +18,7 @@ use axum::routing::{get, patch, post, put};
 use axum::{Json, Router};
 use marshell_protocol::api::{Endpoint, Health, LayoutDoc, Platform, Profile, ProfilesDoc, Settings};
 use marshell_protocol::brand;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::net::Ipv4Addr;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -57,6 +57,9 @@ struct Inner {
     registry: Arc<Registry>,
     // Kept here so every handler reaches it through one State.
     sessions: Mutex<HashMap<String, Arc<crate::pty::Session>>>,
+    /// Tabs a Resume or a Restart is starting a process for. One start per tab at a time, so two
+    /// cannot both put a process in `sessions` and leave the first running unseen.
+    starting: Mutex<HashSet<String>>,
     /// The sidebar's shell, while there is one. It is in `sessions` but has no registry row.
     shell_panel: Mutex<Option<shell_panel::PanelShell>>,
     /// Whether an agent's command (`claude`, `codex`, `agy`) runs from PATH. Tests swap it.
@@ -75,6 +78,7 @@ impl AppState {
             profile_id: tab.profile_id.clone(),
             agent: tab.agent.clone(),
             cwd: tab.cwd.clone(),
+            mode: tab.mode,
             name: tab.name.clone(),
         });
         let shell_dir = match crate::shell::install(&home) {
@@ -96,6 +100,7 @@ impl AppState {
             layout: Mutex::new(layout),
             registry: Arc::new(registry),
             sessions: Mutex::new(HashMap::new()),
+            starting: Mutex::new(HashSet::new()),
             shell_panel: Mutex::new(None),
             agent_on_path: crate::profiles::detect::command_on_path,
         }))
@@ -135,12 +140,35 @@ impl AppState {
             .unwrap()
             .insert(session.id().to_string(), session);
     }
+    /// Claims the tab for one Resume or Restart. None while another one is starting it.
+    /// The claim ends when the returned value is dropped.
+    pub fn claim_start(&self, tab: &str) -> Option<StartClaim> {
+        if !self.0.starting.lock().unwrap().insert(tab.to_string()) {
+            return None;
+        }
+        Some(StartClaim {
+            state: self.clone(),
+            tab: tab.to_string(),
+        })
+    }
     /// Forgets the session so no new socket can attach; the caller kills it.
     pub fn remove_session(&self, tab: &str) -> Option<Arc<crate::pty::Session>> {
         self.0.sessions.lock().unwrap().remove(tab)
     }
     pub fn origin_allowed(&self, origin: &str) -> bool {
         self.0.allowed_origins.iter().any(|o| o == origin)
+    }
+}
+
+/// A tab's claim on starting its process, from `AppState::claim_start`. Dropping it ends the claim.
+pub struct StartClaim {
+    state: AppState,
+    tab: String,
+}
+
+impl Drop for StartClaim {
+    fn drop(&mut self) {
+        self.state.0.starting.lock().unwrap().remove(&self.tab);
     }
 }
 
@@ -173,6 +201,7 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/sessions/reorder", post(sessions::reorder))
         .route("/v1/sessions/reopen", post(sessions::reopen))
         .route("/v1/sessions/{tab}/resume", post(sessions::resume))
+        .route("/v1/sessions/{tab}/restart", post(sessions::restart))
         .route("/v1/sessions/{tab}/input", post(sessions::input))
         .route("/v1/sessions/{tab}/recording", get(sessions::recording))
         .route("/v1/sessions/{tab}", patch(sessions::rename).delete(sessions::close))

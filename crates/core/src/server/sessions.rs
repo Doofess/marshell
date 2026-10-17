@@ -10,7 +10,7 @@ use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use marshell_protocol::api::{
     ColorScheme, CreateSessionRequest, CreateSessionResponse, InputRequest, RenameRequest, ReopenRequest,
-    ReorderRequest, ResumeError, SessionState, SessionsSnapshot, ShellFamily,
+    ReorderRequest, RestartRequest, ResumeError, SessionInfo, SessionMode, SessionState, SessionsSnapshot, ShellFamily,
 };
 use marshell_protocol::brand;
 use serde::Deserialize;
@@ -66,12 +66,14 @@ pub(super) struct Resolved {
 
 /// Finds the profile (the default when `profile_id` is None) and builds the argv for the agent.
 /// With `resume` the agent is told to continue its last conversation, and there is no prompt.
+/// The mode becomes the agent's own flags; a plain shell has none.
 pub(super) fn resolve(
     st: &AppState,
     profile_id: Option<&str>,
     agent: Option<&str>,
     prompt: Option<&str>,
     resume: bool,
+    mode: Option<SessionMode>,
 ) -> Result<Resolved, ApiError> {
     // Copy the profile out so the lock is gone before any await.
     let profile = {
@@ -82,9 +84,9 @@ pub(super) fn resolve(
     match (profile, profile_id) {
         (Some(p), _) => {
             let argv = if resume {
-                launch_argv_resume(&p, agent)
+                launch_argv_resume(&p, agent, mode)
             } else {
-                launch_argv(&p, agent, prompt)
+                launch_argv(&p, agent, prompt, mode)
             };
             let mut argv = argv.map_err(|msg| (StatusCode::BAD_REQUEST, msg))?;
             let mut env = p.env.clone();
@@ -158,6 +160,7 @@ pub(super) fn start_folder(run: &Resolved, requested: Option<String>) -> String 
 }
 
 /// Reserves a number, starts the process and records it. A failed spawn gives the number back.
+#[allow(clippy::too_many_arguments)]
 async fn start_session(
     st: &AppState,
     run: Resolved,
@@ -166,6 +169,7 @@ async fn start_session(
     cwd: Option<String>,
     size: (u16, u16),
     scheme: Option<ColorScheme>,
+    mode: Option<SessionMode>,
 ) -> Result<CreateSessionResponse, ApiError> {
     check_agent_installed(st, &run, agent.as_deref())?;
     let cwd = start_folder(&run, cwd);
@@ -179,16 +183,20 @@ async fn start_session(
         });
 
     let tab_id = auth::new_id("t");
-    let number = st.0.registry.reserve(
+    // The id is new, so the claim always succeeds. Held until the process is in the map, so a
+    // Restart that finds the reserved row cannot start a second process for it.
+    let _claim = st.claim_start(&tab_id);
+    let (number, generation) = st.0.registry.reserve(
         &tab_id,
         Relaunch {
             profile_id: run.profile_id.clone(),
             agent: agent.clone(),
             cwd: cwd.clone(),
+            mode,
             name,
         },
     );
-    if let Err(err) = launch(st, &tab_id, number, run, agent, cwd, size, scheme).await {
+    if let Err(err) = launch(st, &tab_id, number, generation, run, agent, cwd, size, scheme).await {
         // A spawn failed, or the tab was closed while it started (then there is no open row to release).
         st.0.registry.release(&tab_id);
         return Err(err);
@@ -203,13 +211,14 @@ async fn launch(
     st: &AppState,
     tab_id: &str,
     number: u32,
+    generation: u64,
     run: Resolved,
     agent: Option<String>,
     cwd: String,
     size: (u16, u16),
     scheme: Option<ColorScheme>,
 ) -> Result<(), ApiError> {
-    spawn_into_map(st, tab_id, number, run, agent, cwd, size, scheme).await?;
+    spawn_into_map(st, tab_id, number, generation, run, agent, cwd, size, scheme).await?;
     // A close can land between reserve and insert, when the map has nothing to kill yet.
     // Checking after the insert catches it: a later close finds the session in the map.
     if !st.0.registry.is_open(tab_id) {
@@ -226,12 +235,14 @@ async fn launch(
 
 /// Starts the process and stores its session in the sessions map, without touching the registry.
 /// The exit and mark callbacks name the tab in the registry and do nothing while it has no row:
-/// the shell panel starts here and only gets a row when it is adopted.
+/// the shell panel starts here and only gets a row when it is adopted. The exit callback carries
+/// `generation`, so a process that a restart replaced cannot mark its successor Exited.
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn spawn_into_map(
     st: &AppState,
     tab_id: &str,
     number: u32,
+    generation: u64,
     run: Resolved,
     agent: Option<String>,
     cwd: String,
@@ -270,7 +281,9 @@ pub(super) async fn spawn_into_map(
         env,
         cols: size.0,
         rows: size.1,
-        on_exit: Some(Box::new(move |code| registry.mark_exited(&exited_tab, code))),
+        on_exit: Some(Box::new(move |code| {
+            registry.mark_exited(&exited_tab, generation, code)
+        })),
         on_mark,
         record: Some((recording, shell)),
     };
@@ -309,6 +322,8 @@ pub async fn create(
         return Err((StatusCode::BAD_REQUEST, format!("Unknown agent: {agent}.")));
     }
     // An explicit argv keeps the old behaviour: run it as given, as a custom profile.
+    // A plain shell has no mode.
+    let mode = req.mode.filter(|_| req.agent.is_some() && req.shell.is_none());
     let (run, agent) = match req.shell {
         Some(argv) => {
             if argv.is_empty() {
@@ -324,6 +339,7 @@ pub async fn create(
                 req.agent.as_deref(),
                 req.prompt.as_deref(),
                 false,
+                mode,
             )?,
             req.agent,
         ),
@@ -335,21 +351,27 @@ pub async fn create(
         .clone()
         .filter(|c| !c.is_empty() && run.profile_id != CUSTOM_PROFILE);
     let choice = folder.map(|folder| (folder, run.profile_id.clone(), agent.clone()));
-    let created = start_session(&st, run, agent, req.name, req.cwd, size, req.color_scheme).await?;
+    let created = start_session(&st, run, agent, req.name, req.cwd, size, req.color_scheme, mode).await?;
     if let Some((folder, profile_id, agent)) = choice {
-        remember_choice(&st, folder, profile_id, agent).await;
+        remember_choice(&st, folder, profile_id, agent, mode).await;
     }
     Ok(Json(created))
 }
 
 /// Saves the launcher choice in layout.json under the layout lock, like `put_view`.
 /// The session is already running, so a failed save is only logged.
-async fn remember_choice(st: &AppState, folder: String, profile_id: String, agent: Option<String>) {
+async fn remember_choice(
+    st: &AppState,
+    folder: String,
+    profile_id: String,
+    agent: Option<String>,
+    mode: Option<SessionMode>,
+) {
     let state = st.clone();
     let saved = tokio::task::spawn_blocking(move || {
         let mut current = state.0.layout.lock().unwrap_or_else(|e| e.into_inner());
         let mut next = current.clone();
-        crate::layout::remember(&mut next, &folder, profile_id, agent);
+        crate::layout::remember(&mut next, &folder, profile_id, agent, mode);
         let result = crate::layout::save(&state.0.home, &next);
         // The memory is updated even when the save failed, so the launcher still remembers this run.
         *current = next;
@@ -438,10 +460,27 @@ pub async fn reopen(State(st): State<AppState>, body: Bytes) -> Result<Json<Crea
         return Err((StatusCode::NOT_FOUND, "Nothing to reopen.".into()));
     };
     // A fresh session from the saved profile, agent, folder and name (not the old row).
-    let run = resolve(&st, Some(&saved.profile_id), saved.agent.as_deref(), None, false)?;
+    let run = resolve(
+        &st,
+        Some(&saved.profile_id),
+        saved.agent.as_deref(),
+        None,
+        false,
+        saved.mode,
+    )?;
     // The window resizes the terminal as soon as it attaches.
     // The saved session has no colour scheme, so a reopened one starts without COLORFGBG.
-    let created = start_session(&st, run, saved.agent, Some(saved.name), Some(saved.cwd), (80, 24), None).await?;
+    let created = start_session(
+        &st,
+        run,
+        saved.agent,
+        Some(saved.name),
+        Some(saved.cwd),
+        (80, 24),
+        None,
+        saved.mode,
+    )
+    .await?;
     // Only now remove the entry. If another reopen took it first, drop the duplicate we started.
     if st.0.registry.take_closed(Some(&closed_id)).is_none() {
         st.0.registry.release(&created.tab_id);
@@ -464,15 +503,8 @@ fn cannot_resume(reason: impl Into<String>) -> Response {
     (StatusCode::CONFLICT, Json(ResumeError { reason: reason.into() })).into_response()
 }
 
-/// Starts an Ended or Exited tab again in the same row, with the CLI's own continue flag for an agent.
-pub async fn resume(State(st): State<AppState>, Path(tab): Path<String>, Json(req): Json<ResumeRequest>) -> Response {
-    let Some(info) = st.0.registry.snapshot().sessions.into_iter().find(|s| s.tab_id == tab) else {
-        return (StatusCode::NOT_FOUND, "No such session.").into_response();
-    };
-    // These checks come before begin_resume, so a refusal leaves the tab as it was.
-    if info.state == SessionState::Running {
-        return cannot_resume("It is already running.");
-    }
+/// Why the tab's profile or folder rules out starting it again (Resume and Restart), if they do.
+fn cannot_start_again(st: &AppState, info: &SessionInfo) -> Option<String> {
     let profile_known = info.profile_id == CUSTOM_PROFILE
         || st
             .0
@@ -483,12 +515,38 @@ pub async fn resume(State(st): State<AppState>, Path(tab): Path<String>, Json(re
             .iter()
             .any(|p| p.id == info.profile_id);
     if !profile_known {
-        return cannot_resume("Its shell profile was removed.");
+        return Some("Its shell profile was removed.".into());
     }
     if !info.cwd.is_empty() && !std::path::Path::new(&info.cwd).is_dir() {
-        return cannot_resume(format!("Its folder no longer exists: {}", info.cwd));
+        return Some(format!("Its folder no longer exists: {}", info.cwd));
     }
-    let run = match resolve(&st, Some(&info.profile_id), info.agent.as_deref(), None, true) {
+    None
+}
+
+/// Starts an Ended or Exited tab again in the same row, with the CLI's own continue flag for an agent.
+pub async fn resume(State(st): State<AppState>, Path(tab): Path<String>, Json(req): Json<ResumeRequest>) -> Response {
+    let Some(info) = st.0.registry.snapshot().sessions.into_iter().find(|s| s.tab_id == tab) else {
+        return (StatusCode::NOT_FOUND, "No such session.").into_response();
+    };
+    // Held until the new process is in the map. Another start shows the row Running already.
+    let Some(_claim) = st.claim_start(&tab) else {
+        return cannot_resume("It is already running.");
+    };
+    // These checks come before begin_resume, so a refusal leaves the tab as it was.
+    if info.state == SessionState::Running {
+        return cannot_resume("It is already running.");
+    }
+    if let Some(reason) = cannot_start_again(&st, &info) {
+        return cannot_resume(reason);
+    }
+    let run = match resolve(
+        &st,
+        Some(&info.profile_id),
+        info.agent.as_deref(),
+        None,
+        true,
+        info.mode,
+    ) {
         Ok(run) => run,
         Err(err) => return err.into_response(),
     };
@@ -496,7 +554,7 @@ pub async fn resume(State(st): State<AppState>, Path(tab): Path<String>, Json(re
         return cannot_resume(message);
     }
     // The check and the change to Running happen under one lock: of two resumes at once, one wins.
-    let (saved, previous) = match st.0.registry.begin_resume(&tab) {
+    let (saved, previous, generation) = match st.0.registry.begin_resume(&tab) {
         Ok(started) => started,
         Err(ResumeRefusal::NotFound) => return (StatusCode::NOT_FOUND, "No such session.").into_response(),
         Err(ResumeRefusal::AlreadyRunning) => return cannot_resume("It is already running."),
@@ -511,6 +569,7 @@ pub async fn resume(State(st): State<AppState>, Path(tab): Path<String>, Json(re
         &st,
         &tab,
         info.number,
+        generation,
         run,
         saved.agent,
         saved.cwd,
@@ -531,12 +590,94 @@ pub async fn resume(State(st): State<AppState>, Path(tab): Path<String>, Json(re
     }
 }
 
+/// Starts an agent session again in the same row in another mode, continuing its last conversation
+/// (the CLI's own continue flag). The old process, if any, is killed. Every refusal comes before
+/// that, so a refused restart leaves the session running.
+pub async fn restart(State(st): State<AppState>, Path(tab): Path<String>, Json(req): Json<RestartRequest>) -> Response {
+    let Some(info) = st.0.registry.snapshot().sessions.into_iter().find(|s| s.tab_id == tab) else {
+        return (StatusCode::NOT_FOUND, "No such session.").into_response();
+    };
+    if info.agent.is_none() {
+        return cannot_resume("Only an agent session has a mode.");
+    }
+    // Held until the new process is in the map, so a second Restart or a Resume cannot start one too.
+    let Some(_claim) = st.claim_start(&tab) else {
+        return cannot_resume("It is already starting.");
+    };
+    if let Some(reason) = cannot_start_again(&st, &info) {
+        return cannot_resume(reason);
+    }
+    let run = match resolve(
+        &st,
+        Some(&info.profile_id),
+        info.agent.as_deref(),
+        None,
+        true,
+        Some(req.mode),
+    ) {
+        Ok(run) => run,
+        Err(err) => return err.into_response(),
+    };
+    if let Err((_, message)) = check_agent_installed(&st, &run, info.agent.as_deref()) {
+        return cannot_resume(message);
+    }
+    // From here the restart goes ahead. The row takes the new mode and a new generation first, so the
+    // old process's exit (which the kill below causes) no longer touches it.
+    let (saved, generation) = match st.0.registry.begin_restart(&tab, req.mode) {
+        Ok(started) => started,
+        Err(_) => return (StatusCode::NOT_FOUND, "No such session.").into_response(),
+    };
+    // No lock is held here: `remove_session` drops the map lock before it returns, and `kill` only
+    // signals the process tree and returns.
+    if let Some(old) = st.remove_session(&tab) {
+        old.kill();
+    }
+    match launch(
+        &st,
+        &tab,
+        info.number,
+        generation,
+        run,
+        saved.agent,
+        saved.cwd,
+        (req.cols, req.rows),
+        None,
+    )
+    .await
+    {
+        Ok(()) => Json(CreateSessionResponse {
+            tab_id: tab,
+            number: info.number,
+        })
+        .into_response(),
+        Err(err) => {
+            // The old process is gone, so the row cannot go back to Running. Only this run's generation counts:
+            // a newer restart of the same tab keeps its own state.
+            st.0.registry.mark_exited(&tab, generation, -1);
+            err.into_response()
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     fn var(name: &str, value: &str) -> (String, String) {
         (name.to_string(), value.to_string())
+    }
+
+    /// Two starts of one tab at once (a Restart during a Resume's spawn, or two Restarts) would
+    /// both put a process in the map, and the first would run on unseen. One claim per tab.
+    #[test]
+    fn one_start_per_tab_at_a_time() {
+        let home = tempfile::tempdir().unwrap();
+        let st = AppState::new("t".into(), 1, Vec::new(), home.path().to_path_buf(), Vec::new());
+        let first = st.claim_start("a").expect("the first start claims the tab");
+        assert!(st.claim_start("a").is_none());
+        assert!(st.claim_start("b").is_some());
+        drop(first);
+        assert!(st.claim_start("a").is_some());
     }
 
     #[test]

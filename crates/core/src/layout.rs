@@ -2,7 +2,7 @@
 //! broken or newer-version file means the defaults, and `load` never writes.
 
 use crate::store::{self, Versioned};
-use marshell_protocol::api::{LauncherChoice, LayoutDoc, ViewLayout};
+use marshell_protocol::api::{LauncherChoice, LayoutDoc, SessionMode, ViewLayout};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
@@ -43,13 +43,28 @@ pub fn save(home: &Path, doc: &LayoutDoc) -> anyhow::Result<()> {
 /// How many folders the launcher remembers a choice for.
 const MAX_LAUNCHER_FOLDERS: usize = 32;
 
-/// Notes the profile and agent just used in `folder`. The choice gets a number one higher than any
-/// other, so the order of use survives a restart; past 32 folders the one used longest ago is dropped.
-pub fn remember(doc: &mut LayoutDoc, folder: &str, profile_id: String, agent: Option<String>) {
+/// Notes the profile, agent and mode just used in `folder`. Full auto and Bypass are never remembered.
+/// The choice gets a number one higher than any other, so the order of use survives a restart;
+/// past 32 folders the one used longest ago is dropped.
+pub fn remember(
+    doc: &mut LayoutDoc,
+    folder: &str,
+    profile_id: String,
+    agent: Option<String>,
+    mode: Option<SessionMode>,
+) {
+    let mode = mode.filter(|m| !matches!(m, SessionMode::FullAuto | SessionMode::Bypass));
     let newest = doc.launcher.values().map(|c| c.seq).max().unwrap_or(0);
     let seq = newest.saturating_add(1);
-    doc.launcher
-        .insert(folder.to_string(), LauncherChoice { profile_id, agent, seq });
+    doc.launcher.insert(
+        folder.to_string(),
+        LauncherChoice {
+            profile_id,
+            agent,
+            seq,
+            mode,
+        },
+    );
     while doc.launcher.len() > MAX_LAUNCHER_FOLDERS {
         let oldest = doc.launcher.iter().min_by_key(|(_, c)| c.seq).map(|(k, _)| k.clone());
         match oldest {
@@ -155,6 +170,7 @@ mod tests {
             agent: None,
             profile_id: "cmd".into(),
             cwd: "C:/work".into(),
+            mode: None,
         }
     }
 
@@ -272,7 +288,7 @@ mod tests {
     fn remember_numbers_choices_and_keeps_the_newest_32() {
         let mut doc = LayoutDoc::default();
         for i in 0..40 {
-            remember(&mut doc, &format!("C:/work/{i}"), "cmd".into(), None);
+            remember(&mut doc, &format!("C:/work/{i}"), "cmd".into(), None, None);
         }
         assert_eq!(doc.launcher.len(), 32);
         // The eight oldest folders are gone; the newest is numbered 40.
@@ -284,15 +300,42 @@ mod tests {
     #[test]
     fn remember_replaces_a_folders_choice_and_makes_it_the_newest() {
         let mut doc = LayoutDoc::default();
-        remember(&mut doc, "C:/a", "cmd".into(), None);
-        remember(&mut doc, "C:/b", "cmd".into(), None);
-        remember(&mut doc, "C:/a", "pwsh".into(), Some("claude".into()));
+        remember(&mut doc, "C:/a", "cmd".into(), None, None);
+        remember(&mut doc, "C:/b", "cmd".into(), None, None);
+        remember(&mut doc, "C:/a", "pwsh".into(), Some("claude".into()), None);
         assert_eq!(doc.launcher.len(), 2);
         let a = &doc.launcher["C:/a"];
         assert_eq!(
             (a.profile_id.as_str(), a.agent.as_deref(), a.seq),
             ("pwsh", Some("claude"), 3)
         );
+    }
+
+    #[test]
+    fn remember_keeps_safe_modes_only() {
+        let mut doc = LayoutDoc::default();
+        for (mode, kept) in [
+            (SessionMode::Bypass, None),
+            (SessionMode::FullAuto, None),
+            (SessionMode::Plan, Some(SessionMode::Plan)),
+            (SessionMode::AutoEdit, Some(SessionMode::AutoEdit)),
+            (SessionMode::Manual, Some(SessionMode::Manual)),
+        ] {
+            remember(&mut doc, "C:/a", "pwsh".into(), Some("claude".into()), Some(mode));
+            assert_eq!(doc.launcher["C:/a"].mode, kept);
+        }
+    }
+
+    #[test]
+    fn a_layout_without_mode_keys_still_parses() {
+        let doc: LayoutDoc = serde_json::from_str(
+            r#"{"tabs":[{"tab_id":"a","number":1,"name":"A","agent":"claude","profile_id":"cmd","cwd":"C:/w"}],
+                "view":{"panes":[null],"arrangement":null,"ratios":[],"active":0,"zoomed":null,"sidebar":"expanded","sidebar_width":280,"shell_hidden":false,"grouped":false},
+                "launcher":{"C:/w":{"profile_id":"cmd","agent":null,"seq":1}}}"#,
+        )
+        .unwrap();
+        assert_eq!(doc.tabs[0].mode, None);
+        assert_eq!(doc.launcher["C:/w"].mode, None);
     }
 
     #[test]

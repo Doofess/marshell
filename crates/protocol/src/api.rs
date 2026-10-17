@@ -72,10 +72,26 @@ pub struct CreateSessionRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub prompt: Option<String>,
+    /// The mode an agent session starts in. Absent starts it with no mode flags. A plain shell ignores it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub mode: Option<SessionMode>,
     /// The terminal's colour scheme right now. Absent means the core sets no `COLORFGBG`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub color_scheme: Option<ColorScheme>,
+}
+
+/// How much an agent may do before it asks. The core turns it into the CLI's own flags.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "kebab-case")]
+#[ts(export)]
+pub enum SessionMode {
+    Manual,
+    Plan,
+    AutoEdit,
+    FullAuto,
+    Bypass,
 }
 
 /// Whether a terminal's background is dark or light.
@@ -122,6 +138,8 @@ pub struct SessionInfo {
     pub cwd: String,
     /// The git repo root of `cwd` (the main checkout, for a task worktree), or `cwd` itself outside git.
     pub project: String,
+    /// The mode the process started in. None for a plain shell, or an agent started with no mode.
+    pub mode: Option<SessionMode>,
     pub state: SessionState,
     /// What the shell is doing, from its prompt marks. Unknown without shell integration.
     pub command: CommandState,
@@ -161,6 +179,9 @@ pub struct SavedTab {
     pub agent: Option<String>,
     pub profile_id: String,
     pub cwd: String,
+    /// The mode it started in. A layout.json from before this field existed reads as None.
+    #[serde(default)]
+    pub mode: Option<SessionMode>,
 }
 
 /// How the window was laid out: which tabs sit in which panes, and the sidebar.
@@ -210,6 +231,9 @@ pub struct LauncherChoice {
     /// A layout.json from before this field existed reads as 0.
     #[serde(default)]
     pub seq: u32,
+    /// The mode last used here. Never Full auto or Bypass. A layout.json from before this field reads as None.
+    #[serde(default)]
+    pub mode: Option<SessionMode>,
 }
 
 /// The whole of layout.json.
@@ -227,6 +251,15 @@ pub struct LayoutDoc {
 #[ts(export)]
 pub struct ResumeError {
     pub reason: String,
+}
+
+/// POST /v1/sessions/{tab}/restart body: start an agent session again in another mode.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct RestartRequest {
+    pub mode: SessionMode,
+    pub cols: u16,
+    pub rows: u16,
 }
 
 /// One task: a git worktree on its own branch, made by Marshell.
@@ -665,6 +698,14 @@ mod tests {
         assert!(req.shell.is_none() && req.cwd.is_none());
         assert!(req.profile_id.is_none() && req.agent.is_none());
         assert!(req.name.is_none() && req.prompt.is_none());
+        assert!(req.mode.is_none());
+    }
+
+    #[test]
+    fn session_mode_is_kebab_case() {
+        let req: CreateSessionRequest = serde_json::from_str(r#"{"cols":80,"rows":24,"mode":"auto-edit"}"#).unwrap();
+        assert_eq!(req.mode, Some(SessionMode::AutoEdit));
+        assert_eq!(serde_json::to_string(&SessionMode::FullAuto).unwrap(), r#""full-auto""#);
     }
 
     #[test]

@@ -52,6 +52,10 @@
   min-inline-size: 0;
   min-block-size: 0;
 }
+/* The restart bar in a pane's header slot is as tall as the header. */
+.pane > .close-bar {
+  block-size: 28px;
+}
 /*
  * Each pane's own prompt line sits in a fixed slot at its foot, so the terminal above never resizes. A long prompt grows the
  * line upward over this pane's own terminal while it is being written.

@@ -32,6 +32,8 @@ export type SplitViewProps = {
   renderTerminal?: (row: RowModel) => ReactNode;
   /** A click in a pane, or the focus moving into it, gives its index. */
   onFocus?: (index: number) => void;
+  /** A bar for one session, which replaces that pane's header (when the session has a pane here). */
+  paneBar?: { id: string; node: ReactNode };
   /** A pane header's zoom button gives the pane's index. */
   onZoom?: (index: number) => void;
   /** A pane header's remove button gives the pane's index. */
@@ -70,7 +72,7 @@ function handleLabel(plan: Plan, h: Handle): string {
  * the user's choice stands once made. Dividers cost one pixel (the 8 px hit area overhangs the panes). A zoomed
  * pane fills the view and the others keep running.
  */
-export function SplitView({ panes, size, activeIndex = 0, arrangement, ratios = {}, zoomed, choices = [], hidden = 0, composerValues = {}, composers = true, setting = "follow-app", os = "windows", renderTerminal, onFocus, onZoom, onRemove, onPick, onRatios }: SplitViewProps) {
+export function SplitView({ panes, size, activeIndex = 0, arrangement, ratios = {}, zoomed, choices = [], hidden = 0, composerValues = {}, composers = true, setting = "follow-app", os = "windows", renderTerminal, paneBar, onFocus, onZoom, onRemove, onPick, onRatios }: SplitViewProps) {
   const splitRef = useRef<HTMLDivElement>(null);
   if (panes.length > PANE_LIMIT) throw new Error(`At most ${PANE_LIMIT} panes can be on screen`);
   const isZoomed = zoomed !== undefined && panes[zoomed] != null;
@@ -127,7 +129,7 @@ export function SplitView({ panes, size, activeIndex = 0, arrangement, ratios = 
     >
       {visible.map(({ row, index }, k) =>
         row ? (
-          <Pane key={row.id} row={row} active={index === activeIndex} navIndex={index} setting={setting} style={gridArea(plan.cells[k]!)} cells={cells[k]} zoomedOf={isZoomed ? panes.length : undefined} othersRunning={isZoomed ? panes.filter(Boolean).length - 1 : undefined} runningElsewhere={index === activeIndex && hidden > 0 ? hidden : undefined} value={composerValues[row.id]} composer={composers} os={os} renderTerminal={renderTerminal} onFocus={at(onFocus, index)} onZoom={at(onZoom, index)} onRemove={at(onRemove, index)} />
+          <Pane key={row.id} row={row} active={index === activeIndex} navIndex={index} setting={setting} style={gridArea(plan.cells[k]!)} cells={cells[k]} zoomedOf={isZoomed ? panes.length : undefined} othersRunning={isZoomed ? panes.filter(Boolean).length - 1 : undefined} runningElsewhere={index === activeIndex && hidden > 0 ? hidden : undefined} value={composerValues[row.id]} composer={composers} os={os} renderTerminal={renderTerminal} bar={paneBar?.id === row.id ? paneBar.node : undefined} onFocus={at(onFocus, index)} onZoom={at(onZoom, index)} onRemove={at(onRemove, index)} />
         ) : (
           <EmptyPane key={`empty-${index}`} choices={choices} active={index === activeIndex} navIndex={index} style={gridArea(plan.cells[k]!)} os={os} onFocus={at(onFocus, index)} onRemove={at(onRemove, index)} onPick={at(onPick, index)} />
         ),

@@ -9,7 +9,7 @@ import type { TaskPlanRequest } from "../../generated/TaskPlanRequest";
 import { ApiError } from "../../lib/api/client";
 import type { Project } from "../launcher/filter";
 import type { TaskConfirm } from "../launcher/Launcher";
-import { LAUNCH_PROGRAMS, isAgentProgram, programById, type LaunchProgram, type LauncherChoice, type ProgramId } from "../launcher/launchChoice";
+import { LAUNCH_PROGRAMS, isAgentProgram, programById, type LaunchProgram, type LauncherChoice, type Mode, type ProgramId } from "../launcher/launchChoice";
 import { shellKind } from "./toRow";
 
 /** The agents the core can start today. The rest of `LAUNCH_PROGRAMS` stays hidden until their adapters exist. */
@@ -41,6 +41,11 @@ export function preselect(doc: LayoutDoc | null, projectPath: string, programs: 
   return programById(id, programs)?.id;
 }
 
+/** The mode last used in this folder, which the core stores only for the modes that ask first (never Full auto or Bypass). */
+export function preselectMode(doc: LayoutDoc | null, projectPath: string): Mode | undefined {
+  return doc?.launcher[projectPath]?.mode ?? undefined;
+}
+
 /**
  * The request for what the launcher shows. An agent runs inside the default shell and may take a first prompt; a shell
  * profile is just that shell and takes none. No folder means the core's default (the home folder).
@@ -60,7 +65,9 @@ export function launchRequest(
   const id = programById(choice.program, programs)?.id ?? choice.program;
   if (id.startsWith(PROFILE_PREFIX)) return { ...base, profile_id: id.slice(PROFILE_PREFIX.length) };
   const withAgent = { ...base, agent: id, profile_id: profiles.default_id };
-  return isAgentProgram(id, programs) && prompt.trim() !== "" ? { ...withAgent, prompt } : withAgent;
+  if (!isAgentProgram(id, programs)) return withAgent;
+  const withMode = { ...withAgent, mode: choice.mode };
+  return prompt.trim() !== "" ? { ...withMode, prompt } : withMode;
 }
 
 /**
