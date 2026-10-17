@@ -151,6 +151,21 @@
   place-items: center;
   padding: var(--space-3);
 }
+/*
+ * The frame fills the body's cell (a definite size), so the box can be fitted against it with container units. A percentage
+ * max-height on the image does not do it: the box around it has no height of its own, so the image overflows the box (a tall
+ * image by thousands of pixels, a large one by a part of its height), and the region's fractions stop matching the image.
+ */
+.preview__imagefit {
+  container-type: size;
+  justify-self: stretch;
+  align-self: stretch;
+  display: grid;
+  place-items: center;
+  min-inline-size: 0;
+  min-block-size: 0;
+}
+/* Before the image has loaded (its size unknown): as big as the image allows, and no bigger than the frame. */
 .preview__imagebox {
   position: relative;
   display: grid;
@@ -164,6 +179,20 @@
   max-inline-size: 100%;
   max-block-size: 100%;
   object-fit: contain;
+}
+/* Loaded: the box is the image's own size, or the largest size of that ratio that fits the frame; the image fills it. */
+.preview__imagebox[data-fit="true"] {
+  display: block;
+  inline-size: min(calc(var(--nat-w) * 1px), 100cqw, calc(100cqh * var(--nat-w) / var(--nat-h)));
+  aspect-ratio: var(--nat-w) / var(--nat-h);
+  max-inline-size: none;
+  max-block-size: none;
+}
+.preview__imagebox[data-fit="true"] .preview__image {
+  inline-size: 100%;
+  block-size: 100%;
+  max-inline-size: none;
+  max-block-size: none;
 }
 
 /* Code: one row per line. The rows are as wide as the longest line, so the line numbers can stay put while the code scrolls sideways. */
