@@ -202,6 +202,12 @@ describe("viewReducer", () => {
     expect(s.panes).toEqual(["x", null]);
   });
 
+  it("select of a session in a pane out of sight moves it into an empty visible pane", () => {
+    const s = run(state({ panes: ["a", null, "c"], active: 0 }), { type: "select", tabId: "c", visible: 2 });
+    expect(s.panes).toEqual(["a", "c", null]);
+    expect(s.active).toBe(1);
+  });
+
   it("select of a session behind the zoom moves the zoom to its pane", () => {
     const s = run(state({ panes: ["a", "b"], active: 0, zoomed: 0 }), { type: "select", tabId: "b", visible: 2 });
     expect(s.panes).toEqual(["a", "b"]);
@@ -301,6 +307,9 @@ describe("paneToggle", () => {
 
   it("does nothing to the only pane", () => {
     expect(paneToggle(view(["a"]), "a", 1, 2)).toEqual({ kind: "only" });
+    // Nor to the only pane with a session in it: the rest are empty.
+    expect(paneToggle(view(["a", null]), "a", 2, 2)).toEqual({ kind: "only" });
+    expect(paneToggle(view(["a", null, "b"]), "a", 3, 3)).toEqual({ kind: "remove", index: 0 });
   });
 
   it("shows a session from a hidden pane", () => {

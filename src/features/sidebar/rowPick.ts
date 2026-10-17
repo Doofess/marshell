@@ -3,9 +3,12 @@ import { inRenameBox } from "./rowMenu";
 
 type Mods = { ctrlKey: boolean; metaKey: boolean; altKey: boolean; shiftKey: boolean };
 
-/** A click that adds or removes the session's pane: Cmd alone on macOS (Ctrl+click is a right-click there), Ctrl alone elsewhere. */
-export function togglesPane(e: Mods, os: Os): boolean {
-  if (e.altKey || e.shiftKey) return false;
+/**
+ * A click that adds or removes the session's pane: Cmd alone on macOS (Ctrl+click is a right-click there), Ctrl alone elsewhere.
+ * A click in the rename text box stays with the box.
+ */
+export function togglesPane(e: Mods & { target?: object | null }, os: Os): boolean {
+  if (e.altKey || e.shiftKey || inRenameBox(e.target ?? null)) return false;
   return os === "mac" ? e.metaKey && !e.ctrlKey : e.ctrlKey && !e.metaKey;
 }
 

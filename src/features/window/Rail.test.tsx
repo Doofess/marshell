@@ -35,6 +35,9 @@ describe("Rail", () => {
     expect(items[2]).not.toContain("data-visible");
     expect(renderToStaticMarkup(<Rail rows={rows} needsYou={0} selectedId="working" />)).not.toContain("data-visible");
   });
+  it("does not mark the store's selection when it is in no visible pane", () => {
+    expect(renderToStaticMarkup(<Rail rows={rows} needsYou={0} visibleIds={["working"]} selectedId="needs-permission" />)).not.toContain("aria-current");
+  });
   it("carries the agent so the brand stripe colours", () => {
     expect(renderToStaticMarkup(<Rail rows={rows} needsYou={0} />)).toContain('data-agent="claude"');
   });

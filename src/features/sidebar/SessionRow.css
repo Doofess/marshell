@@ -396,6 +396,11 @@
     outline: 2px solid Highlight;
     outline-offset: -2px;
   }
+  /* The keyboard focus takes a third shape, so it never reads as one of the marks above. */
+  .session-row:focus-visible {
+    outline: 3px double Highlight;
+    outline-offset: -3px;
+  }
   .session-row__unread {
     forced-color-adjust: none;
     background: CanvasText;

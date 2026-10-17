@@ -30,7 +30,7 @@ import { sidebarMode } from "../window/layout";
 import { MainWindow } from "../window/MainWindow";
 import { PANE_LIMIT, type Arrangement } from "../window/splitLayout";
 import { useViewState } from "../window/useViewState";
-import { adoptTarget, fillsEmptyPane, focusedIndex, paneToggle, railToggle, ratiosOf, roomForPane, sidebarPrefOf, visibleSessions } from "../window/viewState";
+import { adoptTarget, fillsEmptyPane, focusedIndex, paneToggle, railToggle, ratiosOf, roomForPane, sidebarPrefOf, viewReducer, visibleSessions } from "../window/viewState";
 import { CloseBar } from "./CloseBar";
 import { launcherOpens } from "./launcherOpens";
 import { LiveLauncher } from "./LiveLauncher";
@@ -409,9 +409,16 @@ export function LiveApp() {
   // Ctrl+click or Ctrl+Space on a session: drop its pane if it is on screen (never the last one), else show it as Split does.
   const togglePane = useCallback(
     (id: string) => {
-      const toggle = paneToggle(viewRef.current, id, shownRef.current ?? viewRef.current.panes.length, fitRef.current ?? PANE_LIMIT);
-      if (toggle.kind === "remove") dispatch({ type: "remove", index: toggle.index });
-      else if (toggle.kind === "show") showInPane(id);
+      const v = viewRef.current;
+      const toggle = paneToggle(v, id, shownRef.current ?? v.panes.length, fitRef.current ?? PANE_LIMIT);
+      if (toggle.kind === "remove") {
+        const action = { type: "remove", index: toggle.index } as const;
+        dispatch(action);
+        // The store's selection follows the pane that has the focus now, so it never names the session whose pane went.
+        const after = viewReducer(v, action);
+        const next = after.panes[focusedIndex(after.panes.slice(0, shownRef.current ?? after.panes.length), after.active, after.zoomed)];
+        if (next) selectRef.current(next);
+      } else if (toggle.kind === "show") showInPane(id);
       else if (toggle.kind === "full") announce(NO_PANE_ROOM);
     },
     [dispatch, showInPane, announce],

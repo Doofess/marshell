@@ -137,8 +137,9 @@ export function Sidebar({
       key={r.id}
       row={r}
       density="comfortable"
-      selected={r.id === selectedId || (visibleIds?.includes(r.id) ?? false)}
-      focused={visibleIds ? r.id === selectedId : false}
+      // With visible ids, a session in no pane on screen (the store's choice standing in for an empty pane) is not marked.
+      selected={visibleIds ? visibleIds.includes(r.id) : r.id === selectedId}
+      focused={visibleIds ? visibleIds.includes(r.id) && r.id === selectedId : false}
       os={os}
       tabStop={r.id === tabStop}
       drag={dragFor(r.id)}

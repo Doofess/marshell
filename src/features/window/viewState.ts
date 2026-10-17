@@ -136,7 +136,8 @@ export type PaneToggle = { kind: "remove"; index: number } | { kind: "only" } | 
 /** What a Ctrl+click on a session's row does: drop its pane if it is visible, otherwise bring it into view if there is room. */
 export function paneToggle(view: Pick<ViewLayout, "panes" | "active" | "zoomed">, id: string, shown: number, fit: number): PaneToggle {
   if (visibleSessions(view.panes, shown, view.zoomed).includes(id)) {
-    return view.panes.length > 1 ? { kind: "remove", index: view.panes.indexOf(id) } : { kind: "only" };
+    // Never the last pane with a session in it: the window would be left empty, and an empty single pane takes the selection back.
+    return view.panes.some((p) => p !== null && p !== id) ? { kind: "remove", index: view.panes.indexOf(id) } : { kind: "only" };
   }
   if (view.panes.includes(id)) return { kind: "show" };
   const target = adoptTarget(view, shown, fit);
@@ -194,17 +195,14 @@ export function viewReducer(s: ViewState, a: ViewAction): ViewState {
       const zoomed = s.zoomed !== null && shown[s.zoomed] != null;
       const active = focusedIndex(shown, s.active, s.zoomed);
       if (at >= 0 && at <= last) return { ...s, active: at, zoomed: zoomed ? at : s.zoomed };
-      const empty = s.zoomed === null ? s.panes.slice(0, last + 1).indexOf(null) : -1;
-      if (at < 0 && empty >= 0) {
-        const panes = [...s.panes];
-        panes[empty] = a.tabId;
-        return { ...s, panes, active: empty };
-      }
+      // It goes into the first empty pane on screen (none shows behind a zoom), else into the focused pane.
+      const empty = zoomed ? -1 : shown.indexOf(null);
+      const into = empty >= 0 ? empty : active;
       const panes = [...s.panes];
-      // A session in a pane out of sight trades places with the one in the focused pane, so neither is dropped.
-      if (at >= 0) panes[at] = panes[active]!;
-      panes[active] = a.tabId;
-      return { ...s, panes, active };
+      // A session in a pane out of sight trades places with the pane it goes into, so nothing is dropped.
+      if (at >= 0) panes[at] = panes[into]!;
+      panes[into] = a.tabId;
+      return { ...s, panes, active: into };
     }
     case "focusPane":
       return a.index < 0 || a.index >= s.panes.length ? s : { ...s, active: a.index };

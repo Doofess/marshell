@@ -123,6 +123,12 @@ describe("Sidebar: rename and reorder", () => {
     expect(plain).not.toContain("data-focused");
     expect((plain.match(/aria-selected="true"/g) ?? []).length).toBe(1);
   });
+  it("does not mark the store's selection when it is in no visible pane", () => {
+    const [a, , c] = SCENARIO_ROWS.map((r) => r.id);
+    const h = html({ visibleIds: [a!], selectedId: c });
+    expect((h.match(/aria-selected="true"/g) ?? []).length).toBe(1);
+    expect(h).not.toContain("data-focused");
+  });
   it("does not make a row draggable while its name is being edited", () => {
     const h = html({ onReorder: () => {}, renamingId: target.id, onRename: () => {}, onRenameCancel: () => {} });
     expect((h.match(/draggable="true"/g) ?? []).length).toBe(SCENARIO_ROWS.length - 1);

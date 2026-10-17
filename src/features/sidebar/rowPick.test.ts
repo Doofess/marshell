@@ -17,6 +17,10 @@ describe("togglesPane", () => {
     expect(togglesPane(mods({ ctrlKey: true }), "mac")).toBe(false);
     expect(togglesPane(mods({ metaKey: true, altKey: true }), "mac")).toBe(false);
   });
+  it("leaves a click in the rename text box to the box", () => {
+    const target = { closest: (s: string) => (s === ".session-row__rename" ? {} : null) };
+    expect(togglesPane({ ...mods({ ctrlKey: true }), target }, "windows")).toBe(false);
+  });
 });
 
 describe("togglesPaneKey", () => {
