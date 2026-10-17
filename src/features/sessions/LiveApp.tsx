@@ -381,10 +381,10 @@ export function LiveApp() {
     announce(paths.length === 1 ? `Pasted ${lastSegment(paths[0] ?? "")} into ${delivery.name}.` : `Pasted ${paths.length} paths into ${delivery.name}.`);
     focusDelivered(target.tabId, delivery);
   };
-  // The shell panel's tab has no row to select, and focusTerminal would move the keys to the selected session, so only a pane's session is picked.
+  // The shell panel's tab has no row to select, and focusTerminal would move the keys to the selected session, so the panel's own terminal is focused instead.
   const panelIdRef = useRef<string | undefined>(undefined);
   const focusDelivered = (tabId: string, delivery: { name: string; panel?: true }) => {
-    if (delivery.panel) return;
+    if (delivery.panel) return focusShellTerminal(document);
     pick(tabId);
     setTimeout(() => actions.focusTerminal(), 0);
   };
