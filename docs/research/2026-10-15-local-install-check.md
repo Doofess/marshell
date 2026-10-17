@@ -122,3 +122,7 @@ Not attempted; it requires writing config. The isolated setup would be:
 - Antigravity transcript JSONL schema and `truncated_fields`; `conversations\<id>.db` vs `brain\<id>\...\transcript.jsonl` as the durable source.
 - Whether `agy` honours any home-directory override for an isolated capture.
 - `docs/research/antigravity-notes/01-overview.md` claim that Gemini CLI is deprecated.
+
+### agy 1.4.0 (2026-10-17, modes at launch)
+
+- `--mode auto` starts Full auto, and `agy --continue` resumes the last conversation; Marshell uses both for Launch, Resume and Restart (`mode_args`, `resume_args`). Full auto is not classified by Marshell yet, so its risk check still stands in once the hook lands.

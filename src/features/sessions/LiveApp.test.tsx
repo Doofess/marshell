@@ -34,6 +34,7 @@ function setup(infos: SessionInfo[], selectedId: string | undefined = infos[0]?.
     rename: vi.fn(async () => {}),
     reorder: vi.fn(async () => {}),
     resume: vi.fn(async (): Promise<{ ok: true } | { ok: false; reason: string }> => ({ ok: true })),
+    restart: vi.fn(async (): Promise<{ ok: true }> => ({ ok: true })),
   };
   const select = vi.fn();
   const actions = new SessionActions({ api, context: () => ({ endpoint: ep, infos, selectedId }), select });
@@ -228,7 +229,7 @@ describe("LiveApp: rename and reorder", () => {
   it("while grouped, Alt+Shift+arrow moves a session only inside its project and sends the displayed order", () => {
     const infos = [info(1), info(2), info(3), info(4)];
     const groupedRows = [{ id: "t1", project: "a", projectKey: "a" }, { id: "t2", project: "b", projectKey: "b" }, { id: "t3", project: "a", projectKey: "a" }, { id: "t4", project: "b", projectKey: "b" }] as RowModel[];
-    const api = { close: vi.fn(async () => {}), reopen: vi.fn(), rename: vi.fn(), reorder: vi.fn(async () => {}), resume: vi.fn() };
+    const api = { close: vi.fn(async () => {}), reopen: vi.fn(), rename: vi.fn(), reorder: vi.fn(async () => {}), resume: vi.fn(), restart: vi.fn() };
     let selectedId = "t3";
     const actions = new SessionActions({ api, context: () => ({ endpoint: ep, infos, selectedId, groupedRows }), select: vi.fn() });
     actions.handle({ kind: "move", by: -1 });
@@ -314,7 +315,7 @@ describe("LiveApp: fix round 1", () => {
 
   it("F2 does nothing when the sidebar is not expanded, so no rename box is left pending", () => {
     const infos = [info(1)];
-    const api = { close: vi.fn(async () => {}), reopen: vi.fn(), rename: vi.fn(), reorder: vi.fn(), resume: vi.fn() };
+    const api = { close: vi.fn(async () => {}), reopen: vi.fn(), rename: vi.fn(), reorder: vi.fn(), resume: vi.fn(), restart: vi.fn() };
     const actions = new SessionActions({ api, context: () => ({ endpoint: ep, infos, selectedId: "t1", sidebarExpanded: false }), select: vi.fn() });
     actions.startRename();
     expect(actions.getState().renaming).toBeNull();
@@ -331,7 +332,7 @@ describe("LiveApp: resume", () => {
 
   it("sends the last measured size and says Resumed", async () => {
     const infos = [ended(1)];
-    const api = { close: vi.fn(), reopen: vi.fn(), rename: vi.fn(), reorder: vi.fn(), resume: vi.fn(async (): Promise<{ ok: true }> => ({ ok: true })) };
+    const api = { close: vi.fn(), reopen: vi.fn(), rename: vi.fn(), reorder: vi.fn(), resume: vi.fn(async (): Promise<{ ok: true }> => ({ ok: true })), restart: vi.fn() };
     const actions = new SessionActions({ api, context: () => ({ endpoint: ep, infos, selectedId: "t1" }), select: vi.fn(), size: () => ({ cols: 90, rows: 24 }) });
     await actions.resume("t1");
     expect(api.resume).toHaveBeenCalledWith(ep, "t1", { cols: 90, rows: 24 });
@@ -513,6 +514,11 @@ describe("LiveApp: the palette's Review command", () => {
   it("hides Copy this session's recording path when no session is focused", () => {
     expect(paletteHidden({ resumable: true, isTask: true, missing: true, focused: false })).toEqual(["copy-recording-path"]);
     expect(paletteHidden({ resumable: true, isTask: true, missing: true, focused: true })).toEqual([]);
+  });
+  it("hides the Mode commands unless the focused session is an agent: a plain shell has no mode to change", () => {
+    const modes = ["mode-manual", "mode-plan", "mode-auto-edit", "mode-full-auto", "mode-bypass"];
+    expect(paletteHidden({ resumable: true, isTask: true, missing: true, agent: false })).toEqual(modes);
+    expect(paletteHidden({ resumable: true, isTask: true, missing: true, agent: true })).toEqual([]);
   });
   it("hides Clean up a missing task unless a task's folder is gone, and gives the same list each time", () => {
     expect(paletteHidden({ resumable: true, isTask: true, missing: false })).toEqual(["clean-up-task"]);

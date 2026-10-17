@@ -643,3 +643,28 @@ describe("MainWindow: keyboard navigation", () => {
     expect(html()).toContain('data-nav-pane="0"');
   });
 });
+
+describe("MainWindow: the restart bar", () => {
+  const bar = <div className="close-bar">Restart 1 billing in Plan?</div>;
+  it("with two panes, replaces the target pane's header and the top bar holds no bar", () => {
+    const h = html({ layout: "split", splitCount: 2, ...BIG, paneBar: { id: "needs-permission", node: bar } });
+    const at = h.indexOf('class="split"');
+    expect(h.slice(0, at)).not.toContain("close-bar");
+    expect((h.match(/close-bar/g) ?? []).length).toBe(1);
+    const billing = h.slice(at).split("<section").find((s) => s.includes("terminal: billing"));
+    expect(billing).toContain("close-bar");
+    expect(billing).not.toContain("<header");
+    expect((h.match(/<header class="pane__header"/g) ?? []).length).toBe(1);
+  });
+  it("with one pane, goes in the top bar", () => {
+    const h = html({ paneBar: { id: "working", node: bar } });
+    const from = h.indexOf("window__bar-main");
+    const top = h.slice(from, h.indexOf("</header>", from));
+    expect(top).toContain("close-bar");
+    expect(top).not.toContain("session-header");
+  });
+  it("a bar for a session on no pane on screen goes in the top bar too", () => {
+    const h = html({ layout: "split", splitCount: 2, ...BIG, paneBar: { id: "not-shown", node: bar } });
+    expect((h.match(/close-bar/g) ?? []).length).toBe(1);
+  });
+});

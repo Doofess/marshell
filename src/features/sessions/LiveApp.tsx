@@ -7,15 +7,16 @@ import { ApiError } from "../../lib/api/client";
 import { sessions } from "../../lib/api/sessions";
 import { copyRecordingPath } from "./recording";
 import { inMenu } from "../../components/ContextMenu/menuKeys";
-import { focusAfterMenu, menuFacts } from "./sessionMenuRun";
+import { focusAfterMenu, menuFacts, modeOfItem } from "./sessionMenuRun";
+import { ContextMenu } from "../../components/ContextMenu/ContextMenu";
 import { tasksApi } from "../../lib/api/tasks";
 import { cancelsCloseBar, commandShortcut, sessionShortcut, type SessionShortcut } from "../../lib/appShortcuts";
 import { osOfPlatform } from "../../lib/keymap";
 import { paletteSessions } from "../palette/sessions";
 import { ProfilesDialog } from "../settings/ProfilesPage";
-import { sessionMenuItems } from "../sidebar/sessionMenu";
+import { modeMenuItems, sessionMenuItems } from "../sidebar/sessionMenu";
 import { nextSessionNumber } from "../sidebar/sessionNumber";
-import type { RowModel } from "../sidebar/types";
+import type { Mode, RowModel } from "../sidebar/types";
 import { AppearanceDialog } from "../appearance/AppearanceDialog";
 import { useAppearance } from "../appearance/AppearanceProvider";
 import { terminalThemeOf, wtFont } from "../appearance/terminalSettings";
@@ -32,6 +33,7 @@ import { PANE_LIMIT, type Arrangement } from "../window/splitLayout";
 import { useViewState } from "../window/useViewState";
 import { adoptTarget, fillsEmptyPane, focusedIndex, paneToggle, railToggle, ratiosOf, roomForPane, sidebarPrefOf, viewReducer, visibleSessions } from "../window/viewState";
 import { CloseBar } from "./CloseBar";
+import { RestartBar } from "./RestartBar";
 import { launcherOpens } from "./launcherOpens";
 import { LiveLauncher } from "./LiveLauncher";
 import { LivePalette } from "./LivePalette";
@@ -39,7 +41,7 @@ import { LiveShortcuts } from "./LiveShortcuts";
 import { ResumeBar } from "./ResumeBar";
 import { resumeCommand } from "./resumeCommand";
 import { holdsResume, resumeBlockedReason, resumeStateOf } from "./resumeState";
-import { SessionActions, closeBarText, needsCloseConfirm, tabIdOfNumber } from "./sessionActions";
+import { SessionActions, closeBarText, needsCloseConfirm, restartBarText, tabIdOfNumber } from "./sessionActions";
 import { navPanesOf, useNavigation } from "./useNavigation";
 import type { NavEffect } from "../../lib/navigation/types";
 import { Toast } from "./Toast";
@@ -182,7 +184,7 @@ export function LiveApp() {
     if (settled && loaded && fillsEmptyPane(view.panes, selectedId)) dispatch({ type: "select", tabId: selectedId! });
   }, [settled, loaded, selectedId, view.panes, dispatch]);
   useEffect(() => () => actions.dispose(), [actions]);
-  const { toast, closing, renaming, focusToken, resuming, resumed } = useSyncExternalStore(actions.subscribe, actions.getState);
+  const { toast, closing, restarting, renaming, focusToken, resuming, resumed } = useSyncExternalStore(actions.subscribe, actions.getState);
   // The Ended or Exited row each tab had when Resume was pressed, and how many resumes of it had come back ok by then. The core says
   // Running before the session exists (and may say it after the answer), but the strip, and the button that has the focus, stay put
   // until a snapshot shows the tab has really moved on (holdsResume), so it is drawn from this. Presence of an entry means "held".
@@ -229,7 +231,7 @@ export function LiveApp() {
   const taskRows = useMemo(() => markTasks(rows, infos, tasks), [rows, infos, tasks]);
   // While the list is unknown the palette keeps Review for the session in focus, so choosing it can load the list again.
   const focusedIsTask = reviewTarget(infos, focusedId, tasks).kind !== "none";
-  const hiddenCommands = paletteHidden({ resumable, isTask: focusedIsTask, missing: missingTask(tasks) !== null, focused: infos.some((i) => i.tab_id === focusedId) });
+  const hiddenCommands = paletteHidden({ resumable, isTask: focusedIsTask, missing: missingTask(tasks) !== null, focused: infos.some((i) => i.tab_id === focusedId), agent: infos.find((i) => i.tab_id === focusedId)?.agent != null });
 
   // The Review sheet. It holds its own snapshot (the task, its changes, the session it was opened for), not a view of the lists above,
   // so a task list or a session list that changes under it, a merge removing the task included, never unmounts it while the core works.
@@ -288,12 +290,16 @@ export function LiveApp() {
   useEffect(() => {
     if (closing !== null && (closing !== focusedId || !infos.some((i) => i.tab_id === closing))) actions.cancelClose();
   }, [closing, focusedId, infos, actions]);
+  // The same for the restart bar; and a close question and a restart question are never up together.
+  useEffect(() => {
+    if (restarting !== null && (closing !== null || restarting.id !== focusedId || !infos.some((i) => i.tab_id === restarting.id))) actions.cancelRestart();
+  }, [restarting, closing, focusedId, infos, actions]);
   useEffect(() => {
     // The session went away, or the window shrank to a layout without the sidebar's rows.
     if (renaming !== null && (!sidebarExpanded || !infos.some((i) => i.tab_id === renaming))) actions.cancelRename({ refocus: false });
   }, [renaming, infos, sidebarExpanded, actions]);
   // Escape cancels the bar from anywhere. Captured, so it never reaches the terminal: Escape would interrupt the agent the bar is about.
-  const barOpen = closing !== null;
+  const barOpen = closing !== null || restarting !== null;
   useEffect(() => {
     if (!barOpen) return;
     const onEscape = (e: KeyboardEvent) => {
@@ -302,6 +308,7 @@ export function LiveApp() {
       e.preventDefault();
       e.stopPropagation();
       actions.cancelClose();
+      actions.cancelRestart();
     };
     window.addEventListener("keydown", onEscape, true);
     return () => window.removeEventListener("keydown", onEscape, true);
@@ -448,10 +455,35 @@ export function LiveApp() {
     (id: string) => sessionMenuItems(menuFacts(id, { infos, profiles, rows: taskRows, panes: view.panes, shown: shownRef.current ?? view.panes.length, fit: fitRef.current ?? PANE_LIMIT }), os ?? "windows"),
     [infos, profiles, taskRows, view.panes, os],
   );
+  // Where focus goes when the mode menu ends without a bar: back to the row or the chip it came from.
+  const returnFromModeMenu = (m: { id: string; from: "row" | "chip" }) => {
+    if (m.from === "chip") return void document.querySelector<HTMLElement>(".session-header__mode")?.focus();
+    document.querySelector<HTMLElement>(`[data-nav-row="${rows.find((r) => r.id === m.id)?.number}"]`)?.focus();
+  };
+  // Mode ▸: the second menu (the row menu's item, the header chip), and the palette's Mode commands, all end in `askRestart`.
+  const [modeMenu, setModeMenu] = useState<{ id: string; anchor: { x: number; y: number }; from: "row" | "chip" } | null>(null);
+  useEffect(() => {
+    if (modeMenu && !infos.some((i) => i.tab_id === modeMenu.id)) setModeMenu(null);
+  }, [modeMenu, infos]);
+  // Asks "Restart … in <mode>?" for a session. The bar is on the focused session's pane, so a session that is off screen or not
+  // focused is shown first, as a plain click would. False (a plain shell, or the mode it is already in) changes nothing.
+  const askRestart = useCallback(
+    (id: string, mode: Mode): boolean => {
+      if (!actions.askRestart(id, mode)) return false;
+      actions.cancelClose();
+      if (!(shownPanes.includes(id) && id === focusedId)) showInPane(id);
+      return true;
+    },
+    [actions, shownPanes, focusedId, showInPane],
+  );
   const onMenuRun = useCallback(
-    (id: string, itemId: string) => {
+    (id: string, itemId: string, anchor: { x: number; y: number }) => {
       const info = infos.find((i) => i.tab_id === id);
       switch (itemId) {
+        // The menu that ran this is gone and the mode menu takes its place at the same spot, with its own focus.
+        case "mode":
+          setModeMenu({ id, anchor, from: "row" });
+          break;
         // No timeout: the rename box mounts in the same update that closes the menu, and the menu closes without handing focus back.
         case "rename":
           actions.startRename(id);
@@ -630,6 +662,9 @@ export function LiveApp() {
     if (id === "layout") return void setTimeout(() => setLayoutMenu(true), 0);
     if (id === "group-by-project") return dispatch({ type: "toggleGrouped" });
     if (id === "resume") return void (focusedRow && startResume(focusedRow));
+    // After the palette has given focus back, so the bar's Cancel keeps the focus it takes. A plain shell has no mode: nothing happens.
+    const mode = modeOfItem(id);
+    if (mode) return void (focusedId && setTimeout(() => askRestart(focusedId, mode), 0));
     if (id === "copy-recording-path") return void (endpoint && focusedId && copyRecordingPath(endpoint, focusedId, announce));
     // After the palette has given focus back, so the sheet takes it from the right place and returns it there.
     if (id === "review-task") return void setTimeout(() => reviewSession(focusedId), 0);
@@ -648,6 +683,7 @@ export function LiveApp() {
     else if (shortcut && shortcut.kind !== "palette") setTimeout(() => actions.handle(shortcut), 0);
   };
 
+  const restartInfo = restarting === null ? undefined : infos.find((i) => i.tab_id === restarting.id);
   const closingInfo = closing === null ? undefined : infos.find((i) => i.tab_id === closing);
 
   const started = (created: CreateSessionResponse, text: string) => {
@@ -752,6 +788,8 @@ export function LiveApp() {
           composer={false}
           statusBar={false}
           renderTerminal={renderTerminal}
+          paneBar={restartInfo && { id: restartInfo.tab_id, node: <RestartBar text={restartBarText(restartInfo, restarting!.mode, rows.find((r) => r.id === restartInfo.tab_id)?.status === "working")} onCancel={actions.cancelRestart.bind(actions)} onRestart={() => void actions.confirmRestart()} /> }}
+          onModeMenu={(id, anchor) => setModeMenu({ id, anchor, from: "chip" })}
           headerBar={closingInfo && <CloseBar text={closeBarText(closingInfo)} onCancel={actions.cancelClose.bind(actions)} onCloseNow={() => void actions.confirmClose()} />}
           toast={toast && <Toast text={toast.text} actionLabel={toast.reopenId ? "Reopen" : undefined} onAction={() => void actions.reopenFromToast()} />}
           notice={toast ? { id: toast.id, text: toast.text } : notice}
@@ -768,6 +806,23 @@ export function LiveApp() {
           onPalette={() => setOverlay("palette")}
           noneSelected={nav.noneSelected}
           navCursor={nav.cursor}
+        />
+      )}
+      {modeMenu && (
+        <ContextMenu
+          label={`Mode for ${infos.find((i) => i.tab_id === modeMenu.id)?.name ?? "the session"}`}
+          items={modeMenuItems(infos.find((i) => i.tab_id === modeMenu.id)?.mode ?? undefined)}
+          anchor={modeMenu.anchor}
+          onRun={(itemId) => {
+            setModeMenu(null);
+            const mode = modeOfItem(itemId);
+            // The current mode, or a session that can't change: nothing opens, so the focus goes back where it was.
+            if (!mode || !askRestart(modeMenu.id, mode)) returnFromModeMenu(modeMenu);
+          }}
+          onClose={({ refocus }) => {
+            setModeMenu(null);
+            if (refocus) returnFromModeMenu(modeMenu);
+          }}
         />
       )}
       {overlay === "palette" && os && <LivePalette sessions={paletteSessions(rows)} os={os} labels={paletteLabels} hidden={hiddenCommands} onRun={runFromPalette} onClose={() => setOverlay(null)} />}

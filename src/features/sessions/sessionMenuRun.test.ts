@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { Profile } from "../../generated/Profile";
 import type { SessionInfo } from "../../generated/SessionInfo";
 import type { RowModel } from "../sidebar/types";
-import { focusAfterMenu, menuFacts } from "./sessionMenuRun";
+import { focusAfterMenu, menuFacts, modeOfItem } from "./sessionMenuRun";
 
 const info = (tab_id: string, running = true, profile_id = "pwsh"): SessionInfo =>
   ({ tab_id, profile_id, state: running ? { kind: "running" } : { kind: "exited", code: 0 } }) as SessionInfo;
@@ -70,5 +70,24 @@ describe("focusAfterMenu", () => {
   });
   it("leaves it to the close bar when Close needs the bar, which focuses Cancel itself", () => {
     expect(focusAfterMenu("close", true)).toBeNull();
+  });
+});
+
+describe("Mode ▸ facts and focus", () => {
+  it("an agent session offers Mode, a plain shell does not", () => {
+    const agent = { ...info("x"), agent: "claude" } as SessionInfo;
+    expect(menuFacts("x", ctx({ infos: [agent] })).agent).toBe(true);
+    expect(menuFacts("x", ctx()).agent).toBe(false);
+  });
+  it("the Mode item and a picked mode leave focus to the menu or the bar", () => {
+    expect(focusAfterMenu("mode", false)).toBeNull();
+    expect(focusAfterMenu("mode-plan", false)).toBeNull();
+  });
+  it("modeOfItem reads a mode from a menu item or palette command id", () => {
+    expect(modeOfItem("mode-auto-edit")).toBe("auto-edit");
+    expect(modeOfItem("mode-bypass")).toBe("bypass");
+    expect(modeOfItem("mode")).toBeNull();
+    expect(modeOfItem("mode-nope")).toBeNull();
+    expect(modeOfItem("rename")).toBeNull();
   });
 });

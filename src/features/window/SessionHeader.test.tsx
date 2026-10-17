@@ -48,6 +48,11 @@ describe("SessionHeader", () => {
     expect(h).toContain(label);
     expect(h).toContain('title="Started in Plan. A change made inside the CLI isn&#x27;t shown yet."');
   });
+  it("is a button that opens the mode menu when the window can restart, so its label is announced", () => {
+    const b = renderToStaticMarkup(<SessionHeader row={row("working")} onMode={() => {}} />);
+    expect(b).toMatch(/<button[^>]*aria-label="Started in Plan\. A change made inside the CLI isn&#x27;t shown yet\."/);
+    expect(b).toContain('aria-haspopup="menu"');
+  });
   it("is marked red for a bypass session", () => {
     expect(renderToStaticMarkup(<SessionHeader row={row("bypass")} />)).toContain("data-danger");
     expect(h).not.toContain("data-danger");

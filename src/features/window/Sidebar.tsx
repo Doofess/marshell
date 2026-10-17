@@ -77,7 +77,7 @@ export function Sidebar({
   /** The items of a row's right-click menu. Left out, rows have no menu. */
   menuItems?: (id: string) => MenuItem[];
   /** A menu item was chosen: the row's session id and the item's id. */
-  onMenuRun?: (id: string, itemId: string) => void;
+  onMenuRun?: (id: string, itemId: string, anchor: { x: number; y: number }) => void;
   /** Rows under a heading per project (name and count); a drag moves a row only inside its group. Off by default. */
   grouped?: boolean;
 }) {
@@ -184,7 +184,7 @@ export function Sidebar({
           anchor={menu.anchor}
           onRun={(itemId) => {
             setMenu(null);
-            onMenuRun(menu.id, itemId);
+            onMenuRun(menu.id, itemId, menu.anchor);
           }}
           onClose={({ refocus }) => {
             setMenu(null);

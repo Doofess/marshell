@@ -83,3 +83,9 @@ describe("SplitView.css: a pane header is a title bar, so the session's name is 
     expect(rule(".pane__header > .session-number")).toContain("flex: none");
   });
 });
+
+describe("SplitView.css: the restart bar in a pane", () => {
+  it("is as tall as the pane header it replaces", () => {
+    expect(rule(".pane > .close-bar")).toContain("block-size: 28px");
+  });
+});

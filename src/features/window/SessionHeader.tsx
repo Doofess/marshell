@@ -22,7 +22,7 @@ export const headerDanger = (mode?: Mode) => mode === "bypass" || mode === "full
  * The session header in the unified 40 px top bar: name, place, mode, model and effort, subagents, context, ports.
  * Unknown values are left out, never shown as a dash or guessed.
  */
-export function SessionHeader({ row, ports = [] }: { row: RowModel; ports?: string[] }) {
+export function SessionHeader({ row, ports = [], onMode }: { row: RowModel; ports?: string[]; /** Makes the mode chip a button; it gives the chip's corner, where the mode menu opens. */ onMode?: (anchor: { x: number; y: number }) => void }) {
   const caution = modeCaution(row.mode);
   const modelAndEffort = [row.model, row.effort].filter(Boolean).join(" · ");
   return (
@@ -37,7 +37,23 @@ export function SessionHeader({ row, ports = [] }: { row: RowModel; ports?: stri
       <span className="session-header__place" dir="auto">
         {row.branch ? `${row.project} · ${row.branch}` : row.project}
       </span>
-      {row.mode && (
+      {row.mode && onMode && (
+        // A button, so its label is announced (a bare span's aria-label may not be) and a keyboard reaches the mode menu.
+        <button
+          type="button"
+          className="session-header__mode"
+          aria-label={startedIn(row.mode)}
+          title={startedIn(row.mode)}
+          aria-haspopup="menu"
+          onClick={(e) => {
+            const r = e.currentTarget.getBoundingClientRect();
+            onMode({ x: r.left, y: r.bottom });
+          }}
+        >
+          <Chip tone={caution ? "caution" : "neutral"}>{modeLabel(row.mode)}</Chip>
+        </button>
+      )}
+      {row.mode && !(onMode) && (
         <Chip tone={caution ? "caution" : "neutral"} title={startedIn(row.mode)} label={startedIn(row.mode)}>
           {modeLabel(row.mode)}
         </Chip>
