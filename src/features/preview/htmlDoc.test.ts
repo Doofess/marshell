@@ -40,7 +40,7 @@ describe("buildSrcdoc", () => {
     expect(doc).toContain("<head></head><p>x</p>");
   });
   // What follows the injected policy: our own meta has an http-equiv, so only the part after it is the file's.
-  const fileHalf = (doc: string) => doc.slice(doc.indexOf(CSP) + CSP.length);
+  const fileHalf = (doc: string) => doc.slice(doc.indexOf(CSP) + CSP.length + 2);
   it("is not fooled by a tag nested inside a tag, however deep", () => {
     const refresh = '<meta http-equiv=refresh content="0;url=https://x">';
     const nest = (n: number) => {
@@ -60,6 +60,45 @@ describe("buildSrcdoc", () => {
       expect(file, input).not.toMatch(/http-equiv/i);
       expect(file, input).not.toMatch(/<base/i);
       expect(file, input).not.toMatch(/<meta[^>]*refresh/i);
+    }
+  });
+  it("keeps the visible text when an unquoted attribute value holds an apostrophe", () => {
+    const file = fileHalf(buildSrcdoc("<p title=it's>visible text</p><meta http-equiv=\"refresh\" content=\"0;url=https://x\">"));
+    expect(file).toBe("<p title=it's>visible text</p>");
+    const inside = fileHalf(buildSrcdoc("<meta content=it's http-equiv=refresh>visible text<p>more</p>'>"));
+    expect(inside).toBe("visible text<p>more</p>'>");
+  });
+  it("is not fooled by a fragment that a removed tag would join into a new one", () => {
+    for (const input of ["<me<meta a>ta http-equiv=refresh content=0>", "<ba<base>se href=//x>"]) {
+      const file = fileHalf(buildSrcdoc(`<p>a</p>${input}<p>b</p>`));
+      expect(file, input).not.toMatch(/<meta[^>]*http-equiv/i);
+      expect(file, input).not.toMatch(/<base/i);
+      expect(file, input).toContain("<p>a</p>");
+      expect(file, input).toContain("<p>b</p>");
+    }
+  });
+  it("reads a tag the way a parser does: names, separators, quotes only after an equals sign", () => {
+    expect(fileHalf(buildSrcdoc("<metadata>x</metadata><meta-x y>z"))).toBe("<metadata>x</metadata><meta-x y>z");
+    expect(fileHalf(buildSrcdoc("<p>a</p><meta a'b http-equiv=refresh>c"))).toBe("<p>a</p>c");
+    expect(fileHalf(buildSrcdoc("<p>a</p><meta name=x><meta http-equiv=refresh content=\"a>b\">c"))).toBe("<p>a</p><meta name=x>c");
+    expect(fileHalf(buildSrcdoc("<p>a</p><meta http-equiv=>c"))).toBe("<p>a</p>c");
+  });
+  describe("on a file built to be slow", () => {
+    const SIZE = 400_000;
+    const cases: Array<[string, string]> = [
+      ["unterminated metas", "<meta ".repeat(SIZE)],
+      ["unterminated single quotes", "<meta x='".repeat(SIZE * 0.75)],
+      ["unterminated double quotes on another tag", '<a b="'.repeat(SIZE * 0.75)],
+      ["many closed metas", "<meta x>".repeat(SIZE / 2)],
+      ["many dropped metas", "<meta http-equiv=a>".repeat(SIZE / 4)],
+    ];
+    for (const [name, input] of cases) {
+      it(`takes under 300 ms for ${name}`, () => {
+        const t0 = performance.now();
+        buildSrcdoc(input);
+        const ms = performance.now() - t0;
+        expect(ms).toBeLessThan(300);
+      });
     }
   });
   it("leaves the rest of the file as it is", () => {
