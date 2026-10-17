@@ -18,7 +18,7 @@ impl Versioned for FileDoc {
 }
 
 /// The accent colours that have a name.
-const ACCENT_PRESETS: [&str; 8] = ["amber", "blue", "indigo", "violet", "magenta", "cyan", "teal", "slate"];
+const ACCENT_PRESETS: [&str; 9] = ["sand", "amber", "blue", "indigo", "violet", "magenta", "cyan", "teal", "slate"];
 
 /// Terminal themes that are always there; any other value must be an imported theme's id.
 const BUILT_IN_TERMINAL_THEMES: [&str; 3] = ["follow-app", "dark", "light"];
@@ -194,7 +194,7 @@ mod tests {
         let home = tempfile::tempdir().unwrap();
         let s = load(home.path());
         assert_eq!(s, Settings::default());
-        assert_eq!(s.appearance.accent, "amber");
+        assert_eq!(s.appearance.accent, "sand");
         assert_eq!(s.appearance.terminal_font.size, 13);
     }
 
@@ -248,7 +248,7 @@ mod tests {
         )
         .unwrap();
         let a = load(home.path()).appearance;
-        assert_eq!(a.accent, "amber");
+        assert_eq!(a.accent, "sand");
         assert_eq!(a.terminal_font.size, 13);
         assert_eq!(a.theme, marshell_protocol::api::AppTheme::Dark);
         assert!(!a.contrast_protection);

@@ -27,7 +27,7 @@ describe("rootState", () => {
   });
   it("a custom accent that fails the check falls back to the default preset", () => {
     const r = rootState(a({ accent: "#ffffff" }), off);
-    expect(r.attrs["data-accent"]).toBe("amber");
+    expect(r.attrs["data-accent"]).toBe("sand");
     expect(r.style["--accent"]).toBeNull();
   });
   it("contrast on sets data-contrast", () => {

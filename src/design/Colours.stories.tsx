@@ -9,7 +9,7 @@ import "./specimen.css";
 const meta: Meta = { title: "Design/Colours" };
 export default meta;
 
-const ACCENTS = ["amber", "blue", "indigo", "violet", "magenta", "cyan", "teal", "slate"] as const;
+const ACCENTS = ["sand", "amber", "blue", "indigo", "violet", "magenta", "cyan", "teal", "slate"] as const;
 const tokens = parseTokens(tokensCss, ":root");
 
 function Swatch({ name }: { name: string }) {

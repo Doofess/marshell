@@ -152,7 +152,7 @@ async fn settings_put_invalid_is_400() {
     let home = tempfile::tempdir().unwrap();
     let app = app_in(home.path());
     let mut settings = json_body(app.clone().oneshot(settings_request("GET", None)).await.unwrap()).await;
-    assert_eq!(settings["appearance"]["accent"], "amber");
+    assert_eq!(settings["appearance"]["accent"], "sand");
     settings["appearance"]["accent"] = "pink".into();
     let res = app.oneshot(settings_request("PUT", Some(settings))).await.unwrap();
     assert_eq!(res.status(), StatusCode::BAD_REQUEST);

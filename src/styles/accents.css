@@ -1,8 +1,14 @@
 /*
- * Eight accents. Amber is the default. The accent marks attention only: fills, badges, rings, focus.
+ * Nine accents. Sand is the default. The accent marks attention only: fills, badges, rings, focus.
  * --accent-ink is the text colour on an accent fill (at least 4.5:1; src/design/contrast.test.ts).
  */
+/* The window's own colour where no vendor is in play: a warm dark grey (light) and a beige (dark), each warm enough
+   not to read as Codex's neutral grey, and low enough in chroma not to read as OpenAI's pale yellow. */
 :root,
+[data-accent="sand"] {
+  --accent: light-dark(oklch(42% 0.028 70), oklch(80% 0.045 75));
+  --accent-ink: light-dark(oklch(100% 0 none), oklch(0% 0 none));
+}
 [data-accent="amber"] {
   --accent: light-dark(oklch(58% 0.15 65), oklch(80% 0.16 72));
   --accent-ink: light-dark(oklch(0% 0 none), oklch(0% 0 none));
