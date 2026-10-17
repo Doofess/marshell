@@ -18,9 +18,12 @@ import { LayoutIcon, LayoutMenu } from "./LayoutMenu";
 import { SearchIcon } from "./SearchIcon";
 import { isTool } from "../../components/AgentMark/kinds";
 import { hasPromptLine } from "../sidebar/promptLine";
+import type { Rect } from "../../lib/navigation/types";
 import { KeptTerminals } from "./keptTerminals";
+import { NavCursor, NO_SELECTION_TEXT } from "./NavCursor";
 import { Rail } from "./Rail";
 import { SCENARIO_FOOTER, SCENARIO_PLAN, SCENARIO_PORTS, SCENARIO_REQUESTS, SCENARIO_ROWS } from "./scenario";
+import type { Notice } from "./announce";
 import { SessionAnnouncer } from "./SessionAnnouncer";
 import { SessionHeader } from "./SessionHeader";
 import { windowTitle } from "./windowTitle";
@@ -113,7 +116,7 @@ export type MainWindowProps = {
   /** A receipt over the lower start corner of the terminal column. Plain markup: `notice` is what gets announced. */
   toast?: ReactNode;
   /** Text for the window's one announcer to say; a new `id` says it again, even if the text is the same. */
-  notice?: { id: number; text: string } | null;
+  notice?: Notice | null;
   /** F2: the sidebar row whose name is a text box, and what its Enter and its Escape or blur do. */
   renamingId?: string | null;
   onRename?: (id: string, name: string) => void;
@@ -132,6 +135,10 @@ export type MainWindowProps = {
   onReview?: (id: string) => void;
   /** The click on the Command palette button, in the top bar and in the rail. */
   onPalette?: () => void;
+  /** No terminal is selected (Ctrl+Shift+Backspace): no pane is marked focused, and the window says how to pick one. */
+  noneSelected?: boolean;
+  /** The keyboard cursor while Ctrl+Shift is held, measured against the window. */
+  navCursor?: { rect: Rect; label: string } | null;
 };
 
 const icon = (d: string) => (
@@ -197,6 +204,8 @@ export function MainWindow({
   onPalette,
   onSidebarWidth,
   onSidebarReset,
+  noneSelected = false,
+  navCursor = null,
 }: MainWindowProps) {
   const pref: SidebarPref = sidebarPref ?? (layout === "focus" ? "focus" : layout === "rail" ? "rail" : "expanded");
   const mode = sidebarMode(width, pref);
@@ -315,7 +324,7 @@ export function MainWindow({
   const asked = split && zoomIdx === undefined ? requested : 1;
 
   return (
-    <div className="window" style={{ inlineSize: width, blockSize: height, "--side-w": `${sideW}px` } as CSSProperties} data-mode={mode} data-layout={layout} data-agent={active?.agent} data-title={title}>
+    <div className="window" style={{ inlineSize: width, blockSize: height, "--side-w": `${sideW}px` } as CSSProperties} data-mode={mode} data-layout={layout} data-title={title}>
       <SessionAnnouncer row={active} needsYou={waiting} notice={notice} />
       <header className="window__bar">
         <div className="window__bar-side">
@@ -327,7 +336,7 @@ export function MainWindow({
             </button>
           )}
           {mode === "expanded" && (
-            <button type="button" className="window__palette" aria-label="Command palette" title={`Search sessions, projects and commands (${shortcutLabel(commandById("palette").binding!, os)})`} onClick={onPalette}>
+            <button type="button" className="window__palette" data-nav-top="palette" aria-label="Command palette" title={`Search sessions, projects and commands (${shortcutLabel(commandById("palette").binding!, os)})`} onClick={onPalette}>
               <SearchIcon />
               <span>Command palette</span>
             </button>
@@ -344,6 +353,7 @@ export function MainWindow({
               ref={layoutButton}
               type="button"
               className="window__control window__control--menu"
+              data-nav-top="layout"
               aria-label="Split layout"
               aria-haspopup="dialog"
               aria-expanded={layoutMenu}
@@ -403,13 +413,14 @@ export function MainWindow({
         {mode === "rail" && <Rail rows={rows} needsYou={waiting} selectedId={selected?.id} os={os} onSelect={onSelect} onPalette={onPalette} />}
 
         <div className="window__center">
-        <main className="window__main" tabIndex={-1} data-placement={drawer ? placement : undefined}>
+        {/* A single terminal is slot 0 to the keyboard cursor; in split view each pane is its own slot. */}
+        <main className="window__main" tabIndex={-1} data-placement={drawer ? placement : undefined} data-nav-pane={!empty && !split ? 0 : undefined}>
           {empty ? (
             <div className="window__empty">
               No sessions yet. Start one with {shortcutLabel(commandById("launcher").binding!, os)}.
             </div>
           ) : split ? (
-            <SplitView panes={shown} size={{ w: space.w, h: space.h }} activeIndex={focusedIdx} hidden={hiddenCount} arrangement={chosen} ratios={ratios} zoomed={zoomIdx} choices={choices} composerValues={composerValues} composers={showComposer} setting={terminalSetting} os={os} renderTerminal={renderTerminal} {...paneHandlers} />
+            <SplitView panes={shown} size={{ w: space.w, h: space.h }} activeIndex={noneSelected ? -1 : focusedIdx} hidden={hiddenCount} arrangement={chosen} ratios={ratios} zoomed={zoomIdx} choices={choices} composerValues={composerValues} composers={showComposer} setting={terminalSetting} os={os} renderTerminal={renderTerminal} {...paneHandlers} />
           ) : renderTerminal ? (
             <KeptTerminals rows={rows} selectedId={selected.id} render={renderTerminal} />
           ) : (
@@ -440,11 +451,18 @@ export function MainWindow({
         )}
         {showStatus && (
           <div className="window__status" style={{ blockSize: STATUS_BAR_HEIGHT }}>
-            <StatusBar row={split ? focused : selected} plan={isTool((split ? focused : selected)?.agent ?? "") ? undefined : SCENARIO_PLAN} ports={ports} os={os} />
+            {noneSelected ? <p className="window__status-none">{NO_SELECTION_TEXT}</p> : <StatusBar row={split ? focused : selected} plan={isTool((split ? focused : selected)?.agent ?? "") ? undefined : SCENARIO_PLAN} ports={ports} os={os} />}
           </div>
         )}
         </div>
       </div>
+      {/* With no status bar to say it (the live window), the same line sits where the cursor's hint does, until the hint takes its place. */}
+      {noneSelected && !showStatus && !navCursor && (
+        <p className="nav-hint" aria-hidden="true">
+          <span className="nav-hint__keys">{NO_SELECTION_TEXT}</span>
+        </p>
+      )}
+      {navCursor && <NavCursor rect={navCursor.rect} label={navCursor.label} os={os} />}
     </div>
   );
 }

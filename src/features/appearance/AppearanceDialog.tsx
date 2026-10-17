@@ -49,6 +49,7 @@ export type AppearanceHandlers = {
 };
 
 const ACCENTS = [
+  ["sand", "Sand"],
   ["amber", "Amber"],
   ["blue", "Blue"],
   ["indigo", "Indigo"],

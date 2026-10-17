@@ -80,6 +80,7 @@ export const COMMANDS: Command[] = [
   { id: "find", label: "Search in scrollback", group: "Tools", binding: { code: "KeyF" } },
   { id: "global-search", label: "Search all sessions", group: "Tools", binding: { code: "KeyF", alt: true } },
   { id: "bookmark", label: "Bookmark this point", group: "Tools", binding: { code: "KeyB" } },
+  { id: "copy-recording-path", label: "Copy this session's recording path", group: "Tools" },
   { id: "prompt-prev", label: "Jump to the previous prompt", group: "Tools", binding: { code: "PageUp" } },
   { id: "prompt-next", label: "Jump to the next prompt", group: "Tools", binding: { code: "PageDown" } },
   { id: "cheatsheet", label: "Keyboard shortcuts", group: "Tools", binding: { code: "KeyO" } },

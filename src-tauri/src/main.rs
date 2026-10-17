@@ -63,6 +63,36 @@ fn linux_webview_workarounds() {
     }
 }
 
+/// WebView2 runs its own shortcuts (Ctrl+Shift+I devtools, F5 and Ctrl+R reload, Ctrl+F find, Ctrl+P print)
+/// before the page sees the key, so they would shadow app shortcuts. Off in debug builds too: the shortcut
+/// must behave the same while developing. WebKit on mac and Linux has none of these, so they need nothing yet.
+fn disable_browser_shortcuts(window: &tauri::WebviewWindow) {
+    #[cfg(windows)]
+    {
+        use webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2Settings3;
+        use windows_core::Interface;
+        let result = window.with_webview(|webview| {
+            // SAFETY: COM calls on the live controller, made on the webview's own thread by with_webview.
+            let off = unsafe {
+                webview
+                    .controller()
+                    .CoreWebView2()
+                    .and_then(|core| core.Settings())
+                    .and_then(|settings| settings.cast::<ICoreWebView2Settings3>())
+                    .and_then(|settings| settings.SetAreBrowserAcceleratorKeysEnabled(false))
+            };
+            if let Err(e) = off {
+                eprintln!("Marshell: the browser's own shortcuts stay on: {e}");
+            }
+        });
+        if let Err(e) = result {
+            eprintln!("Marshell: the browser's own shortcuts stay on: {e}");
+        }
+    }
+    #[cfg(not(windows))]
+    let _ = window;
+}
+
 fn main() {
     // First, so every process Marshell starts dies with it, even after a crash (Windows only).
     if let Err(e) = marshell_core::job::tie_children_to_app() {
@@ -79,6 +109,9 @@ fn main() {
         }))
         .plugin(tauri_plugin_window_state::Builder::default().build())
         .setup(|app| {
+            if let Some(w) = app.get_webview_window("main") {
+                disable_browser_shortcuts(&w);
+            }
             let home = marshell_core::paths::home_dir()?;
             marshell_core::crash::install_panic_hook(&home);
             let cfg = CoreConfig {
@@ -104,4 +137,15 @@ fn main() {
             marshell_core::job::release_children();
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    /// Debug builds inject Tauri's own Ctrl+Shift+I listener (toggle-devtools.js), which opens DevTools
+    /// through a command, past the WebView2 shortcut switch. Denying the command leaves the key to focus mode.
+    #[test]
+    fn ctrl_shift_i_cannot_open_devtools() {
+        let caps = include_str!("../capabilities/default.json");
+        assert!(caps.contains("\"core:webview:deny-internal-toggle-devtools\""));
+    }
 }

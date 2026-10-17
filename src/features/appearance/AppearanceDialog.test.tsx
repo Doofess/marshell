@@ -22,14 +22,14 @@ describe("AppearanceView", () => {
     const m = html({ appearance: { ...DEFAULT_APPEARANCE, accent: "teal" } });
     expect(radio(m, "Teal")).toContain('checked=""');
     expect(radio(m, "Teal")).toContain('data-selected="true"');
-    expect(radio(m, "Amber")).not.toContain('checked=""');
+    expect(radio(m, "Sand")).not.toContain('checked=""');
   });
 
   it("custom accent shows the reason and keeps the old value", () => {
     const m = html({ accent: { text: "#ffff00", reason: "Too light on a light background (1:1). Pick a darker colour." } });
     expect(m).toContain("Too light on a light background");
     expect(m).toMatch(/aria-describedby="[^"]+"[^>]*value="#ffff00"|value="#ffff00"[^>]*aria-describedby="[^"]+"/);
-    expect(radio(m, "Amber")).toContain('checked=""');
+    expect(radio(m, "Sand")).toContain('checked=""');
   });
 
   it("lists Windows Terminal schemes with Add", () => {

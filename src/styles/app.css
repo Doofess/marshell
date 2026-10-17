@@ -13,6 +13,13 @@
    but measures the host at its border-box size, so padding there clips the last row. */
 .terminal-host .xterm {
   padding: var(--space-2);
+  background: var(--terminal-bg, var(--bg-base));
+}
+
+/* xterm.css paints this #000 across the padding box, which showed as a black gutter in light themes.
+   xterm colours its scroll area itself; the gutter takes --terminal-bg, set from the theme. */
+.terminal-host .xterm .xterm-viewport {
+  background-color: transparent;
 }
 
 .live-app {

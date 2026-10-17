@@ -10,7 +10,7 @@ import type { TextSize } from "./TextSize";
  */
 export type Appearance = { theme: AppTheme, 
 /**
- * A preset name (amber, blue, indigo, violet, magenta, cyan, teal, slate) or `#rrggbb`.
+ * A preset name (sand, amber, blue, indigo, violet, magenta, cyan, teal, slate) or `#rrggbb`.
  */
 accent: string, contrast: ContrastMode, text_size: TextSize, 
 /**

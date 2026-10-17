@@ -164,6 +164,7 @@ export class SessionActions {
       case "focusMode":
       case "sidebar":
       case "review":
+      case "cheatsheet":
         break;
     }
   }

@@ -152,7 +152,7 @@ async fn settings_put_invalid_is_400() {
     let home = tempfile::tempdir().unwrap();
     let app = app_in(home.path());
     let mut settings = json_body(app.clone().oneshot(settings_request("GET", None)).await.unwrap()).await;
-    assert_eq!(settings["appearance"]["accent"], "amber");
+    assert_eq!(settings["appearance"]["accent"], "sand");
     settings["appearance"]["accent"] = "pink".into();
     let res = app.oneshot(settings_request("PUT", Some(settings))).await.unwrap();
     assert_eq!(res.status(), StatusCode::BAD_REQUEST);
@@ -790,4 +790,32 @@ async fn created_session_records_its_folder_as_a_project() {
         project.path().file_name().unwrap().to_string_lossy().as_ref()
     );
     assert!(rows[0]["branch"].is_null());
+}
+
+#[tokio::test]
+async fn a_session_reports_its_recording_path() {
+    let app = sessions_app();
+    let (status, created) = create_session(&app, serde_json::json!({})).await;
+    assert_eq!(status, StatusCode::OK);
+    let tab = created["tab_id"].as_str().unwrap();
+
+    let res = app
+        .clone()
+        .oneshot(api("GET", &format!("/v1/sessions/{tab}/recording"), None))
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let path = json_body(res).await["path"].as_str().unwrap().to_owned();
+    assert!(path.ends_with(".cast"), "{path}");
+    assert!(std::path::Path::new(&path).is_file(), "{path}");
+    let _ = status_of(&app, api("DELETE", &format!("/v1/sessions/{tab}"), None)).await;
+
+    let res = app
+        .clone()
+        .oneshot(api("GET", "/v1/sessions/no-such-tab/recording", None))
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::NOT_FOUND);
+    let bytes = axum::body::to_bytes(res.into_body(), 1024).await.unwrap();
+    assert_eq!(String::from_utf8_lossy(&bytes), "This session has no recording.");
 }

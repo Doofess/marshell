@@ -5,6 +5,7 @@ import type { Task } from "../../generated/Task";
 import type { TaskChanges } from "../../generated/TaskChanges";
 import { ApiError } from "../../lib/api/client";
 import { sessions } from "../../lib/api/sessions";
+import { copyRecordingPath } from "./recording";
 import { tasksApi } from "../../lib/api/tasks";
 import { cancelsCloseBar, commandShortcut, sessionShortcut, type SessionShortcut } from "../../lib/appShortcuts";
 import { osOfPlatform } from "../../lib/keymap";
@@ -21,6 +22,7 @@ import { reviewApi } from "../tasks/reviewRun";
 import { jumpWords } from "../terminal/promptMarks";
 import { resolveTerminalFont } from "../terminal/terminalFont";
 import { TerminalView, type TerminalThemeProp } from "../terminal/TerminalView";
+import type { Notice } from "../window/announce";
 import { sidebarMode } from "../window/layout";
 import { MainWindow } from "../window/MainWindow";
 import { PANE_LIMIT, type Arrangement } from "../window/splitLayout";
@@ -30,10 +32,13 @@ import { CloseBar } from "./CloseBar";
 import { launcherOpens } from "./launcherOpens";
 import { LiveLauncher } from "./LiveLauncher";
 import { LivePalette } from "./LivePalette";
+import { LiveShortcuts } from "./LiveShortcuts";
 import { ResumeBar } from "./ResumeBar";
 import { resumeCommand } from "./resumeCommand";
 import { holdsResume, resumeDisabledReason, resumeStateOf } from "./resumeState";
-import { SessionActions, closeBarText } from "./sessionActions";
+import { SessionActions, closeBarText, tabIdOfNumber } from "./sessionActions";
+import { navPanesOf, useNavigation } from "./useNavigation";
+import type { NavEffect } from "../../lib/navigation/types";
 import { Toast } from "./Toast";
 import { pruneClosed, without, type StartingTexts } from "./startingTexts";
 import { SHELL_FAILED } from "../window/ShellPanel";
@@ -125,11 +130,11 @@ export function LiveApp() {
   const terminalFont = useMemo(() => ({ family: font.family, size: font.size }), [font.family, font.size]);
   const [launcherOpen, setLauncherOpen] = useState(false);
   // The command palette, or the shell profiles page opened from it, over the window.
-  const [overlay, setOverlay] = useState<"palette" | "profiles" | "appearance" | null>(null);
+  const [overlay, setOverlay] = useState<"palette" | "profiles" | "appearance" | "shortcuts" | null>(null);
   // What the profiles page and the prompt jumps say aloud through the window's announcer. Negative ids never meet a toast's.
-  const [notice, setNotice] = useState<{ id: number; text: string } | null>(null);
+  const [notice, setNotice] = useState<Notice | null>(null);
   const noticeCount = useRef(0);
-  const announce = useCallback((text: string) => setNotice({ id: -++noticeCount.current, text }), []);
+  const announce = useCallback((text: string, navigation?: boolean) => setNotice({ id: -++noticeCount.current, text, navigation }), []);
   // A prompt jump asked of one session's terminal; each token is one jump.
   const [promptJump, setPromptJump] = useState<{ token: number; by: -1 | 1; tabId: string } | null>(null);
   const jumpCount = useRef(0);
@@ -221,7 +226,7 @@ export function LiveApp() {
   const taskRows = useMemo(() => markTasks(rows, infos, tasks), [rows, infos, tasks]);
   // While the list is unknown the palette keeps Review for the session in focus, so choosing it can load the list again.
   const focusedIsTask = reviewTarget(infos, focusedId, tasks).kind !== "none";
-  const hiddenCommands = paletteHidden({ resumable, isTask: focusedIsTask, missing: missingTask(tasks) !== null });
+  const hiddenCommands = paletteHidden({ resumable, isTask: focusedIsTask, missing: missingTask(tasks) !== null, focused: infos.some((i) => i.tab_id === focusedId) });
 
   // The Review sheet. It holds its own snapshot (the task, its changes, the session it was opened for), not a view of the lists above,
   // so a task list or a session list that changes under it, a merge removing the task included, never unmounts it while the core works.
@@ -407,6 +412,57 @@ export function LiveApp() {
     [endpoint, panelTab, themeFor, terminalFont],
   );
 
+  // The app's shortcuts work from anywhere, the terminal included; the terminal lets these keys through (TerminalView).
+  const os = endpoint ? osOfPlatform(endpoint.platform) : undefined;
+
+  // Keyboard navigation (hold Ctrl+Shift): the cursor reaches the panes on screen, the session rows and the top bar.
+  const split = view.panes.length > 1;
+  const numberOf = (id: string | null | undefined) => (id ? (infos.find((i) => i.tab_id === id)?.number ?? null) : null);
+  const navPanes = split ? navPanesOf(shownPanes.map(numberOf), view.zoomed) : [numberOf(focusedId)];
+  const navNames = useMemo(() => Object.fromEntries(rows.map((r) => [r.number, r.name])), [rows]);
+  const applyNav = (effect: NavEffect) => {
+    switch (effect.type) {
+      case "select-pane":
+        if (split) dispatch({ type: "focusPane", index: effect.index });
+        actions.focusTerminal();
+        return;
+      case "bring-into-view": {
+        const id = tabIdOfNumber(infos, effect.number);
+        if (id === undefined) return;
+        if (!split) return void (pick(id), actions.focusTerminal());
+        selectRef.current(id);
+        dispatch({ type: "assign", index: effect.pane, tabId: id });
+        dispatch({ type: "focusPane", index: effect.pane });
+        actions.focusTerminal();
+        return;
+      }
+      case "activate":
+        if (effect.id === "palette") setOverlay("palette");
+        else if (effect.id === "layout") setLayoutMenu(true);
+        else if (effect.id === "launcher") setLauncherOpen(true);
+        return;
+      case "deselect":
+        // No terminal selected: the keys stop going to a program until a pane is chosen again.
+        if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
+        document.querySelector<HTMLElement>(".window__main")?.focus();
+        return;
+      case "announce":
+        // The cursor's receipt speaks for a switch it causes, so the focus-moved line is not said as well.
+        announce(effect.text, true);
+        return;
+    }
+  };
+  const nav = useNavigation({
+    os: os ?? "windows",
+    enabled: os !== undefined && !launcherOpen && overlay === null && review === null,
+    panes: navPanes,
+    selectedPane: split ? focusIdx : 0,
+    names: navNames,
+    root: ref,
+    apply: applyNav,
+  });
+  const sendNav = nav.send;
+
   // The split view's shortcuts and commands. True when it was one of them.
   const paneCommand = useCallback(
     (shortcut: SessionShortcut | null): boolean => {
@@ -429,8 +485,9 @@ export function LiveApp() {
             dispatch({ type: "zoom" });
           }
           return true;
+        // The same events the chords send (useNavigation), so the palette's rows and the keys behave the same.
         case "nextPane":
-          dispatch({ type: "nextPane" });
+          sendNav([{ type: "tab" }]);
           return true;
         case "focusMode":
           dispatch({ type: "toggleFocus" });
@@ -452,19 +509,14 @@ export function LiveApp() {
           }
           return true;
         case "nonePane":
-          // No terminal selected: the keys stop going to a program until a pane is chosen again.
-          if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
-          document.querySelector<HTMLElement>(".window__main")?.focus();
+          sendNav([{ type: "select-none" }]);
           return true;
         default:
           return false;
       }
     },
-    [dispatch, announce],
+    [dispatch, announce, sendNav],
   );
-
-  // The app's shortcuts work from anywhere, the terminal included; the terminal lets these keys through (TerminalView).
-  const os = endpoint ? osOfPlatform(endpoint.platform) : undefined;
   // Review (Ctrl+Shift+R) is read apart from the rest because the window owns the key everywhere, the launcher, the overlays and the
   // sheet included: it is always prevented (it is the webview's hard reload), and acted on only when nothing else holds the keys.
   useEffect(() => {
@@ -493,6 +545,7 @@ export function LiveApp() {
       if (e.repeat && shortcut.kind !== "move" && shortcut.kind !== "prompt") return;
       if (shortcut.kind === "launcher") setLauncherOpen(true);
       else if (shortcut.kind === "palette") setOverlay("palette");
+      else if (shortcut.kind === "cheatsheet") setOverlay("shortcuts");
       else if (shortcut.kind === "prompt") jumpPrompt(shortcut.by);
       else if (!paneCommand(shortcut)) actions.handle(shortcut);
     };
@@ -502,13 +555,14 @@ export function LiveApp() {
 
   // A palette row: a session to go to, the profiles page, or a command the window runs (LivePalette lists only those).
   const runFromPalette = (id: string) => {
-    setOverlay(id === "profiles" || id === "appearance" ? id : null);
+    setOverlay(id === "profiles" || id === "appearance" ? id : id === "cheatsheet" ? "shortcuts" : null);
     if (id.startsWith("session:")) return pick(id.slice("session:".length));
     // Palette-only commands. The menu opens after the palette has given the focus back, so it keeps the focus it takes.
     if (id === "unsplit") return dispatch({ type: "remove", index: focusIdxRef.current });
     if (id === "layout") return void setTimeout(() => setLayoutMenu(true), 0);
     if (id === "group-by-project") return dispatch({ type: "toggleGrouped" });
     if (id === "resume") return void (focusedRow && startResume(focusedRow));
+    if (id === "copy-recording-path") return void (endpoint && focusedId && copyRecordingPath(endpoint, focusedId, announce));
     // After the palette has given focus back, so the sheet takes it from the right place and returns it there.
     if (id === "review-task") return void setTimeout(() => reviewSession(focusedId), 0);
     // A task whose folder is gone has no session: its sheet (only the remove step) opens for no tab.
@@ -639,6 +693,8 @@ export function LiveApp() {
           onSelect={pick}
           onReview={reviewSession}
           onPalette={() => setOverlay("palette")}
+          noneSelected={nav.noneSelected}
+          navCursor={nav.cursor}
         />
       )}
       {overlay === "palette" && os && <LivePalette sessions={paletteSessions(rows)} os={os} labels={paletteLabels} hidden={hiddenCommands} onRun={runFromPalette} onClose={() => setOverlay(null)} />}
@@ -658,6 +714,7 @@ export function LiveApp() {
       )}
       {overlay === "profiles" && endpoint && <ProfilesDialog endpoint={endpoint} onClose={() => setOverlay(null)} onNotice={announce} onSaved={reloadProfiles} />}
       {overlay === "appearance" && <AppearanceDialog onClose={() => setOverlay(null)} onNotice={announce} />}
+      {overlay === "shortcuts" && os && <LiveShortcuts os={os} onClose={() => setOverlay(null)} />}
       {launcherOpen && (
         <LiveLauncher
           endpoint={endpoint}

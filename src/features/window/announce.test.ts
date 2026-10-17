@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { FIXTURES } from "../sidebar/fixtures";
-import { laneAnnouncement, nextAnnouncement, sessionAnnouncement, statusSentence, switchAnnouncement } from "./announce";
+import { coveredByNotice, laneAnnouncement, nextAnnouncement, sessionAnnouncement, statusSentence, switchAnnouncement } from "./announce";
 
 const row = (id: string) => FIXTURES.find((f) => f.id === id)!;
 
@@ -85,5 +85,16 @@ describe("laneAnnouncement: a request arriving anywhere is something that needs 
   it("says how many sessions need you when the count rises", () => {
     expect(laneAnnouncement(1, 2)).toBe("2 sessions need you");
     expect(laneAnnouncement(0, 1)).toBe("1 session needs you");
+  });
+});
+
+describe("coveredByNotice: a navigation receipt speaks for the switch it caused", () => {
+  it("skips the focus-moved line when a new navigation notice arrives in the same change", () => {
+    expect(coveredByNotice({ id: -2, text: "Selected session 4, api", navigation: true }, -1)).toBe(true);
+  });
+  it("still says the switch for a notice already heard, or one not from navigation", () => {
+    expect(coveredByNotice({ id: -2, text: "Selected session 4, api", navigation: true }, -2)).toBe(false);
+    expect(coveredByNotice({ id: -3, text: "Closed Shell 1." }, -2)).toBe(false);
+    expect(coveredByNotice(null, -2)).toBe(false);
   });
 });

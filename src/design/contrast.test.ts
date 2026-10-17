@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { parseTokens } from "./cssTokens";
 import { contrast, deltaE, minOnSurfaces, overlay } from "./contrast";
 
-const ACCENTS = ["amber", "blue", "indigo", "violet", "magenta", "cyan", "teal", "slate"] as const;
+const ACCENTS = ["sand", "amber", "blue", "indigo", "violet", "magenta", "cyan", "teal", "slate"] as const;
 const THEMES = ["dark", "light"] as const;
 const SURFACE_NAMES = ["--bg-base", "--bg-raised", "--bg-overlay"] as const;
 // Read from disk: Vitest hands CSS imports (even ?raw) to tests as empty strings.
@@ -31,7 +31,7 @@ describe("status and brand colours on surfaces", () => {
 });
 
 describe("accents", () => {
-  it("defines all eight", () => {
+  it("defines all nine", () => {
     for (const a of ACCENTS) expect(accent(a)["--accent"], a).toBeDefined();
   });
   for (const theme of THEMES)
@@ -57,8 +57,14 @@ describe("distinctness", () => {
     it(`default amber is ΔE ≥ 18 from Claude orange (${theme})`, () => {
       expect(deltaE(accent("amber")["--accent"]![theme], tokens["--brand-claude"]![theme])).toBeGreaterThanOrEqual(18);
     });
-  it("the :root default is amber", () => {
-    expect(parseTokens(accentsCss, ":root")["--accent"]).toEqual(accent("amber")["--accent"]);
+  // The window's own colour (no session in play) must not read as a vendor's: Codex is a neutral grey, OpenAI a pale yellow.
+  for (const theme of THEMES)
+    for (const b of ["--brand-codex", "--brand-openai", "--brand-claude"])
+      it(`default sand is ΔE ≥ 12 from ${b} (${theme})`, () => {
+        expect(deltaE(accent("sand")["--accent"]![theme], tokens[b]![theme])).toBeGreaterThanOrEqual(12);
+      });
+  it("the :root default is sand: dark grey in light mode, beige in dark", () => {
+    expect(parseTokens(accentsCss, ":root")["--accent"]).toEqual(accent("sand")["--accent"]);
   });
 });
 

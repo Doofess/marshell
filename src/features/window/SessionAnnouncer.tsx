@@ -2,7 +2,7 @@ import { useEffect, useRef } from "react";
 import { Announcer, useAnnouncer } from "../../components/a11y/Announcer";
 import type { AnnounceMode } from "../../components/a11y/announce-policy";
 import type { RowModel } from "../sidebar/types";
-import { laneAnnouncement, nextAnnouncement, statusSentence, type Announced } from "./announce";
+import { coveredByNotice, laneAnnouncement, nextAnnouncement, statusSentence, type Announced, type Notice } from "./announce";
 
 /**
  * The window's single live region (built on the shared Announcer). It is empty on the first render, so nothing is read out
@@ -10,12 +10,13 @@ import { laneAnnouncement, nextAnnouncement, statusSentence, type Announced } fr
  * The prompt lines in the panes are plain text; this is the one place anything is announced. `statusRequest` is a counter
  * the "Read the focused session's status" command bumps; each bump reads the focused session's state aloud.
  */
-export function SessionAnnouncer({ row, mode = "needs-you", statusRequest = 0, needsYou, notice }: { row: RowModel | null; mode?: AnnounceMode; statusRequest?: number; needsYou?: number; notice?: { id: number; text: string } | null }) {
+export function SessionAnnouncer({ row, mode = "needs-you", statusRequest = 0, needsYou, notice }: { row: RowModel | null; mode?: AnnounceMode; statusRequest?: number; needsYou?: number; notice?: Notice | null }) {
   const { announcer, message } = useAnnouncer();
   const said = useRef<Announced | null>(null);
+  const heardNotice = useRef(notice?.id);
   useEffect(() => {
     said.current = nextAnnouncement(said.current, row, mode);
-    if (said.current.text) announcer.say(said.current.text);
+    if (said.current.text && !coveredByNotice(notice, heardNotice.current)) announcer.say(said.current.text);
   }, [row?.id, row?.status, row?.name, mode]); // eslint-disable-line react-hooks/exhaustive-deps -- the row's other fields never change what is said
   // A request arriving in a session that is not focused still needs you: say how many now do.
   const lane = useRef<number | null>(null);
@@ -33,6 +34,7 @@ export function SessionAnnouncer({ row, mode = "needs-you", statusRequest = 0, n
   }, [statusRequest]); // eslint-disable-line react-hooks/exhaustive-deps
   // A receipt shown on screen ("Closed Shell 1.") is also said here, so it needs no live region of its own.
   useEffect(() => {
+    heardNotice.current = notice?.id;
     if (notice) announcer.say(notice.text, { repeat: true });
   }, [notice?.id]); // eslint-disable-line react-hooks/exhaustive-deps -- a new id is a new notice
   return <Announcer message={message} className="window__announcer" data-session-announcer />;

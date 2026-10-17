@@ -37,7 +37,8 @@ export function useAnnouncer(): { announcer: AnnouncerInstance; message: Message
 export function Announcer({ message, className, ...rest }: { message: Message } & HTMLAttributes<HTMLDivElement>) {
   return (
     <div className={className} role="status" aria-live={message.priority} aria-atomic="true" {...rest}>
-      {message.text}
+      {/* A new node for each message: the same words said again must still change the region, or it is not read. */}
+      {message.text && <span key={message.seq}>{message.text}</span>}
     </div>
   );
 }

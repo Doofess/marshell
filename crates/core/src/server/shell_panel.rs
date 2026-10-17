@@ -166,6 +166,7 @@ mod tests {
                 rows: 24,
                 on_exit: None,
                 on_mark: None,
+                record: None,
             },
         )
         .unwrap();

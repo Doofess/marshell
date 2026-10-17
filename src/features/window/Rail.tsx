@@ -26,7 +26,7 @@ export function Rail({ rows, needsYou, selectedId, os = "windows", onSelect, onP
           </div>
         )}
         {rows.map((r) => (
-          <button key={r.id} type="button" {...selectedProps(r.id === selectedId, "current", "rail__item")} data-agent={r.agent} data-mono={monogram(r.name)} data-number={r.number} aria-label={rowLabel(r)} onClick={onSelect && (() => onSelect(r.id))}>
+          <button key={r.id} type="button" {...selectedProps(r.id === selectedId, "current", "rail__item")} data-agent={r.agent} data-mono={monogram(r.name)} data-number={r.number} data-nav-row={r.number} aria-label={rowLabel(r)} onClick={onSelect && (() => onSelect(r.id))}>
             <span className="rail__stripe" aria-hidden="true" />
             <span className="rail__number">
               <SessionNumber n={r.number} />
@@ -37,7 +37,7 @@ export function Rail({ rows, needsYou, selectedId, os = "windows", onSelect, onP
       </div>
       {/* The bar's 52 px column holds only the logo, so the palette lives here, where the rail's own tools go. */}
       <div className="rail__tools">
-        <button type="button" className="rail__tool" aria-label="Command palette" title={`Search sessions, projects and commands (${shortcutLabel(commandById("palette").binding!, os)})`} onClick={onPalette}>
+        <button type="button" className="rail__tool" data-nav-top="palette" aria-label="Command palette" title={`Search sessions, projects and commands (${shortcutLabel(commandById("palette").binding!, os)})`} onClick={onPalette}>
           <SearchIcon />
         </button>
       </div>

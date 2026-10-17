@@ -30,6 +30,11 @@ pub fn crash_log(home: &Path) -> PathBuf {
     home.join("logs").join("crash.log")
 }
 
+/// `<home>/history/recordings`: one asciicast file per session run, `<tab>-<unix ms>.cast`.
+pub fn recordings_dir(home: &Path) -> PathBuf {
+    home.join("history").join("recordings")
+}
+
 /// `<home>/shell`: the shell integration scripts, owned and rewritten by Marshell.
 pub fn shell_dir(home: &Path) -> PathBuf {
     home.join("shell")

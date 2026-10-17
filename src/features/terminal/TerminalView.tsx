@@ -1,11 +1,12 @@
 import "@xterm/xterm/css/xterm.css";
 import { FitAddon } from "@xterm/addon-fit";
-import { Terminal } from "@xterm/xterm";
+import { Terminal, type ITerminalOptions } from "@xterm/xterm";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { Endpoint } from "../../generated/Endpoint";
 import { sessionShortcut } from "../../lib/appShortcuts";
 import { osOfPlatform } from "../../lib/keymap";
 import { onCoreEvent } from "../../lib/api/coreEvents";
+import { claimsKey } from "../sessions/useNavigation";
 import { PtySocket } from "../../lib/api/ptySocket";
 import { LatencyMeter } from "../perf/latency";
 import { PerfOverlay } from "../perf/PerfOverlay";
@@ -51,6 +52,11 @@ type Props = {
 };
 
 const BUNDLED = { family: BUNDLED_FONT, size: 13 };
+
+/** The options every session's terminal starts with. The exit-code marks (promptMarks.ts) draw with registerDecoration, a proposed API. */
+export function terminalOptions(o: Pick<ITerminalOptions, "fontFamily" | "fontSize" | "theme" | "minimumContrastRatio">): ITerminalOptions {
+  return { ...o, cursorBlink: true, scrollback: 10_000, allowProposedApi: true };
+}
 
 /** Waits for a font so xterm measures its cells with the right glyphs. Gives up after a second; a missing font is not an error. */
 function loadFont(family: string, size: number): Promise<void> {
@@ -101,8 +107,11 @@ export function TerminalView({ endpoint, tabId, placeholder, onOutput, onSize, a
     const fontSize = fontRef.current.size;
     const resolve = () => resolveTerminalTheme({ ...themeRef.current, app: appScheme() });
     const first = resolve();
+    // The gutter around the cells (app.css) matches the theme's background.
+    const paintGutter = (background: string | undefined) => el.style.setProperty("--terminal-bg", background ?? null);
+    paintGutter(first.theme.background);
     let current = first.scheme;
-    const term = new Terminal({ fontFamily, fontSize, cursorBlink: true, scrollback: 10_000, theme: first.theme, minimumContrastRatio: first.minimumContrastRatio });
+    const term = new Terminal(terminalOptions({ fontFamily, fontSize, theme: first.theme, minimumContrastRatio: first.minimumContrastRatio }));
     const fit = new FitAddon();
     term.loadAddon(fit);
     fitRef.current = fit;
@@ -117,6 +126,8 @@ export function TerminalView({ endpoint, tabId, placeholder, onOutput, onSize, a
       // The app's session shortcuts (launcher, close, reopen, rename, go to, move) belong to the app: the terminal must not type
       // them (Ctrl+T and Ctrl+W are control codes). The app hears the same key on the window.
       if (e.type === "keydown" && sessionShortcut(e, osOfPlatform(endpoint.platform)) !== null) return false;
+      // So do the navigation chords once navigation has started (Ctrl+Shift+arrow selects a word until then).
+      if (e.type === "keydown" && claimsKey(e, osOfPlatform(endpoint.platform), "terminal")) return false;
       return true;
     });
 
@@ -186,6 +197,7 @@ export function TerminalView({ endpoint, tabId, placeholder, onOutput, onSize, a
     const onScheme = () => {
       const o = resolve();
       term.options.theme = o.theme;
+      paintGutter(o.theme.background);
       term.options.minimumContrastRatio = o.minimumContrastRatio;
       current = o.scheme;
       schemeMode.notify(o.scheme);

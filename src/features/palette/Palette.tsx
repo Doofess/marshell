@@ -1,4 +1,4 @@
-import { useId, type KeyboardEvent } from "react";
+import { useEffect, useId, useRef, type KeyboardEvent } from "react";
 import { selectedProps } from "../../components/a11y/SelectedMark";
 import { AgentMark } from "../../components/AgentMark/AgentMark";
 import { StatusGlyph } from "../../components/StatusGlyph/StatusGlyph";
@@ -10,6 +10,22 @@ import "./Palette.css";
 
 export type PaletteView = { query: string; activeIndex: number };
 export type { PaletteSession };
+
+/**
+ * A press anywhere in the palette but the box keeps the keys in the box: a focused heading or the page body would take Esc and the
+ * arrows away, leaving the palette open over a window that hears the keys instead. A press on the dimmed window around the sheet closes it.
+ */
+export function pressInPalette(e: { target: unknown; preventDefault: () => void }, onClose?: () => void) {
+  const at = (sel: string) => (e.target as { closest?: (s: string) => unknown } | null)?.closest?.(sel);
+  if (at(".palette__input")) return;
+  e.preventDefault();
+  if (at(".palette__backdrop")) onClose?.();
+}
+
+/** The list scrolls inside the sheet's cap, so the row the arrows chose is kept in sight by hand. */
+export function keepActiveInView(list: { querySelector: (sel: string) => { scrollIntoView?: (o: ScrollIntoViewOptions) => void } | null } | null, id: string) {
+  list?.querySelector(`[id="${id}"]`)?.scrollIntoView?.({ block: "nearest" });
+}
 
 const GROUPS: Command["group"][] = ["Sessions", "View", "Tools"];
 const FOCUS_SESSION = /^focus-session-\d+$/;
@@ -115,6 +131,7 @@ export function Palette({
   const uid = useId();
   const optId = (i: number) => `${uid}-opt-${i}`;
   const listId = `${uid}-list`;
+  const list = useRef<HTMLUListElement>(null);
   const filtering = query.trim() !== "";
   const wanted = sessions ? parseSessionNumber(query) : null;
 
@@ -156,10 +173,13 @@ export function Palette({
     }
   };
 
+  const activeId = optId(activeIndex);
+  useEffect(() => keepActiveInView(list.current, activeId), [activeId]);
+
   const prompt = sessions ? "Type a command, or a session number" : "Type a command";
   let index = -1;
   return (
-    <div className="palette">
+    <div className="palette" onMouseDown={(e) => pressInPalette(e, onClose)}>
       <div className="palette__backdrop" />
       <div className="palette__sheet" role="dialog" aria-modal="true" aria-label="Command palette" onKeyDown={onKey}>
         <input
@@ -178,7 +198,7 @@ export function Palette({
             {empty}
           </p>
         ) : (
-          <ul className="palette__list" id={listId} role="listbox" aria-label={sessions ? "Sessions and commands" : "Commands"}>
+          <ul ref={list} className="palette__list" id={listId} role="listbox" aria-label={sessions ? "Sessions and commands" : "Commands"}>
             {filtering ? (
               items.map((item) => option(item, ++index))
             ) : (

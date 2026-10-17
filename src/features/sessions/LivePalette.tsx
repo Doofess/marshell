@@ -8,13 +8,23 @@ import type { PaletteSession } from "../palette/fixtures";
  * Commands the window runs from the palette that have no key of their own: remove the focused pane, open the layout menu, resume an
  * Ended or Exited session, group the sidebar by project, and open the removal of a task whose folder is gone.
  */
-const PALETTE_ONLY = ["profiles", "appearance", "unsplit", "layout", "resume", "group-by-project", "clean-up-task"];
+const PALETTE_ONLY = ["profiles", "appearance", "unsplit", "layout", "resume", "group-by-project", "clean-up-task", "copy-recording-path"];
 
 /**
  * The commands the live window runs: the ones with a session shortcut, the pane commands, and the shell profiles and Appearance pages. Listing any other would
  * be a row that does nothing. (The palette itself is left out: choosing it from itself only closes it.)
  */
 export const LIVE_COMMANDS = COMMANDS.filter((c) => PALETTE_ONLY.includes(c.id) || (c.id !== "palette" && commandShortcut(c.id) !== null));
+
+/** Esc closes the palette wherever the keys are (a pressed heading, the page), and the window behind never hears it. */
+export function escapeCloses(onClose: () => void) {
+  return (e: { key: string; preventDefault: () => void; stopPropagation: () => void }) => {
+    if (e.key !== "Escape") return;
+    e.preventDefault();
+    e.stopPropagation();
+    onClose();
+  };
+}
 
 /**
  * The command palette over the live window. It owns the typed text and the active row; the window decides what a command
@@ -31,6 +41,13 @@ export function LivePalette({ sessions, os, labels, hidden, onRun, onClose }: { 
   const [query, setQuery] = useState("");
   const [activeIndex, setActiveIndex] = useState(0);
   const root = useRef<HTMLDivElement>(null);
+  const closeRef = useRef(onClose);
+  closeRef.current = onClose;
+  useEffect(() => {
+    const onKey = escapeCloses(() => closeRef.current());
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, []);
   useEffect(() => {
     const before = document.activeElement;
     root.current?.querySelector<HTMLElement>(".palette__input")?.focus();

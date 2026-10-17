@@ -2,7 +2,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { COMMANDS } from "../../lib/keymap";
 import { PALETTE_SESSIONS } from "./fixtures";
-import { Palette } from "./Palette";
+import { Palette, keepActiveInView, pressInPalette } from "./Palette";
 
 const html = (query = "", os: "windows" | "mac" | "linux" = "windows", activeIndex = 0) => renderToStaticMarkup(<Palette view={{ query, activeIndex }} os={os} />);
 const withSessions = (query = "", os: "windows" | "mac" | "linux" = "windows", activeIndex = 0) =>
@@ -185,5 +185,27 @@ describe("Palette: commands", () => {
   });
   it("lists every command when none are given", () => {
     expect(options(html())).toBe(COMMANDS.length);
+  });
+});
+
+describe("Palette: the pointer and the keys", () => {
+  const press = (target: string) => {
+    const calls: string[] = [];
+    pressInPalette({ target: { closest: (sel: string) => (target === sel ? {} : null) }, preventDefault: () => calls.push("kept focus") }, () => calls.push("closed"));
+    return calls;
+  };
+  it("closes when the dimmed window around the sheet is pressed", () => {
+    expect(press(".palette__backdrop")).toEqual(["kept focus", "closed"]);
+  });
+  it("keeps the keys in the box when a heading or a row is pressed, so Esc and the arrows still work", () => {
+    expect(press(".palette__sheet")).toEqual(["kept focus"]);
+  });
+  it("lets a press in the box itself place the caret", () => {
+    expect(press(".palette__input")).toEqual([]);
+  });
+  it("scrolls the list to the row the arrows chose", () => {
+    const asked: unknown[] = [];
+    keepActiveInView({ querySelector: (sel: string) => (asked.push(sel), { scrollIntoView: (o: unknown) => asked.push(o) }) }, "p-opt-12");
+    expect(asked).toEqual(['[id="p-opt-12"]', { block: "nearest" }]);
   });
 });

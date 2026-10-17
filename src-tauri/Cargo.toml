@@ -13,3 +13,8 @@ marshell-protocol.workspace = true
 tauri = { version = "2", features = [] }
 tauri-plugin-single-instance = "2"
 tauri-plugin-window-state = "2"
+
+# Reaches the WebView2 settings Tauri does not expose (main.rs: the browser's own shortcuts).
+[target."cfg(windows)".dependencies]
+webview2-com = "0.39.1"
+windows-core = "0.62"

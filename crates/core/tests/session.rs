@@ -13,6 +13,7 @@ fn fake(args: &[&str]) -> SpawnSpec {
         rows: 24,
         on_exit: None,
         on_mark: None,
+        record: None,
     }
 }
 
@@ -195,6 +196,7 @@ fn on_exit_callback_gets_the_code() {
             let _ = tx.send(code);
         })),
         on_mark: None,
+        record: None,
     };
     let _session = Session::spawn("t-exit-cb".into(), spec).unwrap();
     assert_eq!(rx.recv_timeout(Duration::from_secs(5)), Ok(3));
@@ -216,4 +218,59 @@ fn marks_reach_the_callback() {
         }
     }
     assert_eq!(got, [Mark::PromptStart, Mark::Executed, Mark::Finished(Some(7))]);
+}
+
+/// Polls the recording until `want` shows up: the writer thread flushes about once a second.
+fn wait_for_recording(path: &std::path::Path, want: &str) -> String {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        let text = std::fs::read_to_string(path).unwrap_or_default();
+        if text.contains(want) || Instant::now() > deadline {
+            return text;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}
+
+#[test]
+fn session_records_its_output() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("t-1.cast");
+    let mut spec = fake(&["print", "hello"]);
+    spec.record = Some((path.clone(), None));
+    let s = Session::spawn("t-rec".into(), spec).unwrap();
+    assert_eq!(s.recording_path(), Some(path.clone()));
+    assert_eq!(drain(&s, Duration::from_secs(10)).1, Some(0));
+    let text = wait_for_recording(&path, "hello");
+    let hello = text.lines().skip(1).any(|line| {
+        let v: serde_json::Value = serde_json::from_str(line).unwrap();
+        v[1] == "o" && v[2].as_str().unwrap().contains("hello")
+    });
+    assert!(hello, "{text}");
+}
+
+#[test]
+fn session_records_prompt_marks() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("t-2.cast");
+    let mut spec = fake(&["osc133"]);
+    spec.record = Some((path.clone(), None));
+    let s = Session::spawn("t-rec-marks".into(), spec).unwrap();
+    drain(&s, Duration::from_secs(10));
+    let text = wait_for_recording(&path, "\"m\",\"prompt\"");
+    assert!(text.contains("\"m\",\"prompt\""), "{text}");
+}
+
+#[test]
+fn session_without_a_recordable_path_still_runs() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("plain-file");
+    std::fs::write(&file, b"x").unwrap();
+    let mut spec = fake(&["print", "still here"]);
+    spec.record = Some((file.join("under").join("t-3.cast"), None));
+    let s = Session::spawn("t-rec-bad".into(), spec).unwrap();
+    assert_eq!(s.recording_path(), None);
+    let (out, code) = drain(&s, Duration::from_secs(10));
+    assert!(String::from_utf8_lossy(&out).contains("still here"));
+    assert_eq!(code, Some(0));
 }

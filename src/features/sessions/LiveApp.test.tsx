@@ -509,6 +509,10 @@ describe("LiveApp: the palette's Review command", () => {
     expect(paletteHidden({ resumable: true, isTask: false, missing: true })).toEqual(["review-task"]);
     expect(paletteHidden({ resumable: true, isTask: true, missing: true })).toEqual([]);
   });
+  it("hides Copy this session's recording path when no session is focused", () => {
+    expect(paletteHidden({ resumable: true, isTask: true, missing: true, focused: false })).toEqual(["copy-recording-path"]);
+    expect(paletteHidden({ resumable: true, isTask: true, missing: true, focused: true })).toEqual([]);
+  });
   it("hides Clean up a missing task unless a task's folder is gone, and gives the same list each time", () => {
     expect(paletteHidden({ resumable: true, isTask: true, missing: false })).toEqual(["clean-up-task"]);
     expect(paletteHidden({ resumable: false, isTask: false, missing: false })).toEqual(["resume", "review-task", "clean-up-task"]);

@@ -66,8 +66,10 @@
   font: inherit;
   font-size: var(--text-15);
 }
+/* No ring: the box is the only thing in the sheet that takes focus, so the caret says where typing goes.
+   Transparent, not none, so Windows high contrast still draws it. */
 .palette__input:focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 2px solid transparent;
   outline-offset: -2px;
 }
 

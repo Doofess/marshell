@@ -60,6 +60,14 @@ export type Announced = { key: string; text: string };
  * started waiting, stopped or ended), never the first render, never progress, and never the same thing twice: an unchanged
  * session returns the previous value itself.
  */
+/** A notice for the window's announcer. `navigation` marks the cursor's receipts ("Selected session 4, api"). */
+export type Notice = { id: number; text: string; navigation?: boolean };
+
+/** True when a navigation receipt not yet heard arrives with a switch: the receipt already says where focus went. */
+export function coveredByNotice(notice: Notice | null | undefined, heardId: number | undefined): boolean {
+  return notice?.navigation === true && notice.id !== heardId;
+}
+
 export function nextAnnouncement(prev: Announced | null, row: RowModel | null, mode: AnnounceMode = "needs-you"): Announced {
   const state = sessionAnnouncement(row);
   const key = `${row?.id ?? "none"}|${state}`;

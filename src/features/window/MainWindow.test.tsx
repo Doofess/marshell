@@ -97,10 +97,9 @@ describe("MainWindow: logo and accent", () => {
     const h = html({ sidebarPref: "rail" });
     expect(h.slice(h.indexOf('class="rail"'))).toContain('aria-label="Command palette"');
   });
-  it("sets the accent for the whole window to the selected session's vendor", () => {
-    expect(html()).toMatch(/class="window"[^>]*data-agent="claude"/);
-    const codex = SCENARIO_ROWS.map((r) => (r.id === "working" ? { ...r, agent: "codex" as const } : r));
-    expect(html({ rows: codex })).toMatch(/class="window"[^>]*data-agent="codex"/);
+  it("keeps the window's own controls (the layout menu, the panel, the cursor) in the app accent: only a session's own elements take its vendor's", () => {
+    expect(html()).not.toMatch(/class="window"[^>]*data-agent/);
+    expect(html()).toMatch(/class="session-header"[^>]*data-agent="claude"/);
   });
 });
 
@@ -153,8 +152,8 @@ describe("MainWindow: split view up to four", () => {
     const names = [...h.matchAll(/aria-label="Session \d+, terminal: ([^"]+)"/g)].map((m) => m[1]);
     expect(new Set(names).size).toBe(4);
   });
-  it("sets the window accent from the active pane", () => {
-    expect(html({ layout: "split", splitCount: 2, activePane: 1 })).toMatch(/class="window"[^>]*data-agent="claude"/);
+  it("leaves the window in the app accent with panes split: each pane carries its own vendor", () => {
+    expect(html({ layout: "split", splitCount: 2, activePane: 1 })).not.toMatch(/class="window"[^>]*data-agent/);
   });
   it("chooses the arrangement from the space the panes share, after the sidebar and bar", () => {
     expect(html({ layout: "split", splitCount: 4, width: 1700, height: 900 })).toContain('data-arrangement="grid"');
@@ -298,11 +297,6 @@ describe("MainWindow: the review's critical findings", () => {
     const two = SCENARIO_ROWS.slice(0, 2);
     const h = html({ layout: "split", splitCount: 4, rows: two, layoutMenu: true, ...BIG });
     expect(h).not.toContain("Showing 2 of 4");
-  });
-  it("makes the accent test mean something: the focused pane's vendor, not the first pane's, sets the window accent", () => {
-    const rows = SCENARIO_ROWS.map((r) => (r.id === "needs-question" ? r : { ...r, agent: "claude" as const }));
-    const h = html({ layout: "split", splitCount: 3, rows, selectedId: "working", activePane: 2, ...BIG });
-    expect(h).toMatch(/class="window"[^>]*data-agent="antigravity"/);
   });
 });
 
@@ -608,5 +602,31 @@ describe("MainWindow: focus mode and the sidebar width", () => {
   it("makes the handle a tab stop only when it can be used", () => {
     expect(html({ sidebarWidth: 320 })).not.toMatch(/window__side-handle[^>]*tabindex/);
     expect(html({ sidebarWidth: 320, onSidebarWidth: () => {} })).toMatch(/window__side-handle[^>]*tabindex="0"/);
+  });
+});
+
+describe("MainWindow: keyboard navigation", () => {
+  it("shows that nothing is selected: no pane is active, and the status bar says so", () => {
+    const h = html({ layout: "split", noneSelected: true });
+    expect(h).toContain("No session selected · Tab to select a terminal");
+    expect(h).not.toContain('data-active="true"');
+  });
+  it("says it without a status bar too (the live window has none)", () => {
+    expect(html({ layout: "split", noneSelected: true, statusBar: false })).toContain("No session selected · Tab to select a terminal");
+  });
+  it("draws the cursor and its hint inside the window", () => {
+    const h = html({ navCursor: { rect: { x: 0, y: 40, w: 288, h: 56 }, label: "Session 1, billing" } });
+    expect(h).toContain('class="nav-cursor"');
+    expect(h).toContain("Release Ctrl+Shift to select · Backspace for none");
+  });
+  it("marks what the cursor can reach: every pane, every session row and the top bar's controls", () => {
+    const h = html({ layout: "split" });
+    expect(h).toContain('data-nav-pane="0"');
+    expect(h).toContain('data-nav-pane="1"');
+    expect(h).toMatch(/data-nav-row="\d+"/);
+    expect(h).toContain('data-nav-top="palette"');
+    expect(h).toContain('data-nav-top="layout"');
+    expect(html({ width: 940 })).toMatch(/<button[^>]*rail__item[^>]*data-nav-row="\d+"|<button[^>]*data-nav-row="\d+"[^>]*rail__item/);
+    expect(html()).toContain('data-nav-pane="0"');
   });
 });

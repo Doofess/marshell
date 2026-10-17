@@ -16,9 +16,11 @@ const FILES = [...walk(join(SRC, "features")), ...walk(join(SRC, "components")),
  * bodies of the fix sheet and the onboarding frame (a change or three consent cards can be longer than a 720 by 480 window;
  * their actions sit in a row outside the scrolling body, with a visible themed scrollbar; see dialogBodies.test.ts), and the
  * Review sheet's file list (`.review__files`: a capped listbox in a modal sheet, so the diff beside it stays in view, like
- * the launcher's and the palette's lists).
+ * the launcher's and the palette's lists), and the keyboard shortcuts sheet (`.live-shortcuts__sheet`: a modal sheet whose
+ * thirty-odd rows are longer than a 720 by 480 window; it has no actions, Esc or Ctrl+Shift+O closes it, and clipping it would
+ * hide keys).
  */
-const ALLOWED = [/^\.drawer$/, /^\.composer__field$/, /^\.scroll-menu$/, /^\.layout-menu$/, /^\.sidebar__list$/, /^\.rail__list$/, /^\.palette__list$/, /^\.launcher__list$/, /^\.page__body$/, /^\.raw-editor__text$/, /^\.fix-sheet__body$/, /^\.onboarding__body$/, /^\.review__files$/];
+const ALLOWED = [/^\.live-shortcuts__sheet$/,/^\.drawer$/, /^\.composer__field$/, /^\.scroll-menu$/, /^\.layout-menu$/, /^\.sidebar__list$/, /^\.rail__list$/, /^\.palette__list$/, /^\.launcher__list$/, /^\.page__body$/, /^\.raw-editor__text$/, /^\.fix-sheet__body$/, /^\.onboarding__body$/, /^\.review__files$/];
 
 const read = (f: string) => readFileSync(join(SRC, f), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
 const rules = (css: string) => [...css.matchAll(/([^{}]+)\{([^{}]*)\}/g)].map((m) => ({ selectors: m[1]!.split(",").map((s) => s.trim()), body: m[2]! }));

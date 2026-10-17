@@ -42,6 +42,9 @@ export const sessions = {
   /** Turns the panel shell into a tab ("Open in a pane"). Rejects with a 404 ApiError when there is none. */
   adoptShellPanel: async (ep: Endpoint): Promise<string> =>
     (await api<{ tab_id: string }>(ep, "POST", "/v1/shell-panel/adopt")).tab_id,
+  /** The session's asciicast file. Rejects with a 404 ApiError ("This session has no recording.") when there is none. */
+  recordingPath: async (ep: Endpoint, tabId: string): Promise<string> =>
+    (await api<{ path: string }>(ep, "GET", `${tab(tabId)}/recording`)).path,
   /**
    * Starts an Ended or Exited tab again in place. A 409 comes back as `{ ok: false, reason }`
    * with the core's own words; any other failure rejects with an ApiError.

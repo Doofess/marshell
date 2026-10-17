@@ -1,4 +1,6 @@
 .window {
+  /* The keyboard cursor and its hint are placed against the window (NavCursor). */
+  position: relative;
   display: grid;
   grid-template-rows: 40px minmax(0, 1fr);
   min-inline-size: 0;
@@ -183,6 +185,21 @@
   flex: none;
   min-inline-size: 0;
   overflow: clip;
+}
+/* No terminal selected: the strip says so, in the status bar's own place and type, instead of a session's facts. */
+.window__status-none {
+  display: flex;
+  align-items: center;
+  block-size: 24px;
+  margin: 0;
+  padding-inline: var(--space-3);
+  background: var(--bg-raised);
+  box-shadow: inset 0 1px 0 var(--hairline);
+  color: var(--text-2);
+  font-size: var(--text-12);
+  white-space: nowrap;
+  overflow: clip;
+  text-overflow: ellipsis;
 }
 /* Flat and docked, like the compact line in a pane: the whole slot, edge to edge, with nothing lifted off the bottom and no shadow,
    so the status bar sits directly under it and it never covers a terminal row. A long prompt grows it upward from the slot's foot. */

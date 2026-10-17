@@ -2,14 +2,14 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { commandShortcut } from "../../lib/appShortcuts";
 import { PALETTE_SESSIONS } from "../palette/fixtures";
-import { LIVE_COMMANDS, LivePalette } from "./LivePalette";
+import { LIVE_COMMANDS, LivePalette, escapeCloses } from "./LivePalette";
 
 describe("LivePalette", () => {
   it("lists only commands the window runs", () => {
     const ids = LIVE_COMMANDS.map((c) => c.id);
-    for (const id of ["launcher", "close", "reopen", "rename", "move-up", "move-down", "profiles", "appearance", "split", "unsplit", "layout", "resume", "zoom-pane", "nav-next-pane", "nav-none", "focus-mode", "sidebar", "group-by-project"]) expect(ids, id).toContain(id);
+    for (const id of ["launcher", "close", "reopen", "rename", "move-up", "move-down", "profiles", "appearance", "split", "unsplit", "layout", "resume", "zoom-pane", "nav-next-pane", "nav-none", "focus-mode", "sidebar", "group-by-project", "copy-recording-path"]) expect(ids, id).toContain(id);
     // Every other row would do nothing when chosen. (Remove-pane, Change-layout and Resume have no key shortcut; the window runs them from the palette.)
-    for (const id of ids) expect(["profiles", "appearance", "unsplit", "layout", "resume", "group-by-project", "clean-up-task"].includes(id) || commandShortcut(id) !== null, id).toBe(true);
+    for (const id of ids) expect(["profiles", "appearance", "unsplit", "layout", "resume", "group-by-project", "clean-up-task", "copy-recording-path"].includes(id) || commandShortcut(id) !== null, id).toBe(true);
     for (const id of ["doctor", "history", "mode-plan", "go-to-session"]) expect(ids, id).not.toContain(id);
   });
   it("offers Resume only when the window does not hide it", () => {
@@ -48,5 +48,19 @@ describe("LivePalette", () => {
     const h = show({ "group-by-project": "Stop grouping by project" });
     expect(h).toContain("Stop grouping by project");
     expect(h).not.toContain("Group sessions by project");
+  });
+});
+
+describe("LivePalette: Esc", () => {
+  const press = (key: string) => {
+    const calls: string[] = [];
+    escapeCloses(() => calls.push("closed"))({ key, preventDefault: () => calls.push("prevented"), stopPropagation: () => calls.push("stopped") });
+    return calls;
+  };
+  it("closes the palette wherever the keys are, before the window hears it", () => {
+    expect(press("Escape")).toEqual(["prevented", "stopped", "closed"]);
+  });
+  it("leaves every other key alone", () => {
+    expect(press("ArrowDown")).toEqual([]);
   });
 });
