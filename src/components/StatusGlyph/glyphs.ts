@@ -9,7 +9,8 @@ export type GlyphKind =
   | "error"
   | "stuck"
   | "ended"
-  | "limited";
+  | "limited"
+  | "paused";
 export type AuxKind = "muted" | "elevated" | "caution";
 export type Motion = "pulse" | "bounce" | "draw" | "flash" | null;
 export type GlyphSpec = { label: string; motion: Motion; reduced: string | null };
@@ -28,6 +29,8 @@ export const GLYPHS: Record<GlyphKind, GlyphSpec> = {
   stuck: { label: "Might be stuck", motion: null, reduced: null },
   ended: { label: "Ended", motion: null, reduced: null },
   limited: { label: "Status limited", motion: null, reduced: null },
+  // A frozen process tree (Pause): two bars, nothing moves.
+  paused: { label: "Paused", motion: null, reduced: null },
 };
 
 export const AUX_LABELS: Record<AuxKind, string> = {

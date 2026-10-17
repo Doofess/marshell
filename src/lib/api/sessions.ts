@@ -74,6 +74,10 @@ export const sessions = {
    */
   resume: (ep: Endpoint, tabId: string, size: { cols: number; rows: number }): Promise<Started> =>
     refusable(() => api<CreateSessionResponse>(ep, "POST", `${tab(tabId)}/resume`, size)),
+  /** Freezes a running session's whole process tree. A 409 comes back as `{ ok: false, reason }`, as for `resume`. */
+  pause: (ep: Endpoint, tabId: string): Promise<Started> => refusable(() => api<void>(ep, "POST", `${tab(tabId)}/pause`)),
+  /** Thaws a paused session. Answers like `pause`. */
+  cont: (ep: Endpoint, tabId: string): Promise<Started> => refusable(() => api<void>(ep, "POST", `${tab(tabId)}/continue`)),
   /** Ends an agent tab's process and starts it again in `mode`, in the same row. Answers like `resume`. */
   restart: (ep: Endpoint, tabId: string, mode: SessionMode, size: { cols: number; rows: number }): Promise<Started> =>
     refusable(() => api<CreateSessionResponse>(ep, "POST", `${tab(tabId)}/restart`, { mode, ...size } satisfies RestartRequest)),

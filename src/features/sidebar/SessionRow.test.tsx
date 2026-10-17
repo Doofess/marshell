@@ -7,7 +7,7 @@ import { SessionRow } from "./SessionRow";
 describe("SessionRow", () => {
   it("has one fixture per glyph state (and the manual CLI's running) plus the modifiers", () => {
     const kinds = new Set(FIXTURES.map((f) => f.status));
-    expect(kinds.size).toBe(11);
+    expect(kinds.size).toBe(12);
     expect(FIXTURES.some((f) => f.muted)).toBe(true);
     expect(FIXTURES.some((f) => f.elevated)).toBe(true);
     expect(FIXTURES.some((f) => f.mode === "bypass")).toBe(true);

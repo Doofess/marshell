@@ -76,7 +76,12 @@ async fn run(socket: WebSocket, session: Arc<Session>) {
         tokio::select! {
             msg = rx.next() => match msg {
                 Some(Ok(Message::Binary(frame))) => match decode_client(&frame) {
-                    Some(ClientFrame::Input(bytes)) => session.write_input(bytes),
+                    Some(ClientFrame::Input(bytes)) => {
+                        // A paused session takes no keys; the pane shows why.
+                        if !session.is_frozen() {
+                            session.write_input(bytes);
+                        }
+                    }
                     Some(ClientFrame::Resize(r)) => { let _ = session.resize(r.cols, r.rows); }
                     Some(ClientFrame::Ack(n)) => session.ack(n),
                     Some(ClientFrame::Resume(from)) => {

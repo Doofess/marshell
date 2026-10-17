@@ -13,9 +13,11 @@ type AppearanceContext = {
   error: string | null;
   /** Windows Terminal's settings files, for its font and colour schemes; null until read (or when they can't be). */
   wtFiles: FoundFile[] | null;
+  /** The one settings writer, for what is not appearance (the first-Pause warning). Null outside the provider. */
+  sync: SettingsSync | null;
 };
 
-const Ctx = createContext<AppearanceContext>({ appearance: DEFAULT_APPEARANCE, save: async () => {}, error: null, wtFiles: null });
+const Ctx = createContext<AppearanceContext>({ appearance: DEFAULT_APPEARANCE, save: async () => {}, error: null, wtFiles: null, sync: null });
 
 export function useAppearance(): AppearanceContext {
   return useContext(Ctx);
@@ -79,6 +81,6 @@ export function AppearanceProvider({ children }: { children: ReactNode }) {
     }
   }, [sync]);
 
-  const value = useMemo(() => ({ appearance, save, error, wtFiles }), [appearance, save, error, wtFiles]);
+  const value = useMemo(() => ({ appearance, save, error, wtFiles, sync }), [appearance, save, error, wtFiles, sync]);
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }

@@ -59,6 +59,8 @@ export const COMMANDS: Command[] = [
   { id: "move-up", label: "Move session up the list", group: "Sessions", binding: { code: "ArrowUp", alt: true, shift: true } },
   { id: "move-down", label: "Move session down the list", group: "Sessions", binding: { code: "ArrowDown", alt: true, shift: true } },
   // Session modes, the same five for every agent CLI (docs/PLAN.md "Session modes"); unbound, so a person picks the keys.
+  { id: "pause", label: "Pause session", group: "Sessions" },
+  { id: "continue", label: "Continue session", group: "Sessions" },
   { id: "mode-manual", label: "Mode: Manual, ask before each change", group: "Sessions" },
   { id: "mode-plan", label: "Mode: Plan, read and plan without changing anything", group: "Sessions" },
   { id: "mode-auto-edit", label: "Mode: Auto-edit, edits in the project go ahead", group: "Sessions" },

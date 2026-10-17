@@ -11,6 +11,8 @@ use std::path::Path;
 struct FileDoc {
     #[serde(default)]
     appearance: Appearance,
+    #[serde(default)]
+    pause_warned: bool,
 }
 
 impl Versioned for FileDoc {
@@ -31,7 +33,8 @@ pub fn load(home: &Path) -> Settings {
         tracing::warn!("ignoring settings file, using defaults: {err:#}");
         None
     });
-    let mut appearance = doc.unwrap_or_default().appearance;
+    let doc = doc.unwrap_or_default();
+    let (mut appearance, pause_warned) = (doc.appearance, doc.pause_warned);
     // A hand-edited value that fails validation would make every later save fail, so it gives way to its default.
     let replaced = repair(&mut appearance);
     if !replaced.is_empty() {
@@ -40,7 +43,10 @@ pub fn load(home: &Path) -> Settings {
             replaced.join(", ")
         );
     }
-    Settings { appearance }
+    Settings {
+        appearance,
+        pause_warned,
+    }
 }
 
 /// Writes the settings. A file that is not valid JSON is first copied to `settings.json.broken`,
@@ -58,6 +64,7 @@ pub fn save(home: &Path, s: &Settings) -> anyhow::Result<()> {
         &path,
         &FileDoc {
             appearance: s.appearance.clone(),
+            pause_warned: s.pause_warned,
         },
     )
 }
@@ -256,7 +263,28 @@ mod tests {
         assert!(!a.contrast_protection);
         assert_eq!(a.terminal_font.family.as_deref(), Some("Fira Code"));
         // What load returns can be saved again: it no longer fails validation.
-        assert!(validate(&Settings { appearance: a }).is_ok());
+        assert!(
+            validate(&Settings {
+                appearance: a,
+                ..Settings::default()
+            })
+            .is_ok()
+        );
+    }
+
+    #[test]
+    fn pause_warned_round_trips_and_an_old_file_loads_false() {
+        let home = tempfile::tempdir().unwrap();
+        let s = Settings {
+            pause_warned: true,
+            ..Settings::default()
+        };
+        save(home.path(), &s).unwrap();
+        assert!(load(home.path()).pause_warned);
+
+        let file = crate::paths::settings_file(home.path());
+        std::fs::write(&file, r#"{"version":1,"appearance":{}}"#).unwrap();
+        assert!(!load(home.path()).pause_warned);
     }
 
     #[test]

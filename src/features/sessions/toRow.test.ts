@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { Profile } from "../../generated/Profile";
 import type { SessionInfo } from "../../generated/SessionInfo";
+import { rowLabel } from "../sidebar/labels";
 import { toRow } from "./toRow";
 
 const profile = (id: string, family: Profile["family"]): Profile => ({ id, name: id, command: [id], family, cwd: null, env: [], shell_integration: true, detected: true });
@@ -22,6 +23,7 @@ const info = (patch: Partial<SessionInfo> = {}): SessionInfo => ({
   mode: null,
   state: { kind: "running" },
   command: { kind: "unknown" },
+  paused: false,
   ...patch,
 });
 
@@ -49,6 +51,17 @@ describe("toRow", () => {
     expect(row.agent).toBe("claude");
     expect(row.status).toBe("limited");
     expect(row.phrase).toBe("Status arrives with hooks");
+  });
+
+  it("a running, paused agent is Paused, with no phrase", () => {
+    const row = toRow(info({ agent: "claude", paused: true }), PROFILES);
+    expect(row.status).toBe("paused");
+    expect(row.phrase).toBe("");
+    expect(rowLabel(row)).toContain("Paused");
+  });
+
+  it("a paused shell is Paused too, ahead of running a command", () => {
+    expect(toRow(info({ paused: true, command: { kind: "running" } as SessionInfo["command"] }), PROFILES).status).toBe("paused");
   });
 
   it("an exited agent session is ended, not limited", () => {

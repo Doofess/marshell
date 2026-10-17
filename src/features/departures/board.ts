@@ -49,6 +49,8 @@ export function statusText(status: GlyphKind, manual: boolean): string {
       return manual ? "EXITED" : "ENDED";
     case "limited":
       return "LIMITED";
+    case "paused":
+      return "PAUSED";
   }
 }
 

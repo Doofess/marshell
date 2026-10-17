@@ -11,6 +11,9 @@ export type SessionMenuFacts = {
   task: boolean;
   inShownPane: boolean;
   paneAvailable: boolean;
+  /** Running and not paused. */
+  pausable: boolean;
+  paused: boolean;
 };
 
 /** The items a session row's menu shows. Items that don't apply are left out, never disabled. */
@@ -20,6 +23,8 @@ export function sessionMenuItems(facts: SessionMenuFacts, os: Os): MenuItem[] {
   if (!facts.inShownPane && facts.paneAvailable) items.push({ id: "split", label: "Split into a pane" });
   if (facts.resumable) items.push({ id: "resume", label: "Resume" });
   if (facts.agent) items.push({ id: "mode", label: "Mode ▸" });
+  if (facts.pausable) items.push({ id: "pause", label: "Pause" });
+  if (facts.paused) items.push({ id: "continue", label: "Continue" });
   if (facts.task) items.push({ id: "review-task", label: "Review changes", shortcut: shortcut("review-task") });
   items.push({ separator: true }, { id: "close", label: "Close", shortcut: shortcut("close") });
   return items;

@@ -203,6 +203,7 @@ The full text is in the tooltip and the screen-reader label.
 | Auto / dontAsk / bypass | ⚠, **always visible** | — | "Full auto" | Header tinted red with a red bar on its start edge (bypass, auto); in split view each pane header carries the same tint and bar |
 | Ended | Hollow square | — | "Ended · exit 0" | Text 60% |
 | Limited (no hooks) | Dotted circle | — | "Status limited · set up" | Links to setup |
+| Paused | Two vertical bars | — | no phrase | A frozen process tree (Pause); Continue thaws it |
 | Unknown values | Nothing in a row or the strip: the ring, usage line, model, effort and subagent count are left out, not shown as a dash. (A table or a form shows an en dash instead; see Batch 3 design decisions.) | — | — | Ring hidden |
 
 ### The approve card
@@ -825,7 +826,7 @@ Decisions from the 2026-10-10 coverage audit (`docs/superpowers/plan-coverage-au
      2. An item that doesn't apply is hidden, never disabled: Split only for a session not already in a pane on screen while a pane is free, Resume only on an exited or ended row, Review changes only on a task row.
      3. Opening the menu does not select the row, so Split can bring a session that isn't shown into a pane. Every item acts on the row the menu was opened from. Close on an unselected agent that needs the confirm bar selects it first.
      4. Arrows move with wrap-around, Home and End jump, Enter or Space runs, typing a letter jumps to the item that starts with it. Esc closes and returns focus to the row; Tab or a click outside closes without moving focus. The menu closes by itself if its row goes away. It stays fully on screen near the window's edges.
-     5. Mode ▸ (restart the agent in another mode, after an inline confirm) is done in the modes-at-launch PR. Later: Pause in its own PR right after, and Bookmark with phase 5.
+     5. Mode ▸ (restart the agent in another mode, after an inline confirm) is done in the modes-at-launch PR. Pause and Continue (freeze and thaw the whole process tree, a Paused mark, a first-time network warning, and a bar when typing into a paused session) are done in the pause PR. Later: Bookmark with phase 5.
    - **Sidebar pane marks (2026-10-17).**
      1. The session list marks every session that is visible: `aria-selected` and the selected fill on each row, and the list is `aria-multiselectable`. The focused pane's row also gets a 3px accent bar on its inline-end edge, and keeps the single tab stop. While a pane is zoomed only its session is visible; sessions in panes cut off by a small window, and empty panes, are not. The rail marks the same sessions.
      2. A plain click on a session that isn't visible fills the first empty visible pane and focuses it, or else replaces the focused pane's session. While zoomed it replaces the zoomed pane's session. A click on a visible session focuses its pane.

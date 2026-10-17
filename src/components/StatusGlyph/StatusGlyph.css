@@ -9,7 +9,8 @@
 .status-glyph[data-kind="idle"],
 .status-glyph[data-kind="stuck"],
 .status-glyph[data-kind="ended"],
-.status-glyph[data-kind="limited"] {
+.status-glyph[data-kind="limited"],
+.status-glyph[data-kind="paused"] {
   color: var(--text-3);
 }
 .status-glyph[data-kind="working"],

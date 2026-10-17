@@ -1,4 +1,4 @@
-use marshell_core::pty::{MAX_UNACKED, Mark, Pull, Session, SpawnSpec};
+use marshell_core::pty::{FreezeError, MAX_UNACKED, Mark, Pull, Session, SpawnSpec};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -273,4 +273,156 @@ fn session_without_a_recordable_path_still_runs() {
     let (out, code) = drain(&s, Duration::from_secs(10));
     assert!(String::from_utf8_lossy(&out).contains("still here"));
     assert_eq!(code, Some(0));
+}
+
+fn printer(nested: bool) -> SpawnSpec {
+    let argv: Vec<String> = match (cfg!(windows), nested) {
+        (true, false) => vec!["ping".into(), "-t".into(), "127.0.0.1".into()],
+        (true, true) => vec!["cmd".into(), "/c".into(), "cmd /c ping -t 127.0.0.1".into()],
+        (false, false) => vec!["sh".into(), "-c".into(), "while :; do echo x; sleep 0.1; done".into()],
+        (false, true) => vec![
+            "sh".into(),
+            "-c".into(),
+            "sh -c 'while :; do echo x; sleep 0.1; done'".into(),
+        ],
+    };
+    SpawnSpec {
+        argv,
+        cwd: None,
+        env: vec![],
+        cols: 80,
+        rows: 24,
+        on_exit: None,
+        on_mark: None,
+        record: None,
+    }
+}
+
+fn wait_until(timeout: Duration, mut done: impl FnMut() -> bool) -> bool {
+    let deadline = Instant::now() + timeout;
+    while Instant::now() < deadline {
+        if done() {
+            return true;
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    done()
+}
+
+fn freeze_then_thaw_a_printer(nested: bool) {
+    let s = Session::spawn("t-freeze".into(), printer(nested)).unwrap();
+    assert!(wait_until(Duration::from_secs(10), || s.counters().0 > 0), "no output");
+    s.freeze().unwrap();
+    assert!(s.is_frozen());
+    std::thread::sleep(Duration::from_millis(300));
+    let frozen_at = s.counters().0;
+    std::thread::sleep(Duration::from_millis(1500));
+    assert_eq!(s.counters().0, frozen_at, "output grew while frozen");
+    s.thaw();
+    assert!(!s.is_frozen());
+    assert!(
+        wait_until(Duration::from_secs(3), || s.counters().0 > frozen_at),
+        "no output after thaw"
+    );
+    s.force_kill();
+}
+
+#[test]
+fn freeze_stops_output() {
+    freeze_then_thaw_a_printer(false);
+}
+
+#[test]
+fn freeze_stops_a_grandchild() {
+    freeze_then_thaw_a_printer(true);
+}
+
+#[test]
+fn kill_ends_a_frozen_session() {
+    let (tx, rx) = std::sync::mpsc::channel();
+    let mut spec = printer(false);
+    spec.on_exit = Some(Box::new(move |code| {
+        let _ = tx.send(code);
+    }));
+    let s = Session::spawn("t-freeze-kill".into(), spec).unwrap();
+    assert!(wait_until(Duration::from_secs(10), || s.counters().0 > 0), "no output");
+    s.freeze().unwrap();
+    s.kill();
+    assert!(
+        rx.recv_timeout(Duration::from_secs(5)).is_ok(),
+        "frozen session did not end"
+    );
+}
+
+#[test]
+fn freeze_after_exit_is_refused() {
+    let s = Session::spawn("t-freeze-exited".into(), fake(&["exit", "0"])).unwrap();
+    assert!(wait_until(Duration::from_secs(10), || s.has_exited()));
+    assert_eq!(s.freeze(), Err(FreezeError::NotRunning));
+    assert!(!s.is_frozen());
+}
+
+/// Windows only: killing just the root of a frozen tree must not leave its descendants suspended.
+#[cfg(windows)]
+#[test]
+fn a_root_that_exits_while_paused_does_not_leave_descendants_suspended() {
+    let dir = tempfile::tempdir().unwrap();
+    let out = dir.path().join("out.txt");
+    let mut spec = printer(true);
+    // A payload size no other test uses, so the grandchild can be found by its command line.
+    // `start` gives the grandchild a console of its own, so closing the session's pseudoconsole
+    // does not end it; only a resume can unfreeze it. The root itself waits on a second ping.
+    std::fs::write(dir.path().join("inner.cmd"), "ping -t -l 1234 127.0.0.1 > out.txt\r\n").unwrap();
+    spec.argv = vec![
+        "cmd".into(),
+        "/c".into(),
+        "start /min inner.cmd & ping -n 1000 -l 1235 127.0.0.1 > nul".into(),
+    ];
+    spec.cwd = Some(dir.path().to_path_buf());
+    let s = Session::spawn("t-freeze-root-exit".into(), spec).unwrap();
+    let size = || std::fs::metadata(&out).map_or(0, |m| m.len());
+    assert!(
+        wait_until(Duration::from_secs(10), || size() > 0),
+        "grandchild wrote nothing"
+    );
+    s.freeze().unwrap();
+    let root = s.pid().unwrap();
+    // Kill the root only, not its tree.
+    let status = std::process::Command::new("taskkill")
+        .args(["/PID", &root.to_string(), "/F"])
+        .output()
+        .unwrap();
+    assert!(status.status.success(), "taskkill failed");
+    assert!(
+        wait_until(Duration::from_secs(10), || s.has_exited()),
+        "root did not exit"
+    );
+    let at_exit = size();
+    // Closing the pseudoconsole may end the grandchild, which is fine. What must not happen is
+    // that it lingers suspended: it either keeps writing or is gone.
+    let find = |pat: &str| {
+        format!(
+            "Get-CimInstance Win32_Process -Filter \"Name='ping.exe'\" | Where-Object {{ $_.CommandLine -like '{pat}' }}"
+        )
+    };
+    let alive = || {
+        let out = std::process::Command::new("powershell")
+            .args(["-NoProfile", "-Command", &format!("@({}).Count", find("*-l 1234*"))])
+            .output()
+            .unwrap();
+        String::from_utf8_lossy(&out.stdout).trim() != "0"
+    };
+    let settled = wait_until(Duration::from_secs(8), || size() > at_exit || !alive());
+    // Clean up the grandchild whatever happened.
+    let _ = std::process::Command::new("powershell")
+        .args([
+            "-NoProfile",
+            "-Command",
+            &format!(
+                "{} | ForEach-Object {{ Stop-Process -Id $_.ProcessId -Force }}",
+                find("*-l 123*")
+            ),
+        ])
+        .output();
+    assert!(settled, "the grandchild lingered suspended after the root exited");
 }

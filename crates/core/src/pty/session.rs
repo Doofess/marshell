@@ -1,5 +1,6 @@
 use super::buffer::{MAX_UNACKED, OutputBuffer, SCROLLBACK_BYTES};
 use super::dsr::{DSR_REPLY, DsrFilter};
+use super::freeze::{self, FreezeError, Frozen};
 use super::osc133::{Mark, Osc133Scanner};
 use super::record::{CastHeader, Recorder};
 use portable_pty::{CommandBuilder, MasterPty, PtySize, native_pty_system};
@@ -80,6 +81,8 @@ pub struct Session {
     exit_callback: Mutex<Option<ExitCallback>>,
     mark_callback: Option<MarkCallback>,
     recorder: Option<Recorder>,
+    /// Set while the process tree is frozen. Held for the whole freeze, so `on_exit` waits for it.
+    frozen: Mutex<Option<Frozen>>,
 }
 
 impl Session {
@@ -142,6 +145,7 @@ impl Session {
             exit_callback: Mutex::new(spec.on_exit.take()),
             mark_callback: spec.on_mark.take(),
             recorder,
+            frozen: Mutex::new(None),
         });
 
         std::thread::Builder::new()
@@ -172,6 +176,11 @@ impl Session {
 
     pub fn id(&self) -> &str {
         &self.id
+    }
+
+    /// The child's process id, if it had one.
+    pub fn pid(&self) -> Option<u32> {
+        self.pid
     }
 
     /// True once the child process has exited.
@@ -259,6 +268,16 @@ impl Session {
 
     fn on_exit(self: &Arc<Self>, code: i32) {
         self.exited.store(true, Ordering::SeqCst);
+        // The root's own threads are gone, but a descendant it left behind stays suspended unless
+        // it is resumed through the held handles. (On Unix the kernel continues an orphaned
+        // stopped group itself.)
+        let frozen = self.frozen.lock().unwrap().take();
+        #[cfg(windows)]
+        if let Some(frozen) = frozen {
+            freeze::thaw_tree(&frozen);
+        }
+        #[cfg(not(windows))]
+        drop(frozen);
         self.output.lock().unwrap().exit = Some((code, Instant::now()));
         self.space.notify_all();
         // Windows: the reader only gets EOF once the pseudoconsole is closed.
@@ -397,6 +416,7 @@ impl Session {
         if self.exited.load(Ordering::SeqCst) {
             return;
         }
+        self.thaw();
         if let Some(pid) = self.pid {
             kill_tree(pid, self.exited.clone());
         }
@@ -407,9 +427,45 @@ impl Session {
         if self.exited.load(Ordering::SeqCst) {
             return;
         }
+        self.thaw();
         if let Some(pid) = self.pid {
             force_kill_tree(pid);
         }
+    }
+
+    /// Freezes the whole process tree, or none of it. Freezing a frozen session does nothing.
+    pub fn freeze(&self) -> Result<(), FreezeError> {
+        let mut frozen = self.frozen.lock().unwrap();
+        if frozen.is_some() {
+            return Ok(());
+        }
+        let Some(pid) = self.pid.filter(|_| !self.exited.load(Ordering::SeqCst)) else {
+            return Err(FreezeError::NotRunning);
+        };
+        #[cfg(unix)]
+        let foreground = self
+            .master
+            .lock()
+            .unwrap()
+            .as_ref()
+            .and_then(|m| m.process_group_leader())
+            .and_then(|g| u32::try_from(g).ok());
+        #[cfg(not(unix))]
+        let foreground = None;
+        *frozen = Some(freeze::freeze_tree(pid, foreground).map_err(|()| FreezeError::Partial)?);
+        Ok(())
+    }
+
+    /// Thaws a frozen session. Does nothing if it is not frozen.
+    pub fn thaw(&self) {
+        let frozen = self.frozen.lock().unwrap().take();
+        if let Some(frozen) = frozen {
+            freeze::thaw_tree(&frozen);
+        }
+    }
+
+    pub fn is_frozen(&self) -> bool {
+        self.frozen.lock().unwrap().is_some()
     }
 }
 
@@ -438,6 +494,8 @@ fn kill_tree(pid: u32, exited: Arc<AtomicBool>) {
     // portable-pty starts the child in its own session, so its pid is the process group id.
     unsafe {
         libc::killpg(pid as i32, libc::SIGHUP);
+        // A stopped process acts on the hang-up only once it continues.
+        libc::killpg(pid as i32, libc::SIGCONT);
     }
     std::thread::spawn(move || {
         std::thread::sleep(Duration::from_secs(2));

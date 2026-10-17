@@ -55,6 +55,7 @@ const shapes: Record<GlyphKind, ReactNode> = {
   limited: (
     <circle cx="8" cy="8" r="5.25" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeDasharray="0.01 2.75" />
   ),
+  paused: <path d="M5.75 3.75v8.5M10.25 3.75v8.5" fill="none" stroke="currentColor" strokeWidth="2.25" strokeLinecap="round" />,
 };
 
 export function StatusGlyph({ kind, size = 16, label }: { kind: GlyphKind; size?: 12 | 16; label?: string }) {

@@ -1,7 +1,7 @@
 use super::AppState;
 use crate::auth;
 use crate::profiles::detect::{agent_command, default_shell, launch_argv, launch_argv_resume};
-use crate::pty::{Session, SpawnSpec};
+use crate::pty::{FreezeError, Session, SpawnSpec};
 use crate::registry::{Relaunch, ResumeRefusal};
 use axum::Json;
 use axum::body::Bytes;
@@ -422,6 +422,9 @@ pub async fn input(State(st): State<AppState>, Path(tab): Path<String>, Json(req
     let Some(session) = st.session(&tab) else {
         return StatusCode::NOT_FOUND.into_response();
     };
+    if session.is_frozen() {
+        return cannot_resume("It is paused.");
+    }
     if req.text.contains(['\r', '\n']) {
         return (StatusCode::BAD_REQUEST, "The text can't contain a line break.").into_response();
     }
@@ -588,6 +591,44 @@ pub async fn resume(State(st): State<AppState>, Path(tab): Path<String>, Json(re
             err.into_response()
         }
     }
+}
+
+/// Freezes the session's process tree, or thaws it. Holds the tab's start claim meanwhile, so a
+/// Resume or Restart cannot replace the process under it. Pausing twice, or continuing a session
+/// that isn't paused, changes nothing and still answers 204.
+async fn set_frozen(st: AppState, tab: String, frozen: bool) -> Response {
+    // The claim comes first: a Resume or Restart that finished before it has already bumped the
+    // generation, and one that starts after it is refused. So the generation read below is the
+    // one of the process this call acts on.
+    let Some(_claim) = st.claim_start(&tab) else {
+        return cannot_resume("It is already starting.");
+    };
+    let Some(generation) = st.0.registry.generation(&tab) else {
+        return (StatusCode::NOT_FOUND, "No such session.").into_response();
+    };
+    let session = st.session(&tab);
+    if frozen {
+        let Some(session) = session else {
+            return cannot_resume(FreezeError::NotRunning.to_string());
+        };
+        if let Err(err) = session.freeze() {
+            return cannot_resume(err.to_string());
+        }
+    } else if let Some(session) = session {
+        session.thaw();
+    }
+    st.0.registry.set_paused(&tab, generation, frozen);
+    StatusCode::NO_CONTENT.into_response()
+}
+
+/// Freezes a running session: the program and everything it started.
+pub async fn pause(State(st): State<AppState>, Path(tab): Path<String>) -> Response {
+    set_frozen(st, tab, true).await
+}
+
+/// Thaws a paused session. (`continue` is a keyword.)
+pub async fn cont(State(st): State<AppState>, Path(tab): Path<String>) -> Response {
+    set_frozen(st, tab, false).await
 }
 
 /// Starts an agent session again in the same row in another mode, continuing its last conversation

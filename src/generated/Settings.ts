@@ -4,4 +4,8 @@ import type { Appearance } from "./Appearance";
 /**
  * GET/PUT /v1/settings body.
  */
-export type Settings = { appearance: Appearance, };
+export type Settings = { appearance: Appearance, 
+/**
+ * True once the user has seen the network warning that comes with the first Pause.
+ */
+pause_warned: boolean, };
