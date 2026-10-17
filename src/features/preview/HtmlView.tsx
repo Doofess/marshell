@@ -2,6 +2,7 @@ import { useMemo, useRef, type SyntheticEvent } from "react";
 import { buildSrcdoc } from "./htmlDoc";
 import { classifyLink } from "./links";
 import type { LinkTarget } from "./links";
+import { restoreScroll, type ScrollPos } from "./scroll";
 
 type Props = {
   text: string;
@@ -24,10 +25,19 @@ export function HtmlView({ text, name, docPath, onLink, onKey }: Props) {
   const latest = useRef({ docPath, onLink, onKey });
   latest.current = { docPath, onLink, onKey };
 
+  // The last scroll position of the page on screen, and which file it was. A reload replaces the document, so the position is
+  // kept here and put back by the next load, but only for the same file.
+  const shown = useRef<{ path: string | null; pos: ScrollPos | null }>({ path: null, pos: null });
+
   const attach = (e: SyntheticEvent<HTMLIFrameElement>) => {
     const iframe = e.currentTarget;
     const doc = iframe.contentDocument;
-    if (!doc) return;
+    const win = iframe.contentWindow;
+    if (!doc || !win) return;
+    const back = restoreScroll(shown.current.path, latest.current.docPath, shown.current.pos);
+    shown.current = { path: latest.current.docPath, pos: back };
+    if (back) win.scrollTo(back.x, back.y);
+    win.addEventListener("scroll", () => (shown.current.pos = { x: win.scrollX, y: win.scrollY }));
     // Capturing, so nothing in the page sees the click first. Every link is stopped; where it goes is decided here.
     doc.addEventListener(
       "click",
