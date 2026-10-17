@@ -57,7 +57,7 @@ export function LivePalette({
   onClose: () => void;
 }) {
   const quick = useQuickFiles(tab);
-  const files: QuickFiles | undefined = quick ? { ...quick.files, only: filesOnly } : filesOnly ? { seen: [], list: [], folder: "", only: true } : undefined;
+  const files: QuickFiles | undefined = quick ? { ...quick.files, only: filesOnly } : filesOnly ? { seen: [], list: [], folder: "", status: "error", only: true } : undefined;
   const run = (id: string) => (id.startsWith("file:") ? quick && onOpenFile?.(quick.pathOf(id.slice("file:".length))) : onRun(id));
   // A command whose words depend on the window's state (the sidebar command names what it will do next) gets its label from the window.
   // One that has nothing to do right now (Resume, with a running session focused) is left out, not listed as a row that does nothing.

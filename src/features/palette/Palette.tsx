@@ -37,6 +37,8 @@ export type QuickFiles = {
   list: string[];
   folder: string;
   truncated?: boolean;
+  /** The folder's list: still being fetched, failed, or here. Left out means ready. The seen paths do not wait for it. */
+  status?: "loading" | "error" | "ready";
   /** "Open file…": file groups only. */
   only?: boolean;
 };
@@ -182,7 +184,8 @@ export function Palette({
   // One character matches too much to be worth a group; "Open file…" starts at one, and shows the seen paths before any.
   const fileGroups: Array<{ title: string; hits: FileHit[] }> = [];
   if (files && (only || query.trim().length >= 2)) {
-    const seenSet = new Set(files.seen);
+    // A seen path leaves the Files group only once that group exists.
+    const seenSet = new Set(files.status === undefined || files.status === "ready" ? files.seen : []);
     const seenHits = rankFiles(query, [], files.seen, FILE_LIMIT);
     const listHits = query.trim() === "" ? [] : rankFiles(query, files.list.filter((p) => !seenSet.has(p)), [], FILE_LIMIT);
     if (seenHits.length > 0) fileGroups.push({ title: "Seen in output", hits: seenHits });
@@ -209,7 +212,13 @@ export function Palette({
   const numbers = sessions ? [...sessions].map((s) => s.number).sort((a, b) => a - b) : [];
   const empty =
     only
-      ? query.trim() === ""
+      ? files?.status === "loading"
+        ? "Listing files…"
+        : files?.status === "error"
+        ? files.folder
+          ? `Can't list the files in ${files.folder}.`
+          : "Can't list files for this session."
+        : query.trim() === ""
         ? "Type a file name"
         : `No file matches “${query}”`
       : wanted !== null

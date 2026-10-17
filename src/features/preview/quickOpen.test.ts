@@ -1,6 +1,20 @@
 import { describe, expect, it } from "vitest";
 import { displayPath, openPath, rankFiles, splitPath } from "./quickOpen";
 
+describe("rankFiles: a path outside the root", () => {
+  const seen = ["C:/Users/Home Office/AppData/Local/Temp/claude/C--dev-Airport/pv/page.html"];
+  it("scores on its parent folder and name, so a short query does not match scattered letters", () => {
+    const r = rankFiles("carg", ["Cargo.toml"], seen, 10);
+    expect(r.map((h) => h.path)).toEqual(["Cargo.toml"]);
+  });
+  it("still matches on its name, with the ranges inside the full path", () => {
+    const r = rankFiles("page", ["Cargo.toml"], seen, 10);
+    expect(r.map((h) => h.path)).toEqual(seen);
+    const [a, b] = r[0]!.ranges[0]!;
+    expect(seen[0]!.slice(a, b)).toBe("page");
+  });
+});
+
 describe("rankFiles", () => {
   it("ranks a basename match above a match scattered through the folders", () => {
     const r = rankFiles("mainrs", ["docs/maintenance/rs.md", "src/main.rs"], [], 10);

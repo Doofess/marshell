@@ -2,7 +2,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { COMMANDS } from "../../lib/keymap";
 import { PALETTE_SESSIONS } from "./fixtures";
-import { Palette, keepActiveInView, pressInPalette } from "./Palette";
+import { Palette, keepActiveInView, pressInPalette, type QuickFiles } from "./Palette";
 
 const html = (query = "", os: "windows" | "mac" | "linux" = "windows", activeIndex = 0) => renderToStaticMarkup(<Palette view={{ query, activeIndex }} os={os} />);
 const withSessions = (query = "", os: "windows" | "mac" | "linux" = "windows", activeIndex = 0) =>
@@ -243,5 +243,30 @@ describe("Palette: quick open", () => {
   it("notes a truncated list", () => {
     expect(withFiles("ma", { truncated: true })).toContain("Showing the first 20 000 files");
     expect(withFiles("ma")).not.toContain("Showing the first");
+  });
+});
+
+describe("Palette: quick open while the list loads or fails", () => {
+  const base = { seen: ["src/manual.ts"], list: [] as string[], folder: "" };
+  const only = (query: string, f: Partial<QuickFiles>) =>
+    renderToStaticMarkup(<Palette view={{ query, activeIndex: 0 }} sessions={PALETTE_SESSIONS} files={{ ...base, only: true, ...f }} />);
+  it("says it is listing, never that nothing matches, while loading", () => {
+    const h = only("zzz", { status: "loading", seen: [] });
+    expect(h).toContain("Listing files…");
+    expect(h).not.toContain("No file matches");
+  });
+  it("says it can't list the folder on an error", () => {
+    expect(only("zzz", { status: "error", folder: "marshell", seen: [] })).toContain("Can&#x27;t list the files in marshell.");
+    const h = only("zzz", { status: "error", seen: [] });
+    expect(h).toContain("Can&#x27;t list files for this session.");
+    expect(h).not.toContain("No file matches");
+  });
+  it("renders the seen paths while the list loads", () => {
+    const h = only("manual", { status: "loading" });
+    expect(h).toContain("Seen in output");
+    expect(h).toContain('aria-label="manual.ts, src"');
+  });
+  it("says no file matches once the list is ready", () => {
+    expect(only("zzz", { status: "ready", seen: [] })).toContain("No file matches “zzz”");
   });
 });

@@ -27,21 +27,35 @@ export function openPath(rel: string, root: string): string {
   return root.replace(/[\\/]+$/, "") + sep + (sep === "\\" ? rel.replace(/\//g, "\\") : rel);
 }
 
-export type FileHit = { path: string; ranges: Range[] };
+/** A display path that is not relative to the root: it starts with a separator or a drive. */
+const isOutside = (path: string) => /^([a-z]:)?\//i.test(path);
+
+/** The part of a display path that is matched and scored: for a path outside the root, its folder and file name only. */
+function scoredPart(path: string): { text: string; offset: number } {
+  if (!isOutside(path)) return { text: path, offset: 0 };
+  const text = path.split("/").slice(-2).join("/");
+  return { text, offset: path.length - text.length };
+}
+
+export type FileHit ={ path: string; ranges: Range[] };
 
 /**
  * Fuzzy-ranks display paths (see `displayPath`) against a query: best score first, a match on the file name with a bonus, and
- * a path from `seen` ahead of an equal score from `files`. An empty query returns the `seen` paths in the order given.
+ * a path outside the root scored on its folder and file name only, a path from `seen` ahead of an equal score from `files`. An empty query returns the `seen` paths in the order given.
  */
 export function rankFiles(query: string, files: string[], seen: string[], limit: number): FileHit[] {
   if (query.trim() === "") return seen.slice(0, limit).map((path) => ({ path, ranges: [] }));
   const scored: Array<FileHit & { score: number; seen: boolean }> = [];
   const add = (path: string, isSeen: boolean) => {
-    const ranges = matchRanges(query, path);
-    if (ranges === null) return;
+    const { text, offset } = scoredPart(path);
+    const local = matchRanges(query, text);
+    if (local === null) return;
     const name = splitPath(path).name;
     const inName = matchRanges(query, name);
-    scored.push({ path, ranges, score: score(ranges, path) + (inName === null ? 0 : NAME_BONUS + score(inName, name)), seen: isSeen });
+    // Outside the root, the letters marked are the file name's when it matches, not a scatter across the folder.
+    const from = offset > 0 && inName !== null ? { ranges: inName, at: path.length - name.length } : { ranges: local, at: offset };
+    const ranges = from.ranges.map(([a, b]): Range => [a + from.at, b + from.at]);
+    scored.push({ path, ranges, score: score(local, text) + (inName === null ? 0 : NAME_BONUS + score(inName, name)), seen: isSeen });
   };
   for (const p of seen) add(p, true);
   for (const p of files) add(p, false);
