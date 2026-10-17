@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { afterDeleted } from "./usePreviewFile";
 import { START, next, type ReloadState, type StatResult } from "./reload";
 
 const CAP = 1000;
@@ -46,5 +47,23 @@ describe("next", () => {
   });
   it("allows exactly the cap", () => {
     expect(step(START, ok(CAP, 1)).action).toBe("refetch");
+  });
+});
+
+describe("afterDeleted", () => {
+  it("keeps the previous text or image under the deleted state", () => {
+    expect(afterDeleted({ phase: "text", text: "x" })).toEqual({ phase: "deleted", last: { phase: "text", text: "x" } });
+    expect(afterDeleted({ phase: "image", url: "blob:a" })).toEqual({ phase: "deleted", last: { phase: "image", url: "blob:a" } });
+  });
+  it("stays as it is when already deleted, and is plain when nothing was loaded", () => {
+    const d = afterDeleted({ phase: "text", text: "x" });
+    expect(afterDeleted(d)).toBe(d);
+    expect(afterDeleted({ phase: "loading" })).toEqual({ phase: "deleted" });
+    expect(afterDeleted({ phase: "tooLarge", size: 1, limit: 0 })).toEqual({ phase: "deleted" });
+  });
+  it("goes back to a reload when the file returns, with the stat it had before", () => {
+    const loaded = step(START, ok(10, 1)).state;
+    const gone = step(loaded, MISSING).state;
+    expect(step(gone, ok(10, 1)).action).toBe("refetch");
   });
 });

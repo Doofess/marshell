@@ -84,7 +84,8 @@ function Body({ entry, file, onImageSize, onLink, onKey }: BodyProps) {
     case "pdf":
       return <p className="preview__message">PDF preview comes in a later update.</p>;
     case "deleted":
-      return <p className="preview__message">This file was deleted.</p>;
+      // With something that was shown, the content stays and the notice sits above it (see PreviewPane); this is the plain case.
+      return file.last ? <Body entry={entry} file={file.last} onImageSize={onImageSize} onLink={onLink} onKey={onKey} /> : <p className="preview__message">This file was deleted.</p>;
     case "error":
       return <p className="preview__message">This file can't be previewed.</p>;
   }
@@ -101,7 +102,10 @@ export function PreviewPane({ entry, file, updated, theme, os, canBack, canForwa
   // "Updated" is spoken only to someone reading in the pane; a person typing in the terminal is not interrupted by it.
   const [inside, setInside] = useState(false);
   const [size, setSize] = useState<{ url: string; w: number; h: number } | null>(null);
-  const dims = file.phase === "image" && size?.url === file.url ? `${size.w} × ${size.h}` : null;
+  // A deleted file keeps showing what it last was; the notice below says so.
+  const shown = file.phase === "deleted" && file.last ? file.last : file;
+  const gone = file.phase === "deleted" && file.last !== undefined;
+  const dims = shown.phase === "image" && size?.url === shown.url ? `${size.w} × ${size.h}` : null;
 
   // A web link waits here for the person's answer; moving to another file drops the question.
   const [web, setWeb] = useState<string | null>(null);
@@ -131,7 +135,7 @@ export function PreviewPane({ entry, file, updated, theme, os, canBack, canForwa
 
   // Markdown and HTML can be read rendered or as source; the toggle is there once there is text to show.
   const kind = kindOf(entry.path);
-  const toggle = file.phase === "text" && (kind === "markdown" || kind === "html");
+  const toggle = shown.phase === "text" && (kind === "markdown" || kind === "html");
   const rendered = toggle && entry.view === "rendered";
 
   const alt = os === "mac" ? "⌥" : "Alt+";
@@ -180,6 +184,11 @@ export function PreviewPane({ entry, file, updated, theme, os, canBack, canForwa
       </header>
       {web && <WebLinkBar url={web} onOpen={() => answer(true)} onCancel={() => answer(false)} />}
       <div ref={body} className="preview__body" tabIndex={0} role="group" aria-label={`${name}, contents`} data-view={rendered ? kind : undefined}>
+        {gone && (
+          <div className="preview__notice" role="status" aria-live={inside ? "polite" : "off"}>
+            This file was deleted.
+          </div>
+        )}
         <Body entry={entry} file={file} onImageSize={(url, w, h) => setSize({ url, w, h })} onLink={follow} onKey={keys} />
       </div>
     </section>

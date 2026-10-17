@@ -118,6 +118,23 @@
   max-inline-size: 60ch;
 }
 
+/* "This file was deleted." over the last content: it stays at the top of the body while that scrolls beneath it. */
+.preview__notice {
+  position: sticky;
+  inset-block-start: 0;
+  z-index: 1;
+  grid-column: 1 / -1;
+  padding: var(--space-1) var(--space-4);
+  border-block-end: 1px solid var(--hairline);
+  background: var(--bg-raised);
+  color: var(--text-1);
+  font-size: var(--text-12);
+}
+.preview__body:has(.preview__notice):has(.preview__image) {
+  grid-template-rows: auto minmax(0, 1fr);
+  padding-block-start: 0;
+}
+
 /* An image fits the pane and is centred in it, never stretched past its own size. */
 .preview__body:has(.preview__image) {
   display: grid;

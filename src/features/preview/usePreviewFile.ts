@@ -11,8 +11,18 @@ export type FileState =
   | { phase: "tooLarge"; size: number; limit: number }
   | { phase: "binary" }
   | { phase: "pdf" }
-  | { phase: "deleted" }
+  | { phase: "deleted"; /** What was shown before the file went; it stays on screen under the notice. */ last?: Shown }
   | { phase: "error" };
+
+/** The states that carry content worth keeping on screen when the file disappears. */
+export type Shown = Extract<FileState, { phase: "text" | "image" }>;
+
+/** The state after a poll finds the file gone: the last text or image stays; anything else gives the plain message. */
+export function afterDeleted(prev: FileState): FileState {
+  if (prev.phase === "deleted") return prev;
+  if (prev.phase === "text" || prev.phase === "image") return { phase: "deleted", last: prev };
+  return { phase: "deleted" };
+}
 
 /** How often the open file is checked for a change. */
 export const POLL_MS = 1000;
@@ -53,7 +63,7 @@ export function usePreviewFile(path: string): { file: FileState; updated: boolea
       if (content.kind === "missing") {
         state = { seen: null, status: "deleted" };
         loaded.current = false;
-        setFile({ phase: "deleted" });
+        setFile(afterDeleted);
         return;
       }
       if (content.kind === "tooLarge") {
@@ -91,7 +101,7 @@ export function usePreviewFile(path: string): { file: FileState; updated: boolea
           setFile({ phase: "tooLarge", size: stat.size, limit: cap });
         } else if (step.action === "deleted") {
           loaded.current = false;
-          setFile({ phase: "deleted" });
+          setFile(afterDeleted);
         }
       } catch {
         // A refused path or a core that is away: say so on the first look; later polls try again quietly.
@@ -117,7 +127,8 @@ export function usePreviewFile(path: string): { file: FileState; updated: boolea
   }, [path]);
 
   // An image's object URL lives as long as it is shown, and is let go when it is replaced or the pane closes.
-  const url = file.phase === "image" ? file.url : undefined;
+  const shown = file.phase === "deleted" ? file.last : file;
+  const url = shown?.phase === "image" ? shown.url : undefined;
   useEffect(() => {
     if (!url) return;
     return () => URL.revokeObjectURL(url);

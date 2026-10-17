@@ -68,6 +68,15 @@ describe("PreviewPane", () => {
   it("says a file was deleted", () => {
     expect(html({ phase: "deleted" })).toContain("This file was deleted.");
   });
+  it("keeps the last content under a deleted banner", () => {
+    const out = html({ phase: "deleted", last: { phase: "text", text: "kept line\n" } });
+    expect(out).toContain("This file was deleted.");
+    expect(out).toContain("kept line");
+    expect(out).toContain('role="status"');
+    expect(out.indexOf("This file was deleted.")).toBeLessThan(out.indexOf("kept line"));
+    // Focus is not inside in a static render, so nothing announces it.
+    expect(out).not.toContain('aria-live="polite"');
+  });
   it("says a file can't be previewed when the core refuses it", () => {
     expect(html({ phase: "error" })).toContain("This file can&#x27;t be previewed.");
   });
