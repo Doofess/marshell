@@ -39,6 +39,29 @@ describe("buildSrcdoc", () => {
     expect(doc).not.toMatch(/<base/i);
     expect(doc).toContain("<head></head><p>x</p>");
   });
+  // What follows the injected policy: our own meta has an http-equiv, so only the part after it is the file's.
+  const fileHalf = (doc: string) => doc.slice(doc.indexOf(CSP) + CSP.length);
+  it("is not fooled by a tag nested inside a tag, however deep", () => {
+    const refresh = '<meta http-equiv=refresh content="0;url=https://x">';
+    const nest = (n: number) => {
+      let s = refresh;
+      for (let i = 0; i < n; i++) s = `<me<meta http-equiv=a>${s.slice(3)}`;
+      return s;
+    };
+    const inputs = [
+      '<me<me<meta http-equiv=a>ta http-equiv=b>ta http-equiv=refresh content="0;url=https://x">',
+      "<ba<base href=x>se href=https://x>",
+      "<ba<ba<base href=x>se href=y>se href=https://x>",
+      nest(3),
+      nest(40),
+    ];
+    for (const input of inputs) {
+      const file = fileHalf(buildSrcdoc(`<p>a</p>${input}<p>b</p>`));
+      expect(file, input).not.toMatch(/http-equiv/i);
+      expect(file, input).not.toMatch(/<base/i);
+      expect(file, input).not.toMatch(/<meta[^>]*refresh/i);
+    }
+  });
   it("leaves the rest of the file as it is", () => {
     const body = '<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><style>p{color:red}</style></head><body><p>hi</p><a href="#x">x</a></body></html>';
     expect(buildSrcdoc(body).endsWith(body)).toBe(true);
