@@ -7,7 +7,7 @@ import { ApiError } from "../../lib/api/client";
 import { sessions } from "../../lib/api/sessions";
 import { close as closeWindow, minimize as minimizeWindow, onMaximizedChange, toggleMaximize } from "../../lib/window/appWindow";
 import { copyRecordingPath } from "./recording";
-import { clipboardText, deliveryFor, noticeFor } from "../regions/deliver";
+import { addFailure, clipboardText, deliveryFor, noticeFor } from "../regions/deliver";
 import { regionText } from "../regions/region";
 import { pasteAttachment, saveAttachment } from "../regions/regionsApi";
 import { inMenu } from "../../components/ContextMenu/menuKeys";
@@ -336,13 +336,14 @@ export function LiveApp() {
     const { focusedId: id, rows: current } = stateRef.current;
     const target = ep && id ? deliveryFor(current.find((x) => x.id === id) ?? null) : null;
     if (!ep || !id || !target) throw new Error("No session to add it to.");
+    if ("refused" in target) throw new Error(target.refused);
     const text = regionText(r.label, r.comment);
     try {
       const saved = await saveAttachment(ep, id, r.png);
       if (target.via === "paste") await pasteAttachment(ep, id, { attachment: saved.name, text });
       else await navigator.clipboard.writeText(clipboardText(saved.reference, text));
     } catch (e) {
-      const message = `Couldn't add the region: ${reviewReason(e)}`;
+      const message = `Couldn't add the region: ${addFailure(e)}`;
       announce(message);
       throw new Error(message);
     }

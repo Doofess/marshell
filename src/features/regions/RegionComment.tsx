@@ -1,6 +1,7 @@
 import { useId, useState } from "react";
+import type { Delivery } from "./deliver";
 
-export type RegionTarget = { name: string; via: "paste" | "clipboard" };
+export type RegionTarget = Delivery;
 
 type Props = {
   target: RegionTarget | null;
@@ -24,11 +25,11 @@ export function popoverKeyDown(e: { key: string; preventDefault: () => void; sto
 export function RegionComment({ target, busy, error, onAdd, onCancel }: Props) {
   const [text, setText] = useState("");
   const id = useId();
-  const disabled = target === null || busy;
+  const disabled = target === null || "refused" in target || busy;
   const add = () => {
     if (!disabled) onAdd(text);
   };
-  const where = target === null ? "No session to add it to." : target.via === "paste" ? `Adds to ${target.name}` : "Copies to the clipboard";
+  const where = target === null ? "No session to add it to." : "refused" in target ? target.refused : target.via === "paste" ? `Adds to ${target.name}` : "Copies to the clipboard";
   return (
     <div className="region-comment" role="group" aria-label="Region comment" onKeyDown={(e) => popoverKeyDown(e, onCancel)}>
       <label className="region-comment__label" htmlFor={id}>

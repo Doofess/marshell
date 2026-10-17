@@ -13,6 +13,12 @@ describe("RegionComment", () => {
     expect(comment()).toContain("Adds to billing");
     expect(comment({ target: { name: "billing", via: "clipboard" } })).toContain("Copies to the clipboard");
   });
+  it("says why a paused or ended session takes nothing, in place of the target, with Add disabled", () => {
+    const out = comment({ target: { name: "migration", refused: "migration is paused." } });
+    expect(out).toContain("migration is paused.");
+    expect(out).not.toContain("Adds to");
+    expect(out).toContain('aria-disabled="true"');
+  });
   it("has a labelled input and the Add and Cancel buttons", () => {
     const out = comment();
     expect(out).toContain("Comment");
