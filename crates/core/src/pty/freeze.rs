@@ -1,6 +1,6 @@
 //! Freezes a session's whole process tree and thaws it again.
 //! Windows: suspends every thread of the session's process and its descendants.
-//! Unix: SIGSTOP and SIGCONT to the session's process group.
+//! Unix: SIGSTOP and SIGCONT to the session's process group and the terminal's foreground group.
 
 use std::fmt;
 
@@ -23,44 +23,75 @@ impl fmt::Display for FreezeError {
 impl std::error::Error for FreezeError {}
 
 /// What a thaw needs: on Windows the suspended threads, kept open so their ids cannot be reused;
-/// on Unix nothing.
+/// on Unix the process groups that were stopped, in the order they were stopped.
 pub(crate) struct Frozen {
     #[cfg(windows)]
     threads: Vec<windows::Suspended>,
+    #[cfg(unix)]
+    groups: Vec<i32>,
 }
 
-/// Freezes the tree rooted at `pid`. Either all of it is frozen or none of it is.
-pub(crate) fn freeze_tree(pid: u32) -> Result<Frozen, ()> {
+/// Freezes the tree rooted at `pid`. Either all of it is frozen or none of it.
+/// `foreground` is the terminal's foreground process group, if known. On Unix an interactive shell
+/// puts its foreground job in a group of its own, which the session's group does not include.
+/// A background job (`&`) is in yet another group and stays running. Windows ignores `foreground`.
+pub(crate) fn freeze_tree(pid: u32, foreground: Option<u32>) -> Result<Frozen, ()> {
     #[cfg(windows)]
     {
+        let _ = foreground;
         windows::suspend_tree(pid).map(|threads| Frozen { threads })
     }
     #[cfg(unix)]
     {
         // portable-pty starts the child in its own session, so its pid is the process group id.
-        // SAFETY: killpg only sends a signal; a bad pid makes it fail, which is checked.
-        if unsafe { libc::killpg(pid as i32, libc::SIGSTOP) } == 0 {
-            Ok(Frozen {})
-        } else {
-            Err(())
+        // The foreground group goes first so a shell never runs on to wait for a job still running.
+        let mut order = Vec::new();
+        if let Some(fg) = foreground.map(|g| g as i32).filter(|&g| g != pid as i32) {
+            order.push(fg);
         }
+        order.push(pid as i32);
+        let mut groups = Vec::new();
+        for &group in &order {
+            match signal_group(group, libc::SIGSTOP) {
+                Ok(()) => groups.push(group),
+                // The foreground job ended since it was read; there is nothing left to stop.
+                Err(libc::ESRCH) if group != pid as i32 => {}
+                // Not allowed (such as a setuid program) or the session's own group is gone:
+                // undo what was stopped and refuse.
+                Err(_) => {
+                    for &stopped in groups.iter().rev() {
+                        let _ = signal_group(stopped, libc::SIGCONT);
+                    }
+                    return Err(());
+                }
+            }
+        }
+        Ok(Frozen { groups })
     }
 }
 
 /// Thaws what `freeze_tree` froze.
-pub(crate) fn thaw_tree(pid: u32, frozen: &Frozen) {
+pub(crate) fn thaw_tree(frozen: &Frozen) {
     #[cfg(windows)]
     {
-        let _ = pid;
         windows::resume_threads(&frozen.threads);
     }
     #[cfg(unix)]
     {
-        let _ = frozen;
-        // SAFETY: killpg only sends a signal; the caller knows the group is still ours.
-        unsafe {
-            libc::killpg(pid as i32, libc::SIGCONT);
+        for &group in frozen.groups.iter().rev() {
+            let _ = signal_group(group, libc::SIGCONT);
         }
+    }
+}
+
+/// Sends `signal` to a process group. `Err` holds the errno.
+#[cfg(unix)]
+fn signal_group(group: i32, signal: i32) -> Result<(), i32> {
+    // SAFETY: killpg only sends a signal; a bad group makes it fail, which is returned.
+    if unsafe { libc::killpg(group, signal) } == 0 {
+        Ok(())
+    } else {
+        Err(std::io::Error::last_os_error().raw_os_error().unwrap_or(libc::EPERM))
     }
 }
 
@@ -209,10 +240,16 @@ mod windows {
         let (mut created, mut exited, mut kernel, mut user) = (zero, zero, zero, zero);
         // SAFETY: `handle` is a valid process handle; the four pointers are valid FILETIMEs.
         let ok = unsafe { GetProcessTimes(handle.0, &mut created, &mut exited, &mut kernel, &mut user) } != 0;
-        Ok(ok.then(|| (u64::from(created.dwHighDateTime) << 32) | u64::from(created.dwLowDateTime)))
+        // The process exists but cannot be timed, so it cannot be told apart from a reused pid.
+        if !ok {
+            return Err(());
+        }
+        Ok(Some(
+            (u64::from(created.dwHighDateTime) << 32) | u64::from(created.dwLowDateTime),
+        ))
     }
 
-    /// `root` and every process it started. A child counts only if it started after its parent, so a
+    /// `root` and every process it started. A child counts only if it did not start before its parent (they can share a clock tick), so a
     /// process whose recorded parent pid was reused by one of ours is left alone. A child that is gone
     /// is skipped. `None` if `root` or a child cannot be queried, so the tree is never frozen in part.
     fn descendants(root: u32) -> Option<Vec<u32>> {
@@ -228,7 +265,7 @@ mod windows {
                     continue;
                 };
                 if let Some(born) = creation_time(pid).ok()?
-                    && born > parent_born
+                    && born >= parent_born
                 {
                     tree.insert(pid, born);
                     grew = true;

@@ -361,3 +361,68 @@ fn freeze_after_exit_is_refused() {
     assert_eq!(s.freeze(), Err(FreezeError::NotRunning));
     assert!(!s.is_frozen());
 }
+
+/// Windows only: killing just the root of a frozen tree must not leave its descendants suspended.
+#[cfg(windows)]
+#[test]
+fn a_root_that_exits_while_paused_does_not_leave_descendants_suspended() {
+    let dir = tempfile::tempdir().unwrap();
+    let out = dir.path().join("out.txt");
+    let mut spec = printer(true);
+    // A payload size no other test uses, so the grandchild can be found by its command line.
+    // `start` gives the grandchild a console of its own, so closing the session's pseudoconsole
+    // does not end it; only a resume can unfreeze it. The root itself waits on a second ping.
+    std::fs::write(dir.path().join("inner.cmd"), "ping -t -l 1234 127.0.0.1 > out.txt\r\n").unwrap();
+    spec.argv = vec![
+        "cmd".into(),
+        "/c".into(),
+        "start /min inner.cmd & ping -n 1000 -l 1235 127.0.0.1 > nul".into(),
+    ];
+    spec.cwd = Some(dir.path().to_path_buf());
+    let s = Session::spawn("t-freeze-root-exit".into(), spec).unwrap();
+    let size = || std::fs::metadata(&out).map_or(0, |m| m.len());
+    assert!(
+        wait_until(Duration::from_secs(10), || size() > 0),
+        "grandchild wrote nothing"
+    );
+    s.freeze().unwrap();
+    let root = s.pid().unwrap();
+    // Kill the root only, not its tree.
+    let status = std::process::Command::new("taskkill")
+        .args(["/PID", &root.to_string(), "/F"])
+        .output()
+        .unwrap();
+    assert!(status.status.success(), "taskkill failed");
+    assert!(
+        wait_until(Duration::from_secs(10), || s.has_exited()),
+        "root did not exit"
+    );
+    let at_exit = size();
+    // Closing the pseudoconsole may end the grandchild, which is fine. What must not happen is
+    // that it lingers suspended: it either keeps writing or is gone.
+    let find = |pat: &str| {
+        format!(
+            "Get-CimInstance Win32_Process -Filter \"Name='ping.exe'\" | Where-Object {{ $_.CommandLine -like '{pat}' }}"
+        )
+    };
+    let alive = || {
+        let out = std::process::Command::new("powershell")
+            .args(["-NoProfile", "-Command", &format!("@({}).Count", find("*-l 1234*"))])
+            .output()
+            .unwrap();
+        String::from_utf8_lossy(&out.stdout).trim() != "0"
+    };
+    let settled = wait_until(Duration::from_secs(8), || size() > at_exit || !alive());
+    // Clean up the grandchild whatever happened.
+    let _ = std::process::Command::new("powershell")
+        .args([
+            "-NoProfile",
+            "-Command",
+            &format!(
+                "{} | ForEach-Object {{ Stop-Process -Id $_.ProcessId -Force }}",
+                find("*-l 123*")
+            ),
+        ])
+        .output();
+    assert!(settled, "the grandchild lingered suspended after the root exited");
+}

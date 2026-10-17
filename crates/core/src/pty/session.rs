@@ -178,6 +178,11 @@ impl Session {
         &self.id
     }
 
+    /// The child's process id, if it had one.
+    pub fn pid(&self) -> Option<u32> {
+        self.pid
+    }
+
     /// True once the child process has exited.
     pub fn has_exited(&self) -> bool {
         self.exited.load(Ordering::SeqCst)
@@ -263,8 +268,16 @@ impl Session {
 
     fn on_exit(self: &Arc<Self>, code: i32) {
         self.exited.store(true, Ordering::SeqCst);
-        // The frozen threads are gone with the process, so there is nothing to resume.
-        *self.frozen.lock().unwrap() = None;
+        // The root's own threads are gone, but a descendant it left behind stays suspended unless
+        // it is resumed through the held handles. (On Unix the kernel continues an orphaned
+        // stopped group itself.)
+        let frozen = self.frozen.lock().unwrap().take();
+        #[cfg(windows)]
+        if let Some(frozen) = frozen {
+            freeze::thaw_tree(&frozen);
+        }
+        #[cfg(not(windows))]
+        drop(frozen);
         self.output.lock().unwrap().exit = Some((code, Instant::now()));
         self.space.notify_all();
         // Windows: the reader only gets EOF once the pseudoconsole is closed.
@@ -429,15 +442,25 @@ impl Session {
         let Some(pid) = self.pid.filter(|_| !self.exited.load(Ordering::SeqCst)) else {
             return Err(FreezeError::NotRunning);
         };
-        *frozen = Some(freeze::freeze_tree(pid).map_err(|()| FreezeError::Partial)?);
+        #[cfg(unix)]
+        let foreground = self
+            .master
+            .lock()
+            .unwrap()
+            .as_ref()
+            .and_then(|m| m.process_group_leader())
+            .and_then(|g| u32::try_from(g).ok());
+        #[cfg(not(unix))]
+        let foreground = None;
+        *frozen = Some(freeze::freeze_tree(pid, foreground).map_err(|()| FreezeError::Partial)?);
         Ok(())
     }
 
     /// Thaws a frozen session. Does nothing if it is not frozen.
     pub fn thaw(&self) {
         let frozen = self.frozen.lock().unwrap().take();
-        if let (Some(frozen), Some(pid)) = (frozen, self.pid) {
-            freeze::thaw_tree(pid, &frozen);
+        if let Some(frozen) = frozen {
+            freeze::thaw_tree(&frozen);
         }
     }
 

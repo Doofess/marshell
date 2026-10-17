@@ -597,11 +597,14 @@ pub async fn resume(State(st): State<AppState>, Path(tab): Path<String>, Json(re
 /// Resume or Restart cannot replace the process under it. Pausing twice, or continuing a session
 /// that isn't paused, changes nothing and still answers 204.
 async fn set_frozen(st: AppState, tab: String, frozen: bool) -> Response {
-    let Some(generation) = st.0.registry.generation(&tab) else {
-        return (StatusCode::NOT_FOUND, "No such session.").into_response();
-    };
+    // The claim comes first: a Resume or Restart that finished before it has already bumped the
+    // generation, and one that starts after it is refused. So the generation read below is the
+    // one of the process this call acts on.
     let Some(_claim) = st.claim_start(&tab) else {
         return cannot_resume("It is already starting.");
+    };
+    let Some(generation) = st.0.registry.generation(&tab) else {
+        return (StatusCode::NOT_FOUND, "No such session.").into_response();
     };
     let session = st.session(&tab);
     if frozen {
