@@ -1,6 +1,8 @@
 // No console window behind the app in release builds on Windows.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod capture;
+
 use marshell_core::server::CoreConfig;
 use marshell_core::supervisor::{CoreEvent, Supervisor};
 use marshell_protocol::api::Endpoint;
@@ -93,6 +95,86 @@ fn disable_browser_shortcuts(window: &tauri::WebviewWindow) {
     let _ = window;
 }
 
+/// The page origin the dev server serves in a debug build: `build.devUrl` in `tauri.conf.json` (a test keeps them equal).
+#[cfg_attr(not(any(windows, test)), allow(dead_code))]
+const DEV_ORIGIN: &str = "http://localhost:1420";
+
+/// The scheme and authority of a page URI ("http://tauri.localhost/index.html" gives "http://tauri.localhost"), or None when it has
+/// none or carries credentials. Scheme and host are case-insensitive, so they are lowercased.
+#[cfg_attr(not(any(windows, test)), allow(dead_code))]
+fn origin_of(uri: &str) -> Option<String> {
+    let (scheme, rest) = uri.split_once("://")?;
+    let authority = rest.split(['/', '?', '#']).next()?;
+    if scheme.is_empty() || authority.is_empty() || authority.contains('@') {
+        return None;
+    }
+    Some(format!(
+        "{}://{}",
+        scheme.to_ascii_lowercase(),
+        authority.to_ascii_lowercase()
+    ))
+}
+
+/// Whether a page at `uri` may read the clipboard: only the app's own origins, compared whole (never by prefix, so
+/// "http://tauri.localhost.evil.test" is not "http://tauri.localhost"). The dev server's origin counts in debug builds only.
+#[cfg_attr(not(any(windows, test)), allow(dead_code))]
+fn clipboard_read_origin_allowed(uri: &str) -> bool {
+    let Some(origin) = origin_of(uri) else { return false };
+    origin == "http://tauri.localhost"
+        || origin == "tauri://localhost"
+        || (cfg!(debug_assertions) && origin == DEV_ORIGIN)
+}
+
+/// Capturing a screen region reads the clipboard image back with `navigator.clipboard.read()`, which WebView2 would otherwise ask
+/// the person about. Allow exactly that permission for the app's own pages; every other request, and every other origin, is left
+/// to WebView2's default (the handler does not touch it).
+fn allow_clipboard_read(window: &tauri::WebviewWindow) {
+    #[cfg(windows)]
+    {
+        use webview2_com::Microsoft::Web::WebView2::Win32::{
+            COREWEBVIEW2_PERMISSION_KIND, COREWEBVIEW2_PERMISSION_KIND_CLIPBOARD_READ,
+            COREWEBVIEW2_PERMISSION_STATE_ALLOW,
+        };
+        use webview2_com::{PermissionRequestedEventHandler, take_pwstr};
+        use windows_core::PWSTR;
+        let result = window.with_webview(|webview| {
+            let handler = PermissionRequestedEventHandler::create(Box::new(|_sender, args| {
+                let Some(args) = args else { return Ok(()) };
+                // SAFETY: COM calls on the event's own arguments, made on the webview's thread inside the event.
+                unsafe {
+                    let mut kind = COREWEBVIEW2_PERMISSION_KIND::default();
+                    args.PermissionKind(&mut kind)?;
+                    if kind != COREWEBVIEW2_PERMISSION_KIND_CLIPBOARD_READ {
+                        return Ok(());
+                    }
+                    let mut uri = PWSTR::null();
+                    args.Uri(&mut uri)?;
+                    if clipboard_read_origin_allowed(&take_pwstr(uri)) {
+                        args.SetState(COREWEBVIEW2_PERMISSION_STATE_ALLOW)?;
+                    }
+                }
+                Ok(())
+            }));
+            // SAFETY: COM calls on the live controller, made on the webview's own thread by with_webview.
+            let added = unsafe {
+                let mut token = 0i64;
+                webview
+                    .controller()
+                    .CoreWebView2()
+                    .and_then(|core| core.add_PermissionRequested(&handler, &mut token))
+            };
+            if let Err(e) = added {
+                eprintln!("Marshell: reading the clipboard image may ask first: {e}");
+            }
+        });
+        if let Err(e) = result {
+            eprintln!("Marshell: reading the clipboard image may ask first: {e}");
+        }
+    }
+    #[cfg(not(windows))]
+    let _ = window;
+}
+
 /// What the window keeps between runs: everything but the frame, which the config sets (none on Windows, where the
 /// app draws its own title bar). Restoring a frame saved before that would draw the system's bar over the app's.
 fn window_state_flags() -> tauri_plugin_window_state::StateFlags {
@@ -123,7 +205,9 @@ fn main() {
         .setup(|app| {
             if let Some(w) = app.get_webview_window("main") {
                 disable_browser_shortcuts(&w);
+                allow_clipboard_read(&w);
             }
+            app.manage(capture::CaptureState::default());
             let home = marshell_core::paths::home_dir()?;
             marshell_core::crash::install_panic_hook(&home);
             let cfg = CoreConfig {
@@ -138,7 +222,11 @@ fn main() {
             app.manage(CoreHandle(supervisor));
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![core_endpoint])
+        .invoke_handler(tauri::generate_handler![
+            core_endpoint,
+            capture::capture_screen_region,
+            capture::cancel_capture
+        ])
         .build(tauri::generate_context!())
         .expect("failed to build the app");
 
@@ -159,6 +247,32 @@ mod tests {
     fn ctrl_shift_i_cannot_open_devtools() {
         let caps = include_str!("../capabilities/default.json");
         assert!(caps.contains("\"core:webview:deny-internal-toggle-devtools\""));
+    }
+
+    #[test]
+    fn the_clipboard_is_readable_only_from_the_apps_own_origins() {
+        use super::clipboard_read_origin_allowed as ok;
+        assert!(ok("http://tauri.localhost/"));
+        assert!(ok("http://tauri.localhost/index.html?x=1#y"));
+        assert!(ok("tauri://localhost"));
+        assert!(ok("tauri://localhost/index.html"));
+        // Not by prefix, not another scheme, not another port, not with credentials.
+        assert!(!ok("http://tauri.localhost.evil.test/"));
+        assert!(!ok("http://tauri.localhost@evil.test/"));
+        assert!(!ok("https://tauri.localhost/"));
+        assert!(!ok("http://tauri.localhost:8080/"));
+        assert!(!ok("https://example.com/"));
+        assert!(!ok("about:blank"));
+        assert!(!ok(""));
+        assert_eq!(ok("http://localhost:1420/"), cfg!(debug_assertions));
+        assert!(!ok("http://localhost:1421/"));
+    }
+
+    /// The dev origin allowed in debug builds is the one the config serves.
+    #[test]
+    fn the_dev_origin_is_the_configs_dev_url() {
+        let conf = include_str!("../tauri.conf.json");
+        assert!(conf.contains(&format!("\"devUrl\": \"{}\"", super::DEV_ORIGIN)));
     }
 
     /// A window saved while it still had the system frame must not get it back: the config decides the frame.

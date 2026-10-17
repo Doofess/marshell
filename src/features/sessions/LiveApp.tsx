@@ -11,6 +11,7 @@ import { addFailure, clipboardText, deliveryFor, noticeFor } from "../regions/de
 import { regionText } from "../regions/region";
 import { pasteAttachment, pastePaths, saveAttachment } from "../regions/regionsApi";
 import { toPng } from "../regions/imagePaste";
+import { CAPTURE_CANCELLED_NOTICE, CAPTURE_WAIT_NOTICE, cancelCapture, captureFailure, captureRefusal, captureScreenRegion, readClipboardImage, watchFocusCancel } from "../capture/capture";
 import { deliveryTo, type DropTarget } from "../drop/dropTarget";
 import { useFileDrop } from "../drop/useFileDrop";
 import { statFile } from "../preview/previewApi";
@@ -402,6 +403,43 @@ export function LiveApp() {
     announce(`Added the image to ${delivery.name}.`);
     focusDelivered(tabId, delivery);
   };
+  // Capture screen region: the system's snipping tool, then the image it left on the clipboard goes to the focused session through
+  // addImage. The focus watcher runs only while a capture does; a second press while one runs hears the core's "already running"
+  // sentence and starts no second watcher. Every way out ends in a notice, and a text copy during the wait is never the capture (the core).
+  const stopWatch = useRef<(() => void) | null>(null);
+  const runCapture = async (): Promise<void> => {
+    const tabId = stateRef.current.focusedId;
+    const refused = captureRefusal(tabId, stateRef.current.rows);
+    if (refused !== null || !tabId) return announce(refused ?? "No session to add it to.");
+    const watching = stopWatch.current !== null;
+    if (!watching) {
+      announce(CAPTURE_WAIT_NOTICE);
+      stopWatch.current = watchFocusCancel(() => void cancelCapture().catch(() => undefined));
+    }
+    let arrived: boolean;
+    try {
+      arrived = await captureScreenRegion();
+    } catch (e) {
+      return announce(captureFailure(e));
+    } finally {
+      if (!watching) {
+        stopWatch.current?.();
+        stopWatch.current = null;
+      }
+    }
+    if (!arrived) return announce(CAPTURE_CANCELLED_NOTICE);
+    let image: Blob | null;
+    try {
+      image = await readClipboardImage();
+    } catch (e) {
+      return announce(`Couldn't add the image: ${captureFailure(e)}`);
+    }
+    if (!image) return announce("Couldn't add the image: the clipboard has no image.");
+    await addImage(tabId, image);
+  };
+  const runCaptureRef = useRef(runCapture);
+  runCaptureRef.current = runCapture;
+  useEffect(() => () => stopWatch.current?.(), []);
   // The pane under a dragged file gets the dashed outline and its label (Drop.css).
   const dropOver = useRef<Element | null>(null);
   const dropHover = (target: DropTarget | null) => {
@@ -764,6 +802,9 @@ export function LiveApp() {
         case "openFile":
           setFilesOnly(true);
           setOverlay("palette");
+          return true;
+        case "capture":
+          void runCaptureRef.current();
           return true;
         case "split":
           if (!roomForPane(v.panes.length, fitRef.current)) {

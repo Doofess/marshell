@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { problemsIn } from "./bindings";
 import { COMMANDS, NAV_COMMAND_IDS, commandById, keyText, osOfPlatform, shortcutLabel } from "./keymap";
 
 describe("osOfPlatform", () => {
@@ -168,5 +169,19 @@ describe("focus mode key", () => {
   });
   it("no binding uses U, E, C, V, Z or J, which the platforms or the terminal take", () => {
     for (const c of COMMANDS) expect(["KeyU", "KeyE", "KeyC", "KeyV", "KeyZ", "KeyJ"], c.id).not.toContain(c.binding?.code);
+  });
+});
+
+describe("capture", () => {
+  it("is Capture screen region under Tools, on Ctrl+Shift+X, and clashes with nothing on any system", () => {
+    const c = commandById("capture");
+    expect(c.label).toBe("Capture screen region");
+    expect(c.group).toBe("Tools");
+    expect(c.binding?.code).toBe("KeyX");
+    expect(shortcutLabel(c.binding!, "windows")).toBe("Ctrl+Shift+X");
+    expect(shortcutLabel(c.binding!, "linux")).toBe("Ctrl+Shift+X");
+    // Cmd+X is Cut on macOS.
+    expect(shortcutLabel(c.binding!, "mac")).toBe("⌘⌥X");
+    for (const os of ["windows", "mac", "linux"] as const) expect(problemsIn(COMMANDS, os), os).toEqual([]);
   });
 });

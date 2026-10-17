@@ -87,6 +87,8 @@ export const COMMANDS: Command[] = [
   { id: "find", label: "Search in scrollback", group: "Tools", binding: { code: "KeyF" } },
   { id: "global-search", label: "Search all sessions", group: "Tools", binding: { code: "KeyF", alt: true } },
   { id: "bookmark", label: "Bookmark this point", group: "Tools", binding: { code: "KeyB" } },
+  // Windows only for now (the snipping tool); elsewhere it runs and says so. Cmd+X is Cut on macOS, so it takes Cmd+Alt+X there.
+  { id: "capture", label: "Capture screen region", group: "Tools", binding: { code: "KeyX", mac: { code: "KeyX", alt: true } } },
   { id: "copy-recording-path", label: "Copy this session's recording path", group: "Tools" },
   { id: "prompt-prev", label: "Jump to the previous prompt", group: "Tools", binding: { code: "PageUp" } },
   { id: "prompt-next", label: "Jump to the next prompt", group: "Tools", binding: { code: "PageDown" } },
