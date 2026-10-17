@@ -843,6 +843,8 @@ export function LiveApp() {
         canForward={preview.state.index < preview.state.entries.length - 1}
         onBack={preview.back}
         onForward={preview.forward}
+        onOpen={preview.open}
+        onView={preview.setView}
         onClose={() => {
           preview.close();
           setTimeout(() => actions.focusTerminal(), 0);

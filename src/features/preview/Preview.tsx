@@ -1,12 +1,18 @@
-import { useEffect, useRef, useState, type CSSProperties, type KeyboardEvent } from "react";
+import { useEffect, useRef, useState, type CSSProperties } from "react";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import type { ITheme } from "@xterm/xterm";
 import { commandById, shortcutLabel, type Os } from "../../lib/keymap";
 import { CodeView } from "./CodeView";
 import { themeVariables } from "./highlight";
+import { HtmlView } from "./HtmlView";
 import { ImageView } from "./ImageView";
 import { kindOf, languageOf, splitPath } from "./kinds";
+import type { LinkTarget } from "./links";
+import { MarkdownView } from "./MarkdownView";
+import type { OpenPreview } from "./PreviewContext";
 import type { PreviewEntry } from "./previewState";
 import { usePreviewFile, type FileState } from "./usePreviewFile";
+import { WebLinkBar } from "./WebLinkBar";
 import "./Preview.css";
 
 /** A size for a sentence: "300 KB", "1.5 MB". */
@@ -35,18 +41,40 @@ export type PreviewPaneProps = {
   canForward: boolean;
   onBack: () => void;
   onForward: () => void;
+  /** A local link in a document: opens that file here, pushing history. */
+  onOpen: OpenPreview;
+  /** The Rendered / Source toggle of a Markdown or HTML file. */
+  onView: (view: PreviewEntry["view"]) => void;
   onClose: () => void;
   /** Escape: focus goes back to the session's terminal and the pane stays open. */
   onEscape: () => void;
 };
 
-function Body({ entry, file, onImageSize }: { entry: PreviewEntry; file: FileState; onImageSize: (url: string, w: number, h: number) => void }) {
+/** The keys the pane answers to; a native event from inside the HTML frame has the same shape as React's. */
+type Key = { key: string; ctrlKey: boolean; altKey: boolean; metaKey: boolean; shiftKey: boolean; preventDefault: () => void };
+
+/** A link that goes somewhere outside the document's own scroll: a file, or a web address. */
+type Outbound = Exclude<LinkTarget, { kind: "anchor" } | { kind: "none" }>;
+
+type BodyProps = {
+  entry: PreviewEntry;
+  file: FileState;
+  onImageSize: (url: string, w: number, h: number) => void;
+  onLink: (link: Outbound) => void;
+  onKey: (e: Key) => void;
+};
+
+function Body({ entry, file, onImageSize, onLink, onKey }: BodyProps) {
   const { name } = splitPath(entry.path);
   switch (file.phase) {
     case "loading":
       return <p className="preview__message">Loading…</p>;
-    case "text":
+    case "text": {
+      const kind = kindOf(entry.path);
+      if (entry.view === "rendered" && kind === "markdown") return <MarkdownView text={file.text} docPath={entry.path} onLink={onLink} />;
+      if (entry.view === "rendered" && kind === "html") return <HtmlView text={file.text} name={name} docPath={entry.path} onLink={onLink} onKey={onKey} />;
       return <CodeView text={file.text} language={languageOf(entry.path)} target={entry} />;
+    }
     case "image":
       return <ImageView url={file.url} name={name} onSize={(w, h) => onImageSize(file.url, w, h)} />;
     case "tooLarge":
@@ -63,7 +91,7 @@ function Body({ entry, file, onImageSize }: { entry: PreviewEntry; file: FileSta
 }
 
 /** The pane for one file: header, then the scrolling body. Everything it shows comes in as props, so it renders the same on any state. */
-export function PreviewPane({ entry, file, updated, theme, os, canBack, canForward, onBack, onForward, onClose, onEscape }: PreviewPaneProps) {
+export function PreviewPane({ entry, file, updated, theme, os, canBack, canForward, onBack, onForward, onOpen, onView, onClose, onEscape }: PreviewPaneProps) {
   const { name, folder } = splitPath(entry.path);
   const body = useRef<HTMLDivElement>(null);
   // Focus goes into the scroll body when a file is opened, so the arrow keys and Page Up and Down read it at once.
@@ -75,7 +103,20 @@ export function PreviewPane({ entry, file, updated, theme, os, canBack, canForwa
   const [size, setSize] = useState<{ url: string; w: number; h: number } | null>(null);
   const dims = file.phase === "image" && size?.url === file.url ? `${size.w} × ${size.h}` : null;
 
-  const keys = (e: KeyboardEvent<HTMLElement>) => {
+  // A web link waits here for the person's answer; moving to another file drops the question.
+  const [web, setWeb] = useState<string | null>(null);
+  useEffect(() => setWeb(null), [entry]);
+  const answer = (open: boolean) => {
+    if (open && web) void openUrl(web).catch(() => {});
+    setWeb(null);
+    body.current?.focus({ preventScroll: true });
+  };
+  const follow = (link: Outbound) => {
+    if (link.kind === "web") setWeb(link.url);
+    else onOpen(link.line === undefined ? { path: link.path } : { path: link.path, line: link.line });
+  };
+
+  const keys = (e: Key) => {
     if (e.key === "Escape" && !e.ctrlKey && !e.altKey && !e.metaKey && !e.shiftKey) {
       e.preventDefault();
       onEscape();
@@ -87,6 +128,11 @@ export function PreviewPane({ entry, file, updated, theme, os, canBack, canForwa
       if (canForward) onForward();
     }
   };
+
+  // Markdown and HTML can be read rendered or as source; the toggle is there once there is text to show.
+  const kind = kindOf(entry.path);
+  const toggle = file.phase === "text" && (kind === "markdown" || kind === "html");
+  const rendered = toggle && entry.view === "rendered";
 
   const alt = os === "mac" ? "⌥" : "Alt+";
   return (
@@ -119,12 +165,22 @@ export function PreviewPane({ entry, file, updated, theme, os, canBack, canForwa
           {updated ? "Updated" : ""}
         </span>
         <span className="preview__spacer" />
+        {toggle && (
+          <div className="preview__views" role="group" aria-label="View">
+            {(["rendered", "source"] as const).map((v) => (
+              <button key={v} type="button" className="preview__view" aria-pressed={entry.view === v} onClick={() => onView(v)}>
+                {v === "rendered" ? "Rendered" : "Source"}
+              </button>
+            ))}
+          </div>
+        )}
         <button type="button" className="preview__button" aria-label="Close preview" title={`Close preview (${shortcutLabel(commandById("preview").binding!, os)})`} onClick={onClose}>
           {arrow("M3 3l6 6M9 3 3 9")}
         </button>
       </header>
-      <div ref={body} className="preview__body" tabIndex={0} role="group" aria-label={`${name}, contents`}>
-        <Body entry={entry} file={file} onImageSize={(url, w, h) => setSize({ url, w, h })} />
+      {web && <WebLinkBar url={web} onOpen={() => answer(true)} onCancel={() => answer(false)} />}
+      <div ref={body} className="preview__body" tabIndex={0} role="group" aria-label={`${name}, contents`} data-view={rendered ? kind : undefined}>
+        <Body entry={entry} file={file} onImageSize={(url, w, h) => setSize({ url, w, h })} onLink={follow} onKey={keys} />
       </div>
     </section>
   );

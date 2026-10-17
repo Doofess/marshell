@@ -169,6 +169,205 @@
   content: "\200b";
 }
 
+/* Rendered / Source: two buttons, one pressed. The pressed one is filled, so it reads without colour or a box. */
+.preview__views {
+  display: flex;
+  flex: none;
+  gap: 2px;
+  margin-inline-end: var(--space-1);
+}
+.preview__view {
+  block-size: 20px;
+  padding-inline: var(--space-2);
+  border: 0;
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--text-2);
+  font: inherit;
+}
+.preview__view[aria-pressed="true"] {
+  background: var(--fill-strong);
+  color: var(--text-1);
+}
+.preview__view:focus-visible {
+  outline: 2px solid var(--focus, var(--accent));
+  outline-offset: -2px;
+}
+@media (hover: hover) and (pointer: fine) {
+  .preview__view[aria-pressed="false"]:hover {
+    background: var(--hover);
+    color: var(--text-1);
+  }
+}
+
+/* A web link asks first. It sits under the header, and the address wraps in full: a cut-off address is one that can't be checked. */
+.preview:has(.web-link) {
+  grid-template-rows: 28px auto minmax(0, 1fr);
+}
+.web-link {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-4);
+  padding: var(--space-2) var(--space-3);
+  background: var(--bg-overlay);
+  color: var(--text-1);
+  font-size: var(--text-13);
+  border-block-end: 1px solid var(--hairline);
+}
+.web-link__text {
+  flex: 1 1 24ch;
+  min-inline-size: 0;
+  margin: 0;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+.web-link__url {
+  font-family: var(--font-mono);
+  font-size: 0.95em;
+  word-break: break-all;
+}
+.web-link__actions {
+  display: flex;
+  flex: none;
+  gap: var(--space-2);
+}
+.web-link__button {
+  min-block-size: 24px;
+  padding-inline: var(--space-3);
+  border: 0;
+  border-radius: var(--radius);
+  background: var(--fill);
+  color: var(--text-1);
+  font: inherit;
+}
+.web-link__button[data-primary="true"] {
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+.web-link__button:focus-visible {
+  outline: 2px solid var(--focus, var(--accent));
+  outline-offset: 2px;
+}
+@media (hover: hover) and (pointer: fine) {
+  .web-link__button:not([data-primary="true"]):hover {
+    background: var(--fill-strong);
+  }
+}
+
+/* A rendered page is a frame that fills the body and scrolls itself. It is drawn on the light default of a browser, as a page expects. */
+.preview__body[data-view="html"] {
+  overflow: clip;
+}
+.html-view {
+  position: absolute;
+  inset: 0;
+  inline-size: 100%;
+  block-size: 100%;
+  border: 0;
+  background: Canvas;
+  color-scheme: light;
+}
+
+/*
+ * Rendered Markdown: prose in the interface face, in a column of about 72 characters, on the terminal theme's paper. Links
+ * lean toward the ink so they hold their contrast on any theme, and are underlined so colour is not the only sign.
+ */
+.markdown {
+  max-inline-size: 72ch;
+  padding: var(--space-4) var(--space-6) var(--space-8);
+  font-family: var(--font-ui);
+  font-size: var(--text-13);
+  line-height: 1.65;
+  overflow-wrap: anywhere;
+}
+.markdown > :first-child {
+  margin-block-start: 0;
+}
+.markdown :is(p, ul, ol, pre, blockquote, table, hr) {
+  margin-block: 0 var(--space-3);
+}
+.markdown :is(h1, h2, h3, h4, h5, h6) {
+  margin-block: var(--space-6) var(--space-2);
+  line-height: 1.25;
+  font-weight: 650;
+}
+.markdown h1 {
+  font-size: var(--text-20);
+}
+.markdown h2 {
+  padding-block-end: var(--space-1);
+  border-block-end: 1px solid var(--hairline);
+  font-size: var(--text-15);
+}
+.markdown :is(h3, h4, h5, h6) {
+  font-size: var(--text-13);
+}
+.markdown :is(h5, h6) {
+  color: color-mix(in srgb, var(--ink) 70%, var(--paper));
+}
+.markdown a {
+  color: color-mix(in srgb, var(--accent) 65%, var(--ink));
+  text-decoration: underline;
+  text-underline-offset: 0.18em;
+}
+.markdown a:focus-visible {
+  outline: 2px solid var(--focus, var(--accent));
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+.markdown :is(ul, ol) {
+  padding-inline-start: var(--space-6);
+}
+.markdown li + li {
+  margin-block-start: var(--space-1);
+}
+.markdown blockquote {
+  padding-inline-start: var(--space-3);
+  border-inline-start: var(--stripe) solid var(--hairline);
+  color: color-mix(in srgb, var(--ink) 75%, var(--paper));
+}
+.markdown code {
+  padding: 0.1em 0.35em;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--ink) 9%, var(--paper));
+  font-family: var(--font-mono);
+  font-size: 0.92em;
+}
+.markdown pre {
+  padding: var(--space-3);
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--ink) 6%, var(--paper));
+  line-height: 1.5;
+  tab-size: 4;
+  white-space: pre-wrap;
+}
+.markdown pre code {
+  padding: 0;
+  background: none;
+  font-size: var(--text-13);
+}
+.markdown hr {
+  border: 0;
+  border-block-start: 1px solid var(--hairline);
+}
+.markdown img {
+  max-inline-size: 100%;
+  block-size: auto;
+}
+.markdown table {
+  border-collapse: collapse;
+}
+.markdown :is(th, td) {
+  padding: var(--space-1) var(--space-3);
+  border-block-end: 1px solid var(--hairline);
+  text-align: start;
+  vertical-align: top;
+}
+.markdown th {
+  font-weight: 650;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .preview__updated {
     transition: none;
@@ -176,6 +375,14 @@
 }
 
 @media (forced-colors: active) {
+  .preview__view[aria-pressed="true"],
+  .web-link__button {
+    outline: 1px solid ButtonText;
+    outline-offset: -1px;
+  }
+  .markdown a {
+    color: LinkText;
+  }
   .code__row[data-target="true"] {
     outline: 1px solid Highlight;
     outline-offset: -1px;

@@ -15,6 +15,8 @@ const base: PreviewPaneProps = {
   canForward: false,
   onBack: noop,
   onForward: noop,
+  onOpen: noop,
+  onView: noop,
   onClose: noop,
   onEscape: noop,
 };
@@ -82,6 +84,35 @@ describe("PreviewPane", () => {
     expect(shown).toContain("Updated</span>");
     // Focus is not inside in a static render, so nothing announces it.
     expect(shown).not.toContain('aria-live="polite"');
+  });
+});
+
+describe("Rendered and Source", () => {
+  const md = { entry: { path: "C:\\p\\docs\\a.md", view: "source" as const } };
+  const page = (view: "rendered" | "source") => ({ entry: { path: "C:\\p\\site\\index.html", view } });
+  const text: FileState = { phase: "text", text: "<h1>Hi</h1>\n" };
+
+  it("offers the toggle for Markdown and HTML, with the current view pressed", () => {
+    const out = html(text, md);
+    expect(out).toContain('aria-label="View"');
+    expect(out).toMatch(/aria-pressed="false"[^>]*>Rendered</);
+    expect(out).toMatch(/aria-pressed="true"[^>]*>Source</);
+  });
+  it("has no toggle for code, and none until the text has loaded", () => {
+    expect(html(text)).not.toContain('aria-label="View"');
+    expect(html({ phase: "loading" }, md)).not.toContain('aria-label="View"');
+  });
+  it("shows the source of an HTML file as code rows", () => {
+    expect(html(text, page("source"))).toContain('class="code__row"');
+    expect(html(text, page("source"))).not.toContain("<iframe");
+  });
+  it("renders an HTML file in a frame that is sandboxed with nothing but same-origin", () => {
+    const out = html(text, page("rendered"));
+    expect(out).toContain('sandbox="allow-same-origin"');
+    expect(out).not.toMatch(/allow-(scripts|forms|popups|top-navigation|modals)/);
+    expect(out).toContain("Content-Security-Policy");
+    // The policy comes before the file's own markup.
+    expect(out.indexOf("Content-Security-Policy")).toBeLessThan(out.indexOf("&lt;h1&gt;"));
   });
 });
 

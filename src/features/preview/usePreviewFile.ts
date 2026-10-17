@@ -20,7 +20,7 @@ export const POLL_MS = 1000;
 export const UPDATED_MS = 2000;
 
 const IMAGE_TYPES: Record<string, string> = { png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", gif: "image/gif", webp: "image/webp", svg: "image/svg+xml", bmp: "image/bmp", ico: "image/x-icon", avif: "image/avif" };
-const imageType = (path: string) => IMAGE_TYPES[path.slice(path.lastIndexOf(".") + 1).toLowerCase()] ?? "application/octet-stream";
+export const imageType = (path: string) => IMAGE_TYPES[path.slice(path.lastIndexOf(".") + 1).toLowerCase()] ?? "application/octet-stream";
 
 /**
  * Loads a file and keeps it current: `stat` once a second while the document is visible, and a refetch only when the size or

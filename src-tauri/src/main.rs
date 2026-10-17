@@ -108,6 +108,8 @@ fn main() {
             }
         }))
         .plugin(tauri_plugin_window_state::Builder::default().build())
+        // Opens a web link in the person's browser, only after the preview's confirm; the capability limits it to http(s).
+        .plugin(tauri_plugin_opener::init())
         .setup(|app| {
             if let Some(w) = app.get_webview_window("main") {
                 disable_browser_shortcuts(&w);
