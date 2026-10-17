@@ -24,9 +24,13 @@ function global:__MarshellWrapReadLine {
         Set-StrictMode -Off
         $line = & $global:__MarshellReadLine
         if ($line -and $line.Trim()) {
-            # Report the typed line first: a backslash is \\, a semicolon is \x3b, a control char is \xHH.
+            # Report the typed line first, cut to its first line and 200 chars (all Marshell shows):
+            # the rest would only put a pasted script or a secret in the terminal stream and recording.
+            # A backslash is \\, a semicolon is \x3b, a control char is \xHH.
             # [regex]::Replace with a scriptblock works on Windows PowerShell 5.1 as well as 7.
-            $esc = [regex]::Replace(($line -replace '\\', '\\' -replace ';', '\x3b'), '[\x00-\x1f]', { param($m) '\x{0:x2}' -f [int][char]$m.Value })
+            $first = ($line -split '[\r\n]', 2)[0]
+            if ($first.Length -gt 200) { $first = $first.Substring(0, 200) }
+            $esc = [regex]::Replace(($first -replace '\\', '\\' -replace ';', '\x3b'), '[\x00-\x1f]', { param($m) '\x{0:x2}' -f [int][char]$m.Value })
             [Console]::Write("$([char]27)]633;E;$esc$([char]27)\$([char]27)]133;C$([char]27)\")
         }
         $line
