@@ -15,7 +15,7 @@ type ApiError = (StatusCode, String);
 
 /// The generation the panel shell's exit callback carries, and the row gets when the shell is
 /// adopted. The panel has no row to restart or resume before that, so one value is enough.
-const PANEL_GENERATION: u64 = 0;
+pub(super) const PANEL_GENERATION: u64 = 0;
 
 /// What adopting needs to know about the running panel shell.
 pub(super) struct PanelShell {
@@ -57,6 +57,11 @@ fn alive_panel(st: &AppState) -> Option<String> {
 }
 
 impl AppState {
+    /// The id of the panel shell, while there is one. It may have exited since.
+    pub(super) fn panel_tab(&self) -> Option<String> {
+        self.0.shell_panel.lock().unwrap().as_ref().map(|p| p.tab_id.clone())
+    }
+
     /// Whether the panel shell is running in a folder `in_folder` accepts.
     pub(crate) fn panel_running_where(&self, in_folder: impl Fn(&str) -> bool) -> bool {
         let panel = self.0.shell_panel.lock().unwrap();
@@ -123,13 +128,25 @@ pub async fn open(State(st): State<AppState>, Json(req): Json<PanelRequest>) -> 
 
 /// Turns the panel shell into a tab at the end of the list, still running. The panel is free again.
 pub async fn adopt(State(st): State<AppState>) -> Result<Json<PanelResponse>, ApiError> {
-    let no_shell = || (StatusCode::NOT_FOUND, "There is no shell in the panel.".to_string());
-    // One critical section: take the panel, check it, and register the row.
+    match take_and_adopt(&st, None) {
+        Some(tab_id) => Ok(Json(PanelResponse { tab_id })),
+        None => Err((StatusCode::NOT_FOUND, "There is no shell in the panel.".to_string())),
+    }
+}
+
+/// Takes the panel shell out of the panel and registers it as a tab, in one critical section, so
+/// when the route and the foreground watcher both try, exactly one adopts and the other gets None.
+/// With `only`, the panel is taken only while it is still that shell: the watcher's reading may be
+/// older than the panel it finds. None also when the shell has already exited.
+pub(super) fn take_and_adopt(st: &AppState, only: Option<&str>) -> Option<String> {
     let mut panel = st.0.shell_panel.lock().unwrap();
-    let shell = panel.take().ok_or_else(no_shell)?;
+    if only.is_some_and(|only| panel.as_ref().is_none_or(|p| p.tab_id != only)) {
+        return None;
+    }
+    let shell = panel.take()?;
     let Some(session) = st.session(&shell.tab_id).filter(|s| !s.has_exited()) else {
         st.remove_session(&shell.tab_id);
-        return Err(no_shell());
+        return None;
     };
     let tab_id = shell.tab_id;
     adopt_session(
@@ -143,8 +160,7 @@ pub async fn adopt(State(st): State<AppState>) -> Result<Json<PanelResponse>, Ap
             name: shell.name,
         },
     );
-    drop(panel);
-    Ok(Json(PanelResponse { tab_id }))
+    Some(tab_id)
 }
 
 /// Gives a running pty a registry row. If the process exited before the row existed, its exit

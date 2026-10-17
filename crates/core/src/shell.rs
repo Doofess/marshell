@@ -473,6 +473,14 @@ mod tests {
     }
 
     #[test]
+    fn ps1_reports_the_command_line_before_c() {
+        let ps1 = FILES.iter().find(|(name, _)| *name == "marshell.ps1").unwrap().1;
+        let line = ps1.find("]633;E;").expect("ps1 reports the command line");
+        let c = ps1.find("]133;C").expect("ps1 marks C");
+        assert!(line < c);
+    }
+
+    #[test]
     fn posix_scripts_have_no_cr() {
         for (name, text) in FILES {
             if !name.ends_with(".ps1") {

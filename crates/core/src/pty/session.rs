@@ -64,8 +64,32 @@ struct Output {
     startup_dsr_answered: bool,
 }
 
+/// What the shell's marks say about the command it is running.
+#[derive(Default)]
+struct CommandTrack {
+    running: bool,
+    ever_executed: bool,
+    line: Option<String>,
+    /// Counts the C, D and A marks, so a reading taken before one can tell it is stale.
+    epoch: u64,
+}
+
+/// The longest command line that leaves the core, in chars.
+const MAX_COMMAND_LINE: usize = 200;
+
+/// The first line of `text`, trimmed and capped at 200 chars on a char boundary. `None` if empty.
+fn shown_command_line(text: &str) -> Option<String> {
+    let first = text.lines().next().unwrap_or("").trim();
+    let capped = match first.char_indices().nth(MAX_COMMAND_LINE) {
+        Some((end, _)) => &first[..end],
+        None => first,
+    };
+    (!capped.is_empty()).then(|| capped.to_string())
+}
+
 pub struct Session {
     id: String,
+    command: Mutex<CommandTrack>,
     output: Mutex<Output>,
     /// The reader thread waits here while the client is more than MAX_UNACKED behind.
     space: Condvar,
@@ -124,6 +148,7 @@ impl Session {
 
         let session = Arc::new(Session {
             id: id.clone(),
+            command: Mutex::new(CommandTrack::default()),
             output: Mutex::new(Output {
                 buf: OutputBuffer::new(SCROLLBACK_BYTES),
                 screen: vt100::Parser::new(size.rows, size.cols, 0),
@@ -231,14 +256,11 @@ impl Session {
             }
         }
         // Scan the raw bytes: the DSR filter may hold some back, but marks never contain ESC[6n.
-        let marks = if self.mark_callback.is_some() || self.recorder.is_some() {
-            out.marks.scan(bytes)
-        } else {
-            Vec::new()
-        };
+        let marks = out.marks.scan(bytes);
         out.screen.process(&pass);
         out.buf.push(&pass);
         drop(out);
+        self.track_command(&marks);
         self.notify.notify_one();
         // The recording gets what the terminal got, after the lock is dropped.
         if let Some(rec) = &self.recorder {
@@ -257,6 +279,51 @@ impl Session {
             }
         }
         answered
+    }
+
+    /// Folds the shell's marks into the command tracking, before the mark callback sees them.
+    fn track_command(&self, marks: &[Mark]) {
+        if marks.is_empty() {
+            return;
+        }
+        let mut track = self.command.lock().unwrap();
+        for mark in marks {
+            match mark {
+                Mark::CommandLine(text) => track.line = shown_command_line(text),
+                Mark::Executed => {
+                    track.running = true;
+                    track.ever_executed = true;
+                    track.epoch += 1;
+                }
+                Mark::Finished(_) | Mark::PromptStart => {
+                    track.running = false;
+                    track.line = None;
+                    track.epoch += 1;
+                }
+                Mark::CommandStart => {}
+            }
+        }
+    }
+
+    /// True between the shell's C mark and the next D or A mark.
+    pub fn command_running(&self) -> bool {
+        self.command.lock().unwrap().running
+    }
+
+    /// True once the shell has sent a C mark. A shell that never does has no integration.
+    pub fn ever_executed(&self) -> bool {
+        self.command.lock().unwrap().ever_executed
+    }
+
+    /// How many C, D and A marks the shell has sent. A reading taken at one value is stale at another.
+    pub fn command_epoch(&self) -> u64 {
+        self.command.lock().unwrap().epoch
+    }
+
+    /// The command line the shell reported for the running command, as shown: its first line,
+    /// trimmed and capped at 200 chars. `None` when none was reported or the command has finished.
+    pub fn command_line(&self) -> Option<String> {
+        self.command.lock().unwrap().line.clone()
     }
 
     fn wait_for_space(&self) {
@@ -466,6 +533,36 @@ impl Session {
 
     pub fn is_frozen(&self) -> bool {
         self.frozen.lock().unwrap().is_some()
+    }
+
+    /// The programs running in front of the shell, outermost first, as `detect::program_name` names them.
+    /// Empty when the shell has no child. `None` when this cannot be read.
+    pub fn foreground_chain(&self) -> Option<Vec<String>> {
+        let pid = self.pid.filter(|_| !self.exited.load(Ordering::SeqCst))?;
+        #[cfg(windows)]
+        {
+            super::proctree::foreground_chain(pid)
+        }
+        #[cfg(target_os = "linux")]
+        {
+            let group = self
+                .master
+                .lock()
+                .unwrap()
+                .as_ref()
+                .and_then(|m| m.process_group_leader())
+                .and_then(|g| u32::try_from(g).ok())?;
+            if group == pid {
+                return Some(Vec::new());
+            }
+            let comm = std::fs::read_to_string(format!("/proc/{group}/comm")).ok()?;
+            Some(vec![crate::profiles::detect::program_name(comm.trim())])
+        }
+        #[cfg(not(any(windows, target_os = "linux")))]
+        {
+            let _ = pid;
+            None
+        }
     }
 }
 

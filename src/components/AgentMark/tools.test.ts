@@ -7,7 +7,7 @@ import { parseTokens } from "../../design/cssTokens";
 import { AGENT_IDS } from "./agents";
 import { AgentMark } from "./AgentMark";
 import { isTool, kindName } from "./kinds";
-import { TOOL_GROUP, TOOL_GROUPS, TOOL_GROUP_NAMES, TOOL_IDS, TOOL_NAMES, TOOL_PATHS, isToolId } from "./tools";
+import { TOOL_GROUP, TOOL_GROUPS, TOOL_GROUP_NAMES, TOOL_IDS, TOOL_NAMES, TOOL_PATHS, isToolId, toolForProgram } from "./tools";
 
 const read = (p: string) => readFileSync(new URL(p, import.meta.url), "utf8");
 const colors = read("./agent-colors.css");
@@ -55,5 +55,36 @@ describe("manual CLI marks", () => {
     expect(isToolId("docker")).toBe(true);
     expect(isToolId("claude")).toBe(false);
     expect(isTool("claude")).toBe(false);
+  });
+});
+
+describe("toolForProgram", () => {
+  it.each([
+    ["pwsh", "powershell"],
+    ["powershell", "powershell"],
+    ["bash", "bash"],
+    ["zsh", "zsh"],
+    ["cmd", "cmd"],
+    ["wsl", "wsl"],
+    ["git", "git"],
+    ["docker", "docker"],
+    ["docker-compose", "docker"],
+    ["kubectl", "kubectl"],
+    ["node", "node"],
+    ["python", "python"],
+    ["python3", "python"],
+    ["py", "python"],
+    ["cargo", "cargo"],
+    ["gh", "gh"],
+    ["terraform", "terraform"],
+    ["ssh", "ssh"],
+    ["aws", "aws"],
+    ["gcloud", "gcloud"],
+    ["az", "az"],
+    ["supabase", "supabase"],
+    ["vercel", "vercel"],
+    ["fake-agent", "program"],
+  ])("%s maps to %s", (program, tool) => {
+    expect(toolForProgram(program)).toBe(tool);
   });
 });

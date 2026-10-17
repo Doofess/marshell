@@ -40,6 +40,7 @@ const snapshot = (names: string[]): SessionsSnapshot => ({
     state: { kind: "running" },
     command: { kind: "unknown" },
     paused: false,
+    foreground: null,
   })),
   closed: [],
 });

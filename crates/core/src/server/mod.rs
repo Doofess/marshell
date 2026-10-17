@@ -1,4 +1,5 @@
 mod events;
+mod foreground;
 pub mod frames;
 mod guard;
 mod layout;
@@ -62,6 +63,9 @@ struct Inner {
     starting: Mutex<HashSet<String>>,
     /// The sidebar's shell, while there is one. It is in `sessions` but has no registry row.
     shell_panel: Mutex<Option<shell_panel::PanelShell>>,
+    /// Wakes the foreground watcher when a command starts, so it does not wait out its second.
+    /// An `Arc` so a session's mark callback can hold it without holding the state.
+    foreground_wake: Arc<tokio::sync::Notify>,
     /// Whether an agent's command (`claude`, `codex`, `agy`) runs from PATH. Tests swap it.
     agent_on_path: fn(&str) -> bool,
 }
@@ -102,6 +106,7 @@ impl AppState {
             sessions: Mutex::new(HashMap::new()),
             starting: Mutex::new(HashSet::new()),
             shell_panel: Mutex::new(None),
+            foreground_wake: Arc::new(tokio::sync::Notify::new()),
             agent_on_path: crate::profiles::detect::command_on_path,
         }))
     }
@@ -175,6 +180,7 @@ impl Drop for StartClaim {
 pub fn router(state: AppState) -> Router {
     // Here and not in `AppState::new`, which `with_agent_check` needs to be the only owner of.
     layout::spawn_layout_saver(&state);
+    foreground::spawn_watcher(&state);
     let origins: Vec<HeaderValue> = state.0.allowed_origins.iter().filter_map(|o| o.parse().ok()).collect();
     let cors = CorsLayer::new()
         .allow_origin(AllowOrigin::list(origins))

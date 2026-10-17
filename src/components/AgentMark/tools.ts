@@ -143,3 +143,34 @@ export const TOOL_PATHS: Record<ToolId, string> = {
 export function isToolId(v: string): v is ToolId {
   return (TOOL_IDS as readonly string[]).includes(v);
 }
+
+const PROGRAM_TOOLS: Record<string, ToolId> = {
+  pwsh: "powershell",
+  powershell: "powershell",
+  bash: "bash",
+  zsh: "zsh",
+  cmd: "cmd",
+  wsl: "wsl",
+  git: "git",
+  docker: "docker",
+  "docker-compose": "docker",
+  kubectl: "kubectl",
+  node: "node",
+  python: "python",
+  python3: "python",
+  py: "python",
+  cargo: "cargo",
+  gh: "gh",
+  terraform: "terraform",
+  ssh: "ssh",
+  aws: "aws",
+  gcloud: "gcloud",
+  az: "az",
+  supabase: "supabase",
+  vercel: "vercel",
+};
+
+/** The mark for a foreground program (its lowercase name without `.exe`); anything unknown gets the neutral program mark. */
+export function toolForProgram(program: string): ToolId {
+  return (Object.hasOwn(PROGRAM_TOOLS, program) ? PROGRAM_TOOLS[program] : undefined) ?? "program";
+}

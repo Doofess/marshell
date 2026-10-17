@@ -271,6 +271,31 @@ fn exit_3() -> &'static str {
     }
 }
 
+/// The body of the first `OSC 633;E` in the terminal output: the command line as the shell escaped it.
+fn command_line_body(text: &str) -> Option<&str> {
+    const START: &str = "\x1b]633;E;";
+    let rest = &text[text.find(START)? + START.len()..];
+    Some(&rest[..rest.find("\x1b\\")?])
+}
+
+#[test]
+fn pwsh_reports_only_the_first_line_of_a_long_command_capped_at_200_chars() {
+    for name in powershells() {
+        let mut sh = pwsh_with_profile(name, "");
+        sh.expect(Mark::PromptStart);
+        // An open quote makes PSReadLine take Enter as a new line, so the command has two lines.
+        sh.type_line(&format!("\"{}\r", "a".repeat(300)));
+        sh.type_line("second line\"\r");
+        sh.expect(Mark::Executed);
+        sh.settle();
+        let text = sh.text();
+        let body = command_line_body(&text).unwrap_or_else(|| panic!("{name}: no 633;E in {text}"));
+        assert!(body.starts_with("\"aaa"), "{name}: {body}");
+        assert!(body.chars().count() <= 200, "{name}: {} chars", body.chars().count());
+        assert!(!body.contains("second"), "{name}: the second line leaked: {body}");
+    }
+}
+
 #[test]
 fn pwsh_strict_mode_profile_still_marks() {
     for name in powershells() {
