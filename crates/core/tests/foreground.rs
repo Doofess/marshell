@@ -209,7 +209,7 @@ async fn a_paused_session_is_not_polled() {
     let state = state_in(home.path());
     let app = router(state.clone());
     let tab = create(&app, "prog", work.path(), None).await;
-    // Frozen before the first check: the row must stay as it was, with no foreground.
+    // Frozen: the row must keep the foreground it had at that moment.
     // Freezing can be refused for a moment while the shell is still starting its program.
     let mut refusal = String::new();
     for _ in 0..20 {
@@ -225,10 +225,17 @@ async fn a_paused_session_is_not_polled() {
     }
     assert_eq!(refusal, "", "the pause was refused");
 
-    tokio::time::sleep(Duration::from_millis(2500)).await;
-    let r = row(&app, &tab).await.unwrap();
-    assert_eq!(r["paused"], true);
-    assert!(r["foreground"].is_null(), "a paused session was polled: {r}");
+    // Its foreground is whatever it was when the pause took hold, null or not: on a slow cold
+    // launch a check can land before the pause. From then on it must not change.
+    let at_pause = row(&app, &tab).await.unwrap();
+    assert_eq!(at_pause["paused"], true);
+    let kept = at_pause["foreground"].clone();
+    let start = Instant::now();
+    while start.elapsed() < Duration::from_millis(2500) {
+        tokio::time::sleep(Duration::from_millis(250)).await;
+        let r = row(&app, &tab).await.unwrap();
+        assert_eq!(r["foreground"], kept, "a paused session was polled: {r}");
+    }
 
     // Thawed, it is polled again.
     assert_eq!(post(&app, &tab, "continue").await.status(), StatusCode::NO_CONTENT);
