@@ -32,6 +32,23 @@ describe("region", () => {
     expect(regionText("a.pdf, page 1", "x".repeat(5000))).toHaveLength(2000);
   });
 
+  it("turns every control character into a space, not only whitespace", () => {
+    expect(regionText("a.png", "a\u001b[31mb")).toBe("a.png: a [31mb");
+    expect(regionText("a.png", "a\u0007b")).toBe("a.png: a b");
+    expect(regionText("a.png", "a\u009bb\u007fc\u0000d")).toBe("a.png: a b c d");
+    expect(regionText("a.png", "\u001b\u0007")).toBe("a.png");
+  });
+
+  it("cuts at 2000 code points and never inside a surrogate pair", () => {
+    const text = regionText("a.png", "😀".repeat(3000));
+    expect(Array.from(text)).toHaveLength(2000);
+    expect(text).not.toMatch(/[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/);
+    // "a.png: " is 7 units, so UTF-16 unit 2000 falls in the middle of the second emoji.
+    const edge = regionText("a.png", "x".repeat(1990) + "😀".repeat(4));
+    expect(Array.from(edge)).toHaveLength(2000);
+    expect(edge.endsWith("x" + "😀".repeat(3))).toBe(true);
+  });
+
   it("describes the box for a screen reader", () => {
     expect(describeRegion({ page: 3, x: 0.3, y: 0.2, w: 0.4, h: 0.25 })).toBe("Box 40% wide, 25% high, 30% across, 20% down, page 3");
   });

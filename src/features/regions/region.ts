@@ -70,8 +70,12 @@ export function regionLabel(name: string, page: number | null): string {
   return page === null ? name : `${name}, page ${page}`;
 }
 
-/** The reference the agent is given: the label, then the comment with every run of whitespace collapsed; 2000 characters at most. */
+/**
+ * The reference the agent is given: the label, then the comment with every run of whitespace and control characters
+ * (ESC, BEL, NUL, DEL, C1: what pasted terminal output carries, and what the core refuses) collapsed to a space;
+ * 2000 code points at most, never cut inside a surrogate pair.
+ */
 export function regionText(label: string, comment: string): string {
-  const note = comment.replace(/\s+/g, " ").trim();
-  return (note ? `${label}: ${note}` : label).slice(0, MAX_TEXT);
+  const note = comment.replace(/[\s\p{Cc}]+/gu, " ").trim();
+  return Array.from(note ? `${label}: ${note}` : label).slice(0, MAX_TEXT).join("");
 }
