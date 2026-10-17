@@ -487,3 +487,41 @@ async fn every_route_needs_the_token() {
         assert_eq!(res.status(), StatusCode::UNAUTHORIZED, "{method} {uri}");
     }
 }
+
+#[tokio::test]
+async fn a_worktree_session_lists_and_resolves_against_its_own_worktree() {
+    let s = setup("reported");
+    let main = s.dir.path();
+    git(main, &["init", "-q"]);
+    write(&main.join("shared.rs"), "s");
+    write(&main.join("both.rs"), "main");
+    git(main, &["add", "."]);
+    git(
+        main,
+        &["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "x"],
+    );
+    write(&main.join("main-only.rs"), "m");
+    let linked = tempfile::tempdir().unwrap();
+    let wt = linked.path().join("wt");
+    git(main, &["worktree", "add", "-q", &wt.to_string_lossy(), "-b", "wt"]);
+    write(&wt.join("wt-only.rs"), "w");
+    write(&wt.join("both.rs"), "worktree");
+    std::fs::create_dir_all(wt.join("sub")).unwrap();
+
+    let tab = session(&s.app, "sleeper", &wt.join("sub")).await;
+    let list = files_of(&s.app, &tab).await;
+    let files = names(&list);
+    assert_eq!(list["root"], canon(&wt));
+    assert!(files.contains(&"shared.rs".to_string()), "{files:?}");
+    assert!(files.contains(&"wt-only.rs".to_string()), "{files:?}");
+    assert!(!files.contains(&"main-only.rs".to_string()), "{files:?}");
+    let got = resolve(&s.app, &tab, &["wt-only.rs", "both.rs", "main-only.rs"]).await;
+    assert_eq!(
+        got,
+        vec![
+            Some(canon(&wt.join("wt-only.rs"))),
+            Some(canon(&wt.join("both.rs"))),
+            None
+        ]
+    );
+}

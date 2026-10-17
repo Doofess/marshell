@@ -154,16 +154,30 @@ fn resolve_one(candidate: &str, bases: &[PathBuf]) -> Option<String> {
     })
 }
 
+/// The checkout the session was launched in: the nearest folder above the launch folder (or it
+/// itself) with a `.git` folder or file. A linked worktree has a `.git` file, so this is the
+/// worktree, where `projects::repo_root` gives the main checkout. None outside git.
+fn checkout_of(row: &SessionInfo) -> Option<PathBuf> {
+    if row.cwd.is_empty() || refused(&row.cwd) {
+        return None;
+    }
+    let root = std::path::Path::new(&row.cwd)
+        .ancestors()
+        .find(|d| d.join(".git").exists())?;
+    Some(crate::projects::canonical(root))
+}
+
 /// The folders a session's relative paths are tried against, most specific first: the folder the
-/// shell last reported, the launch folder, the project root.
+/// shell last reported, the launch folder, the launch folder's checkout (the project root when
+/// that finds nothing).
 fn bases_of(row: Option<&SessionInfo>, reported: Option<PathBuf>) -> Vec<PathBuf> {
     let mut bases: Vec<PathBuf> = reported.into_iter().collect();
     if let Some(row) = row {
+        let top = checkout_of(row).unwrap_or_else(|| PathBuf::from(&row.project));
         bases.extend(
-            [&row.cwd, &row.project]
+            [PathBuf::from(&row.cwd), top]
                 .into_iter()
-                .filter(|s| !s.is_empty())
-                .map(PathBuf::from),
+                .filter(|p| !p.as_os_str().is_empty()),
         );
     }
     bases
@@ -188,8 +202,9 @@ pub async fn resolve(State(st): State<AppState>, Path(tab): Path<String>, Json(r
         )
             .into_response();
     }
-    let bases = bases_of(row.as_ref(), session.and_then(|s| s.current_cwd()));
+    let reported = session.and_then(|s| s.current_cwd());
     let done = tokio::task::spawn_blocking(move || {
+        let bases = bases_of(row.as_ref(), reported);
         req.candidates
             .iter()
             .map(|c| resolve_one(c, &bases))
@@ -423,12 +438,9 @@ pub async fn list(State(st): State<AppState>, Path(tab): Path<String>) -> Respon
     }
     let reported = session.and_then(|s| s.current_cwd());
     let done = tokio::task::spawn_blocking(move || {
-        // In a repo the root is the project. `project` is the launch folder itself outside git, so
-        // the repo check looks for a `.git`, as `projects` does, instead of trusting the field.
-        let in_repo = row
-            .as_ref()
-            .is_some_and(|r| crate::projects::repo_root(std::path::Path::new(&r.cwd)).is_some());
-        if in_repo && let Some(root) = first_folder(row.iter().map(|r| PathBuf::from(&r.project))) {
+        // In a repo the root is the checkout the session was launched in, which for a task is its
+        // worktree. `project` is the launch folder itself outside git, so it is not used here.
+        if let Some(root) = row.as_ref().and_then(checkout_of).and_then(|c| first_folder([c])) {
             // Without git on PATH the walk still gives a list, though it lists ignored files.
             let (files, truncated) = git_files(&root).unwrap_or_else(|| walk_files(&root));
             return Some((root, files, truncated));
