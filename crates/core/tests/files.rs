@@ -448,6 +448,32 @@ async fn stat_and_content_agree_and_respect_the_caps() {
     assert_eq!(res.status(), StatusCode::BAD_REQUEST);
 }
 
+#[tokio::test]
+async fn a_pdf_is_read_up_to_its_own_cap() {
+    let s = setup("reported");
+    let big = s.dir.path().join("big.pdf");
+    std::fs::write(&big, vec![b'x'; 3 * 1024 * 1024]).unwrap();
+    let path = canon(&big);
+    let res = call(
+        &s.app,
+        "GET",
+        &format!("/v1/files/content?path={}&kind=pdf", enc(&path)),
+        None,
+    )
+    .await;
+    assert_eq!(res.status(), StatusCode::OK);
+    assert_eq!(res.headers()[header::CONTENT_TYPE], "application/pdf");
+    let res = call(
+        &s.app,
+        "GET",
+        &format!("/v1/files/content?path={}&kind=text", enc(&path)),
+        None,
+    )
+    .await;
+    assert_eq!(res.status(), StatusCode::PAYLOAD_TOO_LARGE);
+    assert_eq!(json_of(res).await["limit"], 2_097_152);
+}
+
 async fn files_of(app: &axum::Router, tab: &str) -> serde_json::Value {
     let res = call(app, "GET", &format!("/v1/sessions/{tab}/files"), None).await;
     assert_eq!(res.status(), StatusCode::OK);

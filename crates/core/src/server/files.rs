@@ -19,6 +19,8 @@ use std::time::{Duration, Instant, UNIX_EPOCH};
 pub const TEXT_CAP: u64 = 2 * 1024 * 1024;
 /// The most bytes `content` serves for an image.
 pub const IMAGE_CAP: u64 = 20 * 1024 * 1024;
+/// The largest PDF `GET /v1/files/content?kind=pdf` serves.
+pub const PDF_CAP: u64 = 50 * 1024 * 1024;
 /// The most candidates one `resolve` call takes.
 pub const MAX_CANDIDATES: usize = 64;
 /// The longest candidate `resolve` takes, in characters.
@@ -407,6 +409,7 @@ fn content_type(path: &std::path::Path) -> &'static str {
         "bmp" => "image/bmp",
         "ico" => "image/x-icon",
         "svg" => "image/svg+xml",
+        "pdf" => "application/pdf",
         "txt" | "text" | "md" | "markdown" | "rs" | "ts" | "tsx" | "js" | "jsx" | "mjs" | "cjs" | "json" | "jsonc"
         | "toml" | "yaml" | "yml" | "css" | "scss" | "html" | "htm" | "xml" | "csv" | "log" | "ini" | "cfg"
         | "conf" | "env" | "sh" | "bash" | "zsh" | "ps1" | "bat" | "cmd" | "py" | "rb" | "go" | "java" | "kt" | "c"
@@ -451,7 +454,8 @@ pub async fn content(Query(q): Query<FileQuery>) -> Response {
     let cap = match q.kind.as_deref() {
         Some("text") => TEXT_CAP,
         Some("image") => IMAGE_CAP,
-        _ => return (StatusCode::BAD_REQUEST, "The kind is text or image.").into_response(),
+        Some("pdf") => PDF_CAP,
+        _ => return (StatusCode::BAD_REQUEST, "The kind is text, image or pdf.").into_response(),
     };
     let ctype = content_type(&path);
     let read = tokio::task::spawn_blocking(move || read_capped(&path, cap)).await;
@@ -791,6 +795,7 @@ mod tests {
         let ct = |s: &str| content_type(std::path::Path::new(s));
         assert_eq!(ct("a.PNG"), "image/png");
         assert_eq!(ct("a.svg"), "image/svg+xml");
+        assert_eq!(ct("a.PDF"), "application/pdf");
         assert_eq!(ct("a.rs"), "text/plain; charset=utf-8");
         // Never text/html: the frontend renders HTML itself.
         assert_eq!(ct("index.html"), "text/plain; charset=utf-8");
