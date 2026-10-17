@@ -1,4 +1,4 @@
-use marshell_core::pty::{MAX_UNACKED, Mark, Pull, Session, SpawnSpec};
+use marshell_core::pty::{FreezeError, MAX_UNACKED, Mark, Pull, Session, SpawnSpec};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -273,4 +273,91 @@ fn session_without_a_recordable_path_still_runs() {
     let (out, code) = drain(&s, Duration::from_secs(10));
     assert!(String::from_utf8_lossy(&out).contains("still here"));
     assert_eq!(code, Some(0));
+}
+
+fn printer(nested: bool) -> SpawnSpec {
+    let argv: Vec<String> = match (cfg!(windows), nested) {
+        (true, false) => vec!["ping".into(), "-t".into(), "127.0.0.1".into()],
+        (true, true) => vec!["cmd".into(), "/c".into(), "cmd /c ping -t 127.0.0.1".into()],
+        (false, false) => vec!["sh".into(), "-c".into(), "while :; do echo x; sleep 0.1; done".into()],
+        (false, true) => vec![
+            "sh".into(),
+            "-c".into(),
+            "sh -c 'while :; do echo x; sleep 0.1; done'".into(),
+        ],
+    };
+    SpawnSpec {
+        argv,
+        cwd: None,
+        env: vec![],
+        cols: 80,
+        rows: 24,
+        on_exit: None,
+        on_mark: None,
+        record: None,
+    }
+}
+
+fn wait_until(timeout: Duration, mut done: impl FnMut() -> bool) -> bool {
+    let deadline = Instant::now() + timeout;
+    while Instant::now() < deadline {
+        if done() {
+            return true;
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    done()
+}
+
+fn freeze_then_thaw_a_printer(nested: bool) {
+    let s = Session::spawn("t-freeze".into(), printer(nested)).unwrap();
+    assert!(wait_until(Duration::from_secs(10), || s.counters().0 > 0), "no output");
+    s.freeze().unwrap();
+    assert!(s.is_frozen());
+    std::thread::sleep(Duration::from_millis(300));
+    let frozen_at = s.counters().0;
+    std::thread::sleep(Duration::from_millis(1500));
+    assert_eq!(s.counters().0, frozen_at, "output grew while frozen");
+    s.thaw();
+    assert!(!s.is_frozen());
+    assert!(
+        wait_until(Duration::from_secs(3), || s.counters().0 > frozen_at),
+        "no output after thaw"
+    );
+    s.force_kill();
+}
+
+#[test]
+fn freeze_stops_output() {
+    freeze_then_thaw_a_printer(false);
+}
+
+#[test]
+fn freeze_stops_a_grandchild() {
+    freeze_then_thaw_a_printer(true);
+}
+
+#[test]
+fn kill_ends_a_frozen_session() {
+    let (tx, rx) = std::sync::mpsc::channel();
+    let mut spec = printer(false);
+    spec.on_exit = Some(Box::new(move |code| {
+        let _ = tx.send(code);
+    }));
+    let s = Session::spawn("t-freeze-kill".into(), spec).unwrap();
+    assert!(wait_until(Duration::from_secs(10), || s.counters().0 > 0), "no output");
+    s.freeze().unwrap();
+    s.kill();
+    assert!(
+        rx.recv_timeout(Duration::from_secs(5)).is_ok(),
+        "frozen session did not end"
+    );
+}
+
+#[test]
+fn freeze_after_exit_is_refused() {
+    let s = Session::spawn("t-freeze-exited".into(), fake(&["exit", "0"])).unwrap();
+    assert!(wait_until(Duration::from_secs(10), || s.has_exited()));
+    assert_eq!(s.freeze(), Err(FreezeError::NotRunning));
+    assert!(!s.is_frozen());
 }
