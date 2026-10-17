@@ -220,6 +220,43 @@ fn marks_reach_the_callback() {
     assert_eq!(got, [Mark::PromptStart, Mark::Executed, Mark::Finished(Some(7))]);
 }
 
+#[test]
+fn command_line_is_tracked_from_the_shell_marks() {
+    let (tx, rx) = std::sync::mpsc::channel();
+    let mut spec = fake(&["cmdline", "docker compose up"]);
+    spec.on_mark = Some(Box::new(move |mark| {
+        let _ = tx.send(mark);
+    }));
+    let session = Session::spawn("t-cmdline".into(), spec).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(3);
+    while Instant::now() < deadline && !(session.command_running() && session.command_line().is_some()) {
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    assert!(session.command_running());
+    assert!(session.ever_executed());
+    assert_eq!(session.command_line().as_deref(), Some("docker compose up"));
+    // The session updates its tracking before the callback sees the mark.
+    while let Ok(mark) = rx.recv_timeout(Duration::from_secs(10)) {
+        if matches!(mark, Mark::Finished(_)) {
+            break;
+        }
+    }
+    assert!(!session.command_running());
+    assert!(session.ever_executed());
+    assert_eq!(session.command_line(), None);
+}
+
+#[test]
+fn command_line_keeps_only_the_first_line_capped_at_200_chars() {
+    let text = format!("{}\\nsecond", "x".repeat(300));
+    let session = Session::spawn("t-cmdline-cap".into(), fake(&["cmdline", &text])).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(3);
+    while Instant::now() < deadline && session.command_line().is_none() {
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    assert_eq!(session.command_line(), Some("x".repeat(200)));
+}
+
 /// Polls the recording until `want` shows up: the writer thread flushes about once a second.
 fn wait_for_recording(path: &std::path::Path, want: &str) -> String {
     let deadline = Instant::now() + Duration::from_secs(10);

@@ -313,7 +313,7 @@ impl Registry {
             Mark::Executed => CommandState::Running,
             Mark::Finished(Some(code)) => CommandState::Prompt { last_exit: Some(code) },
             Mark::Finished(None) | Mark::PromptStart => CommandState::Prompt { last_exit },
-            Mark::CommandStart => return,
+            Mark::CommandStart | Mark::CommandLine(_) => return,
         };
         if entry.info.command != next {
             entry.info.command = next;

@@ -23,7 +23,12 @@ function global:__MarshellWrapReadLine {
     function global:PSConsoleHostReadLine {
         Set-StrictMode -Off
         $line = & $global:__MarshellReadLine
-        if ($line -and $line.Trim()) { [Console]::Write("$([char]27)]133;C$([char]27)\") }
+        if ($line -and $line.Trim()) {
+            # Report the typed line first: a backslash is \\, a semicolon is \x3b, a control char is \xHH.
+            # [regex]::Replace with a scriptblock works on Windows PowerShell 5.1 as well as 7.
+            $esc = [regex]::Replace(($line -replace '\\', '\\' -replace ';', '\x3b'), '[\x00-\x1f]', { param($m) '\x{0:x2}' -f [int][char]$m.Value })
+            [Console]::Write("$([char]27)]633;E;$esc$([char]27)\$([char]27)]133;C$([char]27)\")
+        }
         $line
     }
 }

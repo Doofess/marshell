@@ -7,6 +7,7 @@
 //!   fake-agent sleep               sleep 60 s
 //!   fake-agent exit <code>         exit with <code>
 //!   fake-agent osc133              print the OSC 133 marks A, C and D;7, exit 0
+//!   fake-agent cmdline <text>      report <text> as the command line (633;E), mark C, sleep 2 s, mark D;0
 use std::io::{BufRead, Write};
 
 fn main() {
@@ -53,6 +54,24 @@ fn main() {
         Some("sleep") => std::thread::sleep(std::time::Duration::from_secs(60)),
         Some("exit") => std::process::exit(args[1].parse().unwrap()),
         Some("osc133") => write!(out, "\x1b]133;A\x07$ \x1b]133;C\x07out\r\n\x1b]133;D;7\x1b\\").unwrap(),
+        Some("cmdline") => {
+            // Like the PowerShell integration: report the typed line, mark C, run 2 s, mark D.
+            // A literal backslash-n in the text stands for a newline.
+            let text = args[1..].join(" ").replace("\\n", "\n");
+            let mut esc = String::new();
+            for c in text.chars() {
+                match c {
+                    '\\' => esc.push_str("\\\\"),
+                    ';' => esc.push_str("\\x3b"),
+                    c if (c as u32) < 0x20 => esc.push_str(&format!("\\x{:02x}", c as u32)),
+                    c => esc.push(c),
+                }
+            }
+            write!(out, "\x1b]633;E;{esc}\x1b\\\x1b]133;C\x07").unwrap();
+            out.flush().unwrap();
+            std::thread::sleep(std::time::Duration::from_secs(2));
+            write!(out, "\x1b]133;D;0\x07").unwrap();
+        }
         _ => eprintln!("unknown mode"),
     }
     out.flush().unwrap();
