@@ -1,3 +1,4 @@
+mod attachments;
 mod events;
 mod files;
 mod foreground;
@@ -15,6 +16,7 @@ mod tasks;
 use crate::profiles::detect::{Probe, detect_profiles};
 use crate::registry::{Registry, Relaunch};
 use crate::{auth, paths};
+use axum::extract::DefaultBodyLimit;
 use axum::http::{HeaderName, HeaderValue, Method, header};
 use axum::routing::{get, patch, post, put};
 use axum::{Json, Router};
@@ -217,6 +219,11 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/sessions/{tab}/recording", get(sessions::recording))
         .route("/v1/sessions/{tab}/resolve", post(files::resolve))
         .route("/v1/sessions/{tab}/files", get(files::list))
+        .route(
+            "/v1/sessions/{tab}/attachments",
+            post(attachments::save).layer(DefaultBodyLimit::max(files::IMAGE_CAP as usize + 1)),
+        )
+        .route("/v1/sessions/{tab}/paste", post(attachments::paste))
         .route("/v1/files/stat", get(files::stat))
         .route("/v1/files/content", get(files::content))
         .route("/v1/sessions/{tab}", patch(sessions::rename).delete(sessions::close))

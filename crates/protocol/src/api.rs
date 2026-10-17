@@ -448,6 +448,28 @@ pub struct FileStat {
     pub modified_ms: u64,
 }
 
+/// POST /v1/sessions/{tab}/attachments reply: where the image was saved and how to name it to the agent.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct AttachmentSaved {
+    /// The file name, `<unix ms>.png`, or `<unix ms>-2.png` and up when that name was taken.
+    pub name: String,
+    /// The absolute path of the saved file.
+    pub path: String,
+    /// The text to put in the agent's prompt so it reads the image.
+    pub reference: String,
+}
+
+/// POST /v1/sessions/{tab}/paste body: paste a saved attachment's reference and a comment into the session.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct PasteRequest {
+    /// The `name` from `AttachmentSaved`.
+    pub attachment: String,
+    /// The comment to follow the reference; may be empty. No control characters, at most 2000 characters.
+    pub text: String,
+}
+
 /// GET /v1/sessions/{tab}/files reply: the files of the session's project, for quick open.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[ts(export)]

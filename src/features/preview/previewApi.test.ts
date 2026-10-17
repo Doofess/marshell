@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { resetEndpoint } from "../../lib/api/client";
-import { IMAGE_CAP, TEXT_CAP, fetchContent, listFiles, resolvePaths, statFile } from "./previewApi";
+import { IMAGE_CAP, PDF_CAP, TEXT_CAP, fetchContent, listFiles, resolvePaths, statFile } from "./previewApi";
 
 const invoke = vi.hoisted(() => vi.fn());
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
@@ -25,6 +25,7 @@ describe("the caps", () => {
   it("mirror the core's: 2 MiB of text and 20 MiB of image", () => {
     expect(TEXT_CAP).toBe(2 * 1024 * 1024);
     expect(IMAGE_CAP).toBe(20 * 1024 * 1024);
+    expect(PDF_CAP).toBe(52_428_800);
   });
 });
 

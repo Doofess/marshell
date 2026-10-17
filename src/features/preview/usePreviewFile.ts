@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { IMAGE_CAP, TEXT_CAP, fetchContent, statFile, type Content } from "./previewApi";
+import { IMAGE_CAP, PDF_CAP, TEXT_CAP, fetchContent, statFile, type Content } from "./previewApi";
 import { decodeText, kindOf } from "./kinds";
 import { START, next, type ReloadState } from "./reload";
 
@@ -10,17 +10,17 @@ export type FileState =
   | { phase: "image"; url: string }
   | { phase: "tooLarge"; size: number; limit: number }
   | { phase: "binary" }
-  | { phase: "pdf" }
+  | { phase: "pdf"; bytes: ArrayBuffer; /** Counts refetches from 0, so the view reloads while keeping its scroll. */ version: number }
   | { phase: "deleted"; /** What was shown before the file went; it stays on screen under the notice. */ last?: Shown }
   | { phase: "error" };
 
 /** The states that carry content worth keeping on screen when the file disappears. */
-export type Shown = Extract<FileState, { phase: "text" | "image" }>;
+export type Shown = Extract<FileState, { phase: "text" | "image" | "pdf" }>;
 
 /** The state after a poll finds the file gone: the last text or image stays; anything else gives the plain message. */
 export function afterDeleted(prev: FileState): FileState {
   if (prev.phase === "deleted") return prev;
-  if (prev.phase === "text" || prev.phase === "image") return { phase: "deleted", last: prev };
+  if (prev.phase === "text" || prev.phase === "image" || prev.phase === "pdf") return { phase: "deleted", last: prev };
   return { phase: "deleted" };
 }
 
@@ -52,12 +52,9 @@ export function usePreviewFile(path: string): { file: FileState; updated: boolea
     setUpdated(false);
 
     const kind = kindOf(path);
-    if (kind === "pdf") {
-      setFile({ phase: "pdf" });
-      return;
-    }
-    const wire = kind === "image" ? "image" : "text";
-    const cap = kind === "image" ? IMAGE_CAP : TEXT_CAP;
+    const wire = kind === "pdf" ? "pdf" : kind === "image" ? "image" : "text";
+    const cap = kind === "pdf" ? PDF_CAP : kind === "image" ? IMAGE_CAP : TEXT_CAP;
+    let version = 0;
 
     const show = (content: Content) => {
       if (content.kind === "missing") {
@@ -71,7 +68,9 @@ export function usePreviewFile(path: string): { file: FileState; updated: boolea
         setFile({ phase: "tooLarge", size: content.size, limit: content.limit });
         return;
       }
-      if (wire === "image") {
+      if (wire === "pdf") {
+        setFile({ phase: "pdf", bytes: content.bytes, version: version++ });
+      } else if (wire === "image") {
         setFile({ phase: "image", url: URL.createObjectURL(new Blob([content.bytes], { type: imageType(path) })) });
       } else {
         const d = decodeText(content.bytes);

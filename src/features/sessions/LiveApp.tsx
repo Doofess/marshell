@@ -7,6 +7,9 @@ import { ApiError } from "../../lib/api/client";
 import { sessions } from "../../lib/api/sessions";
 import { close as closeWindow, minimize as minimizeWindow, onMaximizedChange, toggleMaximize } from "../../lib/window/appWindow";
 import { copyRecordingPath } from "./recording";
+import { addFailure, clipboardText, deliveryFor, noticeFor } from "../regions/deliver";
+import { regionText } from "../regions/region";
+import { pasteAttachment, saveAttachment } from "../regions/regionsApi";
 import { inMenu } from "../../components/ContextMenu/menuKeys";
 import { focusAfterMenu, menuFacts, modeOfItem } from "./sessionMenuRun";
 import { ContextMenu } from "../../components/ContextMenu/ContextMenu";
@@ -295,8 +298,8 @@ export function LiveApp() {
     [announce],
   );
   // Review the session in `tabId`, or say it isn't a task. What the state was when the key or button was pressed is read from refs.
-  const stateRef = useRef({ infos, tasks, focusedId, launcherOpen, overlay, review });
-  stateRef.current = { infos, tasks, focusedId, launcherOpen, overlay, review };
+  const stateRef = useRef({ infos, tasks, focusedId, launcherOpen, overlay, review, rows });
+  stateRef.current = { infos, tasks, focusedId, launcherOpen, overlay, review, rows };
   // Does what a review request came to: opens the sheet, or says why not (it isn't a task, or the task list can't be loaded).
   const actOn = useCallback(
     async (target: ReviewTarget) => {
@@ -325,6 +328,27 @@ export function LiveApp() {
       },
       (e: unknown) => announce(`Couldn't type that into the agent's terminal: ${reviewReason(e)}`),
     );
+  };
+  // "Add" on a marked region: saves the crop, then pastes its reference and comment into the session focused right now (an agent), or
+  // puts them on the clipboard (a plain terminal). Never Enter. The terminal gets the focus once the popover has unmounted.
+  const addRegion = async (r: { png: Blob; label: string; comment: string }): Promise<void> => {
+    const ep = endpointRef.current;
+    const { focusedId: id, rows: current } = stateRef.current;
+    const target = ep && id ? deliveryFor(current.find((x) => x.id === id) ?? null) : null;
+    if (!ep || !id || !target) throw new Error("No session to add it to.");
+    if ("refused" in target) throw new Error(target.refused);
+    const text = regionText(r.label, r.comment);
+    try {
+      const saved = await saveAttachment(ep, id, r.png);
+      if (target.via === "paste") await pasteAttachment(ep, id, { attachment: saved.name, text });
+      else await navigator.clipboard.writeText(clipboardText(saved.reference, text));
+    } catch (e) {
+      const message = `Couldn't add the region: ${addFailure(e)}`;
+      announce(message);
+      throw new Error(message);
+    }
+    announce(noticeFor(target.via, target.name));
+    setTimeout(() => actions.focusTerminal(), 0);
   };
   // A question about a session that is no longer the selected one, or is gone, has nothing left to ask.
   useEffect(() => {
@@ -873,6 +897,8 @@ export function LiveApp() {
           setTimeout(() => actions.focusTerminal(), 0);
         }}
         onEscape={() => actions.focusTerminal()}
+        regionTarget={deliveryFor(focusedRow ?? null)}
+        onRegion={addRegion}
       />
     ) : undefined;
   return (

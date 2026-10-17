@@ -8,6 +8,7 @@ import type { StatResult } from "./reload";
 /** The largest file the core serves per kind. Mirrors the core's caps; a bigger file is a 413 there and "too large" here. */
 export const TEXT_CAP = 2 * 1024 * 1024;
 export const IMAGE_CAP = 20 * 1024 * 1024;
+export const PDF_CAP = 50 * 1024 * 1024;
 
 const session = (tab: string) => `/v1/sessions/${encodeURIComponent(tab)}`;
 
@@ -26,8 +27,8 @@ export type Content =
   | { kind: "tooLarge"; size: number; limit: number }
   | { kind: "missing" };
 
-/** The file's bytes. `kind` is required by the core: it picks the cap (text or image). */
-export async function fetchContent(path: string, kind: "text" | "image"): Promise<Content> {
+/** The file's bytes. `kind` is required by the core: it picks the cap (text, image or pdf). */
+export async function fetchContent(path: string, kind: "text" | "image" | "pdf"): Promise<Content> {
   const ep = await getEndpoint();
   const res = await coreFetch(ep, "GET", `/v1/files/content?path=${encodeURIComponent(path)}&kind=${kind}`);
   if (res.status === 404) return { kind: "missing" };

@@ -42,6 +42,8 @@ const ALLOWED: Record<string, { reason: string; migrate?: true }> = {
   "features/sessions/PauseBar.tsx": { reason: "the Pause questions are the close bar's twin: the bar owns keyboard focus while it is up and exists only then; it is not a status message, and the window's Announcer cannot say a question that is still open" },
   "features/sessions/RestartBar.tsx": { reason: "the restart question is the close bar's twin: it owns keyboard focus while it is up and exists only then; it is not a status message, and the window's Announcer cannot say a question that is still open" },
   "features/preview/Preview.tsx": { reason: "the header's 'Updated' note, polite only while focus is inside the preview (someone reading the file) and off otherwise, so a refresh never interrupts a person typing in the terminal; the window's announcer would say it to everyone" },
+  "features/regions/RegionLayer.tsx": { reason: "the marked box's size and place, said 300 ms after the last arrow key so a run of presses is one sentence; the box owns keyboard focus while it is up and the window's Announcer cannot follow a box being moved" },
+  "features/regions/RegionComment.tsx": { reason: "the reason a region could not be added (it is paused, no session), in a popover that owns keyboard focus while it is up; it is not a status message the window's Announcer could keep" },
   "features/perf/PerfOverlay.tsx": { reason: 'aria-live="off": a developer overlay that explicitly stays silent' },
   "features/window/NavCursor.tsx": { reason: "migrate: the navigation cursor's own region says 'Selected session 6' and must go through the Announcer so the window has one", migrate: true },
 };

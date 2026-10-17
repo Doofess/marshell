@@ -1,5 +1,5 @@
 use marshell_protocol::api::{Profile, SessionMode, ShellFamily};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// The shell a new tab runs when the request names none.
 /// Windows: PowerShell 7 if installed, else Windows PowerShell. Unix: `$SHELL -l`.
@@ -337,6 +337,17 @@ pub fn resume_args(agent: &str) -> &'static [&'static str] {
         "codex" => &["resume", "--last"],
         "antigravity" => &["--continue"],
         _ => &[],
+    }
+}
+
+/// What to type into `agent`'s prompt so it reads the image at `path`: the absolute path in quotes.
+pub fn attachment_ref(agent: Option<&str>, path: &Path) -> String {
+    match agent {
+        Some("claude") => format!("\"{}\"", path.display()),
+        // Codex attaches an image from a path pasted alone, so the reference is the path and nothing else.
+        Some("codex") => format!("\"{}\"", path.display()),
+        Some("antigravity") => format!("\"{}\"", path.display()),
+        _ => format!("\"{}\"", path.display()),
     }
 }
 
@@ -743,6 +754,15 @@ mod tests {
     fn no_agent_returns_profile_command() {
         let ps = profile("pwsh", &["pwsh.exe", "-NoLogo"], ShellFamily::PowerShell);
         assert_eq!(launch_argv(&ps, None, Some("ignored"), None).unwrap(), ps.command);
+    }
+
+    #[test]
+    fn attachment_ref_quotes_the_absolute_path() {
+        let p = Path::new(r"C:\Users\Home Office\.marshell\attachments\t1\1.png");
+        let quoted = format!("\"{}\"", p.display());
+        for agent in [Some("claude"), Some("codex"), Some("antigravity"), Some("other"), None] {
+            assert_eq!(attachment_ref(agent, p), quoted);
+        }
     }
 
     #[test]

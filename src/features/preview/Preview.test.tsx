@@ -19,6 +19,8 @@ const base: PreviewPaneProps = {
   onView: noop,
   onClose: noop,
   onEscape: noop,
+  regionTarget: null,
+  onRegion: () => Promise.resolve(),
 };
 const html = (file: FileState, more: Partial<PreviewPaneProps> = {}) => renderToStaticMarkup(<PreviewPane {...base} file={file} {...more} />);
 
@@ -62,8 +64,10 @@ describe("PreviewPane", () => {
   it("says a file isn't text", () => {
     expect(html({ phase: "binary" })).toContain("This file isn&#x27;t text.");
   });
-  it("shows the PDF placeholder", () => {
-    expect(html({ phase: "pdf" })).toContain("PDF preview comes in a later update.");
+  it("shows a PDF in the PDF view, not the old placeholder", () => {
+    const out = html({ phase: "pdf", bytes: new ArrayBuffer(8), version: 0 }, { entry: { path: "C:\\docs\\a.pdf", view: "rendered" } });
+    expect(out).not.toContain("later update");
+    expect(out).toContain('data-kind="pdf"');
   });
   it("says a file was deleted", () => {
     expect(html({ phase: "deleted" })).toContain("This file was deleted.");
@@ -131,5 +135,18 @@ describe("formatSize", () => {
     expect(formatSize(1.5 * 1024 * 1024)).toBe("1.5 MB");
     expect(formatSize(300 * 1024)).toBe("300 KB");
     expect(formatSize(900)).toBe("900 B");
+  });
+});
+
+describe("PreviewPane: select region", () => {
+  it("offers the button on an image and on a PDF, not on Markdown", () => {
+    const image = html({ phase: "image", url: "blob:x" }, { entry: { path: "C:\\a\\p.png", view: "rendered" } });
+    const pdf = html({ phase: "pdf", bytes: new ArrayBuffer(0), version: 1 }, { entry: { path: "C:\\a\\p.pdf", view: "rendered" } });
+    const md = html({ phase: "text", text: "# hi" }, { entry: { path: "C:\\a\\p.md", view: "source" } });
+    expect(image).toContain("Select region");
+    expect(image).toContain('title="Select region (R)"');
+    // A PDF is offered it once its document has loaded, not while it is loading or when it failed (the first render has none).
+    expect(pdf).not.toContain("Select region");
+    expect(md).not.toContain("Select region");
   });
 });

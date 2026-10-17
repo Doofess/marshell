@@ -93,6 +93,8 @@
 
 /* The one scroll area of the pane. It takes the keyboard (arrows, Page Up and Down, Home and End) once focused. */
 .preview__body {
+  /* The height of the "deleted" notice; a sticky toolbar under it starts here, so neither covers the other. */
+  --notice-h: 28px;
   position: relative;
   overflow: auto;
   min-inline-size: 0;
@@ -124,7 +126,14 @@
   inset-block-start: 0;
   z-index: 1;
   grid-column: 1 / -1;
-  padding: var(--space-1) var(--space-4);
+  display: flex;
+  align-items: center;
+  box-sizing: border-box;
+  block-size: var(--notice-h);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  padding-inline: var(--space-4);
   border-block-end: 1px solid var(--hairline);
   background: var(--bg-raised);
   color: var(--text-1);
@@ -142,11 +151,48 @@
   place-items: center;
   padding: var(--space-3);
 }
+/*
+ * The frame fills the body's cell (a definite size), so the box can be fitted against it with container units. A percentage
+ * max-height on the image does not do it: the box around it has no height of its own, so the image overflows the box (a tall
+ * image by thousands of pixels, a large one by a part of its height), and the region's fractions stop matching the image.
+ */
+.preview__imagefit {
+  container-type: size;
+  justify-self: stretch;
+  align-self: stretch;
+  display: grid;
+  place-items: center;
+  min-inline-size: 0;
+  min-block-size: 0;
+}
+/* Before the image has loaded (its size unknown): as big as the image allows, and no bigger than the frame. */
+.preview__imagebox {
+  position: relative;
+  display: grid;
+  min-inline-size: 0;
+  min-block-size: 0;
+  max-inline-size: 100%;
+  max-block-size: 100%;
+}
 .preview__image {
   display: block;
   max-inline-size: 100%;
   max-block-size: 100%;
   object-fit: contain;
+}
+/* Loaded: the box is the image's own size, or the largest size of that ratio that fits the frame; the image fills it. */
+.preview__imagebox[data-fit="true"] {
+  display: block;
+  inline-size: min(calc(var(--nat-w) * 1px), 100cqw, calc(100cqh * var(--nat-w) / var(--nat-h)));
+  aspect-ratio: var(--nat-w) / var(--nat-h);
+  max-inline-size: none;
+  max-block-size: none;
+}
+.preview__imagebox[data-fit="true"] .preview__image {
+  inline-size: 100%;
+  block-size: 100%;
+  max-inline-size: none;
+  max-block-size: none;
 }
 
 /* Code: one row per line. The rows are as wide as the longest line, so the line numbers can stay put while the code scrolls sideways. */
