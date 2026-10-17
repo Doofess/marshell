@@ -610,3 +610,29 @@ describe("MainWindow: focus mode and the sidebar width", () => {
     expect(html({ sidebarWidth: 320, onSidebarWidth: () => {} })).toMatch(/window__side-handle[^>]*tabindex="0"/);
   });
 });
+
+describe("MainWindow: keyboard navigation", () => {
+  it("shows that nothing is selected: no pane is active, and the status bar says so", () => {
+    const h = html({ layout: "split", noneSelected: true });
+    expect(h).toContain("No session selected · Tab to select a terminal");
+    expect(h).not.toContain('data-active="true"');
+  });
+  it("says it without a status bar too (the live window has none)", () => {
+    expect(html({ layout: "split", noneSelected: true, statusBar: false })).toContain("No session selected · Tab to select a terminal");
+  });
+  it("draws the cursor and its hint inside the window", () => {
+    const h = html({ navCursor: { rect: { x: 0, y: 40, w: 288, h: 56 }, label: "Session 1, billing" } });
+    expect(h).toContain('class="nav-cursor"');
+    expect(h).toContain("Release Ctrl+Shift to select · Backspace for none");
+  });
+  it("marks what the cursor can reach: every pane, every session row and the top bar's controls", () => {
+    const h = html({ layout: "split" });
+    expect(h).toContain('data-nav-pane="0"');
+    expect(h).toContain('data-nav-pane="1"');
+    expect(h).toMatch(/data-nav-row="\d+"/);
+    expect(h).toContain('data-nav-top="palette"');
+    expect(h).toContain('data-nav-top="layout"');
+    expect(html({ width: 940 })).toMatch(/<button[^>]*rail__item[^>]*data-nav-row="\d+"|<button[^>]*data-nav-row="\d+"[^>]*rail__item/);
+    expect(html()).toContain('data-nav-pane="0"');
+  });
+});

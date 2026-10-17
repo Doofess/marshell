@@ -35,7 +35,9 @@ import { LiveShortcuts } from "./LiveShortcuts";
 import { ResumeBar } from "./ResumeBar";
 import { resumeCommand } from "./resumeCommand";
 import { holdsResume, resumeDisabledReason, resumeStateOf } from "./resumeState";
-import { SessionActions, closeBarText } from "./sessionActions";
+import { SessionActions, closeBarText, tabIdOfNumber } from "./sessionActions";
+import { useNavigation } from "./useNavigation";
+import type { NavEffect } from "../../lib/navigation/types";
 import { Toast } from "./Toast";
 import { pruneClosed, without, type StartingTexts } from "./startingTexts";
 import { SHELL_FAILED } from "../window/ShellPanel";
@@ -409,6 +411,56 @@ export function LiveApp() {
     [endpoint, panelTab, themeFor, terminalFont],
   );
 
+  // The app's shortcuts work from anywhere, the terminal included; the terminal lets these keys through (TerminalView).
+  const os = endpoint ? osOfPlatform(endpoint.platform) : undefined;
+
+  // Keyboard navigation (hold Ctrl+Shift): the cursor reaches the panes on screen, the session rows and the top bar.
+  const split = view.panes.length > 1;
+  const numberOf = (id: string | null | undefined) => (id ? (infos.find((i) => i.tab_id === id)?.number ?? null) : null);
+  const navPanes = split ? shownPanes.map(numberOf) : [numberOf(focusedId)];
+  const navNames = useMemo(() => Object.fromEntries(rows.map((r) => [r.number, r.name])), [rows]);
+  const applyNav = (effect: NavEffect) => {
+    switch (effect.type) {
+      case "select-pane":
+        if (split) dispatch({ type: "focusPane", index: effect.index });
+        actions.focusTerminal();
+        return;
+      case "bring-into-view": {
+        const id = tabIdOfNumber(infos, effect.number);
+        if (id === undefined) return;
+        if (!split) return void (pick(id), actions.focusTerminal());
+        selectRef.current(id);
+        dispatch({ type: "assign", index: effect.pane, tabId: id });
+        dispatch({ type: "focusPane", index: effect.pane });
+        actions.focusTerminal();
+        return;
+      }
+      case "activate":
+        if (effect.id === "palette") setOverlay("palette");
+        else if (effect.id === "layout") setLayoutMenu(true);
+        else if (effect.id === "launcher") setLauncherOpen(true);
+        return;
+      case "deselect":
+        // No terminal selected: the keys stop going to a program until a pane is chosen again.
+        if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
+        document.querySelector<HTMLElement>(".window__main")?.focus();
+        return;
+      case "announce":
+        announce(effect.text);
+        return;
+    }
+  };
+  const nav = useNavigation({
+    os: os ?? "windows",
+    enabled: os !== undefined && !launcherOpen && overlay === null && review === null,
+    panes: navPanes,
+    selectedPane: split ? focusIdx : 0,
+    names: navNames,
+    root: ref,
+    apply: applyNav,
+  });
+  const sendNav = nav.send;
+
   // The split view's shortcuts and commands. True when it was one of them.
   const paneCommand = useCallback(
     (shortcut: SessionShortcut | null): boolean => {
@@ -431,8 +483,9 @@ export function LiveApp() {
             dispatch({ type: "zoom" });
           }
           return true;
+        // The same events the chords send (useNavigation), so the palette's rows and the keys behave the same.
         case "nextPane":
-          dispatch({ type: "nextPane" });
+          sendNav([{ type: "tab" }]);
           return true;
         case "focusMode":
           dispatch({ type: "toggleFocus" });
@@ -454,19 +507,14 @@ export function LiveApp() {
           }
           return true;
         case "nonePane":
-          // No terminal selected: the keys stop going to a program until a pane is chosen again.
-          if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
-          document.querySelector<HTMLElement>(".window__main")?.focus();
+          sendNav([{ type: "select-none" }]);
           return true;
         default:
           return false;
       }
     },
-    [dispatch, announce],
+    [dispatch, announce, sendNav],
   );
-
-  // The app's shortcuts work from anywhere, the terminal included; the terminal lets these keys through (TerminalView).
-  const os = endpoint ? osOfPlatform(endpoint.platform) : undefined;
   // Review (Ctrl+Shift+R) is read apart from the rest because the window owns the key everywhere, the launcher, the overlays and the
   // sheet included: it is always prevented (it is the webview's hard reload), and acted on only when nothing else holds the keys.
   useEffect(() => {
@@ -643,6 +691,8 @@ export function LiveApp() {
           onSelect={pick}
           onReview={reviewSession}
           onPalette={() => setOverlay("palette")}
+          noneSelected={nav.noneSelected}
+          navCursor={nav.cursor}
         />
       )}
       {overlay === "palette" && os && <LivePalette sessions={paletteSessions(rows)} os={os} labels={paletteLabels} hidden={hiddenCommands} onRun={runFromPalette} onClose={() => setOverlay(null)} />}

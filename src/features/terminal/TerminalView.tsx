@@ -6,6 +6,7 @@ import type { Endpoint } from "../../generated/Endpoint";
 import { sessionShortcut } from "../../lib/appShortcuts";
 import { osOfPlatform } from "../../lib/keymap";
 import { onCoreEvent } from "../../lib/api/coreEvents";
+import { claimsKey } from "../sessions/useNavigation";
 import { PtySocket } from "../../lib/api/ptySocket";
 import { LatencyMeter } from "../perf/latency";
 import { PerfOverlay } from "../perf/PerfOverlay";
@@ -117,6 +118,8 @@ export function TerminalView({ endpoint, tabId, placeholder, onOutput, onSize, a
       // The app's session shortcuts (launcher, close, reopen, rename, go to, move) belong to the app: the terminal must not type
       // them (Ctrl+T and Ctrl+W are control codes). The app hears the same key on the window.
       if (e.type === "keydown" && sessionShortcut(e, osOfPlatform(endpoint.platform)) !== null) return false;
+      // So do the navigation chords once navigation has started (Ctrl+Shift+arrow selects a word until then).
+      if (e.type === "keydown" && claimsKey(e, osOfPlatform(endpoint.platform), "terminal")) return false;
       return true;
     });
 

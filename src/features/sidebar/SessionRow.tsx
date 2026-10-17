@@ -73,6 +73,7 @@ export function SessionRow({
       data-density={density}
       data-agent={row.agent}
       data-number={row.number}
+      data-nav-row={row.number}
       data-status={row.status}
       data-needs-you={NEEDS_YOU.has(row.status) || undefined}
       data-blocked={blocked(row.status)}

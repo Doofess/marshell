@@ -32,6 +32,8 @@ const CLOSE = "M2 2l6 6M8 2L2 8";
 export type PaneProps = {
   row: RowModel;
   active: boolean;
+  /** The pane's slot in the view, which the keyboard cursor reaches it by (`data-nav-pane`). */
+  navIndex?: number;
   setting: TerminalThemeSetting;
   style?: CSSProperties;
   /** What the terminal really gets, for the narrow-pane warning. */
@@ -65,7 +67,7 @@ export type PaneProps = {
  * the status glyph (the vendor mark moving, while working), the name, the project and, only when it applies,
  * how tight the pane is. A pane that needs you never recedes with the inactive headers.
  */
-export function Pane({ row, active, setting, style, cells, zoomedOf, othersRunning, runningElsewhere, value, composer = true, os = "windows", renderTerminal, onFocus, onZoom, onRemove }: PaneProps) {
+export function Pane({ row, active, navIndex, setting, style, cells, zoomedOf, othersRunning, runningElsewhere, value, composer = true, os = "windows", renderTerminal, onFocus, onZoom, onRemove }: PaneProps) {
   const needs = needsYou(row);
   // A manual CLI is a plain terminal: no prompt line of ours, and its rows go to the terminal.
   const line = composer && hasPromptLine(row);
@@ -77,6 +79,7 @@ export function Pane({ row, active, setting, style, cells, zoomedOf, othersRunni
     <section
       className="pane"
       data-active={active}
+      data-nav-pane={navIndex}
       data-agent={row.agent}
       data-plain={!hasPromptLine(row) || undefined}
       style={line ? { ...style, gridTemplateRows: `28px minmax(0, 1fr) ${COMPOSER.compact}px` } : style}
@@ -128,10 +131,10 @@ export function Pane({ row, active, setting, style, cells, zoomedOf, othersRunni
 }
 
 /** A slot with no session yet: pick one that is not on screen, or start a new one. */
-export function EmptyPane({ choices, active, style, os = "windows", onFocus, onRemove, onPick }: { choices: RowModel[]; active: boolean; style?: CSSProperties; os?: Os; onFocus?: () => void; onRemove?: () => void; onPick?: (tabId: string) => void }) {
+export function EmptyPane({ choices, active, navIndex, style, os = "windows", onFocus, onRemove, onPick }: { choices: RowModel[]; active: boolean; navIndex?: number; style?: CSSProperties; os?: Os; onFocus?: () => void; onRemove?: () => void; onPick?: (tabId: string) => void }) {
   const keys = shortcutLabel(commandById("launcher").binding!, os);
   return (
-    <section className="pane pane--empty" data-active={active} style={style} aria-label="Empty pane" onPointerDown={onFocus} onFocus={onFocus}>
+    <section className="pane pane--empty" data-active={active} data-nav-pane={navIndex} style={style} aria-label="Empty pane" onPointerDown={onFocus} onFocus={onFocus}>
       <header className="pane__header">
         <span className="pane__name">Empty pane</span>
         <span className="pane__spacer" />
