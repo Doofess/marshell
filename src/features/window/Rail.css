@@ -86,7 +86,7 @@
   inline-size: var(--stripe);
   background: var(--agent, var(--brand-generic));
 }
-/* The number rides the top corner of the item, over the stripe's side, and is the only text there apart from the monogram. */
+/* The number rides the top corner of the item, over the stripe's side, and is the only text there. */
 .rail__number {
   position: absolute;
   inset-block-start: 2px;
@@ -98,11 +98,12 @@
   padding-inline: 3px;
   line-height: 1.25;
 }
-.rail__item::after {
-  content: attr(data-mono);
-  font-size: var(--text-11);
-  font-weight: 600;
-  letter-spacing: 0.04em;
+/* The vendor mark is the item's picture; the status glyph sits under it (a working session's moving mark is its status). */
+.rail__mark {
+  display: grid;
+  justify-items: center;
+  gap: 3px;
+  line-height: 0;
 }
 .rail__item[aria-current="true"] {
   box-shadow: inset 0 0 0 100vmax var(--selected);
