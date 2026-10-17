@@ -37,6 +37,15 @@ export function restartBarText(info: SessionInfo, mode: Mode, working: boolean):
   return working ? `${text} ${agentLabel(info.agent ?? "")} may be mid-task.` : text;
 }
 
+/**
+ * Whether the restart bar has nothing left to ask: its session is gone, a close question is up, or the focus is on
+ * another session. `showing` is a session being brought on screen for the bar; until it is focused, that is not a move away.
+ */
+export function restartBarStale(s: { id: string; closing: string | null; focusedId: string | undefined; ids: string[]; showing: string | null }): boolean {
+  if (!s.ids.includes(s.id) || s.closing !== null) return true;
+  return s.id !== s.focusedId && s.id !== s.showing;
+}
+
 /** The tab of the session whose NUMBER is `number` (not the one in that position), or undefined. */
 export const tabIdOfNumber = (infos: SessionInfo[], number: number): string | undefined => infos.find((i) => i.number === number)?.tab_id;
 

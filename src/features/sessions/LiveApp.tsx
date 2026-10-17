@@ -39,9 +39,9 @@ import { LiveLauncher } from "./LiveLauncher";
 import { LivePalette } from "./LivePalette";
 import { LiveShortcuts } from "./LiveShortcuts";
 import { ResumeBar } from "./ResumeBar";
-import { resumeCommand } from "./resumeCommand";
+import { sessionResumeCommand } from "./resumeCommand";
 import { holdsResume, resumeBlockedReason, resumeStateOf } from "./resumeState";
-import { SessionActions, closeBarText, needsCloseConfirm, restartBarText, tabIdOfNumber } from "./sessionActions";
+import { SessionActions, closeBarText, needsCloseConfirm, restartBarStale, restartBarText, tabIdOfNumber } from "./sessionActions";
 import { navPanesOf, useNavigation } from "./useNavigation";
 import type { NavEffect } from "../../lib/navigation/types";
 import { Toast } from "./Toast";
@@ -290,9 +290,16 @@ export function LiveApp() {
   useEffect(() => {
     if (closing !== null && (closing !== focusedId || !infos.some((i) => i.tab_id === closing))) actions.cancelClose();
   }, [closing, focusedId, infos, actions]);
-  // The same for the restart bar; and a close question and a restart question are never up together.
+  // The same for the restart bar; and a close question and a restart question are never up together. A session that
+  // askRestart is bringing on screen is not focused yet for a render or two (a split waits for the pane count); that is
+  // not a move away, as long as the focus has not moved since the question.
+  const showingForRestart = useRef<{ id: string; from: string | undefined } | null>(null);
   useEffect(() => {
-    if (restarting !== null && (closing !== null || restarting.id !== focusedId || !infos.some((i) => i.tab_id === restarting.id))) actions.cancelRestart();
+    const pending = showingForRestart.current;
+    if (restarting === null || pending?.id !== restarting.id || focusedId === restarting.id) showingForRestart.current = null;
+    if (restarting === null) return;
+    const showing = pending?.id === restarting.id && focusedId === pending.from ? pending.id : null;
+    if (restartBarStale({ id: restarting.id, closing, focusedId, ids: infos.map((i) => i.tab_id), showing })) actions.cancelRestart();
   }, [restarting, closing, focusedId, infos, actions]);
   useEffect(() => {
     // The session went away, or the window shrank to a layout without the sidebar's rows.
@@ -471,7 +478,10 @@ export function LiveApp() {
     (id: string, mode: Mode): boolean => {
       if (!actions.askRestart(id, mode)) return false;
       actions.cancelClose();
-      if (!(shownPanes.includes(id) && id === focusedId)) showInPane(id);
+      if (!(shownPanes.includes(id) && id === focusedId)) {
+        showingForRestart.current = { id, from: focusedId };
+        showInPane(id);
+      }
       return true;
     },
     [actions, shownPanes, focusedId, showInPane],
@@ -733,7 +743,7 @@ export function LiveApp() {
           {bar && info && (
             <ResumeBar
               row={bar}
-              command={resumeCommand(info.agent, profile?.name ?? info.profile_id)}
+              command={sessionResumeCommand(info, profile?.name ?? info.profile_id)}
               folder={info.cwd}
               disabledReason={profileGone}
               onResume={() => startResume(bar)}

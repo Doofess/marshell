@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { Endpoint } from "../../generated/Endpoint";
 import type { SessionInfo } from "../../generated/SessionInfo";
-import { SessionActions, restartBarText } from "./sessionActions";
+import { SessionActions, restartBarStale, restartBarText } from "./sessionActions";
 
 const endpoint = { port: 1, token: "t", platform: "windows" } as Endpoint;
 const info = (tab_id: string): SessionInfo => ({ tab_id, number: 1, name: tab_id, agent: null, profile_id: "pwsh", cwd: "C:/x", project: "C:/x", state: { kind: "running" } }) as SessionInfo;
@@ -104,5 +104,22 @@ describe("restart in another mode", () => {
   it("restartBarText names the session, the mode and the command, and warns when it is working", () => {
     expect(restartBarText(agentInfo, "bypass", false)).toBe("Restart 3 billing in Bypass? It ends and runs claude --continue --permission-mode bypassPermissions.");
     expect(restartBarText(agentInfo, "bypass", true)).toBe("Restart 3 billing in Bypass? It ends and runs claude --continue --permission-mode bypassPermissions. Claude Code may be mid-task.");
+  });
+});
+
+describe("restartBarStale", () => {
+  const ids = ["a", "b"];
+  it("keeps the bar while its off-screen session is still being shown, before it is focused", () => {
+    expect(restartBarStale({ id: "b", closing: null, focusedId: "a", ids, showing: "b" })).toBe(false);
+  });
+  it("keeps the bar on the focused session", () => {
+    expect(restartBarStale({ id: "b", closing: null, focusedId: "b", ids, showing: null })).toBe(false);
+  });
+  it("drops the bar when the focus moved to another session", () => {
+    expect(restartBarStale({ id: "b", closing: null, focusedId: "a", ids, showing: null })).toBe(true);
+  });
+  it("drops the bar when the session is gone or a close question is up", () => {
+    expect(restartBarStale({ id: "c", closing: null, focusedId: "c", ids, showing: "c" })).toBe(true);
+    expect(restartBarStale({ id: "b", closing: "b", focusedId: "b", ids, showing: null })).toBe(true);
   });
 });

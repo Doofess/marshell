@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { resumeCommand } from "./resumeCommand";
+import { resumeCommand, sessionResumeCommand } from "./resumeCommand";
 
 describe("resumeCommand", () => {
   it("is the CLI's own continue command for each agent", () => {
@@ -19,5 +19,15 @@ describe("resumeCommand", () => {
   });
   it("is the profile's name for a plain shell", () => {
     expect(resumeCommand(null, "Git Bash")).toBe("Git Bash");
+  });
+});
+
+describe("sessionResumeCommand", () => {
+  // The core resumes with the saved mode, so an Ended Bypass tab's bar must say so.
+  it("shows the mode the session was last started in", () => {
+    expect(sessionResumeCommand({ agent: "claude", mode: "bypass" }, "pwsh")).toBe("claude --continue --permission-mode bypassPermissions");
+  });
+  it("shows no flags for a session without a mode", () => {
+    expect(sessionResumeCommand({ agent: "codex", mode: null }, "pwsh")).toBe("codex resume --last");
   });
 });

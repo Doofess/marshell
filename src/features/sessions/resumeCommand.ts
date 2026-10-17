@@ -1,6 +1,7 @@
 import type { CliId } from "../onboarding/types";
 import { launchArgs } from "../modes/sessionModes";
 import type { Mode } from "../sidebar/types";
+import type { SessionInfo } from "../../generated/SessionInfo";
 
 const isCliId = (agent: string): agent is CliId => agent === "claude" || agent === "codex" || agent === "antigravity";
 
@@ -16,4 +17,9 @@ export function resumeCommand(agent: string | null, profileName: string, mode?: 
   // The mode's own flags, as `mode_args` gives them; a mode the CLI can't have adds nothing.
   const flags = mode === undefined ? [] : (launchArgs(agent, mode, false)?.args ?? []);
   return [base, ...flags].join(" ");
+}
+
+/** The Resume bar's command for a session. The core resumes with the mode it was last started in, so the flags show too. */
+export function sessionResumeCommand(info: Pick<SessionInfo, "agent" | "mode">, profileName: string): string {
+  return resumeCommand(info.agent, profileName, info.mode ?? undefined);
 }

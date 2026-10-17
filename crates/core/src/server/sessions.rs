@@ -183,6 +183,9 @@ async fn start_session(
         });
 
     let tab_id = auth::new_id("t");
+    // The id is new, so the claim always succeeds. Held until the process is in the map, so a
+    // Restart that finds the reserved row cannot start a second process for it.
+    let _claim = st.claim_start(&tab_id);
     let (number, generation) = st.0.registry.reserve(
         &tab_id,
         Relaunch {
