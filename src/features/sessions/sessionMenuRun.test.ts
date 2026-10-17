@@ -1,13 +1,15 @@
 import { describe, expect, it } from "vitest";
+import type { Profile } from "../../generated/Profile";
 import type { SessionInfo } from "../../generated/SessionInfo";
 import type { RowModel } from "../sidebar/types";
-import { menuFacts } from "./sessionMenuRun";
+import { focusAfterMenu, menuFacts } from "./sessionMenuRun";
 
-const info = (tab_id: string, running = true): SessionInfo =>
-  ({ tab_id, state: running ? { kind: "running" } : { kind: "exited", code: 0 } }) as SessionInfo;
+const info = (tab_id: string, running = true, profile_id = "pwsh"): SessionInfo =>
+  ({ tab_id, profile_id, state: running ? { kind: "running" } : { kind: "exited", code: 0 } }) as SessionInfo;
 const row = (id: string, task = false) => ({ id, task }) as RowModel;
 const ctx = (over: Partial<Parameters<typeof menuFacts>[1]> = {}) => ({
   infos: [info("x")],
+  profiles: [{ id: "pwsh" }] as Profile[],
   rows: [row("x")],
   panes: ["x", null] as (string | null)[],
   shown: 2,
@@ -38,5 +40,35 @@ describe("menuFacts", () => {
   });
   it("room for another pane is available", () => {
     expect(menuFacts("z", ctx({ panes: ["a"], shown: 1, fit: 4 })).paneAvailable).toBe(true);
+  });
+});
+
+describe("menuFacts: Resume is offered only where the Resume bar would let it run", () => {
+  const exited = (profile: string, profiles: Profile[]) => menuFacts("x", ctx({ infos: [info("x", false, profile)], profiles }));
+  it("is not resumable when its shell profile was removed", () => {
+    expect(exited("gone", [{ id: "pwsh" }] as Profile[]).resumable).toBe(false);
+  });
+  it("a custom command has no profile to lose", () => {
+    expect(exited("custom", [{ id: "pwsh" }] as Profile[]).resumable).toBe(true);
+  });
+  it("an empty profile list is unknown, not removed", () => {
+    expect(exited("gone", []).resumable).toBe(true);
+  });
+});
+
+describe("focusAfterMenu", () => {
+  it("leaves focus to rename's box and the review sheet, which take it themselves", () => {
+    expect(focusAfterMenu("rename", false)).toBeNull();
+    expect(focusAfterMenu("review-task", false)).toBeNull();
+  });
+  it("puts focus back on the row after Resume, as Esc does", () => {
+    expect(focusAfterMenu("resume", false)).toBe("row");
+  });
+  it("puts focus in the terminal after Split and after a Close that goes straight through", () => {
+    expect(focusAfterMenu("split", false)).toBe("terminal");
+    expect(focusAfterMenu("close", false)).toBe("terminal");
+  });
+  it("leaves it to the close bar when Close needs the bar, which focuses Cancel itself", () => {
+    expect(focusAfterMenu("close", true)).toBeNull();
   });
 });

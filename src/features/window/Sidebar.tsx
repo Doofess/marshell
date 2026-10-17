@@ -6,7 +6,7 @@ import { Lane } from "../lane/Lane";
 import { laneLayout, pending } from "../lane/laneLayout";
 import { SessionRow, type RowDrag } from "../sidebar/SessionRow";
 import { dragOver, dropOrder, TAB_MIME, type DragState } from "../sidebar/reorder";
-import { menuStillValid } from "../sidebar/rowMenu";
+import { menuStillValid, sameMenuItems } from "../sidebar/rowMenu";
 import type { RowModel } from "../sidebar/types";
 import { groupBounds, groupedOrder, groupRows } from "../sidebar/grouping";
 import { Fragment, useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
@@ -80,8 +80,9 @@ export function Sidebar({
   const groups = grouped ? groupRows(rows) : null;
   const shown = groups ? groupedOrder(groups) : rows;
   const ids = shown.map((r) => r.id);
-  const menuValid = menuStillValid(menu?.id ?? null, ids);
-  // The row closed or went away while its menu was open: the menu goes too, and never acts on it.
+  // The row's state moving under it (a resume, an exit) changes what it offers: the menu closes rather than show a stale item.
+  const menuValid = menuStillValid(menu?.id ?? null, ids) && (!menu || !menuItems || sameMenuItems(menu.items, menuItems(menu.id)));
+  // The row closed, went away or changed while its menu was open: the menu goes too, and never acts on it.
   useEffect(() => {
     if (menu && !menuValid) setMenu(null);
   }, [menu, menuValid]);

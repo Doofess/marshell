@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { menuKey, placeMenu, type MenuItem } from "./menuKeys";
+import { inMenu, leavesMenu, menuKey, placeMenu, type MenuItem } from "./menuKeys";
 
 const items: MenuItem[] = [
   { id: "a", label: "Rename" },
@@ -53,5 +53,39 @@ describe("placeMenu", () => {
   });
   it("keeps the margin when the menu is larger than the viewport", () => {
     expect(placeMenu({ x: 300, y: 300 }, { w: 900, h: 700 }, vp)).toEqual({ x: 8, y: 8 });
+  });
+});
+
+describe("menuKey with modifiers held", () => {
+  it("type-ahead ignores a letter pressed with Ctrl, Alt or Meta (an app shortcut, not a search)", () => {
+    expect(menuKey("c", items, 0, { ctrlKey: true })).toBeNull();
+    expect(menuKey("c", items, 0, { altKey: true })).toBeNull();
+    expect(menuKey("c", items, 0, { metaKey: true })).toBeNull();
+  });
+  it("still searches with Shift or no modifier", () => {
+    expect(menuKey("C", items, 0, { ctrlKey: false, altKey: false, metaKey: false })).toEqual({ kind: "move", index: 3 });
+  });
+});
+
+describe("inMenu", () => {
+  it("is true for a target inside a menu, false for anything else", () => {
+    expect(inMenu({ closest: (s: string) => (s === '[role="menu"]' ? {} : null) })).toBe(true);
+    expect(inMenu({ closest: () => null })).toBe(false);
+    expect(inMenu({})).toBe(false);
+    expect(inMenu(null)).toBe(false);
+  });
+});
+
+describe("leavesMenu", () => {
+  const menu = { contains: (n: object) => n === inside };
+  const inside = {};
+  it("is true when focus lands on something outside the menu", () => {
+    expect(leavesMenu({}, menu)).toBe(true);
+  });
+  it("is false while focus moves between the menu's own items", () => {
+    expect(leavesMenu(inside, menu)).toBe(false);
+  });
+  it("is false when focus goes to nothing (the window lost focus, or the item unmounted)", () => {
+    expect(leavesMenu(null, menu)).toBe(false);
   });
 });

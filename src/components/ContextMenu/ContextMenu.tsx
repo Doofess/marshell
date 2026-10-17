@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import "./ContextMenu.css";
-import { menuKey, placeMenu, type MenuItem } from "./menuKeys";
+import { leavesMenu, menuKey, placeMenu, type MenuItem } from "./menuKeys";
 
 export type { MenuItem } from "./menuKeys";
 
@@ -46,7 +46,11 @@ export function ContextMenu({ items, label, anchor, onRun, onClose }: Props) {
   }, [onClose]);
 
   const onKeyDown = (e: React.KeyboardEvent) => {
-    const r = menuKey(e.key, items, active);
+    // The open menu owns every key: none reaches the window's shortcuts, which would act on the focused session, not this row.
+    // A chord is also kept from the webview (Ctrl+Shift+R would reload it), since the window's own handler no longer sees it.
+    e.stopPropagation();
+    if (e.ctrlKey || e.metaKey) e.preventDefault();
+    const r = menuKey(e.key, items, active, e);
     if (!r) return;
     // Tab keeps its default so focus moves on from where Tab puts it.
     if (!(r.kind === "close" && !r.refocus)) e.preventDefault();
@@ -64,6 +68,8 @@ export function ContextMenu({ items, label, anchor, onRun, onClose }: Props) {
       tabIndex={-1}
       style={{ position: "fixed", insetInlineStart: pos.x, insetBlockStart: pos.y }}
       onKeyDown={onKeyDown}
+      // Focus wandering out (a pane or a box taking it) must not leave a stale menu up. Not refocused: focus has a new home.
+      onBlur={(e) => leavesMenu(e.relatedTarget, e.currentTarget) && onClose({ refocus: false })}
       onContextMenu={(e) => e.preventDefault()}
     >
       {items.map((it, i) =>

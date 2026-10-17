@@ -4,7 +4,7 @@ import { ContextRing } from "../../components/ContextRing/ContextRing";
 import { SessionNumber } from "../../components/SessionNumber/SessionNumber";
 import type { DragEventHandler } from "react";
 import { RenameBox } from "./RenameBox";
-import { keyboardAnchor, opensRowMenu } from "./rowMenu";
+import { inRenameBox, keyboardAnchor, opensRowMenu } from "./rowMenu";
 import { formatDuration, formatUsage, modeCaution } from "./format";
 import { rowLabel, rowTitle } from "./labels";
 import { SESSION_NUMBER_HINT } from "./sessionNumber";
@@ -94,6 +94,8 @@ export function SessionRow({
       onContextMenu={
         onMenu &&
         ((e) => {
+          // The rename box keeps its own native menu (cut, copy, paste); opening ours would cancel the rename.
+          if (inRenameBox(e.target)) return;
           e.preventDefault();
           onMenu({ x: e.clientX, y: e.clientY });
         })

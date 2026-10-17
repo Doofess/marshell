@@ -6,7 +6,8 @@ import type { TaskChanges } from "../../generated/TaskChanges";
 import { ApiError } from "../../lib/api/client";
 import { sessions } from "../../lib/api/sessions";
 import { copyRecordingPath } from "./recording";
-import { menuFacts } from "./sessionMenuRun";
+import { inMenu } from "../../components/ContextMenu/menuKeys";
+import { focusAfterMenu, menuFacts } from "./sessionMenuRun";
 import { tasksApi } from "../../lib/api/tasks";
 import { cancelsCloseBar, commandShortcut, sessionShortcut, type SessionShortcut } from "../../lib/appShortcuts";
 import { osOfPlatform } from "../../lib/keymap";
@@ -37,7 +38,7 @@ import { LivePalette } from "./LivePalette";
 import { LiveShortcuts } from "./LiveShortcuts";
 import { ResumeBar } from "./ResumeBar";
 import { resumeCommand } from "./resumeCommand";
-import { holdsResume, resumeDisabledReason, resumeStateOf } from "./resumeState";
+import { holdsResume, resumeBlockedReason, resumeStateOf } from "./resumeState";
 import { SessionActions, closeBarText, needsCloseConfirm, tabIdOfNumber } from "./sessionActions";
 import { navPanesOf, useNavigation } from "./useNavigation";
 import type { NavEffect } from "../../lib/navigation/types";
@@ -50,8 +51,6 @@ import { useSessions } from "./useSessions";
 
 /** The size a new session starts at until a terminal has been measured. */
 const DEFAULT_SIZE = { cols: 120, rows: 30 };
-/** The core's id for a session started outside any saved shell profile; it never has a profile to lose. */
-const CUSTOM_PROFILE = "custom";
 /** What the announcer says when the shell panel is asked for where it is not drawn: the rail, focus mode, or a window under 960 px. */
 const SHELL_PANEL_ELSEWHERE = "The shell panel is in the expanded sidebar.";
 /** What the announcer says when a split is asked for and the window has no room to show another pane. */
@@ -296,7 +295,8 @@ export function LiveApp() {
   useEffect(() => {
     if (!barOpen) return;
     const onEscape = (e: KeyboardEvent) => {
-      if (!cancelsCloseBar(e, true)) return;
+      // An open row menu has its own Escape, which closes it and nothing else.
+      if (!cancelsCloseBar(e, true) || inMenu(e.target)) return;
       e.preventDefault();
       e.stopPropagation();
       actions.cancelClose();
@@ -426,11 +426,12 @@ export function LiveApp() {
   // The row menu: which items a row shows, and what each one does. Every action takes the row's own id, so it never waits for a
   // selection update to land.
   const menuItems = useCallback(
-    (id: string) => sessionMenuItems(menuFacts(id, { infos, rows: taskRows, panes: view.panes, shown: shownRef.current ?? view.panes.length, fit: fitRef.current ?? PANE_LIMIT }), os ?? "windows"),
-    [infos, taskRows, view.panes, os],
+    (id: string) => sessionMenuItems(menuFacts(id, { infos, profiles, rows: taskRows, panes: view.panes, shown: shownRef.current ?? view.panes.length, fit: fitRef.current ?? PANE_LIMIT }), os ?? "windows"),
+    [infos, profiles, taskRows, view.panes, os],
   );
   const onMenuRun = useCallback(
     (id: string, itemId: string) => {
+      const info = infos.find((i) => i.tab_id === id);
       switch (itemId) {
         // No timeout: the rename box mounts in the same update that closes the menu, and the menu closes without handing focus back.
         case "rename":
@@ -450,12 +451,15 @@ export function LiveApp() {
           break;
         case "close": {
           // The close bar belongs to the focused session (it goes away when focus moves off it), so a session that needs the bar is focused first.
-          const info = infos.find((i) => i.tab_id === id);
           if (info && needsCloseConfirm(info)) pick(id);
           void actions.requestClose(id);
           break;
         }
       }
+      // The menu item that had focus is gone with the menu: put focus somewhere real instead of the page.
+      const to = focusAfterMenu(itemId, info !== undefined && needsCloseConfirm(info));
+      if (to === "terminal") actions.focusTerminal();
+      else if (to === "row") document.querySelector<HTMLElement>(`[data-nav-row="${rows.find((r) => r.id === id)?.number}"]`)?.focus();
     },
     [actions, showInPane, rows, infos, pick, startResume, reviewSession],
   );
@@ -648,7 +652,7 @@ export function LiveApp() {
       const hasTerminal = bar === undefined || bar.phrase !== ENDED_PHRASE;
       const info = infos.find((i) => i.tab_id === row.id);
       const profile = profiles.find((p) => p.id === info?.profile_id);
-      const profileGone = info && info.profile_id !== CUSTOM_PROFILE ? resumeDisabledReason(info.profile_id, profiles) : undefined;
+      const profileGone = info && resumeBlockedReason(info.profile_id, profiles);
       return (
         <div className="resume-pane">
           {hasTerminal && (

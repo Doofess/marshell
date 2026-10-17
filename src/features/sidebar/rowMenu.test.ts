@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { keyboardAnchor, menuStillValid, opensRowMenu } from "./rowMenu";
+import type { MenuItem } from "../../components/ContextMenu/menuKeys";
+import { inRenameBox, keyboardAnchor, menuStillValid, opensRowMenu, sameMenuItems } from "./rowMenu";
 
 const key = (over: Partial<Parameters<typeof opensRowMenu>[0]>) => ({ key: "", shiftKey: false, ctrlKey: false, altKey: false, metaKey: false, target: null, ...over });
 
@@ -30,5 +31,31 @@ describe("menuStillValid", () => {
     expect(menuStillValid("a", ["a", "b"])).toBe(true);
     expect(menuStillValid("c", ["a", "b"])).toBe(false);
     expect(menuStillValid(null, [])).toBe(false);
+  });
+});
+
+describe("inRenameBox", () => {
+  it("is true for a target inside the rename box, so the row's contextmenu leaves it its native menu", () => {
+    expect(inRenameBox({ closest: (s: string) => (s === ".session-row__rename" ? {} : null) })).toBe(true);
+  });
+  it("is false elsewhere in the row, and for no target", () => {
+    expect(inRenameBox({ closest: () => null })).toBe(false);
+    expect(inRenameBox({})).toBe(false);
+    expect(inRenameBox(null)).toBe(false);
+  });
+});
+
+describe("sameMenuItems", () => {
+  const items = (...ids: string[]): MenuItem[] => ids.map((id) => (id === "-" ? { separator: true } : { id, label: id }));
+  it("holds when the ids match in order, whatever the objects", () => {
+    expect(sameMenuItems(items("rename", "resume", "-", "close"), items("rename", "resume", "-", "close"))).toBe(true);
+  });
+  it("fails when an item is gone, added or moved", () => {
+    expect(sameMenuItems(items("rename", "resume", "close"), items("rename", "close"))).toBe(false);
+    expect(sameMenuItems(items("rename", "close"), items("rename", "resume", "close"))).toBe(false);
+    expect(sameMenuItems(items("rename", "split"), items("split", "rename"))).toBe(false);
+  });
+  it("tells a separator from an item", () => {
+    expect(sameMenuItems(items("rename", "-"), items("rename", "close"))).toBe(false);
   });
 });
