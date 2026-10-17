@@ -16,6 +16,16 @@ const PALETTE_ONLY = ["profiles", "appearance", "unsplit", "layout", "resume", "
  */
 export const LIVE_COMMANDS = COMMANDS.filter((c) => PALETTE_ONLY.includes(c.id) || (c.id !== "palette" && commandShortcut(c.id) !== null));
 
+/** Esc closes the palette wherever the keys are (a pressed heading, the page), and the window behind never hears it. */
+export function escapeCloses(onClose: () => void) {
+  return (e: { key: string; preventDefault: () => void; stopPropagation: () => void }) => {
+    if (e.key !== "Escape") return;
+    e.preventDefault();
+    e.stopPropagation();
+    onClose();
+  };
+}
+
 /**
  * The command palette over the live window. It owns the typed text and the active row; the window decides what a command
  * does (`onRun` gets a command id, or `session:<id>`). Mounted only while open. Focus goes to the box and, on close, back to
@@ -31,6 +41,13 @@ export function LivePalette({ sessions, os, labels, hidden, onRun, onClose }: { 
   const [query, setQuery] = useState("");
   const [activeIndex, setActiveIndex] = useState(0);
   const root = useRef<HTMLDivElement>(null);
+  const closeRef = useRef(onClose);
+  closeRef.current = onClose;
+  useEffect(() => {
+    const onKey = escapeCloses(() => closeRef.current());
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, []);
   useEffect(() => {
     const before = document.activeElement;
     root.current?.querySelector<HTMLElement>(".palette__input")?.focus();

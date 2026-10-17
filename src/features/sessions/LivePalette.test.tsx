@@ -2,7 +2,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { commandShortcut } from "../../lib/appShortcuts";
 import { PALETTE_SESSIONS } from "../palette/fixtures";
-import { LIVE_COMMANDS, LivePalette } from "./LivePalette";
+import { LIVE_COMMANDS, LivePalette, escapeCloses } from "./LivePalette";
 
 describe("LivePalette", () => {
   it("lists only commands the window runs", () => {
@@ -48,5 +48,19 @@ describe("LivePalette", () => {
     const h = show({ "group-by-project": "Stop grouping by project" });
     expect(h).toContain("Stop grouping by project");
     expect(h).not.toContain("Group sessions by project");
+  });
+});
+
+describe("LivePalette: Esc", () => {
+  const press = (key: string) => {
+    const calls: string[] = [];
+    escapeCloses(() => calls.push("closed"))({ key, preventDefault: () => calls.push("prevented"), stopPropagation: () => calls.push("stopped") });
+    return calls;
+  };
+  it("closes the palette wherever the keys are, before the window hears it", () => {
+    expect(press("Escape")).toEqual(["prevented", "stopped", "closed"]);
+  });
+  it("leaves every other key alone", () => {
+    expect(press("ArrowDown")).toEqual([]);
   });
 });

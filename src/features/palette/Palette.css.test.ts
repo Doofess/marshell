@@ -25,6 +25,11 @@ describe("Palette.css", () => {
     expect(bare.slice(0, bare.indexOf("@media (hover: hover) and (pointer: fine)"))).not.toContain(":hover");
     expect(bare).not.toMatch(/outline:\s*none/);
   });
+  it("draws no ring on the box: it is the only thing in the sheet that takes focus, so the caret says where typing goes", () => {
+    // Transparent, not none: Windows high contrast still draws it in the system colour.
+    expect(rule(".palette__input:focus-visible")).toMatch(/outline:\s*2px solid transparent/);
+    expect(rule(".palette__input:focus-visible")).not.toContain("--accent");
+  });
   it("marks the active option with a bar as well as a fill", () => {
     expect(rule(".palette__opt[data-active]")).toContain("border-inline-start");
   });
