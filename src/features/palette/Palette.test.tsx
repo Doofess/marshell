@@ -209,3 +209,39 @@ describe("Palette: the pointer and the keys", () => {
     expect(asked).toEqual(['[id="p-opt-12"]', { block: "nearest" }]);
   });
 });
+
+describe("Palette: quick open", () => {
+  const files = { seen: ["src/manual.ts"], list: ["src/main.rs", "docs/mainly.md"], folder: "marshell" };
+  const withFiles = (query: string, f: { only?: boolean; truncated?: boolean } = {}) =>
+    renderToStaticMarkup(<Palette view={{ query, activeIndex: 0 }} sessions={PALETTE_SESSIONS} files={{ ...files, ...f }} />);
+  it("lists seen paths, then the folder's files, after sessions and commands once 2 characters are typed", () => {
+    const h = withFiles("ma");
+    expect(h).toContain("Seen in output");
+    expect(h).toContain("Files in marshell");
+    expect(h.indexOf("Seen in output")).toBeLessThan(h.indexOf("Files in marshell"));
+    expect(h.lastIndexOf('data-kind="session"')).toBeLessThan(h.indexOf("Files in marshell"));
+    expect(h).toContain("main.rs, src");
+  });
+  it("shows no file group for one character", () => {
+    const h = withFiles("m");
+    expect(h).not.toContain("Files in marshell");
+    expect(h).not.toContain("Seen in output");
+  });
+  it("shows only file groups in the Open file mode, the seen paths for an empty query", () => {
+    const h = withFiles("", { only: true });
+    expect(h).toContain("Seen in output");
+    expect(h).not.toContain("Files in marshell");
+    expect(h).not.toContain("Go to session");
+    expect(options(h)).toBe(1);
+    const q = withFiles("m", { only: true });
+    expect(q).toContain("Files in marshell");
+    expect(q).not.toContain("Go to session");
+  });
+  it("names a file option by its name and folder", () => {
+    expect(withFiles("manual")).toContain('aria-label="manual.ts, src"');
+  });
+  it("notes a truncated list", () => {
+    expect(withFiles("ma", { truncated: true })).toContain("Showing the first 20 000 files");
+    expect(withFiles("ma")).not.toContain("Showing the first");
+  });
+});

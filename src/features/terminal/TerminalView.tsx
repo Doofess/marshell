@@ -15,6 +15,7 @@ import { ENDED_LINE, FAILED_LINE, SESSION_ENDED } from "./coreRestart";
 import { jumpFrom, promptTarget, trackPrompts, type Prompt } from "./promptMarks";
 import "./PromptMarks.css";
 import { pathLinkProvider } from "./pathLinks";
+import { registerTerminal } from "./terminals";
 import { loadRenderer, type RendererKind } from "./renderer";
 import { trackColorSchemeMode } from "./colorSchemeMode";
 import { BUNDLED_FONT, fontStack } from "./terminalFont";
@@ -140,6 +141,7 @@ export function TerminalView({ endpoint, tabId, placeholder, onOutput, onSize, a
     loadRenderer(term, endpoint.platform, setRenderer);
     // The provider is disposed with the terminal.
     term.registerLinkProvider(pathLinkProvider(term, tabId, endpoint.platform, (entry) => previewRef.current(entry)));
+    const unregister = registerTerminal(tabId, () => term.buffer.active);
     term.attachCustomKeyEventHandler((e) => {
       if (isPerfToggle(e)) {
         setPerfOpen((open) => !open);
@@ -239,6 +241,7 @@ export function TerminalView({ endpoint, tabId, placeholder, onOutput, onSize, a
       cancelAnimationFrame(frame);
       subs.forEach((s) => s.dispose());
       socket.close();
+      unregister();
       term.dispose();
       termRef.current = null;
       fitRef.current = null;

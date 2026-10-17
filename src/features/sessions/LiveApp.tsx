@@ -147,6 +147,11 @@ export function LiveApp() {
   const [launcherOpen, setLauncherOpen] = useState(false);
   // The command palette, or the shell profiles page opened from it, over the window.
   const [overlay, setOverlay] = useState<"palette" | "profiles" | "appearance" | "shortcuts" | null>(null);
+  // "Open file…" opens the palette with files only; any other way of opening it lists everything.
+  const [filesOnly, setFilesOnly] = useState(false);
+  useEffect(() => {
+    if (overlay !== "palette") setFilesOnly(false);
+  }, [overlay]);
   // What the profiles page and the prompt jumps say aloud through the window's announcer. Negative ids never meet a toast's.
   const [notice, setNotice] = useState<Notice | null>(null);
   const noticeCount = useRef(0);
@@ -632,14 +637,17 @@ export function LiveApp() {
       switch (shortcut?.kind) {
         // With nothing opened yet there is nothing to bring back: the palette is where a file is picked.
         case "preview":
-          if (previewRef.current.state.entries.length === 0) setOverlay("palette");
-          else {
+          if (previewRef.current.state.entries.length === 0) {
+            setFilesOnly(true);
+            setOverlay("palette");
+          } else {
             const wasOpen = previewRef.current.state.open;
             previewRef.current.toggle();
             if (wasOpen) setTimeout(() => actions.focusTerminal(), 0);
           }
           return true;
         case "openFile":
+          setFilesOnly(true);
           setOverlay("palette");
           return true;
         case "split":
@@ -941,7 +949,7 @@ export function LiveApp() {
           }}
         />
       )}
-      {overlay === "palette" && os && <LivePalette sessions={paletteSessions(rows)} os={os} labels={paletteLabels} hidden={hiddenCommands} onRun={runFromPalette} onClose={() => setOverlay(null)} />}
+      {overlay === "palette" && os && <LivePalette sessions={paletteSessions(rows)} os={os} labels={paletteLabels} hidden={hiddenCommands} tab={focusedId ?? null} filesOnly={filesOnly} onOpenFile={(path) => { setOverlay(null); preview.open({ path }); }} onRun={runFromPalette} onClose={() => setOverlay(null)} />}
       {review && (
         <ReviewSheet
           task={review.task}

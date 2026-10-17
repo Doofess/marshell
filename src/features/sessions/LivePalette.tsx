@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { commandShortcut } from "../../lib/appShortcuts";
 import { COMMANDS, type Os } from "../../lib/keymap";
-import { Palette } from "../palette/Palette";
+import { Palette, type QuickFiles } from "../palette/Palette";
+import { useQuickFiles } from "../preview/quickFiles";
 import type { PaletteSession } from "../palette/fixtures";
 
 /**
@@ -31,7 +32,33 @@ export function escapeCloses(onClose: () => void) {
  * does (`onRun` gets a command id, or `session:<id>`). Mounted only while open. Focus goes to the box and, on close, back to
  * where it was (usually the terminal).
  */
-export function LivePalette({ sessions, os, labels, hidden, onRun, onClose }: { sessions: PaletteSession[]; os: Os; labels?: Record<string, string>; hidden?: readonly string[]; onRun: (id: string) => void; onClose: () => void }) {
+export function LivePalette({
+  sessions,
+  os,
+  labels,
+  hidden,
+  tab = null,
+  filesOnly = false,
+  onOpenFile,
+  onRun,
+  onClose,
+}: {
+  sessions: PaletteSession[];
+  os: Os;
+  labels?: Record<string, string>;
+  hidden?: readonly string[];
+  /** The focused session, whose files and output quick open lists. */
+  tab?: string | null;
+  /** "Open file…": only files are listed. */
+  filesOnly?: boolean;
+  /** A file row was chosen: the path to preview. */
+  onOpenFile?: (path: string) => void;
+  onRun: (id: string) => void;
+  onClose: () => void;
+}) {
+  const quick = useQuickFiles(tab);
+  const files: QuickFiles | undefined = quick ? { ...quick.files, only: filesOnly } : filesOnly ? { seen: [], list: [], folder: "", only: true } : undefined;
+  const run = (id: string) => (id.startsWith("file:") ? quick && onOpenFile?.(quick.pathOf(id.slice("file:".length))) : onRun(id));
   // A command whose words depend on the window's state (the sidebar command names what it will do next) gets its label from the window.
   // One that has nothing to do right now (Resume, with a running session focused) is left out, not listed as a row that does nothing.
   const commands = useMemo(() => {
@@ -67,7 +94,8 @@ export function LivePalette({ sessions, os, labels, hidden, onRun, onClose }: { 
           setActiveIndex(0);
         }}
         onActive={setActiveIndex}
-        onRun={onRun}
+        files={files}
+        onRun={run}
         onClose={onClose}
       />
     </div>

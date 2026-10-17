@@ -30,7 +30,7 @@ export function matchRanges(query: string, text: string): Range[] | null {
 }
 
 /** Longer runs and word-start matches score higher; the start of the text counts most; shorter text breaks near-ties. */
-function score(ranges: Range[], text: string): number {
+export function score(ranges: Range[], text: string): number {
   const t = Array.from(text);
   let s = 0;
   for (const [a, b] of ranges) {

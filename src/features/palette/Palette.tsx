@@ -5,6 +5,7 @@ import { StatusGlyph } from "../../components/StatusGlyph/StatusGlyph";
 import { GLYPHS } from "../../components/StatusGlyph/glyphs";
 import { COMMANDS, commandById, shortcutLabel, type Command, type Os } from "../../lib/keymap";
 import { filterCommands, filterSessions, highlight, parseSessionNumber, sessionDetail, type Hit, type Range, type SessionHit } from "../launcher/filter";
+import { rankFiles, splitPath, type FileHit } from "../preview/quickOpen";
 import type { PaletteSession } from "./fixtures";
 import "./Palette.css";
 
@@ -30,8 +31,21 @@ export function keepActiveInView(list: { querySelector: (sel: string) => { scrol
 const GROUPS: Command["group"][] = ["Sessions", "View", "Tools"];
 const FOCUS_SESSION = /^focus-session-\d+$/;
 
-type Item = { type: "session"; hit: SessionHit<PaletteSession> } | { type: "command"; hit: Hit<Command> };
-const itemId = (i: Item) => (i.type === "session" ? `session:${i.hit.item.id}` : i.hit.item.id);
+/** The files quick open offers, as display paths (`displayPath`): the ones seen in the session's output, and its folder's list. */
+export type QuickFiles = {
+  seen: string[];
+  list: string[];
+  folder: string;
+  truncated?: boolean;
+  /** "Open file…": file groups only. */
+  only?: boolean;
+};
+
+/** Files shown per group. */
+const FILE_LIMIT = 20;
+
+type Item = { type: "session"; hit: SessionHit<PaletteSession> } | { type: "command"; hit: Hit<Command> } | { type: "file"; hit: FileHit; group: string };
+const itemId = (i: Item) => (i.type === "session" ? `session:${i.hit.item.id}` : i.type === "file" ? `file:${i.hit.path}` : i.hit.item.id);
 
 const Marked = ({ text, ranges }: { text: string; ranges: Range[] }) => (
   <>
@@ -99,6 +113,28 @@ function SessionOption({ hit, id, active, os, onRun }: OptionProps & { hit: Sess
   );
 }
 
+/** One file: its name, then the folder it is in. The ranges are over the whole path, so they are split at the name. */
+function FileOption({ hit, id, active, onRun }: OptionProps & { hit: FileHit }) {
+  const { name, dir } = splitPath(hit.path);
+  const cut = Array.from(dir === "" ? "" : `${dir}/`).length;
+  const inName = hit.ranges.flatMap(([a, b]): Range[] => (b > cut ? [[Math.max(a, cut) - cut, b - cut]] : []));
+  const inDir = hit.ranges.flatMap(([a, b]): Range[] => (a < cut - 1 ? [[a, Math.min(b, cut - 1)]] : []));
+  return (
+    <li id={id} role="option" {...selectedProps(active, "selected", "palette__opt")} aria-label={dir === "" ? name : `${name}, ${dir}`} data-kind="file" data-active={active || undefined} onClick={() => onRun?.(`file:${hit.path}`)}>
+      <span className="palette__label" dir="auto">
+        <span className="palette__name">
+          <Marked text={name} ranges={inName} />
+        </span>{" "}
+        {dir !== "" && (
+          <span className="palette__detail">
+            <Marked text={dir} ranges={inDir} />
+          </span>
+        )}
+      </span>
+    </li>
+  );
+}
+
 /**
  * The command palette. Every action in the app is here, with its shortcut shown; shortcuts are rebindable in Settings.
  * With `sessions` it is also where you go to a session: each open one is a row with its number, and typing 6, #6 or
@@ -110,6 +146,7 @@ export function Palette({
   sessions,
   commands = COMMANDS,
   os = "windows",
+  files,
   onQuery,
   onRun,
   onActive,
@@ -120,8 +157,10 @@ export function Palette({
   /** The commands to list; all of them when left out. A window that runs only some of them passes just those. */
   commands?: Command[];
   os?: Os;
+  /** Quick open: with 2 or more characters typed the palette also lists these; with `only` it lists nothing else. */
+  files?: QuickFiles;
   onQuery?: (q: string) => void;
-  /** Receives a command's id, or `session:<id>` for a session row. */
+  /** Receives a command's id, `session:<id>` for a session row, or `file:<display path>` for a file. */
   onRun?: (id: string) => void;
   onActive?: (index: number) => void;
   onClose?: () => void;
@@ -135,11 +174,25 @@ export function Palette({
   const filtering = query.trim() !== "";
   const wanted = sessions ? parseSessionNumber(query) : null;
 
-  const sessionHits = sessions ? filterSessions(query, sessions) : [];
+  const only = files?.only === true;
+  const sessionHits = sessions && !only ? filterSessions(query, sessions) : [];
   const pool = sessions ? commands.filter((c) => !FOCUS_SESSION.test(c.id)) : commands;
   // A number means a session: no command should answer to "4" because its label says "up to 4".
-  const commandHits = wanted !== null ? [] : filterCommands(query, pool);
-  const items: Item[] = [...sessionHits.map((hit): Item => ({ type: "session", hit })), ...commandHits.map((hit): Item => ({ type: "command", hit }))];
+  const commandHits = only || wanted !== null ? [] : filterCommands(query, pool);
+  // One character matches too much to be worth a group; "Open file…" starts at one, and shows the seen paths before any.
+  const fileGroups: Array<{ title: string; hits: FileHit[] }> = [];
+  if (files && (only || query.trim().length >= 2)) {
+    const seenSet = new Set(files.seen);
+    const seenHits = rankFiles(query, [], files.seen, FILE_LIMIT);
+    const listHits = query.trim() === "" ? [] : rankFiles(query, files.list.filter((p) => !seenSet.has(p)), [], FILE_LIMIT);
+    if (seenHits.length > 0) fileGroups.push({ title: "Seen in output", hits: seenHits });
+    if (listHits.length > 0) fileGroups.push({ title: `Files in ${files.folder}`, hits: listHits });
+  }
+  const items: Item[] = [
+    ...sessionHits.map((hit): Item => ({ type: "session", hit })),
+    ...commandHits.map((hit): Item => ({ type: "command", hit })),
+    ...fileGroups.flatMap((g) => g.hits.map((hit): Item => ({ type: "file", hit, group: g.title }))),
+  ];
 
   // A stale or odd active index (the list got shorter, a NaN) falls back to a row that exists.
   const activeIndex = items.length === 0 ? 0 : Number.isFinite(view.activeIndex) ? Math.min(Math.max(0, Math.floor(view.activeIndex)), items.length - 1) : 0;
@@ -147,13 +200,19 @@ export function Palette({
   const option = (item: Item, index: number) =>
     item.type === "session" ? (
       <SessionOption key={itemId(item)} hit={item.hit} id={optId(index)} active={index === activeIndex} os={os} onRun={onRun} />
+    ) : item.type === "file" ? (
+      <FileOption key={itemId(item)} hit={item.hit} id={optId(index)} active={index === activeIndex} os={os} onRun={onRun} />
     ) : (
       <CommandOption key={itemId(item)} hit={item.hit} id={optId(index)} active={index === activeIndex} os={os} onRun={onRun} />
     );
 
   const numbers = sessions ? [...sessions].map((s) => s.number).sort((a, b) => a - b) : [];
   const empty =
-    wanted !== null
+    only
+      ? query.trim() === ""
+        ? "Type a file name"
+        : `No file matches “${query}”`
+      : wanted !== null
       ? `No session ${wanted}. ${numbers.length > 0 ? `Open sessions: ${numbers.join(", ")}.` : "No sessions are open."}`
       : `${sessions ? "No session or command matches" : "No command matches"} “${query}”`;
 
@@ -176,8 +235,19 @@ export function Palette({
   const activeId = optId(activeIndex);
   useEffect(() => keepActiveInView(list.current, activeId), [activeId]);
 
-  const prompt = sessions ? "Type a command, or a session number" : "Type a command";
+  const prompt = only ? "Type a file name" : sessions ? "Type a command, or a session number" : "Type a command";
   let index = -1;
+  const fileList = () =>
+    fileGroups.map((g) => (
+      <li key={g.title} role="presentation" className="palette__group-item">
+        <span className="palette__group" role="presentation">
+          {g.title}
+        </span>
+        <ul role="group" aria-label={g.title} className="palette__sub">
+          {items.filter((i) => i.type === "file" && i.group === g.title).map((item) => option(item, ++index))}
+        </ul>
+      </li>
+    ));
   return (
     <div className="palette" onMouseDown={(e) => pressInPalette(e, onClose)}>
       <div className="palette__backdrop" />
@@ -198,9 +268,14 @@ export function Palette({
             {empty}
           </p>
         ) : (
-          <ul ref={list} className="palette__list" id={listId} role="listbox" aria-label={sessions ? "Sessions and commands" : "Commands"}>
-            {filtering ? (
-              items.map((item) => option(item, ++index))
+          <ul ref={list} className="palette__list" id={listId} role="listbox" aria-label={only ? "Files" : sessions ? "Sessions and commands" : "Commands"}>
+            {only ? (
+              fileList()
+            ) : filtering ? (
+              <>
+                {items.filter((i) => i.type !== "file").map((item) => option(item, ++index))}
+                {fileList()}
+              </>
             ) : (
               <>
                 {sessionHits.length > 0 && (
@@ -227,6 +302,7 @@ export function Palette({
             )}
           </ul>
         )}
+        {files?.truncated && fileGroups.length > 0 && <p className="palette__empty">Showing the first 20 000 files</p>}
         <footer className="palette__footer">
           <span>
             <kbd>{"↑"}</kbd> <kbd>{"↓"}</kbd> choose {"·"} <kbd>Enter</kbd> run {"·"} <kbd>Esc</kbd> close

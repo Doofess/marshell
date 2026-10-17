@@ -805,6 +805,15 @@ Decisions from the 2026-10-10 coverage audit (`docs/superpowers/plan-coverage-au
      4. The cheat sheet (Ctrl+Shift+O) reads the live keymap and lists only the keys the window actually runs, so it can never show a binding that does nothing.
      5. The navigation cursor ships to the full spec: hold Ctrl+Shift, Tab starts it, the arrows move it across panes, the session list and the top bar, and releasing selects or brings that session into the focused pane. Ctrl+Shift+Backspace selects nothing. Until Tab starts navigation, Ctrl+Shift+arrow still reaches the terminal (word selection in the shell). Blur or Esc cancels with nothing selected.
      6. On Windows the webview's own browser shortcuts (Ctrl+Shift+I devtools, F5 and Ctrl+R reload, Ctrl+F find, Ctrl+P print) are switched off in every build, debug included, so app shortcuts behave the same while developing. WebKit on macOS and Linux has none of these.
+   - **Slice 2.5a decisions (2026-10-17).**
+     1. The preview toggles with Ctrl+Shift+Q. On macOS, ⌘Q is Quit, so a binding may carry a `mac` override and the preview uses ⌘⌥Q there (macOS is untested). Ctrl+click is ⌘+click on macOS.
+     2. A path opens with Ctrl+click, and only a path that exists becomes a link. Quick open lists the paths seen in the session's output first, for keyboard use.
+     3. Quick open is a mixed "Files in <folder>" group in the palette after 2 or more characters, with "Seen in output" before it, plus an "Open file…" command that shows files only.
+     4. The preview reads any file the user can read, through the token-checked API. Regular files only; the caps are 2 MB for text and 20 MB for images.
+     5. File drop moved to slice 2.5c.
+     6. A relative path resolves against the shell's current folder, then the launch folder, then the project root. A session in a worktree lists and resolves against its own worktree, not the main repo.
+     7. A changed file reloads automatically and keeps its scroll position.
+     8. Links in documents: a local link opens in the preview with Back, a web link asks before it opens the browser, and an anchor scrolls.
      15. A failed git call shows git's last `error:` or `fatal:` line after "Git said: ", else its last non-empty line. If the base can't be put back after a failed merge, the message adds the `git reset --merge` command to run.
      16. Large diffs are cut at 4 MiB on a file boundary. Binary and large untracked files show as a one-line note, not as text.
      17. The "Review changes" button sits inside the sidebar row. Ctrl+Shift+R and the palette are the keyboard and screen reader routes. A by-eye and NVDA check of the button is still open.
@@ -836,7 +845,7 @@ Decisions from the 2026-10-10 coverage audit (`docs/superpowers/plan-coverage-au
 2.5. **Context and preview** (added 2026-10-15, inspired by the features of the Codex desktop app, not its infrastructure; numbered 2.5 so later phases keep their numbers).
    - Scope:
      - **Preview pane.** Read-only preview of code (syntax highlighted), Markdown (rendered, with a source toggle), images, PDF and HTML.
-       - Opened from a clickable path in terminal output, by dropping a file on the window, or with quick open (fuzzy find in the focused session's folder). Its shortcut is picked in this phase's plan from the free letters in the shortcut table. P is taken by Zoom pane, I opens WebView DevTools and R reloads, so H, M, Q and X are the candidates. There is no file tree; that stays in v2.
+       - Opened from a clickable path in terminal output, by dropping a file on the window, or with quick open (fuzzy find in the focused session's folder). Its toggle is Ctrl+Shift+Q (⌘⌥Q on macOS, since ⌘Q is Quit). Dropping a file on the window moved to slice 2.5c. There is no file tree; that stays in v2.
        - Layout: the preview takes the space split view would use. Opening it shows the focused session and the preview side by side, and closing it brings the split back. This is the user's decision (2026-10-15): one session at a time while previewing.
      - **Region to prompt.** In a PDF or image preview, drag a box and type a comment. Marshell saves the crop as a PNG and puts the image reference, the file name and page, and the comment into the session's prompt line.
      - **Screenshot and image drop.** Paste or drop an image on a session, or capture a screen region. Marshell saves it and puts its reference into the prompt line.
