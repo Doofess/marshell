@@ -23,6 +23,7 @@ import { KeptTerminals } from "./keptTerminals";
 import { NavCursor, NO_SELECTION_TEXT } from "./NavCursor";
 import { Rail } from "./Rail";
 import { SCENARIO_FOOTER, SCENARIO_PLAN, SCENARIO_PORTS, SCENARIO_REQUESTS, SCENARIO_ROWS } from "./scenario";
+import type { Notice } from "./announce";
 import { SessionAnnouncer } from "./SessionAnnouncer";
 import { SessionHeader } from "./SessionHeader";
 import { windowTitle } from "./windowTitle";
@@ -115,7 +116,7 @@ export type MainWindowProps = {
   /** A receipt over the lower start corner of the terminal column. Plain markup: `notice` is what gets announced. */
   toast?: ReactNode;
   /** Text for the window's one announcer to say; a new `id` says it again, even if the text is the same. */
-  notice?: { id: number; text: string } | null;
+  notice?: Notice | null;
   /** F2: the sidebar row whose name is a text box, and what its Enter and its Escape or blur do. */
   renamingId?: string | null;
   onRename?: (id: string, name: string) => void;

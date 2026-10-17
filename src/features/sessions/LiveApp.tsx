@@ -22,6 +22,7 @@ import { reviewApi } from "../tasks/reviewRun";
 import { jumpWords } from "../terminal/promptMarks";
 import { resolveTerminalFont } from "../terminal/terminalFont";
 import { TerminalView, type TerminalThemeProp } from "../terminal/TerminalView";
+import type { Notice } from "../window/announce";
 import { sidebarMode } from "../window/layout";
 import { MainWindow } from "../window/MainWindow";
 import { PANE_LIMIT, type Arrangement } from "../window/splitLayout";
@@ -131,9 +132,9 @@ export function LiveApp() {
   // The command palette, or the shell profiles page opened from it, over the window.
   const [overlay, setOverlay] = useState<"palette" | "profiles" | "appearance" | "shortcuts" | null>(null);
   // What the profiles page and the prompt jumps say aloud through the window's announcer. Negative ids never meet a toast's.
-  const [notice, setNotice] = useState<{ id: number; text: string } | null>(null);
+  const [notice, setNotice] = useState<Notice | null>(null);
   const noticeCount = useRef(0);
-  const announce = useCallback((text: string) => setNotice({ id: -++noticeCount.current, text }), []);
+  const announce = useCallback((text: string, navigation?: boolean) => setNotice({ id: -++noticeCount.current, text, navigation }), []);
   // A prompt jump asked of one session's terminal; each token is one jump.
   const [promptJump, setPromptJump] = useState<{ token: number; by: -1 | 1; tabId: string } | null>(null);
   const jumpCount = useRef(0);
@@ -446,7 +447,8 @@ export function LiveApp() {
         document.querySelector<HTMLElement>(".window__main")?.focus();
         return;
       case "announce":
-        announce(effect.text);
+        // The cursor's receipt speaks for a switch it causes, so the focus-moved line is not said as well.
+        announce(effect.text, true);
         return;
     }
   };
