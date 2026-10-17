@@ -324,7 +324,7 @@ export function MainWindow({
   const asked = split && zoomIdx === undefined ? requested : 1;
 
   return (
-    <div className="window" style={{ inlineSize: width, blockSize: height, "--side-w": `${sideW}px` } as CSSProperties} data-mode={mode} data-layout={layout} data-agent={noneSelected ? undefined : active?.agent} data-title={title}>
+    <div className="window" style={{ inlineSize: width, blockSize: height, "--side-w": `${sideW}px` } as CSSProperties} data-mode={mode} data-layout={layout} data-title={title}>
       <SessionAnnouncer row={active} needsYou={waiting} notice={notice} />
       <header className="window__bar">
         <div className="window__bar-side">
