@@ -870,6 +870,16 @@ Decisions from the 2026-10-10 coverage audit (`docs/superpowers/plan-coverage-au
      - A PDF region reaches the prompt line, and the agent reads the crop, in both Claude Code and Codex.
      - A manual shell gets the clipboard fallback.
      - The whole flow works with the keyboard alone (open, select a region with the arrow keys, comment, fill).
+2.6. **Project docs for people and agents** (added 2026-10-18 and done before slice 2.5c; numbered 2.6 so later phases keep their numbers).
+   - Scope:
+     - `AGENTS.md` holds the instructions every coding agent shares: the project map, commands, verification, working rules and platform. It is worded for no one CLI.
+     - `CLAUDE.md` starts with `@AGENTS.md`, because Claude Code stops reading `AGENTS.md` by itself once a `CLAUDE.md` exists. It adds only Claude Code specifics: subagents and models, the slice workflow, where plans and ledgers live, the live-check recipe and compact instructions. The two together stay under 200 lines.
+     - `SCOPE.md` says what an agent may change freely, what needs the user first and what it never touches. It also holds the secrets, destructive-command and dependency rules that the brief's `SECURITY.md` template lists (§5.6). Both instruction files point to it.
+     - `SECURITY.md` is GitHub's security policy: how to report privately, supported versions, and the security model as built today.
+     - `README.md` is the public front page: what Marshell is, its status, platforms, building from source, the docs and the licence.
+     - From the phase-1 audit list, README and SECURITY.md are done here. CONTRIBUTING, the issue and PR templates and `docs/adr/` stay open.
+   - Decisions (2026-10-18): `SECURITY.md` is for GitHub and `SCOPE.md` is for agents; `AGENTS.md` is the shared core that `CLAUDE.md` imports. The old "don't run tests unless asked" rule became "run the checks that cover your change before calling it done", which every agent now follows.
+   - Exit: a fresh Claude Code session in the repo has `CLAUDE.md` and `AGENTS.md` loaded. GitHub shows the security policy, and private vulnerability reporting is on.
 3. **Config safety core + bridge + Claude adapter.**
    - Scope:
      - The **config service core**, built here because hook install depends on it: ChangeSet, preview diff, jsonc CST edits, atomic write, snapshot and restore, `managed.json`, watching, managed-path guard.
