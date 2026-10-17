@@ -10,7 +10,7 @@ use axum::body::Bytes;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
-use marshell_protocol::api::{AttachmentSaved, PasteRequest, SessionInfo};
+use marshell_protocol::api::{AttachmentSaved, PastePathsRequest, PasteRequest, SessionInfo};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 const PNG_SIGNATURE: [u8; 8] = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
@@ -76,10 +76,10 @@ pub(crate) fn check_comment(text: &str) -> Result<(), &'static str> {
     Ok(())
 }
 
-/// The bytes to type: each part wrapped as its own bracketed paste when the program asked for that.
-pub(crate) fn paste_bytes(parts: &[&str], bracketed: bool) -> Vec<u8> {
+/// The bytes to type: each piece wrapped as its own bracketed paste when the program asked for that.
+pub(crate) fn paste_pieces(pieces: &[&str], bracketed: bool) -> Vec<u8> {
     let mut out = Vec::new();
-    for part in parts {
+    for part in pieces {
         if bracketed {
             out.extend_from_slice(b"\x1b[200~");
         }
@@ -138,7 +138,65 @@ pub async fn paste(State(st): State<AppState>, Path(tab): Path<String>, Json(req
     } else {
         vec![&reference, &comment]
     };
-    session.write_input(paste_bytes(&parts, session.bracketed_paste()));
+    session.write_input(paste_pieces(&parts, session.bracketed_paste()));
+    StatusCode::NO_CONTENT.into_response()
+}
+
+const MAX_PASTED_PATHS: usize = 32;
+
+/// A path is typed inside quotes, so a `"` would end them early and a control character could end the
+/// paste or submit the line.
+fn pasteable(path: &str) -> bool {
+    std::path::Path::new(path).is_absolute() && !path.chars().any(|c| c == '"' || c.is_control())
+}
+
+/// POST /v1/sessions/{tab}/paste-paths: types dropped files and folders into the session, each
+/// reference as its own paste with a space as its own paste between them. No Enter is added. 404
+/// unknown tab, 409 paused, 400 for no paths, more than 32, or a path that isn't absolute, doesn't
+/// exist or can't be quoted.
+pub async fn paste_paths(
+    State(st): State<AppState>,
+    Path(tab): Path<String>,
+    Json(req): Json<PastePathsRequest>,
+) -> Response {
+    let Some(session) = st.session(&tab) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    if session.is_frozen() {
+        return cannot_resume("It is paused.");
+    }
+    if req.paths.is_empty() || req.paths.len() > MAX_PASTED_PATHS {
+        return (StatusCode::BAD_REQUEST, "Paste between 1 and 32 paths at a time.").into_response();
+    }
+    if let Some(bad) = req.paths.iter().find(|p| !pasteable(p)) {
+        return (StatusCode::BAD_REQUEST, format!("{bad} can't be pasted.")).into_response();
+    }
+    // A stat on a slow share can block, so it stays off the async threads.
+    let paths = req.paths.clone();
+    let all_exist = tokio::task::spawn_blocking(move || paths.iter().all(|p| std::fs::metadata(p).is_ok())).await;
+    if !all_exist.unwrap_or(false) {
+        return (StatusCode::BAD_REQUEST, "That path doesn't exist.").into_response();
+    }
+    let agent = st
+        .registry()
+        .snapshot()
+        .sessions
+        .iter()
+        .find(|s| s.tab_id == tab)
+        .and_then(effective_agent);
+    let references: Vec<String> = req
+        .paths
+        .iter()
+        .map(|p| attachment_ref(agent.as_deref(), std::path::Path::new(p)))
+        .collect();
+    let mut pieces: Vec<&str> = Vec::with_capacity(references.len() * 2);
+    for (i, reference) in references.iter().enumerate() {
+        if i > 0 {
+            pieces.push(" ");
+        }
+        pieces.push(reference);
+    }
+    session.write_input(paste_pieces(&pieces, session.bracketed_paste()));
     StatusCode::NO_CONTENT.into_response()
 }
 
@@ -171,12 +229,21 @@ mod tests {
     use super::*;
 
     #[test]
-    fn paste_bytes_wraps_each_part_when_the_program_asked_for_it() {
+    fn paste_pieces_wraps_each_piece_when_the_program_asked_for_it() {
         assert_eq!(
-            paste_bytes(&["\"a.png\"", " x.pdf, page 1: hi"], true),
+            paste_pieces(&["\"a.png\"", " x.pdf, page 1: hi"], true),
             b"\x1b[200~\"a.png\"\x1b[201~\x1b[200~ x.pdf, page 1: hi\x1b[201~".to_vec()
         );
-        assert_eq!(paste_bytes(&["\"a.png\"", " hi"], false), b"\"a.png\" hi".to_vec());
+        assert_eq!(paste_pieces(&["\"a.png\"", " hi"], false), b"\"a.png\" hi".to_vec());
+    }
+
+    #[test]
+    fn a_pasteable_path_is_absolute_without_a_quote_or_control_character() {
+        let abs = if cfg!(windows) { "C:\\a b\\c.txt" } else { "/a b/c.txt" };
+        assert!(pasteable(abs));
+        assert!(!pasteable("a/b.txt"));
+        assert!(!pasteable(&format!("{abs}\"")));
+        assert!(!pasteable(&format!("{abs}\n")));
     }
 
     #[test]

@@ -1,5 +1,6 @@
 import type { AttachmentSaved } from "../../generated/AttachmentSaved";
 import type { Endpoint } from "../../generated/Endpoint";
+import type { PastePathsRequest } from "../../generated/PastePathsRequest";
 import type { PasteRequest } from "../../generated/PasteRequest";
 import { ApiError, api, bearer, coreUrl } from "../../lib/api/client";
 
@@ -19,3 +20,7 @@ export async function saveAttachment(ep: Endpoint, tabId: string, png: Blob): Pr
 /** Pastes a saved attachment's reference and a comment into the session, never with Enter. A paused session answers 409. */
 export const pasteAttachment = (ep: Endpoint, tabId: string, req: PasteRequest): Promise<void> =>
   api<void>(ep, "POST", `${tab(tabId)}/paste`, req);
+
+/** Pastes dropped files and folders (1 to 32 absolute paths) into the session, never with Enter. A paused session answers 409. */
+export const pastePaths = (ep: Endpoint, tabId: string, paths: string[]): Promise<void> =>
+  api<void>(ep, "POST", `${tab(tabId)}/paste-paths`, { paths } satisfies PastePathsRequest);

@@ -215,3 +215,149 @@ async fn paste_to_an_unknown_tab_is_refused() {
     let res = paste(&s.app, "nope", "1.png", "hi").await;
     assert_eq!(res.status(), StatusCode::NOT_FOUND);
 }
+
+async fn paste_paths(app: &axum::Router, tab: &str, paths: &[String]) -> axum::response::Response {
+    let body = serde_json::json!({ "paths": paths });
+    call(app, "POST", &format!("/v1/sessions/{tab}/paste-paths"), Some(body)).await
+}
+
+fn file_in(dir: &Path, name: &str) -> String {
+    let path = dir.join(name);
+    std::fs::write(&path, b"x").unwrap();
+    path.to_string_lossy().into_owned()
+}
+
+/// A session whose program turns bracketed paste on and appends every byte typed to it to a file.
+/// Returns the router, the tab and that file.
+async fn capturing(s: &Setup) -> (axum::Router, String, std::path::PathBuf) {
+    let log = s.dir.path().join("typed.log");
+    let fake = env!("CARGO_BIN_EXE_fake-agent");
+    let command = vec![fake.into(), "capture-input".into(), log.to_string_lossy().into_owned()];
+    let state = AppState::new(
+        TOKEN.into(),
+        PORT,
+        vec![ORIGIN.into()],
+        s._home.path().to_path_buf(),
+        vec![profile("capture", command)],
+    );
+    let app = router(state.clone());
+    let body = serde_json::json!({
+        "cols": 80, "rows": 24, "profile_id": "capture", "cwd": s.dir.path().to_string_lossy(), "agent": null,
+    });
+    let res = call(&app, "POST", "/v1/sessions", Some(body)).await;
+    assert_eq!(res.status(), StatusCode::OK);
+    let bytes = axum::body::to_bytes(res.into_body(), 1024 * 1024).await.unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    let tab = json["tab_id"].as_str().unwrap().to_string();
+    let session = state.session(&tab).unwrap();
+    // The program sets raw input before it asks for bracketed paste, so this also means it is ready.
+    for _ in 0..200 {
+        if session.bracketed_paste() {
+            return (app, tab, log);
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    panic!("the program never turned bracketed paste on");
+}
+
+async fn typed(log: &Path, at_least: usize) -> Vec<u8> {
+    for _ in 0..200 {
+        let bytes = std::fs::read(log).unwrap_or_default();
+        if bytes.len() >= at_least {
+            // Give a stray extra write the chance to show up.
+            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+            return std::fs::read(log).unwrap_or_default();
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    std::fs::read(log).unwrap_or_default()
+}
+
+#[tokio::test]
+async fn pastes_each_path_as_its_own_bracketed_paste() {
+    let s = setup();
+    let (app, tab, log) = capturing(&s).await;
+    let a = file_in(s.dir.path(), "my file.txt");
+    let b = file_in(s.dir.path(), "r\u{e9}sum\u{e9} \u{65e5}\u{672c}.txt");
+    let res = paste_paths(&app, &tab, &[a.clone(), b.clone()]).await;
+    assert_eq!(res.status(), StatusCode::NO_CONTENT);
+    let expected = format!("\x1b[200~\"{a}\"\x1b[201~\x1b[200~ \x1b[201~\x1b[200~\"{b}\"\x1b[201~").into_bytes();
+    let got = typed(&log, expected.len()).await;
+    assert_eq!(String::from_utf8_lossy(&got), String::from_utf8_lossy(&expected));
+    assert!(!got.contains(&b'\r') && !got.contains(&b'\n'));
+}
+
+#[tokio::test]
+async fn pastes_a_folder_path() {
+    let s = setup();
+    let tab = session(&s.app, s.dir.path()).await;
+    let folder = s.dir.path().to_string_lossy().into_owned();
+    let res = paste_paths(&s.app, &tab, &[folder]).await;
+    assert_eq!(res.status(), StatusCode::NO_CONTENT);
+}
+
+#[tokio::test]
+async fn refuses_a_relative_path() {
+    let s = setup();
+    let tab = session(&s.app, s.dir.path()).await;
+    let res = paste_paths(&s.app, &tab, &["notes/todo.txt".into()]).await;
+    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn refuses_a_missing_path() {
+    let s = setup();
+    let tab = session(&s.app, s.dir.path()).await;
+    let missing = s.dir.path().join("nope.txt").to_string_lossy().into_owned();
+    let res = paste_paths(&s.app, &tab, &[missing]).await;
+    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+    let bytes = axum::body::to_bytes(res.into_body(), 1024 * 1024).await.unwrap();
+    assert_eq!(&bytes[..], b"That path doesn't exist.");
+}
+
+#[tokio::test]
+async fn refuses_an_empty_list() {
+    let s = setup();
+    let tab = session(&s.app, s.dir.path()).await;
+    let res = paste_paths(&s.app, &tab, &[]).await;
+    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn refuses_33_paths() {
+    let s = setup();
+    let tab = session(&s.app, s.dir.path()).await;
+    let one = s.dir.path().to_string_lossy().into_owned();
+    let res = paste_paths(&s.app, &tab, &vec![one.clone(); 32]).await;
+    assert_eq!(res.status(), StatusCode::NO_CONTENT);
+    let res = paste_paths(&s.app, &tab, &vec![one; 33]).await;
+    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn refuses_a_path_with_a_quote_or_control_char() {
+    let s = setup();
+    let tab = session(&s.app, s.dir.path()).await;
+    let base = s.dir.path().to_string_lossy().into_owned();
+    for bad in ["a\"b", "a\nb", "a\rb", "a\x1b[201~b", "a\x7fb", "a\u{9b}b"] {
+        let res = paste_paths(&s.app, &tab, &[format!("{base}{}{bad}", std::path::MAIN_SEPARATOR)]).await;
+        assert_eq!(res.status(), StatusCode::BAD_REQUEST, "{bad:?}");
+    }
+}
+
+#[tokio::test]
+async fn refuses_paths_for_a_paused_session() {
+    let s = setup();
+    let tab = session(&s.app, s.dir.path()).await;
+    let res = call(&s.app, "POST", &format!("/v1/sessions/{tab}/pause"), None).await;
+    assert_eq!(res.status(), StatusCode::NO_CONTENT);
+    let res = paste_paths(&s.app, &tab, &[s.dir.path().to_string_lossy().into_owned()]).await;
+    assert_eq!(res.status(), StatusCode::CONFLICT);
+}
+
+#[tokio::test]
+async fn refuses_paths_for_an_unknown_tab() {
+    let s = setup();
+    let res = paste_paths(&s.app, "nope", &[s.dir.path().to_string_lossy().into_owned()]).await;
+    assert_eq!(res.status(), StatusCode::NOT_FOUND);
+}
