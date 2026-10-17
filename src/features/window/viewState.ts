@@ -189,8 +189,11 @@ export function viewReducer(s: ViewState, a: ViewAction): ViewState {
       }
       // The active pane may be out of sight (the window shrank, or a pane was added past what fits): the selection goes to one on screen.
       const last = clamp(Math.floor(a.visible) - 1, 0, s.panes.length - 1);
-      const active = Math.min(s.active, last);
-      if (at >= 0 && at <= last) return { ...s, active: at };
+      // While a shown pane is zoomed it is the focused one; the zoom moves with the selection, so the session picked is the one on screen.
+      const shown = s.panes.slice(0, last + 1);
+      const zoomed = s.zoomed !== null && shown[s.zoomed] != null;
+      const active = focusedIndex(shown, s.active, s.zoomed);
+      if (at >= 0 && at <= last) return { ...s, active: at, zoomed: zoomed ? at : s.zoomed };
       const empty = s.zoomed === null ? s.panes.slice(0, last + 1).indexOf(null) : -1;
       if (at < 0 && empty >= 0) {
         const panes = [...s.panes];

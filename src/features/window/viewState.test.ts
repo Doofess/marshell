@@ -201,6 +201,17 @@ describe("viewReducer", () => {
     const s = run(state({ panes: ["a", null], active: 0, zoomed: 0 }), { type: "select", tabId: "x", visible: 2 });
     expect(s.panes).toEqual(["x", null]);
   });
+
+  it("select of a session behind the zoom moves the zoom to its pane", () => {
+    const s = run(state({ panes: ["a", "b"], active: 0, zoomed: 0 }), { type: "select", tabId: "b", visible: 2 });
+    expect(s.panes).toEqual(["a", "b"]);
+    expect(s.active).toBe(1);
+    expect(s.zoomed).toBe(1);
+    // A new session goes into the zoomed pane, even when the active one is another.
+    const into = run(state({ panes: ["a", "b"], active: 1, zoomed: 0 }), { type: "select", tabId: "x", visible: 2 });
+    expect(into.panes).toEqual(["x", "b"]);
+    expect(into.active).toBe(0);
+  });
 });
 
 describe("adoptTarget", () => {
