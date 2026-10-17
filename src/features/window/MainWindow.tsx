@@ -56,6 +56,8 @@ export type MainWindowProps = {
   rows?: RowModel[];
   requests?: ApprovalRequest[];
   selectedId?: string;
+  /** Every session on screen (the panes' sessions). Left out, only `selectedId` is marked. */
+  visibleIds?: readonly string[];
   os?: Os;
   terminalSetting?: TerminalThemeSetting;
   /** Shows the session header in focus mode, as hovering the top edge does (stories). */
@@ -132,6 +134,8 @@ export type MainWindowProps = {
   onSidebarReset?: () => void;
   /** A click on a sidebar row or a rail button gives that session's id. Left out, they do nothing (stories). */
   onSelect?: (id: string) => void;
+  /** Ctrl+click (Cmd on macOS) or Ctrl+Space on a session: add or remove its pane. */
+  onToggle?: (id: string) => void;
   /** Opens the review of a task row's session (its Review changes button). */
   onReview?: (id: string) => void;
   /** The items of a sidebar row's menu, and what choosing one does. Left out, rows have no menu. */
@@ -169,6 +173,7 @@ export function MainWindow({
   rows = SCENARIO_ROWS,
   requests = SCENARIO_REQUESTS,
   selectedId = "working",
+  visibleIds,
   os = "windows",
   terminalSetting = "follow-app",
   headerPeek: headerPeekProp = false,
@@ -204,6 +209,7 @@ export function MainWindow({
   onReorder,
   grouped,
   onSelect,
+  onToggle,
   onReview,
   menuItems,
   onMenuRun,
@@ -399,7 +405,7 @@ export function MainWindow({
       </header>
 
       <div ref={bodyRef} className="window__body">
-        {mode === "expanded" && <Sidebar rows={rows} requests={requests} height={height - BAR} width={sideW} selectedId={selected?.id} footer={footer ?? undefined} shell={shell ? { cwd: shellOptions.cwd ?? active?.project, shellName: shellNameFor(os), collapsed: shellCollapsed || shellOptions.hidden === true, os, terminal: shellOptions.terminal, failed: shellOptions.failed, onRetry: shellOptions.onRetry, openDisabled: shellOptions.openDisabled, forceOpen: shellOptions.forceOpen, onToggle: shellOptions.onToggle, onOpenInPane: shellOptions.onOpenInPane } : undefined} renamingId={renamingId} onRename={onRename} onRenameCancel={onRenameCancel} onReorder={onReorder} onSelect={onSelect} onReview={onReview} menuItems={menuItems} onMenuRun={onMenuRun} grouped={grouped} />}
+        {mode === "expanded" && <Sidebar rows={rows} requests={requests} height={height - BAR} width={sideW} selectedId={selected?.id} visibleIds={visibleIds} os={os} footer={footer ?? undefined} shell={shell ? { cwd: shellOptions.cwd ?? active?.project, shellName: shellNameFor(os), collapsed: shellCollapsed || shellOptions.hidden === true, os, terminal: shellOptions.terminal, failed: shellOptions.failed, onRetry: shellOptions.onRetry, openDisabled: shellOptions.openDisabled, forceOpen: shellOptions.forceOpen, onToggle: shellOptions.onToggle, onOpenInPane: shellOptions.onOpenInPane } : undefined} renamingId={renamingId} onRename={onRename} onRenameCancel={onRenameCancel} onReorder={onReorder} onSelect={onSelect} onToggle={onToggle} onReview={onReview} menuItems={menuItems} onMenuRun={onMenuRun} grouped={grouped} />}
         {mode === "expanded" && (
           <div
             className="window__side-handle"
@@ -416,7 +422,7 @@ export function MainWindow({
             onDoubleClick={onSidebarReset}
           />
         )}
-        {mode === "rail" && <Rail rows={rows} needsYou={waiting} selectedId={selected?.id} os={os} onSelect={onSelect} onPalette={onPalette} />}
+        {mode === "rail" && <Rail rows={rows} needsYou={waiting} selectedId={selected?.id} visibleIds={visibleIds} os={os} onSelect={onSelect} onToggle={onToggle} onPalette={onPalette} />}
 
         <div className="window__center">
         {/* A single terminal is slot 0 to the keyboard cursor; in split view each pane is its own slot. */}

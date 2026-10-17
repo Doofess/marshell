@@ -137,6 +137,10 @@
 .rail__item[aria-current="true"] {
   box-shadow: inset 0 0 0 100vmax var(--selected);
 }
+/* Every session on screen is filled; the focused one keeps aria-current's look, so the two read the same on the rail. */
+.rail__item[data-visible] {
+  box-shadow: inset 0 0 0 100vmax var(--selected);
+}
 .rail__item:focus-visible {
   outline: 2px solid var(--focus, var(--accent));
   outline-offset: -2px;
@@ -155,6 +159,10 @@
     outline: 1px solid CanvasText;
   }
   /* The selected item is told apart by an inset fill, which High Contrast drops, so it takes a system-colour outline like a selected row. */
+  .rail__item[data-visible] {
+    outline: 1px dashed Highlight;
+    outline-offset: -2px;
+  }
   .rail__item[aria-current="true"] {
     outline: 2px solid Highlight;
     outline-offset: -2px;

@@ -50,4 +50,19 @@ describe("SessionRow.css (blocked rows)", () => {
   it("shows the reason line in full-contrast text", () => {
     expect(rule(".session-row[data-blocked] .session-row__phrase")).toContain("var(--text-1)");
   });
+  it("draws the focused row's bar on the inline end in the accent, with logical properties only", () => {
+    const r = rule(".session-row__bar");
+    expect(r).toContain("3px");
+    expect(r).toContain("var(--accent)");
+    expect(css).not.toMatch(/(^|[\s;{])(left|right)\s*:/m);
+  });
+  it("tells visible and focused rows apart by outline shape in forced colours", () => {
+    const fc = css.slice(css.indexOf("@media (forced-colors: active)"));
+    const r = (sel: string) => {
+      const j = fc.indexOf(`${sel} {`);
+      return j < 0 ? "" : fc.slice(j, fc.indexOf("}", j));
+    };
+    expect(r('.session-row[aria-selected="true"]')).toContain("1px dashed Highlight");
+    expect(r(".session-row[data-focused]")).toContain("2px solid Highlight");
+  });
 });

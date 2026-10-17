@@ -3,8 +3,10 @@ import { AuxGlyph, StatusGlyph } from "../../components/StatusGlyph/StatusGlyph"
 import { ContextRing } from "../../components/ContextRing/ContextRing";
 import { SessionNumber } from "../../components/SessionNumber/SessionNumber";
 import type { DragEventHandler } from "react";
+import type { Os } from "../../lib/keymap";
 import { RenameBox } from "./RenameBox";
 import { inRenameBox, keyboardAnchor, opensRowMenu } from "./rowMenu";
+import { togglesPane, togglesPaneKey } from "./rowPick";
 import { formatDuration, formatUsage, modeCaution } from "./format";
 import { rowLabel, rowTitle } from "./labels";
 import { SESSION_NUMBER_HINT } from "./sessionNumber";
@@ -38,21 +40,30 @@ export function SessionRow({
   row,
   density,
   selected = false,
+  focused = false,
+  os = "windows",
   tabStop = false,
   drag,
   rename,
   onSelect,
+  onToggle,
   onReview,
   onMenu,
 }: {
   row: RowModel;
   density: Density;
   selected?: boolean;
+  /** The row of the focused pane: with several rows selected, the one that also gets the bar. */
+  focused?: boolean;
+  /** Decides which click toggles a pane (Cmd on macOS, Ctrl elsewhere). */
+  os?: Os;
   tabStop?: boolean;
   drag?: RowDrag;
   rename?: RowRename;
   /** A click on the row. Left out, a click does nothing (stories). */
   onSelect?: () => void;
+  /** Ctrl+click (Cmd on macOS) or Ctrl+Space: add or remove this session's pane. Left out, a click is always a plain click. */
+  onToggle?: () => void;
   /** Opens the review of this row's task. Left out, a task row shows its tag but no button (stories). */
   onReview?: () => void;
   /** Right-click, Shift+F10 or the Menu key: where to open the row's menu. Left out, the row has no menu. */
@@ -71,6 +82,7 @@ export function SessionRow({
       className="session-row"
       role="option"
       aria-selected={selected}
+      data-focused={focused || undefined}
       aria-haspopup={onMenu ? "menu" : undefined}
       tabIndex={tabStop ? 0 : -1}
       title={rowTitle(row)}
@@ -90,7 +102,7 @@ export function SessionRow({
       data-review={reviewable ? (selected ? "open" : "") : undefined}
       draggable={drag && !rename ? true : undefined}
       data-drop={drag?.dropEdge}
-      onClick={onSelect}
+      onClick={onToggle ? (e) => (togglesPane(e, os) ? onToggle() : onSelect?.()) : onSelect}
       onContextMenu={
         onMenu &&
         ((e) => {
@@ -101,12 +113,16 @@ export function SessionRow({
         })
       }
       onKeyDown={
-        onMenu &&
+        (onMenu || onToggle) &&
         ((e) => {
-          if (!opensRowMenu(e)) return;
-          e.preventDefault();
-          e.stopPropagation();
-          onMenu(keyboardAnchor(e.currentTarget.getBoundingClientRect()));
+          if (onMenu && opensRowMenu(e)) {
+            e.preventDefault();
+            e.stopPropagation();
+            onMenu(keyboardAnchor(e.currentTarget.getBoundingClientRect()));
+          } else if (onToggle && togglesPaneKey(e)) {
+            e.preventDefault();
+            onToggle();
+          }
         })
       }
       onDragStart={drag?.onDragStart}
@@ -115,6 +131,7 @@ export function SessionRow({
       onDragEnd={drag?.onDragEnd}
     >
       <span className="session-row__stripe" aria-hidden="true" />
+      {focused && <span className="session-row__bar" aria-hidden="true" />}
       {rename && <RenameBox original={row.name} onCommit={rename.onCommit} onCancel={rename.onCancel} />}
       <div className="session-row__line1" aria-hidden="true">
         <AgentMark agent={row.agent} working={row.status === "working"} />

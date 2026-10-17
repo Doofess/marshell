@@ -106,6 +106,23 @@ describe("Sidebar: rename and reorder", () => {
     expect(h).not.toContain("data-renaming");
     expect(h).not.toContain("data-drop");
   });
+  it("marks every visible session selected and the focused one with data-focused, only when visible ids are passed", () => {
+    const [a, b, c] = SCENARIO_ROWS.map((r) => r.id);
+    const h = html({ visibleIds: [a!, b!], selectedId: b });
+    const row = (id: string) => h.match(new RegExp(`<div[^>]*data-nav-row="${SCENARIO_ROWS.find((r) => r.id === id)!.number}"[^>]*>`))![0];
+    expect(row(a!)).toContain('aria-selected="true"');
+    expect(row(b!)).toContain('aria-selected="true"');
+    expect(row(c!)).toContain('aria-selected="false"');
+    expect((h.match(/data-focused/g) ?? []).length).toBe(1);
+    expect(row(b!)).toContain("data-focused");
+    expect(row(b!)).toContain('tabindex="0"');
+    expect((h.match(/role="option"[^>]*tabindex="0"/g) ?? []).length).toBe(1);
+    expect(h).toContain('aria-multiselectable="true"');
+    const plain = html({ selectedId: b });
+    expect(plain).not.toContain("aria-multiselectable");
+    expect(plain).not.toContain("data-focused");
+    expect((plain.match(/aria-selected="true"/g) ?? []).length).toBe(1);
+  });
   it("does not make a row draggable while its name is being edited", () => {
     const h = html({ onReorder: () => {}, renamingId: target.id, onRename: () => {}, onRenameCancel: () => {} });
     expect((h.match(/draggable="true"/g) ?? []).length).toBe(SCENARIO_ROWS.length - 1);

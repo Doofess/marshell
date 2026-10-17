@@ -25,6 +25,16 @@ describe("Rail", () => {
   it("marks the selected session", () => {
     expect(renderToStaticMarkup(<Rail rows={rows} needsYou={0} selectedId="working" />)).toContain('aria-current="true"');
   });
+  it("marks every visible session, the focused one keeping aria-current", () => {
+    const h = renderToStaticMarkup(<Rail rows={rows} needsYou={0} visibleIds={["needs-permission", "working"]} selectedId="working" />);
+    const items = h.match(/<button[^>]*rail__item[^>]*>/g)!;
+    expect(items.filter((i) => i.includes("data-visible")).length).toBe(2);
+    expect(items[1]).toContain('aria-current="true"');
+    expect(items[1]).toContain("data-visible");
+    expect(items[0]).not.toContain("aria-current");
+    expect(items[2]).not.toContain("data-visible");
+    expect(renderToStaticMarkup(<Rail rows={rows} needsYou={0} selectedId="working" />)).not.toContain("data-visible");
+  });
   it("carries the agent so the brand stripe colours", () => {
     expect(renderToStaticMarkup(<Rail rows={rows} needsYou={0} />)).toContain('data-agent="claude"');
   });
