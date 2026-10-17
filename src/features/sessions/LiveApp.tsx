@@ -13,6 +13,9 @@ import { tasksApi } from "../../lib/api/tasks";
 import { cancelsCloseBar, commandShortcut, sessionShortcut, type SessionShortcut } from "../../lib/appShortcuts";
 import { osOfPlatform } from "../../lib/keymap";
 import { paletteSessions } from "../palette/sessions";
+import { Preview } from "../preview/Preview";
+import { PreviewContext } from "../preview/PreviewContext";
+import { currentOf, usePreview } from "../preview/previewState";
 import { ProfilesDialog } from "../settings/ProfilesPage";
 import { modeMenuItems, sessionMenuItems } from "../sidebar/sessionMenu";
 import { nextSessionNumber } from "../sidebar/sessionNumber";
@@ -26,6 +29,7 @@ import { reviewApi } from "../tasks/reviewRun";
 import { jumpWords } from "../terminal/promptMarks";
 import { resolveTerminalFont } from "../terminal/terminalFont";
 import { TerminalView, type TerminalThemeProp } from "../terminal/TerminalView";
+import { appScheme, resolveTerminalTheme } from "../terminal/terminalTheme";
 import type { Notice } from "../window/announce";
 import { sidebarMode } from "../window/layout";
 import { MainWindow } from "../window/MainWindow";
@@ -97,6 +101,11 @@ export function LiveApp() {
   const focusIdxRef = useRef(focusIdx);
   focusIdxRef.current = focusIdx;
   const focusedId = view.panes[focusIdx] ?? selectedId;
+  // The preview pane: its history lives here so it outlasts a session switch. Open, it is about the focused session's window only.
+  const preview = usePreview();
+  const previewRef = useRef(preview);
+  previewRef.current = preview;
+  const previewEntry = preview.state.open ? currentOf(preview.state) : undefined;
   // Every session on screen, which the sidebar and the rail mark.
   const visibleIds = useMemo(() => visibleSessions(view.panes, shownCount ?? view.panes.length, view.zoomed), [view.panes, shownCount, view.zoomed]);
   // Going to a session is two things: the store's selection and the view's, where it focuses the pane showing it or fills the focused one.
@@ -621,6 +630,18 @@ export function LiveApp() {
     (shortcut: SessionShortcut | null): boolean => {
       const v = viewRef.current;
       switch (shortcut?.kind) {
+        // With nothing opened yet there is nothing to bring back: the palette is where a file is picked.
+        case "preview":
+          if (previewRef.current.state.entries.length === 0) setOverlay("palette");
+          else {
+            const wasOpen = previewRef.current.state.open;
+            previewRef.current.toggle();
+            if (wasOpen) setTimeout(() => actions.focusTerminal(), 0);
+          }
+          return true;
+        case "openFile":
+          setOverlay("palette");
+          return true;
         case "split":
           if (!roomForPane(v.panes.length, fitRef.current)) {
             announce(NO_PANE_ROOM);
@@ -730,8 +751,8 @@ export function LiveApp() {
       return void (gone && setTimeout(() => void openReview("", gone), 0));
     }
     const shortcut = commandShortcut(id);
-    // Both move the focus, so they wait for the palette to hand it back first.
-    if (shortcut?.kind === "nonePane" || shortcut?.kind === "shellPanel") return void setTimeout(() => paneCommand(shortcut), 0);
+    // These move the focus (or open a pane that takes it), so they wait for the palette to hand it back first.
+    if (shortcut?.kind === "nonePane" || shortcut?.kind === "shellPanel" || shortcut?.kind === "preview" || shortcut?.kind === "openFile") return void setTimeout(() => paneCommand(shortcut), 0);
     if (paneCommand(shortcut)) return;
     if (shortcut?.kind === "launcher") setLauncherOpen(true);
     else if (shortcut?.kind === "prompt") jumpPrompt(shortcut.by);
@@ -811,7 +832,26 @@ export function LiveApp() {
       </p>
     );
   }
+  // The preview pane for the current entry, drawn in the focused session's window. It follows the theme of the terminal beside it.
+  const previewPane =
+    previewEntry && os ? (
+      <Preview
+        entry={previewEntry}
+        theme={resolveTerminalTheme({ ...themeFor(overrideOf(focusedId ?? "")), app: appScheme() }).theme}
+        os={os}
+        canBack={preview.state.index > 0}
+        canForward={preview.state.index < preview.state.entries.length - 1}
+        onBack={preview.back}
+        onForward={preview.forward}
+        onClose={() => {
+          preview.close();
+          setTimeout(() => actions.focusTerminal(), 0);
+        }}
+        onEscape={() => actions.focusTerminal()}
+      />
+    ) : undefined;
   return (
+    <PreviewContext.Provider value={preview.open}>
     <div ref={ref} className="live-app">
       {endpoint && settled && loaded && (
         <MainWindow
@@ -838,7 +878,8 @@ export function LiveApp() {
           onPane={dispatch}
           rows={taskRows}
           selectedId={focusedId}
-          visibleIds={visibleIds}
+          visibleIds={previewPane && focusedId ? [focusedId] : visibleIds}
+          preview={previewPane}
           os={os}
           requests={[]}
           ports={[]}
@@ -926,5 +967,6 @@ export function LiveApp() {
         />
       )}
     </div>
+    </PreviewContext.Provider>
   );
 }

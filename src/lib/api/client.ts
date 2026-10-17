@@ -30,6 +30,22 @@ export function resetEndpoint(): void {
   endpoint = null;
 }
 
+/** One authenticated request to the core, answered as it came, for a caller that reads headers or raw bytes. `api()` is built on it. */
+export async function coreFetch(
+  ep: Endpoint,
+  method: "GET" | "POST" | "PATCH" | "PUT" | "DELETE",
+  path: string,
+  body?: unknown,
+): Promise<Response> {
+  const headers: Record<string, string> = { Authorization: `Bearer ${ep.token}` };
+  if (body !== undefined) headers["Content-Type"] = "application/json";
+  return fetch(`http://127.0.0.1:${ep.port}${path}`, {
+    method,
+    headers,
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+}
+
 /** One request to the core's local API. A 204 resolves to `undefined`. */
 export async function api<T>(
   ep: Endpoint,
@@ -37,13 +53,7 @@ export async function api<T>(
   path: string,
   body?: unknown,
 ): Promise<T> {
-  const headers: Record<string, string> = { Authorization: `Bearer ${ep.token}` };
-  if (body !== undefined) headers["Content-Type"] = "application/json";
-  const res = await fetch(`http://127.0.0.1:${ep.port}${path}`, {
-    method,
-    headers,
-    body: body === undefined ? undefined : JSON.stringify(body),
-  });
+  const res = await coreFetch(ep, method, path, body);
   if (!res.ok) throw new ApiError(res.status, await res.text());
   if (res.status === 204) return undefined as T;
   return (await res.json()) as T;

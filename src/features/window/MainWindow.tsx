@@ -31,6 +31,7 @@ import { windowTitle } from "./windowTitle";
 import { Sidebar, type SidebarFooter } from "./Sidebar";
 import { shellNameFor } from "./ShellPanel";
 import { ARRANGEMENTS, chooseArrangement, maxPanes, type Arrangement, type PaneCount, type Ratios } from "./splitLayout";
+import { PREVIEW_RATIO, clampPreviewRatio, previewLayout, previewTracks } from "./previewLayout";
 import { SplitView } from "./SplitView";
 import { focusedIndex, type ViewAction } from "./viewState";
 import "./MainWindow.css";
@@ -154,6 +155,11 @@ export type MainWindowProps = {
   noneSelected?: boolean;
   /** The keyboard cursor while Ctrl+Shift is held, measured against the window. */
   navCursor?: { rect: Rect; label: string } | null;
+  /**
+   * The preview pane. Present, it sits beside the focused session (or over it, in a narrow window) and the terminals stay mounted.
+   * A split view shows only the focused pane's session while it is open; closing the preview brings the split back as it was.
+   */
+  preview?: ReactNode;
 };
 
 const icon = (d: string) => (
@@ -227,6 +233,7 @@ export function MainWindow({
   onSidebarReset,
   noneSelected = false,
   navCursor = null,
+  preview,
 }: MainWindowProps) {
   const pref: SidebarPref = sidebarPref ?? (layout === "focus" ? "focus" : layout === "rail" ? "rail" : "expanded");
   const mode = sidebarMode(width, pref);
@@ -335,6 +342,28 @@ export function MainWindow({
     e.preventDefault();
     onSidebarWidth(clampSidebar(sideW + (e.key === grow ? SIDEBAR_STEP : -SIDEBAR_STEP)));
   };
+  // The preview's divider: the session's share of the main area. Not saved; every opening starts at half.
+  const mainRef = useRef<HTMLElement>(null);
+  const [previewRatio, setPreviewRatio] = useState<number>(PREVIEW_RATIO.default);
+  const previewing = !empty && preview !== undefined && preview !== null && preview !== false;
+  const previewFull = previewing && previewLayout(space.w) === "full";
+  const dragPreview = (e: ReactPointerEvent<HTMLElement>) => {
+    const main = mainRef.current;
+    if (!main || !e.currentTarget.hasPointerCapture(e.pointerId)) return;
+    const rect = main.getBoundingClientRect();
+    if (rect.width <= 0) return;
+    const rtl = getComputedStyle(main).direction === "rtl";
+    setPreviewRatio(clampPreviewRatio((rtl ? rect.right - e.clientX : e.clientX - rect.left) / rect.width));
+  };
+  const nudgePreview = (e: KeyboardEvent<HTMLElement>) => {
+    if (e.ctrlKey || e.altKey || e.metaKey) return;
+    const rtl = mainRef.current !== null && getComputedStyle(mainRef.current).direction === "rtl";
+    const grow = rtl ? "ArrowLeft" : "ArrowRight";
+    const shrink = rtl ? "ArrowRight" : "ArrowLeft";
+    if (e.key !== grow && e.key !== shrink) return;
+    e.preventDefault();
+    setPreviewRatio((r) => clampPreviewRatio(r + (e.key === grow ? PREVIEW_RATIO.step : -PREVIEW_RATIO.step)));
+  };
   // The pane clicks go out as view actions. Zooming makes the pane the focused one first, so it is the pane the zoom applies to.
   const paneHandlers = onPane && {
     onFocus: (index: number) => onPane({ type: "focusPane", index }),
@@ -440,18 +469,46 @@ export function MainWindow({
 
         <div className="window__center">
         {/* A single terminal is slot 0 to the keyboard cursor; in split view each pane is its own slot. */}
-        <main className="window__main" tabIndex={-1} data-placement={drawer ? placement : undefined} data-nav-pane={!empty && !split ? 0 : undefined}>
+        <main
+          ref={mainRef}
+          className="window__main"
+          tabIndex={-1}
+          data-placement={drawer && !previewing ? placement : undefined}
+          data-nav-pane={!empty && (!split || previewing) ? 0 : undefined}
+          data-preview={previewing ? (previewFull ? "full" : "beside") : undefined}
+          style={previewing && !previewFull ? { gridTemplateColumns: previewTracks(previewRatio) } : undefined}
+        >
           {empty ? (
             <div className="window__empty">
               No sessions yet. Start one with {shortcutLabel(commandById("launcher").binding!, os)}.
             </div>
-          ) : split ? (
+          ) : split && !previewing ? (
             <SplitView panes={shown} size={{ w: space.w, h: space.h }} activeIndex={noneSelected ? -1 : focusedIdx} hidden={hiddenCount} arrangement={chosen} ratios={ratios} zoomed={zoomIdx} choices={choices} composerValues={composerValues} composers={showComposer} setting={terminalSetting} os={os} renderTerminal={renderTerminal} paneBar={barInPane ? paneBar : undefined} {...paneHandlers} />
           ) : renderTerminal ? (
-            <KeptTerminals rows={rows} selectedId={selected.id} render={renderTerminal} />
+            // While the preview is open in a split view, the focused pane's session is the one beside it; the others stay mounted behind.
+            <KeptTerminals rows={rows} selectedId={previewing && split ? (active?.id ?? selected.id) : selected.id} render={renderTerminal} suspended={previewFull} />
           ) : (
             <ScriptedTerminal setting={terminalSetting} label={`Terminal for ${selected.name}`} {...(isTool(selected.agent) ? { script: shellSession({ cwd: selected.project }), size: SHELL_SIZE } : {})} />
           )}
+
+          {previewing && !previewFull && (
+            <div
+              className="split__handle preview__divider"
+              data-orientation="vertical"
+              role="separator"
+              aria-orientation="vertical"
+              aria-label="Resize the preview"
+              aria-valuemin={Math.round(PREVIEW_RATIO.min * 100)}
+              aria-valuemax={Math.round(PREVIEW_RATIO.max * 100)}
+              aria-valuenow={Math.round(clampPreviewRatio(previewRatio) * 100)}
+              tabIndex={0}
+              onPointerDown={(e) => e.button === 0 && e.currentTarget.setPointerCapture(e.pointerId)}
+              onPointerMove={dragPreview}
+              onKeyDown={nudgePreview}
+              onDoubleClick={() => setPreviewRatio(PREVIEW_RATIO.default)}
+            />
+          )}
+          {previewing && preview}
 
           {mode === "focus" && waiting > 0 && (
             <button type="button" className="focus-pill" aria-label={`${waiting} need you ${pillKeys}`}>

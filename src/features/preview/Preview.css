@@ -1,0 +1,186 @@
+/*
+ * The preview pane: a header like a pane's, then one scrolling body. The body takes the terminal theme's background and
+ * foreground (--code-*, set on the pane from the terminal's ANSI colours), so a file reads as part of the terminal beside it.
+ */
+.preview {
+  --paper: var(--code-background, var(--bg-base));
+  --ink: var(--code-foreground, var(--text-1));
+  display: grid;
+  grid-template-rows: 28px minmax(0, 1fr);
+  min-inline-size: 0;
+  min-block-size: 0;
+  background: var(--paper);
+  color: var(--ink);
+}
+
+.preview__header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-inline-size: 0;
+  padding-inline: var(--space-1);
+  border-block-end: 1px solid var(--hairline);
+  background: var(--bg-raised);
+  color: var(--text-1);
+  font-size: var(--text-12);
+}
+.preview__name {
+  flex-shrink: 1;
+  min-inline-size: min(8ch, 100%);
+  overflow: clip;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+}
+/* The folder gives way first: the file name is what the person asked for. */
+.preview__folder {
+  flex-shrink: 100;
+  min-inline-size: 0;
+  overflow: clip;
+  color: var(--text-2);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.preview__meta {
+  flex: none;
+  color: var(--text-2);
+  white-space: nowrap;
+}
+.preview__spacer {
+  flex: 1 1 0;
+}
+
+/* "Updated" fades in, holds, and is gone after two seconds (the hook sets and clears it). */
+.preview__updated {
+  flex: none;
+  color: var(--text-2);
+  opacity: 0;
+  white-space: nowrap;
+  transition: opacity var(--dur-fast) ease-out;
+}
+.preview__updated[data-show="true"] {
+  opacity: 1;
+}
+
+.preview__button {
+  display: grid;
+  flex: none;
+  place-items: center;
+  inline-size: 24px;
+  block-size: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--text-2);
+}
+.preview__button:disabled {
+  opacity: 0.4;
+}
+.preview__button:focus-visible {
+  outline: 2px solid var(--focus, var(--accent));
+  outline-offset: -2px;
+}
+.preview__button:not(:disabled):active {
+  box-shadow: inset 0 0 0 100vmax var(--selected);
+}
+@media (hover: hover) and (pointer: fine) {
+  .preview__button:not(:disabled):hover {
+    background: var(--hover);
+    color: var(--text-1);
+  }
+}
+
+/* The one scroll area of the pane. It takes the keyboard (arrows, Page Up and Down, Home and End) once focused. */
+.preview__body {
+  position: relative;
+  overflow: auto;
+  min-inline-size: 0;
+  min-block-size: 0;
+  background: var(--paper);
+  /* The page does not bounce when the file's end is reached. */
+  overscroll-behavior: contain;
+}
+.preview__body:focus-visible {
+  outline: 2px solid var(--focus, var(--accent));
+  outline-offset: -2px;
+}
+
+.preview__message,
+.preview__note {
+  margin: 0;
+  padding: var(--space-3) var(--space-4);
+  color: var(--text-2);
+  font-size: var(--text-13);
+  line-height: 1.5;
+}
+.preview__message {
+  max-inline-size: 60ch;
+}
+
+/* An image fits the pane and is centred in it, never stretched past its own size. */
+.preview__body:has(.preview__image) {
+  display: grid;
+  grid-template: minmax(0, 1fr) / minmax(0, 1fr);
+  place-items: center;
+  padding: var(--space-3);
+}
+.preview__image {
+  display: block;
+  max-inline-size: 100%;
+  max-block-size: 100%;
+  object-fit: contain;
+}
+
+/* Code: one row per line. The rows are as wide as the longest line, so the line numbers can stay put while the code scrolls sideways. */
+.code {
+  inline-size: max-content;
+  min-inline-size: 100%;
+  padding-block: var(--space-2);
+  font-family: var(--font-mono);
+  font-size: var(--text-13);
+  line-height: 1.5;
+  tab-size: 4;
+  white-space: pre;
+}
+.code__row[data-target="true"] {
+  background: var(--selected);
+}
+.code__no {
+  display: inline-block;
+  position: sticky;
+  inset-inline-start: 0;
+  inline-size: calc(var(--digits) * 1ch + var(--space-4));
+  padding-inline-end: var(--space-2);
+  background: var(--paper);
+  color: color-mix(in srgb, var(--ink) 55%, transparent);
+  text-align: end;
+  user-select: none;
+}
+.code__row[data-target="true"] .code__no {
+  background: color-mix(in srgb, var(--paper) 93%, var(--ink));
+  color: var(--ink);
+}
+.code__text {
+  padding-inline-end: var(--space-4);
+}
+/* An empty line keeps its height. */
+.code__text:empty::before {
+  content: "\200b";
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .preview__updated {
+    transition: none;
+  }
+}
+
+@media (forced-colors: active) {
+  .code__row[data-target="true"] {
+    outline: 1px solid Highlight;
+    outline-offset: -1px;
+  }
+  .code__no {
+    color: CanvasText;
+  }
+}

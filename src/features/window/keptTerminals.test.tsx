@@ -65,6 +65,15 @@ describe("TerminalStack", () => {
     // The hidden one is still in the page, with the hidden attribute.
     expect(html).toMatch(/<div[^>]*\bhidden\b[^>]*><i data-view="a"/);
   });
+  it("keeps every terminal mounted but shows none while suspended, as when the preview fills the window", () => {
+    const render = vi.fn((row: { id: string }, shown: boolean) => <i data-view={row.id} data-shown={shown} />);
+    const html = renderToStaticMarkup(<TerminalStack rows={rows} visited={["a", "c"]} selectedId="c" render={render} suspended />);
+    expect(render.mock.calls.map(([row, shown]) => [row.id, shown])).toEqual([
+      ["a", false],
+      ["c", false],
+    ]);
+    expect(html.match(/ hidden=/g)).toHaveLength(2);
+  });
   it("renders nothing for a visited session that is no longer in the list", () => {
     expect(wrappers(["a", "gone"], "a")).toEqual([{ key: "a", hidden: false }]);
   });

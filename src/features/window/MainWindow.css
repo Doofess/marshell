@@ -162,6 +162,17 @@
   min-inline-size: 0;
   min-block-size: 0;
 }
+/*
+ * With the preview open the main area is the session, a hairline divider and the preview (the columns come from the divider's
+ * ratio, inline). One row that cannot grow past the area, so the preview's body is the only thing that scrolls. In a narrow
+ * window the preview is alone in the area: the terminals stay mounted and hidden behind it.
+ */
+.window__main[data-preview] {
+  grid-template-rows: minmax(0, 1fr);
+}
+.window__main[data-preview="full"] {
+  grid-template-columns: minmax(0, 1fr);
+}
 /* One kept terminal. The `hidden` attribute (no display set here) takes the ones behind the selected session off screen. */
 .window__terminal {
   position: relative;
