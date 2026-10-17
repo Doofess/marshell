@@ -1,0 +1,136 @@
+/*
+ * Marking a region (docs/PLAN.md): a box laid over a page or an image, then a one-line comment beside it.
+ * The box is told apart by its dashed edge in the focus colour and by dimming everything outside it.
+ */
+.preview__body[data-selecting] [data-page] {
+  overflow: clip;
+  user-select: none;
+}
+
+/* Takes the pointer over a page while a region is being marked. */
+.region-capture {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  cursor: crosshair;
+  touch-action: none;
+}
+
+.region-box {
+  position: absolute;
+  z-index: 3;
+  pointer-events: none;
+  /* The dimming outside the box: a fill, not a ring. */
+  box-shadow: 0 0 0 100vmax color-mix(in srgb, var(--ink) 45%, transparent);
+}
+/* The box is always focused while it is shown, so its dashed edge is the focus outline (the one outline the rules keep). */
+.region-box:focus,
+.region-box:focus-visible {
+  outline: 2px dashed var(--focus, var(--accent));
+  outline-offset: -2px;
+}
+.region-box__live {
+  position: absolute;
+  inline-size: 1px;
+  block-size: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.region-popover {
+  position: fixed;
+  z-index: 20;
+  inline-size: 280px;
+  max-inline-size: calc(100vw - 2 * var(--space-2));
+}
+.region-comment {
+  display: grid;
+  gap: var(--space-1);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius);
+  background: var(--bg-raised);
+  box-shadow: var(--shadow-menu);
+  color: var(--text-1);
+  font-size: var(--text-12);
+}
+.region-comment__label {
+  color: var(--text-2);
+}
+.region-comment__input {
+  block-size: 28px;
+  padding-inline: var(--space-2);
+  border-radius: var(--radius);
+  background: var(--fill);
+  color: var(--text-1);
+  font: inherit;
+}
+.region-comment__input::placeholder {
+  color: var(--text-2);
+}
+.region-comment__input:focus-visible,
+.region-comment__btn:focus-visible {
+  outline: 2px solid var(--focus, var(--accent));
+  outline-offset: -2px;
+}
+.region-comment__target {
+  margin: 0;
+  color: var(--text-2);
+}
+.region-comment__error {
+  margin: 0;
+  color: var(--error);
+}
+.region-comment__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-1);
+}
+.region-comment__btn {
+  block-size: 24px;
+  padding-inline: var(--space-3);
+  border: 0;
+  border-radius: var(--radius);
+  background: var(--fill);
+  color: var(--text-1);
+  font: inherit;
+}
+.region-comment__btn--primary {
+  background: var(--fill-strong);
+}
+.region-comment__btn[aria-disabled="true"] {
+  opacity: 0.4;
+}
+@media (hover: hover) and (pointer: fine) {
+  .region-comment__btn:not([aria-disabled="true"]):hover {
+    background: var(--hover);
+  }
+}
+
+@media (forced-colors: active) {
+  .region-box:focus,
+  .region-box:focus-visible {
+    outline: 3px double Highlight;
+    outline-offset: -3px;
+  }
+  .region-comment {
+    outline: 1px solid CanvasText;
+    outline-offset: -1px;
+  }
+  .region-comment__btn,
+  .region-comment__input {
+    outline: 1px solid ButtonText;
+    outline-offset: -1px;
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .region-popover {
+    animation: region-in 120ms ease-out;
+  }
+}
+@keyframes region-in {
+  from {
+    opacity: 0;
+  }
+}

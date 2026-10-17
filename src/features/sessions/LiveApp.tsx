@@ -873,6 +873,8 @@ export function LiveApp() {
           setTimeout(() => actions.focusTerminal(), 0);
         }}
         onEscape={() => actions.focusTerminal()}
+        regionTarget={null}
+        onRegion={() => Promise.reject(new Error("No session to add it to."))}
       />
     ) : undefined;
   return (

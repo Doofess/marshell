@@ -19,6 +19,8 @@ const base: PreviewPaneProps = {
   onView: noop,
   onClose: noop,
   onEscape: noop,
+  regionTarget: null,
+  onRegion: () => Promise.resolve(),
 };
 const html = (file: FileState, more: Partial<PreviewPaneProps> = {}) => renderToStaticMarkup(<PreviewPane {...base} file={file} {...more} />);
 
@@ -133,5 +135,18 @@ describe("formatSize", () => {
     expect(formatSize(1.5 * 1024 * 1024)).toBe("1.5 MB");
     expect(formatSize(300 * 1024)).toBe("300 KB");
     expect(formatSize(900)).toBe("900 B");
+  });
+});
+
+describe("PreviewPane: select region", () => {
+  it("offers the button on an image and on a PDF, not on Markdown", () => {
+    const image = html({ phase: "image", url: "blob:x" }, { entry: { path: "C:\\a\\p.png", view: "rendered" } });
+    const pdf = html({ phase: "pdf", bytes: new ArrayBuffer(0), version: 1 }, { entry: { path: "C:\\a\\p.pdf", view: "rendered" } });
+    const md = html({ phase: "text", text: "# hi" }, { entry: { path: "C:\\a\\p.md", view: "source" } });
+    for (const out of [image, pdf]) {
+      expect(out).toContain("Select region");
+      expect(out).toContain('title="Select region (R)"');
+    }
+    expect(md).not.toContain("Select region");
   });
 });
