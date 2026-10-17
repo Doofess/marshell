@@ -22,10 +22,11 @@ impl fmt::Display for FreezeError {
 
 impl std::error::Error for FreezeError {}
 
-/// What a thaw needs: the threads that were suspended on Windows, nothing on Unix.
+/// What a thaw needs: on Windows the suspended threads, kept open so their ids cannot be reused;
+/// on Unix nothing.
 pub(crate) struct Frozen {
     #[cfg(windows)]
-    threads: Vec<u32>,
+    threads: Vec<windows::Suspended>,
 }
 
 /// Freezes the tree rooted at `pid`. Either all of it is frozen or none of it is.
@@ -66,7 +67,9 @@ pub(crate) fn thaw_tree(pid: u32, frozen: &Frozen) {
 #[cfg(windows)]
 mod windows {
     use std::collections::HashMap;
-    use windows_sys::Win32::Foundation::{CloseHandle, FILETIME, HANDLE, INVALID_HANDLE_VALUE};
+    use windows_sys::Win32::Foundation::{
+        CloseHandle, ERROR_ACCESS_DENIED, ERROR_INVALID_PARAMETER, FILETIME, HANDLE, INVALID_HANDLE_VALUE,
+    };
     use windows_sys::Win32::System::Diagnostics::ToolHelp::{
         CreateToolhelp32Snapshot, PROCESSENTRY32W, Process32FirstW, Process32NextW, TH32CS_SNAPPROCESS,
         TH32CS_SNAPTHREAD, THREADENTRY32, Thread32First, Thread32Next,
@@ -89,10 +92,21 @@ mod windows {
         }
     }
 
-    /// Suspends every thread of `root` and its descendants. Returns the thread ids it suspended,
+    // SAFETY: a kernel handle is only a number the kernel looks up; any thread may use or close it.
+    unsafe impl Send for Owned {}
+    // SAFETY: as above.
+    unsafe impl Sync for Owned {}
+
+    /// A thread this module suspended. The open handle keeps its id from being reused.
+    pub struct Suspended {
+        id: u32,
+        handle: Owned,
+    }
+
+    /// Suspends every thread of `root` and its descendants. Returns the threads it suspended,
     /// or rolls everything back and fails.
-    pub fn suspend_tree(root: u32) -> Result<Vec<u32>, ()> {
-        let mut done: Vec<u32> = Vec::new();
+    pub fn suspend_tree(root: u32) -> Result<Vec<Suspended>, ()> {
+        let mut done: Vec<Suspended> = Vec::new();
         for _ in 0..MAX_PASSES {
             let Some(pids) = descendants(root) else {
                 resume_threads(&done);
@@ -102,43 +116,52 @@ mod windows {
                 resume_threads(&done);
                 return Err(());
             };
-            let fresh: Vec<u32> = threads.into_iter().filter(|t| !done.contains(t)).collect();
+            let fresh: Vec<u32> = threads
+                .into_iter()
+                .filter(|t| done.iter().all(|d| d.id != *t))
+                .collect();
             if fresh.is_empty() {
                 return Ok(done);
             }
             for tid in fresh {
-                if !suspend(tid) {
-                    resume_threads(&done);
-                    return Err(());
+                match suspend(tid) {
+                    Ok(Some(thread)) => done.push(thread),
+                    Ok(None) => {}
+                    Err(()) => {
+                        resume_threads(&done);
+                        return Err(());
+                    }
                 }
-                done.push(tid);
             }
         }
         resume_threads(&done);
         Err(())
     }
 
-    pub fn resume_threads(threads: &[u32]) {
-        for &tid in threads {
-            // SAFETY: the result is checked; the handle is closed by `Owned`.
-            let handle = unsafe { OpenThread(THREAD_SUSPEND_RESUME, 0, tid) };
-            if !handle.is_null() {
-                let handle = Owned(handle);
-                // SAFETY: `handle` is a valid thread handle with the resume right.
-                unsafe { ResumeThread(handle.0) };
-            }
+    pub fn resume_threads(threads: &[Suspended]) {
+        for thread in threads {
+            // SAFETY: the handle is a valid thread handle with the resume right.
+            unsafe { ResumeThread(thread.handle.0) };
         }
     }
 
-    fn suspend(tid: u32) -> bool {
+    /// `Ok(None)` if the thread ended since the snapshot.
+    fn suspend(tid: u32) -> Result<Option<Suspended>, ()> {
         // SAFETY: the result is checked; the handle is closed by `Owned`.
         let handle = unsafe { OpenThread(THREAD_SUSPEND_RESUME, 0, tid) };
         if handle.is_null() {
-            return false;
+            return if std::io::Error::last_os_error().raw_os_error() == Some(ERROR_INVALID_PARAMETER as i32) {
+                Ok(None)
+            } else {
+                Err(())
+            };
         }
         let handle = Owned(handle);
         // SAFETY: `handle` is a valid thread handle with the suspend right.
-        unsafe { SuspendThread(handle.0) != u32::MAX }
+        if unsafe { SuspendThread(handle.0) } == u32::MAX {
+            return Err(());
+        }
+        Ok(Some(Suspended { id: tid, handle }))
     }
 
     fn snapshot(flags: u32) -> Option<Owned> {
@@ -167,12 +190,16 @@ mod windows {
         Some(out)
     }
 
-    /// When the process started, or `None` if it cannot be read (it ended, or it is not ours to query).
-    fn creation_time(pid: u32) -> Option<u64> {
+    /// When the process started. `Ok(None)` if it is gone. `Err` if it exists but cannot be queried,
+    /// such as a process running as administrator.
+    fn creation_time(pid: u32) -> Result<Option<u64>, ()> {
         // SAFETY: the result is checked; the handle is closed by `Owned`.
         let handle = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) };
         if handle.is_null() {
-            return None;
+            return match std::io::Error::last_os_error().raw_os_error() {
+                Some(code) if code == ERROR_ACCESS_DENIED as i32 => Err(()),
+                _ => Ok(None),
+            };
         }
         let handle = Owned(handle);
         let zero = FILETIME {
@@ -182,15 +209,15 @@ mod windows {
         let (mut created, mut exited, mut kernel, mut user) = (zero, zero, zero, zero);
         // SAFETY: `handle` is a valid process handle; the four pointers are valid FILETIMEs.
         let ok = unsafe { GetProcessTimes(handle.0, &mut created, &mut exited, &mut kernel, &mut user) } != 0;
-        ok.then(|| (u64::from(created.dwHighDateTime) << 32) | u64::from(created.dwLowDateTime))
+        Ok(ok.then(|| (u64::from(created.dwHighDateTime) << 32) | u64::from(created.dwLowDateTime)))
     }
 
     /// `root` and every process it started. A child counts only if it started after its parent, so a
-    /// process whose recorded parent pid was reused by one of ours is left alone. A child whose start
-    /// time cannot be read is left alone too. `None` if `root` itself cannot be read.
+    /// process whose recorded parent pid was reused by one of ours is left alone. A child that is gone
+    /// is skipped. `None` if `root` or a child cannot be queried, so the tree is never frozen in part.
     fn descendants(root: u32) -> Option<Vec<u32>> {
         let procs = processes()?;
-        let mut tree: HashMap<u32, u64> = HashMap::from([(root, creation_time(root)?)]);
+        let mut tree: HashMap<u32, u64> = HashMap::from([(root, creation_time(root).ok()??)]);
         loop {
             let mut grew = false;
             for &(pid, parent) in &procs {
@@ -200,7 +227,7 @@ mod windows {
                 let Some(&parent_born) = tree.get(&parent) else {
                     continue;
                 };
-                if let Some(born) = creation_time(pid)
+                if let Some(born) = creation_time(pid).ok()?
                     && born > parent_born
                 {
                     tree.insert(pid, born);
