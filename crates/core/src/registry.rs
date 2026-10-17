@@ -357,7 +357,7 @@ impl Registry {
             Mark::Executed => CommandState::Running,
             Mark::Finished(Some(code)) => CommandState::Prompt { last_exit: Some(code) },
             Mark::Finished(None) | Mark::PromptStart => CommandState::Prompt { last_exit },
-            Mark::CommandStart | Mark::CommandLine(_) => return,
+            Mark::CommandStart | Mark::CommandLine(_) | Mark::Cwd(_) => return,
         };
         let changed = entry.info.command != next;
         if changed {

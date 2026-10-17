@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { bindingConflicts, chordOf, findCommand, matchesBinding, problemsIn, reservedReason, type KeyEventLike } from "./bindings";
-import { COMMANDS, type Binding, type Command, type Os } from "./keymap";
+import { COMMANDS, commandById, shortcutLabel, type Binding, type Command, type Os } from "./keymap";
 
 const ev = (code: string, m: Partial<Omit<KeyEventLike, "code">> = {}): KeyEventLike => ({ code, ctrlKey: false, shiftKey: false, altKey: false, metaKey: false, ...m });
 const OSES: Os[] = ["windows", "mac", "linux"];
@@ -120,6 +120,33 @@ describe("review-task", () => {
       expect(findCommand(ev("KeyR", os === "mac" ? { metaKey: true } : { ctrlKey: true, shiftKey: true }), os)?.id).toBe("review-task");
       expect(problemsIn(COMMANDS, os), os).toEqual([]);
     }
+  });
+});
+
+describe("preview", () => {
+  it("is Ctrl+Shift+Q on Windows and Linux and Cmd+Alt+Q on macOS, where Cmd+Q is Quit", () => {
+    const b = commandById("preview").binding!;
+    expect(chordOf(b, "windows")).toEqual({ code: "KeyQ", ctrl: true, shift: true, alt: false, meta: false });
+    expect(chordOf(b, "linux")).toEqual({ code: "KeyQ", ctrl: true, shift: true, alt: false, meta: false });
+    expect(chordOf(b, "mac")).toEqual({ code: "KeyQ", ctrl: false, shift: false, alt: true, meta: true });
+    expect(shortcutLabel(b, "mac")).toBe("⌘⌥Q");
+    expect(shortcutLabel(b, "windows")).toBe("Ctrl+Shift+Q");
+  });
+  it("is found from the key press on each system", () => {
+    expect(findCommand(ev("KeyQ", { ctrlKey: true, shiftKey: true }), "windows")?.id).toBe("preview");
+    expect(findCommand(ev("KeyQ", { metaKey: true, altKey: true }), "mac")?.id).toBe("preview");
+    expect(findCommand(ev("KeyQ", { metaKey: true }), "mac")).toBeUndefined();
+  });
+  it("has the open-file command with no default binding", () => {
+    expect(commandById("open-file").label).toBe("Open file…");
+    expect(commandById("open-file").binding).toBeUndefined();
+  });
+});
+
+describe("every default binding", () => {
+  it("is free of a reserved chord on every system", () => {
+    for (const os of OSES)
+      for (const c of COMMANDS) if (c.binding) expect(reservedReason(c.binding, os), `${c.id} on ${os}`).toBeNull();
   });
 });
 

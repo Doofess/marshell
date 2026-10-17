@@ -8,6 +8,7 @@
 //!   fake-agent sleep-then-exit <s> sleep <s> seconds, exit 0
 //!   fake-agent exit <code>         exit with <code>
 //!   fake-agent osc133              print the OSC 133 marks A, C and D;7, exit 0
+//!   fake-agent folder <path>       report <path> as the shell's folder (OSC 9;9), sleep 60 s
 //!   fake-agent cmdline <text>      report <text> as the command line (633;E), mark C, sleep 2 s, mark D;0
 use std::io::{BufRead, Write};
 
@@ -56,6 +57,11 @@ fn main() {
         Some("sleep-then-exit") => std::thread::sleep(std::time::Duration::from_secs(args[1].parse().unwrap())),
         Some("exit") => std::process::exit(args[1].parse().unwrap()),
         Some("osc133") => write!(out, "\x1b]133;A\x07$ \x1b]133;C\x07out\r\n\x1b]133;D;7\x1b\\").unwrap(),
+        Some("folder") => {
+            write!(out, "\x1b]9;9;{}\x1b\\", args[1]).unwrap();
+            out.flush().unwrap();
+            std::thread::sleep(std::time::Duration::from_secs(60));
+        }
         Some("cmdline") => {
             // Like the PowerShell integration: report the typed line, mark C, run 2 s, mark D.
             // A literal backslash-n in the text stands for a newline.

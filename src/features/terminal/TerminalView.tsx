@@ -9,10 +9,13 @@ import { onCoreEvent } from "../../lib/api/coreEvents";
 import { claimsKey } from "../sessions/useNavigation";
 import { PtySocket } from "../../lib/api/ptySocket";
 import { LatencyMeter } from "../perf/latency";
+import { useOpenPreview } from "../preview/PreviewContext";
 import { PerfOverlay } from "../perf/PerfOverlay";
 import { ENDED_LINE, FAILED_LINE, SESSION_ENDED } from "./coreRestart";
 import { jumpFrom, promptTarget, trackPrompts, type Prompt } from "./promptMarks";
 import "./PromptMarks.css";
+import { pathLinkProvider } from "./pathLinks";
+import { registerTerminal } from "./terminals";
 import { loadRenderer, type RendererKind } from "./renderer";
 import { trackColorSchemeMode } from "./colorSchemeMode";
 import { BUNDLED_FONT, fontStack } from "./terminalFont";
@@ -98,6 +101,10 @@ export function TerminalView({ endpoint, tabId, placeholder, onOutput, onSize, a
   jumpRef.current = onPromptJump;
   const lastJump = useRef<number | null>(null);
   const landedRef = useRef<number | null>(null);
+  // Ctrl+click on a path in the output opens it in the preview; the terminal keeps the latest opener without restarting.
+  const openPreview = useOpenPreview();
+  const previewRef = useRef(openPreview);
+  previewRef.current = openPreview;
   const themeRef = useRef(theme);
   themeRef.current = theme;
   // Re-applies the theme to the live terminal; set while a terminal exists.
@@ -132,6 +139,9 @@ export function TerminalView({ endpoint, tabId, placeholder, onOutput, onSize, a
     term.open(el);
     termRef.current = term;
     loadRenderer(term, endpoint.platform, setRenderer);
+    // The provider is disposed with the terminal.
+    term.registerLinkProvider(pathLinkProvider(term, tabId, endpoint.platform, (entry) => previewRef.current(entry)));
+    const unregister = registerTerminal(tabId, () => term.buffer.active);
     term.attachCustomKeyEventHandler((e) => {
       if (isPerfToggle(e)) {
         setPerfOpen((open) => !open);
@@ -231,6 +241,7 @@ export function TerminalView({ endpoint, tabId, placeholder, onOutput, onSize, a
       cancelAnimationFrame(frame);
       subs.forEach((s) => s.dispose());
       socket.close();
+      unregister();
       term.dispose();
       termRef.current = null;
       fitRef.current = null;

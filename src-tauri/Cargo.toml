@@ -11,6 +11,7 @@ tauri-build = { version = "2", features = [] }
 marshell-core.workspace = true
 marshell-protocol.workspace = true
 tauri = { version = "2", features = [] }
+tauri-plugin-opener = "2"
 tauri-plugin-single-instance = "2"
 tauri-plugin-window-state = "2"
 

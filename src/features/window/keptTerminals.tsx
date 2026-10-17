@@ -16,16 +16,18 @@ type StackProps = {
   selectedId: string;
   /** Renders one session's terminal; `shown` is false while it is hidden behind the selected one. */
   render: (row: RowModel, shown: boolean) => ReactNode;
+  /** The preview fills the window: every terminal stays mounted and none is on screen. */
+  suspended?: boolean;
 };
 
 /** One wrapper per visited session, keyed by session id. Only the selected one is displayed; the rest carry `hidden`. */
-export function TerminalStack({ rows, visited, selectedId, render }: StackProps) {
+export function TerminalStack({ rows, visited, selectedId, render, suspended = false }: StackProps) {
   return (
     <>
       {visited.map((id) => {
         const row = rows.find((r) => r.id === id);
         if (!row) return null;
-        const shown = id === selectedId;
+        const shown = id === selectedId && !suspended;
         return (
           <div key={id} className="window__terminal" hidden={!shown}>
             {render(row, shown)}
@@ -37,10 +39,10 @@ export function TerminalStack({ rows, visited, selectedId, render }: StackProps)
 }
 
 /** The single window's terminals: every session shown so far stays mounted, and the selected one is on screen. */
-export function KeptTerminals({ rows, selectedId, render }: { rows: RowModel[]; selectedId: string; render: StackProps["render"] }) {
+export function KeptTerminals({ rows, selectedId, render, suspended }: { rows: RowModel[]; selectedId: string; render: StackProps["render"]; suspended?: boolean }) {
   const [visited, setVisited] = useState<string[]>([]);
   const next = nextVisited(visited, rows.map((r) => r.id), selectedId);
   // Setting state while rendering is allowed for a component's own state; React renders again at once with the new list.
   if (next.length !== visited.length || next.some((id, i) => id !== visited[i])) setVisited(next);
-  return <TerminalStack rows={rows} visited={next} selectedId={selectedId} render={render} />;
+  return <TerminalStack rows={rows} visited={next} selectedId={selectedId} render={render} suspended={suspended} />;
 }

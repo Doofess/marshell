@@ -421,6 +421,45 @@ pub struct InputRequest {
     pub text: String,
 }
 
+/// POST /v1/sessions/{tab}/resolve body: text that may name files, such as paths from terminal output.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct ResolveRequest {
+    /// At most 64, each at most 1024 characters.
+    pub candidates: Vec<String>,
+}
+
+/// POST /v1/sessions/{tab}/resolve reply.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct ResolveResponse {
+    /// One entry per candidate, in order: the absolute path of an existing regular file, or null.
+    pub paths: Vec<Option<String>>,
+}
+
+/// GET /v1/files/stat reply.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct FileStat {
+    #[ts(type = "number")]
+    pub size: u64,
+    /// Last modification, in milliseconds since the Unix epoch.
+    #[ts(type = "number")]
+    pub modified_ms: u64,
+}
+
+/// GET /v1/sessions/{tab}/files reply: the files of the session's project, for quick open.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct FileList {
+    /// The folder the paths are relative to.
+    pub root: String,
+    /// Relative paths with `/` separators.
+    pub files: Vec<String>,
+    /// True when the list was cut short at the file cap or the time limit.
+    pub truncated: bool,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export)]
 pub struct RenameRequest {

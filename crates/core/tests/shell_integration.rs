@@ -333,6 +333,29 @@ fn pwsh_failed_cmdlet_after_native_exit_reports_1() {
 }
 
 #[test]
+fn pwsh_reports_its_folder_after_cd() {
+    for name in powershells() {
+        let mut sh = pwsh_with_profile(name, "");
+        std::fs::create_dir(sh._home.path().join("sub")).unwrap();
+        sh.expect(Mark::PromptStart);
+        sh.type_line("cd sub\r");
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            let cwd = sh.session.current_cwd();
+            if cwd.as_deref().is_some_and(|p| p.ends_with("sub")) {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "{name}: folder is {cwd:?}\noutput: {}",
+                sh.text()
+            );
+            sh.read_some();
+        }
+    }
+}
+
+#[test]
 fn bash_reports_prompt_running_and_exit() {
     let Some(bash) = bash() else {
         return skipped("bash");

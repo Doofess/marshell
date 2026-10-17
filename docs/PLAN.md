@@ -821,6 +821,15 @@ Decisions from the 2026-10-10 coverage audit (`docs/superpowers/plan-coverage-au
        | `POST /tasks/{id}/remove/plan` | Show the removal commands and warnings. |
        | `POST /tasks/{id}/remove` | Run the removal. Needs the commands and warnings the user saw. |
        | `POST /sessions/{tab}/input` | Type text into a session with no Enter. Used for the conflict prompt. |
+   - **Slice 2.5a decisions (2026-10-17).**
+     1. The preview toggles with Ctrl+Shift+Q. On macOS, ⌘Q is Quit, so a binding may carry a `mac` override and the preview uses ⌘⌥Q there (macOS is untested). Ctrl+click is ⌘+click on macOS.
+     2. A path opens with Ctrl+click, and only a path that exists becomes a link. Quick open lists the paths seen in the session's output first, for keyboard use.
+     3. Quick open is a mixed "Files in <folder>" group in the palette after 2 or more characters, with "Seen in output" before it, plus an "Open file…" command that shows files only.
+     4. The preview reads any file the user can read, through the token-checked API. Regular files only; the caps are 2 MB for text and 20 MB for images.
+     5. File drop moved to slice 2.5c.
+     6. A relative path resolves against the shell's current folder, then the launch folder, then the project root. A session in a worktree lists and resolves against its own worktree, not the main repo.
+     7. A changed file reloads automatically and keeps its scroll position.
+     8. Links in documents: a local link opens in the preview with Back, a web link asks before it opens the browser, and an anchor scrolls.
    - **Session row menu (2026-10-17).**
      1. Right-clicking a session row, or Shift+F10 or the Menu key on a focused row, opens its menu: Rename (F2), Split into a pane, Resume, Review changes (Ctrl+Shift+R), then Close (Ctrl+Shift+W) after a separator. On macOS the shortcuts show as Cmd+key.
      2. An item that doesn't apply is hidden, never disabled: Split only for a session not already in a pane on screen while a pane is free, Resume only on an exited or ended row, Review changes only on a task row.
@@ -836,7 +845,7 @@ Decisions from the 2026-10-10 coverage audit (`docs/superpowers/plan-coverage-au
 2.5. **Context and preview** (added 2026-10-15, inspired by the features of the Codex desktop app, not its infrastructure; numbered 2.5 so later phases keep their numbers).
    - Scope:
      - **Preview pane.** Read-only preview of code (syntax highlighted), Markdown (rendered, with a source toggle), images, PDF and HTML.
-       - Opened from a clickable path in terminal output, by dropping a file on the window, or with quick open (fuzzy find in the focused session's folder). Its shortcut is picked in this phase's plan from the free letters in the shortcut table. P is taken by Zoom pane, I opens WebView DevTools and R reloads, so H, M, Q and X are the candidates. There is no file tree; that stays in v2.
+       - Opened from a clickable path in terminal output, by dropping a file on the window, or with quick open (fuzzy find in the focused session's folder). Its toggle is Ctrl+Shift+Q (⌘⌥Q on macOS, since ⌘Q is Quit). Dropping a file on the window moved to slice 2.5c. There is no file tree; that stays in v2.
        - Layout: the preview takes the space split view would use. Opening it shows the focused session and the preview side by side, and closing it brings the split back. This is the user's decision (2026-10-15): one session at a time while previewing.
      - **Region to prompt.** In a PDF or image preview, drag a box and type a comment. Marshell saves the crop as a PNG and puts the image reference, the file name and page, and the comment into the session's prompt line.
      - **Screenshot and image drop.** Paste or drop an image on a session, or capture a screen region. Marshell saves it and puts its reference into the prompt line.

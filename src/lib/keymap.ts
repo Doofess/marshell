@@ -8,8 +8,9 @@ export const osOfPlatform = (platform: "windows" | "macos" | "linux"): Os => (pl
  * same shortcut sits on the same key of a French, German, Dvorak, Hebrew or Cyrillic keyboard. Punctuation never appears here.
  * By default the platform's app modifier is implied; `plain` is the key alone and `nav` is the navigation chord.
  * `shift` is Shift (plus Alt when `alt` is set) WITHOUT the app modifier: Alt+Shift+arrow moves a session in the list.
+ * `mac` replaces the whole binding on macOS, for a key the system already owns there: Cmd+Q is Quit, so the preview is Cmd+Alt+Q.
  */
-export type Binding = { code: string; alt?: boolean; plain?: boolean; nav?: boolean; shift?: boolean };
+export type Binding = { code: string; alt?: boolean; plain?: boolean; nav?: boolean; shift?: boolean; mac?: Binding };
 export type Command = { id: string; label: string; binding?: Binding; group: "Sessions" | "View" | "Tools" };
 
 const KEY_TEXT: Record<string, string> = { ArrowLeft: "←", ArrowRight: "→", ArrowUp: "↑", ArrowDown: "↓" };
@@ -21,6 +22,7 @@ export function keyText(code: string): string {
 
 /** macOS: Cmd+key. Windows and Linux: Ctrl+Shift+key (docs/PLAN.md, "Keyboard navigation and shortcuts"). A navigation chord uses the navigation modifier. */
 export function shortcutLabel(b: Binding, os: Os, nav: NavModifier = DEFAULT_NAV_MODIFIER): string {
+  if (os === "mac" && b.mac) return shortcutLabel(b.mac, os, nav);
   const key = keyText(b.code);
   if (b.plain) return key;
   if (b.shift) return os === "mac" ? `${b.alt ? "⌥" : ""}⇧${key}` : `${b.alt ? "Alt+" : ""}Shift+${key}`;
@@ -73,6 +75,9 @@ export const COMMANDS: Command[] = [
   { id: "nav-next-pane", label: "Select the next terminal on screen", group: "View", binding: { code: "Tab", nav: true } },
   { id: "nav-none", label: "Select no terminal", group: "View", binding: { code: "Backspace", nav: true } },
   { id: "focus-mode", label: "Focus mode", group: "View", binding: { code: "KeyI" } },
+  // Cmd+Q is Quit on macOS, so the preview takes Cmd+Alt+Q there.
+  { id: "preview", label: "Preview", group: "View", binding: { code: "KeyQ", mac: { code: "KeyQ", alt: true } } },
+  { id: "open-file", label: "Open file…", group: "View" },
   { id: "sidebar", label: "Collapse sidebar to the rail", group: "View" },
   { id: "group-by-project", label: "Group sessions by project", group: "View" },
   { id: "palette", label: "Command palette", group: "Tools", binding: { code: "KeyK" } },
