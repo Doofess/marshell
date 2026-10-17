@@ -102,6 +102,9 @@ export function TerminalView({ endpoint, tabId, placeholder, onOutput, onSize, a
     const fontSize = fontRef.current.size;
     const resolve = () => resolveTerminalTheme({ ...themeRef.current, app: appScheme() });
     const first = resolve();
+    // The gutter around the cells (app.css) matches the theme's background.
+    const paintGutter = (background: string | undefined) => el.style.setProperty("--terminal-bg", background ?? null);
+    paintGutter(first.theme.background);
     let current = first.scheme;
     const term = new Terminal({ fontFamily, fontSize, cursorBlink: true, scrollback: 10_000, theme: first.theme, minimumContrastRatio: first.minimumContrastRatio });
     const fit = new FitAddon();
@@ -189,6 +192,7 @@ export function TerminalView({ endpoint, tabId, placeholder, onOutput, onSize, a
     const onScheme = () => {
       const o = resolve();
       term.options.theme = o.theme;
+      paintGutter(o.theme.background);
       term.options.minimumContrastRatio = o.minimumContrastRatio;
       current = o.scheme;
       schemeMode.notify(o.scheme);
