@@ -4,7 +4,7 @@ import { interpretBlur } from "../../lib/navigation/keys";
 import { reduce } from "../../lib/navigation/machine";
 import { GRID_CONTEXT, GRID_LAYOUT, NAMES } from "../../lib/navigation/fixtures";
 import { INITIAL_NAV } from "../../lib/navigation/types";
-import { claimsKey, focusKindOf, setNavState, step } from "./useNavigation";
+import { claimsKey, focusKindOf, navPanesOf, setNavState, step } from "./useNavigation";
 
 const key = (code: string, mods: { ctrl?: boolean; shift?: boolean } = { ctrl: true, shift: true }) => ({ code, key: code, ctrlKey: mods.ctrl ?? false, shiftKey: mods.shift ?? false, altKey: false, metaKey: false });
 
@@ -51,6 +51,10 @@ describe("the terminal", () => {
     const src = readFileSync(new URL("../terminal/TerminalView.tsx", import.meta.url), "utf8");
     expect(src).toMatch(/claimsKey\(e, osOfPlatform\(endpoint\.platform\), "terminal"\)\) return false/);
   });
+  it("is reached only through the zoomed pane while one is zoomed", () => {
+    const src = readFileSync(new URL("./LiveApp.tsx", import.meta.url), "utf8");
+    expect(src).toMatch(/navPanesOf\(shownPanes\.map\(numberOf\), view\.zoomed\)/);
+  });
 });
 
 describe("step", () => {
@@ -63,6 +67,14 @@ describe("step", () => {
     expect(blurred.effects.some((e) => e.type === "bring-into-view" || e.type === "select-pane")).toBe(false);
     expect(blurred.effects).toContainEqual({ type: "announce", text: "Cancelled" });
     expect(blurred.state.held).toBe(false);
+  });
+  it("in a zoomed pane, Tab stays on the one terminal on screen and announces it", () => {
+    const panes = navPanesOf([3, 5, 7], 1);
+    expect(panes).toEqual([null, 5, null]);
+    const r = step({ ...INITIAL_NAV, selectedPane: 1 }, [{ type: "modifier-down" }, { type: "tab" }], { panes, layout: GRID_LAYOUT, names: NAMES });
+    expect(r.effects).toContainEqual({ type: "select-pane", index: 1 });
+    expect(r.effects.some((e) => e.type === "announce" && /session 5/.test(e.text))).toBe(true);
+    expect(navPanesOf([3, 5], null)).toEqual([3, 5]);
   });
   it("brings a session that is not on screen into the selected pane on release", () => {
     const layout = [...GRID_LAYOUT.filter((l) => l.target.kind !== "pane"), { target: { kind: "row" as const, number: 7 }, rect: { x: 0, y: 320, w: 288, h: 56 } }];

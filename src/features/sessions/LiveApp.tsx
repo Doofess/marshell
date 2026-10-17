@@ -36,7 +36,7 @@ import { ResumeBar } from "./ResumeBar";
 import { resumeCommand } from "./resumeCommand";
 import { holdsResume, resumeDisabledReason, resumeStateOf } from "./resumeState";
 import { SessionActions, closeBarText, tabIdOfNumber } from "./sessionActions";
-import { useNavigation } from "./useNavigation";
+import { navPanesOf, useNavigation } from "./useNavigation";
 import type { NavEffect } from "../../lib/navigation/types";
 import { Toast } from "./Toast";
 import { pruneClosed, without, type StartingTexts } from "./startingTexts";
@@ -417,7 +417,7 @@ export function LiveApp() {
   // Keyboard navigation (hold Ctrl+Shift): the cursor reaches the panes on screen, the session rows and the top bar.
   const split = view.panes.length > 1;
   const numberOf = (id: string | null | undefined) => (id ? (infos.find((i) => i.tab_id === id)?.number ?? null) : null);
-  const navPanes = split ? shownPanes.map(numberOf) : [numberOf(focusedId)];
+  const navPanes = split ? navPanesOf(shownPanes.map(numberOf), view.zoomed) : [numberOf(focusedId)];
   const navNames = useMemo(() => Object.fromEntries(rows.map((r) => [r.number, r.name])), [rows]);
   const applyNav = (effect: NavEffect) => {
     switch (effect.type) {
