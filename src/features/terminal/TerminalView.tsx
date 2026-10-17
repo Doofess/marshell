@@ -298,7 +298,7 @@ export function TerminalView({ endpoint, tabId, placeholder, onOutput, onSize, a
 
   return (
     <>
-      <div ref={host} className="terminal-host" />
+      <div ref={host} className="terminal-host" data-drop-tab={tabId} />
       {placeholder && !gotOutput && (
         <p className="terminal-placeholder">{placeholder}</p>
       )}

@@ -1,0 +1,37 @@
+/* The pane (or the preview) under a dragged file. The label is generated content, so it is not in the accessibility tree; the drop is announced.
+ * The label uses ::before, since a pane's ::after is its focus ring (SplitView.css). */
+[data-drop-over] {
+  outline: 2px dashed var(--accent);
+  outline-offset: -2px;
+}
+
+.preview[data-drop-over],
+.terminal-host[data-drop-over] {
+  position: relative;
+}
+
+[data-drop-over]::before {
+  content: attr(data-drop-label) / "";
+  position: absolute;
+  inset-block-start: var(--space-2);
+  inset-inline: 0;
+  margin-inline: auto;
+  inline-size: max-content;
+  max-inline-size: calc(100% - 2 * var(--space-2));
+  padding: var(--space-1) var(--space-2);
+  background: var(--accent);
+  color: var(--accent-ink);
+  pointer-events: none;
+  z-index: 20;
+}
+
+@media (forced-colors: active) {
+  [data-drop-over] {
+    outline-color: Highlight;
+  }
+
+  [data-drop-over]::before {
+    background: Highlight;
+    color: HighlightText;
+  }
+}
