@@ -169,10 +169,10 @@ export class SessionActions {
     }
   }
 
-  /** Ctrl+Shift+W on the selected session: closes it, or puts the bar up when an agent may be mid-task. */
-  async requestClose(): Promise<void> {
+  /** Ctrl+Shift+W on the selected session (or the row menu's Close, on `tabId`): closes it, or puts the bar up when an agent may be mid-task. */
+  async requestClose(tabId?: string): Promise<void> {
     const { infos, selectedId } = this.deps.context();
-    const info = infos.find((i) => i.tab_id === selectedId);
+    const info = infos.find((i) => i.tab_id === (tabId ?? selectedId));
     // While the bar is up, the key does nothing: closing must stay a deliberate press on "Close now".
     if (!info || this.state.closing === info.tab_id || this.closingNow.has(info.tab_id)) return;
     if (needsCloseConfirm(info)) this.set({ closing: info.tab_id });
@@ -259,10 +259,11 @@ export class SessionActions {
     this.showToast(text);
   }
 
-  /** F2 on the selected session. It does nothing where the sidebar is not expanded: there is no row to turn into a text box. */
-  startRename(): void {
+  /** F2 on the selected session (or the row menu's Rename, on `tabId`). It does nothing where the sidebar is not expanded: there is no row to turn into a text box. */
+  startRename(tabId?: string): void {
     const { infos, selectedId, sidebarExpanded = true } = this.deps.context();
-    if (sidebarExpanded && infos.some((i) => i.tab_id === selectedId)) this.set({ renaming: selectedId ?? null });
+    const id = tabId ?? selectedId;
+    if (sidebarExpanded && infos.some((i) => i.tab_id === id)) this.set({ renaming: id ?? null });
   }
 
   async commitRename(tabId: string, name: string): Promise<void> {

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
+import { inMenu } from "../../components/ContextMenu/menuKeys";
 import type { KeyEventLike } from "../../lib/bindings";
 import type { Os } from "../../lib/keymap";
 import { interpretBlur, interpretKeyDown, interpretKeyUp, type FocusKind } from "../../lib/navigation/keys";
@@ -109,6 +110,8 @@ export function useNavigation(opts: Options): { cursor: NavCursorView | null; no
       // Chords are read first (capture), so neither the terminal nor a list sees them; a plain key comes last (bubble), so a menu's
       // own Esc or Tab, which stops the key, wins.
       if (isNavModifierHeld(e, DEFAULT_NAV_MODIFIER) !== chordPhase || (!chordPhase && e.defaultPrevented)) return;
+      // An open row menu owns its keys: a chord there is not navigation.
+      if (inMenu(e.target)) return;
       const result = interpretKeyDown(e, { os: optsRef.current.os, nav: DEFAULT_NAV_MODIFIER, focus: focusKindOf(document.activeElement), state: current });
       if (!result) return;
       if (result.preventDefault) {

@@ -4,6 +4,7 @@ import { ContextRing } from "../../components/ContextRing/ContextRing";
 import { SessionNumber } from "../../components/SessionNumber/SessionNumber";
 import type { DragEventHandler } from "react";
 import { RenameBox } from "./RenameBox";
+import { inRenameBox, keyboardAnchor, opensRowMenu } from "./rowMenu";
 import { formatDuration, formatUsage, modeCaution } from "./format";
 import { rowLabel, rowTitle } from "./labels";
 import { SESSION_NUMBER_HINT } from "./sessionNumber";
@@ -42,6 +43,7 @@ export function SessionRow({
   rename,
   onSelect,
   onReview,
+  onMenu,
 }: {
   row: RowModel;
   density: Density;
@@ -53,6 +55,8 @@ export function SessionRow({
   onSelect?: () => void;
   /** Opens the review of this row's task. Left out, a task row shows its tag but no button (stories). */
   onReview?: () => void;
+  /** Right-click, Shift+F10 or the Menu key: where to open the row's menu. Left out, the row has no menu. */
+  onMenu?: (anchor: { x: number; y: number }) => void;
 }) {
   const caution = modeCaution(row.mode);
   const usage = formatUsage(row.usage);
@@ -67,6 +71,7 @@ export function SessionRow({
       className="session-row"
       role="option"
       aria-selected={selected}
+      aria-haspopup={onMenu ? "menu" : undefined}
       tabIndex={tabStop ? 0 : -1}
       title={rowTitle(row)}
       aria-label={rowLabel(row, density)}
@@ -86,6 +91,24 @@ export function SessionRow({
       draggable={drag && !rename ? true : undefined}
       data-drop={drag?.dropEdge}
       onClick={onSelect}
+      onContextMenu={
+        onMenu &&
+        ((e) => {
+          // The rename box keeps its own native menu (cut, copy, paste); opening ours would cancel the rename.
+          if (inRenameBox(e.target)) return;
+          e.preventDefault();
+          onMenu({ x: e.clientX, y: e.clientY });
+        })
+      }
+      onKeyDown={
+        onMenu &&
+        ((e) => {
+          if (!opensRowMenu(e)) return;
+          e.preventDefault();
+          e.stopPropagation();
+          onMenu(keyboardAnchor(e.currentTarget.getBoundingClientRect()));
+        })
+      }
       onDragStart={drag?.onDragStart}
       onDragOver={drag?.onDragOver}
       onDrop={drag?.onDrop}

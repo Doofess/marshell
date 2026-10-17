@@ -1,0 +1,39 @@
+import type { Profile } from "../../generated/Profile";
+import type { SessionInfo } from "../../generated/SessionInfo";
+import type { SessionMenuFacts } from "../sidebar/sessionMenu";
+import type { RowModel } from "../sidebar/types";
+import { roomForPane } from "../window/viewState";
+import { resumeBlockedReason } from "./resumeState";
+
+/** What the window knows about a session, as the row menu's item list needs it. `shown` panes are on screen; `fit` is the most the window has room for. */
+export function menuFacts(
+  id: string,
+  ctx: { infos: SessionInfo[]; profiles: Profile[]; rows: RowModel[]; panes: (string | null)[]; shown: number; fit: number },
+): SessionMenuFacts {
+  const onScreen = ctx.panes.slice(0, ctx.shown);
+  const info = ctx.infos.find((i) => i.tab_id === id);
+  return {
+    // Not where the Resume bar would be disabled (its profile was removed): an item that can't apply is left out, never offered to fail.
+    resumable: info !== undefined && info.state.kind !== "running" && resumeBlockedReason(info.profile_id, ctx.profiles) === undefined,
+    task: ctx.rows.find((r) => r.id === id)?.task === true,
+    inShownPane: onScreen.includes(id),
+    paneAvailable: onScreen.includes(null) || roomForPane(ctx.panes.length, ctx.fit),
+  };
+}
+
+/**
+ * Where focus goes once a menu item has run (the focused item unmounted, so it would fall to the page). Rename and Review changes
+ * are null: the rename box and the sheet take it themselves, and so does the close bar, which `confirms`.
+ */
+export function focusAfterMenu(itemId: string, confirms: boolean): "row" | "terminal" | null {
+  switch (itemId) {
+    case "resume":
+      return "row";
+    case "split":
+      return "terminal";
+    case "close":
+      return confirms ? null : "terminal";
+    default:
+      return null;
+  }
+}

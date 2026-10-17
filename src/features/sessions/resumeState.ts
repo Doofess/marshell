@@ -11,6 +11,12 @@ export function resumeDisabledReason(profileId: string, profiles: Profile[]): st
   return "Its shell profile was removed.";
 }
 
+/** The core's id for a session started outside any saved shell profile; it never has a profile to lose. */
+export const CUSTOM_PROFILE = "custom";
+
+/** Why Resume is off for this session before the core is asked, or undefined: the Resume bar disables it on this, and the row menu leaves it out. */
+export const resumeBlockedReason = (profileId: string, profiles: Profile[]): string | undefined => (profileId === CUSTOM_PROFILE ? undefined : resumeDisabledReason(profileId, profiles));
+
 /** Where Resume's request stands: out, answered ok, or refused (a 409, or a request that failed). */
 export type ResumeResponse = "pending" | "ok" | "refused";
 

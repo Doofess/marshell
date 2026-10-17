@@ -6,11 +6,14 @@ import type { TaskChanges } from "../../generated/TaskChanges";
 import { ApiError } from "../../lib/api/client";
 import { sessions } from "../../lib/api/sessions";
 import { copyRecordingPath } from "./recording";
+import { inMenu } from "../../components/ContextMenu/menuKeys";
+import { focusAfterMenu, menuFacts } from "./sessionMenuRun";
 import { tasksApi } from "../../lib/api/tasks";
 import { cancelsCloseBar, commandShortcut, sessionShortcut, type SessionShortcut } from "../../lib/appShortcuts";
 import { osOfPlatform } from "../../lib/keymap";
 import { paletteSessions } from "../palette/sessions";
 import { ProfilesDialog } from "../settings/ProfilesPage";
+import { sessionMenuItems } from "../sidebar/sessionMenu";
 import { nextSessionNumber } from "../sidebar/sessionNumber";
 import type { RowModel } from "../sidebar/types";
 import { AppearanceDialog } from "../appearance/AppearanceDialog";
@@ -35,8 +38,8 @@ import { LivePalette } from "./LivePalette";
 import { LiveShortcuts } from "./LiveShortcuts";
 import { ResumeBar } from "./ResumeBar";
 import { resumeCommand } from "./resumeCommand";
-import { holdsResume, resumeDisabledReason, resumeStateOf } from "./resumeState";
-import { SessionActions, closeBarText, tabIdOfNumber } from "./sessionActions";
+import { holdsResume, resumeBlockedReason, resumeStateOf } from "./resumeState";
+import { SessionActions, closeBarText, needsCloseConfirm, tabIdOfNumber } from "./sessionActions";
 import { navPanesOf, useNavigation } from "./useNavigation";
 import type { NavEffect } from "../../lib/navigation/types";
 import { Toast } from "./Toast";
@@ -48,8 +51,6 @@ import { useSessions } from "./useSessions";
 
 /** The size a new session starts at until a terminal has been measured. */
 const DEFAULT_SIZE = { cols: 120, rows: 30 };
-/** The core's id for a session started outside any saved shell profile; it never has a profile to lose. */
-const CUSTOM_PROFILE = "custom";
 /** What the announcer says when the shell panel is asked for where it is not drawn: the rail, focus mode, or a window under 960 px. */
 const SHELL_PANEL_ELSEWHERE = "The shell panel is in the expanded sidebar.";
 /** What the announcer says when a split is asked for and the window has no room to show another pane. */
@@ -294,7 +295,8 @@ export function LiveApp() {
   useEffect(() => {
     if (!barOpen) return;
     const onEscape = (e: KeyboardEvent) => {
-      if (!cancelsCloseBar(e, true)) return;
+      // An open row menu has its own Escape, which closes it and nothing else.
+      if (!cancelsCloseBar(e, true) || inMenu(e.target)) return;
       e.preventDefault();
       e.stopPropagation();
       actions.cancelClose();
@@ -382,6 +384,26 @@ export function LiveApp() {
       adopting.current = false;
     }
   }, [endpoint, panelTab]);
+  // Shows a session in a pane: where it already is, else an empty pane on screen, else a new pane if the window has room, else the
+  // focused pane (what it held stays in the sidebar). The adopted shell panel and the row menu's "Split into a pane" both use it.
+  const showInPane = useCallback(
+    (id: string) => {
+      const v = viewRef.current;
+      if (v.panes.includes(id)) {
+        pick(id);
+        return;
+      }
+      const fit = fitRef.current ?? PANE_LIMIT;
+      const target = adoptTarget(v, shownRef.current ?? v.panes.length, fit);
+      // A zoomed pane would hide a different one.
+      if (v.zoomed !== null && target.index !== v.zoomed) dispatch({ type: "zoom" });
+      if (target.split) dispatch({ type: "split", fit });
+      dispatch({ type: "assign", index: target.index, tabId: id });
+      if (!target.split) dispatch({ type: "focusPane", index: target.index });
+      selectRef.current(id);
+    },
+    [pick, dispatch],
+  );
   // The adopted tab is listed: in one update the panel lets go of its terminal and a pane takes the tab. Until then the window draws
   // nothing for that tab (see renderTerminal), so the pty only ever has one terminal attached. (Adopting earlier would let the
   // view's own clean-up drop an id the list does not hold yet.)
@@ -392,21 +414,8 @@ export function LiveApp() {
     if (!infos.some((i) => i.tab_id === id)) return;
     setAdopted(null);
     setPanel(null);
-    const v = viewRef.current;
-    if (v.panes.includes(id)) {
-      pick(id);
-      return;
-    }
-    // An empty pane on screen, else a new pane if the window has room, else the focused pane (what it held stays in the sidebar).
-    const fit = fitRef.current ?? PANE_LIMIT;
-    const target = adoptTarget(v, shownRef.current ?? v.panes.length, fit);
-    // A zoomed pane would hide a different one.
-    if (v.zoomed !== null && target.index !== v.zoomed) dispatch({ type: "zoom" });
-    if (target.split) dispatch({ type: "split", fit });
-    dispatch({ type: "assign", index: target.index, tabId: id });
-    if (!target.split) dispatch({ type: "focusPane", index: target.index });
-    selectRef.current(id);
-  }, [adopted, endpoint, infos, pick, dispatch]);
+    showInPane(id);
+  }, [adopted, endpoint, infos, showInPane]);
   const shellTerminal = useMemo(
     () => (panelTab && endpoint ? <TerminalView key={panelTab.tabId} endpoint={endpoint} tabId={panelTab.tabId} autoFocus={false} theme={themeFor(undefined)} font={terminalFont} /> : null),
     [endpoint, panelTab, themeFor, terminalFont],
@@ -414,6 +423,46 @@ export function LiveApp() {
 
   // The app's shortcuts work from anywhere, the terminal included; the terminal lets these keys through (TerminalView).
   const os = endpoint ? osOfPlatform(endpoint.platform) : undefined;
+  // The row menu: which items a row shows, and what each one does. Every action takes the row's own id, so it never waits for a
+  // selection update to land.
+  const menuItems = useCallback(
+    (id: string) => sessionMenuItems(menuFacts(id, { infos, profiles, rows: taskRows, panes: view.panes, shown: shownRef.current ?? view.panes.length, fit: fitRef.current ?? PANE_LIMIT }), os ?? "windows"),
+    [infos, profiles, taskRows, view.panes, os],
+  );
+  const onMenuRun = useCallback(
+    (id: string, itemId: string) => {
+      const info = infos.find((i) => i.tab_id === id);
+      switch (itemId) {
+        // No timeout: the rename box mounts in the same update that closes the menu, and the menu closes without handing focus back.
+        case "rename":
+          actions.startRename(id);
+          break;
+        case "split":
+          showInPane(id);
+          break;
+        case "resume": {
+          const row = rows.find((r) => r.id === id);
+          if (row) startResume(row);
+          break;
+        }
+        // After the menu has gone, so the sheet takes the focus and the menu does not give it back to the row.
+        case "review-task":
+          setTimeout(() => reviewSession(id), 0);
+          break;
+        case "close": {
+          // The close bar belongs to the focused session (it goes away when focus moves off it), so a session that needs the bar is focused first.
+          if (info && needsCloseConfirm(info)) pick(id);
+          void actions.requestClose(id);
+          break;
+        }
+      }
+      // The menu item that had focus is gone with the menu: put focus somewhere real instead of the page.
+      const to = focusAfterMenu(itemId, info !== undefined && needsCloseConfirm(info));
+      if (to === "terminal") actions.focusTerminal();
+      else if (to === "row") document.querySelector<HTMLElement>(`[data-nav-row="${rows.find((r) => r.id === id)?.number}"]`)?.focus();
+    },
+    [actions, showInPane, rows, infos, pick, startResume, reviewSession],
+  );
 
   // Keyboard navigation (hold Ctrl+Shift): the cursor reaches the panes on screen, the session rows and the top bar.
   const split = view.panes.length > 1;
@@ -603,7 +652,7 @@ export function LiveApp() {
       const hasTerminal = bar === undefined || bar.phrase !== ENDED_PHRASE;
       const info = infos.find((i) => i.tab_id === row.id);
       const profile = profiles.find((p) => p.id === info?.profile_id);
-      const profileGone = info && info.profile_id !== CUSTOM_PROFILE ? resumeDisabledReason(info.profile_id, profiles) : undefined;
+      const profileGone = info && resumeBlockedReason(info.profile_id, profiles);
       return (
         <div className="resume-pane">
           {hasTerminal && (
@@ -692,6 +741,8 @@ export function LiveApp() {
           grouped={view.grouped}
           onSelect={pick}
           onReview={reviewSession}
+          menuItems={os ? menuItems : undefined}
+          onMenuRun={onMenuRun}
           onPalette={() => setOverlay("palette")}
           noneSelected={nav.noneSelected}
           navCursor={nav.cursor}
