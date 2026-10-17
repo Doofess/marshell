@@ -525,6 +525,10 @@ pub async fn resume(State(st): State<AppState>, Path(tab): Path<String>, Json(re
     let Some(info) = st.0.registry.snapshot().sessions.into_iter().find(|s| s.tab_id == tab) else {
         return (StatusCode::NOT_FOUND, "No such session.").into_response();
     };
+    // Held until the new process is in the map. Another start shows the row Running already.
+    let Some(_claim) = st.claim_start(&tab) else {
+        return cannot_resume("It is already running.");
+    };
     // These checks come before begin_resume, so a refusal leaves the tab as it was.
     if info.state == SessionState::Running {
         return cannot_resume("It is already running.");
@@ -593,6 +597,10 @@ pub async fn restart(State(st): State<AppState>, Path(tab): Path<String>, Json(r
     if info.agent.is_none() {
         return cannot_resume("Only an agent session has a mode.");
     }
+    // Held until the new process is in the map, so a second Restart or a Resume cannot start one too.
+    let Some(_claim) = st.claim_start(&tab) else {
+        return cannot_resume("It is already starting.");
+    };
     if let Some(reason) = cannot_start_again(&st, &info) {
         return cannot_resume(reason);
     }
@@ -654,6 +662,19 @@ mod tests {
 
     fn var(name: &str, value: &str) -> (String, String) {
         (name.to_string(), value.to_string())
+    }
+
+    /// Two starts of one tab at once (a Restart during a Resume's spawn, or two Restarts) would
+    /// both put a process in the map, and the first would run on unseen. One claim per tab.
+    #[test]
+    fn one_start_per_tab_at_a_time() {
+        let home = tempfile::tempdir().unwrap();
+        let st = AppState::new("t".into(), 1, Vec::new(), home.path().to_path_buf(), Vec::new());
+        let first = st.claim_start("a").expect("the first start claims the tab");
+        assert!(st.claim_start("a").is_none());
+        assert!(st.claim_start("b").is_some());
+        drop(first);
+        assert!(st.claim_start("a").is_some());
     }
 
     #[test]
