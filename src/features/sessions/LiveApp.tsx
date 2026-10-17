@@ -48,6 +48,7 @@ import type { NavEffect } from "../../lib/navigation/types";
 import { Toast } from "./Toast";
 import { pruneClosed, without, type StartingTexts } from "./startingTexts";
 import { SHELL_FAILED } from "../window/ShellPanel";
+import { handedOff } from "./handOff";
 import { focusShellTerminal, shellAutoFolded, shellTerminalFocused } from "./shellPanelFocus";
 import { ENDED_PHRASE, lastSegment } from "./toRow";
 import { useSessions } from "./useSessions";
@@ -467,6 +468,12 @@ export function LiveApp() {
     setPanel(null);
     showInPane(id);
   }, [adopted, endpoint, infos, showInPane]);
+  // The core adopted the panel's shell because it runs a known agent: its tab is listed, so treat it like "Open in a pane".
+  // Idempotent: `handedOff` is null once the adopt is pending, and the effect above clears it when done.
+  const handed = handedOff(panelTab?.tabId, adopted?.tabId, infos);
+  useEffect(() => {
+    if (handed && endpoint) setAdopted({ endpoint, tabId: handed });
+  }, [handed, endpoint]);
   const shellTerminal = useMemo(
     () => (panelTab && endpoint ? <TerminalView key={panelTab.tabId} endpoint={endpoint} tabId={panelTab.tabId} autoFocus={false} theme={themeFor(undefined)} font={terminalFont} /> : null),
     [endpoint, panelTab, themeFor, terminalFont],

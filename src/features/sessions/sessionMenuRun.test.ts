@@ -79,6 +79,11 @@ describe("Mode ▸ facts and focus", () => {
     expect(menuFacts("x", ctx({ infos: [agent] })).agent).toBe(true);
     expect(menuFacts("x", ctx()).agent).toBe(false);
   });
+
+  it("a shell promoted to an agent by its foreground has no Mode", () => {
+    const promoted = { ...info("x"), agent: null, foreground: { program: "claude", command_line: "claude", agent: "claude" } } as SessionInfo;
+    expect(menuFacts("x", ctx({ infos: [promoted] })).agent).toBe(false);
+  });
   it("the Mode item and a picked mode leave focus to the menu or the bar", () => {
     expect(focusAfterMenu("mode", false)).toBeNull();
     expect(focusAfterMenu("mode-plan", false)).toBeNull();

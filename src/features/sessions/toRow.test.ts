@@ -24,6 +24,7 @@ const info = (patch: Partial<SessionInfo> = {}): SessionInfo => ({
   state: { kind: "running" },
   command: { kind: "unknown" },
   paused: false,
+  foreground: null,
   ...patch,
 });
 
@@ -128,6 +129,41 @@ describe("toRow", () => {
 
     it("an agent session ignores command state", () => {
       expect(toRow(info({ agent: "claude", command: { kind: "running" } }), PROFILES).status).toBe("limited");
+    });
+  });
+
+  describe("foreground", () => {
+    const fg = (program: string, command_line: string | null, agent: string | null = null) => ({ program, command_line, agent });
+
+    it("a shell running a program shows that program's mark and the command line", () => {
+      const row = toRow(info({ foreground: fg("docker", "docker compose up") }), PROFILES);
+      expect(row).toMatchObject({ agent: "docker", status: "working", phrase: "Running docker compose up" });
+    });
+
+    it("without a command line the phrase names the program, and an unknown program gets the neutral mark", () => {
+      const row = toRow(info({ foreground: fg("fake-agent", null) }), PROFILES);
+      expect(row).toMatchObject({ agent: "program", status: "working", phrase: "Running fake-agent" });
+    });
+
+    it("a known agent in a shell shows as that agent, limited until the hooks arrive", () => {
+      const row = toRow(info({ foreground: fg("codex", "codex", "codex") }), PROFILES);
+      expect(row).toMatchObject({ agent: "codex", status: "limited", phrase: "Status arrives with hooks" });
+    });
+
+    it("no foreground keeps the shell's own mark", () => {
+      expect(toRow(info({ foreground: null }), PROFILES).agent).toBe("powershell");
+    });
+
+    it("paused, exited and ended win over the foreground", () => {
+      const foreground = fg("docker", "docker compose up");
+      expect(toRow(info({ foreground, paused: true }), PROFILES)).toMatchObject({ status: "paused", agent: "powershell" });
+      expect(toRow(info({ foreground, state: { kind: "exited", code: 1 } }), PROFILES)).toMatchObject({ status: "ended", agent: "powershell" });
+      expect(toRow(info({ foreground, state: { kind: "ended" } }), PROFILES)).toMatchObject({ status: "ended", agent: "powershell" });
+    });
+
+    it("a launched agent row ignores the foreground", () => {
+      const row = toRow(info({ agent: "claude", foreground: fg("docker", "docker compose up") }), PROFILES);
+      expect(row).toMatchObject({ agent: "claude", status: "limited" });
     });
   });
 });
