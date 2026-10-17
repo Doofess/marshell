@@ -34,14 +34,34 @@ const cancelled = (e: unknown) => {
   return name === "RenderingCancelledException" || name === "AbortException";
 };
 
-/** Draws a page into the canvas at `scale`: sharp on a dense screen (the canvas has `scale × devicePixelRatio` pixels), laid out at `scale`. */
+export const MAX_CANVAS_PIXELS = 16_777_216;
+export const MAX_CANVAS_SIDE = 32_767;
+
+/**
+ * The device-pixel factor a page is rasterised at: `scale × dpr`, lowered when the canvas would pass 16 777 216 pixels
+ * or 32 767 on a side (a canvas past either renders blank or costs the memory of the whole view). `pageW1`/`pageH1` are
+ * the page's size at scale 1.
+ */
+export function canvasScale(pageW1: number, pageH1: number, scale: number, dpr: number): number {
+  const wanted = scale * dpr;
+  if (!(pageW1 > 0 && pageH1 > 0)) return wanted;
+  const byArea = Math.sqrt(MAX_CANVAS_PIXELS / (pageW1 * pageH1));
+  const bySide = MAX_CANVAS_SIDE / Math.max(pageW1, pageH1);
+  return Math.min(wanted, byArea, bySide);
+}
+
+/**
+ * Draws a page into the canvas at `scale`: sharp on a dense screen (the canvas has `scale × devicePixelRatio` pixels,
+ * fewer when that would pass the canvas limits, and is then stretched), laid out at `scale`.
+ */
 export async function renderPage(page: PDFPageProxy, canvas: HTMLCanvasElement, scale: number, signal?: AbortSignal): Promise<void> {
   const dpr = window.devicePixelRatio || 1;
-  const viewport = page.getViewport({ scale: scale * dpr });
+  const base = page.getViewport({ scale: 1 });
+  const viewport = page.getViewport({ scale: canvasScale(base.width, base.height, scale, dpr) });
   canvas.width = Math.floor(viewport.width);
   canvas.height = Math.floor(viewport.height);
-  canvas.style.inlineSize = `${(viewport.width / dpr).toFixed(2)}px`;
-  canvas.style.blockSize = `${(viewport.height / dpr).toFixed(2)}px`;
+  canvas.style.inlineSize = `${(base.width * scale).toFixed(2)}px`;
+  canvas.style.blockSize = `${(base.height * scale).toFixed(2)}px`;
   const task = page.render({ canvas, viewport });
   const stop = () => task.cancel();
   signal?.addEventListener("abort", stop);
