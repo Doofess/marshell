@@ -35,6 +35,11 @@ pub fn recordings_dir(home: &Path) -> PathBuf {
     home.join("history").join("recordings")
 }
 
+/// `<home>/attachments`: the images saved for a session, one folder per tab.
+pub fn attachments_dir(home: &Path) -> PathBuf {
+    home.join("attachments")
+}
+
 /// `<home>/shell`: the shell integration scripts, owned and rewritten by Marshell.
 pub fn shell_dir(home: &Path) -> PathBuf {
     home.join("shell")
