@@ -13,6 +13,10 @@ use serde::{Deserialize, Serialize};
 
 type ApiError = (StatusCode, String);
 
+/// The generation the panel shell's exit callback carries, and the row gets when the shell is
+/// adopted. The panel has no row to restart or resume before that, so one value is enough.
+const PANEL_GENERATION: u64 = 0;
+
 /// What adopting needs to know about the running panel shell.
 pub(super) struct PanelShell {
     tab_id: String,
@@ -88,7 +92,18 @@ pub async fn open(State(st): State<AppState>, Json(req): Json<PanelRequest>) -> 
         cwd: cwd.clone(),
     };
     // The panel has no number: it only gets one when it is adopted.
-    spawn_into_map(&st, &tab_id, 0, run, None, cwd, (req.cols, req.rows), None).await?;
+    spawn_into_map(
+        &st,
+        &tab_id,
+        0,
+        PANEL_GENERATION,
+        run,
+        None,
+        cwd,
+        (req.cols, req.rows),
+        None,
+    )
+    .await?;
     // Two requests can both start a shell; the first to store its id wins.
     let mut panel = st.0.shell_panel.lock().unwrap();
     if let Some(other) = panel.as_ref().map(|p| p.tab_id.clone()) {
@@ -137,9 +152,9 @@ pub async fn adopt(State(st): State<AppState>) -> Result<Json<PanelResponse>, Ap
 /// added: `None` then means the callback has not run yet and will find the row.
 fn adopt_session(registry: &Registry, session: &Session, relaunch: Relaunch) {
     let tab_id = session.id().to_string();
-    registry.adopt(&tab_id, relaunch);
+    registry.adopt(&tab_id, relaunch, PANEL_GENERATION);
     if let Some(code) = session.exit_code() {
-        registry.mark_exited(&tab_id, code);
+        registry.mark_exited(&tab_id, PANEL_GENERATION, code);
     }
 }
 

@@ -35,10 +35,15 @@ pub struct Entry {
     pub info: SessionInfo,
     /// How to reopen this session.
     pub spec: Relaunch,
+    /// Which spawn of this tab is current. A process reports its exit with the generation it
+    /// started with, so an old process (killed by a restart) cannot mark the new one Exited.
+    pub generation: u64,
 }
 
 struct State {
     open: Vec<Entry>,
+    /// The last generation handed out.
+    last_generation: u64,
     /// Newest first.
     closed: VecDeque<Entry>,
 }
@@ -49,6 +54,11 @@ impl State {
             sessions: self.open.iter().map(|e| e.info.clone()).collect(),
             closed: self.closed.iter().map(|e| e.info.clone()).collect(),
         }
+    }
+
+    fn next_generation(&mut self) -> u64 {
+        self.last_generation += 1;
+        self.last_generation
     }
 
     fn lowest_free_number(&self) -> u32 {
@@ -75,6 +85,7 @@ impl Registry {
     pub fn new() -> Self {
         let state = State {
             open: Vec::new(),
+            last_generation: 0,
             closed: VecDeque::new(),
         };
         let (tx, _rx) = watch::channel(state.snapshot());
@@ -84,10 +95,18 @@ impl Registry {
         }
     }
 
-    /// Adds a Running row at the end and returns its number (lowest free).
-    /// If another open session already has exactly this name, the shown
-    /// name becomes "<name> <number>". The stored `Relaunch` keeps the name.
-    pub fn reserve(&self, tab_id: &str, relaunch: Relaunch) -> u32 {
+    /// Adds a Running row at the end and returns its number (lowest free) and the generation of
+    /// the process about to start. If another open session already has exactly this name, the
+    /// shown name becomes "<name> <number>". The stored `Relaunch` keeps the name.
+    pub fn reserve(&self, tab_id: &str, relaunch: Relaunch) -> (u32, u64) {
+        let generation = self.state.lock().unwrap().next_generation();
+        (self.adopt(tab_id, relaunch, generation), generation)
+    }
+
+    /// Adds a Running row at the end for a process that is already running (the shell panel's),
+    /// whose exit callback was built with `generation`, and returns its number. Same naming rule
+    /// as `reserve`.
+    pub fn adopt(&self, tab_id: &str, relaunch: Relaunch, generation: u64) -> u32 {
         let mut state = self.state.lock().unwrap();
         let number = state.lowest_free_number();
         let taken = state.open.iter().any(|e| e.info.name == relaunch.name);
@@ -110,15 +129,10 @@ impl Registry {
                 command: CommandState::Unknown,
             },
             spec: relaunch,
+            generation,
         });
         self.tx.send_replace(state.snapshot());
         number
-    }
-
-    /// Adds a Running row at the end for a process that is already running (the shell panel's),
-    /// and returns its number. Same naming rule as `reserve`.
-    pub fn adopt(&self, tab_id: &str, relaunch: Relaunch) -> u32 {
-        self.reserve(tab_id, relaunch)
     }
 
     /// Adds the saved tabs as Ended rows, in the given order, with their ids and numbers.
@@ -127,6 +141,7 @@ impl Registry {
     pub fn seed_ended(&self, tabs: &[SavedTab], relaunch_of: impl Fn(&SavedTab) -> Relaunch) {
         let mut state = self.state.lock().unwrap();
         for tab in tabs {
+            let generation = state.next_generation();
             let number = if state.open.iter().any(|e| e.info.number == tab.number) {
                 state.lowest_free_number()
             } else {
@@ -146,6 +161,7 @@ impl Registry {
                     command: CommandState::Unknown,
                 },
                 spec: relaunch_of(tab),
+                generation,
             });
         }
         self.tx.send_replace(state.snapshot());
@@ -171,9 +187,11 @@ impl Registry {
 
     /// Starts a Resume: an Ended or Exited tab becomes Running, in the same row (same id, number,
     /// name and place). The check and the change happen under one lock, so of two calls at once
-    /// only one succeeds. Returns how to start it and the state it had, for `set_state` if the start fails.
-    pub fn begin_resume(&self, tab_id: &str) -> Result<(Relaunch, SessionState), ResumeRefusal> {
+    /// only one succeeds. Returns how to start it, the state it had (for `set_state` if the start
+    /// fails) and the generation of the process to start.
+    pub fn begin_resume(&self, tab_id: &str) -> Result<(Relaunch, SessionState, u64), ResumeRefusal> {
         let mut state = self.state.lock().unwrap();
+        let generation = state.next_generation();
         let entry = state
             .open
             .iter_mut()
@@ -184,9 +202,32 @@ impl Registry {
         }
         let previous = std::mem::replace(&mut entry.info.state, SessionState::Running);
         entry.info.command = CommandState::Unknown;
+        entry.generation = generation;
         let relaunch = entry.spec.clone();
         self.tx.send_replace(state.snapshot());
-        Ok((relaunch, previous))
+        Ok((relaunch, previous, generation))
+    }
+
+    /// Starts a Restart: the tab, in any state, becomes Running in the same row with the new mode
+    /// (kept for Resume and layout.json too). The generation moves on, so the old process's exit
+    /// no longer counts. Returns how to start it and the new generation. The caller has already
+    /// checked that the restart can happen, and kills the old process after this.
+    pub fn begin_restart(&self, tab_id: &str, mode: SessionMode) -> Result<(Relaunch, u64), ResumeRefusal> {
+        let mut state = self.state.lock().unwrap();
+        let generation = state.next_generation();
+        let entry = state
+            .open
+            .iter_mut()
+            .find(|e| e.info.tab_id == tab_id)
+            .ok_or(ResumeRefusal::NotFound)?;
+        entry.info.mode = Some(mode);
+        entry.spec.mode = Some(mode);
+        entry.info.state = SessionState::Running;
+        entry.info.command = CommandState::Unknown;
+        entry.generation = generation;
+        let relaunch = entry.spec.clone();
+        self.tx.send_replace(state.snapshot());
+        Ok((relaunch, generation))
     }
 
     /// Puts a tab's state back, when a Resume could not start its process.
@@ -208,9 +249,15 @@ impl Registry {
         }
     }
 
-    pub fn mark_exited(&self, tab_id: &str, code: i32) {
+    /// A process exited. Ignored when `generation` is not the entry's current one: that process
+    /// was replaced by a Restart or Resume, and the row belongs to the new one.
+    pub fn mark_exited(&self, tab_id: &str, generation: u64, code: i32) {
         let mut state = self.state.lock().unwrap();
-        if let Some(entry) = state.open.iter_mut().find(|e| e.info.tab_id == tab_id) {
+        if let Some(entry) = state
+            .open
+            .iter_mut()
+            .find(|e| e.info.tab_id == tab_id && e.generation == generation)
+        {
             entry.info.state = SessionState::Exited { code };
             self.tx.send_replace(state.snapshot());
         }
@@ -390,7 +437,7 @@ mod tests {
         reg.reserve("c", at("c", "/in"));
         reg.reserve("d", at("d", "/in"));
         reg.close("d");
-        reg.mark_exited("c", 0);
+        reg.mark_exited("c", generation_of(&reg, "c"), 0);
 
         assert_eq!(reg.sessions_where(|cwd| cwd == "/in").len(), 2);
         assert_eq!(
@@ -401,6 +448,12 @@ mod tests {
         assert_eq!(snapshot.sessions.len(), 1);
         assert_eq!(snapshot.sessions[0].tab_id, "b");
         assert!(snapshot.closed.is_empty());
+    }
+
+    /// The generation the entry's current process was started with.
+    fn generation_of(reg: &Registry, tab_id: &str) -> u64 {
+        let state = reg.state.lock().unwrap();
+        state.open.iter().find(|e| e.info.tab_id == tab_id).unwrap().generation
     }
 
     fn numbers(reg: &Registry) -> Vec<(String, u32)> {
@@ -418,8 +471,8 @@ mod tests {
         assert_eq!(reg.begin_resume("t1").unwrap_err(), ResumeRefusal::AlreadyRunning);
         assert_eq!(reg.begin_resume("nope").unwrap_err(), ResumeRefusal::NotFound);
 
-        reg.mark_exited("t1", 2);
-        let (spec, previous) = reg.begin_resume("t1").unwrap();
+        reg.mark_exited("t1", generation_of(&reg, "t1"), 2);
+        let (spec, previous, _) = reg.begin_resume("t1").unwrap();
         assert_eq!(spec.name, "Shell");
         assert_eq!(previous, SessionState::Exited { code: 2 });
         assert_eq!(reg.snapshot().sessions[0].state, SessionState::Running);
@@ -431,13 +484,74 @@ mod tests {
     }
 
     #[test]
+    fn stale_exit_is_ignored() {
+        let reg = Registry::new();
+        let (_, first) = reg.reserve(
+            "t1",
+            Relaunch {
+                agent: Some("claude".into()),
+                mode: Some(SessionMode::Manual),
+                ..relaunch("Claude")
+            },
+        );
+        let (spec, second) = reg.begin_restart("t1", SessionMode::Plan).unwrap();
+        assert_ne!(first, second);
+        assert_eq!(spec.mode, Some(SessionMode::Plan));
+        // The killed process reports its exit after the restart: the new run is not Exited.
+        reg.mark_exited("t1", first, 0);
+        let row = reg.snapshot().sessions.remove(0);
+        assert_eq!(row.state, SessionState::Running);
+        assert_eq!(row.mode, Some(SessionMode::Plan));
+        reg.mark_exited("t1", second, 3);
+        assert_eq!(reg.snapshot().sessions[0].state, SessionState::Exited { code: 3 });
+    }
+
+    #[test]
+    fn begin_restart_unknown_tab_is_not_found() {
+        let reg = Registry::new();
+        assert_eq!(
+            reg.begin_restart("nope", SessionMode::Plan).unwrap_err(),
+            ResumeRefusal::NotFound
+        );
+    }
+
+    #[test]
+    fn begin_restart_keeps_the_row_and_saves_the_mode() {
+        let reg = Registry::new();
+        reg.reserve(
+            "a",
+            Relaunch {
+                agent: Some("claude".into()),
+                ..relaunch("A")
+            },
+        );
+        reg.reserve("b", relaunch("B"));
+        reg.mark("b", Mark::Executed);
+        let mut rx = reg.subscribe();
+        reg.mark_exited("a", generation_of(&reg, "a"), 1);
+        rx.borrow_and_update();
+        let (spec, _) = reg.begin_restart("a", SessionMode::Bypass).unwrap();
+        assert!(rx.has_changed().unwrap());
+        assert_eq!(spec.mode, Some(SessionMode::Bypass));
+        let snap = reg.snapshot();
+        assert_eq!(snap.sessions[0].tab_id, "a");
+        assert_eq!(snap.sessions[0].number, 1);
+        assert_eq!(snap.sessions[0].state, SessionState::Running);
+        assert_eq!(snap.sessions[0].command, CommandState::Unknown);
+        assert_eq!(snap.sessions[0].mode, Some(SessionMode::Bypass));
+        // The saved layout and a later Resume see the new mode too.
+        assert_eq!(reg.saved_tabs()[0].mode, Some(SessionMode::Bypass));
+        assert_eq!(snap.sessions[1].command, CommandState::Running);
+    }
+
+    #[test]
     fn numbers_are_lowest_free() {
         let reg = Registry::new();
         for i in 1..=6 {
-            assert_eq!(reg.reserve(&format!("t{i}"), relaunch("Shell")), i);
+            assert_eq!(reg.reserve(&format!("t{i}"), relaunch("Shell")).0, i);
         }
         reg.close("t4");
-        assert_eq!(reg.reserve("t7", relaunch("Shell")), 4);
+        assert_eq!(reg.reserve("t7", relaunch("Shell")).0, 4);
     }
 
     #[test]
@@ -467,12 +581,12 @@ mod tests {
         let reg = Registry::new();
         reg.reserve("a", relaunch("A"));
         reg.reserve("b", relaunch("B"));
-        reg.mark_exited("b", 3);
+        reg.mark_exited("b", generation_of(&reg, "b"), 3);
         let snap = reg.snapshot();
         assert_eq!(snap.sessions[1].state, SessionState::Exited { code: 3 });
         assert_eq!(snap.sessions[1].number, 2);
         // The number stays taken while the exited row is open.
-        assert_eq!(reg.reserve("c", relaunch("C")), 3);
+        assert_eq!(reg.reserve("c", relaunch("C")).0, 3);
     }
 
     #[test]
@@ -482,7 +596,7 @@ mod tests {
         reg.release("a");
         let snap = reg.snapshot();
         assert!(snap.sessions.is_empty() && snap.closed.is_empty());
-        assert_eq!(reg.reserve("b", relaunch("B")), 1);
+        assert_eq!(reg.reserve("b", relaunch("B")).0, 1);
     }
 
     #[test]
@@ -518,7 +632,7 @@ mod tests {
         reg.reserve("a", relaunch("A"));
         assert!(rx.has_changed().unwrap());
         assert_eq!(rx.borrow_and_update().sessions.len(), 1);
-        reg.mark_exited("a", 0);
+        reg.mark_exited("a", generation_of(&reg, "a"), 0);
         assert!(rx.has_changed().unwrap());
     }
 
@@ -556,7 +670,7 @@ mod tests {
         let reg = Registry::new();
         reg.reserve("a", relaunch("A"));
         reg.mark("a", Mark::Executed);
-        reg.mark_exited("a", 1);
+        reg.mark_exited("a", generation_of(&reg, "a"), 1);
         reg.mark("a", Mark::Finished(Some(1)));
         assert_eq!(command(&reg), CommandState::Running);
         reg.mark("missing", Mark::PromptStart);
@@ -700,7 +814,7 @@ mod tests {
             assert_eq!((row.profile_id.as_str(), row.cwd.as_str()), ("pwsh", "C:/work"));
         }
         // The numbers stay taken: the next new tab takes the lowest free one.
-        assert_eq!(reg.reserve("c", relaunch("C")), 1);
+        assert_eq!(reg.reserve("c", relaunch("C")).0, 1);
         assert_eq!(
             reg.saved_tabs().iter().map(|t| t.number).collect::<Vec<_>>(),
             vec![5, 2, 1]
@@ -721,7 +835,7 @@ mod tests {
         reg.reserve("a", relaunch("A"));
         reg.reserve("b", relaunch("B"));
         reg.reserve("c", relaunch("C"));
-        reg.mark_exited("b", 1);
+        reg.mark_exited("b", generation_of(&reg, "b"), 1);
         reg.close("c");
         reg.reorder(&["b".into(), "a".into()]);
         let tabs = reg.saved_tabs();

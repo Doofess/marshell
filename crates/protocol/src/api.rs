@@ -253,6 +253,15 @@ pub struct ResumeError {
     pub reason: String,
 }
 
+/// POST /v1/sessions/{tab}/restart body: start an agent session again in another mode.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct RestartRequest {
+    pub mode: SessionMode,
+    pub cols: u16,
+    pub rows: u16,
+}
+
 /// One task: a git worktree on its own branch, made by Marshell.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[ts(export)]

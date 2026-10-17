@@ -10,7 +10,7 @@ use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use marshell_protocol::api::{
     ColorScheme, CreateSessionRequest, CreateSessionResponse, InputRequest, RenameRequest, ReopenRequest,
-    ReorderRequest, ResumeError, SessionMode, SessionState, SessionsSnapshot, ShellFamily,
+    ReorderRequest, RestartRequest, ResumeError, SessionInfo, SessionMode, SessionState, SessionsSnapshot, ShellFamily,
 };
 use marshell_protocol::brand;
 use serde::Deserialize;
@@ -183,7 +183,7 @@ async fn start_session(
         });
 
     let tab_id = auth::new_id("t");
-    let number = st.0.registry.reserve(
+    let (number, generation) = st.0.registry.reserve(
         &tab_id,
         Relaunch {
             profile_id: run.profile_id.clone(),
@@ -193,7 +193,7 @@ async fn start_session(
             name,
         },
     );
-    if let Err(err) = launch(st, &tab_id, number, run, agent, cwd, size, scheme).await {
+    if let Err(err) = launch(st, &tab_id, number, generation, run, agent, cwd, size, scheme).await {
         // A spawn failed, or the tab was closed while it started (then there is no open row to release).
         st.0.registry.release(&tab_id);
         return Err(err);
@@ -208,13 +208,14 @@ async fn launch(
     st: &AppState,
     tab_id: &str,
     number: u32,
+    generation: u64,
     run: Resolved,
     agent: Option<String>,
     cwd: String,
     size: (u16, u16),
     scheme: Option<ColorScheme>,
 ) -> Result<(), ApiError> {
-    spawn_into_map(st, tab_id, number, run, agent, cwd, size, scheme).await?;
+    spawn_into_map(st, tab_id, number, generation, run, agent, cwd, size, scheme).await?;
     // A close can land between reserve and insert, when the map has nothing to kill yet.
     // Checking after the insert catches it: a later close finds the session in the map.
     if !st.0.registry.is_open(tab_id) {
@@ -231,12 +232,14 @@ async fn launch(
 
 /// Starts the process and stores its session in the sessions map, without touching the registry.
 /// The exit and mark callbacks name the tab in the registry and do nothing while it has no row:
-/// the shell panel starts here and only gets a row when it is adopted.
+/// the shell panel starts here and only gets a row when it is adopted. The exit callback carries
+/// `generation`, so a process that a restart replaced cannot mark its successor Exited.
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn spawn_into_map(
     st: &AppState,
     tab_id: &str,
     number: u32,
+    generation: u64,
     run: Resolved,
     agent: Option<String>,
     cwd: String,
@@ -275,7 +278,9 @@ pub(super) async fn spawn_into_map(
         env,
         cols: size.0,
         rows: size.1,
-        on_exit: Some(Box::new(move |code| registry.mark_exited(&exited_tab, code))),
+        on_exit: Some(Box::new(move |code| {
+            registry.mark_exited(&exited_tab, generation, code)
+        })),
         on_mark,
         record: Some((recording, shell)),
     };
@@ -495,15 +500,8 @@ fn cannot_resume(reason: impl Into<String>) -> Response {
     (StatusCode::CONFLICT, Json(ResumeError { reason: reason.into() })).into_response()
 }
 
-/// Starts an Ended or Exited tab again in the same row, with the CLI's own continue flag for an agent.
-pub async fn resume(State(st): State<AppState>, Path(tab): Path<String>, Json(req): Json<ResumeRequest>) -> Response {
-    let Some(info) = st.0.registry.snapshot().sessions.into_iter().find(|s| s.tab_id == tab) else {
-        return (StatusCode::NOT_FOUND, "No such session.").into_response();
-    };
-    // These checks come before begin_resume, so a refusal leaves the tab as it was.
-    if info.state == SessionState::Running {
-        return cannot_resume("It is already running.");
-    }
+/// Why the tab's profile or folder rules out starting it again (Resume and Restart), if they do.
+fn cannot_start_again(st: &AppState, info: &SessionInfo) -> Option<String> {
     let profile_known = info.profile_id == CUSTOM_PROFILE
         || st
             .0
@@ -514,10 +512,25 @@ pub async fn resume(State(st): State<AppState>, Path(tab): Path<String>, Json(re
             .iter()
             .any(|p| p.id == info.profile_id);
     if !profile_known {
-        return cannot_resume("Its shell profile was removed.");
+        return Some("Its shell profile was removed.".into());
     }
     if !info.cwd.is_empty() && !std::path::Path::new(&info.cwd).is_dir() {
-        return cannot_resume(format!("Its folder no longer exists: {}", info.cwd));
+        return Some(format!("Its folder no longer exists: {}", info.cwd));
+    }
+    None
+}
+
+/// Starts an Ended or Exited tab again in the same row, with the CLI's own continue flag for an agent.
+pub async fn resume(State(st): State<AppState>, Path(tab): Path<String>, Json(req): Json<ResumeRequest>) -> Response {
+    let Some(info) = st.0.registry.snapshot().sessions.into_iter().find(|s| s.tab_id == tab) else {
+        return (StatusCode::NOT_FOUND, "No such session.").into_response();
+    };
+    // These checks come before begin_resume, so a refusal leaves the tab as it was.
+    if info.state == SessionState::Running {
+        return cannot_resume("It is already running.");
+    }
+    if let Some(reason) = cannot_start_again(&st, &info) {
+        return cannot_resume(reason);
     }
     let run = match resolve(
         &st,
@@ -534,7 +547,7 @@ pub async fn resume(State(st): State<AppState>, Path(tab): Path<String>, Json(re
         return cannot_resume(message);
     }
     // The check and the change to Running happen under one lock: of two resumes at once, one wins.
-    let (saved, previous) = match st.0.registry.begin_resume(&tab) {
+    let (saved, previous, generation) = match st.0.registry.begin_resume(&tab) {
         Ok(started) => started,
         Err(ResumeRefusal::NotFound) => return (StatusCode::NOT_FOUND, "No such session.").into_response(),
         Err(ResumeRefusal::AlreadyRunning) => return cannot_resume("It is already running."),
@@ -549,6 +562,7 @@ pub async fn resume(State(st): State<AppState>, Path(tab): Path<String>, Json(re
         &st,
         &tab,
         info.number,
+        generation,
         run,
         saved.agent,
         saved.cwd,
@@ -564,6 +578,71 @@ pub async fn resume(State(st): State<AppState>, Path(tab): Path<String>, Json(re
         .into_response(),
         Err(err) => {
             st.0.registry.set_state(&tab, previous);
+            err.into_response()
+        }
+    }
+}
+
+/// Starts an agent session again in the same row in another mode, continuing its last conversation
+/// (the CLI's own continue flag). The old process, if any, is killed. Every refusal comes before
+/// that, so a refused restart leaves the session running.
+pub async fn restart(State(st): State<AppState>, Path(tab): Path<String>, Json(req): Json<RestartRequest>) -> Response {
+    let Some(info) = st.0.registry.snapshot().sessions.into_iter().find(|s| s.tab_id == tab) else {
+        return (StatusCode::NOT_FOUND, "No such session.").into_response();
+    };
+    if info.agent.is_none() {
+        return cannot_resume("Only an agent session has a mode.");
+    }
+    if let Some(reason) = cannot_start_again(&st, &info) {
+        return cannot_resume(reason);
+    }
+    let run = match resolve(
+        &st,
+        Some(&info.profile_id),
+        info.agent.as_deref(),
+        None,
+        true,
+        Some(req.mode),
+    ) {
+        Ok(run) => run,
+        Err(err) => return err.into_response(),
+    };
+    if let Err((_, message)) = check_agent_installed(&st, &run, info.agent.as_deref()) {
+        return cannot_resume(message);
+    }
+    // From here the restart goes ahead. The row takes the new mode and a new generation first, so the
+    // old process's exit (which the kill below causes) no longer touches it.
+    let (saved, generation) = match st.0.registry.begin_restart(&tab, req.mode) {
+        Ok(started) => started,
+        Err(_) => return (StatusCode::NOT_FOUND, "No such session.").into_response(),
+    };
+    // No lock is held here: `remove_session` drops the map lock before it returns, and `kill` only
+    // signals the process tree and returns.
+    if let Some(old) = st.remove_session(&tab) {
+        old.kill();
+    }
+    match launch(
+        &st,
+        &tab,
+        info.number,
+        generation,
+        run,
+        saved.agent,
+        saved.cwd,
+        (req.cols, req.rows),
+        None,
+    )
+    .await
+    {
+        Ok(()) => Json(CreateSessionResponse {
+            tab_id: tab,
+            number: info.number,
+        })
+        .into_response(),
+        Err(err) => {
+            // The old process is gone, so the row cannot go back to Running. Only this run's generation counts:
+            // a newer restart of the same tab keeps its own state.
+            st.0.registry.mark_exited(&tab, generation, -1);
             err.into_response()
         }
     }
