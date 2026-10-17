@@ -498,12 +498,23 @@ fn foreground_chain_names_the_running_child() {
 #[test]
 fn a_renamed_agent_binary_is_found() {
     let dir = tempfile::tempdir().unwrap();
-    std::fs::copy(env!("CARGO_BIN_EXE_fake-agent"), dir.path().join("codex.exe")).unwrap();
+    std::fs::copy(
+        env!("CARGO_BIN_EXE_fake-agent"),
+        dir.path().join("codex-marshell-test.exe"),
+    )
+    .unwrap();
     let mut spec = fake(&[]);
-    spec.argv = vec!["cmd.exe".into(), "/d".into(), "/c".into(), "codex.exe sleep".into()];
+    spec.argv = vec![
+        "cmd.exe".into(),
+        "/d".into(),
+        "/c".into(),
+        // A path, not a bare name: with NoDefaultCurrentDirectoryInExePath set, cmd would find a
+        // real `codex` on PATH instead. The name is one no real program uses, so nothing else is hit.
+        r".\codex-marshell-test.exe sleep".into(),
+    ];
     spec.cwd = Some(dir.path().to_path_buf());
     let s = Session::spawn("t-renamed".into(), spec).unwrap();
-    let chain = chain_settles(&s, &["codex"]).unwrap_or_default();
+    let chain = chain_settles(&s, &["codex-marshell-test"]).unwrap_or_default();
     s.kill();
     assert_eq!(
         marshell_core::profiles::detect::agent_in(&chain, None),
