@@ -90,6 +90,8 @@ fn shown_command_line(text: &str) -> Option<String> {
 pub struct Session {
     id: String,
     command: Mutex<CommandTrack>,
+    /// The folder the shell last reported (OSC 9;9 or OSC 7).
+    cwd: Mutex<Option<PathBuf>>,
     output: Mutex<Output>,
     /// The reader thread waits here while the client is more than MAX_UNACKED behind.
     space: Condvar,
@@ -149,6 +151,7 @@ impl Session {
         let session = Arc::new(Session {
             id: id.clone(),
             command: Mutex::new(CommandTrack::default()),
+            cwd: Mutex::new(None),
             output: Mutex::new(Output {
                 buf: OutputBuffer::new(SCROLLBACK_BYTES),
                 screen: vt100::Parser::new(size.rows, size.cols, 0),
@@ -301,8 +304,14 @@ impl Session {
                     track.epoch += 1;
                 }
                 Mark::CommandStart => {}
+                Mark::Cwd(path) => *self.cwd.lock().unwrap() = Some(PathBuf::from(path)),
             }
         }
+    }
+
+    /// The last folder the shell reported, or `None` if it never reported one.
+    pub fn current_cwd(&self) -> Option<PathBuf> {
+        self.cwd.lock().unwrap().clone()
     }
 
     /// True between the shell's C mark and the next D or A mark.
