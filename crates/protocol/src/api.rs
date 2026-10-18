@@ -687,6 +687,8 @@ pub struct Settings {
     pub appearance: Appearance,
     /// True once the user has seen the network warning that comes with the first Pause.
     pub pause_warned: bool,
+    /// True once the user has been through (or dismissed) the first-run onboarding.
+    pub onboarded: bool,
 }
 
 /// A file the core found for the user to import from (the core only reads it).

@@ -8,4 +8,8 @@ export type Settings = { appearance: Appearance,
 /**
  * True once the user has seen the network warning that comes with the first Pause.
  */
-pause_warned: boolean, };
+pause_warned: boolean, 
+/**
+ * True once the user has been through (or dismissed) the first-run onboarding.
+ */
+onboarded: boolean, };

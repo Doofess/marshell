@@ -24,6 +24,8 @@ export class SettingsSync {
   private hasRead = false;
   /** Kept from the last read, so an appearance save sends it back unchanged. */
   private warned = false;
+  /** Kept from the last read, so every save sends it back unchanged. */
+  private seen = false;
   /** The appearance the core last stored, which a pause-warning write sends back unchanged. */
   private appearance: Appearance | null = null;
 
@@ -38,6 +40,7 @@ export class SettingsSync {
     const s = await this.api.get(await this.getEndpoint());
     this.hasRead = true;
     this.warned = s.pause_warned;
+    this.seen = s.onboarded;
     this.appearance = s.appearance;
     return s.appearance;
   }
@@ -56,14 +59,24 @@ export class SettingsSync {
         throw new SettingsReadError();
       }
     }
-    const s = await this.api.put(await this.getEndpoint(), { appearance: next, pause_warned: this.warned });
+    const s = await this.api.put(await this.getEndpoint(), { appearance: next, pause_warned: this.warned, onboarded: this.seen });
     this.warned = s.pause_warned;
+    this.seen = s.onboarded;
     this.appearance = s.appearance;
     return s.appearance;
   }
 
   /** Records that the first-Pause warning was confirmed. Reads first, like `save`, and sends the appearance last read back unchanged. */
   async markPauseWarned(): Promise<void> {
+    await this.writeFlags({ pause_warned: true });
+  }
+
+  /** Records that the onboarding was seen. Reads first, like `save`, and sends the appearance and the pause warning back unchanged. */
+  async markOnboarded(): Promise<void> {
+    await this.writeFlags({ onboarded: true });
+  }
+
+  private async writeFlags(change: Partial<Pick<Settings, "pause_warned" | "onboarded">>): Promise<void> {
     if (!this.hasRead) {
       try {
         await this.load();
@@ -71,8 +84,14 @@ export class SettingsSync {
         throw new SettingsReadError();
       }
     }
-    const s = await this.api.put(await this.getEndpoint(), { appearance: this.appearance!, pause_warned: true });
+    const s = await this.api.put(await this.getEndpoint(), {
+      appearance: this.appearance!,
+      pause_warned: this.warned,
+      onboarded: this.seen,
+      ...change,
+    });
     this.warned = s.pause_warned;
+    this.seen = s.onboarded;
     this.appearance = s.appearance;
   }
 }

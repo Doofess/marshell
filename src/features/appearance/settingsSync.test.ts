@@ -26,7 +26,7 @@ describe("SettingsSync", () => {
     let calls = 0;
     const { api, sync } = setup(async () => {
       if (++calls === 1) throw new Error("not yet");
-      return { appearance: teal, pause_warned: false };
+      return { appearance: teal, pause_warned: false, onboarded: false };
     });
     await expect(sync.load()).rejects.toThrow();
     const dark = { ...teal, theme: "dark" as const };
@@ -36,14 +36,14 @@ describe("SettingsSync", () => {
   });
 
   it("a save sends back the pause warning it read", async () => {
-    const { api, sync } = setup(async () => ({ appearance: teal, pause_warned: true }));
+    const { api, sync } = setup(async () => ({ appearance: teal, pause_warned: true, onboarded: false }));
     await sync.load();
     await sync.save(teal);
-    expect(api.put).toHaveBeenCalledWith(ep, { appearance: teal, pause_warned: true });
+    expect(api.put).toHaveBeenCalledWith(ep, { appearance: teal, pause_warned: true, onboarded: false });
   });
 
   it("after one successful read a save does not read again", async () => {
-    const { api, sync } = setup(async () => ({ appearance: teal, pause_warned: true }));
+    const { api, sync } = setup(async () => ({ appearance: teal, pause_warned: true, onboarded: false }));
     expect(await sync.load()).toEqual(teal);
     await sync.save(teal);
     expect(api.get).toHaveBeenCalledTimes(1);
@@ -51,11 +51,11 @@ describe("SettingsSync", () => {
   });
 
   it("markPauseWarned sends the last appearance with pause_warned true, and the getter follows", async () => {
-    const { api, sync } = setup(async () => ({ appearance: teal, pause_warned: false }));
+    const { api, sync } = setup(async () => ({ appearance: teal, pause_warned: false, onboarded: false }));
     await sync.load();
     expect(sync.pauseWarned).toBe(false);
     await sync.markPauseWarned();
-    expect(api.put).toHaveBeenCalledWith(ep, { appearance: teal, pause_warned: true });
+    expect(api.put).toHaveBeenCalledWith(ep, { appearance: teal, pause_warned: true, onboarded: false });
     expect(sync.pauseWarned).toBe(true);
   });
 
@@ -68,9 +68,23 @@ describe("SettingsSync", () => {
   });
 
   it("an appearance save after markPauseWarned keeps the warning", async () => {
-    const { api, sync } = setup(async () => ({ appearance: teal, pause_warned: false }));
+    const { api, sync } = setup(async () => ({ appearance: teal, pause_warned: false, onboarded: false }));
     await sync.markPauseWarned();
     await sync.save(teal);
-    expect(api.put).toHaveBeenLastCalledWith(ep, { appearance: teal, pause_warned: true });
+    expect(api.put).toHaveBeenLastCalledWith(ep, { appearance: teal, pause_warned: true, onboarded: false });
+  });
+
+  it("markOnboarded sends onboarded true and keeps pause_warned", async () => {
+    const { api, sync } = setup(async () => ({ appearance: teal, pause_warned: true, onboarded: false }));
+    await sync.load();
+    await sync.markOnboarded();
+    expect(api.put).toHaveBeenCalledWith(ep, { appearance: teal, pause_warned: true, onboarded: true });
+  });
+
+  it("markPauseWarned keeps onboarded", async () => {
+    const { api, sync } = setup(async () => ({ appearance: teal, pause_warned: false, onboarded: true }));
+    await sync.load();
+    await sync.markPauseWarned();
+    expect(api.put).toHaveBeenCalledWith(ep, { appearance: teal, pause_warned: true, onboarded: true });
   });
 });
