@@ -3,14 +3,14 @@
 use super::AppState;
 use super::files::IMAGE_CAP;
 use super::sessions::cannot_resume;
-use crate::profiles::detect::attachment_ref;
+use crate::profiles::detect::{attachment_ref, dropped_path_ref};
 use crate::{paths, store};
 use axum::Json;
 use axum::body::Bytes;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
-use marshell_protocol::api::{AttachmentSaved, PastePathsRequest, PasteRequest, SessionInfo};
+use marshell_protocol::api::{AttachmentSaved, PastePathsRequest, PasteRequest, SessionInfo, ShellFamily};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 const PNG_SIGNATURE: [u8; 8] = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
@@ -177,27 +177,35 @@ pub async fn paste_paths(
     if !all_exist.unwrap_or(false) {
         return (StatusCode::BAD_REQUEST, "That path doesn't exist.").into_response();
     }
-    let agent = st
-        .registry()
-        .snapshot()
-        .sessions
-        .iter()
-        .find(|s| s.tab_id == tab)
-        .and_then(effective_agent);
+    let info = st.registry().snapshot().sessions.into_iter().find(|s| s.tab_id == tab);
+    let agent = info.as_ref().and_then(effective_agent);
+    let family = shell_family(&st, info.as_ref().map(|i| i.profile_id.as_str()));
     let references: Vec<String> = req
         .paths
         .iter()
-        .map(|p| attachment_ref(agent.as_deref(), std::path::Path::new(p)))
+        .map(|p| dropped_path_ref(agent.as_deref(), family, std::path::Path::new(p)))
         .collect();
+    // Each path is its own paste, and a space follows each one, so the next drop stays apart.
     let mut pieces: Vec<&str> = Vec::with_capacity(references.len() * 2);
-    for (i, reference) in references.iter().enumerate() {
-        if i > 0 {
-            pieces.push(" ");
-        }
+    for reference in &references {
         pieces.push(reference);
+        pieces.push(" ");
     }
     session.write_input(paste_pieces(&pieces, session.bracketed_paste()));
     StatusCode::NO_CONTENT.into_response()
+}
+
+/// The shell family of the session's profile. A session with no known profile runs the default shell.
+fn shell_family(st: &AppState, profile_id: Option<&str>) -> ShellFamily {
+    let doc = st.0.profiles.lock().unwrap();
+    profile_id
+        .and_then(|id| doc.profiles.iter().find(|p| p.id == id))
+        .map(|p| p.family)
+        .unwrap_or(if cfg!(windows) {
+            ShellFamily::PowerShell
+        } else {
+            ShellFamily::Posix
+        })
 }
 
 /// Writes `bytes` to `<dir>/<unix ms>.png`, or `<unix ms>-2.png` and up when that name is taken.
