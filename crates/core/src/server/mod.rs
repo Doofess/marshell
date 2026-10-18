@@ -78,6 +78,8 @@ struct Inner {
     foreground_wake: Arc<tokio::sync::Notify>,
     /// Whether an agent's command (`claude`, `codex`, `agy`) runs from PATH. Tests swap it.
     agent_on_path: fn(&str) -> bool,
+    /// The file an agent's command runs from PATH, for its setup and version. Tests swap it.
+    agent_path: fn(&str) -> Option<PathBuf>,
     /// The last events the bridge sent, per live tab.
     hook_log: crate::hooks::log::HookLog,
     /// The permission requests being held for a decision.
@@ -135,6 +137,7 @@ impl AppState {
             shell_panel: Mutex::new(None),
             foreground_wake: Arc::new(tokio::sync::Notify::new()),
             agent_on_path: crate::profiles::detect::command_on_path,
+            agent_path: crate::profiles::detect::command_path,
             hook_log: crate::hooks::log::HookLog::default(),
             holds: crate::hooks::holds::Holds::default(),
             permission_hold: DEFAULT_PERMISSION_HOLD,
@@ -168,6 +171,13 @@ impl AppState {
         Arc::get_mut(&mut self.0)
             .expect("with_agent_check runs before the state is shared")
             .agent_on_path = check;
+        self
+    }
+    /// Replaces the PATH lookup of an agent's file. Call it before the state is cloned.
+    pub fn with_agent_path(mut self, find: fn(&str) -> Option<PathBuf>) -> Self {
+        Arc::get_mut(&mut self.0)
+            .expect("with_agent_path runs before the state is shared")
+            .agent_path = find;
         self
     }
     /// The folder holding `profiles.json`, `tasks.json` and the other files Marshell keeps.

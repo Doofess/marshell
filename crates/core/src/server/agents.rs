@@ -111,7 +111,8 @@ fn setup_of(st: &AppState) -> Result<AgentSetup, Fail> {
     let user_home = super::files::home_dir().ok_or_else(|| failed("the user's home folder is not known"))?;
     let settings_path = st.claude_settings_path(&user_home);
 
-    let exe = agent_exe(&st.0.profiles.lock().unwrap().profiles, AGENT);
+    // A profile that runs `claude` itself names the file; sessions otherwise start it from PATH.
+    let exe = agent_exe(&st.0.profiles.lock().unwrap().profiles, AGENT).or_else(|| (st.0.agent_path)(AGENT));
     let version = exe.as_deref().and_then(|exe| st.version_of(exe));
 
     let mut setup = AgentSetup {

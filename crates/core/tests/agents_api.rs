@@ -17,9 +17,14 @@ struct Env {
     settings: PathBuf,
 }
 
-/// A temp Marshell home, a project holding the settings file, and no detected profiles, so no
-/// `claude` is ever run. The settings path is handed to the state, never read from the environment.
+/// A temp Marshell home, a project holding the settings file, no detected profiles and nothing on
+/// PATH, so no `claude` is ever run. The settings path is handed to the state, never read from the
+/// environment.
 fn env() -> Env {
+    env_with(|_| None)
+}
+
+fn env_with(agent_path: fn(&str) -> Option<PathBuf>) -> Env {
     let dir = tempfile::tempdir().unwrap();
     let root = canonical(dir.path());
     let home = root.join("home");
@@ -35,7 +40,8 @@ fn env() -> Env {
         home.clone(),
         Vec::new(),
     )
-    .with_claude_settings(settings.clone());
+    .with_claude_settings(settings.clone())
+    .with_agent_path(agent_path);
     Env {
         _dir: dir,
         app: router(st),
@@ -105,6 +111,18 @@ async fn setup_reports_missing_file() {
         setup["bridge_path"],
         paths::bridge_exe(&e.home).to_string_lossy().as_ref()
     );
+    assert!(setup.get("version").is_none(), "{setup}");
+}
+
+/// Sessions start `claude` through a shell, so no profile runs it; PATH is where it is found.
+#[tokio::test]
+async fn setup_finds_claude_on_path_without_a_profile() {
+    // A path that does not exist: the version check fails and nothing is run.
+    let e = env_with(|name| (name == "claude").then(|| PathBuf::from("Z:/nowhere/claude.exe")));
+    let (status, setup) = get(&e.app, "/v1/agents/claude/setup").await;
+    assert_eq!(status, StatusCode::OK, "{setup}");
+    assert_eq!(setup["found"], true);
+    assert_eq!(setup["exe_path"], "Z:/nowhere/claude.exe");
     assert!(setup.get("version").is_none(), "{setup}");
 }
 

@@ -30,9 +30,12 @@ pub fn on_path(exe: &str) -> bool {
 /// True when `name` runs from one of the PATH directories. On Windows that includes the
 /// PATHEXT endings, so `claude` finds `claude.cmd` and `agy` finds `agy.exe`.
 pub fn command_on_path(name: &str) -> bool {
-    let Some(path) = std::env::var_os("PATH") else {
-        return false;
-    };
+    command_path(name).is_some()
+}
+
+/// The file `name` runs from PATH, as `command_on_path` finds it.
+pub fn command_path(name: &str) -> Option<PathBuf> {
+    let path = std::env::var_os("PATH")?;
     let dirs: Vec<PathBuf> = std::env::split_paths(&path).collect();
     let pathext = std::env::var("PATHEXT").unwrap_or_else(|_| ".COM;.EXE;.BAT;.CMD".to_string());
     let exts: Vec<&str> = if cfg!(windows) {
@@ -43,10 +46,14 @@ pub fn command_on_path(name: &str) -> bool {
     found_in(&dirs, name, &exts)
 }
 
-/// True when a directory holds `name` itself or `name` plus one of the endings.
-fn found_in(dirs: &[PathBuf], name: &str, exts: &[&str]) -> bool {
-    dirs.iter()
-        .any(|dir| dir.join(name).is_file() || exts.iter().any(|ext| dir.join(format!("{name}{ext}")).is_file()))
+/// The first directory's `name` plus one of the endings, or else `name` itself.
+fn found_in(dirs: &[PathBuf], name: &str, exts: &[&str]) -> Option<PathBuf> {
+    dirs.iter().find_map(|dir| {
+        exts.iter()
+            .map(|ext| dir.join(format!("{name}{ext}")))
+            .chain(std::iter::once(dir.join(name)))
+            .find(|p| p.is_file())
+    })
 }
 
 /// What detection asks the machine. Tests pass fakes; `Probe::system()` is the real thing.
@@ -529,10 +536,23 @@ mod tests {
         std::fs::write(dir.path().join("claude.cmd"), "").unwrap();
         std::fs::write(dir.path().join("plain"), "").unwrap();
         let dirs = vec![dir.path().to_path_buf()];
-        assert!(found_in(&dirs, "claude", &[".EXE", ".cmd"]));
-        assert!(found_in(&dirs, "plain", &[]));
-        assert!(!found_in(&dirs, "claude", &[".EXE"]));
-        assert!(!found_in(&dirs, "agy", &[".EXE", ".cmd"]));
+        assert!(found_in(&dirs, "claude", &[".EXE", ".cmd"]).is_some());
+        assert!(found_in(&dirs, "plain", &[]).is_some());
+        assert!(found_in(&dirs, "claude", &[".EXE"]).is_none());
+        assert!(found_in(&dirs, "agy", &[".EXE", ".cmd"]).is_none());
+    }
+
+    #[test]
+    fn found_in_prefers_an_ending_to_the_bare_name() {
+        // npm puts a sh script named `claude` next to `claude.cmd`; Windows can only run the second.
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("claude"), "").unwrap();
+        std::fs::write(dir.path().join("claude.cmd"), "").unwrap();
+        let dirs = vec![dir.path().to_path_buf()];
+        assert_eq!(
+            found_in(&dirs, "claude", &[".EXE", ".cmd"]),
+            Some(dir.path().join("claude.cmd"))
+        );
     }
 
     fn utf16le(text: &str) -> Vec<u8> {
