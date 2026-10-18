@@ -928,6 +928,10 @@ Decisions from the 2026-10-10 coverage audit (`docs/superpowers/plan-coverage-au
      1. The status line posts every second and floods the 200-event ring. Keep only the latest status line per tab, or give it its own ring.
      2. A session inherits `CLAUDE_CODE_*` variables from whatever started Marshell, and `CLAUDE_CODE_CHILD_SESSION` turns Claude's transcript saving off. Drop them from the session environment.
      3. Some requests offer only an `addDirectories` suggestion, so a scoped allow is refused. Decide whether a scope may use it, or the card hides the scopes then (3c/3d).
+   - **Carried from 3a's final review into 3c** (before 3c installs the hooks and the status line chain):
+     1. The bridge runs the user's status line command with no time limit, and on Windows its shell outlives the bridge when Claude kills it. Run the command in a kill-on-close Job Object (as `crates/core/src/job.rs` does) with a timeout.
+     2. Nothing clears a tab's state when its session ends: its event ring stays, and its held requests wait out the hold. Release the tab's requests and drop its ring when the session closes or exits.
+     3. A permission request with no tab is held for the full 120 s, and nothing in the pane can release it. Decide whether it is answered at once with 204 (3c/3d).
    - **Slice 3f decisions (2026-10-18).**
      1. One click on the folder chip opens the field as now. Typing filters known folders and also accepts a full path in the running OS's syntax, offered as a "Use <path>" row. A "Browse…" row at the end of the list and Ctrl+O in the field open the native picker, so mouse and keyboard reach it alike (double-click was considered and dropped: the first click already swaps the chip for a field, and it has no keyboard route).
      2. The native dialog comes from `tauri-plugin-dialog` (approved as a new dependency), with a capability limited to the folder-open dialog. Linux and macOS get it from the same plugin later.
