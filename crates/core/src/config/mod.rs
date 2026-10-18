@@ -2,5 +2,6 @@
 //! ChangeSet that is previewed as a diff, applied only with the hashes the user saw, snapshotted,
 //! written atomically, recorded in `managed.json`, and can be restored.
 
+pub mod guard;
 pub mod hash;
 pub mod jsonc;
