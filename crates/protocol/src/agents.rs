@@ -73,3 +73,13 @@ pub struct HookPlanRequest {
     /// Keep the user's own status line working through the chain.
     pub statusline: bool,
 }
+
+/// What removing an agent's hooks would do: the preview, and whether the user's changed status
+/// line stays as it is.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct RemovePreview {
+    pub preview: crate::config::ConfigPreview,
+    /// The person changed `statusLine` since the install, so removal leaves it alone.
+    pub statusline_left: bool,
+}
