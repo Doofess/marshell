@@ -6,6 +6,8 @@ pub mod endpoint;
 pub mod log;
 pub mod post;
 pub mod record;
+pub mod shell;
+pub mod statusline;
 
 use std::io::Read;
 use std::panic::{AssertUnwindSafe, catch_unwind};
@@ -47,9 +49,13 @@ fn call(args: &Args, stdin: &mut dyn Read, env: Env, home: Option<&Path>) -> Vec
         }
         Vec::new()
     };
-    // Wired in Task 4.
     if role == HookRole::Statusline {
-        return Vec::new();
+        // The original's own stdin is never capped: only the copy sent to the core is.
+        let mut bytes = Vec::new();
+        if let Err(e) = stdin.read_to_end(&mut bytes) {
+            return fail(&format!("cannot read stdin: {e}"));
+        }
+        return statusline::run(home, &args.agent, &bytes, env);
     }
     let body = match post::read_capped(stdin) {
         Ok(Some(b)) => b,

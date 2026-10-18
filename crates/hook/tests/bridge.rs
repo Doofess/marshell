@@ -204,10 +204,3 @@ fn big_log_rotates_to_dot_1() {
     assert_eq!(std::fs::metadata(logs.join("bridge.log.1")).unwrap().len(), 1_048_577);
     assert_eq!(log_lines(home.path()).len(), 1);
 }
-
-#[test]
-fn statusline_prints_nothing_for_now() {
-    let home = tempfile::tempdir().unwrap();
-    assert!(go(home.path(), &[], argv("statusline"), b"{}").is_empty());
-    assert!(log_lines(home.path()).is_empty());
-}
