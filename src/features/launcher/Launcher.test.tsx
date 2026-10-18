@@ -122,17 +122,52 @@ describe("Launcher: filtering", () => {
   it("shows an empty state when nothing matches", () => {
     expect(html(view({ query: "zzz" }))).toContain("No folder matches");
   });
-  it("keeps the 'no match' message out of the listbox, where only options may live", () => {
+  it("keeps the 'no match' message out of the listbox, where only options may live; the listbox holds just Browse…", () => {
     const empty = html(view({ query: "zzz" }));
-    expect(empty).not.toContain('role="listbox"');
     expect(empty).toMatch(/<p class="launcher__empty" role="status">No folder matches/);
-    expect(empty).not.toMatch(/aria-controls=/);
-    expect(empty).not.toContain("aria-activedescendant");
+    const list = /<ul[^>]*role="listbox"[^>]*>(.*?)<\/ul>/.exec(empty)?.[1] ?? "";
+    expect(count(list, /role="option"/g)).toBe(1);
+    expect(list).toContain("Browse…");
+    expect(list).not.toContain("No folder matches");
   });
   it("renders hostile text as text", () => {
     const evil = [{ ...PROJECTS[0]!, name: "<img src=x onerror=alert(1)>" }];
     const out = html(view({ query: "i", projects: evil, choice: { ...DEFAULT_CHOICE, projectId: PROJECTS[0]!.id } }));
     expect(out).not.toContain("<img");
+  });
+});
+
+describe("Launcher: the path row and Browse…", () => {
+  const options = (out: string) => [...out.matchAll(/<li[^>]*role="option"[^>]*>.*?<\/li>/g)].map((m) => m[0]);
+  const text = (li: string) => li.replace(/<[^>]*>/g, "");
+  const found = { path: "C:\\dev", state: "found" as const, folder: { path: "C:\\dev", name: "dev", branch: null } };
+  it("ends the list with Browse… and its Ctrl+O hint", () => {
+    const o = options(html(view({ query: "" })));
+    expect(o.length).toBe(PROJECTS.length + 1);
+    expect(text(o.at(-1)!)).toContain("Browse…");
+    expect(o.at(-1)).toContain("<kbd>Ctrl+O</kbd>");
+  });
+  it("puts Use <path> first for a folder that exists, and it can be taken", () => {
+    const o = options(html(view({ query: "C:\\dev", pathCheck: found })));
+    expect(text(o[0]!)).toBe("Use C:\\dev");
+    expect(o[0]).toContain('<span class="launcher__opt-name" dir="auto">Use</span>');
+    expect(o[0]).toContain("launcher__opt-path");
+    expect(o[0]).not.toContain("aria-disabled");
+  });
+  it("shows No folder at <path> as disabled for a missing one", () => {
+    const o = options(html(view({ query: "C:\\nope", pathCheck: { path: "C:\\nope", state: "missing" } })));
+    expect(text(o[0]!)).toBe("No folder at C:\\nope");
+    expect(o[0]).toContain('aria-disabled="true"');
+  });
+  it("shows Checking <path>… as disabled while the core answers", () => {
+    const o = options(html(view({ query: "C:\\de", pathCheck: { path: "C:\\de", state: "checking" } })));
+    expect(text(o[0]!)).toBe("Checking C:\\de…");
+    expect(o[0]).toContain('aria-disabled="true"');
+  });
+  it("counts the path row in the active descendant and keeps the list open", () => {
+    const out = html(view({ query: "C:\\dev", pathCheck: found, activeIndex: 0 }));
+    expect(out).toContain('aria-expanded="true"');
+    expect(out).toMatch(/aria-activedescendant="[^"]*-opt-0"/);
   });
 });
 

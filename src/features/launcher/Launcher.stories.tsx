@@ -22,6 +22,20 @@ const manual = (program: LauncherChoice["program"]): LauncherView => ({ ...base,
 export const Empty: StoryObj = { render: () => <ThemePair label="Empty: pre-filled with the most recent folder; it says it becomes session 4" stack>{frame(base)}</ThemePair> };
 export const Filtering: StoryObj = { render: () => <ThemePair label={'Filtering: "ap" in the folder chip'} stack>{frame({ ...base, query: "ap" })}</ThemePair> };
 export const NoMatch: StoryObj = { render: () => <ThemePair label="No folder matches" stack>{frame({ ...base, query: "zzz" })}</ThemePair> };
+export const TypedPathFound: StoryObj = {
+  render: () => (
+    <ThemePair label="A typed path that exists: Use <path> first, Browse… last" stack>
+      {frame({ ...base, query: "C:\\dev\\my-app", pathCheck: { path: "C:\\dev\\my-app", state: "found", folder: { path: "C:\\dev\\my-app", name: "my-app", branch: "main" } } })}
+    </ThemePair>
+  ),
+};
+export const TypedPathMissing: StoryObj = {
+  render: () => (
+    <ThemePair label="A typed path with no folder: a disabled row, and Enter does nothing" stack>
+      {frame({ ...base, query: "C:\\nope", pathCheck: { path: "C:\\nope", state: "missing" } })}
+    </ThemePair>
+  ),
+};
 export const RememberedForThisProject: StoryObj = {
   render: () => (
     <ThemePair label="Remembered for this project: Plan and Quick are pre-set" stack>

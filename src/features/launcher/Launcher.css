@@ -209,6 +209,14 @@
   text-decoration: underline;
   text-underline-offset: 2px;
 }
+/* A path that is still being checked, or has no folder: shown, never taken. Dimmed by token, not opacity, so the text stays at AA. */
+.launcher__opt[aria-disabled="true"] {
+  cursor: default;
+}
+.launcher__opt[aria-disabled="true"] .launcher__opt-name {
+  color: var(--text-2);
+  font-weight: 400;
+}
 .launcher__opt-path {
   min-inline-size: 0;
   overflow: clip;
@@ -432,7 +440,7 @@
   .launcher__start:hover {
     box-shadow: inset 0 0 0 100vmax var(--hover);
   }
-  .launcher__opt:hover,
+  .launcher__opt:hover:not([aria-disabled="true"]),
   .launcher__program:hover {
     background: var(--hover);
   }
@@ -451,5 +459,9 @@
   .launcher__opt[data-active],
   .launcher__program[data-active] {
     outline: 2px solid Highlight;
+  }
+  .launcher__opt[aria-disabled="true"] .launcher__opt-name,
+  .launcher__opt[aria-disabled="true"] .launcher__opt-path {
+    color: GrayText;
   }
 }

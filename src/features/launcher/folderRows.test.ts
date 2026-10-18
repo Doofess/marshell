@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Hit, Project } from "./filter";
-import { folderRows, rowEnabled, typedPath, type PathCheck } from "./folderRows";
+import { folderEnter, folderRows, rowEnabled, typedPath, type PathCheck } from "./folderRows";
 
 const hit = (id: string): Hit<Project> => ({ item: { id, name: id, path: id, lastUsedMs: 0 }, ranges: [] });
 const found: PathCheck = { path: "C:\\dev", state: "found", folder: { path: "C:\\dev", name: "dev", branch: null } };
@@ -40,5 +40,18 @@ describe("folderRows: rows Enter can't take", () => {
     expect(rowEnabled({ kind: "path", check: found })).toBe(true);
     expect(rowEnabled({ kind: "project", hit: hit("a") })).toBe(true);
     expect(rowEnabled({ kind: "browse" })).toBe(true);
+  });
+});
+
+describe("folderRows: what Enter does on a row", () => {
+  it("uses a found path, and picks a recent folder or opens Browse…", () => {
+    expect(folderEnter({ kind: "path", check: found })).toEqual({ kind: "use", folder: { path: "C:\\dev", name: "dev", branch: null } });
+    expect(folderEnter({ kind: "project", hit: hit("a") })).toEqual({ kind: "pick", id: "a" });
+    expect(folderEnter({ kind: "browse" })).toEqual({ kind: "browse" });
+  });
+  it("does nothing on a path still being checked, a missing one, or no row", () => {
+    expect(folderEnter({ kind: "path", check: { path: "C:\\de", state: "checking" } })).toBeNull();
+    expect(folderEnter({ kind: "path", check: { path: "C:\\nope", state: "missing" } })).toBeNull();
+    expect(folderEnter(undefined)).toBeNull();
   });
 });

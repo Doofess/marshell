@@ -3,7 +3,9 @@ import { AgentMark } from "../../components/AgentMark/AgentMark";
 import { CommandList } from "../tasks/CommandList";
 import { branchHint } from "../tasks/taskName";
 import { headerDanger, modeLabel } from "../window/SessionHeader";
+import type { FolderInfo } from "../../generated/FolderInfo";
 import { filterProjects, highlight, pickByLetter, projectLabel, type Project, type Range } from "./filter";
+import { folderEnter, folderRows, rowEnabled, type FolderRow, type PathCheck } from "./folderRows";
 import {
   LAUNCH_GROUPS,
   LAUNCH_PROGRAMS,
@@ -30,6 +32,8 @@ export type LauncherView = {
   projects: Project[];
   /** Non-null when the folder chip is open for typing; the listbox shows `filterProjects(query, projects)`. */
   query: string | null;
+  /** What the core said about the typed path, shown as the first row; null or absent when the text only filters. */
+  pathCheck?: PathCheck | null;
   /** The highlighted option of whichever list is open. */
   activeIndex: number;
   /** True while the first chip's list of agents, shells and tools is open. */
@@ -49,6 +53,10 @@ type Props = {
   onChange?: (patch: Partial<LauncherChoice>) => void;
   onQuery?: (q: string | null) => void;
   onPick?: (projectId: string) => void;
+  /** The typed path exists: use that folder. */
+  onUsePath?: (folder: FolderInfo) => void;
+  /** Open the native folder picker (the Browse… row, or Ctrl+O in the folder field). */
+  onBrowse?: () => void;
   onPrograms?: (open: boolean) => void;
   onActive?: (index: number) => void;
   onPrompt?: (text: string) => void;
@@ -70,6 +78,8 @@ type Props = {
   /** The confirm view's one status line while busy: the worktree being made, then the program starting. Default "Creating the worktree…". */
   busyText?: string;
 };
+
+const PATH_VERB: Record<PathCheck["state"], string> = { found: "Use", missing: "No folder at", checking: "Checking" };
 
 const CONFIRM_TITLE = "Start a task in a new worktree";
 
@@ -96,7 +106,7 @@ const cycle = <T,>(all: T[], now: T) => all[(all.indexOf(now) + 1) % all.length]
  * first command (it can still run in a worktree). The prompt line is set like the one in every pane (a flat command line), in the vendor's colour for an
  * agent. Presentational: the parent owns the state.
  */
-export function Launcher({ view, onChange, onQuery, onPick, onPrograms, onActive, onPrompt, onStart, onTaskName, onConfirm, onBack, onClose, paceChip = true, programs = LAUNCH_PROGRAMS, error, busy = false, busyText = "Creating the worktree…" }: Props) {
+export function Launcher({ view, onChange, onQuery, onPick, onUsePath, onBrowse, onPrograms, onActive, onPrompt, onStart, onTaskName, onConfirm, onBack, onClose, paceChip = true, programs = LAUNCH_PROGRAMS, error, busy = false, busyText = "Creating the worktree…" }: Props) {
   const { choice, projects, query, activeIndex, remembered, nextNumber, taskName, confirm } = view;
   const project = projects.find((p) => p.id === choice.projectId);
   const agentRun = isAgentProgram(choice.program, programs);
@@ -109,7 +119,15 @@ export function Launcher({ view, onChange, onQuery, onPick, onPrograms, onActive
   const folderOpen = query !== null;
   const programsOpen = !folderOpen && view.programsOpen === true;
   const options = folderOpen ? filterProjects(query, projects) : [];
-  const listSize = programsOpen ? programs.length : options.length;
+  const rows = folderOpen ? folderRows(view.pathCheck ?? null, options) : [];
+  const listSize = programsOpen ? programs.length : rows.length;
+  // A row's click and Enter do the same; a row that can't be taken does nothing.
+  const takeRow = (row: FolderRow | undefined) => {
+    const act = folderEnter(row);
+    if (act?.kind === "pick") onPick?.(act.id);
+    else if (act?.kind === "use") onUsePath?.(act.folder);
+    else if (act?.kind === "browse") onBrowse?.();
+  };
   // Ids belong to one launcher (the review page shows many at once).
   const uid = useId();
   const id = (name: string) => `${uid}-${name}`;
@@ -164,6 +182,11 @@ export function Launcher({ view, onChange, onQuery, onPick, onPrograms, onActive
       else onClose?.();
       return;
     }
+    if (folderOpen && e.ctrlKey && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "o") {
+      e.preventDefault();
+      onBrowse?.();
+      return;
+    }
     if (listOpen && listSize > 0 && listNavKeys(programsOpen ? "programs" : "folder").includes(e.key)) {
       e.preventDefault();
       onActive?.(stepActive(activeIndex, e.key, listSize));
@@ -178,8 +201,7 @@ export function Launcher({ view, onChange, onQuery, onPick, onPrograms, onActive
         if (p) onChange?.({ program: p.id });
         onPrograms?.(false);
       } else {
-        const hit = options[activeIndex];
-        if (hit) onPick?.(hit.item.id);
+        takeRow(rows[activeIndex]);
       }
     } else if (!onButton) {
       e.preventDefault();
@@ -265,9 +287,9 @@ export function Launcher({ view, onChange, onQuery, onPick, onPrograms, onActive
                 <input
                   className="launcher__input"
                   role="combobox"
-                  aria-expanded={options.length > 0}
-                  aria-controls={options.length > 0 ? id("list") : undefined}
-                  aria-activedescendant={options.length > 0 ? id(`opt-${activeIndex}`) : undefined}
+                  aria-expanded={rows.length > 0}
+                  aria-controls={rows.length > 0 ? id("list") : undefined}
+                  aria-activedescendant={rows.length > 0 ? id(`opt-${activeIndex}`) : undefined}
                   aria-label="Folder"
                   value={query}
                   onChange={(e) => onQuery?.(e.target.value)}
@@ -359,7 +381,7 @@ export function Launcher({ view, onChange, onQuery, onPick, onPrograms, onActive
               </div>
             )}
 
-            {folderOpen && options.length === 0 && (
+            {folderOpen && options.length === 0 && !view.pathCheck && (
               // Outside the listbox: only options may live inside one.
               <p className="launcher__empty" role="status">
                 No folder matches {"“"}
@@ -367,24 +389,46 @@ export function Launcher({ view, onChange, onQuery, onPick, onPrograms, onActive
                 {"”"}
               </p>
             )}
-            {folderOpen && options.length > 0 && (
+            {folderOpen && rows.length > 0 && (
               <ul className="launcher__list" id={id("list")} role="listbox" aria-label="Folders">
-                {options.map((h, i) => (
+                {rows.map((row, i) => (
                   <li
-                    key={h.item.id}
+                    key={row.kind === "project" ? row.hit.item.id : row.kind}
                     id={id(`opt-${i}`)}
                     role="option"
                     aria-selected={i === activeIndex}
+                    aria-disabled={rowEnabled(row) ? undefined : true}
                     className="launcher__opt"
                     data-active={i === activeIndex || undefined}
-                    onClick={() => onPick?.(h.item.id)}
+                    onClick={() => takeRow(row)}
                   >
-                    <span className="launcher__opt-name" dir="auto">
-                      <Marked text={projectLabel(h.item)} ranges={h.ranges} />
-                    </span>
-                    <span className="launcher__opt-path" dir="auto">
-                      {h.item.path}
-                    </span>
+                    {row.kind === "project" && (
+                      <>
+                        <span className="launcher__opt-name" dir="auto">
+                          <Marked text={projectLabel(row.hit.item)} ranges={row.hit.ranges} />
+                        </span>
+                        <span className="launcher__opt-path" dir="auto">
+                          {row.hit.item.path}
+                        </span>
+                      </>
+                    )}
+                    {row.kind === "path" && (
+                      <>
+                        <span className="launcher__opt-name" dir="auto">
+                          {PATH_VERB[row.check.state]}
+                        </span>{" "}
+                        <span className="launcher__opt-path" dir="auto">
+                          {row.check.path}
+                          {row.check.state === "checking" ? "…" : ""}
+                        </span>
+                      </>
+                    )}
+                    {row.kind === "browse" && (
+                      <>
+                        <span className="launcher__opt-name">Browse…</span>
+                        <kbd>Ctrl+O</kbd>
+                      </>
+                    )}
                   </li>
                 ))}
               </ul>

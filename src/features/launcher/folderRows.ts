@@ -29,6 +29,14 @@ export function folderRows(check: PathCheck | null, hits: Hit<Project>[]): Folde
   return rows;
 }
 
+/** What Enter (or a click) on a row does; null for a row that can't be taken, so nothing launches. */
+export function folderEnter(row: FolderRow | undefined): { kind: "pick"; id: string } | { kind: "use"; folder: FolderInfo } | { kind: "browse" } | null {
+  if (!row) return null;
+  if (row.kind === "browse") return { kind: "browse" };
+  if (row.kind === "project") return { kind: "pick", id: row.hit.item.id };
+  return row.check.state === "found" ? { kind: "use", folder: row.check.folder } : null;
+}
+
 /** Only a path still being checked, or one with no folder there, can't be taken. */
 export function rowEnabled(row: FolderRow): boolean {
   return row.kind !== "path" || row.check.state === "found";
