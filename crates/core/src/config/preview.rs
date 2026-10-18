@@ -125,7 +125,10 @@ fn compute(
     snapshots: &Snapshots,
 ) -> Result<(Bytes, Bytes), Refused> {
     let resolved = guard.check(&file.path).map_err(|r| match r {
-        Refusal::NotAbsolute => (RefuseReason::NotAbsolute, "The path is not absolute.".to_string()),
+        Refusal::NotAbsolute => (
+            RefuseReason::NotAbsolute,
+            "The path must be absolute, with no .. parts.".to_string(),
+        ),
         Refusal::Managed => (
             RefuseReason::Managed,
             "This is a managed or organization file.".to_string(),

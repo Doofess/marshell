@@ -41,9 +41,12 @@ impl Guard {
         Self::new(allowed, denied_for_os(), home.to_path_buf())
     }
 
-    /// The resolved path (links and `..` resolved) when the service may write it.
+    /// The resolved path (links resolved) when the service may write it. A path with a `..` part is
+    /// refused as `NotAbsolute` before anything is resolved: Win32 folds `..` by the path text before
+    /// it opens a file, and a physical walk can't match that once a folder is missing or a link is
+    /// involved, so the guard and the write could name different files.
     pub fn check(&self, path: &Path) -> Result<PathBuf, Refusal> {
-        if !path.is_absolute() {
+        if !path.is_absolute() || path.components().any(|c| c == Component::ParentDir) {
             return Err(Refusal::NotAbsolute);
         }
         let resolved = resolve(path)?;
@@ -65,18 +68,13 @@ impl Guard {
     }
 }
 
-/// Resolves the path part by part: what exists goes through `canonical` (links and short names),
-/// what does not is appended, and a `..` removes the last part of what is resolved so far. Doing it
-/// in this order means `link/..` leaves through the link's target, as the OS would, and a `..` can
-/// never hide a climb out of an allowed folder.
+/// Resolves the path part by part: what exists goes through `canonical` (links and short names) and
+/// what does not is appended. It never sees a `..`, because `check` refuses those first.
 fn resolve(path: &Path) -> Result<PathBuf, Refusal> {
     let mut out = PathBuf::new();
     let mut exists = true;
     for part in path.components() {
         match part {
-            Component::ParentDir => {
-                out.pop();
-            }
             Component::CurDir => continue,
             other => out.push(other),
         }
@@ -186,14 +184,14 @@ mod tests {
     }
 
     #[test]
-    fn dot_dot_cannot_climb_out() {
+    fn dot_dot_is_refused() {
         let (_dir, root, guard) = setup();
-        // Without `a` on disk, and with it.
-        assert_eq!(guard.check(&root.join("a/../../x.json")), Err(Refusal::OutsideAllowed));
+        // Win32 resolves `..` by the path text and a physical walk would not, so no `..` is allowed,
+        // whether the folder before it exists or not.
+        assert_eq!(guard.check(&root.join("a/../../x.json")), Err(Refusal::NotAbsolute));
         fs::create_dir(root.join("a")).unwrap();
-        assert_eq!(guard.check(&root.join("a/../../x.json")), Err(Refusal::OutsideAllowed));
-        // A `..` that stays inside is fine.
-        assert!(guard.check(&root.join("a/../x.json")).is_ok());
+        assert_eq!(guard.check(&root.join("a/../../x.json")), Err(Refusal::NotAbsolute));
+        assert_eq!(guard.check(&root.join("a/../x.json")), Err(Refusal::NotAbsolute));
     }
 
     #[test]
@@ -221,19 +219,17 @@ mod tests {
         );
     }
 
-    #[test]
-    fn a_link_out_of_the_allowed_folder_is_refused() {
-        let (_dir, root, guard) = setup();
-        let target = tempfile::tempdir().unwrap();
+    /// A folder link at `link` to `target`; a junction on Windows without developer mode.
+    fn link_dir(link: &Path, target: &Path) -> std::io::Result<()> {
         #[cfg(unix)]
-        let made = std::os::unix::fs::symlink(target.path(), root.join("link"));
+        return std::os::unix::fs::symlink(target, link);
         #[cfg(windows)]
-        let made = std::os::windows::fs::symlink_dir(target.path(), root.join("link")).or_else(|_| {
+        return std::os::windows::fs::symlink_dir(target, link).or_else(|_| {
             // Without developer mode a junction still works, and `canonical` resolves it the same way.
             let status = std::process::Command::new("cmd")
                 .args(["/C", "mklink", "/J"])
-                .arg(root.join("link"))
-                .arg(target.path())
+                .arg(link)
+                .arg(target)
                 .output()?
                 .status;
             status
@@ -241,7 +237,13 @@ mod tests {
                 .then_some(())
                 .ok_or_else(|| std::io::Error::other("mklink /J failed"))
         });
-        if let Err(e) = made {
+    }
+
+    #[test]
+    fn a_link_out_of_the_allowed_folder_is_refused() {
+        let (_dir, root, guard) = setup();
+        let target = tempfile::tempdir().unwrap();
+        if let Err(e) = link_dir(&root.join("link"), target.path()) {
             eprintln!("skipped: cannot create a symlink here: {e}");
             return;
         }
@@ -249,11 +251,25 @@ mod tests {
             guard.check(&root.join("link").join("x.json")),
             Err(Refusal::OutsideAllowed)
         );
-        // `..` after a link leaves through the link's target, not through the link's folder.
+        // A `..` is refused before anything is resolved, so it can't leave through the link's target.
         assert_eq!(
             guard.check(&root.join("link").join("..").join("x.json")),
-            Err(Refusal::OutsideAllowed)
+            Err(Refusal::NotAbsolute)
         );
+    }
+
+    #[test]
+    fn missing_dot_dot_then_a_link_is_refused() {
+        let (_dir, root, guard) = setup();
+        let target = tempfile::tempdir().unwrap();
+        if let Err(e) = link_dir(&root.join("link"), target.path()) {
+            eprintln!("skipped: cannot create a symlink here: {e}");
+            return;
+        }
+        // `nope` doesn't exist, so the old walk stopped resolving, stepped back over `..` and
+        // never looked at `link`; the write would have landed in `target`.
+        let sneaky = root.join("nope").join("..").join("link").join("new.json");
+        assert_eq!(guard.check(&sneaky), Err(Refusal::NotAbsolute));
     }
 
     #[cfg(windows)]

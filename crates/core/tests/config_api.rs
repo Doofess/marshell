@@ -242,6 +242,13 @@ async fn file_route_reads_an_allowed_file_and_refuses_marshell_files() {
     let (_, relative) = get(&e.app, "/v1/config/file?path=settings.json").await;
     assert_eq!(relative["refused"], "notAbsolute");
 
+    // A `..` part is refused as well, and nothing is read, even when the file it names exists.
+    std::fs::write(e.project.join("y.json"), "{\"y\":1}").unwrap();
+    let dotted = e.project.join("x").join("..").join("y.json");
+    let (_, dotted) = get(&e.app, &uri(&dotted)).await;
+    assert_eq!(dotted["refused"], "notAbsolute");
+    assert!(dotted.get("content").is_none());
+
     // A managed file is readable, and says it can't be written.
     let managed = e.project.join("managed-settings.json");
     std::fs::write(&managed, "{\"m\":1}").unwrap();
