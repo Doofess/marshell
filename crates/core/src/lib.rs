@@ -1,6 +1,7 @@
 pub mod agents;
 pub mod auth;
 pub mod bridge;
+pub mod config;
 pub mod crash;
 pub mod git;
 pub mod hooks;
