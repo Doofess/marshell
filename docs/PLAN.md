@@ -274,6 +274,7 @@ Decided 2026-10-15: **Marshell sets the mode**, the same five for every agent CL
 - Ctrl+Shift+T opens a 560 px sheet at 20% from the top.
 - It reads as one sentence of chips: `[Claude] in [my-app · main] · [Plan] · [Quick] · [worktree ☐]`, followed by a prompt box.
 - Typing filters projects. Tab moves between chips, and letters pick values.
+- The folder field also takes a full path in the running OS's syntax, offered as a "Use <path>" row. A "Browse…" row at the end of the list, and Ctrl+O in the field, open the OS folder picker (decided 2026-10-18; built in slice 3f).
 - Enter launches. The tab appears **in under 100 ms** showing "Starting Claude Code in my-app…" and never waits for the process.
 
 **5 parallel agents (glance → jump → act):**
@@ -299,7 +300,14 @@ Decided 2026-10-15: **Marshell sets the mode**, the same five for every agent CL
 |---|---|
 | UI font | Segoe UI Variable (Windows), system-ui / SF (macOS), bundled Inter Variable (Linux) |
 | Scale | 11 / 12 / **13** / 15 / 20 / 28. Weights 400/500/600. Tabular figures for every number. |
-| Mono font | **Import the user's existing terminal font** from Windows Terminal or iTerm settings, so Nerd Font prompts keep working. Otherwise use bundled JetBrains Mono, 13 px. |
+| Mono font | **Import the user's existing terminal font** from Windows Terminal or iTerm settings, so Nerd Font prompts keep working. Otherwise use bundled JetBrains Mono, 13 px. A **terminal font choice** (added 2026-10-18; proposed, to confirm when the slice is planned) lets the user pick one of three bundled fonts instead: see "Terminal font setting" below. |
+
+**Terminal font setting** (added 2026-10-18; the option list is proposed, to confirm when the slice is planned). It governs the terminal (xterm.js) font only. The UI font stays as in the table above, and the terminal font size stays its own setting (8–32) and the Text size setting does not move it. It sits in the Appearance dialog and the settings page, next to the size. Options, all bundled with the app under the SIL Open Font License because the webview's CSP allows only the app and loopback (no web-hosted fonts), which also removes any dependency on OS fonts on Linux and macOS:
+- **Match my terminal** (default): today's rule above, the user's Windows Terminal or iTerm font if found, else JetBrains Mono.
+- **JetBrains Mono** (SIL OFL, bundled): the current bundled font.
+- **Cascadia Mono** (SIL OFL, bundled; also ships with Windows 11): the Windows Terminal look.
+- **Atkinson Hyperlegible Mono** (SIL OFL, bundled): drawn for low vision, with distinct 0/O and 1/l/I.
+Every choice is monospace and falls back to the system monospace font and then to the imported Nerd Font if one exists, so powerline and icon glyphs keep working; the WebGL renderer draws box-drawing and block characters itself. The picker is a keyboard-operable list that shows each name in its own font plus a sample line, works in forced colours (it uses the system colours there, and the terminal keeps the user's font) and announces the change through the `Announcer`. Bundling adds font files only, not a code dependency, but the files and their licences need the user's approval when the slice is planned.
 
 **Colour tokens:** the source of truth is `src/styles/tokens.css` (oklch, `light-dark()`), `accents.css` and the Storybook Colours story; this plan holds no hex values. Rules that stay binding:
 - Surfaces: true-black dark, warm-white light. Hover and selected are low-alpha overlays of the text colour. Text has three levels, and `--text-3` must pass AA on every surface.
@@ -593,7 +601,7 @@ The Rust core is the only source of truth.
   - "Allow always (this project)" → `addRules` to `localSettings`.
   - "Allow for session" → `addRules` to `session`.
   - The card always says which.
-- **Permission releases.** If the hold expires, the user clicks "Answer in terminal", or the user starts typing in that tab, the core releases the request. The bridge then exits 0 with no output and the native prompt takes over.
+- **Permission releases.** If the hold expires, the user clicks "Answer in terminal", or the user starts typing in that tab, the core releases the request. The bridge then exits 0 with no output and the native prompt takes over. Typing means keys, pastes and mouse button presses. Reports the terminal sends by itself (focus changes, mouse motion, the wheel, replies to queries) don't release, because Claude enables focus and any-motion mouse reporting (S9, 2026-10-18).
 - **Failure rule.** On any error the bridge exits 0 with empty stdout, never blocks, and appends a single line to `logs/bridge.log`.
 - **Status line chaining.**
   - On install, the user's `statusLine` object is saved verbatim to `statusline-chain.json`.
@@ -734,6 +742,8 @@ Known soft spots, left as they are: on a Mac laptop F2 needs Fn unless "use F-ke
 | S10 | Windows hook path with spaces | A quoted bridge path under `C:\Users\Home Office` runs from Claude's hook runner and status line on this machine. |
 | S11 | WSL bridge | A hook from Claude inside WSL reaches the Windows core through interop, with the tab id carried by `WSLENV`. |
 
+S10, S4 and S9 ran on 2026-10-18 against Claude Code 2.1.302 on Windows and passed (`docs/spikes/`). Hooks install in exec form, the status line chains with no fallback, and the hold stays at 120 s because Claude's own dialog stays visible during it. S4's uninstall row and the macOS and Linux rows are still open.
+
 ## 9. Milestones (phases 1–9 = v1)
 
 Decisions from the 2026-10-10 coverage audit (`docs/superpowers/plan-coverage-audit.md`) are folded in below and in "Cross-cutting requirements".
@@ -844,7 +854,8 @@ Decisions from the 2026-10-10 coverage audit (`docs/superpowers/plan-coverage-au
      1. Capture (Ctrl+Shift+X, ⌘⌥X on macOS) opens the Windows snipping tool, waits up to 60 s for an image on the clipboard, and delivers it like a region to the focused pane's session. Esc in the snipping tool cancels. The image is read in the Rust shell, since the page has no focus while the snipping overlay is up. Off Windows the command says it isn't available yet.
      2. An image-only paste with Ctrl+Shift+V is saved and its path pasted. Ctrl+V stays the CLI's own, so Codex keeps attaching clipboard images natively.
      3. A drop on a session's terminal pastes the quoted path or paths with no Enter, each followed by a space, and focuses that terminal. Up to 32 paths go in at a time. A name the session's shell would act on inside double quotes (`$` or a backtick, PowerShell's typographic quotes, a POSIX `!`) is pasted in the shell's own single quotes instead, so a dropped name can't run as code even after an agent has exited to its shell. A drop anywhere else opens the file in the preview; a folder can't be shown there, and the preview can't tell a folder from a missing file, so both read as a folder.
-     4. Native drop is on, and the sidebar reorder is rewritten with pointer events, since native drop turns off HTML5 drag and drop on Windows. The click that ends a drag past 4 px is swallowed, as with HTML5 drag.     5. A plain shell's terminal, the shell panel included, gets the dropped path pasted too, as Windows Terminal does.
+     4. Native drop is on, and the sidebar reorder is rewritten with pointer events, since native drop turns off HTML5 drag and drop on Windows. The click that ends a drag past 4 px is swallowed, as with HTML5 drag.
+     5. A plain shell's terminal, the shell panel included, gets the dropped path pasted too, as Windows Terminal does.
      6. A pasted or captured image goes to any live session, agent or not, as its saved path; the §2.5 clipboard fallback is not used for it.
      7. The live check and its fixes are in docs/research/drop-paste-capture.md.
    - **Window frame (2026-10-17).** Windows runs frameless with the system shadow and rounded corners, and the 40 px bar is the title bar: its empty space drags the window, double-click maximizes or restores, and Maximize becomes Restore while maximized. Snap Layouts' hover flyout on Maximize is a follow-up, because the buttons are HTML and Windows does not see a maximize button; Win+Z and edge snapping work. macOS and Linux keep their native frames.
@@ -899,6 +910,32 @@ Decisions from the 2026-10-10 coverage audit (`docs/superpowers/plan-coverage-au
      - **Version drift:** adapters are version-gated; an unknown CLI version shows "Status limited" and a doctor note, with a per-CLI switch to turn normalisation off.
      - `marshell uninstall` and, per CLI, turning Marshell's hooks off in Settings (each removes the hook entries Marshell added and puts the user's own status line back from that CLI's `statusline-chain.json`; nothing else in the file is touched); an "orphaned hooks" check for when the bridge is gone.
      - Start code-signing procurement (Azure Artifact Signing, Apple Developer ID).
+   - **Slices (decided 2026-10-18).** Each is its own plan and PR, in this order:
+     - **3a Bridge and spikes.** The `marshell-hook` binary (roles, discovery, the exit-0 failure rule, `record`), `POST /v1/hook`, the permission hold with its decision and release routes, the copy to `~/.marshell/bin` with the locked-exe rename, and spikes S10, S4 and S9 against a real Claude Code.
+     - **3b Config safety core.** ChangeSet, JSONC CST edits, preview diff, atomic write, snapshots and restore, `managed.json`, the managed-path guard, watching with the 3-way merge, owner-only permissions on `~/.marshell`, and the ADR threat model.
+     - **3c Claude adapter, live.** The install plan through the consent card, events normalised into live status, the context and plan rings, the recap, the status line chain, version gating ("Status limited"), the pty fallback, `marshell uninstall`, "hooks off" and the orphaned-hooks check.
+     - **3d Approve from anywhere.** Live approve cards with the risk check, the needs-you lane and live region, Peek, the taskbar badge and flash, the needs-you sound, and the security review gate.
+     - **3e History and diagnostics.** The transcript archive, the SQLite index with its check and rebuild on start, Resume, `tracing` logs with rotation and redaction, "Export diagnostics", the perf panel, and the code-signing checklist.
+     - **3f Folder picker** (added 2026-10-18, may run any time after 3a). The launcher's folder field accepts a typed path and opens the OS folder picker.
+   - **Slice 3a decisions (2026-10-18).**
+     1. The spikes reach a real Claude Code through a scratch folder's `.claude/settings.local.json`, so `~/.claude` and its login stay untouched. Trusting that folder is part of the check, in a session started for it.
+     2. S4 wraps the user's real `python ~/.claude/statusline.py`, which is only run, never written.
+     3. Hook events show nowhere in the UI in 3a. The core keeps the last 200 raw events per tab in memory behind a token-checked GET, and the bridge logs its failures to `logs/bridge.log`. 3c turns them into status.
+     4. A held permission request is answered through the real `POST /v1/permissions/:rid/decision` and `/release` routes, driven by the spike. The card comes in 3d.
+     5. Recorded fixtures come from made-up prompts in a scratch folder. Before they are committed, a scrub step replaces the home path, the user name, session ids and transcript paths with placeholders, and a test checks that no fixture still holds them.
+     6. Code signing: a checklist (`docs/research/code-signing.md`, eligibility, cost and the steps to apply) is written in 3e. Buying and identity checks are the user's; wiring signing into CI waits for the release phase.
+   - **Carried from 3a's live check into 3c** (details in `docs/spikes/S10-hook-path-spaces.md` and `S9-permission-hold.md`):
+     1. The status line posts every second and floods the 200-event ring. Keep only the latest status line per tab, or give it its own ring.
+     2. A session inherits `CLAUDE_CODE_*` variables from whatever started Marshell, and `CLAUDE_CODE_CHILD_SESSION` turns Claude's transcript saving off. Drop them from the session environment.
+     3. Some requests offer only an `addDirectories` suggestion, so a scoped allow is refused. Decide whether a scope may use it, or the card hides the scopes then (3c/3d).
+   - **Carried from 3a's final review into 3c** (before 3c installs the hooks and the status line chain):
+     1. The bridge runs the user's status line command with no time limit, and on Windows its shell outlives the bridge when Claude kills it. Run the command in a kill-on-close Job Object (as `crates/core/src/job.rs` does) with a timeout.
+     2. Nothing clears a tab's state when its session ends: its event ring stays, and its held requests wait out the hold. Release the tab's requests and drop its ring when the session closes or exits.
+     3. A permission request with no tab is held for the full 120 s, and nothing in the pane can release it. Decide whether it is answered at once with 204 (3c/3d).
+   - **Slice 3f decisions (2026-10-18).**
+     1. One click on the folder chip opens the field as now. Typing filters known folders and also accepts a full path in the running OS's syntax, offered as a "Use <path>" row. A "Browse…" row at the end of the list and Ctrl+O in the field open the native picker, so mouse and keyboard reach it alike (double-click was considered and dropped: the first click already swaps the chip for a field, and it has no keyboard route).
+     2. The native dialog comes from `tauri-plugin-dialog` (approved as a new dependency), with a capability limited to the folder-open dialog. Linux and macOS get it from the same plugin later.
+     3. Built as its own slice and PR after 3a merges, with a live check of the dialog. How a typed path that doesn't exist is handled is decided when 3f is planned.
    - Exit: a real Claude session shows correct model, effort, mode, subagents and context; approval from a card works; uninstall leaves zero byte diff; corrupting `index.sqlite` is repaired on start.
 4. **Notifications + choreography + Departures board + stuck detection** (S3).
    - Exit: every rule in brief §5.5 is verified on all three OSes. Every sound has a visual equivalent.
@@ -916,7 +953,7 @@ Decisions from the 2026-10-10 coverage audit (`docs/superpowers/plan-coverage-au
      - **Company tabs.** A company's settings tab appears once its CLI is signed in by any method, an API key included. It edits that CLI's own settings (Claude Code `settings.json`, Codex `config.toml`), not Claude Desktop's. Every write goes through the config service (preview, backup, atomic write, undo; section 6).
      - **Extensions** (a universal tab). It covers MCP servers, skills, hooks and plugins, but only where they port. Skills (`SKILL.md`) are the portable unit. MCP stdio entries can be translated between the Claude JSON, Codex TOML and `agy` JSON formats, with a preview. Hooks, plugins and slash commands stay per CLI.
      - **CLI version and update** (in settings). Each CLI's `--version` and install type, and an update button (`claude update`, `codex update`) with the command's output shown. This pulls part of the v2 installer runner forward; installing a CLI stays in v2.
-   - Scope: settings pane (read-only until the company tabs above add editing), Codex + Antigravity adapters (install both CLIs first; the Antigravity adapter verifies its hook events and any permission hook against a real install), custom agents, repo scripts (`marshell.json`), port chips, the `marshell` CLI and its built-in skill (when the app is closed, `marshell new` says so and offers to start it), project references (`@` picker, alias learning), WSL (S11), "open in system terminal" and "copy resume command", and the `marshell-host` elevated helper. S8 passed with requirements: the token goes over a pipe, never the command line, and the decline and wrong-token paths get tested. Until it ships, elevated sessions open in a separate elevated Marshell window.
+   - Scope: settings pane (read-only until the company tabs above add editing), the terminal font setting (added 2026-10-18; three bundled fonts and a "Match my terminal" default, specified under "Visual system"; the option list is proposed, to confirm when the slice is planned; licence notices go in with phase 9), Codex + Antigravity adapters (install both CLIs first; the Antigravity adapter verifies its hook events and any permission hook against a real install), custom agents, repo scripts (`marshell.json`), port chips, the `marshell` CLI and its built-in skill (when the app is closed, `marshell new` says so and offers to start it), project references (`@` picker, alias learning), WSL (S11), "open in system terminal" and "copy resume command", and the `marshell-host` elevated helper. S8 passed with requirements: the token goes over a pipe, never the command line, and the decline and wrong-token paths get tested. Until it ships, elevated sessions open in a separate elevated Marshell window.
    - Exit: fixture suites from the real CLIs pass.
 7. **Doctor**: the fix actions, on top of the phase-3 config core: "Fix X issues" and one-click undo; folds in each CLI's own doctor; detects duplicate notifications; reports the tokens injected by project references; checks Codex hook trust; waste checks (unused MCP servers and skills, long descriptions, broad scopes, a token-cost estimate); offers to raise `cleanupPeriodDays`.
    - Added 2026-10-16 (research in `docs/research/2026-10-16-accounts-cloud-extensions.md`):

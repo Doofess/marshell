@@ -129,6 +129,19 @@ fn main() {
             app.manage(capture::CaptureState::default());
             let home = marshell_core::paths::home_dir()?;
             marshell_core::crash::install_panic_hook(&home);
+            // Off the launch path: copying the bridge into ~/.marshell/bin may wait on a running copy.
+            let bridge_home = home.clone();
+            std::thread::spawn(move || match std::env::current_exe() {
+                Ok(exe) => match marshell_core::bridge::source_next_to(&exe) {
+                    Some(source) => {
+                        if let Err(e) = marshell_core::bridge::install(&source, &bridge_home) {
+                            eprintln!("Marshell: the hook bridge was not installed: {e}");
+                        }
+                    }
+                    None => eprintln!("Marshell: no hook bridge next to the app, hooks will not report"),
+                },
+                Err(e) => eprintln!("Marshell: could not find the app's own path for the hook bridge: {e}"),
+            });
             let cfg = CoreConfig {
                 home,
                 allowed_origins: allowed_origins(),

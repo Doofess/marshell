@@ -2292,6 +2292,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "marshell-hook"
+version = "0.1.0"
+dependencies = [
+ "marshell-protocol",
+ "serde_json",
+ "tempfile",
+ "ureq",
+]
+
+[[package]]
 name = "marshell-protocol"
 version = "0.1.0"
 dependencies = [

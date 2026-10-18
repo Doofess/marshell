@@ -1,0 +1,21 @@
+[package]
+name = "marshell-hook"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+name = "marshell_hook"
+path = "src/lib.rs"
+
+[[bin]]
+name = "marshell-hook"
+path = "src/main.rs"
+
+[dependencies]
+marshell-protocol.workspace = true
+serde_json.workspace = true
+ureq.workspace = true
+
+[dev-dependencies]
+tempfile = "3.27.0"

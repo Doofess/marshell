@@ -138,6 +138,8 @@ pub async fn paste(State(st): State<AppState>, Path(tab): Path<String>, Json(req
     } else {
         vec![&reference, &comment]
     };
+    // A paste answers in the terminal, the same as a key in the pane.
+    st.holds().release_tab(&tab);
     session.write_input(paste_pieces(&parts, session.bracketed_paste()));
     StatusCode::NO_CONTENT.into_response()
 }
@@ -191,6 +193,7 @@ pub async fn paste_paths(
         pieces.push(reference);
         pieces.push(" ");
     }
+    st.holds().release_tab(&tab);
     session.write_input(paste_pieces(&pieces, session.bracketed_paste()));
     StatusCode::NO_CONTENT.into_response()
 }

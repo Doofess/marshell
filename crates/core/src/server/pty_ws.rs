@@ -40,7 +40,7 @@ pub async fn handler(State(st): State<AppState>, Path(tab): Path<String>, ws: We
     // Echo our subprotocol, or browsers drop the connection.
     ws.max_message_size(MAX_MESSAGE)
         .protocols([brand::WS_SUBPROTOCOL])
-        .on_upgrade(move |socket| run(socket, session))
+        .on_upgrade(move |socket| run(socket, session, st, tab))
 }
 
 /// The flush rule. None: send what is pending now. Some(t): hold it until t.
@@ -56,7 +56,7 @@ fn hold_until(avail: u64, last_sent: Option<Instant>, now: Instant) -> Option<In
     last_sent.map(|t| t + FLUSH_INTERVAL).filter(|d| *d > now)
 }
 
-async fn run(socket: WebSocket, session: Arc<Session>) {
+async fn run(socket: WebSocket, session: Arc<Session>, st: AppState, tab: String) {
     let (mut tx, mut rx) = socket.split();
     // Set when the first RESUME arrives; nothing is attached before that.
     let mut guard: Option<AttachGuard> = None;
@@ -79,6 +79,11 @@ async fn run(socket: WebSocket, session: Arc<Session>) {
                     Some(ClientFrame::Input(bytes)) => {
                         // A paused session takes no keys; the pane shows why.
                         if !session.is_frozen() {
+                            // Typing means the person is answering in the terminal. Focus changes,
+                            // mouse movement and replies to queries come from the terminal itself.
+                            if !super::reports::is_passive_report(&bytes) {
+                                st.holds().release_tab(&tab);
+                            }
                             session.write_input(bytes);
                         }
                     }

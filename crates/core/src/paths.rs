@@ -45,6 +45,26 @@ pub fn shell_dir(home: &Path) -> PathBuf {
     home.join("shell")
 }
 
+/// `<home>/bin`: the bridge program the agents' hooks run.
+pub fn bin_dir(home: &Path) -> PathBuf {
+    home.join("bin")
+}
+
+/// `<home>/bin/marshell-hook` (`.exe` on Windows).
+pub fn bridge_exe(home: &Path) -> PathBuf {
+    bin_dir(home).join(format!("marshell-hook{}", std::env::consts::EXE_SUFFIX))
+}
+
+/// `<home>/logs/bridge.log`: one line per bridge failure.
+pub fn bridge_log(home: &Path) -> PathBuf {
+    home.join("logs").join("bridge.log")
+}
+
+/// `<home>/agents/<agent>/statusline-chain.json`: the status line command the bridge forwards to.
+pub fn statusline_chain(home: &Path, agent: &str) -> PathBuf {
+    home.join("agents").join(agent).join("statusline-chain.json")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

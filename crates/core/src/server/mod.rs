@@ -4,10 +4,13 @@ mod files;
 mod foreground;
 pub mod frames;
 mod guard;
+mod hook;
 mod layout;
+mod permissions;
 mod profiles;
 mod projects;
 mod pty_ws;
+mod reports;
 mod sessions;
 mod settings;
 mod shell_panel;
@@ -26,6 +29,7 @@ use std::collections::{HashMap, HashSet};
 use std::net::Ipv4Addr;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 use tower_http::cors::{AllowOrigin, CorsLayer};
 
 #[derive(Clone)]
@@ -71,7 +75,16 @@ struct Inner {
     foreground_wake: Arc<tokio::sync::Notify>,
     /// Whether an agent's command (`claude`, `codex`, `agy`) runs from PATH. Tests swap it.
     agent_on_path: fn(&str) -> bool,
+    /// The last events the bridge sent, per live tab.
+    hook_log: crate::hooks::log::HookLog,
+    /// The permission requests being held for a decision.
+    holds: crate::hooks::holds::Holds,
+    /// How long the core holds a permission request before it lets the agent ask.
+    permission_hold: Duration,
 }
+
+/// How long a permission request is held when `MARSHELL_PERMISSION_HOLD_SECS` is not set.
+pub const DEFAULT_PERMISSION_HOLD: Duration = Duration::from_secs(120);
 
 impl AppState {
     pub fn new(token: String, port: u16, allowed_origins: Vec<String>, home: PathBuf, detected: Vec<Profile>) -> Self {
@@ -111,7 +124,23 @@ impl AppState {
             shell_panel: Mutex::new(None),
             foreground_wake: Arc::new(tokio::sync::Notify::new()),
             agent_on_path: crate::profiles::detect::command_on_path,
+            hook_log: crate::hooks::log::HookLog::default(),
+            holds: crate::hooks::holds::Holds::default(),
+            permission_hold: DEFAULT_PERMISSION_HOLD,
         }))
+    }
+    /// Sets how long a permission request is held. Call it before the state is cloned.
+    pub fn with_permission_hold(mut self, hold: Duration) -> Self {
+        Arc::get_mut(&mut self.0)
+            .expect("with_permission_hold runs before the state is shared")
+            .permission_hold = hold;
+        self
+    }
+    pub fn permission_hold(&self) -> Duration {
+        self.0.permission_hold
+    }
+    pub fn holds(&self) -> &crate::hooks::holds::Holds {
+        &self.0.holds
     }
     /// Replaces the PATH check for agent commands. Call it before the state is cloned.
     pub fn with_agent_check(mut self, check: fn(&str) -> bool) -> Self {
@@ -127,6 +156,9 @@ impl AppState {
     /// The open and recently closed sessions.
     pub fn registry(&self) -> &Registry {
         &self.0.registry
+    }
+    pub fn hook_log(&self) -> &crate::hooks::log::HookLog {
+        &self.0.hook_log
     }
     pub fn token(&self) -> &str {
         &self.0.token
@@ -230,6 +262,14 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/sessions/{tab}", patch(sessions::rename).delete(sessions::close))
         .route("/v1/shell-panel", post(shell_panel::open))
         .route("/v1/shell-panel/adopt", post(shell_panel::adopt))
+        .route(
+            "/v1/hook",
+            post(hook::post).layer(DefaultBodyLimit::max(marshell_protocol::hook::HOOK_BODY_LIMIT)),
+        )
+        .route("/v1/hook/events", get(hook::events))
+        .route("/v1/permissions", get(permissions::list))
+        .route("/v1/permissions/{rid}/decision", post(permissions::decision))
+        .route("/v1/permissions/{rid}/release", post(permissions::release))
         .route("/v1/events", get(events::handler))
         .route("/v1/pty/{tab}", get(pty_ws::handler))
         .layer(axum::middleware::from_fn_with_state(state.clone(), guard::auth_guard))
@@ -296,6 +336,14 @@ impl RunningCore {
     }
 }
 
+/// `MARSHELL_PERMISSION_HOLD_SECS` clamped to 1..=590 s, or the default when unset or not a number.
+fn permission_hold_from_env(value: Option<&str>) -> Duration {
+    match value.and_then(|v| v.trim().parse::<u64>().ok()) {
+        Some(secs) => Duration::from_secs(secs.clamp(1, 590)),
+        None => DEFAULT_PERMISSION_HOLD,
+    }
+}
+
 /// Binds 127.0.0.1 on a random port, writes `run/endpoint.json`, serves in the background.
 pub async fn start(cfg: CoreConfig) -> anyhow::Result<RunningCore> {
     let listener = tokio::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await?;
@@ -308,7 +356,10 @@ pub async fn start(cfg: CoreConfig) -> anyhow::Result<RunningCore> {
     // Looking for shells runs programs (wsl.exe can take up to 2 s): keep it off the async threads.
     let detected = tokio::task::spawn_blocking(|| detect_profiles(&Probe::system())).await?;
     let endpoint_file = paths::endpoint_file(&cfg.home);
-    let state = AppState::new(endpoint.token.clone(), port, cfg.allowed_origins, cfg.home, detected);
+    let state = AppState::new(endpoint.token.clone(), port, cfg.allowed_origins, cfg.home, detected)
+        .with_permission_hold(permission_hold_from_env(
+            std::env::var("MARSHELL_PERMISSION_HOLD_SECS").ok().as_deref(),
+        ));
     // Last, so the endpoint is only advertised once the state is ready to serve.
     auth::write_endpoint_file(&endpoint_file, &endpoint)?;
     let app = router(state.clone());
@@ -327,4 +378,18 @@ pub async fn start(cfg: CoreConfig) -> anyhow::Result<RunningCore> {
         shutdown: tx,
         serve,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn permission_hold_env_is_clamped() {
+        assert_eq!(permission_hold_from_env(None), DEFAULT_PERMISSION_HOLD);
+        assert_eq!(permission_hold_from_env(Some("abc")), DEFAULT_PERMISSION_HOLD);
+        assert_eq!(permission_hold_from_env(Some("0")), Duration::from_secs(1));
+        assert_eq!(permission_hold_from_env(Some("45")), Duration::from_secs(45));
+        assert_eq!(permission_hold_from_env(Some("9999")), Duration::from_secs(590));
+    }
 }

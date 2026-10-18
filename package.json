@@ -10,12 +10,15 @@
     "build": "tsc --noEmit && vite build",
     "test": "vitest run",
     "tauri": "tauri",
+    "build:hook": "cargo build -p marshell-hook",
+    "build:hook:release": "cargo build --release -p marshell-hook",
     "check:generated": "node scripts/check-generated.mjs",
     "fetch:conpty": "node scripts/fetch-conpty.mjs",
     "storybook": "storybook dev -p 6006",
     "build-storybook": "storybook build -o storybook-static",
     "review:build": "node scripts/build-review.mjs",
-    "a11y:matrix": "node scripts/a11y-matrix.mjs"
+    "a11y:matrix": "node scripts/a11y-matrix.mjs",
+    "scrub:fixtures": "node scripts/scrub-fixtures.mjs"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.12.1",

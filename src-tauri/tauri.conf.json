@@ -4,9 +4,9 @@
   "version": "0.1.0",
   "identifier": "dev.marshell.app",
   "build": {
-    "beforeDevCommand": "pnpm dev",
+    "beforeDevCommand": "pnpm build:hook && pnpm dev",
     "devUrl": "http://localhost:1420",
-    "beforeBuildCommand": "pnpm build",
+    "beforeBuildCommand": "pnpm build:hook:release && pnpm build",
     "frontendDist": "../dist"
   },
   "app": {
