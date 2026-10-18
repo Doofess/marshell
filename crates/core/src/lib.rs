@@ -8,6 +8,7 @@ pub mod hooks;
 pub mod job;
 pub mod layout;
 pub mod paths;
+pub mod private;
 pub mod profiles;
 pub mod projects;
 pub mod pty;

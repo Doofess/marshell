@@ -19,7 +19,7 @@ mod tasks;
 
 use crate::profiles::detect::{Probe, detect_profiles};
 use crate::registry::{Registry, Relaunch};
-use crate::{auth, paths};
+use crate::{auth, paths, private};
 use axum::extract::DefaultBodyLimit;
 use axum::http::{HeaderName, HeaderValue, Method, header};
 use axum::routing::{get, patch, post, put};
@@ -369,6 +369,15 @@ pub async fn start(cfg: CoreConfig) -> anyhow::Result<RunningCore> {
     };
     // Looking for shells runs programs (wsl.exe can take up to 2 s): keep it off the async threads.
     let detected = tokio::task::spawn_blocking(|| detect_profiles(&Probe::system())).await?;
+    // Before anything is written under the home. A failure is not fatal: the default home sits under the
+    // user's profile, which is already private to the user. The first fix may walk the whole home, so it
+    // runs off the async threads.
+    let home = cfg.home.clone();
+    match tokio::task::spawn_blocking(move || private::secure_home(&home)).await? {
+        Ok(private::HomeAcl::Fixed) => tracing::info!("made the Marshell home owner-only"),
+        Ok(private::HomeAcl::AlreadyPrivate) => {}
+        Err(e) => tracing::warn!("could not make the Marshell home owner-only: {e:#}"),
+    }
     let endpoint_file = paths::endpoint_file(&cfg.home);
     let state = AppState::new(endpoint.token.clone(), port, cfg.allowed_origins, cfg.home, detected)
         .with_permission_hold(permission_hold_from_env(

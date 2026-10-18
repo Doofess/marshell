@@ -38,8 +38,8 @@ impl Versioned for EndpointFile {
 
 /// Writes the endpoint file through `store::write`: atomic (temp file + rename), private from the start.
 /// On unix the directory is 0700 and the file 0600, so no other user can read it, not even briefly.
-/// On Windows the file inherits the ACL of its directory, which is user-only under the default
-/// `~/.marshell`. An explicit owner-only ACL comes when the hook bridge starts reading this file (phase 3).
+/// On Windows the file inherits the ACL of its directory: the home's owner-only ACL (the user and SYSTEM),
+/// set by `private::secure_home` before this write.
 pub fn write_endpoint_file(path: &Path, ep: &Endpoint) -> anyhow::Result<()> {
     // The old file only names a core that is gone, even one from a newer Marshell, so it is never kept.
     let _ = std::fs::remove_file(path);
