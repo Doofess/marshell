@@ -39,11 +39,12 @@ export function canEdit(d: Detection): { ok: boolean; reason?: string } {
  * what it added" would not be true of it). Nothing else in the file is touched. When the hooks go in a file of their own that
  * Marshell creates, removal deletes that file too, but only if nothing else was put in it since.
  */
-export function removalCopy(cli: CliId, on: Record<Capability, boolean>, hooks?: { hooksFile: string; created: boolean }, handedOver?: string): string {
+export function removalCopy(cli: CliId, on: Record<Capability, boolean>, hooks?: { hooksFile: string; created: boolean }, handedOver?: string, addedStatusLine = false): string {
   const entries = entryCount(cli, on) > 0;
-  const chain = on.statusline && CAPABILITIES[cli].statusline.available;
+  const chain = on.statusline && CAPABILITIES[cli].statusline.available && !addedStatusLine;
   const parts = [
-    entries && "removes the hook entries it added",
+    entries && (addedStatusLine ? "removes the hook entries and the status line it added" : "removes the hook entries it added"),
+    !entries && addedStatusLine && "removes the status line it added",
     entries && hooks?.created && `deletes ${hooks.hooksFile} if nothing else is in it`,
     chain && "puts your own status line back from statusline-chain.json",
     handedOver && `turns ${handedOver} back on`,
@@ -56,13 +57,17 @@ export function removalCopy(cli: CliId, on: Record<Capability, boolean>, hooks?:
 
 const sentence = (text: string) => `${text.charAt(0).toUpperCase()}${text.slice(1)}.`;
 
+/** Status is on and the user has no status line: install adds one (so context and plan data arrive) instead of chaining theirs. */
+export const addsStatusLine = (d: Detection, on: Record<Capability, boolean>) => d.hasOwnStatusLine === false && on.status && CAPABILITIES[d.cli].statusline.available;
+
 export function consentHeadline(d: Detection, on: Record<Capability, boolean>, handOver = false): string {
   if (d.configState === "unparsable") return `${d.configPath} does not parse (line ${d.parseError?.line ?? "–"}), so Marshell will not edit it.`;
   if (d.configState === "read-only") return `${d.configPath} is read-only, so Marshell will not edit it.`;
   const n = entryCount(d.cli, on);
-  const chain = on.statusline && CAPABILITIES[d.cli].statusline.available;
+  const added = addsStatusLine(d, on);
+  const chain = on.statusline && CAPABILITIES[d.cli].statusline.available && d.hasOwnStatusLine !== false;
   const turnOff = handOver && d.skipsAll ? `turn off ${d.skipsAll.setting}` : undefined;
-  if (n === 0 && !chain && !turnOff) return `Change nothing. ${CLI_NAME[d.cli]} will show limited status.`;
+  if (n === 0 && !chain && !turnOff && !added) return `Change nothing. ${CLI_NAME[d.cli]} will show limited status.`;
   const add = `Add ${n} hook ${n === 1 ? "entry" : "entries"}`;
   if (turnOff) {
     // The settings file gets two kinds of change: say the file once, then what happens in it.
@@ -78,6 +83,6 @@ export function consentHeadline(d: Detection, on: Record<Capability, boolean>, h
       .join(" and ");
     return sentence(text);
   }
-  const text = chain ? (n > 0 ? `${add} and chain your status line` : "Chain your status line") : add;
+  const text = chain ? (n > 0 ? `${add} and chain your status line` : "Chain your status line") : added ? `${add} and a status line` : add;
   return `${text} in ${d.configPath}.`;
 }

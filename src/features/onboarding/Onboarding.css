@@ -87,6 +87,7 @@
 .consent__trust,
 .consent__source,
 .consent__why,
+.consent__conflict,
 .consent__managed {
   margin: 0;
   font-size: var(--text-12);
@@ -94,7 +95,18 @@
   overflow-wrap: anywhere;
   text-wrap: pretty;
 }
+.consent__error {
+  margin: 0;
+  font-size: var(--text-12);
+  color: var(--error);
+  overflow-wrap: anywhere;
+  text-wrap: pretty;
+}
+.consent__apply:disabled {
+  opacity: 0.6;
+}
 .consent__toggle,
+.consent__apply,
 .consent__skip {
   justify-self: start;
   padding: var(--space-1) var(--space-3);
@@ -104,16 +116,19 @@
   font-size: var(--text-13);
 }
 .consent__toggle:focus-visible,
+.consent__apply:focus-visible,
 .consent__skip:focus-visible {
   outline: 2px solid var(--focus, var(--accent));
   outline-offset: 2px;
 }
 .consent__toggle:active,
+.consent__apply:active,
 .consent__skip:active {
   background: var(--selected, var(--fill-strong));
 }
 @media (hover: hover) and (pointer: fine) {
   .consent__toggle:hover,
+  .consent__apply:hover,
   .consent__skip:hover {
     background: var(--selected, var(--fill-strong));
   }
@@ -127,6 +142,7 @@
     outline: 2px solid CanvasText;
   }
   .consent__toggle,
+  .consent__apply,
   .consent__skip {
     outline: 1px solid CanvasText;
   }

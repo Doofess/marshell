@@ -7,8 +7,32 @@ import "./Onboarding.css";
 
 const CAP_LABEL: Record<Capability, string> = { status: "Show status and context", approve: "Approve from anywhere", statusline: "Keep my status line working" };
 
+const ALL: Capability[] = ["status", "approve", "statusline"];
+
 /** Screen 2: one card per CLI, in plain words: what changes and where, the exact diff on request, the backup and the way out. A file that cannot be edited gets the reason instead of controls. */
-export function ConsentCard({ scenario, on, open = false }: { scenario: { detection: Detection; plan: ConsentPlan }; on: Record<Capability, boolean>; open?: boolean }) {
+export function ConsentCard({
+  scenario,
+  on,
+  open = false,
+  offer = ALL,
+  busy = false,
+  onApply,
+  onSkip,
+  error,
+  conflict,
+}: {
+  scenario: { detection: Detection; plan: ConsentPlan };
+  on: Record<Capability, boolean>;
+  open?: boolean;
+  /** The switches shown. A user with no status line of their own is not offered "Keep my status line working" whatever this says. */
+  offer?: Capability[];
+  busy?: boolean;
+  onApply?: () => void;
+  onSkip?: () => void;
+  error?: string;
+  /** The file changed since the preview: the card offers a reload, never an overwrite. */
+  conflict?: { onReload: () => void };
+}) {
   const { detection: d, plan } = scenario;
   const titleId = useId();
   const edit = canEdit(d);
@@ -27,7 +51,7 @@ export function ConsentCard({ scenario, on, open = false }: { scenario: { detect
       {edit.ok ? (
         <>
           <ul className="consent__switches">
-            {(["status", "approve", "statusline"] as const).map((c) => (
+            {offer.filter((c) => c !== "statusline" || d.hasOwnStatusLine !== false).map((c) => (
               <li key={c}>
                 <Switch label={CAP_LABEL[c]} checked={on[c] && CAPABILITIES[d.cli][c].available} disabled={!CAPABILITIES[d.cli][c].available} reason={CAPABILITIES[d.cli][c].reason} />
               </li>
@@ -48,7 +72,7 @@ export function ConsentCard({ scenario, on, open = false }: { scenario: { detect
             View exact changes
           </button>
           {open && <DiffView diff={plan.diff} label={`Exact changes to ${d.hooks ? `${d.hooks.path} and ${d.configPath}` : d.configPath}`} />}
-          {plan.chainPath && on.statusline && CAPABILITIES[d.cli].statusline.available && (
+          {plan.chainPath && on.statusline && d.hasOwnStatusLine !== false && CAPABILITIES[d.cli].statusline.available && (
             <p className="consent__chain">
               Your own status line command is saved in <code>{plan.chainPath}</code> and keeps running: Marshell&apos;s runs first and then yours.
             </p>
@@ -90,8 +114,30 @@ export function ConsentCard({ scenario, on, open = false }: { scenario: { detect
           <code>{d.managed.path}</code> is managed by your organisation. Marshell can&apos;t change it.
         </p>
       )}
+      {conflict && (
+        <p className="consent__conflict">
+          <strong>Review the difference.</strong> The file changed after this preview was made, so nothing was written. Reload to see what it says now.
+        </p>
+      )}
+      {error && (
+        <p className="consent__error" role="alert">
+          {error}
+        </p>
+      )}
       <footer className="consent__foot">
-        <button type="button" className="consent__skip">
+        {conflict ? (
+          <button type="button" className="consent__toggle" onClick={conflict.onReload}>
+            Reload
+          </button>
+        ) : (
+          edit.ok &&
+          onApply && (
+            <button type="button" className="consent__apply" disabled={busy} onClick={onApply}>
+              Allow
+            </button>
+          )
+        )}
+        <button type="button" className="consent__skip" onClick={onSkip}>
           Skip: use limited status
         </button>
       </footer>

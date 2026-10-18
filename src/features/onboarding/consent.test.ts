@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { canEdit, CAPABILITIES, consentHeadline, entryCount, type Detection } from "./consent";
+import { canEdit, CAPABILITIES, consentHeadline, entryCount, removalCopy, type Detection } from "./consent";
 
 const claude: Detection = { cli: "claude", installed: true, version: "2.1.296", configPath: "C:\Users\Home Office\.claude\settings.json", configState: "ok" };
 const all = { status: true, approve: true, statusline: true };
@@ -52,5 +52,19 @@ describe("consentHeadline", () => {
   });
   it("follows the copy rules: no exclamation marks, no 'successfully', no 'Oops'", () => {
     for (const s of [consentHeadline(claude, all), consentHeadline(claude, { status: false, approve: false, statusline: false })]) expect(s).not.toMatch(/!|successfully|oops/i);
+  });
+});
+
+describe("a status line added rather than chained", () => {
+  const none: Detection = { ...claude, hasOwnStatusLine: false };
+  const on = { status: true, approve: false, statusline: false };
+  it("says the status line is added", () => {
+    expect(consentHeadline(none, on)).toBe(`Add 8 hook entries and a status line in ${none.configPath}.`);
+  });
+  it("still chains when the user has one", () => {
+    expect(consentHeadline({ ...claude, hasOwnStatusLine: true }, { ...on, statusline: true })).toContain("chain your status line");
+  });
+  it("removal says it removes what it added", () => {
+    expect(removalCopy("claude", on, undefined, undefined, true)).toBe("Marshell removes the hook entries and the status line it added; the rest of the file stays as it is.");
   });
 });
