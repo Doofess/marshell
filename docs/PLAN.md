@@ -944,6 +944,10 @@ Decisions from the 2026-10-10 coverage audit (`docs/superpowers/plan-coverage-au
      1. One click on the folder chip opens the field as now. Typing filters known folders and also accepts a full path in the running OS's syntax, offered as a "Use <path>" row. A "Browse…" row at the end of the list and Ctrl+O in the field open the native picker, so mouse and keyboard reach it alike (double-click was considered and dropped: the first click already swaps the chip for a field, and it has no keyboard route).
      2. The native dialog comes from `tauri-plugin-dialog` (approved as a new dependency), with a capability limited to the folder-open dialog. Linux and macOS get it from the same plugin later.
      3. Built as its own slice and PR after 3a merges, with a live check of the dialog. How a typed path that doesn't exist is handled is decided when 3f is planned.
+     4. A typed path is checked by the core as you type. An existing folder gets "Use <path>"; a missing one gets a disabled "No folder at <path>" row, so Enter can't launch into it (decided 2026-10-19).
+     5. A full path is an absolute path in the running OS's syntax (`C:\x`, `\\server\share`, `/x` on Unix) or one starting with `~` for the home folder. Quotes pasted around it are stripped, and anything else only filters the known folders (2026-10-19).
+     6. The dialog opens through Marshell's own `pick_folder` Tauri command, which calls the plugin from Rust. The webview gets no dialog permission and no npm package is added (2026-10-19).
+     7. A folder chosen by typing or Browse is remembered after launch like any other, except a drive root (`C:\`, `/`), which is never recorded, as the home folder isn't. So the config write guard never allows a whole drive (2026-10-19).
    - Exit: a real Claude session shows correct model, effort, mode, subagents and context; approval from a card works; uninstall leaves zero byte diff; corrupting `index.sqlite` is repaired on start.
 4. **Notifications + choreography + Departures board + stuck detection** (S3).
    - Exit: every rule in brief §5.5 is verified on all three OSes. Every sound has a visual equivalent.
