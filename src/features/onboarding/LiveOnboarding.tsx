@@ -5,6 +5,7 @@ import { getSetup, toDetection } from "../../lib/api/agents";
 import { actions, consentProps, type InstallFlow } from "../agents/agentsState";
 import { useInstallFlow } from "../agents/useInstallFlow";
 import { ConsentCard } from "./ConsentCard";
+import type { Capability } from "./consent";
 import { Detected } from "./Detected";
 import { OnboardingFrame } from "./OnboardingFrame";
 
@@ -24,6 +25,7 @@ export type OnboardingHandlers = {
   onSkip: () => void;
   onReload: () => void;
   onToggleDiff: () => void;
+  onSwitch: (capability: Capability, checked: boolean) => void;
 };
 
 /** The first two onboarding screens on the core's data. Presentational: `LiveOnboarding` fetches and acts, this draws. */
@@ -51,7 +53,7 @@ export function OnboardingView({ state, ...on }: { state: OnboardingState } & On
   const ready = Boolean(flow.preview) && !flow.conflict && !flow.busy;
   return (
     <OnboardingFrame step="consent" title="What Marshell may change" primary="Allow these changes" primaryDisabled={!ready} onPrimary={on.onAllow} onBack={on.onBack}>
-      <ConsentCard {...consentProps(setup, flow)} onSkip={on.onSkip} onToggleDiff={on.onToggleDiff} conflict={flow.conflict ? { onReload: on.onReload } : undefined} />
+      <ConsentCard {...consentProps(setup, flow)} onSkip={on.onSkip} onToggleDiff={on.onToggleDiff} onSwitch={on.onSwitch} conflict={flow.conflict ? { onReload: on.onReload } : undefined} />
     </OnboardingFrame>
   );
 }
@@ -81,7 +83,7 @@ export function LiveOnboarding({ endpoint, onDone }: { endpoint: Endpoint; onDon
     setup === "loading" || setup === "failed"
       ? { kind: setup }
       : consent
-        ? { kind: "consent", setup, flow: install.flow ?? { preview: null, open: false, busy: true } }
+        ? { kind: "consent", setup, flow: install.flow ?? { preview: null, open: false, busy: true, want: install.want } }
         : { kind: "detected", setup };
 
   return (
@@ -101,6 +103,7 @@ export function LiveOnboarding({ endpoint, onDone }: { endpoint: Endpoint; onDon
       onSkip={onDone}
       onReload={() => void install.plan()}
       onToggleDiff={install.toggleDiff}
+      onSwitch={install.choose}
     />
   );
 }

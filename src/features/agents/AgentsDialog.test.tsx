@@ -5,8 +5,22 @@ import { AgentsDialogView, type Panel } from "./AgentsDialog";
 import { PREVIEW, SETUP } from "./fixtures";
 
 const none = () => {};
-const handlers = { onClose: none, onSetup: none, onHooksOff: none, onBack: none, onAllow: none, onToggleDiff: none, onReload: none, onTurnOff: none };
+const handlers = { onClose: none, onSetup: none, onHooksOff: none, onBack: none, onAllow: none, onToggleDiff: none, onReload: none, onTurnOff: none, onSwitch: none };
 const view = (setup: AgentSetup | "loading" | "failed", panel: Panel = { kind: "list" }) => renderToStaticMarkup(<AgentsDialogView setup={setup} panel={panel} {...handlers} />);
+
+describe("AgentsDialogView switches", () => {
+  const switchOf = (h: string, label: string) => h.match(new RegExp(`<input[^>]*role="switch"[^>]*>(?=<span class="switch__track"[^>]*></span><span class="switch__text">${label}<)`))?.[0] ?? "";
+  it("renders the status line switch unchecked when the person turned it off", () => {
+    const h = view(SETUP, { kind: "setup", flow: { preview: PREVIEW, open: false, busy: false, want: { status: true, statusline: false } } });
+    expect(switchOf(h, "Keep my status line working")).not.toContain("checked");
+    expect(switchOf(h, "Show status and context")).toContain("checked");
+  });
+  it("offers no Allow when status is off, and keeps Skip", () => {
+    const h = view(SETUP, { kind: "setup", flow: { preview: null, open: false, busy: false, want: { status: false, statusline: true } } });
+    expect(h).not.toContain("consent__apply");
+    expect(h).toContain("Skip: use limited status");
+  });
+});
 
 describe("AgentsDialogView", () => {
   it("is a modal dialog named Agents", () => {

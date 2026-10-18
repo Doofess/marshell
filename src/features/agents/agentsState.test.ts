@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { AgentSetup } from "../../generated/AgentSetup";
-import { actions, consentProps, hooksOffNotice, setupLine } from "./agentsState";
+import { actions, consentProps, DEFAULT_WANT, hooksOffNotice, installRequest, setupLine } from "./agentsState";
 import { PREVIEW, SETUP } from "./fixtures";
 
 const s = (patch: Partial<AgentSetup>): AgentSetup => ({ ...SETUP, ...patch });
@@ -57,5 +57,28 @@ describe("consentProps", () => {
     expect(p.error).toBe("hooks is not an object");
     expect(p.scenario.plan.headline).toBe("Marshell will not edit C:/h/.claude/settings.json, so nothing will change.");
     expect(p.scenario.plan.diff).toBe("");
+  });
+});
+
+describe("the switches the person sets", () => {
+  it("start with status and the status line on", () => {
+    expect(installRequest(DEFAULT_WANT)).toEqual({ status: true, statusline: true });
+  });
+  it("send statusline:false when that switch is off, so the status line is never touched", () => {
+    expect(installRequest({ status: true, statusline: false })).toEqual({ status: true, statusline: false });
+  });
+  it("never ask for the status line when status is off", () => {
+    expect(installRequest({ status: false, statusline: true })).toEqual({ status: false, statusline: false });
+  });
+  it("show the card's switches as the person set them", () => {
+    const p = consentProps(SETUP, { preview: PREVIEW, open: false, busy: false, want: { status: true, statusline: false } });
+    expect(p.on).toEqual({ status: true, approve: false, statusline: false });
+    expect(p.scenario.plan.headline).toBeUndefined();
+    expect(p.scenario.plan.chainPath).toBe("C:/m/agents/claude/statusline-chain.json");
+  });
+  it("say nothing will change when status is off", () => {
+    const p = consentProps(SETUP, { preview: null, open: false, busy: false, want: { status: false, statusline: true } });
+    expect(p.on.status).toBe(false);
+    expect(p.scenario.plan.headline).toBe("Nothing will change: status is off.");
   });
 });

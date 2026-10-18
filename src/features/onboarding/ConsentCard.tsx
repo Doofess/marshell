@@ -21,6 +21,7 @@ export function ConsentCard({
   error,
   conflict,
   onToggleDiff,
+  onSwitch,
 }: {
   scenario: { detection: Detection; plan: ConsentPlan };
   on: Record<Capability, boolean>;
@@ -35,6 +36,8 @@ export function ConsentCard({
   conflict?: { onReload: () => void };
   /** "View exact changes" opens or closes the diff. Left out (stories), the button does nothing and `open` decides. */
   onToggleDiff?: () => void;
+  /** With it, the offered switches are controlled by `on` and a change calls this. Left out (stories), they keep their own state. */
+  onSwitch?: (capability: Capability, checked: boolean) => void;
 }) {
   const { detection: d, plan } = scenario;
   const titleId = useId();
@@ -56,7 +59,7 @@ export function ConsentCard({
           <ul className="consent__switches">
             {offer.filter((c) => c !== "statusline" || d.hasOwnStatusLine !== false).map((c) => (
               <li key={c}>
-                <Switch label={CAP_LABEL[c]} checked={on[c] && CAPABILITIES[d.cli][c].available} disabled={!CAPABILITIES[d.cli][c].available} reason={CAPABILITIES[d.cli][c].reason} />
+                <Switch label={CAP_LABEL[c]} checked={on[c] && CAPABILITIES[d.cli][c].available} disabled={!CAPABILITIES[d.cli][c].available} reason={CAPABILITIES[d.cli][c].reason} onChange={onSwitch && ((v) => onSwitch(c, v))} />
               </li>
             ))}
             {d.skipsAll && (

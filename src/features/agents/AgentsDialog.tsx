@@ -7,7 +7,7 @@ import type { RemovePreview } from "../../generated/RemovePreview";
 import { applyPreview, getSetup, planRemove, previewDiff } from "../../lib/api/agents";
 import { useDialogFocus } from "../../lib/useDialogFocus";
 import { ConsentCard } from "../onboarding/ConsentCard";
-import { removalCopy } from "../onboarding/consent";
+import { removalCopy, type Capability } from "../onboarding/consent";
 import { actions, consentProps, hooksOffNotice, setupLine, type InstallFlow } from "./agentsState";
 import { failureText, useInstallFlow } from "./useInstallFlow";
 import "./AgentsDialog.css";
@@ -29,6 +29,7 @@ export type AgentsDialogHandlers = {
   onToggleDiff: () => void;
   onReload: () => void;
   onTurnOff: () => void;
+  onSwitch: (capability: Capability, checked: boolean) => void;
 };
 
 /**
@@ -105,6 +106,7 @@ function SetupPanel({ setup, flow, on }: { setup: AgentSetup; flow: InstallFlow;
       onApply={flow.preview && !flow.conflict ? on.onAllow : undefined}
       onSkip={on.onBack}
       onToggleDiff={on.onToggleDiff}
+      onSwitch={on.onSwitch}
       conflict={flow.conflict ? { onReload: on.onReload } : undefined}
     />
   );
@@ -240,7 +242,7 @@ export function AgentsDialog({
     setMode("list");
   };
   const panel: Panel =
-    mode === "setup" ? { kind: "setup", flow: install.flow ?? { preview: null, open: false, busy: true } } : mode === "off" ? off : { kind: "list" };
+    mode === "setup" ? { kind: "setup", flow: install.flow ?? { preview: null, open: false, busy: true, want: install.want } } : mode === "off" ? off : { kind: "list" };
   return (
     <AgentsDialogView
       setup={setup}
@@ -251,6 +253,7 @@ export function AgentsDialog({
       onBack={back}
       onAllow={() => void install.apply()}
       onToggleDiff={install.toggleDiff}
+      onSwitch={install.choose}
       onReload={() => void (mode === "off" ? startOff() : install.plan())}
       onTurnOff={() => void turnOff()}
     />

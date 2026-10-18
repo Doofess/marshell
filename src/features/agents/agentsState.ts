@@ -5,9 +5,13 @@ import { addsStatusLine, consentHeadline, removalCopy, type Capability, type Con
 
 /** The switches the card shows for Claude Code until 3d: status, and the status line. */
 export const OFFER: Capability[] = ["status", "statusline"];
-/** What Set up asks the core to plan. The approve switch comes with 3d. */
-export const WANT = { status: true, statusline: true } as const;
-const ON: Record<Capability, boolean> = { status: true, approve: false, statusline: true };
+/** What the person has switched on. The approve switch comes with 3d. */
+export type Want = { status: boolean; statusline: boolean };
+export const DEFAULT_WANT: Want = { status: true, statusline: true };
+/** The body of the install request. Status off means nothing is installed, so the status line is never asked for either. */
+export const installRequest = (w: Want): Want => ({ status: w.status, statusline: w.status && w.statusline });
+const onOf = (w: Want): Record<Capability, boolean> => ({ status: w.status, approve: false, statusline: w.status && w.statusline });
+const ON = onOf(DEFAULT_WANT);
 
 /** The setup's file does not parse: there is nothing to set up or turn off until it is fixed. */
 const refused = (s: AgentSetup) => s.settings_state === "unparsable";
@@ -47,23 +51,25 @@ export const hooksOffNotice = (statuslineLeft: boolean): string =>
   `Hooks off. Sessions started from now show limited status.${statuslineLeft ? " Your status line was changed since setup, so it was left as it is." : ""}`;
 
 /** Where a Set up is: the preview the core made (none when the file is refused), and what the card says about it. */
-export type InstallFlow = { preview: ConfigPreview | null; open: boolean; busy: boolean; error?: string; conflict?: boolean };
+export type InstallFlow = { preview: ConfigPreview | null; open: boolean; busy: boolean; error?: string; conflict?: boolean; want?: Want };
 
 /** The consent card's input for the core's setup and preview. A refused file gets a headline that says nothing will change. */
 export function consentProps(s: AgentSetup, flow: InstallFlow) {
+  const want = flow.want ?? DEFAULT_WANT;
+  const on = onOf(want);
   const detection: Detection = toDetection(s);
   const files = flow.preview?.files ?? [];
   const chain = files.find((f) => /statusline-chain\.json$/.test(f.path));
   const plan: ConsentPlan = {
     cli: "claude",
-    on: ON,
+    on,
     configPath: s.settings_path,
     backupPath: s.snapshots_dir,
-    removal: removalCopy("claude", ON, undefined, undefined, addsStatusLine(detection, ON)),
+    removal: removalCopy("claude", on, undefined, undefined, addsStatusLine(detection, on)),
     diff: flow.preview ? previewDiff(flow.preview) : "",
     needsTrust: false,
     chainPath: chain?.path,
-    headline: flow.preview ? undefined : flow.error ? `Marshell will not edit ${s.settings_path}, so nothing will change.` : `Checking ${s.settings_path}…`,
+    headline: flow.preview ? undefined : !want.status ? "Nothing will change: status is off." : flow.error ? `Marshell will not edit ${s.settings_path}, so nothing will change.` : `Checking ${s.settings_path}…`,
   };
-  return { scenario: { detection, plan }, on: ON, offer: OFFER, open: flow.open, busy: flow.busy, error: flow.error };
+  return { scenario: { detection, plan }, on, offer: OFFER, open: flow.open, busy: flow.busy, error: flow.error };
 }

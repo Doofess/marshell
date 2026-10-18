@@ -4,8 +4,21 @@ import { PREVIEW, SETUP } from "../agents/fixtures";
 import { OnboardingView, type OnboardingState } from "./LiveOnboarding";
 
 const none = () => {};
-const handlers = { onContinue: none, onBack: none, onAllow: none, onSkip: none, onReload: none, onToggleDiff: none };
+const handlers = { onContinue: none, onBack: none, onAllow: none, onSkip: none, onReload: none, onToggleDiff: none, onSwitch: none };
 const view = (state: OnboardingState) => renderToStaticMarkup(<OnboardingView state={state} {...handlers} />);
+
+describe("OnboardingView switches", () => {
+  it("shows the status line switch off and keeps Allow enabled for a plan without it", () => {
+    const h = view({ kind: "consent", setup: SETUP, flow: { preview: PREVIEW, open: false, busy: false, want: { status: true, statusline: false } } });
+    expect(h.match(/<input[^>]*role="switch"[^>]*>(?=<span class="switch__track"[^>]*><\/span><span class="switch__text">Keep my)/)?.[0]).not.toContain("checked");
+    expect(h).not.toMatch(/class="onboarding__primary"[^>]*disabled/);
+  });
+  it("disables Allow when status is off, and Skip remains", () => {
+    const h = view({ kind: "consent", setup: SETUP, flow: { preview: null, open: false, busy: false, want: { status: false, statusline: true } } });
+    expect(h).toMatch(/class="onboarding__primary"[^>]*disabled/);
+    expect(h).toContain("Skip: use limited status");
+  });
+});
 
 describe("OnboardingView", () => {
   it("starts on Detected with the Claude Code row", () => {
