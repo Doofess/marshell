@@ -149,7 +149,7 @@ mod win {
 
     pub fn current_user_sid() -> anyhow::Result<String> {
         let buf = token_user()?;
-        // SAFETY: `token_user` filled `buf` with a TOKEN_USER whose SID pointer points into the same buffer.
+        // SAFETY: `token_user` filled the 8-byte-aligned `buf` with a TOKEN_USER whose SID pointer points into the same buffer.
         let sid = unsafe { (*buf.as_ptr().cast::<TOKEN_USER>()).User.Sid };
         sid_to_string(sid)
     }
@@ -326,8 +326,9 @@ mod win {
         }))
     }
 
-    /// The TOKEN_USER of this process, in a u32 buffer so the structure is aligned.
-    fn token_user() -> anyhow::Result<Vec<u32>> {
+    /// The TOKEN_USER of this process, in a u64 buffer: the structure holds a pointer, so it needs
+    /// the buffer aligned to 8 bytes on 64-bit Windows, which a `Vec<u32>` does not promise.
+    fn token_user() -> anyhow::Result<Vec<u64>> {
         let mut token: HANDLE = null_mut();
         // SAFETY: GetCurrentProcess is a pseudo-handle; `token` receives a handle closed below.
         if unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token) } == 0 {
@@ -340,8 +341,8 @@ mod win {
             if needed == 0 {
                 bail!("could not size the token user: {}", std::io::Error::last_os_error());
             }
-            let mut buf = vec![0u32; (needed as usize).div_ceil(4)];
-            // SAFETY: the buffer holds at least `needed` bytes and is aligned for TOKEN_USER.
+            let mut buf = vec![0u64; (needed as usize).div_ceil(8)];
+            // SAFETY: the buffer holds at least `needed` bytes and is 8-byte aligned, which TOKEN_USER needs.
             if unsafe { GetTokenInformation(token, TokenUser, buf.as_mut_ptr().cast(), needed, &mut needed) } == 0 {
                 bail!("could not read the token user: {}", std::io::Error::last_os_error());
             }
@@ -355,7 +356,7 @@ mod win {
     /// A copy of the current user's SID, in a u32 buffer.
     fn sid_bytes_of_user() -> anyhow::Result<Vec<u32>> {
         let buf = token_user()?;
-        // SAFETY: `token_user` filled `buf` with a TOKEN_USER whose SID pointer points into the same buffer.
+        // SAFETY: `token_user` filled the 8-byte-aligned `buf` with a TOKEN_USER whose SID pointer points into the same buffer.
         let sid = unsafe { (*buf.as_ptr().cast::<TOKEN_USER>()).User.Sid };
         // SAFETY: `sid` is a valid SID.
         let len = unsafe { GetLengthSid(sid) } as usize;
