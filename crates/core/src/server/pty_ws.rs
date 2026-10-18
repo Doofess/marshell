@@ -79,8 +79,11 @@ async fn run(socket: WebSocket, session: Arc<Session>, st: AppState, tab: String
                     Some(ClientFrame::Input(bytes)) => {
                         // A paused session takes no keys; the pane shows why.
                         if !session.is_frozen() {
-                            // Typing means the person is answering in the terminal.
-                            st.holds().release_tab(&tab);
+                            // Typing means the person is answering in the terminal. Focus changes,
+                            // mouse movement and replies to queries come from the terminal itself.
+                            if !super::reports::is_passive_report(&bytes) {
+                                st.holds().release_tab(&tab);
+                            }
                             session.write_input(bytes);
                         }
                     }

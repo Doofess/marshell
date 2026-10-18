@@ -10,6 +10,7 @@ mod permissions;
 mod profiles;
 mod projects;
 mod pty_ws;
+mod reports;
 mod sessions;
 mod settings;
 mod shell_panel;
