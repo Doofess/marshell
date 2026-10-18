@@ -9,7 +9,12 @@ import { close as closeWindow, minimize as minimizeWindow, onMaximizedChange, to
 import { copyRecordingPath } from "./recording";
 import { addFailure, clipboardText, deliveryFor, noticeFor } from "../regions/deliver";
 import { regionText } from "../regions/region";
-import { pasteAttachment, saveAttachment } from "../regions/regionsApi";
+import { pasteAttachment, pastePaths, saveAttachment } from "../regions/regionsApi";
+import { toPng } from "../regions/imagePaste";
+import { CAPTURE_CANCELLED_NOTICE, CAPTURE_WAIT_NOTICE, cancelCapture, captureFailure, captureRefusal, captureScreenRegion, readClipboardImage, watchFocusCancel } from "../capture/capture";
+import { deliveryTo, type DropTarget } from "../drop/dropTarget";
+import { useFileDrop } from "../drop/useFileDrop";
+import { statFile } from "../preview/previewApi";
 import { inMenu } from "../../components/ContextMenu/menuKeys";
 import { focusAfterMenu, menuFacts, modeOfItem } from "./sessionMenuRun";
 import { ContextMenu } from "../../components/ContextMenu/ContextMenu";
@@ -350,6 +355,114 @@ export function LiveApp() {
     announce(noticeFor(target.via, target.name));
     setTimeout(() => actions.focusTerminal(), 0);
   };
+  // Files dropped from the system: on a terminal each path is pasted into that session (never Enter); anywhere else the first file opens in
+  // the preview. A paused or an ended session is refused before anything is pasted.
+  const dropPaths = async (target: DropTarget, paths: string[]): Promise<void> => {
+    if (target.kind === "preview") {
+      for (const path of paths) {
+        const stat = await statFile(path).catch(() => null);
+        if (stat?.kind !== "ok") continue;
+        preview.open({ path });
+        announce(`Opened ${lastSegment(path)} in the preview.`);
+        return;
+      }
+      announce("A folder can't be shown in the preview.");
+      return;
+    }
+    const ep = endpointRef.current;
+    const delivery = ep ? deliveryTo(target.tabId, stateRef.current.rows, panelIdRef.current) : null;
+    if (!ep || !delivery) return announce("No session to add it to.");
+    if (delivery.refused !== undefined) return announce(delivery.refused);
+    try {
+      await pastePaths(ep, target.tabId, paths);
+    } catch (e) {
+      return announce(`Couldn't paste the path: ${addFailure(e)}`);
+    }
+    announce(paths.length === 1 ? `Pasted ${lastSegment(paths[0] ?? "")} into ${delivery.name}.` : `Pasted ${paths.length} paths into ${delivery.name}.`);
+    focusDelivered(target.tabId, delivery);
+  };
+  // The shell panel's tab has no row to select, and focusTerminal would move the keys to the selected session, so the panel's own terminal is focused instead.
+  const panelIdRef = useRef<string | undefined>(undefined);
+  const focusDelivered = (tabId: string, delivery: { name: string; panel?: true }) => {
+    if (delivery.panel) return focusShellTerminal(document);
+    pick(tabId);
+    setTimeout(() => actions.focusTerminal(), 0);
+  };
+  // An image pasted into a terminal (Ctrl+Shift+V): saved, and its reference pasted into that session, agent or shell. Never Enter.
+  const addImage = async (tabId: string, image: Blob): Promise<void> => {
+    const ep = endpointRef.current;
+    const delivery = ep ? deliveryTo(tabId, stateRef.current.rows, panelIdRef.current) : null;
+    if (!ep || !delivery) return announce("No session to add it to.");
+    if (delivery.refused !== undefined) return announce(delivery.refused);
+    try {
+      const saved = await saveAttachment(ep, tabId, await toPng(image));
+      await pasteAttachment(ep, tabId, { attachment: saved.name, text: "" });
+    } catch (e) {
+      return announce(`Couldn't add the image: ${addFailure(e)}`);
+    }
+    announce(`Added the image to ${delivery.name}.`);
+    focusDelivered(tabId, delivery);
+  };
+  // Capture screen region: the system's snipping tool, then the image it left on the clipboard goes to the focused session through
+  // addImage. The focus watcher runs only while a capture does; a second press while one runs hears the core's "already running"
+  // sentence and starts no second watcher. Every way out ends in a notice, and a text copy during the wait is never the capture (the core).
+  const stopWatch = useRef<(() => void) | null>(null);
+  const runCapture = async (): Promise<void> => {
+    const tabId = stateRef.current.focusedId;
+    const refused = captureRefusal(tabId, stateRef.current.rows);
+    if (refused !== null || !tabId) return announce(refused ?? "No session to add it to.");
+    const watching = stopWatch.current !== null;
+    if (!watching) {
+      announce(CAPTURE_WAIT_NOTICE);
+      stopWatch.current = watchFocusCancel(() => void cancelCapture().catch(() => undefined));
+    }
+    let arrived: boolean;
+    try {
+      arrived = await captureScreenRegion();
+    } catch (e) {
+      return announce(captureFailure(e));
+    } finally {
+      if (!watching) {
+        stopWatch.current?.();
+        stopWatch.current = null;
+      }
+    }
+    if (!arrived) return announce(CAPTURE_CANCELLED_NOTICE);
+    let image: Blob | null;
+    try {
+      image = await readClipboardImage();
+    } catch (e) {
+      return announce(`Couldn't add the image: ${captureFailure(e)}`);
+    }
+    if (!image) return announce("Couldn't add the image: the clipboard has no image.");
+    await addImage(tabId, image);
+  };
+  const runCaptureRef = useRef(runCapture);
+  runCaptureRef.current = runCapture;
+  useEffect(() => () => stopWatch.current?.(), []);
+  // The pane under a dragged file gets the dashed outline and its label (Drop.css).
+  const dropOver = useRef<Element | null>(null);
+  const dropHover = (target: DropTarget | null) => {
+    let next: Element | null = null;
+    let label = "";
+    if (target?.kind === "terminal") {
+      const host = Array.from(document.querySelectorAll("[data-drop-tab]")).find((h) => h.getAttribute("data-drop-tab") === target.tabId);
+      const name = deliveryTo(target.tabId, stateRef.current.rows, panelIdRef.current)?.name;
+      next = host?.closest(".pane") ?? host ?? null;
+      label = `Drop to paste the path into ${name ?? "the session"}`;
+    } else if (target) {
+      next = document.querySelector("[data-drop-preview]");
+      label = "Drop to open in the preview";
+    }
+    if (dropOver.current && dropOver.current !== next) {
+      dropOver.current.removeAttribute("data-drop-over");
+      dropOver.current.removeAttribute("data-drop-label");
+    }
+    next?.setAttribute("data-drop-over", "");
+    next?.setAttribute("data-drop-label", label);
+    dropOver.current = next;
+  };
+  useFileDrop({ onPaths: (t, p) => void dropPaths(t, p), onHover: dropHover });
   // A question about a session that is no longer the selected one, or is gone, has nothing left to ask.
   useEffect(() => {
     if (closing !== null && (closing !== focusedId || !infos.some((i) => i.tab_id === closing))) actions.cancelClose();
@@ -442,6 +555,7 @@ export function LiveApp() {
       });
   }, [endpoint, shellShown, hasFocusedCwd, panel, attempt, announce]);
   const panelTab = panel && panel.endpoint === endpoint ? panel : null;
+  panelIdRef.current = panelTab?.tabId;
   const shellFailed = failedFor !== null && failedFor === endpoint && !panelTab;
   const retryShell = useCallback(() => {
     setFailedFor(null);
@@ -528,7 +642,7 @@ export function LiveApp() {
     if (handed && endpoint) setAdopted({ endpoint, tabId: handed });
   }, [handed, endpoint]);
   const shellTerminal = useMemo(
-    () => (panelTab && endpoint ? <TerminalView key={panelTab.tabId} endpoint={endpoint} tabId={panelTab.tabId} autoFocus={false} theme={themeFor(undefined)} font={terminalFont} /> : null),
+    () => (panelTab && endpoint ? <TerminalView key={panelTab.tabId} endpoint={endpoint} tabId={panelTab.tabId} autoFocus={false} theme={themeFor(undefined)} font={terminalFont} onImagePaste={(image) => void addImage(panelTab.tabId, image)} /> : null),
     [endpoint, panelTab, themeFor, terminalFont],
   );
 
@@ -688,6 +802,9 @@ export function LiveApp() {
         case "openFile":
           setFilesOnly(true);
           setOverlay("palette");
+          return true;
+        case "capture":
+          void runCaptureRef.current();
           return true;
         case "split":
           if (!roomForPane(v.panes.length, fitRef.current)) {
@@ -852,6 +969,7 @@ export function LiveApp() {
                 focusToken={focusToken}
                 promptJump={promptJump?.tabId === row.id ? promptJump : undefined}
                 onPromptJump={(result) => promptJump && onPromptJump(promptJump.by, result)}
+                onImagePaste={(image) => void addImage(row.id, image)}
                 theme={themeFor(overrideOf(row.id))}
                 font={terminalFont}
               />

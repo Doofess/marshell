@@ -96,9 +96,13 @@ describe("Sidebar: rename and reorder", () => {
     expect(moveBy(ids, ids[1]!, -1)?.[0]).toBe(ids[1]);
     expect(moveBy(ids, ids[0]!, -1)).toBeNull();
   });
-  it("makes rows draggable only when it can reorder them, and marks the drop edge", () => {
+  it("gives rows a pointer drag only when it can reorder them, and never the HTML5 draggable attribute", () => {
     expect(html()).not.toContain("draggable");
-    expect(html({ onReorder: () => {} })).toContain('draggable="true"');
+    expect(html()).not.toContain("data-row-id");
+    const h = html({ onReorder: () => {} });
+    expect(h).not.toContain("draggable");
+    expect((h.match(/data-row-id="/g) ?? []).length).toBe(SCENARIO_ROWS.length);
+    expect(h).not.toContain("data-dragging");
   });
   it("does not change the markup when no rename or reorder props are given", () => {
     const h = html();
@@ -129,9 +133,10 @@ describe("Sidebar: rename and reorder", () => {
     expect((h.match(/aria-selected="true"/g) ?? []).length).toBe(1);
     expect(h).not.toContain("data-focused");
   });
-  it("does not make a row draggable while its name is being edited", () => {
+  it("still marks the row being renamed as a place to drop, but renders no drag attribute on any row", () => {
     const h = html({ onReorder: () => {}, renamingId: target.id, onRename: () => {}, onRenameCancel: () => {} });
-    expect((h.match(/draggable="true"/g) ?? []).length).toBe(SCENARIO_ROWS.length - 1);
+    expect(h).not.toContain("draggable");
+    expect((h.match(/data-row-id="/g) ?? []).length).toBe(SCENARIO_ROWS.length);
   });
 });
 

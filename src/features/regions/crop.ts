@@ -55,7 +55,7 @@ function toBlob(c: HTMLCanvasElement | OffscreenCanvas): Promise<Blob> {
 }
 
 /** Draws the source rectangle into a canvas of `out` pixels and encodes it as a PNG. */
-async function encode(source: CanvasImageSource, rect: { sx: number; sy: number; sw: number; sh: number }, out: Size): Promise<Blob> {
+export async function encode(source: CanvasImageSource, rect: { sx: number; sy: number; sw: number; sh: number }, out: Size): Promise<Blob> {
   const canvas = makeCanvas(out.w, out.h);
   try {
     const ctx = canvas.getContext("2d") as CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D | null;
@@ -68,16 +68,33 @@ async function encode(source: CanvasImageSource, rect: { sx: number; sy: number;
   }
 }
 
+/** Encodes again, smaller, until the PNG is under the cap (or the tries run out). */
+async function shrink(png: Blob, out: Size, redo: (out: Size) => Promise<Blob>): Promise<Blob> {
+  for (let tries = 1; png.size > MAX_PNG_BYTES && tries < MAX_ENCODES; tries++) {
+    out = smallerSize(out, png.size);
+    png = await redo(out);
+  }
+  return png;
+}
+
 /** Crops `r` out of a source `src` pixels large and encodes it as a PNG; a photographic crop the core would refuse (over 20 MB) is encoded again, smaller. */
 export async function cropToPng(source: CanvasImageSource, src: Size, r: Region): Promise<Blob> {
   const rect = cropRect(r, src);
-  let out = outputSize(rect.sw, rect.sh);
-  let png = await encode(source, rect, out);
-  for (let tries = 1; png.size > MAX_PNG_BYTES && tries < MAX_ENCODES; tries++) {
-    out = smallerSize(out, png.size);
-    png = await encode(source, rect, out);
+  const out = outputSize(rect.sw, rect.sh);
+  return shrink(await encode(source, rect, out), out, (o) => encode(source, rect, o));
+}
+
+/** A PNG blob under the cap: the blob itself when it fits, else drawn again, smaller. */
+export async function fitPng(blob: Blob): Promise<Blob> {
+  if (blob.size <= MAX_PNG_BYTES) return blob;
+  const bitmap = await createImageBitmap(blob);
+  try {
+    const size = { w: bitmap.width, h: bitmap.height };
+    const rect = { sx: 0, sy: 0, sw: size.w, sh: size.h };
+    return await shrink(blob, size, (o) => encode(bitmap, rect, o));
+  } finally {
+    bitmap.close();
   }
-  return png;
 }
 
 /** Crops `r` out of the image at `url`, at its natural size. */

@@ -283,6 +283,7 @@ export function PreviewPane({ entry, file, updated, theme, os, canBack, canForwa
   return (
     <section
       className="preview"
+      data-drop-preview=""
       aria-label={`Preview, ${name}`}
       data-kind={kindOf(entry.path)}
       style={themeVariables(theme) as CSSProperties}

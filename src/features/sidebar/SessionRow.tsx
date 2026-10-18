@@ -2,7 +2,7 @@ import { AgentMark } from "../../components/AgentMark/AgentMark";
 import { AuxGlyph, StatusGlyph } from "../../components/StatusGlyph/StatusGlyph";
 import { ContextRing } from "../../components/ContextRing/ContextRing";
 import { SessionNumber } from "../../components/SessionNumber/SessionNumber";
-import type { DragEventHandler } from "react";
+import type { PointerEventHandler } from "react";
 import type { Os } from "../../lib/keymap";
 import { RenameBox } from "./RenameBox";
 import { inRenameBox, keyboardAnchor, opensRowMenu } from "./rowMenu";
@@ -19,14 +19,13 @@ const NEEDS_YOU = new Set(["needs-permission", "needs-question"]);
 /** Sessions that cannot continue without the user stand out from the rest of the list. */
 const blocked = (status: string) => (NEEDS_YOU.has(status) ? "needs-you" : status === "error" ? "error" : undefined);
 
-/** What a row needs to be dragged to a new place in the list (native HTML5 drag and drop). Left out, the row is not draggable. */
+/** What a row needs to be dragged to a new place in the list (pointer events, so native file drop can be on). Left out, the row is not a drag source or a drop place. */
 export type RowDrag = {
-  onDragStart: DragEventHandler<HTMLDivElement>;
-  onDragOver: DragEventHandler<HTMLDivElement>;
-  onDrop: DragEventHandler<HTMLDivElement>;
-  onDragEnd: DragEventHandler<HTMLDivElement>;
   /** Where a dragged row would land relative to this one: a line is drawn on that edge. */
   dropEdge?: "before" | "after";
+  /** This row is the one being dragged. */
+  dragging: boolean;
+  onPointerDown: PointerEventHandler<HTMLDivElement>;
 };
 /** F2: the name is a text box. */
 export type RowRename = { onCommit: (name: string) => void; onCancel: (opts: { refocus: boolean }) => void };
@@ -34,7 +33,7 @@ export type RowRename = { onCommit: (name: string) => void; onCancel: (opts: { r
 /**
  * One sidebar row (docs/PLAN.md "Sidebar rows"): an option in the sidebar's listbox. Height is fixed per density and
  * hover never changes it. Focus is roving: the list gives exactly one row `tabStop`, arrow keys move it (batch 2).
- * `drag` makes the row draggable, and `rename` turns its name into a text box.
+ * `drag` lets the row be dragged by pointer, and `rename` turns its name into a text box.
  */
 export function SessionRow({
   row,
@@ -100,8 +99,11 @@ export function SessionRow({
       data-flash={row.flash || undefined}
       data-renaming={rename ? "" : undefined}
       data-review={reviewable ? (selected ? "open" : "") : undefined}
-      draggable={drag && !rename ? true : undefined}
+      data-row-id={drag ? row.id : undefined}
+      data-dragging={drag?.dragging ? "" : undefined}
       data-drop={drag?.dropEdge}
+      // Not while the name is a text box: a press there selects text.
+      onPointerDown={drag && !rename ? drag.onPointerDown : undefined}
       onClick={onToggle ? (e) => (togglesPane(e, os) ? onToggle() : onSelect?.()) : onSelect}
       onContextMenu={
         onMenu &&
@@ -125,10 +127,6 @@ export function SessionRow({
           }
         })
       }
-      onDragStart={drag?.onDragStart}
-      onDragOver={drag?.onDragOver}
-      onDrop={drag?.onDrop}
-      onDragEnd={drag?.onDragEnd}
     >
       <span className="session-row__stripe" aria-hidden="true" />
       {focused && <span className="session-row__bar" aria-hidden="true" />}

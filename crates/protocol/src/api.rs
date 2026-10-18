@@ -470,6 +470,14 @@ pub struct PasteRequest {
     pub text: String,
 }
 
+/// POST /v1/sessions/{tab}/paste-paths body: paste dropped files and folders into the session.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct PastePathsRequest {
+    /// 1 to 32 absolute paths that exist, each a file or a folder. No control characters and no `"`.
+    pub paths: Vec<String>,
+}
+
 /// GET /v1/sessions/{tab}/files reply: the files of the session's project, for quick open.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[ts(export)]

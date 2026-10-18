@@ -1,6 +1,8 @@
 // No console window behind the app in release builds on Windows.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod capture;
+
 use marshell_core::server::CoreConfig;
 use marshell_core::supervisor::{CoreEvent, Supervisor};
 use marshell_protocol::api::Endpoint;
@@ -124,6 +126,7 @@ fn main() {
             if let Some(w) = app.get_webview_window("main") {
                 disable_browser_shortcuts(&w);
             }
+            app.manage(capture::CaptureState::default());
             let home = marshell_core::paths::home_dir()?;
             marshell_core::crash::install_panic_hook(&home);
             let cfg = CoreConfig {
@@ -138,7 +141,12 @@ fn main() {
             app.manage(CoreHandle(supervisor));
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![core_endpoint])
+        .invoke_handler(tauri::generate_handler![
+            core_endpoint,
+            capture::capture_screen_region,
+            capture::cancel_capture,
+            capture::read_clipboard_image
+        ])
         .build(tauri::generate_context!())
         .expect("failed to build the app");
 

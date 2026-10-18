@@ -351,6 +351,21 @@ pub fn attachment_ref(agent: Option<&str>, path: &Path) -> String {
     }
 }
 
+/// What to type for a path dropped on a session whose shell is `family`: the agent's reference, unless
+/// the name holds a character the shell would act on inside double quotes. Then it is the shell's own
+/// single quoting, since the agent may have exited and left the shell's prompt behind.
+pub fn dropped_path_ref(agent: Option<&str>, family: ShellFamily, path: &Path) -> String {
+    let text = path.to_string_lossy();
+    match family {
+        ShellFamily::PowerShell if text.contains(['$', '`', '\u{201C}', '\u{201D}', '\u{201E}']) => {
+            powershell_quote(&text)
+        }
+        ShellFamily::Posix | ShellFamily::Wsl if text.contains(['$', '`', '!']) => posix_quote(&text),
+        // cmd runs nothing from inside "…".
+        _ => attachment_ref(agent, path),
+    }
+}
+
 /// The CLI's own flags for starting `agent` in `mode`. Hooks are off, so these are the native column of
 /// PLAN "Session modes". `sessionModes.ts` (`launchArgs` with hooks off) must show the same flags.
 /// Codex has no plan flag, so Plan starts like Manual.
@@ -763,6 +778,76 @@ mod tests {
         for agent in [Some("claude"), Some("codex"), Some("antigravity"), Some("other"), None] {
             assert_eq!(attachment_ref(agent, p), quoted);
         }
+    }
+
+    #[test]
+    fn dropped_path_ref_keeps_double_quotes_for_a_plain_name() {
+        let p = Path::new(r"C:\Users\Home Office\my notes.txt");
+        let quoted = format!("\"{}\"", p.display());
+        for family in [
+            ShellFamily::PowerShell,
+            ShellFamily::Cmd,
+            ShellFamily::Posix,
+            ShellFamily::Wsl,
+        ] {
+            for agent in [Some("claude"), Some("codex"), None] {
+                assert_eq!(dropped_path_ref(agent, family, p), quoted, "{family:?} {agent:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn dropped_path_ref_single_quotes_what_powershell_expands_in_double_quotes() {
+        // `$`, the backtick and the typographic double quotes all act inside "…" in PowerShell.
+        for name in [
+            "a$(calc).txt",
+            "a$env:x.txt",
+            "a`b.txt",
+            "a\u{201C};calc;\u{201D}.txt",
+            "a\u{201E}b.txt",
+        ] {
+            let path = format!(r"C:\d\{name}");
+            let p = Path::new(&path);
+            for agent in [Some("claude"), None] {
+                assert_eq!(
+                    dropped_path_ref(agent, ShellFamily::PowerShell, p),
+                    powershell_quote(&path),
+                    "{name:?} {agent:?}"
+                );
+            }
+        }
+        assert_eq!(
+            dropped_path_ref(None, ShellFamily::PowerShell, Path::new("C:\\d\\it's $x\u{2019}.txt")),
+            "'C:\\d\\it''s $x\u{2019}\u{2019}.txt'"
+        );
+    }
+
+    #[test]
+    fn dropped_path_ref_single_quotes_what_a_posix_shell_expands_in_double_quotes() {
+        for family in [ShellFamily::Posix, ShellFamily::Wsl] {
+            for name in ["a$(id).txt", "a`id`.txt", "a!!.txt"] {
+                let path = format!("/home/u/{name}");
+                assert_eq!(
+                    dropped_path_ref(None, family, Path::new(&path)),
+                    posix_quote(&path),
+                    "{family:?} {name:?}"
+                );
+            }
+        }
+        assert_eq!(
+            dropped_path_ref(Some("codex"), ShellFamily::Posix, Path::new("/u/it's $x")),
+            r"'/u/it'\''s $x'"
+        );
+    }
+
+    #[test]
+    fn dropped_path_ref_keeps_double_quotes_in_cmd() {
+        // cmd runs nothing from inside "…": `%x%` reads a variable, and `&` or `|` is plain text.
+        let p = Path::new(r"C:\d\a$(calc) & b %x%.txt");
+        assert_eq!(
+            dropped_path_ref(None, ShellFamily::Cmd, p),
+            format!("\"{}\"", p.display())
+        );
     }
 
     #[test]

@@ -10,7 +10,26 @@
 //!   fake-agent osc133              print the OSC 133 marks A, C and D;7, exit 0
 //!   fake-agent folder <path>       report <path> as the shell's folder (OSC 9;9), sleep 60 s
 //!   fake-agent cmdline <text>      report <text> as the command line (633;E), mark C, sleep 2 s, mark D;0
-use std::io::{BufRead, Write};
+//!   fake-agent capture-input <f>   read stdin raw, turn bracketed paste on (2004h), append every byte read to <f>
+use std::io::{BufRead, Read, Write};
+
+/// Raw, unechoed input, so what the core types arrives byte for byte.
+#[cfg(windows)]
+fn raw_stdin() {
+    unsafe extern "system" {
+        fn GetStdHandle(which: u32) -> isize;
+        fn SetConsoleMode(handle: isize, mode: u32) -> i32;
+    }
+    const STD_INPUT_HANDLE: u32 = -10i32 as u32;
+    const ENABLE_VIRTUAL_TERMINAL_INPUT: u32 = 0x200;
+    // SAFETY: both calls take plain values; a failure only leaves the console in line mode.
+    unsafe { SetConsoleMode(GetStdHandle(STD_INPUT_HANDLE), ENABLE_VIRTUAL_TERMINAL_INPUT) };
+}
+
+#[cfg(not(windows))]
+fn raw_stdin() {
+    let _ = std::process::Command::new("stty").args(["raw", "-echo"]).status();
+}
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -79,6 +98,25 @@ fn main() {
             out.flush().unwrap();
             std::thread::sleep(std::time::Duration::from_secs(2));
             write!(out, "\x1b]133;D;0\x07").unwrap();
+        }
+        Some("capture-input") => {
+            raw_stdin();
+            write!(out, "[?2004h").unwrap();
+            out.flush().unwrap();
+            let mut file = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&args[1])
+                .unwrap();
+            let mut buf = [0u8; 256];
+            let mut stdin = std::io::stdin().lock();
+            while let Ok(n) = stdin.read(&mut buf) {
+                if n == 0 {
+                    break;
+                }
+                file.write_all(&buf[..n]).unwrap();
+                file.flush().unwrap();
+            }
         }
         _ => eprintln!("unknown mode"),
     }

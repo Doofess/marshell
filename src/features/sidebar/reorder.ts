@@ -1,5 +1,20 @@
-/** What a dragged row carries. A custom type, so dropping it on a text field inserts nothing. */
-export const TAB_MIME = "application/x-marshell-tab";
+/** How far (px) the pointer must move from the press before it is a drag and not a click. */
+export const DRAG_THRESHOLD = 4;
+
+/** True once the pointer is `DRAG_THRESHOLD` px or more from where it was pressed. */
+export function dragStarted(dx: number, dy: number): boolean {
+  return Math.hypot(dx, dy) >= DRAG_THRESHOLD;
+}
+
+/** Which half of a row the pointer is in: the top half drops before it, the bottom half after. */
+export function edgeAt(clientY: number, top: number, height: number): "before" | "after" {
+  return clientY < top + height / 2 ? "before" : "after";
+}
+
+/** The session id of the row under an element (the closest `[data-row-id]`), or null when it is not in a row. */
+export function rowIdAt(el: Element | null): string | null {
+  return el?.closest("[data-row-id]")?.getAttribute("data-row-id") ?? null;
+}
 
 /** A row being dragged, and the edge of the row it is over (where it would land). */
 export type DragState = { id: string; over?: { id: string; edge: "before" | "after" } };

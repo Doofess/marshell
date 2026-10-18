@@ -224,6 +224,7 @@ pub fn router(state: AppState) -> Router {
             post(attachments::save).layer(DefaultBodyLimit::max(files::IMAGE_CAP as usize + 1)),
         )
         .route("/v1/sessions/{tab}/paste", post(attachments::paste))
+        .route("/v1/sessions/{tab}/paste-paths", post(attachments::paste_paths))
         .route("/v1/files/stat", get(files::stat))
         .route("/v1/files/content", get(files::content))
         .route("/v1/sessions/{tab}", patch(sessions::rename).delete(sessions::close))
