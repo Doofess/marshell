@@ -177,6 +177,7 @@ mod tests {
             argv: argv.iter().map(|s| s.to_string()).collect(),
             cwd: None,
             env: vec![],
+            env_remove: vec![],
             cols: 80,
             rows: 24,
             on_exit: None,

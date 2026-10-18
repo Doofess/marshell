@@ -22,6 +22,8 @@ pub struct SpawnSpec {
     pub argv: Vec<String>,
     pub cwd: Option<PathBuf>,
     pub env: Vec<(String, String)>,
+    /// Variables the child must not inherit. Applied before `env`, so a name in both keeps its `env` value.
+    pub env_remove: Vec<String>,
     pub cols: u16,
     pub rows: u16,
     /// Called once, from the wait thread, with the exit code. Runs outside every session lock.
@@ -123,6 +125,9 @@ impl Session {
         let mut cmd = CommandBuilder::from_argv(spec.argv.iter().map(OsString::from).collect());
         if let Some(cwd) = &spec.cwd {
             cmd.cwd(cwd);
+        }
+        for k in &spec.env_remove {
+            cmd.env_remove(k);
         }
         for (k, v) in &spec.env {
             cmd.env(k, v);

@@ -200,9 +200,13 @@ impl AppState {
             tab: tab.to_string(),
         })
     }
-    /// Forgets the session so no new socket can attach; the caller kills it.
+    /// Forgets the session so no new socket can attach; the caller kills it. Its held permission
+    /// requests and hook events go too.
     pub fn remove_session(&self, tab: &str) -> Option<Arc<crate::pty::Session>> {
-        self.0.sessions.lock().unwrap().remove(tab)
+        let removed = self.0.sessions.lock().unwrap().remove(tab);
+        self.holds().release_tab(tab);
+        self.hook_log().forget_tab(tab);
+        removed
     }
     pub fn origin_allowed(&self, origin: &str) -> bool {
         self.0.allowed_origins.iter().any(|o| o == origin)
