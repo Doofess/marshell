@@ -156,12 +156,19 @@ pub fn canonical(path: &Path) -> PathBuf {
     let Ok(real) = std::fs::canonicalize(&tidy) else {
         return tidy;
     };
-    // Windows gives `\\?\C:\dir`; the plain `C:\dir` is what everything else uses. A UNC share stays as it is.
+    // Windows gives `\\?\C:\dir`; the plain `C:\dir` is what everything else uses. A UNC share comes
+    // as `\\?\UNC\server\share\dir` and goes back to `\\server\share\dir`.
     let text = real.to_string_lossy();
-    match text.strip_prefix(r"\\?\") {
-        Some(rest) if rest.as_bytes().get(1) == Some(&b':') => PathBuf::from(rest),
-        _ => real,
+    let Some(rest) = text.strip_prefix(r"\\?\") else {
+        return real;
+    };
+    if let Some(unc) = rest.strip_prefix(r"UNC\") {
+        return PathBuf::from(format!(r"\\{unc}"));
     }
+    if rest.as_bytes().get(1) == Some(&b':') {
+        return PathBuf::from(rest);
+    }
+    real
 }
 
 /// The root of the **main** checkout of the repository that holds `dir`: for a linked worktree, not the
@@ -191,7 +198,8 @@ pub fn project_of(cwd: &str) -> String {
 /// Refuses when the file cannot be read (broken, or written by a newer Marshell),
 /// so a file the user may want to repair is never overwritten.
 pub fn record(home: &Path, cwd: &Path, now_ms: u64) -> anyhow::Result<()> {
-    if is_root(cwd)
+    // Root-ness is judged on the resolved path: `C:\x\..` and a link to a drive root are roots too.
+    if is_root(&canonical(cwd))
         || dirs::home_dir().is_some_and(|user_home| same_path(&user_home.to_string_lossy(), &cwd.to_string_lossy()))
     {
         return Ok(());
@@ -381,6 +389,26 @@ mod tests {
     }
 
     #[test]
+    fn a_path_that_folds_to_a_root_is_not_recorded() {
+        let home = tempfile::tempdir().unwrap();
+        let scratch = tempfile::tempdir().unwrap();
+        let drive_root = scratch.path().ancestors().last().unwrap().to_path_buf();
+        let first = scratch
+            .path()
+            .components()
+            .nth(if cfg!(windows) { 2 } else { 1 })
+            .unwrap();
+        // An existing folder and a missing one, then `..` back to the root; and a nested climb.
+        let existing = drive_root.join(first.as_os_str()).join("..");
+        let missing = drive_root.join("marshell-missing-probe").join("..");
+        let nested = drive_root.join("marshell-a").join("marshell-b").join("..").join("..");
+        for cwd in [existing, missing, nested] {
+            record(home.path(), &cwd, 1).unwrap();
+            assert!(!file(home.path()).exists(), "{}", cwd.display());
+        }
+    }
+
+    #[test]
     fn is_root_holds_for_roots_only() {
         assert!(is_root(Path::new("/")));
         if cfg!(windows) {
@@ -389,6 +417,17 @@ mod tests {
             }
         }
         assert!(!is_root(Path::new("C:\\x")));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_unc_path_loses_its_verbatim_prefix() {
+        // The administrative share of this machine: reachable without any network.
+        let shared = canonical(Path::new(r"\\localhost\C$\Windows"));
+        let text = shared.to_string_lossy().into_owned();
+        assert!(!text.starts_with(r"\\?\"), "{text}");
+        assert!(text.to_lowercase().starts_with(r"\\localhost\c$\windows"), "{text}");
+        assert!(is_root(&canonical(Path::new(r"\\localhost\C$"))));
     }
 
     #[test]
