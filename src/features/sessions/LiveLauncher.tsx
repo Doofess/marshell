@@ -159,7 +159,7 @@ export function LiveLauncher({ endpoint, nextNumber, size, onStarted, onClose }:
   };
 
   /** Use a folder the core has checked: its recent project if it is one, else a new entry; then pick it and close the field, as a pick does. */
-  const useFolder = (folder: FolderInfo) => {
+  const takeFolder = (folder: FolderInfo) => {
     const chosen = chooseFolder(projects, folder);
     if (chosen.extra) setExtra(chosen.extra);
     patch({ projectId: chosen.projectId });
@@ -190,7 +190,7 @@ export function LiveLauncher({ endpoint, nextNumber, size, onStarted, onClose }:
         setError(`Couldn't use ${picked}: ${e instanceof Error ? e.message : String(e)}`);
         return;
       }
-      useFolder(folder);
+      takeFolder(folder);
     } finally {
       browsing.current = false;
     }
@@ -302,7 +302,7 @@ export function LiveLauncher({ endpoint, nextNumber, size, onStarted, onClose }:
           patch({ projectId: id });
           setLists((l) => openFolder(l, null));
         }}
-        onUsePath={useFolder}
+        onUsePath={takeFolder}
         onBrowse={() => void browse()}
         onPrograms={(open) => {
           setLists((l) => openPrograms(l, open));
