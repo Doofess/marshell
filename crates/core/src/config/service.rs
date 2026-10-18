@@ -4,13 +4,20 @@
 //!
 //! Lock order: a per-path lock may be held while taking one of the short `Mutex`es below, never the
 //! other way round, and no short `Mutex` is held across file I/O (beyond a hash).
+//!
+//! The one exception is `watcher`, a leaf lock only `preview` takes, around registering a folder with
+//! the OS. Nothing is taken or waited on under it, and the watch callback never touches it.
+//!
+//! The watcher's thread holds a `Weak<Shared>`, upgraded only for the length of one callback, so
+//! dropping the last `ConfigService` drops the watcher, which ends its threads.
 
 use crate::auth::new_id;
 use crate::config::guard::Guard;
-use crate::config::hash::hash_bytes;
+use crate::config::hash::{hash_bytes, hash_file};
 use crate::config::managed::{self, Change};
 use crate::config::preview::{PlannedFile, plan, to_preview};
 use crate::config::snapshots::{SnapshotInput, Snapshots};
+use crate::config::watch::Watcher;
 use crate::config::write;
 use anyhow::anyhow;
 use marshell_protocol::config::{
@@ -98,9 +105,32 @@ struct Shared {
     locks: Mutex<HashMap<PathBuf, Arc<Mutex<()>>>>,
     /// Target path to the hash of the bytes we last wrote there. A removed file has no entry.
     own_writes: Mutex<HashMap<PathBuf, String>>,
+    /// Started by the first `preview`; `None` before that, and when it could not start.
+    watcher: Mutex<Option<Watcher>>,
 }
 
 impl Shared {
+    /// The watcher saw `path` change (once it had been quiet for the debounce time). A change that
+    /// leaves the file as we last wrote it is our own write; anything else marks the previews stale.
+    fn on_change(&self, path: PathBuf) {
+        // Only the files of stored previews matter. Events for anything else in the folder, such as
+        // our own `.<name>.marshell-<pid>-<n>.tmp`, match no target.
+        let wanted = lock(&self.previews).map.values().any(|s| s.targets.contains(&path));
+        if !wanted {
+            return;
+        }
+        let now = hash_file(&path).unwrap_or_else(|e| {
+            tracing::warn!("hashing {}: {e}", path.display());
+            None
+        });
+        let own = lock(&self.own_writes).get(&path).cloned();
+        // Gone with no write of ours on record is our own removal; anything else is an outside edit.
+        if now == own {
+            return;
+        }
+        self.mark_stale(&[path]);
+    }
+
     fn guard(&self) -> Guard {
         self.guard.clone().unwrap_or_else(|| Guard::for_home(&self.home))
     }
@@ -166,6 +196,7 @@ impl ConfigService {
                 previews: Mutex::new(Previews::default()),
                 locks: Mutex::new(HashMap::new()),
                 own_writes: Mutex::new(HashMap::new()),
+                watcher: Mutex::new(None),
             }),
         }
     }
@@ -199,7 +230,40 @@ impl ConfigService {
             },
         );
         previews.prune();
+        drop(previews);
+        self.watch(&files);
         preview
+    }
+
+    /// Starts the watcher on the first call and watches the folder of each file that isn't refused.
+    /// A failure is logged and never fails the preview. A folder that doesn't exist yet (a JSON set
+    /// that creates `.claude/settings.json`) can't be watched, and the file is not watched either.
+    fn watch(&self, files: &[PlannedFile]) {
+        let mut slot = lock(&self.shared.watcher);
+        if slot.is_none() {
+            let weak = Arc::downgrade(&self.shared);
+            let started = Watcher::start(move |path| {
+                if let Some(shared) = weak.upgrade() {
+                    shared.on_change(path);
+                }
+            });
+            match started {
+                Ok(watcher) => *slot = Some(watcher),
+                Err(e) => {
+                    tracing::warn!("could not start the config watcher: {e}");
+                    return;
+                }
+            }
+        }
+        let Some(watcher) = slot.as_mut() else { return };
+        for file in files {
+            if matches!(file.status, FileStatus::Refused { .. }) {
+                continue;
+            }
+            if let Err(e) = watcher.watch_file(&file.target) {
+                tracing::warn!("could not watch {}: {e}", file.target.display());
+            }
+        }
     }
 
     pub fn get_preview(&self, id: &str) -> Option<ConfigPreview> {
@@ -729,5 +793,42 @@ mod tests {
         }
         assert!(e.svc.get_preview(&first.changeset_id).is_none());
         assert!(matches!(apply_shown(&e.svc, &first), Err(ApplyError::UnknownChangeSet)));
+    }
+
+    /// Polls every 50 ms for up to 5 s.
+    fn wait_until(mut done: impl FnMut() -> bool) -> bool {
+        for _ in 0..100 {
+            if done() {
+                return true;
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        done()
+    }
+
+    #[test]
+    fn an_outside_edit_marks_the_preview_stale() {
+        let e = env();
+        let path = e.root.join("settings.json");
+        write(&path, "{}\n");
+        let preview = e.svc.preview(changeset(vec![edit(&path, set("/a", "1"))]));
+        assert!(!e.svc.get_preview(&preview.changeset_id).unwrap().stale);
+        write(&path, "{\"mine\": 1}\n");
+        assert!(
+            wait_until(|| e.svc.get_preview(&preview.changeset_id).unwrap().stale),
+            "the preview never went stale"
+        );
+    }
+
+    #[test]
+    fn our_own_write_does_not_mark_a_new_preview_stale() {
+        let e = env();
+        let path = e.root.join("settings.json");
+        write(&path, "{}\n");
+        let p1 = e.svc.preview(changeset(vec![edit(&path, set("/a", "1"))]));
+        apply_shown(&e.svc, &p1).unwrap();
+        let p3 = e.svc.preview(changeset(vec![edit(&path, set("/b", "1"))]));
+        std::thread::sleep(Duration::from_secs(1));
+        assert!(!e.svc.get_preview(&p3.changeset_id).unwrap().stale);
     }
 }
