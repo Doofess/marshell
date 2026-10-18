@@ -103,8 +103,9 @@ struct Shared {
     snapshots: Snapshots,
     previews: Mutex<Previews>,
     locks: Mutex<HashMap<PathBuf, Arc<Mutex<()>>>>,
-    /// Target path to the hash of the bytes we last wrote there. A removed file has no entry.
-    own_writes: Mutex<HashMap<PathBuf, String>>,
+    /// Target path to the hash of the bytes we last wrote there, or `None` when we last removed it.
+    /// A file we never wrote has no entry.
+    own_writes: Mutex<HashMap<PathBuf, Option<String>>>,
     /// Started by the first `preview`; `None` before that, and when it could not start.
     watcher: Mutex<Option<Watcher>>,
 }
@@ -123,9 +124,9 @@ impl Shared {
             tracing::warn!("hashing {}: {e}", path.display());
             None
         });
-        let own = lock(&self.own_writes).get(&path).cloned();
-        // Gone with no write of ours on record is our own removal; anything else is an outside edit.
-        if now == own {
+        // The file as we last left it (bytes or gone) is our own write; a file we never wrote that
+        // changes or disappears is an outside edit.
+        if lock(&self.own_writes).get(&path) == Some(&now) {
             return;
         }
         self.mark_stale(&[path]);
@@ -150,15 +151,7 @@ impl Shared {
     }
 
     fn set_own_write(&self, target: &Path, bytes: Option<&[u8]>) {
-        let mut own = lock(&self.own_writes);
-        match bytes {
-            Some(bytes) => {
-                own.insert(target.to_path_buf(), hash_bytes(bytes));
-            }
-            None => {
-                own.remove(target);
-            }
-        }
+        lock(&self.own_writes).insert(target.to_path_buf(), bytes.map(hash_bytes));
     }
 
     /// Marks every stored preview that touches one of `targets` as stale.
@@ -207,7 +200,7 @@ impl ConfigService {
 
     /// The hash of the bytes this service last wrote to `target`, if it wrote it and didn't remove it.
     pub fn own_write_hash(&self, target: &Path) -> Option<String> {
-        lock(&self.shared.own_writes).get(target).cloned()
+        lock(&self.shared.own_writes).get(target).cloned().flatten()
     }
 
     /// Plans the ChangeSet from what is on disk now, stores it, and returns what the user would see.
@@ -814,6 +807,19 @@ mod tests {
         let preview = e.svc.preview(changeset(vec![edit(&path, set("/a", "1"))]));
         assert!(!e.svc.get_preview(&preview.changeset_id).unwrap().stale);
         write(&path, "{\"mine\": 1}\n");
+        assert!(
+            wait_until(|| e.svc.get_preview(&preview.changeset_id).unwrap().stale),
+            "the preview never went stale"
+        );
+    }
+
+    #[test]
+    fn an_outside_delete_marks_the_preview_stale() {
+        let e = env();
+        let path = e.root.join("settings.json");
+        write(&path, "{}\n");
+        let preview = e.svc.preview(changeset(vec![edit(&path, set("/a", "1"))]));
+        std::fs::remove_file(&path).unwrap();
         assert!(
             wait_until(|| e.svc.get_preview(&preview.changeset_id).unwrap().stale),
             "the preview never went stale"
