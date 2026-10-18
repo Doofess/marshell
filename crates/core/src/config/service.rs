@@ -389,9 +389,17 @@ impl ConfigService {
             .snapshots
             .take(&preview.changeset_id, &cs.title, &inputs, now_ms)
             .map_err(ApplyError::Failed)?;
+        // Nothing was written, or every file was put back: the snapshot is no use, so drop it.
         let abandon = |error: anyhow::Error| {
             let _ = shared.snapshots.discard(&snapshot_id);
             ApplyError::Failed(error)
+        };
+        // Some files could not be put back, so the snapshot holds their only originals: keep it.
+        let leftover = |problems: &[String]| {
+            format!(
+                "could not put back {}; restore snapshot {snapshot_id}",
+                problems.join(", ")
+            )
         };
 
         // 6. The new `managed.json`, computed before anything is written.
@@ -439,21 +447,23 @@ impl ConfigService {
                 // This file's own write is atomic, so it still holds its old bytes.
                 shared.set_own_write(&file.target, file.before.as_deref());
                 let problems = self.roll_back(&changing[..k], write);
-                return Err(abandon(failure(&file.target, &e, &problems)));
+                if problems.is_empty() {
+                    return Err(abandon(failure(&file.target, &e, None)));
+                }
+                return Err(ApplyError::Failed(failure(&file.target, &e, Some(leftover(&problems)))));
             }
         }
 
         // 8. Record what we wrote.
         if let Err(e) = managed::save(&shared.home, &entries) {
             let problems = self.roll_back(&changing, write);
-            return Err(abandon(e.context(if problems.is_empty() {
-                "recording the change in managed.json".to_string()
-            } else {
-                format!(
-                    "recording the change in managed.json; could not put back {}",
-                    problems.join(", ")
-                )
-            })));
+            if problems.is_empty() {
+                return Err(abandon(e.context("recording the change in managed.json")));
+            }
+            return Err(ApplyError::Failed(e.context(format!(
+                "recording the change in managed.json; {}",
+                leftover(&problems)
+            ))));
         }
 
         // 9. This preview is spent, and the others on these files no longer describe the disk.
@@ -491,15 +501,11 @@ impl ConfigService {
     }
 }
 
-fn failure(target: &Path, error: &io::Error, problems: &[String]) -> anyhow::Error {
-    if problems.is_empty() {
-        anyhow!("writing {}: {error}", target.display())
-    } else {
-        anyhow!(
-            "writing {}: {error}; could not put back {}",
-            target.display(),
-            problems.join(", ")
-        )
+/// `leftover` says what the roll back could not put back, when it left something.
+fn failure(target: &Path, error: &io::Error, leftover: Option<String>) -> anyhow::Error {
+    match leftover {
+        None => anyhow!("writing {}: {error}", target.display()),
+        Some(leftover) => anyhow!("writing {}: {error}; {leftover}", target.display()),
     }
 }
 
@@ -670,6 +676,40 @@ mod tests {
         assert_eq!(read(&b), "{}\n");
         assert!(e.svc.snapshots().list(None).unwrap().is_empty());
         assert!(!crate::paths::managed_file(&e.home).exists());
+    }
+
+    #[test]
+    fn a_failed_roll_back_keeps_the_snapshot() {
+        let e = env();
+        let a = e.root.join("a.json");
+        let b = e.root.join("b.json");
+        write(&a, "{}\n");
+        write(&b, "{}\n");
+        let preview = e
+            .svc
+            .preview(changeset(vec![edit(&a, set("/x", "1")), edit(&b, set("/y", "2"))]));
+        assert!(preview.can_apply);
+        // A is written, B fails, and then A can't be put back either.
+        let writes_to_a = std::cell::Cell::new(0);
+        let writer = |path: &Path, bytes: Option<&[u8]>| -> std::io::Result<()> {
+            if path == b {
+                return Err(std::io::Error::other("disk full"));
+            }
+            writes_to_a.set(writes_to_a.get() + 1);
+            if writes_to_a.get() > 1 {
+                return Err(std::io::Error::other("locked"));
+            }
+            real_write(path, bytes)
+        };
+        let error = match e.svc.apply_with(&shown(&preview), 1, &writer) {
+            Err(ApplyError::Failed(error)) => error.to_string(),
+            other => panic!("{other:?}"),
+        };
+        let listed = e.svc.snapshots().list(None).unwrap();
+        assert_eq!(listed.len(), 1, "the snapshot with the originals must stay");
+        let id = &listed[0].id;
+        assert!(error.contains(id.as_str()), "{error}");
+        assert_eq!(e.svc.snapshots().blob(id, &a).unwrap(), Some(Some(b"{}\n".to_vec())));
     }
 
     /// `count` applies on `path`, each adding one key, so the file ends with `count` snapshots.
