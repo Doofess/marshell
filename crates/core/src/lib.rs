@@ -1,6 +1,7 @@
 pub mod auth;
 pub mod crash;
 pub mod git;
+pub mod hooks;
 pub mod job;
 pub mod layout;
 pub mod paths;

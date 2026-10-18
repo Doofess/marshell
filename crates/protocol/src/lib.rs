@@ -1,6 +1,7 @@
 pub mod api;
 pub mod brand;
 pub mod frames;
+pub mod hook;
 
 /// TypeScript source for the constants ts-rs cannot export (names and frame opcodes).
 pub fn constants_ts() -> String {

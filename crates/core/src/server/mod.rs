@@ -4,6 +4,7 @@ mod files;
 mod foreground;
 pub mod frames;
 mod guard;
+mod hook;
 mod layout;
 mod profiles;
 mod projects;
@@ -71,6 +72,8 @@ struct Inner {
     foreground_wake: Arc<tokio::sync::Notify>,
     /// Whether an agent's command (`claude`, `codex`, `agy`) runs from PATH. Tests swap it.
     agent_on_path: fn(&str) -> bool,
+    /// The last events the bridge sent, per live tab.
+    hook_log: crate::hooks::log::HookLog,
 }
 
 impl AppState {
@@ -111,6 +114,7 @@ impl AppState {
             shell_panel: Mutex::new(None),
             foreground_wake: Arc::new(tokio::sync::Notify::new()),
             agent_on_path: crate::profiles::detect::command_on_path,
+            hook_log: crate::hooks::log::HookLog::default(),
         }))
     }
     /// Replaces the PATH check for agent commands. Call it before the state is cloned.
@@ -127,6 +131,9 @@ impl AppState {
     /// The open and recently closed sessions.
     pub fn registry(&self) -> &Registry {
         &self.0.registry
+    }
+    pub fn hook_log(&self) -> &crate::hooks::log::HookLog {
+        &self.0.hook_log
     }
     pub fn token(&self) -> &str {
         &self.0.token
@@ -230,6 +237,11 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/sessions/{tab}", patch(sessions::rename).delete(sessions::close))
         .route("/v1/shell-panel", post(shell_panel::open))
         .route("/v1/shell-panel/adopt", post(shell_panel::adopt))
+        .route(
+            "/v1/hook",
+            post(hook::post).layer(DefaultBodyLimit::max(marshell_protocol::hook::HOOK_BODY_LIMIT)),
+        )
+        .route("/v1/hook/events", get(hook::events))
         .route("/v1/events", get(events::handler))
         .route("/v1/pty/{tab}", get(pty_ws::handler))
         .layer(axum::middleware::from_fn_with_state(state.clone(), guard::auth_guard))
