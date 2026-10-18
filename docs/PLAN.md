@@ -601,7 +601,7 @@ The Rust core is the only source of truth.
   - "Allow always (this project)" → `addRules` to `localSettings`.
   - "Allow for session" → `addRules` to `session`.
   - The card always says which.
-- **Permission releases.** If the hold expires, the user clicks "Answer in terminal", or the user starts typing in that tab, the core releases the request. The bridge then exits 0 with no output and the native prompt takes over.
+- **Permission releases.** If the hold expires, the user clicks "Answer in terminal", or the user starts typing in that tab, the core releases the request. The bridge then exits 0 with no output and the native prompt takes over. Typing means keys, pastes and mouse button presses. Reports the terminal sends by itself (focus changes, mouse motion, the wheel, replies to queries) don't release, because Claude enables focus and any-motion mouse reporting (S9, 2026-10-18).
 - **Failure rule.** On any error the bridge exits 0 with empty stdout, never blocks, and appends a single line to `logs/bridge.log`.
 - **Status line chaining.**
   - On install, the user's `statusLine` object is saved verbatim to `statusline-chain.json`.
@@ -741,6 +741,8 @@ Known soft spots, left as they are: on a Mac laptop F2 needs Fn unless "use F-ke
 | S9 | Permission hold vs terminal prompt | While the bridge holds a `PermissionRequest`, check whether Claude's own dialog is visible. Then confirm the release path (exit 0, no output) brings the native prompt back immediately. This sets the default hold time. |
 | S10 | Windows hook path with spaces | A quoted bridge path under `C:\Users\Home Office` runs from Claude's hook runner and status line on this machine. |
 | S11 | WSL bridge | A hook from Claude inside WSL reaches the Windows core through interop, with the tab id carried by `WSLENV`. |
+
+S10, S4 and S9 ran on 2026-10-18 against Claude Code 2.1.302 on Windows and passed (`docs/spikes/`). Hooks install in exec form, the status line chains with no fallback, and the hold stays at 120 s because Claude's own dialog stays visible during it. S4's uninstall row and the macOS and Linux rows are still open.
 
 ## 9. Milestones (phases 1–9 = v1)
 
@@ -922,6 +924,10 @@ Decisions from the 2026-10-10 coverage audit (`docs/superpowers/plan-coverage-au
      4. A held permission request is answered through the real `POST /v1/permissions/:rid/decision` and `/release` routes, driven by the spike. The card comes in 3d.
      5. Recorded fixtures come from made-up prompts in a scratch folder. Before they are committed, a scrub step replaces the home path, the user name, session ids and transcript paths with placeholders, and a test checks that no fixture still holds them.
      6. Code signing: a checklist (`docs/research/code-signing.md`, eligibility, cost and the steps to apply) is written in 3e. Buying and identity checks are the user's; wiring signing into CI waits for the release phase.
+   - **Carried from 3a's live check into 3c** (details in `docs/spikes/S10-hook-path-spaces.md` and `S9-permission-hold.md`):
+     1. The status line posts every second and floods the 200-event ring. Keep only the latest status line per tab, or give it its own ring.
+     2. A session inherits `CLAUDE_CODE_*` variables from whatever started Marshell, and `CLAUDE_CODE_CHILD_SESSION` turns Claude's transcript saving off. Drop them from the session environment.
+     3. Some requests offer only an `addDirectories` suggestion, so a scoped allow is refused. Decide whether a scope may use it, or the card hides the scopes then (3c/3d).
    - **Slice 3f decisions (2026-10-18).**
      1. One click on the folder chip opens the field as now. Typing filters known folders and also accepts a full path in the running OS's syntax, offered as a "Use <path>" row. A "Browse…" row at the end of the list and Ctrl+O in the field open the native picker, so mouse and keyboard reach it alike (double-click was considered and dropped: the first click already swaps the chip for a field, and it has no keyboard route).
      2. The native dialog comes from `tauri-plugin-dialog` (approved as a new dependency), with a capability limited to the folder-open dialog. Linux and macOS get it from the same plugin later.
