@@ -1,3 +1,4 @@
+pub mod agents;
 pub mod auth;
 pub mod crash;
 pub mod git;
