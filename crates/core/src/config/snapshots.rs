@@ -170,7 +170,8 @@ impl Snapshots {
         let mut holders: Vec<usize> = (0..index.snapshots.len())
             .filter(|&i| index.snapshots[i].files.iter().any(|f| same_path(&f.info.path, path)))
             .collect();
-        holders.sort_by(|&x, &y| index.snapshots[y].created_ms.cmp(&index.snapshots[x].created_ms));
+        // Newest first; within one millisecond, the later one in the index is newer.
+        holders.sort_by_key(|&i| std::cmp::Reverse((index.snapshots[i].created_ms, i)));
         for &i in holders.iter().skip(KEEP_PER_FILE) {
             let entry = &mut index.snapshots[i];
             let folder = self.dir.join(&entry.id);
@@ -335,6 +336,18 @@ mod tests {
         assert!(snaps.get(&first).unwrap().is_none());
         assert!(!crate::paths::snapshots_dir(home.path()).join(&first).exists());
         assert_eq!(snaps.list(Some(&b())).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn same_millisecond_keeps_the_newest() {
+        let home = tempfile::tempdir().unwrap();
+        let snaps = Snapshots::new(home.path());
+        let mut last = String::new();
+        for _ in 0..=KEEP_PER_FILE {
+            last = snaps.take("c", "t", &[input(&a(), Some(b"x"))], 7).unwrap();
+        }
+        assert!(snaps.get(&last).unwrap().is_some());
+        assert_eq!(snaps.list(Some(&a())).unwrap().len(), KEEP_PER_FILE);
     }
 
     #[test]
