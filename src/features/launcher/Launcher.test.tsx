@@ -159,6 +159,11 @@ describe("Launcher: the path row and Browse…", () => {
     expect(text(o[0]!)).toBe("No folder at C:\\nope");
     expect(o[0]).toContain('aria-disabled="true"');
   });
+  it("shows Couldn't check <path> as disabled when the check itself failed", () => {
+    const o = options(html(view({ query: "C:\\dev", pathCheck: { path: "C:\\dev", state: "failed" } })));
+    expect(text(o[0]!)).toBe("Couldn&#x27;t check C:\\dev"); // the markup escapes the apostrophe
+    expect(o[0]).toContain('aria-disabled="true"');
+  });
   it("shows Checking <path>… as disabled while the core answers", () => {
     const o = options(html(view({ query: "C:\\de", pathCheck: { path: "C:\\de", state: "checking" } })));
     expect(text(o[0]!)).toBe("Checking C:\\de…");

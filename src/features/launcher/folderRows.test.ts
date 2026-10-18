@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Hit, Project } from "./filter";
-import { folderEnter, folderRows, rowEnabled, typedPath, type PathCheck } from "./folderRows";
+import { browseKey, folderEnter, folderRows, rowEnabled, typedPath, type PathCheck } from "./folderRows";
 
 const hit = (id: string): Hit<Project> => ({ item: { id, name: id, path: id, lastUsedMs: 0 }, ranges: [] });
 const found: PathCheck = { path: "C:\\dev", state: "found", folder: { path: "C:\\dev", name: "dev", branch: null } };
@@ -53,5 +53,27 @@ describe("folderRows: what Enter does on a row", () => {
     expect(folderEnter({ kind: "path", check: { path: "C:\\de", state: "checking" } })).toBeNull();
     expect(folderEnter({ kind: "path", check: { path: "C:\\nope", state: "missing" } })).toBeNull();
     expect(folderEnter(undefined)).toBeNull();
+  });
+});
+
+describe("browseKey", () => {
+  const key = { code: "KeyO", ctrlKey: true, shiftKey: false, altKey: false, metaKey: false };
+  it("is Ctrl+O by the physical key, whatever the layout types", () => {
+    expect(browseKey({ ...key, key: "ם" } as typeof key)).toBe(true);
+  });
+  it("is not Ctrl+Shift+O, Alt, Meta, a bare O, or another key", () => {
+    expect(browseKey({ ...key, shiftKey: true })).toBe(false);
+    expect(browseKey({ ...key, altKey: true })).toBe(false);
+    expect(browseKey({ ...key, metaKey: true })).toBe(false);
+    expect(browseKey({ ...key, ctrlKey: false })).toBe(false);
+    expect(browseKey({ ...key, code: "KeyP" })).toBe(false);
+  });
+});
+
+describe("a failed check", () => {
+  const failed: PathCheck = { path: "C:\dev", state: "failed" };
+  it("can't be taken and does nothing on Enter", () => {
+    expect(rowEnabled({ kind: "path", check: failed })).toBe(false);
+    expect(folderEnter({ kind: "path", check: failed })).toBeNull();
   });
 });

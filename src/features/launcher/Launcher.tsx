@@ -5,7 +5,7 @@ import { branchHint } from "../tasks/taskName";
 import { headerDanger, modeLabel } from "../window/SessionHeader";
 import type { FolderInfo } from "../../generated/FolderInfo";
 import { filterProjects, highlight, pickByLetter, projectLabel, type Project, type Range } from "./filter";
-import { folderEnter, folderRows, rowEnabled, type FolderRow, type PathCheck } from "./folderRows";
+import { browseKey, folderEnter, folderRows, rowEnabled, type FolderRow, type PathCheck } from "./folderRows";
 import {
   LAUNCH_GROUPS,
   LAUNCH_PROGRAMS,
@@ -79,7 +79,7 @@ type Props = {
   busyText?: string;
 };
 
-const PATH_VERB: Record<PathCheck["state"], string> = { found: "Use", missing: "No folder at", checking: "Checking" };
+const PATH_VERB: Record<PathCheck["state"], string> = { found: "Use", missing: "No folder at", checking: "Checking", failed: "Couldn't check" };
 
 const CONFIRM_TITLE = "Start a task in a new worktree";
 
@@ -182,7 +182,7 @@ export function Launcher({ view, onChange, onQuery, onPick, onUsePath, onBrowse,
       else onClose?.();
       return;
     }
-    if (folderOpen && e.ctrlKey && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "o") {
+    if (folderOpen && browseKey(e)) {
       e.preventDefault();
       onBrowse?.();
       return;

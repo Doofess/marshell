@@ -49,10 +49,47 @@ export function chooseFolder(projects: Project[], folder: FolderInfo): { project
   return same ? { projectId: same.id, extra: null } : { projectId: folder.path, extra: folderProject(folder) };
 }
 
-/** What the folder field shows for the core's answer to a typed path: found, or missing; a 400 (not a full path) shows no row. */
+/** What the folder field shows for the core's answer to a typed path: found, or missing (404); a 400 (not a full path) shows no row; any other failure is "failed", not a guess. */
 export function checkState(path: string, result: { ok: FolderInfo } | { status: number }): PathCheck | null {
   if ("ok" in result) return { path, state: "found", folder: result.ok };
-  return result.status === 400 ? null : { path, state: "missing" };
+  if (result.status === 400) return null;
+  return { path, state: result.status === 404 ? "missing" : "failed" };
+}
+
+/**
+ * The Browse… flow: pick a folder, have the core check it, take it. Every way out except taking puts focus back in the field
+ * (a cancel or a failure shows its message there), so a keyboard user keeps their place.
+ */
+export async function browseFolder(deps: {
+  start: string | null;
+  pick: (start: string | null) => Promise<string | null>;
+  check: (path: string) => Promise<FolderInfo>;
+  take: (folder: FolderInfo) => void;
+  fail: (message: string) => void;
+  focusField: () => void;
+}): Promise<void> {
+  const why = (e: unknown) => (e instanceof Error ? e.message : String(e));
+  let picked: string | null;
+  try {
+    picked = await deps.pick(deps.start);
+  } catch (e) {
+    deps.fail(`Couldn't open the folder picker: ${why(e)}`);
+    deps.focusField();
+    return;
+  }
+  if (picked === null) {
+    deps.focusField();
+    return;
+  }
+  let folder: FolderInfo;
+  try {
+    folder = await deps.check(picked);
+  } catch (e) {
+    deps.fail(`Couldn't use ${picked}: ${why(e)}`);
+    deps.focusField();
+    return;
+  }
+  deps.take(folder);
 }
 
 /** Numbers the requests so only the newest one's answer is used: an older answer that arrives late is dropped. */

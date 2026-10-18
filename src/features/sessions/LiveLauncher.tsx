@@ -21,7 +21,7 @@ import { openFolder, openPrograms, type OpenLists } from "../launcher/launcherKe
 import { taskNameFor } from "../tasks/taskName";
 import { appScheme } from "../terminal/terminalTheme";
 import { programById, startingText, type LauncherChoice } from "../launcher/launchChoice";
-import { checkState, chooseFolder, latestOnly, createRequest, createThenLaunch, initialFocus, launchRequest, progressText, refocus, rememberTasks, replansAfter, type FocusState, livePrograms, nameSource, preselect, preselectMode, startFailure, taskRequest, toLauncherProject, wantsTask } from "./launchPrograms";
+import { browseFolder, checkState, chooseFolder, latestOnly, createRequest, createThenLaunch, initialFocus, launchRequest, progressText, refocus, rememberTasks, replansAfter, type FocusState, livePrograms, nameSource, preselect, preselectMode, startFailure, taskRequest, toLauncherProject, wantsTask } from "./launchPrograms";
 
 // The worktree flag is part of this state and nothing else: it is never read from or written to the remembered choices, so the chip starts off every time.
 const INITIAL: LauncherChoice = { program: "claude", projectId: "", mode: "manual", pace: "Balanced", worktree: false };
@@ -172,25 +172,14 @@ export function LiveLauncher({ endpoint, nextNumber, size, onStarted, onClose }:
     browsing.current = true;
     const start = shownCheck?.state === "found" ? shownCheck.folder.path : (projects.find((p) => p.id === projectId)?.path ?? null);
     try {
-      let picked: string | null;
-      try {
-        picked = await pickFolder(start);
-      } catch (e) {
-        setError(`Couldn't open the folder picker: ${e instanceof Error ? e.message : String(e)}`);
-        return;
-      }
-      if (picked === null) {
-        root.current?.querySelector<HTMLInputElement>(".launcher__input")?.focus();
-        return;
-      }
-      let folder: FolderInfo;
-      try {
-        folder = await foldersApi.check(endpoint, picked);
-      } catch (e) {
-        setError(`Couldn't use ${picked}: ${e instanceof Error ? e.message : String(e)}`);
-        return;
-      }
-      takeFolder(folder);
+      await browseFolder({
+        start,
+        pick: pickFolder,
+        check: (path) => foldersApi.check(endpoint, path),
+        take: takeFolder,
+        fail: setError,
+        focusField: () => root.current?.querySelector<HTMLInputElement>(".launcher__input")?.focus(),
+      });
     } finally {
       browsing.current = false;
     }
