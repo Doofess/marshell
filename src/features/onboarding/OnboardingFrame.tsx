@@ -3,7 +3,28 @@ import { nextStep, prevStep, STEPS, stepLabel, type Step } from "./onboardingFlo
 import "./Onboarding.css";
 
 /** The frame around each of the four screens: step text, a four-segment progress bar drawn with fills, a scrolling body that is itself a focusable region (so the keyboard can scroll it), one primary button, an optional secondary, and Back from step 2. Not a live region. */
-export function OnboardingFrame({ step, title, primary, secondary, children }: { step: Step; title: string; primary: string; secondary?: string; children: ReactNode }) {
+export function OnboardingFrame({
+  step,
+  title,
+  primary,
+  secondary,
+  children,
+  onPrimary,
+  onSecondary,
+  onBack,
+  primaryDisabled = false,
+}: {
+  step: Step;
+  title: string;
+  primary: string;
+  secondary?: string;
+  children: ReactNode;
+  /** The live window gives the buttons something to do; the stories leave them out. */
+  onPrimary?: () => void;
+  onSecondary?: () => void;
+  onBack?: () => void;
+  primaryDisabled?: boolean;
+}) {
   const canGoBack = prevStep(step) !== step;
   const hasNext = nextStep(step) !== step;
   return (
@@ -22,16 +43,16 @@ export function OnboardingFrame({ step, title, primary, secondary, children }: {
       </div>
       <footer className="onboarding__foot">
         {canGoBack && (
-          <button type="button" className="onboarding__back">
+          <button type="button" className="onboarding__back" onClick={onBack}>
             Back
           </button>
         )}
         {secondary && (
-          <button type="button" className="onboarding__secondary">
+          <button type="button" className="onboarding__secondary" onClick={onSecondary}>
             {secondary}
           </button>
         )}
-        <button type="button" className="onboarding__primary" data-last={!hasNext || undefined}>
+        <button type="button" className="onboarding__primary" data-last={!hasNext || undefined} disabled={primaryDisabled} onClick={onPrimary}>
           {primary}
         </button>
       </footer>

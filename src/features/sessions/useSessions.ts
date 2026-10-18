@@ -8,6 +8,7 @@ import { onCoreEvent } from "../../lib/api/coreEvents";
 import { EventSocket } from "../../lib/api/events";
 import { profiles as profilesApi } from "../../lib/api/profiles";
 import type { RowModel } from "../sidebar/types";
+import type { HookInstall } from "../../generated/HookInstall";
 import { toRow } from "./toRow";
 
 export type SessionsState = {
@@ -138,7 +139,7 @@ export class SessionsStore {
   }
 }
 
-export function useSessions(): {
+export function useSessions(setup?: { claude?: HookInstall }): {
   endpoint: Endpoint | null;
   profiles: Profile[];
   rows: RowModel[];
@@ -154,6 +155,6 @@ export function useSessions(): {
   const store = useMemo(() => new SessionsStore(), []);
   useEffect(() => store.start(), [store]);
   const state = useSyncExternalStore(store.subscribe, store.getState);
-  const rows = useMemo(() => state.infos.map((i) => toRow(i, state.profiles)), [state.infos, state.profiles]);
+  const rows = useMemo(() => state.infos.map((i) => toRow(i, state.profiles, setup)), [state.infos, state.profiles, setup]);
   return { ...state, rows, select: store.select, reloadProfiles: store.reloadProfiles };
 }

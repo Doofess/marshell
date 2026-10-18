@@ -20,6 +20,7 @@ export function ConsentCard({
   onSkip,
   error,
   conflict,
+  onToggleDiff,
 }: {
   scenario: { detection: Detection; plan: ConsentPlan };
   on: Record<Capability, boolean>;
@@ -32,6 +33,8 @@ export function ConsentCard({
   error?: string;
   /** The file changed since the preview: the card offers a reload, never an overwrite. */
   conflict?: { onReload: () => void };
+  /** "View exact changes" opens or closes the diff. Left out (stories), the button does nothing and `open` decides. */
+  onToggleDiff?: () => void;
 }) {
   const { detection: d, plan } = scenario;
   const titleId = useId();
@@ -68,7 +71,7 @@ export function ConsentCard({
               session&apos;s mode decide; Bypass keeps today&apos;s behaviour.
             </p>
           )}
-          <button type="button" className="consent__toggle" aria-expanded={open}>
+          <button type="button" className="consent__toggle" aria-expanded={open} onClick={onToggleDiff}>
             View exact changes
           </button>
           {open && <DiffView diff={plan.diff} label={`Exact changes to ${d.hooks ? `${d.hooks.path} and ${d.configPath}` : d.configPath}`} />}

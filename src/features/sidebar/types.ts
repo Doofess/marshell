@@ -25,6 +25,8 @@ export type RowModel = {
   status: GlyphKind;
   /** Line 2, e.g. "Wants to run `npm test`". */
   phrase: string;
+  /** The row offers "set up": a Claude Code session whose hooks are not installed, so its status is limited. */
+  setupLink?: boolean;
   /** Needs-you only: how long it has waited. */
   waitingMs?: number;
   /** Done or ended: time since. */

@@ -45,6 +45,11 @@ export class SettingsSync {
     return s.appearance;
   }
 
+  /** Whether the onboarding was seen, as of the last read or write. False until a read works. */
+  get onboarded(): boolean {
+    return this.seen;
+  }
+
   /** Whether the first-Pause warning has been confirmed, as of the last read or write. False until a read works. */
   get pauseWarned(): boolean {
     return this.warned;

@@ -166,4 +166,28 @@ describe("toRow", () => {
       expect(row).toMatchObject({ agent: "claude", status: "limited" });
     });
   });
+
+  describe("the set up link", () => {
+    it("a claude row without hooks links to set up", () => {
+      for (const claude of ["none", "partial", "orphaned"] as const) {
+        const row = toRow(info({ agent: "claude" }), PROFILES, { claude });
+        expect(row).toMatchObject({ status: "limited", phrase: "Status limited", setupLink: true });
+      }
+    });
+    it("an installed claude row has no link", () => {
+      const row = toRow(info({ agent: "claude" }), PROFILES, { claude: "installed" });
+      expect(row.setupLink).toBeUndefined();
+      expect(row.phrase).toBe("Status arrives with hooks");
+    });
+    it("a shell row never has one", () => {
+      const row = toRow(info(), PROFILES, { claude: "none" });
+      expect(row.setupLink).toBeUndefined();
+      expect(row.phrase).not.toBe("Status limited");
+      expect(toRow(info({ foreground: { program: "claude", command_line: null, agent: "claude" } }), PROFILES, { claude: "none" }).setupLink).toBeUndefined();
+    });
+    it("a codex row has none, and neither has a claude row before the state is known", () => {
+      expect(toRow(info({ agent: "codex" }), PROFILES, { claude: "none" }).setupLink).toBeUndefined();
+      expect(toRow(info({ agent: "claude" }), PROFILES).setupLink).toBeUndefined();
+    });
+  });
 });

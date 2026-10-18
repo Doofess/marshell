@@ -1,6 +1,7 @@
 import { isAgentId } from "../../components/AgentMark/agents";
 import type { SessionKind } from "../../components/AgentMark/kinds";
 import { toolForProgram } from "../../components/AgentMark/tools";
+import type { HookInstall } from "../../generated/HookInstall";
 import type { Profile } from "../../generated/Profile";
 import type { SessionInfo } from "../../generated/SessionInfo";
 import type { RowModel } from "../sidebar/types";
@@ -34,7 +35,7 @@ export const ENDED_PHRASE = "Ended last time";
  * what an agent is doing, so a running agent is "limited". A shell row's status comes from its prompt marks: "working"
  * while a command runs, and "idle" at the prompt (or before any mark), naming a failed last command.
  */
-export function toRow(info: SessionInfo, profiles: Profile[]): RowModel {
+export function toRow(info: SessionInfo, profiles: Profile[], setup?: { claude?: HookInstall }): RowModel {
   const profile = profiles.find((p) => p.id === info.profile_id);
   // The foreground only speaks for a shell that is running and not paused; a launched agent's row is its own.
   const fg = info.agent === null && info.state.kind === "running" && !info.paused ? info.foreground : null;
@@ -60,7 +61,11 @@ export function toRow(info: SessionInfo, profiles: Profile[]): RowModel {
   if (info.state.kind === "ended") return { ...base, status: "ended", phrase: ENDED_PHRASE };
   if (info.state.kind === "exited") return { ...base, status: "ended", phrase: `Exited with code ${info.state.code}` };
   if (info.paused) return { ...base, status: "paused", phrase: "" };
-  if (info.agent !== null) return { ...base, status: "limited", phrase: "Status arrives with hooks" };
+  if (info.agent !== null) {
+    // Claude Code without Marshell's hooks: say so and offer the setup. An unknown state (not fetched yet) says and offers nothing.
+    if (info.agent === "claude" && setup?.claude !== undefined && setup.claude !== "installed") return { ...base, status: "limited", phrase: "Status limited", setupLink: true };
+    return { ...base, status: "limited", phrase: "Status arrives with hooks" };
+  }
   if (fg !== null) {
     if (fg.agent !== null) return { ...base, status: "limited", phrase: "Status arrives with hooks" };
     return { ...base, status: "working", phrase: `Running ${fg.command_line ?? fg.program}` };

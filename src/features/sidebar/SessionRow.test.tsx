@@ -214,4 +214,18 @@ describe("SessionRow: a task", () => {
   it("leaves the button out while the name is being edited", () => {
     expect(renderToStaticMarkup(<SessionRow row={task} density="comfortable" tabStop onReview={() => {}} rename={{ onCommit: () => {}, onCancel: () => {} }} />)).not.toContain("Review changes");
   });
+  describe("the set up button", () => {
+    const limited = { ...base, agent: "claude" as const, status: "limited" as const, phrase: "Status limited", setupLink: true };
+    it("is a button named for the row whose visible text is set up, reachable by Tab with the row's tab stop", () => {
+      const on = renderToStaticMarkup(<SessionRow row={limited} density="comfortable" tabStop onSetup={() => {}} />);
+      expect(on).toMatch(/<button[^>]*class="session-row__setup"[^>]*aria-label="Set up status for [^"]+"[^>]*tabindex="0"[^>]*>set up<\/button>/);
+      const off = renderToStaticMarkup(<SessionRow row={limited} density="comfortable" onSetup={() => {}} />);
+      expect(off).toMatch(/<button[^>]*session-row__setup[^>]*tabindex="-1"/);
+    });
+    it("is not rendered without onSetup, on a row with no link, or while renaming", () => {
+      expect(renderToStaticMarkup(<SessionRow row={limited} density="comfortable" />)).not.toContain("session-row__setup");
+      expect(renderToStaticMarkup(<SessionRow row={base} density="comfortable" onSetup={() => {}} />)).not.toContain("session-row__setup");
+      expect(renderToStaticMarkup(<SessionRow row={limited} density="comfortable" onSetup={() => {}} rename={{ onCommit: () => {}, onCancel: () => {} }} />)).not.toContain("session-row__setup");
+    });
+  });
 });

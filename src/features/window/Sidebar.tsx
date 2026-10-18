@@ -46,6 +46,7 @@ export function Sidebar({
   onSelect,
   onToggle,
   onReview,
+  onSetup,
   menuItems,
   onMenuRun,
   grouped = false,
@@ -74,6 +75,8 @@ export function Sidebar({
   onToggle?: (id: string) => void;
   /** Opens the review of a task row's session (its Review changes button). */
   onReview?: (id: string) => void;
+  /** Opens the hooks setup from a Claude Code row that says "Status limited". */
+  onSetup?: (id: string) => void;
   /** The items of a row's right-click menu. Left out, rows have no menu. */
   menuItems?: (id: string) => MenuItem[];
   /** A menu item was chosen: the row's session id and the item's id. */
@@ -210,6 +213,7 @@ export function Sidebar({
       onSelect={onSelect && (() => onSelect(r.id))}
       onToggle={onToggle && (() => onToggle(r.id))}
       onReview={onReview && (() => onReview(r.id))}
+      onSetup={onSetup && (() => onSetup(r.id))}
       onMenu={
         menuItems &&
         ((anchor) => {

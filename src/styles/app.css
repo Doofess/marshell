@@ -35,6 +35,18 @@
   inset: 0;
 }
 
+/* First run: over the whole window, above the same layers as the palette. */
+.live-app__onboarding {
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  display: grid;
+  justify-items: center;
+  align-items: start;
+  overflow: clip;
+  background: var(--bg-base);
+}
+
 /* The command palette, like the launcher, sits over the whole window. Above the split divider, the composers and xterm's
    decoration and scrollbar layers (z 1–11), which otherwise draw their lines across the sheet. */
 .live-app__palette {
