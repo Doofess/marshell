@@ -5,7 +5,12 @@
 //! Lock order: a per-path lock may be held while taking one of the short `Mutex`es below, never the
 //! other way round, and no short `Mutex` is held across file I/O (beyond a hash).
 //!
-//! The one exception is `watcher`, a leaf lock only `preview` takes, around registering a folder with
+//! `managed` is held across file I/O on purpose, by `apply` alone, from reading `managed.json` to
+//! saving it. It is taken after the path locks, and `apply` takes only the short `Mutex`es under it
+//! (`own_writes`), never `watcher` and never a wait on the watcher. Nothing takes a path lock while
+//! holding it.
+//!
+//! `watcher` is a leaf lock only `preview` takes, around registering a folder with
 //! the OS. Nothing is taken or waited on under it, and the watch callback never touches it.
 //!
 //! The watcher's thread holds a `Weak<Shared>`, upgraded only for the length of one callback, so
@@ -108,6 +113,9 @@ struct Shared {
     own_writes: Mutex<HashMap<PathBuf, Option<String>>>,
     /// Started by the first `preview`; `None` before that, and when it could not start.
     watcher: Mutex<Option<Watcher>>,
+    /// Held by an apply from reading `managed.json` to saving it, writes and rollback included, so
+    /// two applies on different files can't each save a list the other's entries are missing from.
+    managed: Mutex<()>,
 }
 
 impl Shared {
@@ -190,6 +198,7 @@ impl ConfigService {
                 locks: Mutex::new(HashMap::new()),
                 own_writes: Mutex::new(HashMap::new()),
                 watcher: Mutex::new(None),
+                managed: Mutex::new(()),
             }),
         }
     }
@@ -435,6 +444,7 @@ impl ConfigService {
                 });
             }
         }
+        let managed_lock = lock(&shared.managed);
         let entries = match managed::updated(&shared.home, &preview.changeset_id, &changes, now_ms) {
             Ok(entries) => entries,
             Err(e) => return Err(abandon(e)),
@@ -465,6 +475,8 @@ impl ConfigService {
                 leftover(&problems)
             ))));
         }
+
+        drop(managed_lock);
 
         // 9. This preview is spent, and the others on these files no longer describe the disk.
         let written: Vec<PathBuf> = changing.iter().map(|f| f.target.clone()).collect();
@@ -749,6 +761,48 @@ mod tests {
         let listed = e.svc.snapshots().list(Some(&path)).unwrap();
         assert_eq!(listed.len(), 20);
         assert!(listed.iter().any(|s| s.id == oldest));
+    }
+
+    #[test]
+    fn concurrent_applies_on_different_files_keep_both_managed_entries() {
+        let e = env();
+        let a = e.root.join("a.json");
+        let b = e.root.join("b.json");
+        write(&a, "{}\n");
+        write(&b, "{}\n");
+        let pa = e.svc.preview(changeset(vec![edit(&a, set("/x", "1"))]));
+        let pb = e.svc.preview(changeset(vec![edit(&b, set("/y", "2"))]));
+        // Each writer waits, up to a second, for the other apply to reach its own write. Both are
+        // then past the read of managed.json (step 6) and before its save (step 8). With the
+        // `managed` lock the second apply can't get that far, so the first gives up waiting.
+        let arrived = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let handles: Vec<_> = [pa, pb]
+            .into_iter()
+            .map(|preview| {
+                let svc = e.svc.clone();
+                let arrived = arrived.clone();
+                std::thread::spawn(move || {
+                    let writer = |path: &Path, bytes: Option<&[u8]>| -> std::io::Result<()> {
+                        use std::sync::atomic::Ordering;
+                        arrived.fetch_add(1, Ordering::SeqCst);
+                        let deadline = Instant::now() + Duration::from_secs(1);
+                        while arrived.load(Ordering::SeqCst) < 2 && Instant::now() < deadline {
+                            std::thread::sleep(Duration::from_millis(5));
+                        }
+                        real_write(path, bytes)
+                    };
+                    svc.apply_with(&shown(&preview), 1, &writer).map(|_| ())
+                })
+            })
+            .collect();
+        for handle in handles {
+            handle.join().unwrap().unwrap();
+        }
+        let managed = crate::config::managed::list(&e.home).unwrap();
+        let mut paths: Vec<_> = managed.iter().map(|m| m.path.clone()).collect();
+        paths.sort();
+        let want: Vec<String> = [&a, &b].iter().map(|p| p.to_string_lossy().into_owned()).collect();
+        assert_eq!(paths, want, "{managed:?}");
     }
 
     #[test]
