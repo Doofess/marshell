@@ -65,6 +65,16 @@ pub fn statusline_chain(home: &Path, agent: &str) -> PathBuf {
     home.join("agents").join(agent).join("statusline-chain.json")
 }
 
+/// `<home>/snapshots`: `index.json` and one folder of file copies per snapshot.
+pub fn snapshots_dir(home: &Path) -> PathBuf {
+    home.join("snapshots")
+}
+
+/// `<home>/managed.json`: the config entries Marshell wrote.
+pub fn managed_file(home: &Path) -> PathBuf {
+    home.join("managed.json")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

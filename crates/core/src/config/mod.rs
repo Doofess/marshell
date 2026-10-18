@@ -5,4 +5,5 @@
 pub mod guard;
 pub mod hash;
 pub mod jsonc;
+pub mod snapshots;
 pub mod write;
