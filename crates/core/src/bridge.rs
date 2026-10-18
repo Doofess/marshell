@@ -60,7 +60,7 @@ pub fn install(source: &Path, home: &Path) -> io::Result<BridgeInstall> {
         std::fs::set_permissions(&staged, std::fs::Permissions::from_mode(0o755))?;
     }
 
-    if existed {
+    let aside = existed.then(|| {
         let mut stamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map(|d| d.as_millis())
@@ -69,23 +69,66 @@ pub fn install(source: &Path, home: &Path) -> io::Result<BridgeInstall> {
         while bin.join(format!("{EXE_NAME}.old-{stamp}{suffix}")).exists() {
             stamp += 1;
         }
-        std::fs::rename(&dest, bin.join(format!("{EXE_NAME}.old-{stamp}{suffix}")))?;
-    }
+        bin.join(format!("{EXE_NAME}.old-{stamp}{suffix}"))
+    });
+    swap_in(&staged, &dest, aside.as_deref(), |from, to| std::fs::rename(from, to))?;
+    Ok(if existed {
+        BridgeInstall::Updated
+    } else {
+        BridgeInstall::Installed
+    })
+}
 
+/// Moves `dest` to `aside` when there is one, then `staged` into `dest`. A scanner can hold a fresh copy for a
+/// moment, so the last rename gets five tries. If all five fail, the old copy goes back, so hooks keep a bridge.
+fn swap_in(
+    staged: &Path,
+    dest: &Path,
+    aside: Option<&Path>,
+    rename: impl Fn(&Path, &Path) -> io::Result<()>,
+) -> io::Result<()> {
+    if let Some(aside) = aside {
+        rename(dest, aside)?;
+    }
     let mut tries = 0;
     loop {
-        match std::fs::rename(&staged, &dest) {
-            Ok(()) => break,
-            Err(e) if tries >= 4 => return Err(e),
+        match rename(staged, dest) {
+            Ok(()) => return Ok(()),
+            Err(e) if tries >= 4 => {
+                if let Some(aside) = aside {
+                    let _ = rename(aside, dest);
+                }
+                return Err(e);
+            }
             Err(_) => {
                 tries += 1;
                 std::thread::sleep(Duration::from_millis(50));
             }
         }
     }
-    Ok(if existed {
-        BridgeInstall::Updated
-    } else {
-        BridgeInstall::Installed
-    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_failed_swap_puts_the_old_copy_back() {
+        let dir = tempfile::tempdir().unwrap();
+        let staged = dir.path().join("hook.new.exe");
+        let dest = dir.path().join("hook.exe");
+        let aside = dir.path().join("hook.old-1.exe");
+        std::fs::write(&staged, b"new").unwrap();
+        std::fs::write(&dest, b"old").unwrap();
+        let held = |from: &Path, to: &Path| {
+            if from == staged {
+                Err(io::Error::new(io::ErrorKind::PermissionDenied, "held by a scanner"))
+            } else {
+                std::fs::rename(from, to)
+            }
+        };
+        assert!(swap_in(&staged, &dest, Some(&aside), held).is_err());
+        assert_eq!(std::fs::read(&dest).unwrap(), b"old");
+        assert!(!aside.exists());
+    }
 }
