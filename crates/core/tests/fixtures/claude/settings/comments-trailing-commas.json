@@ -1,0 +1,11 @@
+{
+  // my preferences
+  "theme": "dark", /* inline note */
+  "permissions": {
+    "allow": ["Bash(ls)",],
+  },
+  "statusLine": {
+    "type": "command",
+    "command": "node ./bar.js", // my bar
+  },
+}

@@ -1,5 +1,7 @@
 //! Claude Code's side of a permission request: the JSON a `PermissionRequest` hook answers with.
 
+pub mod hooks;
+
 use marshell_protocol::hook::{PermissionBehavior, PermissionDecision, PermissionScope};
 use serde_json::{Value, json};
 

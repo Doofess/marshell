@@ -71,6 +71,23 @@ pub fn read_value(text: &str) -> Result<Value, EditError> {
     parse_value(body)
 }
 
+/// Where `text` stops being JSONC: the 1-based line of the first parse error and what is wrong.
+/// `None` when it parses (empty text counts, as in `read_value`).
+pub fn parse_problem(text: &str) -> Option<(u32, String)> {
+    let body = text.strip_prefix(BOM).unwrap_or(text);
+    if body.trim().is_empty() {
+        return None;
+    }
+    jsonc_parser::parse_to_serde_value::<Value>(body, &ParseOptions::default())
+        .err()
+        .map(|e| {
+            (
+                u32::try_from(e.line_display()).unwrap_or(u32::MAX),
+                e.kind().to_string(),
+            )
+        })
+}
+
 fn parse_value(body: &str) -> Result<Value, EditError> {
     jsonc_parser::parse_to_serde_value::<Value>(body, &ParseOptions::default())
         .map_err(|e| EditError::DoesNotParse(e.to_string()))
@@ -529,6 +546,19 @@ mod tests {
         .unwrap();
         assert!(out.starts_with('\u{feff}'));
         assert_eq!(read_value(&out).unwrap(), serde_json::json!({"a": 1, "b": 2}));
+    }
+
+    #[test]
+    fn parse_problem_names_the_line() {
+        assert_eq!(parse_problem("{}\n"), None);
+        assert_eq!(parse_problem("  \n"), None);
+        assert_eq!(parse_problem(COMMENTED), None);
+        let (line, message) = parse_problem("{\n  \"a\": 1,\n  \"b\": }\n").unwrap();
+        assert_eq!(line, 3);
+        assert!(!message.is_empty());
+        // A BOM and CRLF do not shift the line.
+        let (line, _) = parse_problem("\u{feff}{\r\n  \"a\": 1,\r\n  \"b\": }\r\n").unwrap();
+        assert_eq!(line, 3);
     }
 
     #[test]
