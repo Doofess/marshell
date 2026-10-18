@@ -3,3 +3,4 @@
 //! written atomically, recorded in `managed.json`, and can be restored.
 
 pub mod hash;
+pub mod jsonc;
