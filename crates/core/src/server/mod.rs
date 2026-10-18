@@ -1,3 +1,4 @@
+mod agents;
 mod attachments;
 mod config;
 mod events;
@@ -85,6 +86,11 @@ struct Inner {
     permission_hold: Duration,
     /// Previews and applies changes to the CLIs' config files.
     config: crate::config::service::ConfigService,
+    /// Claude Code's settings file when a test or a caller names one; None means
+    /// `MARSHELL_CLAUDE_SETTINGS`, else `~/.claude/settings.json`.
+    claude_settings: Option<PathBuf>,
+    /// `--version` of each agent executable, asked once per path for the app's lifetime.
+    versions: Mutex<HashMap<PathBuf, Option<String>>>,
 }
 
 /// How long a permission request is held when `MARSHELL_PERMISSION_HOLD_SECS` is not set.
@@ -133,7 +139,16 @@ impl AppState {
             holds: crate::hooks::holds::Holds::default(),
             permission_hold: DEFAULT_PERMISSION_HOLD,
             config,
+            claude_settings: None,
+            versions: Mutex::new(HashMap::new()),
         }))
+    }
+    /// Names Claude Code's settings file, in place of the environment. Call it before the state is cloned.
+    pub fn with_claude_settings(mut self, path: PathBuf) -> Self {
+        Arc::get_mut(&mut self.0)
+            .expect("with_claude_settings runs before the state is shared")
+            .claude_settings = Some(path);
+        self
     }
     /// Sets how long a permission request is held. Call it before the state is cloned.
     pub fn with_permission_hold(mut self, hold: Duration) -> Self {
@@ -290,6 +305,9 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/config/apply", post(config::apply))
         .route("/v1/snapshots", get(config::snapshots))
         .route("/v1/snapshots/{id}/restore", post(config::restore))
+        .route("/v1/agents/{agent}/setup", get(agents::setup))
+        .route("/v1/agents/{agent}/hooks/plan", post(agents::plan))
+        .route("/v1/agents/{agent}/hooks/remove-plan", post(agents::remove_plan))
         .route("/v1/events", get(events::handler))
         .route("/v1/pty/{tab}", get(pty_ws::handler))
         .layer(axum::middleware::from_fn_with_state(state.clone(), guard::auth_guard))

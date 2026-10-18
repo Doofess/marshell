@@ -311,6 +311,14 @@ fn agent_of_exe(name: &str) -> Option<&'static str> {
     }
 }
 
+/// The program of the first profile that runs `agent`: its command's first word.
+pub fn agent_exe(profiles: &[Profile], agent: &str) -> Option<PathBuf> {
+    profiles.iter().find_map(|p| {
+        let exe = p.command.first()?;
+        (agent_of_exe(&program_name(exe)) == Some(agent)).then(|| PathBuf::from(exe))
+    })
+}
+
 /// The agent CLI an npm package belongs to.
 fn agent_of_package(name: &str) -> Option<&'static str> {
     match name {
@@ -543,6 +551,24 @@ mod tests {
             terminal_theme: None,
             detected: true,
         }
+    }
+
+    #[test]
+    fn agent_exe_finds_the_claude_profile() {
+        let profiles = vec![
+            profile("pwsh", &["pwsh.exe", "-NoLogo"], ShellFamily::PowerShell),
+            profile(
+                "claude",
+                &["C:\\Tools\\claude.exe", "--verbose"],
+                ShellFamily::PowerShell,
+            ),
+        ];
+        assert_eq!(
+            agent_exe(&profiles, "claude"),
+            Some(PathBuf::from("C:\\Tools\\claude.exe"))
+        );
+        assert_eq!(agent_exe(&profiles, "codex"), None);
+        assert_eq!(agent_exe(&profiles[..1], "claude"), None);
     }
 
     #[test]

@@ -2,6 +2,61 @@
 
 pub mod hooks;
 
+use std::path::Path;
+use std::process::{Command, Stdio};
+use std::time::{Duration, Instant};
+
+/// The leading `X.Y.Z` of `claude --version` output (`2.1.302 (Claude Code)`). Nothing else counts:
+/// a `v` in front, or fewer than three numbers, gives `None`.
+pub fn parse_version(stdout: &str) -> Option<String> {
+    let first = stdout.split_whitespace().next()?;
+    let parts: Vec<&str> = first.split('.').collect();
+    let numeric = |p: &&str| !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit());
+    (parts.len() == 3 && parts.iter().all(numeric)).then(|| first.to_string())
+}
+
+/// Runs `<exe> --version` and parses it. The process is killed when it takes longer than `timeout`.
+pub fn run_version(exe: &Path, timeout: Duration) -> Option<String> {
+    let mut cmd = Command::new(exe);
+    cmd.arg("--version")
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null());
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        // CREATE_NO_WINDOW: no console window flashes.
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+    let mut child = cmd.spawn().ok()?;
+    let mut stdout = child.stdout.take()?;
+    // Read on its own thread, so a full pipe cannot hold the child past the deadline.
+    let reader = std::thread::spawn(move || {
+        let mut out = Vec::new();
+        let _ = std::io::Read::read_to_end(&mut stdout, &mut out);
+        out
+    });
+    let deadline = Instant::now() + timeout;
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break Some(status),
+            Ok(None) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(20)),
+            _ => {
+                let _ = child.kill();
+                let _ = child.wait();
+                break None;
+            }
+        }
+    };
+    // After a kill the reader is left alone: a grandchild may still hold the pipe open.
+    if !status?.success() {
+        return None;
+    }
+    let out = reader.join().ok()?;
+    parse_version(&String::from_utf8_lossy(&out))
+}
+
 use marshell_protocol::hook::{PermissionBehavior, PermissionDecision, PermissionScope};
 use serde_json::{Value, json};
 
@@ -52,6 +107,17 @@ pub fn permission_output(decision: &PermissionDecision, request: &Value) -> Resu
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn parse_version_takes_the_leading_semver() {
+        use super::parse_version;
+        assert_eq!(parse_version("2.1.302 (Claude Code)\n"), Some("2.1.302".to_string()));
+        assert_eq!(parse_version("  1.0.0\r\n"), Some("1.0.0".to_string()));
+        assert_eq!(parse_version("garbage"), None);
+        assert_eq!(parse_version("v2.1.0"), None);
+        assert_eq!(parse_version("2.1"), None);
+        assert_eq!(parse_version(""), None);
+    }
+
     use super::*;
     use marshell_protocol::hook::{PermissionBehavior, PermissionDecision, PermissionScope};
     use serde_json::{Value, json};
