@@ -3,6 +3,7 @@
 
 pub mod args;
 pub mod endpoint;
+mod job;
 pub mod log;
 pub mod post;
 pub mod record;

@@ -115,6 +115,34 @@ fn columns_and_lines_reach_the_original() {
 }
 
 #[test]
+fn null_chain_prints_nothing_and_logs_nothing() {
+    let home = tempfile::tempdir().unwrap();
+    let dir = home.path().join("agents").join("claude");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("statusline-chain.json"), r#"{"version":1,"statusLine":null}"#).unwrap();
+    assert!(go(home.path()).is_empty());
+    assert!(!home.path().join("logs").join("bridge.log").exists());
+}
+
+#[test]
+fn a_chain_naming_the_bridge_is_refused() {
+    let home = tempfile::tempdir().unwrap();
+    let marker = home.path().join("ran");
+    // If the chain were run, the marker file would be left behind.
+    let command = format!(
+        "touch '{}'; \"C:/m/bin/marshell-hook.exe\" statusline --agent claude --tag mshl1",
+        marker.display().to_string().replace('\\', "/")
+    );
+    write_chain(home.path(), &command);
+    assert!(go(home.path()).is_empty());
+    assert!(!marker.exists(), "the chain was run");
+    let lines = log_lines(home.path());
+    assert_eq!(lines.len(), 1, "{lines:?}");
+    assert!(lines[0].contains(" statusline "), "{}", lines[0]);
+    assert!(lines[0].contains("Marshell's own status line"), "{}", lines[0]);
+}
+
+#[test]
 fn slow_core_does_not_delay_output() {
     let home = tempfile::tempdir().unwrap();
     let fake = serve(Reply::new(204, "").delayed(Duration::from_secs(2)));
