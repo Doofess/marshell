@@ -458,6 +458,11 @@ impl ConfigService {
 
         // 9. This preview is spent, and the others on these files no longer describe the disk.
         let written: Vec<PathBuf> = changing.iter().map(|f| f.target.clone()).collect();
+        // Old snapshots go only now: a failed apply must not cost one, and a restore of the oldest
+        // snapshot looked it up in step 6, before this.
+        if let Err(e) = shared.snapshots.trim(&written) {
+            tracing::warn!("trimming old snapshots: {e}");
+        }
         lock(&shared.previews).map.remove(&req.changeset_id);
         shared.mark_stale(&written);
         Ok(ApplyResult {
@@ -665,6 +670,45 @@ mod tests {
         assert_eq!(read(&b), "{}\n");
         assert!(e.svc.snapshots().list(None).unwrap().is_empty());
         assert!(!crate::paths::managed_file(&e.home).exists());
+    }
+
+    /// `count` applies on `path`, each adding one key, so the file ends with `count` snapshots.
+    fn apply_many(e: &Env, path: &Path, count: u64) {
+        for n in 0..count {
+            let preview = e.svc.preview(changeset(vec![edit(path, set(&format!("/k{n}"), "1"))]));
+            e.svc.apply(&shown(&preview), n + 1).unwrap();
+        }
+    }
+
+    #[test]
+    fn restoring_the_oldest_of_twenty_snapshots_works() {
+        let e = env();
+        let path = e.root.join("settings.json");
+        write(&path, "{}\n");
+        apply_many(&e, &path, 20);
+        let listed = e.svc.snapshots().list(Some(&path)).unwrap();
+        assert_eq!(listed.len(), 20);
+        let oldest = listed.last().unwrap();
+        let restore = e.svc.restore_preview(&oldest.id).unwrap();
+        assert!(restore.can_apply);
+        apply_shown(&e.svc, &restore).unwrap();
+        assert_eq!(read(&path), "{}\n");
+    }
+
+    #[test]
+    fn a_failed_apply_keeps_every_old_snapshot() {
+        let e = env();
+        let path = e.root.join("settings.json");
+        write(&path, "{}\n");
+        apply_many(&e, &path, 20);
+        let oldest = e.svc.snapshots().list(Some(&path)).unwrap().pop().unwrap().id;
+        let preview = e.svc.preview(changeset(vec![edit(&path, set("/z", "1"))]));
+        let fail = |_: &Path, _: Option<&[u8]>| -> std::io::Result<()> { Err(std::io::Error::other("disk full")) };
+        let result = e.svc.apply_with(&shown(&preview), 99, &fail);
+        assert!(matches!(result, Err(ApplyError::Failed(_))), "{result:?}");
+        let listed = e.svc.snapshots().list(Some(&path)).unwrap();
+        assert_eq!(listed.len(), 20);
+        assert!(listed.iter().any(|s| s.id == oldest));
     }
 
     #[test]

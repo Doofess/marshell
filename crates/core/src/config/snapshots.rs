@@ -1,6 +1,6 @@
 //! Restore points: before a ChangeSet writes a file, the old bytes are copied to
 //! `<home>/snapshots/<id>/<n>.bin` and listed in `snapshots/index.json`. The last
-//! `KEEP_PER_FILE` copies of each file are kept.
+//! `KEEP_PER_FILE` copies of each file are kept, once the caller calls `trim` after a change succeeds.
 
 use crate::auth::new_id;
 use crate::config::hash::hash_bytes;
@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
-/// Copies kept per file; older ones are dropped when a new snapshot is taken.
+/// Copies kept per file; older ones are dropped by `trim`.
 pub const KEEP_PER_FILE: usize = 20;
 
 /// One read-modify-write of the index at a time.
@@ -156,17 +156,28 @@ impl Snapshots {
             title: title.to_string(),
             files: entries,
         });
-        for file in files {
-            self.trim(&mut index, &file.path.to_string_lossy());
-        }
         store::write(&self.index_path(), &index).context("saving the snapshot index")?;
         // Only after the index is saved: the folders it no longer lists.
         self.sweep(&index);
         Ok(())
     }
 
+    /// Keeps the newest `KEEP_PER_FILE` snapshots of each of `paths` and drops the rest. The caller
+    /// does this only once its change has succeeded: `take` does not trim, because an apply that
+    /// fails must not cost an old snapshot, and a restore of the oldest one still needs it.
+    pub fn trim(&self, paths: &[PathBuf]) -> anyhow::Result<()> {
+        let _guard = Self::lock();
+        let mut index = self.load()?;
+        for path in paths {
+            self.trim_file(&mut index, &path.to_string_lossy());
+        }
+        store::write(&self.index_path(), &index).context("saving the snapshot index")?;
+        self.sweep(&index);
+        Ok(())
+    }
+
     /// Keeps the newest `KEEP_PER_FILE` entries that hold `path`; the rest lose that file.
-    fn trim(&self, index: &mut Index, path: &str) {
+    fn trim_file(&self, index: &mut Index, path: &str) {
         let mut holders: Vec<usize> = (0..index.snapshots.len())
             .filter(|&i| index.snapshots[i].files.iter().any(|f| same_path(&f.info.path, path)))
             .collect();
@@ -331,6 +342,10 @@ mod tests {
             }
         }
         let listed = snaps.list(Some(&a())).unwrap();
+        // `take` alone keeps everything; `trim` is what drops the old ones.
+        assert_eq!(listed.len(), 21);
+        snaps.trim(&[a(), b()]).unwrap();
+        let listed = snaps.list(Some(&a())).unwrap();
         assert_eq!(listed.len(), KEEP_PER_FILE);
         assert!(listed.iter().all(|s| s.created_ms != 1));
         assert!(snaps.get(&first).unwrap().is_none());
@@ -346,6 +361,7 @@ mod tests {
         for _ in 0..=KEEP_PER_FILE {
             last = snaps.take("c", "t", &[input(&a(), Some(b"x"))], 7).unwrap();
         }
+        snaps.trim(&[a()]).unwrap();
         assert!(snaps.get(&last).unwrap().is_some());
         assert_eq!(snaps.list(Some(&a())).unwrap().len(), KEEP_PER_FILE);
     }
