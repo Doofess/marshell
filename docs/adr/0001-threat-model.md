@@ -63,7 +63,7 @@ Out of scope:
 ### Config writes (`crates/core/src/config/`, slice 3b)
 
 - One service writes every CLI config file. Each write is a ChangeSet that is first previewed as a diff. Apply needs the file hashes the preview showed, and refuses with a conflict if any file changed since, or if a previewed file changed outside Marshell (the watcher marks the preview stale).
-- The write guard (`config/guard.rs`) allows only the user's home, project folders the person opened in Marshell, and `<marshell home>/agents/`. It always refuses the managed and organization paths (Program Files, ProgramData, the Windows folder, `/etc`, `/Library`, and the files `managed-settings.json`, `managed-mcp.json`, `managed_config.toml` anywhere), even inside an allowed folder. A link is followed and its target is checked too.
+- The write guard (`config/guard.rs`) allows only the user's home, project folders the person opened in Marshell, and `<marshell home>/agents/`. It always refuses the managed and organization paths (Program Files, ProgramData, the Windows folder, `/etc`, `/Library`, and the files `managed-settings.json`, `managed-mcp.json`, `managed_config.toml` anywhere), even inside an allowed folder. A link is followed and its target is checked too. A path with a `..` part is refused outright, because Windows resolves `..` by the text before it opens a file while a link resolves it on disk, and the two can name different files.
 - JSON is edited through a CST, so comments and the rest of the file are kept; a file that doesn't parse is refused rather than rewritten.
 - Every apply takes a snapshot first, and a restore is itself a preview the person applies.
 - Marshell never asks for elevation.
