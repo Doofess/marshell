@@ -1,4 +1,5 @@
 mod attachments;
+mod config;
 mod events;
 mod files;
 mod foreground;
@@ -18,7 +19,7 @@ mod tasks;
 
 use crate::profiles::detect::{Probe, detect_profiles};
 use crate::registry::{Registry, Relaunch};
-use crate::{auth, paths};
+use crate::{auth, paths, private};
 use axum::extract::DefaultBodyLimit;
 use axum::http::{HeaderName, HeaderValue, Method, header};
 use axum::routing::{get, patch, post, put};
@@ -81,6 +82,8 @@ struct Inner {
     holds: crate::hooks::holds::Holds,
     /// How long the core holds a permission request before it lets the agent ask.
     permission_hold: Duration,
+    /// Previews and applies changes to the CLIs' config files.
+    config: crate::config::service::ConfigService,
 }
 
 /// How long a permission request is held when `MARSHELL_PERMISSION_HOLD_SECS` is not set.
@@ -108,6 +111,7 @@ impl AppState {
                 None
             }
         };
+        let config = crate::config::service::ConfigService::new(home.clone());
         Self(Arc::new(Inner {
             token,
             host: format!("127.0.0.1:{port}"),
@@ -127,6 +131,7 @@ impl AppState {
             hook_log: crate::hooks::log::HookLog::default(),
             holds: crate::hooks::holds::Holds::default(),
             permission_hold: DEFAULT_PERMISSION_HOLD,
+            config,
         }))
     }
     /// Sets how long a permission request is held. Call it before the state is cloned.
@@ -156,6 +161,9 @@ impl AppState {
     /// The open and recently closed sessions.
     pub fn registry(&self) -> &Registry {
         &self.0.registry
+    }
+    pub fn config(&self) -> &crate::config::service::ConfigService {
+        &self.0.config
     }
     pub fn hook_log(&self) -> &crate::hooks::log::HookLog {
         &self.0.hook_log
@@ -270,6 +278,12 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/permissions", get(permissions::list))
         .route("/v1/permissions/{rid}/decision", post(permissions::decision))
         .route("/v1/permissions/{rid}/release", post(permissions::release))
+        .route("/v1/config/file", get(config::file))
+        .route("/v1/config/preview", post(config::preview))
+        .route("/v1/config/preview/{id}", get(config::get_preview))
+        .route("/v1/config/apply", post(config::apply))
+        .route("/v1/snapshots", get(config::snapshots))
+        .route("/v1/snapshots/{id}/restore", post(config::restore))
         .route("/v1/events", get(events::handler))
         .route("/v1/pty/{tab}", get(pty_ws::handler))
         .layer(axum::middleware::from_fn_with_state(state.clone(), guard::auth_guard))
@@ -355,6 +369,15 @@ pub async fn start(cfg: CoreConfig) -> anyhow::Result<RunningCore> {
     };
     // Looking for shells runs programs (wsl.exe can take up to 2 s): keep it off the async threads.
     let detected = tokio::task::spawn_blocking(|| detect_profiles(&Probe::system())).await?;
+    // Before anything is written under the home. A failure is not fatal: the default home sits under the
+    // user's profile, which is already private to the user. The first fix may walk the whole home, so it
+    // runs off the async threads.
+    let home = cfg.home.clone();
+    match tokio::task::spawn_blocking(move || private::secure_home(&home)).await? {
+        Ok(private::HomeAcl::Fixed) => tracing::info!("made the Marshell home owner-only"),
+        Ok(private::HomeAcl::AlreadyPrivate) => {}
+        Err(e) => tracing::warn!("could not make the Marshell home owner-only: {e:#}"),
+    }
     let endpoint_file = paths::endpoint_file(&cfg.home);
     let state = AppState::new(endpoint.token.clone(), port, cfg.allowed_origins, cfg.home, detected)
         .with_permission_hold(permission_hold_from_env(

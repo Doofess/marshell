@@ -1,12 +1,14 @@
 pub mod agents;
 pub mod auth;
 pub mod bridge;
+pub mod config;
 pub mod crash;
 pub mod git;
 pub mod hooks;
 pub mod job;
 pub mod layout;
 pub mod paths;
+pub mod private;
 pub mod profiles;
 pub mod projects;
 pub mod pty;
