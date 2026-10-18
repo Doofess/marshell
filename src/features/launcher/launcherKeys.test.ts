@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { focusFellOut, listNavKeys, stepActive } from "./launcherKeys";
+import { focusFellOut, listNavKeys, openFolder, openPrograms, stepActive } from "./launcherKeys";
 
 describe("launcherKeys: which keys move the highlighted option", () => {
   it("in the folder field only Up and Down do: Left and Right move the caret, so a typo can be fixed", () => {
@@ -37,5 +37,20 @@ describe("launcherKeys: focus when the folder field closes", () => {
     expect(focusFellOut({ wasOpen: true, isOpen: false, activeIsBody: false })).toBe(false);
     expect(focusFellOut({ wasOpen: true, isOpen: true, activeIsBody: true })).toBe(false);
     expect(focusFellOut({ wasOpen: false, isOpen: false, activeIsBody: true })).toBe(false);
+  });
+});
+
+describe("launcherKeys: one list open at a time", () => {
+  it("opening the program list closes the folder field, so the program chip works while choosing a folder", () => {
+    expect(openPrograms({ query: "air", programsOpen: false }, true)).toEqual({ query: null, programsOpen: true });
+    expect(openPrograms({ query: "", programsOpen: false }, true)).toEqual({ query: null, programsOpen: true });
+  });
+  it("opening the folder field closes the program list, so it does not pop back once a folder is picked", () => {
+    expect(openFolder({ query: null, programsOpen: true }, "")).toEqual({ query: "", programsOpen: false });
+    expect(openFolder({ query: "", programsOpen: false }, "ai")).toEqual({ query: "ai", programsOpen: false });
+  });
+  it("closing either one leaves the other as it was", () => {
+    expect(openPrograms({ query: null, programsOpen: true }, false)).toEqual({ query: null, programsOpen: false });
+    expect(openFolder({ query: "ai", programsOpen: false }, null)).toEqual({ query: null, programsOpen: false });
   });
 });

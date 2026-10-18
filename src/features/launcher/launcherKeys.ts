@@ -19,6 +19,19 @@ export function stepActive(index: number, key: string, size: number): number {
   return (from + step + size) % size;
 }
 
+/** Which of the launcher's two lists is open: the folder field when `query` is not null, the program grid when `programsOpen`. */
+export type OpenLists = { query: string | null; programsOpen: boolean };
+
+/** Opens or closes the program grid. The launcher hides the grid while the folder field is open, so opening it closes the field. */
+export function openPrograms(lists: OpenLists, open: boolean): OpenLists {
+  return { query: open ? null : lists.query, programsOpen: open };
+}
+
+/** Sets the folder field's text, null to close it. Opening it closes the program grid, which would otherwise come back after a pick. */
+export function openFolder(lists: OpenLists, query: string | null): OpenLists {
+  return { query, programsOpen: query === null ? lists.programsOpen : false };
+}
+
 /**
  * Closing the folder field swaps an input for a button, so the browser drops focus on the page and the sheet's keys (Esc, Enter)
  * stop arriving. True when the folder chip should take focus back: the field just closed and nothing real has focus.

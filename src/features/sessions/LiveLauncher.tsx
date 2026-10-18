@@ -12,6 +12,7 @@ import { useAppearance } from "../appearance/AppearanceProvider";
 import { withColorScheme } from "../appearance/terminalSettings";
 import type { Project } from "../launcher/filter";
 import { Launcher, type TaskConfirm } from "../launcher/Launcher";
+import { openFolder, openPrograms, type OpenLists } from "../launcher/launcherKeys";
 import { taskNameFor } from "../tasks/taskName";
 import { appScheme } from "../terminal/terminalTheme";
 import { programById, startingText, type LauncherChoice } from "../launcher/launchChoice";
@@ -45,9 +46,10 @@ export function LiveLauncher({ endpoint, nextNumber, size, onStarted, onClose }:
   // Once the user picks a program here, the remembered one no longer applies.
   const [programPicked, setProgramPicked] = useState(false);
   const [modePicked, setModePicked] = useState(false);
-  const [query, setQuery] = useState<string | null>(null);
+  // One state for both lists, so opening one closes the other.
+  const [lists, setLists] = useState<OpenLists>({ query: null, programsOpen: false });
+  const { query, programsOpen } = lists;
   const [activeIndex, setActiveIndex] = useState(0);
-  const [programsOpen, setProgramsOpen] = useState(false);
   const [prompt, setPrompt] = useState("");
   const [error, setError] = useState<string>();
   // Why the lists did not load. Unlike `error` no edit clears it: Start stays disabled until they do.
@@ -217,15 +219,15 @@ export function LiveLauncher({ endpoint, nextNumber, size, onStarted, onClose }:
         busyText={progressText(phase, programById(shown.program, programs)?.label ?? shown.program)}
         onChange={patch}
         onQuery={(q) => {
-          setQuery(q);
+          setLists((l) => openFolder(l, q));
           setActiveIndex(0);
         }}
         onPick={(id) => {
           patch({ projectId: id });
-          setQuery(null);
+          setLists((l) => openFolder(l, null));
         }}
         onPrograms={(open) => {
-          setProgramsOpen(open);
+          setLists((l) => openPrograms(l, open));
           if (open) setActiveIndex(Math.max(0, programs.findIndex((p) => p.id === shown.program)));
         }}
         onActive={setActiveIndex}
