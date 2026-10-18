@@ -78,7 +78,6 @@ fn uuids(text: &str) -> Vec<String> {
 }
 
 #[test]
-#[ignore = "fixtures arrive in Task 7"]
 fn fixtures_are_scrubbed() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
     assert!(root.is_dir(), "no fixtures yet: {} does not exist", root.display());
