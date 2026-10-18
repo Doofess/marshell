@@ -68,7 +68,15 @@ fn file_preview(file: &PlannedFile) -> FilePreview {
         let text = |bytes: &Option<Vec<u8>>| bytes.as_deref().map(|b| String::from_utf8_lossy(b).into_owned());
         let before = text(&file.before).unwrap_or_default();
         let after = text(&file.after).unwrap_or_default();
-        diffy::create_patch(&before, &after).to_string()
+        let path = file.path.to_string_lossy();
+        let original = match file.before {
+            Some(_) => format!("a/{path}"),
+            None => "/dev/null".to_string(),
+        };
+        // diffy quotes a name holding a backslash or a space, so its two header lines are replaced.
+        let patch = diffy::create_patch(&before, &after).to_string();
+        let hunks = patch.splitn(3, '\n').nth(2).unwrap_or("");
+        format!("--- {original}\n+++ b/{path}\n{hunks}")
     } else {
         String::new()
     };
@@ -407,6 +415,23 @@ mod tests {
         let diff = to_preview("id", &cs, &files).files.remove(0).diff;
         assert!(diff.contains("@@"), "{diff}");
         assert!(diff.lines().any(|l| l.starts_with('+') && l.contains('a')), "{diff}");
+    }
+
+    /// The headers name the file, so a preview of several files says which change is which.
+    #[test]
+    fn diff_headers_name_the_file() {
+        let (_dir, root, guard, snapshots) = setup();
+        let old = root.join("settings.json");
+        let new = root.join("chain.json");
+        std::fs::write(&old, b"{}\n").unwrap();
+        let cs = changeset(vec![edit(&old, set("/a", "1"), None), edit(&new, set("/b", "2"), None)]);
+        let files = plan(&cs, &guard, &snapshots);
+        let preview = to_preview("id", &cs, &files);
+        let (old, new) = (old.to_string_lossy(), new.to_string_lossy());
+        let first: Vec<&str> = preview.files[0].diff.lines().take(2).collect();
+        assert_eq!(first, [format!("--- a/{old}"), format!("+++ b/{old}")]);
+        let second: Vec<&str> = preview.files[1].diff.lines().take(2).collect();
+        assert_eq!(second, ["--- /dev/null".to_string(), format!("+++ b/{new}")]);
     }
 
     #[test]
