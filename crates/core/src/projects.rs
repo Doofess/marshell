@@ -42,6 +42,11 @@ fn trim_separators(path: &str) -> &str {
     trimmed
 }
 
+/// Whether `path` is a drive or filesystem root: `/`, `C:\`, `C:/` or a UNC share root.
+pub fn is_root(path: &Path) -> bool {
+    Path::new(trim_separators(&path.to_string_lossy())).parent().is_none()
+}
+
 /// Windows paths ignore case, so `C:\Dev\App` and `c:\dev\app` are one project there.
 /// A trailing separator does not make a different folder.
 pub(crate) fn same_path(a: &str, b: &str) -> bool {
@@ -182,11 +187,13 @@ pub fn project_of(cwd: &str) -> String {
     repo_root(Path::new(cwd)).map_or_else(|| cwd.to_string(), |root| root.to_string_lossy().into_owned())
 }
 
-/// Puts `cwd` at the top of the recent list. The user's home folder is never recorded.
+/// Puts `cwd` at the top of the recent list. The user's home folder and a drive root are never recorded.
 /// Refuses when the file cannot be read (broken, or written by a newer Marshell),
 /// so a file the user may want to repair is never overwritten.
 pub fn record(home: &Path, cwd: &Path, now_ms: u64) -> anyhow::Result<()> {
-    if dirs::home_dir().is_some_and(|user_home| same_path(&user_home.to_string_lossy(), &cwd.to_string_lossy())) {
+    if is_root(cwd)
+        || dirs::home_dir().is_some_and(|user_home| same_path(&user_home.to_string_lossy(), &cwd.to_string_lossy()))
+    {
         return Ok(());
     }
     // A task worktree is not a project of its own: its repository is.
@@ -364,6 +371,24 @@ mod tests {
         assert_eq!(list.len(), 1);
         assert_eq!(list[0].path, plain);
         assert_eq!(list[0].last_used_ms, 3);
+    }
+
+    #[test]
+    fn a_root_is_not_recorded() {
+        let home = tempfile::tempdir().unwrap();
+        record(home.path(), Path::new(if cfg!(windows) { "C:\\" } else { "/" }), 1).unwrap();
+        assert!(!file(home.path()).exists());
+    }
+
+    #[test]
+    fn is_root_holds_for_roots_only() {
+        assert!(is_root(Path::new("/")));
+        if cfg!(windows) {
+            for root in ["C:\\", "C:/", "\\\\server\\share\\"] {
+                assert!(is_root(Path::new(root)), "{root}");
+            }
+        }
+        assert!(!is_root(Path::new("C:\\x")));
     }
 
     #[test]

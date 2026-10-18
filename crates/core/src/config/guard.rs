@@ -33,10 +33,16 @@ impl Guard {
     }
 
     /// Allowed: the user's home (`dirs::home_dir`), every folder in `projects.json` and `<home>/agents`.
+    /// A drive root in `projects.json` is skipped: it would open the whole drive.
     /// Denied: `denied_for_os()`. The project list is read once, here.
     pub fn for_home(home: &Path) -> Self {
         let mut allowed: Vec<PathBuf> = dirs::home_dir().into_iter().collect();
-        allowed.extend(crate::projects::list(home).into_iter().map(|p| PathBuf::from(p.path)));
+        allowed.extend(
+            crate::projects::list(home)
+                .into_iter()
+                .map(|p| PathBuf::from(p.path))
+                .filter(|p| !crate::projects::is_root(p)),
+        );
         allowed.push(home.join("agents"));
         Self::new(allowed, denied_for_os(), home.to_path_buf())
     }
@@ -174,6 +180,21 @@ mod tests {
             let stream = root.join("a").join("managed-settings.json:x");
             assert_eq!(guard.check(&stream), Err(Refusal::Managed));
         }
+    }
+
+    #[test]
+    fn a_root_in_projects_json_allows_nothing() {
+        let home = tempfile::tempdir().unwrap();
+        // The drive root of the temp folder: a file directly under it is outside the user's home.
+        let drive_root = home.path().ancestors().last().unwrap().to_path_buf();
+        let doc = serde_json::json!({
+            "version": 1,
+            "projects": [{ "path": drive_root.to_string_lossy(), "last_used_ms": 1 }],
+        });
+        fs::write(home.path().join("projects.json"), doc.to_string()).unwrap();
+        let guard = Guard::for_home(home.path());
+        let file = drive_root.join("marshell-guard-probe.json");
+        assert_eq!(guard.check(&file), Err(Refusal::OutsideAllowed));
     }
 
     #[test]

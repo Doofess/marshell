@@ -709,6 +709,16 @@ pub struct ProjectInfo {
     pub last_used_ms: u64,
 }
 
+/// A folder the launcher was given as text, as the core found it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct FolderInfo {
+    /// The folder's canonical path.
+    pub path: String,
+    pub name: String,
+    pub branch: Option<String>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[ts(export)]
 pub struct Resize {
