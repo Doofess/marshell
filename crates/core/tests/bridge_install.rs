@@ -25,16 +25,50 @@ fn installs_into_an_empty_home() {
     let dir = tempfile::tempdir().unwrap();
     let home = dir.path().join("home");
     let source = write_source(dir.path(), b"one");
-    assert_eq!(bridge::install(&source, &home).unwrap(), BridgeInstall::Installed);
+    assert_eq!(
+        bridge::install(&source, &home, bridge::BRIDGE_EXE).unwrap(),
+        BridgeInstall::Installed
+    );
     assert_eq!(fs::read(paths::bridge_exe(&home)).unwrap(), b"one");
+}
+
+#[test]
+fn installs_the_cli_beside_the_bridge() {
+    let dir = tempfile::tempdir().unwrap();
+    let home = dir.path().join("home");
+    let hook = write_source(dir.path(), b"hook");
+    assert_eq!(
+        bridge::install(&hook, &home, bridge::BRIDGE_EXE).unwrap(),
+        BridgeInstall::Installed
+    );
+    let cli = dir.path().join(format!("source-cli{}", std::env::consts::EXE_SUFFIX));
+    fs::write(&cli, b"cli").unwrap();
+    assert_eq!(
+        bridge::install(&cli, &home, bridge::CLI_EXE).unwrap(),
+        BridgeInstall::Installed
+    );
+    assert_eq!(fs::read(paths::bridge_exe(&home)).unwrap(), b"hook");
+    assert_eq!(fs::read(paths::cli_exe(&home)).unwrap(), b"cli");
+    // Updating one leaves the other, and sweeping one name leaves the other's copies.
+    fs::write(&cli, b"cli 2").unwrap();
+    assert_eq!(
+        bridge::install(&cli, &home, bridge::CLI_EXE).unwrap(),
+        BridgeInstall::Updated
+    );
+    bridge::sweep_leftovers(&home, bridge::BRIDGE_EXE);
+    assert_eq!(leftovers(&home, "marshell.old-").len(), 1);
+    assert_eq!(fs::read(paths::bridge_exe(&home)).unwrap(), b"hook");
 }
 
 #[test]
 fn same_bytes_are_unchanged() {
     let dir = tempfile::tempdir().unwrap();
     let source = write_source(dir.path(), b"one");
-    bridge::install(&source, dir.path()).unwrap();
-    assert_eq!(bridge::install(&source, dir.path()).unwrap(), BridgeInstall::Unchanged);
+    bridge::install(&source, dir.path(), bridge::BRIDGE_EXE).unwrap();
+    assert_eq!(
+        bridge::install(&source, dir.path(), bridge::BRIDGE_EXE).unwrap(),
+        BridgeInstall::Unchanged
+    );
     assert!(leftovers(dir.path(), "marshell-hook.old-").is_empty());
 }
 
@@ -42,9 +76,12 @@ fn same_bytes_are_unchanged() {
 fn new_bytes_update_and_leave_an_old_copy() {
     let dir = tempfile::tempdir().unwrap();
     let source = write_source(dir.path(), b"one");
-    bridge::install(&source, dir.path()).unwrap();
+    bridge::install(&source, dir.path(), bridge::BRIDGE_EXE).unwrap();
     let source = write_source(dir.path(), b"two");
-    assert_eq!(bridge::install(&source, dir.path()).unwrap(), BridgeInstall::Updated);
+    assert_eq!(
+        bridge::install(&source, dir.path(), bridge::BRIDGE_EXE).unwrap(),
+        BridgeInstall::Updated
+    );
     assert_eq!(fs::read(paths::bridge_exe(dir.path())).unwrap(), b"two");
     assert_eq!(leftovers(dir.path(), "marshell-hook.old-").len(), 1);
     assert!(leftovers(dir.path(), "marshell-hook.new").is_empty());
@@ -63,7 +100,7 @@ fn sweep_removes_leftovers() {
     ] {
         fs::write(bin.join(name), b"x").unwrap();
     }
-    bridge::sweep_leftovers(dir.path());
+    bridge::sweep_leftovers(dir.path(), bridge::BRIDGE_EXE);
     assert!(leftovers(dir.path(), "marshell-hook.old-").is_empty());
     assert!(leftovers(dir.path(), "marshell-hook.new").is_empty());
     assert!(bin.join("marshell-hook.exe").exists());
@@ -94,14 +131,17 @@ fn updates_while_the_old_bridge_is_running() {
     std::thread::sleep(std::time::Duration::from_millis(300));
 
     let source = write_source(dir.path(), b"a different bridge");
-    assert_eq!(bridge::install(&source, home).unwrap(), BridgeInstall::Updated);
+    assert_eq!(
+        bridge::install(&source, home, bridge::BRIDGE_EXE).unwrap(),
+        BridgeInstall::Updated
+    );
     assert_eq!(fs::read(&installed).unwrap(), b"a different bridge");
     assert_eq!(leftovers(home, "marshell-hook.old-").len(), 1);
 
     child.0.kill().unwrap();
     child.0.wait().unwrap();
     for _ in 0..20 {
-        bridge::sweep_leftovers(home);
+        bridge::sweep_leftovers(home, bridge::BRIDGE_EXE);
         if leftovers(home, "marshell-hook.old-").is_empty() {
             return;
         }

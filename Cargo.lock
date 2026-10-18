@@ -2333,6 +2333,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "marshell-cli"
+version = "0.1.0"
+dependencies = [
+ "marshell-core",
+ "marshell-protocol",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
 name = "marshell-core"
 version = "0.1.0"
 dependencies = [
