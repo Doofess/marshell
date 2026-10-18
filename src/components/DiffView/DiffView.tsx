@@ -1,10 +1,20 @@
+import { useState } from "react";
 import { collapse, parseUnifiedDiff, SIGN } from "./diff";
 import "./DiffView.css";
 
+type Props = { diff: string; label: string; limit?: number; expanded?: boolean };
+
 /** A unified diff, read-only: every changed line has a sign as well as a fill, and a long one folds after `limit` lines. */
-export function DiffView({ diff, label, limit = 40, expanded = false }: { diff: string; label: string; limit?: number; expanded?: boolean }) {
+export function DiffView({ expanded = false, ...rest }: Props) {
+  const [open, setOpen] = useState(false);
+  return <DiffBody {...rest} open={expanded || open} onToggle={expanded ? undefined : () => setOpen((o) => !o)} />;
+}
+
+/** The diff as shown. With `onToggle`, a long diff has a button that opens and folds it, and stays put so focus does not drop. */
+export function DiffBody({ diff, label, limit = 40, open, onToggle }: Omit<Props, "expanded"> & { open: boolean; onToggle?: () => void }) {
   const p = parseUnifiedDiff(diff);
-  const { shown, hidden } = expanded ? { shown: p.lines, hidden: 0 } : collapse(p.lines, limit);
+  const { shown } = open ? { shown: p.lines } : collapse(p.lines, limit);
+  const foldable = onToggle !== undefined && p.lines.length > limit;
   return (
     <figure className="diff" aria-label={label}>
       <figcaption className="diff__head">
@@ -32,9 +42,9 @@ export function DiffView({ diff, label, limit = 40, expanded = false }: { diff: 
           </li>
         ))}
       </ol>
-      {hidden > 0 && (
-        <button type="button" className="diff__more">
-          Show all {p.lines.filter((l) => l.kind !== "meta" && l.kind !== "hunk").length} lines
+      {foldable && (
+        <button type="button" className="diff__more" aria-expanded={open} onClick={onToggle}>
+          {open ? "Show fewer lines" : `Show all ${p.lines.filter((l) => l.kind !== "meta" && l.kind !== "hunk").length} lines`}
         </button>
       )}
     </figure>

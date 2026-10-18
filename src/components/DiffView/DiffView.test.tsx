@@ -1,6 +1,15 @@
+import { isValidElement, type ReactElement, type ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it } from "vitest";
-import { DiffView } from "./DiffView";
+import { describe, expect, it, vi } from "vitest";
+import { DiffBody, DiffView } from "./DiffView";
+
+/** The first `<button>` in an element tree. */
+function buttonIn(node: ReactNode): ReactElement<{ onClick?: () => void }> | undefined {
+  if (Array.isArray(node)) return node.map(buttonIn).find(Boolean);
+  if (!isValidElement<{ children?: ReactNode }>(node)) return undefined;
+  if (node.type === "button") return node as ReactElement<{ onClick?: () => void }>;
+  return buttonIn(node.props.children);
+}
 
 const small = ["--- a/s.json", "+++ b/s.json", "@@ -1,1 +1,2 @@", " a", "-b", "+c", "+d"].join("\n");
 const big = ["--- a/s.json", "+++ b/s.json", "@@ -1,1 +1,200 @@", ...Array.from({ length: 200 }, (_, i) => `+line ${i}`)].join("\n");
@@ -37,6 +46,19 @@ describe("DiffView", () => {
     const h = renderToStaticMarkup(<DiffView diff={big} label="Changes" expanded />);
     expect(h).not.toContain("Show all");
     expect((h.match(/class="diff__line"/g) ?? []).length).toBe(203);
+  });
+  it("Show all opens the folded lines", () => {
+    const onToggle = vi.fn();
+    buttonIn(DiffBody({ diff: big, label: "Changes", open: false, onToggle }))?.props.onClick?.();
+    expect(onToggle).toHaveBeenCalledTimes(1);
+  });
+  it("marks the fold button collapsed until it is opened", () => {
+    expect(renderToStaticMarkup(<DiffView diff={big} label="Changes" />)).toMatch(/<button[^>]*aria-expanded="false"[^>]*>Show all 200 lines/);
+  });
+  it("once open shows every line and keeps the button, so focus stays on it, offering Show fewer lines", () => {
+    const h = renderToStaticMarkup(<DiffBody diff={big} label="Changes" open onToggle={() => {}} />);
+    expect((h.match(/class="diff__line"/g) ?? []).length).toBe(203);
+    expect(h).toMatch(/<button[^>]*aria-expanded="true"[^>]*>Show fewer lines/);
   });
   it("says so when there is nothing to change", () => {
     expect(renderToStaticMarkup(<DiffView diff="" label="Changes" />)).toContain("No changes");
