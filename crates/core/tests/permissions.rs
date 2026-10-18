@@ -345,3 +345,93 @@ async fn permissions_require_the_token() {
         .unwrap();
     assert_eq!(app.oneshot(req).await.unwrap().status(), StatusCode::UNAUTHORIZED);
 }
+
+/// A router whose one profile runs the fake agent asleep, and a session started in it.
+async fn app_with_session(hold: Duration) -> (axum::Router, String, tempfile::TempDir) {
+    use marshell_protocol::api::{Profile, ShellFamily};
+    let dir = tempfile::tempdir().unwrap();
+    let home = tempfile::tempdir().unwrap().keep();
+    let sleeper = Profile {
+        id: "sleeper".into(),
+        name: "sleeper".into(),
+        command: vec![env!("CARGO_BIN_EXE_fake-agent").into(), "sleep".into()],
+        family: ShellFamily::Posix,
+        cwd: None,
+        env: Vec::new(),
+        shell_integration: false,
+        terminal_theme: None,
+        detected: true,
+    };
+    let st = AppState::new(
+        TOKEN.into(),
+        PORT,
+        vec!["http://tauri.localhost".into()],
+        home,
+        vec![sleeper],
+    )
+    .with_permission_hold(hold);
+    let app = router(st);
+    let body = serde_json::json!({
+        "cols": 80, "rows": 24, "profile_id": "sleeper", "cwd": dir.path().to_string_lossy(), "agent": null,
+    });
+    let (status, text) = post_json(&app, "/v1/sessions", &body).await;
+    assert_eq!(status, StatusCode::OK, "{text}");
+    let json: serde_json::Value = serde_json::from_str(&text).unwrap();
+    (app, json["tab_id"].as_str().unwrap().to_string(), dir)
+}
+
+async fn post_json(app: &axum::Router, path: &str, body: &serde_json::Value) -> (StatusCode, String) {
+    let req = base("POST", path)
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(body.to_string()))
+        .unwrap();
+    let res = app.clone().oneshot(req).await.unwrap();
+    let status = res.status();
+    let bytes = axum::body::to_bytes(res.into_body(), 1 << 20).await.unwrap();
+    (status, String::from_utf8_lossy(&bytes).into_owned())
+}
+
+/// Holds a request for `tab`, sends `body` to `path`, and checks the send was accepted and released the hold.
+async fn assert_releases(app: &axum::Router, tab: &str, path: &str, body: serde_json::Value) {
+    let hook = spawn_hook(app, Some(tab), bash_request());
+    wait_one(app).await;
+    let (status, text) = post_json(app, path, &body).await;
+    assert_eq!(status, StatusCode::NO_CONTENT, "{path}: {text}");
+    let answer = tokio::time::timeout(Duration::from_secs(5), hook)
+        .await
+        .unwrap_or_else(|_| panic!("{path} left the request held"))
+        .unwrap();
+    assert_eq!(answer.0, StatusCode::NO_CONTENT, "{path}");
+    wait_pending(app, |p| p.is_empty()).await;
+}
+
+#[tokio::test]
+async fn text_typed_through_the_api_releases_the_tab() {
+    let (app, tab, _dir) = app_with_session(Duration::from_secs(30)).await;
+    let path = format!("/v1/sessions/{tab}/input");
+    assert_releases(&app, &tab, &path, serde_json::json!({ "text": "4" })).await;
+}
+
+#[tokio::test]
+async fn dropped_paths_release_the_tab() {
+    let (app, tab, dir) = app_with_session(Duration::from_secs(30)).await;
+    let file = dir.path().join("dropped.txt");
+    std::fs::write(&file, b"x").unwrap();
+    let path = format!("/v1/sessions/{tab}/paste-paths");
+    let body = serde_json::json!({ "paths": [file.to_string_lossy()] });
+    assert_releases(&app, &tab, &path, body).await;
+}
+
+#[tokio::test]
+async fn a_pasted_attachment_releases_the_tab() {
+    let (app, tab, _dir) = app_with_session(Duration::from_secs(30)).await;
+    let png = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, b'r', b'e', b's', b't'];
+    let req = base("POST", &format!("/v1/sessions/{tab}/attachments"))
+        .header(header::CONTENT_TYPE, "image/png")
+        .body(Body::from(png.to_vec()))
+        .unwrap();
+    let saved = json_of(app.clone().oneshot(req).await.unwrap()).await;
+    let name = saved["name"].as_str().unwrap();
+    let path = format!("/v1/sessions/{tab}/paste");
+    assert_releases(&app, &tab, &path, serde_json::json!({ "attachment": name, "text": "" })).await;
+}

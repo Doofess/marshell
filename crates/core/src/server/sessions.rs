@@ -437,6 +437,8 @@ pub async fn input(State(st): State<AppState>, Path(tab): Path<String>, Json(req
     if req.text.contains(['\r', '\n']) {
         return (StatusCode::BAD_REQUEST, "The text can't contain a line break.").into_response();
     }
+    // Typed text answers in the terminal, the same as a key in the pane.
+    st.holds().release_tab(&tab);
     session.write_input(req.text.into_bytes());
     StatusCode::NO_CONTENT.into_response()
 }

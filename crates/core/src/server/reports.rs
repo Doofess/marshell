@@ -73,7 +73,7 @@ fn csi_len(input: &[u8]) -> Option<usize> {
         (Some(b'<'), [], b'M') => first_param(&params[1..]).is_some_and(|b| passive_mouse(b, true)),
         // Cursor position, status, and window reports.
         (None, [], b'R' | b'n' | b't') => true,
-        (Some(b'?'), [], b'n') => true,
+        (Some(b'?'), [], b'n' | b'R') => true,
         // Primary and secondary device attributes.
         (Some(b'?' | b'>'), [], b'c') => true,
         // Mode reports.
@@ -134,6 +134,7 @@ mod tests {
     #[test]
     fn replies_to_queries_are_passive() {
         assert!(is_passive_report(b"\x1b[12;40R"), "cursor position");
+        assert!(is_passive_report(b"\x1b[?12;40R"), "private cursor position");
         assert!(is_passive_report(b"\x1b[?1;2c"), "primary device attributes");
         assert!(is_passive_report(b"\x1b[>0;276;0c"), "secondary device attributes");
         assert!(is_passive_report(b"\x1b[0n"), "status report");
