@@ -274,6 +274,7 @@ Decided 2026-10-15: **Marshell sets the mode**, the same five for every agent CL
 - Ctrl+Shift+T opens a 560 px sheet at 20% from the top.
 - It reads as one sentence of chips: `[Claude] in [my-app · main] · [Plan] · [Quick] · [worktree ☐]`, followed by a prompt box.
 - Typing filters projects. Tab moves between chips, and letters pick values.
+- The folder field also takes a full path in the running OS's syntax, offered as a "Use <path>" row. A "Browse…" row at the end of the list, and Ctrl+O in the field, open the OS folder picker (decided 2026-10-18; built in slice 3f).
 - Enter launches. The tab appears **in under 100 ms** showing "Starting Claude Code in my-app…" and never waits for the process.
 
 **5 parallel agents (glance → jump → act):**
@@ -906,6 +907,7 @@ Decisions from the 2026-10-10 coverage audit (`docs/superpowers/plan-coverage-au
      - **3c Claude adapter, live.** The install plan through the consent card, events normalised into live status, the context and plan rings, the recap, the status line chain, version gating ("Status limited"), the pty fallback, `marshell uninstall`, "hooks off" and the orphaned-hooks check.
      - **3d Approve from anywhere.** Live approve cards with the risk check, the needs-you lane and live region, Peek, the taskbar badge and flash, the needs-you sound, and the security review gate.
      - **3e History and diagnostics.** The transcript archive, the SQLite index with its check and rebuild on start, Resume, `tracing` logs with rotation and redaction, "Export diagnostics", the perf panel, and the code-signing checklist.
+     - **3f Folder picker** (added 2026-10-18, may run any time after 3a). The launcher's folder field accepts a typed path and opens the OS folder picker.
    - **Slice 3a decisions (2026-10-18).**
      1. The spikes reach a real Claude Code through a scratch folder's `.claude/settings.local.json`, so `~/.claude` and its login stay untouched. Trusting that folder is part of the check, in a session started for it.
      2. S4 wraps the user's real `python ~/.claude/statusline.py`, which is only run, never written.
@@ -913,6 +915,10 @@ Decisions from the 2026-10-10 coverage audit (`docs/superpowers/plan-coverage-au
      4. A held permission request is answered through the real `POST /v1/permissions/:rid/decision` and `/release` routes, driven by the spike. The card comes in 3d.
      5. Recorded fixtures come from made-up prompts in a scratch folder. Before they are committed, a scrub step replaces the home path, the user name, session ids and transcript paths with placeholders, and a test checks that no fixture still holds them.
      6. Code signing: a checklist (`docs/research/code-signing.md`, eligibility, cost and the steps to apply) is written in 3e. Buying and identity checks are the user's; wiring signing into CI waits for the release phase.
+   - **Slice 3f decisions (2026-10-18).**
+     1. One click on the folder chip opens the field as now. Typing filters known folders and also accepts a full path in the running OS's syntax, offered as a "Use <path>" row. A "Browse…" row at the end of the list and Ctrl+O in the field open the native picker, so mouse and keyboard reach it alike (double-click was considered and dropped: the first click already swaps the chip for a field, and it has no keyboard route).
+     2. The native dialog comes from `tauri-plugin-dialog` (approved as a new dependency), with a capability limited to the folder-open dialog. Linux and macOS get it from the same plugin later.
+     3. Built as its own slice and PR after 3a merges, with a live check of the dialog. How a typed path that doesn't exist is handled is decided when 3f is planned.
    - Exit: a real Claude session shows correct model, effort, mode, subagents and context; approval from a card works; uninstall leaves zero byte diff; corrupting `index.sqlite` is repaired on start.
 4. **Notifications + choreography + Departures board + stuck detection** (S3).
    - Exit: every rule in brief §5.5 is verified on all three OSes. Every sound has a visual equivalent.
