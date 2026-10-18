@@ -41,11 +41,15 @@ Capture (Ctrl+Shift+X):
 
 - The dashed drop frame was invisible on a terminal, because xterm's positioned, opaque viewport paints over its host's own outline. The frame is now drawn on an `::after` layer above the terminal.
 - A path dropped on the shell panel left the focus in the pane beside it. The panel's terminal now gets the focus.
+
+## Fixed after the branch review
+
+- A dropped name was always pasted in double quotes, where PowerShell still runs `$(…)` and a backtick, and ends the string at a typographic quote, so a file named `a$(calc).txt` would run code when Enter was pressed after the drop. A name holding such a character is now pasted in the session shell's own single quotes (PowerShell's or POSIX's); cmd keeps double quotes, since it runs nothing from inside them. The rule also holds in an agent session, since the agent may have exited to its shell.
+- Consecutive drops ran together. Each dropped path is now followed by a space.
 - Capture first read the image with `navigator.clipboard.read()`, which failed with "Document is not focused" while the snipping overlay still had the focus. The image is now read in the Rust shell (the registered PNG format, or the bitmap wrapped as a BMP), which needs no page focus.
 
 ## Known limits
 
 - With the preview closed, a drag over the sidebar shows no label, since there is nothing to mark. The drop still opens the file.
-- Consecutive drops are not separated by a space; the paths within one drop are.
 - A real drag from Explorer, and drops on a scaled display, are a hand check at release sign-off.
 - A console error, "WebSocket … /v1/pty/<tab> 404", recurs while the Claude pane works. This branch does not touch the pty socket, so it is left for a later look.
