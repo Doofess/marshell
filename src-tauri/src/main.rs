@@ -2,6 +2,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod capture;
+mod folder_picker;
 
 use marshell_core::server::CoreConfig;
 use marshell_core::supervisor::{CoreEvent, Supervisor};
@@ -121,6 +122,8 @@ fn main() {
                 .build(),
         )
         // Opens a web link in the person's browser, only after the preview's confirm; the capability limits it to http(s).
+        // No capability grants the dialog to the webview; only the `pick_folder` command opens it.
+        .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
             if let Some(w) = app.get_webview_window("main") {
@@ -155,6 +158,7 @@ fn main() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            folder_picker::pick_folder,
             core_endpoint,
             capture::capture_screen_region,
             capture::cancel_capture,

@@ -1,4 +1,5 @@
 import type { CreateSessionRequest } from "../../generated/CreateSessionRequest";
+import type { FolderInfo } from "../../generated/FolderInfo";
 import type { LayoutDoc } from "../../generated/LayoutDoc";
 import type { Profile } from "../../generated/Profile";
 import type { ProfilesDoc } from "../../generated/ProfilesDoc";
@@ -8,6 +9,8 @@ import type { TaskCreateRequest } from "../../generated/TaskCreateRequest";
 import type { TaskPlanRequest } from "../../generated/TaskPlanRequest";
 import { ApiError } from "../../lib/api/client";
 import type { Project } from "../launcher/filter";
+import type { PathCheck } from "../launcher/folderRows";
+import { samePath } from "../tasks/taskOf";
 import type { TaskConfirm } from "../launcher/Launcher";
 import { LAUNCH_PROGRAMS, isAgentProgram, programById, type LaunchProgram, type LauncherChoice, type Mode, type ProgramId } from "../launcher/launchChoice";
 import { shellKind } from "./toRow";
@@ -28,6 +31,74 @@ export function livePrograms(profiles: Profile[]): LaunchProgram[] {
 /** The launcher's folder for one of the core's recent projects. The path is the id: the core knows no other. */
 export function toLauncherProject(p: ProjectInfo): Project {
   return { id: p.path, name: p.name, path: p.path, lastUsedMs: p.last_used_ms, ...(p.branch === null ? {} : { branch: p.branch }) };
+}
+
+export { samePath };
+
+/** The launcher's folder for a folder the core checked. Its canonical path is the id, as for a recent project. */
+function folderProject(folder: FolderInfo): Project {
+  return { id: folder.path, name: folder.name, path: folder.path, lastUsedMs: 0, ...(folder.branch === null ? {} : { branch: folder.branch }) };
+}
+
+/**
+ * Using a typed or browsed folder: the recent project at the same path (however it is spelt) is selected, so nothing is added twice;
+ * otherwise `extra` is a project for the folder, to list beside the recent ones.
+ */
+export function chooseFolder(projects: Project[], folder: FolderInfo): { projectId: string; extra: Project | null } {
+  const same = projects.find((p) => samePath(p.path, folder.path));
+  return same ? { projectId: same.id, extra: null } : { projectId: folder.path, extra: folderProject(folder) };
+}
+
+/** What the folder field shows for the core's answer to a typed path: found, or missing (404); a 400 (not a full path) shows no row; any other failure is "failed", not a guess. */
+export function checkState(path: string, result: { ok: FolderInfo } | { status: number }): PathCheck | null {
+  if ("ok" in result) return { path, state: "found", folder: result.ok };
+  if (result.status === 400) return null;
+  return { path, state: result.status === 404 ? "missing" : "failed" };
+}
+
+/**
+ * The Browse… flow: pick a folder, have the core check it, take it. Every way out except taking puts focus back in the field
+ * (a cancel or a failure shows its message there), so a keyboard user keeps their place.
+ */
+export async function browseFolder(deps: {
+  start: string | null;
+  pick: (start: string | null) => Promise<string | null>;
+  check: (path: string) => Promise<FolderInfo>;
+  take: (folder: FolderInfo) => void;
+  fail: (message: string) => void;
+  focusField: () => void;
+}): Promise<void> {
+  const why = (e: unknown) => (e instanceof Error ? e.message : String(e));
+  let picked: string | null;
+  try {
+    picked = await deps.pick(deps.start);
+  } catch (e) {
+    deps.fail(`Couldn't open the folder picker: ${why(e)}`);
+    deps.focusField();
+    return;
+  }
+  if (picked === null) {
+    deps.focusField();
+    return;
+  }
+  let folder: FolderInfo;
+  try {
+    folder = await deps.check(picked);
+  } catch (e) {
+    deps.fail(`Couldn't use ${picked}: ${why(e)}`);
+    deps.focusField();
+    return;
+  }
+  deps.take(folder);
+}
+
+/** Numbers the requests so only the newest one's answer is used: an older answer that arrives late is dropped. */
+export function latestOnly() {
+  let n = 0;
+  return {
+    next: () => ++n,
+    isLatest: (k: number) => k === n,
+  };
 }
 
 /**

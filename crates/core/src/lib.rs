@@ -3,6 +3,7 @@ pub mod auth;
 pub mod bridge;
 pub mod config;
 pub mod crash;
+pub mod folders;
 pub mod git;
 pub mod hooks;
 pub mod job;

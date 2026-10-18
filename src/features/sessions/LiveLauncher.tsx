@@ -1,22 +1,27 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { CreateSessionResponse } from "../../generated/CreateSessionResponse";
 import type { Endpoint } from "../../generated/Endpoint";
+import type { FolderInfo } from "../../generated/FolderInfo";
 import type { LayoutDoc } from "../../generated/LayoutDoc";
 import type { ProfilesDoc } from "../../generated/ProfilesDoc";
+import { ApiError } from "../../lib/api/client";
+import { folders as foldersApi } from "../../lib/api/folders";
 import { layout as layoutApi } from "../../lib/api/layout";
 import { profiles as profilesApi } from "../../lib/api/profiles";
 import { projects as projectsApi } from "../../lib/api/projects";
 import { sessions as sessionsApi } from "../../lib/api/sessions";
 import { tasksApi } from "../../lib/api/tasks";
+import { pickFolder } from "../../lib/folderPicker";
 import { useAppearance } from "../appearance/AppearanceProvider";
 import { withColorScheme } from "../appearance/terminalSettings";
 import type { Project } from "../launcher/filter";
 import { Launcher, type TaskConfirm } from "../launcher/Launcher";
+import { typedPath, type PathCheck } from "../launcher/folderRows";
 import { openFolder, openPrograms, type OpenLists } from "../launcher/launcherKeys";
 import { taskNameFor } from "../tasks/taskName";
 import { appScheme } from "../terminal/terminalTheme";
 import { programById, startingText, type LauncherChoice } from "../launcher/launchChoice";
-import { createRequest, createThenLaunch, initialFocus, launchRequest, progressText, refocus, rememberTasks, replansAfter, type FocusState, livePrograms, nameSource, preselect, preselectMode, startFailure, taskRequest, toLauncherProject, wantsTask } from "./launchPrograms";
+import { browseFolder, checkState, chooseFolder, latestOnly, createRequest, createThenLaunch, initialFocus, launchRequest, progressText, refocus, rememberTasks, replansAfter, type FocusState, livePrograms, nameSource, preselect, preselectMode, startFailure, taskRequest, toLauncherProject, wantsTask } from "./launchPrograms";
 
 // The worktree flag is part of this state and nothing else: it is never read from or written to the remembered choices, so the chip starts off every time.
 const INITIAL: LauncherChoice = { program: "claude", projectId: "", mode: "manual", pace: "Balanced", worktree: false };
@@ -92,7 +97,17 @@ export function LiveLauncher({ endpoint, nextNumber, size, onStarted, onClose }:
     };
   }, [endpoint]);
 
-  const projects = useMemo(() => loaded?.projects ?? [], [loaded]);
+  // A folder typed or browsed to that is not among the recent ones: listed first, and used like any other.
+  const [extra, setExtra] = useState<Project | null>(null);
+  // What the core said about the path typed in the folder field; null when the text is not a path.
+  const [pathCheck, setPathCheck] = useState<PathCheck | null>(null);
+  // True while the native folder dialog is open, so a second Ctrl+O or click opens no second one.
+  const browsing = useRef(false);
+  // Each check gets a number, so an answer for text typed earlier that arrives after the field changed again is dropped.
+  const checks = useMemo(latestOnly, []);
+
+  const recent = useMemo(() => loaded?.projects ?? [], [loaded]);
+  const projects = useMemo(() => (extra && !recent.some((p) => p.id === extra.id) ? [extra, ...recent] : recent), [extra, recent]);
   const programs = useMemo(() => livePrograms(loaded?.doc.profiles ?? []), [loaded]);
   // The most recent folder until one is picked.
   const projectId = projects.some((p) => p.id === choice.projectId) ? choice.projectId : (projects[0]?.id ?? "");
@@ -113,11 +128,61 @@ export function LiveLauncher({ endpoint, nextNumber, size, onStarted, onClose }:
     // eslint-disable-next-line react-hooks/exhaustive-deps -- focusState is rebuilt every render; its three fields are the dependencies.
   }, [focusState.program, focusState.prompt, focusState.ready]);
 
+  // Check the typed path 150 ms after the last keystroke. Closing the field (query null) or unmounting cancels the timer and drops any answer on its way.
+  useEffect(() => {
+    const path = endpoint && query !== null ? typedPath(query) : null;
+    if (path === null) {
+      setPathCheck(null);
+      return;
+    }
+    const n = checks.next();
+    setPathCheck({ path, state: "checking" });
+    const timer = setTimeout(() => {
+      foldersApi
+        .check(endpoint!, path)
+        .then((ok) => ({ ok }), (e: unknown) => ({ status: e instanceof ApiError ? e.status : 0 }))
+        .then((result) => checks.isLatest(n) && setPathCheck(checkState(path, result)));
+    }, 150);
+    return () => {
+      clearTimeout(timer);
+      checks.next();
+    };
+  }, [endpoint, query, checks]);
+  // Never show a check for other text than what is in the field now (the effect above catches up a render later).
+  const shownCheck = query !== null && pathCheck !== null && pathCheck.path === typedPath(query) ? pathCheck : null;
+
   const patch = (p: Partial<LauncherChoice>) => {
     if (p.program !== undefined) setProgramPicked(true);
     if (p.mode !== undefined) setModePicked(true);
     setChoice((c) => ({ ...c, ...p }));
     setError(undefined);
+  };
+
+  /** Use a folder the core has checked: its recent project if it is one, else a new entry; then pick it and close the field, as a pick does. */
+  const takeFolder = (folder: FolderInfo) => {
+    const chosen = chooseFolder(projects, folder);
+    if (chosen.extra) setExtra(chosen.extra);
+    patch({ projectId: chosen.projectId });
+    setLists((l) => openFolder(l, null));
+  };
+
+  /** The native folder dialog, starting in the typed folder or else the chosen one. Cancelling leaves the field as it was. */
+  const browse = async () => {
+    if (!endpoint || browsing.current) return;
+    browsing.current = true;
+    const start = shownCheck?.state === "found" ? shownCheck.folder.path : (projects.find((p) => p.id === projectId)?.path ?? null);
+    try {
+      await browseFolder({
+        start,
+        pick: pickFolder,
+        check: (path) => foldersApi.check(endpoint, path),
+        take: takeFolder,
+        fail: setError,
+        focusField: () => root.current?.querySelector<HTMLInputElement>(".launcher__input")?.focus(),
+      });
+    } finally {
+      browsing.current = false;
+    }
   };
 
   // A shell takes no first prompt, so text typed for an agent before switching doesn't name its task.
@@ -211,7 +276,7 @@ export function LiveLauncher({ endpoint, nextNumber, size, onStarted, onClose }:
   return (
     <div ref={root} className="live-app__launcher">
       <Launcher
-        view={{ choice: shown, projects, query, activeIndex, programsOpen, prompt, nextNumber, taskName, ...(confirm === null ? {} : { confirm }) }}
+        view={{ choice: shown, projects, query, pathCheck: shownCheck, activeIndex, programsOpen, prompt, nextNumber, taskName, ...(confirm === null ? {} : { confirm }) }}
         programs={programs}
         paceChip={false}
         error={error ?? loadError}
@@ -226,6 +291,8 @@ export function LiveLauncher({ endpoint, nextNumber, size, onStarted, onClose }:
           patch({ projectId: id });
           setLists((l) => openFolder(l, null));
         }}
+        onUsePath={takeFolder}
+        onBrowse={() => void browse()}
         onPrograms={(open) => {
           setLists((l) => openPrograms(l, open));
           if (open) setActiveIndex(Math.max(0, programs.findIndex((p) => p.id === shown.program)));

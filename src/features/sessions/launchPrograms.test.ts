@@ -6,7 +6,8 @@ import type { Project } from "../launcher/filter";
 import { startingText, type LauncherChoice, type ProgramId } from "../launcher/launchChoice";
 import { ApiError } from "../../lib/api/client";
 import type { LayoutDoc } from "../../generated/LayoutDoc";
-import { createRequest, createThenLaunch, initialFocus, launchRequest, nameSource, preselect, preselectMode, progressText, refocus, rememberTasks, livePrograms, replansAfter, startFailure, taskRequest, toLauncherProject, wantsTask } from "./launchPrograms";
+import type { FolderInfo } from "../../generated/FolderInfo";
+import { browseFolder, checkState, chooseFolder, latestOnly, samePath, createRequest, createThenLaunch, initialFocus, launchRequest, nameSource, preselect, preselectMode, progressText, refocus, rememberTasks, livePrograms, replansAfter, startFailure, taskRequest, toLauncherProject, wantsTask } from "./launchPrograms";
 
 const profile = (id: string, family: Profile["family"], name = id): Profile => ({ id, name, command: [id], family, cwd: null, env: [], shell_integration: true, detected: true });
 const PROFILES: Profile[] = [profile("pwsh", "power_shell", "PowerShell 7"), profile("cmd", "cmd", "Command Prompt"), profile("git-bash", "posix", "Git Bash"), profile("wsl-ubuntu", "wsl", "Ubuntu")];
@@ -269,5 +270,98 @@ describe("starting a task in a worktree", () => {
     });
     // With the worktree flag on and no task, nothing about the request changes: the flag is never sent.
     expect(launchRequest(on("claude"), "go", programs, DOC, PROJECTS, SIZE)).toEqual(launchRequest(choice("claude"), "go", programs, DOC, PROJECTS, SIZE));
+  });
+});
+
+describe("chooseFolder", () => {
+  const recent: Project[] = [{ id: "c:\\dev\\app", name: "app", path: "c:\\dev\\app", lastUsedMs: 5 }];
+  it("selects the recent project spelt differently (case, trailing separator) and adds nothing", () => {
+    const folder: FolderInfo = { path: "C:\\Dev\\App\\", name: "App", branch: null };
+    expect(chooseFolder(recent, folder)).toEqual({ projectId: "c:\\dev\\app", extra: null });
+  });
+  it("builds a project from an unknown folder, its path as the id", () => {
+    const folder: FolderInfo = { path: "C:\\other\\thing", name: "thing", branch: "main" };
+    expect(chooseFolder(recent, folder)).toEqual({
+      projectId: "C:\\other\\thing",
+      extra: { id: "C:\\other\\thing", name: "thing", path: "C:\\other\\thing", branch: "main", lastUsedMs: 0 },
+    });
+  });
+  it("leaves the branch out when the folder has none", () => {
+    const extra = chooseFolder([], { path: "C:\\x", name: "x", branch: null }).extra;
+    expect(extra).toEqual({ id: "C:\\x", name: "x", path: "C:\\x", lastUsedMs: 0 });
+    expect(extra && "branch" in extra).toBe(false);
+  });
+});
+
+describe("samePath", () => {
+  it("ignores case and a trailing separator on a Windows path, not on a Unix one", () => {
+    expect(samePath("C:\\Dev\\App\\", "c:\\dev\\app")).toBe(true);
+    expect(samePath("/Dev/App", "/dev/app")).toBe(false);
+  });
+});
+
+describe("checkState", () => {
+  const folder: FolderInfo = { path: "C:\\a", name: "a", branch: null };
+  it("a found folder is found", () => {
+    expect(checkState("c:/a", { ok: folder })).toEqual({ path: "c:/a", state: "found", folder });
+  });
+  it("a 400 (not a full path) shows no row", () => {
+    expect(checkState("/x", { status: 400 })).toBeNull();
+  });
+  it("only a 404 is missing; any other failure is failed", () => {
+    expect(checkState("C:\\nope", { status: 404 })).toEqual({ path: "C:\\nope", state: "missing" });
+    expect(checkState("C:\\nope", { status: 500 })).toEqual({ path: "C:\\nope", state: "failed" });
+    expect(checkState("C:\\nope", { status: 0 })).toEqual({ path: "C:\\nope", state: "failed" });
+  });
+});
+
+describe("latestOnly", () => {
+  it("only the last number taken is the latest", () => {
+    const seq = latestOnly();
+    const a = seq.next();
+    const b = seq.next();
+    expect(seq.isLatest(a)).toBe(false);
+    expect(seq.isLatest(b)).toBe(true);
+  });
+});
+
+describe("browseFolder", () => {
+  const folder: FolderInfo = { path: "C:\dev", name: "dev", branch: null };
+  const setup = (over: Partial<Parameters<typeof browseFolder>[0]> = {}) => {
+    const take = vi.fn();
+    const fail = vi.fn();
+    const focusField = vi.fn();
+    const deps = { start: "C:\a", pick: vi.fn().mockResolvedValue("C:\dev"), check: vi.fn().mockResolvedValue(folder), take, fail, focusField, ...over };
+    return { deps, take, fail, focusField };
+  };
+  it("passes the start folder to the picker and takes the checked folder without moving focus", async () => {
+    const { deps, take, fail, focusField } = setup();
+    await browseFolder(deps);
+    expect(deps.pick).toHaveBeenCalledWith("C:\a");
+    expect(deps.check).toHaveBeenCalledWith("C:\dev");
+    expect(take).toHaveBeenCalledWith(folder);
+    expect(fail).not.toHaveBeenCalled();
+    expect(focusField).not.toHaveBeenCalled();
+  });
+  it("refocuses the field when the picker is cancelled", async () => {
+    const { deps, take, fail, focusField } = setup({ pick: vi.fn().mockResolvedValue(null) });
+    await browseFolder(deps);
+    expect(focusField).toHaveBeenCalledTimes(1);
+    expect(take).not.toHaveBeenCalled();
+    expect(fail).not.toHaveBeenCalled();
+  });
+  it("reports a picker that throws and refocuses the field", async () => {
+    const { deps, take, fail, focusField } = setup({ pick: vi.fn().mockRejectedValue(new Error("no dialog")) });
+    await browseFolder(deps);
+    expect(fail).toHaveBeenCalledWith("Couldn't open the folder picker: no dialog");
+    expect(focusField).toHaveBeenCalledTimes(1);
+    expect(take).not.toHaveBeenCalled();
+  });
+  it("reports a picked folder the core can't use and refocuses the field", async () => {
+    const { deps, take, fail, focusField } = setup({ check: vi.fn().mockRejectedValue(new Error("gone")) });
+    await browseFolder(deps);
+    expect(fail).toHaveBeenCalledWith("Couldn't use C:\dev: gone");
+    expect(focusField).toHaveBeenCalledTimes(1);
+    expect(take).not.toHaveBeenCalled();
   });
 });

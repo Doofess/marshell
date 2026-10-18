@@ -14,6 +14,10 @@ describe("the launcher stories", () => {
   it("show the new session's number, 4, because 4 is the lowest one free", () => {
     expect(render("Empty")).toContain("Session 4");
   });
+  it("show a typed path that exists and one that doesn't", () => {
+    expect(render("TypedPathFound")).toContain("Use");
+    expect(render("TypedPathMissing")).toContain('aria-disabled="true"');
+  });
   it("show the program list with all three headings, and a shell and a tool without mode and pace chips, but with the worktree chip", () => {
     const open = render("AgentsShellsAndTools");
     for (const g of ["Agents", "Shells", "Tools"]) expect(open).toContain(`>${g}<`);

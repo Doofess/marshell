@@ -2,6 +2,7 @@ mod attachments;
 mod config;
 mod events;
 mod files;
+mod folders;
 mod foreground;
 pub mod frames;
 mod guard;
@@ -241,6 +242,7 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/layout/view", put(layout::put_view))
         .route("/v1/import/windows-terminal", get(settings::windows_terminal))
         .route("/v1/projects", get(projects::get))
+        .route("/v1/folders/check", get(folders::check))
         .route("/v1/tasks", get(tasks::list).post(tasks::create))
         .route("/v1/tasks/plan", post(tasks::plan))
         .route("/v1/tasks/{id}/changes", get(tasks::changes))
