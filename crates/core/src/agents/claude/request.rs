@@ -107,12 +107,15 @@ pub(super) fn allow_rule_suggestions(request: &Value) -> impl Iterator<Item = &V
         .filter(|s| s["type"] == "addRules" && s["behavior"] == "allow")
 }
 
-/// The first suggested allow rule, rendered exactly enough to label the project scope.
+/// Every rule `permission_output` writes for the project scope, so the card names all of them.
+/// `None` when there is none, or when one can't be named (the card then offers no "Always").
 pub fn always_rule(request: &Value) -> Option<String> {
-    let suggestion = allow_rule_suggestions(request).next()?;
-    let rules = suggestion["rules"].as_array()?;
+    let mut rules = Vec::new();
+    for suggestion in allow_rule_suggestions(request) {
+        rules.extend(suggestion["rules"].as_array()?);
+    }
     let rendered: Option<Vec<_>> = rules
-        .iter()
+        .into_iter()
         .map(|rule| {
             let tool = rule["toolName"].as_str().filter(|s| !s.is_empty())?;
             Some(match rule["ruleContent"].as_str().filter(|s| !s.is_empty()) {
@@ -270,9 +273,23 @@ mod tests {
     }
 
     #[test]
-    fn always_rule_uses_first_allow_suggestion_and_renders_each_rule() {
+    fn always_rule_uses_every_allow_suggestion_and_renders_each_rule() {
         let r = json!({"permission_suggestions":[{"type":"addRules", "behavior":"deny"}, {"type":"addRules", "behavior":"allow", "rules":[{"toolName":"Bash", "ruleContent":"npm test:*"}, {"toolName":"Read"}, {"toolName":"Edit", "ruleContent":""}]}, {"type":"addRules", "behavior":"allow", "rules":[{"toolName":"Write"}]}]});
-        assert_eq!(always_rule(&r).as_deref(), Some("Bash(npm test:*), Read, Edit"));
+        assert_eq!(always_rule(&r).as_deref(), Some("Bash(npm test:*), Read, Edit, Write"));
+    }
+
+    #[test]
+    fn always_rule_names_every_rule_permission_output_writes() {
+        let r = json!({"permission_suggestions":[
+            {"type":"addRules", "behavior":"allow", "rules":[{"toolName":"Bash", "ruleContent":"npm test:*"}]},
+            {"type":"addRules", "behavior":"allow", "rules":[{"toolName":"Bash", "ruleContent":"rm:*"}]}
+        ]});
+        assert_eq!(always_rule(&r).as_deref(), Some("Bash(npm test:*), Bash(rm:*)"));
+        let unnamed = json!({"permission_suggestions":[
+            {"type":"addRules", "behavior":"allow", "rules":[{"toolName":"Bash", "ruleContent":"npm test:*"}]},
+            {"type":"addRules", "behavior":"allow", "rules":[{"ruleContent":"rm:*"}]}
+        ]});
+        assert_eq!(always_rule(&unnamed), None);
     }
 
     #[test]
