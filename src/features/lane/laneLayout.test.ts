@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { APPROVALS } from "../approval/fixtures";
 import type { ApprovalRequest } from "../approval/types";
-import { LANE, laneHeading, laneLayout, orderLane, pending } from "./laneLayout";
+import { LANE, laneHeading, laneLayout, nextWaiting, orderLane, pending } from "./laneLayout";
 
 const req = (id: string, waitingMs: number, phase: "pending" | "terminal" = "pending"): ApprovalRequest => ({
   ...APPROVALS.safeBash,
@@ -24,6 +24,21 @@ describe("order", () => {
   });
   it("counts only pending requests", () => {
     expect(pending([req("a", 1), req("b", 2, "terminal")]).map((r) => r.id)).toEqual(["a"]);
+  });
+});
+
+describe("nextWaiting (Ctrl+Shift+N)", () => {
+  it("is the oldest request a card can answer, ahead of an older one that asks in its terminal", () => {
+    const own = { ...req("t", 900), terminalOnly: true };
+    expect(nextWaiting([req("b", 10), own, req("a", 500)])).toEqual({ kind: "card", request: expect.objectContaining({ id: "a" }) });
+  });
+  it("is the oldest session asking in its own terminal when no card can answer", () => {
+    const older = { ...req("t1", 900), terminalOnly: true };
+    const newer = { ...req("t2", 50), terminalOnly: true };
+    expect(nextWaiting([newer, older])).toEqual({ kind: "terminal", request: expect.objectContaining({ id: "t1" }) });
+  });
+  it("is nothing when only answered requests are left", () => {
+    expect(nextWaiting([req("a", 1, "terminal")])).toBeNull();
   });
 });
 

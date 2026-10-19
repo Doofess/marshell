@@ -2,7 +2,7 @@ import type { ReactNode } from "react";
 import { ApproveCard } from "../approval/ApproveCard";
 import type { ApprovalRequest } from "../approval/types";
 import { LaneRow } from "./LaneRow";
-import { LANE, laneHeading, laneLayout, orderLane, pending } from "./laneLayout";
+import { LANE, laneHeading, laneLayout, nextWaiting, orderLane, pending } from "./laneLayout";
 import "./Lane.css";
 
 /**
@@ -25,7 +25,8 @@ export function Lane({
   onJump?: (request: ApprovalRequest) => void;
 }) {
   const waiting = orderLane(pending(requests));
-  const target = waiting.find((r) => !r.terminalOnly);
+  const next = nextWaiting(requests);
+  const target = next?.kind === "card" ? next.request : undefined;
   const ordered = target ? [target, ...waiting.filter((r) => r !== target)] : waiting;
   const settled = requests.filter((r) => r.state.phase !== "pending");
   const layout = laneLayout(ordered.length, sidebarHeight);

@@ -24,6 +24,7 @@ import { focusAfterMenu, menuFacts, modeOfItem } from "./sessionMenuRun";
 import { ContextMenu } from "../../components/ContextMenu/ContextMenu";
 import { tasksApi } from "../../lib/api/tasks";
 import { cancelsCloseBar, commandShortcut, sessionShortcut, type SessionShortcut } from "../../lib/appShortcuts";
+import { nextWaiting } from "../lane/laneLayout";
 import { osOfPlatform } from "../../lib/keymap";
 import { paletteSessions } from "../palette/sessions";
 import { Preview } from "../preview/Preview";
@@ -276,6 +277,10 @@ export function LiveApp() {
     },
     [pick, actions],
   );
+  const requestsRef = useRef(requests);
+  requestsRef.current = requests;
+  const jumpToRequestRef = useRef(jumpToRequest);
+  jumpToRequestRef.current = jumpToRequest;
   const restoreFocus = useCallback(() => void setTimeout(() => actions.focusTerminal(), 0), [actions]);
   const liveCard = (r: ApprovalRequest, inDrawer = false) => (
     <LiveCard key={r.id + (inDrawer ? "-drawer" : "")} request={r} inDrawer={inDrawer} onAnswer={answerRequest} onJump={jumpToRequest} onExpand={(x) => setDrawerId(x.id)} onRestoreFocus={restoreFocus} />
@@ -923,13 +928,20 @@ export function LiveApp() {
         case "nonePane":
           sendNav([{ type: "select-none" }]);
           return true;
-        // The lane's target card, or its oldest one-liner when every waiting session asks in its own terminal. Focus only: never an answer.
+        // Focus only, never an answer: the lane's target card, or the same card in the drawer when the lane is not on screen (focus
+        // mode, the rail). A session that asks in its own terminal is gone to instead.
         case "nextWaiting": {
-          const target =
-            document.querySelector<HTMLElement>('.lane .approve-card[data-phase="pending"]') ??
-            document.querySelector<HTMLElement>(".lane .lane-row");
-          if (target) target.focus();
-          else announce("Nothing needs you");
+          const next = nextWaiting(requestsRef.current);
+          if (next === null) announce("Nothing needs you");
+          else if (next.kind === "terminal") jumpToRequestRef.current(next.request);
+          else {
+            const inLane = document.querySelector<HTMLElement>('.lane .approve-card[data-phase="pending"]');
+            if (inLane) inLane.focus();
+            else {
+              setDrawerId(next.request.id);
+              setTimeout(() => document.querySelector<HTMLElement>('.drawer .approve-card[data-phase="pending"]')?.focus(), 0);
+            }
+          }
           return true;
         }
         default:

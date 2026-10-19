@@ -10,6 +10,14 @@ export function orderLane(items: ApprovalRequest[]): ApprovalRequest[] {
   return [...items].sort((a, b) => b.waitingMs - a.waitingMs || a.id.localeCompare(b.id));
 }
 
+/** Where Ctrl+Shift+N goes: the lane's target card (the oldest request a card can answer), else the oldest session asking in its own terminal. */
+export function nextWaiting(items: ApprovalRequest[]): { kind: "card" | "terminal"; request: ApprovalRequest } | null {
+  const waiting = orderLane(pending(items));
+  const card = waiting.find((r) => !r.terminalOnly);
+  if (card) return { kind: "card", request: card };
+  return waiting[0] ? { kind: "terminal", request: waiting[0] } : null;
+}
+
 export function laneHeading(count: number): string {
   return count > 0 ? `Needs you · ${count}` : "All clear";
 }
