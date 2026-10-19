@@ -5,9 +5,8 @@ import { ContextRing } from "../ContextRing/ContextRing";
 import { AuxGlyph, StatusGlyph } from "./StatusGlyph";
 
 const glyphCss = readFileSync(new URL("./StatusGlyph.css", import.meta.url), "utf8");
-const ringCss = readFileSync(new URL("../ContextRing/ContextRing.css", import.meta.url), "utf8");
 
-describe("the done check, caution triangle and context ring take the vendor's colour", () => {
+describe("the done check and caution triangle take the vendor's colour", () => {
   it("draws both done checks in the vendor's colour, falling back to the app's outside a session", () => {
     expect(glyphCss).toMatch(/\[data-kind="done-unseen"\]\s*\{[^}]*color:\s*var\(--agent-signal, var\(--ok\)\)/);
     expect(glyphCss).toMatch(/\[data-kind="done-seen"\]\s*\{[^}]*color:\s*var\(--agent-signal, var\(--ok-dim\)\)/);
@@ -21,24 +20,19 @@ describe("the done check, caution triangle and context ring take the vendor's co
     expect(glyphCss).toMatch(/\.aux-glyph\[data-kind="caution"\]\s*\{[^}]*color:\s*var\(--agent-signal, var\(--caution\)\)/);
     expect(renderToStaticMarkup(<AuxGlyph kind="caution" />)).toContain("<path d=\"M8 2l6.25 11");
   });
-  it("draws the ring in the vendor's colour at every level, never in caution yellow or error red", () => {
-    expect(ringCss).toMatch(/\.context-ring__value[^{]*\{[^}]*stroke:\s*var\(--agent-signal, var\(--text-2\)\)/);
-    expect(ringCss).not.toContain("--caution");
-    expect(ringCss).not.toContain("--error");
-  });
 });
 
-describe("the ring's level shows in its shape, not its colour", () => {
+describe("the ring's level shows in its shape, as well as in its colour", () => {
   const ring = (pct: number) => renderToStaticMarkup(<ContextRing pct={pct} />);
   const width = (h: string) => Number(/class="context-ring__value"[^>]*stroke-width="([\d.]+)"/.exec(h)?.[1]);
-  it("thickens the ring from 80%", () => {
-    expect(width(ring(79))).toBe(2);
-    expect(width(ring(80))).toBeGreaterThan(2);
-    expect(width(ring(94))).toBe(width(ring(80)));
+  it("thickens the ring from 70%", () => {
+    expect(width(ring(69))).toBe(2);
+    expect(width(ring(70))).toBeGreaterThan(2);
+    expect(width(ring(89))).toBe(width(ring(70)));
   });
-  it("adds a centre dot from 95%, and only then", () => {
-    expect(ring(94)).not.toContain("context-ring__dot");
-    expect(ring(95)).toContain("context-ring__dot");
+  it("adds a centre dot from 90%, and only then", () => {
+    expect(ring(89)).not.toContain("context-ring__dot");
+    expect(ring(90)).toContain("context-ring__dot");
     expect(ring(100)).toContain("context-ring__dot");
   });
   it("still says the level in words", () => {

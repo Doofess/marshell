@@ -1,3 +1,4 @@
+mod activity;
 mod agents;
 mod attachments;
 mod config;
@@ -96,8 +97,12 @@ struct Inner {
     claude_settings: Option<PathBuf>,
     /// Where the app's own programs sit, so setting up hooks can put a missing bridge back. None in tests.
     programs_dir: Option<PathBuf>,
-    /// `--version` of each agent executable, asked once per path for the app's lifetime.
-    versions: Mutex<HashMap<PathBuf, Option<String>>>,
+    /// `--version` of each agent executable with the file's modified time it was read at. A different
+    /// time asks again, and a version that could not be read is not kept.
+    versions: Mutex<HashMap<PathBuf, (Option<std::time::SystemTime>, String)>>,
+    /// A Claude Code version a test pins, in place of asking the executable. `Some(None)` is a
+    /// version that cannot be read.
+    claude_version: Option<Option<String>>,
 }
 
 /// How long a permission request is held when `MARSHELL_PERMISSION_HOLD_SECS` is not set.
@@ -150,6 +155,7 @@ impl AppState {
             claude_settings: None,
             programs_dir: None,
             versions: Mutex::new(HashMap::new()),
+            claude_version: None,
         }))
     }
     /// Names Claude Code's settings file, in place of the environment. Call it before the state is cloned.
@@ -164,6 +170,14 @@ impl AppState {
         Arc::get_mut(&mut self.0)
             .expect("with_programs_dir runs before the state is shared")
             .programs_dir = Some(dir);
+        self
+    }
+    /// Pins the Claude Code version that the live status gate and the setup route see, so a test never runs a
+    /// real `claude`. `None` is a version that cannot be read. Call it before the state is cloned.
+    pub fn with_claude_version(mut self, version: Option<String>) -> Self {
+        Arc::get_mut(&mut self.0)
+            .expect("with_claude_version runs before the state is shared")
+            .claude_version = Some(version);
         self
     }
     /// Sets how long a permission request is held. Call it before the state is cloned.
@@ -267,6 +281,7 @@ pub fn router(state: AppState) -> Router {
     // Here and not in `AppState::new`, which `with_agent_check` needs to be the only owner of.
     layout::spawn_layout_saver(&state);
     foreground::spawn_watcher(&state);
+    activity::spawn_watcher(&state);
     let origins: Vec<HeaderValue> = state.0.allowed_origins.iter().filter_map(|o| o.parse().ok()).collect();
     let cors = CorsLayer::new()
         .allow_origin(AllowOrigin::list(origins))

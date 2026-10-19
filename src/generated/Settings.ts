@@ -12,4 +12,8 @@ pause_warned: boolean,
 /**
  * True once the user has been through (or dismissed) the first-run onboarding.
  */
-onboarded: boolean, };
+onboarded: boolean, 
+/**
+ * Agent ids whose live status is switched off; their rows use the pty fallback.
+ */
+status_off: Array<string>, };

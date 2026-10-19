@@ -13,6 +13,9 @@ export const installRequest = (w: Want): Want => ({ status: w.status, statusline
 const onOf = (w: Want): Record<Capability, boolean> => ({ status: w.status, approve: false, statusline: w.status && w.statusline });
 const ON = onOf(DEFAULT_WANT);
 
+/** Whether an agent's live status is on: it is unless the agent is in the settings' `status_off`. */
+export const liveStatusOn = (statusOff: string[], agent: string): boolean => !statusOff.includes(agent);
+
 /** The setup's file does not parse: there is nothing to set up or turn off until it is fixed. */
 const refused = (s: AgentSetup) => s.settings_state === "unparsable";
 

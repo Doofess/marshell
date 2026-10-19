@@ -72,9 +72,9 @@ describe("statusItems: what the strip says, from known data only", () => {
     const partial = statusItems({ ...row("working"), mcp: { connected: 2, total: 3 } }, undefined, []).find((i) => i.id === "mcp")!;
     expect(partial).toMatchObject({ kind: "ok", value: "2 of 3" });
   });
-  it("tones a meter from the same thresholds as the context ring: neutral to 79, caution from 80, error from 95", () => {
+  it("tones a meter from the same thresholds as the context ring: neutral to 69, caution from 70, error from 90", () => {
     const tone = (pct: number) => statusItems({ ...row("working"), contextPct: pct, usage: undefined }, undefined, []).find((i) => i.id === "ctx")!.tone;
-    expect([tone(0), tone(79.9), tone(80), tone(94.9), tone(95), tone(100)]).toEqual(["neutral", "neutral", "caution", "caution", "error", "error"]);
+    expect([tone(0), tone(69.9), tone(70), tone(89.9), tone(90), tone(100)]).toEqual(["neutral", "neutral", "caution", "caution", "error", "error"]);
   });
   it("clamps a nonsense percentage instead of drawing it", () => {
     const ctx = statusItems({ ...row("working"), contextPct: 140, usage: undefined }, undefined, []).find((i) => i.id === "ctx")!;

@@ -31,11 +31,16 @@ describe("Sidebar", () => {
     expect(h).toContain("Doctor: 4 issues");
   });
   it("leaves out unknown plan usage, and shows a clean doctor as such", () => {
-    const h = html({ footer: {} });
+    const h = html({ footer: { doctorIssues: 0 } });
     expect(h).not.toContain("sidebar__plan");
     expect(h).not.toContain("5h ");
     expect(h).not.toContain("–");
     expect(h).toContain("Doctor: no issues");
+  });
+  it("leaves out a doctor count it was not given, rather than calling it clean", () => {
+    const h = html({ footer: { planPct: 12, fiveHourPct: 12 } });
+    expect(h).toContain("5h 12%");
+    expect(h).not.toContain("sidebar__doctor");
   });
   it("has no footer when none is given, and gives its row back", () => {
     const h = html({ footer: undefined });
@@ -203,5 +208,24 @@ describe("Sidebar: grouped by project", () => {
     expect(html({ rows })).not.toContain("sidebar__group");
     expect(html({ rows, grouped: false })).not.toContain("sidebar__group");
     expect(html()).not.toContain("sidebar__group");
+  });
+});
+
+describe("Sidebar: the plan ring from live status", () => {
+  it("shows the ring at its level and 5h N% for a known plan use, with no doctor number made up", () => {
+    const h = html({ footer: { planPct: 72, fiveHourPct: 72 } });
+    expect(h).toContain("5h 72%");
+    expect(h).toContain('data-tone="caution"');
+  });
+  it("announces the footer ring as the 5-hour plan, once, and not as context", () => {
+    const foot = html({ footer: { planPct: 72, fiveHourPct: 72 } }).split("sidebar__footer")[1];
+    expect(foot).toContain('aria-label="5-hour plan 72% used"');
+    expect(foot).not.toContain("Context");
+    expect(foot).toMatch(/<span class="sidebar__plan" aria-hidden="true">5h 72%<\/span>/);
+  });
+  it("shows nothing of the plan when it is unknown", () => {
+    const h = html({ footer: {} });
+    expect(h.slice(h.indexOf("sidebar__footer"))).not.toContain("context-ring");
+    expect(h).not.toContain("5h ");
   });
 });

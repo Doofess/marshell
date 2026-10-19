@@ -13,6 +13,11 @@ export function formatDuration(ms?: number): string {
   return `${Math.floor(h / 24)}d ${h % 24}h`;
 }
 
+/** A row's age: "<1m" under a minute, so it never ticks by the second on screen or in the row's name, then as formatDuration. */
+export function formatAge(ms?: number): string {
+  return ms !== undefined && Number.isFinite(ms) && ms >= 0 && ms < 60_000 ? "<1m" : formatDuration(ms);
+}
+
 export function formatTokens(n?: number): string {
   if (n === undefined || !Number.isFinite(n) || n < 0) return DASH;
   if (n < 1000) return String(Math.round(n));

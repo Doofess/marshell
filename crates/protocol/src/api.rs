@@ -150,6 +150,70 @@ pub struct SessionInfo {
     /// None at the prompt, and always None for a session launched as an agent.
     #[serde(default)]
     pub foreground: Option<Foreground>,
+    /// What an agent is doing, folded by the core from its hook events and status line. None for a
+    /// plain shell, and for an agent whose live status is unavailable (see `status_note`).
+    #[serde(default)]
+    pub live: Option<LiveStatus>,
+    /// Output activity of an agent row that has no `live`: the pty fallback. Never Needs you, Done or Error.
+    #[serde(default)]
+    pub activity: Option<Activity>,
+    /// Why this agent row has no `live`: an unknown version, or the per-agent switch being off.
+    #[serde(default)]
+    pub status_note: Option<String>,
+}
+
+/// What an agent session is doing, as its hooks report it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum LiveState {
+    Idle,
+    Working,
+    NeedsPermission,
+    NeedsQuestion,
+    Done,
+    Error,
+    Ended,
+}
+
+/// The last thing an agent said when it finished a turn, and when.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct Recap {
+    pub text: String,
+    #[ts(type = "number")]
+    pub at_ms: u64,
+}
+
+/// An agent session's live status. Percentages are whole numbers, 0 to 100; unknown is None.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct LiveStatus {
+    pub state: LiveState,
+    /// Line 2 of the row, e.g. "Running `npm test`". Empty when there is nothing to say.
+    pub phrase: String,
+    /// When `state` last changed.
+    #[ts(type = "number")]
+    pub since_ms: u64,
+    pub recap: Option<Recap>,
+    pub model: Option<String>,
+    pub effort: Option<String>,
+    pub context_pct: Option<u8>,
+    pub five_hour_pct: Option<u8>,
+    /// When the 5-hour window resets, in Unix seconds as Claude Code sends it.
+    #[ts(type = "number | null")]
+    pub five_hour_resets_at: Option<u64>,
+    pub seven_day_pct: Option<u8>,
+    pub subagents: u32,
+}
+
+/// A row's output activity when its hooks say nothing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum Activity {
+    Working,
+    Idle,
 }
 
 /// What a shell session is running right now.
@@ -689,6 +753,8 @@ pub struct Settings {
     pub pause_warned: bool,
     /// True once the user has been through (or dismissed) the first-run onboarding.
     pub onboarded: bool,
+    /// Agent ids whose live status is switched off; their rows use the pty fallback.
+    pub status_off: Vec<String>,
 }
 
 /// A file the core found for the user to import from (the core only reads it).

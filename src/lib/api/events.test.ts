@@ -41,6 +41,9 @@ const snapshot = (names: string[]): SessionsSnapshot => ({
     command: { kind: "unknown" },
     paused: false,
     foreground: null,
+    live: null,
+    activity: null,
+    status_note: null,
   })),
   closed: [],
 });

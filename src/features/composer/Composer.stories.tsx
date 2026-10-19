@@ -98,7 +98,7 @@ export const StatusBarMcpProblem = barStory(
 export const StatusBarNothingKnown = barStory("Nothing known about the session: the bar is an empty row of the same height, never a row of dashes", <StatusBar row={row("tiny")} />);
 export const StatusBarEmptyPane = barStory("The focused pane is empty: the bar stays, empty, so the window never changes height when focus moves", <StatusBar row={null} />);
 export const StatusBarNearlyFull = barStory(
-  "Context at 96% and the 5-hour limit at 88%: the figure goes bold and the bar changes colour (caution from 80%, error from 95%, the same steps as the context ring); the number is always written",
+  "Context at 96% and the 5-hour limit at 88%: the figure goes bold and the bar changes colour (caution from 70%, error from 90%, the same steps as the context ring); the number is always written",
   <StatusBar
     row={{ ...row("working"), contextPct: 96, usage: { ...row("working").usage, inContext: 192_000 } }}
     plan={{ fiveHour: { pct: 88, resetsInMs: 1_500_000 }, sevenDay: { pct: 61, resetsInMs: 190_000_000 } }}

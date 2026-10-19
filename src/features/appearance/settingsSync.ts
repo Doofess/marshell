@@ -26,6 +26,8 @@ export class SettingsSync {
   private warned = false;
   /** Kept from the last read, so every save sends it back unchanged. */
   private seen = false;
+  /** Kept from the last read, so every save sends it back unchanged. */
+  private off: string[] = [];
   /** The appearance the core last stored, which a pause-warning write sends back unchanged. */
   private appearance: Appearance | null = null;
 
@@ -41,8 +43,14 @@ export class SettingsSync {
     this.hasRead = true;
     this.warned = s.pause_warned;
     this.seen = s.onboarded;
+    this.off = s.status_off;
     this.appearance = s.appearance;
     return s.appearance;
+  }
+
+  /** The agent ids whose live status is switched off, as of the last read or write. Empty until a read works. */
+  get statusOff(): string[] {
+    return this.off;
   }
 
   /** Whether the onboarding was seen, as of the last read or write. False until a read works. */
@@ -64,11 +72,18 @@ export class SettingsSync {
         throw new SettingsReadError();
       }
     }
-    const s = await this.api.put(await this.getEndpoint(), { appearance: next, pause_warned: this.warned, onboarded: this.seen });
+    const s = await this.api.put(await this.getEndpoint(), { appearance: next, pause_warned: this.warned, onboarded: this.seen, status_off: this.off });
     this.warned = s.pause_warned;
     this.seen = s.onboarded;
+    this.off = s.status_off;
     this.appearance = s.appearance;
     return s.appearance;
+  }
+
+  /** Switches one agent's live status on or off. Reads first, like `save`, and sends every other field back unchanged. */
+  async setStatusOff(agent: string, off: boolean): Promise<void> {
+    const rest = (await this.readFirst()).filter((id) => id !== agent);
+    await this.writeFlags({ status_off: off ? [...rest, agent] : rest });
   }
 
   /** Records that the first-Pause warning was confirmed. Reads first, like `save`, and sends the appearance last read back unchanged. */
@@ -81,7 +96,19 @@ export class SettingsSync {
     await this.writeFlags({ onboarded: true });
   }
 
-  private async writeFlags(change: Partial<Pick<Settings, "pause_warned" | "onboarded">>): Promise<void> {
+  /** The off list from a read that has worked: reads first when none has. */
+  private async readFirst(): Promise<string[]> {
+    if (!this.hasRead) {
+      try {
+        await this.load();
+      } catch {
+        throw new SettingsReadError();
+      }
+    }
+    return this.off;
+  }
+
+  private async writeFlags(change: Partial<Pick<Settings, "pause_warned" | "onboarded" | "status_off">>): Promise<void> {
     if (!this.hasRead) {
       try {
         await this.load();
@@ -93,10 +120,12 @@ export class SettingsSync {
       appearance: this.appearance!,
       pause_warned: this.warned,
       onboarded: this.seen,
+      status_off: this.off,
       ...change,
     });
     this.warned = s.pause_warned;
     this.seen = s.onboarded;
+    this.off = s.status_off;
     this.appearance = s.appearance;
   }
 }

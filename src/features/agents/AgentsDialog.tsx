@@ -1,14 +1,16 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AgentMark } from "../../components/AgentMark/AgentMark";
+import { Switch } from "../../components/Switch/Switch";
 import { DiffView } from "../../components/DiffView/DiffView";
 import type { AgentSetup } from "../../generated/AgentSetup";
 import type { Endpoint } from "../../generated/Endpoint";
 import type { RemovePreview } from "../../generated/RemovePreview";
 import { applyPreview, getSetup, planRemove, previewDiff } from "../../lib/api/agents";
 import { useDialogFocus } from "../../lib/useDialogFocus";
+import { SettingsReadError, type SettingsSync } from "../appearance/settingsSync";
 import { ConsentCard } from "../onboarding/ConsentCard";
 import { type Capability } from "../onboarding/consent";
-import { actions, consentProps, hooksOffNotice, removalBlock, setupLine, type InstallFlow } from "./agentsState";
+import { actions, consentProps, hooksOffNotice, liveStatusOn, removalBlock, setupLine, type InstallFlow } from "./agentsState";
 import { failureText, useInstallFlow } from "./useInstallFlow";
 import "./AgentsDialog.css";
 
@@ -32,13 +34,15 @@ export type AgentsDialogHandlers = {
   onReload: () => void;
   onTurnOff: () => void;
   onSwitch: (capability: Capability, checked: boolean) => void;
+  /** The Live status switch for Claude Code. */
+  onLiveStatus: (checked: boolean) => void;
 };
 
 /**
  * Settings → Agents (docs/PLAN.md slice 3c, decision 5), as a modal dialog over the window: Claude Code's install state, with Set up,
  * Hooks off (preview, then apply) and the orphaned-hooks warning. Presentational: `AgentsDialog` fetches and acts, this draws.
  */
-export function AgentsDialogView({ setup, panel, ...on }: { setup: AgentSetup | "loading" | "failed"; panel: Panel } & AgentsDialogHandlers) {
+export function AgentsDialogView({ setup, panel, liveStatus, liveStatusError, ...on }: { setup: AgentSetup | "loading" | "failed"; panel: Panel; liveStatus: boolean | null; liveStatusError?: string | null } & AgentsDialogHandlers) {
   const dialog = useRef<HTMLDivElement>(null);
   const title = useRef<HTMLHeadingElement>(null);
   useDialogFocus(dialog, title, on.onClose);
@@ -56,7 +60,7 @@ export function AgentsDialogView({ setup, panel, ...on }: { setup: AgentSetup | 
               {SETUP_UNREADABLE}
             </p>
           )}
-          {typeof setup === "object" && panel.kind === "list" && <AgentList setup={setup} on={on} />}
+          {typeof setup === "object" && panel.kind === "list" && <AgentList setup={setup} liveStatus={liveStatus} error={liveStatusError} on={on} />}
           {typeof setup === "object" && panel.kind === "setup" && <SetupPanel setup={setup} flow={panel.flow} on={on} />}
           {typeof setup === "object" && panel.kind === "off" && <OffPanel panel={panel} on={on} />}
         </div>
@@ -70,7 +74,7 @@ export function AgentsDialogView({ setup, panel, ...on }: { setup: AgentSetup | 
   );
 }
 
-function AgentList({ setup, on }: { setup: AgentSetup; on: AgentsDialogHandlers }) {
+function AgentList({ setup, liveStatus, error, on }: { setup: AgentSetup; liveStatus: boolean | null; error?: string | null; on: AgentsDialogHandlers }) {
   const todo = actions(setup);
   const orphaned = setup.found && setup.hooks === "orphaned" && setup.settings_state !== "unparsable";
   return (
@@ -83,6 +87,15 @@ function AgentList({ setup, on }: { setup: AgentSetup; on: AgentsDialogHandlers 
       <p className={orphaned ? "agents-dialog__warning" : "agents-dialog__line"} dir="auto">
         {setupLine(setup)}
       </p>
+      {/* Left out until the settings have been read: an unread value is never shown as off. */}
+      {liveStatus !== null && (
+        <Switch label="Live status" checked={liveStatus} onChange={on.onLiveStatus} reason={liveStatus ? undefined : "Rows use output activity only: Working or Idle."} />
+      )}
+      {error && (
+        <p className="agents-dialog__error" role="alert">
+          {error}
+        </p>
+      )}
       {todo.length > 0 && (
         <div className="agents-dialog__actions">
           {todo.includes("setup") && (
@@ -172,6 +185,7 @@ export function AgentsDialog({
   onNotice,
   onChanged,
   startWith,
+  sync,
 }: {
   endpoint: Endpoint;
   onClose: () => void;
@@ -179,10 +193,36 @@ export function AgentsDialog({
   /** The hooks were set up or turned off: the window reads the state again. */
   onChanged?: () => void;
   startWith?: "setup";
+  /** The settings the Live status switch reads and saves. Left out, there is no switch. */
+  sync?: SettingsSync;
 }) {
   const [setup, setSetup] = useState<AgentSetup | "loading" | "failed">("loading");
   const [mode, setMode] = useState<"list" | "setup" | "off">("list");
   const [off, setOff] = useState<Extract<Panel, { kind: "off" }>>({ kind: "off", removal: null, busy: false });
+
+  // null until the settings have been read.
+  const [liveStatus, setLiveStatus] = useState<boolean | null>(null);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  useEffect(() => {
+    let live = true;
+    sync?.load().then(
+      () => live && setLiveStatus(liveStatusOn(sync.statusOff, "claude")),
+      () => {},
+    );
+    return () => {
+      live = false;
+    };
+  }, [sync]);
+  const switchLiveStatus = async (on: boolean) => {
+    if (!sync) return;
+    setSaveError(null);
+    try {
+      await sync.setStatusOff("claude", !on);
+      setLiveStatus(liveStatusOn(sync.statusOff, "claude"));
+    } catch (e) {
+      setSaveError(e instanceof SettingsReadError ? e.message : failureText(e));
+    }
+  };
 
   const load = useCallback(async () => {
     try {
@@ -254,6 +294,9 @@ export function AgentsDialog({
     <AgentsDialogView
       setup={setup}
       panel={panel}
+      liveStatus={liveStatus}
+      liveStatusError={saveError}
+      onLiveStatus={(on) => void switchLiveStatus(on)}
       onClose={onClose}
       onSetup={startSetup}
       onHooksOff={() => void startOff()}

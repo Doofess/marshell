@@ -67,7 +67,7 @@ import { pruneClosed, without, type StartingTexts } from "./startingTexts";
 import { SHELL_FAILED } from "../window/ShellPanel";
 import { handedOff } from "./handOff";
 import { focusShellTerminal, shellAutoFolded, shellTerminalFocused } from "./shellPanelFocus";
-import { ENDED_PHRASE, lastSegment } from "./toRow";
+import { ENDED_PHRASE, lastSegment, planRing } from "./toRow";
 import { useSessions } from "./useSessions";
 
 /** The size a new session starts at until a terminal has been measured. */
@@ -296,6 +296,16 @@ export function LiveApp() {
   useEffect(() => {
     if (endpoint) void refreshTasks();
   }, [endpoint, refreshTasks]);
+  // The footer shows the plan only when a status line has reported it; there is no doctor count to show yet.
+  // A shown use goes when its 5-hour window resets, even if no session says anything new by then.
+  const [planNow, setPlanNow] = useState(() => Date.now());
+  const plan = useMemo(() => planRing(infos, Math.max(planNow, Date.now())), [infos, planNow]);
+  useEffect(() => {
+    if (plan?.until === undefined) return;
+    const id = setTimeout(() => setPlanNow(Date.now()), Math.max(0, plan.until - Date.now()) + 1000);
+    return () => clearTimeout(id);
+  }, [plan?.until]);
+  const footer = useMemo(() => (plan ? { planPct: plan.pct, fiveHourPct: plan.pct } : null), [plan]);
   const taskRows = useMemo(() => markTasks(rows, infos, tasks), [rows, infos, tasks]);
   // While the list is unknown the palette keeps Review for the session in focus, so choosing it can load the list again.
   const focusedIsTask = reviewTarget(infos, focusedId, tasks).kind !== "none";
@@ -1082,7 +1092,7 @@ export function LiveApp() {
           windowControls={{ maximized, onMinimize: () => void minimizeWindow(), onToggleMaximize: () => void toggleMaximize(), onClose: () => void closeWindow() }}
           requests={[]}
           ports={[]}
-          footer={null}
+          footer={footer}
           shell={{ terminal: shellTerminal, cwd: panelTab?.folder, hidden: view.shell_hidden, failed: shellFailed, onRetry: retryShell, openDisabled: !panelTab, forceOpen: shellForced, onToggle: toggleShell, onOpenInPane: () => void openInPane() }}
           composer={false}
           statusBar={false}
@@ -1159,7 +1169,7 @@ export function LiveApp() {
         />
       )}
       {overlay === "profiles" && endpoint && <ProfilesDialog endpoint={endpoint} onClose={() => setOverlay(null)} onNotice={announce} onSaved={reloadProfiles} />}
-      {overlay === "agents" && endpoint && <AgentsDialog endpoint={endpoint} startWith={agentsFrom === "row" ? "setup" : undefined} onClose={() => { setOverlay(null); setAgentsFrom(null); refreshSetup(); }} onNotice={announce} onChanged={refreshSetup} />}
+      {overlay === "agents" && endpoint && <AgentsDialog endpoint={endpoint} sync={sync ?? undefined} startWith={agentsFrom === "row" ? "setup" : undefined} onClose={() => { setOverlay(null); setAgentsFrom(null); refreshSetup(); }} onNotice={announce} onChanged={refreshSetup} />}
       {onboarding && endpoint && (
         <div className="live-app__onboarding">
           <LiveOnboarding

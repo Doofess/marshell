@@ -1,8 +1,9 @@
 import { describe, expect, it } from "vitest";
+import type { LiveStatus } from "../../generated/LiveStatus";
 import type { Profile } from "../../generated/Profile";
 import type { SessionInfo } from "../../generated/SessionInfo";
-import { rowLabel } from "../sidebar/labels";
-import { toRow } from "./toRow";
+import { rowLabel, rowTitle } from "../sidebar/labels";
+import { ageTick, planRing, toRow } from "./toRow";
 
 const profile = (id: string, family: Profile["family"]): Profile => ({ id, name: id, command: [id], family, cwd: null, env: [], shell_integration: true, detected: true });
 const PROFILES: Profile[] = [
@@ -25,6 +26,9 @@ const info = (patch: Partial<SessionInfo> = {}): SessionInfo => ({
   command: { kind: "unknown" },
   paused: false,
   foreground: null,
+  live: null,
+  activity: null,
+  status_note: null,
   ...patch,
 });
 
@@ -171,7 +175,7 @@ describe("toRow", () => {
     it("a claude row without hooks links to set up", () => {
       for (const claude of ["none", "partial", "orphaned"] as const) {
         const row = toRow(info({ agent: "claude" }), PROFILES, { claude });
-        expect(row).toMatchObject({ status: "limited", phrase: "Status limited", setupLink: true });
+        expect(row).toMatchObject({ status: "limited", phrase: "Status limited · set up", setupLink: true });
       }
     });
     it("an installed claude row has no link", () => {
@@ -189,5 +193,130 @@ describe("toRow", () => {
       expect(toRow(info({ agent: "codex" }), PROFILES, { claude: "none" }).setupLink).toBeUndefined();
       expect(toRow(info({ agent: "claude" }), PROFILES).setupLink).toBeUndefined();
     });
+  });
+});
+
+describe("toRow: live status", () => {
+  const NOW = 1_000_000;
+  const live = (patch: Partial<LiveStatus> = {}): LiveStatus => ({ state: "idle", phrase: "", since_ms: NOW - 5000, recap: null, model: null, effort: null, context_pct: null, five_hour_pct: null, five_hour_resets_at: null, seven_day_pct: null, subagents: 0, ...patch });
+  const claude = (l: LiveStatus | null, patch: Partial<SessionInfo> = {}) => info({ agent: "claude", live: l, ...patch });
+  const row = (l: LiveStatus | null, patch: Partial<SessionInfo> = {}) => toRow(claude(l, patch), PROFILES, { claude: "installed" }, NOW);
+
+  it.each([
+    ["idle", "idle"],
+    ["working", "working"],
+    ["needs_permission", "needs-permission"],
+    ["needs_question", "needs-question"],
+    ["done", "done-seen"],
+    ["error", "error"],
+    ["ended", "ended"],
+  ] as const)("maps %s to %s", (state, glyph) => {
+    expect(row(live({ state, phrase: "p" })).status).toBe(glyph);
+    expect(row(live({ state, phrase: "p" })).phrase).toBe("p");
+  });
+  it("carries model, effort, context and subagents, and leaves out what is null or 0", () => {
+    const r = row(live({ model: "Opus", effort: "high", context_pct: 42, subagents: 2 }));
+    expect(r).toMatchObject({ model: "Opus", effort: "high", contextPct: 42, subagents: 2 });
+    const bare = row(live());
+    expect(Object.keys(bare)).not.toEqual(expect.arrayContaining(["model"]));
+    for (const k of ["model", "effort", "contextPct", "subagents", "recap"]) expect(Object.keys(bare)).not.toContain(k);
+  });
+  it("reads Done · recap on a done row that has one, and Done without", () => {
+    expect(row(live({ state: "done", phrase: "Done", recap: { text: "Fixed it", at_ms: NOW - 7000 } })).phrase).toBe("Done · Fixed it");
+    expect(row(live({ state: "done", phrase: "Done" })).phrase).toBe("Done");
+    expect(row(live({ state: "idle", phrase: "Idle", recap: { text: "Fixed it", at_ms: NOW - 7000 } })).phrase).toBe("Idle");
+  });
+  it("gives the recap its age and a done row its age", () => {
+    const r = row(live({ state: "done", since_ms: NOW - 3000, recap: { text: "Fixed it", at_ms: NOW - 7000 } }));
+    expect(r.recap).toEqual({ text: "Fixed it", ageMs: 7000 });
+    expect(r.ageMs).toBe(3000);
+    expect(r.waitingMs).toBeUndefined();
+  });
+  it("gives a needs-you row how long it has waited", () => {
+    expect(row(live({ state: "needs_permission", since_ms: NOW - 9000 })).waitingMs).toBe(9000);
+    expect(row(live({ state: "needs_question", since_ms: NOW - 2000 })).waitingMs).toBe(2000);
+  });
+  it("never reports a negative age when the clock is behind", () => {
+    expect(row(live({ state: "needs_permission", since_ms: NOW + 500 })).waitingMs).toBe(0);
+  });
+  it("falls back to output activity with a status-limited note on the tooltip", () => {
+    const w = row(null, { activity: "working" });
+    expect(w).toMatchObject({ status: "working", phrase: "Working · Status limited", note: "Status limited" });
+    const i = row(null, { activity: "idle" });
+    expect(i).toMatchObject({ status: "idle", phrase: "Idle · Status limited", note: "Status limited" });
+    expect(rowTitle(w)).toContain("Status limited");
+  });
+  it("says set up for a Claude row without hooks, and the core's note otherwise", () => {
+    const setup = toRow(claude(null, { status_note: "x" }), PROFILES, { claude: "none" }, NOW);
+    expect(setup).toMatchObject({ status: "limited", phrase: "Status limited · set up", setupLink: true });
+    const noted = row(null, { status_note: "Live status is off for Claude Code" });
+    expect(noted).toMatchObject({ status: "limited", phrase: "Live status is off for Claude Code" });
+    expect(noted.setupLink).toBeUndefined();
+    expect(row(null).phrase).toBe("Status arrives with hooks");
+  });
+  it("keeps offering the setup for a Claude row without hooks, even while its output shows activity", () => {
+    const r = toRow(claude(null, { activity: "working" }), PROFILES, { claude: "none" }, NOW);
+    expect(r).toMatchObject({ status: "limited", phrase: "Status limited · set up", setupLink: true });
+  });
+  it("puts the core's reason in the fallback row's note", () => {
+    const r = row(null, { activity: "idle", status_note: "Live status is off for Claude Code" });
+    expect(r).toMatchObject({ status: "idle", phrase: "Idle · Status limited", note: "Status limited · Live status is off for Claude Code", statusNote: "Live status is off for Claude Code" });
+  });
+  it("puts the limited status in the fallback row's accessible name", () => {
+    const r = row(null, { activity: "idle", status_note: "Live status is off for Claude Code" });
+    expect(rowLabel(r)).toContain("Idle · Status limited. Claude, Idle. Status limited: Live status is off for Claude Code.");
+    expect(rowLabel(row(null, { activity: "idle" }))).not.toContain("Status limited:");
+  });
+  it("lets live status win over a missing setup", () => {
+    expect(toRow(claude(live({ state: "working", phrase: "Thinking" })), PROFILES, { claude: "none" }, NOW)).toMatchObject({ status: "working", phrase: "Thinking" });
+  });
+});
+
+describe("ageTick", () => {
+  const NOW = 1_000_000;
+  const at = (state: LiveStatus["state"], since: number, recapAt: number | null = null): SessionInfo =>
+    info({ agent: "claude", live: { state, phrase: "", since_ms: NOW - since, recap: recapAt === null ? null : { text: "r", at_ms: NOW - recapAt }, model: null, effort: null, context_pct: null, five_hour_pct: null, five_hour_resets_at: null, seven_day_pct: null, subagents: 0 } });
+  it("counts every second while a session waits for you or an age is under a minute", () => {
+    expect(ageTick([at("needs_permission", 600_000)], NOW)).toBe(1000);
+    expect(ageTick([at("done", 5000)], NOW)).toBe(1000);
+    expect(ageTick([at("working", 600_000, 30_000)], NOW)).toBe(1000);
+  });
+  it("counts every half minute when the ages shown are in minutes", () => {
+    expect(ageTick([at("done", 600_000, 600_000)], NOW)).toBe(30_000);
+  });
+  it("does not tick when no row shows an age", () => {
+    expect(ageTick([at("working", 5000), info()], NOW)).toBeUndefined();
+    expect(ageTick([], NOW)).toBeUndefined();
+  });
+});
+
+describe("planRing", () => {
+  const withPct = (n: number, pct: number | null): SessionInfo =>
+    info({ tab_id: `t${n}`, live: { state: "idle", phrase: "", since_ms: 0, recap: null, model: null, effort: null, context_pct: null, five_hour_pct: pct, five_hour_resets_at: null, seven_day_pct: null, subagents: 0 } });
+  it("takes the highest five-hour use among the sessions that report one", () => {
+    const c = (n: number, pct: number | null) => ({ ...withPct(n, pct), agent: "claude" });
+    expect(planRing([c(1, 20), c(2, 61), c(3, null), info()])).toEqual({ pct: 61 });
+  });
+  it("counts only Claude rows: a claude run inside a shell tab does not feed the ring", () => {
+    const shell = withPct(1, 85);
+    const claudeRow = { ...withPct(2, 4), agent: "claude" };
+    expect(planRing([shell, claudeRow])).toEqual({ pct: 4 });
+    expect(planRing([shell])).toBeUndefined();
+  });
+  it("is undefined when none does", () => {
+    expect(planRing([{ ...withPct(1, null), agent: "claude" }, info()])).toBeUndefined();
+    expect(planRing([])).toBeUndefined();
+  });
+  it("leaves out a use whose 5-hour window has reset, and says when the shown one runs out", () => {
+    const c = (n: number, pct: number, resets: number | null): SessionInfo => {
+      const row = withPct(n, pct);
+      return { ...row, agent: "claude", live: row.live && { ...row.live, five_hour_resets_at: resets } };
+    };
+    const now = 1_000_000_000_000;
+    const gone = now / 1000 - 1;
+    const soon = now / 1000 + 600;
+    expect(planRing([c(1, 90, gone), c(2, 12, soon)], now)).toEqual({ pct: 12, until: soon * 1000 });
+    expect(planRing([c(1, 90, gone)], now)).toBeUndefined();
+    expect(planRing([c(1, 30, null)], now)).toEqual({ pct: 30 });
   });
 });

@@ -16,6 +16,7 @@ fn app(hold: Duration) -> (axum::Router, AppState) {
         home,
         Vec::new(),
     )
+    .with_claude_version(Some("2.1.302".into()))
     .with_permission_hold(hold);
     (router(st.clone()), st)
 }
@@ -369,6 +370,7 @@ async fn app_with_session(hold: Duration) -> (axum::Router, String, tempfile::Te
         home,
         vec![sleeper],
     )
+    .with_claude_version(Some("2.1.302".into()))
     .with_permission_hold(hold);
     let app = router(st);
     let body = serde_json::json!({

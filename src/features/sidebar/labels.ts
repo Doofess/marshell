@@ -1,6 +1,6 @@
 import { kindName } from "../../components/AgentMark/kinds";
 import { GLYPHS } from "../../components/StatusGlyph/glyphs";
-import { formatDuration, formatUsage, modeCaution } from "./format";
+import { formatAge, formatUsage, modeCaution } from "./format";
 import { sessionWord } from "./sessionNumber";
 import type { Density, RowModel } from "./types";
 
@@ -28,24 +28,25 @@ export function rowLabel(r: RowModel, density: Density = "comfortable"): string 
   const seen: Array<string | null | undefined> = [
     r.name,
     projectAndBranch(r),
-    time !== undefined ? formatDuration(time) : null,
-    r.model ? `${r.model} \u00b7 ${phrase}` : phrase,
+    time !== undefined ? formatAge(time) : null,
+    r.model && phrase ? `${r.model} \u00b7 ${phrase}` : r.model || phrase,
   ];
   const caution = modeCaution(r.mode);
   if (density === "expanded") {
     seen.push(r.model, r.effort, r.mode === "plan" ? "Plan" : null, caution, r.subagents !== undefined ? `${r.subagents} subagents` : null);
-    if (r.recap) seen.push(r.recap.text, `${formatDuration(r.recap.ageMs)} ago`);
+    if (r.recap) seen.push(r.recap.text, `${formatAge(r.recap.ageMs)} ago`);
     seen.push(formatUsage(r.usage));
   }
   const parts = [`${sessionWord(r.number)}, ${seen.filter(Boolean).join(" ")}.`, `${agentAndModel(r)}, ${GLYPHS[r.status].label}.`];
   if (r.elevated) parts.push("Administrator.");
   if (caution) parts.push(`${caution}.`);
   if (r.muted) parts.push("Muted.");
+  if (r.statusNote) parts.push(`Status limited: ${r.statusNote}.`);
   if (r.contextPct !== undefined && Number.isFinite(r.contextPct))
     parts.push(`Context ${Math.round(Math.min(100, Math.max(0, r.contextPct)))}% used.`);
   return parts.join(" ");
 }
 
 export function rowTitle(r: RowModel): string {
-  return [sessionWord(r.number), r.name, projectAndBranch(r), agentAndModel(r), r.phrase].join("\n");
+  return [sessionWord(r.number), r.name, projectAndBranch(r), agentAndModel(r), r.phrase, ...(r.note ? [r.note] : [])].join("\n");
 }

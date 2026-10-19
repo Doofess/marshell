@@ -12,9 +12,11 @@ use axum::extract::{Path as UrlPath, State};
 use axum::http::StatusCode;
 use marshell_protocol::agents::{AgentSetup, HookInstall, HookPlanRequest, ParseProblem, RemovePreview, SettingsState};
 use marshell_protocol::config::ConfigPreview;
+use std::collections::HashMap;
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
-use std::time::Duration;
+use std::sync::Mutex;
+use std::time::{Duration, SystemTime};
 
 const AGENT: &str = "claude";
 const VERSION_TIMEOUT: Duration = Duration::from_secs(5);
@@ -115,19 +117,49 @@ impl AppState {
         })
     }
 
-    /// `--version` of `exe`, asked once per path while the app runs.
-    fn version_of(&self, exe: &Path) -> Option<String> {
-        if let Some(known) = self.0.versions.lock().unwrap().get(exe) {
-            return known.clone();
-        }
-        let version = claude::run_version(exe, VERSION_TIMEOUT);
-        self.0
-            .versions
-            .lock()
-            .unwrap()
-            .insert(exe.to_path_buf(), version.clone());
-        version
+    /// The `claude` that sessions run: a profile that runs it itself, else the one on PATH.
+    pub(super) fn claude_exe(&self) -> Option<PathBuf> {
+        agent_exe(&self.0.profiles.lock().unwrap().profiles, AGENT).or_else(|| (self.0.agent_path)(AGENT))
     }
+
+    /// The Claude Code version of `exe`, or the one a test pinned. Runs a process on a cold cache, so
+    /// async callers go through `spawn_blocking`.
+    pub(super) fn claude_version(&self, exe: Option<&Path>) -> Option<String> {
+        match &self.0.claude_version {
+            Some(pinned) => pinned.clone(),
+            None => exe.and_then(|exe| self.version_of(exe)),
+        }
+    }
+
+    /// `--version` of `exe`, asked again when the file has changed since, as after an auto-update.
+    fn version_of(&self, exe: &Path) -> Option<String> {
+        let modified = std::fs::metadata(exe).and_then(|m| m.modified()).ok();
+        cached_version(&self.0.versions, exe, modified, || {
+            claude::run_version(exe, VERSION_TIMEOUT)
+        })
+    }
+}
+
+/// The version `cache` holds for `exe` at this modified time, else what `ask` reads. A version that
+/// could not be read is not kept, so the next call tries again. The lock is not held while `ask` runs.
+fn cached_version(
+    cache: &Mutex<HashMap<PathBuf, (Option<SystemTime>, String)>>,
+    exe: &Path,
+    modified: Option<SystemTime>,
+    ask: impl FnOnce() -> Option<String>,
+) -> Option<String> {
+    let known = cache.lock().unwrap().get(exe).cloned();
+    if let Some((at, version)) = known
+        && at == modified
+    {
+        return Some(version);
+    }
+    let version = ask()?;
+    cache
+        .lock()
+        .unwrap()
+        .insert(exe.to_path_buf(), (modified, version.clone()));
+    Some(version)
 }
 
 fn setup_of(st: &AppState) -> Result<AgentSetup, Fail> {
@@ -135,9 +167,8 @@ fn setup_of(st: &AppState) -> Result<AgentSetup, Fail> {
     let user_home = super::files::home_dir().ok_or_else(|| failed("the user's home folder is not known"))?;
     let settings_path = st.claude_settings_path(&user_home);
 
-    // A profile that runs `claude` itself names the file; sessions otherwise start it from PATH.
-    let exe = agent_exe(&st.0.profiles.lock().unwrap().profiles, AGENT).or_else(|| (st.0.agent_path)(AGENT));
-    let version = exe.as_deref().and_then(|exe| st.version_of(exe));
+    let exe = st.claude_exe();
+    let version = st.claude_version(exe.as_deref());
 
     let mut setup = AgentSetup {
         agent: AGENT.to_string(),
@@ -249,4 +280,47 @@ pub async fn remove_plan(
     .await
     .map_err(failed)??;
     Ok(Json(removal))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::cell::Cell;
+
+    fn at(secs: u64) -> Option<SystemTime> {
+        Some(SystemTime::UNIX_EPOCH + Duration::from_secs(secs))
+    }
+
+    #[test]
+    fn a_version_is_asked_once_while_the_file_stays_the_same() {
+        let cache = Mutex::new(HashMap::new());
+        let exe = Path::new("claude");
+        let runs = Cell::new(0);
+        let ask = || {
+            runs.set(runs.get() + 1);
+            Some("2.1.303".to_string())
+        };
+        assert_eq!(cached_version(&cache, exe, at(10), ask).as_deref(), Some("2.1.303"));
+        assert_eq!(cached_version(&cache, exe, at(10), ask).as_deref(), Some("2.1.303"));
+        assert_eq!(runs.get(), 1);
+    }
+
+    #[test]
+    fn a_changed_file_is_asked_again() {
+        let cache = Mutex::new(HashMap::new());
+        let exe = Path::new("claude");
+        cached_version(&cache, exe, at(10), || Some("2.1.303".to_string()));
+        let after_update = cached_version(&cache, exe, at(20), || Some("2.2.0".to_string()));
+        assert_eq!(after_update.as_deref(), Some("2.2.0"));
+        assert_eq!(cached_version(&cache, exe, at(20), || None).as_deref(), Some("2.2.0"));
+    }
+
+    #[test]
+    fn a_version_that_could_not_be_read_is_not_remembered() {
+        let cache = Mutex::new(HashMap::new());
+        let exe = Path::new("claude");
+        assert_eq!(cached_version(&cache, exe, at(10), || None), None);
+        let retry = cached_version(&cache, exe, at(10), || Some("2.1.303".to_string()));
+        assert_eq!(retry.as_deref(), Some("2.1.303"));
+    }
 }

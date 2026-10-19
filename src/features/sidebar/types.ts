@@ -27,6 +27,10 @@ export type RowModel = {
   phrase: string;
   /** The row offers "set up": a Claude Code session whose hooks are not installed, so its status is limited. */
   setupLink?: boolean;
+  /** Said in the row's tooltip, not on its lines: why a Working or Idle row is only as sure as the pty's output (no live status). */
+  note?: string;
+  /** The core's reason for the limited status, when it gave one: the accessible name says it, since the tooltip is not read. */
+  statusNote?: string;
   /** Needs-you only: how long it has waited. */
   waitingMs?: number;
   /** Done or ended: time since. */

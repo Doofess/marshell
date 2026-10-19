@@ -15,6 +15,8 @@ struct FileDoc {
     pause_warned: bool,
     #[serde(default)]
     onboarded: bool,
+    #[serde(default)]
+    status_off: Vec<String>,
 }
 
 impl Versioned for FileDoc {
@@ -37,6 +39,7 @@ pub fn load(home: &Path) -> Settings {
     });
     let doc = doc.unwrap_or_default();
     let (mut appearance, pause_warned, onboarded) = (doc.appearance, doc.pause_warned, doc.onboarded);
+    let status_off = clean_status_off(doc.status_off);
     // A hand-edited value that fails validation would make every later save fail, so it gives way to its default.
     let replaced = repair(&mut appearance);
     if !replaced.is_empty() {
@@ -49,7 +52,17 @@ pub fn load(home: &Path) -> Settings {
         appearance,
         pause_warned,
         onboarded,
+        status_off,
     }
+}
+
+/// Agent ids, without empty entries or repeats, in the order they were written.
+fn clean_status_off(ids: Vec<String>) -> Vec<String> {
+    let mut seen = HashSet::new();
+    ids.into_iter()
+        .map(|id| id.trim().to_string())
+        .filter(|id| !id.is_empty() && seen.insert(id.clone()))
+        .collect()
 }
 
 /// Writes the settings. A file that is not valid JSON is first copied to `settings.json.broken`,
@@ -69,6 +82,7 @@ pub fn save(home: &Path, s: &Settings) -> anyhow::Result<()> {
             appearance: s.appearance.clone(),
             pause_warned: s.pause_warned,
             onboarded: s.onboarded,
+            status_off: clean_status_off(s.status_off.clone()),
         },
     )
 }
@@ -304,6 +318,27 @@ mod tests {
         let file = crate::paths::settings_file(home.path());
         std::fs::write(&file, r#"{"version":1,"appearance":{}}"#).unwrap();
         assert!(!load(home.path()).onboarded);
+    }
+
+    #[test]
+    fn status_off_round_trips_without_repeats_and_defaults_empty() {
+        let home = tempfile::tempdir().unwrap();
+        let s = Settings {
+            status_off: vec!["claude".into(), " ".into(), "claude".into(), "codex".into()],
+            ..Settings::default()
+        };
+        save(home.path(), &s).unwrap();
+        assert_eq!(load(home.path()).status_off, vec!["claude", "codex"]);
+
+        let file = crate::paths::settings_file(home.path());
+        std::fs::write(
+            &file,
+            r#"{"version":1,"appearance":{},"status_off":["claude","","claude"]}"#,
+        )
+        .unwrap();
+        assert_eq!(load(home.path()).status_off, vec!["claude"]);
+        std::fs::write(&file, r#"{"version":1,"appearance":{}}"#).unwrap();
+        assert!(load(home.path()).status_off.is_empty());
     }
 
     #[test]
