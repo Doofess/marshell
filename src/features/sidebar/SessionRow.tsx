@@ -7,7 +7,7 @@ import type { Os } from "../../lib/keymap";
 import { RenameBox } from "./RenameBox";
 import { inRenameBox, keyboardAnchor, opensRowMenu } from "./rowMenu";
 import { togglesPane, togglesPaneKey } from "./rowPick";
-import { formatDuration, formatUsage, modeCaution } from "./format";
+import { formatAge, formatUsage, modeCaution } from "./format";
 import { rowLabel, rowTitle } from "./labels";
 import { SESSION_NUMBER_HINT } from "./sessionNumber";
 import { splitForMiddle } from "./truncate";
@@ -177,7 +177,7 @@ export function SessionRow({
           {row.muted && <AuxGlyph kind="muted" />}
           {/* A working session shows as its vendor mark moving, so it needs no glyph. */}
           {row.status !== "working" && <StatusGlyph kind={row.status} />}
-          {time !== undefined && <> <span className="session-row__time">{formatDuration(time)}</span></>}
+          {time !== undefined && <> <span className="session-row__time">{formatAge(time)}</span></>}
           <ContextRing pct={row.contextPct} />
         </span>
       </div>{" "}
@@ -206,7 +206,7 @@ export function SessionRow({
           )}{" "}
           {row.recap && (
             <p className="session-row__recap">
-              {row.recap.text} <span className="session-row__age">{formatDuration(row.recap.ageMs)} ago</span>
+              {row.recap.text} <span className="session-row__age">{formatAge(row.recap.ageMs)} ago</span>
             </p>
           )}{" "}
           {usage && <div className="session-row__usage">{usage}</div>}

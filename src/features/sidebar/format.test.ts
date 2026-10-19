@@ -1,5 +1,15 @@
 import { describe, expect, it } from "vitest";
-import { formatCost, formatDuration, formatTokens, formatUsage, modeCaution } from "./format";
+import { formatAge, formatCost, formatDuration, formatTokens, formatUsage, modeCaution } from "./format";
+
+describe("formatAge", () => {
+  it.each([
+    [undefined, "–"],
+    [0, "<1m"],
+    [59_999, "<1m"],
+    [60_000, "1m"],
+    [3_900_000, "1h 05m"],
+  ])("%s ms reads %s, never counting seconds", (ms, out) => expect(formatAge(ms)).toBe(out));
+});
 
 describe("formatDuration", () => {
   it.each([

@@ -1,5 +1,9 @@
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
+import { nameContainsLabel } from "../../lib/labelInName";
 import { rowLabel, rowTitle } from "./labels";
+import { SessionRow } from "./SessionRow";
 import type { RowModel } from "./types";
 
 const base: RowModel = {
@@ -57,23 +61,22 @@ describe("rowLabel", () => {
 });
 
 describe("rowLabel and the age", () => {
-  it("leaves the age out while it is under a minute, so a focused row is not re-announced every second", () => {
+  it("says <1m while the age is under a minute, so a focused row is not re-announced every second", () => {
     const l = rowLabel({ ...base, waitingMs: 12_000 });
     expect(l).not.toContain("12s");
-    expect(l).toContain("my-app · feat/auth-flow Wants to run npm test.");
+    expect(l).toContain("my-app · feat/auth-flow <1m Wants to run npm test.");
     expect(rowLabel({ ...base, waitingMs: 65_000 })).toContain("feat/auth-flow 1m Wants");
-    expect(rowLabel({ ...base, status: "done-seen", waitingMs: undefined, ageMs: 59_999, phrase: "Done" })).not.toMatch(/\ds /);
+    expect(rowLabel({ ...base, status: "done-seen", waitingMs: undefined, ageMs: 59_999, phrase: "Done" })).toContain("<1m Done.");
   });
-  it("leaves the recap's age out of the expanded name while it is under a minute", () => {
+  it("says the recap's age as <1m ago while it is under a minute", () => {
     const l = rowLabel({ ...base, recap: { text: "Fixed it", ageMs: 7000 } }, "expanded");
-    expect(l).toContain("Fixed it");
-    expect(l).not.toContain("7s ago");
+    expect(l).toContain("Fixed it <1m ago");
     expect(rowLabel({ ...base, recap: { text: "Fixed it", ageMs: 120_000 } }, "expanded")).toContain("Fixed it 2m ago");
   });
-  it("says the recap once when the phrase already has it", () => {
+  it("says the recap as the expanded row draws it, even when the phrase has it too (label in name)", () => {
     const r: RowModel = { ...base, status: "done-seen", waitingMs: undefined, ageMs: 120_000, phrase: "Done · Fixed it", recap: { text: "Fixed it", ageMs: 120_000 } };
-    expect(rowLabel(r, "expanded").split("Fixed it")).toHaveLength(2);
-    expect(rowLabel(r, "expanded")).toContain("2m ago");
+    expect(rowLabel(r, "expanded")).toContain("Fixed it 2m ago");
+    expect(nameContainsLabel(renderToStaticMarkup(createElement(SessionRow, { row: r, density: "expanded" })))).toBe(true);
   });
   it("adds the core's limited-status note as a trailing part", () => {
     expect(rowLabel({ ...base, statusNote: "Live status is off for Claude Code" })).toContain("Needs you: permission. Status limited: Live status is off for Claude Code.");

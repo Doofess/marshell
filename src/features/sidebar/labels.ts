@@ -1,10 +1,8 @@
 import { kindName } from "../../components/AgentMark/kinds";
 import { GLYPHS } from "../../components/StatusGlyph/glyphs";
-import { formatDuration, formatUsage, modeCaution } from "./format";
+import { formatAge, formatUsage, modeCaution } from "./format";
 import { sessionWord } from "./sessionNumber";
 import type { Density, RowModel } from "./types";
-
-const MINUTE = 60_000;
 
 /** Strips Markdown code ticks so screen readers don't read "backtick". */
 const plain = (s: string) => s.replace(/`/g, "");
@@ -25,20 +23,18 @@ const projectAndBranch = (r: RowModel) => {
  * the context level) follows.
  */
 export function rowLabel(r: RowModel, density: Density = "comfortable"): string {
-  const aged = r.waitingMs ?? (r.status === "done-unseen" || r.status === "done-seen" || r.status === "ended" ? r.ageMs : undefined);
-  // Under a minute the age ticks every second, which would re-announce a focused row each time: the name leaves it out.
-  const time = aged !== undefined && aged >= MINUTE ? aged : undefined;
+  const time = r.waitingMs ?? (r.status === "done-unseen" || r.status === "done-seen" || r.status === "ended" ? r.ageMs : undefined);
   const phrase = `${plain(r.phrase)}${r.muted ? " \u00b7 muted" : ""}`;
   const seen: Array<string | null | undefined> = [
     r.name,
     projectAndBranch(r),
-    time !== undefined ? formatDuration(time) : null,
+    time !== undefined ? formatAge(time) : null,
     r.model && phrase ? `${r.model} \u00b7 ${phrase}` : r.model || phrase,
   ];
   const caution = modeCaution(r.mode);
   if (density === "expanded") {
     seen.push(r.model, r.effort, r.mode === "plan" ? "Plan" : null, caution, r.subagents !== undefined ? `${r.subagents} subagents` : null);
-    if (r.recap) seen.push(r.phrase.includes(r.recap.text) ? null : r.recap.text, r.recap.ageMs >= MINUTE ? `${formatDuration(r.recap.ageMs)} ago` : null);
+    if (r.recap) seen.push(r.recap.text, `${formatAge(r.recap.ageMs)} ago`);
     seen.push(formatUsage(r.usage));
   }
   const parts = [`${sessionWord(r.number)}, ${seen.filter(Boolean).join(" ")}.`, `${agentAndModel(r)}, ${GLYPHS[r.status].label}.`];
