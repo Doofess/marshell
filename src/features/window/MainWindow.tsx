@@ -58,6 +58,13 @@ export type MainWindowProps = {
   sidebarWidth?: number;
   rows?: RowModel[];
   requests?: ApprovalRequest[];
+  /** The lane's full card (the app's live one). Left out it is the static card. */
+  renderCard?: (request: ApprovalRequest) => ReactNode;
+  /** A one-liner in the lane was chosen: go to its session. */
+  onJumpRequest?: (request: ApprovalRequest) => void;
+  /** The card for the drawer's request. Left out the drawer shows the sample long command. */
+  drawerCard?: ReactNode;
+  onDrawerClose?: () => void;
   selectedId?: string;
   /** Every session on screen (the panes' sessions). Left out, only `selectedId` is marked. */
   visibleIds?: readonly string[];
@@ -192,6 +199,10 @@ export function MainWindow({
   sidebarWidth,
   rows = SCENARIO_ROWS,
   requests = SCENARIO_REQUESTS,
+  renderCard,
+  onJumpRequest,
+  drawerCard,
+  onDrawerClose,
   selectedId = "working",
   visibleIds,
   os = "windows",
@@ -473,7 +484,7 @@ export function MainWindow({
       </header>
 
       <div ref={bodyRef} className="window__body">
-        {mode === "expanded" && <Sidebar rows={rows} requests={requests} height={height - BAR} width={sideW} selectedId={selected?.id} visibleIds={visibleIds} os={os} footer={footer ?? undefined} shell={shell ? { cwd: shellOptions.cwd ?? active?.project, shellName: shellNameFor(os), collapsed: shellCollapsed || shellOptions.hidden === true, os, terminal: shellOptions.terminal, failed: shellOptions.failed, onRetry: shellOptions.onRetry, openDisabled: shellOptions.openDisabled, forceOpen: shellOptions.forceOpen, onToggle: shellOptions.onToggle, onOpenInPane: shellOptions.onOpenInPane } : undefined} renamingId={renamingId} onRename={onRename} onRenameCancel={onRenameCancel} onReorder={onReorder} onSelect={onSelect} onToggle={onToggle} onReview={onReview} onSetup={onSetup} menuItems={menuItems} onMenuRun={onMenuRun} grouped={grouped} />}
+        {mode === "expanded" && <Sidebar rows={rows} requests={requests} renderCard={renderCard} onJumpRequest={onJumpRequest} height={height - BAR} width={sideW} selectedId={selected?.id} visibleIds={visibleIds} os={os} footer={footer ?? undefined} shell={shell ? { cwd: shellOptions.cwd ?? active?.project, shellName: shellNameFor(os), collapsed: shellCollapsed || shellOptions.hidden === true, os, terminal: shellOptions.terminal, failed: shellOptions.failed, onRetry: shellOptions.onRetry, openDisabled: shellOptions.openDisabled, forceOpen: shellOptions.forceOpen, onToggle: shellOptions.onToggle, onOpenInPane: shellOptions.onOpenInPane } : undefined} renamingId={renamingId} onRename={onRename} onRenameCancel={onRenameCancel} onReorder={onReorder} onSelect={onSelect} onToggle={onToggle} onReview={onReview} onSetup={onSetup} menuItems={menuItems} onMenuRun={onMenuRun} grouped={grouped} />}
         {mode === "expanded" && (
           <div
             className="window__side-handle"
@@ -545,9 +556,25 @@ export function MainWindow({
             </button>
           )}
 
-          {drawer && requests[0] && (
-            <aside className="drawer" data-placement={placement} style={{ inlineSize: DRAWER.default }} aria-label="Request details">
-              <ApproveCard request={{ ...requests[0], detail: DRAWER_DETAIL }} expanded />
+          {drawer && (drawerCard || requests[0]) && (
+            <aside
+              className="drawer"
+              data-placement={placement}
+              style={{ inlineSize: DRAWER.default }}
+              aria-label="Request details"
+              onKeyDown={(e) => {
+                if (e.key === "Escape" && onDrawerClose) {
+                  e.stopPropagation();
+                  onDrawerClose();
+                }
+              }}
+            >
+              {onDrawerClose && (
+                <button type="button" className="drawer__close" onClick={onDrawerClose}>
+                  Close details
+                </button>
+              )}
+              {drawerCard ?? <ApproveCard request={{ ...requests[0]!, detail: DRAWER_DETAIL }} expanded />}
             </aside>
           )}
         </main>

@@ -24,6 +24,8 @@ export function headline(d: ToolDetail): string {
       return `Fetch ${host(d.url)}`;
     case "mcp":
       return `Use ${d.server} · ${d.tool}`;
+    case "other":
+      return `Use ${d.tool}`;
     case "question":
       return "Has a question";
   }
@@ -42,6 +44,8 @@ export function subject(d: ToolDetail): string {
     case "fetch":
       return host(d.url);
     case "mcp":
+      return d.tool;
+    case "other":
       return d.tool;
     case "question":
       return "question";

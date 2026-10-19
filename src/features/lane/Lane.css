@@ -144,3 +144,8 @@
 .lane .approve-card__actions--options > :nth-child(n + 5) {
   display: none;
 }
+
+/* The live card wraps the approve card only to track focus; it adds no box. */
+.live-card {
+  display: contents;
+}

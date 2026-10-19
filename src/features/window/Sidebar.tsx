@@ -50,9 +50,15 @@ export function Sidebar({
   menuItems,
   onMenuRun,
   grouped = false,
+  renderCard,
+  onJumpRequest,
 }: {
   rows: RowModel[];
   requests: ApprovalRequest[];
+  /** The lane's full card. Left out it is the static one (stories). */
+  renderCard?: (request: ApprovalRequest) => ReactNode;
+  /** A one-liner in the lane was chosen: go to its session. */
+  onJumpRequest?: (request: ApprovalRequest) => void;
   height: number;
   width: number;
   /** The focused pane's session. */
@@ -230,7 +236,7 @@ export function Sidebar({
   const style = { inlineSize: width, ...(panel ? { "--shell-h": `${panel.height}px` } : {}), ...(footer ? {} : { "--footer-h": "0px" }) } as CSSProperties;
   return (
     <aside ref={root} className="sidebar" style={style} data-shell={panel ? "" : undefined} aria-label="Sessions and approvals">
-      <Lane requests={requests} sidebarHeight={height} />
+      <Lane requests={requests} sidebarHeight={height} renderCard={renderCard} onJump={onJumpRequest} />
       <div className="sidebar__list" role="listbox" aria-label="Sessions" aria-multiselectable={visibleIds ? true : undefined}>
         {groups
           ? groups.map((g) => (

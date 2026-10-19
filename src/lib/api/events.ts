@@ -1,5 +1,6 @@
 import { TOKEN_SUBPROTOCOL_PREFIX, WS_SUBPROTOCOL } from "../../generated/constants";
 import type { Endpoint } from "../../generated/Endpoint";
+import type { PermissionView } from "../../generated/PermissionView";
 import type { SessionsSnapshot } from "../../generated/SessionsSnapshot";
 
 const RETRY_BASE_MS = 250;
@@ -7,7 +8,7 @@ const RETRY_MAX_MS = 5000;
 
 /**
  * The core's push channel. Every `sessions` frame is the whole list, so callers replace their state
- * on each one. Reconnects with backoff; the core sends a fresh snapshot on every connect.
+ * on each one; so is every `permissions` frame (the requests being held). Reconnects with backoff; the core sends a fresh snapshot on every connect.
  */
 export class EventSocket {
   private ws: WebSocket | null = null;
@@ -18,6 +19,7 @@ export class EventSocket {
   constructor(
     private readonly endpoint: Endpoint,
     private readonly onSnapshot: (s: SessionsSnapshot) => void,
+    private readonly onPermissions?: (p: PermissionView[]) => void,
   ) {
     this.connect();
   }
@@ -31,8 +33,9 @@ export class EventSocket {
     };
     ws.onmessage = (ev) => {
       if (this.done) return; // a closing socket can still deliver a frame
-      const snapshot = parseSnapshot(ev.data);
-      if (snapshot) this.onSnapshot(snapshot);
+      const event = parseEvent(ev.data);
+      if (event?.type === "sessions") this.onSnapshot(event.data);
+      else if (event?.type === "permissions") this.onPermissions?.(event.data);
     };
     ws.onclose = () => {
       this.ws = null;
@@ -54,13 +57,16 @@ export class EventSocket {
   }
 }
 
-/** The snapshot inside a `sessions` frame, or null for anything else. */
-function parseSnapshot(data: unknown): SessionsSnapshot | null {
+export type CoreEvent = { type: "sessions"; data: SessionsSnapshot } | { type: "permissions"; data: PermissionView[] };
+
+/** The event inside a frame, or null for anything else. */
+export function parseEvent(data: unknown): CoreEvent | null {
   if (typeof data !== "string") return null;
   try {
-    const msg = JSON.parse(data) as { type?: unknown; data?: SessionsSnapshot };
-    if (msg.type !== "sessions" || !msg.data) return null;
-    return msg.data;
+    const msg = JSON.parse(data) as { type?: unknown; data?: unknown };
+    if (msg.type === "sessions" && msg.data) return { type: "sessions", data: msg.data as SessionsSnapshot };
+    if (msg.type === "permissions" && Array.isArray(msg.data)) return { type: "permissions", data: msg.data as PermissionView[] };
+    return null;
   } catch {
     return null;
   }

@@ -5,6 +5,10 @@ import type { Task } from "../../generated/Task";
 import type { TaskChanges } from "../../generated/TaskChanges";
 import { ApiError } from "../../lib/api/client";
 import { sessions } from "../../lib/api/sessions";
+import { decide, release } from "../../lib/api/permissions";
+import { decisionFor, laneEntries } from "../approval/fromCore";
+import { LiveCard, useCards, type Answer } from "../approval/LiveCard";
+import type { ApprovalRequest } from "../approval/types";
 import { close as closeWindow, minimize as minimizeWindow, onMaximizedChange, toggleMaximize } from "../../lib/window/appWindow";
 import { copyRecordingPath } from "./recording";
 import { addFailure, clipboardText, deliveryFor, noticeFor } from "../regions/deliver";
@@ -100,7 +104,7 @@ function useElementSize() {
 export function LiveApp() {
   // Claude Code's hook state, read when the window opens and again after each change in the Agents dialog or the onboarding. Never polled.
   const [claudeHooks, setClaudeHooks] = useState<HookInstall | undefined>(undefined);
-  const { endpoint, profiles, rows, infos, selectedId, loaded, select, reloadProfiles, error } = useSessions(useMemo(() => ({ claude: claudeHooks }), [claudeHooks]));
+  const { endpoint, profiles, rows, infos, permissions, now, selectedId, loaded, select, reloadProfiles, error } = useSessions(useMemo(() => ({ claude: claudeHooks }), [claudeHooks]));
   const refreshSetup = useCallback(() => {
     if (!endpoint) return;
     getSetup(endpoint, "claude").then(
@@ -150,12 +154,6 @@ export function LiveApp() {
   const [layoutMenu, setLayoutMenu] = useState(false);
   const { ref, width, height } = useElementSize();
   const { appearance, wtFiles, sync } = useAppearance();
-  // The lane entries MainWindow shows; Task 6 replaces this empty list with the live ones.
-  const requests = useMemo(() => [], []);
-  const mutedTabs = useMemo(() => new Set(rows.filter((r) => r.muted).map((r) => r.id)), [rows]);
-  // Task 6 fills each entry's tab; until then it is unknown.
-  const attentionEntries = useMemo(() => requests.map((r: { id: string }) => ({ id: r.id, tab: "" })), [requests]);
-  useAttention(attentionEntries, mutedTabs, () => sync?.soundOff ?? false);
   // A session's theme is the setting with its profile's override. One object per override, kept until the setting changes,
   // so a terminal restyles only when its theme really does (the session list updates far more often).
   const themeFor = useMemo(() => {
@@ -251,7 +249,37 @@ export function LiveApp() {
     },
     [announce, dispatch],
   );
+  // Everything that needs the person, oldest first: the held requests and the sessions waiting in their own terminal. This list is the
+  // count (lane heading, taskbar badge, announcer). The cards add the receipts and exits that outlast an entry.
+  const entries = useMemo(() => laneEntries(permissions, rows, Math.max(now, Date.now())), [permissions, rows, now]);
+  const cards = useCards(entries);
+  const requests = cards.requests;
+  const mutedTabs = useMemo(() => new Set(rows.filter((r) => r.muted).map((r) => r.id)), [rows]);
+  const attentionEntries = useMemo(() => entries.map((e) => ({ id: e.id, tab: e.tab })), [entries]);
+  useAttention(attentionEntries, mutedTabs, () => sync?.soundOff ?? false);
+  const [drawerId, setDrawerId] = useState<string | undefined>(undefined);
+  const drawerRequest = requests.find((r) => r.id === drawerId && r.state.phase === "pending");
   const actions = useMemo(() => new SessionActions({ api: sessions, context: () => context.current, select: (id) => pickRef.current(id), size: () => size.current, settings: sync ?? undefined }), []);
+
+  const answerRequest = useCallback(
+    (r: ApprovalRequest, a: Answer) => {
+      if (!endpoint) return;
+      const verdict = a === "deny" ? "denied" : a === "terminal" ? "terminal" : "allowed";
+      cards.answer(r.id, verdict, () => (a === "terminal" ? release(endpoint, r.id) : decide(endpoint, r.id, decisionFor(a))));
+    },
+    [endpoint, cards.answer],
+  );
+  const jumpToRequest = useCallback(
+    (r: ApprovalRequest) => {
+      pick(r.tab);
+      setTimeout(() => actions.focusTerminal(), 0);
+    },
+    [pick, actions],
+  );
+  const restoreFocus = useCallback(() => void setTimeout(() => actions.focusTerminal(), 0), [actions]);
+  const liveCard = (r: ApprovalRequest, inDrawer = false) => (
+    <LiveCard key={r.id + (inDrawer ? "-drawer" : "")} request={r} inDrawer={inDrawer} onAnswer={answerRequest} onJump={jumpToRequest} onExpand={(x) => setDrawerId(x.id)} onRestoreFocus={restoreFocus} />
+  );
 
   // A window of one empty pane takes the store's selection (a first start, or the only open session closed and another opened).
   // With several panes a closed session's pane stays empty.
@@ -1098,6 +1126,11 @@ export function LiveApp() {
           os={os}
           windowControls={{ maximized, onMinimize: () => void minimizeWindow(), onToggleMaximize: () => void toggleMaximize(), onClose: () => void closeWindow() }}
           requests={requests}
+          renderCard={(r) => liveCard(r)}
+          onJumpRequest={jumpToRequest}
+          drawer={drawerRequest !== undefined}
+          drawerCard={drawerRequest && liveCard(drawerRequest, true)}
+          onDrawerClose={() => setDrawerId(undefined)}
           ports={[]}
           footer={footer}
           shell={{ terminal: shellTerminal, cwd: panelTab?.folder, hidden: view.shell_hidden, failed: shellFailed, onRetry: retryShell, openDisabled: !panelTab, forceOpen: shellForced, onToggle: toggleShell, onOpenInPane: () => void openInPane() }}

@@ -1,14 +1,14 @@
 import { StatusGlyph } from "../../components/StatusGlyph/StatusGlyph";
 import { headline } from "../approval/headline";
 import type { ApprovalRequest } from "../approval/types";
-import { formatDuration } from "../sidebar/format";
+import { formatAge } from "../sidebar/format";
 
 /** A waiting request that is not the target: a 36 px one-liner. */
-export function LaneRow({ request }: { request: ApprovalRequest }) {
+export function LaneRow({ request, onJump }: { request: ApprovalRequest; onJump?: (request: ApprovalRequest) => void }) {
   const isQuestion = request.detail.kind === "question";
   const what = headline(request.detail);
   return (
-    <button type="button" className="lane-row" aria-label={`${request.session.name} ${what} ${formatDuration(request.waitingMs)}. ${isQuestion ? "Has a question" : "Needs permission"}.`} data-agent={request.session.agent}>
+    <button type="button" className="lane-row" aria-label={`${request.session.name} ${what} ${formatAge(request.waitingMs)}. ${isQuestion ? "Has a question" : "Needs permission"}.`} data-agent={request.session.agent} onClick={() => onJump?.(request)}>
       <StatusGlyph kind={isQuestion ? "needs-question" : "needs-permission"} />
       <span className="lane-row__name" dir="auto">
         {request.session.name}
@@ -16,7 +16,7 @@ export function LaneRow({ request }: { request: ApprovalRequest }) {
       <span className="lane-row__what" dir="auto">
         {what}
       </span>{" "}
-      <span className="lane-row__time">{formatDuration(request.waitingMs)}</span>
+      <span className="lane-row__time">{formatAge(request.waitingMs)}</span>
     </button>
   );
 }

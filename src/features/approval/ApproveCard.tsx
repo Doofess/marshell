@@ -2,7 +2,7 @@ import { useId, type KeyboardEvent } from "react";
 import { AGENT_NAMES } from "../../components/AgentMark/agents";
 import { SessionNumber } from "../../components/SessionNumber/SessionNumber";
 import { AuxGlyph, StatusGlyph } from "../../components/StatusGlyph/StatusGlyph";
-import { formatDuration } from "../sidebar/format";
+import { formatAge, formatDuration } from "../sidebar/format";
 import { keyAction, type CardAction } from "./arming";
 import { headline, receiptText, subject } from "./headline";
 import { isTruncated, payloadLines, showAllLabel } from "./payload";
@@ -59,10 +59,11 @@ export function ApproveCard({ request, expanded = false, armed = true, holdProgr
   const riskId = useId();
   const { detail, risk, state, session } = request;
   const agent = AGENT_NAMES[session.agent];
+  const leaving = exiting || request.leaving || undefined;
 
   if (state.phase === "decided") {
     return (
-      <div className="approve-card approve-card--receipt" role="status" data-agent={session.agent} data-phase="decided" data-verdict={state.verdict} data-exiting={exiting || undefined}>
+      <div className="approve-card approve-card--receipt" role="status" data-agent={session.agent} data-phase="decided" data-verdict={state.verdict} data-exiting={leaving}>
         <span aria-hidden="true">
           <StatusGlyph kind={state.verdict === "allowed" ? "done-seen" : "error"} size={12} />
         </span>
@@ -74,9 +75,18 @@ export function ApproveCard({ request, expanded = false, armed = true, holdProgr
   }
   if (state.phase === "terminal") {
     return (
-      <div className="approve-card approve-card--receipt" role="status" data-agent={session.agent} data-phase="terminal">
+      <div className="approve-card approve-card--receipt" role="status" data-agent={session.agent} data-phase="terminal" data-exiting={leaving}>
         <span className="approve-card__receipt-text" dir="auto">
           Answered in terminal {"·"} {subject(detail)}
+        </span>
+      </div>
+    );
+  }
+  if (state.phase === "gone") {
+    return (
+      <div className="approve-card approve-card--receipt" role="status" data-agent={session.agent} data-phase="gone" data-exiting={leaving}>
+        <span className="approve-card__receipt-text" dir="auto">
+          {state.message}
         </span>
       </div>
     );
@@ -136,7 +146,7 @@ export function ApproveCard({ request, expanded = false, armed = true, holdProgr
         <span className="approve-card__name" dir="auto">
           {session.name}
         </span>
-        <span className="approve-card__wait">{formatDuration(request.waitingMs)}</span>
+        <span className="approve-card__wait">{formatAge(request.waitingMs)}</span>
         <button type="button" className="approve-card__menu" aria-label="More actions">
           <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
             <circle cx="3.5" cy="8" r="1.25" fill="currentColor" />
@@ -178,6 +188,11 @@ export function ApproveCard({ request, expanded = false, armed = true, holdProgr
       {cwd && (
         <p className="approve-card__cwd" dir="auto">
           in {cwd}
+        </p>
+      )}
+      {state.notice && (
+        <p className="approve-card__risk" role="alert" dir="auto">
+          {state.notice}
         </p>
       )}
       {risky && risk.reason && (
