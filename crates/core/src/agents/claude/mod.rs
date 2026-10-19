@@ -16,6 +16,38 @@ pub fn parse_version(stdout: &str) -> Option<String> {
     (parts.len() == 3 && parts.iter().all(numeric)).then(|| first.to_string())
 }
 
+/// The Claude Code versions whose hook events and status line are recorded in
+/// `tests/fixtures/claude/<version>/`. One entry per minor line: its oldest recorded patch.
+pub const FIXTURE_VERSIONS: &[(u32, u32, u32)] = &[(2, 1, 302)];
+
+/// Whether Marshell may fold a Claude Code version's events into live status.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Gate {
+    Known,
+    /// The status note the row shows instead.
+    Unknown(String),
+}
+
+/// Known: the same minor line as a recorded fixture set, and not older than its oldest patch.
+pub fn version_gate(version: Option<&str>) -> Gate {
+    let parsed = version.and_then(|v| {
+        let mut parts = v.split('.').map(|p| p.parse::<u32>().ok());
+        let triple = (parts.next()??, parts.next()??, parts.next()??);
+        parts.next().is_none().then_some((v, triple))
+    });
+    let Some((v, (major, minor, patch))) = parsed else {
+        return Gate::Unknown("Claude Code's version could not be read".to_string());
+    };
+    match FIXTURE_VERSIONS.iter().find(|f| f.0 == major && f.1 == minor) {
+        Some(f) if patch >= f.2 => Gate::Known,
+        Some(_) => Gate::Unknown(format!("Claude Code {v} is older than the versions Marshell knows")),
+        None if FIXTURE_VERSIONS.iter().all(|f| (major, minor) < (f.0, f.1)) => {
+            Gate::Unknown(format!("Claude Code {v} is older than the versions Marshell knows"))
+        }
+        None => Gate::Unknown(format!("Claude Code {v} is not one Marshell has recorded yet")),
+    }
+}
+
 /// Runs `<exe> --version` and parses it. The process is killed when it takes longer than `timeout`.
 pub fn run_version(exe: &Path, timeout: Duration) -> Option<String> {
     let mut cmd = Command::new(exe);
@@ -108,6 +140,32 @@ pub fn permission_output(decision: &PermissionDecision, request: &Value) -> Resu
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn the_gate_knows_the_recorded_minor_line_from_its_oldest_patch() {
+        use super::{Gate, version_gate};
+        for v in ["2.1.302", "2.1.303", "2.1.999"] {
+            assert_eq!(version_gate(Some(v)), Gate::Known, "{v}");
+        }
+        for v in ["2.2.0", "3.0.0"] {
+            assert_eq!(
+                version_gate(Some(v)),
+                Gate::Unknown(format!("Claude Code {v} is not one Marshell has recorded yet")),
+                "{v}"
+            );
+        }
+        for v in ["2.1.301", "2.0.9"] {
+            assert_eq!(
+                version_gate(Some(v)),
+                Gate::Unknown(format!("Claude Code {v} is older than the versions Marshell knows")),
+                "{v}"
+            );
+        }
+        let unread = Gate::Unknown("Claude Code's version could not be read".to_string());
+        assert_eq!(version_gate(Some("garbage")), unread);
+        assert_eq!(version_gate(Some("2.1")), unread);
+        assert_eq!(version_gate(None), unread);
+    }
+
     #[test]
     fn parse_version_takes_the_leading_semver() {
         use super::parse_version;

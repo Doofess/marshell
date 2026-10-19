@@ -321,6 +321,27 @@ mod tests {
     }
 
     #[test]
+    fn status_off_round_trips_without_repeats_and_defaults_empty() {
+        let home = tempfile::tempdir().unwrap();
+        let s = Settings {
+            status_off: vec!["claude".into(), " ".into(), "claude".into(), "codex".into()],
+            ..Settings::default()
+        };
+        save(home.path(), &s).unwrap();
+        assert_eq!(load(home.path()).status_off, vec!["claude", "codex"]);
+
+        let file = crate::paths::settings_file(home.path());
+        std::fs::write(
+            &file,
+            r#"{"version":1,"appearance":{},"status_off":["claude","","claude"]}"#,
+        )
+        .unwrap();
+        assert_eq!(load(home.path()).status_off, vec!["claude"]);
+        std::fs::write(&file, r#"{"version":1,"appearance":{}}"#).unwrap();
+        assert!(load(home.path()).status_off.is_empty());
+    }
+
+    #[test]
     fn load_drops_a_terminal_theme_whose_import_is_invalid() {
         let home = tempfile::tempdir().unwrap();
         let mut s = Settings::default();
