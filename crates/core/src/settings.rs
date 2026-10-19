@@ -15,6 +15,8 @@ struct FileDoc {
     pause_warned: bool,
     #[serde(default)]
     onboarded: bool,
+    #[serde(default)]
+    status_off: Vec<String>,
 }
 
 impl Versioned for FileDoc {
@@ -37,6 +39,7 @@ pub fn load(home: &Path) -> Settings {
     });
     let doc = doc.unwrap_or_default();
     let (mut appearance, pause_warned, onboarded) = (doc.appearance, doc.pause_warned, doc.onboarded);
+    let status_off = clean_status_off(doc.status_off);
     // A hand-edited value that fails validation would make every later save fail, so it gives way to its default.
     let replaced = repair(&mut appearance);
     if !replaced.is_empty() {
@@ -49,7 +52,17 @@ pub fn load(home: &Path) -> Settings {
         appearance,
         pause_warned,
         onboarded,
+        status_off,
     }
+}
+
+/// Agent ids, without empty entries or repeats, in the order they were written.
+fn clean_status_off(ids: Vec<String>) -> Vec<String> {
+    let mut seen = HashSet::new();
+    ids.into_iter()
+        .map(|id| id.trim().to_string())
+        .filter(|id| !id.is_empty() && seen.insert(id.clone()))
+        .collect()
 }
 
 /// Writes the settings. A file that is not valid JSON is first copied to `settings.json.broken`,
@@ -69,6 +82,7 @@ pub fn save(home: &Path, s: &Settings) -> anyhow::Result<()> {
             appearance: s.appearance.clone(),
             pause_warned: s.pause_warned,
             onboarded: s.onboarded,
+            status_off: clean_status_off(s.status_off.clone()),
         },
     )
 }
