@@ -56,6 +56,8 @@ pub struct AgentSetup {
     #[ts(optional)]
     pub parse_error: Option<ParseProblem>,
     pub hooks: HookInstall,
+    /// The PermissionRequest hook is in place.
+    pub approve_installed: bool,
     /// A status line that is not Marshell's, or the one the chain keeps.
     pub has_own_statusline: bool,
     /// Ours is in place and the chain holds the user's.

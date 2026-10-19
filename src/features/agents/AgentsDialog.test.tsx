@@ -3,26 +3,46 @@ import { describe, expect, it } from "vitest";
 import type { AgentSetup } from "../../generated/AgentSetup";
 import { AgentsDialogView, type Panel } from "./AgentsDialog";
 import { PREVIEW, SETUP } from "./fixtures";
+import { nameContainsLabel } from "../../lib/labelInName";
 
 const none = () => {};
-const handlers = { onClose: none, onSetup: none, onHooksOff: none, onBack: none, onDone: none, onAllow: none, onToggleDiff: none, onReload: none, onTurnOff: none, onSwitch: none, onLiveStatus: none };
+const handlers = { onClose: none, onSetup: none, onHooksOff: none, onBack: none, onDone: none, onAllow: none, onToggleDiff: none, onReload: none, onTurnOff: none, onSwitch: none, onLiveStatus: none, onSound: none };
 const view = (setup: AgentSetup | "loading" | "failed", panel: Panel = { kind: "list" }, liveStatus: boolean | null = true) => renderToStaticMarkup(<AgentsDialogView setup={setup} panel={panel} liveStatus={liveStatus} {...handlers} />);
 
 describe("AgentsDialogView switches", () => {
   const switchOf = (h: string, label: string) => h.match(new RegExp(`<input[^>]*role="switch"[^>]*>(?=<span class="switch__track"[^>]*></span><span class="switch__text">${label}<)`))?.[0] ?? "";
   it("renders the status line switch unchecked when the person turned it off", () => {
-    const h = view(SETUP, { kind: "setup", flow: { preview: PREVIEW, open: false, busy: false, want: { status: true, statusline: false } } });
+    const h = view(SETUP, { kind: "setup", flow: { preview: PREVIEW, open: false, busy: false, want: { status: true, statusline: false, approve: false } } });
     expect(switchOf(h, "Keep my status line working")).not.toContain("checked");
     expect(switchOf(h, "Show status and context")).toContain("checked");
   });
   it("offers no Allow when status is off, and keeps Skip", () => {
-    const h = view(SETUP, { kind: "setup", flow: { preview: null, open: false, busy: false, want: { status: false, statusline: true } } });
+    const h = view(SETUP, { kind: "setup", flow: { preview: null, open: false, busy: false, want: { status: false, statusline: true, approve: false } } });
     expect(h).not.toContain("consent__apply");
     expect(h).toContain("Skip: use limited status");
   });
 });
 
 describe("AgentsDialogView", () => {
+  it("offers Set up for approval missing from an installed status setup", () => {
+    const h = view({ ...SETUP, hooks: "installed", approve_installed: false });
+    expect(h).toContain("Approve from anywhere: off");
+    expect(h).toContain(">Set up</button>");
+    expect(h).not.toContain(">Set up again</button>");
+  });
+  it("renders a named keyboard reachable needs-you sound switch with its saved state", () => {
+    for (const sound of [true, false]) {
+      const h = renderToStaticMarkup(<AgentsDialogView setup={SETUP} panel={{ kind: "list" }} liveStatus={true} sound={sound} {...handlers} onSound={none} />);
+      const label = h.match(/<label[^>]*>(?:(?!<\/label>)[\s\S])*?Needs-you sound[\s\S]*?<\/label>/)?.[0] ?? "";
+      expect(label).toContain('type="checkbox" role="switch"');
+      expect(label.includes('checked=""')).toBe(sound);
+      expect(nameContainsLabel(label)).toBe(true);
+      expect(label).not.toContain('tabindex="-1"');
+    }
+  });
+  it("leaves the sound switch out until settings are read", () => {
+    expect(view(SETUP)).not.toContain("Needs-you sound");
+  });
   it("is a modal dialog named Agents", () => {
     const h = view(SETUP);
     expect(h).toMatch(/role="dialog"[^>]*aria-modal="true"/);
@@ -41,7 +61,7 @@ describe("AgentsDialogView", () => {
     expect(h).not.toContain("agents-dialog__warning");
   });
   it("offers only Hooks off when the hooks are on", () => {
-    const h = view({ ...SETUP, hooks: "installed" });
+    const h = view({ ...SETUP, hooks: "installed", approve_installed: true });
     expect(h).toContain("Hooks on in C:/h/.claude/settings.json.");
     expect(h).toContain(">Hooks off</button>");
     expect(h).not.toMatch(/>Set up( again)?<\/button>/);

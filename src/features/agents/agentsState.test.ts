@@ -1,6 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { AgentSetup } from "../../generated/AgentSetup";
-import { actions, consentProps, DEFAULT_WANT, hooksOffNotice, installRequest, liveStatusOn, setupLine } from "./agentsState";
+import { actions, consentProps, DEFAULT_WANT, hooksOffNotice, installRequest, liveStatusOn, setNeedsYouSound, setupLine, setupWant } from "./agentsState";
 import type { ConfigPreview } from "../../generated/ConfigPreview";
 import type { FilePreview } from "../../generated/FilePreview";
 import { PREVIEW, SETUP } from "./fixtures";
@@ -27,7 +27,7 @@ describe("setupLine", () => {
 describe("actions", () => {
   it("offers what each state allows", () => {
     expect(actions(s({ hooks: "none" }))).toEqual(["setup"]);
-    expect(actions(s({ hooks: "installed" }))).toEqual(["hooksOff"]);
+    expect(actions(s({ hooks: "installed", approve_installed: true }))).toEqual(["hooksOff"]);
     expect(actions(s({ hooks: "partial" }))).toEqual(["setup", "hooksOff"]);
     expect(actions(s({ hooks: "orphaned" }))).toEqual(["setup", "hooksOff"]);
   });
@@ -82,8 +82,8 @@ describe("consentProps", () => {
     expect(p.scenario.plan.diff).toContain('"hooks": {}');
     expect(p.scenario.plan.backupPath).toBe("C:/m/snapshots");
     expect(p.scenario.plan.chainPath).toBe("C:/m/agents/claude/statusline-chain.json");
-    expect(p.offer).toEqual(["status", "statusline"]);
-    expect(p.on).toEqual({ status: true, approve: false, statusline: true });
+    expect(p.offer).toEqual(["status", "approve", "statusline"]);
+    expect(p.on).toEqual({ status: true, approve: true, statusline: true });
   });
   it("never describes a refused file as about to change", () => {
     const p = consentProps(SETUP, { preview: null, open: false, busy: false, error: "hooks is not an object" });
@@ -94,25 +94,53 @@ describe("consentProps", () => {
 });
 
 describe("the switches the person sets", () => {
+  it("starts an upgrade with only approval requested", () => {
+    expect(setupWant(s({ hooks: "installed", approve_installed: false }))).toEqual({ status: false, statusline: false, approve: true });
+    expect(setupWant(SETUP)).toEqual(DEFAULT_WANT);
+  });
+  it("writes the inverse sound setting and returns the saved state", async () => {
+    const sync = { soundOff: false, setSoundOff: vi.fn(async (off: boolean) => { sync.soundOff = off; }) };
+    expect(await setNeedsYouSound(sync, false)).toBe(false);
+    expect(sync.setSoundOff).toHaveBeenLastCalledWith(true);
+    expect(await setNeedsYouSound(sync, true)).toBe(true);
+    expect(sync.setSoundOff).toHaveBeenLastCalledWith(false);
+  });
+  it("propagates a failed sound save instead of reporting a new state", async () => {
+    const sync = { soundOff: false, setSoundOff: vi.fn().mockRejectedValue(new Error("save failed")) };
+    await expect(setNeedsYouSound(sync, false)).rejects.toThrow("save failed");
+  });
+  it("sends the approval switch in the hook plan request", () => {
+    expect(installRequest({ ...DEFAULT_WANT, approve: true }).approve).toBe(true);
+    expect(installRequest({ ...DEFAULT_WANT, approve: false }).approve).toBe(false);
+  });
+  it("offers only approval for an existing status install", () => {
+    const p = consentProps(s({ hooks: "installed", approve_installed: false }), {
+      preview: PREVIEW, open: true, busy: false,
+      want: { status: false, statusline: false, approve: true },
+    });
+    expect(p.offer).toEqual(["approve"]);
+    expect(p.on).toEqual({ status: false, statusline: false, approve: true });
+    expect(p.scenario.plan.diff).toContain('"hooks": {}');
+  });
   it("start with status and the status line on", () => {
-    expect(installRequest(DEFAULT_WANT)).toEqual({ status: true, statusline: true });
+    expect(installRequest(DEFAULT_WANT)).toEqual({ status: true, statusline: true, approve: true });
   });
   it("send statusline:false when that switch is off, so the status line is never touched", () => {
-    expect(installRequest({ status: true, statusline: false })).toEqual({ status: true, statusline: false });
+    expect(installRequest({ status: true, statusline: false, approve: false })).toEqual({ status: true, statusline: false, approve: false });
   });
   it("never ask for the status line when status is off", () => {
-    expect(installRequest({ status: false, statusline: true })).toEqual({ status: false, statusline: false });
+    expect(installRequest({ status: false, statusline: true, approve: false })).toEqual({ status: false, statusline: false, approve: false });
   });
   it("show the card's switches as the person set them", () => {
-    const p = consentProps(SETUP, { preview: PREVIEW, open: false, busy: false, want: { status: true, statusline: false } });
+    const p = consentProps(SETUP, { preview: PREVIEW, open: false, busy: false, want: { status: true, statusline: false, approve: false } });
     expect(p.on).toEqual({ status: true, approve: false, statusline: false });
     expect(p.scenario.plan.headline).toBeUndefined();
     expect(p.scenario.plan.chainPath).toBe("C:/m/agents/claude/statusline-chain.json");
   });
-  it("say nothing will change when status is off", () => {
-    const p = consentProps(SETUP, { preview: null, open: false, busy: false, want: { status: false, statusline: true } });
+  it("wait for a preview when both capabilities are off", () => {
+    const p = consentProps(SETUP, { preview: null, open: false, busy: false, want: { status: false, statusline: true, approve: false } });
     expect(p.on.status).toBe(false);
-    expect(p.scenario.plan.headline).toBe("Nothing will change: status is off.");
+    expect(p.scenario.plan.headline).toBe("Checking C:/h/.claude/settings.json…");
   });
 });
 

@@ -179,6 +179,7 @@ fn setup_of(st: &AppState) -> Result<AgentSetup, Fail> {
         settings_state: SettingsState::Ok,
         parse_error: None,
         hooks: HookInstall::None,
+        approve_installed: false,
         has_own_statusline: false,
         chained: false,
         bridge_path: paths::bridge_exe(home).to_string_lossy().into_owned(),
@@ -219,6 +220,7 @@ fn setup_of(st: &AppState) -> Result<AgentSetup, Fail> {
         .and_then(|t| read_value(&t).ok());
     let found = hooks::inspect(&settings, chain.as_ref(), home);
     setup.hooks = found.install;
+    setup.approve_installed = found.approve_installed;
     setup.has_own_statusline = found.has_own_statusline;
     setup.chained = found.chained;
     Ok(setup)

@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import type { AgentSetup } from "../../generated/AgentSetup";
 import type { Endpoint } from "../../generated/Endpoint";
 import { getSetup, toDetection } from "../../lib/api/agents";
-import { actions, consentProps, type InstallFlow } from "../agents/agentsState";
+import { actions, consentProps, setupWant, type InstallFlow } from "../agents/agentsState";
 import { useInstallFlow } from "../agents/useInstallFlow";
 import { ConsentCard } from "./ConsentCard";
 import type { Capability } from "./consent";
@@ -91,10 +91,10 @@ export function LiveOnboarding({ endpoint, onDone }: { endpoint: Endpoint; onDon
     <OnboardingView
       state={state}
       onContinue={() => {
-        // Nothing to set up (not found, already on, a file that does not parse): the card has nothing to offer, so the onboarding ends.
+        // No setup action means the card has nothing to offer, so onboarding ends.
         if (typeof setup !== "object" || !actions(setup).includes("setup")) return onDone();
         setConsent(true);
-        void install.plan();
+        void install.plan(setupWant(setup));
       }}
       onBack={() => {
         install.reset();

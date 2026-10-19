@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { canEdit, CAPABILITIES, consentHeadline, entryCount, removalCopy, type Detection } from "./consent";
+import { consentProps } from "../agents/agentsState";
+import { SETUP } from "../agents/fixtures";
 
 const claude: Detection = { cli: "claude", installed: true, version: "2.1.296", configPath: "C:\Users\Home Office\.claude\settings.json", configState: "ok" };
 const all = { status: true, approve: true, statusline: true };
@@ -18,6 +20,11 @@ describe("entryCount", () => {
 });
 
 describe("CAPABILITIES", () => {
+  it("offers approval on by default in the live consent card", () => {
+    const card = consentProps(SETUP, { preview: null, open: false, busy: false });
+    expect(card.offer).toContain("approve");
+    expect(card.on.approve).toBe(true);
+  });
   it("offers Antigravity all three: four status hooks, its PreToolUse permission hook and its status line (docs/research/2026-10-15-local-install-check.md)", () => {
     expect(CAPABILITIES.antigravity).toEqual({
       status: { available: true, entries: 4 },

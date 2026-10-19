@@ -16,6 +16,10 @@ agent: string,
  */
 found: boolean, version?: string, exe_path?: string, settings_path: string, settings_state: SettingsState, parse_error?: ParseProblem, hooks: HookInstall, 
 /**
+ * The PermissionRequest hook is in place.
+ */
+approve_installed: boolean, 
+/**
  * A status line that is not Marshell's, or the one the chain keeps.
  */
 has_own_statusline: boolean, 

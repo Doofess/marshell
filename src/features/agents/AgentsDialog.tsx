@@ -10,7 +10,7 @@ import { useDialogFocus } from "../../lib/useDialogFocus";
 import { SettingsReadError, type SettingsSync } from "../appearance/settingsSync";
 import { ConsentCard } from "../onboarding/ConsentCard";
 import { type Capability } from "../onboarding/consent";
-import { actions, consentProps, hooksOffNotice, liveStatusOn, removalBlock, setupLine, type InstallFlow } from "./agentsState";
+import { actions, consentProps, hooksOffNotice, liveStatusOn, removalBlock, setNeedsYouSound, setupLine, setupWant, type InstallFlow } from "./agentsState";
 import { failureText, useInstallFlow } from "./useInstallFlow";
 import "./AgentsDialog.css";
 
@@ -36,13 +36,14 @@ export type AgentsDialogHandlers = {
   onSwitch: (capability: Capability, checked: boolean) => void;
   /** The Live status switch for Claude Code. */
   onLiveStatus: (checked: boolean) => void;
+  onSound: (checked: boolean) => void;
 };
 
 /**
  * Settings → Agents (docs/PLAN.md slice 3c, decision 5), as a modal dialog over the window: Claude Code's install state, with Set up,
  * Hooks off (preview, then apply) and the orphaned-hooks warning. Presentational: `AgentsDialog` fetches and acts, this draws.
  */
-export function AgentsDialogView({ setup, panel, liveStatus, liveStatusError, ...on }: { setup: AgentSetup | "loading" | "failed"; panel: Panel; liveStatus: boolean | null; liveStatusError?: string | null } & AgentsDialogHandlers) {
+export function AgentsDialogView({ setup, panel, liveStatus, sound = null, liveStatusError, ...on }: { setup: AgentSetup | "loading" | "failed"; panel: Panel; liveStatus: boolean | null; sound?: boolean | null; liveStatusError?: string | null } & AgentsDialogHandlers) {
   const dialog = useRef<HTMLDivElement>(null);
   const title = useRef<HTMLHeadingElement>(null);
   useDialogFocus(dialog, title, on.onClose);
@@ -60,7 +61,7 @@ export function AgentsDialogView({ setup, panel, liveStatus, liveStatusError, ..
               {SETUP_UNREADABLE}
             </p>
           )}
-          {typeof setup === "object" && panel.kind === "list" && <AgentList setup={setup} liveStatus={liveStatus} error={liveStatusError} on={on} />}
+          {typeof setup === "object" && panel.kind === "list" && <AgentList setup={setup} liveStatus={liveStatus} sound={sound} error={liveStatusError} on={on} />}
           {typeof setup === "object" && panel.kind === "setup" && <SetupPanel setup={setup} flow={panel.flow} on={on} />}
           {typeof setup === "object" && panel.kind === "off" && <OffPanel panel={panel} on={on} />}
         </div>
@@ -74,7 +75,7 @@ export function AgentsDialogView({ setup, panel, liveStatus, liveStatusError, ..
   );
 }
 
-function AgentList({ setup, liveStatus, error, on }: { setup: AgentSetup; liveStatus: boolean | null; error?: string | null; on: AgentsDialogHandlers }) {
+function AgentList({ setup, liveStatus, sound, error, on }: { setup: AgentSetup; liveStatus: boolean | null; sound: boolean | null; error?: string | null; on: AgentsDialogHandlers }) {
   const todo = actions(setup);
   const orphaned = setup.found && setup.hooks === "orphaned" && setup.settings_state !== "unparsable";
   return (
@@ -87,10 +88,12 @@ function AgentList({ setup, liveStatus, error, on }: { setup: AgentSetup; liveSt
       <p className={orphaned ? "agents-dialog__warning" : "agents-dialog__line"} dir="auto">
         {setupLine(setup)}
       </p>
+      {setup.hooks === "installed" && !setup.approve_installed && <p className="agents-dialog__line">Approve from anywhere: off</p>}
       {/* Left out until the settings have been read: an unread value is never shown as off. */}
       {liveStatus !== null && (
         <Switch label="Live status" checked={liveStatus} onChange={on.onLiveStatus} reason={liveStatus ? undefined : "Rows use output activity only: Working or Idle."} />
       )}
+      {sound !== null && <Switch label="Needs-you sound" checked={sound} onChange={on.onSound} />}
       {error && (
         <p className="agents-dialog__error" role="alert">
           {error}
@@ -100,7 +103,7 @@ function AgentList({ setup, liveStatus, error, on }: { setup: AgentSetup; liveSt
         <div className="agents-dialog__actions">
           {todo.includes("setup") && (
             <button type="button" className="agents-dialog__btn" onClick={on.onSetup}>
-              {setup.hooks === "none" ? "Set up" : "Set up again"}
+              {setup.hooks === "none" || setup.hooks === "installed" ? "Set up" : "Set up again"}
             </button>
           )}
           {todo.includes("hooksOff") && (
@@ -121,7 +124,7 @@ function SetupPanel({ setup, flow, on }: { setup: AgentSetup; flow: InstallFlow;
       {...card}
       onApply={allow ? on.onAllow : undefined}
       onSkip={done ? on.onDone : on.onBack}
-      skipLabel={done ? "Done" : undefined}
+      skipLabel={done ? "Done" : setup.hooks === "installed" ? "Back" : undefined}
       onToggleDiff={on.onToggleDiff}
       onSwitch={on.onSwitch}
       conflict={flow.conflict ? { onReload: on.onReload } : undefined}
@@ -193,7 +196,7 @@ export function AgentsDialog({
   /** The hooks were set up or turned off: the window reads the state again. */
   onChanged?: () => void;
   startWith?: "setup";
-  /** The settings the Live status switch reads and saves. Left out, there is no switch. */
+  /** The settings the Live status and sound switches read and save. */
   sync?: SettingsSync;
 }) {
   const [setup, setSetup] = useState<AgentSetup | "loading" | "failed">("loading");
@@ -202,11 +205,16 @@ export function AgentsDialog({
 
   // null until the settings have been read.
   const [liveStatus, setLiveStatus] = useState<boolean | null>(null);
+  const [sound, setSound] = useState<boolean | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
   useEffect(() => {
     let live = true;
     sync?.load().then(
-      () => live && setLiveStatus(liveStatusOn(sync.statusOff, "claude")),
+      () => {
+        if (!live) return;
+        setLiveStatus(liveStatusOn(sync.statusOff, "claude"));
+        setSound(!sync.soundOff);
+      },
       () => {},
     );
     return () => {
@@ -224,9 +232,21 @@ export function AgentsDialog({
     }
   };
 
+  const switchSound = async (on: boolean) => {
+    if (!sync) return;
+    setSaveError(null);
+    try {
+      setSound(await setNeedsYouSound(sync, on));
+    } catch (e) {
+      setSaveError(e instanceof SettingsReadError ? e.message : failureText(e));
+    }
+  };
+
   const load = useCallback(async () => {
     try {
-      setSetup(await getSetup(endpoint, "claude"));
+      const found = await getSetup(endpoint, "claude");
+      setSetup(found);
+      return found;
     } catch {
       setSetup((s) => (typeof s === "object" ? s : "failed"));
     }
@@ -239,10 +259,12 @@ export function AgentsDialog({
   }, [load, onChanged]);
   const install = useInstallFlow(endpoint, installed);
 
-  const startSetup = useCallback(() => {
+  const startSetup = useCallback((current?: AgentSetup) => {
+    const found = current ?? setup;
+    if (typeof found !== "object") return;
     setMode("setup");
-    void install.plan();
-  }, [install.plan]);
+    void install.plan(setupWant(found));
+  }, [install.plan, setup]);
   const startOff = useCallback(async () => {
     setMode("off");
     setOff({ kind: "off", removal: null, busy: true });
@@ -257,8 +279,8 @@ export function AgentsDialog({
   useEffect(() => {
     if (!first.current) return;
     first.current = false;
-    void load().then(() => {
-      if (startWith === "setup") startSetup();
+    void load().then((found) => {
+      if (startWith === "setup" && found) startSetup(found);
     });
   }, [load, startWith, startSetup]);
 
@@ -295,10 +317,12 @@ export function AgentsDialog({
       setup={setup}
       panel={panel}
       liveStatus={liveStatus}
+      sound={sound}
       liveStatusError={saveError}
       onLiveStatus={(on) => void switchLiveStatus(on)}
+      onSound={(on) => void switchSound(on)}
       onClose={onClose}
-      onSetup={startSetup}
+      onSetup={() => startSetup()}
       onHooksOff={() => void startOff()}
       onBack={back}
       onDone={done}
