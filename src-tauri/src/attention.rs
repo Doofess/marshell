@@ -1,6 +1,5 @@
-//! The needs-you count on the taskbar, the flash and the chime.
+//! The needs-you count on the taskbar, the flash and the sound.
 
-use std::time::Duration;
 use tauri::{Manager, UserAttentionType};
 
 const SIZE: u32 = 16;
@@ -86,7 +85,7 @@ pub fn set_badge(app: tauri::AppHandle, count: u32) -> Result<(), String> {
     }
 }
 
-/// Flashes the taskbar button and, when `sound`, plays the chime. The window decides when to call it (a new request while unfocused).
+/// Flashes the taskbar button and, when `sound`, plays the needs-you sound. The window decides when to call it (a new request while unfocused).
 #[tauri::command]
 pub fn alert_needs_you(app: tauri::AppHandle, sound: bool) -> Result<(), String> {
     let window = app.get_webview_window("main").ok_or("no main window")?;
@@ -94,36 +93,53 @@ pub fn alert_needs_you(app: tauri::AppHandle, sound: bool) -> Result<(), String>
         .request_user_attention(Some(UserAttentionType::Informational))
         .map_err(|e| e.to_string())?;
     if sound {
-        std::thread::spawn(chime);
+        play_sound();
     }
     Ok(())
 }
 
-/// Two short sine tones, 880 Hz then 1320 Hz. A failure to open audio is logged and ignored.
-fn chime() {
-    use rodio::source::{SineWave, Source};
-    let mut sink = match rodio::DeviceSinkBuilder::open_default_sink() {
-        Ok(s) => s,
-        Err(e) => {
-            eprintln!("Marshell: no sound for the needs-you chime: {e}");
-            return;
-        }
-    };
-    sink.log_on_drop(false);
-    let player = rodio::Player::connect_new(sink.mixer());
-    for hz in [880.0, 1320.0] {
-        let tone = SineWave::new(hz)
-            .take_duration(Duration::from_millis(90))
-            .fade_in(Duration::from_millis(10))
-            .amplify(0.25);
-        player.append(tone);
-    }
-    player.sleep_until_end();
+/// Windows' own notification sound, so it follows the user's sound scheme and volume (3d decision 9).
+const SOUND_ALIAS: &str = "Notification.Default";
+
+/// `s` as a NUL-terminated UTF-16 string for the Win32 API.
+fn wide(s: &str) -> Vec<u16> {
+    s.encode_utf16().chain(std::iter::once(0)).collect()
 }
 
+/// Plays the sound without waiting for it. No fallback beep: a scheme with the sound set to (None) stays silent.
+#[cfg(windows)]
+fn play_sound() {
+    use windows_sys::Win32::Media::Audio::{PlaySoundW, SND_ALIAS, SND_ASYNC, SND_NODEFAULT};
+    // Kept for the life of the process: with SND_ASYNC the call returns before the sound ends.
+    static ALIAS: std::sync::OnceLock<Vec<u16>> = std::sync::OnceLock::new();
+    let alias = ALIAS.get_or_init(|| wide(SOUND_ALIAS));
+    // SAFETY: `alias` is a NUL-terminated UTF-16 string that is never freed.
+    let ok = unsafe {
+        PlaySoundW(
+            alias.as_ptr(),
+            std::ptr::null_mut(),
+            SND_ALIAS | SND_ASYNC | SND_NODEFAULT,
+        )
+    };
+    if ok == 0 {
+        eprintln!("Marshell: no sound for needs-you ({SOUND_ALIAS})");
+    }
+}
+
+/// The system sounds of macOS and Linux come when those platforms are built.
+#[cfg(not(windows))]
+fn play_sound() {}
 #[cfg(test)]
 mod tests {
-    use super::badge_rgba;
+    use super::{SOUND_ALIAS, badge_rgba, wide};
+
+    #[test]
+    fn the_sound_is_windows_own_notification_alias_as_a_c_wide_string() {
+        assert_eq!(SOUND_ALIAS, "Notification.Default");
+        let w = wide(SOUND_ALIAS);
+        assert_eq!(w.last(), Some(&0));
+        assert_eq!(String::from_utf16(&w[..w.len() - 1]).unwrap(), SOUND_ALIAS);
+    }
 
     #[test]
     fn badge_rgba_sizes_and_nine_plus() {
