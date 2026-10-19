@@ -6,6 +6,7 @@ import type { TaskChanges } from "../../generated/TaskChanges";
 import { ApiError } from "../../lib/api/client";
 import { sessions } from "../../lib/api/sessions";
 import { decide, release } from "../../lib/api/permissions";
+import { peek as peekScreen } from "../../lib/api/peek";
 import { decisionFor, laneEntries } from "../approval/fromCore";
 import { LiveCard, useCards, type Answer } from "../approval/LiveCard";
 import type { ApprovalRequest } from "../approval/types";
@@ -1149,6 +1150,8 @@ export function LiveApp() {
           requests={requests}
           renderCard={(r) => liveCard(r)}
           onJumpRequest={jumpToRequest}
+          readScreen={endpoint ? (id) => peekScreen(endpoint, id) : undefined}
+          onPeekClose={() => actions.focusTerminal()}
           drawer={drawerRequest !== undefined}
           drawerCard={drawerRequest && liveCard(drawerRequest, true)}
           onDrawerClose={() => setDrawerId(undefined)}
