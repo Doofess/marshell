@@ -35,6 +35,7 @@ import { getSetup } from "../../lib/api/agents";
 import type { HookInstall } from "../../generated/HookInstall";
 import { AppearanceDialog } from "../appearance/AppearanceDialog";
 import { useAppearance } from "../appearance/AppearanceProvider";
+import { useAttention } from "../attention/useAttention";
 import { terminalThemeOf, wtFont } from "../appearance/terminalSettings";
 import { changesFor, isTextBox, keyBlocked, markTasks, missingTask, paletteHidden, resolveTarget, reviewAgentName, reviewKeyDown, reviewTarget, taskRefresher, type ReviewTarget } from "../tasks/reviewOpen";
 import { ReviewSheet } from "../tasks/ReviewSheet";
@@ -149,6 +150,12 @@ export function LiveApp() {
   const [layoutMenu, setLayoutMenu] = useState(false);
   const { ref, width, height } = useElementSize();
   const { appearance, wtFiles, sync } = useAppearance();
+  // The lane entries MainWindow shows; Task 6 replaces this empty list with the live ones.
+  const requests = useMemo(() => [], []);
+  const mutedTabs = useMemo(() => new Set(rows.filter((r) => r.muted).map((r) => r.id)), [rows]);
+  // Task 6 fills each entry's tab; until then it is unknown.
+  const attentionEntries = useMemo(() => requests.map((r: { id: string }) => ({ id: r.id, tab: "" })), [requests]);
+  useAttention(attentionEntries, mutedTabs, () => sync?.soundOff ?? false);
   // A session's theme is the setting with its profile's override. One object per override, kept until the setting changes,
   // so a terminal restyles only when its theme really does (the session list updates far more often).
   const themeFor = useMemo(() => {
@@ -1090,7 +1097,7 @@ export function LiveApp() {
           preview={previewPane}
           os={os}
           windowControls={{ maximized, onMinimize: () => void minimizeWindow(), onToggleMaximize: () => void toggleMaximize(), onClose: () => void closeWindow() }}
-          requests={[]}
+          requests={requests}
           ports={[]}
           footer={footer}
           shell={{ terminal: shellTerminal, cwd: panelTab?.folder, hidden: view.shell_hidden, failed: shellFailed, onRetry: retryShell, openDisabled: !panelTab, forceOpen: shellForced, onToggle: toggleShell, onOpenInPane: () => void openInPane() }}

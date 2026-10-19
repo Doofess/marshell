@@ -15,6 +15,8 @@ tauri-plugin-dialog = "2"
 tauri-plugin-opener = "2"
 tauri-plugin-single-instance = "2"
 tauri-plugin-window-state = "2"
+# attention.rs: the needs-you chime, synthesised from sine waves (no decoders, no audio file).
+rodio = { version = "0.22", default-features = false, features = ["playback"] }
 
 # Reaches the WebView2 settings Tauri does not expose (main.rs: the browser's own shortcuts).
 [target."cfg(windows)".dependencies]
