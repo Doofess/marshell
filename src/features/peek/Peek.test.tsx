@@ -2,7 +2,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { nameContainsLabel } from "../../lib/labelInName";
 import type { RowModel } from "../sidebar/types";
-import { Peek } from "./Peek";
+import { Peek, showNewest } from "./Peek";
 
 const row = { id: "t6", number: 6, name: "api-server" } as RowModel;
 const html = (rows: string[] | null, failed = false) => renderToStaticMarkup(<Peek row={row} rows={rows} failed={failed} onClose={() => {}} />);
@@ -26,5 +26,10 @@ describe("Peek", () => {
   it("keeps the dialog's name containing what its controls show (the pre has no label of its own)", () => {
     const pre = /<pre[\s\S]*<\/pre>/.exec(html(["x"]))![0];
     expect(nameContainsLabel(pre)).toBe(true);
+  });
+  it("opens scrolled to the newest row, since 30 rows overflow the popover (live check, 3d)", () => {
+    const screen = { scrollTop: 0, scrollHeight: 588 };
+    showNewest(screen);
+    expect(screen.scrollTop).toBe(588);
   });
 });

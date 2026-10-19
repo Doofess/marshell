@@ -1,7 +1,12 @@
-import { useEffect, useRef, type CSSProperties } from "react";
+import { useEffect, useLayoutEffect, useRef, type CSSProperties } from "react";
 import type { RowModel } from "../sidebar/types";
 import { peekName } from "./usePeek";
 import "./Peek.css";
+
+/** Scrolls the screen to its last row: the newest output is what a glance is for, and 30 rows overflow the popover. */
+export function showNewest(el: { scrollTop: number; scrollHeight: number }) {
+  el.scrollTop = el.scrollHeight;
+}
 
 /**
  * A session's last rows, as plain monospace text in a non-modal popover beside its row. `rows` is null while loading (nothing
@@ -30,6 +35,9 @@ export function Peek({
 }) {
   const screen = useRef<HTMLPreElement & HTMLParagraphElement>(null);
   const shown = rows !== null || failed;
+  useLayoutEffect(() => {
+    if (screen.current) showNewest(screen.current);
+  }, [rows]);
   useEffect(() => {
     if (focusOnOpen && shown) screen.current?.focus();
   }, [focusOnOpen, shown]);
