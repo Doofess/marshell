@@ -1,6 +1,7 @@
 //! Claude Code's side of a permission request: the JSON a `PermissionRequest` hook answers with.
 
 pub mod hooks;
+pub mod status;
 
 use std::path::Path;
 use std::process::{Command, Stdio};
