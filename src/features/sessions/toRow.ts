@@ -55,7 +55,7 @@ function liveRow(live: LiveStatus, now: number): Pick<RowModel, "status" | "phra
   const since = Math.max(0, now - live.since_ms);
   return {
     status: GLYPH[live.state],
-    phrase: live.phrase,
+    phrase: live.state === "done" && live.recap !== null ? `${live.phrase} · ${live.recap.text}` : live.phrase,
     ...(live.state === "needs_permission" || live.state === "needs_question" ? { waitingMs: since } : {}),
     ...(live.state === "done" ? { ageMs: since } : {}),
     ...(live.model === null ? {} : { model: live.model }),
@@ -84,10 +84,11 @@ export function ageTick(infos: SessionInfo[], now: number): number | undefined {
   return tick;
 }
 
-/** The plan ring: the highest 5-hour use any session reports, or nothing when none does. */
+/** The plan ring: the highest 5-hour use any Claude session reports, or nothing when none does. A claude run inside a shell tab feeds that shell's row, not the ring. */
 export function planRing(infos: SessionInfo[]): { pct: number } | undefined {
   let pct: number | undefined;
   for (const i of infos) {
+    if (i.agent !== "claude") continue;
     const p = i.live?.five_hour_pct;
     if (p !== null && p !== undefined && Number.isFinite(p) && (pct === undefined || p > pct)) pct = p;
   }
@@ -131,8 +132,9 @@ export function toRow(info: SessionInfo, profiles: Profile[], setup?: { claude?:
     // Claude Code without Marshell's hooks: say so and offer the setup, ahead of the output fallback. An unknown state (not fetched yet) says and offers nothing.
     if (info.agent === "claude" && setup?.claude !== undefined && setup.claude !== "installed") return { ...base, status: "limited", phrase: "Status limited · set up", setupLink: true };
     const note = info.status_note === null ? LIMITED_NOTE : `${LIMITED_NOTE} · ${info.status_note}`;
-    if (info.activity === "working") return { ...base, status: "working", phrase: "Working", note };
-    if (info.activity === "idle") return { ...base, status: "idle", phrase: "Idle", note };
+    const statusNote = info.status_note === null ? {} : { statusNote: info.status_note };
+    if (info.activity === "working") return { ...base, status: "working", phrase: `Working · ${LIMITED_NOTE}`, note, ...statusNote };
+    if (info.activity === "idle") return { ...base, status: "idle", phrase: `Idle · ${LIMITED_NOTE}`, note, ...statusNote };
     return { ...base, status: "limited", phrase: info.status_note ?? "Status arrives with hooks" };
   }
   if (fg !== null) {

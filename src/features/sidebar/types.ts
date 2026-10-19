@@ -29,6 +29,8 @@ export type RowModel = {
   setupLink?: boolean;
   /** Said in the row's tooltip, not on its lines: why a Working or Idle row is only as sure as the pty's output (no live status). */
   note?: string;
+  /** The core's reason for the limited status, when it gave one: the accessible name says it, since the tooltip is not read. */
+  statusNote?: string;
   /** Needs-you only: how long it has waited. */
   waitingMs?: number;
   /** Done or ended: time since. */

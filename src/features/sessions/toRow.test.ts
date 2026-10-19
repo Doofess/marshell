@@ -221,6 +221,11 @@ describe("toRow: live status", () => {
     expect(Object.keys(bare)).not.toEqual(expect.arrayContaining(["model"]));
     for (const k of ["model", "effort", "contextPct", "subagents", "recap"]) expect(Object.keys(bare)).not.toContain(k);
   });
+  it("reads Done · recap on a done row that has one, and Done without", () => {
+    expect(row(live({ state: "done", phrase: "Done", recap: { text: "Fixed it", at_ms: NOW - 7000 } })).phrase).toBe("Done · Fixed it");
+    expect(row(live({ state: "done", phrase: "Done" })).phrase).toBe("Done");
+    expect(row(live({ state: "idle", phrase: "Idle", recap: { text: "Fixed it", at_ms: NOW - 7000 } })).phrase).toBe("Idle");
+  });
   it("gives the recap its age and a done row its age", () => {
     const r = row(live({ state: "done", since_ms: NOW - 3000, recap: { text: "Fixed it", at_ms: NOW - 7000 } }));
     expect(r.recap).toEqual({ text: "Fixed it", ageMs: 7000 });
@@ -236,9 +241,9 @@ describe("toRow: live status", () => {
   });
   it("falls back to output activity with a status-limited note on the tooltip", () => {
     const w = row(null, { activity: "working" });
-    expect(w).toMatchObject({ status: "working", phrase: "Working", note: "Status limited" });
+    expect(w).toMatchObject({ status: "working", phrase: "Working · Status limited", note: "Status limited" });
     const i = row(null, { activity: "idle" });
-    expect(i).toMatchObject({ status: "idle", phrase: "Idle", note: "Status limited" });
+    expect(i).toMatchObject({ status: "idle", phrase: "Idle · Status limited", note: "Status limited" });
     expect(rowTitle(w)).toContain("Status limited");
   });
   it("says set up for a Claude row without hooks, and the core's note otherwise", () => {
@@ -255,7 +260,12 @@ describe("toRow: live status", () => {
   });
   it("puts the core's reason in the fallback row's note", () => {
     const r = row(null, { activity: "idle", status_note: "Live status is off for Claude Code" });
-    expect(r).toMatchObject({ status: "idle", phrase: "Idle", note: "Status limited · Live status is off for Claude Code" });
+    expect(r).toMatchObject({ status: "idle", phrase: "Idle · Status limited", note: "Status limited · Live status is off for Claude Code", statusNote: "Live status is off for Claude Code" });
+  });
+  it("puts the limited status in the fallback row's accessible name", () => {
+    const r = row(null, { activity: "idle", status_note: "Live status is off for Claude Code" });
+    expect(rowLabel(r)).toContain("Idle · Status limited. Claude, Idle. Status limited: Live status is off for Claude Code.");
+    expect(rowLabel(row(null, { activity: "idle" }))).not.toContain("Status limited:");
   });
   it("lets live status win over a missing setup", () => {
     expect(toRow(claude(live({ state: "working", phrase: "Thinking" })), PROFILES, { claude: "none" }, NOW)).toMatchObject({ status: "working", phrase: "Thinking" });
@@ -284,10 +294,17 @@ describe("planRing", () => {
   const withPct = (n: number, pct: number | null): SessionInfo =>
     info({ tab_id: `t${n}`, live: { state: "idle", phrase: "", since_ms: 0, recap: null, model: null, effort: null, context_pct: null, five_hour_pct: pct, seven_day_pct: null, subagents: 0 } });
   it("takes the highest five-hour use among the sessions that report one", () => {
-    expect(planRing([withPct(1, 20), withPct(2, 61), withPct(3, null), info()])).toEqual({ pct: 61 });
+    const c = (n: number, pct: number | null) => ({ ...withPct(n, pct), agent: "claude" });
+    expect(planRing([c(1, 20), c(2, 61), c(3, null), info()])).toEqual({ pct: 61 });
+  });
+  it("counts only Claude rows: a claude run inside a shell tab does not feed the ring", () => {
+    const shell = withPct(1, 85);
+    const claudeRow = { ...withPct(2, 4), agent: "claude" };
+    expect(planRing([shell, claudeRow])).toEqual({ pct: 4 });
+    expect(planRing([shell])).toBeUndefined();
   });
   it("is undefined when none does", () => {
-    expect(planRing([withPct(1, null), info()])).toBeUndefined();
+    expect(planRing([{ ...withPct(1, null), agent: "claude" }, info()])).toBeUndefined();
     expect(planRing([])).toBeUndefined();
   });
 });
