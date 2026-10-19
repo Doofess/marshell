@@ -1,10 +1,10 @@
 import { useEffect, useRef } from "react";
 import { alertNeedsYou, attentionStep, setBadge } from "./attention";
 
-/** Keeps the taskbar count in step with the entries and flashes (with a chime unless the sound is off) for a new one while the window isn't focused. */
+/** Keeps the taskbar count in step with the entries and flashes (with the sound unless it is off) for a new one while the window isn't focused. */
 export function useAttention(entries: { id: string; tab: string }[], mutedTabs: Set<string>, soundOff: () => boolean): void {
   const focused = useRef(true);
-  const prev = useRef<string[]>([]);
+  const prev = useRef<{ id: string; tab: string }[]>([]);
   const count = useRef<number | null>(null);
   const latest = useRef({ mutedTabs, soundOff });
   latest.current = { mutedTabs, soundOff };
@@ -23,7 +23,7 @@ export function useAttention(entries: { id: string; tab: string }[], mutedTabs: 
 
   useEffect(() => {
     const step = attentionStep(prev.current, entries, focused.current, latest.current.mutedTabs);
-    prev.current = entries.map((e) => e.id);
+    prev.current = entries;
     if (step.count !== count.current) {
       count.current = step.count;
       void setBadge(step.count);

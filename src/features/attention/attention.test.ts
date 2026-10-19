@@ -14,12 +14,18 @@ describe("attentionStep", () => {
     expect(attentionStep([], [e("a", "t1")], false, new Set(["t1"]))).toEqual({ count: 1, alert: false });
   });
   it("does not alert for the same entries again", () => {
-    expect(attentionStep(["a"], [e("a")], false, new Set())).toEqual({ count: 1, alert: false });
+    expect(attentionStep([e("a")], [e("a")], false, new Set())).toEqual({ count: 1, alert: false });
   });
   it("alerts when one entry of several is new", () => {
-    expect(attentionStep(["a"], [e("a"), e("b", "t2")], false, new Set(["t1"]))).toEqual({ count: 2, alert: true });
+    expect(attentionStep([e("a")], [e("a"), e("b", "t2")], false, new Set(["t1"]))).toEqual({ count: 2, alert: true });
+  });
+  it("does not alert again when a tab's entry changes id, as when its held request replaces the waiting row (live check, 3d)", () => {
+    expect(attentionStep([e("terminal-t1")], [e("p1")], false, new Set())).toEqual({ count: 1, alert: false });
+  });
+  it("alerts for a new request on a tab whose earlier one was answered", () => {
+    expect(attentionStep([], [e("p2")], false, new Set())).toEqual({ count: 1, alert: true });
   });
   it("counts follow the entries", () => {
-    expect(attentionStep(["a", "b"], [], false, new Set())).toEqual({ count: 0, alert: false });
+    expect(attentionStep([e("a"), e("b", "t2")], [], false, new Set())).toEqual({ count: 0, alert: false });
   });
 });
