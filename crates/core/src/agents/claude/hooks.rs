@@ -274,14 +274,27 @@ pub struct Found {
     pub chained: bool,
 }
 
+/// The chain file's value, `{"statusLine": ...}`, holds a status line of the user's own.
+fn chain_holds_users_line(chain: Option<&Value>) -> bool {
+    chain
+        .and_then(|c| c.get("statusLine"))
+        .is_some_and(|s| s.is_object() && !line_is_ours(s))
+}
+
+/// The chain can be forwarded to: it holds the user's line, or says they had none.
+fn chain_usable(chain: Option<&Value>) -> bool {
+    chain_holds_users_line(chain) || chain.and_then(|c| c.get("statusLine")).is_some_and(Value::is_null)
+}
+
 /// What the settings (and the chain file's value, `{"statusLine": ...}`) say about the install.
 pub fn inspect(settings: &Value, chain: Option<&Value>, home: &Path) -> Found {
     let line = settings.get("statusLine").filter(|l| l.is_object());
     let line_ours = line.is_some_and(line_is_ours);
 
-    let saved = chain.and_then(|c| c.get("statusLine"));
-    let chain_holds_users = saved.is_some_and(|s| s.is_object() && !line_is_ours(s));
-    let chain_usable = chain_holds_users || saved.is_some_and(Value::is_null);
+    let chain_holds_users = chain_holds_users_line(chain);
+    let chain_usable = chain_usable(chain);
+    let line_current =
+        line.is_some_and(|l| l.get("command").and_then(Value::as_str) == Some(&statusline_command(home)));
 
     let expected = bridge_path(home);
     let exact_events = STATUS_EVENTS
@@ -303,7 +316,10 @@ pub fn inspect(settings: &Value, chain: Option<&Value>, home: &Path) -> Found {
         HookInstall::None
     } else if !paths::bridge_exe(home).exists() {
         HookInstall::Orphaned
-    } else if exact_events == STATUS_EVENTS.len() && total == exact_events && (!line_ours || chain_usable) {
+    } else if exact_events == STATUS_EVENTS.len()
+        && total == exact_events
+        && (!line_ours || (chain_usable && line_current))
+    {
         HookInstall::Installed
     } else {
         HookInstall::Partial
@@ -341,8 +357,9 @@ fn remove_op(pointer: String) -> EditOp {
 /// The plan that adds the 8 status hooks and, as asked, the status line.
 ///
 /// Marshell's existing entries come out first (so a rerun never duplicates), then one group per
-/// event goes in at the end, after the user's own. A status line that is already Marshell's is not
-/// touched and the chain is not written, so the chain never holds Marshell's own command.
+/// event goes in at the end, after the user's own. A status line that is already Marshell's keeps its
+/// place and is only pointed at this home's bridge. The chain is written only when it has nothing usable,
+/// and then as null, so the chain never holds Marshell's own command.
 pub fn install_plan(
     settings_path: &Path,
     user_home: &Path,
@@ -380,7 +397,18 @@ pub fn install_plan(
     let how = "Adds 8 hook entries so Marshell can show what Claude Code is doing";
     let mut tail = "";
     match line {
-        Some(line) if line_is_ours(line) => {}
+        Some(line) if line_is_ours(line) => {
+            // Ours already: the user's line is never read back from it. A line that runs another home's bridge
+            // is pointed at this one, and a chain with nothing to forward to says the user had none.
+            if line.get("command").and_then(Value::as_str) != Some(&ours) {
+                ops.push(set("/statusLine/command", &json!(ours)));
+            }
+            let saved = chain_text.and_then(|t| read_value(t).ok());
+            if !chain_usable(saved.as_ref()) {
+                chain_edit = Some(set("/statusLine", &Value::Null));
+                tail = ", and runs Marshell's status line on its own, because the saved copy of yours is missing";
+            }
+        }
         Some(line) if want.statusline => {
             ops.push(set("/statusLine/command", &json!(ours)));
             chain_edit = Some(set("/statusLine", line));
@@ -843,16 +871,59 @@ mod tests {
 
     #[test]
     fn install_never_writes_marshells_own_command_into_the_chain() {
-        // Ours is in place and the chain file is gone: nothing is invented, and inspect says so.
+        // Ours is in place and the chain file is gone: the user's line is not known, so the chain says
+        // null. The status line command is never copied into it.
+        let (_, once) = install(&Files::settings(&fixture("user-hooks.json")), BOTH);
+        let lost = Files {
+            chain: None,
+            ..once.clone()
+        };
+        let (_, again) = install(&lost, BOTH);
+        assert_eq!(again.chain_value(), json!({ "statusLine": null }));
+        assert!(!tagged(&again.chain_value()));
+    }
+
+    #[test]
+    fn reinstall_repairs_a_lost_chain() {
         let (_, once) = install(&Files::settings(&fixture("user-hooks.json")), BOTH);
         let lost = Files {
             chain: None,
             ..once.clone()
         };
         let (cs, again) = install(&lost, BOTH);
+        assert_eq!(pointers(&cs, &chain_path()), ["/statusLine"]);
+        let chain_edit = cs.edits.iter().find(|e| e.scope == ConfigScope::Marshell).unwrap();
+        assert!(matches!(&chain_edit.op, EditOp::JsonSet { value, .. } if value == "null"));
+        assert!(
+            cs.reason
+                .ends_with(", and runs Marshell's status line on its own, because the saved copy of yours is missing."),
+            "{}",
+            cs.reason
+        );
+        // The status line is already ours, so no edit touches it.
+        assert!(pointers(&cs, &sfile()).iter().all(|p| p.starts_with("/hooks")));
+        assert_eq!(
+            again.settings_value()["statusLine"],
+            once.settings_value()["statusLine"]
+        );
+        assert_eq!(again.chain_value(), json!({ "statusLine": null }));
+    }
+
+    #[test]
+    fn reinstall_repoints_a_line_from_another_home() {
+        let other = PathBuf::from("D:/old home/.marshell");
+        let moved = installed_for(&fixture("user-hooks.json"), &other);
+        let original_chain = moved.chain_value();
+        assert_ne!(moved.settings_value()["statusLine"]["command"], ours_statusline());
+
+        let (cs, again) = install(&moved, BOTH);
+        let v = again.settings_value();
+        assert_eq!(v["statusLine"]["command"], ours_statusline());
+        assert_eq!(ours_count(&v), 8);
+        assert!(pointers(&cs, &sfile()).contains(&"/statusLine/command".to_string()));
+        // The chain already holds the user's line: it stays as it is.
         assert!(pointers(&cs, &chain_path()).is_empty());
-        assert_eq!(again.chain, None);
-        // (`inspect_states` pins that this state reads as Partial.)
+        assert_eq!(again.chain_value(), original_chain);
     }
 
     #[test]
@@ -1099,6 +1170,85 @@ mod tests {
             (found.install, found.has_own_statusline, found.chained),
             (HookInstall::None, true, false)
         );
+    }
+
+    /// The files after the install plan for `home` is applied: the settings edits through `apply_for`, and
+    /// the chain, which is one whole-value edit, as `{"statusLine": <value>}`.
+    fn installed_over(before: &Files, home: &Path) -> Files {
+        let cs = try_install(before, BOTH, home).unwrap();
+        let chain = cs
+            .edits
+            .iter()
+            .find(|e| e.scope == ConfigScope::Marshell)
+            .map(|e| match &e.op {
+                EditOp::JsonSet { pointer, value } => {
+                    assert_eq!(pointer, "/statusLine");
+                    format!("{{\"statusLine\": {value}}}")
+                }
+                other => panic!("{other:?}"),
+            })
+            .or_else(|| before.chain.clone());
+        Files {
+            settings: Some(apply_for(&cs, &before.settings)),
+            chain,
+        }
+    }
+
+    #[test]
+    fn every_partial_state_installs_to_installed() {
+        let (_keep, home) = scratch_home(true);
+        let other = PathBuf::from("D:/old home/.marshell");
+        let other_line = statusline_command(&other);
+        let other_bridge = bridge_path(&other);
+
+        type Break = fn(&mut Value, &mut Option<String>, &str, &str);
+        let breaks: [(&str, Break); 6] = [
+            ("one event missing", |s, _, _, _| {
+                s["hooks"].as_object_mut().unwrap().remove("SessionEnd");
+            }),
+            ("a duplicate entry", |s, _, _, _| {
+                let groups = s["hooks"]["Stop"].as_array_mut().unwrap();
+                let ours = groups.last().unwrap().clone();
+                groups.push(ours);
+            }),
+            ("the wrong bridge in an entry", |s, _, _, bridge| {
+                let groups = s["hooks"]["Stop"].as_array_mut().unwrap();
+                groups.last_mut().unwrap()["hooks"][0]["command"] = json!(bridge);
+            }),
+            ("a lost chain", |_, chain, _, _| *chain = None),
+            ("a chain that holds our own line", |s, chain, _, _| {
+                *chain = Some(json!({ "statusLine": s["statusLine"] }).to_string());
+            }),
+            ("a status line from another home", |s, _, line, _| {
+                s["statusLine"]["command"] = json!(line);
+            }),
+        ];
+        for fixture_name in ["user-hooks.json", "no-statusline.json"] {
+            let full = installed_over(&Files::settings(&fixture(fixture_name)), &home);
+            let found = inspect(&full.settings_value(), Some(&full.chain_value()), &home);
+            assert_eq!(found.install, HookInstall::Installed, "{fixture_name}: the baseline");
+            for (name, break_it) in breaks {
+                let mut settings = full.settings_value();
+                let mut chain = full.chain.clone();
+                break_it(&mut settings, &mut chain, &other_line, &other_bridge);
+                let broken = Files {
+                    settings: Some(settings.to_string()),
+                    chain,
+                };
+                let chain_value = broken.chain.as_deref().and_then(|t| read_value(t).ok());
+                let found = inspect(&broken.settings_value(), chain_value.as_ref(), &home);
+                assert_eq!(found.install, HookInstall::Partial, "{fixture_name}: {name} is Partial");
+
+                let fixed = installed_over(&broken, &home);
+                let chain_value = fixed.chain.as_deref().and_then(|t| read_value(t).ok());
+                let found = inspect(&fixed.settings_value(), chain_value.as_ref(), &home);
+                assert_eq!(found.install, HookInstall::Installed, "{fixture_name}: {name} installs");
+                assert!(
+                    !tagged(&chain_value.unwrap()),
+                    "{fixture_name}: {name} chain holds ours"
+                );
+            }
+        }
     }
 
     #[test]
