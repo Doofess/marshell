@@ -1,6 +1,7 @@
 use axum::body::Body;
 use axum::http::{Request, StatusCode, header};
 use marshell_core::server::{AppState, router};
+use marshell_protocol::api::{LiveState, SessionInfo};
 use marshell_protocol::hook::HOOK_BODY_LIMIT;
 use tower::ServiceExt;
 
@@ -21,15 +22,24 @@ fn sleeper_profile() -> marshell_protocol::api::Profile {
     }
 }
 
-fn app() -> axum::Router {
+/// A Claude Code version Marshell has recorded; pinned so no test runs a real `claude`.
+const KNOWN: &str = "2.1.302";
+
+fn state(version: Option<&str>) -> AppState {
     let home = tempfile::tempdir().unwrap().keep();
-    router(AppState::new(
+    AppState::new(
         TOKEN.into(),
         PORT,
         vec!["http://tauri.localhost".into()],
         home,
         vec![sleeper_profile()],
-    ))
+    )
+    .with_agent_check(|_| true)
+    .with_claude_version(version.map(str::to_string))
+}
+
+fn app() -> axum::Router {
+    router(state(Some(KNOWN)))
 }
 
 fn base(method: &str, path: &str) -> axum::http::request::Builder {
@@ -214,4 +224,211 @@ async fn closing_a_session_clears_its_hook_events() {
         .unwrap();
     assert!(status(&app, close).await.is_success());
     assert!(events(&app, Some(&tab)).await.is_empty());
+}
+
+/// A recorded hook body or status line of Claude Code 2.1.302.
+fn fixture(name: &str) -> Vec<u8> {
+    std::fs::read(format!(
+        "{}/tests/fixtures/claude/{KNOWN}/{name}.json",
+        env!("CARGO_MANIFEST_DIR")
+    ))
+    .unwrap()
+}
+
+/// Starts a Claude Code session (the sleeper profile, launched as agent "claude") and returns its tab.
+async fn start_claude(app: &axum::Router) -> String {
+    let body = serde_json::json!({ "cols": 80, "rows": 24, "profile_id": "sleeper", "agent": "claude" });
+    let res = app
+        .clone()
+        .oneshot(
+            base("POST", "/v1/sessions")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(body.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let bytes = axum::body::to_bytes(res.into_body(), 64 * 1024).await.unwrap();
+    serde_json::from_slice::<serde_json::Value>(&bytes).unwrap()["tab_id"]
+        .as_str()
+        .unwrap()
+        .to_string()
+}
+
+async fn post_fixture(app: &axum::Router, role: &str, tab: &str, name: &str) -> StatusCode {
+    status(app, hook(Some(role), Some("claude"), Some(tab), fixture(name))).await
+}
+
+fn row(st: &AppState, tab: &str) -> SessionInfo {
+    st.registry()
+        .snapshot()
+        .sessions
+        .into_iter()
+        .find(|s| s.tab_id == tab)
+        .unwrap()
+}
+
+/// Ends the sleeper so the test leaves no process behind.
+fn stop(st: &AppState, tab: &str) {
+    if let Some(session) = st.remove_session(tab) {
+        session.force_kill();
+    }
+}
+
+#[tokio::test]
+async fn session_start_then_a_prompt_makes_the_row_work() {
+    let st = state(Some(KNOWN));
+    let app = router(st.clone());
+    let tab = start_claude(&app).await;
+
+    assert_eq!(
+        post_fixture(&app, "event", &tab, "SessionStart").await,
+        StatusCode::NO_CONTENT
+    );
+    assert_eq!(row(&st, &tab).live.unwrap().state, LiveState::Idle);
+    assert_eq!(
+        post_fixture(&app, "event", &tab, "UserPromptSubmit").await,
+        StatusCode::NO_CONTENT
+    );
+    let info = row(&st, &tab);
+    stop(&st, &tab);
+    assert_eq!(info.live.unwrap().state, LiveState::Working);
+    assert_eq!(info.status_note, None);
+}
+
+#[tokio::test]
+async fn stop_gives_done_with_a_recap() {
+    let st = state(Some(KNOWN));
+    let app = router(st.clone());
+    let tab = start_claude(&app).await;
+
+    post_fixture(&app, "event", &tab, "UserPromptSubmit").await;
+    post_fixture(&app, "event", &tab, "Stop").await;
+    let live = row(&st, &tab).live.unwrap();
+    stop(&st, &tab);
+    assert_eq!(live.state, LiveState::Done);
+    assert!(live.recap.is_some_and(|r| !r.text.is_empty()));
+}
+
+#[tokio::test]
+async fn the_statusline_role_gives_the_context_percentage() {
+    let st = state(Some(KNOWN));
+    let app = router(st.clone());
+    let tab = start_claude(&app).await;
+
+    assert_eq!(
+        post_fixture(&app, "statusline", &tab, "statusline").await,
+        StatusCode::NO_CONTENT
+    );
+    let live = row(&st, &tab).live.unwrap();
+    stop(&st, &tab);
+    assert_eq!(live.context_pct, Some(6));
+    assert_eq!(live.model.as_deref(), Some("Opus 5.5"));
+}
+
+#[tokio::test]
+async fn a_held_permission_request_shows_needs_permission() {
+    let st = state(Some(KNOWN)).with_permission_hold(std::time::Duration::from_millis(300));
+    let app = router(st.clone());
+    let tab = start_claude(&app).await;
+
+    // The hold runs out with no decision: 204, and the agent asks itself.
+    assert_eq!(
+        post_fixture(&app, "permission", &tab, "PermissionRequest").await,
+        StatusCode::NO_CONTENT
+    );
+    let live = row(&st, &tab).live.unwrap();
+    stop(&st, &tab);
+    assert_eq!(live.state, LiveState::NeedsPermission);
+}
+
+#[tokio::test]
+async fn an_unknown_version_leaves_no_status_and_says_why() {
+    for (version, note) in [
+        (Some("2.2.0"), "Claude Code 2.2.0 is not one Marshell has recorded yet"),
+        (None, "Claude Code's version could not be read"),
+    ] {
+        let st = state(version);
+        let app = router(st.clone());
+        let tab = start_claude(&app).await;
+
+        post_fixture(&app, "event", &tab, "UserPromptSubmit").await;
+        post_fixture(&app, "statusline", &tab, "statusline").await;
+        let info = row(&st, &tab);
+        stop(&st, &tab);
+        assert_eq!(info.live, None, "{version:?}");
+        assert_eq!(info.status_note.as_deref(), Some(note));
+    }
+}
+
+#[tokio::test]
+async fn the_switch_off_for_claude_leaves_no_status_and_says_why() {
+    let st = state(Some(KNOWN));
+    let app = router(st.clone());
+    let tab = start_claude(&app).await;
+    let settings = serde_json::json!({ "appearance": {}, "status_off": ["claude"] });
+    let res = app
+        .clone()
+        .oneshot(
+            base("PUT", "/v1/settings")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(settings.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+
+    post_fixture(&app, "event", &tab, "UserPromptSubmit").await;
+    post_fixture(&app, "statusline", &tab, "statusline").await;
+    let info = row(&st, &tab);
+    stop(&st, &tab);
+    assert_eq!(info.live, None);
+    assert_eq!(info.status_note.as_deref(), Some("Live status is off for Claude Code"));
+}
+
+#[tokio::test]
+async fn a_known_version_takes_the_note_away() {
+    let st = state(Some(KNOWN));
+    let app = router(st.clone());
+    let tab = start_claude(&app).await;
+    st.registry().set_status_note(&tab, Some("old note".into()));
+
+    post_fixture(&app, "event", &tab, "UserPromptSubmit").await;
+    let info = row(&st, &tab);
+    stop(&st, &tab);
+    assert_eq!(info.status_note, None);
+    assert!(info.live.is_some());
+}
+
+#[tokio::test]
+async fn a_post_for_an_unknown_tab_changes_nothing() {
+    let st = state(Some(KNOWN));
+    let app = router(st.clone());
+    let tab = start_claude(&app).await;
+    let before = st.registry().snapshot();
+
+    assert_eq!(
+        post_fixture(&app, "event", "nope", "UserPromptSubmit").await,
+        StatusCode::NO_CONTENT
+    );
+    let untabbed = hook(Some("event"), Some("claude"), None, fixture("UserPromptSubmit"));
+    assert_eq!(status(&app, untabbed).await, StatusCode::NO_CONTENT);
+    let after = st.registry().snapshot();
+    stop(&st, &tab);
+    assert_eq!(before, after);
+}
+
+#[tokio::test]
+async fn another_agents_events_do_not_touch_the_status() {
+    let st = state(Some(KNOWN));
+    let app = router(st.clone());
+    let tab = start_claude(&app).await;
+
+    let req = hook(Some("event"), Some("codex"), Some(&tab), fixture("UserPromptSubmit"));
+    assert_eq!(status(&app, req).await, StatusCode::NO_CONTENT);
+    let info = row(&st, &tab);
+    stop(&st, &tab);
+    assert_eq!((info.live, info.status_note), (None, None));
 }

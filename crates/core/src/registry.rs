@@ -7,7 +7,7 @@ use std::sync::Mutex;
 
 use crate::pty::Mark;
 use marshell_protocol::api::{
-    CommandState, Foreground, SavedTab, SessionInfo, SessionMode, SessionState, SessionsSnapshot,
+    CommandState, Foreground, LiveStatus, SavedTab, SessionInfo, SessionMode, SessionState, SessionsSnapshot,
 };
 use tokio::sync::watch;
 
@@ -40,6 +40,16 @@ pub struct Entry {
     /// Which spawn of this tab is current. A process reports its exit with the generation it
     /// started with, so an old process (killed by a restart) cannot mark the new one Exited.
     pub generation: u64,
+}
+
+impl Entry {
+    /// Forgets what the old process reported: its live status, its output activity and the note
+    /// that said why there was no status. A new process, or none, starts blank.
+    fn clear_live(&mut self) {
+        self.info.live = None;
+        self.info.activity = None;
+        self.info.status_note = None;
+    }
 }
 
 struct State {
@@ -216,6 +226,7 @@ impl Registry {
         entry.info.command = CommandState::Unknown;
         entry.info.paused = false;
         entry.info.foreground = None;
+        entry.clear_live();
         entry.generation = generation;
         let relaunch = entry.spec.clone();
         self.tx.send_replace(state.snapshot());
@@ -240,6 +251,7 @@ impl Registry {
         entry.info.command = CommandState::Unknown;
         entry.info.paused = false;
         entry.info.foreground = None;
+        entry.clear_live();
         entry.generation = generation;
         let relaunch = entry.spec.clone();
         self.tx.send_replace(state.snapshot());
@@ -277,6 +289,7 @@ impl Registry {
             entry.info.state = SessionState::Exited { code };
             entry.info.paused = false;
             entry.info.foreground = None;
+            entry.clear_live();
             self.tx.send_replace(state.snapshot());
         }
     }
@@ -374,6 +387,35 @@ impl Registry {
         }
     }
 
+    /// Folds a report from the agent into the tab's live status: `f` gets the current one and
+    /// returns the next, or None to leave it. Applied only to an open Running row. Live status
+    /// replaces any output activity. Broadcasts only on a change.
+    pub fn update_live(&self, tab_id: &str, f: impl FnOnce(Option<&LiveStatus>) -> Option<LiveStatus>) {
+        let mut state = self.state.lock().unwrap();
+        if let Some(entry) = state.open.iter_mut().find(|e| e.info.tab_id == tab_id)
+            && entry.info.state == SessionState::Running
+            && let Some(next) = f(entry.info.live.as_ref())
+            && entry.info.live.as_ref() != Some(&next)
+        {
+            entry.info.live = Some(next);
+            entry.info.activity = None;
+            self.tx.send_replace(state.snapshot());
+        }
+    }
+
+    /// Sets why a Claude Code row has no live status (a gated version, or the switch is off), or
+    /// takes the note away. Applied only to an open Running row. Broadcasts only on a change.
+    pub fn set_status_note(&self, tab_id: &str, note: Option<String>) {
+        let mut state = self.state.lock().unwrap();
+        if let Some(entry) = state.open.iter_mut().find(|e| e.info.tab_id == tab_id)
+            && entry.info.state == SessionState::Running
+            && entry.info.status_note != note
+        {
+            entry.info.status_note = note;
+            self.tx.send_replace(state.snapshot());
+        }
+    }
+
     /// Trims the name; an empty name or an unknown tab returns false.
     pub fn rename(&self, tab_id: &str, name: &str) -> bool {
         let name = name.trim();
@@ -417,6 +459,7 @@ impl Registry {
         // Closing kills the process, which thaws it first.
         entry.info.paused = false;
         entry.info.foreground = None;
+        entry.clear_live();
         let spec = entry.spec.clone();
         state.closed.push_front(entry);
         state.closed.truncate(MAX_CLOSED);
@@ -502,6 +545,7 @@ impl Registry {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use marshell_protocol::api::LiveState;
 
     fn relaunch(name: &str) -> Relaunch {
         Relaunch {
@@ -1146,5 +1190,117 @@ mod tests {
             .map(|(id, _, has)| (id, has))
             .collect();
         assert_eq!(ids, vec![("shell".to_string(), true)]);
+    }
+
+    fn live(state: LiveState) -> LiveStatus {
+        LiveStatus {
+            state,
+            phrase: String::new(),
+            since_ms: 1,
+            recap: None,
+            model: None,
+            effort: None,
+            context_pct: None,
+            five_hour_pct: None,
+            seven_day_pct: None,
+            subagents: 0,
+        }
+    }
+
+    fn row(reg: &Registry, tab_id: &str) -> SessionInfo {
+        reg.snapshot()
+            .sessions
+            .into_iter()
+            .find(|s| s.tab_id == tab_id)
+            .unwrap()
+    }
+
+    #[test]
+    fn update_live_sets_the_status_and_hands_over_the_previous_one() {
+        let reg = Registry::new();
+        reg.reserve("a", relaunch("A"));
+        reg.update_live("a", |prev| {
+            assert!(prev.is_none());
+            Some(live(LiveState::Working))
+        });
+        assert_eq!(row(&reg, "a").live, Some(live(LiveState::Working)));
+        reg.update_live("a", |prev| {
+            assert_eq!(prev, Some(&live(LiveState::Working)));
+            Some(live(LiveState::Done))
+        });
+        assert_eq!(row(&reg, "a").live, Some(live(LiveState::Done)));
+        // A fold that has nothing to say leaves it.
+        reg.update_live("a", |_| None);
+        assert_eq!(row(&reg, "a").live, Some(live(LiveState::Done)));
+    }
+
+    #[test]
+    fn update_live_on_an_unknown_or_exited_tab_does_nothing() {
+        let reg = Registry::new();
+        reg.reserve("gone", relaunch("G"));
+        reg.mark_exited("gone", generation_of(&reg, "gone"), 0);
+        let mut rx = reg.subscribe();
+        rx.borrow_and_update();
+        reg.update_live("nope", |_| Some(live(LiveState::Working)));
+        reg.update_live("gone", |_| Some(live(LiveState::Working)));
+        assert!(!rx.has_changed().unwrap());
+        assert_eq!(row(&reg, "gone").live, None);
+    }
+
+    #[test]
+    fn update_live_broadcasts_only_on_a_change() {
+        let reg = Registry::new();
+        reg.reserve("a", relaunch("A"));
+        reg.update_live("a", |_| Some(live(LiveState::Working)));
+        let mut rx = reg.subscribe();
+        rx.borrow_and_update();
+        reg.update_live("a", |_| Some(live(LiveState::Working)));
+        assert!(!rx.has_changed().unwrap());
+        reg.update_live("a", |_| Some(live(LiveState::Idle)));
+        assert!(rx.has_changed().unwrap());
+    }
+
+    #[test]
+    fn set_status_note_broadcasts_once_and_only_for_a_running_row() {
+        let reg = Registry::new();
+        reg.reserve("a", relaunch("A"));
+        let mut rx = reg.subscribe();
+        rx.borrow_and_update();
+        reg.set_status_note("a", Some("why".into()));
+        assert!(rx.has_changed().unwrap());
+        assert_eq!(row(&reg, "a").status_note.as_deref(), Some("why"));
+        rx.borrow_and_update();
+        reg.set_status_note("a", Some("why".into()));
+        assert!(!rx.has_changed().unwrap());
+        reg.set_status_note("a", None);
+        assert!(rx.has_changed().unwrap());
+        rx.borrow_and_update();
+        reg.set_status_note("a", None);
+        reg.set_status_note("nope", Some("why".into()));
+        assert!(!rx.has_changed().unwrap());
+    }
+
+    #[test]
+    fn exit_restart_resume_and_close_clear_the_live_status() {
+        let reg = Registry::new();
+        for id in ["exit", "restart", "resume", "close"] {
+            reg.reserve(id, relaunch(id));
+            reg.update_live(id, |_| Some(live(LiveState::Working)));
+            reg.set_status_note(id, Some("why".into()));
+        }
+        let blank = |info: SessionInfo| (info.live, info.activity, info.status_note);
+        reg.mark_exited("exit", generation_of(&reg, "exit"), 0);
+        assert_eq!(blank(row(&reg, "exit")), (None, None, None));
+
+        reg.begin_restart("restart", SessionMode::Plan).unwrap();
+        assert_eq!(blank(row(&reg, "restart")), (None, None, None));
+
+        // A process that exited without clearing, as a race could leave it, still resumes clean.
+        reg.mark_exited("resume", generation_of(&reg, "resume"), 0);
+        reg.begin_resume("resume").unwrap();
+        assert_eq!(blank(row(&reg, "resume")), (None, None, None));
+
+        reg.close("close");
+        assert_eq!(blank(reg.snapshot().closed[0].clone()), (None, None, None));
     }
 }

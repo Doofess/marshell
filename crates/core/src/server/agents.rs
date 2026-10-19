@@ -115,6 +115,20 @@ impl AppState {
         })
     }
 
+    /// The `claude` that sessions run: a profile that runs it itself, else the one on PATH.
+    pub(super) fn claude_exe(&self) -> Option<PathBuf> {
+        agent_exe(&self.0.profiles.lock().unwrap().profiles, AGENT).or_else(|| (self.0.agent_path)(AGENT))
+    }
+
+    /// The Claude Code version of `exe`, or the one a test pinned. Runs a process on a cold cache, so
+    /// async callers go through `spawn_blocking`.
+    pub(super) fn claude_version(&self, exe: Option<&Path>) -> Option<String> {
+        match &self.0.claude_version {
+            Some(pinned) => pinned.clone(),
+            None => exe.and_then(|exe| self.version_of(exe)),
+        }
+    }
+
     /// `--version` of `exe`, asked once per path while the app runs.
     fn version_of(&self, exe: &Path) -> Option<String> {
         if let Some(known) = self.0.versions.lock().unwrap().get(exe) {
@@ -135,9 +149,8 @@ fn setup_of(st: &AppState) -> Result<AgentSetup, Fail> {
     let user_home = super::files::home_dir().ok_or_else(|| failed("the user's home folder is not known"))?;
     let settings_path = st.claude_settings_path(&user_home);
 
-    // A profile that runs `claude` itself names the file; sessions otherwise start it from PATH.
-    let exe = agent_exe(&st.0.profiles.lock().unwrap().profiles, AGENT).or_else(|| (st.0.agent_path)(AGENT));
-    let version = exe.as_deref().and_then(|exe| st.version_of(exe));
+    let exe = st.claude_exe();
+    let version = st.claude_version(exe.as_deref());
 
     let mut setup = AgentSetup {
         agent: AGENT.to_string(),

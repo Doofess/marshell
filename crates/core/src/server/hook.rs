@@ -1,4 +1,6 @@
 use super::AppState;
+use crate::agents::claude::status::{fold_event, fold_statusline};
+use crate::agents::claude::{Gate, version_gate};
 use crate::hooks::holds::Outcome;
 use crate::hooks::log::HookEventRecord;
 use axum::Json;
@@ -47,10 +49,47 @@ pub async fn post(
         body: json.clone(),
     };
     st.hook_log().push(rec, |tab| st.session(tab).is_some());
+    if agent == "claude"
+        && let Some(tab) = tab.as_deref()
+    {
+        fold_live(&st, role, tab, &json, at_ms).await;
+    }
     if role == HookRole::Permission {
         return Ok(hold_permission(&st, tab, agent, json).await);
     }
     Ok(StatusCode::NO_CONTENT.into_response())
+}
+
+/// Folds what Claude Code reported into the tab's live status. A permission request counts as an event
+/// (it folds to Needs permission). Without a known version, or with the switch off, the row gets a
+/// note saying why and keeps no status.
+async fn fold_live(st: &AppState, role: HookRole, tab: &str, body: &serde_json::Value, at_ms: u64) {
+    if !matches!(role, HookRole::Event | HookRole::Permission | HookRole::Statusline) || !st.registry().is_open(tab) {
+        return;
+    }
+    let off = st.0.settings.lock().unwrap().status_off.iter().any(|a| a == "claude");
+    if off {
+        st.registry()
+            .set_status_note(tab, Some("Live status is off for Claude Code".to_string()));
+        return;
+    }
+    // A cold cache runs `claude --version`: keep that off the async workers.
+    let asker = st.clone();
+    let version = tokio::task::spawn_blocking(move || asker.claude_version(asker.claude_exe().as_deref()))
+        .await
+        .unwrap_or(None);
+    match version_gate(version.as_deref()) {
+        Gate::Unknown(note) => st.registry().set_status_note(tab, Some(note)),
+        Gate::Known => {
+            if role == HookRole::Statusline {
+                st.registry()
+                    .update_live(tab, |prev| Some(fold_statusline(prev, body, at_ms)));
+            } else {
+                st.registry().update_live(tab, |prev| fold_event(prev, body, at_ms));
+            }
+            st.registry().set_status_note(tab, None);
+        }
+    }
 }
 
 /// Holds the bridge's request until a decision, a release, the hold running out, or the bridge

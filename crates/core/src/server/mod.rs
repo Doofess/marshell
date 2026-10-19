@@ -98,6 +98,9 @@ struct Inner {
     programs_dir: Option<PathBuf>,
     /// `--version` of each agent executable, asked once per path for the app's lifetime.
     versions: Mutex<HashMap<PathBuf, Option<String>>>,
+    /// A Claude Code version a test pins, in place of asking the executable. `Some(None)` is a
+    /// version that cannot be read.
+    claude_version: Option<Option<String>>,
 }
 
 /// How long a permission request is held when `MARSHELL_PERMISSION_HOLD_SECS` is not set.
@@ -150,6 +153,7 @@ impl AppState {
             claude_settings: None,
             programs_dir: None,
             versions: Mutex::new(HashMap::new()),
+            claude_version: None,
         }))
     }
     /// Names Claude Code's settings file, in place of the environment. Call it before the state is cloned.
@@ -164,6 +168,14 @@ impl AppState {
         Arc::get_mut(&mut self.0)
             .expect("with_programs_dir runs before the state is shared")
             .programs_dir = Some(dir);
+        self
+    }
+    /// Pins the Claude Code version that the live status gate and the setup route see, so a test never runs a
+    /// real `claude`. `None` is a version that cannot be read. Call it before the state is cloned.
+    pub fn with_claude_version(mut self, version: Option<String>) -> Self {
+        Arc::get_mut(&mut self.0)
+            .expect("with_claude_version runs before the state is shared")
+            .claude_version = Some(version);
         self
     }
     /// Sets how long a permission request is held. Call it before the state is cloned.
