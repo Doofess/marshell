@@ -14,6 +14,9 @@ pub fn classify(detail: &PermissionDetail, cwd: &Path) -> Option<String> {
             classify_command(command, cwd, base.as_deref().unwrap_or(cwd))
         }
         PermissionDetail::Edit { path, .. } | PermissionDetail::Write { path, .. } => {
+            if is_remote_path(path) {
+                return Some("Writes outside this project".into());
+            }
             let path = resolve_path(Path::new(path), cwd);
             if !within(&path, cwd) {
                 return Some("Writes outside this project".into());
@@ -24,8 +27,12 @@ pub fn classify(detail: &PermissionDetail, cwd: &Path) -> Option<String> {
                 if let Component::Normal(name) = component {
                     let name = name.to_string_lossy();
                     let key = path_case(&name);
+                    // Files an agent CLI, git or the editor runs on its own, so a write there is code execution.
                     if key.starts_with(".env")
-                        || key == ".ssh"
+                        || matches!(
+                            key.as_str(),
+                            ".ssh" | ".claude" | ".git" | ".vscode" | ".codex" | ".mcp.json"
+                        )
                         || (name.starts_with('.') && home.as_ref().is_some_and(|home| paths_equal(&parent, home)))
                     {
                         return Some(format!("Writes to {name}"));
@@ -38,6 +45,13 @@ pub fn classify(detail: &PermissionDetail, cwd: &Path) -> Option<String> {
         PermissionDetail::Fetch { url } => network_reason(url),
         PermissionDetail::Mcp { .. } | PermissionDetail::Other { .. } => None,
     }
+}
+
+/// A UNC (`\\host\share`, `//host/share`), `\\?\` or `\\.\` path. Any filesystem call on one can open a
+/// network connection and send the user's credentials to a host the repository chose, so none is made.
+pub(crate) fn is_remote_path(path: &str) -> bool {
+    let mut chars = path.chars();
+    matches!((chars.next(), chars.next()), (Some('\\' | '/'), Some('\\' | '/')))
 }
 
 fn path_case(text: &str) -> String {
@@ -423,7 +437,10 @@ const DOWNLOADS: &[&str] = &["curl", "wget", "iwr", "irm", "Invoke-WebRequest", 
 const SHELLS: &[&str] = &["sh", "bash", "zsh", "iex", "Invoke-Expression", "pwsh", "powershell"];
 
 fn classify_command(command: &str, cwd: &Path, base: &Path) -> Option<String> {
-    let segments = segments(command)?;
+    // An unbalanced quote can hide a command from this reader (`rm -rf ~ #'`), so unreadable is not safe.
+    let Some(segments) = segments(command) else {
+        return Some("Marshell can't read this command".into());
+    };
     let commands: Vec<_> = segments.iter().map(|s| command_words(&s.words)).collect();
     let mut recursive = false;
     for words in &commands {
@@ -640,7 +657,7 @@ mod tests {
             ("echo git push --force", None),
             ("rm -- -rf", None),
             ("git push -- --force", None),
-            ("curl 'unterminated", None),
+            ("curl 'unterminated", Some("Marshell can't read this command")),
         ];
         for (command, reason) in cases {
             assert_eq!(classify(&bash(command), &project()).as_deref(), reason, "{command}");
@@ -699,6 +716,67 @@ mod tests {
             classify(&write(".profile"), &home).as_deref(),
             Some("Writes to .profile")
         );
+    }
+
+    #[test]
+    fn a_command_that_cannot_be_read_fails_closed() {
+        // Bash ignores the comment and deletes the home folder, so an unbalanced quote must not read as safe.
+        for command in ["rm -rf ~ #'", "rm -rf ~ \"", "echo \"hi"] {
+            assert_eq!(
+                classify(&bash(command), &project()).as_deref(),
+                Some("Marshell can't read this command"),
+                "{command}"
+            );
+        }
+    }
+
+    #[test]
+    fn in_project_config_writes_are_flagged() {
+        for (path, reason) in [
+            (".claude/settings.json", Some("Writes to .claude")),
+            ("sub/.claude/hooks/x.sh", Some("Writes to .claude")),
+            (".git/hooks/pre-commit", Some("Writes to .git")),
+            (".vscode/tasks.json", Some("Writes to .vscode")),
+            (".codex/config.toml", Some("Writes to .codex")),
+            (".mcp.json", Some("Writes to .mcp.json")),
+            ("src/main.rs", None),
+            ("src/claude/git.rs", None),
+        ] {
+            for detail in [
+                write(path),
+                PermissionDetail::Edit {
+                    path: path.into(),
+                    add: 0,
+                    del: 0,
+                    hunk: vec![],
+                },
+            ] {
+                assert_eq!(classify(&detail, &project()).as_deref(), reason, "{detail:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn remote_and_device_paths_are_recognised_by_their_spelling() {
+        for path in [
+            r"\\nohost.invalid\share\x.txt",
+            "//nohost.invalid/share/x",
+            r"\\?\UNC\nohost.invalid\share\x",
+            r"\\.\pipe\x",
+            r"\\?\C:\x",
+        ] {
+            assert!(is_remote_path(path), "{path}");
+        }
+        for path in [r"C:\x", r"relative\x", "/home/x", "a//b", ""] {
+            assert!(!is_remote_path(path), "{path}");
+        }
+        for path in [r"\\nohost.invalid\share\x.txt", "//nohost.invalid/share/x"] {
+            assert_eq!(
+                classify(&write(path), &project()).as_deref(),
+                Some("Writes outside this project"),
+                "{path}"
+            );
+        }
     }
 
     #[test]
@@ -876,6 +954,10 @@ mod tests {
         assert_eq!(
             classify(&write(".ENV.local"), &project()).as_deref(),
             Some("Writes to .ENV.local")
+        );
+        assert_eq!(
+            classify(&write(".CLAUDE/settings.json"), &project()).as_deref(),
+            Some("Writes to .CLAUDE")
         );
         assert_eq!(
             classify(&bash(r"Remove-Item -Recurse 'C:\PROJECT\build'"), &project()).as_deref(),

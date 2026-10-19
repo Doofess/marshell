@@ -70,7 +70,8 @@ fn known_detail(tool: &str, input: &Value, request: &Value) -> Option<Permission
             PermissionDetail::Write {
                 path: path.into(),
                 preview: content.lines().take(4).collect::<Vec<_>>().join("\n"),
-                is_new: !risk::resolve_path(Path::new(path), cwd).exists(),
+                // Never stat a remote path: that connects to a host the repository may have chosen.
+                is_new: !risk::is_remote_path(path) && !risk::resolve_path(Path::new(path), cwd).exists(),
             }
         }
         "WebFetch" => PermissionDetail::Fetch {
@@ -310,6 +311,22 @@ mod tests {
         );
         std::fs::write(dir.path().join("a.ts"), "old").unwrap();
         assert!(matches!(detail(&r), PermissionDetail::Write { is_new: false, .. }));
+    }
+
+    #[test]
+    fn detail_write_never_touches_a_remote_path() {
+        // `.exists()` on a UNC path opens an SMB connection, which can leak NTLM credentials to a host a repo names.
+        for path in [
+            r"\\nohost.invalid\share\x.txt",
+            "//nohost.invalid/share/x",
+            r"\\.\pipe\x",
+        ] {
+            let r = request("Write", json!({"file_path": path, "content": "x"}));
+            assert!(
+                matches!(detail(&r), PermissionDetail::Write { is_new: false, .. }),
+                "{path}"
+            );
+        }
     }
 
     #[test]
