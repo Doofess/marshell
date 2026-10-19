@@ -5,7 +5,7 @@ use crate::pty::{FreezeError, Session, SpawnSpec};
 use crate::registry::{Relaunch, ResumeRefusal};
 use axum::Json;
 use axum::body::Bytes;
-use axum::extract::{Path, State};
+use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use marshell_protocol::api::{
@@ -13,6 +13,7 @@ use marshell_protocol::api::{
     ReorderRequest, RestartRequest, ResumeError, SessionInfo, SessionMode, SessionState, SessionsSnapshot, ShellFamily,
 };
 use marshell_protocol::brand;
+use marshell_protocol::hook::PeekRows;
 use serde::Deserialize;
 use std::path::PathBuf;
 
@@ -401,6 +402,29 @@ pub async fn list(State(st): State<AppState>) -> Json<SessionsSnapshot> {
     Json(st.0.registry.snapshot())
 }
 
+#[derive(Deserialize)]
+pub struct PeekQuery {
+    #[serde(default = "default_peek_lines")]
+    lines: usize,
+}
+
+fn default_peek_lines() -> usize {
+    30
+}
+
+/// Returns the session's last rendered rows, after releasing its output lock.
+pub async fn peek(
+    State(st): State<AppState>,
+    Path(tab): Path<String>,
+    Query(query): Query<PeekQuery>,
+) -> Result<Json<PeekRows>, ApiError> {
+    let session = st
+        .session(&tab)
+        .ok_or((StatusCode::NOT_FOUND, "No such session.".into()))?;
+    let rows = session.peek(query.lines);
+    Ok(Json(PeekRows { rows }))
+}
+
 pub async fn rename(
     State(st): State<AppState>,
     Path(tab): Path<String>,
@@ -717,6 +741,16 @@ pub async fn restart(State(st): State<AppState>, Path(tab): Path<String>, Json(r
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn peek_query_defaults_to_thirty_lines() {
+        let uri = "/v1/sessions/tab/peek".parse().unwrap();
+        let query = axum::extract::Query::<PeekQuery>::try_from_uri(&uri).unwrap();
+        assert_eq!(query.lines, 30);
+        let uri = "/v1/sessions/tab/peek?lines=7".parse().unwrap();
+        let query = axum::extract::Query::<PeekQuery>::try_from_uri(&uri).unwrap();
+        assert_eq!(query.lines, 7);
+    }
 
     fn var(name: &str, value: &str) -> (String, String) {
         (name.to_string(), value.to_string())

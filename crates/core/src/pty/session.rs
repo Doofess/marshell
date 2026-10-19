@@ -1,4 +1,4 @@
-use super::buffer::{MAX_UNACKED, OutputBuffer, SCROLLBACK_BYTES};
+use super::buffer::{MAX_UNACKED, OutputBuffer, SCROLLBACK_BYTES, peek_rows};
 use super::dsr::{DSR_REPLY, DsrFilter};
 use super::freeze::{self, FreezeError, Frozen};
 use super::osc133::{Mark, Osc133Scanner};
@@ -387,6 +387,12 @@ impl Session {
     /// Whether the program in the session asked for bracketed paste (DECSET 2004).
     pub fn bracketed_paste(&self) -> bool {
         self.output.lock().unwrap().screen.screen().bracketed_paste()
+    }
+
+    /// Copies the last rendered rows as plain text while holding the output lock.
+    pub fn peek(&self, lines: usize) -> Vec<String> {
+        let out = self.output.lock().unwrap();
+        peek_rows(out.screen.screen(), lines)
     }
 
     /// Ignores 0x0 (a minimized window reports it).

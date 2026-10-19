@@ -316,6 +316,7 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/sessions/{tab}/continue", post(sessions::cont))
         .route("/v1/sessions/{tab}/input", post(sessions::input))
         .route("/v1/sessions/{tab}/recording", get(sessions::recording))
+        .route("/v1/sessions/{tab}/peek", get(sessions::peek))
         .route("/v1/sessions/{tab}/resolve", post(files::resolve))
         .route("/v1/sessions/{tab}/files", get(files::list))
         .route(

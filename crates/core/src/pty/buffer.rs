@@ -7,6 +7,18 @@ pub const FLUSH_BYTES: usize = 64 * 1024;
 /// Stop reading the pty when an attached client is this far behind.
 pub const MAX_UNACKED: u64 = 1024 * 1024;
 
+/// The last rendered rows, without formatting, trailing spaces or blank rows at the bottom.
+pub(super) fn peek_rows(screen: &vt100::Screen, lines: usize) -> Vec<String> {
+    let mut rows: Vec<String> = screen
+        .rows(0, screen.size().1)
+        .map(|row| row.trim_end_matches(' ').to_string())
+        .collect();
+    while rows.last().is_some_and(String::is_empty) {
+        rows.pop();
+    }
+    rows.split_off(rows.len().saturating_sub(lines.clamp(1, 100)))
+}
+
 /// A ring of output bytes addressed by absolute byte offset ("seq").
 /// Old bytes fall off the front once `cap` is exceeded.
 pub struct OutputBuffer {
@@ -50,6 +62,38 @@ impl OutputBuffer {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn peek_returns_the_last_rows_of_a_tui_redraw() {
+        let mut parser = vt100::Parser::new(5, 20, 0);
+        parser.process(b"a\r\nb\r\n\x1b[1;1Hz");
+        assert_eq!(peek_rows(parser.screen(), 30), ["z", "b"]);
+    }
+
+    #[test]
+    fn peek_clamps_lines() {
+        let mut parser = vt100::Parser::new(110, 20, 0);
+        let rows: Vec<String> = (0..105).map(|i| format!("row {i}")).collect();
+        parser.process(rows.join("\r\n").as_bytes());
+        assert_eq!(peek_rows(parser.screen(), 0), rows[104..]);
+        assert_eq!(peek_rows(parser.screen(), 1), rows[104..]);
+        assert_eq!(peek_rows(parser.screen(), 30), rows[75..]);
+        assert_eq!(peek_rows(parser.screen(), 100), rows[5..]);
+        assert_eq!(peek_rows(parser.screen(), usize::MAX), rows[5..]);
+    }
+
+    #[test]
+    fn peek_trims_trailing_spaces_and_preserves_inner_blank_rows() {
+        let mut parser = vt100::Parser::new(8, 20, 0);
+        parser.process(b"old\r\n  \x1b[31mred\x1b[0m   \r\n   \r\nlast   \r\n   ");
+        assert_eq!(peek_rows(parser.screen(), 3), ["  red", "", "last"]);
+    }
+
+    #[test]
+    fn peek_blank_screen_has_no_rows() {
+        let parser = vt100::Parser::new(5, 20, 0);
+        assert!(peek_rows(parser.screen(), 30).is_empty());
+    }
 
     #[test]
     fn push_and_read() {

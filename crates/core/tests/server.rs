@@ -820,3 +820,26 @@ async fn a_session_reports_its_recording_path() {
     let bytes = axum::body::to_bytes(res.into_body(), 1024).await.unwrap();
     assert_eq!(String::from_utf8_lossy(&bytes), "This session has no recording.");
 }
+
+#[tokio::test]
+async fn peek_route_404_for_unknown_tab() {
+    let home = tempfile::tempdir().unwrap();
+    let app = app_in(home.path());
+    let res = app
+        .oneshot(api("GET", "/v1/sessions/no-such-tab/peek?lines=30", None))
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::NOT_FOUND);
+    let bytes = axum::body::to_bytes(res.into_body(), 1024).await.unwrap();
+    assert_eq!(String::from_utf8_lossy(&bytes), "No such session.");
+}
+
+#[tokio::test]
+async fn peek_route_without_token_is_401() {
+    let home = tempfile::tempdir().unwrap();
+    let req = get("/v1/sessions/no-such-tab/peek?lines=30")
+        .body(Body::empty())
+        .unwrap();
+    let res = app_in(home.path()).oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
+}
