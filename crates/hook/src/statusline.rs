@@ -28,28 +28,13 @@ const OWN_TAG: &str = "--tag mshl1";
 /// its stdout when it exits 0, otherwise nothing, which is what Claude shows for a failing command.
 /// A hung original is stopped with its whole process tree after `ORIGINAL_TIMEOUT`. An empty chain
 /// (the person had no status line) prints nothing and logs nothing.
-/// The forward to the core runs beside it and is waited for only until its 100 ms budget is spent.
+/// The forward to the core runs beside it, whatever the chain holds (the core reads context and plan
+/// use from it), and is waited for only until its 100 ms budget is spent.
 /// `home` is `None` when there is nowhere to find a chain file, and then nothing is printed.
 pub fn run(home: Option<&Path>, agent: &str, stdin_bytes: &[u8], env: Env) -> Vec<u8> {
-    let fail = |msg: &str| {
-        if let Some(home) = home {
-            log::line(home, ROLE, msg);
-        }
-        Vec::new()
-    };
     let Some(home) = home else {
         return Vec::new();
     };
-    let command = match read_chain(home, agent) {
-        Ok(Some(c)) => c,
-        Ok(None) => return Vec::new(),
-        Err(e) => return fail(&e),
-    };
-    // Running it would start this bridge again, which would read the same chain, and so on.
-    if command.contains(OWN_TAG) {
-        return fail("the chain names Marshell's own status line, so it was not run");
-    }
-
     let started = Instant::now();
     let budget = post::budget(HookRole::Statusline);
     let (done_tx, done_rx) = channel::<()>();
@@ -78,7 +63,15 @@ pub fn run(home: Option<&Path>, agent: &str, stdin_bytes: &[u8], env: Env) -> Ve
         drop(done_tx);
     }
 
-    let out = run_original(&command, stdin_bytes, env, ORIGINAL_TIMEOUT);
+    let out = match read_chain(home, agent) {
+        Ok(Some(command)) if command.contains(OWN_TAG) => {
+            // Running it would start this bridge again, which would read the same chain, and so on.
+            Err("the chain names Marshell's own status line, so it was not run".to_string())
+        }
+        Ok(Some(command)) => run_original(&command, stdin_bytes, env, ORIGINAL_TIMEOUT),
+        Ok(None) => Ok(Vec::new()),
+        Err(e) => Err(e),
+    };
 
     // The forward gets what is left of its budget and no more; a late one is left behind and dies
     // with the process.
@@ -86,7 +79,10 @@ pub fn run(home: Option<&Path>, agent: &str, stdin_bytes: &[u8], env: Env) -> Ve
 
     match out {
         Ok(bytes) => bytes,
-        Err(e) => fail(&e),
+        Err(e) => {
+            log::line(home, ROLE, &e);
+            Vec::new()
+        }
     }
 }
 

@@ -124,6 +124,30 @@ fn null_chain_prints_nothing_and_logs_nothing() {
     assert!(!home.path().join("logs").join("bridge.log").exists());
 }
 
+/// The core reads context and plan use from the status line, so it gets the copy even when the person had no status line.
+#[test]
+fn a_null_chain_still_reaches_the_core() {
+    let home = tempfile::tempdir().unwrap();
+    let fake = serve(Reply::new(204, ""));
+    write_endpoint(home.path(), fake.port, "t");
+    let dir = home.path().join("agents").join("claude");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("statusline-chain.json"), r#"{"version":1,"statusLine":null}"#).unwrap();
+    assert!(go(home.path()).is_empty());
+    let c = fake.captured(WAIT).expect("no request");
+    assert_eq!(c.headers["x-marshell-role"], "statusline");
+    assert_eq!(c.body, STDIN);
+}
+
+#[test]
+fn a_missing_chain_file_still_reaches_the_core() {
+    let home = tempfile::tempdir().unwrap();
+    let fake = serve(Reply::new(204, ""));
+    write_endpoint(home.path(), fake.port, "t");
+    assert!(go(home.path()).is_empty());
+    assert_eq!(fake.captured(WAIT).expect("no request").body, STDIN);
+}
+
 #[test]
 fn a_chain_naming_the_bridge_is_refused() {
     let home = tempfile::tempdir().unwrap();
