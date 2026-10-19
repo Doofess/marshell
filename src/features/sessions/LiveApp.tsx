@@ -297,10 +297,15 @@ export function LiveApp() {
     if (endpoint) void refreshTasks();
   }, [endpoint, refreshTasks]);
   // The footer shows the plan only when a status line has reported it; there is no doctor count to show yet.
-  const footer = useMemo(() => {
-    const plan = planRing(infos);
-    return plan ? { planPct: plan.pct, fiveHourPct: plan.pct } : null;
-  }, [infos]);
+  // A shown use goes when its 5-hour window resets, even if no session says anything new by then.
+  const [planNow, setPlanNow] = useState(() => Date.now());
+  const plan = useMemo(() => planRing(infos, Math.max(planNow, Date.now())), [infos, planNow]);
+  useEffect(() => {
+    if (plan?.until === undefined) return;
+    const id = setTimeout(() => setPlanNow(Date.now()), Math.max(0, plan.until - Date.now()) + 1000);
+    return () => clearTimeout(id);
+  }, [plan?.until]);
+  const footer = useMemo(() => (plan ? { planPct: plan.pct, fiveHourPct: plan.pct } : null), [plan]);
   const taskRows = useMemo(() => markTasks(rows, infos, tasks), [rows, infos, tasks]);
   // While the list is unknown the palette keeps Review for the session in focus, so choosing it can load the list again.
   const focusedIsTask = reviewTarget(infos, focusedId, tasks).kind !== "none";

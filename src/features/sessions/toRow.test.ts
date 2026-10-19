@@ -198,7 +198,7 @@ describe("toRow", () => {
 
 describe("toRow: live status", () => {
   const NOW = 1_000_000;
-  const live = (patch: Partial<LiveStatus> = {}): LiveStatus => ({ state: "idle", phrase: "", since_ms: NOW - 5000, recap: null, model: null, effort: null, context_pct: null, five_hour_pct: null, seven_day_pct: null, subagents: 0, ...patch });
+  const live = (patch: Partial<LiveStatus> = {}): LiveStatus => ({ state: "idle", phrase: "", since_ms: NOW - 5000, recap: null, model: null, effort: null, context_pct: null, five_hour_pct: null, five_hour_resets_at: null, seven_day_pct: null, subagents: 0, ...patch });
   const claude = (l: LiveStatus | null, patch: Partial<SessionInfo> = {}) => info({ agent: "claude", live: l, ...patch });
   const row = (l: LiveStatus | null, patch: Partial<SessionInfo> = {}) => toRow(claude(l, patch), PROFILES, { claude: "installed" }, NOW);
 
@@ -275,7 +275,7 @@ describe("toRow: live status", () => {
 describe("ageTick", () => {
   const NOW = 1_000_000;
   const at = (state: LiveStatus["state"], since: number, recapAt: number | null = null): SessionInfo =>
-    info({ agent: "claude", live: { state, phrase: "", since_ms: NOW - since, recap: recapAt === null ? null : { text: "r", at_ms: NOW - recapAt }, model: null, effort: null, context_pct: null, five_hour_pct: null, seven_day_pct: null, subagents: 0 } });
+    info({ agent: "claude", live: { state, phrase: "", since_ms: NOW - since, recap: recapAt === null ? null : { text: "r", at_ms: NOW - recapAt }, model: null, effort: null, context_pct: null, five_hour_pct: null, five_hour_resets_at: null, seven_day_pct: null, subagents: 0 } });
   it("counts every second while a session waits for you or an age is under a minute", () => {
     expect(ageTick([at("needs_permission", 600_000)], NOW)).toBe(1000);
     expect(ageTick([at("done", 5000)], NOW)).toBe(1000);
@@ -292,7 +292,7 @@ describe("ageTick", () => {
 
 describe("planRing", () => {
   const withPct = (n: number, pct: number | null): SessionInfo =>
-    info({ tab_id: `t${n}`, live: { state: "idle", phrase: "", since_ms: 0, recap: null, model: null, effort: null, context_pct: null, five_hour_pct: pct, seven_day_pct: null, subagents: 0 } });
+    info({ tab_id: `t${n}`, live: { state: "idle", phrase: "", since_ms: 0, recap: null, model: null, effort: null, context_pct: null, five_hour_pct: pct, five_hour_resets_at: null, seven_day_pct: null, subagents: 0 } });
   it("takes the highest five-hour use among the sessions that report one", () => {
     const c = (n: number, pct: number | null) => ({ ...withPct(n, pct), agent: "claude" });
     expect(planRing([c(1, 20), c(2, 61), c(3, null), info()])).toEqual({ pct: 61 });
@@ -306,5 +306,17 @@ describe("planRing", () => {
   it("is undefined when none does", () => {
     expect(planRing([{ ...withPct(1, null), agent: "claude" }, info()])).toBeUndefined();
     expect(planRing([])).toBeUndefined();
+  });
+  it("leaves out a use whose 5-hour window has reset, and says when the shown one runs out", () => {
+    const c = (n: number, pct: number, resets: number | null): SessionInfo => {
+      const row = withPct(n, pct);
+      return { ...row, agent: "claude", live: row.live && { ...row.live, five_hour_resets_at: resets } };
+    };
+    const now = 1_000_000_000_000;
+    const gone = now / 1000 - 1;
+    const soon = now / 1000 + 600;
+    expect(planRing([c(1, 90, gone), c(2, 12, soon)], now)).toEqual({ pct: 12, until: soon * 1000 });
+    expect(planRing([c(1, 90, gone)], now)).toBeUndefined();
+    expect(planRing([c(1, 30, null)], now)).toEqual({ pct: 30 });
   });
 });

@@ -84,15 +84,22 @@ export function ageTick(infos: SessionInfo[], now: number): number | undefined {
   return tick;
 }
 
-/** The plan ring: the highest 5-hour use any Claude session reports, or nothing when none does. A claude run inside a shell tab feeds that shell's row, not the ring. */
-export function planRing(infos: SessionInfo[]): { pct: number } | undefined {
-  let pct: number | undefined;
+/**
+ * The plan ring: the highest 5-hour use any Claude session reports for a window that has not reset, or nothing when none does.
+ * A claude run inside a shell tab feeds that shell's row, not the ring. `until` is when the shown use's window resets.
+ */
+export function planRing(infos: SessionInfo[], now = Date.now()): { pct: number; until?: number } | undefined {
+  let best: { pct: number; until?: number } | undefined;
   for (const i of infos) {
-    if (i.agent !== "claude") continue;
-    const p = i.live?.five_hour_pct;
-    if (p !== null && p !== undefined && Number.isFinite(p) && (pct === undefined || p > pct)) pct = p;
+    if (i.agent !== "claude" || !i.live) continue;
+    const p = i.live.five_hour_pct;
+    if (p === null || !Number.isFinite(p)) continue;
+    // A use from a window that has since reset says nothing about the new one: within a window, use only rises.
+    const until = i.live.five_hour_resets_at === null ? undefined : i.live.five_hour_resets_at * 1000;
+    if (until !== undefined && until <= now) continue;
+    if (best === undefined || p > best.pct) best = until === undefined ? { pct: p } : { pct: p, until };
   }
-  return pct === undefined ? undefined : { pct };
+  return best;
 }
 
 /**
