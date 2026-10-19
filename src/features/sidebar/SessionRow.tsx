@@ -47,6 +47,7 @@ export function SessionRow({
   onSelect,
   onToggle,
   onReview,
+  onSetup,
   onMenu,
 }: {
   row: RowModel;
@@ -65,6 +66,8 @@ export function SessionRow({
   onToggle?: () => void;
   /** Opens the review of this row's task. Left out, a task row shows its tag but no button (stories). */
   onReview?: () => void;
+  /** Opens the hooks setup. Shown on a row with `setupLink`; left out, there is no button (stories). */
+  onSetup?: () => void;
   /** Right-click, Shift+F10 or the Menu key: where to open the row's menu. Left out, the row has no menu. */
   onMenu?: (anchor: { x: number; y: number }) => void;
 }) {
@@ -75,6 +78,7 @@ export function SessionRow({
   const time = row.waitingMs ?? (row.status === "done-unseen" || row.status === "done-seen" || row.status === "ended" ? row.ageMs : undefined);
   const branch = row.branch ? splitForMiddle(row.branch) : null;
   const reviewable = Boolean(row.task && onReview && !rename);
+  const settable = Boolean(row.setupLink && onSetup && !rename);
 
   return (
     <div
@@ -99,6 +103,7 @@ export function SessionRow({
       data-flash={row.flash || undefined}
       data-renaming={rename ? "" : undefined}
       data-review={reviewable ? (selected ? "open" : "") : undefined}
+      data-setup={settable ? "" : undefined}
       data-row-id={drag ? row.id : undefined}
       data-dragging={drag?.dragging ? "" : undefined}
       data-drop={drag?.dropEdge}
@@ -220,6 +225,25 @@ export function SessionRow({
           }}
         >
           Review changes
+        </button>
+      )}
+      {/* Same rules as the review button: outside the aria-hidden lines, in the row's tab order, and a click here is not a click on the row. */}
+      {settable && (
+        <button
+          type="button"
+          className="session-row__setup"
+          aria-label={`Set up status for ${row.name}`}
+          tabIndex={tabStop ? 0 : -1}
+          onClick={(e) => {
+            e.stopPropagation();
+            onSetup?.();
+          }}
+          onKeyDown={(e) => {
+            // Enter and Space press the button; the row's own key handling (menu, pane toggle) never sees them.
+            if (e.key === "Enter" || e.key === " ") e.stopPropagation();
+          }}
+        >
+          set up
         </button>
       )}
     </div>

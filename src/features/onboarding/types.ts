@@ -17,6 +17,8 @@ export type Detection = {
   hooks?: { path: string; exists: boolean };
   /** A setting in `configPath` that skips every permission prompt (Antigravity's `dangerouslySkipPermissions: true`); while it is on, no mode below Bypass can work. */
   skipsAll?: { setting: string };
+  /** The user has a status line of their own. `false` means there is none, so a status line is added rather than chained; unset means unknown. */
+  hasOwnStatusLine?: boolean;
 };
 
 export type Capability = "status" | "approve" | "statusline";

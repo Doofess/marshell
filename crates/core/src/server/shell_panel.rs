@@ -194,6 +194,7 @@ mod tests {
                 argv,
                 cwd: None,
                 env: Vec::new(),
+                env_remove: Vec::new(),
                 cols: 80,
                 rows: 24,
                 on_exit: None,

@@ -209,7 +209,7 @@ fn links_refused(path: &std::path::Path) -> bool {
     })
 }
 
-fn home_dir() -> Option<PathBuf> {
+pub(super) fn home_dir() -> Option<PathBuf> {
     let var = if cfg!(windows) { "USERPROFILE" } else { "HOME" };
     std::env::var_os(var).filter(|v| !v.is_empty()).map(PathBuf::from)
 }

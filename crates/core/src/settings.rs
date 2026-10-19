@@ -13,6 +13,8 @@ struct FileDoc {
     appearance: Appearance,
     #[serde(default)]
     pause_warned: bool,
+    #[serde(default)]
+    onboarded: bool,
 }
 
 impl Versioned for FileDoc {
@@ -34,7 +36,7 @@ pub fn load(home: &Path) -> Settings {
         None
     });
     let doc = doc.unwrap_or_default();
-    let (mut appearance, pause_warned) = (doc.appearance, doc.pause_warned);
+    let (mut appearance, pause_warned, onboarded) = (doc.appearance, doc.pause_warned, doc.onboarded);
     // A hand-edited value that fails validation would make every later save fail, so it gives way to its default.
     let replaced = repair(&mut appearance);
     if !replaced.is_empty() {
@@ -46,6 +48,7 @@ pub fn load(home: &Path) -> Settings {
     Settings {
         appearance,
         pause_warned,
+        onboarded,
     }
 }
 
@@ -65,6 +68,7 @@ pub fn save(home: &Path, s: &Settings) -> anyhow::Result<()> {
         &FileDoc {
             appearance: s.appearance.clone(),
             pause_warned: s.pause_warned,
+            onboarded: s.onboarded,
         },
     )
 }
@@ -285,6 +289,21 @@ mod tests {
         let file = crate::paths::settings_file(home.path());
         std::fs::write(&file, r#"{"version":1,"appearance":{}}"#).unwrap();
         assert!(!load(home.path()).pause_warned);
+    }
+
+    #[test]
+    fn onboarded_round_trips_and_defaults_false() {
+        let home = tempfile::tempdir().unwrap();
+        let s = Settings {
+            onboarded: true,
+            ..Settings::default()
+        };
+        save(home.path(), &s).unwrap();
+        assert!(load(home.path()).onboarded);
+
+        let file = crate::paths::settings_file(home.path());
+        std::fs::write(&file, r#"{"version":1,"appearance":{}}"#).unwrap();
+        assert!(!load(home.path()).onboarded);
     }
 
     #[test]

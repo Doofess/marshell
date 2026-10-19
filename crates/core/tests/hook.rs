@@ -185,3 +185,33 @@ async fn context_role_answers_204_with_no_body() {
     let bytes = axum::body::to_bytes(res.into_body(), 1024).await.unwrap();
     assert!(bytes.is_empty());
 }
+
+#[tokio::test]
+async fn closing_a_session_clears_its_hook_events() {
+    let app = app();
+    let body = serde_json::json!({ "cols": 80, "rows": 24, "profile_id": "sleeper" });
+    let res = app
+        .clone()
+        .oneshot(
+            base("POST", "/v1/sessions")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(body.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let bytes = axum::body::to_bytes(res.into_body(), 64 * 1024).await.unwrap();
+    let tab = serde_json::from_slice::<serde_json::Value>(&bytes).unwrap()["tab_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let req = hook(Some("event"), Some("claude"), Some(&tab), br#"{"a":1}"#.to_vec());
+    assert_eq!(status(&app, req).await, StatusCode::NO_CONTENT);
+    assert_eq!(events(&app, Some(&tab)).await.len(), 1);
+
+    let close = base("DELETE", &format!("/v1/sessions/{tab}"))
+        .body(Body::empty())
+        .unwrap();
+    assert!(status(&app, close).await.is_success());
+    assert!(events(&app, Some(&tab)).await.is_empty());
+}

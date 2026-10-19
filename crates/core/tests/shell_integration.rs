@@ -63,6 +63,7 @@ impl Shell {
             argv: applied.argv,
             cwd: Some(home.path().to_path_buf()),
             env,
+            env_remove: vec![],
             cols: 100,
             rows: 30,
             on_exit: None,

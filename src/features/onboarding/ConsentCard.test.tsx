@@ -74,4 +74,29 @@ describe("ConsentCard", () => {
     const h = renderToStaticMarkup(<ConsentCard scenario={CONSENT.claude} on={on} />);
     for (const b of h.match(/<button[\s\S]*?<\/button>/g) ?? []) expect(nameContainsLabel(b)).toBe(true);
   });
+  it("leaves out a capability that is not offered", () => {
+    const h = renderToStaticMarkup(<ConsentCard scenario={CONSENT.claude} on={on} offer={["status", "statusline"]} />);
+    expect(h).not.toContain("Approve from anywhere");
+    expect(h.match(/role="switch"/g)).toHaveLength(2);
+  });
+  it("offers no status line switch when the user has none", () => {
+    const d = { ...CONSENT.claude.detection, hasOwnStatusLine: false };
+    const h = renderToStaticMarkup(<ConsentCard scenario={{ ...CONSENT.claude, detection: d }} on={on} offer={["status", "statusline"]} />);
+    expect(h).not.toContain("Keep my status line working");
+    expect(h).toContain("and a status line in");
+  });
+  it("on a conflict offers Review the difference and Reload, and no apply button", () => {
+    const h = renderToStaticMarkup(<ConsentCard scenario={CONSENT.claude} on={on} onApply={() => {}} conflict={{ onReload: () => {} }} />);
+    expect(h).toContain("Review the difference");
+    expect(h).toContain(">Reload<");
+    expect(h).not.toContain("consent__apply");
+  });
+  it("has an apply button that busy disables, and an error that is an alert", () => {
+    const idle = renderToStaticMarkup(<ConsentCard scenario={CONSENT.claude} on={on} onApply={() => {}} />);
+    expect(idle).toContain("consent__apply");
+    expect(idle).not.toContain('role="alert"');
+    const busy = renderToStaticMarkup(<ConsentCard scenario={CONSENT.claude} on={on} onApply={() => {}} busy error="Disk full" />);
+    expect(/<button[^>]*consent__apply[^>]*disabled/.test(busy)).toBe(true);
+    expect(busy).toMatch(/role="alert"[^>]*>Disk full/);
+  });
 });

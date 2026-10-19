@@ -9,6 +9,7 @@ fn fake(args: &[&str]) -> SpawnSpec {
         argv,
         cwd: None,
         env: vec![],
+        env_remove: vec![],
         cols: 80,
         rows: 24,
         on_exit: None,
@@ -190,6 +191,7 @@ fn on_exit_callback_gets_the_code() {
         argv: argv.iter().map(|s| s.to_string()).collect(),
         cwd: None,
         env: vec![],
+        env_remove: vec![],
         cols: 80,
         rows: 24,
         on_exit: Some(Box::new(move |code| {
@@ -353,6 +355,7 @@ fn printer(nested: bool) -> SpawnSpec {
         argv,
         cwd: None,
         env: vec![],
+        env_remove: vec![],
         cols: 80,
         rows: 24,
         on_exit: None,
@@ -549,4 +552,40 @@ fn a_renamed_agent_binary_is_found() {
     );
     std::thread::sleep(Duration::from_millis(500));
     std::fs::remove_dir_all(dir.path()).ok();
+}
+
+/// What `set` (or `env`) prints for a session spawned from `spec`.
+fn environment_of(id: &str, mut spec: SpawnSpec) -> String {
+    spec.argv = if cfg!(windows) {
+        vec!["cmd".into(), "/d".into(), "/c".into(), "set".into()]
+    } else {
+        vec!["env".into()]
+    };
+    let s = Session::spawn(id.into(), spec).unwrap();
+    let (bytes, _) = drain(&s, Duration::from_secs(10));
+    String::from_utf8_lossy(&bytes).into_owned()
+}
+
+#[test]
+fn env_remove_drops_an_inherited_variable() {
+    // Names no other test uses, so setting the process environment cannot race one.
+    unsafe {
+        std::env::set_var("MARSHELL_TEST_INHERITED_GONE", "1");
+        std::env::set_var("MARSHELL_TEST_INHERITED_KEPT", "1");
+    }
+    let mut spec = fake(&[]);
+    spec.env_remove = vec!["MARSHELL_TEST_INHERITED_GONE".into()];
+    let out = environment_of("t-env-remove", spec);
+    assert!(!out.contains("MARSHELL_TEST_INHERITED_GONE="), "{out}");
+    assert!(out.contains("MARSHELL_TEST_INHERITED_KEPT=1"), "{out}");
+}
+
+#[test]
+fn a_name_in_env_and_env_remove_keeps_the_env_value() {
+    unsafe { std::env::set_var("MARSHELL_TEST_INHERITED_BOTH", "inherited") };
+    let mut spec = fake(&[]);
+    spec.env = vec![("MARSHELL_TEST_INHERITED_BOTH".into(), "on-purpose".into())];
+    spec.env_remove = vec!["MARSHELL_TEST_INHERITED_BOTH".into()];
+    let out = environment_of("t-env-both", spec);
+    assert!(out.contains("MARSHELL_TEST_INHERITED_BOTH=on-purpose"), "{out}");
 }

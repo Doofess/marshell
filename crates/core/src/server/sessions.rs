@@ -288,6 +288,9 @@ pub(super) async fn spawn_into_map(
         argv: run.argv,
         cwd: (!cwd.is_empty()).then(|| PathBuf::from(cwd)),
         env,
+        // Every session, shell or agent: the markers would reach a shell's children too. The profile's
+        // env still wins, since it is applied after.
+        env_remove: crate::agents::INHERITED_MARKERS.iter().map(|k| k.to_string()).collect(),
         cols: size.0,
         rows: size.1,
         on_exit: Some(Box::new(move |code| {

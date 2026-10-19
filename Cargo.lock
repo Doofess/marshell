@@ -2333,6 +2333,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "marshell-cli"
+version = "0.1.0"
+dependencies = [
+ "marshell-core",
+ "marshell-protocol",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
 name = "marshell-core"
 version = "0.1.0"
 dependencies = [
@@ -2371,6 +2381,7 @@ dependencies = [
  "serde_json",
  "tempfile",
  "ureq",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

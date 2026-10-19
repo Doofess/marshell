@@ -1,3 +1,4 @@
+mod agents;
 mod attachments;
 mod config;
 mod events;
@@ -40,6 +41,9 @@ pub struct CoreConfig {
     pub home: PathBuf,
     /// Webview origins allowed to call the API, e.g. `http://tauri.localhost`.
     pub allowed_origins: Vec<String>,
+    /// The folder holding marshell-hook and marshell, next to the app's exe. None in tests: set up then never
+    /// copies them.
+    pub programs_dir: Option<PathBuf>,
 }
 
 /// Shared server state. Cloning is cheap (one `Arc`).
@@ -77,6 +81,8 @@ struct Inner {
     foreground_wake: Arc<tokio::sync::Notify>,
     /// Whether an agent's command (`claude`, `codex`, `agy`) runs from PATH. Tests swap it.
     agent_on_path: fn(&str) -> bool,
+    /// The file an agent's command runs from PATH, for its setup and version. Tests swap it.
+    agent_path: fn(&str) -> Option<PathBuf>,
     /// The last events the bridge sent, per live tab.
     hook_log: crate::hooks::log::HookLog,
     /// The permission requests being held for a decision.
@@ -85,6 +91,13 @@ struct Inner {
     permission_hold: Duration,
     /// Previews and applies changes to the CLIs' config files.
     config: crate::config::service::ConfigService,
+    /// Claude Code's settings file when a test or a caller names one; None means
+    /// `MARSHELL_CLAUDE_SETTINGS`, else `~/.claude/settings.json`.
+    claude_settings: Option<PathBuf>,
+    /// Where the app's own programs sit, so setting up hooks can put a missing bridge back. None in tests.
+    programs_dir: Option<PathBuf>,
+    /// `--version` of each agent executable, asked once per path for the app's lifetime.
+    versions: Mutex<HashMap<PathBuf, Option<String>>>,
 }
 
 /// How long a permission request is held when `MARSHELL_PERMISSION_HOLD_SECS` is not set.
@@ -129,11 +142,29 @@ impl AppState {
             shell_panel: Mutex::new(None),
             foreground_wake: Arc::new(tokio::sync::Notify::new()),
             agent_on_path: crate::profiles::detect::command_on_path,
+            agent_path: crate::profiles::detect::command_path,
             hook_log: crate::hooks::log::HookLog::default(),
             holds: crate::hooks::holds::Holds::default(),
             permission_hold: DEFAULT_PERMISSION_HOLD,
             config,
+            claude_settings: None,
+            programs_dir: None,
+            versions: Mutex::new(HashMap::new()),
         }))
+    }
+    /// Names Claude Code's settings file, in place of the environment. Call it before the state is cloned.
+    pub fn with_claude_settings(mut self, path: PathBuf) -> Self {
+        Arc::get_mut(&mut self.0)
+            .expect("with_claude_settings runs before the state is shared")
+            .claude_settings = Some(path);
+        self
+    }
+    /// Names the folder holding the app's own programs. Call it before the state is cloned.
+    pub fn with_programs_dir(mut self, dir: PathBuf) -> Self {
+        Arc::get_mut(&mut self.0)
+            .expect("with_programs_dir runs before the state is shared")
+            .programs_dir = Some(dir);
+        self
     }
     /// Sets how long a permission request is held. Call it before the state is cloned.
     pub fn with_permission_hold(mut self, hold: Duration) -> Self {
@@ -153,6 +184,13 @@ impl AppState {
         Arc::get_mut(&mut self.0)
             .expect("with_agent_check runs before the state is shared")
             .agent_on_path = check;
+        self
+    }
+    /// Replaces the PATH lookup of an agent's file. Call it before the state is cloned.
+    pub fn with_agent_path(mut self, find: fn(&str) -> Option<PathBuf>) -> Self {
+        Arc::get_mut(&mut self.0)
+            .expect("with_agent_path runs before the state is shared")
+            .agent_path = find;
         self
     }
     /// The folder holding `profiles.json`, `tasks.json` and the other files Marshell keeps.
@@ -200,9 +238,13 @@ impl AppState {
             tab: tab.to_string(),
         })
     }
-    /// Forgets the session so no new socket can attach; the caller kills it.
+    /// Forgets the session so no new socket can attach; the caller kills it. Its held permission
+    /// requests and hook events go too.
     pub fn remove_session(&self, tab: &str) -> Option<Arc<crate::pty::Session>> {
-        self.0.sessions.lock().unwrap().remove(tab)
+        let removed = self.0.sessions.lock().unwrap().remove(tab);
+        self.holds().release_tab(tab);
+        self.hook_log().forget_tab(tab);
+        removed
     }
     pub fn origin_allowed(&self, origin: &str) -> bool {
         self.0.allowed_origins.iter().any(|o| o == origin)
@@ -286,6 +328,9 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/config/apply", post(config::apply))
         .route("/v1/snapshots", get(config::snapshots))
         .route("/v1/snapshots/{id}/restore", post(config::restore))
+        .route("/v1/agents/{agent}/setup", get(agents::setup))
+        .route("/v1/agents/{agent}/hooks/plan", post(agents::plan))
+        .route("/v1/agents/{agent}/hooks/remove-plan", post(agents::remove_plan))
         .route("/v1/events", get(events::handler))
         .route("/v1/pty/{tab}", get(pty_ws::handler))
         .layer(axum::middleware::from_fn_with_state(state.clone(), guard::auth_guard))
@@ -381,10 +426,13 @@ pub async fn start(cfg: CoreConfig) -> anyhow::Result<RunningCore> {
         Err(e) => tracing::warn!("could not make the Marshell home owner-only: {e:#}"),
     }
     let endpoint_file = paths::endpoint_file(&cfg.home);
-    let state = AppState::new(endpoint.token.clone(), port, cfg.allowed_origins, cfg.home, detected)
+    let mut state = AppState::new(endpoint.token.clone(), port, cfg.allowed_origins, cfg.home, detected)
         .with_permission_hold(permission_hold_from_env(
             std::env::var("MARSHELL_PERMISSION_HOLD_SECS").ok().as_deref(),
         ));
+    if let Some(dir) = cfg.programs_dir {
+        state = state.with_programs_dir(dir);
+    }
     // Last, so the endpoint is only advertised once the state is ready to serve.
     auth::write_endpoint_file(&endpoint_file, &endpoint)?;
     let app = router(state.clone());

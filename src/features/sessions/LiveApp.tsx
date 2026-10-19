@@ -29,6 +29,10 @@ import { ProfilesDialog } from "../settings/ProfilesPage";
 import { modeMenuItems, sessionMenuItems } from "../sidebar/sessionMenu";
 import { nextSessionNumber } from "../sidebar/sessionNumber";
 import type { Mode, RowModel } from "../sidebar/types";
+import { AgentsDialog } from "../agents/AgentsDialog";
+import { LiveOnboarding } from "../onboarding/LiveOnboarding";
+import { getSetup } from "../../lib/api/agents";
+import type { HookInstall } from "../../generated/HookInstall";
 import { AppearanceDialog } from "../appearance/AppearanceDialog";
 import { useAppearance } from "../appearance/AppearanceProvider";
 import { terminalThemeOf, wtFont } from "../appearance/terminalSettings";
@@ -93,7 +97,17 @@ function useElementSize() {
 
 /** The real app: the main window on the core's live session list, and the launcher that adds to it. */
 export function LiveApp() {
-  const { endpoint, profiles, rows, infos, selectedId, loaded, select, reloadProfiles, error } = useSessions();
+  // Claude Code's hook state, read when the window opens and again after each change in the Agents dialog or the onboarding. Never polled.
+  const [claudeHooks, setClaudeHooks] = useState<HookInstall | undefined>(undefined);
+  const { endpoint, profiles, rows, infos, selectedId, loaded, select, reloadProfiles, error } = useSessions(useMemo(() => ({ claude: claudeHooks }), [claudeHooks]));
+  const refreshSetup = useCallback(() => {
+    if (!endpoint) return;
+    getSetup(endpoint, "claude").then(
+      (s) => setClaudeHooks(s.found ? s.hooks : undefined),
+      () => {},
+    );
+  }, [endpoint]);
+  useEffect(refreshSetup, [refreshSetup]);
   const [maximized, setMaximized] = useState(false);
   useEffect(() => onMaximizedChange(setMaximized), []);
   // The window's saved layout: which sessions are in which pane. `undefined` until the list has answered, so an empty first list is never "everything closed".
@@ -159,7 +173,22 @@ export function LiveApp() {
   const terminalFont = useMemo(() => ({ family: font.family, size: font.size }), [font.family, font.size]);
   const [launcherOpen, setLauncherOpen] = useState(false);
   // The command palette, or the shell profiles page opened from it, over the window.
-  const [overlay, setOverlay] = useState<"palette" | "profiles" | "appearance" | "shortcuts" | null>(null);
+  const [overlay, setOverlay] = useState<"palette" | "profiles" | "appearance" | "agents" | "shortcuts" | null>(null);
+  // The Agents dialog opened from a row's "set up" starts on the Set up card.
+  const [agentsFrom, setAgentsFrom] = useState<"row" | null>(null);
+  // First run: shown once, when the saved settings say the onboarding was not seen. Nothing shows until that read has answered.
+  const [onboarding, setOnboarding] = useState(false);
+  useEffect(() => {
+    if (!endpoint || !sync) return;
+    let live = true;
+    sync.load().then(
+      () => live && setOnboarding(!sync.onboarded),
+      () => {},
+    );
+    return () => {
+      live = false;
+    };
+  }, [endpoint, sync]);
   // "Open file…" opens the palette with files only; any other way of opening it lists everything.
   const [filesOnly, setFilesOnly] = useState(false);
   useEffect(() => {
@@ -893,7 +922,7 @@ export function LiveApp() {
 
   // A palette row: a session to go to, the profiles page, or a command the window runs (LivePalette lists only those).
   const runFromPalette = (id: string) => {
-    setOverlay(id === "profiles" || id === "appearance" ? id : id === "cheatsheet" ? "shortcuts" : null);
+    setOverlay(id === "profiles" || id === "appearance" || id === "agents" ? id : id === "cheatsheet" ? "shortcuts" : null);
     if (id.startsWith("session:")) return pick(id.slice("session:".length));
     // Palette-only commands. The menu opens after the palette has given the focus back, so it keeps the focus it takes.
     if (id === "unsplit") return dispatch({ type: "remove", index: focusIdxRef.current });
@@ -1085,6 +1114,10 @@ export function LiveApp() {
           onSelect={pick}
           onToggle={togglePane}
           onReview={reviewSession}
+          onSetup={() => {
+            setAgentsFrom("row");
+            setOverlay("agents");
+          }}
           menuItems={os ? menuItems : undefined}
           onMenuRun={onMenuRun}
           onPalette={() => setOverlay("palette")}
@@ -1126,6 +1159,19 @@ export function LiveApp() {
         />
       )}
       {overlay === "profiles" && endpoint && <ProfilesDialog endpoint={endpoint} onClose={() => setOverlay(null)} onNotice={announce} onSaved={reloadProfiles} />}
+      {overlay === "agents" && endpoint && <AgentsDialog endpoint={endpoint} startWith={agentsFrom === "row" ? "setup" : undefined} onClose={() => { setOverlay(null); setAgentsFrom(null); refreshSetup(); }} onNotice={announce} onChanged={refreshSetup} />}
+      {onboarding && endpoint && (
+        <div className="live-app__onboarding">
+          <LiveOnboarding
+            endpoint={endpoint}
+            onDone={() => {
+              setOnboarding(false);
+              refreshSetup();
+              void sync?.markOnboarded().catch(() => {});
+            }}
+          />
+        </div>
+      )}
       {overlay === "appearance" && <AppearanceDialog onClose={() => setOverlay(null)} onNotice={announce} />}
       {overlay === "shortcuts" && os && <LiveShortcuts os={os} onClose={() => setOverlay(null)} />}
       {launcherOpen && (

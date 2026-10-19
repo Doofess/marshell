@@ -1,0 +1,7 @@
+{
+  "statusLine": {
+    "type": "command", // how it runs
+    /* the script */ "command": "python ./line.py",
+    "padding": 0
+  }
+}

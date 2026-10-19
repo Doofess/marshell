@@ -150,6 +150,7 @@ export type MainWindowProps = {
   onToggle?: (id: string) => void;
   /** Opens the review of a task row's session (its Review changes button). */
   onReview?: (id: string) => void;
+  onSetup?: (id: string) => void;
   /** The items of a sidebar row's menu, and what choosing one does. Left out, rows have no menu. */
   menuItems?: (id: string) => MenuItem[];
   onMenuRun?: (id: string, itemId: string, anchor: { x: number; y: number }) => void;
@@ -233,6 +234,7 @@ export function MainWindow({
   onSelect,
   onToggle,
   onReview,
+  onSetup,
   menuItems,
   onMenuRun,
   onPalette,
@@ -471,7 +473,7 @@ export function MainWindow({
       </header>
 
       <div ref={bodyRef} className="window__body">
-        {mode === "expanded" && <Sidebar rows={rows} requests={requests} height={height - BAR} width={sideW} selectedId={selected?.id} visibleIds={visibleIds} os={os} footer={footer ?? undefined} shell={shell ? { cwd: shellOptions.cwd ?? active?.project, shellName: shellNameFor(os), collapsed: shellCollapsed || shellOptions.hidden === true, os, terminal: shellOptions.terminal, failed: shellOptions.failed, onRetry: shellOptions.onRetry, openDisabled: shellOptions.openDisabled, forceOpen: shellOptions.forceOpen, onToggle: shellOptions.onToggle, onOpenInPane: shellOptions.onOpenInPane } : undefined} renamingId={renamingId} onRename={onRename} onRenameCancel={onRenameCancel} onReorder={onReorder} onSelect={onSelect} onToggle={onToggle} onReview={onReview} menuItems={menuItems} onMenuRun={onMenuRun} grouped={grouped} />}
+        {mode === "expanded" && <Sidebar rows={rows} requests={requests} height={height - BAR} width={sideW} selectedId={selected?.id} visibleIds={visibleIds} os={os} footer={footer ?? undefined} shell={shell ? { cwd: shellOptions.cwd ?? active?.project, shellName: shellNameFor(os), collapsed: shellCollapsed || shellOptions.hidden === true, os, terminal: shellOptions.terminal, failed: shellOptions.failed, onRetry: shellOptions.onRetry, openDisabled: shellOptions.openDisabled, forceOpen: shellOptions.forceOpen, onToggle: shellOptions.onToggle, onOpenInPane: shellOptions.onOpenInPane } : undefined} renamingId={renamingId} onRename={onRename} onRenameCancel={onRenameCancel} onReorder={onReorder} onSelect={onSelect} onToggle={onToggle} onReview={onReview} onSetup={onSetup} menuItems={menuItems} onMenuRun={onMenuRun} grouped={grouped} />}
         {mode === "expanded" && (
           <div
             className="window__side-handle"

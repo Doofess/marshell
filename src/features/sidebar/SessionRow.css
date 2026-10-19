@@ -310,6 +310,52 @@
     padding-inline-end: calc(7.5rem + 8px + var(--space-2));
   }
 }
+/*
+ * The "set up" link on a Claude Code row whose hooks are not installed. Placed and shown like the review button (hover, focus
+ * inside, selected, and always where there is no hover). The phrase always gives up the room, so showing it never reflows.
+ */
+.session-row__setup {
+  position: absolute;
+  inset-inline-end: 8px;
+  inset-block-end: 4px;
+  block-size: 24px;
+  padding-inline: var(--space-2);
+  white-space: nowrap;
+  border-radius: var(--radius);
+  background: var(--fill-strong);
+  color: var(--text-1);
+  font: inherit;
+  font-size: var(--text-12);
+  line-height: 16px;
+  cursor: pointer;
+  opacity: 0;
+}
+.session-row[data-review] .session-row__setup {
+  inset-inline-end: calc(7.5rem + 8px + var(--space-2));
+}
+.session-row:hover .session-row__setup,
+.session-row:focus-within .session-row__setup,
+.session-row[aria-selected="true"] .session-row__setup {
+  opacity: 1;
+}
+@media (hover: none) {
+  .session-row__setup {
+    opacity: 1;
+  }
+}
+.session-row[data-setup] .session-row__phrase {
+  padding-inline-end: calc(4rem + 8px + var(--space-2));
+}
+.session-row__setup:focus-visible {
+  outline: 2px solid var(--focus, var(--accent));
+  outline-offset: 0;
+}
+@media (hover: hover) and (pointer: fine) {
+  .session-row__setup:hover {
+    background: var(--selected, var(--fill));
+  }
+}
+
 .session-row__review:focus-visible {
   outline: 2px solid var(--focus, var(--accent));
   outline-offset: 0;
@@ -427,6 +473,16 @@
     outline-offset: -1px;
   }
   .session-row .session-row__review:focus-visible {
+    outline: 2px solid Highlight;
+    outline-offset: 0;
+  }
+  .session-row[aria-selected="true"] .session-row__setup,
+  .session-row:hover .session-row__setup,
+  .session-row:focus-within .session-row__setup {
+    outline: 1px solid ButtonText;
+    outline-offset: -1px;
+  }
+  .session-row .session-row__setup:focus-visible {
     outline: 2px solid Highlight;
     outline-offset: 0;
   }

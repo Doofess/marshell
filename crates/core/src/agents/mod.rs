@@ -2,6 +2,21 @@
 
 pub mod claude;
 
+/// Variables that identify the Claude Code session Marshell itself may have been started from;
+/// user settings such as `CLAUDE_CODE_GIT_BASH_PATH` are not in it.
+pub const INHERITED_MARKERS: &[&str] = &[
+    "CLAUDECODE",
+    "CLAUDE_CODE_ENTRYPOINT",
+    "CLAUDE_CODE_CHILD_SESSION",
+    "CLAUDE_CODE_SESSION_ID",
+    "CLAUDE_CODE_SESSION_ATTENDED",
+    "CLAUDE_CODE_MESSAGING_SOCKET",
+    "CLAUDE_CODE_MESSAGING_TOKEN",
+    "CLAUDE_CODE_EXECPATH",
+    "CLAUDE_CODE_SSE_PORT",
+    "CLAUDE_PID",
+];
+
 use marshell_protocol::hook::PermissionDecision;
 use serde_json::Value;
 
@@ -10,5 +25,31 @@ pub fn permission_output(agent: &str, decision: &PermissionDecision, request: &V
     match agent {
         "claude" => claude::permission_output(decision, request),
         _ => Err("This agent can't take a decision yet."),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::INHERITED_MARKERS;
+
+    #[test]
+    fn markers_name_the_session_identity_only() {
+        assert_eq!(
+            INHERITED_MARKERS,
+            [
+                "CLAUDECODE",
+                "CLAUDE_CODE_ENTRYPOINT",
+                "CLAUDE_CODE_CHILD_SESSION",
+                "CLAUDE_CODE_SESSION_ID",
+                "CLAUDE_CODE_SESSION_ATTENDED",
+                "CLAUDE_CODE_MESSAGING_SOCKET",
+                "CLAUDE_CODE_MESSAGING_TOKEN",
+                "CLAUDE_CODE_EXECPATH",
+                "CLAUDE_CODE_SSE_PORT",
+                "CLAUDE_PID",
+            ]
+        );
+        assert!(!INHERITED_MARKERS.contains(&"CLAUDE_CODE_GIT_BASH_PATH"));
+        assert!(!INHERITED_MARKERS.contains(&"CLAUDE_CODE_USE_BEDROCK"));
     }
 }

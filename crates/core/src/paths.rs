@@ -55,6 +55,11 @@ pub fn bridge_exe(home: &Path) -> PathBuf {
     bin_dir(home).join(format!("marshell-hook{}", std::env::consts::EXE_SUFFIX))
 }
 
+/// `<home>/bin/marshell` (`.exe` on Windows): the command line program.
+pub fn cli_exe(home: &Path) -> PathBuf {
+    bin_dir(home).join(format!("{}{}", brand::CLI_BIN, std::env::consts::EXE_SUFFIX))
+}
+
 /// `<home>/logs/bridge.log`: one line per bridge failure.
 pub fn bridge_log(home: &Path) -> PathBuf {
     home.join("logs").join("bridge.log")
