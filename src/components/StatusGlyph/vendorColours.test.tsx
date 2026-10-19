@@ -31,14 +31,14 @@ describe("the done check, caution triangle and context ring take the vendor's co
 describe("the ring's level shows in its shape, not its colour", () => {
   const ring = (pct: number) => renderToStaticMarkup(<ContextRing pct={pct} />);
   const width = (h: string) => Number(/class="context-ring__value"[^>]*stroke-width="([\d.]+)"/.exec(h)?.[1]);
-  it("thickens the ring from 80%", () => {
-    expect(width(ring(79))).toBe(2);
-    expect(width(ring(80))).toBeGreaterThan(2);
-    expect(width(ring(94))).toBe(width(ring(80)));
+  it("thickens the ring from 70%", () => {
+    expect(width(ring(69))).toBe(2);
+    expect(width(ring(70))).toBeGreaterThan(2);
+    expect(width(ring(89))).toBe(width(ring(70)));
   });
-  it("adds a centre dot from 95%, and only then", () => {
-    expect(ring(94)).not.toContain("context-ring__dot");
-    expect(ring(95)).toContain("context-ring__dot");
+  it("adds a centre dot from 90%, and only then", () => {
+    expect(ring(89)).not.toContain("context-ring__dot");
+    expect(ring(90)).toContain("context-ring__dot");
     expect(ring(100)).toContain("context-ring__dot");
   });
   it("still says the level in words", () => {

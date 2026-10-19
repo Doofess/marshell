@@ -5,8 +5,8 @@ import { AgentsDialogView, type Panel } from "./AgentsDialog";
 import { PREVIEW, SETUP } from "./fixtures";
 
 const none = () => {};
-const handlers = { onClose: none, onSetup: none, onHooksOff: none, onBack: none, onDone: none, onAllow: none, onToggleDiff: none, onReload: none, onTurnOff: none, onSwitch: none };
-const view = (setup: AgentSetup | "loading" | "failed", panel: Panel = { kind: "list" }) => renderToStaticMarkup(<AgentsDialogView setup={setup} panel={panel} {...handlers} />);
+const handlers = { onClose: none, onSetup: none, onHooksOff: none, onBack: none, onDone: none, onAllow: none, onToggleDiff: none, onReload: none, onTurnOff: none, onSwitch: none, onLiveStatus: none };
+const view = (setup: AgentSetup | "loading" | "failed", panel: Panel = { kind: "list" }, liveStatus: boolean | null = true) => renderToStaticMarkup(<AgentsDialogView setup={setup} panel={panel} liveStatus={liveStatus} {...handlers} />);
 
 describe("AgentsDialogView switches", () => {
   const switchOf = (h: string, label: string) => h.match(new RegExp(`<input[^>]*role="switch"[^>]*>(?=<span class="switch__track"[^>]*></span><span class="switch__text">${label}<)`))?.[0] ?? "";
@@ -110,5 +110,20 @@ describe("AgentsDialogView", () => {
   });
   it("says why the setup could not be read", () => {
     expect(view("failed")).toContain("Couldn&#x27;t read the setup");
+  });
+});
+
+describe("AgentsDialogView: the Live status switch", () => {
+  const sw = (h: string) => h.match(/<input[^>]*role="switch"[^>]*>(?=<span class="switch__track"[^>]*><\/span><span class="switch__text">Live status<)/)?.[0] ?? "";
+  it("is on when live status is not switched off for Claude Code", () => {
+    expect(sw(view({ ...SETUP, hooks: "installed" }, { kind: "list" }, true))).toContain("checked");
+  });
+  it("is off when it is", () => {
+    const h = sw(view({ ...SETUP, hooks: "installed" }, { kind: "list" }, false));
+    expect(h).toContain('role="switch"');
+    expect(h).not.toContain("checked");
+  });
+  it("is left out until the settings have been read", () => {
+    expect(view(SETUP, { kind: "list" }, null)).not.toContain("Live status");
   });
 });

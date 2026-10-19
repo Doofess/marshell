@@ -3,8 +3,8 @@ import "./ContextRing.css";
 export type RingTone = "neutral" | "caution" | "error";
 
 export function ringTone(pct: number): RingTone {
-  if (pct >= 95) return "error";
-  if (pct >= 80) return "caution";
+  if (pct >= 90) return "error";
+  if (pct >= 70) return "caution";
   return "neutral";
 }
 
@@ -12,8 +12,8 @@ const R = 6;
 const C = 2 * Math.PI * R;
 
 /**
- * Context-window use as a 16 px ring, in the vendor's colour. The level shows in the shape: the ring thickens from 80%
- * and gets a centre dot from 95%, so it reads without colour.
+ * Context-window use as a 16 px ring, in the vendor's colour. The level shows in the shape: the ring thickens from 70%
+ * and gets a centre dot from 90%, so it reads without colour.
  *
  * Unknown hides it (docs/PLAN.md: unknown values are never guessed).
  */

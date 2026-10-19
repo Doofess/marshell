@@ -47,5 +47,5 @@ export function rowLabel(r: RowModel, density: Density = "comfortable"): string 
 }
 
 export function rowTitle(r: RowModel): string {
-  return [sessionWord(r.number), r.name, projectAndBranch(r), agentAndModel(r), r.phrase].join("\n");
+  return [sessionWord(r.number), r.name, projectAndBranch(r), agentAndModel(r), r.phrase, ...(r.note ? [r.note] : [])].join("\n");
 }

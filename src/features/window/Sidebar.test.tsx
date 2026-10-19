@@ -205,3 +205,16 @@ describe("Sidebar: grouped by project", () => {
     expect(html()).not.toContain("sidebar__group");
   });
 });
+
+describe("Sidebar: the plan ring from live status", () => {
+  it("shows the ring at its level and 5h N% for a known plan use, with no doctor number made up", () => {
+    const h = html({ footer: { planPct: 72, fiveHourPct: 72 } });
+    expect(h).toContain("5h 72%");
+    expect(h).toContain('data-tone="caution"');
+  });
+  it("shows nothing of the plan when it is unknown", () => {
+    const h = html({ footer: {} });
+    expect(h.slice(h.indexOf("sidebar__footer"))).not.toContain("context-ring");
+    expect(h).not.toContain("5h ");
+  });
+});

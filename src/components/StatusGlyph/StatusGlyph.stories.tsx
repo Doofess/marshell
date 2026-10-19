@@ -78,7 +78,7 @@ export const MotionReplay: StoryObj = {
 
 export const ContextRings: StoryObj = {
   render: () => (
-    <ThemePair label="Context ring (Antigravity cyan; thicker from 80%, a centre dot from 95%)">
+    <ThemePair label="Context ring (Antigravity cyan; thicker from 70%, a centre dot from 90%)">
       <div data-agent="antigravity" style={{ display: "flex", gap: "var(--space-4)", alignItems: "center" }}>
         {[0, 12, 42, 79, 80, 94, 95, 100].map((p) => (
           <figure key={p} style={{ margin: 0, display: "grid", justifyItems: "center", gap: "var(--space-1)" }}>

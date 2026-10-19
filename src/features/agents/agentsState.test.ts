@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { AgentSetup } from "../../generated/AgentSetup";
-import { actions, consentProps, DEFAULT_WANT, hooksOffNotice, installRequest, setupLine } from "./agentsState";
+import { actions, consentProps, DEFAULT_WANT, hooksOffNotice, installRequest, liveStatusOn, setupLine } from "./agentsState";
 import type { ConfigPreview } from "../../generated/ConfigPreview";
 import type { FilePreview } from "../../generated/FilePreview";
 import { PREVIEW, SETUP } from "./fixtures";
@@ -113,5 +113,13 @@ describe("the switches the person sets", () => {
     const p = consentProps(SETUP, { preview: null, open: false, busy: false, want: { status: false, statusline: true } });
     expect(p.on.status).toBe(false);
     expect(p.scenario.plan.headline).toBe("Nothing will change: status is off.");
+  });
+});
+
+describe("liveStatusOn", () => {
+  it("is on unless the agent is in status_off", () => {
+    expect(liveStatusOn([], "claude")).toBe(true);
+    expect(liveStatusOn(["codex"], "claude")).toBe(true);
+    expect(liveStatusOn(["codex", "claude"], "claude")).toBe(false);
   });
 });

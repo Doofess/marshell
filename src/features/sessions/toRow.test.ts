@@ -1,8 +1,9 @@
 import { describe, expect, it } from "vitest";
+import type { LiveStatus } from "../../generated/LiveStatus";
 import type { Profile } from "../../generated/Profile";
 import type { SessionInfo } from "../../generated/SessionInfo";
-import { rowLabel } from "../sidebar/labels";
-import { toRow } from "./toRow";
+import { rowLabel, rowTitle } from "../sidebar/labels";
+import { planRing, toRow } from "./toRow";
 
 const profile = (id: string, family: Profile["family"]): Profile => ({ id, name: id, command: [id], family, cwd: null, env: [], shell_integration: true, detected: true });
 const PROFILES: Profile[] = [
@@ -25,6 +26,9 @@ const info = (patch: Partial<SessionInfo> = {}): SessionInfo => ({
   command: { kind: "unknown" },
   paused: false,
   foreground: null,
+  live: null,
+  activity: null,
+  status_note: null,
   ...patch,
 });
 
@@ -171,7 +175,7 @@ describe("toRow", () => {
     it("a claude row without hooks links to set up", () => {
       for (const claude of ["none", "partial", "orphaned"] as const) {
         const row = toRow(info({ agent: "claude" }), PROFILES, { claude });
-        expect(row).toMatchObject({ status: "limited", phrase: "Status limited", setupLink: true });
+        expect(row).toMatchObject({ status: "limited", phrase: "Status limited · set up", setupLink: true });
       }
     });
     it("an installed claude row has no link", () => {
@@ -189,5 +193,75 @@ describe("toRow", () => {
       expect(toRow(info({ agent: "codex" }), PROFILES, { claude: "none" }).setupLink).toBeUndefined();
       expect(toRow(info({ agent: "claude" }), PROFILES).setupLink).toBeUndefined();
     });
+  });
+});
+
+describe("toRow: live status", () => {
+  const NOW = 1_000_000;
+  const live = (patch: Partial<LiveStatus> = {}): LiveStatus => ({ state: "idle", phrase: "", since_ms: NOW - 5000, recap: null, model: null, effort: null, context_pct: null, five_hour_pct: null, seven_day_pct: null, subagents: 0, ...patch });
+  const claude = (l: LiveStatus | null, patch: Partial<SessionInfo> = {}) => info({ agent: "claude", live: l, ...patch });
+  const row = (l: LiveStatus | null, patch: Partial<SessionInfo> = {}) => toRow(claude(l, patch), PROFILES, { claude: "installed" }, NOW);
+
+  it.each([
+    ["idle", "idle"],
+    ["working", "working"],
+    ["needs_permission", "needs-permission"],
+    ["needs_question", "needs-question"],
+    ["done", "done-seen"],
+    ["error", "error"],
+    ["ended", "ended"],
+  ] as const)("maps %s to %s", (state, glyph) => {
+    expect(row(live({ state, phrase: "p" })).status).toBe(glyph);
+    expect(row(live({ state, phrase: "p" })).phrase).toBe("p");
+  });
+  it("carries model, effort, context and subagents, and leaves out what is null or 0", () => {
+    const r = row(live({ model: "Opus", effort: "high", context_pct: 42, subagents: 2 }));
+    expect(r).toMatchObject({ model: "Opus", effort: "high", contextPct: 42, subagents: 2 });
+    const bare = row(live());
+    expect(Object.keys(bare)).not.toEqual(expect.arrayContaining(["model"]));
+    for (const k of ["model", "effort", "contextPct", "subagents", "recap"]) expect(Object.keys(bare)).not.toContain(k);
+  });
+  it("gives the recap its age and a done row its age", () => {
+    const r = row(live({ state: "done", since_ms: NOW - 3000, recap: { text: "Fixed it", at_ms: NOW - 7000 } }));
+    expect(r.recap).toEqual({ text: "Fixed it", ageMs: 7000 });
+    expect(r.ageMs).toBe(3000);
+    expect(r.waitingMs).toBeUndefined();
+  });
+  it("gives a needs-you row how long it has waited", () => {
+    expect(row(live({ state: "needs_permission", since_ms: NOW - 9000 })).waitingMs).toBe(9000);
+    expect(row(live({ state: "needs_question", since_ms: NOW - 2000 })).waitingMs).toBe(2000);
+  });
+  it("never reports a negative age when the clock is behind", () => {
+    expect(row(live({ state: "needs_permission", since_ms: NOW + 500 })).waitingMs).toBe(0);
+  });
+  it("falls back to output activity with a status-limited note on the tooltip", () => {
+    const w = row(null, { activity: "working" });
+    expect(w).toMatchObject({ status: "working", phrase: "Working", note: "Status limited" });
+    const i = row(null, { activity: "idle" });
+    expect(i).toMatchObject({ status: "idle", phrase: "Idle", note: "Status limited" });
+    expect(rowTitle(w)).toContain("Status limited");
+  });
+  it("says set up for a Claude row without hooks, and the core's note otherwise", () => {
+    const setup = toRow(claude(null, { status_note: "x" }), PROFILES, { claude: "none" }, NOW);
+    expect(setup).toMatchObject({ status: "limited", phrase: "Status limited · set up", setupLink: true });
+    const noted = row(null, { status_note: "Live status is off for Claude Code" });
+    expect(noted).toMatchObject({ status: "limited", phrase: "Live status is off for Claude Code" });
+    expect(noted.setupLink).toBeUndefined();
+    expect(row(null).phrase).toBe("Status arrives with hooks");
+  });
+  it("lets live status win over a missing setup", () => {
+    expect(toRow(claude(live({ state: "working", phrase: "Thinking" })), PROFILES, { claude: "none" }, NOW)).toMatchObject({ status: "working", phrase: "Thinking" });
+  });
+});
+
+describe("planRing", () => {
+  const withPct = (n: number, pct: number | null): SessionInfo =>
+    info({ tab_id: `t${n}`, live: { state: "idle", phrase: "", since_ms: 0, recap: null, model: null, effort: null, context_pct: null, five_hour_pct: pct, seven_day_pct: null, subagents: 0 } });
+  it("takes the highest five-hour use among the sessions that report one", () => {
+    expect(planRing([withPct(1, 20), withPct(2, 61), withPct(3, null), info()])).toEqual({ pct: 61 });
+  });
+  it("is undefined when none does", () => {
+    expect(planRing([withPct(1, null), info()])).toBeUndefined();
+    expect(planRing([])).toBeUndefined();
   });
 });
