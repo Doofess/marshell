@@ -55,7 +55,11 @@ pub async fn post(
         fold_live(&st, role, tab, &json, at_ms).await;
     }
     if role == HookRole::Permission {
-        return Ok(hold_permission(&st, tab, agent, json).await);
+        // Nobody to answer from Marshell: no tab, or a tab that is not open. The agent asks itself.
+        let Some(tab) = tab.filter(|t| st.registry().is_open(t)) else {
+            return Ok(StatusCode::NO_CONTENT.into_response());
+        };
+        return Ok(hold_permission(&st, Some(tab), agent, json).await);
     }
     Ok(StatusCode::NO_CONTENT.into_response())
 }

@@ -193,6 +193,10 @@ impl AppState {
     pub fn holds(&self) -> &crate::hooks::holds::Holds {
         &self.0.holds
     }
+    /// The cards of the held requests, oldest first. Each was built when its hold opened.
+    pub fn permission_views(&self) -> Vec<marshell_protocol::hook::PermissionView> {
+        self.0.holds.views()
+    }
     /// Replaces the PATH check for agent commands. Call it before the state is cloned.
     pub fn with_agent_check(mut self, check: fn(&str) -> bool) -> Self {
         Arc::get_mut(&mut self.0)
