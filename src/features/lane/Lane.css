@@ -146,6 +146,38 @@
   display: none;
 }
 
+/*
+ * Lane card enter (docs/PLAN.md, Motion): the lane grows to its new size and the card fades in with a 4 px rise, both over
+ * 180 ms, so the sessions below slide down instead of jumping. Reduced motion: the size snaps and the card fades over 80 ms.
+ */
+@keyframes lane-card-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+}
+@keyframes lane-card-fade {
+  from {
+    opacity: 0;
+  }
+}
+@media (prefers-reduced-motion: no-preference) {
+  :root:not([data-motion="reduce"]) .lane {
+    transition: block-size var(--dur-enter) var(--ease-out);
+  }
+  :root:not([data-motion="reduce"]) .lane .approve-card[data-phase="pending"] {
+    animation: lane-card-in var(--dur-enter) var(--ease-out);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .lane .approve-card[data-phase="pending"] {
+    animation: lane-card-fade 80ms linear;
+  }
+}
+:root[data-motion="reduce"] .lane .approve-card[data-phase="pending"] {
+  animation: lane-card-fade 80ms linear;
+}
+
 /* The live card wraps the approve card only to track focus; it adds no box. */
 .live-card {
   display: contents;
