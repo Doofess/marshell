@@ -72,6 +72,7 @@ describe("receipts", () => {
     const h = renderToStaticMarkup(<ApproveCard request={displayRequest(APPROVALS.safeBash, { phase: "pending", notice: "no rule to add" })} />);
     expect(h).toContain("no rule to add");
     expect(h).toContain('data-phase="pending"');
+    expect(h).toContain("<span>no rule to add</span>");
   });
 });
 

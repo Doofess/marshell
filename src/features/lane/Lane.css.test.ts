@@ -35,7 +35,11 @@ describe("Lane.css", () => {
   });
   it("bounds the targeted card to the 256 px the layout reserves, so its buttons can never be pushed out of the clipped lane", () => {
     expect(css).toMatch(/\.lane \.approve-card\s*\{[^}]*max-block-size:\s*256px/);
-    for (const part of ["question", "what", "risk", "cwd"]) expect(css, part).toMatch(new RegExp(`\\.lane \\.approve-card__${part}[^{]*\\{[^}]*line-clamp`));
+    for (const part of ["question", "what", "cwd"]) expect(css, part).toMatch(new RegExp(`\\.lane \\.approve-card__${part}[^{]*\\{[^}]*line-clamp`));
+    expect(css).toMatch(/\.lane \.approve-card__risk > span\s*\{[^}]*line-clamp/);
+  });
+  it("clamps the risk reason's text, not its line, so the caution glyph stays beside the reason (live check, 3d)", () => {
+    expect(css).not.toMatch(/\.lane \.approve-card__risk\s*[,{]/);
   });
   it("shows at most four answer options in the lane, the rest being in the full card", () => {
     expect(css).toMatch(/\.lane \.approve-card__actions--options > :nth-child\(n \+ 5\)\s*\{[^}]*display:\s*none/);

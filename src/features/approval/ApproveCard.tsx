@@ -192,7 +192,7 @@ export function ApproveCard({ request, expanded = false, armed = true, holdProgr
       )}
       {state.notice && (
         <p className="approve-card__risk" role="alert" dir="auto">
-          {state.notice}
+          <span>{state.notice}</span>
         </p>
       )}
       {risky && risk.reason && (

@@ -112,7 +112,7 @@
 }
 .lane .approve-card__question,
 .lane .approve-card__what,
-.lane .approve-card__risk,
+.lane .approve-card__risk > span,
 .lane .approve-card__cwd {
   display: -webkit-box;
   -webkit-box-orient: vertical;
@@ -126,7 +126,8 @@
   line-clamp: 2;
   -webkit-line-clamp: 2;
 }
-.lane .approve-card__risk {
+/* The span, not the line: the line is a flex row with the caution glyph. */
+.lane .approve-card__risk > span {
   line-clamp: 2;
   -webkit-line-clamp: 2;
 }
