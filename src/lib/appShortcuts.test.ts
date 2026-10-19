@@ -81,6 +81,14 @@ describe("the cheat sheet shortcut", () => {
   });
 });
 
+describe("the needs-you shortcut", () => {
+  it("Ctrl+Shift+N (Cmd+N) goes to the oldest waiting request", () => {
+    expect(sessionShortcut(ev("KeyN", cs), "windows")).toEqual({ kind: "nextWaiting" });
+    expect(sessionShortcut(ev("KeyN", { metaKey: true }), "mac")).toEqual({ kind: "nextWaiting" });
+    expect(commandShortcut("next-waiting")).toEqual({ kind: "nextWaiting" });
+  });
+});
+
 describe("commandShortcut", () => {
   it("maps the palette commands the live window runs, and nothing else", () => {
     expect(commandShortcut("close")).toEqual({ kind: "close" });

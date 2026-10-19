@@ -923,6 +923,15 @@ export function LiveApp() {
         case "nonePane":
           sendNav([{ type: "select-none" }]);
           return true;
+        // The lane's target card, or its oldest one-liner when every waiting session asks in its own terminal. Focus only: never an answer.
+        case "nextWaiting": {
+          const target =
+            document.querySelector<HTMLElement>('.lane .approve-card[data-phase="pending"]') ??
+            document.querySelector<HTMLElement>(".lane .lane-row");
+          if (target) target.focus();
+          else announce("Nothing needs you");
+          return true;
+        }
         default:
           return false;
       }
