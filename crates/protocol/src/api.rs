@@ -200,6 +200,9 @@ pub struct LiveStatus {
     pub effort: Option<String>,
     pub context_pct: Option<u8>,
     pub five_hour_pct: Option<u8>,
+    /// When the 5-hour window resets, in Unix seconds as Claude Code sends it.
+    #[ts(type = "number | null")]
+    pub five_hour_resets_at: Option<u64>,
     pub seven_day_pct: Option<u8>,
     pub subagents: u32,
 }

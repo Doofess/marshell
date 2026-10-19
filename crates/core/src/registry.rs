@@ -1247,6 +1247,7 @@ mod tests {
             effort: None,
             context_pct: None,
             five_hour_pct: None,
+            five_hour_resets_at: None,
             seven_day_pct: None,
             subagents: 0,
         }

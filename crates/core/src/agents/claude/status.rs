@@ -33,6 +33,7 @@ fn blank(now_ms: u64) -> LiveStatus {
         effort: None,
         context_pct: None,
         five_hour_pct: None,
+        five_hour_resets_at: None,
         seven_day_pct: None,
         subagents: 0,
     }
@@ -80,18 +81,49 @@ fn permission_phrase(body: &Value) -> String {
     }
 }
 
+/// A tool phrase turned into what a permission prompt asks, "Running `x`" into "Wants to run `x`".
+fn wants_phrase(phrase: &str) -> String {
+    const VERBS: [(&str, &str); 4] = [
+        ("Running ", "Wants to run "),
+        ("Editing ", "Wants to edit "),
+        ("Reading ", "Wants to read "),
+        ("Using ", "Wants to use "),
+    ];
+    if phrase.starts_with("Wants to") {
+        return phrase.to_string();
+    }
+    for (seen, wants) in VERBS {
+        if let Some(target) = phrase.strip_prefix(seen) {
+            return format!("{wants}{target}");
+        }
+    }
+    "Wants to use a tool".to_string()
+}
+
 /// The status after one hook event. None for an event that says nothing about status.
 pub fn fold_event(prev: Option<&LiveStatus>, body: &Value, now_ms: u64) -> Option<LiveStatus> {
     let mut next = prev.cloned().unwrap_or_else(|| blank(now_ms));
     let (state, phrase) = match body.get("hook_event_name").and_then(Value::as_str)? {
         "SessionStart" => (LiveState::Idle, String::new()),
         "UserPromptSubmit" => (LiveState::Working, "Thinking".to_string()),
+        "PreToolUse" if str_at(body, "/tool_name") == Some("AskUserQuestion") => {
+            (LiveState::NeedsQuestion, "Has a question".to_string())
+        }
         "PreToolUse" => (LiveState::Working, tool_phrase(body)),
-        "PostToolUse" | "PostToolBatch" => (LiveState::Working, next.phrase.clone()),
+        // A question or a permission ends with the tool's result: the question's phrase no longer holds.
+        "PostToolUse" | "PostToolBatch" => match next.state {
+            LiveState::NeedsPermission | LiveState::NeedsQuestion => (LiveState::Working, "Thinking".to_string()),
+            _ => (LiveState::Working, next.phrase.clone()),
+        },
         "PermissionRequest" => (LiveState::NeedsPermission, permission_phrase(body)),
         "Notification" => match body.get("notification_type").and_then(Value::as_str) {
-            Some("idle_prompt") => (LiveState::Idle, String::new()),
-            Some("permission_prompt") => (LiveState::NeedsPermission, next.phrase.clone()),
+            // Claude sends this a minute after every Stop, so a finished turn stays Done. A turn that
+            // is still marked busy was interrupted, and Claude sends no Stop for that.
+            Some("idle_prompt") => match next.state {
+                LiveState::Done | LiveState::Idle | LiveState::Ended => (next.state, next.phrase.clone()),
+                _ => (LiveState::Idle, String::new()),
+            },
+            Some("permission_prompt") => (LiveState::NeedsPermission, wants_phrase(&next.phrase)),
             _ => (next.state, next.phrase.clone()),
         },
         "Stop" => {
@@ -130,6 +162,7 @@ pub fn fold_statusline(prev: Option<&LiveStatus>, body: &Value, now_ms: u64) -> 
     next.effort = str_at(body, "/effort/level").map(str::to_string);
     next.context_pct = pct_at(body, "/context_window/used_percentage");
     next.five_hour_pct = pct_at(body, "/rate_limits/five_hour/used_percentage");
+    next.five_hour_resets_at = body.pointer("/rate_limits/five_hour/resets_at").and_then(Value::as_u64);
     next.seven_day_pct = pct_at(body, "/rate_limits/seven_day/used_percentage");
     next
 }
@@ -236,12 +269,89 @@ mod tests {
     }
 
     #[test]
-    fn a_permission_notification_needs_you_and_keeps_the_phrase() {
+    fn a_permission_notification_needs_you() {
         let pre = fold(None, &fixture!("PreToolUse"));
         let n = json!({"hook_event_name":"Notification","notification_type":"permission_prompt","message":"x"});
         let s = fold(Some(&pre), &n);
         assert_eq!(s.state, LiveState::NeedsPermission);
-        assert_eq!(s.phrase, pre.phrase);
+        assert_eq!(s.since_ms, 1_000);
+    }
+
+    #[test]
+    fn idle_prompt_keeps_done_and_its_time() {
+        let done = fold_event(None, &fixture!("Stop"), 1_000).unwrap();
+        let idle = json!({"hook_event_name":"Notification","notification_type":"idle_prompt"});
+        let s = fold_event(Some(&done), &idle, 61_000).unwrap();
+        assert_eq!(s.state, LiveState::Done);
+        assert_eq!(s.phrase, "Done");
+        assert_eq!(s.since_ms, 1_000);
+        assert_eq!(s, done);
+    }
+
+    #[test]
+    fn idle_prompt_ends_a_stuck_turn() {
+        let pre = fold(None, &fixture!("PreToolUse"));
+        let idle = json!({"hook_event_name":"Notification","notification_type":"idle_prompt"});
+        let s = fold(Some(&pre), &idle);
+        assert_eq!(s.state, LiveState::Idle);
+        assert_eq!(s.phrase, "");
+    }
+
+    #[test]
+    fn a_permission_prompt_says_what_it_wants_to_run() {
+        let pre = fold(None, &fixture!("PreToolUse"));
+        let bash = json!({"hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"npm test"}});
+        let pre = fold(Some(&pre), &bash);
+        let n = json!({"hook_event_name":"Notification","notification_type":"permission_prompt","message":"x"});
+        let s = fold(Some(&pre), &n);
+        assert_eq!(s.state, LiveState::NeedsPermission);
+        assert_eq!(s.phrase, "Wants to run `npm test`");
+    }
+
+    #[test]
+    fn a_permission_prompt_says_what_it_wants_to_edit_read_or_use() {
+        let n = json!({"hook_event_name":"Notification","notification_type":"permission_prompt"});
+        let asks = |tool: Value| fold(Some(&fold(None, &tool)), &n).phrase;
+        let edit = json!({"hook_event_name":"PreToolUse","tool_name":"Edit","tool_input":{"file_path":"src/auth.ts"}});
+        assert_eq!(asks(edit), "Wants to edit `src/auth.ts`");
+        let read = json!({"hook_event_name":"PreToolUse","tool_name":"Read","tool_input":{"file_path":"a.rs"}});
+        assert_eq!(asks(read), "Wants to read `a.rs`");
+        let other = json!({"hook_event_name":"PreToolUse","tool_name":"WebFetch","tool_input":{}});
+        assert_eq!(asks(other), "Wants to use `WebFetch`");
+        let prompt = json!({"hook_event_name":"UserPromptSubmit"});
+        assert_eq!(asks(prompt), "Wants to use a tool");
+        assert_eq!(fold(None, &n).phrase, "Wants to use a tool");
+    }
+
+    #[test]
+    fn a_permission_prompt_after_a_permission_request_keeps_its_phrase() {
+        let asked = fold(None, &fixture!("PermissionRequest"));
+        let n = json!({"hook_event_name":"Notification","notification_type":"permission_prompt"});
+        assert_eq!(fold(Some(&asked), &n).phrase, asked.phrase);
+    }
+
+    #[test]
+    fn the_tool_result_after_a_question_or_a_permission_is_working_again() {
+        let q = json!({"hook_event_name":"PreToolUse","tool_name":"AskUserQuestion","tool_input":{"questions":[]}});
+        let post = json!({"hook_event_name":"PostToolUse","tool_name":"AskUserQuestion"});
+        let s = fold(Some(&fold(None, &q)), &post);
+        assert_eq!((s.state, s.phrase.as_str()), (LiveState::Working, "Thinking"));
+        let bash = json!({"hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"npm test"}});
+        let n = json!({"hook_event_name":"Notification","notification_type":"permission_prompt"});
+        let asked = fold(Some(&fold(None, &bash)), &n);
+        let s = fold(
+            Some(&asked),
+            &json!({"hook_event_name":"PostToolUse","tool_name":"Bash"}),
+        );
+        assert_eq!((s.state, s.phrase.as_str()), (LiveState::Working, "Thinking"));
+    }
+
+    #[test]
+    fn ask_user_question_needs_you() {
+        let q = json!({"hook_event_name":"PreToolUse","tool_name":"AskUserQuestion","tool_input":{"questions":[]}});
+        let s = fold(None, &q);
+        assert_eq!(s.state, LiveState::NeedsQuestion);
+        assert_eq!(s.phrase, "Has a question");
     }
 
     #[test]
@@ -312,6 +422,22 @@ mod tests {
         assert_eq!(s.context_pct, Some(6));
         assert_eq!(s.five_hour_pct, Some(7));
         assert_eq!(s.seven_day_pct, Some(32));
+    }
+
+    #[test]
+    fn the_status_line_gives_when_the_five_hour_window_resets() {
+        let s = fold_statusline(None, &fixture!("statusline"), 1);
+        assert_eq!(s.five_hour_resets_at, Some(1792357200));
+    }
+
+    #[test]
+    fn a_missing_or_odd_reset_time_is_unknown() {
+        let s = fold_statusline(None, &json!({"rate_limits":{"five_hour":{"used_percentage":7}}}), 1);
+        assert_eq!(s.five_hour_resets_at, None);
+        let s = fold_statusline(None, &json!({"rate_limits":{"five_hour":{"resets_at":"soon"}}}), 1);
+        assert_eq!(s.five_hour_resets_at, None);
+        let full = fold_statusline(None, &fixture!("statusline"), 1);
+        assert_eq!(fold_statusline(Some(&full), &json!({}), 2).five_hour_resets_at, None);
     }
 
     #[test]

@@ -13,4 +13,8 @@ phrase: string,
 /**
  * When `state` last changed.
  */
-since_ms: number, recap: Recap | null, model: string | null, effort: string | null, context_pct: number | null, five_hour_pct: number | null, seven_day_pct: number | null, subagents: number, };
+since_ms: number, recap: Recap | null, model: string | null, effort: string | null, context_pct: number | null, five_hour_pct: number | null, 
+/**
+ * When the 5-hour window resets, in Unix seconds as Claude Code sends it.
+ */
+five_hour_resets_at: number | null, seven_day_pct: number | null, subagents: number, };
