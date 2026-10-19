@@ -21,7 +21,7 @@
 | `bin\marshell.exe uninstall`, answered `n` | Pass: exit 1, "Nothing changed.", hash unchanged, `bin` kept. The diff is headed `--- a/<path>` and `+++ b/<path>` |
 | `bin\marshell.exe uninstall --yes` | Pass: exit 0, snapshot named, the settings hash back to the pre-install one, and the rest of the home kept. The running `marshell.exe` couldn't delete itself and said "delete it once this window is closed"; the bridge was removed |
 | Install, delete `<home>\bin` with the app running, open the Agents dialog | Pass: the orphaned warning names the settings file and the missing bridge, with Set up again and Hooks off |
-| Set up again on that orphaned setup | **Fail**, see finding 1 |
+| Set up again on that orphaned setup | **Fail**, see finding 1. Re-check after the fix: Pass |
 | Forced colours (emulated), Agents dialog | Pass: dialog border, bordered buttons, focus ring |
 | Forced colours (emulated), the row's "set up" button | Pass: bordered and readable on the selected row. Like Review changes, it shows on hover, focus or selection only |
 
@@ -40,6 +40,7 @@ The latest status line has no HTTP route in 3c1 (3c2 reads it), so "the latest s
    - `exe_path` keeps the PATH lookup's casing (`claude.EXE`).
    - The consent diff's label names one path.
    - A closed "Start a session" dialog stays in the DOM.
+   - The same home spelled two ways (`C:\Users\Home Office\…` and its 8.3 form `C:\Users\HOMEOF~1\…`, which `%TEMP%` gives) reads as another home, so a setup made under one spelling shows "Some hooks are missing" under the other. Only a hand-set `MARSHELL_HOME` can do this.
 5. **By design:**
    - The removal diff never includes the chain file, because removal reads the chain and never changes it.
    - The reinstall diff leaves the chain file out when it already holds the same command.
@@ -49,4 +50,5 @@ The latest status line has no HTTP route in 3c1 (3c2 reads it), so "the latest s
 - **Folder trust:** the first Claude session stopped at Claude Code's folder trust prompt for the scratch project. Down went in through the input API and Enter as a trusted key to that tab only; Claude Code recorded the trust in its own state.
 - **Slow first page:** the webview's first load showed an empty page for about 20 seconds while Vite served the app cold. Waiting, or one reload, showed it.
 - **Step 7 order changed:** each launch copies the programs into `bin` again, so restarting the app as the plan wrote would have hidden the orphaned state. The check deleted `bin` while the app ran instead.
-- **Cleanup:** the sessions were started for this check, and Enter was sent only into them. The app was stopped through the task that started it, and the scratch folders are removed after finding 1's fix is checked.
+- **Re-check of finding 1** (after 37db6b7, 275c523 and 7ca4a2b): with the hooks installed, `bin` was deleted while the app ran and the dialog showed the orphaned warning. Set up again copied `marshell-hook.exe` and `marshell.exe` back into `bin`, and the card read "Already set up. Nothing in …settings.local.json changes." with no Allow and a Done button. Done went back to "Hooks on", and the settings hash stayed `aedaee02`. Hooks off now shows the core's sentence, "Removes the 8 hook entries Marshell added and puts your status line back."
+- **Cleanup:** the sessions were started for this check, and Enter was sent only into them. The app was stopped through the task that started it, and both scratch folders were removed after the re-check.
