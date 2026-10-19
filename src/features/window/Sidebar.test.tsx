@@ -217,6 +217,12 @@ describe("Sidebar: the plan ring from live status", () => {
     expect(h).toContain("5h 72%");
     expect(h).toContain('data-tone="caution"');
   });
+  it("announces the footer ring as the 5-hour plan, once, and not as context", () => {
+    const foot = html({ footer: { planPct: 72, fiveHourPct: 72 } }).split("sidebar__footer")[1];
+    expect(foot).toContain('aria-label="5-hour plan 72% used"');
+    expect(foot).not.toContain("Context");
+    expect(foot).toMatch(/<span class="sidebar__plan" aria-hidden="true">5h 72%<\/span>/);
+  });
   it("shows nothing of the plan when it is unknown", () => {
     const h = html({ footer: {} });
     expect(h.slice(h.indexOf("sidebar__footer"))).not.toContain("context-ring");

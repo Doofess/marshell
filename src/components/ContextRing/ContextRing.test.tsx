@@ -10,6 +10,9 @@ describe("ContextRing", () => {
   it("labels the percentage for screen readers", () => {
     expect(renderToStaticMarkup(<ContextRing pct={42} />)).toContain('aria-label="Context 42% used"');
   });
+  it("names what it measures when told", () => {
+    expect(renderToStaticMarkup(<ContextRing pct={42} label="5-hour plan" />)).toContain('aria-label="5-hour plan 42% used"');
+  });
   it("clamps out-of-range values", () => {
     expect(renderToStaticMarkup(<ContextRing pct={140} />)).toContain('aria-label="Context 100% used"');
     expect(renderToStaticMarkup(<ContextRing pct={-5} />)).toContain('aria-label="Context 0% used"');

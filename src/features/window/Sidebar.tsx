@@ -263,8 +263,13 @@ export function Sidebar({
       )}
       {footer && (
         <footer className="sidebar__footer">
-          <ContextRing pct={footer.planPct} />
-          {footer.fiveHourPct !== undefined && <span className="sidebar__plan">5h {Math.round(footer.fiveHourPct)}%</span>}
+          <ContextRing pct={footer.planPct} label="5-hour plan" />
+          {/* The ring says the same to a screen reader, when it shows. */}
+          {footer.fiveHourPct !== undefined && (
+            <span className="sidebar__plan" aria-hidden={footer.planPct !== undefined ? "true" : undefined}>
+              5h {Math.round(footer.fiveHourPct)}%
+            </span>
+          )}
           <span className="sidebar__spacer" />
           {footer.doctorIssues !== undefined && (
             <span className="sidebar__doctor" role="img" aria-label={issues > 0 ? `Doctor: ${issues} issues` : "Doctor: no issues"}>
