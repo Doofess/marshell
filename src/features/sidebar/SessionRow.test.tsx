@@ -90,6 +90,12 @@ describe("SessionRow (agent mark and model)", () => {
     expect(cluster.indexOf("status-glyph")).toBeLessThan(cluster.indexOf("session-row__time"));
     expect(html.slice(0, html.indexOf("session-row__cluster"))).not.toContain("status-glyph");
   });
+  it("draws no separator after the model when the phrase is empty", () => {
+    const html = renderToStaticMarkup(<SessionRow row={{ ...working, status: "idle", phrase: "", model: "Opus 5.5" }} density="comfortable" />);
+    const line2 = html.slice(html.indexOf("session-row__phrase"));
+    expect(line2).toContain("Opus 5.5");
+    expect(line2).not.toContain("session-row__sep");
+  });
   it("shows the model first on line 2", () => {
     const html = renderToStaticMarkup(<SessionRow row={working} density="comfortable" />);
     const line2 = html.slice(html.indexOf("session-row__phrase"));

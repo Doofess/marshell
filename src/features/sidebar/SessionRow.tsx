@@ -185,7 +185,7 @@ export function SessionRow({
         {row.model && (
           <>
             <span className="session-row__model">{row.model}</span>{" "}
-            <span className="session-row__sep">·</span>{" "}
+            {(row.phrase || row.muted) && <><span className="session-row__sep">·</span>{" "}</>}
           </>
         )}
         <span className="session-row__status-text">

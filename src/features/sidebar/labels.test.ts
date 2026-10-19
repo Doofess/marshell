@@ -22,6 +22,11 @@ describe("rowLabel", () => {
   it("puts the model and its separator where they are drawn, before the phrase", () => {
     expect(rowLabel({ ...base, model: "Opus 5.5" })).toContain("1m Opus 5.5 · Wants to run npm test.");
   });
+  it("leaves the separator out when there is no phrase after the model", () => {
+    const l = rowLabel({ ...base, status: "idle", phrase: "", waitingMs: undefined, model: "Opus 5.5" });
+    expect(l).toContain("feat/auth-flow Opus 5.5. Claude Opus 5.5, Idle.");
+    expect(l).not.toContain("·.");
+  });
   it("adds what only the glyphs say (agent, state, elevated, mode, muted, context) after the visible text", () => {
     const l = rowLabel({ ...base, muted: true, elevated: true, mode: "full-auto" });
     expect(l).toContain("Administrator. Full auto. Muted.");

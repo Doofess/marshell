@@ -29,7 +29,7 @@ export function rowLabel(r: RowModel, density: Density = "comfortable"): string 
     r.name,
     projectAndBranch(r),
     time !== undefined ? formatDuration(time) : null,
-    r.model ? `${r.model} \u00b7 ${phrase}` : phrase,
+    r.model && phrase ? `${r.model} \u00b7 ${phrase}` : r.model || phrase,
   ];
   const caution = modeCaution(r.mode);
   if (density === "expanded") {
