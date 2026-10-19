@@ -231,6 +231,7 @@ mod tests {
         let want = HookPlanRequest {
             status: true,
             statusline: true,
+            approve: false,
         };
         let changes = install_plan(&settings, &user_home, Some(original), None, &home, &want).unwrap();
         let service = ConfigService::new(home.clone());

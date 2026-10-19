@@ -72,6 +72,9 @@ pub struct HookPlanRequest {
     pub status: bool,
     /// Keep the user's own status line working through the chain.
     pub statusline: bool,
+    /// Add the PermissionRequest hook so requests can be answered from Marshell.
+    #[serde(default)]
+    pub approve: bool,
 }
 
 /// What removing an agent's hooks would do: the preview, and whether the user's changed status
