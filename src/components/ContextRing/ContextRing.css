@@ -5,17 +5,25 @@
 .context-ring__track {
   stroke: var(--hairline);
 }
-/* The ring is the vendor's colour at every level; the level shows in its shape (ContextRing.tsx): thicker from 70%, a centre dot from 90%. */
-.context-ring__value,
-.context-ring__dot {
-  stroke: var(--agent-signal, var(--text-2));
+/* Green below 70%, yellow from 70%, red from 90%; the shape says the same (ContextRing.tsx): thicker from 70%, a centre dot from 90%. */
+.context-ring[data-tone="neutral"] .context-ring__value {
+  stroke: var(--ok);
+}
+.context-ring[data-tone="caution"] .context-ring__value {
+  stroke: var(--caution);
+}
+.context-ring[data-tone="error"] .context-ring__value {
+  stroke: var(--error);
 }
 .context-ring__dot {
-  fill: var(--agent-signal, var(--text-2));
+  fill: var(--error);
   stroke: none;
 }
 @media (forced-colors: active) {
-  .context-ring__value {
+  .context-ring[data-tone] .context-ring__value {
     stroke: CanvasText;
+  }
+  .context-ring__dot {
+    fill: CanvasText;
   }
 }

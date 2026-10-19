@@ -12,8 +12,8 @@ const R = 6;
 const C = 2 * Math.PI * R;
 
 /**
- * Context-window use as a 16 px ring, in the vendor's colour. The level shows in the shape: the ring thickens from 70%
- * and gets a centre dot from 90%, so it reads without colour.
+ * Context-window use as a 16 px ring. Green below 70%, yellow from 70%, red from 90%; the shape says the same, so it reads
+ * without colour: the ring thickens from 70% and gets a centre dot from 90%.
  *
  * Unknown hides it (docs/PLAN.md: unknown values are never guessed). `label` names what it measures for screen readers;
  * the sidebar footer's plan ring passes "5-hour plan".
