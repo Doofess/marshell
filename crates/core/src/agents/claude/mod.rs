@@ -1,6 +1,7 @@
 //! Claude Code's side of a permission request: the JSON a `PermissionRequest` hook answers with.
 
 pub mod hooks;
+pub mod request;
 pub mod status;
 
 use std::path::Path;
@@ -115,12 +116,7 @@ pub fn permission_output(decision: &PermissionDecision, request: &Value) -> Resu
             };
             let mut allow = json!({ "behavior": "allow" });
             if let Some(destination) = destination {
-                let rules: Vec<Value> = request
-                    .get("permission_suggestions")
-                    .and_then(Value::as_array)
-                    .into_iter()
-                    .flatten()
-                    .filter(|s| s["type"] == "addRules" && s["behavior"] == "allow")
+                let rules: Vec<Value> = request::allow_rule_suggestions(request)
                     .map(|s| {
                         let mut s = s.clone();
                         s["destination"] = json!(destination);
