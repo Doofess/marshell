@@ -5,6 +5,7 @@ pub mod args;
 pub mod endpoint;
 mod job;
 pub mod log;
+mod permission;
 pub mod post;
 pub mod record;
 pub mod shell;
@@ -71,13 +72,24 @@ fn call(args: &Args, stdin: &mut dyn Read, env: Env, home: Option<&Path>) -> Vec
             fail(&format!("cannot save the recording: {e}"));
         }
     }
+    let tab = env(&brand::env_var("TAB_ID")).filter(|t| !t.is_empty());
+    if role == HookRole::Permission && tab.is_none() {
+        // The core answers a request from outside Marshell with 204, so there is nothing to ask.
+        return Vec::new();
+    }
     let Some((_, port, token)) = endpoint::discover(env) else {
         return Vec::new();
     };
-    let tab = env(&brand::env_var("TAB_ID")).filter(|t| !t.is_empty());
     let budget = post::budget(role);
     match post::post(port, &token, args, tab.as_deref(), &body, budget) {
-        Ok((200, bytes)) if matches!(role, HookRole::Context | HookRole::Permission) => bytes,
+        Ok((200, bytes)) if role == HookRole::Permission => {
+            if permission::accepted(&bytes, &body) {
+                bytes
+            } else {
+                fail("the answer is not one Marshell gives, nothing printed")
+            }
+        }
+        Ok((200, bytes)) if role == HookRole::Context => bytes,
         Ok((status, _)) if (200..300).contains(&status) => Vec::new(),
         Ok((status, _)) => fail(&format!("the core answered {status}")),
         Err(PostError::Closed) => Vec::new(),
