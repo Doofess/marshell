@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import type { AgentSetup } from "../../generated/AgentSetup";
 import { actions, consentProps, DEFAULT_WANT, hooksOffNotice, installRequest, setupLine } from "./agentsState";
+import type { ConfigPreview } from "../../generated/ConfigPreview";
+import type { FilePreview } from "../../generated/FilePreview";
 import { PREVIEW, SETUP } from "./fixtures";
 
 const s = (patch: Partial<AgentSetup>): AgentSetup => ({ ...SETUP, ...patch });
@@ -39,6 +41,37 @@ describe("hooksOffNotice", () => {
   it("adds the status line sentence only when it was left", () => {
     expect(hooksOffNotice(false)).toBe("Hooks off. Sessions started from now show limited status.");
     expect(hooksOffNotice(true)).toBe("Hooks off. Sessions started from now show limited status. Your status line was changed since setup, so it was left as it is.");
+  });
+});
+
+describe("consentProps for a preview that cannot be applied", () => {
+  const withFiles = (files: Array<{ path: string; status: FilePreview["status"] }>, can_apply: boolean): ConfigPreview => ({
+    ...PREVIEW,
+    can_apply,
+    files: files.map((f) => ({ ...PREVIEW.files[0]!, diff: "", ...f })),
+  });
+  const flow = (preview: ConfigPreview) => ({ preview, open: false, busy: false });
+  it("names the first refused file and offers no Allow", () => {
+    const p = consentProps(SETUP, flow(withFiles([{ path: "C:/x/a.json", status: { kind: "refused", reason: "tooLarge", detail: "it is over 1 MB" } }, { path: "C:/h/.claude/settings.json", status: { kind: "changes" } }], false)));
+    expect(p.scenario.plan.headline).toBe("Marshell will not edit C:/x/a.json: it is over 1 MB");
+    expect(p.allow).toBe(false);
+    expect(p.done).toBe(false);
+  });
+  it("says it is already set up when nothing changes, and turns Skip into Done", () => {
+    const p = consentProps(SETUP, flow(withFiles([{ path: "C:/h/.claude/settings.json", status: { kind: "noChange" } }], false)));
+    expect(p.scenario.plan.headline).toBe("Already set up. Nothing in C:/h/.claude/settings.json changes.");
+    expect(p.allow).toBe(false);
+    expect(p.done).toBe(true);
+    expect(consentProps(SETUP, flow(withFiles([], false))).done).toBe(true);
+  });
+  it("offers Allow for a preview that can apply", () => {
+    const p = consentProps(SETUP, flow(PREVIEW));
+    expect(p.allow).toBe(true);
+    expect(p.done).toBe(false);
+    expect(p.scenario.plan.headline).toBeUndefined();
+  });
+  it("offers no Allow without a preview", () => {
+    expect(consentProps(SETUP, { preview: null, open: false, busy: false }).allow).toBe(false);
   });
 });
 

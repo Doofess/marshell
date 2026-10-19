@@ -18,6 +18,7 @@ export function ConsentCard({
   busy = false,
   onApply,
   onSkip,
+  skipLabel = "Skip: use limited status",
   error,
   conflict,
   onToggleDiff,
@@ -31,6 +32,8 @@ export function ConsentCard({
   busy?: boolean;
   onApply?: () => void;
   onSkip?: () => void;
+  /** The Skip button's words; "Done" when there is nothing left to change. */
+  skipLabel?: string;
   error?: string;
   /** The file changed since the preview: the card offers a reload, never an overwrite. */
   conflict?: { onReload: () => void };
@@ -144,7 +147,7 @@ export function ConsentCard({
           )
         )}
         <button type="button" className="consent__skip" onClick={onSkip}>
-          Skip: use limited status
+          {skipLabel}
         </button>
       </footer>
     </article>

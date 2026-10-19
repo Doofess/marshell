@@ -48,6 +48,13 @@ describe("OnboardingView", () => {
     expect(h).toMatch(/role="alert"[^>]*>hooks is not an object</);
     expect(h).toMatch(/class="onboarding__primary"[^>]*disabled/);
   });
+  it("disables the frame's Allow for a preview that cannot apply", () => {
+    const noChange = { ...PREVIEW, can_apply: false, files: PREVIEW.files.map((f) => ({ ...f, diff: "", status: { kind: "noChange" as const } })) };
+    const h = view({ kind: "consent", setup: SETUP, flow: { preview: noChange, open: false, busy: false } });
+    expect(h).toMatch(/class="onboarding__primary"[^>]*disabled/);
+    expect(h).toContain("Already set up.");
+    expect(h).not.toContain("consent__apply");
+  });
   it("says when the setup could not be read, and lets the person go on", () => {
     const h = view({ kind: "failed" });
     expect(h).toContain("Couldn&#x27;t read the setup");

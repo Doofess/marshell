@@ -50,10 +50,11 @@ export function OnboardingView({ state, ...on }: { state: OnboardingState } & On
     );
   const { flow, setup } = state;
   // The frame's button is the Allow; the card keeps its Skip, its diff toggle and, after a conflict, its Reload.
-  const ready = Boolean(flow.preview) && !flow.conflict && !flow.busy;
+  const { allow, done, ...card } = consentProps(setup, flow);
+  const ready = allow && !flow.busy;
   return (
     <OnboardingFrame step="consent" title="What Marshell may change" primary="Allow these changes" primaryDisabled={!ready} onPrimary={on.onAllow} onBack={on.onBack}>
-      <ConsentCard {...consentProps(setup, flow)} onSkip={on.onSkip} onToggleDiff={on.onToggleDiff} onSwitch={on.onSwitch} conflict={flow.conflict ? { onReload: on.onReload } : undefined} />
+      <ConsentCard {...card} onSkip={on.onSkip} skipLabel={done ? "Done" : undefined} onToggleDiff={on.onToggleDiff} onSwitch={on.onSwitch} conflict={flow.conflict ? { onReload: on.onReload } : undefined} />
     </OnboardingFrame>
   );
 }

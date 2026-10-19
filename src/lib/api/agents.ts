@@ -18,9 +18,22 @@ export const planInstall = (ep: Endpoint, agent: "claude", want: { status: boole
 
 export const planRemove = (ep: Endpoint, agent: "claude") => api<RemovePreview>(ep, "POST", `${base(agent)}/hooks/remove-plan`);
 
+/** The 409 body's reason and the files it is about. A body that is not that JSON is read as a plain conflict. */
+function conflictBody(text: string): { reason?: string; paths: string[] } {
+  try {
+    const b = JSON.parse(text) as { reason?: unknown; paths?: unknown };
+    return { reason: typeof b.reason === "string" ? b.reason : undefined, paths: Array.isArray(b.paths) ? b.paths.filter((p): p is string => typeof p === "string") : [] };
+  } catch {
+    return { paths: [] };
+  }
+}
+
 export type ApplyOutcome = { ok: true; result: ApplyResult } | { ok: false; conflict: true } | { ok: false; conflict: false; message: string };
 
-/** Applies a preview, guarded by the hash each file had when the preview was made. A 409 means a file changed since: nothing was written. */
+/**
+ * Applies a preview, guarded by the hash each file had when the preview was made. A 409 means nothing was written: a file changed since
+ * (a conflict), or the core refuses a file (not a conflict, Reload cannot help). A 404 is a preview that expired, which Reload re-plans.
+ */
 export async function applyPreview(ep: Endpoint, preview: ConfigPreview): Promise<ApplyOutcome> {
   const body: ApplyRequest = {
     changeset_id: preview.changeset_id,
@@ -29,7 +42,13 @@ export async function applyPreview(ep: Endpoint, preview: ConfigPreview): Promis
   try {
     return { ok: true, result: await api<ApplyResult>(ep, "POST", "/v1/config/apply", body) };
   } catch (e) {
-    if (e instanceof ApiError) return e.status === 409 ? { ok: false, conflict: true } : { ok: false, conflict: false, message: e.message };
+    if (e instanceof ApiError) {
+      if (e.status === 404) return { ok: false, conflict: true };
+      if (e.status !== 409) return { ok: false, conflict: false, message: e.message };
+      const { reason, paths } = conflictBody(e.message);
+      if (reason !== "refused") return { ok: false, conflict: true };
+      return { ok: false, conflict: false, message: paths.length > 0 ? `Marshell can't change ${paths.join(", ")}, so nothing was written.` : "Nothing was written: there is nothing Marshell can change here." };
+    }
     throw e;
   }
 }

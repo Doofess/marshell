@@ -61,6 +61,24 @@ describe("agents api", () => {
     await expect(applyPreview(endpoint, preview([file("a.json", "d", "h1")]))).resolves.toEqual({ ok: false, conflict: true });
   });
 
+  it("applyPreview says a refused file was not written, and is no conflict", async () => {
+    vi.stubGlobal("fetch", reply({ reason: "refused", paths: ["a.json", "b.json"] }, 409));
+    await expect(applyPreview(endpoint, preview([file("a.json", "d", "h1")]))).resolves.toEqual({ ok: false, conflict: false, message: "Marshell can't change a.json, b.json, so nothing was written." });
+    vi.stubGlobal("fetch", reply({ reason: "refused", paths: [] }, 409));
+    await expect(applyPreview(endpoint, preview([]))).resolves.toEqual({ ok: false, conflict: false, message: "Nothing was written: there is nothing Marshell can change here." });
+  });
+
+  it("applyPreview treats each change reason, an unparsable 409 and an expired preview as a conflict", async () => {
+    for (const reason of ["changed", "changed outside Marshell", "not what was shown"]) {
+      vi.stubGlobal("fetch", reply({ reason, paths: ["a.json"] }, 409));
+      await expect(applyPreview(endpoint, preview([]))).resolves.toEqual({ ok: false, conflict: true });
+    }
+    vi.stubGlobal("fetch", reply("conflict", 409));
+    await expect(applyPreview(endpoint, preview([]))).resolves.toEqual({ ok: false, conflict: true });
+    vi.stubGlobal("fetch", reply("no such preview", 404));
+    await expect(applyPreview(endpoint, preview([]))).resolves.toEqual({ ok: false, conflict: true });
+  });
+
   it("applyPreview passes any other error's message on", async () => {
     vi.stubGlobal("fetch", reply("boom", 500));
     await expect(applyPreview(endpoint, preview([]))).resolves.toEqual({ ok: false, conflict: false, message: "boom" });

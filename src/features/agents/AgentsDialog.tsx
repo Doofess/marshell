@@ -7,8 +7,8 @@ import type { RemovePreview } from "../../generated/RemovePreview";
 import { applyPreview, getSetup, planRemove, previewDiff } from "../../lib/api/agents";
 import { useDialogFocus } from "../../lib/useDialogFocus";
 import { ConsentCard } from "../onboarding/ConsentCard";
-import { removalCopy, type Capability } from "../onboarding/consent";
-import { actions, consentProps, hooksOffNotice, setupLine, type InstallFlow } from "./agentsState";
+import { type Capability } from "../onboarding/consent";
+import { actions, consentProps, hooksOffNotice, removalBlock, setupLine, type InstallFlow } from "./agentsState";
 import { failureText, useInstallFlow } from "./useInstallFlow";
 import "./AgentsDialog.css";
 
@@ -25,6 +25,8 @@ export type AgentsDialogHandlers = {
   onSetup: () => void;
   onHooksOff: () => void;
   onBack: () => void;
+  /** Nothing was left to change: back to the list, with the state read again as after an apply. */
+  onDone: () => void;
   onAllow: () => void;
   onToggleDiff: () => void;
   onReload: () => void;
@@ -100,11 +102,13 @@ function AgentList({ setup, on }: { setup: AgentSetup; on: AgentsDialogHandlers 
 }
 
 function SetupPanel({ setup, flow, on }: { setup: AgentSetup; flow: InstallFlow; on: AgentsDialogHandlers }) {
+  const { allow, done, ...card } = consentProps(setup, flow);
   return (
     <ConsentCard
-      {...consentProps(setup, flow)}
-      onApply={flow.preview && !flow.conflict ? on.onAllow : undefined}
-      onSkip={on.onBack}
+      {...card}
+      onApply={allow ? on.onAllow : undefined}
+      onSkip={done ? on.onDone : on.onBack}
+      skipLabel={done ? "Done" : undefined}
       onToggleDiff={on.onToggleDiff}
       onSwitch={on.onSwitch}
       conflict={flow.conflict ? { onReload: on.onReload } : undefined}
@@ -114,17 +118,16 @@ function SetupPanel({ setup, flow, on }: { setup: AgentSetup; flow: InstallFlow;
 
 function OffPanel({ panel, on }: { panel: Extract<Panel, { kind: "off" }>; on: AgentsDialogHandlers }) {
   const { removal } = panel;
-  const copy = removalCopy("claude", { status: true, approve: false, statusline: !removal?.statusline_left });
+  const block = removal ? removalBlock(removal.preview) : undefined;
   return (
     <section className="agents-dialog__off" aria-label="Turn Claude Code hooks off">
       <h3 className="agents-dialog__name">Turn Claude Code hooks off</h3>
       {removal ? (
         <>
-          <p className="agents-dialog__line">
-            {copy}
-            {removal.statusline_left ? " Your status line was changed since setup, so it is left as it is." : ""}
+          <p className="agents-dialog__line" dir="auto">
+            {block ?? removal.preview.reason}
           </p>
-          <DiffView diff={previewDiff(removal.preview)} label="Exact changes to turn the hooks off" />
+          {!block && <DiffView diff={previewDiff(removal.preview)} label="Exact changes to turn the hooks off" />}
         </>
       ) : (
         !panel.error && <p className="agents-dialog__line">Checking what would change…</p>
@@ -241,6 +244,10 @@ export function AgentsDialog({
     install.reset();
     setMode("list");
   };
+  const done = () => {
+    install.reset();
+    installed();
+  };
   const panel: Panel =
     mode === "setup" ? { kind: "setup", flow: install.flow ?? { preview: null, open: false, busy: true, want: install.want } } : mode === "off" ? off : { kind: "list" };
   return (
@@ -251,6 +258,7 @@ export function AgentsDialog({
       onSetup={startSetup}
       onHooksOff={() => void startOff()}
       onBack={back}
+      onDone={done}
       onAllow={() => void install.apply()}
       onToggleDiff={install.toggleDiff}
       onSwitch={install.choose}

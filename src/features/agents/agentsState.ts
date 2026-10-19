@@ -53,6 +53,20 @@ export const hooksOffNotice = (statuslineLeft: boolean): string =>
 /** Where a Set up is: the preview the core made (none when the file is refused), and what the card says about it. */
 export type InstallFlow = { preview: ConfigPreview | null; open: boolean; busy: boolean; error?: string; conflict?: boolean; want?: Want };
 
+/** The first file the core refuses, as the sentence that says so. */
+function refusal(p: ConfigPreview): string | undefined {
+  for (const f of p.files) if (f.status.kind === "refused") return `Marshell will not edit ${f.path}: ${f.status.detail}`;
+  return undefined;
+}
+
+/** A preview that cannot be applied and has nothing to change: the hooks are already as asked. */
+const alreadyDone = (p: ConfigPreview) => !p.can_apply && p.files.every((f) => f.status.kind === "noChange");
+
+/** Why a removal preview cannot be applied, in the core's words (a refused file named first); nothing when it can be. */
+export function removalBlock(p: ConfigPreview): string | undefined {
+  return p.can_apply ? undefined : (refusal(p) ?? p.reason);
+}
+
 /** The consent card's input for the core's setup and preview. A refused file gets a headline that says nothing will change. */
 export function consentProps(s: AgentSetup, flow: InstallFlow) {
   const want = flow.want ?? DEFAULT_WANT;
@@ -69,7 +83,10 @@ export function consentProps(s: AgentSetup, flow: InstallFlow) {
     diff: flow.preview ? previewDiff(flow.preview) : "",
     needsTrust: false,
     chainPath: chain?.path,
-    headline: flow.preview ? undefined : !want.status ? "Nothing will change: status is off." : flow.error ? `Marshell will not edit ${s.settings_path}, so nothing will change.` : `Checking ${s.settings_path}…`,
+    headline: flow.preview ? (refusal(flow.preview) ?? (alreadyDone(flow.preview) ? `Already set up. Nothing in ${s.settings_path} changes.` : undefined)) : !want.status ? "Nothing will change: status is off." : flow.error ? `Marshell will not edit ${s.settings_path}, so nothing will change.` : `Checking ${s.settings_path}…`,
   };
-  return { scenario: { detection, plan }, on, offer: OFFER, open: flow.open, busy: flow.busy, error: flow.error };
+  // Allow is for a preview the core can apply; `done` is the one that has nothing left to change, whose Skip becomes Done.
+  const allow = Boolean(flow.preview?.can_apply) && !flow.conflict;
+  const done = Boolean(flow.preview) && !refusal(flow.preview!) && alreadyDone(flow.preview!);
+  return { scenario: { detection, plan }, on, offer: OFFER, open: flow.open, busy: flow.busy, error: flow.error, allow, done };
 }
