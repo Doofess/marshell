@@ -20,7 +20,7 @@
 | The core's record after Stop | Pass: `{state: done, phrase: "Done", recap: {text: "ok"}, model: "Opus 5.5", effort: "high", context_pct: 5, five_hour_pct: 5, seven_day_pct: 46, subagents: 0}` |
 | Context ring | Pass: the row's label ends "Context 5% used" |
 | Footer plan ring | Pass: this account sends rate limits, so the footer shows the ring and "5h 5%". It was announced as context, see finding 2 |
-| The recap with its age | Not visible in the live app, see finding 4. The core holds it, and the expanded row draws it (`SessionRow` and `labels` tests) |
+| The recap with its age | Not visible in the live app at the time of the check, see finding 4. The core holds it, and the expanded row draws it (`SessionRow` and `labels` tests) |
 | Hook log | Pass: SessionStart, UserPromptSubmit and Stop |
 | Agents dialog → Live status Off | Pass: the switch read Off, with "Rows use output activity only: Working or Idle.", and `settings.json` held `"status_off": ["claude"]` |
 | Row with live status off | Pass: the core dropped `live` and set `status_note` to "Live status is off for Claude Code". The row read Idle with no model or ring, and its tooltip ended "Status limited · Live status is off for Claude Code" |
@@ -31,7 +31,7 @@
 1. **No status line reached the core when the person has none of their own.** The bridge's status line role returned before forwarding when the chain file held `statusLine: null`, the common case, so the model and the rings never arrived. Fixed in 543d923: the forward starts first, whatever the chain holds, and the chain decides only what is printed. Tests `a_null_chain_still_reaches_the_core` and `a_missing_chain_file_still_reaches_the_core` failed first.
 2. **The footer's plan ring was announced as "Context N% used".** `ContextRing` now takes a label, the footer passes "5-hour plan", and the "5h N%" text is hidden from screen readers while the ring shows, so it is said once (8b8b283).
 3. **An idle live row read "Opus 5.5 · "** with nothing after the separator. The separator now shows only when a phrase or "muted" follows, in the row and in its label (67ae4f1).
-4. **The recap is not visible in the live app.** PLAN.md puts the recap in the expanded row ("Expanded … adds … the recap with its age"), and the live sidebar always draws rows comfortable: per-row expansion (→ or the disclosure control) is not built yet. Left as specified; it shows once rows can expand.
+4. **The recap was not visible in the live app.** PLAN.md put the recap only in the expanded row, and the live sidebar always draws rows comfortable: per-row expansion is not built yet. After the check, the user decided that a Done row reads "Done · <the recap's first line>" in the comfortable density too (PLAN.md §9, 3c2 decision 6), and the review's fix pass built it.
 
 ## Notes
 
