@@ -149,6 +149,7 @@ mod tests {
         let cfg = CoreConfig {
             home: home.path().to_path_buf(),
             allowed_origins: vec![],
+            programs_dir: None,
         };
         let events: Events = Arc::default();
         let sink = events.clone();

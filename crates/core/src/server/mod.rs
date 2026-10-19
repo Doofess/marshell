@@ -41,6 +41,9 @@ pub struct CoreConfig {
     pub home: PathBuf,
     /// Webview origins allowed to call the API, e.g. `http://tauri.localhost`.
     pub allowed_origins: Vec<String>,
+    /// The folder holding marshell-hook and marshell, next to the app's exe. None in tests: set up then never
+    /// copies them.
+    pub programs_dir: Option<PathBuf>,
 }
 
 /// Shared server state. Cloning is cheap (one `Arc`).
@@ -91,6 +94,8 @@ struct Inner {
     /// Claude Code's settings file when a test or a caller names one; None means
     /// `MARSHELL_CLAUDE_SETTINGS`, else `~/.claude/settings.json`.
     claude_settings: Option<PathBuf>,
+    /// Where the app's own programs sit, so setting up hooks can put a missing bridge back. None in tests.
+    programs_dir: Option<PathBuf>,
     /// `--version` of each agent executable, asked once per path for the app's lifetime.
     versions: Mutex<HashMap<PathBuf, Option<String>>>,
 }
@@ -143,6 +148,7 @@ impl AppState {
             permission_hold: DEFAULT_PERMISSION_HOLD,
             config,
             claude_settings: None,
+            programs_dir: None,
             versions: Mutex::new(HashMap::new()),
         }))
     }
@@ -151,6 +157,13 @@ impl AppState {
         Arc::get_mut(&mut self.0)
             .expect("with_claude_settings runs before the state is shared")
             .claude_settings = Some(path);
+        self
+    }
+    /// Names the folder holding the app's own programs. Call it before the state is cloned.
+    pub fn with_programs_dir(mut self, dir: PathBuf) -> Self {
+        Arc::get_mut(&mut self.0)
+            .expect("with_programs_dir runs before the state is shared")
+            .programs_dir = Some(dir);
         self
     }
     /// Sets how long a permission request is held. Call it before the state is cloned.
@@ -413,10 +426,13 @@ pub async fn start(cfg: CoreConfig) -> anyhow::Result<RunningCore> {
         Err(e) => tracing::warn!("could not make the Marshell home owner-only: {e:#}"),
     }
     let endpoint_file = paths::endpoint_file(&cfg.home);
-    let state = AppState::new(endpoint.token.clone(), port, cfg.allowed_origins, cfg.home, detected)
+    let mut state = AppState::new(endpoint.token.clone(), port, cfg.allowed_origins, cfg.home, detected)
         .with_permission_hold(permission_hold_from_env(
             std::env::var("MARSHELL_PERMISSION_HOLD_SECS").ok().as_deref(),
         ));
+    if let Some(dir) = cfg.programs_dir {
+        state = state.with_programs_dir(dir);
+    }
     // Last, so the endpoint is only advertised once the state is ready to serve.
     auth::write_endpoint_file(&endpoint_file, &endpoint)?;
     let app = router(state.clone());

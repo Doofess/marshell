@@ -12,6 +12,7 @@ async fn core() -> (RunningCore, tempfile::TempDir) {
     let core = start(CoreConfig {
         home: home.path().to_path_buf(),
         allowed_origins: vec![],
+        programs_dir: None,
     })
     .await
     .unwrap();

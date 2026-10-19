@@ -134,24 +134,29 @@ fn main() {
             marshell_core::crash::install_panic_hook(&home);
             // Off the launch path: copying the programs into ~/.marshell/bin may wait on a running copy.
             let bridge_home = home.clone();
-            std::thread::spawn(move || match std::env::current_exe() {
+            let exe = std::env::current_exe();
+            let programs_dir = exe
+                .as_ref()
+                .ok()
+                .and_then(|e| e.parent().map(std::path::Path::to_path_buf));
+            std::thread::spawn(move || match exe {
                 Ok(exe) => {
-                    use marshell_core::bridge::{BRIDGE_EXE, CLI_EXE, install, source_next_to};
-                    for (name, missing) in [
-                        (BRIDGE_EXE, "no hook bridge next to the app, hooks will not report"),
-                        (
-                            CLI_EXE,
-                            "no marshell program next to the app, `marshell uninstall` will not be there",
-                        ),
-                    ] {
-                        match source_next_to(&exe, name) {
-                            Some(source) => {
-                                if let Err(e) = install(&source, &bridge_home, name) {
-                                    eprintln!("Marshell: {name} was not installed: {e}");
-                                }
-                            }
-                            None => eprintln!("Marshell: {missing}"),
+                    use marshell_core::bridge::{BRIDGE_EXE, CLI_EXE, ensure, source_next_to};
+                    let Some(dir) = exe.parent() else {
+                        eprintln!("Marshell: could not find the folder of the app for the hook bridge");
+                        return;
+                    };
+                    match ensure(dir, &bridge_home) {
+                        Ok(()) => {}
+                        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                            eprintln!("Marshell: no hook bridge next to the app, hooks will not report");
                         }
+                        Err(e) => eprintln!("Marshell: {BRIDGE_EXE} or {CLI_EXE} was not installed: {e}"),
+                    }
+                    if source_next_to(&exe, CLI_EXE).is_none() {
+                        eprintln!(
+                            "Marshell: no marshell program next to the app, `marshell uninstall` will not be there"
+                        );
                     }
                 }
                 Err(e) => eprintln!("Marshell: could not find the app's own path for the hook bridge: {e}"),
@@ -159,6 +164,7 @@ fn main() {
             let cfg = CoreConfig {
                 home,
                 allowed_origins: allowed_origins(),
+                programs_dir,
             };
             let handle = app.handle().clone();
             let supervisor =

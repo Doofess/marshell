@@ -269,6 +269,7 @@ async fn start_writes_endpoint_file_and_serves() {
     let core = marshell_core::server::start(marshell_core::server::CoreConfig {
         home: home.path().to_path_buf(),
         allowed_origins: vec![],
+        programs_dir: None,
     })
     .await
     .unwrap();

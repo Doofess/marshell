@@ -25,6 +25,22 @@ fn env() -> Env {
 }
 
 fn env_with(agent_path: fn(&str) -> Option<PathBuf>) -> Env {
+    build(agent_path, None)
+}
+
+/// What the state is told sits next to the app's exe.
+enum Programs {
+    /// A folder holding fake `marshell-hook` and `marshell`.
+    Both,
+    /// A folder with neither.
+    Empty,
+}
+
+fn env_with_programs(programs: Programs) -> Env {
+    build(|_| None, Some(programs))
+}
+
+fn build(agent_path: fn(&str) -> Option<PathBuf>, programs: Option<Programs>) -> Env {
     let dir = tempfile::tempdir().unwrap();
     let root = canonical(dir.path());
     let home = root.join("home");
@@ -33,7 +49,7 @@ fn env_with(agent_path: fn(&str) -> Option<PathBuf>) -> Env {
     std::fs::create_dir_all(&project).unwrap();
     record(&home, &project, 1).unwrap();
     let settings = project.join("settings.json");
-    let st = AppState::new(
+    let mut st = AppState::new(
         TOKEN.into(),
         PORT,
         vec!["http://tauri.localhost".into()],
@@ -42,6 +58,17 @@ fn env_with(agent_path: fn(&str) -> Option<PathBuf>) -> Env {
     )
     .with_claude_settings(settings.clone())
     .with_agent_path(agent_path);
+    if let Some(programs) = programs {
+        let programs_dir = root.join("programs");
+        std::fs::create_dir_all(&programs_dir).unwrap();
+        if matches!(programs, Programs::Both) {
+            for name in ["marshell-hook", "marshell"] {
+                let file = programs_dir.join(format!("{name}{}", std::env::consts::EXE_SUFFIX));
+                std::fs::write(file, name).unwrap();
+            }
+        }
+        st = st.with_programs_dir(programs_dir);
+    }
     Env {
         _dir: dir,
         app: router(st),
@@ -205,4 +232,42 @@ async fn unparsable_settings_is_422_with_the_line() {
     assert_eq!(setup["settings_state"], "unparsable", "{setup}");
     assert_eq!(setup["parse_error"]["line"], 3, "{setup}");
     assert_eq!(setup["hooks"], "none");
+}
+
+#[tokio::test]
+async fn plan_puts_a_missing_bridge_back_from_the_programs_folder() {
+    let e = env_with_programs(Programs::Both);
+    std::fs::write(&e.settings, "{}\n").unwrap();
+    assert!(!paths::bridge_exe(&e.home).exists());
+
+    let (status, preview) = post(&e.app, "/v1/agents/claude/hooks/plan", WANT()).await;
+    assert_eq!(status, StatusCode::OK, "{preview}");
+    assert_eq!(std::fs::read(paths::bridge_exe(&e.home)).unwrap(), b"marshell-hook");
+    assert!(paths::cli_exe(&e.home).is_file());
+}
+
+#[tokio::test]
+async fn plan_is_refused_when_the_bridge_cannot_be_put_back() {
+    let e = env_with_programs(Programs::Empty);
+    std::fs::write(&e.settings, "{}\n").unwrap();
+
+    let (status, bytes) = post_raw(&e.app, "/v1/agents/claude/hooks/plan", WANT()).await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    let message = String::from_utf8(bytes).unwrap();
+    assert!(message.contains("hook program is missing"), "{message}");
+    assert!(
+        message.contains(&*paths::bridge_exe(&e.home).to_string_lossy()),
+        "{message}"
+    );
+    assert!(message.ends_with("Reinstall Marshell, then set up again."), "{message}");
+    assert_eq!(std::fs::read_to_string(&e.settings).unwrap(), "{}\n");
+    assert!(!paths::bridge_exe(&e.home).exists());
+}
+
+#[tokio::test]
+async fn setup_never_copies_the_programs() {
+    let e = env_with_programs(Programs::Both);
+    let (status, _) = get(&e.app, "/v1/agents/claude/setup").await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(!paths::bridge_exe(&e.home).exists());
 }

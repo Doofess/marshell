@@ -149,3 +149,65 @@ fn updates_while_the_old_bridge_is_running() {
     }
     panic!("the old copy is still there after the bridge exited");
 }
+
+fn program_dir(dir: &Path, programs: &[(&str, &[u8])]) -> PathBuf {
+    let programs_dir = dir.join("programs");
+    fs::create_dir_all(&programs_dir).unwrap();
+    for (name, bytes) in programs {
+        fs::write(
+            programs_dir.join(format!("{name}{}", std::env::consts::EXE_SUFFIX)),
+            bytes,
+        )
+        .unwrap();
+    }
+    programs_dir
+}
+
+#[test]
+fn ensure_copies_both_programs_into_an_empty_home() {
+    let dir = tempfile::tempdir().unwrap();
+    let home = dir.path().join("home");
+    let programs = program_dir(dir.path(), &[(bridge::BRIDGE_EXE, b"hook"), (bridge::CLI_EXE, b"cli")]);
+    bridge::ensure(&programs, &home).unwrap();
+    assert_eq!(fs::read(paths::bridge_exe(&home)).unwrap(), b"hook");
+    assert_eq!(fs::read(paths::cli_exe(&home)).unwrap(), b"cli");
+}
+
+#[test]
+fn ensure_without_a_bridge_source_is_not_found_and_writes_nothing() {
+    let dir = tempfile::tempdir().unwrap();
+    let home = dir.path().join("home");
+    let programs = program_dir(dir.path(), &[]);
+    let err = bridge::ensure(&programs, &home).unwrap_err();
+    assert_eq!(err.kind(), std::io::ErrorKind::NotFound);
+    assert!(err.to_string().contains(bridge::BRIDGE_EXE), "{err}");
+    assert!(!paths::bin_dir(&home).exists());
+}
+
+#[test]
+fn ensure_skips_a_missing_cli_source() {
+    let dir = tempfile::tempdir().unwrap();
+    let home = dir.path().join("home");
+    let programs = program_dir(dir.path(), &[(bridge::BRIDGE_EXE, b"hook")]);
+    bridge::ensure(&programs, &home).unwrap();
+    assert!(paths::bridge_exe(&home).is_file());
+    assert!(!paths::cli_exe(&home).exists());
+}
+
+#[test]
+fn two_ensures_at_once_both_succeed_and_leave_one_bridge() {
+    let dir = tempfile::tempdir().unwrap();
+    let home = dir.path().join("home");
+    let programs = program_dir(dir.path(), &[(bridge::BRIDGE_EXE, b"hook"), (bridge::CLI_EXE, b"cli")]);
+    let results: Vec<_> = std::thread::scope(|s| {
+        let handles: Vec<_> = (0..2).map(|_| s.spawn(|| bridge::ensure(&programs, &home))).collect();
+        handles.into_iter().map(|h| h.join().unwrap()).collect()
+    });
+    assert!(results.iter().all(|r| r.is_ok()), "{results:?}");
+    assert_eq!(
+        leftovers(&home, "marshell-hook"),
+        vec![format!("marshell-hook{}", std::env::consts::EXE_SUFFIX)]
+    );
+    assert!(leftovers(&home, "marshell.new").is_empty());
+    assert!(leftovers(&home, "marshell.old-").is_empty());
+}

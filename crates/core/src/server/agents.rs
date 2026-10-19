@@ -3,6 +3,7 @@
 
 use super::AppState;
 use crate::agents::claude::{self, hooks};
+use crate::bridge;
 use crate::config::jsonc::{parse_problem, read_value};
 use crate::paths;
 use crate::profiles::detect::agent_exe;
@@ -88,6 +89,29 @@ impl AppState {
             settings_path,
             text,
             chain_text,
+        })
+    }
+
+    /// Puts the bridge back into `<home>/bin` before hooks that run it are planned. Only the app knows where its
+    /// programs are, so this does nothing without a programs folder (tests) or when the bridge is there.
+    fn ensure_bridge(&self, want: &HookPlanRequest) -> Result<(), Fail> {
+        let bridge = paths::bridge_exe(&self.0.home);
+        let Some(dir) = self
+            .0
+            .programs_dir
+            .as_deref()
+            .filter(|_| want.status && !bridge.exists())
+        else {
+            return Ok(());
+        };
+        bridge::ensure(dir, &self.0.home).map_err(|e| {
+            (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                format!(
+                    "Marshell's hook program is missing from {} and could not be put back ({e}), so setting up would leave hooks that fail each time one fires. Reinstall Marshell, then set up again.",
+                    bridge.display()
+                ),
+            )
         })
     }
 
@@ -185,6 +209,7 @@ pub async fn plan(
     only_claude(&agent)?;
     let preview = tokio::task::spawn_blocking(move || {
         let inputs = st.inputs()?;
+        st.ensure_bridge(&want)?;
         let changes = hooks::install_plan(
             &inputs.settings_path,
             &inputs.user_home,

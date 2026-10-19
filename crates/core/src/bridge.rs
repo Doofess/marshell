@@ -2,6 +2,7 @@ use crate::paths;
 use marshell_protocol::brand;
 use std::io;
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 /// The bridge program the agents' hooks run.
@@ -21,6 +22,31 @@ pub enum BridgeInstall {
 pub fn source_next_to(exe: &Path, name: &str) -> Option<PathBuf> {
     let source = exe.parent()?.join(format!("{name}{}", std::env::consts::EXE_SUFFIX));
     source.is_file().then_some(source)
+}
+
+/// Puts the bridge and the `marshell` program from `source_dir` into `<home>/bin`. A missing bridge is a
+/// `NotFound` error naming the path, since hooks would fail without it; a missing `marshell` is skipped. One
+/// call at a time, so the launch thread and a plan request cannot both stage the same `.new` copy.
+pub fn ensure(source_dir: &Path, home: &Path) -> io::Result<()> {
+    static LOCK: Mutex<()> = Mutex::new(());
+    let _one_at_a_time = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+
+    let suffix = std::env::consts::EXE_SUFFIX;
+    let bridge = source_dir.join(format!("{BRIDGE_EXE}{suffix}"));
+    if !bridge.is_file() {
+        return Err(io::Error::new(
+            io::ErrorKind::NotFound,
+            format!("no hook bridge at {}", bridge.display()),
+        ));
+    }
+    let bridge_result = install(&bridge, home, BRIDGE_EXE).map(|_| ());
+    let cli = source_dir.join(format!("{CLI_EXE}{suffix}"));
+    let cli_result = if cli.is_file() {
+        install(&cli, home, CLI_EXE).map(|_| ())
+    } else {
+        Ok(())
+    };
+    bridge_result.and(cli_result)
 }
 
 /// Deletes the `.old-*` and `.new*` copies of `name` an earlier update left in `<home>/bin`. Errors are ignored: a
