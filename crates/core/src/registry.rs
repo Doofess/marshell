@@ -404,13 +404,17 @@ impl Registry {
     }
 
     /// Sets why a Claude Code row has no live status (a gated version, or the switch is off), or
-    /// takes the note away. Applied only to an open Running row. Broadcasts only on a change.
+    /// takes the note away. A note also drops the live status, so a switch turned off mid-session
+    /// leaves no stale status. Applied only to an open Running row. Broadcasts only on a change.
     pub fn set_status_note(&self, tab_id: &str, note: Option<String>) {
         let mut state = self.state.lock().unwrap();
         if let Some(entry) = state.open.iter_mut().find(|e| e.info.tab_id == tab_id)
             && entry.info.state == SessionState::Running
-            && entry.info.status_note != note
+            && (entry.info.status_note != note || (note.is_some() && entry.info.live.is_some()))
         {
+            if note.is_some() {
+                entry.info.live = None;
+            }
             entry.info.status_note = note;
             self.tx.send_replace(state.snapshot());
         }
@@ -1258,6 +1262,23 @@ mod tests {
         assert!(!rx.has_changed().unwrap());
         reg.update_live("a", |_| Some(live(LiveState::Idle)));
         assert!(rx.has_changed().unwrap());
+    }
+
+    #[test]
+    fn a_status_note_takes_the_live_status_away() {
+        // Switching live status off mid-session must not leave the last status showing.
+        let reg = Registry::new();
+        reg.reserve("a", relaunch("A"));
+        reg.update_live("a", |_| Some(live(LiveState::Working)));
+        let mut rx = reg.subscribe();
+        rx.borrow_and_update();
+        reg.set_status_note("a", Some("off".into()));
+        assert!(rx.has_changed().unwrap());
+        assert_eq!(row(&reg, "a").live, None);
+        // A row that already has the note and no status sends nothing new.
+        rx.borrow_and_update();
+        reg.set_status_note("a", Some("off".into()));
+        assert!(!rx.has_changed().unwrap());
     }
 
     #[test]
