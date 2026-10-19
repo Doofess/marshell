@@ -66,6 +66,24 @@ function liveRow(live: LiveStatus, now: number): Pick<RowModel, "status" | "phra
   };
 }
 
+/**
+ * How often the rows' ages need recounting: every second while a session waits for you or an age shown is under a minute
+ * (it shows seconds), every half minute when the ages shown are in minutes, and never when no row shows one.
+ */
+export function ageTick(infos: SessionInfo[], now: number): number | undefined {
+  let tick: number | undefined;
+  for (const { live } of infos) {
+    if (live === null) continue;
+    if (live.state === "needs_permission" || live.state === "needs_question") return 1000;
+    const ages = [...(live.state === "done" ? [live.since_ms] : []), ...(live.recap === null ? [] : [live.recap.at_ms])];
+    for (const at of ages) {
+      if (now - at < 60_000) return 1000;
+      tick = 30_000;
+    }
+  }
+  return tick;
+}
+
 /** The plan ring: the highest 5-hour use any session reports, or nothing when none does. */
 export function planRing(infos: SessionInfo[]): { pct: number } | undefined {
   let pct: number | undefined;
@@ -110,10 +128,11 @@ export function toRow(info: SessionInfo, profiles: Profile[], setup?: { claude?:
   if (info.paused) return { ...base, status: "paused", phrase: "" };
   if (info.agent !== null) {
     if (info.live !== null) return { ...base, ...liveRow(info.live, now) };
-    if (info.activity === "working") return { ...base, status: "working", phrase: "Working", note: LIMITED_NOTE };
-    if (info.activity === "idle") return { ...base, status: "idle", phrase: "Idle", note: LIMITED_NOTE };
-    // Claude Code without Marshell's hooks: say so and offer the setup. An unknown state (not fetched yet) says and offers nothing.
+    // Claude Code without Marshell's hooks: say so and offer the setup, ahead of the output fallback. An unknown state (not fetched yet) says and offers nothing.
     if (info.agent === "claude" && setup?.claude !== undefined && setup.claude !== "installed") return { ...base, status: "limited", phrase: "Status limited · set up", setupLink: true };
+    const note = info.status_note === null ? LIMITED_NOTE : `${LIMITED_NOTE} · ${info.status_note}`;
+    if (info.activity === "working") return { ...base, status: "working", phrase: "Working", note };
+    if (info.activity === "idle") return { ...base, status: "idle", phrase: "Idle", note };
     return { ...base, status: "limited", phrase: info.status_note ?? "Status arrives with hooks" };
   }
   if (fg !== null) {

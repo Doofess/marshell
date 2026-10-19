@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useSyncExternalStore } from "react";
+import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import type { Endpoint } from "../../generated/Endpoint";
 import type { Profile } from "../../generated/Profile";
 import type { SessionInfo } from "../../generated/SessionInfo";
@@ -9,7 +9,7 @@ import { EventSocket } from "../../lib/api/events";
 import { profiles as profilesApi } from "../../lib/api/profiles";
 import type { RowModel } from "../sidebar/types";
 import type { HookInstall } from "../../generated/HookInstall";
-import { toRow } from "./toRow";
+import { ageTick, toRow } from "./toRow";
 
 export type SessionsState = {
   endpoint: Endpoint | null;
@@ -155,6 +155,14 @@ export function useSessions(setup?: { claude?: HookInstall }): {
   const store = useMemo(() => new SessionsStore(), []);
   useEffect(() => store.start(), [store]);
   const state = useSyncExternalStore(store.subscribe, store.getState);
-  const rows = useMemo(() => state.infos.map((i) => toRow(i, state.profiles, setup)), [state.infos, state.profiles, setup]);
+  // The clock the rows' ages count from. It moves only while some row shows an age, as often as that age needs.
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const tick = ageTick(state.infos, Date.now());
+    if (tick === undefined) return;
+    const id = setTimeout(() => setNow(Date.now()), tick);
+    return () => clearTimeout(id);
+  }, [state.infos, now]);
+  const rows = useMemo(() => state.infos.map((i) => toRow(i, state.profiles, setup, Math.max(now, Date.now()))), [state.infos, state.profiles, setup, now]);
   return { ...state, rows, select: store.select, reloadProfiles: store.reloadProfiles };
 }

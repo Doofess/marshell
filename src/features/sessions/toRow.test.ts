@@ -3,7 +3,7 @@ import type { LiveStatus } from "../../generated/LiveStatus";
 import type { Profile } from "../../generated/Profile";
 import type { SessionInfo } from "../../generated/SessionInfo";
 import { rowLabel, rowTitle } from "../sidebar/labels";
-import { planRing, toRow } from "./toRow";
+import { ageTick, planRing, toRow } from "./toRow";
 
 const profile = (id: string, family: Profile["family"]): Profile => ({ id, name: id, command: [id], family, cwd: null, env: [], shell_integration: true, detected: true });
 const PROFILES: Profile[] = [
@@ -249,8 +249,34 @@ describe("toRow: live status", () => {
     expect(noted.setupLink).toBeUndefined();
     expect(row(null).phrase).toBe("Status arrives with hooks");
   });
+  it("keeps offering the setup for a Claude row without hooks, even while its output shows activity", () => {
+    const r = toRow(claude(null, { activity: "working" }), PROFILES, { claude: "none" }, NOW);
+    expect(r).toMatchObject({ status: "limited", phrase: "Status limited · set up", setupLink: true });
+  });
+  it("puts the core's reason in the fallback row's note", () => {
+    const r = row(null, { activity: "idle", status_note: "Live status is off for Claude Code" });
+    expect(r).toMatchObject({ status: "idle", phrase: "Idle", note: "Status limited · Live status is off for Claude Code" });
+  });
   it("lets live status win over a missing setup", () => {
     expect(toRow(claude(live({ state: "working", phrase: "Thinking" })), PROFILES, { claude: "none" }, NOW)).toMatchObject({ status: "working", phrase: "Thinking" });
+  });
+});
+
+describe("ageTick", () => {
+  const NOW = 1_000_000;
+  const at = (state: LiveStatus["state"], since: number, recapAt: number | null = null): SessionInfo =>
+    info({ agent: "claude", live: { state, phrase: "", since_ms: NOW - since, recap: recapAt === null ? null : { text: "r", at_ms: NOW - recapAt }, model: null, effort: null, context_pct: null, five_hour_pct: null, seven_day_pct: null, subagents: 0 } });
+  it("counts every second while a session waits for you or an age is under a minute", () => {
+    expect(ageTick([at("needs_permission", 600_000)], NOW)).toBe(1000);
+    expect(ageTick([at("done", 5000)], NOW)).toBe(1000);
+    expect(ageTick([at("working", 600_000, 30_000)], NOW)).toBe(1000);
+  });
+  it("counts every half minute when the ages shown are in minutes", () => {
+    expect(ageTick([at("done", 600_000, 600_000)], NOW)).toBe(30_000);
+  });
+  it("does not tick when no row shows an age", () => {
+    expect(ageTick([at("working", 5000), info()], NOW)).toBeUndefined();
+    expect(ageTick([], NOW)).toBeUndefined();
   });
 });
 

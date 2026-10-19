@@ -31,11 +31,16 @@ describe("Sidebar", () => {
     expect(h).toContain("Doctor: 4 issues");
   });
   it("leaves out unknown plan usage, and shows a clean doctor as such", () => {
-    const h = html({ footer: {} });
+    const h = html({ footer: { doctorIssues: 0 } });
     expect(h).not.toContain("sidebar__plan");
     expect(h).not.toContain("5h ");
     expect(h).not.toContain("–");
     expect(h).toContain("Doctor: no issues");
+  });
+  it("leaves out a doctor count it was not given, rather than calling it clean", () => {
+    const h = html({ footer: { planPct: 12, fiveHourPct: 12 } });
+    expect(h).toContain("5h 12%");
+    expect(h).not.toContain("sidebar__doctor");
   });
   it("has no footer when none is given, and gives its row back", () => {
     const h = html({ footer: undefined });
