@@ -1,3 +1,4 @@
+mod activity;
 mod agents;
 mod attachments;
 mod config;
@@ -279,6 +280,7 @@ pub fn router(state: AppState) -> Router {
     // Here and not in `AppState::new`, which `with_agent_check` needs to be the only owner of.
     layout::spawn_layout_saver(&state);
     foreground::spawn_watcher(&state);
+    activity::spawn_watcher(&state);
     let origins: Vec<HeaderValue> = state.0.allowed_origins.iter().filter_map(|o| o.parse().ok()).collect();
     let cors = CorsLayer::new()
         .allow_origin(AllowOrigin::list(origins))

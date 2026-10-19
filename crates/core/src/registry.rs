@@ -7,7 +7,7 @@ use std::sync::Mutex;
 
 use crate::pty::Mark;
 use marshell_protocol::api::{
-    CommandState, Foreground, LiveStatus, SavedTab, SessionInfo, SessionMode, SessionState, SessionsSnapshot,
+    Activity, CommandState, Foreground, LiveStatus, SavedTab, SessionInfo, SessionMode, SessionState, SessionsSnapshot,
 };
 use tokio::sync::watch;
 
@@ -305,8 +305,9 @@ impl Registry {
     }
 
     /// The process was frozen or thawed. Ignored when `generation` is not the entry's current one:
-    /// the row belongs to a newer process. A row that is not Running is never paused. Broadcasts
-    /// only on a change.
+    /// the row belongs to a newer process. A row that is not Running is never paused. Freezing
+    /// drops the output activity, so a frozen row does not keep saying Working. Broadcasts only on
+    /// a change.
     pub fn set_paused(&self, tab_id: &str, generation: u64, paused: bool) {
         let mut state = self.state.lock().unwrap();
         if let Some(entry) = state
@@ -317,6 +318,9 @@ impl Registry {
             && (!paused || entry.info.state == SessionState::Running)
         {
             entry.info.paused = paused;
+            if paused {
+                entry.info.activity = None;
+            }
             self.tx.send_replace(state.snapshot());
         }
     }
@@ -353,6 +357,43 @@ impl Registry {
             .iter()
             .filter(|e| e.info.state == SessionState::Running && !e.info.paused && e.info.agent.is_none())
             .map(|e| (e.info.tab_id.clone(), e.generation, e.info.foreground.is_some()))
+            .collect()
+    }
+
+    /// Sets what an agent row is doing as far as its output shows, for a row without live status.
+    /// Applied only to a Running, unpaused row launched as an agent, with no `live`, whose
+    /// `generation` is current. Broadcasts only on a change.
+    pub fn set_activity(&self, tab_id: &str, generation: u64, activity: Option<Activity>) {
+        let mut state = self.state.lock().unwrap();
+        if let Some(entry) = state
+            .open
+            .iter_mut()
+            .find(|e| e.info.tab_id == tab_id && e.generation == generation)
+            && entry.info.state == SessionState::Running
+            && entry.info.agent.is_some()
+            && !entry.info.paused
+            && entry.info.live.is_none()
+            && entry.info.activity != activity
+        {
+            entry.info.activity = activity;
+            self.tx.send_replace(state.snapshot());
+        }
+    }
+
+    /// The rows the activity watcher may look at: Running, not paused, launched as an agent and
+    /// without live status. Each is the tab id and its generation.
+    pub fn activity_candidates(&self) -> Vec<(String, u64)> {
+        let state = self.state.lock().unwrap();
+        state
+            .open
+            .iter()
+            .filter(|e| {
+                e.info.state == SessionState::Running
+                    && !e.info.paused
+                    && e.info.agent.is_some()
+                    && e.info.live.is_none()
+            })
+            .map(|e| (e.info.tab_id.clone(), e.generation))
             .collect()
     }
 
@@ -1323,5 +1364,95 @@ mod tests {
 
         reg.close("close");
         assert_eq!(blank(reg.snapshot().closed[0].clone()), (None, None, None));
+    }
+
+    fn agent_relaunch(name: &str) -> Relaunch {
+        Relaunch {
+            agent: Some("claude".into()),
+            ..relaunch(name)
+        }
+    }
+
+    #[test]
+    fn set_activity_is_refused_for_a_row_that_cannot_take_it() {
+        let reg = Registry::new();
+        reg.reserve("live", agent_relaunch("L"));
+        reg.reserve("shell", relaunch("S"));
+        reg.reserve("old", agent_relaunch("O"));
+        reg.reserve("exited", agent_relaunch("E"));
+        reg.reserve("paused", agent_relaunch("P"));
+        reg.update_live("live", |_| Some(live(LiveState::Working)));
+        reg.set_paused("paused", generation_of(&reg, "paused"), true);
+        reg.mark_exited("exited", generation_of(&reg, "exited"), 0);
+        let mut rx = reg.subscribe();
+        rx.borrow_and_update();
+        for (id, generation) in [
+            ("live", generation_of(&reg, "live")),
+            ("shell", generation_of(&reg, "shell")),
+            ("old", generation_of(&reg, "old") + 1),
+            ("exited", generation_of(&reg, "exited")),
+            ("paused", generation_of(&reg, "paused")),
+            ("nope", 1),
+        ] {
+            reg.set_activity(id, generation, Some(Activity::Working));
+            assert!(!rx.has_changed().unwrap(), "{id} took an activity");
+        }
+        for id in ["live", "shell", "old", "exited", "paused"] {
+            assert_eq!(row(&reg, id).activity, None, "{id}");
+        }
+    }
+
+    #[test]
+    fn set_activity_broadcasts_only_on_a_change() {
+        let reg = Registry::new();
+        reg.reserve("a", agent_relaunch("A"));
+        let generation = generation_of(&reg, "a");
+        let mut rx = reg.subscribe();
+        rx.borrow_and_update();
+        reg.set_activity("a", generation, Some(Activity::Working));
+        assert!(rx.has_changed().unwrap());
+        assert_eq!(row(&reg, "a").activity, Some(Activity::Working));
+        rx.borrow_and_update();
+        reg.set_activity("a", generation, Some(Activity::Working));
+        assert!(!rx.has_changed().unwrap());
+        reg.set_activity("a", generation, Some(Activity::Idle));
+        assert!(rx.has_changed().unwrap());
+        assert_eq!(row(&reg, "a").activity, Some(Activity::Idle));
+        rx.borrow_and_update();
+        reg.set_activity("a", generation, None);
+        assert!(rx.has_changed().unwrap());
+        assert_eq!(row(&reg, "a").activity, None);
+    }
+
+    #[test]
+    fn exit_and_pause_leave_no_activity() {
+        let reg = Registry::new();
+        reg.reserve("exit", agent_relaunch("E"));
+        reg.reserve("pause", agent_relaunch("P"));
+        for id in ["exit", "pause"] {
+            reg.set_activity(id, generation_of(&reg, id), Some(Activity::Working));
+            assert_eq!(row(&reg, id).activity, Some(Activity::Working));
+        }
+        reg.mark_exited("exit", generation_of(&reg, "exit"), 0);
+        assert_eq!(row(&reg, "exit").activity, None);
+        reg.set_paused("pause", generation_of(&reg, "pause"), true);
+        assert_eq!(row(&reg, "pause").activity, None);
+    }
+
+    #[test]
+    fn activity_candidates_are_running_unpaused_agent_rows_without_live_status() {
+        let reg = Registry::new();
+        reg.reserve("agent", agent_relaunch("A"));
+        reg.reserve("live", agent_relaunch("L"));
+        reg.reserve("shell", relaunch("S"));
+        reg.reserve("paused", agent_relaunch("P"));
+        reg.reserve("exited", agent_relaunch("E"));
+        reg.update_live("live", |_| Some(live(LiveState::Idle)));
+        reg.set_paused("paused", generation_of(&reg, "paused"), true);
+        reg.mark_exited("exited", generation_of(&reg, "exited"), 0);
+        assert_eq!(
+            reg.activity_candidates(),
+            vec![("agent".to_string(), generation_of(&reg, "agent"))]
+        );
     }
 }
