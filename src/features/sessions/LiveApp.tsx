@@ -60,7 +60,7 @@ import { adoptTarget, fillsEmptyPane, focusedIndex, paneToggle, ratiosOf, roomFo
 import { CloseBar } from "./CloseBar";
 import { PauseBar } from "./PauseBar";
 import { RestartBar } from "./RestartBar";
-import { launcherOpens } from "./launcherOpens";
+import { launcherOpens, type OnboardingShown } from "./launcherOpens";
 import { LiveLauncher } from "./LiveLauncher";
 import { LivePalette } from "./LivePalette";
 import { LiveShortcuts } from "./LiveShortcuts";
@@ -184,14 +184,16 @@ export function LiveApp() {
   const [overlay, setOverlay] = useState<"palette" | "profiles" | "appearance" | "agents" | "diagnostics" | "shortcuts" | null>(null);
   // The Agents dialog opened from a row's "set up" starts on the Set up card.
   const [agentsFrom, setAgentsFrom] = useState<"row" | null>(null);
-  // First run: shown once, when the saved settings say the onboarding was not seen. Nothing shows until that read has answered.
-  const [onboarding, setOnboarding] = useState(false);
+  // First run: shown once, when the saved settings say the onboarding was not seen. Nothing shows until that read has answered;
+  // a failed read shows none.
+  const [onboardingShown, setOnboardingShown] = useState<OnboardingShown>("unknown");
+  const onboarding = onboardingShown === "showing";
   useEffect(() => {
     if (!endpoint || !sync) return;
     let live = true;
     sync.load().then(
-      () => live && setOnboarding(!sync.onboarded),
-      () => {},
+      () => live && setOnboardingShown(sync.onboarded ? "done" : "showing"),
+      () => live && setOnboardingShown("done"),
     );
     return () => {
       live = false;
@@ -218,10 +220,11 @@ export function LiveApp() {
     if (cols > 0 && lines > 0) size.current = { cols, rows: lines };
   }, []);
 
-  // No sessions (first run, everything closed): the launcher opens. A restarted core seeds the saved tabs, so it opens only if there are none.
+  // No sessions (first run, everything closed): the launcher opens, after the onboarding if one shows. A restarted core seeds the
+  // saved tabs, so it opens only if there are none.
   useEffect(() => {
-    if (launcherOpens(loaded, rows.length)) setLauncherOpen(true);
-  }, [loaded, rows.length]);
+    if (launcherOpens(loaded, rows.length, onboardingShown)) setLauncherOpen(true);
+  }, [loaded, rows.length, onboardingShown]);
 
   useEffect(() => {
     const current = new Set(rows.map((r) => r.id));
@@ -1253,7 +1256,7 @@ export function LiveApp() {
           <LiveOnboarding
             endpoint={endpoint}
             onDone={() => {
-              setOnboarding(false);
+              setOnboardingShown("done");
               refreshSetup();
               void sync?.markOnboarded().catch(() => {});
             }}
