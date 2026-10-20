@@ -97,7 +97,12 @@ fn folder_rule(path: &Path, placeholder: &'static str) -> Option<FolderRule> {
     let root = if rooted { r"[\\/]+" } else { "" };
     // The folder must start and end at a boundary, so `C:\Users\me2` is not `C:\Users\me`. The character
     // after it is captured so it can be put back.
-    let pattern = format!(r"(?i)(?P<pre>^|[^A-Za-z0-9_.\-/\\])(?:\\\\\?\\)?{root}{body}(?P<post>[^A-Za-z0-9_]|$)");
+    let boundary = if parts[0].len() == 2 && parts[0].ends_with(':') {
+        r"[^A-Za-z0-9_.\-\\]"
+    } else {
+        r"[^A-Za-z0-9_.\-/\\]"
+    };
+    let pattern = format!(r"(?i)(?P<pre>^|{boundary})(?:\\{{2,4}}\?\\{{1,2}})?{root}{body}(?P<post>[^A-Za-z0-9_]|$)");
     Some(FolderRule {
         matcher: Regex::new(&pattern).ok()?,
         placeholder,
@@ -105,18 +110,20 @@ fn folder_rule(path: &Path, placeholder: &'static str) -> Option<FolderRule> {
     })
 }
 
-fn replace_folder<'a>(rule: &FolderRule, text: Cow<'a, str>) -> Cow<'a, str> {
+fn replace_folder<'a>(rule: &FolderRule, mut text: Cow<'a, str>) -> Cow<'a, str> {
     // A closure: `$post` in a template would read the placeholder's `<` wrongly.
-    let replaced = match rule.matcher.replace_all(&text, |c: &Captures| {
-        format!("{}{}{}", &c["pre"], rule.placeholder, &c["post"])
-    }) {
-        Cow::Owned(s) => Some(s),
-        Cow::Borrowed(_) => None,
-    };
-    match replaced {
-        Some(s) => Cow::Owned(s),
-        None => text,
+    // Repeat so a restored boundary can also precede the next occurrence; a copy next to another is done in
+    // two passes, and the cap only guards against a placeholder that matches again.
+    for _ in 0..16 {
+        let replaced = rule.matcher.replace_all(&text, |c: &Captures| {
+            format!("{}{}{}", &c["pre"], rule.placeholder, &c["post"])
+        });
+        if replaced == text {
+            return text;
+        }
+        text = Cow::Owned(replaced.into_owned());
     }
+    text
 }
 
 fn replace_regex<'a>(re: &Regex, with: &str, text: Cow<'a, str>) -> Cow<'a, str> {
@@ -327,6 +334,19 @@ mod tests {
         }
         // A longer folder name is not the home.
         assert_eq!(r.redact(r"C:\Users\Home Office2\x"), r"C:\Users\Home Office2\x");
+    }
+
+    #[test]
+    fn redacts_repeated_and_url_spellings_of_the_home() {
+        let r = Redactor::new(Some(PathBuf::from(r"C:\Users\Jane Doe")), None, None);
+        for (input, want) in [
+            (r"C:\Users\Jane Doe;C:\Users\Jane Doe", "~;~"),
+            ("file:///C:/Users/Jane Doe/x", "file:///~/x"),
+            (r"\\\\?\\C:\\Users\\Jane Doe", "~"),
+            (r"C:\Users\Jane Doe2", r"C:\Users\Jane Doe2"),
+        ] {
+            assert_eq!(r.redact(input), want, "{input}");
+        }
     }
 
     #[test]
