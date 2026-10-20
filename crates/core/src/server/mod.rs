@@ -1,7 +1,8 @@
 mod activity;
-mod agents;
+pub(crate) mod agents;
 mod attachments;
 mod config;
+mod diagnostics;
 mod events;
 mod files;
 mod folders;
@@ -105,6 +106,10 @@ struct Inner {
     /// A Claude Code version a test pins, in place of asking the executable. `Some(None)` is a
     /// version that cannot be read.
     claude_version: Option<Option<String>>,
+    /// The previous process readings, so each `/v1/perf` call can tell the CPU used since the last one.
+    sampler: Mutex<crate::diagnostics::perf::Sampler>,
+    /// The diagnostics export waiting to be read and saved.
+    previews: crate::diagnostics::export::Previews,
 }
 
 /// How long a permission request is held when `MARSHELL_PERMISSION_HOLD_SECS` is not set.
@@ -160,6 +165,8 @@ impl AppState {
             programs_dir: None,
             versions: Mutex::new(HashMap::new()),
             claude_version: None,
+            sampler: Mutex::new(crate::diagnostics::perf::Sampler::new()),
+            previews: crate::diagnostics::export::Previews::default(),
         }))
     }
     /// Names Claude Code's settings file, in place of the environment. Call it before the state is cloned.
@@ -245,6 +252,28 @@ impl AppState {
     /// How many sessions have a running process. Ended tabs have none.
     pub fn live_session_count(&self) -> usize {
         self.0.sessions.lock().unwrap().len()
+    }
+    /// (tab id, process id) of each session that has a process.
+    pub(crate) fn session_pids(&self) -> Vec<(String, u32)> {
+        let sessions = self.0.sessions.lock().unwrap();
+        sessions
+            .iter()
+            .filter_map(|(tab, s)| s.pid().map(|pid| (tab.clone(), pid)))
+            .collect()
+    }
+    pub(crate) fn sampler(&self) -> std::sync::MutexGuard<'_, crate::diagnostics::perf::Sampler> {
+        self.0.sampler.lock().unwrap_or_else(|e| e.into_inner())
+    }
+    pub(crate) fn previews(&self) -> &crate::diagnostics::export::Previews {
+        &self.0.previews
+    }
+    /// A copy of the current settings.
+    pub(crate) fn settings_snapshot(&self) -> Settings {
+        self.0.settings.lock().unwrap_or_else(|e| e.into_inner()).clone()
+    }
+    /// A copy of the current profiles: detected ones merged with `profiles.json`.
+    pub(crate) fn profiles_snapshot(&self) -> ProfilesDoc {
+        self.0.profiles.lock().unwrap_or_else(|e| e.into_inner()).clone()
     }
     pub fn insert_session(&self, session: Arc<crate::pty::Session>) {
         self.0
@@ -346,6 +375,14 @@ pub fn router(state: AppState) -> Router {
             "/v1/hook",
             post(hook::post).layer(DefaultBodyLimit::max(marshell_protocol::hook::HOOK_BODY_LIMIT)),
         )
+        .route(
+            "/v1/diagnostics/logging",
+            get(diagnostics::get_logging).put(diagnostics::put_logging),
+        )
+        .route("/v1/diagnostics/export", post(diagnostics::post_export))
+        .route("/v1/diagnostics/export/{id}/file", get(diagnostics::get_export_file))
+        .route("/v1/diagnostics/export/{id}/zip", get(diagnostics::get_export_zip))
+        .route("/v1/perf", get(diagnostics::get_perf))
         .route("/v1/hook/events", get(hook::events))
         .route("/v1/permissions", get(permissions::list))
         .route("/v1/permissions/{rid}/decision", post(permissions::decision))
@@ -363,9 +400,27 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/pty/{tab}", get(pty_ws::handler))
         .layer(axum::middleware::from_fn_with_state(state.clone(), guard::auth_guard))
         .layer(cors)
-        // Added last = outermost: Host is checked before CORS can answer a preflight.
+        // Host is checked before CORS can answer a preflight.
         .layer(axum::middleware::from_fn_with_state(state.clone(), guard::host_guard))
+        // Outside both guards and CORS, so even rejected requests have their final status logged.
+        .layer(axum::middleware::from_fn(log_request))
         .with_state(state)
+}
+
+async fn log_request(req: axum::extract::Request, next: axum::middleware::Next) -> axum::response::Response {
+    let method = req.method().clone();
+    // Never retain the full URI, headers or body: they can contain tokens and user content.
+    let path = req.uri().path().to_owned();
+    let started = std::time::Instant::now();
+    let response = next.run(req).await;
+    tracing::debug!(
+        %method,
+        %path,
+        status = response.status().as_u16(),
+        duration_ms = started.elapsed().as_secs_f64() * 1000.0,
+        "API request"
+    );
+    response
 }
 
 async fn health() -> Json<Health> {
@@ -450,6 +505,8 @@ pub async fn start(cfg: CoreConfig) -> anyhow::Result<RunningCore> {
         token: auth::new_token(),
         platform: Platform::current(),
     };
+    // So no log line, export or error message can carry this launch's token.
+    crate::diagnostics::redact::global().remember_token(&endpoint.token);
     // Looking for shells runs programs (wsl.exe can take up to 2 s): keep it off the async threads.
     let detected = tokio::task::spawn_blocking(|| detect_profiles(&Probe::system())).await?;
     // Before anything is written under the home. A failure is not fatal: the default home sits under the
@@ -481,6 +538,7 @@ pub async fn start(cfg: CoreConfig) -> anyhow::Result<RunningCore> {
             tracing::error!("core server stopped: {e}");
         }
     });
+    tracing::info!(app_version = env!("CARGO_PKG_VERSION"), port, "core started");
     Ok(RunningCore {
         endpoint,
         state,

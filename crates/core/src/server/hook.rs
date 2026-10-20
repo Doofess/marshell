@@ -19,6 +19,13 @@ fn header<'a>(headers: &'a HeaderMap, name: &str) -> Option<&'a str> {
         .filter(|v| !v.is_empty())
 }
 
+fn is_identifier(value: &str) -> bool {
+    value.len() <= 64
+        && value
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.'))
+}
+
 /// What the bridge posts. The body is the agent's hook JSON.
 pub async fn post(
     State(st): State<AppState>,
@@ -33,10 +40,19 @@ pub async fn post(
         .to_string();
     let json: serde_json::Value =
         serde_json::from_slice(&body).map_err(|e| (StatusCode::BAD_REQUEST, format!("body is not JSON: {e}")))?;
+    let tab = header(&headers, HEADER_TAB).map(str::to_string);
+    // Both come from the sender, so only a short identifier is logged: never free text a payload could carry.
+    tracing::debug!(
+        event_name = json
+            .get("hook_event_name")
+            .and_then(serde_json::Value::as_str)
+            .filter(|v| is_identifier(v)),
+        tab_id = tab.as_deref().filter(|v| is_identifier(v)),
+        "hook event received"
+    );
     if role == HookRole::Context {
         return Ok(StatusCode::NO_CONTENT.into_response());
     }
-    let tab = header(&headers, HEADER_TAB).map(str::to_string);
     let at_ms = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis() as u64)

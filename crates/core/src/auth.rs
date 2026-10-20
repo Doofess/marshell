@@ -3,7 +3,7 @@ use marshell_protocol::api::Endpoint;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
-fn random_hex(bytes: usize) -> String {
+pub(crate) fn random_hex(bytes: usize) -> String {
     let mut buf = vec![0u8; bytes];
     getrandom::fill(&mut buf).expect("the OS random number generator failed");
     hex::encode(buf)

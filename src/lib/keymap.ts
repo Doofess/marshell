@@ -96,6 +96,7 @@ export const COMMANDS: Command[] = [
   { id: "profiles", label: "Shell profiles…", group: "Tools" },
   { id: "appearance", label: "Appearance…", group: "Tools" },
   { id: "agents", label: "Agents…", group: "Tools" },
+  { id: "diagnostics", label: "Diagnostics…", group: "Tools" },
   { id: "doctor", label: "Open Doctor", group: "Tools" },
   { id: "departures", label: "Open Departures board", group: "Tools" },
 ];

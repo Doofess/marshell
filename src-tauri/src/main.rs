@@ -3,6 +3,7 @@
 
 mod attention;
 mod capture;
+mod diagnostics;
 mod folder_picker;
 
 use marshell_core::server::CoreConfig;
@@ -104,6 +105,7 @@ fn window_state_flags() -> tauri_plugin_window_state::StateFlags {
 }
 
 fn main() {
+    marshell_core::diagnostics::perf::mark_launch();
     // First, so every process Marshell starts dies with it, even after a crash (Windows only).
     if let Err(e) = marshell_core::job::tie_children_to_app() {
         eprintln!("Marshell: children may outlive a crash: {e}");
@@ -133,6 +135,9 @@ fn main() {
             app.manage(capture::CaptureState::default());
             let home = marshell_core::paths::home_dir()?;
             marshell_core::crash::install_panic_hook(&home);
+            if let Err(e) = marshell_core::diagnostics::log::init(&home) {
+                eprintln!("Marshell: no log file this run: {e:#}");
+            }
             // Off the launch path: copying the programs into ~/.marshell/bin may wait on a running copy.
             let bridge_home = home.clone();
             let exe = std::env::current_exe();
@@ -176,6 +181,7 @@ fn main() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            diagnostics::save_diagnostics,
             folder_picker::pick_folder,
             core_endpoint,
             capture::capture_screen_region,

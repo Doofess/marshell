@@ -5,8 +5,7 @@ pub mod request;
 pub mod status;
 
 use std::path::Path;
-use std::process::{Command, Stdio};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 /// The leading `X.Y.Z` of `claude --version` output (`2.1.302 (Claude Code)`). Nothing else counts:
 /// a `v` in front, or fewer than three numbers, gives `None`.
@@ -51,44 +50,7 @@ pub fn version_gate(version: Option<&str>) -> Gate {
 
 /// Runs `<exe> --version` and parses it. The process is killed when it takes longer than `timeout`.
 pub fn run_version(exe: &Path, timeout: Duration) -> Option<String> {
-    let mut cmd = Command::new(exe);
-    cmd.arg("--version")
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null());
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        // CREATE_NO_WINDOW: no console window flashes.
-        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-        cmd.creation_flags(CREATE_NO_WINDOW);
-    }
-    let mut child = cmd.spawn().ok()?;
-    let mut stdout = child.stdout.take()?;
-    // Read on its own thread, so a full pipe cannot hold the child past the deadline.
-    let reader = std::thread::spawn(move || {
-        let mut out = Vec::new();
-        let _ = std::io::Read::read_to_end(&mut stdout, &mut out);
-        out
-    });
-    let deadline = Instant::now() + timeout;
-    let status = loop {
-        match child.try_wait() {
-            Ok(Some(status)) => break Some(status),
-            Ok(None) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(20)),
-            _ => {
-                let _ = child.kill();
-                let _ = child.wait();
-                break None;
-            }
-        }
-    };
-    // After a kill the reader is left alone: a grandchild may still hold the pipe open.
-    if !status?.success() {
-        return None;
-    }
-    let out = reader.join().ok()?;
-    parse_version(&String::from_utf8_lossy(&out))
+    parse_version(&super::run_version_text(exe, timeout)?)
 }
 
 use marshell_protocol::hook::{PermissionBehavior, PermissionDecision, PermissionScope};
