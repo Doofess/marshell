@@ -3,6 +3,7 @@
 
 mod attention;
 mod capture;
+mod diagnostics;
 mod folder_picker;
 
 use marshell_core::server::CoreConfig;
@@ -180,6 +181,7 @@ fn main() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            diagnostics::save_diagnostics,
             folder_picker::pick_folder,
             core_endpoint,
             capture::capture_screen_region,
