@@ -79,11 +79,12 @@
   color: var(--text-1);
   font-size: var(--text-13);
 }
-.diagnostics-dialog__btn:disabled {
+.diagnostics-dialog__btn:disabled,
+.diagnostics-dialog__btn[aria-disabled="true"] {
   color: var(--text-2);
   background: var(--fill);
 }
-.diagnostics-dialog__btn:active:not(:disabled) {
+.diagnostics-dialog__btn:active:not(:disabled, [aria-disabled="true"]) {
   background: var(--selected, var(--fill-strong));
 }
 .diagnostics-dialog__btn:focus-visible,
@@ -138,7 +139,7 @@
   overflow-wrap: anywhere;
 }
 @media (hover: hover) and (pointer: fine) {
-  .diagnostics-dialog__btn:not(:disabled):hover {
+  .diagnostics-dialog__btn:not(:disabled, [aria-disabled="true"]):hover {
     background: var(--selected, var(--fill-strong));
   }
 }
@@ -149,6 +150,10 @@
   }
   .diagnostics-dialog__text {
     outline: 1px solid CanvasText;
+  }
+  .diagnostics-dialog__btn[aria-disabled="true"] {
+    color: GrayText;
+    outline-color: GrayText;
   }
   .diagnostics-dialog__btn:focus-visible,
   .diagnostics-dialog__title:focus-visible,

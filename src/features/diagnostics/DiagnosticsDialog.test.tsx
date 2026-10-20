@@ -79,4 +79,13 @@ describe("DiagnosticsDialogView", () => {
     expect(view(ON, "preparing")).toContain("Preparing the export…");
     expect(view(ON, "failed")).toContain("Couldn&#x27;t prepare the export.");
   });
+  it("keeps focus on a button that is busy: aria-disabled, never disabled, so Escape still reaches the dialog", () => {
+    const preparing = view(ON, "preparing");
+    expect(preparing).toMatch(/<button[^>]*aria-disabled="true"[^>]*>Prepare export<\/button>/);
+    expect(preparing).not.toMatch(/<button[^>]*\sdisabled[^>]*>Prepare export/);
+    const saving = renderToStaticMarkup(<DiagnosticsDialogView logging={ON} preview={PREVIEW} viewing={null} saving {...handlers} />);
+    expect(saving).toMatch(/<button[^>]*aria-disabled="true"[^>]*>Save…<\/button>/);
+    expect(saving).not.toMatch(/<button[^>]*\sdisabled[^>]*>Save…/);
+    expect(view(ON, PREVIEW)).not.toContain("aria-disabled");
+  });
 });

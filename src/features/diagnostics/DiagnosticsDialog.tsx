@@ -23,7 +23,9 @@ export type DiagnosticsHandlers = {
 /**
  * Tools → Diagnostics, as a modal dialog like Agents: the detailed-logs switch and a previewed export. Presentational:
  * `DiagnosticsDialog` fetches and acts, this draws. Focus: on open the title; opening a file moves it to the text, and
- * Back to the files moves it to that file's View button.
+ * Back to the files moves it to that file's View button. A button that is busy (Prepare while it builds, Save while the native
+ * dialog is open) is `aria-disabled`, not `disabled`: a disabled button that has focus drops it to the page, and then Escape
+ * and Tab no longer reach the dialog. The handlers ignore a press while busy.
  */
 export function DiagnosticsDialogView({
   logging,
@@ -148,11 +150,11 @@ export function DiagnosticsDialogView({
                 )}
                 <div className="diagnostics-dialog__actions">
                   {files && (
-                    <button type="button" className="diagnostics-dialog__btn" disabled={saving} onClick={on.onSave}>
+                    <button type="button" className="diagnostics-dialog__btn" aria-disabled={saving || undefined} onClick={on.onSave}>
                       Save…
                     </button>
                   )}
-                  <button type="button" className="diagnostics-dialog__btn" disabled={preview === "preparing"} onClick={on.onPrepare}>
+                  <button type="button" className="diagnostics-dialog__btn" aria-disabled={preview === "preparing" || undefined} onClick={on.onPrepare}>
                     {files ? "Prepare again" : "Prepare export"}
                   </button>
                 </div>
@@ -204,6 +206,7 @@ export function DiagnosticsDialog({ endpoint, onClose, onNotice }: { endpoint: E
   };
 
   const prepare = async () => {
+    if (preview === "preparing") return;
     setViewing(null);
     setPreview("preparing");
     try {
