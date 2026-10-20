@@ -40,6 +40,8 @@ pub struct Entry {
     /// Which spawn of this tab is current. A process reports its exit with the generation it
     /// started with, so an old process (killed by a restart) cannot mark the new one Exited.
     pub generation: u64,
+    /// The ids of the subagents the agent reports running. Not serialized; the row shows its size.
+    running: std::collections::BTreeSet<String>,
 }
 
 impl Entry {
@@ -49,6 +51,7 @@ impl Entry {
         self.info.live = None;
         self.info.activity = None;
         self.info.status_note = None;
+        self.running.clear();
     }
 }
 
@@ -147,6 +150,7 @@ impl Registry {
             },
             spec: relaunch,
             generation,
+            running: Default::default(),
         });
         self.tx.send_replace(state.snapshot());
         number
@@ -184,6 +188,7 @@ impl Registry {
                 },
                 spec: relaunch_of(tab),
                 generation,
+                running: Default::default(),
             });
         }
         self.tx.send_replace(state.snapshot());
@@ -455,6 +460,28 @@ impl Registry {
         {
             entry.info.mode = Some(mode);
             entry.spec.mode = Some(mode);
+            self.tx.send_replace(state.snapshot());
+        }
+    }
+
+    /// Follows the subagents the agent reports: folds the hook body into the tab's running set and,
+    /// when it changed, sets the live status's count to the set's size. Applied only to an open
+    /// Running row. Broadcasts once per change.
+    pub fn update_subagents(&self, tab_id: &str, body: &serde_json::Value) {
+        let mut state = self.state.lock().unwrap();
+        if let Some(entry) = state.open.iter_mut().find(|e| e.info.tab_id == tab_id)
+            && entry.info.state == SessionState::Running
+            && crate::agents::claude::status::fold_subagents(&mut entry.running, body)
+        {
+            let count = entry.running.len() as u32;
+            let at_ms = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |d| d.as_millis() as u64);
+            let live = entry
+                .info
+                .live
+                .get_or_insert_with(|| crate::agents::claude::status::blank(at_ms));
+            live.subagents = count;
             self.tx.send_replace(state.snapshot());
         }
     }
@@ -1338,6 +1365,39 @@ mod tests {
         // A fold that has nothing to say leaves it.
         reg.update_live("a", |_| None);
         assert_eq!(row(&reg, "a").live, Some(live(LiveState::Done)));
+    }
+
+    #[test]
+    fn subagent_count_follows_the_running_set_and_clears_with_the_process() {
+        let reg = Registry::new();
+        reg.reserve("a", relaunch("A"));
+        let mut rx = reg.subscribe();
+        let start = |id: &str| serde_json::json!({ "hook_event_name": "SubagentStart", "agent_id": id });
+        let count = |reg: &Registry| row(reg, "a").live.map(|l| l.subagents);
+        reg.update_subagents("a", &start("x"));
+        assert_eq!(count(&reg), Some(1));
+        assert!(rx.has_changed().unwrap());
+        rx.borrow_and_update();
+        reg.update_subagents("a", &start("y"));
+        assert_eq!(count(&reg), Some(2));
+        assert!(rx.has_changed().unwrap());
+        rx.borrow_and_update();
+        // A repeat of a known id, or an unknown tab, changes nothing and says nothing.
+        reg.update_subagents("a", &start("y"));
+        reg.update_subagents("nope", &start("z"));
+        assert!(!rx.has_changed().unwrap());
+        // A restart clears the set: the next Start counts 1.
+        reg.begin_restart("a", SessionMode::Plan).unwrap();
+        assert_eq!(count(&reg), None);
+        reg.update_subagents("a", &start("w"));
+        assert_eq!(count(&reg), Some(1));
+        // The process exiting clears it, and an exited row takes no more.
+        let current = reg.state.lock().unwrap().open[0].generation;
+        reg.mark_exited("a", current, 0);
+        assert_eq!(count(&reg), None);
+        assert!(reg.state.lock().unwrap().open[0].running.is_empty());
+        reg.update_subagents("a", &start("v"));
+        assert_eq!(count(&reg), None);
     }
 
     #[test]

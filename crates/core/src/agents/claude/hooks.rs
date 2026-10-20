@@ -16,13 +16,14 @@ use std::path::{Path, PathBuf};
 pub const TAG: &str = "mshl1";
 
 /// The events whose hooks carry live status, in the order they are installed.
-pub const STATUS_EVENTS: [&str; 8] = [
+pub const STATUS_EVENTS: [&str; 9] = [
     "SessionStart",
     "UserPromptSubmit",
     "PreToolUse",
     "PostToolUse",
     "Notification",
     "Stop",
+    "SubagentStart",
     "SubagentStop",
     "SessionEnd",
 ];
@@ -424,7 +425,10 @@ pub fn install_plan(
     let ours = statusline_command(home);
     let mut chain_edit = None;
     let line = settings.get("statusLine").filter(|l| !l.is_null());
-    let how = "Adds 8 hook entries so Marshell can show what Claude Code is doing";
+    let how = format!(
+        "Adds {} hook entries so Marshell can show what Claude Code is doing",
+        STATUS_EVENTS.len()
+    );
     let mut tail = "";
     match line {
         Some(line) if line_is_ours(line) => {
@@ -768,6 +772,58 @@ mod tests {
         assert_eq!(v["hooks"]["Stop"][0]["hooks"][0]["timeout"], 5);
     }
 
+    #[test]
+    fn an_install_without_subagent_start_is_partial() {
+        let (_keep, home) = scratch_home(true);
+        // The settings an install made before SubagentStart joined the list.
+        let old: Vec<&str> = STATUS_EVENTS.into_iter().filter(|e| *e != "SubagentStart").collect();
+        assert_eq!(old.len(), 8);
+        let mut hooks = serde_json::Map::new();
+        for event in &old {
+            hooks.insert((*event).into(), json!([{ "hooks": [hook_entry(&home, event)] }]));
+        }
+        let settings =
+            json!({ "hooks": hooks, "statusLine": { "type": "command", "command": statusline_command(&home) } });
+        let chain = json!({ "statusLine": { "type": "command", "command": "echo hi" } });
+        let found = inspect(&settings, Some(&chain), &home);
+        assert_eq!(found.install, HookInstall::Partial);
+
+        let before = Files {
+            settings: Some(settings.to_string()),
+            chain: Some(chain.to_string()),
+        };
+        // The install replaces Marshell's own entries, so the new group is the only change to
+        // the result: every event has one group and SubagentStart is the one that is new.
+        let after = installed_over(&before, &home);
+        let v = after.settings_value();
+        assert_eq!(ours_count(&v), STATUS_EVENTS.len());
+        assert_eq!(
+            v["hooks"]["SubagentStart"],
+            json!([{ "hooks": [hook_entry(&home, "SubagentStart")] }])
+        );
+        for event in &old {
+            assert_eq!(v["hooks"][*event].as_array().unwrap().len(), 1, "{event}");
+        }
+        assert_eq!(
+            inspect(&v, Some(&after.chain_value()), &home).install,
+            HookInstall::Installed
+        );
+    }
+
+    #[test]
+    fn the_install_headline_counts_the_status_events() {
+        let cs = try_install(
+            &Files::settings(
+                "{}
+",
+            ),
+            BOTH,
+            &home(),
+        )
+        .unwrap();
+        assert!(cs.reason.starts_with("Adds 9 hook entries"), "{}", cs.reason);
+    }
+
     fn permission_entry() -> Value {
         json!({
             "type": "command", "command": bridge(),
@@ -904,7 +960,7 @@ mod tests {
     fn install_creates_a_missing_settings_file() {
         let (cs, after) = install(&Files::default(), BOTH);
         assert!(cs.edits.iter().all(|e| e.expected_hash.is_none()));
-        assert_eq!(ours_count(&after.settings_value()), 8);
+        assert_eq!(ours_count(&after.settings_value()), STATUS_EVENTS.len());
     }
 
     #[test]
@@ -981,7 +1037,7 @@ mod tests {
             after.settings_value()["statusLine"],
             before.settings_value()["statusLine"]
         );
-        assert_eq!(ours_count(&after.settings_value()), 8);
+        assert_eq!(ours_count(&after.settings_value()), STATUS_EVENTS.len());
     }
 
     #[test]
@@ -991,7 +1047,7 @@ mod tests {
         let original_chain = once.chain_value();
         let (cs, twice) = install(&once, BOTH);
         let v = twice.settings_value();
-        assert_eq!(ours_count(&v), 8);
+        assert_eq!(ours_count(&v), STATUS_EVENTS.len());
         assert_eq!(v["hooks"]["Stop"].as_array().unwrap().len(), 2);
         assert_eq!(v["hooks"]["Stop"][0], before.settings_value()["hooks"]["Stop"][0]);
         assert_eq!(v["statusLine"]["command"], ours_statusline());
@@ -1006,14 +1062,14 @@ mod tests {
             settings: Some(apply_for(&cs, &before.settings)),
             chain: None,
         };
-        assert_eq!(ours_count(&other_files.settings_value()), 8);
+        assert_eq!(ours_count(&other_files.settings_value()), STATUS_EVENTS.len());
         let other_files = Files {
             chain: Some(json!({ "statusLine": before.settings_value()["statusLine"] }).to_string()),
             ..other_files
         };
         let (cs, moved) = install(&other_files, BOTH);
         let v = moved.settings_value();
-        assert_eq!(ours_count(&v), 8);
+        assert_eq!(ours_count(&v), STATUS_EVENTS.len());
         assert!(v["hooks"].to_string().contains(&bridge()));
         assert!(!v["hooks"].to_string().contains("old home"));
         assert!(pointers(&cs, &chain_path()).is_empty());
@@ -1089,7 +1145,7 @@ mod tests {
         let (cs, again) = install(&moved, BOTH);
         let v = again.settings_value();
         assert_eq!(v["statusLine"]["command"], ours_statusline());
-        assert_eq!(ours_count(&v), 8);
+        assert_eq!(ours_count(&v), STATUS_EVENTS.len());
         assert!(pointers(&cs, &sfile()).contains(&"/statusLine/command".to_string()));
         // The chain already holds the user's line: it stays as it is.
         assert!(pointers(&cs, &chain_path()).is_empty());

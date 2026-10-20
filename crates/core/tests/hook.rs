@@ -424,6 +424,25 @@ async fn a_hook_body_with_a_permission_mode_changes_the_row_mode() {
 }
 
 #[tokio::test]
+async fn subagent_hooks_count_the_running_subagents_on_the_row() {
+    let st = state(Some(KNOWN));
+    let app = router(st.clone());
+    let tab = start_claude(&app).await;
+    let body = |event: &str, id: &str| {
+        serde_json::to_vec(&serde_json::json!({ "hook_event_name": event, "agent_id": id })).unwrap()
+    };
+    for (event, id) in [("SubagentStart", "a"), ("SubagentStart", "b"), ("SubagentStop", "a")] {
+        assert_eq!(
+            status(&app, hook(Some("event"), Some("claude"), Some(&tab), body(event, id))).await,
+            StatusCode::NO_CONTENT
+        );
+    }
+    let count = row(&st, &tab).live.map(|l| l.subagents);
+    stop(&st, &tab);
+    assert_eq!(count, Some(1));
+}
+
+#[tokio::test]
 async fn the_switch_off_for_claude_keeps_the_launch_mode() {
     let st = state(Some(KNOWN));
     let app = router(st.clone());

@@ -169,7 +169,11 @@ async fn plan_then_apply_writes_the_hooks() {
 
     let written: Value = serde_json::from_str(&std::fs::read_to_string(&e.settings).unwrap()).unwrap();
     assert_eq!(written["model"], "opus");
-    assert_eq!(written["hooks"].as_object().unwrap().len(), 8, "{written}");
+    assert_eq!(
+        written["hooks"].as_object().unwrap().len(),
+        marshell_core::agents::claude::hooks::STATUS_EVENTS.len(),
+        "{written}"
+    );
 
     let (_, setup) = get(&e.app, "/v1/agents/claude/setup").await;
     assert_eq!(setup["settings_state"], "ok", "{setup}");

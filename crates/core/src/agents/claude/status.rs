@@ -37,7 +37,7 @@ pub fn ring_level(pct: f32) -> RingLevel {
 }
 
 /// The status a session has before anything is known.
-fn blank(now_ms: u64) -> LiveStatus {
+pub(crate) fn blank(now_ms: u64) -> LiveStatus {
     LiveStatus {
         state: LiveState::Idle,
         phrase: String::new(),
@@ -50,6 +50,24 @@ fn blank(now_ms: u64) -> LiveStatus {
         five_hour_resets_at: None,
         seven_day_pct: None,
         subagents: 0,
+    }
+}
+
+/// Folds a hook body into the set of subagent ids that are running. `SubagentStart` adds its
+/// `agent_id`, `SubagentStop` takes it out, and the main `Stop` or `SessionEnd` empties the set.
+/// Anything else, or a Start or Stop without a string `agent_id`, changes nothing. True when the
+/// set changed.
+pub fn fold_subagents(running: &mut std::collections::BTreeSet<String>, body: &Value) -> bool {
+    let id = body.get("agent_id").and_then(Value::as_str);
+    match body.get("hook_event_name").and_then(Value::as_str) {
+        Some("SubagentStart") => id.is_some_and(|id| running.insert(id.to_string())),
+        Some("SubagentStop") => id.is_some_and(|id| running.remove(id)),
+        Some("Stop" | "SessionEnd") => {
+            let had = !running.is_empty();
+            running.clear();
+            had
+        }
+        _ => false,
     }
 }
 
@@ -512,5 +530,37 @@ mod tests {
         assert_eq!(ring_level(70.0), RingLevel::Yellow);
         assert_eq!(ring_level(89.9), RingLevel::Yellow);
         assert_eq!(ring_level(90.0), RingLevel::Red);
+    }
+
+    #[test]
+    fn subagents_count_running_ids() {
+        use std::collections::BTreeSet;
+        let mut set = BTreeSet::new();
+        let ev = |name: &str, id: Option<Value>| match id {
+            Some(id) => json!({ "hook_event_name": name, "agent_id": id }),
+            None => json!({ "hook_event_name": name }),
+        };
+        let ids = |s: &BTreeSet<String>| s.iter().cloned().collect::<Vec<_>>();
+        assert!(fold_subagents(&mut set, &ev("SubagentStart", Some(json!("a")))));
+        assert_eq!(ids(&set), ["a"]);
+        assert!(fold_subagents(&mut set, &ev("SubagentStart", Some(json!("b")))));
+        assert_eq!(ids(&set), ["a", "b"]);
+        assert!(!fold_subagents(&mut set, &ev("SubagentStart", Some(json!("a")))));
+        assert!(fold_subagents(&mut set, &ev("SubagentStop", Some(json!("a")))));
+        assert_eq!(ids(&set), ["b"]);
+        assert!(!fold_subagents(&mut set, &ev("SubagentStop", Some(json!("zzz")))));
+        assert!(!fold_subagents(&mut set, &ev("PreToolUse", Some(json!("q")))));
+        // No agent_id, or one that is not a string: nothing changes.
+        for bad in [None, Some(json!(7)), Some(json!(null))] {
+            assert!(!fold_subagents(&mut set, &ev("SubagentStart", bad.clone())));
+            assert!(!fold_subagents(&mut set, &ev("SubagentStop", bad)));
+        }
+        assert_eq!(ids(&set), ["b"]);
+        assert!(fold_subagents(&mut set, &ev("Stop", None)));
+        assert!(set.is_empty());
+        assert!(!fold_subagents(&mut set, &ev("Stop", None)));
+        fold_subagents(&mut set, &ev("SubagentStart", Some(json!("c"))));
+        assert!(fold_subagents(&mut set, &ev("SessionEnd", None)));
+        assert!(set.is_empty());
     }
 }

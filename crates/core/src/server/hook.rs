@@ -127,6 +127,7 @@ async fn fold_live(st: &AppState, role: HookRole, tab: &str, body: &serde_json::
                     .update_live(tab, |prev| Some(fold_statusline(prev, body, at_ms)));
             } else {
                 st.registry().update_live(tab, |prev| fold_event(prev, body, at_ms));
+                st.registry().update_subagents(tab, body);
                 if let Some(mode) = mode_of(body) {
                     st.registry().set_live_mode(tab, mode);
                 }
