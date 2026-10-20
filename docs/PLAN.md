@@ -260,7 +260,7 @@ Decided 2026-10-15: **Marshell sets the mode**, the same five for every agent CL
 
 **First run (4 screens, under 60 s):**
 1. **Detected:** CLIs found, with versions, and "Not installed" rows.
-2. **Consent, one card per CLI**, in plain words. Example: "Add 9 hook entries and chain your status line in `C:\Users\Home Office\.claude\settings.json`."
+2. **Consent, one card per CLI**, in plain words. Example: "Add 10 hook entries and chain your status line in `C:\Users\Home Office\.claude\settings.json`."
    - Toggles per capability: status, approve-from-anywhere, status line.
    - "View exact changes" opens the unified diff.
    - The backup path is shown.
