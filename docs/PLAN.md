@@ -918,6 +918,8 @@ Decisions from the 2026-10-10 coverage audit (`docs/superpowers/plan-coverage-au
        - **3c2 Live status.** Events normalised into live status, the context and plan rings, the event recap, version gating and the pty fallback.
      - **3d Approve from anywhere.** Live approve cards with the risk check, the needs-you lane and live region, Peek, the taskbar badge and flash, the needs-you sound, and the security review gate.
      - **3e History and diagnostics.** The transcript archive, the SQLite index with its check and rebuild on start, Resume, `tracing` logs with rotation and redaction, "Export diagnostics", the perf panel, and the code-signing checklist.
+       - **3e1 History.** The transcript archive, the SQLite sessions index with its check and rebuild on start, and Resume by session id.
+       - **3e2 Diagnostics.** `tracing` logs with rotation and redaction, "Export diagnostics", the perf panel, and the code-signing checklist.
      - **3f Folder picker** (added 2026-10-18, may run any time after 3a). The launcher's folder field accepts a typed path and opens the OS folder picker.
    - **Slice 3a decisions (2026-10-18).**
      1. The spikes reach a real Claude Code through a scratch folder's `.claude/settings.local.json`, so `~/.claude` and its login stay untouched. Trusting that folder is part of the check, in a session started for it.
@@ -970,6 +972,12 @@ Decisions from the 2026-10-10 coverage audit (`docs/superpowers/plan-coverage-au
      7. Peek shows the session's last 30 rows from the core's screen parser as plain monospace text, without colours, through a new token-guarded route.
      8. The taskbar overlay shows the needs-you count whenever it is above 0. The window flashes and the sound plays only when a session starts needing you while Marshell isn't focused. Muted sessions don't flash or sound.
      9. The needs-you sound is Windows' own notification sound (`PlaySound` with the `Notification.Default` alias and no fallback beep), not a tone of Marshell's own: the synthesised chime sounded harsh in the live check. It follows the user's sound scheme and volume, stays on by default, and the Settings switch still mutes it. rodio is dropped from 3d; macOS and Linux get their system sound when those platforms are built (2026-10-19, after the live check).
+   - **Slice 3e decisions (2026-10-20).**
+     1. 3e is split into 3e1 History and 3e2 Diagnostics, each with its own plan and PR.
+     2. The archive copies Claude Code transcripts of sessions run in a Marshell tab, found through the `transcript_path` and `session_id` its hooks send. The zstd copy is refreshed on every `Stop` and at `SessionEnd`, so a crash loses at most the turn in progress, and the copy outlives Claude's own cleanup after `cleanupPeriodDays`. Codex and other agents follow when their adapters land.
+     3. In 3e the index holds sessions and their chains only (agent, session id, tab, folder, times, archive path, the tab's previous session). Parsing turns, tool calls, files touched and the FTS5 search waits for phase 5, which has the UI that uses them.
+     4. Resume and Restart run `claude --resume <session id>` when the tab's session id is known, so two sessions in one folder each resume their own conversation. Without one they keep `--continue`.
+     5. Each archive copy has a `<session>.meta.json` sidecar beside it, and the index is rebuilt from the sidecars, never by parsing the transcript, whose format is internal to Claude Code.
    - **Slice 3f decisions (2026-10-18).**
      1. One click on the folder chip opens the field as now. Typing filters known folders and also accepts a full path in the running OS's syntax, offered as a "Use <path>" row. A "Browse…" row at the end of the list and Ctrl+O in the field open the native picker, so mouse and keyboard reach it alike (double-click was considered and dropped: the first click already swaps the chip for a field, and it has no keyboard route).
      2. The native dialog comes from `tauri-plugin-dialog` (approved as a new dependency), with a capability limited to the folder-open dialog. Linux and macOS get it from the same plugin later.
