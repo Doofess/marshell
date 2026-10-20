@@ -19,10 +19,13 @@ use tracing_subscriber::{Layer, Registry, fmt, reload};
 /// One log file's size cap, and how many files (the log and its numbered older copies) are kept.
 const MAX_BYTES: u64 = 2 * 1024 * 1024;
 const KEEP: usize = 5;
+const ROTATION_RETRY_BYTES: u64 = 64 * 1024;
 
 struct Current {
     file: Option<File>,
     len: u64,
+    retry_at: u64,
+    recover: bool,
 }
 
 /// A log file that moves to `<name>.1`, `.2` … once the next line would take it past `max_bytes`, and drops
@@ -40,7 +43,12 @@ impl RotatingFile {
             path,
             max_bytes,
             keep: keep.max(1),
-            current: Mutex::new(Current { file: None, len: 0 }),
+            current: Mutex::new(Current {
+                file: None,
+                len: 0,
+                retry_at: 0,
+                recover: true,
+            }),
         }
     }
 
@@ -59,11 +67,18 @@ impl RotatingFile {
         Ok((file, len))
     }
 
-    /// Closes the log, drops the oldest copy and shifts the others up by one. The caller holds the lock.
-    fn rotate(&self, current: &mut Current) -> io::Result<()> {
-        // Closed first: Windows will not rename a file this process still has open for writing.
-        current.file = None;
-        current.len = 0;
+    fn rotating(&self) -> PathBuf {
+        let mut name = self.path.file_name().unwrap_or_default().to_os_string();
+        name.push(".rotating");
+        self.path.with_file_name(name)
+    }
+
+    /// Finishes a staged rotation, including one left by a crash. Never append to the staged file.
+    fn finish_rotation(&self) -> io::Result<()> {
+        let rotating = self.rotating();
+        if !rotating.try_exists()? {
+            return Ok(());
+        }
         if self.keep > 1 {
             let oldest = self.numbered(self.keep - 1);
             if oldest.exists() {
@@ -75,16 +90,23 @@ impl RotatingFile {
                     std::fs::rename(&from, self.numbered(n + 1))?;
                 }
             }
-            if self.path.exists() {
-                std::fs::rename(&self.path, self.numbered(1))?;
-            }
+            std::fs::rename(rotating, self.numbered(1))?;
         } else {
-            std::fs::remove_file(&self.path)?;
+            std::fs::remove_file(rotating)?;
         }
         Ok(())
     }
 
-    /// Appends one line (with its newline). A line longer than the cap is cut so no file ever goes over it.
+    /// Stages the current log before touching any older copy. The caller holds the lock and has
+    /// finished any pending rotation, so a crash's staged log cannot be overwritten.
+    fn rotate(&self, current: &mut Current) -> io::Result<()> {
+        current.file = None;
+        std::fs::rename(&self.path, self.rotating())?;
+        self.finish_rotation()
+    }
+
+    /// Appends a whole line, cutting lines longer than the cap. A refused rotation temporarily allows
+    /// the current log past the cap; retry after another 64 KiB, without dropping any incoming lines.
     pub fn write_line(&self, line: &[u8]) -> io::Result<()> {
         let mut line = line;
         let cap = usize::try_from(self.max_bytes).unwrap_or(usize::MAX);
@@ -101,11 +123,24 @@ impl RotatingFile {
             current.file = Some(file);
             current.len = len;
         }
-        if current.len > 0 && current.len + line.len() as u64 > self.max_bytes {
-            self.rotate(&mut current)?;
-            let (file, len) = self.open()?;
-            current.file = Some(file);
-            current.len = len;
+        let full = current.len > 0 && current.len + line.len() as u64 > self.max_bytes;
+        if (current.recover || full) && current.len >= current.retry_at {
+            let result = self
+                .finish_rotation()
+                .and_then(|()| if full { self.rotate(&mut current) } else { Ok(()) });
+            // Reopen even when renaming failed: retaining the old length and continuing to append
+            // is essential when a reader has opened the log without FILE_SHARE_DELETE.
+            if current.file.is_none() {
+                let (file, len) = self.open()?;
+                current.file = Some(file);
+                current.len = len;
+            }
+            current.recover = result.is_err();
+            current.retry_at = if result.is_err() {
+                current.len.saturating_add(ROTATION_RETRY_BYTES)
+            } else {
+                0
+            };
         }
         let file = current.file.as_mut().expect("the log file was just opened");
         file.write_all(line)?;
@@ -275,6 +310,72 @@ mod tests {
         }
         let newest = std::fs::read_to_string(dir.path().join("marshell.log")).unwrap();
         assert_eq!(newest.lines().last().unwrap(), "line 29 xxxxxxxxxxx");
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn a_refused_rotation_keeps_older_files_and_every_line() {
+        use std::os::windows::fs::OpenOptionsExt;
+        use windows_sys::Win32::Storage::FileSystem::{FILE_SHARE_READ, FILE_SHARE_WRITE};
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("marshell.log");
+        let log = RotatingFile::new(path.clone(), 128 * 1024, 5);
+        for n in 1..5 {
+            std::fs::write(log.numbered(n), format!("older {n}\n")).unwrap();
+        }
+        let held = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE)
+            .open(&path)
+            .unwrap();
+        let lines: Vec<_> = (0..194).map(|i| format!("{i:03} {}\n", "x".repeat(1019))).collect();
+        for line in &lines[..132] {
+            assert_eq!(line.len(), 1024);
+            log.write_line(line.as_bytes()).unwrap();
+        }
+        for n in 1..5 {
+            assert_eq!(
+                std::fs::read_to_string(log.numbered(n)).unwrap(),
+                format!("older {n}\n")
+            );
+        }
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), lines[..132].concat());
+        drop(held);
+        // A successful append does not immediately retry the refused rotation.
+        log.write_line(lines[132].as_bytes()).unwrap();
+        assert_eq!(std::fs::read_to_string(log.numbered(1)).unwrap(), "older 1\n");
+        for line in &lines[133..] {
+            log.write_line(line.as_bytes()).unwrap();
+        }
+        let files = files_in(dir.path());
+        assert_eq!(files.len(), 5);
+        assert!(!dir.path().join("marshell.log.rotating").exists());
+        let text = files
+            .iter()
+            .map(|p| std::fs::read_to_string(p).unwrap())
+            .collect::<String>();
+        for line in &lines {
+            assert_eq!(text.lines().filter(|found| *found == line.trim_end()).count(), 1);
+        }
+        assert!(std::fs::read_to_string(log.numbered(1)).unwrap().starts_with(&lines[0]));
+    }
+
+    #[test]
+    fn a_leftover_rotation_is_recovered_before_appending() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("marshell.log");
+        std::fs::write(dir.path().join("marshell.log.rotating"), "before crash\n").unwrap();
+        std::fs::write(&path, "after crash\n").unwrap();
+        let log = RotatingFile::new(path.clone(), 100, 5);
+        for n in 1..5 {
+            std::fs::write(log.numbered(n), format!("older {n}\n")).unwrap();
+        }
+        log.write_line(b"new line\n").unwrap();
+        assert_eq!(std::fs::read_to_string(log.numbered(1)).unwrap(), "before crash\n");
+        assert_eq!(std::fs::read_to_string(path).unwrap(), "after crash\nnew line\n");
+        assert_eq!(files_in(dir.path()).len(), 5);
     }
 
     #[test]
