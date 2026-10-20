@@ -48,6 +48,9 @@ pub(crate) fn collect_with(st: &AppState, redactor: &Redactor) -> Vec<BundleFile
     // An environment value is never kept, whatever it looks like; the names stay.
     let mut profiles = st.profiles_snapshot();
     for profile in &mut profiles.profiles {
+        for arg in &mut profile.command {
+            *arg = redactor.redact(arg).into_owned();
+        }
         for (_, value) in &mut profile.env {
             *value = "<removed>".to_string();
         }
@@ -269,6 +272,34 @@ mod tests {
         assert!(clis[0]["version"].is_null());
         assert_eq!(about["app_version"], env!("CARGO_PKG_VERSION"));
         assert!(text_of(&files, "README.txt").starts_with("Marshell diagnostics. This holds"));
+    }
+
+    #[test]
+    fn profiles_lose_quoted_secrets() {
+        let home = tempfile::tempdir().unwrap();
+        let profile = Profile {
+            id: "p1".into(),
+            name: "work".into(),
+            command: vec![
+                "pwsh".into(),
+                "-c".into(),
+                r#"$env:MY_TOKEN="abc123secret"; claude"#.into(),
+                // A backslash in the value: after JSON escaping (`\\`) the escaped-quote rule no longer
+                // sees the closing quote, so only the argument on its own is redacted whole.
+                r#"$env:MY_API_KEY="C:\keys\hidden-9 two""#.into(),
+            ],
+            family: ShellFamily::Posix,
+            cwd: None,
+            env: Vec::new(),
+            shell_integration: true,
+            terminal_theme: None,
+            detected: false,
+        };
+        let files = collect_with(&state(home.path(), vec![profile]), &Redactor::new(None, None, None));
+        let text = text_of(&files, "profiles.json");
+        assert!(!text.contains("abc123secret"), "{text}");
+        assert!(!text.contains("hidden-9") && !text.contains("two"), "{text}");
+        serde_json::from_str::<serde_json::Value>(&text).unwrap();
     }
 
     #[test]

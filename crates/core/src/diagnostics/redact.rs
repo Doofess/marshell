@@ -10,7 +10,7 @@ use std::sync::{LazyLock, Mutex, OnceLock};
 /// Rules 2 to 5, in order: a pattern and what replaces each match.
 static RULES: LazyLock<Vec<(Regex, &'static str)>> = LazyLock::new(|| {
     let rule = |pattern: &str, with: &'static str| (Regex::new(pattern).expect("a valid redaction pattern"), with);
-    vec![
+    let mut rules = vec![
         rule(r"sk-ant-[A-Za-z0-9_-]{8,}", "<anthropic-key>"),
         rule(r"sk-(?:proj-)?[A-Za-z0-9_-]{20,}", "<openai-key>"),
         rule(r"gh[pousr]_[A-Za-z0-9]{20,}", "<github-token>"),
@@ -19,14 +19,39 @@ static RULES: LazyLock<Vec<(Regex, &'static str)>> = LazyLock::new(|| {
         rule(r"xox[abprs]-[A-Za-z0-9-]{10,}", "<slack-token>"),
         rule(r"eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}", "<jwt>"),
         rule(r"(?i)\bbearer\s+[A-Za-z0-9._~+/=-]{8,}", "Bearer <redacted>"),
-        // No leading `\b`: in `ANTHROPIC_API_KEY` the `_` (a word character) sits right before `API`, so a
-        // `\b` would never fire there. The name may carry a prefix instead, which stays in group 1.
+        // `Basic` is also an ordinary word, so a bare one needs a base64-looking value (a digit, `+`, `/` or
+        // `=` in it); after `Authorization` any value goes.
         rule(
-            r#"(?i)([A-Za-z0-9_-]*(?:api[_-]?key|access[_-]?token|token|secret|password|passwd|pwd))(["']?\s*[:=]\s*["']?)[^\s"'&,;]+"#,
-            "${1}${2}<redacted>",
+            r"(?i)(\bauthorization\W{0,8})basic\s+[A-Za-z0-9._~+/=-]{4,}",
+            "${1}Basic <redacted>",
         ),
-        rule(r"://[^/\s:@]+:[^/\s@]+@", "://<redacted>@"),
-    ]
+        rule(
+            r"(?i)\bbasic\s+[A-Za-z]*[0-9+/=][A-Za-z0-9._~+/=-]{6,}",
+            "Basic <redacted>",
+        ),
+    ];
+    for prefix in [
+        // The name may carry an environment-variable prefix; `max_tokens` is not a secret name.
+        r#"[A-Za-z0-9_-]*(?:api[_-]?key|access[_-]?token|token|secret|password|passwd|pwd)(?:\\?["'])?\s*[:=]\s*"#,
+        r"(?:^|[^A-Za-z0-9_-])--(?:api-key|apikey|token|access-token|secret|password|passwd)(?:=|\s+)",
+    ] {
+        // Keep the delimiters (including JSON escaping), replacing the entire quoted value first.
+        for (quote, body) in [
+            (r#"\\""#, r#"[^\\]*(?:\\[^"\\][^\\]*)*"#),
+            (r"\\'", r"[^\\]*(?:\\[^'\\][^\\]*)*"),
+            ("\"", r#"[^"\\]*(?:\\.[^"\\]*)*"#),
+            ("'", r"[^'\\]*(?:\\.[^'\\]*)*"),
+        ] {
+            rules.push(rule(
+                &format!("(?i)({prefix})({quote}){body}({quote})"),
+                "${1}${2}<redacted>${3}",
+            ));
+        }
+        rules.push(rule(&format!(r#"(?i)({prefix})[^\s"'\\&,;]+"#), "${1}<redacted>"));
+    }
+    // Greedy within the authority: a password may itself contain `@`.
+    rules.push(rule(r"://[^/\s:@]+:[^/\s?#]+@", "://<redacted>@"));
+    rules
 });
 
 /// A folder to hide: the matcher and what replaces it.
@@ -176,6 +201,62 @@ mod tests {
 
     fn plain() -> Redactor {
         Redactor::new(None, None, None)
+    }
+
+    #[test]
+    fn redacts_quoted_and_escaped_values() {
+        for input in [
+            r#"$env:MY_TOKEN=\"abc123secret\""#,
+            r#""password": "hunter 2 two""#,
+            r"secret='hunter 2 two'",
+            r"secret=\'hunter 2 two\'",
+        ] {
+            let out = plain().redact(input).into_owned();
+            for secret in ["abc123secret", "hunter", "2 two"] {
+                assert!(!out.contains(secret), "{input} -> {out}");
+            }
+        }
+        assert_eq!(plain().redact("max_tokens: 4096"), "max_tokens: 4096");
+    }
+
+    #[test]
+    fn redacts_secret_flags() {
+        for input in [
+            "--api-key abc123",
+            "--token abc123",
+            "--password=abc123",
+            "--apikey abc123",
+            "--access-token abc123",
+            "--secret abc123",
+            "--passwd abc123",
+            r#"--token "abc123 with spaces""#,
+            r#"--secret=\"abc123 with spaces\""#,
+        ] {
+            let out = plain().redact(input).into_owned();
+            assert!(!out.contains("abc123"), "{input} -> {out}");
+            assert!(!out.contains("with spaces"), "{input} -> {out}");
+        }
+        assert_eq!(plain().redact("--verbose abc"), "--verbose abc");
+    }
+
+    #[test]
+    fn redacts_basic_authorization() {
+        assert_eq!(
+            plain().redact("Authorization: Basic dXNlcjpwYXNzd29yZA=="),
+            "Authorization: Basic <redacted>"
+        );
+        assert_eq!(plain().redact("Basic dXNlcjpwYXNzd29yZA=="), "Basic <redacted>");
+        assert_eq!(
+            plain().redact("basic configuration of the app"),
+            "basic configuration of the app"
+        );
+    }
+
+    #[test]
+    fn redacts_url_password_with_at() {
+        let out = plain().redact("https://user:p@ss@host/x");
+        assert!(!out.contains("ss@host"), "{out}");
+        assert_eq!(out, "https://<redacted>@host/x");
     }
 
     #[test]
