@@ -50,6 +50,9 @@ describe("toDetail", () => {
 });
 
 describe("laneEntries", () => {
+  it("does not add a terminal fallback while a vanished card is sending", () => {
+    expect(laneEntries([], [row({ status: "needs-permission" })], NOW, new Set(["tab-a"]))).toEqual([]);
+  });
   it("adds a terminal-only entry for a needs-you row with no view", () => {
     const e = laneEntries([], [row({ status: "needs-question", phrase: "Pick a region", waitingMs: 9000 })], NOW);
     expect(e).toHaveLength(1);

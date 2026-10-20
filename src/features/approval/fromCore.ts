@@ -49,12 +49,12 @@ const WAITING = new Set(["needs-permission", "needs-question"]);
  * Everything that needs the person, oldest first: every held request, plus a one-liner for each session that is waiting with no
  * held request (its CLI asks in its own terminal). This list is the needs-you count everywhere.
  */
-export function laneEntries(views: PermissionView[], rows: RowModel[], now: number): ApprovalRequest[] {
+export function laneEntries(views: PermissionView[], rows: RowModel[], now: number, sendingTabs: ReadonlySet<string> = new Set()): ApprovalRequest[] {
   const byTab = new Map(rows.map((r) => [r.id, r]));
   const held = new Set(views.map((v) => v.tab));
   const entries = views.map((v) => toRequest(v, byTab.get(v.tab), now));
   for (const row of rows) {
-    if (!WAITING.has(row.status) || held.has(row.id)) continue;
+    if (!WAITING.has(row.status) || held.has(row.id) || sendingTabs.has(row.id)) continue;
     entries.push({
       id: `terminal-${row.id}`,
       tab: row.id,

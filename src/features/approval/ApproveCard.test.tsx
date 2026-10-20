@@ -102,7 +102,7 @@ describe("ApproveCard: a question", () => {
 describe("ApproveCard: after the request", () => {
   it("shows a one-line receipt, no buttons and no undo", () => {
     const h = html(APPROVALS.receipt);
-    expect(h).toContain('role="status"');
+    expect(h).not.toContain('role="status"');
     expect(h).toContain("Allowed \u00b7 npm test");
     expect(h).not.toContain("<button");
     expect(h.toLowerCase()).not.toContain("undo");

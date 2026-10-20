@@ -4,6 +4,9 @@ import { attentionStep } from "./attention";
 const e = (id: string, tab = "t1") => ({ id, tab });
 
 describe("attentionStep", () => {
+  it("counts sessions even when a tab has several requests", () => {
+    expect(attentionStep([], [e("a"), e("b")], true, new Set()).count).toBe(1);
+  });
   it("alerts for a new entry while the window is not focused", () => {
     expect(attentionStep([], [e("a")], false, new Set())).toEqual({ count: 1, alert: true });
   });

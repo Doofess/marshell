@@ -1,7 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 
 /**
- * The taskbar count is every entry; an alert needs an entry on a tab that had none, isn't muted, while Marshell isn't
+ * The taskbar counts distinct sessions; an alert needs an entry on a tab that had none, isn't muted, while Marshell isn't
  * focused. By tab, not by id: a waiting row that its held request replaces is the same moment, and alerts once.
  */
 export function attentionStep(
@@ -12,7 +12,7 @@ export function attentionStep(
 ): { count: number; alert: boolean } {
   const seen = new Set(prev.map((p) => p.tab));
   const alert = !focused && next.some((n) => !seen.has(n.tab) && !muted.has(n.tab));
-  return { count: next.length, alert };
+  return { count: new Set(next.map((n) => n.tab)).size, alert };
 }
 
 /** Calls a Tauri command, ignoring a failure: tests and a plain browser have no Tauri to answer. */

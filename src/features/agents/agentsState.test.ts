@@ -58,11 +58,18 @@ describe("consentProps for a preview that cannot be applied", () => {
     expect(p.done).toBe(false);
   });
   it("says it is already set up when nothing changes, and turns Skip into Done", () => {
-    const p = consentProps(SETUP, flow(withFiles([{ path: "C:/h/.claude/settings.json", status: { kind: "noChange" } }], false)));
+    const installed = s({ hooks: "installed" });
+    const p = consentProps(installed, flow(withFiles([{ path: "C:/h/.claude/settings.json", status: { kind: "noChange" } }], false)));
     expect(p.scenario.plan.headline).toBe("Already set up. Nothing in C:/h/.claude/settings.json changes.");
     expect(p.allow).toBe(false);
     expect(p.done).toBe(true);
-    expect(consentProps(SETUP, flow(withFiles([], false))).done).toBe(true);
+    expect(consentProps(installed, flow(withFiles([], false))).done).toBe(true);
+  });
+  it("keeps Skip and says nothing will change on a fresh setup with every switch off", () => {
+    const p = consentProps(SETUP, { ...flow(withFiles([], false)), want: { status: false, statusline: false, approve: false } });
+    expect(p.scenario.plan.headline).toBe("Nothing will change: status is off.");
+    expect(p.done).toBe(false);
+    expect(p.allow).toBe(false);
   });
   it("offers Allow for a preview that can apply", () => {
     const p = consentProps(SETUP, flow(PREVIEW));
@@ -96,6 +103,7 @@ describe("consentProps", () => {
 describe("the switches the person sets", () => {
   it("starts an upgrade with only approval requested", () => {
     expect(setupWant(s({ hooks: "installed", approve_installed: false }))).toEqual({ status: false, statusline: false, approve: true });
+    expect(installRequest(setupWant(s({ hooks: "installed", approve_installed: false })))).toEqual({ status: false, statusline: false, approve: true });
     expect(setupWant(SETUP)).toEqual(DEFAULT_WANT);
   });
   it("writes the inverse sound setting and returns the saved state", async () => {

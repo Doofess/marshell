@@ -50,7 +50,7 @@ describe("OnboardingView", () => {
   });
   it("disables the frame's Allow for a preview that cannot apply", () => {
     const noChange = { ...PREVIEW, can_apply: false, files: PREVIEW.files.map((f) => ({ ...f, diff: "", status: { kind: "noChange" as const } })) };
-    const h = view({ kind: "consent", setup: SETUP, flow: { preview: noChange, open: false, busy: false } });
+    const h = view({ kind: "consent", setup: { ...SETUP, hooks: "installed" }, flow: { preview: noChange, open: false, busy: false } });
     expect(h).toMatch(/class="onboarding__primary"[^>]*disabled/);
     expect(h).toContain("Already set up.");
     expect(h).not.toContain("consent__apply");

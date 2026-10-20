@@ -4,6 +4,7 @@ import type { CardAction } from "./arming";
 import type { ApprovalRequest } from "./types";
 import { useArming } from "./useArming";
 import { useHold } from "./useHold";
+import { receiptText, subject } from "./headline";
 
 /** How long a receipt stays, and how long its exit takes. */
 export const RECEIPT_MS = 1500;
@@ -72,12 +73,13 @@ export function displayRequest(r: ApprovalRequest, m: CardMachine): ApprovalRequ
     case "gone":
       return { ...r, state: { phase: "gone", message: m.message } };
     case "exiting": {
-      // A request that left while still waiting shows as answered elsewhere for its 140 ms.
-      const shown = m.from.phase === "pending" ? ({ phase: "receipt", verdict: "terminal" } as const) : m.from;
-      return { ...displayRequest(r, shown), leaving: true };
+      if (m.from.phase === "pending") {
+        return { ...r, state: r.state.phase === "released" ? r.state : { phase: "gone", message: `No longer waiting · ${subject(r.detail)}` }, leaving: true };
+      }
+      return { ...displayRequest(r, m.from), leaving: true };
     }
     case "removed":
-      return { ...r, state: { phase: "terminal" }, leaving: true };
+      return { ...r, state: { phase: "gone", message: `No longer waiting · ${subject(r.detail)}` }, leaving: true };
   }
 }
 
@@ -117,7 +119,7 @@ function reduceCards(cards: Tracked[], a: Action): Tracked[] {
  * Every lane entry's card life. The returned requests are what the lane draws: waiting entries, plus the receipts and exits that
  * outlast the entry itself (the core drops a request the moment it is answered). The needs-you count stays the entries.
  */
-export function useCards(entries: ApprovalRequest[]): {
+export function useCards(entries: ApprovalRequest[], onNotice?: (text: string) => void): {
   requests: ApprovalRequest[];
   /** Runs the call once for a waiting card, and moves the card through sending to its receipt. */
   answer: (id: string, verdict: Verdict, call: () => Promise<"ok" | "gone" | { conflict: string }>) => void;
@@ -126,6 +128,8 @@ export function useCards(entries: ApprovalRequest[]): {
   const latest = useRef(cards);
   latest.current = cards;
   const sending = useRef(new Set<string>());
+  const notice = useRef(onNotice);
+  notice.current = onNotice;
   useEffect(() => dispatch({ type: "sync", entries }), [entries]);
 
   const timers = useRef(new Map<string, { phase: string; handle: ReturnType<typeof setTimeout> }>());
@@ -158,8 +162,14 @@ export function useCards(entries: ApprovalRequest[]): {
     sending.current.add(id);
     dispatch({ type: "event", id, e: { type: "act", verdict } });
     call().then(
-      (r) => dispatch({ type: "event", id, e: r === "ok" ? { type: "ok" } : r === "gone" ? { type: "gone" } : { type: "conflict", text: r.conflict } }),
-      () => dispatch({ type: "event", id, e: { type: "conflict", text: UNREACHABLE_MESSAGE } }),
+      (r) => {
+        dispatch({ type: "event", id, e: r === "ok" ? { type: "ok" } : r === "gone" ? { type: "gone" } : { type: "conflict", text: r.conflict } });
+        notice.current?.(r === "gone" ? GONE_MESSAGE : r !== "ok" ? r.conflict : verdict === "terminal" ? `Answered in terminal · ${subject(card.request.detail)}` : receiptText(card.request.detail, verdict));
+      },
+      () => {
+        dispatch({ type: "event", id, e: { type: "conflict", text: UNREACHABLE_MESSAGE } });
+        notice.current?.(UNREACHABLE_MESSAGE);
+      },
     ).finally(() => sending.current.delete(id));
   }, []);
 
@@ -187,6 +197,7 @@ export function LiveCard({ request, inDrawer = false, onAnswer, onJump, onExpand
   const [expanded, setExpanded] = useState(inDrawer);
   const { armed, rearm } = useArming(`${request.id}\n${JSON.stringify(request.detail)}\n${request.alwaysRule ?? ""}`);
   const hadFocus = useRef(false);
+  const element = useRef<HTMLDivElement>(null);
   const restore = useRef(onRestoreFocus);
   restore.current = onRestoreFocus;
   useEffect(
@@ -202,7 +213,8 @@ export function LiveCard({ request, inDrawer = false, onAnswer, onJump, onExpand
     }
     onAnswer(request, a);
   };
-  const hold = useHold(() => reply("allow"));
+  const canAnswer = armed && !busy && request.state.phase === "pending";
+  const hold = useHold(() => reply("allow"), canAnswer, () => element.current?.contains(document.activeElement) === true);
   const onAction = (a: CardAction | `answer:${number}`) => {
     switch (a) {
       case "allow":
@@ -224,8 +236,12 @@ export function LiveCard({ request, inDrawer = false, onAnswer, onJump, onExpand
     }
   };
   return (
-    <div className="live-card" onFocus={() => (hadFocus.current = true)} onBlur={() => (hadFocus.current = false)}>
-      <ApproveCard request={request} expanded={expanded} armed={armed && !busy} holdProgress={hold.progress} onAction={onAction} onHoldEnd={hold.cancel} onFocus={rearm} />
+    <div ref={element} className="live-card" onFocus={() => (hadFocus.current = true)} onBlur={(e) => {
+      if (e.currentTarget.contains(e.relatedTarget)) return;
+      hadFocus.current = false;
+      hold.cancel();
+    }}>
+      <ApproveCard request={request} expanded={expanded} armed={canAnswer} holdProgress={hold.progress} onAction={onAction} onHoldStart={hold.begin} onHoldEnd={hold.cancel} onFocus={rearm} />
     </div>
   );
 }

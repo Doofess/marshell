@@ -92,10 +92,16 @@ describe("AgentsDialogView", () => {
   });
   it("renders no Allow for a preview with nothing to change, and the card's button reads Done", () => {
     const noChange = { ...PREVIEW, can_apply: false, files: PREVIEW.files.map((f) => ({ ...f, diff: "", status: { kind: "noChange" as const } })) };
-    const h = view(SETUP, { kind: "setup", flow: { preview: noChange, open: false, busy: false } });
+    const h = view({ ...SETUP, hooks: "installed" }, { kind: "setup", flow: { preview: noChange, open: false, busy: false } });
     expect(h).not.toContain("consent__apply");
     expect(h).toContain("Already set up. Nothing in C:/h/.claude/settings.json changes.");
     expect(h).toMatch(/consent__skip[^>]*>Done</);
+  });
+  it("keeps Skip for an empty fresh setup", () => {
+    const h = view(SETUP, { kind: "setup", flow: { preview: { ...PREVIEW, can_apply: false, files: [] }, open: false, busy: false, want: { status: false, approve: false, statusline: false } } });
+    expect(h).toContain("Nothing will change: status is off.");
+    expect(h).toMatch(/consent__skip[^>]*>Skip: use limited status</);
+    expect(h).not.toContain("Already set up");
   });
   it("renders no Allow and the refusal for a refused file", () => {
     const refused = { ...PREVIEW, can_apply: false, files: [{ ...PREVIEW.files[0]!, diff: "", status: { kind: "refused" as const, reason: "readOnly" as const, detail: "it is read-only" } }] };

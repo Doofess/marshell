@@ -4,6 +4,7 @@ import type { ApprovalRequest } from "../approval/types";
 export const LANE = { header: 28, expanded: 256, collapsed: 36, maxShare: 0.4 } as const;
 
 export const pending = (items: ApprovalRequest[]): ApprovalRequest[] => items.filter((r) => r.state.phase === "pending");
+export const pendingSessionCount = (items: ApprovalRequest[]): number => new Set(pending(items).map((r) => r.tab)).size;
 
 /** Oldest waiting first (docs/PLAN.md section 7: first in, first out). Ties break by id. */
 export function orderLane(items: ApprovalRequest[]): ApprovalRequest[] {

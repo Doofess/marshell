@@ -253,8 +253,9 @@ export function LiveApp() {
   );
   // Everything that needs the person, oldest first: the held requests and the sessions waiting in their own terminal. This list is the
   // count (lane heading, taskbar badge, announcer). The cards add the receipts and exits that outlast an entry.
-  const entries = useMemo(() => laneEntries(permissions, rows, Math.max(now, Date.now())), [permissions, rows, now]);
-  const cards = useCards(entries);
+  const [sendingRequests, setSendingRequests] = useState<Map<string, string>>(() => new Map());
+  const entries = useMemo(() => laneEntries(permissions, rows, Math.max(now, Date.now()), new Set(sendingRequests.values())), [permissions, rows, now, sendingRequests]);
+  const cards = useCards(entries, announce);
   const requests = cards.requests;
   const mutedTabs = useMemo(() => new Set(rows.filter((r) => r.muted).map((r) => r.id)), [rows]);
   const attentionEntries = useMemo(() => entries.map((e) => ({ id: e.id, tab: e.tab })), [entries]);
@@ -267,7 +268,18 @@ export function LiveApp() {
     (r: ApprovalRequest, a: Answer) => {
       if (!endpoint) return;
       const verdict = a === "deny" ? "denied" : a === "terminal" ? "terminal" : "allowed";
-      cards.answer(r.id, verdict, () => (a === "terminal" ? release(endpoint, r.id) : decide(endpoint, r.id, decisionFor(a))));
+      cards.answer(r.id, verdict, async () => {
+        setSendingRequests((current) => new Map(current).set(r.id, r.tab));
+        try {
+          return await (a === "terminal" ? release(endpoint, r.id) : decide(endpoint, r.id, decisionFor(a)));
+        } finally {
+          setSendingRequests((current) => {
+            const next = new Map(current);
+            next.delete(r.id);
+            return next;
+          });
+        }
+      });
     },
     [endpoint, cards.answer],
   );

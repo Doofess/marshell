@@ -10,7 +10,7 @@ import { Composer } from "../composer/Composer";
 import { StatusBar } from "../composer/StatusBar";
 import { APPROVALS } from "../approval/fixtures";
 import type { ApprovalRequest } from "../approval/types";
-import { pending } from "../lane/laneLayout";
+import { pendingSessionCount } from "../lane/laneLayout";
 import type { RowModel } from "../sidebar/types";
 import { ScriptedTerminal } from "../terminal/ScriptedTerminal";
 import { SHELL_SIZE, shellSession } from "../terminal/scriptedShell";
@@ -271,7 +271,7 @@ export function MainWindow({
   // No sessions at all is a real state (first run, everything closed): the window shows its empty state, never a missing row.
   const selected: RowModel | null = rows.find((r) => r.id === selectedId) ?? rows[0] ?? null;
   const empty = selected === null;
-  const waiting = pending(requests).length;
+  const waiting = pendingSessionCount(requests);
   // Focus mode hides the session header until the pointer reaches the top edge; the pane headers stay. Keyboard users leave focus mode instead.
   const [peeking, setPeeking] = useState(false);
   // Leaving focus mode with the pointer on the bar must not leave the peek set for the next time focus mode starts.

@@ -3,10 +3,39 @@ import { describe, expect, it } from "vitest";
 import { nameContainsLabel } from "../../lib/labelInName";
 import { ConsentCard } from "./ConsentCard";
 import { CONSENT } from "./fixtures";
+import { elements } from "../../test/hooks";
+import { Switch } from "../../components/Switch/Switch";
+import type { Capability } from "./consent";
 
 const on = { status: true, approve: true, statusline: true };
 
 describe("ConsentCard", () => {
+  function switches(value: typeof on, offer?: Capability[]) {
+    let tree: ReturnType<typeof ConsentCard>;
+    const changes: Array<[Capability, boolean]> = [];
+    function Capture() {
+      tree = ConsentCard({ scenario: CONSENT.claude, on: value, offer, onSwitch: (c, v) => changes.push([c, v]) });
+      return tree;
+    }
+    const html = renderToStaticMarkup(<Capture />);
+    return { html, changes, toggle: (label: string, checked: boolean) => elements(tree).find((e) => e.type === Switch && e.props.label === label)!.props.onChange(checked) };
+  }
+  it("turns live status on when approval is enabled", () => {
+    const card = switches({ status: false, approve: false, statusline: false });
+    card.toggle("Approve from anywhere", true);
+    expect(card.changes).toEqual([["status", true], ["approve", true]]);
+    expect(card.html).toContain("Approve from anywhere needs live status to know when a request is answered.");
+  });
+  it("turns approval off when live status is disabled", () => {
+    const card = switches(on);
+    card.toggle("Show status and context", false);
+    expect(card.changes).toEqual([["approve", false], ["status", false]]);
+  });
+  it("leaves the approval-only upgrade request intact", () => {
+    const card = switches({ status: false, approve: false, statusline: false }, ["approve"]);
+    card.toggle("Approve from anywhere", true);
+    expect(card.changes).toEqual([["approve", true]]);
+  });
   it("says what will change in plain words, with the backup and the way out", () => {
     const h = renderToStaticMarkup(<ConsentCard scenario={CONSENT.claude} on={on} />);
     expect(h).toContain("Add 9 hook entries and chain your status line");

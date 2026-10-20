@@ -49,6 +49,18 @@ describe("cardReducer", () => {
 
 describe("displayRequest", () => {
   const base = APPROVALS.safeBash;
+  it("says no longer waiting when an idle request vanishes without a chosen answer", () => {
+    const shown = displayRequest(base, { phase: "exiting", from: { phase: "pending" } });
+    const html = renderToStaticMarkup(<ApproveCard request={shown} />);
+    expect(html).toContain("No longer waiting");
+    expect(html).not.toContain("Answered in terminal");
+    const removed = renderToStaticMarkup(<ApproveCard request={displayRequest(base, { phase: "removed" })} />);
+    expect(removed).not.toContain("Answered in terminal");
+  });
+  it("preserves the timed-out copy when a released request leaves", () => {
+    const shown = displayRequest({ ...base, state: { phase: "released", afterMs: 120_000 } }, { phase: "exiting", from: { phase: "pending" } });
+    expect(renderToStaticMarkup(<ApproveCard request={shown} />)).toContain("Timed out after");
+  });
   it("shows a sent answer as inert, a receipt as its verdict and a gone request as its message", () => {
     expect(displayRequest(base, { phase: "sending", verdict: "allowed" })).toMatchObject({ busy: true, state: { phase: "pending" } });
     expect(displayRequest(base, { phase: "receipt", verdict: "allowed" }).state).toEqual({ phase: "decided", verdict: "allowed" });
@@ -66,13 +78,14 @@ describe("receipts", () => {
     expect(denied).toContain("Denied · npm test");
     const gone = renderToStaticMarkup(<ApproveCard request={displayRequest(APPROVALS.safeBash, { phase: "gone", message: GONE_MESSAGE })} />);
     expect(gone).toContain("This request is no longer waiting. Answer it in the terminal.");
-    expect(gone).toContain('role="status"');
+    expect(gone).not.toContain('role="status"');
   });
   it("shows the core's refusal on a card that is still waiting", () => {
     const h = renderToStaticMarkup(<ApproveCard request={displayRequest(APPROVALS.safeBash, { phase: "pending", notice: "no rule to add" })} />);
     expect(h).toContain("no rule to add");
     expect(h).toContain('data-phase="pending"');
     expect(h).toContain("<span>no rule to add</span>");
+    expect(h).not.toContain('role="alert"');
   });
 });
 

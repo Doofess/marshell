@@ -87,6 +87,9 @@ export function consentProps(s: AgentSetup, flow: InstallFlow) {
   const detection: Detection = toDetection(s);
   const files = flow.preview?.files ?? [];
   const chain = files.find((f) => /statusline-chain\.json$/.test(f.path));
+  const unchanged = Boolean(flow.preview && alreadyDone(flow.preview));
+  const installed = s.hooks !== "none" || s.approve_installed || s.chained;
+  const done = unchanged && installed;
   const plan: ConsentPlan = {
     cli: "claude",
     on,
@@ -96,10 +99,9 @@ export function consentProps(s: AgentSetup, flow: InstallFlow) {
     diff: flow.preview ? previewDiff(flow.preview) : "",
     needsTrust: false,
     chainPath: chain?.path,
-    headline: flow.preview ? (refusal(flow.preview) ?? (alreadyDone(flow.preview) ? `Already set up. Nothing in ${s.settings_path} changes.` : undefined)) : flow.error ? `Marshell will not edit ${s.settings_path}, so nothing will change.` : `Checking ${s.settings_path}…`,
+    headline: flow.preview ? (refusal(flow.preview) ?? (done ? `Already set up. Nothing in ${s.settings_path} changes.` : unchanged ? "Nothing will change: status is off." : undefined)) : flow.error ? `Marshell will not edit ${s.settings_path}, so nothing will change.` : `Checking ${s.settings_path}…`,
   };
   // Allow is for a preview the core can apply; `done` is the one that has nothing left to change, whose Skip becomes Done.
   const allow = Boolean(flow.preview?.can_apply) && !flow.conflict;
-  const done = Boolean(flow.preview) && !refusal(flow.preview!) && alreadyDone(flow.preview!);
   return { scenario: { detection, plan }, on, offer: s.hooks === "installed" ? ["approve"] as Capability[] : OFFER, open: flow.open, busy: flow.busy, error: flow.error, allow, done };
 }
