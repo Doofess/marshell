@@ -91,7 +91,7 @@ describe("SessionRow (agent mark and model)", () => {
     expect(html.slice(0, html.indexOf("session-row__cluster"))).not.toContain("status-glyph");
   });
   it("draws no separator after the model when the phrase is empty", () => {
-    const html = renderToStaticMarkup(<SessionRow row={{ ...working, status: "idle", phrase: "", model: "Opus 5.5" }} density="comfortable" />);
+    const html = renderToStaticMarkup(<SessionRow row={{ ...working, status: "idle", phrase: "", model: "Opus 5.5", subagents: undefined }} density="comfortable" />);
     const line2 = html.slice(html.indexOf("session-row__phrase"));
     expect(line2).toContain("Opus 5.5");
     expect(line2).not.toContain("session-row__sep");
@@ -170,6 +170,27 @@ describe("SessionRow (unknown values are not shown)", () => {
     expect(h).toContain("Opus 5.5");
     expect(h).toContain("2 subagents");
     expect(h).not.toContain(">–<");
+  });
+});
+
+describe("SessionRow (subagent count)", () => {
+  const row = { ...FIXTURES.find((f) => f.id === "needs-permission")!, model: "Opus 5.5", phrase: "Thinking", muted: false };
+  const text = (h: string) => h.replace(/<[^>]+>/g, "");
+  const phraseLine = (h: string) => text(h.slice(h.indexOf("session-row__phrase"), h.indexOf("</div>", h.indexOf("session-row__phrase"))));
+  // docs/PLAN.md "Sidebar rows": the second line reads like "Editing src/auth.ts · 2 subagents".
+  it("follows the phrase on the second line of a comfortable row", () => {
+    const h = renderToStaticMarkup(<SessionRow row={{ ...row, subagents: 2 }} density="comfortable" />);
+    expect(phraseLine(h)).toContain("Opus 5.5 · Thinking · 2 subagents");
+  });
+  it("says one subagent in the singular", () => {
+    const h = renderToStaticMarkup(<SessionRow row={{ ...row, subagents: 1 }} density="comfortable" />);
+    expect(text(h)).toContain("1 subagent");
+    expect(text(h)).not.toContain("1 subagents");
+  });
+  it("shows once in an expanded row, on its meta line", () => {
+    const h = renderToStaticMarkup(<SessionRow row={{ ...row, subagents: 2 }} density="expanded" />);
+    expect(text(h).split("2 subagents").length - 1).toBe(1);
+    expect(phraseLine(h)).not.toContain("subagents");
   });
 });
 

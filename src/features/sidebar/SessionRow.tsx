@@ -7,7 +7,7 @@ import type { Os } from "../../lib/keymap";
 import { RenameBox } from "./RenameBox";
 import { inRenameBox, keyboardAnchor, opensRowMenu } from "./rowMenu";
 import { togglesPane, togglesPaneKey } from "./rowPick";
-import { formatAge, formatUsage, modeCaution } from "./format";
+import { formatAge, formatUsage, modeCaution, subagentsText } from "./format";
 import { rowLabel, rowTitle } from "./labels";
 import { SESSION_NUMBER_HINT } from "./sessionNumber";
 import { splitForMiddle } from "./truncate";
@@ -79,6 +79,8 @@ export function SessionRow({
   const caution = modeCaution(row.mode);
   const usage = formatUsage(row.usage);
   // Unknown values are left out, not shown as a dash.
+  // The second line carries the count in a comfortable row; an expanded one shows it on its meta line instead.
+  const lineSubagents = density !== "expanded" && row.subagents !== undefined;
   const hasMeta = Boolean(row.model || row.effort || row.mode === "plan" || caution || row.subagents !== undefined);
   const time = row.waitingMs ?? (row.status === "done-unseen" || row.status === "done-seen" || row.status === "ended" ? row.ageMs : undefined);
   const branch = row.branch ? splitForMiddle(row.branch) : null;
@@ -195,11 +197,12 @@ export function SessionRow({
         {row.model && (
           <>
             <span className="session-row__model">{row.model}</span>{" "}
-            {(row.phrase || row.muted) && <><span className="session-row__sep">·</span>{" "}</>}
+            {(row.phrase || row.muted || lineSubagents) && <><span className="session-row__sep">·</span>{" "}</>}
           </>
         )}
         <span className="session-row__status-text">
           {row.phrase}
+          {lineSubagents && <span className="session-row__suffix">{row.phrase ? " · " : ""}{subagentsText(row.subagents!)}</span>}
           {row.muted && <span className="session-row__suffix"> · muted</span>}
         </span>
       </div>{" "}
@@ -211,7 +214,7 @@ export function SessionRow({
               {row.effort && <> <span>{row.effort}</span></>}
               {row.mode === "plan" && <> <span className="session-row__pill">Plan</span></>}
               {caution && <> <span className="session-row__caution-text">{caution}</span></>}
-              {row.subagents !== undefined && <> <span>{`${row.subagents} subagents`}</span></>}
+              {row.subagents !== undefined && <> <span>{subagentsText(row.subagents)}</span></>}
             </div>
           )}{" "}
           {row.recap && (

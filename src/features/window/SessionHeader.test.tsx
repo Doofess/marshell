@@ -32,6 +32,10 @@ describe("modeLabel / headerDanger", () => {
 
 describe("SessionHeader", () => {
   const h = renderToStaticMarkup(<SessionHeader row={row("working")} ports={["localhost:3000"]} />);
+  it("says one subagent in the singular", () => {
+    const one = renderToStaticMarkup(<SessionHeader row={{ ...row("working"), subagents: 1 }} />);
+    expect(one).toContain("1 subagent<");
+  });
   it("shows name, project and branch, mode, model and effort, subagents, context and ports in one bar", () => {
     for (const s of ["api-server", "my-app", "feat/auth-flow", "Plan", "Opus 5.5", "high", "2 subagents", "Context 42% used", "localhost:3000"]) expect(h, s).toContain(s);
   });

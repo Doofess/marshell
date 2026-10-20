@@ -39,6 +39,9 @@ export function formatUsage(u?: Usage): string | null {
   return `${formatTokens(u.inContext)} / ${formatTokens(u.window)} · ${formatTokens(u.tokensIn)} in · ${formatTokens(u.tokensOut)} out · ${formatCost(u.costUsd)}`;
 }
 
+/** The subagent count as words: "1 subagent", "2 subagents". */
+export const subagentsText = (n: number) => (n === 1 ? "1 subagent" : `${n} subagents`);
+
 /** Modes that run without asking always show a caution (docs/PLAN.md "Sidebar rows"). */
 export function modeCaution(mode?: Mode): string | null {
   switch (mode) {

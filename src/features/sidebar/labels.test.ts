@@ -54,6 +54,11 @@ describe("rowLabel", () => {
   it("keeps names that are not Latin", () => {
     expect(rowLabel({ ...base, name: "認証サーバー \u{1F680}" }).startsWith("Session 6, 認証サーバー \u{1F680} my-app")).toBe(true);
   });
+  it("reads the subagent count where a comfortable row draws it, after the phrase", () => {
+    const l = rowLabel({ ...base, model: "Opus 5.5", phrase: "Thinking", muted: false, subagents: 2 });
+    expect(l).toContain("Opus 5.5 · Thinking · 2 subagents");
+    expect(rowLabel({ ...base, model: "Opus 5.5", phrase: "Thinking", muted: false, subagents: 2 }, "expanded").split("2 subagents").length - 1).toBe(1);
+  });
   it("in the expanded row also starts with the extra lines shown there", () => {
     const l = rowLabel({ ...base, model: "Opus 5.5", effort: "high", subagents: 2, recap: { text: "Fixed the retry loop", ageMs: 120_000 } }, "expanded");
     expect(l).toContain("Opus 5.5 high 2 subagents Fixed the retry loop 2m ago");
