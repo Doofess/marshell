@@ -1,41 +1,27 @@
-import { Fragment, useEffect, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import type { Endpoint } from "../../generated/Endpoint";
 import type { PerfSnapshot } from "../../generated/PerfSnapshot";
 import { perf } from "../../lib/api/perf";
 import type { RendererKind } from "../terminal/renderer";
 import type { LatencyMeter } from "./latency";
 import { perfLines } from "./perfLines";
+import { createPerfPolling } from "./perfPolling";
 
 /** Hidden panel for the performance gate. Toggle: Ctrl+Shift+Alt+P (Cmd+Shift+Alt+P on macOS). */
-export function PerfOverlay({ meter, renderer, endpoint, tabId }: { meter: LatencyMeter; renderer: RendererKind; endpoint: Endpoint; tabId: string }) {
+export function PerfOverlay({ meter, renderer, endpoint, tabId, visible }: { meter: LatencyMeter; renderer: RendererKind; endpoint: Endpoint; tabId: string; visible: boolean }) {
   const [stats, setStats] = useState(() => meter.stats());
   const [snapshot, setSnapshot] = useState<PerfSnapshot | null>(null);
+  const polling = useMemo(() => createPerfPolling({ poll: () => perf.snapshot(endpoint), intervalMs: 1000, onSnapshot: setSnapshot }), [endpoint]);
   useEffect(() => {
+    if (!visible) return;
+    setStats(meter.stats());
     const id = setInterval(() => setStats(meter.stats()), 500);
     return () => clearInterval(id);
-  }, [meter]);
+  }, [meter, visible]);
   useEffect(() => {
-    let stopped = false;
-    let inFlight = false;
-    const poll = async () => {
-      if (inFlight) return;
-      inFlight = true;
-      try {
-        const next = await perf.snapshot(endpoint);
-        if (!stopped) setSnapshot(next);
-      } catch {
-        // Keep the last snapshot.
-      } finally {
-        inFlight = false;
-      }
-    };
-    void poll();
-    const id = setInterval(() => void poll(), 1000);
-    return () => {
-      stopped = true;
-      clearInterval(id);
-    };
-  }, [endpoint]);
+    polling.setVisible(visible);
+    return polling.stop;
+  }, [polling, visible]);
   return (
     <output className="perf-overlay" aria-live="off">
       {/* <output> holds phrasing content only, so the lines are split with <br>. */}
