@@ -12,8 +12,12 @@ pub enum RingLevel {
 }
 
 /// The permission mode a hook body reports (`permission_mode`). None for a missing field, a
-/// non-string or a value this build does not know, so the row keeps the mode it has.
+/// non-string or a value this build does not know, so the row keeps the mode it has. A subagent's
+/// own events (they carry `agent_id`) report the subagent's mode, not the session's: None too.
 pub fn mode_of(body: &Value) -> Option<SessionMode> {
+    if body.get("agent_id").is_some() {
+        return None;
+    }
     Some(match body.get("permission_mode")?.as_str()? {
         "default" | "manual" => SessionMode::Manual,
         "plan" => SessionMode::Plan,
@@ -54,19 +58,33 @@ pub(crate) fn blank(now_ms: u64) -> LiveStatus {
 }
 
 /// Folds a hook body into the set of subagent ids that are running. `SubagentStart` adds its
-/// `agent_id`, `SubagentStop` takes it out, and the main `Stop` or `SessionEnd` empties the set.
-/// Anything else, or a Start or Stop without a string `agent_id`, changes nothing. True when the
-/// set changed.
+/// `agent_id` and `SubagentStop` takes it out. The main `Stop` keeps only the subagents its
+/// `background_tasks` lists as running (Claude Code runs some in the background, past the turn's
+/// end), or empties the set when the list is missing; `SessionEnd` empties it. So a missed
+/// SubagentStop never leaves a stale count. Anything else, or a Start or Stop without a string
+/// `agent_id`, changes nothing. True when the set changed.
 pub fn fold_subagents(running: &mut std::collections::BTreeSet<String>, body: &Value) -> bool {
     let id = body.get("agent_id").and_then(Value::as_str);
+    let keep = |set: &mut std::collections::BTreeSet<String>, now: std::collections::BTreeSet<String>| {
+        let changed = *set != now;
+        *set = now;
+        changed
+    };
     match body.get("hook_event_name").and_then(Value::as_str) {
         Some("SubagentStart") => id.is_some_and(|id| running.insert(id.to_string())),
         Some("SubagentStop") => id.is_some_and(|id| running.remove(id)),
-        Some("Stop" | "SessionEnd") => {
-            let had = !running.is_empty();
-            running.clear();
-            had
+        Some("Stop") => {
+            let listed = body.get("background_tasks").and_then(Value::as_array);
+            let still = listed.into_iter().flatten().filter(|t| {
+                t.get("type").and_then(Value::as_str) == Some("subagent")
+                    && t.get("status").and_then(Value::as_str) == Some("running")
+            });
+            keep(
+                running,
+                still.filter_map(|t| t.get("id")?.as_str().map(String::from)).collect(),
+            )
         }
+        Some("SessionEnd") => keep(running, Default::default()),
         _ => false,
     }
 }
@@ -228,6 +246,13 @@ mod tests {
         assert_eq!(of(json!("somethingNew")), None);
         assert_eq!(of(json!(3)), None);
         assert_eq!(mode_of(&json!({})), None);
+    }
+
+    // A subagent's own events report its mode, which a custom agent can set for itself; the row follows the session's.
+    #[test]
+    fn mode_of_skips_a_subagents_own_events() {
+        let sub = json!({ "permission_mode": "plan", "agent_id": "a1", "hook_event_name": "PreToolUse" });
+        assert_eq!(mode_of(&sub), None);
     }
 
     fn fold(prev: Option<&LiveStatus>, body: &Value) -> LiveStatus {
@@ -530,6 +555,47 @@ mod tests {
         assert_eq!(ring_level(70.0), RingLevel::Yellow);
         assert_eq!(ring_level(89.9), RingLevel::Yellow);
         assert_eq!(ring_level(90.0), RingLevel::Red);
+    }
+
+    macro_rules! fixture_305 {
+        ($name:literal) => {
+            serde_json::from_str::<Value>(include_str!(concat!(
+                "../../../tests/fixtures/claude/2.1.305/",
+                $name,
+                ".json"
+            )))
+            .unwrap()
+        };
+    }
+
+    // Recorded on 2.1.305: Claude ran the agent in the background, so the main Stop came while it still ran.
+    #[test]
+    fn a_background_subagent_outlives_the_main_stop() {
+        use std::collections::BTreeSet;
+        let mut set = BTreeSet::new();
+        assert!(fold_subagents(&mut set, &fixture_305!("SubagentStart")));
+        assert_eq!(set.len(), 1);
+        assert!(!fold_subagents(&mut set, &fixture_305!("Stop-background")));
+        assert_eq!(set.len(), 1);
+        assert!(fold_subagents(&mut set, &fixture_305!("SubagentStop")));
+        assert!(set.is_empty());
+    }
+
+    #[test]
+    fn the_main_stop_keeps_only_the_subagents_it_lists_as_running() {
+        use std::collections::BTreeSet;
+        let mut set: BTreeSet<String> = ["a", "b", "c"].map(String::from).into();
+        let stop = json!({ "hook_event_name": "Stop", "background_tasks": [
+            { "id": "a", "type": "subagent", "status": "running" },
+            { "id": "b", "type": "subagent", "status": "completed" },
+            { "id": "s", "type": "shell", "status": "running" },
+            { "id": "d", "type": "subagent", "status": "running" },
+        ] });
+        assert!(fold_subagents(&mut set, &stop));
+        assert_eq!(set.iter().map(String::as_str).collect::<Vec<_>>(), ["a", "d"]);
+        // Without the list (an older Claude Code), the main Stop clears the set.
+        assert!(fold_subagents(&mut set, &json!({ "hook_event_name": "Stop" })));
+        assert!(set.is_empty());
     }
 
     #[test]
