@@ -92,6 +92,7 @@ pub enum SessionMode {
     AutoEdit,
     FullAuto,
     Bypass,
+    DontAsk,
 }
 
 /// Whether a terminal's background is dark or light.
@@ -876,6 +877,11 @@ mod tests {
         let req: CreateSessionRequest = serde_json::from_str(r#"{"cols":80,"rows":24,"mode":"auto-edit"}"#).unwrap();
         assert_eq!(req.mode, Some(SessionMode::AutoEdit));
         assert_eq!(serde_json::to_string(&SessionMode::FullAuto).unwrap(), r#""full-auto""#);
+        assert_eq!(serde_json::to_string(&SessionMode::DontAsk).unwrap(), r#""dont-ask""#);
+        assert_eq!(
+            serde_json::from_str::<SessionMode>(r#""dont-ask""#).unwrap(),
+            SessionMode::DontAsk
+        );
     }
 
     #[test]

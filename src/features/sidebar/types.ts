@@ -4,7 +4,8 @@ import type { GlyphKind } from "../../components/StatusGlyph/glyphs";
 
 export type { AgentId, SessionKind };
 export type Density = "comfortable" | "expanded";
-export type Mode = "manual" | "plan" | "auto-edit" | "full-auto" | "bypass";
+/** The five modes Marshell offers, and "dont-ask", a mode Claude Code can report that Marshell never offers. */
+export type Mode = "manual" | "plan" | "auto-edit" | "full-auto" | "bypass" | "dont-ask";
 export type Usage = { inContext?: number; window?: number; tokensIn?: number; tokensOut?: number; costUsd?: number };
 
 /** Phase 0 view model for one sidebar row; phase 3 maps the core's generated session types onto it. */

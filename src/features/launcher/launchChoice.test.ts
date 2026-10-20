@@ -39,6 +39,7 @@ describe("launcherSentence", () => {
 describe("options", () => {
   it("has the modes and paces the sentence uses", () => {
     expect(MODES).toEqual(["manual", "plan", "auto-edit", "full-auto", "bypass"]);
+    expect(MODES as string[]).not.toContain("dont-ask");
     expect(PACES).toEqual(["Quick", "Balanced", "Deep"]);
   });
 });

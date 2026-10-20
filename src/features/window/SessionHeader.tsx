@@ -4,17 +4,23 @@ import { ContextRing } from "../../components/ContextRing/ContextRing";
 import { SessionNumber } from "../../components/SessionNumber/SessionNumber";
 import { sessionWord, SESSION_NUMBER_HINT } from "../sidebar/sessionNumber";
 import { AuxGlyph } from "../../components/StatusGlyph/StatusGlyph";
-import { modeCaution } from "../sidebar/format";
+import { modeCaution, subagentsText } from "../sidebar/format";
 import type { Mode, RowModel } from "../sidebar/types";
 import "./SessionHeader.css";
 
 const DASH = "–";
-const MODE_LABELS: Record<Mode, string> = { manual: "Manual", plan: "Plan", "auto-edit": "Auto-edit", "full-auto": "Full auto", bypass: "Bypass" };
+const MODE_LABELS: Record<Mode, string> = { manual: "Manual", plan: "Plan", "auto-edit": "Auto-edit", "full-auto": "Full auto", bypass: "Bypass", "dont-ask": "Don't ask" };
 
 export const modeLabel = (mode?: Mode) => (mode ? MODE_LABELS[mode] : DASH);
 /** docs/PLAN.md "Sidebar rows": the header is marked red for bypass and auto, with a tint and a start-edge bar (never a box). */
-/** What the mode chip says: the mode a session started in is all Marshell knows until the CLI reports changes. */
-const startedIn = (mode: Mode) => `Started in ${modeLabel(mode)}. A change made inside the CLI isn't shown yet.`;
+/**
+ * What the mode chip says. Claude Code reports its mode in every hook event and the row follows it; for another CLI, the mode
+ * a session started in is all Marshell knows.
+ */
+const modeTitle = (agent: RowModel["agent"], mode: Mode) =>
+  agent === "claude"
+    ? `Mode: ${modeLabel(mode)}, as Claude Code last reported.`
+    : `Started in ${modeLabel(mode)}. A change made inside the CLI isn't shown yet.`;
 
 export const headerDanger = (mode?: Mode) => mode === "bypass" || mode === "full-auto";
 
@@ -42,8 +48,8 @@ export function SessionHeader({ row, ports = [], onMode }: { row: RowModel; port
         <button
           type="button"
           className="session-header__mode"
-          aria-label={startedIn(row.mode)}
-          title={startedIn(row.mode)}
+          aria-label={modeTitle(row.agent, row.mode)}
+          title={modeTitle(row.agent, row.mode)}
           aria-haspopup="menu"
           onClick={(e) => {
             const r = e.currentTarget.getBoundingClientRect();
@@ -54,12 +60,12 @@ export function SessionHeader({ row, ports = [], onMode }: { row: RowModel; port
         </button>
       )}
       {row.mode && !(onMode) && (
-        <Chip tone={caution ? "caution" : "neutral"} title={startedIn(row.mode)} label={startedIn(row.mode)}>
+        <Chip tone={caution ? "caution" : "neutral"} title={modeTitle(row.agent, row.mode)} label={modeTitle(row.agent, row.mode)}>
           {modeLabel(row.mode)}
         </Chip>
       )}
       {modelAndEffort && <span className="session-header__meta">{modelAndEffort}</span>}
-      {row.subagents !== undefined && <span className="session-header__meta">{row.subagents} subagents</span>}
+      {row.subagents !== undefined && <span className="session-header__meta">{subagentsText(row.subagents)}</span>}
       <span className="session-header__spacer" />
       <ContextRing pct={row.contextPct} />
       {ports.map((p) => (

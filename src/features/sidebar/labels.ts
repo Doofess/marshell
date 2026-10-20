@@ -1,6 +1,6 @@
 import { kindName } from "../../components/AgentMark/kinds";
 import { GLYPHS } from "../../components/StatusGlyph/glyphs";
-import { formatAge, formatUsage, modeCaution } from "./format";
+import { formatAge, formatUsage, modeCaution, subagentsText } from "./format";
 import { sessionWord } from "./sessionNumber";
 import type { Density, RowModel } from "./types";
 
@@ -24,7 +24,9 @@ const projectAndBranch = (r: RowModel) => {
  */
 export function rowLabel(r: RowModel, density: Density = "comfortable"): string {
   const time = r.waitingMs ?? (r.status === "done-unseen" || r.status === "done-seen" || r.status === "ended" ? r.ageMs : undefined);
-  const phrase = `${plain(r.phrase)}${r.muted ? " \u00b7 muted" : ""}`;
+  // A comfortable row draws the subagent count after the phrase; an expanded one draws it on its meta line.
+  const count = density !== "expanded" && r.subagents !== undefined ? subagentsText(r.subagents) : "";
+  const phrase = [plain(r.phrase), count].filter(Boolean).join(" \u00b7 ") + (r.muted ? " \u00b7 muted" : "");
   const seen: Array<string | null | undefined> = [
     r.name,
     projectAndBranch(r),
@@ -33,7 +35,7 @@ export function rowLabel(r: RowModel, density: Density = "comfortable"): string 
   ];
   const caution = modeCaution(r.mode);
   if (density === "expanded") {
-    seen.push(r.model, r.effort, r.mode === "plan" ? "Plan" : null, caution, r.subagents !== undefined ? `${r.subagents} subagents` : null);
+    seen.push(r.model, r.effort, r.mode === "plan" ? "Plan" : null, caution, r.subagents !== undefined ? subagentsText(r.subagents) : null);
     if (r.recap) seen.push(r.recap.text, `${formatAge(r.recap.ageMs)} ago`);
     seen.push(formatUsage(r.usage));
   }

@@ -40,6 +40,8 @@ pub struct Entry {
     /// Which spawn of this tab is current. A process reports its exit with the generation it
     /// started with, so an old process (killed by a restart) cannot mark the new one Exited.
     pub generation: u64,
+    /// The ids of the subagents the agent reports running. Not serialized; the row shows its size.
+    running: std::collections::BTreeSet<String>,
 }
 
 impl Entry {
@@ -49,6 +51,7 @@ impl Entry {
         self.info.live = None;
         self.info.activity = None;
         self.info.status_note = None;
+        self.running.clear();
     }
 }
 
@@ -147,6 +150,7 @@ impl Registry {
             },
             spec: relaunch,
             generation,
+            running: Default::default(),
         });
         self.tx.send_replace(state.snapshot());
         number
@@ -184,6 +188,7 @@ impl Registry {
                 },
                 spec: relaunch_of(tab),
                 generation,
+                running: Default::default(),
             });
         }
         self.tx.send_replace(state.snapshot());
@@ -444,6 +449,46 @@ impl Registry {
         }
     }
 
+    /// Follows the permission mode Claude Code reports: sets the row's mode and the mode Resume and
+    /// the next launch use. Applied only to an open Running Claude row, and only on a change: the
+    /// hooks reach any row whose process tree runs `claude`, and another agent's mode isn't theirs.
+    pub fn set_live_mode(&self, tab_id: &str, mode: SessionMode) {
+        let mut state = self.state.lock().unwrap();
+        if let Some(entry) = state.open.iter_mut().find(|e| e.info.tab_id == tab_id)
+            && entry.info.state == SessionState::Running
+            && entry.info.agent.as_deref() == Some("claude")
+            && entry.info.mode != Some(mode)
+        {
+            entry.info.mode = Some(mode);
+            entry.spec.mode = Some(mode);
+            self.tx.send_replace(state.snapshot());
+        }
+    }
+
+    /// Follows the subagents the agent reports: folds the hook body into the tab's running set and,
+    /// when it changed, sets the live status's count to the set's size. Applied only to an open
+    /// Running row that is Claude's or a plain shell's (where `claude` was typed), never another
+    /// agent's. Broadcasts once per change.
+    pub fn update_subagents(&self, tab_id: &str, body: &serde_json::Value) {
+        let mut state = self.state.lock().unwrap();
+        if let Some(entry) = state.open.iter_mut().find(|e| e.info.tab_id == tab_id)
+            && entry.info.state == SessionState::Running
+            && matches!(entry.info.agent.as_deref(), None | Some("claude"))
+            && crate::agents::claude::status::fold_subagents(&mut entry.running, body)
+        {
+            let count = entry.running.len() as u32;
+            let at_ms = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |d| d.as_millis() as u64);
+            let live = entry
+                .info
+                .live
+                .get_or_insert_with(|| crate::agents::claude::status::blank(at_ms));
+            live.subagents = count;
+            self.tx.send_replace(state.snapshot());
+        }
+    }
+
     /// Sets why a Claude Code row has no live status (a gated version, or the switch is off), or
     /// takes the note away. A note also drops the live status, so a switch turned off mid-session
     /// leaves no stale status. Applied only to an open Running row. Broadcasts only on a change.
@@ -681,6 +726,62 @@ mod tests {
         assert_eq!(row.mode, Some(SessionMode::Plan));
         reg.mark_exited("t1", second, 3);
         assert_eq!(reg.snapshot().sessions[0].state, SessionState::Exited { code: 3 });
+    }
+
+    #[test]
+    fn live_mode_updates_the_row_and_the_relaunch_spec() {
+        let reg = Registry::new();
+        let claude = Relaunch {
+            agent: Some("claude".into()),
+            mode: Some(SessionMode::Manual),
+            ..relaunch("Claude")
+        };
+        reg.reserve("c", claude);
+        reg.reserve("s", relaunch("Shell"));
+        let mut rx = reg.subscribe();
+        rx.borrow_and_update();
+
+        reg.set_live_mode("c", SessionMode::Plan);
+        assert!(rx.has_changed().unwrap());
+        rx.borrow_and_update();
+        let mode_of = |tab: &str| {
+            reg.snapshot()
+                .sessions
+                .into_iter()
+                .find(|s| s.tab_id == tab)
+                .unwrap()
+                .mode
+        };
+        assert_eq!(mode_of("c"), Some(SessionMode::Plan));
+        // The same mode again changes nothing and broadcasts nothing.
+        reg.set_live_mode("c", SessionMode::Plan);
+        assert!(!rx.has_changed().unwrap());
+        // A plain shell row has no agent: nothing changes.
+        reg.set_live_mode("s", SessionMode::Plan);
+        assert_eq!(mode_of("s"), None);
+        assert!(!rx.has_changed().unwrap());
+        // Claude's hooks reach any row whose process tree runs `claude`; another agent's mode is not Claude's to set.
+        let codex = Relaunch {
+            agent: Some("codex".into()),
+            mode: Some(SessionMode::Manual),
+            ..relaunch("Codex")
+        };
+        reg.reserve("x", codex);
+        rx.borrow_and_update();
+        reg.set_live_mode("x", SessionMode::Bypass);
+        assert_eq!(mode_of("x"), Some(SessionMode::Manual));
+        assert!(!rx.has_changed().unwrap());
+        reg.set_live_mode("nope", SessionMode::Plan);
+        assert!(!rx.has_changed().unwrap());
+
+        reg.mark_exited("c", generation_of(&reg, "c"), 0);
+        rx.borrow_and_update();
+        // A row that is not Running keeps its mode.
+        reg.set_live_mode("c", SessionMode::Bypass);
+        assert!(!rx.has_changed().unwrap());
+        // Resume reads the spec: it reopens in the mode the agent was in.
+        let (spec, _, _) = reg.begin_resume("c").unwrap();
+        assert_eq!(spec.mode, Some(SessionMode::Plan));
     }
 
     #[test]
@@ -1278,6 +1379,49 @@ mod tests {
         // A fold that has nothing to say leaves it.
         reg.update_live("a", |_| None);
         assert_eq!(row(&reg, "a").live, Some(live(LiveState::Done)));
+    }
+
+    #[test]
+    fn subagent_count_follows_the_running_set_and_clears_with_the_process() {
+        let reg = Registry::new();
+        reg.reserve("a", relaunch("A"));
+        let mut rx = reg.subscribe();
+        let start = |id: &str| serde_json::json!({ "hook_event_name": "SubagentStart", "agent_id": id });
+        let count = |reg: &Registry| row(reg, "a").live.map(|l| l.subagents);
+        reg.update_subagents("a", &start("x"));
+        assert_eq!(count(&reg), Some(1));
+        assert!(rx.has_changed().unwrap());
+        rx.borrow_and_update();
+        reg.update_subagents("a", &start("y"));
+        assert_eq!(count(&reg), Some(2));
+        assert!(rx.has_changed().unwrap());
+        rx.borrow_and_update();
+        // A repeat of a known id, or an unknown tab, changes nothing and says nothing.
+        reg.update_subagents("a", &start("y"));
+        reg.update_subagents("nope", &start("z"));
+        assert!(!rx.has_changed().unwrap());
+        // A restart clears the set: the next Start counts 1.
+        reg.begin_restart("a", SessionMode::Plan).unwrap();
+        assert_eq!(count(&reg), None);
+        reg.update_subagents("a", &start("w"));
+        assert_eq!(count(&reg), Some(1));
+        // The process exiting clears it, and an exited row takes no more.
+        let current = reg.state.lock().unwrap().open[0].generation;
+        reg.mark_exited("a", current, 0);
+        assert_eq!(count(&reg), None);
+        assert!(reg.state.lock().unwrap().open[0].running.is_empty());
+        reg.update_subagents("a", &start("v"));
+        assert_eq!(count(&reg), None);
+        // Another agent's row takes no count from Claude's hooks.
+        reg.reserve(
+            "x",
+            Relaunch {
+                agent: Some("codex".into()),
+                ..relaunch("X")
+            },
+        );
+        reg.update_subagents("x", &start("q"));
+        assert_eq!(row(&reg, "x").live, None);
     }
 
     #[test]

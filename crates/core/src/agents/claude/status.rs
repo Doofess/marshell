@@ -1,6 +1,6 @@
 //! Folds Claude Code's hook events and status line into a session's live status.
 
-use marshell_protocol::api::{LiveState, LiveStatus, Recap};
+use marshell_protocol::api::{LiveState, LiveStatus, Recap, SessionMode};
 use serde_json::Value;
 
 /// A ring's colour band.
@@ -9,6 +9,24 @@ pub enum RingLevel {
     Green,
     Yellow,
     Red,
+}
+
+/// The permission mode a hook body reports (`permission_mode`). None for a missing field, a
+/// non-string or a value this build does not know, so the row keeps the mode it has. A subagent's
+/// own events (they carry `agent_id`) report the subagent's mode, not the session's: None too.
+pub fn mode_of(body: &Value) -> Option<SessionMode> {
+    if body.get("agent_id").is_some() {
+        return None;
+    }
+    Some(match body.get("permission_mode")?.as_str()? {
+        "default" | "manual" => SessionMode::Manual,
+        "plan" => SessionMode::Plan,
+        "acceptEdits" => SessionMode::AutoEdit,
+        "auto" => SessionMode::FullAuto,
+        "bypassPermissions" => SessionMode::Bypass,
+        "dontAsk" => SessionMode::DontAsk,
+        _ => return None,
+    })
 }
 
 /// Green below 70%, yellow from 70%, red from 90%.
@@ -23,7 +41,7 @@ pub fn ring_level(pct: f32) -> RingLevel {
 }
 
 /// The status a session has before anything is known.
-fn blank(now_ms: u64) -> LiveStatus {
+pub(crate) fn blank(now_ms: u64) -> LiveStatus {
     LiveStatus {
         state: LiveState::Idle,
         phrase: String::new(),
@@ -36,6 +54,38 @@ fn blank(now_ms: u64) -> LiveStatus {
         five_hour_resets_at: None,
         seven_day_pct: None,
         subagents: 0,
+    }
+}
+
+/// Folds a hook body into the set of subagent ids that are running. `SubagentStart` adds its
+/// `agent_id` and `SubagentStop` takes it out. The main `Stop` keeps only the subagents its
+/// `background_tasks` lists as running (Claude Code runs some in the background, past the turn's
+/// end), or empties the set when the list is missing; `SessionEnd` empties it. So a missed
+/// SubagentStop never leaves a stale count. Anything else, or a Start or Stop without a string
+/// `agent_id`, changes nothing. True when the set changed.
+pub fn fold_subagents(running: &mut std::collections::BTreeSet<String>, body: &Value) -> bool {
+    let id = body.get("agent_id").and_then(Value::as_str);
+    let keep = |set: &mut std::collections::BTreeSet<String>, now: std::collections::BTreeSet<String>| {
+        let changed = *set != now;
+        *set = now;
+        changed
+    };
+    match body.get("hook_event_name").and_then(Value::as_str) {
+        Some("SubagentStart") => id.is_some_and(|id| running.insert(id.to_string())),
+        Some("SubagentStop") => id.is_some_and(|id| running.remove(id)),
+        Some("Stop") => {
+            let listed = body.get("background_tasks").and_then(Value::as_array);
+            let still = listed.into_iter().flatten().filter(|t| {
+                t.get("type").and_then(Value::as_str) == Some("subagent")
+                    && t.get("status").and_then(Value::as_str) == Some("running")
+            });
+            keep(
+                running,
+                still.filter_map(|t| t.get("id")?.as_str().map(String::from)).collect(),
+            )
+        }
+        Some("SessionEnd") => keep(running, Default::default()),
+        _ => false,
     }
 }
 
@@ -181,6 +231,28 @@ mod tests {
             )))
             .unwrap()
         };
+    }
+
+    #[test]
+    fn mode_of_maps_every_documented_value() {
+        let of = |v: Value| mode_of(&json!({ "permission_mode": v }));
+        assert_eq!(of(json!("default")), Some(SessionMode::Manual));
+        assert_eq!(of(json!("manual")), Some(SessionMode::Manual));
+        assert_eq!(of(json!("plan")), Some(SessionMode::Plan));
+        assert_eq!(of(json!("acceptEdits")), Some(SessionMode::AutoEdit));
+        assert_eq!(of(json!("auto")), Some(SessionMode::FullAuto));
+        assert_eq!(of(json!("bypassPermissions")), Some(SessionMode::Bypass));
+        assert_eq!(of(json!("dontAsk")), Some(SessionMode::DontAsk));
+        assert_eq!(of(json!("somethingNew")), None);
+        assert_eq!(of(json!(3)), None);
+        assert_eq!(mode_of(&json!({})), None);
+    }
+
+    // A subagent's own events report its mode, which a custom agent can set for itself; the row follows the session's.
+    #[test]
+    fn mode_of_skips_a_subagents_own_events() {
+        let sub = json!({ "permission_mode": "plan", "agent_id": "a1", "hook_event_name": "PreToolUse" });
+        assert_eq!(mode_of(&sub), None);
     }
 
     fn fold(prev: Option<&LiveStatus>, body: &Value) -> LiveStatus {
@@ -483,5 +555,78 @@ mod tests {
         assert_eq!(ring_level(70.0), RingLevel::Yellow);
         assert_eq!(ring_level(89.9), RingLevel::Yellow);
         assert_eq!(ring_level(90.0), RingLevel::Red);
+    }
+
+    macro_rules! fixture_305 {
+        ($name:literal) => {
+            serde_json::from_str::<Value>(include_str!(concat!(
+                "../../../tests/fixtures/claude/2.1.305/",
+                $name,
+                ".json"
+            )))
+            .unwrap()
+        };
+    }
+
+    // Recorded on 2.1.305: Claude ran the agent in the background, so the main Stop came while it still ran.
+    #[test]
+    fn a_background_subagent_outlives_the_main_stop() {
+        use std::collections::BTreeSet;
+        let mut set = BTreeSet::new();
+        assert!(fold_subagents(&mut set, &fixture_305!("SubagentStart")));
+        assert_eq!(set.len(), 1);
+        assert!(!fold_subagents(&mut set, &fixture_305!("Stop-background")));
+        assert_eq!(set.len(), 1);
+        assert!(fold_subagents(&mut set, &fixture_305!("SubagentStop")));
+        assert!(set.is_empty());
+    }
+
+    #[test]
+    fn the_main_stop_keeps_only_the_subagents_it_lists_as_running() {
+        use std::collections::BTreeSet;
+        let mut set: BTreeSet<String> = ["a", "b", "c"].map(String::from).into();
+        let stop = json!({ "hook_event_name": "Stop", "background_tasks": [
+            { "id": "a", "type": "subagent", "status": "running" },
+            { "id": "b", "type": "subagent", "status": "completed" },
+            { "id": "s", "type": "shell", "status": "running" },
+            { "id": "d", "type": "subagent", "status": "running" },
+        ] });
+        assert!(fold_subagents(&mut set, &stop));
+        assert_eq!(set.iter().map(String::as_str).collect::<Vec<_>>(), ["a", "d"]);
+        // Without the list (an older Claude Code), the main Stop clears the set.
+        assert!(fold_subagents(&mut set, &json!({ "hook_event_name": "Stop" })));
+        assert!(set.is_empty());
+    }
+
+    #[test]
+    fn subagents_count_running_ids() {
+        use std::collections::BTreeSet;
+        let mut set = BTreeSet::new();
+        let ev = |name: &str, id: Option<Value>| match id {
+            Some(id) => json!({ "hook_event_name": name, "agent_id": id }),
+            None => json!({ "hook_event_name": name }),
+        };
+        let ids = |s: &BTreeSet<String>| s.iter().cloned().collect::<Vec<_>>();
+        assert!(fold_subagents(&mut set, &ev("SubagentStart", Some(json!("a")))));
+        assert_eq!(ids(&set), ["a"]);
+        assert!(fold_subagents(&mut set, &ev("SubagentStart", Some(json!("b")))));
+        assert_eq!(ids(&set), ["a", "b"]);
+        assert!(!fold_subagents(&mut set, &ev("SubagentStart", Some(json!("a")))));
+        assert!(fold_subagents(&mut set, &ev("SubagentStop", Some(json!("a")))));
+        assert_eq!(ids(&set), ["b"]);
+        assert!(!fold_subagents(&mut set, &ev("SubagentStop", Some(json!("zzz")))));
+        assert!(!fold_subagents(&mut set, &ev("PreToolUse", Some(json!("q")))));
+        // No agent_id, or one that is not a string: nothing changes.
+        for bad in [None, Some(json!(7)), Some(json!(null))] {
+            assert!(!fold_subagents(&mut set, &ev("SubagentStart", bad.clone())));
+            assert!(!fold_subagents(&mut set, &ev("SubagentStop", bad)));
+        }
+        assert_eq!(ids(&set), ["b"]);
+        assert!(fold_subagents(&mut set, &ev("Stop", None)));
+        assert!(set.is_empty());
+        assert!(!fold_subagents(&mut set, &ev("Stop", None)));
+        fold_subagents(&mut set, &ev("SubagentStart", Some(json!("c"))));
+        assert!(fold_subagents(&mut set, &ev("SessionEnd", None)));
+        assert!(set.is_empty());
     }
 }

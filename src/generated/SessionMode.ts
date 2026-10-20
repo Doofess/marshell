@@ -3,4 +3,4 @@
 /**
  * How much an agent may do before it asks. The core turns it into the CLI's own flags.
  */
-export type SessionMode = "manual" | "plan" | "auto-edit" | "full-auto" | "bypass";
+export type SessionMode = "manual" | "plan" | "auto-edit" | "full-auto" | "bypass" | "dont-ask";

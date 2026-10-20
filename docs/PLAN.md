@@ -260,7 +260,7 @@ Decided 2026-10-15: **Marshell sets the mode**, the same five for every agent CL
 
 **First run (4 screens, under 60 s):**
 1. **Detected:** CLIs found, with versions, and "Not installed" rows.
-2. **Consent, one card per CLI**, in plain words. Example: "Add 9 hook entries and chain your status line in `C:\Users\Home Office\.claude\settings.json`."
+2. **Consent, one card per CLI**, in plain words. Example: "Add 10 hook entries and chain your status line in `C:\Users\Home Office\.claude\settings.json`."
    - Toggles per capability: status, approve-from-anywhere, status line.
    - "View exact changes" opens the unified diff.
    - The backup path is shown.
@@ -921,6 +921,7 @@ Decisions from the 2026-10-10 coverage audit (`docs/superpowers/plan-coverage-au
        - **3e1 History.** The transcript archive, the SQLite sessions index with its check and rebuild on start, and Resume by session id.
        - **3e2 Diagnostics.** `tracing` logs with rotation and redaction, "Export diagnostics", the perf panel, and the code-signing checklist.
      - **3f Folder picker** (added 2026-10-18, may run any time after 3a). The launcher's folder field accepts a typed path and opens the OS folder picker.
+     - **3g Exit gaps** (added 2026-10-21, before the phase 3 exit check). The subagent count and the live permission mode, the two exit criteria nothing fed yet.
    - **Slice 3a decisions (2026-10-18).**
      1. The spikes reach a real Claude Code through a scratch folder's `.claude/settings.local.json`, so `~/.claude` and its login stay untouched. Trusting that folder is part of the check, in a session started for it.
      2. S4 wraps the user's real `python ~/.claude/statusline.py`, which is only run, never written.
@@ -992,6 +993,10 @@ Decisions from the 2026-10-10 coverage audit (`docs/superpowers/plan-coverage-au
      5. A full path is an absolute path in the running OS's syntax (`C:\x`, `\\server\share`, `/x` on Unix) or one starting with `~` for the home folder. Quotes pasted around it are stripped, and anything else only filters the known folders (2026-10-19).
      6. The dialog opens through Marshell's own `pick_folder` Tauri command, which calls the plugin from Rust. The webview gets no dialog permission and no npm package is added (2026-10-19).
      7. A folder chosen by typing or Browse is remembered after launch like any other, except a drive root (`C:\`, `/`), which is never recorded, as the home folder isn't. So the config write guard never allows a whole drive (2026-10-19).
+   - **Slice 3g decisions (2026-10-21).**
+     1. The subagent count comes from hooks. `SubagentStart` joins the installed status events; the core keeps the running `agent_id`s per tab, which Start adds, `SubagentStop` removes, and the main turn's `Stop`, `SessionEnd` or a new process clear, so a missed Stop can't leave a stale count. An install from before reads Partial, and Set up again adds the one entry. Amended by the live check (`docs/research/2026-10-21-exit-gaps-live-check.md`): Claude Code 2.1.305 runs subagents in the background past the main `Stop`, so that `Stop` keeps the subagents its `background_tasks` lists as running and clears only when the list is missing; a subagent's own events don't move the mode; a comfortable row shows the count after its phrase.
+     2. The mode chip follows the `permission_mode` Claude Code reports on its hook events: `default`→Manual, `plan`→Plan, `acceptEdits`→Auto-edit, `auto`→Full auto, `bypassPermissions`→Bypass (with its red tint), `dontAsk`→a new "Don't ask" mode, which is reported and never offered in the launcher or Mode ▸. Until a hook reports, the launch mode shows. Resume and Restart start in the mode last seen.
+     3. 3g runs as its own plan and PR with a live check, then one integrated phase 3 exit check runs on main, its findings in `docs/research/`.
    - Exit: a real Claude session shows correct model, effort, mode, subagents and context; approval from a card works; uninstall leaves zero byte diff; corrupting `index.sqlite` is repaired on start.
 4. **Notifications + choreography + Departures board + stuck detection** (S3).
    - Exit: every rule in brief §5.5 is verified on all three OSes. Every sound has a visual equivalent.

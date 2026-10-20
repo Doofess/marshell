@@ -14,6 +14,13 @@ describe("modeLabel / headerDanger", () => {
     expect(modeLabel("bypass")).toBe("Bypass");
     expect(modeLabel(undefined)).toBe("–");
   });
+  it("names Don't ask, a mode Claude Code reports, without the danger outline", () => {
+    expect(modeLabel("dont-ask")).toBe("Don't ask");
+    expect(headerDanger("dont-ask")).toBe(false);
+    const html = renderToStaticMarkup(<SessionHeader row={{ ...row("working"), mode: "dont-ask" }} />);
+    expect(html).toContain("Don&#x27;t ask");
+    expect(html).not.toContain("data-danger");
+  });
   it("outlines the header in red only for bypass and auto", () => {
     expect(headerDanger("bypass")).toBe(true);
     expect(headerDanger("full-auto")).toBe(true);
@@ -25,6 +32,10 @@ describe("modeLabel / headerDanger", () => {
 
 describe("SessionHeader", () => {
   const h = renderToStaticMarkup(<SessionHeader row={row("working")} ports={["localhost:3000"]} />);
+  it("says one subagent in the singular", () => {
+    const one = renderToStaticMarkup(<SessionHeader row={{ ...row("working"), subagents: 1 }} />);
+    expect(one).toContain("1 subagent<");
+  });
   it("shows name, project and branch, mode, model and effort, subagents, context and ports in one bar", () => {
     for (const s of ["api-server", "my-app", "feat/auth-flow", "Plan", "Opus 5.5", "high", "2 subagents", "Context 42% used", "localhost:3000"]) expect(h, s).toContain(s);
   });
@@ -43,14 +54,18 @@ describe("SessionHeader", () => {
     expect(e).toContain(">high<");
     expect(e).not.toContain("· high");
   });
-  it("says the mode is the one the session started in, since a change inside the CLI is not tracked yet", () => {
-    const label = 'aria-label="Started in Plan. A change made inside the CLI isn&#x27;t shown yet."';
-    expect(h).toContain(label);
-    expect(h).toContain('title="Started in Plan. A change made inside the CLI isn&#x27;t shown yet."');
+  it("says a Claude Code session's mode is the one it last reported, since the row follows it", () => {
+    expect(h).toContain('aria-label="Mode: Plan, as Claude Code last reported."');
+    expect(h).toContain('title="Mode: Plan, as Claude Code last reported."');
+  });
+  it("says another agent's mode is the one the session started in, since a change inside that CLI is not tracked", () => {
+    const c = renderToStaticMarkup(<SessionHeader row={{ ...row("idle"), mode: "plan" }} />);
+    expect(c).toContain('aria-label="Started in Plan. A change made inside the CLI isn&#x27;t shown yet."');
+    expect(c).toContain('title="Started in Plan. A change made inside the CLI isn&#x27;t shown yet."');
   });
   it("is a button that opens the mode menu when the window can restart, so its label is announced", () => {
     const b = renderToStaticMarkup(<SessionHeader row={row("working")} onMode={() => {}} />);
-    expect(b).toMatch(/<button[^>]*aria-label="Started in Plan\. A change made inside the CLI isn&#x27;t shown yet\."/);
+    expect(b).toMatch(/<button[^>]*aria-label="Mode: Plan, as Claude Code last reported\."/);
     expect(b).toContain('aria-haspopup="menu"');
   });
   it("is marked red for a bypass session", () => {
