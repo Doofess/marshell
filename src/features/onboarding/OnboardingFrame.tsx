@@ -1,4 +1,5 @@
-import type { ReactNode } from "react";
+import { useEffect, useRef, type ReactNode } from "react";
+import { useDialogFocus } from "../../lib/useDialogFocus";
 import { nextStep, prevStep, STEPS, stepLabel, type Step } from "./onboardingFlow";
 import "./Onboarding.css";
 
@@ -25,10 +26,17 @@ export function OnboardingFrame({
   onBack?: () => void;
   primaryDisabled?: boolean;
 }) {
+  const frame = useRef<HTMLElement>(null);
+  const heading = useRef<HTMLHeadingElement>(null);
+  // It covers the window like a modal: the title takes the focus (not an action, so Enter applies nothing by reflex) and Tab
+  // stays inside. It has no Escape: the onboarding ends through its buttons.
+  useDialogFocus(frame, heading);
+  // A new step replaces the buttons and their text, so the focus starts again from the title.
+  useEffect(() => heading.current?.focus(), [step]);
   const canGoBack = prevStep(step) !== step;
   const hasNext = nextStep(step) !== step;
   return (
-    <section className="onboarding" aria-label={`Onboarding: ${title}`} data-step={step}>
+    <section ref={frame} className="onboarding" aria-label={`Onboarding: ${title}`} data-step={step}>
       <ol className="onboarding__progress" aria-label="Progress">
         {STEPS.map((s) => (
           <li key={s} className="onboarding__segment" data-done={STEPS.indexOf(s) <= STEPS.indexOf(step) || undefined} aria-current={s === step ? "step" : undefined}>
@@ -37,7 +45,7 @@ export function OnboardingFrame({
         ))}
       </ol>
       <p className="onboarding__step">{stepLabel(step).split(": ")[0]}</p>
-      <h2 className="onboarding__title">{title}</h2>
+      <h2 ref={heading} className="onboarding__title" tabIndex={-1}>{title}</h2>
       <div className="onboarding__body" role="region" aria-label="Step content" tabIndex={0}>
         {children}
       </div>
