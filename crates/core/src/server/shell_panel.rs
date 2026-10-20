@@ -87,7 +87,7 @@ pub async fn open(State(st): State<AppState>, Json(req): Json<PanelRequest>) -> 
     if let Some(tab_id) = alive_panel(&st) {
         return Ok(Json(PanelResponse { tab_id }));
     }
-    let run = resolve(&st, None, None, None, false, None)?;
+    let run = resolve(&st, None, None, None, None, None)?;
     let cwd = start_folder(&run, Some(req.cwd));
     let tab_id = auth::new_id("t");
     let shell = PanelShell {

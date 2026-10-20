@@ -69,6 +69,14 @@ Out of scope:
 - Marshell never asks for elevation.
 - The token is still the boundary: a caller with the token can preview and apply. The guard limits where, and the 3c consent card limits what the person is asked to approve.
 
+### History (`crates/core/src/history/`, slice 3e1)
+
+- The archive copies a Claude transcript named by a hook body: `transcript_path` and `session_id` come from a token-holding caller (the bridge), and are checked before any filesystem call. A `session_id` must be 1–64 characters of `[A-Za-z0-9_-]` and start with a letter or digit, so it can't read as an option (`history::valid_session_id`). A `transcript_path` must be absolute, not a UNC or device path (`hooks::risk::is_remote_path`), and named exactly `<session_id>.jsonl` (`history::transcript_allowed`). A body that fails either check is left out of the history; the hook itself is answered as before.
+- So a copy can only read a local file named `<id>.jsonl`. It can't be pointed at an arbitrary file, a share or a device. The path may still lead anywhere on local disks, and a link in it is followed, but a caller with the token already acts as the user.
+- Archives (`history/archive/<agent>/<id>.jsonl.zst`), their `.meta.json` sidecars and `history/index.sqlite` live in the Marshell home, so they are owner-only like the rest of it (below). They are compressed, not encrypted: a transcript holds whatever the person and the agent wrote, secrets included, as Claude's own copy does. Encrypting data at rest is out of scope while same-user malware is out of scope.
+- The check runs when the hook body arrives and again before Resume or Restart uses an indexed row, because index rows and sidecars live in the Marshell home and are not trusted just for being there: a row that fails it is treated as unknown, before any filesystem call, and a rebuild skips sidecars that fail it. Resume passes only an id that passed the check, as its own argument (`--resume <id>`), and refuses when Marshell holds an archive of the indexed transcript but Claude's file is gone, rather than fall back to another conversation. A session that never wrote a transcript starts fresh, with no resume flag.
+- The index is rebuilt from the sidecars when it fails its integrity check, and the bad file is kept as `index.sqlite.broken-<ms>`. No transcript is parsed.
+
 ### The `marshell://` link (phase 4)
 
 - It carries no authority: it can only focus Marshell and select a tab. It never sends input, answers a permission request or applies a change. Registering it is a setting that is off by default.
@@ -128,6 +136,7 @@ Slice 3d lets the needs-you card answer a held `PermissionRequest`. Before it sh
 - **Same-user processes read the token.** Any program running as the user can read `endpoint.json` and drive the API. This is accepted: such a program can already edit the CLIs' config directly.
 - **A managed path not on the list.** A new organization-managed location that the guard doesn't know is only protected by the allowed-folder rule. The list lives in `guard::denied_for_os` and is updated with the adapters.
 - **Approved but hostile content.** A person who approves a diff they didn't read gets that change. Snapshots and restore make it undoable, and the consent card in 3c keeps diffs short and plain.
+- **Archived transcripts are plain text once decompressed.** The history keeps a second copy of every Claude conversation in the home, protected by the home's permissions only.
 - **Children of the home are fixed only on reset.** A file inside the home given its own explicit ACL or a looser mode by another tool keeps it until the home's own DACL or mode is found wrong.
 
 ## Consequences

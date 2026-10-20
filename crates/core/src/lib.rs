@@ -5,6 +5,7 @@ pub mod config;
 pub mod crash;
 pub mod folders;
 pub mod git;
+pub mod history;
 pub mod hooks;
 pub mod job;
 pub mod layout;

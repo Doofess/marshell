@@ -435,3 +435,33 @@ async fn another_agents_events_do_not_touch_the_status() {
     stop(&st, &tab);
     assert_eq!((info.live, info.status_note), (None, None));
 }
+
+/// A body the history refuses (a bad session id, a transcript on a share) is still a Stop for the live status:
+/// the status is folded before the history looks at the body, and the refusal writes nothing.
+#[tokio::test]
+async fn hostile_history_body_still_updates_live_status() {
+    let st = state(Some(KNOWN));
+    let app = router(st.clone());
+    let tab = start_claude(&app).await;
+    // No earlier valid event: that one would put a (legitimate) row in the history.
+    let mut body: serde_json::Value = serde_json::from_slice(&fixture("Stop")).unwrap();
+    body["session_id"] = "../../x".into();
+    body["transcript_path"] = r"\\host\share\x.jsonl".into();
+    let req = hook(
+        Some("event"),
+        Some("claude"),
+        Some(&tab),
+        serde_json::to_vec(&body).unwrap(),
+    );
+    assert_eq!(status(&app, req).await, StatusCode::NO_CONTENT);
+
+    let live = row(&st, &tab).live.unwrap();
+    let remembered = st.history().latest_for_tab(&tab);
+    stop(&st, &tab);
+    assert_eq!(live.state, LiveState::Done);
+    assert!(live.recap.is_some_and(|r| !r.text.is_empty()));
+    assert_eq!(remembered, None);
+    let archive = st.home().join("history").join("archive");
+    let written = std::fs::read_dir(&archive).map_or(0, |dir| dir.count());
+    assert_eq!(written, 0, "something was written under {}", archive.display());
+}

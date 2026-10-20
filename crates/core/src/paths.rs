@@ -30,6 +30,21 @@ pub fn crash_log(home: &Path) -> PathBuf {
     home.join("logs").join("crash.log")
 }
 
+/// `<home>/history`: recordings, the transcript archive and the sessions index.
+pub fn history_dir(home: &Path) -> PathBuf {
+    home.join("history")
+}
+
+/// `<home>/history/archive/<agent>`: compressed transcript copies and their sidecars.
+pub fn archive_dir(home: &Path, agent: &str) -> PathBuf {
+    history_dir(home).join("archive").join(agent)
+}
+
+/// `<home>/history/index.sqlite`: the sessions index.
+pub fn index_file(home: &Path) -> PathBuf {
+    history_dir(home).join("index.sqlite")
+}
+
 /// `<home>/history/recordings`: one asciicast file per session run, `<tab>-<unix ms>.cast`.
 pub fn recordings_dir(home: &Path) -> PathBuf {
     home.join("history").join("recordings")
