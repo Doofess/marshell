@@ -2370,6 +2370,7 @@ dependencies = [
  "marshell-protocol",
  "notify",
  "portable-pty",
+ "regex",
  "rusqlite",
  "serde",
  "serde_json",

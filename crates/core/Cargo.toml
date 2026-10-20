@@ -19,6 +19,7 @@ hex = "0.4.3"
 dirs = "7.0.0"
 futures-util = "0.3.34"
 tracing = "0.1.44"
+regex = "1"
 jsonc-parser = { version = "0.34", features = ["cst", "serde"] }
 notify = "8"
 diffy = "0.5"
