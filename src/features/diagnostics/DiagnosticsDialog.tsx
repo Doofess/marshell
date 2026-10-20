@@ -10,6 +10,16 @@ import "./DiagnosticsDialog.css";
 
 export const EXPIRED = "This export has expired. Prepare it again.";
 
+type PreviewState = ExportPreview | "idle" | "preparing" | "expired" | "failed";
+
+/** User-requested export transitions can replace the focused control. Unrelated renders leave focus alone. */
+export function diagnosticsFocusTarget(previous: PreviewState, next: PreviewState): "diagnostics-prepare" | "diagnostics-title" | null {
+  if (previous === next) return null;
+  if (typeof next === "object") return "diagnostics-title";
+  if (next === "preparing" || next === "expired" || next === "failed") return "diagnostics-prepare";
+  return null;
+}
+
 export type DiagnosticsHandlers = {
   onClose: () => void;
   onDetailed: (checked: boolean) => void;
@@ -35,7 +45,7 @@ export function DiagnosticsDialogView({
   ...on
 }: {
   logging: LoggingState | "loading" | "failed";
-  preview: ExportPreview | "idle" | "preparing" | "expired" | "failed";
+  preview: PreviewState;
   viewing: { name: string; text: string } | null;
   saving?: boolean;
 } & DiagnosticsHandlers) {
@@ -44,10 +54,18 @@ export function DiagnosticsDialogView({
   const text = useRef<HTMLPreElement>(null);
   const viewButtons = useRef(new Map<string, HTMLButtonElement>());
   const lastViewed = useRef<string | null>(null);
+  const previousPreview = useRef(preview);
   useDialogFocus(dialog, title, on.onClose);
 
   const viewingName = viewing?.name ?? null;
   useEffect(() => {
+    const target = diagnosticsFocusTarget(previousPreview.current, preview);
+    previousPreview.current = preview;
+    if (target !== null) {
+      lastViewed.current = null;
+      dialog.current?.querySelector<HTMLElement>(`#${target}`)?.focus();
+      return;
+    }
     if (viewingName !== null) {
       lastViewed.current = viewingName;
       text.current?.focus();
@@ -55,14 +73,14 @@ export function DiagnosticsDialogView({
       viewButtons.current.get(lastViewed.current)?.focus();
       lastViewed.current = null;
     }
-  }, [viewingName]);
+  }, [preview, viewingName]);
 
   const files = typeof preview === "object" ? preview : null;
   return (
     <div className="diagnostics-dialog">
       <div className="diagnostics-dialog__backdrop" onClick={on.onClose} />
       <div ref={dialog} className="diagnostics-dialog__sheet" role="dialog" aria-modal="true" aria-label="Diagnostics">
-        <h2 ref={title} tabIndex={-1} className="diagnostics-dialog__title">
+        <h2 ref={title} id="diagnostics-title" tabIndex={-1} className="diagnostics-dialog__title">
           Diagnostics
         </h2>
         <div className="diagnostics-dialog__body">
@@ -154,7 +172,7 @@ export function DiagnosticsDialogView({
                       Save…
                     </button>
                   )}
-                  <button type="button" className="diagnostics-dialog__btn" aria-disabled={preview === "preparing" || undefined} onClick={on.onPrepare}>
+                  <button id="diagnostics-prepare" type="button" className="diagnostics-dialog__btn" aria-disabled={preview === "preparing" || undefined} onClick={on.onPrepare}>
                     {files ? "Prepare again" : "Prepare export"}
                   </button>
                 </div>
@@ -180,7 +198,7 @@ const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
  */
 export function DiagnosticsDialog({ endpoint, onClose, onNotice }: { endpoint: Endpoint; onClose: () => void; onNotice?: (text: string) => void }) {
   const [logging, setLogging] = useState<LoggingState | "loading" | "failed">("loading");
-  const [preview, setPreview] = useState<ExportPreview | "idle" | "preparing" | "expired" | "failed">("idle");
+  const [preview, setPreview] = useState<PreviewState>("idle");
   const [viewing, setViewing] = useState<{ name: string; text: string } | null>(null);
   const [saving, setSaving] = useState(false);
   const exportId = typeof preview === "object" ? preview.id : null;

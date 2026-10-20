@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { ExportPreview } from "../../generated/ExportPreview";
 import type { LoggingState } from "../../generated/LoggingState";
 import { exportName, formatBytes } from "../../lib/api/diagnostics";
-import { DiagnosticsDialogView } from "./DiagnosticsDialog";
+import { DiagnosticsDialogView, diagnosticsFocusTarget } from "./DiagnosticsDialog";
 
 const none = () => {};
 const handlers = { onClose: none, onDetailed: none, onPrepare: none, onView: none, onBack: none, onSave: none };
@@ -19,6 +19,27 @@ const PREVIEW: ExportPreview = {
 const view = (logging: LoggingState | "loading" | "failed", preview: Parameters<typeof DiagnosticsDialogView>[0]["preview"] = "idle", viewing: { name: string; text: string } | null = null) =>
   renderToStaticMarkup(<DiagnosticsDialogView logging={logging} preview={preview} viewing={viewing} {...handlers} />);
 const ON: LoggingState = { available: true, detailed: false };
+
+describe("diagnosticsFocusTarget", () => {
+  it("recovers focus on Prepare when an export expires or preparation fails", () => {
+    expect(diagnosticsFocusTarget(PREVIEW, "expired")).toBe("diagnostics-prepare");
+    expect(diagnosticsFocusTarget("preparing", "failed")).toBe("diagnostics-prepare");
+  });
+  it("keeps focus inside while preparing again removes the file controls", () => {
+    expect(diagnosticsFocusTarget(PREVIEW, "preparing")).toBe("diagnostics-prepare");
+    expect(diagnosticsFocusTarget("expired", "preparing")).toBe("diagnostics-prepare");
+    expect(diagnosticsFocusTarget("failed", "preparing")).toBe("diagnostics-prepare");
+  });
+  it("focuses the title after preparing an export, including an empty one", () => {
+    expect(diagnosticsFocusTarget("preparing", PREVIEW)).toBe("diagnostics-title");
+    expect(diagnosticsFocusTarget("preparing", { ...PREVIEW, files: [] })).toBe("diagnostics-title");
+  });
+  it("does not refocus on unchanged preview state or ordinary viewer navigation", () => {
+    for (const state of ["idle", "preparing", "expired", "failed", PREVIEW] as const) {
+      expect(diagnosticsFocusTarget(state, state)).toBeNull();
+    }
+  });
+});
 
 describe("formatBytes and exportName", () => {
   it("formats sizes", () => {
@@ -67,6 +88,12 @@ describe("DiagnosticsDialogView", () => {
     const h = view(ON, "expired");
     expect(h).toContain("This export has expired. Prepare it again.");
     expect(h).toContain(">Prepare export</button>");
+  });
+  it("renders the focus targets in the expired, failed, preparing and ready views", () => {
+    for (const state of ["expired", "failed", "preparing"] as const) {
+      expect(view(ON, state)).toMatch(/<button[^>]*id="diagnostics-prepare"[^>]*>Prepare export<\/button>/);
+    }
+    expect(view(ON, PREVIEW)).toMatch(/<h2[^>]*id="diagnostics-title"[^>]*tabindex="-1"/);
   });
   it("shows the text of the viewed file in a labelled read-only region", () => {
     const h = view(ON, PREVIEW, { name: "logs/marshell.log", text: "line one\nline two" });
