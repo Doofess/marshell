@@ -125,10 +125,17 @@ pub fn read_process(_pid: u32) -> Option<(u64, Duration)> {
     None
 }
 
-/// Turns processor-time readings into a CPU share. It keeps the previous reading of every pid it last saw.
+#[derive(Clone, Copy)]
+struct Baseline {
+    at: Instant,
+    cpu_time: Duration,
+    share: Option<f32>,
+}
+
+/// Turns processor-time readings into a CPU share, retaining a baseline and last share per pid.
 pub struct Sampler {
     cpus: u32,
-    previous: HashMap<u32, (Instant, Duration)>,
+    previous: HashMap<u32, Baseline>,
 }
 
 impl Sampler {
@@ -151,8 +158,8 @@ impl Sampler {
     }
 
     /// As `sample`, with the reader given. A pid the reader cannot read is skipped. CPU is the summed share of the
-    /// pids that have an earlier reading, so it is None until some pid has been read twice. A pid not in
-    /// `groups` is forgotten.
+    /// pids with a baseline at least 500 ms old; closer calls reuse the last computed share. Baselines
+    /// advance only after 900 ms and expire after 10 s. A pid not in `groups` is forgotten.
     pub fn sample_with(
         &mut self,
         groups: &[(String, Vec<u32>)],
@@ -171,15 +178,29 @@ impl Sampler {
                 };
                 processes += 1;
                 memory = Some(memory.unwrap_or(0).saturating_add(bytes));
-                if let Some(&(then, before)) = self.previous.get(&pid) {
-                    let wall = now.saturating_duration_since(then).as_secs_f64();
-                    if wall > 0.0 {
-                        let used = cpu_time.saturating_sub(before).as_secs_f64();
-                        let share = (used / (wall * f64::from(self.cpus)) * 100.0) as f32;
-                        cpu = Some(cpu.unwrap_or(0.0) + share);
+                let mut baseline = self
+                    .previous
+                    .get(&pid)
+                    .copied()
+                    .filter(|b| now.saturating_duration_since(b.at) <= Duration::from_secs(10))
+                    .unwrap_or(Baseline {
+                        at: now,
+                        cpu_time,
+                        share: None,
+                    });
+                let elapsed = now.saturating_duration_since(baseline.at);
+                if elapsed >= Duration::from_millis(500) {
+                    let used = cpu_time.saturating_sub(baseline.cpu_time).as_secs_f64();
+                    baseline.share = Some((used / (elapsed.as_secs_f64() * f64::from(self.cpus)) * 100.0) as f32);
+                    if elapsed >= Duration::from_millis(900) {
+                        baseline.at = now;
+                        baseline.cpu_time = cpu_time;
                     }
                 }
-                next.insert(pid, (now, cpu_time));
+                if let Some(share) = baseline.share {
+                    cpu = Some(cpu.unwrap_or(0.0) + share);
+                }
+                next.insert(pid, baseline);
             }
             out.push(ProcessUsage {
                 processes,
@@ -241,14 +262,64 @@ mod tests {
     }
 
     #[test]
+    fn close_calls_reuse_the_last_share() {
+        let mut sampler = Sampler::with_cpus(1);
+        let t0 = Instant::now();
+        let sample = |sampler: &mut Sampler, wall, used| {
+            sampler.sample_with(&groups(&[7]), t0 + Duration::from_millis(wall), |_| {
+                Some((1000, Duration::from_millis(used)))
+            })[0]
+                .cpu_percent
+        };
+        assert_eq!(sample(&mut sampler, 0, 0), None);
+        let share = sample(&mut sampler, 1000, 250);
+        assert_eq!(share, Some(25.0));
+        assert_eq!(sample(&mut sampler, 1010, 250), share);
+        assert_eq!(sample(&mut sampler, 2000, 750), Some(50.0));
+    }
+
+    #[test]
+    fn shares_start_at_500_ms_and_baselines_advance_at_900_ms() {
+        let mut sampler = Sampler::with_cpus(1);
+        let t0 = Instant::now();
+        for (wall, used, expected) in [
+            (0, 0, None),
+            (499, 125, None),
+            (500, 125, Some(25.0)),
+            (900, 450, Some(50.0)),
+            (1400, 550, Some(20.0)),
+        ] {
+            let out = sampler.sample_with(&groups(&[7]), t0 + Duration::from_millis(wall), |_| {
+                Some((1000, Duration::from_millis(used)))
+            });
+            assert_eq!(out[0].cpu_percent, expected, "at {wall} ms");
+        }
+    }
+
+    #[test]
+    fn a_stale_baseline_is_no_baseline() {
+        let mut sampler = Sampler::with_cpus(1);
+        let t0 = Instant::now();
+        sampler.sample_with(&groups(&[7]), t0, |_| Some((1000, Duration::ZERO)));
+        let stale = sampler.sample_with(&groups(&[7]), t0 + Duration::from_secs(11), |_| {
+            Some((1000, Duration::from_secs(5)))
+        });
+        assert_eq!(stale[0].cpu_percent, None);
+        let fresh = sampler.sample_with(&groups(&[7]), t0 + Duration::from_secs(12), |_| {
+            Some((1000, Duration::from_millis(5500)))
+        });
+        assert_eq!(fresh[0].cpu_percent, Some(50.0));
+    }
+
+    #[test]
     fn cpu_is_none_first_then_a_share() {
         let mut sampler = Sampler::with_cpus(4);
         let t0 = Instant::now();
         let first = sampler.sample_with(&groups(&[7]), t0, |_| Some((1000, Duration::from_millis(100))));
         assert_eq!(first[0].cpu_percent, None);
         assert_eq!(first[0].memory_bytes, Some(1000));
-        let second = sampler.sample_with(&groups(&[7]), t0 + Duration::from_millis(100), |_| {
-            Some((1000, Duration::from_millis(150)))
+        let second = sampler.sample_with(&groups(&[7]), t0 + Duration::from_millis(1000), |_| {
+            Some((1000, Duration::from_millis(600)))
         });
         assert_eq!(second[0].cpu_percent, Some(12.5));
     }
