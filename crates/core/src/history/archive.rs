@@ -1,6 +1,6 @@
 //! Compressed copies of agent transcripts, each with a small `.meta.json` sidecar.
 
-use super::SessionMeta;
+use super::{SessionMeta, transcript_allowed};
 use crate::{paths, store};
 use anyhow::Context;
 use std::path::{Path, PathBuf};
@@ -31,7 +31,8 @@ pub fn copy_transcript(home: &Path, meta: &SessionMeta) -> anyhow::Result<PathBu
     Ok(archive)
 }
 
-/// Every readable sidecar in the archive. One that can't be read is skipped with a warning.
+/// Every readable sidecar in the archive. One that can't be read, or whose id or transcript path fails
+/// `transcript_allowed`, is skipped with a warning, so a rebuild never indexes it.
 pub fn read_all_meta(home: &Path) -> Vec<SessionMeta> {
     let mut found = Vec::new();
     let Ok(agents) = std::fs::read_dir(paths::history_dir(home).join("archive")) else {
@@ -47,7 +48,11 @@ pub fn read_all_meta(home: &Path) -> Vec<SessionMeta> {
                 continue;
             }
             match store::read::<SessionMeta>(&path) {
-                Ok(Some(meta)) => found.push(meta),
+                Ok(Some(meta)) if transcript_allowed(&meta.transcript_path, &meta.session_id) => found.push(meta),
+                Ok(Some(_)) => tracing::warn!(
+                    "skipping history sidecar {}: unsafe session id or transcript path",
+                    path.display()
+                ),
                 Ok(None) => {}
                 Err(err) => tracing::warn!("skipping history sidecar {}: {err:#}", path.display()),
             }
@@ -112,11 +117,32 @@ mod tests {
     #[test]
     fn read_all_meta_skips_broken_sidecars() {
         let home = tempfile::tempdir().unwrap();
-        let src = home.path().join("x.jsonl");
-        write_meta(home.path(), &meta("a", &src)).unwrap();
-        write_meta(home.path(), &meta("b", &src)).unwrap();
+        write_meta(home.path(), &meta("a", &home.path().join("a.jsonl"))).unwrap();
+        write_meta(home.path(), &meta("b", &home.path().join("b.jsonl"))).unwrap();
         let (_, broken) = archive_paths(home.path(), "claude", "c");
         std::fs::write(&broken, b"garbage \xff not json").unwrap();
         assert_eq!(read_all_meta(home.path()).len(), 2);
+    }
+
+    #[test]
+    fn rebuild_skips_unsafe_sidecars() {
+        let home = tempfile::tempdir().unwrap();
+        let dir = std::path::Path::new(if cfg!(windows) {
+            r"C:\Users\u\.claude\p"
+        } else {
+            "/home/u/.claude/p"
+        });
+        write_meta(home.path(), &meta("good-1", &dir.join("good-1.jsonl"))).unwrap();
+        // Sidecars as something that skipped the hook-time check would have left them.
+        write_meta(home.path(), &meta("x; calc", &dir.join("x; calc.jsonl"))).unwrap();
+        write_meta(home.path(), &meta("-rf", &dir.join("-rf.jsonl"))).unwrap();
+        write_meta(
+            home.path(),
+            &meta("unc-1", std::path::Path::new(r"\\host\share\unc-1.jsonl")),
+        )
+        .unwrap();
+        write_meta(home.path(), &meta("other-1", &dir.join("elsewhere.jsonl"))).unwrap();
+        let ids: Vec<String> = read_all_meta(home.path()).into_iter().map(|m| m.session_id).collect();
+        assert_eq!(ids, vec!["good-1".to_string()]);
     }
 }

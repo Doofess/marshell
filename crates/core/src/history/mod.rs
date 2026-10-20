@@ -28,9 +28,12 @@ impl store::Versioned for SessionMeta {
     const VERSION: u32 = 1;
 }
 
-/// A session id is used in file names, so it must be 1 to 64 letters, digits, `_` or `-`.
+/// A session id is used in file names and as a command-line argument, so it must be 1 to 64 letters, digits,
+/// `_` or `-`, and start with a letter or digit (so it can't read as an option).
 pub fn valid_session_id(id: &str) -> bool {
-    (1..=64).contains(&id.len()) && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+    (1..=64).contains(&id.len())
+        && id.starts_with(|c: char| c.is_ascii_alphanumeric())
+        && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
 }
 
 /// True when the path is absolute, local (not UNC or a device path), and named exactly
@@ -67,6 +70,12 @@ mod tests {
             assert!(!valid_session_id(bad), "{bad:?}");
         }
         assert!(!valid_session_id(&"a".repeat(65)));
+        // A leading `-` or `_` could read as an option.
+        for bad in ["-x", "--dangerously-skip-permissions", "_x"] {
+            assert!(!valid_session_id(bad), "{bad:?}");
+        }
+        assert!(valid_session_id("a-_"));
+        assert!(valid_session_id("0"));
 
         assert!(transcript_allowed(&format!("{}{ID}.jsonl", dir_prefix()), ID));
         assert!(!transcript_allowed(&format!("p/{ID}.jsonl"), ID));

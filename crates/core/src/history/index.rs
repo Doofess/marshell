@@ -183,7 +183,7 @@ mod tests {
             session_id: session.into(),
             tab_id: tab.into(),
             cwd: "c".into(),
-            transcript_path: format!("p/{session}.jsonl"),
+            transcript_path: format!("{}{session}.jsonl", if cfg!(windows) { r"C:\p\" } else { "/p/" }),
             started_ms: 1,
             updated_ms: updated,
             previous_in_tab: previous.map(Into::into),

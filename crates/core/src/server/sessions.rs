@@ -576,6 +576,11 @@ fn resume_session(st: &AppState, tab: &str, agent: Option<&str>) -> Result<Optio
     let Some(meta) = st.history().latest_for_tab(tab) else {
         return Ok(None);
     };
+    // The row lives in the Marshell home and is checked again before its id reaches a command line or its
+    // path a filesystem call. A row that fails counts as unknown.
+    if !crate::history::transcript_allowed(&meta.transcript_path, &meta.session_id) {
+        return Ok(None);
+    }
     if std::path::Path::new(&meta.transcript_path).is_file() {
         Ok(Some(meta.session_id))
     } else {
@@ -833,6 +838,36 @@ mod tests {
         // The conversation is gone.
         std::fs::remove_file(&transcript).unwrap();
         assert_eq!(resume_session(&st, "t1", Some("claude")), Err(NO_CONVERSATION));
+    }
+
+    #[test]
+    fn resume_session_ignores_an_unsafe_row() {
+        use crate::history::{SessionMeta, index::Index};
+        let home = tempfile::tempdir().unwrap();
+        let work = tempfile::tempdir().unwrap();
+        let st = AppState::new("t".into(), 1, Vec::new(), home.path().to_path_buf(), Vec::new());
+        let row = |tab: &str, id: &str, path: &str| SessionMeta {
+            agent: "claude".into(),
+            session_id: id.into(),
+            tab_id: tab.into(),
+            cwd: String::new(),
+            transcript_path: path.into(),
+            started_ms: 1,
+            updated_ms: 2,
+            previous_in_tab: None,
+        };
+        // An id that would reach the command line, with a transcript that really exists.
+        let hostile = work.path().join("x; calc.jsonl");
+        std::fs::write(&hostile, "{}\n").unwrap();
+        // A transcript on a share.
+        let unc = row("t2", "abc-2", r"\\host\share\abc-2.jsonl");
+        // A row written to the index directly, as a damaged or planted index would hold it.
+        let (index, _) = Index::open(home.path()).unwrap();
+        index.upsert(&row("t1", "x; calc", &hostile.to_string_lossy())).unwrap();
+        index.upsert(&unc).unwrap();
+        // Neither row is used, and neither counts as a known conversation that was lost.
+        assert_eq!(resume_session(&st, "t1", Some("claude")), Ok(None));
+        assert_eq!(resume_session(&st, "t2", Some("claude")), Ok(None));
     }
 
     #[test]
