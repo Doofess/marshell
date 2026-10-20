@@ -563,33 +563,66 @@ fn cannot_start_again(st: &AppState, info: &SessionInfo) -> Option<String> {
     None
 }
 
-/// The refusal when the index knows the tab's Claude conversation but its transcript file is gone.
+/// The refusal when Marshell holds a copy of the tab's Claude conversation but Claude's transcript file is gone.
 const NO_CONVERSATION: &str = "Claude Code no longer has this conversation, so it can't be resumed.";
 
-/// Which conversation a Resume or Restart of `tab` should pick up. `Ok(Some(id))` resumes that Claude session,
-/// `Ok(None)` uses the CLI's own continue flag (nothing is known, or the agent is not Claude), and
-/// `Err(message)` means the known conversation is gone. It never falls back to another conversation.
-fn resume_session(st: &AppState, tab: &str, agent: Option<&str>) -> Result<Option<String>, &'static str> {
+/// What a Resume or Restart starts.
+#[derive(Debug, PartialEq, Eq)]
+enum Resume {
+    /// One Claude conversation, by its session id.
+    Session(String),
+    /// The CLI's own continue flag: nothing is known about the tab, or the agent is not Claude.
+    Last,
+    /// A Claude session that never wrote a transcript: start Claude with no resume flag. (Not `--continue`,
+    /// which could pick up another tab's conversation in the same folder.)
+    Fresh,
+}
+
+impl Resume {
+    /// The target `resolve` is given; None starts the agent plainly.
+    fn target(&self) -> Option<ResumeTarget<'_>> {
+        match self {
+            Resume::Session(id) => Some(ResumeTarget::Session(id)),
+            Resume::Last => Some(ResumeTarget::Last),
+            Resume::Fresh => None,
+        }
+    }
+}
+
+/// Which conversation a Resume or Restart of `tab` should pick up, from the sessions index. It never falls
+/// back to another conversation: `Err(message)` means Marshell had this one and Claude has lost it.
+/// - No row, a row that fails the id and path check, or an agent other than Claude: `Resume::Last`.
+/// - The transcript is a file: `Resume::Session(id)`.
+/// - The transcript is missing and Marshell holds an archive of it: `Err`, the conversation is lost.
+/// - The transcript is missing and there is no archive: the session never wrote anything (Claude creates the
+///   file at the first message, after the SessionStart that indexed it), so `Resume::Fresh`.
+fn resume_session(st: &AppState, tab: &str, agent: Option<&str>) -> Result<Resume, &'static str> {
     if agent != Some("claude") {
-        return Ok(None);
+        return Ok(Resume::Last);
     }
     let Some(meta) = st.history().latest_for_tab(tab) else {
-        return Ok(None);
+        return Ok(Resume::Last);
     };
     // The row lives in the Marshell home and is checked again before its id reaches a command line or its
     // path a filesystem call. A row that fails counts as unknown.
     if !crate::history::transcript_allowed(&meta.transcript_path, &meta.session_id) {
-        return Ok(None);
+        return Ok(Resume::Last);
     }
     if std::path::Path::new(&meta.transcript_path).is_file() {
-        Ok(Some(meta.session_id))
-    } else {
+        return Ok(Resume::Session(meta.session_id));
+    }
+    // Only Claude sessions are indexed, so the archive is Claude's.
+    let (archive, _) = crate::history::archive::archive_paths(st.home(), "claude", &meta.session_id);
+    if archive.is_file() {
         Err(NO_CONVERSATION)
+    } else {
+        Ok(Resume::Fresh)
     }
 }
 
-/// Starts an Ended or Exited tab again in the same row, with the CLI's own continue flag for an agent
-/// (or `--resume <id>` for a Claude tab whose session is known).
+/// Starts an Ended or Exited tab again in the same row. An agent gets the CLI's own continue flag, a Claude tab
+/// whose session is known gets `--resume <id>`, and one whose session never wrote a transcript starts fresh
+/// (see `resume_session`).
 pub async fn resume(State(st): State<AppState>, Path(tab): Path<String>, Json(req): Json<ResumeRequest>) -> Response {
     let Some(info) = st.0.registry.snapshot().sessions.into_iter().find(|s| s.tab_id == tab) else {
         return (StatusCode::NOT_FOUND, "No such session.").into_response();
@@ -609,13 +642,12 @@ pub async fn resume(State(st): State<AppState>, Path(tab): Path<String>, Json(re
         Ok(session) => session,
         Err(message) => return cannot_resume(message),
     };
-    let target = session.as_deref().map_or(ResumeTarget::Last, ResumeTarget::Session);
     let run = match resolve(
         &st,
         Some(&info.profile_id),
         info.agent.as_deref(),
         None,
-        Some(target),
+        session.target(),
         info.mode,
     ) {
         Ok(run) => run,
@@ -699,8 +731,9 @@ pub async fn cont(State(st): State<AppState>, Path(tab): Path<String>) -> Respon
     set_frozen(st, tab, false).await
 }
 
-/// Starts an agent session again in the same row in another mode, continuing its last conversation
-/// (the CLI's own continue flag). The old process, if any, is killed. Every refusal comes before
+/// Starts an agent session again in the same row in another mode, continuing its conversation as Resume does
+/// (`--resume <id>` for a known Claude session, a plain start when it never wrote a transcript, otherwise the
+/// CLI's own continue flag). The old process, if any, is killed. Every refusal comes before
 /// that, so a refused restart leaves the session running.
 pub async fn restart(State(st): State<AppState>, Path(tab): Path<String>, Json(req): Json<RestartRequest>) -> Response {
     let Some(info) = st.0.registry.snapshot().sessions.into_iter().find(|s| s.tab_id == tab) else {
@@ -720,13 +753,12 @@ pub async fn restart(State(st): State<AppState>, Path(tab): Path<String>, Json(r
         Ok(session) => session,
         Err(message) => return cannot_resume(message),
     };
-    let target = session.as_deref().map_or(ResumeTarget::Last, ResumeTarget::Session);
     let run = match resolve(
         &st,
         Some(&info.profile_id),
         info.agent.as_deref(),
         None,
-        Some(target),
+        session.target(),
         Some(req.mode),
     ) {
         Ok(run) => run,
@@ -821,7 +853,7 @@ mod tests {
         let work = tempfile::tempdir().unwrap();
         let st = AppState::new("t".into(), 1, Vec::new(), home.path().to_path_buf(), Vec::new());
         // No row yet: the CLI's own continue flag.
-        assert_eq!(resume_session(&st, "t1", Some("claude")), Ok(None));
+        assert_eq!(resume_session(&st, "t1", Some("claude")), Ok(Resume::Last));
         let transcript = work.path().join("abc-1.jsonl");
         std::fs::write(
             &transcript,
@@ -830,12 +862,17 @@ mod tests {
         )
         .unwrap();
         note_session(&st, "t1", "abc-1", &transcript);
-        assert_eq!(resume_session(&st, "t1", Some("claude")), Ok(Some("abc-1".to_string())));
+        assert_eq!(
+            resume_session(&st, "t1", Some("claude")),
+            Ok(Resume::Session("abc-1".to_string()))
+        );
         // Another tab has no row, and another agent never uses one.
-        assert_eq!(resume_session(&st, "t2", Some("claude")), Ok(None));
-        assert_eq!(resume_session(&st, "t1", Some("codex")), Ok(None));
-        assert_eq!(resume_session(&st, "t1", None), Ok(None));
-        // The conversation is gone.
+        assert_eq!(resume_session(&st, "t2", Some("claude")), Ok(Resume::Last));
+        assert_eq!(resume_session(&st, "t1", Some("codex")), Ok(Resume::Last));
+        assert_eq!(resume_session(&st, "t1", None), Ok(Resume::Last));
+        // Marshell holds a copy of it, but Claude's file is gone: the conversation is lost.
+        let meta = st.history().latest_for_tab("t1").unwrap();
+        crate::history::archive::copy_transcript(home.path(), &meta).unwrap();
         std::fs::remove_file(&transcript).unwrap();
         assert_eq!(resume_session(&st, "t1", Some("claude")), Err(NO_CONVERSATION));
     }
@@ -866,8 +903,25 @@ mod tests {
         index.upsert(&row("t1", "x; calc", &hostile.to_string_lossy())).unwrap();
         index.upsert(&unc).unwrap();
         // Neither row is used, and neither counts as a known conversation that was lost.
-        assert_eq!(resume_session(&st, "t1", Some("claude")), Ok(None));
-        assert_eq!(resume_session(&st, "t2", Some("claude")), Ok(None));
+        assert_eq!(resume_session(&st, "t1", Some("claude")), Ok(Resume::Last));
+        assert_eq!(resume_session(&st, "t2", Some("claude")), Ok(Resume::Last));
+    }
+
+    #[test]
+    fn a_session_without_a_transcript_or_archive_starts_fresh() {
+        let home = tempfile::tempdir().unwrap();
+        let work = tempfile::tempdir().unwrap();
+        let st = AppState::new("t".into(), 1, Vec::new(), home.path().to_path_buf(), Vec::new());
+        // SessionStart indexed the session, but Claude has not written its first message yet.
+        let transcript = work.path().join("new-1.jsonl");
+        note_session(&st, "t1", "new-1", &transcript);
+        let fresh = resume_session(&st, "t1", Some("claude"));
+        assert_eq!(fresh, Ok(Resume::Fresh));
+        // Fresh means no resume flag at all, not even `--continue`.
+        assert_eq!(Resume::Fresh.target(), None);
+        assert_eq!(Resume::Last.target(), Some(ResumeTarget::Last));
+        // Another agent never gets this: it keeps the CLI's own continue flag.
+        assert_eq!(resume_session(&st, "t1", Some("codex")), Ok(Resume::Last));
     }
 
     #[test]

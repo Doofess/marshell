@@ -14,11 +14,12 @@ const TOKEN: &str = "test-token";
 const PORT: u16 = 5555;
 const ORIGIN: &str = "http://tauri.localhost";
 
-fn profile(id: &str) -> Profile {
+/// A profile that runs the fake agent in `mode`: "sleep" stays up, "print" writes its own arguments and ends.
+fn profile(id: &str, mode: &str) -> Profile {
     Profile {
         id: id.into(),
         name: id.into(),
-        command: vec![env!("CARGO_BIN_EXE_fake-agent").into(), "sleep".into()],
+        command: vec![env!("CARGO_BIN_EXE_fake-agent").into(), mode.into()],
         family: ShellFamily::Posix,
         cwd: None,
         env: Vec::new(),
@@ -29,13 +30,17 @@ fn profile(id: &str) -> Profile {
 }
 
 fn state_in(home: &Path, profile_id: &str) -> AppState {
+    state_running(home, profile_id, "sleep")
+}
+
+fn state_running(home: &Path, profile_id: &str, mode: &str) -> AppState {
     common::tie_children_to_test();
     AppState::new(
         TOKEN.into(),
         PORT,
         vec![ORIGIN.into()],
         home.to_path_buf(),
-        vec![profile(profile_id)],
+        vec![profile(profile_id, mode)],
     )
 }
 
@@ -106,6 +111,18 @@ async fn restarted_with(
     agent: Option<&str>,
     agent_on_path: fn(&str) -> bool,
 ) -> (AppState, axum::Router, String, String) {
+    restarted_running(home, cwd, profile_id, agent, agent_on_path, "sleep").await
+}
+
+/// Like `restarted_with`, but the restarted core's profile runs the fake agent in `mode`.
+async fn restarted_running(
+    home: &Path,
+    cwd: &Path,
+    profile_id: &str,
+    agent: Option<&str>,
+    agent_on_path: fn(&str) -> bool,
+    mode: &str,
+) -> (AppState, axum::Router, String, String) {
     let first = state_in(home, "sleeper").with_agent_check(|_| true);
     let app = router(first.clone());
     let mut ids = Vec::new();
@@ -130,7 +147,7 @@ async fn restarted_with(
     }
     drop(app);
     drop(first);
-    let second = state_in(home, profile_id).with_agent_check(agent_on_path);
+    let second = state_running(home, profile_id, mode).with_agent_check(agent_on_path);
     let app = router(second.clone());
     (second, app, ids[0].clone(), ids[1].clone())
 }
@@ -257,7 +274,7 @@ async fn resume_refuses_a_conversation_claude_no_longer_has() {
     let home = tempfile::tempdir().unwrap();
     let work = tempfile::tempdir().unwrap();
     let (state, app, _a, b) = restarted_with(home.path(), work.path(), "sleeper", Some("claude"), |_| true).await;
-    // The index knows the tab's session, but its transcript file does not exist.
+    // The index knows the tab's session, and so does the archive, but the transcript file is gone.
     let transcript = work.path().join("gone-1.jsonl");
     let body = serde_json::json!({
         "hook_event_name": "SessionStart",
@@ -265,7 +282,12 @@ async fn resume_refuses_a_conversation_claude_no_longer_has() {
         "transcript_path": transcript.to_string_lossy(),
         "cwd": work.path().to_string_lossy(),
     });
+    std::fs::write(&transcript, "{}\n").unwrap();
     assert!(state.history().note_event(&b, &body, 1).is_none());
+    let meta = state.history().latest_for_tab(&b).unwrap();
+    // Marshell holds a copy of it, then Claude's file goes: we had it and it was lost.
+    marshell_core::history::archive::copy_transcript(home.path(), &meta).unwrap();
+    std::fs::remove_file(&transcript).unwrap();
 
     let res = resume(&app, &b).await;
     assert_eq!(res.status(), StatusCode::CONFLICT);
@@ -275,4 +297,48 @@ async fn resume_refuses_a_conversation_claude_no_longer_has() {
     );
     assert_eq!(sessions(&app).await["sessions"][1]["state"]["kind"], "ended");
     assert_eq!(state.live_session_count(), 0);
+}
+
+/// The rows `peek` returns once `text` shows up in them.
+async fn peek_until(app: &axum::Router, tab: &str, text: &str) -> String {
+    let start = Instant::now();
+    loop {
+        let res = app
+            .clone()
+            .oneshot(api("GET", &format!("/v1/sessions/{tab}/peek?lines=30"), None))
+            .await
+            .unwrap();
+        let rows = json_of(res).await["rows"].to_string();
+        if rows.contains(text) {
+            return rows;
+        }
+        assert!(start.elapsed() < Duration::from_secs(5), "never saw {text:?} in {rows}");
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+}
+
+#[tokio::test]
+async fn resume_starts_fresh_when_the_session_never_wrote_a_transcript() {
+    let home = tempfile::tempdir().unwrap();
+    let work = tempfile::tempdir().unwrap();
+    // The fake agent prints the arguments it was started with, so the command line can be read back.
+    let (state, app, a, b) =
+        restarted_running(home.path(), work.path(), "sleeper", Some("claude"), |_| true, "print").await;
+    // SessionStart indexed the session; Claude writes the file only at the first message.
+    let transcript = work.path().join("new-1.jsonl");
+    let body = serde_json::json!({
+        "hook_event_name": "SessionStart",
+        "session_id": "new-1",
+        "transcript_path": transcript.to_string_lossy(),
+        "cwd": work.path().to_string_lossy(),
+    });
+    assert!(state.history().note_event(&b, &body, 1).is_none());
+
+    let res = resume(&app, &b).await;
+    assert_eq!(res.status(), StatusCode::OK);
+    let rows = peek_until(&app, &b, "claude").await;
+    assert!(!rows.contains("--resume"), "{rows}");
+    assert!(!rows.contains("--continue"), "{rows}");
+    assert_eq!(sessions(&app).await["sessions"][1]["tab_id"], b.as_str());
+    stop_all(&state, &[&a, &b]);
 }
