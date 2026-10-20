@@ -7,9 +7,13 @@ use serde_json::Value;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 /// The agent whose hooks feed the history so far.
 const AGENT: &str = "claude";
+
+/// How long a transcript settles before it is copied: Claude writes the turn's last lines after the hook fires.
+const SETTLE: Duration = Duration::from_millis(1500);
 
 pub struct History {
     home: PathBuf,
@@ -18,6 +22,8 @@ pub struct History {
     /// Sessions being copied right now. `Some` holds the newest request that arrived during the copy,
     /// which runs once more after it.
     copying: Mutex<HashMap<String, Option<SessionMeta>>>,
+    /// The wait before each copy; tests shorten it.
+    settle: Mutex<Duration>,
 }
 
 impl History {
@@ -46,7 +52,13 @@ impl History {
             home: home.to_path_buf(),
             index: Mutex::new(index),
             copying: Mutex::new(HashMap::new()),
+            settle: Mutex::new(SETTLE),
         }
+    }
+
+    /// Sets the wait before each copy (tests only need it short).
+    pub fn set_settle(&self, settle: Duration) {
+        *self.settle.lock().unwrap() = settle;
     }
 
     /// Validates the body, updates the index and sidecar when it is a session start, stop or end or a session not
@@ -122,7 +134,8 @@ impl History {
     }
 }
 
-/// Copies on a blocking thread, one copy at a time per session; a request during a copy runs one more copy after it.
+/// Copies on a blocking thread after the settle time, one copy at a time per session; a request during the wait or
+/// a copy runs one more copy after it.
 pub fn schedule_copy(history: Arc<History>, meta: SessionMeta) {
     {
         let mut copying = history.copying.lock().unwrap();
@@ -136,6 +149,8 @@ pub fn schedule_copy(history: Arc<History>, meta: SessionMeta) {
         let id = meta.session_id.clone();
         let mut current = meta;
         loop {
+            let settle = *history.settle.lock().unwrap();
+            std::thread::sleep(settle);
             if let Err(err) = archive::copy_transcript(&history.home, &current) {
                 tracing::warn!("could not archive transcript {id}: {err:#}");
             }
@@ -203,6 +218,38 @@ mod tests {
         let ended = history.note_event("t1", &body(END, home.path(), ID), 4000).unwrap();
         assert_eq!(ended.started_ms, 1000);
         assert_eq!(ended.updated_ms, 4000);
+    }
+
+    #[tokio::test]
+    async fn copy_waits_for_the_turns_last_lines() {
+        use std::io::Write;
+        let home = tempfile::tempdir().unwrap();
+        let history = Arc::new(History::open(home.path()));
+        history.set_settle(Duration::from_millis(300));
+        let transcript = home.path().join(format!("{ID}.jsonl"));
+        std::fs::write(
+            &transcript,
+            "{\"n\":1}
+",
+        )
+        .unwrap();
+
+        let meta = history.note_event("t1", &body(STOP, home.path(), ID), 2000).unwrap();
+        schedule_copy(history.clone(), meta);
+        // Claude writes the turn's last lines a moment after the Stop hook fires.
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        let mut file = std::fs::OpenOptions::new().append(true).open(&transcript).unwrap();
+        writeln!(file, "{{\"n\":2}}").unwrap();
+
+        let started = std::time::Instant::now();
+        while !history.is_idle() {
+            assert!(started.elapsed() < Duration::from_secs(5), "copy did not finish");
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        let (archive, _) = crate::history::archive::archive_paths(home.path(), "claude", ID);
+        let decoded = zstd::decode_all(std::fs::File::open(&archive).unwrap()).unwrap();
+        assert_eq!(decoded, std::fs::read(&transcript).unwrap());
+        assert!(String::from_utf8(decoded).unwrap().contains("{\"n\":2}"));
     }
 
     #[test]

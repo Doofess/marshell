@@ -112,6 +112,7 @@ async fn stops_in_a_row_copy_once_at_a_time_and_end_current() {
     common::tie_children_to_test();
     let home = tempfile::tempdir().unwrap();
     let history = Arc::new(History::open(home.path()));
+    history.set_settle(Duration::from_millis(10));
     let transcript = home.path().join(format!("{ID}.jsonl"));
     // Lines that do not compress well, so a copy takes a moment.
     let mut x: u64 = 0x9E3779B97F4A7C15;
