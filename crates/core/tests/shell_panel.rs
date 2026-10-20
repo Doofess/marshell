@@ -1,5 +1,7 @@
 //! The sidebar shell panel runs in its own pty: not a tab, not saved, until "Open in a pane" adopts it.
 
+mod common;
+
 use axum::body::Body;
 use axum::http::{Request, StatusCode, header};
 use marshell_core::server::{AppState, router};
@@ -13,6 +15,7 @@ const PORT: u16 = 5555;
 const ORIGIN: &str = "http://tauri.localhost";
 
 fn state_in(home: &Path) -> AppState {
+    common::tie_children_to_test();
     let profile = Profile {
         id: "sleeper".into(),
         name: "Sleeper".into(),

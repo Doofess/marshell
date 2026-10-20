@@ -4,6 +4,8 @@
 //! Windows only: the programs run under `cmd.exe`, so the process chain has a shell to read.
 #![cfg(windows)]
 
+mod common;
+
 use axum::body::Body;
 use axum::http::{Request, StatusCode, header};
 use marshell_core::server::{AppState, router};
@@ -46,6 +48,7 @@ fn cmd(id: &str, flag: &str, line: String) -> Profile {
 /// It runs the copy by a path, not a bare name: with NoDefaultCurrentDirectoryInExePath set, cmd
 /// would find a real `codex` on PATH instead of the copy in the folder.
 fn state_in(home: &Path) -> AppState {
+    common::tie_children_to_test();
     let fake = env!("CARGO_BIN_EXE_fake-agent");
     let profiles = vec![
         cmd("codex", "/c", format!(r".\{CODEX_COPY} sleep")),

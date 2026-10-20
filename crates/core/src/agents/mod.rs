@@ -21,13 +21,18 @@ use crate::hooks::holds::PendingPermission;
 use marshell_protocol::hook::{PermissionDecision, PermissionView};
 use serde_json::Value;
 
+/// Whether Marshell can show and answer this agent's permission requests.
+pub fn supports_permissions(agent: &str) -> bool {
+    matches!(agent, "claude")
+}
+
 /// A held request's card, when its agent is known and it belongs to a tab.
 pub fn permission_view(p: &PendingPermission) -> Option<PermissionView> {
     p.tab.as_ref()?;
-    match p.agent.as_str() {
-        "claude" => claude::request::view(p),
-        _ => None,
+    if !supports_permissions(&p.agent) {
+        return None;
     }
+    claude::request::view(p)
 }
 
 /// The hook output that carries `decision` back to `agent`, or why it can't.

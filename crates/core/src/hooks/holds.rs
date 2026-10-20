@@ -127,7 +127,32 @@ impl Holds {
 
     /// Settles the request with a decision. False when the rid is unknown or already settled.
     pub fn decide(&self, rid: &str, decision: PermissionDecision) -> bool {
-        self.settle(rid, Outcome::Decided(decision))
+        self.decide_and_update(rid, decision, |_, _| {})
+    }
+
+    /// Updates the tab after a winning decision, before publishing the removal. The callback
+    /// receives whether another request for the same tab is waiting. It runs under the map lock
+    /// and must not access holds.
+    pub(crate) fn decide_and_update(
+        &self,
+        rid: &str,
+        decision: PermissionDecision,
+        update: impl FnOnce(&PendingPermission, bool),
+    ) -> bool {
+        let answered = {
+            let mut map = lock(&self.map);
+            let Some(entry) = map.remove(rid) else {
+                return false;
+            };
+            let answered = entry.tx.send(Outcome::Decided(decision)).is_ok();
+            if answered {
+                let waiting = map.values().any(|e| e.info.tab == entry.info.tab);
+                update(&entry.info, waiting);
+            }
+            answered
+        };
+        bump(&self.changes);
+        answered
     }
 
     /// Lets the agent ask the person itself. False when the rid is unknown or already settled.
@@ -245,12 +270,32 @@ mod tests {
     #[test]
     fn views_are_built_at_open_and_oldest_first() {
         let holds = Holds::default();
-        let (_a, _ra) = holds.open(Some("t1".into()), "claude".into(), request());
+        let (a, _ra) = holds.open(Some("t1".into()), "claude".into(), request());
         let (_b, _rb) = holds.open(None, "claude".into(), request());
         let (_c, _rc) = holds.open(Some("t2".into()), "codex".into(), request());
+        let (d, _rd) = holds.open(Some("t3".into()), "claude".into(), request());
+        let (e, _re) = holds.open(Some("t4".into()), "claude".into(), request());
+        {
+            let mut map = lock(&holds.map);
+            // Fixed, distinct ages make the order independent of clock resolution and hash order.
+            for (hold, at_ms) in [(&a, 20), (&d, 10), (&e, 30)] {
+                let entry = map.get_mut(&hold.rid).unwrap();
+                entry.info.at_ms = at_ms;
+                entry.view.as_mut().unwrap().at_ms = at_ms;
+                entry.info.request["tool_input"]["command"] = json!("changed after opening");
+            }
+        }
         // No tab and a non-claude agent have no card.
         let views = holds.views();
-        assert_eq!(views.len(), 1);
-        assert_eq!(views[0].tab, "t1");
+        assert_eq!(
+            views.iter().map(|v| v.tab.as_str()).collect::<Vec<_>>(),
+            ["t3", "t1", "t4"]
+        );
+        for view in views {
+            assert!(matches!(
+                view.detail,
+                marshell_protocol::hook::PermissionDetail::Bash { command, .. } if command == "npm test"
+            ));
+        }
     }
 }

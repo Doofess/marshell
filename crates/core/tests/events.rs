@@ -1,3 +1,5 @@
+mod common;
+
 use futures_util::{SinkExt, StreamExt};
 use marshell_core::server::{CoreConfig, RunningCore, start};
 use marshell_protocol::api::CreateSessionRequest;
@@ -8,6 +10,7 @@ use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 type Ws = tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
 
 async fn core() -> (RunningCore, tempfile::TempDir) {
+    common::tie_children_to_test();
     let home = tempfile::tempdir().unwrap();
     let core = start(CoreConfig {
         home: home.path().to_path_buf(),

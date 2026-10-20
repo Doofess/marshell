@@ -1440,24 +1440,26 @@ mod tests {
             ("hooks already present", fixture("hooks-empty.json"), false),
         ];
         for (name, text, exact) in cases {
-            let (_, installed) = install(&Files::settings(&text), BOTH);
-            assert_ne!(
-                installed.settings.as_deref(),
-                Some(text.as_str()),
-                "{name}: install changed nothing"
-            );
-            let (_, removed) = remove(&installed);
-            let got = removed.settings.unwrap();
-            if exact {
-                assert_eq!(got, text, "{name}");
-            } else {
-                // Fallback for this fixture only: `"hooks": {}` was there before the install, but once
-                // the entries are out an empty `hooks` is indistinguishable from one the install
-                // created, and removing it is right for the other fixtures. So the value differs by
-                // exactly that empty object.
-                let mut want = read_value(&text).unwrap();
-                want.as_object_mut().unwrap().shift_remove("hooks");
-                assert_eq!(read_value(&got).unwrap(), want, "{name}: {got}");
+            for approve in [false, true] {
+                let (_, installed) = install(&Files::settings(&text), HookPlanRequest { approve, ..BOTH });
+                assert_ne!(
+                    installed.settings.as_deref(),
+                    Some(text.as_str()),
+                    "{name}: install changed nothing"
+                );
+                let (_, removed) = remove(&installed);
+                let got = removed.settings.unwrap();
+                if exact {
+                    assert_eq!(got, text, "{name}, approve={approve}");
+                } else {
+                    // Fallback for this fixture only: `"hooks": {}` was there before the install, but once
+                    // the entries are out an empty `hooks` is indistinguishable from one the install
+                    // created, and removing it is right for the other fixtures. So the value differs by
+                    // exactly that empty object.
+                    let mut want = read_value(&text).unwrap();
+                    want.as_object_mut().unwrap().shift_remove("hooks");
+                    assert_eq!(read_value(&got).unwrap(), want, "{name}, approve={approve}: {got}");
+                }
             }
         }
     }

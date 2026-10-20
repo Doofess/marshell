@@ -1,3 +1,5 @@
+mod common;
+
 use axum::body::Body;
 use axum::http::{Request, StatusCode, header};
 use marshell_core::server::{AppState, router};
@@ -424,6 +426,7 @@ async fn empty_shell_argv_is_a_bad_request() {
 
 /// A profile that starts the fake agent in `sleep` mode, so a session stays open until closed.
 fn sleeper_profile() -> marshell_protocol::api::Profile {
+    common::tie_children_to_test();
     marshell_protocol::api::Profile {
         id: "sleeper".into(),
         name: "Sleeper".into(),
@@ -456,6 +459,7 @@ fn sessions_app_with(agent_on_path: fn(&str) -> bool) -> axum::Router {
 }
 
 fn fake_argv(args: &[&str]) -> Vec<String> {
+    common::tie_children_to_test();
     let mut v = vec![env!("CARGO_BIN_EXE_fake-agent").to_string()];
     v.extend(args.iter().map(|s| s.to_string()));
     v

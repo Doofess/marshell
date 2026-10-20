@@ -1,6 +1,8 @@
 //! Pause freezes a running session and Continue thaws it. The row's `paused` flag follows the
 //! freeze, and typing into a paused session is refused.
 
+mod common;
+
 use axum::body::Body;
 use axum::http::{Request, StatusCode, header};
 use marshell_core::server::{AppState, router};
@@ -14,6 +16,7 @@ const PORT: u16 = 5555;
 const ORIGIN: &str = "http://tauri.localhost";
 
 fn state_in(home: &Path) -> AppState {
+    common::tie_children_to_test();
     let profile = Profile {
         id: "sleeper".into(),
         name: "sleeper".into(),

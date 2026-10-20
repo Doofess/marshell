@@ -1,3 +1,5 @@
+mod common;
+
 use futures_util::{SinkExt, StreamExt};
 use marshell_core::pty::Pull;
 use marshell_core::server::{CoreConfig, RunningCore, start};
@@ -7,6 +9,7 @@ use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 
 async fn core() -> (RunningCore, tempfile::TempDir) {
+    common::tie_children_to_test();
     let home = tempfile::tempdir().unwrap();
     let core = start(CoreConfig {
         home: home.path().to_path_buf(),

@@ -51,8 +51,7 @@ async fn run(
     // Mark the counter as seen before reading the list, so a change in between sends another frame.
     // The views are cloned under the holds lock, which is released before anything is sent.
     holds.borrow_and_update();
-    let first = permissions_event(&st.permission_views());
-    if !send(&mut tx, first).await {
+    if !send_permissions(&mut tx, &st, &mut rx).await {
         return;
     }
     loop {
@@ -72,8 +71,7 @@ async fn run(
                     break;
                 }
                 holds.borrow_and_update();
-                let msg = permissions_event(&st.permission_views());
-                if !send(&mut tx, msg).await {
+                if !send_permissions(&mut tx, &st, &mut rx).await {
                     break;
                 }
             }
@@ -83,6 +81,23 @@ async fn run(
             },
         }
     }
+}
+
+/// Read the views first, then send any waiting session update before them. A decision updates
+/// the row before publishing the removal, even when select chooses the holds channel first.
+async fn send_permissions(
+    tx: &mut futures_util::stream::SplitSink<WebSocket, Message>,
+    st: &AppState,
+    rx: &mut watch::Receiver<SessionsSnapshot>,
+) -> bool {
+    let msg = permissions_event(&st.permission_views());
+    if rx.has_changed().unwrap_or(false) {
+        let sessions = event(&rx.borrow_and_update());
+        if !send(tx, sessions).await {
+            return false;
+        }
+    }
+    send(tx, msg).await
 }
 
 /// False when the peer is gone or stuck.

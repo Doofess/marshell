@@ -1,3 +1,5 @@
+mod common;
+
 use axum::body::Body;
 use axum::http::{Request, StatusCode, header};
 use marshell_core::server::{AppState, router};
@@ -310,12 +312,8 @@ async fn scoped_allow_without_a_rule_is_409() {
 
 #[tokio::test]
 async fn unsupported_agent_decision_is_409_and_stays_pending() {
-    let (app, _) = app(Duration::from_secs(30));
-    let req = hook_request("codex", Some("t0"), &bash_request());
-    let hook = {
-        let app = app.clone();
-        tokio::spawn(async move { app.oneshot(req).await.unwrap().status() })
-    };
+    let (app, st) = app(Duration::from_secs(30));
+    let (_hold, _rx) = st.holds().open(Some("t0".into()), "codex".into(), bash_request());
     let rid = rid_of(&wait_one(&app).await);
     let (status, text) = post_to(
         &app,
@@ -326,7 +324,24 @@ async fn unsupported_agent_decision_is_409_and_stays_pending() {
     assert_eq!(status, StatusCode::CONFLICT);
     assert_eq!(text, "This agent can't take a decision yet.");
     assert_eq!(pending(&app).await.len(), 1);
-    hook.abort();
+}
+
+#[tokio::test]
+async fn permission_without_a_view_is_answered_at_once() {
+    let (app, _) = app(Duration::from_secs(120));
+    let req = hook_request("codex", Some("t0"), &bash_request());
+    let response = tokio::time::timeout(Duration::from_secs(1), app.clone().oneshot(req))
+        .await
+        .expect("a request without a card was held")
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::NO_CONTENT);
+    assert!(
+        axum::body::to_bytes(response.into_body(), 1024)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    assert!(pending(&app).await.is_empty());
 }
 
 #[tokio::test]
@@ -383,6 +398,7 @@ async fn permissions_require_the_token() {
 
 /// A router whose one profile runs the fake agent asleep, and a session started in it.
 async fn app_with_session(hold: Duration) -> (axum::Router, String, tempfile::TempDir) {
+    common::tie_children_to_test();
     use marshell_protocol::api::{Profile, ShellFamily};
     let dir = tempfile::tempdir().unwrap();
     let home = tempfile::tempdir().unwrap().keep();
@@ -525,6 +541,32 @@ async fn decision_sets_working_thinking() {
 }
 
 #[tokio::test]
+async fn deciding_one_request_keeps_the_tab_waiting_for_the_other() {
+    use marshell_protocol::api::LiveState;
+    let (app, st) = app(Duration::from_secs(30));
+    let first = spawn_hook(&app, Some("t1"), bash_request());
+    let first_rid = rid_of(&wait_one(&app).await);
+    let second = spawn_hook(&app, Some("t1"), bash_request());
+    let entries = wait_pending(&app, |p| p.len() == 2).await;
+    let second_rid = entries.iter().map(rid_of).find(|rid| rid != &first_rid).unwrap();
+    for (rid, expected) in [
+        (first_rid, LiveState::NeedsPermission),
+        (second_rid, LiveState::Working),
+    ] {
+        let (status, _) = post_to(
+            &app,
+            &format!("/v1/permissions/{rid}/decision"),
+            r#"{"behavior":"allow"}"#,
+        )
+        .await;
+        assert_eq!(status, StatusCode::NO_CONTENT);
+        assert_eq!(live_of(&st, "t1").state, expected);
+    }
+    assert_eq!(first.await.unwrap().0, StatusCode::OK);
+    assert_eq!(second.await.unwrap().0, StatusCode::OK);
+}
+
+#[tokio::test]
 async fn release_leaves_the_status_alone() {
     use marshell_protocol::api::LiveState;
     let (app, st) = app(Duration::from_secs(30));
@@ -609,4 +651,69 @@ async fn events_socket_sends_permissions_on_open_and_change() {
     );
     assert_eq!(next_permissions(&mut ws).await, Vec::<serde_json::Value>::new());
     assert_eq!(hook.await.unwrap().0, StatusCode::OK);
+}
+
+#[tokio::test]
+async fn decision_sends_sessions_before_permissions() {
+    use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let (app, _) = app_on(port, Duration::from_secs(30));
+    tokio::spawn(axum::serve(listener, app.clone()).into_future());
+    let mut req = format!("ws://127.0.0.1:{port}/v1/events")
+        .into_client_request()
+        .unwrap();
+    req.headers_mut().insert(
+        "Sec-WebSocket-Protocol",
+        format!("marshell.v1, token.{TOKEN}").parse().unwrap(),
+    );
+    let (mut ws, _) = tokio_tungstenite::connect_async(req).await.unwrap();
+    assert_eq!(next_frame(&mut ws).await["type"], "sessions");
+    assert_eq!(next_frame(&mut ws).await["type"], "permissions");
+
+    // Both channels can be ready together; exercise that choice across repeated decisions.
+    for _ in 0..32 {
+        let hook = spawn_hook_on(port, &app, Some("t1"), bash_request());
+        let (mut waiting, mut rid) = (false, None);
+        while !waiting || rid.is_none() {
+            let frame = next_frame(&mut ws).await;
+            match frame["type"].as_str().unwrap() {
+                "sessions" => {
+                    let row = frame["data"]["sessions"]
+                        .as_array()
+                        .unwrap()
+                        .iter()
+                        .find(|r| r["tab_id"] == "t1")
+                        .unwrap();
+                    waiting = row["live"]["state"] == "needs_permission";
+                }
+                "permissions" => rid = Some(rid_of(&frame["data"][0])),
+                other => panic!("unexpected frame: {other}"),
+            }
+        }
+        let path = format!("/v1/permissions/{}/decision", rid.unwrap());
+        let decide = base_on(port, "POST", &path)
+            .body(Body::from(r#"{"behavior":"allow"}"#))
+            .unwrap();
+        assert_eq!(
+            app.clone().oneshot(decide).await.unwrap().status(),
+            StatusCode::NO_CONTENT
+        );
+        let frame = next_frame(&mut ws).await;
+        assert_eq!(
+            frame["type"], "sessions",
+            "permission removal arrived before the live status"
+        );
+        let row = frame["data"]["sessions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|r| r["tab_id"] == "t1")
+            .unwrap();
+        assert_eq!(row["live"]["state"], "working");
+        let frame = next_frame(&mut ws).await;
+        assert_eq!(frame["type"], "permissions");
+        assert_eq!(frame["data"], serde_json::json!([]));
+        assert_eq!(hook.await.unwrap().0, StatusCode::OK);
+    }
 }

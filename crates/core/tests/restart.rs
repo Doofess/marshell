@@ -1,6 +1,8 @@
 //! Restart starts an agent session again in another mode, in the same row. Every refusal
 //! comes before the old process is touched.
 
+mod common;
+
 use axum::body::Body;
 use axum::http::{Request, StatusCode, header};
 use marshell_core::server::{AppState, router};
@@ -16,6 +18,7 @@ const PORT: u16 = 5555;
 const ORIGIN: &str = "http://tauri.localhost";
 
 fn state_in(home: &Path, agent_on_path: fn(&str) -> bool) -> AppState {
+    common::tie_children_to_test();
     let profile = Profile {
         id: "sleeper".into(),
         name: "sleeper".into(),
