@@ -322,7 +322,7 @@ export function TerminalView({ endpoint, tabId, placeholder, onOutput, onSize, a
       {placeholder && !gotOutput && (
         <p className="terminal-placeholder">{placeholder}</p>
       )}
-      {perfOpen && <PerfOverlay meter={meter} renderer={renderer} />}
+      {perfOpen && <PerfOverlay meter={meter} renderer={renderer} endpoint={endpoint} tabId={tabId} />}
     </>
   );
 }
