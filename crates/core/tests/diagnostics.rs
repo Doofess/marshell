@@ -12,7 +12,218 @@ const TOKEN: &str = "test-token";
 const PORT: u16 = 5555;
 const ORIGIN: &str = "http://tauri.localhost";
 
+/// A process-wide subscriber that discards everything. The capture tests below install their own for one
+/// thread; without a global one, tests running in parallel can leave a log call's cached "disabled" answer
+/// behind and the captured text misses lines. Every test that builds an app calls this first.
+fn keep_log_calls_enabled() {
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    ONCE.call_once(|| {
+        let global = tracing_subscriber::fmt()
+            .with_max_level(tracing::Level::DEBUG)
+            .with_writer(std::io::sink)
+            .finish();
+        let _ = tracing::subscriber::set_global_default(global);
+    });
+}
+
+#[derive(Clone, Default)]
+struct Capture(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+
+impl std::io::Write for Capture {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        self.0.lock().unwrap().extend_from_slice(bytes);
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for Capture {
+    type Writer = Self;
+
+    fn make_writer(&'a self) -> Self {
+        self.clone()
+    }
+}
+
+impl Capture {
+    fn subscriber(&self) -> impl tracing::Subscriber + Send + Sync + 'static {
+        keep_log_calls_enabled();
+        tracing_subscriber::fmt()
+            .with_ansi(false)
+            .without_time()
+            .with_max_level(tracing::Level::DEBUG)
+            .with_writer(self.clone())
+            .finish()
+    }
+
+    fn text(&self) -> String {
+        String::from_utf8(self.0.lock().unwrap().clone()).unwrap()
+    }
+}
+
+#[tokio::test]
+async fn request_log_line_has_no_query_or_body() {
+    let home = tempfile::tempdir().unwrap();
+    let app = app(home.path());
+    let capture = Capture::default();
+    let _subscriber = tracing::subscriber::set_default(capture.subscriber());
+    let res = call(&app, "GET", "/v1/sessions?token=QUERYSECRET", None).await;
+    assert_eq!(res.status(), StatusCode::OK);
+    let res = call(&app, "POST", "/v1/sessions", Some("BODYSECRET")).await;
+    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+    for (host, expected) in [
+        (format!("127.0.0.1:{PORT}"), StatusCode::UNAUTHORIZED),
+        ("foreign.invalid".to_string(), StatusCode::FORBIDDEN),
+    ] {
+        let req = Request::builder()
+            .uri("/v1/sessions?token=QUERYSECRET")
+            .header(header::HOST, host)
+            .body(Body::empty())
+            .unwrap();
+        assert_eq!(app.clone().oneshot(req).await.unwrap().status(), expected);
+    }
+    let text = capture.text();
+    let lines: Vec<_> = text.lines().filter(|line| line.contains("API request")).collect();
+    assert_eq!(lines.len(), 4, "{text}");
+    for (line, (method, status)) in lines
+        .iter()
+        .zip([("GET", 200), ("POST", 400), ("GET", 401), ("GET", 403)])
+    {
+        assert!(line.contains(method) && line.contains("/v1/sessions"), "{line}");
+        assert!(
+            line.contains(&format!("status={status}")) && line.contains("duration_ms="),
+            "{line}"
+        );
+    }
+    for secret in ["QUERYSECRET", "BODYSECRET", TOKEN] {
+        assert!(!text.contains(secret), "{text}");
+    }
+}
+
+#[tokio::test]
+async fn hook_log_line_has_only_event_name_and_tab() {
+    use marshell_protocol::hook::{HEADER_AGENT, HEADER_ROLE, HEADER_TAB};
+
+    let home = tempfile::tempdir().unwrap();
+    let app = app(home.path());
+    let capture = Capture::default();
+    let _subscriber = tracing::subscriber::set_default(capture.subscriber());
+    let req = Request::builder()
+        .method("POST")
+        .uri("/v1/hook")
+        .header(header::HOST, format!("127.0.0.1:{PORT}"))
+        .header(header::AUTHORIZATION, format!("Bearer {TOKEN}"))
+        .header(HEADER_AGENT, "claude")
+        .header(HEADER_ROLE, "event")
+        .header(HEADER_TAB, "test-tab")
+        .body(Body::from(
+            r#"{"hook_event_name":"UserPromptSubmit","prompt":"PROMPTSECRET","tool_input":"PAYLOADSECRET"}"#,
+        ))
+        .unwrap();
+    assert_eq!(app.clone().oneshot(req).await.unwrap().status(), StatusCode::NO_CONTENT);
+    let text = capture.text();
+    let line = text
+        .lines()
+        .find(|line| line.contains("hook event received"))
+        .expect("hook event line");
+    assert!(line.contains("UserPromptSubmit") && line.contains("test-tab"), "{line}");
+    for secret in ["PROMPTSECRET", "PAYLOADSECRET", TOKEN] {
+        assert!(!text.contains(secret), "{text}");
+    }
+    // An event name that is free text (a hostile payload) is not logged at all.
+    let req = Request::builder()
+        .method("POST")
+        .uri("/v1/hook")
+        .header(header::HOST, format!("127.0.0.1:{PORT}"))
+        .header(header::AUTHORIZATION, format!("Bearer {TOKEN}"))
+        .header(HEADER_AGENT, "claude")
+        .header(HEADER_ROLE, "event")
+        .header(HEADER_TAB, "test-tab")
+        .body(Body::from(r#"{"hook_event_name":"EVENTSECRET is a sentence"}"#))
+        .unwrap();
+    assert_eq!(app.oneshot(req).await.unwrap().status(), StatusCode::NO_CONTENT);
+    assert!(!capture.text().contains("EVENTSECRET"), "{}", capture.text());
+}
+
+#[tokio::test]
+async fn session_start_log_has_program_name_and_no_arguments() {
+    common::tie_children_to_test();
+    let home = tempfile::tempdir().unwrap();
+    let work = tempfile::tempdir().unwrap();
+    let profile = Profile {
+        id: "logger".into(),
+        name: "logger".into(),
+        command: vec![
+            env!("CARGO_BIN_EXE_fake-agent").into(),
+            "sleep-then-exit".into(),
+            "1".into(),
+            "ARGSECRET".into(),
+        ],
+        family: ShellFamily::Posix,
+        cwd: None,
+        env: Vec::new(),
+        shell_integration: false,
+        terminal_theme: None,
+        detected: true,
+    };
+    keep_log_calls_enabled();
+    let state = AppState::new(
+        TOKEN.into(),
+        PORT,
+        vec![ORIGIN.into()],
+        home.path().to_path_buf(),
+        vec![profile],
+    );
+    let app = router(state.clone());
+    let capture = Capture::default();
+    let _subscriber = tracing::subscriber::set_default(capture.subscriber());
+    let body = serde_json::json!({
+        "cols": 80, "rows": 24, "profile_id": "logger", "cwd": work.path().to_string_lossy(),
+    });
+    let res = call(&app, "POST", "/v1/sessions", Some(&body.to_string())).await;
+    assert_eq!(res.status(), StatusCode::OK);
+    let json: serde_json::Value = serde_json::from_slice(&body_of(res).await).unwrap();
+    let tab = json["tab_id"].as_str().unwrap();
+    // Wait for a real exit, so the callback's logging is exercised on its own thread too.
+    let ended = tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        loop {
+            if capture.text().contains("session ended") {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+    })
+    .await;
+    // Clean up before asserting the log, including on the RED run.
+    if let Some(session) = state.remove_session(tab)
+        && session.exit_code().is_none()
+    {
+        session.force_kill();
+    }
+    let text = capture.text();
+    let line = text
+        .lines()
+        .find(|line| line.contains("session started"))
+        .unwrap_or_else(|| panic!("session start line: {text}"));
+    assert!(
+        line.contains("fake-agent") && line.contains(tab) && line.contains("shell"),
+        "{line}"
+    );
+    assert!(
+        !line.contains("ARGSECRET") && !line.contains("sleep-then-exit"),
+        "{line}"
+    );
+    assert!(!line.contains(env!("CARGO_BIN_EXE_fake-agent")), "{line}");
+    assert!(ended.is_ok(), "session exit line: {text}");
+    let line = text.lines().find(|line| line.contains("session ended")).unwrap();
+    assert!(line.contains(tab) && line.contains("exit_code=0"), "{line}");
+}
+
 fn app(home: &std::path::Path) -> axum::Router {
+    keep_log_calls_enabled();
     router(AppState::new(
         TOKEN.into(),
         PORT,
@@ -97,6 +308,7 @@ async fn perf_lists_each_open_session() {
         terminal_theme: None,
         detected: true,
     };
+    keep_log_calls_enabled();
     let state = AppState::new(
         TOKEN.into(),
         PORT,
@@ -144,6 +356,7 @@ async fn perf_lists_each_open_session() {
 
 /// A state that runs no real `claude` and reads no real Claude Code settings.
 fn export_app(home: &std::path::Path) -> axum::Router {
+    keep_log_calls_enabled();
     router(
         AppState::new(TOKEN.into(), PORT, vec![ORIGIN.into()], home.to_path_buf(), Vec::new())
             .with_claude_settings(home.join("claude-settings.json"))

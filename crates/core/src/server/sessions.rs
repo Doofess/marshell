@@ -249,12 +249,18 @@ pub(super) async fn spawn_into_map(
     size: (u16, u16),
     scheme: Option<ColorScheme>,
 ) -> Result<(), ApiError> {
+    let agent = agent.unwrap_or_else(|| "shell".into());
+    let program = run
+        .argv
+        .first()
+        .and_then(|p| std::path::Path::new(p).file_name())
+        .map(|p| p.to_string_lossy().into_owned());
     // The profile's variables first, so ours win.
     let mut env = spawn_env(scheme, &run.env);
     env.extend([
         (brand::env_var("TAB_ID"), tab_id.to_string()),
         (brand::env_var("SESSION_NUMBER"), number.to_string()),
-        (brand::env_var("AGENT"), agent.unwrap_or_else(|| "shell".into())),
+        (brand::env_var("AGENT"), agent.clone()),
         ("TERM".into(), "xterm-256color".into()),
         ("COLORTERM".into(), "truecolor".into()),
     ]);
@@ -284,6 +290,8 @@ pub(super) async fn spawn_into_map(
         .map_or(0, |d| d.as_millis());
     let recording = crate::paths::recordings_dir(&st.0.home).join(format!("{tab_id}-{unix_ms}.cast"));
     let shell = run.argv.first().cloned();
+    // The exit callback runs on the PTY wait thread; preserve the caller's subscriber there.
+    let exit_dispatch = tracing::dispatcher::get_default(Clone::clone);
     let spec = SpawnSpec {
         argv: run.argv,
         cwd: (!cwd.is_empty()).then(|| PathBuf::from(cwd)),
@@ -294,6 +302,10 @@ pub(super) async fn spawn_into_map(
         cols: size.0,
         rows: size.1,
         on_exit: Some(Box::new(move |code| {
+            tracing::dispatcher::with_default(&exit_dispatch, || {
+                // The PTY uses -1 when waiting for the child failed, so its exit code is unknown.
+                tracing::info!(tab_id = %exited_tab, exit_code = (code != -1).then_some(code), "session ended");
+            });
             registry.mark_exited(&exited_tab, generation, code)
         })),
         on_mark,
@@ -322,6 +334,7 @@ pub(super) async fn spawn_into_map(
         Ok(Err(e)) => return Err((StatusCode::INTERNAL_SERVER_ERROR, format!("{e:#}"))),
         Err(e) => return Err((StatusCode::INTERNAL_SERVER_ERROR, e.to_string())),
     };
+    tracing::info!(tab_id, %agent, program = program.as_deref(), "session started");
     st.insert_session(session);
     Ok(())
 }

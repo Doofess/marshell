@@ -400,9 +400,27 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/pty/{tab}", get(pty_ws::handler))
         .layer(axum::middleware::from_fn_with_state(state.clone(), guard::auth_guard))
         .layer(cors)
-        // Added last = outermost: Host is checked before CORS can answer a preflight.
+        // Host is checked before CORS can answer a preflight.
         .layer(axum::middleware::from_fn_with_state(state.clone(), guard::host_guard))
+        // Outside both guards and CORS, so even rejected requests have their final status logged.
+        .layer(axum::middleware::from_fn(log_request))
         .with_state(state)
+}
+
+async fn log_request(req: axum::extract::Request, next: axum::middleware::Next) -> axum::response::Response {
+    let method = req.method().clone();
+    // Never retain the full URI, headers or body: they can contain tokens and user content.
+    let path = req.uri().path().to_owned();
+    let started = std::time::Instant::now();
+    let response = next.run(req).await;
+    tracing::debug!(
+        %method,
+        %path,
+        status = response.status().as_u16(),
+        duration_ms = started.elapsed().as_secs_f64() * 1000.0,
+        "API request"
+    );
+    response
 }
 
 async fn health() -> Json<Health> {
@@ -520,6 +538,7 @@ pub async fn start(cfg: CoreConfig) -> anyhow::Result<RunningCore> {
             tracing::error!("core server stopped: {e}");
         }
     });
+    tracing::info!(app_version = env!("CARGO_PKG_VERSION"), port, "core started");
     Ok(RunningCore {
         endpoint,
         state,
