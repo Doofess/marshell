@@ -4,6 +4,7 @@ import { APPROVALS } from "../approval/fixtures";
 import type { ApprovalRequest } from "../approval/types";
 import { Lane } from "./Lane";
 import { laneLayout } from "./laneLayout";
+import { nameContainsLabel } from "../../lib/labelInName";
 
 const html = (requests: ApprovalRequest[] = [APPROVALS.safeBash, APPROVALS.question], h = 800) => renderToStaticMarkup(<Lane requests={requests} sidebarHeight={h} />);
 
@@ -58,5 +59,39 @@ describe("Lane (accessibility gate)", () => {
     const h = html();
     expect(h).toContain('aria-label="billing Run a command 1m. Needs permission."');
     expect(h).toMatch(/lane-row__name"[^>]*>billing<\/span> <span class="lane-row__what"/);
+  });
+});
+
+describe("Lane (live entries)", () => {
+  const waitingRow: ApprovalRequest = { ...APPROVALS.question, id: "terminal-t9", tab: "t9", terminalOnly: true, waitingMs: 90_000, session: { name: "web", agent: "claude", number: 2 }, detail: { kind: "question", question: "Pick a region", options: [] } };
+  it("shows the first request that is not terminal-only as the card, even when a terminal-only one has waited longer", () => {
+    const h = html([waitingRow, APPROVALS.safeBash]);
+    expect((h.match(/data-phase="pending"/g) ?? []).length).toBe(1);
+    expect(h.indexOf("approve-card")).toBeLessThan(h.indexOf("lane-row"));
+    expect(h).toContain("Run a command");
+  });
+  it("shows a terminal-only entry as a row saying it has a question, never as a card", () => {
+    const h = html([waitingRow]);
+    expect(h).not.toContain("approve-card");
+    expect(h).toContain("lane-row");
+    expect(h).toContain("Has a question");
+    expect(h).toContain("Needs you · 1");
+  });
+  it("counts entries, so two requests from one tab are two", () => {
+    expect(html([APPROVALS.safeBash, { ...APPROVALS.safeBash, id: "second" }])).toContain("Needs you · 2");
+  });
+  it("names a row and a card with <1m for a wait under a minute, and the name holds what they show", () => {
+    const quick = { ...waitingRow, waitingMs: 12_000 };
+    const row = html([APPROVALS.safeBash, quick]);
+    expect(row).toContain("web Has a question &lt;1m. Has a question.");
+    expect(row).not.toContain("12s");
+    const rowOnly = /<button[^>]*class="lane-row"[\s\S]*?<\/button>/.exec(row)![0];
+    expect(nameContainsLabel(rowOnly)).toBe(true);
+    expect(html([{ ...APPROVALS.safeBash, waitingMs: 12_000 }])).toContain("&lt;1m");
+  });
+  it("shows a receipt above the waiting ones without counting it", () => {
+    const h = html([{ ...APPROVALS.safeBash, state: { phase: "decided", verdict: "allowed" } }, APPROVALS.question]);
+    expect(h).toContain("Allowed · npm test");
+    expect(h).toContain("Needs you · 1");
   });
 });

@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { FIXTURES } from "../sidebar/fixtures";
+import { pendingSessionCount } from "../lane/laneLayout";
+import { APPROVALS } from "../approval/fixtures";
 import { coveredByNotice, laneAnnouncement, nextAnnouncement, sessionAnnouncement, statusSentence, switchAnnouncement } from "./announce";
 
 const row = (id: string) => FIXTURES.find((f) => f.id === id)!;
@@ -77,6 +79,13 @@ describe("statusSentence: what 'Read the focused session's status' says", () => 
 });
 
 describe("laneAnnouncement: a request arriving anywhere is something that needs you", () => {
+  it("counts distinct tabs, including a sending card only once", () => {
+    const a = { ...APPROVALS.safeBash, tab: "a" };
+    const count = pendingSessionCount([a, { ...a, id: "second", busy: true }]);
+    expect(count).toBe(1);
+    expect(laneAnnouncement(1, count)).toBe("");
+    expect(laneAnnouncement(1, pendingSessionCount([a, { ...a, id: "third", tab: "b" }]))).toBe("2 sessions need you");
+  });
   it("is silent on the first render and when the count stays or falls", () => {
     expect(laneAnnouncement(null, 2)).toBe("");
     expect(laneAnnouncement(2, 2)).toBe("");

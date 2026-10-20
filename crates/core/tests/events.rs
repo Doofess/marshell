@@ -1,3 +1,5 @@
+mod common;
+
 use futures_util::{SinkExt, StreamExt};
 use marshell_core::server::{CoreConfig, RunningCore, start};
 use marshell_protocol::api::CreateSessionRequest;
@@ -8,6 +10,7 @@ use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 type Ws = tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
 
 async fn core() -> (RunningCore, tempfile::TempDir) {
+    common::tie_children_to_test();
     let home = tempfile::tempdir().unwrap();
     let core = start(CoreConfig {
         home: home.path().to_path_buf(),
@@ -80,10 +83,15 @@ async fn events_send_snapshot_on_connect_and_change() {
     assert_eq!(first["type"], "sessions");
     assert_eq!(first["data"]["sessions"].as_array().unwrap().len(), 0);
 
+    // The held permission requests follow the first snapshot, none yet.
+    let second = next_event(&mut ws).await;
+    assert_eq!(second["type"], "permissions");
+    assert_eq!(second["data"], serde_json::json!([]));
+
     create(&core).await;
     // The session may publish more than one change (reserve, then ready); read until it shows up.
     let mut event = next_event(&mut ws).await;
-    while event["data"]["sessions"].as_array().unwrap().is_empty() {
+    while event["type"] != "sessions" || event["data"]["sessions"].as_array().unwrap().is_empty() {
         event = next_event(&mut ws).await;
     }
     assert_eq!(event["type"], "sessions");

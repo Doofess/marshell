@@ -10,7 +10,7 @@ import { Composer } from "../composer/Composer";
 import { StatusBar } from "../composer/StatusBar";
 import { APPROVALS } from "../approval/fixtures";
 import type { ApprovalRequest } from "../approval/types";
-import { pending } from "../lane/laneLayout";
+import { pendingSessionCount } from "../lane/laneLayout";
 import type { RowModel } from "../sidebar/types";
 import { ScriptedTerminal } from "../terminal/ScriptedTerminal";
 import { SHELL_SIZE, shellSession } from "../terminal/scriptedShell";
@@ -58,6 +58,17 @@ export type MainWindowProps = {
   sidebarWidth?: number;
   rows?: RowModel[];
   requests?: ApprovalRequest[];
+  /** The lane's full card (the app's live one). Left out it is the static card. */
+  renderCard?: (request: ApprovalRequest) => ReactNode;
+  /** A one-liner in the lane was chosen: go to its session. */
+  onJumpRequest?: (request: ApprovalRequest) => void;
+  /** A session's last rows as text, for Peek on a row. Left out, rows have no Peek. */
+  readScreen?: (id: string) => Promise<string[]>;
+  /** Esc closed Peek: focus goes back to the terminal. */
+  onPeekClose?: () => void;
+  /** The card for the drawer's request. Left out the drawer shows the sample long command. */
+  drawerCard?: ReactNode;
+  onDrawerClose?: () => void;
   selectedId?: string;
   /** Every session on screen (the panes' sessions). Left out, only `selectedId` is marked. */
   visibleIds?: readonly string[];
@@ -192,6 +203,12 @@ export function MainWindow({
   sidebarWidth,
   rows = SCENARIO_ROWS,
   requests = SCENARIO_REQUESTS,
+  renderCard,
+  onJumpRequest,
+  readScreen,
+  onPeekClose,
+  drawerCard,
+  onDrawerClose,
   selectedId = "working",
   visibleIds,
   os = "windows",
@@ -254,7 +271,7 @@ export function MainWindow({
   // No sessions at all is a real state (first run, everything closed): the window shows its empty state, never a missing row.
   const selected: RowModel | null = rows.find((r) => r.id === selectedId) ?? rows[0] ?? null;
   const empty = selected === null;
-  const waiting = pending(requests).length;
+  const waiting = pendingSessionCount(requests);
   // Focus mode hides the session header until the pointer reaches the top edge; the pane headers stay. Keyboard users leave focus mode instead.
   const [peeking, setPeeking] = useState(false);
   // Leaving focus mode with the pointer on the bar must not leave the peek set for the next time focus mode starts.
@@ -473,7 +490,7 @@ export function MainWindow({
       </header>
 
       <div ref={bodyRef} className="window__body">
-        {mode === "expanded" && <Sidebar rows={rows} requests={requests} height={height - BAR} width={sideW} selectedId={selected?.id} visibleIds={visibleIds} os={os} footer={footer ?? undefined} shell={shell ? { cwd: shellOptions.cwd ?? active?.project, shellName: shellNameFor(os), collapsed: shellCollapsed || shellOptions.hidden === true, os, terminal: shellOptions.terminal, failed: shellOptions.failed, onRetry: shellOptions.onRetry, openDisabled: shellOptions.openDisabled, forceOpen: shellOptions.forceOpen, onToggle: shellOptions.onToggle, onOpenInPane: shellOptions.onOpenInPane } : undefined} renamingId={renamingId} onRename={onRename} onRenameCancel={onRenameCancel} onReorder={onReorder} onSelect={onSelect} onToggle={onToggle} onReview={onReview} onSetup={onSetup} menuItems={menuItems} onMenuRun={onMenuRun} grouped={grouped} />}
+        {mode === "expanded" && <Sidebar rows={rows} requests={requests} renderCard={renderCard} onJumpRequest={onJumpRequest} readScreen={readScreen} onPeekClose={onPeekClose} height={height - BAR} width={sideW} selectedId={selected?.id} visibleIds={visibleIds} os={os} footer={footer ?? undefined} shell={shell ? { cwd: shellOptions.cwd ?? active?.project, shellName: shellNameFor(os), collapsed: shellCollapsed || shellOptions.hidden === true, os, terminal: shellOptions.terminal, failed: shellOptions.failed, onRetry: shellOptions.onRetry, openDisabled: shellOptions.openDisabled, forceOpen: shellOptions.forceOpen, onToggle: shellOptions.onToggle, onOpenInPane: shellOptions.onOpenInPane } : undefined} renamingId={renamingId} onRename={onRename} onRenameCancel={onRenameCancel} onReorder={onReorder} onSelect={onSelect} onToggle={onToggle} onReview={onReview} onSetup={onSetup} menuItems={menuItems} onMenuRun={onMenuRun} grouped={grouped} />}
         {mode === "expanded" && (
           <div
             className="window__side-handle"
@@ -545,9 +562,25 @@ export function MainWindow({
             </button>
           )}
 
-          {drawer && requests[0] && (
-            <aside className="drawer" data-placement={placement} style={{ inlineSize: DRAWER.default }} aria-label="Request details">
-              <ApproveCard request={{ ...requests[0], detail: DRAWER_DETAIL }} expanded />
+          {drawer && (drawerCard || requests[0]) && (
+            <aside
+              className="drawer"
+              data-placement={placement}
+              style={{ inlineSize: DRAWER.default }}
+              aria-label="Request details"
+              onKeyDown={(e) => {
+                if (e.key === "Escape" && onDrawerClose) {
+                  e.stopPropagation();
+                  onDrawerClose();
+                }
+              }}
+            >
+              {onDrawerClose && (
+                <button type="button" className="drawer__close" onClick={onDrawerClose}>
+                  Close details
+                </button>
+              )}
+              {drawerCard ?? <ApproveCard request={{ ...requests[0]!, detail: DRAWER_DETAIL }} expanded />}
             </aside>
           )}
         </main>

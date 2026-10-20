@@ -11,4 +11,8 @@ status: boolean,
 /**
  * Keep the user's own status line working through the chain.
  */
-statusline: boolean, };
+statusline: boolean, 
+/**
+ * Add the PermissionRequest hook so requests can be answered from Marshell.
+ */
+approve: boolean, };

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import type { Endpoint } from "../../generated/Endpoint";
+import type { PermissionView } from "../../generated/PermissionView";
 import type { Profile } from "../../generated/Profile";
 import type { SessionInfo } from "../../generated/SessionInfo";
 import type { SessionsSnapshot } from "../../generated/SessionsSnapshot";
@@ -18,6 +19,8 @@ export type SessionsState = {
   infos: SessionInfo[];
   /** Recently closed sessions. Never shown as live rows: an entry can carry a stale state or number. */
   closed: SessionInfo[];
+  /** The permission requests being held, oldest first. Replaced whole by every `permissions` frame. */
+  permissions: PermissionView[];
   selectedId: string | undefined;
   /** True once the core has sent the list on this connection, so an empty list really is empty. */
   loaded: boolean;
@@ -26,7 +29,7 @@ export type SessionsState = {
   error: string | null;
 };
 
-const EMPTY: SessionsState = { endpoint: null, profiles: [], infos: [], closed: [], selectedId: undefined, loaded: false, restarts: 0, error: null };
+const EMPTY: SessionsState = { endpoint: null, profiles: [], infos: [], closed: [], permissions: [], selectedId: undefined, loaded: false, restarts: 0, error: null };
 const FAILED_TEXT = "Marshell's core stopped and could not restart. Restart Marshell to continue.";
 
 /** Which session is selected after the list changed: the newest one, else the same one, else its neighbour. */
@@ -124,7 +127,7 @@ export class SessionsStore {
       // A profile list that won't load only costs the shell marks (rows fall back to the generic one), so it is not an error.
       const doc = await profilesApi.get(endpoint).catch(() => null);
       if (gen !== this.generation) return;
-      this.socket = new EventSocket(endpoint, (snapshot) => gen === this.generation && this.apply(snapshot));
+      this.socket = new EventSocket(endpoint, (snapshot) => gen === this.generation && this.apply(snapshot), (permissions) => gen === this.generation && this.set({ permissions }));
       this.set({ endpoint, profiles: doc?.profiles ?? [], error: null });
     } catch (e) {
       if (gen === this.generation) this.set({ error: `Couldn't reach the core: ${String(e)}` });
@@ -145,6 +148,9 @@ export function useSessions(setup?: { claude?: HookInstall }): {
   rows: RowModel[];
   infos: SessionInfo[];
   closed: SessionInfo[];
+  permissions: PermissionView[];
+  /** The clock the rows' ages count from (it also dates the lane's waits). */
+  now: number;
   selectedId: string | undefined;
   loaded: boolean;
   restarts: number;
@@ -164,5 +170,5 @@ export function useSessions(setup?: { claude?: HookInstall }): {
     return () => clearTimeout(id);
   }, [state.infos, now]);
   const rows = useMemo(() => state.infos.map((i) => toRow(i, state.profiles, setup, Math.max(now, Date.now()))), [state.infos, state.profiles, setup, now]);
-  return { ...state, rows, select: store.select, reloadProfiles: store.reloadProfiles };
+  return { ...state, rows, now, select: store.select, reloadProfiles: store.reloadProfiles };
 }

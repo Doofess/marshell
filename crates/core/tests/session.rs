@@ -1,8 +1,11 @@
+mod common;
+
 use marshell_core::pty::{FreezeError, MAX_UNACKED, Mark, Pull, Session, SpawnSpec};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 fn fake(args: &[&str]) -> SpawnSpec {
+    common::tie_children_to_test();
     let mut argv = vec![env!("CARGO_BIN_EXE_fake-agent").to_string()];
     argv.extend(args.iter().map(|s| s.to_string()));
     SpawnSpec {
@@ -15,6 +18,78 @@ fn fake(args: &[&str]) -> SpawnSpec {
         on_exit: None,
         on_mark: None,
         record: None,
+    }
+}
+
+#[cfg(windows)]
+#[test]
+fn sessions_die_when_the_test_process_exits() {
+    use windows_sys::Win32::Foundation::{CloseHandle, WAIT_OBJECT_0};
+    use windows_sys::Win32::System::Threading::{
+        OpenProcess, PROCESS_SYNCHRONIZE, PROCESS_TERMINATE, TerminateProcess, WaitForSingleObject,
+    };
+    const PROBE: &str = "MARSHELL_TEST_CHILD_PID_FILE";
+    if let Some(path) = std::env::var_os(PROBE) {
+        let _session = Session::spawn("test-exit".into(), fake(&["sleep"])).unwrap();
+        // A child outside ConPTY also has to die; closing a console alone cannot protect it.
+        #[allow(clippy::zombie_processes)] // The parent verifies job cleanup after this process exits.
+        let child = std::process::Command::new(env!("CARGO_BIN_EXE_fake-agent"))
+            .arg("sleep")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .unwrap();
+        let path = std::path::PathBuf::from(path);
+        std::fs::write(&path, child.id().to_string()).unwrap();
+        assert!(wait_until(Duration::from_secs(10), || path
+            .with_extension("ready")
+            .exists()));
+        if std::env::var_os("MARSHELL_TEST_CHILD_PANIC").is_some() {
+            panic!("deliberate test panic");
+        }
+        return;
+    }
+
+    for panics in [false, true] {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("pid");
+        let mut child = std::process::Command::new(std::env::current_exe().unwrap());
+        child
+            .args(["--exact", "sessions_die_when_the_test_process_exits"])
+            .env(PROBE, &path)
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped());
+        if panics {
+            child.env("MARSHELL_TEST_CHILD_PANIC", "1");
+        }
+        let child = child.spawn().unwrap();
+        let mut pid = None;
+        assert!(wait_until(Duration::from_secs(10), || {
+            pid = std::fs::read_to_string(&path).ok().and_then(|s| s.parse::<u32>().ok());
+            pid.is_some()
+        }));
+        let pid = pid.unwrap();
+        // SAFETY: this PID belongs to the child our probe just started; the handle is checked.
+        let process = unsafe { OpenProcess(PROCESS_SYNCHRONIZE | PROCESS_TERMINATE, 0, pid) };
+        assert!(
+            !process.is_null(),
+            "could not open probe child: {}",
+            std::io::Error::last_os_error()
+        );
+        std::fs::write(path.with_extension("ready"), b"").unwrap();
+        let output = child.wait_with_output().unwrap();
+        // SAFETY: the handle stays open through the wait and cleanup, then is closed exactly once.
+        let gone = unsafe {
+            let gone = WaitForSingleObject(process, 5000) == WAIT_OBJECT_0;
+            if !gone {
+                TerminateProcess(process, 1);
+                WaitForSingleObject(process, 5000);
+            }
+            CloseHandle(process);
+            gone
+        };
+        assert_eq!(output.status.success(), !panics, "{output:?}");
+        assert!(gone, "fake-agent outlived its test process (panics={panics})");
     }
 }
 
@@ -181,6 +256,7 @@ fn process_alive(pid: u32) -> bool {
 
 #[test]
 fn on_exit_callback_gets_the_code() {
+    common::tie_children_to_test();
     let argv: &[&str] = if cfg!(windows) {
         &["cmd", "/c", "exit 3"]
     } else {
@@ -341,6 +417,7 @@ fn session_without_a_recordable_path_still_runs() {
 }
 
 fn printer(nested: bool) -> SpawnSpec {
+    common::tie_children_to_test();
     let argv: Vec<String> = match (cfg!(windows), nested) {
         (true, false) => vec!["ping".into(), "-t".into(), "127.0.0.1".into()],
         (true, true) => vec!["cmd".into(), "/c".into(), "cmd /c ping -t 127.0.0.1".into()],

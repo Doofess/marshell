@@ -1,3 +1,5 @@
+mod common;
+
 use axum::body::Body;
 use axum::http::{Request, StatusCode, header};
 use marshell_core::server::{AppState, router};
@@ -91,6 +93,7 @@ async fn put_view_then_get_returns_it() {
 }
 
 fn sleeper_profile() -> marshell_protocol::api::Profile {
+    common::tie_children_to_test();
     marshell_protocol::api::Profile {
         id: "sleeper".into(),
         name: "Sleeper".into(),

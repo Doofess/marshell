@@ -9,6 +9,7 @@ const longCommand = Array.from({ length: 40 }, (_, i) =>
 export const APPROVALS = {
   safeBash: {
     id: "safe-bash",
+    tab: "tab-safe-bash",
     session: { name: "billing", agent: "claude", number: 1 },
     sessionCwd: "C:/dev/payments",
     waitingMs: 65_000,
@@ -19,6 +20,7 @@ export const APPROVALS = {
   },
   riskyBash: {
     id: "risky-bash",
+    tab: "tab-risky-bash",
     session: { name: "refactor", agent: "claude", number: 17 },
     sessionCwd: "C:/dev/my-app",
     waitingMs: 12_000,
@@ -28,6 +30,7 @@ export const APPROVALS = {
   },
   edit: {
     id: "edit",
+    tab: "tab-edit",
     session: { name: "api-server", agent: "claude", number: 3 },
     sessionCwd: "C:/dev/my-app",
     waitingMs: 31_000,
@@ -51,6 +54,7 @@ export const APPROVALS = {
   },
   writeNew: {
     id: "write-new",
+    tab: "tab-write-new",
     session: { name: "landing", agent: "codex", number: 5 },
     sessionCwd: "C:/dev/marketing",
     waitingMs: 8_000,
@@ -60,6 +64,7 @@ export const APPROVALS = {
   },
   mcp: {
     id: "mcp",
+    tab: "tab-mcp",
     session: { name: "infra", agent: "claude", number: 2 },
     sessionCwd: "C:/dev/terraform",
     waitingMs: 95_000,
@@ -70,6 +75,7 @@ export const APPROVALS = {
   },
   longCommand: {
     id: "long-command",
+    tab: "tab-long-command",
     session: { name: "ci-fix", agent: "antigravity", number: 27 },
     sessionCwd: "C:/dev/my-app",
     waitingMs: 2 * MIN,
@@ -79,6 +85,7 @@ export const APPROVALS = {
   },
   question: {
     id: "question",
+    tab: "tab-question",
     session: { name: "infra", agent: "antigravity", number: 2 },
     sessionCwd: "C:/dev/terraform",
     waitingMs: 4 * MIN,
@@ -88,6 +95,7 @@ export const APPROVALS = {
   },
   receipt: {
     id: "receipt",
+    tab: "tab-receipt",
     session: { name: "billing", agent: "claude", number: 1 },
     sessionCwd: "C:/dev/payments",
     waitingMs: 70_000,
@@ -97,6 +105,7 @@ export const APPROVALS = {
   },
   answeredInTerminal: {
     id: "answered-in-terminal",
+    tab: "tab-answered-in-terminal",
     session: { name: "billing", agent: "claude", number: 1 },
     sessionCwd: "C:/dev/payments",
     waitingMs: 40_000,
@@ -106,6 +115,7 @@ export const APPROVALS = {
   },
   released: {
     id: "released",
+    tab: "tab-released",
     session: { name: "nightly", agent: "claude", number: 26 },
     sessionCwd: "C:/dev/perf",
     waitingMs: 120_000,

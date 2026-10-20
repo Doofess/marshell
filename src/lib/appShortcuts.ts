@@ -33,7 +33,9 @@ export type SessionShortcut =
   /** "Open file…": the palette, to pick a file for the preview. Has no key of its own. */
   | { kind: "openFile" }
   /** Capture a screen region with the system's snipping tool and add the image to the focused session (Ctrl+Shift+X). Windows only for now. */
-  | { kind: "capture" };
+  | { kind: "capture" }
+  /** Focus the needs-you lane's target card, the oldest waiting request (Ctrl+Shift+N; Cmd+N on macOS). */
+  | { kind: "nextWaiting" };
 
 /** Escape while the busy-close bar is up cancels it, even with focus in the terminal (where the window takes the key first). */
 export function cancelsCloseBar(e: { key: string; ctrlKey: boolean; shiftKey: boolean; altKey: boolean; metaKey: boolean; isComposing?: boolean }, barOpen: boolean): boolean {
@@ -89,6 +91,8 @@ export function commandShortcut(id: string): SessionShortcut | null {
       return { kind: "openFile" };
     case "capture":
       return { kind: "capture" };
+    case "next-waiting":
+      return { kind: "nextWaiting" };
   }
   const n = FOCUS_SESSION.exec(id)?.[1];
   return n === undefined ? null : { kind: "goto", number: Number(n) };

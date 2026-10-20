@@ -27,6 +27,8 @@ export type RowDrag = {
   dragging: boolean;
   onPointerDown: PointerEventHandler<HTMLDivElement>;
 };
+/** What a row does for Peek: Space on the focused row, and the mouse over or off the row. */
+export type RowPeek = { onOpen: (el: HTMLElement) => void; onHover: (el: HTMLElement) => void; onLeave: () => void };
 /** F2: the name is a text box. */
 export type RowRename = { onCommit: (name: string) => void; onCancel: (opts: { refocus: boolean }) => void };
 
@@ -49,6 +51,7 @@ export function SessionRow({
   onReview,
   onSetup,
   onMenu,
+  peek,
 }: {
   row: RowModel;
   density: Density;
@@ -70,6 +73,8 @@ export function SessionRow({
   onSetup?: () => void;
   /** Right-click, Shift+F10 or the Menu key: where to open the row's menu. Left out, the row has no menu. */
   onMenu?: (anchor: { x: number; y: number }) => void;
+  /** Space opens Peek (focus goes into it); a mouse resting on the row opens it after a delay. Left out, the row has no Peek. */
+  peek?: RowPeek;
 }) {
   const caution = modeCaution(row.mode);
   const usage = formatUsage(row.usage);
@@ -119,10 +124,15 @@ export function SessionRow({
           onMenu({ x: e.clientX, y: e.clientY });
         })
       }
+      onPointerEnter={peek && !rename ? (e) => e.pointerType === "mouse" && peek.onHover(e.currentTarget) : undefined}
+      onPointerLeave={peek ? () => peek.onLeave() : undefined}
       onKeyDown={
-        (onMenu || onToggle) &&
+        (onMenu || onToggle || peek) &&
         ((e) => {
-          if (onMenu && opensRowMenu(e)) {
+          if (peek && !rename && e.key === " " && e.target === e.currentTarget && !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey) {
+            e.preventDefault();
+            peek.onOpen(e.currentTarget);
+          } else if (onMenu && opensRowMenu(e)) {
             e.preventDefault();
             e.stopPropagation();
             onMenu(keyboardAnchor(e.currentTarget.getBoundingClientRect()));

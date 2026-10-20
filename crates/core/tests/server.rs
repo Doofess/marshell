@@ -1,3 +1,5 @@
+mod common;
+
 use axum::body::Body;
 use axum::http::{Request, StatusCode, header};
 use marshell_core::server::{AppState, router};
@@ -291,6 +293,49 @@ async fn start_writes_endpoint_file_and_serves() {
     core.shutdown();
 }
 
+async fn start_core(home: &std::path::Path) -> marshell_core::server::RunningCore {
+    marshell_core::server::start(marshell_core::server::CoreConfig {
+        home: home.to_path_buf(),
+        allowed_origins: vec![],
+        programs_dir: None,
+    })
+    .await
+    .unwrap()
+}
+
+#[tokio::test]
+async fn endpoint_file_names_the_core_process() {
+    let home = tempfile::tempdir().unwrap();
+    let core = start_core(home.path()).await;
+    let raw: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(home.path().join("run/endpoint.json")).unwrap()).unwrap();
+    assert_eq!(raw["pid"], std::process::id());
+    core.shutdown();
+}
+
+#[tokio::test]
+async fn shutdown_deletes_the_endpoint_file() {
+    let home = tempfile::tempdir().unwrap();
+    let core = start_core(home.path()).await;
+    let file = home.path().join("run/endpoint.json");
+    assert!(file.exists());
+    core.shutdown();
+    assert!(!file.exists());
+}
+
+#[tokio::test]
+async fn shutdown_keeps_the_endpoint_file_of_a_newer_core() {
+    let home = tempfile::tempdir().unwrap();
+    let old = start_core(home.path()).await;
+    let newer = start_core(home.path()).await;
+    old.shutdown();
+    let raw: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(home.path().join("run/endpoint.json")).unwrap()).unwrap();
+    assert_eq!(raw["token"], newer.endpoint.token);
+    newer.shutdown();
+    assert!(!home.path().join("run/endpoint.json").exists());
+}
+
 #[tokio::test]
 async fn bad_bearer_token_is_unauthorized() {
     let req = get("/v1/health")
@@ -381,6 +426,7 @@ async fn empty_shell_argv_is_a_bad_request() {
 
 /// A profile that starts the fake agent in `sleep` mode, so a session stays open until closed.
 fn sleeper_profile() -> marshell_protocol::api::Profile {
+    common::tie_children_to_test();
     marshell_protocol::api::Profile {
         id: "sleeper".into(),
         name: "Sleeper".into(),
@@ -413,6 +459,7 @@ fn sessions_app_with(agent_on_path: fn(&str) -> bool) -> axum::Router {
 }
 
 fn fake_argv(args: &[&str]) -> Vec<String> {
+    common::tie_children_to_test();
     let mut v = vec![env!("CARGO_BIN_EXE_fake-agent").to_string()];
     v.extend(args.iter().map(|s| s.to_string()));
     v
@@ -819,4 +866,27 @@ async fn a_session_reports_its_recording_path() {
     assert_eq!(res.status(), StatusCode::NOT_FOUND);
     let bytes = axum::body::to_bytes(res.into_body(), 1024).await.unwrap();
     assert_eq!(String::from_utf8_lossy(&bytes), "This session has no recording.");
+}
+
+#[tokio::test]
+async fn peek_route_404_for_unknown_tab() {
+    let home = tempfile::tempdir().unwrap();
+    let app = app_in(home.path());
+    let res = app
+        .oneshot(api("GET", "/v1/sessions/no-such-tab/peek?lines=30", None))
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::NOT_FOUND);
+    let bytes = axum::body::to_bytes(res.into_body(), 1024).await.unwrap();
+    assert_eq!(String::from_utf8_lossy(&bytes), "No such session.");
+}
+
+#[tokio::test]
+async fn peek_route_without_token_is_401() {
+    let home = tempfile::tempdir().unwrap();
+    let req = get("/v1/sessions/no-such-tab/peek?lines=30")
+        .body(Body::empty())
+        .unwrap();
+    let res = app_in(home.path()).oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
 }

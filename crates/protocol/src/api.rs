@@ -755,6 +755,8 @@ pub struct Settings {
     pub onboarded: bool,
     /// Agent ids whose live status is switched off; their rows use the pty fallback.
     pub status_off: Vec<String>,
+    /// True when the needs-you sound is switched off.
+    pub sound_off: bool,
 }
 
 /// A file the core found for the user to import from (the core only reads it).

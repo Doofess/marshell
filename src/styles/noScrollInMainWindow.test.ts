@@ -21,7 +21,7 @@ const FILES = [...walk(join(SRC, "features")), ...walk(join(SRC, "components")),
  * hide keys), and the preview pane's body (`.preview__body`: a file is read by scrolling it, both ways, with the themed scrollbar visible;
  * it is a pane beside the terminal, opened and closed by the person).
  */
-const ALLOWED = [/^\.live-shortcuts__sheet$/,/^\.drawer$/, /^\.composer__field$/, /^\.scroll-menu$/, /^\.layout-menu$/, /^\.sidebar__list$/, /^\.rail__list$/, /^\.palette__list$/, /^\.launcher__list$/, /^\.page__body$/, /^\.raw-editor__text$/, /^\.fix-sheet__body$/, /^\.onboarding__body$/, /^\.agents-dialog__body$/, /^\.review__files$/, /^\.preview__body$/];
+const ALLOWED = [/^\.live-shortcuts__sheet$/,/^\.drawer$/, /^\.composer__field$/, /^\.scroll-menu$/, /^\.layout-menu$/, /^\.sidebar__list$/, /^\.rail__list$/, /^\.palette__list$/, /^\.launcher__list$/, /^\.page__body$/, /^\.raw-editor__text$/, /^\.fix-sheet__body$/, /^\.onboarding__body$/, /^\.agents-dialog__body$/, /^\.review__files$/, /^\.preview__body$/, /^\.peek__screen$/];
 
 const read = (f: string) => readFileSync(join(SRC, f), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
 const rules = (css: string) => [...css.matchAll(/([^{}]+)\{([^{}]*)\}/g)].map((m) => ({ selectors: m[1]!.split(",").map((s) => s.trim()), body: m[2]! }));

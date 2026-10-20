@@ -28,6 +28,8 @@ export class SettingsSync {
   private seen = false;
   /** Kept from the last read, so every save sends it back unchanged. */
   private off: string[] = [];
+  /** Kept from the last read, so every save sends it back unchanged. */
+  private mute = false;
   /** The appearance the core last stored, which a pause-warning write sends back unchanged. */
   private appearance: Appearance | null = null;
 
@@ -44,8 +46,14 @@ export class SettingsSync {
     this.warned = s.pause_warned;
     this.seen = s.onboarded;
     this.off = s.status_off;
+    this.mute = s.sound_off;
     this.appearance = s.appearance;
     return s.appearance;
+  }
+
+  /** Whether the needs-you sound is switched off, as of the last read or write. False until a read works. */
+  get soundOff(): boolean {
+    return this.mute;
   }
 
   /** The agent ids whose live status is switched off, as of the last read or write. Empty until a read works. */
@@ -72,12 +80,18 @@ export class SettingsSync {
         throw new SettingsReadError();
       }
     }
-    const s = await this.api.put(await this.getEndpoint(), { appearance: next, pause_warned: this.warned, onboarded: this.seen, status_off: this.off });
+    const s = await this.api.put(await this.getEndpoint(), { appearance: next, pause_warned: this.warned, onboarded: this.seen, status_off: this.off, sound_off: this.mute });
     this.warned = s.pause_warned;
     this.seen = s.onboarded;
     this.off = s.status_off;
+    this.mute = s.sound_off;
     this.appearance = s.appearance;
     return s.appearance;
+  }
+
+  /** Switches the needs-you sound off or on. Reads first, like `save`, and sends every other field back unchanged. */
+  async setSoundOff(off: boolean): Promise<void> {
+    await this.writeFlags({ sound_off: off });
   }
 
   /** Switches one agent's live status on or off. Reads first, like `save`, and sends every other field back unchanged. */
@@ -108,7 +122,7 @@ export class SettingsSync {
     return this.off;
   }
 
-  private async writeFlags(change: Partial<Pick<Settings, "pause_warned" | "onboarded" | "status_off">>): Promise<void> {
+  private async writeFlags(change: Partial<Pick<Settings, "pause_warned" | "onboarded" | "status_off" | "sound_off">>): Promise<void> {
     if (!this.hasRead) {
       try {
         await this.load();
@@ -121,11 +135,13 @@ export class SettingsSync {
       pause_warned: this.warned,
       onboarded: this.seen,
       status_off: this.off,
+      sound_off: this.mute,
       ...change,
     });
     this.warned = s.pause_warned;
     this.seen = s.onboarded;
     this.off = s.status_off;
+    this.mute = s.sound_off;
     this.appearance = s.appearance;
   }
 }

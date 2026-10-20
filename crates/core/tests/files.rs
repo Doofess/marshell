@@ -1,5 +1,7 @@
 //! The files API: resolve paths against a session's folders, stat and read a file, list a folder.
 
+mod common;
+
 use axum::body::Body;
 use axum::http::{Request, StatusCode, header};
 use marshell_core::server::{AppState, router};
@@ -29,6 +31,7 @@ fn profile(id: &str, command: Vec<String>) -> Profile {
 
 /// `sleeper` reports no folder. `reporter` reports `reported` as its folder, as a shell does.
 fn state_in(home: &Path, reported: &Path) -> AppState {
+    common::tie_children_to_test();
     let fake = env!("CARGO_BIN_EXE_fake-agent");
     let profiles = vec![
         profile("sleeper", vec![fake.into(), "sleep".into()]),

@@ -1,3 +1,5 @@
+mod common;
+
 use axum::body::Body;
 use axum::http::{Request, StatusCode, header};
 use marshell_core::server::{AppState, router};
@@ -26,6 +28,7 @@ fn sleeper_profile() -> marshell_protocol::api::Profile {
 const KNOWN: &str = "2.1.302";
 
 fn state(version: Option<&str>) -> AppState {
+    common::tie_children_to_test();
     let home = tempfile::tempdir().unwrap().keep();
     AppState::new(
         TOKEN.into(),

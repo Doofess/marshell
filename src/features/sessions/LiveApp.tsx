@@ -5,6 +5,11 @@ import type { Task } from "../../generated/Task";
 import type { TaskChanges } from "../../generated/TaskChanges";
 import { ApiError } from "../../lib/api/client";
 import { sessions } from "../../lib/api/sessions";
+import { decide, release } from "../../lib/api/permissions";
+import { peek as peekScreen } from "../../lib/api/peek";
+import { decisionFor, laneEntries } from "../approval/fromCore";
+import { LiveCard, useCards, type Answer } from "../approval/LiveCard";
+import type { ApprovalRequest } from "../approval/types";
 import { close as closeWindow, minimize as minimizeWindow, onMaximizedChange, toggleMaximize } from "../../lib/window/appWindow";
 import { copyRecordingPath } from "./recording";
 import { addFailure, clipboardText, deliveryFor, noticeFor } from "../regions/deliver";
@@ -20,6 +25,7 @@ import { focusAfterMenu, menuFacts, modeOfItem } from "./sessionMenuRun";
 import { ContextMenu } from "../../components/ContextMenu/ContextMenu";
 import { tasksApi } from "../../lib/api/tasks";
 import { cancelsCloseBar, commandShortcut, sessionShortcut, type SessionShortcut } from "../../lib/appShortcuts";
+import { nextWaiting } from "../lane/laneLayout";
 import { osOfPlatform } from "../../lib/keymap";
 import { paletteSessions } from "../palette/sessions";
 import { Preview } from "../preview/Preview";
@@ -35,6 +41,7 @@ import { getSetup } from "../../lib/api/agents";
 import type { HookInstall } from "../../generated/HookInstall";
 import { AppearanceDialog } from "../appearance/AppearanceDialog";
 import { useAppearance } from "../appearance/AppearanceProvider";
+import { useAttention } from "../attention/useAttention";
 import { terminalThemeOf, wtFont } from "../appearance/terminalSettings";
 import { changesFor, isTextBox, keyBlocked, markTasks, missingTask, paletteHidden, resolveTarget, reviewAgentName, reviewKeyDown, reviewTarget, taskRefresher, type ReviewTarget } from "../tasks/reviewOpen";
 import { ReviewSheet } from "../tasks/ReviewSheet";
@@ -99,7 +106,7 @@ function useElementSize() {
 export function LiveApp() {
   // Claude Code's hook state, read when the window opens and again after each change in the Agents dialog or the onboarding. Never polled.
   const [claudeHooks, setClaudeHooks] = useState<HookInstall | undefined>(undefined);
-  const { endpoint, profiles, rows, infos, selectedId, loaded, select, reloadProfiles, error } = useSessions(useMemo(() => ({ claude: claudeHooks }), [claudeHooks]));
+  const { endpoint, profiles, rows, infos, permissions, now, selectedId, loaded, select, reloadProfiles, error } = useSessions(useMemo(() => ({ claude: claudeHooks }), [claudeHooks]));
   const refreshSetup = useCallback(() => {
     if (!endpoint) return;
     getSetup(endpoint, "claude").then(
@@ -244,7 +251,53 @@ export function LiveApp() {
     },
     [announce, dispatch],
   );
+  // Everything that needs the person, oldest first: the held requests and the sessions waiting in their own terminal. This list is the
+  // count (lane heading, taskbar badge, announcer). The cards add the receipts and exits that outlast an entry.
+  const [sendingRequests, setSendingRequests] = useState<Map<string, string>>(() => new Map());
+  const entries = useMemo(() => laneEntries(permissions, rows, Math.max(now, Date.now()), new Set(sendingRequests.values())), [permissions, rows, now, sendingRequests]);
+  const cards = useCards(entries, announce);
+  const requests = cards.requests;
+  const mutedTabs = useMemo(() => new Set(rows.filter((r) => r.muted).map((r) => r.id)), [rows]);
+  const attentionEntries = useMemo(() => entries.map((e) => ({ id: e.id, tab: e.tab })), [entries]);
+  useAttention(attentionEntries, mutedTabs, () => sync?.soundOff ?? false);
+  const [drawerId, setDrawerId] = useState<string | undefined>(undefined);
+  const drawerRequest = requests.find((r) => r.id === drawerId && r.state.phase === "pending");
   const actions = useMemo(() => new SessionActions({ api: sessions, context: () => context.current, select: (id) => pickRef.current(id), size: () => size.current, settings: sync ?? undefined }), []);
+
+  const answerRequest = useCallback(
+    (r: ApprovalRequest, a: Answer) => {
+      if (!endpoint) return;
+      const verdict = a === "deny" ? "denied" : a === "terminal" ? "terminal" : "allowed";
+      cards.answer(r.id, verdict, async () => {
+        setSendingRequests((current) => new Map(current).set(r.id, r.tab));
+        try {
+          return await (a === "terminal" ? release(endpoint, r.id) : decide(endpoint, r.id, decisionFor(a)));
+        } finally {
+          setSendingRequests((current) => {
+            const next = new Map(current);
+            next.delete(r.id);
+            return next;
+          });
+        }
+      });
+    },
+    [endpoint, cards.answer],
+  );
+  const jumpToRequest = useCallback(
+    (r: ApprovalRequest) => {
+      pick(r.tab);
+      setTimeout(() => actions.focusTerminal(), 0);
+    },
+    [pick, actions],
+  );
+  const requestsRef = useRef(requests);
+  requestsRef.current = requests;
+  const jumpToRequestRef = useRef(jumpToRequest);
+  jumpToRequestRef.current = jumpToRequest;
+  const restoreFocus = useCallback(() => void setTimeout(() => actions.focusTerminal(), 0), [actions]);
+  const liveCard = (r: ApprovalRequest, inDrawer = false) => (
+    <LiveCard key={r.id + (inDrawer ? "-drawer" : "")} request={r} inDrawer={inDrawer} onAnswer={answerRequest} onJump={jumpToRequest} onExpand={(x) => setDrawerId(x.id)} onRestoreFocus={restoreFocus} />
+  );
 
   // A window of one empty pane takes the store's selection (a first start, or the only open session closed and another opened).
   // With several panes a closed session's pane stays empty.
@@ -888,6 +941,22 @@ export function LiveApp() {
         case "nonePane":
           sendNav([{ type: "select-none" }]);
           return true;
+        // Focus only, never an answer: the lane's target card, or the same card in the drawer when the lane is not on screen (focus
+        // mode, the rail). A session that asks in its own terminal is gone to instead.
+        case "nextWaiting": {
+          const next = nextWaiting(requestsRef.current);
+          if (next === null) announce("Nothing needs you");
+          else if (next.kind === "terminal") jumpToRequestRef.current(next.request);
+          else {
+            const inLane = document.querySelector<HTMLElement>('.lane .approve-card[data-phase="pending"]');
+            if (inLane) inLane.focus();
+            else {
+              setDrawerId(next.request.id);
+              setTimeout(() => document.querySelector<HTMLElement>('.drawer .approve-card[data-phase="pending"]')?.focus(), 0);
+            }
+          }
+          return true;
+        }
         default:
           return false;
       }
@@ -1090,7 +1159,14 @@ export function LiveApp() {
           preview={previewPane}
           os={os}
           windowControls={{ maximized, onMinimize: () => void minimizeWindow(), onToggleMaximize: () => void toggleMaximize(), onClose: () => void closeWindow() }}
-          requests={[]}
+          requests={requests}
+          renderCard={(r) => liveCard(r)}
+          onJumpRequest={jumpToRequest}
+          readScreen={endpoint ? (id) => peekScreen(endpoint, id) : undefined}
+          onPeekClose={() => actions.focusTerminal()}
+          drawer={drawerRequest !== undefined}
+          drawerCard={drawerRequest && liveCard(drawerRequest, true)}
+          onDrawerClose={() => setDrawerId(undefined)}
           ports={[]}
           footer={footer}
           shell={{ terminal: shellTerminal, cwd: panelTab?.folder, hidden: view.shell_hidden, failed: shellFailed, onRetry: retryShell, openDisabled: !panelTab, forceOpen: shellForced, onToggle: toggleShell, onOpenInPane: () => void openInPane() }}

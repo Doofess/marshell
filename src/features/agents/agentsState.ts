@@ -1,17 +1,27 @@
 import type { AgentSetup } from "../../generated/AgentSetup";
 import type { ConfigPreview } from "../../generated/ConfigPreview";
+import type { HookPlanRequest } from "../../generated/HookPlanRequest";
+import type { SettingsSync } from "../appearance/settingsSync";
 import { previewDiff, toDetection } from "../../lib/api/agents";
 import { addsStatusLine, consentHeadline, removalCopy, type Capability, type ConsentPlan, type Detection } from "../onboarding/consent";
 
-/** The switches the card shows for Claude Code until 3d: status, and the status line. */
-export const OFFER: Capability[] = ["status", "statusline"];
-/** What the person has switched on. The approve switch comes with 3d. */
-export type Want = { status: boolean; statusline: boolean };
-export const DEFAULT_WANT: Want = { status: true, statusline: true };
-/** The body of the install request. Status off means nothing is installed, so the status line is never asked for either. */
-export const installRequest = (w: Want): Want => ({ status: w.status, statusline: w.status && w.statusline });
-const onOf = (w: Want): Record<Capability, boolean> => ({ status: w.status, approve: false, statusline: w.status && w.statusline });
+/** The capabilities offered for a new Claude Code setup. */
+export const OFFER: Capability[] = ["status", "approve", "statusline"];
+export type Want = HookPlanRequest;
+export const DEFAULT_WANT: Want = { status: true, statusline: true, approve: true };
+/** Approval can be added on its own; chaining still needs status. */
+export const installRequest = (w: Want): HookPlanRequest => ({ status: w.status, statusline: w.status && w.statusline, approve: w.approve });
+const onOf = installRequest;
 const ON = onOf(DEFAULT_WANT);
+
+/** An existing status install needs only the permission hook. */
+export const setupWant = (s: AgentSetup): Want => s.hooks === "installed" ? { status: false, statusline: false, approve: true } : DEFAULT_WANT;
+
+/** The switch says sound on; storage says sound off. Report only the saved state. */
+export async function setNeedsYouSound(sync: Pick<SettingsSync, "setSoundOff" | "soundOff">, on: boolean): Promise<boolean> {
+  await sync.setSoundOff(!on);
+  return !sync.soundOff;
+}
 
 /** Whether an agent's live status is on: it is unless the agent is in the settings' `status_off`. */
 export const liveStatusOn = (statusOff: string[], agent: string): boolean => !statusOff.includes(agent);
@@ -42,7 +52,7 @@ export function actions(s: AgentSetup): Array<"setup" | "hooksOff"> {
     case "none":
       return ["setup"];
     case "installed":
-      return ["hooksOff"];
+      return s.approve_installed ? ["hooksOff"] : ["setup", "hooksOff"];
     case "partial":
     case "orphaned":
       return ["setup", "hooksOff"];
@@ -72,11 +82,14 @@ export function removalBlock(p: ConfigPreview): string | undefined {
 
 /** The consent card's input for the core's setup and preview. A refused file gets a headline that says nothing will change. */
 export function consentProps(s: AgentSetup, flow: InstallFlow) {
-  const want = flow.want ?? DEFAULT_WANT;
+  const want = flow.want ?? setupWant(s);
   const on = onOf(want);
   const detection: Detection = toDetection(s);
   const files = flow.preview?.files ?? [];
   const chain = files.find((f) => /statusline-chain\.json$/.test(f.path));
+  const unchanged = Boolean(flow.preview && alreadyDone(flow.preview));
+  const installed = s.hooks !== "none" || s.approve_installed || s.chained;
+  const done = unchanged && installed;
   const plan: ConsentPlan = {
     cli: "claude",
     on,
@@ -86,10 +99,9 @@ export function consentProps(s: AgentSetup, flow: InstallFlow) {
     diff: flow.preview ? previewDiff(flow.preview) : "",
     needsTrust: false,
     chainPath: chain?.path,
-    headline: flow.preview ? (refusal(flow.preview) ?? (alreadyDone(flow.preview) ? `Already set up. Nothing in ${s.settings_path} changes.` : undefined)) : !want.status ? "Nothing will change: status is off." : flow.error ? `Marshell will not edit ${s.settings_path}, so nothing will change.` : `Checking ${s.settings_path}…`,
+    headline: flow.preview ? (refusal(flow.preview) ?? (done ? `Already set up. Nothing in ${s.settings_path} changes.` : unchanged ? "Nothing will change: status is off." : undefined)) : flow.error ? `Marshell will not edit ${s.settings_path}, so nothing will change.` : `Checking ${s.settings_path}…`,
   };
   // Allow is for a preview the core can apply; `done` is the one that has nothing left to change, whose Skip becomes Done.
   const allow = Boolean(flow.preview?.can_apply) && !flow.conflict;
-  const done = Boolean(flow.preview) && !refusal(flow.preview!) && alreadyDone(flow.preview!);
-  return { scenario: { detection, plan }, on, offer: OFFER, open: flow.open, busy: flow.busy, error: flow.error, allow, done };
+  return { scenario: { detection, plan }, on, offer: s.hooks === "installed" ? ["approve"] as Capability[] : OFFER, open: flow.open, busy: flow.busy, error: flow.error, allow, done };
 }

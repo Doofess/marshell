@@ -9,6 +9,8 @@ import { dragOver, dragStarted, dropOrder, edgeAt, rowIdAt, type DragState } fro
 import { inRenameBox, menuStillValid, sameMenuItems } from "../sidebar/rowMenu";
 import type { RowModel } from "../sidebar/types";
 import { groupBounds, groupedOrder, groupRows } from "../sidebar/grouping";
+import { Peek } from "../peek/Peek";
+import { usePeek } from "../peek/usePeek";
 import { Fragment, useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import type { Os } from "../../lib/keymap";
 import type { ShellName } from "../terminal/scriptedShell";
@@ -50,9 +52,21 @@ export function Sidebar({
   menuItems,
   onMenuRun,
   grouped = false,
+  renderCard,
+  onJumpRequest,
+  readScreen,
+  onPeekClose,
 }: {
   rows: RowModel[];
   requests: ApprovalRequest[];
+  /** The lane's full card. Left out it is the static one (stories). */
+  renderCard?: (request: ApprovalRequest) => ReactNode;
+  /** A one-liner in the lane was chosen: go to its session. */
+  onJumpRequest?: (request: ApprovalRequest) => void;
+  /** A session's last rows as text, for Peek. Left out, rows have no Peek. */
+  readScreen?: (id: string) => Promise<string[]>;
+  /** Esc closed Peek: put focus back in the terminal. */
+  onPeekClose?: () => void;
   height: number;
   width: number;
   /** The focused pane's session. */
@@ -89,6 +103,11 @@ export function Sidebar({
   // The open menu keeps the items it opened with, so they stay the same objects while it is open.
   const [menu, setMenu] = useState<{ id: string; anchor: { x: number; y: number }; items: MenuItem[] } | null>(null);
   const root = useRef<HTMLElement>(null);
+  const peek = usePeek(readScreen);
+  const closePeek = () => {
+    peek.close();
+    onPeekClose?.();
+  };
   // Grouped, the list is the groups one after another, and a move or a drop stays inside the dragged row's group.
   const groups = grouped ? groupRows(rows) : null;
   const shown = groups ? groupedOrder(groups) : rows;
@@ -214,6 +233,7 @@ export function Sidebar({
       onToggle={onToggle && (() => onToggle(r.id))}
       onReview={onReview && (() => onReview(r.id))}
       onSetup={onSetup && (() => onSetup(r.id))}
+      peek={readScreen ? { onOpen: (el) => peek.openFromKey(r.id, el), onHover: (el) => peek.hoverRow(r.id, el), onLeave: peek.leaveRow } : undefined}
       onMenu={
         menuItems &&
         ((anchor) => {
@@ -230,8 +250,20 @@ export function Sidebar({
   const style = { inlineSize: width, ...(panel ? { "--shell-h": `${panel.height}px` } : {}), ...(footer ? {} : { "--footer-h": "0px" }) } as CSSProperties;
   return (
     <aside ref={root} className="sidebar" style={style} data-shell={panel ? "" : undefined} aria-label="Sessions and approvals">
-      <Lane requests={requests} sidebarHeight={height} />
-      <div className="sidebar__list" role="listbox" aria-label="Sessions" aria-multiselectable={visibleIds ? true : undefined}>
+      <Lane requests={requests} sidebarHeight={height} renderCard={renderCard} onJump={onJumpRequest} />
+      <div
+        className="sidebar__list"
+        role="listbox"
+        aria-label="Sessions"
+        aria-multiselectable={visibleIds ? true : undefined}
+        onKeyDown={(e) => {
+          // Esc on a row while Peek is open (a hover opened it): close it and go back to the terminal.
+          if (e.key === "Escape" && peek.state && !e.defaultPrevented) {
+            e.preventDefault();
+            closePeek();
+          }
+        }}
+      >
         {groups
           ? groups.map((g) => (
               <Fragment key={g.project}>
@@ -245,6 +277,10 @@ export function Sidebar({
           : rows.map(row)}
       </div>
       {panel && shell && <ShellPanel height={panel.height} collapsed={panel.collapsed} auto={panel.auto} cwd={shell.cwd} shellName={shell.shellName} os={shell.os} terminal={shell.terminal} failed={shell.failed} onRetry={shell.onRetry} openDisabled={shell.openDisabled} onToggle={shell.onToggle} onOpenInPane={shell.onOpenInPane} />}
+      {peek.state && (() => {
+        const r = rows.find((x) => x.id === peek.state!.id);
+        return r ? <Peek row={r} rows={peek.state.rows} failed={peek.state.failed} focusOnOpen={peek.state.via === "key"} at={peek.state.at} onClose={closePeek} onPointerEnter={peek.hoverPeek} onPointerLeave={peek.leavePeek} /> : null;
+      })()}
       {menu && menuValid && onMenuRun !== undefined && (
         <ContextMenu
           label={`Session ${rows.find((r) => r.id === menu.id)?.name ?? ""}`}

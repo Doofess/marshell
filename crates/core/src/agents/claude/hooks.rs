@@ -31,6 +31,7 @@ const AGENT: &str = "claude";
 const HOOK_TIMEOUT: u64 = 5;
 /// `SessionEnd` may take 3 s at most.
 const SESSION_END_TIMEOUT: u64 = 2;
+const PERMISSION_EVENT: &str = "PermissionRequest";
 
 #[derive(Debug, PartialEq)]
 pub enum PlanError {
@@ -118,8 +119,12 @@ fn hook_entry(home: &Path, event: &str) -> Value {
     json!({
         "type": "command",
         "command": bridge_path(home),
-        "args": ["event", "--agent", AGENT, "--tag", TAG],
-        "timeout": if event == "SessionEnd" { SESSION_END_TIMEOUT } else { HOOK_TIMEOUT },
+        "args": [if event == PERMISSION_EVENT { "permission" } else { "event" }, "--agent", AGENT, "--tag", TAG],
+        "timeout": match event {
+            PERMISSION_EVENT => 600,
+            "SessionEnd" => SESSION_END_TIMEOUT,
+            _ => HOOK_TIMEOUT,
+        },
     })
 }
 
@@ -268,6 +273,8 @@ fn line_is_ours(line: &Value) -> bool {
 
 pub struct Found {
     pub install: HookInstall,
+    /// The PermissionRequest hook is in place.
+    pub approve_installed: bool,
     /// A status line that is not Marshell's, or the one the chain keeps.
     pub has_own_statusline: bool,
     /// Ours is in place and the chain holds the user's.
@@ -311,13 +318,15 @@ pub fn inspect(settings: &Value, chain: Option<&Value>, home: &Path) -> Found {
         })
         .count();
     let total = ours_total(settings);
+    let mut permission = entries_of(settings).filter(|(event, entry)| *event == PERMISSION_EVENT && is_ours(entry));
+    let permission_exact = matches!((permission.next(), permission.next()), (Some((_, entry)), None) if *entry == hook_entry(home, PERMISSION_EVENT));
 
     let install = if total == 0 && !line_ours {
         HookInstall::None
     } else if !paths::bridge_exe(home).exists() {
         HookInstall::Orphaned
     } else if exact_events == STATUS_EVENTS.len()
-        && total == exact_events
+        && total == exact_events + usize::from(permission_exact)
         && (!line_ours || (chain_usable && line_current))
     {
         HookInstall::Installed
@@ -326,6 +335,7 @@ pub fn inspect(settings: &Value, chain: Option<&Value>, home: &Path) -> Found {
     };
     Found {
         install,
+        approve_installed: permission_exact && paths::bridge_exe(home).exists(),
         has_own_statusline: (line.is_some() && !line_ours) || (line_ours && chain_holds_users),
         chained: line_ours && chain_holds_users,
     }
@@ -354,7 +364,7 @@ fn remove_op(pointer: String) -> EditOp {
     EditOp::JsonRemove { pointer }
 }
 
-/// The plan that adds the 8 status hooks and, as asked, the status line.
+/// The plan for status hooks, the status line and optional approval. Status off leaves status alone.
 ///
 /// Marshell's existing entries come out first (so a rerun never duplicates), then one group per
 /// event goes in at the end, after the user's own. A status line that is already Marshell's keeps its
@@ -369,19 +379,20 @@ pub fn install_plan(
     want: &HookPlanRequest,
 ) -> Result<ChangeSet, PlanError> {
     let title = "Set up Claude Code hooks".to_string();
-    if !want.status {
-        return Ok(ChangeSet {
-            title,
-            reason: "Nothing was asked for, so nothing changes.".to_string(),
-            edits: Vec::new(),
-        });
-    }
     let settings = parse_settings(settings_path, text)?;
     let scope = scope_of(settings_path, user_home);
-    let mut ops: Vec<EditOp> = removal_pointers(&settings, false).into_iter().map(remove_op).collect();
+    let mut ops: Vec<EditOp> = removal_pointers(&settings, false)
+        .into_iter()
+        .filter(|p| want.status || p.starts_with("/hooks/PermissionRequest/"))
+        .map(remove_op)
+        .collect();
 
     let existing = settings.get("hooks").and_then(Value::as_object);
-    for event in STATUS_EVENTS {
+    let events = STATUS_EVENTS
+        .into_iter()
+        .filter(|_| want.status)
+        .chain(want.approve.then_some(PERMISSION_EVENT));
+    for event in events {
         let group = json!({ "hooks": [hook_entry(home, event)] });
         if existing.is_some_and(|h| h.contains_key(event)) {
             ops.push(set(format!("/hooks/{}/-", esc(event)), &group));
@@ -389,6 +400,25 @@ pub fn install_plan(
             // Setting `/-` under a missing event would make an object with a "-" key.
             ops.push(set(format!("/hooks/{}", esc(event)), &json!([group])));
         }
+    }
+
+    let approval = if want.approve {
+        "Adds the PermissionRequest hook for Approve from anywhere"
+    } else if entries_of(&settings).any(|(event, entry)| event == PERMISSION_EVENT && is_ours(entry)) {
+        "Removes Marshell's PermissionRequest hook"
+    } else {
+        ""
+    };
+    if !want.status {
+        return Ok(ChangeSet {
+            title,
+            reason: if approval.is_empty() {
+                "Nothing was asked for, so nothing changes.".to_string()
+            } else {
+                format!("{approval}.")
+            },
+            edits: ops.into_iter().map(|op| edit(settings_path, scope, op, text)).collect(),
+        });
     }
 
     let ours = statusline_command(home);
@@ -429,7 +459,11 @@ pub fn install_plan(
     }
     Ok(ChangeSet {
         title,
-        reason: format!("{how}{tail}."),
+        reason: if approval.is_empty() {
+            format!("{how}{tail}.")
+        } else {
+            format!("{how}{tail}. {approval}.")
+        },
         edits,
     })
 }
@@ -538,6 +572,7 @@ mod tests {
     const BOTH: HookPlanRequest = HookPlanRequest {
         status: true,
         statusline: true,
+        approve: false,
     };
 
     fn home() -> PathBuf {
@@ -733,6 +768,138 @@ mod tests {
         assert_eq!(v["hooks"]["Stop"][0]["hooks"][0]["timeout"], 5);
     }
 
+    fn permission_entry() -> Value {
+        json!({
+            "type": "command", "command": bridge(),
+            "args": ["permission", "--agent", "claude", "--tag", "mshl1"],
+            "timeout": 600,
+        })
+    }
+
+    #[test]
+    fn install_plan_adds_permission_request_when_approve() {
+        let (_, after) = install(&Files::default(), HookPlanRequest { approve: true, ..BOTH });
+        assert_eq!(
+            after.settings_value()["hooks"]["PermissionRequest"],
+            json!([{ "hooks": [permission_entry()] }])
+        );
+        let (_, again) = install(&after, HookPlanRequest { approve: true, ..BOTH });
+        assert_eq!(again.settings_value(), after.settings_value());
+    }
+
+    #[test]
+    fn install_plan_without_approve_removes_our_permission_request() {
+        let before =
+            Files::settings(&json!({"hooks": {"PermissionRequest": [{"hooks": [permission_entry()]}]}}).to_string());
+        let (_, after) = install(&before, BOTH);
+        assert!(
+            !entries_of(&after.settings_value()).any(|(event, entry)| event == "PermissionRequest" && is_ours(entry))
+        );
+    }
+
+    #[test]
+    fn install_plan_keeps_the_users_own_permission_request() {
+        let user = json!({"type": "command", "command": "echo my-permission", "timeout": 42});
+        let before = Files::settings(
+            &json!({"hooks": {"PermissionRequest": [{"matcher": "Bash", "hooks": [user, permission_entry()]}]}})
+                .to_string(),
+        );
+        for approve in [false, true] {
+            let (_, after) = install(&before, HookPlanRequest { approve, ..BOTH });
+            assert_eq!(
+                after.settings_value()["hooks"]["PermissionRequest"][0],
+                json!({"matcher": "Bash", "hooks": [user]})
+            );
+        }
+    }
+
+    #[test]
+    fn remove_plan_drops_permission_request() {
+        let user = json!({"type": "command", "command": "echo my-permission"});
+        let before = Files::settings(
+            &json!({"hooks": {"PermissionRequest": [{"hooks": [user, permission_entry()]}]}}).to_string(),
+        );
+        let (_, after) = remove(&before);
+        assert_eq!(
+            after.settings_value(),
+            json!({"hooks": {"PermissionRequest": [{"hooks": [user]}]}})
+        );
+    }
+
+    #[test]
+    fn existing_status_install_without_permission_request_is_installed() {
+        let (_keep, home) = scratch_home(true);
+        let before = installed_for(&fixture("user-hooks.json"), &home);
+        let found = inspect(&before.settings_value(), Some(&before.chain_value()), &home);
+        assert_eq!(found.install, HookInstall::Installed);
+        assert!(!found.approve_installed);
+    }
+
+    #[test]
+    fn inspect_reports_permission_hook_and_rejects_malformed_entries() {
+        let (_keep, home) = scratch_home(true);
+        let before = installed_for(&fixture("user-hooks.json"), &home);
+        let mut settings = before.settings_value();
+        settings["hooks"][PERMISSION_EVENT] = json!([{ "hooks": [hook_entry(&home, PERMISSION_EVENT)] }]);
+        let found = inspect(&settings, Some(&before.chain_value()), &home);
+        assert_eq!(found.install, HookInstall::Installed);
+        assert!(found.approve_installed);
+        for (key, value) in [
+            ("timeout", json!(5)),
+            ("args", json!(["event", "--tag", TAG])),
+            ("command", json!("elsewhere")),
+        ] {
+            let mut wrong = settings.clone();
+            wrong["hooks"][PERMISSION_EVENT][0]["hooks"][0][key] = value;
+            let found = inspect(&wrong, Some(&before.chain_value()), &home);
+            assert_eq!(found.install, HookInstall::Partial);
+            assert!(!found.approve_installed);
+        }
+        settings["hooks"][PERMISSION_EVENT][0]["hooks"]
+            .as_array_mut()
+            .unwrap()
+            .push(hook_entry(&home, PERMISSION_EVENT));
+        assert!(!inspect(&settings, Some(&before.chain_value()), &home).approve_installed);
+    }
+
+    #[test]
+    fn approval_only_plan_leaves_status_hooks_and_chain_untouched() {
+        let (_, before) = install(&Files::settings(&fixture("user-hooks.json")), BOTH);
+        let (plan, after) = install(
+            &before,
+            HookPlanRequest {
+                status: false,
+                statusline: false,
+                approve: true,
+            },
+        );
+        assert!(!plan.edits.is_empty());
+        assert!(
+            pointers(&plan, &sfile())
+                .iter()
+                .all(|p| p.starts_with("/hooks/PermissionRequest"))
+        );
+        assert_eq!(after.chain, before.chain);
+        let mut expected = before.settings_value();
+        expected["hooks"]["PermissionRequest"] = json!([{ "hooks": [permission_entry()] }]);
+        assert_eq!(after.settings_value(), expected);
+        let (plan, off) = install(
+            &after,
+            HookPlanRequest {
+                status: false,
+                statusline: false,
+                approve: false,
+            },
+        );
+        assert!(
+            pointers(&plan, &sfile())
+                .iter()
+                .all(|p| p.starts_with("/hooks/PermissionRequest"))
+        );
+        assert_eq!(off.chain, before.chain);
+        assert!(!entries_of(&off.settings_value()).any(|(event, entry)| event == PERMISSION_EVENT && is_ours(entry)));
+    }
+
     #[test]
     fn install_creates_a_missing_settings_file() {
         let (cs, after) = install(&Files::default(), BOTH);
@@ -745,6 +912,7 @@ mod tests {
         let want = HookPlanRequest {
             status: false,
             statusline: true,
+            approve: false,
         };
         let cs = try_install(&Files::settings("{}\n"), want, &home()).unwrap();
         assert!(cs.edits.is_empty());
@@ -791,6 +959,7 @@ mod tests {
         let off = HookPlanRequest {
             status: true,
             statusline: false,
+            approve: false,
         };
         let (_, after_off) = install(&Files::settings(&fixture("no-statusline.json")), off);
         assert_eq!(after_off.settings_value()["statusLine"]["command"], ours_statusline());
@@ -802,6 +971,7 @@ mod tests {
         let off = HookPlanRequest {
             status: true,
             statusline: false,
+            approve: false,
         };
         let (cs, after) = install(&before, off);
         assert!(pointers(&cs, &sfile()).iter().all(|p| !p.starts_with("/statusLine")));
@@ -1270,24 +1440,26 @@ mod tests {
             ("hooks already present", fixture("hooks-empty.json"), false),
         ];
         for (name, text, exact) in cases {
-            let (_, installed) = install(&Files::settings(&text), BOTH);
-            assert_ne!(
-                installed.settings.as_deref(),
-                Some(text.as_str()),
-                "{name}: install changed nothing"
-            );
-            let (_, removed) = remove(&installed);
-            let got = removed.settings.unwrap();
-            if exact {
-                assert_eq!(got, text, "{name}");
-            } else {
-                // Fallback for this fixture only: `"hooks": {}` was there before the install, but once
-                // the entries are out an empty `hooks` is indistinguishable from one the install
-                // created, and removing it is right for the other fixtures. So the value differs by
-                // exactly that empty object.
-                let mut want = read_value(&text).unwrap();
-                want.as_object_mut().unwrap().shift_remove("hooks");
-                assert_eq!(read_value(&got).unwrap(), want, "{name}: {got}");
+            for approve in [false, true] {
+                let (_, installed) = install(&Files::settings(&text), HookPlanRequest { approve, ..BOTH });
+                assert_ne!(
+                    installed.settings.as_deref(),
+                    Some(text.as_str()),
+                    "{name}: install changed nothing"
+                );
+                let (_, removed) = remove(&installed);
+                let got = removed.settings.unwrap();
+                if exact {
+                    assert_eq!(got, text, "{name}, approve={approve}");
+                } else {
+                    // Fallback for this fixture only: `"hooks": {}` was there before the install, but once
+                    // the entries are out an empty `hooks` is indistinguishable from one the install
+                    // created, and removing it is right for the other fixtures. So the value differs by
+                    // exactly that empty object.
+                    let mut want = read_value(&text).unwrap();
+                    want.as_object_mut().unwrap().shift_remove("hooks");
+                    assert_eq!(read_value(&got).unwrap(), want, "{name}, approve={approve}: {got}");
+                }
             }
         }
     }

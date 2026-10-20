@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { TOKEN_SUBPROTOCOL_PREFIX, WS_SUBPROTOCOL } from "../../generated/constants";
 import type { Endpoint } from "../../generated/Endpoint";
 import type { SessionsSnapshot } from "../../generated/SessionsSnapshot";
-import { EventSocket } from "./events";
+import { EventSocket, parseEvent } from "./events";
 
 class FakeWebSocket {
   static instances: FakeWebSocket[] = [];
@@ -150,5 +150,31 @@ describe("EventSocket", () => {
     ws.receive(frame(snapshot(["late"])));
 
     expect(onSnapshot).not.toHaveBeenCalled();
+  });
+
+  it("delivers a permissions frame as the whole replacement list", () => {
+    const onPermissions = vi.fn();
+    const onSnapshot = vi.fn();
+    const socket = new EventSocket(endpoint, onSnapshot, onPermissions);
+    const ws = FakeWebSocket.instances[0]!;
+    ws.open();
+    ws.receive(JSON.stringify({ type: "permissions", data: [{ rid: "r1" }] }));
+    ws.receive(JSON.stringify({ type: "permissions", data: [] }));
+
+    expect(onPermissions.mock.calls).toEqual([[[{ rid: "r1" }]], [[]]]);
+    expect(onSnapshot).not.toHaveBeenCalled();
+    socket.close();
+  });
+});
+
+describe("parseEvent", () => {
+  it("accepts a permissions frame and keeps sessions frames", () => {
+    expect(parseEvent(JSON.stringify({ type: "permissions", data: [] }))).toEqual({ type: "permissions", data: [] });
+    expect(parseEvent(frame(snapshot(["a"])))).toEqual({ type: "sessions", data: snapshot(["a"]) });
+  });
+  it("rejects a permissions frame whose data is not a list, and anything else", () => {
+    expect(parseEvent(JSON.stringify({ type: "permissions", data: {} }))).toBeNull();
+    expect(parseEvent(JSON.stringify({ type: "permissions" }))).toBeNull();
+    expect(parseEvent("nope")).toBeNull();
   });
 });

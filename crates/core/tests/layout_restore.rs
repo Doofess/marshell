@@ -1,5 +1,7 @@
 //! Tabs are saved to layout.json as they change, and a new core on the same home lists them as Ended.
 
+mod common;
+
 use axum::body::Body;
 use axum::http::{Request, StatusCode, header};
 use marshell_core::server::{AppState, router};
@@ -26,6 +28,7 @@ fn sleeper_profile() -> marshell_protocol::api::Profile {
 }
 
 fn state_in(home: &Path) -> AppState {
+    common::tie_children_to_test();
     AppState::new(
         TOKEN.into(),
         PORT,

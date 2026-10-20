@@ -1,5 +1,7 @@
 //! The attachments API: a region's PNG saved under the session, and the reference the agent is told.
 
+mod common;
+
 use axum::body::Body;
 use axum::http::{Request, StatusCode, header};
 use marshell_core::server::{AppState, router};
@@ -17,6 +19,7 @@ fn profile(id: &str, command: Vec<String>) -> Profile {
 }
 
 fn family_profile(id: &str, command: Vec<String>, family: ShellFamily) -> Profile {
+    common::tie_children_to_test();
     Profile {
         id: id.into(),
         name: id.into(),

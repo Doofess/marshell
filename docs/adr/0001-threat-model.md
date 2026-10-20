@@ -53,7 +53,7 @@ Out of scope:
 
 - The bridge finds the core through `endpoint.json` and talks only to `127.0.0.1`, with no proxy and no redirects (`crates/hook/src/post.rs`).
 - Token required; the body is capped at 1 MiB.
-- The bridge always exits 0 and prints nothing to the agent: a Marshell that isn't running is ignored, and other failures go to the bridge's log file. A missing or broken Marshell never blocks or changes the agent's own behaviour.
+- The bridge always exits 0. It prints nothing to the agent except the answer to a held `PermissionRequest`, and only in the shapes the core gives (slice 3d, below). A Marshell that isn't running is ignored, and other failures go to the bridge's log file. A missing or broken Marshell never blocks or changes the agent's own behaviour.
 
 ### Permission holds (`hooks/holds.rs`, `server/permissions.rs`)
 
@@ -88,6 +88,41 @@ Only the home's own DACL or mode is checked on each launch, so a launch never wa
 
 This keeps other local users away from the token, the recordings and the config snapshots, including when `MARSHELL_HOME` points outside the user profile. A failure is logged and the launch goes on, since the default home under the user profile is already private to the user.
 
+## Reviewed for 3d: approve from anywhere (2026-10-20)
+
+Slice 3d lets the needs-you card answer a held `PermissionRequest`. Before it shipped, an Opus security review of `phase-3d` against this record covered:
+
+- the decision and release routes;
+- the `permissions` frame and the peek route behind the guards;
+- what a same-user process or a web page can do with them;
+- keyboard safety on the card;
+- the risk check's bypasses;
+- the no-tab rule;
+- the quoting of the `PermissionRequest` hook command;
+- whether Peek shows a screen to anyone without the token.
+
+### What 3d adds
+
+- `GET /v1/permissions`, `POST /v1/permissions/{rid}/decision` and `/release`, the `permissions` frame on the events socket, and `GET /v1/sessions/{tab}/peek`. All of them sit behind `host_guard` and `auth_guard` like every other route, so a web page can't reach them and a holder of the token can do nothing it couldn't already do by typing into the session.
+- The card answers only while it has focus. Keys typed in a terminal never reach a decision, the card's buttons do nothing for 500 ms after it takes focus or its content changes, Enter never allows, and typing in the pane releases the hold instead of answering it. A command too long to show in full must be expanded before Allow acts.
+- The risk check (`hooks/risk.rs`, `agents/claude/request.rs`) marks a risky request. A risky card needs a hold to allow and offers no Always. The check is a warning, not a gate: Claude's own dialog stays up in the terminal the whole time.
+- A request with no Marshell tab (a Claude run outside Marshell) gets 204 at once, and the bridge doesn't post such a request at all, so an outside session is never held or answered by Marshell.
+
+### Findings fixed
+
+- **A stale port could be answered by an impostor.** After Marshell exits, a process that outlives its session (a child that broke away from the job, or a detached program that inherited `MARSHELL_TAB_ID`) could still run the bridge against the port named in the old `endpoint.json`, and another local user who bound that port could answer the request. The bridge now posts only from a Marshell tab and prints only the answer shapes the core gives: allow, deny, or allow with rules the request itself suggested. So an impostor can't rewrite a command or add its own rules (6291370). The core also writes its PID into `endpoint.json` and deletes the file on a clean shutdown. The bridge skips a file whose PID names no running process (1532fc0).
+- **A command the parser couldn't read counted as safe.** It now reads as risky, so a quoting trick that defeats the parser gets the guarded card (2538a6c).
+- **Writes to tool config inside the project counted as ordinary edits.** `.claude/`, `.git/`, `.vscode/`, `.codex/` and `.mcp.json` run code on their own, so a write there is risky even inside the project (2538a6c).
+- **Checking whether a Write target existed could leak credentials.** Checking a UNC or device path (`\\host\share`, `\\?\`, `\\.\`) can open a network connection and send the user's NTLM credentials to a host the repository chose. The request view now makes no filesystem call on such a path and reads it as "Writes outside this project" (2538a6c).
+
+### Deferred, with their residual risk
+
+- **Other ways to slip past the risk check.** Aliases, `eval`, and interpreters given inline code (`python -c`, `node -e`) aren't classified. An obfuscated command shows as a plain card, and Claude's own dialog still asks.
+- **The server doesn't refuse a project-scope Always** on a risky request or on one with no rule. The card never offers Always in either case, so only a holder of the token can send it.
+- **Tab attribution trusts the `MARSHELL_TAB_ID` a process inherits.** A request is matched to a tab by that variable, not by Claude's `session_id`, so a Claude started from inside another tab's process tree shows its requests on that tab.
+- **Space on a focused Allow button of a plain card** activates it as any button does. Risky cards need a hold, so Space can't allow those.
+- **The PID check can be fooled by PID reuse.** If the core's PID now belongs to another process, the bridge treats the file as live. That needs a crash, which leaves the file behind, and then a stale-port impostor, so it is accepted.
+
 ## Residual risks
 
 - **Same-user processes read the token.** Any program running as the user can read `endpoint.json` and drive the API. This is accepted: such a program can already edit the CLIs' config directly.
@@ -99,4 +134,4 @@ This keeps other local users away from the token, the recordings and the config 
 
 - New routes go behind `host_guard` and `auth_guard`; a route that skips the token needs its own ADR.
 - Every config write goes through the config service; no feature writes a CLI's files directly.
-- Approve-from-anywhere (notifications with Allow/Deny) needs a security review before it ships.
+- Approve-from-anywhere (notifications with Allow/Deny) needs a security review before it ships. The in-app card was reviewed for 3d (above); answering from an OS notification needs its own review.

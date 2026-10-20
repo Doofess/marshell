@@ -1,6 +1,8 @@
 //! Real shells started through Marshell's integration scripts. Each test is skipped (with a
 //! printed note) when its shell is not on this machine.
 
+mod common;
+
 use marshell_core::profiles::detect::{command_on_path, git_bash_path};
 use marshell_core::pty::{Mark, Pull, Session, SpawnSpec};
 use marshell_core::shell;
@@ -44,6 +46,7 @@ impl Shell {
 
     /// Like `start`, and `tweak` may change the integrated argv (given the temp home) before the shell starts.
     fn start_with(profile: Profile, setup: impl FnOnce(&Path), tweak: impl FnOnce(&mut Vec<String>, &Path)) -> Shell {
+        common::tie_children_to_test();
         let home = tempfile::tempdir().unwrap();
         setup(home.path());
         let dir = shell::install(&home.path().join(".marshell")).unwrap();

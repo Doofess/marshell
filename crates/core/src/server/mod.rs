@@ -193,6 +193,10 @@ impl AppState {
     pub fn holds(&self) -> &crate::hooks::holds::Holds {
         &self.0.holds
     }
+    /// The cards of the held requests, oldest first. Each was built when its hold opened.
+    pub fn permission_views(&self) -> Vec<marshell_protocol::hook::PermissionView> {
+        self.0.holds.views()
+    }
     /// Replaces the PATH check for agent commands. Call it before the state is cloned.
     pub fn with_agent_check(mut self, check: fn(&str) -> bool) -> Self {
         Arc::get_mut(&mut self.0)
@@ -316,6 +320,7 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/sessions/{tab}/continue", post(sessions::cont))
         .route("/v1/sessions/{tab}/input", post(sessions::input))
         .route("/v1/sessions/{tab}/recording", get(sessions::recording))
+        .route("/v1/sessions/{tab}/peek", get(sessions::peek))
         .route("/v1/sessions/{tab}/resolve", post(files::resolve))
         .route("/v1/sessions/{tab}/files", get(files::list))
         .route(
@@ -365,6 +370,8 @@ async fn health() -> Json<Health> {
 pub struct RunningCore {
     pub endpoint: Endpoint,
     pub state: AppState,
+    /// Where `start` wrote the endpoint file, so `shutdown` can delete it.
+    endpoint_file: PathBuf,
     shutdown: tokio::sync::oneshot::Sender<()>,
     serve: tokio::task::JoinHandle<()>,
 }
@@ -375,7 +382,9 @@ impl RunningCore {
         !self.serve.is_finished() && !self.state.0.sessions.is_poisoned()
     }
 
-    /// Kills every session's process tree, then stops the server. Works on a poisoned lock too.
+    /// Kills every session's process tree, deletes the endpoint file (unless a newer core has replaced it),
+    /// then stops the server. Works on a poisoned lock too. Done here and not in a task, because the
+    /// process exits right after this returns.
     pub fn shutdown(self) {
         let sessions: Vec<_> = self
             .state
@@ -389,6 +398,7 @@ impl RunningCore {
         for s in sessions {
             s.force_kill();
         }
+        auth::remove_endpoint_file_if_ours(&self.endpoint_file, &self.endpoint.token);
         let _ = self.shutdown.send(());
     }
 
@@ -463,6 +473,7 @@ pub async fn start(cfg: CoreConfig) -> anyhow::Result<RunningCore> {
     Ok(RunningCore {
         endpoint,
         state,
+        endpoint_file,
         shutdown: tx,
         serve,
     })

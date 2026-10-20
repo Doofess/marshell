@@ -55,7 +55,14 @@ pub async fn post(
         fold_live(&st, role, tab, &json, at_ms).await;
     }
     if role == HookRole::Permission {
-        return Ok(hold_permission(&st, tab, agent, json).await);
+        // Without a card or an open tab, the agent must ask the person itself.
+        if !crate::agents::supports_permissions(&agent) {
+            return Ok(StatusCode::NO_CONTENT.into_response());
+        }
+        let Some(tab) = tab.filter(|t| st.registry().is_open(t)) else {
+            return Ok(StatusCode::NO_CONTENT.into_response());
+        };
+        return Ok(hold_permission(&st, Some(tab), agent, json).await);
     }
     Ok(StatusCode::NO_CONTENT.into_response())
 }

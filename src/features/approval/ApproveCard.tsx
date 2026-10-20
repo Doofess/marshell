@@ -2,7 +2,7 @@ import { useId, type KeyboardEvent } from "react";
 import { AGENT_NAMES } from "../../components/AgentMark/agents";
 import { SessionNumber } from "../../components/SessionNumber/SessionNumber";
 import { AuxGlyph, StatusGlyph } from "../../components/StatusGlyph/StatusGlyph";
-import { formatDuration } from "../sidebar/format";
+import { formatAge, formatDuration } from "../sidebar/format";
 import { keyAction, type CardAction } from "./arming";
 import { headline, receiptText, subject } from "./headline";
 import { isTruncated, payloadLines, showAllLabel } from "./payload";
@@ -21,6 +21,7 @@ export type ApproveCardProps = {
   exiting?: boolean;
   onAction?: (a: CardAction | `answer:${number}`) => void;
   onHoldEnd?: () => void;
+  onHoldStart?: (source: "keyboard" | "pointer") => void;
   onFocus?: () => void;
 };
 
@@ -55,14 +56,15 @@ const Kbd = ({ k }: { k: string }) => (
  * The approve card (docs/PLAN.md "The approve card"). Presentational: the parent owns the request, the arming timer
  * (useArming) and the hold timer (useHold). Keys act only while the card has focus; Enter never allows.
  */
-export function ApproveCard({ request, expanded = false, armed = true, holdProgress = 0, exiting = false, onAction, onHoldEnd, onFocus }: ApproveCardProps) {
+export function ApproveCard({ request, expanded = false, armed = true, holdProgress = 0, exiting = false, onAction, onHoldEnd, onHoldStart, onFocus }: ApproveCardProps) {
   const riskId = useId();
   const { detail, risk, state, session } = request;
   const agent = AGENT_NAMES[session.agent];
+  const leaving = exiting || request.leaving || undefined;
 
   if (state.phase === "decided") {
     return (
-      <div className="approve-card approve-card--receipt" role="status" data-agent={session.agent} data-phase="decided" data-verdict={state.verdict} data-exiting={exiting || undefined}>
+      <div className="approve-card approve-card--receipt" data-agent={session.agent} data-phase="decided" data-verdict={state.verdict} data-exiting={leaving}>
         <span aria-hidden="true">
           <StatusGlyph kind={state.verdict === "allowed" ? "done-seen" : "error"} size={12} />
         </span>
@@ -74,16 +76,25 @@ export function ApproveCard({ request, expanded = false, armed = true, holdProgr
   }
   if (state.phase === "terminal") {
     return (
-      <div className="approve-card approve-card--receipt" role="status" data-agent={session.agent} data-phase="terminal">
+      <div className="approve-card approve-card--receipt" data-agent={session.agent} data-phase="terminal" data-exiting={leaving}>
         <span className="approve-card__receipt-text" dir="auto">
           Answered in terminal {"·"} {subject(detail)}
         </span>
       </div>
     );
   }
+  if (state.phase === "gone") {
+    return (
+      <div className="approve-card approve-card--receipt" data-agent={session.agent} data-phase="gone" data-exiting={leaving}>
+        <span className="approve-card__receipt-text" dir="auto">
+          {state.message}
+        </span>
+      </div>
+    );
+  }
   if (state.phase === "released") {
     return (
-      <div className="approve-card approve-card--receipt" role="status" data-agent={session.agent} data-phase="released">
+      <div className="approve-card approve-card--receipt" data-agent={session.agent} data-phase="released" data-exiting={leaving}>
         <span className="approve-card__receipt-text">
           Timed out after {formatDuration(state.afterMs)}. {agent} is asking in its own terminal now.
         </span>
@@ -101,14 +112,16 @@ export function ApproveCard({ request, expanded = false, armed = true, holdProgr
 
   const fire = (a: CardAction | `answer:${number}`) => {
     if (!armed && a !== "jump" && a !== "expand") return;
-    onAction?.(a);
+    if (a === "hold-allow" && onHoldStart) onHoldStart("pointer");
+    else onAction?.(a);
   };
   const onKeyDown = (e: KeyboardEvent) => {
     if (e.ctrlKey || e.metaKey || e.altKey || e.repeat) return;
     const a = keyAction(e.key, ctx);
     if (!a) return;
     e.preventDefault();
-    onAction?.(a);
+    if (a === "hold-allow" && onHoldStart) onHoldStart("keyboard");
+    else onAction?.(a);
   };
   const onKeyUp = (e: KeyboardEvent) => {
     if (risky && e.key.toLowerCase() === "y") onHoldEnd?.();
@@ -128,7 +141,9 @@ export function ApproveCard({ request, expanded = false, armed = true, holdProgr
       data-armed={armed}
       onKeyDown={onKeyDown}
       onKeyUp={onKeyUp}
-      onFocus={onFocus}
+      onFocus={(e) => {
+        if (!e.currentTarget.contains(e.relatedTarget)) onFocus?.();
+      }}
     >
       <header className="approve-card__who">
         <StatusGlyph kind={isQuestion ? "needs-question" : "needs-permission"} />
@@ -136,7 +151,7 @@ export function ApproveCard({ request, expanded = false, armed = true, holdProgr
         <span className="approve-card__name" dir="auto">
           {session.name}
         </span>
-        <span className="approve-card__wait">{formatDuration(request.waitingMs)}</span>
+        <span className="approve-card__wait">{formatAge(request.waitingMs)}</span>
         <button type="button" className="approve-card__menu" aria-label="More actions">
           <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
             <circle cx="3.5" cy="8" r="1.25" fill="currentColor" />
@@ -180,6 +195,11 @@ export function ApproveCard({ request, expanded = false, armed = true, holdProgr
           in {cwd}
         </p>
       )}
+      {state.notice && (
+        <p className="approve-card__risk" dir="auto">
+          <span>{state.notice}</span>
+        </p>
+      )}
       {risky && risk.reason && (
         <p className="approve-card__risk" id={riskId}>
           <AuxGlyph kind="caution" label="Risky" />
@@ -212,6 +232,7 @@ export function ApproveCard({ request, expanded = false, armed = true, holdProgr
               onPointerDown={() => fire(collapsed ? "expand" : "hold-allow")}
               onPointerUp={onHoldEnd}
               onPointerLeave={onHoldEnd}
+              onPointerCancel={onHoldEnd}
             >
               <Ring progress={holdProgress} />
               Hold to allow <Kbd k="Y" />

@@ -3,6 +3,7 @@ import type { ApplyRequest } from "../../generated/ApplyRequest";
 import type { ApplyResult } from "../../generated/ApplyResult";
 import type { ConfigPreview } from "../../generated/ConfigPreview";
 import type { Endpoint } from "../../generated/Endpoint";
+import type { HookPlanRequest } from "../../generated/HookPlanRequest";
 import type { RemovePreview } from "../../generated/RemovePreview";
 import type { ConfigState, Detection } from "../../features/onboarding/types";
 import { api, ApiError } from "./client";
@@ -12,8 +13,8 @@ const base = (agent: string) => `/v1/agents/${encodeURIComponent(agent)}`;
 /** What the core knows about one agent's settings file and the hooks in it. */
 export const getSetup = (ep: Endpoint, agent: "claude") => api<AgentSetup>(ep, "GET", `${base(agent)}/setup`);
 
-/** The preview of installing the hooks (`status`) and the status line (`statusline`). A 422 ApiError says why the file is refused. */
-export const planInstall = (ep: Endpoint, agent: "claude", want: { status: boolean; statusline: boolean }) =>
+/** The preview of the requested status, approval and status line hooks. A 422 ApiError says why the file is refused. */
+export const planInstall = (ep: Endpoint, agent: "claude", want: HookPlanRequest) =>
   api<ConfigPreview>(ep, "POST", `${base(agent)}/hooks/plan`, want);
 
 export const planRemove = (ep: Endpoint, agent: "claude") => api<RemovePreview>(ep, "POST", `${base(agent)}/hooks/remove-plan`);

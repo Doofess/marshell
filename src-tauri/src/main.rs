@@ -1,6 +1,7 @@
 // No console window behind the app in release builds on Windows.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod attention;
 mod capture;
 mod folder_picker;
 
@@ -179,7 +180,9 @@ fn main() {
             core_endpoint,
             capture::capture_screen_region,
             capture::cancel_capture,
-            capture::read_clipboard_image
+            capture::read_clipboard_image,
+            attention::set_badge,
+            attention::alert_needs_you
         ])
         .build(tauri::generate_context!())
         .expect("failed to build the app");

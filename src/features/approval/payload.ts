@@ -18,6 +18,11 @@ export function payloadLines(d: ToolDetail): string[] {
       return [d.url];
     case "mcp":
       return Object.entries(d.args).map(([k, v]) => `${k}: ${v}`);
+    case "other": {
+      // Never a blank card: a tool with no input still shows its name.
+      const lines = Object.entries(d.args).map(([k, v]) => `${k}: ${v}`);
+      return lines.length > 0 ? lines : [d.tool];
+    }
     case "question":
       return [d.question];
   }

@@ -17,6 +17,8 @@ struct FileDoc {
     onboarded: bool,
     #[serde(default)]
     status_off: Vec<String>,
+    #[serde(default)]
+    sound_off: bool,
 }
 
 impl Versioned for FileDoc {
@@ -53,6 +55,7 @@ pub fn load(home: &Path) -> Settings {
         pause_warned,
         onboarded,
         status_off,
+        sound_off: doc.sound_off,
     }
 }
 
@@ -83,6 +86,7 @@ pub fn save(home: &Path, s: &Settings) -> anyhow::Result<()> {
             pause_warned: s.pause_warned,
             onboarded: s.onboarded,
             status_off: clean_status_off(s.status_off.clone()),
+            sound_off: s.sound_off,
         },
     )
 }
@@ -339,6 +343,18 @@ mod tests {
         assert_eq!(load(home.path()).status_off, vec!["claude"]);
         std::fs::write(&file, r#"{"version":1,"appearance":{}}"#).unwrap();
         assert!(load(home.path()).status_off.is_empty());
+    }
+
+    #[test]
+    fn sound_off_round_trips_and_defaults_on() {
+        let home = tempfile::tempdir().unwrap();
+        assert!(!load(home.path()).sound_off);
+        let s = Settings {
+            sound_off: true,
+            ..Settings::default()
+        };
+        save(home.path(), &s).unwrap();
+        assert!(load(home.path()).sound_off);
     }
 
     #[test]

@@ -1,5 +1,7 @@
 //! Resume starts an Ended tab again in the same row: same id, number, name and place.
 
+mod common;
+
 use axum::body::Body;
 use axum::http::{Request, StatusCode, header};
 use marshell_core::server::{AppState, router};
@@ -27,6 +29,7 @@ fn profile(id: &str) -> Profile {
 }
 
 fn state_in(home: &Path, profile_id: &str) -> AppState {
+    common::tie_children_to_test();
     AppState::new(
         TOKEN.into(),
         PORT,

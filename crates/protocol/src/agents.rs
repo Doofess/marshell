@@ -56,6 +56,8 @@ pub struct AgentSetup {
     #[ts(optional)]
     pub parse_error: Option<ParseProblem>,
     pub hooks: HookInstall,
+    /// The PermissionRequest hook is in place.
+    pub approve_installed: bool,
     /// A status line that is not Marshell's, or the one the chain keeps.
     pub has_own_statusline: bool,
     /// Ours is in place and the chain holds the user's.
@@ -72,6 +74,9 @@ pub struct HookPlanRequest {
     pub status: bool,
     /// Keep the user's own status line working through the chain.
     pub statusline: bool,
+    /// Add the PermissionRequest hook so requests can be answered from Marshell.
+    #[serde(default)]
+    pub approve: bool,
 }
 
 /// What removing an agent's hooks would do: the preview, and whether the user's changed status

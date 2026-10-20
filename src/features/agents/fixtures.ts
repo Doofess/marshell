@@ -11,6 +11,7 @@ export const SETUP: AgentSetup = {
   settings_path: "C:/h/.claude/settings.json",
   settings_state: "ok",
   hooks: "none",
+  approve_installed: false,
   has_own_statusline: true,
   chained: false,
   bridge_path: "C:/m/bin/marshell-hook.exe",

@@ -88,16 +88,77 @@ fn non_2xx_answer_prints_nothing_and_logs_one_line() {
     assert!(!lines[0].contains("stdin-body-marker"));
 }
 
-#[test]
-fn permission_prints_a_200_body_verbatim() {
+const TAB: &[(&str, &str)] = &[("MARSHELL_TAB_ID", "tab1")];
+const SUGGESTED: &str = r#"{"type":"addRules","rules":[{"toolName":"Bash","ruleContent":"node *"}],"behavior":"allow","destination":"localSettings"}"#;
+
+fn permission_request() -> String {
+    format!(r#"{{"tool_name":"Bash","permission_suggestions":[{SUGGESTED}]}}"#)
+}
+
+fn decision(decision: &str) -> String {
+    format!(r#"{{"hookSpecificOutput":{{"hookEventName":"PermissionRequest","decision":{decision}}}}}"#)
+}
+
+/// What the bridge prints for a permission request when the core answers 200 with `body`.
+fn permission_answer(body: &str) -> (Vec<u8>, Vec<String>) {
     let home = tempfile::tempdir().unwrap();
-    let body = r#"{"hookSpecificOutput":{"decision":{"behavior":"allow"}}}"#;
     let fake = serve(Reply::new(200, body));
     write_endpoint(home.path(), fake.port, "t");
-    let out = go(home.path(), &[], argv("permission"), b"{}");
-    assert_eq!(out, body.as_bytes());
-    let c = fake.captured(WAIT).unwrap();
-    assert_eq!(c.headers["x-marshell-role"], "permission");
+    let out = go(home.path(), TAB, argv("permission"), permission_request().as_bytes());
+    (out, log_lines(home.path()))
+}
+
+#[test]
+fn permission_prints_an_allow_or_a_deny_verbatim() {
+    for body in [
+        decision(r#"{"behavior":"allow"}"#),
+        decision(r#"{"behavior":"deny","message":"Denied in Marshell."}"#),
+        decision(&format!(r#"{{"behavior":"allow","updatedPermissions":[{SUGGESTED}]}}"#)),
+        decision(&format!(
+            r#"{{"behavior":"allow","updatedPermissions":[{}]}}"#,
+            SUGGESTED.replace("localSettings", "session")
+        )),
+    ] {
+        let (out, log) = permission_answer(&body);
+        assert_eq!(String::from_utf8(out).unwrap(), body);
+        assert!(log.is_empty(), "{log:?}");
+    }
+}
+
+#[test]
+fn permission_without_a_tab_asks_nothing() {
+    // The core answers 204 at once without a tab; a listener on a stale port must not get the chance to answer.
+    let home = tempfile::tempdir().unwrap();
+    let fake = serve(Reply::new(200, &decision(r#"{"behavior":"allow"}"#)));
+    write_endpoint(home.path(), fake.port, "t");
+    assert!(go(home.path(), &[], argv("permission"), permission_request().as_bytes()).is_empty());
+    assert!(
+        fake.captured(Duration::from_millis(300)).is_none(),
+        "the bridge posted without a tab"
+    );
+}
+
+#[test]
+fn permission_prints_nothing_for_an_answer_marshell_never_gives() {
+    // Whatever answers on the port might not be the core (ADR 0001, reviewed for 3d): only the core's own shapes pass.
+    let other_rule = SUGGESTED.replace("node *", "*");
+    for body in [
+        decision(r#"{"behavior":"allow","updatedInput":{"command":"calc"}}"#),
+        decision(&format!(r#"{{"behavior":"allow","updatedPermissions":[{other_rule}]}}"#)),
+        decision(&format!(r#"{{"behavior":"allow","updatedPermissions":[{}]}}"#, SUGGESTED.replace("localSettings", "userSettings"))),
+        decision(r#"{"behavior":"allow","updatedPermissions":[{"type":"setMode","mode":"bypassPermissions","destination":"session"}]}"#),
+        decision(r#"{"behavior":"deny","message":"no","interrupt":true}"#),
+        decision(r#"{"behavior":"ask"}"#),
+        r#"{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decision":{"behavior":"allow"}},"systemMessage":"hi"}"#.to_string(),
+        r#"{"hookSpecificOutput":{"hookEventName":"PreToolUse","decision":{"behavior":"allow"}}}"#.to_string(),
+        r#"{"continue":false}"#.to_string(),
+        "not json".to_string(),
+    ] {
+        let (out, log) = permission_answer(&body);
+        assert!(out.is_empty(), "printed {body}");
+        assert_eq!(log.len(), 1, "{body}: {log:?}");
+        assert!(log[0].contains("answer"), "{}", log[0]);
+    }
 }
 
 #[test]
@@ -105,7 +166,8 @@ fn permission_204_prints_nothing() {
     let home = tempfile::tempdir().unwrap();
     let fake = serve(Reply::new(204, ""));
     write_endpoint(home.path(), fake.port, "t");
-    assert!(go(home.path(), &[], argv("permission"), b"{}").is_empty());
+    assert!(go(home.path(), TAB, argv("permission"), b"{}").is_empty());
+    assert!(fake.captured(WAIT).is_some());
     assert!(log_lines(home.path()).is_empty());
 }
 

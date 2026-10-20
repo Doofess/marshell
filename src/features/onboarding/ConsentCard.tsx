@@ -46,6 +46,14 @@ export function ConsentCard({
   const titleId = useId();
   const edit = canEdit(d);
   const name = CLI_NAME[d.cli];
+  const change = (c: Capability, checked: boolean) => {
+    // An upgrade offers only approval: its live status hooks are already installed.
+    if (offer.includes("status")) {
+      if (c === "approve" && checked && !on.status) onSwitch?.("status", true);
+      if (c === "status" && !checked && on.approve) onSwitch?.("approve", false);
+    }
+    onSwitch?.(c, checked);
+  };
   return (
     <article className="consent" data-agent={d.cli} data-blocked={edit.ok ? undefined : ""} aria-labelledby={titleId}>
       <header className="consent__head">
@@ -62,7 +70,7 @@ export function ConsentCard({
           <ul className="consent__switches">
             {offer.filter((c) => c !== "statusline" || d.hasOwnStatusLine !== false).map((c) => (
               <li key={c}>
-                <Switch label={CAP_LABEL[c]} checked={on[c] && CAPABILITIES[d.cli][c].available} disabled={!CAPABILITIES[d.cli][c].available} reason={CAPABILITIES[d.cli][c].reason} onChange={onSwitch && ((v) => onSwitch(c, v))} />
+                <Switch label={CAP_LABEL[c]} checked={on[c] && CAPABILITIES[d.cli][c].available} disabled={!CAPABILITIES[d.cli][c].available} reason={CAPABILITIES[d.cli][c].reason} onChange={onSwitch && ((v) => change(c, v))} />
               </li>
             ))}
             {d.skipsAll && (
@@ -71,6 +79,7 @@ export function ConsentCard({
               </li>
             )}
           </ul>
+          {offer.includes("approve") && offer.includes("status") && <p className="consent__meta">Approve from anywhere needs live status to know when a request is answered.</p>}
           {d.skipsAll && (
             <p className="consent__handover">
               {name} is set to skip every permission prompt (<code>{d.skipsAll.setting}</code>), so Marshell can&apos;t ask you about anything. Turning it off lets each

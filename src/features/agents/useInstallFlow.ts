@@ -22,11 +22,13 @@ export function useInstallFlow(endpoint: Endpoint, onApplied: () => void) {
   const [want, setWant] = useState<Want>(DEFAULT_WANT);
   const wantRef = useRef(want);
 
-  const plan = useCallback(async () => {
+  const plan = useCallback(async (initial?: Want) => {
+    if (initial) {
+      wantRef.current = initial;
+      setWant(initial);
+    }
     const mine = ++latest.current;
     const asked = wantRef.current;
-    // Status off installs nothing: there is no plan to ask for, and nothing to apply.
-    if (!asked.status) return setFlow({ preview: null, open: false, busy: false });
     setFlow({ preview: null, open: false, busy: true });
     try {
       const preview = await planInstall(endpoint, "claude", installRequest(asked));
@@ -64,7 +66,6 @@ export function useInstallFlow(endpoint: Endpoint, onApplied: () => void) {
   /** A switch changed: keep it, and plan again so the preview matches. */
   const choose = useCallback(
     (c: Capability, checked: boolean) => {
-      if (c !== "status" && c !== "statusline") return;
       wantRef.current = { ...wantRef.current, [c]: checked };
       setWant(wantRef.current);
       void plan();

@@ -16,4 +16,8 @@ onboarded: boolean,
 /**
  * Agent ids whose live status is switched off; their rows use the pty fallback.
  */
-status_off: Array<string>, };
+status_off: Array<string>, 
+/**
+ * True when the needs-you sound is switched off.
+ */
+sound_off: boolean, };

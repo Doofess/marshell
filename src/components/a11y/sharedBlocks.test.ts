@@ -33,7 +33,6 @@ const LIVE = /role=["{]*["']?(status|alert)\b|aria-live=/;
  */
 const ALLOWED: Record<string, { reason: string; migrate?: true }> = {
   "components/a11y/Announcer.tsx": { reason: "THE live region of the app" },
-  "features/approval/ApproveCard.tsx": { reason: "the receipt line confirms the user's own decision (Allowed · npm test) and is not announced anywhere else" },
   "features/launcher/Launcher.tsx": { reason: "'No folder matches' while typing, and the task confirm's single progress line ('Creating the worktree…', then 'Starting <program>…'), in a modal sheet that owns focus; the window's announcer is quiet while it is open" },
   "features/onboarding/ConsentCard.tsx": { reason: "the error from an Allow press (the file could not be written) appears beside the button that has focus and is not announced anywhere else; it exists only after a failed attempt" },
   "features/agents/AgentsDialog.tsx": { reason: "the dialog's read and refusal alerts, in a modal sheet that owns focus; they exist only after a failed request and the window's announcer is quiet while it is open" },
@@ -53,6 +52,10 @@ const ALLOWED: Record<string, { reason: string; migrate?: true }> = {
 
 describe("shared blocks: one live region", () => {
   const names = files.filter(isSource).filter((p) => LIVE.test(readFileSync(p, "utf8"))).map(rel);
+  it("approval and lane features use the shared announcer for every outcome", () => {
+    const regions = names.filter((n) => /^features\/(approval|lane)\//.test(n));
+    expect(regions).toEqual([]);
+  });
 
   it("only the allowed files contain a live region (role=status, role=alert or aria-live)", () => {
     const unexpected = names.filter((n) => !(n in ALLOWED));

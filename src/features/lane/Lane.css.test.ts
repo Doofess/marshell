@@ -35,10 +35,22 @@ describe("Lane.css", () => {
   });
   it("bounds the targeted card to the 256 px the layout reserves, so its buttons can never be pushed out of the clipped lane", () => {
     expect(css).toMatch(/\.lane \.approve-card\s*\{[^}]*max-block-size:\s*256px/);
-    for (const part of ["question", "what", "risk", "cwd"]) expect(css, part).toMatch(new RegExp(`\\.lane \\.approve-card__${part}[^{]*\\{[^}]*line-clamp`));
+    for (const part of ["question", "what", "cwd"]) expect(css, part).toMatch(new RegExp(`\\.lane \\.approve-card__${part}[^{]*\\{[^}]*line-clamp`));
+    expect(css).toMatch(/\.lane \.approve-card__risk > span\s*\{[^}]*line-clamp/);
+  });
+  it("clamps the risk reason's text, not its line, so the caution glyph stays beside the reason (live check, 3d)", () => {
+    expect(css).not.toMatch(/\.lane \.approve-card__risk\s*[,{]/);
   });
   it("shows at most four answer options in the lane, the rest being in the full card", () => {
     expect(css).toMatch(/\.lane \.approve-card__actions--options > :nth-child\(n \+ 5\)\s*\{[^}]*display:\s*none/);
+  });
+  it("grows to its new size over 180 ms instead of snapping, so the sessions below slide rather than jump (live check, 3d)", () => {
+    expect(css).toMatch(/:root:not\(\[data-motion="reduce"\]\) \.lane\s*\{[^}]*transition:\s*block-size var\(--dur-enter\) var\(--ease-out\)/);
+  });
+  it("brings a new card in with a 180 ms fade and rise, and an 80 ms fade under reduced motion (PLAN, Motion)", () => {
+    expect(css).toMatch(/@keyframes lane-card-in\s*\{[^}]*opacity:\s*0;[^}]*translateY/);
+    expect(css).toMatch(/\.lane \.approve-card\[data-phase="pending"\]\s*\{[^}]*animation:\s*lane-card-in var\(--dur-enter\) var\(--ease-out\)/);
+    expect(css).toMatch(/\.lane \.approve-card\[data-phase="pending"\]\s*\{[^}]*animation:\s*lane-card-fade 80ms linear/);
   });
   it("adds no gap or end padding to the list, so the lane's size (header + card + one-liners) is exactly what laneLayout says", () => {
     const r = rule(".lane__list");

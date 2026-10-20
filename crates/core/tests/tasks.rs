@@ -1,5 +1,7 @@
 //! Task worktrees: names, plans, creation, and the repo root a session is grouped under.
 
+mod common;
+
 use axum::body::Body;
 use axum::http::{Request, StatusCode, header};
 use marshell_core::git::{GitStep, display, run};
@@ -282,6 +284,7 @@ const TOKEN: &str = "test-token";
 const PORT: u16 = 5556;
 
 fn state_in(home: &Path) -> AppState {
+    common::tie_children_to_test();
     let profile = Profile {
         id: "sleeper".into(),
         name: "Sleeper".into(),
@@ -1136,6 +1139,7 @@ async fn merge_routes_plan_merge_and_404() {
 // ---- typing into a session ----
 
 fn echo_state(home: &Path) -> AppState {
+    common::tie_children_to_test();
     let profile = Profile {
         id: "echoer".into(),
         name: "Echoer".into(),
