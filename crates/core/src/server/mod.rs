@@ -106,6 +106,8 @@ struct Inner {
     /// A Claude Code version a test pins, in place of asking the executable. `Some(None)` is a
     /// version that cannot be read.
     claude_version: Option<Option<String>>,
+    /// The previous process readings, so each `/v1/perf` call can tell the CPU used since the last one.
+    sampler: Mutex<crate::diagnostics::perf::Sampler>,
 }
 
 /// How long a permission request is held when `MARSHELL_PERMISSION_HOLD_SECS` is not set.
@@ -161,6 +163,7 @@ impl AppState {
             programs_dir: None,
             versions: Mutex::new(HashMap::new()),
             claude_version: None,
+            sampler: Mutex::new(crate::diagnostics::perf::Sampler::new()),
         }))
     }
     /// Names Claude Code's settings file, in place of the environment. Call it before the state is cloned.
@@ -246,6 +249,17 @@ impl AppState {
     /// How many sessions have a running process. Ended tabs have none.
     pub fn live_session_count(&self) -> usize {
         self.0.sessions.lock().unwrap().len()
+    }
+    /// (tab id, process id) of each session that has a process.
+    pub(crate) fn session_pids(&self) -> Vec<(String, u32)> {
+        let sessions = self.0.sessions.lock().unwrap();
+        sessions
+            .iter()
+            .filter_map(|(tab, s)| s.pid().map(|pid| (tab.clone(), pid)))
+            .collect()
+    }
+    pub(crate) fn sampler(&self) -> std::sync::MutexGuard<'_, crate::diagnostics::perf::Sampler> {
+        self.0.sampler.lock().unwrap_or_else(|e| e.into_inner())
     }
     pub fn insert_session(&self, session: Arc<crate::pty::Session>) {
         self.0
@@ -351,6 +365,7 @@ pub fn router(state: AppState) -> Router {
             "/v1/diagnostics/logging",
             get(diagnostics::get_logging).put(diagnostics::put_logging),
         )
+        .route("/v1/perf", get(diagnostics::get_perf))
         .route("/v1/hook/events", get(hook::events))
         .route("/v1/permissions", get(permissions::list))
         .route("/v1/permissions/{rid}/decision", post(permissions::decision))

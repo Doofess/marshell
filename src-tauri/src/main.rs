@@ -104,6 +104,7 @@ fn window_state_flags() -> tauri_plugin_window_state::StateFlags {
 }
 
 fn main() {
+    marshell_core::diagnostics::perf::mark_launch();
     // First, so every process Marshell starts dies with it, even after a crash (Windows only).
     if let Err(e) = marshell_core::job::tie_children_to_app() {
         eprintln!("Marshell: children may outlive a crash: {e}");

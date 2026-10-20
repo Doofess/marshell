@@ -44,6 +44,8 @@ impl Supervisor {
         on_event: impl Fn(CoreEvent) + Send + Sync + 'static,
     ) -> anyhow::Result<Arc<Supervisor>> {
         let core = server::start(cfg.clone()).await?;
+        // Only the first core counts: a restart leaves the startup time where it was.
+        crate::diagnostics::perf::mark_ready();
         Ok(Arc::new(Supervisor {
             cfg,
             current: Mutex::new(Some(core)),
