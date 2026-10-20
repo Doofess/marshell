@@ -444,6 +444,21 @@ impl Registry {
         }
     }
 
+    /// Follows the permission mode the agent reports: sets the row's mode and the mode Resume and
+    /// the next launch use. Applied only to an open Running agent row, and only on a change.
+    pub fn set_live_mode(&self, tab_id: &str, mode: SessionMode) {
+        let mut state = self.state.lock().unwrap();
+        if let Some(entry) = state.open.iter_mut().find(|e| e.info.tab_id == tab_id)
+            && entry.info.state == SessionState::Running
+            && entry.info.agent.is_some()
+            && entry.info.mode != Some(mode)
+        {
+            entry.info.mode = Some(mode);
+            entry.spec.mode = Some(mode);
+            self.tx.send_replace(state.snapshot());
+        }
+    }
+
     /// Sets why a Claude Code row has no live status (a gated version, or the switch is off), or
     /// takes the note away. A note also drops the live status, so a switch turned off mid-session
     /// leaves no stale status. Applied only to an open Running row. Broadcasts only on a change.
@@ -681,6 +696,51 @@ mod tests {
         assert_eq!(row.mode, Some(SessionMode::Plan));
         reg.mark_exited("t1", second, 3);
         assert_eq!(reg.snapshot().sessions[0].state, SessionState::Exited { code: 3 });
+    }
+
+    #[test]
+    fn live_mode_updates_the_row_and_the_relaunch_spec() {
+        let reg = Registry::new();
+        let claude = Relaunch {
+            agent: Some("claude".into()),
+            mode: Some(SessionMode::Manual),
+            ..relaunch("Claude")
+        };
+        reg.reserve("c", claude);
+        reg.reserve("s", relaunch("Shell"));
+        let mut rx = reg.subscribe();
+        rx.borrow_and_update();
+
+        reg.set_live_mode("c", SessionMode::Plan);
+        assert!(rx.has_changed().unwrap());
+        rx.borrow_and_update();
+        let mode_of = |tab: &str| {
+            reg.snapshot()
+                .sessions
+                .into_iter()
+                .find(|s| s.tab_id == tab)
+                .unwrap()
+                .mode
+        };
+        assert_eq!(mode_of("c"), Some(SessionMode::Plan));
+        // The same mode again changes nothing and broadcasts nothing.
+        reg.set_live_mode("c", SessionMode::Plan);
+        assert!(!rx.has_changed().unwrap());
+        // A plain shell row has no agent: nothing changes.
+        reg.set_live_mode("s", SessionMode::Plan);
+        assert_eq!(mode_of("s"), None);
+        assert!(!rx.has_changed().unwrap());
+        reg.set_live_mode("nope", SessionMode::Plan);
+        assert!(!rx.has_changed().unwrap());
+
+        reg.mark_exited("c", generation_of(&reg, "c"), 0);
+        rx.borrow_and_update();
+        // A row that is not Running keeps its mode.
+        reg.set_live_mode("c", SessionMode::Bypass);
+        assert!(!rx.has_changed().unwrap());
+        // Resume reads the spec: it reopens in the mode the agent was in.
+        let (spec, _, _) = reg.begin_resume("c").unwrap();
+        assert_eq!(spec.mode, Some(SessionMode::Plan));
     }
 
     #[test]

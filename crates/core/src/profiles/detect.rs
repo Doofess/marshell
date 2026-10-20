@@ -404,6 +404,7 @@ pub fn mode_args(agent: &str, mode: SessionMode) -> &'static [&'static str] {
         ("claude", AutoEdit) => &["--permission-mode", "acceptEdits"],
         ("claude", FullAuto) => &["--permission-mode", "auto"],
         ("claude", Bypass) => &["--permission-mode", "bypassPermissions"],
+        ("claude", DontAsk) => &["--permission-mode", "dontAsk"],
         ("codex", Manual | Plan) => &["--sandbox", "read-only", "--ask-for-approval", "on-request"],
         ("codex", AutoEdit) => &["--sandbox", "workspace-write", "--ask-for-approval", "on-request"],
         ("codex", FullAuto) => &["--approve-for-me"],
@@ -963,6 +964,9 @@ mod tests {
         assert_eq!(mode_args("claude", AutoEdit), ["--permission-mode", "acceptEdits"]);
         assert_eq!(mode_args("claude", FullAuto), ["--permission-mode", "auto"]);
         assert_eq!(mode_args("claude", Bypass), ["--permission-mode", "bypassPermissions"]);
+        assert_eq!(mode_args("claude", DontAsk), ["--permission-mode", "dontAsk"]);
+        assert!(mode_args("codex", DontAsk).is_empty());
+        assert!(mode_args("antigravity", DontAsk).is_empty());
         let manual = ["--sandbox", "read-only", "--ask-for-approval", "on-request"];
         assert_eq!(mode_args("codex", Manual), manual);
         assert_eq!(mode_args("codex", Plan), mode_args("codex", Manual));

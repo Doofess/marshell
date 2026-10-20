@@ -1,6 +1,6 @@
 //! Folds Claude Code's hook events and status line into a session's live status.
 
-use marshell_protocol::api::{LiveState, LiveStatus, Recap};
+use marshell_protocol::api::{LiveState, LiveStatus, Recap, SessionMode};
 use serde_json::Value;
 
 /// A ring's colour band.
@@ -9,6 +9,20 @@ pub enum RingLevel {
     Green,
     Yellow,
     Red,
+}
+
+/// The permission mode a hook body reports (`permission_mode`). None for a missing field, a
+/// non-string or a value this build does not know, so the row keeps the mode it has.
+pub fn mode_of(body: &Value) -> Option<SessionMode> {
+    Some(match body.get("permission_mode")?.as_str()? {
+        "default" | "manual" => SessionMode::Manual,
+        "plan" => SessionMode::Plan,
+        "acceptEdits" => SessionMode::AutoEdit,
+        "auto" => SessionMode::FullAuto,
+        "bypassPermissions" => SessionMode::Bypass,
+        "dontAsk" => SessionMode::DontAsk,
+        _ => return None,
+    })
 }
 
 /// Green below 70%, yellow from 70%, red from 90%.
@@ -181,6 +195,21 @@ mod tests {
             )))
             .unwrap()
         };
+    }
+
+    #[test]
+    fn mode_of_maps_every_documented_value() {
+        let of = |v: Value| mode_of(&json!({ "permission_mode": v }));
+        assert_eq!(of(json!("default")), Some(SessionMode::Manual));
+        assert_eq!(of(json!("manual")), Some(SessionMode::Manual));
+        assert_eq!(of(json!("plan")), Some(SessionMode::Plan));
+        assert_eq!(of(json!("acceptEdits")), Some(SessionMode::AutoEdit));
+        assert_eq!(of(json!("auto")), Some(SessionMode::FullAuto));
+        assert_eq!(of(json!("bypassPermissions")), Some(SessionMode::Bypass));
+        assert_eq!(of(json!("dontAsk")), Some(SessionMode::DontAsk));
+        assert_eq!(of(json!("somethingNew")), None);
+        assert_eq!(of(json!(3)), None);
+        assert_eq!(mode_of(&json!({})), None);
     }
 
     fn fold(prev: Option<&LiveStatus>, body: &Value) -> LiveStatus {

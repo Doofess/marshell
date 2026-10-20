@@ -1,5 +1,5 @@
 use super::AppState;
-use crate::agents::claude::status::{fold_event, fold_statusline};
+use crate::agents::claude::status::{fold_event, fold_statusline, mode_of};
 use crate::agents::claude::{Gate, version_gate};
 use crate::history::recorder::schedule_copy;
 use crate::hooks::holds::Outcome;
@@ -127,6 +127,9 @@ async fn fold_live(st: &AppState, role: HookRole, tab: &str, body: &serde_json::
                     .update_live(tab, |prev| Some(fold_statusline(prev, body, at_ms)));
             } else {
                 st.registry().update_live(tab, |prev| fold_event(prev, body, at_ms));
+                if let Some(mode) = mode_of(body) {
+                    st.registry().set_live_mode(tab, mode);
+                }
             }
             st.registry().set_status_note(tab, None);
         }

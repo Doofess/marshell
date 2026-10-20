@@ -391,6 +391,65 @@ async fn the_switch_off_for_claude_leaves_no_status_and_says_why() {
     assert_eq!(info.status_note.as_deref(), Some("Live status is off for Claude Code"));
 }
 
+fn pre_tool_use_in(mode: &str) -> Vec<u8> {
+    let mut body: serde_json::Value = serde_json::from_slice(&fixture("PreToolUse")).unwrap();
+    body["permission_mode"] = mode.into();
+    serde_json::to_vec(&body).unwrap()
+}
+
+#[tokio::test]
+async fn a_hook_body_with_a_permission_mode_changes_the_row_mode() {
+    let st = state(Some(KNOWN));
+    let app = router(st.clone());
+    let tab = start_claude(&app).await;
+    assert_eq!(
+        status(
+            &app,
+            hook(Some("event"), Some("claude"), Some(&tab), pre_tool_use_in("plan"))
+        )
+        .await,
+        StatusCode::NO_CONTENT
+    );
+    let planned = row(&st, &tab).mode;
+    // An unknown value changes nothing.
+    status(
+        &app,
+        hook(Some("event"), Some("claude"), Some(&tab), pre_tool_use_in("later")),
+    )
+    .await;
+    let unknown = row(&st, &tab).mode;
+    stop(&st, &tab);
+    assert_eq!(planned, Some(marshell_protocol::api::SessionMode::Plan));
+    assert_eq!(unknown, planned);
+}
+
+#[tokio::test]
+async fn the_switch_off_for_claude_keeps_the_launch_mode() {
+    let st = state(Some(KNOWN));
+    let app = router(st.clone());
+    let tab = start_claude(&app).await;
+    let launched = row(&st, &tab).mode;
+    let settings = serde_json::json!({ "appearance": {}, "status_off": ["claude"] });
+    app.clone()
+        .oneshot(
+            base("PUT", "/v1/settings")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(settings.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    status(
+        &app,
+        hook(Some("event"), Some("claude"), Some(&tab), pre_tool_use_in("plan")),
+    )
+    .await;
+    let after = row(&st, &tab).mode;
+    stop(&st, &tab);
+    assert_eq!(after, launched);
+    assert_ne!(after, Some(marshell_protocol::api::SessionMode::Plan));
+}
+
 #[tokio::test]
 async fn a_known_version_takes_the_note_away() {
     let st = state(Some(KNOWN));
