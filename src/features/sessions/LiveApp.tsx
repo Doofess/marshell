@@ -36,6 +36,7 @@ import { modeMenuItems, sessionMenuItems } from "../sidebar/sessionMenu";
 import { nextSessionNumber } from "../sidebar/sessionNumber";
 import type { Mode, RowModel } from "../sidebar/types";
 import { AgentsDialog } from "../agents/AgentsDialog";
+import { DiagnosticsDialog } from "../diagnostics/DiagnosticsDialog";
 import { LiveOnboarding } from "../onboarding/LiveOnboarding";
 import { getSetup } from "../../lib/api/agents";
 import type { HookInstall } from "../../generated/HookInstall";
@@ -180,7 +181,7 @@ export function LiveApp() {
   const terminalFont = useMemo(() => ({ family: font.family, size: font.size }), [font.family, font.size]);
   const [launcherOpen, setLauncherOpen] = useState(false);
   // The command palette, or the shell profiles page opened from it, over the window.
-  const [overlay, setOverlay] = useState<"palette" | "profiles" | "appearance" | "agents" | "shortcuts" | null>(null);
+  const [overlay, setOverlay] = useState<"palette" | "profiles" | "appearance" | "agents" | "diagnostics" | "shortcuts" | null>(null);
   // The Agents dialog opened from a row's "set up" starts on the Set up card.
   const [agentsFrom, setAgentsFrom] = useState<"row" | null>(null);
   // First run: shown once, when the saved settings say the onboarding was not seen. Nothing shows until that read has answered.
@@ -1001,7 +1002,7 @@ export function LiveApp() {
 
   // A palette row: a session to go to, the profiles page, or a command the window runs (LivePalette lists only those).
   const runFromPalette = (id: string) => {
-    setOverlay(id === "profiles" || id === "appearance" || id === "agents" ? id : id === "cheatsheet" ? "shortcuts" : null);
+    setOverlay(id === "profiles" || id === "appearance" || id === "agents" || id === "diagnostics" ? id : id === "cheatsheet" ? "shortcuts" : null);
     if (id.startsWith("session:")) return pick(id.slice("session:".length));
     // Palette-only commands. The menu opens after the palette has given the focus back, so it keeps the focus it takes.
     if (id === "unsplit") return dispatch({ type: "remove", index: focusIdxRef.current });
@@ -1246,6 +1247,7 @@ export function LiveApp() {
       )}
       {overlay === "profiles" && endpoint && <ProfilesDialog endpoint={endpoint} onClose={() => setOverlay(null)} onNotice={announce} onSaved={reloadProfiles} />}
       {overlay === "agents" && endpoint && <AgentsDialog endpoint={endpoint} sync={sync ?? undefined} startWith={agentsFrom === "row" ? "setup" : undefined} onClose={() => { setOverlay(null); setAgentsFrom(null); refreshSetup(); }} onNotice={announce} onChanged={refreshSetup} />}
+      {overlay === "diagnostics" && endpoint && <DiagnosticsDialog endpoint={endpoint} onClose={() => setOverlay(null)} onNotice={announce} />}
       {onboarding && endpoint && (
         <div className="live-app__onboarding">
           <LiveOnboarding

@@ -185,3 +185,11 @@ describe("capture", () => {
     for (const os of ["windows", "mac", "linux"] as const) expect(problemsIn(COMMANDS, os), os).toEqual([]);
   });
 });
+
+describe("diagnostics command", () => {
+  it("sits right after agents, in Tools, with no key of its own", () => {
+    const i = COMMANDS.findIndex((c) => c.id === "agents");
+    expect(COMMANDS[i + 1]).toMatchObject({ id: "diagnostics", label: "Diagnostics…", group: "Tools" });
+    expect(commandById("diagnostics")?.binding).toBeUndefined();
+  });
+});
