@@ -27,10 +27,14 @@ pub fn tokens_match(a: &str, b: &str) -> bool {
     a.bytes().zip(b.bytes()).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
 }
 
-/// `endpoint.json` on disk: the endpoint plus a top-level `"version"`.
+/// `endpoint.json` on disk: the endpoint, the PID of the core that wrote it, and a top-level `"version"`.
+/// Readers that do not know `pid` ignore it, so adding it did not need a new version.
 #[derive(Serialize, Deserialize)]
-#[serde(transparent)]
-struct EndpointFile(Endpoint);
+struct EndpointFile {
+    #[serde(flatten)]
+    endpoint: Endpoint,
+    pid: u32,
+}
 
 impl Versioned for EndpointFile {
     const VERSION: u32 = 1;
@@ -43,7 +47,29 @@ impl Versioned for EndpointFile {
 pub fn write_endpoint_file(path: &Path, ep: &Endpoint) -> anyhow::Result<()> {
     // The old file only names a core that is gone, even one from a newer Marshell, so it is never kept.
     let _ = std::fs::remove_file(path);
-    store::write(path, &EndpointFile(ep.clone()))
+    let file = EndpointFile {
+        endpoint: ep.clone(),
+        pid: std::process::id(),
+    };
+    store::write(path, &file)
+}
+
+/// Deletes the endpoint file, but only if it still holds `token`. A restarted core writes its own file
+/// before the old one is gone from memory, so a file with another token belongs to the new core and stays.
+/// A missing or unreadable file, or a failed delete, is logged at most.
+pub fn remove_endpoint_file_if_ours(path: &Path, token: &str) {
+    let Ok(bytes) = std::fs::read(path) else {
+        return;
+    };
+    let Ok(file) = serde_json::from_slice::<Endpoint>(&bytes) else {
+        return;
+    };
+    if !tokens_match(&file.token, token) {
+        return;
+    }
+    if let Err(e) = std::fs::remove_file(path) {
+        tracing::warn!("could not delete {}: {e}", path.display());
+    }
 }
 
 #[cfg(test)]
@@ -148,5 +174,52 @@ mod tests {
         let back: Endpoint = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
         assert_eq!(back.port, 2222);
         assert_eq!(back.token, "b");
+    }
+
+    fn sample(token: &str) -> Endpoint {
+        Endpoint {
+            port: 4242,
+            token: token.into(),
+            platform: Platform::current(),
+        }
+    }
+
+    #[test]
+    fn endpoint_file_names_this_process() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("run").join("endpoint.json");
+        write_endpoint_file(&path, &sample("t0k")).unwrap();
+        let raw: serde_json::Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        assert_eq!(raw["pid"], std::process::id());
+        assert_eq!(raw["port"], 4242);
+        assert_eq!(raw["token"], "t0k");
+    }
+
+    #[test]
+    fn removes_the_endpoint_file_when_the_token_is_ours() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("run").join("endpoint.json");
+        write_endpoint_file(&path, &sample("mine")).unwrap();
+        remove_endpoint_file_if_ours(&path, "mine");
+        assert!(!path.exists());
+    }
+
+    #[test]
+    fn keeps_an_endpoint_file_with_another_token() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("run").join("endpoint.json");
+        write_endpoint_file(&path, &sample("newer")).unwrap();
+        remove_endpoint_file_if_ours(&path, "older");
+        assert!(path.exists());
+    }
+
+    #[test]
+    fn removing_a_missing_or_broken_endpoint_file_is_harmless() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("endpoint.json");
+        remove_endpoint_file_if_ours(&path, "x");
+        std::fs::write(&path, "not json").unwrap();
+        remove_endpoint_file_if_ours(&path, "x");
+        assert!(path.exists());
     }
 }

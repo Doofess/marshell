@@ -370,6 +370,8 @@ async fn health() -> Json<Health> {
 pub struct RunningCore {
     pub endpoint: Endpoint,
     pub state: AppState,
+    /// Where `start` wrote the endpoint file, so `shutdown` can delete it.
+    endpoint_file: PathBuf,
     shutdown: tokio::sync::oneshot::Sender<()>,
     serve: tokio::task::JoinHandle<()>,
 }
@@ -380,7 +382,9 @@ impl RunningCore {
         !self.serve.is_finished() && !self.state.0.sessions.is_poisoned()
     }
 
-    /// Kills every session's process tree, then stops the server. Works on a poisoned lock too.
+    /// Kills every session's process tree, deletes the endpoint file (unless a newer core has replaced it),
+    /// then stops the server. Works on a poisoned lock too. Done here and not in a task, because the
+    /// process exits right after this returns.
     pub fn shutdown(self) {
         let sessions: Vec<_> = self
             .state
@@ -394,6 +398,7 @@ impl RunningCore {
         for s in sessions {
             s.force_kill();
         }
+        auth::remove_endpoint_file_if_ours(&self.endpoint_file, &self.endpoint.token);
         let _ = self.shutdown.send(());
     }
 
@@ -468,6 +473,7 @@ pub async fn start(cfg: CoreConfig) -> anyhow::Result<RunningCore> {
     Ok(RunningCore {
         endpoint,
         state,
+        endpoint_file,
         shutdown: tx,
         serve,
     })

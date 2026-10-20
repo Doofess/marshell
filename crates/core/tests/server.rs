@@ -291,6 +291,49 @@ async fn start_writes_endpoint_file_and_serves() {
     core.shutdown();
 }
 
+async fn start_core(home: &std::path::Path) -> marshell_core::server::RunningCore {
+    marshell_core::server::start(marshell_core::server::CoreConfig {
+        home: home.to_path_buf(),
+        allowed_origins: vec![],
+        programs_dir: None,
+    })
+    .await
+    .unwrap()
+}
+
+#[tokio::test]
+async fn endpoint_file_names_the_core_process() {
+    let home = tempfile::tempdir().unwrap();
+    let core = start_core(home.path()).await;
+    let raw: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(home.path().join("run/endpoint.json")).unwrap()).unwrap();
+    assert_eq!(raw["pid"], std::process::id());
+    core.shutdown();
+}
+
+#[tokio::test]
+async fn shutdown_deletes_the_endpoint_file() {
+    let home = tempfile::tempdir().unwrap();
+    let core = start_core(home.path()).await;
+    let file = home.path().join("run/endpoint.json");
+    assert!(file.exists());
+    core.shutdown();
+    assert!(!file.exists());
+}
+
+#[tokio::test]
+async fn shutdown_keeps_the_endpoint_file_of_a_newer_core() {
+    let home = tempfile::tempdir().unwrap();
+    let old = start_core(home.path()).await;
+    let newer = start_core(home.path()).await;
+    old.shutdown();
+    let raw: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(home.path().join("run/endpoint.json")).unwrap()).unwrap();
+    assert_eq!(raw["token"], newer.endpoint.token);
+    newer.shutdown();
+    assert!(!home.path().join("run/endpoint.json").exists());
+}
+
 #[tokio::test]
 async fn bad_bearer_token_is_unauthorized() {
     let req = get("/v1/health")
