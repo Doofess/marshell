@@ -345,14 +345,26 @@ pub fn agent_in(chain: &[String], command_line: Option<&str>) -> Option<&'static
     agent_of_exe(&program).or_else(|| agent_of_package(&program))
 }
 
-/// The arguments that make an agent continue its last conversation in the current folder.
-pub fn resume_args(agent: &str) -> &'static [&'static str] {
-    match agent {
-        "claude" => &["--continue"],
-        "codex" => &["resume", "--last"],
-        "antigravity" => &["--continue"],
-        _ => &[],
-    }
+/// Which conversation a resumed agent should pick up.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ResumeTarget<'a> {
+    /// The CLI's own "last conversation in this folder".
+    Last,
+    /// One conversation by the CLI's session id. Only Claude Code takes one so far.
+    Session(&'a str),
+}
+
+/// The arguments that make an agent continue a conversation: the one named by `target` when the CLI
+/// can name it, otherwise its last conversation in the current folder.
+pub fn resume_args(agent: &str, target: ResumeTarget) -> Vec<String> {
+    let args: Vec<&str> = match (agent, target) {
+        ("claude", ResumeTarget::Session(id)) => vec!["--resume", id],
+        ("claude", ResumeTarget::Last) => vec!["--continue"],
+        ("codex", _) => vec!["resume", "--last"],
+        ("antigravity", _) => vec!["--continue"],
+        _ => Vec::new(),
+    };
+    args.into_iter().map(String::from).collect()
 }
 
 /// What to type into `agent`'s prompt so it reads the image at `path`: the absolute path in quotes.
@@ -443,15 +455,17 @@ pub fn launch_argv(
     build_argv(profile, agent, prompt, &[], mode)
 }
 
-/// Like `launch_argv` with no prompt, but the agent is told to continue its last conversation.
-/// With no agent it is the profile's own command.
+/// Like `launch_argv` with no prompt, but the agent is told to continue the conversation `target` names.
+/// With no agent it is the profile's own command. A session id is only ever letters, digits, `_` and `-`,
+/// so it is safe as its own word in a shell command line.
 pub fn launch_argv_resume(
     profile: &Profile,
     agent: Option<&str>,
     mode: Option<SessionMode>,
+    target: ResumeTarget,
 ) -> Result<Vec<String>, String> {
-    let extra = agent.map_or(&[][..], resume_args);
-    build_argv(profile, agent, None, extra, mode)
+    let extra = agent.map_or_else(Vec::new, |agent| resume_args(agent, target));
+    build_argv(profile, agent, None, &extra, mode)
 }
 
 /// `extra` goes right after the agent's program name, then the mode flags, then any prompt.
@@ -459,7 +473,7 @@ fn build_argv(
     profile: &Profile,
     agent: Option<&str>,
     prompt: Option<&str>,
-    extra: &[&str],
+    extra: &[String],
     mode: Option<SessionMode>,
 ) -> Result<Vec<String>, String> {
     let Some(agent) = agent else {
@@ -468,7 +482,7 @@ fn build_argv(
     let program = agent_command(agent).ok_or_else(|| format!("Unknown agent: {agent}."))?;
     let mut program_line = program.to_string();
     let mode_flags = mode.map_or(&[][..], |m| mode_args(agent, m));
-    for arg in extra.iter().chain(mode_flags) {
+    for arg in extra.iter().map(String::as_str).chain(mode_flags.iter().copied()) {
         program_line.push(' ');
         program_line.push_str(arg);
     }
@@ -898,29 +912,47 @@ mod tests {
 
     #[test]
     fn resume_args_per_agent() {
-        assert_eq!(resume_args("claude"), ["--continue"]);
-        assert_eq!(resume_args("codex"), ["resume", "--last"]);
-        assert_eq!(resume_args("antigravity"), ["--continue"]);
-        assert!(resume_args("aider").is_empty());
+        assert_eq!(resume_args("claude", ResumeTarget::Last), ["--continue"]);
+        assert_eq!(resume_args("codex", ResumeTarget::Last), ["resume", "--last"]);
+        assert_eq!(resume_args("antigravity", ResumeTarget::Last), ["--continue"]);
+        assert!(resume_args("aider", ResumeTarget::Last).is_empty());
     }
 
     #[test]
     fn resume_argv_adds_the_continue_flag_and_no_prompt() {
         let ps = profile("pwsh", &["pwsh.exe"], ShellFamily::PowerShell);
-        let argv = launch_argv_resume(&ps, Some("claude"), None).unwrap();
+        let argv = launch_argv_resume(&ps, Some("claude"), None, ResumeTarget::Last).unwrap();
         assert_eq!(argv.last().unwrap(), "& claude --continue");
         let sh = profile("bash", &["bash"], ShellFamily::Posix);
-        let argv = launch_argv_resume(&sh, Some("codex"), None).unwrap();
+        let argv = launch_argv_resume(&sh, Some("codex"), None, ResumeTarget::Last).unwrap();
         assert!(argv.last().unwrap().starts_with("codex resume --last; exec"));
         let cmd = profile("cmd", &["cmd.exe"], ShellFamily::Cmd);
         assert_eq!(
-            launch_argv_resume(&cmd, Some("claude"), None).unwrap(),
+            launch_argv_resume(&cmd, Some("claude"), None, ResumeTarget::Last).unwrap(),
             ["cmd.exe", "/k", "claude --continue"]
         );
-        let argv = launch_argv_resume(&ps, Some("antigravity"), None).unwrap();
+        let argv = launch_argv_resume(&ps, Some("antigravity"), None, ResumeTarget::Last).unwrap();
         assert_eq!(argv.last().unwrap(), "& agy --continue");
         // A plain shell is just its own command.
-        assert_eq!(launch_argv_resume(&ps, None, None).unwrap(), ps.command);
+        assert_eq!(
+            launch_argv_resume(&ps, None, None, ResumeTarget::Last).unwrap(),
+            ps.command
+        );
+    }
+
+    #[test]
+    fn resume_by_session_id() {
+        let ps = profile("pwsh", &["pwsh.exe"], ShellFamily::PowerShell);
+        let by_id = ResumeTarget::Session("abc-1");
+        let argv = launch_argv_resume(&ps, Some("claude"), None, by_id).unwrap();
+        assert_eq!(argv.last().unwrap(), "& claude --resume abc-1");
+        let argv = launch_argv_resume(&ps, Some("claude"), Some(SessionMode::Bypass), by_id).unwrap();
+        assert_eq!(
+            argv.last().unwrap(),
+            "& claude --resume abc-1 --permission-mode bypassPermissions"
+        );
+        let argv = launch_argv_resume(&ps, Some("codex"), None, by_id).unwrap();
+        assert_eq!(argv.last().unwrap(), "& codex resume --last");
     }
 
     #[test]
@@ -954,12 +986,12 @@ mod tests {
     #[test]
     fn resume_puts_the_mode_flags_after_the_resume_args() {
         let ps = profile("pwsh", &["pwsh.exe"], ShellFamily::PowerShell);
-        let argv = launch_argv_resume(&ps, Some("claude"), Some(SessionMode::Bypass)).unwrap();
+        let argv = launch_argv_resume(&ps, Some("claude"), Some(SessionMode::Bypass), ResumeTarget::Last).unwrap();
         assert_eq!(
             argv.last().unwrap(),
             "& claude --continue --permission-mode bypassPermissions"
         );
-        let argv = launch_argv_resume(&ps, Some("codex"), Some(SessionMode::FullAuto)).unwrap();
+        let argv = launch_argv_resume(&ps, Some("codex"), Some(SessionMode::FullAuto), ResumeTarget::Last).unwrap();
         assert_eq!(argv.last().unwrap(), "& codex resume --last --approve-for-me");
     }
 

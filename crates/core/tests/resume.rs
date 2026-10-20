@@ -251,3 +251,28 @@ async fn resume_refuses_an_agent_that_is_not_installed() {
     assert_eq!(sessions(&app).await["sessions"][1]["state"]["kind"], "ended");
     assert_eq!(state.live_session_count(), 0);
 }
+
+#[tokio::test]
+async fn resume_refuses_a_conversation_claude_no_longer_has() {
+    let home = tempfile::tempdir().unwrap();
+    let work = tempfile::tempdir().unwrap();
+    let (state, app, _a, b) = restarted_with(home.path(), work.path(), "sleeper", Some("claude"), |_| true).await;
+    // The index knows the tab's session, but its transcript file does not exist.
+    let transcript = work.path().join("gone-1.jsonl");
+    let body = serde_json::json!({
+        "hook_event_name": "SessionStart",
+        "session_id": "gone-1",
+        "transcript_path": transcript.to_string_lossy(),
+        "cwd": work.path().to_string_lossy(),
+    });
+    assert!(state.history().note_event(&b, &body, 1).is_none());
+
+    let res = resume(&app, &b).await;
+    assert_eq!(res.status(), StatusCode::CONFLICT);
+    assert_eq!(
+        json_of(res).await["reason"],
+        "Claude Code no longer has this conversation, so it can't be resumed."
+    );
+    assert_eq!(sessions(&app).await["sessions"][1]["state"]["kind"], "ended");
+    assert_eq!(state.live_session_count(), 0);
+}
