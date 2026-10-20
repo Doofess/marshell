@@ -50,6 +50,9 @@ describe("Mode ▸", () => {
     expect(labels).toContain("Mode ▸");
     expect(ids({ ...all, agent: false })).not.toContain("mode");
   });
+  it("modeMenuItems never offers Don't ask", () => {
+    expect(modeMenuItems("dont-ask").map((i) => ("separator" in i ? "-" : i.id))).not.toContain("mode-dont-ask");
+  });
   it("modeMenuItems lists the five modes and marks the one it started in", () => {
     const items = modeMenuItems("plan");
     expect(items.map((i) => ("separator" in i ? "-" : i.id))).toEqual(["mode-manual", "mode-plan", "mode-auto-edit", "mode-full-auto", "mode-bypass"]);

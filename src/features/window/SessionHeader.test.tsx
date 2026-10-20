@@ -14,6 +14,13 @@ describe("modeLabel / headerDanger", () => {
     expect(modeLabel("bypass")).toBe("Bypass");
     expect(modeLabel(undefined)).toBe("–");
   });
+  it("names Don't ask, a mode Claude Code reports, without the danger outline", () => {
+    expect(modeLabel("dont-ask")).toBe("Don't ask");
+    expect(headerDanger("dont-ask")).toBe(false);
+    const html = renderToStaticMarkup(<SessionHeader row={{ ...row("working"), mode: "dont-ask" }} />);
+    expect(html).toContain("Don&#x27;t ask");
+    expect(html).not.toContain("data-danger");
+  });
   it("outlines the header in red only for bypass and auto", () => {
     expect(headerDanger("bypass")).toBe(true);
     expect(headerDanger("full-auto")).toBe(true);

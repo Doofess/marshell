@@ -9,7 +9,7 @@ import type { Mode, RowModel } from "../sidebar/types";
 import "./SessionHeader.css";
 
 const DASH = "–";
-const MODE_LABELS: Record<Mode, string> = { manual: "Manual", plan: "Plan", "auto-edit": "Auto-edit", "full-auto": "Full auto", bypass: "Bypass" };
+const MODE_LABELS: Record<Mode, string> = { manual: "Manual", plan: "Plan", "auto-edit": "Auto-edit", "full-auto": "Full auto", bypass: "Bypass", "dont-ask": "Don't ask" };
 
 export const modeLabel = (mode?: Mode) => (mode ? MODE_LABELS[mode] : DASH);
 /** docs/PLAN.md "Sidebar rows": the header is marked red for bypass and auto, with a tint and a start-edge bar (never a box). */

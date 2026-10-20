@@ -74,4 +74,7 @@ describe("modeCaution", () => {
       null,
     ]);
   });
+  it("gives no caution for Don't ask", () => {
+    expect(modeCaution("dont-ask")).toBeNull();
+  });
 });

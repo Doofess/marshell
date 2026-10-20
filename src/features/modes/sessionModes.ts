@@ -28,6 +28,8 @@ const NATIVE: Record<CliId, Record<Mode, string[] | null>> = {
     "auto-edit": ["--permission-mode", "acceptEdits"],
     "full-auto": ["--permission-mode", "auto"],
     bypass: ["--permission-mode", "bypassPermissions"],
+    // Only reported by Claude Code, never offered: no launcher or Mode menu entry reaches this flag.
+    "dont-ask": ["--permission-mode", "dontAsk"],
   },
   codex: {
     manual: STRICT.codex,
@@ -36,6 +38,7 @@ const NATIVE: Record<CliId, Record<Mode, string[] | null>> = {
     "auto-edit": ["--sandbox", "workspace-write", "--ask-for-approval", "on-request"],
     "full-auto": ["--approve-for-me"],
     bypass: ["--dangerously-bypass-approvals-and-sandbox"],
+    "dont-ask": null,
   },
   antigravity: {
     manual: STRICT.antigravity,
@@ -43,6 +46,7 @@ const NATIVE: Record<CliId, Record<Mode, string[] | null>> = {
     "auto-edit": ["--mode", "accept-edits"],
     "full-auto": ["--mode", "auto"],
     bypass: ["--dangerously-skip-permissions"],
+    "dont-ask": null,
   },
 };
 
@@ -70,6 +74,7 @@ export function decide(cli: CliId, mode: Mode, request: Request, risky: boolean)
   switch (mode) {
     case "manual":
     case "plan":
+    case "dont-ask": // Claude refuses what its rules don't allow; anything that still reaches the hook goes to a person.
       return "ask";
     case "auto-edit":
       return request.kind === "edit" && request.inProject ? "allow" : "ask";
