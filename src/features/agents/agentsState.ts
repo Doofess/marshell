@@ -99,7 +99,8 @@ export function consentProps(s: AgentSetup, flow: InstallFlow) {
     diff: flow.preview ? previewDiff(flow.preview) : "",
     needsTrust: false,
     chainPath: chain?.path,
-    headline: flow.preview ? (refusal(flow.preview) ?? (done ? `Already set up. Nothing in ${s.settings_path} changes.` : unchanged ? "Nothing will change: status is off." : undefined)) : flow.error ? `Marshell will not edit ${s.settings_path}, so nothing will change.` : `Checking ${s.settings_path}…`,
+    // A Partial install's repair changes only what is missing or wrong (the diff shows which), so it isn't the whole install's count.
+    headline: flow.preview ? (refusal(flow.preview) ?? (done ? `Already set up. Nothing in ${s.settings_path} changes.` : unchanged ? "Nothing will change: status is off." : s.hooks === "partial" ? `Repair the hook entries Marshell added in ${s.settings_path}.` : undefined)) : flow.error ? `Marshell will not edit ${s.settings_path}, so nothing will change.` : `Checking ${s.settings_path}…`,
   };
   // Allow is for a preview the core can apply; `done` is the one that has nothing left to change, whose Skip becomes Done.
   const allow = Boolean(flow.preview?.can_apply) && !flow.conflict;

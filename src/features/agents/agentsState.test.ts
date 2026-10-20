@@ -77,6 +77,12 @@ describe("consentProps for a preview that cannot be applied", () => {
     expect(p.done).toBe(false);
     expect(p.scenario.plan.headline).toBeUndefined();
   });
+  // Set up again on a Partial install changes only what is missing or wrong, so the whole install's count would mislead.
+  it("calls Set up again on a Partial install a repair, not the whole install", () => {
+    const p = consentProps(s({ hooks: "partial" }), flow(PREVIEW));
+    expect(p.scenario.plan.headline).toBe("Repair the hook entries Marshell added in C:/h/.claude/settings.json.");
+    expect(p.allow).toBe(true);
+  });
   it("offers no Allow without a preview", () => {
     expect(consentProps(SETUP, { preview: null, open: false, busy: false }).allow).toBe(false);
   });
