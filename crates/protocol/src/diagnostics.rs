@@ -45,3 +45,25 @@ pub struct PerfSnapshot {
     #[ts(type = "number")]
     pub sampled_at_ms: u64,
 }
+
+/// One file of a prepared export: its name inside the bundle and its size after redaction.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct ExportFile {
+    /// A path inside the zip, such as `about.json` or `logs/marshell.log`.
+    pub name: String,
+    #[ts(type = "number")]
+    pub bytes: u64,
+}
+
+/// `POST /v1/diagnostics/export`: what would be zipped, built and held in memory for 15 minutes. Nothing is
+/// written to disk until the person saves the zip.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct ExportPreview {
+    /// Names this preview in `GET /v1/diagnostics/export/{id}/file` and `.../zip`.
+    pub id: String,
+    pub files: Vec<ExportFile>,
+    #[ts(type = "number")]
+    pub total_bytes: u64,
+}

@@ -1,5 +1,5 @@
 mod activity;
-mod agents;
+pub(crate) mod agents;
 mod attachments;
 mod config;
 mod diagnostics;
@@ -108,6 +108,8 @@ struct Inner {
     claude_version: Option<Option<String>>,
     /// The previous process readings, so each `/v1/perf` call can tell the CPU used since the last one.
     sampler: Mutex<crate::diagnostics::perf::Sampler>,
+    /// The diagnostics export waiting to be read and saved.
+    previews: crate::diagnostics::export::Previews,
 }
 
 /// How long a permission request is held when `MARSHELL_PERMISSION_HOLD_SECS` is not set.
@@ -164,6 +166,7 @@ impl AppState {
             versions: Mutex::new(HashMap::new()),
             claude_version: None,
             sampler: Mutex::new(crate::diagnostics::perf::Sampler::new()),
+            previews: crate::diagnostics::export::Previews::default(),
         }))
     }
     /// Names Claude Code's settings file, in place of the environment. Call it before the state is cloned.
@@ -260,6 +263,17 @@ impl AppState {
     }
     pub(crate) fn sampler(&self) -> std::sync::MutexGuard<'_, crate::diagnostics::perf::Sampler> {
         self.0.sampler.lock().unwrap_or_else(|e| e.into_inner())
+    }
+    pub(crate) fn previews(&self) -> &crate::diagnostics::export::Previews {
+        &self.0.previews
+    }
+    /// A copy of the current settings.
+    pub(crate) fn settings_snapshot(&self) -> Settings {
+        self.0.settings.lock().unwrap_or_else(|e| e.into_inner()).clone()
+    }
+    /// A copy of the current profiles: detected ones merged with `profiles.json`.
+    pub(crate) fn profiles_snapshot(&self) -> ProfilesDoc {
+        self.0.profiles.lock().unwrap_or_else(|e| e.into_inner()).clone()
     }
     pub fn insert_session(&self, session: Arc<crate::pty::Session>) {
         self.0
@@ -365,6 +379,9 @@ pub fn router(state: AppState) -> Router {
             "/v1/diagnostics/logging",
             get(diagnostics::get_logging).put(diagnostics::put_logging),
         )
+        .route("/v1/diagnostics/export", post(diagnostics::post_export))
+        .route("/v1/diagnostics/export/{id}/file", get(diagnostics::get_export_file))
+        .route("/v1/diagnostics/export/{id}/zip", get(diagnostics::get_export_zip))
         .route("/v1/perf", get(diagnostics::get_perf))
         .route("/v1/hook/events", get(hook::events))
         .route("/v1/permissions", get(permissions::list))

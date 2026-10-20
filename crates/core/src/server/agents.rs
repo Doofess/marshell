@@ -119,12 +119,17 @@ impl AppState {
 
     /// The `claude` that sessions run: a profile that runs it itself, else the one on PATH.
     pub(super) fn claude_exe(&self) -> Option<PathBuf> {
-        agent_exe(&self.0.profiles.lock().unwrap().profiles, AGENT).or_else(|| (self.0.agent_path)(AGENT))
+        self.agent_exe_of(AGENT)
+    }
+
+    /// The file sessions run for `agent`: a profile that runs it itself, else the one on PATH.
+    pub(crate) fn agent_exe_of(&self, agent: &str) -> Option<PathBuf> {
+        agent_exe(&self.0.profiles.lock().unwrap().profiles, agent).or_else(|| (self.0.agent_path)(agent))
     }
 
     /// The Claude Code version of `exe`, or the one a test pinned. Runs a process on a cold cache, so
     /// async callers go through `spawn_blocking`.
-    pub(super) fn claude_version(&self, exe: Option<&Path>) -> Option<String> {
+    pub(crate) fn claude_version(&self, exe: Option<&Path>) -> Option<String> {
         match &self.0.claude_version {
             Some(pinned) => pinned.clone(),
             None => exe.and_then(|exe| self.version_of(exe)),
@@ -132,7 +137,7 @@ impl AppState {
     }
 
     /// `--version` of `exe`, asked again when the file has changed since, as after an auto-update.
-    fn version_of(&self, exe: &Path) -> Option<String> {
+    pub(crate) fn version_of(&self, exe: &Path) -> Option<String> {
         let modified = std::fs::metadata(exe).and_then(|m| m.modified()).ok();
         cached_version(&self.0.versions, exe, modified, || {
             claude::run_version(exe, VERSION_TIMEOUT)
@@ -162,7 +167,7 @@ fn cached_version(
     Some(version)
 }
 
-fn setup_of(st: &AppState) -> Result<AgentSetup, Fail> {
+pub(crate) fn setup_of(st: &AppState) -> Result<AgentSetup, Fail> {
     let home = &st.0.home;
     let user_home = super::files::home_dir().ok_or_else(|| failed("the user's home folder is not known"))?;
     let settings_path = st.claude_settings_path(&user_home);
