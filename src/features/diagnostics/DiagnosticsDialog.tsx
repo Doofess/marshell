@@ -10,6 +10,10 @@ import "./DiagnosticsDialog.css";
 
 export const EXPIRED = "This export has expired. Prepare it again.";
 
+export function exportReadyMessage(preview: ExportPreview): string {
+  return `Export ready: ${preview.files.length} ${preview.files.length === 1 ? "file" : "files"}, ${formatBytes(preview.total_bytes)}.`;
+}
+
 type PreviewState = ExportPreview | "idle" | "preparing" | "expired" | "failed";
 
 /** User-requested export transitions can replace the focused control. Unrelated renders leave focus alone. */
@@ -106,6 +110,9 @@ export function DiagnosticsDialogView({
               Export diagnostics
             </h3>
             <p className="diagnostics-dialog__line">Logs and setup only: no transcripts, recordings, prompts or hook events. Keys, tokens, your home folder and user name are replaced.</p>
+            <p className={`diagnostics-dialog__status ${preview === "expired" ? "diagnostics-dialog__error" : "diagnostics-dialog__line"}`} role="status" aria-live="polite" aria-atomic="true">
+              {preview === "preparing" ? "Preparing the export…" : preview === "expired" ? EXPIRED : ""}
+            </p>
             {viewing ? (
               <div className="diagnostics-dialog__viewer">
                 <h4 id="diagnostics-file-heading" className="diagnostics-dialog__file-name" dir="auto">
@@ -122,16 +129,6 @@ export function DiagnosticsDialogView({
               </div>
             ) : (
               <>
-                {preview === "preparing" && (
-                  <p className="diagnostics-dialog__line" role="status">
-                    Preparing the export…
-                  </p>
-                )}
-                {preview === "expired" && (
-                  <p className="diagnostics-dialog__error" role="alert">
-                    {EXPIRED}
-                  </p>
-                )}
                 {preview === "failed" && (
                   <p className="diagnostics-dialog__error" role="alert">
                     Couldn&apos;t prepare the export. Try again.
@@ -228,7 +225,9 @@ export function DiagnosticsDialog({ endpoint, onClose, onNotice }: { endpoint: E
     setViewing(null);
     setPreview("preparing");
     try {
-      setPreview(await diagnostics.prepare(endpoint));
+      const next = await diagnostics.prepare(endpoint);
+      setPreview(next);
+      onNotice?.(exportReadyMessage(next));
     } catch {
       setPreview("failed");
     }

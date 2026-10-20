@@ -63,6 +63,10 @@
 .diagnostics-dialog__error {
   color: var(--caution);
 }
+/* Keep the live region available to assistive technology without an empty grid row. */
+.diagnostics-dialog__status:empty {
+  position: absolute;
+}
 .diagnostics-dialog__actions,
 .diagnostics-dialog__foot {
   display: flex;

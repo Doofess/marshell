@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { ExportPreview } from "../../generated/ExportPreview";
 import type { LoggingState } from "../../generated/LoggingState";
 import { exportName, formatBytes } from "../../lib/api/diagnostics";
-import { DiagnosticsDialogView, diagnosticsFocusTarget } from "./DiagnosticsDialog";
+import { DiagnosticsDialogView, diagnosticsFocusTarget, exportReadyMessage } from "./DiagnosticsDialog";
 
 const none = () => {};
 const handlers = { onClose: none, onDetailed: none, onPrepare: none, onView: none, onBack: none, onSave: none };
@@ -53,7 +53,33 @@ describe("formatBytes and exportName", () => {
   });
 });
 
+describe("exportReadyMessage", () => {
+  it("announces one file with the formatted total", () => {
+    expect(exportReadyMessage({ ...PREVIEW, files: [PREVIEW.files[0]!], total_bytes: 512 })).toBe("Export ready: 1 file, 512 B.");
+  });
+  it("announces seven files with the formatted total", () => {
+    expect(exportReadyMessage({ ...PREVIEW, files: Array(7).fill(PREVIEW.files[0]), total_bytes: 3_250_000 })).toBe("Export ready: 7 files, 3.1 MB.");
+  });
+});
+
 describe("DiagnosticsDialogView", () => {
+  it("keeps an empty polite status region mounted when idle, ready and viewing", () => {
+    for (const h of [view(ON), view(ON, PREVIEW), view(ON, PREVIEW, { name: "about.json", text: "{}" })]) {
+      expect(h).toMatch(/<p[^>]*role="status"[^>]*aria-live="polite"[^>]*><\/p>/);
+      expect(h.match(/role="status"/g)).toHaveLength(1);
+    }
+  });
+  it("puts preparing text into the persistent polite region", () => {
+    const h = view(ON, "preparing");
+    expect(h).toMatch(/<p[^>]*role="status"[^>]*aria-live="polite"[^>]*>Preparing the export…<\/p>/);
+    expect(h.match(/role="status"/g)).toHaveLength(1);
+  });
+  it("announces expiration through just the polite region, without a second alert", () => {
+    const h = view(ON, "expired");
+    expect(h).toMatch(/<p[^>]*role="status"[^>]*aria-live="polite"[^>]*>This export has expired\. Prepare it again\.<\/p>/);
+    expect(h.match(/This export has expired/g)).toHaveLength(1);
+    expect(h).not.toContain('role="alert"');
+  });
   it("shows the title, the logs switch and the export copy", () => {
     const h = view(ON);
     expect(h).toContain('aria-label="Diagnostics"');
