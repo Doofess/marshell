@@ -29,6 +29,12 @@ describe("OnboardingFrame", () => {
     expect(h).toMatch(/<div class="onboarding__body" role="region" aria-label="Step content" tabindex="0">/);
     expect(focusOrder(h)).toEqual(["Step content", "Back", "Skip", "Continue"]);
   });
+  // The window's focus goes to the title on open and on each step (useDialogFocus), never to an action, and stays out of the Tab order.
+  it("its title takes the focus without joining the tab order", () => {
+    const h = frame("detected");
+    expect(h).toContain('<h2 class="onboarding__title" tabindex="-1">Title</h2>');
+    expect(focusOrder(h)).toEqual(["Step content", "Skip", "Continue"]);
+  });
   it("has no live region and names its buttons from their text", () => {
     const h = frame("consent");
     expect(h).not.toMatch(/aria-live|role="status"|role="alert"/);
