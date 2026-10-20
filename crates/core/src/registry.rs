@@ -449,13 +449,14 @@ impl Registry {
         }
     }
 
-    /// Follows the permission mode the agent reports: sets the row's mode and the mode Resume and
-    /// the next launch use. Applied only to an open Running agent row, and only on a change.
+    /// Follows the permission mode Claude Code reports: sets the row's mode and the mode Resume and
+    /// the next launch use. Applied only to an open Running Claude row, and only on a change: the
+    /// hooks reach any row whose process tree runs `claude`, and another agent's mode isn't theirs.
     pub fn set_live_mode(&self, tab_id: &str, mode: SessionMode) {
         let mut state = self.state.lock().unwrap();
         if let Some(entry) = state.open.iter_mut().find(|e| e.info.tab_id == tab_id)
             && entry.info.state == SessionState::Running
-            && entry.info.agent.is_some()
+            && entry.info.agent.as_deref() == Some("claude")
             && entry.info.mode != Some(mode)
         {
             entry.info.mode = Some(mode);
@@ -466,11 +467,13 @@ impl Registry {
 
     /// Follows the subagents the agent reports: folds the hook body into the tab's running set and,
     /// when it changed, sets the live status's count to the set's size. Applied only to an open
-    /// Running row. Broadcasts once per change.
+    /// Running row that is Claude's or a plain shell's (where `claude` was typed), never another
+    /// agent's. Broadcasts once per change.
     pub fn update_subagents(&self, tab_id: &str, body: &serde_json::Value) {
         let mut state = self.state.lock().unwrap();
         if let Some(entry) = state.open.iter_mut().find(|e| e.info.tab_id == tab_id)
             && entry.info.state == SessionState::Running
+            && matches!(entry.info.agent.as_deref(), None | Some("claude"))
             && crate::agents::claude::status::fold_subagents(&mut entry.running, body)
         {
             let count = entry.running.len() as u32;
@@ -756,6 +759,17 @@ mod tests {
         // A plain shell row has no agent: nothing changes.
         reg.set_live_mode("s", SessionMode::Plan);
         assert_eq!(mode_of("s"), None);
+        assert!(!rx.has_changed().unwrap());
+        // Claude's hooks reach any row whose process tree runs `claude`; another agent's mode is not Claude's to set.
+        let codex = Relaunch {
+            agent: Some("codex".into()),
+            mode: Some(SessionMode::Manual),
+            ..relaunch("Codex")
+        };
+        reg.reserve("x", codex);
+        rx.borrow_and_update();
+        reg.set_live_mode("x", SessionMode::Bypass);
+        assert_eq!(mode_of("x"), Some(SessionMode::Manual));
         assert!(!rx.has_changed().unwrap());
         reg.set_live_mode("nope", SessionMode::Plan);
         assert!(!rx.has_changed().unwrap());
@@ -1398,6 +1412,16 @@ mod tests {
         assert!(reg.state.lock().unwrap().open[0].running.is_empty());
         reg.update_subagents("a", &start("v"));
         assert_eq!(count(&reg), None);
+        // Another agent's row takes no count from Claude's hooks.
+        reg.reserve(
+            "x",
+            Relaunch {
+                agent: Some("codex".into()),
+                ..relaunch("X")
+            },
+        );
+        reg.update_subagents("x", &start("q"));
+        assert_eq!(row(&reg, "x").live, None);
     }
 
     #[test]
