@@ -6,8 +6,9 @@ use super::{SessionMeta, archive, transcript_allowed};
 use serde_json::Value;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 /// The agent whose hooks feed the history so far.
 const AGENT: &str = "claude";
@@ -24,6 +25,8 @@ pub struct History {
     copying: Mutex<HashMap<String, Option<SessionMeta>>>,
     /// The wait before each copy; tests shorten it.
     settle: Mutex<Duration>,
+    /// Set by `flush`: every settle wait ends at once.
+    hurry: AtomicBool,
 }
 
 impl History {
@@ -53,6 +56,7 @@ impl History {
             index: Mutex::new(index),
             copying: Mutex::new(HashMap::new()),
             settle: Mutex::new(SETTLE),
+            hurry: AtomicBool::new(false),
         }
     }
 
@@ -132,6 +136,28 @@ impl History {
     pub fn is_idle(&self) -> bool {
         self.copying.lock().unwrap().is_empty()
     }
+
+    /// Sleeps `settle` in short slices, and stops at once when a flush has set the hurry.
+    fn settle_wait(&self, settle: Duration) {
+        let started = Instant::now();
+        while !self.hurry.load(Ordering::SeqCst) {
+            let left = settle.saturating_sub(started.elapsed());
+            if left.is_zero() {
+                break;
+            }
+            std::thread::sleep(left.min(Duration::from_millis(25)));
+        }
+    }
+
+    /// Ends every settle wait now (and skips it for copies asked for later), then waits until no copy is
+    /// running or waiting, or `cap` has passed. For shutdown: the hurry stays on. Blocking.
+    pub fn flush(&self, cap: Duration) {
+        self.hurry.store(true, Ordering::SeqCst);
+        let started = Instant::now();
+        while !self.is_idle() && started.elapsed() < cap {
+            std::thread::sleep(Duration::from_millis(25));
+        }
+    }
 }
 
 /// Copies on a blocking thread after the settle time, one copy at a time per session; a request during the wait or
@@ -150,7 +176,7 @@ pub fn schedule_copy(history: Arc<History>, meta: SessionMeta) {
         let mut current = meta;
         loop {
             let settle = *history.settle.lock().unwrap();
-            std::thread::sleep(settle);
+            history.settle_wait(settle);
             if let Err(err) = archive::copy_transcript(&history.home, &current) {
                 tracing::warn!("could not archive transcript {id}: {err:#}");
             }
@@ -250,6 +276,35 @@ mod tests {
         let decoded = zstd::decode_all(std::fs::File::open(&archive).unwrap()).unwrap();
         assert_eq!(decoded, std::fs::read(&transcript).unwrap());
         assert!(String::from_utf8(decoded).unwrap().contains("{\"n\":2}"));
+    }
+
+    #[tokio::test]
+    async fn flush_copies_at_once_without_waiting_the_settle() {
+        let home = tempfile::tempdir().unwrap();
+        let history = Arc::new(History::open(home.path()));
+        history.set_settle(Duration::from_secs(10));
+        let transcript = home.path().join(format!("{ID}.jsonl"));
+        std::fs::write(&transcript, "{\"n\":1}\n{\"n\":2}\n").unwrap();
+
+        let meta = history.note_event("t1", &body(STOP, home.path(), ID), 2000).unwrap();
+        schedule_copy(history.clone(), meta);
+        assert!(!history.is_idle());
+
+        let started = Instant::now();
+        history.flush(Duration::from_secs(3));
+        assert!(started.elapsed() < Duration::from_secs(2), "flush waited the settle");
+        assert!(history.is_idle());
+        let (archive, _) = crate::history::archive::archive_paths(home.path(), "claude", ID);
+        let decoded = zstd::decode_all(std::fs::File::open(&archive).unwrap()).unwrap();
+        assert_eq!(decoded, std::fs::read(&transcript).unwrap());
+
+        // A copy asked for after the flush skips the wait too.
+        std::fs::write(&transcript, "{\"n\":1}\n{\"n\":2}\n{\"n\":3}\n").unwrap();
+        let meta = history.note_event("t1", &body(STOP, home.path(), ID), 3000).unwrap();
+        schedule_copy(history.clone(), meta);
+        history.flush(Duration::from_secs(3));
+        let decoded = zstd::decode_all(std::fs::File::open(&archive).unwrap()).unwrap();
+        assert!(String::from_utf8(decoded).unwrap().contains("{\"n\":3}"));
     }
 
     #[test]

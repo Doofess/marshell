@@ -406,6 +406,9 @@ impl RunningCore {
         for s in sessions {
             s.force_kill();
         }
+        // After the kill, so Claude has stopped writing: a copy still waiting to settle runs now, and a reply
+        // given just before closing is kept. It returns at once when nothing is pending.
+        self.state.history().flush(Duration::from_secs(3));
         auth::remove_endpoint_file_if_ours(&self.endpoint_file, &self.endpoint.token);
         let _ = self.shutdown.send(());
     }
