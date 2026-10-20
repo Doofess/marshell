@@ -2,6 +2,7 @@ pub mod agents;
 pub mod api;
 pub mod brand;
 pub mod config;
+pub mod diagnostics;
 pub mod frames;
 pub mod hook;
 

@@ -133,6 +133,9 @@ fn main() {
             app.manage(capture::CaptureState::default());
             let home = marshell_core::paths::home_dir()?;
             marshell_core::crash::install_panic_hook(&home);
+            if let Err(e) = marshell_core::diagnostics::log::init(&home) {
+                eprintln!("Marshell: no log file this run: {e:#}");
+            }
             // Off the launch path: copying the programs into ~/.marshell/bin may wait on a running copy.
             let bridge_home = home.clone();
             let exe = std::env::current_exe();

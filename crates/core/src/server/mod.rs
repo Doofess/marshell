@@ -2,6 +2,7 @@ mod activity;
 mod agents;
 mod attachments;
 mod config;
+mod diagnostics;
 mod events;
 mod files;
 mod folders;
@@ -346,6 +347,10 @@ pub fn router(state: AppState) -> Router {
             "/v1/hook",
             post(hook::post).layer(DefaultBodyLimit::max(marshell_protocol::hook::HOOK_BODY_LIMIT)),
         )
+        .route(
+            "/v1/diagnostics/logging",
+            get(diagnostics::get_logging).put(diagnostics::put_logging),
+        )
         .route("/v1/hook/events", get(hook::events))
         .route("/v1/permissions", get(permissions::list))
         .route("/v1/permissions/{rid}/decision", post(permissions::decision))
@@ -450,6 +455,8 @@ pub async fn start(cfg: CoreConfig) -> anyhow::Result<RunningCore> {
         token: auth::new_token(),
         platform: Platform::current(),
     };
+    // So no log line, export or error message can carry this launch's token.
+    crate::diagnostics::redact::global().remember_token(&endpoint.token);
     // Looking for shells runs programs (wsl.exe can take up to 2 s): keep it off the async threads.
     let detected = tokio::task::spawn_blocking(|| detect_profiles(&Probe::system())).await?;
     // Before anything is written under the home. A failure is not fatal: the default home sits under the
