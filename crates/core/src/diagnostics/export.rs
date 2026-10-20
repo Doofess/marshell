@@ -14,7 +14,7 @@ use std::time::{Duration, Instant};
 pub const PREVIEW_TTL: Duration = Duration::from_secs(15 * 60);
 
 /// The agents `about.json` lists, in this order.
-const CLIS: [&str; 3] = ["claude", "codex", "agy"];
+const CLIS: [&str; 3] = ["claude", "codex", "antigravity"];
 
 const README: &str = "Marshell diagnostics. This holds Marshell's logs and setup only: no transcripts, recordings, prompts or hook events. Keys, tokens, your home folder and user name were replaced before saving. Read the files before you share them.\n";
 
@@ -96,11 +96,7 @@ fn about(st: &AppState) -> serde_json::Value {
         .iter()
         .map(|agent| {
             let exe = st.agent_exe_of(agent);
-            let version = if *agent == "claude" {
-                st.claude_version(exe.as_deref())
-            } else {
-                exe.as_deref().and_then(|exe| st.version_of(exe))
-            };
+            let version = st.agent_version(agent, exe.as_deref());
             json!({ "agent": agent, "found": exe.is_some(), "version": version })
         })
         .collect();
@@ -267,9 +263,11 @@ mod tests {
         let about: serde_json::Value = serde_json::from_str(&text_of(&files, "about.json")).unwrap();
         let clis = about["clis"].as_array().unwrap();
         let agents: Vec<_> = clis.iter().map(|c| c["agent"].clone()).collect();
-        assert_eq!(agents, ["claude", "codex", "agy"]);
-        assert_eq!(clis[0]["found"], false);
-        assert!(clis[0]["version"].is_null());
+        assert_eq!(agents, ["claude", "codex", "antigravity"]);
+        for cli in clis {
+            assert_eq!(cli["found"], false);
+            assert!(cli["version"].is_null());
+        }
         assert_eq!(about["app_version"], env!("CARGO_PKG_VERSION"));
         assert!(text_of(&files, "README.txt").starts_with("Marshell diagnostics. This holds"));
     }

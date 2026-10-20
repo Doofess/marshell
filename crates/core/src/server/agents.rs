@@ -3,6 +3,7 @@
 
 use super::AppState;
 use crate::agents::claude::{self, hooks};
+use crate::agents::{parse_any_version, run_version_text};
 use crate::bridge;
 use crate::config::jsonc::{parse_problem, read_value};
 use crate::paths;
@@ -132,16 +133,27 @@ impl AppState {
     pub(crate) fn claude_version(&self, exe: Option<&Path>) -> Option<String> {
         match &self.0.claude_version {
             Some(pinned) => pinned.clone(),
-            None => exe.and_then(|exe| self.version_of(exe)),
+            None => exe.and_then(|exe| self.version_of(exe, claude::parse_version)),
         }
     }
 
-    /// `--version` of `exe`, asked again when the file has changed since, as after an auto-update.
-    pub(crate) fn version_of(&self, exe: &Path) -> Option<String> {
+    /// The agent's version, preserving Claude's strict parser and the version pinned by tests.
+    pub(crate) fn agent_version(&self, agent: &str, exe: Option<&Path>) -> Option<String> {
+        if agent == AGENT {
+            self.claude_version(exe)
+        } else {
+            exe.and_then(|exe| self.version_of(exe, parse_any_version))
+        }
+    }
+
+    /// Cache stdout per executable and modified time; parse on every read so a generic lookup
+    /// cannot make Claude's strict gate accept output it would otherwise reject.
+    fn version_of(&self, exe: &Path, parse: fn(&str) -> Option<String>) -> Option<String> {
         let modified = std::fs::metadata(exe).and_then(|m| m.modified()).ok();
-        cached_version(&self.0.versions, exe, modified, || {
-            claude::run_version(exe, VERSION_TIMEOUT)
-        })
+        let text = cached_version(&self.0.versions, exe, modified, || {
+            run_version_text(exe, VERSION_TIMEOUT).filter(|text| parse(text).is_some())
+        })?;
+        parse(&text)
     }
 }
 
