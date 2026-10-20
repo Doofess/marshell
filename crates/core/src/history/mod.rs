@@ -79,8 +79,9 @@ mod tests {
 
         assert!(transcript_allowed(&format!("{}{ID}.jsonl", dir_prefix()), ID));
         assert!(!transcript_allowed(&format!("p/{ID}.jsonl"), ID));
-        assert!(!transcript_allowed(&format!(r"\host\share\{ID}.jsonl"), ID));
-        assert!(!transcript_allowed(&format!(r"\?\C:\x\{ID}.jsonl"), ID));
+        assert!(!transcript_allowed(&format!(r"\\host\share\{ID}.jsonl"), ID));
+        assert!(!transcript_allowed(&format!(r"\\?\C:\x\{ID}.jsonl"), ID));
+        assert!(!transcript_allowed(&format!(r"\\.\pipe\{ID}.jsonl"), ID));
         assert!(!transcript_allowed(&format!("{}other.jsonl", dir_prefix()), ID));
         assert!(!transcript_allowed(&format!("{}{ID}.json", dir_prefix()), ID));
     }

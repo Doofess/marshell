@@ -282,13 +282,15 @@ mod tests {
         bad_id["session_id"] = json!("../../x");
         bad_id["transcript_path"] = json!(home.path().join("../../x.jsonl").to_string_lossy());
         let mut unc = body(STOP, home.path(), ID);
-        unc["transcript_path"] = json!(format!(r"\host\share\{ID}.jsonl"));
+        unc["transcript_path"] = json!(format!(r"\\host\share\{ID}.jsonl"));
+        let mut device = body(STOP, home.path(), ID);
+        device["transcript_path"] = json!(format!(r"\\?\C:\x\{ID}.jsonl"));
         let mut other_name = body(STOP, home.path(), ID);
         other_name["transcript_path"] = json!(home.path().join("other.jsonl").to_string_lossy());
         let mut no_cwd = body(STOP, home.path(), ID);
         no_cwd.as_object_mut().unwrap().remove("cwd");
 
-        for hostile in [bad_id, unc, other_name, no_cwd] {
+        for hostile in [bad_id, unc, device, other_name, no_cwd] {
             assert_eq!(history.note_event("t1", &hostile, 1000), None);
         }
         assert_eq!(history.latest_for_tab("t1"), None);
