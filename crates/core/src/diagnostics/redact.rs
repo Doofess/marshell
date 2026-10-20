@@ -64,8 +64,8 @@ struct FolderRule {
 
 pub struct Redactor {
     tokens: Mutex<Vec<String>>,
-    marshell_home: Option<FolderRule>,
-    user_home: Option<FolderRule>,
+    marshell_home: Vec<FolderRule>,
+    user_home: Vec<FolderRule>,
     user_name: Option<Regex>,
 }
 
@@ -139,21 +139,36 @@ fn replace_regex<'a>(re: &Regex, with: &str, text: Cow<'a, str>) -> Cow<'a, str>
 
 impl Redactor {
     pub fn new(user_home: Option<PathBuf>, marshell_home: Option<PathBuf>, user_name: Option<String>) -> Redactor {
-        let user_home = user_home.and_then(|p| folder_rule(&p, "~"));
-        let marshell_home = marshell_home
-            .and_then(|p| folder_rule(&p, "<marshell-home>"))
-            // Inside the user's home, the `~` rule already covers it.
-            .filter(|m| !user_home.as_ref().is_some_and(|u| m.parts.starts_with(&u.parts)));
         let user_name = user_name
             .map(|n| n.trim().to_string())
             .filter(|n| n.chars().count() >= 3)
             .and_then(|n| Regex::new(&format!(r"(?i)\b{}\b", regex::escape(&n))).ok());
         Redactor {
             tokens: Mutex::new(Vec::new()),
-            marshell_home,
-            user_home,
+            marshell_home: Vec::new(),
+            user_home: Vec::new(),
             user_name,
         }
+        .with_folder_aliases(user_home, marshell_home)
+    }
+
+    /// Adds known spellings; only `global` discovers aliases from the filesystem.
+    fn with_folder_aliases(
+        mut self,
+        user_home: impl IntoIterator<Item = PathBuf>,
+        marshell_home: impl IntoIterator<Item = PathBuf>,
+    ) -> Self {
+        self.user_home
+            .extend(user_home.into_iter().filter_map(|p| folder_rule(&p, "~")));
+        self.marshell_home.extend(
+            marshell_home
+                .into_iter()
+                .filter_map(|p| folder_rule(&p, "<marshell-home>")),
+        );
+        // Inside any spelling of the user's home, the `~` rule already covers it.
+        self.marshell_home
+            .retain(|m| !self.user_home.iter().any(|u| m.parts.starts_with(&u.parts)));
+        self
     }
 
     /// Adds a secret (a launch's API token) that must never be written out.
@@ -180,10 +195,10 @@ impl Redactor {
         for (re, with) in RULES.iter() {
             out = replace_regex(re, with, out);
         }
-        if let Some(rule) = &self.marshell_home {
+        for rule in &self.marshell_home {
             out = replace_folder(rule, out);
         }
-        if let Some(rule) = &self.user_home {
+        for rule in &self.user_home {
             out = replace_folder(rule, out);
         }
         if let Some(re) = &self.user_name {
@@ -193,12 +208,50 @@ impl Redactor {
     }
 }
 
+/// The existing Windows 8.3 spelling, when available and different from the given path.
+#[cfg(windows)]
+fn short_path(p: &Path) -> Option<PathBuf> {
+    use std::ffi::OsString;
+    use std::os::windows::ffi::{OsStrExt, OsStringExt};
+    use windows_sys::Win32::Storage::FileSystem::GetShortPathNameW;
+
+    let mut wide: Vec<u16> = p.as_os_str().encode_wide().collect();
+    if wide.contains(&0) {
+        return None;
+    }
+    wide.push(0);
+    // SAFETY: `wide` is NUL-terminated and valid for the call. A null output with size zero
+    // asks for the required buffer length, including the terminating NUL.
+    let size = unsafe { GetShortPathNameW(wide.as_ptr(), std::ptr::null_mut(), 0) };
+    if size == 0 {
+        return None;
+    }
+    let mut buf = vec![0u16; size as usize];
+    // SAFETY: the input remains valid and `buf` has `size` writable UTF-16 units.
+    let len = unsafe { GetShortPathNameW(wide.as_ptr(), buf.as_mut_ptr(), size) };
+    if len == 0 || len >= size {
+        return None;
+    }
+    let short = PathBuf::from(OsString::from_wide(&buf[..len as usize]));
+    (short != p).then_some(short)
+}
+
+#[cfg(not(windows))]
+fn short_path(_: &Path) -> Option<PathBuf> {
+    None
+}
+
 /// The redactor for this process: the user's profile folder, the Marshell home and the user name.
 pub fn global() -> &'static Redactor {
     static GLOBAL: OnceLock<Redactor> = OnceLock::new();
     GLOBAL.get_or_init(|| {
         let name_var = if cfg!(windows) { "USERNAME" } else { "USER" };
-        Redactor::new(dirs::home_dir(), paths::home_dir().ok(), std::env::var(name_var).ok())
+        let user_home = dirs::home_dir();
+        let marshell_home = paths::home_dir().ok();
+        let user_short = user_home.as_deref().and_then(short_path);
+        let marshell_short = marshell_home.as_deref().and_then(short_path);
+        Redactor::new(user_home, marshell_home, std::env::var(name_var).ok())
+            .with_folder_aliases(user_short, marshell_short)
     })
 }
 
@@ -346,6 +399,35 @@ mod tests {
             (r"C:\Users\Jane Doe2", r"C:\Users\Jane Doe2"),
         ] {
             assert_eq!(r.redact(input), want, "{input}");
+        }
+    }
+
+    #[test]
+    fn redacts_the_short_form_of_the_home() {
+        let r = Redactor::new(Some(PathBuf::from(r"C:\Users\Jane Doe")), None, None)
+            .with_folder_aliases([PathBuf::from(r"C:\Users\JANEDO~1")], []);
+        for input in [r"C:\Users\JANEDO~1\AppData\x", r"c:\users\janedo~1\AppData\x"] {
+            assert_eq!(r.redact(input), r"~\AppData\x");
+        }
+        let r = Redactor::new(
+            Some(PathBuf::from(r"C:\Users\Jane Doe")),
+            Some(PathBuf::from(r"D:\Marshell Home")),
+            None,
+        )
+        .with_folder_aliases([PathBuf::from(r"C:\Users\JANEDO~1")], [PathBuf::from(r"D:\MARSHE~1")]);
+        assert_eq!(r.redact(r"D:\MARSHE~1\logs"), r"<marshell-home>\logs");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn redacts_a_windows_short_path() {
+        let temp = tempfile::tempdir().unwrap();
+        let long = temp.path().join("folder with spaces");
+        std::fs::create_dir(&long).unwrap();
+        if let Some(short) = short_path(&long) {
+            assert_ne!(short, long);
+            let r = Redactor::new(Some(long), None, None).with_folder_aliases([short.clone()], []);
+            assert_eq!(r.redact(&short.to_string_lossy()), "~");
         }
     }
 
