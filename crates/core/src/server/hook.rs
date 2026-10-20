@@ -1,6 +1,7 @@
 use super::AppState;
 use crate::agents::claude::status::{fold_event, fold_statusline};
 use crate::agents::claude::{Gate, version_gate};
+use crate::history::recorder::schedule_copy;
 use crate::hooks::holds::Outcome;
 use crate::hooks::log::HookEventRecord;
 use axum::Json;
@@ -53,6 +54,9 @@ pub async fn post(
         && let Some(tab) = tab.as_deref()
     {
         fold_live(&st, role, tab, &json, at_ms).await;
+        if role == HookRole::Event && st.registry().is_open(tab) {
+            record_history(&st, tab, &json, at_ms).await;
+        }
     }
     if role == HookRole::Permission {
         // Without a card or an open tab, the agent must ask the person itself.
@@ -65,6 +69,20 @@ pub async fn post(
         return Ok(hold_permission(&st, Some(tab), agent, json).await);
     }
     Ok(StatusCode::NO_CONTENT.into_response())
+}
+
+/// Notes the event in the history. The index update is short, so it is awaited; the copy it may ask for
+/// runs on its own and the response does not wait for it.
+async fn record_history(st: &AppState, tab: &str, body: &serde_json::Value, at_ms: u64) {
+    let history = st.history();
+    let (tab, body) = (tab.to_string(), body.clone());
+    let noter = history.clone();
+    let meta = tokio::task::spawn_blocking(move || noter.note_event(&tab, &body, at_ms))
+        .await
+        .unwrap_or(None);
+    if let Some(meta) = meta {
+        schedule_copy(history, meta);
+    }
 }
 
 /// Folds what Claude Code reported into the tab's live status. A permission request counts as an event

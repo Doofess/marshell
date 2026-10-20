@@ -92,6 +92,8 @@ struct Inner {
     permission_hold: Duration,
     /// Previews and applies changes to the CLIs' config files.
     config: crate::config::service::ConfigService,
+    /// The sessions index and the transcript archive.
+    history: Arc<crate::history::recorder::History>,
     /// Claude Code's settings file when a test or a caller names one; None means
     /// `MARSHELL_CLAUDE_SETTINGS`, else `~/.claude/settings.json`.
     claude_settings: Option<PathBuf>,
@@ -131,6 +133,7 @@ impl AppState {
             }
         };
         let config = crate::config::service::ConfigService::new(home.clone());
+        let history = Arc::new(crate::history::recorder::History::open(&home));
         Self(Arc::new(Inner {
             token,
             host: format!("127.0.0.1:{port}"),
@@ -152,6 +155,7 @@ impl AppState {
             holds: crate::hooks::holds::Holds::default(),
             permission_hold: DEFAULT_PERMISSION_HOLD,
             config,
+            history,
             claude_settings: None,
             programs_dir: None,
             versions: Mutex::new(HashMap::new()),
@@ -210,6 +214,10 @@ impl AppState {
             .expect("with_agent_path runs before the state is shared")
             .agent_path = find;
         self
+    }
+    /// The sessions index and the transcript archive.
+    pub fn history(&self) -> Arc<crate::history::recorder::History> {
+        self.0.history.clone()
     }
     /// The folder holding `profiles.json`, `tasks.json` and the other files Marshell keeps.
     pub fn home(&self) -> &std::path::Path {
