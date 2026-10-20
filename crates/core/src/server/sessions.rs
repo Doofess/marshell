@@ -594,8 +594,8 @@ impl Resume {
 /// - No row, a row that fails the id and path check, or an agent other than Claude: `Resume::Last`.
 /// - The transcript is a file: `Resume::Session(id)`.
 /// - The transcript is missing and Marshell holds an archive of it: `Err`, the conversation is lost.
-/// - The transcript is missing and there is no archive: the session never wrote anything (Claude creates the
-///   file at the first message, after the SessionStart that indexed it), so `Resume::Fresh`.
+/// - The transcript is missing and there is no archive: the session never wrote anything (Claude may create the
+///   file only at the first message, after the SessionStart that indexed it), so `Resume::Fresh`.
 fn resume_session(st: &AppState, tab: &str, agent: Option<&str>) -> Result<Resume, &'static str> {
     if agent != Some("claude") {
         return Ok(Resume::Last);
