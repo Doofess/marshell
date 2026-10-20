@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
 import type { Endpoint } from "../../generated/Endpoint";
 import type { PerfSnapshot } from "../../generated/PerfSnapshot";
 import { perf } from "../../lib/api/perf";
@@ -38,8 +38,12 @@ export function PerfOverlay({ meter, renderer, endpoint, tabId }: { meter: Laten
   }, [endpoint]);
   return (
     <output className="perf-overlay" aria-live="off">
-      {perfLines(snapshot, tabId, stats, renderer).map((line) => (
-        <div key={line.split(" ")[0]}>{line}</div>
+      {/* <output> holds phrasing content only, so the lines are split with <br>. */}
+      {perfLines(snapshot, tabId, stats, renderer).map((line, i) => (
+        <Fragment key={line.split(" ")[0]}>
+          {i > 0 && <br />}
+          {line}
+        </Fragment>
       ))}
     </output>
   );
