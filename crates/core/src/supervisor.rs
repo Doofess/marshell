@@ -69,6 +69,13 @@ impl Supervisor {
         lock(&self.current).as_ref().map(|c| c.endpoint.clone())
     }
 
+    /// The app window lost focus: the running core stops counting it as focused, whatever the UI last said.
+    pub fn window_blurred(&self) {
+        if let Some(core) = lock(&self.current).as_ref() {
+            core.state.window_blurred();
+        }
+    }
+
     /// 0 at launch, +1 per restart.
     pub fn generation(&self) -> u32 {
         self.generation.load(Ordering::SeqCst)
@@ -269,6 +276,24 @@ mod tests {
             exits_within(&session, Duration::from_secs(2)).await,
             "the session was not ended"
         );
+        sup.shutdown();
+    }
+
+    #[tokio::test]
+    async fn a_window_blur_clears_the_focus_the_ui_reported() {
+        let (_home, sup, _events) = started().await;
+        let view = {
+            let current = sup.current_for_test();
+            let state = &current.as_ref().unwrap().state;
+            state.report_view(marshell_protocol::api::UiView {
+                window_focused: true,
+                visible_tabs: vec!["t1".into()],
+            });
+            state.view()
+        };
+        sup.window_blurred();
+        assert!(!view.borrow().window_focused);
+        assert_eq!(view.borrow().visible_tabs, ["t1"]);
         sup.shutdown();
     }
 

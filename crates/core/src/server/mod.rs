@@ -289,6 +289,17 @@ impl AppState {
     pub fn view(&self) -> tokio::sync::watch::Receiver<marshell_protocol::api::UiView> {
         self.0.view.subscribe()
     }
+    /// Records what the UI reports it shows.
+    pub fn report_view(&self, view: marshell_protocol::api::UiView) {
+        self.0.view.send_replace(view);
+    }
+    /// The window lost focus, as the shell saw it. A webview that died or hung while focused can no longer say
+    /// so, and its last report would otherwise keep every notification back.
+    pub fn window_blurred(&self) {
+        self.0
+            .view
+            .send_if_modified(|v| std::mem::replace(&mut v.window_focused, false));
+    }
     /// The open and recently closed sessions.
     pub fn registry(&self) -> &Registry {
         &self.0.registry

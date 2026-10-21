@@ -21,6 +21,6 @@ pub async fn put(State(st): State<AppState>, body: Bytes) -> Result<StatusCode, 
             format!("At most {MAX_VISIBLE_TABS} visible tabs."),
         ));
     }
-    st.0.view.send_replace(view);
+    st.report_view(view);
     Ok(StatusCode::NO_CONTENT)
 }

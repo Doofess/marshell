@@ -132,6 +132,14 @@ fn main() {
         .plugin(tauri_plugin_opener::init())
         // No capability grants notifications to the webview; only the shell shows banners.
         .plugin(tauri_plugin_notification::init())
+        // The UI reports focus too, but a webview that died while focused cannot report losing it.
+        .on_window_event(|window, event| {
+            if matches!(event, tauri::WindowEvent::Focused(false))
+                && let Some(core) = window.try_state::<CoreHandle>()
+            {
+                core.0.window_blurred();
+            }
+        })
         .setup(|app| {
             if let Err(e) = notify::init(app.handle()) {
                 eprintln!("Marshell: banners will not answer clicks: {e}");
