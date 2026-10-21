@@ -12,4 +12,8 @@ agent: string | null, profile_id: string, cwd: string,
 /**
  * The mode it started in. A layout.json from before this field existed reads as None.
  */
-mode: SessionMode | null, };
+mode: SessionMode | null, 
+/**
+ * Whether the user muted this session's notifications. A layout.json from before this field existed reads as false.
+ */
+muted: boolean, };

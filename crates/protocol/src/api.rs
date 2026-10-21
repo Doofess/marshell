@@ -269,6 +269,9 @@ pub struct SavedTab {
     /// The mode it started in. A layout.json from before this field existed reads as None.
     #[serde(default)]
     pub mode: Option<SessionMode>,
+    /// Whether the user muted this session's notifications. A layout.json from before this field existed reads as false.
+    #[serde(default)]
+    pub muted: bool,
 }
 
 /// How the window was laid out: which tabs sit in which panes, and the sidebar.
@@ -914,6 +917,12 @@ mod tests {
         };
         let json = serde_json::to_string(&view).unwrap();
         assert_eq!(serde_json::from_str::<UiView>(&json).unwrap(), view);
+    }
+
+    #[test]
+    fn saved_tab_without_muted_deserializes_false() {
+        let json = r#"{"tab_id":"a","number":1,"name":"A","agent":null,"profile_id":"cmd","cwd":"C:/w"}"#;
+        assert!(!serde_json::from_str::<SavedTab>(json).unwrap().muted);
     }
 
     #[test]

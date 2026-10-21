@@ -20,6 +20,7 @@ mod sessions;
 mod settings;
 mod shell_panel;
 mod tasks;
+mod view;
 
 pub(crate) use files::existing_file as local_file;
 
@@ -118,6 +119,8 @@ struct Inner {
     sampler: Mutex<crate::diagnostics::perf::Sampler>,
     /// The diagnostics export waiting to be read and saved.
     previews: crate::diagnostics::export::Previews,
+    /// What the UI last reported it shows, for the notifier to read.
+    view: tokio::sync::watch::Sender<marshell_protocol::api::UiView>,
 }
 
 /// How long a permission request is held when `MARSHELL_PERMISSION_HOLD_SECS` is not set.
@@ -184,6 +187,11 @@ impl AppState {
             claude_version: None,
             sampler: Mutex::new(crate::diagnostics::perf::Sampler::new()),
             previews: crate::diagnostics::export::Previews::default(),
+            view: tokio::sync::watch::channel(marshell_protocol::api::UiView {
+                window_focused: false,
+                visible_tabs: Vec::new(),
+            })
+            .0,
         }))
     }
     /// Names Claude Code's settings file, in place of the environment. Call it before the state is cloned.
@@ -273,6 +281,10 @@ impl AppState {
     /// The folder holding `profiles.json`, `tasks.json` and the other files Marshell keeps.
     pub fn home(&self) -> &std::path::Path {
         &self.0.home
+    }
+    /// What the UI last reported it shows. Starts as an unfocused window with no visible tab.
+    pub fn view(&self) -> tokio::sync::watch::Receiver<marshell_protocol::api::UiView> {
+        self.0.view.subscribe()
     }
     /// The open and recently closed sessions.
     pub fn registry(&self) -> &Registry {
@@ -397,6 +409,11 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/sessions/reopen", post(sessions::reopen))
         .route("/v1/sessions/{tab}/resume", post(sessions::resume))
         .route("/v1/sessions/{tab}/restart", post(sessions::restart))
+        .route("/v1/sessions/{tab}/muted", put(sessions::muted))
+        .route(
+            "/v1/ui/view",
+            put(view::put).layer(DefaultBodyLimit::max(view::MAX_BODY * 4)),
+        )
         .route("/v1/sessions/{tab}/pause", post(sessions::pause))
         .route("/v1/sessions/{tab}/continue", post(sessions::cont))
         .route("/v1/sessions/{tab}/input", post(sessions::input))

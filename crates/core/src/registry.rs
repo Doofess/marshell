@@ -208,7 +208,7 @@ impl Registry {
                     live: None,
                     activity: None,
                     status_note: None,
-                    muted: false,
+                    muted: tab.muted,
                 },
                 spec: relaunch_of(tab),
                 generation,
@@ -234,6 +234,7 @@ impl Registry {
                 profile_id: e.info.profile_id.clone(),
                 cwd: e.info.cwd.clone(),
                 mode: e.info.mode,
+                muted: e.info.muted,
             })
             .collect()
     }
@@ -655,6 +656,20 @@ impl Registry {
         entry.info.name = name.to_string();
         entry.spec.name = name.to_string();
         self.tx.send_replace(state.snapshot());
+        true
+    }
+
+    /// Mutes or unmutes an open tab's notifications. Returns false for an unknown tab; subscribers
+    /// hear of it only when the value changes.
+    pub fn set_muted(&self, tab_id: &str, muted: bool) -> bool {
+        let mut state = self.state.lock().unwrap();
+        let Some(entry) = state.open.iter_mut().find(|e| e.info.tab_id == tab_id) else {
+            return false;
+        };
+        if entry.info.muted != muted {
+            entry.info.muted = muted;
+            self.tx.send_replace(state.snapshot());
+        }
         true
     }
 
@@ -1089,6 +1104,25 @@ mod tests {
     }
 
     #[test]
+    fn set_muted_broadcasts_only_a_change_and_is_saved() {
+        let reg = Registry::new();
+        reg.reserve("a", relaunch("A"));
+        let mut rx = reg.subscribe();
+        rx.borrow_and_update();
+        assert!(reg.set_muted("a", true));
+        assert!(rx.has_changed().unwrap());
+        rx.borrow_and_update();
+        assert!(reg.set_muted("a", true));
+        assert!(!rx.has_changed().unwrap());
+        assert!(!reg.set_muted("missing", true));
+        let tabs = reg.saved_tabs();
+        assert!(tabs[0].muted);
+        let again = Registry::new();
+        seed(&again, &tabs);
+        assert!(again.snapshot().sessions[0].muted);
+    }
+
+    #[test]
     fn subscribe_sees_every_change() {
         let reg = Registry::new();
         let mut rx = reg.subscribe();
@@ -1232,6 +1266,7 @@ mod tests {
             profile_id: "pwsh".into(),
             cwd: "C:/work".into(),
             mode: None,
+            muted: false,
         }
     }
 

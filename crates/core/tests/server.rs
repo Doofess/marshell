@@ -890,3 +890,116 @@ async fn peek_route_without_token_is_401() {
     let res = app_in(home.path()).oneshot(req).await.unwrap();
     assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
 }
+
+/// A sessions app whose state the test keeps, to watch what the core broadcasts.
+fn sessions_app_and_state() -> (axum::Router, AppState) {
+    let state = AppState::new(
+        TOKEN.into(),
+        PORT,
+        vec![ORIGIN.into()],
+        temp_home(),
+        vec![sleeper_profile()],
+    )
+    .with_agent_check(|_| true);
+    (router(state.clone()), state)
+}
+
+fn muted_request(tab: &str, muted: bool) -> Request<Body> {
+    api(
+        "PUT",
+        &format!("/v1/sessions/{tab}/muted"),
+        Some(serde_json::json!({ "muted": muted })),
+    )
+}
+
+#[tokio::test]
+async fn mute_round_trips_through_the_session_list() {
+    let (app, state) = sessions_app_and_state();
+    let (_, a) = create_session(&app, serde_json::json!({})).await;
+    let tab = a["tab_id"].as_str().unwrap();
+    assert_eq!(list_sessions(&app).await["sessions"][0]["muted"], false);
+
+    assert_eq!(status_of(&app, muted_request(tab, true)).await, StatusCode::NO_CONTENT);
+    assert_eq!(list_sessions(&app).await["sessions"][0]["muted"], true);
+
+    // The same value again changes nothing, so subscribers hear nothing.
+    let mut changes = state.registry().subscribe();
+    changes.borrow_and_update();
+    assert_eq!(status_of(&app, muted_request(tab, true)).await, StatusCode::NO_CONTENT);
+    assert!(!changes.has_changed().unwrap());
+
+    assert_eq!(status_of(&app, muted_request(tab, false)).await, StatusCode::NO_CONTENT);
+    assert!(changes.has_changed().unwrap());
+    assert_eq!(list_sessions(&app).await["sessions"][0]["muted"], false);
+}
+
+#[tokio::test]
+async fn mute_of_an_unknown_tab_is_404() {
+    let app = sessions_app();
+    assert_eq!(
+        status_of(&app, muted_request("t_nope", true)).await,
+        StatusCode::NOT_FOUND
+    );
+}
+
+#[tokio::test]
+async fn mute_and_view_routes_need_the_token() {
+    let app = sessions_app();
+    let body = |json: serde_json::Value| Body::from(json.to_string());
+    let mute = get("/v1/sessions/t_nope/muted")
+        .method("PUT")
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(body(serde_json::json!({ "muted": true })))
+        .unwrap();
+    assert_eq!(status_of(&app, mute).await, StatusCode::UNAUTHORIZED);
+    let view = get("/v1/ui/view")
+        .method("PUT")
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(body(serde_json::json!({ "window_focused": true, "visible_tabs": [] })))
+        .unwrap();
+    assert_eq!(status_of(&app, view).await, StatusCode::UNAUTHORIZED);
+}
+
+fn view_request(body: serde_json::Value) -> Request<Body> {
+    api("PUT", "/v1/ui/view", Some(body))
+}
+
+#[tokio::test]
+async fn ui_view_put_is_visible_through_the_state() {
+    let (app, state) = sessions_app_and_state();
+    let view = state.view();
+    assert_eq!(
+        *view.borrow(),
+        marshell_protocol::api::UiView {
+            window_focused: false,
+            visible_tabs: vec![]
+        }
+    );
+    let body = serde_json::json!({ "window_focused": true, "visible_tabs": ["a", "b"] });
+    assert_eq!(status_of(&app, view_request(body)).await, StatusCode::NO_CONTENT);
+    assert!(view.has_changed().unwrap());
+    assert_eq!(
+        *view.borrow(),
+        marshell_protocol::api::UiView {
+            window_focused: true,
+            visible_tabs: vec!["a".into(), "b".into()]
+        }
+    );
+}
+
+#[tokio::test]
+async fn ui_view_rejects_too_many_tabs_and_a_large_body() {
+    let (app, state) = sessions_app_and_state();
+    let tabs = |n: usize| (0..n).map(|i| format!("t{i}")).collect::<Vec<_>>();
+    let ok = serde_json::json!({ "window_focused": true, "visible_tabs": tabs(16) });
+    assert_eq!(status_of(&app, view_request(ok)).await, StatusCode::NO_CONTENT);
+    let many = serde_json::json!({ "window_focused": false, "visible_tabs": tabs(17) });
+    assert_eq!(status_of(&app, view_request(many)).await, StatusCode::BAD_REQUEST);
+    // 16 ids of 300 characters is over 4 KiB.
+    let long = serde_json::json!({ "window_focused": false, "visible_tabs": vec!["x".repeat(300); 16] });
+    assert_eq!(status_of(&app, view_request(long)).await, StatusCode::BAD_REQUEST);
+    let junk = serde_json::json!({ "window_focused": "yes" });
+    assert_eq!(status_of(&app, view_request(junk)).await, StatusCode::BAD_REQUEST);
+    // The rejected bodies left the accepted view alone.
+    assert_eq!(state.view().borrow().visible_tabs.len(), 16);
+}

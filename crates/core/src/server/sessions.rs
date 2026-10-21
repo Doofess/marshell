@@ -452,6 +452,23 @@ pub async fn rename(
     }
 }
 
+#[derive(Deserialize)]
+pub struct MutedRequest {
+    muted: bool,
+}
+
+pub async fn muted(
+    State(st): State<AppState>,
+    Path(tab): Path<String>,
+    Json(req): Json<MutedRequest>,
+) -> Result<StatusCode, ApiError> {
+    if st.0.registry.set_muted(&tab, req.muted) {
+        Ok(StatusCode::NO_CONTENT)
+    } else {
+        Err((StatusCode::NOT_FOUND, "No such session.".into()))
+    }
+}
+
 pub async fn reorder(State(st): State<AppState>, Json(req): Json<ReorderRequest>) -> Result<StatusCode, ApiError> {
     if st.0.registry.reorder(&req.tab_ids) {
         Ok(StatusCode::NO_CONTENT)
