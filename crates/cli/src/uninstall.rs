@@ -34,13 +34,15 @@ fn confirmed(input: &mut dyn BufRead, out: &mut dyn Write, question: &str) -> bo
     matches!(line.trim().to_lowercase().as_str(), "y" | "yes")
 }
 
-/// Removes the files in `<home>/bin` one by one, then the folder if it is empty. A file that stays (the
-/// running `marshell` itself, on Windows) is reported and is not a failure.
+/// Removes the files in `<home>/bin` one by one, then the folder if it is empty. On Windows the
+/// running executable is removed after exit. Other files that stay are reported, not a failure.
 fn remove_bin(home: &Path, out: &mut dyn Write) {
     let bin = paths::bin_dir(home);
     let Ok(entries) = std::fs::read_dir(&bin) else {
         return;
     };
+    #[cfg(windows)]
+    let mut failed = Vec::new();
     for entry in entries.flatten() {
         let path = entry.path();
         let removed = if path.is_dir() {
@@ -49,6 +51,21 @@ fn remove_bin(home: &Path, out: &mut dyn Write) {
             std::fs::remove_file(&path)
         };
         if removed.is_err() {
+            #[cfg(windows)]
+            failed.push(path);
+            #[cfg(not(windows))]
+            let _ = writeln!(
+                out,
+                "Couldn't remove {}; delete it once this window is closed.",
+                path.display()
+            );
+        }
+    }
+    #[cfg(windows)]
+    if failed.len() == 1 && defer_self_removal(&bin) {
+        let _ = writeln!(out, "marshell.exe will be removed when this window closes.");
+    } else {
+        for path in failed {
             let _ = writeln!(
                 out,
                 "Couldn't remove {}; delete it once this window is closed.",
@@ -57,6 +74,68 @@ fn remove_bin(home: &Path, out: &mut dyn Write) {
         }
     }
     let _ = std::fs::remove_dir(&bin);
+}
+
+/// Only literal paths: PowerShell single quotes are escaped by doubling them.
+#[cfg(windows)]
+fn self_removal_command(pid: u32, exe: &str, bin: &str) -> String {
+    let exe = exe.replace('\'', "''");
+    let bin = bin.replace('\'', "''");
+    format!(
+        "Wait-Process -Id {pid} -ErrorAction SilentlyContinue; \
+         Remove-Item -LiteralPath '{exe}' -ErrorAction Stop; \
+         if (-not (Get-ChildItem -LiteralPath '{bin}' -Force -ErrorAction Stop)) {{ \
+         Remove-Item -LiteralPath '{bin}' -ErrorAction Stop }}"
+    )
+}
+
+/// Build nothing unless the running exe is a direct child of bin and its only remaining entry.
+#[cfg(windows)]
+fn checked_self_removal_command(pid: u32, exe: &Path, bin: &Path) -> Option<String> {
+    // The plain `C:\dir` form, not `\\?\C:\dir`, so PowerShell gets an ordinary path.
+    let exe = marshell_core::projects::canonical(exe);
+    let bin = marshell_core::projects::canonical(bin);
+    if exe.parent()?.to_str()?.to_lowercase() != bin.to_str()?.to_lowercase() {
+        return None;
+    }
+    let mut entries = std::fs::read_dir(&bin).ok()?;
+    let remaining = marshell_core::projects::canonical(&entries.next()?.ok()?.path());
+    if entries.next().is_some() || remaining.to_str()?.to_lowercase() != exe.to_str()?.to_lowercase() {
+        return None;
+    }
+    Some(self_removal_command(pid, exe.to_str()?, bin.to_str()?))
+}
+
+#[cfg(windows)]
+fn defer_self_removal(bin: &Path) -> bool {
+    use std::os::windows::process::CommandExt;
+    use std::process::{Command, Stdio};
+
+    let Ok(exe) = std::env::current_exe() else {
+        return false;
+    };
+    let Some(command) = checked_self_removal_command(std::process::id(), &exe, bin) else {
+        return false;
+    };
+    const CREATE_NO_WINDOW: u32 = 0x08000000;
+    const DETACHED_PROCESS: u32 = 0x00000008;
+    Command::new("powershell.exe")
+        .args([
+            "-NoProfile",
+            "-NonInteractive",
+            "-WindowStyle",
+            "Hidden",
+            "-Command",
+            &command,
+        ])
+        .creation_flags(CREATE_NO_WINDOW | DETACHED_PROCESS)
+        // Don't keep bin open if uninstall was launched with bin as its working directory.
+        .current_dir(std::env::temp_dir())
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .is_ok()
 }
 
 pub fn run(
@@ -207,6 +286,70 @@ mod tests {
 
     const ORIGINAL: &str =
         "{\n  \"theme\": \"dark\",\n  \"statusLine\": {\"type\": \"command\", \"command\": \"my-line\"}\n}\n";
+
+    #[cfg(windows)]
+    #[test]
+    fn self_removal_quotes_exact_paths_without_recursion_or_wildcards() {
+        let command = self_removal_command(123, r"C:\Marshell's home\bin\marshell.exe", r"C:\Marshell's home\bin");
+        assert_eq!(
+            command,
+            "Wait-Process -Id 123 -ErrorAction SilentlyContinue; \
+             Remove-Item -LiteralPath 'C:\\Marshell''s home\\bin\\marshell.exe' -ErrorAction Stop; \
+             if (-not (Get-ChildItem -LiteralPath 'C:\\Marshell''s home\\bin' -Force -ErrorAction Stop)) { \
+             Remove-Item -LiteralPath 'C:\\Marshell''s home\\bin' -ErrorAction Stop }"
+        );
+        assert!(!command.to_lowercase().contains("-recurse"));
+        assert!(!command.contains(['*', '?', '[', ']']));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn self_removal_is_not_built_for_an_exe_outside_bin() {
+        let dir = tempfile::tempdir().unwrap();
+        let bin = paths::bin_dir(dir.path());
+        let outside = dir.path().join("bin-other");
+        std::fs::create_dir(&bin).unwrap();
+        std::fs::create_dir(&outside).unwrap();
+        let exe = outside.join("marshell.exe");
+        std::fs::write(&exe, b"exe").unwrap();
+        std::fs::write(bin.join("marshell.exe"), b"exe").unwrap();
+        assert!(checked_self_removal_command(123, &exe, &bin).is_none());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn self_removal_requires_only_the_running_exe_in_bin() {
+        let dir = tempfile::tempdir().unwrap();
+        let bin = paths::bin_dir(dir.path());
+        std::fs::create_dir(&bin).unwrap();
+        let exe = bin.join("marshell.exe");
+        std::fs::write(&exe, b"exe").unwrap();
+        assert!(checked_self_removal_command(123, &exe, &bin).is_some());
+        let other = bin.join("marshell-hook.exe");
+        std::fs::write(&other, b"hook").unwrap();
+        assert!(checked_self_removal_command(123, &exe, &bin).is_none());
+        std::fs::remove_file(&exe).unwrap();
+        assert!(checked_self_removal_command(123, &exe, &bin).is_none());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn self_removal_canonicalizes_paths_and_ignores_case() {
+        let dir = tempfile::tempdir().unwrap();
+        let bin = paths::bin_dir(dir.path());
+        std::fs::create_dir(&bin).unwrap();
+        let exe = bin.join("marshell.exe");
+        std::fs::write(&exe, b"exe").unwrap();
+        let upper = PathBuf::from(exe.to_str().unwrap().to_uppercase());
+        assert_eq!(
+            checked_self_removal_command(123, &upper, &bin.join("..\\bin")),
+            Some(self_removal_command(
+                123,
+                marshell_core::projects::canonical(&exe).to_str().unwrap(),
+                marshell_core::projects::canonical(&bin).to_str().unwrap(),
+            ))
+        );
+    }
 
     struct Fixture {
         _dir: tempfile::TempDir,
