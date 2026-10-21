@@ -101,10 +101,59 @@ fn disable_browser_shortcuts(window: &tauri::WebviewWindow) {
     let _ = window;
 }
 
+/// What the close button does.
+enum CloseAction {
+    Quit,
+    Hide,
+    Ask,
+}
+
+/// Without a tray nothing could bring a hidden window back, so the close button quits whatever was saved.
+/// With one it follows the saved choice, and asks the person once when there is none.
+fn close_action(tray_ready: bool, close_to_tray: Option<bool>) -> CloseAction {
+    match (tray_ready, close_to_tray) {
+        (false, _) | (true, Some(false)) => CloseAction::Quit,
+        (true, Some(true)) => CloseAction::Hide,
+        (true, None) => CloseAction::Ask,
+    }
+}
+
 /// What the window keeps between runs: everything but the frame, which the config sets (none on Windows, where the
 /// app draws its own title bar). Restoring a frame saved before that would draw the system's bar over the app's.
+/// Not whether it was visible either: quitting from the tray while hidden must not start the next run hidden.
 fn window_state_flags() -> tauri_plugin_window_state::StateFlags {
-    tauri_plugin_window_state::StateFlags::all() - tauri_plugin_window_state::StateFlags::DECORATIONS
+    use tauri_plugin_window_state::StateFlags;
+    StateFlags::all() - StateFlags::DECORATIONS - StateFlags::VISIBLE
+}
+
+/// Where the Marshell home is, for the settings the close button reads on every request.
+struct HomeDir(std::path::PathBuf);
+
+/// The close button, from the title bar, Alt+F4 or the taskbar. Always held back from Tauri's own close, so a
+/// live tray icon can never keep the process alive after a quit.
+fn on_close_requested(window: &tauri::Window, api: &tauri::CloseRequestApi) {
+    let app = window.app_handle();
+    api.prevent_close();
+    // Read fresh each time: the choice may have been saved since the window opened.
+    let saved = app
+        .try_state::<HomeDir>()
+        .and_then(|home| marshell_core::settings::load(&home.0).close_to_tray);
+    match close_action(tray::tray_ready(app), saved) {
+        CloseAction::Quit => app.exit(0),
+        CloseAction::Hide => {
+            if let Some(core) = app.try_state::<CoreHandle>() {
+                core.0.set_window_hidden(true);
+            }
+            let _ = window.hide();
+        }
+        CloseAction::Ask => {
+            // The window stays open and in front; the webview shows its one-time dialog.
+            tray::show_main(app);
+            if let Err(e) = app.emit("close-choice", ()) {
+                eprintln!("Marshell: could not ask the window about closing: {e}");
+            }
+        }
+    }
 }
 
 fn main() {
@@ -137,6 +186,11 @@ fn main() {
             {
                 core.0.window_blurred();
             }
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event
+                && window.label() == "main"
+            {
+                on_close_requested(window, api);
+            }
             // The taskbar may have changed colour, and the wands must stay readable on it.
             if matches!(event, tauri::WindowEvent::ThemeChanged(_)) {
                 tray::theme_changed(window.app_handle());
@@ -154,6 +208,7 @@ fn main() {
             }
             app.manage(capture::CaptureState::default());
             let home = marshell_core::paths::home_dir()?;
+            app.manage(HomeDir(home.clone()));
             marshell_core::crash::install_panic_hook(&home);
             if let Err(e) = marshell_core::diagnostics::log::init(&home) {
                 eprintln!("Marshell: no log file this run: {e:#}");
@@ -240,6 +295,32 @@ mod tests {
     fn saved_window_state_leaves_the_frame_to_the_config() {
         use tauri_plugin_window_state::StateFlags;
         assert!(!super::window_state_flags().contains(StateFlags::DECORATIONS));
+        // Quitting while hidden must not start the next run hidden.
+        assert!(!super::window_state_flags().contains(StateFlags::VISIBLE));
         assert!(super::window_state_flags().contains(StateFlags::SIZE | StateFlags::POSITION | StateFlags::MAXIMIZED));
+    }
+
+    #[test]
+    fn close_action_quits_without_a_tray_whatever_was_saved() {
+        for saved in [None, Some(true), Some(false)] {
+            assert!(matches!(super::close_action(false, saved), super::CloseAction::Quit));
+        }
+    }
+
+    #[test]
+    fn close_action_follows_the_saved_choice() {
+        assert!(matches!(
+            super::close_action(true, Some(true)),
+            super::CloseAction::Hide
+        ));
+        assert!(matches!(
+            super::close_action(true, Some(false)),
+            super::CloseAction::Quit
+        ));
+    }
+
+    #[test]
+    fn close_action_asks_when_nothing_is_saved() {
+        assert!(matches!(super::close_action(true, None), super::CloseAction::Ask));
     }
 }

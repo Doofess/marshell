@@ -58,7 +58,6 @@ pub struct TrayState {
 }
 
 /// True once `build` made the icon. Without it the close button must quit: nothing could bring the window back.
-#[allow(dead_code)] // Used by the close button (next commit).
 pub fn tray_ready(app: &tauri::AppHandle) -> bool {
     app.try_state::<TrayState>()
         .is_some_and(|s| s.ready.load(Ordering::SeqCst))
