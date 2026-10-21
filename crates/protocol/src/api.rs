@@ -773,14 +773,25 @@ pub struct Settings {
 
 /// How one kind of event notifies.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(default)]
 #[ts(export)]
 pub struct NotifyChannel {
     pub banner: bool,
     pub sound: bool,
 }
 
+impl Default for NotifyChannel {
+    fn default() -> Self {
+        Self {
+            banner: true,
+            sound: true,
+        }
+    }
+}
+
 /// Hours in which notifications are held back, as "HH:MM" 24-hour strings.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(default)]
 #[ts(export)]
 pub struct QuietHours {
     pub enabled: bool,
@@ -813,10 +824,7 @@ pub struct NotifySettings {
 
 impl Default for NotifySettings {
     fn default() -> Self {
-        let on = NotifyChannel {
-            banner: true,
-            sound: true,
-        };
+        let on = NotifyChannel::default();
         Self {
             needs_you: on,
             done: on,

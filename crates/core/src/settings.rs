@@ -17,12 +17,25 @@ struct FileDoc {
     onboarded: bool,
     #[serde(default)]
     status_off: Vec<String>,
-    /// Absent in a file written before notifications had settings.
-    #[serde(default)]
+    /// Absent in a file written before notifications had settings. A hand-edited block that does not read
+    /// falls back on its own, so it cannot take the rest of the file with it.
+    #[serde(default, deserialize_with = "lenient_notifications")]
     notifications: Option<NotifySettings>,
     /// Read only, to migrate an older file; never written.
     #[serde(default, skip_serializing)]
     sound_off: bool,
+}
+
+/// The notifications block, or the defaults when it is not one (a wrong type or `null` where a value goes).
+fn lenient_notifications<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<NotifySettings>, D::Error> {
+    let value = serde_json::Value::deserialize(d)?;
+    if value.is_null() {
+        return Ok(None);
+    }
+    Ok(Some(serde_json::from_value(value).unwrap_or_else(|err| {
+        tracing::warn!("settings file has an invalid notifications block, using the defaults: {err}");
+        NotifySettings::default()
+    })))
 }
 
 impl Versioned for FileDoc {
@@ -412,6 +425,38 @@ mod tests {
         assert_eq!(s.notifications.quiet_hours, QuietHours::default());
         assert!(!s.notifications.done.banner);
         assert!(s.onboarded);
+    }
+
+    #[test]
+    fn a_notifications_block_missing_a_field_keeps_the_rest() {
+        let home = tempfile::tempdir().unwrap();
+        let file = crate::paths::settings_file(home.path());
+        std::fs::write(
+            &file,
+            r#"{"version":1,"appearance":{},"onboarded":true,"notifications":{"done":{"banner":false},"quiet_hours":{"enabled":true,"start":"23:00"}}}"#,
+        )
+        .unwrap();
+        let s = load(home.path());
+        assert!(s.onboarded);
+        assert!(!s.notifications.done.banner);
+        assert!(s.notifications.done.sound);
+        let q = &s.notifications.quiet_hours;
+        assert_eq!((q.enabled, q.start.as_str(), q.end.as_str()), (true, "23:00", "08:00"));
+    }
+
+    #[test]
+    fn a_notifications_block_of_the_wrong_type_falls_back_alone() {
+        let home = tempfile::tempdir().unwrap();
+        let file = crate::paths::settings_file(home.path());
+        std::fs::write(
+            &file,
+            r#"{"version":1,"appearance":{"accent":"teal"},"onboarded":true,"notifications":{"done":{"banner":false,"sound":true},"quiet_hours":{"enabled":true,"start":2200,"end":null}}}"#,
+        )
+        .unwrap();
+        let s = load(home.path());
+        assert!(s.onboarded);
+        assert_eq!(s.appearance.accent, "teal");
+        assert_eq!(s.notifications, NotifySettings::default());
     }
 
     #[test]
