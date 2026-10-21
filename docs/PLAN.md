@@ -1002,6 +1002,10 @@ Decisions from the 2026-10-10 coverage audit (`docs/superpowers/plan-coverage-au
      2. The row turns Done at Claude Code's own final `Stop`, which lists no running subagent. If the last subagent has ended and Claude Code hasn't resumed the turn 30 s later, the row turns Done anyway.
      3. An agent that ended inside a shell that still runs (#39) offers no Resume: no bar, palette command or menu item. The person types in the shell as usual, and Resume comes back once the shell exits.
      4. The Resume bar may name `--continue` while the core runs `--resume <id>` (#41): not a problem.
+   - **Phase 3 exit check decisions (2026-10-21).** From the integrated check on main (`docs/research/2026-10-21-phase-3-exit-check.md`), where every criterion passed except the context ring:
+     1. The context ring matches Claude Code's `/context`. It is the status line's `context_window.total_input_tokens` divided by the effective window: the smaller of `context_window_size` and the `autoCompactWindow` in Claude's settings (user, project and local, read only). Without that setting it stays `used_percentage`. This amends slice 3c2 decision 2.
+     2. Mode ▸ follows the Resume rule of the 3g follow-up decision 3: while an agent has ended inside a shell that still runs, the row menu, the chip and the palette offer no Mode ▸. It comes back once the shell exits.
+     3. `marshell uninstall` deletes its own exe once it has exited, through a short hidden helper that waits for the process and then removes the exe and the empty `bin` folder, so nothing is left to delete by hand.
    - Exit: a real Claude session shows correct model, effort, mode, subagents and context; approval from a card works; uninstall leaves zero byte diff; corrupting `index.sqlite` is repaired on start.
 4. **Notifications + choreography + Departures board + stuck detection** (S3).
    - Exit: every rule in brief §5.5 is verified on all three OSes. Every sound has a visual equivalent.
