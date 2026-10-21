@@ -1,5 +1,9 @@
 import type { Profile } from "../../generated/Profile";
+import type { SessionInfo } from "../../generated/SessionInfo";
 import type { RowModel } from "../sidebar/types";
+
+/** An agent that ended inside a shell that still runs can't be resumed until the shell exits. */
+export const offersResume = (row: RowModel, info: SessionInfo | undefined): boolean => row.status === "ended" && info?.state.kind !== "running";
 
 /**
  * Why Resume is off before the core is even asked, or undefined. The profile list can be empty because the fetch failed
