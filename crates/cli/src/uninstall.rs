@@ -117,8 +117,9 @@ fn defer_self_removal(bin: &Path) -> bool {
     let Some(command) = checked_self_removal_command(std::process::id(), &exe, bin) else {
         return false;
     };
+    // A hidden console of its own, so closing this window doesn't end it. Not DETACHED_PROCESS:
+    // powershell.exe started without a console exits before running the command.
     const CREATE_NO_WINDOW: u32 = 0x08000000;
-    const DETACHED_PROCESS: u32 = 0x00000008;
     Command::new("powershell.exe")
         .args([
             "-NoProfile",
@@ -128,7 +129,7 @@ fn defer_self_removal(bin: &Path) -> bool {
             "-Command",
             &command,
         ])
-        .creation_flags(CREATE_NO_WINDOW | DETACHED_PROCESS)
+        .creation_flags(CREATE_NO_WINDOW)
         // Don't keep bin open if uninstall was launched with bin as its working directory.
         .current_dir(std::env::temp_dir())
         .stdin(Stdio::null())
