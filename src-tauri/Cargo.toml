@@ -10,12 +10,16 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 marshell-core.workspace = true
 marshell-protocol.workspace = true
+serde.workspace = true
 tauri = { version = "2", features = ["tray-icon"] }
 tauri-plugin-dialog = "2"
 tauri-plugin-notification = "2.7"
 tauri-plugin-opener = "2"
 tauri-plugin-single-instance = "2"
 tauri-plugin-window-state = "2"
+
+[dev-dependencies]
+serde_json.workspace = true
 
 # Reaches the WebView2 settings Tauri does not expose (main.rs: the browser's own shortcuts).
 [target."cfg(windows)".dependencies]

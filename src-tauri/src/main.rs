@@ -6,6 +6,7 @@ mod capture;
 mod diagnostics;
 mod folder_picker;
 mod notify;
+mod tray;
 
 use marshell_core::server::CoreConfig;
 use marshell_core::supervisor::{CoreEvent, Supervisor};
@@ -116,10 +117,7 @@ fn main() {
     let app = tauri::Builder::default()
         // Must be the first plugin: a second launch focuses the existing window instead.
         .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
-            if let Some(w) = app.get_webview_window("main") {
-                let _ = w.unminimize();
-                let _ = w.set_focus();
-            }
+            tray::show_main(app)
         }))
         .plugin(
             tauri_plugin_window_state::Builder::default()
@@ -139,10 +137,17 @@ fn main() {
             {
                 core.0.window_blurred();
             }
+            // The taskbar may have changed colour, and the wands must stay readable on it.
+            if matches!(event, tauri::WindowEvent::ThemeChanged(_)) {
+                tray::theme_changed(window.app_handle());
+            }
         })
         .setup(|app| {
             if let Err(e) = notify::init(app.handle()) {
                 eprintln!("Marshell: banners will not answer clicks: {e}");
+            }
+            if let Err(e) = tray::build(app.handle()) {
+                eprintln!("Marshell: no tray icon this run: {e}");
             }
             if let Some(w) = app.get_webview_window("main") {
                 disable_browser_shortcuts(&w);
@@ -205,7 +210,8 @@ fn main() {
             capture::capture_screen_region,
             capture::cancel_capture,
             capture::read_clipboard_image,
-            attention::set_badge
+            attention::set_badge,
+            tray::set_tray
         ])
         .build(tauri::generate_context!())
         .expect("failed to build the app");
