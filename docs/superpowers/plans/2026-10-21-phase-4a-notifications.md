@@ -219,6 +219,6 @@ Copy (`copy.rs`, ported from `banner.ts`; each line is a test):
   - quiet hours set around the current time;
   - Windows do-not-disturb on;
   - a muted session;
-  - a click on a banner and on an Action Center entry selects the session.
+  - a click on a banner selects the session (an entry in the notification centre does nothing, a known limit from spike S3).
   The user listens to the five sounds and picks replacements for any that sound wrong; that goes into §9 as a 4a decision.
 - [ ] **Step 3:** Stop what was started by PID, remove the scratch folder, commit the research note.

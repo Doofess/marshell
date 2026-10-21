@@ -5,6 +5,7 @@ mod attention;
 mod capture;
 mod diagnostics;
 mod folder_picker;
+mod notify;
 
 use marshell_core::server::CoreConfig;
 use marshell_core::supervisor::{CoreEvent, Supervisor};
@@ -128,7 +129,12 @@ fn main() {
         // No capability grants the dialog to the webview; only the `pick_folder` command opens it.
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
+        // No capability grants notifications to the webview; only the shell shows banners.
+        .plugin(tauri_plugin_notification::init())
         .setup(|app| {
+            if let Err(e) = notify::init(app.handle()) {
+                eprintln!("Marshell: banners will not answer clicks: {e}");
+            }
             if let Some(w) = app.get_webview_window("main") {
                 disable_browser_shortcuts(&w);
             }

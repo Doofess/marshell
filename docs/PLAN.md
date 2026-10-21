@@ -744,6 +744,8 @@ Known soft spots, left as they are: on a Mac laptop F2 needs Fn unless "use F-ke
 
 S10, S4 and S9 ran on 2026-10-18 against Claude Code 2.1.302 on Windows and passed (`docs/spikes/`). Hooks install in exec form, the status line chains with no fallback, and the hold stays at 120 s because Claude's own dialog stays visible during it. S4's uninstall row and the macOS and Linux rows are still open.
 
+S3 ran on 2026-10-21 on Windows (`docs/spikes/S3-notification-click.md`). A click on a banner, on its body or on Open, focuses the window and selects the tab in the dev build and the installed one. A click on the entry in the notification centre does nothing, which is a known limit. The banners use `tauri-plugin-notification`, and Allow and Deny on banners wait for their own slice (slice 4a decision 1). The macOS and Linux rows are still open.
+
 ## 9. Milestones (phases 1–9 = v1)
 
 Decisions from the 2026-10-10 coverage audit (`docs/superpowers/plan-coverage-audit.md`) are folded in below and in "Cross-cutting requirements".
@@ -1016,7 +1018,7 @@ Decisions from the 2026-10-10 coverage audit (`docs/superpowers/plan-coverage-au
    - **Slice 4a decisions (2026-10-21).**
      1. 4a's banners offer Open, or Review for a risky request, and nothing else. Allow and Deny on a banner (batch 3 design decisions) come in their own small slice after 4a, gated by an Opus security review against ADR 0001 as slice 3d was. A `marshell://` link only ever focuses a session and never answers a request.
      2. A main `Stop` is held for 1.5 s before it counts as Done: the row stays Working, and a `UserPromptSubmit` or `PreToolUse` in that time cancels it (phase 3 exit check finding 4). Only a settled Done draws the check and reaches the sound and banner rules.
-     3. Quiet hours are off by default and prefilled 22:00–08:00 when turned on. They silence Marshell's sounds and the taskbar flash only: banners still arrive (silent, as always) and the badge count stays. Windows do-not-disturb silences Marshell's sounds the same way, as far as `SHQueryUserNotificationState` reports it (checked in spike S3; a known limit if it doesn't).
+     3. Quiet hours are off by default and prefilled 22:00–08:00 when turned on. They silence Marshell's sounds and the taskbar flash only: banners still arrive (silent, as always) and the badge count stays. Windows do-not-disturb holds the banners back on its own, but Marshell can't see it: spike S3 found that `SHQueryUserNotificationState` still returns `QUNS_ACCEPTS_NOTIFICATIONS` with it on. So Marshell's sounds still play during Windows do-not-disturb. This is a known limit, and Marshell's quiet hours cover it.
    - Exit: every rule in brief §5.5 is verified on Windows 11 (phase 4 decision 4). Every sound has a visual equivalent.
 5. **History view and conversations.**
    - Conversations (added 2026-10-16; evidence in `docs/research/2026-10-16-accounts-cloud-extensions.md`): the history view also lists and manages every CLI's locally saved conversations (Claude Code, Codex CLI, others), not only sessions Marshell ran.
