@@ -4,6 +4,8 @@ import { MainWindow } from "./MainWindow";
 import { COMPOSER, STATUS_BAR_HEIGHT } from "./layout";
 import { SCENARIO_REQUESTS, SCENARIO_ROWS } from "./scenario";
 import { windowTitle } from "./windowTitle";
+import type { SessionInfo } from "../../generated/SessionInfo";
+import { offersModeChange } from "../sessions/resumeState";
 
 const BIG = { width: 1700, height: 900 } as const;
 const html = (p: Partial<Parameters<typeof MainWindow>[0]> = {}) => renderToStaticMarkup(<MainWindow width={1180} height={800} selectedId="working" {...p} />);
@@ -11,6 +13,21 @@ const html = (p: Partial<Parameters<typeof MainWindow>[0]> = {}) => renderToStat
 const NUM: Record<string, number> = { "api-server": 3, billing: 1, infra: 2, landing: 5, search: 6 };
 
 describe("MainWindow: default", () => {
+  it("keeps the ended agent's mode as text while its shell runs, with no button semantics or tab stop", () => {
+    const row = { ...SCENARIO_ROWS[0]!, status: "ended" as const, mode: "plan" as const };
+    const render = (state: SessionInfo["state"]) => {
+      const info = { state } as SessionInfo;
+      const h = html({ rows: [row], selectedId: row.id, onModeMenu: () => {}, canChangeMode: (r) => offersModeChange(r, info) });
+      return h.match(/<div class="session-header".*?<\/div>/)![0];
+    };
+    const h = render({ kind: "running" });
+    expect(h).toMatch(/<span[^>]*class="chip"[^>]*>Plan<\/span>/);
+    expect(h).not.toContain("<button");
+    expect(h).not.toContain('role="button"');
+    expect(h).not.toContain("tabindex");
+    expect(h).not.toContain("aria-haspopup");
+    expect(render({ kind: "exited", code: 0 })).toMatch(/<button[^>]*class="session-header__mode"/);
+  });
   const h = html();
   it("has one unified 40 px top bar, a sidebar and one terminal", () => {
     expect(h).toContain("window__bar");

@@ -139,6 +139,8 @@ export type MainWindowProps = {
   paneBar?: { id: string; node: ReactNode };
   /** The session header's mode chip becomes a button that gives the session's id and where it is, to open the mode menu. */
   onModeMenu?: (id: string, anchor: { x: number; y: number }) => void;
+  /** Keeps the displayed session's mode as text when changing it is unavailable. */
+  canChangeMode?: (row: RowModel) => boolean;
   /** A receipt over the lower start corner of the terminal column. Plain markup: `notice` is what gets announced. */
   toast?: ReactNode;
   /** Text for the window's one announcer to say; a new `id` says it again, even if the text is the same. */
@@ -241,6 +243,7 @@ export function MainWindow({
   headerBar,
   paneBar,
   onModeMenu,
+  canChangeMode,
   toast,
   notice,
   renamingId,
@@ -438,7 +441,7 @@ export function MainWindow({
           )}
         </div>
         <div className="window__bar-main" data-tauri-drag-region="deep" onPointerLeave={mode === "focus" ? () => setPeeking(false) : undefined}>
-          {topBar ?? (showHeader && !manyPanes && active && <SessionHeader row={active} ports={ports} onMode={onModeMenu && ((anchor) => onModeMenu(active.id, anchor))} />)}
+          {topBar ?? (showHeader && !manyPanes && active && <SessionHeader row={active} ports={ports} onMode={onModeMenu && (canChangeMode?.(active) ?? true) ? (anchor) => onModeMenu(active.id, anchor) : undefined} />)}
           {/* Focus mode: the pointer at the top edge brings the header up, and leaving the bar puts it away. A pointer affordance only; the keyboard leaves focus mode. */}
           {mode === "focus" && !showHeader && !manyPanes && <div className="window__peek" aria-hidden="true" onPointerEnter={() => setPeeking(true)} />}
         </div>

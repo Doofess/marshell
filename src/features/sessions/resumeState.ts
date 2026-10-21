@@ -5,6 +5,9 @@ import type { RowModel } from "../sidebar/types";
 /** An agent that ended inside a shell that still runs can't be resumed until the shell exits. */
 export const offersResume = (row: RowModel, info: SessionInfo | undefined): boolean => row.status === "ended" && info?.state.kind !== "running";
 
+/** Restarting an ended agent would replace the shell the person is still using. */
+export const offersModeChange = (row: RowModel, info: SessionInfo | undefined): boolean => !(row.status === "ended" && info?.state.kind === "running");
+
 /**
  * Why Resume is off before the core is even asked, or undefined. The profile list can be empty because the fetch failed
  * (useSessions falls back to an empty list), and "no profiles" must not read as "this one was removed": an empty list is unknown,

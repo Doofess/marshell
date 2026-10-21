@@ -66,7 +66,7 @@ import { LivePalette } from "./LivePalette";
 import { LiveShortcuts } from "./LiveShortcuts";
 import { ResumeBar } from "./ResumeBar";
 import { sessionResumeCommand } from "./resumeCommand";
-import { holdsResume, offersResume, resumeBlockedReason, resumeStateOf } from "./resumeState";
+import { holdsResume, offersModeChange, offersResume, resumeBlockedReason, resumeStateOf } from "./resumeState";
 import { PAUSED_TYPING_TEXT, SessionActions, closeBarText, needsCloseConfirm, pauseBarStale, pauseBarText, restartBarStale, restartBarText, tabIdOfNumber } from "./sessionActions";
 import { navPanesOf, useNavigation } from "./useNavigation";
 import type { NavEffect } from "../../lib/navigation/types";
@@ -372,7 +372,7 @@ export function LiveApp() {
     isTask: focusedIsTask,
     missing: missingTask(tasks) !== null,
     focused: focusedInfo !== undefined,
-    agent: focusedInfo?.agent != null,
+    agent: focusedInfo?.agent != null && (focusedRow === undefined || offersModeChange(focusedRow, focusedInfo)),
     pausable: focusedInfo?.state.kind === "running" && !focusedInfo.paused,
     paused: focusedInfo?.state.kind === "running" && focusedInfo.paused,
   });
@@ -758,12 +758,21 @@ export function LiveApp() {
   // Mode ▸: the second menu (the row menu's item, the header chip), and the palette's Mode commands, all end in `askRestart`.
   const [modeMenu, setModeMenu] = useState<{ id: string; anchor: { x: number; y: number }; from: "row" | "chip" } | null>(null);
   useEffect(() => {
-    if (modeMenu && !infos.some((i) => i.tab_id === modeMenu.id)) setModeMenu(null);
-  }, [modeMenu, infos]);
+    if (!modeMenu) return;
+    const info = infos.find((i) => i.tab_id === modeMenu.id);
+    const row = rows.find((r) => r.id === modeMenu.id);
+    if (!info) setModeMenu(null);
+    else if (row && !offersModeChange(row, info)) {
+      setModeMenu(null);
+      actions.focusTerminal();
+    }
+  }, [modeMenu, infos, rows, actions]);
   // Asks "Restart … in <mode>?" for a session. The bar is on the focused session's pane, so a session that is off screen or not
   // focused is shown first, as a plain click would. False (a plain shell, or the mode it is already in) changes nothing.
   const askRestart = useCallback(
     (id: string, mode: Mode): boolean => {
+      const row = rows.find((r) => r.id === id);
+      if (row && !offersModeChange(row, infos.find((i) => i.tab_id === id))) return false;
       if (!actions.askRestart(id, mode)) return false;
       actions.cancelClose();
       if (!(shownPanes.includes(id) && id === focusedId)) {
@@ -772,7 +781,7 @@ export function LiveApp() {
       }
       return true;
     },
-    [actions, shownPanes, focusedId, showInPane],
+    [actions, shownPanes, focusedId, showInPane, rows, infos],
   );
   // Pause: the first one ever asks first, on the session's pane like the restart question; after that it acts at once.
   const pauseSession = useCallback(
@@ -1193,6 +1202,7 @@ export function LiveApp() {
                 : undefined
           }
           onModeMenu={(id, anchor) => setModeMenu({ id, anchor, from: "chip" })}
+          canChangeMode={(row) => offersModeChange(row, infos.find((i) => i.tab_id === row.id))}
           headerBar={closingInfo && <CloseBar text={closeBarText(closingInfo)} onCancel={actions.cancelClose.bind(actions)} onCloseNow={() => void actions.confirmClose()} />}
           toast={toast && <Toast text={toast.text} actionLabel={toast.reopenId ? "Reopen" : undefined} onAction={() => void actions.reopenFromToast()} />}
           notice={toast ? { id: toast.id, text: toast.text } : notice}
