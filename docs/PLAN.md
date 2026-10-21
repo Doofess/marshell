@@ -1020,6 +1020,20 @@ Decisions from the 2026-10-10 coverage audit (`docs/superpowers/plan-coverage-au
      2. A main `Stop` is held for 1.5 s before it counts as Done: the row stays Working, and a `UserPromptSubmit` or `PreToolUse` in that time cancels it (phase 3 exit check finding 4). Only a settled Done draws the check and reaches the sound and banner rules.
      3. Quiet hours are off by default and prefilled 22:00–08:00 when turned on. They silence Marshell's sounds and the taskbar flash only: banners still arrive (silent, as always) and the badge count stays. Windows do-not-disturb holds the banners back on its own, but Marshell can't see it: spike S3 found that `SHQueryUserNotificationState` still returns `QUNS_ACCEPTS_NOTIFICATIONS` with it on. So Marshell's sounds still play during Windows do-not-disturb. This is a known limit, and Marshell's quiet hours cover it.
      4. The five sounds stay as built (decided by ear in the live check, 2026-10-22; `docs/research/2026-10-21-notifications-live-check.md`): needs-you `Notification.Default`, the one-minute reminder `Notification.Reminder`, Done `Notification.Mail`, subagent done `Notification.IM`, error `SystemHand`. In the default Windows 11 scheme they are five different sounds.
+   - **Slice 4b decisions (2026-10-22).**
+     1. The needs-you count is every session that waits on the person: a held request, or a row whose status is needs-permission or needs-question, including one whose 120 s hold ran out (4a live-check finding 1). Muted sessions count. The taskbar badge, the window title and the tray all show this one count.
+     2. The window title puts the count first, as browsers do, so a narrow taskbar label or Alt+Tab still shows it: "(2) api-server — Marshell", or "(1) Marshell" with no session selected. At 0 nothing is added.
+     3. The first time the close button would hide the window, an in-app dialog asks first: "Marshell keeps running in the tray, so your sessions keep going." Its buttons are Keep running in the tray (the default) and Quit when I close. Escape cancels and leaves the window open. The choice is saved and never asked again. It can be changed in the Notifications dialog under "Close button", because Marshell has no general settings page yet.
+     4. The tray menu is the phase-0 design minus what isn't live yet:
+        - Open Marshell;
+        - the waiting sessions with their numbers (at most five, then "N more…");
+        - Go to the oldest waiting session;
+        - Pause or Resume notifications;
+        - Notifications…;
+        - Quit Marshell.
+
+        Departures comes with 4c, and Doctor once the doctor is live. "Settings…" reads "Notifications…" until there is a settings page. Pause silences banners, sounds and the taskbar flash until Resume or until the app quits; it survives a core restart. The count, the title and the tray still count while paused, the tooltip adds "(notifications paused)", and the palette has the same toggle.
+     5. Decided in planning: a left click on the tray icon shows and focuses the window, and a right click opens the menu (Linux is menu-only). The icon is the mono wands, white on a dark taskbar and black on a light one, with an accent dot while anything needs you. Quit doesn't ask, as closing didn't before 4b. If the tray can't be created, the close button quits.
    - Exit: every rule in brief §5.5 is verified on Windows 11 (phase 4 decision 4). Every sound has a visual equivalent.
 5. **History view and conversations.**
    - Conversations (added 2026-10-16; evidence in `docs/research/2026-10-16-accounts-cloud-extensions.md`): the history view also lists and manages every CLI's locally saved conversations (Claude Code, Codex CLI, others), not only sessions Marshell ran.
