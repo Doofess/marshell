@@ -2,6 +2,7 @@
 //! ends the old core's sessions and starts a new core on a new port and token. After three
 //! restarts within a minute it gives up and reports `Failed`.
 
+use crate::notify::NotifyRequest;
 use crate::server::{self, CoreConfig, RunningCore};
 use marshell_protocol::api::Endpoint;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
@@ -12,13 +13,15 @@ const MAX_RESTARTS: usize = 3;
 const RESTART_WINDOW: Duration = Duration::from_secs(60);
 
 /// Serialised as the window's event payload: `{"generation": n}` for a restart, `null` for `Failed`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 #[serde(untagged)]
 pub enum CoreEvent {
     /// A new core is running; `generation` counts restarts since launch.
     Restarted { generation: u32 },
     /// Too many restarts in a minute, so the supervisor stopped trying.
     Failed,
+    /// The notifier wants a banner, a sound or a flash. Not a core lifecycle event: the app shell shows it.
+    Notify(NotifyRequest),
 }
 
 pub struct Supervisor {
@@ -29,7 +32,7 @@ pub struct Supervisor {
     restarts: Mutex<Vec<Instant>>,
     /// Set by `Failed` or `shutdown`; nothing restarts after that.
     stopped: AtomicBool,
-    on_event: Box<dyn Fn(CoreEvent) + Send + Sync>,
+    on_event: Arc<dyn Fn(CoreEvent) + Send + Sync>,
 }
 
 /// The supervisor's own locks are never held across a panic, but a poisoned one should not stop it either.
@@ -38,11 +41,16 @@ fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
 }
 
 impl Supervisor {
-    /// Starts the first core. `on_event` is called on every restart and on `Failed`.
+    /// Starts the first core. `on_event` is called on every restart, on `Failed` and for each notification
+    /// the core decides on (`Notify`), also from the cores that replace this one.
     pub async fn start(
-        cfg: CoreConfig,
+        mut cfg: CoreConfig,
         on_event: impl Fn(CoreEvent) + Send + Sync + 'static,
     ) -> anyhow::Result<Arc<Supervisor>> {
+        let on_event: Arc<dyn Fn(CoreEvent) + Send + Sync> = Arc::new(on_event);
+        let notifier = on_event.clone();
+        // The config is cloned for every restart, so each new core notifies through the same sink.
+        cfg.notify = Some(Arc::new(move |request| notifier(CoreEvent::Notify(request))));
         let core = server::start(cfg.clone()).await?;
         // Only the first core counts: a restart leaves the startup time where it was.
         crate::diagnostics::perf::mark_ready();
@@ -52,7 +60,7 @@ impl Supervisor {
             generation: AtomicU32::new(0),
             restarts: Mutex::new(Vec::new()),
             stopped: AtomicBool::new(false),
-            on_event: Box::new(on_event),
+            on_event,
         }))
     }
 
@@ -152,6 +160,7 @@ mod tests {
             home: home.path().to_path_buf(),
             allowed_origins: vec![],
             programs_dir: None,
+            notify: None,
         };
         let events: Events = Arc::default();
         let sink = events.clone();

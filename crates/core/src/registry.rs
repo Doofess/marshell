@@ -493,7 +493,8 @@ impl Registry {
     }
 
     /// Follows the subagents the agent reports: folds the hook body into the tab's running set and,
-    /// when it changed, sets the live status's count to the set's size. Applied only to an open
+    /// when it changed, sets the live status's count to the set's size (and counts a SubagentStop that took
+    /// an id out in `subagents_finished`, which the main Stop and SessionEnd never raise). Applied only to an open
     /// Running row that is Claude's or a plain shell's (where `claude` was typed), never another
     /// agent's. Broadcasts once per change.
     pub fn update_subagents(&self, tab_id: &str, body: &serde_json::Value) {
@@ -512,6 +513,11 @@ impl Registry {
                 .live
                 .get_or_insert_with(|| crate::agents::claude::status::blank(at_ms));
             live.subagents = count;
+            // Only a SubagentStop that took an id out is a subagent finishing; the main Stop and SessionEnd
+            // clear the set too, and those are not.
+            if body.get("hook_event_name").and_then(serde_json::Value::as_str) == Some("SubagentStop") {
+                live.subagents_finished = live.subagents_finished.saturating_add(1);
+            }
             self.tx.send_replace(state.snapshot());
         }
     }
@@ -1521,6 +1527,7 @@ mod tests {
             five_hour_resets_at: None,
             seven_day_pct: None,
             subagents: 0,
+            subagents_finished: 0,
         }
     }
 
@@ -1719,6 +1726,40 @@ mod tests {
         );
         reg.update_subagents("x", &start("q"));
         assert_eq!(row(&reg, "x").live, None);
+    }
+
+    #[test]
+    fn finished_subagents_are_counted_only_by_a_subagent_stop_that_removed_one() {
+        let reg = Registry::new();
+        reg.reserve("a", relaunch("A"));
+        let ev = |name: &str, id: Option<&str>| match id {
+            Some(id) => serde_json::json!({ "hook_event_name": name, "agent_id": id }),
+            None => serde_json::json!({ "hook_event_name": name }),
+        };
+        let finished = |reg: &Registry| row(reg, "a").live.map(|l| l.subagents_finished);
+        reg.update_subagents("a", &ev("SubagentStart", Some("x")));
+        reg.update_subagents("a", &ev("SubagentStart", Some("y")));
+        assert_eq!(finished(&reg), Some(0));
+        reg.update_subagents("a", &ev("SubagentStop", Some("x")));
+        assert_eq!(finished(&reg), Some(1));
+        // An id that was never running is no subagent finishing.
+        reg.update_subagents("a", &ev("SubagentStop", Some("zzz")));
+        assert_eq!(finished(&reg), Some(1));
+        // The main Stop clears the set (y is not listed as running) and so does SessionEnd: neither counts.
+        reg.update_subagents("a", &ev("Stop", None));
+        assert_eq!(row(&reg, "a").live.map(|l| l.subagents), Some(0));
+        assert_eq!(finished(&reg), Some(1));
+        reg.update_subagents("a", &ev("SubagentStart", Some("w")));
+        reg.update_subagents("a", &ev("SessionEnd", None));
+        assert_eq!(finished(&reg), Some(1));
+        // A restart gives the row a fresh status, so the count starts again.
+        reg.update_subagents("a", &ev("SubagentStart", Some("v")));
+        reg.update_subagents("a", &ev("SubagentStop", Some("v")));
+        assert_eq!(finished(&reg), Some(2));
+        reg.begin_restart("a", SessionMode::Plan).unwrap();
+        assert_eq!(finished(&reg), None);
+        reg.update_subagents("a", &ev("SubagentStart", Some("u")));
+        assert_eq!(finished(&reg), Some(0));
     }
 
     fn working_on(phrase: &str) -> LiveStatus {

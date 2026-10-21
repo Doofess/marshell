@@ -209,6 +209,11 @@ pub struct LiveStatus {
     pub five_hour_resets_at: Option<u64>,
     pub seven_day_pct: Option<u8>,
     pub subagents: u32,
+    /// How many subagents have stopped since this status began (a new process starts it again at 0). The core
+    /// only: the notifier tells a finished subagent from the main turn's Stop clearing the set. Never sent.
+    #[serde(skip)]
+    #[ts(skip)]
+    pub subagents_finished: u32,
 }
 
 /// A row's output activity when its hooks say nothing.

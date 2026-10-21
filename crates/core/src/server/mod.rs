@@ -49,6 +49,9 @@ pub struct CoreConfig {
     /// The folder holding marshell-hook and marshell, next to the app's exe. None in tests: set up then never
     /// copies them.
     pub programs_dir: Option<PathBuf>,
+    /// Where the notifier hands what it decided (banners, sounds, flashes). None in tests that don't care:
+    /// then no notifier runs.
+    pub notify: Option<crate::notify::NotifySink>,
 }
 
 /// Shared server state. Cloning is cheap (one `Arc`).
@@ -323,6 +326,15 @@ impl AppState {
     pub(crate) fn previews(&self) -> &crate::diagnostics::export::Previews {
         &self.0.previews
     }
+    /// A copy of the notification settings, from memory: the notifier reads them every tick.
+    pub(crate) fn notify_settings(&self) -> marshell_protocol::api::NotifySettings {
+        self.0
+            .settings
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .notifications
+            .clone()
+    }
     /// A copy of the current settings.
     pub(crate) fn settings_snapshot(&self) -> Settings {
         self.0.settings.lock().unwrap_or_else(|e| e.into_inner()).clone()
@@ -498,6 +510,8 @@ pub struct RunningCore {
     endpoint_file: PathBuf,
     shutdown: tokio::sync::oneshot::Sender<()>,
     serve: tokio::task::JoinHandle<()>,
+    /// The notifier's task, when the config named a sink. Ended with the core.
+    notifier: Option<tokio::task::JoinHandle<()>>,
 }
 
 impl RunningCore {
@@ -526,6 +540,9 @@ impl RunningCore {
         // given just before closing is kept. It returns at once when nothing is pending.
         self.state.history().flush(Duration::from_secs(3));
         auth::remove_endpoint_file_if_ours(&self.endpoint_file, &self.endpoint.token);
+        if let Some(notifier) = &self.notifier {
+            notifier.abort();
+        }
         let _ = self.shutdown.send(());
     }
 
@@ -599,6 +616,7 @@ pub async fn start(cfg: CoreConfig) -> anyhow::Result<RunningCore> {
             tracing::error!("core server stopped: {e}");
         }
     });
+    let notifier = cfg.notify.map(|sink| crate::notify::spawn(state.clone(), sink));
     tracing::info!(app_version = env!("CARGO_PKG_VERSION"), port, "core started");
     Ok(RunningCore {
         endpoint,
@@ -606,6 +624,7 @@ pub async fn start(cfg: CoreConfig) -> anyhow::Result<RunningCore> {
         endpoint_file,
         shutdown: tx,
         serve,
+        notifier,
     })
 }
 

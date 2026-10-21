@@ -29,6 +29,8 @@ fn emit_core_event(app: &tauri::AppHandle, event: CoreEvent) {
     let name = match event {
         CoreEvent::Restarted { .. } => "core-restarted",
         CoreEvent::Failed => "core-failed",
+        // Showing it is for the app shell; nothing consumes it yet.
+        CoreEvent::Notify(_) => return,
     };
     let sent = app.emit(name, event);
     if let Err(e) = sent {
@@ -177,6 +179,7 @@ fn main() {
                 home,
                 allowed_origins: allowed_origins(),
                 programs_dir,
+                notify: None,
             };
             let handle = app.handle().clone();
             let supervisor =

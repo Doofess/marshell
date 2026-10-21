@@ -15,6 +15,7 @@ async fn core() -> (RunningCore, tempfile::TempDir) {
         home: home.path().to_path_buf(),
         allowed_origins: vec![],
         programs_dir: None,
+        notify: None,
     })
     .await
     .unwrap();
@@ -458,6 +459,7 @@ async fn websocket_from_foreign_origin_is_forbidden() {
         home: home.path().to_path_buf(),
         allowed_origins: vec!["http://tauri.localhost".into()],
         programs_dir: None,
+        notify: None,
     })
     .await
     .unwrap();
