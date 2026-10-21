@@ -128,6 +128,15 @@ async fn fold_live(st: &AppState, role: HookRole, tab: &str, body: &serde_json::
             } else {
                 st.registry().update_live(tab, |prev| fold_event(prev, body, at_ms));
                 st.registry().update_subagents(tab, body);
+                st.registry().follow_subagent_wait(tab, body);
+                if st.registry().awaits_subagents_end(tab) {
+                    let st = st.clone();
+                    let tab = tab.to_string();
+                    tokio::spawn(async move {
+                        tokio::time::sleep(st.subagent_wait()).await;
+                        st.registry().settle_subagent_wait(&tab);
+                    });
+                }
                 if let Some(mode) = mode_of(body) {
                     st.registry().set_live_mode(tab, mode);
                 }

@@ -330,6 +330,98 @@ async fn the_statusline_role_gives_the_context_percentage() {
     assert_eq!(live.model.as_deref(), Some("Opus 5.5"));
 }
 
+async fn finish_background_subagent(app: &axum::Router, st: &AppState, tab: &str) {
+    for body in [
+        serde_json::json!({ "hook_event_name": "SubagentStart", "agent_id": "a" }),
+        serde_json::json!({ "hook_event_name": "Stop", "background_tasks": [
+            { "id": "a", "type": "subagent", "status": "running" }
+        ] }),
+    ] {
+        assert_eq!(
+            status(
+                app,
+                hook(
+                    Some("event"),
+                    Some("claude"),
+                    Some(tab),
+                    serde_json::to_vec(&body).unwrap()
+                )
+            )
+            .await,
+            StatusCode::NO_CONTENT
+        );
+    }
+    let waiting = row(st, tab).live.unwrap();
+    assert_eq!(waiting.state, LiveState::Working);
+    assert_eq!(waiting.phrase, "Waiting for subagents");
+    assert_eq!(waiting.subagents, 1);
+    assert_eq!(
+        status(
+            app,
+            hook(
+                Some("event"),
+                Some("claude"),
+                Some(tab),
+                br#"{"hook_event_name":"PreToolUse","agent_id":"a","tool_name":"Glob"}"#.to_vec()
+            )
+        )
+        .await,
+        StatusCode::NO_CONTENT
+    );
+    let waiting = row(st, tab).live.unwrap();
+    assert_eq!(waiting.state, LiveState::Working);
+    assert_eq!(waiting.phrase, "Waiting for subagents");
+    assert_eq!(
+        status(
+            app,
+            hook(
+                Some("event"),
+                Some("claude"),
+                Some(tab),
+                br#"{"hook_event_name":"SubagentStop","agent_id":"a"}"#.to_vec()
+            )
+        )
+        .await,
+        StatusCode::NO_CONTENT
+    );
+    let waiting = row(st, tab).live.unwrap();
+    assert_eq!(waiting.state, LiveState::Working);
+    assert_eq!(waiting.phrase, "Waiting for subagents");
+    assert_eq!(waiting.subagents, 0);
+}
+
+#[tokio::test]
+async fn the_wait_falls_back_to_done_when_claude_does_not_resume() {
+    let st = state(Some(KNOWN)).with_subagent_wait(std::time::Duration::from_millis(200));
+    let app = router(st.clone());
+    let tab = start_claude(&app).await;
+    finish_background_subagent(&app, &st, &tab).await;
+
+    tokio::time::sleep(std::time::Duration::from_millis(400)).await;
+    let live = row(&st, &tab).live.unwrap();
+    stop(&st, &tab);
+    assert_eq!(live.state, LiveState::Done);
+    assert_eq!(live.phrase, "Done");
+}
+
+#[tokio::test]
+async fn a_resumed_turn_is_not_settled_by_the_wait() {
+    let st = state(Some(KNOWN)).with_subagent_wait(std::time::Duration::from_millis(200));
+    let app = router(st.clone());
+    let tab = start_claude(&app).await;
+    finish_background_subagent(&app, &st, &tab).await;
+    assert_eq!(
+        post_fixture(&app, "event", &tab, "UserPromptSubmit").await,
+        StatusCode::NO_CONTENT
+    );
+
+    tokio::time::sleep(std::time::Duration::from_millis(400)).await;
+    let live = row(&st, &tab).live.unwrap();
+    stop(&st, &tab);
+    assert_eq!(live.state, LiveState::Working);
+    assert_eq!(live.phrase, "Thinking");
+}
+
 #[tokio::test]
 async fn a_held_permission_request_shows_needs_permission() {
     let st = state(Some(KNOWN)).with_permission_hold(std::time::Duration::from_millis(300));

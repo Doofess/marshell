@@ -7,7 +7,8 @@ use std::sync::Mutex;
 
 use crate::pty::Mark;
 use marshell_protocol::api::{
-    Activity, CommandState, Foreground, LiveStatus, SavedTab, SessionInfo, SessionMode, SessionState, SessionsSnapshot,
+    Activity, CommandState, Foreground, LiveState, LiveStatus, SavedTab, SessionInfo, SessionMode, SessionState,
+    SessionsSnapshot,
 };
 use tokio::sync::watch;
 
@@ -42,9 +43,22 @@ pub struct Entry {
     pub generation: u64,
     /// The ids of the subagents the agent reports running. Not serialized; the row shows its size.
     running: std::collections::BTreeSet<String>,
+    /// The main turn has stopped while subagents still run. Not serialized.
+    waiting: bool,
 }
 
 impl Entry {
+    fn awaits_subagents_end(&self) -> bool {
+        self.info.state == SessionState::Running
+            && self.waiting
+            && self.running.is_empty()
+            && self
+                .info
+                .live
+                .as_ref()
+                .is_some_and(|live| live.state == LiveState::Working)
+    }
+
     /// Forgets what the old process reported: its live status, its output activity and the note
     /// that said why there was no status. A new process, or none, starts blank.
     fn clear_live(&mut self) {
@@ -52,6 +66,7 @@ impl Entry {
         self.info.activity = None;
         self.info.status_note = None;
         self.running.clear();
+        self.waiting = false;
     }
 }
 
@@ -151,6 +166,7 @@ impl Registry {
             spec: relaunch,
             generation,
             running: Default::default(),
+            waiting: false,
         });
         self.tx.send_replace(state.snapshot());
         number
@@ -189,6 +205,7 @@ impl Registry {
                 spec: relaunch_of(tab),
                 generation,
                 running: Default::default(),
+                waiting: false,
             });
         }
         self.tx.send_replace(state.snapshot());
@@ -487,6 +504,68 @@ impl Registry {
             live.subagents = count;
             self.tx.send_replace(state.snapshot());
         }
+    }
+
+    /// Follows the main turn's wait for subagents on an open Running Claude or plain-shell row.
+    /// Keeps Working rows showing the wait while leaving permission and question prompts visible.
+    /// Broadcasts only when the live status changes.
+    pub fn follow_subagent_wait(&self, tab_id: &str, body: &serde_json::Value) {
+        use crate::agents::claude::status::{WAITING_PHRASE, running_subagents};
+
+        let mut state = self.state.lock().unwrap();
+        if let Some(entry) = state.open.iter_mut().find(|e| e.info.tab_id == tab_id)
+            && entry.info.state == SessionState::Running
+            && matches!(entry.info.agent.as_deref(), None | Some("claude"))
+        {
+            if body.get("agent_id").is_none() {
+                match body.get("hook_event_name").and_then(serde_json::Value::as_str) {
+                    Some("Stop") => entry.waiting = running_subagents(body).next().is_some(),
+                    Some("UserPromptSubmit" | "SessionStart" | "SessionEnd" | "PreToolUse") => {
+                        entry.waiting = false;
+                    }
+                    _ => {}
+                }
+            }
+            if entry.waiting
+                && let Some(live) = entry.info.live.as_mut()
+                && live.state == LiveState::Working
+                && live.phrase != WAITING_PHRASE
+            {
+                live.phrase = WAITING_PHRASE.to_string();
+                self.tx.send_replace(state.snapshot());
+            }
+        }
+    }
+
+    /// Reports whether an open Running row is still waiting for subagents with none left in its
+    /// running set. Reads under the state lock and changes nothing.
+    pub fn awaits_subagents_end(&self, tab_id: &str) -> bool {
+        let state = self.state.lock().unwrap();
+        state
+            .open
+            .iter()
+            .any(|entry| entry.info.tab_id == tab_id && entry.awaits_subagents_end())
+    }
+
+    /// Ends the wait for subagents when none remain: sets Done and its time on an open Running
+    /// row still Working and waiting. Broadcasts once and returns true on a change;
+    /// otherwise changes nothing and returns false.
+    pub fn settle_subagent_wait(&self, tab_id: &str) -> bool {
+        let mut state = self.state.lock().unwrap();
+        if let Some(entry) = state.open.iter_mut().find(|e| e.info.tab_id == tab_id)
+            && entry.awaits_subagents_end()
+            && let Some(live) = entry.info.live.as_mut()
+        {
+            live.state = LiveState::Done;
+            live.phrase = "Done".to_string();
+            live.since_ms = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |d| d.as_millis() as u64);
+            entry.waiting = false;
+            self.tx.send_replace(state.snapshot());
+            return true;
+        }
+        false
     }
 
     /// Sets why a Claude Code row has no live status (a gated version, or the switch is off), or
@@ -1379,6 +1458,133 @@ mod tests {
         // A fold that has nothing to say leaves it.
         reg.update_live("a", |_| None);
         assert_eq!(row(&reg, "a").live, Some(live(LiveState::Done)));
+    }
+
+    fn fold_claude_event(reg: &Registry, body: serde_json::Value) {
+        reg.update_live("a", |prev| {
+            crate::agents::claude::status::fold_event(prev, &body, 1_000)
+        });
+        reg.update_subagents("a", &body);
+        reg.follow_subagent_wait("a", &body);
+    }
+
+    fn stop_with_running_subagent(reg: &Registry) {
+        fold_claude_event(
+            reg,
+            serde_json::json!({
+                "hook_event_name": "Stop", "background_tasks": [
+                    { "id": "x", "type": "subagent", "status": "running" }
+                ]
+            }),
+        );
+    }
+
+    #[test]
+    fn a_subagents_tool_events_keep_the_wait() {
+        use crate::agents::claude::status::WAITING_PHRASE;
+        let reg = Registry::new();
+        reg.reserve("a", relaunch("A"));
+        stop_with_running_subagent(&reg);
+        fold_claude_event(
+            &reg,
+            serde_json::json!({
+                "hook_event_name": "PreToolUse", "agent_id": "x", "tool_name": "Glob"
+            }),
+        );
+        let waiting = row(&reg, "a").live.unwrap();
+        assert_eq!(waiting.state, LiveState::Working);
+        assert_eq!(waiting.phrase, WAITING_PHRASE);
+
+        fold_claude_event(
+            &reg,
+            serde_json::json!({
+                "hook_event_name": "PermissionRequest", "agent_id": "x"
+            }),
+        );
+        assert_eq!(row(&reg, "a").live.unwrap().state, LiveState::NeedsPermission);
+        fold_claude_event(
+            &reg,
+            serde_json::json!({
+                "hook_event_name": "PostToolUse", "agent_id": "x"
+            }),
+        );
+        let waiting = row(&reg, "a").live.unwrap();
+        assert_eq!(waiting.state, LiveState::Working);
+        assert_eq!(waiting.phrase, WAITING_PHRASE);
+
+        fold_claude_event(
+            &reg,
+            serde_json::json!({
+                "hook_event_name": "SubagentStop", "agent_id": "x"
+            }),
+        );
+        assert!(reg.awaits_subagents_end("a"));
+        assert!(reg.settle_subagent_wait("a"));
+        assert_eq!(row(&reg, "a").live.unwrap().state, LiveState::Done);
+    }
+
+    #[test]
+    fn a_resumed_turn_ends_the_wait() {
+        let reg = Registry::new();
+        reg.reserve("a", relaunch("A"));
+        stop_with_running_subagent(&reg);
+        fold_claude_event(
+            &reg,
+            serde_json::json!({
+                "hook_event_name": "SubagentStop", "agent_id": "x"
+            }),
+        );
+        assert!(reg.awaits_subagents_end("a"));
+        fold_claude_event(&reg, serde_json::json!({ "hook_event_name": "UserPromptSubmit" }));
+        let thinking = row(&reg, "a").live.unwrap();
+        assert_eq!(thinking.state, LiveState::Working);
+        assert_eq!(thinking.phrase, "Thinking");
+        assert!(!reg.awaits_subagents_end("a"));
+        assert!(!reg.settle_subagent_wait("a"));
+    }
+
+    #[test]
+    fn settling_the_wait_turns_done_only_with_no_subagents_left() {
+        let reg = Registry::new();
+        reg.reserve("a", relaunch("A"));
+        stop_with_running_subagent(&reg);
+        let mut rx = reg.subscribe();
+        assert!(!reg.awaits_subagents_end("a"));
+        assert!(!reg.settle_subagent_wait("a"));
+        assert_eq!(row(&reg, "a").live.unwrap().state, LiveState::Working);
+        assert!(!rx.has_changed().unwrap());
+
+        fold_claude_event(
+            &reg,
+            serde_json::json!({ "hook_event_name": "SubagentStop", "agent_id": "x" }),
+        );
+        rx.borrow_and_update();
+        assert!(reg.awaits_subagents_end("a"));
+        assert!(!rx.has_changed().unwrap());
+        let before = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as u64;
+        assert!(reg.settle_subagent_wait("a"));
+        let done = row(&reg, "a").live.unwrap();
+        assert_eq!(done.state, LiveState::Done);
+        assert_eq!(done.phrase, "Done");
+        assert!(done.since_ms >= before);
+        assert!(rx.has_changed().unwrap());
+        rx.borrow_and_update();
+        assert!(!reg.awaits_subagents_end("a"));
+        assert!(!reg.settle_subagent_wait("a"));
+        assert_eq!(row(&reg, "a").live, Some(done));
+        assert!(!rx.has_changed().unwrap());
+
+        let mut thinking = live(LiveState::Working);
+        thinking.phrase = "Thinking".to_string();
+        reg.update_live("a", |_| Some(thinking.clone()));
+        rx.borrow_and_update();
+        assert!(!reg.awaits_subagents_end("a"));
+        assert!(!reg.settle_subagent_wait("a"));
+        assert_eq!(row(&reg, "a").live, Some(thinking));
+        assert!(!rx.has_changed().unwrap());
     }
 
     #[test]

@@ -3,6 +3,9 @@
 use marshell_protocol::api::{LiveState, LiveStatus, Recap, SessionMode};
 use serde_json::Value;
 
+/// The main turn has stopped while background subagents are still running.
+pub const WAITING_PHRASE: &str = "Waiting for subagents";
+
 /// A ring's colour band.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RingLevel {
@@ -73,20 +76,27 @@ pub fn fold_subagents(running: &mut std::collections::BTreeSet<String>, body: &V
     match body.get("hook_event_name").and_then(Value::as_str) {
         Some("SubagentStart") => id.is_some_and(|id| running.insert(id.to_string())),
         Some("SubagentStop") => id.is_some_and(|id| running.remove(id)),
-        Some("Stop") => {
-            let listed = body.get("background_tasks").and_then(Value::as_array);
-            let still = listed.into_iter().flatten().filter(|t| {
-                t.get("type").and_then(Value::as_str) == Some("subagent")
-                    && t.get("status").and_then(Value::as_str) == Some("running")
-            });
-            keep(
-                running,
-                still.filter_map(|t| t.get("id")?.as_str().map(String::from)).collect(),
-            )
-        }
+        Some("Stop") => keep(
+            running,
+            running_subagents(body)
+                .filter_map(|t| t.get("id")?.as_str().map(String::from))
+                .collect(),
+        ),
         Some("SessionEnd") => keep(running, Default::default()),
         _ => false,
     }
+}
+
+/// The background tasks the main turn reports as running subagents.
+pub(crate) fn running_subagents(body: &Value) -> impl Iterator<Item = &Value> {
+    body.get("background_tasks")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter(|t| {
+            t.get("type").and_then(Value::as_str) == Some("subagent")
+                && t.get("status").and_then(Value::as_str) == Some("running")
+        })
 }
 
 /// The first non-empty line, trimmed, cut at `max` characters with an ellipsis.
@@ -171,6 +181,8 @@ pub fn fold_event(prev: Option<&LiveStatus>, body: &Value, now_ms: u64) -> Optio
             // is still marked busy was interrupted, and Claude sends no Stop for that.
             Some("idle_prompt") => match next.state {
                 LiveState::Done | LiveState::Idle | LiveState::Ended => (next.state, next.phrase.clone()),
+                // The turn is over but its subagents still run.
+                LiveState::Working if next.phrase == WAITING_PHRASE => (next.state, next.phrase.clone()),
                 _ => (LiveState::Idle, String::new()),
             },
             Some("permission_prompt") => (LiveState::NeedsPermission, wants_phrase(&next.phrase)),
@@ -183,7 +195,11 @@ pub fn fold_event(prev: Option<&LiveStatus>, body: &Value, now_ms: u64) -> Optio
                     at_ms: now_ms,
                 });
             }
-            (LiveState::Done, "Done".to_string())
+            if running_subagents(body).next().is_some() {
+                (LiveState::Working, WAITING_PHRASE.to_string())
+            } else {
+                (LiveState::Done, "Done".to_string())
+            }
         }
         "SessionEnd" => (LiveState::Ended, "Ended".to_string()),
         _ => return None,
@@ -358,6 +374,18 @@ mod tests {
         assert_eq!(s.phrase, "Done");
         assert_eq!(s.since_ms, 1_000);
         assert_eq!(s, done);
+    }
+
+    #[test]
+    fn idle_prompt_keeps_a_wait_for_subagents() {
+        let mut waiting = blank(1_000);
+        waiting.state = LiveState::Working;
+        waiting.phrase = WAITING_PHRASE.to_string();
+        let idle = json!({"hook_event_name":"Notification","notification_type":"idle_prompt"});
+        let s = fold_event(Some(&waiting), &idle, 61_000).unwrap();
+        assert_eq!(s.state, LiveState::Working);
+        assert_eq!(s.phrase, WAITING_PHRASE);
+        assert_eq!(s, waiting);
     }
 
     #[test]
@@ -566,6 +594,38 @@ mod tests {
             )))
             .unwrap()
         };
+    }
+
+    #[test]
+    fn a_stop_with_running_background_subagents_keeps_working() {
+        let working = fold(None, &fixture!("UserPromptSubmit"));
+        let s = fold_event(Some(&working), &fixture_305!("Stop-background"), 7_000).unwrap();
+        assert_eq!(s.state, LiveState::Working);
+        assert_eq!(s.phrase, WAITING_PHRASE);
+        let recap = s.recap.expect("a recap while waiting");
+        assert!(
+            recap
+                .text
+                .starts_with("I've started both Explore agents at the same time.")
+        );
+        assert_eq!(recap.at_ms, 7_000);
+    }
+
+    #[test]
+    fn a_stop_without_running_subagents_is_done() {
+        let working = fold(None, &fixture!("UserPromptSubmit"));
+        for body in [
+            json!({ "hook_event_name": "Stop", "background_tasks": [] }),
+            json!({ "hook_event_name": "Stop", "background_tasks": [
+                { "type": "subagent", "status": "completed" },
+                { "type": "shell", "status": "running" },
+            ] }),
+            json!({ "hook_event_name": "Stop" }),
+        ] {
+            let s = fold(Some(&working), &body);
+            assert_eq!(s.state, LiveState::Done, "{body}");
+            assert_eq!(s.phrase, "Done", "{body}");
+        }
     }
 
     // Recorded on 2.1.305: Claude ran the agent in the background, so the main Stop came while it still ran.

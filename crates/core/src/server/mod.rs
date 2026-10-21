@@ -91,6 +91,8 @@ struct Inner {
     holds: crate::hooks::holds::Holds,
     /// How long the core holds a permission request before it lets the agent ask.
     permission_hold: Duration,
+    /// How long to wait for Claude to resume after its last background subagent stops.
+    subagent_wait: Duration,
     /// Previews and applies changes to the CLIs' config files.
     config: crate::config::service::ConfigService,
     /// The sessions index and the transcript archive.
@@ -114,6 +116,9 @@ struct Inner {
 
 /// How long a permission request is held when `MARSHELL_PERMISSION_HOLD_SECS` is not set.
 pub const DEFAULT_PERMISSION_HOLD: Duration = Duration::from_secs(120);
+
+/// How long to wait for Claude to resume after its last background subagent stops.
+pub const DEFAULT_SUBAGENT_WAIT: Duration = Duration::from_secs(30);
 
 impl AppState {
     pub fn new(token: String, port: u16, allowed_origins: Vec<String>, home: PathBuf, detected: Vec<Profile>) -> Self {
@@ -159,6 +164,7 @@ impl AppState {
             hook_log: crate::hooks::log::HookLog::default(),
             holds: crate::hooks::holds::Holds::default(),
             permission_hold: DEFAULT_PERMISSION_HOLD,
+            subagent_wait: DEFAULT_SUBAGENT_WAIT,
             config,
             history,
             claude_settings: None,
@@ -200,6 +206,16 @@ impl AppState {
     }
     pub fn permission_hold(&self) -> Duration {
         self.0.permission_hold
+    }
+    /// Sets how long to wait after the last subagent stops. Call it before the state is cloned.
+    pub fn with_subagent_wait(mut self, d: Duration) -> Self {
+        Arc::get_mut(&mut self.0)
+            .expect("with_subagent_wait runs before the state is shared")
+            .subagent_wait = d;
+        self
+    }
+    pub fn subagent_wait(&self) -> Duration {
+        self.0.subagent_wait
     }
     pub fn holds(&self) -> &crate::hooks::holds::Holds {
         &self.0.holds
