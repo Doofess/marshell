@@ -5,7 +5,7 @@ import { COMMANDS, shortcutLabel, type Os } from "../../lib/keymap";
 export type { Os };
 
 export type TraySession = { number: number; name: string; status: GlyphKind; phrase: string; agent: SessionKind };
-export type TrayState = { os: Os; sessions: TraySession[]; paused: boolean; doctorIssues: number };
+export type TrayState = { os: Os; sessions: TraySession[]; paused: boolean; doctorIssues: number | null; departures: boolean };
 export type TrayItem = { id: string; label: string; kind: "item" | "session" | "separator"; shortcut?: string; number?: number; disabled?: boolean };
 
 const WAITING = new Set<GlyphKind>(["needs-permission", "needs-question"]);
@@ -14,13 +14,16 @@ const sep = (n: number): TrayItem => ({ id: `sep-${n}`, label: "", kind: "separa
 
 /**
  * The tray menu: open the window, open Departures, who needs you (at most five, with their numbers, then how many more),
- * go to the oldest waiting, then pause, the doctor, settings, and quit last. Only sessions that wait on the user are listed.
+ * go to the oldest waiting, then pause, the doctor, Notifications, and quit last. Only sessions that wait on the user are listed.
+ * The live app has no Departures or Doctor to open yet: `departures: false` and `doctorIssues: null` leave them out, and the design stories show both.
  */
 export function trayItems(s: TrayState): TrayItem[] {
   const waiting = s.sessions.filter((x) => WAITING.has(x.status));
   const shown = waiting.slice(0, MAX_TRAY_SESSIONS);
   const next = COMMANDS.find((c) => c.id === "next-waiting")!;
-  const items: TrayItem[] = [{ id: "open", label: "Open Marshell", kind: "item" }, { id: "departures", label: "Open Departures", kind: "item" }, sep(1)];
+  const items: TrayItem[] = [{ id: "open", label: "Open Marshell", kind: "item" }];
+  if (s.departures) items.push({ id: "departures", label: "Open Departures", kind: "item" });
+  items.push(sep(1));
   if (waiting.length === 0) items.push({ id: "none", label: "Nothing needs you", kind: "item", disabled: true });
   for (const w of shown) items.push({ id: `session-${w.number}`, label: `${w.name}: ${w.phrase}`, kind: "session", number: w.number });
   if (waiting.length > shown.length) items.push({ id: "more", label: `${waiting.length - shown.length} more…`, kind: "item" });
@@ -28,11 +31,9 @@ export function trayItems(s: TrayState): TrayItem[] {
     { id: "next-waiting", label: "Go to the oldest waiting session", kind: "item", shortcut: shortcutLabel(next.binding!, s.os), disabled: waiting.length === 0 },
     sep(2),
     { id: "pause", label: s.paused ? "Resume notifications" : "Pause notifications", kind: "item" },
-    { id: "doctor", label: s.doctorIssues === 0 ? "Doctor: all clear" : `Doctor: ${s.doctorIssues} ${s.doctorIssues === 1 ? "issue" : "issues"}`, kind: "item" },
-    { id: "settings", label: "Settings…", kind: "item" },
-    sep(3),
-    { id: "quit", label: "Quit Marshell", kind: "item" },
   );
+  if (s.doctorIssues !== null) items.push({ id: "doctor", label: s.doctorIssues === 0 ? "Doctor: all clear" : `Doctor: ${s.doctorIssues} ${s.doctorIssues === 1 ? "issue" : "issues"}`, kind: "item" });
+  items.push({ id: "notifications", label: "Notifications…", kind: "item" }, sep(3), { id: "quit", label: "Quit Marshell", kind: "item" });
   return items;
 }
 

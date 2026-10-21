@@ -43,7 +43,11 @@ import type { HookInstall } from "../../generated/HookInstall";
 import { AppearanceDialog } from "../appearance/AppearanceDialog";
 import { useAppearance } from "../appearance/AppearanceProvider";
 import { listen } from "@tauri-apps/api/event";
+import { needsYouCount } from "../attention/attention";
 import { useAttention } from "../attention/useAttention";
+import { notify } from "../../lib/api/notify";
+import { traySessions, useTray, useTrayActions, type TrayAction } from "../tray/useTray";
+import { CloseDialog } from "../window/CloseDialog";
 import { NotificationsDialog } from "../notifications/NotificationsDialog";
 import { useViewReport } from "../notifications/useViewReport";
 import { terminalThemeOf, wtFont } from "../appearance/terminalSettings";
@@ -211,6 +215,8 @@ export function LiveApp() {
   const [notice, setNotice] = useState<Notice | null>(null);
   const noticeCount = useRef(0);
   const announce = useCallback((text: string, navigation?: boolean) => setNotice({ id: -++noticeCount.current, text, navigation }), []);
+  // The one-time close dialog, opened by the shell's close-choice (see below).
+  const [closeAsk, setCloseAsk] = useState<{ busy: boolean; error: string | null } | null>(null);
   // A prompt jump asked of one session's terminal; each token is one jump.
   const [promptJump, setPromptJump] = useState<{ token: number; by: -1 | 1; tabId: string } | null>(null);
   const jumpCount = useRef(0);
@@ -278,8 +284,9 @@ export function LiveApp() {
   const entries = useMemo(() => laneEntries(permissions, rows, Math.max(now, Date.now()), new Set(sendingRequests.values())), [permissions, rows, now, sendingRequests]);
   const cards = useCards(entries, announce);
   const requests = cards.requests;
-  const attentionEntries = useMemo(() => entries.map((e) => ({ id: e.id, tab: e.tab })), [entries]);
-  useAttention(attentionEntries);
+  // One count for the taskbar badge, the window title and the tray.
+  const needsYou = useMemo(() => needsYouCount(entries), [entries]);
+  useAttention(needsYou);
   const [drawerId, setDrawerId] = useState<string | undefined>(undefined);
   const drawerRequest = requests.find((r) => r.id === drawerId && r.state.phase === "pending");
   const actions = useMemo(() => new SessionActions({ api: sessions, context: () => context.current, select: (id) => pickRef.current(id), size: () => size.current, settings: sync ?? undefined }), []);
@@ -1012,7 +1019,7 @@ export function LiveApp() {
 
   useEffect(() => {
     // While the sheet is up it has the keys: Esc, Tab and the lists are its own.
-    if (!os || launcherOpen || overlay !== null || review !== null) return;
+    if (!os || launcherOpen || overlay !== null || review !== null || closeAsk !== null) return;
     const onKey = (e: KeyboardEvent) => {
       const shortcut = sessionShortcut(e, os);
       // Review is read above.
@@ -1030,13 +1037,14 @@ export function LiveApp() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [os, launcherOpen, overlay, review, actions, jumpPrompt, paneCommand]);
+  }, [os, launcherOpen, overlay, review, closeAsk, actions, jumpPrompt, paneCommand]);
 
   // A palette row: a session to go to, the profiles page, or a command the window runs (LivePalette lists only those).
   const runFromPalette = (id: string) => {
     setOverlay(id === "profiles" || id === "appearance" || id === "agents" || id === "notifications" || id === "diagnostics" ? id : id === "cheatsheet" ? "shortcuts" : null);
     if (id.startsWith("session:")) return pick(id.slice("session:".length));
     // Palette-only commands. The menu opens after the palette has given the focus back, so it keeps the focus it takes.
+    if (id === "pause-notifications") return void togglePause();
     if (id === "unsplit") return dispatch({ type: "remove", index: focusIdxRef.current });
     if (id === "layout") return void setTimeout(() => setLayoutMenu(true), 0);
     if (id === "group-by-project") return dispatch({ type: "toggleGrouped" });
@@ -1063,6 +1071,80 @@ export function LiveApp() {
     else if (shortcut?.kind === "prompt") jumpPrompt(shortcut.by);
     // After the palette has given focus back, so a rename box or the terminal keeps the focus it is given.
     else if (shortcut && shortcut.kind !== "palette") setTimeout(() => actions.handle(shortcut), 0);
+  };
+
+  // Pause notifications: the core owns the flag (it outlives a core restart, so a new endpoint reads it again). The tray, the palette and
+  // the Notifications dialog all go through this one toggle. The count is never paused.
+  const [paused, setPaused] = useState(false);
+  const pausedRef = useRef(paused);
+  pausedRef.current = paused;
+  useEffect(() => {
+    if (!endpoint) return;
+    let live = true;
+    notify.paused(endpoint).then(
+      (p) => live && setPaused(p),
+      () => {},
+    );
+    return () => {
+      live = false;
+    };
+  }, [endpoint]);
+  const togglePause = useCallback(async () => {
+    const ep = endpointRef.current;
+    if (!ep) return;
+    const next = !pausedRef.current;
+    try {
+      await notify.setPaused(ep, next);
+      setPaused(next);
+      announce(next ? "Notifications paused" : "Notifications resumed");
+    } catch {
+      announce("Couldn't change the pause. Try again.");
+    }
+  }, [announce]);
+  const trayState = useMemo(() => (os ? { os, sessions: traySessions(entries, rows), paused, doctorIssues: null, departures: false } : null), [os, entries, rows, paused]);
+  useTray(trayState);
+  // A tray menu choice. The shell has already brought the window forward for the ones that need it.
+  useTrayActions((action: TrayAction) => {
+    if (action.kind === "goto") actions.handle({ kind: "goto", number: action.number });
+    else if (action.kind === "nextWaiting") paneCommand({ kind: "nextWaiting" });
+    else if (action.kind === "overlay") setOverlay(action.overlay);
+    else void togglePause();
+  });
+  // The close button with no choice saved: the shell keeps the window open and asks for the one-time dialog.
+  const closeAskOpen = useRef(false);
+  useEffect(() => {
+    let gone = false;
+    let stop: (() => void) | undefined;
+    listen("close-choice", () => {
+      closeAskOpen.current = true;
+      setCloseAsk({ busy: false, error: null });
+    })
+      .then((s) => (gone ? s() : (stop = s)))
+      .catch(() => {}); // Outside Tauri (tests, a plain browser) there are no events.
+    return () => {
+      gone = true;
+      stop?.();
+    };
+  }, []);
+  const cancelCloseAsk = () => {
+    closeAskOpen.current = false;
+    setCloseAsk(null);
+  };
+  // Saves the choice, waits for it, and only then closes: the shell reads the saved choice on the close request.
+  const chooseClose = async (keepInTray: boolean) => {
+    if (!sync) return setCloseAsk({ busy: false, error: "Couldn't save that choice. Try again." });
+    setCloseAsk({ busy: true, error: null });
+    try {
+      await sync.setCloseToTray(keepInTray);
+    } catch {
+      if (closeAskOpen.current) setCloseAsk({ busy: false, error: "Couldn't save that choice. Try again." });
+      return;
+    }
+    // Escape while it saved: the choice stands, but the person asked not to close now.
+    if (!closeAskOpen.current) return;
+    closeAskOpen.current = false;
+    setCloseAsk(null);
+    void closeWindow();
   };
 
   const restartInfo = restarting === null ? undefined : infos.find((i) => i.tab_id === restarting.id);
@@ -1167,6 +1249,7 @@ export function LiveApp() {
     <div ref={ref} className="live-app">
       {endpoint && settled && loaded && (
         <MainWindow
+          needsYou={needsYou}
           width={width}
           height={height}
           layout={view.panes.length > 1 ? "split" : "default"}
@@ -1298,6 +1381,7 @@ export function LiveApp() {
       )}
       {overlay === "appearance" && <AppearanceDialog onClose={() => setOverlay(null)} onNotice={announce} />}
       {overlay === "shortcuts" && os && <LiveShortcuts os={os} onClose={() => setOverlay(null)} />}
+      {closeAsk && <CloseDialog busy={closeAsk.busy} error={closeAsk.error} onChoose={(keep) => void chooseClose(keep)} onCancel={cancelCloseAsk} />}
       {launcherOpen && (
         <LiveLauncher
           endpoint={endpoint}

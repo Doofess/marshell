@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { PermissionView } from "../../generated/PermissionView";
+import { needsYouCount } from "../attention/attention";
 import type { RowModel } from "../sidebar/types";
 import { decisionFor, laneEntries, toDetail, toRequest } from "./fromCore";
 
@@ -62,6 +63,17 @@ describe("laneEntries", () => {
     const e = laneEntries([view()], [row({ status: "needs-permission" })], NOW);
     expect(e).toHaveLength(1);
     expect(e[0]!.terminalOnly).toBeUndefined();
+  });
+  it("an_expired_hold_still_counts_while_the_row_waits", () => {
+    // The hold ran out: no view is left, but the row still reads needs-permission, so the tab keeps its entry and the count.
+    const e = laneEntries([], [row({ status: "needs-permission", phrase: "Wants to run `npm test`", waitingMs: 130_000 })], NOW);
+    expect(e).toHaveLength(1);
+    expect(e[0]).toMatchObject({ tab: "tab-a", terminalOnly: true });
+    expect(needsYouCount(e)).toBe(1);
+  });
+  it("a_muted_row_still_counts", () => {
+    const e = laneEntries([], [row({ status: "needs-question", phrase: "Pick a region", muted: true })], NOW);
+    expect(needsYouCount(e)).toBe(1);
   });
   it("ignores rows that are not waiting", () => {
     expect(laneEntries([], [row({ status: "working" }), row({ id: "b", status: "idle" })], NOW)).toEqual([]);

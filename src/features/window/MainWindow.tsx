@@ -118,6 +118,8 @@ export type MainWindowProps = {
   ports?: string[];
   /** What the sidebar footer shows; defaults to the scenario's plan and doctor numbers. `null` leaves the footer out (the live app has none to show yet). */
   footer?: SidebarFooter | null;
+  /** The needs-you count the window title leads with. The live app passes the one count it also gives the taskbar badge. */
+  needsYou?: number;
   /** The 24 px status bar at the foot of the window (the focused session's strip); on by default, never in focus mode. */
   statusBar?: boolean;
   /**
@@ -240,6 +242,7 @@ export function MainWindow({
   renderTerminal,
   ports = SCENARIO_PORTS,
   footer = SCENARIO_FOOTER,
+  needsYou = 0,
   headerBar,
   paneBar,
   onModeMenu,
@@ -319,7 +322,7 @@ export function MainWindow({
   const menuCount = (split && !empty ? (zoomIdx !== undefined ? 1 : paneCount) : 1) as PaneCount;
   const hiddenCount = split ? requested - shown.length : 0;
   // The OS title bar and the taskbar name the focused session, like any window named for its document.
-  const title = windowTitle(active);
+  const title = windowTitle(active, needsYou);
   useEffect(() => {
     if (typeof document !== "undefined") document.title = title;
     // Tauri does not pass document.title on to the window, so the title bar and the taskbar are told as well (a no-op outside the app).

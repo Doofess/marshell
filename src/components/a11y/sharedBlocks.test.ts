@@ -35,6 +35,7 @@ const ALLOWED: Record<string, { reason: string; migrate?: true }> = {
   "components/a11y/Announcer.tsx": { reason: "THE live region of the app" },
   "features/launcher/Launcher.tsx": { reason: "'No folder matches' while typing, and the task confirm's single progress line ('Creating the worktree…', then 'Starting <program>…'), in a modal sheet that owns focus; the window's announcer is quiet while it is open" },
   "features/onboarding/ConsentCard.tsx": { reason: "the error from an Allow press (the file could not be written) appears beside the button that has focus and is not announced anywhere else; it exists only after a failed attempt" },
+  "features/window/CloseDialog.tsx": { reason: "the one-time close dialog's save failure alert, in a modal sheet that owns focus; it exists only after a failed save and the window's announcer is quiet while it is open" },
   "features/notifications/NotificationsDialog.tsx": { reason: "the dialog's read and save failure alert, in a modal sheet that owns focus; it exists only after a failed request and the window's announcer is quiet while it is open" },
   "features/agents/AgentsDialog.tsx": { reason: "the dialog's read and refusal alerts, in a modal sheet that owns focus; they exist only after a failed request and the window's announcer is quiet while it is open" },
   "features/diagnostics/DiagnosticsDialog.tsx": { reason: "the dialog's preparing status and read and refusal alerts, in a modal sheet that owns focus; they exist only after a request and the window's announcer is quiet while it is open" },

@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { badgeFor, MAX_TRAY_SESSIONS, trayItems, trayTooltip, type TrayState } from "./trayItems";
 
 const wait = (n: number, name: string, status: "needs-permission" | "needs-question" = "needs-permission") => ({ number: n, name, status, phrase: status === "needs-permission" ? "Wants to run `npm test`" : "Has a question", agent: "claude" as const });
-const state: TrayState = { os: "windows", sessions: [wait(3, "api-server"), wait(2, "infra", "needs-question")], paused: false, doctorIssues: 4 };
+const state: TrayState = { os: "windows", sessions: [wait(3, "api-server"), wait(2, "infra", "needs-question")], paused: false, doctorIssues: 4, departures: true };
 const ids = (s: TrayState) => trayItems(s).map((i) => i.id);
 
 describe("trayItems", () => {
@@ -36,6 +36,16 @@ describe("trayItems", () => {
   it("offers Open Departures right after Open Marshell, named for the board", () => {
     const items = trayItems(state);
     expect(items[1]).toMatchObject({ id: "departures", label: "Open Departures", kind: "item" });
+  });
+  it("leaves out Departures and the Doctor in the live app, which has neither to open", () => {
+    const live = { ...state, doctorIssues: null, departures: false };
+    expect(ids({ ...live, sessions: [] })).toEqual(["open", "sep-1", "none", "next-waiting", "sep-2", "pause", "notifications", "sep-3", "quit"]);
+    expect(ids(live)).toEqual(["open", "sep-1", "session-3", "session-2", "next-waiting", "sep-2", "pause", "notifications", "sep-3", "quit"]);
+  });
+  it("opens Notifications where Settings used to be, and the design state still lists Departures and the Doctor", () => {
+    expect(trayItems(state).find((i) => i.id === "notifications")).toMatchObject({ label: "Notifications…", kind: "item" });
+    expect(ids(state)).not.toContain("settings");
+    expect(ids(state)).toEqual(expect.arrayContaining(["departures", "doctor"]));
   });
   it("never lists a session that is not waiting", () => {
     const s = { ...state, sessions: [{ ...wait(1, "busy"), status: "working" as const }] };

@@ -1,15 +1,14 @@
 import { useEffect, useRef } from "react";
-import { badgeCount, setBadge } from "./attention";
+import { setBadge } from "./attention";
 
-/** Keeps the taskbar count in step with the entries. Banners and sounds are the core's job, not the window's. */
-export function useAttention(entries: { id: string; tab: string }[]): void {
+/** Keeps the taskbar count in step with the needs-you count. Banners and sounds are the core's job, not the window's. */
+export function useAttention(needsYou: number): void {
   const count = useRef<number | null>(null);
 
   useEffect(() => {
-    const next = badgeCount(entries);
-    if (next !== count.current) {
-      count.current = next;
-      void setBadge(next);
+    if (needsYou !== count.current) {
+      count.current = needsYou;
+      void setBadge(needsYou);
     }
-  }, [entries]);
+  }, [needsYou]);
 }
