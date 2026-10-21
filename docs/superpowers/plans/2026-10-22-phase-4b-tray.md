@@ -49,7 +49,7 @@ On a close request, the shell reads the saved choice from `settings.json` and th
 
 ## Execution
 
-Tasks 1, 2, 3 and 4 go to Codex CLI (`codex exec`). Each task gets its own worktree under `C:/dev/codex-wt/`, branched from `phase-4b`. When Codex is out of quota, the task goes to a `worker` instead, at high effort for Tasks 1 and 2 (the local API; Win32 and threading). The main thread reads each diff, runs the tests and cherry-picks. Task 1 runs first, Tasks 2 and 3 together after it, and Task 4 once Tasks 1 to 3 are in. Task 5 is docs, done inline. Task 6 is the live check in the main thread.
+Tasks 1, 2, 3 and 4 go to Codex CLI (`codex exec`). Each task gets its own worktree under `C:/dev/codex-wt/`, branched from `phase-4b`. When Codex is out of quota, the task goes to a `worker` instead, at high effort for Tasks 1 and 2 (the local API; Win32 and threading). The main thread reads each diff, runs the tests and cherry-picks. They run in order, 1 → 2 → 3 → 4, because each consumes the one before it, and 2 and 3 both edit `main.rs`. Before Task 2, the main thread turns on the `tray-icon` feature and builds once, so Codex's sandbox finds the crates already fetched. Task 5 is docs, done inline. Task 6 is the live check in the main thread.
 
 ## Review Focus
 
@@ -57,7 +57,8 @@ Tasks 1, 2, 3 and 4 go to Codex CLI (`codex exec`). Each task gets its own workt
 2. **Hostile text in a menu label.** A session name or phrase with `&`, a tab, a newline or 300 characters must stay one plain line. `&` is doubled so it is not read as a mnemonic, control characters become spaces, and the label is cut to 64 characters with "…". Task 2 has `menu_label` tests for each.
 3. **Closing before the webview can answer.** With nothing saved and the webview not listening, the window stays open and visible: nothing hides it out of reach. Quit in the tray always works. Task 3 tests `close_action`, and Task 6 checks it live.
 4. **Pause across a core restart.** The flag lives in the supervisor and is handed to each new core, so a restart keeps it. A wait that started while paused never gets its banner after Resume. Task 1 has a supervisor test and a notifier test.
-5. **An expired hold.** When a 120 s hold runs out and the row still reads needs-permission, the count stays the same. Task 4 has a `laneEntries` test, and Task 6 checks it live with the sessions snapshot recorded, because the 4a live check saw the count drop.
+5. **A hidden window keeps no tabs in view.** After the window hides, the tab that was on screen is out of sight: its Done banner comes after 30 s and its reminder still fires, even if the hidden webview reports its old view again. Task 1 has a core test (`a_hidden_window_has_no_tab_in_view`) and Task 6 checks it live.
+6. **An expired hold.** When a 120 s hold runs out and the row still reads needs-permission, the count stays the same. Task 4 has a `laneEntries` test, and Task 6 checks it live with the sessions snapshot recorded, because the 4a live check saw the count drop.
 
 ---
 
@@ -76,6 +77,7 @@ Tasks 1, 2, 3 and 4 go to Codex CLI (`codex exec`). Each task gets its own workt
   - `GET /v1/notify/paused` → `{"paused": bool}`.
   - `PUT /v1/notify/paused` with `{"paused": bool}` → 204. Both sit behind the existing token and origin guard.
   - The supervisor creates one flag and passes a clone to every core it starts.
+  - `AppState::set_window_hidden(&self, hidden: bool)` and `Supervisor::set_window_hidden(&self, hidden: bool)`. While hidden, the notifier hands the engine an effective view with `window_focused: false` and no visible tabs, whatever `PUT /v1/ui/view` last said. The flag lives in the supervisor too, so a restarted core starts with it.
 
 - [ ] **Step 1: Write the failing tests.**
   - `a_settings_file_without_close_to_tray_reads_none`.
@@ -83,6 +85,7 @@ Tasks 1, 2, 3 and 4 go to Codex CLI (`codex exec`). Each task gets its own workt
   - In `server.rs`: `paused_starts_false_and_round_trips`; `paused_routes_need_the_token` (401 without the token, on both routes); `a_paused_body_that_is_not_a_bool_is_rejected` (400 or 422, whichever the router's JSON rejection already gives).
   - In the notifier: `nothing_is_delivered_while_paused_and_nothing_replays_after_resume`. A wait starts while paused, gets no request, and after Resume the next tick delivers no needs-you banner for it. Drive `spawn` with a test sink, or factor the loop body into a function you can call.
   - In the supervisor: `the_paused_flag_survives_a_core_restart`.
+  - In the notifier: `a_hidden_window_has_no_tab_in_view`. The view says focused with tab t1 visible, then the window hides and the view is reported again unchanged; a main Stop on t1 still gives a Done request once 30 s out of sight have passed. After `set_window_hidden(false)`, the reported view counts again.
 - [ ] **Step 2:** Run `cargo test -p marshell-core` and see those tests fail (compile errors count).
 - [ ] **Step 3:** Implement the changes.
   - In the notifier loop, keep calling `observe` and `tick` every turn so the engine's state advances, and drop the requests while paused. A one-minute reminder armed during the pause can still fire after Resume for a wait that is still open, which is fine.
@@ -101,7 +104,7 @@ Tasks 1, 2, 3 and 4 go to Codex CLI (`codex exec`). Each task gets its own workt
 - Consumes: the webview's `TrayItem` shape: `{ id: string; label: string; kind: "item" | "session" | "separator"; shortcut?: string; number?: number; disabled?: boolean }`.
 - Produces:
   - The `#[tauri::command] set_tray(app, model: TrayModel) -> Result<(), String>`, where `TrayModel { items: Vec<TrayItemDto>, tooltip: String, waiting: u32 }`, deserialized from camelCase JSON.
-  - `pub fn show_main(app: &tauri::AppHandle)`, which unminimizes, shows and focuses the window.
+  - `pub fn show_main(app: &tauri::AppHandle)`, which unminimizes, shows and focuses the window, and calls `Supervisor::set_window_hidden(false)` through the managed `CoreHandle` when there is one.
   - `pub fn build(app: &tauri::AppHandle) -> tauri::Result<()>`, which creates the tray with id `"main"`, tooltip "Marshell", the "Open Marshell" and "Quit Marshell" items, and the icon for 0.
   - `pub fn tray_ready(app) -> bool`, true once `build` succeeded (Task 3 uses it).
   - `pub fn menu_label(item: &TrayItemDto) -> String`.
@@ -145,8 +148,8 @@ Tasks 1, 2, 3 and 4 go to Codex CLI (`codex exec`). Each task gets its own workt
 - [ ] **Step 2:** Run `cargo test -p marshell-app` and see them fail.
 - [ ] **Step 3:** Implement.
   - In `on_window_event`, on `CloseRequested { api, .. }` for the window labelled `"main"`, match `close_action`:
-    - Quit: let it close; the app exits as it does today.
-    - Hide: `api.prevent_close()`, then `window.hide()`.
+    - Quit: `api.prevent_close()`, then `app.exit(0)` explicitly, so a live tray icon can't keep the process alive.
+    - Hide: `api.prevent_close()`, then `Supervisor::set_window_hidden(true)`, then `window.hide()`.
     - Ask: `api.prevent_close()`, then `show_main`, then emit `close-choice`.
   - Remove `VISIBLE` from `window_state_flags`.
 - [ ] **Step 4:** Run `cargo test -p marshell-app && cargo clippy --workspace --all-targets -- -D warnings`. Expected: pass and clean.
@@ -191,7 +194,7 @@ Tasks 1, 2, 3 and 4 go to Codex CLI (`codex exec`). Each task gets its own workt
   - `useTray`, through its pure helper `trayModel(state): { items, tooltip, waiting }`:
     - waiting equals the number of sessions and not just the five shown, so 8 waiting gives `waiting: 8`;
     - the tooltip carries "(notifications paused)" while paused.
-  - The `tray-action` handler, through a pure `actionFor(id)`: `session-7` → `{ kind: "goto", number: 7 }`; `next-waiting` and `more` → `{ kind: "nextWaiting" }`; `notifications` → `{ kind: "overlay", overlay: "notifications" }`; `pause` → `{ kind: "togglePause" }`; anything else → `null`.
+  - The `tray-action` handler, through a pure `actionFor(id)`. The tray's `pause` toggles notifications, never the palette's Pause session: `session-7` → `{ kind: "goto", number: 7 }`; `next-waiting` and `more` → `{ kind: "nextWaiting" }`; `notifications` → `{ kind: "overlay", overlay: "notifications" }`; `pause` → `{ kind: "togglePause" }`; anything else → `null`.
   - `CloseDialog` (`renderToStaticMarkup`): it is `role="dialog"` with an accessible name, has the exact copy and both buttons, and "Keep running in the tray" comes first and is marked as the default (autofocus).
   - The Notifications dialog: a "Close button" group with a checkbox "Keep Marshell running in the tray when I close the window". It is checked unless `close_to_tray` is `false`.
 - [ ] **Step 2:** Run `pnpm test <those folders>` and see them fail.
@@ -213,9 +216,10 @@ Tasks 1, 2, 3 and 4 go to Codex CLI (`codex exec`). Each task gets its own workt
 
 Run it on a `pnpm tauri dev` build of the branch with a scratch `MARSHELL_HOME` and CDP on port 9333, using plain cmd sessions and hook bodies posted to `/v1/hook` as in 4a. Write the findings to `docs/research/2026-10-22-tray-live-check.md`.
 - [ ] **Step 1: The count.** Two sessions need you. Check the title "(2) … — Marshell", the badge 2, the tooltip "Marshell · 2 need you" and the menu listing both. Then let a hold expire after 120 s, record `GET /v1/sessions` and the permissions, and check that the count holds.
-- [ ] **Step 2: The first close.** With nothing saved, the dialog appears. Escape keeps the window open. Keep running hides it, sessions keep running, and a banner still arrives. A left click on the tray brings the window back.
+- [ ] **Step 2: The first close.** With nothing saved, the dialog appears. Escape keeps the window open. Keep running hides it, sessions keep running, and a banner still arrives. A Done on the tab that was on screen gets its banner after 30 s. A left click on the tray brings the window back.
+- [ ] **Step 2b: A hidden webview keeps the tray current.** Hide the window and wait more than 5 minutes. Start a new wait and time how long the tooltip and menu take to show it. If they lag by more than a few seconds, stop and rethink who drives the tray before going on.
 - [ ] **Step 3: The menu.** A session item selects that session, Go to oldest works, Pause stops the banner and the sound for a new wait while the count still rises, Resume restores them, and Notifications… opens the dialog.
-- [ ] **Step 4: Quit and restart.** Quit from the tray while hidden; the next start shows the window. The Notifications checkbox switched off makes the close button quit.
+- [ ] **Step 4: Quit and restart.** Quit from the tray while hidden; the process is gone and the sessions have ended, and the next start shows the window. The Notifications checkbox switched off makes the close button quit, and the process ends.
 - [ ] **Step 5: The look and the keyboard.** Check the icon on a dark and a light taskbar (screenshot only to judge the icon, never shared). Win+B and the arrow keys reach the menu. The close dialog works in forced colors.
 - [ ] **Step 6:** Commit: `docs(research): record the tray live check`.
 
