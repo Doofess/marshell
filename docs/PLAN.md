@@ -1016,7 +1016,7 @@ Decisions from the 2026-10-10 coverage audit (`docs/superpowers/plan-coverage-au
    - **Slice 4a decisions (2026-10-21).**
      1. 4a's banners offer Open, or Review for a risky request, and nothing else. Allow and Deny on a banner (batch 3 design decisions) come in their own small slice after 4a, gated by an Opus security review against ADR 0001 as slice 3d was. A `marshell://` link only ever focuses a session and never answers a request.
      2. A main `Stop` is held for 1.5 s before it counts as Done: the row stays Working, and a `UserPromptSubmit` or `PreToolUse` in that time cancels it (phase 3 exit check finding 4). Only a settled Done draws the check and reaches the sound and banner rules.
-     3. Quiet hours are off by default and prefilled 22:00–08:00 when turned on. They silence Marshell's sounds and the taskbar flash only: banners still arrive (silent, as always) and the badge count stays. Windows do-not-disturb silences Marshell's sounds the same way.
+     3. Quiet hours are off by default and prefilled 22:00–08:00 when turned on. They silence Marshell's sounds and the taskbar flash only: banners still arrive (silent, as always) and the badge count stays. Windows do-not-disturb silences Marshell's sounds the same way, as far as `SHQueryUserNotificationState` reports it (checked in spike S3; a known limit if it doesn't).
    - Exit: every rule in brief §5.5 is verified on Windows 11 (phase 4 decision 4). Every sound has a visual equivalent.
 5. **History view and conversations.**
    - Conversations (added 2026-10-16; evidence in `docs/research/2026-10-16-accounts-cloud-extensions.md`): the history view also lists and manages every CLI's locally saved conversations (Claude Code, Codex CLI, others), not only sessions Marshell ran.

@@ -24,6 +24,10 @@
 - `cargo fmt --all` before every Rust commit; `pnpm check:generated` after a protocol change. Tests and live checks never touch the real `~/.marshell` or `~/.claude`.
 - Commit messages `type(scope): what changed, as a sentence`, ending `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`.
 
+## Execution
+
+Tasks 2, 3, 4, 5 and 7 go to Codex CLI (`codex exec`, one worktree per task under `C:/dev/codex-wt/`, branched from `phase-4a`), or to a `worker` when Codex is out of quota; Tasks 3 and 5 (timers, concurrency) run at high effort. The main thread reviews each diff, runs the tests and cherry-picks. Tasks 1, 6 and 9 need the live app and run in the main thread; Task 8 is inline.
+
 ## Review Focus
 
 1. A needs-you that is answered within the batching window or before the escalation: no trailing batch banner and no escalation for it (the engine re-checks the tab's current state at flush and escalation time).
@@ -43,7 +47,8 @@
 
 - [ ] **Step 1:** Add `tauri-plugin-notification` (latest 2.x; check licence MIT/Apache, active upstream). Register it, add `on_action` that logs the action id and, for a tap, unminimizes, shows and focuses the `main` window. Add a temporary debug-only command `debug_banner` that sends one banner with no sound and an `Open` action, tagged with a test tab id.
 - [ ] **Step 2:** Live check under `pnpm tauri dev` (scratch `MARSHELL_HOME`, CDP per CLAUDE.md): fire it with the window minimised and behind another window; record whether the toast shows, whether it is silent, what app name it carries (expect PowerShell or similar without an AUMID), and whether a click on the body and on Open reaches `on_action` and focuses the window.
-- [ ] **Step 3:** Repeat on an installed build (`pnpm tauri build`, install the NSIS per-user package, run with a scratch `MARSHELL_HOME`), where the AUMID comes from the Start-menu shortcut. Also check a click after the toast moved to the Action Center.
+- [ ] **Step 3:** Repeat on an installed build (`pnpm tauri build`, install the NSIS per-user package, run with a scratch `MARSHELL_HOME`), where the AUMID comes from the Start-menu shortcut. Also check a click after the toast moved to the Action Center. The dev and installed builds share the identifier and single-instance, so never run both at once. The install goes on the user's own machine (told in the plan handoff); uninstall it after the spike and check that its Start-menu entry is gone.
+- [ ] **Step 3b:** Turn on Windows 11 do-not-disturb and call `SHQueryUserNotificationState`; record the value it returns. If it still says `QUNS_ACCEPTS_NOTIFICATIONS`, the do-not-disturb rule becomes a known limit in §9, and Task 7 leaves out the dialog line that promises it.
 - [ ] **Step 4:** If the click never reaches the app in the installed build, replace the plugin with `tauri-winrt-notification` (toast with an activation callback) and repeat Step 3. If neither works, the fallback is the `marshell://focus/<tab>` link plus single-instance, and that goes back to the user before Task 6.
 - [ ] **Step 5:** Write `docs/spikes/S3-notification-click.md` (pass/fail per PLAN's S3 criterion, the crate chosen, dev vs installed, Action Center, the AUMID note). Remove `debug_banner`. Commit: `spike(notify): check banner click-to-focus on Windows and pick the banner crate`.
 
@@ -132,7 +137,9 @@
 
 The rules the engine owns (each one a test in `engine.rs`):
 - **Seeding.** The first `observe` only records states, so a core restart replays nothing (Review Focus 3).
-- **Events** come from transitions between snapshots: into `NeedsPermission`/`NeedsQuestion` from any other state → needs-you; into `Done` → done; into `Error` → error; `live.subagents` going down → one subagent-done per drop. `Ended`, `Idle` and `Working` make no event. A muted tab, or a category whose banner and sound are both off, makes none.
+- **Events** come from differences between snapshots. The registry is a `watch` channel, so snapshots coalesce, and a state comparison alone would miss a second wait. Each wait therefore has an identity: a permission wait is the tab's open hold `rid` (`holds().views()`); a question, Done or Error is `live.since_ms`. A new identity in `NeedsPermission`/`NeedsQuestion` → needs-you (so two requests on one tab inside one interval, and permission → question, are two events); a new Done → done; a new Error → error. `Ended`, `Idle` and `Working` make no event. A muted tab, or a category whose banner and sound are both off, makes none.
+- **Subagent done** is a drop in `live.subagents` only while the tab stays Working on the same process (the same `SessionInfo` generation, or whatever field marks a restart); one event per drop. The count also clears at the main `Stop`, at `SessionEnd` and on a restart (slice 3g), and those clears make no event (one test for each).
+- **Error has no producer yet**: nothing in the core sets `LiveState::Error` today (no Claude hook in `fold_event` maps to it). The category is built and tested in the engine, so it fires once an adapter sets Error; the live check skips it, and the PR's Known limits say so.
 - **Focus.** `window_focused` → nothing at all (no banner, no sound, no flash). A tab is "in the background since T" from the moment it stopped being (window focused and the tab in `visible_tabs`); with no view ever reported, everything is in the background since the engine started (Review Focus 5).
 - **Done** banner only when the tab has been in the background for more than 30 s; the done sound follows the same rule.
 - **Batching**, per category (needs-you, done, error): the first event goes out at once. Further events of that category within the next 3 s are collected; at the end of the window, those whose tab is still in that state go out as one batch banner listing every collected session, the first one included. If none are left, nothing goes out (Review Focus 1). Sounds in a batch follow the 3 s per-category limit.
@@ -150,7 +157,7 @@ Copy (`copy.rs`, ported from `banner.ts`; each line is a test):
 
 - [ ] **Step 1: Write the failing tests:** one per rule above in `engine.rs`, driving `Instant`s by hand (no sleeping); the copy lines in `copy.rs`; a quiet-hours table test (22:00–08:00 at 21:59/22:00/03:00/07:59/08:00; 09:00–17:00; 10:00–10:00 → off).
 - [ ] **Step 2:** `cargo test -p marshell-core notify` fails to compile.
-- [ ] **Step 3:** Implement the engine and copy. Then the driver: `notify::spawn(state: AppState, sink: NotifySink)` started from `server::start` when `cfg.notify` is `Some`. It `select!`s on registry changes, view changes and a 250 ms interval; it reads settings fresh per tick (the settings store is the source), computes `risky_tabs` from `holds().views()`, and calls the sink for each request. `Supervisor::start` sets `cfg.notify` to a sink that calls `on_event(CoreEvent::Notify(req))`, and keeps it on restarts.
+- [ ] **Step 3:** Implement the engine and copy. Then the driver: `notify::spawn(state: AppState, sink: NotifySink)` started from `server::start` when `cfg.notify` is `Some`. It `select!`s on registry changes, view changes and a 250 ms interval; it reads settings per tick from the in-memory settings the core already holds, never from disk, computes `risky_tabs` from `holds().views()`, and calls the sink for each request. `Supervisor::start` sets `cfg.notify` to a sink that calls `on_event(CoreEvent::Notify(req))`, and keeps it on restarts.
 - [ ] **Step 4:** Driver test in `tests/notify.rs`: start a core with a sink that collects requests, put a view with `window_focused: false`, drive a fake tab into NeedsPermission through `POST /v1/hook` (as the 3d tests do) → one request within 500 ms with a banner titled `"<name> needs you"`, `sound: Some(NeedsYou)`, `flash: true`; `PUT /v1/ui/view` with `window_focused: true`, and a second tab needing you → no request. Then `cargo test -p marshell-core` and `cargo clippy --workspace --all-targets -- -D warnings`.
 - [ ] **Step 5:** Commit: `feat(notify): decide banners, sounds and flashes in the core`.
 
@@ -165,7 +172,7 @@ Copy (`copy.rs`, ported from `banner.ts`; each line is a test):
 - Consumes: `CoreEvent::Notify(NotifyRequest)` (Task 5); the banner crate from Task 1.
 - Produces: the Tauri event `"focus-session"` with payload `{ "tab_id": string | null }`; in TS, `CoreEvent` gains `{ kind: "focus-session"; tabId: string | null }`.
 
-- [ ] **Step 1:** Tests for `fn sound_alias(kind: SoundKind) -> &'static str`: NeedsYou `"Notification.Default"`, Escalation `"Notification.Reminder"`, Done `"Notification.IM"`, SubagentDone `"Notification.SMS"`, Error `"SystemHand"`. And `fn quiet_for_os(state: i32) -> bool`: true for every `QUERY_USER_NOTIFICATION_STATE` except `QUNS_ACCEPTS_NOTIFICATIONS` (5) and `QUNS_APP` (7).
+- [ ] **Step 1:** Tests for `fn sound_alias(kind: SoundKind) -> &'static str`: NeedsYou `"Notification.Default"`, Escalation `"Notification.Reminder"`, Done `"Notification.Mail"`, SubagentDone `"Notification.IM"`, Error `"SystemHand"`. In the default Windows 11 scheme these are five different files (checked on the dev machine 2026-10-21: Generic, Calendar, Email, Messaging, Foreground; `Notification.SMS` shares Messaging with IM, so it is not used). And `fn quiet_for_os(state: i32) -> bool`: true for every `QUERY_USER_NOTIFICATION_STATE` except `QUNS_ACCEPTS_NOTIFICATIONS` (5) and `QUNS_APP` (7). And a banner escaping test: a phrase containing `<`, `&`, `"` and `</text><action activationType="protocol" arguments="https://example.com"/>` reaches the toast as text. Check the toast XML the crate builds, or escape before handing it over if the crate does not, so no action or link can be injected.
 - [ ] **Step 2:** Implement `emit_core_event` for `Notify`: banner through the chosen crate (silent, tagged by category so a batch replaces its first banner where the crate allows); sound through `PlaySoundW` with the alias unless `SHQueryUserNotificationState` says quiet; flash through `request_user_attention(Informational)` with the same quiet check. A banner click unminimizes, shows and focuses `main`, then emits `"focus-session"`. `alert_needs_you` and its sound path are removed (the core decides now); `set_badge` stays.
 - [ ] **Step 3:** `cargo test -p marshell-app` (or the src-tauri package name), `cargo clippy --workspace --all-targets -- -D warnings`, `pnpm build`.
 - [ ] **Step 4:** Commit: `feat(shell): show the core's banners, play its sounds and jump to the session on a click`.
@@ -183,7 +190,7 @@ Copy (`copy.rs`, ported from `banner.ts`; each line is a test):
 - [ ] **Step 1: Write the failing tests**
   - `useViewReport`: the report `{window_focused, visible_tabs}` is sent on focus, blur and pane changes, at most once per 200 ms, never twice with the same value, and again after a core restart.
   - `sessionMenu`: a running or ended session has "Mute notifications" / "Unmute notifications" (one label per state, as the toggle rule in PLAN "Accessibility safety net" needs: the label names the action and is not a toggle that renames itself; follow how Pause/Continue does it).
-  - `NotificationsDialog` (rendered with `renderToStaticMarkup`): per category a "Banner" and a "Sound" switch for Needs you, Done and Error, and one "Sound" switch for Subagent done (off by default, help "A short sound when a subagent finishes."); Quiet hours with an on switch and two time fields prefilled 22:00 and 08:00, and the help "No sounds or taskbar flashes between these times. Banners still arrive, silently."; a line saying Windows do-not-disturb silences sounds too. Every control has a label; the dialog follows `useDialogFocus` like the Agents dialog.
+  - `NotificationsDialog` (rendered with `renderToStaticMarkup`): per category a "Banner" and a "Sound" switch for Needs you, Done and Error, and one "Sound" switch for Subagent done (off by default, help "A short sound when a subagent finishes."); Quiet hours with an on switch and two time fields prefilled 22:00 and 08:00, and the help "No sounds or taskbar flashes between these times. Banners still arrive, silently."; a line saying Windows do-not-disturb silences sounds too, only if Task 1 Step 3b showed the API sees it. Every control has a label; the dialog follows `useDialogFocus` like the Agents dialog.
   - `useAttention`: it sets only the badge count; it never calls a sound or flash.
 - [ ] **Step 2:** `pnpm test src/features/notifications src/features/sidebar src/features/attention` fails.
 - [ ] **Step 3:** Implement. `"focus-session"` with a tab id calls `pick(tabId)`; with `null` it does nothing more (the window is already focused). Muted rows show the existing bell-slash. The dialog opens from the palette and from the Agents dialog's old sound row, which now reads "Sounds and banners: Notifications…".
@@ -204,7 +211,7 @@ Copy (`copy.rs`, ported from `banner.ts`; each line is a test):
 
 - [ ] **Step 1:** Run per CLAUDE.md "Live check (Windows)", scratch `MARSHELL_HOME`, on an installed build for the banner click (Task 1 says why). Sessions are fake agents or Claude sessions started for the check.
 - [ ] **Step 2:** Check and record:
-  - each category's banner and sound with the window in the background;
+  - the banner and sound of needs-you, done and subagent done (Error has no producer yet) with the window in the background;
   - nothing while focused;
   - three needs-you within 3 s → one banner, then one batch banner;
   - the escalation at ~60 s;
