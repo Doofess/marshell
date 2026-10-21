@@ -60,9 +60,9 @@ export class SettingsSync {
     return s.appearance;
   }
 
-  /** Whether the needs-you sound is switched off, as of the last read or write. False until a read works. */
-  get soundOff(): boolean {
-    return !this.notify.needs_you.sound;
+  /** The notification settings, as of the last read or write. The defaults until a read works. */
+  get notifications(): NotifySettings {
+    return this.notify;
   }
 
   /** The agent ids whose live status is switched off, as of the last read or write. Empty until a read works. */
@@ -98,9 +98,9 @@ export class SettingsSync {
     return s.appearance;
   }
 
-  /** Switches the needs-you sound off or on. Reads first, like `save`, and sends every other field back unchanged. */
-  async setSoundOff(off: boolean): Promise<void> {
-    await this.writeFlags({ notifications: { ...this.notify, needs_you: { ...this.notify.needs_you, sound: !off } } });
+  /** Saves the notification settings. Reads first, like `save`, and sends every other field back unchanged. */
+  async setNotifications(next: NotifySettings): Promise<void> {
+    await this.writeFlags({ notifications: next });
   }
 
   /** Switches one agent's live status on or off. Reads first, like `save`, and sends every other field back unchanged. */

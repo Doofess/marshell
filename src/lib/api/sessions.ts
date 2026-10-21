@@ -78,6 +78,8 @@ export const sessions = {
   pause: (ep: Endpoint, tabId: string): Promise<Started> => refusable(() => api<void>(ep, "POST", `${tab(tabId)}/pause`)),
   /** Thaws a paused session. Answers like `pause`. */
   cont: (ep: Endpoint, tabId: string): Promise<Started> => refusable(() => api<void>(ep, "POST", `${tab(tabId)}/continue`)),
+  /** Mutes or unmutes a session's banners and sounds. Rejects with a 404 ApiError for a tab the core doesn't know. */
+  setMuted: (ep: Endpoint, tabId: string, muted: boolean): Promise<void> => api<void>(ep, "PUT", `${tab(tabId)}/muted`, { muted }),
   /** Ends an agent tab's process and starts it again in `mode`, in the same row. Answers like `resume`. */
   restart: (ep: Endpoint, tabId: string, mode: SessionMode, size: { cols: number; rows: number }): Promise<Started> =>
     refusable(() => api<CreateSessionResponse>(ep, "POST", `${tab(tabId)}/restart`, { mode, ...size } satisfies RestartRequest)),

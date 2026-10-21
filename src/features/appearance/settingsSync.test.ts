@@ -115,18 +115,18 @@ describe("SettingsSync: live status switch", () => {
   });
 });
 
-describe("SettingsSync: needs-you sound switch", () => {
-  const read = (sound_off: boolean) => async () => ({ appearance: teal, pause_warned: true, onboarded: true, status_off: ["codex"], notifications: sound_off ? N_OFF : N });
-  it("muting it keeps every other field, and other saves send it back", async () => {
-    const { api, sync } = setup(read(false));
-    await sync.setSoundOff(true);
+describe("SettingsSync: notifications", () => {
+  const read = (n: typeof N) => async () => ({ appearance: teal, pause_warned: true, onboarded: true, status_off: ["codex"], notifications: n });
+  it("saving them keeps every other field, and other saves send them back", async () => {
+    const { api, sync } = setup(read(N));
+    await sync.setNotifications(N_OFF);
     expect(api.put).toHaveBeenLastCalledWith(ep, { appearance: teal, pause_warned: true, onboarded: true, status_off: ["codex"], notifications: N_OFF });
-    expect(sync.soundOff).toBe(true);
+    expect(sync.notifications).toEqual(N_OFF);
     await sync.setStatusOff("claude", true);
     expect(api.put).toHaveBeenLastCalledWith(ep, { appearance: teal, pause_warned: true, onboarded: true, status_off: ["codex", "claude"], notifications: N_OFF });
   });
-  it("an appearance save sends the stored switch back unchanged", async () => {
-    const { api, sync } = setup(read(true));
+  it("an appearance save sends the stored settings back unchanged", async () => {
+    const { api, sync } = setup(read(N_OFF));
     await sync.save(teal);
     expect(api.put).toHaveBeenLastCalledWith(ep, { appearance: teal, pause_warned: true, onboarded: true, status_off: ["codex"], notifications: N_OFF });
   });

@@ -5,8 +5,8 @@ import { menuFacts } from "../sessions/sessionMenuRun";
 import { FIXTURES } from "./fixtures";
 import { modeMenuItems, sessionMenuItems, type SessionMenuFacts } from "./sessionMenu";
 
-const all: SessionMenuFacts = { agent: true, modeChangeable: true, resumable: true, task: true, inShownPane: false, paneAvailable: true, pausable: true, paused: false };
-const none: SessionMenuFacts = { agent: false, modeChangeable: true, resumable: false, task: false, inShownPane: false, paneAvailable: false, pausable: false, paused: false };
+const all: SessionMenuFacts = { agent: true, modeChangeable: true, resumable: true, task: true, inShownPane: false, paneAvailable: true, pausable: true, paused: false, muted: false };
+const none: SessionMenuFacts = { agent: false, modeChangeable: true, resumable: false, task: false, inShownPane: false, paneAvailable: false, pausable: false, paused: false, muted: false };
 
 const ids = (facts: SessionMenuFacts) =>
   sessionMenuItems(facts, "windows").map((i) => ("separator" in i ? "-" : i.id));
@@ -14,9 +14,10 @@ const ids = (facts: SessionMenuFacts) =>
 describe("sessionMenuItems", () => {
   it("shows every item in order with its shortcut", () => {
     const items = sessionMenuItems(all, "windows");
-    expect(ids(all)).toEqual(["rename", "split", "resume", "mode", "pause", "review-task", "-", "close"]);
+    expect(ids(all)).toEqual(["rename", "split", "resume", "mode", "pause", "mute", "review-task", "-", "close"]);
     expect(items.map((i) => ("separator" in i ? undefined : i.shortcut))).toEqual([
       "F2",
+      undefined,
       undefined,
       undefined,
       undefined,
@@ -38,8 +39,8 @@ describe("sessionMenuItems", () => {
   it("hides Review changes without a task", () => {
     expect(ids({ ...all, task: false })).not.toContain("review-task");
   });
-  it("keeps only Rename and Close with minimal facts", () => {
-    expect(ids(none)).toEqual(["rename", "-", "close"]);
+  it("keeps only Rename, Mute and Close with minimal facts", () => {
+    expect(ids(none)).toEqual(["rename", "mute", "-", "close"]);
   });
   it("uses the platform's close shortcut", () => {
     const close = sessionMenuItems(all, "mac").find((i) => "id" in i && i.id === "close");
@@ -92,5 +93,23 @@ describe("Pause and Continue", () => {
     const list = ids({ ...all, paused: true, pausable: false });
     expect(list.indexOf("continue")).toBe(list.indexOf("mode") + 1);
     expect(list.indexOf("continue")).toBeLessThan(list.indexOf("review-task"));
+  });
+});
+
+describe("Mute notifications", () => {
+  const labelOf = (facts: SessionMenuFacts, id: string) => {
+    const item = sessionMenuItems(facts, "windows").find((i) => "id" in i && i.id === id);
+    return item && "label" in item ? item.label : undefined;
+  };
+  it("a session that is not muted lists Mute notifications and not Unmute", () => {
+    expect(labelOf(all, "mute")).toBe("Mute notifications");
+    expect(ids(all)).not.toContain("unmute");
+  });
+  it("a muted session lists Unmute notifications and not Mute", () => {
+    expect(labelOf({ ...all, muted: true }, "unmute")).toBe("Unmute notifications");
+    expect(ids({ ...all, muted: true })).not.toContain("mute");
+  });
+  it("an ended session offers it too", () => {
+    expect(ids(none)).toContain("mute");
   });
 });

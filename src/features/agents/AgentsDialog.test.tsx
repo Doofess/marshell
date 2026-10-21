@@ -6,7 +6,7 @@ import { PREVIEW, SETUP } from "./fixtures";
 import { nameContainsLabel } from "../../lib/labelInName";
 
 const none = () => {};
-const handlers = { onClose: none, onSetup: none, onHooksOff: none, onBack: none, onDone: none, onAllow: none, onToggleDiff: none, onReload: none, onTurnOff: none, onSwitch: none, onLiveStatus: none, onSound: none };
+const handlers = { onClose: none, onSetup: none, onHooksOff: none, onBack: none, onDone: none, onAllow: none, onToggleDiff: none, onReload: none, onTurnOff: none, onSwitch: none, onLiveStatus: none, onNotifications: none };
 const view = (setup: AgentSetup | "loading" | "failed", panel: Panel = { kind: "list" }, liveStatus: boolean | null = true) => renderToStaticMarkup(<AgentsDialogView setup={setup} panel={panel} liveStatus={liveStatus} {...handlers} />);
 
 describe("AgentsDialogView switches", () => {
@@ -30,18 +30,11 @@ describe("AgentsDialogView", () => {
     expect(h).toContain(">Set up</button>");
     expect(h).not.toContain(">Set up again</button>");
   });
-  it("renders a named keyboard reachable needs-you sound switch with its saved state", () => {
-    for (const sound of [true, false]) {
-      const h = renderToStaticMarkup(<AgentsDialogView setup={SETUP} panel={{ kind: "list" }} liveStatus={true} sound={sound} {...handlers} onSound={none} />);
-      const label = h.match(/<label[^>]*>(?:(?!<\/label>)[\s\S])*?Needs-you sound[\s\S]*?<\/label>/)?.[0] ?? "";
-      expect(label).toContain('type="checkbox" role="switch"');
-      expect(label.includes('checked=""')).toBe(sound);
-      expect(nameContainsLabel(label)).toBe(true);
-      expect(label).not.toContain('tabindex="-1"');
-    }
-  });
-  it("leaves the sound switch out until settings are read", () => {
-    expect(view(SETUP)).not.toContain("Needs-you sound");
+  it("points to the Notifications dialog for sounds and banners, with a named button", () => {
+    const h = view(SETUP);
+    expect(h).toContain("Sounds and banners:");
+    expect(h).toMatch(/<button[^>]*>Notifications…<\/button>/);
+    expect(h).not.toContain("Needs-you sound");
   });
   it("is a modal dialog named Agents", () => {
     const h = view(SETUP);

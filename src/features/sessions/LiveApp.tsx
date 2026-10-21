@@ -42,7 +42,10 @@ import { getSetup } from "../../lib/api/agents";
 import type { HookInstall } from "../../generated/HookInstall";
 import { AppearanceDialog } from "../appearance/AppearanceDialog";
 import { useAppearance } from "../appearance/AppearanceProvider";
+import { listen } from "@tauri-apps/api/event";
 import { useAttention } from "../attention/useAttention";
+import { NotificationsDialog } from "../notifications/NotificationsDialog";
+import { useViewReport } from "../notifications/useViewReport";
 import { terminalThemeOf, wtFont } from "../appearance/terminalSettings";
 import { changesFor, isTextBox, keyBlocked, markTasks, missingTask, paletteHidden, resolveTarget, reviewAgentName, reviewKeyDown, reviewTarget, taskRefresher, type ReviewTarget } from "../tasks/reviewOpen";
 import { ReviewSheet } from "../tasks/ReviewSheet";
@@ -181,7 +184,7 @@ export function LiveApp() {
   const terminalFont = useMemo(() => ({ family: font.family, size: font.size }), [font.family, font.size]);
   const [launcherOpen, setLauncherOpen] = useState(false);
   // The command palette, or the shell profiles page opened from it, over the window.
-  const [overlay, setOverlay] = useState<"palette" | "profiles" | "appearance" | "agents" | "diagnostics" | "shortcuts" | null>(null);
+  const [overlay, setOverlay] = useState<"palette" | "profiles" | "appearance" | "agents" | "notifications" | "diagnostics" | "shortcuts" | null>(null);
   // The Agents dialog opened from a row's "set up" starts on the Set up card.
   const [agentsFrom, setAgentsFrom] = useState<"row" | null>(null);
   // First run: shown once, when the saved settings say the onboarding was not seen. Nothing shows until that read has answered;
@@ -245,6 +248,20 @@ export function LiveApp() {
   context.current = { endpoint, infos, selectedId: focusedId, sidebarExpanded, groupedRows };
   const pickRef = useRef(pick);
   pickRef.current = pick;
+  // A clicked banner brings the window forward (the shell does that) and names the session; no tab means there is nothing to go to.
+  useEffect(() => {
+    let gone = false;
+    let stop: (() => void) | undefined;
+    listen<{ tab_id: string | null }>("focus-session", (e) => {
+      if (e.payload.tab_id) pickRef.current(e.payload.tab_id);
+    })
+      .then((s) => (gone ? s() : (stop = s)))
+      .catch(() => {}); // Outside Tauri (tests, a plain browser) there are no events.
+    return () => {
+      gone = true;
+      stop?.();
+    };
+  }, []);
   // The sidebar command and the top bar's sidebar button: fold to the rail or open, or say why a narrow window cannot open it.
   const toggleSidebar = useCallback(
     (v: ViewState) => {
@@ -261,9 +278,8 @@ export function LiveApp() {
   const entries = useMemo(() => laneEntries(permissions, rows, Math.max(now, Date.now()), new Set(sendingRequests.values())), [permissions, rows, now, sendingRequests]);
   const cards = useCards(entries, announce);
   const requests = cards.requests;
-  const mutedTabs = useMemo(() => new Set(rows.filter((r) => r.muted).map((r) => r.id)), [rows]);
   const attentionEntries = useMemo(() => entries.map((e) => ({ id: e.id, tab: e.tab })), [entries]);
-  useAttention(attentionEntries, mutedTabs, () => sync?.soundOff ?? false);
+  useAttention(attentionEntries);
   const [drawerId, setDrawerId] = useState<string | undefined>(undefined);
   const drawerRequest = requests.find((r) => r.id === drawerId && r.state.phase === "pending");
   const actions = useMemo(() => new SessionActions({ api: sessions, context: () => context.current, select: (id) => pickRef.current(id), size: () => size.current, settings: sync ?? undefined }), []);
@@ -821,6 +837,10 @@ export function LiveApp() {
         case "continue":
           void actions.cont(id);
           break;
+        case "mute":
+        case "unmute":
+          if (endpoint) void sessions.setMuted(endpoint, id, itemId === "mute").catch(() => announce("Couldn't change the mute. Try again."));
+          break;
         // After the menu has gone, so the sheet takes the focus and the menu does not give it back to the row.
         case "review-task":
           setTimeout(() => reviewSession(id), 0);
@@ -837,7 +857,7 @@ export function LiveApp() {
       if (to === "terminal") actions.focusTerminal();
       else if (to === "row") document.querySelector<HTMLElement>(`[data-nav-row="${rows.find((r) => r.id === id)?.number}"]`)?.focus();
     },
-    [actions, showInPane, rows, infos, pick, startResume, reviewSession, pauseSession],
+    [actions, showInPane, rows, infos, pick, startResume, reviewSession, pauseSession, endpoint, announce],
   );
 
   // Keyboard navigation (hold Ctrl+Shift): the cursor reaches the panes on screen, the session rows and the top bar.
@@ -1014,7 +1034,7 @@ export function LiveApp() {
 
   // A palette row: a session to go to, the profiles page, or a command the window runs (LivePalette lists only those).
   const runFromPalette = (id: string) => {
-    setOverlay(id === "profiles" || id === "appearance" || id === "agents" || id === "diagnostics" ? id : id === "cheatsheet" ? "shortcuts" : null);
+    setOverlay(id === "profiles" || id === "appearance" || id === "agents" || id === "notifications" || id === "diagnostics" ? id : id === "cheatsheet" ? "shortcuts" : null);
     if (id.startsWith("session:")) return pick(id.slice("session:".length));
     // Palette-only commands. The menu opens after the palette has given the focus back, so it keeps the focus it takes.
     if (id === "unsplit") return dispatch({ type: "remove", index: focusIdxRef.current });
@@ -1140,6 +1160,8 @@ export function LiveApp() {
         onRegion={addRegion}
       />
     ) : undefined;
+  // The core decides whether a banner is worth showing from this: whether the window has focus and which sessions are on screen.
+  useViewReport(endpoint, previewPane && focusedId ? [focusedId] : visibleIds);
   return (
     <PreviewContext.Provider value={preview.open}>
     <div ref={ref} className="live-app">
@@ -1259,7 +1281,8 @@ export function LiveApp() {
         />
       )}
       {overlay === "profiles" && endpoint && <ProfilesDialog endpoint={endpoint} onClose={() => setOverlay(null)} onNotice={announce} onSaved={reloadProfiles} />}
-      {overlay === "agents" && endpoint && <AgentsDialog endpoint={endpoint} sync={sync ?? undefined} startWith={agentsFrom === "row" ? "setup" : undefined} onClose={() => { setOverlay(null); setAgentsFrom(null); refreshSetup(); }} onNotice={announce} onChanged={refreshSetup} />}
+      {overlay === "agents" && endpoint && <AgentsDialog endpoint={endpoint} sync={sync ?? undefined} startWith={agentsFrom === "row" ? "setup" : undefined} onClose={() => { setOverlay(null); setAgentsFrom(null); refreshSetup(); }} onNotice={announce} onChanged={refreshSetup} onNotifications={() => { setAgentsFrom(null); setOverlay("notifications"); }} />}
+      {overlay === "notifications" && <NotificationsDialog sync={sync ?? undefined} onClose={() => setOverlay(null)} />}
       {overlay === "diagnostics" && endpoint && <DiagnosticsDialog endpoint={endpoint} onClose={() => setOverlay(null)} onNotice={announce} />}
       {onboarding && endpoint && (
         <div className="live-app__onboarding">

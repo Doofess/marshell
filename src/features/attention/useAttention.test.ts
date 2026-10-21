@@ -1,27 +1,23 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { mountHook } from "../../test/hooks";
 import { useAttention } from "./useAttention";
-import { alertNeedsYou, setBadge } from "./attention";
+import { setBadge } from "./attention";
 
 vi.mock("react", async () => ({ ...await vi.importActual("react"), ...(await import("../../test/hooks")).hooks }));
-vi.mock("./attention", async () => ({ ...await vi.importActual("./attention"), alertNeedsYou: vi.fn(), setBadge: vi.fn() }));
-afterEach(() => { vi.unstubAllGlobals(); vi.clearAllMocks(); });
+vi.mock("./attention", async () => ({ ...await vi.importActual("./attention"), setBadge: vi.fn() }));
+afterEach(() => vi.clearAllMocks());
 
-it("checks document focus at each step after a top-window blur into an iframe", () => {
-  const win = new EventTarget();
-  const hasFocus = vi.fn(() => true);
-  vi.stubGlobal("window", win);
-  vi.stubGlobal("document", { hasFocus });
+it("sets only the badge count, once per change, and never a sound or a flash", async () => {
+  const attention = await import("./attention");
+  expect(Object.keys(attention)).not.toContain("alertNeedsYou");
   let entries: { id: string; tab: string }[] = [];
-  const h = mountHook(() => useAttention(entries, new Set(), () => false));
-  win.dispatchEvent(new Event("blur"));
+  const h = mountHook(() => useAttention(entries));
+  expect(setBadge).toHaveBeenLastCalledWith(0);
   entries = [{ id: "a", tab: "a" }];
   h.rerender();
   expect(setBadge).toHaveBeenLastCalledWith(1);
-  expect(alertNeedsYou).not.toHaveBeenCalled();
-  hasFocus.mockReturnValue(false);
-  entries = [...entries, { id: "b", tab: "b" }];
+  entries = [...entries, { id: "a2", tab: "a" }];
   h.rerender();
-  expect(alertNeedsYou).toHaveBeenCalledExactlyOnceWith(true);
+  expect(setBadge).toHaveBeenCalledTimes(2);
   h.unmount();
 });

@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { AgentSetup } from "../../generated/AgentSetup";
-import { actions, consentProps, DEFAULT_WANT, hooksOffNotice, installRequest, liveStatusOn, setNeedsYouSound, setupLine, setupWant } from "./agentsState";
+import { actions, consentProps, DEFAULT_WANT, hooksOffNotice, installRequest, liveStatusOn, setupLine, setupWant } from "./agentsState";
 import type { ConfigPreview } from "../../generated/ConfigPreview";
 import type { FilePreview } from "../../generated/FilePreview";
 import { PREVIEW, SETUP } from "./fixtures";
@@ -111,17 +111,6 @@ describe("the switches the person sets", () => {
     expect(setupWant(s({ hooks: "installed", approve_installed: false }))).toEqual({ status: false, statusline: false, approve: true });
     expect(installRequest(setupWant(s({ hooks: "installed", approve_installed: false })))).toEqual({ status: false, statusline: false, approve: true });
     expect(setupWant(SETUP)).toEqual(DEFAULT_WANT);
-  });
-  it("writes the inverse sound setting and returns the saved state", async () => {
-    const sync = { soundOff: false, setSoundOff: vi.fn(async (off: boolean) => { sync.soundOff = off; }) };
-    expect(await setNeedsYouSound(sync, false)).toBe(false);
-    expect(sync.setSoundOff).toHaveBeenLastCalledWith(true);
-    expect(await setNeedsYouSound(sync, true)).toBe(true);
-    expect(sync.setSoundOff).toHaveBeenLastCalledWith(false);
-  });
-  it("propagates a failed sound save instead of reporting a new state", async () => {
-    const sync = { soundOff: false, setSoundOff: vi.fn().mockRejectedValue(new Error("save failed")) };
-    await expect(setNeedsYouSound(sync, false)).rejects.toThrow("save failed");
   });
   it("sends the approval switch in the hook plan request", () => {
     expect(installRequest({ ...DEFAULT_WANT, approve: true }).approve).toBe(true);

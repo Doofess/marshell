@@ -10,7 +10,7 @@ import { useDialogFocus } from "../../lib/useDialogFocus";
 import { SettingsReadError, type SettingsSync } from "../appearance/settingsSync";
 import { ConsentCard } from "../onboarding/ConsentCard";
 import { type Capability } from "../onboarding/consent";
-import { actions, consentProps, hooksOffNotice, liveStatusOn, removalBlock, setNeedsYouSound, setupLine, setupWant, type InstallFlow } from "./agentsState";
+import { actions, consentProps, hooksOffNotice, liveStatusOn, removalBlock, setupLine, setupWant, type InstallFlow } from "./agentsState";
 import { failureText, useInstallFlow } from "./useInstallFlow";
 import "./AgentsDialog.css";
 
@@ -36,14 +36,15 @@ export type AgentsDialogHandlers = {
   onSwitch: (capability: Capability, checked: boolean) => void;
   /** The Live status switch for Claude Code. */
   onLiveStatus: (checked: boolean) => void;
-  onSound: (checked: boolean) => void;
+  /** Opens the Notifications dialog, where the sounds and banners are set. */
+  onNotifications: () => void;
 };
 
 /**
  * Settings → Agents (docs/PLAN.md slice 3c, decision 5), as a modal dialog over the window: Claude Code's install state, with Set up,
  * Hooks off (preview, then apply) and the orphaned-hooks warning. Presentational: `AgentsDialog` fetches and acts, this draws.
  */
-export function AgentsDialogView({ setup, panel, liveStatus, sound = null, liveStatusError, ...on }: { setup: AgentSetup | "loading" | "failed"; panel: Panel; liveStatus: boolean | null; sound?: boolean | null; liveStatusError?: string | null } & AgentsDialogHandlers) {
+export function AgentsDialogView({ setup, panel, liveStatus, liveStatusError, ...on }: { setup: AgentSetup | "loading" | "failed"; panel: Panel; liveStatus: boolean | null; liveStatusError?: string | null } & AgentsDialogHandlers) {
   const dialog = useRef<HTMLDivElement>(null);
   const title = useRef<HTMLHeadingElement>(null);
   useDialogFocus(dialog, title, on.onClose);
@@ -61,7 +62,7 @@ export function AgentsDialogView({ setup, panel, liveStatus, sound = null, liveS
               {SETUP_UNREADABLE}
             </p>
           )}
-          {typeof setup === "object" && panel.kind === "list" && <AgentList setup={setup} liveStatus={liveStatus} sound={sound} error={liveStatusError} on={on} />}
+          {typeof setup === "object" && panel.kind === "list" && <AgentList setup={setup} liveStatus={liveStatus} error={liveStatusError} on={on} />}
           {typeof setup === "object" && panel.kind === "setup" && <SetupPanel setup={setup} flow={panel.flow} on={on} />}
           {typeof setup === "object" && panel.kind === "off" && <OffPanel panel={panel} on={on} />}
         </div>
@@ -75,7 +76,7 @@ export function AgentsDialogView({ setup, panel, liveStatus, sound = null, liveS
   );
 }
 
-function AgentList({ setup, liveStatus, sound, error, on }: { setup: AgentSetup; liveStatus: boolean | null; sound: boolean | null; error?: string | null; on: AgentsDialogHandlers }) {
+function AgentList({ setup, liveStatus, error, on }: { setup: AgentSetup; liveStatus: boolean | null; error?: string | null; on: AgentsDialogHandlers }) {
   const todo = actions(setup);
   const orphaned = setup.found && setup.hooks === "orphaned" && setup.settings_state !== "unparsable";
   return (
@@ -93,7 +94,12 @@ function AgentList({ setup, liveStatus, sound, error, on }: { setup: AgentSetup;
       {liveStatus !== null && (
         <Switch label="Live status" checked={liveStatus} onChange={on.onLiveStatus} reason={liveStatus ? undefined : "Rows use output activity only: Working or Idle."} />
       )}
-      {sound !== null && <Switch label="Needs-you sound" checked={sound} onChange={on.onSound} />}
+      <p className="agents-dialog__line">
+        Sounds and banners:{" "}
+        <button type="button" className="agents-dialog__btn" onClick={on.onNotifications}>
+          Notifications…
+        </button>
+      </p>
       {error && (
         <p className="agents-dialog__error" role="alert">
           {error}
@@ -187,6 +193,7 @@ export function AgentsDialog({
   onClose,
   onNotice,
   onChanged,
+  onNotifications,
   startWith,
   sync,
 }: {
@@ -196,7 +203,9 @@ export function AgentsDialog({
   /** The hooks were set up or turned off: the window reads the state again. */
   onChanged?: () => void;
   startWith?: "setup";
-  /** The settings the Live status and sound switches read and save. */
+  /** Opens the Notifications dialog. */
+  onNotifications: () => void;
+  /** The settings the Live status switch reads and saves. */
   sync?: SettingsSync;
 }) {
   const [setup, setSetup] = useState<AgentSetup | "loading" | "failed">("loading");
@@ -205,7 +214,6 @@ export function AgentsDialog({
 
   // null until the settings have been read.
   const [liveStatus, setLiveStatus] = useState<boolean | null>(null);
-  const [sound, setSound] = useState<boolean | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
   useEffect(() => {
     let live = true;
@@ -213,7 +221,6 @@ export function AgentsDialog({
       () => {
         if (!live) return;
         setLiveStatus(liveStatusOn(sync.statusOff, "claude"));
-        setSound(!sync.soundOff);
       },
       () => {},
     );
@@ -227,16 +234,6 @@ export function AgentsDialog({
     try {
       await sync.setStatusOff("claude", !on);
       setLiveStatus(liveStatusOn(sync.statusOff, "claude"));
-    } catch (e) {
-      setSaveError(e instanceof SettingsReadError ? e.message : failureText(e));
-    }
-  };
-
-  const switchSound = async (on: boolean) => {
-    if (!sync) return;
-    setSaveError(null);
-    try {
-      setSound(await setNeedsYouSound(sync, on));
     } catch (e) {
       setSaveError(e instanceof SettingsReadError ? e.message : failureText(e));
     }
@@ -317,10 +314,9 @@ export function AgentsDialog({
       setup={setup}
       panel={panel}
       liveStatus={liveStatus}
-      sound={sound}
       liveStatusError={saveError}
       onLiveStatus={(on) => void switchLiveStatus(on)}
-      onSound={(on) => void switchSound(on)}
+      onNotifications={onNotifications}
       onClose={onClose}
       onSetup={() => startSetup()}
       onHooksOff={() => void startOff()}

@@ -1,20 +1,15 @@
 import { useEffect, useRef } from "react";
-import { alertNeedsYou, attentionStep, setBadge } from "./attention";
+import { badgeCount, setBadge } from "./attention";
 
-/** Keeps the taskbar count in step with the entries and flashes (with the sound unless it is off) for a new one while the window isn't focused. */
-export function useAttention(entries: { id: string; tab: string }[], mutedTabs: Set<string>, soundOff: () => boolean): void {
-  const prev = useRef<{ id: string; tab: string }[]>([]);
+/** Keeps the taskbar count in step with the entries. Banners and sounds are the core's job, not the window's. */
+export function useAttention(entries: { id: string; tab: string }[]): void {
   const count = useRef<number | null>(null);
-  const latest = useRef({ mutedTabs, soundOff });
-  latest.current = { mutedTabs, soundOff };
 
   useEffect(() => {
-    const step = attentionStep(prev.current, entries, document.hasFocus(), latest.current.mutedTabs);
-    prev.current = entries;
-    if (step.count !== count.current) {
-      count.current = step.count;
-      void setBadge(step.count);
+    const next = badgeCount(entries);
+    if (next !== count.current) {
+      count.current = next;
+      void setBadge(next);
     }
-    if (step.alert) void alertNeedsYou(!latest.current.soundOff());
   }, [entries]);
 }

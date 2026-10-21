@@ -1,7 +1,6 @@
 import type { AgentSetup } from "../../generated/AgentSetup";
 import type { ConfigPreview } from "../../generated/ConfigPreview";
 import type { HookPlanRequest } from "../../generated/HookPlanRequest";
-import type { SettingsSync } from "../appearance/settingsSync";
 import { previewDiff, toDetection } from "../../lib/api/agents";
 import { addsStatusLine, consentHeadline, removalCopy, type Capability, type ConsentPlan, type Detection } from "../onboarding/consent";
 
@@ -16,12 +15,6 @@ const ON = onOf(DEFAULT_WANT);
 
 /** An existing status install needs only the permission hook. */
 export const setupWant = (s: AgentSetup): Want => s.hooks === "installed" ? { status: false, statusline: false, approve: true } : DEFAULT_WANT;
-
-/** The switch says sound on; storage says sound off. Report only the saved state. */
-export async function setNeedsYouSound(sync: Pick<SettingsSync, "setSoundOff" | "soundOff">, on: boolean): Promise<boolean> {
-  await sync.setSoundOff(!on);
-  return !sync.soundOff;
-}
 
 /** Whether an agent's live status is on: it is unless the agent is in the settings' `status_off`. */
 export const liveStatusOn = (statusOff: string[], agent: string): boolean => !statusOff.includes(agent);
