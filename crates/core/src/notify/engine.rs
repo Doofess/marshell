@@ -313,10 +313,11 @@ impl Engine {
     ) {
         let Event { cat, entry } = event;
         let channel = channel_of(settings, cat);
-        if entry.muted || !(channel.banner || channel.sound) || self.view.window_focused {
+        if entry.muted || !(channel.banner || channel.sound) {
             return;
         }
-        let quiet = in_quiet_hours(&settings.quiet_hours, minute);
+        // Armed even while the window is in focus, so a wait in a tab nobody looked at is reminded about
+        // once the window is left. The reminder waits while the window is in focus, and a tab in view drops it.
         if cat == Cat::NeedsYou {
             // Reset by a newer wait, and dropped when the tab is seen or the wait ends.
             self.escalations.insert(
@@ -330,6 +331,10 @@ impl Engine {
                 },
             );
         }
+        if self.view.window_focused {
+            return;
+        }
+        let quiet = in_quiet_hours(&settings.quiet_hours, minute);
         if cat == Cat::Done && !self.in_background_long(&entry.who.tab_id, now) {
             return;
         }
@@ -924,8 +929,12 @@ mod tests {
         assert!(h.obs(2.0, vec![question(1, 5), question(2, 6)], &[]).is_empty());
         assert!(h.tick(70.0).is_empty());
         h.view(80.0, false, &["t1"]);
-        assert!(h.tick(81.0).is_empty());
-        assert!(h.obs(82.0, vec![question(1, 5), question(2, 6)], &[]).is_empty());
+        // The wait nobody looked at is reminded about once the window is left; the one in view was seen.
+        let req = only(h.tick(81.0));
+        assert_eq!(banner(&req).tab_id.as_deref(), Some("t2"));
+        assert_eq!(req.sound, Some(SoundKind::Escalation));
+        assert!(h.tick(82.0).is_empty());
+        assert!(h.obs(83.0, vec![question(1, 5), question(2, 6)], &[]).is_empty());
     }
 
     #[test]
