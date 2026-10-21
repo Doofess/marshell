@@ -95,6 +95,8 @@ struct Inner {
     permission_hold: Duration,
     /// How long to wait for Claude to resume after its last background subagent stops.
     subagent_wait: Duration,
+    /// How long a Stop is held before the row reads Done.
+    done_settle: Duration,
     /// Previews and applies changes to the CLIs' config files.
     config: crate::config::service::ConfigService,
     /// The sessions index and the transcript archive.
@@ -123,6 +125,9 @@ pub const DEFAULT_PERMISSION_HOLD: Duration = Duration::from_secs(120);
 
 /// How long to wait for Claude to resume after its last background subagent stops.
 pub const DEFAULT_SUBAGENT_WAIT: Duration = Duration::from_secs(30);
+
+/// How long a Stop is held before the row reads Done, so a turn that resumes at once never shows it.
+pub const DEFAULT_DONE_SETTLE: Duration = Duration::from_millis(1500);
 
 impl AppState {
     pub fn new(token: String, port: u16, allowed_origins: Vec<String>, home: PathBuf, detected: Vec<Profile>) -> Self {
@@ -169,6 +174,7 @@ impl AppState {
             holds: crate::hooks::holds::Holds::default(),
             permission_hold: DEFAULT_PERMISSION_HOLD,
             subagent_wait: DEFAULT_SUBAGENT_WAIT,
+            done_settle: DEFAULT_DONE_SETTLE,
             config,
             history,
             claude_settings: None,
@@ -228,6 +234,16 @@ impl AppState {
     }
     pub fn subagent_wait(&self) -> Duration {
         self.0.subagent_wait
+    }
+    /// Sets how long a Stop is held before the row reads Done. Call it before the state is cloned.
+    pub fn with_done_settle(mut self, d: Duration) -> Self {
+        Arc::get_mut(&mut self.0)
+            .expect("with_done_settle runs before the state is shared")
+            .done_settle = d;
+        self
+    }
+    pub fn done_settle(&self) -> Duration {
+        self.0.done_settle
     }
     pub fn holds(&self) -> &crate::hooks::holds::Holds {
         &self.0.holds

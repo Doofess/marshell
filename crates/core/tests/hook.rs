@@ -312,12 +312,13 @@ async fn session_start_then_a_prompt_makes_the_row_work() {
 
 #[tokio::test]
 async fn stop_gives_done_with_a_recap() {
-    let st = state(Some(KNOWN));
+    let st = state(Some(KNOWN)).with_done_settle(std::time::Duration::from_millis(50));
     let app = router(st.clone());
     let tab = start_claude(&app).await;
 
     post_fixture(&app, "event", &tab, "UserPromptSubmit").await;
     post_fixture(&app, "event", &tab, "Stop").await;
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
     let live = row(&st, &tab).live.unwrap();
     stop(&st, &tab);
     assert_eq!(live.state, LiveState::Done);
@@ -485,6 +486,100 @@ async fn a_resumed_turn_is_not_settled_by_the_wait() {
     stop(&st, &tab);
     assert_eq!(live.state, LiveState::Working);
     assert_eq!(live.phrase, "Thinking");
+}
+
+/// The live state of a tab as `GET /v1/sessions` shows it.
+async fn live_over_http(app: &axum::Router, tab: &str) -> Option<serde_json::Value> {
+    let res = app
+        .clone()
+        .oneshot(base("GET", "/v1/sessions").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let bytes = axum::body::to_bytes(res.into_body(), 1024 * 1024).await.unwrap();
+    let snapshot: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    snapshot["sessions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|s| s["tab_id"] == tab)
+        .map(|s| s["live"].clone())
+}
+
+#[tokio::test]
+async fn stop_then_resume_never_shows_done() {
+    use std::time::Duration;
+    let st = state(Some(KNOWN)).with_done_settle(Duration::from_millis(300));
+    let app = router(st.clone());
+    let tab = start_claude(&app).await;
+    post_fixture(&app, "event", &tab, "UserPromptSubmit").await;
+
+    // Poll every 20 ms across the Stop and the resume, as the app's own subscriber would see the rows.
+    let poller = {
+        let (app, tab) = (app.clone(), tab.clone());
+        tokio::spawn(async move {
+            let mut seen = Vec::new();
+            for _ in 0..30 {
+                let live = live_over_http(&app, &tab).await.unwrap();
+                seen.push(live["state"].as_str().unwrap().to_string());
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+            seen
+        })
+    };
+    post_fixture(&app, "event", &tab, "Stop").await;
+    tokio::time::sleep(Duration::from_millis(78)).await;
+    post_fixture(&app, "event", &tab, "UserPromptSubmit").await;
+    let seen = poller.await.unwrap();
+    let last = row(&st, &tab).live.unwrap();
+    stop(&st, &tab);
+    assert!(seen.iter().all(|s| s != "done"), "{seen:?}");
+    assert_eq!((last.state, last.phrase.as_str()), (LiveState::Working, "Thinking"));
+}
+
+#[tokio::test]
+async fn stop_alone_settles_to_done() {
+    use std::time::Duration;
+    let st = state(Some(KNOWN)).with_done_settle(Duration::from_millis(300));
+    let app = router(st.clone());
+    let tab = start_claude(&app).await;
+    post_fixture(&app, "event", &tab, "UserPromptSubmit").await;
+
+    post_fixture(&app, "event", &tab, "Stop").await;
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    let early = row(&st, &tab).live.unwrap();
+    tokio::time::sleep(Duration::from_millis(400)).await;
+    let late = row(&st, &tab).live.unwrap();
+    stop(&st, &tab);
+    assert_eq!(early.state, LiveState::Working);
+    assert_eq!(late.state, LiveState::Done);
+    assert_eq!(late.phrase, "Done");
+    assert!(late.recap.is_some_and(|r| r.text.starts_with("I ran")));
+}
+
+#[tokio::test]
+async fn a_status_line_update_does_not_cancel_the_held_done() {
+    use std::time::Duration;
+    let st = state(Some(KNOWN)).with_done_settle(Duration::from_millis(300));
+    let app = router(st.clone());
+    let tab = start_claude(&app).await;
+    post_fixture(&app, "event", &tab, "UserPromptSubmit").await;
+
+    post_fixture(&app, "event", &tab, "Stop").await;
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    assert_eq!(
+        post_fixture(&app, "statusline", &tab, "statusline").await,
+        StatusCode::NO_CONTENT
+    );
+    let held = row(&st, &tab).live.unwrap();
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    let late = row(&st, &tab).live.unwrap();
+    stop(&st, &tab);
+    assert_eq!(held.state, LiveState::Working);
+    assert!(held.context_pct.is_some());
+    assert_eq!(late.state, LiveState::Done);
+    assert!(late.recap.is_some());
+    assert_eq!(late.context_pct, held.context_pct);
 }
 
 #[tokio::test]
@@ -675,7 +770,7 @@ async fn another_agents_events_do_not_touch_the_status() {
 /// the status is folded before the history looks at the body, and the refusal writes nothing.
 #[tokio::test]
 async fn hostile_history_body_still_updates_live_status() {
-    let st = state(Some(KNOWN));
+    let st = state(Some(KNOWN)).with_done_settle(std::time::Duration::from_millis(50));
     let app = router(st.clone());
     let tab = start_claude(&app).await;
     // No earlier valid event: that one would put a (legitimate) row in the history.
@@ -689,6 +784,7 @@ async fn hostile_history_body_still_updates_live_status() {
         serde_json::to_vec(&body).unwrap(),
     );
     assert_eq!(status(&app, req).await, StatusCode::NO_CONTENT);
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
 
     let live = row(&st, &tab).live.unwrap();
     let remembered = st.history().latest_for_tab(&tab);
