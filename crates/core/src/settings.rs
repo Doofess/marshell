@@ -16,6 +16,8 @@ struct FileDoc {
     #[serde(default)]
     onboarded: bool,
     #[serde(default)]
+    close_to_tray: Option<bool>,
+    #[serde(default)]
     status_off: Vec<String>,
     /// Absent in a file written before notifications had settings. A hand-edited block that does not read
     /// falls back on its own, so it cannot take the rest of the file with it.
@@ -80,6 +82,7 @@ pub fn load(home: &Path) -> Settings {
         appearance,
         pause_warned,
         onboarded,
+        close_to_tray: doc.close_to_tray,
         status_off,
         notifications,
     }
@@ -122,6 +125,7 @@ pub fn save(home: &Path, s: &Settings) -> anyhow::Result<()> {
             appearance: s.appearance.clone(),
             pause_warned: s.pause_warned,
             onboarded: s.onboarded,
+            close_to_tray: s.close_to_tray,
             status_off: clean_status_off(s.status_off.clone()),
             notifications: Some(s.notifications.clone()),
             sound_off: false,
@@ -265,6 +269,29 @@ mod tests {
         assert_eq!(s, Settings::default());
         assert_eq!(s.appearance.accent, "sand");
         assert_eq!(s.appearance.terminal_font.size, 13);
+    }
+
+    #[test]
+    fn a_settings_file_without_close_to_tray_reads_none() {
+        let home = tempfile::tempdir().unwrap();
+        let file = crate::paths::settings_file(home.path());
+        for json in [r#"{"version":1}"#, r#"{"version":1,"close_to_tray":null}"#] {
+            std::fs::write(&file, json).unwrap();
+            assert_eq!(load(home.path()).close_to_tray, None);
+        }
+    }
+
+    #[test]
+    fn close_to_tray_round_trips_through_save_and_load() {
+        let home = tempfile::tempdir().unwrap();
+        for close_to_tray in [Some(true), Some(false), None] {
+            let s = Settings {
+                close_to_tray,
+                ..Settings::default()
+            };
+            save(home.path(), &s).unwrap();
+            assert_eq!(load(home.path()).close_to_tray, close_to_tray);
+        }
     }
 
     #[test]

@@ -16,6 +16,8 @@ async fn core() -> (RunningCore, tempfile::TempDir) {
         allowed_origins: vec![],
         programs_dir: None,
         notify: None,
+        notify_paused: Default::default(),
+        window_hidden: Default::default(),
     })
     .await
     .unwrap();
@@ -460,6 +462,8 @@ async fn websocket_from_foreign_origin_is_forbidden() {
         allowed_origins: vec!["http://tauri.localhost".into()],
         programs_dir: None,
         notify: None,
+        notify_paused: Default::default(),
+        window_hidden: Default::default(),
     })
     .await
     .unwrap();

@@ -76,6 +76,11 @@ impl Supervisor {
         }
     }
 
+    /// Kept even while a replacement core is starting.
+    pub fn set_window_hidden(&self, hidden: bool) {
+        self.cfg.window_hidden.store(hidden, Ordering::SeqCst);
+    }
+
     /// 0 at launch, +1 per restart.
     pub fn generation(&self) -> u32 {
         self.generation.load(Ordering::SeqCst)
@@ -168,6 +173,8 @@ mod tests {
             allowed_origins: vec![],
             programs_dir: None,
             notify: None,
+            notify_paused: Default::default(),
+            window_hidden: Default::default(),
         };
         let events: Events = Arc::default();
         let sink = events.clone();
@@ -257,6 +264,39 @@ mod tests {
             serde_json::from_slice(&std::fs::read(crate::paths::endpoint_file(home.path())).unwrap()).unwrap();
         assert_eq!(on_disk["token"], new.token);
         assert_eq!(*events.lock().unwrap(), [CoreEvent::Restarted { generation: 1 }]);
+        sup.shutdown();
+    }
+
+    #[tokio::test]
+    async fn the_paused_flag_survives_a_core_restart() {
+        let (_home, sup, _events) = started().await;
+        assert!(!sup.current_for_test().as_ref().unwrap().state.notify_paused());
+        sup.cfg.notify_paused.store(true, Ordering::SeqCst);
+        assert!(sup.current_for_test().as_ref().unwrap().state.notify_paused());
+        stop_server(&sup).await;
+        assert!(sup.check_and_restart().await);
+        assert!(sup.current_for_test().as_ref().unwrap().state.notify_paused());
+        sup.cfg.notify_paused.store(false, Ordering::SeqCst);
+        assert!(!sup.current_for_test().as_ref().unwrap().state.notify_paused());
+        sup.shutdown();
+    }
+
+    #[tokio::test]
+    async fn the_hidden_flag_survives_a_core_restart() {
+        let (_home, sup, _events) = started().await;
+        sup.set_window_hidden(true);
+        stop_server(&sup).await;
+        assert!(sup.check_and_restart().await);
+        let state = sup.current_for_test().as_ref().unwrap().state.clone();
+        let view = marshell_protocol::api::UiView {
+            window_focused: true,
+            visible_tabs: vec!["t1".into()],
+        };
+        state.report_view(view.clone());
+        assert!(!state.effective_view().window_focused);
+        assert!(state.effective_view().visible_tabs.is_empty());
+        sup.set_window_hidden(false);
+        assert_eq!(state.effective_view(), view);
         sup.shutdown();
     }
 

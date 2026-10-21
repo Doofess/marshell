@@ -70,6 +70,8 @@ struct Wait {
     rids: HashSet<String>,
     risky: bool,
     told: bool,
+    /// Its initial delivery was pending during a pause; only its reminder may still go out.
+    silenced: bool,
     /// When a permission with no hold yet is told anyway.
     deadline: Instant,
 }
@@ -253,6 +255,18 @@ impl Engine {
         out
     }
 
+    /// A pause drops deferred deliveries too, without losing the wait that can arm a reminder.
+    pub(super) fn discard_pending(&mut self) {
+        self.windows.clear();
+        for tab in self.tabs.values_mut() {
+            if let Some(wait) = tab.wait.as_mut()
+                && !wait.told
+            {
+                wait.silenced = true;
+            }
+        }
+    }
+
     /// Tabs in view now count as seen at `now`, and a reminder for one is not needed.
     fn note_seen(&mut self, now: Instant) {
         if !self.view.window_focused {
@@ -330,6 +344,14 @@ impl Engine {
                     risky: entry.risky,
                 },
             );
+            if self
+                .tabs
+                .get(&entry.who.tab_id)
+                .and_then(|t| t.wait.as_ref())
+                .is_some_and(|w| w.silenced)
+            {
+                return;
+            }
         }
         if self.view.window_focused {
             return;
@@ -531,6 +553,7 @@ fn follow(
                     risky: mine.iter().any(|h| h.risk.is_some()),
                     // A wait found at the first look was told in a run before this one.
                     told: seeding,
+                    silenced: false,
                     deadline: now + HOLD_WAIT,
                 });
             }

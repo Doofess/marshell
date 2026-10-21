@@ -181,19 +181,88 @@ async fn windows_terminal_import_lists_files_as_an_array() {
 async fn settings_put_then_get_returns_it() {
     let home = tempfile::tempdir().unwrap();
     let app = app_in(home.path());
-    let body = serde_json::json!({ "appearance": { "theme": "dark", "accent": "#3366cc", "text_size": "large" } });
+    let body = serde_json::json!({ "appearance": { "theme": "dark", "accent": "#3366cc", "text_size": "large" }, "close_to_tray": false });
     let res = app.clone().oneshot(settings_request("PUT", Some(body))).await.unwrap();
     assert_eq!(res.status(), StatusCode::OK);
     let after = json_body(app.oneshot(settings_request("GET", None)).await.unwrap()).await;
     assert_eq!(after["appearance"]["theme"], "dark");
     assert_eq!(after["appearance"]["accent"], "#3366cc");
     assert_eq!(after["appearance"]["text_size"], "large");
+    assert_eq!(after["close_to_tray"], false);
     // Fields the body left out come back as their defaults.
     assert_eq!(after["appearance"]["terminal_theme"], "follow-app");
     let saved: serde_json::Value =
         serde_json::from_slice(&std::fs::read(home.path().join("settings.json")).unwrap()).unwrap();
     assert_eq!(saved["version"], 1);
     assert_eq!(saved["appearance"]["accent"], "#3366cc");
+    assert_eq!(saved["close_to_tray"], false);
+}
+
+#[tokio::test]
+async fn paused_starts_false_and_round_trips() {
+    let (app, state) = sessions_app_and_state();
+    assert!(!state.notify_paused());
+    let res = app
+        .clone()
+        .oneshot(api("GET", "/v1/notify/paused", None))
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    assert_eq!(json_body(res).await, serde_json::json!({ "paused": false }));
+    for paused in [true, false] {
+        let req = api(
+            "PUT",
+            "/v1/notify/paused",
+            Some(serde_json::json!({ "paused": paused })),
+        );
+        assert_eq!(status_of(&app, req).await, StatusCode::NO_CONTENT);
+        assert_eq!(state.notify_paused(), paused);
+        let res = app
+            .clone()
+            .oneshot(api("GET", "/v1/notify/paused", None))
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::OK);
+        assert_eq!(json_body(res).await, serde_json::json!({ "paused": paused }));
+    }
+}
+
+#[tokio::test]
+async fn paused_routes_need_the_token() {
+    let app = app();
+    for method in ["GET", "PUT"] {
+        let mut req = api(method, "/v1/notify/paused", Some(serde_json::json!({ "paused": true })));
+        req.headers_mut().remove(header::AUTHORIZATION);
+        assert_eq!(status_of(&app, req).await, StatusCode::UNAUTHORIZED);
+    }
+}
+
+#[tokio::test]
+async fn paused_routes_reject_an_untrusted_origin() {
+    let app = app();
+    for method in ["GET", "PUT"] {
+        let mut req = api(method, "/v1/notify/paused", Some(serde_json::json!({ "paused": true })));
+        req.headers_mut()
+            .insert(header::ORIGIN, "https://untrusted.example".parse().unwrap());
+        assert_eq!(status_of(&app, req).await, StatusCode::FORBIDDEN);
+    }
+}
+
+#[tokio::test]
+async fn a_paused_body_that_is_not_a_bool_is_rejected() {
+    let (app, state) = sessions_app_and_state();
+    for body in [
+        serde_json::json!({ "paused": "true" }),
+        serde_json::json!({ "paused": null }),
+        serde_json::json!({}),
+    ] {
+        let status = status_of(&app, api("PUT", "/v1/notify/paused", Some(body))).await;
+        assert!(matches!(
+            status,
+            StatusCode::BAD_REQUEST | StatusCode::UNPROCESSABLE_ENTITY
+        ));
+        assert!(!state.notify_paused());
+    }
 }
 
 fn get(path: &str) -> axum::http::request::Builder {
@@ -273,6 +342,8 @@ async fn start_writes_endpoint_file_and_serves() {
         allowed_origins: vec![],
         programs_dir: None,
         notify: None,
+        notify_paused: Default::default(),
+        window_hidden: Default::default(),
     })
     .await
     .unwrap();
@@ -300,6 +371,8 @@ async fn start_core(home: &std::path::Path) -> marshell_core::server::RunningCor
         allowed_origins: vec![],
         programs_dir: None,
         notify: None,
+        notify_paused: Default::default(),
+        window_hidden: Default::default(),
     })
     .await
     .unwrap()

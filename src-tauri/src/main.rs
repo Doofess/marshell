@@ -187,6 +187,8 @@ fn main() {
                 allowed_origins: allowed_origins(),
                 programs_dir,
                 notify: None,
+                notify_paused: Default::default(),
+                window_hidden: Default::default(),
             };
             let handle = app.handle().clone();
             let supervisor =
