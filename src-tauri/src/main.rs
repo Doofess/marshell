@@ -29,8 +29,7 @@ fn emit_core_event(app: &tauri::AppHandle, event: CoreEvent) {
     let name = match event {
         CoreEvent::Restarted { .. } => "core-restarted",
         CoreEvent::Failed => "core-failed",
-        // Showing it is for the app shell; nothing consumes it yet.
-        CoreEvent::Notify(_) => return,
+        CoreEvent::Notify(request) => return notify::deliver(app, request),
     };
     let sent = app.emit(name, event);
     if let Err(e) = sent {
@@ -196,8 +195,7 @@ fn main() {
             capture::capture_screen_region,
             capture::cancel_capture,
             capture::read_clipboard_image,
-            attention::set_badge,
-            attention::alert_needs_you
+            attention::set_badge
         ])
         .build(tauri::generate_context!())
         .expect("failed to build the app");
