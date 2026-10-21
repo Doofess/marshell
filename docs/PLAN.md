@@ -331,7 +331,7 @@ Every choice is monospace and falls back to the system monospace font and then t
 
 Pause all looping animation when the window is hidden.
 
-**Sound brief:**
+**Sound brief:** (superseded on Windows by phase 4 decision 2: each category plays a Windows system sound alias; the 3 s limit stays.)
 - One family in D major pentatonic: soft sine plus a felt-bell timbre, normalised to −20 LUFS.
 - Needs you: rising D5→A5, 420 ms. The escalation adds a third note.
 - Done: a resolving 3-note arrival, 600 ms.
@@ -540,10 +540,10 @@ Session state is exactly as in brief §4, plus `unseen_done`, `waiting_since_ms`
   - make the WebSocket upgrade echo the `marshell.v1` subprotocol (`WebSocketUpgrade::protocols`), or browsers drop the connection.
 - **`/v1/status`**, JSON.
   - It opens with a `Snapshot {sessions, lane, plan_usage, doctor_summary}`.
-  - After that, the core sends a `Patch[]` batch every 100 ms: `SessionPatch`, `PermissionCard`, `NotifyRequest`, `DoctorStatus`. `PermissionCard` and needs-you patches **skip the batch** and go out immediately, to meet the 150 ms hook-to-card budget.
-  - The client sends `ClientState {focused: bool, active_tab, visible_tabs}`, which the notification rules and the native-recap focus trick both need.
+  - After that, the core sends a `Patch[]` batch every 100 ms: `SessionPatch`, `PermissionCard`, `DoctorStatus`. `PermissionCard` and needs-you patches **skip the batch** and go out immediately, to meet the 150 ms hook-to-card budget.
+  - The client reports `UiView {window_focused, visible_tabs}` through `PUT /v1/ui/view` (slice 4a), which the notification rules and the native-recap focus trick both need.
 - **Tauri events** are OS-level only: notification activated → `{tab_id}`, single-instance argv, tray menu actions.
-- **The window shell subscribes to `/v1/status` like any other client** and turns `NotifyRequest` into banners and badges. This keeps v2's daemon move a packaging change.
+- **Notifications are decided in the core** (`crates/core/src/notify/`, slice 4a). Each `NotifyRequest` (banner, sound, flash) goes to the app shell through the supervisor's `CoreEvent::Notify`, not to the webview, and the shell shows it. The webview keeps only the taskbar badge count. In v2's daemon the same requests travel over the daemon's channel to the shell.
 
 ## 4. Data model: where state lives
 
@@ -655,9 +655,9 @@ The Rust core is the only source of truth.
 | Shells | pwsh 7, Windows PowerShell, cmd, Git Bash (registry `GitForWindows\InstallPath`), WSL distros (`wsl -l -q` outputs UTF-16) | `/etc/shells`, login shell | `/etc/shells`, login shell |
 | PATH | Inherited | GUI apps lack the shell PATH, so resolve `$SHELL -lic env` once for `detect()` and headless runs | Same as macOS |
 | WSL agents | Separate config root per distro. Hooks inside WSL call the Windows bridge through interop (`/mnt/c/.../marshell-hook.exe`), with `WSLENV=MARSHELL_TAB_ID/u:MARSHELL_AGENT/u`. Spike. | n/a | n/a |
-| Notifications | Banners are always sent **silent**; our own rodio sounds play instead. First evaluate one cross-platform crate with actions and a click callback (e.g. `user-notify`; verify it in S3), and write per-OS code only where it falls short. Per-OS fallback: `tauri-winrt-notification` toasts with buttons and an activation callback. Needs an AUMID, which the installed app has (dev builds show as PowerShell). Overlay icon for the count; `requestUserAttention` to flash. | Per-OS fallback: `UNUserNotificationCenter` with Allow/Deny categories and a click callback. Needs a signed bundle. Dock badge via `setBadgeCount`. | Per-OS fallback: `notify-rust` over D-Bus with actions and a default action (GNOME/KDE). Badge only where the Unity LauncherEntry API exists. |
+| Notifications | Banners are always sent **silent** and the shell plays a system sound instead. `tauri-plugin-notification` (S3, 2026-10-21): a click on the banner or its Open button focuses the session; a click from the notification centre does nothing. Needs an AUMID, which the installed app has (dev builds show as PowerShell). Overlay icon for the count; `requestUserAttention` to flash. | Per-OS fallback: `UNUserNotificationCenter` with Allow/Deny categories and a click callback. Needs a signed bundle. Dock badge via `setBadgeCount`. | Per-OS fallback: `notify-rust` over D-Bus with actions and a default action (GNOME/KDE). Badge only where the Unity LauncherEntry API exists. |
 | Fallback for all three | Activation through a `marshell://focus/<tab>` deep link plus single-instance | Same | Same |
-| DND for our sounds | `SHQueryUserNotificationState` | Best effort (no public Focus API without an entitlement) | GNOME `show-banners` / KDE `Inhibited` |
+| DND for our sounds | `SHQueryUserNotificationState` (full-screen and presentation only: it misses Windows 11 do-not-disturb, S3) | Best effort (no public Focus API without an entitlement) | GNOME `show-banners` / KDE `Inhibited` |
 | Webview | WebView2 (bootstrapper embedded) | WKWebView. Dead-key bug xterm #5894 needs a host-side dead-key shim. | WebKitGTK 4.1. WebGL `preserveDrawingBuffer:true`; set `WEBKIT_DISABLE_COMPOSITING_MODE` / `WEBKIT_DISABLE_DMABUF_RENDERER` in `main()` only when the user hasn't set them; `transparent:false`; IME commit guard; build the AppImage on debian:12. |
 | Title bar | Custom Fluent-like | Native traffic lights (Overlay) | Native decorations |
 | Claude paths | `%USERPROFILE%\.claude`; managed `C:\Program Files\ClaudeCode\managed-settings.json` | `~/.claude`; managed `/Library/Application Support/ClaudeCode/` | `~/.claude`; managed `/etc/claude-code/` |
@@ -666,7 +666,7 @@ The Rust core is the only source of truth.
 | Packaging | NSIS per-user (no admin) + MSI | dmg, universal binary | AppImage, deb, rpm |
 | Signing | Azure Artifact Signing | Developer ID + notarization, hardened runtime. Sidecar bins (`marshell-hook`, `marshell`, `marshell-host`) are signed too. | AppImage GPG, rpm key |
 | Elevated sessions | `marshell-host --elevated` via ShellExecute `runas`; token loopback; accepts only input and resize | `sudo -i` in the tab | `pkexec` / `sudo -i` |
-| Sound | rodio 0.22 (WASAPI) | rodio (CoreAudio) | rodio; ALSA build dependency |
+| Sound | `PlaySound` with a system sound alias per category (phase 4 decision 2) | rodio (CoreAudio) | rodio; ALSA build dependency |
 
 Tray mouse events are not emitted on Linux, so on Linux the tray is menu-only.
 
