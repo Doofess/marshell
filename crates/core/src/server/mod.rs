@@ -21,6 +21,8 @@ mod settings;
 mod shell_panel;
 mod tasks;
 
+pub(crate) use files::existing_file as local_file;
+
 use crate::profiles::detect::{Probe, detect_profiles};
 use crate::registry::{Registry, Relaunch};
 use crate::{auth, paths, private};
@@ -100,6 +102,8 @@ struct Inner {
     /// Claude Code's settings file when a test or a caller names one; None means
     /// `MARSHELL_CLAUDE_SETTINGS`, else `~/.claude/settings.json`.
     claude_settings: Option<PathBuf>,
+    /// Home and managed settings paths for reading Claude's compact window; tests supply scratch paths.
+    claude_compact_paths: Option<(PathBuf, Vec<PathBuf>)>,
     /// Where the app's own programs sit, so setting up hooks can put a missing bridge back. None in tests.
     programs_dir: Option<PathBuf>,
     /// `--version` of each agent executable with the file's modified time it was read at. A different
@@ -168,6 +172,7 @@ impl AppState {
             config,
             history,
             claude_settings: None,
+            claude_compact_paths: None,
             programs_dir: None,
             versions: Mutex::new(HashMap::new()),
             claude_version: None,
@@ -180,6 +185,13 @@ impl AppState {
         Arc::get_mut(&mut self.0)
             .expect("with_claude_settings runs before the state is shared")
             .claude_settings = Some(path);
+        self
+    }
+    /// Names the user home and managed files used for Claude's compact window, before state is shared.
+    pub fn with_claude_compact_paths(mut self, user_home: PathBuf, managed: Vec<PathBuf>) -> Self {
+        Arc::get_mut(&mut self.0)
+            .expect("with_claude_compact_paths runs before the state is shared")
+            .claude_compact_paths = Some((user_home, managed));
         self
     }
     /// Names the folder holding the app's own programs. Call it before the state is cloned.

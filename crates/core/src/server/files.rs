@@ -228,7 +228,7 @@ fn expand_home(candidate: &str) -> Option<String> {
 }
 
 /// The canonical path of `path` when it is a regular file (after following symlinks).
-fn existing_file(path: &str) -> Option<String> {
+pub(crate) fn existing_file(path: &str) -> Option<String> {
     // A link on the way may lead to a network path, so the links are read before anything follows them.
     if refused(path) || links_refused(std::path::Path::new(path)) {
         return None;

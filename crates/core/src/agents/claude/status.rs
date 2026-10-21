@@ -233,6 +233,31 @@ pub fn fold_statusline(prev: Option<&LiveStatus>, body: &Value, now_ms: u64) -> 
     next
 }
 
+/// Measures current input tokens against the compact window, capped by the model's window.
+/// Without a compact window or input count, keeps the status line's own percentage.
+pub fn fold_statusline_with_window(
+    prev: Option<&LiveStatus>,
+    body: &Value,
+    now_ms: u64,
+    window: Option<u64>,
+) -> LiveStatus {
+    let mut next = fold_statusline(prev, body, now_ms);
+    if let Some(window) = window
+        && let Some(tokens) = body
+            .pointer("/context_window/total_input_tokens")
+            .and_then(Value::as_u64)
+    {
+        let model_window = body
+            .pointer("/context_window/context_window_size")
+            .and_then(Value::as_u64);
+        let effective = model_window.map_or(window, |size| size.min(window));
+        if effective > 0 {
+            next.context_pct = Some((tokens as f64 * 100.0 / effective as f64).round().clamp(0.0, 100.0) as u8);
+        }
+    }
+    next
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -247,6 +272,46 @@ mod tests {
             )))
             .unwrap()
         };
+    }
+
+    #[test]
+    fn statusline_uses_the_compact_window() {
+        let body = fixture!("statusline");
+        assert_eq!(
+            fold_statusline_with_window(None, &body, 1, Some(300_000)).context_pct,
+            Some(19)
+        );
+        assert_eq!(fold_statusline_with_window(None, &body, 1, None).context_pct, Some(6));
+    }
+
+    #[test]
+    fn statusline_uses_the_smaller_model_window() {
+        let mut body = fixture!("statusline");
+        body["context_window"]["context_window_size"] = json!(200000);
+        assert_eq!(
+            fold_statusline_with_window(None, &body, 1, Some(300_000)).context_pct,
+            Some(29)
+        );
+    }
+
+    #[test]
+    fn statusline_without_input_tokens_keeps_used_percentage() {
+        let body = json!({"context_window": {"used_percentage": 6}});
+        assert_eq!(
+            fold_statusline_with_window(None, &body, 1, Some(300_000)).context_pct,
+            Some(6)
+        );
+    }
+
+    #[test]
+    fn statusline_rounds_and_clamps_with_no_model_window() {
+        for (tokens, want) in [(0, 0), (59500, 20), (400000, 100)] {
+            let body = json!({"context_window": {"total_input_tokens": tokens}});
+            assert_eq!(
+                fold_statusline_with_window(None, &body, 1, Some(300_000)).context_pct,
+                Some(want)
+            );
+        }
     }
 
     #[test]

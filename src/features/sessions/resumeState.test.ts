@@ -4,7 +4,7 @@ import type { LiveStatus } from "../../generated/LiveStatus";
 import type { Profile } from "../../generated/Profile";
 import type { SessionInfo } from "../../generated/SessionInfo";
 import type { RowModel } from "../sidebar/types";
-import { holdsResume, offersResume, resumeDisabledReason } from "./resumeState";
+import { holdsResume, offersModeChange, offersResume, resumeDisabledReason } from "./resumeState";
 import { toRow } from "./toRow";
 
 const profile = (id: string) => ({ id }) as Profile;
@@ -46,6 +46,25 @@ describe("offersResume", () => {
     const row = { ...toRow(info(), []), status };
     for (const session of [info(), info({ state: { kind: "exited", code: 0 } }), info({ state: { kind: "ended" } }), undefined]) {
       expect(offersResume(row, session)).toBe(false);
+    }
+  });
+});
+
+describe("offersModeChange", () => {
+  it("hides Mode only while the ended agent's shell still runs", () => {
+    const session = info({ live: { state: "ended", phrase: "Ended", since_ms: 0, recap: null } as LiveStatus });
+    const row = toRow(session, []);
+    expect(row.status).toBe("ended");
+    expect(offersModeChange(row, session)).toBe(false);
+    for (const state of [{ kind: "exited", code: 0 }, { kind: "ended" }] as const) {
+      expect(offersModeChange(row, { ...session, state })).toBe(true);
+    }
+    expect(offersModeChange(row, undefined)).toBe(true);
+  });
+  it.each((Object.keys(GLYPHS) as RowModel["status"][]).filter((status) => status !== "ended"))("keeps Mode for status %s, whatever the process state", (status) => {
+    const row = { ...toRow(info(), []), status };
+    for (const session of [info(), info({ state: { kind: "exited", code: 0 } }), info({ state: { kind: "ended" } }), undefined]) {
+      expect(offersModeChange(row, session)).toBe(true);
     }
   });
 });

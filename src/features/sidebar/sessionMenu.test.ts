@@ -1,9 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { commandById, shortcutLabel } from "../../lib/keymap";
+import type { SessionInfo } from "../../generated/SessionInfo";
+import { menuFacts } from "../sessions/sessionMenuRun";
+import { FIXTURES } from "./fixtures";
 import { modeMenuItems, sessionMenuItems, type SessionMenuFacts } from "./sessionMenu";
 
-const all: SessionMenuFacts = { agent: true, resumable: true, task: true, inShownPane: false, paneAvailable: true, pausable: true, paused: false };
-const none: SessionMenuFacts = { agent: false, resumable: false, task: false, inShownPane: false, paneAvailable: false, pausable: false, paused: false };
+const all: SessionMenuFacts = { agent: true, modeChangeable: true, resumable: true, task: true, inShownPane: false, paneAvailable: true, pausable: true, paused: false };
+const none: SessionMenuFacts = { agent: false, modeChangeable: true, resumable: false, task: false, inShownPane: false, paneAvailable: false, pausable: false, paused: false };
 
 const ids = (facts: SessionMenuFacts) =>
   sessionMenuItems(facts, "windows").map((i) => ("separator" in i ? "-" : i.id));
@@ -45,6 +48,14 @@ describe("sessionMenuItems", () => {
 });
 
 describe("Mode ▸", () => {
+  it("hides Mode for an ended agent in a running shell, then restores it when the shell exits", () => {
+    const row = { ...FIXTURES[0]!, status: "ended" as const };
+    const info = { tab_id: row.id, agent: "claude", state: { kind: "running" }, paused: false } as SessionInfo;
+    const ctx = { infos: [info], rows: [row], profiles: [], panes: [row.id], shown: 1, fit: 4 };
+    expect(ids(menuFacts(row.id, ctx))).not.toContain("mode");
+    expect(ids(menuFacts(row.id, { ...ctx, infos: [{ ...info, state: { kind: "exited", code: 0 } }] }))).toContain("mode");
+    expect(ids(menuFacts(row.id, { ...ctx, rows: [{ ...row, status: "working" }] }))).toContain("mode");
+  });
   it("is offered for an agent session and not for a plain shell", () => {
     const labels = sessionMenuItems(all, "windows").map((i) => ("separator" in i ? "-" : i.label));
     expect(labels).toContain("Mode ▸");

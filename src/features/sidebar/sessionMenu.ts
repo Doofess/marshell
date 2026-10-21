@@ -7,6 +7,8 @@ import type { Mode } from "./types";
 export type SessionMenuFacts = {
   /** An agent session has a mode to restart in; a plain shell has none. */
   agent: boolean;
+  /** Restarting in another mode will not replace an ended agent's live shell. */
+  modeChangeable: boolean;
   resumable: boolean;
   task: boolean;
   inShownPane: boolean;
@@ -22,7 +24,7 @@ export function sessionMenuItems(facts: SessionMenuFacts, os: Os): MenuItem[] {
   const items: MenuItem[] = [{ id: "rename", label: "Rename", shortcut: shortcut("rename") }];
   if (!facts.inShownPane && facts.paneAvailable) items.push({ id: "split", label: "Split into a pane" });
   if (facts.resumable) items.push({ id: "resume", label: "Resume" });
-  if (facts.agent) items.push({ id: "mode", label: "Mode ▸" });
+  if (facts.agent && facts.modeChangeable) items.push({ id: "mode", label: "Mode ▸" });
   if (facts.pausable) items.push({ id: "pause", label: "Pause" });
   if (facts.paused) items.push({ id: "continue", label: "Continue" });
   if (facts.task) items.push({ id: "review-task", label: "Review changes", shortcut: shortcut("review-task") });
