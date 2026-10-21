@@ -1,5 +1,6 @@
 //! Claude Code's side of a permission request: the JSON a `PermissionRequest` hook answers with.
 
+pub mod compact;
 pub mod hooks;
 pub mod request;
 pub mod status;

@@ -1,5 +1,6 @@
 use super::AppState;
-use crate::agents::claude::status::{fold_event, fold_statusline, mode_of};
+use crate::agents::claude::compact;
+use crate::agents::claude::status::{fold_event, fold_statusline_with_window, mode_of};
 use crate::agents::claude::{Gate, version_gate};
 use crate::history::recorder::schedule_copy;
 use crate::hooks::holds::Outcome;
@@ -123,8 +124,29 @@ async fn fold_live(st: &AppState, role: HookRole, tab: &str, body: &serde_json::
         Gate::Unknown(note) => st.registry().set_status_note(tab, Some(note)),
         Gate::Known => {
             if role == HookRole::Statusline {
+                // Read settings off the async workers and before taking the registry lock.
+                let paths =
+                    st.0.claude_compact_paths
+                        .clone()
+                        .or_else(|| super::files::home_dir().map(|home| (home, compact::managed_settings_paths())));
+                let settings_body = body.clone();
+                let window = tokio::task::spawn_blocking(move || {
+                    let (home, managed) = paths?;
+                    let project = settings_body
+                        .pointer("/workspace/project_dir")
+                        .and_then(serde_json::Value::as_str)
+                        .or_else(|| settings_body.get("cwd").and_then(serde_json::Value::as_str))
+                        .filter(|path| !super::files::refused(path))
+                        .map(std::path::Path::new)
+                        .filter(|path| path.is_absolute());
+                    let files = compact::read_settings(&home, project, &managed);
+                    let model = settings_body.pointer("/model/id").and_then(serde_json::Value::as_str);
+                    compact::compact_window(model, &files)
+                })
+                .await
+                .unwrap_or(None);
                 st.registry()
-                    .update_live(tab, |prev| Some(fold_statusline(prev, body, at_ms)));
+                    .update_live(tab, |prev| Some(fold_statusline_with_window(prev, body, at_ms, window)));
             } else {
                 st.registry().update_live(tab, |prev| fold_event(prev, body, at_ms));
                 st.registry().update_subagents(tab, body);

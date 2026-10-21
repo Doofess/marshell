@@ -30,6 +30,7 @@ const KNOWN: &str = "2.1.302";
 fn state(version: Option<&str>) -> AppState {
     common::tie_children_to_test();
     let home = tempfile::tempdir().unwrap().keep();
+    let user_home = home.join("user");
     AppState::new(
         TOKEN.into(),
         PORT,
@@ -39,6 +40,7 @@ fn state(version: Option<&str>) -> AppState {
     )
     .with_agent_check(|_| true)
     .with_claude_version(version.map(str::to_string))
+    .with_claude_compact_paths(user_home, Vec::new())
 }
 
 fn app() -> axum::Router {
@@ -260,7 +262,15 @@ async fn start_claude(app: &axum::Router) -> String {
 }
 
 async fn post_fixture(app: &axum::Router, role: &str, tab: &str, name: &str) -> StatusCode {
-    status(app, hook(Some(role), Some("claude"), Some(tab), fixture(name))).await
+    let mut body = fixture(name);
+    if role == "statusline" {
+        // Recorded project paths must not make a test read settings outside its scratch home.
+        let mut json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        json["workspace"] = serde_json::json!({});
+        json["cwd"] = serde_json::Value::Null;
+        body = serde_json::to_vec(&json).unwrap();
+    }
+    status(app, hook(Some(role), Some("claude"), Some(tab), body)).await
 }
 
 fn row(st: &AppState, tab: &str) -> SessionInfo {
@@ -328,6 +338,61 @@ async fn the_statusline_role_gives_the_context_percentage() {
     stop(&st, &tab);
     assert_eq!(live.context_pct, Some(6));
     assert_eq!(live.model.as_deref(), Some("Opus 5.5"));
+}
+
+#[tokio::test]
+async fn statusline_reads_the_model_and_project_compact_settings() {
+    let dir = tempfile::tempdir().unwrap();
+    let home = dir.path().join("user");
+    let project = dir.path().join("project");
+    let cwd = dir.path().join("cwd");
+    for path in [&home, &project, &cwd] {
+        std::fs::create_dir_all(path.join(".claude")).unwrap();
+    }
+    std::fs::write(home.join(".claude/settings.json"), r#"{"autoCompactWindow": 500000}"#).unwrap();
+    std::fs::write(
+        project.join(".claude/settings.local.json"),
+        r#"{
+        "autoCompactWindow": 400000,
+        "modelSettings": {"claude-opus-5-5": {"autoCompactWindow": 300000}}
+    }"#,
+    )
+    .unwrap();
+    std::fs::write(cwd.join(".claude/settings.json"), r#"{"autoCompactWindow": 200000}"#).unwrap();
+    let override_path = dir.path().join("hook-settings.json");
+    std::fs::write(&override_path, r#"{"autoCompactWindow": 100000}"#).unwrap();
+    let st = state(Some(KNOWN))
+        .with_claude_compact_paths(home, Vec::new())
+        .with_claude_settings(override_path);
+    let app = router(st.clone());
+    let tab = start_claude(&app).await;
+    let mut body: serde_json::Value = serde_json::from_slice(&fixture("statusline")).unwrap();
+    body["workspace"]["project_dir"] = serde_json::json!(project);
+    body["cwd"] = serde_json::json!(cwd);
+    let mut percentages = Vec::new();
+    for source in ["project", "cwd", "user"] {
+        if source == "cwd" {
+            body["workspace"] = serde_json::json!({});
+        } else if source == "user" {
+            body["cwd"] = serde_json::Value::Null;
+        }
+        assert_eq!(
+            status(
+                &app,
+                hook(
+                    Some("statusline"),
+                    Some("claude"),
+                    Some(&tab),
+                    body.to_string().into_bytes()
+                )
+            )
+            .await,
+            StatusCode::NO_CONTENT
+        );
+        percentages.push(row(&st, &tab).live.unwrap().context_pct);
+    }
+    stop(&st, &tab);
+    assert_eq!(percentages, vec![Some(19), Some(29), Some(12)]);
 }
 
 async fn finish_background_subagent(app: &axum::Router, st: &AppState, tab: &str) {
