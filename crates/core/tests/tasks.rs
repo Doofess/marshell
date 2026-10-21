@@ -1366,6 +1366,7 @@ async fn remove_closes_sessions_and_deletes_everything() {
         profile_id: "sleeper".into(),
         cwd: task.path.clone(),
         mode: None,
+        muted: false,
     };
     state
         .registry()

@@ -10,6 +10,7 @@ use axum::body::Bytes;
 use axum::extract::{Query, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
+use marshell_protocol::api::LiveState;
 use marshell_protocol::hook::{HEADER_AGENT, HEADER_ROLE, HEADER_TAB, HEADER_VERSION, HookRole};
 use serde::Deserialize;
 
@@ -148,9 +149,33 @@ async fn fold_live(st: &AppState, role: HookRole, tab: &str, body: &serde_json::
                 st.registry()
                     .update_live(tab, |prev| Some(fold_statusline_with_window(prev, body, at_ms, window)));
             } else {
-                st.registry().update_live(tab, |prev| fold_event(prev, body, at_ms));
+                // A Stop that would read Done is held for `done_settle`: a turn that resumes within it
+                // (the next event cancels the hold) never shows Done.
+                let mut done = None;
+                st.registry()
+                    .update_live(tab, |prev| match fold_event(prev, body, at_ms) {
+                        Some(next) if is_stop(body) && next.state == LiveState::Done => {
+                            done = Some(next);
+                            None
+                        }
+                        other => other,
+                    });
                 st.registry().update_subagents(tab, body);
+                // Cancels a hold from an earlier event, so it runs before this Stop's own.
                 st.registry().follow_subagent_wait(tab, body);
+                if let Some(done) = done {
+                    if st.registry().hold_done(tab, done.clone()) {
+                        let st = st.clone();
+                        let tab = tab.to_string();
+                        tokio::spawn(async move {
+                            tokio::time::sleep(st.done_settle()).await;
+                            st.registry().settle_done(&tab);
+                        });
+                    } else {
+                        // Not a row that holds (another agent's): show it at once, as before.
+                        st.registry().update_live(tab, |_| Some(done));
+                    }
+                }
                 if st.registry().awaits_subagents_end(tab) {
                     let st = st.clone();
                     let tab = tab.to_string();
@@ -166,6 +191,11 @@ async fn fold_live(st: &AppState, role: HookRole, tab: &str, body: &serde_json::
             st.registry().set_status_note(tab, None);
         }
     }
+}
+
+/// Whether the body is the main turn's Stop.
+fn is_stop(body: &serde_json::Value) -> bool {
+    body.get("hook_event_name").and_then(serde_json::Value::as_str) == Some("Stop")
 }
 
 /// Holds the bridge's request until a decision, a release, the hold running out, or the bridge

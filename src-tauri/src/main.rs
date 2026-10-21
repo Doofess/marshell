@@ -5,6 +5,7 @@ mod attention;
 mod capture;
 mod diagnostics;
 mod folder_picker;
+mod notify;
 
 use marshell_core::server::CoreConfig;
 use marshell_core::supervisor::{CoreEvent, Supervisor};
@@ -28,6 +29,7 @@ fn emit_core_event(app: &tauri::AppHandle, event: CoreEvent) {
     let name = match event {
         CoreEvent::Restarted { .. } => "core-restarted",
         CoreEvent::Failed => "core-failed",
+        CoreEvent::Notify(request) => return notify::deliver(app, request),
     };
     let sent = app.emit(name, event);
     if let Err(e) = sent {
@@ -128,7 +130,20 @@ fn main() {
         // No capability grants the dialog to the webview; only the `pick_folder` command opens it.
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
+        // No capability grants notifications to the webview; only the shell shows banners.
+        .plugin(tauri_plugin_notification::init())
+        // The UI reports focus too, but a webview that died while focused cannot report losing it.
+        .on_window_event(|window, event| {
+            if matches!(event, tauri::WindowEvent::Focused(false))
+                && let Some(core) = window.try_state::<CoreHandle>()
+            {
+                core.0.window_blurred();
+            }
+        })
         .setup(|app| {
+            if let Err(e) = notify::init(app.handle()) {
+                eprintln!("Marshell: banners will not answer clicks: {e}");
+            }
             if let Some(w) = app.get_webview_window("main") {
                 disable_browser_shortcuts(&w);
             }
@@ -171,6 +186,7 @@ fn main() {
                 home,
                 allowed_origins: allowed_origins(),
                 programs_dir,
+                notify: None,
             };
             let handle = app.handle().clone();
             let supervisor =
@@ -187,8 +203,7 @@ fn main() {
             capture::capture_screen_region,
             capture::cancel_capture,
             capture::read_clipboard_image,
-            attention::set_badge,
-            attention::alert_needs_you
+            attention::set_badge
         ])
         .build(tauri::generate_context!())
         .expect("failed to build the app");

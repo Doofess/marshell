@@ -20,6 +20,7 @@ mod sessions;
 mod settings;
 mod shell_panel;
 mod tasks;
+mod view;
 
 pub(crate) use files::existing_file as local_file;
 
@@ -48,6 +49,9 @@ pub struct CoreConfig {
     /// The folder holding marshell-hook and marshell, next to the app's exe. None in tests: set up then never
     /// copies them.
     pub programs_dir: Option<PathBuf>,
+    /// Where the notifier hands what it decided (banners, sounds, flashes). None in tests that don't care:
+    /// then no notifier runs.
+    pub notify: Option<crate::notify::NotifySink>,
 }
 
 /// Shared server state. Cloning is cheap (one `Arc`).
@@ -95,6 +99,8 @@ struct Inner {
     permission_hold: Duration,
     /// How long to wait for Claude to resume after its last background subagent stops.
     subagent_wait: Duration,
+    /// How long a Stop is held before the row reads Done.
+    done_settle: Duration,
     /// Previews and applies changes to the CLIs' config files.
     config: crate::config::service::ConfigService,
     /// The sessions index and the transcript archive.
@@ -116,6 +122,8 @@ struct Inner {
     sampler: Mutex<crate::diagnostics::perf::Sampler>,
     /// The diagnostics export waiting to be read and saved.
     previews: crate::diagnostics::export::Previews,
+    /// What the UI last reported it shows, for the notifier to read.
+    view: tokio::sync::watch::Sender<marshell_protocol::api::UiView>,
 }
 
 /// How long a permission request is held when `MARSHELL_PERMISSION_HOLD_SECS` is not set.
@@ -123,6 +131,9 @@ pub const DEFAULT_PERMISSION_HOLD: Duration = Duration::from_secs(120);
 
 /// How long to wait for Claude to resume after its last background subagent stops.
 pub const DEFAULT_SUBAGENT_WAIT: Duration = Duration::from_secs(30);
+
+/// How long a Stop is held before the row reads Done, so a turn that resumes at once never shows it.
+pub const DEFAULT_DONE_SETTLE: Duration = Duration::from_millis(1500);
 
 impl AppState {
     pub fn new(token: String, port: u16, allowed_origins: Vec<String>, home: PathBuf, detected: Vec<Profile>) -> Self {
@@ -169,6 +180,7 @@ impl AppState {
             holds: crate::hooks::holds::Holds::default(),
             permission_hold: DEFAULT_PERMISSION_HOLD,
             subagent_wait: DEFAULT_SUBAGENT_WAIT,
+            done_settle: DEFAULT_DONE_SETTLE,
             config,
             history,
             claude_settings: None,
@@ -178,6 +190,11 @@ impl AppState {
             claude_version: None,
             sampler: Mutex::new(crate::diagnostics::perf::Sampler::new()),
             previews: crate::diagnostics::export::Previews::default(),
+            view: tokio::sync::watch::channel(marshell_protocol::api::UiView {
+                window_focused: false,
+                visible_tabs: Vec::new(),
+            })
+            .0,
         }))
     }
     /// Names Claude Code's settings file, in place of the environment. Call it before the state is cloned.
@@ -229,6 +246,16 @@ impl AppState {
     pub fn subagent_wait(&self) -> Duration {
         self.0.subagent_wait
     }
+    /// Sets how long a Stop is held before the row reads Done. Call it before the state is cloned.
+    pub fn with_done_settle(mut self, d: Duration) -> Self {
+        Arc::get_mut(&mut self.0)
+            .expect("with_done_settle runs before the state is shared")
+            .done_settle = d;
+        self
+    }
+    pub fn done_settle(&self) -> Duration {
+        self.0.done_settle
+    }
     pub fn holds(&self) -> &crate::hooks::holds::Holds {
         &self.0.holds
     }
@@ -257,6 +284,21 @@ impl AppState {
     /// The folder holding `profiles.json`, `tasks.json` and the other files Marshell keeps.
     pub fn home(&self) -> &std::path::Path {
         &self.0.home
+    }
+    /// What the UI last reported it shows. Starts as an unfocused window with no visible tab.
+    pub fn view(&self) -> tokio::sync::watch::Receiver<marshell_protocol::api::UiView> {
+        self.0.view.subscribe()
+    }
+    /// Records what the UI reports it shows.
+    pub fn report_view(&self, view: marshell_protocol::api::UiView) {
+        self.0.view.send_replace(view);
+    }
+    /// The window lost focus, as the shell saw it. A webview that died or hung while focused can no longer say
+    /// so, and its last report would otherwise keep every notification back.
+    pub fn window_blurred(&self) {
+        self.0
+            .view
+            .send_if_modified(|v| std::mem::replace(&mut v.window_focused, false));
     }
     /// The open and recently closed sessions.
     pub fn registry(&self) -> &Registry {
@@ -294,6 +336,15 @@ impl AppState {
     }
     pub(crate) fn previews(&self) -> &crate::diagnostics::export::Previews {
         &self.0.previews
+    }
+    /// A copy of the notification settings, from memory: the notifier reads them every tick.
+    pub(crate) fn notify_settings(&self) -> marshell_protocol::api::NotifySettings {
+        self.0
+            .settings
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .notifications
+            .clone()
     }
     /// A copy of the current settings.
     pub(crate) fn settings_snapshot(&self) -> Settings {
@@ -381,6 +432,11 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/sessions/reopen", post(sessions::reopen))
         .route("/v1/sessions/{tab}/resume", post(sessions::resume))
         .route("/v1/sessions/{tab}/restart", post(sessions::restart))
+        .route("/v1/sessions/{tab}/muted", put(sessions::muted))
+        .route(
+            "/v1/ui/view",
+            put(view::put).layer(DefaultBodyLimit::max(view::MAX_BODY * 4)),
+        )
         .route("/v1/sessions/{tab}/pause", post(sessions::pause))
         .route("/v1/sessions/{tab}/continue", post(sessions::cont))
         .route("/v1/sessions/{tab}/input", post(sessions::input))
@@ -465,6 +521,8 @@ pub struct RunningCore {
     endpoint_file: PathBuf,
     shutdown: tokio::sync::oneshot::Sender<()>,
     serve: tokio::task::JoinHandle<()>,
+    /// The notifier's task, when the config named a sink. Ended with the core.
+    notifier: Option<tokio::task::JoinHandle<()>>,
 }
 
 impl RunningCore {
@@ -493,6 +551,9 @@ impl RunningCore {
         // given just before closing is kept. It returns at once when nothing is pending.
         self.state.history().flush(Duration::from_secs(3));
         auth::remove_endpoint_file_if_ours(&self.endpoint_file, &self.endpoint.token);
+        if let Some(notifier) = &self.notifier {
+            notifier.abort();
+        }
         let _ = self.shutdown.send(());
     }
 
@@ -566,6 +627,7 @@ pub async fn start(cfg: CoreConfig) -> anyhow::Result<RunningCore> {
             tracing::error!("core server stopped: {e}");
         }
     });
+    let notifier = cfg.notify.map(|sink| crate::notify::spawn(state.clone(), sink));
     tracing::info!(app_version = env!("CARGO_PKG_VERSION"), port, "core started");
     Ok(RunningCore {
         endpoint,
@@ -573,6 +635,7 @@ pub async fn start(cfg: CoreConfig) -> anyhow::Result<RunningCore> {
         endpoint_file,
         shutdown: tx,
         serve,
+        notifier,
     })
 }
 

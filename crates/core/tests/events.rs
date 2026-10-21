@@ -16,6 +16,7 @@ async fn core() -> (RunningCore, tempfile::TempDir) {
         home: home.path().to_path_buf(),
         allowed_origins: vec![],
         programs_dir: None,
+        notify: None,
     })
     .await
     .unwrap();

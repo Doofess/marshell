@@ -57,6 +57,7 @@ pub(crate) fn blank(now_ms: u64) -> LiveStatus {
         five_hour_resets_at: None,
         seven_day_pct: None,
         subagents: 0,
+        subagents_finished: 0,
     }
 }
 

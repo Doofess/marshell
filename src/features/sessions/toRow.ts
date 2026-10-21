@@ -130,6 +130,7 @@ export function toRow(info: SessionInfo, profiles: Profile[], setup?: { claude?:
     projectKey: info.project,
     agent,
     ...(info.mode === null ? {} : { mode: info.mode }),
+    ...(info.muted ? { muted: true } : {}),
   };
   if (info.state.kind === "ended") return { ...base, status: "ended", phrase: ENDED_PHRASE };
   if (info.state.kind === "exited") return { ...base, status: "ended", phrase: `Exited with code ${info.state.code}` };

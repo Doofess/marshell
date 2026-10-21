@@ -1,5 +1,6 @@
-//! The needs-you count on the taskbar, the flash and the sound.
+//! The needs-you count on the taskbar, the flash and the sounds.
 
+use marshell_core::notify::SoundKind;
 use tauri::{Manager, UserAttentionType};
 
 const SIZE: u32 = 16;
@@ -85,34 +86,61 @@ pub fn set_badge(app: tauri::AppHandle, count: u32) -> Result<(), String> {
     }
 }
 
-/// Flashes the taskbar button and, when `sound`, plays the needs-you sound. The window decides when to call it (a new request while unfocused).
-#[tauri::command]
-pub fn alert_needs_you(app: tauri::AppHandle, sound: bool) -> Result<(), String> {
-    let window = app.get_webview_window("main").ok_or("no main window")?;
-    window
-        .request_user_attention(Some(UserAttentionType::Informational))
-        .map_err(|e| e.to_string())?;
-    if sound {
-        play_sound();
+/// Flashes the taskbar button. The core decides when (a needs-you wait while the window is in the background).
+pub fn flash(app: &tauri::AppHandle) {
+    if let Some(window) = app.get_webview_window("main")
+        && let Err(e) = window.request_user_attention(Some(UserAttentionType::Informational))
+    {
+        eprintln!("Marshell: could not flash the taskbar button: {e}");
     }
-    Ok(())
 }
 
-/// Windows' own notification sound, so it follows the user's sound scheme and volume (3d decision 9).
-const SOUND_ALIAS: &str = "Notification.Default";
+/// Windows' own sound for each kind, so each follows the user's sound scheme and volume (3d decision 9) and
+/// they differ: in the default Windows 11 scheme these are five different files.
+pub fn sound_alias(kind: SoundKind) -> &'static str {
+    match kind {
+        SoundKind::NeedsYou => "Notification.Default",
+        SoundKind::Escalation => "Notification.Reminder",
+        SoundKind::Done => "Notification.Mail",
+        SoundKind::SubagentDone => "Notification.IM",
+        SoundKind::Error => "SystemHand",
+    }
+}
+
+/// Whether a `QUERY_USER_NOTIFICATION_STATE` asks apps to keep quiet: anything but accepting notifications
+/// (5) or an app running in its own quiet mode (7). Windows 11 do-not-disturb still reads as 5 (spike S3).
+pub fn quiet_for_os(state: i32) -> bool {
+    !matches!(state, 5 | 7)
+}
+
+/// Whether Windows asks apps to keep quiet now (a full-screen app, presentation mode). False when it can't say.
+#[cfg(windows)]
+pub fn os_is_quiet() -> bool {
+    use windows_sys::Win32::UI::Shell::SHQueryUserNotificationState;
+    let mut state = 0;
+    // SAFETY: `state` is a valid, writable i32 for the call to fill.
+    let hr = unsafe { SHQueryUserNotificationState(&mut state) };
+    hr >= 0 && quiet_for_os(state)
+}
+
+#[cfg(not(windows))]
+pub fn os_is_quiet() -> bool {
+    false
+}
 
 /// `s` as a NUL-terminated UTF-16 string for the Win32 API.
 fn wide(s: &str) -> Vec<u16> {
     s.encode_utf16().chain(std::iter::once(0)).collect()
 }
 
-/// Plays the sound without waiting for it. No fallback beep: a scheme with the sound set to (None) stays silent.
+/// Plays the kind's sound without waiting for it. No fallback beep: a scheme with the sound set to (None) stays silent.
 #[cfg(windows)]
-fn play_sound() {
+pub fn play_sound(kind: SoundKind) {
     use windows_sys::Win32::Media::Audio::{PlaySoundW, SND_ALIAS, SND_ASYNC, SND_NODEFAULT};
-    // Kept for the life of the process: with SND_ASYNC the call returns before the sound ends.
-    static ALIAS: std::sync::OnceLock<Vec<u16>> = std::sync::OnceLock::new();
-    let alias = ALIAS.get_or_init(|| wide(SOUND_ALIAS));
+    // Kept for the life of the process: with SND_ASYNC the call returns before the sound ends. One per kind.
+    static ALIASES: [std::sync::OnceLock<Vec<u16>>; 5] = [const { std::sync::OnceLock::new() }; 5];
+    let name = sound_alias(kind);
+    let alias = ALIASES[kind as usize].get_or_init(|| wide(name));
     // SAFETY: `alias` is a NUL-terminated UTF-16 string that is never freed.
     let ok = unsafe {
         PlaySoundW(
@@ -122,23 +150,39 @@ fn play_sound() {
         )
     };
     if ok == 0 {
-        eprintln!("Marshell: no sound for needs-you ({SOUND_ALIAS})");
+        eprintln!("Marshell: no sound for {kind:?} ({name})");
     }
 }
 
 /// The system sounds of macOS and Linux come when those platforms are built.
 #[cfg(not(windows))]
-fn play_sound() {}
+pub fn play_sound(_kind: SoundKind) {}
+
 #[cfg(test)]
 mod tests {
-    use super::{SOUND_ALIAS, badge_rgba, wide};
+    use super::{SoundKind, badge_rgba, quiet_for_os, sound_alias, wide};
 
     #[test]
-    fn the_sound_is_windows_own_notification_alias_as_a_c_wide_string() {
-        assert_eq!(SOUND_ALIAS, "Notification.Default");
-        let w = wide(SOUND_ALIAS);
+    fn each_kind_has_its_own_windows_sound() {
+        assert_eq!(sound_alias(SoundKind::NeedsYou), "Notification.Default");
+        assert_eq!(sound_alias(SoundKind::Escalation), "Notification.Reminder");
+        assert_eq!(sound_alias(SoundKind::Done), "Notification.Mail");
+        assert_eq!(sound_alias(SoundKind::SubagentDone), "Notification.IM");
+        assert_eq!(sound_alias(SoundKind::Error), "SystemHand");
+    }
+
+    #[test]
+    fn only_accepting_notifications_and_an_apps_own_quiet_mode_allow_sound() {
+        // QUNS_NOT_PRESENT, BUSY, RUNNING_D3D_FULL_SCREEN, PRESENTATION_MODE, ACCEPTS_NOTIFICATIONS, QUIET_TIME, APP.
+        let quiet: Vec<bool> = (1..=7).map(quiet_for_os).collect();
+        assert_eq!(quiet, [true, true, true, true, false, true, false]);
+    }
+
+    #[test]
+    fn an_alias_is_a_c_wide_string() {
+        let w = wide("Notification.Mail");
         assert_eq!(w.last(), Some(&0));
-        assert_eq!(String::from_utf16(&w[..w.len() - 1]).unwrap(), SOUND_ALIAS);
+        assert_eq!(String::from_utf16(&w[..w.len() - 1]).unwrap(), "Notification.Mail");
     }
 
     #[test]

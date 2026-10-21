@@ -1,5 +1,6 @@
 import type { Appearance } from "../../generated/Appearance";
 import type { Endpoint } from "../../generated/Endpoint";
+import type { NotifySettings } from "../../generated/NotifySettings";
 import type { Settings } from "../../generated/Settings";
 
 export const READ_FAILED = "Couldn't read your settings, so nothing was saved. Try again in a moment.";
@@ -10,6 +11,14 @@ export class SettingsReadError extends Error {
     super(READ_FAILED);
   }
 }
+
+const DEFAULT_NOTIFY: NotifySettings = {
+  needs_you: { banner: true, sound: true },
+  done: { banner: true, sound: true },
+  error: { banner: true, sound: true },
+  subagent_sound: false,
+  quiet_hours: { enabled: false, start: "22:00", end: "08:00" },
+};
 
 type SettingsApi = {
   get(ep: Endpoint): Promise<Settings>;
@@ -29,7 +38,7 @@ export class SettingsSync {
   /** Kept from the last read, so every save sends it back unchanged. */
   private off: string[] = [];
   /** Kept from the last read, so every save sends it back unchanged. */
-  private mute = false;
+  private notify: NotifySettings = DEFAULT_NOTIFY;
   /** The appearance the core last stored, which a pause-warning write sends back unchanged. */
   private appearance: Appearance | null = null;
 
@@ -46,14 +55,14 @@ export class SettingsSync {
     this.warned = s.pause_warned;
     this.seen = s.onboarded;
     this.off = s.status_off;
-    this.mute = s.sound_off;
+    this.notify = s.notifications;
     this.appearance = s.appearance;
     return s.appearance;
   }
 
-  /** Whether the needs-you sound is switched off, as of the last read or write. False until a read works. */
-  get soundOff(): boolean {
-    return this.mute;
+  /** The notification settings, as of the last read or write. The defaults until a read works. */
+  get notifications(): NotifySettings {
+    return this.notify;
   }
 
   /** The agent ids whose live status is switched off, as of the last read or write. Empty until a read works. */
@@ -80,18 +89,18 @@ export class SettingsSync {
         throw new SettingsReadError();
       }
     }
-    const s = await this.api.put(await this.getEndpoint(), { appearance: next, pause_warned: this.warned, onboarded: this.seen, status_off: this.off, sound_off: this.mute });
+    const s = await this.api.put(await this.getEndpoint(), { appearance: next, pause_warned: this.warned, onboarded: this.seen, status_off: this.off, notifications: this.notify });
     this.warned = s.pause_warned;
     this.seen = s.onboarded;
     this.off = s.status_off;
-    this.mute = s.sound_off;
+    this.notify = s.notifications;
     this.appearance = s.appearance;
     return s.appearance;
   }
 
-  /** Switches the needs-you sound off or on. Reads first, like `save`, and sends every other field back unchanged. */
-  async setSoundOff(off: boolean): Promise<void> {
-    await this.writeFlags({ sound_off: off });
+  /** Saves the notification settings. Reads first, like `save`, and sends every other field back unchanged. */
+  async setNotifications(next: NotifySettings): Promise<void> {
+    await this.writeFlags({ notifications: next });
   }
 
   /** Switches one agent's live status on or off. Reads first, like `save`, and sends every other field back unchanged. */
@@ -122,7 +131,7 @@ export class SettingsSync {
     return this.off;
   }
 
-  private async writeFlags(change: Partial<Pick<Settings, "pause_warned" | "onboarded" | "status_off" | "sound_off">>): Promise<void> {
+  private async writeFlags(change: Partial<Pick<Settings, "pause_warned" | "onboarded" | "status_off" | "notifications">>): Promise<void> {
     if (!this.hasRead) {
       try {
         await this.load();
@@ -135,13 +144,13 @@ export class SettingsSync {
       pause_warned: this.warned,
       onboarded: this.seen,
       status_off: this.off,
-      sound_off: this.mute,
+      notifications: this.notify,
       ...change,
     });
     this.warned = s.pause_warned;
     this.seen = s.onboarded;
     this.off = s.status_off;
-    this.mute = s.sound_off;
+    this.notify = s.notifications;
     this.appearance = s.appearance;
   }
 }

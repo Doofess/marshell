@@ -45,6 +45,10 @@ pub struct Entry {
     running: std::collections::BTreeSet<String>,
     /// The main turn has stopped while subagents still run. Not serialized.
     waiting: bool,
+    /// A finished turn the row has not shown yet: held a moment, so a turn that resumes at once never
+    /// reads Done. Cleared by the next hook event, a process change or the end of a subagent wait.
+    /// Not serialized.
+    pending_done: Option<LiveStatus>,
 }
 
 impl Entry {
@@ -67,6 +71,7 @@ impl Entry {
         self.info.status_note = None;
         self.running.clear();
         self.waiting = false;
+        self.pending_done = None;
     }
 }
 
@@ -162,11 +167,13 @@ impl Registry {
                 live: None,
                 activity: None,
                 status_note: None,
+                muted: false,
             },
             spec: relaunch,
             generation,
             running: Default::default(),
             waiting: false,
+            pending_done: None,
         });
         self.tx.send_replace(state.snapshot());
         number
@@ -201,11 +208,13 @@ impl Registry {
                     live: None,
                     activity: None,
                     status_note: None,
+                    muted: tab.muted,
                 },
                 spec: relaunch_of(tab),
                 generation,
                 running: Default::default(),
                 waiting: false,
+                pending_done: None,
             });
         }
         self.tx.send_replace(state.snapshot());
@@ -225,6 +234,7 @@ impl Registry {
                 profile_id: e.info.profile_id.clone(),
                 cwd: e.info.cwd.clone(),
                 mode: e.info.mode,
+                muted: e.info.muted,
             })
             .collect()
     }
@@ -483,7 +493,8 @@ impl Registry {
     }
 
     /// Follows the subagents the agent reports: folds the hook body into the tab's running set and,
-    /// when it changed, sets the live status's count to the set's size. Applied only to an open
+    /// when it changed, sets the live status's count to the set's size (and counts a SubagentStop that took
+    /// an id out in `subagents_finished`, which the main Stop and SessionEnd never raise). Applied only to an open
     /// Running row that is Claude's or a plain shell's (where `claude` was typed), never another
     /// agent's. Broadcasts once per change.
     pub fn update_subagents(&self, tab_id: &str, body: &serde_json::Value) {
@@ -502,6 +513,11 @@ impl Registry {
                 .live
                 .get_or_insert_with(|| crate::agents::claude::status::blank(at_ms));
             live.subagents = count;
+            // Only a SubagentStop that took an id out is a subagent finishing; the main Stop and SessionEnd
+            // clear the set too, and those are not.
+            if body.get("hook_event_name").and_then(serde_json::Value::as_str) == Some("SubagentStop") {
+                live.subagents_finished = live.subagents_finished.saturating_add(1);
+            }
             self.tx.send_replace(state.snapshot());
         }
     }
@@ -517,6 +533,8 @@ impl Registry {
             && entry.info.state == SessionState::Running
             && matches!(entry.info.agent.as_deref(), None | Some("claude"))
         {
+            // Every hook event is newer than a held Done; a Stop holds its own after this runs.
+            entry.pending_done = None;
             if body.get("agent_id").is_none() {
                 match body.get("hook_event_name").and_then(serde_json::Value::as_str) {
                     Some("Stop") => entry.waiting = running_subagents(body).next().is_some(),
@@ -562,10 +580,54 @@ impl Registry {
                 .duration_since(std::time::UNIX_EPOCH)
                 .map_or(0, |d| d.as_millis() as u64);
             entry.waiting = false;
+            entry.pending_done = None;
             self.tx.send_replace(state.snapshot());
             return true;
         }
         false
+    }
+
+    /// Holds a finished turn back: keeps `done` (state, phrase, time and recap) for `settle_done` and
+    /// leaves the row as it is, without a broadcast, so a turn that resumes at once never reads Done.
+    /// Applied only to an open Running Claude or plain-shell row; returns true when held. The next
+    /// hook event for the tab (`follow_subagent_wait` sees them all), the end of a subagent wait or a
+    /// process change drops it. A status line update does not.
+    pub fn hold_done(&self, tab_id: &str, done: LiveStatus) -> bool {
+        let mut state = self.state.lock().unwrap();
+        if let Some(entry) = state.open.iter_mut().find(|e| e.info.tab_id == tab_id)
+            && entry.info.state == SessionState::Running
+            && matches!(entry.info.agent.as_deref(), None | Some("claude"))
+        {
+            entry.pending_done = Some(done);
+            return true;
+        }
+        false
+    }
+
+    /// Shows a held Done if it is still held and the row is Running: the state, phrase, time and recap
+    /// of the Stop, over whatever a status line said since (or as the whole status when the row had
+    /// none). Broadcasts once; otherwise changes nothing.
+    pub fn settle_done(&self, tab_id: &str) {
+        let mut state = self.state.lock().unwrap();
+        if let Some(entry) = state.open.iter_mut().find(|e| e.info.tab_id == tab_id)
+            && let Some(done) = entry.pending_done.take()
+            && entry.info.state == SessionState::Running
+        {
+            if let Some(live) = entry.info.live.as_mut() {
+                live.state = done.state;
+                live.phrase = done.phrase;
+                live.since_ms = done.since_ms;
+                if done.recap.is_some() {
+                    live.recap = done.recap;
+                }
+            } else if entry.info.status_note.is_none() {
+                entry.info.live = Some(done);
+                entry.info.activity = None;
+            } else {
+                return;
+            }
+            self.tx.send_replace(state.snapshot());
+        }
     }
 
     /// Sets why a Claude Code row has no live status (a gated version, or the switch is off), or
@@ -579,6 +641,7 @@ impl Registry {
         {
             if note.is_some() {
                 entry.info.live = None;
+                entry.pending_done = None;
             }
             entry.info.status_note = note;
             self.tx.send_replace(state.snapshot());
@@ -599,6 +662,20 @@ impl Registry {
         entry.info.name = name.to_string();
         entry.spec.name = name.to_string();
         self.tx.send_replace(state.snapshot());
+        true
+    }
+
+    /// Mutes or unmutes an open tab's notifications. Returns false for an unknown tab; subscribers
+    /// hear of it only when the value changes.
+    pub fn set_muted(&self, tab_id: &str, muted: bool) -> bool {
+        let mut state = self.state.lock().unwrap();
+        let Some(entry) = state.open.iter_mut().find(|e| e.info.tab_id == tab_id) else {
+            return false;
+        };
+        if entry.info.muted != muted {
+            entry.info.muted = muted;
+            self.tx.send_replace(state.snapshot());
+        }
         true
     }
 
@@ -1033,6 +1110,25 @@ mod tests {
     }
 
     #[test]
+    fn set_muted_broadcasts_only_a_change_and_is_saved() {
+        let reg = Registry::new();
+        reg.reserve("a", relaunch("A"));
+        let mut rx = reg.subscribe();
+        rx.borrow_and_update();
+        assert!(reg.set_muted("a", true));
+        assert!(rx.has_changed().unwrap());
+        rx.borrow_and_update();
+        assert!(reg.set_muted("a", true));
+        assert!(!rx.has_changed().unwrap());
+        assert!(!reg.set_muted("missing", true));
+        let tabs = reg.saved_tabs();
+        assert!(tabs[0].muted);
+        let again = Registry::new();
+        seed(&again, &tabs);
+        assert!(again.snapshot().sessions[0].muted);
+    }
+
+    #[test]
     fn subscribe_sees_every_change() {
         let reg = Registry::new();
         let mut rx = reg.subscribe();
@@ -1176,6 +1272,7 @@ mod tests {
             profile_id: "pwsh".into(),
             cwd: "C:/work".into(),
             mode: None,
+            muted: false,
         }
     }
 
@@ -1430,6 +1527,7 @@ mod tests {
             five_hour_resets_at: None,
             seven_day_pct: None,
             subagents: 0,
+            subagents_finished: 0,
         }
     }
 
@@ -1628,6 +1726,175 @@ mod tests {
         );
         reg.update_subagents("x", &start("q"));
         assert_eq!(row(&reg, "x").live, None);
+    }
+
+    #[test]
+    fn finished_subagents_are_counted_only_by_a_subagent_stop_that_removed_one() {
+        let reg = Registry::new();
+        reg.reserve("a", relaunch("A"));
+        let ev = |name: &str, id: Option<&str>| match id {
+            Some(id) => serde_json::json!({ "hook_event_name": name, "agent_id": id }),
+            None => serde_json::json!({ "hook_event_name": name }),
+        };
+        let finished = |reg: &Registry| row(reg, "a").live.map(|l| l.subagents_finished);
+        reg.update_subagents("a", &ev("SubagentStart", Some("x")));
+        reg.update_subagents("a", &ev("SubagentStart", Some("y")));
+        assert_eq!(finished(&reg), Some(0));
+        reg.update_subagents("a", &ev("SubagentStop", Some("x")));
+        assert_eq!(finished(&reg), Some(1));
+        // An id that was never running is no subagent finishing.
+        reg.update_subagents("a", &ev("SubagentStop", Some("zzz")));
+        assert_eq!(finished(&reg), Some(1));
+        // The main Stop clears the set (y is not listed as running) and so does SessionEnd: neither counts.
+        reg.update_subagents("a", &ev("Stop", None));
+        assert_eq!(row(&reg, "a").live.map(|l| l.subagents), Some(0));
+        assert_eq!(finished(&reg), Some(1));
+        reg.update_subagents("a", &ev("SubagentStart", Some("w")));
+        reg.update_subagents("a", &ev("SessionEnd", None));
+        assert_eq!(finished(&reg), Some(1));
+        // A restart gives the row a fresh status, so the count starts again.
+        reg.update_subagents("a", &ev("SubagentStart", Some("v")));
+        reg.update_subagents("a", &ev("SubagentStop", Some("v")));
+        assert_eq!(finished(&reg), Some(2));
+        reg.begin_restart("a", SessionMode::Plan).unwrap();
+        assert_eq!(finished(&reg), None);
+        reg.update_subagents("a", &ev("SubagentStart", Some("u")));
+        assert_eq!(finished(&reg), Some(0));
+    }
+
+    fn working_on(phrase: &str) -> LiveStatus {
+        let mut working = live(LiveState::Working);
+        working.phrase = phrase.to_string();
+        working
+    }
+
+    fn done_with_recap(text: &str) -> LiveStatus {
+        let mut done = live(LiveState::Done);
+        done.phrase = "Done".to_string();
+        done.since_ms = 5;
+        done.recap = Some(marshell_protocol::api::Recap {
+            text: text.to_string(),
+            at_ms: 5,
+        });
+        done
+    }
+
+    fn reg_working_on_a() -> Registry {
+        let reg = Registry::new();
+        reg.reserve("a", relaunch("A"));
+        reg.update_live("a", |_| Some(working_on("Editing a.rs")));
+        reg
+    }
+
+    #[test]
+    fn held_done_keeps_working_until_settled() {
+        let reg = reg_working_on_a();
+        let mut rx = reg.subscribe();
+        rx.borrow_and_update();
+
+        assert!(reg.hold_done("a", done_with_recap("All done.")));
+        let held = row(&reg, "a").live.unwrap();
+        assert_eq!((held.state, held.phrase.as_str()), (LiveState::Working, "Editing a.rs"));
+        assert_eq!(held.recap, None);
+        assert!(!rx.has_changed().unwrap());
+
+        reg.settle_done("a");
+        let done = row(&reg, "a").live.unwrap();
+        assert_eq!((done.state, done.phrase.as_str()), (LiveState::Done, "Done"));
+        assert_eq!(done.recap.unwrap().text, "All done.");
+        assert!(rx.has_changed().unwrap());
+        rx.borrow_and_update();
+
+        // Settling again changes nothing.
+        reg.settle_done("a");
+        assert!(!rx.has_changed().unwrap());
+    }
+
+    #[test]
+    fn a_held_done_is_only_for_an_open_running_claude_row() {
+        let reg = Registry::new();
+        assert!(!reg.hold_done("nope", done_with_recap("x")));
+        reg.reserve(
+            "x",
+            Relaunch {
+                agent: Some("codex".into()),
+                ..relaunch("X")
+            },
+        );
+        assert!(!reg.hold_done("x", done_with_recap("x")));
+        reg.reserve("gone", relaunch("G"));
+        reg.mark_exited("gone", generation_of(&reg, "gone"), 0);
+        assert!(!reg.hold_done("gone", done_with_recap("x")));
+    }
+
+    #[test]
+    fn newer_event_cancels_held_done() {
+        let shown = |reg: &Registry| {
+            let live = row(reg, "a").live.unwrap();
+            (live.state, live.phrase)
+        };
+        for (event, state) in [
+            (
+                serde_json::json!({ "hook_event_name": "UserPromptSubmit" }),
+                LiveState::Working,
+            ),
+            (
+                serde_json::json!({ "hook_event_name": "PreToolUse", "tool_name": "Glob" }),
+                LiveState::Working,
+            ),
+            (serde_json::json!({ "hook_event_name": "SessionEnd" }), LiveState::Ended),
+        ] {
+            let reg = reg_working_on_a();
+            assert!(reg.hold_done("a", done_with_recap("All done.")));
+            fold_claude_event(&reg, event.clone());
+            let after = shown(&reg);
+            assert_eq!(after.0, state, "{event}");
+            if state == LiveState::Working && event["hook_event_name"] == "UserPromptSubmit" {
+                assert_eq!(after.1, "Thinking");
+            }
+            let mut rx = reg.subscribe();
+            rx.borrow_and_update();
+            reg.settle_done("a");
+            assert_eq!(shown(&reg), after, "{event}");
+            assert!(!rx.has_changed().unwrap(), "{event}");
+        }
+    }
+
+    #[test]
+    fn a_status_line_update_does_not_cancel_a_held_done() {
+        let reg = reg_working_on_a();
+        assert!(reg.hold_done("a", done_with_recap("All done.")));
+        let body = serde_json::json!({ "context_window": { "used_percentage": 42 } });
+        reg.update_live("a", |prev| {
+            Some(crate::agents::claude::status::fold_statusline(prev, &body, 2_000))
+        });
+        let held = row(&reg, "a").live.unwrap();
+        assert_eq!((held.state, held.phrase.as_str()), (LiveState::Working, "Editing a.rs"));
+        assert_eq!(held.context_pct, Some(42));
+
+        reg.settle_done("a");
+        let done = row(&reg, "a").live.unwrap();
+        assert_eq!((done.state, done.phrase.as_str()), (LiveState::Done, "Done"));
+        assert_eq!(done.recap.unwrap().text, "All done.");
+        // What the status line said meanwhile is kept.
+        assert_eq!(done.context_pct, Some(42));
+    }
+
+    #[test]
+    fn a_process_change_drops_a_held_done() {
+        let reg = reg_working_on_a();
+        assert!(reg.hold_done("a", done_with_recap("All done.")));
+        reg.begin_restart("a", SessionMode::Plan).unwrap();
+        assert_eq!(row(&reg, "a").live, None);
+        reg.update_live("a", |_| Some(working_on("Thinking")));
+        reg.settle_done("a");
+        assert_eq!(row(&reg, "a").live.unwrap().state, LiveState::Working);
+
+        let reg = reg_working_on_a();
+        assert!(reg.hold_done("a", done_with_recap("All done.")));
+        reg.mark_exited("a", generation_of(&reg, "a"), 0);
+        reg.settle_done("a");
+        assert_eq!(row(&reg, "a").live, None);
     }
 
     #[test]

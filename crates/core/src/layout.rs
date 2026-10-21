@@ -171,6 +171,7 @@ mod tests {
             profile_id: "cmd".into(),
             cwd: "C:/work".into(),
             mode: None,
+            muted: false,
         }
     }
 

@@ -331,7 +331,7 @@ Every choice is monospace and falls back to the system monospace font and then t
 
 Pause all looping animation when the window is hidden.
 
-**Sound brief:**
+**Sound brief:** (superseded on Windows by phase 4 decision 2: each category plays a Windows system sound alias; the 3 s limit stays.)
 - One family in D major pentatonic: soft sine plus a felt-bell timbre, normalised to −20 LUFS.
 - Needs you: rising D5→A5, 420 ms. The escalation adds a third note.
 - Done: a resolving 3-note arrival, 600 ms.
@@ -540,10 +540,10 @@ Session state is exactly as in brief §4, plus `unseen_done`, `waiting_since_ms`
   - make the WebSocket upgrade echo the `marshell.v1` subprotocol (`WebSocketUpgrade::protocols`), or browsers drop the connection.
 - **`/v1/status`**, JSON.
   - It opens with a `Snapshot {sessions, lane, plan_usage, doctor_summary}`.
-  - After that, the core sends a `Patch[]` batch every 100 ms: `SessionPatch`, `PermissionCard`, `NotifyRequest`, `DoctorStatus`. `PermissionCard` and needs-you patches **skip the batch** and go out immediately, to meet the 150 ms hook-to-card budget.
-  - The client sends `ClientState {focused: bool, active_tab, visible_tabs}`, which the notification rules and the native-recap focus trick both need.
+  - After that, the core sends a `Patch[]` batch every 100 ms: `SessionPatch`, `PermissionCard`, `DoctorStatus`. `PermissionCard` and needs-you patches **skip the batch** and go out immediately, to meet the 150 ms hook-to-card budget.
+  - The client reports `UiView {window_focused, visible_tabs}` through `PUT /v1/ui/view` (slice 4a), which the notification rules and the native-recap focus trick both need.
 - **Tauri events** are OS-level only: notification activated → `{tab_id}`, single-instance argv, tray menu actions.
-- **The window shell subscribes to `/v1/status` like any other client** and turns `NotifyRequest` into banners and badges. This keeps v2's daemon move a packaging change.
+- **Notifications are decided in the core** (`crates/core/src/notify/`, slice 4a). Each `NotifyRequest` (banner, sound, flash) goes to the app shell through the supervisor's `CoreEvent::Notify`, not to the webview, and the shell shows it. The webview keeps only the taskbar badge count. In v2's daemon the same requests travel over the daemon's channel to the shell.
 
 ## 4. Data model: where state lives
 
@@ -655,9 +655,9 @@ The Rust core is the only source of truth.
 | Shells | pwsh 7, Windows PowerShell, cmd, Git Bash (registry `GitForWindows\InstallPath`), WSL distros (`wsl -l -q` outputs UTF-16) | `/etc/shells`, login shell | `/etc/shells`, login shell |
 | PATH | Inherited | GUI apps lack the shell PATH, so resolve `$SHELL -lic env` once for `detect()` and headless runs | Same as macOS |
 | WSL agents | Separate config root per distro. Hooks inside WSL call the Windows bridge through interop (`/mnt/c/.../marshell-hook.exe`), with `WSLENV=MARSHELL_TAB_ID/u:MARSHELL_AGENT/u`. Spike. | n/a | n/a |
-| Notifications | Banners are always sent **silent**; our own rodio sounds play instead. First evaluate one cross-platform crate with actions and a click callback (e.g. `user-notify`; verify it in S3), and write per-OS code only where it falls short. Per-OS fallback: `tauri-winrt-notification` toasts with buttons and an activation callback. Needs an AUMID, which the installed app has (dev builds show as PowerShell). Overlay icon for the count; `requestUserAttention` to flash. | Per-OS fallback: `UNUserNotificationCenter` with Allow/Deny categories and a click callback. Needs a signed bundle. Dock badge via `setBadgeCount`. | Per-OS fallback: `notify-rust` over D-Bus with actions and a default action (GNOME/KDE). Badge only where the Unity LauncherEntry API exists. |
+| Notifications | Banners are always sent **silent** and the shell plays a system sound instead. `tauri-plugin-notification` (S3, 2026-10-21): a click on the banner or its Open button focuses the session; a click from the notification centre does nothing. Needs an AUMID, which the installed app has (dev builds show as PowerShell). Overlay icon for the count; `requestUserAttention` to flash. | Per-OS fallback: `UNUserNotificationCenter` with Allow/Deny categories and a click callback. Needs a signed bundle. Dock badge via `setBadgeCount`. | Per-OS fallback: `notify-rust` over D-Bus with actions and a default action (GNOME/KDE). Badge only where the Unity LauncherEntry API exists. |
 | Fallback for all three | Activation through a `marshell://focus/<tab>` deep link plus single-instance | Same | Same |
-| DND for our sounds | `SHQueryUserNotificationState` | Best effort (no public Focus API without an entitlement) | GNOME `show-banners` / KDE `Inhibited` |
+| DND for our sounds | `SHQueryUserNotificationState` (full-screen and presentation only: it misses Windows 11 do-not-disturb, S3) | Best effort (no public Focus API without an entitlement) | GNOME `show-banners` / KDE `Inhibited` |
 | Webview | WebView2 (bootstrapper embedded) | WKWebView. Dead-key bug xterm #5894 needs a host-side dead-key shim. | WebKitGTK 4.1. WebGL `preserveDrawingBuffer:true`; set `WEBKIT_DISABLE_COMPOSITING_MODE` / `WEBKIT_DISABLE_DMABUF_RENDERER` in `main()` only when the user hasn't set them; `transparent:false`; IME commit guard; build the AppImage on debian:12. |
 | Title bar | Custom Fluent-like | Native traffic lights (Overlay) | Native decorations |
 | Claude paths | `%USERPROFILE%\.claude`; managed `C:\Program Files\ClaudeCode\managed-settings.json` | `~/.claude`; managed `/Library/Application Support/ClaudeCode/` | `~/.claude`; managed `/etc/claude-code/` |
@@ -666,7 +666,7 @@ The Rust core is the only source of truth.
 | Packaging | NSIS per-user (no admin) + MSI | dmg, universal binary | AppImage, deb, rpm |
 | Signing | Azure Artifact Signing | Developer ID + notarization, hardened runtime. Sidecar bins (`marshell-hook`, `marshell`, `marshell-host`) are signed too. | AppImage GPG, rpm key |
 | Elevated sessions | `marshell-host --elevated` via ShellExecute `runas`; token loopback; accepts only input and resize | `sudo -i` in the tab | `pkexec` / `sudo -i` |
-| Sound | rodio 0.22 (WASAPI) | rodio (CoreAudio) | rodio; ALSA build dependency |
+| Sound | `PlaySound` with a system sound alias per category (phase 4 decision 2) | rodio (CoreAudio) | rodio; ALSA build dependency |
 
 Tray mouse events are not emitted on Linux, so on Linux the tray is menu-only.
 
@@ -743,6 +743,8 @@ Known soft spots, left as they are: on a Mac laptop F2 needs Fn unless "use F-ke
 | S11 | WSL bridge | A hook from Claude inside WSL reaches the Windows core through interop, with the tab id carried by `WSLENV`. |
 
 S10, S4 and S9 ran on 2026-10-18 against Claude Code 2.1.302 on Windows and passed (`docs/spikes/`). Hooks install in exec form, the status line chains with no fallback, and the hold stays at 120 s because Claude's own dialog stays visible during it. S4's uninstall row and the macOS and Linux rows are still open.
+
+S3 ran on 2026-10-21 on Windows (`docs/spikes/S3-notification-click.md`). A click on a banner, on its body or on Open, focuses the window and selects the tab in the dev build and the installed one. A click on the entry in the notification centre does nothing, which is a known limit. The banners use `tauri-plugin-notification`, and Allow and Deny on banners wait for their own slice (slice 4a decision 1). The macOS and Linux rows are still open.
 
 ## 9. Milestones (phases 1–9 = v1)
 
@@ -1008,7 +1010,17 @@ Decisions from the 2026-10-10 coverage audit (`docs/superpowers/plan-coverage-au
      3. `marshell uninstall` deletes its own exe once it has exited, through a short hidden helper that waits for the process and then removes the exe and the empty `bin` folder, so nothing is left to delete by hand.
    - Exit: a real Claude session shows correct model, effort, mode, subagents and context; approval from a card works; uninstall leaves zero byte diff; corrupting `index.sqlite` is repaired on start.
 4. **Notifications + choreography + Departures board + stuck detection** (S3).
-   - Exit: every rule in brief §5.5 is verified on all three OSes. Every sound has a visual equivalent.
+   - **Phase 4 decisions (2026-10-21).**
+     1. Phase 4 is four slices, each with its own plan and PR, in this order: 4a notifications (spike S3, the notification engine in the core, Windows banners, sounds, Settings → Notifications); 4b the tray, the close button and the needs-you count in the window title; 4c the Departures board and the attention choreography; 4d stuck detection and the BEL, OSC 9 and OSC 777 fallback.
+     2. Each category plays a Windows system sound of its own through `PlaySound` with a sound alias, as slice 3d decision 9 did for needs-you, so the sounds follow the user's sound scheme and volume. Each category has its own on/off switch; there is no per-category volume. This amends brief §5.5 (rodio, per-category volume) and the sound brief above; macOS and Linux get their system sounds when those platforms are built.
+     3. With a tray icon, the close button hides the window to the tray: sessions keep running and banners and the tray still work. Quit is in the tray menu. A one-time note says where the window went, and a setting makes the close button quit instead.
+     4. The exit is verified on Windows 11. The macOS and Linux parts sit behind `cfg` stubs (a no-op or a best effort), are marked unverified, and are checked when there is hardware to test on.
+   - **Slice 4a decisions (2026-10-21).**
+     1. 4a's banners offer Open, or Review for a risky request, and nothing else. Allow and Deny on a banner (batch 3 design decisions) come in their own small slice after 4a, gated by an Opus security review against ADR 0001 as slice 3d was. A `marshell://` link only ever focuses a session and never answers a request.
+     2. A main `Stop` is held for 1.5 s before it counts as Done: the row stays Working, and a `UserPromptSubmit` or `PreToolUse` in that time cancels it (phase 3 exit check finding 4). Only a settled Done draws the check and reaches the sound and banner rules.
+     3. Quiet hours are off by default and prefilled 22:00–08:00 when turned on. They silence Marshell's sounds and the taskbar flash only: banners still arrive (silent, as always) and the badge count stays. Windows do-not-disturb holds the banners back on its own, but Marshell can't see it: spike S3 found that `SHQueryUserNotificationState` still returns `QUNS_ACCEPTS_NOTIFICATIONS` with it on. So Marshell's sounds still play during Windows do-not-disturb. This is a known limit, and Marshell's quiet hours cover it.
+     4. The five sounds stay as built (decided by ear in the live check, 2026-10-22; `docs/research/2026-10-21-notifications-live-check.md`): needs-you `Notification.Default`, the one-minute reminder `Notification.Reminder`, Done `Notification.Mail`, subagent done `Notification.IM`, error `SystemHand`. In the default Windows 11 scheme they are five different sounds.
+   - Exit: every rule in brief §5.5 is verified on Windows 11 (phase 4 decision 4). Every sound has a visual equivalent.
 5. **History view and conversations.**
    - Conversations (added 2026-10-16; evidence in `docs/research/2026-10-16-accounts-cloud-extensions.md`): the history view also lists and manages every CLI's locally saved conversations (Claude Code, Codex CLI, others), not only sessions Marshell ran.
      - **Cloud-only conversations.** Where a CLI can list them, they show with a cloud icon (`codex cloud list --json` exists). Claude web sessions are reachable only through `--teleport` or claude.ai/code. There is no public API for claude.ai or ChatGPT history, so Marshell does not try to read one.

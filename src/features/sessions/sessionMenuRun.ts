@@ -21,6 +21,7 @@ export function menuFacts(
     // Not where the Resume bar would be disabled (its profile was removed): an item that can't apply is left out, never offered to fail.
     resumable: info !== undefined && info.state.kind !== "running" && resumeBlockedReason(info.profile_id, ctx.profiles) === undefined,
     task: row?.task === true,
+    muted: info?.muted === true,
     inShownPane: onScreen.includes(id),
     pausable: info !== undefined && info.state.kind === "running" && !info.paused,
     paused: info !== undefined && info.state.kind === "running" && info.paused,
@@ -35,6 +36,8 @@ export function menuFacts(
 export function focusAfterMenu(itemId: string, confirms: boolean): "row" | "terminal" | null {
   switch (itemId) {
     case "resume":
+    case "mute":
+    case "unmute":
       return "row";
     case "split":
     case "continue":
