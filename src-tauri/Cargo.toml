@@ -10,7 +10,7 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 marshell-core.workspace = true
 marshell-protocol.workspace = true
-tauri = { version = "2", features = [] }
+tauri = { version = "2", features = ["tray-icon"] }
 tauri-plugin-dialog = "2"
 tauri-plugin-notification = "2.7"
 tauri-plugin-opener = "2"
@@ -23,4 +23,4 @@ webview2-com = "0.39.1"
 windows-core = "0.62"
 # capture.rs: the clipboard's change counter, its formats and the image's memory (a polling timer; see the ruling there).
 tokio = { version = "1", features = ["time"] }
-windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Media_Audio", "Win32_System_DataExchange", "Win32_System_Memory", "Win32_UI_Shell"] }
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Media_Audio", "Win32_System_DataExchange", "Win32_System_Memory", "Win32_System_Registry", "Win32_UI_Shell"] }
