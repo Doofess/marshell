@@ -2,7 +2,7 @@ import { createRequire } from "node:module";
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 import react from "@vitejs/plugin-react";
-import { defineConfig, type Plugin } from "vitest/config";
+import { configDefaults, defineConfig, type Plugin } from "vitest/config";
 
 const PDFJS_DIRS = ["cmaps", "standard_fonts", "wasm"];
 
@@ -51,5 +51,6 @@ export default defineConfig({
   // natively. An older target makes the minifier rewrite light-dark() into variables that ignore a nested
   // color-scheme, which breaks forced-dark or side-by-side light panels.
   build: { target: "es2022", cssTarget: ["chrome123", "safari17.5"] },
-  test: { environment: "node" },
+  // Worktrees under .claude/ hold whole copies of the repo; their tests are not this checkout's.
+  test: { environment: "node", exclude: [...configDefaults.exclude, ".claude/**"] },
 });
