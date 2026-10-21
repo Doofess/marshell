@@ -2,7 +2,7 @@
 //! means the defaults, and a broken file is left alone until the next save moves it aside.
 
 use crate::store::{self, Versioned};
-use marshell_protocol::api::{Appearance, Settings};
+use marshell_protocol::api::{Appearance, NotifySettings, QuietHours, Settings};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::path::Path;
@@ -17,7 +17,11 @@ struct FileDoc {
     onboarded: bool,
     #[serde(default)]
     status_off: Vec<String>,
+    /// Absent in a file written before notifications had settings.
     #[serde(default)]
+    notifications: Option<NotifySettings>,
+    /// Read only, to migrate an older file; never written.
+    #[serde(default, skip_serializing)]
     sound_off: bool,
 }
 
@@ -50,13 +54,33 @@ pub fn load(home: &Path) -> Settings {
             replaced.join(", ")
         );
     }
+    let mut notifications = doc.notifications.unwrap_or_else(|| {
+        let mut n = NotifySettings::default();
+        n.needs_you.sound = !doc.sound_off;
+        n
+    });
+    if parse_hhmm(&notifications.quiet_hours.start).is_none() || parse_hhmm(&notifications.quiet_hours.end).is_none() {
+        tracing::warn!("settings file has invalid quiet hours, using the defaults");
+        notifications.quiet_hours = QuietHours::default();
+    }
     Settings {
         appearance,
         pause_warned,
         onboarded,
         status_off,
-        sound_off: doc.sound_off,
+        notifications,
     }
+}
+
+/// "HH:MM" on a 24-hour clock as minutes since midnight. None for anything else.
+pub fn parse_hhmm(s: &str) -> Option<u16> {
+    let b = s.as_bytes();
+    if b.len() != 5 || b[2] != b':' || ![0, 1, 3, 4].iter().all(|&i| b[i].is_ascii_digit()) {
+        return None;
+    }
+    let hours = u16::from(b[0] - b'0') * 10 + u16::from(b[1] - b'0');
+    let minutes = u16::from(b[3] - b'0') * 10 + u16::from(b[4] - b'0');
+    (hours < 24 && minutes < 60).then_some(hours * 60 + minutes)
 }
 
 /// Agent ids, without empty entries or repeats, in the order they were written.
@@ -86,7 +110,8 @@ pub fn save(home: &Path, s: &Settings) -> anyhow::Result<()> {
             pause_warned: s.pause_warned,
             onboarded: s.onboarded,
             status_off: clean_status_off(s.status_off.clone()),
-            sound_off: s.sound_off,
+            notifications: Some(s.notifications.clone()),
+            sound_off: false,
         },
     )
 }
@@ -346,15 +371,57 @@ mod tests {
     }
 
     #[test]
-    fn sound_off_round_trips_and_defaults_on() {
+    fn settings_default_notifications() {
         let home = tempfile::tempdir().unwrap();
-        assert!(!load(home.path()).sound_off);
-        let s = Settings {
-            sound_off: true,
-            ..Settings::default()
-        };
+        let file = crate::paths::settings_file(home.path());
+        std::fs::write(&file, r#"{"version":1,"appearance":{}}"#).unwrap();
+        assert_eq!(load(home.path()).notifications, NotifySettings::default());
+        let mut s = Settings::default();
+        s.notifications.done.banner = false;
+        s.notifications.subagent_sound = true;
         save(home.path(), &s).unwrap();
-        assert!(load(home.path()).sound_off);
+        assert_eq!(load(home.path()), s);
+    }
+
+    #[test]
+    fn legacy_sound_off_maps_to_needs_you_sound() {
+        let home = tempfile::tempdir().unwrap();
+        let file = crate::paths::settings_file(home.path());
+        std::fs::write(&file, r#"{"version":1,"appearance":{},"sound_off":true}"#).unwrap();
+        let s = load(home.path());
+        let mut expected = NotifySettings::default();
+        expected.needs_you.sound = false;
+        assert_eq!(s.notifications, expected);
+        save(home.path(), &s).unwrap();
+        let text = std::fs::read_to_string(&file).unwrap();
+        assert!(text.contains("\"notifications\""), "{text}");
+        assert!(!text.contains("sound_off"), "{text}");
+        assert_eq!(load(home.path()), s);
+    }
+
+    #[test]
+    fn bad_quiet_hours_fall_back() {
+        let home = tempfile::tempdir().unwrap();
+        let file = crate::paths::settings_file(home.path());
+        std::fs::write(
+            &file,
+            r#"{"version":1,"appearance":{},"onboarded":true,"notifications":{"done":{"banner":false,"sound":true},"quiet_hours":{"enabled":true,"start":"25:00","end":"08:00"}}}"#,
+        )
+        .unwrap();
+        let s = load(home.path());
+        assert_eq!(s.notifications.quiet_hours, QuietHours::default());
+        assert!(!s.notifications.done.banner);
+        assert!(s.onboarded);
+    }
+
+    #[test]
+    fn parse_hhmm_reads_24_hour_times() {
+        assert_eq!(parse_hhmm("00:00"), Some(0));
+        assert_eq!(parse_hhmm("08:00"), Some(480));
+        assert_eq!(parse_hhmm("23:59"), Some(1439));
+        for bad in ["24:00", "8:00", "08:60", "", "08:0", "ab:cd", "08-00", "+8:00"] {
+            assert_eq!(parse_hhmm(bad), None, "{bad}");
+        }
     }
 
     #[test]

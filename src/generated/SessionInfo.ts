@@ -51,4 +51,8 @@ activity: Activity | null,
 /**
  * Why this agent row has no `live`: an unknown version, or the per-agent switch being off.
  */
-status_note: string | null, };
+status_note: string | null, 
+/**
+ * True while the user has muted this session's notifications.
+ */
+muted: boolean, };

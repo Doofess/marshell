@@ -24,6 +24,7 @@ const info = (patch: Partial<SessionInfo> = {}): SessionInfo => ({
   live: null,
   activity: null,
   status_note: null,
+  muted: false,
   ...patch,
 });
 

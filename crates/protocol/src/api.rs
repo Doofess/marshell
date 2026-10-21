@@ -161,6 +161,9 @@ pub struct SessionInfo {
     /// Why this agent row has no `live`: an unknown version, or the per-agent switch being off.
     #[serde(default)]
     pub status_note: Option<String>,
+    /// True while the user has muted this session's notifications.
+    #[serde(default)]
+    pub muted: bool,
 }
 
 /// What an agent session is doing, as its hooks report it.
@@ -756,8 +759,72 @@ pub struct Settings {
     pub onboarded: bool,
     /// Agent ids whose live status is switched off; their rows use the pty fallback.
     pub status_off: Vec<String>,
-    /// True when the needs-you sound is switched off.
-    pub sound_off: bool,
+    /// Which events notify, and how.
+    pub notifications: NotifySettings,
+}
+
+/// How one kind of event notifies.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct NotifyChannel {
+    pub banner: bool,
+    pub sound: bool,
+}
+
+/// Hours in which notifications are held back, as "HH:MM" 24-hour strings.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct QuietHours {
+    pub enabled: bool,
+    pub start: String,
+    pub end: String,
+}
+
+impl Default for QuietHours {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            start: "22:00".into(),
+            end: "08:00".into(),
+        }
+    }
+}
+
+/// The notification settings.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(default)]
+#[ts(export)]
+pub struct NotifySettings {
+    pub needs_you: NotifyChannel,
+    pub done: NotifyChannel,
+    pub error: NotifyChannel,
+    /// True when a subagent finishing plays a sound.
+    pub subagent_sound: bool,
+    pub quiet_hours: QuietHours,
+}
+
+impl Default for NotifySettings {
+    fn default() -> Self {
+        let on = NotifyChannel {
+            banner: true,
+            sound: true,
+        };
+        Self {
+            needs_you: on,
+            done: on,
+            error: on,
+            subagent_sound: false,
+            quiet_hours: QuietHours::default(),
+        }
+    }
+}
+
+/// What the user is looking at, as the UI reports it to the core.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct UiView {
+    pub window_focused: bool,
+    pub visible_tabs: Vec<String>,
 }
 
 /// A file the core found for the user to import from (the core only reads it).
@@ -827,6 +894,52 @@ mod tests {
         assert_eq!(json, r#"{"kind":"exited","code":2}"#);
         let json = serde_json::to_string(&SessionState::Running).unwrap();
         assert_eq!(json, r#"{"kind":"running"}"#);
+    }
+
+    #[test]
+    fn notify_settings_and_ui_view_round_trip() {
+        let mut n = NotifySettings::default();
+        n.done.sound = false;
+        n.subagent_sound = true;
+        n.quiet_hours.enabled = true;
+        let json = serde_json::to_string(&n).unwrap();
+        assert_eq!(serde_json::from_str::<NotifySettings>(&json).unwrap(), n);
+        assert_eq!(
+            serde_json::from_str::<NotifySettings>("{}").unwrap(),
+            NotifySettings::default()
+        );
+        let view = UiView {
+            window_focused: true,
+            visible_tabs: vec!["a".into(), "b".into()],
+        };
+        let json = serde_json::to_string(&view).unwrap();
+        assert_eq!(serde_json::from_str::<UiView>(&json).unwrap(), view);
+    }
+
+    #[test]
+    fn session_info_without_muted_deserializes_false() {
+        let info = SessionInfo {
+            tab_id: "a".into(),
+            number: 1,
+            name: "n".into(),
+            agent: None,
+            profile_id: "p".into(),
+            cwd: "c".into(),
+            project: "c".into(),
+            mode: None,
+            state: SessionState::Running,
+            command: CommandState::Unknown,
+            paused: false,
+            foreground: None,
+            live: None,
+            activity: None,
+            status_note: None,
+            muted: true,
+        };
+        let mut value = serde_json::to_value(&info).unwrap();
+        value.as_object_mut().unwrap().remove("muted");
+        let back: SessionInfo = serde_json::from_value(value).unwrap();
+        assert!(!back.muted);
     }
 
     #[test]
