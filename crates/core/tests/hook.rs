@@ -3,7 +3,7 @@ mod common;
 use axum::body::Body;
 use axum::http::{Request, StatusCode, header};
 use marshell_core::server::{AppState, router};
-use marshell_protocol::api::{LiveState, SessionInfo};
+use marshell_protocol::api::{LiveState, LiveStatus, SessionInfo};
 use marshell_protocol::hook::HOOK_BODY_LIMIT;
 use tower::ServiceExt;
 
@@ -506,10 +506,26 @@ async fn live_over_http(app: &axum::Router, tab: &str) -> Option<serde_json::Val
         .map(|s| s["live"].clone())
 }
 
+/// The settle time in the tests that watch a held Done: long enough that a slow CI runner does not pass it
+/// between the Stop and the next read.
+const SETTLE: std::time::Duration = std::time::Duration::from_secs(1);
+
+/// The row's live status once it reads Done, or as it is after five seconds.
+async fn settled(st: &AppState, tab: &str) -> LiveStatus {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    loop {
+        let live = row(st, tab).live.unwrap();
+        if live.state == LiveState::Done || std::time::Instant::now() > deadline {
+            return live;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+}
+
 #[tokio::test]
 async fn stop_then_resume_never_shows_done() {
     use std::time::Duration;
-    let st = state(Some(KNOWN)).with_done_settle(Duration::from_millis(300));
+    let st = state(Some(KNOWN)).with_done_settle(SETTLE);
     let app = router(st.clone());
     let tab = start_claude(&app).await;
     post_fixture(&app, "event", &tab, "UserPromptSubmit").await;
@@ -539,19 +555,24 @@ async fn stop_then_resume_never_shows_done() {
 
 #[tokio::test]
 async fn stop_alone_settles_to_done() {
-    use std::time::Duration;
-    let st = state(Some(KNOWN)).with_done_settle(Duration::from_millis(300));
+    let st = state(Some(KNOWN)).with_done_settle(SETTLE);
     let app = router(st.clone());
     let tab = start_claude(&app).await;
     post_fixture(&app, "event", &tab, "UserPromptSubmit").await;
 
+    let sent = std::time::Instant::now();
     post_fixture(&app, "event", &tab, "Stop").await;
-    tokio::time::sleep(Duration::from_millis(100)).await;
-    let early = row(&st, &tab).live.unwrap();
-    tokio::time::sleep(Duration::from_millis(400)).await;
-    let late = row(&st, &tab).live.unwrap();
+    let early = row(&st, &tab);
+    let early_at = sent.elapsed();
+    let late = settled(&st, &tab).await;
     stop(&st, &tab);
-    assert_eq!(early.state, LiveState::Working);
+    let early_live = early.live.unwrap();
+    assert_eq!(
+        early_live.state,
+        LiveState::Working,
+        "read {early_at:?} after the Stop, row {:?}",
+        early.state
+    );
     assert_eq!(late.state, LiveState::Done);
     assert_eq!(late.phrase, "Done");
     assert!(late.recap.is_some_and(|r| r.text.starts_with("I ran")));
@@ -559,23 +580,22 @@ async fn stop_alone_settles_to_done() {
 
 #[tokio::test]
 async fn a_status_line_update_does_not_cancel_the_held_done() {
-    use std::time::Duration;
-    let st = state(Some(KNOWN)).with_done_settle(Duration::from_millis(300));
+    let st = state(Some(KNOWN)).with_done_settle(SETTLE);
     let app = router(st.clone());
     let tab = start_claude(&app).await;
     post_fixture(&app, "event", &tab, "UserPromptSubmit").await;
 
+    let sent = std::time::Instant::now();
     post_fixture(&app, "event", &tab, "Stop").await;
-    tokio::time::sleep(Duration::from_millis(50)).await;
     assert_eq!(
         post_fixture(&app, "statusline", &tab, "statusline").await,
         StatusCode::NO_CONTENT
     );
     let held = row(&st, &tab).live.unwrap();
-    tokio::time::sleep(Duration::from_millis(500)).await;
-    let late = row(&st, &tab).live.unwrap();
+    let held_at = sent.elapsed();
+    let late = settled(&st, &tab).await;
     stop(&st, &tab);
-    assert_eq!(held.state, LiveState::Working);
+    assert_eq!(held.state, LiveState::Working, "read {held_at:?} after the Stop");
     assert!(held.context_pct.is_some());
     assert_eq!(late.state, LiveState::Done);
     assert!(late.recap.is_some());
