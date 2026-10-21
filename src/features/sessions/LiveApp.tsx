@@ -66,7 +66,7 @@ import { LivePalette } from "./LivePalette";
 import { LiveShortcuts } from "./LiveShortcuts";
 import { ResumeBar } from "./ResumeBar";
 import { sessionResumeCommand } from "./resumeCommand";
-import { holdsResume, resumeBlockedReason, resumeStateOf } from "./resumeState";
+import { holdsResume, offersResume, resumeBlockedReason, resumeStateOf } from "./resumeState";
 import { PAUSED_TYPING_TEXT, SessionActions, closeBarText, needsCloseConfirm, pauseBarStale, pauseBarText, restartBarStale, restartBarText, tabIdOfNumber } from "./sessionActions";
 import { navPanesOf, useNavigation } from "./useNavigation";
 import type { NavEffect } from "../../lib/navigation/types";
@@ -341,7 +341,8 @@ export function LiveApp() {
     }
   }, [rows, heldRow]);
   const focusedRow = rows.find((r) => r.id === focusedId);
-  const resumable = focusedRow?.status === "ended";
+  const focusedInfo = infos.find((i) => i.tab_id === focusedId);
+  const resumable = focusedRow !== undefined && offersResume(focusedRow, focusedInfo);
 
   // The core's tasks (worktrees). A session whose folder is a task's is a task: its row says so and offers its review. Asked on start
   // and again after every create, merge and remove; the core has no push for them. Null means it has not loaded (or never answered):
@@ -366,7 +367,6 @@ export function LiveApp() {
   const taskRows = useMemo(() => markTasks(rows, infos, tasks), [rows, infos, tasks]);
   // While the list is unknown the palette keeps Review for the session in focus, so choosing it can load the list again.
   const focusedIsTask = reviewTarget(infos, focusedId, tasks).kind !== "none";
-  const focusedInfo = infos.find((i) => i.tab_id === focusedId);
   const hiddenCommands = paletteHidden({
     resumable,
     isTask: focusedIsTask,
@@ -1056,10 +1056,10 @@ export function LiveApp() {
       if (!endpoint) return null;
       // The shell panel's terminal still holds this tab's pty (it was just adopted): a pane draws the tab once the panel lets go.
       if (panelTab?.tabId === row.id) return null;
-      // While Resume is out the core already says Running, but the strip stays and the terminal waits (see `resuming` in sessionActions).
-      const bar = heldRow(row) ?? (row.status === "ended" ? row : undefined);
-      const hasTerminal = bar === undefined || bar.phrase !== ENDED_PHRASE;
       const info = infos.find((i) => i.tab_id === row.id);
+      // While Resume is out the core already says Running, but the strip stays and the terminal waits (see `resuming` in sessionActions).
+      const bar = heldRow(row) ?? (offersResume(row, info) ? row : undefined);
+      const hasTerminal = bar === undefined || bar.phrase !== ENDED_PHRASE;
       const profile = profiles.find((p) => p.id === info?.profile_id);
       const profileGone = info && resumeBlockedReason(info.profile_id, profiles);
       return (
