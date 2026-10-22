@@ -115,6 +115,17 @@ Run this one in the installed app, not the review page. Have two sessions waitin
 | G4 | Press Escape | The dialog closes, focus is back where it was, and the window stays open | ☐ | ☐ |
 | G5 | Alt+Tab to the window | Its title starts with the count: "(2) …, Marshell" | ☐ | ☐ |
 
+## H. The live Departures board (phase 4c, at release sign-off)
+
+Run this one in the installed app, not the review page. Have three sessions open, one of them waiting, and focus in a terminal.
+
+| # | Do | You should hear | Narrator | NVDA |
+| --- | --- | --- | :-: | :-: |
+| H1 | Open the palette (Ctrl+K), choose "Open Departures board"; then close it and open it again from the tray's "Open Departures" | "Departures, dialog", then the active row read whole from its cells, session number first, as in F1 | ☐ | ☐ |
+| H2 | Keep the pointer over the board while a second session starts needing you, then arrow to its row | Its row reads "Moves up when you move away"; its status cell reads its final text once, with no letters read while it flips | ☐ | ☐ |
+| H3 | Press Tab, then Shift+Tab, repeatedly | Focus stays inside the board | ☐ | ☐ |
+| H4 | Press Escape | The board closes and focus is back in the terminal it came from | ☐ | ☐ |
+
 ## Recording the result
 
 In the review page's sign-off, answer with the table's letters (A to F): for example **"Screen reader: A pass, B fail (B6: focus went to the page, not the chip), C pass, Narrator and NVDA"**. A fail is a bug to fix before the sub-review is signed off, not a note for later. Put anything surprising (a phrase that is correct but long or odd) in `docs/IDEAS.md`.
