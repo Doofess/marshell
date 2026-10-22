@@ -5,6 +5,7 @@ import { SCENARIO_ROWS_WITH_TOOLS } from "../window/scenario";
 import { FIXTURES } from "../sidebar/fixtures";
 import { DeparturesBoard } from "./DeparturesBoard";
 import { LiveFlipCell } from "./LiveFlipCell";
+import { heldRows } from "./liveBoard";
 
 const html = (o: Partial<Parameters<typeof DeparturesBoard>[0]> = {}) => renderToStaticMarkup(<DeparturesBoard rows={SCENARIO_ROWS_WITH_TOOLS} heightPx={800} {...o} />);
 
@@ -19,6 +20,46 @@ describe("LiveFlipCell", () => {
 });
 
 describe("DeparturesBoard", () => {
+  it("renders the live card instead of the fixture command", () => {
+    const gate = SCENARIO_ROWS_WITH_TOOLS.find((r) => r.status === "needs-permission")!;
+    const h = html({ card: gate.id, renderCard: () => <span>Real request</span> });
+    expect(h).toContain("Real request");
+    expect(h).not.toContain("npm test");
+  });
+  it("does not render or reserve room for a card whose renderer returns null", () => {
+    const gate = SCENARIO_ROWS_WITH_TOOLS.find((r) => r.status === "needs-permission")!;
+    const h = html({ card: gate.id, renderCard: () => null, heightPx: 400 });
+    expect(h).not.toContain('class="board__card"');
+    expect(h.match(/class="board__row/g)?.length).toBe(html({ heightPx: 400 }).match(/class="board__row/g)?.length);
+  });
+  it("keeps a live request visible when opening it leaves less room for rows", () => {
+    const rows = Array.from({ length: 6 }, (_, i) => ({ ...FIXTURES[2]!, id: `s${i}`, number: i + 1, status: "needs-permission" as const }));
+    const h = html({ rows, heightPx: 440, card: "s5", renderCard: () => <span>Last request</span> });
+    expect(h).toContain("Last request");
+    expect(h).toContain('data-row-id="s5"');
+    expect(h).toContain("+4 more sessions");
+  });
+  it("renders a closed row from its kept copy, dimmed", () => {
+    const kept = new Map(SCENARIO_ROWS_WITH_TOOLS.map((r) => [r.id, r]));
+    const stale = SCENARIO_ROWS_WITH_TOOLS[1]!;
+    const rows = heldRows(SCENARIO_ROWS_WITH_TOOLS.filter((r) => r.id !== stale.id), kept, [stale.id]);
+    const h = html({ rows, stale: [stale.id] });
+    expect(h).toMatch(new RegExp(`data-stale="true"[^>]*title="Session ${stale.number}, `));
+  });
+  it("keeps a newly waiting row outside Gate calls with its move note while held", () => {
+    const working = SCENARIO_ROWS_WITH_TOOLS.find((r) => r.status === "working")!;
+    const rows = SCENARIO_ROWS_WITH_TOOLS.map((r) => r.id === working.id ? { ...r, status: "needs-permission" as const } : r);
+    const hold = { order: SCENARIO_ROWS_WITH_TOOLS.map((r) => r.id), gate: SCENARIO_ROWS_WITH_TOOLS.filter((r) => r.status === "needs-permission" || r.status === "needs-question").map((r) => r.id) };
+    const h = html({ rows, hold });
+    const held = h.match(/<tr class="board__row[^>]*>[\s\S]*?<\/tr>/g)!.find((r) => r.includes(`title="Session ${working.number}, `))!;
+    expect(h).toContain("Gate calls · 2");
+    expect(held).toContain('data-gate="false"');
+    expect(held).toContain("Moves up when you move away");
+  });
+  it("uses live flipping cells for status and waiting only", () => {
+    const h = html({ live: true });
+    expect(h.match(/data-live="true"/g)).toHaveLength(SCENARIO_ROWS_WITH_TOOLS.length * 2);
+  });
   it("has the plan's seven columns as real column headers", () => {
     const h = html();
     for (const c of ["STATUS", "SESSION", "PROJECT / BRANCH", "AGENT", "WAITING", "CTX", "RECAP"]) expect(h).toMatch(new RegExp(`<th[^>]*scope="col"[^>]*>${c.replace("/", "\\/")}`));
