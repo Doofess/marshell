@@ -33,22 +33,31 @@
   - Closing returns focus to where it was: the terminal, or the palette's opener.
   - While the board is open, the window's other shortcuts don't fire (`overlay !== null`).
 - **Rows.** Exactly the sidebar's rows (`taskRows`), in the board's own order: gate calls oldest waiting first, then the rest by session number.
-- **Hold under the pointer.** While the pointer is over the board:
+- **Gate calls** are the tabs in the needs-you list (`requests`, from `laneEntries` through `useCards`). These are the same tabs the title count, the badge and the tray count (4b decision 1), so a plain shell holding a request is a gate call even though its own status reads Idle (4b known limit: plain-shell rows ignore hooks).
+  - Such a row shows the waiting status the tray would give it: its own needs-permission or needs-question, else needs-permission.
+  - Its waiting time is the longest of its entries.
+- **Hold under the pointer.** While the pointer is over the board's table (`.board__table`, not the whole full-window layer):
   - no row moves, and a row keeps the group it had;
   - new rows are appended at the end;
   - a row whose session closed stays in place, dimmed, drawn from its last `RowModel`;
   - a row that now needs you, outside Gate calls, shows "Moves up when you move away".
 
   When the pointer leaves, everything settles at once.
-- **Flips.** Only the status and waiting cells flip, at 60 ms per character with a 15 ms stagger and a 400 ms cap (`flip.ts`), and only when their text changes between two renders. A row that appears doesn't flip. Under reduced motion (`prefers-reduced-motion` or `data-motion="reduce"`) the cell crossfades over 200 ms. A flip mid-way when the text changes again restarts from the text on screen.
+- **Flips.** Only the status and waiting cells flip, at 60 ms per character with a 15 ms stagger and a 400 ms cap (`flip.ts`), and only when the text they show changes. A row that appears doesn't flip. The waiting text counts whole minutes, so a waiting cell flips at most once a minute. Under reduced motion (`prefers-reduced-motion` or `data-motion="reduce"`) the cell crossfades over 200 ms. A flip mid-way when the text changes again restarts from the text on screen.
 - **Screen readers.** A flipping cell's moving letters are `aria-hidden`, and its final text is always in the accessibility tree. Nothing is announced per frame.
 - **Keys.**
+  - The board is a modal layer: Tab and Shift+Tab stay inside it (`trapKey`), and the title-bar controls stay reachable by pointer.
+  - The keyboard's place is a row id, not an index. When rows reorder (the keyboard doesn't freeze them), the tab stop stays on the same session; if that session is gone, it moves to the row now at its index.
   - Arrow keys, Home and End move the one tab stop.
   - Enter jumps to the session (`pick`, then focus its terminal) and closes the board.
   - Y on a gate row opens that row's live request inline with focus on the card. N opens it with focus on Deny.
   - Neither key answers, and Enter never answers.
   - Keys are physical (`e.code`), and the hint shows the user's layout letter.
-- **Inline card.** It is the live `LiveCard` for the row's pending request (`requests.find(r => r.tab === row.id && r.state.phase === "pending")`), answered through the same `answerRequest`. A gate row with no request (a needs-you status with no hold) opens nothing: Y and N do nothing on it.
+- **Inline card.** It is the live `LiveCard` for the row's oldest pending entry, answered through the same `answerRequest`.
+  - A terminal-only entry (a needs-you status with no hold) opens its one-line card, and N focuses that card, since it has no Deny.
+  - On the board, the card's own focus restore goes to the board row, never to the terminal hidden underneath. This covers the card closing on Escape and an answer removing it.
+  - The card's jump closes the board and jumps.
+  - The card's expand closes the board and opens the drawer.
 - **"+N more" line.** Its "All sessions" button closes the board and opens the command palette.
 - **Row flash.** A row flashes when its status changes between snapshots into an attention state: `needs-permission`, `needs-question`, `done-unseen` or `error`.
   - Working, idle, running and ended don't flash, and neither does the first snapshot a row appears in (no flash on load or restore).
@@ -65,9 +74,20 @@
 
 1. **A session closes while the pointer holds the board.** Its row stays, dimmed, from the last `RowModel` kept for it. The board must never look up a row that is gone (today `rows.find(...)!` would throw). Task 3 has a test.
 2. **The texts change during a flip.** Status goes NEEDS YOU → WORKING → DONE within 400 ms: the cell restarts from what is on screen and ends on DONE, with no stale frame left. Task 1 has a test.
-3. **A Y press on a needs-you row with no held request** (a hold that ran out). Nothing opens and nothing throws, and the row's other keys still work. Task 3 has a test.
+3. **A plain shell holding a request, and a needs-you row with no held request.**
+   - The first is a gate call: the Gate calls count equals the title's count.
+   - Y on the second opens its one-line card, and N doesn't throw for want of a Deny.
+
+   Task 3 has tests.
 4. **A burst of status changes.** A snapshot that brings back 10 rows at once (a core restart or a relaunch) flashes none of them. A row that goes needs-you → working → needs-you within 600 ms flashes again on the second change. Task 2 has tests.
-5. **Focus on close.** Escape, Enter on a row and "All sessions" each leave focus somewhere real: the terminal of the jumped-to session, the opener, or the palette input. Never `body`. Task 3 has a test of the focus target choice, and Task 6 checks it live.
+5. **Focus on close.** Each of these leaves focus somewhere real, never `body` and never a terminal hidden under the board:
+   - Escape on the board returns to the opener;
+   - Enter on a row goes to the jumped-to session's terminal;
+   - "All sessions" goes to the palette input;
+   - an answered or Escaped inline card returns to its board row.
+
+   Task 3 tests the focus-target choice, and Task 6 checks it live.
+6. **Rows reorder under the keyboard.** The tab stop sits on session 4 (row 3) when session 2 starts needing you and moves up into Gate calls. The tab stop stays on session 4, and Enter jumps to session 4. Task 3 has a test.
 
 ---
 
@@ -82,38 +102,43 @@ Tasks 1 to 4 go to Codex CLI (`codex exec`), each in its own worktree under `C:/
 ### Task 1: Live flipping cells and holding the board's groups
 
 **Files:**
-- Modify: `src/features/departures/FlipCell.tsx`, `src/features/departures/flip.ts`, `src/features/departures/board.ts`, `src/features/departures/Board.css`
+- Create: `src/features/departures/LiveFlipCell.tsx`
+- Modify: `src/features/departures/flip.ts`, `src/features/departures/board.ts`, `src/features/departures/Board.css`
 - Test: `src/features/departures/flip.test.ts`, `src/features/departures/board.test.ts`, `src/features/departures/DeparturesBoard.test.tsx`, `src/features/departures/Board.css.test.ts`
 
 **Interfaces:**
 - Produces:
-  - `textChanges(prev: ReadonlyMap<string, CellTexts>, rows: BoardRow[]): Record<string, Partial<Record<"status" | "waiting", string>>>`, where `CellTexts = { status: string; waiting: string }`: the previous text of each cell whose text changed. A row missing from `prev` gives nothing.
+  - `type FlipRun = { from: string; to: string; start: number }`.
+  - `retarget(run: FlipRun | null, shown: string, to: string, now: number): FlipRun | null`, pure. `shown` is the settled text when no run is going. It returns:
+    - `null` when no run is going and `to === shown`;
+    - the same run when `to` is the run's own `to`;
+    - otherwise a new run from the text now on screen (`flipFrame(run.from, run.to, now - run.start)`, or `shown` with no run) to `to`, starting at `now`.
   - `holdGroups(groups: { gate: BoardRow[]; others: BoardRow[] }, hold: { order: string[]; gate: string[] }): { gate: BoardRow[]; others: BoardRow[] }`: the rows in `hold.order`, each in the group `hold.gate` says. Ids not in `hold.order` are appended to the end of the group their own `gate` flag picks.
-  - `FlipCell` gains `live?: boolean`. With `live`, a change from `from` to `to` plays `flipFrame(from, to, t)` on `requestAnimationFrame` from mount or from the change. A new `to` mid-flip restarts from the text then on screen.
-  - The live markup is `<span class="flip" data-live><span aria-hidden="true">{frame}</span><span class="board__sr">{to}</span></span>`. Without `live`, the static markup and the review page's `data-frames` path are unchanged.
-  - Reduced (`reduced` prop true) with `live`: no frames. The cell sets `data-fade` for one 200 ms crossfade (`.flip[data-fade]` keyframes in `Board.css`, opacity .4 → 1).
+  - `LiveFlipCell({ text, reduced }: { text: string; reduced: boolean })` is its own component, so the static `FlipCell` (stories, review page, `data-frames`) is untouched and no hook sits behind an early return.
+    - It keeps its own last text in a ref and never takes a `from` from the parent. Rows re-render every second while anything waits, so a `from` taken from the previous render would cut a flip short.
+    - On mount it shows `text` with no flip.
+    - On a new `text` it calls `retarget` and plays frames on `requestAnimationFrame` until the run settles. It cancels the frame on unmount.
+  - The markup is `<span class="flip" data-live><span aria-hidden="true">{frame}</span><span class="board__sr">{text}</span></span>`.
+  - Reduced: no frames. The cell sets `data-fade` for one 200 ms crossfade (`.flip[data-fade]` keyframes in `Board.css`, opacity .4 → 1), restarted on each change.
 
 - [ ] **Step 1: Write the failing tests.**
   - `flip.test.ts`:
-    - `textChanges` returns `{ a: { status: "WORKING" } }` for a row `a` whose status went WORKING → NEEDS YOU with the same waiting text;
-    - it returns `{}` for a row new to `prev`;
-    - it returns both cells when both changed.
+    - `retarget(null, "IDLE", "IDLE", 0)` is `null`;
+    - `retarget(null, "IDLE", "NEEDS YOU", 5)` is `{ from: "IDLE", to: "NEEDS YOU", start: 5 }`;
+    - the same target mid-run keeps the run;
+    - a run NEEDS YOU → WORKING started at 0 and retargeted to DONE at 100 gives `{ from: flipFrame("NEEDS YOU", "WORKING", 100), to: "DONE", start: 100 }`;
+    - that run's frame at `100 + flipDuration(9)` is "DONE".
   - `board.test.ts`:
     - `holdGroups` keeps the held order and gate membership: a row that became gate stays in `others`, and a row that stopped being gate stays in `gate`;
     - it appends a new id at the end of its own group.
   - `DeparturesBoard.test.tsx`:
-    - a live `FlipCell` (`live`, from "WORKING" to "NEEDS YOU") renders the final text "NEEDS YOU" inside `.board__sr`, and an `aria-hidden="true"` span;
-    - a non-live `FlipCell` renders exactly as before, with `data-frames`.
+    - `LiveFlipCell` with text "NEEDS YOU" renders "NEEDS YOU" inside `.board__sr`, and an `aria-hidden="true"` span holding "NEEDS YOU" (no flip on mount);
+    - the existing `FlipCell` cases are unchanged.
   - `Board.css.test.ts`: `.flip[data-fade]` has an animation with a 200ms duration.
 
-- [ ] **Step 2: Run them.** `pnpm test src/features/departures`. Expected: the new cases FAIL (no `textChanges`, no `holdGroups`, no live markup).
+- [ ] **Step 2: Run them.** `pnpm test src/features/departures`. Expected: the new cases FAIL (no `retarget`, no `holdGroups`, no `LiveFlipCell`).
 
-- [ ] **Step 3: Implement.** Add `textChanges` to `flip.ts` and `holdGroups` to `board.ts`. Add the live mode to `FlipCell`:
-  - use `useState` for the frame and `useEffect` keyed on `to`;
-  - cancel the animation frame on unmount;
-  - keep the start text in a ref, so a change mid-flip starts from what is on screen.
-
-  Add the fade keyframes in `Board.css`, beside `.flip`.
+- [ ] **Step 3: Implement.** Add `retarget` to `flip.ts` and `holdGroups` to `board.ts`. Create `LiveFlipCell.tsx`, and add the fade keyframes in `Board.css` beside `.flip`.
 
 - [ ] **Step 4: Run them again.** `pnpm test src/features/departures`. Expected: PASS, and every existing case still passes.
 
@@ -171,32 +196,39 @@ Tasks 1 to 4 go to Codex CLI (`codex exec`), each in its own worktree under `C:/
   - `src/features/approval/LiveCard.test.tsx`, if present; otherwise the nearest LiveCard test.
 
 **Interfaces:**
-- Consumes `textChanges`, `holdGroups` and `FlipCell live` from Task 1, and `freezeOrder` (`freeze.ts`) and `reduceBoard`/`CardFocus` (`nav.ts`) as they are.
+- Consumes `holdGroups`, `LiveFlipCell` and `retarget` from Task 1, and `freezeOrder` (`freeze.ts`) and `reduceBoard`/`CardFocus` (`nav.ts`) as they are.
 - `DeparturesBoard` gains these optional props. With none of them, the stories render as today:
-  - `live?: boolean`, passed to each `FlipCell`;
+  - `live?: boolean`: the status and waiting cells render `LiveFlipCell` instead of `FlipCell`;
   - `hold?: { order: string[]; gate: string[] }`, applied with `holdGroups` after `splitGroups`;
   - `renderCard?: (rowId: string) => ReactNode`, used instead of the fixture `ApproveCard` when given. A row it returns `null` for gets no card row;
   - `onAllSessions?: () => void`, on the "All sessions" button;
   - `onRowClick?: (rowId: string) => void`;
   - the source row lookup no longer asserts: `source?.recap?.text`.
-- `LiveCard` gains `initialFocus?: CardFocus`. On mount, `"title"` focuses the card element and `"deny"` focuses its Deny button. Never Allow.
+- `LiveCard` gains `initialFocus?: CardFocus`. On mount, `"title"` focuses the card element and `"deny"` focuses its Deny button, or the card when there is no Deny (a terminal-only entry). Never Allow.
 - `liveBoard.ts` (pure):
-  - `heldRows(rows: RowModel[], kept: ReadonlyMap<string, RowModel>, stale: string[]): RowModel[]`: the live rows plus the kept copy of each stale id, in place of what is gone;
-  - `cardFor(requests: ApprovalRequest[], rowId: string): ApprovalRequest | undefined`: the row's pending request;
-  - `focusAfter(action: "escape" | "jump" | "all-sessions"): "opener" | "terminal" | "palette"`.
-- `LiveDepartures(props: { rows: RowModel[]; requests: ApprovalRequest[]; reduced: boolean; layout?: ReadonlyMap<string, string>; renderCard: (r: ApprovalRequest, focus: CardFocus) => ReactNode; onJump: (rowId: string) => void; onAllSessions: () => void; onClose: () => void })` is a `<div className="departures" role="dialog" aria-modal="true" aria-label="Departures">`. It:
+  - `gateRows(rows: RowModel[], requests: ApprovalRequest[]): RowModel[]`. Each row whose tab has an entry gets a waiting status (its own needs-permission or needs-question, else needs-permission) and `waitingMs` set to the longest of its entries. Other rows are unchanged. This is the board's own copy of the rows: the sidebar's rows are not touched.
+  - `heldRows(rows: RowModel[], kept: ReadonlyMap<string, RowModel>, stale: string[]): RowModel[]`: the live rows plus the kept copy of each stale id, in place of what is gone.
+  - `cardFor(requests: ApprovalRequest[], rowId: string): ApprovalRequest | undefined`: the row's oldest pending entry, terminal-only included.
+  - `activeIndex(shownIds: string[], activeId: string | null, lastIndex: number): number`: the index of `activeId`. If it is gone, `lastIndex` clamped to the rows shown. With no rows, 0.
+  - `focusAfter(action: "escape" | "jump" | "all-sessions" | "card-closed"): "opener" | "terminal" | "palette" | "board-row"`.
+- `LiveDepartures(props: { rows: RowModel[]; requests: ApprovalRequest[]; reduced: boolean; layout?: ReadonlyMap<string, string>; renderCard: (r: ApprovalRequest, focus: CardFocus, restore: () => void) => ReactNode; onJump: (rowId: string) => void; onAllSessions: () => void; onClose: () => void })` is a `<div className="departures" role="dialog" aria-modal="true" aria-label="Departures">`. It:
+  - feeds `gateRows(heldRows(...), requests)` to the board;
   - measures its height with a `ResizeObserver` for `heightPx`;
-  - holds `BoardState` and acts on `reduceBoard` keys (`e.code`, preventDefault on the handled ones);
-  - freezes `order` and `gate` on `pointerenter` and releases them on `pointerleave`, keeping each row's last `RowModel` while frozen;
-  - keeps the previous cell texts in a ref for `textChanges`;
+  - keeps the active row as an id (`activeIndex` on each render) and acts on `reduceBoard` keys (`e.code`, preventDefault on the handled ones);
+  - keeps Tab inside with `trapKey`;
+  - freezes `order` and `gate` on `pointerenter` of `.board__table` and releases them on its `pointerleave`, keeping each row's last `RowModel` while frozen;
   - on mount, focuses the active row and keeps the opener's element to return to;
+  - passes `renderCard` a `restore` that focuses the active board row: the card's restore on unmount, after an answer or Escape;
   - on Escape with no card open, calls `onClose`.
 
 - [ ] **Step 1: Write the failing tests.**
   - `liveBoard.test.ts`:
+    - `gateRows` turns a plain-shell row (status idle) with a held request into needs-permission, with the entry's `waitingMs`; the Gate calls count from `boardRows`/`splitGroups` then equals the distinct tabs in `requests`;
+    - `gateRows` keeps needs-question for a row that already has it;
     - `heldRows` keeps a stale row's last copy at its index and drops nothing;
-    - `cardFor` returns the pending request for the tab and `undefined` for an answered one or none;
-    - `focusAfter` maps escape → opener, jump → terminal, all-sessions → palette.
+    - `cardFor` returns the pending entry for the tab, including a terminal-only one, and `undefined` for an answered one or none;
+    - `activeIndex` follows the id when rows reorder (session 4 at index 2 moves to index 3 → 3), and falls back to the clamped last index when the id is gone;
+    - `focusAfter` maps escape → opener, jump → terminal, all-sessions → palette, card-closed → board-row.
   - `DeparturesBoard.test.tsx`:
     - with `renderCard` returning a marker, the open card row shows the marker and not the fixture command;
     - with `renderCard` returning `null`, no `.board__card` row renders;
@@ -236,8 +268,14 @@ Tasks 1 to 4 go to Codex CLI (`codex exec`), each in its own worktree under `C:/
     - `onJump`: `setOverlay(null)`, `pick(id)`, then `actions.focusTerminal()` on the next tick;
     - `onAllSessions`: `setOverlay("palette")`;
     - `onClose`: `setOverlay(null)` and restore focus;
-    - `renderCard`: `liveCard(r)` with `initialFocus`;
+    - `renderCard`: a `LiveCard` for the board, not `liveCard(r)`, wired like this:
+      - `initialFocus` as given;
+      - `onRestoreFocus` set to the board's `restore`;
+      - `onJump`: close the board, then `jumpToRequest`;
+      - `onExpand`: close the board, then `setDrawerId`;
+      - `onAnswer`: `answerRequest`;
     - `reduced`: read from `matchMedia("(prefers-reduced-motion: reduce)")` or `document.documentElement.dataset.motion === "reduce"`.
+  - The window-level Escape capture that lets an open session bar take Escape first (LiveApp's close, restart and pause bars) steps aside while `overlay === "departures"`, so Escape always reaches the board.
 
 - [ ] **Step 1: Write the failing tests.**
   - `LIVE_COMMANDS` contains `departures`.
