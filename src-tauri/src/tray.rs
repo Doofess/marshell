@@ -84,11 +84,22 @@ pub fn menu_label(item: &TrayItemDto) -> String {
     label
 }
 
-/// `text` with every control character, and the Unicode line and paragraph separators, as a space.
+/// `text` with control characters, Unicode line and paragraph separators, bidi controls,
+/// zero-width characters and invisible operators replaced by spaces.
 fn one_line(text: &str) -> String {
     text.chars()
         .map(|c| {
-            if c.is_control() || matches!(c, '\u{2028}' | '\u{2029}') {
+            if c.is_control()
+                || matches!(
+                    c,
+                    '\u{2028}' | '\u{2029}'
+                        | '\u{200B}'..='\u{200F}'
+                        | '\u{202A}'..='\u{202E}'
+                        | '\u{2060}'..='\u{2064}'
+                        | '\u{2066}'..='\u{2069}'
+                        | '\u{FEFF}'
+                )
+            {
                 ' '
             } else {
                 c
@@ -357,6 +368,27 @@ mod tests {
     fn control_characters_become_spaces() {
         assert_eq!(menu_label(&item("a\tb\nc\r\nd\u{7}e")), "a b c  d e");
         assert_eq!(menu_label(&item("a\u{2028}b")), "a b");
+    }
+
+    #[test]
+    fn bidi_and_zero_width_characters_become_spaces() {
+        assert_eq!(menu_label(&item("a\u{202E}b\u{2066}c\u{200B}d")), "a b c d");
+        for c in [
+            '\u{200B}', '\u{200C}', '\u{200D}', '\u{200E}', '\u{200F}', '\u{202A}', '\u{202B}', '\u{202C}', '\u{202D}',
+            '\u{202E}', '\u{2060}', '\u{2061}', '\u{2062}', '\u{2063}', '\u{2064}', '\u{2066}', '\u{2067}', '\u{2068}',
+            '\u{2069}', '\u{FEFF}',
+        ] {
+            assert_eq!(menu_label(&item(&format!("a{c}b"))), "a b", "U+{:04X}", c as u32);
+        }
+    }
+
+    #[test]
+    fn bidi_controls_in_shortcuts_become_spaces() {
+        let next = TrayItemDto {
+            shortcut: Some("Ctrl+\u{202E}N".into()),
+            ..item("Go to the oldest waiting session")
+        };
+        assert_eq!(menu_label(&next), "Go to the oldest waiting session\tCtrl+ N");
     }
 
     #[test]
