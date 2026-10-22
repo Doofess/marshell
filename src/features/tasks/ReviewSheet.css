@@ -3,6 +3,7 @@
 .review {
   position: absolute;
   inset: 0;
+  z-index: 20;
   container: review / inline-size;
 }
 .review__changes {
