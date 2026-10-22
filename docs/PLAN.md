@@ -1063,6 +1063,21 @@ Decisions from the 2026-10-10 coverage audit (`docs/superpowers/plan-coverage-au
 9. **Release.**
    - Scope: tagged-build workflow, signed and notarized artifacts (NSIS per-user + MSI, dmg, AppImage/deb/rpm), checksums, release notes, the Tauri updater with a signing key and a rollback path, installers that run the unhook on uninstall, a manual release checklist file (including the macOS run), the WebView2 bootstrapper and the arm64 build (moved from phase 2 on 2026-10-15: installer concerns), `cargo-deny` and `pnpm audit`, licence notices for bundled fonts, sounds and OpenConsole, and the formal trademark search.
    - Exit: a signed build installs, updates and uninstalls on all three OSes with zero trace left in any CLI config.
+10. **Accounts and cross-device** (after v1; proposal, research and sources in `docs/research/2026-10-22-accounts-and-cross-device.md`). Sign in with GitHub, a device registry with approval from an existing device, remote terminals through an end-to-end encrypted relay, and conversation handoffs between PCs. Slices: 10a spikes and the GitHub App, 10b sign-in, 10c devices, 10d remote view, 10e remote input, 10f handoffs, 10g later (remote approve cards, remote banners, a GitHub mirror, a direct path).
+   - Exit: on two PCs, a session on one is viewed and typed into from the other with the host showing who is connected; a closed session's handoff reaches the next session on the other PC; signed out, the app is today's app and a test asserts it opens no outbound socket.
+   - **Phase 10 decisions (2026-10-22).** Every question in the proposal's §8 was answered with its recommendation:
+     1. Sign-in is GitHub's device flow through a GitHub App that asks for no permissions. The Worker checks the user token once with the client secret, keys the account by the numeric user id, and revokes the token: nobody keeps a GitHub token. The device keeps only Marshell's own rotating refresh token, in the OS keychain, never in a file. The loopback web flow is a documented fallback that spike S13 tests.
+     2. The backend is a Cloudflare Worker, one Durable Object per account on the WebSocket Hibernation API, and D1, open source under `cloud/`, run on the owner's Cloudflare account, with the relay URL as an Advanced setting for self-hosters.
+     3. Transport is the relay with Noise KK end to end between device pairs, so the relay sees ciphertext, sizes and timing only. No WebRTC in this phase; a direct path can come later behind the same device-to-device frames.
+     4. A new device is pending until an approved device compares a six-digit code derived from both devices' keys and seals the account key to it. No server escrow. A recovery phrase, shown once at account creation and on demand, unwraps the account key when every device is lost. Revoking a device rotates the key, and every trust change is signed by an approved device.
+     5. "Not mine: start over" at a first sign-in that finds an unknown device wipes the account at once when it has one device and no handoffs, and otherwise starts a seven-day reset announced to every approved device and cancellable from any of them.
+     6. Remote input is on by default for approved devices, with a host-side switch per device, an always-visible "Viewed from" or "Controlled from" indicator, and one-action disconnect. The host refuses input for a paused session or from a device whose switch is off.
+     7. A remote row keeps its host's number and shows the device name ("desktop · 6"). Ctrl+Shift+1–9 stay local; the palette's Go to session accepts "desktop 6". Remote rows never enter `layout.json`.
+     8. Remote sessions join the needs-you count, lane and tray from slice 10e. Banners and sounds for them are a switch, off by default, in 10g. Remote approve cards come in 10g after their own security review, as slice 3d had.
+     9. Handoffs: the core always writes a zero-token record at close, at every Stop, and after a crash from the archive. A smart summary through the user's own CLI headless (`claude -p` first) is opt-in per agent, and a "Hand off" row action fills the prompt line for the person to send. Marshell still never presses Enter.
+     10. Delivery: Claude Code through a per-launch flag or the context hook role; Codex and Antigravity through `MARSHELL_HANDOFF` plus a two-line tagged block in the CLI's user-level instruction file, installed through the config service's consent card and removed on uninstall. The repository's own instruction files are never touched. 10f waits for phase 6's adapters.
+     11. Handoffs are stored as ciphertext under the account key on the backend with a blind project index (an HMAC of the normalised git remote URL, or an assigned project key): newest 20 per project, 90 days, 256 KiB each, 10 devices per account, and a monthly relayed-bytes cap set from spike S14. Each PC keeps an owner-only plaintext copy under `~/.marshell`, redacted before sealing. Export to a synced folder is off by default.
+     12. The phase starts with its spikes after 4d merges and runs beside phase 5; 10f runs after phase 6.
 
 ### Accessibility safety net
 
@@ -1091,7 +1106,7 @@ Onboarding, Departures, the doctor, the settings page, the banners and the tray 
 
 ## Cross-cutting requirements (every phase)
 
-- **Privacy:** no telemetry and no crash reporting, ever. The app makes no network calls except ones you start (updates, a model-backed recap you turned on). Crash information stays local in the diagnostics export. The onboarding says so in one line.
+- **Privacy:** no telemetry and no crash reporting, ever. The app makes no network calls except ones you start (updates, a model-backed recap you turned on). Signing in to an account (phase 10) is one of those: while signed in, the app keeps one connection open to the relay and refreshes its token, and signing out closes both. Crash information stays local in the diagnostics export. The onboarding says so in one line.
 - **Zero token cost by default:** no model call happens unless you enable a model-backed feature; a test asserts it.
 - **Secrets at rest:** transcripts and recordings are stored with owner-only permissions (0700 / owner ACL), not encrypted, so search stays fast. Redaction happens on export.
 - **Languages:** English only in v1. All user-facing copy lives in one string catalog so translation can be added later. Layout already handles right-to-left names.
@@ -1101,7 +1116,7 @@ Onboarding, Departures, the doctor, the settings page, the banners and the tray 
 
 ## v2 and later (not in v1)
 
-From brief §5.9 and §6: the installer runner (install CLIs; the update button and version display moved to phase 6 on 2026-10-16), review-to-merge (for worktree tasks it moved to slice 2e+ on 2026-10-16), start-from-issue, checkpoints, file tree, phone check-in, and the `marshelld` daemon. v1 keeps the core protocol-first so these are additions, not rewrites. Also deferred: Airport mode (relabel statuses), if wanted at all.
+From brief §5.9 and §6: the installer runner (install CLIs; the update button and version display moved to phase 6 on 2026-10-16), review-to-merge (for worktree tasks it moved to slice 2e+ on 2026-10-16), start-from-issue, checkpoints, file tree, phone check-in, and the `marshelld` daemon; accounts and cross-device are phase 10 above (decided 2026-10-22). v1 keeps the core protocol-first so these are additions, not rewrites. Also deferred: Airport mode (relabel statuses), if wanted at all.
 
 ## 10. Testing strategy
 
