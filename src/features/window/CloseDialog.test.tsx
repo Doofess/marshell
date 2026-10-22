@@ -33,7 +33,7 @@ describe("CloseDialog", () => {
     expect(view({ busy: true }).match(/<button[^>]*disabled=""/g)).toHaveLength(2);
     expect(view().match(/disabled=""/g)).toBeNull();
   });
-  it("shows a failed save as an alert", () => {
-    expect(view({ error: "Disk full." })).toMatch(/role="alert"[^>]*>Disk full\./);
+  it("shows a failed close as an alert", () => {
+    expect(view({ error: "Window unavailable." })).toMatch(/role="alert"[^>]*>Window unavailable\./);
   });
 });

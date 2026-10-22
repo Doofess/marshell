@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { invoke } from "@tauri-apps/api/core";
 import type { CreateSessionResponse } from "../../generated/CreateSessionResponse";
 import type { Endpoint } from "../../generated/Endpoint";
 import type { Task } from "../../generated/Task";
@@ -48,6 +49,7 @@ import { useAttention } from "../attention/useAttention";
 import { notify } from "../../lib/api/notify";
 import { traySessions, useTray, useTrayActions, type TrayAction } from "../tray/useTray";
 import { CloseDialog } from "../window/CloseDialog";
+import { chooseClose as applyCloseChoice } from "../window/closeChoice";
 import { NotificationsDialog } from "../notifications/NotificationsDialog";
 import { useViewReport } from "../notifications/useViewReport";
 import { terminalThemeOf, wtFont } from "../appearance/terminalSettings";
@@ -1130,21 +1132,20 @@ export function LiveApp() {
     closeAskOpen.current = false;
     setCloseAsk(null);
   };
-  // Saves the choice, waits for it, and only then closes: the shell reads the saved choice on the close request.
+  // Save for future closes if possible; otherwise carry out this choice once in the shell.
   const chooseClose = async (keepInTray: boolean) => {
-    if (!sync) return setCloseAsk({ busy: false, error: "Couldn't save that choice. Try again." });
     setCloseAsk({ busy: true, error: null });
     try {
-      await sync.setCloseToTray(keepInTray);
+      const result = await applyCloseChoice(keepInTray, {
+        save: sync ? (keep) => sync.setCloseToTray(keep) : undefined,
+        isOpen: () => closeAskOpen.current,
+        closeWindow,
+        closeOnce: (keep) => invoke<void>("close_once", { keepInTray: keep }),
+      });
+      if (result !== "cancelled") cancelCloseAsk();
     } catch {
-      if (closeAskOpen.current) setCloseAsk({ busy: false, error: "Couldn't save that choice. Try again." });
-      return;
+      if (closeAskOpen.current) setCloseAsk({ busy: false, error: "Couldn't close the window. Try again." });
     }
-    // Escape while it saved: the choice stands, but the person asked not to close now.
-    if (!closeAskOpen.current) return;
-    closeAskOpen.current = false;
-    setCloseAsk(null);
-    void closeWindow();
   };
 
   const restartInfo = restarting === null ? undefined : infos.find((i) => i.tab_id === restarting.id);

@@ -111,10 +111,38 @@ enum CloseAction {
 /// Without a tray nothing could bring a hidden window back, so the close button quits whatever was saved.
 /// With one it follows the saved choice, and asks the person once when there is none.
 fn close_action(tray_ready: bool, close_to_tray: Option<bool>) -> CloseAction {
-    match (tray_ready, close_to_tray) {
-        (false, _) | (true, Some(false)) => CloseAction::Quit,
-        (true, Some(true)) => CloseAction::Hide,
-        (true, None) => CloseAction::Ask,
+    match close_to_tray {
+        None if tray_ready => CloseAction::Ask,
+        choice => close_once_action(tray_ready, choice.unwrap_or(false)),
+    }
+}
+
+/// Carries out a choice without saving it, with the same no-tray safeguard as a normal close.
+fn close_once_action(tray_ready: bool, keep_in_tray: bool) -> CloseAction {
+    if tray_ready && keep_in_tray {
+        CloseAction::Hide
+    } else {
+        CloseAction::Quit
+    }
+}
+
+fn hide_to_tray(window: &tauri::Window) {
+    if let Some(core) = window.app_handle().try_state::<CoreHandle>() {
+        core.0.set_window_hidden(true);
+    }
+    let _ = window.hide();
+}
+
+/// The dialog's fallback when saving failed or the core is unavailable. Never changes the saved choice.
+#[tauri::command]
+fn close_once(app: tauri::AppHandle, keep_in_tray: bool) {
+    match close_once_action(tray::tray_ready(&app), keep_in_tray) {
+        CloseAction::Hide => {
+            if let Some(window) = app.get_webview_window("main") {
+                hide_to_tray(&window.as_ref().window());
+            }
+        }
+        CloseAction::Quit | CloseAction::Ask => app.exit(0),
     }
 }
 
@@ -140,12 +168,7 @@ fn on_close_requested(window: &tauri::Window, api: &tauri::CloseRequestApi) {
         .and_then(|home| marshell_core::settings::load(&home.0).close_to_tray);
     match close_action(tray::tray_ready(app), saved) {
         CloseAction::Quit => app.exit(0),
-        CloseAction::Hide => {
-            if let Some(core) = app.try_state::<CoreHandle>() {
-                core.0.set_window_hidden(true);
-            }
-            let _ = window.hide();
-        }
+        CloseAction::Hide => hide_to_tray(window),
         CloseAction::Ask => {
             // The window stays open and in front; the webview shows its one-time dialog.
             tray::show_main(app);
@@ -262,6 +285,7 @@ fn main() {
             diagnostics::save_diagnostics,
             folder_picker::pick_folder,
             core_endpoint,
+            close_once,
             capture::capture_screen_region,
             capture::cancel_capture,
             capture::read_clipboard_image,
@@ -322,5 +346,24 @@ mod tests {
     #[test]
     fn close_action_asks_when_nothing_is_saved() {
         assert!(matches!(super::close_action(true, None), super::CloseAction::Ask));
+    }
+
+    #[test]
+    fn close_once_action_follows_the_choice_with_a_tray() {
+        assert!(matches!(super::close_once_action(true, true), super::CloseAction::Hide));
+        assert!(matches!(
+            super::close_once_action(true, false),
+            super::CloseAction::Quit
+        ));
+    }
+
+    #[test]
+    fn close_once_action_quits_without_a_tray_whatever_was_chosen() {
+        for keep_in_tray in [true, false] {
+            assert!(matches!(
+                super::close_once_action(false, keep_in_tray),
+                super::CloseAction::Quit
+            ));
+        }
     }
 }
