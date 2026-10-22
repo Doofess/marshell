@@ -5,7 +5,9 @@ const read = (path: string) => readFileSync(new URL(path, import.meta.url), "utf
 const zIndexOf = (css: string, selector: string) => {
   const rule = new RegExp(`(?:^|\\})\\s*${selector.replace(/[.[\]"=-]/g, "\\$&")}\\s*\\{([^}]*)\\}`).exec(css);
   expect(rule, selector).not.toBeNull();
-  const z = /z-index:\s*(\d+)/.exec(rule![1]);
+  const body = rule?.[1];
+  if (body === undefined) throw new Error(`Missing rule: ${selector}`);
+  const z = /z-index:\s*(\d+)/.exec(body);
   return z ? Number(z[1]) : 0;
 };
 
