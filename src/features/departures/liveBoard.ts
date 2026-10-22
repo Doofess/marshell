@@ -2,12 +2,20 @@ import type { ApprovalRequest } from "../approval/types";
 import type { RowModel } from "../sidebar/types";
 import { fitRows, type BoardRow } from "./board";
 
-/** Opening a card can hide its own row; keep a window of whole rows ending at that request. */
-export function fitLiveBoard(heightPx: number, groups: { gate: BoardRow[]; others: BoardRow[] }, card?: string) {
+export function refocusNeeded(s: { rowFocused: boolean; leaving: boolean; focusInside: boolean }): boolean {
+  return s.rowFocused && !s.leaving && !s.focusInside;
+}
+
+export function openerUsable(opener: { isConnected: boolean } | null | undefined, body: unknown): boolean {
+  return opener !== null && opener !== undefined && opener.isConnected && opener !== body;
+}
+
+/** Keep a window of whole rows ending at the card or active row when it would be hidden. */
+export function fitLiveBoard(heightPx: number, groups: { gate: BoardRow[]; others: BoardRow[] }, card?: string, keep?: string) {
   const fit = fitRows(heightPx, groups, card !== undefined);
   const count = fit.gate.length + fit.others.length;
   const rows = [...groups.gate, ...groups.others];
-  const index = rows.findIndex((r) => r.id === card);
+  const index = rows.findIndex((r) => r.id === (card ?? keep));
   if (index < count || count === 0) return fit;
   const shown = rows.slice(index - count + 1, index + 1);
   const gate = new Set(groups.gate.map((r) => r.id));
@@ -17,7 +25,9 @@ export function fitLiveBoard(heightPx: number, groups: { gate: BoardRow[]; other
 /** The board counts held requests even when a plain shell's sidebar status is idle. */
 export function gateRows(rows: RowModel[], requests: ApprovalRequest[]): RowModel[] {
   const waits = new Map<string, number>();
-  for (const request of requests) waits.set(request.tab, Math.max(waits.get(request.tab) ?? 0, request.waitingMs));
+  for (const request of requests) {
+    if (request.state.phase === "pending") waits.set(request.tab, Math.max(waits.get(request.tab) ?? 0, request.waitingMs));
+  }
   return rows.map((row) => {
     const waitingMs = waits.get(row.id);
     return waitingMs === undefined ? row : { ...row, status: row.status === "needs-question" ? "needs-question" : "needs-permission", waitingMs };

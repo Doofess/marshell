@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import { FOCUSABLE } from "../../lib/dialogFocus";
 import { trapKey } from "../../lib/focusTrap";
 import type { ApprovalRequest } from "../approval/types";
@@ -6,7 +6,7 @@ import type { RowModel } from "../sidebar/types";
 import { boardRows, holdGroups, splitGroups } from "./board";
 import { DeparturesBoard } from "./DeparturesBoard";
 import { freezeOrder } from "./freeze";
-import { activeIndex, cardFor, fitLiveBoard, focusAfter, gateRows, heldRows } from "./liveBoard";
+import { activeIndex, cardFor, fitLiveBoard, gateRows, heldRows, openerUsable, refocusNeeded } from "./liveBoard";
 import { reduceBoard, type CardFocus } from "./nav";
 import "./LiveDepartures.css";
 
@@ -18,7 +18,7 @@ type Props = {
   renderCard: (r: ApprovalRequest, focus: CardFocus, restore: () => void) => ReactNode;
   onJump: (rowId: string) => void;
   onAllSessions: () => void;
-  onClose: () => void;
+  onClose: (focusTerminal: boolean) => void;
 };
 type Hold = { order: string[]; gate: string[] };
 
@@ -50,7 +50,7 @@ export function LiveDepartures({ rows, requests, reduced, layout, renderCard, on
   const request = open ? cardFor(requests, open.rowId) : undefined;
   const card = request?.id === open?.requestId ? request : undefined;
   const cardContent = card && open ? renderCard(card, open.focus, restore) : null;
-  const fit = fitLiveBoard(heightPx, groups, cardContent !== null && cardContent !== undefined ? open?.rowId : undefined);
+  const fit = fitLiveBoard(heightPx, groups, cardContent !== null && cardContent !== undefined ? open?.rowId : undefined, place.id ?? undefined);
   const shown = [...fit.gate, ...fit.others];
   const active = activeIndex(shown.map((r) => r.id), place.id, place.index);
   const activeId = shown[active]?.id ?? null;
@@ -74,6 +74,11 @@ export function LiveDepartures({ rows, requests, reduced, layout, renderCard, on
     const focused = document.activeElement;
     if (heightPx > 0 && (rowFocused.current || focused === element.current || (focused instanceof HTMLElement && focused.matches(".board__row")))) restore();
   }, [activeId, active, place, heightPx, restore]);
+
+  useLayoutEffect(() => {
+    const root = element.current;
+    if (root && refocusNeeded({ rowFocused: rowFocused.current, leaving: leaving.current, focusInside: root.contains(document.activeElement) })) restore();
+  });
 
   useEffect(() => {
     if (!hold) return;
@@ -117,6 +122,7 @@ export function LiveDepartures({ rows, requests, reduced, layout, renderCard, on
   }, [hasTable]);
 
   const jump = (id: string) => {
+    if (stale.includes(id)) return;
     leaving.current = true;
     onJump(id);
   };
@@ -143,8 +149,9 @@ export function LiveDepartures({ rows, requests, reduced, layout, renderCard, on
         restore();
       } else {
         leaving.current = true;
-        onClose();
-        if (focusAfter("escape") === "opener" && opener.current?.isConnected) opener.current.focus();
+        const usable = openerUsable(opener.current, document.body);
+        onClose(!usable);
+        if (usable) opener.current?.focus();
       }
       return;
     }
@@ -178,7 +185,7 @@ export function LiveDepartures({ rows, requests, reduced, layout, renderCard, on
         if (!e.currentTarget.contains(e.relatedTarget)) rowFocused.current = false;
       }}>
       <DeparturesBoard rows={liveRows} heightPx={heightPx} active={active} layout={layout} live reduced={reduced} hold={held} stale={stale}
-        card={card ? open?.rowId : undefined} renderCard={() => cardContent}
+        card={card ? open?.rowId : undefined} keep={place.id ?? undefined} renderCard={() => cardContent}
         onRowClick={jump} onAllSessions={allSessions} />
     </div>
   );

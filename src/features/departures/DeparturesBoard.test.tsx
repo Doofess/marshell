@@ -10,6 +10,14 @@ import { heldRows } from "./liveBoard";
 
 const html = (o: Partial<Parameters<typeof DeparturesBoard>[0]> = {}) => renderToStaticMarkup(<DeparturesBoard rows={SCENARIO_ROWS_WITH_TOOLS} heightPx={800} {...o} />);
 
+it("marks only stale rows as disabled", () => {
+  const id = SCENARIO_ROWS_WITH_TOOLS[0]!.id;
+  const tags = html({ stale: [id] }).match(/<tr[^>]*data-row-id="[^"]*"[^>]*>/g)!;
+  const stale = tags.find((tag) => tag.includes(`data-row-id="${id}"`))!;
+  expect(stale).toContain('aria-disabled="true"');
+  for (const tag of tags.filter((tag) => tag !== stale)) expect(tag).not.toContain("aria-disabled");
+});
+
 describe("LiveFlipCell", () => {
   it.each([false, true])("shows the final text without a flip on mount (reduced: %s)", (reduced) => {
     const h = renderToStaticMarkup(<LiveFlipCell text="NEEDS YOU" reduced={reduced} />);

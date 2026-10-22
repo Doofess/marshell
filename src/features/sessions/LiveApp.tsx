@@ -28,6 +28,7 @@ import { ContextMenu } from "../../components/ContextMenu/ContextMenu";
 import { tasksApi } from "../../lib/api/tasks";
 import { cancelsCloseBar, commandShortcut, sessionShortcut, type SessionShortcut } from "../../lib/appShortcuts";
 import { nextWaiting } from "../lane/laneLayout";
+import { focusPendingCard } from "../approval/focusPendingCard";
 import { osOfPlatform } from "../../lib/keymap";
 import { paletteSessions } from "../palette/sessions";
 import { Preview } from "../preview/Preview";
@@ -49,7 +50,7 @@ import { needsYouCount } from "../attention/attention";
 import { useAttention } from "../attention/useAttention";
 import { useRowFlash } from "../attention/rowFlash";
 import { notify } from "../../lib/api/notify";
-import { traySessions, useTray, useTrayActions, type TrayAction } from "../tray/useTray";
+import { trayClosesBoard, traySessions, useTray, useTrayActions, type TrayAction } from "../tray/useTray";
 import { CloseDialog } from "../window/CloseDialog";
 import { chooseClose as applyCloseChoice } from "../window/closeChoice";
 import { NotificationsDialog } from "../notifications/NotificationsDialog";
@@ -993,11 +994,9 @@ export function LiveApp() {
           if (next === null) announce("Nothing needs you");
           else if (next.kind === "terminal") jumpToRequestRef.current(next.request);
           else {
-            const inLane = document.querySelector<HTMLElement>('.lane .approve-card[data-phase="pending"]');
-            if (inLane) inLane.focus();
-            else {
+            if (!focusPendingCard(document, "lane")) {
               setDrawerId(next.request.id);
-              setTimeout(() => document.querySelector<HTMLElement>('.drawer .approve-card[data-phase="pending"]')?.focus(), 0);
+              setTimeout(() => focusPendingCard(document, "drawer"), 0);
             }
           }
           return true;
@@ -1110,6 +1109,7 @@ export function LiveApp() {
   useTray(trayState);
   // A tray menu choice. The shell has already brought the window forward for the ones that need it.
   useTrayActions((action: TrayAction) => {
+    if (trayClosesBoard(action, overlay)) setOverlay(null);
     if (action.kind === "goto") actions.handle({ kind: "goto", number: action.number });
     else if (action.kind === "nextWaiting") paneCommand({ kind: "nextWaiting" });
     else if (action.kind === "overlay") setOverlay(action.overlay);
@@ -1363,9 +1363,12 @@ export function LiveApp() {
             pick(id);
             setTimeout(() => actions.focusTerminal(), 0);
           }}
-          onAllSessions={() => setOverlay("palette")}
-          // The board restores its opener; the card restores its board row.
-          onClose={() => setOverlay(null)}
+          onAllSessions={() => { actions.focusTerminal(); setOverlay("palette"); }}
+          // The board restores a usable opener, or asks for terminal focus after closing.
+          onClose={(focusTerminal) => {
+            setOverlay(null);
+            if (focusTerminal) setTimeout(() => actions.focusTerminal(), 0);
+          }}
           renderCard={(r, initialFocus, restore) => (
             <LiveCard
               key={r.id}
@@ -1373,7 +1376,11 @@ export function LiveApp() {
               initialFocus={initialFocus}
               onRestoreFocus={restore}
               onJump={(request) => { setOverlay(null); jumpToRequest(request); }}
-              onExpand={(request) => { setOverlay(null); setDrawerId(request.id); }}
+              onExpand={(request) => {
+                setOverlay(null);
+                setDrawerId(request.id);
+                setTimeout(() => focusPendingCard(document, "drawer"), 0);
+              }}
               onAnswer={answerRequest}
             />
           )}

@@ -4,11 +4,27 @@ import { mountHook } from "../../test/hooks";
 import type { ApprovalRequest } from "../approval/types";
 import type { RowModel } from "../sidebar/types";
 import type { TrayState } from "./trayItems";
-import { actionFor, trayModel, traySessions, useTray } from "./useTray";
+import { actionFor, trayClosesBoard, trayModel, traySessions, useTray, type TrayAction } from "./useTray";
 
 vi.mock("react", async () => ({ ...await vi.importActual("react"), ...(await import("../../test/hooks")).hooks }));
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 afterEach(() => vi.clearAllMocks());
+
+describe("trayClosesBoard", () => {
+  it.each([
+    [{ kind: "goto", number: 2 }, "departures", true],
+    [{ kind: "nextWaiting" }, "departures", true],
+    [{ kind: "goto", number: 2 }, "palette", false],
+    [{ kind: "nextWaiting" }, "palette", false],
+    [{ kind: "goto", number: 2 }, null, false],
+    [{ kind: "nextWaiting" }, null, false],
+    [{ kind: "overlay", overlay: "departures" }, "departures", false],
+    [{ kind: "overlay", overlay: "notifications" }, "departures", false],
+    [{ kind: "togglePause" }, "departures", false],
+  ] satisfies [TrayAction, string | null, boolean][])("action %j with overlay %s closes board: %s", (action, overlay, expected) => {
+    expect(trayClosesBoard(action, overlay)).toBe(expected);
+  });
+});
 
 const row = (over: Partial<RowModel> = {}): RowModel => ({ id: "tab-a", number: 3, name: "infra", project: "infra", projectKey: "infra", agent: "claude", status: "needs-permission", phrase: "Wants to run `npm test`", ...over });
 const entry = (tab: string, over: Partial<ApprovalRequest> = {}): ApprovalRequest => ({

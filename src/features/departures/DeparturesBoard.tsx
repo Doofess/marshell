@@ -25,6 +25,8 @@ export type DeparturesBoardProps = {
   layout?: ReadonlyMap<string, string>;
   /** The row whose request is open inline. */
   card?: string;
+  /** Keep the keyboard's session in view when the groups change. */
+  keep?: string;
   /** Rows that closed while the pointer was over the board: kept in place, dimmed. */
   stale?: string[];
   /** Per-row text changes for the motion clip: [rowId][cell] = { from, at }. */
@@ -49,12 +51,12 @@ const EMPTY = EMPTY_STATES.find((e) => e.id === "departures-empty")!;
  * moves with the arrows, Enter jumps to the session and Y or N opens the request inline, but Enter never answers it. The
  * gate-call header says which keys those are, with the letter the user's own layout prints on them.
  */
-export function DeparturesBoard({ rows, heightPx, active, layout, card, stale = [], flips = {}, tracks = {}, texts = {}, reduced = false, live = false, hold, renderCard, onAllSessions, onRowClick }: DeparturesBoardProps) {
+export function DeparturesBoard({ rows, heightPx, active, layout, card, keep, stale = [], flips = {}, tracks = {}, texts = {}, reduced = false, live = false, hold, renderCard, onAllSessions, onRowClick }: DeparturesBoardProps) {
   const sorted = splitGroups(boardRows(rows));
   const groups = hold ? holdGroups(sorted, hold) : sorted;
   const cardContent = card === undefined ? null : renderCard ? renderCard(card) : <ApproveCard request={APPROVALS.safeBash} />;
   const hasCard = cardContent !== null && cardContent !== undefined;
-  const fit = renderCard ? fitLiveBoard(heightPx, groups, hasCard ? card : undefined) : fitRows(heightPx, groups, hasCard);
+  const fit = renderCard || keep !== undefined ? fitLiveBoard(heightPx, groups, hasCard ? card : undefined, keep) : fitRows(heightPx, groups, hasCard);
   const shown = [...fit.gate, ...fit.others];
   const rowsById = new Map(rows.map((r) => [r.id, r]));
   const gateIds = new Set(groups.gate.map((r) => r.id));
@@ -86,10 +88,11 @@ export function DeparturesBoard({ rows, heightPx, active, layout, card, stale = 
         data-row-id={r.id}
         data-agent={r.agent}
         data-stale={stale.includes(r.id) || undefined}
+        aria-disabled={stale.includes(r.id) || undefined}
         title={boardRowLabel(r)}
         role="row"
         tabIndex={current === index ? 0 : -1}
-        onClick={onRowClick ? () => onRowClick(r.id) : undefined}
+        onClick={onRowClick && !stale.includes(r.id) ? () => onRowClick(r.id) : undefined}
       >
         <td role="cell" className="board__status">
           {live ? <LiveFlipCell text={statusNow} reduced={reduced} /> : <FlipCell from={f?.status?.from ?? statusNow} to={statusNow} at={f?.status?.at} reduced={reduced} track={track?.status} />}
