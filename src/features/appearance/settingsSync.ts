@@ -35,6 +35,8 @@ export class SettingsSync {
   private warned = false;
   /** Kept from the last read, so every save sends it back unchanged. */
   private seen = false;
+  /** Whether closing hides the window to the tray: null until the person chooses. Kept from the last read, so every save sends it back unchanged. */
+  private tray: boolean | null = null;
   /** Kept from the last read, so every save sends it back unchanged. */
   private off: string[] = [];
   /** Kept from the last read, so every save sends it back unchanged. */
@@ -54,6 +56,7 @@ export class SettingsSync {
     this.hasRead = true;
     this.warned = s.pause_warned;
     this.seen = s.onboarded;
+    this.tray = s.close_to_tray;
     this.off = s.status_off;
     this.notify = s.notifications;
     this.appearance = s.appearance;
@@ -75,6 +78,11 @@ export class SettingsSync {
     return this.seen;
   }
 
+  /** Whether closing hides the window to the tray, as of the last read or write: null until the person has chosen (or a read works). */
+  get closeToTray(): boolean | null {
+    return this.tray;
+  }
+
   /** Whether the first-Pause warning has been confirmed, as of the last read or write. False until a read works. */
   get pauseWarned(): boolean {
     return this.warned;
@@ -89,9 +97,10 @@ export class SettingsSync {
         throw new SettingsReadError();
       }
     }
-    const s = await this.api.put(await this.getEndpoint(), { appearance: next, pause_warned: this.warned, onboarded: this.seen, status_off: this.off, notifications: this.notify });
+    const s = await this.api.put(await this.getEndpoint(), { appearance: next, pause_warned: this.warned, onboarded: this.seen, close_to_tray: this.tray, status_off: this.off, notifications: this.notify });
     this.warned = s.pause_warned;
     this.seen = s.onboarded;
+    this.tray = s.close_to_tray;
     this.off = s.status_off;
     this.notify = s.notifications;
     this.appearance = s.appearance;
@@ -114,6 +123,11 @@ export class SettingsSync {
     await this.writeFlags({ pause_warned: true });
   }
 
+  /** Saves whether closing hides the window to the tray. Reads first, like `save`, and sends every other field back unchanged. */
+  async setCloseToTray(value: boolean): Promise<void> {
+    await this.writeFlags({ close_to_tray: value });
+  }
+
   /** Records that the onboarding was seen. Reads first, like `save`, and sends the appearance and the pause warning back unchanged. */
   async markOnboarded(): Promise<void> {
     await this.writeFlags({ onboarded: true });
@@ -131,7 +145,7 @@ export class SettingsSync {
     return this.off;
   }
 
-  private async writeFlags(change: Partial<Pick<Settings, "pause_warned" | "onboarded" | "status_off" | "notifications">>): Promise<void> {
+  private async writeFlags(change: Partial<Pick<Settings, "pause_warned" | "onboarded" | "close_to_tray" | "status_off" | "notifications">>): Promise<void> {
     if (!this.hasRead) {
       try {
         await this.load();
@@ -143,12 +157,14 @@ export class SettingsSync {
       appearance: this.appearance!,
       pause_warned: this.warned,
       onboarded: this.seen,
+      close_to_tray: this.tray,
       status_off: this.off,
       notifications: this.notify,
       ...change,
     });
     this.warned = s.pause_warned;
     this.seen = s.onboarded;
+    this.tray = s.close_to_tray;
     this.off = s.status_off;
     this.notify = s.notifications;
     this.appearance = s.appearance;

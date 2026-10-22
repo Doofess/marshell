@@ -5,7 +5,7 @@ import { TrayMenu } from "./TrayMenu";
 import type { TrayState } from "./trayItems";
 
 const wait = (n: number, name: string, status: "needs-permission" | "needs-question" = "needs-permission") => ({ number: n, name, status, phrase: status === "needs-permission" ? "Wants to run `npm test`" : "Has a question", agent: "claude" as const });
-const state: TrayState = { os: "windows", sessions: [wait(3, "api-server"), wait(2, "infra", "needs-question")], paused: false, doctorIssues: 4 };
+const state: TrayState = { os: "windows", sessions: [wait(3, "api-server"), wait(2, "infra", "needs-question")], paused: false, doctorIssues: 4, departures: true };
 const html = (s: Partial<TrayState> = {}, caption = false) => renderToStaticMarkup(<TrayMenu state={{ ...state, ...s }} caption={caption} />);
 
 describe("TrayMenu", () => {

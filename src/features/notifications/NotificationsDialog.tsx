@@ -19,14 +19,17 @@ const EVENTS: { key: "needs_you" | "done" | "error"; label: string }[] = [
 export type NotificationsHandlers = {
   /** The settings with one change made; the owner saves them. */
   onChange: (next: NotifySettings) => void;
+  /** The close button's tray choice: true keeps Marshell running in the tray. */
+  onCloseToTray?: (keepInTray: boolean) => void;
   onClose: () => void;
 };
 
 /**
  * Settings → Notifications: which events show a banner or play a sound, whether a finished subagent does, and the quiet hours.
- * Presentational: `NotificationsDialog` reads and saves, this draws. `settings` is null until they have been read.
+ * It also holds the one setting that is not a notification, what the close button does, since a person who turns off the tray looks here.
+ * Presentational: `NotificationsDialog` reads and saves, this draws. `settings` is null until they have been read; `closeToTray` is null until chosen, and counts as on.
  */
-export function NotificationsDialogView({ settings, error, onChange, onClose }: { settings: NotifySettings | null; error: string | null } & NotificationsHandlers) {
+export function NotificationsDialogView({ settings, closeToTray = null, error, onChange, onCloseToTray, onClose }: { settings: NotifySettings | null; closeToTray?: boolean | null; error: string | null } & NotificationsHandlers) {
   const dialog = useRef<HTMLDivElement>(null);
   const title = useRef<HTMLHeadingElement>(null);
   useDialogFocus(dialog, title, onClose);
@@ -89,6 +92,12 @@ export function NotificationsDialogView({ settings, error, onChange, onClose }: 
               </div>
             </section>
           )}
+          {settings !== null && (
+            <section className="notifications-dialog__group" aria-label="Close button">
+              <h3 className="notifications-dialog__name">Close button</h3>
+              <Switch label="Keep Marshell running in the tray when I close the window" checked={closeToTray !== false} onChange={(keep) => onCloseToTray?.(keep)} />
+            </section>
+          )}
           {error && (
             <p className="notifications-dialog__error" role="alert">
               {error}
@@ -108,11 +117,16 @@ export function NotificationsDialogView({ settings, error, onChange, onClose }: 
 /** The Notifications dialog on the app's settings: each change is saved as it is made, and the switches show what the core stored. */
 export function NotificationsDialog({ sync, onClose }: { sync?: SettingsSync; onClose: () => void }) {
   const [settings, setSettings] = useState<NotifySettings | null>(null);
+  const [closeToTray, setCloseToTray] = useState<boolean | null>(null);
   const [error, setError] = useState<string | null>(null);
   useEffect(() => {
     let live = true;
     sync?.load().then(
-      () => live && setSettings(sync.notifications),
+      () => {
+        if (!live) return;
+        setSettings(sync.notifications);
+        setCloseToTray(sync.closeToTray);
+      },
       () => live && setError(SETTINGS_UNREADABLE),
     );
     return () => {
@@ -129,5 +143,15 @@ export function NotificationsDialog({ sync, onClose }: { sync?: SettingsSync; on
       setError(e instanceof SettingsReadError ? e.message : failureText(e));
     }
   };
-  return <NotificationsDialogView settings={settings} error={error} onChange={(next) => void save(next)} onClose={onClose} />;
+  const saveCloseToTray = async (keep: boolean) => {
+    if (!sync) return;
+    setError(null);
+    try {
+      await sync.setCloseToTray(keep);
+      setCloseToTray(sync.closeToTray);
+    } catch (e) {
+      setError(e instanceof SettingsReadError ? e.message : failureText(e));
+    }
+  };
+  return <NotificationsDialogView settings={settings} closeToTray={closeToTray} error={error} onChange={(next) => void save(next)} onCloseToTray={(keep) => void saveCloseToTray(keep)} onClose={onClose} />;
 }

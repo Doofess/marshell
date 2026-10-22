@@ -6,6 +6,7 @@ mod capture;
 mod diagnostics;
 mod folder_picker;
 mod notify;
+mod tray;
 
 use marshell_core::server::CoreConfig;
 use marshell_core::supervisor::{CoreEvent, Supervisor};
@@ -100,10 +101,82 @@ fn disable_browser_shortcuts(window: &tauri::WebviewWindow) {
     let _ = window;
 }
 
+/// What the close button does.
+enum CloseAction {
+    Quit,
+    Hide,
+    Ask,
+}
+
+/// Without a tray nothing could bring a hidden window back, so the close button quits whatever was saved.
+/// With one it follows the saved choice, and asks the person once when there is none.
+fn close_action(tray_ready: bool, close_to_tray: Option<bool>) -> CloseAction {
+    match close_to_tray {
+        None if tray_ready => CloseAction::Ask,
+        choice => close_once_action(tray_ready, choice.unwrap_or(false)),
+    }
+}
+
+/// Carries out a choice without saving it, with the same no-tray safeguard as a normal close.
+fn close_once_action(tray_ready: bool, keep_in_tray: bool) -> CloseAction {
+    if tray_ready && keep_in_tray {
+        CloseAction::Hide
+    } else {
+        CloseAction::Quit
+    }
+}
+
+fn hide_to_tray(window: &tauri::Window) {
+    if let Some(core) = window.app_handle().try_state::<CoreHandle>() {
+        core.0.set_window_hidden(true);
+    }
+    let _ = window.hide();
+}
+
+/// The dialog's fallback when saving failed or the core is unavailable. Never changes the saved choice.
+#[tauri::command]
+fn close_once(app: tauri::AppHandle, keep_in_tray: bool) {
+    match close_once_action(tray::tray_ready(&app), keep_in_tray) {
+        CloseAction::Hide => {
+            if let Some(window) = app.get_webview_window("main") {
+                hide_to_tray(&window.as_ref().window());
+            }
+        }
+        CloseAction::Quit | CloseAction::Ask => app.exit(0),
+    }
+}
+
 /// What the window keeps between runs: everything but the frame, which the config sets (none on Windows, where the
 /// app draws its own title bar). Restoring a frame saved before that would draw the system's bar over the app's.
+/// Not whether it was visible either: quitting from the tray while hidden must not start the next run hidden.
 fn window_state_flags() -> tauri_plugin_window_state::StateFlags {
-    tauri_plugin_window_state::StateFlags::all() - tauri_plugin_window_state::StateFlags::DECORATIONS
+    use tauri_plugin_window_state::StateFlags;
+    StateFlags::all() - StateFlags::DECORATIONS - StateFlags::VISIBLE
+}
+
+/// Where the Marshell home is, for the settings the close button reads on every request.
+struct HomeDir(std::path::PathBuf);
+
+/// The close button, from the title bar, Alt+F4 or the taskbar. Always held back from Tauri's own close, so a
+/// live tray icon can never keep the process alive after a quit.
+fn on_close_requested(window: &tauri::Window, api: &tauri::CloseRequestApi) {
+    let app = window.app_handle();
+    api.prevent_close();
+    // Read fresh each time: the choice may have been saved since the window opened.
+    let saved = app
+        .try_state::<HomeDir>()
+        .and_then(|home| marshell_core::settings::load(&home.0).close_to_tray);
+    match close_action(tray::tray_ready(app), saved) {
+        CloseAction::Quit => app.exit(0),
+        CloseAction::Hide => hide_to_tray(window),
+        CloseAction::Ask => {
+            // The window stays open and in front; the webview shows its one-time dialog.
+            tray::show_main(app);
+            if let Err(e) = app.emit("close-choice", ()) {
+                eprintln!("Marshell: could not ask the window about closing: {e}");
+            }
+        }
+    }
 }
 
 fn main() {
@@ -116,10 +189,7 @@ fn main() {
     let app = tauri::Builder::default()
         // Must be the first plugin: a second launch focuses the existing window instead.
         .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
-            if let Some(w) = app.get_webview_window("main") {
-                let _ = w.unminimize();
-                let _ = w.set_focus();
-            }
+            tray::show_main(app)
         }))
         .plugin(
             tauri_plugin_window_state::Builder::default()
@@ -139,16 +209,29 @@ fn main() {
             {
                 core.0.window_blurred();
             }
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event
+                && window.label() == "main"
+            {
+                on_close_requested(window, api);
+            }
+            // The taskbar may have changed colour, and the wands must stay readable on it.
+            if matches!(event, tauri::WindowEvent::ThemeChanged(_)) {
+                tray::theme_changed(window.app_handle());
+            }
         })
         .setup(|app| {
             if let Err(e) = notify::init(app.handle()) {
                 eprintln!("Marshell: banners will not answer clicks: {e}");
+            }
+            if let Err(e) = tray::build(app.handle()) {
+                eprintln!("Marshell: no tray icon this run: {e}");
             }
             if let Some(w) = app.get_webview_window("main") {
                 disable_browser_shortcuts(&w);
             }
             app.manage(capture::CaptureState::default());
             let home = marshell_core::paths::home_dir()?;
+            app.manage(HomeDir(home.clone()));
             marshell_core::crash::install_panic_hook(&home);
             if let Err(e) = marshell_core::diagnostics::log::init(&home) {
                 eprintln!("Marshell: no log file this run: {e:#}");
@@ -187,6 +270,8 @@ fn main() {
                 allowed_origins: allowed_origins(),
                 programs_dir,
                 notify: None,
+                notify_paused: Default::default(),
+                window_hidden: Default::default(),
             };
             let handle = app.handle().clone();
             let supervisor =
@@ -200,10 +285,12 @@ fn main() {
             diagnostics::save_diagnostics,
             folder_picker::pick_folder,
             core_endpoint,
+            close_once,
             capture::capture_screen_region,
             capture::cancel_capture,
             capture::read_clipboard_image,
-            attention::set_badge
+            attention::set_badge,
+            tray::set_tray
         ])
         .build(tauri::generate_context!())
         .expect("failed to build the app");
@@ -232,6 +319,51 @@ mod tests {
     fn saved_window_state_leaves_the_frame_to_the_config() {
         use tauri_plugin_window_state::StateFlags;
         assert!(!super::window_state_flags().contains(StateFlags::DECORATIONS));
+        // Quitting while hidden must not start the next run hidden.
+        assert!(!super::window_state_flags().contains(StateFlags::VISIBLE));
         assert!(super::window_state_flags().contains(StateFlags::SIZE | StateFlags::POSITION | StateFlags::MAXIMIZED));
+    }
+
+    #[test]
+    fn close_action_quits_without_a_tray_whatever_was_saved() {
+        for saved in [None, Some(true), Some(false)] {
+            assert!(matches!(super::close_action(false, saved), super::CloseAction::Quit));
+        }
+    }
+
+    #[test]
+    fn close_action_follows_the_saved_choice() {
+        assert!(matches!(
+            super::close_action(true, Some(true)),
+            super::CloseAction::Hide
+        ));
+        assert!(matches!(
+            super::close_action(true, Some(false)),
+            super::CloseAction::Quit
+        ));
+    }
+
+    #[test]
+    fn close_action_asks_when_nothing_is_saved() {
+        assert!(matches!(super::close_action(true, None), super::CloseAction::Ask));
+    }
+
+    #[test]
+    fn close_once_action_follows_the_choice_with_a_tray() {
+        assert!(matches!(super::close_once_action(true, true), super::CloseAction::Hide));
+        assert!(matches!(
+            super::close_once_action(true, false),
+            super::CloseAction::Quit
+        ));
+    }
+
+    #[test]
+    fn close_once_action_quits_without_a_tray_whatever_was_chosen() {
+        for keep_in_tray in [true, false] {
+            assert!(matches!(
+                super::close_once_action(false, keep_in_tray),
+                super::CloseAction::Quit
+            ));
+        }
     }
 }

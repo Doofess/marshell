@@ -17,7 +17,7 @@ const wait = (number: number, name: string, status: TraySession["status"] = "nee
   agent: "claude",
 });
 const TWO: TraySession[] = [wait(3, "api-server"), wait(2, "infra", "needs-question")];
-const state = (over: Partial<TrayState> = {}): TrayState => ({ os: "windows", sessions: TWO, paused: false, doctorIssues: 4, ...over });
+const state = (over: Partial<TrayState> = {}): TrayState => ({ os: "windows", sessions: TWO, paused: false, doctorIssues: 4, departures: true, ...over });
 const menu = (s: TrayState) => <TrayMenu state={s} caption />;
 
 const panels = (children: (panel: "light" | "dark") => React.ReactNode) => (
@@ -47,7 +47,7 @@ export const IconSizes: StoryObj = {
     </ThemePair>
   ),
 };
-export const TrayMenuWindows: StoryObj = { render: () => <ThemePair label="Windows: who needs you, with their numbers, then Departures, pause, the doctor, settings and quit">{menu(state())}</ThemePair> };
+export const TrayMenuWindows: StoryObj = { render: () => <ThemePair label="Windows: who needs you, with their numbers, then Departures, pause, the doctor, notifications and quit">{menu(state())}</ThemePair> };
 export const TrayMenuNothing: StoryObj = { render: () => <ThemePair label="Nothing waiting: a disabled line says so">{menu(state({ sessions: [] }))}</ThemePair> };
 export const TrayMenuMany: StoryObj = { render: () => <ThemePair label="Eight waiting: five are listed and the rest are counted">{menu(state({ sessions: Array.from({ length: 8 }, (_, i) => wait(i + 1, `session-${i + 1}`)) }))}</ThemePair> };
 export const TrayMenuPaused: StoryObj = { render: () => <ThemePair label="Paused: the item offers Resume, and the tooltip says so">{menu(state({ paused: true }))}</ThemePair> };

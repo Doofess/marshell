@@ -98,6 +98,7 @@ export const COMMANDS: Command[] = [
   { id: "agents", label: "Agents…", group: "Tools" },
   { id: "diagnostics", label: "Diagnostics…", group: "Tools" },
   { id: "notifications", label: "Notifications…", group: "Tools" },
+  { id: "pause-notifications", label: "Pause or resume notifications", group: "Tools" },
   { id: "doctor", label: "Open Doctor", group: "Tools" },
   { id: "departures", label: "Open Departures board", group: "Tools" },
 ];

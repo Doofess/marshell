@@ -1,7 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 
-/** The taskbar counts distinct sessions that need you. By tab, not by id: a waiting row that its held request replaces is the same session. */
-export function badgeCount(entries: { id: string; tab: string }[]): number {
+/** The needs-you count: distinct sessions that need you. The taskbar badge, the window title and the tray all show it. By tab, not by id: a waiting row that its held request replaces is the same session. */
+export function needsYouCount(entries: { id: string; tab: string }[]): number {
   return new Set(entries.map((e) => e.tab)).size;
 }
 

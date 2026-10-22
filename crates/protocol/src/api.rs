@@ -765,6 +765,8 @@ pub struct Settings {
     pub pause_warned: bool,
     /// True once the user has been through (or dismissed) the first-run onboarding.
     pub onboarded: bool,
+    /// Whether closing hides the window to the tray. None until the user chooses.
+    pub close_to_tray: Option<bool>,
     /// Agent ids whose live status is switched off; their rows use the pty fallback.
     pub status_off: Vec<String>,
     /// Which events notify, and how.

@@ -36,6 +36,7 @@ use marshell_protocol::brand;
 use std::collections::{HashMap, HashSet};
 use std::net::Ipv4Addr;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tower_http::cors::{AllowOrigin, CorsLayer};
@@ -52,6 +53,9 @@ pub struct CoreConfig {
     /// Where the notifier hands what it decided (banners, sounds, flashes). None in tests that don't care:
     /// then no notifier runs.
     pub notify: Option<crate::notify::NotifySink>,
+    /// Shared by every core the supervisor starts; neither flag is saved to disk.
+    pub notify_paused: Arc<AtomicBool>,
+    pub window_hidden: Arc<AtomicBool>,
 }
 
 /// Shared server state. Cloning is cheap (one `Arc`).
@@ -124,6 +128,8 @@ struct Inner {
     previews: crate::diagnostics::export::Previews,
     /// What the UI last reported it shows, for the notifier to read.
     view: tokio::sync::watch::Sender<marshell_protocol::api::UiView>,
+    notify_paused: Arc<AtomicBool>,
+    window_hidden: Arc<AtomicBool>,
 }
 
 /// How long a permission request is held when `MARSHELL_PERMISSION_HOLD_SECS` is not set.
@@ -195,7 +201,16 @@ impl AppState {
                 visible_tabs: Vec::new(),
             })
             .0,
+            notify_paused: Arc::default(),
+            window_hidden: Arc::default(),
         }))
+    }
+    /// Shares the supervisor's flags with this core, before the state is cloned.
+    pub(crate) fn with_notification_flags(mut self, paused: Arc<AtomicBool>, hidden: Arc<AtomicBool>) -> Self {
+        let inner = Arc::get_mut(&mut self.0).expect("with_notification_flags runs before the state is shared");
+        inner.notify_paused = paused;
+        inner.window_hidden = hidden;
+        self
     }
     /// Names Claude Code's settings file, in place of the environment. Call it before the state is cloned.
     pub fn with_claude_settings(mut self, path: PathBuf) -> Self {
@@ -292,6 +307,21 @@ impl AppState {
     /// Records what the UI reports it shows.
     pub fn report_view(&self, view: marshell_protocol::api::UiView) {
         self.0.view.send_replace(view);
+    }
+    pub fn notify_paused(&self) -> bool {
+        self.0.notify_paused.load(Ordering::SeqCst)
+    }
+    /// The shell's visibility wins over a hidden webview's last report.
+    pub fn set_window_hidden(&self, hidden: bool) {
+        self.0.window_hidden.store(hidden, Ordering::SeqCst);
+    }
+    pub(crate) fn effective_view(&self) -> marshell_protocol::api::UiView {
+        let mut view = self.0.view.borrow().clone();
+        if self.0.window_hidden.load(Ordering::SeqCst) {
+            view.window_focused = false;
+            view.visible_tabs.clear();
+        }
+        view
     }
     /// The window lost focus, as the shell saw it. A webview that died or hung while focused can no longer say
     /// so, and its last report would otherwise keep every notification back.
@@ -415,6 +445,7 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/profiles/detected", get(profiles::detected))
         .route("/v1/profiles/integration", post(profiles::integration))
         .route("/v1/settings", get(settings::get).put(settings::put))
+        .route("/v1/notify/paused", get(get_notify_paused).put(put_notify_paused))
         .route("/v1/layout", get(layout::get))
         .route("/v1/layout/view", put(layout::put_view))
         .route("/v1/import/windows-terminal", get(settings::windows_terminal))
@@ -505,6 +536,25 @@ async fn log_request(req: axum::extract::Request, next: axum::middleware::Next) 
         "API request"
     );
     response
+}
+
+#[derive(serde::Deserialize, serde::Serialize)]
+struct NotifyPaused {
+    paused: bool,
+}
+
+async fn get_notify_paused(axum::extract::State(st): axum::extract::State<AppState>) -> Json<NotifyPaused> {
+    Json(NotifyPaused {
+        paused: st.notify_paused(),
+    })
+}
+
+async fn put_notify_paused(
+    axum::extract::State(st): axum::extract::State<AppState>,
+    Json(body): Json<NotifyPaused>,
+) -> axum::http::StatusCode {
+    st.0.notify_paused.store(body.paused, Ordering::SeqCst);
+    axum::http::StatusCode::NO_CONTENT
 }
 
 async fn health() -> Json<Health> {
@@ -609,6 +659,7 @@ pub async fn start(cfg: CoreConfig) -> anyhow::Result<RunningCore> {
     }
     let endpoint_file = paths::endpoint_file(&cfg.home);
     let mut state = AppState::new(endpoint.token.clone(), port, cfg.allowed_origins, cfg.home, detected)
+        .with_notification_flags(cfg.notify_paused, cfg.window_hidden)
         .with_permission_hold(permission_hold_from_env(
             std::env::var("MARSHELL_PERMISSION_HOLD_SECS").ok().as_deref(),
         ));

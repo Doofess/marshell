@@ -46,6 +46,16 @@ describe("NotificationsDialogView", () => {
     expect(g).toMatch(/<label[^>]*>(?:(?!<\/label>)[\s\S])*From(?:(?!<\/label>)[\s\S])*<input/);
     expect(g).toMatch(/<label[^>]*>(?:(?!<\/label>)[\s\S])*To(?:(?!<\/label>)[\s\S])*<input/);
   });
+  it("has a Close button group with one checkbox for keeping Marshell in the tray, checked unless the choice is no", () => {
+    const withChoice = (closeToTray: boolean | null) => renderToStaticMarkup(<NotificationsDialogView settings={DEFAULTS} closeToTray={closeToTray} error={null} onChange={none} onClose={none} />);
+    for (const [choice, checked] of [[null, true], [true, true], [false, false]] as const) {
+      const g = group(withChoice(choice), "Close button");
+      expect(switchLabels(g)).toEqual(["Keep Marshell running in the tray when I close the window"]);
+      expect(g).toContain('type="checkbox"');
+      expect(g.includes('checked=""')).toBe(checked);
+    }
+    expect(group(view(null), "Close button")).toBe("");
+  });
   it("makes no promise about Windows do-not-disturb", () => {
     expect(view().toLowerCase()).not.toMatch(/do.not.disturb/);
   });

@@ -103,6 +103,18 @@ Go to the **Departures** section, then **Notifications**, then **Tray and icon**
 | F5 | Move through the tray menu | "Open Marshell, menu item", then each waiting session with its number, "Go to the oldest waiting session, Ctrl+Shift+N", and the disabled line as unavailable | ☐ | ☐ |
 | F6 | Move to the tray icon | "Marshell, 2 need you" as one image, with no drawing details read | ☐ | ☐ |
 
+## G. The live tray and the close dialog (phase 4b, at release sign-off)
+
+Run this one in the installed app, not the review page. Have two sessions waiting, and no close choice saved yet. To reset the choice, delete `close_to_tray` from `settings.json` in a scratch `MARSHELL_HOME`.
+
+| # | Do | You should hear | Narrator | NVDA |
+| --- | --- | --- | :-: | :-: |
+| G1 | Press Win+B, arrow to the Marshell icon | "Marshell · 2 need you", read once | ☐ | ☐ |
+| G2 | Press Shift+F10 or the Menu key, then move through the menu | "Open Marshell", then each waiting session as "number · name: phrase", then "Go to the oldest waiting session" with Ctrl+Shift+N, then "Pause notifications", "Notifications…" and "Quit Marshell" | ☐ | ☐ |
+| G3 | Close the window with Alt+F4 | A dialog: "Marshell keeps running in the tray, so your sessions keep going.", with focus on "Keep running in the tray" | ☐ | ☐ |
+| G4 | Press Escape | The dialog closes, focus is back where it was, and the window stays open | ☐ | ☐ |
+| G5 | Alt+Tab to the window | Its title starts with the count: "(2) …, Marshell" | ☐ | ☐ |
+
 ## Recording the result
 
 In the review page's sign-off, answer with the table's letters (A to F): for example **"Screen reader: A pass, B fail (B6: focus went to the page, not the chip), C pass, Narrator and NVDA"**. A fail is a bug to fix before the sub-review is signed off, not a note for later. Put anything surprising (a phrase that is correct but long or odd) in `docs/IDEAS.md`.

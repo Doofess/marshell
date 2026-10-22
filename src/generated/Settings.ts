@@ -15,6 +15,10 @@ pause_warned: boolean,
  */
 onboarded: boolean, 
 /**
+ * Whether closing hides the window to the tray. None until the user chooses.
+ */
+close_to_tray: boolean | null, 
+/**
  * Agent ids whose live status is switched off; their rows use the pty fallback.
  */
 status_off: Array<string>, 

@@ -2,6 +2,7 @@
 .profiles-dialog {
   position: absolute;
   inset: 0;
+  z-index: 20;
 }
 .profiles__list {
   display: grid;

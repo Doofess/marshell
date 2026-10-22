@@ -1,16 +1,16 @@
 import { describe, expect, it } from "vitest";
-import { badgeCount } from "./attention";
+import { needsYouCount } from "./attention";
 
 const e = (id: string, tab = "t1") => ({ id, tab });
 
-describe("badgeCount", () => {
+describe("needsYouCount", () => {
   it("counts sessions even when a tab has several requests", () => {
-    expect(badgeCount([e("a"), e("b")])).toBe(1);
+    expect(needsYouCount([e("a"), e("b")])).toBe(1);
   });
   it("counts distinct tabs", () => {
-    expect(badgeCount([e("a"), e("b", "t2")])).toBe(2);
+    expect(needsYouCount([e("a"), e("b", "t2")])).toBe(2);
   });
   it("is zero with no entries", () => {
-    expect(badgeCount([])).toBe(0);
+    expect(needsYouCount([])).toBe(0);
   });
 });

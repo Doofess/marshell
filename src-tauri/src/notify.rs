@@ -1,10 +1,10 @@
 //! OS banners. Every banner is silent (the core picks a sound and the shell plays it), never raises the window,
 //! and a click only focuses the window and tells the webview which session to select.
 
-use crate::attention;
+use crate::{attention, tray};
 use marshell_core::notify::{Banner, BannerAction, NotifyRequest};
 use std::collections::HashMap;
-use tauri::{Emitter, Manager};
+use tauri::Emitter;
 use tauri_plugin_notification::{Action, ActionType, NotificationExt};
 
 /// The action types a banner can carry; their actions become its buttons.
@@ -30,11 +30,7 @@ pub fn init(app: &tauri::AppHandle) -> tauri_plugin_notification::Result<()> {
             .and_then(|v| v.as_str())
             .map(str::to_string);
         eprintln!("Marshell: banner clicked ({}), tab {tab_id:?}", performed.action_id());
-        if let Some(w) = handle.get_webview_window("main") {
-            let _ = w.unminimize();
-            let _ = w.show();
-            let _ = w.set_focus();
-        }
+        tray::show_main(&handle);
         let _ = handle.emit("focus-session", HashMap::from([("tab_id", tab_id)]));
     })
 }

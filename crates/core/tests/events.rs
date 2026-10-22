@@ -17,6 +17,8 @@ async fn core() -> (RunningCore, tempfile::TempDir) {
         allowed_origins: vec![],
         programs_dir: None,
         notify: None,
+        notify_paused: Default::default(),
+        window_hidden: Default::default(),
     })
     .await
     .unwrap();

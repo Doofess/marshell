@@ -575,8 +575,15 @@ describe("MainWindow: panes from the view state", () => {
   it("window title follows the focused pane", () => {
     const [a, b] = [SCENARIO_ROWS[0]!, SCENARIO_ROWS[1]!];
     const title = (activePane: number) => html({ layout: "split", paneIds: [a.id, b.id], activePane, ...BIG }).match(/class="window"[^>]*data-title="([^"]*)"/)?.[1];
-    expect(title(0)).toBe(windowTitle(a));
-    expect(title(1)).toBe(windowTitle(b));
+    expect(title(0)).toBe(windowTitle(a, 0));
+    expect(title(1)).toBe(windowTitle(b, 0));
+  });
+  it("window title leads with the needs-you count it is given", () => {
+    const a = SCENARIO_ROWS[0]!;
+    const title = (needsYou: number) => html({ layout: "split", paneIds: [a.id], activePane: 0, needsYou, ...BIG }).match(/class="window"[^>]*data-title="([^"]*)"/)?.[1];
+    expect(title(2)).toBe(windowTitle(a, 2));
+    expect(title(2)).toMatch(/^\(2\) /);
+    expect(title(0)).toBe(windowTitle(a, 0));
   });
   it("drives the arrangement, ratios and zoom from its props", () => {
     const h = html({ layout: "split", paneIds: ids.slice(0, 2), arrangement: "rows", ratios: { row: 0.3 }, ...BIG });

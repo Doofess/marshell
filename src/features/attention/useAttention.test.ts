@@ -10,13 +10,12 @@ afterEach(() => vi.clearAllMocks());
 it("sets only the badge count, once per change, and never a sound or a flash", async () => {
   const attention = await import("./attention");
   expect(Object.keys(attention)).not.toContain("alertNeedsYou");
-  let entries: { id: string; tab: string }[] = [];
-  const h = mountHook(() => useAttention(entries));
+  let count = 0;
+  const h = mountHook(() => useAttention(count));
   expect(setBadge).toHaveBeenLastCalledWith(0);
-  entries = [{ id: "a", tab: "a" }];
+  count = 1;
   h.rerender();
   expect(setBadge).toHaveBeenLastCalledWith(1);
-  entries = [...entries, { id: "a2", tab: "a" }];
   h.rerender();
   expect(setBadge).toHaveBeenCalledTimes(2);
   h.unmount();
