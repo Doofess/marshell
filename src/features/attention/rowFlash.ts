@@ -4,11 +4,19 @@ import type { RowModel } from "../sidebar/types";
 
 export const FLASH_MS = 600;
 
+const ATTENTION: ReadonlySet<GlyphKind> = new Set(["needs-permission", "needs-question", "done-unseen", "done-seen", "error"]);
+
+/**
+ * The rows whose status just changed into one that wants the user's eye. The live app reads every finished turn as done-seen
+ * (it has no "seen" yet), so done-seen counts as Done, except when it comes from done-unseen: that is the row being looked at.
+ */
 export function attentionFlashes(prev: ReadonlyMap<string, GlyphKind> | null, rows: RowModel[]): string[] {
   if (prev === null) return [];
-  return rows.filter((row) => !row.muted && prev.has(row.id) && prev.get(row.id) !== row.status && (
-    row.status === "needs-permission" || row.status === "needs-question" || row.status === "done-unseen" || row.status === "error"
-  )).map((row) => row.id);
+  return rows.filter((row) => {
+    const was = prev.get(row.id);
+    if (row.muted || was === undefined || was === row.status || !ATTENTION.has(row.status)) return false;
+    return !(was === "done-unseen" && row.status === "done-seen");
+  }).map((row) => row.id);
 }
 
 type Flash = { timer?: ReturnType<typeof setTimeout>; frame?: number };

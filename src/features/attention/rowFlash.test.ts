@@ -16,11 +16,12 @@ describe("attentionFlashes", () => {
   it("does not flash the first snapshot", () => {
     expect(attentionFlashes(null, [row("needs-permission")])).toEqual([]);
   });
-  it.each<GlyphKind>(["needs-permission", "needs-question", "done-unseen", "error"])("flashes working → %s", (status) => {
+  // The live app reads every finished turn as done-seen (toRow's GLYPH), so a turn ending into done-seen is Done and flashes.
+  it.each<GlyphKind>(["needs-permission", "needs-question", "done-unseen", "done-seen", "error"])("flashes working → %s", (status) => {
     expect(attentionFlashes(new Map([["one", "working"]]), [row(status)])).toEqual(["one"]);
   });
   it.each<[GlyphKind, GlyphKind]>([
-    ["working", "idle"], ["idle", "working"], ["needs-permission", "needs-permission"],
+    ["working", "idle"], ["idle", "working"], ["needs-permission", "needs-permission"], ["done-unseen", "done-seen"],
   ])("does not flash %s → %s", (from, to) => {
     expect(attentionFlashes(new Map([["one", from]]), [row(to)])).toEqual([]);
   });
