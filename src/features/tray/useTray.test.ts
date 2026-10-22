@@ -73,8 +73,11 @@ describe("actionFor", () => {
     expect(actionFor("notifications")).toEqual({ kind: "overlay", overlay: "notifications" });
     expect(actionFor("pause")).toEqual({ kind: "togglePause" });
   });
+  it("opens the Departures board", () => {
+    expect(actionFor("departures")).toEqual({ kind: "overlay", overlay: "departures" });
+  });
   it("ignores anything else", () => {
-    for (const id of ["open", "quit", "doctor", "departures", "session-", "session-x", "nope"]) expect(actionFor(id)).toBeNull();
+    for (const id of ["open", "quit", "doctor", "session-", "session-x", "nope"]) expect(actionFor(id)).toBeNull();
   });
 });
 

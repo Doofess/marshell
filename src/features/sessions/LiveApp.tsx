@@ -10,6 +10,7 @@ import { decide, release } from "../../lib/api/permissions";
 import { peek as peekScreen } from "../../lib/api/peek";
 import { decisionFor, laneEntries } from "../approval/fromCore";
 import { LiveCard, useCards, type Answer } from "../approval/LiveCard";
+import { LiveDepartures } from "../departures/LiveDepartures";
 import type { ApprovalRequest } from "../approval/types";
 import { close as closeWindow, minimize as minimizeWindow, onMaximizedChange, toggleMaximize } from "../../lib/window/appWindow";
 import { copyRecordingPath } from "./recording";
@@ -191,7 +192,7 @@ export function LiveApp() {
   const terminalFont = useMemo(() => ({ family: font.family, size: font.size }), [font.family, font.size]);
   const [launcherOpen, setLauncherOpen] = useState(false);
   // The command palette, or the shell profiles page opened from it, over the window.
-  const [overlay, setOverlay] = useState<"palette" | "profiles" | "appearance" | "agents" | "notifications" | "diagnostics" | "shortcuts" | null>(null);
+  const [overlay, setOverlay] = useState<"palette" | "profiles" | "appearance" | "agents" | "notifications" | "diagnostics" | "shortcuts" | "departures" | null>(null);
   // The Agents dialog opened from a row's "set up" starts on the Set up card.
   const [agentsFrom, setAgentsFrom] = useState<"row" | null>(null);
   // First run: shown once, when the saved settings say the onboarding was not seen. Nothing shows until that read has answered;
@@ -615,7 +616,7 @@ export function LiveApp() {
   // Escape cancels the bar from anywhere. Captured, so it never reaches the terminal: Escape would interrupt the agent the bar is about.
   const barOpen = closing !== null || restarting !== null || pauseBar !== null;
   useEffect(() => {
-    if (!barOpen) return;
+    if (!barOpen || overlay === "departures") return;
     const onEscape = (e: KeyboardEvent) => {
       // An open row menu has its own Escape, which closes it and nothing else.
       if (!cancelsCloseBar(e, true) || inMenu(e.target)) return;
@@ -627,7 +628,7 @@ export function LiveApp() {
     };
     window.addEventListener("keydown", onEscape, true);
     return () => window.removeEventListener("keydown", onEscape, true);
-  }, [barOpen, actions]);
+  }, [barOpen, overlay, actions]);
 
   const selectedRef = useRef(focusedId);
   selectedRef.current = focusedId;
@@ -1045,7 +1046,7 @@ export function LiveApp() {
 
   // A palette row: a session to go to, the profiles page, or a command the window runs (LivePalette lists only those).
   const runFromPalette = (id: string) => {
-    setOverlay(id === "profiles" || id === "appearance" || id === "agents" || id === "notifications" || id === "diagnostics" ? id : id === "cheatsheet" ? "shortcuts" : null);
+    setOverlay(id === "profiles" || id === "appearance" || id === "agents" || id === "notifications" || id === "diagnostics" || id === "departures" ? id : id === "cheatsheet" ? "shortcuts" : null);
     if (id.startsWith("session:")) return pick(id.slice("session:".length));
     // Palette-only commands. The menu opens after the palette has given the focus back, so it keeps the focus it takes.
     if (id === "pause-notifications") return void togglePause();
@@ -1105,7 +1106,7 @@ export function LiveApp() {
       announce("Couldn't change the pause. Try again.");
     }
   }, [announce]);
-  const trayState = useMemo(() => (os ? { os, sessions: traySessions(entries, rows), paused, doctorIssues: null, departures: false } : null), [os, entries, rows, paused]);
+  const trayState = useMemo(() => (os ? { os, sessions: traySessions(entries, rows), paused, doctorIssues: null, departures: true } : null), [os, entries, rows, paused]);
   useTray(trayState);
   // A tray menu choice. The shell has already brought the window forward for the ones that need it.
   useTrayActions((action: TrayAction) => {
@@ -1352,6 +1353,32 @@ export function LiveApp() {
         />
       )}
       {overlay === "palette" && os && <LivePalette sessions={paletteSessions(rows)} os={os} labels={paletteLabels} hidden={hiddenCommands} tab={focusedId ?? null} filesOnly={filesOnly} onOpenFile={(path) => { setOverlay(null); preview.open({ path }); }} onRun={runFromPalette} onClose={() => setOverlay(null)} />}
+      {overlay === "departures" && (
+        <LiveDepartures
+          rows={taskRows}
+          requests={requests}
+          reduced={window.matchMedia("(prefers-reduced-motion: reduce)").matches || document.documentElement.dataset.motion === "reduce"}
+          onJump={(id) => {
+            setOverlay(null);
+            pick(id);
+            setTimeout(() => actions.focusTerminal(), 0);
+          }}
+          onAllSessions={() => setOverlay("palette")}
+          // The board restores its opener; the card restores its board row.
+          onClose={() => setOverlay(null)}
+          renderCard={(r, initialFocus, restore) => (
+            <LiveCard
+              key={r.id}
+              request={r}
+              initialFocus={initialFocus}
+              onRestoreFocus={restore}
+              onJump={(request) => { setOverlay(null); jumpToRequest(request); }}
+              onExpand={(request) => { setOverlay(null); setDrawerId(request.id); }}
+              onAnswer={answerRequest}
+            />
+          )}
+        />
+      )}
       {review && (
         <ReviewSheet
           task={review.task}

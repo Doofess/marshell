@@ -41,7 +41,7 @@ export function trayModel(state: TrayState): TrayModel {
 }
 
 /** What a tray menu choice does in the window. Open and Quit are the shell's own and never get here. */
-export type TrayAction = { kind: "goto"; number: number } | { kind: "nextWaiting" } | { kind: "overlay"; overlay: "notifications" } | { kind: "togglePause" };
+export type TrayAction = { kind: "goto"; number: number } | { kind: "nextWaiting" } | { kind: "overlay"; overlay: "notifications" | "departures" } | { kind: "togglePause" };
 
 /** The tray's `pause` is the notifications pause, not the palette's Pause session. */
 export function actionFor(id: string): TrayAction | null {
@@ -53,6 +53,8 @@ export function actionFor(id: string): TrayAction | null {
       return { kind: "nextWaiting" };
     case "notifications":
       return { kind: "overlay", overlay: "notifications" };
+    case "departures":
+      return { kind: "overlay", overlay: "departures" };
     case "pause":
       return { kind: "togglePause" };
     default:
