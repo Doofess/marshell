@@ -10,16 +10,17 @@ export function CloseDialog({ busy, error, onChoose, onCancel }: { busy: boolean
   const dialog = useRef<HTMLDivElement>(null);
   const keep = useRef<HTMLButtonElement>(null);
   const title = useId();
+  const description = useId();
   // The default button takes the focus instead of the title: it is the choice Enter should make.
   useDialogFocus(dialog, keep, onCancel);
   return (
     <div className="close-dialog">
       <div className="close-dialog__backdrop" onClick={onCancel} />
-      <div ref={dialog} className="close-dialog__sheet" role="dialog" aria-modal="true" aria-labelledby={title}>
+      <div ref={dialog} className="close-dialog__sheet" role="dialog" aria-modal="true" aria-labelledby={title} aria-describedby={description}>
         <h2 id={title} className="close-dialog__title">
           When you close the window
         </h2>
-        <p className="close-dialog__line">Marshell keeps running in the tray, so your sessions keep going.</p>
+        <p id={description} className="close-dialog__line">Marshell keeps running in the tray, so your sessions keep going.</p>
         {error && (
           <p className="close-dialog__error" role="alert">
             {error}

@@ -15,6 +15,14 @@ describe("CloseDialog", () => {
     expect(h).toContain(`id="${id}"`);
     expect(h).toContain("Marshell keeps running in the tray, so your sessions keep going.");
   });
+  it("describes the dialog with the explanation that sessions keep going", () => {
+    const h = view();
+    const dialog = h.match(/<div[^>]*role="dialog"[^>]*>/)![0];
+    expect(dialog).toMatch(/aria-describedby="([^"]+)"/);
+    const id = dialog.match(/aria-describedby="([^"]+)"/)![1];
+    const line = h.match(/<p[^>]*>Marshell keeps running in the tray, so your sessions keep going\.<\/p>/)![0];
+    expect(line).toContain(`id="${id}"`);
+  });
   it("offers keeping it in the tray first, as the default, and then quitting", () => {
     const h = view();
     expect(buttons(h)).toEqual(["Keep running in the tray", "Quit when I close"]);
