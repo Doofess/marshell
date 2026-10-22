@@ -1106,7 +1106,7 @@ Onboarding, Departures, the doctor, the settings page, the banners and the tray 
 
 ## Cross-cutting requirements (every phase)
 
-- **Privacy:** no telemetry and no crash reporting, ever. The app makes no network calls except ones you start (updates, a model-backed recap you turned on). Crash information stays local in the diagnostics export. The onboarding says so in one line.
+- **Privacy:** no telemetry and no crash reporting, ever. The app makes no network calls except ones you start (updates, a model-backed recap you turned on). Signing in to an account (phase 10) is one of those: while signed in, the app keeps one connection open to the relay and refreshes its token, and signing out closes both. Crash information stays local in the diagnostics export. The onboarding says so in one line.
 - **Zero token cost by default:** no model call happens unless you enable a model-backed feature; a test asserts it.
 - **Secrets at rest:** transcripts and recordings are stored with owner-only permissions (0700 / owner ACL), not encrypted, so search stays fast. Redaction happens on export.
 - **Languages:** English only in v1. All user-facing copy lives in one string catalog so translation can be added later. Layout already handles right-to-left names.
