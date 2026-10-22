@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { FLIP_CAP_MS, flipDuration, flipFrame, flipFrames, settleAt } from "./flip";
+import { FLIP_CAP_MS, flipDuration, flipFrame, flipFrames, retarget, settleAt } from "./flip";
 
 describe("flip schedule", () => {
   it("starts on the old text and ends on the new text", () => {
@@ -25,5 +25,26 @@ describe("flip schedule", () => {
   });
   it("keeps spaces where both texts have them", () => {
     expect(flipFrame("NEEDS YOU", "NEEDS YOU", 30)).toBe("NEEDS YOU");
+  });
+});
+
+describe("retarget", () => {
+  it("does not start a run when the settled text is unchanged", () => {
+    expect(retarget(null, "IDLE", "IDLE", 0)).toBeNull();
+  });
+  it("starts a run from the settled text", () => {
+    expect(retarget(null, "IDLE", "NEEDS YOU", 5)).toEqual({ from: "IDLE", to: "NEEDS YOU", start: 5 });
+  });
+  it("keeps the same run when its target is unchanged", () => {
+    const run = { from: "NEEDS YOU", to: "WORKING", start: 0 };
+    expect(retarget(run, "NEEDS YOU", "WORKING", 100)).toBe(run);
+  });
+  it("restarts from the text on screen when the target changes mid-flip", () => {
+    const run = { from: "NEEDS YOU", to: "WORKING", start: 0 };
+    expect(retarget(run, "NEEDS YOU", "DONE", 100)).toEqual({ from: flipFrame("NEEDS YOU", "WORKING", 100), to: "DONE", start: 100 });
+  });
+  it("settles on the latest target without leaving a stale frame", () => {
+    const run = retarget({ from: "NEEDS YOU", to: "WORKING", start: 0 }, "NEEDS YOU", "DONE", 100)!;
+    expect(flipFrame(run.from, run.to, 100 + flipDuration(9) - run.start)).toBe("DONE");
   });
 });

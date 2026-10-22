@@ -4,8 +4,19 @@ import { labelOf, nameContainsLabel } from "../../lib/labelInName";
 import { SCENARIO_ROWS_WITH_TOOLS } from "../window/scenario";
 import { FIXTURES } from "../sidebar/fixtures";
 import { DeparturesBoard } from "./DeparturesBoard";
+import { LiveFlipCell } from "./LiveFlipCell";
 
 const html = (o: Partial<Parameters<typeof DeparturesBoard>[0]> = {}) => renderToStaticMarkup(<DeparturesBoard rows={SCENARIO_ROWS_WITH_TOOLS} heightPx={800} {...o} />);
+
+describe("LiveFlipCell", () => {
+  it.each([false, true])("shows the final text without a flip on mount (reduced: %s)", (reduced) => {
+    const h = renderToStaticMarkup(<LiveFlipCell text="NEEDS YOU" reduced={reduced} />);
+    expect(h).toMatch(/<span class="flip" data-live="true">/);
+    expect(h).toContain('<span aria-hidden="true">NEEDS YOU</span>');
+    expect(h).toContain('<span class="board__sr">NEEDS YOU</span>');
+    expect(h).not.toMatch(/data-frames|data-fade|aria-live|role="status"|role="alert"/);
+  });
+});
 
 describe("DeparturesBoard", () => {
   it("has the plan's seven columns as real column headers", () => {

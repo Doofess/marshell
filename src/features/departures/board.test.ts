@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { FIXTURES } from "../sidebar/fixtures";
 import { SCENARIO_ROWS_WITH_TOOLS } from "../window/scenario";
-import { boardHeight, boardRowLabel, boardRows, CARD_PX, fitRows, GROUP_PX, HEAD_PX, MORE_PX, ROW_PX, splitGroups, statusText, waitingText } from "./board";
+import { boardHeight, boardRowLabel, boardRows, CARD_PX, fitRows, GROUP_PX, HEAD_PX, holdGroups, MORE_PX, ROW_PX, splitGroups, statusText, waitingText } from "./board";
 
 describe("statusText and waitingText", () => {
   it("writes status in capitals, and says RUNNING / EXITED for a plain terminal", () => {
@@ -46,6 +46,30 @@ describe("boardRows", () => {
     const label = boardRowLabel(r);
     expect(label.startsWith(`Session ${r.number}, ${r.name}`)).toBe(true);
     expect(label).toContain(r.statusText.toLowerCase());
+  });
+});
+
+describe("holdGroups", () => {
+  const rows = boardRows([
+    { ...FIXTURES[2]!, id: "became-gate", number: 1, status: "needs-permission" },
+    { ...FIXTURES[2]!, id: "stopped-gate", number: 2, status: "working" },
+    { ...FIXTURES[2]!, id: "other", number: 3, status: "working" },
+    { ...FIXTURES[2]!, id: "gate", number: 4, status: "needs-question" },
+  ]);
+  const hold = { order: ["gate", "stopped-gate", "other", "became-gate"], gate: ["stopped-gate", "gate"] };
+  it("keeps held order and group membership even when gate flags change", () => {
+    const held = holdGroups(splitGroups(rows), hold);
+    expect(held.gate).toEqual([rows[3], rows[1]]);
+    expect(held.others).toEqual([rows[2], rows[0]]);
+    expect(held.gate[1]!.gate).toBe(false);
+    expect(held.others[1]!.gate).toBe(true);
+  });
+  it("appends new ids to the end of the group their own gate flag picks", () => {
+    const newGate = { ...rows[0]!, id: "new-gate", number: 0, waitingMs: 600_000 };
+    const newOther = { ...rows[1]!, id: "new-other", number: 0 };
+    const held = holdGroups(splitGroups([...rows, newGate, newOther]), hold);
+    expect(held.gate).toEqual([rows[3], rows[1], newGate]);
+    expect(held.others).toEqual([rows[2], rows[0], newOther]);
   });
 });
 

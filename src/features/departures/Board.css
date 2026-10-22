@@ -224,6 +224,18 @@
   }
 }
 
+/* A live cell under reduced motion: one crossfade per change instead of the flip. */
+.flip[data-fade] {
+  animation: board-live-crossfade 200ms ease-out;
+}
+@keyframes board-live-crossfade {
+  from {
+    opacity: 0.4;
+  }
+  to {
+    opacity: 1;
+  }
+}
 /* A flipping cell: the script swaps the characters frame by frame. Nothing moves without it. */
 @media (prefers-reduced-motion: no-preference) {
   .flip {

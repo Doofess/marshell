@@ -22,6 +22,11 @@ describe("Board.css", () => {
   it("never scrolls", () => {
     expect(css).not.toMatch(/overflow(-x|-y)?:\s*(auto|scroll)/);
   });
+  it("cross-fades live cells once over 200 ms from .4 opacity to 1", () => {
+    const animation = css.match(/\.flip\[data-fade\]\s*\{[^}]*animation:\s*([\w-]+)\s+200ms\s+ease-out\s*;/);
+    expect(animation).not.toBeNull();
+    expect(css).toMatch(new RegExp(`@keyframes ${animation![1]}\\s*\\{\\s*from\\s*\\{\\s*opacity:\\s*0?\\.4;\\s*\\}\\s*to\\s*\\{\\s*opacity:\\s*1;`));
+  });
   it("colours the agent name from the session's accent", () => {
     expect(css).toMatch(/\.board__agent[^{]*\{[^}]*color:\s*var\(--accent\)/);
   });
