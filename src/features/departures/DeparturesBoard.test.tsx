@@ -1,3 +1,4 @@
+import { isValidElement, type ReactElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { labelOf, nameContainsLabel } from "../../lib/labelInName";
@@ -25,6 +26,21 @@ describe("DeparturesBoard", () => {
     const h = html({ card: gate.id, renderCard: () => <span>Real request</span> });
     expect(h).toContain("Real request");
     expect(h).not.toContain("npm test");
+  });
+  it("keeps a row's element when its card opens, so the focus on it survives the card closing", () => {
+    // A row with its card must not come back as a nested [row, card] array: React would remount the row and drop its focus.
+    const gate = SCENARIO_ROWS_WITH_TOOLS.find((r) => r.status === "needs-permission")!;
+    const tree = DeparturesBoard({ rows: SCENARIO_ROWS_WITH_TOOLS, heightPx: 800, card: gate.id, renderCard: () => <span>Real request</span> });
+    const bodies: ReactElement<{ children: unknown }>[] = [];
+    const walk = (node: unknown) => {
+      if (Array.isArray(node)) return node.forEach(walk);
+      if (!isValidElement<{ children?: unknown }>(node)) return;
+      if (node.type === "tbody") bodies.push(node as ReactElement<{ children: unknown }>);
+      walk(node.props.children);
+    };
+    walk(tree);
+    expect(bodies.length).toBeGreaterThan(0);
+    for (const body of bodies) for (const child of [body.props.children].flat(2)) expect(Array.isArray(child)).toBe(false);
   });
   it("does not render or reserve room for a card whose renderer returns null", () => {
     const gate = SCENARIO_ROWS_WITH_TOOLS.find((r) => r.status === "needs-permission")!;

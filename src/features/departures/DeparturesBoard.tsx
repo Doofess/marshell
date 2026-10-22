@@ -157,7 +157,7 @@ export function DeparturesBoard({ rows, heightPx, active, layout, card, stale = 
                 </span>
               </th>
             </tr>
-            {fit.gate.map(withCard)}
+            {fit.gate.flatMap(withCard)}
           </tbody>
         )}
         {fit.others.length > 0 && (
@@ -167,7 +167,7 @@ export function DeparturesBoard({ rows, heightPx, active, layout, card, stale = 
                 Other sessions · {groups.others.length}
               </th>
             </tr>
-            {fit.others.map(withCard)}
+            {fit.others.flatMap(withCard)}
           </tbody>
         )}
         {fit.hidden > 0 && (
