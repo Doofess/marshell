@@ -46,6 +46,7 @@ import { useAppearance } from "../appearance/AppearanceProvider";
 import { listen } from "@tauri-apps/api/event";
 import { needsYouCount } from "../attention/attention";
 import { useAttention } from "../attention/useAttention";
+import { useRowFlash } from "../attention/rowFlash";
 import { notify } from "../../lib/api/notify";
 import { traySessions, useTray, useTrayActions, type TrayAction } from "../tray/useTray";
 import { CloseDialog } from "../window/CloseDialog";
@@ -390,6 +391,7 @@ export function LiveApp() {
   }, [plan?.until]);
   const footer = useMemo(() => (plan ? { planPct: plan.pct, fiveHourPct: plan.pct } : null), [plan]);
   const taskRows = useMemo(() => markTasks(rows, infos, tasks), [rows, infos, tasks]);
+  const sidebarRows = useRowFlash(taskRows);
   // While the list is unknown the palette keeps Review for the session in focus, so choosing it can load the list again.
   const focusedIsTask = reviewTarget(infos, focusedId, tasks).kind !== "none";
   const hiddenCommands = paletteHidden({
@@ -1272,7 +1274,7 @@ export function LiveApp() {
             dispatch({ type: "arrange", arrangement });
           }}
           onPane={dispatch}
-          rows={taskRows}
+          rows={sidebarRows}
           selectedId={focusedId}
           visibleIds={previewPane && focusedId ? [focusedId] : visibleIds}
           preview={previewPane}
