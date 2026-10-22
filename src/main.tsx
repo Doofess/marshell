@@ -7,6 +7,7 @@ import "./styles/accents.css";
 import "./styles/appearance.css";
 import "./styles/scrollbars.css";
 import "./styles/base.css";
+import "./styles/motion.css";
 import "./styles/app.css";
 import { syncPageHidden } from "./design/visibility";
 import { markDesktopHost } from "./lib/window/appWindow";
