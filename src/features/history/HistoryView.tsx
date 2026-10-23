@@ -1,9 +1,9 @@
-import { Fragment, useEffect, useId, useRef, type KeyboardEvent } from "react";
+import { Fragment, useEffect, useId, useRef, type KeyboardEvent, type ReactNode } from "react";
 import type { Conversation } from "../../generated/Conversation";
 import type { HistoryEntry } from "../../generated/HistoryEntry";
 import type { SearchHit } from "../../generated/SearchHit";
 import { commandById, shortcutLabel, type Os } from "../../lib/keymap";
-import { ConversationView } from "./ConversationView";
+import { ConversationView, type ConversationViewProps } from "./ConversationView";
 import { filterOptions, groupByProject, moveSelection, rowMeta } from "./historyState";
 import { splitSnippet } from "./snippet";
 import "./History.css";
@@ -39,7 +39,16 @@ export type HistoryViewProps = {
   onResume: (target: { agent: string; session_id: string }) => void;
   onGoTo: (tab: string) => void;
   onEscape: () => void;
+  /** The list's text when it has no rows, in place of the default for the state: a failed fetch says why here. */
+  emptyText?: string;
+  /** Sits at the top of the conversation pane and stays in view while it scrolls: a refusal, or the question before a web link opens. */
+  banner?: ReactNode;
+  /** A file or web link clicked in assistant text. */
+  onLink?: ConversationViewProps["onLink"];
 };
+
+export const EMPTY_LIST_COPY = "No conversations yet. Claude Code sessions you run in Marshell show up here when their first turn ends.";
+export const noHitsCopy = (query: string) => `Nothing matches “${query}”.`;
 
 /** A hit's row key: one session can match in several turns. */
 export const hitKey = (h: Pick<SearchHit, "session_id" | "turn">) => `${h.session_id}:${h.turn}`;
@@ -212,9 +221,7 @@ export function HistoryView(p: HistoryViewProps) {
 
           {rows.length === 0 ? (
             <p className="history__empty">
-              {searching
-                ? `Nothing matches “${p.query}”.`
-                : "No conversations yet. Claude Code sessions you run in Marshell show up here when their first turn ends."}
+              {p.emptyText ?? (searching ? noHitsCopy(p.query) : EMPTY_LIST_COPY)}
             </p>
           ) : (
             <div
@@ -280,6 +287,7 @@ export function HistoryView(p: HistoryViewProps) {
               Back to conversations
             </button>
           )}
+          {p.banner && <div className="history__banner">{p.banner}</div>}
           {shown === null ? (
             <p className="history__empty">Choose a conversation to read it.</p>
           ) : shown === "loading" ? (
@@ -297,6 +305,7 @@ export function HistoryView(p: HistoryViewProps) {
               liveTab={live(shown)}
               onResume={() => p.onResume({ agent: shown.agent, session_id: shown.session_id })}
               onGoTo={p.onGoTo}
+              onLink={p.onLink}
             />
           )}
         </div>

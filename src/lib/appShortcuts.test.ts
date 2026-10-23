@@ -106,3 +106,12 @@ describe("commandShortcut", () => {
     expect(commandShortcut("profiles")).toBeNull();
   });
 });
+
+describe("history shortcuts", () => {
+  it("takes Ctrl+Shift+Y and Ctrl+Shift+Alt+F, and the palette's two commands", () => {
+    expect(sessionShortcut(ev("KeyY", cs), "windows")).toEqual({ kind: "history" });
+    expect(sessionShortcut(ev("KeyF", { ...cs, altKey: true }), "windows")).toEqual({ kind: "globalSearch" });
+    expect(commandShortcut("history")).toEqual({ kind: "history" });
+    expect(commandShortcut("global-search")).toEqual({ kind: "globalSearch" });
+  });
+});

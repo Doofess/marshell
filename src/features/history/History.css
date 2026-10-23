@@ -164,6 +164,19 @@
   min-inline-size: 0;
   min-block-size: 0;
 }
+/* Above the conversation, and in view while it scrolls: a refusal to resume, or the question before a web link opens. */
+.history__banner {
+  position: sticky;
+  inset-block-start: 0;
+  z-index: 1;
+}
+.history__refusal {
+  margin: 0;
+  padding: var(--space-3) var(--space-4);
+  border-inline-start: 3px solid var(--error);
+  background: var(--bg-overlay);
+  text-wrap: pretty;
+}
 .conversation {
   max-inline-size: 80ch;
   padding: var(--space-6) var(--space-6) var(--space-8);
@@ -449,7 +462,8 @@ details.tool[open] > summary {
   .tool[data-error="true"] {
     outline: 2px solid CanvasText;
   }
-  .conversation__notice {
+  .conversation__notice,
+  .history__refusal {
     outline: 1px solid CanvasText;
   }
   .history__snippet mark,

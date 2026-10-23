@@ -43,7 +43,7 @@ describe("history", () => {
   it("resumes with the size, returns the reason on a 409 and rejects on other errors", async () => {
     const ok = respond({ tab_id: "t1", number: 1 });
     vi.stubGlobal("fetch", ok);
-    await expect(history.resume(endpoint, "claude", "s 1", { cols: 80, rows: 24 })).resolves.toEqual({ ok: true });
+    await expect(history.resume(endpoint, "claude", "s 1", { cols: 80, rows: 24 })).resolves.toEqual({ ok: true, tabId: "t1" });
     expect(call(ok)).toMatchObject({
       url: "http://127.0.0.1:9/v1/history/claude/s%201/resume",
       method: "POST",

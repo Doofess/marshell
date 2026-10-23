@@ -183,3 +183,12 @@ describe("HistoryView conversation pane", () => {
     expect(html({ entries: two })).not.toContain("Back to conversations");
   });
 });
+
+describe("HistoryView: states from the window", () => {
+  it("shows the given empty text in place of the default, and a banner above the conversation", () => {
+    const h = renderToStaticMarkup(<HistoryView {...base} emptyText="Couldn't load the history." banner={<p className="x-banner">Refused.</p>} />);
+    expect(h).toContain("Couldn&#x27;t load the history.");
+    expect(h).not.toContain("No conversations yet");
+    expect(h).toContain("x-banner");
+  });
+});

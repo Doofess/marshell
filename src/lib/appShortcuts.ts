@@ -34,6 +34,10 @@ export type SessionShortcut =
   | { kind: "openFile" }
   /** Capture a screen region with the system's snipping tool and add the image to the focused session (Ctrl+Shift+X). Windows only for now. */
   | { kind: "capture" }
+  /** Show or hide the History view in the main area (Ctrl+Shift+Y). */
+  | { kind: "history" }
+  /** Open the History view with the cursor in its search box (Ctrl+Shift+Alt+F). */
+  | { kind: "globalSearch" }
   /** Focus the needs-you lane's target card, the oldest waiting request (Ctrl+Shift+N; Cmd+N on macOS). */
   | { kind: "nextWaiting" };
 
@@ -93,6 +97,10 @@ export function commandShortcut(id: string): SessionShortcut | null {
       return { kind: "capture" };
     case "next-waiting":
       return { kind: "nextWaiting" };
+    case "history":
+      return { kind: "history" };
+    case "global-search":
+      return { kind: "globalSearch" };
   }
   const n = FOCUS_SESSION.exec(id)?.[1];
   return n === undefined ? null : { kind: "goto", number: Number(n) };

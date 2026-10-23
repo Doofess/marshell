@@ -733,3 +733,25 @@ describe("MainWindow: the sidebar toggle", () => {
     expect(html({ width: 1280, sidebarPref: "rail" })).not.toContain("rail__tool");
   });
 });
+
+describe("MainWindow: mainView", () => {
+  const view = <section className="history-stand-in">History</section>;
+  const main = (h: string) => /<main[^>]*class="window__main".*?<\/main>/s.exec(h)![0];
+  it("holds the view in the main area in place of the terminal, the empty text and the preview", () => {
+    const h = html({ mainView: view, preview: <aside className="preview-stand-in" /> });
+    expect(main(h)).toContain("history-stand-in");
+    expect(main(h)).not.toContain("scripted-terminal");
+    expect(main(h)).not.toContain("preview-stand-in");
+    expect(html({ mainView: view, rows: [] })).toContain("history-stand-in");
+    expect(html({ mainView: view, rows: [] })).not.toContain("No sessions yet");
+  });
+  it("keeps the sidebar and the session header", () => {
+    const h = html({ mainView: view });
+    expect(h).toContain('class="sidebar"');
+    expect(h).toContain("session-header");
+  });
+  it("shows the terminal as before without it", () => {
+    expect(html()).toContain("scripted-terminal");
+    expect(html()).not.toContain("history-stand-in");
+  });
+});

@@ -1,7 +1,7 @@
 import { useEffect, useId, useRef } from "react";
 import type { Conversation } from "../../generated/Conversation";
 import type { TurnItem } from "../../generated/TurnItem";
-import { MarkdownText } from "./MarkdownText";
+import { MarkdownText, type MarkdownTextProps } from "./MarkdownText";
 import { ToolCard } from "./ToolCard";
 import "./History.css";
 
@@ -22,12 +22,14 @@ export type ConversationViewProps = {
   onGoTo: (tab: string) => void;
   /** The tab that holds this conversation right now, or null when none does. */
   liveTab: string | null;
+  /** A file or web link clicked in assistant text. Without it a click does nothing. */
+  onLink?: MarkdownTextProps["onLink"];
 };
 
-function Item({ item, cwd }: { item: TurnItem; cwd: string }) {
+function Item({ item, cwd, onLink }: { item: TurnItem; cwd: string; onLink: MarkdownTextProps["onLink"] }) {
   switch (item.kind) {
     case "text":
-      return <MarkdownText markdown={item.markdown} cwd={cwd} />;
+      return <MarkdownText markdown={item.markdown} cwd={cwd} onLink={onLink} />;
     case "tool":
       return <ToolCard card={item.card} />;
     case "subagent":
@@ -57,7 +59,7 @@ function Item({ item, cwd }: { item: TurnItem; cwd: string }) {
 const when = (ms: number) => new Date(ms).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
 
 /** One archived conversation: its header with Resume, then each prompt with what the agent did in answer. Transcript text is untrusted, so only assistant text goes through the sanitiser; everything else is text. */
-export function ConversationView({ conversation: c, scrollToTurn, onResume, onGoTo, liveTab }: ConversationViewProps) {
+export function ConversationView({ conversation: c, scrollToTurn, onResume, onGoTo, liveTab, onLink }: ConversationViewProps) {
   const uid = useId();
   const root = useRef<HTMLElement>(null);
 
@@ -113,7 +115,7 @@ export function ConversationView({ conversation: c, scrollToTurn, onResume, onGo
           {t.items.length > 0 && (
             <div className="turn__items">
               {t.items.map((item, i) => (
-                <Item key={i} item={item} cwd={c.cwd} />
+                <Item key={i} item={item} cwd={c.cwd} onLink={onLink} />
               ))}
             </div>
           )}

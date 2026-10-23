@@ -8,7 +8,7 @@ import { safeMarkdownHtml } from "../preview/markdown";
  */
 export const docPathIn = (cwd: string) => `${cwd.replace(/[\\/]+$/, "")}${cwd.includes("\\") ? "\\" : "/"}conversation.md`;
 
-type Props = {
+export type MarkdownTextProps = {
   markdown: string;
   /** The conversation's folder: relative links and images are resolved against it. */
   cwd: string;
@@ -20,7 +20,7 @@ type Props = {
  * Assistant text from a transcript. The only markup it sets is DOMPurify's output (`safeMarkdownHtml`, the same path the
  * Preview takes). Without a DOM (the node tests) it is plain text in a pre-wrapped block, so nothing is ever parsed as HTML.
  */
-export function MarkdownText({ markdown, cwd, onLink }: Props) {
+export function MarkdownText({ markdown, cwd, onLink }: MarkdownTextProps) {
   const hasDom = typeof DOMParser !== "undefined";
   const docPath = docPathIn(cwd);
   const html = useMemo(() => (hasDom ? safeMarkdownHtml(markdown, docPath) : null), [hasDom, markdown, docPath]);

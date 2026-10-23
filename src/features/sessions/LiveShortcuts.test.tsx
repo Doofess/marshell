@@ -28,7 +28,8 @@ describe("LiveShortcuts", () => {
     expect(h).toContain("Ctrl+Shift+O");
     expect(h).toContain("Go to session 1 to 9");
     expect(h).not.toContain("Search in scrollback");
-    expect(h).not.toContain("History");
+    expect(h).toContain("History");
+    expect(h).toContain("Search all sessions");
   });
   it("is a command the palette runs", () => {
     expect(LIVE_COMMANDS.map((c) => c.id)).toContain("cheatsheet");
