@@ -539,6 +539,14 @@ describe("file rules", () => {
       none(edit(path.join(home, ".claude", "settings.json")));
       none(edit("~/.claude/settings.json"));
     });
+    test("plan mode's ~/.claude/plans/*.md gives no decision", () => {
+      none(edit(path.join(home, ".claude", "plans", "sunny-rolling-codd.md")));
+      none(edit("~/.claude/plans/x.md", { tool: "Write" }));
+    });
+    test("deeper or non-markdown files under plans are still denied", () => {
+      denied(edit(path.join(home, ".claude", "plans", "a", "b.md")), R.F4);
+      denied(edit(path.join(home, ".claude", "plans", "x.json")), R.F4);
+    });
     test("other projects folders are still denied", () =>
       denied(edit(path.join(home, ".claude", "projects", "p", "session.jsonl")), R.F4));
     test("a lookalike folder gives no decision", () => none(edit(path.join(home, ".claude-other", "a.md"))));

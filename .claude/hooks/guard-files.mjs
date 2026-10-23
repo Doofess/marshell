@@ -12,7 +12,10 @@ const F4 = "Real CLI configuration and Marshell data are off limits while develo
 const OWNER_FILES = new Set(["scope.md", "docs/brief.md", "license", "third_party_notices.md", "security.md"]);
 const ASK_FILES = new Set(["src-tauri/tauri.conf.json", "src-tauri/tauri.windows.conf.json", "crates/core/src/server/guard.rs"]);
 
-/** F4: under ~/.codex, ~/.marshell or ~/.claude, except Claude's per-project memory and its settings.json. */
+/**
+ * F4: under ~/.codex, ~/.marshell or ~/.claude, except Claude's per-project memory, its settings.json (the advisor
+ * switch) and plan mode's plan files.
+ */
 function realConfig(fileKey) {
   const home = key(P.resolve(os.homedir()));
   for (const dir of [".codex", ".marshell", ".claude"]) {
@@ -20,7 +23,9 @@ function realConfig(fileKey) {
     if (fileKey !== base && !fileKey.startsWith(`${base}/`)) continue;
     if (dir === ".claude") {
       const rest = fileKey.slice(base.length + 1);
-      if (rest === "settings.json" || /^projects\/[^/]+\/memory\/.+/.test(rest)) return null;
+      if (rest === "settings.json" || /^projects\/[^/]+\/memory\/.+/.test(rest) || /^plans\/[^/]+\.md$/.test(rest)) {
+        return null;
+      }
     }
     return deny(F4);
   }
