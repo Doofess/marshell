@@ -273,6 +273,13 @@ export function HistoryView(p: HistoryViewProps) {
         </div>
 
         <div ref={detailRef} className="history__detail" role="region" aria-label="Conversation" tabIndex={0}>
+          {/* Only a narrow view shows it (History.css): there the list is hidden while a conversation is open. With one open,
+              `onEscape` closes it. */}
+          {open && (
+            <button type="button" className="history__back" onClick={p.onEscape}>
+              Back to conversations
+            </button>
+          )}
           {shown === null ? (
             <p className="history__empty">Choose a conversation to read it.</p>
           ) : shown === "loading" ? (

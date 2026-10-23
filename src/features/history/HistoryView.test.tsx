@@ -176,4 +176,10 @@ describe("HistoryView conversation pane", () => {
     expect(html({ entries: two, conversation: conv })).toContain('data-detail="open"');
     expect(html({ entries: two })).not.toContain('data-detail="open"');
   });
+
+  it("gives a narrow window a Back button to the list while a conversation is open, for the mouse as well as Esc", () => {
+    for (const conversation of [conv, "loading" as const, { error: "x" }])
+      expect(html({ entries: two, conversation })).toMatch(/<button type="button" class="history__back"[^>]*>Back to conversations<\/button>/);
+    expect(html({ entries: two })).not.toContain("Back to conversations");
+  });
 });

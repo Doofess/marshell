@@ -200,6 +200,16 @@
   font-size: var(--text-13);
   font-weight: 600;
 }
+/* Back to the list: shown only in the narrow layout below, where the list is hidden while a conversation is open. */
+.history__back {
+  display: none;
+  margin: var(--space-4) var(--space-6) 0;
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius);
+  color: var(--text-2);
+  font-size: var(--text-13);
+}
+.history__back:focus-visible,
 .conversation__action:focus-visible,
 .tool__summary:focus-visible {
   outline: 2px solid var(--accent);
@@ -403,13 +413,17 @@ details.tool[open] > summary {
   .history__side {
     border-inline-end: 0;
   }
+  .history__back {
+    display: block;
+  }
 }
 
 @media (hover: hover) and (pointer: fine) {
   .history__row:hover:not([aria-selected="true"]) {
     background: var(--hover);
   }
-  .conversation__action:hover {
+  .conversation__action:hover,
+  .history__back:hover {
     box-shadow: inset 0 0 0 100vmax var(--hover);
   }
   details.tool > summary:hover {
@@ -420,6 +434,7 @@ details.tool[open] > summary {
 @media (forced-colors: active) {
   .history__search,
   .history__select,
+  .history__back,
   .conversation__action,
   .tool {
     outline: 1px solid CanvasText;
