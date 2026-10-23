@@ -66,6 +66,19 @@ pub struct AgentSetup {
     pub snapshots_dir: String,
 }
 
+/// Whether one agent's CLI is on this machine, which is all Marshell knows about an agent it has no adapter for.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct AgentFound {
+    /// The agent's id: "claude", "codex" or "antigravity".
+    pub agent: String,
+    /// A detected profile runs this agent, or its program is on PATH.
+    pub found: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub exe_path: Option<String>,
+}
+
 /// What an install plan should include.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[ts(export)]
