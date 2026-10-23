@@ -1,6 +1,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { Detected } from "./Detected";
+import type { Detection } from "./types";
 import { DETECTIONS } from "./fixtures";
 
 describe("Detected", () => {
@@ -22,5 +23,21 @@ describe("Detected", () => {
     expect(renderToStaticMarkup(<Detected detections={DETECTIONS.unparsable} />)).toContain("does not parse");
     expect(renderToStaticMarkup(<Detected detections={DETECTIONS.readOnly} />)).toContain("read-only");
     expect(renderToStaticMarkup(<Detected detections={DETECTIONS.managedPresent} />)).toContain("managed by your organisation");
+  });
+  it("shows a CLI without an adapter as Found, with its program and a note, and no version", () => {
+    const later: Detection = { cli: "codex", installed: true, exePath: "C:/bin/codex.cmd", configPath: "", configState: "ok", later: true };
+    const h = renderToStaticMarkup(<Detected detections={[...DETECTIONS.onlyClaude.slice(0, 1), later]} />);
+    const row = h.slice(h.indexOf('data-agent="codex"'));
+    expect(row).toContain("Found");
+    expect(row).toContain("C:/bin/codex.cmd");
+    expect(row).toContain("Live status and setup come in a later version.");
+    expect(row).not.toMatch(/version [–\d]/);
+  });
+  it("shows a missing CLI without an adapter as Not installed, with no note", () => {
+    const later: Detection = { cli: "antigravity", installed: false, configPath: "", configState: "ok", later: true };
+    const h = renderToStaticMarkup(<Detected detections={[...DETECTIONS.onlyClaude.slice(0, 1), later]} />);
+    const row = h.slice(h.indexOf('data-agent="antigravity"'));
+    expect(row).toContain("Not installed");
+    expect(row).not.toContain("detected__note");
   });
 });

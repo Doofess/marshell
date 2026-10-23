@@ -1,3 +1,4 @@
+import type { AgentFound } from "../../generated/AgentFound";
 import type { AgentSetup } from "../../generated/AgentSetup";
 import type { ApplyRequest } from "../../generated/ApplyRequest";
 import type { ApplyResult } from "../../generated/ApplyResult";
@@ -12,6 +13,9 @@ const base = (agent: string) => `/v1/agents/${encodeURIComponent(agent)}`;
 
 /** What the core knows about one agent's settings file and the hooks in it. */
 export const getSetup = (ep: Endpoint, agent: "claude") => api<AgentSetup>(ep, "GET", `${base(agent)}/setup`);
+
+/** Which agent CLIs are on this machine: Claude, Codex and Antigravity, in that order. */
+export const listAgents = (ep: Endpoint) => api<AgentFound[]>(ep, "GET", "/v1/agents");
 
 /** The preview of the requested status, approval and status line hooks. A 422 ApiError says why the file is refused. */
 export const planInstall = (ep: Endpoint, agent: "claude", want: HookPlanRequest) =>
@@ -76,4 +80,16 @@ export function toDetection(s: AgentSetup): Detection {
     parseError: s.parse_error ? { line: s.parse_error.line, message: s.parse_error.message } : undefined,
     hasOwnStatusLine: s.has_own_statusline,
   };
+}
+
+/**
+ * Every row of the first-run screen: Claude's from its setup, then Codex and Antigravity from the found list, which gives no version
+ * and no settings. `found` null (the list could not be read) leaves Claude's row alone. Claude's and unknown entries in `found` are ignored.
+ */
+export function toDetections(setup: AgentSetup, found: AgentFound[] | null): Detection[] {
+  const later = (["codex", "antigravity"] as const).flatMap((cli): Detection[] => {
+    const f = found?.find((x) => x.agent === cli);
+    return f ? [{ cli, installed: f.found, exePath: f.exe_path, configPath: "", configState: "ok", later: true }] : [];
+  });
+  return [toDetection(setup), ...later];
 }
