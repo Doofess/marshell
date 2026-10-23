@@ -2,7 +2,8 @@ import "./Logo.css";
 
 /**
  * The app icon ("Night shift", assets/icon/app-night-shift.svg): two marshalling wands on a dark tile, the pale
- * hands below and the signal-orange tips above. Drawn inline so it can sit in a button and be themed from Logo.css.
+ * hands below and the signal-orange tips above. Drawn inline so it can sit in a button and be themed from Logo.css,
+ * which swaps in the "Daylight" colours (alt-daylight.svg) in the light theme.
  */
 export function Logo({ size = 24, decorative = false }: { size?: number; decorative?: boolean }) {
   const a11y = decorative ? ({ "aria-hidden": true } as const) : ({ role: "img", "aria-label": "Marshell" } as const);
