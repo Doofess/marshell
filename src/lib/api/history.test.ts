@@ -104,12 +104,20 @@ describe("history", () => {
   it("bookmarks a turn with PUT and removes the bookmark with DELETE", async () => {
     const on = respond(null, 204);
     vi.stubGlobal("fetch", on);
-    await history.bookmarkTurn(endpoint, "claude", "s", 3, true);
+    await expect(history.bookmarkTurn(endpoint, "claude", "s", 3, true)).resolves.toEqual({ ok: true });
     expect(call(on)).toMatchObject({ url: "http://127.0.0.1:9/v1/history/claude/s/bookmarks/3", method: "PUT" });
     const off = respond(null, 204);
     vi.stubGlobal("fetch", off);
     await history.bookmarkTurn(endpoint, "claude", "s", 3, false);
     expect(call(off)).toMatchObject({ method: "DELETE" });
+  });
+
+  it("hands back the core's words when it has not indexed the turn (409)", async () => {
+    const text = "Marshell hasn't indexed turn 3 of this conversation yet.";
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(text, { status: 409 })));
+    await expect(history.bookmarkTurn(endpoint, "claude", "s", 3, true)).resolves.toEqual({ ok: false, reason: text });
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response("boom", { status: 500 })));
+    await expect(history.bookmarkTurn(endpoint, "claude", "s", 3, true)).rejects.toBeInstanceOf(ApiError);
   });
 
   it("removes Marshell's copy with DELETE and returns the reason for a 409", async () => {

@@ -65,9 +65,12 @@ export const history = {
   /** Changes the supplied marks. A 400 (a tag the core refuses) comes back as `{ ok: false, reason }` in the core's words. */
   patch: (ep: Endpoint, agent: string, id: string, p: HistoryPatch) =>
     refused(async () => ({ entry: await api<HistoryEntry>(ep, "PATCH", conversation(agent, id), p) })),
-  /** Marks or unmarks a turn (0-based, as in a search hit). */
+  /** Marks or unmarks a turn (0-based, as in a search hit). A 409 (a turn the core hasn't indexed yet) comes back as `{ ok: false, reason }` in the core's words. */
   bookmarkTurn: (ep: Endpoint, agent: string, id: string, turn: number, on: boolean) =>
-    api<void>(ep, on ? "PUT" : "DELETE", `${conversation(agent, id)}/bookmarks/${turn}`),
+    refused(async () => {
+      await api<void>(ep, on ? "PUT" : "DELETE", `${conversation(agent, id)}/bookmarks/${turn}`);
+      return {};
+    }),
   /** Deletes Marshell's copy only. A 409 (running in a tab, copy in progress) comes back as `{ ok: false, reason }`. */
   remove: (ep: Endpoint, agent: string, id: string) =>
     refused(async () => {

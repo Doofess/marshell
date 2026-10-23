@@ -268,7 +268,8 @@ export function LiveHistory({ endpoint, rows, os, searchFocus, size, announce, o
     const c = shown;
     if (!c) return;
     try {
-      await history.bookmarkTurn(endpoint, c.agent, c.session_id, turn, on);
+      const r = await history.bookmarkTurn(endpoint, c.agent, c.session_id, turn, on);
+      if (!r.ok) return fail(r.reason);
       refresh();
     } catch (e) {
       fail(`Couldn't bookmark: ${failureText(e)}`);
