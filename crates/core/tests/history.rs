@@ -125,6 +125,14 @@ async fn stops_in_a_row_copy_once_at_a_time_and_end_current() {
     }
     std::fs::write(&transcript, &bytes).unwrap();
 
+    // Copies run only for a conversation the index knows, as after its SessionStart hook.
+    let start = serde_json::json!({
+        "hook_event_name": "SessionStart",
+        "session_id": ID,
+        "transcript_path": transcript.to_string_lossy(),
+        "cwd": "c",
+    });
+    history.note_event("t1", &start, 1);
     let m = meta(&transcript);
     for i in 0..5 {
         schedule_copy(history.clone(), m.clone());

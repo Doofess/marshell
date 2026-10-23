@@ -50,13 +50,25 @@ fn env() -> Env {
     env_in(home, work)
 }
 
+/// Like `printer`, but the agent waits on its input instead of exiting, so its tab stays Running.
+fn waiter() -> Profile {
+    Profile {
+        command: vec![env!("CARGO_BIN_EXE_fake-agent").into(), "echo".into()],
+        ..printer()
+    }
+}
+
 fn env_in(home: tempfile::TempDir, work: tempfile::TempDir) -> Env {
+    env_with(home, work, printer())
+}
+
+fn env_with(home: tempfile::TempDir, work: tempfile::TempDir, profile: Profile) -> Env {
     let state = AppState::new(
         TOKEN.into(),
         PORT,
         vec!["http://tauri.localhost".into()],
         home.path().to_path_buf(),
-        vec![printer()],
+        vec![profile],
     )
     .with_agent_check(|_| true);
     Env {
@@ -344,7 +356,9 @@ async fn resume_starts_claude_with_the_session_in_its_folder() {
 
 #[tokio::test]
 async fn resume_refuses_a_conversation_running_in_a_tab() {
-    let env = env();
+    common::tie_children_to_test();
+    // A printer would exit at once and end its tab before the second Resume, racing the refusal.
+    let env = env_with(tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap(), waiter());
     let claude_dir = tempfile::tempdir().unwrap();
     index_session(&env, ID, claude_dir.path());
     let meta = env.state.history().latest_for_tab("t1").unwrap();
