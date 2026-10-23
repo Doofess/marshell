@@ -38,7 +38,7 @@ describe("ConsentCard", () => {
   });
   it("says what will change in plain words, with the backup and the way out", () => {
     const h = renderToStaticMarkup(<ConsentCard scenario={CONSENT.claude} on={on} />);
-    expect(h).toContain("Add 10 hook entries and chain your status line");
+    expect(h).toContain("Add 11 hook entries and chain your status line");
     expect(h).toContain("A backup is saved first");
     expect(h).toContain(".marshell\\snapshots");
     expect(h).toContain("removes the hook entries it added and puts your own status line back from statusline-chain.json");

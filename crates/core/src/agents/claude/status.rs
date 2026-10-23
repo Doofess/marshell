@@ -161,6 +161,29 @@ fn wants_phrase(phrase: &str) -> String {
     "Wants to use a tool".to_string()
 }
 
+/// Why a turn failed, as the row says it: our line for a known `error`, else Claude's own text.
+fn error_phrase(body: &Value) -> String {
+    let line = match str_at(body, "/error") {
+        Some("rate_limit") => "Rate limit reached",
+        Some("overloaded") => "Claude is overloaded",
+        Some("authentication_failed") => "Sign-in failed",
+        Some("oauth_org_not_allowed") => "Organization not allowed",
+        Some("account_on_hold") => "Account on hold",
+        Some("billing_error") => "Billing problem",
+        Some("invalid_request") => "Invalid request",
+        Some("model_not_found") => "Model not found",
+        Some("server_error") => "Server error",
+        Some("max_output_tokens") => "Reply hit the output limit",
+        Some("cloud_credential_error") => "Cloud sign-in failed",
+        _ => {
+            return str_at(body, "/last_assistant_message")
+                .map(|text| first_line(text, 120))
+                .unwrap_or_else(|| "API error".to_string());
+        }
+    };
+    line.to_string()
+}
+
 /// The status after one hook event. None for an event that says nothing about status.
 pub fn fold_event(prev: Option<&LiveStatus>, body: &Value, now_ms: u64) -> Option<LiveStatus> {
     let mut next = prev.cloned().unwrap_or_else(|| blank(now_ms));
@@ -181,7 +204,9 @@ pub fn fold_event(prev: Option<&LiveStatus>, body: &Value, now_ms: u64) -> Optio
             // Claude sends this a minute after every Stop, so a finished turn stays Done. A turn that
             // is still marked busy was interrupted, and Claude sends no Stop for that.
             Some("idle_prompt") => match next.state {
-                LiveState::Done | LiveState::Idle | LiveState::Ended => (next.state, next.phrase.clone()),
+                LiveState::Done | LiveState::Error | LiveState::Idle | LiveState::Ended => {
+                    (next.state, next.phrase.clone())
+                }
                 // The turn is over but its subagents still run.
                 LiveState::Working if next.phrase == WAITING_PHRASE => (next.state, next.phrase.clone()),
                 _ => (LiveState::Idle, String::new()),
@@ -202,6 +227,8 @@ pub fn fold_event(prev: Option<&LiveStatus>, body: &Value, now_ms: u64) -> Optio
                 (LiveState::Done, "Done".to_string())
             }
         }
+        // A turn that ended on an API error: Claude sends this in place of Stop. The recap stays.
+        "StopFailure" => (LiveState::Error, error_phrase(body)),
         "SessionEnd" => (LiveState::Ended, "Ended".to_string()),
         _ => return None,
     };
@@ -649,6 +676,74 @@ mod tests {
         assert_eq!(ring_level(70.0), RingLevel::Yellow);
         assert_eq!(ring_level(89.9), RingLevel::Yellow);
         assert_eq!(ring_level(90.0), RingLevel::Red);
+    }
+
+    macro_rules! fixture_309 {
+        ($name:literal) => {
+            serde_json::from_str::<Value>(include_str!(concat!(
+                "../../../tests/fixtures/claude/2.1.309/",
+                $name,
+                ".json"
+            )))
+            .unwrap()
+        };
+    }
+
+    #[test]
+    fn stop_failure_is_error_with_our_line() {
+        let done = fold_event(None, &fixture!("Stop"), 1_000).unwrap();
+        let s = fold_event(Some(&done), &fixture_309!("StopFailure"), 5_000).unwrap();
+        assert_eq!(s.state, LiveState::Error);
+        assert_eq!(s.phrase, "Sign-in failed");
+        assert_eq!(s.since_ms, 5_000);
+        assert_eq!(s.recap, done.recap);
+    }
+
+    #[test]
+    fn stop_failure_has_a_line_for_every_known_error() {
+        for (error, line) in [
+            ("rate_limit", "Rate limit reached"),
+            ("overloaded", "Claude is overloaded"),
+            ("authentication_failed", "Sign-in failed"),
+            ("oauth_org_not_allowed", "Organization not allowed"),
+            ("account_on_hold", "Account on hold"),
+            ("billing_error", "Billing problem"),
+            ("invalid_request", "Invalid request"),
+            ("model_not_found", "Model not found"),
+            ("server_error", "Server error"),
+            ("max_output_tokens", "Reply hit the output limit"),
+            ("cloud_credential_error", "Cloud sign-in failed"),
+        ] {
+            let body = json!({"hook_event_name":"StopFailure","error":error,"last_assistant_message":"ignored"});
+            assert_eq!(fold(None, &body).phrase, line, "{error}");
+        }
+    }
+
+    #[test]
+    fn stop_failure_with_unknown_type_uses_claudes_text() {
+        let body = json!({"hook_event_name":"StopFailure","error":"new_thing","last_assistant_message":"API Error: Something new
+more"});
+        let s = fold(None, &body);
+        assert_eq!(s.state, LiveState::Error);
+        assert_eq!(s.phrase, "API Error: Something new");
+    }
+
+    #[test]
+    fn stop_failure_with_no_text_says_api_error() {
+        let body = json!({"hook_event_name":"StopFailure","error":"unknown"});
+        assert_eq!(fold(None, &body).phrase, "API error");
+        let empty = json!({"hook_event_name":"StopFailure","error":"unknown","last_assistant_message":"  "});
+        assert_eq!(fold(None, &empty).phrase, "API error");
+    }
+
+    #[test]
+    fn idle_prompt_keeps_error() {
+        let failed = fold_event(None, &fixture_309!("StopFailure"), 1_000).unwrap();
+        let idle = json!({"hook_event_name":"Notification","notification_type":"idle_prompt"});
+        let s = fold_event(Some(&failed), &idle, 61_000).unwrap();
+        assert_eq!(s.state, LiveState::Error);
+        assert_eq!(s.phrase, failed.phrase);
+        assert_eq!(s.since_ms, failed.since_ms);
     }
 
     macro_rules! fixture_305 {

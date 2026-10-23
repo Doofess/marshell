@@ -34,7 +34,7 @@ export const DETECTIONS: Record<"allThree" | "onlyClaude" | "none" | "unparsable
 };
 
 const BRIDGE = '"C:/Users/Home Office/.marshell/bin/marshell-hook.exe"';
-const EVENTS = ["SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse", "Notification", "SubagentStart", "SubagentStop", "Stop", "SessionEnd"];
+const EVENTS = ["SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse", "Notification", "SubagentStart", "SubagentStop", "Stop", "StopFailure", "SessionEnd"];
 
 const claudeBefore = `{
   "model": "opus",

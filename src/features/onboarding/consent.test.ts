@@ -7,9 +7,9 @@ const claude: Detection = { cli: "claude", installed: true, version: "2.1.296", 
 const all = { status: true, approve: true, statusline: true };
 
 describe("entryCount", () => {
-  it("is 10 hook entries for Claude with status and approval on, and the status line adds none", () => {
-    expect(entryCount("claude", all)).toBe(10);
-    expect(entryCount("claude", { status: true, approve: false, statusline: true })).toBe(9);
+  it("is 11 hook entries for Claude with status and approval on, and the status line adds none", () => {
+    expect(entryCount("claude", all)).toBe(11);
+    expect(entryCount("claude", { status: true, approve: false, statusline: true })).toBe(10);
     expect(entryCount("claude", { status: false, approve: false, statusline: false })).toBe(0);
   });
   it("counts only what the CLI can do", () => {
@@ -40,10 +40,10 @@ describe("CAPABILITIES", () => {
 
 describe("consentHeadline", () => {
   it("names the count, the status line and the whole path, spaces included", () => {
-    expect(consentHeadline(claude, all)).toBe("Add 10 hook entries and chain your status line in C:\Users\Home Office\.claude\settings.json.");
+    expect(consentHeadline(claude, all)).toBe("Add 11 hook entries and chain your status line in C:\Users\Home Office\.claude\settings.json.");
   });
   it("leaves out the status line when it is off", () => {
-    expect(consentHeadline(claude, { ...all, statusline: false })).toBe("Add 10 hook entries in C:\Users\Home Office\.claude\settings.json.");
+    expect(consentHeadline(claude, { ...all, statusline: false })).toBe("Add 11 hook entries in C:\Users\Home Office\.claude\settings.json.");
   });
   it("says nothing changes when everything is off", () => {
     expect(consentHeadline(claude, { status: false, approve: false, statusline: false })).toBe("Change nothing. Claude Code will show limited status.");
@@ -66,7 +66,7 @@ describe("a status line added rather than chained", () => {
   const none: Detection = { ...claude, hasOwnStatusLine: false };
   const on = { status: true, approve: false, statusline: false };
   it("says the status line is added", () => {
-    expect(consentHeadline(none, on)).toBe(`Add 9 hook entries and a status line in ${none.configPath}.`);
+    expect(consentHeadline(none, on)).toBe(`Add 10 hook entries and a status line in ${none.configPath}.`);
   });
   it("still chains when the user has one", () => {
     expect(consentHeadline({ ...claude, hasOwnStatusLine: true }, { ...on, statusline: true })).toContain("chain your status line");

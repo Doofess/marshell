@@ -16,13 +16,14 @@ use std::path::{Path, PathBuf};
 pub const TAG: &str = "mshl1";
 
 /// The events whose hooks carry live status, in the order they are installed.
-pub const STATUS_EVENTS: [&str; 9] = [
+pub const STATUS_EVENTS: [&str; 10] = [
     "SessionStart",
     "UserPromptSubmit",
     "PreToolUse",
     "PostToolUse",
     "Notification",
     "Stop",
+    "StopFailure",
     "SubagentStart",
     "SubagentStop",
     "SessionEnd",
@@ -777,7 +778,7 @@ mod tests {
         let (_keep, home) = scratch_home(true);
         // The settings an install made before SubagentStart joined the list.
         let old: Vec<&str> = STATUS_EVENTS.into_iter().filter(|e| *e != "SubagentStart").collect();
-        assert_eq!(old.len(), 8);
+        assert_eq!(old.len(), 9);
         let mut hooks = serde_json::Map::new();
         for event in &old {
             hooks.insert((*event).into(), json!([{ "hooks": [hook_entry(&home, event)] }]));
@@ -811,6 +812,42 @@ mod tests {
     }
 
     #[test]
+    fn an_install_without_stop_failure_is_partial() {
+        let (_keep, home) = scratch_home(true);
+        // The settings an install made before StopFailure joined the list.
+        let old: Vec<&str> = STATUS_EVENTS.into_iter().filter(|e| *e != "StopFailure").collect();
+        assert_eq!(old.len(), 9);
+        let mut hooks = serde_json::Map::new();
+        for event in &old {
+            hooks.insert((*event).into(), json!([{ "hooks": [hook_entry(&home, event)] }]));
+        }
+        let settings =
+            json!({ "hooks": hooks, "statusLine": { "type": "command", "command": statusline_command(&home) } });
+        let chain = json!({ "statusLine": { "type": "command", "command": "echo hi" } });
+        let found = inspect(&settings, Some(&chain), &home);
+        assert_eq!(found.install, HookInstall::Partial);
+
+        let before = Files {
+            settings: Some(settings.to_string()),
+            chain: Some(chain.to_string()),
+        };
+        let after = installed_over(&before, &home);
+        let v = after.settings_value();
+        assert_eq!(ours_count(&v), STATUS_EVENTS.len());
+        assert_eq!(
+            v["hooks"]["StopFailure"],
+            json!([{ "hooks": [hook_entry(&home, "StopFailure")] }])
+        );
+        for event in &old {
+            assert_eq!(v["hooks"][*event].as_array().unwrap().len(), 1, "{event}");
+        }
+        assert_eq!(
+            inspect(&v, Some(&after.chain_value()), &home).install,
+            HookInstall::Installed
+        );
+    }
+
+    #[test]
     fn the_install_headline_counts_the_status_events() {
         let cs = try_install(
             &Files::settings(
@@ -821,7 +858,7 @@ mod tests {
             &home(),
         )
         .unwrap();
-        assert!(cs.reason.starts_with("Adds 9 hook entries"), "{}", cs.reason);
+        assert!(cs.reason.starts_with("Adds 10 hook entries"), "{}", cs.reason);
     }
 
     fn permission_entry() -> Value {
