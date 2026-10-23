@@ -38,6 +38,8 @@ export type SessionShortcut =
   | { kind: "history" }
   /** Open the History view with the cursor in its search box (Ctrl+Shift+Alt+F). */
   | { kind: "globalSearch" }
+  /** Bookmark the current point of the focused Claude Code session (Ctrl+Shift+B). */
+  | { kind: "bookmark" }
   /** Focus the needs-you lane's target card, the oldest waiting request (Ctrl+Shift+N; Cmd+N on macOS). */
   | { kind: "nextWaiting" };
 
@@ -97,6 +99,8 @@ export function commandShortcut(id: string): SessionShortcut | null {
       return { kind: "capture" };
     case "next-waiting":
       return { kind: "nextWaiting" };
+    case "bookmark":
+      return { kind: "bookmark" };
     case "history":
       return { kind: "history" };
     case "global-search":

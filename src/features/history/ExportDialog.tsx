@@ -77,6 +77,12 @@ export function ExportDialog({ title, load, onSave, onCopy, onClose, announce }:
     };
   }, [format, redact]);
 
+  // The window's announcer says a failure; the line in the dialog is for the eyes.
+  const loadFailure = preview.kind === "failed" ? `Couldn't prepare the export: ${preview.message}` : null;
+  useEffect(() => {
+    if (loadFailure) announce(loadFailure);
+  }, [loadFailure, announce]);
+
   const text = preview.kind === "ready" ? preview.text : null;
   const act = async (what: "save" | "copy") => {
     if (text === null || busy) return;
@@ -121,16 +127,8 @@ export function ExportDialog({ title, load, onSave, onCopy, onClose, announce }:
           <pre tabIndex={0} className="export-dialog__text" aria-labelledby={`${uid}-preview`} dir="auto">
             {preview.kind === "ready" ? preview.text : preview.kind === "loading" ? "Loading…" : ""}
           </pre>
-          {preview.kind === "failed" && (
-            <p className="export-dialog__error" role="alert">
-              {`Couldn't prepare the export: ${preview.message}`}
-            </p>
-          )}
-          {problem && (
-            <p className="export-dialog__error" role="alert">
-              {problem}
-            </p>
-          )}
+          {loadFailure && <p className="export-dialog__error">{loadFailure}</p>}
+          {problem && <p className="export-dialog__error">{problem}</p>}
         </div>
         <footer className="export-dialog__foot">
           <button type="button" className="export-dialog__btn" aria-disabled={text === null || busy || undefined} onClick={() => void act("save")}>

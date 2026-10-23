@@ -96,3 +96,16 @@ describe("Mode ▸ facts and focus", () => {
     expect(modeOfItem("rename")).toBeNull();
   });
 });
+
+describe("Bookmark fact", () => {
+  it("is true for a Claude Code tab only", () => {
+    const claude = { ...info("x"), agent: "claude" } as SessionInfo;
+    const codex = { ...info("x"), agent: "codex" } as SessionInfo;
+    expect(menuFacts("x", ctx({ infos: [claude] })).bookmarkable).toBe(true);
+    expect(menuFacts("x", ctx({ infos: [codex] })).bookmarkable).toBe(false);
+    expect(menuFacts("x", ctx()).bookmarkable).toBe(false);
+  });
+  it("leaves focus on the row, where the menu was", () => {
+    expect(focusAfterMenu("bookmark", false)).toBe("row");
+  });
+});

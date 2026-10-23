@@ -22,6 +22,7 @@ export function menuFacts(
     resumable: info !== undefined && info.state.kind !== "running" && resumeBlockedReason(info.profile_id, ctx.profiles) === undefined,
     task: row?.task === true,
     muted: info?.muted === true,
+    bookmarkable: info?.agent === "claude",
     inShownPane: onScreen.includes(id),
     pausable: info !== undefined && info.state.kind === "running" && !info.paused,
     paused: info !== undefined && info.state.kind === "running" && info.paused,
@@ -36,6 +37,7 @@ export function menuFacts(
 export function focusAfterMenu(itemId: string, confirms: boolean): "row" | "terminal" | null {
   switch (itemId) {
     case "resume":
+    case "bookmark":
     case "mute":
     case "unmute":
       return "row";

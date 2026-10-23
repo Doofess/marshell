@@ -240,7 +240,7 @@ describe("ConversationView actions", () => {
     const out = html(conv([]), { editor: "tags", error: "A tag can't contain a comma." });
     const box = out.match(/<input[^>]*aria-describedby="([^"]+)"/);
     expect(box).not.toBeNull();
-    const errorId = box![1]!.split(" ").find((id) => out.includes(`id="${id}" role="alert">A tag can&#x27;t contain a comma.<`));
+    const errorId = box![1]!.split(" ").find((id) => out.includes(`id="${id}">A tag can&#x27;t contain a comma.<`));
     expect(errorId).toBeDefined();
     expect(out).toContain("Tags, separated by commas");
   });

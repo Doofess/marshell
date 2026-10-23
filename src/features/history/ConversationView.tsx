@@ -257,7 +257,7 @@ export function ConversationView({
             </p>
           )}
           {error && (
-            <p className="conversation__error" id={errorId} role="alert">
+            <p className="conversation__error" id={errorId}>
               {error}
             </p>
           )}
@@ -269,7 +269,7 @@ export function ConversationView({
             {`Delete Marshell's copy of “${title}”? Claude Code's own file is not touched.`}
           </p>
           {error && (
-            <p className="conversation__error" id={errorId} role="alert">
+            <p className="conversation__error" id={errorId}>
               {error}
             </p>
           )}

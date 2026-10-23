@@ -115,3 +115,10 @@ describe("history shortcuts", () => {
     expect(commandShortcut("global-search")).toEqual({ kind: "globalSearch" });
   });
 });
+
+describe("bookmark shortcut", () => {
+  it("runs on Ctrl+Shift+B and from the palette", () => {
+    expect(sessionShortcut(ev("KeyB", cs), "windows")).toEqual({ kind: "bookmark" });
+    expect(commandShortcut("bookmark")).toEqual({ kind: "bookmark" });
+  });
+});
