@@ -15,6 +15,13 @@ describe("bookmarkSession", () => {
     expect(announce).toHaveBeenCalledWith("Bookmarked this point in “Fix the API”.");
   });
 
+  it("names an unnamed conversation instead of leaving the quotes empty", async () => {
+    vi.spyOn(sessions, "bookmark").mockResolvedValue({ ok: true, title: "" });
+    const announce = vi.fn();
+    await bookmarkSession(ep, "t1", announce);
+    expect(announce).toHaveBeenCalledWith("Bookmarked this point in “Untitled conversation”.");
+  });
+
   it("bookmark announces the refusal", async () => {
     vi.spyOn(sessions, "bookmark").mockResolvedValue({ ok: false, reason: "Bookmarks work in Claude Code sessions for now." });
     const announce = vi.fn();

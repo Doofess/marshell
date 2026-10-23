@@ -2,6 +2,9 @@ import type { Endpoint } from "../../generated/Endpoint";
 import type { HistoryPatch } from "../../generated/HistoryPatch";
 import { history } from "../../lib/api/history";
 
+/** What a conversation with no title is called. */
+export const UNTITLED = "Untitled conversation";
+
 type Target = { agent: string; session_id: string };
 
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
