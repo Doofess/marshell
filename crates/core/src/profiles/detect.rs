@@ -352,6 +352,9 @@ pub enum ResumeTarget<'a> {
     Last,
     /// One conversation by the CLI's session id. Only Claude Code takes one so far.
     Session(&'a str),
+    /// A new conversation that starts from one by the CLI's session id, leaving the original as it is.
+    /// Only Claude Code can fork; every other agent continues its last conversation as `Last` does.
+    Fork(&'a str),
 }
 
 /// The arguments that make an agent continue a conversation: the one named by `target` when the CLI
@@ -359,6 +362,7 @@ pub enum ResumeTarget<'a> {
 pub fn resume_args(agent: &str, target: ResumeTarget) -> Vec<String> {
     let args: Vec<&str> = match (agent, target) {
         ("claude", ResumeTarget::Session(id)) => vec!["--resume", id],
+        ("claude", ResumeTarget::Fork(id)) => vec!["--resume", id, "--fork-session"],
         ("claude", ResumeTarget::Last) => vec!["--continue"],
         ("codex", _) => vec!["resume", "--last"],
         ("antigravity", _) => vec!["--continue"],
@@ -954,6 +958,30 @@ mod tests {
         );
         let argv = launch_argv_resume(&ps, Some("codex"), None, by_id).unwrap();
         assert_eq!(argv.last().unwrap(), "& codex resume --last");
+    }
+
+    #[test]
+    fn fork_args_add_fork_session() {
+        assert_eq!(
+            resume_args("claude", ResumeTarget::Fork("abc-1")),
+            ["--resume", "abc-1", "--fork-session"]
+        );
+        // Codex and Antigravity can't fork by id, so they take the same arguments as `Last`.
+        assert_eq!(resume_args("codex", ResumeTarget::Fork("abc-1")), ["resume", "--last"]);
+        let ps = profile("pwsh", &["pwsh.exe"], ShellFamily::PowerShell);
+        let argv = launch_argv_resume(&ps, Some("claude"), None, ResumeTarget::Fork("abc-1")).unwrap();
+        assert_eq!(argv.last().unwrap(), "& claude --resume abc-1 --fork-session");
+        let argv = launch_argv_resume(
+            &ps,
+            Some("claude"),
+            Some(SessionMode::Bypass),
+            ResumeTarget::Fork("abc-1"),
+        )
+        .unwrap();
+        assert_eq!(
+            argv.last().unwrap(),
+            "& claude --resume abc-1 --fork-session --permission-mode bypassPermissions"
+        );
     }
 
     #[test]

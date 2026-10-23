@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 use std::path::Path;
 
 pub mod archive;
+pub mod export;
 pub mod index;
 pub mod marks;
 pub mod recorder;

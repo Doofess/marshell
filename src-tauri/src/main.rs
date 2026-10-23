@@ -4,6 +4,7 @@
 mod attention;
 mod capture;
 mod diagnostics;
+mod export;
 mod folder_picker;
 mod link;
 mod notify;
@@ -292,6 +293,7 @@ fn main() {
         })
         .invoke_handler(tauri::generate_handler![
             diagnostics::save_diagnostics,
+            export::save_conversation,
             folder_picker::pick_folder,
             core_endpoint,
             close_once,

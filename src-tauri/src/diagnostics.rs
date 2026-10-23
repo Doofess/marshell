@@ -33,7 +33,7 @@ fn check(name: &str, bytes: &[u8]) -> Result<(), String> {
 
 /// Writes `bytes` to `<path>.part` beside `path`, then renames it over `path`. A failed write leaves no
 /// `.part` behind.
-fn write_export(path: &Path, bytes: &[u8]) -> io::Result<()> {
+pub(crate) fn write_export(path: &Path, bytes: &[u8]) -> io::Result<()> {
     let mut part = path.as_os_str().to_os_string();
     part.push(".part");
     let part = PathBuf::from(part);

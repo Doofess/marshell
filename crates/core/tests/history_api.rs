@@ -806,6 +806,199 @@ async fn marks_writes_do_not_lose_an_edit() {
     }
 }
 
+/// A tab's row in the sessions list.
+async fn tab_row(app: &axum::Router, tab: &str) -> Value {
+    let (_, sessions) = get_json(app, "/v1/sessions").await;
+    sessions["sessions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|s| s["tab_id"] == tab)
+        .unwrap_or_else(|| panic!("no tab {tab} in {sessions}"))
+        .clone()
+}
+
+fn tab_of(text: &str) -> String {
+    serde_json::from_str::<Value>(text).unwrap()["tab_id"]
+        .as_str()
+        .unwrap()
+        .to_string()
+}
+
+async fn name_conversation(env: &Env, name: &str) {
+    let (status, _) = call(
+        &env.app,
+        req(
+            "PATCH",
+            &format!("/v1/history/claude/{ID}"),
+            Some(json!({ "name": name })),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+}
+
+#[tokio::test]
+async fn fork_starts_a_tab_with_fork_session_even_while_running() {
+    let env = env();
+    seed(&env, ID);
+    // Tab t1 is Running and holds the conversation, so Resume refuses it.
+    reserve_tab(&env, "t1", Some("claude"));
+    name_conversation(&env, "Mine").await;
+    let resume = format!("/v1/history/claude/{ID}/resume");
+    let (status, _) = call(&env.app, req("POST", &resume, Some(resume_body()))).await;
+    assert_eq!(status, StatusCode::CONFLICT);
+
+    let fork = format!("/v1/history/claude/{ID}/fork");
+    let (status, text) = call(&env.app, req("POST", &fork, Some(resume_body()))).await;
+    assert_eq!(status, StatusCode::OK, "{text}");
+    let tab = tab_of(&text);
+    let rows = peek_until(&env.app, &tab, &format!("--resume {ID} --fork-session")).await;
+    assert!(rows.contains("claude"), "{rows}");
+    let row = tab_row(&env.app, &tab).await;
+    assert_eq!(row["name"], "Mine (fork)");
+    assert_eq!(row["agent"], "claude");
+    assert_eq!(row["cwd"], env.work.path().to_string_lossy().as_ref());
+
+    // With no name the person gave, the fork's tab has the default name.
+    name_conversation(&env, "").await;
+    let (status, text) = call(&env.app, req("POST", &fork, Some(resume_body()))).await;
+    assert_eq!(status, StatusCode::OK, "{text}");
+    let name = tab_row(&env.app, &tab_of(&text)).await["name"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert!(!name.contains("(fork)"), "{name}");
+
+    // Claude's file gone: the same refusal as Resume. A bad id is a 404 before anything else.
+    std::fs::remove_file(env.work.path().join(format!("{ID}.jsonl"))).unwrap();
+    let (status, text) = call(&env.app, req("POST", &fork, Some(resume_body()))).await;
+    assert_eq!(status, StatusCode::CONFLICT, "{text}");
+    assert_eq!(serde_json::from_str::<Value>(&text).unwrap()["reason"], NO_CONVERSATION);
+    let (status, text) = call(
+        &env.app,
+        req("POST", "/v1/history/claude/..%2Fx/fork", Some(resume_body())),
+    )
+    .await;
+    assert_eq!((status, text.as_str()), (StatusCode::NOT_FOUND, NO_SUCH));
+}
+
+#[tokio::test]
+async fn resume_opens_the_tab_under_the_name() {
+    let env = env();
+    seed(&env, ID);
+    name_conversation(&env, "Mine").await;
+    let resume = format!("/v1/history/claude/{ID}/resume");
+    let (status, text) = call(&env.app, req("POST", &resume, Some(resume_body()))).await;
+    assert_eq!(status, StatusCode::OK, "{text}");
+    let tab = tab_of(&text);
+    assert_eq!(tab_row(&env.app, &tab).await["name"], "Mine");
+
+    // The conversation Claude starts in that tab takes the name too.
+    let newer = "00000000-0000-4000-8000-000000000002";
+    let newer_path = env.work.path().join(format!("{newer}.jsonl"));
+    std::fs::write(&newer_path, BASIC).unwrap();
+    let body = json!({
+        "hook_event_name": "SessionStart",
+        "session_id": newer,
+        "transcript_path": newer_path.to_string_lossy(),
+        "cwd": env.work.path().to_string_lossy(),
+    });
+    env.state.history().note_event(&tab, &body, 5000);
+    let (_, list) = get_json(&env.app, "/v1/history").await;
+    let row = list
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["session_id"] == newer)
+        .unwrap();
+    assert_eq!(row["title"], "Mine");
+    assert_eq!(row["named"], true);
+
+    // A conversation with no name of its own opens under the default name.
+    name_conversation(&env, "").await;
+    let (_, text) = call(&env.app, req("POST", &resume, Some(resume_body()))).await;
+    assert_ne!(tab_row(&env.app, &tab_of(&text)).await["name"], "Mine");
+}
+
+/// The status, content type and body of a request.
+async fn call_typed(app: &axum::Router, request: Request<Body>) -> (StatusCode, String, String) {
+    let res = app.clone().oneshot(request).await.unwrap();
+    let status = res.status();
+    let kind = res
+        .headers()
+        .get(header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or_default()
+        .to_string();
+    let bytes = axum::body::to_bytes(res.into_body(), 1 << 24).await.unwrap();
+    (status, kind, String::from_utf8_lossy(&bytes).into_owned())
+}
+
+#[tokio::test]
+async fn export_routes_answer_both_formats_and_404_without_a_copy() {
+    let env = env();
+    // A prompt that holds a key, in Marshell's copy.
+    let transcript = index_session(&env, ID, env.work.path());
+    std::fs::write(
+        &transcript,
+        BASIC.replace("Add a limit of five attempts", "use key sk-ant-abcdefgh12345678"),
+    )
+    .unwrap();
+    let meta = env.state.history().latest_for_tab("t1").unwrap();
+    // No copy yet.
+    let uri = format!("/v1/history/claude/{ID}/export?format=markdown");
+    let (status, _, text) = call_typed(&env.app, req("GET", &uri, None)).await;
+    assert_eq!((status, text.as_str()), (StatusCode::NOT_FOUND, NO_COPY));
+    copy_transcript(env.home.path(), &meta).unwrap();
+    env.state.history().reindex(&meta);
+
+    // Markdown, redacted unless asked otherwise.
+    let (status, kind, text) = call_typed(&env.app, req("GET", &uri, None)).await;
+    assert_eq!(status, StatusCode::OK, "{text}");
+    assert_eq!(kind, "text/markdown; charset=utf-8");
+    assert!(text.starts_with("# Retry limit work\n\n- Folder: "), "{text}");
+    assert!(text.contains("## Turn 2\n\n> use key <anthropic-key>\n"), "{text}");
+    assert!(!text.contains("abcdefgh12345678"));
+    let (_, _, plain) = call_typed(&env.app, req("GET", &format!("{uri}&redact=false"), None)).await;
+    assert!(plain.contains("> use key sk-ant-abcdefgh12345678\n"), "{plain}");
+
+    // JSON.
+    let json_uri = format!("/v1/history/claude/{ID}/export?format=json");
+    let (status, kind, text) = call_typed(&env.app, req("GET", &json_uri, None)).await;
+    assert_eq!(status, StatusCode::OK, "{text}");
+    assert_eq!(kind, "application/json");
+    let parsed: Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(parsed["session_id"], ID);
+    assert_eq!(parsed["turns"][1]["prompt"], "use key <anthropic-key>");
+    let (_, _, plain) = call_typed(&env.app, req("GET", &format!("{json_uri}&redact=false"), None)).await;
+    assert_eq!(
+        serde_json::from_str::<Value>(&plain).unwrap()["turns"][1]["prompt"],
+        "use key sk-ant-abcdefgh12345678"
+    );
+
+    // A bad format is a 400; a bad or unknown conversation is a 404 before any lookup.
+    let (status, _, _) = call_typed(
+        &env.app,
+        req("GET", &format!("/v1/history/claude/{ID}/export?format=pdf"), None),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    let (status, _, text) = call_typed(
+        &env.app,
+        req("GET", "/v1/history/claude/..%2Fx/export?format=json", None),
+    )
+    .await;
+    assert_eq!((status, text.as_str()), (StatusCode::NOT_FOUND, NO_SUCH));
+    let other = "00000000-0000-4000-8000-0000000000ff";
+    let (status, _, text) = call_typed(
+        &env.app,
+        req("GET", &format!("/v1/history/claude/{other}/export"), None),
+    )
+    .await;
+    assert_eq!((status, text.as_str()), (StatusCode::NOT_FOUND, NO_SUCH));
+}
+
 /// Seeds a Marshell home for the slice 5a live check: the five transcript fixtures as archived Claude sessions, each with
 /// its sidecar and zstd copy, in two project folders. The transcripts sit in `<seed>/../transcripts`; the one for
 /// `…0b4` is deleted after its copy, so Resume refuses it. Run with

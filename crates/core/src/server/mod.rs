@@ -558,6 +558,8 @@ pub fn router(state: AppState) -> Router {
             put(history::bookmark_turn).delete(history::unbookmark_turn),
         )
         .route("/v1/history/{agent}/{session_id}/resume", post(history::resume))
+        .route("/v1/history/{agent}/{session_id}/fork", post(history::fork))
+        .route("/v1/history/{agent}/{session_id}/export", get(history::export))
         .route("/v1/events", get(events::handler))
         .route("/v1/pty/{tab}", get(pty_ws::handler))
         .layer(axum::middleware::from_fn_with_state(state.clone(), guard::auth_guard))
