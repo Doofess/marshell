@@ -12,6 +12,8 @@ The shared rules are above, imported from `AGENTS.md`, and `SCOPE.md` is binding
 4. A live check runs where the plan's exit criteria need the real app (below). Its findings go in `docs/research/<topic>.md`.
 5. The final whole-branch review runs on Opus, followed by one fix pass. Then the PR, a green CI and the merge.
 
+The project skills carry the details: `marshell-codex-task` hands a task to Codex CLI, the `marshell-reviewer` agent does step 5's review, and `marshell-ship` runs the checks, the PR and the merge.
+
 A PR body has "What it does", "Live check", "Known limits" and "Checks" sections, with the exact commands and counts from this session.
 
 ## Subagents
@@ -26,6 +28,8 @@ A PR body has "What it does", "Live check", "Known limits" and "Checks" sections
 2. Drive the webview over CDP at `http://127.0.0.1:9333`. Prefer evaluations that return small JSON over screenshots, and screenshot only to judge the look.
 3. Agent sessions in a live check are ones you start for it. Pressing Enter in one is part of the check, never part of the feature.
 4. Stop what you started by PID, then remove the scratch folder.
+
+The `marshell-live-check` skill runs these steps with a script that also sets a scratch `CLAUDE_CONFIG_DIR`, and adds the `webview` MCP server for step 2.
 
 ## Gotchas
 
