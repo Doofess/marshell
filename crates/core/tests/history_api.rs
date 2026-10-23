@@ -5,6 +5,7 @@ mod common;
 use axum::body::Body;
 use axum::http::{Request, StatusCode, header};
 use marshell_core::history::archive::{archive_paths, copy_transcript};
+use marshell_core::history::marks;
 use marshell_core::server::{AppState, router};
 use marshell_protocol::api::{Profile, ShellFamily};
 use serde_json::{Value, json};
@@ -575,7 +576,7 @@ async fn renaming_a_tab_names_its_conversation_and_the_next_one() {
 
 #[tokio::test]
 async fn bookmark_turn_on_and_off() {
-    use marshell_core::history::marks::{self, Marks};
+    use marshell_core::history::marks::Marks;
     let env = env();
     seed(&env, ID);
     let uri = format!("/v1/history/claude/{ID}");
@@ -662,6 +663,35 @@ async fn bookmark_now_refusals() {
         let (status, text) = call(&env.app, req("POST", &format!("/v1/sessions/{tab}/bookmark"), None)).await;
         assert_eq!((status, text.as_str()), (StatusCode::CONFLICT, message));
     }
+}
+
+#[tokio::test]
+async fn bookmark_now_waits_for_the_first_prompt() {
+    let env = env();
+    let transcript = index_session(&env, ID, env.work.path());
+    reserve_tab(&env, "t1", Some("claude"));
+    let message = "Nothing to bookmark yet: the conversation starts with its first prompt.";
+    let (status, text) = call(&env.app, req("POST", "/v1/sessions/t1/bookmark", None)).await;
+    assert_eq!((status, text.as_str()), (StatusCode::CONFLICT, message));
+    assert!(
+        get_json(&env.app, "/v1/history/bookmarks")
+            .await
+            .1
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    let prompt = json!({
+        "hook_event_name": "UserPromptSubmit",
+        "session_id": ID,
+        "transcript_path": transcript.to_string_lossy(),
+        "cwd": env.work.path().to_string_lossy(),
+        "prompt": "hello",
+    });
+    assert!(env.state.history().note_event("t1", &prompt, 2000).is_none());
+    let (status, text) = call(&env.app, req("POST", "/v1/sessions/t1/bookmark", None)).await;
+    assert_eq!(status, StatusCode::OK, "{text}");
+    assert_eq!(marks::read(env.home.path(), "claude", ID).bookmarks.len(), 1);
 }
 
 #[tokio::test]

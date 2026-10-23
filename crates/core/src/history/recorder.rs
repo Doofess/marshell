@@ -9,7 +9,7 @@ use crate::registry::Registry;
 use marshell_protocol::api::SessionState;
 use marshell_protocol::history::{ConversationMarks, HistoryEntry, HistoryPatch, HistoryQuery, SearchHit};
 use serde_json::Value;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -69,13 +69,23 @@ impl std::fmt::Display for DeleteRefusal {
     }
 }
 
+/// What the marks lock guards besides the files it serializes: tab names and in-run prompt knowledge.
+#[derive(Default)]
+struct TabState {
+    /// Tab names, inherited by the tab's next conversation.
+    names: HashMap<String, String>,
+    /// Sessions that had a `UserPromptSubmit` in this run. After a restart the parsed turns say the same.
+    prompted: HashSet<String>,
+}
+
 pub struct History {
     home: PathBuf,
     /// None when the index could not be opened: history is off for this run.
     index: Mutex<Option<Index>>,
-    /// Serializes marks read-modify-write, delete, and hook name inheritance. Also holds tab names.
-    /// Always take this before the index or copying lock; never wait on it while holding either.
-    marks: Mutex<HashMap<String, String>>,
+    /// Serializes marks read-modify-write, delete, and hook name inheritance. Also holds tab names and the
+    /// sessions that have been prompted. Always take this before the index or copying lock; never wait on it
+    /// while holding either.
+    marks: Mutex<TabState>,
     /// Shared with the server so live checks use the current registry, even inside the marks lock.
     registry: Option<Arc<Registry>>,
     /// Sessions being copied right now. `Some` holds the newest request that arrived during the copy,
@@ -115,7 +125,7 @@ impl History {
         History {
             home: home.to_path_buf(),
             index: Mutex::new(index),
-            marks: Mutex::new(HashMap::new()),
+            marks: Mutex::new(TabState::default()),
             registry: None,
             copying: Mutex::new(HashMap::new()),
             settle: Mutex::new(SETTLE),
@@ -144,7 +154,10 @@ impl History {
         if !transcript_allowed(transcript_path, session_id) {
             return None;
         }
-        let names = self.marks.lock().unwrap();
+        let mut state = self.marks.lock().unwrap();
+        if event == "UserPromptSubmit" {
+            state.prompted.insert(session_id.to_string());
+        }
         let guard = self.index.lock().unwrap();
         let index = guard.as_ref()?;
 
@@ -186,7 +199,7 @@ impl History {
             if let Err(err) = archive::write_meta(&self.home, &meta) {
                 tracing::warn!("history sidecar write failed: {err:#}");
             }
-            if is_new && let Some(name) = names.get(tab_id) {
+            if is_new && let Some(name) = state.names.get(tab_id) {
                 let mut marks = marks::read(&self.home, AGENT, session_id);
                 if marks.name.is_none() {
                     marks.name = Some(name.clone());
@@ -262,13 +275,13 @@ impl History {
     }
 
     pub fn name_tab(&self, tab_id: &str, name: Option<&str>) {
-        let mut names = self.marks.lock().unwrap();
+        let mut state = self.marks.lock().unwrap();
         match name.and_then(marks::normalize_name) {
             Some(name) => {
-                names.insert(tab_id.to_string(), name);
+                state.names.insert(tab_id.to_string(), name);
             }
             None => {
-                names.remove(tab_id);
+                state.names.remove(tab_id);
             }
         }
     }
@@ -276,7 +289,7 @@ impl History {
     /// The tab route's whole rename, including an ended tab or one with no conversation yet.
     /// Keep registry, inherited name and marks in the same order across concurrent requests.
     pub(crate) fn rename_tab(&self, tab_id: &str, name: &str) -> anyhow::Result<bool> {
-        let mut names = self.marks.lock().unwrap();
+        let mut state = self.marks.lock().unwrap();
         let Some(name) = marks::normalize_name(name) else {
             return Ok(false);
         };
@@ -287,7 +300,7 @@ impl History {
         {
             return Ok(false);
         }
-        names.insert(tab_id.to_string(), name.clone());
+        state.names.insert(tab_id.to_string(), name.clone());
         let guard = self.index.lock().unwrap();
         if let Some(index) = guard.as_ref()
             && let Some(meta) = index.latest_for_tab(tab_id)?
@@ -316,7 +329,7 @@ impl History {
 
     pub fn patch(&self, agent: &str, session_id: &str, patch: &HistoryPatch) -> Result<Marks, &'static str> {
         let tags = patch.tags.as_deref().map(marks::normalize_tags).transpose()?;
-        let mut names = self.marks.lock().unwrap();
+        let mut state = self.marks.lock().unwrap();
         let guard = self.index.lock().unwrap();
         let index = guard.as_ref().ok_or("History is off for this run.")?;
         let failed = |err: anyhow::Error| {
@@ -350,10 +363,10 @@ impl History {
             }
             match &marks.name {
                 Some(name) => {
-                    names.insert(meta.tab_id, name.clone());
+                    state.names.insert(meta.tab_id, name.clone());
                 }
                 None => {
-                    names.remove(&meta.tab_id);
+                    state.names.remove(&meta.tab_id);
                 }
             }
         }
@@ -379,7 +392,7 @@ impl History {
     }
 
     pub fn bookmark_now(&self, tab_id: &str, at_ms: u64) -> Result<String, BookmarkRefusal> {
-        let _marks = self.marks.lock().unwrap();
+        let state = self.marks.lock().unwrap();
         if let Some(registry) = &self.registry {
             let tab = registry
                 .snapshot()
@@ -398,6 +411,10 @@ impl History {
         let meta = index.latest_for_tab(tab_id)?.ok_or(BookmarkRefusal::NothingYet)?;
         if meta.agent != AGENT {
             return Err(BookmarkRefusal::AnotherAgent);
+        }
+        // The row exists from SessionStart; the conversation starts with its first prompt.
+        if !state.prompted.contains(&meta.session_id) && index.turn_times(AGENT, &meta.session_id)?.is_empty() {
+            return Err(BookmarkRefusal::NothingYet);
         }
         let entry = index
             .entry(AGENT, &meta.session_id)?
