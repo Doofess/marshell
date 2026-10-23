@@ -2,9 +2,12 @@
 //! and copies the transcript into the archive on a blocking thread.
 
 use super::index::{Index, Opened};
+use super::marks::{self, Marks};
 use super::{SessionMeta, archive, transcript_allowed};
 use crate::agents::claude::transcript;
-use marshell_protocol::history::{HistoryEntry, HistoryQuery, SearchHit};
+use crate::registry::Registry;
+use marshell_protocol::api::SessionState;
+use marshell_protocol::history::{ConversationMarks, HistoryEntry, HistoryPatch, HistoryQuery, SearchHit};
 use serde_json::Value;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -18,10 +21,63 @@ const AGENT: &str = "claude";
 /// How long a transcript settles before it is copied: Claude writes the turn's last lines after the hook fires.
 const SETTLE: Duration = Duration::from_millis(1500);
 
+#[derive(Debug)]
+pub enum BookmarkRefusal {
+    NothingYet,
+    AnotherAgent,
+    Failed(anyhow::Error),
+}
+
+impl From<anyhow::Error> for BookmarkRefusal {
+    fn from(err: anyhow::Error) -> Self {
+        Self::Failed(err)
+    }
+}
+
+impl std::fmt::Display for BookmarkRefusal {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::NothingYet => f.write_str("Nothing to bookmark yet: the conversation starts with its first prompt."),
+            Self::AnotherAgent => f.write_str("Bookmarks work in Claude Code sessions for now."),
+            Self::Failed(err) => write!(f, "{err:#}"),
+        }
+    }
+}
+
+#[derive(Debug)]
+pub enum DeleteRefusal {
+    RunningInATab,
+    Copying,
+    Failed(anyhow::Error),
+}
+
+impl From<anyhow::Error> for DeleteRefusal {
+    fn from(err: anyhow::Error) -> Self {
+        Self::Failed(err)
+    }
+}
+
+impl std::fmt::Display for DeleteRefusal {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::RunningInATab => {
+                f.write_str("This conversation is running in a tab. Close the tab first, then delete Marshell's copy.")
+            }
+            Self::Copying => f.write_str("Marshell is saving this conversation right now. Try again in a moment."),
+            Self::Failed(err) => write!(f, "{err:#}"),
+        }
+    }
+}
+
 pub struct History {
     home: PathBuf,
     /// None when the index could not be opened: history is off for this run.
     index: Mutex<Option<Index>>,
+    /// Serializes marks read-modify-write, delete, and hook name inheritance. Also holds tab names.
+    /// Always take this before the index or copying lock; never wait on it while holding either.
+    marks: Mutex<HashMap<String, String>>,
+    /// Shared with the server so live checks use the current registry, even inside the marks lock.
+    registry: Option<Arc<Registry>>,
     /// Sessions being copied right now. `Some` holds the newest request that arrived during the copy,
     /// which runs once more after it.
     copying: Mutex<HashMap<String, Option<SessionMeta>>>,
@@ -59,10 +115,17 @@ impl History {
         History {
             home: home.to_path_buf(),
             index: Mutex::new(index),
+            marks: Mutex::new(HashMap::new()),
+            registry: None,
             copying: Mutex::new(HashMap::new()),
             settle: Mutex::new(SETTLE),
             hurry: AtomicBool::new(false),
         }
+    }
+
+    pub(crate) fn with_registry(mut self, registry: Arc<Registry>) -> Self {
+        self.registry = Some(registry);
+        self
     }
 
     /// Sets the wait before each copy (tests only need it short).
@@ -81,6 +144,7 @@ impl History {
         if !transcript_allowed(transcript_path, session_id) {
             return None;
         }
+        let names = self.marks.lock().unwrap();
         let guard = self.index.lock().unwrap();
         let index = guard.as_ref()?;
 
@@ -121,6 +185,15 @@ impl History {
             }
             if let Err(err) = archive::write_meta(&self.home, &meta) {
                 tracing::warn!("history sidecar write failed: {err:#}");
+            }
+            if is_new && let Some(name) = names.get(tab_id) {
+                let mut marks = marks::read(&self.home, AGENT, session_id);
+                if marks.name.is_none() {
+                    marks.name = Some(name.clone());
+                    if let Err(err) = self.save_marks(index, AGENT, session_id, &marks) {
+                        tracing::warn!("history name inheritance failed: {err:#}");
+                    }
+                }
             }
         }
         ends_turn.then_some(meta)
@@ -175,6 +248,224 @@ impl History {
         }
     }
 
+    pub fn bookmarks(&self, query: &HistoryQuery) -> anyhow::Result<Vec<SearchHit>> {
+        match self.index.lock().unwrap().as_ref() {
+            Some(index) => index.bookmarks(query),
+            None => Ok(Vec::new()),
+        }
+    }
+
+    /// Caller holds the marks lock from before the read through both writes.
+    fn save_marks(&self, index: &Index, agent: &str, session_id: &str, marks: &Marks) -> anyhow::Result<()> {
+        marks::write(&self.home, agent, session_id, marks)?;
+        index.set_marks(agent, session_id, marks)
+    }
+
+    pub fn name_tab(&self, tab_id: &str, name: Option<&str>) {
+        let mut names = self.marks.lock().unwrap();
+        match name.and_then(marks::normalize_name) {
+            Some(name) => {
+                names.insert(tab_id.to_string(), name);
+            }
+            None => {
+                names.remove(tab_id);
+            }
+        }
+    }
+
+    /// The tab route's whole rename, including an ended tab or one with no conversation yet.
+    /// Keep registry, inherited name and marks in the same order across concurrent requests.
+    pub(crate) fn rename_tab(&self, tab_id: &str, name: &str) -> anyhow::Result<bool> {
+        let mut names = self.marks.lock().unwrap();
+        let Some(name) = marks::normalize_name(name) else {
+            return Ok(false);
+        };
+        if !self
+            .registry
+            .as_ref()
+            .is_some_and(|registry| registry.rename(tab_id, &name))
+        {
+            return Ok(false);
+        }
+        names.insert(tab_id.to_string(), name.clone());
+        let guard = self.index.lock().unwrap();
+        if let Some(index) = guard.as_ref()
+            && let Some(meta) = index.latest_for_tab(tab_id)?
+        {
+            let mut marks = marks::read(&self.home, &meta.agent, &meta.session_id);
+            marks.name = Some(name);
+            self.save_marks(index, &meta.agent, &meta.session_id, &marks)?;
+        }
+        Ok(true)
+    }
+
+    /// Same rule as Resume: a Running tab whose newest conversation is this one.
+    fn running_in_tab(&self, index: &Index, meta: &SessionMeta) -> anyhow::Result<bool> {
+        let running = self.registry.as_ref().is_some_and(|registry| {
+            registry
+                .snapshot()
+                .sessions
+                .iter()
+                .any(|tab| tab.tab_id == meta.tab_id && tab.state == SessionState::Running)
+        });
+        Ok(running
+            && index
+                .latest_for_tab(&meta.tab_id)?
+                .is_some_and(|latest| latest.session_id == meta.session_id))
+    }
+
+    pub fn patch(&self, agent: &str, session_id: &str, patch: &HistoryPatch) -> Result<Marks, &'static str> {
+        let tags = patch.tags.as_deref().map(marks::normalize_tags).transpose()?;
+        let mut names = self.marks.lock().unwrap();
+        let guard = self.index.lock().unwrap();
+        let index = guard.as_ref().ok_or("History is off for this run.")?;
+        let failed = |err: anyhow::Error| {
+            tracing::warn!("history marks write failed: {err:#}");
+            "Could not save conversation marks."
+        };
+        let meta = index
+            .get(agent, session_id)
+            .map_err(failed)?
+            .ok_or("No such conversation.")?;
+        let mut marks = marks::read(&self.home, agent, session_id);
+        if let Some(name) = &patch.name {
+            marks.name = marks::normalize_name(name);
+        }
+        if let Some(tags) = tags {
+            marks.tags = tags;
+        }
+        if let Some(pinned) = patch.pinned {
+            marks.pinned = pinned;
+        }
+        if let Some(archived) = patch.archived {
+            marks.archived = archived;
+        }
+        self.save_marks(index, agent, session_id, &marks).map_err(failed)?;
+        if patch.name.is_some() && self.running_in_tab(index, &meta).map_err(failed)? {
+            // Keep this inside the same lock, so a later rename can't be overwritten by an earlier response.
+            if let Some(entry) = index.entry(agent, session_id).map_err(failed)?
+                && let Some(registry) = &self.registry
+            {
+                registry.rename(&meta.tab_id, &entry.title);
+            }
+            match &marks.name {
+                Some(name) => {
+                    names.insert(meta.tab_id, name.clone());
+                }
+                None => {
+                    names.remove(&meta.tab_id);
+                }
+            }
+        }
+        Ok(marks)
+    }
+
+    pub fn bookmark_turn(&self, agent: &str, session_id: &str, turn: u32, on: bool) -> anyhow::Result<()> {
+        let _marks = self.marks.lock().unwrap();
+        let guard = self.index.lock().unwrap();
+        let index = guard
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("History is off for this run."))?;
+        anyhow::ensure!(index.get(agent, session_id)?.is_some(), "No such conversation.");
+        let turns = index.turn_times(agent, session_id)?;
+        let mut marks = marks::read(&self.home, agent, session_id);
+        if on {
+            let at_ms = turns.iter().find(|(n, _)| *n == turn).map_or(0, |(_, at)| *at);
+            marks::add_bookmark(&mut marks, at_ms);
+        } else {
+            marks.bookmarks.retain(|at| marks::turn_for(*at, &turns) != turn);
+        }
+        self.save_marks(index, agent, session_id, &marks)
+    }
+
+    pub fn bookmark_now(&self, tab_id: &str, at_ms: u64) -> Result<String, BookmarkRefusal> {
+        let _marks = self.marks.lock().unwrap();
+        if let Some(registry) = &self.registry {
+            let tab = registry
+                .snapshot()
+                .sessions
+                .into_iter()
+                .find(|tab| tab.tab_id == tab_id)
+                .ok_or(BookmarkRefusal::NothingYet)?;
+            if tab.agent.as_deref() != Some(AGENT) {
+                return Err(BookmarkRefusal::AnotherAgent);
+            }
+        }
+        let guard = self.index.lock().unwrap();
+        let index = guard
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("History is off for this run."))?;
+        let meta = index.latest_for_tab(tab_id)?.ok_or(BookmarkRefusal::NothingYet)?;
+        if meta.agent != AGENT {
+            return Err(BookmarkRefusal::AnotherAgent);
+        }
+        let entry = index
+            .entry(AGENT, &meta.session_id)?
+            .ok_or(BookmarkRefusal::NothingYet)?;
+        let mut marks = marks::read(&self.home, AGENT, &meta.session_id);
+        marks::add_bookmark(&mut marks, at_ms);
+        self.save_marks(index, AGENT, &meta.session_id, &marks)?;
+        Ok(entry.title)
+    }
+
+    pub fn marks(&self, agent: &str, session_id: &str) -> ConversationMarks {
+        let _marks = self.marks.lock().unwrap();
+        let marks = marks::read(&self.home, agent, session_id);
+        let turns = self
+            .index
+            .lock()
+            .unwrap()
+            .as_ref()
+            .map(|index| index.turn_times(agent, session_id));
+        let turns = match turns {
+            Some(Ok(turns)) => turns,
+            Some(Err(err)) => {
+                tracing::warn!("could not resolve bookmarks: {err:#}");
+                Vec::new()
+            }
+            None => Vec::new(),
+        };
+        let mut bookmarked_turns: Vec<_> = marks.bookmarks.iter().map(|at| marks::turn_for(*at, &turns)).collect();
+        bookmarked_turns.sort_unstable();
+        bookmarked_turns.dedup();
+        ConversationMarks {
+            name: marks.name,
+            tags: marks.tags,
+            pinned: marks.pinned,
+            archived: marks.archived,
+            bookmarked_turns,
+        }
+    }
+
+    pub fn delete_copy(&self, agent: &str, session_id: &str) -> Result<(), DeleteRefusal> {
+        let _marks = self.marks.lock().unwrap();
+        if self.copying.lock().unwrap().contains_key(session_id) {
+            return Err(DeleteRefusal::Copying);
+        }
+        let guard = self.index.lock().unwrap();
+        let index = guard
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("History is off for this run."))?;
+        if let Some(meta) = index.get(agent, session_id)?
+            && self.running_in_tab(index, &meta)?
+        {
+            return Err(DeleteRefusal::RunningInATab);
+        }
+        index.remove(agent, session_id)?;
+        drop(guard);
+        let (archive, meta) = archive::archive_paths(&self.home, agent, session_id);
+        for path in [archive, meta, marks::marks_path(&self.home, agent, session_id)] {
+            for path in [&path, &crate::store::bak_path(&path)] {
+                match std::fs::remove_file(path) {
+                    Ok(()) => {}
+                    Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+                    Err(err) => return Err(anyhow::Error::from(err).into()),
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// Reads the session's archive copy and replaces what the index holds of it. The file is read and parsed
     /// with the index free; the lock is held only for the write. An archive that can't be read in full leaves
     /// the session listed, marked limited, with nothing to search. Does nothing when there is no archive or
@@ -196,10 +487,15 @@ impl History {
                 None
             }
         };
+        let _marks = self.marks.lock().unwrap();
         let guard = self.index.lock().unwrap();
         let Some(index) = guard.as_ref() else {
             return;
         };
+        // A delete may have finished while this archive was being parsed. Never recreate its row.
+        if !matches!(index.get(&meta.agent, &meta.session_id), Ok(Some(_))) {
+            return;
+        }
         let written = match &conversation {
             Some(c) => index.index_conversation(meta, c, len),
             None => index.mark_limited(meta, len),
@@ -266,6 +562,11 @@ impl History {
 /// a copy runs one more copy after it.
 pub fn schedule_copy(history: Arc<History>, meta: SessionMeta) {
     {
+        let _marks = history.marks.lock().unwrap();
+        // A queued hook may reach this after a delete. Only a new hook can add the session again.
+        if !matches!(history.get(&meta.agent, &meta.session_id), Ok(Some(_))) {
+            return;
+        }
         let mut copying = history.copying.lock().unwrap();
         if let Some(waiting) = copying.get_mut(&meta.session_id) {
             *waiting = Some(meta);

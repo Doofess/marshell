@@ -164,7 +164,7 @@ impl AppState {
         let layout = crate::layout::load(&home);
         // The tabs of the last run come back as Ended rows. Nothing is started, and this runs before
         // the saver subscribes, so seeding never writes the file.
-        let registry = Registry::new();
+        let registry = Arc::new(Registry::new());
         registry.seed_ended(&layout.tabs, |tab| Relaunch {
             profile_id: tab.profile_id.clone(),
             agent: tab.agent.clone(),
@@ -180,7 +180,7 @@ impl AppState {
             }
         };
         let config = crate::config::service::ConfigService::new(home.clone());
-        let history = Arc::new(crate::history::recorder::History::open(&home));
+        let history = Arc::new(crate::history::recorder::History::open(&home).with_registry(registry.clone()));
         Self(Arc::new(Inner {
             token,
             host: format!("127.0.0.1:{port}"),
@@ -191,7 +191,7 @@ impl AppState {
             profiles: Mutex::new(profiles),
             settings: Mutex::new(settings),
             layout: Mutex::new(layout),
-            registry: Arc::new(registry),
+            registry,
             sessions: Mutex::new(HashMap::new()),
             starting: Mutex::new(HashSet::new()),
             shell_panel: Mutex::new(None),
@@ -493,6 +493,7 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/sessions/reorder", post(sessions::reorder))
         .route("/v1/sessions/reopen", post(sessions::reopen))
         .route("/v1/sessions/{tab}/resume", post(sessions::resume))
+        .route("/v1/sessions/{tab}/bookmark", post(history::bookmark_now))
         .route("/v1/sessions/{tab}/restart", post(sessions::restart))
         .route("/v1/sessions/{tab}/muted", put(sessions::muted))
         .route(
@@ -545,7 +546,17 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/agents/{agent}/hooks/remove-plan", post(agents::remove_plan))
         .route("/v1/history", get(history::list))
         .route("/v1/history/search", get(history::search))
-        .route("/v1/history/{agent}/{session_id}", get(history::conversation))
+        .route("/v1/history/bookmarks", get(history::bookmarks))
+        .route(
+            "/v1/history/{agent}/{session_id}",
+            get(history::conversation)
+                .patch(history::patch)
+                .delete(history::delete_copy),
+        )
+        .route(
+            "/v1/history/{agent}/{session_id}/bookmarks/{turn}",
+            put(history::bookmark_turn).delete(history::unbookmark_turn),
+        )
         .route("/v1/history/{agent}/{session_id}/resume", post(history::resume))
         .route("/v1/events", get(events::handler))
         .route("/v1/pty/{tab}", get(pty_ws::handler))
