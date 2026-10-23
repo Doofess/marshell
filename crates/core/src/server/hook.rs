@@ -160,7 +160,8 @@ async fn fold_live(st: &AppState, role: HookRole, tab: &str, body: &serde_json::
                         }
                         other => other,
                     });
-                st.registry().stuck_event(tab, body, at_ms);
+                st.registry()
+                    .stuck_event(tab, crate::agents::claude::stuck::stuck_signal(body), at_ms);
                 st.registry().update_subagents(tab, body);
                 // Cancels a hold from an earlier event, so it runs before this Stop's own.
                 st.registry().follow_subagent_wait(tab, body);

@@ -240,7 +240,9 @@ mod tests {
             visible_tabs: vec!["t1".into()],
         };
         let attention = || state.registry().snapshot().sessions[0].attention.clone();
-        state.registry().mark("t1", crate::pty::Mark::Notify(None));
+        state
+            .registry()
+            .mark("t1", crate::pty::Mark::Notify(None), &state.effective_view());
         state.set_window_hidden(true);
         state.report_view(view.clone());
         assert!(attention().is_some());

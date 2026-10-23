@@ -58,6 +58,16 @@ pub struct CoreConfig {
     pub window_hidden: Arc<AtomicBool>,
 }
 
+/// The view with a hidden window counted as unfocused: the shell's visibility wins over the webview's last report.
+fn effective(reported: &marshell_protocol::api::UiView, hidden: bool) -> marshell_protocol::api::UiView {
+    let mut view = reported.clone();
+    if hidden {
+        view.window_focused = false;
+        view.visible_tabs.clear();
+    }
+    view
+}
+
 /// Shared server state. Cloning is cheap (one `Arc`).
 #[derive(Clone)]
 pub struct AppState(Arc<Inner>);
@@ -334,12 +344,14 @@ impl AppState {
         self.0.window_hidden.store(hidden, Ordering::SeqCst);
     }
     pub(crate) fn effective_view(&self) -> marshell_protocol::api::UiView {
-        let mut view = self.0.view.borrow().clone();
-        if self.0.window_hidden.load(Ordering::SeqCst) {
-            view.window_focused = false;
-            view.visible_tabs.clear();
-        }
-        view
+        effective(&self.0.view.borrow(), self.0.window_hidden.load(Ordering::SeqCst))
+    }
+    /// `effective_view` for a callback that outlives the call. It holds the channel and the flag, not
+    /// the state: the state owns the sessions that own the callback.
+    pub(crate) fn view_reader(&self) -> impl Fn() -> marshell_protocol::api::UiView + Send + Sync + 'static {
+        let view = self.0.view.subscribe();
+        let hidden = self.0.window_hidden.clone();
+        move || effective(&view.borrow(), hidden.load(Ordering::SeqCst))
     }
     /// The window lost focus, as the shell saw it. A webview that died or hung while focused can no longer say
     /// so, and its last report would otherwise keep every notification back.

@@ -270,6 +270,8 @@ pub(super) async fn spawn_into_map(
     let on_mark: Option<crate::pty::MarkCallback> = {
         let registry = st.0.registry.clone();
         let wake = st.0.foreground_wake.clone();
+        // Not the `AppState`: it owns this session, so holding it here would be a reference cycle.
+        let view = st.view_reader();
         let tab = tab_id.to_string();
         let marks = run.marks;
         Some(Box::new(move |mark| {
@@ -277,7 +279,8 @@ pub(super) async fn spawn_into_map(
                 return;
             }
             let started = mark == crate::pty::Mark::Executed;
-            registry.mark(&tab, mark);
+            // Read before the registry lock is taken.
+            registry.mark(&tab, mark, &view());
             // A command just started: look at what it runs now, not up to a second later. After the
             // registry knows the command runs, which is what lets a program be shown for the row.
             if started {

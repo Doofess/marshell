@@ -4,6 +4,7 @@ pub mod compact;
 pub mod hooks;
 pub mod request;
 pub mod status;
+pub mod stuck;
 
 use std::path::Path;
 use std::time::Duration;
