@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import type { Endpoint } from "../../generated/Endpoint";
@@ -16,6 +17,16 @@ describe("TerminalView (server markup)", () => {
   it("shows nothing extra without one", () => {
     const h = renderToStaticMarkup(<TerminalView endpoint={endpoint} tabId="t1" />);
     expect(h).not.toContain("terminal-placeholder");
+  });
+});
+
+// These tests have no DOM, so the effect itself never runs here; the source is checked instead.
+describe("TerminalView: focus on a new terminal", () => {
+  it("runs the focus effect again once the terminal exists, after its font has loaded", () => {
+    const src = readFileSync(new URL("./TerminalView.tsx", import.meta.url), "utf8");
+    const effect = /if \(autoFocus\) termRef\.current\?\.focus\(\);\s*\}, \[([^\]]*)\]\);/.exec(src);
+    expect(effect).not.toBeNull();
+    expect(effect![1]!.split(",").map((d) => d.trim())).toContain("fontReady");
   });
 });
 

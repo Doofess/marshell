@@ -288,13 +288,14 @@ export function TerminalView({ endpoint, tabId, placeholder, onOutput, onSize, a
     restyleRef.current?.();
   }, [theme]);
 
-  // Declared after the effect above so a new terminal exists by the time this runs.
+  // Declared after the effect above so a new terminal exists by the time this runs. The terminal is made only once its font has
+  // loaded, after the first render, so `fontReady` runs this again then: without it a new session's terminal never took focus.
   useEffect(() => {
     if (!visible) return;
     // Shown again after being hidden: the window may have changed size meanwhile, and a hidden host measures as zero.
     fitRef.current?.fit();
     if (autoFocus) termRef.current?.focus();
-  }, [autoFocus, visible, endpoint, tabId, focusToken]);
+  }, [autoFocus, visible, endpoint, tabId, focusToken, fontReady]);
 
   useEffect(() => {
     if (!promptJump || promptJump.token === lastJump.current) return;
