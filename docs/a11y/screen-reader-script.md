@@ -126,6 +126,17 @@ Run this one in the installed app, not the review page. Have three sessions open
 | H3 | Press Tab, then Shift+Tab, repeatedly | Focus stays inside the board | ☐ | ☐ |
 | H4 | Press Escape | The board closes and focus is back in the terminal it came from | ☐ | ☐ |
 
+## I. Terminal attention and stuck (phase 4d, at release sign-off)
+
+Run this one in the installed app, not the review page, with a scratch `MARSHELL_HOME`. Have a plain PowerShell session without hook status and a hooked agent session open. Keep another session selected while the shell prints its notification; opening the notifying session clears its attention.
+
+| # | Do | You should hear | Narrator | NVDA |
+| --- | --- | --- | :-: | :-: |
+| I1 | In the plain shell, run `Start-Sleep 5; Write-Host "$([char]27)]9;Build done$([char]7)"`, switch to another session before it prints, then read the shell's sidebar row without opening it | Its session number and name, "Build done", and "Needs you: question" | ☐ | ☐ |
+| I2 | Have the hooked agent repeat the same tool call with identical input nine times within four minutes, then read its sidebar row | "Same command 9× in 4 min" with the row's session number and name; the dashed ring's reason is readable as text, with no needs-you announcement or count increase | ☐ | ☐ |
+| I3 | Open Notifications and Tab to the switch in "Terminal programs" | "Alerts from terminal programs (bell, OSC 9, OSC 777), switch, on" by default, with "Off: the row still changes, with no banner or sound." as its description | ☐ | ☐ |
+| I4 | Press Space on that switch, then press Space again | The same switch is announced "off", then "on" | ☐ | ☐ |
+
 ## Recording the result
 
 In the review page's sign-off, answer with the table's letters (A to F): for example **"Screen reader: A pass, B fail (B6: focus went to the page, not the chip), C pass, Narrator and NVDA"**. A fail is a bug to fix before the sub-review is signed off, not a note for later. Put anything surprising (a phrase that is correct but long or odd) in `docs/IDEAS.md`.

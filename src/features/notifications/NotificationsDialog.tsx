@@ -63,6 +63,17 @@ export function NotificationsDialogView({ settings, closeToTray = null, error, o
             </section>
           )}
           {settings !== null && (
+            <section className="notifications-dialog__group" aria-label="Terminal programs">
+              <h3 className="notifications-dialog__name">Terminal programs</h3>
+              <Switch
+                label="Alerts from terminal programs (bell, OSC 9, OSC 777)"
+                checked={settings.terminal_alerts}
+                onChange={(terminal_alerts) => onChange({ ...settings, terminal_alerts })}
+                reason="Off: the row still changes, with no banner or sound."
+              />
+            </section>
+          )}
+          {settings !== null && (
             <section className="notifications-dialog__group" aria-label="Quiet hours">
               <Switch
                 label="Quiet hours"
