@@ -46,7 +46,7 @@ impl std::fmt::Display for BookmarkRefusal {
 
 #[derive(Debug)]
 pub enum BookmarkTurnRefusal {
-    /// The index has no time for this turn, so a bookmark could not be placed on it.
+    /// The index has no time for this turn (0-based), so a bookmark could not be placed on it. Shown 1-based.
     NotIndexed(u32),
     Failed(anyhow::Error),
 }
@@ -60,7 +60,11 @@ impl From<anyhow::Error> for BookmarkTurnRefusal {
 impl std::fmt::Display for BookmarkTurnRefusal {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::NotIndexed(turn) => write!(f, "Marshell hasn't indexed turn {turn} of this conversation yet."),
+            Self::NotIndexed(turn) => write!(
+                f,
+                "Marshell hasn't indexed turn {} of this conversation yet.",
+                u64::from(*turn) + 1
+            ),
             Self::Failed(err) => write!(f, "{err:#}"),
         }
     }

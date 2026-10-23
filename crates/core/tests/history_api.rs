@@ -689,13 +689,14 @@ async fn bookmark_now_waits_for_the_first_prompt() {
 async fn bookmarking_an_unknown_turn_is_refused() {
     let env = env();
     seed(&env, ID);
+    // The index counts turns from 0; the person reads them from 1, as on the Bookmark turn buttons.
     let uri = format!("/v1/history/claude/{ID}");
     let (status, text) = call(&env.app, req("PUT", &format!("{uri}/bookmarks/999"), None)).await;
     assert_eq!(
         (status, text.as_str()),
         (
             StatusCode::CONFLICT,
-            "Marshell hasn't indexed turn 999 of this conversation yet."
+            "Marshell hasn't indexed turn 1000 of this conversation yet."
         )
     );
     assert!(marks::read(env.home.path(), "claude", ID).bookmarks.is_empty());
