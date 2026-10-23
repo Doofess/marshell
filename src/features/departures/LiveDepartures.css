@@ -1,0 +1,19 @@
+.departures {
+  position: absolute;
+  inset: 40px 0 0 0;
+  z-index: 20;
+  background: var(--bg-base);
+  display: grid;
+  min-block-size: 0;
+}
+
+.departures > .board {
+  min-block-size: 0;
+  block-size: 100%;
+}
+
+@media (forced-colors: active) {
+  .departures {
+    background: Canvas;
+  }
+}

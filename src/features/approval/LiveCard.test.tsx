@@ -1,10 +1,27 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { APPROVALS } from "./fixtures";
-import { GONE_MESSAGE, RECEIPT_MS, EXIT_MS, cardReducer, displayRequest, type CardEvent, type CardMachine } from "./LiveCard";
+import { GONE_MESSAGE, RECEIPT_MS, EXIT_MS, LiveCard, cardReducer, displayRequest, type CardEvent, type CardMachine } from "./LiveCard";
 import { ApproveCard } from "./ApproveCard";
 
 const run = (events: CardEvent[], from: CardMachine = { phase: "pending" }) => events.reduce(cardReducer, from);
+
+describe("LiveCard initial focus", () => {
+  const actions = { onAnswer: () => {}, onJump: () => {}, onExpand: () => {}, onRestoreFocus: () => {} };
+  it("exposes Deny's selector as the initial focus target, never Allow", () => {
+    const h = renderToStaticMarkup(<LiveCard request={APPROVALS.safeBash} initialFocus="deny" {...actions} />);
+    expect(h).toContain('data-initial-focus="[data-kind=&quot;deny&quot;]"');
+    expect(h).toMatch(/<button[^>]*data-kind="deny"/);
+  });
+  it("targets the card title for Y, and the lane's one-liner for a terminal-only entry with no Deny", () => {
+    const h = renderToStaticMarkup(<LiveCard request={APPROVALS.safeBash} initialFocus="title" {...actions} />);
+    expect(h).toContain('data-initial-focus=".approve-card"');
+    const terminal = renderToStaticMarkup(<LiveCard request={{ ...APPROVALS.safeBash, terminalOnly: true }} initialFocus="deny" {...actions} />);
+    expect(terminal).toContain('data-initial-focus=".lane-row"');
+    expect(terminal).toMatch(/<button[^>]*class="lane-row"/);
+    expect(terminal).not.toMatch(/data-kind="(?:deny|allow)"/);
+  });
+});
 
 describe("cardReducer", () => {
   it("act then ok gives a receipt, then exiting on the first timer, then removed on the second", () => {

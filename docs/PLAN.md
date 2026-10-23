@@ -1034,6 +1034,12 @@ Decisions from the 2026-10-10 coverage audit (`docs/superpowers/plan-coverage-au
 
         Departures comes with 4c, and Doctor once the doctor is live. "Settings…" reads "Notifications…" until there is a settings page. Pause silences banners, sounds and the taskbar flash until Resume or until the app quits; it survives a core restart. The count, the title and the tray still count while paused, the tooltip adds "(notifications paused)", and the palette has the same toggle.
      5. Decided in planning: a left click on the tray icon shows and focuses the window, and a right click opens the menu (Linux is menu-only). The icon is the mono wands, white on a dark taskbar and black on a light one, with an accent dot while anything needs you. Quit doesn't ask, as closing didn't before 4b. If the tray can't be created, the close button quits.
+   - **Slice 4c decisions (2026-10-23).**
+     1. The Departures board opens full window, as brief §4 describes it: it covers the sidebar and the terminals below the title bar (the window controls stay), and the sessions keep running. Escape closes it, and Enter on a row jumps to that session and closes it.
+     2. It opens from the command palette ("Open Departures board") and from the tray menu ("Open Departures", the item 4b held back). There is no default key, because Ctrl+Shift+D is Split; one can be bound in Keyboard shortcuts.
+     3. A row flashes once with the accent only on an attention change: when the session starts needing you (permission or question), when it is Done, and when it errors. Working and idle going back and forth stay quiet, so a flash always means something. A muted session doesn't flash, as its badge doesn't bounce.
+     4. The board lists the same sessions as the sidebar: every open tab, plain shells and ended sessions included, so the two always agree.
+     5. Decided in planning: under reduced motion the flipping cells crossfade, as the motion table above says; brief §4's "static" is amended to match. The "+N more" line's "All sessions" button closes the board and opens the command palette, which lists every session.
    - Exit: every rule in brief §5.5 is verified on Windows 11 (phase 4 decision 4). Every sound has a visual equivalent.
 5. **History view and conversations.**
    - Conversations (added 2026-10-16; evidence in `docs/research/2026-10-16-accounts-cloud-extensions.md`): the history view also lists and manages every CLI's locally saved conversations (Claude Code, Codex CLI, others), not only sessions Marshell ran.

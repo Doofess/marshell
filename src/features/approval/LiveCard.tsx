@@ -5,6 +5,8 @@ import type { ApprovalRequest } from "./types";
 import { useArming } from "./useArming";
 import { useHold } from "./useHold";
 import { receiptText, subject } from "./headline";
+import type { CardFocus } from "../departures/nav";
+import { LaneRow } from "../lane/LaneRow";
 
 /** How long a receipt stays, and how long its exit takes. */
 export const RECEIPT_MS = 1500;
@@ -180,6 +182,7 @@ export type LiveCardProps = {
   request: ApprovalRequest;
   /** In the drawer: the payload is shown in full from the start. */
   inDrawer?: boolean;
+  initialFocus?: CardFocus;
   onAnswer: (request: ApprovalRequest, answer: Answer) => void;
   onJump: (request: ApprovalRequest) => void;
   /** Space or "Show all" on a card in the lane: the drawer opens with the full request. */
@@ -192,7 +195,7 @@ export type LiveCardProps = {
  * The approve card wired to the app: it owns the 500 ms arming (re-armed on focus and when the request changes) and the 600 ms hold
  * for a risky Allow, and turns the card's actions into answers. Enter jumps to the session and never allows.
  */
-export function LiveCard({ request, inDrawer = false, onAnswer, onJump, onExpand, onRestoreFocus }: LiveCardProps): ReactNode {
+export function LiveCard({ request, inDrawer = false, initialFocus, onAnswer, onJump, onExpand, onRestoreFocus }: LiveCardProps): ReactNode {
   const busy = request.busy === true;
   const [expanded, setExpanded] = useState(inDrawer);
   const { armed, rearm } = useArming(`${request.id}\n${JSON.stringify(request.detail)}\n${request.alwaysRule ?? ""}`);
@@ -200,6 +203,14 @@ export function LiveCard({ request, inDrawer = false, onAnswer, onJump, onExpand
   const element = useRef<HTMLDivElement>(null);
   const restore = useRef(onRestoreFocus);
   restore.current = onRestoreFocus;
+  // A terminal-only entry has no Deny, so both keys focus its one-liner.
+  const title = request.terminalOnly ? ".lane-row" : ".approve-card";
+  const focusTarget = initialFocus === undefined ? undefined : initialFocus === "deny" && !request.terminalOnly && request.detail.kind !== "question" ? '[data-kind="deny"]' : title;
+  useEffect(() => {
+    if (!focusTarget) return;
+    const target = element.current?.querySelector<HTMLElement>(focusTarget) ?? element.current?.querySelector<HTMLElement>(title);
+    target?.focus();
+  }, [request.id, focusTarget]);
   useEffect(
     () => () => {
       if (hadFocus.current) restore.current();
@@ -236,12 +247,12 @@ export function LiveCard({ request, inDrawer = false, onAnswer, onJump, onExpand
     }
   };
   return (
-    <div ref={element} className="live-card" onFocus={() => (hadFocus.current = true)} onBlur={(e) => {
+    <div ref={element} className="live-card" data-initial-focus={focusTarget} onFocus={() => (hadFocus.current = true)} onBlur={(e) => {
       if (e.currentTarget.contains(e.relatedTarget)) return;
       hadFocus.current = false;
       hold.cancel();
     }}>
-      <ApproveCard request={request} expanded={expanded} armed={canAnswer} holdProgress={hold.progress} onAction={onAction} onHoldStart={hold.begin} onHoldEnd={hold.cancel} onFocus={rearm} />
+      {request.terminalOnly ? <LaneRow request={request} onJump={onJump} /> : <ApproveCard request={request} expanded={expanded} armed={canAnswer} holdProgress={hold.progress} onAction={onAction} onHoldStart={hold.begin} onHoldEnd={hold.cancel} onFocus={rearm} />}
     </div>
   );
 }

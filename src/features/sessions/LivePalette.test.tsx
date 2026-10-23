@@ -9,9 +9,14 @@ describe("LivePalette", () => {
     const ids = LIVE_COMMANDS.map((c) => c.id);
     for (const id of ["launcher", "close", "reopen", "rename", "move-up", "move-down", "profiles", "appearance", "split", "unsplit", "layout", "resume", "zoom-pane", "nav-next-pane", "nav-none", "focus-mode", "sidebar", "group-by-project", "copy-recording-path", "pause", "continue"]) expect(ids, id).toContain(id);
     // Every other row would do nothing when chosen. (Remove-pane, Change-layout and Resume have no key shortcut; the window runs them from the palette.)
-    for (const id of ids) expect(["profiles", "appearance", "agents", "diagnostics", "notifications", "pause-notifications", "unsplit", "layout", "resume", "group-by-project", "clean-up-task", "copy-recording-path", "pause", "continue"].includes(id) || id.startsWith("mode-") || commandShortcut(id) !== null, id).toBe(true);
+    for (const id of ids) expect(["profiles", "appearance", "agents", "diagnostics", "notifications", "pause-notifications", "departures", "unsplit", "layout", "resume", "group-by-project", "clean-up-task", "copy-recording-path", "pause", "continue"].includes(id) || id.startsWith("mode-") || commandShortcut(id) !== null, id).toBe(true);
     for (const id of ["pause-notifications", "mode-manual", "mode-plan", "mode-auto-edit", "mode-full-auto", "mode-bypass"]) expect(ids, id).toContain(id);
     for (const id of ["doctor", "history", "go-to-session"]) expect(ids, id).not.toContain(id);
+  });
+  it("offers the Departures board", () => {
+    expect(LIVE_COMMANDS.map((c) => c.id)).toContain("departures");
+    const h = renderToStaticMarkup(<LivePalette sessions={PALETTE_SESSIONS} os="windows" onRun={() => {}} onClose={() => {}} />);
+    expect(h).toContain("Open Departures board");
   });
   it("offers Resume only when the window does not hide it", () => {
     const show = (hidden?: string[]) => renderToStaticMarkup(<LivePalette sessions={PALETTE_SESSIONS} os="windows" hidden={hidden} onRun={() => {}} onClose={() => {}} />);

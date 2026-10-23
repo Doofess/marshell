@@ -91,6 +91,22 @@ export function splitGroups(rows: BoardRow[]): { gate: BoardRow[]; others: Board
   return { gate, others };
 }
 
+/** Keep the held order and groups; new rows join the end of their own group. */
+export function holdGroups(groups: { gate: BoardRow[]; others: BoardRow[] }, hold: { order: string[]; gate: string[] }): { gate: BoardRow[]; others: BoardRow[] } {
+  const rows = new Map([...groups.gate, ...groups.others].map((r) => [r.id, r]));
+  const heldGate = new Set(hold.gate);
+  const gate: BoardRow[] = [];
+  const others: BoardRow[] = [];
+  for (const id of hold.order) {
+    const row = rows.get(id);
+    if (!row) continue;
+    (heldGate.has(id) ? gate : others).push(row);
+    rows.delete(id);
+  }
+  for (const row of rows.values()) (row.gate ? gate : others).push(row);
+  return { gate, others };
+}
+
 /** The "+N more sessions" line. */
 export const MORE_PX = 44;
 /** An open request (the approve card) under its row, which is taller than any row. */

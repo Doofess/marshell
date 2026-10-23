@@ -10,6 +10,15 @@ export const settleAt = (i: number): number => FLIP_CHAR_MS + Math.min(i * FLIP_
 
 export const flipDuration = (len: number): number => (len <= 0 ? 0 : settleAt(len - 1));
 
+export type FlipRun = { from: string; to: string; start: number };
+
+/** A new target starts at the current frame, even when the previous flip has not settled. */
+export function retarget(run: FlipRun | null, shown: string, to: string, now: number): FlipRun | null {
+  if (!run && to === shown) return null;
+  if (run && to === run.to) return run;
+  return { from: run ? flipFrame(run.from, run.to, now - run.start) : shown, to, start: now };
+}
+
 export function flipFrame(from: string, to: string, t: number): string {
   const n = Math.max(from.length, to.length);
   const f = from.padEnd(n);

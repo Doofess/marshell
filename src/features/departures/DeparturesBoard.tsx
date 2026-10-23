@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { AgentMark } from "../../components/AgentMark/AgentMark";
 import { selectedProps } from "../../components/a11y/SelectedMark";
 import { EmptyState } from "../../components/EmptyState/EmptyState";
@@ -6,8 +7,10 @@ import { SESSION_NUMBER_HINT } from "../sidebar/sessionNumber";
 import { ApproveCard } from "../approval/ApproveCard";
 import { APPROVALS } from "../approval/fixtures";
 import type { RowModel } from "../sidebar/types";
-import { boardRowLabel, boardRows, COLUMNS, fitRows, splitGroups, type BoardRow } from "./board";
+import { boardRowLabel, boardRows, COLUMNS, fitRows, holdGroups, splitGroups, type BoardRow } from "./board";
 import { FlipCell } from "./FlipCell";
+import { LiveFlipCell } from "./LiveFlipCell";
+import { fitLiveBoard } from "./liveBoard";
 import { keyHint } from "./nav";
 import { EMPTY_STATES } from "../onboarding/emptyStates";
 import "./Board.css";
@@ -22,6 +25,8 @@ export type DeparturesBoardProps = {
   layout?: ReadonlyMap<string, string>;
   /** The row whose request is open inline. */
   card?: string;
+  /** Keep the keyboard's session in view when the groups change. */
+  keep?: string;
   /** Rows that closed while the pointer was over the board: kept in place, dimmed. */
   stale?: string[];
   /** Per-row text changes for the motion clip: [rowId][cell] = { from, at }. */
@@ -31,6 +36,11 @@ export type DeparturesBoardProps = {
   /** One frozen moment: texts that replace a row's own status or waiting text (the filmstrip of the motion clip). */
   texts?: Record<string, Partial<Record<"status" | "waiting", string>>>;
   reduced?: boolean;
+  live?: boolean;
+  hold?: { order: string[]; gate: string[] };
+  renderCard?: (rowId: string) => ReactNode;
+  onAllSessions?: () => void;
+  onRowClick?: (rowId: string) => void;
 };
 
 const EMPTY = EMPTY_STATES.find((e) => e.id === "departures-empty")!;
@@ -41,10 +51,15 @@ const EMPTY = EMPTY_STATES.find((e) => e.id === "departures-empty")!;
  * moves with the arrows, Enter jumps to the session and Y or N opens the request inline, but Enter never answers it. The
  * gate-call header says which keys those are, with the letter the user's own layout prints on them.
  */
-export function DeparturesBoard({ rows, heightPx, active, layout, card, stale = [], flips = {}, tracks = {}, texts = {}, reduced = false }: DeparturesBoardProps) {
-  const groups = splitGroups(boardRows(rows));
-  const fit = fitRows(heightPx, groups, card !== undefined);
+export function DeparturesBoard({ rows, heightPx, active, layout, card, keep, stale = [], flips = {}, tracks = {}, texts = {}, reduced = false, live = false, hold, renderCard, onAllSessions, onRowClick }: DeparturesBoardProps) {
+  const sorted = splitGroups(boardRows(rows));
+  const groups = hold ? holdGroups(sorted, hold) : sorted;
+  const cardContent = card === undefined ? null : renderCard ? renderCard(card) : <ApproveCard request={APPROVALS.safeBash} />;
+  const hasCard = cardContent !== null && cardContent !== undefined;
+  const fit = renderCard || keep !== undefined ? fitLiveBoard(heightPx, groups, hasCard ? card : undefined, keep) : fitRows(heightPx, groups, hasCard);
   const shown = [...fit.gate, ...fit.others];
+  const rowsById = new Map(rows.map((r) => [r.id, r]));
+  const gateIds = new Set(groups.gate.map((r) => r.id));
   // One tab stop for the whole board (a roving tabindex): the active row, clamped to the rows shown, or the first when none is.
   const current = Math.min(Math.max(0, active ?? 0), Math.max(0, shown.length - 1));
 
@@ -63,20 +78,24 @@ export function DeparturesBoard({ rows, heightPx, active, layout, card, stale = 
     const t = texts[r.id];
     const statusNow = t?.status ?? r.statusText;
     const waitingNow = t?.waiting ?? r.waitingText;
-    const source = rows.find((x) => x.id === r.id)!;
+    const source = rowsById.get(r.id);
+    const gate = gateIds.has(r.id);
     return (
       <tr
         key={r.id}
         {...selectedProps(active !== undefined && current === index, "current", "board__row")}
-        data-gate={r.gate}
+        data-gate={gate}
+        data-row-id={r.id}
         data-agent={r.agent}
         data-stale={stale.includes(r.id) || undefined}
+        aria-disabled={stale.includes(r.id) || undefined}
         title={boardRowLabel(r)}
         role="row"
         tabIndex={current === index ? 0 : -1}
+        onClick={onRowClick && !stale.includes(r.id) ? () => onRowClick(r.id) : undefined}
       >
         <td role="cell" className="board__status">
-          <FlipCell from={f?.status?.from ?? statusNow} to={statusNow} at={f?.status?.at} reduced={reduced} track={track?.status} />
+          {live ? <LiveFlipCell text={statusNow} reduced={reduced} /> : <FlipCell from={f?.status?.from ?? statusNow} to={statusNow} at={f?.status?.at} reduced={reduced} track={track?.status} />}
         </td>
         <td role="cell" className="board__session">
           <span className="board__sr">Session </span>
@@ -85,7 +104,7 @@ export function DeparturesBoard({ rows, heightPx, active, layout, card, stale = 
             {r.name}
           </span>
           {/* Rows are held still while the pointer is over the board, so a row that now needs you says it will move. */}
-          {!r.gate && statusNow === "NEEDS YOU" && <span className="board__moves">Moves up when you move away</span>}
+          {!gate && statusNow === "NEEDS YOU" && <span className="board__moves">Moves up when you move away</span>}
         </td>
         <td role="cell" className="board__where">
           <span dir="auto">{r.where}</span>
@@ -94,11 +113,11 @@ export function DeparturesBoard({ rows, heightPx, active, layout, card, stale = 
           <AgentMark agent={r.agent} size={12} /> <span>{r.agentName}</span>
         </td>
         <td role="cell" className="board__waiting">
-          <FlipCell from={f?.waiting?.from ?? waitingNow} to={waitingNow} at={f?.waiting?.at} reduced={reduced} track={track?.waiting} />
+          {live ? <LiveFlipCell text={waitingNow} reduced={reduced} /> : <FlipCell from={f?.waiting?.from ?? waitingNow} to={waitingNow} at={f?.waiting?.at} reduced={reduced} track={track?.waiting} />}
         </td>
         <td role="cell" className="board__ctx">{r.ctxText}</td>
         <td role="cell" className="board__recap">
-          <span dir="auto" title={source.recap?.text}>
+          <span dir="auto" title={source?.recap?.text}>
             {r.recap}
           </span>
         </td>
@@ -107,12 +126,12 @@ export function DeparturesBoard({ rows, heightPx, active, layout, card, stale = 
   };
 
   const withCard = (r: BoardRow) =>
-    card === r.id
+    card === r.id && cardContent !== null && cardContent !== undefined
       ? [
           row(r),
           <tr key={`${r.id}-card`} className="board__card" role="row">
             <td role="cell" colSpan={COLUMNS.length}>
-              <ApproveCard request={APPROVALS.safeBash} />
+              {cardContent}
             </td>
           </tr>,
         ]
@@ -141,7 +160,7 @@ export function DeparturesBoard({ rows, heightPx, active, layout, card, stale = 
                 </span>
               </th>
             </tr>
-            {fit.gate.map(withCard)}
+            {fit.gate.flatMap(withCard)}
           </tbody>
         )}
         {fit.others.length > 0 && (
@@ -151,7 +170,7 @@ export function DeparturesBoard({ rows, heightPx, active, layout, card, stale = 
                 Other sessions · {groups.others.length}
               </th>
             </tr>
-            {fit.others.map(withCard)}
+            {fit.others.flatMap(withCard)}
           </tbody>
         )}
         {fit.hidden > 0 && (
@@ -159,7 +178,7 @@ export function DeparturesBoard({ rows, heightPx, active, layout, card, stale = 
             <tr className="board__more" role="row">
               <td role="cell" colSpan={COLUMNS.length}>
                 +{fit.hidden} more {fit.hidden === 1 ? "session" : "sessions"}{" "}
-                <button type="button" className="board__all">
+                <button type="button" className="board__all" onClick={onAllSessions}>
                   All sessions
                 </button>
               </td>

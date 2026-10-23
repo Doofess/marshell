@@ -15,7 +15,7 @@ const sep = (n: number): TrayItem => ({ id: `sep-${n}`, label: "", kind: "separa
 /**
  * The tray menu: open the window, open Departures, who needs you (at most five, with their numbers, then how many more),
  * go to the oldest waiting, then pause, the doctor, Notifications, and quit last. Only sessions that wait on the user are listed.
- * The live app has no Departures or Doctor to open yet: `departures: false` and `doctorIssues: null` leave them out, and the design stories show both.
+ * The live app opens Departures; `doctorIssues: null` leaves out the Doctor until it is available. The design stories show both.
  */
 export function trayItems(s: TrayState): TrayItem[] {
   const waiting = s.sessions.filter((x) => WAITING.has(x.status));
