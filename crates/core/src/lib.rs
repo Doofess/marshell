@@ -21,6 +21,7 @@ pub mod server;
 pub mod settings;
 pub mod shell;
 pub mod store;
+pub mod stuck;
 pub mod supervisor;
 pub mod tasks;
 pub mod wt;

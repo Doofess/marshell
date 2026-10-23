@@ -6,6 +6,7 @@ use std::collections::VecDeque;
 use std::sync::Mutex;
 
 use crate::pty::Mark;
+use crate::stuck::StuckTracker;
 use marshell_protocol::api::{
     Activity, CommandState, Foreground, LiveState, LiveStatus, SavedTab, SessionInfo, SessionMode, SessionState,
     SessionsSnapshot,
@@ -49,6 +50,7 @@ pub struct Entry {
     /// reads Done. Cleared by the next hook event, a process change or the end of a subagent wait.
     /// Not serialized.
     pending_done: Option<LiveStatus>,
+    stuck: StuckTracker,
 }
 
 impl Entry {
@@ -67,11 +69,27 @@ impl Entry {
     /// that said why there was no status. A new process, or none, starts blank.
     fn clear_live(&mut self) {
         self.info.live = None;
+        self.info.stuck = None;
+        self.stuck = StuckTracker::default();
         self.info.activity = None;
         self.info.status_note = None;
         self.running.clear();
         self.waiting = false;
         self.pending_done = None;
+    }
+
+    fn clear_stuck_outside_working(&mut self) {
+        match self.info.live.as_ref().map(|live| live.state) {
+            None | Some(LiveState::Ended) => {
+                self.info.stuck = None;
+                self.stuck = StuckTracker::default();
+            }
+            Some(LiveState::Working) => {}
+            _ => {
+                self.info.stuck = None;
+                self.stuck.clear_repeat();
+            }
+        }
     }
 }
 
@@ -176,6 +194,7 @@ impl Registry {
             running: Default::default(),
             waiting: false,
             pending_done: None,
+            stuck: StuckTracker::default(),
         });
         self.tx.send_replace(state.snapshot());
         number
@@ -219,6 +238,7 @@ impl Registry {
                 running: Default::default(),
                 waiting: false,
                 pending_done: None,
+                stuck: StuckTracker::default(),
             });
         }
         self.tx.send_replace(state.snapshot());
@@ -299,6 +319,10 @@ impl Registry {
         let mut state = self.state.lock().unwrap();
         if let Some(entry) = state.open.iter_mut().find(|e| e.info.tab_id == tab_id) {
             entry.info.state = new_state;
+            if entry.info.state != SessionState::Running {
+                entry.info.stuck = None;
+                entry.stuck = StuckTracker::default();
+            }
             self.tx.send_replace(state.snapshot());
         }
     }
@@ -475,7 +499,51 @@ impl Registry {
             && entry.info.live.as_ref() != Some(&next)
         {
             entry.info.live = Some(next);
+            entry.clear_stuck_outside_working();
             entry.info.activity = None;
+            self.tx.send_replace(state.snapshot());
+        }
+    }
+
+    /// Feeds a hook event, never a status line, into the session's stuck tracker.
+    pub fn stuck_event(&self, tab_id: &str, body: &serde_json::Value, now_ms: u64) {
+        let mut state = self.state.lock().unwrap();
+        if let Some(entry) = state.open.iter_mut().find(|e| e.info.tab_id == tab_id)
+            && entry.info.state == SessionState::Running
+        {
+            let previous = entry.info.stuck.clone();
+            entry.info.stuck = entry.stuck.on_event(body, now_ms);
+            entry.clear_stuck_outside_working();
+            if entry.info.stuck != previous {
+                self.tx.send_replace(state.snapshot());
+            }
+        }
+    }
+
+    /// Checks hook silence while Working. A repeat verdict takes precedence over quiet.
+    pub fn check_stuck(&self, now_ms: u64, quiet_ms: u64) {
+        let mut state = self.state.lock().unwrap();
+        let mut changed = false;
+        for entry in &mut state.open {
+            let previous = entry.info.stuck.clone();
+            if entry.info.state == SessionState::Running {
+                let working = entry
+                    .info
+                    .live
+                    .as_ref()
+                    .is_some_and(|live| live.state == LiveState::Working);
+                entry.info.stuck = entry
+                    .stuck
+                    .repeat()
+                    .or_else(|| entry.stuck.quiet(working, now_ms, quiet_ms));
+                entry.clear_stuck_outside_working();
+            } else {
+                entry.info.stuck = None;
+                entry.stuck = StuckTracker::default();
+            }
+            changed |= entry.info.stuck != previous;
+        }
+        if changed {
             self.tx.send_replace(state.snapshot());
         }
     }
@@ -583,6 +651,7 @@ impl Registry {
             live.since_ms = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .map_or(0, |d| d.as_millis() as u64);
+            entry.clear_stuck_outside_working();
             entry.waiting = false;
             entry.pending_done = None;
             self.tx.send_replace(state.snapshot());
@@ -630,6 +699,7 @@ impl Registry {
             } else {
                 return;
             }
+            entry.clear_stuck_outside_working();
             self.tx.send_replace(state.snapshot());
         }
     }
@@ -645,6 +715,7 @@ impl Registry {
         {
             if note.is_some() {
                 entry.info.live = None;
+                entry.clear_stuck_outside_working();
                 entry.pending_done = None;
             }
             entry.info.status_note = note;
@@ -1788,6 +1859,130 @@ mod tests {
         reg.reserve("a", relaunch("A"));
         reg.update_live("a", |_| Some(working_on("Editing a.rs")));
         reg
+    }
+
+    fn stuck_repeat(reg: &Registry) {
+        for ms in 1..=9 {
+            reg.stuck_event(
+                "a",
+                &serde_json::json!({
+                    "hook_event_name": "PreToolUse", "tool_name": "Bash", "tool_input": {"command": "pwd"}
+                }),
+                ms,
+            );
+        }
+        assert_eq!(
+            row(reg, "a").stuck.as_ref().unwrap().reason,
+            marshell_protocol::api::StuckReason::Repeat
+        );
+    }
+
+    #[test]
+    fn stuck_clears_when_live_leaves_working() {
+        for next in [
+            LiveState::Done,
+            LiveState::NeedsPermission,
+            LiveState::NeedsQuestion,
+            LiveState::Idle,
+            LiveState::Error,
+            LiveState::Ended,
+        ] {
+            let reg = reg_working_on_a();
+            stuck_repeat(&reg);
+            reg.update_live("a", |_| Some(live(next)));
+            assert_eq!(row(&reg, "a").stuck, None);
+            reg.stuck_event("a", &serde_json::json!({"hook_event_name": "Stop"}), 10);
+            reg.check_stuck(1_000_000, 600_000);
+            assert_eq!(row(&reg, "a").stuck, None);
+            reg.update_live("a", |_| Some(live(LiveState::Working)));
+            reg.check_stuck(11, 600_000);
+            assert_eq!(row(&reg, "a").stuck, None);
+        }
+        let reg = reg_working_on_a();
+        stuck_repeat(&reg);
+        reg.hold_done("a", done_with_recap("Done"));
+        reg.settle_done("a");
+        assert_eq!(row(&reg, "a").stuck, None);
+        reg.update_live("a", |_| Some(live(LiveState::Working)));
+        reg.check_stuck(11, 600_000);
+        assert_eq!(row(&reg, "a").stuck, None);
+
+        let reg = reg_working_on_a();
+        stop_with_running_subagent(&reg);
+        stuck_repeat(&reg);
+        fold_claude_event(
+            &reg,
+            serde_json::json!({"hook_event_name": "SubagentStop", "agent_id": "x"}),
+        );
+        assert!(reg.settle_subagent_wait("a"));
+        assert_eq!(row(&reg, "a").stuck, None);
+        reg.update_live("a", |_| Some(live(LiveState::Working)));
+        reg.check_stuck(11, 600_000);
+        assert_eq!(row(&reg, "a").stuck, None);
+    }
+
+    #[test]
+    fn check_stuck_broadcasts_only_on_change() {
+        let reg = reg_working_on_a();
+        let mut rx = reg.subscribe();
+        reg.stuck_event("a", &serde_json::json!({"hook_event_name": "UserPromptSubmit"}), 100);
+        assert!(!rx.has_changed().unwrap());
+        reg.check_stuck(600_099, 600_000);
+        assert!(!rx.has_changed().unwrap());
+        reg.check_stuck(600_100, 600_000);
+        assert!(rx.has_changed().unwrap());
+        assert_eq!(
+            row(&reg, "a").stuck,
+            Some(marshell_protocol::api::Stuck {
+                reason: marshell_protocol::api::StuckReason::Quiet,
+                since_ms: 600_100
+            })
+        );
+        rx.borrow_and_update();
+        reg.check_stuck(900_000, 600_000);
+        assert!(!rx.has_changed().unwrap());
+        reg.stuck_event("a", &serde_json::json!({"hook_event_name": "Notification"}), 900_001);
+        assert!(rx.has_changed().unwrap());
+        assert_eq!(row(&reg, "a").stuck, None);
+        stuck_repeat(&reg);
+        rx.borrow_and_update();
+        reg.check_stuck(1_000_000, 600_000);
+        assert!(!rx.has_changed().unwrap());
+        reg.stuck_event("a", &serde_json::json!({"hook_event_name": "PostToolUse"}), 1_000_001);
+        assert!(!rx.has_changed().unwrap());
+    }
+
+    #[test]
+    fn stuck_tracker_resets_when_session_ends() {
+        for end in 0..6 {
+            let reg = reg_working_on_a();
+            stuck_repeat(&reg);
+            match end {
+                0 => reg.mark_exited("a", generation_of(&reg, "a"), 0),
+                1 => reg.set_state("a", SessionState::Ended),
+                2 => reg.set_status_note("a", Some("Status off".into())),
+                3 => {
+                    reg.begin_restart("a", SessionMode::Manual).unwrap();
+                }
+                4 => {
+                    reg.close("a");
+                }
+                _ => reg.update_live("a", |_| Some(live(LiveState::Ended))),
+            }
+            if end == 4 {
+                let state = reg.state.lock().unwrap();
+                assert_eq!(state.closed[0].info.stuck, None);
+                assert_eq!(state.closed[0].stuck.quiet(true, 1_000_000, 600_000), None);
+                continue;
+            }
+            assert_eq!(row(&reg, "a").stuck, None);
+            reg.set_state("a", SessionState::Running);
+            reg.update_live("a", |_| Some(live(LiveState::Working)));
+            reg.check_stuck(1_000_000, 600_000);
+            assert_eq!(row(&reg, "a").stuck, None);
+            reg.stuck_event("a", &serde_json::json!({"hook_event_name": "PreToolUse", "tool_name": "Bash", "tool_input": {"command": "pwd"}}), 10);
+            assert_eq!(row(&reg, "a").stuck, None);
+        }
     }
 
     #[test]

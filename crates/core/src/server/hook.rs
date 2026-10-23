@@ -160,6 +160,7 @@ async fn fold_live(st: &AppState, role: HookRole, tab: &str, body: &serde_json::
                         }
                         other => other,
                     });
+                st.registry().stuck_event(tab, body, at_ms);
                 st.registry().update_subagents(tab, body);
                 // Cancels a hold from an earlier event, so it runs before this Stop's own.
                 st.registry().follow_subagent_wait(tab, body);
@@ -232,4 +233,81 @@ pub struct EventsQuery {
 /// The kept events, oldest first: a tab's, or the untabbed ones without `?tab=`.
 pub async fn events(State(st): State<AppState>, Query(q): Query<EventsQuery>) -> Json<Vec<HookEventRecord>> {
     Json(st.hook_log().recent(q.tab.as_deref()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use marshell_protocol::api::{Stuck, StuckReason};
+    use serde_json::json;
+
+    #[tokio::test]
+    async fn stuck_statusline_neither_resets_repeats_nor_counts_as_progress() {
+        let home = tempfile::tempdir().unwrap();
+        let st = AppState::new("test-token".into(), 5555, vec![], home.path().into(), vec![])
+            .with_claude_version(Some("2.1.302".into()))
+            .with_claude_compact_paths(home.path().join("user"), vec![]);
+        st.registry().reserve(
+            "a",
+            crate::registry::Relaunch {
+                profile_id: "test".into(),
+                agent: Some("claude".into()),
+                cwd: "C:/work".into(),
+                mode: None,
+                name: "A".into(),
+            },
+        );
+        let call = json!({"hook_event_name": "PreToolUse", "tool_name": "Bash", "tool_input": {"command": "pwd"}});
+        for ms in 1..=9 {
+            fold_live(&st, HookRole::Event, "a", &call, ms * 10).await;
+            fold_live(
+                &st,
+                HookRole::Event,
+                "a",
+                &json!({"hook_event_name": "PostToolUse"}),
+                ms * 10 + 1,
+            )
+            .await;
+            fold_live(
+                &st,
+                HookRole::Event,
+                "a",
+                &json!({"hook_event_name": "Notification", "notification_type": "other"}),
+                ms * 10 + 2,
+            )
+            .await;
+            fold_live(
+                &st,
+                HookRole::Statusline,
+                "a",
+                &json!({"model": {"id": "test"}}),
+                ms * 10 + 3,
+            )
+            .await;
+        }
+        assert_eq!(
+            st.registry().snapshot().sessions[0].stuck,
+            Some(Stuck {
+                reason: StuckReason::Repeat,
+                since_ms: 90
+            })
+        );
+        fold_live(
+            &st,
+            HookRole::Event,
+            "a",
+            &json!({"hook_event_name": "UserPromptSubmit"}),
+            100,
+        )
+        .await;
+        fold_live(&st, HookRole::Statusline, "a", &json!({}), 600_099).await;
+        st.registry().check_stuck(600_100, 600_000);
+        assert_eq!(
+            st.registry().snapshot().sessions[0].stuck,
+            Some(Stuck {
+                reason: StuckReason::Quiet,
+                since_ms: 600_100
+            })
+        );
+    }
 }
