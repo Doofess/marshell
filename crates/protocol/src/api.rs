@@ -164,6 +164,44 @@ pub struct SessionInfo {
     /// True while the user has muted this session's notifications.
     #[serde(default)]
     pub muted: bool,
+    /// A terminal program asked for attention (OSC 9, OSC 777 or a bell) in a session without hook
+    /// status. Cleared when the person types into the session or looks at it.
+    #[serde(default)]
+    pub attention: Option<Attention>,
+    /// A hooked agent that repeats one tool call or goes quiet while Working. Never notifies.
+    #[serde(default)]
+    pub stuck: Option<Stuck>,
+}
+
+/// A terminal program's request for attention.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct Attention {
+    /// The notification's text: trimmed, capped at 200 chars. None for a bare bell.
+    pub message: Option<String>,
+    /// When the first signal of this attention arrived. A flood keeps the first time.
+    #[ts(type = "number")]
+    pub since_ms: u64,
+}
+
+/// Why an agent looks stuck.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum StuckReason {
+    /// The same tool call with identical input, 9 times in 4 minutes.
+    Repeat,
+    /// Working with no hook event for 10 minutes.
+    Quiet,
+}
+
+/// An agent that looks stuck, and since when.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct Stuck {
+    pub reason: StuckReason,
+    #[ts(type = "number")]
+    pub since_ms: u64,
 }
 
 /// What an agent session is doing, as its hooks report it.
@@ -822,6 +860,8 @@ pub struct NotifySettings {
     /// True when a subagent finishing plays a sound.
     pub subagent_sound: bool,
     pub quiet_hours: QuietHours,
+    /// True when OSC 9, OSC 777 and bells from sessions without hooks raise a banner and sound.
+    pub terminal_alerts: bool,
 }
 
 impl Default for NotifySettings {
@@ -833,6 +873,7 @@ impl Default for NotifySettings {
             error: on,
             subagent_sound: false,
             quiet_hours: QuietHours::default(),
+            terminal_alerts: true,
         }
     }
 }
@@ -935,6 +976,26 @@ mod tests {
     }
 
     #[test]
+    fn session_info_without_attention_or_stuck_deserializes() {
+        let json = r#"{"tab_id":"a","number":1,"name":"A","agent":null,"profile_id":"cmd","cwd":"C:/w","project":"C:/w","mode":null,"state":{"kind":"running"},"command":{"kind":"unknown"}}"#;
+        let info = serde_json::from_str::<SessionInfo>(json).unwrap();
+        assert_eq!(info.attention, None);
+        assert_eq!(info.stuck, None);
+    }
+
+    #[test]
+    fn stuck_reason_serializes_snake_case() {
+        let s = Stuck {
+            reason: StuckReason::Repeat,
+            since_ms: 5,
+        };
+        assert_eq!(
+            serde_json::to_string(&s).unwrap(),
+            r#"{"reason":"repeat","since_ms":5}"#
+        );
+    }
+
+    #[test]
     fn saved_tab_without_muted_deserializes_false() {
         let json = r#"{"tab_id":"a","number":1,"name":"A","agent":null,"profile_id":"cmd","cwd":"C:/w"}"#;
         assert!(!serde_json::from_str::<SavedTab>(json).unwrap().muted);
@@ -959,6 +1020,8 @@ mod tests {
             activity: None,
             status_note: None,
             muted: true,
+            attention: None,
+            stuck: None,
         };
         let mut value = serde_json::to_value(&info).unwrap();
         value.as_object_mut().unwrap().remove("muted");

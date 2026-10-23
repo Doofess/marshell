@@ -29,6 +29,8 @@ const info = (n: number, patch: Partial<SessionInfo> = {}): SessionInfo => ({
   activity: null,
   status_note: null,
   muted: false,
+  attention: null,
+  stuck: null,
   ...patch,
 });
 const claude = (n: number, patch: Partial<SessionInfo> = {}) => info(n, { name: "Claude Code", agent: "claude", ...patch });

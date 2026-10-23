@@ -9,6 +9,7 @@ const DEFAULTS: NotifySettings = {
   error: { banner: true, sound: true },
   subagent_sound: false,
   quiet_hours: { enabled: false, start: "22:00", end: "08:00" },
+  terminal_alerts: true,
 };
 const none = () => {};
 const view = (settings: NotifySettings | null = DEFAULTS, error: string | null = null) =>

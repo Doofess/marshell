@@ -129,6 +129,8 @@ mod tests {
                 activity: None,
                 status_note: None,
                 muted: false,
+                attention: None,
+                stuck: None,
                 live: Some(LiveStatus {
                     state,
                     phrase: String::new(),
