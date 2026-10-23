@@ -227,13 +227,13 @@ impl Index {
 
     /// The sessions, newest `updated_ms` first, narrowed by the filters that are set.
     pub fn list(&self, q: &HistoryQuery) -> anyhow::Result<Vec<HistoryEntry>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT agent, session_id, tab_id, cwd, title, branch, model, version, limited, turns, started_ms, updated_ms
+        let mut stmt = self.conn.prepare(&format!(
+            "SELECT {ENTRY_COLUMNS}
              FROM sessions
              WHERE (?1 IS NULL OR agent = ?1) AND (?2 IS NULL OR cwd = ?2) AND (?3 IS NULL OR branch = ?3)
                AND (?4 IS NULL OR model = ?4) AND (?5 IS NULL OR updated_ms >= ?5)
-             ORDER BY updated_ms DESC, session_id LIMIT ?6",
-        )?;
+             ORDER BY updated_ms DESC, session_id LIMIT ?6"
+        ))?;
         let rows = stmt.query_map(
             params![
                 q.agent,
@@ -243,24 +243,18 @@ impl Index {
                 q.since_ms.map(|ms| ms as i64),
                 LIST_LIMIT
             ],
-            |row| {
-                Ok(HistoryEntry {
-                    agent: row.get(0)?,
-                    session_id: row.get(1)?,
-                    tab_id: row.get(2)?,
-                    cwd: row.get(3)?,
-                    title: row.get(4)?,
-                    branch: row.get(5)?,
-                    model: row.get(6)?,
-                    version: row.get(7)?,
-                    limited: row.get(8)?,
-                    turns: row.get::<_, i64>(9)? as u32,
-                    started_ms: row.get::<_, i64>(10)? as u64,
-                    updated_ms: row.get::<_, i64>(11)? as u64,
-                })
-            },
+            read_entry,
         )?;
         Ok(rows.collect::<rusqlite::Result<_>>()?)
+    }
+
+    /// One session as the list shows it, if the index has it.
+    pub fn entry(&self, agent: &str, session_id: &str) -> anyhow::Result<Option<HistoryEntry>> {
+        let sql = format!("SELECT {ENTRY_COLUMNS} FROM sessions WHERE agent = ?1 AND session_id = ?2");
+        Ok(self
+            .conn
+            .query_row(&sql, params![agent, session_id], read_entry)
+            .optional()?)
     }
 
     /// Turns that match what a person typed, best first. The text only ever reaches SQLite as the bound
@@ -472,6 +466,26 @@ fn insert(conn: &Connection, meta: &SessionMeta) -> anyhow::Result<()> {
     )
     .context("saving a session in the history index")?;
     Ok(())
+}
+
+const ENTRY_COLUMNS: &str =
+    "agent, session_id, tab_id, cwd, title, branch, model, version, limited, turns, started_ms, updated_ms";
+
+fn read_entry(row: &Row) -> rusqlite::Result<HistoryEntry> {
+    Ok(HistoryEntry {
+        agent: row.get(0)?,
+        session_id: row.get(1)?,
+        tab_id: row.get(2)?,
+        cwd: row.get(3)?,
+        title: row.get(4)?,
+        branch: row.get(5)?,
+        model: row.get(6)?,
+        version: row.get(7)?,
+        limited: row.get(8)?,
+        turns: row.get::<_, i64>(9)? as u32,
+        started_ms: row.get::<_, i64>(10)? as u64,
+        updated_ms: row.get::<_, i64>(11)? as u64,
+    })
 }
 
 fn read_row(row: &Row) -> rusqlite::Result<SessionMeta> {

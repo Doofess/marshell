@@ -161,7 +161,7 @@ pub(super) fn start_folder(run: &Resolved, requested: Option<String>) -> String 
 
 /// Reserves a number, starts the process and records it. A failed spawn gives the number back.
 #[allow(clippy::too_many_arguments)]
-async fn start_session(
+pub(super) async fn start_session(
     st: &AppState,
     run: Resolved,
     agent: Option<String>,
@@ -571,8 +571,8 @@ pub async fn reopen(State(st): State<AppState>, body: Bytes) -> Result<Json<Crea
 
 #[derive(Deserialize)]
 pub struct ResumeRequest {
-    cols: u16,
-    rows: u16,
+    pub(super) cols: u16,
+    pub(super) rows: u16,
 }
 
 /// A 409 whose body tells the user why Resume cannot start the tab.
@@ -601,7 +601,7 @@ fn cannot_start_again(st: &AppState, info: &SessionInfo) -> Option<String> {
 }
 
 /// The refusal when Marshell holds a copy of the tab's Claude conversation but Claude's transcript file is gone.
-const NO_CONVERSATION: &str = "Claude Code no longer has this conversation, so it can't be resumed.";
+pub(super) const NO_CONVERSATION: &str = "Claude Code no longer has this conversation, so it can't be resumed.";
 
 /// What a Resume or Restart starts.
 #[derive(Debug, PartialEq, Eq)]

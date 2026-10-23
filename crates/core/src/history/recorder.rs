@@ -137,6 +137,28 @@ impl History {
             .flatten()
     }
 
+    /// False when the index could not be opened: history is off for this run.
+    pub fn is_on(&self) -> bool {
+        self.index.lock().unwrap().is_some()
+    }
+
+    /// The session's sidecar data from the index. None when the index doesn't have it, and when history is off.
+    /// Blocking.
+    pub fn get(&self, agent: &str, session_id: &str) -> anyhow::Result<Option<SessionMeta>> {
+        match self.index.lock().unwrap().as_ref() {
+            Some(index) => index.get(agent, session_id),
+            None => Ok(None),
+        }
+    }
+
+    /// The session as the list shows it. None when the index doesn't have it, and when history is off. Blocking.
+    pub fn entry(&self, agent: &str, session_id: &str) -> anyhow::Result<Option<HistoryEntry>> {
+        match self.index.lock().unwrap().as_ref() {
+            Some(index) => index.entry(agent, session_id),
+            None => Ok(None),
+        }
+    }
+
     /// The listed conversations, newest first. Empty when history is off for this run. Blocking.
     pub fn list(&self, query: &HistoryQuery) -> anyhow::Result<Vec<HistoryEntry>> {
         match self.index.lock().unwrap().as_ref() {

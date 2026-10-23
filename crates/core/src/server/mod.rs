@@ -9,6 +9,7 @@ mod folders;
 mod foreground;
 pub mod frames;
 mod guard;
+mod history;
 mod hook;
 mod layout;
 mod permissions;
@@ -542,6 +543,10 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/agents/{agent}/setup", get(agents::setup))
         .route("/v1/agents/{agent}/hooks/plan", post(agents::plan))
         .route("/v1/agents/{agent}/hooks/remove-plan", post(agents::remove_plan))
+        .route("/v1/history", get(history::list))
+        .route("/v1/history/search", get(history::search))
+        .route("/v1/history/{agent}/{session_id}", get(history::conversation))
+        .route("/v1/history/{agent}/{session_id}/resume", post(history::resume))
         .route("/v1/events", get(events::handler))
         .route("/v1/pty/{tab}", get(pty_ws::handler))
         .layer(axum::middleware::from_fn_with_state(state.clone(), guard::auth_guard))

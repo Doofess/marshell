@@ -1,0 +1,339 @@
+//! The History routes: list, search, one conversation, and resume.
+
+mod common;
+
+use axum::body::Body;
+use axum::http::{Request, StatusCode, header};
+use marshell_core::history::archive::{archive_paths, copy_transcript};
+use marshell_core::server::{AppState, router};
+use marshell_protocol::api::{Profile, ShellFamily};
+use serde_json::{Value, json};
+use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
+use tower::ServiceExt;
+
+const TOKEN: &str = "test-token";
+const PORT: u16 = 5557;
+const ID: &str = "00000000-0000-4000-8000-000000000001";
+const BASIC: &str = include_str!("fixtures/claude/transcripts/2.1.309/basic.jsonl");
+const NO_SUCH: &str = "No such conversation.";
+const NO_COPY: &str = "Marshell has no copy of this conversation yet.";
+const NO_CONVERSATION: &str = "Claude Code no longer has this conversation, so it can't be resumed.";
+
+struct Env {
+    state: AppState,
+    app: axum::Router,
+    home: tempfile::TempDir,
+    work: tempfile::TempDir,
+}
+
+/// A profile whose agent "claude" runs the fake agent in `print` mode: it prints its own arguments.
+fn printer() -> Profile {
+    Profile {
+        id: "printer".into(),
+        name: "Printer".into(),
+        command: vec![env!("CARGO_BIN_EXE_fake-agent").into(), "print".into()],
+        family: ShellFamily::Posix,
+        cwd: None,
+        env: Vec::new(),
+        shell_integration: true,
+        terminal_theme: None,
+        detected: true,
+    }
+}
+
+fn env() -> Env {
+    common::tie_children_to_test();
+    let home = tempfile::tempdir().unwrap();
+    let work = tempfile::tempdir().unwrap();
+    env_in(home, work)
+}
+
+fn env_in(home: tempfile::TempDir, work: tempfile::TempDir) -> Env {
+    let state = AppState::new(
+        TOKEN.into(),
+        PORT,
+        vec!["http://tauri.localhost".into()],
+        home.path().to_path_buf(),
+        vec![printer()],
+    )
+    .with_agent_check(|_| true);
+    Env {
+        app: router(state.clone()),
+        state,
+        home,
+        work,
+    }
+}
+
+fn req(method: &str, uri: &str, body: Option<Value>) -> Request<Body> {
+    let builder = Request::builder()
+        .method(method)
+        .uri(uri)
+        .header(header::HOST, format!("127.0.0.1:{PORT}"))
+        .header(header::AUTHORIZATION, format!("Bearer {TOKEN}"));
+    match body {
+        Some(json) => builder
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(json.to_string()))
+            .unwrap(),
+        None => builder.body(Body::empty()).unwrap(),
+    }
+}
+
+/// The status and body text of a request.
+async fn call(app: &axum::Router, request: Request<Body>) -> (StatusCode, String) {
+    let res = app.clone().oneshot(request).await.unwrap();
+    let status = res.status();
+    let bytes = axum::body::to_bytes(res.into_body(), 1 << 24).await.unwrap();
+    (status, String::from_utf8_lossy(&bytes).into_owned())
+}
+
+async fn get_json(app: &axum::Router, uri: &str) -> (StatusCode, Value) {
+    let (status, text) = call(app, req("GET", uri, None)).await;
+    (status, serde_json::from_str(&text).unwrap_or(Value::String(text)))
+}
+
+fn resume_body() -> Value {
+    json!({ "cols": 80, "rows": 24 })
+}
+
+/// Indexes the session `id` for tab "t1" with its transcript file in `dir`, as a SessionStart does.
+fn index_session(env: &Env, id: &str, dir: &Path) -> PathBuf {
+    let transcript = dir.join(format!("{id}.jsonl"));
+    std::fs::write(&transcript, BASIC).unwrap();
+    let body = json!({
+        "hook_event_name": "SessionStart",
+        "session_id": id,
+        "transcript_path": transcript.to_string_lossy(),
+        "cwd": env.work.path().to_string_lossy(),
+    });
+    assert!(env.state.history().note_event("t1", &body, 1000).is_none());
+    transcript
+}
+
+/// Indexes the session, copies its transcript into the archive and reads it into the index.
+fn seed(env: &Env, id: &str) -> PathBuf {
+    let transcript = index_session(env, id, env.work.path());
+    let meta = env.state.history().latest_for_tab("t1").unwrap();
+    copy_transcript(env.home.path(), &meta).unwrap();
+    env.state.history().reindex(&meta);
+    transcript
+}
+
+#[tokio::test]
+async fn list_and_search_after_a_copy() {
+    let env = env();
+    seed(&env, ID);
+
+    let (status, list) = get_json(&env.app, "/v1/history").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(list.as_array().unwrap().len(), 1, "{list}");
+    assert_eq!(list[0]["session_id"], ID);
+    assert_eq!(list[0]["title"], "Retry limit work");
+    assert_eq!(list[0]["turns"], 2);
+
+    let (_, other_agent) = get_json(&env.app, "/v1/history?agent=codex").await;
+    assert_eq!(other_agent, json!([]));
+    let (_, claude) = get_json(&env.app, "/v1/history?agent=claude&since_ms=1").await;
+    assert_eq!(claude.as_array().unwrap().len(), 1);
+
+    let (status, hits) = get_json(&env.app, "/v1/history/search?q=retry").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(hits[0]["session_id"], ID, "{hits}");
+    assert!(hits[0]["snippet"].as_str().unwrap().contains('\u{2}'));
+
+    // No query, an empty one, and one made only of punctuation all find nothing, with no error.
+    for uri in [
+        "/v1/history/search",
+        "/v1/history/search?q=",
+        "/v1/history/search?q=%22",
+        "/v1/history/search?q=NEAR%28",
+    ] {
+        let (status, none) = get_json(&env.app, uri).await;
+        assert_eq!(status, StatusCode::OK, "{uri}");
+        assert_eq!(none, json!([]), "{uri}");
+    }
+}
+
+#[tokio::test]
+async fn conversation_returns_turns() {
+    let env = env();
+    seed(&env, ID);
+
+    let (status, conversation) = get_json(&env.app, &format!("/v1/history/claude/{ID}")).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(conversation["session_id"], ID);
+    assert_eq!(conversation["agent"], "claude");
+    assert_eq!(conversation["turns"].as_array().unwrap().len(), 2, "{conversation}");
+    assert_eq!(conversation["limited"], false);
+}
+
+#[tokio::test]
+async fn a_session_without_an_archive_has_no_conversation_yet() {
+    let env = env();
+    // Indexed by its SessionStart, but never copied.
+    index_session(&env, ID, env.work.path());
+
+    let (status, text) = call(&env.app, req("GET", &format!("/v1/history/claude/{ID}"), None)).await;
+    assert_eq!((status, text.as_str()), (StatusCode::NOT_FOUND, NO_COPY));
+}
+
+#[tokio::test]
+async fn an_archive_that_cannot_be_read_is_a_limited_conversation() {
+    let env = env();
+    seed(&env, ID);
+    // Not zstd: the read fails, and the route answers from the index row instead of an error.
+    let (archive, _) = archive_paths(env.home.path(), "claude", ID);
+    std::fs::write(&archive, b"this is not a zstd frame").unwrap();
+
+    let (status, conversation) = get_json(&env.app, &format!("/v1/history/claude/{ID}")).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(conversation["limited"], true);
+    assert_eq!(conversation["turns"], json!([]));
+    assert_eq!(conversation["title"], "Retry limit work");
+    assert_eq!(conversation["cwd"], env.work.path().to_string_lossy().as_ref());
+}
+
+#[tokio::test]
+async fn bad_ids_are_404_without_touching_files() {
+    let env = env();
+    seed(&env, ID);
+    // A real archive under another agent's name: if the route opened it, the answer would not be a 404.
+    let (claude_archive, _) = archive_paths(env.home.path(), "claude", ID);
+    let (codex_archive, _) = archive_paths(env.home.path(), "codex", ID);
+    std::fs::create_dir_all(codex_archive.parent().unwrap()).unwrap();
+    std::fs::copy(&claude_archive, &codex_archive).unwrap();
+
+    let long = "a".repeat(65);
+    let unknown = "00000000-0000-4000-8000-0000000000ff";
+    let gets = [
+        "/v1/history/claude/..%2F..%2Fx".to_string(),
+        "/v1/history/claude/%2E%2E".to_string(),
+        format!("/v1/history/claude/{long}"),
+        format!("/v1/history/codex/{ID}"),
+        format!("/v1/history/claude/{unknown}"),
+    ];
+    for uri in gets {
+        let (status, text) = call(&env.app, req("GET", &uri, None)).await;
+        assert_eq!((status, text.as_str()), (StatusCode::NOT_FOUND, NO_SUCH), "GET {uri}");
+    }
+    let posts = [
+        "/v1/history/claude/..%2F..%2Fx/resume".to_string(),
+        format!("/v1/history/claude/{long}/resume"),
+        format!("/v1/history/codex/{ID}/resume"),
+        format!("/v1/history/claude/{unknown}/resume"),
+    ];
+    for uri in posts {
+        let (status, text) = call(&env.app, req("POST", &uri, Some(resume_body()))).await;
+        assert_eq!((status, text.as_str()), (StatusCode::NOT_FOUND, NO_SUCH), "POST {uri}");
+    }
+    assert_eq!(env.state.live_session_count(), 0);
+}
+
+/// The rows `peek` returns once `text` shows up in them.
+async fn peek_until(app: &axum::Router, tab: &str, text: &str) -> String {
+    let start = Instant::now();
+    loop {
+        let (_, body) = get_json(app, &format!("/v1/sessions/{tab}/peek?lines=30")).await;
+        let rows = body["rows"].to_string();
+        if rows.contains(text) {
+            return rows;
+        }
+        assert!(start.elapsed() < Duration::from_secs(5), "never saw {text:?} in {rows}");
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+}
+
+#[tokio::test]
+async fn resume_starts_claude_with_the_session_in_its_folder() {
+    let env = env();
+    // The transcript is Claude's own file, outside the Marshell home; the archive is Marshell's copy.
+    let claude_dir = tempfile::tempdir().unwrap();
+    let transcript = index_session(&env, ID, claude_dir.path());
+    let meta = env.state.history().latest_for_tab("t1").unwrap();
+    copy_transcript(env.home.path(), &meta).unwrap();
+    env.state.history().reindex(&meta);
+
+    let (status, text) = call(
+        &env.app,
+        req("POST", &format!("/v1/history/claude/{ID}/resume"), Some(resume_body())),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{text}");
+    let created: Value = serde_json::from_str(&text).unwrap();
+    let tab = created["tab_id"].as_str().unwrap().to_string();
+    let rows = peek_until(&env.app, &tab, &format!("--resume {ID}")).await;
+    assert!(rows.contains("claude"), "{rows}");
+    assert!(!rows.contains("--continue"), "{rows}");
+
+    let (_, sessions) = get_json(&env.app, "/v1/sessions").await;
+    let row = sessions["sessions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|s| s["tab_id"] == tab.as_str())
+        .unwrap();
+    assert_eq!(row["agent"], "claude");
+    assert_eq!(row["cwd"], env.work.path().to_string_lossy().as_ref());
+    if let Some(session) = env.state.remove_session(&tab) {
+        session.force_kill();
+    }
+
+    // Claude's file goes: the answer is the same refusal the tab Resume gives, and nothing starts.
+    std::fs::remove_file(&transcript).unwrap();
+    let (status, text) = call(
+        &env.app,
+        req("POST", &format!("/v1/history/claude/{ID}/resume"), Some(resume_body())),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{text}");
+    let body: Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(body["reason"], NO_CONVERSATION);
+    assert_eq!(env.state.live_session_count(), 0);
+}
+
+#[tokio::test]
+async fn routes_need_the_token() {
+    let env = env();
+    seed(&env, ID);
+    let routes = [
+        ("GET", "/v1/history".to_string()),
+        ("GET", "/v1/history/search?q=retry".to_string()),
+        ("GET", format!("/v1/history/claude/{ID}")),
+        ("POST", format!("/v1/history/claude/{ID}/resume")),
+    ];
+    for (method, uri) in routes {
+        let mut request = req(method, &uri, Some(resume_body()));
+        request.headers_mut().remove(header::AUTHORIZATION);
+        let (status, _) = call(&env.app, request).await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED, "{method} {uri}");
+    }
+    assert_eq!(env.state.live_session_count(), 0);
+}
+
+#[tokio::test]
+async fn history_off_is_503() {
+    common::tie_children_to_test();
+    let home = tempfile::tempdir().unwrap();
+    // A directory where the index file belongs: the index can't open, so history is off for this run.
+    std::fs::create_dir_all(home.path().join("history").join("index.sqlite")).unwrap();
+    let env = env_in(home, tempfile::tempdir().unwrap());
+
+    for (method, uri) in [
+        ("GET", "/v1/history".to_string()),
+        ("GET", "/v1/history/search?q=retry".to_string()),
+        ("GET", format!("/v1/history/claude/{ID}")),
+        ("POST", format!("/v1/history/claude/{ID}/resume")),
+    ] {
+        let (status, text) = call(&env.app, req(method, &uri, Some(resume_body()))).await;
+        assert_eq!(
+            (status, text.as_str()),
+            (StatusCode::SERVICE_UNAVAILABLE, "History is off for this run."),
+            "{method} {uri}"
+        );
+    }
+    // A bad id is still a 404 first.
+    let (status, text) = call(&env.app, req("GET", "/v1/history/codex/x", None)).await;
+    assert_eq!((status, text.as_str()), (StatusCode::NOT_FOUND, NO_SUCH));
+}
