@@ -7,6 +7,7 @@ mod diagnostics;
 mod folder_picker;
 mod link;
 mod notify;
+mod toast;
 mod tray;
 
 use marshell_core::server::CoreConfig;

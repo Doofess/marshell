@@ -47,8 +47,7 @@ pub fn parse(s: &str) -> Option<Link> {
 }
 
 /// The link a toast carries: the tab's, or `marshell://show` when there is no tab or its id would not parse.
-// Task 3 (the toasts) is its first caller.
-#[allow(dead_code)]
+#[cfg_attr(not(windows), allow(dead_code))]
 pub fn link_for(tab_id: Option<&str>) -> String {
     match tab_id {
         Some(id) if valid_tab_id(id) => format!("marshell://focus/{id}"),
@@ -231,10 +230,11 @@ mod registry {
         write(COMMAND_KEY, None, &command_for(&exe))
     }
 
-    /// Deletes the key, but only when it points at this exe: another Marshell's registration stays.
-    pub fn unregister() -> Result<(), String> {
+    /// Deletes the key, but only when it points at this exe: another Marshell's registration stays. True when
+    /// it deleted the key.
+    pub fn unregister() -> Result<bool, String> {
         if !registered_here() {
-            return Ok(());
+            return Ok(false);
         }
         let key = wide(KEY);
         // SAFETY: the key name is NUL-terminated.
@@ -242,7 +242,7 @@ mod registry {
         if status != 0 {
             return Err(format!("could not remove the registry key (error {status})"));
         }
-        Ok(())
+        Ok(true)
     }
 }
 
@@ -261,6 +261,17 @@ pub fn hand_over_foreground() {
     unsafe { AllowSetForegroundWindow(ASFW_ANY) };
 }
 
+/// Removes Marshell's banners from the notification centre: with the link gone, their protocol links would
+/// open Windows' "find an app" prompt. A failure is logged and ignored; the switch has already changed.
+#[cfg(windows)]
+fn clear_banners(app: &tauri::AppHandle) {
+    use windows::UI::Notifications::ToastNotificationManager;
+    let aumid = windows::core::HSTRING::from(crate::toast::app_aumid(app));
+    if let Err(e) = ToastNotificationManager::History().and_then(|history| history.ClearWithId(&aumid)) {
+        eprintln!("Marshell: could not clear the notification centre: {e}");
+    }
+}
+
 /// The switch's state, read from the registry (never stored). `None` where the link doesn't exist.
 #[tauri::command]
 pub fn notification_link() -> Option<bool> {
@@ -276,19 +287,19 @@ pub fn notification_link() -> Option<bool> {
 
 /// Turns the link on (pointing it at this exe) or off (only when it points here). Returns the state after.
 #[tauri::command]
-pub fn set_notification_link(on: bool) -> Result<bool, String> {
+pub fn set_notification_link(app: tauri::AppHandle, on: bool) -> Result<bool, String> {
     #[cfg(windows)]
     {
         if on {
             registry::register()?;
-        } else {
-            registry::unregister()?;
+        } else if registry::unregister()? {
+            clear_banners(&app);
         }
         Ok(registered_here())
     }
     #[cfg(not(windows))]
     {
-        let _ = on;
+        let _ = (app, on);
         Err("the notification centre link is only available on Windows".to_string())
     }
 }
