@@ -4,6 +4,7 @@ pub mod brand;
 pub mod config;
 pub mod diagnostics;
 pub mod frames;
+pub mod history;
 pub mod hook;
 
 /// TypeScript source for the constants ts-rs cannot export (names and frame opcodes).
