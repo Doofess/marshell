@@ -13,3 +13,4 @@ storybook-static/
 # Superpowers plan execution scratch
 .superpowers/
 *.tsbuildinfo
+.claude/settings.local.json

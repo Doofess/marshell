@@ -38,6 +38,7 @@ jobs:
       - run: cargo test --workspace
       - run: pnpm check:generated
       - run: pnpm test
+      - run: pnpm test:claude
       - run: pnpm build
       - run: pnpm tauri build --no-bundle
       # Both S6 numbers, filtered by name: `--ignored` alone would run every ignored test in the file.
