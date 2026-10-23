@@ -2,7 +2,7 @@
 //! Code and changes between versions, so parsing is best effort: what isn't understood is skipped, and a
 //! conversation from an untested version is flagged `limited`.
 
-use marshell_protocol::history::{Conversation, ToolCard, Turn, TurnItem};
+use marshell_protocol::history::{Conversation, EditedFile, ToolCard, Turn, TurnItem};
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
 
@@ -333,6 +333,7 @@ fn tool_card(
     let path = |key: &str| quote(key).map(|p| relative(&p, cwd));
     let mut detail = None;
     let mut error = failed;
+    let mut file = None;
     let summary = match name.as_str() {
         "Edit" | "Write" => match path("file_path") {
             Some(p) => {
@@ -345,12 +346,30 @@ fn tool_card(
                     let content = content.unwrap_or_default();
                     detail = Some(content.to_string()).filter(|c| !c.is_empty());
                     let n = content.lines().count();
+                    file = Some(EditedFile {
+                        path: p.clone(),
+                        added: Some(n as u32),
+                        removed: Some(0),
+                        created: true,
+                    });
                     format!("Created {p}, {n} {}", if n == 1 { "line" } else { "lines" })
                 } else if result.is_some_and(|r| r.get("structuredPatch").is_some()) {
                     let count = |sign: char| patch.iter().filter(|l| l.starts_with(sign)).count();
                     detail = Some(patch.join("\n")).filter(|d| !d.is_empty());
+                    file = Some(EditedFile {
+                        path: p.clone(),
+                        added: Some(count('+') as u32),
+                        removed: Some(count('-') as u32),
+                        created: false,
+                    });
                     format!("Edited {p}, {} added, {} removed", count('+'), count('-'))
                 } else {
+                    file = Some(EditedFile {
+                        path: p.clone(),
+                        added: None,
+                        removed: None,
+                        created: false,
+                    });
                     format!("Edited {p}")
                 }
             }
@@ -401,6 +420,7 @@ fn tool_card(
         name,
         summary,
         detail: detail.map(|d| cap(&d, DETAIL_CAP)),
+        file: file.filter(|_| !error),
         error,
     }
 }
@@ -620,6 +640,69 @@ mod tests {
         );
         assert_eq!(conv.turns.len(), 1);
         assert_eq!(texts(&conv.turns[0]), ["All done."]);
+    }
+
+    #[test]
+    fn edit_and_write_cards_carry_the_file() {
+        use serde_json::json;
+        let call = |n: u32, id: &str, name: &str, input: serde_json::Value| {
+            assistant(n, json!({"type": "tool_use", "id": id, "name": name, "input": input}))
+        };
+        let result = |n: u32, id: &str, error: bool, structured: Option<serde_json::Value>| {
+            let mut v = json!({
+                "type": "user", "uuid": format!("00000000-0000-4000-8000-{n:012}"), "version": "2.1.309",
+                "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": id, "content": "ok", "is_error": error}]},
+            });
+            if let Some(s) = structured {
+                v["toolUseResult"] = s;
+            }
+            v
+        };
+        let lines = [
+            call(10, "e1", "Edit", json!({"file_path": "C:/work/demo/src/a.ts"})),
+            result(
+                11,
+                "e1",
+                false,
+                Some(json!({"structuredPatch": [{"lines": [" keep", "-old", "+new", "+more"]}]})),
+            ),
+            call(
+                12,
+                "w1",
+                "Write",
+                json!({"file_path": "C:/work/demo/notes.md", "content": "a
+b
+c"}),
+            ),
+            result(
+                13,
+                "w1",
+                false,
+                Some(json!({"type": "create", "content": "a
+b
+c"})),
+            ),
+            call(14, "e2", "Edit", json!({"file_path": "C:/work/demo/src/b.ts"})),
+            result(15, "e2", true, Some(json!({"structuredPatch": [{"lines": ["+x"]}]}))),
+            call(16, "e3", "Edit", json!({"file_path": "C:/work/demo/src/c.ts"})),
+            call(17, "r1", "Read", json!({"file_path": "C:/work/demo/src/a.ts"})),
+        ];
+        let conv = parse(&transcript(Some("2.1.309"), &lines), SID);
+        type Got = Option<(String, Option<u32>, Option<u32>, bool)>;
+        let files: Vec<Got> = cards(&conv)
+            .iter()
+            .map(|c| c.file.as_ref().map(|f| (f.path.clone(), f.added, f.removed, f.created)))
+            .collect();
+        assert_eq!(
+            files,
+            [
+                Some(("src/a.ts".into(), Some(2), Some(1), false)),
+                Some(("notes.md".into(), Some(3), Some(0), true)),
+                None,
+                Some(("src/c.ts".into(), None, None, false)),
+                None,
+            ]
+        );
     }
 
     #[test]

@@ -409,6 +409,7 @@ All done.
                             name: "Bash".into(),
                             summary: "Ran git push with ghp_abcdefghijklmnopqrstuvwx1234".into(),
                             detail: Some(r"token=ghp_abcdefghijklmnopqrstuvwx1234 in C:\Users\someone\x".into()),
+                            file: None,
                             error: false,
                         },
                     },

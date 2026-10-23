@@ -114,8 +114,30 @@ pub struct ToolCard {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub detail: Option<String>,
+    /// The file an Edit or Write call changed. Not set for a failed call or any other tool.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub file: Option<EditedFile>,
     /// The call failed or was interrupted.
     pub error: bool,
+}
+
+/// One file changed by an Edit or Write call.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct EditedFile {
+    /// Relative to the conversation's folder when inside it, else as the agent gave it.
+    pub path: String,
+    /// Lines added; `None` when the result didn't say.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub added: Option<u32>,
+    /// Lines removed; `None` when the result didn't say.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub removed: Option<u32>,
+    /// The call created the file.
+    pub created: bool,
 }
 
 /// One row of the History list: an archived conversation as the index knows it.
