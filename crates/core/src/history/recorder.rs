@@ -109,7 +109,7 @@ impl History {
             updated_ms: at_ms,
             previous_in_tab,
         };
-        let ends_turn = matches!(event, "Stop" | "SessionEnd");
+        let ends_turn = matches!(event, "Stop" | "StopFailure" | "SessionEnd");
         if is_new || ends_turn || event == "SessionStart" {
             if let Err(err) = index.upsert(&meta) {
                 tracing::warn!("history index write failed: {err:#}");
@@ -244,6 +244,16 @@ mod tests {
         let ended = history.note_event("t1", &body(END, home.path(), ID), 4000).unwrap();
         assert_eq!(ended.started_ms, 1000);
         assert_eq!(ended.updated_ms, 4000);
+    }
+
+    #[test]
+    fn stop_failure_ends_a_turn() {
+        let home = tempfile::tempdir().unwrap();
+        let history = History::open(home.path());
+        history.note_event("t1", &body(START, home.path(), ID), 1000);
+        let failure = include_str!("../../tests/fixtures/claude/2.1.309/StopFailure.json");
+        let meta = history.note_event("t1", &body(failure, home.path(), ID), 2000).unwrap();
+        assert_eq!(meta.updated_ms, 2000);
     }
 
     #[tokio::test]

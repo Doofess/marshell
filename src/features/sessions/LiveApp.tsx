@@ -55,6 +55,7 @@ import { CloseDialog } from "../window/CloseDialog";
 import { chooseClose as applyCloseChoice } from "../window/closeChoice";
 import { NotificationsDialog } from "../notifications/NotificationsDialog";
 import { useViewReport } from "../notifications/useViewReport";
+import { focusTarget, linkFocusSelector } from "../notifications/notificationLink";
 import { terminalThemeOf, wtFont } from "../appearance/terminalSettings";
 import { changesFor, isTextBox, keyBlocked, markTasks, missingTask, paletteHidden, resolveTarget, reviewAgentName, reviewKeyDown, reviewTarget, taskRefresher, type ReviewTarget } from "../tasks/reviewOpen";
 import { ReviewSheet } from "../tasks/ReviewSheet";
@@ -158,8 +159,11 @@ export function LiveApp() {
   // Going to a session is two things: the store's selection and the view's, where it focuses the pane showing it or fills the focused one.
   const selectRef = useRef(select);
   selectRef.current = select;
+  // A link or a banner put focus on a row: no terminal takes it on its own until the person picks a session or a pane.
+  const [linkHeld, setLinkHeld] = useState(false);
   const pick = useCallback(
     (id: string) => {
+      setLinkHeld(false);
       selectRef.current(id);
       // The view is told how many panes are on screen, so the session never lands in one that is not.
       dispatch({ type: "select", tabId: id, visible: shownRef.current });
@@ -264,9 +268,18 @@ export function LiveApp() {
     let gone = false;
     let stop: (() => void) | undefined;
     listen<{ tab_id: string | null }>("focus-session", (e) => {
-      if (!e.payload.tab_id) return;
-      setOverlay((o) => (jumpCloses(o) ? null : o));
-      pickRef.current(e.payload.tab_id);
+      // A closed session's entry shows the window (the shell did) and leaves the selection alone.
+      const { infos, selectedId } = context.current;
+      const tab = focusTarget(e.payload.tab_id, infos.map((i) => i.tab_id));
+      if (tab !== null) {
+        setOverlay((o) => (jumpCloses(o) ? null : o));
+        pickRef.current(tab);
+      }
+      // Before the window takes the keyboard: typing meant for another window must not reach an agent's prompt.
+      setLinkHeld(true);
+      if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
+      const to = linkFocusSelector(tab, selectedId ?? null, infos.map((i) => ({ id: i.tab_id, number: i.number })));
+      (document.querySelector<HTMLElement>(to) ?? document.querySelector<HTMLElement>(".window__main"))?.focus();
     })
       .then((s) => (gone ? s() : (stop = s)))
       .catch(() => {}); // Outside Tauri (tests, a plain browser) there are no events.
@@ -340,6 +353,8 @@ export function LiveApp() {
   }, [settled, loaded, selectedId, view.panes, dispatch]);
   useEffect(() => () => actions.dispose(), [actions]);
   const { toast, closing, restarting, pauseBar, renaming, focusToken, resuming, resumed } = useSyncExternalStore(actions.subscribe, actions.getState);
+  // Asking for the terminal (a pane, a command) ends a link's hold.
+  useEffect(() => setLinkHeld(false), [focusToken]);
   // The Ended or Exited row each tab had when Resume was pressed, and how many resumes of it had come back ok by then. The core says
   // Running before the session exists (and may say it after the answer), but the strip, and the button that has the focus, stay put
   // until a snapshot shows the tab has really moved on (holdsResume), so it is drawn from this. Presence of an entry means "held".
@@ -1191,7 +1206,7 @@ export function LiveApp() {
                 placeholder={startingTexts[row.id]}
                 onOutput={() => setStartingTexts((t) => without(t, row.id))}
                 onSize={onSize}
-                autoFocus={!launcherOpen && overlay === null && review === null && row.id === focusedId}
+                autoFocus={!linkHeld && !launcherOpen && overlay === null && review === null && row.id === focusedId}
                 visible={shown}
                 paused={info?.paused === true}
                 onBlockedInput={() => actions.showPausedBar(row.id)}
@@ -1216,7 +1231,7 @@ export function LiveApp() {
         </div>
       );
     },
-    [endpoint, panelTab?.tabId, heldRow, resumed, infos, profiles, startResume, startingTexts, onSize, launcherOpen, overlay, review, focusedId, focusToken, promptJump, onPromptJump, themeFor, overrideOf, terminalFont],
+    [endpoint, panelTab?.tabId, heldRow, resumed, infos, profiles, startResume, startingTexts, onSize, launcherOpen, overlay, review, focusedId, focusToken, linkHeld, promptJump, onPromptJump, themeFor, overrideOf, terminalFont],
   );
 
   if (error) {

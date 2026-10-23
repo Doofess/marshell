@@ -5,7 +5,9 @@ mod attention;
 mod capture;
 mod diagnostics;
 mod folder_picker;
+mod link;
 mod notify;
+mod toast;
 mod tray;
 
 use marshell_core::server::CoreConfig;
@@ -180,6 +182,11 @@ fn on_close_requested(window: &tauri::Window, api: &tauri::CloseRequestApi) {
 }
 
 fn main() {
+    // A second launch with a link lets the running Marshell take the foreground when the plugin forwards it.
+    #[cfg(windows)]
+    if link::from_argv(&std::env::args().collect::<Vec<_>>()).is_some() {
+        link::hand_over_foreground();
+    }
     marshell_core::diagnostics::perf::mark_launch();
     // First, so every process Marshell starts dies with it, even after a crash (Windows only).
     if let Err(e) = marshell_core::job::tie_children_to_app() {
@@ -187,9 +194,11 @@ fn main() {
     }
     linux_webview_workarounds();
     let app = tauri::Builder::default()
+        .manage(std::sync::Mutex::new(link::Recent::default()))
         // Must be the first plugin: a second launch focuses the existing window instead.
-        .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
-            tray::show_main(app)
+        // A link in a lone argument selects its tab; anything else on the command line is never read.
+        .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
+            link::open(app, link::from_argv(&argv))
         }))
         .plugin(
             tauri_plugin_window_state::Builder::default()
@@ -290,7 +299,9 @@ fn main() {
             capture::cancel_capture,
             capture::read_clipboard_image,
             attention::set_badge,
-            tray::set_tray
+            tray::set_tray,
+            link::notification_link,
+            link::set_notification_link
         ])
         .build(tauri::generate_context!())
         .expect("failed to build the app");

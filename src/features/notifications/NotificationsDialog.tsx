@@ -5,6 +5,7 @@ import type { NotifySettings } from "../../generated/NotifySettings";
 import { useDialogFocus } from "../../lib/useDialogFocus";
 import { SettingsReadError, type SettingsSync } from "../appearance/settingsSync";
 import { failureText } from "../agents/useInstallFlow";
+import { readNotificationLink, setNotificationLink } from "./notificationLink";
 import "./NotificationsDialog.css";
 
 export const SETTINGS_UNREADABLE = "Couldn't read your settings. Close this and try again.";
@@ -21,6 +22,8 @@ export type NotificationsHandlers = {
   onChange: (next: NotifySettings) => void;
   /** The close button's tray choice: true keeps Marshell running in the tray. */
   onCloseToTray?: (keepInTray: boolean) => void;
+  /** The notification-centre switch: true registers the marshell:// link. */
+  onLink?: (on: boolean) => void;
   onClose: () => void;
 };
 
@@ -29,7 +32,16 @@ export type NotificationsHandlers = {
  * It also holds the one setting that is not a notification, what the close button does, since a person who turns off the tray looks here.
  * Presentational: `NotificationsDialog` reads and saves, this draws. `settings` is null until they have been read; `closeToTray` is null until chosen, and counts as on.
  */
-export function NotificationsDialogView({ settings, closeToTray = null, error, onChange, onCloseToTray, onClose }: { settings: NotifySettings | null; closeToTray?: boolean | null; error: string | null } & NotificationsHandlers) {
+export function NotificationsDialogView({
+  settings,
+  closeToTray = null,
+  link = null,
+  error,
+  onChange,
+  onCloseToTray,
+  onLink,
+  onClose,
+}: { settings: NotifySettings | null; closeToTray?: boolean | null; link?: boolean | null; error: string | null } & NotificationsHandlers) {
   const dialog = useRef<HTMLDivElement>(null);
   const title = useRef<HTMLHeadingElement>(null);
   useDialogFocus(dialog, title, onClose);
@@ -70,6 +82,17 @@ export function NotificationsDialogView({ settings, closeToTray = null, error, o
                 checked={settings.terminal_alerts}
                 onChange={(terminal_alerts) => onChange({ ...settings, terminal_alerts })}
                 reason="Off: the row still changes, with no banner or sound."
+              />
+            </section>
+          )}
+          {settings !== null && typeof link === "boolean" && (
+            <section className="notifications-dialog__group" aria-label="Notification centre">
+              <h3 className="notifications-dialog__name">Notification centre</h3>
+              <Switch
+                label="Open sessions from the notification centre"
+                checked={link}
+                onChange={(on) => onLink?.(on)}
+                reason="Adds a marshell:// link for your Windows account. It can only bring Marshell forward and select a session."
               />
             </section>
           )}
@@ -129,9 +152,11 @@ export function NotificationsDialogView({ settings, closeToTray = null, error, o
 export function NotificationsDialog({ sync, onClose }: { sync?: SettingsSync; onClose: () => void }) {
   const [settings, setSettings] = useState<NotifySettings | null>(null);
   const [closeToTray, setCloseToTray] = useState<boolean | null>(null);
+  const [link, setLink] = useState<boolean | null>(null);
   const [error, setError] = useState<string | null>(null);
   useEffect(() => {
     let live = true;
+    void readNotificationLink().then((on) => live && setLink(on));
     sync?.load().then(
       () => {
         if (!live) return;
@@ -164,5 +189,24 @@ export function NotificationsDialog({ sync, onClose }: { sync?: SettingsSync; on
       setError(e instanceof SettingsReadError ? e.message : failureText(e));
     }
   };
-  return <NotificationsDialogView settings={settings} closeToTray={closeToTray} error={error} onChange={(next) => void save(next)} onCloseToTray={(keep) => void saveCloseToTray(keep)} onClose={onClose} />;
+  const saveLink = async (on: boolean) => {
+    setError(null);
+    try {
+      setLink(await setNotificationLink(on));
+    } catch (e) {
+      setError(failureText(e));
+    }
+  };
+  return (
+    <NotificationsDialogView
+      settings={settings}
+      closeToTray={closeToTray}
+      link={link}
+      error={error}
+      onChange={(next) => void save(next)}
+      onCloseToTray={(keep) => void saveCloseToTray(keep)}
+      onLink={(on) => void saveLink(on)}
+      onClose={onClose}
+    />
+  );
 }

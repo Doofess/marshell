@@ -12,7 +12,7 @@ const no = (reason: string) => ({ available: false, reason, entries: 0 });
  * line is `statusLine` in ~/.gemini/antigravity-cli/settings.json.
  */
 export const CAPABILITIES: Record<CliId, Record<Capability, { available: boolean; reason?: string; entries: number }>> = {
-  claude: { status: { available: true, entries: 9 }, approve: { available: true, entries: 1 }, statusline: { available: true, entries: 0 } },
+  claude: { status: { available: true, entries: 10 }, approve: { available: true, entries: 1 }, statusline: { available: true, entries: 0 } },
   codex: { status: { available: true, entries: 6 }, approve: { available: true, entries: 1 }, statusline: no("Codex has no status line to chain.") },
   antigravity: { status: { available: true, entries: 4 }, approve: { available: true, entries: 1 }, statusline: { available: true, entries: 0 } },
 };

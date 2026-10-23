@@ -126,6 +126,34 @@ async fn a_request_in_a_background_window_asks_for_a_banner_a_sound_and_a_flash(
 }
 
 #[tokio::test]
+async fn stop_failure_raises_the_error_banner() {
+    let (app, _st, got, notifier) = core();
+    put_view(&app, false).await;
+    // Let the notifier take its first look, which only records.
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    let body = std::fs::read(format!(
+        "{}/tests/fixtures/claude/2.1.309/StopFailure.json",
+        env!("CARGO_MANIFEST_DIR")
+    ))
+    .unwrap();
+    let req = base("POST", "/v1/hook")
+        .header("x-marshell-role", "event")
+        .header("x-marshell-agent", "claude")
+        .header("x-marshell-version", "0.0.0")
+        .header("x-marshell-tab", "t1")
+        .body(Body::from(body))
+        .unwrap();
+    assert_eq!(send(&app, req).await, StatusCode::NO_CONTENT);
+    let seen = wait_for(&got, 1, Duration::from_secs(1)).await;
+    assert_eq!(seen.len(), 1, "got {seen:?}");
+    assert_eq!(seen[0].sound, Some(SoundKind::Error));
+    let banner = seen[0].banner.as_ref().expect("a banner");
+    assert_eq!(banner.title, "t1 stopped");
+    assert_eq!(banner.body, "Stopped: Sign-in failed.");
+    notifier.abort();
+}
+
+#[tokio::test]
 async fn a_focus_reported_after_the_first_look_silences_the_next_request() {
     let (app, _st, got, notifier) = core();
     put_view(&app, false).await;

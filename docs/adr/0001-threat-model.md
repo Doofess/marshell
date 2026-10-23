@@ -88,6 +88,12 @@ Out of scope:
 ### The `marshell://` link (phase 4)
 
 - It carries no authority: it can only focus Marshell and select a tab. It never sends input, answers a permission request or applies a change. Registering it is a setting that is off by default.
+- Built in slice 4e (`src-tauri/src/link.rs`):
+  - **Two shapes.** Only two shapes parse: `marshell://show` and `marshell://focus/<tab>`, where the tab id matches `^[A-Za-z0-9_-]{1,64}$`. The scheme and the word are read in any case, and one trailing `/` is allowed. Anything longer than 128 bytes or not ASCII is refused, and so is anything else, rather than trimmed.
+  - **Where it arrives.** A link arrives in two ways. One is a toast's in-process activation. The other is a second launch, where only a lone `argv[1]` is read and the rest of the command line is never looked at. A cold start launched with a link starts Marshell normally and ignores the link. One click reported both ways selects once: the same link is ignored for 2 s.
+  - **Registration.** The "Open sessions from the notification centre" switch registers the link under `HKCU\Software\Classes\marshell`, pointing at the running exe. Its state is read from the registry and never stored. Turning it off removes the key only when the key points at this exe. The uninstaller removes it on the same condition, and not during an update.
+  - **What a hostile link can do.** A page or document that gets the person to open a link can at most bring Marshell forward and select a session whose random tab id it already knows. Browsers ask before they open an external protocol, but a site the person once told to "always allow" can fire one while they type.
+  - **Where the keyboard lands.** Every opened link, and every banner click, first tells the webview, which moves focus to a session's row (the linked one, else the selected one, else the main area), and only then does the window come forward. No terminal takes focus on its own until the person picks a session or a pane, so typing meant for another window cannot answer an agent's prompt. The order between that event and the window's activation is not guaranteed by the OS: in the worst case a keystroke typed in the same few milliseconds reaches the terminal that last had focus.
 
 ### Instruction library (phase 7)
 
@@ -138,6 +144,29 @@ Slice 3d lets the needs-you card answer a held `PermissionRequest`. Before it sh
 - **Tab attribution trusts the `MARSHELL_TAB_ID` a process inherits.** A request is matched to a tab by that variable, not by Claude's `session_id`, so a Claude started from inside another tab's process tree shows its requests on that tab.
 - **Space on a focused Allow button of a plain card** activates it as any button does. Risky cards need a hold, so Space can't allow those.
 - **The PID check can be fooled by PID reuse.** If the core's PID now belongs to another process, the bridge treats the file as live. That needs a crash, which leaves the file behind, and then a stale-port impostor, so it is accepted.
+
+## Reviewed for 4e: the `marshell://` link and Marshell's own toasts (2026-10-23)
+
+Slice 4e builds Windows toasts in the shell, adds the `marshell://` link and its switch, and turns `StopFailure` into an Error row. Before it shipped, an Opus review of `phase-4e` against this record covered:
+
+- the link's parsing (Review Focus 1 of the plan: traversal, queries, extra arguments, a 10 KB argument, case, a trailing `/`, a link that is not the first argument);
+- what a hostile link can do through a focus change;
+- the toast XML (built through the DOM, never from a string), its activation handler and the AUMID;
+- the registry code, the switch and the uninstaller hook;
+- the `cfg` split that keeps macOS and Linux on the notification plugin.
+
+### Findings fixed
+
+- **A link could put the keyboard in an agent's terminal.** Bringing the window forward let the selected session's terminal take focus, so a page that fired a link while the person typed (a site once told to "always allow" the protocol) could land the rest of their typing, Enter included, in an agent's prompt. Every link and every banner click now tells the webview first, focus goes to a session's row, and no terminal takes focus on its own until the person picks a session or a pane (f99150c). The phase 4 exit check confirmed it on an installed build (`docs/research/2026-10-23-phase-4-exit-check.md`).
+
+### Deferred, with their residual risk
+
+- **The event and the activation race.** Windows does not order the webview's event against the window's activation, so a keystroke typed in the same few milliseconds can still reach the terminal that last had focus.
+- **`AllowSetForegroundWindow(ASFW_ANY)`.** A second launch that carries a link lets any process take the foreground for that moment, not only the running Marshell. A local program has easier routes, so it stays as hardening for later.
+- **A cold start ignores the link but focuses as any start does.** A hostile link with Marshell closed starts it, and its first window behaves as when the person starts it.
+- **Registration writes over the key.** A leftover `DelegateExecute` or other verb under `HKCU\Software\Classes\marshell` would win while the switch reads on.
+- **The uninstaller compares the exact path.** A Marshell started through an 8.3 short path would register a command the uninstaller does not recognise, and the key stays.
+- **A toast keeps the link it was made with.** One shown while the link pointed here stays a protocol toast if another Marshell takes the key, and its click starts that one.
 
 ## Residual risks
 
