@@ -1,5 +1,5 @@
 // Tests for the PreToolUse guard hooks. Each case runs the hook as a child process with a JSON stdin.
-import { test, describe, after } from "node:test";
+import { test, describe, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
@@ -456,6 +456,15 @@ describe("S8: Rust commit needs cargo fmt", () => {
   }
   const opts = { realHome: true };
   const cargo = { skip: !HAS_CARGO && "cargo not installed" };
+
+  // The guard fails open when cargo fmt takes over 10 s. On a cold CI runner the first two runs in a new repo took
+  // 11.7 s and 7 s, and later ones 0.4 s, so warm it up untimed before the tests that time it.
+  before(() => {
+    if (!HAS_CARGO) return;
+    for (let i = 0; i < 2; i++) {
+      spawnSync("cargo", ["fmt", "--all", "--check"], { cwd: rustRepo(FORMATTED), encoding: "utf8", windowsHide: true });
+    }
+  });
 
   test("unformatted .rs staged, cwd is the repo", cargo, () => {
     const dir = rustRepo(UNFORMATTED);
