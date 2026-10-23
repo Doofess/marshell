@@ -1,13 +1,15 @@
 # Errors from Claude and clicks in the notification centre (slice 4e) Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+>
+> **Who implements:** Tasks 1 (after the fixture) to 4 go to Codex CLI (`codex exec`), one worktree each under `C:/dev/codex-wt/`, branched from `phase-4e`. The main thread reviews each diff, runs the tests and cherry-picks. If Codex's quota runs out, a `worker` finishes the task, with `effort: high` for Tasks 2 and 3. Task 5 and the fixture capture stay in the main thread.
 
 **Goal:** Claude's `StopFailure` hook turns a row Error, a banner clicked in the Windows notification centre opens its session when the person has turned the link on, and the phase 4 exit check runs on an installed build.
 
 **Architecture:**
 - The Claude adapter installs a tenth status hook, `StopFailure`, and folds it into `LiveState::Error` with a phrase from a fixed table. The 4a engine already turns Error into a banner, sound and flash.
 - On Windows the shell builds toasts itself through the `windows` crate. Every toast carries one link, `marshell://focus/<tab>` (or `marshell://show`), in its `launch` attribute and its button's `arguments`. The toast uses protocol activation when the link is registered for this exe, and foreground activation otherwise.
-- One parser, `link::parse`, reads the link from both click paths: an in-process `Activated` event, and a second launch that the single-instance plugin forwards. Both call `link::open`.
+- One parser, `link::parse`, reads the link from both click paths: an in-process `Activated` event, and a second launch that the single-instance plugin forwards. Both call `link::open`, which ignores the same link arriving again within 2 s, in case Windows reports one click both ways. The second launch hands its foreground right to the running Marshell (`AllowSetForegroundWindow`) before it forwards.
 - A switch in the Notifications dialog registers the link under `HKCU\Software\Classes\marshell` through two shell commands. Its state is read from the registry, never stored. An NSIS uninstall hook removes a registration that points at the uninstalled exe.
 
 **Tech Stack:** Rust (Tauri 2, `windows` 0.62, `windows-sys` 0.61, serde), React + TypeScript, Vitest, NSIS.
@@ -42,7 +44,7 @@
 
 ## Review Focus
 
-1. **A hostile or malformed link.** For example `marshell://focus/../x`, `marshell://focus/t1?x=1`, `marshell://focus/t1 extra`, a 10 KB argument, `MARSHELL://FOCUS/t1`, a trailing `/`, and a link that is not the first argument. Only the two exact shapes parse. A scheme in any case and one trailing `/` are accepted. Every other second launch only shows the window, as it does today. Task 2 tests each case.
+1. **A hostile or malformed link.** For example `marshell://focus/../x`, `marshell://focus/t1?x=1`, `marshell://focus/t1 extra`, a 10 KB argument, `MARSHELL://FOCUS/t1`, a trailing `/`, and a link that is not the first argument. Only the two exact shapes parse. The scheme and the word `focus` or `show` are read in any case, the tab id exactly as written, and one trailing `/` is accepted. Every other second launch only shows the window, as it does today. Task 2 tests each case.
 2. **A stale tab.** A notification-centre entry for a session that has since closed shows the window and leaves the selection alone. Task 4 adds `focusTarget` with a test, and the exit check clicks one.
 3. **Error, then `idle_prompt`.** Claude sends `idle_prompt` about a minute after a turn ends. A row that is Error must stay Error, not turn Idle. Task 1 tests it.
 4. **An install made before `StopFailure`.** Settings with the nine old events read Partial, and the repair adds only `StopFailure`. Task 1 tests it, like `an_install_without_subagent_start_is_partial`.
@@ -66,10 +68,10 @@
 - [ ] **Step 1: Capture the fixture (main thread, live).**
   - Create a fresh literal scratch folder under the session scratchpad. Use it as `CLAUDE_CONFIG_DIR`, never the real `~/.claude`.
   - In it, a `settings.json` whose only hook is `StopFailure`, running `cat > <scratch>/stopfailure.json`.
-  - Run `claude -p "hi"` with `ANTHROPIC_API_KEY=sk-ant-invalid` and that `CLAUDE_CONFIG_DIR`.
+  - Run `claude -p "hi"` with `ANTHROPIC_API_KEY=sk-ant-invalid` and that `CLAUDE_CONFIG_DIR`, from a second scratch folder as the cwd so no project settings apply.
   - Expected: `error` is `authentication_failed`.
   - Save the body as the fixture, with `session_id`, `transcript_path` and `cwd` replaced the way `2.1.302/Stop.json` has them.
-  - If the run gives a different `error`, keep what it gave and say so in the commit.
+  - If the run gives a different `error`, keep what it gave and say so in the commit. If no `StopFailure` fires (for example, the key is refused before a turn starts), use the documented example body (`rate_limit`, "429 Too Many Requests", "API Error: Rate limit reached") and say so in the commit and the exit-check record.
   - Ask before removing the scratch folder.
 - [ ] **Step 2: Write the failing tests.**
   - `status.rs`:
@@ -106,7 +108,9 @@
   - `pub fn parse(s: &str) -> Option<Link>`
   - `pub fn link_for(tab_id: Option<&str>) -> String`: `marshell://focus/<tab>`, or `marshell://show` when there is no tab or the id fails the pattern
   - `pub fn from_argv(argv: &[String]) -> Option<Link>`: only `argv[1]`, and only when `argv.len() == 2`
-  - `pub fn open(app: &tauri::AppHandle, link: Option<Link>)`: `tray::show_main(app)`, then emit `focus-session {tab_id}` for `Focus`
+  - `pub struct Recent` (the last link opened and when), with `pub fn admit(&mut self, link: &Link, now_ms: u64) -> bool`: false for the same link within 2 000 ms of the last admitted one
+  - `pub fn open(app: &tauri::AppHandle, link: Option<Link>)`: `tray::show_main(app)`, then, for `Focus` that `Recent` (an `app.manage`d `Mutex<Recent>`) admits, emit `focus-session {tab_id}`
+  - `#[cfg(windows)] pub fn hand_over_foreground()`: `AllowSetForegroundWindow(ASFW_ANY)`. This needs the `Win32_UI_WindowsAndMessaging` feature added to the existing `windows-sys` line.
   - `#[cfg(windows)] pub fn registered_here() -> bool`
   - `pub fn command_for(exe: &Path) -> String`: `"\"<exe>\" \"%1\""`
   - `pub fn points_at(command: &str, exe: &Path) -> bool`: ASCII case-insensitive equality with `command_for(exe)`
@@ -128,6 +132,7 @@
     - a 10 000-byte string
     - `""`
   - `link_for_round_trips`: `parse(&link_for(Some("t1"))) == Some(Focus("t1"))`, `link_for(None) == "marshell://show"`, and `link_for(Some("bad id")) == "marshell://show"`.
+  - `recent_admits_a_repeat_only_after_2_s`: `Focus(t1)` at 0 is admitted, `Focus(t1)` at 1 500 is not, `Focus(t2)` at 1 600 is, and `Focus(t1)` at 4 000 is.
   - `argv_takes_only_a_lone_link`: `["m.exe", "marshell://focus/t1"]` gives `Focus`. `["m.exe"]`, `["m.exe", "--flag", "marshell://focus/t1"]` and `["m.exe", "marshell://focus/t1", "x"]` give `None`.
   - `points_at_compares_the_whole_command`: true for `command_for(exe)` in another case. False for another exe, for the exe without `"%1"`, and for `""`.
 - [ ] **Step 2: Run them and see them fail.** `cargo test -p marshell-app link`. Expected: FAIL, because the module is missing.
@@ -137,10 +142,11 @@
     - `HKCU\Software\Classes\marshell` default `URL:Marshell`;
     - its `URL Protocol` as `""`;
     - `shell\open\command` default `command_for(current_exe)`.
-  - Turning off runs `RegDeleteTreeW` on `Software\Classes\marshell`, only when `registered_here()`.
+  - Turning off runs `RegDeleteTreeW` on `Software\Classes\marshell`, only when `registered_here()`. On Windows it then clears Marshell's banners from the notification centre (`ToastNotificationManager::History()?.ClearWithId(aumid)`, using `toast::aumid` from Task 3, so this line lands with Task 3). Their protocol links would otherwise open Windows' "find an app" prompt.
   - `registered_here()` reads the command, applies `points_at`, and requires the `URL Protocol` value.
 - [ ] **Step 4: Wire it in `main.rs`.**
   - The single-instance callback becomes `link::open(app, link::from_argv(&argv))`. A second launch without a link still shows the window.
+  - At the top of `main`, before the plugins, call `link::hand_over_foreground()` when `link::from_argv(&std::env::args().collect::<Vec<_>>())` is `Some`.
   - Register both commands.
   - Add `src-tauri/windows/hooks.nsh`, with an `NSIS_HOOK_POSTUNINSTALL` macro that:
     - reads `HKCU\Software\Classes\marshell\shell\open\command`;
@@ -176,7 +182,7 @@
   - `review_is_the_button_for_a_risky_request`: `BannerAction::Review` gives `content="Review"`.
   - `text_stays_text`:
     - The title `x</text><action activationType="protocol" arguments="https://example.com"/>` keeps one `<action>` element.
-    - The title round-trips through the second `<text>`'s `InnerText`.
+    - The title round-trips through the first `<text>`'s `InnerText`.
     - The body's two lines are `body_of(banner)`.
   - `aumid_follows_the_plugin`: `C:\r\target\debug` and `C:\r\target\release` give the PowerShell id, and `C:\Program Files\Marshell` gives `dev.marshell.app`.
 - [ ] **Step 2: Run them and see them fail.** `cargo test -p marshell-app toast`. Expected: FAIL.
@@ -228,7 +234,8 @@
 - Modify: `docs/PLAN.md` §9 phase 4: the exit line points at the record.
 
 - [ ] **Step 1: Update the threat model and run the full CI set.** `cargo fmt --all --check`, clippy, `cargo test --workspace`, `pnpm test`, `pnpm check:generated`, `pnpm build`. Quote the counts.
-- [ ] **Step 2: Install the NSIS build of the branch per user, with a scratch `MARSHELL_HOME` and CDP on 9333.**
+- [ ] **Step 2: Install the NSIS build of the `phase-4e` head per user, with a scratch `MARSHELL_HOME` and CDP on 9333.**
+  - Before anything else, export `HKCU\Software\Classes\marshell` if it exists (`reg export`) to the scratch folder, and restore it at the end.
   - Sessions are plain `cmd.exe` ones started for the check.
   - Agent states are hook bodies posted to `/v1/hook` with the scratch token, as in `docs/research/2026-10-21-notifications-live-check.md`.
   - Error uses Task 1's fixture.
@@ -253,11 +260,14 @@
   - Error from `StopFailure` gives the banner "<name> stopped" / "Stopped: Sign-in failed.", the sound, the flash and the row.
   - Notification centre, link off: nothing happens.
   - Turn the switch on, and the key appears.
-  - A centre click with the app running gives exactly one `focus-session` and the right selection. Count the events over CDP and note the delay.
+  - A centre click with the app running gives exactly one `focus-session`, the right selection, and `document.hasFocus()` true. Count the events over CDP and note the delay.
   - An on-screen body click and an Open click each select once.
   - A centre click for a closed session shows the window and keeps the selection.
-  - A centre click with Marshell quit starts it normally.
   - Switch off: the key is gone.
   - Switch on, then a silent uninstall: the key is gone, and so are the shortcut and the folder.
+
+  Not run: a centre click with Marshell quit. Windows would start Marshell outside the check's environment, against the real `~/.marshell`. The record lists it as not run.
 - [ ] **Step 4: Stop what was started, by PID.** List the tree first. Ask before removing the scratch folders.
 - [ ] **Step 5: Commit.** `docs(research): record the phase 4 exit check on an installed build`
+
+After Task 5 comes the final whole-branch review on Opus. It is briefed against the threat model's "The `marshell://` link" section: parsing, and what a hostile link could do through a focus change, such as stealing focus into a terminal while the person types. It ends with a "Reviewed for 4e" entry in the ADR, as 3d had.
