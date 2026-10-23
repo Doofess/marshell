@@ -947,6 +947,7 @@ mod tests {
             .collect();
         times.sort();
         let median = times[times.len() / 2];
+        eprintln!("search median over 1000 sessions: {median:?}");
         assert!(median < std::time::Duration::from_millis(100), "median {median:?}");
     }
 }

@@ -337,3 +337,70 @@ async fn history_off_is_503() {
     let (status, text) = call(&env.app, req("GET", "/v1/history/codex/x", None)).await;
     assert_eq!((status, text.as_str()), (StatusCode::NOT_FOUND, NO_SUCH));
 }
+
+/// Seeds a Marshell home for the slice 5a live check: the five transcript fixtures as archived Claude sessions, each with
+/// its sidecar and zstd copy, in two project folders. The transcripts sit in `<seed>/../transcripts`; the one for
+/// `…0b4` is deleted after its copy, so Resume refuses it. Run with
+/// `MARSHELL_SEED_HOME=<scratch>\home cargo test -p marshell-core --test history_api seed_history_home -- --ignored`.
+#[test]
+#[ignore]
+fn seed_history_home() {
+    use marshell_core::history::SessionMeta;
+    let home = PathBuf::from(std::env::var("MARSHELL_SEED_HOME").expect("MARSHELL_SEED_HOME names the home to seed"));
+    let root = home.parent().expect("the seed home has a parent folder").to_path_buf();
+    let transcripts = root.join("transcripts");
+    let (demo, billing) = (root.join("work").join("demo"), root.join("work").join("billing"));
+    for dir in [&home, &transcripts, &demo, &billing] {
+        std::fs::create_dir_all(dir).unwrap();
+    }
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as u64;
+    let hour = 3_600_000;
+    let sessions: [(&str, &str, &Path, u64); 5] = [
+        ("00000000-0000-4000-8000-0000000000b1", BASIC, &demo, 2 * hour),
+        (
+            "00000000-0000-4000-8000-0000000000b2",
+            include_str!("fixtures/claude/transcripts/2.1.309/tools.jsonl"),
+            &demo,
+            5 * hour,
+        ),
+        (
+            "00000000-0000-4000-8000-0000000000b3",
+            include_str!("fixtures/claude/transcripts/2.1.309/subagent-compact.jsonl"),
+            &billing,
+            26 * hour,
+        ),
+        (
+            "00000000-0000-4000-8000-0000000000b4",
+            include_str!("fixtures/claude/transcripts/2.1.309/commands.jsonl"),
+            &billing,
+            9 * 24 * hour,
+        ),
+        (
+            "00000000-0000-4000-8000-0000000000b5",
+            include_str!("fixtures/claude/transcripts/9.9.9/future.jsonl"),
+            &demo,
+            40 * 24 * hour,
+        ),
+    ];
+    for (n, (id, text, cwd, age)) in sessions.into_iter().enumerate() {
+        let transcript = transcripts.join(format!("{id}.jsonl"));
+        std::fs::write(&transcript, text).unwrap();
+        let meta = SessionMeta {
+            agent: "claude".into(),
+            session_id: id.into(),
+            tab_id: format!("seed-tab-{n}"),
+            cwd: cwd.to_string_lossy().into_owned(),
+            transcript_path: transcript.to_string_lossy().into_owned(),
+            started_ms: now - age - 60_000,
+            updated_ms: now - age,
+            previous_in_tab: None,
+        };
+        copy_transcript(&home, &meta).unwrap();
+        if id.ends_with("b4") {
+            std::fs::remove_file(&transcript).unwrap();
+        }
+    }
+}
