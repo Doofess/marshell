@@ -145,6 +145,29 @@ Slice 3d lets the needs-you card answer a held `PermissionRequest`. Before it sh
 - **Space on a focused Allow button of a plain card** activates it as any button does. Risky cards need a hold, so Space can't allow those.
 - **The PID check can be fooled by PID reuse.** If the core's PID now belongs to another process, the bridge treats the file as live. That needs a crash, which leaves the file behind, and then a stale-port impostor, so it is accepted.
 
+## Reviewed for 4e: the `marshell://` link and Marshell's own toasts (2026-10-23)
+
+Slice 4e builds Windows toasts in the shell, adds the `marshell://` link and its switch, and turns `StopFailure` into an Error row. Before it shipped, an Opus review of `phase-4e` against this record covered:
+
+- the link's parsing (Review Focus 1 of the plan: traversal, queries, extra arguments, a 10 KB argument, case, a trailing `/`, a link that is not the first argument);
+- what a hostile link can do through a focus change;
+- the toast XML (built through the DOM, never from a string), its activation handler and the AUMID;
+- the registry code, the switch and the uninstaller hook;
+- the `cfg` split that keeps macOS and Linux on the notification plugin.
+
+### Findings fixed
+
+- **A link could put the keyboard in an agent's terminal.** Bringing the window forward let the selected session's terminal take focus, so a page that fired a link while the person typed (a site once told to "always allow" the protocol) could land the rest of their typing, Enter included, in an agent's prompt. Every link and every banner click now tells the webview first, focus goes to a session's row, and no terminal takes focus on its own until the person picks a session or a pane (f99150c). The phase 4 exit check confirmed it on an installed build (`docs/research/2026-10-23-phase-4-exit-check.md`).
+
+### Deferred, with their residual risk
+
+- **The event and the activation race.** Windows does not order the webview's event against the window's activation, so a keystroke typed in the same few milliseconds can still reach the terminal that last had focus.
+- **`AllowSetForegroundWindow(ASFW_ANY)`.** A second launch that carries a link lets any process take the foreground for that moment, not only the running Marshell. A local program has easier routes, so it stays as hardening for later.
+- **A cold start ignores the link but focuses as any start does.** A hostile link with Marshell closed starts it, and its first window behaves as when the person starts it.
+- **Registration writes over the key.** A leftover `DelegateExecute` or other verb under `HKCU\Software\Classes\marshell` would win while the switch reads on.
+- **The uninstaller compares the exact path.** A Marshell started through an 8.3 short path would register a command the uninstaller does not recognise, and the key stays.
+- **A toast keeps the link it was made with.** One shown while the link pointed here stays a protocol toast if another Marshell takes the key, and its click starts that one.
+
 ## Residual risks
 
 - **Same-user processes read the token.** Any program running as the user can read `endpoint.json` and drive the API. This is accepted: such a program can already edit the CLIs' config directly.
