@@ -168,9 +168,9 @@ impl History {
     }
 
     /// Full-text search over the indexed conversations. Empty when history is off for this run. Blocking.
-    pub fn search(&self, query: &str) -> anyhow::Result<Vec<SearchHit>> {
+    pub fn search(&self, query: &str, include_archived: bool) -> anyhow::Result<Vec<SearchHit>> {
         match self.index.lock().unwrap().as_ref() {
-            Some(index) => index.search(query),
+            Some(index) => index.search(query, include_archived),
             None => Ok(Vec::new()),
         }
     }
@@ -491,12 +491,12 @@ mod tests {
         let history = Arc::new(History::open(home.path()));
         history.set_settle(Duration::from_millis(20));
         let meta = stopped(&history, home.path(), ID, TOOLS, 2000);
-        assert!(history.search("typo").unwrap().is_empty());
+        assert!(history.search("typo", false).unwrap().is_empty());
 
         schedule_copy(history.clone(), meta);
         idle(&history).await;
 
-        let hits = history.search("typo").unwrap();
+        let hits = history.search("typo", false).unwrap();
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].session_id, ID);
         assert!(hits[0].snippet.contains("\u{2}typo\u{3}"));
@@ -514,11 +514,11 @@ mod tests {
             let meta = stopped(&history, home.path(), ID, TOOLS, 2000);
             // Archived, but never indexed: as after an upgrade from schema 1.
             crate::history::archive::copy_transcript(home.path(), &meta).unwrap();
-            assert!(history.search("typo").unwrap().is_empty());
+            assert!(history.search("typo", false).unwrap().is_empty());
         }
         let history = Arc::new(History::open(home.path()));
         history.clone().backfill().await.unwrap();
-        assert_eq!(history.search("typo").unwrap().len(), 1);
+        assert_eq!(history.search("typo", false).unwrap().len(), 1);
         // Everything is current now: a second pass has nothing to do.
         assert!(
             history
@@ -545,7 +545,7 @@ mod tests {
         let listed = history.list(&HistoryQuery::default()).unwrap();
         assert_eq!(listed.len(), 1);
         assert!(listed[0].limited);
-        assert!(history.search("typo").unwrap().is_empty());
+        assert!(history.search("typo", false).unwrap().is_empty());
         // Already read once: not stale again until the archive changes.
         assert!(
             history

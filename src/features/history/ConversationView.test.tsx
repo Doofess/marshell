@@ -19,6 +19,7 @@ const conv = (items: TurnItem[], over: Partial<Conversation> = {}, prompt = "Fix
   model: "opus",
   version: "2.1.300",
   limited: false,
+  marks: { tags: [], pinned: false, archived: false, bookmarked_turns: [] },
   turns: [{ index: 0, at_ms: 0, prompt, items }],
   ...over,
 });

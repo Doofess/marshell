@@ -1,15 +1,18 @@
-//! The sessions index: one SQLite table with a row per archived session. It can always be rebuilt
-//! from the sidecars, so a damaged file is moved aside and replaced.
+//! The sessions index and search rows. Rebuilt from sidecars and marks files when damaged or outdated.
 
-use super::{SessionMeta, archive};
+use super::{
+    SessionMeta, archive,
+    marks::{self, Marks},
+};
 use crate::{paths, store};
 use anyhow::Context;
 use marshell_protocol::history::{Conversation, HistoryEntry, HistoryQuery, SearchHit, Turn, TurnItem};
 use rusqlite::{Connection, OptionalExtension, Row, params};
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
-/// The schema version this build writes. 2 added the conversation fields and the full-text table.
-const SCHEMA_VERSION: i64 = 2;
+/// 2 added conversation fields and full-text search; 3 caches the person's marks.
+const SCHEMA_VERSION: i64 = 3;
 
 /// Each session owns a block of this many full-text rowids (one per turn), so its rows can be replaced
 /// by a rowid range instead of a scan of the whole table.
@@ -121,9 +124,20 @@ impl Index {
                  limited INTEGER NOT NULL DEFAULT 0,
                  turns INTEGER NOT NULL DEFAULT 0,
                  indexed_len INTEGER,
+                 name TEXT,
+                 pinned INTEGER NOT NULL DEFAULT 0,
+                 archived INTEGER NOT NULL DEFAULT 0,
                  PRIMARY KEY (agent, session_id)
              );
              CREATE INDEX IF NOT EXISTS sessions_by_tab ON sessions (tab_id, updated_ms);
+             CREATE TABLE IF NOT EXISTS tags (
+                 agent TEXT NOT NULL, session_id TEXT NOT NULL, tag TEXT NOT NULL, key TEXT NOT NULL,
+                 PRIMARY KEY (agent, session_id, key)
+             );
+             CREATE TABLE IF NOT EXISTS bookmarks (
+                 agent TEXT NOT NULL, session_id TEXT NOT NULL, at_ms INTEGER NOT NULL,
+                 PRIMARY KEY (agent, session_id, at_ms)
+             );
              CREATE VIRTUAL TABLE IF NOT EXISTS turns_fts USING fts5(
                  prompt, reply, tools, paths,
                  agent UNINDEXED, session_id UNINDEXED, turn UNINDEXED, at_ms UNINDEXED,
@@ -136,6 +150,8 @@ impl Index {
         let tx = conn.transaction()?;
         for meta in &metas {
             insert(&tx, meta)?;
+            let marks = marks::read(home, &meta.agent, &meta.session_id);
+            replace_marks(&tx, &meta.agent, &meta.session_id, &marks)?;
         }
         tx.commit()?;
         Ok((conn, metas.len()))
@@ -144,6 +160,47 @@ impl Index {
     /// Insert, or update the session's own fields by (agent, session_id); what indexing read stays.
     pub fn upsert(&self, meta: &SessionMeta) -> anyhow::Result<()> {
         insert(&self.conn, meta)
+    }
+
+    /// Replaces every cached annotation together. The marks file remains the source of truth.
+    pub fn set_marks(&self, agent: &str, session_id: &str, marks: &Marks) -> anyhow::Result<()> {
+        let tx = self.conn.unchecked_transaction()?;
+        replace_marks(&tx, agent, session_id, marks)?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// Removes only index rows; the caller owns any archive-file deletion.
+    pub fn remove(&self, agent: &str, session_id: &str) -> anyhow::Result<()> {
+        let tx = self.conn.unchecked_transaction()?;
+        if let Some(block) = existing_block(&tx, agent, session_id)? {
+            tx.execute(
+                "DELETE FROM turns_fts WHERE rowid >= ?1 AND rowid < ?2",
+                params![block, block + TURNS_PER_BLOCK],
+            )?;
+        }
+        for table in ["tags", "bookmarks", "sessions"] {
+            tx.execute(
+                &format!("DELETE FROM {table} WHERE agent = ?1 AND session_id = ?2"),
+                params![agent, session_id],
+            )?;
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// Prompt times in turn order, using the session's full-text rowid block.
+    pub fn turn_times(&self, agent: &str, session_id: &str) -> anyhow::Result<Vec<(u32, u64)>> {
+        let Some(block) = existing_block(&self.conn, agent, session_id)? else {
+            return Ok(Vec::new());
+        };
+        let mut stmt = self
+            .conn
+            .prepare("SELECT turn, at_ms FROM turns_fts WHERE rowid >= ?1 AND rowid < ?2 ORDER BY rowid")?;
+        let rows = stmt.query_map(params![block, block + TURNS_PER_BLOCK], |row| {
+            Ok((row.get::<_, i64>(0)? as u32, row.get::<_, i64>(1)? as u64))
+        })?;
+        Ok(rows.collect::<rusqlite::Result<_>>()?)
     }
 
     pub fn get(&self, agent: &str, session_id: &str) -> anyhow::Result<Option<SessionMeta>> {
@@ -230,9 +287,8 @@ impl Index {
         let mut stmt = self.conn.prepare(&format!(
             "SELECT {ENTRY_COLUMNS}
              FROM sessions
-             WHERE (?1 IS NULL OR agent = ?1) AND (?2 IS NULL OR cwd = ?2) AND (?3 IS NULL OR branch = ?3)
-               AND (?4 IS NULL OR model = ?4) AND (?5 IS NULL OR updated_ms >= ?5)
-             ORDER BY updated_ms DESC, session_id LIMIT ?6"
+             WHERE {FILTERS}
+             ORDER BY updated_ms DESC, session_id LIMIT ?9"
         ))?;
         let rows = stmt.query_map(
             params![
@@ -241,9 +297,12 @@ impl Index {
                 q.branch,
                 q.model,
                 q.since_ms.map(|ms| ms as i64),
+                q.tag.as_ref().map(|s| s.to_lowercase()),
+                q.bookmarked.unwrap_or(false),
+                q.archived.unwrap_or(false),
                 LIST_LIMIT
             ],
-            read_entry,
+            |row| read_entry(&self.conn, row),
         )?;
         Ok(rows.collect::<rusqlite::Result<_>>()?)
     }
@@ -253,25 +312,25 @@ impl Index {
         let sql = format!("SELECT {ENTRY_COLUMNS} FROM sessions WHERE agent = ?1 AND session_id = ?2");
         Ok(self
             .conn
-            .query_row(&sql, params![agent, session_id], read_entry)
+            .query_row(&sql, params![agent, session_id], |row| read_entry(&self.conn, row))
             .optional()?)
     }
 
     /// Turns that match what a person typed, best first. The text only ever reaches SQLite as the bound
     /// parameter built by `fts_query`. Marks each hit in the snippet between U+0002 and U+0003.
-    pub fn search(&self, query: &str) -> anyhow::Result<Vec<SearchHit>> {
+    pub fn search(&self, query: &str, include_archived: bool) -> anyhow::Result<Vec<SearchHit>> {
         let Some(fts) = fts_query(query) else {
             return Ok(Vec::new());
         };
         let mut stmt = self.conn.prepare(
-            "SELECT turns_fts.agent, turns_fts.session_id, sessions.title, sessions.cwd, turns_fts.turn,
+            "SELECT turns_fts.agent, turns_fts.session_id, COALESCE(sessions.name, sessions.title), sessions.cwd, turns_fts.turn,
                     turns_fts.at_ms, snippet(turns_fts, -1, char(2), char(3), '…', 12)
              FROM turns_fts JOIN sessions
                ON sessions.agent = turns_fts.agent AND sessions.session_id = turns_fts.session_id
-             WHERE turns_fts MATCH ?1
+             WHERE turns_fts MATCH ?1 AND (?3 OR sessions.archived = 0)
              ORDER BY rank LIMIT ?2",
         )?;
-        let rows = stmt.query_map(params![fts, SEARCH_LIMIT], |row| {
+        let rows = stmt.query_map(params![fts, SEARCH_LIMIT, include_archived], |row| {
             Ok(SearchHit {
                 agent: row.get(0)?,
                 session_id: row.get(1)?,
@@ -283,6 +342,78 @@ impl Index {
             })
         })?;
         Ok(rows.collect::<rusqlite::Result<_>>()?)
+    }
+
+    /// Bookmarked turns, newest bookmark first. Multiple timestamps in one turn produce one hit.
+    pub fn bookmarks(&self, q: &HistoryQuery) -> anyhow::Result<Vec<SearchHit>> {
+        let mut stmt = self.conn.prepare(&format!(
+            "SELECT sessions.agent, sessions.session_id, COALESCE(sessions.name, sessions.title),
+                    sessions.cwd, bookmarks.at_ms, sessions.rowid
+             FROM bookmarks JOIN sessions
+               ON sessions.agent = bookmarks.agent AND sessions.session_id = bookmarks.session_id
+             WHERE {FILTERS}
+             ORDER BY bookmarks.at_ms DESC, sessions.agent, sessions.session_id"
+        ))?;
+        let rows = stmt.query_map(
+            params![
+                q.agent,
+                q.project,
+                q.branch,
+                q.model,
+                q.since_ms.map(|ms| ms as i64),
+                q.tag.as_ref().map(|s| s.to_lowercase()),
+                q.bookmarked.unwrap_or(false),
+                q.archived.unwrap_or(false),
+            ],
+            |row| {
+                Ok((
+                    SearchHit {
+                        agent: row.get(0)?,
+                        session_id: row.get(1)?,
+                        title: row.get(2)?,
+                        cwd: row.get(3)?,
+                        turn: 0,
+                        at_ms: row.get::<_, i64>(4)? as u64,
+                        snippet: String::new(),
+                    },
+                    row.get::<_, i64>(5)?,
+                ))
+            },
+        )?;
+        let mut times = HashMap::new();
+        let mut seen = HashSet::new();
+        let mut hits = Vec::new();
+        for row in rows {
+            let (mut hit, rowid) = row?;
+            let turns = match times.entry(rowid) {
+                std::collections::hash_map::Entry::Occupied(entry) => entry.into_mut(),
+                std::collections::hash_map::Entry::Vacant(entry) => {
+                    entry.insert(self.turn_times(&hit.agent, &hit.session_id)?)
+                }
+            };
+            hit.turn = marks::turn_for(hit.at_ms, turns);
+            if !seen.insert((rowid, hit.turn)) {
+                continue;
+            }
+            let prompt: Option<String> = self
+                .conn
+                .query_row(
+                    "SELECT prompt FROM turns_fts WHERE rowid = ?1",
+                    params![rowid * TURNS_PER_BLOCK + i64::from(hit.turn)],
+                    |row| row.get(0),
+                )
+                .optional()?;
+            let prompt = prompt.unwrap_or_default();
+            hit.snippet = match prompt.char_indices().nth(120) {
+                Some((cut, _)) => format!("{}…", &prompt[..cut]),
+                None => prompt,
+            };
+            hits.push(hit);
+            if hits.len() == SEARCH_LIMIT as usize {
+                break;
+            }
+        }
+        Ok(hits)
     }
 
     /// The sessions that have an archive whose length is not the one last indexed, newest first.
@@ -363,6 +494,16 @@ fn card_path<'a>(name: &str, summary: &'a str) -> Option<&'a str> {
         path = head;
     }
     Some(path)
+}
+
+/// The first full-text rowid of an existing session, without creating a missing session.
+fn existing_block(conn: &Connection, agent: &str, session_id: &str) -> rusqlite::Result<Option<i64>> {
+    conn.query_row(
+        "SELECT rowid FROM sessions WHERE agent = ?1 AND session_id = ?2",
+        params![agent, session_id],
+        |row| row.get::<_, i64>(0).map(|rowid| rowid * TURNS_PER_BLOCK),
+    )
+    .optional()
 }
 
 /// The first full-text rowid of the session's block, making the session's row first when it isn't there.
@@ -468,13 +609,55 @@ fn insert(conn: &Connection, meta: &SessionMeta) -> anyhow::Result<()> {
     Ok(())
 }
 
-const ENTRY_COLUMNS: &str =
-    "agent, session_id, tab_id, cwd, title, branch, model, version, limited, turns, started_ms, updated_ms";
+/// Shared by list and bookmarks so the same filters always select the same conversations.
+const FILTERS: &str = "(?1 IS NULL OR sessions.agent = ?1) AND (?2 IS NULL OR cwd = ?2)
+    AND (?3 IS NULL OR branch = ?3) AND (?4 IS NULL OR model = ?4)
+    AND (?5 IS NULL OR updated_ms >= ?5)
+    AND (?6 IS NULL OR EXISTS (SELECT 1 FROM tags WHERE tags.agent = sessions.agent
+        AND tags.session_id = sessions.session_id AND tags.key = ?6))
+    AND (NOT ?7 OR EXISTS (SELECT 1 FROM bookmarks WHERE bookmarks.agent = sessions.agent
+        AND bookmarks.session_id = sessions.session_id))
+    AND (?8 OR sessions.archived = 0)";
 
-fn read_entry(row: &Row) -> rusqlite::Result<HistoryEntry> {
+fn replace_marks(conn: &Connection, agent: &str, session_id: &str, marks: &Marks) -> anyhow::Result<()> {
+    conn.execute(
+        "UPDATE sessions SET name = ?3, pinned = ?4, archived = ?5 WHERE agent = ?1 AND session_id = ?2",
+        params![agent, session_id, marks.name, marks.pinned, marks.archived],
+    )?;
+    conn.execute(
+        "DELETE FROM tags WHERE agent = ?1 AND session_id = ?2",
+        params![agent, session_id],
+    )?;
+    let mut tag = conn.prepare("INSERT OR IGNORE INTO tags (agent, session_id, tag, key) VALUES (?1, ?2, ?3, ?4)")?;
+    for value in &marks.tags {
+        tag.execute(params![agent, session_id, value, value.to_lowercase()])?;
+    }
+    conn.execute(
+        "DELETE FROM bookmarks WHERE agent = ?1 AND session_id = ?2",
+        params![agent, session_id],
+    )?;
+    let mut bookmark =
+        conn.prepare("INSERT OR IGNORE INTO bookmarks (agent, session_id, at_ms) VALUES (?1, ?2, ?3)")?;
+    for at in &marks.bookmarks {
+        bookmark.execute(params![agent, session_id, *at as i64])?;
+    }
+    Ok(())
+}
+
+const ENTRY_COLUMNS: &str = "agent, session_id, tab_id, cwd, COALESCE(name, title), branch, model, version,
+    limited, turns, started_ms, updated_ms, pinned, archived, name IS NOT NULL,
+    (SELECT COUNT(*) FROM bookmarks WHERE bookmarks.agent = sessions.agent AND bookmarks.session_id = sessions.session_id)";
+
+fn read_entry(conn: &Connection, row: &Row) -> rusqlite::Result<HistoryEntry> {
+    let agent: String = row.get(0)?;
+    let session_id: String = row.get(1)?;
+    let mut stmt = conn.prepare_cached("SELECT tag FROM tags WHERE agent = ?1 AND session_id = ?2 ORDER BY rowid")?;
+    let tags = stmt
+        .query_map(params![agent, session_id], |r| r.get::<_, String>(0))?
+        .collect::<rusqlite::Result<_>>()?;
     Ok(HistoryEntry {
-        agent: row.get(0)?,
-        session_id: row.get(1)?,
+        agent,
+        session_id,
         tab_id: row.get(2)?,
         cwd: row.get(3)?,
         title: row.get(4)?,
@@ -485,6 +668,11 @@ fn read_entry(row: &Row) -> rusqlite::Result<HistoryEntry> {
         turns: row.get::<_, i64>(9)? as u32,
         started_ms: row.get::<_, i64>(10)? as u64,
         updated_ms: row.get::<_, i64>(11)? as u64,
+        tags,
+        pinned: row.get(12)?,
+        archived: row.get(13)?,
+        named: row.get(14)?,
+        bookmarks: row.get::<_, i64>(15)? as u32,
     })
 }
 
@@ -505,6 +693,7 @@ fn read_row(row: &Row) -> rusqlite::Result<SessionMeta> {
 mod tests {
     use super::*;
     use crate::history::archive;
+    use crate::history::marks::{self, Marks};
     use marshell_protocol::history::TurnItem;
 
     fn meta(session: &str, tab: &str, updated: u64, previous: Option<&str>) -> SessionMeta {
@@ -524,6 +713,363 @@ mod tests {
         let home = tempfile::tempdir().unwrap();
         let (index, _) = Index::open(home.path()).unwrap();
         (home, index)
+    }
+
+    fn seed_marks(home: &Path) {
+        for (id, updated, archived) in [("a", 1, false), ("b", 2, true)] {
+            archive::write_meta(home, &meta(id, "t1", updated, None)).unwrap();
+            marks::write(
+                home,
+                "claude",
+                id,
+                &Marks {
+                    name: Some(format!("Named {id}")),
+                    tags: vec!["Zed".into(), "Bug".into()],
+                    pinned: !archived,
+                    archived,
+                    bookmarks: vec![100, 200],
+                },
+            )
+            .unwrap();
+        }
+    }
+
+    fn assert_rebuilt_marks(index: &Index) {
+        let q = HistoryQuery {
+            archived: Some(true),
+            ..HistoryQuery::default()
+        };
+        let entries = index.list(&q).unwrap();
+        assert_eq!(entries.len(), 2);
+        for (entry, id, pinned, archived) in [(&entries[0], "b", false, true), (&entries[1], "a", true, false)] {
+            assert_eq!(entry.session_id, id);
+            assert_eq!(entry.title, format!("Named {id}"));
+            assert_eq!(entry.tags, ["Zed", "Bug"]);
+            assert_eq!(
+                (entry.pinned, entry.archived, entry.named, entry.bookmarks),
+                (pinned, archived, true, 2)
+            );
+        }
+        let hits = index.bookmarks(&q).unwrap();
+        assert_eq!(hits.len(), 2, "timestamps in the same turn collapse to one hit");
+        for id in ["a", "b"] {
+            let hit = hits.iter().find(|h| h.session_id == id).unwrap();
+            assert_eq!(hit.title, format!("Named {id}"));
+            assert_eq!((hit.turn, hit.at_ms, hit.snippet.as_str()), (0, 200, ""));
+        }
+        let hits = index.bookmarks(&HistoryQuery::default()).unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].session_id, "a");
+    }
+
+    #[test]
+    fn marks_survive_a_rebuild() {
+        let (home, index) = fresh();
+        seed_marks(home.path());
+        drop(index);
+        std::fs::remove_file(paths::index_file(home.path())).unwrap();
+        let (index, opened) = Index::open(home.path()).unwrap();
+        assert!(matches!(opened, Opened::Created { sessions: 2 }));
+        assert_rebuilt_marks(&index);
+    }
+
+    #[test]
+    fn schema_2_index_upgrades_to_3_with_marks() {
+        let home = tempfile::tempdir().unwrap();
+        seed_marks(home.path());
+        let file = paths::index_file(home.path());
+        let conn = Connection::open(&file).unwrap();
+        conn.execute_batch(
+            "CREATE TABLE sessions (agent TEXT, session_id TEXT, title TEXT);
+            INSERT INTO sessions VALUES ('claude', 'old', 'not a sidecar'); PRAGMA user_version = 2;",
+        )
+        .unwrap();
+        drop(conn);
+        let (index, opened) = Index::open(home.path()).unwrap();
+        assert!(matches!(opened, Opened::Upgraded { sessions: 2 }));
+        assert_eq!(
+            index
+                .conn
+                .query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))
+                .unwrap(),
+            3
+        );
+        assert!(index.get("claude", "old").unwrap().is_none());
+        assert_rebuilt_marks(&index);
+        let c = conversation("Parsed title", None, None, &["needle"]);
+        index.index_conversation(&meta("a", "t1", 1, None), &c, 1).unwrap();
+        assert_eq!(index.search("needle", false).unwrap()[0].title, "Named a");
+        let entry = index.entry("claude", "a").unwrap().unwrap();
+        assert_eq!(entry.tags, ["Zed", "Bug"]);
+        assert!(entry.pinned && entry.named);
+        assert_eq!(entry.bookmarks, 2);
+    }
+
+    fn marked_pair() -> (tempfile::TempDir, Index) {
+        let (home, index) = fresh();
+        for (id, updated) in [("a", 1), ("b", 2)] {
+            index
+                .index_conversation(
+                    &meta(id, "t1", updated, None),
+                    &conversation("Title", None, None, &["needle"]),
+                    1,
+                )
+                .unwrap();
+        }
+        index
+            .set_marks(
+                "claude",
+                "a",
+                &Marks {
+                    tags: vec!["Bug".into(), "UI".into()],
+                    bookmarks: vec![1000],
+                    ..Marks::default()
+                },
+            )
+            .unwrap();
+        (home, index)
+    }
+
+    #[test]
+    fn list_hides_archived_unless_asked() {
+        let (_home, index) = marked_pair();
+        index
+            .set_marks(
+                "claude",
+                "b",
+                &Marks {
+                    archived: true,
+                    ..Marks::default()
+                },
+            )
+            .unwrap();
+        for archived in [None, Some(false)] {
+            let entries = index
+                .list(&HistoryQuery {
+                    archived,
+                    ..HistoryQuery::default()
+                })
+                .unwrap();
+            assert_eq!(entries.iter().map(|e| e.session_id.as_str()).collect::<Vec<_>>(), ["a"]);
+        }
+        let entries = index
+            .list(&HistoryQuery {
+                archived: Some(true),
+                ..HistoryQuery::default()
+            })
+            .unwrap();
+        assert_eq!(
+            entries.iter().map(|e| e.session_id.as_str()).collect::<Vec<_>>(),
+            ["b", "a"]
+        );
+        assert!(entries[0].archived);
+        assert!(index.entry("claude", "b").unwrap().unwrap().archived);
+    }
+
+    #[test]
+    fn list_filters_by_tag_case_insensitively() {
+        let (_home, index) = marked_pair();
+        for tag in ["bug", "BUG", "ui"] {
+            let q = HistoryQuery {
+                tag: Some(tag.into()),
+                ..HistoryQuery::default()
+            };
+            let entries = index.list(&q).unwrap();
+            assert_eq!(entries.len(), 1);
+            assert_eq!(entries[0].session_id, "a");
+            assert_eq!(entries[0].tags, ["Bug", "UI"]);
+            assert_eq!(index.bookmarks(&q).unwrap().len(), 1);
+        }
+        let q = HistoryQuery {
+            tag: Some("missing".into()),
+            ..HistoryQuery::default()
+        };
+        assert!(index.list(&q).unwrap().is_empty());
+        assert!(index.bookmarks(&q).unwrap().is_empty());
+    }
+
+    #[test]
+    fn bookmarked_filter_lists_only_bookmarked() {
+        let (_home, index) = marked_pair();
+        let entries = index
+            .list(&HistoryQuery {
+                bookmarked: Some(true),
+                ..HistoryQuery::default()
+            })
+            .unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].session_id, "a");
+        assert_eq!(entries[0].bookmarks, 1);
+        assert_eq!(
+            index
+                .list(&HistoryQuery {
+                    bookmarked: Some(false),
+                    ..HistoryQuery::default()
+                })
+                .unwrap()
+                .len(),
+            2
+        );
+    }
+
+    #[test]
+    fn search_skips_archived_unless_asked() {
+        let (_home, index) = marked_pair();
+        index
+            .set_marks(
+                "claude",
+                "b",
+                &Marks {
+                    archived: true,
+                    ..Marks::default()
+                },
+            )
+            .unwrap();
+        let hits = index.search("needle", false).unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].session_id, "a");
+        assert_eq!(index.search("needle", true).unwrap().len(), 2);
+    }
+
+    #[test]
+    fn name_overrides_title_in_list_and_search() {
+        let (_home, index) = marked_pair();
+        index
+            .set_marks(
+                "claude",
+                "a",
+                &Marks {
+                    name: Some("My name".into()),
+                    pinned: true,
+                    ..Marks::default()
+                },
+            )
+            .unwrap();
+        // Recorder updates and transcript reindexing must preserve the person's name and pin.
+        index.upsert(&meta("a", "t1", 3, None)).unwrap();
+        index
+            .index_conversation(
+                &meta("a", "t1", 3, None),
+                &conversation("New parsed title", None, None, &["needle"]),
+                2,
+            )
+            .unwrap();
+        let entry = &index.list(&HistoryQuery::default()).unwrap()[0];
+        assert_eq!(entry.title, "My name");
+        assert!(entry.named && entry.pinned);
+        let hits = index.search("needle", false).unwrap();
+        assert_eq!(hits.iter().find(|h| h.session_id == "a").unwrap().title, "My name");
+        index.set_marks("claude", "a", &Marks::default()).unwrap();
+        let entry = index.entry("claude", "a").unwrap().unwrap();
+        assert_eq!(entry.title, "New parsed title");
+        assert!(!entry.named && !entry.pinned);
+        assert!(entry.tags.is_empty());
+        assert_eq!(entry.bookmarks, 0);
+    }
+
+    #[test]
+    fn bookmarks_resolve_to_turns_newest_first() {
+        let (_home, index) = fresh();
+        let mut c = conversation(
+            "Parsed title",
+            Some("main"),
+            Some("opus"),
+            &["first", "middle", &"界".repeat(121)],
+        );
+        for (turn, at) in c.turns.iter_mut().zip([100, 200, 300]) {
+            turn.at_ms = at;
+        }
+        index.index_conversation(&meta("a", "t1", 1, None), &c, 1).unwrap();
+        index
+            .set_marks(
+                "claude",
+                "a",
+                &Marks {
+                    name: Some("Named".into()),
+                    bookmarks: vec![50, 100, 250, 260, 999],
+                    ..Marks::default()
+                },
+            )
+            .unwrap();
+        assert_eq!(index.turn_times("claude", "a").unwrap(), [(0, 100), (1, 200), (2, 300)]);
+        assert!(index.turn_times("claude", "missing").unwrap().is_empty());
+        let hits = index.bookmarks(&HistoryQuery::default()).unwrap();
+        assert_eq!(
+            hits.iter().map(|h| (h.turn, h.at_ms)).collect::<Vec<_>>(),
+            [(2, 999), (1, 260), (0, 100)]
+        );
+        assert_eq!(hits[0].snippet, format!("{}…", "界".repeat(120)));
+        assert_eq!(hits[1].snippet, "middle");
+        assert_eq!(hits[2].snippet, "first");
+        assert!(hits.iter().all(|h| h.title == "Named" && h.cwd == "c"));
+        for q in [
+            HistoryQuery {
+                agent: Some("codex".into()),
+                ..HistoryQuery::default()
+            },
+            HistoryQuery {
+                project: Some("other".into()),
+                ..HistoryQuery::default()
+            },
+            HistoryQuery {
+                branch: Some("dev".into()),
+                ..HistoryQuery::default()
+            },
+            HistoryQuery {
+                model: Some("sonnet".into()),
+                ..HistoryQuery::default()
+            },
+            HistoryQuery {
+                since_ms: Some(2),
+                ..HistoryQuery::default()
+            },
+        ] {
+            assert!(index.bookmarks(&q).unwrap().is_empty());
+        }
+        index.mark_limited(&meta("a", "t1", 1, None), 2).unwrap();
+        let hits = index.bookmarks(&HistoryQuery::default()).unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!((hits[0].turn, hits[0].at_ms, hits[0].snippet.as_str()), (0, 999, ""));
+    }
+
+    #[test]
+    fn remove_clears_every_table() {
+        let (_home, index) = marked_pair();
+        index
+            .set_marks(
+                "claude",
+                "b",
+                &Marks {
+                    tags: vec!["Keep".into()],
+                    bookmarks: vec![1000],
+                    ..Marks::default()
+                },
+            )
+            .unwrap();
+        index.remove("claude", "a").unwrap();
+        index.remove("claude", "a").unwrap();
+        for table in ["sessions", "tags", "bookmarks", "turns_fts"] {
+            let count: i64 = index
+                .conn
+                .query_row(
+                    &format!("SELECT COUNT(*) FROM {table} WHERE agent = 'claude' AND session_id = 'a'"),
+                    [],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            assert_eq!(count, 0, "{table}");
+            let count: i64 = index
+                .conn
+                .query_row(
+                    &format!("SELECT COUNT(*) FROM {table} WHERE agent = 'claude' AND session_id = 'b'"),
+                    [],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            assert_eq!(count, 1, "{table} keeps the other session");
+        }
+        assert_eq!(index.search("needle", false).unwrap()[0].session_id, "b");
+        assert_eq!(index.bookmarks(&HistoryQuery::default()).unwrap()[0].session_id, "b");
     }
 
     #[test]
@@ -600,7 +1146,7 @@ mod tests {
         let file = paths::index_file(home.path());
         rusqlite::Connection::open(&file)
             .unwrap()
-            .pragma_update(None, "user_version", 3)
+            .pragma_update(None, "user_version", SCHEMA_VERSION + 1)
             .unwrap();
         let before = std::fs::read(&file).unwrap();
         assert!(Index::open(home.path()).is_err());
@@ -642,6 +1188,7 @@ mod tests {
             model: model.map(Into::into),
             version: Some("2.1.309".into()),
             limited: false,
+            marks: Default::default(),
             turns: prompts
                 .iter()
                 .enumerate()
@@ -686,7 +1233,7 @@ mod tests {
 
         // Each word is in one place only: the prompt, the reply, a tool summary.
         for (word, place) in [("typo", "prompt"), ("done", "reply"), ("Frobnicate", "tool")] {
-            let hits = index.search(word).unwrap();
+            let hits = index.search(word, false).unwrap();
             assert_eq!(hits.len(), 1, "{word} ({place})");
             assert_eq!(hits[0].turn, 0);
             assert_eq!(hits[0].session_id, TOOLS_ID);
@@ -697,7 +1244,7 @@ mod tests {
             );
         }
         // A path is searched by its parts, and sits in its own column.
-        let hits = index.search("notes.md").unwrap();
+        let hits = index.search("notes.md", false).unwrap();
         assert_eq!(hits.len(), 1);
         assert!(hits[0].snippet.contains('\u{2}'));
         let paths: String = index
@@ -711,8 +1258,8 @@ mod tests {
             .unwrap();
         assert_eq!(reply, "All done.");
         // The last word is a prefix; a word that is nowhere finds nothing.
-        assert_eq!(index.search("frobn").unwrap().len(), 1);
-        assert!(index.search("zebra").unwrap().is_empty());
+        assert_eq!(index.search("frobn", false).unwrap().len(), 1);
+        assert!(index.search("zebra", false).unwrap().is_empty());
     }
 
     #[test]
@@ -727,21 +1274,21 @@ mod tests {
                 5,
             )
             .unwrap();
-        assert_eq!(index.search("beta").unwrap().len(), 1);
+        assert_eq!(index.search("beta", false).unwrap().len(), 1);
         index
             .index_conversation(&m, &conversation("Second", None, None, &["gamma three"]), 6)
             .unwrap();
-        assert!(index.search("alpha").unwrap().is_empty());
-        assert!(index.search("beta").unwrap().is_empty());
-        assert_eq!(index.search("gamma").unwrap().len(), 1);
+        assert!(index.search("alpha", false).unwrap().is_empty());
+        assert!(index.search("beta", false).unwrap().is_empty());
+        assert_eq!(index.search("gamma", false).unwrap().len(), 1);
         // A later upsert of the session's own fields doesn't wipe what indexing read.
         index.upsert(&meta("a", "t1", 99, None)).unwrap();
         let entry = &index.list(&HistoryQuery::default()).unwrap()[0];
         assert_eq!((entry.title.as_str(), entry.turns, entry.updated_ms), ("Second", 1, 99));
-        assert_eq!(index.search("gamma").unwrap().len(), 1);
+        assert_eq!(index.search("gamma", false).unwrap().len(), 1);
         // A session whose archive can't be read stays listed, limited, with nothing to search.
         index.mark_limited(&m, 9).unwrap();
-        assert!(index.search("gamma").unwrap().is_empty());
+        assert!(index.search("gamma", false).unwrap().is_empty());
         let entry = &index.list(&HistoryQuery::default()).unwrap()[0];
         assert!(entry.limited);
     }
@@ -753,7 +1300,7 @@ mod tests {
         index.index_conversation(&m, &tools_conversation(), 7).unwrap();
         let empty = ["", "   ", "\t\n", "*", "**", "!!!", "...", "\"\"", "()", "-"];
         for q in empty {
-            assert!(index.search(q).unwrap().is_empty(), "{q:?}");
+            assert!(index.search(q, false).unwrap().is_empty(), "{q:?}");
         }
         let hostile = [
             "\"",
@@ -783,13 +1330,13 @@ mod tests {
             "typo\u{0}",
         ];
         for q in hostile {
-            index.search(q).unwrap_or_else(|e| panic!("{q:?}: {e:#}"));
+            index.search(q, false).unwrap_or_else(|e| panic!("{q:?}: {e:#}"));
         }
         // Words are plain words: "AND" is not an operator, and a column name is not a column filter.
-        assert_eq!(index.search("typo").unwrap().len(), 1);
-        assert!(index.search("typo AND zebra").unwrap().is_empty());
-        assert!(index.search("prompt:typo").unwrap().is_empty());
-        assert_eq!(index.search("\u{0}typo").unwrap().len(), 1);
+        assert_eq!(index.search("typo", false).unwrap().len(), 1);
+        assert!(index.search("typo AND zebra", false).unwrap().is_empty());
+        assert!(index.search("prompt:typo", false).unwrap().is_empty());
+        assert_eq!(index.search("\u{0}typo", false).unwrap().len(), 1);
         let rows: i64 = index
             .conn
             .query_row("SELECT COUNT(*) FROM sessions", [], |r| r.get(0))
@@ -940,7 +1487,7 @@ mod tests {
         let mut times: Vec<std::time::Duration> = (0..20)
             .map(|i| {
                 let started = std::time::Instant::now();
-                let hits = index.search(&format!("word{} word{}", 10 + i, 20 + i)).unwrap();
+                let hits = index.search(&format!("word{} word{}", 10 + i, 20 + i), false).unwrap();
                 let took = started.elapsed();
                 assert!(hits.len() <= 50);
                 took

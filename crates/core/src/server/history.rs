@@ -88,7 +88,7 @@ pub async fn search(
         if query.q.trim().is_empty() {
             return Ok(Vec::new());
         }
-        history.search(&query.q).map_err(failed)
+        history.search(&query.q, false).map_err(failed)
     })
     .await?;
     Ok(Json(hits))
@@ -128,6 +128,7 @@ pub async fn conversation(
                     version: entry.version,
                     limited: true,
                     turns: Vec::new(),
+                    marks: Default::default(),
                 })
             }
         }

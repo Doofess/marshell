@@ -2,5 +2,6 @@
 
 /**
  * The filters of the History list. `project` is the full working folder.
+ * `archived: true` includes archived conversations.
  */
-export type HistoryQuery = { agent?: string, project?: string, branch?: string, model?: string, since_ms?: number, };
+export type HistoryQuery = { agent?: string, project?: string, branch?: string, model?: string, since_ms?: number, tag?: string, bookmarked?: boolean, archived?: boolean, };

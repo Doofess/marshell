@@ -17,6 +17,11 @@ const entry = (over: Partial<HistoryEntry> = {}): HistoryEntry => ({
   model: "opus",
   version: "2.1.300",
   limited: false,
+  tags: [],
+  pinned: false,
+  archived: false,
+  bookmarks: 0,
+  named: false,
   turns: 3,
   started_ms: NOW - 3_600_000,
   updated_ms: NOW - 300_000,
@@ -154,6 +159,7 @@ describe("HistoryView conversation pane", () => {
     title: "Fix the invoice rounding",
     cwd: "C:\\dev\\billing",
     limited: false,
+    marks: { tags: [], pinned: false, archived: false, bookmarked_turns: [] },
     turns: [{ index: 0, at_ms: 0, prompt: "hello", items: [] }],
   };
 
