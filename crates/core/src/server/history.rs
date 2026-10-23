@@ -8,7 +8,7 @@ use super::sessions::{NO_CONVERSATION, ResumeRequest, cannot_resume, resolve, st
 use crate::agents::claude::transcript;
 use crate::history::export::{ExportFormat, export_text};
 use crate::history::marks::normalize_name;
-use crate::history::recorder::{BookmarkRefusal, DeleteRefusal, History};
+use crate::history::recorder::{BookmarkRefusal, BookmarkTurnRefusal, DeleteRefusal, History};
 use crate::history::{SessionMeta, archive, transcript_allowed, valid_session_id};
 use crate::profiles::detect::ResumeTarget;
 use axum::Json;
@@ -252,7 +252,12 @@ async fn set_bookmark(
     let history = st.history();
     blocking(move || {
         session_meta(&history, &session_id)?;
-        history.bookmark_turn(&agent, &session_id, turn, on).map_err(failed)
+        history
+            .bookmark_turn(&agent, &session_id, turn, on)
+            .map_err(|err| match err {
+                BookmarkTurnRefusal::Failed(err) => failed(err),
+                err => (StatusCode::CONFLICT, err.to_string()),
+            })
     })
     .await?;
     Ok(StatusCode::NO_CONTENT)

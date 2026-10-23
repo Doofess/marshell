@@ -618,15 +618,6 @@ async fn bookmark_turn_on_and_off() {
         StatusCode::NO_CONTENT
     );
     assert_eq!(get_json(&env.app, "/v1/history/bookmarks").await.1, json!([]));
-    // A session not yet parsed has no turn times: its bookmark falls back to 0.
-    index_session(&env, "unparsed", env.work.path());
-    assert_eq!(
-        call(&env.app, req("PUT", "/v1/history/claude/unparsed/bookmarks/0", None))
-            .await
-            .0,
-        StatusCode::NO_CONTENT
-    );
-    assert_eq!(marks::read(env.home.path(), "claude", "unparsed").bookmarks, vec![0]);
 }
 
 #[tokio::test]
@@ -692,6 +683,26 @@ async fn bookmark_now_waits_for_the_first_prompt() {
     let (status, text) = call(&env.app, req("POST", "/v1/sessions/t1/bookmark", None)).await;
     assert_eq!(status, StatusCode::OK, "{text}");
     assert_eq!(marks::read(env.home.path(), "claude", ID).bookmarks.len(), 1);
+}
+
+#[tokio::test]
+async fn bookmarking_an_unknown_turn_is_refused() {
+    let env = env();
+    seed(&env, ID);
+    let uri = format!("/v1/history/claude/{ID}");
+    let (status, text) = call(&env.app, req("PUT", &format!("{uri}/bookmarks/999"), None)).await;
+    assert_eq!(
+        (status, text.as_str()),
+        (
+            StatusCode::CONFLICT,
+            "Marshell hasn't indexed turn 999 of this conversation yet."
+        )
+    );
+    assert!(marks::read(env.home.path(), "claude", ID).bookmarks.is_empty());
+    assert_eq!(get_json(&env.app, &uri).await.1["marks"]["bookmarked_turns"], json!([]));
+    // Turning one off for an unknown turn is a harmless no-op.
+    let (status, _) = call(&env.app, req("DELETE", &format!("{uri}/bookmarks/999"), None)).await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
 }
 
 #[tokio::test]

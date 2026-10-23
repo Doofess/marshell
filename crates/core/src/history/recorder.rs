@@ -45,6 +45,28 @@ impl std::fmt::Display for BookmarkRefusal {
 }
 
 #[derive(Debug)]
+pub enum BookmarkTurnRefusal {
+    /// The index has no time for this turn, so a bookmark could not be placed on it.
+    NotIndexed(u32),
+    Failed(anyhow::Error),
+}
+
+impl From<anyhow::Error> for BookmarkTurnRefusal {
+    fn from(err: anyhow::Error) -> Self {
+        Self::Failed(err)
+    }
+}
+
+impl std::fmt::Display for BookmarkTurnRefusal {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::NotIndexed(turn) => write!(f, "Marshell hasn't indexed turn {turn} of this conversation yet."),
+            Self::Failed(err) => write!(f, "{err:#}"),
+        }
+    }
+}
+
+#[derive(Debug)]
 pub enum DeleteRefusal {
     RunningInATab,
     Copying,
@@ -373,22 +395,27 @@ impl History {
         Ok(marks)
     }
 
-    pub fn bookmark_turn(&self, agent: &str, session_id: &str, turn: u32, on: bool) -> anyhow::Result<()> {
+    pub fn bookmark_turn(&self, agent: &str, session_id: &str, turn: u32, on: bool) -> Result<(), BookmarkTurnRefusal> {
         let _marks = self.marks.lock().unwrap();
         let guard = self.index.lock().unwrap();
         let index = guard
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("History is off for this run."))?;
-        anyhow::ensure!(index.get(agent, session_id)?.is_some(), "No such conversation.");
+        if index.get(agent, session_id)?.is_none() {
+            return Err(anyhow::anyhow!("No such conversation.").into());
+        }
         let turns = index.turn_times(agent, session_id)?;
         let mut marks = marks::read(&self.home, agent, session_id);
         if on {
-            let at_ms = turns.iter().find(|(n, _)| *n == turn).map_or(0, |(_, at)| *at);
-            marks::add_bookmark(&mut marks, at_ms);
+            let (_, at_ms) = turns
+                .iter()
+                .find(|(n, _)| *n == turn)
+                .ok_or(BookmarkTurnRefusal::NotIndexed(turn))?;
+            marks::add_bookmark(&mut marks, *at_ms);
         } else {
             marks.bookmarks.retain(|at| marks::turn_for(*at, &turns) != turn);
         }
-        self.save_marks(index, agent, session_id, &marks)
+        Ok(self.save_marks(index, agent, session_id, &marks)?)
     }
 
     pub fn bookmark_now(&self, tab_id: &str, at_ms: u64) -> Result<String, BookmarkRefusal> {
