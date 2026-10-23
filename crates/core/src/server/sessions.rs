@@ -887,7 +887,7 @@ mod tests {
             "transcript_path": path.to_string_lossy(),
             "cwd": path.parent().unwrap().to_string_lossy(),
         });
-        assert!(st.history().note_event(tab, &body, 1).is_none());
+        assert!(st.history().note_event(tab, None, &body, 1).is_none());
     }
 
     #[test]
@@ -935,6 +935,7 @@ mod tests {
             started_ms: 1,
             updated_ms: 2,
             previous_in_tab: None,
+            recordings: vec![],
         };
         // An id that would reach the command line, with a transcript that really exists.
         let hostile = work.path().join("x; calc.jsonl");

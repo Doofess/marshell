@@ -686,6 +686,7 @@ fn read_row(row: &Row) -> rusqlite::Result<SessionMeta> {
         started_ms: row.get::<_, i64>(5)? as u64,
         updated_ms: row.get::<_, i64>(6)? as u64,
         previous_in_tab: row.get(7)?,
+        recordings: vec![],
     })
 }
 
@@ -706,6 +707,7 @@ mod tests {
             started_ms: 1,
             updated_ms: updated,
             previous_in_tab: previous.map(Into::into),
+            recordings: vec![],
         }
     }
 

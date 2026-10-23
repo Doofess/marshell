@@ -122,7 +122,7 @@ fn index_session(env: &Env, id: &str, dir: &Path) -> PathBuf {
         "transcript_path": transcript.to_string_lossy(),
         "cwd": env.work.path().to_string_lossy(),
     });
-    assert!(env.state.history().note_event("t1", &body, 1000).is_none());
+    assert!(env.state.history().note_event("t1", None, &body, 1000).is_none());
     transcript
 }
 
@@ -379,7 +379,7 @@ async fn resume_refuses_a_conversation_running_in_a_tab() {
         "transcript_path": claude_dir.path().join(format!("{ID}.jsonl")).to_string_lossy(),
         "cwd": env.work.path().to_string_lossy(),
     });
-    env.state.history().note_event(&tab, &body, 2000);
+    env.state.history().note_event(&tab, None, &body, 2000);
     assert_eq!(env.state.live_session_count(), 1);
 
     // A second Resume would start a second Claude on it: refused, and nothing starts.
@@ -399,7 +399,7 @@ async fn resume_refuses_a_conversation_running_in_a_tab() {
         "transcript_path": newer_path.to_string_lossy(),
         "cwd": env.work.path().to_string_lossy(),
     });
-    env.state.history().note_event(&tab, &body, 3000);
+    env.state.history().note_event(&tab, None, &body, 3000);
     let (status, text) = call(&env.app, req("POST", &uri, Some(resume_body()))).await;
     assert_eq!(status, StatusCode::OK, "{text}");
     assert_eq!(env.state.live_session_count(), 2);
@@ -679,7 +679,7 @@ async fn bookmark_now_waits_for_the_first_prompt() {
         "cwd": env.work.path().to_string_lossy(),
         "prompt": "hello",
     });
-    assert!(env.state.history().note_event("t1", &prompt, 2000).is_none());
+    assert!(env.state.history().note_event("t1", None, &prompt, 2000).is_none());
     let (status, text) = call(&env.app, req("POST", "/v1/sessions/t1/bookmark", None)).await;
     assert_eq!(status, StatusCode::OK, "{text}");
     assert_eq!(marks::read(env.home.path(), "claude", ID).bookmarks.len(), 1);
@@ -757,7 +757,7 @@ async fn delete_refuses_a_running_conversation() {
     );
     assert!(archive_paths(env.home.path(), "claude", ID).0.exists());
     // A running tab on a different conversation does not block deleting this one.
-    env.state.history().note_event("t1", &json!({"hook_event_name":"SessionStart", "session_id":"newer", "transcript_path":env.work.path().join("newer.jsonl"), "cwd":env.work.path()}), 2000);
+    env.state.history().note_event("t1", None, &json!({"hook_event_name":"SessionStart", "session_id":"newer", "transcript_path":env.work.path().join("newer.jsonl"), "cwd":env.work.path()}), 2000);
     assert_eq!(
         call(&env.app, req("DELETE", &uri, None)).await.0,
         StatusCode::NO_CONTENT
@@ -946,7 +946,7 @@ async fn resume_opens_the_tab_under_the_name() {
         "transcript_path": newer_path.to_string_lossy(),
         "cwd": env.work.path().to_string_lossy(),
     });
-    env.state.history().note_event(&tab, &body, 5000);
+    env.state.history().note_event(&tab, None, &body, 5000);
     let (_, list) = get_json(&env.app, "/v1/history").await;
     let row = list
         .as_array()
@@ -1100,6 +1100,7 @@ fn seed_history_home() {
             started_ms: now - age - 60_000,
             updated_ms: now - age,
             previous_in_tab: None,
+            recordings: vec![],
         };
         copy_transcript(&home, &meta).unwrap();
         if id.ends_with("b4") {

@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 use std::path::Path;
 
 pub mod archive;
+pub mod cast;
 pub mod export;
 pub mod index;
 pub mod marks;
@@ -24,10 +25,13 @@ pub struct SessionMeta {
     pub updated_ms: u64,
     /// The session this tab had before this one (after a /clear), if any.
     pub previous_in_tab: Option<String>,
+    /// File names (in `recordings/`) of the recordings of the tabs this conversation ran in, oldest first.
+    #[serde(default)]
+    pub recordings: Vec<String>,
 }
 
 impl store::Versioned for SessionMeta {
-    const VERSION: u32 = 1;
+    const VERSION: u32 = 2;
 }
 
 /// A session id is used in file names and as a command-line argument, so it must be 1 to 64 letters, digits,

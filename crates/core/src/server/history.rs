@@ -338,7 +338,7 @@ fn boxed(err: impl IntoResponse) -> Box<Response> {
 /// What the lookup before a Resume or Fork found.
 enum Found {
     /// The conversation, and the name its new tab opens under, if the person named it.
-    Usable(SessionMeta, Option<String>),
+    Usable(Box<SessionMeta>, Option<String>),
     /// Claude's transcript file is gone.
     Gone,
     RunningInATab,
@@ -392,12 +392,12 @@ async fn open_in_new_tab(
         } else {
             name
         };
-        Ok(Found::Usable(meta, tab_name))
+        Ok(Found::Usable(Box::new(meta), tab_name))
     })
     .await
     .map_err(boxed)?;
     let (meta, tab_name) = match meta {
-        Found::Usable(meta, tab_name) => (meta, tab_name),
+        Found::Usable(meta, tab_name) => (*meta, tab_name),
         Found::Gone => return Err(Box::new(cannot_resume(NO_CONVERSATION))),
         Found::RunningInATab => return Err(Box::new(cannot_resume(RUNNING_IN_A_TAB))),
     };

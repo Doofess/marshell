@@ -283,7 +283,7 @@ async fn resume_refuses_a_conversation_claude_no_longer_has() {
         "cwd": work.path().to_string_lossy(),
     });
     std::fs::write(&transcript, "{}\n").unwrap();
-    assert!(state.history().note_event(&b, &body, 1).is_none());
+    assert!(state.history().note_event(&b, None, &body, 1).is_none());
     let meta = state.history().latest_for_tab(&b).unwrap();
     // Marshell holds a copy of it, then Claude's file goes: we had it and it was lost.
     marshell_core::history::archive::copy_transcript(home.path(), &meta).unwrap();
@@ -332,7 +332,7 @@ async fn resume_starts_fresh_when_the_session_never_wrote_a_transcript() {
         "transcript_path": transcript.to_string_lossy(),
         "cwd": work.path().to_string_lossy(),
     });
-    assert!(state.history().note_event(&b, &body, 1).is_none());
+    assert!(state.history().note_event(&b, None, &body, 1).is_none());
 
     let res = resume(&app, &b).await;
     assert_eq!(res.status(), StatusCode::OK);

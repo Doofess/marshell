@@ -201,3 +201,15 @@ pub struct HistoryQuery {
     #[ts(optional)]
     pub archived: Option<bool>,
 }
+
+/// One event of an asciicast recording, with its time already placed on the Unix clock.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct CastEvent {
+    /// The part's start plus the event's offset, in ms since the Unix epoch.
+    #[ts(type = "number")]
+    pub at_ms: u64,
+    /// "o" output, "r" resize ("80x24") or "m" mark.
+    pub code: String,
+    pub data: String,
+}
