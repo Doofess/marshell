@@ -31,6 +31,40 @@ pub fn copy_transcript(home: &Path, meta: &SessionMeta) -> anyhow::Result<PathBu
     Ok(archive)
 }
 
+/// The most a transcript may decode to before Marshell stops reading it.
+pub const MAX_DECODED_BYTES: u64 = 200 * 1024 * 1024;
+
+/// The archived transcript as text, or None when the session has no archive. Decodes in a stream and stops
+/// with an error once more than `MAX_DECODED_BYTES` has come out. Invalid UTF-8 becomes U+FFFD.
+pub fn read_archive(home: &Path, agent: &str, session_id: &str) -> anyhow::Result<Option<String>> {
+    read_archive_capped(home, agent, session_id, MAX_DECODED_BYTES)
+}
+
+fn read_archive_capped(home: &Path, agent: &str, session_id: &str, cap: u64) -> anyhow::Result<Option<String>> {
+    use std::io::Read;
+    let (archive, _) = archive_paths(home, agent, session_id);
+    let file = match std::fs::File::open(&archive) {
+        Ok(file) => file,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(err) => return Err(err).with_context(|| format!("opening {}", archive.display())),
+    };
+    let decoder = zstd::Decoder::new(file).context("starting to decompress the archive")?;
+    let mut bytes = Vec::new();
+    decoder
+        .take(cap + 1)
+        .read_to_end(&mut bytes)
+        .with_context(|| format!("decompressing {}", archive.display()))?;
+    anyhow::ensure!(
+        bytes.len() as u64 <= cap,
+        "{} is over {} MB decoded",
+        archive.display(),
+        cap / (1024 * 1024)
+    );
+    Ok(Some(String::from_utf8(bytes).unwrap_or_else(|e| {
+        String::from_utf8_lossy(e.as_bytes()).into_owned()
+    })))
+}
+
 /// Every readable sidecar in the archive. One that can't be read, or whose id or transcript path fails
 /// `transcript_allowed`, is skipped with a warning, so a rebuild never indexes it.
 pub fn read_all_meta(home: &Path) -> Vec<SessionMeta> {
@@ -112,6 +146,34 @@ mod tests {
             .filter(|e| e.as_ref().unwrap().file_name().to_string_lossy().ends_with(".tmp"))
             .count();
         assert_eq!(leftovers, 0);
+    }
+
+    #[test]
+    fn read_archive_round_trips_and_caps() {
+        let home = tempfile::tempdir().unwrap();
+        assert_eq!(read_archive(home.path(), "claude", "s1").unwrap(), None);
+        let src = home.path().join("s1.jsonl");
+        std::fs::write(
+            &src,
+            "{\"a\":1}
+{\"b\":2}
+",
+        )
+        .unwrap();
+        copy_transcript(home.path(), &meta("s1", &src)).unwrap();
+        assert_eq!(
+            read_archive(home.path(), "claude", "s1").unwrap().as_deref(),
+            Some(
+                "{\"a\":1}
+{\"b\":2}
+"
+            )
+        );
+        assert!(read_archive_capped(home.path(), "claude", "s1", 16).unwrap().is_some());
+        assert!(read_archive_capped(home.path(), "claude", "s1", 15).is_err());
+        let (archive, _) = archive_paths(home.path(), "claude", "s1");
+        std::fs::write(&archive, b"not zstd").unwrap();
+        assert!(read_archive(home.path(), "claude", "s1").is_err());
     }
 
     #[test]

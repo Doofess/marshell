@@ -31,6 +31,7 @@ import { nextWaiting } from "../lane/laneLayout";
 import { focusPendingCard } from "../approval/focusPendingCard";
 import { osOfPlatform } from "../../lib/keymap";
 import { paletteSessions } from "../palette/sessions";
+import { LiveHistory } from "../history/LiveHistory";
 import { Preview } from "../preview/Preview";
 import { PreviewContext } from "../preview/PreviewContext";
 import { currentOf, usePreview } from "../preview/previewState";
@@ -161,8 +162,14 @@ export function LiveApp() {
   selectRef.current = select;
   // A link or a banner put focus on a row: no terminal takes it on its own until the person picks a session or a pane.
   const [linkHeld, setLinkHeld] = useState(false);
+  // What the main area shows: the sessions, or the History view over them (the sidebar stays). Going to any session closes it.
+  const [mainView, setMainView] = useState<"sessions" | "history">("sessions");
+  const mainViewRef = useRef(mainView);
+  mainViewRef.current = mainView;
+  const [searchFocus, setSearchFocus] = useState(0);
   const pick = useCallback(
     (id: string) => {
+      setMainView("sessions");
       setLinkHeld(false);
       selectRef.current(id);
       // The view is told how many panes are on screen, so the session never lands in one that is not.
@@ -961,6 +968,16 @@ export function LiveApp() {
         case "capture":
           void runCaptureRef.current();
           return true;
+        case "history":
+          if (mainViewRef.current === "history") {
+            setMainView("sessions");
+            setTimeout(() => actions.focusTerminal(), 0);
+          } else setMainView("history");
+          return true;
+        case "globalSearch":
+          setMainView("history");
+          setSearchFocus((n) => n + 1);
+          return true;
         case "split":
           if (!roomForPane(v.panes.length, fitRef.current)) {
             announce(NO_PANE_ROOM);
@@ -1046,7 +1063,8 @@ export function LiveApp() {
       // Review is read above.
       if (!shortcut || shortcut.kind === "review") return;
       // A text box (the rename box, the launcher's fields) keeps its own keys; xterm's own hidden textarea is the terminal, not a box.
-      if (isTextBox(e.target as HTMLElement | null)) return;
+      // The History view's search box is a text box, and Ctrl+Shift+Y and Ctrl+Shift+Alt+F are the keys that leave it and come back to it.
+      if (isTextBox(e.target as HTMLElement | null) && shortcut.kind !== "history" && shortcut.kind !== "globalSearch") return;
       e.preventDefault();
       // Holding the key repeats it; only moving a session along the list, or from prompt to prompt, should.
       if (e.repeat && shortcut.kind !== "move" && shortcut.kind !== "prompt") return;
@@ -1086,7 +1104,7 @@ export function LiveApp() {
     }
     const shortcut = commandShortcut(id);
     // These move the focus (or open a pane that takes it), so they wait for the palette to hand it back first.
-    if (shortcut?.kind === "nonePane" || shortcut?.kind === "shellPanel" || shortcut?.kind === "preview" || shortcut?.kind === "openFile") return void setTimeout(() => paneCommand(shortcut), 0);
+    if (shortcut?.kind === "nonePane" || shortcut?.kind === "shellPanel" || shortcut?.kind === "preview" || shortcut?.kind === "openFile" || shortcut?.kind === "history" || shortcut?.kind === "globalSearch") return void setTimeout(() => paneCommand(shortcut), 0);
     if (paneCommand(shortcut)) return;
     if (shortcut?.kind === "launcher") setLauncherOpen(true);
     else if (shortcut?.kind === "prompt") jumpPrompt(shortcut.by);
@@ -1264,7 +1282,9 @@ export function LiveApp() {
       />
     ) : undefined;
   // The core decides whether a banner is worth showing from this: whether the window has focus and which sessions are on screen.
-  useViewReport(endpoint, previewPane && focusedId ? [focusedId] : visibleIds);
+  // Under the History view the terminals stay mounted but none is on screen, so none is reported (or marked in the sidebar) as seen.
+  const onScreenIds = mainView === "history" ? [] : previewPane && focusedId ? [focusedId] : visibleIds;
+  useViewReport(endpoint, onScreenIds);
   return (
     <PreviewContext.Provider value={preview.open}>
     <div ref={ref} className="live-app">
@@ -1294,8 +1314,34 @@ export function LiveApp() {
           onPane={dispatch}
           rows={sidebarRows}
           selectedId={focusedId}
-          visibleIds={previewPane && focusedId ? [focusedId] : visibleIds}
+          visibleIds={onScreenIds}
           preview={previewPane}
+          mainView={
+            mainView === "history" && endpoint && os ? (
+              <LiveHistory
+                endpoint={endpoint}
+                rows={rows}
+                os={os}
+                searchFocus={searchFocus}
+                size={() => size.current}
+                announce={announce}
+                onGoTo={(tabId) => {
+                  pick(tabId);
+                  setTimeout(() => actions.focusTerminal(), 0);
+                }}
+                onResumed={pick}
+                onOpenFile={(link) => {
+                  setMainView("sessions");
+                  preview.open(link);
+                  announce(`Opened ${lastSegment(link.path)} in the preview.`);
+                }}
+                onClose={() => {
+                  setMainView("sessions");
+                  setTimeout(() => actions.focusTerminal(), 0);
+                }}
+              />
+            ) : undefined
+          }
           os={os}
           windowControls={{ maximized, onMinimize: () => void minimizeWindow(), onToggleMaximize: () => void toggleMaximize(), onClose: () => void closeWindow() }}
           requests={requests}

@@ -182,6 +182,11 @@ export type MainWindowProps = {
    * A split view shows only the focused pane's session while it is open; closing the preview brings the split back as it was.
    */
   preview?: ReactNode;
+  /**
+   * A view that takes the main area (History), in place of the panes, the empty text and the preview. The sidebar and the bar stay.
+   * Where the window draws live terminals they stay mounted behind it, so a session keeps its scrollback.
+   */
+  mainView?: ReactNode;
 };
 
 const icon = (d: string) => (
@@ -267,6 +272,7 @@ export function MainWindow({
   noneSelected = false,
   navCursor = null,
   preview,
+  mainView,
 }: MainWindowProps) {
   const pref: SidebarPref = sidebarPref ?? (layout === "focus" ? "focus" : layout === "rail" ? "rail" : "expanded");
   const mode = sidebarMode(width, pref);
@@ -382,7 +388,8 @@ export function MainWindow({
   // The preview's divider: the session's share of the main area. Not saved; every opening starts at half.
   const mainRef = useRef<HTMLElement>(null);
   const [previewRatio, setPreviewRatio] = useState<number>(PREVIEW_RATIO.default);
-  const previewing = !empty && preview !== undefined && preview !== null && preview !== false;
+  const viewing = mainView !== undefined && mainView !== null && mainView !== false;
+  const previewing = !viewing && !empty && preview !== undefined && preview !== null && preview !== false;
   const previewFull = previewing && previewLayout(space.w) === "full";
   const dragPreview = (e: ReactPointerEvent<HTMLElement>) => {
     const main = mainRef.current;
@@ -522,22 +529,27 @@ export function MainWindow({
           className="window__main"
           tabIndex={-1}
           data-placement={drawer && !previewing ? placement : undefined}
-          data-nav-pane={!empty && (!split || previewing) ? 0 : undefined}
+          data-nav-pane={!viewing && !empty && (!split || previewing) ? 0 : undefined}
           data-preview={previewing ? (previewFull ? "full" : "beside") : undefined}
           style={previewing && !previewFull ? { gridTemplateColumns: previewTracks(previewRatio) } : undefined}
         >
           {empty ? (
-            <div className="window__empty">
-              No sessions yet. Start one with {shortcutLabel(commandById("launcher").binding!, os)}.
-            </div>
-          ) : split && !previewing ? (
+            viewing ? null : (
+              <div className="window__empty">
+                No sessions yet. Start one with {shortcutLabel(commandById("launcher").binding!, os)}.
+              </div>
+            )
+          ) : split && !previewing && !viewing ? (
             <SplitView panes={shown} size={{ w: space.w, h: space.h }} activeIndex={noneSelected ? -1 : focusedIdx} hidden={hiddenCount} arrangement={chosen} ratios={ratios} zoomed={zoomIdx} choices={choices} composerValues={composerValues} composers={showComposer} setting={terminalSetting} os={os} renderTerminal={renderTerminal} paneBar={barInPane ? paneBar : undefined} {...paneHandlers} />
           ) : renderTerminal ? (
             // While the preview is open in a split view, the focused pane's session is the one beside it; the others stay mounted behind.
-            <KeptTerminals rows={rows} selectedId={previewing && split ? (active?.id ?? selected.id) : selected.id} render={renderTerminal} suspended={previewFull} />
-          ) : (
+            // Under a main view the same: every terminal stays mounted and none is on screen.
+            <KeptTerminals rows={rows} selectedId={(previewing || viewing) && split ? (active?.id ?? selected.id) : selected.id} render={renderTerminal} suspended={previewFull || viewing} />
+          ) : viewing ? null : (
             <ScriptedTerminal setting={terminalSetting} label={`Terminal for ${selected.name}`} {...(isTool(selected.agent) ? { script: shellSession({ cwd: selected.project }), size: SHELL_SIZE } : {})} />
           )}
+
+          {viewing && mainView}
 
           {previewing && !previewFull && (
             <div

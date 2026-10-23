@@ -1054,13 +1054,23 @@ Decisions from the 2026-10-10 coverage audit (`docs/superpowers/plan-coverage-au
      6. The link is registered by a switch in the Notifications dialog, off by default, as the threat model says. It writes `HKCU\Software\Classes\marshell` pointing at the running Marshell, and turning it off removes only a registration that points there. The uninstaller removes a registration that points at the uninstalled app. With the switch off, a click on an on-screen banner still focuses its session, and a click in the notification centre does nothing.
      7. The Error row says Marshell's own short line for each error type Claude names ("Rate limit reached", "Sign-in failed" and so on), and Claude's own error text, trimmed to one line, for `unknown` or a type Marshell doesn't know.
    - Exit: every rule in brief §5.5 is verified on Windows 11 (phase 4 decision 4), except the doctor rule moved to phase 7 (slice 4e decision 4). Every sound has a visual equivalent. Checked 2026-10-23 on an installed build: `docs/research/2026-10-23-phase-4-exit-check.md`.
-5. **History view and conversations.**
+5. **History view and conversations.** Slice 5a live check: `docs/research/2026-10-23-history-view-live-check.md`.
    - Conversations (added 2026-10-16; evidence in `docs/research/2026-10-16-accounts-cloud-extensions.md`): the history view also lists and manages every CLI's locally saved conversations (Claude Code, Codex CLI, others), not only sessions Marshell ran.
      - **Cloud-only conversations.** Where a CLI can list them, they show with a cloud icon (`codex cloud list --json` exists). Claude web sessions are reachable only through `--teleport` or claude.ai/code. There is no public API for claude.ai or ChatGPT history, so Marshell does not try to read one.
      - **Parsing.** Transcript parsing is best effort and version-gated, because each CLI's file format is internal. An unknown version shows "Status limited", as the adapters do.
      - **Resume.** It goes through each CLI's own resume flow. Marshell never rewrites a CLI's conversation files.
    - Scope: search, conversation view, files-changed tab, recording replay, bookmarks, tags, archive and delete-copy, export with redaction, import of sessions run outside the app, retention limits (size and age), the optional backup-folder mirror, a disk-usage view, recording compression and cleanup.
    - Exit: a 1000-session index searches in under 100 ms; recordings stay within a stated MB-per-hour budget.
+   - **Slice 5a decisions (2026-10-23).**
+     1. Phase 5 runs as five slices, reading first:
+        - 5a: the History view, with the list, filters, search with snippets, the conversation view and Resume.
+        - 5b: actions: rename, tag, pin, bookmark, fork, export with redaction, archive and delete copy.
+        - 5c: recording replay and the files-changed tab.
+        - 5d: sessions run outside Marshell, and Codex conversations.
+        - 5e: retention, the backup mirror, disk usage, recording compression and the exit check.
+     2. 5a lists the Claude Code sessions run in a Marshell tab, which slice 3e1 already archives. Conversations from a plain terminal come in 5d, which watches Claude's transcript folder read-only and copies them into the archive.
+     3. The History view takes the main area in place of the panes, and the sidebar stays. Ctrl+Shift+Y opens and closes it, Esc goes back to the sessions, and Ctrl+Shift+Alt+F opens it with the search box focused.
+     4. (A ruling made in planning, following slice 3e decision 3.) The search index is built by parsing Marshell's archive copy of each transcript (format: `docs/research/2026-10-23-claude-transcripts.md`). This amends slice 3e decision 5 for search only: the sessions list is still rebuilt from the sidecars, and a transcript that can't be parsed still lists.
 6. **Agents, integration and the elevated helper.**
    - Accounts, company tabs, extensions and CLI versions (added 2026-10-16; evidence in `docs/research/2026-10-16-accounts-cloud-extensions.md`):
      - **Accounts** (Settings → Accounts, one section per company). Sign in runs the CLI's own login command in a terminal (`claude auth login`, `codex login`). Marshell never collects, stores or brokers OAuth tokens and never reads credential files. Status comes from the CLI's status command: `claude auth status` (JSON: `loggedIn`, `authMethod`, `email`, `subscriptionType`) and `codex login status` (text). The row reads "Signed in as <email>, <plan>, checked <time> ago", with a Sign in button when signed out. There is no expiry countdown, because no CLI exposes one. A value the command does not give is left out (nothing guessed).

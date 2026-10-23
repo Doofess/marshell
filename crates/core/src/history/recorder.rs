@@ -3,6 +3,8 @@
 
 use super::index::{Index, Opened};
 use super::{SessionMeta, archive, transcript_allowed};
+use crate::agents::claude::transcript;
+use marshell_protocol::history::{HistoryEntry, HistoryQuery, SearchHit};
 use serde_json::Value;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -38,6 +40,9 @@ impl History {
                     Opened::Ok => tracing::info!("history index is ready"),
                     Opened::Created { sessions } => {
                         tracing::info!("history index created from {sessions} sidecar(s)")
+                    }
+                    Opened::Upgraded { sessions } => {
+                        tracing::info!("history index upgraded; {sessions} sidecar(s) re-listed, search fills in")
                     }
                     Opened::Rebuilt { quarantined, sessions } => tracing::warn!(
                         "history index was broken; moved to {} and rebuilt from {sessions} sidecar(s)",
@@ -132,6 +137,103 @@ impl History {
             .flatten()
     }
 
+    /// False when the index could not be opened: history is off for this run.
+    pub fn is_on(&self) -> bool {
+        self.index.lock().unwrap().is_some()
+    }
+
+    /// The session's sidecar data from the index. None when the index doesn't have it, and when history is off.
+    /// Blocking.
+    pub fn get(&self, agent: &str, session_id: &str) -> anyhow::Result<Option<SessionMeta>> {
+        match self.index.lock().unwrap().as_ref() {
+            Some(index) => index.get(agent, session_id),
+            None => Ok(None),
+        }
+    }
+
+    /// The session as the list shows it. None when the index doesn't have it, and when history is off. Blocking.
+    pub fn entry(&self, agent: &str, session_id: &str) -> anyhow::Result<Option<HistoryEntry>> {
+        match self.index.lock().unwrap().as_ref() {
+            Some(index) => index.entry(agent, session_id),
+            None => Ok(None),
+        }
+    }
+
+    /// The listed conversations, newest first. Empty when history is off for this run. Blocking.
+    pub fn list(&self, query: &HistoryQuery) -> anyhow::Result<Vec<HistoryEntry>> {
+        match self.index.lock().unwrap().as_ref() {
+            Some(index) => index.list(query),
+            None => Ok(Vec::new()),
+        }
+    }
+
+    /// Full-text search over the indexed conversations. Empty when history is off for this run. Blocking.
+    pub fn search(&self, query: &str) -> anyhow::Result<Vec<SearchHit>> {
+        match self.index.lock().unwrap().as_ref() {
+            Some(index) => index.search(query),
+            None => Ok(Vec::new()),
+        }
+    }
+
+    /// Reads the session's archive copy and replaces what the index holds of it. The file is read and parsed
+    /// with the index free; the lock is held only for the write. An archive that can't be read in full leaves
+    /// the session listed, marked limited, with nothing to search. Does nothing when there is no archive or
+    /// the agent isn't one whose transcripts Marshell reads. Blocking.
+    pub fn reindex(&self, meta: &SessionMeta) {
+        if meta.agent != AGENT {
+            return;
+        }
+        let (archive, _) = archive::archive_paths(&self.home, &meta.agent, &meta.session_id);
+        // Taken before the read: a copy that lands in between leaves the session stale, and it is indexed again.
+        let Ok(len) = std::fs::metadata(&archive).map(|m| m.len()) else {
+            return;
+        };
+        let conversation = match archive::read_archive(&self.home, &meta.agent, &meta.session_id) {
+            Ok(Some(text)) => Some(transcript::parse(&text, &meta.session_id)),
+            Ok(None) => return,
+            Err(err) => {
+                tracing::warn!("could not read archived transcript {}: {err:#}", meta.session_id);
+                None
+            }
+        };
+        let guard = self.index.lock().unwrap();
+        let Some(index) = guard.as_ref() else {
+            return;
+        };
+        let written = match &conversation {
+            Some(c) => index.index_conversation(meta, c, len),
+            None => index.mark_limited(meta, len),
+        };
+        if let Err(err) = written {
+            tracing::warn!("could not index conversation {}: {err:#}", meta.session_id);
+        }
+    }
+
+    /// Indexes, newest first and one at a time on a blocking thread, every session whose archive the index
+    /// hasn't read yet. Takes the index only for each write, so requests and hooks never wait on it long.
+    /// Stops early when a flush has started.
+    pub fn backfill(self: Arc<Self>) -> tokio::task::JoinHandle<()> {
+        tokio::task::spawn_blocking(move || {
+            let stale = match self.index.lock().unwrap().as_ref().map(Index::stale) {
+                Some(Ok(stale)) => stale,
+                Some(Err(err)) => {
+                    tracing::warn!("history backfill could not list sessions: {err:#}");
+                    return;
+                }
+                None => return,
+            };
+            if !stale.is_empty() {
+                tracing::info!("history backfill: indexing {} conversation(s)", stale.len());
+            }
+            for meta in stale {
+                if self.hurry.load(Ordering::SeqCst) {
+                    break;
+                }
+                self.reindex(&meta);
+            }
+        })
+    }
+
     /// True when no copy is running or waiting.
     pub fn is_idle(&self) -> bool {
         self.copying.lock().unwrap().is_empty()
@@ -177,8 +279,11 @@ pub fn schedule_copy(history: Arc<History>, meta: SessionMeta) {
         loop {
             let settle = *history.settle.lock().unwrap();
             history.settle_wait(settle);
-            if let Err(err) = archive::copy_transcript(&history.home, &current) {
-                tracing::warn!("could not archive transcript {id}: {err:#}");
+            match archive::copy_transcript(&history.home, &current) {
+                // Not during a flush: shutdown is waiting, and the backfill reads this copy next start.
+                Ok(_) if !history.hurry.load(Ordering::SeqCst) => history.reindex(&current),
+                Ok(_) => {}
+                Err(err) => tracing::warn!("could not archive transcript {id}: {err:#}"),
             }
             let mut copying = history.copying.lock().unwrap();
             match copying.get_mut(&id).and_then(Option::take) {
@@ -362,5 +467,96 @@ mod tests {
         let archive = paths::archive_dir(home.path(), "claude");
         let files = std::fs::read_dir(archive).map(|d| d.count()).unwrap_or(0);
         assert_eq!(files, 0);
+    }
+
+    const TOOLS: &str = include_str!("../../tests/fixtures/claude/transcripts/2.1.309/tools.jsonl");
+
+    /// A transcript at `<dir>/<id>.jsonl` and the Stop event that asks for its copy.
+    fn stopped(history: &History, dir: &Path, id: &str, text: &str, at_ms: u64) -> SessionMeta {
+        std::fs::write(dir.join(format!("{id}.jsonl")), text).unwrap();
+        history.note_event("t1", &body(STOP, dir, id), at_ms).unwrap()
+    }
+
+    async fn idle(history: &History) {
+        let started = Instant::now();
+        while !history.is_idle() {
+            assert!(started.elapsed() < Duration::from_secs(5), "copy did not finish");
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    }
+
+    #[tokio::test]
+    async fn reindex_after_copy_makes_it_searchable() {
+        let home = tempfile::tempdir().unwrap();
+        let history = Arc::new(History::open(home.path()));
+        history.set_settle(Duration::from_millis(20));
+        let meta = stopped(&history, home.path(), ID, TOOLS, 2000);
+        assert!(history.search("typo").unwrap().is_empty());
+
+        schedule_copy(history.clone(), meta);
+        idle(&history).await;
+
+        let hits = history.search("typo").unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].session_id, ID);
+        assert!(hits[0].snippet.contains("\u{2}typo\u{3}"));
+        let listed = history.list(&HistoryQuery::default()).unwrap();
+        assert_eq!(listed.len(), 1);
+        assert_eq!((listed[0].turns, listed[0].branch.as_deref()), (1, Some("main")));
+        assert!(!listed[0].limited);
+    }
+
+    #[tokio::test]
+    async fn backfill_indexes_what_was_archived_before_and_skips_what_is_current() {
+        let home = tempfile::tempdir().unwrap();
+        {
+            let history = History::open(home.path());
+            let meta = stopped(&history, home.path(), ID, TOOLS, 2000);
+            // Archived, but never indexed: as after an upgrade from schema 1.
+            crate::history::archive::copy_transcript(home.path(), &meta).unwrap();
+            assert!(history.search("typo").unwrap().is_empty());
+        }
+        let history = Arc::new(History::open(home.path()));
+        history.clone().backfill().await.unwrap();
+        assert_eq!(history.search("typo").unwrap().len(), 1);
+        // Everything is current now: a second pass has nothing to do.
+        assert!(
+            history
+                .index
+                .lock()
+                .unwrap()
+                .as_ref()
+                .unwrap()
+                .stale()
+                .unwrap()
+                .is_empty()
+        );
+        history.backfill().await.unwrap();
+    }
+
+    #[test]
+    fn an_unreadable_archive_leaves_the_session_listed_and_limited() {
+        let home = tempfile::tempdir().unwrap();
+        let history = History::open(home.path());
+        let meta = stopped(&history, home.path(), ID, TOOLS, 2000);
+        let (archive, _) = crate::history::archive::archive_paths(home.path(), "claude", ID);
+        std::fs::write(&archive, b"not zstd").unwrap();
+        history.reindex(&meta);
+        let listed = history.list(&HistoryQuery::default()).unwrap();
+        assert_eq!(listed.len(), 1);
+        assert!(listed[0].limited);
+        assert!(history.search("typo").unwrap().is_empty());
+        // Already read once: not stale again until the archive changes.
+        assert!(
+            history
+                .index
+                .lock()
+                .unwrap()
+                .as_ref()
+                .unwrap()
+                .stale()
+                .unwrap()
+                .is_empty()
+        );
     }
 }

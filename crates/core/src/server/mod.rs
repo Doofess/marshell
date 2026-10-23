@@ -9,6 +9,7 @@ mod folders;
 mod foreground;
 pub mod frames;
 mod guard;
+mod history;
 mod hook;
 mod layout;
 mod permissions;
@@ -542,6 +543,10 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/agents/{agent}/setup", get(agents::setup))
         .route("/v1/agents/{agent}/hooks/plan", post(agents::plan))
         .route("/v1/agents/{agent}/hooks/remove-plan", post(agents::remove_plan))
+        .route("/v1/history", get(history::list))
+        .route("/v1/history/search", get(history::search))
+        .route("/v1/history/{agent}/{session_id}", get(history::conversation))
+        .route("/v1/history/{agent}/{session_id}/resume", post(history::resume))
         .route("/v1/events", get(events::handler))
         .route("/v1/pty/{tab}", get(pty_ws::handler))
         .layer(axum::middleware::from_fn_with_state(state.clone(), guard::auth_guard))
@@ -723,6 +728,9 @@ pub async fn start(cfg: CoreConfig) -> anyhow::Result<RunningCore> {
             tracing::error!("core server stopped: {e}");
         }
     });
+    // The server is listening: index the conversations archived before search existed, one at a time off the
+    // async threads. Dropping the handle lets it run on its own.
+    drop(state.history().backfill());
     let notifier = cfg.notify.map(|sink| crate::notify::spawn(state.clone(), sink));
     let stuck_state = state.clone();
     let stuck_tick = tokio::spawn(async move {

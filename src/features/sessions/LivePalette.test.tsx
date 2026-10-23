@@ -11,7 +11,8 @@ describe("LivePalette", () => {
     // Every other row would do nothing when chosen. (Remove-pane, Change-layout and Resume have no key shortcut; the window runs them from the palette.)
     for (const id of ids) expect(["profiles", "appearance", "agents", "diagnostics", "notifications", "pause-notifications", "departures", "unsplit", "layout", "resume", "group-by-project", "clean-up-task", "copy-recording-path", "pause", "continue"].includes(id) || id.startsWith("mode-") || commandShortcut(id) !== null, id).toBe(true);
     for (const id of ["pause-notifications", "mode-manual", "mode-plan", "mode-auto-edit", "mode-full-auto", "mode-bypass"]) expect(ids, id).toContain(id);
-    for (const id of ["doctor", "history", "go-to-session"]) expect(ids, id).not.toContain(id);
+    for (const id of ["doctor", "go-to-session"]) expect(ids, id).not.toContain(id);
+    for (const id of ["history", "global-search"]) expect(ids, id).toContain(id);
   });
   it("offers the Departures board", () => {
     expect(LIVE_COMMANDS.map((c) => c.id)).toContain("departures");

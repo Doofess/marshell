@@ -19,9 +19,11 @@ const FILES = [...walk(join(SRC, "features")), ...walk(join(SRC, "components")),
  * the launcher's and the palette's lists), and the keyboard shortcuts sheet (`.live-shortcuts__sheet`: a modal sheet whose
  * thirty-odd rows are longer than a 720 by 480 window; it has no actions, Esc or Ctrl+Shift+O closes it, and clipping it would
  * hide keys), and the preview pane's body (`.preview__body`: a file is read by scrolling it, both ways, with the themed scrollbar visible;
- * it is a pane beside the terminal, opened and closed by the person).
+ * it is a pane beside the terminal, opened and closed by the person), and the History view's two panes (`.history__list` and
+ * `.history__detail`: a list of conversations and one conversation, each read by scrolling with the themed scrollbar visible;
+ * the view replaces the terminal area while the person has it open).
  */
-const ALLOWED = [/^\.live-shortcuts__sheet$/,/^\.drawer$/, /^\.composer__field$/, /^\.scroll-menu$/, /^\.layout-menu$/, /^\.sidebar__list$/, /^\.rail__list$/, /^\.palette__list$/, /^\.launcher__list$/, /^\.page__body$/, /^\.raw-editor__text$/, /^\.fix-sheet__body$/, /^\.onboarding__body$/, /^\.agents-dialog__body$/, /^\.notifications-dialog__body$/, /^\.diagnostics-dialog__body$/, /^\.diagnostics-dialog__text$/, /^\.review__files$/, /^\.preview__body$/, /^\.peek__screen$/];
+const ALLOWED = [/^\.live-shortcuts__sheet$/,/^\.drawer$/, /^\.composer__field$/, /^\.scroll-menu$/, /^\.layout-menu$/, /^\.sidebar__list$/, /^\.rail__list$/, /^\.palette__list$/, /^\.launcher__list$/, /^\.page__body$/, /^\.raw-editor__text$/, /^\.fix-sheet__body$/, /^\.onboarding__body$/, /^\.agents-dialog__body$/, /^\.notifications-dialog__body$/, /^\.diagnostics-dialog__body$/, /^\.diagnostics-dialog__text$/, /^\.review__files$/, /^\.preview__body$/, /^\.peek__screen$/, /^\.history__list$/, /^\.history__detail$/];
 
 const read = (f: string) => readFileSync(join(SRC, f), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
 const rules = (css: string) => [...css.matchAll(/([^{}]+)\{([^{}]*)\}/g)].map((m) => ({ selectors: m[1]!.split(",").map((s) => s.trim()), body: m[2]! }));
