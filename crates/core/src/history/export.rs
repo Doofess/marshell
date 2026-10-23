@@ -618,8 +618,11 @@ All done.
 
             let hidden = to_asciicast(home.path(), std::slice::from_ref(&part), &title, Some(&redactor)).unwrap();
             let (header, events) = parsed(&hidden);
-            for secret in [KEY, "abcdefgh12345678", r"C:\Users\someone", "someone"] {
+            // The key's halves sit on separate event lines in the file, so look at the output as a player shows it.
+            let played = output(&events);
+            for secret in [KEY, "abcdefgh12345678", "defgh12345678", r"C:\Users\someone", "someone"] {
                 assert!(!hidden.contains(secret), "leaked {secret}: {hidden}");
+                assert!(!played.contains(secret), "leaked {secret} on replay: {played}");
             }
             assert!(!header["title"].as_str().unwrap().contains("abcdefgh"));
             assert!(output(&events).contains("done"));
