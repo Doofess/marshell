@@ -28,6 +28,11 @@ describe("focusKindOf", () => {
     expect(focusKindOf(el([], "DIV"))).toBe("none");
     expect(focusKindOf(null)).toBe("none");
   });
+
+  it("is a control on a select or a details summary, so Tab moves on from them instead of selecting a terminal", () => {
+    expect(focusKindOf(el(["select"], "SELECT"))).toBe("control");
+    expect(focusKindOf(el(["summary"], "SUMMARY"))).toBe("control");
+  });
 });
 
 describe("claimsKey", () => {

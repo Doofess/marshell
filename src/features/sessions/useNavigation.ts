@@ -30,7 +30,7 @@ export function focusKindOf(el: Element | null): FocusKind {
   if (!el) return "none";
   if (el.closest(".xterm")) return "terminal";
   if (isTextBox(el as HTMLElement)) return "editable";
-  if (el.matches("button, a, [role=option], [tabindex]") && !el.matches(".window__main")) return "control";
+  if (el.matches("button, a, select, summary, [role=option], [tabindex]") && !el.matches(".window__main")) return "control";
   return "none";
 }
 
