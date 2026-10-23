@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import type { HistoryEntry } from "../../generated/HistoryEntry";
 import type { RowModel } from "../sidebar/types";
@@ -69,5 +70,15 @@ describe("failure text", () => {
     expect(conversationFailure(new ApiError(404, "Marshell has no copy of this conversation yet."))).toBe(NO_ARCHIVE_COPY);
     expect(conversationFailure(new ApiError(404, "No such conversation."))).toBe("No such conversation.");
     expect(conversationFailure(new ApiError(500, "boom"))).toBe("boom");
+  });
+});
+
+// These tests have no DOM, so effects never run here; the source is checked instead.
+describe("LiveHistory: search effect", () => {
+  it("runs again after a delete, archive or rename (reload), like the list effects", () => {
+    const src = readFileSync(new URL("./LiveHistory.tsx", import.meta.url), "utf8");
+    const effect = /SEARCH_DELAY_MS\);\s*return \(\) => \{[^}]*\};\s*\}, \[([^\]]*)\]\);/.exec(src);
+    expect(effect).not.toBeNull();
+    expect(effect![1]!.split(",").map((d) => d.trim())).toContain("reload");
   });
 });

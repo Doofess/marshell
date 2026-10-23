@@ -169,7 +169,7 @@ export function LiveHistory({ endpoint, rows, os, searchFocus, size, announce, o
       live = false;
       clearTimeout(timer);
     };
-  }, [endpoint, query, filters.archived]);
+  }, [endpoint, query, filters.archived, reload]);
 
   const searching = query.trim() !== "" && searched !== null;
   const showMarked = !searching && query.trim() === "" && filters.bookmarked;
