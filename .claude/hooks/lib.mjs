@@ -65,6 +65,37 @@ export function toAbs(p, base) {
   return P.resolve(base || process.cwd(), s);
 }
 
+/**
+ * `abs` with its longest existing prefix canonicalized by realpath, so 8.3 short names (C:\Users\HOMEOF~1) and
+ * junctions compare equal to the real folder. The part that does not exist yet is appended unchanged. Falls back to
+ * `abs` on any error.
+ */
+export function canon(abs) {
+  try {
+    let cur = abs;
+    const tail = [];
+    for (;;) {
+      try {
+        const real = fs.realpathSync.native(cur);
+        return tail.length ? P.join(real, ...tail.reverse()) : real;
+      } catch {
+        // not there (yet): try the parent
+      }
+      const up = P.dirname(cur);
+      if (up === cur) return abs;
+      tail.push(P.basename(cur));
+      cur = up;
+    }
+  } catch {
+    return abs;
+  }
+}
+
+/** The comparison key of the real home folder, canonicalized. */
+export function homeKey() {
+  return key(canon(P.resolve(os.homedir())));
+}
+
 /** A comparison key: forward slashes, and lower case on Windows. */
 export function key(p) {
   const s = String(p).replace(/\\/g, "/");

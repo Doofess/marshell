@@ -1,18 +1,20 @@
 // PreToolUse guard for Bash and PowerShell: rules S1 to S8 of SCOPE.md and the live-check rules.
 // A rule matches only where a command word starts a segment, so mentioning a command is never running it.
 import fs from "node:fs";
-import os from "node:os";
 import { spawnSync } from "node:child_process";
-import { P, ask, deny, findGitRoot, isMarshellRoot, key, runHook, toAbs } from "./lib.mjs";
+import { ask, canon, deny, findGitRoot, homeKey, isMarshellRoot, key, runHook, toAbs } from "./lib.mjs";
 
 const SHELL_TOOLS = new Set(["Bash", "PowerShell"]);
 
 const S1 = "Stop processes by PID only, after listing the tree: real agent CLIs run on this machine (SCOPE.md).";
 const S2 = "Don't delete a variable-built path recursively. Use a literal scratch path, and ask before cleaning scratch folders.";
 const S3 = 'The stash is shared with other sessions. Use a WIP commit, or git stash push -u -m "<tag>" and apply by SHA.';
+const S3D =
+  "The stash is shared by every session and worktree, so clear or an unnamed drop can destroy another session's work. Drop a stash by its SHA, and only your own.";
 const S4 = "Credential files and the real Marshell token are off limits (SCOPE.md). A live check reads its scratch home's token.";
 const S5 = "Don't name a test binary like a real CLI. Use a name like codex-marshell-test.exe.";
-const S6 = "A live check runs with MARSHELL_HOME and CLAUDE_CONFIG_DIR set to scratch folders. See the marshell-live-check skill.";
+const S6 =
+  "A live check runs with MARSHELL_HOME, CLAUDE_CONFIG_DIR and MARSHELL_CLAUDE_SETTINGS set to scratch folders. See the marshell-live-check skill.";
 const S7 = "This can't be undone. Confirm with the user first.";
 const S8 = "Run cargo fmt --all before a Rust commit.";
 
@@ -115,13 +117,23 @@ function tokenize(s) {
 
 const ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*=/;
 
-/** The command word of a segment (lower case, no folder, no .exe) and its arguments, skipping env, VAR=x and { prefixes. */
+/** Shell keywords and wrappers that come before the real command word: `do rm`, `then git`, `try { git`, `time git`. */
+const KEYWORDS = new Set(["do", "then", "else", "elif", "if", "while", "until", "time", "nohup", "!", "{", "}", "try", "catch", "finally"]);
+
+/**
+ * The command word of a segment (lower case, no folder, no .exe) and its arguments, skipping shell keywords, env and
+ * VAR=x prefixes.
+ */
 function commandOf(words) {
   let i = 0;
   while (i < words.length) {
     const { t, q } = words[i];
-    if (!q && (t === "{" || t === "}" || t === "!")) i++;
-    else if (ASSIGNMENT.test(t)) i++;
+    const low = t.toLowerCase();
+    if (!q && KEYWORDS.has(low)) {
+      i++;
+      if (low === "time") while (i < words.length && words[i].t.startsWith("-")) i++;
+      if (low === "catch") while (i < words.length && words[i].t.startsWith("[")) i++;
+    } else if (ASSIGNMENT.test(t)) i++;
     else if (!q && t.toLowerCase() === "env") {
       i++;
       while (i < words.length && (words[i].t.startsWith("-") || ASSIGNMENT.test(words[i].t))) i++;
@@ -151,16 +163,82 @@ const lastSegment = (a) => key(pathPart(a)).split("/").pop();
 
 // ---- rules -------------------------------------------------------------------------------------------------------
 
-const RM_FLAGS = /^-[rRfiIvdx]*[rR][rRfiIvdx]*$|^--recursive$|^-r(e(c(u(r(s(e)?)?)?)?)?)?$/i;
+const REMOVE_ITEM = new Set(["rm", "remove-item", "ri", "rmdir", "rd", "del", "erase"]);
+
+/** Whether a pipeline starts from `Get-Process` without -Id, so what it feeds on is chosen by name or is everything. */
+function listsProcessesByName(cmd) {
+  if (!cmd || !["get-process", "gps"].includes(cmd.name)) return false;
+  return !cmd.args.some((a) => /^-id(:|$)/i.test(a));
+}
+
+const RM_FLAGS =/^-[rRfiIvdx]*[rR][rRfiIvdx]*$|^--recursive$|^-r(e(c(u(r(s(e)?)?)?)?)?)?$/i;
 const SENSITIVE_SUFFIXES = ["/.codex/auth.json", "/.marshell/run/endpoint.json"];
 
 function isEnvFile(base) {
   if (base === ".env") return true;
-  return base.startsWith(".env.") && !/^\.env\.(example|sample|template|dist)$/.test(base);
+  return base.startsWith(".env.") && !/\.(example|sample|template|dist)$/.test(base);
 }
 
-function touchesSensitiveFile(args) {
-  return args.some((a) => {
+// S4 looks only at file operands of commands that read or copy. These don't read what they are given:
+const NON_READERS = new Set(["echo", "printf", "write-host", "write-output", "write-error", "write-warning", "write-verbose", "write-information"]);
+const GIT_NON_READERS = new Set(["log", "commit", "status", "check-ignore", "ls-files", "shortlog", "rev-list", "whatchanged"]);
+// These take a search pattern as the first positional argument; the rest are files.
+const PATTERN_CMDS = new Set(["grep", "egrep", "fgrep", "rg", "ag", "ack", "findstr", "select-string", "sls"]);
+const PATTERN_FLAG = /^(?:-e|--regexp|-pat(?:t(?:e(?:r(?:n)?)?)?)?)(?:[:=](.*))?$/i;
+const FILE_FLAG = /^(?:-f|--file|-path|-literalpath)(?:[:=](.*))?$/i;
+// Flags whose value is the next word (grep and rg are case sensitive; Select-String's are not, and are matched lower case).
+const VALUE_FLAGS = new Set(["-A", "-B", "-C", "-m", "-d", "-D", "-g", "-t", "-T", "-j", "-M"]);
+const LONG_VALUE_FLAGS = new Set([
+  "--glob", "--type", "--type-not", "--include", "--exclude", "--exclude-dir", "--max-count", "--max-depth", "--threads",
+  "--context", "--after-context", "--before-context", "--replace", "--max-columns", "--encoding", "--colors",
+  "-context", "-encoding", "-include", "-exclude",
+]);
+
+/** The words of a pattern command that are files: its flags, and the pattern unless -e/-f/-Pattern gave one, are left out. */
+function patternCmdFiles(name, args) {
+  const files = [];
+  let patternGiven = false;
+  let rest = false;
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
+    if (!rest && a === "--") {
+      rest = true;
+      continue;
+    }
+    const isFlag = !rest && (name === "findstr" ? /^\/[a-z](?::|$)/i.test(a) : a.length > 1 && a.startsWith("-"));
+    if (!isFlag) {
+      if (patternGiven) files.push(a);
+      else patternGiven = true;
+      continue;
+    }
+    if (name === "findstr") {
+      if (/^\/[cg]:/i.test(a)) patternGiven = true;
+      continue;
+    }
+    let m;
+    if ((m = PATTERN_FLAG.exec(a))) {
+      patternGiven = true;
+      if (m[1] === undefined) i++;
+    } else if ((m = FILE_FLAG.exec(a))) {
+      if (/^(-f|--file)/i.test(a)) patternGiven = true;
+      if (m[1] !== undefined) files.push(m[1]);
+      else if (i + 1 < args.length) files.push(args[++i]);
+    } else if (VALUE_FLAGS.has(a) || LONG_VALUE_FLAGS.has(a.toLowerCase()) || (name === "rg" && a === "-r")) i++;
+    // other flags (-rn, -i, --include=x, -SimpleMatch ...) carry no file
+  }
+  return files;
+}
+
+/** The operands of a command that it reads or copies, for S4. */
+function readOperands(name, args) {
+  if (NON_READERS.has(name)) return [];
+  if (name === "git") return GIT_NON_READERS.has(parseGit(args).sub) ? [] : args;
+  if (PATTERN_CMDS.has(name)) return patternCmdFiles(name, args);
+  return args;
+}
+
+function touchesSensitiveFile(name, args) {
+  return readOperands(name, args).some((a) => {
     const k = "/" + key(pathPart(a));
     const base = k.split("/").pop();
     return base === ".credentials.json" || isEnvFile(base) || SENSITIVE_SUFFIXES.some((s) => k.endsWith(s));
@@ -180,21 +258,27 @@ function isTauriDev(name, args) {
   return name === "tauri" && toks[1] === "dev";
 }
 
-/** S6: whether the same command sets `name`, and whether any value it sets points into the real home folder. */
+/**
+ * S6: whether the same command sets `name` to something non-empty, and whether any value it sets points into the real
+ * home's .marshell or .claude folder, or at ~/.claude.json.
+ */
 function envSetting(command, name) {
-  const mention = new RegExp(`\\$\\{?env:${name}\\b|\\b${name}\\s*=`, "i");
-  const assign = new RegExp(`(?:\\$\\{?env:)?\\b${name}\\}?\\s*=\\s*("([^"]*)"|'([^']*)'|[^\\s;&|)]+)`, "gi");
-  const home = key(P.resolve(os.homedir()));
+  // `$env:NAME = value` (PowerShell) or `NAME=value` straight after the equals sign (so `NAME= cmd` is empty).
+  const assign = new RegExp(`(?:\\$\\{?env:${name}\\}?\\s*=\\s*|(?<![\\w$:])${name}=)("([^"]*)"|'([^']*)'|[^\\s;&|)]*)`, "gi");
+  const home = homeKey();
+  let set = false;
   let real = false;
   for (const m of command.matchAll(assign)) {
     const value = m[2] ?? m[3] ?? m[1];
-    const v = key(toAbs(value));
+    if (value.trim()) set = true;
+    const v = key(canon(toAbs(value)));
+    if (v === `${home}/.claude.json`) real = true;
     for (const dir of [".marshell", ".claude"]) {
       const base = `${home}/${dir}`;
       if (v === base || v.startsWith(`${base}/`)) real = true;
     }
   }
-  return { set: mention.test(command), real };
+  return { set, real };
 }
 
 /** S8: whether `target` is a checkout of this repo with staged Rust files that `cargo fmt --all --check` rejects. */
@@ -225,12 +309,13 @@ function evaluate(command, cwd) {
   };
   const commitTargets = [];
   let dir = cwd;
-  let prev = null;
+  let head = null; // the first command of the current pipeline
 
   for (const seg of segs) {
     const cmd = commandOf(seg.words);
-    const before = prev;
-    prev = cmd;
+    // A pipeline continues across | and across the parentheses of a script block or `(...).Method()`.
+    if (seg.sep !== "|" && seg.sep !== "(" && seg.sep !== ")") head = cmd;
+    else if (seg.sep === "(" && cmd && ["get-process", "gps"].includes(cmd.name)) head = cmd;
     if (!cmd) continue;
     const { name, args } = cmd;
     const lower = args.map((a) => a.toLowerCase());
@@ -239,18 +324,24 @@ function evaluate(command, cwd) {
     // S1: killing by name
     if (name === "pkill" || name === "killall") found(deny(S1));
     else if (name === "taskkill" && args.some((a) => /^[/-]{1,2}im$/i.test(a))) found(deny(S1));
-    else if (name === "stop-process") {
-      if (lower.some((a) => /^-(name|processname)(:|$)/.test(a))) found(deny(S1));
-      else if (seg.sep === "|" && before && ["get-process", "gps"].includes(before.name)) found(deny(S1));
+    else if (["stop-process", "spps", "kill"].includes(name)) {
+      // `kill -n 9` is bash's signal flag, so for `kill` the name flag needs two letters.
+      const byName = name === "kill" ? /^-(na(m(e)?)?|processname)(:|$)/i : /^-(n(a(m(e)?)?)?|processname)(:|$)/i;
+      if (args.some((a) => byName.test(a))) found(deny(S1));
+      else if (seg.sep === "|" && listsProcessesByName(head)) found(deny(S1));
+    } else if (listsProcessesByName(head) && head !== cmd) {
+      // (Get-Process x).Kill() and Get-Process x | ForEach-Object { $_.Kill() }
+      const kills = name.startsWith(".kill") || args.some((a) => /\.kill\b/i.test(a));
+      if (kills && (seg.sep === "|" || seg.sep === ")")) found(deny(S1));
     }
 
     // S2: recursive delete of a variable-built path
-    if ((name === "rm" || name === "remove-item") && args.some((a) => RM_FLAGS.test(a)) && args.some((a) => /[$`%]/.test(a))) {
+    if (REMOVE_ITEM.has(name) && args.some((a) => RM_FLAGS.test(a)) && args.some((a) => /[$`%]/.test(a))) {
       found(deny(S2));
     }
 
     // S4: credential files and the real Marshell token
-    if (touchesSensitiveFile(args)) found(deny(S4));
+    if (touchesSensitiveFile(name, args)) found(deny(S4));
 
     // S5: a test binary named like a real CLI
     if (["cp", "copy", "copy-item", "mv", "move", "move-item", "rename-item"].includes(name)) {
@@ -261,7 +352,9 @@ function evaluate(command, cwd) {
     if (isTauriDev(name, args)) {
       const home = envSetting(body, "MARSHELL_HOME");
       const config = envSetting(body, "CLAUDE_CONFIG_DIR");
-      if (!home.set || !config.set || home.real || config.real) found(deny(S6));
+      const settings = envSetting(body, "MARSHELL_CLAUDE_SETTINGS");
+      const all = [home, config, settings];
+      if (all.some((e) => !e.set || e.real)) found(deny(S6));
     }
 
     // directory changes, for S8
@@ -274,13 +367,18 @@ function evaluate(command, cwd) {
       const { dirs, sub, rest } = parseGit(args);
       const hasFlag = (re) => rest.some((a) => re.test(a));
       if (sub === "stash") {
-        const op = rest.find((a) => !a.startsWith("-"))?.toLowerCase() ?? "";
+        const opIdx = rest.findIndex((a) => !a.startsWith("-"));
+        const op = opIdx < 0 ? "" : rest[opIdx].toLowerCase();
         const withMessage = hasFlag(/^(-m.*|--message(=.*)?)$/);
-        if (op === "pop" || op === "save" || ((op === "" || op === "push") && !withMessage)) found(deny(S3));
+        if (op === "clear" || (op === "drop" && !rest.slice(opIdx + 1).some((a) => !a.startsWith("-")))) found(deny(S3D));
+        else if (op === "pop" || op === "save" || ((op === "" || op === "push") && !withMessage)) found(deny(S3));
       } else if (sub === "push" && hasFlag(/^(--force(-with-lease(=.*)?)?|-[nvqud46]*f[nvqud46]*)$/)) found(ask(S7));
+      else if (sub === "push" && (hasFlag(/^(--delete|-[nvqfu46]*d[nvqfu46]*)$/) || rest.some((a) => /^\+?:./.test(a)))) found(ask(S7));
       else if (sub === "reset" && rest.includes("--hard")) found(ask(S7));
       else if (sub === "clean" && hasFlag(/^(--force|-[a-zA-Z]*f[a-zA-Z]*)$/)) found(ask(S7));
-      else if (sub === "branch" && hasFlag(/^-[a-zA-Z]*D[a-zA-Z]*$/)) found(ask(S7));
+      else if (sub === "branch" && (hasFlag(/^-[a-zA-Z]*D[a-zA-Z]*$/) || (hasFlag(/^(--delete|-[a-zA-Z]*d[a-zA-Z]*)$/) && hasFlag(/^(--force|-[a-zA-Z]*f[a-zA-Z]*)$/)))) {
+        found(ask(S7));
+      }
       else if (sub === "commit") {
         let target = dir;
         for (const d of dirs) target = target ? toAbs(d, target) : toAbs(d);

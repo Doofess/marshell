@@ -15,9 +15,10 @@ const R = {
   S1: "Stop processes by PID only, after listing the tree: real agent CLIs run on this machine (SCOPE.md).",
   S2: "Don't delete a variable-built path recursively. Use a literal scratch path, and ask before cleaning scratch folders.",
   S3: 'The stash is shared with other sessions. Use a WIP commit, or git stash push -u -m "<tag>" and apply by SHA.',
+  S3D: "The stash is shared by every session and worktree, so clear or an unnamed drop can destroy another session's work. Drop a stash by its SHA, and only your own.",
   S4: "Credential files and the real Marshell token are off limits (SCOPE.md). A live check reads its scratch home's token.",
   S5: "Don't name a test binary like a real CLI. Use a name like codex-marshell-test.exe.",
-  S6: "A live check runs with MARSHELL_HOME and CLAUDE_CONFIG_DIR set to scratch folders. See the marshell-live-check skill.",
+  S6: "A live check runs with MARSHELL_HOME, CLAUDE_CONFIG_DIR and MARSHELL_CLAUDE_SETTINGS set to scratch folders. See the marshell-live-check skill.",
   S7: "This can't be undone. Confirm with the user first.",
   S8: "Run cargo fmt --all before a Rust commit.",
   F1: "src/generated is written by ts-rs. Change crates/protocol and run cargo test -p marshell-protocol.",
@@ -111,6 +112,16 @@ function writeAndStage(dir, rel, content) {
 
 const fwd = (p) => p.replace(/\\/g, "/");
 
+/** The 8.3 short form of an existing path (Windows), or null when there is none. */
+function shortPath(p) {
+  if (!WIN) return null;
+  const r = spawnSync(`for %I in ("${p}") do @echo %~sI`, { shell: true, encoding: "utf8" });
+  const s = (r.stdout ?? "").trim();
+  return r.status === 0 && s && s.toLowerCase() !== p.toLowerCase() ? s : null;
+}
+const SHORT_HOME = shortPath(FAKE_HOME);
+const NO_SHORT = !SHORT_HOME && "no 8.3 short name for the temp home on this machine";
+
 // cargo is needed for the S8 tests that run `cargo fmt`, with the same env the hook child gets (the real home).
 const HAS_CARGO = spawnSync("cargo", ["fmt", "--version"], { env: process.env, encoding: "utf8" }).status === 0;
 
@@ -155,6 +166,13 @@ describe("S1: killing by name", () => {
     "Get-Process claude | Stop-Process",
     "& taskkill /IM codex.exe",
     "$p = 1; stop-process -name node",
+    "Get-Process claude | Where-Object { $_.Id -ne 1 } | Stop-Process -Force",
+    "Get-Process claude | ForEach-Object { $_.Kill() }",
+    "kill -Name claude",
+    "spps -Name claude",
+    "Stop-Process -N claude",
+    "stop-process -na claude",
+    "(Get-Process codex).Kill()",
   ];
   for (const c of badPs) test(`PowerShell: ${c}`, () => denied(ps(c), R.S1));
 
@@ -164,6 +182,10 @@ describe("S1: killing by name", () => {
     'echo "Ruling: taskkill /IM is denied" >> progress.md',
     'grep -n "pkill" docs/x.md',
     "git log --grep=taskkill",
+    "Get-Process -Id 4242 | Stop-Process -Force",
+    "Stop-Process -Id 4242",
+    "Get-Process -Name claude",
+    "kill -n 9 123",
   ];
   for (const c of ok) test(`no decision: ${c}`, () => none(shell(c)));
 });
@@ -178,6 +200,7 @@ describe("S2: variable-built recursive delete", () => {
     "rm -rf \x60pwd\x60/x",
     "rm -Rf $(pwd)/x",
     "ls && rm -rf $dir",
+    'for d in a b; do rm -rf "$d"; done',
   ];
   for (const c of bad) test(`Bash: ${c}`, () => denied(shell(c), R.S2));
   const badPs = [
@@ -185,6 +208,12 @@ describe("S2: variable-built recursive delete", () => {
     "Remove-Item $x -Recurse",
     "Remove-Item -Path C:\\Users\\x\\$dir -Recurse -Force",
     "rm -r -force $x",
+    "ri -r $dir",
+    "rmdir -Recurse -Force $dir",
+    "del -Recurse $env:TEMP/x",
+    "erase -Recurse $x",
+    "rd -Recurse $x",
+    "try { Remove-Item -Recurse $x } catch {}",
   ];
   for (const c of badPs) test(`PowerShell: ${c}`, () => denied(ps(c), R.S2));
 
@@ -215,17 +244,31 @@ describe("S3: git stash", () => {
     "git -C C:\\dev\\x stash",
     "git stash; echo done",
     "git.exe stash pop",
+    "if true; then git stash pop; fi",
+    "time git stash pop",
+    "nohup git stash pop",
+    "while true; do git stash; done",
+    "! git stash pop",
+    "{ git stash pop; }",
   ];
   for (const c of bad) test(`Bash: ${c}`, () => denied(shell(c), R.S3));
   test("PowerShell: git stash pop", () => denied(ps("git stash pop"), R.S3));
   test("PowerShell: & git stash", () => denied(ps("& git stash"), R.S3));
+  test("PowerShell: try { git stash pop } catch {}", () => denied(ps("try { git stash pop } catch {}"), R.S3));
+  test("PowerShell: } catch { git stash pop }", () => denied(ps("try {\n  foo\n} catch { git stash pop }"), R.S3));
+  test("PowerShell: } finally { git stash pop }", () => denied(ps("try {\n  foo\n} finally { git stash pop }"), R.S3));
+  for (const c of ["git stash clear", "git stash drop", "git stash drop -q", "git -C x stash clear"]) {
+    test(`Bash: ${c}`, () => denied(shell(c), R.S3D));
+  }
 
   const ok = [
     "git stash list",
     "git stash apply 1a2b3c",
     'git stash push -u -m "wip-x"',
     "git stash push --message wip",
-    "git stash drop",
+    "git stash drop stash@{2}",
+    "git stash drop 1a2b3c4d",
+    "git stash drop -q stash@{0}",
     "git stash show -p",
   ];
   for (const c of ok) test(`no decision: ${c}`, () => none(shell(c)));
@@ -241,6 +284,14 @@ describe("S4: credential files and the real token", () => {
     "cat .env",
     'cat "C:/Program Files/app/.env"',
     "cat .env.local",
+    "grep token .env",
+    "Get-Content $HOME/.codex/auth.json",
+    "cp ~/.codex/auth.json x",
+    "type .env",
+    "grep -e token .env",
+    "rg -g '*.md' token .env",
+    "bash -c 'cat ~/.claude/.credentials.json'",
+    "echo $(cat .env)",
   ];
   for (const c of bad) test(`Bash: ${c}`, () => denied(shell(c), R.S4));
   const badPs = [
@@ -249,6 +300,9 @@ describe("S4: credential files and the real token", () => {
     "type %USERPROFILE%\\.marshell\\run\\endpoint.json",
     "Get-Content .\\.env",
     "Get-Content -Path:C:\\x\\.credentials.json",
+    "Select-String token .env",
+    "Select-String -Path .env -Pattern token",
+    "sls -Pattern token -LiteralPath $HOME/.codex/auth.json",
   ];
   for (const c of badPs) test(`PowerShell: ${c}`, () => denied(ps(c), R.S4));
 
@@ -258,8 +312,22 @@ describe("S4: credential files and the real token", () => {
     "cat .env.example",
     "cat envfile.txt",
     'git commit -m "docs: .env and .credentials.json are off limits"',
+    'grep -rn ".marshell/run/endpoint.json" docs/',
+    'rg -n "~/.codex/auth.json" docs',
+    'grep -rn "\\.env" .gitignore',
+    "git log --oneline -- .env",
+    'echo "Never read ~/.claude/.credentials.json" >> notes.md',
+    "cat .env.local.example",
+    "rg -e '.credentials.json' docs",
+    "grep -A 3 -m 2 '.env' README.md",
   ];
   for (const c of ok) test(`no decision: ${c}`, () => none(shell(c)));
+  const okPs = [
+    'Select-String -Pattern "auth.json" -Path docs/x.md',
+    "Select-String '.env' README.md",
+    "Write-Host 'never read .credentials.json'",
+  ];
+  for (const c of okPs) test(`no decision (PowerShell): ${c}`, () => none(ps(c)));
 });
 
 // ---- S5 ----------------------------------------------------------------------------------------------------------
@@ -296,6 +364,13 @@ describe("S6: tauri dev outside a scratch environment", () => {
     "MARSHELL_HOME=~/.marshell CLAUDE_CONFIG_DIR=/tmp/cc pnpm tauri dev",
     "MARSHELL_HOME=/tmp/mh CLAUDE_CONFIG_DIR=$HOME/.claude pnpm tauri dev",
     "cd x && pnpm tauri dev",
+    "nohup pnpm tauri dev &",
+    "MARSHELL_HOME=/tmp/mh CLAUDE_CONFIG_DIR=/tmp/cc pnpm tauri dev",
+    "MARSHELL_HOME=/tmp/mh CLAUDE_CONFIG_DIR=/tmp/cc MARSHELL_CLAUDE_SETTINGS= pnpm tauri dev",
+    'MARSHELL_HOME=/tmp/mh CLAUDE_CONFIG_DIR=/tmp/cc MARSHELL_CLAUDE_SETTINGS="" pnpm tauri dev',
+    "MARSHELL_HOME=/tmp/mh CLAUDE_CONFIG_DIR=/tmp/cc MARSHELL_CLAUDE_SETTINGS=~/.claude/settings.json pnpm tauri dev",
+    "MARSHELL_HOME=/tmp/mh CLAUDE_CONFIG_DIR=/tmp/cc MARSHELL_CLAUDE_SETTINGS=$HOME/.claude.json pnpm tauri dev",
+    "MARSHELL_HOME=/tmp/mh CLAUDE_CONFIG_DIR=/tmp/cc MARSHELL_CLAUDE_SETTINGS=~/.claude/x/settings.local.json pnpm tauri dev",
   ];
   for (const c of bad) test(`Bash: ${c}`, () => denied(shell(c), R.S6));
   const badPs = [
@@ -303,15 +378,29 @@ describe("S6: tauri dev outside a scratch environment", () => {
     '$env:MARSHELL_HOME="C:\\s\\mh"; pnpm tauri dev',
     '$env:MARSHELL_HOME="C:\\s\\mh"; $env:CLAUDE_CONFIG_DIR="$env:USERPROFILE\\.claude"; pnpm tauri dev',
     '$env:MARSHELL_HOME="$env:USERPROFILE\\.marshell"; $env:CLAUDE_CONFIG_DIR="C:\\s\\cc"; pnpm tauri dev',
+    '$env:MARSHELL_HOME="C:\\s\\mh"; $env:CLAUDE_CONFIG_DIR="C:\\s\\cc"; pnpm tauri dev',
+    '$env:MARSHELL_HOME="C:\\s\\mh"; $env:CLAUDE_CONFIG_DIR="C:\\s\\cc"; $env:MARSHELL_CLAUDE_SETTINGS="$env:USERPROFILE\\.claude\\settings.json"; pnpm tauri dev',
   ];
   for (const c of badPs) test(`PowerShell: ${c}`, () => denied(ps(c), R.S6));
 
-  test("Bash: both set to scratch folders", () =>
-    none(shell("MARSHELL_HOME=/tmp/mh CLAUDE_CONFIG_DIR=/tmp/cc WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9333 pnpm tauri dev")));
-  test("Bash: env prefix with both set", () =>
-    none(shell("env MARSHELL_HOME=/tmp/mh CLAUDE_CONFIG_DIR=/tmp/cc pnpm tauri dev")));
-  test("PowerShell: both set to scratch folders", () =>
-    none(ps('$env:MARSHELL_HOME="C:\\s\\mh"; $env:CLAUDE_CONFIG_DIR="C:\\s\\cc"; pnpm tauri dev')));
+  const SCRATCH3 = "MARSHELL_HOME=/tmp/mh CLAUDE_CONFIG_DIR=/tmp/cc MARSHELL_CLAUDE_SETTINGS=/tmp/p/settings.local.json";
+  test("Bash: all three set to scratch folders", () =>
+    none(shell(`${SCRATCH3} WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9333 pnpm tauri dev`)));
+  test("Bash: env prefix with all three set", () => none(shell(`env ${SCRATCH3} pnpm tauri dev`)));
+  test("Bash: nohup with all three set", () => none(shell(`${SCRATCH3} nohup pnpm tauri dev &`)));
+  test("PowerShell: all three set to scratch folders", () =>
+    none(
+      ps(
+        '$env:MARSHELL_HOME="C:\\s\\mh"; $env:CLAUDE_CONFIG_DIR="C:\\s\\cc"; $env:MARSHELL_CLAUDE_SETTINGS="C:\\s\\p\\settings.local.json"; pnpm tauri dev',
+      ),
+    ));
+  test("Bash: 8.3 short name of the home folder is the real home", { skip: NO_SHORT }, () =>
+    denied(
+      shell(
+        `MARSHELL_HOME=${fwd(SHORT_HOME)}/.marshell CLAUDE_CONFIG_DIR=/c/s/cc MARSHELL_CLAUDE_SETTINGS=/c/s/p/settings.local.json pnpm tauri dev`,
+      ),
+      R.S6,
+    ));
   test('no decision: grep -n "tauri dev" docs/PLAN.md', () => none(shell('grep -n "tauri dev" docs/PLAN.md')));
   test("no decision: pnpm tauri build", () => none(shell("pnpm tauri build --no-bundle")));
 });
@@ -327,6 +416,12 @@ describe("S7: irreversible git operations ask", () => {
     "git clean -f",
     "git branch -D marshell-canary-none",
     "git -C C:\\dev\\x reset --hard",
+    "git branch --delete --force foo",
+    "git branch -d -f foo",
+    "git branch -df foo",
+    "git push origin --delete foo",
+    "git push -d origin foo",
+    "git push origin :foo",
   ];
   for (const c of bad) test(`Bash: ${c}`, () => asked(shell(c), R.S7));
   test("PowerShell: git push --force", () => asked(ps("git push --force"), R.S7));
@@ -336,6 +431,8 @@ describe("S7: irreversible git operations ask", () => {
     "git push origin main",
     "git push -u origin x",
     "git branch -d x",
+    "git branch --delete foo",
+    "git push origin HEAD:refs/heads/foo",
     "git reset --soft HEAD~1",
     "git clean -n",
     'git commit -m "docs: git push --force and git reset --hard ask first"',
@@ -526,6 +623,13 @@ describe("file rules", () => {
     ]) {
       test(`Write ${f}`, () => denied(edit(f, { tool: "Write" }), R.F4));
     }
+    test("~/.claude.json is the real Claude user config", () => {
+      denied(edit(path.join(home, ".claude.json"), { tool: "Write" }), R.F4);
+      denied(edit("~/.claude.json"), R.F4);
+    });
+    test("a lookalike of .claude.json gives no decision", () => none(edit(path.join(home, ".claude.json-x"))));
+    test("8.3 short name of the home folder is the real home", { skip: NO_SHORT }, () =>
+      denied(edit(`${fwd(SHORT_HOME)}/.claude/agents/x.md`, { tool: "Write" }), R.F4));
     test("~ is expanded", () => denied(edit("~/.codex/config.toml"), R.F4));
     test("%USERPROFILE% is expanded", () => denied(edit("%USERPROFILE%\\.claude\\agents\\a.md"), R.F4));
     test("$HOME is expanded", () => denied(edit("$HOME/.marshell/x.json"), R.F4));

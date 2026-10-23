@@ -1,6 +1,5 @@
 // PreToolUse guard for Edit, Write, MultiEdit and NotebookEdit: rules F1 to F4 of SCOPE.md's file protections.
-import os from "node:os";
-import { P, ask, deny, findGitRoot, isMarshellRoot, key, relKey, runHook, toAbs } from "./lib.mjs";
+import { P, ask, canon, deny, findGitRoot, homeKey, isMarshellRoot, key, relKey, runHook, toAbs } from "./lib.mjs";
 
 const FILE_TOOLS = new Set(["Edit", "Write", "MultiEdit", "NotebookEdit"]);
 
@@ -13,11 +12,12 @@ const OWNER_FILES = new Set(["scope.md", "docs/brief.md", "license", "third_part
 const ASK_FILES = new Set(["src-tauri/tauri.conf.json", "src-tauri/tauri.windows.conf.json", "crates/core/src/server/guard.rs"]);
 
 /**
- * F4: under ~/.codex, ~/.marshell or ~/.claude, except Claude's per-project memory, its settings.json (the advisor
+ * F4: ~/.claude.json, or under ~/.codex, ~/.marshell or ~/.claude, except Claude's per-project memory, its settings.json (the advisor
  * switch) and plan mode's plan files.
  */
 function realConfig(fileKey) {
-  const home = key(P.resolve(os.homedir()));
+  const home = homeKey();
+  if (fileKey === `${home}/.claude.json`) return deny(F4);
   for (const dir of [".codex", ".marshell", ".claude"]) {
     const base = `${home}/${dir}`;
     if (fileKey !== base && !fileKey.startsWith(`${base}/`)) continue;
@@ -47,7 +47,7 @@ runHook((input) => {
   const raw = toolInput.file_path ?? toolInput.notebook_path;
   if (typeof raw !== "string" || !raw) return null;
 
-  const file = toAbs(raw, typeof input.cwd === "string" ? input.cwd : undefined);
+  const file = canon(toAbs(raw, typeof input.cwd === "string" ? input.cwd : undefined));
   const config = realConfig(key(file));
   if (config) return config;
 
