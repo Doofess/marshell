@@ -83,6 +83,7 @@ async fn run(socket: WebSocket, session: Arc<Session>, st: AppState, tab: String
                             // mouse movement and replies to queries come from the terminal itself.
                             if !super::reports::is_passive_report(&bytes) {
                                 st.holds().release_tab(&tab);
+                                st.registry().note_input(&tab);
                             }
                             session.write_input(bytes);
                         }

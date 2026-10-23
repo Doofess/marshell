@@ -222,6 +222,34 @@ mod tests {
     }
 
     #[test]
+    fn a_view_report_clears_seen_attention_unless_the_window_is_hidden() {
+        let home = tempfile::tempdir().unwrap();
+        let state = AppState::new("t".into(), 1, vec![], home.path().into(), vec![]);
+        state.registry().reserve(
+            "t1",
+            crate::registry::Relaunch {
+                profile_id: "pwsh".into(),
+                agent: None,
+                cwd: "C:/work".into(),
+                mode: None,
+                name: "A".into(),
+            },
+        );
+        let view = UiView {
+            window_focused: true,
+            visible_tabs: vec!["t1".into()],
+        };
+        let attention = || state.registry().snapshot().sessions[0].attention.clone();
+        state.registry().mark("t1", crate::pty::Mark::Notify(None));
+        state.set_window_hidden(true);
+        state.report_view(view.clone());
+        assert!(attention().is_some());
+        state.set_window_hidden(false);
+        state.report_view(view);
+        assert_eq!(attention(), None);
+    }
+
+    #[test]
     fn a_hidden_window_has_no_tab_in_view() {
         let home = tempfile::tempdir().unwrap();
         let state = AppState::new("t".into(), 1, vec![], home.path().into(), vec![]);

@@ -323,6 +323,8 @@ impl AppState {
     /// Records what the UI reports it shows.
     pub fn report_view(&self, view: marshell_protocol::api::UiView) {
         self.0.view.send_replace(view);
+        // What the person is looking at in a focused window has had their attention.
+        self.registry().clear_attention_seen(&self.effective_view());
     }
     pub fn notify_paused(&self) -> bool {
         self.0.notify_paused.load(Ordering::SeqCst)

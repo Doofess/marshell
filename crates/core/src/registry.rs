@@ -4,14 +4,33 @@
 
 use std::collections::VecDeque;
 use std::sync::Mutex;
+use std::time::{Duration, Instant};
 
 use crate::pty::Mark;
 use crate::stuck::StuckTracker;
 use marshell_protocol::api::{
-    Activity, CommandState, Foreground, LiveState, LiveStatus, SavedTab, SessionInfo, SessionMode, SessionState,
-    SessionsSnapshot,
+    Activity, Attention, CommandState, Foreground, LiveState, LiveStatus, SavedTab, SessionInfo, SessionMode,
+    SessionState, SessionsSnapshot, UiView,
 };
 use tokio::sync::watch;
+
+/// A bell this soon after the person's own typing is its echo (a shell's refused key), not a program asking.
+const TYPING_ECHO: Duration = Duration::from_secs(1);
+
+/// Whether a terminal program's signal may become attention on this row. Never on a row with hook status:
+/// its hooks already report the same moments. A notification always counts; a bare bell only while a
+/// program runs (at the prompt it is a failed Tab completion) and not right after the person typed.
+pub(crate) fn attention_allowed(info: &SessionInfo, bell: bool, last_input: Option<Instant>, now: Instant) -> bool {
+    if info.live.is_some() {
+        return false;
+    }
+    if !bell {
+        return true;
+    }
+    // An agent launched as the session is itself the program running; it has no prompt.
+    let busy = info.agent.is_some() || info.command == CommandState::Running || info.foreground.is_some();
+    busy && last_input.is_none_or(|at| now.saturating_duration_since(at) >= TYPING_ECHO)
+}
 
 /// How many closed sessions we remember for Reopen.
 const MAX_CLOSED: usize = 10;
@@ -51,6 +70,8 @@ pub struct Entry {
     /// Not serialized.
     pending_done: Option<LiveStatus>,
     stuck: StuckTracker,
+    /// When the person last typed into the session. Not serialized.
+    last_input: Option<Instant>,
 }
 
 impl Entry {
@@ -69,6 +90,7 @@ impl Entry {
     /// that said why there was no status. A new process, or none, starts blank.
     fn clear_live(&mut self) {
         self.info.live = None;
+        self.info.attention = None;
         self.info.stuck = None;
         self.stuck = StuckTracker::default();
         self.info.activity = None;
@@ -76,6 +98,28 @@ impl Entry {
         self.running.clear();
         self.waiting = false;
         self.pending_done = None;
+    }
+
+    /// Sets attention, or keeps the one already set: a flood of bells is one attention, from its first
+    /// signal. A later message fills in a missing one. True when the row changed.
+    fn note_attention(&mut self, message: Option<String>) -> bool {
+        match &mut self.info.attention {
+            Some(attention) => {
+                if attention.message.is_none() && message.is_some() {
+                    attention.message = message;
+                    true
+                } else {
+                    false
+                }
+            }
+            None => {
+                let since_ms = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map_or(0, |d| d.as_millis() as u64);
+                self.info.attention = Some(Attention { message, since_ms });
+                true
+            }
+        }
     }
 
     fn clear_stuck_outside_working(&mut self) {
@@ -195,6 +239,7 @@ impl Registry {
             waiting: false,
             pending_done: None,
             stuck: StuckTracker::default(),
+            last_input: None,
         });
         self.tx.send_replace(state.snapshot());
         number
@@ -239,6 +284,7 @@ impl Registry {
                 waiting: false,
                 pending_done: None,
                 stuck: StuckTracker::default(),
+                last_input: None,
             });
         }
         self.tx.send_replace(state.snapshot());
@@ -457,14 +503,58 @@ impl Registry {
             .collect()
     }
 
-    /// Folds a shell-integration mark into the tab's command state. Marks for
-    /// an exited or unknown tab are ignored. Broadcasts only on a change.
+    /// The person typed into the session: a bell in the next second is its echo, and they have seen
+    /// whatever asked for their attention. Broadcasts only on a change.
+    pub fn note_input(&self, tab_id: &str) {
+        let mut state = self.state.lock().unwrap();
+        let Some(entry) = state.open.iter_mut().find(|e| e.info.tab_id == tab_id) else {
+            return;
+        };
+        entry.last_input = Some(Instant::now());
+        if entry.info.attention.take().is_some() {
+            self.tx.send_replace(state.snapshot());
+        }
+    }
+
+    /// The person is looking at these sessions: with the window focused, their attention is seen.
+    /// Broadcasts only on a change.
+    pub fn clear_attention_seen(&self, view: &UiView) {
+        if !view.window_focused {
+            return;
+        }
+        let mut state = self.state.lock().unwrap();
+        let mut changed = false;
+        for entry in state
+            .open
+            .iter_mut()
+            .filter(|e| view.visible_tabs.contains(&e.info.tab_id))
+        {
+            changed |= entry.info.attention.take().is_some();
+        }
+        if changed {
+            self.tx.send_replace(state.snapshot());
+        }
+    }
+
+    /// Folds a shell-integration mark into the tab's command state, and a terminal program's notification
+    /// or bell into its attention. Marks for an exited or unknown tab are ignored. Broadcasts only on a change.
     pub fn mark(&self, tab_id: &str, mark: Mark) {
         let mut state = self.state.lock().unwrap();
         let Some(entry) = state.open.iter_mut().find(|e| e.info.tab_id == tab_id) else {
             return;
         };
         if entry.info.state != SessionState::Running {
+            return;
+        }
+        let signal = match &mark {
+            Mark::Notify(message) => Some((message.clone(), false)),
+            Mark::Bell => Some((None, true)),
+            _ => None,
+        };
+        if let Some((message, bell)) = signal {
+            if attention_allowed(&entry.info, bell, entry.last_input, Instant::now()) && entry.note_attention(message) {
+                self.tx.send_replace(state.snapshot());
+            }
             return;
         }
         let last_exit = match entry.info.command {
@@ -477,8 +567,7 @@ impl Registry {
             Mark::Executed => CommandState::Running,
             Mark::Finished(Some(code)) => CommandState::Prompt { last_exit: Some(code) },
             Mark::Finished(None) | Mark::PromptStart => CommandState::Prompt { last_exit },
-            Mark::CommandStart | Mark::CommandLine(_) | Mark::Cwd(_) => return,
-            Mark::Notify(_) | Mark::Bell => return,
+            Mark::CommandStart | Mark::CommandLine(_) | Mark::Cwd(_) | Mark::Notify(_) | Mark::Bell => return,
         };
         let changed = entry.info.command != next;
         if changed {
@@ -502,6 +591,7 @@ impl Registry {
             entry.info.live = Some(next);
             entry.clear_stuck_outside_working();
             entry.info.activity = None;
+            entry.info.attention = None;
             self.tx.send_replace(state.snapshot());
         }
     }
@@ -1613,6 +1703,143 @@ mod tests {
             .into_iter()
             .find(|s| s.tab_id == tab_id)
             .unwrap()
+    }
+
+    #[test]
+    fn attention_allowed_follows_hooks_foreground_and_typing() {
+        let reg = Registry::new();
+        reg.reserve("a", relaunch("A"));
+        let shell = row(&reg, "a");
+        let now = Instant::now();
+        let ago = |ms: u64| now.checked_sub(Duration::from_millis(ms));
+        // A notification counts at the prompt; a bell there is a failed Tab completion.
+        assert!(attention_allowed(&shell, false, None, now));
+        assert!(!attention_allowed(&shell, true, None, now));
+        let running = SessionInfo {
+            command: CommandState::Running,
+            ..shell.clone()
+        };
+        assert!(attention_allowed(&running, true, None, now));
+        let foreground = SessionInfo {
+            foreground: Some(marshell_protocol::api::Foreground {
+                program: "python".into(),
+                command_line: None,
+                agent: None,
+            }),
+            ..shell.clone()
+        };
+        assert!(attention_allowed(&foreground, true, None, now));
+        // An agent launched as the session is the program running; it has no prompt.
+        let agent = SessionInfo {
+            agent: Some("codex".into()),
+            ..shell.clone()
+        };
+        assert!(attention_allowed(&agent, true, None, now));
+        // The echo of the person's own typing is not a program asking.
+        assert!(!attention_allowed(&running, true, ago(200), now));
+        assert!(attention_allowed(&running, true, ago(2_000), now));
+        assert!(attention_allowed(&running, false, ago(200), now));
+        // Hooks already report these moments.
+        let hooked = SessionInfo {
+            live: Some(live(LiveState::Working)),
+            ..running.clone()
+        };
+        assert!(!attention_allowed(&hooked, true, None, now));
+        assert!(!attention_allowed(&hooked, false, None, now));
+    }
+
+    #[test]
+    fn notify_mark_sets_attention_once() {
+        let reg = Registry::new();
+        reg.reserve("a", relaunch("A"));
+        let mut rx = reg.subscribe();
+        rx.borrow_and_update();
+        reg.mark("a", Mark::Notify(None));
+        assert!(rx.has_changed().unwrap());
+        rx.borrow_and_update();
+        let first = row(&reg, "a").attention.expect("attention");
+        assert_eq!(first.message, None);
+        // A later message fills in the missing one, and the flood keeps the first time.
+        reg.mark("a", Mark::Notify(Some("Build done".into())));
+        reg.mark("a", Mark::Notify(Some("Other".into())));
+        reg.mark("a", Mark::Notify(None));
+        let now = row(&reg, "a").attention.expect("attention");
+        assert_eq!(now.message.as_deref(), Some("Build done"));
+        assert_eq!(now.since_ms, first.since_ms);
+        rx.borrow_and_update();
+        reg.mark("a", Mark::Notify(Some("Again".into())));
+        assert!(!rx.has_changed().unwrap());
+    }
+
+    #[test]
+    fn bell_counts_only_while_a_command_runs() {
+        let reg = Registry::new();
+        reg.reserve("a", relaunch("A"));
+        reg.mark("a", Mark::PromptStart);
+        reg.mark("a", Mark::Bell);
+        assert_eq!(row(&reg, "a").attention, None);
+        reg.mark("a", Mark::Executed);
+        reg.mark("a", Mark::Bell);
+        assert_eq!(row(&reg, "a").attention.expect("attention").message, None);
+    }
+
+    #[test]
+    fn bell_right_after_typing_is_ignored() {
+        let reg = Registry::new();
+        reg.reserve("a", relaunch("A"));
+        reg.mark("a", Mark::Executed);
+        reg.note_input("a");
+        reg.mark("a", Mark::Bell);
+        assert_eq!(row(&reg, "a").attention, None);
+    }
+
+    #[test]
+    fn note_input_clears_attention() {
+        let reg = Registry::new();
+        reg.reserve("a", relaunch("A"));
+        reg.mark("a", Mark::Notify(Some("Build done".into())));
+        assert!(row(&reg, "a").attention.is_some());
+        reg.note_input("a");
+        assert_eq!(row(&reg, "a").attention, None);
+        reg.note_input("missing");
+    }
+
+    #[test]
+    fn focused_view_clears_visible_attention() {
+        let reg = Registry::new();
+        reg.reserve("a", relaunch("A"));
+        reg.reserve("b", relaunch("B"));
+        reg.mark("a", Mark::Notify(None));
+        reg.mark("b", Mark::Notify(None));
+        reg.clear_attention_seen(&UiView {
+            window_focused: true,
+            visible_tabs: vec!["a".into()],
+        });
+        assert_eq!(row(&reg, "a").attention, None);
+        assert!(row(&reg, "b").attention.is_some());
+    }
+
+    #[test]
+    fn unfocused_view_keeps_it() {
+        let reg = Registry::new();
+        reg.reserve("a", relaunch("A"));
+        reg.mark("a", Mark::Notify(None));
+        reg.clear_attention_seen(&UiView {
+            window_focused: false,
+            visible_tabs: vec!["a".into()],
+        });
+        assert!(row(&reg, "a").attention.is_some());
+    }
+
+    #[test]
+    fn hooked_row_ignores_signals_and_live_status_clears_attention() {
+        let reg = Registry::new();
+        reg.reserve("a", relaunch("A"));
+        reg.mark("a", Mark::Notify(Some("Build done".into())));
+        reg.update_live("a", |_| Some(live(LiveState::Working)));
+        assert_eq!(row(&reg, "a").attention, None);
+        reg.mark("a", Mark::Notify(Some("Again".into())));
+        assert_eq!(row(&reg, "a").attention, None);
     }
 
     #[test]

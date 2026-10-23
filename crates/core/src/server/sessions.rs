@@ -266,11 +266,16 @@ pub(super) async fn spawn_into_map(
     ]);
     let registry = st.0.registry.clone();
     let exited_tab = tab_id.to_string();
-    let on_mark: Option<crate::pty::MarkCallback> = if run.marks {
+    // Every session passes on terminal notifications and bells; only one with shell integration has prompt marks.
+    let on_mark: Option<crate::pty::MarkCallback> = {
         let registry = st.0.registry.clone();
         let wake = st.0.foreground_wake.clone();
         let tab = tab_id.to_string();
+        let marks = run.marks;
         Some(Box::new(move |mark| {
+            if !marks && !matches!(mark, crate::pty::Mark::Notify(_) | crate::pty::Mark::Bell) {
+                return;
+            }
             let started = mark == crate::pty::Mark::Executed;
             registry.mark(&tab, mark);
             // A command just started: look at what it runs now, not up to a second later. After the
@@ -279,8 +284,6 @@ pub(super) async fn spawn_into_map(
                 wake.notify_one();
             }
         }))
-    } else {
-        None
     };
     // `spec` takes the cwd; the closure below records the same folder.
     let marshell_home = st.0.home.clone();
@@ -495,6 +498,7 @@ pub async fn input(State(st): State<AppState>, Path(tab): Path<String>, Json(req
     }
     // Typed text answers in the terminal, the same as a key in the pane.
     st.holds().release_tab(&tab);
+    st.registry().note_input(&tab);
     session.write_input(req.text.into_bytes());
     StatusCode::NO_CONTENT.into_response()
 }
