@@ -304,6 +304,7 @@
 .conversation__action:focus-visible,
 .conversation__input:focus-visible,
 .turn__bookmark:focus-visible,
+.conversation__tab:focus-visible,
 .file__goto:focus-visible,
 .tool__summary:focus-visible {
   outline: 2px solid var(--accent);
@@ -319,6 +320,27 @@
   border-inline-start: 3px solid var(--caution);
   background: var(--fill);
   text-wrap: pretty;
+}
+
+/* The tabs under the header: quiet buttons on the fill; the chosen one carries SelectedMark's fill, end bar and forced-colors outline. */
+.conversation__tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  margin-block-start: var(--space-6);
+}
+.conversation__tab {
+  padding: var(--space-1) var(--space-3);
+  border-radius: var(--radius);
+  background: var(--fill);
+  color: var(--text-2);
+  font-size: var(--text-13);
+}
+.conversation__tab:active {
+  box-shadow: inset 0 0 0 100vmax var(--selected);
+}
+[role="tabpanel"] {
+  min-inline-size: 0;
 }
 
 /* A turn: the prompt is its heading, with a bar down its start edge; what the agent did sits indented under it. */
@@ -612,6 +634,7 @@ details.tool[open] > summary {
   }
   .conversation__action:hover,
   .turn__bookmark:hover,
+  .conversation__tab:hover:not([aria-selected="true"]),
   .file__goto:hover,
   .history__back:hover {
     box-shadow: inset 0 0 0 100vmax var(--hover);
@@ -628,6 +651,7 @@ details.tool[open] > summary {
   .conversation__action,
   .conversation__input,
   .turn__bookmark,
+  .conversation__tab,
   .file__goto,
   .tool {
     outline: 1px solid CanvasText;

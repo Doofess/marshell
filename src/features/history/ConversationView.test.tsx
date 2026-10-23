@@ -3,7 +3,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import type { Conversation } from "../../generated/Conversation";
 import type { TurnItem } from "../../generated/TurnItem";
-import { ConversationView, NO_ARCHIVE_COPY, moreActions } from "./ConversationView";
+import { ConversationView, NO_ARCHIVE_COPY, moreActions, tabKey } from "./ConversationView";
 import { MarkdownText } from "./MarkdownText";
 
 vi.mock("../preview/markdown", () => ({ safeMarkdownHtml: vi.fn((md: string, doc: string) => `<p data-sentinel="${doc}">${md.length}</p>`) }));
@@ -262,5 +262,66 @@ describe("ConversationView: scrolling to the target turn", () => {
     const deps = effect![1]!.split(",").map((d) => d.trim());
     expect(deps).not.toContain("c");
     expect(deps).toEqual(expect.arrayContaining(["c.agent", "c.session_id", "scrollToTurn"]));
+  });
+});
+
+describe("ConversationView tabs", () => {
+  const two = () => {
+    const c = conv([{ kind: "tool", card: { name: "Edit", summary: "Edited a.ts", detail: "", error: false, file: { path: "a.ts", added: 1, removed: 0, created: false, diff: "+x" } } as never }]);
+    c.turns.push({ index: 1, at_ms: 2000, prompt: "again", items: [] });
+    return c;
+  };
+
+  it("draws a tablist with three tabs that each name their panel, and selects one", () => {
+    const out = html(two());
+    expect(out).toContain('role="tablist"');
+    const tabs = [...out.matchAll(/<button[^>]*role="tab"[^>]*>/g)].map((m) => m[0]);
+    expect(tabs).toHaveLength(3);
+    for (const t of tabs) expect(t).toMatch(/aria-selected="(true|false)"/);
+    for (const t of tabs) expect(t).toMatch(/aria-controls="[^"]+"/);
+    expect(tabs.filter((t) => t.includes('aria-selected="true"'))).toHaveLength(1);
+    expect(tabs.filter((t) => t.includes('tabindex="0"'))).toHaveLength(1);
+    expect(out).toContain(">Conversation</button>");
+    expect(out).toContain(">Recording</button>");
+  });
+
+  it("counts the changed files in the third tab only when there are some", () => {
+    expect(html(two())).toContain(">Files changed (1)</button>");
+    expect(html(conv([]))).toContain(">Files changed</button>");
+  });
+
+  it("shows the panel of the open tab", () => {
+    const rec = <p>RECORDING-PANEL</p>;
+    const conversation = html(two(), { recording: rec });
+    expect(conversation).toContain("again");
+    expect(conversation).not.toContain("RECORDING-PANEL");
+    const recording = html(two(), { tab: "recording", recording: rec });
+    expect(recording).toContain("RECORDING-PANEL");
+    expect(recording).not.toContain('data-turn="1"');
+    expect(recording).toContain('role="tabpanel"');
+    const files = html(two(), { tab: "files" });
+    expect(files).toContain("1 file changed");
+    expect(files).not.toContain('data-turn="1"');
+  });
+
+  it("offers Play from here only on playable turns", () => {
+    const out = html(two(), { playableTurns: new Set([1]) });
+    expect(out).toContain('aria-label="Play turn 2 from here"');
+    expect(out).not.toContain('aria-label="Play turn 1 from here"');
+    expect(html(two())).not.toContain("Play from here");
+  });
+});
+
+describe("tabKey", () => {
+  it("moves with the arrows and wraps", () => {
+    expect(tabKey("conversation", "ArrowRight")).toBe("recording");
+    expect(tabKey("files", "ArrowRight")).toBe("conversation");
+    expect(tabKey("conversation", "ArrowLeft")).toBe("files");
+    expect(tabKey("recording", "ArrowLeft")).toBe("conversation");
+  });
+  it("jumps with Home and End, and ignores other keys", () => {
+    expect(tabKey("recording", "Home")).toBe("conversation");
+    expect(tabKey("recording", "End")).toBe("files");
+    expect(tabKey("recording", "a")).toBeNull();
   });
 });

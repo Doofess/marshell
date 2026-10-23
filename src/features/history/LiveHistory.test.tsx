@@ -6,7 +6,7 @@ import { SCENARIO_ROWS } from "../window/scenario";
 import { ApiError } from "../../lib/api/client";
 import { NO_ARCHIVE_COPY } from "./ConversationView";
 import { EMPTY_LIST_COPY } from "./HistoryView";
-import { NO_FILTER_MATCH_COPY, conversationFailure, failureText, listEmptyText, liveTabFor } from "./LiveHistory";
+import { NO_FILTER_MATCH_COPY, conversationFailure, failureText, listEmptyText, liveTabFor, playableTurns } from "./LiveHistory";
 
 const entry = (tab_id: string): HistoryEntry => ({
   agent: "claude",
@@ -80,5 +80,17 @@ describe("LiveHistory: search effect", () => {
     const effect = /SEARCH_DELAY_MS\);\s*return \(\) => \{[^}]*\};\s*\}, \[([^\]]*)\]\);/.exec(src);
     expect(effect).not.toBeNull();
     expect(effect![1]!.split(",").map((d) => d.trim())).toContain("reload");
+  });
+});
+
+describe("playableTurns", () => {
+  const part = (started_ms: number, ended_ms: number) => ({ started_ms, ended_ms }) as never;
+  const turns = [0, 500, 1500, 9000].map((at_ms, index) => ({ index, at_ms }));
+  it("keeps the turns whose time falls inside a part, and never one without a time", () => {
+    expect([...playableTurns([part(0, 2000)], turns)]).toEqual([1, 2]);
+    expect([...playableTurns([part(400, 600), part(8000, 9000)], turns)]).toEqual([1, 3]);
+  });
+  it("is empty when there are no parts", () => {
+    expect(playableTurns([], turns).size).toBe(0);
   });
 });

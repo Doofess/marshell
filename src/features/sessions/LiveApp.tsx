@@ -1333,6 +1333,8 @@ export function LiveApp() {
                 endpoint={endpoint}
                 rows={rows}
                 os={os}
+                theme={themeFor(undefined)}
+                font={terminalFont}
                 searchFocus={searchFocus}
                 size={() => size.current}
                 announce={announce}
