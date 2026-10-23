@@ -32,6 +32,20 @@
 8. **A motion change applies on the next render.** The board reads the reduced-motion setting when the app renders, so changing it while the board is open takes effect on the next update.
 9. **Check method: the tray event needs an object payload.** Emitting `tray-action` with a bare string did nothing; `{ id: "departures" }` is what the tray sends.
 
+## Re-check after the review's fix pass
+
+Three plain shells and held requests, the same scratch home, driven over CDP:
+
+| Check | Result |
+| --- | --- |
+| Row changes group at the same index | Pass. With focus on session 4 (Others, first row), a held request moved it to Gate calls, first row: focus stayed on its row, and the arrows, Y and Escape kept working. Removing the row fired no blur that cleared the board's own record of row focus. |
+| Answered request | Pass. Deny on the board's card took session 4 out of Gate calls within 100 ms, the title went from (2) to (1), and focus followed the row into Others. A click in the first moments after the card opened did nothing, as the card's arming delay intends. |
+| Show all | Pass. Space on a card with a long command closed the board and left focus on the drawer's card. |
+| Tray "Go to session" | Pass. With the board open, it closed the board and focused session 6's terminal. |
+| All sessions, then Escape | Pass. Focus landed on the selected session's terminal, not on the page. |
+
+A closed row held under the pointer and the tab stop on an overfull board are covered by unit tests only.
+
 ## Real config
 
 The check used only the scratch home and a scratch Claude config folder, sent no input to any agent CLI, and installed no hooks. `~/.marshell` kept its date (2026-10-21T19:42:54). `~/.claude/settings.json` was written at 01:12:58 by the user's own Claude Code sessions running beside the check; it holds no Marshell entry.
