@@ -17,4 +17,4 @@ paths:
 - Keep one CLI's conventions out of the others: Codex hook trust and `AGENTS.md` generation stay in Codex code, Claude Code's settings hooks stay in Claude Code code. (AGENTS.md)
 - Before Codex adapter, hook or instruction-file work, read `docs/research/codex-cli.md`. (AGENTS.md)
 - Codex hook installs end with a "trust these hooks in `/hooks`" step. (PLAN.md §6)
-- Tests and live checks use `MARSHELL_HOME` and temp folders. Never touch `~/.claude/`, `~/.codex/` or `~/.marshell/`. (SCOPE.md)
+- Tests and live checks use `MARSHELL_HOME`, `MARSHELL_CLAUDE_SETTINGS` and temp folders. Without `MARSHELL_CLAUDE_SETTINGS`, installing Claude's hooks writes the real `~/.claude/settings.json`. Never touch `~/.claude/`, `~/.codex/` or `~/.marshell/`. (SCOPE.md)

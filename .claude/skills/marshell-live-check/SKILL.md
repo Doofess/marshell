@@ -15,7 +15,7 @@ A live check runs the dev app against scratch homes, drives the webview over CDP
    ```
    pwsh -NoProfile -File .claude/skills/marshell-live-check/live-check.ps1 start -Scratch <literal path>
    ```
-   It creates `mh` (`MARSHELL_HOME`) and `cc` (`CLAUDE_CONFIG_DIR`), starts `pnpm tauri dev` with CDP on port 9333, logs to `dev.out.log` and `dev.err.log`, and records the root PID in `pids.json`. It refuses a non-empty folder.
+   It creates `mh` (`MARSHELL_HOME`), `cc` (`CLAUDE_CONFIG_DIR`) and `proj/.claude/settings.local.json` seeded with `{}` (`MARSHELL_CLAUDE_SETTINGS`), starts `pnpm tauri dev` with CDP on port 9333, logs to `dev.out.log` and `dev.err.log`, and records the root PID in `pids.json`. It refuses a non-empty folder.
 4. Wait until `http://127.0.0.1:9333/json/version` answers. The first Rust build can take minutes, so poll with a Monitor or an until-loop, not a fixed sleep.
 
 ## Drive it
@@ -29,7 +29,7 @@ The `webview` MCP server (`.mcp.json`) is Playwright attached to the dev webview
 
 ## Rules the past checks taught
 
-- **Claude Code sessions** ignore a PATH shim. Marshell's `pwsh` gets a fresh PATH and runs the real `claude.exe`, so the scratch `CLAUDE_CONFIG_DIR` set by `start` is what keeps the real `~/.claude` safe. Claude then stops at its login. If the check needs a real answer from Claude, ask the user first.
+- **Claude Code sessions** ignore a PATH shim. Marshell's `pwsh` gets a fresh PATH and runs the real `claude.exe`, so the scratch `CLAUDE_CONFIG_DIR` set by `start` is what keeps Claude itself out of the real `~/.claude`. Marshell is kept out by `MARSHELL_CLAUDE_SETTINGS`: onboarding's "Set up" and the hooks consent install into that scratch file. Before pressing either, read the target path in the preview. Claude then stops at its login. If the check needs a real answer from Claude, ask the user first.
 - **`/model` and `/effort`** typed into a Claude session write the real `~/.claude/settings.json`, even with a scratch home. Test model and effort with `claude --model <x> --effort <y>` at launch instead. If one slipped through, restore only the changed keys from `C:/dev/claude-setup/settings.json`.
 - **Enter and input:** the agent sessions in a check are ones you start for it. Pressing Enter in one is part of the check, never part of the feature. Never send input to a session the user started.
 - **Desktop input:** CDP input reaches only the webview. Anything outside it, such as the tray, a native menu, a notification or the window frame, needs real input. Ask before sending it. Before any `SetCursorPos`, `mouse_event` or `SendKeys`, check that the target rect is non-empty and belongs to the expected process, and abort otherwise. Prefer UIA Invoke. A stray click once landed in the user's Photoshop.
@@ -59,7 +59,7 @@ Write `docs/research/<date>-<topic>-live-check.md`:
 
 - Date: <date>, <start> to <end> local time.
 - Build: `<branch>` under `pnpm tauri dev` on Windows 11 Pro (<build>).
-- Home: a scratch `MARSHELL_HOME` and `CLAUDE_CONFIG_DIR`, with CDP on port 9333. <What onboarding was left with.>
+- Home: a scratch `MARSHELL_HOME`, `CLAUDE_CONFIG_DIR` and `MARSHELL_CLAUDE_SETTINGS`, with CDP on port 9333. <What onboarding was left with.>
 - Data: <what was seeded and how, with the command>.
 - How it was driven: <CDP evaluations, CDP keys, emulated forced colors, N screenshots; any desktop input and why>.
 

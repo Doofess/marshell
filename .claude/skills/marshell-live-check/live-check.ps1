@@ -3,8 +3,10 @@
 Starts and stops the dev Marshell app for a live check, with every home redirected to a scratch folder.
 
 .DESCRIPTION
-start: creates <Scratch>\mh (MARSHELL_HOME) and <Scratch>\cc (CLAUDE_CONFIG_DIR), starts `pnpm tauri dev`
-       in this checkout with CDP on 127.0.0.1:9333, and records the root PID in <Scratch>\pids.json.
+start: creates <Scratch>\mh (MARSHELL_HOME), <Scratch>\cc (CLAUDE_CONFIG_DIR, for the Claude sessions the
+       check starts) and <Scratch>\proj\.claude\settings.local.json seeded with {} (MARSHELL_CLAUDE_SETTINGS, where
+       Marshell installs Claude's hooks, so onboarding's "Set up" never writes the real ~/.claude), starts
+       `pnpm tauri dev` in this checkout with CDP on 127.0.0.1:9333, and records the root PID in <Scratch>\pids.json.
 tree:  prints the process tree under the recorded root PID and stops nothing.
 stop:  prints the tree and stops it by PID, leaves first. If the tree holds an agent CLI (claude.exe,
        codex.exe, node_repl.exe), nothing is stopped unless every such PID is named in -AlsoStop:
@@ -28,6 +30,7 @@ $ErrorActionPreference = 'Stop'
 $AgentNames = @('claude.exe', 'codex.exe', 'node_repl.exe')
 
 if (-not [System.IO.Path]::IsPathRooted($Scratch)) { throw "Scratch must be an absolute path: $Scratch" }
+# In PowerShell 7, GetFullPath also expands 8.3 short names (C:\Users\JANEDO~1) in the part that exists.
 $Scratch = [System.IO.Path]::GetFullPath($Scratch).TrimEnd('\')
 foreach ($real in @("$HOME\.marshell", "$HOME\.claude", "$HOME\.codex")) {
     $r = [System.IO.Path]::GetFullPath($real).TrimEnd('\')
@@ -79,10 +82,13 @@ switch ($Mode) {
         if (-not (Test-Path -LiteralPath $Scratch)) { New-Item -ItemType Directory -Path $Scratch | Out-Null }
         $mh = New-Item -ItemType Directory -Path (Join-Path $Scratch 'mh')
         $cc = New-Item -ItemType Directory -Path (Join-Path $Scratch 'cc')
+        $settings = Join-Path (New-Item -ItemType Directory -Path (Join-Path $Scratch 'proj\.claude')).FullName 'settings.local.json'
+        Set-Content -LiteralPath $settings -Value '{}' -Encoding utf8NoBOM
         $repo = (Resolve-Path -LiteralPath $Repo).Path
         if (-not (Test-Path -LiteralPath (Join-Path $repo 'src-tauri\tauri.conf.json'))) { throw "Not a Marshell checkout: $repo" }
         $env:MARSHELL_HOME = $mh.FullName
         $env:CLAUDE_CONFIG_DIR = $cc.FullName
+        $env:MARSHELL_CLAUDE_SETTINGS = $settings
         $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = "--remote-debugging-port=$Port"
         $proc = Start-Process -FilePath 'cmd.exe' -ArgumentList '/d', '/c', 'pnpm tauri dev' -WorkingDirectory $repo `
             -NoNewWindow -PassThru -RedirectStandardOutput (Join-Path $Scratch 'dev.out.log') `
@@ -90,11 +96,12 @@ switch ($Mode) {
         $created = (Get-CimInstance Win32_Process -Filter "ProcessId = $($proc.Id)" -Property CreationDate).CreationDate
         [ordered]@{
             root = $proc.Id; name = 'cmd.exe'; created = $created.ToUniversalTime().ToString('o')
-            repo = $repo; marshellHome = $mh.FullName; claudeConfigDir = $cc.FullName; cdp = "http://127.0.0.1:$Port"
+            repo = $repo; marshellHome = $mh.FullName; claudeConfigDir = $cc.FullName; claudeSettings = $settings; cdp = "http://127.0.0.1:$Port"
         } | ConvertTo-Json | Set-Content -LiteralPath $PidsFile -Encoding utf8NoBOM
         Write-Output "Started pnpm tauri dev in $repo, root PID $($proc.Id)."
         Write-Output "MARSHELL_HOME=$($mh.FullName)"
         Write-Output "CLAUDE_CONFIG_DIR=$($cc.FullName)"
+        Write-Output "MARSHELL_CLAUDE_SETTINGS=$settings"
         Write-Output "Logs: $Scratch\dev.out.log, $Scratch\dev.err.log. CDP: http://127.0.0.1:$Port/json/version"
     }
     'tree' {
