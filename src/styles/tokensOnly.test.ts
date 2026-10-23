@@ -17,7 +17,7 @@ const DEFINITIONS = new Set(["styles/tokens.css", "styles/accents.css", "styles/
 
 /** Files that hold a colour of their own, each with its reason. A file that stops needing it must leave this list. */
 const ALLOWED: Record<string, string> = {
-  "components/Logo/Logo.css": "The app icon's three fixed brand colours (tile, hand, signal): artwork, identical in every theme and accent, not a themed surface.",
+  "components/Logo/Logo.css": "The app icon's brand colours (tile, hand, signal), the Daylight variant in the light theme and Night shift in the dark: artwork, not a themed surface, and the same in every accent.",
 };
 
 const read = (f: string) => readFileSync(join(SRC, f), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");

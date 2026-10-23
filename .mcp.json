@@ -1,0 +1,17 @@
+{
+  "mcpServers": {
+    "webview": {
+      "command": "cmd",
+      "args": [
+        "/c",
+        "npx",
+        "-y",
+        "@playwright/mcp@0.0.83",
+        "--cdp-endpoint",
+        "http://127.0.0.1:9333",
+        "--output-dir",
+        "${CLAUDE_PROJECT_DIR:-.}/.playwright-mcp"
+      ]
+    }
+  }
+}

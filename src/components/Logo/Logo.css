@@ -1,8 +1,10 @@
-/* Brand colours of the app icon, the same in both themes: it is an app tile, not UI chrome. */
+/* Brand colours of the app icon: it is an app tile, not UI chrome, so it takes no accent. The light theme shows the Daylight
+   variant (assets/icon/alt-daylight.svg) and the dark theme Night shift (app-night-shift.svg); `light-dark()` follows the
+   theme setting, and the system's when the setting follows it. */
 .logo {
-  --logo-tile: oklch(21% 0.008 265);
-  --logo-hand: oklch(89% 0.006 255);
-  --logo-signal: oklch(72% 0.19 55);
+  --logo-tile: light-dark(oklch(95.4% 0.005 258), oklch(21% 0.008 265));
+  --logo-hand: light-dark(oklch(26.4% 0.01 261), oklch(89% 0.006 255));
+  --logo-signal: light-dark(oklch(68.2% 0.188 46), oklch(72% 0.19 55));
   flex: none;
   display: block;
 }
