@@ -16,7 +16,7 @@ const tab = (tabId: string) => `/v1/sessions/${encodeURIComponent(tabId)}`;
 export type Started = { ok: true } | { ok: false; reason: string };
 
 /** Runs a start request: a 409 becomes `{ ok: false, reason }` in the core's words, anything else rejects. */
-async function refusable(request: () => Promise<unknown>): Promise<Started> {
+export async function refusable(request: () => Promise<unknown>): Promise<Started> {
   try {
     await request();
     return { ok: true };
