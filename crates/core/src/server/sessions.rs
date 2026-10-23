@@ -266,21 +266,27 @@ pub(super) async fn spawn_into_map(
     ]);
     let registry = st.0.registry.clone();
     let exited_tab = tab_id.to_string();
-    let on_mark: Option<crate::pty::MarkCallback> = if run.marks {
+    // Every session passes on terminal notifications and bells; only one with shell integration has prompt marks.
+    let on_mark: Option<crate::pty::MarkCallback> = {
         let registry = st.0.registry.clone();
         let wake = st.0.foreground_wake.clone();
+        // Not the `AppState`: it owns this session, so holding it here would be a reference cycle.
+        let view = st.view_reader();
         let tab = tab_id.to_string();
+        let marks = run.marks;
         Some(Box::new(move |mark| {
+            if !marks && !matches!(mark, crate::pty::Mark::Notify(_) | crate::pty::Mark::Bell) {
+                return;
+            }
             let started = mark == crate::pty::Mark::Executed;
-            registry.mark(&tab, mark);
+            // Read before the registry lock is taken.
+            registry.mark(&tab, mark, &view());
             // A command just started: look at what it runs now, not up to a second later. After the
             // registry knows the command runs, which is what lets a program be shown for the row.
             if started {
                 wake.notify_one();
             }
         }))
-    } else {
-        None
     };
     // `spec` takes the cwd; the closure below records the same folder.
     let marshell_home = st.0.home.clone();
@@ -495,6 +501,7 @@ pub async fn input(State(st): State<AppState>, Path(tab): Path<String>, Json(req
     }
     // Typed text answers in the terminal, the same as a key in the pane.
     st.holds().release_tab(&tab);
+    st.registry().note_input(&tab);
     session.write_input(req.text.into_bytes());
     StatusCode::NO_CONTENT.into_response()
 }

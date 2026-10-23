@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { usePopupFocus } from "../../lib/usePopupFocus";
 import "./ContextMenu.css";
 import { leavesMenu, menuKey, placeMenu, type MenuItem } from "./menuKeys";
 
@@ -32,10 +33,15 @@ export function ContextMenu({ items, label, anchor, onRun, onClose }: Props) {
   }, [anchor]);
 
   // Roving focus: the active item takes DOM focus. Items are the only children with role=menuitem, so index by item order.
-  useEffect(() => {
+  const activeItem = () => {
     const n = items.slice(0, active).filter((i) => !("separator" in i)).length;
-    ref.current?.querySelectorAll<HTMLElement>('[role="menuitem"]')[n]?.focus();
+    return ref.current?.querySelectorAll<HTMLElement>('[role="menuitem"]')[n];
+  };
+  useEffect(() => {
+    activeItem()?.focus();
   }, [active, items]);
+  // Focus pulled out of the menu comes back to the active item. Tab is left alone: it closes the menu without a refocus.
+  usePopupFocus(ref, activeItem, { tab: false });
 
   useEffect(() => {
     const away = (e: PointerEvent) => {

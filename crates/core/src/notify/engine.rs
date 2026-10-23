@@ -62,9 +62,10 @@ struct Live {
     finished: u32,
 }
 
-/// One wait for the user: a permission request or a question.
+/// One wait for the user: a permission request, a question or terminal attention.
 struct Wait {
     permission: bool,
+    terminal: bool,
     since_ms: u64,
     /// The holds seen for this wait. A hold not in here is another request.
     rids: HashSet<String>,
@@ -108,7 +109,7 @@ impl Tab {
         }
     }
 
-    /// The row has no live status to follow (an ended process, or none reported).
+    /// The row has no live status or attention to follow (an ended process, or none reported).
     fn clear(&mut self) {
         self.live = None;
         self.wait = None;
@@ -123,6 +124,7 @@ struct Entry {
     who: Who,
     /// The wait's kind and `since_ms`, which tell this event from another of the same tab.
     permission: bool,
+    terminal: bool,
     since_ms: u64,
     phrase: String,
     recap: Option<String>,
@@ -146,6 +148,7 @@ struct Escalation {
     armed: Instant,
     who: Who,
     permission: bool,
+    terminal: bool,
     since_ms: u64,
     risky: bool,
 }
@@ -221,7 +224,7 @@ impl Engine {
         self.escalations.retain(|id, e| {
             tabs.get(id)
                 .and_then(|t| t.wait.as_ref())
-                .is_some_and(|w| w.permission == e.permission && w.since_ms == e.since_ms)
+                .is_some_and(|w| w.permission == e.permission && w.terminal == e.terminal && w.since_ms == e.since_ms)
         });
         let mut out = Vec::new();
         // Windows that ended before these events started are over; these start new ones.
@@ -327,7 +330,7 @@ impl Engine {
     ) {
         let Event { cat, entry } = event;
         let channel = channel_of(settings, cat);
-        if entry.muted || !(channel.banner || channel.sound) {
+        if entry.muted || (entry.terminal && !settings.terminal_alerts) || !(channel.banner || channel.sound) {
             return;
         }
         // Armed even while the window is in focus, so a wait in a tab nobody looked at is reminded about
@@ -340,6 +343,7 @@ impl Engine {
                     armed: now,
                     who: entry.who.clone(),
                     permission: entry.permission,
+                    terminal: entry.terminal,
                     since_ms: entry.since_ms,
                     risky: entry.risky,
                 },
@@ -390,7 +394,10 @@ impl Engine {
             if self.view.window_focused || !(channel.banner || channel.sound) {
                 continue;
             }
-            let ok: Vec<bool> = entries.iter().map(|e| self.still(cat, e)).collect();
+            let ok: Vec<bool> = entries
+                .iter()
+                .map(|e| (!e.terminal || settings.terminal_alerts) && self.still(cat, e))
+                .collect();
             // The first went out when it happened: nothing goes out unless a later one is still waiting.
             if !ok.iter().skip(1).any(|ok| *ok) {
                 continue;
@@ -421,10 +428,9 @@ impl Engine {
             return false;
         };
         match cat {
-            Cat::NeedsYou => tab
-                .wait
-                .as_ref()
-                .is_some_and(|w| w.permission == entry.permission && w.since_ms == entry.since_ms),
+            Cat::NeedsYou => tab.wait.as_ref().is_some_and(|w| {
+                w.permission == entry.permission && w.terminal == entry.terminal && w.since_ms == entry.since_ms
+            }),
             Cat::Done => live.state == LiveState::Done && live.since_ms == entry.since_ms,
             Cat::Error => live.state == LiveState::Error && live.since_ms == entry.since_ms,
             Cat::Subagent => false,
@@ -448,7 +454,10 @@ impl Engine {
                 continue;
             };
             let channel = settings.needs_you;
-            if self.tabs.get(&id).is_none_or(|t| t.muted) || !(channel.banner || channel.sound) {
+            if self.tabs.get(&id).is_none_or(|t| t.muted)
+                || (e.terminal && !settings.terminal_alerts)
+                || !(channel.banner || channel.sound)
+            {
                 continue;
             }
             let minutes = (now.saturating_duration_since(e.armed).as_secs_f64() / 60.0)
@@ -487,6 +496,7 @@ fn needs_you_event(who: &Who, muted: bool, wait: &Wait, live: &Live, risky: bool
         entry: Entry {
             who: who.clone(),
             permission: wait.permission,
+            terminal: wait.terminal,
             since_ms: wait.since_ms,
             phrase: live.phrase.clone(),
             recap: None,
@@ -505,17 +515,49 @@ fn follow(
     now: Instant,
     events: &mut Vec<Event>,
 ) {
-    let (SessionState::Running, Some(status)) = (&info.state, &info.live) else {
-        tab.clear();
-        return;
+    let (status, terminal) = match (&info.state, &info.live, &info.attention) {
+        (SessionState::Running, Some(status), _) => (
+            Live {
+                state: status.state,
+                phrase: status.phrase.clone(),
+                since_ms: status.since_ms,
+                finished: status.subagents_finished,
+            },
+            false,
+        ),
+        (SessionState::Running, None, Some(attention)) => (
+            Live {
+                state: LiveState::NeedsQuestion,
+                phrase: attention
+                    .message
+                    .clone()
+                    .unwrap_or_else(|| "Wants your attention".into()),
+                since_ms: attention.since_ms,
+                finished: 0,
+            },
+            true,
+        ),
+        _ => {
+            tab.clear();
+            return;
+        }
     };
+    if terminal {
+        tab.done_since = None;
+        tab.error_since = None;
+    }
     let (who, muted) = (tab.who.clone(), tab.muted);
     let entry = |permission: bool, risky: bool| Entry {
         who: who.clone(),
         permission,
+        terminal,
         since_ms: status.since_ms,
         phrase: status.phrase.clone(),
-        recap: status.recap.as_ref().map(|r| r.text.clone()),
+        recap: info
+            .live
+            .as_ref()
+            .and_then(|s| s.recap.as_ref())
+            .map(|r| r.text.clone()),
         risky,
         muted,
     };
@@ -524,9 +566,9 @@ fn follow(
     // and a restart starts it again from 0 (it falls, and is taken as the new reading).
     if let Some(prev) = &tab.live
         && prev.state == LiveState::Working
-        && status.subagents_finished > prev.finished
+        && status.finished > prev.finished
     {
-        for _ in 0..(status.subagents_finished - prev.finished).min(MAX_SUBAGENT_EVENTS) {
+        for _ in 0..(status.finished - prev.finished).min(MAX_SUBAGENT_EVENTS) {
             events.push(Event {
                 cat: Cat::Subagent,
                 entry: entry(false, false),
@@ -544,10 +586,11 @@ fn follow(
             let same = tab
                 .wait
                 .as_ref()
-                .is_some_and(|w| w.permission == permission && w.since_ms == status.since_ms);
+                .is_some_and(|w| w.permission == permission && w.terminal == terminal && w.since_ms == status.since_ms);
             if !same {
                 tab.wait = Some(Wait {
                     permission,
+                    terminal,
                     since_ms: status.since_ms,
                     rids: mine.iter().map(|h| h.rid.clone()).collect(),
                     risky: mine.iter().any(|h| h.risk.is_some()),
@@ -603,12 +646,7 @@ fn follow(
         }
         _ => {}
     }
-    tab.live = Some(Live {
-        state: status.state,
-        phrase: status.phrase.clone(),
-        since_ms: status.since_ms,
-        finished: status.subagents_finished,
-    });
+    tab.live = Some(status);
 }
 
 /// "HH:MM" as minutes since midnight.
@@ -639,8 +677,8 @@ mod tests {
     use super::*;
     use crate::notify::{BannerAction, NotifyRequest, SoundKind};
     use marshell_protocol::api::{
-        CommandState, LiveState, LiveStatus, NotifyChannel, NotifySettings, QuietHours, SessionInfo, SessionState,
-        SessionsSnapshot, UiView,
+        Attention, CommandState, LiveState, LiveStatus, NotifyChannel, NotifySettings, QuietHours, SessionInfo,
+        SessionState, SessionsSnapshot, UiView,
     };
     use marshell_protocol::hook::{PermissionDetail, PermissionView};
     use std::time::{Duration, Instant};
@@ -683,6 +721,8 @@ mod tests {
             activity: None,
             status_note: None,
             muted: false,
+            attention: None,
+            stuck: None,
         }
     }
 
@@ -699,6 +739,15 @@ mod tests {
 
     fn question(number: u32, since: u64) -> SessionInfo {
         row(number, Some(live(LiveState::NeedsQuestion, "Has a question", since)))
+    }
+
+    fn attention(number: u32, since_ms: u64, message: Option<&str>) -> SessionInfo {
+        let mut info = row(number, None);
+        info.attention = Some(Attention {
+            message: message.map(String::from),
+            since_ms,
+        });
+        info
     }
 
     fn done(number: u32, since: u64) -> SessionInfo {
@@ -844,6 +893,117 @@ mod tests {
         let req = only(h.obs(1.0, vec![question(1, 5)], &[]));
         assert_eq!(banner(&req).body, "Has a question");
         assert_eq!(req.sound, Some(SoundKind::NeedsYou));
+    }
+
+    #[test]
+    fn attention_raises_needs_you_with_its_message() {
+        let mut h = H::new();
+        h.obs(0.0, vec![row(1, None)], &[]);
+        let req = only(h.obs(1.0, vec![attention(1, 5, Some("Build needs input"))], &[]));
+        let b = banner(&req);
+        assert_eq!(b.title, "s1 needs you");
+        assert_eq!(b.body, "Build needs input");
+        assert_eq!(b.meta, "Session 1 · app");
+        assert_eq!(b.action, BannerAction::Open);
+        assert_eq!(b.tab_id.as_deref(), Some("t1"));
+        assert_eq!(req.sound, Some(SoundKind::NeedsYou));
+        assert!(req.flash);
+        let reminder = only(h.tick(61.0));
+        assert_eq!(banner(&reminder).body, "s1 has waited 1 min for an answer");
+        assert_eq!(reminder.sound, Some(SoundKind::Escalation));
+        assert!(h.tick(200.0).is_empty());
+    }
+
+    #[test]
+    fn attention_without_message_says_wants_your_attention() {
+        let mut h = H::new();
+        h.obs(0.0, vec![row(1, None)], &[]);
+        let req = only(h.obs(1.0, vec![attention(1, 5, None)], &[]));
+        assert_eq!(banner(&req).body, "Wants your attention");
+        assert_eq!(req.sound, Some(SoundKind::NeedsYou));
+    }
+
+    #[test]
+    fn attention_is_silent_when_terminal_alerts_off() {
+        let mut h = H::new();
+        h.settings.terminal_alerts = false;
+        h.obs(0.0, vec![row(1, None), idle(2)], &[]);
+        assert!(h.obs(1.0, vec![attention(1, 5, None), idle(2)], &[]).is_empty());
+        h.settings.terminal_alerts = true;
+        assert!(h.obs(2.0, vec![attention(1, 5, None), idle(2)], &[]).is_empty());
+        assert!(h.tick(70.0).is_empty());
+        // The wait was tracked while off: only a new since_ms is a new event.
+        assert_eq!(h.obs(71.0, vec![attention(1, 6, None), idle(2)], &[]).len(), 1);
+        h.settings.terminal_alerts = false;
+        let req = only(h.obs(75.0, vec![attention(1, 6, None), question(2, 7)], &[]));
+        assert_eq!(banner(&req).title, "s2 needs you");
+        assert_eq!(req.sound, Some(SoundKind::NeedsYou));
+        assert!(h.tick(131.0).is_empty());
+        // A switch turned off before a batch flush removes only terminal entries.
+        for hook_first in [false, true] {
+            let mut h = H::new();
+            h.obs(0.0, vec![row(1, None), idle(2)], &[]);
+            let first = if hook_first {
+                vec![row(1, None), question(2, 7)]
+            } else {
+                vec![attention(1, 5, None), idle(2)]
+            };
+            assert_eq!(h.obs(1.0, first, &[]).len(), 1);
+            assert!(h.obs(2.0, vec![attention(1, 5, None), question(2, 7)], &[]).is_empty());
+            h.settings.terminal_alerts = false;
+            let batch = h.tick(4.0);
+            if hook_first {
+                assert!(batch.is_empty());
+            } else {
+                let req = only(batch);
+                assert_eq!(banner(&req).title, "s2 needs you");
+                assert_eq!(req.sound, Some(SoundKind::NeedsYou));
+            }
+        }
+    }
+
+    #[test]
+    fn attention_flood_is_one_banner() {
+        let mut h = H::new();
+        h.obs(0.0, vec![row(1, None)], &[]);
+        assert_eq!(h.obs(1.0, vec![attention(1, 5, None)], &[]).len(), 1);
+        for secs in [1.1, 2.0, 3.0, 4.0, 10.0, 30.0] {
+            assert!(h.obs(secs, vec![attention(1, 5, Some("More bells"))], &[]).is_empty());
+            assert!(h.tick(secs).is_empty());
+        }
+    }
+
+    #[test]
+    fn new_attention_after_clear_is_a_new_wait() {
+        let mut h = H::new();
+        h.obs(0.0, vec![row(1, None)], &[]);
+        assert_eq!(h.obs(1.0, vec![attention(1, 5, None)], &[]).len(), 1);
+        assert!(h.obs(2.0, vec![row(1, None)], &[]).is_empty());
+        assert!(h.tick(61.0).is_empty());
+        let req = only(h.obs(70.0, vec![attention(1, 6, Some("Next question"))], &[]));
+        assert_eq!(banner(&req).body, "Next question");
+        assert_eq!(req.sound, Some(SoundKind::NeedsYou));
+    }
+
+    #[test]
+    fn attention_on_visible_tab_in_focused_window_is_not_announced() {
+        let mut h = H::new();
+        h.obs(0.0, vec![row(1, None)], &[]);
+        h.view(0.5, true, &["t1"]);
+        assert!(h.obs(1.0, vec![attention(1, 5, None)], &[]).is_empty());
+        h.view(2.0, false, &["t1"]);
+        assert!(h.obs(3.0, vec![attention(1, 5, None)], &[]).is_empty());
+        assert!(h.tick(70.0).is_empty());
+    }
+
+    #[test]
+    fn attention_is_ignored_on_a_hooked_row() {
+        let mut h = H::new();
+        h.obs(0.0, vec![working(1, 1)], &[]);
+        let mut info = attention(1, 5, Some("Build needs input"));
+        info.live = working(1, 1).live;
+        assert!(h.obs(1.0, vec![info], &[]).is_empty());
+        assert!(h.tick(70.0).is_empty());
     }
 
     #[test]

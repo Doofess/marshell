@@ -4,6 +4,7 @@ import { AgentMark } from "../../components/AgentMark/AgentMark";
 import { StatusGlyph } from "../../components/StatusGlyph/StatusGlyph";
 import { GLYPHS } from "../../components/StatusGlyph/glyphs";
 import { COMMANDS, commandById, shortcutLabel, type Command, type Os } from "../../lib/keymap";
+import { usePopupFocus } from "../../lib/usePopupFocus";
 import { filterCommands, filterSessions, highlight, parseSessionNumber, sessionDetail, type Hit, type Range, type SessionHit } from "../launcher/filter";
 import { rankFiles, splitPath, type FileHit } from "../preview/quickOpen";
 import type { PaletteSession } from "./fixtures";
@@ -173,6 +174,8 @@ export function Palette({
   const optId = (i: number) => `${uid}-opt-${i}`;
   const listId = `${uid}-list`;
   const list = useRef<HTMLUListElement>(null);
+  const sheet = useRef<HTMLDivElement>(null);
+  const input = useRef<HTMLInputElement>(null);
   const filtering = query.trim() !== "";
   const wanted = sessions ? parseSessionNumber(query) : null;
 
@@ -244,6 +247,8 @@ export function Palette({
   const activeId = optId(activeIndex);
   useEffect(() => keepActiveInView(list.current, activeId), [activeId]);
 
+  usePopupFocus(sheet, () => input.current);
+
   const prompt = only ? "Type a file name" : sessions ? "Type a command, or a session number" : "Type a command";
   let index = -1;
   const fileList = () =>
@@ -260,8 +265,9 @@ export function Palette({
   return (
     <div className="palette" onMouseDown={(e) => pressInPalette(e, onClose)}>
       <div className="palette__backdrop" />
-      <div className="palette__sheet" role="dialog" aria-modal="true" aria-label="Command palette" onKeyDown={onKey}>
+      <div ref={sheet} className="palette__sheet" role="dialog" aria-modal="true" aria-label="Command palette" onKeyDown={onKey}>
         <input
+          ref={input}
           className="palette__input"
           role="combobox"
           aria-expanded={items.length > 0}

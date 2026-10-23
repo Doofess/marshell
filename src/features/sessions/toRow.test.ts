@@ -30,10 +30,43 @@ const info = (patch: Partial<SessionInfo> = {}): SessionInfo => ({
   activity: null,
   status_note: null,
   muted: false,
+  attention: null,
+  stuck: null,
   ...patch,
 });
 
 describe("toRow", () => {
+  it("attention on a plain shell is needs-question with its message", () => {
+    for (const patch of [{}, { command: { kind: "running" } }, { command: { kind: "prompt", last_exit: 2 } }, { foreground: { program: "docker", command_line: "docker build .", agent: null } }] satisfies Partial<SessionInfo>[]) {
+      const row = toRow(info({ ...patch, attention: { message: "Build done", since_ms: 1000 } }), PROFILES);
+      expect(row).toMatchObject({ status: "needs-question", phrase: "Build done" });
+      expect(rowLabel(row)).toContain("Needs you");
+      expect(rowLabel(row)).toContain("Build done");
+    }
+  });
+
+  it("attention without a message says Wants your attention", () => {
+    expect(toRow(info({ attention: { message: null, since_ms: 1000 } }), PROFILES)).toMatchObject({ status: "needs-question", phrase: "Wants your attention" });
+  });
+
+  it("attention on a paused shell stays paused", () => {
+    expect(toRow(info({ paused: true, attention: { message: "Build done", since_ms: 1000 } }), PROFILES)).toMatchObject({ status: "paused", phrase: "" });
+  });
+
+  it("attention on an agent without live status wins over setup and activity", () => {
+    for (const agent of ["claude", "codex"]) {
+      const row = toRow(info({ agent, activity: "working", attention: { message: "Build done", since_ms: 1000 } }), PROFILES, { claude: "none" });
+      expect(row).toMatchObject({ status: "needs-question", phrase: "Build done" });
+      expect(row.setupLink).toBeUndefined();
+    }
+  });
+
+  it("attention leaves ended and exited rows unchanged", () => {
+    const attention = { message: "Build done", since_ms: 1000 };
+    expect(toRow(info({ attention, state: { kind: "ended" } }), PROFILES)).toMatchObject({ status: "ended", phrase: "Ended last time" });
+    expect(toRow(info({ attention, state: { kind: "exited", code: 3 } }), PROFILES)).toMatchObject({ status: "ended", phrase: "Exited with code 3" });
+  });
+
   it("names the project after the repository, not the sub folder", () => {
     const row = toRow(info({ cwd: "C:\\w\\app\\src", project: "C:\\w\\app" }), PROFILES);
     expect(row.project).toBe("app");
@@ -202,6 +235,33 @@ describe("toRow: live status", () => {
   const live = (patch: Partial<LiveStatus> = {}): LiveStatus => ({ state: "idle", phrase: "", since_ms: NOW - 5000, recap: null, model: null, effort: null, context_pct: null, five_hour_pct: null, five_hour_resets_at: null, seven_day_pct: null, subagents: 0, ...patch });
   const claude = (l: LiveStatus | null, patch: Partial<SessionInfo> = {}) => info({ agent: "claude", live: l, ...patch });
   const row = (l: LiveStatus | null, patch: Partial<SessionInfo> = {}) => toRow(claude(l, patch), PROFILES, { claude: "installed" }, NOW);
+
+  it("attention is ignored when live is set", () => {
+    for (const agent of [null, "claude"]) {
+      const l = live({ state: "working", phrase: "Thinking" });
+      expect(row(l, { agent, attention: { message: "Build done", since_ms: NOW } })).toEqual(row(l, { agent }));
+    }
+  });
+  it("stuck repeat reads Same command 9× in 4 min", () => {
+    const l = live({ state: "working", phrase: "Thinking", model: "Opus", effort: "high", context_pct: 42, subagents: 2, recap: { text: "Fixed it", at_ms: NOW - 7000 } });
+    const r = row(l, { mode: "plan", stuck: { reason: "repeat", since_ms: NOW } });
+    expect(r).toEqual({ ...row(l, { mode: "plan" }), status: "stuck", phrase: "Same command 9× in 4 min" });
+    expect(rowLabel(r)).toContain("Same command 9× in 4 min");
+    expect(rowTitle(r)).toContain("Same command 9× in 4 min");
+  });
+  it("stuck quiet reads No progress for 10 min", () => {
+    const r = row(live({ state: "working", phrase: "Thinking" }), { stuck: { reason: "quiet", since_ms: NOW } });
+    expect(r).toMatchObject({ status: "stuck", phrase: "No progress for 10 min" });
+    expect(rowLabel(r)).toContain("No progress for 10 min");
+    expect(rowTitle(r)).toContain("No progress for 10 min");
+  });
+  it("stuck outside Working is ignored", () => {
+    for (const state of ["idle", "needs_permission", "needs_question", "done", "error", "ended"] as const) {
+      const l = live({ state, phrase: "Original phrase" });
+      expect(row(l, { stuck: { reason: "repeat", since_ms: NOW } })).toEqual(row(l));
+    }
+    expect(row(null, { stuck: { reason: "quiet", since_ms: NOW } })).toEqual(row(null));
+  });
 
   it.each([
     ["idle", "idle"],

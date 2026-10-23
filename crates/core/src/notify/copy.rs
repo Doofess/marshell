@@ -247,6 +247,8 @@ mod tests {
             activity: None,
             status_note: None,
             muted: false,
+            attention: None,
+            stuck: None,
         };
         assert_eq!(Who::of(&info("C:\\work\\my-app")).project, "my-app");
         assert_eq!(Who::of(&info("/home/me/my-app/")).project, "my-app");

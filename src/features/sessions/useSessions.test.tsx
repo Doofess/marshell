@@ -60,6 +60,8 @@ const info = (n: number, patch: Partial<SessionInfo> = {}): SessionInfo => ({
   activity: null,
   status_note: null,
   muted: false,
+  attention: null,
+  stuck: null,
   ...patch,
 });
 const snap = (open: number[], closed: SessionInfo[] = []): SessionsSnapshot => ({ sessions: open.map((n) => info(n)), closed });

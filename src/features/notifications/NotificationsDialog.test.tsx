@@ -9,6 +9,7 @@ const DEFAULTS: NotifySettings = {
   error: { banner: true, sound: true },
   subagent_sound: false,
   quiet_hours: { enabled: false, start: "22:00", end: "08:00" },
+  terminal_alerts: true,
 };
 const none = () => {};
 const view = (settings: NotifySettings | null = DEFAULTS, error: string | null = null) =>
@@ -33,6 +34,17 @@ describe("NotificationsDialogView", () => {
   it("shows each switch in its saved state", () => {
     const h = view({ ...DEFAULTS, done: { banner: false, sound: true } });
     expect(group(h, "Done").match(/checked=""/g)).toHaveLength(1);
+  });
+  it("renders the terminal alerts switch, on by default", () => {
+    const h = view();
+    const g = group(h, "Terminal programs");
+    expect(switchLabels(g)).toEqual(["Alerts from terminal programs (bell, OSC 9, OSC 777)"]);
+    expect(g).toContain('<h3 class="notifications-dialog__name">Terminal programs</h3>');
+    expect(g).toMatch(/<input[^>]*role="switch"[^>]*checked=""/);
+    expect(g).toContain("Off: the row still changes, with no banner or sound.");
+    expect(h.indexOf('aria-label="Terminal programs"')).toBeGreaterThan(h.indexOf('aria-label="Subagent done"'));
+    expect(h.indexOf('aria-label="Terminal programs"')).toBeLessThan(h.indexOf('aria-label="Quiet hours"'));
+    expect(group(view({ ...DEFAULTS, terminal_alerts: false }), "Terminal programs")).not.toContain('checked=""');
   });
   it("offers Quiet hours with an on switch, two time fields prefilled 22:00 and 08:00, and its help", () => {
     const g = group(view(), "Quiet hours");

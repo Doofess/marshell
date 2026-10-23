@@ -51,11 +51,12 @@ const GLYPH: Record<LiveState, GlyphKind> = {
 };
 
 /** The row fields a live status gives. What the status line has not reported is left out, not zero. `now` is passed in so a row is a pure function of its input. */
-function liveRow(live: LiveStatus, now: number): Pick<RowModel, "status" | "phrase" | "waitingMs" | "ageMs" | "model" | "effort" | "contextPct" | "subagents" | "recap"> {
+function liveRow(live: LiveStatus, stuck: SessionInfo["stuck"], now: number): Pick<RowModel, "status" | "phrase" | "waitingMs" | "ageMs" | "model" | "effort" | "contextPct" | "subagents" | "recap"> {
   const since = Math.max(0, now - live.since_ms);
+  const reason = live.state === "working" && stuck !== null ? stuck.reason === "repeat" ? "Same command 9× in 4 min" : "No progress for 10 min" : null;
   return {
-    status: GLYPH[live.state],
-    phrase: live.state === "done" && live.recap !== null ? `${live.phrase} · ${live.recap.text}` : live.phrase,
+    status: reason !== null ? "stuck" : GLYPH[live.state],
+    phrase: reason ?? (live.state === "done" && live.recap !== null ? `${live.phrase} · ${live.recap.text}` : live.phrase),
     ...(live.state === "needs_permission" || live.state === "needs_question" ? { waitingMs: since } : {}),
     ...(live.state === "done" ? { ageMs: since } : {}),
     ...(live.model === null ? {} : { model: live.model }),
@@ -135,8 +136,9 @@ export function toRow(info: SessionInfo, profiles: Profile[], setup?: { claude?:
   if (info.state.kind === "ended") return { ...base, status: "ended", phrase: ENDED_PHRASE };
   if (info.state.kind === "exited") return { ...base, status: "ended", phrase: `Exited with code ${info.state.code}` };
   if (info.paused) return { ...base, status: "paused", phrase: "" };
+  if (info.live === null && info.attention !== null) return { ...base, status: "needs-question", phrase: info.attention.message ?? "Wants your attention" };
   if (info.agent !== null) {
-    if (info.live !== null) return { ...base, ...liveRow(info.live, now) };
+    if (info.live !== null) return { ...base, ...liveRow(info.live, info.stuck, now) };
     // Claude Code without Marshell's hooks: say so and offer the setup, ahead of the output fallback. An unknown state (not fetched yet) says and offers nothing.
     if (info.agent === "claude" && setup?.claude !== undefined && setup.claude !== "installed") return { ...base, status: "limited", phrase: "Status limited · set up", setupLink: true };
     const note = info.status_note === null ? LIMITED_NOTE : `${LIMITED_NOTE} · ${info.status_note}`;

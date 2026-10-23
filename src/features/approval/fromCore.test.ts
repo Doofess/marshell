@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import type { PermissionView } from "../../generated/PermissionView";
+import type { SessionInfo } from "../../generated/SessionInfo";
 import { needsYouCount } from "../attention/attention";
+import { attentionFlashes } from "../attention/rowFlash";
+import { toRow } from "../sessions/toRow";
 import type { RowModel } from "../sidebar/types";
 import { decisionFor, laneEntries, toDetail, toRequest } from "./fromCore";
 
@@ -51,6 +54,30 @@ describe("toDetail", () => {
 });
 
 describe("laneEntries", () => {
+  const info = (patch: Partial<SessionInfo> = {}): SessionInfo => ({
+    tab_id: "terminal", number: 4, name: "Shell", agent: null, profile_id: "pwsh", cwd: "C:/dev/app", project: "C:/dev/app", mode: null,
+    state: { kind: "running" }, command: { kind: "unknown" }, paused: false, foreground: null, live: null, activity: null, status_note: null, muted: false, attention: null, stuck: null, ...patch,
+  });
+  it("an attention row is a waiting entry", () => {
+    const before = toRow(info(), [], undefined, NOW);
+    const attention = toRow(info({ attention: { message: "Build done", since_ms: NOW - 9000 } }), [], undefined, NOW);
+    const baseline = needsYouCount(laneEntries([view()], [row(), before], NOW));
+    const entries = laneEntries([view()], [row(), attention], NOW);
+    expect(entries).toHaveLength(2);
+    expect(entries[1]).toMatchObject({ tab: "terminal", terminalOnly: true, detail: { kind: "question", question: "Build done", options: [] } });
+    expect(needsYouCount(entries)).toBe(baseline + 1);
+    expect(attentionFlashes(new Map([[before.id, before.status]]), [attention])).toEqual(["terminal"]);
+  });
+  it("a stuck row is not a waiting entry", () => {
+    const live: NonNullable<SessionInfo["live"]> = { state: "working", phrase: "Thinking", since_ms: NOW - 9000, recap: null, model: null, effort: null, context_pct: null, five_hour_pct: null, five_hour_resets_at: null, seven_day_pct: null, subagents: 0 };
+    for (const reason of ["repeat", "quiet"] as const) {
+      const stuck = toRow(info({ agent: "claude", live, stuck: { reason, since_ms: NOW } }), [], undefined, NOW);
+      expect(stuck.status).toBe("stuck");
+      expect(laneEntries([], [stuck], NOW)).toEqual([]);
+      expect(needsYouCount(laneEntries([view()], [row(), stuck], NOW))).toBe(1);
+      expect(attentionFlashes(new Map([[stuck.id, "working"]]), [stuck])).toEqual([]);
+    }
+  });
   it("does not add a terminal fallback while a vanished card is sending", () => {
     expect(laneEntries([], [row({ status: "needs-permission" })], NOW, new Set(["tab-a"]))).toEqual([]);
   });

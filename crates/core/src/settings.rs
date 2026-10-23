@@ -424,6 +424,20 @@ mod tests {
     }
 
     #[test]
+    fn notify_settings_without_terminal_alerts_reads_true() {
+        let home = tempfile::tempdir().unwrap();
+        let file = crate::paths::settings_file(home.path());
+        std::fs::write(
+            &file,
+            r#"{"version":1,"appearance":{},"notifications":{"done":{"banner":false,"sound":true},"subagent_sound":true}}"#,
+        )
+        .unwrap();
+        let s = load(home.path());
+        assert!(s.notifications.terminal_alerts);
+        assert!(!s.notifications.done.banner);
+    }
+
+    #[test]
     fn legacy_sound_off_maps_to_needs_you_sound() {
         let home = tempfile::tempdir().unwrap();
         let file = crate::paths::settings_file(home.path());

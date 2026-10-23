@@ -4,13 +4,33 @@
 
 use std::collections::VecDeque;
 use std::sync::Mutex;
+use std::time::{Duration, Instant};
 
 use crate::pty::Mark;
+use crate::stuck::{StuckSignal, StuckTracker};
 use marshell_protocol::api::{
-    Activity, CommandState, Foreground, LiveState, LiveStatus, SavedTab, SessionInfo, SessionMode, SessionState,
-    SessionsSnapshot,
+    Activity, Attention, CommandState, Foreground, LiveState, LiveStatus, SavedTab, SessionInfo, SessionMode,
+    SessionState, SessionsSnapshot, UiView,
 };
 use tokio::sync::watch;
+
+/// A bell this soon after the person's own typing is its echo (a shell's refused key), not a program asking.
+const TYPING_ECHO: Duration = Duration::from_secs(1);
+
+/// Whether a terminal program's signal may become attention on this row. Never on a row with hook status:
+/// its hooks already report the same moments. A notification always counts; a bare bell only while a
+/// program runs (at the prompt it is a failed Tab completion) and not right after the person typed.
+pub(crate) fn attention_allowed(info: &SessionInfo, bell: bool, last_input: Option<Instant>, now: Instant) -> bool {
+    if info.live.is_some() {
+        return false;
+    }
+    if !bell {
+        return true;
+    }
+    // An agent launched as the session is itself the program running; it has no prompt.
+    let busy = info.agent.is_some() || info.command == CommandState::Running || info.foreground.is_some();
+    busy && last_input.is_none_or(|at| now.saturating_duration_since(at) >= TYPING_ECHO)
+}
 
 /// How many closed sessions we remember for Reopen.
 const MAX_CLOSED: usize = 10;
@@ -49,6 +69,9 @@ pub struct Entry {
     /// reads Done. Cleared by the next hook event, a process change or the end of a subagent wait.
     /// Not serialized.
     pending_done: Option<LiveStatus>,
+    stuck: StuckTracker,
+    /// When the person last typed into the session. Not serialized.
+    last_input: Option<Instant>,
 }
 
 impl Entry {
@@ -67,11 +90,50 @@ impl Entry {
     /// that said why there was no status. A new process, or none, starts blank.
     fn clear_live(&mut self) {
         self.info.live = None;
+        self.info.attention = None;
+        self.info.stuck = None;
+        self.stuck = StuckTracker::default();
         self.info.activity = None;
         self.info.status_note = None;
         self.running.clear();
         self.waiting = false;
         self.pending_done = None;
+    }
+
+    /// Sets attention, or keeps the one already set: a flood of bells is one attention, from its first
+    /// signal. A later message fills in a missing one. True when the row changed.
+    fn note_attention(&mut self, message: Option<String>) -> bool {
+        match &mut self.info.attention {
+            Some(attention) => {
+                if attention.message.is_none() && message.is_some() {
+                    attention.message = message;
+                    true
+                } else {
+                    false
+                }
+            }
+            None => {
+                let since_ms = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map_or(0, |d| d.as_millis() as u64);
+                self.info.attention = Some(Attention { message, since_ms });
+                true
+            }
+        }
+    }
+
+    fn clear_stuck_outside_working(&mut self) {
+        match self.info.live.as_ref().map(|live| live.state) {
+            None | Some(LiveState::Ended) => {
+                self.info.stuck = None;
+                self.stuck = StuckTracker::default();
+            }
+            Some(LiveState::Working) => {}
+            _ => {
+                self.info.stuck = None;
+                self.stuck.clear_repeat();
+            }
+        }
     }
 }
 
@@ -168,12 +230,16 @@ impl Registry {
                 activity: None,
                 status_note: None,
                 muted: false,
+                attention: None,
+                stuck: None,
             },
             spec: relaunch,
             generation,
             running: Default::default(),
             waiting: false,
             pending_done: None,
+            stuck: StuckTracker::default(),
+            last_input: None,
         });
         self.tx.send_replace(state.snapshot());
         number
@@ -209,12 +275,16 @@ impl Registry {
                     activity: None,
                     status_note: None,
                     muted: tab.muted,
+                    attention: None,
+                    stuck: None,
                 },
                 spec: relaunch_of(tab),
                 generation,
                 running: Default::default(),
                 waiting: false,
                 pending_done: None,
+                stuck: StuckTracker::default(),
+                last_input: None,
             });
         }
         self.tx.send_replace(state.snapshot());
@@ -295,6 +365,10 @@ impl Registry {
         let mut state = self.state.lock().unwrap();
         if let Some(entry) = state.open.iter_mut().find(|e| e.info.tab_id == tab_id) {
             entry.info.state = new_state;
+            if entry.info.state != SessionState::Running {
+                entry.info.stuck = None;
+                entry.stuck = StuckTracker::default();
+            }
             self.tx.send_replace(state.snapshot());
         }
     }
@@ -429,14 +503,63 @@ impl Registry {
             .collect()
     }
 
-    /// Folds a shell-integration mark into the tab's command state. Marks for
-    /// an exited or unknown tab are ignored. Broadcasts only on a change.
-    pub fn mark(&self, tab_id: &str, mark: Mark) {
+    /// The person typed into the session: a bell in the next second is its echo, and they have seen
+    /// whatever asked for their attention. Broadcasts only on a change.
+    pub fn note_input(&self, tab_id: &str) {
+        let mut state = self.state.lock().unwrap();
+        let Some(entry) = state.open.iter_mut().find(|e| e.info.tab_id == tab_id) else {
+            return;
+        };
+        entry.last_input = Some(Instant::now());
+        if entry.info.attention.take().is_some() {
+            self.tx.send_replace(state.snapshot());
+        }
+    }
+
+    /// The person is looking at these sessions: with the window focused, their attention is seen.
+    /// Broadcasts only on a change.
+    pub fn clear_attention_seen(&self, view: &UiView) {
+        if !view.window_focused {
+            return;
+        }
+        let mut state = self.state.lock().unwrap();
+        let mut changed = false;
+        for entry in state
+            .open
+            .iter_mut()
+            .filter(|e| view.visible_tabs.contains(&e.info.tab_id))
+        {
+            changed |= entry.info.attention.take().is_some();
+        }
+        if changed {
+            self.tx.send_replace(state.snapshot());
+        }
+    }
+
+    /// Folds a shell-integration mark into the tab's command state, and a terminal program's notification
+    /// or bell into its attention, unless `view` already shows the tab in a focused window: attention the person
+    /// can see is seen. Marks for an exited or unknown tab are ignored. Broadcasts only on a change.
+    pub fn mark(&self, tab_id: &str, mark: Mark, view: &UiView) {
         let mut state = self.state.lock().unwrap();
         let Some(entry) = state.open.iter_mut().find(|e| e.info.tab_id == tab_id) else {
             return;
         };
         if entry.info.state != SessionState::Running {
+            return;
+        }
+        let signal = match &mark {
+            Mark::Notify(message) => Some((message.clone(), false)),
+            Mark::Bell => Some((None, true)),
+            _ => None,
+        };
+        if let Some((message, bell)) = signal {
+            let on_screen = view.window_focused && view.visible_tabs.iter().any(|t| t == tab_id);
+            if !on_screen
+                && attention_allowed(&entry.info, bell, entry.last_input, Instant::now())
+                && entry.note_attention(message)
+            {
+                self.tx.send_replace(state.snapshot());
+            }
             return;
         }
         let last_exit = match entry.info.command {
@@ -449,7 +572,7 @@ impl Registry {
             Mark::Executed => CommandState::Running,
             Mark::Finished(Some(code)) => CommandState::Prompt { last_exit: Some(code) },
             Mark::Finished(None) | Mark::PromptStart => CommandState::Prompt { last_exit },
-            Mark::CommandStart | Mark::CommandLine(_) | Mark::Cwd(_) => return,
+            Mark::CommandStart | Mark::CommandLine(_) | Mark::Cwd(_) | Mark::Notify(_) | Mark::Bell => return,
         };
         let changed = entry.info.command != next;
         if changed {
@@ -471,7 +594,52 @@ impl Registry {
             && entry.info.live.as_ref() != Some(&next)
         {
             entry.info.live = Some(next);
+            entry.clear_stuck_outside_working();
             entry.info.activity = None;
+            entry.info.attention = None;
+            self.tx.send_replace(state.snapshot());
+        }
+    }
+
+    /// Feeds a hook event, never a status line, into the session's stuck tracker.
+    pub fn stuck_event(&self, tab_id: &str, signal: StuckSignal, now_ms: u64) {
+        let mut state = self.state.lock().unwrap();
+        if let Some(entry) = state.open.iter_mut().find(|e| e.info.tab_id == tab_id)
+            && entry.info.state == SessionState::Running
+        {
+            let previous = entry.info.stuck.clone();
+            entry.info.stuck = entry.stuck.on_event(signal, now_ms);
+            entry.clear_stuck_outside_working();
+            if entry.info.stuck != previous {
+                self.tx.send_replace(state.snapshot());
+            }
+        }
+    }
+
+    /// Checks hook silence while Working. A repeat verdict takes precedence over quiet.
+    pub fn check_stuck(&self, now_ms: u64, quiet_ms: u64) {
+        let mut state = self.state.lock().unwrap();
+        let mut changed = false;
+        for entry in &mut state.open {
+            let previous = entry.info.stuck.clone();
+            if entry.info.state == SessionState::Running {
+                let working = entry
+                    .info
+                    .live
+                    .as_ref()
+                    .is_some_and(|live| live.state == LiveState::Working);
+                entry.info.stuck = entry
+                    .stuck
+                    .repeat()
+                    .or_else(|| entry.stuck.quiet(working, now_ms, quiet_ms));
+                entry.clear_stuck_outside_working();
+            } else {
+                entry.info.stuck = None;
+                entry.stuck = StuckTracker::default();
+            }
+            changed |= entry.info.stuck != previous;
+        }
+        if changed {
             self.tx.send_replace(state.snapshot());
         }
     }
@@ -579,6 +747,7 @@ impl Registry {
             live.since_ms = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .map_or(0, |d| d.as_millis() as u64);
+            entry.clear_stuck_outside_working();
             entry.waiting = false;
             entry.pending_done = None;
             self.tx.send_replace(state.snapshot());
@@ -626,6 +795,7 @@ impl Registry {
             } else {
                 return;
             }
+            entry.clear_stuck_outside_working();
             self.tx.send_replace(state.snapshot());
         }
     }
@@ -641,6 +811,7 @@ impl Registry {
         {
             if note.is_some() {
                 entry.info.live = None;
+                entry.clear_stuck_outside_working();
                 entry.pending_done = None;
             }
             entry.info.status_note = note;
@@ -1011,7 +1182,7 @@ mod tests {
             },
         );
         reg.reserve("b", relaunch("B"));
-        reg.mark("b", Mark::Executed);
+        reg.mark("b", Mark::Executed, &away());
         let mut rx = reg.subscribe();
         reg.mark_exited("a", generation_of(&reg, "a"), 1);
         rx.borrow_and_update();
@@ -1149,23 +1320,23 @@ mod tests {
         let reg = Registry::new();
         reg.reserve("a", relaunch("A"));
         assert_eq!(command(&reg), CommandState::Unknown);
-        reg.mark("a", Mark::Finished(None));
+        reg.mark("a", Mark::Finished(None), &away());
         assert_eq!(command(&reg), CommandState::Prompt { last_exit: None });
-        reg.mark("a", Mark::PromptStart);
+        reg.mark("a", Mark::PromptStart, &away());
         assert_eq!(command(&reg), CommandState::Prompt { last_exit: None });
-        reg.mark("a", Mark::CommandStart);
+        reg.mark("a", Mark::CommandStart, &away());
         assert_eq!(command(&reg), CommandState::Prompt { last_exit: None });
-        reg.mark("a", Mark::Executed);
+        reg.mark("a", Mark::Executed, &away());
         assert_eq!(command(&reg), CommandState::Running);
-        reg.mark("a", Mark::Finished(Some(2)));
+        reg.mark("a", Mark::Finished(Some(2)), &away());
         assert_eq!(command(&reg), CommandState::Prompt { last_exit: Some(2) });
-        reg.mark("a", Mark::PromptStart);
+        reg.mark("a", Mark::PromptStart, &away());
         assert_eq!(command(&reg), CommandState::Prompt { last_exit: Some(2) });
         // An empty Enter (D without a code) keeps the last code.
-        reg.mark("a", Mark::Finished(None));
+        reg.mark("a", Mark::Finished(None), &away());
         assert_eq!(command(&reg), CommandState::Prompt { last_exit: Some(2) });
-        reg.mark("a", Mark::Executed);
-        reg.mark("a", Mark::Finished(Some(0)));
+        reg.mark("a", Mark::Executed, &away());
+        reg.mark("a", Mark::Finished(Some(0)), &away());
         assert_eq!(command(&reg), CommandState::Prompt { last_exit: Some(0) });
     }
 
@@ -1173,11 +1344,11 @@ mod tests {
     fn marks_after_exit_are_ignored() {
         let reg = Registry::new();
         reg.reserve("a", relaunch("A"));
-        reg.mark("a", Mark::Executed);
+        reg.mark("a", Mark::Executed, &away());
         reg.mark_exited("a", generation_of(&reg, "a"), 1);
-        reg.mark("a", Mark::Finished(Some(1)));
+        reg.mark("a", Mark::Finished(Some(1)), &away());
         assert_eq!(command(&reg), CommandState::Running);
-        reg.mark("missing", Mark::PromptStart);
+        reg.mark("missing", Mark::PromptStart, &away());
     }
 
     #[test]
@@ -1185,12 +1356,12 @@ mod tests {
         let reg = Registry::new();
         reg.reserve("a", relaunch("A"));
         let mut rx = reg.subscribe();
-        reg.mark("a", Mark::PromptStart);
+        reg.mark("a", Mark::PromptStart, &away());
         assert!(rx.has_changed().unwrap());
         rx.borrow_and_update();
-        reg.mark("a", Mark::PromptStart);
-        reg.mark("a", Mark::CommandStart);
-        reg.mark("a", Mark::Finished(None));
+        reg.mark("a", Mark::PromptStart, &away());
+        reg.mark("a", Mark::CommandStart, &away());
+        reg.mark("a", Mark::Finished(None), &away());
         assert!(!rx.has_changed().unwrap());
     }
 
@@ -1420,16 +1591,16 @@ mod tests {
         let reg = Registry::new();
         reg.reserve("a", relaunch("A"));
         let generation = generation_of(&reg, "a");
-        reg.mark("a", Mark::Executed);
+        reg.mark("a", Mark::Executed, &away());
         reg.set_foreground("a", generation, running("git"));
         assert_eq!(foreground(&reg, "a"), running("git"));
         // The command finished while the reading was on its way: it must not land after the D mark.
-        reg.mark("a", Mark::Finished(Some(0)));
+        reg.mark("a", Mark::Finished(Some(0)), &away());
         assert_eq!(foreground(&reg, "a"), None);
         reg.set_foreground("a", generation, running("notepad"));
         assert_eq!(foreground(&reg, "a"), None);
         // A new command shows its program again.
-        reg.mark("a", Mark::Executed);
+        reg.mark("a", Mark::Executed, &away());
         reg.set_foreground("a", generation, running("notepad"));
         assert_eq!(foreground(&reg, "a"), running("notepad"));
     }
@@ -1455,14 +1626,14 @@ mod tests {
         for mark in [Mark::Finished(Some(0)), Mark::Finished(None), Mark::PromptStart] {
             let reg = Registry::new();
             reg.reserve("a", relaunch("A"));
-            reg.mark("a", Mark::Executed);
+            reg.mark("a", Mark::Executed, &away());
             reg.set_foreground("a", generation_of(&reg, "a"), running("docker"));
             // Marks that do not end the command leave it.
-            reg.mark("a", Mark::CommandStart);
+            reg.mark("a", Mark::CommandStart, &away());
             assert_eq!(foreground(&reg, "a"), running("docker"));
             let mut rx = reg.subscribe();
             rx.borrow_and_update();
-            reg.mark("a", mark);
+            reg.mark("a", mark, &away());
             assert_eq!(foreground(&reg, "a"), None);
             assert!(rx.has_changed().unwrap());
         }
@@ -1537,6 +1708,192 @@ mod tests {
             .into_iter()
             .find(|s| s.tab_id == tab_id)
             .unwrap()
+    }
+
+    #[test]
+    fn attention_allowed_follows_hooks_foreground_and_typing() {
+        let reg = Registry::new();
+        reg.reserve("a", relaunch("A"));
+        let shell = row(&reg, "a");
+        let now = Instant::now();
+        let ago = |ms: u64| now.checked_sub(Duration::from_millis(ms));
+        // A notification counts at the prompt; a bell there is a failed Tab completion.
+        assert!(attention_allowed(&shell, false, None, now));
+        assert!(!attention_allowed(&shell, true, None, now));
+        let running = SessionInfo {
+            command: CommandState::Running,
+            ..shell.clone()
+        };
+        assert!(attention_allowed(&running, true, None, now));
+        let foreground = SessionInfo {
+            foreground: Some(marshell_protocol::api::Foreground {
+                program: "python".into(),
+                command_line: None,
+                agent: None,
+            }),
+            ..shell.clone()
+        };
+        assert!(attention_allowed(&foreground, true, None, now));
+        // An agent launched as the session is the program running; it has no prompt.
+        let agent = SessionInfo {
+            agent: Some("codex".into()),
+            ..shell.clone()
+        };
+        assert!(attention_allowed(&agent, true, None, now));
+        // The echo of the person's own typing is not a program asking.
+        assert!(!attention_allowed(&running, true, ago(200), now));
+        assert!(attention_allowed(&running, true, ago(2_000), now));
+        assert!(attention_allowed(&running, false, ago(200), now));
+        // Hooks already report these moments.
+        let hooked = SessionInfo {
+            live: Some(live(LiveState::Working)),
+            ..running.clone()
+        };
+        assert!(!attention_allowed(&hooked, true, None, now));
+        assert!(!attention_allowed(&hooked, false, None, now));
+    }
+
+    /// A window nobody is looking at.
+    fn away() -> UiView {
+        UiView {
+            window_focused: false,
+            visible_tabs: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn attention_in_a_tab_on_screen_in_a_focused_window_is_not_raised() {
+        let reg = Registry::new();
+        reg.reserve("a", relaunch("A"));
+        reg.mark("a", Mark::Executed, &away());
+        let mut rx = reg.subscribe();
+        rx.borrow_and_update();
+        let seen = UiView {
+            window_focused: true,
+            visible_tabs: vec!["a".into()],
+        };
+        reg.mark("a", Mark::Notify(Some("Build done".into())), &seen);
+        reg.mark("a", Mark::Bell, &seen);
+        assert_eq!(row(&reg, "a").attention, None);
+        assert!(!rx.has_changed().unwrap());
+    }
+
+    #[test]
+    fn attention_in_a_hidden_or_unfocused_view_is_raised() {
+        let views = [
+            UiView {
+                window_focused: false,
+                visible_tabs: vec!["a".into()],
+            },
+            UiView {
+                window_focused: true,
+                visible_tabs: vec!["b".into()],
+            },
+            away(),
+        ];
+        for view in views {
+            let reg = Registry::new();
+            reg.reserve("a", relaunch("A"));
+            let mut rx = reg.subscribe();
+            rx.borrow_and_update();
+            reg.mark("a", Mark::Notify(None), &view);
+            assert!(row(&reg, "a").attention.is_some(), "{view:?}");
+            assert!(rx.has_changed().unwrap(), "{view:?}");
+        }
+    }
+
+    #[test]
+    fn notify_mark_sets_attention_once() {
+        let reg = Registry::new();
+        reg.reserve("a", relaunch("A"));
+        let mut rx = reg.subscribe();
+        rx.borrow_and_update();
+        reg.mark("a", Mark::Notify(None), &away());
+        assert!(rx.has_changed().unwrap());
+        rx.borrow_and_update();
+        let first = row(&reg, "a").attention.expect("attention");
+        assert_eq!(first.message, None);
+        // A later message fills in the missing one, and the flood keeps the first time.
+        reg.mark("a", Mark::Notify(Some("Build done".into())), &away());
+        reg.mark("a", Mark::Notify(Some("Other".into())), &away());
+        reg.mark("a", Mark::Notify(None), &away());
+        let now = row(&reg, "a").attention.expect("attention");
+        assert_eq!(now.message.as_deref(), Some("Build done"));
+        assert_eq!(now.since_ms, first.since_ms);
+        rx.borrow_and_update();
+        reg.mark("a", Mark::Notify(Some("Again".into())), &away());
+        assert!(!rx.has_changed().unwrap());
+    }
+
+    #[test]
+    fn bell_counts_only_while_a_command_runs() {
+        let reg = Registry::new();
+        reg.reserve("a", relaunch("A"));
+        reg.mark("a", Mark::PromptStart, &away());
+        reg.mark("a", Mark::Bell, &away());
+        assert_eq!(row(&reg, "a").attention, None);
+        reg.mark("a", Mark::Executed, &away());
+        reg.mark("a", Mark::Bell, &away());
+        assert_eq!(row(&reg, "a").attention.expect("attention").message, None);
+    }
+
+    #[test]
+    fn bell_right_after_typing_is_ignored() {
+        let reg = Registry::new();
+        reg.reserve("a", relaunch("A"));
+        reg.mark("a", Mark::Executed, &away());
+        reg.note_input("a");
+        reg.mark("a", Mark::Bell, &away());
+        assert_eq!(row(&reg, "a").attention, None);
+    }
+
+    #[test]
+    fn note_input_clears_attention() {
+        let reg = Registry::new();
+        reg.reserve("a", relaunch("A"));
+        reg.mark("a", Mark::Notify(Some("Build done".into())), &away());
+        assert!(row(&reg, "a").attention.is_some());
+        reg.note_input("a");
+        assert_eq!(row(&reg, "a").attention, None);
+        reg.note_input("missing");
+    }
+
+    #[test]
+    fn focused_view_clears_visible_attention() {
+        let reg = Registry::new();
+        reg.reserve("a", relaunch("A"));
+        reg.reserve("b", relaunch("B"));
+        reg.mark("a", Mark::Notify(None), &away());
+        reg.mark("b", Mark::Notify(None), &away());
+        reg.clear_attention_seen(&UiView {
+            window_focused: true,
+            visible_tabs: vec!["a".into()],
+        });
+        assert_eq!(row(&reg, "a").attention, None);
+        assert!(row(&reg, "b").attention.is_some());
+    }
+
+    #[test]
+    fn unfocused_view_keeps_it() {
+        let reg = Registry::new();
+        reg.reserve("a", relaunch("A"));
+        reg.mark("a", Mark::Notify(None), &away());
+        reg.clear_attention_seen(&UiView {
+            window_focused: false,
+            visible_tabs: vec!["a".into()],
+        });
+        assert!(row(&reg, "a").attention.is_some());
+    }
+
+    #[test]
+    fn hooked_row_ignores_signals_and_live_status_clears_attention() {
+        let reg = Registry::new();
+        reg.reserve("a", relaunch("A"));
+        reg.mark("a", Mark::Notify(Some("Build done".into())), &away());
+        reg.update_live("a", |_| Some(live(LiveState::Working)));
+        assert_eq!(row(&reg, "a").attention, None);
+        reg.mark("a", Mark::Notify(Some("Again".into())), &away());
+        assert_eq!(row(&reg, "a").attention, None);
     }
 
     #[test]
@@ -1784,6 +2141,124 @@ mod tests {
         reg.reserve("a", relaunch("A"));
         reg.update_live("a", |_| Some(working_on("Editing a.rs")));
         reg
+    }
+
+    fn stuck_repeat(reg: &Registry) {
+        for ms in 1..=9 {
+            reg.stuck_event("a", StuckSignal::Call("pwd".into()), ms);
+        }
+        assert_eq!(
+            row(reg, "a").stuck.as_ref().unwrap().reason,
+            marshell_protocol::api::StuckReason::Repeat
+        );
+    }
+
+    #[test]
+    fn stuck_clears_when_live_leaves_working() {
+        for next in [
+            LiveState::Done,
+            LiveState::NeedsPermission,
+            LiveState::NeedsQuestion,
+            LiveState::Idle,
+            LiveState::Error,
+            LiveState::Ended,
+        ] {
+            let reg = reg_working_on_a();
+            stuck_repeat(&reg);
+            reg.update_live("a", |_| Some(live(next)));
+            assert_eq!(row(&reg, "a").stuck, None);
+            reg.stuck_event("a", StuckSignal::Progress, 10);
+            reg.check_stuck(1_000_000, 600_000);
+            assert_eq!(row(&reg, "a").stuck, None);
+            reg.update_live("a", |_| Some(live(LiveState::Working)));
+            reg.check_stuck(11, 600_000);
+            assert_eq!(row(&reg, "a").stuck, None);
+        }
+        let reg = reg_working_on_a();
+        stuck_repeat(&reg);
+        reg.hold_done("a", done_with_recap("Done"));
+        reg.settle_done("a");
+        assert_eq!(row(&reg, "a").stuck, None);
+        reg.update_live("a", |_| Some(live(LiveState::Working)));
+        reg.check_stuck(11, 600_000);
+        assert_eq!(row(&reg, "a").stuck, None);
+
+        let reg = reg_working_on_a();
+        stop_with_running_subagent(&reg);
+        stuck_repeat(&reg);
+        fold_claude_event(
+            &reg,
+            serde_json::json!({"hook_event_name": "SubagentStop", "agent_id": "x"}),
+        );
+        assert!(reg.settle_subagent_wait("a"));
+        assert_eq!(row(&reg, "a").stuck, None);
+        reg.update_live("a", |_| Some(live(LiveState::Working)));
+        reg.check_stuck(11, 600_000);
+        assert_eq!(row(&reg, "a").stuck, None);
+    }
+
+    #[test]
+    fn check_stuck_broadcasts_only_on_change() {
+        let reg = reg_working_on_a();
+        let mut rx = reg.subscribe();
+        reg.stuck_event("a", StuckSignal::Prompt, 100);
+        assert!(!rx.has_changed().unwrap());
+        reg.check_stuck(600_099, 600_000);
+        assert!(!rx.has_changed().unwrap());
+        reg.check_stuck(600_100, 600_000);
+        assert!(rx.has_changed().unwrap());
+        assert_eq!(
+            row(&reg, "a").stuck,
+            Some(marshell_protocol::api::Stuck {
+                reason: marshell_protocol::api::StuckReason::Quiet,
+                since_ms: 600_100
+            })
+        );
+        rx.borrow_and_update();
+        reg.check_stuck(900_000, 600_000);
+        assert!(!rx.has_changed().unwrap());
+        reg.stuck_event("a", StuckSignal::Progress, 900_001);
+        assert!(rx.has_changed().unwrap());
+        assert_eq!(row(&reg, "a").stuck, None);
+        stuck_repeat(&reg);
+        rx.borrow_and_update();
+        reg.check_stuck(1_000_000, 600_000);
+        assert!(!rx.has_changed().unwrap());
+        reg.stuck_event("a", StuckSignal::Progress, 1_000_001);
+        assert!(!rx.has_changed().unwrap());
+    }
+
+    #[test]
+    fn stuck_tracker_resets_when_session_ends() {
+        for end in 0..6 {
+            let reg = reg_working_on_a();
+            stuck_repeat(&reg);
+            match end {
+                0 => reg.mark_exited("a", generation_of(&reg, "a"), 0),
+                1 => reg.set_state("a", SessionState::Ended),
+                2 => reg.set_status_note("a", Some("Status off".into())),
+                3 => {
+                    reg.begin_restart("a", SessionMode::Manual).unwrap();
+                }
+                4 => {
+                    reg.close("a");
+                }
+                _ => reg.update_live("a", |_| Some(live(LiveState::Ended))),
+            }
+            if end == 4 {
+                let state = reg.state.lock().unwrap();
+                assert_eq!(state.closed[0].info.stuck, None);
+                assert_eq!(state.closed[0].stuck.quiet(true, 1_000_000, 600_000), None);
+                continue;
+            }
+            assert_eq!(row(&reg, "a").stuck, None);
+            reg.set_state("a", SessionState::Running);
+            reg.update_live("a", |_| Some(live(LiveState::Working)));
+            reg.check_stuck(1_000_000, 600_000);
+            assert_eq!(row(&reg, "a").stuck, None);
+            reg.stuck_event("a", StuckSignal::Call("pwd".into()), 10);
+            assert_eq!(row(&reg, "a").stuck, None);
+        }
     }
 
     #[test]

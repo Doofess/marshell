@@ -45,6 +45,8 @@ const snapshot = (names: string[]): SessionsSnapshot => ({
     activity: null,
     status_note: null,
     muted: false,
+    attention: null,
+    stuck: null,
   })),
   closed: [],
 });

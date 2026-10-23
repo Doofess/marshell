@@ -1,5 +1,7 @@
 import { useEffect, useId, useRef, type KeyboardEvent } from "react";
 import { AgentMark } from "../../components/AgentMark/AgentMark";
+import { tabbableIn } from "../../lib/focusGuard";
+import { usePopupFocus } from "../../lib/usePopupFocus";
 import { CommandList } from "../tasks/CommandList";
 import { branchHint } from "../tasks/taskName";
 import { headerDanger, modeLabel } from "../window/SessionHeader";
@@ -163,6 +165,10 @@ export function Launcher({ view, onChange, onQuery, onPick, onUsePath, onBrowse,
     if (!busy) onBack?.();
   };
 
+  // The prompt line is missing in the confirm view and for a program with no first command; then the first control is the way back.
+  const sheet = useRef<HTMLDivElement>(null);
+  usePopupFocus(sheet, () => sheet.current?.querySelector<HTMLElement>(".launcher__prompt") ?? (sheet.current ? tabbableIn(sheet.current)[0] : null));
+
   const onSheetKey = (e: KeyboardEvent<HTMLDivElement>) => {
     if (confirm) {
       if (e.key === "Escape") {
@@ -215,6 +221,7 @@ export function Launcher({ view, onChange, onQuery, onPick, onUsePath, onBrowse,
     <div className="launcher" data-open={folderOpen || programsOpen || undefined}>
       <div className="launcher__backdrop" />
       <div
+        ref={sheet}
         className="launcher__sheet"
         role="dialog"
         aria-modal="true"

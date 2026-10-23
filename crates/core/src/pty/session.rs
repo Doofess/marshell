@@ -309,6 +309,7 @@ impl Session {
                     track.epoch += 1;
                 }
                 Mark::CommandStart => {}
+                Mark::Notify(_) | Mark::Bell => {}
                 Mark::Cwd(path) => *self.cwd.lock().unwrap() = Some(PathBuf::from(path)),
             }
         }

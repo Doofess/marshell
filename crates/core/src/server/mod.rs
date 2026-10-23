@@ -58,6 +58,16 @@ pub struct CoreConfig {
     pub window_hidden: Arc<AtomicBool>,
 }
 
+/// The view with a hidden window counted as unfocused: the shell's visibility wins over the webview's last report.
+fn effective(reported: &marshell_protocol::api::UiView, hidden: bool) -> marshell_protocol::api::UiView {
+    let mut view = reported.clone();
+    if hidden {
+        view.window_focused = false;
+        view.visible_tabs.clear();
+    }
+    view
+}
+
 /// Shared server state. Cloning is cheap (one `Arc`).
 #[derive(Clone)]
 pub struct AppState(Arc<Inner>);
@@ -101,6 +111,8 @@ struct Inner {
     holds: crate::hooks::holds::Holds,
     /// How long the core holds a permission request before it lets the agent ask.
     permission_hold: Duration,
+    /// How long a Working agent can go without a hook event before it reads Stuck.
+    stuck_quiet: Duration,
     /// How long to wait for Claude to resume after its last background subagent stops.
     subagent_wait: Duration,
     /// How long a Stop is held before the row reads Done.
@@ -134,6 +146,9 @@ struct Inner {
 
 /// How long a permission request is held when `MARSHELL_PERMISSION_HOLD_SECS` is not set.
 pub const DEFAULT_PERMISSION_HOLD: Duration = Duration::from_secs(120);
+
+/// How long a Working agent can go without a hook event before it reads Stuck, when `MARSHELL_STUCK_QUIET_SECS` is not set.
+pub const DEFAULT_STUCK_QUIET: Duration = Duration::from_secs(600);
 
 /// How long to wait for Claude to resume after its last background subagent stops.
 pub const DEFAULT_SUBAGENT_WAIT: Duration = Duration::from_secs(30);
@@ -185,6 +200,7 @@ impl AppState {
             hook_log: crate::hooks::log::HookLog::default(),
             holds: crate::hooks::holds::Holds::default(),
             permission_hold: DEFAULT_PERMISSION_HOLD,
+            stuck_quiet: DEFAULT_STUCK_QUIET,
             subagent_wait: DEFAULT_SUBAGENT_WAIT,
             done_settle: DEFAULT_DONE_SETTLE,
             config,
@@ -251,6 +267,16 @@ impl AppState {
     pub fn permission_hold(&self) -> Duration {
         self.0.permission_hold
     }
+    /// Sets the hook silence threshold. Call it before the state is cloned.
+    pub fn with_stuck_quiet(mut self, quiet: Duration) -> Self {
+        Arc::get_mut(&mut self.0)
+            .expect("with_stuck_quiet runs before the state is shared")
+            .stuck_quiet = quiet;
+        self
+    }
+    pub fn stuck_quiet(&self) -> Duration {
+        self.0.stuck_quiet
+    }
     /// Sets how long to wait after the last subagent stops. Call it before the state is cloned.
     pub fn with_subagent_wait(mut self, d: Duration) -> Self {
         Arc::get_mut(&mut self.0)
@@ -307,6 +333,8 @@ impl AppState {
     /// Records what the UI reports it shows.
     pub fn report_view(&self, view: marshell_protocol::api::UiView) {
         self.0.view.send_replace(view);
+        // What the person is looking at in a focused window has had their attention.
+        self.registry().clear_attention_seen(&self.effective_view());
     }
     pub fn notify_paused(&self) -> bool {
         self.0.notify_paused.load(Ordering::SeqCst)
@@ -316,12 +344,14 @@ impl AppState {
         self.0.window_hidden.store(hidden, Ordering::SeqCst);
     }
     pub(crate) fn effective_view(&self) -> marshell_protocol::api::UiView {
-        let mut view = self.0.view.borrow().clone();
-        if self.0.window_hidden.load(Ordering::SeqCst) {
-            view.window_focused = false;
-            view.visible_tabs.clear();
-        }
-        view
+        effective(&self.0.view.borrow(), self.0.window_hidden.load(Ordering::SeqCst))
+    }
+    /// `effective_view` for a callback that outlives the call. It holds the channel and the flag, not
+    /// the state: the state owns the sessions that own the callback.
+    pub(crate) fn view_reader(&self) -> impl Fn() -> marshell_protocol::api::UiView + Send + Sync + 'static {
+        let view = self.0.view.subscribe();
+        let hidden = self.0.window_hidden.clone();
+        move || effective(&view.borrow(), hidden.load(Ordering::SeqCst))
     }
     /// The window lost focus, as the shell saw it. A webview that died or hung while focused can no longer say
     /// so, and its last report would otherwise keep every notification back.
@@ -573,6 +603,8 @@ pub struct RunningCore {
     serve: tokio::task::JoinHandle<()>,
     /// The notifier's task, when the config named a sink. Ended with the core.
     notifier: Option<tokio::task::JoinHandle<()>>,
+    /// The stuck check's tick task. Ended with the core.
+    stuck_tick: tokio::task::JoinHandle<()>,
 }
 
 impl RunningCore {
@@ -604,6 +636,7 @@ impl RunningCore {
         if let Some(notifier) = &self.notifier {
             notifier.abort();
         }
+        self.stuck_tick.abort();
         let _ = self.shutdown.send(());
     }
 
@@ -635,6 +668,14 @@ fn permission_hold_from_env(value: Option<&str>) -> Duration {
     }
 }
 
+/// `MARSHELL_STUCK_QUIET_SECS` clamped to 5..=3600 s, or the default when unset or not a number.
+fn stuck_quiet_from_env(value: Option<&str>) -> Duration {
+    match value.and_then(|v| v.trim().parse::<u64>().ok()) {
+        Some(secs) => Duration::from_secs(secs.clamp(5, 3600)),
+        None => DEFAULT_STUCK_QUIET,
+    }
+}
+
 /// Binds 127.0.0.1 on a random port, writes `run/endpoint.json`, serves in the background.
 pub async fn start(cfg: CoreConfig) -> anyhow::Result<RunningCore> {
     let listener = tokio::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await?;
@@ -662,6 +703,9 @@ pub async fn start(cfg: CoreConfig) -> anyhow::Result<RunningCore> {
         .with_notification_flags(cfg.notify_paused, cfg.window_hidden)
         .with_permission_hold(permission_hold_from_env(
             std::env::var("MARSHELL_PERMISSION_HOLD_SECS").ok().as_deref(),
+        ))
+        .with_stuck_quiet(stuck_quiet_from_env(
+            std::env::var("MARSHELL_STUCK_QUIET_SECS").ok().as_deref(),
         ));
     if let Some(dir) = cfg.programs_dir {
         state = state.with_programs_dir(dir);
@@ -679,6 +723,18 @@ pub async fn start(cfg: CoreConfig) -> anyhow::Result<RunningCore> {
         }
     });
     let notifier = cfg.notify.map(|sink| crate::notify::spawn(state.clone(), sink));
+    let stuck_state = state.clone();
+    let stuck_tick = tokio::spawn(async move {
+        let mut interval = tokio::time::interval(Duration::from_secs(30));
+        let quiet_ms = stuck_state.stuck_quiet().as_millis() as u64;
+        loop {
+            interval.tick().await;
+            let now_ms = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |d| d.as_millis() as u64);
+            stuck_state.registry().check_stuck(now_ms, quiet_ms);
+        }
+    });
     tracing::info!(app_version = env!("CARGO_PKG_VERSION"), port, "core started");
     Ok(RunningCore {
         endpoint,
@@ -687,12 +743,22 @@ pub async fn start(cfg: CoreConfig) -> anyhow::Result<RunningCore> {
         shutdown: tx,
         serve,
         notifier,
+        stuck_tick,
     })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn stuck_quiet_env_is_clamped() {
+        assert_eq!(stuck_quiet_from_env(None), Duration::from_secs(600));
+        assert_eq!(stuck_quiet_from_env(Some("60")), Duration::from_secs(60));
+        assert_eq!(stuck_quiet_from_env(Some("1")), Duration::from_secs(5));
+        assert_eq!(stuck_quiet_from_env(Some("99999")), Duration::from_secs(3600));
+        assert_eq!(stuck_quiet_from_env(Some("x")), Duration::from_secs(600));
+    }
 
     #[test]
     fn permission_hold_env_is_clamped() {

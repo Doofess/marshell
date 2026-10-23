@@ -330,15 +330,15 @@ async fn links_to_a_network_share_are_refused_without_touching_the_network() {
     assert!(list.contains(&"plain.txt".to_string()), "{list:?}");
     assert!(!list.iter().any(|f| f.contains("link")), "{list:?}");
     // The same folder as a repo: the git listing checks each file too.
+    // `git init` is the test's own setup, so its start-up stays out of the time.
+    let before_git = started.elapsed();
     git(root, &["init", "-q"]);
+    let after_git = Instant::now();
     let list = names(&files_of(&s.app, &tab).await);
     assert!(list.contains(&"plain.txt".to_string()), "{list:?}");
     assert!(!list.iter().any(|f| f.contains("link")), "{list:?}");
-    assert!(
-        started.elapsed() < Duration::from_secs(2),
-        "took {:?}",
-        started.elapsed()
-    );
+    let took = before_git + after_git.elapsed();
+    assert!(took < Duration::from_secs(2), "took {took:?}");
 }
 
 #[cfg(windows)]

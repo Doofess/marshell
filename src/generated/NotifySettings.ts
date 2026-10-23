@@ -9,4 +9,8 @@ export type NotifySettings = { needs_you: NotifyChannel, done: NotifyChannel, er
 /**
  * True when a subagent finishing plays a sound.
  */
-subagent_sound: boolean, quiet_hours: QuietHours, };
+subagent_sound: boolean, quiet_hours: QuietHours, 
+/**
+ * True when OSC 9, OSC 777 and bells from sessions without hooks raise a banner and sound.
+ */
+terminal_alerts: boolean, };

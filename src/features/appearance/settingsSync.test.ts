@@ -6,7 +6,7 @@ import { READ_FAILED, SettingsReadError, SettingsSync } from "./settingsSync";
 
 const ep: Endpoint = { port: 1, token: "t", platform: "windows" };
 const teal = { ...DEFAULT_APPEARANCE, accent: "teal" };
-const N = { needs_you: { banner: true, sound: true }, done: { banner: true, sound: true }, error: { banner: true, sound: true }, subagent_sound: false, quiet_hours: { enabled: false, start: "22:00", end: "08:00" } };
+const N = { needs_you: { banner: true, sound: true }, done: { banner: true, sound: true }, error: { banner: true, sound: true }, subagent_sound: false, quiet_hours: { enabled: false, start: "22:00", end: "08:00" }, terminal_alerts: true };
 const N_OFF = { ...N, needs_you: { banner: true, sound: false } };
 
 function setup(get: () => Promise<Settings>) {
