@@ -9,6 +9,7 @@
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
     "test": "vitest run",
+    "test:claude": "node --test .claude/hooks/",
     "tauri": "tauri",
     "build:hook": "cargo build -p marshell-hook -p marshell-cli",
     "build:hook:release": "cargo build --release -p marshell-hook -p marshell-cli",
