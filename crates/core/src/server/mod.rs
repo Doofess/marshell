@@ -538,6 +538,7 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/config/apply", post(config::apply))
         .route("/v1/snapshots", get(config::snapshots))
         .route("/v1/snapshots/{id}/restore", post(config::restore))
+        .route("/v1/agents", get(agents::found))
         .route("/v1/agents/{agent}/setup", get(agents::setup))
         .route("/v1/agents/{agent}/hooks/plan", post(agents::plan))
         .route("/v1/agents/{agent}/hooks/remove-plan", post(agents::remove_plan))

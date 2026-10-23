@@ -24,13 +24,14 @@ export function Detected({ detections }: { detections: Detection[] }) {
             <div className="detected__text">
               <p className="detected__name">
                 <span dir="auto">{CLI_NAME[d.cli]}</span>
-                <span className="detected__version">{d.installed ? `version ${d.version ?? "–"}` : "Not installed"}</span>
+                <span className="detected__version">{!d.installed ? "Not installed" : d.later ? "Found" : `version ${d.version ?? "–"}`}</span>
               </p>
-              {d.installed && (
+              {d.installed && (d.later ? d.exePath : d.configPath) && (
                 <p className="detected__path">
-                  <code dir="ltr">{d.configPath}</code>
+                  <code dir="ltr">{d.later ? d.exePath : d.configPath}</code>
                 </p>
               )}
+              {d.installed && d.later && <p className="detected__note">Marshell runs it as a terminal session for now. Live status and setup come in a later version.</p>}
               {problem && <p className="detected__problem">{problem}</p>}
               {d.installed && d.managed && (
                 <p className="detected__problem">

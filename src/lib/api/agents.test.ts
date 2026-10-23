@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AgentSetup } from "../../generated/AgentSetup";
 import type { ConfigPreview } from "../../generated/ConfigPreview";
 import type { Endpoint } from "../../generated/Endpoint";
-import { applyPreview, getSetup, planInstall, planRemove, previewDiff, toDetection } from "./agents";
+import { applyPreview, getSetup, planInstall, planRemove, previewDiff, toDetection, toDetections } from "./agents";
 
 const endpoint: Endpoint = { port: 9, token: "t", platform: "windows" };
 const reply = (body: unknown, status = 200) => vi.fn().mockResolvedValue(new Response(typeof body === "string" ? body : JSON.stringify(body), { status }));
@@ -96,5 +96,24 @@ describe("agents api", () => {
   it("previewDiff joins file diffs", () => {
     expect(previewDiff(preview([file("a", "one\n"), file("b", "two\n")]))).toBe("one\ntwo\n");
     expect(previewDiff(preview([file("a", "one"), file("b", ""), file("c", "three")]))).toBe("one\nthree");
+  });
+});
+
+describe("toDetections", () => {
+  const found = [
+    { agent: "antigravity", found: true, exe_path: "C:/bin/agy.exe" },
+    { agent: "claude", found: false },
+    { agent: "aider", found: true },
+    { agent: "codex", found: false },
+  ];
+  it("puts Claude's row from the setup first, then Codex and Antigravity from the list", () => {
+    const rows = toDetections(setup, found);
+    expect(rows.map((r) => r.cli)).toEqual(["claude", "codex", "antigravity"]);
+    expect(rows[0]).toEqual(toDetection(setup));
+    expect(rows[1]).toMatchObject({ installed: false, later: true, exePath: undefined });
+    expect(rows[2]).toMatchObject({ installed: true, later: true, exePath: "C:/bin/agy.exe", configPath: "" });
+  });
+  it("keeps only Claude's row when the list could not be read", () => {
+    expect(toDetections(setup, null)).toEqual([toDetection(setup)]);
   });
 });

@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
 import type { AgentSetup } from "../../generated/AgentSetup";
+import type { AgentFound } from "../../generated/AgentFound";
 import type { Endpoint } from "../../generated/Endpoint";
-import { getSetup, toDetection } from "../../lib/api/agents";
+import { getSetup, listAgents, toDetections } from "../../lib/api/agents";
 import { actions, consentProps, setupWant, type InstallFlow } from "../agents/agentsState";
 import { useInstallFlow } from "../agents/useInstallFlow";
 import { ConsentCard } from "./ConsentCard";
@@ -15,7 +16,7 @@ export const SETUP_UNREADABLE = "Couldn't read the setup from Marshell's core. Y
 export type OnboardingState =
   | { kind: "loading" }
   | { kind: "failed" }
-  | { kind: "detected"; setup: AgentSetup }
+  | { kind: "detected"; setup: AgentSetup; found: AgentFound[] | null }
   | { kind: "consent"; setup: AgentSetup; flow: InstallFlow };
 
 export type OnboardingHandlers = {
@@ -45,7 +46,7 @@ export function OnboardingView({ state, ...on }: { state: OnboardingState } & On
   if (state.kind === "detected")
     return (
       <OnboardingFrame step="detected" title="Coding agents found" primary="Continue" onPrimary={on.onContinue}>
-        <Detected detections={[toDetection(state.setup)]} />
+        <Detected detections={toDetections(state.setup, state.found)} />
       </OnboardingFrame>
     );
   const { flow, setup } = state;
@@ -66,13 +67,18 @@ export function OnboardingView({ state, ...on }: { state: OnboardingState } & On
  */
 export function LiveOnboarding({ endpoint, onDone }: { endpoint: Endpoint; onDone: () => void }) {
   const [setup, setSetup] = useState<AgentSetup | "loading" | "failed">("loading");
+  const [found, setFound] = useState<AgentFound[] | null>(null);
   const [consent, setConsent] = useState(false);
   const install = useInstallFlow(endpoint, onDone);
 
   useEffect(() => {
     let live = true;
-    getSetup(endpoint, "claude").then(
-      (s) => live && setSetup(s),
+    Promise.all([getSetup(endpoint, "claude"), listAgents(endpoint).catch(() => null)]).then(
+      ([s, list]) => {
+        if (!live) return;
+        setFound(list);
+        setSetup(s);
+      },
       () => live && setSetup("failed"),
     );
     return () => {
@@ -85,7 +91,7 @@ export function LiveOnboarding({ endpoint, onDone }: { endpoint: Endpoint; onDon
       ? { kind: setup }
       : consent
         ? { kind: "consent", setup, flow: install.flow ?? { preview: null, open: false, busy: true, want: install.want } }
-        : { kind: "detected", setup };
+        : { kind: "detected", setup, found };
 
   return (
     <OnboardingView

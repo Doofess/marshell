@@ -34,6 +34,7 @@
   font-variant-numeric: tabular-nums;
 }
 .detected__path,
+.detected__note,
 .detected__problem {
   margin: 0;
   font-size: var(--text-12);

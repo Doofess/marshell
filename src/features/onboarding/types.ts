@@ -19,6 +19,8 @@ export type Detection = {
   skipsAll?: { setting: string };
   /** The user has a status line of their own. `false` means there is none, so a status line is added rather than chained; unset means unknown. */
   hasOwnStatusLine?: boolean;
+  /** Marshell runs this CLI as a terminal session but has no adapter for it yet, so it has no settings to show or change here. */
+  later?: boolean;
 };
 
 export type Capability = "status" | "approve" | "statusline";

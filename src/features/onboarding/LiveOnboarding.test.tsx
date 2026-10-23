@@ -22,12 +22,19 @@ describe("OnboardingView switches", () => {
 
 describe("OnboardingView", () => {
   it("starts on Detected with the Claude Code row", () => {
-    const h = view({ kind: "detected", setup: SETUP });
+    const h = view({ kind: "detected", setup: SETUP, found: null });
     expect(h).toContain("Coding agents found");
     expect(h).toContain("Claude Code");
     expect(h).toContain("version 2.1.3");
     expect(h).toContain("C:/h/.claude/settings.json");
     expect(h).toContain(">Continue</button>");
+  });
+  it("lists Codex as found, with its program and the note, beside Claude Code", () => {
+    const h = view({ kind: "detected", setup: SETUP, found: [{ agent: "claude", found: true }, { agent: "codex", found: true, exe_path: "C:/bin/codex.cmd" }, { agent: "antigravity", found: false }] });
+    expect(h).toContain("Codex");
+    expect(h).toContain("C:/bin/codex.cmd");
+    expect(h).toContain("Live status and setup come in a later version.");
+    expect(h).toContain("Not installed");
   });
   it("renders the consent card with the preview diff", () => {
     const h = view({ kind: "consent", setup: SETUP, flow: { preview: PREVIEW, open: true, busy: false } });

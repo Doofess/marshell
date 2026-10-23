@@ -7,11 +7,13 @@ use crate::agents::{parse_any_version, run_version_text};
 use crate::bridge;
 use crate::config::jsonc::{parse_problem, read_value};
 use crate::paths;
-use crate::profiles::detect::agent_exe;
+use crate::profiles::detect::{agent_command, agent_exe};
 use axum::Json;
 use axum::extract::{Path as UrlPath, State};
 use axum::http::StatusCode;
-use marshell_protocol::agents::{AgentSetup, HookInstall, HookPlanRequest, ParseProblem, RemovePreview, SettingsState};
+use marshell_protocol::agents::{
+    AgentFound, AgentSetup, HookInstall, HookPlanRequest, ParseProblem, RemovePreview, SettingsState,
+};
 use marshell_protocol::config::ConfigPreview;
 use std::collections::HashMap;
 use std::io::ErrorKind;
@@ -249,6 +251,28 @@ pub async fn setup(State(st): State<AppState>, UrlPath(agent): UrlPath<String>) 
         .await
         .map_err(failed)??;
     Ok(Json(setup))
+}
+
+/// Which of the agent CLIs Marshell can start are on this machine, in the order claude, codex, antigravity.
+pub async fn found(State(st): State<AppState>) -> Result<Json<Vec<AgentFound>>, Fail> {
+    let list = tokio::task::spawn_blocking(move || {
+        let profiles = st.0.profiles.lock().unwrap().profiles.clone();
+        ["claude", "codex", "antigravity"]
+            .into_iter()
+            .map(|agent| {
+                let exe =
+                    agent_exe(&profiles, agent).or_else(|| agent_command(agent).and_then(|c| (st.0.agent_path)(c)));
+                AgentFound {
+                    agent: agent.to_string(),
+                    found: exe.is_some(),
+                    exe_path: exe.map(|p| p.to_string_lossy().into_owned()),
+                }
+            })
+            .collect::<Vec<_>>()
+    })
+    .await
+    .map_err(failed)?;
+    Ok(Json(list))
 }
 
 pub async fn plan(

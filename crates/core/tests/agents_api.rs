@@ -153,6 +153,25 @@ async fn setup_finds_claude_on_path_without_a_profile() {
     assert!(setup.get("version").is_none(), "{setup}");
 }
 
+/// The list names all three agents in order; Codex is absent, Antigravity is found by its program `agy`.
+#[tokio::test]
+async fn found_lists_each_agent_by_its_program() {
+    let e = env_with(|name| match name {
+        "claude" | "agy" => Some(PathBuf::from(format!("Z:/nowhere/{name}.exe"))),
+        _ => None,
+    });
+    let (status, list) = get(&e.app, "/v1/agents").await;
+    assert_eq!(status, StatusCode::OK, "{list}");
+    assert_eq!(
+        list,
+        json!([
+            {"agent": "claude", "found": true, "exe_path": "Z:/nowhere/claude.exe"},
+            {"agent": "codex", "found": false},
+            {"agent": "antigravity", "found": true, "exe_path": "Z:/nowhere/agy.exe"},
+        ])
+    );
+}
+
 #[tokio::test]
 async fn plan_then_apply_writes_the_hooks() {
     let e = env();
