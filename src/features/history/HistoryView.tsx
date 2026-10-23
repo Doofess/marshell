@@ -25,8 +25,8 @@ export type HistoryViewProps = {
   selectedId: string | null;
   /** The open conversation, "loading" while it is fetched, `{ error }` when it can't be shown, null when none is open. */
   conversation: Conversation | "loading" | { error: string } | null;
-  /** The tab that holds this entry's session right now, if one does. */
-  liveTabFor: (e: HistoryEntry) => string | null;
+  /** The tab that holds this entry's session right now, if one does. The open conversation is asked by its own tab, so it needn't be in `entries`. */
+  liveTabFor: (e: Pick<HistoryEntry, "tab_id">) => string | null;
   now: number;
   os: Os;
   /** Each new value puts the cursor in the search box. */
@@ -169,10 +169,7 @@ export function HistoryView(p: HistoryViewProps) {
   };
 
   const shown = p.conversation;
-  const live = (c: Conversation) => {
-    const e = p.entries.find((x) => x.agent === c.agent && x.session_id === c.session_id);
-    return e ? p.liveTabFor(e) : null;
-  };
+  const live = (c: Conversation) => (c.tab_id ? p.liveTabFor(c) : null);
   const shownConversation = typeof shown === "object" && shown !== null && "session_id" in shown ? shown : null;
   const scrollToTurn = selected?.kind === "hit" && shownConversation?.session_id === selected.hit.session_id ? selected.hit.turn : undefined;
 

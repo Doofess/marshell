@@ -204,6 +204,7 @@ pub fn parse(text: &str, session_id: &str) -> Conversation {
     Conversation {
         agent: "claude".into(),
         session_id: session_id.into(),
+        tab_id: String::new(),
         title,
         cwd,
         branch,

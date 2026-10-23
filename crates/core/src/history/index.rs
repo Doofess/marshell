@@ -635,6 +635,7 @@ mod tests {
         Conversation {
             agent: "claude".into(),
             session_id: String::new(),
+            tab_id: String::new(),
             title: title.into(),
             cwd: String::new(),
             branch: branch.map(Into::into),

@@ -150,6 +150,7 @@ describe("HistoryView conversation pane", () => {
   const conv: Conversation = {
     agent: "claude",
     session_id: "a",
+    tab_id: "t1",
     title: "Fix the invoice rounding",
     cwd: "C:\\dev\\billing",
     limited: false,
@@ -157,11 +158,18 @@ describe("HistoryView conversation pane", () => {
   };
 
   it("shows the conversation beside the list, and the live tab for a session that is open", () => {
-    const out = html({ entries: two, conversation: conv, liveTabFor: (e) => (e.session_id === "a" ? "t1" : null) });
+    const out = html({ entries: two, conversation: conv, liveTabFor: (e) => (e.tab_id === "t1" ? "t1" : null) });
     expect(out).toContain('aria-label="Fix the invoice rounding"');
     expect(out).toContain("Go to session");
     expect(out).not.toContain(">Resume<");
     expect(html({ entries: two, conversation: conv })).toContain(">Resume<");
+  });
+
+  it("offers Go to session for a conversation whose tab is live even when the list doesn't hold it", () => {
+    const out = html({ entries: [], conversation: { ...conv, tab_id: "t9" }, liveTabFor: (e) => (e.tab_id === "t9" ? "t9" : null) });
+    expect(out).toContain("Go to session");
+    expect(out).not.toContain(">Resume<");
+    expect(html({ entries: [], conversation: { ...conv, tab_id: "" }, liveTabFor: () => "t9" })).toContain(">Resume<");
   });
 
   it("shows loading, a failure and the no-archive copy as text; the window's one live region (the Announcer) says them", () => {

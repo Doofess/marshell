@@ -24,11 +24,20 @@ import { escapeAction, sinceFor } from "./historyState";
 /** How long the search waits after the last keystroke. */
 const SEARCH_DELAY_MS = 150;
 const LOADING_COPY = "Loading conversations…";
+export const NO_FILTER_MATCH_COPY = "No conversations match these filters.";
+
+/** What the list says when it has no rows and no search is running: the failure, loading, or why it is empty (a filter that excludes everything is not "no conversations yet"). */
+export function listEmptyText(filters: HistoryFilters, loaded: boolean, error: string | null): string {
+  if (error) return error;
+  if (!loaded) return LOADING_COPY;
+  const filtered = filters.when !== "any" || Boolean(filters.agent || filters.project || filters.branch || filters.model);
+  return filtered ? NO_FILTER_MATCH_COPY : EMPTY_LIST_COPY;
+}
 
 /** The tab that holds an entry's session right now: a row of that tab whose state isn't Ended (an Ended tab has no session to go to). */
 export const liveTabFor =
   (rows: RowModel[]) =>
-  (e: HistoryEntry): string | null =>
+  (e: Pick<HistoryEntry, "tab_id">): string | null =>
     rows.find((r) => r.id === e.tab_id && r.status !== "ended")?.id ?? null;
 
 /** What a failed request says: the core's words, or the error's. */
@@ -117,7 +126,7 @@ export function LiveHistory({ endpoint, rows, os, searchFocus, size, announce, o
 
   const searching = query.trim() !== "" && searched !== null;
   const hits = searching ? searched.hits : null;
-  const emptyText = searching ? (searched.error ?? noHitsCopy(searched.query)) : (listed.error ?? (listed.loaded ? EMPTY_LIST_COPY : LOADING_COPY));
+  const emptyText = searching ? (searched.error ?? noHitsCopy(searched.query)) : listEmptyText(filters, listed.loaded, listed.error);
   const isEmpty = searching ? searched.hits.length === 0 : listed.loaded && listed.entries.length === 0;
 
   // What the list says when it has nothing is spoken once when it appears or changes, not on every render.

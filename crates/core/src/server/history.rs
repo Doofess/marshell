@@ -13,12 +13,15 @@ use axum::Json;
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
-use marshell_protocol::api::CreateSessionResponse;
+use marshell_protocol::api::{CreateSessionResponse, SessionState};
 use marshell_protocol::history::{Conversation, HistoryEntry, HistoryQuery, SearchHit};
 use serde::Deserialize;
 use std::sync::Arc;
 
 const AGENT: &str = "claude";
+
+/// Resume's refusal when a live tab already holds the conversation.
+const RUNNING_IN_A_TAB: &str = "This conversation is already running in a tab. Use Go to session.";
 
 /// A status and the message the route replies with.
 type Fail = (StatusCode, String);
@@ -104,7 +107,10 @@ pub async fn conversation(
         require_on(&history)?;
         let entry = history.entry(AGENT, &session_id).map_err(failed)?.ok_or_else(no_such)?;
         match archive::read_archive(&home, AGENT, &session_id) {
-            Ok(Some(text)) => Ok(transcript::parse(&text, &session_id)),
+            Ok(Some(text)) => Ok(Conversation {
+                tab_id: entry.tab_id,
+                ..transcript::parse(&text, &session_id)
+            }),
             Ok(None) => Err((
                 StatusCode::NOT_FOUND,
                 "Marshell has no copy of this conversation yet.".into(),
@@ -114,6 +120,7 @@ pub async fn conversation(
                 Ok(Conversation {
                     agent: entry.agent,
                     session_id: entry.session_id,
+                    tab_id: entry.tab_id,
                     title: entry.title,
                     cwd: entry.cwd,
                     branch: entry.branch,
@@ -153,6 +160,14 @@ fn boxed(err: impl IntoResponse) -> Box<Response> {
     Box::new(err.into_response())
 }
 
+/// What the lookup before a Resume found.
+enum Found {
+    Usable(SessionMeta),
+    /// Claude's transcript file is gone.
+    Gone,
+    RunningInATab,
+}
+
 async fn resume_in_new_tab(
     st: AppState,
     agent: String,
@@ -162,17 +177,34 @@ async fn resume_in_new_tab(
     check(&agent, &session_id).map_err(boxed)?;
     let history = st.history();
     let id = session_id.clone();
+    let running_tabs: Vec<String> = st
+        .registry()
+        .snapshot()
+        .sessions
+        .into_iter()
+        .filter(|s| s.state == SessionState::Running)
+        .map(|s| s.tab_id)
+        .collect();
     let meta = blocking(move || {
         let meta = session_meta(&history, &id)?;
+        let in_tab = running_tabs.contains(&meta.tab_id)
+            && history
+                .latest_for_tab(&meta.tab_id)
+                .is_some_and(|latest| latest.session_id == meta.session_id);
+        if in_tab {
+            return Ok(Found::RunningInATab);
+        }
         // The row lives in the Marshell home: its path is checked again before a file call.
         let usable = transcript_allowed(&meta.transcript_path, &meta.session_id)
             && std::path::Path::new(&meta.transcript_path).is_file();
-        Ok(usable.then_some(meta))
+        Ok(if usable { Found::Usable(meta) } else { Found::Gone })
     })
     .await
     .map_err(boxed)?;
-    let Some(meta) = meta else {
-        return Err(Box::new(cannot_resume(NO_CONVERSATION)));
+    let meta = match meta {
+        Found::Usable(meta) => meta,
+        Found::Gone => return Err(Box::new(cannot_resume(NO_CONVERSATION))),
+        Found::RunningInATab => return Err(Box::new(cannot_resume(RUNNING_IN_A_TAB))),
     };
     // The same check the tab Resume makes before it starts anything.
     let folder = meta.cwd.clone();

@@ -10,6 +10,10 @@ export type Conversation = {
  */
 agent: string, session_id: string, 
 /**
+ * The Marshell tab the conversation ran in.
+ */
+tab_id: string, 
+/**
  * The person's own title, else the agent's, else the first prompt's first line.
  */
 title: string, cwd: string, branch?: string, model?: string, version?: string, 

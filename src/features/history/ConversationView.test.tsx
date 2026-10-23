@@ -12,6 +12,7 @@ const noop = () => {};
 const conv = (items: TurnItem[], over: Partial<Conversation> = {}, prompt = "Fix the rounding"): Conversation => ({
   agent: "claude",
   session_id: "a",
+  tab_id: "t1",
   title: "Fix the invoice rounding",
   cwd: "C:\\dev\\billing",
   branch: "main",

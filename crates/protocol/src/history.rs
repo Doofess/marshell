@@ -8,6 +8,8 @@ pub struct Conversation {
     /// The agent's id, such as "claude".
     pub agent: String,
     pub session_id: String,
+    /// The Marshell tab the conversation ran in.
+    pub tab_id: String,
     /// The person's own title, else the agent's, else the first prompt's first line.
     pub title: String,
     pub cwd: String,

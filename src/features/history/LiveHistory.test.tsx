@@ -4,7 +4,8 @@ import type { RowModel } from "../sidebar/types";
 import { SCENARIO_ROWS } from "../window/scenario";
 import { ApiError } from "../../lib/api/client";
 import { NO_ARCHIVE_COPY } from "./ConversationView";
-import { conversationFailure, failureText, liveTabFor } from "./LiveHistory";
+import { EMPTY_LIST_COPY } from "./HistoryView";
+import { NO_FILTER_MATCH_COPY, conversationFailure, failureText, listEmptyText, liveTabFor } from "./LiveHistory";
 
 const entry = (tab_id: string): HistoryEntry => ({
   agent: "claude",
@@ -29,6 +30,21 @@ describe("liveTabFor", () => {
     const f = liveTabFor([row("t1", "ended")]);
     expect(f(entry("t1"))).toBeNull();
     expect(f(entry("gone"))).toBeNull();
+  });
+});
+
+describe("listEmptyText", () => {
+  it("says loading until the list has loaded, and the error when it failed", () => {
+    expect(listEmptyText({ when: "any" }, false, null)).toBe("Loading conversations…");
+    expect(listEmptyText({ when: "any" }, true, "disk full")).toBe("disk full");
+  });
+  it("says there is nothing yet only when no filter is set", () => {
+    expect(listEmptyText({ when: "any" }, true, null)).toBe(EMPTY_LIST_COPY);
+  });
+  it("says nothing matches when a filter or a time range is set", () => {
+    expect(listEmptyText({ when: "today" }, true, null)).toBe(NO_FILTER_MATCH_COPY);
+    expect(listEmptyText({ when: "any", project: "x" }, true, null)).toBe(NO_FILTER_MATCH_COPY);
+    expect(NO_FILTER_MATCH_COPY).toBe("No conversations match these filters.");
   });
 });
 

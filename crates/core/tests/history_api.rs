@@ -18,6 +18,7 @@ const ID: &str = "00000000-0000-4000-8000-000000000001";
 const BASIC: &str = include_str!("fixtures/claude/transcripts/2.1.309/basic.jsonl");
 const NO_SUCH: &str = "No such conversation.";
 const NO_COPY: &str = "Marshell has no copy of this conversation yet.";
+const RUNNING_IN_A_TAB: &str = "This conversation is already running in a tab. Use Go to session.";
 const NO_CONVERSATION: &str = "Claude Code no longer has this conversation, so it can't be resumed.";
 
 struct Env {
@@ -167,6 +168,7 @@ async fn conversation_returns_turns() {
     assert_eq!(conversation["agent"], "claude");
     assert_eq!(conversation["turns"].as_array().unwrap().len(), 2, "{conversation}");
     assert_eq!(conversation["limited"], false);
+    assert_eq!(conversation["tab_id"], "t1");
 }
 
 #[tokio::test]
@@ -192,6 +194,7 @@ async fn an_archive_that_cannot_be_read_is_a_limited_conversation() {
     assert_eq!(conversation["limited"], true);
     assert_eq!(conversation["turns"], json!([]));
     assert_eq!(conversation["title"], "Retry limit work");
+    assert_eq!(conversation["tab_id"], "t1");
     assert_eq!(conversation["cwd"], env.work.path().to_string_lossy().as_ref());
 }
 
@@ -291,6 +294,60 @@ async fn resume_starts_claude_with_the_session_in_its_folder() {
     let body: Value = serde_json::from_str(&text).unwrap();
     assert_eq!(body["reason"], NO_CONVERSATION);
     assert_eq!(env.state.live_session_count(), 0);
+}
+
+#[tokio::test]
+async fn resume_refuses_a_conversation_running_in_a_tab() {
+    let env = env();
+    let claude_dir = tempfile::tempdir().unwrap();
+    index_session(&env, ID, claude_dir.path());
+    let meta = env.state.history().latest_for_tab("t1").unwrap();
+    copy_transcript(env.home.path(), &meta).unwrap();
+    env.state.history().reindex(&meta);
+    let uri = format!("/v1/history/claude/{ID}/resume");
+
+    // The first Resume opens a tab that runs the conversation.
+    let (status, text) = call(&env.app, req("POST", &uri, Some(resume_body()))).await;
+    assert_eq!(status, StatusCode::OK, "{text}");
+    let created: Value = serde_json::from_str(&text).unwrap();
+    let tab = created["tab_id"].as_str().unwrap().to_string();
+    // Claude's SessionStart hook arrives from that tab: the index now has the conversation in it.
+    let body = json!({
+        "hook_event_name": "SessionStart",
+        "session_id": ID,
+        "transcript_path": claude_dir.path().join(format!("{ID}.jsonl")).to_string_lossy(),
+        "cwd": env.work.path().to_string_lossy(),
+    });
+    env.state.history().note_event(&tab, &body, 2000);
+    assert_eq!(env.state.live_session_count(), 1);
+
+    // A second Resume would start a second Claude on it: refused, and nothing starts.
+    let (status, text) = call(&env.app, req("POST", &uri, Some(resume_body()))).await;
+    assert_eq!(status, StatusCode::CONFLICT, "{text}");
+    let refusal: Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(refusal["reason"], RUNNING_IN_A_TAB);
+    assert_eq!(env.state.live_session_count(), 1);
+
+    // The tab moved on to a newer conversation (after /clear): the old one may be resumed again.
+    let newer = "00000000-0000-4000-8000-000000000002";
+    let newer_path = claude_dir.path().join(format!("{newer}.jsonl"));
+    std::fs::write(&newer_path, BASIC).unwrap();
+    let body = json!({
+        "hook_event_name": "SessionStart",
+        "session_id": newer,
+        "transcript_path": newer_path.to_string_lossy(),
+        "cwd": env.work.path().to_string_lossy(),
+    });
+    env.state.history().note_event(&tab, &body, 3000);
+    let (status, text) = call(&env.app, req("POST", &uri, Some(resume_body()))).await;
+    assert_eq!(status, StatusCode::OK, "{text}");
+    assert_eq!(env.state.live_session_count(), 2);
+    let second: Value = serde_json::from_str(&text).unwrap();
+    for t in [tab.as_str(), second["tab_id"].as_str().unwrap()] {
+        if let Some(session) = env.state.remove_session(t) {
+            session.force_kill();
+        }
+    }
 }
 
 #[tokio::test]
