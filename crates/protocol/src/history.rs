@@ -76,3 +76,67 @@ pub struct ToolCard {
     /// The call failed or was interrupted.
     pub error: bool,
 }
+
+/// One row of the History list: an archived conversation as the index knows it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct HistoryEntry {
+    pub agent: String,
+    pub session_id: String,
+    pub tab_id: String,
+    pub cwd: String,
+    /// Empty until the conversation has been read; the view shows its own placeholder then.
+    pub title: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub branch: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub model: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub version: Option<String>,
+    /// The conversation couldn't be read in full: untested version, unreadable, or too big.
+    pub limited: bool,
+    pub turns: u32,
+    #[ts(type = "number")]
+    pub started_ms: u64,
+    #[ts(type = "number")]
+    pub updated_ms: u64,
+}
+
+/// One full-text match: the turn it is in and a snippet with the hit between U+0002 and U+0003.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct SearchHit {
+    pub agent: String,
+    pub session_id: String,
+    pub title: String,
+    pub cwd: String,
+    pub turn: u32,
+    #[ts(type = "number")]
+    pub at_ms: u64,
+    pub snippet: String,
+}
+
+/// The filters of the History list. `project` is the full working folder.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct HistoryQuery {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub agent: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub project: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub branch: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub model: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    #[ts(type = "number")]
+    pub since_ms: Option<u64>,
+}

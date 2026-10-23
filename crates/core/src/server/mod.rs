@@ -723,6 +723,9 @@ pub async fn start(cfg: CoreConfig) -> anyhow::Result<RunningCore> {
             tracing::error!("core server stopped: {e}");
         }
     });
+    // The server is listening: index the conversations archived before search existed, one at a time off the
+    // async threads. Dropping the handle lets it run on its own.
+    drop(state.history().backfill());
     let notifier = cfg.notify.map(|sink| crate::notify::spawn(state.clone(), sink));
     let stuck_state = state.clone();
     let stuck_tick = tokio::spawn(async move {
