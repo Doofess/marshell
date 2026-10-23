@@ -13,6 +13,7 @@ import { LiveCard, useCards, type Answer } from "../approval/LiveCard";
 import { LiveDepartures } from "../departures/LiveDepartures";
 import type { ApprovalRequest } from "../approval/types";
 import { close as closeWindow, minimize as minimizeWindow, onMaximizedChange, toggleMaximize } from "../../lib/window/appWindow";
+import { bookmarkSession } from "./bookmark";
 import { copyRecordingPath } from "./recording";
 import { addFailure, clipboardText, deliveryFor, noticeFor } from "../regions/deliver";
 import { regionText } from "../regions/region";
@@ -874,6 +875,9 @@ export function LiveApp() {
         case "continue":
           void actions.cont(id);
           break;
+        case "bookmark":
+          if (endpoint) void bookmarkSession(endpoint, id, announce);
+          break;
         case "mute":
         case "unmute":
           if (endpoint) void sessions.setMuted(endpoint, id, itemId === "mute").catch(() => announce("Couldn't change the mute. Try again."));
@@ -1033,6 +1037,13 @@ export function LiveApp() {
               setTimeout(() => focusPendingCard(document, "drawer"), 0);
             }
           }
+          return true;
+        }
+        // Marks the focused session's current point. The answer, or the refusal, is announced.
+        case "bookmark": {
+          const ep = endpointRef.current;
+          const id = stateRef.current.focusedId;
+          if (ep && id) void bookmarkSession(ep, id, announce);
           return true;
         }
         default:

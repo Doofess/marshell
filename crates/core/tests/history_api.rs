@@ -5,6 +5,7 @@ mod common;
 use axum::body::Body;
 use axum::http::{Request, StatusCode, header};
 use marshell_core::history::archive::{archive_paths, copy_transcript};
+use marshell_core::history::marks;
 use marshell_core::server::{AppState, router};
 use marshell_protocol::api::{Profile, ShellFamily};
 use serde_json::{Value, json};
@@ -50,13 +51,25 @@ fn env() -> Env {
     env_in(home, work)
 }
 
+/// Like `printer`, but the agent waits on its input instead of exiting, so its tab stays Running.
+fn waiter() -> Profile {
+    Profile {
+        command: vec![env!("CARGO_BIN_EXE_fake-agent").into(), "echo".into()],
+        ..printer()
+    }
+}
+
 fn env_in(home: tempfile::TempDir, work: tempfile::TempDir) -> Env {
+    env_with(home, work, printer())
+}
+
+fn env_with(home: tempfile::TempDir, work: tempfile::TempDir, profile: Profile) -> Env {
     let state = AppState::new(
         TOKEN.into(),
         PORT,
         vec!["http://tauri.localhost".into()],
         home.path().to_path_buf(),
-        vec![printer()],
+        vec![profile],
     )
     .with_agent_check(|_| true);
     Env {
@@ -169,6 +182,52 @@ async fn conversation_returns_turns() {
     assert_eq!(conversation["turns"].as_array().unwrap().len(), 2, "{conversation}");
     assert_eq!(conversation["limited"], false);
     assert_eq!(conversation["tab_id"], "t1");
+}
+
+#[tokio::test]
+async fn conversation_uses_the_parsed_title_before_backfill() {
+    let env = env();
+    index_session(&env, ID, env.work.path());
+    let meta = env.state.history().latest_for_tab("t1").unwrap();
+    copy_transcript(env.home.path(), &meta).unwrap();
+    let (_, conversation) = get_json(&env.app, &format!("/v1/history/claude/{ID}")).await;
+    assert_eq!(conversation["title"], "Retry limit work");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn concurrent_tab_renames_keep_ended_tabs_and_conversations_together() {
+    let env = env();
+    seed(&env, ID);
+    reserve_tab(&env, "t1", Some("claude"));
+    env.state
+        .registry()
+        .set_state("t1", marshell_protocol::api::SessionState::Ended);
+    for round in 0..10 {
+        let barrier = std::sync::Arc::new(tokio::sync::Barrier::new(20));
+        let mut tasks = Vec::new();
+        for n in 0..20 {
+            let app = env.app.clone();
+            let barrier = barrier.clone();
+            tasks.push(tokio::spawn(async move {
+                barrier.wait().await;
+                let (status, text) = call(
+                    &app,
+                    req(
+                        "PATCH",
+                        "/v1/sessions/t1",
+                        Some(json!({"name":format!("name{round}-{n}")})),
+                    ),
+                )
+                .await;
+                assert_eq!(status, StatusCode::NO_CONTENT, "{text}");
+            }));
+        }
+        for task in tasks {
+            task.await.unwrap();
+        }
+        let (_, list) = get_json(&env.app, "/v1/history").await;
+        assert_eq!(list[0]["title"], env.state.registry().snapshot().sessions[0].name);
+    }
 }
 
 #[tokio::test]
@@ -298,7 +357,9 @@ async fn resume_starts_claude_with_the_session_in_its_folder() {
 
 #[tokio::test]
 async fn resume_refuses_a_conversation_running_in_a_tab() {
-    let env = env();
+    common::tie_children_to_test();
+    // A printer would exit at once and end its tab before the second Resume, racing the refusal.
+    let env = env_with(tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap(), waiter());
     let claude_dir = tempfile::tempdir().unwrap();
     index_session(&env, ID, claude_dir.path());
     let meta = env.state.history().latest_for_tab("t1").unwrap();
@@ -359,6 +420,12 @@ async fn routes_need_the_token() {
         ("GET", "/v1/history/search?q=retry".to_string()),
         ("GET", format!("/v1/history/claude/{ID}")),
         ("POST", format!("/v1/history/claude/{ID}/resume")),
+        ("PATCH", format!("/v1/history/claude/{ID}")),
+        ("DELETE", format!("/v1/history/claude/{ID}")),
+        ("PUT", format!("/v1/history/claude/{ID}/bookmarks/0")),
+        ("DELETE", format!("/v1/history/claude/{ID}/bookmarks/0")),
+        ("GET", "/v1/history/bookmarks".into()),
+        ("POST", "/v1/sessions/t1/bookmark".into()),
     ];
     for (method, uri) in routes {
         let mut request = req(method, &uri, Some(resume_body()));
@@ -382,6 +449,12 @@ async fn history_off_is_503() {
         ("GET", "/v1/history/search?q=retry".to_string()),
         ("GET", format!("/v1/history/claude/{ID}")),
         ("POST", format!("/v1/history/claude/{ID}/resume")),
+        ("PATCH", format!("/v1/history/claude/{ID}")),
+        ("DELETE", format!("/v1/history/claude/{ID}")),
+        ("PUT", format!("/v1/history/claude/{ID}/bookmarks/0")),
+        ("DELETE", format!("/v1/history/claude/{ID}/bookmarks/0")),
+        ("GET", "/v1/history/bookmarks".into()),
+        ("POST", "/v1/sessions/t1/bookmark".into()),
     ] {
         let (status, text) = call(&env.app, req(method, &uri, Some(resume_body()))).await;
         assert_eq!(
@@ -392,6 +465,579 @@ async fn history_off_is_503() {
     }
     // A bad id is still a 404 first.
     let (status, text) = call(&env.app, req("GET", "/v1/history/codex/x", None)).await;
+    assert_eq!((status, text.as_str()), (StatusCode::NOT_FOUND, NO_SUCH));
+}
+
+fn reserve_tab(env: &Env, tab: &str, agent: Option<&str>) {
+    env.state.registry().reserve(
+        tab,
+        marshell_core::registry::Relaunch {
+            profile_id: "printer".into(),
+            agent: agent.map(str::to_string),
+            cwd: env.work.path().to_string_lossy().into_owned(),
+            mode: None,
+            name: "Original tab".into(),
+        },
+    );
+}
+
+#[tokio::test]
+async fn patch_sets_name_tags_pin_and_archive() {
+    let env = env();
+    seed(&env, ID);
+    let uri = format!("/v1/history/claude/{ID}");
+    let (status, text) = call(
+        &env.app,
+        req(
+            "PATCH",
+            &uri,
+            Some(json!({
+                "name": "  My work  ", "tags": [" Bug ", "bug", "ui"], "pinned": true, "archived": true
+            })),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{text}");
+    assert_eq!(get_json(&env.app, "/v1/history").await.1, json!([]));
+    let (_, list) = get_json(&env.app, "/v1/history?archived=true&tag=BUG").await;
+    assert_eq!(list[0]["title"], "My work");
+    assert_eq!(list[0]["tags"], json!(["Bug", "ui"]));
+    assert_eq!(list[0]["pinned"], true);
+    assert_eq!(list[0]["archived"], true);
+    assert_eq!(list[0]["named"], true);
+    let (_, conversation) = get_json(&env.app, &uri).await;
+    assert_eq!(conversation["title"], "My work");
+    assert_eq!(
+        conversation["marks"],
+        json!({"name":"My work", "tags":["Bug","ui"], "pinned":true, "archived":true, "bookmarked_turns":[]})
+    );
+    assert_eq!(get_json(&env.app, "/v1/history/search?q=retry").await.1, json!([]));
+    let (_, hits) = get_json(&env.app, "/v1/history/search?q=retry&archived=true").await;
+    assert_eq!(hits[0]["title"], "My work");
+    let (status, _) = call(&env.app, req("PATCH", &uri, Some(json!({"name":"", "archived":false})))).await;
+    assert_eq!(status, StatusCode::OK);
+    let (_, list) = get_json(&env.app, "/v1/history").await;
+    assert_eq!(list[0]["title"], "Retry limit work");
+    assert_eq!(list[0]["named"], false);
+    assert_eq!(list[0]["tags"], json!(["Bug", "ui"]));
+    assert_eq!(list[0]["pinned"], true);
+}
+
+#[tokio::test]
+async fn patch_refuses_bad_tags_with_the_message() {
+    let env = env();
+    seed(&env, ID);
+    let tags: Vec<_> = (0..21).map(|n| format!("tag{n}")).collect();
+    let (status, text) = call(
+        &env.app,
+        req("PATCH", &format!("/v1/history/claude/{ID}"), Some(json!({"tags":tags}))),
+    )
+    .await;
+    assert_eq!(
+        (status, text.as_str()),
+        (StatusCode::BAD_REQUEST, "A conversation can have up to 20 tags.")
+    );
+}
+
+#[tokio::test]
+async fn renaming_a_running_conversation_renames_its_tab() {
+    let env = env();
+    seed(&env, ID);
+    reserve_tab(&env, "t1", Some("claude"));
+    let uri = format!("/v1/history/claude/{ID}");
+    let (status, _) = call(&env.app, req("PATCH", &uri, Some(json!({"name":"  Shared\nname  "})))).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(env.state.registry().snapshot().sessions[0].name, "Shared name");
+    let (status, _) = call(&env.app, req("PATCH", &uri, Some(json!({"name":""})))).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(env.state.registry().snapshot().sessions[0].name, "Retry limit work");
+}
+
+#[tokio::test]
+async fn renaming_a_tab_names_its_conversation_and_the_next_one() {
+    let env = env();
+    seed(&env, ID);
+    reserve_tab(&env, "t1", Some("claude"));
+    let (status, _) = call(
+        &env.app,
+        req("PATCH", "/v1/sessions/t1", Some(json!({"name":"Shared name"}))),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    assert_eq!(get_json(&env.app, "/v1/history").await.1[0]["title"], "Shared name");
+    let newer = "00000000-0000-4000-8000-000000000002";
+    seed(&env, newer);
+    let (_, list) = get_json(&env.app, "/v1/history").await;
+    assert_eq!(list.as_array().unwrap().len(), 2);
+    for row in list.as_array().unwrap() {
+        assert_eq!(row["title"], "Shared name");
+    }
+}
+
+#[tokio::test]
+async fn bookmark_turn_on_and_off() {
+    use marshell_core::history::marks::Marks;
+    let env = env();
+    seed(&env, ID);
+    let uri = format!("/v1/history/claude/{ID}");
+    let (_, c) = get_json(&env.app, &uri).await;
+    let at = c["turns"][0]["at_ms"].as_u64().unwrap();
+    // Two live bookmarks within the first turn resolve to one turn, and toggle-off removes both.
+    marks::write(
+        env.home.path(),
+        "claude",
+        ID,
+        &Marks {
+            bookmarks: vec![at, at + 1],
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        get_json(&env.app, &uri).await.1["marks"]["bookmarked_turns"],
+        json!([0])
+    );
+    let turn = format!("{uri}/bookmarks/0");
+    assert_eq!(
+        call(&env.app, req("DELETE", &turn, None)).await.0,
+        StatusCode::NO_CONTENT
+    );
+    assert!(marks::read(env.home.path(), "claude", ID).bookmarks.is_empty());
+    assert_eq!(call(&env.app, req("PUT", &turn, None)).await.0, StatusCode::NO_CONTENT);
+    assert_eq!(marks::read(env.home.path(), "claude", ID).bookmarks, vec![at]);
+    assert_eq!(
+        get_json(&env.app, &uri).await.1["marks"]["bookmarked_turns"],
+        json!([0])
+    );
+    assert_eq!(
+        get_json(&env.app, "/v1/history?bookmarked=true").await.1[0]["bookmarks"],
+        1
+    );
+    assert_eq!(
+        call(&env.app, req("DELETE", &turn, None)).await.0,
+        StatusCode::NO_CONTENT
+    );
+    assert_eq!(get_json(&env.app, "/v1/history/bookmarks").await.1, json!([]));
+}
+
+#[tokio::test]
+async fn bookmark_now_marks_the_tabs_conversation() {
+    let env = env();
+    seed(&env, ID);
+    reserve_tab(&env, "t1", Some("claude"));
+    let (status, text) = call(&env.app, req("POST", "/v1/sessions/t1/bookmark", None)).await;
+    assert_eq!(status, StatusCode::OK, "{text}");
+    assert_eq!(
+        serde_json::from_str::<Value>(&text).unwrap(),
+        json!({"title":"Retry limit work"})
+    );
+    let (status, bookmarks) = get_json(&env.app, "/v1/history/bookmarks").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(bookmarks[0]["session_id"], ID);
+    assert_eq!(bookmarks[0]["turn"], 1);
+}
+
+#[tokio::test]
+async fn bookmark_now_refusals() {
+    let env = env();
+    reserve_tab(&env, "t1", Some("claude"));
+    reserve_tab(&env, "t2", Some("codex"));
+    reserve_tab(&env, "t3", None);
+    for (tab, message) in [
+        (
+            "t1",
+            "Nothing to bookmark yet: the conversation starts with its first prompt.",
+        ),
+        ("t2", "Bookmarks work in Claude Code sessions for now."),
+        ("t3", "Bookmarks work in Claude Code sessions for now."),
+    ] {
+        let (status, text) = call(&env.app, req("POST", &format!("/v1/sessions/{tab}/bookmark"), None)).await;
+        assert_eq!((status, text.as_str()), (StatusCode::CONFLICT, message));
+    }
+}
+
+#[tokio::test]
+async fn bookmark_now_waits_for_the_first_prompt() {
+    let env = env();
+    let transcript = index_session(&env, ID, env.work.path());
+    reserve_tab(&env, "t1", Some("claude"));
+    let message = "Nothing to bookmark yet: the conversation starts with its first prompt.";
+    let (status, text) = call(&env.app, req("POST", "/v1/sessions/t1/bookmark", None)).await;
+    assert_eq!((status, text.as_str()), (StatusCode::CONFLICT, message));
+    assert!(
+        get_json(&env.app, "/v1/history/bookmarks")
+            .await
+            .1
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    let prompt = json!({
+        "hook_event_name": "UserPromptSubmit",
+        "session_id": ID,
+        "transcript_path": transcript.to_string_lossy(),
+        "cwd": env.work.path().to_string_lossy(),
+        "prompt": "hello",
+    });
+    assert!(env.state.history().note_event("t1", &prompt, 2000).is_none());
+    let (status, text) = call(&env.app, req("POST", "/v1/sessions/t1/bookmark", None)).await;
+    assert_eq!(status, StatusCode::OK, "{text}");
+    assert_eq!(marks::read(env.home.path(), "claude", ID).bookmarks.len(), 1);
+}
+
+#[tokio::test]
+async fn bookmarking_an_unknown_turn_is_refused() {
+    let env = env();
+    seed(&env, ID);
+    // The index counts turns from 0; the person reads them from 1, as on the Bookmark turn buttons.
+    let uri = format!("/v1/history/claude/{ID}");
+    let (status, text) = call(&env.app, req("PUT", &format!("{uri}/bookmarks/999"), None)).await;
+    assert_eq!(
+        (status, text.as_str()),
+        (
+            StatusCode::CONFLICT,
+            "Marshell hasn't indexed turn 1000 of this conversation yet."
+        )
+    );
+    assert!(marks::read(env.home.path(), "claude", ID).bookmarks.is_empty());
+    assert_eq!(get_json(&env.app, &uri).await.1["marks"]["bookmarked_turns"], json!([]));
+    // Turning one off for an unknown turn is a harmless no-op.
+    let (status, _) = call(&env.app, req("DELETE", &format!("{uri}/bookmarks/999"), None)).await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+}
+
+#[tokio::test]
+async fn delete_removes_only_marshells_copy() {
+    use marshell_core::{history::marks, store::bak_path};
+    let env = env();
+    let transcript = seed(&env, ID);
+    let (archive, meta) = archive_paths(env.home.path(), "claude", ID);
+    let marks = marks::marks_path(env.home.path(), "claude", ID);
+    marks::write(env.home.path(), "claude", ID, &Default::default()).unwrap();
+    let files = [archive, meta, marks];
+    for path in &files {
+        std::fs::copy(path, bak_path(path)).unwrap();
+    }
+    let uri = format!("/v1/history/claude/{ID}");
+    assert_eq!(
+        call(&env.app, req("DELETE", &uri, None)).await.0,
+        StatusCode::NO_CONTENT
+    );
+    assert_eq!(get_json(&env.app, &uri).await.0, StatusCode::NOT_FOUND);
+    assert_eq!(get_json(&env.app, "/v1/history").await.1, json!([]));
+    assert_eq!(get_json(&env.app, "/v1/history/search?q=retry").await.1, json!([]));
+    for path in &files {
+        assert!(!path.exists());
+        assert!(!bak_path(path).exists());
+    }
+    assert_eq!(std::fs::read_to_string(transcript).unwrap(), BASIC);
+    // A session whose archive and marks never existed can still be deleted.
+    index_session(&env, "uncopied", env.work.path());
+    assert_eq!(
+        call(&env.app, req("DELETE", "/v1/history/claude/uncopied", None))
+            .await
+            .0,
+        StatusCode::NO_CONTENT
+    );
+}
+
+#[tokio::test]
+async fn delete_refuses_a_running_conversation() {
+    let env = env();
+    seed(&env, ID);
+    reserve_tab(&env, "t1", Some("claude"));
+    let uri = format!("/v1/history/claude/{ID}");
+    let (status, text) = call(&env.app, req("DELETE", &uri, None)).await;
+    assert_eq!(
+        (status, text.as_str()),
+        (
+            StatusCode::CONFLICT,
+            "This conversation is running in a tab. Close the tab first, then delete Marshell's copy."
+        )
+    );
+    assert!(archive_paths(env.home.path(), "claude", ID).0.exists());
+    // A running tab on a different conversation does not block deleting this one.
+    env.state.history().note_event("t1", &json!({"hook_event_name":"SessionStart", "session_id":"newer", "transcript_path":env.work.path().join("newer.jsonl"), "cwd":env.work.path()}), 2000);
+    assert_eq!(
+        call(&env.app, req("DELETE", &uri, None)).await.0,
+        StatusCode::NO_CONTENT
+    );
+}
+
+#[tokio::test]
+async fn delete_refuses_a_copy_in_progress() {
+    let env = env();
+    seed(&env, ID);
+    let history = env.state.history();
+    history.set_settle(Duration::from_secs(60));
+    marshell_core::history::recorder::schedule_copy(history.clone(), history.latest_for_tab("t1").unwrap());
+    let result = call(&env.app, req("DELETE", &format!("/v1/history/claude/{ID}"), None)).await;
+    history.flush(Duration::from_secs(5));
+    assert_eq!(
+        (result.0, result.1.as_str()),
+        (
+            StatusCode::CONFLICT,
+            "Marshell is saving this conversation right now. Try again in a moment."
+        )
+    );
+    assert!(archive_paths(env.home.path(), "claude", ID).0.exists());
+}
+
+#[tokio::test]
+async fn delete_rejects_a_bad_id() {
+    let env = env();
+    let transcript = seed(&env, ID);
+    let (archive, meta) = archive_paths(env.home.path(), "claude", ID);
+    let before = [std::fs::read(&archive).unwrap(), std::fs::read(&meta).unwrap()];
+    for uri in [
+        "/v1/history/claude/..%2Fx".to_string(),
+        format!("/v1/history/codex/{ID}"),
+        "/v1/history/claude/unknown".to_string(),
+    ] {
+        let (status, text) = call(&env.app, req("DELETE", &uri, None)).await;
+        assert_eq!((status, text.as_str()), (StatusCode::NOT_FOUND, NO_SUCH));
+    }
+    assert_eq!(std::fs::read(&archive).unwrap(), before[0]);
+    assert_eq!(std::fs::read(&meta).unwrap(), before[1]);
+    assert_eq!(std::fs::read_to_string(transcript).unwrap(), BASIC);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn marks_writes_do_not_lose_an_edit() {
+    let env = env();
+    seed(&env, ID);
+    // Twenty tasks start together. Each field's requests are ordered so its last applied value is known;
+    // the two fields race each other, catching a read-modify-write that loses the other field.
+    let barrier = std::sync::Arc::new(tokio::sync::Barrier::new(20));
+    let mut tasks = Vec::new();
+    let mut previous = [None, None];
+    for n in 0..20 {
+        let kind = n % 2;
+        let prior = previous[kind].take();
+        let (done, next) = tokio::sync::oneshot::channel::<()>();
+        previous[kind] = Some(next);
+        let app = env.app.clone();
+        let barrier = barrier.clone();
+        tasks.push(tokio::spawn(async move {
+            barrier.wait().await;
+            if let Some(prior) = prior {
+                prior.await.unwrap();
+            }
+            let body = if kind == 0 {
+                json!({"tags":[format!("tag{}", n / 2)]})
+            } else {
+                json!({"pinned":n / 2 % 2 == 1})
+            };
+            let (status, text) = call(&app, req("PATCH", &format!("/v1/history/claude/{ID}"), Some(body))).await;
+            let _ = done.send(());
+            assert_eq!(status, StatusCode::OK, "{text}");
+        }));
+    }
+    for task in tasks {
+        task.await.unwrap();
+    }
+    let marks = marshell_core::history::marks::read(env.home.path(), "claude", ID);
+    assert_eq!(marks.tags, ["tag9"]);
+    assert!(marks.pinned);
+    let (_, list) = get_json(&env.app, "/v1/history").await;
+    assert_eq!(list[0]["tags"], json!(["tag9"]));
+    assert_eq!(list[0]["pinned"], true);
+    for file in std::fs::read_dir(archive_paths(env.home.path(), "claude", ID).0.parent().unwrap()).unwrap() {
+        let name = file.unwrap().file_name().to_string_lossy().into_owned();
+        assert!(!name.ends_with(".part") && !name.ends_with(".tmp"), "{name}");
+    }
+}
+
+/// A tab's row in the sessions list.
+async fn tab_row(app: &axum::Router, tab: &str) -> Value {
+    let (_, sessions) = get_json(app, "/v1/sessions").await;
+    sessions["sessions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|s| s["tab_id"] == tab)
+        .unwrap_or_else(|| panic!("no tab {tab} in {sessions}"))
+        .clone()
+}
+
+fn tab_of(text: &str) -> String {
+    serde_json::from_str::<Value>(text).unwrap()["tab_id"]
+        .as_str()
+        .unwrap()
+        .to_string()
+}
+
+async fn name_conversation(env: &Env, name: &str) {
+    let (status, _) = call(
+        &env.app,
+        req(
+            "PATCH",
+            &format!("/v1/history/claude/{ID}"),
+            Some(json!({ "name": name })),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+}
+
+#[tokio::test]
+async fn fork_starts_a_tab_with_fork_session_even_while_running() {
+    let env = env();
+    seed(&env, ID);
+    // Tab t1 is Running and holds the conversation, so Resume refuses it.
+    reserve_tab(&env, "t1", Some("claude"));
+    name_conversation(&env, "Mine").await;
+    let resume = format!("/v1/history/claude/{ID}/resume");
+    let (status, _) = call(&env.app, req("POST", &resume, Some(resume_body()))).await;
+    assert_eq!(status, StatusCode::CONFLICT);
+
+    let fork = format!("/v1/history/claude/{ID}/fork");
+    let (status, text) = call(&env.app, req("POST", &fork, Some(resume_body()))).await;
+    assert_eq!(status, StatusCode::OK, "{text}");
+    let tab = tab_of(&text);
+    let rows = peek_until(&env.app, &tab, &format!("--resume {ID} --fork-session")).await;
+    assert!(rows.contains("claude"), "{rows}");
+    let row = tab_row(&env.app, &tab).await;
+    assert_eq!(row["name"], "Mine (fork)");
+    assert_eq!(row["agent"], "claude");
+    assert_eq!(row["cwd"], env.work.path().to_string_lossy().as_ref());
+
+    // With no name the person gave, the fork's tab has the default name.
+    name_conversation(&env, "").await;
+    let (status, text) = call(&env.app, req("POST", &fork, Some(resume_body()))).await;
+    assert_eq!(status, StatusCode::OK, "{text}");
+    let name = tab_row(&env.app, &tab_of(&text)).await["name"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert!(!name.contains("(fork)"), "{name}");
+
+    // Claude's file gone: the same refusal as Resume. A bad id is a 404 before anything else.
+    std::fs::remove_file(env.work.path().join(format!("{ID}.jsonl"))).unwrap();
+    let (status, text) = call(&env.app, req("POST", &fork, Some(resume_body()))).await;
+    assert_eq!(status, StatusCode::CONFLICT, "{text}");
+    assert_eq!(serde_json::from_str::<Value>(&text).unwrap()["reason"], NO_CONVERSATION);
+    let (status, text) = call(
+        &env.app,
+        req("POST", "/v1/history/claude/..%2Fx/fork", Some(resume_body())),
+    )
+    .await;
+    assert_eq!((status, text.as_str()), (StatusCode::NOT_FOUND, NO_SUCH));
+}
+
+#[tokio::test]
+async fn resume_opens_the_tab_under_the_name() {
+    let env = env();
+    seed(&env, ID);
+    name_conversation(&env, "Mine").await;
+    let resume = format!("/v1/history/claude/{ID}/resume");
+    let (status, text) = call(&env.app, req("POST", &resume, Some(resume_body()))).await;
+    assert_eq!(status, StatusCode::OK, "{text}");
+    let tab = tab_of(&text);
+    assert_eq!(tab_row(&env.app, &tab).await["name"], "Mine");
+
+    // The conversation Claude starts in that tab takes the name too.
+    let newer = "00000000-0000-4000-8000-000000000002";
+    let newer_path = env.work.path().join(format!("{newer}.jsonl"));
+    std::fs::write(&newer_path, BASIC).unwrap();
+    let body = json!({
+        "hook_event_name": "SessionStart",
+        "session_id": newer,
+        "transcript_path": newer_path.to_string_lossy(),
+        "cwd": env.work.path().to_string_lossy(),
+    });
+    env.state.history().note_event(&tab, &body, 5000);
+    let (_, list) = get_json(&env.app, "/v1/history").await;
+    let row = list
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["session_id"] == newer)
+        .unwrap();
+    assert_eq!(row["title"], "Mine");
+    assert_eq!(row["named"], true);
+
+    // A conversation with no name of its own opens under the default name.
+    name_conversation(&env, "").await;
+    let (_, text) = call(&env.app, req("POST", &resume, Some(resume_body()))).await;
+    assert_ne!(tab_row(&env.app, &tab_of(&text)).await["name"], "Mine");
+}
+
+/// The status, content type and body of a request.
+async fn call_typed(app: &axum::Router, request: Request<Body>) -> (StatusCode, String, String) {
+    let res = app.clone().oneshot(request).await.unwrap();
+    let status = res.status();
+    let kind = res
+        .headers()
+        .get(header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or_default()
+        .to_string();
+    let bytes = axum::body::to_bytes(res.into_body(), 1 << 24).await.unwrap();
+    (status, kind, String::from_utf8_lossy(&bytes).into_owned())
+}
+
+#[tokio::test]
+async fn export_routes_answer_both_formats_and_404_without_a_copy() {
+    let env = env();
+    // A prompt that holds a key, in Marshell's copy.
+    let transcript = index_session(&env, ID, env.work.path());
+    std::fs::write(
+        &transcript,
+        BASIC.replace("Add a limit of five attempts", "use key sk-ant-abcdefgh12345678"),
+    )
+    .unwrap();
+    let meta = env.state.history().latest_for_tab("t1").unwrap();
+    // No copy yet.
+    let uri = format!("/v1/history/claude/{ID}/export?format=markdown");
+    let (status, _, text) = call_typed(&env.app, req("GET", &uri, None)).await;
+    assert_eq!((status, text.as_str()), (StatusCode::NOT_FOUND, NO_COPY));
+    copy_transcript(env.home.path(), &meta).unwrap();
+    env.state.history().reindex(&meta);
+
+    // Markdown, redacted unless asked otherwise.
+    let (status, kind, text) = call_typed(&env.app, req("GET", &uri, None)).await;
+    assert_eq!(status, StatusCode::OK, "{text}");
+    assert_eq!(kind, "text/markdown; charset=utf-8");
+    assert!(text.starts_with("# Retry limit work\n\n- Folder: "), "{text}");
+    assert!(text.contains("## Turn 2\n\n> use key <anthropic-key>\n"), "{text}");
+    assert!(!text.contains("abcdefgh12345678"));
+    let (_, _, plain) = call_typed(&env.app, req("GET", &format!("{uri}&redact=false"), None)).await;
+    assert!(plain.contains("> use key sk-ant-abcdefgh12345678\n"), "{plain}");
+
+    // JSON.
+    let json_uri = format!("/v1/history/claude/{ID}/export?format=json");
+    let (status, kind, text) = call_typed(&env.app, req("GET", &json_uri, None)).await;
+    assert_eq!(status, StatusCode::OK, "{text}");
+    assert_eq!(kind, "application/json");
+    let parsed: Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(parsed["session_id"], ID);
+    assert_eq!(parsed["turns"][1]["prompt"], "use key <anthropic-key>");
+    let (_, _, plain) = call_typed(&env.app, req("GET", &format!("{json_uri}&redact=false"), None)).await;
+    assert_eq!(
+        serde_json::from_str::<Value>(&plain).unwrap()["turns"][1]["prompt"],
+        "use key sk-ant-abcdefgh12345678"
+    );
+
+    // A bad format is a 400; a bad or unknown conversation is a 404 before any lookup.
+    let (status, _, _) = call_typed(
+        &env.app,
+        req("GET", &format!("/v1/history/claude/{ID}/export?format=pdf"), None),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    let (status, _, text) = call_typed(
+        &env.app,
+        req("GET", "/v1/history/claude/..%2Fx/export?format=json", None),
+    )
+    .await;
+    assert_eq!((status, text.as_str()), (StatusCode::NOT_FOUND, NO_SUCH));
+    let other = "00000000-0000-4000-8000-0000000000ff";
+    let (status, _, text) = call_typed(
+        &env.app,
+        req("GET", &format!("/v1/history/claude/{other}/export"), None),
+    )
+    .await;
     assert_eq!((status, text.as_str()), (StatusCode::NOT_FOUND, NO_SUCH));
 }
 

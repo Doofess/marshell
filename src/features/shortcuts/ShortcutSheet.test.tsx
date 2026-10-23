@@ -51,7 +51,7 @@ describe("ShortcutSheet", () => {
     expect(renderToStaticMarkup(<ShortcutSheet os="linux" nav="ctrl+alt" />)).toContain("Hold Ctrl+Alt, then");
   });
   it("lists only the commands that run, when told which do", () => {
-    const off = ["history", "find", "global-search", "bookmark", "next-waiting"];
+    const off = ["history", "find", "global-search", "next-waiting"];
     const labels = sheetGroups("windows", undefined, (id) => !off.includes(id)).flatMap((g) => g.rows.map((r) => r.label));
     for (const id of off) expect(labels).not.toContain(COMMANDS.find((c) => c.id === id)!.label);
     expect(labels).toContain("Command palette");

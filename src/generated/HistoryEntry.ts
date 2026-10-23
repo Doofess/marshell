@@ -11,4 +11,4 @@ title: string, branch?: string, model?: string, version?: string,
 /**
  * The conversation couldn't be read in full: untested version, unreadable, or too big.
  */
-limited: boolean, turns: number, started_ms: number, updated_ms: number, };
+limited: boolean, turns: number, started_ms: number, updated_ms: number, tags: Array<string>, pinned: boolean, archived: boolean, bookmarks: number, named: boolean, };

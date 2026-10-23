@@ -448,14 +448,20 @@ pub async fn rename(
     Path(tab): Path<String>,
     Json(req): Json<RenameRequest>,
 ) -> Result<StatusCode, ApiError> {
-    if req.name.trim().is_empty() {
-        return Err((StatusCode::BAD_REQUEST, "The name is empty.".into()));
-    }
-    if st.0.registry.rename(&tab, &req.name) {
+    let name = crate::history::marks::normalize_name(&req.name)
+        .ok_or((StatusCode::BAD_REQUEST, "The name is empty.".into()))?;
+    tokio::task::spawn_blocking(move || {
+        if !st
+            .history()
+            .rename_tab(&tab, &name)
+            .map_err(|err| (StatusCode::INTERNAL_SERVER_ERROR, format!("{err:#}")))?
+        {
+            return Err((StatusCode::NOT_FOUND, "No such session.".into()));
+        }
         Ok(StatusCode::NO_CONTENT)
-    } else {
-        Err((StatusCode::NOT_FOUND, "No such session.".into()))
-    }
+    })
+    .await
+    .map_err(|err| (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))?
 }
 
 #[derive(Deserialize)]

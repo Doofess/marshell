@@ -1,3 +1,4 @@
+import type { Bookmarked } from "../../generated/Bookmarked";
 import type { CreateSessionRequest } from "../../generated/CreateSessionRequest";
 import type { CreateSessionResponse } from "../../generated/CreateSessionResponse";
 import type { Endpoint } from "../../generated/Endpoint";
@@ -15,21 +16,24 @@ const tab = (tabId: string) => `/v1/sessions/${encodeURIComponent(tabId)}`;
 
 export type Started = { ok: true } | { ok: false; reason: string };
 
+/** The core's reason in a refusal: the `reason` of its JSON body, or the plain text. */
+export function reasonOf(e: ApiError): string {
+  try {
+    const body = JSON.parse(e.message) as Partial<ResumeError>;
+    if (typeof body.reason === "string") return body.reason;
+  } catch {
+    // Not our JSON body: fall through to the plain text.
+  }
+  return e.message;
+}
+
 /** Runs a start request: a 409 becomes `{ ok: false, reason }` in the core's words, anything else rejects. */
 export async function refusable(request: () => Promise<unknown>): Promise<Started> {
   try {
     await request();
     return { ok: true };
   } catch (e) {
-    if (e instanceof ApiError && e.status === 409) {
-      try {
-        const body = JSON.parse(e.message) as Partial<ResumeError>;
-        if (typeof body.reason === "string") return { ok: false, reason: body.reason };
-      } catch {
-        // Not our JSON body: fall through to the plain text.
-      }
-      return { ok: false, reason: e.message };
-    }
+    if (e instanceof ApiError && e.status === 409) return { ok: false, reason: reasonOf(e) };
     throw e;
   }
 }
@@ -68,6 +72,15 @@ export const sessions = {
   /** The session's asciicast file. Rejects with a 404 ApiError ("This session has no recording.") when there is none. */
   recordingPath: async (ep: Endpoint, tabId: string): Promise<string> =>
     (await api<{ path: string }>(ep, "GET", `${tab(tabId)}/recording`)).path,
+  /** Bookmarks the current point of a live Claude Code session. A 409 (nothing yet, another agent) comes back as `{ ok: false, reason }`. */
+  bookmark: async (ep: Endpoint, tabId: string): Promise<{ ok: true; title: string } | { ok: false; reason: string }> => {
+    try {
+      return { ok: true, title: (await api<Bookmarked>(ep, "POST", `${tab(tabId)}/bookmark`)).title };
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 409) return { ok: false, reason: reasonOf(e) };
+      throw e;
+    }
+  },
   /**
    * Starts an Ended or Exited tab again in place. A 409 comes back as `{ ok: false, reason }`
    * with the core's own words; any other failure rejects with an ApiError.

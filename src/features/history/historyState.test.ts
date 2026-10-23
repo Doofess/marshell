@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { HistoryEntry } from "../../generated/HistoryEntry";
-import { escapeAction, filterOptions, groupByProject, moveSelection, rowMeta, sinceFor } from "./historyState";
+import { bookmarkQuery, escapeAction, filterOptions, groupByProject, listQuery, moveSelection, rowMeta, sinceFor } from "./historyState";
 
 const entry = (over: Partial<HistoryEntry>): HistoryEntry => ({
   agent: "claude",
@@ -9,6 +9,11 @@ const entry = (over: Partial<HistoryEntry>): HistoryEntry => ({
   cwd: "C:\\dev\\demo",
   title: "T",
   limited: false,
+  tags: [],
+  pinned: false,
+  archived: false,
+  bookmarks: 0,
+  named: false,
   turns: 2,
   started_ms: 0,
   updated_ms: 0,
@@ -37,7 +42,7 @@ describe("filterOptions", () => {
         entry({ agent: "claude", cwd: "a", branch: "dev" }),
         entry({ agent: "claude", cwd: "a", branch: "main", model: "x" }),
       ]),
-    ).toEqual({ agents: ["claude", "codex"], projects: ["a", "b"], branches: ["dev", "main"], models: ["x"] });
+    ).toEqual({ agents: ["claude", "codex"], projects: ["a", "b"], branches: ["dev", "main"], models: ["x"], tags: [] });
   });
 });
 
@@ -91,5 +96,46 @@ describe("escapeAction", () => {
     expect(escapeAction({ conversationOpen: true, query: "x" })).toBe("close-conversation");
     expect(escapeAction({ conversationOpen: false, query: "x" })).toBe("clear-search");
     expect(escapeAction({ conversationOpen: false, query: "" })).toBe("close-history");
+  });
+});
+
+describe("groupByProject with pins", () => {
+  it("puts pinned first and only once", () => {
+    const groups = groupByProject([
+      entry({ session_id: "a", cwd: "C:\\dev\\old", updated_ms: 1, pinned: true }),
+      entry({ session_id: "b", cwd: "C:\\dev\\new", updated_ms: 9 }),
+      entry({ session_id: "c", cwd: "C:\\dev\\old", updated_ms: 5 }),
+      entry({ session_id: "d", cwd: "C:\\dev\\new", updated_ms: 7, pinned: true }),
+    ]);
+    expect(groups.map((g) => [g.project, g.label, g.entries.map((e) => e.session_id)])).toEqual([
+      ["\u0000pinned", "Pinned", ["d", "a"]],
+      ["C:\\dev\\new", "new", ["b"]],
+      ["C:\\dev\\old", "old", ["c"]],
+    ]);
+    expect(groups.flatMap((g) => g.entries)).toHaveLength(4);
+  });
+
+  it("drops a project group whose entries are all pinned, and has no Pinned group when nothing is pinned", () => {
+    expect(groupByProject([entry({ session_id: "a", pinned: true })]).map((g) => g.label)).toEqual(["Pinned"]);
+    expect(groupByProject([entry({ session_id: "a" })]).map((g) => g.label)).toEqual(["demo"]);
+  });
+});
+
+describe("filterOptions tags", () => {
+  it("offers each tag once, sorted", () => {
+    expect(
+      filterOptions([entry({ tags: ["zeta", "bug"] }), entry({ tags: ["bug", "alpha"] }), entry({ tags: [] })]).tags,
+    ).toEqual(["alpha", "bug", "zeta"]);
+  });
+});
+
+describe("the queries the view sends", () => {
+  const filters = { when: "any", tag: "bug", bookmarked: true, archived: true, agent: "claude" } as const;
+  it("passes archived=true and the tag to the list, which never filters by bookmarks itself", () => {
+    expect(listQuery(filters, 0)).toEqual({ agent: "claude", tag: "bug", archived: true, since_ms: undefined });
+    expect(listQuery({ when: "any", bookmarked: false, archived: false }, 0).archived).toBe(false);
+  });
+  it("asks the bookmarks route with the same filters and bookmarked=true", () => {
+    expect(bookmarkQuery(filters, 0)).toEqual({ agent: "claude", tag: "bug", archived: true, bookmarked: true, since_ms: undefined });
   });
 });

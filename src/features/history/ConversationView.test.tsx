@@ -1,8 +1,9 @@
+import { readFileSync } from "node:fs";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import type { Conversation } from "../../generated/Conversation";
 import type { TurnItem } from "../../generated/TurnItem";
-import { ConversationView, NO_ARCHIVE_COPY } from "./ConversationView";
+import { ConversationView, NO_ARCHIVE_COPY, moreActions } from "./ConversationView";
 import { MarkdownText } from "./MarkdownText";
 
 vi.mock("../preview/markdown", () => ({ safeMarkdownHtml: vi.fn((md: string, doc: string) => `<p data-sentinel="${doc}">${md.length}</p>`) }));
@@ -19,11 +20,26 @@ const conv = (items: TurnItem[], over: Partial<Conversation> = {}, prompt = "Fix
   model: "opus",
   version: "2.1.300",
   limited: false,
+  marks: { tags: [], pinned: false, archived: false, bookmarked_turns: [] },
   turns: [{ index: 0, at_ms: 0, prompt, items }],
   ...over,
 });
 const html = (c: Conversation, over: Partial<Parameters<typeof ConversationView>[0]> = {}) =>
-  renderToStaticMarkup(<ConversationView conversation={c} onResume={noop} onGoTo={noop} liveTab={null} {...over} />);
+  renderToStaticMarkup(<ConversationView
+      conversation={c}
+      onResume={noop}
+      onGoTo={noop}
+      liveTab={null}
+      onFork={noop}
+      onPatch={noop}
+      onBookmark={noop}
+      onExport={noop}
+      onCopyMarkdown={noop}
+      onDelete={noop}
+      editor={null}
+      onEditor={noop}
+      {...over}
+    />);
 
 describe("ConversationView turns", () => {
   it("makes each turn a section whose h3 is the prompt, as text", () => {
@@ -158,5 +174,93 @@ describe("MarkdownText", () => {
     } finally {
       vi.unstubAllGlobals();
     }
+  });
+});
+
+describe("ConversationView actions", () => {
+  it("the header offers Resume, Fork and More actions", () => {
+    const out = html(conv([]));
+    expect(out).toContain(">Resume<");
+    expect(out).toContain(">Fork<");
+    expect(out).toMatch(/<button[^>]*aria-haspopup="menu"[^>]*aria-expanded="false"[^>]*>More actions<\/button>/);
+  });
+
+  it("while a tab runs the conversation the header offers Go to session, Fork, More actions in that order, and no Resume", () => {
+    const out = html(conv([]), { liveTab: "t1" });
+    const labels = [...out.matchAll(/<button[^>]*class="conversation__action[^>]*>([^<]*)<\/button>/g)].map((m) => m[1]);
+    expect(labels).toEqual(["Go to session", "Fork", "More actions"]);
+  });
+
+  it("the menu lists the actions in order, with Unpin and Unarchive when set", () => {
+    const labels = (m: { pinned: boolean; archived: boolean }) => moreActions(m).flatMap((i) => ("separator" in i ? [] : [i.label]));
+    expect(labels({ pinned: false, archived: false })).toEqual([
+      "Rename…",
+      "Tags…",
+      "Pin",
+      "Archive",
+      "Export…",
+      "Copy as markdown",
+      "Delete Marshell's copy…",
+    ]);
+    expect(labels({ pinned: true, archived: true })).toEqual([
+      "Rename…",
+      "Tags…",
+      "Unpin",
+      "Unarchive",
+      "Export…",
+      "Copy as markdown",
+      "Delete Marshell's copy…",
+    ]);
+  });
+
+  it("a name with HTML renders as text", () => {
+    const hostile = "<img src=x onerror=alert(1)>";
+    const out = html(conv([], { title: hostile, marks: { name: hostile, tags: ["<b>x</b>"], pinned: false, archived: false, bookmarked_turns: [] } }), { editor: "rename" });
+    expect(out).toContain("&lt;img src=x onerror=alert(1)&gt;");
+    expect(out).toContain("&lt;b&gt;x&lt;/b&gt;");
+    expect(out).not.toContain("<img");
+    expect(out).not.toContain("<b>");
+  });
+
+  it("each turn has a Bookmark toggle with aria-pressed", () => {
+    const c = conv([], { marks: { tags: [], pinned: false, archived: false, bookmarked_turns: [1] } });
+    c.turns.push({ index: 1, at_ms: 0, prompt: "again", items: [] });
+    const out = html(c);
+    expect(out).toMatch(/<button[^>]*aria-label="Bookmark turn 1"[^>]*aria-pressed="false"[^>]*>Bookmark<\/button>/);
+    expect(out).toMatch(/<button[^>]*aria-label="Bookmark turn 2"[^>]*aria-pressed="true"[^>]*>Bookmarked<\/button>/);
+  });
+
+  it("the rename box is labelled and hints at Claude Code's title", () => {
+    const out = html(conv([]), { editor: "rename" });
+    expect(out).toMatch(/<label[^>]*>Conversation name<\/label>/);
+    expect(out).toContain("Leave empty to use Claude Code&#x27;s title.");
+  });
+
+  it("the delete confirm names the title and says Claude's file is kept", () => {
+    const out = html(conv([]), { editor: "delete" });
+    expect(out).toContain("Delete Marshell&#x27;s copy of “Fix the invoice rounding”? Claude Code&#x27;s own file is not touched.");
+    expect(out).toContain(">Delete<");
+    expect(out).toContain(">Cancel<");
+  });
+
+  it("the tag error is tied to the box", () => {
+    const out = html(conv([]), { editor: "tags", error: "A tag can't contain a comma." });
+    const box = out.match(/<input[^>]*aria-describedby="([^"]+)"/);
+    expect(box).not.toBeNull();
+    const errorId = box![1]!.split(" ").find((id) => out.includes(`id="${id}">A tag can&#x27;t contain a comma.<`));
+    expect(errorId).toBeDefined();
+    expect(out).toContain("Tags, separated by commas");
+  });
+});
+
+// These tests have no DOM, so the effect never runs here; the source is checked instead.
+describe("ConversationView: scrolling to the target turn", () => {
+  it("runs again for another conversation or turn, not each time a refresh replaces the same conversation", () => {
+    const src = readFileSync(new URL("./ConversationView.tsx", import.meta.url), "utf8");
+    const effect = /scrollIntoView\?\.\([^)]*\)\s*;?\s*\}, \[([^\]]*)\]\);/.exec(src);
+    expect(effect).not.toBeNull();
+    const deps = effect![1]!.split(",").map((d) => d.trim());
+    expect(deps).not.toContain("c");
+    expect(deps).toEqual(expect.arrayContaining(["c.agent", "c.session_id", "scrollToTurn"]));
   });
 });

@@ -7,7 +7,9 @@ use serde::{Deserialize, Serialize};
 use std::path::Path;
 
 pub mod archive;
+pub mod export;
 pub mod index;
+pub mod marks;
 pub mod recorder;
 
 /// What Marshell knows about one agent conversation. Stored as the `<id>.meta.json` sidecar.

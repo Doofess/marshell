@@ -5,8 +5,8 @@ import { menuFacts } from "../sessions/sessionMenuRun";
 import { FIXTURES } from "./fixtures";
 import { modeMenuItems, sessionMenuItems, type SessionMenuFacts } from "./sessionMenu";
 
-const all: SessionMenuFacts = { agent: true, modeChangeable: true, resumable: true, task: true, inShownPane: false, paneAvailable: true, pausable: true, paused: false, muted: false };
-const none: SessionMenuFacts = { agent: false, modeChangeable: true, resumable: false, task: false, inShownPane: false, paneAvailable: false, pausable: false, paused: false, muted: false };
+const all: SessionMenuFacts = { agent: true, modeChangeable: true, resumable: true, task: true, inShownPane: false, paneAvailable: true, pausable: true, paused: false, muted: false, bookmarkable: true };
+const none: SessionMenuFacts = { agent: false, modeChangeable: true, resumable: false, task: false, inShownPane: false, paneAvailable: false, pausable: false, paused: false, muted: false, bookmarkable: false };
 
 const ids = (facts: SessionMenuFacts) =>
   sessionMenuItems(facts, "windows").map((i) => ("separator" in i ? "-" : i.id));
@@ -14,13 +14,14 @@ const ids = (facts: SessionMenuFacts) =>
 describe("sessionMenuItems", () => {
   it("shows every item in order with its shortcut", () => {
     const items = sessionMenuItems(all, "windows");
-    expect(ids(all)).toEqual(["rename", "split", "resume", "mode", "pause", "mute", "review-task", "-", "close"]);
+    expect(ids(all)).toEqual(["rename", "split", "resume", "mode", "pause", "bookmark", "mute", "review-task", "-", "close"]);
     expect(items.map((i) => ("separator" in i ? undefined : i.shortcut))).toEqual([
       "F2",
       undefined,
       undefined,
       undefined,
       undefined,
+      "Ctrl+Shift+B",
       undefined,
       "Ctrl+Shift+R",
       undefined,
@@ -111,5 +112,21 @@ describe("Mute notifications", () => {
   });
   it("an ended session offers it too", () => {
     expect(ids(none)).toContain("mute");
+  });
+});
+
+describe("Bookmark", () => {
+  it("the row menu shows Bookmark for a Claude tab only", () => {
+    expect(ids(all)).toContain("bookmark");
+    expect(ids({ ...all, bookmarkable: false })).not.toContain("bookmark");
+    expect(ids(none)).not.toContain("bookmark");
+  });
+  it("it carries the key it runs on and sits after Pause and before Mute", () => {
+    const items = sessionMenuItems(all, "windows");
+    const item = items.find((i) => "id" in i && i.id === "bookmark");
+    expect(item && "label" in item ? [item.label, item.shortcut] : null).toEqual(["Bookmark", "Ctrl+Shift+B"]);
+    const list = ids(all);
+    expect(list.indexOf("bookmark")).toBeGreaterThan(list.indexOf("pause"));
+    expect(list.indexOf("bookmark")).toBeLessThan(list.indexOf("mute"));
   });
 });

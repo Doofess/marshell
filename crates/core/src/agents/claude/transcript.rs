@@ -212,6 +212,7 @@ pub fn parse(text: &str, session_id: &str) -> Conversation {
         limited: version.is_none() || untested,
         version,
         turns,
+        marks: Default::default(),
     }
 }
 

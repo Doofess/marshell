@@ -25,6 +25,45 @@ pub struct Conversation {
     /// The agent's version is untested, so parts of the conversation may be missing.
     pub limited: bool,
     pub turns: Vec<Turn>,
+    #[serde(default)]
+    pub marks: ConversationMarks,
+}
+
+/// The person's annotations, with bookmark times resolved to turns for the conversation view.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct ConversationMarks {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub name: Option<String>,
+    pub tags: Vec<String>,
+    pub pinned: bool,
+    pub archived: bool,
+    pub bookmarked_turns: Vec<u32>,
+}
+
+/// Only supplied fields change. An empty name clears the person's name.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct HistoryPatch {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub tags: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub pinned: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub archived: Option<bool>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct Bookmarked {
+    pub title: String,
 }
 
 /// One prompt and everything the agent did in answer to it.
@@ -105,6 +144,16 @@ pub struct HistoryEntry {
     pub started_ms: u64,
     #[ts(type = "number")]
     pub updated_ms: u64,
+    #[serde(default)]
+    pub tags: Vec<String>,
+    #[serde(default)]
+    pub pinned: bool,
+    #[serde(default)]
+    pub archived: bool,
+    #[serde(default)]
+    pub bookmarks: u32,
+    #[serde(default)]
+    pub named: bool,
 }
 
 /// One full-text match: the turn it is in and a snippet with the hit between U+0002 and U+0003.
@@ -122,6 +171,7 @@ pub struct SearchHit {
 }
 
 /// The filters of the History list. `project` is the full working folder.
+/// `archived: true` includes archived conversations.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, TS)]
 #[ts(export)]
 pub struct HistoryQuery {
@@ -141,4 +191,13 @@ pub struct HistoryQuery {
     #[ts(optional)]
     #[ts(type = "number")]
     pub since_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub tag: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub bookmarked: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub archived: Option<bool>,
 }
