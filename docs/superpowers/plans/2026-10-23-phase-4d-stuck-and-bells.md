@@ -36,6 +36,7 @@
 3. **Typing echo.** A shell rings BEL 200 ms after a keystroke: ignored. A program rings 2 s after the last keystroke: it counts. Task 3 tests both with an injected clock.
 4. **A flood.** `type` on a binary file rings 500 bells. That is one attention, one wait and one banner: `since_ms` stays at the first bell until the attention clears. Tasks 3 and 4 test it.
 5. **Stuck noise.** `PostToolUse`, `Notification` and status line updates between identical `PreToolUse` calls don't reset the count, and status line updates don't count as progress. Quiet stuck never fires outside Working. A session that ends clears its tracker. Task 5 tests each.
+6. **Pop-outs keep the focus (added mid-slice at the user's request).** While a menu, the launcher, the palette, the layout popover, a key-opened peek or a dialog is open, focus that lands outside it (Tab past the last control, a terminal focused by a timer or a banner click, nothing after the window lost focus) comes back to it, and Tab wraps inside it. It must never fight: a dialog opened over a menu keeps its focus, an opener's refocus or Rename's box after a close is not pulled back, and two open pop-outs don't trade the focus. The row menu's Tab still closes it (PLAN §9). `src/lib/focusGuard.test.ts` covers the guard; the wiring is checked live.
 
 ---
 

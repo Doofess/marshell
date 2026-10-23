@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, type CSSProperties } from "react";
+import { usePopupFocus } from "../../lib/usePopupFocus";
 import type { RowModel } from "../sidebar/types";
 import { peekName } from "./usePeek";
 import "./Peek.css";
@@ -34,6 +35,7 @@ export function Peek({
   onPointerLeave?: () => void;
 }) {
   const screen = useRef<HTMLPreElement & HTMLParagraphElement>(null);
+  const peek = useRef<HTMLDivElement>(null);
   const shown = rows !== null || failed;
   useLayoutEffect(() => {
     if (screen.current) showNewest(screen.current);
@@ -41,11 +43,13 @@ export function Peek({
   useEffect(() => {
     if (focusOnOpen && shown) screen.current?.focus();
   }, [focusOnOpen, shown]);
+  usePopupFocus(peek, () => screen.current, { enabled: focusOnOpen && shown });
   if (!shown) return null;
   const empty = !failed && (rows ?? []).every((r) => r.trim() === "");
   const style = at ? ({ "--peek-x": `${at.x}px`, "--peek-y": `${at.y}px` } as CSSProperties) : undefined;
   return (
     <div
+      ref={peek}
       className="peek"
       role="dialog"
       aria-label={peekName(row)}

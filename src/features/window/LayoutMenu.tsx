@@ -1,5 +1,6 @@
 import { useEffect, useRef, type KeyboardEvent } from "react";
 import { commandById, shortcutLabel, type Os } from "../../lib/keymap";
+import { usePopupFocus } from "../../lib/usePopupFocus";
 import { ARRANGEMENTS, planFor, type Arrangement, type PaneCount } from "./splitLayout";
 import "./LayoutMenu.css";
 
@@ -98,6 +99,7 @@ export function LayoutMenu({ count, arrangement, auto, os = "windows", requested
   useEffect(() => {
     if (focusOnOpen) root.current?.querySelector<HTMLElement>('[role="radio"][aria-checked="true"]')?.focus();
   }, [focusOnOpen]);
+  usePopupFocus(root, () => root.current?.querySelector<HTMLElement>('[role="radio"][aria-checked="true"]') ?? null, { enabled: focusOnOpen });
   const countsOn = COUNTS.map((n) => n <= max);
   const options = ARRANGEMENTS[count];
   return (
