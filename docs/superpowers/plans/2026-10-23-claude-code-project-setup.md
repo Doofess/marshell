@@ -10,7 +10,8 @@
   - `.claude/hooks/*.mjs` (Node, with `node --test` tests);
   - `.claude/rules/*.md`, `.claude/skills/marshell-*/` and `.claude/agents/marshell-reviewer.md`.
 - Every worktree cut from `main` after the merge carries the setup.
-- The user's files are never edited: `~/.claude/settings.json`, `~/.claude.json` and `C:/dev/claude-setup`. The one exception is a known-marketplace line that `claude plugin install --scope project` may add to the user file. good-css is already listed there.
+- The user's files are never edited: `~/.claude/settings.json`, `~/.claude.json`, `~/.claude/CLAUDE.md`, `~/.claude/agents/`, `~/.claude/skills/` and `C:/dev/claude-setup`.
+- The one exception: `claude plugin install good-css@good-css --scope project` puts good-css into the plugin cache and `~/.claude/plugins/installed_plugins.json`. It is *enabled* only by this repo's settings, and other projects don't load it.
 
 **Tech Stack:** Claude Code project settings, hooks, skills, agents and rules; Node 26 (`node --test`); `@playwright/mcp@0.0.83`.
 
@@ -49,19 +50,23 @@
 
 ## Review Focus
 
-1. **False positives that block real work:**
+1. **False positives that block real work.** Rules match only in command position, so mentioning a command is never running it:
    - `git stash list` and `git stash apply <sha>`;
    - `rm -rf` with a literal scratch path;
    - reading the *scratch* home's `run/endpoint.json`;
    - `taskkill /PID`;
-   - a commit with no Rust files staged.
+   - a commit with no Rust files staged;
+   - `grep -n "tauri dev" docs/PLAN.md`;
+   - a heredoc whose body contains `git stash`, such as a Codex prompt;
+   - `echo "Ruling: taskkill /IM is denied" >> progress.md`;
+   - `git commit -m "docs: explain why git stash pop is denied"`.
    A guard that blocks these costs more than it saves.
 2. **Guards fail open.** Empty stdin, non-JSON input, missing `tool_input`, a missing `git` or `cargo`, and a path outside any git checkout must all exit 0 with no output.
 3. **Paths:**
    - Windows paths with backslashes, forward slashes, a drive letter in either case, `~`, `%USERPROFILE%`, `$HOME` and `$env:USERPROFILE`.
    - A file in a *different* repo must not match this repo's protected paths.
    - Worktrees: `.claude/worktrees/<x>/src/generated/a.ts` is generated code too.
-4. **Project-only.** A `claude -p` in `C:/dev/claude-setup` must show the same skills, connectors and plugins before and after.
+4. **Project-only.** The SHA-256 hashes of the user's own files (Task 1 Step 1) are unchanged at the end of every task, apart from the good-css plugin cache.
 5. **The resume hook stays small,** at most 15 lines, and silent when there's no ledger. It must not read whole ledgers into context.
 
 ---
@@ -78,9 +83,14 @@
 
 **Produces:** the settings file that Tasks 2–3 add `hooks` to.
 
-- [ ] **Step 1: Measure the baseline.**
-  - Run `claude -p "Reply with only: ok" --output-format json` in `C:/dev/Airport` and in `C:/dev/claude-setup`. Record `usage.input_tokens + cache_creation_input_tokens + cache_read_input_tokens` for each.
-  - Run `claude -p "List every skill name and every MCP server name available to you, comma-separated, nothing else"` in both folders. Save the output in the research note.
+- [ ] **Step 1: Measure the baseline.** Every run is in this worktree, which has none of the new files yet.
+  - **Tokens.** Run `claude -p "Reply with only: ok" --output-format json`. Record `usage.input_tokens + cache_creation_input_tokens + cache_read_input_tokens`.
+  - **Inventory.** `claude mcp list` and `claude plugin list` give the deterministic inventory. `claude -p "List every skill name available to you, comma-separated, nothing else"` gives the skills. Save all three in the research note.
+  - **User-file hashes.** Take SHA-256 hashes of:
+    - `~/.claude/settings.json`, parsed with `advisorModel` removed, since the 5b run switches it;
+    - `~/.claude/CLAUDE.md`;
+    - every file under `~/.claude/agents/` and `~/.claude/skills/`;
+    - `~/.claude.json`'s `projects` entries for paths outside this repo.
 - [ ] **Step 2: Write `.claude/settings.json`.**
   ```json
   {
@@ -110,7 +120,9 @@
     }
   }
   ```
-  If `/mcp` shows a different display name for a connector, use that name and record it in the note.
+  Notes on these values:
+  - **Connector names.** If `claude mcp list` shows a different display name for a connector, use that name and record it in the note.
+  - **`skillOverrides`.** `"off"` is a documented value (skills docs, "Override skill visibility from settings"). `dataviz` is a bundled skill, which matches by name. `underwater-photoshop` is a user skill. Plugin skills ignore `skillOverrides`, which is why `engineering` and `design` are switched off through `enabledPlugins`.
 - [ ] **Step 3: Install good-css at project scope.**
   - Run `claude plugin install good-css@good-css --scope project`.
   - Confirm that `git diff` shows only the `enabledPlugins` entry in the project file.
@@ -124,14 +136,16 @@
   ```
 - [ ] **Step 5: Write `.worktreeinclude`.** It holds one line, `.claude/settings.local.json`, so per-person approvals reach new worktrees.
 - [ ] **Step 6: Verify.**
-  - Run the Step 1 commands again.
-  - **Expected in `C:/dev/Airport`:**
+  - Run the Step 1 commands again in this worktree.
+  - **Expected:**
     - no `underwater-photoshop`, `dataviz`, `engineering:*` or `design:*` skill;
-    - no Supabase, Resend or Cloudflare server;
-    - good-css is listed;
+    - no Supabase, Resend or Cloudflare server in `claude mcp list`;
+    - `webview` is listed;
     - the token count is lower.
-  - **Expected in `C:/dev/claude-setup`:** identical to the baseline.
-  - Record both sets of numbers in the note.
+  - **good-css.** `-p` may skip project plugin loading, so a missing good-css under `-p` proves nothing. `claude plugin list` must show it enabled at project scope.
+  - **User files.** Every Step 1 hash is unchanged, apart from the plugin cache and `installed_plugins.json` entry for good-css.
+  - **The user's look.** Ask the user for one interactive `/mcp` and `/plugin` look in a session started in this worktree, and record what they see.
+  - Record all the numbers in the note.
 - [ ] **Step 7: Write the research note.**
   - The doc facts this design rests on, each with its URL:
     - scopes and merging;
@@ -154,7 +168,14 @@
   - `.claude/hooks/guards.test.mjs`
 - Modify: `.claude/settings.json` (the `hooks.PreToolUse` entries), `package.json` (script `"test:claude": "node --test .claude/hooks/"`) and `.github/workflows/ci.yml` (a `pnpm test:claude` step after `pnpm test`).
 
-**Shell rules.** These are matched on the command text, case-insensitive, after joining continuation lines.
+**Shell rules.**
+- Before matching, the hook:
+  - joins continuation lines (`\` and PowerShell's backtick);
+  - removes heredoc bodies (bash `<<` heredocs and PowerShell here-strings);
+  - removes quoted strings, keeping only the paths that S2, S4 and S5 inspect: arguments of the matched command itself.
+- It then splits the command on `;`, `&&`, `||`, `|`, a newline and `(`.
+- A rule matches only when its command word starts a segment. A leading `env VAR=…`, `VAR=… ` or `& ` prefix is skipped.
+- Matching is case-insensitive.
 
 | Id | Matches | Decision | Reason (verbatim) |
 |---|---|---|---|
@@ -165,18 +186,18 @@
 | S5 | `cp`, `copy`, `copy-item`, `mv`, `move`, `move-item` or `rename-item` with an argument whose file name is `claude.exe` or `codex.exe` | deny | `Don't name a test binary like a real CLI. Use a name like codex-marshell-test.exe.` |
 | S6 | `tauri dev` without `MARSHELL_HOME=` (or `$env:MARSHELL_HOME`) and `CLAUDE_CONFIG_DIR=` (or `$env:CLAUDE_CONFIG_DIR`) in the same command, or with either one pointing at `.marshell` or `.claude` in the home folder | deny | `A live check runs with MARSHELL_HOME and CLAUDE_CONFIG_DIR set to scratch folders. See the marshell-live-check skill.` |
 | S7 | `git push` with `--force`, `-f` or `--force-with-lease`; `git reset --hard`; `git clean -f…`; `git branch -D` | ask | `This can't be undone. Confirm with the user first.` |
-| S8 | `git commit` while staged files include `*.rs`: run `cargo fmt --all --check` in `cwd`; on a non-zero exit | deny | `Run cargo fmt --all before a Rust commit.` |
+| S8 | `git commit` while staged files include `*.rs`. The target checkout comes from `git -C <dir>`, else the last `cd <dir>`/`Set-Location <dir>` before it in the same command, else the hook's `cwd`. Run `cargo fmt --all --check` there; a non-zero exit denies. An unresolvable target, or no `cargo`, fails open | deny | `Run cargo fmt --all before a Rust commit.` |
 
-**File rules.** `file_path` is made relative to the git root found by walking up from the file.
+**File rules.** The hook reads `tool_input.file_path`, or `notebook_path` for NotebookEdit. The path is made relative to the git root found by walking up from the file. A root counts as a checkout of this repo only if it contains `crates/protocol` and `src-tauri`.
 
 | Id | Path (relative to its checkout) | Decision | Reason (verbatim) |
 |---|---|---|---|
 | F1 | `src/generated/**` | deny | `src/generated is written by ts-rs. Change crates/protocol and run cargo test -p marshell-protocol.` |
 | F2 | `SCOPE.md`, `docs/BRIEF.md`, `LICENSE`, `THIRD_PARTY_NOTICES.md`, `SECURITY.md` | deny | `This is an owner file. Propose the change to the user instead.` |
 | F3 | `src-tauri/capabilities/**`, `src-tauri/tauri.conf.json`, `crates/core/src/server/guard.rs` | ask | `Capabilities, the CSP and the API guard change only with the user's word (SCOPE.md).` |
-| F4 | absolute paths under `~/.codex/`, `~/.marshell/`, or `~/.claude/` other than `~/.claude/projects/*/memory/**` | deny | `Real CLI configuration and Marshell data are off limits while developing (SCOPE.md).` |
+| F4 | absolute paths under `~/.codex/`, `~/.marshell/`, or `~/.claude/`, except `~/.claude/projects/*/memory/**` and `~/.claude/settings.json`. The latter is exempt because the user's global rules have Claude switch `advisorModel` there | deny | `Real CLI configuration and Marshell data are off limits while developing (SCOPE.md).` |
 
-- [ ] **Step 1: Write the failing tests** in `guards.test.mjs`. Each case runs the hook as a child process with a JSON stdin and asserts the decision and the exact reason.
+- [ ] **Step 1: Write the failing tests** in `guards.test.mjs`, using the Write tool (never a Bash heredoc, which the finished guard would inspect). Each case runs the hook as a child process with a JSON stdin and asserts the decision and the exact reason.
   - Per rule: at least two matching commands or paths, including one PowerShell form and one Windows path with backslashes.
   - Review Focus 1, which must give no decision:
     - `git stash list`;
@@ -188,7 +209,9 @@
     - `git commit` with only `.ts` staged, using a temp git repo fixture;
     - an edit to `src/lib/a.ts`;
     - an edit to `C:/dev/claude-setup/src/generated/x.ts`, outside a checkout of this repo, which is detected by the absence of `crates/protocol` at the root;
-    - an edit to `~/.claude/projects/C--dev-Airport/memory/x.md`.
+    - an edit to `~/.claude/projects/C--dev-Airport/memory/x.md`;
+    - an edit to `~/.claude/settings.json`;
+    - each of the four mention-only commands in Review Focus 1.
   - Review Focus 2:
     - stdin `""`, `"nope"` and `{}`;
     - `{"tool_name":"Bash"}` with no input.
@@ -203,10 +226,12 @@
   ] }
   ```
 - [ ] **Step 4: Run** `node --test .claude/hooks/`. Expected: PASS. Then `pnpm test:claude` gives the same result.
-- [ ] **Step 5: Live-verify in a real session.** Run `claude -p "Run this exact Bash command: git stash"` in this worktree.
-  - **Expected:** Claude reports the S3 reason, and `git stash list` is unchanged.
-  - Repeat for one file rule with `Write src/generated/zz.ts`. Expected: denied, no file.
-  - Check that S7's `ask` prompts under the user's `bypassPermissions`. If it doesn't, change S7 and F3 to deny with ` Ask the user in chat first.` appended to the reason. Ledger this as a ruling.
+- [ ] **Step 5: Live-verify in a real session, with canaries only.** If a guard fails to load, a canary does nothing.
+  - **Nesting first.** Run `claude -p "Reply with only: ok"` in this worktree. If it refuses to start inside a Claude Code session, don't unset anything to force it. Give the user the commands below to run in their own terminal, and record what they report.
+  - **S1:** `claude -p "Run this exact Bash command: taskkill /IM marshell-canary-none.exe"`. Expected: Claude reports the S1 reason.
+  - **S3:** `claude -p "Run this exact Bash command: git stash push"`. Run it only after `git status --porcelain` is empty in this worktree, so a failed guard stashes nothing. Expected: the S3 reason, and `git stash list` is unchanged.
+  - **F1:** `claude -p "Use the Write tool to create src/generated/zz-canary.ts containing //"`. Expected: denied, and no file. Delete the file if it appears.
+  - **The `ask` decision.** Check that S7's `ask` prompts under the user's `bypassPermissions`, using `git branch -D marshell-canary-none` on a branch that doesn't exist. If it doesn't prompt, change S7 and F3 to deny with ` Ask the user in chat first.` appended to the reason. Ledger this as a ruling.
 - [ ] **Step 6: Commit** as `chore(claude): add guard hooks that enforce SCOPE.md and the live-check rules`.
 
 ### Task 3: Resume hook and path-scoped rules
@@ -283,9 +308,10 @@
   - The prompt template: the binding docs, "Task N only", TDD, the commands, the commit trailer and the final report.
   - Run it as:
     ```
-    codex exec -C <wt> -s workspace-write --add-dir <main>/.git -o <out>.md - < <prompt>
+    codex exec -C <wt> -s workspace-write -o <out>.md - < <prompt>
     ```
-    `--add-dir` lets it commit. Without it, the sandbox denies the worktree's index lock.
+  - Its sandbox can't write the worktree's index, which lives in the main `.git`. Don't widen it with `--add-dir`, which would open every ref and the shared stash.
+  - The prompt says to leave the changes uncommitted and to write the commit message to `.superpowers/codex-commit-message.txt` with UTF-8 and no BOM (not PowerShell 5's `Set-Content -Encoding utf8`). Claude commits after review, stripping a leading BOM before `git commit -F`.
   - Review: read the diff and run the tests yourself. Codex's sandbox can't run some core tests. Watch for CRLF and a UTF-8 BOM in messages written from PowerShell.
   - Cherry-pick, then `task-done`.
   - **Quota:** if the log shows `usage limit`, check the worktree. Codex may have finished; it did in 5b Task 2. If not, hand the task to a `worker` and tell the user.
@@ -332,6 +358,8 @@
   - "Known limits" covers these three:
     - per-person MCP approvals in new worktrees go through `.worktreeinclude`;
     - worktrees cut before this merge don't have the setup;
-    - the possible double `CLAUDE.md` load in `.claude/worktrees`.
+    - the possible double `CLAUDE.md` load in `.claude/worktrees`;
+    - path-scoped rules match paths under the session's own project root, so edits made from a main-checkout session into `C:/dev/codex-wt/*` don't load them;
+    - `.worktreeinclude` affects only worktrees that Claude Code creates, not ones made with `git worktree add`.
 - [ ] Wait for CI, then merge.
 - [ ] Fast-forward the main checkout so `${CLAUDE_PROJECT_DIR}` hooks resolve there.
