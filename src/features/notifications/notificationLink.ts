@@ -18,3 +18,11 @@ export function setNotificationLink(on: boolean): Promise<boolean> {
 export function focusTarget(tabId: string | null, tabIds: readonly string[]): string | null {
   return tabId !== null && tabIds.includes(tabId) ? tabId : null;
 }
+
+/** Where keyboard focus goes when a link or a banner brings Marshell forward: a session's row, one key from its terminal
+ * but never in it, so typing meant for another window cannot answer an agent. The linked session's row, else the selected
+ * session's, else the main area. */
+export function linkFocusSelector(tabId: string | null, selectedId: string | null, rows: readonly { id: string; number: number }[]): string {
+  const row = rows.find((r) => r.id === (tabId ?? selectedId));
+  return row ? `[data-nav-row="${row.number}"]` : ".window__main";
+}

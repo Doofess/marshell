@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
-import { focusTarget, readNotificationLink, setNotificationLink } from "./notificationLink";
+import { focusTarget, linkFocusSelector, readNotificationLink, setNotificationLink } from "./notificationLink";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 afterEach(() => vi.clearAllMocks());
@@ -15,6 +15,23 @@ describe("focusTarget", () => {
     ["no open tabs", "t1", []],
   ])("gives null for %s", (_n, id, ids) => {
     expect(focusTarget(id as string | null, ids)).toBeNull();
+  });
+});
+
+describe("linkFocusSelector", () => {
+  const rows = [
+    { id: "t1", number: 1 },
+    { id: "t2", number: 2 },
+  ];
+  it("puts focus on the linked session's row, never in its terminal", () => {
+    expect(linkFocusSelector("t2", "t1", rows)).toBe('[data-nav-row="2"]');
+  });
+  it("uses the selected session's row when the link names none (show, or a closed session)", () => {
+    expect(linkFocusSelector(null, "t1", rows)).toBe('[data-nav-row="1"]');
+  });
+  it("falls back to the main area with no session to name", () => {
+    expect(linkFocusSelector(null, null, rows)).toBe(".window__main");
+    expect(linkFocusSelector("gone", null, [])).toBe(".window__main");
   });
 });
 

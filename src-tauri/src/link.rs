@@ -90,17 +90,28 @@ fn now_ms() -> u64 {
 }
 
 /// Opens a link: the window comes forward whatever the link was (a second launch without one still shows it),
-/// and a `Focus` that was not just opened selects its tab.
+/// and a `Focus` that was not just opened selects its tab. The webview hears first, so it can move keyboard focus
+/// out of the terminal before the window takes the keyboard: a link from a web page must not land the person's
+/// typing in an agent's prompt.
 pub fn open(app: &tauri::AppHandle, link: Option<Link>) {
-    crate::tray::show_main(app);
-    let Some(Link::Focus(tab_id)) = link else { return };
-    let link = Link::Focus(tab_id.clone());
-    let admitted = match app.try_state::<Mutex<Recent>>() {
-        Some(recent) => recent.lock().unwrap_or_else(|e| e.into_inner()).admit(&link, now_ms()),
-        None => true,
+    let admitted = match (&link, app.try_state::<Mutex<Recent>>()) {
+        (Some(focus @ Link::Focus(_)), Some(recent)) => {
+            recent.lock().unwrap_or_else(|e| e.into_inner()).admit(focus, now_ms())
+        }
+        _ => true,
     };
-    if admitted {
+    if let Some(tab_id) = focus_event(link.as_ref(), admitted) {
         let _ = app.emit("focus-session", HashMap::from([("tab_id", tab_id)]));
+    }
+    crate::tray::show_main(app);
+}
+
+/// The `focus-session` payload a link sends: its tab for a `Focus`, none for anything else, and nothing at all for a
+/// repeated `Focus` (the first one already moved the selection and the focus).
+pub fn focus_event(link: Option<&Link>, admitted: bool) -> Option<Option<String>> {
+    match link {
+        Some(Link::Focus(id)) => admitted.then(|| Some(id.clone())),
+        _ => Some(None),
     }
 }
 
@@ -311,6 +322,16 @@ mod tests {
 
     fn focus(id: &str) -> Option<Link> {
         Some(Link::Focus(id.to_string()))
+    }
+
+    #[test]
+    fn every_opened_link_tells_the_webview_except_a_repeat() {
+        let t1 = Link::Focus("t1".into());
+        assert_eq!(focus_event(Some(&t1), true), Some(Some("t1".to_string())));
+        assert_eq!(focus_event(Some(&t1), false), None);
+        // `show`, and a second launch with no link, still take keyboard focus out of the terminal.
+        assert_eq!(focus_event(Some(&Link::Show), true), Some(None));
+        assert_eq!(focus_event(None, true), Some(None));
     }
 
     #[test]
