@@ -3,6 +3,7 @@
 
 use super::index::{Index, Opened};
 use super::marks::{self, Marks};
+use super::recordings::CastCache;
 use super::{SessionMeta, archive, cast, transcript_allowed};
 use crate::agents::claude::transcript;
 use crate::registry::Registry;
@@ -121,6 +122,8 @@ pub struct History {
     settle: Mutex<Duration>,
     /// Set by `flush`: every settle wait ends at once.
     hurry: AtomicBool,
+    /// Summaries of recordings already scanned, for the Recording tab.
+    casts: CastCache,
 }
 
 impl History {
@@ -156,6 +159,7 @@ impl History {
             copying: Mutex::new(HashMap::new()),
             settle: Mutex::new(SETTLE),
             hurry: AtomicBool::new(false),
+            casts: CastCache::default(),
         }
     }
 
@@ -275,6 +279,24 @@ impl History {
     pub fn get(&self, agent: &str, session_id: &str) -> anyhow::Result<Option<SessionMeta>> {
         match self.index.lock().unwrap().as_ref() {
             Some(index) => index.get(agent, session_id),
+            None => Ok(None),
+        }
+    }
+
+    /// The recording summaries cache.
+    pub fn casts(&self) -> &CastCache {
+        &self.casts
+    }
+
+    /// When the conversation's first prompt with a known time was sent, from the index. None when it has none
+    /// yet, and when history is off. Blocking.
+    pub fn first_prompt_ms(&self, agent: &str, session_id: &str) -> anyhow::Result<Option<u64>> {
+        match self.index.lock().unwrap().as_ref() {
+            Some(index) => Ok(index
+                .turn_times(agent, session_id)?
+                .into_iter()
+                .map(|(_, at_ms)| at_ms)
+                .find(|at_ms| *at_ms != 0)),
             None => Ok(None),
         }
     }

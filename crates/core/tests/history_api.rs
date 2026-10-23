@@ -426,6 +426,8 @@ async fn routes_need_the_token() {
         ("DELETE", format!("/v1/history/claude/{ID}/bookmarks/0")),
         ("GET", "/v1/history/bookmarks".into()),
         ("POST", "/v1/sessions/t1/bookmark".into()),
+        ("GET", format!("/v1/history/claude/{ID}/recordings")),
+        ("GET", format!("/v1/history/claude/{ID}/recordings/0/frames")),
     ];
     for (method, uri) in routes {
         let mut request = req(method, &uri, Some(resume_body()));
@@ -1039,6 +1041,163 @@ async fn export_routes_answer_both_formats_and_404_without_a_copy() {
     )
     .await;
     assert_eq!((status, text.as_str()), (StatusCode::NOT_FOUND, NO_SUCH));
+}
+
+/// 2026-10-20T09:00:00Z, the time of the first line of the basic transcript fixture.
+const RECORDED_AT: u64 = 1_792_486_800_000;
+const CAST_NAME: &str = "t1-1792486800000.cast";
+
+/// Seeds the session with a sidecar that lists a recording of 13 output events (ten short lines, then three
+/// of 400 kB), one prompt mark at 2 s and the size-limit marker, and reads its transcript into the index.
+fn seed_recorded(env: &Env, id: &str) {
+    use marshell_core::pty::record::{CastEncoder, CastHeader, header_line};
+    let dir = marshell_core::paths::recordings_dir(env.home.path());
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut text = header_line(&CastHeader {
+        cols: 80,
+        rows: 24,
+        started_unix: RECORDED_AT / 1000,
+        shell: None,
+    });
+    for n in 0..10 {
+        text += &CastEncoder::default()
+            .output(1.0 + n as f64, format!("line {n}\r\n").as_bytes())
+            .unwrap();
+    }
+    text += &CastEncoder::marker(2.0, "prompt");
+    for n in 0..3 {
+        text += &CastEncoder::default()
+            .output(20.0 + n as f64, &vec![b'z'; 400_000])
+            .unwrap();
+    }
+    text += &CastEncoder::marker(30.0, "Recording stopped: it reached the size limit.");
+    std::fs::write(dir.join(CAST_NAME), text).unwrap();
+
+    let transcript = env.work.path().join(format!("{id}.jsonl"));
+    std::fs::write(&transcript, BASIC).unwrap();
+    for (event, at_ms) in [("SessionStart", RECORDED_AT), ("Stop", RECORDED_AT + 60_000)] {
+        let body = json!({
+            "hook_event_name": event,
+            "session_id": id,
+            "transcript_path": transcript.to_string_lossy(),
+            "cwd": env.work.path().to_string_lossy(),
+        });
+        // A Stop asks for a copy of the transcript; this seed makes its own below.
+        env.state.history().note_event("t1", Some(CAST_NAME), &body, at_ms);
+    }
+    let meta = env.state.history().latest_for_tab("t1").unwrap();
+    copy_transcript(env.home.path(), &meta).unwrap();
+    env.state.history().reindex(&meta);
+}
+
+const NO_PART: &str = "No such part of the recording.";
+
+#[tokio::test]
+async fn recordings_route_lists_parts_and_frames_play_them() {
+    let env = env();
+    seed_recorded(&env, ID);
+    let (_, conversation) = get_json(&env.app, &format!("/v1/history/claude/{ID}")).await;
+    let first_turn = conversation["turns"][0]["at_ms"].as_u64().unwrap();
+    assert!(first_turn > RECORDED_AT);
+
+    let (status, parts) = get_json(&env.app, &format!("/v1/history/claude/{ID}/recordings")).await;
+    assert_eq!(status, StatusCode::OK);
+    let parts = parts.as_array().unwrap();
+    assert_eq!(parts.len(), 1);
+    let part = &parts[0];
+    assert_eq!(part["index"], 0);
+    assert_eq!(part["file"], CAST_NAME);
+    assert_eq!((part["cols"].as_u64(), part["rows"].as_u64()), (Some(80), Some(24)));
+    assert_eq!(part["started_ms"], RECORDED_AT);
+    assert_eq!(part["ended_ms"], RECORDED_AT + 30_000);
+    // The span starts at the first prompt and ends at the conversation's last event.
+    assert_eq!(part["span_from_ms"], first_turn);
+    assert_eq!(part["span_to_ms"], RECORDED_AT + 30_000);
+    assert_eq!(part["marks_ms"], json!([RECORDED_AT + 2000]));
+    assert_eq!(part["stopped"], "Recording stopped: it reached the size limit.");
+
+    // Chain the frames from the start until the end: every output event comes once, in order.
+    let base = format!("/v1/history/claude/{ID}/recordings/0/frames");
+    let (status, first) = get_json(&env.app, &base).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(first["screen"].is_string());
+    let mut sizes: Vec<usize> = Vec::new();
+    let mut page = first;
+    let mut pages = 0;
+    loop {
+        pages += 1;
+        for event in page["events"].as_array().unwrap() {
+            if event["code"] == "o" {
+                sizes.push(event["data"].as_str().unwrap().len());
+            }
+        }
+        match page["next_offset"].as_u64() {
+            Some(offset) => {
+                let (status, next) = get_json(&env.app, &format!("{base}?offset={offset}")).await;
+                assert_eq!(status, StatusCode::OK);
+                assert!(next["screen"].is_null());
+                page = next;
+            }
+            None => break,
+        }
+    }
+    assert!(pages >= 2, "the 1.2 MB of output should not fit one answer");
+    assert_eq!(sizes.len(), 13);
+    assert_eq!(sizes[10..], [400_000; 3]);
+
+    // A seek into the middle: the screen is what a replay up to there shows.
+    let from = RECORDED_AT + 5500;
+    let (_, seek) = get_json(&env.app, &format!("{base}?from_ms={from}&to_ms={}", from + 2000)).await;
+    assert!(seek["screen"].as_str().unwrap().contains("line 4"));
+    assert!(!seek["screen"].as_str().unwrap().contains("line 5"));
+    let times: Vec<u64> = seek["events"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|e| e["at_ms"].as_u64().unwrap())
+        .collect();
+    assert_eq!(times, [RECORDED_AT + 6000, RECORDED_AT + 7000]);
+    assert!(seek["next_offset"].is_null());
+}
+
+#[tokio::test]
+async fn a_conversation_with_no_recording_has_no_parts() {
+    let env = env();
+    seed(&env, ID);
+    let (status, parts) = get_json(&env.app, &format!("/v1/history/claude/{ID}/recordings")).await;
+    assert_eq!((status, parts), (StatusCode::OK, json!([])));
+}
+
+#[tokio::test]
+async fn frames_route_answers_404_for_an_unknown_part_and_400_for_a_bad_offset() {
+    let env = env();
+    seed_recorded(&env, ID);
+    let base = format!("/v1/history/claude/{ID}/recordings");
+    let (status, text) = call(&env.app, req("GET", &format!("{base}/1/frames"), None)).await;
+    assert_eq!((status, text.as_str()), (StatusCode::NOT_FOUND, NO_PART));
+    // Three bytes into the first event line.
+    let cast = std::fs::read(marshell_core::paths::recordings_dir(env.home.path()).join(CAST_NAME)).unwrap();
+    let inside = cast.iter().position(|b| *b == b'\n').unwrap() + 1 + 3;
+    let (status, text) = call(&env.app, req("GET", &format!("{base}/0/frames?offset={inside}"), None)).await;
+    assert_eq!(
+        (status, text.as_str()),
+        (StatusCode::BAD_REQUEST, "Not a frame boundary.")
+    );
+}
+
+#[tokio::test]
+async fn recordings_route_404s_an_unknown_conversation() {
+    let env = env();
+    let missing = "00000000-0000-4000-8000-0000000000ff";
+    for uri in [
+        format!("/v1/history/claude/{missing}/recordings"),
+        format!("/v1/history/claude/{missing}/recordings/0/frames"),
+        "/v1/history/claude/..%2Fx/recordings".to_string(),
+        format!("/v1/history/codex/{ID}/recordings"),
+    ] {
+        let (status, text) = call(&env.app, req("GET", &uri, None)).await;
+        assert_eq!((status, text.as_str()), (StatusCode::NOT_FOUND, NO_SUCH), "{uri}");
+    }
 }
 
 /// Seeds a Marshell home for the slice 5a live check: the five transcript fixtures as archived Claude sessions, each with
