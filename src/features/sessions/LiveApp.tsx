@@ -55,6 +55,7 @@ import { CloseDialog } from "../window/CloseDialog";
 import { chooseClose as applyCloseChoice } from "../window/closeChoice";
 import { NotificationsDialog } from "../notifications/NotificationsDialog";
 import { useViewReport } from "../notifications/useViewReport";
+import { focusTarget } from "../notifications/notificationLink";
 import { terminalThemeOf, wtFont } from "../appearance/terminalSettings";
 import { changesFor, isTextBox, keyBlocked, markTasks, missingTask, paletteHidden, resolveTarget, reviewAgentName, reviewKeyDown, reviewTarget, taskRefresher, type ReviewTarget } from "../tasks/reviewOpen";
 import { ReviewSheet } from "../tasks/ReviewSheet";
@@ -264,9 +265,11 @@ export function LiveApp() {
     let gone = false;
     let stop: (() => void) | undefined;
     listen<{ tab_id: string | null }>("focus-session", (e) => {
-      if (!e.payload.tab_id) return;
+      // A closed session's entry shows the window (the shell did) and leaves the selection alone.
+      const tab = focusTarget(e.payload.tab_id, context.current.infos.map((i) => i.tab_id));
+      if (tab === null) return;
       setOverlay((o) => (jumpCloses(o) ? null : o));
-      pickRef.current(e.payload.tab_id);
+      pickRef.current(tab);
     })
       .then((s) => (gone ? s() : (stop = s)))
       .catch(() => {}); // Outside Tauri (tests, a plain browser) there are no events.

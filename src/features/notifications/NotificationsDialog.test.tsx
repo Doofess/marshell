@@ -79,4 +79,16 @@ describe("NotificationsDialogView", () => {
   it("shows a save error as an alert", () => {
     expect(view(DEFAULTS, "Save failed.")).toMatch(/role="alert"[^>]*>Save failed\./);
   });
+  it("shows the notification centre switch only when the link state is known", () => {
+    const withLink = (link?: boolean | null) =>
+      renderToStaticMarkup(<NotificationsDialogView settings={DEFAULTS} error={null} link={link} onChange={none} onClose={none} />);
+    const h = withLink(false);
+    expect(h).toContain("Notification centre");
+    expect(h).toContain("Open sessions from the notification centre");
+    expect(h).toContain("Adds a marshell:// link for your Windows account. It can only bring Marshell forward and select a session.");
+    expect(h.indexOf("Notification centre")).toBeGreaterThan(h.indexOf('aria-label="Terminal programs"'));
+    expect(h.indexOf("Notification centre")).toBeLessThan(h.indexOf('aria-label="Close button"'));
+    expect(group(withLink(true), "Notification centre")).toMatch(/<input[^>]*role="switch"[^>]*checked=""/);
+    for (const none of [null, undefined]) expect(withLink(none)).not.toContain("Notification centre");
+  });
 });
