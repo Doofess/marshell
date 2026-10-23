@@ -170,3 +170,24 @@ describe("history", () => {
     });
   });
 });
+
+describe("history recordings", () => {
+  it("lists the recording parts of a conversation", async () => {
+    const f = respond([]);
+    vi.stubGlobal("fetch", f);
+    await history.recordingParts(endpoint, "claude", "a/b");
+    expect(call(f)).toMatchObject({ url: "http://127.0.0.1:9/v1/history/claude/a%2Fb/recordings", method: "GET" });
+  });
+
+  it("asks for frames with only the set query fields, zero included", async () => {
+    const none = respond({});
+    vi.stubGlobal("fetch", none);
+    await history.recordingFrames(endpoint, "claude", "s", 2, {});
+    expect(call(none).url).toBe("http://127.0.0.1:9/v1/history/claude/s/recordings/2/frames");
+
+    const some = respond({});
+    vi.stubGlobal("fetch", some);
+    await history.recordingFrames(endpoint, "claude", "s", 0, { fromMs: 0, toMs: 5000, offset: 123 });
+    expect(call(some).url).toBe("http://127.0.0.1:9/v1/history/claude/s/recordings/0/frames?from_ms=0&to_ms=5000&offset=123");
+  });
+});

@@ -1,0 +1,145 @@
+/*
+ * The Recording tab and its player. The screen is the recording itself, so it takes the terminal's own background (set from the
+ * theme by the player) and everything else stays quiet: controls are told apart by fill, never a box. The font is fitted to the
+ * width in script, down to 8 px, and what is still wider clips at the end edge, so this view never gets a scrollbar.
+ */
+.recording {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  gap: var(--space-3);
+  block-size: 100%;
+  min-block-size: 0;
+  color: var(--text-1);
+  font-size: var(--text-13);
+}
+.recording__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-3);
+}
+.recording__caption {
+  color: var(--text-2);
+  font-size: var(--text-12);
+  font-variant-numeric: tabular-nums;
+}
+.recording__check {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-inline-start: auto;
+}
+.recording__note,
+.recording__stopped,
+.player__problem {
+  margin: 0;
+  color: var(--text-2);
+  text-wrap: pretty;
+}
+.recording__stopped {
+  padding: var(--space-3);
+  border-radius: var(--radius);
+  border-inline-start: var(--stripe) solid var(--caution);
+  background: var(--fill);
+}
+.player__problem {
+  color: var(--error);
+}
+
+.player {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto;
+  gap: var(--space-3);
+  min-block-size: 0;
+  min-inline-size: 0;
+}
+.player__screen {
+  min-block-size: 0;
+  min-inline-size: 0;
+  padding: var(--space-2);
+  border-radius: var(--radius);
+  background: var(--bg-raised);
+  overflow: clip;
+}
+.player__bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-3);
+}
+.player__slider {
+  flex: 1 1 12rem;
+  min-inline-size: 0;
+  background: none;
+  accent-color: var(--accent);
+}
+.player__time {
+  color: var(--text-2);
+  font-size: var(--text-12);
+  font-variant-numeric: tabular-nums;
+}
+.player__field {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--text-2);
+  font-size: var(--text-12);
+}
+
+.recording__button,
+.player__button,
+.player__select {
+  padding: var(--space-1) var(--space-3);
+  border-radius: var(--radius);
+  background: var(--fill);
+  color: var(--text-1);
+  font-size: var(--text-12);
+}
+.player__select {
+  padding-inline: var(--space-2);
+}
+.recording__button[aria-disabled="true"],
+.player__button[aria-disabled="true"] {
+  color: var(--text-3);
+}
+
+.recording__button:focus-visible,
+.recording__check input:focus-visible,
+.player__button:focus-visible,
+.player__slider:focus-visible,
+.player__select:focus-visible,
+.player__screen:focus-within {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.recording__button:active,
+.player__button:active {
+  box-shadow: inset 0 0 0 100vmax var(--selected);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .recording__button:hover,
+  .player__button:hover,
+  .player__select:hover {
+    box-shadow: inset 0 0 0 100vmax var(--hover);
+  }
+}
+
+@media (forced-colors: active) {
+  .recording__button,
+  .player__button,
+  .player__select,
+  .player__screen {
+    outline: 1px solid CanvasText;
+  }
+  .recording__button[aria-disabled="true"],
+  .player__button[aria-disabled="true"] {
+    color: GrayText;
+  }
+  .player__problem {
+    color: CanvasText;
+  }
+  .player__slider {
+    accent-color: Highlight;
+  }
+}

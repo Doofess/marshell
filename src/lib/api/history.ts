@@ -5,6 +5,8 @@ import type { Endpoint } from "../../generated/Endpoint";
 import type { HistoryEntry } from "../../generated/HistoryEntry";
 import type { HistoryPatch } from "../../generated/HistoryPatch";
 import type { HistoryQuery } from "../../generated/HistoryQuery";
+import type { RecordingFrames } from "../../generated/RecordingFrames";
+import type { RecordingPart } from "../../generated/RecordingPart";
 import type { SearchHit } from "../../generated/SearchHit";
 import type { ExportFormat } from "../exportName";
 import { ApiError, api, coreFetch } from "./client";
@@ -84,6 +86,16 @@ export const history = {
   /** Like `resume`, but Claude starts a new conversation from this one. */
   fork: (ep: Endpoint, agent: string, id: string, size: Size): Promise<Resumed> =>
     startAgain(ep, `${conversation(agent, id)}/fork`, size),
+  /** The recording files the conversation ran in, in time order. Empty when it has none. */
+  recordingParts: (ep: Endpoint, agent: string, id: string) => api<RecordingPart[]>(ep, "GET", `${conversation(agent, id)}/recordings`),
+  /** Events of one part. `fromMs` starts a seek (the answer carries the screen); `offset` continues the last answer; `toMs` is exclusive. */
+  recordingFrames: (ep: Endpoint, agent: string, id: string, part: number, q: { fromMs?: number; toMs?: number; offset?: number }) => {
+    const params = new URLSearchParams();
+    if (q.fromMs !== undefined) params.set("from_ms", String(q.fromMs));
+    if (q.toMs !== undefined) params.set("to_ms", String(q.toMs));
+    if (q.offset !== undefined) params.set("offset", String(q.offset));
+    return api<RecordingFrames>(ep, "GET", withQuery(`${conversation(agent, id)}/recordings/${part}/frames`, params));
+  },
   /** The conversation as text (or, for "asciicast", its recording), with secrets and personal paths hidden when `redact`. */
   exportText: async (ep: Endpoint, agent: string, id: string, format: ExportFormat, redact: boolean): Promise<string> => {
     const params = new URLSearchParams({ format, redact: String(redact) });
