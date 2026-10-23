@@ -123,10 +123,11 @@ export function ConversationView({
   const shownEditor = useRef<ConversationEditor | null>(null);
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
 
+  // Keyed on the conversation's identity, not `c`: a refresh after a bookmark, pin or rename replaces `c`, and the view must stay where the person is.
   useEffect(() => {
     if (scrollToTurn === undefined) return;
     root.current?.querySelector(`[data-turn="${scrollToTurn}"]`)?.scrollIntoView?.({ block: "start" });
-  }, [c, scrollToTurn]);
+  }, [c.agent, c.session_id, scrollToTurn]);
 
   // An editor takes focus when it opens; when it closes, focus goes back to "More actions".
   useEffect(() => {
@@ -199,15 +200,13 @@ export function ConversationView({
               Go to session
             </button>
           ) : (
-            <>
-              <button type="button" className="conversation__action" onClick={onResume}>
-                Resume
-              </button>
-              <button type="button" className="conversation__action conversation__action--quiet" onClick={onFork}>
-                Fork
-              </button>
-            </>
+            <button type="button" className="conversation__action" onClick={onResume}>
+              Resume
+            </button>
           )}
+          <button type="button" className="conversation__action conversation__action--quiet" onClick={onFork}>
+            Fork
+          </button>
           <button
             ref={moreRef}
             type="button"

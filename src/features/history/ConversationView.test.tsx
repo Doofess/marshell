@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import type { Conversation } from "../../generated/Conversation";
@@ -184,6 +185,12 @@ describe("ConversationView actions", () => {
     expect(out).toMatch(/<button[^>]*aria-haspopup="menu"[^>]*aria-expanded="false"[^>]*>More actions<\/button>/);
   });
 
+  it("while a tab runs the conversation the header offers Go to session, Fork, More actions in that order, and no Resume", () => {
+    const out = html(conv([]), { liveTab: "t1" });
+    const labels = [...out.matchAll(/<button[^>]*class="conversation__action[^>]*>([^<]*)<\/button>/g)].map((m) => m[1]);
+    expect(labels).toEqual(["Go to session", "Fork", "More actions"]);
+  });
+
   it("the menu lists the actions in order, with Unpin and Unarchive when set", () => {
     const labels = (m: { pinned: boolean; archived: boolean }) => moreActions(m).flatMap((i) => ("separator" in i ? [] : [i.label]));
     expect(labels({ pinned: false, archived: false })).toEqual([
@@ -243,5 +250,17 @@ describe("ConversationView actions", () => {
     const errorId = box![1]!.split(" ").find((id) => out.includes(`id="${id}">A tag can&#x27;t contain a comma.<`));
     expect(errorId).toBeDefined();
     expect(out).toContain("Tags, separated by commas");
+  });
+});
+
+// These tests have no DOM, so the effect never runs here; the source is checked instead.
+describe("ConversationView: scrolling to the target turn", () => {
+  it("runs again for another conversation or turn, not each time a refresh replaces the same conversation", () => {
+    const src = readFileSync(new URL("./ConversationView.tsx", import.meta.url), "utf8");
+    const effect = /scrollIntoView\?\.\([^)]*\)\s*;?\s*\}, \[([^\]]*)\]\);/.exec(src);
+    expect(effect).not.toBeNull();
+    const deps = effect![1]!.split(",").map((d) => d.trim());
+    expect(deps).not.toContain("c");
+    expect(deps).toEqual(expect.arrayContaining(["c.agent", "c.session_id", "scrollToTurn"]));
   });
 });
