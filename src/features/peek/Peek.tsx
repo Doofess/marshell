@@ -43,7 +43,8 @@ export function Peek({
   useEffect(() => {
     if (focusOnOpen && shown) screen.current?.focus();
   }, [focusOnOpen, shown]);
-  usePopupFocus(peek, () => screen.current, { enabled: focusOnOpen && shown });
+  // No backdrop: a click elsewhere closes a key-opened peek, as one outside the layout popover closes that.
+  usePopupFocus(peek, () => screen.current, { enabled: focusOnOpen && shown, onPressOutside: onClose });
   if (!shown) return null;
   const empty = !failed && (rows ?? []).every((r) => r.trim() === "");
   const style = at ? ({ "--peek-x": `${at.x}px`, "--peek-y": `${at.y}px` } as CSSProperties) : undefined;

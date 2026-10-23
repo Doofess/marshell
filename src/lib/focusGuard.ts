@@ -15,6 +15,8 @@ export type GuardDom = {
   onFocusOut(handler: (related: unknown) => void): () => void;
   /** Listens for the window getting the focus back; returns the way to stop. */
   onWindowFocus(handler: () => void): () => void;
+  /** Listens for a pointer press anywhere in the page, with what it pressed; returns the way to stop. */
+  onPress(handler: (target: unknown) => void): () => void;
   /** Runs `f` on the next frame; returns the way to cancel it. */
   later(f: () => void): () => void;
 };
@@ -28,17 +30,26 @@ const OPEN: object[] = [];
  * One open of a popup (a menu, a sheet, a dialog): while it is open the focus stays inside it. Focus that lands outside (a
  * terminal focused by a timer, the page after Tab, nothing after the window lost focus) comes back on the next frame to the
  * last control it held, or to `fallback()`. Focus that moves into another dialog or menu is left there, and a popup that has
- * left the page by then (a close that moved the focus on, like Rename's box) is not reclaimed. The returned function ends it.
+ * left the page by then (a close that moved the focus on, like Rename's box) is not reclaimed. A popup with no backdrop (a
+ * key-opened peek) passes `pressedOutside`: a press outside it is the person choosing somewhere else, so it is told (and
+ * closes) and the focus the press moves is left alone until focus comes back inside. The returned function ends it.
  */
-export function holdFocus(popup: GuardNode, dom: GuardDom, fallback: () => Focusable | null, open: object[] = OPEN): () => void {
+export function holdFocus(
+  popup: GuardNode,
+  dom: GuardDom,
+  fallback: () => Focusable | null,
+  open: object[] = OPEN,
+  pressedOutside?: () => void,
+): () => void {
   const me = {};
   open.push(me);
   let last: Focusable | null = null;
   let cancel: (() => void) | null = null;
+  let released = false;
   const inside = (n: unknown) => n !== null && popup.contains(n);
   const check = () => {
     cancel = null;
-    if (open[open.length - 1] !== me || !popup.isConnected) return;
+    if (released || open[open.length - 1] !== me || !popup.isConnected) return;
     const a = dom.active();
     if (inside(a) || (a !== null && dom.inOtherLayer(a))) return;
     (last?.isConnected !== false && last ? last : fallback())?.focus();
@@ -49,11 +60,18 @@ export function holdFocus(popup: GuardNode, dom: GuardDom, fallback: () => Focus
   };
   const stops = [
     dom.onFocusIn((t) => {
-      if (inside(t)) last = t as Focusable;
-      else soon();
+      if (inside(t)) {
+        last = t as Focusable;
+        released = false;
+      } else soon();
     }),
     dom.onFocusOut((r) => r === null && soon()),
     dom.onWindowFocus(soon),
+    dom.onPress((t) => {
+      if (!pressedOutside || inside(t)) return;
+      released = true;
+      pressedOutside();
+    }),
   ];
   return () => {
     cancel?.();
@@ -93,6 +111,11 @@ export function guardDom(el: HTMLElement, doc: Document, win: Window): GuardDom 
     onWindowFocus: (h) => {
       win.addEventListener("focus", h);
       return () => win.removeEventListener("focus", h);
+    },
+    onPress: (h) => {
+      const f = (e: PointerEvent) => h(e.target);
+      doc.addEventListener("pointerdown", f, true);
+      return () => doc.removeEventListener("pointerdown", f, true);
     },
     later: (f) => {
       const id = win.requestAnimationFrame(f);

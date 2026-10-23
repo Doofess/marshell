@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { holdFocus, tabbable, type GuardDom, type GuardNode } from "./focusGuard";
 
+const OPEN_FOR_TEST = (): object[] => [];
+
 type Node = GuardNode & { name: string; focus(): void };
 
 /** A page reduced to what the guard touches: popups that contain nodes, who has focus, the three listeners and a frame queue. */
@@ -28,6 +30,7 @@ function page() {
   const focusIn: ((t: unknown) => void)[] = [];
   const focusOut = new Map<Node, (r: unknown) => void>();
   const winFocus: (() => void)[] = [];
+  const presses: ((t: unknown) => void)[] = [];
   let frames: (() => void)[] = [];
   const dom = (popup: Node): GuardDom => ({
     active: () => active,
@@ -35,6 +38,7 @@ function page() {
     onFocusIn: (h) => (focusIn.push(h), () => void focusIn.splice(focusIn.indexOf(h), 1)),
     onFocusOut: (h) => (focusOut.set(popup, h), () => void focusOut.delete(popup)),
     onWindowFocus: (h) => (winFocus.push(h), () => void winFocus.splice(winFocus.indexOf(h), 1)),
+    onPress: (h) => (presses.push(h), () => void presses.splice(presses.indexOf(h), 1)),
     later: (f) => {
       frames.push(f);
       return () => void (frames = frames.filter((x) => x !== f));
@@ -52,7 +56,8 @@ function page() {
     frames = [];
     run.forEach((f) => f());
   };
-  return { node, dom, move, frame, log, layers, winFocus: () => winFocus.forEach((h) => h()), active: () => active, pending: () => frames.length };
+  const press = (on: Node) => [...presses].forEach((h) => h(on));
+  return { node, dom, move, frame, press, log, layers, winFocus: () => winFocus.forEach((h) => h()), active: () => active, pending: () => frames.length };
 }
 
 describe("holdFocus: an open popup keeps the focus", () => {
@@ -201,6 +206,44 @@ describe("holdFocus: an open popup keeps the focus", () => {
     p.frame();
     expect(p.active()).toBe(box);
     stop();
+  });
+});
+
+describe("holdFocus: a press outside a popup that has no backdrop", () => {
+  it("tells the popup (a key-opened peek closes) instead of pulling the focus back from where the click put it", () => {
+    const p = page();
+    const peek = p.node("peek");
+    const screen = p.node("screen", peek);
+    const terminal = p.node("terminal");
+    let pressed = 0;
+    const stop = holdFocus(peek, p.dom(peek), () => screen, OPEN_FOR_TEST(), () => pressed++);
+    p.move(screen);
+    p.press(terminal);
+    p.move(terminal);
+    p.frame();
+    expect(pressed).toBe(1);
+    expect(p.active()).toBe(terminal);
+    stop();
+  });
+
+  it("ignores a press inside the popup, and without the callback a press changes nothing", () => {
+    const p = page();
+    const peek = p.node("peek");
+    const screen = p.node("screen", peek);
+    let pressed = 0;
+    const stop = holdFocus(peek, p.dom(peek), () => screen, OPEN_FOR_TEST(), () => pressed++);
+    p.press(screen);
+    expect(pressed).toBe(0);
+    stop();
+    const sheet = p.node("sheet");
+    const prompt = p.node("prompt", sheet);
+    const stopSheet = holdFocus(sheet, p.dom(sheet), () => prompt);
+    p.move(prompt);
+    p.press(p.node("row"));
+    p.move(p.node("row"));
+    p.frame();
+    expect(p.active()).toBe(prompt);
+    stopSheet();
   });
 });
 
