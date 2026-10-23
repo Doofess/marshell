@@ -141,6 +141,10 @@ describe("history", () => {
     vi.stubGlobal("fetch", f);
     await expect(history.exportText(endpoint, "claude", "s", "json", false)).resolves.toBe("# Title");
     expect(call(f)).toMatchObject({ url: "http://127.0.0.1:9/v1/history/claude/s/export?format=json&redact=false", method: "GET" });
+    const cast = vi.fn().mockResolvedValue(new Response('{"version":2}\n', { status: 200 }));
+    vi.stubGlobal("fetch", cast);
+    await history.exportText(endpoint, "claude", "s", "asciicast", true);
+    expect(call(cast).url).toBe("http://127.0.0.1:9/v1/history/claude/s/export?format=asciicast&redact=true");
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response("No such conversation.", { status: 404 })));
     await expect(history.exportText(endpoint, "claude", "s", "markdown", true)).rejects.toBeInstanceOf(ApiError);
   });

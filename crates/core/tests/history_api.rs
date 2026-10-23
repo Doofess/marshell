@@ -1200,6 +1200,52 @@ async fn recordings_route_404s_an_unknown_conversation() {
     }
 }
 
+#[tokio::test]
+async fn export_asciicast_answers_cast_and_404s_without_a_recording() {
+    let env = env();
+    seed_recorded(&env, ID);
+    let uri = format!("/v1/history/claude/{ID}/export?format=asciicast");
+    let (status, kind, text) = call_typed(&env.app, req("GET", &uri, None)).await;
+    assert_eq!((status, kind.as_str()), (StatusCode::OK, "application/x-asciicast"));
+    let mut lines = text.lines();
+    let header: Value = serde_json::from_str(lines.next().unwrap()).unwrap();
+    assert_eq!(
+        (header["version"].as_u64(), header["width"].as_u64()),
+        (Some(2), Some(80))
+    );
+    assert!(header["title"].is_string());
+    let events: Vec<Value> = lines.map(|l| serde_json::from_str(l).unwrap()).collect();
+    assert!(!events.is_empty());
+    assert!(
+        events
+            .iter()
+            .all(|e| e[0].is_number() && e[1].is_string() && e[2].is_string())
+    );
+    let (status, raw) = call(&env.app, req("GET", &format!("{uri}&redact=false"), None)).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(raw.lines().count() >= events.len());
+
+    // A conversation with no recording, and an unknown one.
+    let bare = self::env();
+    seed(&bare, ID);
+    let (status, text) = call(&bare.app, req("GET", &uri, None)).await;
+    assert_eq!(
+        (status, text.as_str()),
+        (StatusCode::NOT_FOUND, "Marshell has no recording of this conversation.")
+    );
+    let missing = "00000000-0000-4000-8000-0000000000ff";
+    let (status, text) = call(
+        &env.app,
+        req(
+            "GET",
+            &format!("/v1/history/claude/{missing}/export?format=asciicast"),
+            None,
+        ),
+    )
+    .await;
+    assert_eq!((status, text.as_str()), (StatusCode::NOT_FOUND, NO_SUCH));
+}
+
 /// Seeds a Marshell home for the slice 5a live check: the five transcript fixtures as archived Claude sessions, each with
 /// its sidecar and zstd copy, in two project folders. The transcripts sit in `<seed>/../transcripts`; the one for
 /// `…0b4` is deleted after its copy, so Resume refuses it. Run with

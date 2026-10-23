@@ -6,6 +6,7 @@ import type { HistoryEntry } from "../../generated/HistoryEntry";
 import type { HistoryPatch } from "../../generated/HistoryPatch";
 import type { HistoryQuery } from "../../generated/HistoryQuery";
 import type { SearchHit } from "../../generated/SearchHit";
+import type { ExportFormat } from "../exportName";
 import { ApiError, api, coreFetch } from "./client";
 import { reasonOf, refusable } from "./sessions";
 
@@ -83,8 +84,8 @@ export const history = {
   /** Like `resume`, but Claude starts a new conversation from this one. */
   fork: (ep: Endpoint, agent: string, id: string, size: Size): Promise<Resumed> =>
     startAgain(ep, `${conversation(agent, id)}/fork`, size),
-  /** The conversation as text, with secrets and personal paths hidden when `redact`. */
-  exportText: async (ep: Endpoint, agent: string, id: string, format: "markdown" | "json", redact: boolean): Promise<string> => {
+  /** The conversation as text (or, for "asciicast", its recording), with secrets and personal paths hidden when `redact`. */
+  exportText: async (ep: Endpoint, agent: string, id: string, format: ExportFormat, redact: boolean): Promise<string> => {
     const params = new URLSearchParams({ format, redact: String(redact) });
     const res = await coreFetch(ep, "GET", `${conversation(agent, id)}/export?${params.toString()}`);
     if (!res.ok) throw new ApiError(res.status, await res.text());

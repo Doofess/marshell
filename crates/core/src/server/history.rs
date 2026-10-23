@@ -7,7 +7,7 @@ use super::AppState;
 use super::sessions::{NO_CONVERSATION, ResumeRequest, cannot_resume, resolve, start_session};
 use crate::agents::claude::transcript;
 use crate::history::cast::{self, FrameStart, FramesError};
-use crate::history::export::{ExportFormat, export_text};
+use crate::history::export::{AsciicastError, ExportFormat, export_text, to_asciicast};
 use crate::history::marks::normalize_name;
 use crate::history::recorder::{BookmarkRefusal, BookmarkTurnRefusal, DeleteRefusal, History};
 use crate::history::{SessionMeta, archive, recordings, transcript_allowed, valid_session_id};
@@ -168,8 +168,8 @@ fn yes() -> bool {
     true
 }
 
-/// The conversation as markdown (the default) or JSON, with secrets and personal paths hidden unless
-/// `redact=false`. The text is built here; the Save dialog is the shell's.
+/// The conversation as markdown (the default), JSON or an asciicast of its recording, with secrets and personal
+/// paths hidden unless `redact=false`. The text is built here; the Save dialog is the shell's.
 pub async fn export(
     State(st): State<AppState>,
     Path((agent, session_id)): Path<(String, String)>,
@@ -178,16 +178,39 @@ pub async fn export(
     check(&agent, &session_id)?;
     let history = st.history();
     let home = st.home().to_path_buf();
-    let text = blocking(move || {
-        let conversation = load_conversation(&history, &home, &session_id)?;
-        Ok(export_text(conversation, query.format, query.redact))
+    let (format, redact) = (query.format, query.redact);
+    let text = blocking(move || match format {
+        ExportFormat::Asciicast => asciicast(&history, &home, &session_id, redact),
+        _ => {
+            let conversation = load_conversation(&history, &home, &session_id)?;
+            Ok(export_text(conversation, format, redact))
+        }
     })
     .await?;
-    let kind = match query.format {
+    let kind = match format {
         ExportFormat::Markdown => "text/markdown; charset=utf-8",
         ExportFormat::Json => "application/json",
+        ExportFormat::Asciicast => "application/x-asciicast",
     };
     Ok(([(header::CONTENT_TYPE, kind)], text).into_response())
+}
+
+const NO_RECORDING: &str = "Marshell has no recording of this conversation.";
+const RECORDING_TOO_LARGE: &str = "This recording is over 64 MiB, too large to export.";
+
+/// The conversation's recording as an asciicast, titled with its name or its title. Blocking.
+fn asciicast(history: &History, home: &std::path::Path, session_id: &str, redact: bool) -> Result<String, Fail> {
+    let parts = recording_parts(history, home, session_id)?;
+    if parts.is_empty() {
+        return Err((StatusCode::NOT_FOUND, NO_RECORDING.into()));
+    }
+    let entry = history.entry(AGENT, session_id).map_err(failed)?.ok_or_else(no_such)?;
+    let title = history.marks(AGENT, session_id).name.unwrap_or(entry.title);
+    let redactor = redact.then(crate::diagnostics::redact::global);
+    to_asciicast(home, &parts, &title, redactor).map_err(|err| match err {
+        AsciicastError::TooLarge => (StatusCode::PAYLOAD_TOO_LARGE, RECORDING_TOO_LARGE.into()),
+        AsciicastError::Failed(err) => failed(err),
+    })
 }
 
 const NO_PART: &str = "No such part of the recording.";
