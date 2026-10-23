@@ -88,6 +88,11 @@ Out of scope:
 ### The `marshell://` link (phase 4)
 
 - It carries no authority: it can only focus Marshell and select a tab. It never sends input, answers a permission request or applies a change. Registering it is a setting that is off by default.
+- Built in slice 4e (`src-tauri/src/link.rs`):
+  - **Two shapes.** Only two shapes parse: `marshell://show` and `marshell://focus/<tab>`, where the tab id matches `^[A-Za-z0-9_-]{1,64}$`. The scheme and the word are read in any case, and one trailing `/` is allowed. Anything longer than 128 bytes or not ASCII is refused, and so is anything else, rather than trimmed.
+  - **Where it arrives.** A link arrives in two ways. One is a toast's in-process activation. The other is a second launch, where only a lone `argv[1]` is read and the rest of the command line is never looked at. A cold start launched with a link starts Marshell normally and ignores the link. One click reported both ways selects once: the same link is ignored for 2 s.
+  - **Registration.** The "Open sessions from the notification centre" switch registers the link under `HKCU\Software\Classes\marshell`, pointing at the running exe. Its state is read from the registry and never stored. Turning it off removes the key only when the key points at this exe. The uninstaller removes it on the same condition, and not during an update.
+  - **What a hostile link can do.** A page or document that gets the person to open a link can at most bring Marshell forward and select a session whose random tab id it already knows. Browsers ask before they open an external protocol.
 
 ### Instruction library (phase 7)
 
