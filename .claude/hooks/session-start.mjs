@@ -96,7 +96,8 @@ function main() {
     }
   };
   add(ledgersIn(root), root);
-  if (main) {
+  // Only a session in the main checkout lists the worktrees' ledgers; a worktree sees its own.
+  if (main && realpathSync.native(main) === realpathSync.native(root)) {
     for (const wt of subdirs(path.join(main, '.claude', 'worktrees'))) {
       add(ledgersIn(wt), main);
     }

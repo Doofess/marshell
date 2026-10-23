@@ -78,6 +78,29 @@ test('silent_without_ledger_beyond_branch', () => {
   }
 });
 
+test('worktree_shows_only_its_own_ledgers', () => {
+  const dir = makeRepo();
+  try {
+    const wt = path.join(dir, '.claude', 'worktrees', 'wt');
+    git(dir, 'worktree', 'add', '-q', '-b', 'wt', wt);
+    ledger(dir, 'main-plan', '# SDD ledger — plan: plans/main-plan.md\n');
+    const other = path.join(dir, '.claude', 'worktrees', 'other');
+    git(dir, 'worktree', 'add', '-q', '-b', 'other', other);
+    ledger(wt, 'wt-plan', '# SDD ledger — plan: plans/wt-plan.md\n');
+    ledger(other, 'other-plan', '# SDD ledger — plan: plans/other-plan.md\n');
+    const fromMain = context(run(dir));
+    assert.match(fromMain, /plan main-plan\.md/);
+    assert.match(fromMain, /plan wt-plan\.md/);
+    assert.match(fromMain, /plan other-plan\.md/);
+    const fromWt = context(run(wt));
+    assert.match(fromWt, /^Branch wt,/);
+    assert.match(fromWt, /plan wt-plan\.md/);
+    assert.doesNotMatch(fromWt, /main-plan|other-plan/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('caps_at_15_lines', () => {
   const dir = makeRepo();
   try {
