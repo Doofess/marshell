@@ -49,18 +49,22 @@ function describe(file, base) {
   // The first line reads `# SDD ledger — plan: <plan path>`.
   const planPath = /\bplan:\s*(\S+)/i.exec(first)?.[1] ?? '';
   const plan = planPath ? planPath.split(/[\\/]/).pop() : 'unknown';
+  // Tasks can finish out of order, so the next one is the first without a complete line, and `last` is the latest line.
   let last = null;
-  let n = 0;
+  const done = new Set();
   for (const line of lines) {
     const m = /Task (\d+): complete/.exec(line);
     if (m) {
       last = line.trim();
-      n = Number(m[1]);
+      done.add(Number(m[1]));
     }
   }
+  let next = 1;
+  while (done.has(next)) next++;
   const rel = path.relative(base, file).split(path.sep).join('/');
   const tail = last === null ? 'none' : last.slice(0, MAX_LAST);
-  return `Ledger ${rel}: plan ${plan}; last: ${tail}; next: Task ${n + 1}.`;
+  const finished = done.size === 0 ? '' : ` done: Tasks ${[...done].sort((a, b) => a - b).join(', ')};`;
+  return `Ledger ${rel}: plan ${plan};${finished} last: ${tail}; next: Task ${next}.`;
 }
 
 function main() {

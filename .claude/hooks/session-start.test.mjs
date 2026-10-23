@@ -67,6 +67,20 @@ test('prints_branch_and_ledger_tail', () => {
   }
 });
 
+test('next_is_the_first_task_without_a_complete_line', () => {
+  const dir = makeRepo();
+  try {
+    const head = '# SDD ledger — plan: docs/superpowers/plans/p.md\n';
+    ledger(dir, 'gap', `${head}Task 1: complete (a)\nTask 3: complete (c)\nTask 4: complete (d)\n`);
+    ledger(dir, 'shuffled', `${head}Task 1: complete (a)\nTask 3: complete (c)\nTask 4: complete (d)\nTask 2: complete (b)\n`);
+    const ctx = context(run(dir));
+    assert.match(ctx, /sdd\/gap\/progress\.md: plan p\.md; done: Tasks 1, 3, 4; last: Task 4: complete \(d\); next: Task 2\./);
+    assert.match(ctx, /sdd\/shuffled\/progress\.md: plan p\.md; done: Tasks 1, 2, 3, 4; last: Task 2: complete \(b\); next: Task 5\./);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('silent_without_ledger_beyond_branch', () => {
   const dir = makeRepo();
   try {
