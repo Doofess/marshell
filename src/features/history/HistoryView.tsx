@@ -58,7 +58,7 @@ export type HistoryViewProps = {
   banner?: ReactNode;
   /** A file or web link clicked in assistant text. */
   onLink?: ConversationViewProps["onLink"];
-};
+} & Partial<Pick<ConversationViewProps, "onFork" | "onPatch" | "onBookmark" | "onExport" | "onCopyMarkdown" | "onDelete" | "editor" | "onEditor" | "error">>;
 
 export const EMPTY_LIST_COPY = "No conversations yet. Claude Code sessions you run in Marshell show up here when their first turn ends.";
 export const noHitsCopy = (query: string) => `Nothing matches “${query}”.`;
@@ -69,6 +69,7 @@ export const noBookmarksCopy = (shortcut: string) => `No bookmarks yet. Press ${
 export const hitKey = (h: Pick<SearchHit, "session_id" | "turn">) => `${h.session_id}:${h.turn}`;
 
 const folderName = (cwd: string) => cwd.split(/[\\/]/).filter(Boolean).pop() ?? cwd;
+const noop = () => {};
 const UNTITLED = "Untitled conversation";
 
 const WHEN_LABELS: [When, string][] = [
@@ -339,6 +340,15 @@ export function HistoryView(p: HistoryViewProps) {
               onResume={() => p.onResume({ agent: shown.agent, session_id: shown.session_id })}
               onGoTo={p.onGoTo}
               onLink={p.onLink}
+              onFork={p.onFork ?? noop}
+              onPatch={p.onPatch ?? noop}
+              onBookmark={p.onBookmark ?? noop}
+              onExport={p.onExport ?? noop}
+              onCopyMarkdown={p.onCopyMarkdown ?? noop}
+              onDelete={p.onDelete ?? noop}
+              editor={p.editor ?? null}
+              onEditor={p.onEditor ?? noop}
+              error={p.error}
             />
           )}
         </div>
