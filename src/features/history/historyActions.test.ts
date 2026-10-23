@@ -69,13 +69,23 @@ describe("deleteConversation", () => {
 });
 
 describe("actionAnnouncement", () => {
+  const saved = { named: false, title: "Claude's own title" };
   it("says what a change did, in the plan's words", () => {
-    expect(actionAnnouncement({ name: "  Billing  " })).toBe("Renamed to “Billing”.");
-    expect(actionAnnouncement({ name: "   " })).toBe("Name cleared.");
-    expect(actionAnnouncement({ pinned: true })).toBe("Pinned.");
-    expect(actionAnnouncement({ pinned: false })).toBe("Unpinned.");
-    expect(actionAnnouncement({ archived: true })).toBe("Archived.");
-    expect(actionAnnouncement({ archived: false })).toBe("Unarchived.");
-    expect(actionAnnouncement({ tags: ["a"] })).toBe("Tags saved.");
+    expect(actionAnnouncement({ name: "  Billing  " }, { named: true, title: "Billing" })).toBe("Renamed to “Billing”.");
+    expect(actionAnnouncement({ name: "   " }, saved)).toBe("Name cleared.");
+    expect(actionAnnouncement({ pinned: true }, saved)).toBe("Pinned.");
+    expect(actionAnnouncement({ pinned: false }, saved)).toBe("Unpinned.");
+    expect(actionAnnouncement({ archived: true }, saved)).toBe("Archived.");
+    expect(actionAnnouncement({ archived: false }, saved)).toBe("Unarchived.");
+    expect(actionAnnouncement({ tags: ["a"] }, saved)).toBe("Tags saved.");
+  });
+
+  it("announces a name the core cleared as cleared, though text was typed", () => {
+    expect(actionAnnouncement({ name: "‮" }, saved)).toBe("Name cleared.");
+  });
+
+  it("announces the name as saved, not as typed", () => {
+    const typed = "x".repeat(300);
+    expect(actionAnnouncement({ name: typed }, { named: true, title: "x".repeat(120) })).toBe(`Renamed to “${"x".repeat(120)}”.`);
   });
 });

@@ -1,4 +1,5 @@
 import type { Endpoint } from "../../generated/Endpoint";
+import type { HistoryEntry } from "../../generated/HistoryEntry";
 import type { HistoryPatch } from "../../generated/HistoryPatch";
 import { history } from "../../lib/api/history";
 
@@ -9,12 +10,9 @@ type Target = { agent: string; session_id: string };
 
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
-/** What a change the core accepted is announced as. */
-export function actionAnnouncement(p: HistoryPatch): string {
-  if (p.name !== undefined) {
-    const name = p.name.trim();
-    return name === "" ? "Name cleared." : `Renamed to “${name}”.`;
-  }
+/** What a change the core accepted is announced as. A name is announced as the core saved it (`saved` is the entry it returned), since it may have cleared or cut what was typed. */
+export function actionAnnouncement(p: HistoryPatch, saved: Pick<HistoryEntry, "named" | "title">): string {
+  if (p.name !== undefined) return saved.named && saved.title !== "" ? `Renamed to “${saved.title}”.` : "Name cleared.";
   if (p.pinned !== undefined) return p.pinned ? "Pinned." : "Unpinned.";
   if (p.archived !== undefined) return p.archived ? "Archived." : "Unarchived.";
   return "Tags saved.";

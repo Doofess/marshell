@@ -257,7 +257,7 @@ export function LiveHistory({ endpoint, rows, os, searchFocus, size, announce, o
       if (!r.ok) return fail(r.reason);
       setEditorError(undefined);
       setEditor(null);
-      announce(actionAnnouncement(p));
+      announce(actionAnnouncement(p, r.entry));
       refresh();
     } catch (e) {
       fail(`Couldn't save: ${failureText(e)}`);
