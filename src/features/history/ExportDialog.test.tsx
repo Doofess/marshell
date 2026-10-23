@@ -49,3 +49,19 @@ describe("ExportDialog", () => {
     expect(announce).toHaveBeenLastCalledWith("Copied as markdown.");
   });
 });
+
+describe("saveExport with hidden secrets", () => {
+  it("names the file from the redacted title", async () => {
+    const onSave = vi.fn((_text: string, _name: string) => Promise.resolve<string | null>(null));
+    await saveExport({
+      text: "# use <anthropic-key> here\n\nbody",
+      title: "use sk-ant-api03-SECRET here",
+      format: "markdown",
+      redact: true,
+      onSave,
+      announce: vi.fn(),
+      now: new Date(2026, 9, 23),
+    });
+    expect(onSave.mock.calls[0]![1]).toBe("use-anthropic-key-here-2026-10-23.md");
+  });
+});

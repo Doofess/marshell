@@ -16,3 +16,20 @@ export function exportFileName(title: string, format: ExportFormat, now: Date): 
   const date = `${String(now.getFullYear()).padStart(4, "0")}-${two(now.getMonth() + 1)}-${two(now.getDate())}`;
   return `${words || "conversation"}-${date}.${format === "markdown" ? "md" : "json"}`;
 }
+
+/** The title that names the saved file. Without redaction it is the conversation's own title. With it, the title is read from the
+ *  redacted export itself (the first `# ` line of markdown, the `title` of JSON), so a secret or a personal path in the title never
+ *  reaches the file name; when the export has none, it is empty and the name falls back to "conversation". */
+export function exportTitle(text: string, format: ExportFormat, title: string, redact: boolean): string {
+  if (!redact) return title;
+  if (format === "markdown") {
+    const first = text.split(/\r?\n/, 1)[0] ?? "";
+    return first.startsWith("# ") ? first.slice(2) : "";
+  }
+  try {
+    const t = (JSON.parse(text) as { title?: unknown }).title;
+    return typeof t === "string" ? t : "";
+  } catch {
+    return "";
+  }
+}

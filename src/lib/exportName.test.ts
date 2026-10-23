@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { exportFileName } from "./exportName";
+import { exportFileName, exportTitle } from "./exportName";
 
 const day = new Date(2026, 9, 23, 23, 59);
 
@@ -34,5 +34,25 @@ describe("exportFileName", () => {
         expect(name.length).toBeLessThanOrEqual(60);
       }
     }
+  });
+});
+
+describe("exportTitle", () => {
+  const raw = "use sk-ant-api03-SECRET here";
+  it("uses the raw title when nothing is hidden", () => {
+    expect(exportTitle("# other\n\nbody", "markdown", raw, false)).toBe(raw);
+  });
+  it("reads the redacted title from the first line of a markdown export", () => {
+    const name = exportFileName(exportTitle("# use <anthropic-key> here\n\nbody", "markdown", raw, true), "markdown", day);
+    expect(name).toContain("anthropic-key");
+    expect(name).not.toContain("sk-ant");
+  });
+  it("reads the redacted title from a JSON export", () => {
+    const text = JSON.stringify({ title: "fix <home>/app", turns: [] });
+    expect(exportFileName(exportTitle(text, "json", "fix C:\Users\rotem\app", true), "json", day)).toContain("home");
+  });
+  it("never falls back to the raw title when the redacted text has none", () => {
+    expect(exportTitle("not json", "json", raw, true)).toBe("");
+    expect(exportTitle("", "markdown", raw, true)).toBe("");
   });
 });

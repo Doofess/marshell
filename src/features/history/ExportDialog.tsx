@@ -1,5 +1,5 @@
 import { useEffect, useId, useRef, useState } from "react";
-import { exportFileName, type ExportFormat } from "../../lib/exportName";
+import { exportFileName, exportTitle, type ExportFormat } from "../../lib/exportName";
 import { useDialogFocus } from "../../lib/useDialogFocus";
 import "./ExportDialog.css";
 
@@ -10,11 +10,13 @@ export async function saveExport(p: {
   text: string;
   title: string;
   format: ExportFormat;
+  /** The text was exported with secrets and personal paths hidden, so the file is named from its title, not the raw one. */
+  redact?: boolean;
   onSave: (text: string, name: string) => Promise<string | null>;
   announce: (text: string) => void;
   now?: Date;
 }): Promise<void> {
-  const path = await p.onSave(p.text, exportFileName(p.title, p.format, p.now ?? new Date()));
+  const path = await p.onSave(p.text, exportFileName(exportTitle(p.text, p.format, p.title, p.redact ?? false), p.format, p.now ?? new Date()));
   if (path !== null) p.announce(`Saved to ${path}.`);
 }
 
@@ -89,7 +91,7 @@ export function ExportDialog({ title, load, onSave, onCopy, onClose, announce }:
     setBusy(true);
     setProblem(null);
     try {
-      if (what === "save") await saveExport({ text, title, format, onSave, announce });
+      if (what === "save") await saveExport({ text, title, format, redact, onSave, announce });
       else await copyExport({ text, format, onCopy, announce });
     } catch (e) {
       const failed = `Couldn't ${what === "save" ? "save" : "copy"} the export: ${message(e)}`;
