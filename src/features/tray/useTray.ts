@@ -43,8 +43,13 @@ export function trayModel(state: TrayState): TrayModel {
 /** What a tray menu choice does in the window. Open and Quit are the shell's own and never get here. */
 export type TrayAction = { kind: "goto"; number: number } | { kind: "nextWaiting" } | { kind: "overlay"; overlay: "notifications" | "departures" } | { kind: "togglePause" };
 
+/** A jump to a session from outside the window (a tray choice, a banner) closes the board or the palette over it: neither holds a draft. */
+export function jumpCloses(overlay: string | null): boolean {
+  return overlay === "departures" || overlay === "palette";
+}
+
 export function trayClosesBoard(action: TrayAction, overlay: string | null): boolean {
-  return overlay === "departures" && (action.kind === "goto" || action.kind === "nextWaiting");
+  return jumpCloses(overlay) && (action.kind === "goto" || action.kind === "nextWaiting");
 }
 
 /** The tray's `pause` is the notifications pause, not the palette's Pause session. */

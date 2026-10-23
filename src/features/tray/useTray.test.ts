@@ -4,18 +4,29 @@ import { mountHook } from "../../test/hooks";
 import type { ApprovalRequest } from "../approval/types";
 import type { RowModel } from "../sidebar/types";
 import type { TrayState } from "./trayItems";
-import { actionFor, trayClosesBoard, trayModel, traySessions, useTray, type TrayAction } from "./useTray";
+import { actionFor, jumpCloses, trayClosesBoard, trayModel, traySessions, useTray, type TrayAction } from "./useTray";
 
 vi.mock("react", async () => ({ ...await vi.importActual("react"), ...(await import("../../test/hooks")).hooks }));
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 afterEach(() => vi.clearAllMocks());
 
+describe("jumpCloses", () => {
+  it("closes the board and the palette for a jump from outside the window, and leaves a dialog or nothing alone", () => {
+    expect(jumpCloses("departures")).toBe(true);
+    expect(jumpCloses("palette")).toBe(true);
+    expect(jumpCloses("appearance")).toBe(false);
+    expect(jumpCloses("notifications")).toBe(false);
+    expect(jumpCloses(null)).toBe(false);
+  });
+});
+
 describe("trayClosesBoard", () => {
   it.each([
     [{ kind: "goto", number: 2 }, "departures", true],
     [{ kind: "nextWaiting" }, "departures", true],
-    [{ kind: "goto", number: 2 }, "palette", false],
-    [{ kind: "nextWaiting" }, "palette", false],
+    [{ kind: "goto", number: 2 }, "palette", true],
+    [{ kind: "nextWaiting" }, "palette", true],
+    [{ kind: "goto", number: 2 }, "appearance", false],
     [{ kind: "goto", number: 2 }, null, false],
     [{ kind: "nextWaiting" }, null, false],
     [{ kind: "overlay", overlay: "departures" }, "departures", false],

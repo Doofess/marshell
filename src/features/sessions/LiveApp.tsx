@@ -50,7 +50,7 @@ import { needsYouCount } from "../attention/attention";
 import { useAttention } from "../attention/useAttention";
 import { useRowFlash } from "../attention/rowFlash";
 import { notify } from "../../lib/api/notify";
-import { trayClosesBoard, traySessions, useTray, useTrayActions, type TrayAction } from "../tray/useTray";
+import { jumpCloses, trayClosesBoard, traySessions, useTray, useTrayActions, type TrayAction } from "../tray/useTray";
 import { CloseDialog } from "../window/CloseDialog";
 import { chooseClose as applyCloseChoice } from "../window/closeChoice";
 import { NotificationsDialog } from "../notifications/NotificationsDialog";
@@ -264,7 +264,9 @@ export function LiveApp() {
     let gone = false;
     let stop: (() => void) | undefined;
     listen<{ tab_id: string | null }>("focus-session", (e) => {
-      if (e.payload.tab_id) pickRef.current(e.payload.tab_id);
+      if (!e.payload.tab_id) return;
+      setOverlay((o) => (jumpCloses(o) ? null : o));
+      pickRef.current(e.payload.tab_id);
     })
       .then((s) => (gone ? s() : (stop = s)))
       .catch(() => {}); // Outside Tauri (tests, a plain browser) there are no events.
