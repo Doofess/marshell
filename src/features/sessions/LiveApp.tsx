@@ -1282,7 +1282,9 @@ export function LiveApp() {
       />
     ) : undefined;
   // The core decides whether a banner is worth showing from this: whether the window has focus and which sessions are on screen.
-  useViewReport(endpoint, previewPane && focusedId ? [focusedId] : visibleIds);
+  // Under the History view the terminals stay mounted but none is on screen, so none is reported (or marked in the sidebar) as seen.
+  const onScreenIds = mainView === "history" ? [] : previewPane && focusedId ? [focusedId] : visibleIds;
+  useViewReport(endpoint, onScreenIds);
   return (
     <PreviewContext.Provider value={preview.open}>
     <div ref={ref} className="live-app">
@@ -1312,7 +1314,7 @@ export function LiveApp() {
           onPane={dispatch}
           rows={sidebarRows}
           selectedId={focusedId}
-          visibleIds={previewPane && focusedId ? [focusedId] : visibleIds}
+          visibleIds={onScreenIds}
           preview={previewPane}
           mainView={
             mainView === "history" && endpoint && os ? (
