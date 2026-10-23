@@ -284,6 +284,10 @@ fn prompt_text(content: &Value) -> Option<String> {
         _ => return None,
     };
     let text = raw.trim();
+    // Claude Code's own note that the person pressed Esc, written as a user line.
+    if text.starts_with("[Request interrupted by user") && text.ends_with(']') {
+        return None;
+    }
     let prompt = match text
         .strip_prefix('<')
         .map(|rest| rest.split(['>', ' ']).next().unwrap_or_default())
@@ -649,6 +653,35 @@ mod tests {
         assert_eq!(prompts, ["/model opus", "! git status", "look at this [image]"]);
         assert_eq!(texts(&conv.turns[2]), ["Looks fine."]);
         assert!(!conv.limited);
+    }
+
+    #[test]
+    fn interrupt_markers_are_not_prompts() {
+        let user = |n: u32, content: serde_json::Value| {
+            serde_json::json!({
+                "type": "user", "uuid": format!("00000000-0000-4000-8000-{n:012}"), "cwd": "C:/work/demo",
+                "version": "2.1.309", "timestamp": "2026-10-20T09:00:02.000Z",
+                "message": {"role": "user", "content": content}
+            })
+        };
+        let conv = parse(
+            &transcript(
+                Some("2.1.309"),
+                &[
+                    assistant(2, serde_json::json!({"type": "text", "text": "Working on it."})),
+                    user(
+                        3,
+                        serde_json::json!([{"type": "text", "text": "[Request interrupted by user]"}]),
+                    ),
+                    user(4, serde_json::json!("[Request interrupted by user for tool use]")),
+                    assistant(5, serde_json::json!({"type": "text", "text": "Stopped."})),
+                ],
+            ),
+            SID,
+        );
+        let prompts: Vec<&str> = conv.turns.iter().map(|t| t.prompt.as_str()).collect();
+        assert_eq!(prompts, ["go"]);
+        assert_eq!(texts(&conv.turns[0]), ["Working on it.", "Stopped."]);
     }
 
     #[test]
