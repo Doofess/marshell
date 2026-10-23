@@ -46,7 +46,8 @@ function describe(file, base) {
   const text = readFileSync(file, 'utf8');
   const lines = text.split(/\r?\n/);
   const first = (lines[0] ?? '').trim();
-  const planPath = first.toLowerCase().startsWith('plan:') ? first.slice(5).trim() : '';
+  // The first line reads `# SDD ledger — plan: <plan path>`.
+  const planPath = /\bplan:\s*(\S+)/i.exec(first)?.[1] ?? '';
   const plan = planPath ? planPath.split(/[\\/]/).pop() : 'unknown';
   let last = null;
   let n = 0;

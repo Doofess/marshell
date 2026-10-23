@@ -19,4 +19,4 @@ paths:
 - The frontend talks only to the core API, never to a CLI directly. (PLAN.md §1)
 - Test components through `renderToStaticMarkup`; Vitest runs in node with no DOM. (AGENTS.md)
 - xterm.js 6 on Windows: Ctrl+V reaches the CLI as ^V and fires no paste event, and Ctrl+Shift+V is the terminal's paste. (CLAUDE.md, Gotchas)
-- Never enable Tauri's native file drop; it disables in-page HTML5 drag and drop on Windows. (CLAUDE.md, Gotchas)
+- Tauri's native file drop is on (`dragDropEnabled`), and on Windows that disables in-page HTML5 drag and drop, so don't build on HTML5 drop events. (CLAUDE.md, Gotchas; `src-tauri/tauri.conf.json`)

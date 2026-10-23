@@ -54,7 +54,7 @@ test('prints_branch_and_ledger_tail', () => {
     ledger(
       dir,
       'plan-x',
-      'plan: docs/superpowers/plans/2026-10-23-plan-x.md\nTask 1: complete (abc)\nnotes\nTask 2: complete (def123)\nruling: something\n',
+      '# SDD ledger — plan: docs/superpowers/plans/2026-10-23-plan-x.md\nTask 1: complete (abc)\nnotes\nTask 2: complete (def123)\nruling: something\n',
     );
     const ctx = context(run(dir));
     assert.match(ctx, /^Branch work, 1 uncommitted files\./);
@@ -82,7 +82,7 @@ test('caps_at_15_lines', () => {
   const dir = makeRepo();
   try {
     for (let i = 0; i < 20; i++) {
-      ledger(dir, `p${String(i).padStart(2, '0')}`, `plan: plans/p${i}.md\nTask 1: complete (x)\n`);
+      ledger(dir, `p${String(i).padStart(2, '0')}`, `# SDD ledger — plan: plans/p${i}.md\nTask 1: complete (x)\n`);
     }
     const ctx = context(run(dir));
     assert.equal(ctx.split('\n').length, 15);
