@@ -6,20 +6,21 @@ import type { HistoryEntry } from "../../generated/HistoryEntry";
 import type { SearchHit } from "../../generated/SearchHit";
 import { history } from "../../lib/api/history";
 import { ApiError } from "../../lib/api/client";
-import type { Os } from "../../lib/keymap";
+import { commandById, shortcutLabel, type Os } from "../../lib/keymap";
 import { WebLinkBar } from "../preview/WebLinkBar";
 import type { RowModel } from "../sidebar/types";
 import { NO_ARCHIVE_COPY } from "./ConversationView";
 import {
   EMPTY_LIST_COPY,
   HistoryView,
+  noBookmarksCopy,
   noHitsCopy,
   type FilterName,
   type HistoryFilters,
   type HistoryViewProps,
   type When,
 } from "./HistoryView";
-import { escapeAction, sinceFor } from "./historyState";
+import { bookmarkQuery, escapeAction, listQuery } from "./historyState";
 
 /** How long the search waits after the last keystroke. */
 const SEARCH_DELAY_MS = 150;
@@ -27,10 +28,11 @@ const LOADING_COPY = "Loading conversations…";
 export const NO_FILTER_MATCH_COPY = "No conversations match these filters.";
 
 /** What the list says when it has no rows and no search is running: the failure, loading, or why it is empty (a filter that excludes everything is not "no conversations yet"). */
-export function listEmptyText(filters: HistoryFilters, loaded: boolean, error: string | null): string {
+export function listEmptyText(filters: HistoryFilters, loaded: boolean, error: string | null, bookmarkShortcut = ""): string {
   if (error) return error;
   if (!loaded) return LOADING_COPY;
-  const filtered = filters.when !== "any" || Boolean(filters.agent || filters.project || filters.branch || filters.model);
+  if (filters.bookmarked) return noBookmarksCopy(bookmarkShortcut);
+  const filtered = filters.when !== "any" || Boolean(filters.agent || filters.project || filters.branch || filters.model || filters.tag);
   return filtered ? NO_FILTER_MATCH_COPY : EMPTY_LIST_COPY;
 }
 
@@ -53,6 +55,7 @@ export function conversationFailure(e: unknown): string {
 }
 
 type Listed = { entries: HistoryEntry[]; now: number; loaded: boolean; error: string | null };
+type Marked = { hits: SearchHit[]; error: string | null };
 type Searched = { query: string; hits: SearchHit[]; error: string | null };
 type Shown = Conversation | "loading" | { error: string } | null;
 type Link = Parameters<NonNullable<HistoryViewProps["onLink"]>>[0];
@@ -78,10 +81,11 @@ export type LiveHistoryProps = {
 
 /** The History view wired to the core: it fetches the list on open and on each filter change, searches 150 ms after the last keystroke, opens a conversation on Enter or a click, and resumes it. */
 export function LiveHistory({ endpoint, rows, os, searchFocus, size, announce, onGoTo, onResumed, onOpenFile, onClose }: LiveHistoryProps) {
-  const [filters, setFilters] = useState<HistoryFilters>({ when: "any" });
+  const [filters, setFilters] = useState<HistoryFilters>({ when: "any", bookmarked: false, archived: false });
   const [listed, setListed] = useState<Listed>({ entries: [], now: Date.now(), loaded: false, error: null });
   const [query, setQuery] = useState("");
   const [searched, setSearched] = useState<Searched | null>(null);
+  const [marked, setMarked] = useState<Marked | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [conversation, setConversation] = useState<Shown>(null);
   const [refusal, setRefusal] = useState<string | null>(null);
@@ -94,10 +98,23 @@ export function LiveHistory({ endpoint, rows, os, searchFocus, size, announce, o
   useEffect(() => {
     let live = true;
     const now = Date.now();
-    const { when, ...rest } = filters;
-    history.list(endpoint, { ...rest, since_ms: sinceFor(when, now) }).then(
+    history.list(endpoint, listQuery(filters, now)).then(
       (entries) => live && setListed({ entries, now, loaded: true, error: null }),
       (e: unknown) => live && setListed({ entries: [], now, loaded: true, error: failureText(e) }),
+    );
+    return () => {
+      live = false;
+    };
+  }, [endpoint, filters]);
+
+  // The bookmarks: one row per bookmark, fetched while the Bookmarked filter is on.
+  useEffect(() => {
+    setMarked(null);
+    if (!filters.bookmarked) return;
+    let live = true;
+    history.bookmarks(endpoint, bookmarkQuery(filters, Date.now())).then(
+      (hits) => live && setMarked({ hits, error: null }),
+      (e: unknown) => live && setMarked({ hits: [], error: failureText(e) }),
     );
     return () => {
       live = false;
@@ -113,7 +130,7 @@ export function LiveHistory({ endpoint, rows, os, searchFocus, size, announce, o
     }
     let live = true;
     const timer = setTimeout(() => {
-      history.search(endpoint, q).then(
+      history.search(endpoint, q, filters.archived).then(
         (hits) => live && setSearched({ query: q, hits, error: null }),
         (e: unknown) => live && setSearched({ query: q, hits: [], error: failureText(e) }),
       );
@@ -122,12 +139,20 @@ export function LiveHistory({ endpoint, rows, os, searchFocus, size, announce, o
       live = false;
       clearTimeout(timer);
     };
-  }, [endpoint, query]);
+  }, [endpoint, query, filters.archived]);
 
   const searching = query.trim() !== "" && searched !== null;
-  const hits = searching ? searched.hits : null;
-  const emptyText = searching ? (searched.error ?? noHitsCopy(searched.query)) : listEmptyText(filters, listed.loaded, listed.error);
-  const isEmpty = searching ? searched.hits.length === 0 : listed.loaded && listed.entries.length === 0;
+  const showMarked = !searching && query.trim() === "" && filters.bookmarked;
+  const bookmarkShortcut = shortcutLabel(commandById("bookmark")!.binding!, os);
+  const hits = searching ? searched.hits : showMarked ? (marked?.hits ?? []) : null;
+  const emptyText = searching
+    ? (searched.error ?? noHitsCopy(searched.query))
+    : showMarked
+      ? marked === null
+        ? LOADING_COPY
+        : (marked.error ?? noBookmarksCopy(bookmarkShortcut))
+      : listEmptyText(filters, listed.loaded, listed.error, bookmarkShortcut);
+  const isEmpty = searching ? searched.hits.length === 0 : showMarked ? marked !== null && marked.hits.length === 0 : listed.loaded && listed.entries.length === 0;
 
   // What the list says when it has nothing is spoken once when it appears or changes, not on every render.
   const emptySpoken = isEmpty ? emptyText : null;
@@ -178,6 +203,8 @@ export function LiveHistory({ endpoint, rows, os, searchFocus, size, announce, o
     else onClose();
   };
 
+  const toggle = (name: "bookmarked" | "archived", on: boolean) => setFilters((f) => ({ ...f, [name]: on }));
+
   const filter = (name: FilterName, value: string) =>
     setFilters((f) => {
       if (name === "when") return { ...f, when: value as When };
@@ -223,6 +250,7 @@ export function LiveHistory({ endpoint, rows, os, searchFocus, size, announce, o
       searchFocus={searchFocus}
       onQuery={setQuery}
       onFilter={filter}
+      onToggle={toggle}
       onSelect={setSelectedId}
       onOpen={open}
       onResume={(t) => void resume(t)}

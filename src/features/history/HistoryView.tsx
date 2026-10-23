@@ -2,16 +2,28 @@ import { Fragment, useEffect, useId, useRef, type KeyboardEvent, type ReactNode 
 import type { Conversation } from "../../generated/Conversation";
 import type { HistoryEntry } from "../../generated/HistoryEntry";
 import type { SearchHit } from "../../generated/SearchHit";
+import { Chip } from "../../components/Chip/Chip";
 import { commandById, shortcutLabel, type Os } from "../../lib/keymap";
 import { ConversationView, type ConversationViewProps } from "./ConversationView";
-import { filterOptions, groupByProject, moveSelection, rowMeta } from "./historyState";
+import { PINNED_GROUP, filterOptions, groupByProject, moveSelection, rowMeta } from "./historyState";
 import { splitSnippet } from "./snippet";
 import "./History.css";
 
 export type When = "any" | "today" | "7d" | "30d";
-export type FilterName = "agent" | "project" | "branch" | "model" | "when";
+export type FilterName = "agent" | "project" | "branch" | "model" | "tag" | "when";
 /** An unset filter is left out. */
-export type HistoryFilters = { agent?: string; project?: string; branch?: string; model?: string; when: When };
+export type HistoryFilters = {
+  agent?: string;
+  project?: string;
+  branch?: string;
+  model?: string;
+  tag?: string;
+  when: When;
+  /** Show the bookmarks as rows, one per bookmark, instead of the list. */
+  bookmarked: boolean;
+  /** Include archived conversations in the list and the search. */
+  archived: boolean;
+};
 /** Which conversation, and for a search hit the turn it is in. */
 export type OpenTarget = { agent: string; session_id: string; turn?: number };
 
@@ -19,7 +31,7 @@ export type HistoryViewProps = {
   entries: HistoryEntry[];
   filters: HistoryFilters;
   query: string;
-  /** The search results, or null when the list is showing instead (no query). */
+  /** The search results, or with the Bookmarked filter on and no query the bookmarks, one hit per bookmark; null when the list is showing instead. */
   hits: SearchHit[] | null;
   /** A row's key: a session id in the list, `hitKey(hit)` among hits. */
   selectedId: string | null;
@@ -34,6 +46,7 @@ export type HistoryViewProps = {
   onQuery: (q: string) => void;
   /** An empty value clears the filter. */
   onFilter: (name: FilterName, value: string) => void;
+  onToggle: (name: "bookmarked" | "archived", on: boolean) => void;
   onSelect: (key: string) => void;
   onOpen: (target: OpenTarget) => void;
   onResume: (target: { agent: string; session_id: string }) => void;
@@ -49,6 +62,8 @@ export type HistoryViewProps = {
 
 export const EMPTY_LIST_COPY = "No conversations yet. Claude Code sessions you run in Marshell show up here when their first turn ends.";
 export const noHitsCopy = (query: string) => `Nothing matches “${query}”.`;
+/** `shortcut` is the label of the "Bookmark this point" key for the OS. */
+export const noBookmarksCopy = (shortcut: string) => `No bookmarks yet. Press ${shortcut} in a Claude Code session, or bookmark a turn here.`;
 
 /** A hit's row key: one session can match in several turns. */
 export const hitKey = (h: Pick<SearchHit, "session_id" | "turn">) => `${h.session_id}:${h.turn}`;
@@ -82,7 +97,10 @@ function Snippet({ text }: { text: string }) {
 /** The History view: a search box, filters and a grouped listbox of conversations beside the open conversation. Presentational; `LiveHistory` feeds it. */
 export function HistoryView(p: HistoryViewProps) {
   const uid = useId();
-  const searching = p.query.trim() !== "" && p.hits !== null;
+  const typed = p.query.trim() !== "";
+  // Hits show for a search, and for the Bookmarked filter while nothing is typed.
+  const searching = p.hits !== null && (typed || p.filters.bookmarked);
+  const bookmarkLabel = shortcutLabel(commandById("bookmark")!.binding!, p.os);
   const searchRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const sideRef = useRef<HTMLDivElement>(null);
@@ -151,6 +169,12 @@ export function HistoryView(p: HistoryViewProps) {
   };
 
   const options = filterOptions(p.entries);
+  const toggle = (name: "bookmarked" | "archived", label: string) => (
+    <label className="history__check">
+      <input type="checkbox" checked={p.filters[name]} onChange={(e) => p.onToggle(name, e.target.checked)} />
+      <span>{label}</span>
+    </label>
+  );
   const choose = (name: Exclude<FilterName, "when">, label: string, list: string[], display: (v: string) => string = (v) => v) => {
     const current = p.filters[name];
     return (
@@ -203,6 +227,7 @@ export function HistoryView(p: HistoryViewProps) {
               {choose("project", "Project", options.projects, folderName)}
               {choose("branch", "Branch", options.branches)}
               {choose("model", "Model", options.models)}
+              {choose("tag", "Tag", options.tags)}
               <label className="history__filter">
                 <span className="history__filter-label">When</span>
                 <select className="history__select" value={p.filters.when} onChange={(e) => p.onFilter("when", e.target.value)}>
@@ -213,12 +238,15 @@ export function HistoryView(p: HistoryViewProps) {
                   ))}
                 </select>
               </label>
+              {toggle("bookmarked", "Bookmarked")}
+              {toggle("archived", "Show archived")}
             </div>
           </div>
 
           {rows.length === 0 ? (
             <p className="history__empty">
-              {p.emptyText ?? (searching ? noHitsCopy(p.query) : EMPTY_LIST_COPY)}
+              {p.emptyText ??
+                (searching ? (typed ? noHitsCopy(p.query) : noBookmarksCopy(bookmarkLabel)) : EMPTY_LIST_COPY)}
             </p>
           ) : (
             <div
@@ -226,7 +254,7 @@ export function HistoryView(p: HistoryViewProps) {
               className="history__list"
               role="listbox"
               tabIndex={0}
-              aria-label={searching ? "Search results" : "Conversations"}
+              aria-label={searching ? (typed ? "Search results" : "Bookmarks") : "Conversations"}
               aria-activedescendant={selected ? domId(selected.key) : undefined}
               onKeyDown={onListKey}
             >
@@ -247,7 +275,7 @@ export function HistoryView(p: HistoryViewProps) {
                   )
                 : groups.map((g, gi) => (
                     <div key={g.project} role="group" aria-labelledby={`${uid}-group-${gi}`}>
-                      <h3 className="history__project" id={`${uid}-group-${gi}`} title={g.project} dir="auto">
+                      <h3 className="history__project" id={`${uid}-group-${gi}`} title={g.project === PINNED_GROUP ? undefined : g.project} dir="auto">
                         {g.label}
                       </h3>
                       {g.entries.map((entry) => (
@@ -268,6 +296,14 @@ export function HistoryView(p: HistoryViewProps) {
                           <span className="history__meta" dir="auto">
                             {rowMeta(entry, p.now)}
                           </span>
+                          {(entry.archived || entry.tags.length > 0) && (
+                            <span className="history__chips">
+                              {entry.archived && <Chip>Archived</Chip>}
+                              {entry.tags.map((tag) => (
+                                <Chip key={tag}>{tag}</Chip>
+                              ))}
+                            </span>
+                          )}
                         </div>
                       ))}
                     </div>

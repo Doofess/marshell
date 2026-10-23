@@ -23,6 +23,7 @@ const entry = (tab_id: string): HistoryEntry => ({
   started_ms: 0,
   updated_ms: 0,
 });
+const F = { when: "any", bookmarked: false, archived: false } as const;
 const row = (id: string, status: RowModel["status"]): RowModel => ({ ...SCENARIO_ROWS[0]!, id, status });
 
 describe("liveTabFor", () => {
@@ -40,15 +41,20 @@ describe("liveTabFor", () => {
 
 describe("listEmptyText", () => {
   it("says loading until the list has loaded, and the error when it failed", () => {
-    expect(listEmptyText({ when: "any" }, false, null)).toBe("Loading conversations…");
-    expect(listEmptyText({ when: "any" }, true, "disk full")).toBe("disk full");
+    expect(listEmptyText(F, false, null)).toBe("Loading conversations…");
+    expect(listEmptyText(F, true, "disk full")).toBe("disk full");
   });
   it("says there is nothing yet only when no filter is set", () => {
-    expect(listEmptyText({ when: "any" }, true, null)).toBe(EMPTY_LIST_COPY);
+    expect(listEmptyText(F, true, null)).toBe(EMPTY_LIST_COPY);
+  });
+  it("names the shortcut when Bookmarked is on and nothing is bookmarked", () => {
+    expect(listEmptyText({ ...F, bookmarked: true }, true, null, "Ctrl+Shift+B")).toBe(
+      "No bookmarks yet. Press Ctrl+Shift+B in a Claude Code session, or bookmark a turn here.",
+    );
   });
   it("says nothing matches when a filter or a time range is set", () => {
-    expect(listEmptyText({ when: "today" }, true, null)).toBe(NO_FILTER_MATCH_COPY);
-    expect(listEmptyText({ when: "any", project: "x" }, true, null)).toBe(NO_FILTER_MATCH_COPY);
+    expect(listEmptyText({ ...F, when: "today" }, true, null)).toBe(NO_FILTER_MATCH_COPY);
+    expect(listEmptyText({ ...F, project: "x" }, true, null)).toBe(NO_FILTER_MATCH_COPY);
     expect(NO_FILTER_MATCH_COPY).toBe("No conversations match these filters.");
   });
 });

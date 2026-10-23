@@ -1,19 +1,31 @@
 import type { HistoryEntry } from "../../generated/HistoryEntry";
+import type { HistoryQuery } from "../../generated/HistoryQuery";
+import type { HistoryFilters } from "./HistoryView";
 
 const DAY_MS = 86_400_000;
 
 /** The last part of a folder path, split on both separators, ignoring a trailing one. */
 const folderName = (cwd: string) => cwd.split(/[\\/]/).filter(Boolean).pop() ?? cwd;
 
+/** The key of the group of pinned conversations: not a folder path, so no project can collide with it. */
+export const PINNED_GROUP = "\u0000pinned";
+
+/** Pinned conversations first, in one group, then the projects, newest group first. A pinned entry appears only in the Pinned group. */
 export function groupByProject(entries: HistoryEntry[]): { project: string; label: string; entries: HistoryEntry[] }[] {
   const groups = new Map<string, HistoryEntry[]>();
+  const pinned: HistoryEntry[] = [];
   for (const e of [...entries].sort((a, b) => b.updated_ms - a.updated_ms)) {
+    if (e.pinned) {
+      pinned.push(e);
+      continue;
+    }
     const g = groups.get(e.cwd);
     if (g) g.push(e);
     else groups.set(e.cwd, [e]);
   }
   // Entries are visited newest first, so insertion order already puts the newest group first.
-  return [...groups].map(([project, es]) => ({ project, label: folderName(project), entries: es }));
+  const projects = [...groups].map(([project, es]) => ({ project, label: folderName(project), entries: es }));
+  return pinned.length > 0 ? [{ project: PINNED_GROUP, label: "Pinned", entries: pinned }, ...projects] : projects;
 }
 
 const sortedUnique = (values: (string | undefined)[]) =>
@@ -25,6 +37,7 @@ export function filterOptions(entries: HistoryEntry[]) {
     projects: sortedUnique(entries.map((e) => e.cwd)),
     branches: sortedUnique(entries.map((e) => e.branch)),
     models: sortedUnique(entries.map((e) => e.model)),
+    tags: sortedUnique(entries.flatMap((e) => e.tags)),
   };
 }
 
@@ -56,6 +69,15 @@ export function rowMeta(e: HistoryEntry, now: number): string {
     .filter(Boolean)
     .join(" · ");
 }
+
+/** What the list asks the core for. `bookmarked` is left out: the Bookmarked filter shows the bookmarks route's rows instead of the list. */
+export function listQuery(filters: HistoryFilters, now: number): HistoryQuery {
+  const { when, bookmarked: _bookmarked, ...rest } = filters;
+  return { ...rest, since_ms: sinceFor(when, now) };
+}
+
+/** What the Bookmarked filter asks the core for: the list's filters, one row per bookmark. */
+export const bookmarkQuery = (filters: HistoryFilters, now: number): HistoryQuery => ({ ...listQuery(filters, now), bookmarked: true });
 
 export function moveSelection(
   ids: string[],

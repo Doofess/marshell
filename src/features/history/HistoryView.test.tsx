@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { Conversation } from "../../generated/Conversation";
 import type { HistoryEntry } from "../../generated/HistoryEntry";
 import type { SearchHit } from "../../generated/SearchHit";
-import { HistoryView, hitKey, type HistoryViewProps } from "./HistoryView";
+import { noBookmarksCopy, HistoryView, hitKey, type HistoryViewProps } from "./HistoryView";
 
 const NOW = Date.UTC(2026, 9, 23, 12, 0, 0);
 const noop = () => {};
@@ -29,7 +29,7 @@ const entry = (over: Partial<HistoryEntry> = {}): HistoryEntry => ({
 });
 const base: HistoryViewProps = {
   entries: [],
-  filters: { when: "any" },
+  filters: { when: "any", bookmarked: false, archived: false },
   query: "",
   hits: null,
   selectedId: null,
@@ -40,6 +40,7 @@ const base: HistoryViewProps = {
   searchFocus: 0,
   onQuery: noop,
   onFilter: noop,
+  onToggle: noop,
   onSelect: noop,
   onOpen: noop,
   onResume: noop,
@@ -115,7 +116,7 @@ describe("HistoryView list", () => {
   });
 
   it("keeps a chosen filter value in its select even when the list no longer has it", () => {
-    const out = html({ entries: [], filters: { when: "7d", model: "sonnet" } });
+    const out = html({ entries: [], filters: { when: "7d", model: "sonnet", bookmarked: false, archived: false } });
     const options = [...out.matchAll(/<option[^>]*>[^<]*<\/option>/g)].map((m) => m[0]);
     expect(options.find((o) => o.includes('value="sonnet"'))).toContain("selected");
     expect(options.find((o) => o.includes('value="7d"'))).toContain("selected");
@@ -204,5 +205,52 @@ describe("HistoryView: states from the window", () => {
     expect(h).toContain("Couldn&#x27;t load the history.");
     expect(h).not.toContain("No conversations yet");
     expect(h).toContain("x-banner");
+  });
+});
+
+describe("HistoryView pins, archive, tags and bookmarks", () => {
+  const withFilters = (over: Partial<HistoryViewProps["filters"]>) => ({ when: "any" as const, bookmarked: false, archived: false, ...over });
+
+  it("lists a Pinned group first and a pinned entry once", () => {
+    const out = html({
+      entries: [entry({ session_id: "a", title: "Old pinned", pinned: true, updated_ms: NOW - 9_000_000 }), entry({ session_id: "b", title: "Fresh", updated_ms: NOW - 1000 })],
+    });
+    expect(out.indexOf(">Pinned</h3>")).toBeGreaterThan(-1);
+    expect(out.indexOf(">Pinned</h3>")).toBeLessThan(out.indexOf(">billing</h3>"));
+    expect(out.split("Old pinned")).toHaveLength(2);
+  });
+
+  it("an archived row says Archived", () => {
+    expect(html({ entries: [entry({ archived: true })] })).toMatch(/<span class="chip"[^>]*>Archived<\/span>/);
+    expect(html({ entries: [entry()] })).not.toContain("Archived");
+  });
+
+  it("shows tags as chips in the row, as text", () => {
+    const out = html({ entries: [entry({ tags: ["bug", "<img src=x onerror=alert(1)>"] })] });
+    expect(out).toMatch(/<span class="chip"[^>]*>bug<\/span>/);
+    expect(out).toContain("&lt;img src=x onerror=alert(1)&gt;");
+    expect(out).not.toContain("<img");
+  });
+
+  it("has a Tag select that starts at Any, and the Bookmarked and Show archived checkboxes", () => {
+    const out = html({ entries: [entry({ tags: ["zeta", "bug"] })], filters: withFilters({ tag: "bug", archived: true }) });
+    expect(out).toMatch(/Tag<\/span><select[^>]*><option value="">Any<\/option><option value="bug" title="bug" selected="">bug<\/option><option value="zeta"/);
+    expect(out).toMatch(/<input[^>]*type="checkbox"[^>]*\/>\s*<span>Bookmarked<\/span>/);
+    expect(out).toMatch(/<input[^>]*type="checkbox"[^>]*checked=""[^>]*\/>\s*<span>Show archived<\/span>/);
+  });
+
+  it("Bookmarked shows bookmark rows that open at their turn", () => {
+    const hit: SearchHit = { agent: "claude", session_id: "s9", title: "Marked", cwd: "C:\\dev\\billing", turn: 4, at_ms: NOW, snippet: "\u0002total\u0003 rounding" };
+    const out = html({ filters: withFilters({ bookmarked: true }), hits: [hit], entries: [entry({ session_id: "s9" })] });
+    expect(out).toContain('aria-label="Bookmarks"');
+    expect(out).toContain("turn 5");
+    expect(out).toContain("Marked");
+    expect(out).not.toContain(">Pinned</h3>");
+  });
+
+  it("the empty Bookmarked list names the shortcut", () => {
+    const out = html({ filters: withFilters({ bookmarked: true }), hits: [] });
+    expect(out).toContain("No bookmarks yet. Press Ctrl+Shift+B in a Claude Code session, or bookmark a turn here.");
+    expect(noBookmarksCopy("⌘⇧B")).toBe("No bookmarks yet. Press ⌘⇧B in a Claude Code session, or bookmark a turn here.");
   });
 });
