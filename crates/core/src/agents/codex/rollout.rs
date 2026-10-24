@@ -62,7 +62,9 @@ fn meta_of(line: &Value) -> Option<RolloutMeta> {
             Some("Codex Desktop" | "codex_work_desktop") => Client::Desktop,
             _ => Client::Terminal,
         },
-        listed: matches!(str_at(p, "thread_source"), Some("user" | "chatgpt_handoff")),
+        // Only the known child threads are left out: a source this version doesn't name is shown, not lost.
+        listed: !matches!(str_at(p, "thread_source"), Some("subagent" | "guardian_review"))
+            && p.get("source").and_then(|s| s.get("subagent")).is_none(),
     })
 }
 
@@ -492,6 +494,20 @@ mod tests {
         assert_eq!((m.client, m.listed), (Client::Desktop, true));
         let line = serde_json::json!({"type": "session_meta", "payload": {"id": "x", "originator": "something-new"}});
         assert_eq!(meta(&line.to_string()).unwrap().client, Client::Terminal);
+    }
+
+    #[test]
+    fn a_thread_with_no_thread_source_is_listed() {
+        // Every surveyed rollout names its source; one that doesn't is shown rather than lost.
+        let line = serde_json::json!({"type": "session_meta", "payload": {"id": "x", "originator": "codex-tui"}});
+        assert!(meta(&line.to_string()).unwrap().listed);
+        for child in ["subagent", "guardian_review"] {
+            let line = serde_json::json!({"type": "session_meta", "payload": {"id": "x", "thread_source": child}});
+            assert!(!meta(&line.to_string()).unwrap().listed, "{child}");
+        }
+        let line = serde_json::json!({"type": "session_meta", "payload": {"id": "x",
+            "source": {"subagent": {"thread_spawn": {"parent_thread_id": "p"}}}}});
+        assert!(!meta(&line.to_string()).unwrap().listed);
     }
 
     #[test]
