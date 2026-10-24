@@ -136,17 +136,17 @@ Added after Task 1, which found that Codex keys trust by position. It changes Ta
 - A Marshell entry inside a group that also holds the user's entries is removed as before (an entry can't be left empty), and the slice's Known limits say so.
 - `inspect` and `trust::state` don't count an empty group as Marshell's, and still count its position.
 
-- [ ] **Step 1: Write the failing tests.**
+- [x] **Step 1: Write the failing tests.**
   - `removal_keeps_a_later_user_group_in_place`: `Stop: [ours, user]` gives `[{"hooks": []}, user]`, and the user's group is byte-equal to the input. Run it over the BOM, CRLF and comments texts.
   - `removal_drops_a_trailing_group`: `Stop: [user, ours]` gives `[user]`.
   - `an_event_with_a_placeholder_left_stays`: after removing `[ours, user]`, the event is still there, and an event that held only Marshell's group goes.
   - `reinstall_replaces_ours_where_it_is`: `Stop: [ours with another timeout, user]` gives `[ours as wanted, user]`, with Marshell's group still at index 0.
   - `install_after_a_placeholder_appends`: `Stop: [{"hooks": []}, user]` gives `[{"hooks": []}, user, ours]`.
   - In `trust.rs`: `a_placeholder_counts_as_a_group`: `Stop: [{"hooks": []}, ours]` looks Marshell's entry up under `stop:1:0`.
-- [ ] **Step 2: Run `cargo test -p marshell-core -j 4 --lib codex::`.** Expected: FAIL on the new tests.
-- [ ] **Step 3: Implement it.**
-- [ ] **Step 4: Run Step 2's command, then `cargo test -p marshell-core -j 4 --test agents_api` and `cargo test -p marshell-cli -j 4`.** Expected: PASS.
-- [ ] **Step 5: Run `cargo fmt --all` and commit** as `fix(codex): leave the user's hooks at their positions when Marshell's are removed or replaced`.
+- [x] **Step 2: Run `cargo test -p marshell-core -j 4 --lib codex::`.** Expected: FAIL on the new tests.
+- [x] **Step 3: Implement it.**
+- [x] **Step 4: Run Step 2's command, then `cargo test -p marshell-core -j 4 --test agents_api` and `cargo test -p marshell-cli -j 4`.** Expected: PASS.
+- [x] **Step 5: Run `cargo fmt --all` and commit** as `fix(codex): leave the user's hooks at their positions when Marshell's are removed or replaced`.
 
 ### Task 3: Setup, plan and removal routes for Codex, and `marshell uninstall`
 
