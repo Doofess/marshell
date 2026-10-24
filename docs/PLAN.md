@@ -1151,12 +1151,12 @@ Decisions from the 2026-10-10 coverage audit (`docs/superpowers/plan-coverage-au
 
         Slice 6a's decision 1 keeps the old letters as the record of that day.
      3. Shipped manifests: GitHub Copilot CLI, Cursor CLI, opencode, Amp, Grok Build, Qwen Code, Kimi Code CLI, Aider and Crush. Kimi means Kimi Code CLI (`~/.kimi-code`). The archived Python `kimi-cli` is not covered.
-     4. A manifest agent's status comes from terminal signals only:
-        - Needs you: the CLI's own notification (OSC 9, 99 or 777) or a bell.
-        - Working: its OSC 9;4 progress, where it sends one.
-        - Running: otherwise.
+     4. A manifest agent's status comes from the terminal only. Marshell writes no hook or config file for these CLIs and guesses no status.
+        - It gets the pty fallback that every agent row without hooks has (slice 3c2 decision 4): Working while output flows and Idle when it's quiet, both marked "Status limited".
+        - Its own OSC 9;4 progress also shows Working.
+        - Its own notification (OSC 9, 99 or 777) or a bell shows Needs you.
 
-        Marshell writes no hook or config file for these CLIs and guesses no status.
+        (Amended the same day: the first answer, "signals only", was given without knowing about the fallback.)
      5. DeepSeek is a Claude Code preset, not a manifest. "DeepSeek" in the picker starts Claude Code with DeepSeek's documented Anthropic-compatible environment (base URL and model names). The key comes from an environment variable the person sets (`DEEPSEEK_API_KEY`) and goes only into that process's environment. Marshell never stores, logs or shows it. The tab shows the DeepSeek mark and keeps Claude Code's adapter for status. With the variable unset, the entry says so and doesn't start.
      6. Own agents live in `~/.marshell/agents.json` (§4). A person edits the file by hand or through a form under Settings → Agents. The form covers name, command, the first-prompt flag, continue and resume flags, mode flags and the exe names to recognise. An invalid entry is listed with the reason, and the file is reloaded when it changes.
      7. Live check:
