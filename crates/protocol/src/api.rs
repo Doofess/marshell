@@ -811,6 +811,12 @@ pub struct Settings {
     pub notifications: NotifySettings,
     /// Whether Marshell keeps its own copy of the conversations Claude Code and Codex ran outside it.
     pub history_import: bool,
+    /// Recordings and images are kept up to this many GB (1024-based). None is no size limit.
+    pub history_limit_gb: Option<u32>,
+    /// Recordings and images older than this many days are removed. None keeps them forever.
+    pub history_limit_days: Option<u32>,
+    /// A folder that holds an exact copy of the history, in a "Marshell history" folder of its own. None is no backup.
+    pub history_backup_dir: Option<String>,
 }
 
 impl Default for Settings {
@@ -823,6 +829,9 @@ impl Default for Settings {
             status_off: Vec::new(),
             notifications: NotifySettings::default(),
             history_import: true,
+            history_limit_gb: None,
+            history_limit_days: None,
+            history_backup_dir: None,
         }
     }
 }

@@ -40,6 +40,16 @@ pub fn history_dir(home: &Path) -> PathBuf {
     home.join("history")
 }
 
+/// `<home>/history/archive`: every agent's transcript copies.
+pub fn archive_root(home: &Path) -> PathBuf {
+    history_dir(home).join("archive")
+}
+
+/// `<home>/logs`: the core's, the crash and the bridge logs.
+pub fn logs_dir(home: &Path) -> PathBuf {
+    home.join("logs")
+}
+
 /// `<home>/history/archive/<agent>`: compressed transcript copies and their sidecars.
 pub fn archive_dir(home: &Path, agent: &str) -> PathBuf {
     history_dir(home).join("archive").join(agent)

@@ -52,7 +52,8 @@ export function sinceFor(when: "any" | "today" | "7d" | "30d", now: number): num
   return now - (when === "7d" ? 7 : 30) * DAY_MS;
 }
 
-function relativeTime(ms: number): string {
+/** How long ago, from an elapsed time in ms: "just now", "5 min ago", "2 h ago", "3 d ago". */
+export function relativeTime(ms: number): string {
   const min = Math.floor(Math.max(0, ms) / 60_000);
   if (min < 1) return "just now";
   if (min < 60) return `${min} min ago`;

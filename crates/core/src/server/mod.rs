@@ -127,6 +127,8 @@ struct Inner {
     history: Arc<crate::history::recorder::History>,
     /// Copies conversations run outside Marshell; started once, after the backfill.
     importer: std::sync::OnceLock<Arc<crate::history::import::Importer>>,
+    /// Compresses finished recordings and keeps the history within its limits; started once, at startup.
+    storage: std::sync::OnceLock<Arc<crate::history::storage::Storage>>,
     /// Claude Code's settings file when a test or a caller names one; None means
     /// `MARSHELL_CLAUDE_SETTINGS`, else `~/.claude/settings.json`.
     claude_settings: Option<PathBuf>,
@@ -212,6 +214,7 @@ impl AppState {
             config,
             history,
             importer: std::sync::OnceLock::new(),
+            storage: std::sync::OnceLock::new(),
             claude_settings: None,
             claude_compact_paths: None,
             programs_dir: None,
@@ -329,6 +332,42 @@ impl AppState {
     pub fn history(&self) -> Arc<crate::history::recorder::History> {
         self.0.history.clone()
     }
+    /// The storage thread. None until `start_storage`, and when history is off for this run.
+    pub fn storage(&self) -> Option<Arc<crate::history::storage::Storage>> {
+        self.0.storage.get().cloned()
+    }
+    /// Starts the storage thread. Does nothing when history is off for this run, or when it is already running.
+    pub fn start_storage(&self) {
+        self.start_storage_with(crate::history::storage::StorageTiming::default());
+    }
+
+    /// Like `start_storage`, with the given timing (tests shorten it).
+    pub fn start_storage_with(&self, timing: crate::history::storage::StorageTiming) {
+        if !self.0.history.is_on() {
+            return;
+        }
+        // Weak, so the thread's source of what is in use doesn't keep the state alive.
+        let weak = Arc::downgrade(&self.0);
+        let open: crate::history::storage::OpenNow = Arc::new(move || {
+            weak.upgrade()
+                .map(|inner| {
+                    let state = AppState(inner);
+                    // The sidebar's tabs, Ended ones restored from the last run included, and the sessions
+                    // (the sidebar's shell has no registry row). Each lock is released before the next.
+                    let mut tabs: HashSet<String> = state.0.sessions.lock().unwrap().keys().cloned().collect();
+                    tabs.extend(state.registry().saved_tabs().into_iter().map(|tab| tab.tab_id));
+                    crate::history::storage::Open {
+                        recordings: state.open_recordings(),
+                        tabs,
+                    }
+                })
+                .unwrap_or_default()
+        });
+        self.0.storage.get_or_init(|| {
+            let home = self.0.history.home().to_path_buf();
+            crate::history::storage::Storage::start_with(home, self.0.history.clone(), open, timing)
+        });
+    }
     /// Starts the importer on `roots`, with the switch from the settings. Does nothing when history is off for
     /// this run, or when one is already running.
     pub fn start_importer(&self, roots: crate::history::import::ImportRoots) {
@@ -419,6 +458,11 @@ impl AppState {
     }
     pub fn session(&self, tab: &str) -> Option<Arc<crate::pty::Session>> {
         self.0.sessions.lock().unwrap().get(tab).cloned()
+    }
+    /// Files still held by session recording writers. Release the map lock before asking each session.
+    pub fn open_recordings(&self) -> HashSet<PathBuf> {
+        let sessions: Vec<_> = self.0.sessions.lock().unwrap().values().cloned().collect();
+        sessions.iter().filter_map(|s| s.open_recording()).collect()
     }
     /// How many sessions have a running process. Ended tabs have none.
     pub fn live_session_count(&self) -> usize {
@@ -586,6 +630,8 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/agents/{agent}/hooks/remove-plan", post(agents::remove_plan))
         .route("/v1/history", get(history::list))
         .route("/v1/history/import", get(history::import_status))
+        .route("/v1/history/storage", get(history::storage_report))
+        .route("/v1/history/storage/preview", post(history::storage_preview))
         .route("/v1/history/search", get(history::search))
         .route("/v1/history/bookmarks", get(history::bookmarks))
         .route(
@@ -699,6 +745,9 @@ impl RunningCore {
         if let Some(importer) = self.state.0.importer.get() {
             importer.halt();
         }
+        if let Some(storage) = self.state.0.storage.get() {
+            storage.halt();
+        }
         // After the kill, so Claude has stopped writing: a copy still waiting to settle runs now, and a reply
         // given just before closing is kept. It returns at once when nothing is pending.
         self.state.history().flush(Duration::from_secs(3));
@@ -798,6 +847,7 @@ pub async fn start(cfg: CoreConfig) -> anyhow::Result<RunningCore> {
     if let Some(roots) = cfg.import {
         state.start_importer(roots);
     }
+    state.start_storage();
     let notifier = cfg.notify.map(|sink| crate::notify::spawn(state.clone(), sink));
     let stuck_state = state.clone();
     let stuck_tick = tokio::spawn(async move {

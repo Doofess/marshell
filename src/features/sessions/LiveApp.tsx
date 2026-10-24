@@ -1481,7 +1481,7 @@ export function LiveApp() {
       {overlay === "profiles" && endpoint && <ProfilesDialog endpoint={endpoint} onClose={() => setOverlay(null)} onNotice={announce} onSaved={reloadProfiles} />}
       {overlay === "agents" && endpoint && <AgentsDialog endpoint={endpoint} sync={sync ?? undefined} startWith={agentsFrom === "row" ? "setup" : undefined} onClose={() => { setOverlay(null); setAgentsFrom(null); refreshSetup(); }} onNotice={announce} onChanged={refreshSetup} onNotifications={() => { setAgentsFrom(null); setOverlay("notifications"); }} />}
       {overlay === "notifications" && <NotificationsDialog sync={sync ?? undefined} onClose={() => setOverlay(null)} />}
-      {overlay === "history-settings" && <HistorySettingsDialog sync={sync ?? undefined} onClose={() => setOverlay(null)} />}
+      {overlay === "history-settings" && <HistorySettingsDialog sync={sync ?? undefined} announce={announce} onClose={() => setOverlay(null)} />}
       {overlay === "diagnostics" && endpoint && <DiagnosticsDialog endpoint={endpoint} onClose={() => setOverlay(null)} onNotice={announce} />}
       {onboarding && endpoint && (
         <div className="live-app__onboarding">

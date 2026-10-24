@@ -4,8 +4,8 @@
 use anyhow::Context;
 use marshell_protocol::history::CastEvent;
 use std::fs::File;
-use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
-use std::path::Path;
+use std::io::{self, BufRead, BufReader, Read, Seek, SeekFrom};
+use std::path::{Path, PathBuf};
 
 /// True for a recording file name that is safe to join to the recordings folder: `<tab id>-<unix ms>.cast`.
 /// Matches `^[A-Za-z0-9]{1,32}-[0-9]{1,16}\.cast$`.
@@ -17,6 +17,16 @@ pub fn valid_recording_name(name: &str) -> bool {
         && tab.bytes().all(|b| b.is_ascii_alphanumeric())
         && (1..=16).contains(&ms.len())
         && ms.bytes().all(|b| b.is_ascii_digit())
+}
+
+/// Resolves a sidecar's `.cast` link to a regular file, preferring plain over compressed. Links are skipped.
+pub fn resolve(dir: &Path, name: &str) -> Option<PathBuf> {
+    if !valid_recording_name(name) {
+        return None;
+    }
+    [dir.join(name), dir.join(format!("{name}.zst"))]
+        .into_iter()
+        .find(|path| std::fs::symlink_metadata(path).is_ok_and(|meta| meta.is_file()))
 }
 
 /// The start time (unix ms) a recording's file name carries.
@@ -71,10 +81,20 @@ impl<R: BufRead> Lines<R> {
     }
 }
 
-/// Opens the file and reads its header line: the size and where the events start.
-fn open(path: &Path) -> anyhow::Result<(Lines<BufReader<File>>, u16, u16)> {
-    let file = File::open(path).with_context(|| format!("opening {}", path.display()))?;
-    let mut lines = Lines::new(BufReader::with_capacity(64 * 1024, file), 0);
+fn reader(file: File, compressed: bool) -> io::Result<Box<dyn BufRead + Send>> {
+    if compressed {
+        Ok(Box::new(BufReader::with_capacity(64 * 1024, zstd::Decoder::new(file)?)))
+    } else {
+        Ok(Box::new(BufReader::with_capacity(64 * 1024, file)))
+    }
+}
+
+/// A recording's lines, from a plain or a zstd-compressed file.
+type CastLines = Lines<Box<dyn BufRead + Send>>;
+
+/// Reads the file's header line: the size and where the events start in the uncompressed text.
+fn open(path: &Path, file: File) -> anyhow::Result<(CastLines, u16, u16)> {
+    let mut lines = Lines::new(reader(file, path.extension().is_some_and(|ext| ext == "zst"))?, 0);
     let (_, line) = lines
         .next_line()
         .with_context(|| format!("reading {}", path.display()))?
@@ -109,7 +129,8 @@ pub struct CastSummary {
 
 /// One streaming pass over the file; it never holds more than a line.
 pub fn scan(path: &Path, started_ms: u64) -> anyhow::Result<CastSummary> {
-    let (mut lines, cols, rows) = open(path)?;
+    let file = File::open(path).with_context(|| format!("opening {}", path.display()))?;
+    let (mut lines, cols, rows) = open(path, file)?;
     let mut summary = CastSummary {
         cols,
         rows,
@@ -203,7 +224,10 @@ pub fn frames(
     to_ms: u64,
     budget: usize,
 ) -> Result<Frames, FramesError> {
-    let (mut lines, mut cols, mut rows) = open(path)?;
+    let mut file = File::open(path).with_context(|| format!("opening {}", path.display()))?;
+    // Keep the same file open for an offset seek, even if compression removes its directory entry meanwhile.
+    let header_file = file.try_clone().context("cloning the recording handle")?;
+    let (mut lines, mut cols, mut rows) = open(path, header_file)?;
     let read_err = |err: std::io::Error| FramesError::Failed(anyhow::Error::new(err).context("reading the recording"));
     let mut screen = None;
     // The first event not yet used, when a replay already read it.
@@ -236,17 +260,24 @@ pub fn frames(
         FrameStart::Offset(offset) => {
             let header_end = lines.offset;
             if offset > header_end {
-                let mut file = lines.reader.into_inner();
-                file.seek(SeekFrom::Start(offset - 1)).map_err(read_err)?;
+                drop(lines);
+                let compressed = path.extension().is_some_and(|ext| ext == "zst");
+                // A compressed offset is in decoded bytes, so start the decoder over and discard up to it.
+                file.seek(SeekFrom::Start(if compressed { 0 } else { offset - 1 }))
+                    .map_err(read_err)?;
+                let mut reader = reader(file, compressed).map_err(read_err)?;
+                if compressed {
+                    io::copy(&mut reader.by_ref().take(offset - 1), &mut io::sink()).map_err(read_err)?;
+                }
                 let mut before = [0u8; 1];
-                match file.read_exact(&mut before) {
+                match reader.read_exact(&mut before) {
                     Ok(()) if before[0] != b'\n' => return Err(FramesError::NotABoundary),
                     Ok(()) => {}
                     // Past the end of the file: nothing there yet.
                     Err(err) if err.kind() == std::io::ErrorKind::UnexpectedEof => {}
                     Err(err) => return Err(read_err(err)),
                 }
-                lines = Lines::new(BufReader::with_capacity(64 * 1024, file), offset);
+                lines = Lines::new(reader, offset);
             } else if offset != 0 && offset != header_end {
                 return Err(FramesError::NotABoundary);
             }
@@ -371,6 +402,118 @@ mod tests {
         assert_eq!(got.ended_ms, START + 2000);
         assert_eq!(got.marks_ms, vec![START + 1000, START + 2000]);
         assert_eq!(got.stopped.as_deref(), Some(stop));
+    }
+
+    fn compressed(path: &Path) -> std::path::PathBuf {
+        let packed = path.with_extension("cast.zst");
+        let bytes = std::fs::read(path).unwrap();
+        std::fs::write(&packed, zstd::encode_all(bytes.as_slice(), 3).unwrap()).unwrap();
+        packed
+    }
+
+    #[test]
+    fn scan_reads_a_compressed_recording_like_plain() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = write(
+            dir.path(),
+            &[
+                header(80, 24),
+                out(0.5, "hello"),
+                CastEncoder::marker(1.0, "prompt"),
+                CastEncoder::resize(1.5, 100, 30),
+                CastEncoder::marker(2.0, "Recording stopped: it reached the size limit."),
+            ],
+        );
+        assert_eq!(scan(&compressed(&path), START).unwrap(), scan(&path, START).unwrap());
+    }
+
+    #[test]
+    fn frames_match_on_a_compressed_recording() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = write(dir.path(), &redraw_fixture());
+        let packed = compressed(&path);
+        let start = FrameStart::At(START + 400);
+        let plain = frames(&path, START, start, u64::MAX, 32).unwrap();
+        assert!(plain.screen.is_some());
+        assert!(!plain.events.is_empty());
+        assert_eq!(frames(&packed, START, start, u64::MAX, 32).unwrap(), plain);
+        let next = plain.next_offset.unwrap();
+        let page = frames(&path, START, FrameStart::Offset(next), u64::MAX, 32).unwrap();
+        assert_eq!(page.screen, None);
+        assert!(!page.events.is_empty());
+        assert_eq!(
+            frames(&packed, START, FrameStart::Offset(next), u64::MAX, 32).unwrap(),
+            page
+        );
+        let head = header(40, 10).len() as u64;
+        for offset in [3, head + 3, next + 1] {
+            for file in [&path, &packed] {
+                assert!(matches!(
+                    frames(file, START, FrameStart::Offset(offset), u64::MAX, 32),
+                    Err(FramesError::NotABoundary)
+                ));
+            }
+        }
+        let len = std::fs::metadata(&path).unwrap().len();
+        for offset in [0, head, len, len + 100] {
+            assert_eq!(
+                frames(&packed, START, FrameStart::Offset(offset), u64::MAX, 32).unwrap(),
+                frames(&path, START, FrameStart::Offset(offset), u64::MAX, 32).unwrap()
+            );
+        }
+    }
+
+    #[test]
+    fn resolve_prefers_plain_then_zst_and_refuses_hostile_names() {
+        let dir = tempfile::tempdir().unwrap();
+        let name = "t1-1000.cast";
+        let plain = dir.path().join(name);
+        let packed = dir.path().join(format!("{name}.zst"));
+        assert_eq!(resolve(dir.path(), name), None);
+        std::fs::write(&plain, b"plain").unwrap();
+        assert_eq!(resolve(dir.path(), name), Some(plain.clone()));
+        std::fs::write(&packed, b"packed").unwrap();
+        assert_eq!(resolve(dir.path(), name), Some(plain.clone()));
+        std::fs::remove_file(&plain).unwrap();
+        assert_eq!(resolve(dir.path(), name), Some(packed.clone()));
+        std::fs::create_dir(&plain).unwrap();
+        assert_eq!(resolve(dir.path(), name), Some(packed.clone()));
+        std::fs::remove_file(&packed).unwrap();
+        std::fs::create_dir(&packed).unwrap();
+        assert_eq!(resolve(dir.path(), name), None);
+        for bad in [
+            r"..\x.cast",
+            r"C:\x.cast",
+            "a/b-1.cast",
+            "t1-12.cast.exe",
+            "t1.cast",
+            "t1-.cast",
+            "-12.cast",
+            "t1-1-2.cast",
+            "t1-12.CAST",
+            "",
+            "t1-1000.cast.zst",
+            &format!("{}-1.cast", "a".repeat(200)),
+            &format!("{}.cast", "1".repeat(200)),
+            &format!("t-{}.cast", "1".repeat(17)),
+        ] {
+            assert_eq!(resolve(dir.path(), bad), None, "{bad:?}");
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn resolve_does_not_follow_links() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = write(dir.path(), &redraw_fixture());
+        let plain = dir.path().join("t1-1000.cast");
+        let packed = plain.with_extension("cast.zst");
+        std::os::unix::fs::symlink(&target, &plain).unwrap();
+        std::os::unix::fs::symlink(&target, &packed).unwrap();
+        assert_eq!(resolve(dir.path(), "t1-1000.cast"), None);
+        std::fs::remove_file(&packed).unwrap();
+        std::fs::write(&packed, b"packed").unwrap();
+        assert_eq!(resolve(dir.path(), "t1-1000.cast"), Some(packed));
     }
 
     #[test]

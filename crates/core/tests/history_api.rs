@@ -1093,6 +1093,41 @@ fn seed_recorded(env: &Env, id: &str) {
 const NO_PART: &str = "No such part of the recording.";
 
 #[tokio::test]
+async fn recording_frames_serves_a_compressed_part() {
+    let env = env();
+    seed_recorded(&env, ID);
+    let base = format!("/v1/history/claude/{ID}/recordings");
+    let (status, plain_parts) = get_json(&env.app, &base).await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, first) = get_json(&env.app, &format!("{base}/0/frames")).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(first["screen"].is_string());
+    assert!(!first["events"].as_array().unwrap().is_empty());
+    let offset = first["next_offset"].as_u64().unwrap();
+    let next_url = format!("{base}/0/frames?offset={offset}");
+    let (status, next) = get_json(&env.app, &next_url).await;
+    assert_eq!(status, StatusCode::OK);
+    let path = marshell_core::paths::recordings_dir(env.home.path()).join(CAST_NAME);
+    let bytes = std::fs::read(&path).unwrap();
+    std::fs::write(
+        path.with_extension("cast.zst"),
+        zstd::encode_all(bytes.as_slice(), 3).unwrap(),
+    )
+    .unwrap();
+    std::fs::remove_file(&path).unwrap();
+    let (status, parts) = get_json(&env.app, &base).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(parts, plain_parts);
+    assert_eq!(parts[0]["file"], CAST_NAME);
+    let (status, compressed) = get_json(&env.app, &format!("{base}/0/frames")).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(compressed, first);
+    let (status, compressed) = get_json(&env.app, &next_url).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(compressed, next);
+}
+
+#[tokio::test]
 async fn recordings_route_lists_parts_and_frames_play_them() {
     let env = env();
     seed_recorded(&env, ID);
@@ -1505,4 +1540,314 @@ async fn resume_opens_codex_in_the_conversations_folder() {
     if let Some(session) = env.state.remove_session(&tab) {
         session.force_kill();
     }
+}
+
+/// Writes a file of `body` that was last modified `days` days ago.
+fn write_aged(path: &Path, body: &[u8], days: u64) {
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(path, body).unwrap();
+    std::fs::File::options()
+        .write(true)
+        .open(path)
+        .unwrap()
+        .set_modified(std::time::SystemTime::now() - Duration::from_secs(days * 86_400))
+        .unwrap();
+}
+
+/// The storage thread with nothing to wait for: an hour between ticks, and files count at once.
+fn start_storage(env: &Env) {
+    env.state
+        .start_storage_with(marshell_core::history::storage::StorageTiming {
+            tick: Duration::from_secs(3600),
+            cleanup_every: Duration::from_secs(3600),
+            settle: Duration::ZERO,
+        });
+}
+
+#[tokio::test]
+async fn storage_preview_refuses_without_the_bearer() {
+    let env = env();
+    start_storage(&env);
+    let mut request = req("POST", "/v1/history/storage/preview", Some(json!({ "limit_days": 30 })));
+    request.headers_mut().remove(header::AUTHORIZATION);
+    let (status, _) = call(&env.app, request).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn storage_report_refuses_without_the_bearer_and_answers_503_without_storage() {
+    let env = env();
+    let (status, _) = call(&env.app, req("GET", "/v1/history/storage", None)).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "no storage thread yet");
+    start_storage(&env);
+    let mut request = req("GET", "/v1/history/storage", None);
+    request.headers_mut().remove(header::AUTHORIZATION);
+    let (status, _) = call(&env.app, request).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    let (status, body) = call(&env.app, req("GET", "/v1/history/storage", None)).await;
+    assert_eq!(status, StatusCode::OK);
+    let report: Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(report["transcripts"], 0);
+    assert_eq!(report["backup"]["dir"], Value::Null);
+}
+
+#[tokio::test]
+async fn storage_preview_refuses_a_limit_off_the_list_and_answers_503_without_storage() {
+    let env = env();
+    let (status, _) = call(
+        &env.app,
+        req("POST", "/v1/history/storage/preview", Some(json!({ "limit_days": 30 }))),
+    )
+    .await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "no storage thread yet");
+    start_storage(&env);
+    for body in [
+        json!({ "limit_gb": 3 }),
+        json!({ "limit_days": 7 }),
+        json!({ "limit_gb": 0 }),
+    ] {
+        let (status, _) = call(&env.app, req("POST", "/v1/history/storage/preview", Some(body.clone()))).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    }
+    let (status, body) = call(&env.app, req("POST", "/v1/history/storage/preview", Some(json!({})))).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        serde_json::from_str::<Value>(&body).unwrap(),
+        json!({ "files": 0, "bytes": 0, "oldest_ms": null })
+    );
+}
+
+#[tokio::test]
+async fn the_settings_route_refuses_a_limit_off_the_list_and_keeps_a_listed_one() {
+    let env = env();
+    let (_, settings) = get_json(&env.app, "/v1/settings").await;
+    assert_eq!(settings["history_limit_gb"], Value::Null);
+    assert_eq!(settings["history_limit_days"], Value::Null);
+    for (gb, days) in [(json!(3), Value::Null), (Value::Null, json!(7))] {
+        let mut bad = settings.clone();
+        bad["history_limit_gb"] = gb;
+        bad["history_limit_days"] = days;
+        let (status, _) = call(&env.app, req("PUT", "/v1/settings", Some(bad))).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+    }
+    let mut good = settings.clone();
+    good["history_limit_gb"] = json!(5);
+    good["history_limit_days"] = json!(90);
+    let (status, _) = call(&env.app, req("PUT", "/v1/settings", Some(good))).await;
+    assert_eq!(status, StatusCode::OK);
+    let (_, back) = get_json(&env.app, "/v1/settings").await;
+    assert_eq!(back["history_limit_gb"], 5);
+    assert_eq!(back["history_limit_days"], 90);
+}
+
+#[tokio::test]
+async fn the_settings_route_refuses_a_backup_folder_with_the_reason_and_does_not_save_it() {
+    let env = env();
+    let (_, settings) = get_json(&env.app, "/v1/settings").await;
+    assert_eq!(settings["history_backup_dir"], Value::Null);
+    let outer = tempfile::tempdir().unwrap();
+    let theirs = tempfile::tempdir().unwrap();
+    let target = theirs.path().join("Marshell history");
+    std::fs::create_dir(&target).unwrap();
+    std::fs::write(
+        target.join(".marshell-backup.json"),
+        r#"{"install_id":"00000000000000000000000000000000"}"#,
+    )
+    .unwrap();
+    let unmarked = tempfile::tempdir().unwrap();
+    std::fs::create_dir(unmarked.path().join("Marshell history")).unwrap();
+    std::fs::write(unmarked.path().join("Marshell history").join("notes.txt"), b"mine").unwrap();
+    let cases = [
+        (outer.path().join("nope"), "That folder doesn't exist."),
+        (
+            env.home.path().to_path_buf(),
+            "Choose a folder outside Marshell's own folder.",
+        ),
+        (
+            theirs.path().to_path_buf(),
+            "That folder holds another Marshell's backup. Choose another folder.",
+        ),
+        (
+            unmarked.path().to_path_buf(),
+            "That folder already has a \"Marshell history\" folder that Marshell didn't make. Choose another folder.",
+        ),
+    ];
+    for (dir, copy) in cases {
+        let mut bad = settings.clone();
+        bad["history_backup_dir"] = json!(dir.to_string_lossy());
+        let (status, body) = call(&env.app, req("PUT", "/v1/settings", Some(bad))).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{dir:?}");
+        assert_eq!(body, copy);
+        let (_, back) = get_json(&env.app, "/v1/settings").await;
+        assert_eq!(back["history_backup_dir"], Value::Null, "{dir:?} was saved");
+    }
+    assert_eq!(
+        std::fs::read(unmarked.path().join("Marshell history").join("notes.txt")).unwrap(),
+        b"mine"
+    );
+    let good = tempfile::tempdir().unwrap();
+    let mut ok = settings.clone();
+    ok["history_backup_dir"] = json!(good.path().to_string_lossy());
+    let (status, _) = call(&env.app, req("PUT", "/v1/settings", Some(ok))).await;
+    assert_eq!(status, StatusCode::OK);
+    let (_, back) = get_json(&env.app, "/v1/settings").await;
+    assert_eq!(back["history_backup_dir"], json!(good.path().to_string_lossy()));
+}
+
+#[tokio::test]
+async fn a_saved_age_limit_removes_what_the_preview_listed_and_the_last_cleanup_says_so() {
+    let env = env();
+    let rec = env.home.path().join("history/recordings");
+    write_aged(&rec.join("t1-1000.cast.zst"), b"12345", 40);
+    write_aged(&rec.join("t2-2000.cast.zst"), b"1234567", 60);
+    write_aged(&rec.join("t3-3000.cast.zst"), b"new", 1);
+    // A pinned conversation's recording is as old as the rest, and stays.
+    write_aged(&rec.join("t4-4000.cast.zst"), b"pinned", 100);
+    let transcript = env.work.path().join(format!("{ID}.jsonl"));
+    std::fs::write(&transcript, BASIC).unwrap();
+    let meta = marshell_core::history::SessionMeta {
+        agent: "claude".into(),
+        session_id: ID.into(),
+        tab_id: "t4".into(),
+        cwd: env.work.path().to_string_lossy().into_owned(),
+        transcript_path: transcript.to_string_lossy().into_owned(),
+        started_ms: 1,
+        updated_ms: 2,
+        previous_in_tab: None,
+        recordings: vec![marshell_core::history::RecordingLink {
+            file: "t4-4000.cast".into(),
+            first_ms: 1,
+            last_ms: 2,
+        }],
+        client: Default::default(),
+    };
+    marshell_core::history::archive::write_meta(env.home.path(), &meta).unwrap();
+    let pinned = marks::Marks {
+        pinned: true,
+        ..marks::Marks::default()
+    };
+    marks::write(env.home.path(), "claude", ID, &pinned).unwrap();
+    start_storage(&env);
+
+    let (status, preview) = call(
+        &env.app,
+        req("POST", "/v1/history/storage/preview", Some(json!({ "limit_days": 30 }))),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let preview: Value = serde_json::from_str(&preview).unwrap();
+    assert_eq!(preview["files"], 2);
+    assert_eq!(preview["bytes"], 12);
+    let oldest = preview["oldest_ms"].as_u64().unwrap();
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as u64;
+    let sixty_days_ago = now_ms - 60 * 86_400_000;
+    assert!(oldest.abs_diff(sixty_days_ago) < 60_000, "{oldest} vs {sixty_days_ago}");
+    // Previewing removes nothing.
+    assert!(rec.join("t1-1000.cast.zst").exists() && rec.join("t2-2000.cast.zst").exists());
+    let storage = env.state.storage().unwrap();
+    // The first tick found no limit saved.
+    assert_eq!(storage.last_cleanup(), None);
+
+    let (_, mut settings) = get_json(&env.app, "/v1/settings").await;
+    settings["history_limit_days"] = json!(30);
+    let (status, _) = call(&env.app, req("PUT", "/v1/settings", Some(settings))).await;
+    assert_eq!(status, StatusCode::OK);
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while storage.last_cleanup().is_none() {
+        assert!(Instant::now() < deadline, "the cleanup did not run");
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    let run = storage.last_cleanup().unwrap();
+    assert_eq!((run.files, run.bytes), (2, 12));
+    assert!(!rec.join("t1-1000.cast.zst").exists());
+    assert!(!rec.join("t2-2000.cast.zst").exists());
+    assert!(rec.join("t3-3000.cast.zst").exists());
+    assert!(
+        rec.join("t4-4000.cast.zst").exists(),
+        "the pinned conversation's recording stays"
+    );
+}
+
+#[tokio::test]
+async fn the_report_shows_the_saved_backup_folder_at_once() {
+    let env = env();
+    start_storage(&env);
+    let (_, settings) = get_json(&env.app, "/v1/settings").await;
+    let (a, b) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+    let mut to_a = settings.clone();
+    to_a["history_backup_dir"] = json!(a.path().to_string_lossy());
+    let (status, _) = call(&env.app, req("PUT", "/v1/settings", Some(to_a))).await;
+    assert_eq!(status, StatusCode::OK);
+    let storage = env.state.storage().unwrap();
+    let started = std::time::Instant::now();
+    while storage.backup_status().last_copy_ms.is_none() {
+        assert!(
+            started.elapsed() < Duration::from_secs(20),
+            "the mirror to folder A never finished"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let (_, report) = get_json(&env.app, "/v1/history/storage").await;
+    assert_eq!(report["backup"]["dir"], json!(a.path().to_string_lossy()));
+    assert!(report["backup"]["last_copy_ms"].is_u64());
+    // The thread ends here, so the new folder can't be mirrored before the report is read.
+    storage.stop();
+    let mut to_b = settings.clone();
+    to_b["history_backup_dir"] = json!(b.path().to_string_lossy());
+    let (status, _) = call(&env.app, req("PUT", "/v1/settings", Some(to_b))).await;
+    assert_eq!(status, StatusCode::OK);
+    let (_, report) = get_json(&env.app, "/v1/history/storage").await;
+    assert_eq!(report["backup"]["dir"], json!(b.path().to_string_lossy()));
+    assert_eq!(report["backup"]["last_copy_ms"], Value::Null);
+    assert_eq!(report["backup"]["error"], Value::Null);
+    let (status, _) = call(&env.app, req("PUT", "/v1/settings", Some(settings))).await;
+    assert_eq!(status, StatusCode::OK);
+    let (_, report) = get_json(&env.app, "/v1/history/storage").await;
+    assert_eq!(report["backup"]["dir"], Value::Null);
+    assert_eq!(report["backup"]["last_copy_ms"], Value::Null);
+    assert_eq!(report["backup"]["error"], Value::Null);
+}
+
+#[tokio::test]
+async fn a_cleanup_keeps_the_images_of_a_tab_restored_from_the_last_run() {
+    let env = env();
+    // A tab from the last run: in the sidebar as Ended, with no session.
+    let saved = marshell_protocol::api::SavedTab {
+        tab_id: "t7".into(),
+        number: 7,
+        name: "Last run".into(),
+        agent: None,
+        profile_id: "printer".into(),
+        cwd: env.work.path().to_string_lossy().into_owned(),
+        mode: None,
+        muted: false,
+    };
+    env.state
+        .registry()
+        .seed_ended(&[saved], |tab| marshell_core::registry::Relaunch {
+            profile_id: tab.profile_id.clone(),
+            agent: None,
+            cwd: tab.cwd.clone(),
+            mode: None,
+            name: tab.name.clone(),
+        });
+    let image = marshell_core::paths::attachments_dir(env.home.path())
+        .join("t7")
+        .join("a.png");
+    write_aged(&image, b"png", 90);
+    let (_, mut settings) = get_json(&env.app, "/v1/settings").await;
+    settings["history_limit_days"] = json!(30);
+    let (status, _) = call(&env.app, req("PUT", "/v1/settings", Some(settings))).await;
+    assert_eq!(status, StatusCode::OK);
+    start_storage(&env);
+    let storage = env.state.storage().unwrap();
+    let started = Instant::now();
+    while storage.last_cleanup().is_none() {
+        assert!(started.elapsed() < Duration::from_secs(20), "no cleanup ran");
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert!(image.exists(), "the image of a tab still in the sidebar was removed");
 }

@@ -1,6 +1,7 @@
 import type { Appearance } from "../../generated/Appearance";
 import type { Endpoint } from "../../generated/Endpoint";
 import type { NotifySettings } from "../../generated/NotifySettings";
+import type { RetentionLimits } from "../../generated/RetentionLimits";
 import type { Settings } from "../../generated/Settings";
 
 export const READ_FAILED = "Couldn't read your settings, so nothing was saved. Try again in a moment.";
@@ -44,6 +45,12 @@ export class SettingsSync {
   private notify: NotifySettings = DEFAULT_NOTIFY;
   /** Whether conversations run outside Marshell are copied. Kept from the last read, so every save sends it back unchanged. */
   private importOn = true;
+  /** The size limit on recordings and images, in GB. Kept from the last read, so every save sends it back unchanged. */
+  private limitGb: number | null = null;
+  /** The age limit on recordings and images, in days. Kept from the last read, so every save sends it back unchanged. */
+  private limitDays: number | null = null;
+  /** The backup folder for the history. Kept from the last read, so every save sends it back unchanged. */
+  private backupDir: string | null = null;
   /** The appearance the core last stored, which a pause-warning write sends back unchanged. */
   private appearance: Appearance | null = null;
 
@@ -63,6 +70,9 @@ export class SettingsSync {
     this.off = s.status_off;
     this.notify = s.notifications;
     this.importOn = s.history_import;
+    this.limitGb = s.history_limit_gb;
+    this.limitDays = s.history_limit_days;
+    this.backupDir = s.history_backup_dir;
     this.appearance = s.appearance;
     return s.appearance;
   }
@@ -70,6 +80,16 @@ export class SettingsSync {
   /** Whether conversations run outside Marshell are copied, as of the last read or write. True until a read works. */
   get historyImport(): boolean {
     return this.importOn;
+  }
+
+  /** The size and age limits on recordings and images, as of the last read or write. No limits until a read works. */
+  get historyLimits(): RetentionLimits {
+    return { limit_gb: this.limitGb, limit_days: this.limitDays };
+  }
+
+  /** The backup folder for the history, as of the last read or write: null when there is none. */
+  get historyBackupDir(): string | null {
+    return this.backupDir;
   }
 
   /** The notification settings, as of the last read or write. The defaults until a read works. */
@@ -106,13 +126,16 @@ export class SettingsSync {
         throw new SettingsReadError();
       }
     }
-    const s = await this.api.put(await this.getEndpoint(), { appearance: next, pause_warned: this.warned, onboarded: this.seen, close_to_tray: this.tray, status_off: this.off, notifications: this.notify, history_import: this.importOn });
+    const s = await this.api.put(await this.getEndpoint(), { appearance: next, pause_warned: this.warned, onboarded: this.seen, close_to_tray: this.tray, status_off: this.off, notifications: this.notify, history_import: this.importOn, history_limit_gb: this.limitGb, history_limit_days: this.limitDays, history_backup_dir: this.backupDir });
     this.warned = s.pause_warned;
     this.seen = s.onboarded;
     this.tray = s.close_to_tray;
     this.off = s.status_off;
     this.notify = s.notifications;
     this.importOn = s.history_import;
+    this.limitGb = s.history_limit_gb;
+    this.limitDays = s.history_limit_days;
+    this.backupDir = s.history_backup_dir;
     this.appearance = s.appearance;
     return s.appearance;
   }
@@ -143,6 +166,16 @@ export class SettingsSync {
     await this.writeFlags({ history_import: on });
   }
 
+  /** Saves the limits on recordings and images. Reads first, like `save`, and sends every other field back unchanged. A refusal (400) rejects with the core's body as the message. */
+  async setHistoryLimits(limits: RetentionLimits): Promise<void> {
+    await this.writeFlags({ history_limit_gb: limits.limit_gb, history_limit_days: limits.limit_days });
+  }
+
+  /** Saves the backup folder, or clears it with null. Reads first, like `save`, and sends every other field back unchanged. A refusal (400) rejects with the core's body as the message. */
+  async setHistoryBackupDir(dir: string | null): Promise<void> {
+    await this.writeFlags({ history_backup_dir: dir });
+  }
+
   /** Records that the onboarding was seen. Reads first, like `save`, and sends the appearance and the pause warning back unchanged. */
   async markOnboarded(): Promise<void> {
     await this.writeFlags({ onboarded: true });
@@ -160,7 +193,7 @@ export class SettingsSync {
     return this.off;
   }
 
-  private async writeFlags(change: Partial<Pick<Settings, "pause_warned" | "onboarded" | "close_to_tray" | "status_off" | "notifications" | "history_import">>): Promise<void> {
+  private async writeFlags(change: Partial<Pick<Settings, "pause_warned" | "onboarded" | "close_to_tray" | "status_off" | "notifications" | "history_import" | "history_limit_gb" | "history_limit_days" | "history_backup_dir">>): Promise<void> {
     if (!this.hasRead) {
       try {
         await this.load();
@@ -176,6 +209,9 @@ export class SettingsSync {
       status_off: this.off,
       notifications: this.notify,
       history_import: this.importOn,
+      history_limit_gb: this.limitGb,
+      history_limit_days: this.limitDays,
+      history_backup_dir: this.backupDir,
       ...change,
     });
     this.warned = s.pause_warned;
@@ -184,6 +220,9 @@ export class SettingsSync {
     this.off = s.status_off;
     this.notify = s.notifications;
     this.importOn = s.history_import;
+    this.limitGb = s.history_limit_gb;
+    this.limitDays = s.history_limit_days;
+    this.backupDir = s.history_backup_dir;
     this.appearance = s.appearance;
   }
 }

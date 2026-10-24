@@ -4,6 +4,7 @@ import { useDialogFocus } from "../../lib/useDialogFocus";
 import { failureText } from "../agents/useInstallFlow";
 import { SettingsReadError, type SettingsSync } from "../appearance/settingsSync";
 import { SETTINGS_UNREADABLE } from "../notifications/NotificationsDialog";
+import { StorageSection } from "./StorageSection";
 // The Notifications dialog's sheet: the same look and stacking, so this dialog adds no styles of its own.
 import "../notifications/NotificationsDialog.css";
 
@@ -11,7 +12,7 @@ export const HISTORY_IMPORT_LABEL = "Copy conversations run outside Marshell";
 export const HISTORY_IMPORT_HINT = "Marshell reads Claude Code's and Codex's conversation folders and keeps its own copy of each conversation. It never changes their files.";
 
 /** Settings → History: the one switch for copying conversations run outside Marshell. `on` is null until the setting has been read, and no switch shows then (an unread value is never shown as off). */
-export function HistorySettingsDialogView({ on, error, onChange, onClose }: { on: boolean | null; error: string | null; onChange: (on: boolean) => void; onClose: () => void }) {
+export function HistorySettingsDialogView({ on, error, sync, announce, onChange, onClose }: { on: boolean | null; error: string | null; sync?: SettingsSync; announce?: (text: string) => void; onChange: (on: boolean) => void; onClose: () => void }) {
   const dialog = useRef<HTMLDivElement>(null);
   const title = useRef<HTMLHeadingElement>(null);
   useDialogFocus(dialog, title, onClose);
@@ -25,6 +26,7 @@ export function HistorySettingsDialogView({ on, error, onChange, onClose }: { on
         <div className="notifications-dialog__body">
           {on === null && !error && <p className="notifications-dialog__line">Reading your settings…</p>}
           {on !== null && <Switch label={HISTORY_IMPORT_LABEL} checked={on} onChange={onChange} reason={HISTORY_IMPORT_HINT} />}
+          {on !== null && <StorageSection sync={sync} announce={announce} />}
           {error && (
             <p className="notifications-dialog__error">
               {error}
@@ -42,7 +44,7 @@ export function HistorySettingsDialogView({ on, error, onChange, onClose }: { on
 }
 
 /** The History settings dialog on the app's settings. The switch is saved through `SettingsSync`, so a later appearance save keeps it; the core starts or stops the copy when it sees the saved value. */
-export function HistorySettingsDialog({ sync, onClose }: { sync?: SettingsSync; onClose: () => void }) {
+export function HistorySettingsDialog({ sync, announce, onClose }: { sync?: SettingsSync; announce?: (text: string) => void; onClose: () => void }) {
   const [on, setOn] = useState<boolean | null>(null);
   const [error, setError] = useState<string | null>(null);
   useEffect(() => {
@@ -65,5 +67,5 @@ export function HistorySettingsDialog({ sync, onClose }: { sync?: SettingsSync; 
       setError(e instanceof SettingsReadError ? e.message : failureText(e));
     }
   };
-  return <HistorySettingsDialogView on={on} error={error} onChange={(next) => void save(next)} onClose={onClose} />;
+  return <HistorySettingsDialogView on={on} error={error} sync={sync} announce={announce} onChange={(next) => void save(next)} onClose={onClose} />;
 }

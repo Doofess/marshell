@@ -109,7 +109,8 @@ fn summaries(dir: &Path, names: &[String], cache: &CastCache) -> Vec<(String, Ca
         .iter()
         .filter_map(|name| {
             let started = cast::started_ms(name)?;
-            match cache.summary(&dir.join(name), started) {
+            let path = cast::resolve(dir, name)?;
+            match cache.summary(&path, started) {
                 Ok(summary) => Some((name.clone(), summary)),
                 Err(err) => {
                     tracing::debug!("skipping recording {name}: {err:#}");
@@ -120,16 +121,21 @@ fn summaries(dir: &Path, names: &[String], cache: &CastCache) -> Vec<(String, Ca
         .collect()
 }
 
-/// The `<tab_id>-<ms>.cast` names in the recordings folder, for a conversation whose sidecar lists none.
+/// The `<tab_id>-<ms>.cast` link names for either form, for a conversation whose sidecar lists none.
 fn tab_files(dir: &Path, tab_id: &str) -> Vec<String> {
     let prefix = format!("{tab_id}-");
     let Ok(read) = std::fs::read_dir(dir) else {
         return Vec::new();
     };
-    read.filter_map(Result::ok)
+    let mut names: Vec<String> = read
+        .filter_map(Result::ok)
         .filter_map(|entry| entry.file_name().into_string().ok())
-        .filter(|name| name.starts_with(&prefix) && cast::valid_recording_name(name))
-        .collect()
+        .map(|name| name.strip_suffix(".zst").unwrap_or(&name).to_string())
+        .filter(|name| name.starts_with(&prefix) && cast::resolve(dir, name).is_some())
+        .collect();
+    names.sort();
+    names.dedup();
+    names
 }
 
 #[cfg(test)]
@@ -189,6 +195,33 @@ mod tests {
 
     fn files(parts: &[RecordingPart]) -> Vec<&str> {
         parts.iter().map(|p| p.file.as_str()).collect()
+    }
+
+    #[test]
+    fn parts_find_a_compressed_recording_by_its_cast_link() {
+        let home = tempfile::tempdir().unwrap();
+        let name = cast_file(home.path(), "t1", 1000, &[1.0, 2.0]);
+        assert_eq!(name, "t1-1000.cast");
+        let dir = paths::recordings_dir(home.path());
+        let path = dir.join(&name);
+        let bytes = std::fs::read(&path).unwrap();
+        let cache = CastCache::default();
+        let linked = meta_links("other", &[(&name, 1000, 3000)]);
+        let plain = parts(home.path(), &linked, (1000, 3000), &cache);
+        assert_eq!(files(&plain), [name.as_str()]);
+        std::fs::write(
+            path.with_extension("cast.zst"),
+            zstd::encode_all(bytes.as_slice(), 3).unwrap(),
+        )
+        .unwrap();
+        std::fs::remove_file(&path).unwrap();
+        assert_eq!(parts(home.path(), &linked, (1000, 3000), &cache), plain);
+        let fallback = meta("t1", &[]);
+        assert_eq!(parts(home.path(), &fallback, (1000, 3000), &cache), plain);
+        assert_eq!(tab_files(&dir, "t1"), std::slice::from_ref(&name));
+        std::fs::write(&path, bytes).unwrap();
+        assert_eq!(tab_files(&dir, "t1"), [name]);
+        assert_eq!(parts(home.path(), &fallback, (1000, 3000), &cache), plain);
     }
 
     #[test]

@@ -26,6 +26,15 @@ struct FileDoc {
     /// None (a file from before the switch) means on.
     #[serde(default)]
     history_import: Option<bool>,
+    /// None is no size limit. A value off the list of choices reads as none.
+    #[serde(default)]
+    history_limit_gb: Option<u32>,
+    /// None keeps recordings and images forever. A value off the list of choices reads as none.
+    #[serde(default)]
+    history_limit_days: Option<u32>,
+    /// None is no backup. The folder is checked when it is saved and again at every copy.
+    #[serde(default)]
+    history_backup_dir: Option<String>,
     /// Read only, to migrate an older file; never written.
     #[serde(default, skip_serializing)]
     sound_off: bool,
@@ -55,6 +64,23 @@ const ACCENT_PRESETS: [&str; 9] = [
 /// Terminal themes that are always there; any other value must be an imported theme's id.
 const BUILT_IN_TERMINAL_THEMES: [&str; 3] = ["follow-app", "dark", "light"];
 
+/// The size limits on recordings and images, in GB. Anything else is refused.
+pub const LIMIT_GB_CHOICES: [u32; 6] = [1, 2, 5, 10, 20, 50];
+
+/// The age limits on recordings and images, in days. Anything else is refused.
+pub const LIMIT_DAY_CHOICES: [u32; 4] = [30, 90, 180, 365];
+
+/// Checks a pair of retention limits against the choices the app offers.
+pub fn check_limits(limit_gb: Option<u32>, limit_days: Option<u32>) -> Result<(), String> {
+    if limit_gb.is_some_and(|gb| !LIMIT_GB_CHOICES.contains(&gb)) {
+        return Err("The size limit must be 1, 2, 5, 10, 20 or 50 GB.".into());
+    }
+    if limit_days.is_some_and(|days| !LIMIT_DAY_CHOICES.contains(&days)) {
+        return Err("The age limit must be 30, 90, 180 or 365 days.".into());
+    }
+    Ok(())
+}
+
 /// A missing, broken or newer-version file means the defaults. The file itself is not touched.
 pub fn load(home: &Path) -> Settings {
     let doc = store::read::<FileDoc>(&crate::paths::settings_file(home)).unwrap_or_else(|err| {
@@ -81,6 +107,11 @@ pub fn load(home: &Path) -> Settings {
         tracing::warn!("settings file has invalid quiet hours, using the defaults");
         notifications.quiet_hours = QuietHours::default();
     }
+    // A hand-edited limit off the list would make every later save fail, so it reads as no limit.
+    let (history_limit_gb, history_limit_days) = (
+        doc.history_limit_gb.filter(|gb| LIMIT_GB_CHOICES.contains(gb)),
+        doc.history_limit_days.filter(|days| LIMIT_DAY_CHOICES.contains(days)),
+    );
     Settings {
         appearance,
         pause_warned,
@@ -89,6 +120,9 @@ pub fn load(home: &Path) -> Settings {
         status_off,
         notifications,
         history_import: doc.history_import.unwrap_or(true),
+        history_limit_gb,
+        history_limit_days,
+        history_backup_dir: doc.history_backup_dir.filter(|dir| !dir.trim().is_empty()),
     }
 }
 
@@ -133,6 +167,9 @@ pub fn save(home: &Path, s: &Settings) -> anyhow::Result<()> {
             status_off: clean_status_off(s.status_off.clone()),
             notifications: Some(s.notifications.clone()),
             history_import: Some(s.history_import),
+            history_limit_gb: s.history_limit_gb,
+            history_limit_days: s.history_limit_days,
+            history_backup_dir: s.history_backup_dir.clone(),
             sound_off: false,
         },
     )
@@ -214,7 +251,8 @@ pub fn validate(s: &Settings) -> Result<(), String> {
     check_accent(a)?;
     check_font_size(a)?;
     check_imported_themes(a)?;
-    check_terminal_theme(a)
+    check_terminal_theme(a)?;
+    check_limits(s.history_limit_gb, s.history_limit_days)
 }
 
 /// Puts the default in place of every field that fails its check, and returns the names of those
@@ -302,6 +340,57 @@ mod tests {
             save(home.path(), &s).unwrap();
             assert_eq!(load(home.path()).history_import, on);
         }
+    }
+
+    #[test]
+    fn retention_limits_accept_only_the_listed_values_and_round_trip() {
+        for (gb, days) in [
+            (Some(3), None),
+            (None, Some(7)),
+            (Some(3), Some(7)),
+            (Some(0), None),
+            (None, Some(0)),
+        ] {
+            let s = Settings {
+                history_limit_gb: gb,
+                history_limit_days: days,
+                ..Settings::default()
+            };
+            assert!(validate(&s).is_err(), "{gb:?} {days:?}");
+        }
+        let home = tempfile::tempdir().unwrap();
+        let s = Settings {
+            history_limit_gb: Some(5),
+            history_limit_days: Some(90),
+            ..Settings::default()
+        };
+        assert!(validate(&s).is_ok());
+        save(home.path(), &s).unwrap();
+        let back = load(home.path());
+        assert_eq!((back.history_limit_gb, back.history_limit_days), (Some(5), Some(90)));
+        // An old file has no limits; a hand-edited value off the list reads as none.
+        let file = crate::paths::settings_file(home.path());
+        std::fs::write(&file, r#"{"version":1}"#).unwrap();
+        assert_eq!(load(home.path()).history_limit_gb, None);
+        std::fs::write(&file, r#"{"version":1,"history_limit_gb":3,"history_limit_days":90}"#).unwrap();
+        let back = load(home.path());
+        assert_eq!((back.history_limit_gb, back.history_limit_days), (None, Some(90)));
+    }
+
+    #[test]
+    fn the_backup_folder_round_trips_and_a_blank_one_reads_as_none() {
+        let home = tempfile::tempdir().unwrap();
+        assert_eq!(load(home.path()).history_backup_dir, None);
+        let s = Settings {
+            history_backup_dir: Some("D:/Backups".into()),
+            ..Settings::default()
+        };
+        assert!(validate(&s).is_ok());
+        save(home.path(), &s).unwrap();
+        assert_eq!(load(home.path()).history_backup_dir.as_deref(), Some("D:/Backups"));
+        let file = crate::paths::settings_file(home.path());
+        std::fs::write(&file, r#"{"version":1,"history_backup_dir":"  "}"#).unwrap();
+        assert_eq!(load(home.path()).history_backup_dir, None);
     }
 
     #[test]

@@ -94,6 +94,7 @@ enum Event {
     Output(f64, Vec<u8>),
     Resize(f64, u16, u16),
     Marker(f64, String),
+    Close,
 }
 
 /// Writes one session's recording from its own thread, so disk I/O never runs on the pty reader
@@ -106,6 +107,10 @@ pub struct Recorder {
     failed: Arc<AtomicBool>,
     /// Set by a sender that found the queue full. Nothing more is sent; the writer ends the file with a marker.
     behind: Arc<AtomicBool>,
+    /// Set before sending Close. Also lets the writer close when the queue has no room for it.
+    closing: Arc<AtomicBool>,
+    /// Set by the writer only after it has dropped the file.
+    closed: Arc<AtomicBool>,
     #[cfg(test)]
     thread: Option<std::thread::JoinHandle<()>>,
 }
@@ -144,12 +149,15 @@ impl Recorder {
         let (tx, rx) = sync_channel::<Event>(queue);
         let failed = Arc::new(AtomicBool::new(false));
         let behind = Arc::new(AtomicBool::new(false));
+        let closing = Arc::new(AtomicBool::new(false));
+        let closed = Arc::new(AtomicBool::new(false));
         let writer = Writer {
             file,
             written: head.len() as u64,
             limit,
             limited: false,
             behind: behind.clone(),
+            closing: closing.clone(),
             last_t: 0.0,
             encoder: CastEncoder::default(),
         };
@@ -159,6 +167,7 @@ impl Recorder {
             .unwrap_or_default();
         let thread_failed = failed.clone();
         let thread_path = path.clone();
+        let thread_closed = closed.clone();
         let _handle = std::thread::Builder::new().name(format!("rec-{stem}")).spawn(move || {
             if let Some(gate) = gate {
                 let _ = gate.recv();
@@ -167,6 +176,7 @@ impl Recorder {
                 thread_failed.store(true, Ordering::SeqCst);
                 tracing::warn!("recording {} stopped: {e}", thread_path.display());
             }
+            thread_closed.store(true, Ordering::SeqCst);
         })?;
         Ok(Recorder {
             path,
@@ -174,6 +184,8 @@ impl Recorder {
             tx,
             failed,
             behind,
+            closing,
+            closed,
             #[cfg(test)]
             thread: Some(_handle),
         })
@@ -200,6 +212,20 @@ impl Recorder {
         !self.failed.load(Ordering::SeqCst)
     }
 
+    /// Requests a flush and close after the queued events, without waiting for the disk.
+    pub fn close(&self) {
+        if !self.closing.swap(true, Ordering::SeqCst) {
+            // A full queue still closes: the writer sees `closing` when it has drained it.
+            // Unlike a dropped output event, this does not mean the recording fell behind.
+            let _ = self.tx.try_send(Event::Close);
+        }
+    }
+
+    /// True once the writer has flushed (or failed) and dropped its file.
+    pub fn is_closed(&self) -> bool {
+        self.closed.load(Ordering::SeqCst)
+    }
+
     fn now(&self) -> f64 {
         self.started.elapsed().as_secs_f64()
     }
@@ -207,11 +233,21 @@ impl Recorder {
     /// Never waits: a disk that hangs must not hold up the session. A full queue stops the recording
     /// rather than dropping single events, which would leave a gap in the replay.
     fn send(&self, event: Event) {
-        if self.failed.load(Ordering::Relaxed) || self.behind.load(Ordering::Relaxed) {
+        if self.closing.load(Ordering::SeqCst)
+            || self.failed.load(Ordering::Relaxed)
+            || self.behind.load(Ordering::Relaxed)
+        {
             return;
         }
+        self.enqueue(event);
+    }
+
+    /// The nonblocking send after the initial flag check; close may race with this step.
+    fn enqueue(&self, event: Event) {
         match self.tx.try_send(event) {
             Ok(()) => {}
+            // Close can fill the queue or drop the receiver after `send` checked the flag.
+            Err(_) if self.closing.load(Ordering::SeqCst) => {}
             Err(TrySendError::Full(_)) => self.behind.store(true, Ordering::SeqCst),
             Err(TrySendError::Disconnected(_)) => self.failed.store(true, Ordering::SeqCst),
         }
@@ -234,20 +270,36 @@ struct Writer {
     limit: u64,
     limited: bool,
     behind: Arc<AtomicBool>,
+    closing: Arc<AtomicBool>,
     /// Events come from more than one thread; a time never goes backwards in the file.
     last_t: f64,
     encoder: CastEncoder,
 }
 
 impl Writer {
-    /// Runs until every sender is gone. Flushes about once a second, so a crash loses at most that much.
+    /// Runs until close or every sender is gone. Flushes about once a second, so a crash loses at most that much.
     fn run(mut self, rx: Receiver<Event>) -> std::io::Result<()> {
         loop {
-            match rx.recv_timeout(Duration::from_secs(1)) {
+            // Observe close before checking for an empty queue: a close arriving during a
+            // flush may have queued output before it, and that output must still be drained.
+            let closing = self.closing.load(Ordering::SeqCst);
+            let timeout = if closing {
+                Duration::ZERO
+            } else {
+                Duration::from_secs(1)
+            };
+            match rx.recv_timeout(timeout) {
+                Ok(Event::Close) => {
+                    self.stop_if_behind()?;
+                    return self.file.flush();
+                }
                 Ok(event) => self.write(event)?,
                 Err(RecvTimeoutError::Timeout) => {
                     self.stop_if_behind()?;
-                    self.file.flush()?
+                    self.file.flush()?;
+                    if closing {
+                        return Ok(());
+                    }
                 }
                 Err(RecvTimeoutError::Disconnected) => {
                     self.stop_if_behind()?;
@@ -281,6 +333,7 @@ impl Writer {
             }
             Event::Resize(t, cols, rows) => CastEncoder::resize(self.time(t), cols, rows),
             Event::Marker(t, label) => CastEncoder::marker(self.time(t), &label),
+            Event::Close => unreachable!("close is handled by the writer loop"),
         };
         if self.written + line.len() as u64 > self.limit {
             self.limited = true;
@@ -444,6 +497,121 @@ mod tests {
         assert_eq!(v[2], "Recording stopped: it fell behind.");
         // Only the events queued before the drop are written: no gap inside the replay.
         assert_eq!(lines.len(), 1 + 4 + 1, "{text}");
+    }
+
+    #[test]
+    fn close_flushes_and_closes_the_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("t-close.cast");
+        let rec = Recorder::start(path.clone(), header()).unwrap();
+        rec.output(b"last");
+        rec.close();
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while !rec.is_closed() && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert!(rec.is_closed(), "the writer did not close its file");
+        let text = std::fs::read_to_string(&path).unwrap();
+        let last: serde_json::Value = serde_json::from_str(text.lines().last().unwrap()).unwrap();
+        assert_eq!(last[1], "o");
+        assert_eq!(last[2], "last");
+        rec.output(b"after");
+        rec.resize(100, 40);
+        rec.marker("after");
+        rec.close();
+        assert!(rec.is_recording(), "a finished recording keeps its path");
+        rec.finish();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), text);
+        assert!(!text.contains("after"));
+    }
+
+    #[test]
+    fn close_with_a_full_queue_still_closes() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("t-close-full.cast");
+        let (open, gate) = sync_channel::<()>(0);
+        let rec = Recorder::start_inner(path.clone(), header(), MAX_RECORDING_BYTES, 2, Some(gate)).unwrap();
+        let (done_tx, done) = sync_channel::<Recorder>(1);
+        std::thread::spawn(move || {
+            rec.output(b"first");
+            rec.output(b"last");
+            rec.output(b"dropped");
+            rec.close();
+            done_tx.send(rec).unwrap();
+        });
+        let rec = done
+            .recv_timeout(Duration::from_secs(2))
+            .expect("close blocked behind a stalled recording");
+        assert!(!rec.is_closed(), "the writer still holds its file");
+        open.send(()).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while !rec.is_closed() && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert!(rec.is_closed(), "the full queue prevented close");
+        assert!(rec.is_recording());
+        let text = std::fs::read_to_string(&path).unwrap();
+        let lines: Vec<&str> = text.lines().collect();
+        assert_eq!(lines.len(), 1 + 2 + 1, "{text}");
+        let last: serde_json::Value = serde_json::from_str(lines.last().unwrap()).unwrap();
+        assert_eq!(last[1], "m");
+        assert_eq!(last[2], "Recording stopped: it fell behind.");
+        assert!(!text.contains("dropped"));
+        rec.finish();
+    }
+
+    #[test]
+    fn close_with_a_full_queue_preserves_every_queued_event() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("t-close-drain.cast");
+        let (open, gate) = sync_channel::<()>(0);
+        let rec = Recorder::start_inner(path.clone(), header(), MAX_RECORDING_BYTES, 2, Some(gate)).unwrap();
+        let (done_tx, done) = sync_channel::<Recorder>(1);
+        std::thread::spawn(move || {
+            rec.output(b"first");
+            rec.output(b"last");
+            rec.close();
+            rec.output(b"after");
+            rec.resize(100, 40);
+            rec.marker("after");
+            done_tx.send(rec).unwrap();
+        });
+        let rec = done.recv_timeout(Duration::from_secs(2)).expect("close blocked");
+        assert!(!rec.is_closed());
+        open.send(()).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while !rec.is_closed() && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert!(rec.is_closed());
+        assert!(rec.is_recording());
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(text.lines().count(), 3, "{text}");
+        let last: serde_json::Value = serde_json::from_str(text.lines().last().unwrap()).unwrap();
+        assert_eq!(last[1], "o");
+        assert_eq!(last[2], "last");
+        assert!(!text.contains("after"));
+        rec.finish();
+    }
+
+    #[test]
+    fn a_send_already_in_flight_when_close_finishes_keeps_the_recording_valid() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("t-close-race.cast");
+        let rec = Recorder::start(path.clone(), header()).unwrap();
+        rec.output(b"last");
+        rec.close();
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while !rec.is_closed() && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert!(rec.is_closed());
+        let text = std::fs::read_to_string(&path).unwrap();
+        // Resume a sender after its initial flag check: close has since dropped the receiver.
+        rec.enqueue(Event::Marker(rec.now(), "after".into()));
+        assert!(rec.is_recording(), "a successful close is not an I/O failure");
+        rec.finish();
+        assert_eq!(std::fs::read_to_string(path).unwrap(), text);
     }
 
     #[test]

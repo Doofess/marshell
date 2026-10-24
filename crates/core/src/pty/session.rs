@@ -240,6 +240,9 @@ impl Session {
             }
             self.wait_for_space();
         }
+        if let Some(rec) = &self.recorder {
+            rec.close();
+        }
         self.output.lock().unwrap().reader_done = true;
         self.notify.notify_one();
     }
@@ -427,6 +430,14 @@ impl Session {
         self.recorder
             .as_ref()
             .filter(|r| r.is_recording())
+            .map(|r| r.path().to_path_buf())
+    }
+
+    /// The recording while its writer still holds the file, including a pending close.
+    pub fn open_recording(&self) -> Option<PathBuf> {
+        self.recorder
+            .as_ref()
+            .filter(|r| r.is_recording() && !r.is_closed())
             .map(|r| r.path().to_path_buf())
     }
 
@@ -635,5 +646,56 @@ fn kill_tree(pid: u32, exited: Arc<AtomicBool>) {
 fn force_kill_tree(pid: u32) {
     unsafe {
         libc::killpg(pid as i32, libc::SIGKILL);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_recording_closes_when_the_output_ends() {
+        // Run this test executable as the fake program, as the session integration tests do
+        // for their child-process probes. Only the child receives this variable.
+        const CHILD: &str = "MARSHELL_TEST_RECORDING_CHILD";
+        if std::env::var_os(CHILD).is_some() {
+            println!("last recording output");
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("t-end.cast");
+        let spec = SpawnSpec {
+            argv: vec![
+                std::env::current_exe().unwrap().to_string_lossy().into_owned(),
+                "--exact".into(),
+                "pty::session::tests::the_recording_closes_when_the_output_ends".into(),
+                "--nocapture".into(),
+            ],
+            cwd: Some(dir.path().to_path_buf()),
+            env: vec![(CHILD.into(), "1".into())],
+            env_remove: vec![],
+            cols: 80,
+            rows: 24,
+            on_exit: None,
+            on_mark: None,
+            record: Some((path.clone(), None)),
+        };
+        let session = Session::spawn("t-end".into(), spec).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while !session.output.lock().unwrap().reader_done && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        let reader_done = session.output.lock().unwrap().reader_done;
+        if !reader_done {
+            session.force_kill();
+        }
+        assert!(reader_done, "the fake program's output did not end");
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while session.open_recording().is_some() && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert_eq!(session.open_recording(), None);
+        assert_eq!(session.recording_path(), Some(path.clone()));
+        assert!(std::fs::read_to_string(path).unwrap().contains("last recording output"));
     }
 }

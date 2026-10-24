@@ -512,10 +512,18 @@ pub async fn input(State(st): State<AppState>, Path(tab): Path<String>, Json(req
     StatusCode::NO_CONTENT.into_response()
 }
 
-/// Where the session's asciicast recording is. 404 for an unknown tab, and for one that has no recording.
+/// Where the session's asciicast recording is: the plain file, or the compressed one the storage thread leaves
+/// after the program has exited. 404 for an unknown tab, and for one that has no recording.
 pub async fn recording(State(st): State<AppState>, Path(tab): Path<String>) -> Response {
     match st.session(&tab).and_then(|s| s.recording_path()) {
-        Some(path) => Json(serde_json::json!({ "path": path })).into_response(),
+        Some(path) => {
+            let on_disk = path
+                .parent()
+                .zip(path.file_name().and_then(|name| name.to_str()))
+                .and_then(|(dir, name)| crate::history::cast::resolve(dir, name))
+                .unwrap_or(path);
+            Json(serde_json::json!({ "path": on_disk })).into_response()
+        }
         None => (StatusCode::NOT_FOUND, "This session has no recording.").into_response(),
     }
 }

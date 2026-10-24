@@ -946,6 +946,26 @@ async fn a_session_reports_its_recording_path() {
 }
 
 #[tokio::test]
+async fn the_recording_path_follows_a_recording_that_was_compressed() {
+    let app = sessions_app();
+    let (_, created) = create_session(&app, serde_json::json!({})).await;
+    let tab = created["tab_id"].as_str().unwrap();
+    let uri = format!("/v1/sessions/{tab}/recording");
+    let res = app.clone().oneshot(api("GET", &uri, None)).await.unwrap();
+    let plain = json_body(res).await["path"].as_str().unwrap().to_owned();
+    assert!(plain.ends_with(".cast"), "{plain}");
+    // What the storage thread leaves behind once the program has exited: the compressed file only.
+    let packed = format!("{plain}.zst");
+    std::fs::rename(&plain, &packed).unwrap();
+    let res = app.clone().oneshot(api("GET", &uri, None)).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let path = json_body(res).await["path"].as_str().unwrap().to_owned();
+    assert_eq!(path, packed);
+    assert!(std::path::Path::new(&path).is_file(), "{path}");
+    let _ = status_of(&app, api("DELETE", &format!("/v1/sessions/{tab}"), None)).await;
+}
+
+#[tokio::test]
 async fn peek_route_404_for_unknown_tab() {
     let home = tempfile::tempdir().unwrap();
     let app = app_in(home.path());

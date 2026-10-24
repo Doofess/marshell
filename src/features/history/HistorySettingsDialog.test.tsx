@@ -23,4 +23,10 @@ describe("HistorySettingsDialogView", () => {
   it("shows no switch until the setting has been read", () => {
     expect(view(null)).not.toContain('role="switch"');
   });
+  it("shows the Storage section under the switch, and none before the setting is read", () => {
+    const h = view(true);
+    expect(h.indexOf('role="switch"')).toBeGreaterThan(-1);
+    expect(h.indexOf(">Storage</h3>")).toBeGreaterThan(h.indexOf('role="switch"'));
+    expect(view(null)).not.toContain(">Storage</h3>");
+  });
 });

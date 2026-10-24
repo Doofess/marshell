@@ -196,6 +196,79 @@ pub struct ImportStatus {
     pub total: u32,
 }
 
+/// The size and age limits on recordings and images. `None` is no limit. The core accepts only the listed values:
+/// 1, 2, 5, 10, 20 or 50 GB, and 30, 90, 180 or 365 days.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(default)]
+#[ts(export)]
+pub struct RetentionLimits {
+    pub limit_gb: Option<u32>,
+    pub limit_days: Option<u32>,
+}
+
+/// POST /v1/history/storage/preview: what a cleanup with these limits would remove now.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct RetentionPreview {
+    /// Recordings and images that would go.
+    pub files: u32,
+    #[ts(type = "number")]
+    pub bytes: u64,
+    /// The modified time of the oldest of them, unix ms. None when nothing would go.
+    #[ts(type = "number | null")]
+    pub oldest_ms: Option<u64>,
+}
+
+/// The last cleanup that removed something or found nothing to remove.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct CleanupRun {
+    /// When it ran, unix ms.
+    #[ts(type = "number")]
+    pub at_ms: u64,
+    pub files: u32,
+    #[ts(type = "number")]
+    pub bytes: u64,
+}
+
+/// How the backup mirror stands: the folder it copies into, when it last finished, and why it could not.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct BackupStatus {
+    /// The backup folder as saved in the settings. None when there is no backup.
+    pub dir: Option<String>,
+    /// When the last copy finished, unix ms. None until one has for this folder.
+    #[ts(type = "number | null")]
+    pub last_copy_ms: Option<u64>,
+    /// Why the last attempt failed. None when it worked, or none has run yet.
+    pub error: Option<String>,
+}
+
+/// GET /v1/history/storage: what Marshell keeps on disk, the retention limits, the last cleanup and the backup.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct StorageReport {
+    /// Bytes under `<home>/history/archive`.
+    #[ts(type = "number")]
+    pub transcripts: u64,
+    #[ts(type = "number")]
+    pub recordings: u64,
+    /// The saved images (`<home>/attachments`).
+    #[ts(type = "number")]
+    pub attachments: u64,
+    #[ts(type = "number")]
+    pub snapshots: u64,
+    #[ts(type = "number")]
+    pub logs: u64,
+    /// The sessions index with its `-wal` and `-shm` files.
+    #[ts(type = "number")]
+    pub index: u64,
+    /// The limits in the saved settings.
+    pub limits: RetentionLimits,
+    pub last_cleanup: Option<CleanupRun>,
+    pub backup: BackupStatus,
+}
+
 /// The History list's "Where" filter.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[ts(export)]
