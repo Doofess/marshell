@@ -49,6 +49,17 @@ pub(crate) fn first_patch_file(patch: &str) -> Option<&str> {
     })
 }
 
+/// Every path a patch writes, in order: its files and the targets they move to.
+pub(crate) fn patch_files(patch: &str) -> impl Iterator<Item = &str> {
+    patch.lines().filter_map(|line| {
+        let path = ["*** Add File:", "*** Update File:", "*** Delete File:", "*** Move to:"]
+            .iter()
+            .find_map(|prefix| line.trim().strip_prefix(prefix))?
+            .trim();
+        (!path.is_empty()).then_some(path)
+    })
+}
+
 /// The file `apply_patch` touches first, cut to fit a row.
 fn patched_file(body: &Value) -> Option<String> {
     first_patch_file(str_at(body, "/tool_input/command")?).map(|path| first_line(path, 60))

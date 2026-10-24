@@ -1,6 +1,6 @@
 //! Maps Codex's PermissionRequest payload to the agent-neutral approve card, and a decision to Codex's answer.
 
-use super::status::first_patch_file;
+use super::status::{first_patch_file, patch_files};
 use crate::agents::common::{DENIED_TEXT, flatten_input};
 use crate::hooks::{holds::PendingPermission, risk};
 use marshell_protocol::hook::{
@@ -64,6 +64,23 @@ fn patch_detail(patch: &str) -> Option<PermissionDetail> {
     Some(PermissionDetail::Edit { path, add, del, hunk })
 }
 
+/// The card's edit names a patch's first file, but the patch may write others, or move a file
+/// elsewhere: each is checked as an edit of its own.
+fn later_file_risk(request: &Value, cwd: &Path) -> Option<String> {
+    if request["tool_name"].as_str() != Some("apply_patch") {
+        return None;
+    }
+    patch_files(request["tool_input"]["command"].as_str()?).find_map(|path| {
+        let edit = PermissionDetail::Edit {
+            path: path.into(),
+            add: 0,
+            del: 0,
+            hunk: Vec::new(),
+        };
+        risk::classify(&edit, cwd)
+    })
+}
+
 /// Builds a card without changing the held request or answering it. Codex keeps no rule from Marshell,
 /// so there is no always rule.
 pub fn view(p: &PendingPermission) -> Option<PermissionView> {
@@ -75,7 +92,7 @@ pub fn view(p: &PendingPermission) -> Option<PermissionView> {
         tab,
         agent: p.agent.clone(),
         at_ms: p.at_ms,
-        risk: risk::classify(&detail, cwd),
+        risk: risk::classify(&detail, cwd).or_else(|| later_file_risk(&p.request, cwd)),
         detail,
         always_rule: None,
     })
@@ -214,6 +231,25 @@ mod tests {
         assert_eq!(v.always_rule, None);
         assert!(matches!(v.detail, PermissionDetail::Bash { .. }));
         assert!(view(&PendingPermission { tab: None, ..p }).is_none());
+    }
+
+    #[test]
+    fn a_risky_later_file_in_a_patch_is_flagged() {
+        let p = |patch: &str| PendingPermission {
+            rid: "r".into(),
+            tab: Some("t1".into()),
+            agent: "codex".into(),
+            tool: Some("apply_patch".into()),
+            at_ms: 7,
+            request: json!({ "tool_name": "apply_patch", "cwd": "C:/p", "tool_input": { "command": patch } }),
+        };
+        let added =
+            "*** Begin Patch\n*** Update File: src/a.rs\n+x\n*** Add File: .git/hooks/pre-commit\n+y\n*** End Patch";
+        assert_eq!(view(&p(added)).unwrap().risk.as_deref(), Some("Writes to .git"));
+        let moved = "*** Begin Patch\n*** Update File: src/a.rs\n*** Move to: .git/config\n+x\n*** End Patch";
+        assert_eq!(view(&p(moved)).unwrap().risk.as_deref(), Some("Writes to .git"));
+        let plain = "*** Begin Patch\n*** Update File: src/a.rs\n+x\n*** End Patch";
+        assert_eq!(view(&p(plain)).unwrap().risk, None);
     }
 
     #[test]
