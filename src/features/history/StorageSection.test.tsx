@@ -1,7 +1,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import type { StorageReport } from "../../generated/StorageReport";
-import { StorageSectionView } from "./StorageSection";
+import { StorageSectionView, limitsShown } from "./StorageSection";
 
 const none = () => {};
 const NOW = new Date(2026, 9, 24, 12).getTime();
@@ -113,5 +113,28 @@ describe("StorageSectionView", () => {
   });
   it("shows the error text it is given", () => {
     expect(view({ error: "That folder doesn't exist." })).toContain("That folder doesn&#x27;t exist.</p>");
+  });
+  it("labels the backup field as a group by its name and leaves the path span unlabelled", () => {
+    const h = view();
+    expect(h).toMatch(/<div class="storage__field" role="group" aria-labelledby="storage-backup-label">/);
+    expect(h).toMatch(/<span class="storage__path">/);
+    expect(h.match(/aria-labelledby="storage-backup-label"/g)).toHaveLength(1);
+  });
+});
+
+describe("limitsShown", () => {
+  const preview = { files: 1, bytes: 1, oldest_ms: null };
+  const saved = { limit_gb: null, limit_days: null };
+  it("builds a second change on the person's latest choice while the report is still old", () => {
+    const shown = limitsShown(null, { limit_gb: 5, limit_days: null }, report({ limits: saved }));
+    expect({ ...shown, limit_days: 90 }).toEqual({ limit_gb: 5, limit_days: 90 });
+  });
+  it("lets a pending change win over the choice", () => {
+    const pending = { limits: { limit_gb: 2, limit_days: 30 }, preview };
+    expect(limitsShown(pending, { limit_gb: 5, limit_days: null }, report())).toEqual({ limit_gb: 2, limit_days: 30 });
+  });
+  it("is the report's limits when nothing is chosen, and undefined before the report", () => {
+    expect(limitsShown(null, null, report({ limits: { limit_gb: 10, limit_days: 180 } }))).toEqual({ limit_gb: 10, limit_days: 180 });
+    expect(limitsShown(null, null, null)).toBeUndefined();
   });
 });

@@ -36,11 +36,18 @@ function backupLine(b: StorageReport["backup"], now: number): string {
   return b.last_copy_ms === null ? "Not copied yet." : `Last copy ${relativeTime(now - b.last_copy_ms)}.`;
 }
 
+/** The limits the selects show and a change is built on: a change waiting for a yes, else the person's latest choice (a save in flight hasn't reached the report yet), else the saved limits. */
+export function limitsShown(pending: PendingLimits | null, chosen: RetentionLimits | null, report: StorageReport | null): RetentionLimits | undefined {
+  return pending?.limits ?? chosen ?? report?.limits;
+}
+
 export type StorageSectionViewProps = {
   /** Null until the report has arrived: sizes show an en dash and no control shows. */
   report: StorageReport | null;
   /** A change that would remove files, waiting for a yes. */
   pending: PendingLimits | null;
+  /** The person's latest choice, until the report shows it as saved. */
+  chosen?: RetentionLimits | null;
   error: string | null;
   busy: boolean;
   now: number;
@@ -54,7 +61,7 @@ export type StorageSectionViewProps = {
 };
 
 /** Settings → History → Storage: what Marshell keeps on disk, the limits on recordings and images, and the backup folder. */
-export function StorageSectionView({ report, pending, error, busy, now, sizeRef, ageRef, onLimits, onConfirm, onCancel, onChoose, onStop }: StorageSectionViewProps) {
+export function StorageSectionView({ report, pending, chosen = null, error, busy, now, sizeRef, ageRef, onLimits, onConfirm, onCancel, onChoose, onStop }: StorageSectionViewProps) {
   const bytes = (n: number | undefined) => (n === undefined ? DASH : formatBytes(n));
   const rows: [string, number | undefined][] = [
     ["Transcripts", report?.transcripts],
@@ -65,7 +72,7 @@ export function StorageSectionView({ report, pending, error, busy, now, sizeRef,
     ["Search index", report?.index],
     ["Total", report ? report.transcripts + report.recordings + report.attachments + report.snapshots + report.logs + report.index : undefined],
   ];
-  const shown = pending?.limits ?? report?.limits;
+  const shown = limitsShown(pending, chosen, report);
   const described = pending ? `storage-limits-hint ${QUESTION_ID}` : "storage-limits-hint";
   const limited = report !== null && (report.limits.limit_gb !== null || report.limits.limit_days !== null);
   return (
@@ -124,11 +131,11 @@ export function StorageSectionView({ report, pending, error, busy, now, sizeRef,
             </div>
           )}
           {limited && report.last_cleanup && <p className="notifications-dialog__line">{cleanupLine(report.last_cleanup, now)}</p>}
-          <div className="storage__field">
+          <div className="storage__field" role="group" aria-labelledby="storage-backup-label">
             <span className="field__label" id="storage-backup-label">
               Backup folder
             </span>
-            <span className="storage__path" aria-labelledby="storage-backup-label">
+            <span className="storage__path">
               {report.backup.dir ?? "None"}
             </span>
             <div className="storage__actions">
@@ -155,6 +162,7 @@ export function StorageSectionView({ report, pending, error, busy, now, sizeRef,
 export function StorageSection({ sync, announce }: { sync?: SettingsSync; announce?: (text: string) => void }) {
   const [report, setReport] = useState<StorageReport | null>(null);
   const [pending, setPending] = useState<PendingLimits | null>(null);
+  const [chosen, setChosen] = useState<RetentionLimits | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [refocus, setRefocus] = useState(0);
@@ -174,6 +182,10 @@ export function StorageSection({ sync, announce }: { sync?: SettingsSync; announ
       live.current = false;
     };
   }, []);
+  // Once the report shows the chosen limits as saved, the report is the truth again.
+  useEffect(() => {
+    if (report) setChosen((c) => (c && c.limit_gb === report.limits.limit_gb && c.limit_days === report.limits.limit_days ? null : c));
+  }, [report]);
   // Focus stays on the select the person was using, also after the confirm line has gone.
   useEffect(() => {
     if (refocus > 0) (field.current === "size" ? sizeRef : ageRef).current?.focus();
@@ -205,6 +217,7 @@ export function StorageSection({ sync, announce }: { sync?: SettingsSync; announ
     <StorageSectionView
       report={report}
       pending={pending}
+      chosen={chosen}
       error={error}
       busy={busy}
       now={Date.now()}
@@ -212,20 +225,32 @@ export function StorageSection({ sync, announce }: { sync?: SettingsSync; announ
       ageRef={ageRef}
       onLimits={(limits, which) => {
         field.current = which;
+        if (!sync) return;
+        setChosen(limits);
         void run(async () => {
-          if (!sync) return;
-          const ask = await proposeLimits(previewRetention, saveLimits, limits, announce);
-          setPending(ask);
+          try {
+            const ask = await proposeLimits(previewRetention, saveLimits, limits, announce);
+            setPending(ask);
+          } catch (e) {
+            setChosen(null);
+            throw e;
+          }
         });
       }}
       onConfirm={() =>
         void run(async () => {
-          if (pending) await saveLimits(pending.limits);
+          try {
+            if (pending) await saveLimits(pending.limits);
+          } catch (e) {
+            setChosen(null);
+            throw e;
+          }
           setRefocus((n) => n + 1);
         })
       }
       onCancel={() => {
         setPending(null);
+        setChosen(null);
         setRefocus((n) => n + 1);
       }}
       onChoose={() =>
