@@ -182,6 +182,20 @@ impl Client {
     }
 }
 
+/// GET /v1/history/import: the copy of conversations run outside Marshell.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct ImportStatus {
+    /// The switch "Copy conversations run outside Marshell".
+    pub on: bool,
+    /// True while a batch of files is being copied.
+    pub copying: bool,
+    /// Files copied in this batch.
+    pub done: u32,
+    /// Files in this batch.
+    pub total: u32,
+}
+
 /// The History list's "Where" filter.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[ts(export)]

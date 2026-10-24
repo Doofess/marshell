@@ -344,6 +344,7 @@ async fn start_writes_endpoint_file_and_serves() {
         notify: None,
         notify_paused: Default::default(),
         window_hidden: Default::default(),
+        import: None,
     })
     .await
     .unwrap();
@@ -373,6 +374,7 @@ async fn start_core(home: &std::path::Path) -> marshell_core::server::RunningCor
         notify: None,
         notify_paused: Default::default(),
         window_hidden: Default::default(),
+        import: None,
     })
     .await
     .unwrap()

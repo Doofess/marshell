@@ -794,7 +794,7 @@ impl Default for Appearance {
 }
 
 /// GET/PUT /v1/settings body.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(default)]
 #[ts(export)]
 pub struct Settings {
@@ -809,6 +809,22 @@ pub struct Settings {
     pub status_off: Vec<String>,
     /// Which events notify, and how.
     pub notifications: NotifySettings,
+    /// Whether Marshell keeps its own copy of the conversations Claude Code and Codex ran outside it.
+    pub history_import: bool,
+}
+
+impl Default for Settings {
+    fn default() -> Self {
+        Self {
+            appearance: Appearance::default(),
+            pause_warned: false,
+            onboarded: false,
+            close_to_tray: None,
+            status_off: Vec::new(),
+            notifications: NotifySettings::default(),
+            history_import: true,
+        }
+    }
 }
 
 /// How one kind of event notifies.

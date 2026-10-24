@@ -66,6 +66,11 @@ fn require_on(history: &History) -> Result<(), Fail> {
     if history.is_on() { Ok(()) } else { Err(off()) }
 }
 
+/// The copy of conversations run outside Marshell: the switch and the progress. Reads atomics only.
+pub async fn import_status(State(st): State<AppState>) -> Json<marshell_protocol::history::ImportStatus> {
+    Json(st.import_status())
+}
+
 pub async fn list(
     State(st): State<AppState>,
     Query(query): Query<HistoryQuery>,

@@ -1,6 +1,6 @@
 //! Compressed copies of agent transcripts, each with a small `.meta.json` sidecar.
 
-use super::{SessionMeta, transcript_allowed};
+use super::{SessionMeta, sidecar_allowed};
 use crate::{paths, store};
 use anyhow::Context;
 use std::path::{Path, PathBuf};
@@ -60,12 +60,42 @@ pub fn read_meta(home: &Path, agent: &str, session_id: &str) -> anyhow::Result<O
 /// Reads the whole transcript, compresses it, and replaces the archive copy and the sidecar.
 /// If the transcript can't be read, returns an error and leaves the old copy as it was.
 pub fn copy_transcript(home: &Path, meta: &SessionMeta) -> anyhow::Result<PathBuf> {
-    let bytes = std::fs::read(&meta.transcript_path).with_context(|| format!("reading {}", meta.transcript_path))?;
+    copy_from(home, meta, Path::new(&meta.transcript_path))
+}
+
+/// Like `copy_transcript`, but from `source`, which may be a `.jsonl.zst` (decoded first, with the archive's
+/// cap). The source is only opened for reading.
+pub fn copy_from(home: &Path, meta: &SessionMeta, source: &Path) -> anyhow::Result<PathBuf> {
+    let bytes = read_source(source)?;
     let packed = zstd::encode_all(bytes.as_slice(), 3).context("compressing the transcript")?;
     let (archive, _) = archive_paths(home, &meta.agent, &meta.session_id);
     store::write_bytes_atomic(&archive, &packed)?;
     write_meta(home, meta)?;
     Ok(archive)
+}
+
+/// The bytes of a transcript file; a `.zst` file is decoded, and fails once it decodes past `MAX_DECODED_BYTES`.
+pub fn read_source(source: &Path) -> anyhow::Result<Vec<u8>> {
+    use std::io::Read;
+    let reading = || format!("reading {}", source.display());
+    if source.extension().is_some_and(|ext| ext == "zst") {
+        let file = std::fs::File::open(source).with_context(reading)?;
+        let decoder = zstd::Decoder::new(file).context("starting to decompress the transcript")?;
+        let mut bytes = Vec::new();
+        decoder
+            .take(MAX_DECODED_BYTES + 1)
+            .read_to_end(&mut bytes)
+            .with_context(reading)?;
+        anyhow::ensure!(
+            bytes.len() as u64 <= MAX_DECODED_BYTES,
+            "{} is over {} MB decoded",
+            source.display(),
+            MAX_DECODED_BYTES / (1024 * 1024)
+        );
+        Ok(bytes)
+    } else {
+        std::fs::read(source).with_context(reading)
+    }
 }
 
 /// The most a transcript may decode to before Marshell stops reading it.
@@ -103,7 +133,7 @@ fn read_archive_capped(home: &Path, agent: &str, session_id: &str, cap: u64) -> 
 }
 
 /// Every readable sidecar in the archive. One that can't be read, or whose id or transcript path fails
-/// `transcript_allowed`, is skipped with a warning, so a rebuild never indexes it.
+/// `sidecar_allowed`, is skipped with a warning, so a rebuild never indexes it.
 pub fn read_all_meta(home: &Path) -> Vec<SessionMeta> {
     let mut found = Vec::new();
     let Ok(agents) = std::fs::read_dir(paths::history_dir(home).join("archive")) else {
@@ -119,7 +149,9 @@ pub fn read_all_meta(home: &Path) -> Vec<SessionMeta> {
                 continue;
             }
             match store::read::<SessionMeta>(&path) {
-                Ok(Some(meta)) if transcript_allowed(&meta.transcript_path, &meta.session_id) => found.push(meta),
+                Ok(Some(meta)) if sidecar_allowed(&meta.agent, &meta.transcript_path, &meta.session_id) => {
+                    found.push(meta)
+                }
                 Ok(Some(_)) => tracing::warn!(
                     "skipping history sidecar {}: unsafe session id or transcript path",
                     path.display()

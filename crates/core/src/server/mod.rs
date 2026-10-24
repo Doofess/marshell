@@ -57,6 +57,9 @@ pub struct CoreConfig {
     /// Shared by every core the supervisor starts; neither flag is saved to disk.
     pub notify_paused: Arc<AtomicBool>,
     pub window_hidden: Arc<AtomicBool>,
+    /// The folders of Claude Code's and Codex's conversations, for the importer. None in tests: then no importer
+    /// runs, so nothing reads the real `~/.claude` or `~/.codex`.
+    pub import: Option<crate::history::import::ImportRoots>,
 }
 
 /// The view with a hidden window counted as unfocused: the shell's visibility wins over the webview's last report.
@@ -122,6 +125,8 @@ struct Inner {
     config: crate::config::service::ConfigService,
     /// The sessions index and the transcript archive.
     history: Arc<crate::history::recorder::History>,
+    /// Copies conversations run outside Marshell; started once, after the backfill.
+    importer: std::sync::OnceLock<Arc<crate::history::import::Importer>>,
     /// Claude Code's settings file when a test or a caller names one; None means
     /// `MARSHELL_CLAUDE_SETTINGS`, else `~/.claude/settings.json`.
     claude_settings: Option<PathBuf>,
@@ -206,6 +211,7 @@ impl AppState {
             done_settle: DEFAULT_DONE_SETTLE,
             config,
             history,
+            importer: std::sync::OnceLock::new(),
             claude_settings: None,
             claude_compact_paths: None,
             programs_dir: None,
@@ -323,6 +329,40 @@ impl AppState {
     pub fn history(&self) -> Arc<crate::history::recorder::History> {
         self.0.history.clone()
     }
+    /// Starts the importer on `roots`, with the switch from the settings. Does nothing when history is off for
+    /// this run, or when one is already running.
+    pub fn start_importer(&self, roots: crate::history::import::ImportRoots) {
+        self.start_importer_with(roots, crate::history::import::Timing::default());
+    }
+
+    /// Like `start_importer`, with the given timing (tests shorten it).
+    pub fn start_importer_with(
+        &self,
+        roots: crate::history::import::ImportRoots,
+        timing: crate::history::import::Timing,
+    ) {
+        if !self.0.history.is_on() {
+            return;
+        }
+        let on = self.settings_snapshot().history_import;
+        self.0
+            .importer
+            .get_or_init(|| crate::history::import::Importer::start_with(self.0.history.clone(), roots, on, timing));
+    }
+
+    /// What `GET /v1/history/import` says. Without an importer: the switch from the settings and no work.
+    pub fn import_status(&self) -> marshell_protocol::history::ImportStatus {
+        match self.0.importer.get() {
+            Some(importer) => importer.status(),
+            None => marshell_protocol::history::ImportStatus {
+                on: self.settings_snapshot().history_import,
+                copying: false,
+                done: 0,
+                total: 0,
+            },
+        }
+    }
+
     /// The folder holding `profiles.json`, `tasks.json` and the other files Marshell keeps.
     pub fn home(&self) -> &std::path::Path {
         &self.0.home
@@ -545,6 +585,7 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/agents/{agent}/hooks/plan", post(agents::plan))
         .route("/v1/agents/{agent}/hooks/remove-plan", post(agents::remove_plan))
         .route("/v1/history", get(history::list))
+        .route("/v1/history/import", get(history::import_status))
         .route("/v1/history/search", get(history::search))
         .route("/v1/history/bookmarks", get(history::bookmarks))
         .route(
@@ -653,6 +694,10 @@ impl RunningCore {
         for s in sessions {
             s.force_kill();
         }
+        // First, so it starts no new file; the flush below then waits for the one it is copying.
+        if let Some(importer) = self.state.0.importer.get() {
+            importer.stop();
+        }
         // After the kill, so Claude has stopped writing: a copy still waiting to settle runs now, and a reply
         // given just before closing is kept. It returns at once when nothing is pending.
         self.state.history().flush(Duration::from_secs(3));
@@ -749,6 +794,9 @@ pub async fn start(cfg: CoreConfig) -> anyhow::Result<RunningCore> {
     // The server is listening: index the conversations archived before search existed, one at a time off the
     // async threads. Dropping the handle lets it run on its own.
     drop(state.history().backfill());
+    if let Some(roots) = cfg.import {
+        state.start_importer(roots);
+    }
     let notifier = cfg.notify.map(|sink| crate::notify::spawn(state.clone(), sink));
     let stuck_state = state.clone();
     let stuck_tick = tokio::spawn(async move {

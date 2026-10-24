@@ -1314,3 +1314,75 @@ fn seed_history_home() {
         }
     }
 }
+
+const CLAUDE_OUTSIDE: &str = "00000000-0000-4000-8000-0000000000e1";
+const CODEX_OUTSIDE: &str = "00000000-0000-4000-8000-0000000000e2";
+
+#[tokio::test]
+async fn import_status_route_reports_progress() {
+    use marshell_core::history::import::{ImportRoots, Timing};
+    let env = env();
+    // Without an importer the route answers from the settings alone.
+    let (status, idle) = get_json(&env.app, "/v1/history/import").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(idle, json!({ "on": true, "copying": false, "done": 0, "total": 0 }));
+
+    let claude = tempfile::tempdir().unwrap();
+    let codex = tempfile::tempdir().unwrap();
+    let project = claude.path().join("p1");
+    std::fs::create_dir_all(&project).unwrap();
+    std::fs::write(project.join(format!("{CLAUDE_OUTSIDE}.jsonl")), BASIC).unwrap();
+    let day = codex.path().join("2026").join("10").join("21");
+    std::fs::create_dir_all(&day).unwrap();
+    let rollout = json!({
+        "timestamp": "2026-10-21T09:00:00.000Z", "ordinal": 0, "type": "session_meta",
+        "payload": { "id": CODEX_OUTSIDE, "timestamp": "2026-10-21T09:00:00.000Z", "cwd": "/work/demo",
+            "originator": "codex-tui", "thread_source": "user" },
+    });
+    std::fs::write(
+        day.join(format!("rollout-2026-10-21T09-00-00-{CODEX_OUTSIDE}.jsonl")),
+        format!("{rollout}\n"),
+    )
+    .unwrap();
+
+    env.state.start_importer_with(
+        ImportRoots {
+            claude: Some(claude.path().to_path_buf()),
+            codex: Some(codex.path().to_path_buf()),
+        },
+        Timing {
+            settle: Duration::from_millis(100),
+            rescan: Duration::from_millis(300),
+        },
+    );
+    let deadline = Instant::now() + Duration::from_secs(15);
+    loop {
+        let (status, body) = get_json(&env.app, "/v1/history/import").await;
+        assert_eq!(status, StatusCode::OK);
+        if body == json!({ "on": true, "copying": false, "done": 2, "total": 2 }) {
+            break;
+        }
+        assert!(Instant::now() < deadline, "the import did not finish: {body}");
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert!(archive_paths(env.home.path(), "claude", CLAUDE_OUTSIDE).0.exists());
+    assert!(archive_paths(env.home.path(), "codex", CODEX_OUTSIDE).0.exists());
+
+    // The settings route flips the switch.
+    let (_, mut settings) = get_json(&env.app, "/v1/settings").await;
+    assert_eq!(settings["history_import"], true);
+    settings["history_import"] = json!(false);
+    let (status, _) = call(&env.app, req("PUT", "/v1/settings", Some(settings))).await;
+    assert_eq!(status, StatusCode::OK);
+    let (_, off) = get_json(&env.app, "/v1/history/import").await;
+    assert_eq!(off["on"], false);
+}
+
+#[tokio::test]
+async fn import_status_route_refuses_without_the_bearer() {
+    let env = env();
+    let mut request = req("GET", "/v1/history/import", None);
+    request.headers_mut().remove(header::AUTHORIZATION);
+    let (status, _) = call(&env.app, request).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+}

@@ -21,7 +21,11 @@ pub async fn put(
     tokio::task::spawn_blocking(move || {
         let mut current = state.0.settings.lock().unwrap();
         crate::settings::save(&state.0.home, &to_save)?;
+        let import = to_save.history_import;
         *current = to_save;
+        if let Some(importer) = state.0.importer.get() {
+            importer.set_on(import);
+        }
         anyhow::Ok(())
     })
     .await

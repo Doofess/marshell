@@ -42,6 +42,8 @@ export class SettingsSync {
   private off: string[] = [];
   /** Kept from the last read, so every save sends it back unchanged. */
   private notify: NotifySettings = DEFAULT_NOTIFY;
+  /** Whether conversations run outside Marshell are copied. Kept from the last read, so every save sends it back unchanged. */
+  private historyImport = true;
   /** The appearance the core last stored, which a pause-warning write sends back unchanged. */
   private appearance: Appearance | null = null;
 
@@ -60,6 +62,7 @@ export class SettingsSync {
     this.tray = s.close_to_tray;
     this.off = s.status_off;
     this.notify = s.notifications;
+    this.historyImport = s.history_import;
     this.appearance = s.appearance;
     return s.appearance;
   }
@@ -98,12 +101,13 @@ export class SettingsSync {
         throw new SettingsReadError();
       }
     }
-    const s = await this.api.put(await this.getEndpoint(), { appearance: next, pause_warned: this.warned, onboarded: this.seen, close_to_tray: this.tray, status_off: this.off, notifications: this.notify });
+    const s = await this.api.put(await this.getEndpoint(), { appearance: next, pause_warned: this.warned, onboarded: this.seen, close_to_tray: this.tray, status_off: this.off, notifications: this.notify, history_import: this.historyImport });
     this.warned = s.pause_warned;
     this.seen = s.onboarded;
     this.tray = s.close_to_tray;
     this.off = s.status_off;
     this.notify = s.notifications;
+    this.historyImport = s.history_import;
     this.appearance = s.appearance;
     return s.appearance;
   }
@@ -161,6 +165,7 @@ export class SettingsSync {
       close_to_tray: this.tray,
       status_off: this.off,
       notifications: this.notify,
+      history_import: this.historyImport,
       ...change,
     });
     this.warned = s.pause_warned;
@@ -168,6 +173,7 @@ export class SettingsSync {
     this.tray = s.close_to_tray;
     this.off = s.status_off;
     this.notify = s.notifications;
+    this.historyImport = s.history_import;
     this.appearance = s.appearance;
   }
 }

@@ -175,6 +175,7 @@ mod tests {
             notify: None,
             notify_paused: Default::default(),
             window_hidden: Default::default(),
+            import: None,
         };
         let events: Events = Arc::default();
         let sink = events.clone();

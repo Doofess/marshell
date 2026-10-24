@@ -25,4 +25,8 @@ status_off: Array<string>,
 /**
  * Which events notify, and how.
  */
-notifications: NotifySettings, };
+notifications: NotifySettings, 
+/**
+ * Whether Marshell keeps its own copy of the conversations Claude Code and Codex ran outside it.
+ */
+history_import: boolean, };
