@@ -17,8 +17,9 @@ pub fn archive_paths(home: &Path, agent: &str, session_id: &str) -> (PathBuf, Pa
 /// The most recording names a sidecar keeps; the oldest go first.
 pub const MAX_RECORDINGS: usize = 100;
 
-/// Writes the sidecar for a session. The recording names already in the file stay, in their order, and the
-/// new ones follow, so no writer (a copy running on old data included) drops a link.
+/// Writes the sidecar for a session. The recording links already in the file stay, in their order, and the
+/// new ones follow, so no writer (a copy running on old data included) drops a link. A recording listed twice
+/// is one link, from the earliest first event to the latest last one.
 pub fn write_meta(home: &Path, meta: &SessionMeta) -> anyhow::Result<()> {
     let (_, sidecar) = archive_paths(home, &meta.agent, &meta.session_id);
     let mut merged = match store::read::<SessionMeta>(&sidecar) {
@@ -26,9 +27,13 @@ pub fn write_meta(home: &Path, meta: &SessionMeta) -> anyhow::Result<()> {
         // A sidecar that can't be read is replaced, as before.
         Ok(None) | Err(_) => Vec::new(),
     };
-    for name in &meta.recordings {
-        if !merged.contains(name) {
-            merged.push(name.clone());
+    for link in &meta.recordings {
+        match merged.iter_mut().find(|l| l.file == link.file) {
+            Some(known) => {
+                known.first_ms = known.first_ms.min(link.first_ms);
+                known.last_ms = known.last_ms.max(link.last_ms);
+            }
+            None => merged.push(link.clone()),
         }
     }
     let excess = merged.len().saturating_sub(MAX_RECORDINGS);
@@ -125,7 +130,7 @@ pub fn read_all_meta(home: &Path) -> Vec<SessionMeta> {
 
 #[cfg(test)]
 mod tests {
-    use super::super::SessionMeta;
+    use super::super::{RecordingLink, SessionMeta};
     use super::*;
     use crate::store;
 
@@ -159,38 +164,63 @@ mod tests {
         assert_eq!(store::read::<SessionMeta>(&sidecar).unwrap(), Some(m));
     }
 
+    fn link(file: &str, first_ms: u64, last_ms: u64) -> RecordingLink {
+        RecordingLink {
+            file: file.into(),
+            first_ms,
+            last_ms,
+        }
+    }
+
+    fn files(listed: &[RecordingLink]) -> Vec<&str> {
+        listed.iter().map(|l| l.file.as_str()).collect()
+    }
+
     #[test]
     fn write_meta_keeps_recordings_already_listed() {
         let home = tempfile::tempdir().unwrap();
         let mut m = meta("s1", &home.path().join("s1.jsonl"));
         assert_eq!(read_meta(home.path(), "claude", "s1").unwrap(), None);
-        m.recordings = vec!["a-1.cast".into(), "b-2.cast".into()];
+        m.recordings = vec![link("a-1.cast", 1, 1), link("b-2.cast", 2, 2)];
         write_meta(home.path(), &m).unwrap();
         // A writer that knows only the newest one, or none, drops nothing.
-        m.recordings = vec!["c-3.cast".into(), "a-1.cast".into()];
+        m.recordings = vec![link("c-3.cast", 3, 3), link("a-1.cast", 1, 1)];
         write_meta(home.path(), &m).unwrap();
         m.recordings = vec![];
         write_meta(home.path(), &m).unwrap();
         let listed = read_meta(home.path(), "claude", "s1").unwrap().unwrap().recordings;
-        assert_eq!(listed, ["a-1.cast", "b-2.cast", "c-3.cast"]);
+        assert_eq!(files(&listed), ["a-1.cast", "b-2.cast", "c-3.cast"]);
+    }
+
+    #[test]
+    fn write_meta_merges_links_by_file_with_the_widest_span() {
+        let home = tempfile::tempdir().unwrap();
+        let mut m = meta("s1", &home.path().join("s1.jsonl"));
+        m.recordings = vec![link("a-1.cast", 100, 200), link("b-2.cast", 300, 300)];
+        write_meta(home.path(), &m).unwrap();
+        // The same file again: one entry, the earliest first and the latest last; the order stays.
+        m.recordings = vec![link("b-2.cast", 250, 400), link("a-1.cast", 150, 900)];
+        write_meta(home.path(), &m).unwrap();
+        let listed = read_meta(home.path(), "claude", "s1").unwrap().unwrap().recordings;
+        assert_eq!(listed, [link("a-1.cast", 100, 900), link("b-2.cast", 250, 400)]);
     }
 
     #[test]
     fn write_meta_keeps_the_last_hundred_recordings() {
         let home = tempfile::tempdir().unwrap();
         let mut m = meta("s1", &home.path().join("s1.jsonl"));
-        m.recordings = (0..120).map(|n| format!("t-{n}.cast")).collect();
+        m.recordings = (0..120).map(|n| link(&format!("t-{n}.cast"), n, n)).collect();
         write_meta(home.path(), &m).unwrap();
         let listed = read_meta(home.path(), "claude", "s1").unwrap().unwrap().recordings;
         assert_eq!(listed.len(), MAX_RECORDINGS);
-        assert_eq!(listed.first().map(String::as_str), Some("t-20.cast"));
-        assert_eq!(listed.last().map(String::as_str), Some("t-119.cast"));
+        assert_eq!(listed.first().map(|l| l.file.as_str()), Some("t-20.cast"));
+        assert_eq!(listed.last().map(|l| l.file.as_str()), Some("t-119.cast"));
         // One more drops the oldest.
-        m.recordings = vec!["t-120.cast".into()];
+        m.recordings = vec![link("t-120.cast", 120, 120)];
         write_meta(home.path(), &m).unwrap();
         let listed = read_meta(home.path(), "claude", "s1").unwrap().unwrap().recordings;
         assert_eq!(listed.len(), MAX_RECORDINGS);
-        assert_eq!(listed.first().map(String::as_str), Some("t-21.cast"));
+        assert_eq!(listed.first().map(|l| l.file.as_str()), Some("t-21.cast"));
     }
 
     #[test]

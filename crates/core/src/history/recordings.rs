@@ -6,6 +6,7 @@ use super::SessionMeta;
 use super::cast::{self, CastSummary};
 use crate::paths;
 use marshell_protocol::history::RecordingPart;
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::SystemTime;
@@ -42,35 +43,62 @@ impl CastCache {
 }
 
 /// The conversation's recordings overlapping `span` (from, to in unix ms), in time order and numbered from 0.
+/// A recording the sidecar links is also clipped to the conversation's first and last event in it, so the
+/// output of another conversation in the same file (after a /clear) stays out of the span. The newest
+/// recording keeps the span's end, as the conversation may still be running in it.
 pub fn parts(home: &Path, meta: &SessionMeta, span: (u64, u64), cache: &CastCache) -> Vec<RecordingPart> {
     let dir = paths::recordings_dir(home);
     let mut names: Vec<String> = Vec::new();
-    for name in meta.recordings.iter().filter(|n| cast::valid_recording_name(n)) {
-        if !names.contains(name) {
-            names.push(name.clone());
+    // The events of the conversation in each recording: (first, last) in unix ms.
+    let mut events: HashMap<&str, (u64, u64)> = HashMap::new();
+    for link in meta.recordings.iter().filter(|l| cast::valid_recording_name(&l.file)) {
+        if !names.contains(&link.file) {
+            names.push(link.file.clone());
         }
+        let seen = events
+            .entry(link.file.as_str())
+            .or_insert((link.first_ms, link.last_ms));
+        seen.0 = seen.0.min(link.first_ms);
+        seen.1 = seen.1.max(link.last_ms);
     }
     let mut found = summaries(&dir, &names, cache);
     if found.is_empty() {
         found = summaries(&dir, &tab_files(&dir, &meta.tab_id), cache);
     }
+    // The newest recording is the one the conversation runs in now.
+    let newest = found
+        .iter()
+        .max_by(|a, b| (a.1.started_ms, &a.0).cmp(&(b.1.started_ms, &b.0)))
+        .map(|(file, _)| file.clone());
     // A part with no length plays nothing; one outside the span isn't this conversation's.
     found.retain(|(_, s)| s.ended_ms > s.started_ms && s.started_ms <= span.1 && s.ended_ms >= span.0);
     found.sort_by(|a, b| (a.1.started_ms, &a.0).cmp(&(b.1.started_ms, &b.0)));
     found
         .into_iter()
         .enumerate()
-        .map(|(index, (file, s))| RecordingPart {
-            index: index as u32,
-            file,
-            started_ms: s.started_ms,
-            ended_ms: s.ended_ms,
-            cols: s.cols,
-            rows: s.rows,
-            span_from_ms: span.0.max(s.started_ms),
-            span_to_ms: span.1.min(s.ended_ms),
-            marks_ms: s.marks_ms,
-            stopped: s.stopped,
+        .map(|(index, (file, s))| {
+            let whole = (span.0.max(s.started_ms), span.1.min(s.ended_ms));
+            let mut clipped = whole;
+            if let Some(&(first_ms, last_ms)) = events.get(file.as_str()) {
+                clipped.0 = clipped.0.max(first_ms);
+                if newest.as_deref() != Some(file.as_str()) {
+                    clipped.1 = clipped.1.min(last_ms);
+                }
+            }
+            // A link that leaves nothing of the part doesn't get to empty it.
+            let (span_from_ms, span_to_ms) = if clipped.0 < clipped.1 { clipped } else { whole };
+            RecordingPart {
+                index: index as u32,
+                file,
+                started_ms: s.started_ms,
+                ended_ms: s.ended_ms,
+                cols: s.cols,
+                rows: s.rows,
+                span_from_ms,
+                span_to_ms,
+                marks_ms: s.marks_ms,
+                stopped: s.stopped,
+            }
         })
         .collect()
 }
@@ -107,11 +135,19 @@ fn tab_files(dir: &Path, tab_id: &str) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::history::RecordingLink;
     use crate::pty::record::{CastEncoder, CastHeader, header_line};
 
     const T0: u64 = 1_761_300_000_000;
 
+    /// A sidecar whose links cover the whole of `T0..T0 + 100 s`, so they clip nothing.
     fn meta(tab: &str, recordings: &[&str]) -> SessionMeta {
+        let links: Vec<(&str, u64, u64)> = recordings.iter().map(|n| (*n, T0, T0 + 100_000)).collect();
+        meta_links(tab, &links)
+    }
+
+    /// A sidecar with a link of (file, first_ms, last_ms) per recording.
+    fn meta_links(tab: &str, links: &[(&str, u64, u64)]) -> SessionMeta {
         SessionMeta {
             agent: "claude".into(),
             session_id: "s1".into(),
@@ -121,7 +157,14 @@ mod tests {
             started_ms: T0,
             updated_ms: T0 + 100_000,
             previous_in_tab: None,
-            recordings: recordings.iter().map(|s| s.to_string()).collect(),
+            recordings: links
+                .iter()
+                .map(|(file, first_ms, last_ms)| RecordingLink {
+                    file: file.to_string(),
+                    first_ms: *first_ms,
+                    last_ms: *last_ms,
+                })
+                .collect(),
         }
     }
 
@@ -237,6 +280,46 @@ mod tests {
         );
         // A span that ends before the part starts leaves it out.
         assert!(parts(home.path(), &m, (T0, T0 + 5_000), &cache).is_empty());
+    }
+
+    #[test]
+    fn parts_clip_an_earlier_recording_at_the_conversations_last_event_in_it() {
+        let home = tempfile::tempdir().unwrap();
+        // Tab A runs 0 to 20 s; the conversation's last event there is at 5 s (a /clear started another
+        // conversation after it). Tab B starts at 15 s and runs to 21 s.
+        let a = cast_file(home.path(), "ta", T0, &[1.0, 20.0]);
+        let b = cast_file(home.path(), "tb", T0 + 15_000, &[1.0, 6.0]);
+        let m = meta_links("tb", &[(&a, T0 + 1000, T0 + 5000), (&b, T0 + 15_000, T0 + 16_000)]);
+        let got = parts(home.path(), &m, (T0 + 1000, T0 + 18_000), &CastCache::default());
+        assert_eq!(files(&got), [a.as_str(), b.as_str()]);
+        assert_eq!(got[0].span_to_ms, T0 + 5000);
+        // The part the conversation runs in now is not cut at its last turn end: the turn may still run.
+        assert_eq!(got[1].span_to_ms, T0 + 18_000);
+    }
+
+    #[test]
+    fn a_later_part_starts_at_the_conversations_first_event_in_it() {
+        let home = tempfile::tempdir().unwrap();
+        let a = cast_file(home.path(), "ta", T0, &[1.0, 20.0]);
+        let b = cast_file(home.path(), "tb", T0 + 15_000, &[1.0, 6.0]);
+        let m = meta_links("tb", &[(&a, T0 + 1000, T0 + 5000), (&b, T0 + 17_000, T0 + 17_500)]);
+        let got = parts(home.path(), &m, (T0 + 1500, T0 + 100_000), &CastCache::default());
+        // The first part still starts at the span (the first prompt, after the first event), the second where the conversation came back.
+        assert_eq!(got[0].span_from_ms, T0 + 1500);
+        assert_eq!(got[1].span_from_ms, T0 + 17_000);
+        assert_eq!(got[1].span_to_ms, T0 + 21_000);
+    }
+
+    #[test]
+    fn a_link_that_leaves_nothing_of_a_part_falls_back_to_the_file_clip() {
+        let home = tempfile::tempdir().unwrap();
+        let a = cast_file(home.path(), "ta", T0, &[1.0, 20.0]);
+        let b = cast_file(home.path(), "tb", T0 + 15_000, &[1.0, 6.0]);
+        // A's last event is before the span starts, so clipping there would end the part before it begins.
+        let m = meta_links("tb", &[(&a, T0, T0 + 2000), (&b, T0 + 15_000, T0 + 16_000)]);
+        let got = parts(home.path(), &m, (T0 + 3000, T0 + 18_000), &CastCache::default());
+        assert_eq!((got[0].span_from_ms, got[0].span_to_ms), (T0 + 3000, T0 + 18_000));
+        assert!(got.iter().all(|p| p.span_from_ms <= p.span_to_ms));
     }
 
     #[test]

@@ -4,7 +4,7 @@
 use super::index::{Index, Opened};
 use super::marks::{self, Marks};
 use super::recordings::CastCache;
-use super::{SessionMeta, archive, cast, transcript_allowed};
+use super::{RecordingLink, SessionMeta, archive, cast, transcript_allowed};
 use crate::agents::claude::transcript;
 use crate::registry::Registry;
 use marshell_protocol::api::SessionState;
@@ -225,7 +225,14 @@ impl History {
             started_ms,
             updated_ms: at_ms,
             previous_in_tab,
-            recordings: recording.iter().cloned().collect(),
+            recordings: recording
+                .iter()
+                .map(|file| RecordingLink {
+                    file: file.clone(),
+                    first_ms: at_ms,
+                    last_ms: at_ms,
+                })
+                .collect(),
         };
         let ends_turn = matches!(event, "Stop" | "StopFailure" | "SessionEnd");
         if is_new || ends_turn || event == "SessionStart" {
@@ -246,7 +253,7 @@ impl History {
             }
         } else if let Some(name) = &recording {
             match archive::read_meta(&self.home, AGENT, session_id) {
-                Ok(Some(listed)) if !listed.recordings.contains(name) => {
+                Ok(Some(listed)) if !listed.recordings.iter().any(|l| &l.file == name) => {
                     if let Err(err) = archive::write_meta(&self.home, &meta) {
                         tracing::warn!("history sidecar write failed: {err:#}");
                     }
@@ -848,6 +855,9 @@ mod tests {
                 .unwrap()
                 .unwrap()
                 .recordings
+                .into_iter()
+                .map(|link| link.file)
+                .collect::<Vec<_>>()
         };
         let (a, b, b2) = ("ta-1000.cast", "tb-2000.cast", "tb-3000.cast");
 
@@ -871,6 +881,41 @@ mod tests {
         // A name that is not a recording name is never listed.
         history.note_event("tb", Some("..\\x.cast"), &body(STOP, home.path(), ID), 4000);
         assert_eq!(listed(), [a, b, b2]);
+    }
+
+    #[test]
+    fn a_turn_end_moves_the_recordings_last_event_and_other_events_write_nothing() {
+        let home = tempfile::tempdir().unwrap();
+        let history = History::open(home.path());
+        let links = || {
+            archive::read_meta(home.path(), "claude", ID)
+                .unwrap()
+                .unwrap()
+                .recordings
+        };
+        let link = |file: &str, first_ms, last_ms| RecordingLink {
+            file: file.into(),
+            first_ms,
+            last_ms,
+        };
+        let (a, b) = ("ta-1000.cast", "tb-2000.cast");
+        history.note_event("ta", Some(a), &body(START, home.path(), ID), 1000);
+        assert_eq!(links(), [link(a, 1000, 1000)]);
+        history.note_event("ta", Some(a), &body(STOP, home.path(), ID), 5000);
+        assert_eq!(links(), [link(a, 1000, 5000)]);
+        // Resumed in tab B: A keeps where it ended, and B starts its own.
+        history.note_event("tb", Some(b), &body(START, home.path(), ID), 9000);
+        assert_eq!(links(), [link(a, 1000, 5000), link(b, 9000, 9000)]);
+        history.note_event("tb", Some(b), &body(STOP, home.path(), ID), 12_000);
+        assert_eq!(links(), [link(a, 1000, 5000), link(b, 9000, 12_000)]);
+        // An event in a recording the sidecar already lists writes nothing.
+        let before = std::fs::metadata(sidecar(home.path(), ID)).unwrap().modified().unwrap();
+        history.note_event("tb", Some(b), &body(PRE_TOOL, home.path(), ID), 13_000);
+        assert_eq!(links(), [link(a, 1000, 5000), link(b, 9000, 12_000)]);
+        assert_eq!(
+            std::fs::metadata(sidecar(home.path(), ID)).unwrap().modified().unwrap(),
+            before
+        );
     }
 
     #[test]

@@ -26,9 +26,20 @@ pub struct SessionMeta {
     pub updated_ms: u64,
     /// The session this tab had before this one (after a /clear), if any.
     pub previous_in_tab: Option<String>,
-    /// File names (in `recordings/`) of the recordings of the tabs this conversation ran in, oldest first.
+    /// The recordings (in `recordings/`) of the tabs this conversation ran in, oldest first.
     #[serde(default)]
-    pub recordings: Vec<String>,
+    pub recordings: Vec<RecordingLink>,
+}
+
+/// One recording a conversation ran in, and when.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RecordingLink {
+    /// The file name in `recordings/`.
+    pub file: String,
+    /// The first hook event of this conversation in that recording, unix ms.
+    pub first_ms: u64,
+    /// The last hook event of this conversation in that recording, unix ms.
+    pub last_ms: u64,
 }
 
 impl store::Versioned for SessionMeta {

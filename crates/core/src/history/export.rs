@@ -649,6 +649,62 @@ All done.
         }
 
         #[test]
+        fn asciicast_export_leaves_out_another_conversations_output_in_an_earlier_tab() {
+            use crate::history::recordings::{CastCache, parts};
+            use crate::history::{RecordingLink, SessionMeta};
+            let home = tempfile::tempdir().unwrap();
+            // X runs in tab A, /clear starts Y in the same recording, then X is resumed in tab B.
+            let in_a = write(
+                home.path(),
+                T0,
+                (80, 24),
+                &[
+                    (2.0, "o", "x before the clear\r\n"),
+                    (10.0, "o", "y after the clear\r\n"),
+                    (12.0, "o", "y goes on\r\n"),
+                ],
+            );
+            let in_b = write(
+                home.path(),
+                T0 + 20_000,
+                (80, 24),
+                &[(1.0, "o", "x resumed\r\n"), (5.0, "o", "x goes on\r\n")],
+            );
+            let meta = SessionMeta {
+                agent: "claude".into(),
+                session_id: "x".into(),
+                tab_id: "t1".into(),
+                cwd: String::new(),
+                transcript_path: String::new(),
+                started_ms: T0 + 1000,
+                updated_ms: T0 + 25_000,
+                previous_in_tab: None,
+                recordings: vec![
+                    RecordingLink {
+                        file: in_a.file.clone(),
+                        first_ms: T0 + 1000,
+                        last_ms: T0 + 4000,
+                    },
+                    RecordingLink {
+                        file: in_b.file.clone(),
+                        first_ms: T0 + 20_000,
+                        last_ms: T0 + 25_000,
+                    },
+                ],
+            };
+            let got = parts(home.path(), &meta, (T0 + 1000, T0 + 25_000), &CastCache::default());
+            let text = to_asciicast(home.path(), &got, "x", None).unwrap();
+            let (_, events) = parsed(&text);
+            let all = output(&events);
+            assert!(all.contains("x before the clear"), "{all}");
+            assert!(all.contains("x resumed") && all.contains("x goes on"), "{all}");
+            assert!(
+                !all.contains("y after the clear") && !all.contains("y goes on"),
+                "{all}"
+            );
+        }
+
+        #[test]
         fn asciicast_export_refuses_a_hostile_file_name() {
             let home = tempfile::tempdir().unwrap();
             let mut part = write(home.path(), T0, (80, 24), &[(1.0, "o", "x")]);
