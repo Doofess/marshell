@@ -457,3 +457,111 @@ async fn codex_setup_reads_trust_from_config_toml() {
     assert_eq!(setup["trust"], "changed", "{setup}");
     assert_eq!(std::fs::read(&config).unwrap(), before);
 }
+
+// ---- Codex live status ----
+
+/// A state with one open Codex row, "cx", and the Codex version pinned so no `codex` is ever run.
+fn codex_live(version: Option<&str>) -> (AppState, axum::Router) {
+    let home = tempfile::tempdir().unwrap().keep();
+    let st = AppState::new(
+        TOKEN.into(),
+        PORT,
+        vec!["http://tauri.localhost".into()],
+        home,
+        Vec::new(),
+    )
+    .with_codex_version(version.map(str::to_string))
+    .with_agent_path(|_| None);
+    st.registry().reserve(
+        "cx",
+        marshell_core::registry::Relaunch {
+            profile_id: "test".into(),
+            agent: Some("codex".into()),
+            cwd: "C:/work".into(),
+            mode: None,
+            name: "Codex".into(),
+        },
+    );
+    let app = router(st.clone());
+    (st, app)
+}
+
+async fn codex_event(app: &axum::Router, event: Value) -> StatusCode {
+    let req = base("POST", "/v1/hook")
+        .header("x-marshell-role", "event")
+        .header("x-marshell-agent", "codex")
+        .header("x-marshell-tab", "cx")
+        .header("x-marshell-version", "0.0.0")
+        .body(Body::from(event.to_string()))
+        .unwrap();
+    send(app, req).await.0
+}
+
+fn codex_row(st: &AppState) -> marshell_protocol::api::SessionInfo {
+    st.registry()
+        .snapshot()
+        .sessions
+        .into_iter()
+        .find(|s| s.tab_id == "cx")
+        .unwrap()
+}
+
+#[tokio::test]
+async fn a_codex_event_folds_into_its_tab() {
+    let (st, app) = codex_live(Some("0.163.0"));
+    let prompt: Value =
+        serde_json::from_str(include_str!("fixtures/codex/hooks/0.163.0/UserPromptSubmit.json")).unwrap();
+    assert_eq!(codex_event(&app, prompt).await, StatusCode::NO_CONTENT);
+    let row = codex_row(&st);
+    let live = row.live.expect("the row has a live status");
+    assert_eq!(
+        (live.state, live.phrase.as_str()),
+        (marshell_protocol::api::LiveState::Working, "Thinking")
+    );
+    assert_eq!(row.status_note, None);
+
+    // A turn ends: Done shows at once, with the recap.
+    let stop: Value = serde_json::from_str(include_str!("fixtures/codex/hooks/0.163.0/Stop-recap.json")).unwrap();
+    codex_event(&app, stop).await;
+    let live = codex_row(&st).live.unwrap();
+    assert_eq!(live.state, marshell_protocol::api::LiveState::Done);
+    assert!(live.recap.is_some());
+}
+
+#[tokio::test]
+async fn an_unrecorded_codex_version_leaves_no_status_and_says_why() {
+    for (version, note) in [
+        (Some("0.170.0"), "Codex 0.170.0 is not one Marshell has recorded yet"),
+        (None, "Codex's version could not be read"),
+    ] {
+        let (st, app) = codex_live(version);
+        let prompt: Value =
+            serde_json::from_str(include_str!("fixtures/codex/hooks/0.163.0/UserPromptSubmit.json")).unwrap();
+        codex_event(&app, prompt).await;
+        let row = codex_row(&st);
+        assert_eq!(row.live, None, "{version:?}");
+        assert_eq!(row.status_note.as_deref(), Some(note));
+    }
+}
+
+#[tokio::test]
+async fn codex_status_off_sets_its_note() {
+    let (st, app) = codex_live(Some("0.163.0"));
+    let (status, _) = send(
+        &app,
+        base("PUT", "/v1/settings")
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(
+                json!({"appearance": {}, "status_off": ["codex"]}).to_string(),
+            ))
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let prompt: Value =
+        serde_json::from_str(include_str!("fixtures/codex/hooks/0.163.0/UserPromptSubmit.json")).unwrap();
+    codex_event(&app, prompt).await;
+    let row = codex_row(&st);
+    assert_eq!(row.live, None);
+    assert_eq!(row.status_note.as_deref(), Some("Live status is off for Codex"));
+}

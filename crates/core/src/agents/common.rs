@@ -1,5 +1,6 @@
 //! Helpers the agents' conversation parsers share: truncation, paths, card wording and timestamps.
 
+use marshell_protocol::api::{LiveState, LiveStatus};
 use serde_json::Value;
 use std::fmt;
 use std::path::PathBuf;
@@ -157,4 +158,51 @@ pub fn is_ours(entry: &Value) -> bool {
         .and_then(Value::as_str)
         .is_some_and(|c| c.contains(&format!("--tag {TAG}")));
     in_args || in_command
+}
+
+/// The status a session has before anything is known.
+pub(crate) fn blank(now_ms: u64) -> LiveStatus {
+    LiveStatus {
+        state: LiveState::Idle,
+        phrase: String::new(),
+        since_ms: now_ms,
+        recap: None,
+        model: None,
+        effort: None,
+        context_pct: None,
+        five_hour_pct: None,
+        five_hour_resets_at: None,
+        seven_day_pct: None,
+        subagents: 0,
+        subagents_finished: 0,
+    }
+}
+
+/// Whether Marshell may fold an agent's events into live status.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Gate {
+    Known,
+    /// The status note the row shows instead.
+    Unknown(String),
+}
+
+/// Known: the same minor line as a recorded fixture set (`known`, one entry per minor line: its oldest
+/// recorded patch), and not older than that patch. `name` is how the agent is called in the note.
+pub fn version_gate(name: &str, known: &[(u32, u32, u32)], version: Option<&str>) -> Gate {
+    let parsed = version.and_then(|v| {
+        let mut parts = v.split('.').map(|p| p.parse::<u32>().ok());
+        let triple = (parts.next()??, parts.next()??, parts.next()??);
+        parts.next().is_none().then_some((v, triple))
+    });
+    let Some((v, (major, minor, patch))) = parsed else {
+        return Gate::Unknown(format!("{name}'s version could not be read"));
+    };
+    match known.iter().find(|f| f.0 == major && f.1 == minor) {
+        Some(f) if patch >= f.2 => Gate::Known,
+        Some(_) => Gate::Unknown(format!("{name} {v} is older than the versions Marshell knows")),
+        None if known.iter().all(|f| (major, minor) < (f.0, f.1)) => {
+            Gate::Unknown(format!("{name} {v} is older than the versions Marshell knows"))
+        }
+        None => Gate::Unknown(format!("{name} {v} is not one Marshell has recorded yet")),
+    }
 }

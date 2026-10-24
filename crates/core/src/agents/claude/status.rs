@@ -1,5 +1,6 @@
 //! Folds Claude Code's hook events and status line into a session's live status.
 
+use crate::agents::common::blank;
 use marshell_protocol::api::{LiveState, LiveStatus, Recap, SessionMode};
 use serde_json::Value;
 
@@ -40,24 +41,6 @@ pub fn ring_level(pct: f32) -> RingLevel {
         RingLevel::Yellow
     } else {
         RingLevel::Green
-    }
-}
-
-/// The status a session has before anything is known.
-pub(crate) fn blank(now_ms: u64) -> LiveStatus {
-    LiveStatus {
-        state: LiveState::Idle,
-        phrase: String::new(),
-        since_ms: now_ms,
-        recap: None,
-        model: None,
-        effort: None,
-        context_pct: None,
-        five_hour_pct: None,
-        five_hour_resets_at: None,
-        seven_day_pct: None,
-        subagents: 0,
-        subagents_finished: 0,
     }
 }
 
