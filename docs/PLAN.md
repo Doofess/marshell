@@ -1158,8 +1158,13 @@ Decisions from the 2026-10-10 coverage audit (`docs/superpowers/plan-coverage-au
 
         (Amended the same day: the first answer, "signals only", was given without knowing about the fallback.)
      5. DeepSeek is a Claude Code preset, not a manifest. "DeepSeek" in the picker starts Claude Code with DeepSeek's documented Anthropic-compatible environment (base URL and model names). The key comes from an environment variable the person sets (`DEEPSEEK_API_KEY`) and goes only into that process's environment. Marshell never stores, logs or shows it. The tab shows the DeepSeek mark and keeps Claude Code's adapter for status. With the variable unset, the entry says so and doesn't start.
-     6. Own agents live in `~/.marshell/agents.json` (§4). A person edits the file by hand or through a form under Settings → Agents. The form covers name, command, the first-prompt flag, continue and resume flags, mode flags and the exe names to recognise. An invalid entry is listed with the reason, and the file is reloaded when it changes.
-     7. Live check:
+     6. Own agents live in `~/.marshell/agents.json` (§4). A person edits the file by hand or through a form. Settings isn't wired into the app until 6e, so in 6b the form is an "Add your own agent" section of the live Agents dialog, and it moves to Settings → Agents in 6e. The form covers name, command, the first-prompt flag, continue and resume flags, mode flags and the exe names to recognise. An invalid entry is listed with the reason, and the file is reloaded when it changes.
+     7. Grok runs Claude Code's hook files by default (`[compat.claude] hooks`). Marshell filters on its side and leaves Grok's settings alone:
+        - The core drops Claude hook events from a tab whose agent isn't Claude Code.
+        - The hook bridge exits quietly when Grok's `GROK_HOOK_EVENT` is set, which covers a Grok typed into a shell.
+
+        The person's own Claude hooks still run inside Grok.
+     8. Live check:
         - Install opencode, Qwen Code, Crush and Kimi Code into a scratch prefix, and check their launch, resume and mode flags against `--help` and a real start, without signing in.
         - Grok runs a real session in a scratch folder on the person's own account.
         - Copilot, Cursor and Amp are checked from their docs only, and the pull request lists them under Known limits.
