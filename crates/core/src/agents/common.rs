@@ -1,5 +1,9 @@
 //! Helpers the agents' conversation parsers share: truncation, paths, card wording and timestamps.
 
+use serde_json::Value;
+use std::fmt;
+use std::path::PathBuf;
+
 /// Cap on a tool card's detail, in characters.
 pub const DETAIL_CAP: usize = 4_000;
 
@@ -103,4 +107,54 @@ pub fn rfc3339_ms(s: &str) -> Option<u64> {
     let days = era * 146_097 + yoe * 365 + yoe / 4 - yoe / 100 + doy - 719_468;
     let secs = days * 86_400 + hour * 3_600 + minute * 60 + second - offset_minutes * 60;
     u64::try_from(secs).ok().map(|s| s * 1_000 + ms as u64)
+}
+
+/// What marks a hook entry or a status line as Marshell's.
+pub const TAG: &str = "mshl1";
+
+#[derive(Debug, PartialEq)]
+pub enum PlanError {
+    /// The config file is not JSON(C); `problem` is the line and what is wrong.
+    DoesNotParse { path: PathBuf, problem: (u32, String) },
+    /// A value the CLI expects to be an object or array is something else, at `pointer`.
+    NotAnObject { path: PathBuf, pointer: String },
+}
+
+impl fmt::Display for PlanError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            PlanError::DoesNotParse { path, problem } => {
+                write!(
+                    f,
+                    "{} does not parse (line {}): {}",
+                    path.display(),
+                    problem.0,
+                    problem.1
+                )
+            }
+            PlanError::NotAnObject { path, pointer } => {
+                write!(
+                    f,
+                    "{} has a value at {pointer} of a kind the agent does not use",
+                    path.display()
+                )
+            }
+        }
+    }
+}
+
+impl std::error::Error for PlanError {}
+
+/// Marshell's own hook entry: `args` hold `--tag` then the tag, or the command string says so. The
+/// bridge's path is not part of the match, so an orphan from another home is still found.
+pub fn is_ours(entry: &Value) -> bool {
+    let in_args = entry.get("args").and_then(Value::as_array).is_some_and(|args| {
+        args.windows(2)
+            .any(|w| w[0].as_str() == Some("--tag") && w[1].as_str() == Some(TAG))
+    });
+    let in_command = entry
+        .get("command")
+        .and_then(Value::as_str)
+        .is_some_and(|c| c.contains(&format!("--tag {TAG}")));
+    in_args || in_command
 }

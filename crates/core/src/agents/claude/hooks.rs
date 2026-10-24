@@ -3,17 +3,14 @@
 //! config service previews, snapshots and writes it. Every doubt fails closed: a file that does not
 //! parse, or a `hooks` value of the wrong shape, gives an error and no edits.
 
+use crate::agents::common::is_ours;
 use crate::config::hash::hash_bytes;
 use crate::config::jsonc::{parse_problem, read_value};
 use crate::paths;
 use marshell_protocol::agents::{HookInstall, HookPlanRequest};
 use marshell_protocol::config::{Applies, ChangeSet, ConfigScope, EditOp, FileEdit};
 use serde_json::{Value, json};
-use std::fmt;
 use std::path::{Path, PathBuf};
-
-/// What marks an entry or a status line as Marshell's.
-pub const TAG: &str = "mshl1";
 
 /// The events whose hooks carry live status, in the order they are installed.
 pub const STATUS_EVENTS: [&str; 10] = [
@@ -34,39 +31,6 @@ const HOOK_TIMEOUT: u64 = 5;
 /// `SessionEnd` may take 3 s at most.
 const SESSION_END_TIMEOUT: u64 = 2;
 const PERMISSION_EVENT: &str = "PermissionRequest";
-
-#[derive(Debug, PartialEq)]
-pub enum PlanError {
-    /// The settings file is not JSON(C); `problem` is the line and what is wrong.
-    DoesNotParse { path: PathBuf, problem: (u32, String) },
-    /// A value Claude Code expects to be an object or array is something else, at `pointer`.
-    NotAnObject { path: PathBuf, pointer: String },
-}
-
-impl fmt::Display for PlanError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            PlanError::DoesNotParse { path, problem } => {
-                write!(
-                    f,
-                    "{} does not parse (line {}): {}",
-                    path.display(),
-                    problem.0,
-                    problem.1
-                )
-            }
-            PlanError::NotAnObject { path, pointer } => {
-                write!(
-                    f,
-                    "{} has a value at {pointer} of a kind Claude Code does not use",
-                    path.display()
-                )
-            }
-        }
-    }
-}
-
-impl std::error::Error for PlanError {}
 
 /// What removing the hooks would do.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -130,24 +94,12 @@ fn hook_entry(home: &Path, event: &str) -> Value {
     })
 }
 
-/// Marshell's own: `args` hold `--tag` then the tag, or the command string says so. The bridge's
-/// path is not part of the match, so an orphan from another home is still found.
-fn is_ours(entry: &Value) -> bool {
-    let in_args = entry.get("args").and_then(Value::as_array).is_some_and(|args| {
-        args.windows(2)
-            .any(|w| w[0].as_str() == Some("--tag") && w[1].as_str() == Some(TAG))
-    });
-    let in_command = entry
-        .get("command")
-        .and_then(Value::as_str)
-        .is_some_and(|c| c.contains(&format!("--tag {TAG}")));
-    in_args || in_command
-}
-
 /// An RFC 6901 token.
 fn esc(token: &str) -> String {
     token.replace('~', "~0").replace('/', "~1")
 }
+
+pub use crate::agents::common::{PlanError, TAG};
 
 // ---- reading the settings ----
 
