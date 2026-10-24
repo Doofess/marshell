@@ -82,7 +82,7 @@ use serde_json::Value;
 
 /// Whether Marshell can show and answer this agent's permission requests.
 pub fn supports_permissions(agent: &str) -> bool {
-    matches!(agent, "claude")
+    matches!(agent, "claude" | "codex")
 }
 
 /// A held request's card, when its agent is known and it belongs to a tab.
@@ -91,13 +91,18 @@ pub fn permission_view(p: &PendingPermission) -> Option<PermissionView> {
     if !supports_permissions(&p.agent) {
         return None;
     }
-    claude::request::view(p)
+    match p.agent.as_str() {
+        "claude" => claude::request::view(p),
+        "codex" => codex::request::view(p),
+        _ => None,
+    }
 }
 
 /// The hook output that carries `decision` back to `agent`, or why it can't.
 pub fn permission_output(agent: &str, decision: &PermissionDecision, request: &Value) -> Result<Value, &'static str> {
     match agent {
         "claude" => claude::permission_output(decision, request),
+        "codex" => codex::request::permission_output(decision, request),
         _ => Err("This agent can't take a decision yet."),
     }
 }

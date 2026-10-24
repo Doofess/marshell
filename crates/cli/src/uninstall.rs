@@ -1,12 +1,13 @@
-//! `marshell uninstall`: shows what taking Marshell out of Claude Code would change, asks, and does it
+//! `marshell uninstall`: shows what taking Marshell out of Claude Code and Codex would change, asks, and does it
 //! through the config service (so it is hashed, snapshotted and undoable), then removes `<home>/bin`.
 //!
 //! Exit codes: 0 done or nothing to do, 1 refused, failed or declined.
 
 use marshell_core::agents::claude::hooks::{remove_plan, settings_path};
+use marshell_core::agents::codex::hooks as codex_hooks;
 use marshell_core::config::service::{ApplyError, ConfigService};
 use marshell_core::paths;
-use marshell_protocol::config::{ApplyRequest, ExpectedHash, FileStatus};
+use marshell_protocol::config::{ApplyRequest, ChangeSet, ExpectedHash, FileStatus};
 use std::io::{BufRead, Write};
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -156,24 +157,76 @@ pub fn run(
             return 1;
         }
     };
-    let plan = match remove_plan(&settings, user_home, text.as_deref(), chain_text.as_deref(), home) {
+    let mut plan = match remove_plan(&settings, user_home, text.as_deref(), chain_text.as_deref(), home) {
         Ok(plan) => plan,
         Err(e) => {
             let _ = writeln!(out, "{e}");
             return 1;
         }
     };
+    // Codex's hooks.json. Nothing about its config.toml is read or written here. A file that can't be
+    // read or planned from is reported and left alone; Claude Code's removal goes on without it, and
+    // the bin folder stays, because Codex's entries may still point at the bridge.
+    let codex_file = codex_hooks::hooks_path(env, user_home);
+    let codex = read_text(&codex_file).and_then(|text| {
+        codex_hooks::remove_plan(&codex_file, text.as_deref(), home)
+            .map(|changes| (text, changes))
+            .map_err(|e| e.to_string())
+    });
+    let (codex_text, codex_changes, codex_failed) = match codex {
+        Ok((text, changes)) => (text, changes, false),
+        Err(e) => {
+            let _ = writeln!(out, "{e}");
+            (
+                None,
+                ChangeSet {
+                    title: String::new(),
+                    reason: String::new(),
+                    edits: Vec::new(),
+                },
+                true,
+            )
+        }
+    };
+    let claude_empty = plan.changes.edits.is_empty();
+    if codex_changes.edits.is_empty() {
+        if codex_text.is_some() {
+            let _ = writeln!(out, "Marshell has no hooks in {}.", codex_file.display());
+        }
+    } else if claude_empty {
+        plan.changes = codex_changes;
+    } else {
+        plan.changes = ChangeSet {
+            title: "Turn Marshell's hooks off".to_string(),
+            reason: format!("{} {}", plan.changes.reason, codex_changes.reason),
+            edits: plan.changes.edits.into_iter().chain(codex_changes.edits).collect(),
+        };
+    }
     let bin = paths::bin_dir(home);
-    let has_bin = bin.exists();
+    let has_bin = bin.exists() && !codex_failed;
+    // Non-zero when something was left, so a script notices.
+    let ok = i32::from(codex_failed);
+    let keep_note = |out: &mut dyn Write| {
+        if codex_failed && bin.exists() {
+            let _ = writeln!(
+                out,
+                "The folder {} was left in place, because Codex's hooks may still point at it.",
+                bin.display()
+            );
+        }
+    };
     let left_note = "Your status line was changed since the setup and was left as it is.";
 
     if plan.changes.edits.is_empty() {
-        let _ = writeln!(out, "Marshell has no hooks in {}.", settings.display());
+        if claude_empty {
+            let _ = writeln!(out, "Marshell has no hooks in {}.", settings.display());
+        }
         if plan.statusline_left {
             let _ = writeln!(out, "{left_note}");
         }
         if !has_bin {
-            return 0;
+            keep_note(out);
+            return ok;
         }
         let _ = writeln!(
             out,
@@ -185,7 +238,7 @@ pub fn run(
             return 1;
         }
         remove_bin(home, out);
-        return 0;
+        return ok;
     }
 
     let service = ConfigService::new(home.to_path_buf());
@@ -272,8 +325,12 @@ pub fn run(
             return 1;
         }
     }
-    remove_bin(home, out);
-    0
+    if has_bin {
+        remove_bin(home, out);
+    } else {
+        keep_note(out);
+    }
+    ok
 }
 
 #[cfg(test)]
@@ -412,6 +469,129 @@ mod tests {
         let mut out = Vec::new();
         let code = run(&f.home, &f.user_home, &no_env, &mut input.as_bytes(), &mut out, yes);
         (code, String::from_utf8(out).unwrap())
+    }
+
+    /// Installs Codex's hooks into `<user home>/.codex/hooks.json` through the real plan and service.
+    fn install_codex(f: &Fixture, original: Option<&str>) -> PathBuf {
+        use marshell_core::agents::codex::hooks as ch;
+        let path = ch::hooks_path(&no_env, &f.user_home);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        if let Some(text) = original {
+            std::fs::write(&path, text).unwrap();
+        }
+        let want = HookPlanRequest {
+            status: true,
+            statusline: false,
+            approve: false,
+        };
+        let changes = ch::install_plan(&path, original, &f.home, &want).unwrap();
+        let service = ConfigService::new(f.home.clone());
+        let preview = service.preview(changes);
+        assert!(preview.can_apply, "{preview:?}");
+        let request = ApplyRequest {
+            changeset_id: preview.changeset_id.clone(),
+            expected_hashes: preview
+                .files
+                .iter()
+                .map(|f| ExpectedHash {
+                    path: f.path.clone(),
+                    hash: f.before_hash.clone(),
+                })
+                .collect(),
+        };
+        service.apply(&request, 2).unwrap();
+        assert!(std::fs::read_to_string(&path).unwrap().contains("mshl1"));
+        path
+    }
+
+    #[test]
+    fn removes_codex_hooks_too() {
+        let f = installed(ORIGINAL);
+        let mine = "{\"hooks\": {\"Stop\": [{\"hooks\": [{\"type\": \"command\", \"command\": \"my-stop\"}]}]}}
+";
+        let codex = install_codex(&f, Some(mine));
+        let (code, out) = run_with(
+            &f, "y
+", false,
+        );
+        assert_eq!(code, 0, "{out}");
+        assert_eq!(out.matches("Apply these changes?").count(), 1, "{out}");
+        assert!(out.contains(&*f.settings.to_string_lossy()), "{out}");
+        assert!(out.contains("hooks.json"), "{out}");
+        assert_eq!(std::fs::read_to_string(&f.settings).unwrap(), ORIGINAL);
+        let after = std::fs::read_to_string(&codex).unwrap();
+        assert!(after.contains("my-stop") && !after.contains("mshl1"), "{after}");
+    }
+
+    /// A `hooks.json` Marshell can't plan from, in the place Codex's hooks go.
+    fn broken_codex(f: &Fixture) -> (PathBuf, &'static str) {
+        let broken = "{ \"hooks\": [oops\n";
+        let path = marshell_core::agents::codex::hooks::hooks_path(&no_env, &f.user_home);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, broken).unwrap();
+        (path, broken)
+    }
+
+    #[test]
+    fn a_codex_file_that_does_not_parse_does_not_stop_claudes_removal() {
+        let f = installed(ORIGINAL);
+        let (codex, broken) = broken_codex(&f);
+        let (code, out) = run_with(&f, "y\n", false);
+        // Codex's file is reported by name and left byte for byte as it was.
+        assert!(
+            out.contains(&*codex.to_string_lossy()) && out.contains("does not parse"),
+            "{out}"
+        );
+        assert_eq!(std::fs::read_to_string(&codex).unwrap(), broken);
+        // Claude's hooks still came out, after the usual confirmation.
+        assert_eq!(out.matches("Apply these changes?").count(), 1, "{out}");
+        assert_eq!(std::fs::read_to_string(&f.settings).unwrap(), ORIGINAL);
+        // Codex's entries may still point at the bridge, so bin stays, and the exit says so.
+        assert!(marshell_core::paths::bridge_exe(&f.home).exists());
+        assert!(out.contains("left in place"), "{out}");
+        assert_ne!(code, 0, "{out}");
+    }
+
+    #[test]
+    fn a_codex_file_that_does_not_parse_and_answer_no_changes_nothing() {
+        let f = installed(ORIGINAL);
+        let installed_text = std::fs::read_to_string(&f.settings).unwrap();
+        let (codex, broken) = broken_codex(&f);
+        let (code, out) = run_with(&f, "n\n", false);
+        assert_ne!(code, 0, "{out}");
+        assert!(out.contains("Nothing changed."), "{out}");
+        assert_eq!(std::fs::read_to_string(&f.settings).unwrap(), installed_text);
+        assert_eq!(std::fs::read_to_string(&codex).unwrap(), broken);
+        assert!(marshell_core::paths::bridge_exe(&f.home).exists());
+    }
+
+    #[test]
+    fn a_codex_file_that_does_not_parse_keeps_bin_even_with_no_claude_hooks() {
+        let f = installed(ORIGINAL);
+        std::fs::write(&f.settings, ORIGINAL).unwrap();
+        let (_, broken) = broken_codex(&f);
+        let (code, out) = run_with(&f, "y\n", false);
+        assert_ne!(code, 0, "{out}");
+        assert!(marshell_core::paths::bridge_exe(&f.home).exists(), "{out}");
+        assert!(out.contains("left in place"), "{out}");
+        assert!(!out.contains("will be removed"), "{out}");
+        let _ = broken;
+    }
+
+    #[test]
+    fn a_codex_only_install_is_found() {
+        // Claude's hooks are gone; only Codex's are left.
+        let f2 = installed(ORIGINAL);
+        std::fs::write(&f2.settings, ORIGINAL).unwrap();
+        let codex = install_codex(&f2, None);
+        let (code, out) = run_with(
+            &f2, "y
+", false,
+        );
+        assert_eq!(code, 0, "{out}");
+        assert!(out.contains("hooks.json"), "{out}");
+        assert!(!std::fs::read_to_string(&codex).unwrap().contains("mshl1"));
+        assert_eq!(std::fs::read_to_string(&f2.settings).unwrap(), ORIGINAL);
     }
 
     #[test]

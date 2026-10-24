@@ -116,10 +116,10 @@ export function ConsentCard({
           {plan.needsTrust && (
             <>
               <p className="consent__trust">
-                Codex runs hooks only after you trust them. After you allow this, Marshell asks you to open <code>/hooks</code> and trust them there.
+                Codex runs hooks only after you trust them. The next time Codex starts, it lists them as new: choose <strong>Trust all and continue</strong>, or review them first in <code>/hooks</code>.
               </p>
               <p className="consent__source">
-                The hook entries go in <code>config.toml</code> only, not in <code>hooks.json</code> as well: Codex reads both and would warn about duplicates.
+                The hook entries go in <code>hooks.json</code> only, not in <code>config.toml</code> as well: Codex reads both and would warn about duplicates.
               </p>
             </>
           )}

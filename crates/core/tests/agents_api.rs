@@ -225,13 +225,15 @@ async fn remove_plan_after_install_restores_the_file() {
 }
 
 #[tokio::test]
-async fn unknown_agent_is_404() {
+async fn antigravity_is_still_404() {
     let e = env();
-    let (status, _) = get(&e.app, "/v1/agents/codex/setup").await;
+    let (status, _) = get(&e.app, "/v1/agents/antigravity/setup").await;
     assert_eq!(status, StatusCode::NOT_FOUND);
-    let (status, _) = post(&e.app, "/v1/agents/codex/hooks/plan", WANT()).await;
+    let (status, _) = post(&e.app, "/v1/agents/antigravity/hooks/plan", WANT()).await;
     assert_eq!(status, StatusCode::NOT_FOUND);
-    let (status, _) = post(&e.app, "/v1/agents/codex/hooks/remove-plan", json!({})).await;
+    let (status, _) = post(&e.app, "/v1/agents/antigravity/hooks/remove-plan", json!({})).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    let (status, _) = get(&e.app, "/v1/agents/nope/setup").await;
     assert_eq!(status, StatusCode::NOT_FOUND);
 }
 
@@ -293,4 +295,273 @@ async fn setup_never_copies_the_programs() {
     let (status, _) = get(&e.app, "/v1/agents/claude/setup").await;
     assert_eq!(status, StatusCode::OK);
     assert!(!paths::bridge_exe(&e.home).exists());
+}
+
+// ---- Codex ----
+
+/// A state whose Codex home is a folder inside the recorded project, so the config service may write it.
+/// Returns the env and the `hooks.json` path. The bridge file exists, so installs read as installed.
+fn codex_env() -> (Env, PathBuf) {
+    let dir = tempfile::tempdir().unwrap();
+    let root = canonical(dir.path());
+    let home = root.join("home");
+    let project = root.join("project");
+    let codex_home = project.join("codex-home");
+    std::fs::create_dir_all(&home).unwrap();
+    std::fs::create_dir_all(&codex_home).unwrap();
+    record(&home, &project, 1).unwrap();
+    let hooks = codex_home.join("hooks.json");
+    let settings = project.join("settings.json");
+    let st = AppState::new(
+        TOKEN.into(),
+        PORT,
+        vec!["http://tauri.localhost".into()],
+        home.clone(),
+        Vec::new(),
+    )
+    .with_claude_settings(settings.clone())
+    .with_codex_hooks(hooks.clone())
+    .with_codex_version(Some("0.163.0".into()))
+    .with_agent_path(|_| None);
+    let bridge = paths::bridge_exe(&home);
+    std::fs::create_dir_all(bridge.parent().unwrap()).unwrap();
+    std::fs::write(&bridge, "").unwrap();
+    (
+        Env {
+            _dir: dir,
+            app: router(st),
+            home,
+            settings,
+        },
+        hooks,
+    )
+}
+
+async fn install_codex(e: &Env) {
+    let (status, preview) = post(&e.app, "/v1/agents/codex/hooks/plan", WANT()).await;
+    assert_eq!(status, StatusCode::OK, "{preview}");
+    assert_eq!(preview["can_apply"], true, "{preview}");
+    let (status, applied) = post(&e.app, "/v1/config/apply", shown(&preview)).await;
+    assert_eq!(status, StatusCode::OK, "{applied}");
+}
+
+#[tokio::test]
+async fn codex_setup_reports_a_missing_file() {
+    let (e, hooks) = codex_env();
+    let (status, setup) = get(&e.app, "/v1/agents/codex/setup").await;
+    assert_eq!(status, StatusCode::OK, "{setup}");
+    assert_eq!(setup["agent"], "codex");
+    assert_eq!(setup["settings_state"], "missing");
+    assert_eq!(setup["hooks"], "none");
+    assert_eq!(setup["needs_trust"], true);
+    assert!(setup.get("trust").is_none(), "{setup}");
+    assert_eq!(setup["version"], "0.163.0");
+    assert_eq!(setup["has_own_statusline"], false);
+    assert_eq!(setup["chained"], false);
+    assert_eq!(setup["settings_path"], hooks.to_string_lossy().as_ref());
+    let (_, claude) = get(&e.app, "/v1/agents/claude/setup").await;
+    assert_eq!(claude["needs_trust"], false, "{claude}");
+    assert!(claude.get("trust").is_none(), "{claude}");
+}
+
+#[tokio::test]
+async fn codex_plan_then_apply_installs() {
+    let (e, hooks) = codex_env();
+    install_codex(&e).await;
+    assert!(hooks.exists());
+    let (_, setup) = get(&e.app, "/v1/agents/codex/setup").await;
+    assert_eq!(setup["settings_state"], "ok", "{setup}");
+    assert_eq!(setup["hooks"], "installed", "{setup}");
+    assert_eq!(setup["approve_installed"], false, "{setup}");
+
+    let want = json!({"status": true, "statusline": false, "approve": true});
+    let (_, preview) = post(&e.app, "/v1/agents/codex/hooks/plan", want).await;
+    let (status, applied) = post(&e.app, "/v1/config/apply", shown(&preview)).await;
+    assert_eq!(status, StatusCode::OK, "{applied}");
+    let (_, setup) = get(&e.app, "/v1/agents/codex/setup").await;
+    assert_eq!(setup["approve_installed"], true, "{setup}");
+}
+
+#[tokio::test]
+async fn codex_remove_plan_after_install_leaves_the_users_hooks() {
+    let (e, hooks) = codex_env();
+    let mine = json!({"hooks": {"Stop": [{"hooks": [{"type": "command", "command": "my-stop"}]}]}});
+    std::fs::write(&hooks, serde_json::to_string_pretty(&mine).unwrap()).unwrap();
+    install_codex(&e).await;
+    let installed = std::fs::read_to_string(&hooks).unwrap();
+    assert!(
+        installed.contains("my-stop") && installed.contains("mshl1"),
+        "{installed}"
+    );
+
+    let (status, removal) = post(&e.app, "/v1/agents/codex/hooks/remove-plan", json!({})).await;
+    assert_eq!(status, StatusCode::OK, "{removal}");
+    assert_eq!(removal["statusline_left"], false);
+    let (status, applied) = post(&e.app, "/v1/config/apply", shown(&removal["preview"])).await;
+    assert_eq!(status, StatusCode::OK, "{applied}");
+    let after = std::fs::read_to_string(&hooks).unwrap();
+    assert!(after.contains("my-stop"), "{after}");
+    assert!(!after.contains("mshl1"), "{after}");
+    let (_, setup) = get(&e.app, "/v1/agents/codex/setup").await;
+    assert_eq!(setup["hooks"], "none", "{setup}");
+}
+
+/// A `config.toml` that records `hash_of` for each of Marshell's entries in `hooks_path`.
+fn trust_toml(hooks_path: &std::path::Path, alter: Option<usize>) -> String {
+    use marshell_core::agents::codex::trust::{hook_hash, snake_case};
+    let root: Value = serde_json::from_str(&std::fs::read_to_string(hooks_path).unwrap()).unwrap();
+    let mut out = String::new();
+    let mut n = 0;
+    for (event, groups) in root["hooks"].as_object().unwrap() {
+        for (g, group) in groups.as_array().unwrap().iter().enumerate() {
+            for (h, entry) in group["hooks"].as_array().unwrap().iter().enumerate() {
+                if !entry["command"].as_str().unwrap().contains("mshl1") {
+                    continue;
+                }
+                let mut hash = hook_hash(event, group, entry);
+                if alter == Some(n) {
+                    hash.push('0');
+                }
+                n += 1;
+                out.push_str(&format!(
+                    "[hooks.state.'{}:{}:{g}:{h}']
+trusted_hash = \"{hash}\"
+",
+                    hooks_path.display(),
+                    snake_case(event)
+                ));
+            }
+        }
+    }
+    assert!(n > 0);
+    out
+}
+
+#[tokio::test]
+async fn codex_setup_reads_trust_from_config_toml() {
+    let (e, hooks) = codex_env();
+    install_codex(&e).await;
+    let (_, setup) = get(&e.app, "/v1/agents/codex/setup").await;
+    assert_eq!(setup["trust"], "untrusted", "{setup}");
+
+    let config = hooks.with_file_name("config.toml");
+    std::fs::write(&config, trust_toml(&hooks, None)).unwrap();
+    let before = std::fs::read(&config).unwrap();
+    let (_, setup) = get(&e.app, "/v1/agents/codex/setup").await;
+    assert_eq!(setup["trust"], "trusted", "{setup}");
+    assert_eq!(std::fs::read(&config).unwrap(), before);
+
+    std::fs::write(&config, trust_toml(&hooks, Some(0))).unwrap();
+    let before = std::fs::read(&config).unwrap();
+    let (_, setup) = get(&e.app, "/v1/agents/codex/setup").await;
+    assert_eq!(setup["trust"], "changed", "{setup}");
+    assert_eq!(std::fs::read(&config).unwrap(), before);
+}
+
+// ---- Codex live status ----
+
+/// A state with one open Codex row, "cx", and the Codex version pinned so no `codex` is ever run.
+fn codex_live(version: Option<&str>) -> (AppState, axum::Router) {
+    let home = tempfile::tempdir().unwrap().keep();
+    let st = AppState::new(
+        TOKEN.into(),
+        PORT,
+        vec!["http://tauri.localhost".into()],
+        home,
+        Vec::new(),
+    )
+    .with_codex_version(version.map(str::to_string))
+    .with_agent_path(|_| None);
+    st.registry().reserve(
+        "cx",
+        marshell_core::registry::Relaunch {
+            profile_id: "test".into(),
+            agent: Some("codex".into()),
+            cwd: "C:/work".into(),
+            mode: None,
+            name: "Codex".into(),
+        },
+    );
+    let app = router(st.clone());
+    (st, app)
+}
+
+async fn codex_event(app: &axum::Router, event: Value) -> StatusCode {
+    let req = base("POST", "/v1/hook")
+        .header("x-marshell-role", "event")
+        .header("x-marshell-agent", "codex")
+        .header("x-marshell-tab", "cx")
+        .header("x-marshell-version", "0.0.0")
+        .body(Body::from(event.to_string()))
+        .unwrap();
+    send(app, req).await.0
+}
+
+fn codex_row(st: &AppState) -> marshell_protocol::api::SessionInfo {
+    st.registry()
+        .snapshot()
+        .sessions
+        .into_iter()
+        .find(|s| s.tab_id == "cx")
+        .unwrap()
+}
+
+#[tokio::test]
+async fn a_codex_event_folds_into_its_tab() {
+    let (st, app) = codex_live(Some("0.163.0"));
+    let prompt: Value =
+        serde_json::from_str(include_str!("fixtures/codex/hooks/0.163.0/UserPromptSubmit.json")).unwrap();
+    assert_eq!(codex_event(&app, prompt).await, StatusCode::NO_CONTENT);
+    let row = codex_row(&st);
+    let live = row.live.expect("the row has a live status");
+    assert_eq!(
+        (live.state, live.phrase.as_str()),
+        (marshell_protocol::api::LiveState::Working, "Thinking")
+    );
+    assert_eq!(row.status_note, None);
+
+    // A turn ends: Done shows at once, with the recap.
+    let stop: Value = serde_json::from_str(include_str!("fixtures/codex/hooks/0.163.0/Stop-recap.json")).unwrap();
+    codex_event(&app, stop).await;
+    let live = codex_row(&st).live.unwrap();
+    assert_eq!(live.state, marshell_protocol::api::LiveState::Done);
+    assert!(live.recap.is_some());
+}
+
+#[tokio::test]
+async fn an_unrecorded_codex_version_leaves_no_status_and_says_why() {
+    for (version, note) in [
+        (Some("0.170.0"), "Codex 0.170.0 is not one Marshell has recorded yet"),
+        (None, "Codex's version could not be read"),
+    ] {
+        let (st, app) = codex_live(version);
+        let prompt: Value =
+            serde_json::from_str(include_str!("fixtures/codex/hooks/0.163.0/UserPromptSubmit.json")).unwrap();
+        codex_event(&app, prompt).await;
+        let row = codex_row(&st);
+        assert_eq!(row.live, None, "{version:?}");
+        assert_eq!(row.status_note.as_deref(), Some(note));
+    }
+}
+
+#[tokio::test]
+async fn codex_status_off_sets_its_note() {
+    let (st, app) = codex_live(Some("0.163.0"));
+    let (status, _) = send(
+        &app,
+        base("PUT", "/v1/settings")
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(
+                json!({"appearance": {}, "status_off": ["codex"]}).to_string(),
+            ))
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let prompt: Value =
+        serde_json::from_str(include_str!("fixtures/codex/hooks/0.163.0/UserPromptSubmit.json")).unwrap();
+    codex_event(&app, prompt).await;
+    let row = codex_row(&st);
+    assert_eq!(row.live, None);
+    assert_eq!(row.status_note.as_deref(), Some("Live status is off for Codex"));
 }

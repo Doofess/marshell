@@ -132,6 +132,8 @@ struct Inner {
     /// Claude Code's settings file when a test or a caller names one; None means
     /// `MARSHELL_CLAUDE_SETTINGS`, else `~/.claude/settings.json`.
     claude_settings: Option<PathBuf>,
+    /// Codex's `hooks.json` when a test or a caller names one; None means `$CODEX_HOME`, else `~/.codex`.
+    codex_hooks: Option<PathBuf>,
     /// Home and managed settings paths for reading Claude's compact window; tests supply scratch paths.
     claude_compact_paths: Option<(PathBuf, Vec<PathBuf>)>,
     /// Where the app's own programs sit, so setting up hooks can put a missing bridge back. None in tests.
@@ -142,6 +144,8 @@ struct Inner {
     /// A Claude Code version a test pins, in place of asking the executable. `Some(None)` is a
     /// version that cannot be read.
     claude_version: Option<Option<String>>,
+    /// A Codex version a test pins, in place of asking the executable. `Some(None)` cannot be read.
+    codex_version: Option<Option<String>>,
     /// The previous process readings, so each `/v1/perf` call can tell the CPU used since the last one.
     sampler: Mutex<crate::diagnostics::perf::Sampler>,
     /// The diagnostics export waiting to be read and saved.
@@ -216,10 +220,12 @@ impl AppState {
             importer: std::sync::OnceLock::new(),
             storage: std::sync::OnceLock::new(),
             claude_settings: None,
+            codex_hooks: None,
             claude_compact_paths: None,
             programs_dir: None,
             versions: Mutex::new(HashMap::new()),
             claude_version: None,
+            codex_version: None,
             sampler: Mutex::new(crate::diagnostics::perf::Sampler::new()),
             previews: crate::diagnostics::export::Previews::default(),
             view: tokio::sync::watch::channel(marshell_protocol::api::UiView {
@@ -245,6 +251,14 @@ impl AppState {
             .claude_settings = Some(path);
         self
     }
+    /// Names Codex's `hooks.json`, in place of the environment. Its `config.toml` is the file beside it. Call it
+    /// before the state is cloned.
+    pub fn with_codex_hooks(mut self, path: PathBuf) -> Self {
+        Arc::get_mut(&mut self.0)
+            .expect("with_codex_hooks runs before the state is shared")
+            .codex_hooks = Some(path);
+        self
+    }
     /// Names the user home and managed files used for Claude's compact window, before state is shared.
     pub fn with_claude_compact_paths(mut self, user_home: PathBuf, managed: Vec<PathBuf>) -> Self {
         Arc::get_mut(&mut self.0)
@@ -265,6 +279,14 @@ impl AppState {
         Arc::get_mut(&mut self.0)
             .expect("with_claude_version runs before the state is shared")
             .claude_version = Some(version);
+        self
+    }
+    /// Pins the Codex version the setup route sees, so a test never runs a real `codex`. `None` is a version that
+    /// cannot be read. Call it before the state is cloned.
+    pub fn with_codex_version(mut self, version: Option<String>) -> Self {
+        Arc::get_mut(&mut self.0)
+            .expect("with_codex_version runs before the state is shared")
+            .codex_version = Some(version);
         self
     }
     /// Sets how long a permission request is held. Call it before the state is cloned.

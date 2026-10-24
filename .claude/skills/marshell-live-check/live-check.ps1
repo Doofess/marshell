@@ -13,7 +13,9 @@ tree:  prints the process tree under the recorded root PID and stops nothing.
 stop:  prints the tree and stops it by PID, leaves first. If the tree holds an agent CLI (claude.exe,
        codex.exe, node_repl.exe), nothing is stopped unless every such PID is named in -AlsoStop:
        the person may be using the dev window, and their sessions are not the check's to end.
-Nothing here deletes a folder.
+Nothing here deletes a folder. With -CodexAuth, start copies ~/.codex/auth.json into the scratch CODEX_HOME
+       and stop deletes that copy. -CodexHome <short path> puts CODEX_HOME there instead of <Scratch>\cx; that
+       folder is deleted with the scratch folder at the end of the work.
 
 .EXAMPLE
 pwsh -NoProfile -File live-check.ps1 start -Scratch C:\Users\me\AppData\Local\Temp\lc-5b-1
@@ -26,6 +28,12 @@ param(
     [int[]]$AlsoStop = @(),
     # start only: a folder whose cc and cx subfolders are copied into the scratch CLAUDE_CONFIG_DIR and CODEX_HOME.
     [string]$Seed,
+    # start only: copies ~/.codex/auth.json (and nothing else) into the scratch CODEX_HOME, so a real Codex can sign in.
+    # stop deletes that one copy once the tree is gone.
+    [switch]$CodexAuth,
+    # start only: a new, short literal folder (at most 60 characters) to use as CODEX_HOME instead of <Scratch>\cx.
+    # Codex 0.163 can't start its app-server under a longer one ("path must be shorter than SUN_LEN").
+    [string]$CodexHome,
     # The checkout to run; defaults to the one holding this script.
     [string]$Repo = (Join-Path $PSScriptRoot '..\..\..'),
     [int]$Port = 9333
@@ -36,14 +44,23 @@ $AgentNames = @('claude.exe', 'codex.exe', 'node_repl.exe')
 if (-not [System.IO.Path]::IsPathRooted($Scratch)) { throw "Scratch must be an absolute path: $Scratch" }
 # In PowerShell 7, GetFullPath also expands 8.3 short names (C:\Users\JANEDO~1) in the part that exists.
 $Scratch = [System.IO.Path]::GetFullPath($Scratch).TrimEnd('\')
+if ($CodexHome) {
+    if (-not [System.IO.Path]::IsPathRooted($CodexHome)) { throw "CodexHome must be an absolute path: $CodexHome" }
+    $CodexHome = [System.IO.Path]::GetFullPath($CodexHome).TrimEnd('\')
+    if ($CodexHome.Length -gt 60) { throw "CodexHome is $($CodexHome.Length) characters; Codex needs at most 60: $CodexHome" }
+}
 foreach ($real in @("$HOME\.marshell", "$HOME\.claude", "$HOME\.codex")) {
     $r = [System.IO.Path]::GetFullPath($real).TrimEnd('\')
-    if ($Scratch -ieq $r -or $Scratch.StartsWith("$r\", 'OrdinalIgnoreCase')) { throw "Scratch is inside a real config folder: $real" }
+    foreach ($path in @($Scratch, $CodexHome) | Where-Object { $_ }) {
+        if ($path -ieq $r -or $path.StartsWith("$r\", 'OrdinalIgnoreCase')) { throw "$path is inside a real config folder: $real" }
+    }
 }
 if ((Split-Path $Scratch -Leaf) -ieq '.marshell') { throw 'Never name the scratch folder .marshell.' }
 $PidsFile = Join-Path $Scratch 'pids.json'
 
 function Get-Tree([int]$RootPid) {
+    # PIDs 0 and 4 are the idle process and the kernel: every process descends from them.
+    if ($RootPid -le 4) { throw "Refusing to walk the tree from PID $RootPid." }
     $all = Get-CimInstance Win32_Process -Property ProcessId, ParentProcessId, Name, CreationDate
     $byParent = $all | Group-Object ParentProcessId -AsHashTable -AsString
     $root = $all | Where-Object ProcessId -eq $RootPid
@@ -54,7 +71,7 @@ function Get-Tree([int]$RootPid) {
         $out.Add([pscustomobject]@{ Depth = $depth; Name = $p.Name; PID = [int]$p.ProcessId; Parent = [int]$p.ParentProcessId })
         foreach ($c in @($byParent["$($p.ProcessId)"])) {
             # A child created before its parent is a reused parent PID, not a real child.
-            if ($c -and $c.CreationDate -ge $p.CreationDate) { & $walk $c ($depth + 1) }
+            if ($c -and $c.ProcessId -ne $p.ProcessId -and $c.CreationDate -ge $p.CreationDate) { & $walk $c ($depth + 1) }
         }
     }
     & $walk $root 0
@@ -65,13 +82,25 @@ function Read-Record {
     if (-not (Test-Path -LiteralPath $PidsFile)) { throw "No $PidsFile; was start run with this Scratch?" }
     $rec = Get-Content -LiteralPath $PidsFile -Raw | ConvertFrom-Json
     $p = Get-CimInstance Win32_Process -Filter "ProcessId = $($rec.root)" -Property Name, CreationDate
-    if (-not $p) { Write-Output "Root PID $($rec.root) is no longer running."; return $null }
+    # Write-Host, not Write-Output: output would become part of the return value, so the caller would get a
+    # non-null record and walk the tree from PID 0, the whole machine.
+    if (-not $p) { Write-Host "Root PID $($rec.root) is no longer running."; return $null }
     # ConvertFrom-Json may already have turned `created` into a DateTime; compare as times either way.
     $recorded = ([datetime]$rec.created).ToUniversalTime()
     if ($p.Name -ne $rec.name -or [math]::Abs(($p.CreationDate.ToUniversalTime() - $recorded).TotalMilliseconds) -gt 1) {
         throw "PID $($rec.root) is now a different process ($($p.Name)); not touching it."
     }
     return $rec
+}
+
+# The copied Codex sign-in is the one file removed here: a known literal name in the recorded CODEX_HOME.
+function Remove-AuthCopy($rec) {
+    if (-not $rec.codexAuth -or -not $rec.codexHome) { return }
+    $authCopy = Join-Path $rec.codexHome 'auth.json'
+    if (Test-Path -LiteralPath $authCopy) {
+        Remove-Item -LiteralPath $authCopy -Force
+        Write-Output "Deleted the copied Codex sign-in: $authCopy"
+    }
 }
 
 function Show-Tree($tree) {
@@ -86,12 +115,24 @@ switch ($Mode) {
         if (-not (Test-Path -LiteralPath $Scratch)) { New-Item -ItemType Directory -Path $Scratch | Out-Null }
         $mh = New-Item -ItemType Directory -Path (Join-Path $Scratch 'mh')
         $cc = New-Item -ItemType Directory -Path (Join-Path $Scratch 'cc')
-        $cx = New-Item -ItemType Directory -Path (Join-Path $Scratch 'cx')
+        if ($CodexHome) {
+            if ((Test-Path -LiteralPath $CodexHome) -and (Get-ChildItem -LiteralPath $CodexHome -Force | Select-Object -First 1)) {
+                throw "CodexHome is not empty: $CodexHome. Use a new literal path."
+            }
+            $cx = if (Test-Path -LiteralPath $CodexHome) { Get-Item -LiteralPath $CodexHome } else { New-Item -ItemType Directory -Path $CodexHome }
+        } else {
+            $cx = New-Item -ItemType Directory -Path (Join-Path $Scratch 'cx')
+        }
         if ($Seed) {
             foreach ($pair in @(@('cc', $cc), @('cx', $cx))) {
                 $from = Join-Path $Seed $pair[0]
                 if (Test-Path -LiteralPath $from) { Copy-Item -Path (Join-Path $from '*') -Destination $pair[1].FullName -Recurse }
             }
+        }
+        if ($CodexAuth) {
+            $auth = Join-Path $HOME '.codex/auth.json'
+            if (-not (Test-Path -LiteralPath $auth)) { throw "No Codex sign-in to copy: $auth" }
+            Copy-Item -LiteralPath $auth -Destination (Join-Path $cx.FullName 'auth.json')
         }
         $settings = Join-Path (New-Item -ItemType Directory -Path (Join-Path $Scratch 'proj\.claude')).FullName 'settings.local.json'
         Set-Content -LiteralPath $settings -Value '{}' -Encoding utf8NoBOM
@@ -108,7 +149,7 @@ switch ($Mode) {
         $created = (Get-CimInstance Win32_Process -Filter "ProcessId = $($proc.Id)" -Property CreationDate).CreationDate
         [ordered]@{
             root = $proc.Id; name = 'cmd.exe'; created = $created.ToUniversalTime().ToString('o')
-            repo = $repo; marshellHome = $mh.FullName; claudeConfigDir = $cc.FullName; codexHome = $cx.FullName; claudeSettings = $settings; cdp = "http://127.0.0.1:$Port"
+            repo = $repo; marshellHome = $mh.FullName; claudeConfigDir = $cc.FullName; codexHome = $cx.FullName; codexAuth = [bool]$CodexAuth; claudeSettings = $settings; cdp = "http://127.0.0.1:$Port"
         } | ConvertTo-Json | Set-Content -LiteralPath $PidsFile -Encoding utf8NoBOM
         Write-Output "Started pnpm tauri dev in $repo, root PID $($proc.Id)."
         Write-Output "MARSHELL_HOME=$($mh.FullName)"
@@ -123,7 +164,11 @@ switch ($Mode) {
     }
     'stop' {
         $rec = Read-Record
-        if (-not $rec) { return }
+        if (-not $rec) {
+            # The tree is gone already (stopped some other way), but the sign-in copy may not be.
+            Remove-AuthCopy (Get-Content -LiteralPath $PidsFile -Raw | ConvertFrom-Json)
+            return
+        }
         $tree = @(Get-Tree $rec.root)
         Show-Tree $tree
         $agents = @($tree | Where-Object { $AgentNames -contains $_.Name.ToLowerInvariant() })
@@ -144,6 +189,7 @@ switch ($Mode) {
         Start-Sleep -Milliseconds 500
         $left = @($tree | Where-Object { Get-Process -Id $_.PID -ErrorAction SilentlyContinue })
         if ($left.Count) { Write-Output "Still running: $(($left | ForEach-Object { "$($_.Name) $($_.PID)" }) -join ', ')"; exit 1 }
+        Remove-AuthCopy $rec
         Write-Output "All $($tree.Count) recorded processes are gone. $Scratch was left in place."
     }
 }

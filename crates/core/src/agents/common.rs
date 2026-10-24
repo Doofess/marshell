@@ -1,7 +1,24 @@
 //! Helpers the agents' conversation parsers share: truncation, paths, card wording and timestamps.
 
+use marshell_protocol::api::{LiveState, LiveStatus};
+use serde_json::Value;
+use std::fmt;
+use std::path::PathBuf;
+
 /// Cap on a tool card's detail, in characters.
 pub const DETAIL_CAP: usize = 4_000;
+
+/// What a denial says when the person gave no reason.
+pub const DENIED_TEXT: &str = "Denied in Marshell.";
+
+/// A tool's input as `key: value` lines: an object's fields, or the whole value as `input`.
+pub fn flatten_input(input: &Value) -> Vec<(String, String)> {
+    let render = |value: &Value| value.as_str().map(str::to_owned).unwrap_or_else(|| value.to_string());
+    match input.as_object() {
+        Some(object) => object.iter().map(|(key, value)| (key.clone(), render(value))).collect(),
+        None => vec![("input".into(), render(input))],
+    }
+}
 
 /// "Created src/a.ts, 3 lines".
 pub fn created_summary(path: &str, lines: usize) -> String {
@@ -103,4 +120,108 @@ pub fn rfc3339_ms(s: &str) -> Option<u64> {
     let days = era * 146_097 + yoe * 365 + yoe / 4 - yoe / 100 + doy - 719_468;
     let secs = days * 86_400 + hour * 3_600 + minute * 60 + second - offset_minutes * 60;
     u64::try_from(secs).ok().map(|s| s * 1_000 + ms as u64)
+}
+
+/// What marks a hook entry or a status line as Marshell's.
+pub const TAG: &str = "mshl1";
+
+#[derive(Debug, PartialEq)]
+pub enum PlanError {
+    /// The config file is not JSON(C); `problem` is the line and what is wrong.
+    DoesNotParse { path: PathBuf, problem: (u32, String) },
+    /// A value the CLI expects to be an object or array is something else, at `pointer`.
+    NotAnObject { path: PathBuf, pointer: String },
+}
+
+impl fmt::Display for PlanError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            PlanError::DoesNotParse { path, problem } => {
+                write!(
+                    f,
+                    "{} does not parse (line {}): {}",
+                    path.display(),
+                    problem.0,
+                    problem.1
+                )
+            }
+            PlanError::NotAnObject { path, pointer } => {
+                write!(
+                    f,
+                    "{} has a value at {pointer} of a kind the agent does not use",
+                    path.display()
+                )
+            }
+        }
+    }
+}
+
+impl std::error::Error for PlanError {}
+
+/// Marshell's own hook entry: `args` hold `--tag` then the tag, or the command string says so. The
+/// bridge's path is not part of the match, so an orphan from another home is still found.
+pub fn is_ours(entry: &Value) -> bool {
+    let in_args = entry.get("args").and_then(Value::as_array).is_some_and(|args| {
+        args.windows(2)
+            .any(|w| w[0].as_str() == Some("--tag") && w[1].as_str() == Some(TAG))
+    });
+    let in_command = entry
+        .get("command")
+        .and_then(Value::as_str)
+        .is_some_and(|c| c.contains(&format!("--tag {TAG}")));
+    in_args || in_command
+}
+
+/// The status a session has before anything is known.
+pub(crate) fn blank(now_ms: u64) -> LiveStatus {
+    LiveStatus {
+        state: LiveState::Idle,
+        phrase: String::new(),
+        since_ms: now_ms,
+        recap: None,
+        model: None,
+        effort: None,
+        context_pct: None,
+        five_hour_pct: None,
+        five_hour_resets_at: None,
+        seven_day_pct: None,
+        subagents: 0,
+        subagents_finished: 0,
+    }
+}
+
+/// Whether Marshell may fold an agent's events into live status.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Gate {
+    Known,
+    /// The status note the row shows instead.
+    Unknown(String),
+}
+
+/// Known: the same minor line as a recorded fixture set (`known`, one entry per minor line: its oldest
+/// recorded patch), and not older than that patch. `name` is how the agent is called in the note.
+/// Build metadata (`+build`) is the same release; a pre-release suffix (`-alpha.1`) is never Known,
+/// because it is not the build that was recorded.
+pub fn version_gate(name: &str, known: &[(u32, u32, u32)], version: Option<&str>) -> Gate {
+    let parsed = version.and_then(|v| {
+        let (core, suffix) = match v.find(['-', '+']) {
+            Some(at) => v.split_at(at),
+            None => (v, ""),
+        };
+        let mut parts = core.split('.').map(|p| p.parse::<u32>().ok());
+        let triple = (parts.next()??, parts.next()??, parts.next()??);
+        parts.next().is_none().then_some((v, triple, suffix.starts_with('-')))
+    });
+    let Some((v, (major, minor, patch), prerelease)) = parsed else {
+        return Gate::Unknown(format!("{name}'s version could not be read"));
+    };
+    match known.iter().find(|f| f.0 == major && f.1 == minor) {
+        Some(f) if patch >= f.2 && !prerelease => Gate::Known,
+        Some(f) if patch > f.2 => Gate::Unknown(format!("{name} {v} is not one Marshell has recorded yet")),
+        Some(_) => Gate::Unknown(format!("{name} {v} is older than the versions Marshell knows")),
+        None if known.iter().all(|f| (major, minor) < (f.0, f.1)) => {
+            Gate::Unknown(format!("{name} {v} is older than the versions Marshell knows"))
+        }
+        None => Gate::Unknown(format!("{name} {v} is not one Marshell has recorded yet")),
+    }
 }

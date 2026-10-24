@@ -1,5 +1,6 @@
 //! Maps Claude's permission payload to the agent-neutral approve card.
 
+use crate::agents::common::flatten_input;
 use crate::hooks::{holds::PendingPermission, risk};
 use marshell_protocol::hook::{DiffKind, DiffLine, PermissionDetail, PermissionView};
 use serde_json::Value;
@@ -14,7 +15,7 @@ pub fn detail(request: &Value) -> PermissionDetail {
     let input = &request["tool_input"];
     known_detail(tool, input, request).unwrap_or_else(|| PermissionDetail::Other {
         tool: tool.into(),
-        args: flatten(input),
+        args: flatten_input(input),
     })
 }
 
@@ -85,18 +86,10 @@ fn known_detail(tool: &str, input: &Value, request: &Value) -> Option<Permission
             PermissionDetail::Mcp {
                 server: server.into(),
                 tool: tool.into(),
-                args: flatten(input),
+                args: flatten_input(input),
             }
         }
     })
-}
-
-fn flatten(input: &Value) -> Vec<(String, String)> {
-    let render = |value: &Value| value.as_str().map(str::to_owned).unwrap_or_else(|| value.to_string());
-    match input.as_object() {
-        Some(object) => object.iter().map(|(key, value)| (key.clone(), render(value))).collect(),
-        None => vec![("input".into(), render(input))],
-    }
 }
 
 /// Shared with the permission response so only suggestions the CLI can accept count.

@@ -1,6 +1,6 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { PREVIEW, SETUP } from "../agents/fixtures";
+import { CODEX_SETUP, PREVIEW, SETUP } from "../agents/fixtures";
 import { OnboardingView, type OnboardingState } from "./LiveOnboarding";
 
 const none = () => {};
@@ -66,5 +66,23 @@ describe("OnboardingView", () => {
     const h = view({ kind: "failed" });
     expect(h).toContain("Couldn&#x27;t read the setup");
     expect(h).toContain(">Skip for now</button>");
+  });
+});
+
+describe("OnboardingView: Codex", () => {
+  it("lists Codex from its own setup, with its version and hooks.json, and no later-version note", () => {
+    const h = view({ kind: "detected", setup: SETUP, found: [{ agent: "codex", found: true }], codex: CODEX_SETUP });
+    const row = h.slice(h.indexOf('data-agent="codex"'));
+    expect(row).toContain("version 0.163.0");
+    expect(row).toContain("C:/h/.codex/hooks.json");
+    expect(row).not.toContain("come in a later version");
+  });
+  it("shows Codex's own card with its trust and source lines, and no status line switch", () => {
+    const h = view({ kind: "consent", setup: CODEX_SETUP, flow: { preview: PREVIEW, open: false, busy: false } });
+    expect(h).toContain('data-agent="codex"');
+    expect(h).toContain("<strong>Trust all and continue</strong>");
+    expect(h).toContain("<code>hooks.json</code> only");
+    expect(h).not.toContain("Keep my status line working");
+    expect(h).not.toContain("Claude Code");
   });
 });

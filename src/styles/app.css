@@ -41,6 +41,8 @@
   inset: 0;
   z-index: 20;
   display: grid;
+  /* A row as tall as the window: an auto row grows to the frame, so its max height never held. */
+  grid-template-rows: minmax(0, 1fr);
   justify-items: center;
   align-items: start;
   overflow: clip;

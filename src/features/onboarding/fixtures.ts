@@ -3,7 +3,8 @@ import { CAPABILITIES, CLI_NAME, fileName, removalCopy, type Capability, type Cl
 
 const HOME = "C:\\Users\\Home Office";
 const CLAUDE_PATH = `${HOME}\\.claude\\settings.json`;
-const CODEX_PATH = `${HOME}\\.codex\\config.toml`;
+// Marshell writes only Codex's hooks.json (never config.toml, where Codex keeps its trust).
+const CODEX_PATH = `${HOME}\\.codex\\hooks.json`;
 const ANTIGRAVITY_PATH = `${HOME}\\.gemini\\antigravity-cli\\settings.json`;
 // Antigravity reads global hooks from the shared ~/.gemini/config/ folder, not from its settings (agy 1.3.3's bundled hooks doc).
 const ANTIGRAVITY_HOOKS_PATH = `${HOME}\\.gemini\\config\\hooks.json`;
@@ -55,29 +56,29 @@ ${EVENTS.map((e) => `    "${e}": [{ "hooks": [{ "type": "command", "command": "$
 }
 `;
 
-// `notify` is often taken already (the Codex desktop app points it at its computer-use helper), so the diff leaves it alone.
-const codexBefore = 'model = "gpt-5"\napproval_policy = "on-request"\nnotify = ["C:\\\\Users\\\\Home Office\\\\AppData\\\\Local\\\\OpenAI\\\\Codex\\\\codex-computer-use.exe", "turn-ended"]\n';
-// Codex hooks are event-nested TOML (docs/research/codex-cli.md, "Hook sources, trust, and config safety"): `[[hooks.<Event>]]` is a
-// matcher group and `[[hooks.<Event>.hooks]]` its handler. No matcher: Marshell wants every source and every tool. Timeouts are
-// seconds, explicit and short: 10 for telemetry, 120 for the permission decision (a person is in the loop), 3 for SessionEnd (Codex
-// caps it there). The bridge path has a space, so the command quotes it inside the TOML literal string (itself in single quotes).
-const CODEX_TIMEOUT: Record<string, number> = { PermissionRequest: 120, SessionEnd: 3 };
-const codexEntry = (event: string, role: "event" | "permission") =>
-  `\n[[hooks.${event}]]\n[[hooks.${event}.hooks]]\ntype = "command"\ncommand = '${BRIDGE} ${role} --agent codex --tag mshl1'\ntimeout = ${CODEX_TIMEOUT[event] ?? 10}\n`;
-// Exactly the seven documented events the card promises, in lifecycle order: six status events and the permission request.
+// Codex's hooks.json (docs/research/codex-cli.md, and the recording of Task 1): `{"hooks": {"<Event>": [{"hooks": [handler]}]}}`, with no
+// matcher because Marshell wants every source and every tool. Timeouts are seconds: 5 for telemetry, 2 for SessionEnd and Interrupt (Codex
+// caps them at 3), 600 for the permission decision (a person is in the loop). Codex runs a hook command through PowerShell on Windows,
+// where a quoted path followed by arguments is a parse error, so the command is `& "<bridge>" ...`.
+const CODEX_TIMEOUT: Record<string, number> = { PermissionRequest: 600, SessionEnd: 2, Interrupt: 2 };
+const codexHandler = (event: string, role: "event" | "permission") => ({ type: "command", command: `& ${BRIDGE} ${role} --agent codex --tag mshl1`, timeout: CODEX_TIMEOUT[event] ?? 5 });
+// The seven status events, then the permission request: the eight entries the card promises.
 const CODEX_HOOKS: Array<[event: string, role: "event" | "permission"]> = [
   ["SessionStart", "event"],
   ["UserPromptSubmit", "event"],
   ["PreToolUse", "event"],
-  ["PermissionRequest", "permission"],
   ["PostToolUse", "event"],
   ["Stop", "event"],
+  ["Interrupt", "event"],
   ["SessionEnd", "event"],
+  ["PermissionRequest", "permission"],
 ];
-const codexAfter = codexBefore + CODEX_HOOKS.map(([e, role]) => codexEntry(e, role)).join("");
+const codexFile = (hooks: Array<[event: string, role: "event" | "permission"]>) =>
+  `${JSON.stringify({ hooks: Object.fromEntries(hooks.map(([e, role]) => [e, [{ hooks: [codexHandler(e, role)] }]])) }, null, 2)}\n`;
+const codexAfter = codexFile(CODEX_HOOKS);
 // A stand-in, made long on purpose to show how a long change folds; its card says so in its own headline.
 const STAND_IN = 40;
-const codexStandIn = codexBefore + Array.from({ length: STAND_IN }, (_, i) => codexEntry(`StandIn${i + 1}`, "event")).join("");
+const codexStandIn = codexFile(Array.from({ length: STAND_IN }, (_, i): [string, "event"] => [`StandIn${i + 1}`, "event"]));
 
 // Antigravity hooks (agy 1.3.3's bundled hooks doc, docs/research/2026-10-15-local-install-check.md): hooks.json holds named hooks,
 // each with `enabled` and its events. PreToolUse and PostToolUse are matcher groups (a regex on the tool name; `.*` takes every
@@ -128,8 +129,8 @@ const newFile = (path: string, text: string) => unifiedDiff(path, "", text).repl
 /** The exact change each CLI's consent card shows under "View exact changes". */
 export const CONSENT_DIFFS = {
   claude: unifiedDiff(CLAUDE_PATH, claudeBefore, claudeAfter) + newFile(chainPath("claude"), chainFile),
-  codex: unifiedDiff(CODEX_PATH, codexBefore, codexAfter),
-  codexLong: unifiedDiff(CODEX_PATH, codexBefore, codexStandIn),
+  codex: newFile(CODEX_PATH, codexAfter),
+  codexLong: newFile(CODEX_PATH, codexStandIn),
   antigravity:
     newFile(ANTIGRAVITY_HOOKS_PATH, antigravityHooks) +
     unifiedDiff(ANTIGRAVITY_PATH, antigravityBefore, antigravityAfter) +

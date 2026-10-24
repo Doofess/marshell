@@ -1,7 +1,8 @@
 use super::AppState;
 use crate::agents::claude::compact;
 use crate::agents::claude::status::{fold_event, fold_statusline_with_window, mode_of};
-use crate::agents::claude::{Gate, version_gate};
+use crate::agents::codex;
+use crate::agents::common::Gate;
 use crate::history::recorder::schedule_copy;
 use crate::hooks::holds::Outcome;
 use crate::hooks::log::HookEventRecord;
@@ -68,12 +69,12 @@ pub async fn post(
         body: json.clone(),
     };
     st.hook_log().push(rec, |tab| st.session(tab).is_some());
-    if agent == "claude"
+    if matches!(agent.as_str(), "claude" | "codex")
         && let Some(tab) = tab.as_deref()
     {
-        fold_live(&st, role, tab, &json, at_ms).await;
+        fold_live(&st, &agent, role, tab, &json, at_ms).await;
         if role == HookRole::Event && st.registry().is_open(tab) {
-            record_history(&st, tab, &json, at_ms).await;
+            record_history(&st, &agent, tab, &json, at_ms).await;
         }
     }
     if role == HookRole::Permission {
@@ -91,15 +92,15 @@ pub async fn post(
 
 /// Notes the event in the history. The index update is short, so it is awaited; the copy it may ask for
 /// runs on its own and the response does not wait for it.
-async fn record_history(st: &AppState, tab: &str, body: &serde_json::Value, at_ms: u64) {
+async fn record_history(st: &AppState, agent: &str, tab: &str, body: &serde_json::Value, at_ms: u64) {
     let history = st.history();
     let recording = st
         .session(tab)
         .and_then(|s| s.recording_path())
         .and_then(|path| path.file_name().map(|name| name.to_string_lossy().into_owned()));
-    let (tab, body) = (tab.to_string(), body.clone());
+    let (agent, tab, body) = (agent.to_string(), tab.to_string(), body.clone());
     let noter = history.clone();
-    let meta = tokio::task::spawn_blocking(move || noter.note_event(&tab, recording.as_deref(), &body, at_ms))
+    let meta = tokio::task::spawn_blocking(move || noter.note_event(&agent, &tab, recording.as_deref(), &body, at_ms))
         .await
         .unwrap_or(None);
     if let Some(meta) = meta {
@@ -107,26 +108,45 @@ async fn record_history(st: &AppState, tab: &str, body: &serde_json::Value, at_m
     }
 }
 
-/// Folds what Claude Code reported into the tab's live status. A permission request counts as an event
-/// (it folds to Needs permission). Without a known version, or with the switch off, the row gets a
-/// note saying why and keeps no status.
-async fn fold_live(st: &AppState, role: HookRole, tab: &str, body: &serde_json::Value, at_ms: u64) {
-    if !matches!(role, HookRole::Event | HookRole::Permission | HookRole::Statusline) || !st.registry().is_open(tab) {
+/// Folds what an agent (Claude Code or Codex) reported into the tab's live status. A permission request
+/// counts as an event (it folds to Needs permission). Without a known version, or with the switch off,
+/// the row gets a note saying why and keeps no status. Only Claude Code sends a status line.
+async fn fold_live(st: &AppState, agent: &str, role: HookRole, tab: &str, body: &serde_json::Value, at_ms: u64) {
+    if !matches!(role, HookRole::Event | HookRole::Permission | HookRole::Statusline)
+        || (role == HookRole::Statusline && agent != "claude")
+        || !st.registry().is_open(tab)
+    {
         return;
     }
-    let off = st.0.settings.lock().unwrap().status_off.iter().any(|a| a == "claude");
+    let (name, gate): (&str, fn(Option<&str>) -> Gate) = match agent {
+        "claude" => ("Claude Code", crate::agents::claude::version_gate),
+        "codex" => ("Codex", codex::version_gate),
+        _ => return,
+    };
+    let off = st.0.settings.lock().unwrap().status_off.iter().any(|a| a == agent);
     if off {
         st.registry()
-            .set_status_note(tab, Some("Live status is off for Claude Code".to_string()));
+            .set_status_note(tab, Some(format!("Live status is off for {name}")));
         return;
     }
-    // A cold cache runs `claude --version`: keep that off the async workers.
+    // A cold cache runs `<agent> --version`: keep that off the async workers.
     let asker = st.clone();
-    let version = tokio::task::spawn_blocking(move || asker.claude_version(asker.claude_exe().as_deref()))
-        .await
-        .unwrap_or(None);
-    match version_gate(version.as_deref()) {
+    let which = agent.to_string();
+    let version =
+        tokio::task::spawn_blocking(move || asker.agent_version(&which, asker.agent_exe_of(&which).as_deref()))
+            .await
+            .unwrap_or(None);
+    match gate(version.as_deref()) {
         Gate::Unknown(note) => st.registry().set_status_note(tab, Some(note)),
+        Gate::Known if agent == "codex" => {
+            // No Done hold, subagent count or stuck check: those follow Claude Code's events.
+            st.registry()
+                .update_live(tab, |prev| codex::status::fold_event(prev, body, at_ms));
+            if let Some(mode) = codex::status::mode_of(body) {
+                st.registry().set_live_mode(tab, mode);
+            }
+            st.registry().set_status_note(tab, None);
+        }
         Gate::Known => {
             if role == HookRole::Statusline {
                 // Read settings off the async workers and before taking the registry lock.
@@ -264,9 +284,10 @@ mod tests {
         );
         let call = json!({"hook_event_name": "PreToolUse", "tool_name": "Bash", "tool_input": {"command": "pwd"}});
         for ms in 1..=9 {
-            fold_live(&st, HookRole::Event, "a", &call, ms * 10).await;
+            fold_live(&st, "claude", HookRole::Event, "a", &call, ms * 10).await;
             fold_live(
                 &st,
+                "claude",
                 HookRole::Event,
                 "a",
                 &json!({"hook_event_name": "PostToolUse"}),
@@ -275,6 +296,7 @@ mod tests {
             .await;
             fold_live(
                 &st,
+                "claude",
                 HookRole::Event,
                 "a",
                 &json!({"hook_event_name": "Notification", "notification_type": "other"}),
@@ -283,6 +305,7 @@ mod tests {
             .await;
             fold_live(
                 &st,
+                "claude",
                 HookRole::Statusline,
                 "a",
                 &json!({"model": {"id": "test"}}),
@@ -299,13 +322,14 @@ mod tests {
         );
         fold_live(
             &st,
+            "claude",
             HookRole::Event,
             "a",
             &json!({"hook_event_name": "UserPromptSubmit"}),
             100,
         )
         .await;
-        fold_live(&st, HookRole::Statusline, "a", &json!({}), 600_099).await;
+        fold_live(&st, "claude", HookRole::Statusline, "a", &json!({}), 600_099).await;
         st.registry().check_stuck(600_100, 600_000);
         assert_eq!(
             st.registry().snapshot().sessions[0].stuck,

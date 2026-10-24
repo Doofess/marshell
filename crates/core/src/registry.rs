@@ -679,7 +679,7 @@ impl Registry {
             let live = entry
                 .info
                 .live
-                .get_or_insert_with(|| crate::agents::claude::status::blank(at_ms));
+                .get_or_insert_with(|| crate::agents::common::blank(at_ms));
             live.subagents = count;
             // Only a SubagentStop that took an id out is a subagent finishing; the main Stop and SessionEnd
             // clear the set too, and those are not.

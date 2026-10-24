@@ -1,9 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 import type { AgentSetup } from "../../generated/AgentSetup";
-import { actions, consentProps, DEFAULT_WANT, hooksOffNotice, installRequest, liveStatusOn, setupLine, setupWant } from "./agentsState";
+import { actions, consentProps, consentQueue, DEFAULT_WANT, hooksOffNotice, installRequest, liveStatusOn, rowSetupStart, setupLine, setupWant } from "./agentsState";
 import type { ConfigPreview } from "../../generated/ConfigPreview";
 import type { FilePreview } from "../../generated/FilePreview";
-import { PREVIEW, SETUP } from "./fixtures";
+import { CODEX_SETUP, PREVIEW, SETUP } from "./fixtures";
 
 const s = (patch: Partial<AgentSetup>): AgentSetup => ({ ...SETUP, ...patch });
 
@@ -147,10 +147,58 @@ describe("the switches the person sets", () => {
   });
 });
 
+describe("rowSetupStart", () => {
+  it("opens the setup of the agent whose row was clicked", () => {
+    expect(rowSetupStart("codex")).toEqual({ setup: "codex" });
+    expect(rowSetupStart("claude")).toEqual({ setup: "claude" });
+  });
+});
+
 describe("liveStatusOn", () => {
   it("is on unless the agent is in status_off", () => {
     expect(liveStatusOn([], "claude")).toBe(true);
     expect(liveStatusOn(["codex"], "claude")).toBe(true);
     expect(liveStatusOn(["codex", "claude"], "claude")).toBe(false);
+  });
+});
+
+describe("Codex", () => {
+  const flow = { preview: PREVIEW, open: false, busy: false };
+  it("consentProps for Codex asks for trust, names Codex and offers no status line", () => {
+    const p = consentProps(CODEX_SETUP, flow);
+    expect(p.scenario.detection.cli).toBe("codex");
+    expect(p.scenario.plan.cli).toBe("codex");
+    expect(p.scenario.plan.needsTrust).toBe(true);
+    expect(p.scenario.plan.configPath).toBe("C:/h/.codex/hooks.json");
+    expect(p.offer).toEqual(["status", "approve"]);
+    expect(p.on.statusline).toBe(false);
+    expect(p.scenario.plan.removal).toBe("Marshell removes the hook entries it added; the rest of the file stays as it is.");
+    expect(consentProps(SETUP, flow).scenario.plan.needsTrust).toBe(false);
+  });
+  it("an installed Codex offers approval only", () => {
+    expect(consentProps({ ...CODEX_SETUP, hooks: "installed" }, flow).offer).toEqual(["approve"]);
+  });
+  it("installRequest never asks Codex for a status line", () => {
+    expect(installRequest(DEFAULT_WANT, "codex")).toEqual({ status: true, statusline: false, approve: true });
+    expect(installRequest(DEFAULT_WANT)).toEqual({ status: true, statusline: true, approve: true });
+  });
+  it("setupLine names Codex", () => {
+    expect(setupLine(CODEX_SETUP)).toBe("Not set up. Sessions show limited status.");
+    expect(setupLine({ ...CODEX_SETUP, found: false })).toBe("Codex was not found on this computer.");
+    expect(setupLine({ ...CODEX_SETUP, hooks: "orphaned" })).toContain("so Codex reports a failing hook each time one fires");
+  });
+  it("setupLine claims status for Codex only once the hooks are trusted", () => {
+    const on = { ...CODEX_SETUP, hooks: "installed" as const };
+    const path = on.settings_path;
+    expect(setupLine({ ...on, trust: "trusted" })).toBe(`Hooks on in ${path}. New sessions report status.`);
+    expect(setupLine(on)).toBe(`Hooks on in ${path}. New sessions report status.`);
+    expect(setupLine({ ...on, trust: "untrusted" })).toBe(`Hooks on in ${path}. New sessions report status once Codex trusts them.`);
+    expect(setupLine({ ...on, trust: "changed" })).toBe(`Hooks on in ${path}. New sessions report status once Codex trusts them.`);
+  });
+  it("onboarding offers one card per found agent with hooks, Claude first", () => {
+    expect(consentQueue([SETUP, CODEX_SETUP]).map((x) => x.agent)).toEqual(["claude", "codex"]);
+    expect(consentQueue([SETUP, { ...CODEX_SETUP, found: false }]).map((x) => x.agent)).toEqual(["claude"]);
+    expect(consentQueue([{ ...SETUP, found: false }, CODEX_SETUP]).map((x) => x.agent)).toEqual(["codex"]);
+    expect(consentQueue([{ ...SETUP, hooks: "installed", approve_installed: true }, CODEX_SETUP]).map((x) => x.agent)).toEqual(["codex"]);
   });
 });

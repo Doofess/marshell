@@ -1,4 +1,5 @@
 use super::AppState;
+use crate::agents::codex::supports_no_daemon;
 use crate::auth;
 use crate::profiles::detect::{ResumeTarget, agent_command, default_shell, launch_argv, launch_argv_resume};
 use crate::pty::{FreezeError, Session, SpawnSpec};
@@ -68,14 +69,16 @@ pub(super) struct Resolved {
 /// Finds the profile (the default when `profile_id` is None) and builds the argv for the agent.
 /// With a `resume` target the agent is told to continue that conversation, and there is no prompt.
 /// The mode becomes the agent's own flags; a plain shell has none.
-pub(super) fn resolve(
+/// A Codex launch reads Codex's version first (off the async workers), to know whether it takes `--no-daemon`.
+pub(super) async fn resolve(
     st: &AppState,
     profile_id: Option<&str>,
     agent: Option<&str>,
     prompt: Option<&str>,
-    resume: Option<ResumeTarget>,
+    resume: Option<ResumeTarget<'_>>,
     mode: Option<SessionMode>,
 ) -> Result<Resolved, ApiError> {
+    let no_daemon = agent == Some("codex") && codex_takes_no_daemon(st).await;
     // Copy the profile out so the lock is gone before any await.
     let profile = {
         let doc = st.0.profiles.lock().unwrap();
@@ -85,8 +88,8 @@ pub(super) fn resolve(
     match (profile, profile_id) {
         (Some(p), _) => {
             let argv = match resume {
-                Some(target) => launch_argv_resume(&p, agent, mode, target),
-                None => launch_argv(&p, agent, prompt, mode),
+                Some(target) => launch_argv_resume(&p, agent, mode, target, no_daemon),
+                None => launch_argv(&p, agent, prompt, mode, no_daemon),
             };
             let mut argv = argv.map_err(|msg| (StatusCode::BAD_REQUEST, msg))?;
             let mut env = p.env.clone();
@@ -118,6 +121,18 @@ pub(super) fn resolve(
             format!("Unknown profile: {}.", id.unwrap_or("(default)")),
         )),
     }
+}
+
+/// Whether the Codex that sessions run accepts `--no-daemon` (slice 6a decision 14). A cold version
+/// cache runs `codex --version`, so this goes through `spawn_blocking`.
+async fn codex_takes_no_daemon(st: &AppState) -> bool {
+    let asker = st.clone();
+    tokio::task::spawn_blocking(move || {
+        let exe = asker.agent_exe_of("codex");
+        supports_no_daemon(asker.codex_version(exe.as_deref()).as_deref())
+    })
+    .await
+    .unwrap_or(false)
 }
 
 fn custom(argv: Vec<String>) -> Resolved {
@@ -371,7 +386,8 @@ pub async fn create(
                 req.prompt.as_deref(),
                 None,
                 mode,
-            )?,
+            )
+            .await?,
             req.agent,
         ),
     };
@@ -558,7 +574,8 @@ pub async fn reopen(State(st): State<AppState>, body: Bytes) -> Result<Json<Crea
         None,
         None,
         saved.mode,
-    )?;
+    )
+    .await?;
     // The window resizes the terminal as soon as it attaches.
     // The saved session has no colour scheme, so a reopened one starts without COLORFGBG.
     let created = start_session(
@@ -700,7 +717,9 @@ pub async fn resume(State(st): State<AppState>, Path(tab): Path<String>, Json(re
         None,
         session.target(),
         info.mode,
-    ) {
+    )
+    .await
+    {
         Ok(run) => run,
         Err(err) => return err.into_response(),
     };
@@ -811,7 +830,9 @@ pub async fn restart(State(st): State<AppState>, Path(tab): Path<String>, Json(r
         None,
         session.target(),
         Some(req.mode),
-    ) {
+    )
+    .await
+    {
         Ok(run) => run,
         Err(err) => return err.into_response(),
     };
@@ -870,6 +891,45 @@ mod tests {
         assert_eq!(query.lines, 7);
     }
 
+    fn resolved_codex_line(version: Option<&str>, resume: Option<ResumeTarget<'_>>) -> String {
+        let pwsh = marshell_protocol::api::Profile {
+            id: "pwsh".into(),
+            name: "pwsh".into(),
+            command: vec!["pwsh.exe".into()],
+            family: ShellFamily::PowerShell,
+            cwd: None,
+            env: Vec::new(),
+            shell_integration: false,
+            terminal_theme: None,
+            detected: true,
+        };
+        let home = tempfile::tempdir().unwrap().keep();
+        let st = AppState::new("t".into(), 1, Vec::new(), home, vec![pwsh])
+            .with_codex_version(version.map(str::to_string))
+            .with_agent_path(|_| None);
+        let run = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap()
+            .block_on(resolve(&st, Some("pwsh"), Some("codex"), None, resume, None))
+            .unwrap();
+        run.argv.last().unwrap().clone()
+    }
+
+    #[test]
+    fn codex_gets_no_daemon_only_from_the_version_that_takes_it() {
+        assert_eq!(resolved_codex_line(Some("0.163.0"), None), "& codex --no-daemon");
+        assert_eq!(resolved_codex_line(Some("0.162.9"), None), "& codex");
+        assert_eq!(resolved_codex_line(None, None), "& codex");
+        assert_eq!(
+            resolved_codex_line(Some("0.170.2"), Some(ResumeTarget::Last)),
+            "& codex resume --last --no-daemon"
+        );
+        assert_eq!(
+            resolved_codex_line(Some("garbage"), Some(ResumeTarget::Last)),
+            "& codex resume --last"
+        );
+    }
+
     fn var(name: &str, value: &str) -> (String, String) {
         (name.to_string(), value.to_string())
     }
@@ -895,7 +955,7 @@ mod tests {
             "transcript_path": path.to_string_lossy(),
             "cwd": path.parent().unwrap().to_string_lossy(),
         });
-        assert!(st.history().note_event(tab, None, &body, 1).is_none());
+        assert!(st.history().note_event("claude", tab, None, &body, 1).is_none());
     }
 
     #[test]

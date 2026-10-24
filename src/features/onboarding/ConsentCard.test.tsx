@@ -86,7 +86,7 @@ describe("ConsentCard", () => {
   });
   it("adds the trust step for Codex", () => {
     const h = renderToStaticMarkup(<ConsentCard scenario={CONSENT.codex} on={on} />);
-    expect(h).toContain("trust them there");
+    expect(h).toContain("Trust all and continue");
   });
   it("replaces the controls with the reason when the file cannot be edited", () => {
     const h = renderToStaticMarkup(<ConsentCard scenario={CONSENT.unparsableAntigravity} on={on} />);

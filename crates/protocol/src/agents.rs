@@ -16,6 +16,19 @@ pub enum HookInstall {
     Orphaned,
 }
 
+/// Whether Codex trusts the hook entries Marshell added, as its `config.toml` records it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub enum HookTrust {
+    /// Every entry has a recorded hash that matches and is not disabled.
+    Trusted,
+    /// An entry has no recorded hash, or is disabled, and none has a different hash.
+    Untrusted,
+    /// An entry's recorded hash differs from the hash of what is in `hooks.json` now.
+    Changed,
+}
+
 /// Whether an agent's settings file could be read for a plan.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
@@ -62,6 +75,13 @@ pub struct AgentSetup {
     pub has_own_statusline: bool,
     /// Ours is in place and the chain holds the user's.
     pub chained: bool,
+    /// The person has to trust the hooks inside the agent before it runs them (Codex).
+    pub needs_trust: bool,
+    /// What the agent's own config says about Marshell's hook entries; absent when it holds none of ours
+    /// or when the agent has no such trust.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub trust: Option<HookTrust>,
     pub bridge_path: String,
     pub snapshots_dir: String,
 }

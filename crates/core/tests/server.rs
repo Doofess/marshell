@@ -531,7 +531,8 @@ fn sessions_app_with(agent_on_path: fn(&str) -> bool) -> axum::Router {
             temp_home(),
             vec![sleeper_profile()],
         )
-        .with_agent_check(agent_on_path),
+        .with_agent_check(agent_on_path)
+        .with_codex_version(None),
     )
 }
 

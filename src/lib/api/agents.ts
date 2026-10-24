@@ -9,19 +9,22 @@ import type { RemovePreview } from "../../generated/RemovePreview";
 import type { ConfigState, Detection } from "../../features/onboarding/types";
 import { api, ApiError } from "./client";
 
+/** The agents whose hooks Marshell sets up through `/v1/agents/{agent}/...`. Antigravity has no adapter yet. */
+export type HookAgent = "claude" | "codex";
+
 const base = (agent: string) => `/v1/agents/${encodeURIComponent(agent)}`;
 
 /** What the core knows about one agent's settings file and the hooks in it. */
-export const getSetup = (ep: Endpoint, agent: "claude") => api<AgentSetup>(ep, "GET", `${base(agent)}/setup`);
+export const getSetup = (ep: Endpoint, agent: HookAgent) => api<AgentSetup>(ep, "GET", `${base(agent)}/setup`);
 
 /** Which agent CLIs are on this machine: Claude, Codex and Antigravity, in that order. */
 export const listAgents = (ep: Endpoint) => api<AgentFound[]>(ep, "GET", "/v1/agents");
 
 /** The preview of the requested status, approval and status line hooks. A 422 ApiError says why the file is refused. */
-export const planInstall = (ep: Endpoint, agent: "claude", want: HookPlanRequest) =>
+export const planInstall = (ep: Endpoint, agent: HookAgent, want: HookPlanRequest) =>
   api<ConfigPreview>(ep, "POST", `${base(agent)}/hooks/plan`, want);
 
-export const planRemove = (ep: Endpoint, agent: "claude") => api<RemovePreview>(ep, "POST", `${base(agent)}/hooks/remove-plan`);
+export const planRemove = (ep: Endpoint, agent: HookAgent) => api<RemovePreview>(ep, "POST", `${base(agent)}/hooks/remove-plan`);
 
 /** The 409 body's reason and the files it is about. A body that is not that JSON is read as a plain conflict. */
 function conflictBody(text: string): { reason?: string; paths: string[] } {
@@ -83,11 +86,13 @@ export function toDetection(s: AgentSetup): Detection {
 }
 
 /**
- * Every row of the first-run screen: Claude's from its setup, then Codex and Antigravity from the found list, which gives no version
- * and no settings. `found` null (the list could not be read) leaves Claude's row alone. Claude's and unknown entries in `found` are ignored.
+ * Every row of the first-run screen: Claude's from its setup, Codex's from its own setup when there is one, then the rest from the found
+ * list, which gives no version and no settings and so stays a "later" row. `found` null (the list could not be read) leaves Claude's row
+ * alone, and Codex's too unless its setup was read. Claude's and unknown entries in `found` are ignored.
  */
-export function toDetections(setup: AgentSetup, found: AgentFound[] | null): Detection[] {
+export function toDetections(setup: AgentSetup, found: AgentFound[] | null, codex?: AgentSetup | null): Detection[] {
   const later = (["codex", "antigravity"] as const).flatMap((cli): Detection[] => {
+    if (cli === "codex" && codex) return [toDetection(codex)];
     const f = found?.find((x) => x.agent === cli);
     return f ? [{ cli, installed: f.found, exePath: f.exe_path, configPath: "", configState: "ok", later: true }] : [];
   });

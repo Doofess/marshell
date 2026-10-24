@@ -14,8 +14,21 @@ export const SETUP: AgentSetup = {
   approve_installed: false,
   has_own_statusline: true,
   chained: false,
+  needs_trust: false,
   bridge_path: "C:/m/bin/marshell-hook.exe",
   snapshots_dir: "C:/m/snapshots",
+};
+
+/** Test input only: what the core sends for a Codex with no hooks of Marshell's yet. */
+export const CODEX_SETUP: AgentSetup = {
+  ...SETUP,
+  agent: "codex",
+  version: "0.163.0",
+  exe_path: "C:/bin/codex.exe",
+  settings_path: "C:/h/.codex/hooks.json",
+  settings_state: "missing",
+  has_own_statusline: false,
+  needs_trust: true,
 };
 
 const file = (path: string, diff: string): FilePreview => ({ path, scope: "user", applies: "newSessions", before_hash: "h0", diff, status: { kind: "changes" } }) as FilePreview;

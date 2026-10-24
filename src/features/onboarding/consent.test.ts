@@ -15,7 +15,7 @@ describe("entryCount", () => {
   it("counts only what the CLI can do", () => {
     expect(entryCount("antigravity", all)).toBe(5);
     expect(entryCount("antigravity", { status: true, approve: false, statusline: true })).toBe(4);
-    expect(entryCount("codex", all)).toBe(7);
+    expect(entryCount("codex", all)).toBe(8);
   });
 });
 

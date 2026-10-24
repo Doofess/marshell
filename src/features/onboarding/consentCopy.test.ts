@@ -42,82 +42,63 @@ describe("the bridge path has a space in it, so every command in every diff quot
   }
 });
 
-describe("the Codex diff writes hooks in the event-nested TOML shape Codex documents", () => {
-  // docs/research/codex-cli.md, "Hook sources, trust, and config safety": `[[hooks.<Event>]]` is a matcher group and
-  // `[[hooks.<Event>.hooks]]` one of its handlers. The flat `[[hooks]]` table with an `event` key is not a shape Codex reads.
-  const DOCUMENTED = ["SessionStart", "UserPromptSubmit", "PreToolUse", "PermissionRequest", "PostToolUse", "Stop", "SessionEnd"];
-  type Handler = { event: string; keys: Record<string, string> };
-  type Group = { event: string; handlers: Handler[] };
-  /** Reads the added TOML lines back as groups of handlers; each handler remembers the event in its own table name. */
-  const groupsIn = (diff: string): Group[] => {
-    const groups: Group[] = [];
-    let handler: Handler | undefined;
-    for (const t of added(diff)) {
-      const g = /^\[\[hooks\.(\w+)\]\]$/.exec(t);
-      const h = /^\[\[hooks\.(\w+)\.hooks\]\]$/.exec(t);
-      const kv = /^(\w+) = (.+)$/.exec(t);
-      if (g) {
-        groups.push({ event: g[1]!, handlers: [] });
-        handler = undefined;
-      } else if (h) {
-        handler = { event: h[1]!, keys: {} };
-        groups.at(-1)?.handlers.push(handler);
-      } else if (kv && handler) handler.keys[kv[1]!] = kv[2]!;
-    }
-    return groups;
-  };
-  const codex = groupsIn(CONSENT.codex.plan.diff);
-  const only = (g: Group): Handler => {
-    expect(g.handlers, g.event).toHaveLength(1);
-    expect(g.handlers[0]!.event).toBe(g.event);
-    return g.handlers[0]!;
+describe("the Codex diff writes hooks.json in the shape Codex documents", () => {
+  // docs/research/codex-cli.md and Task 1's recording: `{"hooks": {"<Event>": [{"hooks": [{"type": "command", "command", "timeout"}]}]}}`, no matcher.
+  const EVENTS = ["SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse", "Stop", "Interrupt", "SessionEnd", "PermissionRequest"];
+  type Handler = { type: string; command: string; timeout: number };
+  type File = { hooks: Record<string, Array<{ matcher?: string; hooks: Handler[] }>> };
+  /** The file the diff creates, read back from its added lines. */
+  const fileOf = (diff: string): File => JSON.parse(added(diff).join("\n")) as File;
+  const codex = fileOf(CONSENT.codex.plan.diff);
+  const only = (event: string): Handler => {
+    const groups = codex.hooks[event]!;
+    expect(groups, event).toHaveLength(1);
+    expect(groups[0]!.matcher, event).toBeUndefined();
+    expect(groups[0]!.hooks, event).toHaveLength(1);
+    return groups[0]!.hooks[0]!;
   };
 
-  it("one [[hooks.<Event>]] group per documented event, each with one [[hooks.<Event>.hooks]] command handler", () => {
-    expect(codex.map((g) => g.event)).toEqual(DOCUMENTED);
-    for (const g of codex) expect(only(g).keys.type).toBe('"command"');
+  it("one group per event, each with one command handler and no matcher", () => {
+    expect(Object.keys(codex.hooks)).toEqual(EVENTS);
+    for (const e of EVENTS) expect(only(e).type).toBe("command");
   });
-  it("the headline count is the number of events written, split as the capabilities say", () => {
-    expect(codex).toHaveLength(entryCount("codex", ALL));
-    expect(consentHeadline(CONSENT.codex.detection, ALL)).toContain(`Add ${codex.length} hook entries`);
-    const roles = codex.map((g) => / (event|permission) --agent codex/.exec(only(g).keys.command!)?.[1]);
+  it("the Codex entry count matches its diff: the headline count is the number of events written, split as the capabilities say", () => {
+    expect(Object.keys(codex.hooks)).toHaveLength(entryCount("codex", ALL));
+    expect(consentHeadline(CONSENT.codex.detection, ALL)).toContain(`Add ${Object.keys(codex.hooks).length} hook entries`);
+    const roles = EVENTS.map((e) => / (event|permission) --agent codex/.exec(only(e).command)?.[1]);
     expect(roles.filter((r) => r === "event")).toHaveLength(CAPABILITIES.codex.status.entries);
     expect(roles.filter((r) => r === "permission")).toHaveLength(CAPABILITIES.codex.approve.entries);
-    expect(only(codex.find((g) => g.event === "PermissionRequest")!).keys.command).toContain(" permission --agent codex");
+    expect(only("PermissionRequest").command).toContain(" permission --agent codex");
   });
-  it("never writes the flat [[hooks]] table or an event key", () => {
-    for (const s of [CONSENT.codex, CONSENT.codexLong]) {
-      expect(added(s.plan.diff).some((t) => /^\[\[hooks\]\]$/.test(t))).toBe(false);
-      expect(added(s.plan.diff).some((t) => /^event = /.test(t))).toBe(false);
-    }
+  it("every command runs the bridge through PowerShell's call operator, quoted, and names the agent and the tag", () => {
+    for (const e of EVENTS) expect(only(e).command, e).toMatch(/^& "C:\/Users\/Home Office\/\.marshell\/bin\/marshell-hook\.exe" (?:event|permission) --agent codex --tag mshl1$/);
   });
-  it("every command quotes the bridge path inside the TOML literal, and names the agent and the tag", () => {
-    for (const g of codex) expect(only(g).keys.command, g.event).toMatch(/^'"C:\/Users\/Home Office\/\.marshell\/bin\/marshell-hook\.exe" (?:event|permission) --agent codex --tag mshl1'$/);
+  it("timeouts are explicit seconds: 5 for telemetry, 2 for SessionEnd and Interrupt, 600 for the permission decision", () => {
+    for (const e of EVENTS) expect(only(e).timeout, e).toBe(e === "PermissionRequest" ? 600 : e === "SessionEnd" || e === "Interrupt" ? 2 : 5);
   });
-  it("timeouts are explicit seconds: 10 for telemetry, 120 for the permission decision, 3 for SessionEnd (Codex caps it there)", () => {
-    for (const g of codex) expect(only(g).keys.timeout, g.event).toBe(g.event === "PermissionRequest" ? "120" : g.event === "SessionEnd" ? "3" : "10");
-  });
-  it("the stand-in long diff keeps the nested shape and stays labelled as a stand-in", () => {
-    const long = groupsIn(CONSENT.codexLong.plan.diff);
-    expect(long.length).toBeGreaterThan(30);
-    for (const g of long) only(g);
+  it("the stand-in long diff keeps the shape and stays labelled as a stand-in", () => {
+    const long = fileOf(CONSENT.codexLong.plan.diff);
+    expect(Object.keys(long.hooks).length).toBeGreaterThan(30);
+    for (const groups of Object.values(long.hooks)) expect(groups[0]!.hooks).toHaveLength(1);
     expect(CONSENT.codexLong.plan.headline).toMatch(/stand-in/i);
-    expect(CONSENT.codexLong.plan.headline).toContain(`Add ${long.length} hook entries`);
+    expect(CONSENT.codexLong.plan.headline).toContain(`Add ${Object.keys(long.hooks).length} hook entries`);
   });
-  it("the card says the entries go in config.toml only, not hooks.json as well, and still says /hooks once", () => {
+  it("the source line names hooks.json, not config.toml, and the trust line says /hooks once", () => {
     const h = renderToStaticMarkup(createElement(ConsentCard, { scenario: CONSENT.codex, on: ALL }));
-    expect(h.match(/hooks\.json/g)).toHaveLength(1);
-    expect(h).toMatch(/<p class="consent__source">.*?not in <code>hooks\.json<\/code> as well.*?<\/p>/);
-    expect(h).toContain("would warn about duplicates");
+    expect(h).toContain(
+      '<p class="consent__source">The hook entries go in <code>hooks.json</code> only, not in <code>config.toml</code> as well: Codex reads both and would warn about duplicates.</p>',
+    );
+    expect(h).toContain(
+      '<p class="consent__trust">Codex runs hooks only after you trust them. The next time Codex starts, it lists them as new: choose <strong>Trust all and continue</strong>, or review them first in <code>/hooks</code>.</p>',
+    );
     expect(/<p class="consent__trust">(.*?)<\/p>/.exec(h)![1]!.match(/\/hooks/g)).toHaveLength(1);
     // The note is Codex's alone: Claude's card never mentions hooks.json, and Antigravity's names it only as the file it writes.
     expect(renderToStaticMarkup(createElement(ConsentCard, { scenario: CONSENT.claude, on: ALL }))).not.toContain("hooks.json");
     expect(renderToStaticMarkup(createElement(ConsentCard, { scenario: CONSENT.antigravity, on: ALL }))).not.toContain('class="consent__source"');
   });
-  it("leaves the user's notify program alone: the Codex desktop app already uses it", () => {
-    const d = parseUnifiedDiff(CONSENT.codex.plan.diff).lines;
-    expect(d.some((l) => l.kind === "context" && l.text.startsWith("notify = "))).toBe(true);
-    expect(d.some((l) => (l.kind === "add" || l.kind === "del") && /notify/.test(l.text))).toBe(false);
+  it("writes no config.toml", () => {
+    expect(CONSENT.codex.plan.diff).not.toContain("config.toml");
+    expect(CONSENT.codex.detection.configPath).toMatch(/hooks\.json$/);
   });
 });
 

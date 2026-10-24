@@ -56,7 +56,9 @@ fn state_in(home: &Path) -> AppState {
         cmd("ends", "/k", format!("{fake} sleep-then-exit 3")),
         profile("sleeper", ShellFamily::Posix, vec![fake.into(), "sleep".into()]),
     ];
-    AppState::new(TOKEN.into(), PORT, vec![ORIGIN.into()], home.to_path_buf(), profiles).with_agent_check(|_| true)
+    AppState::new(TOKEN.into(), PORT, vec![ORIGIN.into()], home.to_path_buf(), profiles)
+        .with_agent_check(|_| true)
+        .with_codex_version(None)
 }
 
 /// A folder holding the Codex-named copy of fake-agent.

@@ -272,7 +272,7 @@ mod tests {
         let holds = Holds::default();
         let (a, _ra) = holds.open(Some("t1".into()), "claude".into(), request());
         let (_b, _rb) = holds.open(None, "claude".into(), request());
-        let (_c, _rc) = holds.open(Some("t2".into()), "codex".into(), request());
+        let (_c, _rc) = holds.open(Some("t2".into()), "antigravity".into(), request());
         let (d, _rd) = holds.open(Some("t3".into()), "claude".into(), request());
         let (e, _re) = holds.open(Some("t4".into()), "claude".into(), request());
         {
@@ -285,7 +285,7 @@ mod tests {
                 entry.info.request["tool_input"]["command"] = json!("changed after opening");
             }
         }
-        // No tab and a non-claude agent have no card.
+        // No tab and an agent without cards have no card.
         let views = holds.views();
         assert_eq!(
             views.iter().map(|v| v.tab.as_str()).collect::<Vec<_>>(),

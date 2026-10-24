@@ -779,7 +779,12 @@ async fn another_agents_events_do_not_touch_the_status() {
     let app = router(st.clone());
     let tab = start_claude(&app).await;
 
-    let req = hook(Some("event"), Some("codex"), Some(&tab), fixture("UserPromptSubmit"));
+    let req = hook(
+        Some("event"),
+        Some("antigravity"),
+        Some(&tab),
+        fixture("UserPromptSubmit"),
+    );
     assert_eq!(status(&app, req).await, StatusCode::NO_CONTENT);
     let info = row(&st, &tab);
     stop(&st, &tab);

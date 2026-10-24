@@ -32,6 +32,16 @@ describe("ApproveCard: a safe request", () => {
   });
 });
 
+describe("ApproveCard: a Codex request", () => {
+  it("a Codex card offers no Always allow", () => {
+    const { alwaysRule: _rule, ...rest } = APPROVALS.safeBash;
+    const h = html({ ...rest, session: { ...rest.session, agent: "codex" } });
+    expect(h).toContain("Allow once");
+    expect(h).not.toContain("Always allow");
+    expect(h).not.toContain('<kbd class="approve-card__kbd" aria-hidden="true">A</kbd>');
+  });
+});
+
 describe("ApproveCard: a risky request", () => {
   const h = html(APPROVALS.riskyBash);
   it("states the plain reason, with a warning glyph", () => {

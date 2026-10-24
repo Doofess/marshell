@@ -7,10 +7,10 @@ import { useInstallFlow } from "./useInstallFlow";
 vi.mock("../../lib/api/agents", () => ({ planInstall: vi.fn(), applyPreview: vi.fn() }));
 const endpoint = { port: 9, token: "test", platform: "windows" as const };
 
-function flow() {
+function flow(agent: "claude" | "codex" = "claude") {
   let result!: ReturnType<typeof useInstallFlow>;
   function Harness() {
-    result = useInstallFlow(endpoint, vi.fn());
+    result = useInstallFlow(endpoint, agent, vi.fn());
     return null;
   }
   renderToStaticMarkup(<Harness />);
@@ -23,6 +23,12 @@ beforeEach(() => {
 });
 
 describe("useInstallFlow requests", () => {
+  it("the install flow plans at /v1/agents/codex/hooks/plan, with no status line asked for", async () => {
+    const install = flow("codex");
+    await install.plan();
+    expect(planInstall).toHaveBeenLastCalledWith(endpoint, "codex", { status: true, statusline: false, approve: true });
+  });
+
   it("plans approval by default and replans when its switch changes without applying", async () => {
     const install = flow();
     await install.plan();

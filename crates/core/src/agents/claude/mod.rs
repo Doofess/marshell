@@ -23,32 +23,11 @@ pub fn parse_version(stdout: &str) -> Option<String> {
 /// `tests/fixtures/claude/<version>/`. One entry per minor line: its oldest recorded patch.
 pub const FIXTURE_VERSIONS: &[(u32, u32, u32)] = &[(2, 1, 302)];
 
-/// Whether Marshell may fold a Claude Code version's events into live status.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Gate {
-    Known,
-    /// The status note the row shows instead.
-    Unknown(String),
-}
+pub use super::common::Gate;
 
 /// Known: the same minor line as a recorded fixture set, and not older than its oldest patch.
 pub fn version_gate(version: Option<&str>) -> Gate {
-    let parsed = version.and_then(|v| {
-        let mut parts = v.split('.').map(|p| p.parse::<u32>().ok());
-        let triple = (parts.next()??, parts.next()??, parts.next()??);
-        parts.next().is_none().then_some((v, triple))
-    });
-    let Some((v, (major, minor, patch))) = parsed else {
-        return Gate::Unknown("Claude Code's version could not be read".to_string());
-    };
-    match FIXTURE_VERSIONS.iter().find(|f| f.0 == major && f.1 == minor) {
-        Some(f) if patch >= f.2 => Gate::Known,
-        Some(_) => Gate::Unknown(format!("Claude Code {v} is older than the versions Marshell knows")),
-        None if FIXTURE_VERSIONS.iter().all(|f| (major, minor) < (f.0, f.1)) => {
-            Gate::Unknown(format!("Claude Code {v} is older than the versions Marshell knows"))
-        }
-        None => Gate::Unknown(format!("Claude Code {v} is not one Marshell has recorded yet")),
-    }
+    super::common::version_gate("Claude Code", FIXTURE_VERSIONS, version)
 }
 
 /// Runs `<exe> --version` and parses it. The process is killed when it takes longer than `timeout`.
@@ -70,7 +49,7 @@ pub fn permission_output(decision: &PermissionDecision, request: &Value) -> Resu
                 .message
                 .as_deref()
                 .filter(|m| !m.is_empty())
-                .unwrap_or("Denied in Marshell.");
+                .unwrap_or(super::common::DENIED_TEXT);
             json!({ "behavior": "deny", "message": message })
         }
         PermissionBehavior::Allow => {
@@ -125,6 +104,26 @@ mod tests {
         assert_eq!(version_gate(Some("garbage")), unread);
         assert_eq!(version_gate(Some("2.1")), unread);
         assert_eq!(version_gate(None), unread);
+    }
+
+    #[test]
+    fn claude_gate_messages_are_unchanged() {
+        use super::{Gate, version_gate};
+        let note = |s: &str| Gate::Unknown(s.to_string());
+        assert_eq!(
+            version_gate(Some("2.2.0")),
+            note("Claude Code 2.2.0 is not one Marshell has recorded yet")
+        );
+        assert_eq!(
+            version_gate(Some("2.1.301")),
+            note("Claude Code 2.1.301 is older than the versions Marshell knows")
+        );
+        assert_eq!(
+            version_gate(Some("1.9.0")),
+            note("Claude Code 1.9.0 is older than the versions Marshell knows")
+        );
+        assert_eq!(version_gate(None), note("Claude Code's version could not be read"));
+        assert_eq!(version_gate(Some("2.1.302")), Gate::Known);
     }
 
     #[test]
