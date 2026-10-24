@@ -1,5 +1,6 @@
 import type { RetentionLimits } from "../../generated/RetentionLimits";
 import type { RetentionPreview } from "../../generated/RetentionPreview";
+import type { StorageReport } from "../../generated/StorageReport";
 import { failureText } from "../agents/useInstallFlow";
 import { SettingsReadError } from "../appearance/settingsSync";
 
@@ -14,6 +15,16 @@ export async function proposeLimits(preview: (l: RetentionLimits) => Promise<Ret
     return null;
   }
   return { limits, preview: found };
+}
+
+/** The report once the cleanup a limits save asked for has run: the core runs it on its storage thread just after the save, so a report read at once still shows the files it removes. Reads again until the last cleanup is newer than `before` (its time before the save), at most 20 times, a quarter second apart; then the last report read. */
+export async function reportAfterCleanup(get: () => Promise<StorageReport>, before: number | null, wait: () => Promise<void> = () => new Promise((done) => setTimeout(done, 250))): Promise<StorageReport> {
+  let report = await get();
+  for (let tries = 1; tries < 20 && (report.last_cleanup?.at_ms ?? null) === before; tries++) {
+    await wait();
+    report = await get();
+  }
+  return report;
 }
 
 /** Opens the folder picker at `current` and saves the choice. False when the person cancelled. */

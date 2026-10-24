@@ -6,7 +6,7 @@ import { pickFolder } from "../../lib/folderPicker";
 import { formatBytes } from "../../lib/format";
 import type { SettingsSync } from "../appearance/settingsSync";
 import { relativeTime } from "./historyState";
-import { type PendingLimits, chooseBackupFolder, proposeLimits, storageErrorText } from "./storageActions";
+import { type PendingLimits, chooseBackupFolder, proposeLimits, reportAfterCleanup, storageErrorText } from "./storageActions";
 import "../settings/Settings.css";
 import "../notifications/NotificationsDialog.css";
 import "./StorageSection.css";
@@ -199,9 +199,13 @@ export function StorageSection({ sync }: { sync?: SettingsSync }) {
   };
   const saveLimits = async (limits: RetentionLimits) => {
     if (!sync) return;
+    const before = report?.last_cleanup?.at_ms ?? null;
     await sync.setHistoryLimits(limits);
     setPending(null);
-    await reload();
+    // A limit runs a cleanup on the core's storage thread just after the save; wait for it so the sizes and the last-cleanup line show what it removed.
+    const limited = limits.limit_gb !== null || limits.limit_days !== null;
+    const next = limited ? await reportAfterCleanup(getStorage, before) : await getStorage();
+    if (live.current) setReport(next);
   };
 
   return (
