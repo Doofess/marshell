@@ -180,6 +180,14 @@ describe("Codex", () => {
     expect(setupLine({ ...CODEX_SETUP, found: false })).toBe("Codex was not found on this computer.");
     expect(setupLine({ ...CODEX_SETUP, hooks: "orphaned" })).toContain("so Codex reports a failing hook each time one fires");
   });
+  it("setupLine claims status for Codex only once the hooks are trusted", () => {
+    const on = { ...CODEX_SETUP, hooks: "installed" as const };
+    const path = on.settings_path;
+    expect(setupLine({ ...on, trust: "trusted" })).toBe(`Hooks on in ${path}. New sessions report status.`);
+    expect(setupLine(on)).toBe(`Hooks on in ${path}. New sessions report status.`);
+    expect(setupLine({ ...on, trust: "untrusted" })).toBe(`Hooks on in ${path}. New sessions report status once Codex trusts them.`);
+    expect(setupLine({ ...on, trust: "changed" })).toBe(`Hooks on in ${path}. New sessions report status once Codex trusts them.`);
+  });
   it("onboarding offers one card per found agent with hooks, Claude first", () => {
     expect(consentQueue([SETUP, CODEX_SETUP]).map((x) => x.agent)).toEqual(["claude", "codex"]);
     expect(consentQueue([SETUP, { ...CODEX_SETUP, found: false }]).map((x) => x.agent)).toEqual(["claude"]);

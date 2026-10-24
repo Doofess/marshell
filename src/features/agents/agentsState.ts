@@ -40,7 +40,10 @@ export function setupLine(s: AgentSetup): string {
     case "none":
       return "Not set up. Sessions show limited status.";
     case "installed":
-      return `Hooks on in ${s.settings_path}. New sessions report status.`;
+      // Codex runs hooks only after the person trusts them (slice 6a decision 10), so an untrusted or changed set reports nothing yet.
+      return s.agent === "codex" && (s.trust === "untrusted" || s.trust === "changed")
+        ? `Hooks on in ${s.settings_path}. New sessions report status once Codex trusts them.`
+        : `Hooks on in ${s.settings_path}. New sessions report status.`;
     case "partial":
       return `Some hooks are missing in ${s.settings_path}. Set up again to repair them.`;
     case "orphaned":
