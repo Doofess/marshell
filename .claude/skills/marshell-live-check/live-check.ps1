@@ -61,7 +61,7 @@ $PidsFile = Join-Path $Scratch 'pids.json'
 function Get-Tree([int]$RootPid) {
     # PIDs 0 and 4 are the idle process and the kernel: every process descends from them.
     if ($RootPid -le 4) { throw "Refusing to walk the tree from PID $RootPid." }
-    $all =Get-CimInstance Win32_Process -Property ProcessId, ParentProcessId, Name, CreationDate
+    $all = Get-CimInstance Win32_Process -Property ProcessId, ParentProcessId, Name, CreationDate
     $byParent = $all | Group-Object ParentProcessId -AsHashTable -AsString
     $root = $all | Where-Object ProcessId -eq $RootPid
     if (-not $root) { return @() }
@@ -91,6 +91,16 @@ function Read-Record {
         throw "PID $($rec.root) is now a different process ($($p.Name)); not touching it."
     }
     return $rec
+}
+
+# The copied Codex sign-in is the one file removed here: a known literal name in the recorded CODEX_HOME.
+function Remove-AuthCopy($rec) {
+    if (-not $rec.codexAuth -or -not $rec.codexHome) { return }
+    $authCopy = Join-Path $rec.codexHome 'auth.json'
+    if (Test-Path -LiteralPath $authCopy) {
+        Remove-Item -LiteralPath $authCopy -Force
+        Write-Output "Deleted the copied Codex sign-in: $authCopy"
+    }
 }
 
 function Show-Tree($tree) {
@@ -154,7 +164,11 @@ switch ($Mode) {
     }
     'stop' {
         $rec = Read-Record
-        if (-not $rec) { return }
+        if (-not $rec) {
+            # The tree is gone already (stopped some other way), but the sign-in copy may not be.
+            Remove-AuthCopy (Get-Content -LiteralPath $PidsFile -Raw | ConvertFrom-Json)
+            return
+        }
         $tree = @(Get-Tree $rec.root)
         Show-Tree $tree
         $agents = @($tree | Where-Object { $AgentNames -contains $_.Name.ToLowerInvariant() })
@@ -175,12 +189,7 @@ switch ($Mode) {
         Start-Sleep -Milliseconds 500
         $left = @($tree | Where-Object { Get-Process -Id $_.PID -ErrorAction SilentlyContinue })
         if ($left.Count) { Write-Output "Still running: $(($left | ForEach-Object { "$($_.Name) $($_.PID)" }) -join ', ')"; exit 1 }
-        # The copied Codex sign-in is the one file removed here: a known literal name in the recorded CODEX_HOME.
-        $authCopy = Join-Path $rec.codexHome 'auth.json'
-        if ($rec.codexAuth -and (Test-Path -LiteralPath $authCopy)) {
-            Remove-Item -LiteralPath $authCopy -Force
-            Write-Output "Deleted the copied Codex sign-in: $authCopy"
-        }
+        Remove-AuthCopy $rec
         Write-Output "All $($tree.Count) recorded processes are gone. $Scratch was left in place."
     }
 }
