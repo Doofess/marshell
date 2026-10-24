@@ -7,6 +7,9 @@ pub const EXIT: u8 = 0x02;
 /// Server -> client: `[RESET][seq u64][screen bytes]`. The client clears its terminal, writes the
 /// screen, and continues the live stream from `seq`.
 pub const RESET: u8 = 0x03;
+/// Server -> client: `[LIVE][seq u64]`. Sent after every Resume, before any output: output before `seq`
+/// was written before this renderer attached (a replay), so the renderer doesn't answer queries in it.
+pub const LIVE: u8 = 0x04;
 /// Client -> server: `[INPUT][bytes]`.
 pub const INPUT: u8 = 0x10;
 /// Client -> server: `[RESIZE][json Resize]`.

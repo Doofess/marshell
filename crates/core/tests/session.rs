@@ -95,7 +95,7 @@ fn sessions_die_when_the_test_process_exits() {
 
 /// Reads everything until Exit (or the timeout), acking as it goes. Returns (bytes, exit code).
 fn drain(s: &Arc<Session>, timeout: Duration) -> (Vec<u8>, Option<i32>) {
-    let generation = s.attach();
+    let (generation, _) = s.attach();
     s.resume(0);
     let deadline = Instant::now() + timeout;
     let (mut cursor, mut all) = (0u64, Vec::new());
@@ -149,7 +149,7 @@ fn input_reaches_the_child() {
 #[test]
 fn backpressure_bounds_unacked_output() {
     let s = Session::spawn("t4".into(), fake(&["flood", "8000000"])).unwrap();
-    let generation = s.attach();
+    let (generation, _) = s.attach();
     s.resume(0);
     // Never ack. First prove output flowed, so a slow machine cannot pass vacuously.
     let deadline = Instant::now() + Duration::from_secs(10);
@@ -214,7 +214,7 @@ fn zero_resize_is_ignored() {
 #[test]
 fn kill_takes_the_tree() {
     let s = Session::spawn("t6".into(), fake(&["spawn-child"])).unwrap();
-    let generation = s.attach();
+    let (generation, _) = s.attach();
     s.resume(0);
     let deadline = Instant::now() + Duration::from_secs(10);
     let (mut cursor, mut text) = (0u64, String::new());

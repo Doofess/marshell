@@ -14,13 +14,14 @@ pub fn constants_ts() -> String {
          export const APP_NAME = {app:?};\n\
          export const WS_SUBPROTOCOL = {ws:?};\n\
          export const TOKEN_SUBPROTOCOL_PREFIX = {tok:?};\n\
-         export const FRAME = {{ OUTPUT: {o}, EXIT: {e}, RESET: {r}, INPUT: {i}, RESIZE: {rs}, ACK: {a}, RESUME: {re} }} as const;\n",
+         export const FRAME = {{ OUTPUT: {o}, EXIT: {e}, RESET: {r}, LIVE: {l}, INPUT: {i}, RESIZE: {rs}, ACK: {a}, RESUME: {re} }} as const;\n",
         app = brand::APP_NAME,
         ws = brand::WS_SUBPROTOCOL,
         tok = brand::TOKEN_SUBPROTOCOL_PREFIX,
         o = frames::OUTPUT,
         e = frames::EXIT,
         r = frames::RESET,
+        l = frames::LIVE,
         i = frames::INPUT,
         rs = frames::RESIZE,
         a = frames::ACK,

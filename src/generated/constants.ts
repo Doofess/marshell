@@ -2,4 +2,4 @@
 export const APP_NAME = "Marshell";
 export const WS_SUBPROTOCOL = "marshell.v1";
 export const TOKEN_SUBPROTOCOL_PREFIX = "token.";
-export const FRAME = { OUTPUT: 1, EXIT: 2, RESET: 3, INPUT: 16, RESIZE: 17, ACK: 18, RESUME: 19 } as const;
+export const FRAME = { OUTPUT: 1, EXIT: 2, RESET: 3, LIVE: 4, INPUT: 16, RESIZE: 17, ACK: 18, RESUME: 19 } as const;
