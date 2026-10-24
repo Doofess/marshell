@@ -6,6 +6,7 @@ import "./Onboarding.css";
 /** The frame around each of the four screens: step text, a four-segment progress bar drawn with fills, a scrolling body that is itself a focusable region (so the keyboard can scroll it), one primary button, an optional secondary, and Back from step 2. Not a live region. */
 export function OnboardingFrame({
   step,
+  agent,
   title,
   primary,
   secondary,
@@ -16,6 +17,8 @@ export function OnboardingFrame({
   primaryDisabled = false,
 }: {
   step: Step;
+  /** The agent whose card the consent step shows. Claude's card and Codex's are the same step, so a change of agent starts the focus again too. */
+  agent?: string;
   title: string;
   primary: string;
   secondary?: string;
@@ -31,12 +34,12 @@ export function OnboardingFrame({
   // It covers the window like a modal: the title takes the focus (not an action, so Enter applies nothing by reflex) and Tab
   // stays inside. It has no Escape: the onboarding ends through its buttons.
   useDialogFocus(frame, heading);
-  // A new step replaces the buttons and their text, so the focus starts again from the title.
-  useEffect(() => heading.current?.focus(), [step]);
+  // A new step, or the next agent's card, replaces the buttons and their text, so the focus starts again from the title.
+  useEffect(() => heading.current?.focus(), [step, agent]);
   const canGoBack = prevStep(step) !== step;
   const hasNext = nextStep(step) !== step;
   return (
-    <section ref={frame} className="onboarding" aria-label={`Onboarding: ${title}`} data-step={step}>
+    <section ref={frame} className="onboarding" aria-label={`Onboarding: ${title}`} data-step={step} data-agent={agent}>
       <ol className="onboarding__progress" aria-label="Progress">
         {STEPS.map((s) => (
           <li key={s} className="onboarding__segment" data-done={STEPS.indexOf(s) <= STEPS.indexOf(step) || undefined} aria-current={s === step ? "step" : undefined}>

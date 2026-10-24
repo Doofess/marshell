@@ -35,6 +35,18 @@ describe("OnboardingFrame", () => {
     expect(h).toContain('<h2 class="onboarding__title" tabindex="-1">Title</h2>');
     expect(focusOrder(h)).toEqual(["Step content", "Skip", "Continue"]);
   });
+  // Claude's and Codex's cards are both the consent step, so the frame is told whose card it holds: a change of agent moves the focus to the title again.
+  it("records the agent whose card it holds, which the title focus effect depends on", () => {
+    const h = (agent?: string) =>
+      renderToStaticMarkup(
+        <OnboardingFrame step="consent" agent={agent} title="Title" primary="Continue">
+          body
+        </OnboardingFrame>,
+      );
+    expect(h("codex")).toContain('data-agent="codex"');
+    expect(h("claude")).toContain('data-agent="claude"');
+    expect(h()).not.toContain("data-agent");
+  });
   it("has no live region and names its buttons from their text", () => {
     const h = frame("consent");
     expect(h).not.toMatch(/aria-live|role="status"|role="alert"/);

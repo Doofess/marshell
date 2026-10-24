@@ -55,7 +55,7 @@ export function OnboardingView({ state, ...on }: { state: OnboardingState } & On
   const { allow, done, ...card } = consentProps(setup, flow);
   const ready = allow && !flow.busy;
   return (
-    <OnboardingFrame step="consent" title="What Marshell may change" primary="Allow these changes" primaryDisabled={!ready} onPrimary={on.onAllow} onBack={on.onBack}>
+    <OnboardingFrame step="consent" agent={setup.agent} title="What Marshell may change" primary="Allow these changes" primaryDisabled={!ready} onPrimary={on.onAllow} onBack={on.onBack}>
       <ConsentCard {...card} onSkip={on.onSkip} skipLabel={done ? "Done" : undefined} onToggleDiff={on.onToggleDiff} onSwitch={on.onSwitch} conflict={flow.conflict ? { onReload: on.onReload } : undefined} />
     </OnboardingFrame>
   );
