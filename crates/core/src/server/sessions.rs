@@ -637,12 +637,12 @@ pub(super) const NO_CONVERSATION: &str = "Claude Code no longer has this convers
 /// What a Resume or Restart starts.
 #[derive(Debug, PartialEq, Eq)]
 enum Resume {
-    /// One Claude conversation, by its session id.
+    /// One Claude or Codex conversation, by its session id.
     Session(String),
-    /// The CLI's own continue flag: nothing is known about the tab, or the agent is not Claude.
+    /// The CLI's own continue flag: nothing is known about the tab, or the agent is neither Claude nor Codex.
     Last,
-    /// A Claude session that never wrote a transcript: start Claude with no resume flag. (Not `--continue`,
-    /// which could pick up another tab's conversation in the same folder.)
+    /// A session with no transcript (Claude's never written, Codex's rollout missing): start the CLI with no
+    /// resume flag. (Not its continue flag, which could pick up another tab's conversation in the same folder.)
     Fresh,
 }
 
@@ -657,29 +657,35 @@ impl Resume {
     }
 }
 
-/// Which conversation a Resume or Restart of `tab` should pick up, from the sessions index. It never falls
-/// back to another conversation: `Err(message)` means Marshell had this one and Claude has lost it.
-/// - No row, a row that fails the id and path check, or an agent other than Claude: `Resume::Last`.
-/// - The transcript is a file: `Resume::Session(id)`.
-/// - The transcript is missing and Marshell holds an archive of it: `Err`, the conversation is lost.
-/// - The transcript is missing and there is no archive: the session never wrote anything (Claude may create the
-///   file only at the first message, after the SessionStart that indexed it), so `Resume::Fresh`.
+/// Which conversation a Resume or Restart of `tab` should pick up, from the sessions index: the tab's latest
+/// conversation of its own agent. It never falls back to another conversation: `Err(message)` means Marshell
+/// had this one and Claude has lost it.
+/// - No row of the tab's agent, a row that fails the id and path check, or an agent other than Claude and
+///   Codex: `Resume::Last`.
+/// - The transcript (Codex's rollout) is a file: `Resume::Session(id)`.
+/// - Claude's transcript is missing and Marshell holds an archive of it: `Err`, the conversation is lost.
+/// - Claude's transcript is missing and there is no archive: the session never wrote anything (Claude may create
+///   the file only at the first message, after the SessionStart that indexed it), so `Resume::Fresh`.
+/// - Codex's rollout is missing: `Resume::Fresh`. Marshell keeps no copy of a rollout, so a deleted one can't be
+///   told from one Codex never wrote (slice 6a2 decision 4).
 fn resume_session(st: &AppState, tab: &str, agent: Option<&str>) -> Result<Resume, &'static str> {
-    if agent != Some("claude") {
+    let Some(agent @ ("claude" | "codex")) = agent else {
         return Ok(Resume::Last);
-    }
-    let Some(meta) = st.history().latest_for_tab(tab) else {
+    };
+    let Some(meta) = st.history().latest_for_tab_of(tab, agent) else {
         return Ok(Resume::Last);
     };
     // The row lives in the Marshell home and is checked again before its id reaches a command line or its
     // path a filesystem call. A row that fails counts as unknown.
-    if !crate::history::transcript_allowed(&meta.transcript_path, &meta.session_id) {
+    if !crate::history::sidecar_allowed(agent, &meta.transcript_path, &meta.session_id) {
         return Ok(Resume::Last);
     }
     if std::path::Path::new(&meta.transcript_path).is_file() {
         return Ok(Resume::Session(meta.session_id));
     }
-    // Only Claude sessions are indexed, so the archive is Claude's.
+    if agent == "codex" {
+        return Ok(Resume::Fresh);
+    }
     let (archive, _) = crate::history::archive::archive_paths(st.home(), "claude", &meta.session_id);
     if archive.is_file() {
         Err(NO_CONVERSATION)
@@ -688,9 +694,9 @@ fn resume_session(st: &AppState, tab: &str, agent: Option<&str>) -> Result<Resum
     }
 }
 
-/// Starts an Ended or Exited tab again in the same row. An agent gets the CLI's own continue flag, a Claude tab
-/// whose session is known gets `--resume <id>`, and one whose session never wrote a transcript starts fresh
-/// (see `resume_session`).
+/// Starts an Ended or Exited tab again in the same row. An agent gets the CLI's own continue flag, a Claude or
+/// Codex tab whose session is known gets it by id (`--resume <id>`, `resume <id>`), and one whose session has
+/// no transcript starts fresh (see `resume_session`).
 pub async fn resume(State(st): State<AppState>, Path(tab): Path<String>, Json(req): Json<ResumeRequest>) -> Response {
     let Some(info) = st.0.registry.snapshot().sessions.into_iter().find(|s| s.tab_id == tab) else {
         return (StatusCode::NOT_FOUND, "No such session.").into_response();
@@ -977,7 +983,7 @@ mod tests {
             resume_session(&st, "t1", Some("claude")),
             Ok(Resume::Session("abc-1".to_string()))
         );
-        // Another tab has no row, and another agent never uses one.
+        // Another tab has no row, and Claude's row is not Codex's.
         assert_eq!(resume_session(&st, "t2", Some("claude")), Ok(Resume::Last));
         assert_eq!(resume_session(&st, "t1", Some("codex")), Ok(Resume::Last));
         assert_eq!(resume_session(&st, "t1", None), Ok(Resume::Last));
@@ -1033,8 +1039,118 @@ mod tests {
         // Fresh means no resume flag at all, not even `--continue`.
         assert_eq!(Resume::Fresh.target(), None);
         assert_eq!(Resume::Last.target(), Some(ResumeTarget::Last));
-        // Another agent never gets this: it keeps the CLI's own continue flag.
+        // The row is Claude's, so a Codex tab has none of its own: Codex's own continue flag.
         assert_eq!(resume_session(&st, "t1", Some("codex")), Ok(Resume::Last));
+    }
+
+    const CODEX_START: &str = include_str!("../../tests/fixtures/codex/hooks/0.163.0/SessionStart.json");
+
+    /// Codex's SessionStart for `id` in `tab` at `at_ms`, with its rollout named as Codex names it, under `dir`.
+    /// Returns the rollout's path; the file itself is not written.
+    fn note_codex(st: &AppState, tab: &str, id: &str, dir: &std::path::Path, at_ms: u64) -> std::path::PathBuf {
+        let rollout = dir.join(format!("rollout-2026-10-25T10-00-00-{id}.jsonl"));
+        let mut body: serde_json::Value = serde_json::from_str(CODEX_START).unwrap();
+        body["session_id"] = serde_json::json!(id);
+        body["transcript_path"] = serde_json::json!(rollout.to_string_lossy());
+        body["cwd"] = serde_json::json!(dir.to_string_lossy());
+        st.history().note_event("codex", tab, None, &body, at_ms);
+        rollout
+    }
+
+    const CODEX_ID: &str = "019a2b3c-4d5e-7f60-8a9b-0c1d2e3f4a5b";
+
+    #[test]
+    fn a_codex_tab_resumes_its_own_conversation_by_id() {
+        let home = tempfile::tempdir().unwrap();
+        let work = tempfile::tempdir().unwrap();
+        let st = AppState::new("t".into(), 1, Vec::new(), home.path().to_path_buf(), Vec::new());
+        let rollout = note_codex(&st, "t1", CODEX_ID, work.path(), 1);
+        std::fs::write(&rollout, "{}\n").unwrap();
+        assert_eq!(
+            resume_session(&st, "t1", Some("codex")),
+            Ok(Resume::Session(CODEX_ID.to_string()))
+        );
+    }
+
+    #[test]
+    fn a_codex_tab_with_no_conversation_on_record_resumes_the_last() {
+        let home = tempfile::tempdir().unwrap();
+        let st = AppState::new("t".into(), 1, Vec::new(), home.path().to_path_buf(), Vec::new());
+        assert_eq!(resume_session(&st, "t1", Some("codex")), Ok(Resume::Last));
+    }
+
+    /// Marshell keeps no copy of a Codex rollout, so a missing file can't be told from one Codex never wrote:
+    /// Codex starts fresh, and never with another tab's conversation (slice 6a2 decision 4).
+    #[test]
+    fn a_codex_tab_whose_rollout_is_gone_starts_fresh() {
+        let home = tempfile::tempdir().unwrap();
+        let work = tempfile::tempdir().unwrap();
+        let st = AppState::new("t".into(), 1, Vec::new(), home.path().to_path_buf(), Vec::new());
+        note_codex(&st, "t1", CODEX_ID, work.path(), 1);
+        assert_eq!(resume_session(&st, "t1", Some("codex")), Ok(Resume::Fresh));
+    }
+
+    #[test]
+    fn a_codex_row_that_fails_the_check_resumes_the_last() {
+        use crate::history::{SessionMeta, index::Index};
+        let home = tempfile::tempdir().unwrap();
+        let work = tempfile::tempdir().unwrap();
+        let st = AppState::new("t".into(), 1, Vec::new(), home.path().to_path_buf(), Vec::new());
+        let notes = work.path().join("notes.txt");
+        std::fs::write(&notes, "{}\n").unwrap();
+        let row = |tab: &str, id: &str, path: &str| SessionMeta {
+            agent: "codex".into(),
+            session_id: id.into(),
+            tab_id: tab.into(),
+            cwd: String::new(),
+            transcript_path: path.into(),
+            started_ms: 1,
+            updated_ms: 2,
+            previous_in_tab: None,
+            recordings: vec![],
+            client: Default::default(),
+        };
+        // Rows written to the index directly, as a damaged or planted index would hold them: a file that is not a
+        // rollout, a relative path, and an id that would reach the command line.
+        let (index, _) = Index::open(home.path()).unwrap();
+        index.upsert(&row("t1", CODEX_ID, &notes.to_string_lossy())).unwrap();
+        index.upsert(&row("t2", CODEX_ID, "sessions/rollout-x.jsonl")).unwrap();
+        let hostile = work.path().join("rollout-x.jsonl");
+        std::fs::write(&hostile, "{}\n").unwrap();
+        index.upsert(&row("t3", "x; calc", &hostile.to_string_lossy())).unwrap();
+        for tab in ["t1", "t2", "t3"] {
+            assert_eq!(resume_session(&st, tab, Some("codex")), Ok(Resume::Last), "{tab}");
+        }
+    }
+
+    /// A CLI started from inside another inherits the tab id, so a tab can hold rows of two agents. A newer row of
+    /// the other agent never hides the tab's own conversation.
+    #[test]
+    fn a_tab_resumes_only_its_own_agents_conversation() {
+        let home = tempfile::tempdir().unwrap();
+        let work = tempfile::tempdir().unwrap();
+        let st = AppState::new("t".into(), 1, Vec::new(), home.path().to_path_buf(), Vec::new());
+        let transcript = work.path().join("abc-1.jsonl");
+        std::fs::write(&transcript, "{}\n").unwrap();
+        note_session(&st, "t1", "abc-1", &transcript);
+        let rollout = note_codex(&st, "t1", CODEX_ID, work.path(), 50);
+        std::fs::write(&rollout, "{}\n").unwrap();
+        assert_eq!(
+            resume_session(&st, "t1", Some("claude")),
+            Ok(Resume::Session("abc-1".to_string()))
+        );
+        assert_eq!(
+            resume_session(&st, "t1", Some("codex")),
+            Ok(Resume::Session(CODEX_ID.to_string()))
+        );
+    }
+
+    #[test]
+    fn a_resumed_codex_tab_runs_resume_with_its_id() {
+        assert_eq!(
+            resolved_codex_line(Some("0.163.0"), Some(ResumeTarget::Session(CODEX_ID))),
+            format!("& codex resume {CODEX_ID} --no-daemon")
+        );
     }
 
     #[test]

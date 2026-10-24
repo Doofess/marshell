@@ -350,7 +350,7 @@ pub fn agent_in(chain: &[String], command_line: Option<&str>) -> Option<&'static
 pub enum ResumeTarget<'a> {
     /// The CLI's own "last conversation in this folder".
     Last,
-    /// One conversation by the CLI's session id. Only Claude Code takes one so far.
+    /// One conversation by the CLI's session id. Claude Code and Codex take one.
     Session(&'a str),
     /// A new conversation that starts from one by the CLI's session id, leaving the original as it is.
     /// Only Claude Code can fork; every other agent continues its last conversation as `Last` does.
