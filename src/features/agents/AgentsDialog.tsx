@@ -10,7 +10,7 @@ import { useDialogFocus } from "../../lib/useDialogFocus";
 import { SettingsReadError, type SettingsSync } from "../appearance/settingsSync";
 import { ConsentCard } from "../onboarding/ConsentCard";
 import { CLI_NAME, type Capability } from "../onboarding/consent";
-import { actions, consentProps, hooksOffNotice, liveStatusOn, removalBlock, setupLine, setupWant, type InstallFlow } from "./agentsState";
+import { actions, consentProps, hooksOffNotice, liveStatusOn, removalBlock, setupLine, setupWant, type InstallFlow, type SetupStart } from "./agentsState";
 import { failureText, useInstallFlow } from "./useInstallFlow";
 import "./AgentsDialog.css";
 
@@ -236,7 +236,7 @@ function OffPanel({ agent, panel, on }: { agent: HookAgent; panel: Extract<Panel
 
 /**
  * The Agents dialog on the core's data. The state is read when it opens and again after each apply; nothing polls.
- * `startWith: "setup"` opens straight on the Set up card (the row link). It only talks to the core's HTTP API.
+ * `startWith: { setup: agent }` opens straight on that agent's Set up card (the row link). It only talks to the core's HTTP API.
  */
 export function AgentsDialog({
   endpoint,
@@ -252,7 +252,7 @@ export function AgentsDialog({
   onNotice?: (text: string) => void;
   /** The hooks were set up or turned off: the window reads the state again. */
   onChanged?: () => void;
-  startWith?: "setup";
+  startWith?: SetupStart;
   /** Opens the Notifications dialog. */
   onNotifications: () => void;
   /** The settings the Live status switch reads and saves. */
@@ -342,10 +342,17 @@ export function AgentsDialog({
   useEffect(() => {
     if (!first.current) return;
     first.current = false;
-    void load().then((found) => {
-      if (startWith === "setup" && found) startSetup("claude", found);
+    void load().then(async (found) => {
+      if (!startWith) return;
+      if (startWith.setup === "claude") {
+        if (found) startSetup("claude", found);
+        return;
+      }
+      // Codex's own setup is read here, so its card does not wait on the section's load.
+      const codexFound = await getSetup(endpoint, "codex").catch(() => null);
+      if (codexFound) startSetup("codex", codexFound);
     });
-  }, [load, startWith, startSetup]);
+  }, [load, startWith, startSetup, endpoint]);
 
   const turnOff = async () => {
     if (!off.removal) return;

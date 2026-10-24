@@ -22,6 +22,10 @@ const ON = onOf(DEFAULT_WANT);
 /** An existing status install needs only the permission hook. */
 export const setupWant = (s: AgentSetup): Want => s.hooks === "installed" ? { status: false, statusline: false, approve: true } : DEFAULT_WANT;
 
+/** Where the Agents dialog opens from a session row's "set up" link: on that row's agent's Set up card. */
+export type SetupStart = { setup: HookAgent };
+export const rowSetupStart = (agent: string): SetupStart => ({ setup: agent === "codex" ? "codex" : "claude" });
+
 /** Whether an agent's live status is on: it is unless the agent is in the settings' `status_off`. */
 export const liveStatusOn = (statusOff: string[], agent: string): boolean => !statusOff.includes(agent);
 

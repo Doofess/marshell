@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { AgentSetup } from "../../generated/AgentSetup";
-import { actions, consentProps, consentQueue, DEFAULT_WANT, hooksOffNotice, installRequest, liveStatusOn, setupLine, setupWant } from "./agentsState";
+import { actions, consentProps, consentQueue, DEFAULT_WANT, hooksOffNotice, installRequest, liveStatusOn, rowSetupStart, setupLine, setupWant } from "./agentsState";
 import type { ConfigPreview } from "../../generated/ConfigPreview";
 import type { FilePreview } from "../../generated/FilePreview";
 import { CODEX_SETUP, PREVIEW, SETUP } from "./fixtures";
@@ -144,6 +144,13 @@ describe("the switches the person sets", () => {
     const p = consentProps(SETUP, { preview: null, open: false, busy: false, want: { status: false, statusline: true, approve: false } });
     expect(p.on.status).toBe(false);
     expect(p.scenario.plan.headline).toBe("Checking C:/h/.claude/settings.json…");
+  });
+});
+
+describe("rowSetupStart", () => {
+  it("opens the setup of the agent whose row was clicked", () => {
+    expect(rowSetupStart("codex")).toEqual({ setup: "codex" });
+    expect(rowSetupStart("claude")).toEqual({ setup: "claude" });
   });
 });
 

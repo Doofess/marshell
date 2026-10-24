@@ -42,6 +42,7 @@ import { modeMenuItems, sessionMenuItems } from "../sidebar/sessionMenu";
 import { nextSessionNumber } from "../sidebar/sessionNumber";
 import type { Mode, RowModel } from "../sidebar/types";
 import { AgentsDialog } from "../agents/AgentsDialog";
+import { rowSetupStart, type SetupStart } from "../agents/agentsState";
 import { DiagnosticsDialog } from "../diagnostics/DiagnosticsDialog";
 import { LiveOnboarding } from "../onboarding/LiveOnboarding";
 import { getSetup, type HookAgent } from "../../lib/api/agents";
@@ -210,7 +211,7 @@ export function LiveApp() {
   // The command palette, or the shell profiles page opened from it, over the window.
   const [overlay, setOverlay] = useState<"palette" | "profiles" | "appearance" | "agents" | "notifications" | "history-settings" | "diagnostics" | "shortcuts" | "departures" | null>(null);
   // The Agents dialog opened from a row's "set up" starts on the Set up card.
-  const [agentsFrom, setAgentsFrom] = useState<"row" | null>(null);
+  const [agentsFrom, setAgentsFrom] = useState<SetupStart | null>(null);
   // First run: shown once, when the saved settings say the onboarding was not seen. Nothing shows until that read has answered;
   // a failed read shows none.
   const [onboardingShown, setOnboardingShown] = useState<OnboardingShown>("unknown");
@@ -1403,8 +1404,8 @@ export function LiveApp() {
           onSelect={pick}
           onToggle={togglePane}
           onReview={reviewSession}
-          onSetup={() => {
-            setAgentsFrom("row");
+          onSetup={(id) => {
+            setAgentsFrom(rowSetupStart(sidebarRows.find((r) => r.id === id)?.agent ?? "claude"));
             setOverlay("agents");
           }}
           menuItems={os ? menuItems : undefined}
@@ -1481,7 +1482,7 @@ export function LiveApp() {
         />
       )}
       {overlay === "profiles" && endpoint && <ProfilesDialog endpoint={endpoint} onClose={() => setOverlay(null)} onNotice={announce} onSaved={reloadProfiles} />}
-      {overlay === "agents" && endpoint && <AgentsDialog endpoint={endpoint} sync={sync ?? undefined} startWith={agentsFrom === "row" ? "setup" : undefined} onClose={() => { setOverlay(null); setAgentsFrom(null); refreshSetup(); }} onNotice={announce} onChanged={refreshSetup} onNotifications={() => { setAgentsFrom(null); setOverlay("notifications"); }} />}
+      {overlay === "agents" && endpoint && <AgentsDialog endpoint={endpoint} sync={sync ?? undefined} startWith={agentsFrom ?? undefined} onClose={() => { setOverlay(null); setAgentsFrom(null); refreshSetup(); }} onNotice={announce} onChanged={refreshSetup} onNotifications={() => { setAgentsFrom(null); setOverlay("notifications"); }} />}
       {overlay === "notifications" && <NotificationsDialog sync={sync ?? undefined} onClose={() => setOverlay(null)} />}
       {overlay === "history-settings" && <HistorySettingsDialog sync={sync ?? undefined} announce={announce} onClose={() => setOverlay(null)} />}
       {overlay === "diagnostics" && endpoint && <DiagnosticsDialog endpoint={endpoint} onClose={() => setOverlay(null)} onNotice={announce} />}
