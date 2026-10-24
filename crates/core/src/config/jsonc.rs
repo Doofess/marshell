@@ -343,6 +343,17 @@ fn apply_to_cst(root: &CstRootNode, op: &JsonOp) -> Result<bool, EditError> {
             let node = array_index(last)
                 .and_then(|i| arr.elements().into_iter().nth(i))
                 .ok_or_else(|| bad(pointer, "no such array element"))?;
+            // An object replaced whole renders its inside one level too shallow, so an object
+            // becoming an object keeps its braces and has its properties swapped instead.
+            if let (Some(obj), Value::Object(map)) = (node.as_object(), value) {
+                for prop in obj.properties() {
+                    prop.remove();
+                }
+                for (k, v) in map {
+                    obj.append(k, to_input(v));
+                }
+                return Ok(true);
+            }
             if replace_node(node, to_input(value)) {
                 Ok(true)
             } else {
@@ -407,6 +418,33 @@ mod tests {
         )
         .unwrap();
         assert_eq!(out, "{\"a\": 5, \"b\": 2}");
+    }
+
+    #[test]
+    fn set_replaces_an_array_element_at_its_indent() {
+        let before = "{\n  \"a\": [\n    {\n      \"x\": 1\n    },\n    2\n  ]\n}\n";
+        let v = serde_json::json!({ "x": [3] });
+        let out = apply_ops(
+            before,
+            &[JsonOp::Set {
+                pointer: "/a/0",
+                value: &v,
+            }],
+        )
+        .unwrap();
+        assert_eq!(out, "{\n  \"a\": [\n    {\n      \"x\": [3]\n    },\n    2\n  ]\n}\n");
+
+        let commented = "{\n  \"a\": [\n    1,\n    // keep me\n    {\n      \"x\": 1\n    } // and me\n  ]\n}\n";
+        let out = apply_ops(
+            commented,
+            &[JsonOp::Set {
+                pointer: "/a/1",
+                value: &v,
+            }],
+        )
+        .unwrap();
+        assert!(out.contains("// keep me") && out.contains("// and me"), "{out}");
+        assert_eq!(read_value(&out).unwrap()["a"][1], v);
     }
 
     #[test]
