@@ -147,13 +147,13 @@
   font-size: var(--text-12);
   font-variant-numeric: tabular-nums;
 }
-/* Archived and tags: chips under the row's meta line. */
 /* The import's progress: meta text that may wrap, since the count must not be clipped. */
 .history__import {
   margin: 0;
   white-space: normal;
   text-wrap: pretty;
 }
+/* Archived and tags: chips under the row's meta line. */
 .history__chips {
   display: flex;
   flex-wrap: wrap;
