@@ -39,16 +39,22 @@
 
 The research describes the documented Codex behaviour. Task 1 checks it against Codex 0.163. If a finding differs, the plan is amended (shapes, constants, copy) and committed before Task 2 starts.
 
+Every finding and its evidence is in `docs/research/2026-10-24-codex-hooks.md`.
+
 - **A1.** `$CODEX_HOME/hooks.json` is `{"hooks": {"<Event>": [{"matcher": "<regex>", "hooks": [{"type": "command", "command": "<string>", "timeout": <secs>}]}]}}`, and `matcher` is optional for events that have no tool.
+  - **Finding (Task 1):** confirmed, with no matcher on any group. Codex also loads an empty group `{"hooks": []}` without a warning and counts its position (decision 11).
 - **A2.** On Windows, `command` = `"C:/Users/<user>/.marshell/bin/marshell-hook.exe" event --agent codex --tag mshl1` runs, quoted path with a space included. If it doesn't, the form that does run is recorded (`commandWindows`, or a different quoting).
   - **Finding (Task 1):** it doesn't run. Codex 0.163 runs a hook command through PowerShell on Windows (pwsh 7.6.8 here), where a quoted path followed by arguments is a parse error. `& "<bridge>" <role> --agent codex --tag mshl1` runs, with a space in the path. So Windows uses the call operator, and other platforms use the plain quoted form.
-  - **Finding (A3):** trust is per entry and hash-bound. It's stored in the Codex home's `config.toml` as `[hooks.state.'<hooks.json path>:<event_snake>:<group>:<handler>'] trusted_hash = "sha256:…"`. At its next start, Codex lists new or changed entries ("12 hooks are new or changed") with "Trust all and continue". Changing one entry asks again for that entry only.
+  - **Finding (A3):** trust is per entry and hash-bound. It's stored in the Codex home's `config.toml` as `[hooks.state.'<hooks.json path>:<event_snake>:<group>:<handler>'] trusted_hash = "sha256:…"`. At its next start, Codex lists new or changed entries ("12 hooks are new or changed") with "Trust all and continue". Changing one entry asks again for that entry only. Group and handler are raw positions: removing a group shifts the later groups of that event, and Codex then asks for them again (decision 11, Task 2b).
   - **Finding (A4):** `MARSHELL_HOME` and `MARSHELL_TAB_ID` reach the hook. The core received the record post with the tab.
   - **Finding:** a turn that ends in an error (a usage limit) fires no `Stop`, and Codex has no StopFailure-like event. The row stays Working until the next event, and the slice's Known limits say so.
 - **A3.** Hooks don't run until they are trusted in `/hooks`. The finding records where trust is kept and whether changing one entry un-trusts the others.
 - **A4.** `TAB_ID` and the rest of the session's environment reach the hook process. If Codex scrubs the environment, the bridge can't name the tab, and this plan stops for a ruling.
 - **A5.** Payloads carry `session_id`, `transcript_path` (the rollout), `cwd`, `hook_event_name`, `model` and `permission_mode`. `PreToolUse` and `PermissionRequest` add `tool_name` and `tool_input`. The finding names the exact tool names and input fields for a shell command and an `apply_patch`.
+  - **Finding (Task 1):** confirmed with corrections. The shell tool is `tool_name: "Bash"` (on Windows too) with `tool_input.command`. `apply_patch` puts the whole patch in `tool_input.command`, and the file is on its `*** Add File:`, `*** Update File:` or `*** Delete File:` line. `PermissionRequest` has no `tool_use_id`, and for `Bash` adds `tool_input.description` (Codex's reason). `Stop.last_assistant_message` is `null` when the turn ends without a reply. `SessionEnd` carries only `reason` beyond the common four fields, with no `model` or `permission_mode`. Only `permission_mode: "default"` was seen. No MCP tool ran, and the research gives no source for its `tool_name` format.
+  - **Finding (Task 1):** `SessionStart` fires with the first prompt, not at launch. A Codex quit with no prompt fires only `SessionEnd`, and still leaves a rollout. In the sandbox, a failed command is retried with escalation: two `PreToolUse`, and a `PostToolUse` for the second only. A denied request goes `PermissionRequest`, then `Stop`, with no `PostToolUse`. An interrupt fires `Interrupt` and no `Stop`.
 - **A6.** Stdout `{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decision":{"behavior":"allow"}}}` allows, `behavior: "deny"` with `message` denies, and empty stdout leaves Codex's own prompt.
+  - **Finding (Task 1):** confirmed, all three. A hook that passes its timeout leaves Codex's own prompt, and a later answer is ignored.
 
 ## Review focus
 
@@ -69,14 +75,14 @@ This task runs in the main thread, not through a worker. It needs a real Codex s
 - Create: `docs/research/2026-10-24-codex-hooks.md`
 - Create: `crates/core/tests/fixtures/codex/hooks/0.163.0/*.json`
 
-- [ ] **Step 1: Add `-CodexAuth` to `live-check.ps1 start`.** With the switch, it copies `$HOME\.codex\auth.json` into `<Scratch>\cx\auth.json` after the scratch folders exist, and copies nothing else. `stop` already removes the whole scratch folder. Add one line to SKILL.md's start step saying what the switch copies and that `stop` deletes it.
-- [ ] **Step 2: Start the live check.** Run `live-check.ps1 start -CodexAuth` with a fresh literal scratch folder. Write `<Scratch>\cx\hooks.json` by hand: every event in the research table, each running `"<scratch bridge>" record --agent codex --tag mshl1`. The `record` role saves each stdin under the record directory and posts it.
-- [ ] **Step 3: Drive a session.** Open a Codex tab in the dev app with `-a untrusted`, so shell commands ask. Over CDP, run `/hooks`, trust the entries, then send one prompt that runs a shell command, one that makes an `apply_patch` edit, and then interrupt a turn. Answer each Codex prompt in the terminal.
-- [ ] **Step 4: Check A2 and A6 by hand.** Point the `PermissionRequest` entry at a two-line `.cmd` stub in the scratch folder that prints the A6 allow JSON. Confirm Codex runs the command without asking. Then use a deny stub with a message, then an empty stub. Note whether editing the entry made `/hooks` ask for trust again (A3).
-- [ ] **Step 4b: Record two trust-hash test vectors (decision 10).** Add two extra groups to the scratch `hooks.json` whose commands name a neutral path, `& "C:/Users/someone/.marshell/bin/marshell-hook.exe" event --agent codex --tag mshl1`: one on `Stop` with `timeout` 5, one on `SessionEnd` with `timeout` 2. Restart Codex, choose **Trust all and continue**, and copy each entry's `trusted_hash` from the scratch `config.toml` into the research doc beside its event, command and timeout. Check that the recipe in Task 3b reproduces both. These are Task 3b's vectors, and they carry no real user name.
-- [ ] **Step 5: Write the fixtures.** Copy one recorded body per event (`SessionStart.json`, `UserPromptSubmit.json`, `PreToolUse-shell.json`, `PreToolUse-apply_patch.json`, `PermissionRequest-shell.json`, `PermissionRequest-apply_patch.json`, `PostToolUse.json`, `Stop.json`, `Interrupt.json`, `SessionEnd.json`) into `crates/core/tests/fixtures/codex/hooks/0.163.0/`. Run `pnpm scrub:fixtures crates/core/tests/fixtures/codex/hooks`, then `cargo test -p marshell-core -j 4 --test fixtures_scrubbed`. Expected: PASS.
-- [ ] **Step 6: Write `docs/research/2026-10-24-codex-hooks.md`.** It answers A1–A6, each with evidence, plus the Codex version, the exact `hooks.json` that ran, and the real `~/.codex` check: `config.toml`'s modified time before and after, and `hooks.json` still absent. Stop the check by PID and remove the scratch folder.
-- [ ] **Step 7: Amend this plan where a finding differs, and commit.**
+- [x] **Step 1: Add `-CodexAuth` to `live-check.ps1 start`.** With the switch, it copies `$HOME\.codex\auth.json` into `<Scratch>\cx\auth.json` after the scratch folders exist, and copies nothing else. `stop` already removes the whole scratch folder. Add one line to SKILL.md's start step saying what the switch copies and that `stop` deletes it.
+- [x] **Step 2: Start the live check.** Run `live-check.ps1 start -CodexAuth` with a fresh literal scratch folder. Write `<Scratch>\cx\hooks.json` by hand: every event in the research table, each running `"<scratch bridge>" record --agent codex --tag mshl1`. The `record` role saves each stdin under the record directory and posts it.
+- [x] **Step 3: Drive a session.** Open a Codex tab in the dev app with `-a untrusted`, so shell commands ask. (Ran as `codex --no-daemon -s read-only -a on-request`: 0.163 has no `untrusted`, and the scratch `CODEX_HOME` is too long for the daemon's socket.) Over CDP, run `/hooks`, trust the entries, then send one prompt that runs a shell command, one that makes an `apply_patch` edit, and then interrupt a turn. Answer each Codex prompt in the terminal.
+- [x] **Step 4: Check A2 and A6 by hand.** Point the `PermissionRequest` entry at a two-line `.cmd` stub in the scratch folder that prints the A6 allow JSON. (Ran as a second `PermissionRequest` group whose stub prints a file, so the answer changed without a new trust.) Confirm Codex runs the command without asking. Then use a deny stub with a message, then an empty stub. Note whether editing the entry made `/hooks` ask for trust again (A3).
+- [x] **Step 4b: Record two trust-hash test vectors (decision 10).** Add two extra groups to the scratch `hooks.json` whose commands name a neutral path, `& "C:/Users/someone/.marshell/bin/marshell-hook.exe" event --agent codex --tag mshl1`: one on `Stop` with `timeout` 5, one on `SessionEnd` with `timeout` 2. Restart Codex, choose **Trust all and continue**, and copy each entry's `trusted_hash` from the scratch `config.toml` into the research doc beside its event, command and timeout. Check that the recipe in Task 3b reproduces both. These are Task 3b's vectors, and they carry no real user name.
+- [x] **Step 5: Write the fixtures.** Copy one recorded body per event (`SessionStart.json`, `UserPromptSubmit.json`, `PreToolUse-shell.json`, `PreToolUse-apply_patch.json`, `PermissionRequest-shell.json`, `PermissionRequest-apply_patch.json`, `PostToolUse.json`, `PostToolUse-apply_patch.json`, `Stop.json` (no reply), `Stop-recap.json`, `Interrupt.json`, `SessionEnd.json`) into `crates/core/tests/fixtures/codex/hooks/0.163.0/`. Run `pnpm scrub:fixtures crates/core/tests/fixtures/codex/hooks`, then `cargo test -p marshell-core -j 4 --test fixtures_scrubbed`. Expected: PASS.
+- [x] **Step 6: Write `docs/research/2026-10-24-codex-hooks.md`.** It answers A1–A6, each with evidence, plus the Codex version, the exact `hooks.json` that ran, and the real `~/.codex` check: `config.toml`'s modified time before and after, and `hooks.json` still absent. Stop the check by PID and remove the scratch folder.
+- [x] **Step 7: Amend this plan where a finding differs, and commit.**
 
 ```bash
 git add .claude/skills/marshell-live-check docs/research/2026-10-24-codex-hooks.md crates/core/tests/fixtures/codex/hooks docs/superpowers/plans/2026-10-24-phase-6a-codex-adapter.md
@@ -115,6 +121,32 @@ git commit -m "docs(research): record Codex 0.163's hooks, trust and payloads, w
 - [ ] **Step 3: Implement it.** Follow `claude::hooks`: remove Marshell's own entries highest index first, then append one group per event (or set the event to `[group]`), using the same `JsonSet`/`JsonRemove` edits with `expected_hash`.
 - [ ] **Step 4: Run Step 2's command, then `cargo test -p marshell-core -j 4 claude::hooks`.** Expected: both PASS. The Claude tests prove the move changed nothing.
 - [ ] **Step 5: Run `cargo fmt --all` and commit** as `feat(codex): plan the hooks.json entries that install and remove Marshell's Codex hooks`.
+
+### Task 2b: Keep the user's hooks at their positions (decision 11)
+
+Added after Task 1, which found that Codex keys trust by position. It changes Task 2's plan code. Task 3's routes and `marshell uninstall` use `remove_plan` and `install_plan`, so they pick the change up without edits.
+
+**Files:**
+- Modify: `crates/core/src/agents/codex/hooks.rs`
+- Test: unit tests in `codex/hooks.rs` and `codex/trust.rs`
+
+**Interfaces (unchanged signatures):**
+- Removal, in `remove_plan` and in the removal half of `install_plan`: a Marshell group that has any group after it that stays (the user's, or an empty one) becomes `{"hooks": []}` through `JsonSet` at its pointer. A Marshell group with nothing staying after it is removed as before, highest index first. `prune` removes an event only when every group in it was removed. Empty groups already in the file are left alone, Marshell's leftovers included, because Marshell can't tell them from the user's.
+- Reinstall: where an event already has a Marshell group, `install_plan` sets the wanted entry at that group's position (`JsonSet` on `/hooks/<Event>/<g>`) instead of removing it and appending. Any further Marshell groups for that event follow the removal rule. An event with no Marshell group gets one appended at the end, as before.
+- A Marshell entry inside a group that also holds the user's entries is removed as before (an entry can't be left empty), and the slice's Known limits say so.
+- `inspect` and `trust::state` don't count an empty group as Marshell's, and still count its position.
+
+- [ ] **Step 1: Write the failing tests.**
+  - `removal_keeps_a_later_user_group_in_place`: `Stop: [ours, user]` gives `[{"hooks": []}, user]`, and the user's group is byte-equal to the input. Run it over the BOM, CRLF and comments texts.
+  - `removal_drops_a_trailing_group`: `Stop: [user, ours]` gives `[user]`.
+  - `an_event_with_a_placeholder_left_stays`: after removing `[ours, user]`, the event is still there, and an event that held only Marshell's group goes.
+  - `reinstall_replaces_ours_where_it_is`: `Stop: [ours with another timeout, user]` gives `[ours as wanted, user]`, with Marshell's group still at index 0.
+  - `install_after_a_placeholder_appends`: `Stop: [{"hooks": []}, user]` gives `[{"hooks": []}, user, ours]`.
+  - In `trust.rs`: `a_placeholder_counts_as_a_group`: `Stop: [{"hooks": []}, ours]` looks Marshell's entry up under `stop:1:0`.
+- [ ] **Step 2: Run `cargo test -p marshell-core -j 4 --lib codex::`.** Expected: FAIL on the new tests.
+- [ ] **Step 3: Implement it.**
+- [ ] **Step 4: Run Step 2's command, then `cargo test -p marshell-core -j 4 --test agents_api` and `cargo test -p marshell-cli -j 4`.** Expected: PASS.
+- [ ] **Step 5: Run `cargo fmt --all` and commit** as `fix(codex): leave the user's hooks at their positions when Marshell's are removed or replaced`.
 
 ### Task 3: Setup, plan and removal routes for Codex, and `marshell uninstall`
 
@@ -192,21 +224,30 @@ Runs before Task 3, which consumes it.
   |---|---|
   | `SessionStart` | Idle, "" |
   | `UserPromptSubmit` | Working, "Thinking" |
-  | `PreToolUse` shell | Working, "Running \`<command, first line, 60>\`" |
-  | `PreToolUse` apply_patch | Working, "Editing \`<first file>\`" |
+  | `PreToolUse` shell (`tool_name` `Bash`) | Working, "Running \`<command, first line, 60>\`" |
+  | `PreToolUse` apply_patch | Working, "Editing \`<first file>\`", the file from the first `*** Add File:`, `*** Update File:` or `*** Delete File:` line of `tool_input.command`; "Editing files" when there is none |
   | `PreToolUse` other tool | Working, "Using \`<tool>\`" |
   | `PermissionRequest` | NeedsPermission, "Wants to run \`<command>\`" or "Wants to use \`<tool>\`" |
   | `PostToolUse` | Working, "Thinking" after NeedsPermission, else the phrase is kept |
-  | `Stop` | Done, "Done", with the recap from `last_assistant_message` (first line, 200) |
+  | `Stop` | Done, "Done", with the recap from `last_assistant_message` (first line, 200); no recap when it is `null` |
   | `Interrupt` | Idle, "" |
   | `SessionEnd` | Ended, "Ended" |
   | anything else | None |
 
   Field names come from Task 1's fixtures. `since_ms` changes only when the state changes, as in Claude's fold.
+
+  Task 1's timing findings the fold must tolerate:
+  - `SessionStart` arrives with the first prompt, so a Codex tab has no live status until then and keeps the limited fallback. Any event can be the first, with `prev = None`; `SessionEnd` often is.
+  - `SessionEnd` has no `permission_mode`, so `mode_of` returns `None` for it and the tab's mode is left as it was.
+  - A sandboxed command that fails is retried: `PreToolUse` twice and one `PostToolUse`. A denied request goes `PermissionRequest`, then `Stop`, with no `PostToolUse`, and must end Done, not NeedsPermission. An interrupt sends `Interrupt` and no `Stop`.
+  - A turn that ends in an error (a usage limit) sends no `Stop`, so the row stays Working until the next event. This goes in the slice's Known limits.
+  - `codex --version` prints `codex-cli 0.163.0`, and the gate reads the version after the prefix.
 - `fold_live(st, agent, role, tab, body, at_ms)` checks `status_off` for `agent`. It gets the version from `agent_version(agent, exe)` in `spawn_blocking` and gates with that agent's gate. Only Claude takes `Statusline`. The `if agent == "claude"` guard in `post` becomes `matches!(agent.as_str(), "claude" | "codex")`.
 
 - [ ] **Step 1: Write the failing tests.**
-  - One test per row of the table, loading the Task 1 fixture with `include_str!`: `session_start_is_idle`, `prompt_is_thinking`, `shell_tool_is_running_its_command`, `apply_patch_is_editing_its_file`, `permission_request_needs_permission`, `post_tool_after_a_permission_is_thinking`, `stop_is_done_with_its_recap`, `interrupt_is_idle`, `session_end_is_ended`, `an_unknown_event_is_none`.
+  - One test per row of the table, loading the Task 1 fixture with `include_str!`: `session_start_is_idle`, `prompt_is_thinking`, `shell_tool_is_running_its_command`, `apply_patch_is_editing_its_file`, `permission_request_needs_permission`, `post_tool_after_a_permission_is_thinking`, `stop_is_done_with_its_recap` (`Stop-recap.json`), `stop_without_a_reply_has_no_recap` (`Stop.json`), `interrupt_is_idle`, `session_end_is_ended`, `an_unknown_event_is_none`.
+  - Timing: `session_end_with_no_earlier_event_is_ended` (`prev = None`), `a_denied_request_then_stop_is_done`, `a_retried_tool_keeps_running`, `session_end_leaves_the_mode_alone`, `apply_patch_without_a_file_line_is_editing_files`.
+  - `the_version_is_read_after_codex_cli`: `codex-cli 0.163.0` gives a known version.
   - Gate tests: `codex_0_163_is_known`; `codex_0_170_is_not_recorded`, asserting the exact note "Codex 0.170.0 is not one Marshell has recorded yet"; `codex_0_162_is_older`.
   - `claude_gate_messages_are_unchanged`.
   - In `agents_api.rs`: `a_codex_event_folds_into_its_tab` (needs a live tab, as Claude's fold tests do) and `codex_status_off_sets_its_note`.
@@ -223,7 +264,7 @@ Runs before Task 3, which consumes it.
 
 **Interfaces:**
 - Produces:
-  - `codex::request::detail(request: &Value) -> PermissionDetail`: a shell command gives the bash kind with its command, `apply_patch` gives the edit kind with its first file, an MCP tool gives the mcp kind, and anything else gives other with the raw `tool_input`.
+  - `codex::request::detail(request: &Value) -> PermissionDetail`: `tool_name` `Bash` gives the bash kind with its command, and Codex's `tool_input.description` as the description when the bash kind has one. `apply_patch` gives the edit kind with its first file, read from the patch as in Task 4. Anything else gives other with the raw `tool_input`. MCP requests fall under other too, because Task 1 recorded no MCP tool name and the research gives no source for one. The request has no `tool_use_id`, so nothing keys on it.
   - `codex::request::view(p: &PendingPermission) -> Option<PermissionView>`, with `always_rule: None`.
   - `codex::permission_output(decision: &PermissionDecision, request: &Value) -> Result<Value, &'static str>`: allow gives exactly the A6 JSON, and deny adds `message` from the decision (Claude's text when there is none). `PermissionScope::Project` gives `Err` with the exact refusal copy from the constraints.
 - `agents::supports_permissions` matches `"claude" | "codex"`. `permission_view` and `permission_output` dispatch on the agent.
@@ -254,11 +295,14 @@ Runs before Task 3, which consumes it.
 
 **Interfaces:**
 - `History::note_event(&self, agent: &str, tab_id: &str, recording: Option<&str>, body: &Value, at_ms: u64) -> Option<SessionMeta>`. For `codex`, the path check is `sidecar_allowed("codex", path, id)`. It writes the sidecar's agent, tab, recording and `client: Marshell`, and returns None, so no copy is scheduled: 5d's importer copies the rollout. Claude's behaviour is unchanged.
+- For Codex, the link is made by the first event of a session that carries `session_id` and `transcript_path`, not only by `SessionStart`. Task 1 found `SessionStart` fires with the first prompt, and a Codex quit with no prompt sends only `SessionEnd` yet leaves a rollout, which would otherwise be labelled "Outside Marshell". `record_history` passes every Codex event through, and `note_event` makes the link once.
 
 - [ ] **Step 1: Write the failing tests.**
   - `a_codex_start_in_a_tab_records_the_tab`.
   - `the_importer_keeps_a_codex_tab_session_marshells`: note a Codex `SessionStart` for `t1`, then import the same rollout. The row has `client: Marshell` and `tab_id: "t1"`, whichever runs first.
   - `a_codex_rollout_path_with_the_wrong_name_is_ignored`.
+  - `a_codex_session_with_only_session_end_is_linked`, from `SessionEnd.json`.
+  - `a_later_codex_event_does_not_rewrite_the_link`.
 - [ ] **Step 2: Run `cargo test -p marshell-core -j 4 history::`.** Expected: FAIL.
 - [ ] **Step 3: Implement it.** Add the `agent` argument at every caller, and widen `record_history`'s guard to Codex.
 - [ ] **Step 4: Run Step 2's command.** Expected: PASS.
@@ -317,15 +361,15 @@ Runs before Task 3, which consumes it.
 - Modify: `docs/PLAN.md` (the phase 6 line names this live check)
 
 - [ ] **Step 1: Run `cargo test -p marshell-core -j 4 codex`.** Expected: PASS. This is the exit's "fixture suites from the real CLIs" for Codex.
-- [ ] **Step 2: Run the live check.** Use `marshell-live-check` with `-CodexAuth` on the `phase-6a` head and check, in order:
+- [ ] **Step 2: Run the live check.** Use `marshell-live-check` with `-CodexAuth` on the `phase-6a` head. Codex 0.163 can't start its background server under a `CODEX_HOME` longer than about 60 characters ("path must be shorter than SUN_LEN"), and a tab opened from the Codex profile can't add `--no-daemon`. So first give `live-check.ps1 start` a `-CodexHome <short literal path>` option, for example `%TEMP%\lc-6a-4-cx`: it refuses a non-empty folder, records the path in `pids.json`, and `stop` deletes the copied `auth.json` from it as it does today. Add it to SKILL.md's start step, and remove the folder with the scratch folder at the end of the work. Then check, in order:
   1. Onboarding shows a Codex card beside Claude's, with the exact `hooks.json` diff in the scratch `CODEX_HOME`.
   2. Apply it. The Agents dialog says "Not trusted yet".
   3. A Codex tab: choose **Trust all and continue**. The row shows Thinking, then Running, then Done, and the dialog, reopened, says "Trusted". Change one entry's timeout in the scratch `hooks.json` by hand: the dialog says "Changed since you trusted them".
-  4. In `-a untrusted`, a shell command reaches the card. Allow runs it, and Deny stops it with the message.
+  4. In Manual mode (`--sandbox read-only --ask-for-approval on-request`), a shell write reaches the card. Allow runs it, and Deny stops it with the message.
   5. The banner appears with the window unfocused, and the request shows in Departures.
   6. With Marshell closed, Codex asks itself.
   7. History lists the conversation under Marshell, linked to its tab.
-  8. Removing the hooks from the Agents dialog leaves a seeded user hook.
+  8. Removing the hooks from the Agents dialog leaves a seeded user hook. Seed it after Marshell's group on `Stop`, and trust it. After removal, Codex starts without asking about it (decision 11).
   9. `marshell uninstall` (answer no) prints both diffs.
   10. The real `~/.codex` is unchanged: same `config.toml` modified time, no `hooks.json`.
 - [ ] **Step 3: Fix each finding test-first and record it** in the research doc, with its commit.
