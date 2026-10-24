@@ -18,7 +18,8 @@ use axum::http::{StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use marshell_protocol::api::{CreateSessionResponse, SessionState};
 use marshell_protocol::history::{
-    Bookmarked, Conversation, HistoryEntry, HistoryPatch, HistoryQuery, RecordingFrames, RecordingPart, SearchHit,
+    Bookmarked, Conversation, HistoryEntry, HistoryPatch, HistoryQuery, RecordingFrames, RecordingPart,
+    RetentionLimits, RetentionPreview, SearchHit,
 };
 use serde::Deserialize;
 use std::sync::Arc;
@@ -72,6 +73,18 @@ fn require_on(history: &History) -> Result<(), Fail> {
 /// The copy of conversations run outside Marshell: the switch and the progress. Reads atomics only.
 pub async fn import_status(State(st): State<AppState>) -> Json<marshell_protocol::history::ImportStatus> {
     Json(st.import_status())
+}
+
+/// What a cleanup with these limits would remove now. 400 for a limit that isn't one of the choices; 503 when
+/// history is off for this run, as there is no storage thread then.
+pub async fn storage_preview(
+    State(st): State<AppState>,
+    Json(limits): Json<RetentionLimits>,
+) -> Result<Json<RetentionPreview>, Fail> {
+    crate::settings::check_limits(limits.limit_gb, limits.limit_days).map_err(|msg| (StatusCode::BAD_REQUEST, msg))?;
+    let storage = st.storage().ok_or_else(off)?;
+    let preview = blocking(move || Ok(storage.preview(&limits))).await?;
+    Ok(Json(preview))
 }
 
 pub async fn list(

@@ -29,4 +29,12 @@ notifications: NotifySettings,
 /**
  * Whether Marshell keeps its own copy of the conversations Claude Code and Codex ran outside it.
  */
-history_import: boolean, };
+history_import: boolean, 
+/**
+ * Recordings and images are kept up to this many GB (1024-based). None is no size limit.
+ */
+history_limit_gb: number | null, 
+/**
+ * Recordings and images older than this many days are removed. None keeps them forever.
+ */
+history_limit_days: number | null, };

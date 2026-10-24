@@ -196,6 +196,41 @@ pub struct ImportStatus {
     pub total: u32,
 }
 
+/// The size and age limits on recordings and images. `None` is no limit. The core accepts only the listed values:
+/// 1, 2, 5, 10, 20 or 50 GB, and 30, 90, 180 or 365 days.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(default)]
+#[ts(export)]
+pub struct RetentionLimits {
+    pub limit_gb: Option<u32>,
+    pub limit_days: Option<u32>,
+}
+
+/// POST /v1/history/storage/preview: what a cleanup with these limits would remove now.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct RetentionPreview {
+    /// Recordings and images that would go.
+    pub files: u32,
+    #[ts(type = "number")]
+    pub bytes: u64,
+    /// The modified time of the oldest of them, unix ms. None when nothing would go.
+    #[ts(type = "number | null")]
+    pub oldest_ms: Option<u64>,
+}
+
+/// The last cleanup that removed something or found nothing to remove.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct CleanupRun {
+    /// When it ran, unix ms.
+    #[ts(type = "number")]
+    pub at_ms: u64,
+    pub files: u32,
+    #[ts(type = "number")]
+    pub bytes: u64,
+}
+
 /// The History list's "Where" filter.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[ts(export)]

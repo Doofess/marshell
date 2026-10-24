@@ -1541,3 +1541,161 @@ async fn resume_opens_codex_in_the_conversations_folder() {
         session.force_kill();
     }
 }
+
+/// Writes a file of `body` that was last modified `days` days ago.
+fn write_aged(path: &Path, body: &[u8], days: u64) {
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(path, body).unwrap();
+    std::fs::File::options()
+        .write(true)
+        .open(path)
+        .unwrap()
+        .set_modified(std::time::SystemTime::now() - Duration::from_secs(days * 86_400))
+        .unwrap();
+}
+
+/// The storage thread with nothing to wait for: an hour between ticks, and files count at once.
+fn start_storage(env: &Env) {
+    env.state
+        .start_storage_with(marshell_core::history::storage::StorageTiming {
+            tick: Duration::from_secs(3600),
+            cleanup_every: Duration::from_secs(3600),
+            settle: Duration::ZERO,
+        });
+}
+
+#[tokio::test]
+async fn storage_preview_refuses_without_the_bearer() {
+    let env = env();
+    start_storage(&env);
+    let mut request = req("POST", "/v1/history/storage/preview", Some(json!({ "limit_days": 30 })));
+    request.headers_mut().remove(header::AUTHORIZATION);
+    let (status, _) = call(&env.app, request).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn storage_preview_refuses_a_limit_off_the_list_and_answers_503_without_storage() {
+    let env = env();
+    let (status, _) = call(
+        &env.app,
+        req("POST", "/v1/history/storage/preview", Some(json!({ "limit_days": 30 }))),
+    )
+    .await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "no storage thread yet");
+    start_storage(&env);
+    for body in [
+        json!({ "limit_gb": 3 }),
+        json!({ "limit_days": 7 }),
+        json!({ "limit_gb": 0 }),
+    ] {
+        let (status, _) = call(&env.app, req("POST", "/v1/history/storage/preview", Some(body.clone()))).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    }
+    let (status, body) = call(&env.app, req("POST", "/v1/history/storage/preview", Some(json!({})))).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        serde_json::from_str::<Value>(&body).unwrap(),
+        json!({ "files": 0, "bytes": 0, "oldest_ms": null })
+    );
+}
+
+#[tokio::test]
+async fn the_settings_route_refuses_a_limit_off_the_list_and_keeps_a_listed_one() {
+    let env = env();
+    let (_, settings) = get_json(&env.app, "/v1/settings").await;
+    assert_eq!(settings["history_limit_gb"], Value::Null);
+    assert_eq!(settings["history_limit_days"], Value::Null);
+    for (gb, days) in [(json!(3), Value::Null), (Value::Null, json!(7))] {
+        let mut bad = settings.clone();
+        bad["history_limit_gb"] = gb;
+        bad["history_limit_days"] = days;
+        let (status, _) = call(&env.app, req("PUT", "/v1/settings", Some(bad))).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+    }
+    let mut good = settings.clone();
+    good["history_limit_gb"] = json!(5);
+    good["history_limit_days"] = json!(90);
+    let (status, _) = call(&env.app, req("PUT", "/v1/settings", Some(good))).await;
+    assert_eq!(status, StatusCode::OK);
+    let (_, back) = get_json(&env.app, "/v1/settings").await;
+    assert_eq!(back["history_limit_gb"], 5);
+    assert_eq!(back["history_limit_days"], 90);
+}
+
+#[tokio::test]
+async fn a_saved_age_limit_removes_what_the_preview_listed_and_the_last_cleanup_says_so() {
+    let env = env();
+    let rec = env.home.path().join("history/recordings");
+    write_aged(&rec.join("t1-1000.cast.zst"), b"12345", 40);
+    write_aged(&rec.join("t2-2000.cast.zst"), b"1234567", 60);
+    write_aged(&rec.join("t3-3000.cast.zst"), b"new", 1);
+    // A pinned conversation's recording is as old as the rest, and stays.
+    write_aged(&rec.join("t4-4000.cast.zst"), b"pinned", 100);
+    let transcript = env.work.path().join(format!("{ID}.jsonl"));
+    std::fs::write(&transcript, BASIC).unwrap();
+    let meta = marshell_core::history::SessionMeta {
+        agent: "claude".into(),
+        session_id: ID.into(),
+        tab_id: "t4".into(),
+        cwd: env.work.path().to_string_lossy().into_owned(),
+        transcript_path: transcript.to_string_lossy().into_owned(),
+        started_ms: 1,
+        updated_ms: 2,
+        previous_in_tab: None,
+        recordings: vec![marshell_core::history::RecordingLink {
+            file: "t4-4000.cast".into(),
+            first_ms: 1,
+            last_ms: 2,
+        }],
+        client: Default::default(),
+    };
+    marshell_core::history::archive::write_meta(env.home.path(), &meta).unwrap();
+    let pinned = marks::Marks {
+        pinned: true,
+        ..marks::Marks::default()
+    };
+    marks::write(env.home.path(), "claude", ID, &pinned).unwrap();
+    start_storage(&env);
+
+    let (status, preview) = call(
+        &env.app,
+        req("POST", "/v1/history/storage/preview", Some(json!({ "limit_days": 30 }))),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let preview: Value = serde_json::from_str(&preview).unwrap();
+    assert_eq!(preview["files"], 2);
+    assert_eq!(preview["bytes"], 12);
+    let oldest = preview["oldest_ms"].as_u64().unwrap();
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as u64;
+    let sixty_days_ago = now_ms - 60 * 86_400_000;
+    assert!(oldest.abs_diff(sixty_days_ago) < 60_000, "{oldest} vs {sixty_days_ago}");
+    // Previewing removes nothing.
+    assert!(rec.join("t1-1000.cast.zst").exists() && rec.join("t2-2000.cast.zst").exists());
+    let storage = env.state.storage().unwrap();
+    // The first tick found no limit saved.
+    assert_eq!(storage.last_cleanup(), None);
+
+    let (_, mut settings) = get_json(&env.app, "/v1/settings").await;
+    settings["history_limit_days"] = json!(30);
+    let (status, _) = call(&env.app, req("PUT", "/v1/settings", Some(settings))).await;
+    assert_eq!(status, StatusCode::OK);
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while storage.last_cleanup().is_none() {
+        assert!(Instant::now() < deadline, "the cleanup did not run");
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    let run = storage.last_cleanup().unwrap();
+    assert_eq!((run.files, run.bytes), (2, 12));
+    assert!(!rec.join("t1-1000.cast.zst").exists());
+    assert!(!rec.join("t2-2000.cast.zst").exists());
+    assert!(rec.join("t3-3000.cast.zst").exists());
+    assert!(
+        rec.join("t4-4000.cast.zst").exists(),
+        "the pinned conversation's recording stays"
+    );
+}

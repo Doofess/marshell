@@ -1,20 +1,22 @@
 //! The storage thread: housekeeping for the files history keeps on disk.
 //!
 //! The thread ticks every minute and when nudged. A tick compresses the recordings that have finished
-//! (the plain ones left by earlier runs too). Later steps of the tick, in order, are the retention cleanup
-//! and the backup mirror. It owns one plain `std::thread`, as the importer does, and checks for a halt
-//! between files.
+//! (the plain ones left by earlier runs too), then runs the retention cleanup when it is due. A later step
+//! of the tick is the backup mirror. It owns one plain `std::thread`, as the importer does, and checks for a
+//! halt between files.
 
 pub mod compress;
+pub mod retention;
 
 use super::recorder::History;
 use crate::paths;
+use marshell_protocol::history::{CleanupRun, RetentionLimits, RetentionPreview};
 use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, SystemTime};
+use std::time::{Duration, Instant, SystemTime};
 
 /// How often the storage thread works.
 #[derive(Clone, Copy, Debug)]
@@ -23,7 +25,7 @@ pub struct StorageTiming {
     pub tick: Duration,
     /// How often the retention cleanup runs.
     pub cleanup_every: Duration,
-    /// How long a recording must have gone unmodified before it is compressed.
+    /// How long a recording must have gone unmodified before it is compressed or removed.
     pub settle: Duration,
 }
 
@@ -51,20 +53,39 @@ enum Msg {
     Stop,
 }
 
-/// Where the thread learns which recordings are still being written.
-pub type OpenRecordings = Arc<dyn Fn() -> HashSet<PathBuf> + Send + Sync>;
+/// What is in use right now, so housekeeping leaves it alone.
+#[derive(Clone, Debug, Default)]
+pub struct Open {
+    /// The recording files sessions are still writing.
+    pub recordings: HashSet<PathBuf>,
+    /// The tabs that are open: their images stay.
+    pub tabs: HashSet<String>,
+}
+
+/// Where the thread learns what is in use. Each call is one snapshot; the thread takes it after it has listed
+/// the folders, never before.
+pub type OpenNow = Arc<dyn Fn() -> Open + Send + Sync>;
+
+/// What the thread and the preview share.
+struct Shared {
+    home: PathBuf,
+    history: Arc<History>,
+    open: OpenNow,
+    settle: Duration,
+    /// The last cleanup that ran. Never held across file work.
+    last_cleanup: Mutex<Option<CleanupRun>>,
+}
 
 struct Worker {
-    home: PathBuf,
-    /// For the retention cleanup step.
-    #[allow(dead_code)]
-    history: Arc<History>,
-    open: OpenRecordings,
+    shared: Arc<Shared>,
     timing: StorageTiming,
     stopped: Arc<AtomicBool>,
+    /// When the cleanup last ran. None until the first tick has.
+    cleaned_at: Option<Instant>,
 }
 
 pub struct Storage {
+    shared: Arc<Shared>,
     stopped: Arc<AtomicBool>,
     tx: Sender<Msg>,
     thread: Mutex<Option<std::thread::JoinHandle<()>>>,
@@ -72,26 +93,27 @@ pub struct Storage {
 
 impl Storage {
     /// Starts the storage thread with the production timing (a tick every 60 s, 10 s to settle).
-    pub fn start(home: PathBuf, history: Arc<History>, open: OpenRecordings) -> Arc<Storage> {
+    pub fn start(home: PathBuf, history: Arc<History>, open: OpenNow) -> Arc<Storage> {
         Self::start_with(home, history, open, StorageTiming::default())
     }
 
-    /// Starts the thread. `open` names the recordings still being written; it is asked after the recordings
-    /// folder is listed, never before. The thread ticks once at once.
-    pub fn start_with(
-        home: PathBuf,
-        history: Arc<History>,
-        open: OpenRecordings,
-        timing: StorageTiming,
-    ) -> Arc<Storage> {
+    /// Starts the thread. `open` names what is in use; it is asked after a folder is listed, never before.
+    /// The thread ticks once at once.
+    pub fn start_with(home: PathBuf, history: Arc<History>, open: OpenNow, timing: StorageTiming) -> Arc<Storage> {
         let (tx, rx) = std::sync::mpsc::channel();
         let stopped = Arc::new(AtomicBool::new(false));
-        let worker = Worker {
+        let shared = Arc::new(Shared {
             home,
             history,
             open,
+            settle: timing.settle,
+            last_cleanup: Mutex::new(None),
+        });
+        let worker = Worker {
+            shared: shared.clone(),
             timing,
             stopped: stopped.clone(),
+            cleaned_at: None,
         };
         let thread = std::thread::Builder::new()
             .name("storage".into())
@@ -99,6 +121,7 @@ impl Storage {
             .map_err(|err| tracing::warn!("could not start the storage thread: {err}"))
             .ok();
         Arc::new(Storage {
+            shared,
             stopped,
             tx,
             thread: Mutex::new(thread),
@@ -108,6 +131,24 @@ impl Storage {
     /// Asks the thread to work now.
     pub fn nudge(&self, what: Nudge) {
         let _ = self.tx.send(Msg::Nudge(what));
+    }
+
+    /// What a cleanup with `limits` would remove now. It lists the files on the caller's thread, so a route
+    /// runs it in `spawn_blocking`.
+    pub fn preview(&self, limits: &RetentionLimits) -> RetentionPreview {
+        let items = self.shared.collect();
+        let chosen = retention::plan(&items, limits, retention::unix_ms(SystemTime::now()));
+        let removed = || chosen.iter().filter_map(|&i| items.get(i));
+        RetentionPreview {
+            files: chosen.len() as u32,
+            bytes: removed().map(|item| item.bytes).sum(),
+            oldest_ms: removed().map(|item| item.at_ms).min(),
+        }
+    }
+
+    /// The last cleanup that ran. None until one has, and while no limit has been set.
+    pub fn last_cleanup(&self) -> Option<CleanupRun> {
+        *self.shared.last_cleanup.lock().unwrap()
     }
 
     /// Tells the thread to end and returns at once. It stops between files.
@@ -135,41 +176,75 @@ impl Drop for Storage {
     }
 }
 
+impl Shared {
+    /// The files retention may remove now. The folders are listed before the open set is taken.
+    fn collect(&self) -> Vec<retention::Item> {
+        retention::collect_with(&self.home, &*self.open, SystemTime::now(), self.settle)
+    }
+}
+
 impl Worker {
-    fn run(self, rx: Receiver<Msg>) {
-        self.tick();
+    fn run(mut self, rx: Receiver<Msg>) {
+        self.tick(false);
         loop {
-            match rx.recv_timeout(self.timing.tick) {
+            let cleanup_now = match rx.recv_timeout(self.timing.tick) {
                 Ok(Msg::Stop) | Err(RecvTimeoutError::Disconnected) => break,
-                // The cleanup step comes in a later task; until then a cleanup nudge is a tick.
-                Ok(Msg::Nudge(Nudge::Tick | Nudge::Cleanup)) | Err(RecvTimeoutError::Timeout) => {}
-            }
+                Ok(Msg::Nudge(Nudge::Cleanup)) => true,
+                Ok(Msg::Nudge(Nudge::Tick)) | Err(RecvTimeoutError::Timeout) => false,
+            };
             if self.stopped.load(Ordering::SeqCst) {
                 break;
             }
-            self.tick();
+            self.tick(cleanup_now);
         }
     }
 
-    /// One pass, in order: compress, then (in later tasks) cleanup and mirror. A step that fails is logged and
-    /// the next still runs.
-    fn tick(&self) {
+    /// One pass, in order: compress, cleanup when it is due or was asked for, then (in a later task) mirror.
+    /// A step that fails is logged and the next still runs.
+    fn tick(&mut self, cleanup_now: bool) {
         if self.stopped.load(Ordering::SeqCst) {
             return;
         }
         self.compress_finished();
+        if self.stopped.load(Ordering::SeqCst) {
+            return;
+        }
+        let due = self
+            .cleaned_at
+            .is_none_or(|at| at.elapsed() >= self.timing.cleanup_every);
+        if cleanup_now || due {
+            self.cleaned_at = Some(Instant::now());
+            self.cleanup();
+        }
+    }
+
+    /// Runs the retention cleanup with the limits in the settings file as they are now, not as they were when
+    /// the nudge was sent and not as a preview listed them. With no limit set nothing happens.
+    fn cleanup(&self) {
+        let settings = crate::settings::load(&self.shared.home);
+        let limits = RetentionLimits {
+            limit_gb: settings.history_limit_gb,
+            limit_days: settings.history_limit_days,
+        };
+        if (limits.limit_gb.is_none() && limits.limit_days.is_none()) || !self.shared.history.is_on() {
+            return;
+        }
+        let items = self.shared.collect();
+        let chosen = retention::plan(&items, &limits, retention::unix_ms(SystemTime::now()));
+        let run = retention::apply(&items, &chosen);
+        *self.shared.last_cleanup.lock().unwrap() = Some(run);
     }
 
     /// Compresses the finished plain recordings, one at a time, oldest first.
     fn compress_finished(&self) {
-        let dir = paths::recordings_dir(&self.home);
+        let dir = paths::recordings_dir(&self.shared.home);
         // The folder first, the open set second: a recording that finishes in between reads as open or as
         // finished, and one that starts in between isn't listed.
         let listed = compress::list_plain(&dir);
         if listed.is_empty() {
             return;
         }
-        let open = (self.open)();
+        let open = (self.shared.open)().recordings;
         for path in compress::select_finished(listed, &open, SystemTime::now(), self.timing.settle) {
             if self.stopped.load(Ordering::SeqCst) {
                 return;
@@ -185,7 +260,6 @@ impl Worker {
 mod tests {
     use super::*;
     use std::fs::File;
-    use std::time::Instant;
 
     fn timing() -> StorageTiming {
         StorageTiming {
@@ -206,6 +280,15 @@ mod tests {
         what()
     }
 
+    fn start(home: &std::path::Path, open: Open) -> Arc<Storage> {
+        Storage::start_with(
+            home.to_path_buf(),
+            Arc::new(History::open(home)),
+            Arc::new(move || open.clone()),
+            timing(),
+        )
+    }
+
     #[test]
     fn a_tick_compresses_a_finished_recording_and_skips_an_open_one() {
         let home = tempfile::tempdir().unwrap();
@@ -214,12 +297,12 @@ mod tests {
         let open = dir.join("t1-1000.cast");
         std::fs::write(&open, b"open").unwrap();
         std::fs::write(dir.join("t2-2000.cast"), b"finished").unwrap();
-        let open_set: HashSet<PathBuf> = [open.clone()].into();
-        let storage = Storage::start_with(
-            home.path().to_path_buf(),
-            Arc::new(History::open(home.path())),
-            Arc::new(move || open_set.clone()),
-            timing(),
+        let storage = start(
+            home.path(),
+            Open {
+                recordings: [open.clone()].into(),
+                tabs: HashSet::new(),
+            },
         );
         storage.nudge(Nudge::Tick);
         assert!(wait_for(
@@ -246,12 +329,7 @@ mod tests {
         for i in 0..20 {
             std::fs::write(dir.join(format!("t{i}-{}.cast", 1000 + i)), &body).unwrap();
         }
-        let storage = Storage::start_with(
-            home.path().to_path_buf(),
-            Arc::new(History::open(home.path())),
-            Arc::new(HashSet::new),
-            timing(),
-        );
+        let storage = start(home.path(), Open::default());
         storage.nudge(Nudge::Tick);
         storage.halt();
         let started = Instant::now();
@@ -263,5 +341,90 @@ mod tests {
             assert!(plain.exists() || zst.exists(), "file {i} was lost");
             assert!(!dir.join(format!("t{i}-{}.cast.zst.tmp", 1000 + i)).exists());
         }
+    }
+
+    /// Writes an old recording and a new one, and saves `limits` in the settings file.
+    fn seed_retention(home: &std::path::Path, limits: (Option<u32>, Option<u32>)) -> (PathBuf, PathBuf) {
+        let dir = paths::recordings_dir(home);
+        std::fs::create_dir_all(&dir).unwrap();
+        let (old, new) = (dir.join("t1-1000.cast.zst"), dir.join("t2-2000.cast.zst"));
+        for (path, age_days) in [(&old, 40), (&new, 1)] {
+            std::fs::write(path, b"recording").unwrap();
+            File::options()
+                .write(true)
+                .open(path)
+                .unwrap()
+                .set_modified(SystemTime::now() - Duration::from_secs(age_days * 86_400))
+                .unwrap();
+        }
+        let settings = marshell_protocol::api::Settings {
+            history_limit_gb: limits.0,
+            history_limit_days: limits.1,
+            ..Default::default()
+        };
+        crate::settings::save(home, &settings).unwrap();
+        (old, new)
+    }
+
+    #[test]
+    fn the_first_tick_runs_the_cleanup_with_the_saved_limits() {
+        let home = tempfile::tempdir().unwrap();
+        let (old, new) = seed_retention(home.path(), (None, Some(30)));
+        let storage = start(home.path(), Open::default());
+        assert!(wait_for(|| storage.last_cleanup().is_some()));
+        let run = storage.last_cleanup().unwrap();
+        assert_eq!((run.files, run.bytes), (1, 9));
+        assert!(!old.exists());
+        assert!(new.exists());
+        storage.stop();
+    }
+
+    #[test]
+    fn no_limit_means_no_cleanup_and_no_last_run() {
+        let home = tempfile::tempdir().unwrap();
+        let (old, _) = seed_retention(home.path(), (None, None));
+        let storage = start(home.path(), Open::default());
+        storage.nudge(Nudge::Cleanup);
+        std::thread::sleep(Duration::from_millis(300));
+        assert!(old.exists());
+        assert_eq!(storage.last_cleanup(), None);
+        // Saving a limit and nudging runs it at once, ahead of the next daily run.
+        let settings = marshell_protocol::api::Settings {
+            history_limit_days: Some(30),
+            ..Default::default()
+        };
+        crate::settings::save(home.path(), &settings).unwrap();
+        storage.nudge(Nudge::Cleanup);
+        assert!(wait_for(|| storage.last_cleanup().is_some()));
+        assert!(!old.exists());
+        storage.stop();
+    }
+
+    #[test]
+    fn a_cleanup_never_removes_an_open_recording_or_an_open_tabs_images() {
+        let home = tempfile::tempdir().unwrap();
+        let dir = paths::recordings_dir(home.path());
+        let (old, _) = seed_retention(home.path(), (None, Some(30)));
+        let image = paths::attachments_dir(home.path()).join("t9").join("a.png");
+        std::fs::create_dir_all(image.parent().unwrap()).unwrap();
+        std::fs::write(&image, b"png").unwrap();
+        File::options()
+            .write(true)
+            .open(&image)
+            .unwrap()
+            .set_modified(SystemTime::now() - Duration::from_secs(90 * 86_400))
+            .unwrap();
+        let storage = start(
+            home.path(),
+            Open {
+                recordings: [dir.join("t1-1000.cast")].into(),
+                tabs: ["t9".to_owned()].into(),
+            },
+        );
+        assert!(wait_for(|| storage.last_cleanup().is_some()));
+        assert_eq!(storage.last_cleanup().unwrap().files, 0);
+        assert!(old.exists());
+        assert!(image.exists());
+        storage.stop();
     }
 }

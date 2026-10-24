@@ -338,19 +338,30 @@ impl AppState {
     }
     /// Starts the storage thread. Does nothing when history is off for this run, or when it is already running.
     pub fn start_storage(&self) {
+        self.start_storage_with(crate::history::storage::StorageTiming::default());
+    }
+
+    /// Like `start_storage`, with the given timing (tests shorten it).
+    pub fn start_storage_with(&self, timing: crate::history::storage::StorageTiming) {
         if !self.0.history.is_on() {
             return;
         }
-        // Weak, so the thread's source of open recordings doesn't keep the state alive.
+        // Weak, so the thread's source of what is in use doesn't keep the state alive.
         let weak = Arc::downgrade(&self.0);
-        let open: crate::history::storage::OpenRecordings = Arc::new(move || {
+        let open: crate::history::storage::OpenNow = Arc::new(move || {
             weak.upgrade()
-                .map(|inner| AppState(inner).open_recordings())
+                .map(|inner| {
+                    let state = AppState(inner);
+                    crate::history::storage::Open {
+                        recordings: state.open_recordings(),
+                        tabs: state.0.sessions.lock().unwrap().keys().cloned().collect(),
+                    }
+                })
                 .unwrap_or_default()
         });
         self.0.storage.get_or_init(|| {
             let home = self.0.history.home().to_path_buf();
-            crate::history::storage::Storage::start(home, self.0.history.clone(), open)
+            crate::history::storage::Storage::start_with(home, self.0.history.clone(), open, timing)
         });
     }
     /// Starts the importer on `roots`, with the switch from the settings. Does nothing when history is off for
@@ -615,6 +626,7 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/agents/{agent}/hooks/remove-plan", post(agents::remove_plan))
         .route("/v1/history", get(history::list))
         .route("/v1/history/import", get(history::import_status))
+        .route("/v1/history/storage/preview", post(history::storage_preview))
         .route("/v1/history/search", get(history::search))
         .route("/v1/history/bookmarks", get(history::bookmarks))
         .route(
