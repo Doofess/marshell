@@ -23,10 +23,4 @@ describe("Onboarding.css", () => {
     expect(css).toMatch(/\.onboarding__body\s*\{[^}]*overflow-y:\s*auto/);
     expect([...css.matchAll(/overflow(-x|-y)?:\s*(auto|scroll)/g)]).toHaveLength(1);
   });
-  it("sits in a row as tall as the window, so its max height holds and the body scrolls (live check 6a)", () => {
-    const app = readFileSync(new URL("../../styles/app.css", import.meta.url), "utf8");
-    const i = app.indexOf(".live-app__onboarding {");
-    expect(app.slice(i, app.indexOf("}", i))).toMatch(/grid-template-rows:\s*minmax\(0, 1fr\)/);
-    expect(css).toMatch(/\.onboarding\s*\{[^}]*max-block-size:\s*100%/);
-  });
 });

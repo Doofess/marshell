@@ -4,6 +4,7 @@
   inset: 0;
   z-index: 20;
   display: grid;
+  grid-template-rows: minmax(0, 1fr);
   place-items: center;
   padding: var(--space-4);
   color: var(--text-1);
