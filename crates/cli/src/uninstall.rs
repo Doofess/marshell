@@ -164,20 +164,28 @@ pub fn run(
             return 1;
         }
     };
-    // Codex's hooks.json. Nothing about its config.toml is read or written here.
+    // Codex's hooks.json. Nothing about its config.toml is read or written here. A file that can't be
+    // read or planned from is reported and left alone; Claude Code's removal goes on without it, and
+    // the bin folder stays, because Codex's entries may still point at the bridge.
     let codex_file = codex_hooks::hooks_path(env, user_home);
-    let codex_text = match read_text(&codex_file) {
-        Ok(text) => text,
+    let codex = read_text(&codex_file).and_then(|text| {
+        codex_hooks::remove_plan(&codex_file, text.as_deref(), home)
+            .map(|changes| (text, changes))
+            .map_err(|e| e.to_string())
+    });
+    let (codex_text, codex_changes, codex_failed) = match codex {
+        Ok((text, changes)) => (text, changes, false),
         Err(e) => {
             let _ = writeln!(out, "{e}");
-            return 1;
-        }
-    };
-    let codex_changes = match codex_hooks::remove_plan(&codex_file, codex_text.as_deref(), home) {
-        Ok(changes) => changes,
-        Err(e) => {
-            let _ = writeln!(out, "{e}");
-            return 1;
+            (
+                None,
+                ChangeSet {
+                    title: String::new(),
+                    reason: String::new(),
+                    edits: Vec::new(),
+                },
+                true,
+            )
         }
     };
     let claude_empty = plan.changes.edits.is_empty();
@@ -195,7 +203,18 @@ pub fn run(
         };
     }
     let bin = paths::bin_dir(home);
-    let has_bin = bin.exists();
+    let has_bin = bin.exists() && !codex_failed;
+    // Non-zero when something was left, so a script notices.
+    let ok = i32::from(codex_failed);
+    let keep_note = |out: &mut dyn Write| {
+        if codex_failed && bin.exists() {
+            let _ = writeln!(
+                out,
+                "The folder {} was left in place, because Codex's hooks may still point at it.",
+                bin.display()
+            );
+        }
+    };
     let left_note = "Your status line was changed since the setup and was left as it is.";
 
     if plan.changes.edits.is_empty() {
@@ -206,7 +225,8 @@ pub fn run(
             let _ = writeln!(out, "{left_note}");
         }
         if !has_bin {
-            return 0;
+            keep_note(out);
+            return ok;
         }
         let _ = writeln!(
             out,
@@ -218,7 +238,7 @@ pub fn run(
             return 1;
         }
         remove_bin(home, out);
-        return 0;
+        return ok;
     }
 
     let service = ConfigService::new(home.to_path_buf());
@@ -305,8 +325,12 @@ pub fn run(
             return 1;
         }
     }
-    remove_bin(home, out);
-    0
+    if has_bin {
+        remove_bin(home, out);
+    } else {
+        keep_note(out);
+    }
+    ok
 }
 
 #[cfg(test)]
@@ -497,6 +521,61 @@ mod tests {
         assert_eq!(std::fs::read_to_string(&f.settings).unwrap(), ORIGINAL);
         let after = std::fs::read_to_string(&codex).unwrap();
         assert!(after.contains("my-stop") && !after.contains("mshl1"), "{after}");
+    }
+
+    /// A `hooks.json` Marshell can't plan from, in the place Codex's hooks go.
+    fn broken_codex(f: &Fixture) -> (PathBuf, &'static str) {
+        let broken = "{ \"hooks\": [oops\n";
+        let path = marshell_core::agents::codex::hooks::hooks_path(&no_env, &f.user_home);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, broken).unwrap();
+        (path, broken)
+    }
+
+    #[test]
+    fn a_codex_file_that_does_not_parse_does_not_stop_claudes_removal() {
+        let f = installed(ORIGINAL);
+        let (codex, broken) = broken_codex(&f);
+        let (code, out) = run_with(&f, "y\n", false);
+        // Codex's file is reported by name and left byte for byte as it was.
+        assert!(
+            out.contains(&*codex.to_string_lossy()) && out.contains("does not parse"),
+            "{out}"
+        );
+        assert_eq!(std::fs::read_to_string(&codex).unwrap(), broken);
+        // Claude's hooks still came out, after the usual confirmation.
+        assert_eq!(out.matches("Apply these changes?").count(), 1, "{out}");
+        assert_eq!(std::fs::read_to_string(&f.settings).unwrap(), ORIGINAL);
+        // Codex's entries may still point at the bridge, so bin stays, and the exit says so.
+        assert!(marshell_core::paths::bridge_exe(&f.home).exists());
+        assert!(out.contains("left in place"), "{out}");
+        assert_ne!(code, 0, "{out}");
+    }
+
+    #[test]
+    fn a_codex_file_that_does_not_parse_and_answer_no_changes_nothing() {
+        let f = installed(ORIGINAL);
+        let installed_text = std::fs::read_to_string(&f.settings).unwrap();
+        let (codex, broken) = broken_codex(&f);
+        let (code, out) = run_with(&f, "n\n", false);
+        assert_ne!(code, 0, "{out}");
+        assert!(out.contains("Nothing changed."), "{out}");
+        assert_eq!(std::fs::read_to_string(&f.settings).unwrap(), installed_text);
+        assert_eq!(std::fs::read_to_string(&codex).unwrap(), broken);
+        assert!(marshell_core::paths::bridge_exe(&f.home).exists());
+    }
+
+    #[test]
+    fn a_codex_file_that_does_not_parse_keeps_bin_even_with_no_claude_hooks() {
+        let f = installed(ORIGINAL);
+        std::fs::write(&f.settings, ORIGINAL).unwrap();
+        let (_, broken) = broken_codex(&f);
+        let (code, out) = run_with(&f, "y\n", false);
+        assert_ne!(code, 0, "{out}");
+        assert!(marshell_core::paths::bridge_exe(&f.home).exists(), "{out}");
+        assert!(out.contains("left in place"), "{out}");
+        assert!(!out.contains("will be removed"), "{out}");
+        let _ = broken;
     }
 
     #[test]
