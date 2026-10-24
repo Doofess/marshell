@@ -127,6 +127,8 @@ struct Inner {
     history: Arc<crate::history::recorder::History>,
     /// Copies conversations run outside Marshell; started once, after the backfill.
     importer: std::sync::OnceLock<Arc<crate::history::import::Importer>>,
+    /// Compresses finished recordings and keeps the history within its limits; started once, at startup.
+    storage: std::sync::OnceLock<Arc<crate::history::storage::Storage>>,
     /// Claude Code's settings file when a test or a caller names one; None means
     /// `MARSHELL_CLAUDE_SETTINGS`, else `~/.claude/settings.json`.
     claude_settings: Option<PathBuf>,
@@ -212,6 +214,7 @@ impl AppState {
             config,
             history,
             importer: std::sync::OnceLock::new(),
+            storage: std::sync::OnceLock::new(),
             claude_settings: None,
             claude_compact_paths: None,
             programs_dir: None,
@@ -328,6 +331,27 @@ impl AppState {
     /// The sessions index and the transcript archive.
     pub fn history(&self) -> Arc<crate::history::recorder::History> {
         self.0.history.clone()
+    }
+    /// The storage thread. None until `start_storage`, and when history is off for this run.
+    pub fn storage(&self) -> Option<Arc<crate::history::storage::Storage>> {
+        self.0.storage.get().cloned()
+    }
+    /// Starts the storage thread. Does nothing when history is off for this run, or when it is already running.
+    pub fn start_storage(&self) {
+        if !self.0.history.is_on() {
+            return;
+        }
+        // Weak, so the thread's source of open recordings doesn't keep the state alive.
+        let weak = Arc::downgrade(&self.0);
+        let open: crate::history::storage::OpenRecordings = Arc::new(move || {
+            weak.upgrade()
+                .map(|inner| AppState(inner).open_recordings())
+                .unwrap_or_default()
+        });
+        self.0.storage.get_or_init(|| {
+            let home = self.0.history.home().to_path_buf();
+            crate::history::storage::Storage::start(home, self.0.history.clone(), open)
+        });
     }
     /// Starts the importer on `roots`, with the switch from the settings. Does nothing when history is off for
     /// this run, or when one is already running.
@@ -704,6 +728,9 @@ impl RunningCore {
         if let Some(importer) = self.state.0.importer.get() {
             importer.halt();
         }
+        if let Some(storage) = self.state.0.storage.get() {
+            storage.halt();
+        }
         // After the kill, so Claude has stopped writing: a copy still waiting to settle runs now, and a reply
         // given just before closing is kept. It returns at once when nothing is pending.
         self.state.history().flush(Duration::from_secs(3));
@@ -803,6 +830,7 @@ pub async fn start(cfg: CoreConfig) -> anyhow::Result<RunningCore> {
     if let Some(roots) = cfg.import {
         state.start_importer(roots);
     }
+    state.start_storage();
     let notifier = cfg.notify.map(|sink| crate::notify::spawn(state.clone(), sink));
     let stuck_state = state.clone();
     let stuck_tick = tokio::spawn(async move {

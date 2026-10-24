@@ -15,6 +15,7 @@ pub mod index;
 pub mod marks;
 pub mod recorder;
 pub mod recordings;
+pub mod storage;
 
 /// What Marshell knows about one agent conversation. Stored as the `<id>.meta.json` sidecar.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
