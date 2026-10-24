@@ -638,8 +638,32 @@ impl History {
                 Err(err)
             }
         };
-        self.copying.lock().unwrap().remove(&meta.session_id);
+        self.finish_copying(&meta.session_id);
         result
+    }
+
+    /// Ends an import's hold on the session. A hook copy asked for meanwhile waited on it (`schedule_copy` only
+    /// queues behind a running copy), so it runs here, as `schedule_copy`'s own loop would run it.
+    fn finish_copying(&self, session_id: &str) {
+        loop {
+            let next = {
+                let mut copying = self.copying.lock().unwrap();
+                match copying.get_mut(session_id).and_then(Option::take) {
+                    Some(next) => next,
+                    None => {
+                        copying.remove(session_id);
+                        return;
+                    }
+                }
+            };
+            let settle = *self.settle.lock().unwrap();
+            self.settle_wait(settle);
+            match archive::copy_transcript(&self.home, &next) {
+                Ok(_) if !self.hurry.load(Ordering::SeqCst) => self.reindex(&next),
+                Ok(_) => {}
+                Err(err) => tracing::warn!("could not archive transcript {session_id}: {err:#}"),
+            }
+        }
     }
 
     /// Indexes, newest first and one at a time on a blocking thread, every session whose archive the index
@@ -1045,6 +1069,28 @@ mod tests {
         assert_eq!(listed.len(), 1);
         assert_eq!((listed[0].turns, listed[0].branch.as_deref()), (1, Some("main")));
         assert!(!listed[0].limited);
+    }
+
+    #[test]
+    fn a_hook_copy_asked_for_during_an_import_still_runs() {
+        let home = tempfile::tempdir().unwrap();
+        let history = History::open(home.path());
+        history.set_settle(Duration::from_millis(20));
+        let mut hook = stopped(&history, home.path(), ID, TOOLS, 2000);
+        hook.recordings.push(RecordingLink {
+            file: "t1-1.cast".into(),
+            first_ms: 1,
+            last_ms: 2,
+        });
+        // An import holds the session, and a hook asks for a copy meanwhile: schedule_copy leaves it waiting.
+        history.copying.lock().unwrap().insert(ID.into(), Some(hook));
+        history.finish_copying(ID);
+        assert!(history.is_idle());
+        let meta = crate::history::archive::read_meta(home.path(), "claude", ID)
+            .unwrap()
+            .unwrap();
+        assert_eq!(meta.recordings.len(), 1, "the waiting hook copy was dropped");
+        assert_eq!(history.search("typo", false, false).unwrap().len(), 1);
     }
 
     #[tokio::test]
