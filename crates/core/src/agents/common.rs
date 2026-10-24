@@ -210,10 +210,7 @@ pub fn version_gate(name: &str, known: &[(u32, u32, u32)], version: Option<&str>
         };
         let mut parts = core.split('.').map(|p| p.parse::<u32>().ok());
         let triple = (parts.next()??, parts.next()??, parts.next()??);
-        parts
-            .next()
-            .is_none()
-            .then_some((v, triple, suffix.starts_with('-')))
+        parts.next().is_none().then_some((v, triple, suffix.starts_with('-')))
     });
     let Some((v, (major, minor, patch), prerelease)) = parsed else {
         return Gate::Unknown(format!("{name}'s version could not be read"));
