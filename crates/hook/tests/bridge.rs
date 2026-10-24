@@ -4,7 +4,7 @@ use std::io::Cursor;
 use std::time::{Duration, Instant};
 
 use common::{Reply, argv, env_of, refused_port, serve, write_endpoint};
-use marshell_hook::run;
+use marshell_hook::{run, run_with};
 
 const WAIT: Duration = Duration::from_secs(2);
 
@@ -160,6 +160,67 @@ fn a_codex_permission_without_tab_prints_nothing() {
         "the bridge posted without a tab"
     );
     assert!(log_lines(home.path()).is_empty());
+}
+
+const DAEMON_CHAIN: &[&str] = &[
+    r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe",
+    r"C:\Users\me\.codex\packages\app-server-daemon\releases\0.163.0\bin\codex.exe",
+    r"C:\Users\me\AppData\Local\Programs\OpenAI\Codex\bin\codex.exe",
+];
+const TUI_CHAIN: &[&str] = &[
+    r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe",
+    r"C:\Users\me\AppData\Local\Programs\OpenAI\Codex\bin\codex.exe",
+];
+
+/// `go` with a tab id and the given process chain above the bridge, parent first.
+fn go_under(home: &std::path::Path, chain: &[&str], args: Vec<String>, stdin: &[u8]) -> Vec<u8> {
+    let env = env_of(home, TAB);
+    let chain: Vec<String> = chain.iter().map(|p| (*p).to_owned()).collect();
+    run_with(&args, &mut Cursor::new(stdin.to_vec()), &env, &|| chain.clone())
+}
+
+fn codex(role: &str) -> Vec<String> {
+    [role, "--agent", "codex", "--tag", "mshl1"].map(String::from).to_vec()
+}
+
+#[test]
+fn a_codex_event_from_the_shared_daemon_posts_with_no_tab() {
+    // The daemon keeps the tab id of the Codex that started it, so the hook may be another tab's.
+    let home = tempfile::tempdir().unwrap();
+    let fake = serve(Reply::new(204, ""));
+    write_endpoint(home.path(), fake.port, "t");
+    assert!(go_under(home.path(), DAEMON_CHAIN, codex("event"), b"{}").is_empty());
+    let c = fake.captured(WAIT).expect("no request");
+    assert_eq!(c.headers["x-marshell-agent"], "codex");
+    assert!(!c.headers.contains_key("x-marshell-tab"));
+}
+
+#[test]
+fn a_codex_permission_from_the_shared_daemon_prints_nothing() {
+    let home = tempfile::tempdir().unwrap();
+    let fake = serve(Reply::new(200, &decision(r#"{"behavior":"allow"}"#)));
+    write_endpoint(home.path(), fake.port, "t");
+    let request = br#"{"hook_event_name":"PermissionRequest","tool_name":"Bash","tool_input":{"command":"dir"}}"#;
+    assert!(go_under(home.path(), DAEMON_CHAIN, codex("permission"), request).is_empty());
+    assert!(
+        fake.captured(Duration::from_millis(300)).is_none(),
+        "the bridge posted for another tab"
+    );
+    assert!(log_lines(home.path()).is_empty());
+}
+
+#[test]
+fn the_tab_stands_for_codex_without_the_daemon_and_for_claude() {
+    for (chain, args) in [(TUI_CHAIN, codex("event")), (DAEMON_CHAIN, argv("event"))] {
+        let home = tempfile::tempdir().unwrap();
+        let fake = serve(Reply::new(204, ""));
+        write_endpoint(home.path(), fake.port, "t");
+        go_under(home.path(), chain, args, b"{}");
+        assert_eq!(
+            fake.captured(WAIT).expect("no request").headers["x-marshell-tab"],
+            "tab1"
+        );
+    }
 }
 
 #[test]

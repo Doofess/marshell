@@ -488,7 +488,14 @@ fn build_argv(
     let program = agent_command(agent).ok_or_else(|| format!("Unknown agent: {agent}."))?;
     let mut program_line = program.to_string();
     let mode_flags = mode.map_or(&[][..], |m| mode_args(agent, m));
-    for arg in extra.iter().map(String::as_str).chain(mode_flags.iter().copied()) {
+    // Codex's shared daemon runs every session's hooks with the first tab's id (slice 6a decision 12).
+    let own_server: &[&str] = if agent == "codex" { &["--no-daemon"] } else { &[] };
+    for arg in extra
+        .iter()
+        .map(String::as_str)
+        .chain(own_server.iter().copied())
+        .chain(mode_flags.iter().copied())
+    {
         program_line.push(' ');
         program_line.push_str(arg);
     }
@@ -730,7 +737,7 @@ mod tests {
         let cmd = profile("cmd", &["cmd.exe"], ShellFamily::Cmd);
         assert_eq!(
             launch_argv(&cmd, Some("codex"), None, None).unwrap(),
-            ["cmd.exe", "/k", "codex"]
+            ["cmd.exe", "/k", "codex --no-daemon"]
         );
     }
 
@@ -826,7 +833,7 @@ mod tests {
                 "--exec",
                 "bash",
                 "-lc",
-                "codex 'hi'; exec bash -l"
+                "codex --no-daemon 'hi'; exec bash -l"
             ]
         );
     }
@@ -939,7 +946,11 @@ mod tests {
         assert_eq!(argv.last().unwrap(), "& claude --continue");
         let sh = profile("bash", &["bash"], ShellFamily::Posix);
         let argv = launch_argv_resume(&sh, Some("codex"), None, ResumeTarget::Last).unwrap();
-        assert!(argv.last().unwrap().starts_with("codex resume --last; exec"));
+        assert!(
+            argv.last()
+                .unwrap()
+                .starts_with("codex resume --last --no-daemon; exec")
+        );
         let cmd = profile("cmd", &["cmd.exe"], ShellFamily::Cmd);
         assert_eq!(
             launch_argv_resume(&cmd, Some("claude"), None, ResumeTarget::Last).unwrap(),
@@ -966,7 +977,7 @@ mod tests {
             "& claude --resume abc-1 --permission-mode bypassPermissions"
         );
         let argv = launch_argv_resume(&ps, Some("codex"), None, by_id).unwrap();
-        assert_eq!(argv.last().unwrap(), "& codex resume abc-1");
+        assert_eq!(argv.last().unwrap(), "& codex resume abc-1 --no-daemon");
     }
 
     #[test]
@@ -1025,6 +1036,16 @@ mod tests {
     }
 
     #[test]
+    fn codex_starts_with_its_own_app_server() {
+        // In Codex's shared daemon every session's hooks carry the first tab's id (slice 6a decision 12).
+        let ps = profile("pwsh", &["pwsh.exe"], ShellFamily::PowerShell);
+        let argv = launch_argv(&ps, Some("codex"), Some("hi"), Some(SessionMode::Manual)).unwrap();
+        assert!(argv.last().unwrap().starts_with("& codex --no-daemon "), "{argv:?}");
+        let argv = launch_argv(&ps, Some("claude"), None, None).unwrap();
+        assert!(!argv.last().unwrap().contains("--no-daemon"));
+    }
+
+    #[test]
     fn resume_puts_the_mode_flags_after_the_resume_args() {
         let ps = profile("pwsh", &["pwsh.exe"], ShellFamily::PowerShell);
         let argv = launch_argv_resume(&ps, Some("claude"), Some(SessionMode::Bypass), ResumeTarget::Last).unwrap();
@@ -1033,7 +1054,10 @@ mod tests {
             "& claude --continue --permission-mode bypassPermissions"
         );
         let argv = launch_argv_resume(&ps, Some("codex"), Some(SessionMode::FullAuto), ResumeTarget::Last).unwrap();
-        assert_eq!(argv.last().unwrap(), "& codex resume --last --approve-for-me");
+        assert_eq!(
+            argv.last().unwrap(),
+            "& codex resume --last --no-daemon --approve-for-me"
+        );
     }
 
     #[test]
