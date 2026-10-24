@@ -122,51 +122,110 @@ fn ours_of(root: &Value) -> Vec<(&str, &Value)> {
     entries_of(root).filter(|(_, e)| is_ours(e)).collect()
 }
 
-/// The pointers that take Marshell's entries out, highest index first so none shifts another.
-/// A group holding nothing else goes whole. With `prune`, an event left without groups goes, and
-/// `/hooks` itself when every event in it went.
-fn removal_pointers(root: &Value, prune: bool) -> Vec<String> {
-    let Some(hooks) = root.get("hooks").and_then(Value::as_object) else {
-        return Vec::new();
+/// A group made only of Marshell's entries, with nothing else in it.
+fn is_whole(group: &Value) -> bool {
+    let Some(entries) = group.get("hooks").and_then(Value::as_array) else {
+        return false;
     };
-    let mut out = Vec::new();
-    let mut events_gone = 0;
-    for (event, groups) in hooks {
-        let Some(groups) = groups.as_array() else { continue };
-        let event_pointer = format!("/hooks/{}", esc(event));
-        let mut ops = Vec::new();
-        let mut groups_gone = 0;
-        let mut found = false;
-        for (gi, group) in groups.iter().enumerate().rev() {
-            let Some(entries) = group.get("hooks").and_then(Value::as_array) else {
-                continue;
-            };
-            let ours: Vec<usize> = (0..entries.len()).filter(|&i| is_ours(&entries[i])).collect();
-            if ours.is_empty() {
-                continue;
-            }
-            found = true;
-            if ours.len() == entries.len() && group.as_object().is_some_and(|o| o.len() == 1) {
-                ops.push(format!("{event_pointer}/{gi}"));
-                groups_gone += 1;
-            } else {
-                ops.extend(ours.iter().rev().map(|ei| format!("{event_pointer}/{gi}/hooks/{ei}")));
-            }
-        }
-        if !found {
+    !entries.is_empty() && entries.iter().all(is_ours) && group.as_object().is_some_and(|o| o.len() == 1)
+}
+
+/// What happens to one event's groups. Codex keys its trust by group position, so a group may only
+/// leave when nothing after it stays: otherwise every later group would shift, and Codex would ask
+/// the person to trust them again. A Marshell group with a group after it that stays becomes
+/// `{"hooks": []}`, which Codex accepts and counts. With `wanted`, the first Marshell group is set
+/// to it where it stands. An entry sharing a group with the user's own comes out alone, and the
+/// group stays.
+struct EventChange {
+    /// Highest group first, so no edit shifts one that follows.
+    ops: Vec<EditOp>,
+    found: bool,
+    groups_gone: usize,
+    /// `wanted` was set at an existing Marshell group.
+    replaced: bool,
+}
+
+fn event_change(event_pointer: &str, groups: &[Value], wanted: Option<&Value>) -> EventChange {
+    let target = wanted.and_then(|_| groups.iter().position(is_whole));
+    let mut change = EventChange {
+        ops: Vec::new(),
+        found: false,
+        groups_gone: 0,
+        replaced: false,
+    };
+    // Nothing after the group being looked at stays.
+    let mut tail_clear = true;
+    for (gi, group) in groups.iter().enumerate().rev() {
+        let entries = group
+            .get("hooks")
+            .and_then(Value::as_array)
+            .map_or(&[][..], Vec::as_slice);
+        let ours: Vec<usize> = (0..entries.len()).filter(|&i| is_ours(&entries[i])).collect();
+        if ours.is_empty() {
+            tail_clear = false;
             continue;
         }
-        if prune && groups_gone == groups.len() {
-            out.push(event_pointer);
+        change.found = true;
+        let pointer = format!("{event_pointer}/{gi}");
+        if !is_whole(group) {
+            change
+                .ops
+                .extend(ours.iter().rev().map(|ei| remove_op(format!("{pointer}/hooks/{ei}"))));
+        } else if Some(gi) == target {
+            if let Some(wanted) = wanted.filter(|w| *w != group) {
+                change.ops.push(set(pointer, wanted));
+            }
+            change.replaced = true;
+        } else if tail_clear {
+            change.ops.push(remove_op(pointer));
+            change.groups_gone += 1;
+            continue;
+        } else {
+            change.ops.push(set(pointer, &json!({ "hooks": [] })));
+        }
+        tail_clear = false;
+    }
+    change
+}
+
+/// The edits that take Marshell's entries out of the events `in_scope` names. `wanted` gives an
+/// event's group to set at its first Marshell group instead; the events where it did are returned.
+/// With `prune`, an event whose groups all went goes, and `/hooks` itself when every event in it went.
+fn removal_ops(
+    root: &Value,
+    prune: bool,
+    in_scope: &dyn Fn(&str) -> bool,
+    wanted: &dyn Fn(&str) -> Option<Value>,
+) -> (Vec<EditOp>, Vec<String>) {
+    let Some(hooks) = root.get("hooks").and_then(Value::as_object) else {
+        return (Vec::new(), Vec::new());
+    };
+    let mut out = Vec::new();
+    let mut replaced = Vec::new();
+    let mut events_gone = 0;
+    for (event, groups) in hooks {
+        let Some(groups) = groups.as_array().filter(|_| in_scope(event)) else {
+            continue;
+        };
+        let event_pointer = format!("/hooks/{}", esc(event));
+        let change = event_change(&event_pointer, groups, wanted(event).as_ref());
+        if !change.found {
+            continue;
+        }
+        if change.replaced {
+            replaced.push(event.clone());
+        }
+        if prune && change.groups_gone == groups.len() {
+            out.push(remove_op(event_pointer));
             events_gone += 1;
         } else {
-            out.extend(ops);
+            out.extend(change.ops);
         }
     }
     if prune && events_gone > 0 && events_gone == hooks.len() {
-        return vec!["/hooks".to_string()];
+        return (vec![remove_op("/hooks".to_string())], replaced);
     }
-    out
+    (out, replaced)
 }
 
 // ---- inspect ----
@@ -236,9 +295,10 @@ fn remove_op(pointer: String) -> EditOp {
 /// The plan for status hooks and optional approval hooks. Status off leaves status alone, and
 /// `want.statusline` is ignored, because Codex has no status line.
 ///
-/// Marshell's existing entries come out first (so a rerun never duplicates), then one group per
-/// event goes in at the end, after the user's own. A file that already holds exactly what is asked
-/// for gets no edits.
+/// Where an event already has a Marshell group, the wanted group is set at that position and the
+/// user's groups stay where they are (Codex keys its trust by position). Other Marshell entries come
+/// out as in `remove_plan`, and an event without a Marshell group gets one at the end, after the
+/// user's own. A file that already holds exactly what is asked for gets no edits.
 pub fn install_plan(
     path: &Path,
     text: Option<&str>,
@@ -273,14 +333,13 @@ pub fn install_plan(
         });
     }
 
-    let mut ops: Vec<EditOp> = removal_pointers(&root, false)
-        .into_iter()
-        .filter(|p| want.status || p.starts_with("/hooks/PermissionRequest/"))
-        .map(remove_op)
-        .collect();
+    let group_of = |event: &str| json!({ "hooks": [hook_entry(home, event)] });
+    let (mut ops, replaced_in_place) = removal_ops(&root, false, &replaced, &|event| {
+        events.contains(&event).then(|| group_of(event))
+    });
     let existing = root.get("hooks").and_then(Value::as_object);
-    for event in &events {
-        let group = json!({ "hooks": [hook_entry(home, event)] });
+    for event in events.iter().filter(|e| !replaced_in_place.iter().any(|r| r == **e)) {
+        let group = group_of(event);
         if existing.is_some_and(|h| h.contains_key(*event)) {
             ops.push(set(format!("/hooks/{}/-", esc(event)), &group));
         } else {
@@ -315,11 +374,12 @@ pub fn install_plan(
     })
 }
 
-/// The plan that takes Marshell's entries out and leaves the user's own.
+/// The plan that takes Marshell's entries out and leaves the user's own, each at the position it
+/// had: a Marshell group with one of the user's after it becomes an empty group.
 pub fn remove_plan(path: &Path, text: Option<&str>, _home: &Path) -> Result<ChangeSet, PlanError> {
     let title = "Turn Codex hooks off".to_string();
     let root = parse_hooks(path, text)?;
-    let ops: Vec<EditOp> = removal_pointers(&root, true).into_iter().map(remove_op).collect();
+    let (ops, _) = removal_ops(&root, true, &|_| true, &|_| None);
     if ops.is_empty() {
         return Ok(ChangeSet {
             title,
@@ -527,6 +587,74 @@ mod tests {
             assert_eq!(after.starts_with('\u{feff}'), text.starts_with('\u{feff}'));
             assert_eq!(after.contains("\r\n"), text.contains("\r\n"));
         }
+    }
+
+    /// Marshell's `Stop` group, as compact JSON.
+    fn ours_stop(home: &Path) -> String {
+        json!({ "hooks": [hook_entry(home, "Stop")] }).to_string()
+    }
+
+    #[test]
+    fn removal_keeps_a_later_user_group_in_place() {
+        for text in [plain(), bom(), crlf(), comments()] {
+            let home = fake_home();
+            let before = text.replacen(USER_GROUP, &format!("{},{USER_GROUP}", ours_stop(&home)), 1);
+            let cs = remove_plan(&file(), Some(&before), &home).unwrap();
+            let after = apply(&cs, Some(&before)).unwrap();
+            let v = value(&after);
+            assert_eq!(v["hooks"]["Stop"], json!([{ "hooks": [] }, value(USER_GROUP)]));
+            assert!(after.contains(USER_GROUP));
+            assert_eq!(after.starts_with('\u{feff}'), text.starts_with('\u{feff}'));
+            assert_eq!(after.contains("\r\n"), text.contains("\r\n"));
+        }
+    }
+
+    #[test]
+    fn removal_drops_a_trailing_group() {
+        let home = fake_home();
+        let before = plain().replacen(USER_GROUP, &format!("{USER_GROUP},{}", ours_stop(&home)), 1);
+        let cs = remove_plan(&file(), Some(&before), &home).unwrap();
+        let after = apply(&cs, Some(&before)).unwrap();
+        assert_eq!(value(&after)["hooks"]["Stop"], json!([value(USER_GROUP)]));
+    }
+
+    #[test]
+    fn an_event_with_a_placeholder_left_stays() {
+        let home = fake_home();
+        let ours = ours_stop(&home);
+        let before = format!(r#"{{"hooks":{{"Stop":[{ours},{USER_GROUP}],"SessionEnd":[{ours}]}}}}"#);
+        let cs = remove_plan(&file(), Some(&before), &home).unwrap();
+        let v = value(&apply(&cs, Some(&before)).unwrap());
+        assert_eq!(v["hooks"]["Stop"], json!([{ "hooks": [] }, value(USER_GROUP)]));
+        assert!(v["hooks"].get("SessionEnd").is_none());
+    }
+
+    #[test]
+    fn reinstall_replaces_ours_where_it_is() {
+        let home = fake_home();
+        let mut old = hook_entry(&home, "Stop");
+        old["timeout"] = json!(9);
+        let before = plain().replacen(USER_GROUP, &format!("{},{USER_GROUP}", json!({ "hooks": [old] })), 1);
+        let (_, after) = install(Some(&before), &home, &STATUS);
+        let after = after.unwrap();
+        let stop = value(&after)["hooks"]["Stop"].clone();
+        assert_eq!(
+            stop,
+            json!([{ "hooks": [hook_entry(&home, "Stop")] }, value(USER_GROUP)])
+        );
+        assert!(after.contains(USER_GROUP));
+    }
+
+    #[test]
+    fn install_after_a_placeholder_appends() {
+        let home = fake_home();
+        let before = plain().replacen(USER_GROUP, &format!(r#"{{"hooks":[]}},{USER_GROUP}"#), 1);
+        let (_, after) = install(Some(&before), &home, &STATUS);
+        let stop = value(&after.unwrap())["hooks"]["Stop"].clone();
+        assert_eq!(
+            stop,
+            json!([{ "hooks": [] }, value(USER_GROUP), { "hooks": [hook_entry(&home, "Stop")] }])
+        );
     }
 
     #[test]

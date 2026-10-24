@@ -308,6 +308,22 @@ mod tests {
     }
 
     #[test]
+    fn a_placeholder_counts_as_a_group() {
+        // Marshell's `Stop` entry sits after an empty group, so Codex keys it as `stop:1:0`.
+        let hooks = hooks_after(vec![json!({ "hooks": [] })]);
+        assert_eq!(
+            state_of(&hooks, Some(&config(&trusted_rows()))),
+            Some(HookTrust::Untrusted)
+        );
+        let mut rows = trusted_rows();
+        rows[0].0 = format!("{HOOKS_PATH}:stop:1:0");
+        assert_eq!(state_of(&hooks, Some(&config(&rows))), Some(HookTrust::Trusted));
+        // An empty group is not Marshell's.
+        let only_placeholder = json!({ "hooks": { "Stop": [{ "hooks": [] }] } });
+        assert_eq!(state_of(&only_placeholder, Some(&config(&rows))), None);
+    }
+
+    #[test]
     fn a_config_that_does_not_parse_gives_no_answer() {
         assert_eq!(state_of(&hooks(), Some("[hooks.state\nnot toml")), None);
     }
