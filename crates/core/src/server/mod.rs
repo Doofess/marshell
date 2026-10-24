@@ -694,9 +694,10 @@ impl RunningCore {
         for s in sessions {
             s.force_kill();
         }
-        // First, so it starts no new file; the flush below then waits for the one it is copying.
+        // First, so it starts no new file. It is not waited for: the file it is copying is registered with
+        // History, so the flush below waits for that copy, for 3 s at most; the flush's hurry also makes that copy skip its reindex.
         if let Some(importer) = self.state.0.importer.get() {
-            importer.stop();
+            importer.halt();
         }
         // After the kill, so Claude has stopped writing: a copy still waiting to settle runs now, and a reply
         // given just before closing is kept. It returns at once when nothing is pending.

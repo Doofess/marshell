@@ -103,6 +103,11 @@ struct Shared {
     /// The sessions copied, in order, for tests.
     #[cfg(test)]
     order: Mutex<Vec<String>>,
+    /// For tests: the worker waits on this lock before it copies, and sets `at_gate` when it gets there.
+    #[cfg(test)]
+    gate: Mutex<()>,
+    #[cfg(test)]
+    at_gate: AtomicBool,
 }
 
 enum Msg {
@@ -135,6 +140,10 @@ impl Importer {
             total: AtomicU32::new(0),
             #[cfg(test)]
             order: Mutex::new(Vec::new()),
+            #[cfg(test)]
+            gate: Mutex::new(()),
+            #[cfg(test)]
+            at_gate: AtomicBool::new(false),
         });
         let state_path = paths::history_dir(history.home()).join("import.json");
         let (known, first_run) = match store::read::<StateDoc>(&state_path) {
@@ -188,10 +197,16 @@ impl Importer {
         }
     }
 
-    /// Ends the thread (after the file it is copying) and its watchers. Waits for it.
-    pub fn stop(&self) {
+    /// Tells the thread to end and returns at once. For shutdown: the file being copied is registered with
+    /// `History`, whose `flush` waits for it up to its own cap, so a large file can't hold shutdown up.
+    pub fn halt(&self) {
         self.shared.stopped.store(true, Ordering::SeqCst);
         let _ = self.tx.send(Msg::Stop);
+    }
+
+    /// Ends the thread (after the file it is copying) and its watchers. Waits for it.
+    pub fn stop(&self) {
+        self.halt();
         let handle = self.thread.lock().unwrap().take();
         if let Some(handle) = handle {
             let _ = handle.join();
@@ -414,6 +429,11 @@ impl Worker {
             self.seen.remove(path);
             return;
         };
+        #[cfg(test)]
+        {
+            self.shared.at_gate.store(true, Ordering::SeqCst);
+            drop(self.shared.gate.lock().unwrap());
+        }
         let prepared = match archive::read_source(path) {
             Ok(bytes) => prepare(kind, path, &String::from_utf8_lossy(&bytes), &md),
             Err(err) => {
@@ -422,6 +442,10 @@ impl Worker {
                 return;
             }
         };
+        // Shutdown began while the file was being read: the copy would start after the flush stopped waiting.
+        if self.shared.stopped.load(Ordering::SeqCst) || self.history.is_hurrying() {
+            return;
+        }
         match prepared {
             Prepared::Skip(agent) => self.record(path, size, agent, ""),
             // The user deleted this conversation's copy and the file has not changed since: it stays deleted.
@@ -1131,6 +1155,35 @@ mod tests {
         wait_idle(&importer, 1);
         assert!(rig.history.get("claude", CLAUDE_A).unwrap().is_some());
         assert!(archive::deleted_at(rig.home.path(), "claude", CLAUDE_A).is_none());
+    }
+
+    #[test]
+    fn the_shutdown_stop_returns_at_once_while_a_file_is_being_copied() {
+        let rig = rig();
+        write_claude(&rig, CLAUDE_A, "cli", "2026-10-20T09:00:00.000Z");
+        // Off at the start, so the file is seen but the worker is not yet in the copy.
+        let importer = rig.start(false, FAST);
+        std::thread::sleep(FAST.rescan);
+        // Holding the gate keeps the worker busy with that file for as long as the test wants.
+        let busy = importer.shared.gate.lock().unwrap();
+        importer.set_on(true);
+        wait_for("the worker to reach the file", || {
+            importer.shared.at_gate.load(Ordering::SeqCst)
+        });
+        let (done_tx, done_rx) = std::sync::mpsc::channel();
+        let halting = importer.clone();
+        let halter = std::thread::spawn(move || {
+            halting.halt();
+            let _ = done_tx.send(());
+        });
+        // The worker cannot finish until the gate is released, so a stop that returns in time did not wait for it.
+        let returned = done_rx.recv_timeout(Duration::from_secs(5)).is_ok();
+        drop(busy);
+        halter.join().unwrap();
+        assert!(returned, "halt waited for the file being copied");
+        // The worker, once let go, stops without starting another file.
+        importer.stop();
+        assert!(importer.shared.stopped.load(Ordering::SeqCst));
     }
 
     #[test]
