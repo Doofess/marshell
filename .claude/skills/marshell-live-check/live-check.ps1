@@ -59,7 +59,9 @@ if ((Split-Path $Scratch -Leaf) -ieq '.marshell') { throw 'Never name the scratc
 $PidsFile = Join-Path $Scratch 'pids.json'
 
 function Get-Tree([int]$RootPid) {
-    $all = Get-CimInstance Win32_Process -Property ProcessId, ParentProcessId, Name, CreationDate
+    # PIDs 0 and 4 are the idle process and the kernel: every process descends from them.
+    if ($RootPid -le 4) { throw "Refusing to walk the tree from PID $RootPid." }
+    $all =Get-CimInstance Win32_Process -Property ProcessId, ParentProcessId, Name, CreationDate
     $byParent = $all | Group-Object ParentProcessId -AsHashTable -AsString
     $root = $all | Where-Object ProcessId -eq $RootPid
     if (-not $root) { return @() }
@@ -69,7 +71,7 @@ function Get-Tree([int]$RootPid) {
         $out.Add([pscustomobject]@{ Depth = $depth; Name = $p.Name; PID = [int]$p.ProcessId; Parent = [int]$p.ParentProcessId })
         foreach ($c in @($byParent["$($p.ProcessId)"])) {
             # A child created before its parent is a reused parent PID, not a real child.
-            if ($c -and $c.CreationDate -ge $p.CreationDate) { & $walk $c ($depth + 1) }
+            if ($c -and $c.ProcessId -ne $p.ProcessId -and $c.CreationDate -ge $p.CreationDate) { & $walk $c ($depth + 1) }
         }
     }
     & $walk $root 0
@@ -80,7 +82,9 @@ function Read-Record {
     if (-not (Test-Path -LiteralPath $PidsFile)) { throw "No $PidsFile; was start run with this Scratch?" }
     $rec = Get-Content -LiteralPath $PidsFile -Raw | ConvertFrom-Json
     $p = Get-CimInstance Win32_Process -Filter "ProcessId = $($rec.root)" -Property Name, CreationDate
-    if (-not $p) { Write-Output "Root PID $($rec.root) is no longer running."; return $null }
+    # Write-Host, not Write-Output: output would become part of the return value, so the caller would get a
+    # non-null record and walk the tree from PID 0, the whole machine.
+    if (-not $p) { Write-Host "Root PID $($rec.root) is no longer running."; return $null }
     # ConvertFrom-Json may already have turned `created` into a DateTime; compare as times either way.
     $recorded = ([datetime]$rec.created).ToUniversalTime()
     if ($p.Name -ne $rec.name -or [math]::Abs(($p.CreationDate.ToUniversalTime() - $recorded).TotalMilliseconds) -gt 1) {
