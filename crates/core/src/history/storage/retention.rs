@@ -189,9 +189,15 @@ impl Protection {
             unlinked_tabs: HashSet::new(),
         };
         for meta in archive::read_all_meta(home) {
-            let marks = marks::read(home, &meta.agent, &meta.session_id);
-            if !marks.pinned && marks.bookmarks.is_empty() {
-                continue;
+            // Marks that can't be read may say pinned, so the conversation is kept until they can.
+            match marks::try_read(home, &meta.agent, &meta.session_id) {
+                Ok(marks) if !marks.pinned && marks.bookmarks.is_empty() => continue,
+                Ok(_) => {}
+                Err(err) => tracing::warn!(
+                    "keeping the files of {} {}: its marks can't be read: {err:#}",
+                    meta.agent,
+                    meta.session_id
+                ),
             }
             let mut linked = false;
             for link in meta.recordings.iter().filter(|l| valid_recording_name(&l.file)) {
@@ -449,6 +455,37 @@ mod tests {
         assert!(png("tb").protected);
         assert!(!png("tu").protected);
         assert_eq!(by_name(&items, "tp-1000.cast").bytes, 6);
+    }
+
+    #[test]
+    fn collect_protects_a_conversation_whose_marks_cannot_be_read() {
+        let home = tempfile::tempdir().unwrap();
+        let rec = paths::recordings_dir(home.path());
+        let att = paths::attachments_dir(home.path());
+        write_aged(&rec.join("tx-1000.cast"), b"unreadable marks", HOUR);
+        write_aged(&rec.join("tm-2000.cast"), b"no marks", HOUR);
+        write_aged(&att.join("tx").join("a.png"), b"png", HOUR);
+        sidecar(home.path(), "s-broken", "tx", &["tx-1000.cast"]);
+        // Marks that are not valid JSON, with no backup to fall back on: they may well say pinned.
+        let path = marks::marks_path(home.path(), "claude", "s-broken");
+        std::fs::write(&path, b"{ not json").unwrap();
+        // A conversation with no marks file at all has nothing to protect it.
+        sidecar(home.path(), "s-missing", "tm", &["tm-2000.cast"]);
+
+        let items = collect(
+            home.path(),
+            &HashSet::new(),
+            &HashSet::new(),
+            SystemTime::now(),
+            Duration::ZERO,
+        );
+        assert!(by_name(&items, "tx-1000.cast").protected);
+        assert!(by_name(&items, "a.png").protected);
+        assert!(!by_name(&items, "tm-2000.cast").protected);
+        let now = unix_ms(SystemTime::now()) + 400 * DAY_MS;
+        let chosen = plan(&items, &limits(None, Some(30)), now);
+        assert_eq!(chosen.len(), 1, "only the unmarked conversation's recording goes");
+        assert!(items[chosen[0]].path.ends_with("tm-2000.cast"));
     }
 
     #[test]

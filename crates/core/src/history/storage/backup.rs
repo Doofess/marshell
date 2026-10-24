@@ -84,17 +84,23 @@ fn valid_id(text: &str) -> bool {
     text.len() == 32 && text.bytes().all(|b| b.is_ascii_hexdigit())
 }
 
-fn read_id(file: &Path) -> Option<String> {
-    let text = std::fs::read_to_string(file).ok()?;
+/// The id in `file`. None when the file is missing or holds something that isn't an id; an error when it can't be
+/// read, so an id that is only locked for now isn't replaced.
+fn read_id(file: &Path) -> io::Result<Option<String>> {
+    let text = match std::fs::read_to_string(file) {
+        Ok(text) => text,
+        Err(err) if matches!(err.kind(), io::ErrorKind::NotFound | io::ErrorKind::InvalidData) => return Ok(None),
+        Err(err) => return Err(err),
+    };
     let text = text.trim();
-    valid_id(text).then(|| text.to_owned())
+    Ok(valid_id(text).then(|| text.to_owned()))
 }
 
 /// This install's id: 32 hex characters kept in `<home>/history/install-id`, made on first use. A copy of the home
 /// folder moved to another PC keeps it; a fresh install gets its own, which is what tells their backups apart.
 pub fn install_id(home: &Path) -> anyhow::Result<String> {
     let file = paths::history_dir(home).join("install-id");
-    if let Some(id) = read_id(&file) {
+    if let Some(id) = read_id(&file).with_context(|| format!("reading {}", file.display()))? {
         return Ok(id);
     }
     let mut bytes = [0u8; 16];
@@ -118,7 +124,9 @@ pub fn install_id(home: &Path) -> anyhow::Result<String> {
     };
     let _ = std::fs::remove_file(&tmp);
     placed.with_context(|| format!("writing {}", file.display()))?;
-    read_id(&file).with_context(|| format!("reading {}", file.display()))
+    read_id(&file)
+        .and_then(|id| id.ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "not an install id")))
+        .with_context(|| format!("reading {}", file.display()))
 }
 
 /// Checks `dir` as a backup folder and returns the `Marshell history` path inside its canonical form.
@@ -739,6 +747,25 @@ mod tests {
         assert!(id.bytes().all(|b| b.is_ascii_hexdigit()));
         assert_eq!(install_id(home.path()).unwrap(), id);
         assert_ne!(install_id(tempfile::tempdir().unwrap().path()).unwrap(), id);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn an_install_id_that_cannot_be_read_is_not_replaced() {
+        use std::os::windows::fs::OpenOptionsExt;
+        let home = tempfile::tempdir().unwrap();
+        let id = install_id(home.path()).unwrap();
+        let file = paths::history_dir(home.path()).join("install-id");
+        // Another process holds the file and shares only delete (FILE_SHARE_DELETE): reading it fails, though it
+        // holds a good id, and replacing it would work. With no sharing at all the replacing would fail too.
+        for share in [0, 4] {
+            let held = File::options().read(true).share_mode(share).open(&file).unwrap();
+            assert!(install_id(home.path()).is_err(), "share mode {share}");
+            drop(held);
+        }
+        assert_eq!(install_id(home.path()).unwrap(), id);
+        std::fs::write(&file, b"not an id").unwrap();
+        assert_ne!(install_id(home.path()).unwrap(), id, "an invalid id is still replaced");
     }
 
     #[cfg(unix)]

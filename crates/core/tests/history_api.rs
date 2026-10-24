@@ -1770,3 +1770,84 @@ async fn a_saved_age_limit_removes_what_the_preview_listed_and_the_last_cleanup_
         "the pinned conversation's recording stays"
     );
 }
+
+#[tokio::test]
+async fn the_report_shows_the_saved_backup_folder_at_once() {
+    let env = env();
+    start_storage(&env);
+    let (_, settings) = get_json(&env.app, "/v1/settings").await;
+    let (a, b) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+    let mut to_a = settings.clone();
+    to_a["history_backup_dir"] = json!(a.path().to_string_lossy());
+    let (status, _) = call(&env.app, req("PUT", "/v1/settings", Some(to_a))).await;
+    assert_eq!(status, StatusCode::OK);
+    let storage = env.state.storage().unwrap();
+    let started = std::time::Instant::now();
+    while storage.backup_status().last_copy_ms.is_none() {
+        assert!(
+            started.elapsed() < Duration::from_secs(20),
+            "the mirror to folder A never finished"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let (_, report) = get_json(&env.app, "/v1/history/storage").await;
+    assert_eq!(report["backup"]["dir"], json!(a.path().to_string_lossy()));
+    assert!(report["backup"]["last_copy_ms"].is_u64());
+    // The thread ends here, so the new folder can't be mirrored before the report is read.
+    storage.stop();
+    let mut to_b = settings.clone();
+    to_b["history_backup_dir"] = json!(b.path().to_string_lossy());
+    let (status, _) = call(&env.app, req("PUT", "/v1/settings", Some(to_b))).await;
+    assert_eq!(status, StatusCode::OK);
+    let (_, report) = get_json(&env.app, "/v1/history/storage").await;
+    assert_eq!(report["backup"]["dir"], json!(b.path().to_string_lossy()));
+    assert_eq!(report["backup"]["last_copy_ms"], Value::Null);
+    assert_eq!(report["backup"]["error"], Value::Null);
+    let (status, _) = call(&env.app, req("PUT", "/v1/settings", Some(settings))).await;
+    assert_eq!(status, StatusCode::OK);
+    let (_, report) = get_json(&env.app, "/v1/history/storage").await;
+    assert_eq!(report["backup"]["dir"], Value::Null);
+    assert_eq!(report["backup"]["last_copy_ms"], Value::Null);
+    assert_eq!(report["backup"]["error"], Value::Null);
+}
+
+#[tokio::test]
+async fn a_cleanup_keeps_the_images_of_a_tab_restored_from_the_last_run() {
+    let env = env();
+    // A tab from the last run: in the sidebar as Ended, with no session.
+    let saved = marshell_protocol::api::SavedTab {
+        tab_id: "t7".into(),
+        number: 7,
+        name: "Last run".into(),
+        agent: None,
+        profile_id: "printer".into(),
+        cwd: env.work.path().to_string_lossy().into_owned(),
+        mode: None,
+        muted: false,
+    };
+    env.state
+        .registry()
+        .seed_ended(&[saved], |tab| marshell_core::registry::Relaunch {
+            profile_id: tab.profile_id.clone(),
+            agent: None,
+            cwd: tab.cwd.clone(),
+            mode: None,
+            name: tab.name.clone(),
+        });
+    let image = marshell_core::paths::attachments_dir(env.home.path())
+        .join("t7")
+        .join("a.png");
+    write_aged(&image, b"png", 90);
+    let (_, mut settings) = get_json(&env.app, "/v1/settings").await;
+    settings["history_limit_days"] = json!(30);
+    let (status, _) = call(&env.app, req("PUT", "/v1/settings", Some(settings))).await;
+    assert_eq!(status, StatusCode::OK);
+    start_storage(&env);
+    let storage = env.state.storage().unwrap();
+    let started = Instant::now();
+    while storage.last_cleanup().is_none() {
+        assert!(started.elapsed() < Duration::from_secs(20), "no cleanup ran");
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert!(image.exists(), "the image of a tab still in the sidebar was removed");
+}

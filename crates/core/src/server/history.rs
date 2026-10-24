@@ -98,7 +98,16 @@ pub async fn storage_report(
         limit_gb: settings.history_limit_gb,
         limit_days: settings.history_limit_days,
     };
-    let report = blocking(move || Ok(storage.usage(limits))).await?;
+    let backup_dir = settings.history_backup_dir;
+    let mut report = blocking(move || Ok(storage.usage(limits))).await?;
+    // The folder is the saved one, so a change shows at once. The thread's last copy and error count only when
+    // they were for that same folder.
+    let same = report.backup.dir == backup_dir;
+    report.backup = marshell_protocol::history::BackupStatus {
+        dir: backup_dir,
+        last_copy_ms: report.backup.last_copy_ms.filter(|_| same),
+        error: report.backup.error.filter(|_| same),
+    };
     Ok(Json(report))
 }
 

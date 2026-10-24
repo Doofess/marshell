@@ -23,16 +23,20 @@ pub fn marks_path(home: &Path, agent: &str, session_id: &str) -> PathBuf {
     paths::archive_dir(home, agent).join(format!("{session_id}.marks.json"))
 }
 
+/// Uses the store's backup recovery. Missing marks are the default; marks that can't be read are an error.
+pub fn try_read(home: &Path, agent: &str, session_id: &str) -> anyhow::Result<Marks> {
+    Ok(store::read::<Marks>(&marks_path(home, agent, session_id))?.unwrap_or_default())
+}
+
 /// Uses the store's backup recovery; missing or unreadable annotations leave the conversation usable.
 pub fn read(home: &Path, agent: &str, session_id: &str) -> Marks {
-    let path = marks_path(home, agent, session_id);
-    match store::read::<Marks>(&path) {
-        Ok(marks) => marks.unwrap_or_default(),
-        Err(err) => {
-            tracing::warn!("could not read history marks {}: {err:#}", path.display());
-            Marks::default()
-        }
-    }
+    try_read(home, agent, session_id).unwrap_or_else(|err| {
+        tracing::warn!(
+            "could not read history marks {}: {err:#}",
+            marks_path(home, agent, session_id).display()
+        );
+        Marks::default()
+    })
 }
 
 pub fn write(home: &Path, agent: &str, session_id: &str, marks: &Marks) -> anyhow::Result<()> {

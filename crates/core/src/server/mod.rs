@@ -352,9 +352,13 @@ impl AppState {
             weak.upgrade()
                 .map(|inner| {
                     let state = AppState(inner);
+                    // The sidebar's tabs, Ended ones restored from the last run included, and the sessions
+                    // (the sidebar's shell has no registry row). Each lock is released before the next.
+                    let mut tabs: HashSet<String> = state.0.sessions.lock().unwrap().keys().cloned().collect();
+                    tabs.extend(state.registry().saved_tabs().into_iter().map(|tab| tab.tab_id));
                     crate::history::storage::Open {
                         recordings: state.open_recordings(),
-                        tabs: state.0.sessions.lock().unwrap().keys().cloned().collect(),
+                        tabs,
                     }
                 })
                 .unwrap_or_default()
