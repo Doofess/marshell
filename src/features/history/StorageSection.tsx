@@ -17,9 +17,8 @@ const AGE_CHOICES: [number | null, string][] = [[null, "Forever"], [30, "30 days
 
 export const LIMITS_HINT = "Transcripts are always kept. Recordings and images of pinned and bookmarked conversations are never removed.";
 export const BACKUP_HINT = 'Marshell keeps an exact copy of its history in a "Marshell history" folder there. A recording or conversation removed here is removed there too.';
-/** The core's four reasons for refusing a backup folder. One of them in the status is shown as it is. */
+/** The core's reasons for refusing a backup folder that waiting won't fix. One of them in the status is shown as it is; any other error, a folder gone missing (an unplugged drive) included, reads as Can't reach. */
 const REFUSALS = [
-  "That folder doesn't exist.",
   "Choose a folder outside Marshell's own folder.",
   "That folder holds another Marshell's backup. Choose another folder.",
   'That folder already has a "Marshell history" folder that Marshell didn\'t make. Choose another folder.',

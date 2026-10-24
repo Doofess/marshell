@@ -98,6 +98,11 @@ describe("StorageSectionView", () => {
     expect(h).toContain("That folder holds another Marshell&#x27;s backup. Choose another folder.");
     expect(h).not.toContain("Can&#x27;t reach");
   });
+  it("shows Can't reach for a backup folder that has gone missing, as an unplugged drive does", () => {
+    const h = view({ report: report({ backup: { dir: "E:/Usb", last_copy_ms: NOW - MIN, error: "That folder doesn't exist." } }) });
+    expect(h).toContain("Can&#x27;t reach E:/Usb. Marshell will try again in a minute.");
+    expect(h).not.toContain("That folder doesn&#x27;t exist.");
+  });
   it("shows the error text it is given", () => {
     expect(view({ error: "That folder doesn't exist." })).toContain("That folder doesn&#x27;t exist.</p>");
   });
