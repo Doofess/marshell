@@ -113,6 +113,12 @@ export const historyAgentLabel = (agent: string): string => AGENT_NAMES[agent] ?
 export const importLine = (s: ImportStatus | null): string | null =>
   s?.copying ? `Copying conversations from Claude Code and Codex: ${s.done} of ${s.total}.` : null;
 
+/** What's spoken when a copy ends: finished, or stopped by the switch with how far it got; null when the status couldn't be read. */
+export const importEndLine = (s: ImportStatus | null): string | null => {
+  if (!s) return null;
+  return s.on ? "Finished copying conversations from Claude Code and Codex." : `Stopped copying conversations from Claude Code and Codex: ${s.done} of ${s.total} copied.`;
+};
+
 /** What the Bookmarked filter asks the core for: the list's filters, one row per bookmark. */
 export const bookmarkQuery = (filters: HistoryFilters, now: number): HistoryQuery => ({ ...listQuery(filters, now), bookmarked: true });
 

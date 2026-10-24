@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { HistoryEntry } from "../../generated/HistoryEntry";
-import { bookmarkQuery, clientMark, historyAgentLabel, importLine, escapeAction, filterOptions, groupByProject, listQuery, moveSelection, resumeWarning, rowMeta, sinceFor } from "./historyState";
+import { bookmarkQuery, clientMark, historyAgentLabel, importEndLine, importLine, escapeAction, filterOptions, groupByProject, listQuery, moveSelection, resumeWarning, rowMeta, sinceFor } from "./historyState";
 
 const entry = (over: Partial<HistoryEntry>): HistoryEntry => ({
   agent: "claude",
@@ -166,6 +166,12 @@ describe("where a conversation ran", () => {
     expect(importLine({ copying: true, done: 120, total: 355, on: true })).toBe("Copying conversations from Claude Code and Codex: 120 of 355.");
     expect(importLine({ copying: false, done: 355, total: 355, on: true })).toBeNull();
     expect(importLine(null)).toBeNull();
+  });
+
+  it("words the end of a copy: finished, stopped by the switch, or unknown after a failed read", () => {
+    expect(importEndLine({ copying: false, done: 355, total: 355, on: true })).toBe("Finished copying conversations from Claude Code and Codex.");
+    expect(importEndLine({ copying: false, done: 576, total: 1500, on: false })).toBe("Stopped copying conversations from Claude Code and Codex: 576 of 1500 copied.");
+    expect(importEndLine(null)).toBeNull();
   });
 });
 

@@ -25,14 +25,13 @@ import {
   type HistoryViewProps,
   type When,
 } from "./HistoryView";
-import { bookmarkQuery, escapeAction, importLine, listQuery, resumeWarning } from "./historyState";
+import { bookmarkQuery, escapeAction, importEndLine, importLine, listQuery, resumeWarning } from "./historyState";
 import { RecordingTab, type PlayRequest, type RecordingState } from "./recording/RecordingTab";
 import type { TerminalThemeProp } from "../terminal/TerminalView";
 
 /** How long the search waits after the last keystroke. */
 const SEARCH_DELAY_MS = 150;
 const IMPORT_POLL_MS = 1000;
-const IMPORT_DONE_COPY = "Finished copying conversations from Claude Code and Codex.";
 const LOADING_COPY = "Loading conversations…";
 export const NO_FILTER_MATCH_COPY = "No conversations match these filters.";
 
@@ -192,7 +191,8 @@ export function LiveHistory({ endpoint, rows, os, searchFocus, size, announce, o
       const copying = next?.copying === true;
       if (copying && !wasCopying) announce(importLine(next) ?? "");
       if (!copying && wasCopying) {
-        announce(IMPORT_DONE_COPY);
+        const end = importEndLine(next);
+        if (end) announce(end);
         setReload((n) => n + 1);
       }
       wasCopying = copying;
