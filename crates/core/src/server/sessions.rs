@@ -895,7 +895,7 @@ mod tests {
             "transcript_path": path.to_string_lossy(),
             "cwd": path.parent().unwrap().to_string_lossy(),
         });
-        assert!(st.history().note_event(tab, None, &body, 1).is_none());
+        assert!(st.history().note_event("claude", tab, None, &body, 1).is_none());
     }
 
     #[test]

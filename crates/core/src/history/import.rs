@@ -1110,7 +1110,8 @@ mod tests {
             "hook_event_name": "SessionStart", "session_id": CLAUDE_A, "cwd": "C:/work/demo",
             "transcript_path": path.to_string_lossy(),
         });
-        rig.history.note_event("t1", Some("t1-1000.cast"), &hook, 1000);
+        rig.history
+            .note_event("claude", "t1", Some("t1-1000.cast"), &hook, 1000);
         let before = rig.sidecar("claude", CLAUDE_A).unwrap();
         assert_eq!(before.tab_id, "t1");
         assert_eq!(before.recordings.len(), 1);
@@ -1131,6 +1132,34 @@ mod tests {
         );
         let row = rig.history.get("claude", CLAUDE_A).unwrap().unwrap();
         assert_eq!((row.tab_id.as_str(), row.client), ("t1", Client::Marshell));
+    }
+
+    #[test]
+    fn the_importer_keeps_a_codex_tab_session_marshells() {
+        for note_first in [true, false] {
+            let rig = rig();
+            let path = write_codex(&rig, CODEX_A, "user", "2026-10-21T09:00:00.000Z", false);
+            let hook = json!({
+                "hook_event_name": "SessionStart", "session_id": CODEX_A, "cwd": "C:/work/demo",
+                "transcript_path": path.to_string_lossy(),
+            });
+            let note = || {
+                assert!(rig.history.note_event("codex", "t1", None, &hook, 1000).is_none());
+            };
+            if note_first {
+                note();
+            }
+            let importer = rig.start(true, FAST);
+            wait_for("the import", || rig.archived("codex", CODEX_A).is_some());
+            wait_idle(&importer, 1);
+            if !note_first {
+                note();
+            }
+            let meta = rig.sidecar("codex", CODEX_A).unwrap();
+            assert_eq!((meta.tab_id.as_str(), meta.client), ("t1", Client::Marshell));
+            let row = rig.history.get("codex", CODEX_A).unwrap().unwrap();
+            assert_eq!((row.tab_id.as_str(), row.client), ("t1", Client::Marshell));
+        }
     }
 
     #[test]

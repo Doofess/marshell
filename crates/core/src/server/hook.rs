@@ -73,8 +73,8 @@ pub async fn post(
         && let Some(tab) = tab.as_deref()
     {
         fold_live(&st, &agent, role, tab, &json, at_ms).await;
-        if agent == "claude" && role == HookRole::Event && st.registry().is_open(tab) {
-            record_history(&st, tab, &json, at_ms).await;
+        if role == HookRole::Event && st.registry().is_open(tab) {
+            record_history(&st, &agent, tab, &json, at_ms).await;
         }
     }
     if role == HookRole::Permission {
@@ -92,15 +92,15 @@ pub async fn post(
 
 /// Notes the event in the history. The index update is short, so it is awaited; the copy it may ask for
 /// runs on its own and the response does not wait for it.
-async fn record_history(st: &AppState, tab: &str, body: &serde_json::Value, at_ms: u64) {
+async fn record_history(st: &AppState, agent: &str, tab: &str, body: &serde_json::Value, at_ms: u64) {
     let history = st.history();
     let recording = st
         .session(tab)
         .and_then(|s| s.recording_path())
         .and_then(|path| path.file_name().map(|name| name.to_string_lossy().into_owned()));
-    let (tab, body) = (tab.to_string(), body.clone());
+    let (agent, tab, body) = (agent.to_string(), tab.to_string(), body.clone());
     let noter = history.clone();
-    let meta = tokio::task::spawn_blocking(move || noter.note_event(&tab, recording.as_deref(), &body, at_ms))
+    let meta = tokio::task::spawn_blocking(move || noter.note_event(&agent, &tab, recording.as_deref(), &body, at_ms))
         .await
         .unwrap_or(None);
     if let Some(meta) = meta {

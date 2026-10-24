@@ -4,7 +4,7 @@
 use super::index::{Index, Opened};
 use super::marks::{self, Marks};
 use super::recordings::CastCache;
-use super::{RecordingLink, SessionMeta, archive, cast, transcript_allowed};
+use super::{RecordingLink, SessionMeta, archive, cast, sidecar_allowed, transcript_allowed};
 use crate::registry::Registry;
 use marshell_protocol::api::SessionState;
 use marshell_protocol::history::{ConversationMarks, HistoryEntry, HistoryPatch, HistoryQuery, SearchHit};
@@ -175,8 +175,22 @@ impl History {
     /// Validates the body, updates the index and sidecar when it is a session start, stop or end or a session not
     /// yet seen in this tab, and says whether a copy should follow. `recording` is the file name of the tab's
     /// recording; the sidecar lists it once, also when the event would not otherwise write the sidecar (a restart
-    /// in the same tab starts a new file). Blocking: call inside spawn_blocking.
-    pub fn note_event(&self, tab_id: &str, recording: Option<&str>, body: &Value, at_ms: u64) -> Option<SessionMeta> {
+    /// in the same tab starts a new file). A Codex session is linked by the first event that names it, whatever
+    /// the event (a quit with no prompt sends only `SessionEnd`), and never asks for a copy: the importer copies
+    /// the rollout. Blocking: call inside spawn_blocking.
+    pub fn note_event(
+        &self,
+        agent: &str,
+        tab_id: &str,
+        recording: Option<&str>,
+        body: &Value,
+        at_ms: u64,
+    ) -> Option<SessionMeta> {
+        let codex = match agent {
+            "claude" => false,
+            "codex" => true,
+            _ => return None,
+        };
         let recording = recording
             .filter(|name| cast::valid_recording_name(name))
             .map(str::to_string);
@@ -185,26 +199,43 @@ impl History {
         let session_id = text("session_id")?;
         let transcript_path = text("transcript_path")?;
         let cwd = text("cwd")?;
-        if !transcript_allowed(transcript_path, session_id) {
+        let allowed = if codex {
+            sidecar_allowed(agent, transcript_path, session_id)
+        } else {
+            transcript_allowed(transcript_path, session_id)
+        };
+        if !allowed {
             return None;
         }
         let mut state = self.marks.lock().unwrap();
-        if event == "UserPromptSubmit" {
+        if event == "UserPromptSubmit" && !codex {
             state.prompted.insert(session_id.to_string());
         }
         let guard = self.index.lock().unwrap();
         let index = guard.as_ref()?;
 
-        let known = match index.get(AGENT, session_id) {
-            Ok(row) => row.filter(|row| row.tab_id == tab_id),
+        let row = match index.get(agent, session_id) {
+            Ok(row) => row,
             Err(err) => {
                 tracing::warn!("history index read failed: {err:#}");
                 return None;
             }
         };
+        // An imported rollout has a row with no tab: the link keeps its start.
+        let imported = row.as_ref().filter(|row| codex && row.tab_id.is_empty()).cloned();
+        let known = row.filter(|row| row.tab_id == tab_id);
         let is_new = known.is_none();
         let (started_ms, previous_in_tab) = match known {
             Some(row) => (row.started_ms, row.previous_in_tab),
+            None if imported.is_some() => {
+                let previous = index
+                    .latest_for_tab(tab_id)
+                    .ok()
+                    .flatten()
+                    .map(|row| row.session_id)
+                    .filter(|id| id != session_id);
+                (imported.as_ref().map_or(at_ms, |row| row.started_ms), previous)
+            }
             None => {
                 let previous = index
                     .latest_for_tab(tab_id)
@@ -216,7 +247,7 @@ impl History {
             }
         };
         let meta = SessionMeta {
-            agent: AGENT.to_string(),
+            agent: agent.to_string(),
             session_id: session_id.to_string(),
             tab_id: tab_id.to_string(),
             cwd: cwd.to_string(),
@@ -234,8 +265,8 @@ impl History {
                 .collect(),
             client: Default::default(),
         };
-        let ends_turn = matches!(event, "Stop" | "StopFailure" | "SessionEnd");
-        if is_new || ends_turn || event == "SessionStart" {
+        let ends_turn = !codex && matches!(event, "Stop" | "StopFailure" | "SessionEnd");
+        if is_new || ends_turn || (!codex && event == "SessionStart") {
             if let Err(err) = index.upsert(&meta) {
                 tracing::warn!("history index write failed: {err:#}");
             }
@@ -243,16 +274,16 @@ impl History {
                 tracing::warn!("history sidecar write failed: {err:#}");
             }
             if is_new && let Some(name) = state.names.get(tab_id) {
-                let mut marks = marks::read(&self.home, AGENT, session_id);
+                let mut marks = marks::read(&self.home, agent, session_id);
                 if marks.name.is_none() {
                     marks.name = Some(name.clone());
-                    if let Err(err) = self.save_marks(index, AGENT, session_id, &marks) {
+                    if let Err(err) = self.save_marks(index, agent, session_id, &marks) {
                         tracing::warn!("history name inheritance failed: {err:#}");
                     }
                 }
             }
         } else if let Some(name) = &recording {
-            match archive::read_meta(&self.home, AGENT, session_id) {
+            match archive::read_meta(&self.home, agent, session_id) {
                 Ok(Some(listed)) if !listed.recordings.iter().any(|l| &l.file == name) => {
                     if let Err(err) = archive::write_meta(&self.home, &meta) {
                         tracing::warn!("history sidecar write failed: {err:#}");
@@ -784,6 +815,7 @@ pub fn schedule_copy(history: Arc<History>, meta: SessionMeta) {
 mod tests {
     use super::*;
     use crate::paths;
+    use marshell_protocol::history::Client;
     use serde_json::{Value, json};
     use std::path::Path;
 
@@ -811,7 +843,7 @@ mod tests {
         let history = History::open(home.path());
 
         assert_eq!(
-            history.note_event("t1", None, &body(START, home.path(), ID), 1000),
+            history.note_event("claude", "t1", None, &body(START, home.path(), ID), 1000),
             None
         );
         let row = history.latest_for_tab("t1").unwrap();
@@ -820,7 +852,7 @@ mod tests {
         assert!(sidecar(home.path(), ID).exists());
 
         let stopped = history
-            .note_event("t1", None, &body(STOP, home.path(), ID), 2000)
+            .note_event("claude", "t1", None, &body(STOP, home.path(), ID), 2000)
             .unwrap();
         assert_eq!(stopped.started_ms, 1000);
         assert_eq!(stopped.updated_ms, 2000);
@@ -828,7 +860,7 @@ mod tests {
         let before_bytes = std::fs::read(sidecar(home.path(), ID)).unwrap();
         let before_time = std::fs::metadata(sidecar(home.path(), ID)).unwrap().modified().unwrap();
         assert_eq!(
-            history.note_event("t1", None, &body(PRE_TOOL, home.path(), ID), 3000),
+            history.note_event("claude", "t1", None, &body(PRE_TOOL, home.path(), ID), 3000),
             None
         );
         assert_eq!(std::fs::read(sidecar(home.path(), ID)).unwrap(), before_bytes);
@@ -838,7 +870,7 @@ mod tests {
         );
 
         let ended = history
-            .note_event("t1", None, &body(END, home.path(), ID), 4000)
+            .note_event("claude", "t1", None, &body(END, home.path(), ID), 4000)
             .unwrap();
         assert_eq!(ended.started_ms, 1000);
         assert_eq!(ended.updated_ms, 4000);
@@ -848,10 +880,10 @@ mod tests {
     fn stop_failure_ends_a_turn() {
         let home = tempfile::tempdir().unwrap();
         let history = History::open(home.path());
-        history.note_event("t1", None, &body(START, home.path(), ID), 1000);
+        history.note_event("claude", "t1", None, &body(START, home.path(), ID), 1000);
         let failure = include_str!("../../tests/fixtures/claude/2.1.309/StopFailure.json");
         let meta = history
-            .note_event("t1", None, &body(failure, home.path(), ID), 2000)
+            .note_event("claude", "t1", None, &body(failure, home.path(), ID), 2000)
             .unwrap();
         assert_eq!(meta.updated_ms, 2000);
     }
@@ -871,7 +903,7 @@ mod tests {
         .unwrap();
 
         let meta = history
-            .note_event("t1", None, &body(STOP, home.path(), ID), 2000)
+            .note_event("claude", "t1", None, &body(STOP, home.path(), ID), 2000)
             .unwrap();
         schedule_copy(history.clone(), meta);
         // Claude writes the turn's last lines a moment after the Stop hook fires.
@@ -899,7 +931,7 @@ mod tests {
         std::fs::write(&transcript, "{\"n\":1}\n{\"n\":2}\n").unwrap();
 
         let meta = history
-            .note_event("t1", None, &body(STOP, home.path(), ID), 2000)
+            .note_event("claude", "t1", None, &body(STOP, home.path(), ID), 2000)
             .unwrap();
         schedule_copy(history.clone(), meta);
         assert!(!history.is_idle());
@@ -915,7 +947,7 @@ mod tests {
         // A copy asked for after the flush skips the wait too.
         std::fs::write(&transcript, "{\"n\":1}\n{\"n\":2}\n{\"n\":3}\n").unwrap();
         let meta = history
-            .note_event("t1", None, &body(STOP, home.path(), ID), 3000)
+            .note_event("claude", "t1", None, &body(STOP, home.path(), ID), 3000)
             .unwrap();
         schedule_copy(history.clone(), meta);
         history.flush(Duration::from_secs(3));
@@ -927,8 +959,8 @@ mod tests {
     fn clear_links_previous_in_tab() {
         let home = tempfile::tempdir().unwrap();
         let history = History::open(home.path());
-        history.note_event("t1", None, &body(START, home.path(), "aaa"), 1000);
-        history.note_event("t1", None, &body(START, home.path(), "bbb"), 2000);
+        history.note_event("claude", "t1", None, &body(START, home.path(), "aaa"), 1000);
+        history.note_event("claude", "t1", None, &body(START, home.path(), "bbb"), 2000);
         let latest = history.latest_for_tab("t1").unwrap();
         assert_eq!(latest.session_id, "bbb");
         assert_eq!(latest.previous_in_tab.as_deref(), Some("aaa"));
@@ -950,25 +982,25 @@ mod tests {
         };
         let (a, b, b2) = ("ta-1000.cast", "tb-2000.cast", "tb-3000.cast");
 
-        history.note_event("ta", Some(a), &body(START, home.path(), ID), 1000);
+        history.note_event("claude", "ta", Some(a), &body(START, home.path(), ID), 1000);
         assert_eq!(listed(), [a]);
         // Resumed in tab B.
-        history.note_event("tb", Some(b), &body(START, home.path(), ID), 2000);
+        history.note_event("claude", "tb", Some(b), &body(START, home.path(), ID), 2000);
         assert_eq!(listed(), [a, b]);
         // A restart in tab B: a new file, with no start or stop event to write the sidecar for it.
-        history.note_event("tb", Some(b2), &body(PRE_TOOL, home.path(), ID), 3000);
+        history.note_event("claude", "tb", Some(b2), &body(PRE_TOOL, home.path(), ID), 3000);
         assert_eq!(listed(), [a, b, b2]);
         // Nothing new: the sidecar is not rewritten.
         let before = std::fs::metadata(sidecar(home.path(), ID)).unwrap().modified().unwrap();
-        history.note_event("tb", Some(b2), &body(PRE_TOOL, home.path(), ID), 3500);
-        history.note_event("tb", None, &body(PRE_TOOL, home.path(), ID), 3600);
+        history.note_event("claude", "tb", Some(b2), &body(PRE_TOOL, home.path(), ID), 3500);
+        history.note_event("claude", "tb", None, &body(PRE_TOOL, home.path(), ID), 3600);
         assert_eq!(listed(), [a, b, b2]);
         assert_eq!(
             std::fs::metadata(sidecar(home.path(), ID)).unwrap().modified().unwrap(),
             before
         );
         // A name that is not a recording name is never listed.
-        history.note_event("tb", Some("..\\x.cast"), &body(STOP, home.path(), ID), 4000);
+        history.note_event("claude", "tb", Some("..\\x.cast"), &body(STOP, home.path(), ID), 4000);
         assert_eq!(listed(), [a, b, b2]);
     }
 
@@ -988,18 +1020,18 @@ mod tests {
             last_ms,
         };
         let (a, b) = ("ta-1000.cast", "tb-2000.cast");
-        history.note_event("ta", Some(a), &body(START, home.path(), ID), 1000);
+        history.note_event("claude", "ta", Some(a), &body(START, home.path(), ID), 1000);
         assert_eq!(links(), [link(a, 1000, 1000)]);
-        history.note_event("ta", Some(a), &body(STOP, home.path(), ID), 5000);
+        history.note_event("claude", "ta", Some(a), &body(STOP, home.path(), ID), 5000);
         assert_eq!(links(), [link(a, 1000, 5000)]);
         // Resumed in tab B: A keeps where it ended, and B starts its own.
-        history.note_event("tb", Some(b), &body(START, home.path(), ID), 9000);
+        history.note_event("claude", "tb", Some(b), &body(START, home.path(), ID), 9000);
         assert_eq!(links(), [link(a, 1000, 5000), link(b, 9000, 9000)]);
-        history.note_event("tb", Some(b), &body(STOP, home.path(), ID), 12_000);
+        history.note_event("claude", "tb", Some(b), &body(STOP, home.path(), ID), 12_000);
         assert_eq!(links(), [link(a, 1000, 5000), link(b, 9000, 12_000)]);
         // An event in a recording the sidecar already lists writes nothing.
         let before = std::fs::metadata(sidecar(home.path(), ID)).unwrap().modified().unwrap();
-        history.note_event("tb", Some(b), &body(PRE_TOOL, home.path(), ID), 13_000);
+        history.note_event("claude", "tb", Some(b), &body(PRE_TOOL, home.path(), ID), 13_000);
         assert_eq!(links(), [link(a, 1000, 5000), link(b, 9000, 12_000)]);
         assert_eq!(
             std::fs::metadata(sidecar(home.path(), ID)).unwrap().modified().unwrap(),
@@ -1012,7 +1044,7 @@ mod tests {
         let home = tempfile::tempdir().unwrap();
         let history = History::open(home.path());
         assert_eq!(
-            history.note_event("t1", None, &body(PRE_TOOL, home.path(), ID), 1500),
+            history.note_event("claude", "t1", None, &body(PRE_TOOL, home.path(), ID), 1500),
             None
         );
         assert_eq!(history.latest_for_tab("t1").unwrap().started_ms, 1500);
@@ -1037,7 +1069,7 @@ mod tests {
         no_cwd.as_object_mut().unwrap().remove("cwd");
 
         for hostile in [bad_id, unc, device, other_name, no_cwd] {
-            assert_eq!(history.note_event("t1", None, &hostile, 1000), None);
+            assert_eq!(history.note_event("claude", "t1", None, &hostile, 1000), None);
         }
         assert_eq!(history.latest_for_tab("t1"), None);
         let archive = paths::archive_dir(home.path(), "claude");
@@ -1045,12 +1077,108 @@ mod tests {
         assert_eq!(files, 0);
     }
 
+    const CODEX_START: &str = include_str!("../../tests/fixtures/codex/hooks/0.163.0/SessionStart.json");
+    const CODEX_END: &str = include_str!("../../tests/fixtures/codex/hooks/0.163.0/SessionEnd.json");
+
+    /// A Codex fixture pointed at a rollout named as Codex names it, under `dir`.
+    fn codex_body(fixture: &str, dir: &Path, id: &str) -> Value {
+        let mut v: Value = serde_json::from_str(fixture).unwrap();
+        v["session_id"] = json!(id);
+        v["transcript_path"] = json!(
+            dir.join("sessions")
+                .join(format!("rollout-2026-10-24T19-31-03-{id}.jsonl"))
+                .to_string_lossy()
+        );
+        v["cwd"] = json!(dir.to_string_lossy());
+        v
+    }
+
+    #[test]
+    fn a_codex_start_in_a_tab_records_the_tab() {
+        let home = tempfile::tempdir().unwrap();
+        let history = History::open(home.path());
+        let body = codex_body(CODEX_START, home.path(), ID);
+        assert_eq!(
+            history.note_event("codex", "t1", Some("t1-1000.cast"), &body, 1000),
+            None
+        );
+        let row = history.get("codex", ID).unwrap().unwrap();
+        assert_eq!((row.tab_id.as_str(), row.client), ("t1", Client::Marshell));
+        assert_eq!(row.started_ms, 1000);
+        let (_, side) = crate::history::archive::archive_paths(home.path(), "codex", ID);
+        let meta = crate::history::archive::read_meta(home.path(), "codex", ID)
+            .unwrap()
+            .unwrap();
+        assert!(side.exists());
+        assert_eq!(
+            (meta.agent.as_str(), meta.tab_id.as_str(), meta.client),
+            ("codex", "t1", Client::Marshell)
+        );
+        assert_eq!(meta.recordings.len(), 1);
+        assert_eq!(history.latest_for_tab("t1").unwrap().session_id, ID);
+    }
+
+    #[test]
+    fn a_codex_rollout_path_with_the_wrong_name_is_ignored() {
+        let home = tempfile::tempdir().unwrap();
+        let history = History::open(home.path());
+        let mut body = codex_body(CODEX_START, home.path(), ID);
+        for path in [
+            home.path().join("sessions").join("notes.txt"),
+            home.path().join("sessions").join(format!("{ID}.json")),
+        ] {
+            body["transcript_path"] = json!(path.to_string_lossy());
+            assert_eq!(history.note_event("codex", "t1", None, &body, 1000), None);
+        }
+        body["transcript_path"] = json!("sessions/rollout-x.jsonl");
+        assert_eq!(history.note_event("codex", "t1", None, &body, 1000), None);
+        assert!(history.get("codex", ID).unwrap().is_none());
+        assert!(!sidecar(home.path(), ID).exists());
+        let (_, side) = crate::history::archive::archive_paths(home.path(), "codex", ID);
+        assert!(!side.exists());
+    }
+
+    #[test]
+    fn a_codex_session_with_only_session_end_is_linked() {
+        let home = tempfile::tempdir().unwrap();
+        let history = History::open(home.path());
+        let body = codex_body(CODEX_END, home.path(), ID);
+        assert_eq!(history.note_event("codex", "t1", None, &body, 5000), None);
+        let row = history.get("codex", ID).unwrap().unwrap();
+        assert_eq!((row.tab_id.as_str(), row.client), ("t1", Client::Marshell));
+        let meta = crate::history::archive::read_meta(home.path(), "codex", ID)
+            .unwrap()
+            .unwrap();
+        assert_eq!(meta.tab_id, "t1");
+    }
+
+    #[test]
+    fn a_later_codex_event_does_not_rewrite_the_link() {
+        let home = tempfile::tempdir().unwrap();
+        let history = History::open(home.path());
+        history.note_event("codex", "t1", None, &codex_body(CODEX_START, home.path(), ID), 1000);
+        let (_, side) = crate::history::archive::archive_paths(home.path(), "codex", ID);
+        let before_bytes = std::fs::read(&side).unwrap();
+        let before_time = std::fs::metadata(&side).unwrap().modified().unwrap();
+        std::thread::sleep(Duration::from_millis(20));
+        assert_eq!(
+            history.note_event("codex", "t1", None, &codex_body(CODEX_END, home.path(), ID), 9000),
+            None
+        );
+        assert_eq!(std::fs::read(&side).unwrap(), before_bytes);
+        assert_eq!(std::fs::metadata(&side).unwrap().modified().unwrap(), before_time);
+        let row = history.get("codex", ID).unwrap().unwrap();
+        assert_eq!((row.started_ms, row.updated_ms), (1000, 1000));
+    }
+
     const TOOLS: &str = include_str!("../../tests/fixtures/claude/transcripts/2.1.309/tools.jsonl");
 
     /// A transcript at `<dir>/<id>.jsonl` and the Stop event that asks for its copy.
     fn stopped(history: &History, dir: &Path, id: &str, text: &str, at_ms: u64) -> SessionMeta {
         std::fs::write(dir.join(format!("{id}.jsonl")), text).unwrap();
-        history.note_event("t1", None, &body(STOP, dir, id), at_ms).unwrap()
+        history
+            .note_event("claude", "t1", None, &body(STOP, dir, id), at_ms)
+            .unwrap()
     }
 
     async fn idle(history: &History) {
