@@ -623,7 +623,8 @@ fn a_renamed_agent_binary_is_found() {
     let chain = chain_settles(&s, &["codex-marshell-test"]).unwrap_or_default();
     s.kill();
     assert_eq!(
-        marshell_core::profiles::detect::agent_in(&chain, None),
+        marshell_core::profiles::detect::agent_in(&marshell_core::agents::manifest::Agents::shipped(), &chain, None)
+            .as_deref(),
         Some("codex"),
         "chain was {chain:?}"
     );

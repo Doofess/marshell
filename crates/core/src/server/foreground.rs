@@ -8,6 +8,7 @@
 
 use super::AppState;
 use super::shell_panel::{PANEL_GENERATION, take_and_adopt};
+use crate::agents::manifest::Agents;
 use crate::profiles::detect::{agent_in, program_of};
 use crate::pty::Session;
 use marshell_protocol::api::Foreground;
@@ -85,11 +86,12 @@ async fn tick(st: &AppState, pending: &mut Option<(String, u64, Instant)>) {
         return;
     }
     // One blocking task for the whole pass: reading a process list is not async.
+    let agents = st.0.agents.clone();
     let readings = tokio::task::spawn_blocking(move || {
         work.into_iter()
             .map(|(target, session, epoch)| {
                 let prompt = at_prompt(session.ever_executed(), session.command_running());
-                let reading = reading_for(prompt, || read(&session));
+                let reading = reading_for(prompt, || read(&agents, &session));
                 // The session comes back for its epoch at apply time.
                 (target, session, epoch, reading)
             })
@@ -179,13 +181,17 @@ fn seen_twice(pending: &mut Option<(String, u64, Instant)>, tab: &str, epoch: u6
 }
 
 /// Reads the session's process chain and command line. Blocking.
-fn read(session: &Session) -> Option<Option<Foreground>> {
-    foreground_of(session.foreground_chain().as_deref(), session.command_line())
+fn read(agents: &Agents, session: &Session) -> Option<Option<Foreground>> {
+    foreground_of(agents, session.foreground_chain().as_deref(), session.command_line())
 }
 
 /// What the chain (outermost first) and the reported command line say the shell is running.
 /// `Some(None)`: nothing. `None`: something runs but it cannot be named.
-fn foreground_of(chain: Option<&[String]>, command_line: Option<String>) -> Option<Option<Foreground>> {
+fn foreground_of(
+    agents: &Agents,
+    chain: Option<&[String]>,
+    command_line: Option<String>,
+) -> Option<Option<Foreground>> {
     let chain = chain.unwrap_or(&[]);
     if chain.is_empty() && command_line.is_none() {
         return Some(None);
@@ -194,7 +200,7 @@ fn foreground_of(chain: Option<&[String]>, command_line: Option<String>) -> Opti
         Some(last) => last.clone(),
         None => program_of(command_line.as_deref()?)?,
     };
-    let agent = agent_in(chain, command_line.as_deref()).map(String::from);
+    let agent = agent_in(agents, chain, command_line.as_deref());
     Some(Some(Foreground {
         program,
         command_line,
@@ -271,14 +277,14 @@ mod tests {
 
     #[test]
     fn nothing_running_is_no_foreground() {
-        assert_eq!(foreground_of(None, None), Some(None));
-        assert_eq!(foreground_of(Some(&[][..]), None), Some(None));
+        assert_eq!(foreground_of(&Agents::shipped(), None, None), Some(None));
+        assert_eq!(foreground_of(&Agents::shipped(), Some(&[][..]), None), Some(None));
     }
 
     #[test]
     fn the_deepest_process_is_the_program() {
         let chain = names(&["pnpm", "node"]);
-        let fg = foreground_of(Some(chain.as_slice()), Some("pnpm dev".into()))
+        let fg = foreground_of(&Agents::shipped(), Some(chain.as_slice()), Some("pnpm dev".into()))
             .unwrap()
             .unwrap();
         assert_eq!(fg.program, "node");
@@ -288,7 +294,9 @@ mod tests {
 
     #[test]
     fn the_command_line_names_the_program_when_the_chain_is_empty() {
-        let fg = foreground_of(None, Some("npx @openai/codex".into())).unwrap().unwrap();
+        let fg = foreground_of(&Agents::shipped(), None, Some("npx @openai/codex".into()))
+            .unwrap()
+            .unwrap();
         assert_eq!(fg.program, "@openai/codex");
         assert_eq!(fg.agent.as_deref(), Some("codex"));
     }
@@ -296,13 +304,15 @@ mod tests {
     #[test]
     fn an_agent_anywhere_in_the_chain_names_it() {
         let chain = names(&["node", "codex-win32-x64"]);
-        let fg = foreground_of(Some(chain.as_slice()), None).unwrap().unwrap();
+        let fg = foreground_of(&Agents::shipped(), Some(chain.as_slice()), None)
+            .unwrap()
+            .unwrap();
         assert_eq!(fg.agent.as_deref(), Some("codex"));
         assert_eq!(fg.command_line, None);
     }
 
     #[test]
     fn a_command_line_that_names_nothing_is_skipped() {
-        assert_eq!(foreground_of(None, Some("&".into())), None);
+        assert_eq!(foreground_of(&Agents::shipped(), None, Some("&".into())), None);
     }
 }

@@ -1,3 +1,4 @@
+use crate::agents::manifest::{Agents, PromptStyle};
 use marshell_protocol::api::{Profile, SessionMode, ShellFamily};
 use std::path::{Path, PathBuf};
 
@@ -227,7 +228,7 @@ pub fn detect_profiles(probe: &Probe) -> Vec<Profile> {
     found
 }
 
-/// The program an agent id runs. Other agents stay hidden until their adapters exist.
+/// The program an adapter agent id runs. Manifest agents are looked up through `Agents`.
 pub fn agent_command(agent: &str) -> Option<&'static str> {
     match agent {
         "claude" => Some("claude"),
@@ -307,8 +308,8 @@ pub fn program_of(command_line: &str) -> Option<String> {
     Some(program_name(first))
 }
 
-/// The agent CLI an executable name belongs to.
-fn agent_of_exe(name: &str) -> Option<&'static str> {
+/// The adapter agent an executable name belongs to.
+pub(crate) fn adapter_of_exe(name: &str) -> Option<&'static str> {
     match name {
         "claude" => Some("claude"),
         "codex" => Some("codex"),
@@ -318,16 +319,16 @@ fn agent_of_exe(name: &str) -> Option<&'static str> {
     }
 }
 
-/// The program of the first profile that runs `agent`: its command's first word.
+/// The program of the first profile that runs the adapter `agent`: its command's first word.
 pub fn agent_exe(profiles: &[Profile], agent: &str) -> Option<PathBuf> {
     profiles.iter().find_map(|p| {
         let exe = p.command.first()?;
-        (agent_of_exe(&program_name(exe)) == Some(agent)).then(|| PathBuf::from(exe))
+        (adapter_of_exe(&program_name(exe)) == Some(agent)).then(|| PathBuf::from(exe))
     })
 }
 
-/// The agent CLI an npm package belongs to.
-fn agent_of_package(name: &str) -> Option<&'static str> {
+/// The adapter agent an npm package belongs to.
+pub(crate) fn adapter_of_package(name: &str) -> Option<&'static str> {
     match name {
         "@anthropic-ai/claude-code" => Some("claude"),
         "@openai/codex" => Some("codex"),
@@ -337,12 +338,14 @@ fn agent_of_package(name: &str) -> Option<&'static str> {
 
 /// The agent a foreground process chain (outermost first) or a typed command line runs, if any.
 /// The chain is checked first, deepest process first, then the command line.
-pub fn agent_in(chain: &[String], command_line: Option<&str>) -> Option<&'static str> {
-    if let Some(agent) = chain.iter().rev().find_map(|name| agent_of_exe(name)) {
+pub fn agent_in(agents: &Agents, chain: &[String], command_line: Option<&str>) -> Option<String> {
+    if let Some(agent) = chain.iter().rev().find_map(|name| agents.agent_of_exe(name)) {
         return Some(agent);
     }
     let program = program_of(command_line?)?;
-    agent_of_exe(&program).or_else(|| agent_of_package(&program))
+    agents
+        .agent_of_exe(&program)
+        .or_else(|| agents.agent_of_package(&program))
 }
 
 /// Which conversation a resumed agent should pick up.
@@ -359,7 +362,11 @@ pub enum ResumeTarget<'a> {
 
 /// The arguments that make an agent continue a conversation: the one named by `target` when the CLI
 /// can name it, otherwise its last conversation in the current folder.
-pub fn resume_args(agent: &str, target: ResumeTarget) -> Vec<String> {
+/// A manifest agent continues its last conversation for every target; one without `continue` starts fresh.
+pub fn resume_args(agents: &Agents, agent: &str, target: ResumeTarget) -> Vec<String> {
+    if let Some(m) = agents.manifest(agent) {
+        return m.continue_args.clone().unwrap_or_default();
+    }
     let args: Vec<&str> = match (agent, target) {
         ("claude", ResumeTarget::Session(id)) => vec!["--resume", id],
         ("claude", ResumeTarget::Fork(id)) => vec!["--resume", id, "--fork-session"],
@@ -401,25 +408,32 @@ pub fn dropped_path_ref(agent: Option<&str>, family: ShellFamily, path: &Path) -
 /// The CLI's own flags for starting `agent` in `mode`. Hooks are off, so these are the native column of
 /// PLAN "Session modes". `sessionModes.ts` (`launchArgs` with hooks off) must show the same flags.
 /// Codex has no plan flag, so Plan starts like Manual.
-pub fn mode_args(agent: &str, mode: SessionMode) -> &'static [&'static str] {
+/// An adapter always has an answer, possibly no flags. A manifest agent has one only for a mode it maps,
+/// and an unknown agent has none.
+pub fn mode_args(agents: &Agents, agent: &str, mode: SessionMode) -> Option<Vec<String>> {
     use SessionMode::*;
-    match (agent, mode) {
-        ("claude", Manual) => &["--permission-mode", "manual"],
-        ("claude", Plan) => &["--permission-mode", "plan"],
-        ("claude", AutoEdit) => &["--permission-mode", "acceptEdits"],
-        ("claude", FullAuto) => &["--permission-mode", "auto"],
-        ("claude", Bypass) => &["--permission-mode", "bypassPermissions"],
-        ("claude", DontAsk) => &["--permission-mode", "dontAsk"],
-        ("codex", Manual | Plan) => &["--sandbox", "read-only", "--ask-for-approval", "on-request"],
-        ("codex", AutoEdit) => &["--sandbox", "workspace-write", "--ask-for-approval", "on-request"],
-        ("codex", FullAuto) => &["--approve-for-me"],
-        ("codex", Bypass) => &["--dangerously-bypass-approvals-and-sandbox"],
-        ("antigravity", Plan) => &["--mode", "plan"],
-        ("antigravity", AutoEdit) => &["--mode", "accept-edits"],
-        ("antigravity", FullAuto) => &["--mode", "auto"],
-        ("antigravity", Bypass) => &["--dangerously-skip-permissions"],
-        _ => &[],
+    let adapter: Option<&[&str]> = match (agent, mode) {
+        ("claude", Manual) => Some(&["--permission-mode", "manual"]),
+        ("claude", Plan) => Some(&["--permission-mode", "plan"]),
+        ("claude", AutoEdit) => Some(&["--permission-mode", "acceptEdits"]),
+        ("claude", FullAuto) => Some(&["--permission-mode", "auto"]),
+        ("claude", Bypass) => Some(&["--permission-mode", "bypassPermissions"]),
+        ("claude", DontAsk) => Some(&["--permission-mode", "dontAsk"]),
+        ("codex", Manual | Plan) => Some(&["--sandbox", "read-only", "--ask-for-approval", "on-request"]),
+        ("codex", AutoEdit) => Some(&["--sandbox", "workspace-write", "--ask-for-approval", "on-request"]),
+        ("codex", FullAuto) => Some(&["--approve-for-me"]),
+        ("codex", Bypass) => Some(&["--dangerously-bypass-approvals-and-sandbox"]),
+        ("antigravity", Plan) => Some(&["--mode", "plan"]),
+        ("antigravity", AutoEdit) => Some(&["--mode", "accept-edits"]),
+        ("antigravity", FullAuto) => Some(&["--mode", "auto"]),
+        ("antigravity", Bypass) => Some(&["--dangerously-skip-permissions"]),
+        ("codex" | "antigravity", _) => Some(&[]),
+        _ => None,
+    };
+    if let Some(flags) = adapter {
+        return Some(flags.iter().map(|f| f.to_string()).collect());
     }
+    agents.manifest(agent)?.modes.get(&mode).cloned()
 }
 
 /// `'text'` for PowerShell, where a quote inside is doubled. PowerShell also treats the
@@ -450,17 +464,44 @@ fn is_windows_powershell_5(profile: &Profile) -> bool {
         .is_some_and(|name| name.eq_ignore_ascii_case("powershell.exe"))
 }
 
+/// What `build_argv` puts first: a name the shell looks up, or a path to one file.
+#[derive(Clone, Copy, Debug)]
+pub enum Program<'a> {
+    Name(&'a str),
+    Path(&'a Path),
+}
+
+impl<'a> Program<'a> {
+    /// A command holding a path separator is a path; any other is a name.
+    pub fn of_command(command: &'a str) -> Self {
+        if command.contains(['/', '\\']) {
+            Program::Path(Path::new(command))
+        } else {
+            Program::Name(command)
+        }
+    }
+}
+
+/// True when `word` can go into a command line as it is: `[A-Za-z0-9._:/\\=-]` and not empty.
+fn is_plain_word(word: &str) -> bool {
+    !word.is_empty()
+        && word
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | ':' | '/' | '\\' | '=' | '-'))
+}
+
 /// The argv that starts `agent` (with an optional first prompt and mode) inside `profile`'s shell.
 /// With no agent it is the profile's own command. `no_daemon` adds Codex's `--no-daemon`, and only for
 /// Codex: the caller says so when the detected version accepts it (slice 6a decision 14).
 pub fn launch_argv(
     profile: &Profile,
-    agent: Option<&str>,
+    agents: &Agents,
+    agent: Option<(&str, Program)>,
     prompt: Option<&str>,
     mode: Option<SessionMode>,
     no_daemon: bool,
 ) -> Result<Vec<String>, String> {
-    build_argv(profile, agent, prompt, &[], mode, no_daemon)
+    build_argv(profile, agents, agent, prompt, &[], mode, no_daemon)
 }
 
 /// Like `launch_argv` with no prompt, but the agent is told to continue the conversation `target` names.
@@ -468,30 +509,49 @@ pub fn launch_argv(
 /// so it is safe as its own word in a shell command line.
 pub fn launch_argv_resume(
     profile: &Profile,
-    agent: Option<&str>,
+    agents: &Agents,
+    agent: Option<(&str, Program)>,
     mode: Option<SessionMode>,
     target: ResumeTarget,
     no_daemon: bool,
 ) -> Result<Vec<String>, String> {
-    let extra = agent.map_or_else(Vec::new, |agent| resume_args(agent, target));
-    build_argv(profile, agent, None, &extra, mode, no_daemon)
+    let extra = agent.map_or_else(Vec::new, |(id, _)| resume_args(agents, id, target));
+    build_argv(profile, agents, agent, None, &extra, mode, no_daemon)
 }
 
-/// `extra` goes right after the agent's program name, then the mode flags, then any prompt.
+/// `extra` goes right after the agent's program, then the mode flags, then any prompt.
+/// A mode the manifest does not map adds no flags here; the server refuses it before it gets this far.
 fn build_argv(
     profile: &Profile,
-    agent: Option<&str>,
+    agents: &Agents,
+    agent: Option<(&str, Program)>,
     prompt: Option<&str>,
     extra: &[String],
     mode: Option<SessionMode>,
     no_daemon: bool,
 ) -> Result<Vec<String>, String> {
-    let Some(agent) = agent else {
+    let Some((agent, program)) = agent else {
         return Ok(profile.command.clone());
     };
-    let program = agent_command(agent).ok_or_else(|| format!("Unknown agent: {agent}."))?;
-    let mut program_line = program.to_string();
-    let mode_flags = mode.map_or(&[][..], |m| mode_args(agent, m));
+    if !agents.is_known(agent) {
+        return Err(format!("Unknown agent: {agent}."));
+    }
+    let manifest = agents.manifest(agent);
+    let prompt = prompt.filter(|p| !p.is_empty());
+    // The flag before the first prompt: agy's and a manifest's own, else none (a positional argument).
+    let prompt_flag: Option<&str> = match manifest.map(|m| &m.prompt) {
+        None if agent == "antigravity" => Some("-i"),
+        None | Some(PromptStyle::Positional) => None,
+        Some(PromptStyle::Flag { flag }) => Some(flag),
+        Some(PromptStyle::None) => {
+            if prompt.is_some() {
+                let cli = manifest.map_or(agent, |m| m.cli.as_str());
+                return Err(format!("{cli} can't take a first prompt. Start it, then type it."));
+            }
+            None
+        }
+    };
+    let mode_flags = mode.and_then(|m| mode_args(agents, agent, m)).unwrap_or_default();
     // Codex's shared daemon runs every session's hooks with the first tab's id (slice 6a decision 12).
     // Only a version that accepts the flag gets it (decision 14).
     let own_server: &[&str] = if agent == "codex" && no_daemon {
@@ -499,22 +559,34 @@ fn build_argv(
     } else {
         &[]
     };
-    for arg in extra
+    let program_word = match program {
+        Program::Name(name) => name.to_string(),
+        Program::Path(path) => path.to_string_lossy().into_owned(),
+    };
+    let args: Vec<&str> = extra
         .iter()
         .map(String::as_str)
         .chain(own_server.iter().copied())
-        .chain(mode_flags.iter().copied())
-    {
-        program_line.push(' ');
-        program_line.push_str(arg);
-    }
-    let prompt = prompt.filter(|p| !p.is_empty());
-    // agy takes the first prompt after -i; Claude and Codex take it as one positional argument.
-    let flag = if program == "agy" { "-i " } else { "" };
+        .chain(mode_flags.iter().map(String::as_str))
+        .collect();
+    // Plain words go in as they are; anything else is quoted for the shell, or refused where it can't be.
+    // A POSIX shell eats a backslash outside quotes, so there it is not plain.
+    let posix = matches!(profile.family, ShellFamily::Posix | ShellFamily::Wsl);
+    let word = |text: &str, quote: fn(&str) -> String| {
+        if is_plain_word(text) && !(posix && text.contains('\\')) {
+            text.to_string()
+        } else {
+            quote(text)
+        }
+    };
     let mut argv = profile.command.clone();
     match profile.family {
         ShellFamily::PowerShell => {
-            let mut line = format!("& {program_line}");
+            let mut line = format!("& {}", word(&program_word, powershell_quote));
+            for arg in &args {
+                line.push(' ');
+                line.push_str(&word(arg, powershell_quote));
+            }
             if let Some(p) = prompt {
                 // Windows PowerShell 5 mangles double quotes when it calls a native command.
                 if p.contains('"') && is_windows_powershell_5(profile) {
@@ -523,7 +595,11 @@ fn build_argv(
                             .into(),
                     );
                 }
-                line.push_str(&format!(" {flag}{}", powershell_quote(p)));
+                if let Some(flag) = prompt_flag {
+                    line.push(' ');
+                    line.push_str(&word(flag, powershell_quote));
+                }
+                line.push_str(&format!(" {}", powershell_quote(p)));
             }
             argv.extend(["-NoExit".into(), "-Command".into(), line]);
         }
@@ -535,12 +611,31 @@ fn build_argv(
                     "Command Prompt can't pass a prompt safely. Use PowerShell or start without a prompt.".into(),
                 );
             }
-            argv.extend(["/k".into(), program_line]);
+            if !is_plain_word(&program_word) {
+                return Err("Command Prompt can't start a program whose path has a space. Use PowerShell.".into());
+            }
+            if args.iter().any(|a| !is_plain_word(a)) {
+                return Err("Command Prompt can't pass an argument that needs quoting. Use PowerShell.".into());
+            }
+            let mut line = program_word;
+            for arg in &args {
+                line.push(' ');
+                line.push_str(arg);
+            }
+            argv.extend(["/k".into(), line]);
         }
         ShellFamily::Posix | ShellFamily::Wsl => {
-            let mut line = program_line;
+            let mut line = word(&program_word, posix_quote);
+            for arg in &args {
+                line.push(' ');
+                line.push_str(&word(arg, posix_quote));
+            }
             if let Some(p) = prompt {
-                line.push_str(&format!(" {flag}{}", posix_quote(p)));
+                if let Some(flag) = prompt_flag {
+                    line.push(' ');
+                    line.push_str(&word(flag, posix_quote));
+                }
+                line.push_str(&format!(" {}", posix_quote(p)));
             }
             if profile.family == ShellFamily::Wsl {
                 line.push_str("; exec bash -l");
@@ -565,15 +660,44 @@ fn build_argv(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::agents::manifest::{AgentManifest, PromptStyle, shipped};
 
-    /// `launch_argv` without Codex's `--no-daemon`; the tests that want the flag call `super::launch_argv` with `true`.
+    /// The program a test launches for `agent`: an adapter's command, else the manifest's first command.
+    fn program_of_agent(agent: &str) -> Program<'static> {
+        if let Some(command) = agent_command(agent) {
+            return Program::Name(command);
+        }
+        match shipped().iter().find(|m| m.id == agent) {
+            Some(m) => Program::Name(&m.commands[0]),
+            None => Program::Name("nope"),
+        }
+    }
+
+    /// `launch_argv` without Codex's `--no-daemon`; the tests that want the flag call `launch_argv_nd` with `true`.
     fn launch_argv(
         profile: &Profile,
         agent: Option<&str>,
         prompt: Option<&str>,
         mode: Option<SessionMode>,
     ) -> Result<Vec<String>, String> {
-        super::launch_argv(profile, agent, prompt, mode, false)
+        launch_argv_nd(profile, agent, prompt, mode, false)
+    }
+
+    fn launch_argv_nd(
+        profile: &Profile,
+        agent: Option<&str>,
+        prompt: Option<&str>,
+        mode: Option<SessionMode>,
+        no_daemon: bool,
+    ) -> Result<Vec<String>, String> {
+        super::launch_argv(
+            profile,
+            &Agents::shipped(),
+            agent.map(|a| (a, program_of_agent(a))),
+            prompt,
+            mode,
+            no_daemon,
+        )
     }
 
     /// `launch_argv_resume` without Codex's `--no-daemon`.
@@ -583,7 +707,36 @@ mod tests {
         mode: Option<SessionMode>,
         target: ResumeTarget,
     ) -> Result<Vec<String>, String> {
-        super::launch_argv_resume(profile, agent, mode, target, false)
+        launch_argv_resume_nd(profile, agent, mode, target, false)
+    }
+
+    fn launch_argv_resume_nd(
+        profile: &Profile,
+        agent: Option<&str>,
+        mode: Option<SessionMode>,
+        target: ResumeTarget,
+        no_daemon: bool,
+    ) -> Result<Vec<String>, String> {
+        super::launch_argv_resume(
+            profile,
+            &Agents::shipped(),
+            agent.map(|a| (a, program_of_agent(a))),
+            mode,
+            target,
+            no_daemon,
+        )
+    }
+
+    fn resume_args(agent: &str, target: ResumeTarget) -> Vec<String> {
+        super::resume_args(&Agents::shipped(), agent, target)
+    }
+
+    fn mode_args(agent: &str, mode: SessionMode) -> Option<Vec<String>> {
+        super::mode_args(&Agents::shipped(), agent, mode)
+    }
+
+    fn agent_in(chain: &[String], command_line: Option<&str>) -> Option<String> {
+        super::agent_in(&Agents::shipped(), chain, command_line)
     }
 
     #[test]
@@ -765,7 +918,7 @@ mod tests {
     fn cmd_without_prompt_builds_k_line() {
         let cmd = profile("cmd", &["cmd.exe"], ShellFamily::Cmd);
         assert_eq!(
-            super::launch_argv(&cmd, Some("codex"), None, None, true).unwrap(),
+            launch_argv_nd(&cmd, Some("codex"), None, None, true).unwrap(),
             ["cmd.exe", "/k", "codex --no-daemon"]
         );
     }
@@ -852,7 +1005,7 @@ mod tests {
     #[test]
     fn wsl_agent_argv_runs_bash_login() {
         let wsl = profile("wsl-ubuntu", &["wsl.exe", "-d", "Ubuntu"], ShellFamily::Wsl);
-        let argv = super::launch_argv(&wsl, Some("codex"), Some("hi"), None, true).unwrap();
+        let argv = launch_argv_nd(&wsl, Some("codex"), Some("hi"), None, true).unwrap();
         assert_eq!(
             argv,
             [
@@ -965,7 +1118,8 @@ mod tests {
         assert_eq!(resume_args("claude", ResumeTarget::Last), ["--continue"]);
         assert_eq!(resume_args("codex", ResumeTarget::Last), ["resume", "--last"]);
         assert_eq!(resume_args("antigravity", ResumeTarget::Last), ["--continue"]);
-        assert!(resume_args("aider", ResumeTarget::Last).is_empty());
+        assert_eq!(resume_args("aider", ResumeTarget::Last), ["--restore-chat-history"]);
+        assert!(resume_args("nope", ResumeTarget::Last).is_empty());
     }
 
     #[test]
@@ -974,7 +1128,7 @@ mod tests {
         let argv = launch_argv_resume(&ps, Some("claude"), None, ResumeTarget::Last).unwrap();
         assert_eq!(argv.last().unwrap(), "& claude --continue");
         let sh = profile("bash", &["bash"], ShellFamily::Posix);
-        let argv = super::launch_argv_resume(&sh, Some("codex"), None, ResumeTarget::Last, true).unwrap();
+        let argv = launch_argv_resume_nd(&sh, Some("codex"), None, ResumeTarget::Last, true).unwrap();
         assert!(
             argv.last()
                 .unwrap()
@@ -1005,7 +1159,7 @@ mod tests {
             argv.last().unwrap(),
             "& claude --resume abc-1 --permission-mode bypassPermissions"
         );
-        let argv = super::launch_argv_resume(&ps, Some("codex"), None, by_id, true).unwrap();
+        let argv = launch_argv_resume_nd(&ps, Some("codex"), None, by_id, true).unwrap();
         assert_eq!(argv.last().unwrap(), "& codex resume abc-1 --no-daemon");
     }
 
@@ -1036,6 +1190,7 @@ mod tests {
     #[test]
     fn mode_args_match_the_plan_table() {
         use SessionMode::*;
+        let mode_args = |agent: &str, mode| mode_args(agent, mode).unwrap();
         assert_eq!(mode_args("claude", Manual), ["--permission-mode", "manual"]);
         assert_eq!(mode_args("claude", Plan), ["--permission-mode", "plan"]);
         assert_eq!(mode_args("claude", AutoEdit), ["--permission-mode", "acceptEdits"]);
@@ -1061,26 +1216,26 @@ mod tests {
         assert_eq!(mode_args("antigravity", AutoEdit), ["--mode", "accept-edits"]);
         assert_eq!(mode_args("antigravity", FullAuto), ["--mode", "auto"]);
         assert_eq!(mode_args("antigravity", Bypass), ["--dangerously-skip-permissions"]);
-        assert!(mode_args("aider", Bypass).is_empty());
+        assert_eq!(mode_args("aider", Bypass), ["--yes-always"]);
     }
 
     #[test]
     fn codex_starts_with_its_own_app_server() {
         // In Codex's shared daemon every session's hooks carry the first tab's id (slice 6a decision 12).
         let ps = profile("pwsh", &["pwsh.exe"], ShellFamily::PowerShell);
-        let argv = super::launch_argv(&ps, Some("codex"), Some("hi"), Some(SessionMode::Manual), true).unwrap();
+        let argv = launch_argv_nd(&ps, Some("codex"), Some("hi"), Some(SessionMode::Manual), true).unwrap();
         assert!(argv.last().unwrap().starts_with("& codex --no-daemon "), "{argv:?}");
         // The flag is Codex's own: no other agent gets it, whatever the caller says.
-        let argv = super::launch_argv(&ps, Some("claude"), None, None, true).unwrap();
+        let argv = launch_argv_nd(&ps, Some("claude"), None, None, true).unwrap();
         assert!(!argv.last().unwrap().contains("--no-daemon"));
     }
 
     #[test]
     fn codex_starts_without_no_daemon_when_the_version_does_not_take_it() {
         let ps = profile("pwsh", &["pwsh.exe"], ShellFamily::PowerShell);
-        let argv = super::launch_argv(&ps, Some("codex"), Some("hi"), None, false).unwrap();
+        let argv = launch_argv_nd(&ps, Some("codex"), Some("hi"), None, false).unwrap();
         assert_eq!(argv.last().unwrap(), "& codex 'hi'");
-        let argv = super::launch_argv_resume(&ps, Some("codex"), None, ResumeTarget::Last, false).unwrap();
+        let argv = launch_argv_resume_nd(&ps, Some("codex"), None, ResumeTarget::Last, false).unwrap();
         assert_eq!(argv.last().unwrap(), "& codex resume --last");
     }
 
@@ -1092,7 +1247,7 @@ mod tests {
             argv.last().unwrap(),
             "& claude --continue --permission-mode bypassPermissions"
         );
-        let argv = super::launch_argv_resume(
+        let argv = launch_argv_resume_nd(
             &ps,
             Some("codex"),
             Some(SessionMode::FullAuto),
@@ -1125,7 +1280,10 @@ mod tests {
     #[test]
     fn unknown_agent_is_an_error() {
         let ps = profile("pwsh", &["pwsh.exe"], ShellFamily::PowerShell);
-        assert!(launch_argv(&ps, Some("aider"), None, None).is_err());
+        assert_eq!(
+            launch_argv(&ps, Some("nope"), None, None).unwrap_err(),
+            "Unknown agent: nope."
+        );
         assert_eq!(agent_command("antigravity"), Some("agy"));
         assert_eq!(agent_command("aider"), None);
     }
@@ -1157,15 +1315,211 @@ mod tests {
     #[test]
     fn agent_in_reads_the_chain_then_the_command_line() {
         let chain = |names: &[&str]| names.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        let agent = |names: &[&str], line: Option<&str>| agent_in(&chain(names), line);
         assert_eq!(
-            agent_in(&chain(&["cmd", "node", "codex-x86_64-pc-windows-msvc"]), None),
+            agent(&["cmd", "node", "codex-x86_64-pc-windows-msvc"], None).as_deref(),
             Some("codex")
         );
-        assert_eq!(agent_in(&chain(&["claude"]), None), Some("claude"));
-        assert_eq!(agent_in(&chain(&["agy"]), None), Some("antigravity"));
-        assert_eq!(agent_in(&[], Some("npx @anthropic-ai/claude-code")), Some("claude"));
-        assert_eq!(agent_in(&chain(&["node"]), Some("git status")), None);
-        assert_eq!(agent_in(&chain(&["claude-helper"]), None), None);
-        assert_eq!(agent_in(&chain(&["codex"]), None), Some("codex"));
+        assert_eq!(agent(&["claude"], None).as_deref(), Some("claude"));
+        assert_eq!(agent(&["agy"], None).as_deref(), Some("antigravity"));
+        assert_eq!(
+            agent(&[], Some("npx @anthropic-ai/claude-code")).as_deref(),
+            Some("claude")
+        );
+        assert_eq!(agent(&["node"], Some("git status")), None);
+        assert_eq!(agent(&["claude-helper"], None), None);
+        assert_eq!(agent(&["codex"], None).as_deref(), Some("codex"));
+    }
+
+    fn pwsh() -> Profile {
+        profile("pwsh", &["pwsh.exe"], ShellFamily::PowerShell)
+    }
+
+    #[test]
+    fn grok_launches_with_a_positional_prompt_and_its_mode() {
+        let argv = launch_argv(&pwsh(), Some("grok"), Some("fix it"), Some(SessionMode::Manual)).unwrap();
+        assert_eq!(argv.last().unwrap(), "& grok --permission-mode default 'fix it'");
+    }
+
+    #[test]
+    fn qwen_takes_its_prompt_after_dash_i() {
+        let argv = launch_argv(&pwsh(), Some("qwen"), Some("x"), Some(SessionMode::Plan)).unwrap();
+        assert_eq!(argv.last().unwrap(), "& qwen --approval-mode plan -i 'x'");
+    }
+
+    #[test]
+    fn opencode_takes_its_prompt_after_dash_dash_prompt() {
+        let argv = launch_argv(&pwsh(), Some("opencode"), Some("x"), None).unwrap();
+        assert_eq!(argv.last().unwrap(), "& opencode --prompt 'x'");
+        let sh = profile("login-shell", &["/bin/zsh", "-l"], ShellFamily::Posix);
+        let argv = launch_argv(&sh, Some("opencode"), Some("it's"), None).unwrap();
+        assert!(argv.last().unwrap().starts_with("opencode --prompt 'it'\\''s';"));
+    }
+
+    #[test]
+    fn a_prompt_for_a_cli_without_one_is_refused() {
+        for (agent, cli) in [
+            ("kimi", "Kimi Code CLI"),
+            ("crush", "Crush"),
+            ("amp", "Amp"),
+            ("aider", "Aider"),
+        ] {
+            let err = launch_argv(&pwsh(), Some(agent), Some("hi"), None).unwrap_err();
+            assert_eq!(err, format!("{cli} can't take a first prompt. Start it, then type it."));
+            // No prompt, or an empty one, starts it.
+            assert!(launch_argv(&pwsh(), Some(agent), None, None).is_ok());
+            assert!(launch_argv(&pwsh(), Some(agent), Some(""), None).is_ok());
+        }
+    }
+
+    #[test]
+    fn manifest_resume_uses_continue_for_every_target() {
+        for target in [
+            ResumeTarget::Last,
+            ResumeTarget::Session("abc-1"),
+            ResumeTarget::Fork("abc-1"),
+        ] {
+            let line = |agent| {
+                launch_argv_resume(&pwsh(), Some(agent), None, target)
+                    .unwrap()
+                    .pop()
+                    .unwrap()
+            };
+            assert_eq!(line("grok"), "& grok --continue");
+            assert_eq!(line("amp"), "& amp threads continue");
+            assert_eq!(line("aider"), "& aider --restore-chat-history");
+        }
+    }
+
+    #[test]
+    fn an_unmapped_mode_adds_no_flags_and_is_refused_by_the_server() {
+        assert_eq!(mode_args("cursor", SessionMode::AutoEdit), None);
+        assert_eq!(mode_args("opencode", SessionMode::Manual), None);
+        assert_eq!(mode_args("cursor", SessionMode::Manual), Some(vec![]));
+        assert_eq!(mode_args("cursor", SessionMode::Plan), Some(vec!["--plan".to_string()]));
+        // The adapters keep `Some(&[])` where they had no flags.
+        assert_eq!(mode_args("antigravity", SessionMode::Manual), Some(vec![]));
+        assert_eq!(mode_args("codex", SessionMode::DontAsk), Some(vec![]));
+        // build_argv itself adds nothing for it; the server's check is what refuses.
+        let argv = launch_argv(&pwsh(), Some("cursor"), None, Some(SessionMode::AutoEdit)).unwrap();
+        assert_eq!(argv.last().unwrap(), "& cursor-agent");
+    }
+
+    fn own_agent(command: &str) -> AgentManifest {
+        AgentManifest {
+            id: "mine".into(),
+            name: "Mine".into(),
+            cli: "Mine".into(),
+            mark: "generic".into(),
+            commands: vec![command.into()],
+            reject_paths: vec![],
+            version_shape: None,
+            exe_names: vec!["my agent".into()],
+            packages: vec![],
+            prompt: PromptStyle::Positional,
+            continue_args: None,
+            modes: Default::default(),
+        }
+    }
+
+    #[test]
+    fn an_own_command_with_a_space_is_quoted_per_shell() {
+        let path = Path::new("C:\\Users\\Home Office\\tools\\my agent.exe");
+        let agents = Agents::with_own(vec![own_agent("x")]);
+        let launch = |profile: &Profile, flags: &[&str]| {
+            let mut agent = own_agent("x");
+            agent
+                .modes
+                .insert(SessionMode::Bypass, flags.iter().map(|f| f.to_string()).collect());
+            let agents = Agents::with_own(vec![agent]);
+            super::launch_argv(
+                profile,
+                &agents,
+                Some(("mine", Program::Path(path))),
+                None,
+                Some(SessionMode::Bypass),
+                false,
+            )
+        };
+        let argv = launch(&pwsh(), &[]).unwrap();
+        assert_eq!(argv.last().unwrap(), "& 'C:\\Users\\Home Office\\tools\\my agent.exe'");
+        // Own flags with a space or a quote are quoted the same way.
+        let argv = launch(&pwsh(), &["--name", "it's mine", "--safe=1"]).unwrap();
+        assert_eq!(
+            argv.last().unwrap(),
+            "& 'C:\\Users\\Home Office\\tools\\my agent.exe' --name 'it''s mine' --safe=1"
+        );
+        let sh = profile("login-shell", &["/bin/zsh", "-l"], ShellFamily::Posix);
+        let argv = launch(&sh, &["--name", "it's mine"]).unwrap();
+        assert!(
+            argv.last()
+                .unwrap()
+                .starts_with("'C:\\Users\\Home Office\\tools\\my agent.exe' --name 'it'\\''s mine'; exec"),
+            "{argv:?}"
+        );
+        let cmd = profile("cmd", &["cmd.exe"], ShellFamily::Cmd);
+        assert_eq!(
+            launch(&cmd, &[]).unwrap_err(),
+            "Command Prompt can't start a program whose path has a space. Use PowerShell."
+        );
+        // A safe program with an argument that needs quoting is refused in cmd too.
+        let err = super::launch_argv(
+            &cmd,
+            &{
+                let mut agent = own_agent("x");
+                agent.modes.insert(SessionMode::Bypass, vec!["a b".into()]);
+                Agents::with_own(vec![agent])
+            },
+            Some(("mine", Program::Name("mine"))),
+            None,
+            Some(SessionMode::Bypass),
+            false,
+        )
+        .unwrap_err();
+        assert_eq!(
+            err,
+            "Command Prompt can't pass an argument that needs quoting. Use PowerShell."
+        );
+        // The ids and the program names of the agents are known to the value.
+        assert!(agents.is_known("mine"));
+    }
+
+    #[test]
+    fn foreground_names_come_from_manifests() {
+        let chain = |names: &[&str]| names.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        let agents = Agents::with_own(vec![own_agent("my-agent-marshell-test")]);
+        let agent = |names: &[&str], line: Option<&str>| super::agent_in(&agents, &chain(names), line);
+        assert_eq!(agent(&["pwsh", "grok"], None).as_deref(), Some("grok"));
+        // Grok installs an `agent.exe` too: a bare `agent` is nobody's.
+        assert_eq!(agent(&["pwsh", "agent"], None), None);
+        assert_eq!(agent(&["pwsh", "grok", "agent"], None).as_deref(), Some("grok"));
+        assert_eq!(agent(&["pwsh", "cursor-agent"], None).as_deref(), Some("cursor"));
+        assert_eq!(agent(&[], Some("npx @qwen-code/qwen-code")).as_deref(), Some("qwen"));
+        assert_eq!(agent(&[], Some("npx opencode-ai run")).as_deref(), Some("opencode"));
+        assert_eq!(agent(&["my agent"], None).as_deref(), Some("mine"));
+        // The deepest process wins, adapter or not.
+        assert_eq!(agent(&["claude", "grok"], None).as_deref(), Some("grok"));
+        assert_eq!(agent(&["grok", "claude"], None).as_deref(), Some("claude"));
+        // Shipped-only agents don't know the own one.
+        assert_eq!(super::agent_in(&Agents::shipped(), &chain(&["my agent"]), None), None);
+    }
+
+    #[test]
+    fn adapters_launch_exactly_as_before() {
+        let sh = profile("login-shell", &["/bin/zsh", "-l"], ShellFamily::Posix);
+        let line = |profile: &Profile, agent: &str, mode| launch_argv(profile, Some(agent), Some("hi"), mode).unwrap();
+        assert_eq!(
+            line(&pwsh(), "claude", Some(SessionMode::Plan)).last().unwrap(),
+            "& claude --permission-mode plan 'hi'"
+        );
+        assert_eq!(
+            line(&pwsh(), "codex", Some(SessionMode::AutoEdit)).last().unwrap(),
+            "& codex --sandbox workspace-write --ask-for-approval on-request 'hi'"
+        );
+        assert_eq!(line(&pwsh(), "antigravity", None).last().unwrap(), "& agy -i 'hi'");
+        assert_eq!(
+            line(&sh, "claude", None).last().unwrap(),
+            "claude 'hi'; exec \"$SHELL\" -l"
+        );
     }
 }

@@ -109,6 +109,10 @@ struct Inner {
     agent_on_path: fn(&str) -> bool,
     /// The file an agent's command runs from PATH, for its setup and version. Tests swap it.
     agent_path: fn(&str) -> Option<PathBuf>,
+    /// The adapters' launch data plus the shipped and own manifest agents.
+    agents: crate::agents::manifest::Agents,
+    /// `--version` of the manifest agents' programs, for telling a program from another with the same name.
+    agent_versions: Arc<crate::agents::identify::VersionCache>,
     /// The last events the bridge sent, per live tab.
     hook_log: crate::hooks::log::HookLog,
     /// The permission requests being held for a decision.
@@ -209,6 +213,8 @@ impl AppState {
             foreground_wake: Arc::new(tokio::sync::Notify::new()),
             agent_on_path: crate::profiles::detect::command_on_path,
             agent_path: crate::profiles::detect::command_path,
+            agents: crate::agents::manifest::Agents::shipped(),
+            agent_versions: Arc::new(crate::agents::identify::VersionCache::default()),
             hook_log: crate::hooks::log::HookLog::default(),
             holds: crate::hooks::holds::Holds::default(),
             permission_hold: DEFAULT_PERMISSION_HOLD,

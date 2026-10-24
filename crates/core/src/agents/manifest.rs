@@ -3,7 +3,7 @@
 use marshell_protocol::api::SessionMode;
 pub use marshell_protocol::manifest::{AgentManifest, OwnAgentProblem, PromptStyle};
 use std::collections::HashSet;
-use std::sync::LazyLock;
+use std::sync::{Arc, LazyLock};
 
 static SHIPPED: LazyLock<Vec<AgentManifest>> =
     LazyLock::new(|| serde_json::from_str(include_str!("manifests.json")).expect("agents/manifests.json parses"));
@@ -73,6 +73,61 @@ impl Reserved {
     }
 }
 
+/// The three adapters' launch data plus the shipped and valid own manifests. Cheap to clone.
+#[derive(Clone)]
+pub struct Agents(Arc<Vec<AgentManifest>>);
+
+impl Agents {
+    /// The shipped manifests and no own agents.
+    pub fn shipped() -> Self {
+        Self::with_own(Vec::new())
+    }
+
+    /// The shipped manifests, then `own` (already through `validate_own`).
+    pub fn with_own(own: Vec<AgentManifest>) -> Self {
+        let mut all = shipped().to_vec();
+        all.extend(own);
+        Self(Arc::new(all))
+    }
+
+    /// The manifest of a manifest agent. None for the adapters (claude, codex, antigravity) and unknown ids.
+    pub fn manifest(&self, id: &str) -> Option<&AgentManifest> {
+        self.0.iter().find(|m| m.id == id)
+    }
+
+    /// An adapter agent or a manifest agent.
+    pub fn is_known(&self, id: &str) -> bool {
+        ADAPTER_IDS.contains(&id) || self.manifest(id).is_some()
+    }
+
+    /// The agent an executable name (as `program_name` gives it) belongs to. Adapters come first.
+    pub fn agent_of_exe(&self, name: &str) -> Option<String> {
+        if let Some(adapter) = crate::profiles::detect::adapter_of_exe(name) {
+            return Some(adapter.to_string());
+        }
+        self.0
+            .iter()
+            .find(|m| m.exe_names.iter().any(|e| e.eq_ignore_ascii_case(name)))
+            .map(|m| m.id.clone())
+    }
+
+    /// The agent an npm package (as `program_of` gives it) belongs to.
+    pub fn agent_of_package(&self, name: &str) -> Option<String> {
+        if let Some(adapter) = crate::profiles::detect::adapter_of_package(name) {
+            return Some(adapter.to_string());
+        }
+        self.0
+            .iter()
+            .find(|m| m.packages.iter().any(|p| p.eq_ignore_ascii_case(name)))
+            .map(|m| m.id.clone())
+    }
+
+    /// The shipped manifests, then the own ones.
+    pub fn manifests(&self) -> impl Iterator<Item = &AgentManifest> {
+        self.0.iter()
+    }
+}
+
 const SHELL_CHARS: &[char] = &['&', '|', ';', '<', '>', '^', '%', '$', '`', '"', '\'', '\n', '\r'];
 
 fn id_is_well_formed(id: &str) -> bool {
@@ -83,7 +138,7 @@ fn id_is_well_formed(id: &str) -> bool {
             .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
 }
 
-fn mode_label(mode: SessionMode) -> &'static str {
+pub(crate) fn mode_label(mode: SessionMode) -> &'static str {
     match mode {
         SessionMode::Manual => "Manual",
         SessionMode::Plan => "Plan",

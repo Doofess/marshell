@@ -1,7 +1,11 @@
 use super::AppState;
 use crate::agents::codex::supports_no_daemon;
+use crate::agents::identify::{Missing, find};
+use crate::agents::manifest::mode_label;
 use crate::auth;
-use crate::profiles::detect::{ResumeTarget, agent_command, default_shell, launch_argv, launch_argv_resume};
+use crate::profiles::detect::{
+    Program, ResumeTarget, agent_command, default_shell, launch_argv, launch_argv_resume, mode_args,
+};
 use crate::pty::{FreezeError, Session, SpawnSpec};
 use crate::registry::{Relaunch, ResumeRefusal};
 use axum::Json;
@@ -79,6 +83,16 @@ pub(super) async fn resolve(
     mode: Option<SessionMode>,
 ) -> Result<Resolved, ApiError> {
     let no_daemon = agent == Some("codex") && codex_takes_no_daemon(st).await;
+    let agents = st.0.agents.clone();
+    // A manifest agent has a mode only where its manifest maps one.
+    if let (Some(m), Some(mode)) = (agent.and_then(|a| agents.manifest(a)), mode)
+        && mode_args(&agents, &m.id, mode).is_none()
+    {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            format!("{} has no {} mode.", m.name, mode_label(mode)),
+        ));
+    }
     // Copy the profile out so the lock is gone before any await.
     let profile = {
         let doc = st.0.profiles.lock().unwrap();
@@ -87,9 +101,16 @@ pub(super) async fn resolve(
     };
     match (profile, profile_id) {
         (Some(p), _) => {
+            let command = match agent {
+                None => None,
+                Some(id) => Some(program_command(st, id, p.family == ShellFamily::Wsl).await?),
+            };
+            let spec = agent
+                .zip(command.as_deref())
+                .map(|(id, c)| (id, Program::of_command(c)));
             let argv = match resume {
-                Some(target) => launch_argv_resume(&p, agent, mode, target, no_daemon),
-                None => launch_argv(&p, agent, prompt, mode, no_daemon),
+                Some(target) => launch_argv_resume(&p, &agents, spec, mode, target, no_daemon),
+                None => launch_argv(&p, &agents, spec, prompt, mode, no_daemon),
             };
             let mut argv = argv.map_err(|msg| (StatusCode::BAD_REQUEST, msg))?;
             let mut env = p.env.clone();
@@ -119,6 +140,34 @@ pub(super) async fn resolve(
         (None, id) => Err((
             StatusCode::BAD_REQUEST,
             format!("Unknown profile: {}.", id.unwrap_or("(default)")),
+        )),
+    }
+}
+
+/// The program word an agent starts with. An adapter's is fixed. A manifest agent's is the first of its
+/// commands that resolves on PATH as that agent (off the async workers: a version check may run its
+/// `--version`); a WSL distro has its own PATH, so there it is the first command. An unknown id gets
+/// itself, and `launch_argv` refuses it.
+async fn program_command(st: &AppState, id: &str, wsl: bool) -> Result<String, ApiError> {
+    if let Some(command) = agent_command(id) {
+        return Ok(command.to_string());
+    }
+    let Some(m) = st.0.agents.manifest(id).cloned() else {
+        return Ok(id.to_string());
+    };
+    if wsl {
+        return Ok(m.commands.first().cloned().unwrap_or_else(|| id.to_string()));
+    }
+    let (path_of, versions) = (st.0.agent_path, st.0.agent_versions.clone());
+    let name = m.name.clone();
+    let found = tokio::task::spawn_blocking(move || find(&m, &|c| path_of(c), &|p| versions.get(p)))
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    match found {
+        Ok(found) => Ok(found.command),
+        Err(Missing::NotOnPath | Missing::Rejected { .. } | Missing::WrongVersion { .. }) => Err((
+            StatusCode::BAD_REQUEST,
+            format!("{name} isn't installed, or isn't on PATH."),
         )),
     }
 }
@@ -364,7 +413,7 @@ pub async fn create(
     State(st): State<AppState>,
     Json(req): Json<CreateSessionRequest>,
 ) -> Result<Json<CreateSessionResponse>, ApiError> {
-    if let Some(agent) = req.agent.as_deref().filter(|a| agent_command(a).is_none()) {
+    if let Some(agent) = req.agent.as_deref().filter(|a| !st.0.agents.is_known(a)) {
         return Err((StatusCode::BAD_REQUEST, format!("Unknown agent: {agent}.")));
     }
     // An explicit argv keeps the old behaviour: run it as given, as a custom profile.
