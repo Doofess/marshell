@@ -247,8 +247,12 @@ impl Kind {
     }
 }
 
-fn is_zst(path: &Path) -> bool {
-    path.extension().is_some_and(|ext| ext == "zst")
+/// True when the error comes from the operating system (a file that can't be opened or read), as opposed to
+/// a file whose content is the problem: too large, or not a zstd frame.
+fn failed_in_the_system(err: &anyhow::Error) -> bool {
+    err.chain()
+        .filter_map(|cause| cause.downcast_ref::<std::io::Error>())
+        .any(|io| io.raw_os_error().is_some())
 }
 
 /// What reading a source file's text decided.
@@ -461,22 +465,22 @@ impl Worker {
             self.shared.at_gate.store(true, Ordering::SeqCst);
             drop(self.shared.gate.lock().unwrap());
         }
-        // A plain file this large is not read at all: its copy could not be read back. It is looked at
-        // again only when its size changes.
-        if size > self.max_source && !is_zst(path) {
-            tracing::warn!(
-                "history import: skipping {}: {size} bytes is over the {} byte limit",
-                path.display(),
-                self.max_source
-            );
-            self.record(path, size, kind.agent(), "");
-            return;
-        }
         let bytes = match archive::read_source_capped(path, self.max_source) {
             Ok(bytes) => bytes,
-            Err(err) => {
+            // The system could not open or read it (a lock, a vanished file): try again after the next rescan.
+            Err(err) if failed_in_the_system(&err) => {
                 tracing::warn!("history import: could not read {}: {err:#}", path.display());
                 self.retry_later(path, size);
+                return;
+            }
+            // Over the cap, or it does not decode: reading it again gives the same result. Record it at this
+            // size, so it is looked at again only when its size changes, and say so once.
+            Err(err) => {
+                tracing::warn!(
+                    "history import: skipping {}, which is looked at again only when its size changes: {err:#}",
+                    path.display()
+                );
+                self.record(path, size, kind.agent(), "");
                 return;
             }
         };
@@ -1238,6 +1242,28 @@ mod tests {
         std::fs::write(&path, &smaller).unwrap();
         wait_for("the copy after the size changed", || {
             rig.archived("claude", CLAUDE_A) == Some(smaller.clone())
+        });
+        drop(importer);
+    }
+
+    #[test]
+    fn a_corrupt_zst_is_not_read_again_until_its_size_changes() {
+        let rig = rig();
+        let path = write_codex(&rig, CODEX_A, "user", "2026-10-21T09:00:00.000Z", true);
+        std::fs::write(&path, b"this is not a zstd frame, whatever its name says").unwrap();
+        let importer = rig.start(true, FAST);
+        wait_for("the corrupt file to be recorded", || rig.recorded(&path).is_some());
+        let recorded = rig.recorded(&path).unwrap();
+        assert_eq!(
+            (recorded.size, recorded.session_id.as_str()),
+            (std::fs::metadata(&path).unwrap().len(), "")
+        );
+        std::thread::sleep(FAST.rescan * 3);
+        assert!(rig.archived("codex", CODEX_A).is_none());
+        // The CLI rewrites it whole: the size changes and it is copied.
+        write_codex(&rig, CODEX_A, "user", "2026-10-21T09:00:00.000Z", true);
+        wait_for("the copy after the file was rewritten", || {
+            rig.archived("codex", CODEX_A).is_some()
         });
         drop(importer);
     }
