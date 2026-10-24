@@ -3,11 +3,12 @@ import type { Conversation } from "../../generated/Conversation";
 import { editDiff, filesChanged } from "./changedFiles";
 
 /** The note and the empty line, per agent: each names the tools whose edits the transcript records. */
+const CLAUDE_COPY = {
+  note: "Only edits made with Claude Code's Edit and Write tools are listed. Changes made through shell commands, such as sed or a code generator, aren't.",
+  none: "Claude Code didn't edit any files in this conversation.",
+};
 const COPY: Record<string, { note: string; none: string }> = {
-  claude: {
-    note: "Only edits made with Claude Code's Edit and Write tools are listed. Changes made through shell commands, such as sed or a code generator, aren't.",
-    none: "Claude Code didn't edit any files in this conversation.",
-  },
+  claude: CLAUDE_COPY,
   codex: {
     note: "Only edits made with Codex's apply_patch are listed. Changes made through shell commands, such as sed or a code generator, aren't.",
     none: "Codex didn't edit any files in this conversation.",
@@ -23,7 +24,7 @@ const counts = (added: number | null, removed: number | null) => `+${added ?? "â
  */
 export function FilesChanged({ conversation, onGoToTurn }: { conversation: Conversation; onGoToTurn: (turn: number) => void }) {
   const files = filesChanged(conversation);
-  const copy = COPY[conversation.agent] ?? COPY.claude;
+  const copy = COPY[conversation.agent] ?? CLAUDE_COPY;
   return (
     <section className="files" aria-label="Files changed">
       <h3 className="files__heading">{files.length === 1 ? "1 file changed" : `${files.length} files changed`}</h3>
