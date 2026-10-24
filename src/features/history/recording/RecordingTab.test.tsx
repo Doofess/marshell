@@ -1,7 +1,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import type { RecordingPart } from "../../../generated/RecordingPart";
-import { RecordingTab, type RecordingState } from "./RecordingTab";
+import { partFor, RecordingTab, type RecordingState } from "./RecordingTab";
 
 const part = (index: number, over: Partial<RecordingPart> = {}): RecordingPart => ({
   index,
@@ -38,6 +38,21 @@ describe("RecordingTab", () => {
   });
   it("opens the part that covers a Play from here request", () => {
     expect(html(ready(part(0), part(1), part(2)), { turn: 1, atMs: 2_100_000 })).toMatch(/Part 2 of 3, started /);
+  });
+  it("opens the later of two parts that both cover the request, as after a resume in a new tab", () => {
+    const older = part(0, { ended_ms: 3_000_000, span_to_ms: 3_000_000 });
+    const resumed = part(1);
+    expect(html(ready(older, resumed), { turn: 2, atMs: 2_100_000 })).toMatch(/Part 2 of 2, started /);
+    expect(partFor([older, resumed], 1_500_000)).toBe(older);
+    expect(partFor([older, resumed], 2_100_000)).toBe(resumed);
+    expect(partFor([older, resumed], 9_000_000)).toBeUndefined();
+  });
+  it("leaves a turn that belongs to a later part out of an older part's marks", () => {
+    const older = part(0, { ended_ms: 3_000_000, span_to_ms: 3_000_000 });
+    const h = renderToStaticMarkup(
+      <RecordingTab agent="claude" id="s" parts={ready(older, part(1))} turnTimes={[2_100_000]} request={null} frames={frames} />,
+    );
+    expect(h).toMatch(/aria-disabled="true">Next mark/);
   });
   it("has the Whole recording checkbox, unchecked", () => {
     const h = html(ready(part(0)));

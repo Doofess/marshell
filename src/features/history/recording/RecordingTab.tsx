@@ -15,6 +15,16 @@ export const LOADING_COPY = "Loading the recording…";
 export const NO_RECORDING_COPY = "Marshell has no recording of this conversation.";
 export const OUTSIDE_COPY = "This turn is outside the recording.";
 
+/**
+ * The part a moment belongs to: of the parts that cover it, the one that started last. Parts overlap when a conversation is
+ * resumed in a new tab while the old tab still records, and from then on the conversation runs in the newer one.
+ */
+export function partFor<P extends Pick<RecordingPart, "started_ms" | "ended_ms">>(parts: P[], atMs: number): P | undefined {
+  let best: P | undefined;
+  for (const p of parts) if (atMs >= p.started_ms && atMs <= p.ended_ms && (!best || p.started_ms > best.started_ms)) best = p;
+  return best;
+}
+
 const whenOf = (ms: number) => new Date(ms).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
 
 /**
@@ -51,7 +61,7 @@ export function RecordingTab({
   const list = parts.parts;
   if (list.length === 0) return <p className="recording__note">{NO_RECORDING_COPY}</p>;
 
-  const covering = request ? list.find((p) => request.atMs >= p.started_ms && request.atMs <= p.ended_ms) : undefined;
+  const covering = request ? partFor(list, request.atMs) : undefined;
   const mine = picked !== null && picked.request === request ? picked.index : null;
   const index = clampIndex(mine ?? covering?.index ?? 0, list.length);
   const part = list[index]!;
@@ -82,7 +92,7 @@ export function RecordingTab({
         key={`${part.file}|${part.started_ms}`}
         part={part}
         frames={(q) => frames(part.index, q)}
-        turnTimes={turnTimes}
+        turnTimes={turnTimes.filter((t) => partFor(list, t) === part)}
         startAtMs={startAt}
         whole={whole}
         theme={theme}
