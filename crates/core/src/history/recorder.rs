@@ -610,6 +610,11 @@ impl History {
     /// done: the session is being copied by the hook path (the next scan tries again), or history is off.
     /// A Marshell tab's ownership is kept by the index and the sidecar when `meta` has no tab. Blocking.
     pub fn import(&self, meta: &SessionMeta, source: &Path) -> anyhow::Result<bool> {
+        self.import_bytes(meta, &archive::read_source(source)?)
+    }
+
+    /// Like `import`, for a transcript the caller has already read.
+    pub fn import_bytes(&self, meta: &SessionMeta, bytes: &[u8]) -> anyhow::Result<bool> {
         let existed = {
             let _marks = self.marks.lock().unwrap();
             let mut copying = self.copying.lock().unwrap();
@@ -625,7 +630,7 @@ impl History {
             copying.insert(meta.session_id.clone(), None);
             existed
         };
-        let result = match archive::copy_from(&self.home, meta, source) {
+        let result = match archive::copy_bytes(&self.home, meta, bytes) {
             Ok(_) => {
                 // Not during a flush: shutdown is waiting, and the backfill reads this copy next start.
                 if !self.hurry.load(Ordering::SeqCst) {

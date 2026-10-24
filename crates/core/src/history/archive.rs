@@ -66,8 +66,12 @@ pub fn copy_transcript(home: &Path, meta: &SessionMeta) -> anyhow::Result<PathBu
 /// Like `copy_transcript`, but from `source`, which may be a `.jsonl.zst` (decoded first, with the archive's
 /// cap). The source is only opened for reading.
 pub fn copy_from(home: &Path, meta: &SessionMeta, source: &Path) -> anyhow::Result<PathBuf> {
-    let bytes = read_source(source)?;
-    let packed = zstd::encode_all(bytes.as_slice(), 3).context("compressing the transcript")?;
+    copy_bytes(home, meta, &read_source(source)?)
+}
+
+/// Compresses `bytes`, a transcript already read, and replaces the archive copy and the sidecar.
+pub fn copy_bytes(home: &Path, meta: &SessionMeta, bytes: &[u8]) -> anyhow::Result<PathBuf> {
+    let packed = zstd::encode_all(bytes, 3).context("compressing the transcript")?;
     let (archive, _) = archive_paths(home, &meta.agent, &meta.session_id);
     store::write_bytes_atomic(&archive, &packed)?;
     write_meta(home, meta)?;
@@ -154,28 +158,40 @@ pub fn clear_tombstone(home: &Path, agent: &str, session_id: &str) {
     }
 }
 
-/// The bytes of a transcript file; a `.zst` file is decoded, and fails once it decodes past `MAX_DECODED_BYTES`.
+/// The bytes of a transcript file; a `.zst` file is decoded. Fails once the file, or what it decodes to, is over
+/// `MAX_DECODED_BYTES`: the archive could not be read back past that.
 pub fn read_source(source: &Path) -> anyhow::Result<Vec<u8>> {
+    read_source_capped(source, MAX_DECODED_BYTES)
+}
+
+/// `read_source` with a different cap.
+pub fn read_source_capped(source: &Path, cap: u64) -> anyhow::Result<Vec<u8>> {
     use std::io::Read;
     let reading = || format!("reading {}", source.display());
+    let file = std::fs::File::open(source).with_context(reading)?;
+    let mut bytes = Vec::new();
     if source.extension().is_some_and(|ext| ext == "zst") {
-        let file = std::fs::File::open(source).with_context(reading)?;
-        let decoder = zstd::Decoder::new(file).context("starting to decompress the transcript")?;
-        let mut bytes = Vec::new();
-        decoder
-            .take(MAX_DECODED_BYTES + 1)
+        zstd::Decoder::new(file)
+            .context("starting to decompress the transcript")?
+            .take(cap + 1)
             .read_to_end(&mut bytes)
             .with_context(reading)?;
-        anyhow::ensure!(
-            bytes.len() as u64 <= MAX_DECODED_BYTES,
-            "{} is over {} MB decoded",
-            source.display(),
-            MAX_DECODED_BYTES / (1024 * 1024)
-        );
-        Ok(bytes)
     } else {
-        std::fs::read(source).with_context(reading)
+        // Before reading any of it: a file this large is not worth the memory.
+        let len = file.metadata().with_context(reading)?.len();
+        anyhow::ensure!(
+            len <= cap,
+            "{} is {len} bytes, over the {cap} byte limit",
+            source.display()
+        );
+        file.take(cap + 1).read_to_end(&mut bytes).with_context(reading)?;
     }
+    anyhow::ensure!(
+        bytes.len() as u64 <= cap,
+        "{} is over {cap} bytes decoded",
+        source.display()
+    );
+    Ok(bytes)
 }
 
 /// The most a transcript may decode to before Marshell stops reading it.

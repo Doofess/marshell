@@ -131,6 +131,17 @@ impl Importer {
     }
 
     pub fn start_with(history: Arc<History>, roots: ImportRoots, on: bool, timing: Timing) -> Arc<Importer> {
+        Self::start_capped(history, roots, on, timing, archive::MAX_DECODED_BYTES)
+    }
+
+    /// Like `start_with`, with a different most a source file may be, plain or decoded, before it is skipped.
+    fn start_capped(
+        history: Arc<History>,
+        roots: ImportRoots,
+        on: bool,
+        timing: Timing,
+        max_source: u64,
+    ) -> Arc<Importer> {
         let (tx, rx) = std::sync::mpsc::channel();
         let shared = Arc::new(Shared {
             on: AtomicBool::new(on),
@@ -167,6 +178,7 @@ impl Importer {
             watchers: Vec::new(),
             missing_logged: HashSet::new(),
             first_run,
+            max_source,
         };
         let thread = std::thread::Builder::new()
             .name("history-import".into())
@@ -226,6 +238,19 @@ enum Kind {
     Codex,
 }
 
+impl Kind {
+    fn agent(self) -> &'static str {
+        match self {
+            Kind::Claude => CLAUDE,
+            Kind::Codex => CODEX,
+        }
+    }
+}
+
+fn is_zst(path: &Path) -> bool {
+    path.extension().is_some_and(|ext| ext == "zst")
+}
+
 /// What reading a source file's text decided.
 enum Prepared {
     /// Copy it with this meta.
@@ -250,6 +275,8 @@ struct Worker {
     watchers: Vec<RecommendedWatcher>,
     missing_logged: HashSet<PathBuf>,
     first_run: bool,
+    /// The most a source file may be, plain or decoded; a larger one is skipped.
+    max_source: u64,
 }
 
 impl Worker {
@@ -434,14 +461,26 @@ impl Worker {
             self.shared.at_gate.store(true, Ordering::SeqCst);
             drop(self.shared.gate.lock().unwrap());
         }
-        let prepared = match archive::read_source(path) {
-            Ok(bytes) => prepare(kind, path, &String::from_utf8_lossy(&bytes), &md),
+        // A plain file this large is not read at all: its copy could not be read back. It is looked at
+        // again only when its size changes.
+        if size > self.max_source && !is_zst(path) {
+            tracing::warn!(
+                "history import: skipping {}: {size} bytes is over the {} byte limit",
+                path.display(),
+                self.max_source
+            );
+            self.record(path, size, kind.agent(), "");
+            return;
+        }
+        let bytes = match archive::read_source_capped(path, self.max_source) {
+            Ok(bytes) => bytes,
             Err(err) => {
                 tracing::warn!("history import: could not read {}: {err:#}", path.display());
                 self.retry_later(path, size);
                 return;
             }
         };
+        let prepared = prepare(kind, path, &String::from_utf8_lossy(&bytes), &md);
         // Shutdown began while the file was being read: the copy would start after the flush stopped waiting.
         if self.shared.stopped.load(Ordering::SeqCst) || self.history.is_hurrying() {
             return;
@@ -456,7 +495,7 @@ impl Worker {
             {
                 self.record(path, size, &meta.agent, &meta.session_id);
             }
-            Prepared::Copy(meta) => match self.history.import(&meta, path) {
+            Prepared::Copy(meta) => match self.history.import_bytes(&meta, &bytes) {
                 Ok(true) => {
                     #[cfg(test)]
                     self.shared.order.lock().unwrap().push(meta.session_id.clone());
@@ -807,6 +846,17 @@ mod tests {
             Importer::start_with(self.history.clone(), self.roots(), on, timing)
         }
 
+        /// Like `start`, with a small cap on the size of a source file.
+        fn start_capped(&self, timing: Timing, max_source: u64) -> Arc<Importer> {
+            Importer::start_capped(self.history.clone(), self.roots(), true, timing, max_source)
+        }
+
+        /// What the importer has recorded of the source file at `path`.
+        fn recorded(&self, path: &Path) -> Option<Copied> {
+            let state: Option<StateDoc> = store::read(&self.home.path().join("history").join("import.json")).unwrap();
+            state?.files.get(&key(path)).cloned()
+        }
+
         /// The decoded archive copy, or None when there is none.
         fn archived(&self, agent: &str, id: &str) -> Option<String> {
             archive::read_archive(self.home.path(), agent, id).unwrap()
@@ -1155,6 +1205,41 @@ mod tests {
         wait_idle(&importer, 1);
         assert!(rig.history.get("claude", CLAUDE_A).unwrap().is_some());
         assert!(archive::deleted_at(rig.home.path(), "claude", CLAUDE_A).is_none());
+    }
+
+    #[test]
+    fn a_plain_file_over_the_cap_is_skipped_until_its_size_changes() {
+        let rig = rig();
+        let path = write_claude(&rig, CLAUDE_A, "cli", "2026-10-20T09:00:00.000Z");
+        let small = std::fs::read_to_string(&path).unwrap();
+        let cap = small.len() as u64 + 50;
+        let mut big = small.clone();
+        for n in 0..2 {
+            big.push_str(&claude_user_line(
+                "cli",
+                "2026-10-20T09:05:00.000Z",
+                &format!("more {n}"),
+            ));
+            big.push('\n');
+        }
+        assert!(big.len() as u64 > cap);
+        std::fs::write(&path, &big).unwrap();
+        let importer = rig.start_capped(FAST, cap);
+        wait_for("the big file to be recorded", || rig.recorded(&path).is_some());
+        let recorded = rig.recorded(&path).unwrap();
+        assert_eq!((recorded.size, recorded.session_id.as_str()), (big.len() as u64, ""));
+        // Rescans pass and it is still not copied.
+        std::thread::sleep(FAST.rescan * 3);
+        assert!(rig.archived("claude", CLAUDE_A).is_none());
+        assert!(rig.history.get("claude", CLAUDE_A).unwrap().is_none());
+        // Its size changes to one under the cap: it is looked at again and copied.
+        let smaller = small.replace("hello there", "hello");
+        assert!(smaller.len() as u64 <= cap && smaller.len() != big.len());
+        std::fs::write(&path, &smaller).unwrap();
+        wait_for("the copy after the size changed", || {
+            rig.archived("claude", CLAUDE_A) == Some(smaller.clone())
+        });
+        drop(importer);
     }
 
     #[test]
