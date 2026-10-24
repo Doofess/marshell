@@ -5,11 +5,11 @@ import { DiffView } from "../../components/DiffView/DiffView";
 import type { AgentSetup } from "../../generated/AgentSetup";
 import type { Endpoint } from "../../generated/Endpoint";
 import type { RemovePreview } from "../../generated/RemovePreview";
-import { applyPreview, getSetup, planRemove, previewDiff } from "../../lib/api/agents";
+import { applyPreview, getSetup, planRemove, previewDiff, type HookAgent } from "../../lib/api/agents";
 import { useDialogFocus } from "../../lib/useDialogFocus";
 import { SettingsReadError, type SettingsSync } from "../appearance/settingsSync";
 import { ConsentCard } from "../onboarding/ConsentCard";
-import { type Capability } from "../onboarding/consent";
+import { CLI_NAME, type Capability } from "../onboarding/consent";
 import { actions, consentProps, hooksOffNotice, liveStatusOn, removalBlock, setupLine, setupWant, type InstallFlow } from "./agentsState";
 import { failureText, useInstallFlow } from "./useInstallFlow";
 import "./AgentsDialog.css";
@@ -19,13 +19,13 @@ export const SETUP_UNREADABLE = "Couldn't read the setup from Marshell's core. C
 /** What the dialog shows below its title: the state, the card for Set up, or the diff for turning the hooks off. */
 export type Panel =
   | { kind: "list" }
-  | { kind: "setup"; flow: InstallFlow }
-  | { kind: "off"; removal: RemovePreview | null; busy: boolean; error?: string; conflict?: boolean };
+  | { kind: "setup"; flow: InstallFlow; agent?: HookAgent }
+  | { kind: "off"; removal: RemovePreview | null; busy: boolean; error?: string; conflict?: boolean; agent?: HookAgent };
 
 export type AgentsDialogHandlers = {
   onClose: () => void;
-  onSetup: () => void;
-  onHooksOff: () => void;
+  onSetup: (agent: HookAgent) => void;
+  onHooksOff: (agent: HookAgent) => void;
   onBack: () => void;
   /** Nothing was left to change: back to the list, with the state read again as after an apply. */
   onDone: () => void;
@@ -34,8 +34,8 @@ export type AgentsDialogHandlers = {
   onReload: () => void;
   onTurnOff: () => void;
   onSwitch: (capability: Capability, checked: boolean) => void;
-  /** The Live status switch for Claude Code. */
-  onLiveStatus: (checked: boolean) => void;
+  /** The Live status switch of one agent. */
+  onLiveStatus: (checked: boolean, agent: HookAgent) => void;
   /** Opens the Notifications dialog, where the sounds and banners are set. */
   onNotifications: () => void;
 };
@@ -44,7 +44,27 @@ export type AgentsDialogHandlers = {
  * Settings → Agents (docs/PLAN.md slice 3c, decision 5), as a modal dialog over the window: Claude Code's install state, with Set up,
  * Hooks off (preview, then apply) and the orphaned-hooks warning. Presentational: `AgentsDialog` fetches and acts, this draws.
  */
-export function AgentsDialogView({ setup, panel, liveStatus, liveStatusError, ...on }: { setup: AgentSetup | "loading" | "failed"; panel: Panel; liveStatus: boolean | null; liveStatusError?: string | null } & AgentsDialogHandlers) {
+export function AgentsDialogView({
+  setup,
+  codex,
+  panel,
+  liveStatus,
+  liveStatusError,
+  codexLiveStatus = null,
+  codexLiveStatusError,
+  ...on
+}: {
+  setup: AgentSetup | "loading" | "failed";
+  /** Codex's setup; its section shows only when it was read and Codex is found. */
+  codex?: AgentSetup | null;
+  panel: Panel;
+  liveStatus: boolean | null;
+  liveStatusError?: string | null;
+  codexLiveStatus?: boolean | null;
+  codexLiveStatusError?: string | null;
+} & AgentsDialogHandlers) {
+  // The card and the turn-off panel belong to the agent the person chose.
+  const target = panel.kind !== "list" && panel.agent === "codex" && codex ? codex : typeof setup === "object" ? setup : null;
   const dialog = useRef<HTMLDivElement>(null);
   const title = useRef<HTMLHeadingElement>(null);
   useDialogFocus(dialog, title, on.onClose);
@@ -62,9 +82,14 @@ export function AgentsDialogView({ setup, panel, liveStatus, liveStatusError, ..
               {SETUP_UNREADABLE}
             </p>
           )}
-          {typeof setup === "object" && panel.kind === "list" && <AgentList setup={setup} liveStatus={liveStatus} error={liveStatusError} on={on} />}
-          {typeof setup === "object" && panel.kind === "setup" && <SetupPanel setup={setup} flow={panel.flow} on={on} />}
-          {typeof setup === "object" && panel.kind === "off" && <OffPanel panel={panel} on={on} />}
+          {typeof setup === "object" && panel.kind === "list" && (
+            <>
+              <AgentList setup={setup} agent="claude" liveStatus={liveStatus} error={liveStatusError} on={on} />
+              {codex?.found && <AgentList setup={codex} agent="codex" liveStatus={codexLiveStatus} error={codexLiveStatusError} on={on} />}
+            </>
+          )}
+          {target && panel.kind === "setup" && <SetupPanel setup={target} flow={panel.flow} on={on} />}
+          {target && panel.kind === "off" && <OffPanel agent={target.agent as HookAgent} panel={panel} on={on} />}
         </div>
         <footer className="agents-dialog__foot">
           <button type="button" className="agents-dialog__btn" onClick={on.onClose}>
@@ -76,30 +101,55 @@ export function AgentsDialogView({ setup, panel, liveStatus, liveStatusError, ..
   );
 }
 
-function AgentList({ setup, liveStatus, error, on }: { setup: AgentSetup; liveStatus: boolean | null; error?: string | null; on: AgentsDialogHandlers }) {
+/** What Codex says about Marshell's hook entries (docs/PLAN.md slice 6a decision 10). Absent trust says nothing. */
+function TrustLine({ trust }: { trust: NonNullable<AgentSetup["trust"]> }) {
+  switch (trust) {
+    case "trusted":
+      return <p className="agents-dialog__line">Trusted: Codex runs these hooks.</p>;
+    case "untrusted":
+      return (
+        <p className="agents-dialog__warning">
+          Not trusted yet: Codex won&apos;t run these hooks until you trust them. The next time Codex starts, choose <strong>Trust all and continue</strong>, or review them first in <code>/hooks</code>.
+        </p>
+      );
+    case "changed":
+      return (
+        <p className="agents-dialog__warning">
+          Changed since you trusted them: Codex won&apos;t run the changed hooks until you trust them again in <code>/hooks</code>.
+        </p>
+      );
+  }
+}
+
+/** One agent's section: its state, its Live status switch, and Set up or Hooks off. Claude Code's has the Notifications link; Codex has no status line. */
+function AgentList({ setup, agent, liveStatus, error, on }: { setup: AgentSetup; agent: HookAgent; liveStatus: boolean | null; error?: string | null; on: AgentsDialogHandlers }) {
   const todo = actions(setup);
   const orphaned = setup.found && setup.hooks === "orphaned" && setup.settings_state !== "unparsable";
+  const name = CLI_NAME[agent];
   return (
-    <section className="agents-dialog__agent" aria-label="Claude Code">
+    <section className="agents-dialog__agent" aria-label={name}>
       <header className="agents-dialog__agent-head">
-        <AgentMark agent="claude" size={20} />
-        <h3 className="agents-dialog__name">Claude Code</h3>
+        <AgentMark agent={agent} size={20} />
+        <h3 className="agents-dialog__name">{name}</h3>
         {setup.found && setup.version && <span className="agents-dialog__version">version {setup.version}</span>}
       </header>
       <p className={orphaned ? "agents-dialog__warning" : "agents-dialog__line"} dir="auto">
         {setupLine(setup)}
       </p>
+      {agent === "codex" && setup.trust && <TrustLine trust={setup.trust} />}
       {setup.hooks === "installed" && !setup.approve_installed && <p className="agents-dialog__line">Approve from anywhere: off</p>}
       {/* Left out until the settings have been read: an unread value is never shown as off. */}
       {liveStatus !== null && (
-        <Switch label="Live status" checked={liveStatus} onChange={on.onLiveStatus} reason={liveStatus ? undefined : "Rows use output activity only: Working or Idle."} />
+        <Switch label="Live status" checked={liveStatus} onChange={(checked) => on.onLiveStatus(checked, agent)} reason={liveStatus ? undefined : "Rows use output activity only: Working or Idle."} />
       )}
-      <p className="agents-dialog__line">
-        Sounds and banners:{" "}
-        <button type="button" className="agents-dialog__btn" onClick={on.onNotifications}>
-          Notifications…
-        </button>
-      </p>
+      {agent === "claude" && (
+        <p className="agents-dialog__line">
+          Sounds and banners:{" "}
+          <button type="button" className="agents-dialog__btn" onClick={on.onNotifications}>
+            Notifications…
+          </button>
+        </p>
+      )}
       {error && (
         <p className="agents-dialog__error" role="alert">
           {error}
@@ -108,12 +158,12 @@ function AgentList({ setup, liveStatus, error, on }: { setup: AgentSetup; liveSt
       {todo.length > 0 && (
         <div className="agents-dialog__actions">
           {todo.includes("setup") && (
-            <button type="button" className="agents-dialog__btn" onClick={on.onSetup}>
+            <button type="button" className="agents-dialog__btn" onClick={() => on.onSetup(agent)}>
               {setup.hooks === "none" || setup.hooks === "installed" ? "Set up" : "Set up again"}
             </button>
           )}
           {todo.includes("hooksOff") && (
-            <button type="button" className="agents-dialog__btn" onClick={on.onHooksOff}>
+            <button type="button" className="agents-dialog__btn" onClick={() => on.onHooksOff(agent)}>
               Hooks off
             </button>
           )}
@@ -138,12 +188,12 @@ function SetupPanel({ setup, flow, on }: { setup: AgentSetup; flow: InstallFlow;
   );
 }
 
-function OffPanel({ panel, on }: { panel: Extract<Panel, { kind: "off" }>; on: AgentsDialogHandlers }) {
+function OffPanel({ agent, panel, on }: { agent: HookAgent; panel: Extract<Panel, { kind: "off" }>; on: AgentsDialogHandlers }) {
   const { removal } = panel;
   const block = removal ? removalBlock(removal.preview) : undefined;
   return (
-    <section className="agents-dialog__off" aria-label="Turn Claude Code hooks off">
-      <h3 className="agents-dialog__name">Turn Claude Code hooks off</h3>
+    <section className="agents-dialog__off" aria-label={`Turn ${CLI_NAME[agent]} hooks off`}>
+      <h3 className="agents-dialog__name">Turn {CLI_NAME[agent]} hooks off</h3>
       {removal ? (
         <>
           <p className="agents-dialog__line" dir="auto">
@@ -209,18 +259,21 @@ export function AgentsDialog({
   sync?: SettingsSync;
 }) {
   const [setup, setSetup] = useState<AgentSetup | "loading" | "failed">("loading");
+  const [codex, setCodex] = useState<AgentSetup | null>(null);
   const [mode, setMode] = useState<"list" | "setup" | "off">("list");
+  // The agent whose card or turn-off panel is open.
+  const [active, setActive] = useState<HookAgent>("claude");
   const [off, setOff] = useState<Extract<Panel, { kind: "off" }>>({ kind: "off", removal: null, busy: false });
 
   // null until the settings have been read.
-  const [liveStatus, setLiveStatus] = useState<boolean | null>(null);
-  const [saveError, setSaveError] = useState<string | null>(null);
+  const [liveStatus, setLiveStatus] = useState<Record<HookAgent, boolean | null>>({ claude: null, codex: null });
+  const [saveError, setSaveError] = useState<{ agent: HookAgent; text: string } | null>(null);
   useEffect(() => {
     let live = true;
     sync?.load().then(
       () => {
         if (!live) return;
-        setLiveStatus(liveStatusOn(sync.statusOff, "claude"));
+        setLiveStatus({ claude: liveStatusOn(sync.statusOff, "claude"), codex: liveStatusOn(sync.statusOff, "codex") });
       },
       () => {},
     );
@@ -228,18 +281,20 @@ export function AgentsDialog({
       live = false;
     };
   }, [sync]);
-  const switchLiveStatus = async (on: boolean) => {
+  const switchLiveStatus = async (on: boolean, agent: HookAgent) => {
     if (!sync) return;
     setSaveError(null);
     try {
-      await sync.setStatusOff("claude", !on);
-      setLiveStatus(liveStatusOn(sync.statusOff, "claude"));
+      await sync.setStatusOff(agent, !on);
+      setLiveStatus((s) => ({ ...s, [agent]: liveStatusOn(sync.statusOff, agent) }));
     } catch (e) {
-      setSaveError(e instanceof SettingsReadError ? e.message : failureText(e));
+      setSaveError({ agent, text: e instanceof SettingsReadError ? e.message : failureText(e) });
     }
   };
 
   const load = useCallback(async () => {
+    // Codex's section is a bonus: a setup that cannot be read leaves it out and never fails Claude's.
+    void getSetup(endpoint, "codex").then(setCodex, () => {});
     try {
       const found = await getSetup(endpoint, "claude");
       setSetup(found);
@@ -254,30 +309,41 @@ export function AgentsDialog({
     void load();
     onChanged?.();
   }, [load, onChanged]);
-  const install = useInstallFlow(endpoint, installed);
+  // One flow per agent, so choosing an agent and planning never wait on a render.
+  const claudeInstall = useInstallFlow(endpoint, "claude", installed);
+  const codexInstall = useInstallFlow(endpoint, "codex", installed);
+  const install = active === "codex" ? codexInstall : claudeInstall;
 
-  const startSetup = useCallback((current?: AgentSetup) => {
-    const found = current ?? setup;
-    if (typeof found !== "object") return;
-    setMode("setup");
-    void install.plan(setupWant(found));
-  }, [install.plan, setup]);
-  const startOff = useCallback(async () => {
-    setMode("off");
-    setOff({ kind: "off", removal: null, busy: true });
-    try {
-      setOff({ kind: "off", removal: await planRemove(endpoint, "claude"), busy: false });
-    } catch (e) {
-      setOff({ kind: "off", removal: null, busy: false, error: failureText(e) });
-    }
-  }, [endpoint]);
+  const startSetup = useCallback(
+    (agent: HookAgent = "claude", current?: AgentSetup) => {
+      const found = current ?? (agent === "codex" ? codex : setup);
+      if (typeof found !== "object" || found === null) return;
+      setActive(agent);
+      setMode("setup");
+      void (agent === "codex" ? codexInstall : claudeInstall).plan(setupWant(found));
+    },
+    [claudeInstall.plan, codexInstall.plan, setup, codex],
+  );
+  const startOff = useCallback(
+    async (agent: HookAgent = "claude") => {
+      setActive(agent);
+      setMode("off");
+      setOff({ kind: "off", removal: null, busy: true, agent });
+      try {
+        setOff({ kind: "off", removal: await planRemove(endpoint, agent), busy: false, agent });
+      } catch (e) {
+        setOff({ kind: "off", removal: null, busy: false, error: failureText(e), agent });
+      }
+    },
+    [endpoint],
+  );
 
   const first = useRef(true);
   useEffect(() => {
     if (!first.current) return;
     first.current = false;
     void load().then((found) => {
-      if (startWith === "setup" && found) startSetup(found);
+      if (startWith === "setup" && found) startSetup("claude", found);
     });
   }, [load, startWith, startSetup]);
 
@@ -308,24 +374,31 @@ export function AgentsDialog({
     installed();
   };
   const panel: Panel =
-    mode === "setup" ? { kind: "setup", flow: install.flow ?? { preview: null, open: false, busy: true, want: install.want } } : mode === "off" ? off : { kind: "list" };
+    mode === "setup"
+      ? { kind: "setup", agent: active, flow: install.flow ?? { preview: null, open: false, busy: true, want: install.want } }
+      : mode === "off"
+        ? off
+        : { kind: "list" };
   return (
     <AgentsDialogView
       setup={setup}
+      codex={codex}
       panel={panel}
-      liveStatus={liveStatus}
-      liveStatusError={saveError}
-      onLiveStatus={(on) => void switchLiveStatus(on)}
+      liveStatus={liveStatus.claude}
+      liveStatusError={saveError?.agent === "claude" ? saveError.text : null}
+      codexLiveStatus={liveStatus.codex}
+      codexLiveStatusError={saveError?.agent === "codex" ? saveError.text : null}
+      onLiveStatus={(on, agent) => void switchLiveStatus(on, agent)}
       onNotifications={onNotifications}
       onClose={onClose}
-      onSetup={() => startSetup()}
-      onHooksOff={() => void startOff()}
+      onSetup={(agent) => startSetup(agent)}
+      onHooksOff={(agent) => void startOff(agent)}
       onBack={back}
       onDone={done}
       onAllow={() => void install.apply()}
       onToggleDiff={install.toggleDiff}
       onSwitch={install.choose}
-      onReload={() => void (mode === "off" ? startOff() : install.plan())}
+      onReload={() => void (mode === "off" ? startOff(active) : install.plan())}
       onTurnOff={() => void turnOff()}
     />
   );

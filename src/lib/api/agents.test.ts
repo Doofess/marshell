@@ -31,6 +31,21 @@ const setup: AgentSetup = {
 afterEach(() => vi.unstubAllGlobals());
 
 describe("agents api", () => {
+  it("reaches Codex at /v1/agents/codex/...", async () => {
+    const g = reply(setup);
+    vi.stubGlobal("fetch", g);
+    await getSetup(endpoint, "codex");
+    expect(call(g)).toMatchObject({ url: "http://127.0.0.1:9/v1/agents/codex/setup", method: "GET" });
+    const p = reply(preview([]));
+    vi.stubGlobal("fetch", p);
+    await planInstall(endpoint, "codex", { status: true, statusline: false, approve: true });
+    expect(call(p)).toMatchObject({ url: "http://127.0.0.1:9/v1/agents/codex/hooks/plan", method: "POST" });
+    const r = reply({ ...preview([]), statusline_left: false, preview: preview([]) });
+    vi.stubGlobal("fetch", r);
+    await planRemove(endpoint, "codex");
+    expect(call(r)).toMatchObject({ url: "http://127.0.0.1:9/v1/agents/codex/hooks/remove-plan", method: "POST" });
+  });
+
   it("reads the setup and plans install and removal", async () => {
     const g = reply(setup);
     vi.stubGlobal("fetch", g);
@@ -113,6 +128,14 @@ describe("toDetections", () => {
     expect(rows[0]).toEqual(toDetection(setup));
     expect(rows[1]).toMatchObject({ installed: false, later: true, exePath: undefined });
     expect(rows[2]).toMatchObject({ installed: true, later: true, exePath: "C:/bin/agy.exe", configPath: "" });
+  });
+  it("takes Codex's row from its own setup when there is one, and it is no longer a later version", () => {
+    const codex: AgentSetup = { ...setup, agent: "codex", version: "0.163.0", exe_path: "C:/bin/codex.exe", settings_path: "C:/h/.codex/hooks.json" };
+    const rows = toDetections(setup, found, codex);
+    expect(rows.map((r) => r.cli)).toEqual(["claude", "codex", "antigravity"]);
+    expect(rows[1]).toEqual(toDetection(codex));
+    expect(rows[1]!.later).toBeUndefined();
+    expect(rows[2]).toMatchObject({ later: true });
   });
   it("keeps only Claude's row when the list could not be read", () => {
     expect(toDetections(setup, null)).toEqual([toDetection(setup)]);

@@ -1,7 +1,7 @@
 import { useCallback, useRef, useState } from "react";
 import type { Endpoint } from "../../generated/Endpoint";
 import { ApiError } from "../../lib/api/client";
-import { applyPreview, planInstall } from "../../lib/api/agents";
+import { applyPreview, planInstall, type HookAgent } from "../../lib/api/agents";
 import type { Capability } from "../onboarding/consent";
 import { DEFAULT_WANT, installRequest, type InstallFlow, type Want } from "./agentsState";
 
@@ -11,10 +11,10 @@ export const UNREACHABLE = "Couldn't reach Marshell's core. Try again in a momen
 export const failureText = (e: unknown): string => (e instanceof ApiError ? e.message : UNREACHABLE);
 
 /**
- * Set up Claude Code's hooks: plan, apply, and re-plan after a conflict. A refused file (a 422) is the card's error, never a throw.
+ * Set up one agent's hooks (Claude Code's or Codex's): plan, apply, and re-plan after a conflict. A refused file (a 422) is the card's error, never a throw.
  * Nothing is ever applied without a preview whose file hashes the core checks, and a conflict offers a reload, never an overwrite.
  */
-export function useInstallFlow(endpoint: Endpoint, onApplied: () => void) {
+export function useInstallFlow(endpoint: Endpoint, agent: HookAgent, onApplied: () => void) {
   const [flow, setFlow] = useState<InstallFlow | null>(null);
   // Only the latest plan counts: a slow answer to an older Reload must not replace a newer preview.
   const latest = useRef(0);
@@ -31,12 +31,12 @@ export function useInstallFlow(endpoint: Endpoint, onApplied: () => void) {
     const asked = wantRef.current;
     setFlow({ preview: null, open: false, busy: true });
     try {
-      const preview = await planInstall(endpoint, "claude", installRequest(asked));
+      const preview = await planInstall(endpoint, agent, installRequest(asked, agent));
       if (mine === latest.current) setFlow({ preview, open: false, busy: false });
     } catch (e) {
       if (mine === latest.current) setFlow({ preview: null, open: false, busy: false, error: failureText(e) });
     }
-  }, [endpoint]);
+  }, [endpoint, agent]);
 
   const apply = useCallback(async () => {
     const current = flow;

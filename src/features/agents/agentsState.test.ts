@@ -1,9 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 import type { AgentSetup } from "../../generated/AgentSetup";
-import { actions, consentProps, DEFAULT_WANT, hooksOffNotice, installRequest, liveStatusOn, setupLine, setupWant } from "./agentsState";
+import { actions, consentProps, consentQueue, DEFAULT_WANT, hooksOffNotice, installRequest, liveStatusOn, setupLine, setupWant } from "./agentsState";
 import type { ConfigPreview } from "../../generated/ConfigPreview";
 import type { FilePreview } from "../../generated/FilePreview";
-import { PREVIEW, SETUP } from "./fixtures";
+import { CODEX_SETUP, PREVIEW, SETUP } from "./fixtures";
 
 const s = (patch: Partial<AgentSetup>): AgentSetup => ({ ...SETUP, ...patch });
 
@@ -152,5 +152,38 @@ describe("liveStatusOn", () => {
     expect(liveStatusOn([], "claude")).toBe(true);
     expect(liveStatusOn(["codex"], "claude")).toBe(true);
     expect(liveStatusOn(["codex", "claude"], "claude")).toBe(false);
+  });
+});
+
+describe("Codex", () => {
+  const flow = { preview: PREVIEW, open: false, busy: false };
+  it("consentProps for Codex asks for trust, names Codex and offers no status line", () => {
+    const p = consentProps(CODEX_SETUP, flow);
+    expect(p.scenario.detection.cli).toBe("codex");
+    expect(p.scenario.plan.cli).toBe("codex");
+    expect(p.scenario.plan.needsTrust).toBe(true);
+    expect(p.scenario.plan.configPath).toBe("C:/h/.codex/hooks.json");
+    expect(p.offer).toEqual(["status", "approve"]);
+    expect(p.on.statusline).toBe(false);
+    expect(p.scenario.plan.removal).toBe("Marshell removes the hook entries it added; the rest of the file stays as it is.");
+    expect(consentProps(SETUP, flow).scenario.plan.needsTrust).toBe(false);
+  });
+  it("an installed Codex offers approval only", () => {
+    expect(consentProps({ ...CODEX_SETUP, hooks: "installed" }, flow).offer).toEqual(["approve"]);
+  });
+  it("installRequest never asks Codex for a status line", () => {
+    expect(installRequest(DEFAULT_WANT, "codex")).toEqual({ status: true, statusline: false, approve: true });
+    expect(installRequest(DEFAULT_WANT)).toEqual({ status: true, statusline: true, approve: true });
+  });
+  it("setupLine names Codex", () => {
+    expect(setupLine(CODEX_SETUP)).toBe("Not set up. Sessions show limited status.");
+    expect(setupLine({ ...CODEX_SETUP, found: false })).toBe("Codex was not found on this computer.");
+    expect(setupLine({ ...CODEX_SETUP, hooks: "orphaned" })).toContain("so Codex reports a failing hook each time one fires");
+  });
+  it("onboarding offers one card per found agent with hooks, Claude first", () => {
+    expect(consentQueue([SETUP, CODEX_SETUP]).map((x) => x.agent)).toEqual(["claude", "codex"]);
+    expect(consentQueue([SETUP, { ...CODEX_SETUP, found: false }]).map((x) => x.agent)).toEqual(["claude"]);
+    expect(consentQueue([{ ...SETUP, found: false }, CODEX_SETUP]).map((x) => x.agent)).toEqual(["codex"]);
+    expect(consentQueue([{ ...SETUP, hooks: "installed", approve_installed: true }, CODEX_SETUP]).map((x) => x.agent)).toEqual(["codex"]);
   });
 });

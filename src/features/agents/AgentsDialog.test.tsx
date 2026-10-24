@@ -2,7 +2,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import type { AgentSetup } from "../../generated/AgentSetup";
 import { AgentsDialogView, type Panel } from "./AgentsDialog";
-import { PREVIEW, SETUP } from "./fixtures";
+import { CODEX_SETUP, PREVIEW, SETUP } from "./fixtures";
 import { nameContainsLabel } from "../../lib/labelInName";
 
 const none = () => {};
@@ -144,5 +144,54 @@ describe("AgentsDialogView: the Live status switch", () => {
   });
   it("is left out until the settings have been read", () => {
     expect(view(SETUP, { kind: "list" }, null)).not.toContain("Live status");
+  });
+});
+
+describe("AgentsDialogView: Codex", () => {
+  const withCodex = (codex: AgentSetup | null, panel: Panel = { kind: "list" }, codexLiveStatus: boolean | null = true) =>
+    renderToStaticMarkup(<AgentsDialogView setup={SETUP} codex={codex} panel={panel} liveStatus={true} codexLiveStatus={codexLiveStatus} {...handlers} />);
+  const codexSection = (h: string) => h.slice(h.indexOf('aria-label="Codex"'));
+
+  it("shows a Codex section with its own consent when Codex is found", () => {
+    const list = withCodex(CODEX_SETUP);
+    expect(list).toContain('aria-label="Claude Code"');
+    expect(codexSection(list)).toContain("C:/bin/codex.exe".slice(0, 0) + "version 0.163.0");
+    expect(codexSection(list)).toContain(">Set up</button>");
+    const card = withCodex(CODEX_SETUP, { kind: "setup", agent: "codex", flow: { preview: PREVIEW, open: false, busy: false } });
+    expect(card).toContain('data-agent="codex"');
+    expect(card).toContain("Trust all and continue");
+    expect(card).toContain("<code>hooks.json</code> only");
+    expect(card).not.toContain("Keep my status line working");
+    expect(card).not.toContain("Codex has no status line");
+  });
+  it("shows no Codex section when Codex is not found or not read", () => {
+    expect(withCodex(null)).not.toContain('aria-label="Codex"');
+    expect(withCodex({ ...CODEX_SETUP, found: false })).not.toContain('aria-label="Codex"');
+  });
+  it("Codex's trust line for each trust state, and none for null", () => {
+    const line = (trust: AgentSetup["trust"]) => codexSection(withCodex({ ...CODEX_SETUP, hooks: "installed", approve_installed: true, trust }));
+    expect(line("trusted")).toContain('<p class="agents-dialog__line">Trusted: Codex runs these hooks.</p>');
+    expect(line("untrusted")).toContain(
+      '<p class="agents-dialog__warning">Not trusted yet: Codex won&#x27;t run these hooks until you trust them. The next time Codex starts, choose <strong>Trust all and continue</strong>, or review them first in <code>/hooks</code>.</p>',
+    );
+    expect(line("changed")).toContain(
+      '<p class="agents-dialog__warning">Changed since you trusted them: Codex won&#x27;t run the changed hooks until you trust them again in <code>/hooks</code>.</p>',
+    );
+    const none = line(undefined);
+    expect(none).not.toMatch(/Trusted:|Not trusted|Changed since/);
+    expect(withCodex(CODEX_SETUP)).not.toMatch(/Trusted:|Not trusted|Changed since/);
+    // Claude's section never has a trust line.
+    expect(view({ ...SETUP, trust: "trusted" })).not.toContain("Trusted:");
+  });
+  it("has no status line control, and a Live status switch that is its own", () => {
+    const h = codexSection(withCodex(CODEX_SETUP, { kind: "list" }, false));
+    expect(h).not.toMatch(/status line/i);
+    expect(h).toContain("Live status");
+    expect(codexSection(withCodex(CODEX_SETUP, { kind: "list" }, null))).not.toContain("Live status");
+  });
+  it("names Codex on the turn-off panel", () => {
+    const h = withCodex(CODEX_SETUP, { kind: "off", agent: "codex", removal: null, busy: false });
+    expect(h).toContain("Turn Codex hooks off");
+    expect(h).not.toContain("Turn Claude Code hooks off");
   });
 });
