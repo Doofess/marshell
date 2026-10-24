@@ -465,8 +465,8 @@ async fn history_off_is_503() {
             "{method} {uri}"
         );
     }
-    // A bad id is still a 404 first.
-    let (status, text) = call(&env.app, req("GET", "/v1/history/codex/x", None)).await;
+    // An unknown agent is still a 404 first.
+    let (status, text) = call(&env.app, req("GET", "/v1/history/gemini/x", None)).await;
     assert_eq!((status, text.as_str()), (StatusCode::NOT_FOUND, NO_SUCH));
 }
 
@@ -1385,4 +1385,124 @@ async fn import_status_route_refuses_without_the_bearer() {
     request.headers_mut().remove(header::AUTHORIZATION);
     let (status, _) = call(&env.app, request).await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);
+}
+
+const CODEX_ID: &str = "00000000-0000-4000-8000-0000000000c2";
+const CODEX_ROLLOUT: &str = include_str!("fixtures/codex/exec.jsonl");
+
+/// Copies the exec fixture into the archive as a Codex conversation run outside Marshell. The rollout file sits
+/// in a Codex-style folder under `dir`, and the conversation's folder is the env's work folder.
+fn seed_codex(env: &Env, dir: &Path) -> PathBuf {
+    let folder = dir.join("sessions/2026/10/24");
+    std::fs::create_dir_all(&folder).unwrap();
+    let source = folder.join(format!("rollout-2026-10-24T09-00-00-{CODEX_ID}.jsonl"));
+    std::fs::write(&source, CODEX_ROLLOUT).unwrap();
+    let meta = marshell_core::history::SessionMeta {
+        agent: "codex".into(),
+        session_id: CODEX_ID.into(),
+        tab_id: String::new(),
+        cwd: env.work.path().to_string_lossy().into_owned(),
+        transcript_path: source.to_string_lossy().into_owned(),
+        started_ms: 1_000,
+        updated_ms: 2_000,
+        previous_in_tab: None,
+        recordings: Vec::new(),
+        client: marshell_protocol::history::Client::Terminal,
+    };
+    assert!(env.state.history().import(&meta, &source).unwrap());
+    source
+}
+
+#[tokio::test]
+async fn a_codex_conversation_opens_from_the_archive() {
+    let env = env();
+    let dir = tempfile::tempdir().unwrap();
+    seed_codex(&env, dir.path());
+    let (status, body) = get_json(&env.app, &format!("/v1/history/codex/{CODEX_ID}")).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["agent"], "codex");
+    assert_eq!(body["session_id"], CODEX_ID);
+    assert!(!body["turns"].as_array().unwrap().is_empty(), "{body}");
+}
+
+#[tokio::test]
+async fn search_finds_a_codex_turn() {
+    let env = env();
+    let dir = tempfile::tempdir().unwrap();
+    seed_codex(&env, dir.path());
+    let (status, hits) = get_json(&env.app, "/v1/history/search?q=tests").await;
+    assert_eq!(status, StatusCode::OK, "{hits}");
+    assert!(hits.as_array().unwrap().iter().any(|h| h["agent"] == "codex"), "{hits}");
+}
+
+#[tokio::test]
+async fn export_works_for_a_codex_conversation() {
+    let env = env();
+    let dir = tempfile::tempdir().unwrap();
+    seed_codex(&env, dir.path());
+    let uri = format!("/v1/history/codex/{CODEX_ID}/export?format=markdown");
+    let (status, text) = call(&env.app, req("GET", &uri, None)).await;
+    assert_eq!(status, StatusCode::OK, "{text}");
+    assert!(text.contains("Run the tests"), "{text}");
+}
+
+#[tokio::test]
+async fn an_unknown_agent_is_not_found() {
+    let env = env();
+    let (status, text) = call(&env.app, req("GET", &format!("/v1/history/gemini/{ID}"), None)).await;
+    assert_eq!((status, text.as_str()), (StatusCode::NOT_FOUND, NO_SUCH));
+}
+
+#[tokio::test]
+async fn fork_refuses_a_codex_conversation() {
+    let env = env();
+    let dir = tempfile::tempdir().unwrap();
+    seed_codex(&env, dir.path());
+    let (status, text) = call(
+        &env.app,
+        req(
+            "POST",
+            &format!("/v1/history/codex/{CODEX_ID}/fork"),
+            Some(resume_body()),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{text}");
+    let body: Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(body["reason"], "Fork works only for Claude Code conversations.");
+    assert_eq!(env.state.live_session_count(), 0);
+}
+
+#[tokio::test]
+async fn resume_opens_codex_in_the_conversations_folder() {
+    let env = env();
+    let dir = tempfile::tempdir().unwrap();
+    seed_codex(&env, dir.path());
+    let (status, text) = call(
+        &env.app,
+        req(
+            "POST",
+            &format!("/v1/history/codex/{CODEX_ID}/resume"),
+            Some(resume_body()),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{text}");
+    let created: Value = serde_json::from_str(&text).unwrap();
+    let tab = created["tab_id"].as_str().unwrap().to_string();
+    let rows = peek_until(&env.app, &tab, &format!("resume {CODEX_ID}")).await;
+    assert!(rows.contains("codex"), "{rows}");
+    assert!(!rows.contains("--last"), "{rows}");
+    let (_, sessions) = get_json(&env.app, "/v1/sessions").await;
+    let row = sessions["sessions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|s| s["tab_id"] == tab.as_str())
+        .unwrap();
+    assert_eq!(row["agent"], "codex");
+    assert_eq!(row["cwd"], env.work.path().to_string_lossy().as_ref());
+    if let Some(session) = env.state.remove_session(&tab) {
+        session.force_kill();
+    }
 }

@@ -219,6 +219,16 @@ mod tests {
     }
 
     #[test]
+    fn a_conversation_with_no_tab_has_no_parts() {
+        let home = tempfile::tempdir().unwrap();
+        cast_file(home.path(), "t1", T0, &[1.0, 20.0]);
+        cast_file(home.path(), "t2", T0, &[1.0, 20.0]);
+        cast_file(home.path(), "", T0, &[1.0, 20.0]);
+        let parts = parts(home.path(), &meta("", &[]), (T0, T0 + 100_000), &CastCache::default());
+        assert!(parts.is_empty(), "{:?}", files(&parts));
+    }
+
+    #[test]
     fn parts_skip_hostile_and_missing_names() {
         let home = tempfile::tempdir().unwrap();
         let good = cast_file(home.path(), "t1", T0, &[1.0, 2.0]);

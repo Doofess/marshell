@@ -1,16 +1,15 @@
 //! The History view's routes: the list, full-text search, one conversation, its marks, export, Resume and Fork.
-//! Only Claude Code's conversations are recorded so far, so any other agent is a 404. An agent and a session id
+//! Claude Code and Codex conversations are kept; any other agent is a 404. An agent and a session id
 //! from the URL are checked before anything touches the index or a file. Every call into the history and every
 //! file read runs on a blocking thread.
 
 use super::AppState;
 use super::sessions::{NO_CONVERSATION, ResumeRequest, cannot_resume, resolve, start_session};
-use crate::agents::claude::transcript;
 use crate::history::cast::{self, FrameStart, FramesError};
 use crate::history::export::{AsciicastError, ExportFormat, export_text, to_asciicast};
 use crate::history::marks::normalize_name;
 use crate::history::recorder::{BookmarkRefusal, BookmarkTurnRefusal, DeleteRefusal, History};
-use crate::history::{SessionMeta, archive, recordings, transcript_allowed, valid_session_id};
+use crate::history::{SessionMeta, archive, parse_for, recordings, sidecar_allowed, valid_session_id};
 use crate::paths;
 use crate::profiles::detect::ResumeTarget;
 use axum::Json;
@@ -24,10 +23,14 @@ use marshell_protocol::history::{
 use serde::Deserialize;
 use std::sync::Arc;
 
-const AGENT: &str = "claude";
+/// The agents whose conversations the History view opens.
+const AGENTS: [&str; 2] = ["claude", "codex"];
 
 /// Resume's refusal when a live tab already holds the conversation.
 const RUNNING_IN_A_TAB: &str = "This conversation is already running in a tab. Use Go to session.";
+
+/// Fork starts from a Claude Code conversation only.
+const FORK_CLAUDE_ONLY: &str = "Fork works only for Claude Code conversations.";
 
 const NO_COPY: &str = "Marshell has no copy of this conversation yet.";
 
@@ -49,7 +52,7 @@ fn failed(err: impl std::fmt::Display) -> Fail {
 /// The agent and id a URL names, checked before any lookup: only Claude's, and an id safe for a file name
 /// and a command line.
 fn check(agent: &str, session_id: &str) -> Result<(), Fail> {
-    if agent == AGENT && valid_session_id(session_id) {
+    if AGENTS.contains(&agent) && valid_session_id(session_id) {
         Ok(())
     } else {
         Err(no_such())
@@ -120,18 +123,23 @@ pub async fn conversation(
     check(&agent, &session_id)?;
     let history = st.history();
     let home = st.home().to_path_buf();
-    let conversation = blocking(move || load_conversation(&history, &home, &session_id)).await?;
+    let conversation = blocking(move || load_conversation(&history, &home, &agent, &session_id)).await?;
     Ok(Json(conversation))
 }
 
 /// The conversation from Marshell's copy, for the view and for export. Blocking.
-fn load_conversation(history: &History, home: &std::path::Path, session_id: &str) -> Result<Conversation, Fail> {
+fn load_conversation(
+    history: &History,
+    home: &std::path::Path,
+    agent: &str,
+    session_id: &str,
+) -> Result<Conversation, Fail> {
     require_on(history)?;
-    let entry = history.entry(AGENT, session_id).map_err(failed)?.ok_or_else(no_such)?;
-    let marks = history.marks(AGENT, session_id);
-    match archive::read_archive(home, AGENT, session_id) {
+    let entry = history.entry(agent, session_id).map_err(failed)?.ok_or_else(no_such)?;
+    let marks = history.marks(agent, session_id);
+    match archive::read_archive(home, agent, session_id) {
         Ok(Some(text)) => {
-            let mut conversation = transcript::parse(&text, session_id);
+            let mut conversation = parse_for(agent, &text, session_id).ok_or_else(no_such)?;
             if let Some(name) = &marks.name {
                 conversation.title = name.clone();
             }
@@ -187,9 +195,9 @@ pub async fn export(
     let home = st.home().to_path_buf();
     let (format, redact) = (query.format, query.redact);
     let text = blocking(move || match format {
-        ExportFormat::Asciicast => asciicast(&history, &home, &session_id, redact),
+        ExportFormat::Asciicast => asciicast(&history, &home, &agent, &session_id, redact),
         _ => {
-            let conversation = load_conversation(&history, &home, &session_id)?;
+            let conversation = load_conversation(&history, &home, &agent, &session_id)?;
             Ok(export_text(conversation, format, redact))
         }
     })
@@ -206,13 +214,19 @@ const NO_RECORDING: &str = "Marshell has no recording of this conversation.";
 const RECORDING_TOO_LARGE: &str = "This recording is over 64 MiB, too large to export.";
 
 /// The conversation's recording as an asciicast, titled with its name or its title. Blocking.
-fn asciicast(history: &History, home: &std::path::Path, session_id: &str, redact: bool) -> Result<String, Fail> {
-    let parts = recording_parts(history, home, session_id)?;
+fn asciicast(
+    history: &History,
+    home: &std::path::Path,
+    agent: &str,
+    session_id: &str,
+    redact: bool,
+) -> Result<String, Fail> {
+    let parts = recording_parts(history, home, agent, session_id)?;
     if parts.is_empty() {
         return Err((StatusCode::NOT_FOUND, NO_RECORDING.into()));
     }
-    let entry = history.entry(AGENT, session_id).map_err(failed)?.ok_or_else(no_such)?;
-    let title = history.marks(AGENT, session_id).name.unwrap_or(entry.title);
+    let entry = history.entry(agent, session_id).map_err(failed)?.ok_or_else(no_such)?;
+    let title = history.marks(agent, session_id).name.unwrap_or(entry.title);
     let redactor = redact.then(crate::diagnostics::redact::global);
     to_asciicast(home, &parts, &title, redactor).map_err(|err| match err {
         AsciicastError::TooLarge => (StatusCode::PAYLOAD_TOO_LARGE, RECORDING_TOO_LARGE.into()),
@@ -228,13 +242,18 @@ const FRAMES_BUDGET: usize = 1 << 20;
 /// The parts of the conversation's recording, from its sidecar. The span starts at the first prompt whose time
 /// is known (the index has the turn times, so the transcript isn't parsed again) and ends at the sidecar's last
 /// update. Blocking.
-fn recording_parts(history: &History, home: &std::path::Path, session_id: &str) -> Result<Vec<RecordingPart>, Fail> {
+fn recording_parts(
+    history: &History,
+    home: &std::path::Path,
+    agent: &str,
+    session_id: &str,
+) -> Result<Vec<RecordingPart>, Fail> {
     require_on(history)?;
-    let meta = archive::read_meta(home, AGENT, session_id)
+    let meta = archive::read_meta(home, agent, session_id)
         .map_err(failed)?
         .ok_or_else(no_such)?;
     let from = history
-        .first_prompt_ms(AGENT, session_id)
+        .first_prompt_ms(agent, session_id)
         .map_err(failed)?
         .unwrap_or(meta.started_ms);
     Ok(recordings::parts(home, &meta, (from, meta.updated_ms), history.casts()))
@@ -248,7 +267,7 @@ pub async fn recordings(
     check(&agent, &session_id)?;
     let history = st.history();
     let home = st.home().to_path_buf();
-    let parts = blocking(move || recording_parts(&history, &home, &session_id)).await?;
+    let parts = blocking(move || recording_parts(&history, &home, &agent, &session_id)).await?;
     Ok(Json(parts))
 }
 
@@ -271,7 +290,7 @@ pub async fn recording_frames(
     let history = st.history();
     let home = st.home().to_path_buf();
     let frames = blocking(move || {
-        let parts = recording_parts(&history, &home, &session_id)?;
+        let parts = recording_parts(&history, &home, &agent, &session_id)?;
         let part = parts
             .into_iter()
             .find(|p| p.index == part)
@@ -306,7 +325,7 @@ pub async fn patch(
     check(&agent, &session_id)?;
     let history = st.history();
     let entry = blocking(move || {
-        session_meta(&history, &session_id)?;
+        session_meta(&history, &agent, &session_id)?;
         // History also synchronizes a running tab's name while holding the marks lock.
         history.patch(&agent, &session_id, &patch).map_err(patch_failed)?;
         history.entry(&agent, &session_id).map_err(failed)?.ok_or_else(no_such)
@@ -363,7 +382,7 @@ async fn set_bookmark(
     check(&agent, &session_id)?;
     let history = st.history();
     blocking(move || {
-        session_meta(&history, &session_id)?;
+        session_meta(&history, &agent, &session_id)?;
         history
             .bookmark_turn(&agent, &session_id, turn, on)
             .map_err(|err| match err {
@@ -398,7 +417,7 @@ pub async fn delete_copy(
     check(&agent, &session_id)?;
     let history = st.history();
     blocking(move || {
-        session_meta(&history, &session_id)?;
+        session_meta(&history, &agent, &session_id)?;
         history.delete_copy(&agent, &session_id).map_err(|err| match err {
             DeleteRefusal::Failed(err) => failed(err),
             err => (StatusCode::CONFLICT, err.to_string()),
@@ -409,9 +428,9 @@ pub async fn delete_copy(
 }
 
 /// The session's sidecar data, once the id is known to be Claude's and valid.
-fn session_meta(history: &Arc<History>, session_id: &str) -> Result<SessionMeta, Fail> {
+fn session_meta(history: &Arc<History>, agent: &str, session_id: &str) -> Result<SessionMeta, Fail> {
     require_on(history)?;
-    history.get(AGENT, session_id).map_err(failed)?.ok_or_else(no_such)
+    history.get(agent, session_id).map_err(failed)?.ok_or_else(no_such)
 }
 
 /// Starts Claude in a new tab with `--resume <id>`, in the folder the conversation ran in, under the name the
@@ -439,6 +458,15 @@ fn answer(result: Result<CreateSessionResponse, Box<Response>>) -> Response {
     match result {
         Ok(created) => Json(created).into_response(),
         Err(response) => *response,
+    }
+}
+
+/// Why a conversation can't be resumed when its source file is gone.
+fn gone(agent: &str) -> String {
+    if agent == "codex" {
+        "Codex no longer has this conversation, so it can't be resumed.".into()
+    } else {
+        NO_CONVERSATION.into()
     }
 }
 
@@ -471,8 +499,12 @@ async fn open_in_new_tab(
     fork: bool,
 ) -> Result<CreateSessionResponse, Box<Response>> {
     check(&agent, &session_id).map_err(boxed)?;
+    if fork && agent != "claude" {
+        return Err(Box::new(cannot_resume(FORK_CLAUDE_ONLY)));
+    }
     let history = st.history();
     let id = session_id.clone();
+    let agent_name = agent.clone();
     let running_tabs: Vec<String> = st
         .registry()
         .snapshot()
@@ -482,7 +514,7 @@ async fn open_in_new_tab(
         .map(|s| s.tab_id)
         .collect();
     let meta = blocking(move || {
-        let meta = session_meta(&history, &id)?;
+        let meta = session_meta(&history, &agent, &id)?;
         // A fork starts a conversation of its own, so a running original is no reason to refuse.
         let in_tab = !fork
             && running_tabs.contains(&meta.tab_id)
@@ -493,12 +525,12 @@ async fn open_in_new_tab(
             return Ok(Found::RunningInATab);
         }
         // The row lives in the Marshell home: its path is checked again before a file call.
-        let usable = transcript_allowed(&meta.transcript_path, &meta.session_id)
+        let usable = sidecar_allowed(&agent, &meta.transcript_path, &meta.session_id)
             && std::path::Path::new(&meta.transcript_path).is_file();
         if !usable {
             return Ok(Found::Gone);
         }
-        let name = history.marks(AGENT, &meta.session_id).name;
+        let name = history.marks(&agent, &meta.session_id).name;
         let tab_name = if fork {
             name.as_deref().and_then(fork_name)
         } else {
@@ -510,7 +542,7 @@ async fn open_in_new_tab(
     .map_err(boxed)?;
     let (meta, tab_name) = match meta {
         Found::Usable(meta, tab_name) => (*meta, tab_name),
-        Found::Gone => return Err(Box::new(cannot_resume(NO_CONVERSATION))),
+        Found::Gone => return Err(Box::new(cannot_resume(gone(&agent_name)))),
         Found::RunningInATab => return Err(Box::new(cannot_resume(RUNNING_IN_A_TAB))),
     };
     // The same check the tab Resume makes before it starts anything.
@@ -525,11 +557,11 @@ async fn open_in_new_tab(
     } else {
         ResumeTarget::Session(&meta.session_id)
     };
-    let run = resolve(&st, None, Some(AGENT), None, Some(target), None).map_err(boxed)?;
+    let run = resolve(&st, None, Some(agent_name.as_str()), None, Some(target), None).map_err(boxed)?;
     let created = start_session(
         &st,
         run,
-        Some(AGENT.into()),
+        Some(agent_name.clone()),
         tab_name.clone(),
         Some(folder),
         (req.cols, req.rows),
