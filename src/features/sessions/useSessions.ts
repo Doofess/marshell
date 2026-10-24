@@ -7,6 +7,7 @@ import type { SessionsSnapshot } from "../../generated/SessionsSnapshot";
 import { getEndpoint, resetEndpoint } from "../../lib/api/client";
 import { onCoreEvent } from "../../lib/api/coreEvents";
 import { EventSocket } from "../../lib/api/events";
+import type { HookAgent } from "../../lib/api/agents";
 import { profiles as profilesApi } from "../../lib/api/profiles";
 import type { RowModel } from "../sidebar/types";
 import type { HookInstall } from "../../generated/HookInstall";
@@ -142,7 +143,7 @@ export class SessionsStore {
   }
 }
 
-export function useSessions(setup?: { claude?: HookInstall }): {
+export function useSessions(setup?: Partial<Record<HookAgent, HookInstall>>): {
   endpoint: Endpoint | null;
   profiles: Profile[];
   rows: RowModel[];

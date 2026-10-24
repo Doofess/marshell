@@ -1,6 +1,7 @@
 import { isAgentId } from "../../components/AgentMark/agents";
 import type { SessionKind } from "../../components/AgentMark/kinds";
 import { toolForProgram } from "../../components/AgentMark/tools";
+import type { HookAgent } from "../../lib/api/agents";
 import type { HookInstall } from "../../generated/HookInstall";
 import type { LiveState } from "../../generated/LiveState";
 import type { LiveStatus } from "../../generated/LiveStatus";
@@ -103,13 +104,15 @@ export function planRing(infos: SessionInfo[], now = Date.now()): { pct: number;
   return best;
 }
 
+const isHookAgent = (agent: string): agent is HookAgent => agent === "claude" || agent === "codex";
+
 /**
  * The sidebar row for one open session the core lists. An agent with live status shows it. One without shows the pty
  * fallback (Working or Idle, noted as limited) or, with no activity either, a limited row that says why. A shell row's
  * status comes from its prompt marks: "working" while a command runs, and "idle" at the prompt (or before any mark),
  * naming a failed last command. `now` is the clock the ages count from.
  */
-export function toRow(info: SessionInfo, profiles: Profile[], setup?: { claude?: HookInstall }, now: number = Date.now()): RowModel {
+export function toRow(info: SessionInfo, profiles: Profile[], setup?: Partial<Record<HookAgent, HookInstall>>, now: number = Date.now()): RowModel {
   const profile = profiles.find((p) => p.id === info.profile_id);
   // The foreground only speaks for a shell that is running and not paused; a launched agent's row is its own.
   const fg = info.agent === null && info.state.kind === "running" && !info.paused ? info.foreground : null;
@@ -139,8 +142,10 @@ export function toRow(info: SessionInfo, profiles: Profile[], setup?: { claude?:
   if (info.live === null && info.attention !== null) return { ...base, status: "needs-question", phrase: info.attention.message ?? "Wants your attention" };
   if (info.agent !== null) {
     if (info.live !== null) return { ...base, ...liveRow(info.live, info.stuck, now) };
-    // Claude Code without Marshell's hooks: say so and offer the setup, ahead of the output fallback. An unknown state (not fetched yet) says and offers nothing.
-    if (info.agent === "claude" && setup?.claude !== undefined && setup.claude !== "installed") return { ...base, status: "limited", phrase: "Status limited · set up", setupLink: true };
+    // A hook agent (Claude Code, Codex) without Marshell's hooks: say so and offer the setup, ahead of the output fallback. An unknown state (not fetched yet) says and offers nothing.
+    // Installed hooks offer nothing, even for a Codex that has not trusted them yet: the row keeps the limited fallback and never claims they work.
+    const hooks = isHookAgent(info.agent) ? setup?.[info.agent] : undefined;
+    if (hooks !== undefined && hooks !== "installed") return { ...base, status: "limited", phrase: "Status limited · set up", setupLink: true };
     const note = info.status_note === null ? LIMITED_NOTE : `${LIMITED_NOTE} · ${info.status_note}`;
     const statusNote = info.status_note === null ? {} : { statusNote: info.status_note };
     if (info.activity === "working") return { ...base, status: "working", phrase: `Working · ${LIMITED_NOTE}`, note, ...statusNote };

@@ -223,9 +223,21 @@ describe("toRow", () => {
       expect(row.phrase).not.toBe("Status limited");
       expect(toRow(info({ foreground: { program: "claude", command_line: null, agent: "claude" } }), PROFILES, { claude: "none" }).setupLink).toBeUndefined();
     });
-    it("a codex row has none, and neither has a claude row before the state is known", () => {
+    it("a claude row has none before the state is known, and a codex row none for Claude's state", () => {
       expect(toRow(info({ agent: "codex" }), PROFILES, { claude: "none" }).setupLink).toBeUndefined();
       expect(toRow(info({ agent: "claude" }), PROFILES).setupLink).toBeUndefined();
+      expect(toRow(info({ agent: "claude" }), PROFILES, { codex: "none" }).setupLink).toBeUndefined();
+    });
+    it("a Codex row without hooks offers the setup", () => {
+      for (const codex of ["none", "partial", "orphaned"] as const) {
+        expect(toRow(info({ agent: "codex" }), PROFILES, { codex })).toMatchObject({ status: "limited", phrase: "Status limited · set up", setupLink: true });
+      }
+    });
+    it("an installed but untrusted Codex keeps the limited fallback with no setup link", () => {
+      const r = toRow(info({ agent: "codex", activity: "working" }), PROFILES, { codex: "installed" });
+      expect(r.setupLink).toBeUndefined();
+      expect(r).toMatchObject({ status: "working", phrase: "Working · Status limited" });
+      expect(toRow(info({ agent: "codex" }), PROFILES, { codex: "installed" })).toMatchObject({ status: "limited", phrase: "Status arrives with hooks" });
     });
   });
 });
@@ -235,6 +247,11 @@ describe("toRow: live status", () => {
   const live = (patch: Partial<LiveStatus> = {}): LiveStatus => ({ state: "idle", phrase: "", since_ms: NOW - 5000, recap: null, model: null, effort: null, context_pct: null, five_hour_pct: null, five_hour_resets_at: null, seven_day_pct: null, subagents: 0, ...patch });
   const claude = (l: LiveStatus | null, patch: Partial<SessionInfo> = {}) => info({ agent: "claude", live: l, ...patch });
   const row = (l: LiveStatus | null, patch: Partial<SessionInfo> = {}) => toRow(claude(l, patch), PROFILES, { claude: "installed" }, NOW);
+
+  it("a Codex row with live status shows its phrase", () => {
+    const l = live({ state: "working", phrase: "Running a command" });
+    expect(toRow(info({ agent: "codex", live: l }), PROFILES, { codex: "none" }, NOW)).toMatchObject({ agent: "codex", status: "working", phrase: "Running a command" });
+  });
 
   it("attention is ignored when live is set", () => {
     for (const agent of [null, "claude"]) {
