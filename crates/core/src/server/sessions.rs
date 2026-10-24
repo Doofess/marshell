@@ -936,6 +936,7 @@ mod tests {
             updated_ms: 2,
             previous_in_tab: None,
             recordings: vec![],
+            client: Default::default(),
         };
         // An id that would reach the command line, with a transcript that really exists.
         let hostile = work.path().join("x; calc.jsonl");

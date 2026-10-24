@@ -20,6 +20,7 @@ const entry = (tab_id: string): HistoryEntry => ({
   archived: false,
   bookmarks: 0,
   named: false,
+  client: "marshell",
   turns: 1,
   started_ms: 0,
   updated_ms: 0,

@@ -165,6 +165,7 @@ mod tests {
                     last_ms: *last_ms,
                 })
                 .collect(),
+            client: Default::default(),
         }
     }
 

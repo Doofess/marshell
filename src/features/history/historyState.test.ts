@@ -14,6 +14,7 @@ const entry = (over: Partial<HistoryEntry>): HistoryEntry => ({
   archived: false,
   bookmarks: 0,
   named: false,
+  client: "marshell",
   turns: 2,
   started_ms: 0,
   updated_ms: 0,

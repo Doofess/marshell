@@ -19,14 +19,11 @@ pub const MAX_RECORDINGS: usize = 100;
 
 /// Writes the sidecar for a session. The recording links already in the file stay, in their order, and the
 /// new ones follow, so no writer (a copy running on old data included) drops a link. A recording listed twice
-/// is one link, from the earliest first event to the latest last one.
+/// is one link, from the earliest first event to the latest last one. A stored owner (a tab) and its client stay.
 pub fn write_meta(home: &Path, meta: &SessionMeta) -> anyhow::Result<()> {
     let (_, sidecar) = archive_paths(home, &meta.agent, &meta.session_id);
-    let mut merged = match store::read::<SessionMeta>(&sidecar) {
-        Ok(Some(old)) => old.recordings,
-        // A sidecar that can't be read is replaced, as before.
-        Ok(None) | Err(_) => Vec::new(),
-    };
+    let stored = store::read::<SessionMeta>(&sidecar).ok().flatten();
+    let mut merged = stored.as_ref().map(|old| old.recordings.clone()).unwrap_or_default();
     for link in &meta.recordings {
         match merged.iter_mut().find(|l| l.file == link.file) {
             Some(known) => {
@@ -38,13 +35,18 @@ pub fn write_meta(home: &Path, meta: &SessionMeta) -> anyhow::Result<()> {
     }
     let excess = merged.len().saturating_sub(MAX_RECORDINGS);
     merged.drain(..excess);
-    store::write(
-        &sidecar,
-        &SessionMeta {
-            recordings: merged,
-            ..meta.clone()
-        },
-    )
+    let mut out = SessionMeta {
+        recordings: merged,
+        ..meta.clone()
+    };
+    // A conversation that ran in a Marshell tab stays Marshell's, whichever writer comes after.
+    if let Some(old) = stored.filter(|old| !old.tab_id.is_empty()) {
+        out.tab_id = old.tab_id;
+        out.client = old.client;
+        out.started_ms = old.started_ms.min(meta.started_ms);
+        out.updated_ms = old.updated_ms.max(meta.updated_ms);
+    }
+    store::write(&sidecar, &out)
 }
 
 /// The session's sidecar, or None when it has none.
@@ -133,6 +135,7 @@ mod tests {
     use super::super::{RecordingLink, SessionMeta};
     use super::*;
     use crate::store;
+    use marshell_protocol::history::Client;
 
     fn meta(id: &str, transcript: &std::path::Path) -> SessionMeta {
         SessionMeta {
@@ -145,6 +148,7 @@ mod tests {
             updated_ms: 2,
             previous_in_tab: None,
             recordings: vec![],
+            client: Default::default(),
         }
     }
 
@@ -203,6 +207,54 @@ mod tests {
         write_meta(home.path(), &m).unwrap();
         let listed = read_meta(home.path(), "claude", "s1").unwrap().unwrap().recordings;
         assert_eq!(listed, [link("a-1.cast", 100, 900), link("b-2.cast", 250, 400)]);
+    }
+
+    #[test]
+    fn an_old_sidecar_without_a_client_reads_as_marshell() {
+        let home = tempfile::tempdir().unwrap();
+        let (_, sidecar) = archive_paths(home.path(), "claude", "s1");
+        std::fs::create_dir_all(sidecar.parent().unwrap()).unwrap();
+        std::fs::write(
+            &sidecar,
+            r#"{"version":2,"agent":"claude","session_id":"s1","tab_id":"t1","cwd":"c","transcript_path":"p","started_ms":1,"updated_ms":2,"previous_in_tab":null,"recordings":[]}"#,
+        )
+        .unwrap();
+        let got = read_meta(home.path(), "claude", "s1").unwrap().unwrap();
+        assert_eq!(got.client, Client::Marshell);
+    }
+
+    #[test]
+    fn write_meta_keeps_a_marshell_owner() {
+        let home = tempfile::tempdir().unwrap();
+        let mut owned = meta("s1", &home.path().join("s1.jsonl"));
+        owned.started_ms = 5;
+        owned.updated_ms = 10;
+        write_meta(home.path(), &owned).unwrap();
+        let mut imported = owned.clone();
+        imported.tab_id = String::new();
+        imported.client = Client::Terminal;
+        imported.started_ms = 3;
+        imported.updated_ms = 20;
+        write_meta(home.path(), &imported).unwrap();
+        let got = read_meta(home.path(), "claude", "s1").unwrap().unwrap();
+        assert_eq!(got.tab_id, "t1");
+        assert_eq!(got.client, Client::Marshell);
+        assert_eq!(got.updated_ms, 20);
+        assert_eq!(got.started_ms, 3);
+    }
+
+    #[test]
+    fn write_meta_lets_marshell_take_over_an_imported_session() {
+        let home = tempfile::tempdir().unwrap();
+        let mut imported = meta("s1", &home.path().join("s1.jsonl"));
+        imported.tab_id = String::new();
+        imported.client = Client::Terminal;
+        write_meta(home.path(), &imported).unwrap();
+        let owned = meta("s1", &home.path().join("s1.jsonl"));
+        write_meta(home.path(), &owned).unwrap();
+        let got = read_meta(home.path(), "claude", "s1").unwrap().unwrap();
+        assert_eq!(got.tab_id, "t1");
+        assert_eq!(got.client, Client::Marshell);
     }
 
     #[test]

@@ -691,6 +691,7 @@ All done.
                         last_ms: T0 + 25_000,
                     },
                 ],
+                client: Default::default(),
             };
             let got = parts(home.path(), &meta, (T0 + 1000, T0 + 25_000), &CastCache::default());
             let text = to_asciicast(home.path(), &got, "x", None).unwrap();

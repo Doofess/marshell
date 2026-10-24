@@ -3,6 +3,7 @@
 
 use crate::hooks::risk::is_remote_path;
 use crate::store;
+use marshell_protocol::history::Client;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
@@ -29,6 +30,9 @@ pub struct SessionMeta {
     /// The recordings (in `recordings/`) of the tabs this conversation ran in, oldest first.
     #[serde(default)]
     pub recordings: Vec<RecordingLink>,
+    /// Where the conversation ran. Sidecars from before this field read as Marshell.
+    #[serde(default)]
+    pub client: Client,
 }
 
 /// One recording a conversation ran in, and when.

@@ -1306,6 +1306,7 @@ fn seed_history_home() {
             updated_ms: now - age,
             previous_in_tab: None,
             recordings: vec![],
+            client: Default::default(),
         };
         copy_transcript(&home, &meta).unwrap();
         if id.ends_with("b4") {

@@ -140,6 +140,57 @@ pub struct EditedFile {
     pub created: bool,
 }
 
+/// Where a conversation ran.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+#[serde(rename_all = "kebab-case")]
+pub enum Client {
+    /// In a Marshell tab.
+    #[default]
+    Marshell,
+    /// In a terminal outside Marshell.
+    Terminal,
+    /// In the VS Code extension.
+    Vscode,
+    /// In the desktop app.
+    Desktop,
+    /// A headless run (`claude -p`, `codex exec`).
+    Headless,
+}
+
+impl Client {
+    /// The name stored in the index.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Client::Marshell => "marshell",
+            Client::Terminal => "terminal",
+            Client::Vscode => "vscode",
+            Client::Desktop => "desktop",
+            Client::Headless => "headless",
+        }
+    }
+
+    /// The client named `name`; anything unknown reads as `Marshell`.
+    pub fn from_name(name: &str) -> Client {
+        match name {
+            "terminal" => Client::Terminal,
+            "vscode" => Client::Vscode,
+            "desktop" => Client::Desktop,
+            "headless" => Client::Headless,
+            _ => Client::Marshell,
+        }
+    }
+}
+
+/// The History list's "Where" filter.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+#[serde(rename_all = "kebab-case")]
+pub enum Place {
+    Marshell,
+    Outside,
+}
+
 /// One row of the History list: an archived conversation as the index knows it.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[ts(export)]
@@ -176,6 +227,9 @@ pub struct HistoryEntry {
     pub bookmarks: u32,
     #[serde(default)]
     pub named: bool,
+    /// Where the conversation ran.
+    #[serde(default)]
+    pub client: Client,
 }
 
 /// One full-text match: the turn it is in and a snippet with the hit between U+0002 and U+0003.
@@ -222,6 +276,13 @@ pub struct HistoryQuery {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub archived: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub place: Option<Place>,
+    /// Headless runs are left out unless this is `Some(true)`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub headless: Option<bool>,
 }
 
 /// One event of an asciicast recording, with its time already placed on the Unix clock.

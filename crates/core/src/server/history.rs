@@ -85,6 +85,8 @@ pub struct SearchQuery {
     q: String,
     #[serde(default)]
     archived: bool,
+    #[serde(default)]
+    headless: bool,
 }
 
 /// An empty or missing query finds nothing.
@@ -98,7 +100,7 @@ pub async fn search(
         if query.q.trim().is_empty() {
             return Ok(Vec::new());
         }
-        history.search(&query.q, query.archived).map_err(failed)
+        history.search(&query.q, query.archived, query.headless).map_err(failed)
     })
     .await?;
     Ok(Json(hits))
