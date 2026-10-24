@@ -69,6 +69,24 @@ describe("history", () => {
     expect(call(f).url).toBe("http://127.0.0.1:9/v1/history?tag=to+do&archived=true");
   });
 
+  it("sends place and headless to the list, and headless to the search, only when set", async () => {
+    const l = respond([]);
+    vi.stubGlobal("fetch", l);
+    await history.list(endpoint, { place: "outside", headless: true });
+    expect(call(l).url).toBe("http://127.0.0.1:9/v1/history?place=outside&headless=true");
+    const f = respond([]);
+    vi.stubGlobal("fetch", f);
+    await history.search(endpoint, "x", false, true);
+    expect(call(f).url).toBe("http://127.0.0.1:9/v1/history/search?q=x&headless=true");
+  });
+
+  it("reads the import's status", async () => {
+    const f = respond({ on: true, copying: false, done: 0, total: 0 });
+    vi.stubGlobal("fetch", f);
+    await history.importStatus(endpoint);
+    expect(call(f)).toMatchObject({ url: "http://127.0.0.1:9/v1/history/import", method: "GET" });
+  });
+
   it("searches with archived=true only when asked", async () => {
     const f = respond([]);
     vi.stubGlobal("fetch", f);

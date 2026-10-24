@@ -1,3 +1,5 @@
+import type { Client } from "../../generated/Client";
+import type { ImportStatus } from "../../generated/ImportStatus";
 import type { HistoryEntry } from "../../generated/HistoryEntry";
 import type { HistoryQuery } from "../../generated/HistoryQuery";
 import type { HistoryFilters } from "./HistoryView";
@@ -72,9 +74,33 @@ export function rowMeta(e: HistoryEntry, now: number): string {
 
 /** What the list asks the core for. `bookmarked` is left out: the Bookmarked filter shows the bookmarks route's rows instead of the list. */
 export function listQuery(filters: HistoryFilters, now: number): HistoryQuery {
-  const { when, bookmarked: _bookmarked, ...rest } = filters;
-  return { ...rest, since_ms: sinceFor(when, now) };
+  const { when, bookmarked: _bookmarked, place, headless, ...rest } = filters;
+  return { ...rest, ...(place !== "any" && { place }), ...(headless && { headless }), since_ms: sinceFor(when, now) };
 }
+
+/** The mark on a row for where the conversation ran; none for one run in Marshell. */
+export function clientMark(c: Client): string | null {
+  switch (c) {
+    case "marshell":
+      return null;
+    case "terminal":
+      return "Outside Marshell";
+    case "vscode":
+      return "VS Code";
+    case "desktop":
+      return "Desktop app";
+    case "headless":
+      return "Headless";
+  }
+}
+
+const AGENT_NAMES: Record<string, string> = { claude: "Claude Code", codex: "Codex CLI" };
+/** An agent's name in the Agent filter; an agent not named here shows its id. */
+export const historyAgentLabel = (agent: string): string => AGENT_NAMES[agent] ?? agent;
+
+/** The progress line while the import copies files; null when it isn't copying (or not yet known). */
+export const importLine = (s: ImportStatus | null): string | null =>
+  s?.copying ? `Copying conversations from Claude Code and Codex: ${s.done} of ${s.total}.` : null;
 
 /** What the Bookmarked filter asks the core for: the list's filters, one row per bookmark. */
 export const bookmarkQuery = (filters: HistoryFilters, now: number): HistoryQuery => ({ ...listQuery(filters, now), bookmarked: true });

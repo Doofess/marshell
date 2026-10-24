@@ -5,6 +5,7 @@ import type { Endpoint } from "../../generated/Endpoint";
 import type { HistoryEntry } from "../../generated/HistoryEntry";
 import type { HistoryPatch } from "../../generated/HistoryPatch";
 import type { HistoryQuery } from "../../generated/HistoryQuery";
+import type { ImportStatus } from "../../generated/ImportStatus";
 import type { RecordingFrames } from "../../generated/RecordingFrames";
 import type { RecordingPart } from "../../generated/RecordingPart";
 import type { SearchHit } from "../../generated/SearchHit";
@@ -27,6 +28,8 @@ function filterParams(q: HistoryQuery): URLSearchParams {
   }
   if (q.bookmarked) params.set("bookmarked", "true");
   if (q.archived) params.set("archived", "true");
+  if (q.place !== undefined) params.set("place", q.place);
+  if (q.headless) params.set("headless", "true");
   return params;
 }
 
@@ -56,11 +59,14 @@ export const history = {
   /** The archived conversations, newest first. Unset filters are left out of the query string. */
   list: (ep: Endpoint, q: HistoryQuery) => api<HistoryEntry[]>(ep, "GET", withQuery("/v1/history", filterParams(q))),
   /** `archived` includes archived conversations in the results. */
-  search: (ep: Endpoint, q: string, archived = false) => {
+  search: (ep: Endpoint, q: string, archived = false, headless = false) => {
     const params = new URLSearchParams({ q });
     if (archived) params.set("archived", "true");
+    if (headless) params.set("headless", "true");
     return api<SearchHit[]>(ep, "GET", `/v1/history/search?${params.toString()}`);
   },
+  /** The copy of conversations run outside Marshell: whether it is on, and its progress while copying. */
+  importStatus: (ep: Endpoint) => api<ImportStatus>(ep, "GET", "/v1/history/import"),
   /** One row per bookmark, as a search hit, with the same filters as `list`. */
   bookmarks: (ep: Endpoint, q: HistoryQuery) => api<SearchHit[]>(ep, "GET", withQuery("/v1/history/bookmarks", filterParams(q))),
   /** Rejects with a 404 ApiError ("No such conversation.") when there is none. */

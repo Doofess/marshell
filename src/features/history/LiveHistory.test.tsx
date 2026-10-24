@@ -25,7 +25,7 @@ const entry = (tab_id: string): HistoryEntry => ({
   started_ms: 0,
   updated_ms: 0,
 });
-const F = { when: "any", bookmarked: false, archived: false } as const;
+const F = { when: "any", bookmarked: false, archived: false, place: "any", headless: false } as const;
 const row = (id: string, status: RowModel["status"]): RowModel => ({ ...SCENARIO_ROWS[0]!, id, status });
 
 describe("liveTabFor", () => {

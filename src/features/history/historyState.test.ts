@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { HistoryEntry } from "../../generated/HistoryEntry";
-import { bookmarkQuery, escapeAction, filterOptions, groupByProject, listQuery, moveSelection, rowMeta, sinceFor } from "./historyState";
+import { bookmarkQuery, clientMark, historyAgentLabel, importLine, escapeAction, filterOptions, groupByProject, listQuery, moveSelection, rowMeta, sinceFor } from "./historyState";
 
 const entry = (over: Partial<HistoryEntry>): HistoryEntry => ({
   agent: "claude",
@@ -131,12 +131,40 @@ describe("filterOptions tags", () => {
 });
 
 describe("the queries the view sends", () => {
-  const filters = { when: "any", tag: "bug", bookmarked: true, archived: true, agent: "claude" } as const;
+  const filters = { when: "any", tag: "bug", bookmarked: true, archived: true, agent: "claude", place: "any", headless: false } as const;
   it("passes archived=true and the tag to the list, which never filters by bookmarks itself", () => {
     expect(listQuery(filters, 0)).toEqual({ agent: "claude", tag: "bug", archived: true, since_ms: undefined });
-    expect(listQuery({ when: "any", bookmarked: false, archived: false }, 0).archived).toBe(false);
+    expect(listQuery({ when: "any", bookmarked: false, archived: false, place: "any", headless: false }, 0).archived).toBe(false);
   });
   it("asks the bookmarks route with the same filters and bookmarked=true", () => {
     expect(bookmarkQuery(filters, 0)).toEqual({ agent: "claude", tag: "bug", archived: true, bookmarked: true, since_ms: undefined });
+  });
+});
+
+describe("where a conversation ran", () => {
+  const f = { when: "any", bookmarked: false, archived: false, place: "any", headless: false } as const;
+  it("sends place only when it is not Any, and headless only when on", () => {
+    expect(listQuery({ ...f, place: "outside" }, 0).place).toBe("outside");
+    expect(listQuery({ ...f, place: "marshell" }, 0).place).toBe("marshell");
+    expect("place" in listQuery(f, 0)).toBe(false);
+    expect(listQuery({ ...f, headless: true }, 0).headless).toBe(true);
+    expect("headless" in listQuery(f, 0)).toBe(false);
+  });
+  it("marks each client but Marshell", () => {
+    expect(clientMark("marshell")).toBeNull();
+    expect(clientMark("terminal")).toBe("Outside Marshell");
+    expect(clientMark("vscode")).toBe("VS Code");
+    expect(clientMark("desktop")).toBe("Desktop app");
+    expect(clientMark("headless")).toBe("Headless");
+  });
+  it("names the agents", () => {
+    expect(historyAgentLabel("claude")).toBe("Claude Code");
+    expect(historyAgentLabel("codex")).toBe("Codex CLI");
+    expect(historyAgentLabel("other")).toBe("other");
+  });
+  it("words the import's progress, or says nothing when it isn't copying", () => {
+    expect(importLine({ copying: true, done: 120, total: 355, on: true })).toBe("Copying conversations from Claude Code and Codex: 120 of 355.");
+    expect(importLine({ copying: false, done: 355, total: 355, on: true })).toBeNull();
+    expect(importLine(null)).toBeNull();
   });
 });

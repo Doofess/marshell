@@ -1,16 +1,17 @@
 import { Fragment, useEffect, useId, useRef, type KeyboardEvent, type ReactNode } from "react";
 import type { Conversation } from "../../generated/Conversation";
 import type { HistoryEntry } from "../../generated/HistoryEntry";
+import type { Place } from "../../generated/Place";
 import type { SearchHit } from "../../generated/SearchHit";
 import { Chip } from "../../components/Chip/Chip";
 import { commandById, shortcutLabel, type Os } from "../../lib/keymap";
 import { ConversationView, type ConversationViewProps } from "./ConversationView";
-import { PINNED_GROUP, filterOptions, groupByProject, moveSelection, rowMeta } from "./historyState";
+import { PINNED_GROUP, clientMark, filterOptions, historyAgentLabel, groupByProject, moveSelection, rowMeta } from "./historyState";
 import { splitSnippet } from "./snippet";
 import "./History.css";
 
 export type When = "any" | "today" | "7d" | "30d";
-export type FilterName = "agent" | "project" | "branch" | "model" | "tag" | "when";
+export type FilterName = "agent" | "project" | "branch" | "model" | "tag" | "when" | "place";
 /** An unset filter is left out. */
 export type HistoryFilters = {
   agent?: string;
@@ -23,6 +24,10 @@ export type HistoryFilters = {
   bookmarked: boolean;
   /** Include archived conversations in the list and the search. */
   archived: boolean;
+  /** Where the conversation ran. */
+  place: "any" | Place;
+  /** Include headless runs (`claude -p` and the like), which the list hides by default. */
+  headless: boolean;
 };
 /** Which conversation, and for a search hit the turn it is in. */
 export type OpenTarget = { agent: string; session_id: string; turn?: number };
@@ -46,12 +51,14 @@ export type HistoryViewProps = {
   onQuery: (q: string) => void;
   /** An empty value clears the filter. */
   onFilter: (name: FilterName, value: string) => void;
-  onToggle: (name: "bookmarked" | "archived", on: boolean) => void;
+  onToggle: (name: "bookmarked" | "archived" | "headless", on: boolean) => void;
   onSelect: (key: string) => void;
   onOpen: (target: OpenTarget) => void;
   onResume: (target: { agent: string; session_id: string }) => void;
   onGoTo: (tab: string) => void;
   onEscape: () => void;
+  /** The progress of the copy of outside conversations while it runs; shown under the filters. Spoken by `LiveHistory`, not here. */
+  importLine?: string | null;
   /** The list's text when it has no rows, in place of the default for the state: a failed fetch says why here. */
   emptyText?: string;
   /** Sits at the top of the conversation pane and stays in view while it scrolls: a refusal, or the question before a web link opens. */
@@ -71,6 +78,12 @@ export const hitKey = (h: Pick<SearchHit, "session_id" | "turn">) => `${h.sessio
 const folderName = (cwd: string) => cwd.split(/[\\/]/).filter(Boolean).pop() ?? cwd;
 const noop = () => {};
 const UNTITLED = "Untitled conversation";
+
+const PLACE_LABELS: ["any" | Place, string][] = [
+  ["any", "Any"],
+  ["marshell", "Marshell"],
+  ["outside", "Outside Marshell"],
+];
 
 const WHEN_LABELS: [When, string][] = [
   ["any", "Any time"],
@@ -170,13 +183,13 @@ export function HistoryView(p: HistoryViewProps) {
   };
 
   const options = filterOptions(p.entries);
-  const toggle = (name: "bookmarked" | "archived", label: string) => (
+  const toggle = (name: "bookmarked" | "archived" | "headless", label: string) => (
     <label className="history__check">
       <input type="checkbox" checked={p.filters[name]} onChange={(e) => p.onToggle(name, e.target.checked)} />
       <span>{label}</span>
     </label>
   );
-  const choose = (name: Exclude<FilterName, "when">, label: string, list: string[], display: (v: string) => string = (v) => v) => {
+  const choose = (name: Exclude<FilterName, "when" | "place">, label: string, list: string[], display: (v: string) => string = (v) => v) => {
     const current = p.filters[name];
     return (
       <label className="history__filter">
@@ -224,7 +237,7 @@ export function HistoryView(p: HistoryViewProps) {
               onKeyDown={onSearchKey}
             />
             <div className="history__filters">
-              {choose("agent", "Agent", options.agents)}
+              {choose("agent", "Agent", options.agents, historyAgentLabel)}
               {choose("project", "Project", options.projects, folderName)}
               {choose("branch", "Branch", options.branches)}
               {choose("model", "Model", options.models)}
@@ -239,9 +252,21 @@ export function HistoryView(p: HistoryViewProps) {
                   ))}
                 </select>
               </label>
+              <label className="history__filter">
+                <span className="history__filter-label">Where</span>
+                <select className="history__select" value={p.filters.place} onChange={(e) => p.onFilter("place", e.target.value)}>
+                  {PLACE_LABELS.map(([v, label]) => (
+                    <option key={v} value={v}>
+                      {label}
+                    </option>
+                  ))}
+                </select>
+              </label>
               {toggle("bookmarked", "Bookmarked")}
               {toggle("archived", "Show archived")}
+              {toggle("headless", "Show headless runs")}
             </div>
+            {p.importLine && <p className="history__meta history__import">{p.importLine}</p>}
           </div>
 
           {rows.length === 0 ? (
@@ -297,8 +322,9 @@ export function HistoryView(p: HistoryViewProps) {
                           <span className="history__meta" dir="auto">
                             {rowMeta(entry, p.now)}
                           </span>
-                          {(entry.archived || entry.tags.length > 0) && (
+                          {(entry.archived || entry.tags.length > 0 || clientMark(entry.client)) && (
                             <span className="history__chips">
+                              {clientMark(entry.client) && <Chip>{clientMark(entry.client)}</Chip>}
                               {entry.archived && <Chip>Archived</Chip>}
                               {entry.tags.map((tag) => (
                                 <Chip key={tag}>{tag}</Chip>

@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import type { Conversation } from "../../generated/Conversation";
 import type { Endpoint } from "../../generated/Endpoint";
 import type { HistoryEntry } from "../../generated/HistoryEntry";
+import type { ImportStatus } from "../../generated/ImportStatus";
 import type { SearchHit } from "../../generated/SearchHit";
 import type { HistoryPatch } from "../../generated/HistoryPatch";
 import type { RecordingPart } from "../../generated/RecordingPart";
@@ -24,12 +25,14 @@ import {
   type HistoryViewProps,
   type When,
 } from "./HistoryView";
-import { bookmarkQuery, escapeAction, listQuery } from "./historyState";
+import { bookmarkQuery, escapeAction, importLine, listQuery } from "./historyState";
 import { RecordingTab, type PlayRequest, type RecordingState } from "./recording/RecordingTab";
 import type { TerminalThemeProp } from "../terminal/TerminalView";
 
 /** How long the search waits after the last keystroke. */
 const SEARCH_DELAY_MS = 150;
+const IMPORT_POLL_MS = 1000;
+const IMPORT_DONE_COPY = "Finished copying conversations from Claude Code and Codex.";
 const LOADING_COPY = "Loading conversations…";
 export const NO_FILTER_MATCH_COPY = "No conversations match these filters.";
 
@@ -38,7 +41,7 @@ export function listEmptyText(filters: HistoryFilters, loaded: boolean, error: s
   if (error) return error;
   if (!loaded) return LOADING_COPY;
   if (filters.bookmarked) return noBookmarksCopy(bookmarkShortcut);
-  const filtered = filters.when !== "any" || Boolean(filters.agent || filters.project || filters.branch || filters.model || filters.tag);
+  const filtered = filters.when !== "any" || filters.place !== "any" || Boolean(filters.agent || filters.project || filters.branch || filters.model || filters.tag);
   return filtered ? NO_FILTER_MATCH_COPY : EMPTY_LIST_COPY;
 }
 
@@ -98,7 +101,8 @@ export type LiveHistoryProps = {
 
 /** The History view wired to the core: it fetches the list on open and on each filter change, searches 150 ms after the last keystroke, opens a conversation on Enter or a click, and resumes it. */
 export function LiveHistory({ endpoint, rows, os, searchFocus, size, announce, onGoTo, onResumed, onOpenFile, onClose, theme, font }: LiveHistoryProps) {
-  const [filters, setFilters] = useState<HistoryFilters>({ when: "any", bookmarked: false, archived: false });
+  const [filters, setFilters] = useState<HistoryFilters>({ when: "any", bookmarked: false, archived: false, place: "any", headless: false });
+  const [importState, setImportState] = useState<ImportStatus | null>(null);
   const [listed, setListed] = useState<Listed>({ entries: [], now: Date.now(), loaded: false, error: null });
   const [query, setQuery] = useState("");
   const [searched, setSearched] = useState<Searched | null>(null);
@@ -169,6 +173,37 @@ export function LiveHistory({ endpoint, rows, os, searchFocus, size, announce, o
     };
   }, [endpoint, filters, reload]);
 
+  // The import's progress: read once when History opens, then every second for as long as the last answer said it was copying.
+  // The line is spoken when copying starts and when it ends, not on each count; the list loads again once when it ends.
+  useEffect(() => {
+    let live = true;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let wasCopying = false;
+    const tick = async () => {
+      let next: ImportStatus | null = null;
+      try {
+        next = await history.importStatus(endpoint);
+      } catch {
+        // A failed read ends the polling; reopening History reads again.
+      }
+      if (!live) return;
+      const copying = next?.copying === true;
+      if (copying && !wasCopying) announce(importLine(next) ?? "");
+      if (!copying && wasCopying) {
+        announce(IMPORT_DONE_COPY);
+        setReload((n) => n + 1);
+      }
+      wasCopying = copying;
+      setImportState(next);
+      if (copying) timer = setTimeout(() => void tick(), IMPORT_POLL_MS);
+    };
+    void tick();
+    return () => {
+      live = false;
+      clearTimeout(timer);
+    };
+  }, [endpoint, announce]);
+
   // The bookmarks: one row per bookmark, fetched while the Bookmarked filter is on.
   useEffect(() => {
     setMarked(null);
@@ -192,7 +227,7 @@ export function LiveHistory({ endpoint, rows, os, searchFocus, size, announce, o
     }
     let live = true;
     const timer = setTimeout(() => {
-      history.search(endpoint, q, filters.archived).then(
+      history.search(endpoint, q, filters.archived, filters.headless).then(
         (hits) => live && setSearched({ query: q, hits, error: null }),
         (e: unknown) => live && setSearched({ query: q, hits: [], error: failureText(e) }),
       );
@@ -201,7 +236,7 @@ export function LiveHistory({ endpoint, rows, os, searchFocus, size, announce, o
       live = false;
       clearTimeout(timer);
     };
-  }, [endpoint, query, filters.archived, reload]);
+  }, [endpoint, query, filters.archived, filters.headless, reload]);
 
   const searching = query.trim() !== "" && searched !== null;
   const showMarked = !searching && query.trim() === "" && filters.bookmarked;
@@ -353,11 +388,12 @@ export function LiveHistory({ endpoint, rows, os, searchFocus, size, announce, o
     else onClose();
   };
 
-  const toggle = (name: "bookmarked" | "archived", on: boolean) => setFilters((f) => ({ ...f, [name]: on }));
+  const toggle = (name: "bookmarked" | "archived" | "headless", on: boolean) => setFilters((f) => ({ ...f, [name]: on }));
 
   const filter = (name: FilterName, value: string) =>
     setFilters((f) => {
       if (name === "when") return { ...f, when: value as When };
+      if (name === "place") return { ...f, place: value as HistoryFilters["place"] };
       const next = { ...f };
       if (value === "") delete next[name];
       else next[name] = value;
@@ -407,6 +443,7 @@ export function LiveHistory({ endpoint, rows, os, searchFocus, size, announce, o
       onGoTo={onGoTo}
       onEscape={escape}
       emptyText={emptyText}
+      importLine={importLine(importState)}
       banner={banner}
       onLink={follow}
       onFork={() => shown && void fork(shown)}

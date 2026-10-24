@@ -30,7 +30,7 @@ const entry = (over: Partial<HistoryEntry> = {}): HistoryEntry => ({
 });
 const base: HistoryViewProps = {
   entries: [],
-  filters: { when: "any", bookmarked: false, archived: false },
+  filters: { when: "any", bookmarked: false, archived: false, place: "any", headless: false },
   query: "",
   hits: null,
   selectedId: null,
@@ -117,7 +117,7 @@ describe("HistoryView list", () => {
   });
 
   it("keeps a chosen filter value in its select even when the list no longer has it", () => {
-    const out = html({ entries: [], filters: { when: "7d", model: "sonnet", bookmarked: false, archived: false } });
+    const out = html({ entries: [], filters: { when: "7d", model: "sonnet", bookmarked: false, archived: false, place: "any", headless: false } });
     const options = [...out.matchAll(/<option[^>]*>[^<]*<\/option>/g)].map((m) => m[0]);
     expect(options.find((o) => o.includes('value="sonnet"'))).toContain("selected");
     expect(options.find((o) => o.includes('value="7d"'))).toContain("selected");
@@ -210,7 +210,7 @@ describe("HistoryView: states from the window", () => {
 });
 
 describe("HistoryView pins, archive, tags and bookmarks", () => {
-  const withFilters = (over: Partial<HistoryViewProps["filters"]>) => ({ when: "any" as const, bookmarked: false, archived: false, ...over });
+  const withFilters = (over: Partial<HistoryViewProps["filters"]>) => ({ when: "any" as const, bookmarked: false, archived: false, place: "any" as const, headless: false, ...over });
 
   it("lists a Pinned group first and a pinned entry once", () => {
     const out = html({
@@ -224,6 +224,23 @@ describe("HistoryView pins, archive, tags and bookmarks", () => {
   it("an archived row says Archived", () => {
     expect(html({ entries: [entry({ archived: true })] })).toMatch(/<span class="chip"[^>]*>Archived<\/span>/);
     expect(html({ entries: [entry()] })).not.toContain("Archived");
+  });
+
+  it("marks a conversation run outside Marshell, and shows no mark for one run in it", () => {
+    expect(html({ entries: [entry({ client: "terminal" })] })).toMatch(/<span class="chip"[^>]*>Outside Marshell<\/span>/);
+    const own = html({ entries: [entry({ client: "marshell" })] });
+    expect(own).not.toMatch(/<span class="chip"[^>]*>(Outside Marshell|VS Code|Desktop app|Headless)<\/span>/);
+  });
+
+  it("has a Where select with Any, Marshell and Outside Marshell, and a Show headless runs checkbox", () => {
+    const out = html();
+    expect(out).toMatch(/<label[^>]*><span[^>]*>Where<\/span>/);
+    for (const o of ["Any", "Marshell", "Outside Marshell"]) expect(out).toContain(`>${o}</option>`);
+    expect(out).toMatch(/<input type="checkbox"[^>]*\/><span>Show headless runs<\/span>/);
+  });
+
+  it("names the Codex agent in the Agent filter", () => {
+    expect(html({ entries: [entry({ agent: "codex" })] })).toContain(">Codex CLI</option>");
   });
 
   it("shows tags as chips in the row, as text", () => {
