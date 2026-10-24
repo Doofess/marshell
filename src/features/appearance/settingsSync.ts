@@ -43,7 +43,7 @@ export class SettingsSync {
   /** Kept from the last read, so every save sends it back unchanged. */
   private notify: NotifySettings = DEFAULT_NOTIFY;
   /** Whether conversations run outside Marshell are copied. Kept from the last read, so every save sends it back unchanged. */
-  private historyImport = true;
+  private importOn = true;
   /** The appearance the core last stored, which a pause-warning write sends back unchanged. */
   private appearance: Appearance | null = null;
 
@@ -62,9 +62,14 @@ export class SettingsSync {
     this.tray = s.close_to_tray;
     this.off = s.status_off;
     this.notify = s.notifications;
-    this.historyImport = s.history_import;
+    this.importOn = s.history_import;
     this.appearance = s.appearance;
     return s.appearance;
+  }
+
+  /** Whether conversations run outside Marshell are copied, as of the last read or write. True until a read works. */
+  get historyImport(): boolean {
+    return this.importOn;
   }
 
   /** The notification settings, as of the last read or write. The defaults until a read works. */
@@ -101,13 +106,13 @@ export class SettingsSync {
         throw new SettingsReadError();
       }
     }
-    const s = await this.api.put(await this.getEndpoint(), { appearance: next, pause_warned: this.warned, onboarded: this.seen, close_to_tray: this.tray, status_off: this.off, notifications: this.notify, history_import: this.historyImport });
+    const s = await this.api.put(await this.getEndpoint(), { appearance: next, pause_warned: this.warned, onboarded: this.seen, close_to_tray: this.tray, status_off: this.off, notifications: this.notify, history_import: this.importOn });
     this.warned = s.pause_warned;
     this.seen = s.onboarded;
     this.tray = s.close_to_tray;
     this.off = s.status_off;
     this.notify = s.notifications;
-    this.historyImport = s.history_import;
+    this.importOn = s.history_import;
     this.appearance = s.appearance;
     return s.appearance;
   }
@@ -133,6 +138,11 @@ export class SettingsSync {
     await this.writeFlags({ close_to_tray: value });
   }
 
+  /** Saves whether conversations run outside Marshell are copied. Reads first, like `save`, and sends every other field back unchanged, so a later appearance save keeps it. */
+  async setHistoryImport(on: boolean): Promise<void> {
+    await this.writeFlags({ history_import: on });
+  }
+
   /** Records that the onboarding was seen. Reads first, like `save`, and sends the appearance and the pause warning back unchanged. */
   async markOnboarded(): Promise<void> {
     await this.writeFlags({ onboarded: true });
@@ -150,7 +160,7 @@ export class SettingsSync {
     return this.off;
   }
 
-  private async writeFlags(change: Partial<Pick<Settings, "pause_warned" | "onboarded" | "close_to_tray" | "status_off" | "notifications">>): Promise<void> {
+  private async writeFlags(change: Partial<Pick<Settings, "pause_warned" | "onboarded" | "close_to_tray" | "status_off" | "notifications" | "history_import">>): Promise<void> {
     if (!this.hasRead) {
       try {
         await this.load();
@@ -165,7 +175,7 @@ export class SettingsSync {
       close_to_tray: this.tray,
       status_off: this.off,
       notifications: this.notify,
-      history_import: this.historyImport,
+      history_import: this.importOn,
       ...change,
     });
     this.warned = s.pause_warned;
@@ -173,7 +183,7 @@ export class SettingsSync {
     this.tray = s.close_to_tray;
     this.off = s.status_off;
     this.notify = s.notifications;
-    this.historyImport = s.history_import;
+    this.importOn = s.history_import;
     this.appearance = s.appearance;
   }
 }

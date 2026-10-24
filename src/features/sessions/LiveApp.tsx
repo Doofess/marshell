@@ -32,6 +32,7 @@ import { nextWaiting } from "../lane/laneLayout";
 import { focusPendingCard } from "../approval/focusPendingCard";
 import { osOfPlatform } from "../../lib/keymap";
 import { paletteSessions } from "../palette/sessions";
+import { HistorySettingsDialog } from "../history/HistorySettingsDialog";
 import { LiveHistory } from "../history/LiveHistory";
 import { Preview } from "../preview/Preview";
 import { PreviewContext } from "../preview/PreviewContext";
@@ -205,7 +206,7 @@ export function LiveApp() {
   const terminalFont = useMemo(() => ({ family: font.family, size: font.size }), [font.family, font.size]);
   const [launcherOpen, setLauncherOpen] = useState(false);
   // The command palette, or the shell profiles page opened from it, over the window.
-  const [overlay, setOverlay] = useState<"palette" | "profiles" | "appearance" | "agents" | "notifications" | "diagnostics" | "shortcuts" | "departures" | null>(null);
+  const [overlay, setOverlay] = useState<"palette" | "profiles" | "appearance" | "agents" | "notifications" | "history-settings" | "diagnostics" | "shortcuts" | "departures" | null>(null);
   // The Agents dialog opened from a row's "set up" starts on the Set up card.
   const [agentsFrom, setAgentsFrom] = useState<"row" | null>(null);
   // First run: shown once, when the saved settings say the onboarding was not seen. Nothing shows until that read has answered;
@@ -1091,7 +1092,7 @@ export function LiveApp() {
 
   // A palette row: a session to go to, the profiles page, or a command the window runs (LivePalette lists only those).
   const runFromPalette = (id: string) => {
-    setOverlay(id === "profiles" || id === "appearance" || id === "agents" || id === "notifications" || id === "diagnostics" || id === "departures" ? id : id === "cheatsheet" ? "shortcuts" : null);
+    setOverlay(id === "profiles" || id === "appearance" || id === "agents" || id === "notifications" || id === "history-settings" || id === "diagnostics" || id === "departures" ? id : id === "cheatsheet" ? "shortcuts" : null);
     if (id.startsWith("session:")) return pick(id.slice("session:".length));
     // Palette-only commands. The menu opens after the palette has given the focus back, so it keeps the focus it takes.
     if (id === "pause-notifications") return void togglePause();
@@ -1343,6 +1344,7 @@ export function LiveApp() {
                   setTimeout(() => actions.focusTerminal(), 0);
                 }}
                 onResumed={pick}
+                onSettings={() => setOverlay("history-settings")}
                 onOpenFile={(link) => {
                   setMainView("sessions");
                   preview.open(link);
@@ -1479,6 +1481,7 @@ export function LiveApp() {
       {overlay === "profiles" && endpoint && <ProfilesDialog endpoint={endpoint} onClose={() => setOverlay(null)} onNotice={announce} onSaved={reloadProfiles} />}
       {overlay === "agents" && endpoint && <AgentsDialog endpoint={endpoint} sync={sync ?? undefined} startWith={agentsFrom === "row" ? "setup" : undefined} onClose={() => { setOverlay(null); setAgentsFrom(null); refreshSetup(); }} onNotice={announce} onChanged={refreshSetup} onNotifications={() => { setAgentsFrom(null); setOverlay("notifications"); }} />}
       {overlay === "notifications" && <NotificationsDialog sync={sync ?? undefined} onClose={() => setOverlay(null)} />}
+      {overlay === "history-settings" && <HistorySettingsDialog sync={sync ?? undefined} onClose={() => setOverlay(null)} />}
       {overlay === "diagnostics" && endpoint && <DiagnosticsDialog endpoint={endpoint} onClose={() => setOverlay(null)} onNotice={announce} />}
       {onboarding && endpoint && (
         <div className="live-app__onboarding">

@@ -193,3 +193,10 @@ describe("diagnostics command", () => {
     expect(commandById("diagnostics")?.binding).toBeUndefined();
   });
 });
+
+describe("history settings command", () => {
+  it("is History settings… in Tools, with no key of its own", () => {
+    expect(commandById("history-settings")).toMatchObject({ label: "History settings…", group: "Tools" });
+    expect(commandById("history-settings")?.binding).toBeUndefined();
+  });
+});

@@ -65,7 +65,9 @@ export type HistoryViewProps = {
   banner?: ReactNode;
   /** A file or web link clicked in assistant text. */
   onLink?: ConversationViewProps["onLink"];
-} & Partial<Pick<ConversationViewProps, "onFork" | "onPatch" | "onBookmark" | "onExport" | "onCopyMarkdown" | "onDelete" | "editor" | "onEditor" | "error" | "tab" | "onTab" | "playableTurns" | "onPlayFrom" | "recording">>;
+  /** Opens the History settings dialog; without it the header has no button. */
+  onSettings?: () => void;
+} & Partial<Pick<ConversationViewProps, "resumeWarning" | "onFork" | "onPatch" | "onBookmark" | "onExport" | "onCopyMarkdown" | "onDelete" | "editor" | "onEditor" | "error" | "tab" | "onTab" | "playableTurns" | "onPlayFrom" | "recording">>;
 
 export const EMPTY_LIST_COPY = "No conversations yet. Claude Code sessions you run in Marshell show up here when their first turn ends.";
 export const noHitsCopy = (query: string) => `Nothing matches “${query}”.`;
@@ -221,6 +223,11 @@ export function HistoryView(p: HistoryViewProps) {
             <h2 className="history__title" id={`${uid}-title`}>
               History
             </h2>
+            {p.onSettings && (
+              <button type="button" className="conversation__action conversation__action--quiet" onClick={p.onSettings}>
+                History settings
+              </button>
+            )}
             <input
               ref={searchRef}
               className="history__search"
@@ -363,6 +370,7 @@ export function HistoryView(p: HistoryViewProps) {
               conversation={shown}
               scrollToTurn={scrollToTurn}
               liveTab={live(shown)}
+              resumeWarning={p.resumeWarning}
               onResume={() => p.onResume({ agent: shown.agent, session_id: shown.session_id })}
               onGoTo={p.onGoTo}
               onLink={p.onLink}

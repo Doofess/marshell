@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { HistoryEntry } from "../../generated/HistoryEntry";
-import { bookmarkQuery, clientMark, historyAgentLabel, importLine, escapeAction, filterOptions, groupByProject, listQuery, moveSelection, rowMeta, sinceFor } from "./historyState";
+import { bookmarkQuery, clientMark, historyAgentLabel, importLine, escapeAction, filterOptions, groupByProject, listQuery, moveSelection, resumeWarning, rowMeta, sinceFor } from "./historyState";
 
 const entry = (over: Partial<HistoryEntry>): HistoryEntry => ({
   agent: "claude",
@@ -166,5 +166,23 @@ describe("where a conversation ran", () => {
     expect(importLine({ copying: true, done: 120, total: 355, on: true })).toBe("Copying conversations from Claude Code and Codex: 120 of 355.");
     expect(importLine({ copying: false, done: 355, total: 355, on: true })).toBeNull();
     expect(importLine(null)).toBeNull();
+  });
+});
+
+describe("resumeWarning", () => {
+  const now = 10_000_000;
+  const copy = (when: string) => `This conversation changed ${when} and may still be open in another terminal. Resume here anyway?`;
+  it("is null for a Marshell conversation", () => {
+    expect(resumeWarning("marshell", now - 1000, now)).toBeNull();
+  });
+  it("names whole minutes for an outside conversation", () => {
+    expect(resumeWarning("terminal", now - 3 * 60_000 - 20_000, now)).toBe(copy("3 min ago"));
+  });
+  it("says less than a minute under 60 seconds", () => {
+    expect(resumeWarning("vscode", now - 30_000, now)).toBe(copy("less than a minute ago"));
+  });
+  it("is null from 10 minutes on", () => {
+    expect(resumeWarning("terminal", now - 600_000, now)).toBeNull();
+    expect(resumeWarning("terminal", now - 599_000, now)).not.toBeNull();
   });
 });

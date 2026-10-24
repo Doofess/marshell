@@ -25,7 +25,7 @@ import {
   type HistoryViewProps,
   type When,
 } from "./HistoryView";
-import { bookmarkQuery, escapeAction, importLine, listQuery } from "./historyState";
+import { bookmarkQuery, escapeAction, importLine, listQuery, resumeWarning } from "./historyState";
 import { RecordingTab, type PlayRequest, type RecordingState } from "./recording/RecordingTab";
 import type { TerminalThemeProp } from "../terminal/TerminalView";
 
@@ -94,13 +94,15 @@ export type LiveHistoryProps = {
   /** A file link in assistant text: the window opens it in the preview, as the preview's own links do. */
   onOpenFile: (link: { path: string; line?: number }) => void;
   onClose: () => void;
+  /** Opens the History settings dialog, which the window owns. */
+  onSettings?: () => void;
   /** The live terminals' look, which the recording player shares. */
   theme?: TerminalThemeProp;
   font?: { family: string; size: number };
 };
 
 /** The History view wired to the core: it fetches the list on open and on each filter change, searches 150 ms after the last keystroke, opens a conversation on Enter or a click, and resumes it. */
-export function LiveHistory({ endpoint, rows, os, searchFocus, size, announce, onGoTo, onResumed, onOpenFile, onClose, theme, font }: LiveHistoryProps) {
+export function LiveHistory({ endpoint, rows, os, searchFocus, size, announce, onGoTo, onResumed, onOpenFile, onClose, onSettings, theme, font }: LiveHistoryProps) {
   const [filters, setFilters] = useState<HistoryFilters>({ when: "any", bookmarked: false, archived: false, place: "any", headless: false });
   const [importState, setImportState] = useState<ImportStatus | null>(null);
   const [listed, setListed] = useState<Listed>({ entries: [], now: Date.now(), loaded: false, error: null });
@@ -422,6 +424,9 @@ export function LiveHistory({ endpoint, rows, os, searchFocus, size, announce, o
       </>
     ) : undefined;
 
+  // Where the open conversation ran and when it last changed come from its list row; one the list doesn't hold asks nothing.
+  const shownEntry = shown ? listed.entries.find((e) => e.agent === shown.agent && e.session_id === shown.session_id) : undefined;
+
   const view = (
     <HistoryView
       entries={listed.entries}
@@ -439,6 +444,8 @@ export function LiveHistory({ endpoint, rows, os, searchFocus, size, announce, o
       onToggle={toggle}
       onSelect={setSelectedId}
       onOpen={open}
+      resumeWarning={shownEntry ? resumeWarning(shownEntry.client, shownEntry.updated_ms, Date.now()) : null}
+      onSettings={onSettings}
       onResume={(t) => void resume(t)}
       onGoTo={onGoTo}
       onEscape={escape}

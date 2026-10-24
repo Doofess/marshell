@@ -15,7 +15,7 @@ A live check runs the dev app against scratch homes, drives the webview over CDP
    ```
    pwsh -NoProfile -File .claude/skills/marshell-live-check/live-check.ps1 start -Scratch <literal path>
    ```
-   It creates `mh` (`MARSHELL_HOME`), `cc` (`CLAUDE_CONFIG_DIR`) and `proj/.claude/settings.local.json` seeded with `{}` (`MARSHELL_CLAUDE_SETTINGS`), starts `pnpm tauri dev` with CDP on port 9333, logs to `dev.out.log` and `dev.err.log`, and records the root PID in `pids.json`. It refuses a non-empty folder.
+   It creates `mh` (`MARSHELL_HOME`), `cc` (`CLAUDE_CONFIG_DIR`), `cx` (`CODEX_HOME`, so History's importer never reads the real `~/.codex`) and `proj/.claude/settings.local.json` seeded with `{}` (`MARSHELL_CLAUDE_SETTINGS`), starts `pnpm tauri dev` with CDP on port 9333, logs to `dev.out.log` and `dev.err.log`, and records the root PID in `pids.json`. It refuses a non-empty folder. `-Seed <folder>` first copies `<folder>\cc` and `<folder>\cx` into the new `cc` and `cx`, for hand-written transcripts and rollouts the app should find on its first run.
 4. Wait until `http://127.0.0.1:9333/json/version` answers. The first Rust build can take minutes, so poll with a Monitor or an until-loop, not a fixed sleep.
 
 ## Drive it

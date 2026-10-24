@@ -331,3 +331,21 @@ describe("tabKey", () => {
     expect(tabKey("recording", "a")).toBeNull();
   });
 });
+
+describe("ConversationView resume confirm and Fork", () => {
+  const WARN = "This conversation changed 3 min ago and may still be open in another terminal. Resume here anyway?";
+  it("shows the inline confirm with Resume here and Cancel while it is open", () => {
+    const h = html(conv([]), { editor: "resume", resumeWarning: WARN });
+    expect(h).toContain(WARN);
+    expect(h).toContain(">Resume here<");
+    expect(h).toContain(">Cancel<");
+  });
+  it("shows no confirm while it is closed", () => {
+    const h = html(conv([]), { editor: null, resumeWarning: WARN });
+    expect(h).not.toContain("Resume here");
+  });
+  it("hides Fork for a Codex conversation and keeps it for Claude Code", () => {
+    expect(html(conv([], { agent: "codex" }))).not.toContain(">Fork<");
+    expect(html(conv([]))).toContain(">Fork<");
+  });
+});

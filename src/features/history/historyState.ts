@@ -78,6 +78,17 @@ export function listQuery(filters: HistoryFilters, now: number): HistoryQuery {
   return { ...rest, ...(place !== "any" && { place }), ...(headless && { headless }), since_ms: sinceFor(when, now) };
 }
 
+const RECENT_MS = 10 * 60_000;
+
+/** The question before resuming a conversation that ran outside Marshell and changed under 10 minutes ago, so it may still be open in another terminal. Null when none applies. */
+export function resumeWarning(client: Client, updatedMs: number, now: number): string | null {
+  const age = now - updatedMs;
+  if (client === "marshell" || age >= RECENT_MS) return null;
+  const minutes = Math.floor(age / 60_000);
+  const when = minutes < 1 ? "less than a minute ago" : `${minutes} min ago`;
+  return `This conversation changed ${when} and may still be open in another terminal. Resume here anyway?`;
+}
+
 /** The mark on a row for where the conversation ran; none for one run in Marshell. */
 export function clientMark(c: Client): string | null {
   switch (c) {

@@ -34,13 +34,15 @@ export function tabKey(current: ConversationTab, key: string): ConversationTab |
 }
 
 /** Which inline editor is open in the header. */
-export type ConversationEditor = "rename" | "tags" | "delete";
+export type ConversationEditor = "rename" | "tags" | "delete" | "resume";
 
 export type ConversationViewProps = {
   conversation: Conversation;
   /** The turn to bring into view, such as the one a search hit is in. */
   scrollToTurn?: number;
   onResume: () => void;
+  /** The question to ask before resuming (a conversation that may still be open elsewhere), or null to resume at once. */
+  resumeWarning?: string | null;
   /** Called with the tab that already holds this conversation. */
   onGoTo: (tab: string) => void;
   /** The tab that holds this conversation right now, or null when none does. */
@@ -130,6 +132,7 @@ export function ConversationView({
   conversation: c,
   scrollToTurn,
   onResume,
+  resumeWarning = null,
   onGoTo,
   liveTab,
   onLink,
@@ -153,6 +156,8 @@ export function ConversationView({
   const moreRef = useRef<HTMLButtonElement>(null);
   const boxRef = useRef<HTMLInputElement>(null);
   const deleteRef = useRef<HTMLButtonElement>(null);
+  const resumeRef = useRef<HTMLButtonElement>(null);
+  const cancelResumeRef = useRef<HTMLButtonElement>(null);
   const shownEditor = useRef<ConversationEditor | null>(null);
   const tabRefs = useRef<Partial<Record<ConversationTab, HTMLButtonElement | null>>>({});
   const pendingTurn = useRef<number | null>(null);
@@ -176,7 +181,9 @@ export function ConversationView({
 
   // An editor takes focus when it opens; when it closes, focus goes back to "More actions".
   useEffect(() => {
-    if (editor !== null) (editor === "delete" ? deleteRef : boxRef).current?.focus();
+    // The resume question focuses Cancel first, as the restart bar does, so a stray Enter resumes nothing; closing it returns to Resume.
+    if (editor !== null) (editor === "delete" ? deleteRef : editor === "resume" ? cancelResumeRef : boxRef).current?.focus();
+    else if (shownEditor.current === "resume") (resumeRef.current ?? moreRef.current)?.focus();
     else if (shownEditor.current !== null) moreRef.current?.focus();
     shownEditor.current = editor;
   }, [editor]);
@@ -267,13 +274,15 @@ export function ConversationView({
               Go to session
             </button>
           ) : (
-            <button type="button" className="conversation__action" onClick={onResume}>
+            <button ref={resumeRef} type="button" className="conversation__action" onClick={() => (resumeWarning ? onEditor("resume") : onResume())}>
               Resume
             </button>
           )}
-          <button type="button" className="conversation__action conversation__action--quiet" onClick={onFork}>
-            Fork
-          </button>
+          {c.agent !== "codex" && (
+            <button type="button" className="conversation__action conversation__action--quiet" onClick={onFork}>
+              Fork
+            </button>
+          )}
           <button
             ref={moreRef}
             type="button"
@@ -351,6 +360,28 @@ export function ConversationView({
             </button>
             <button type="button" className="conversation__action conversation__action--quiet" onClick={() => onEditor(null)}>
               Cancel
+            </button>
+          </div>
+        </div>
+      )}
+      {editor === "resume" && resumeWarning && (
+        <div className="conversation__editor" onKeyDown={confirmKey}>
+          <p className="conversation__confirm" id={`${uid}-resume`} dir="auto">
+            {resumeWarning}
+          </p>
+          <div className="conversation__actions">
+            <button ref={cancelResumeRef} type="button" className="conversation__action" aria-describedby={`${uid}-resume`} onClick={() => onEditor(null)}>
+              Cancel
+            </button>
+            <button
+              type="button"
+              className="conversation__action conversation__action--quiet"
+              onClick={() => {
+                onEditor(null);
+                onResume();
+              }}
+            >
+              Resume here
             </button>
           </div>
         </div>

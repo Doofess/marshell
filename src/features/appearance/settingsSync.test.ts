@@ -74,6 +74,25 @@ describe("SettingsSync", () => {
     expect(api.put).toHaveBeenLastCalledWith(ep, expect.objectContaining({ close_to_tray: false }));
   });
 
+  it("setHistoryImport saves the switch, and a later appearance save sends it back unchanged", async () => {
+    const { api, sync } = setup(async () => ({ appearance: teal, pause_warned: false, onboarded: false, close_to_tray: null, status_off: [], notifications: N, history_import: true }));
+    await sync.load();
+    expect(sync.historyImport).toBe(true);
+    await sync.setHistoryImport(false);
+    expect(api.put).toHaveBeenLastCalledWith(ep, { appearance: teal, pause_warned: false, onboarded: false, close_to_tray: null, status_off: [], notifications: N, history_import: false });
+    expect(sync.historyImport).toBe(false);
+    await sync.save(teal);
+    expect(api.put).toHaveBeenLastCalledWith(ep, expect.objectContaining({ history_import: false }));
+  });
+
+  it("setHistoryImport sends nothing when the read fails", async () => {
+    const { api, sync } = setup(async () => {
+      throw new Error("no core");
+    });
+    await expect(sync.setHistoryImport(false)).rejects.toBeInstanceOf(SettingsReadError);
+    expect(api.put).not.toHaveBeenCalled();
+  });
+
   it("setCloseToTray reads first when nothing was read, and sends nothing if that fails", async () => {
     const { api, sync } = setup(async () => {
       throw new Error("no core");
