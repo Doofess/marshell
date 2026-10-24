@@ -1,6 +1,5 @@
 import "@xterm/xterm/css/xterm.css";
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
-import type { CastEvent } from "../../../generated/CastEvent";
 import type { Platform } from "../../../generated/Platform";
 import type { RecordingFrames } from "../../../generated/RecordingFrames";
 import type { RecordingPart } from "../../../generated/RecordingPart";
@@ -8,10 +7,11 @@ import { ApiError } from "../../../lib/api/client";
 import { reasonOf } from "../../../lib/api/sessions";
 import { BUNDLED_FONT, fontStack } from "../../terminal/terminalFont";
 import { appScheme, resolveTerminalTheme, type TerminalThemeInput } from "../../terminal/terminalTheme";
-import { clock, jumpTargets, nextTarget, playbackDelay, terminalTakesKey } from "./castPlayer";
+import { clock, jumpTargets, nextTarget, terminalTakesKey } from "./castPlayer";
+import { createPlaybackEngine, type FramesQuery } from "./playbackEngine";
 import "./RecordingPlayer.css";
 
-export type FramesQuery = { fromMs?: number; toMs?: number; offset?: number };
+export type { FramesQuery };
 
 const FOLLOW_APP: Omit<TerminalThemeInput, "app"> = { setting: "follow-app", imported: [], protection: true };
 const BUNDLED = { family: BUNDLED_FONT, size: 13 };
@@ -23,12 +23,8 @@ const IDLE_CAPS: { value: string; cap: number | null; label: string }[] = [
   { value: "2000", cap: 2_000, label: "Up to 2 s" },
   { value: "5000", cap: 5_000, label: "Up to 5 s" },
 ];
-/** Fetch the next chunk when this many bytes of events or fewer are left. */
-const PREFETCH_BYTES = 256 * 1024;
 /** The smallest the font gets when fitting a wide recording; beyond it the right edge clips. */
 const MIN_FONT = 8;
-/** A frame that comes late (a hidden window) plays at most this much catching up. */
-const MAX_STEP_MS = 250;
 
 const clamp = (v: number, lo: number, hi: number) => Math.min(Math.max(v, lo), hi);
 
@@ -160,141 +156,30 @@ export function RecordingPlayer({
       observer.observe(el);
       fit();
 
-      // Playback state.
-      let queue: CastEvent[] = [];
-      let qi = 0;
-      let remaining = 0;
-      let nextOffset: number | null = null;
-      let inflight = false;
-      let token = 0;
-      let lastAt = 0;
-      let budget = 0;
-      let lastTs: number | null = null;
-      let raf = 0;
-      let on = false;
-
       const fail = (e: unknown) => setProblem(e instanceof ApiError ? reasonOf(e) : e instanceof Error ? e.message : String(e));
-      const stop = () => {
-        on = false;
-        setPlaying(false);
-        cancelAnimationFrame(raf);
-        raf = 0;
-      };
-      const pump = () => {
-        if (nextOffset === null || inflight || remaining > PREFETCH_BYTES) return;
-        inflight = true;
-        const mine = token;
-        const to = live.current.range.to + 1;
-        live.current
-          .frames({ offset: nextOffset, toMs: to })
-          .then((res) => {
-            if (mine !== token || cancelled) return;
-            queue.push(...res.events);
-            remaining += res.events.reduce((n, e) => n + e.data.length, 0);
-            nextOffset = res.next_offset;
-          })
-          .catch((e) => {
-            if (mine === token) {
-              nextOffset = null;
-              fail(e);
-            }
-          })
-          .finally(() => {
-            if (mine === token) inflight = false;
-          });
-      };
-      const apply = (ev: CastEvent) => {
-        if (ev.code === "o") term.write(ev.data);
-        else if (ev.code === "r") {
-          const m = /^(\d+)x(\d+)$/.exec(ev.data);
-          if (m) resizeTo(Number(m[1]), Number(m[2]));
-        }
-      };
-      const loop = (ts: number) => {
-        raf = 0;
-        if (!on || cancelled) return;
-        const { range: r, speed: sp, cap: idleCap } = live.current;
-        budget += lastTs === null ? 0 : Math.min(ts - lastTs, MAX_STEP_MS);
-        lastTs = ts;
-        for (;;) {
-          const ev = queue[qi];
-          if (!ev) {
-            if (nextOffset === null && !inflight) {
-              setPos(r.to);
-              stop();
-              return;
-            }
-            break;
-          }
-          if (ev.at_ms > r.to) {
-            setPos(r.to);
-            stop();
-            return;
-          }
-          const delay = playbackDelay(ev.at_ms - lastAt, sp, idleCap);
-          if (budget < delay) break;
-          budget -= delay;
-          apply(ev);
-          lastAt = ev.at_ms;
-          qi++;
-          remaining -= ev.data.length;
-        }
-        if (qi > 2000) {
-          queue = queue.slice(qi);
-          qi = 0;
-        }
-        pump();
-        setPos(lastAt);
-        raf = requestAnimationFrame(loop);
-      };
-      const play = (go: boolean) => {
-        if (go === on) return;
-        on = go;
-        setPlaying(go);
-        if (go) {
-          lastTs = null;
-          raf = requestAnimationFrame(loop);
-        } else {
-          cancelAnimationFrame(raf);
-          raf = 0;
-        }
-      };
+      const engine = createPlaybackEngine({
+        frames: (q) => live.current.frames(q),
+        range: () => live.current.range,
+        speed: () => live.current.speed,
+        idleCap: () => live.current.cap,
+        write: (data) => term.write(data),
+        reset: () => term.reset(),
+        resizeTo,
+        onPos: setPos,
+        onPlaying: setPlaying,
+        onProblem: fail,
+        requestFrame: (cb) => requestAnimationFrame(cb),
+        cancelFrame: (id) => cancelAnimationFrame(id),
+      });
       const seek = (ms: number, go: boolean) => {
-        const r = live.current.range;
-        const target = clamp(ms, r.from, r.to);
-        const mine = ++token;
-        stop();
-        setPos(target);
         setProblem(null);
-        inflight = false;
-        live.current.frames({ fromMs: target, toMs: r.to + 1 }).then(
-          (res) => {
-            if (mine !== token || cancelled) return;
-            term.reset();
-            if (res.screen !== null) {
-              resizeTo(res.cols, res.rows);
-              term.write(res.screen);
-            }
-            queue = res.events;
-            qi = 0;
-            remaining = res.events.reduce((n, e) => n + e.data.length, 0);
-            nextOffset = res.next_offset;
-            lastAt = target;
-            budget = 0;
-            pump();
-            if (go) play(true);
-          },
-          (e) => {
-            if (mine === token) fail(e);
-          },
-        );
+        engine.seek(ms, go);
       };
-      ctl.current = { seek, play, fit };
+      ctl.current = { seek, play: engine.play, fit };
       setReady(true);
 
       dispose = () => {
-        token++;
-        cancelAnimationFrame(raf);
+        engine.dispose();
         prefers.removeEventListener("change", applyTheme);
         watch.disconnect();
         observer.disconnect();
