@@ -63,4 +63,7 @@ describe("clock", () => {
     expect(terminalTakesKey({ key: " " })).toBe(true);
     expect(terminalTakesKey({ key: "ArrowDown" })).toBe(true);
   });
+  it("leaves Tab to the page, so the controls after the screen stay reachable", () => {
+    expect(terminalTakesKey({ key: "Tab" })).toBe(false);
+  });
 });

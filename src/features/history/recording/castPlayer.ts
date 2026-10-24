@@ -29,10 +29,11 @@ export function nextTarget(targets: number[], posMs: number, by: -1 | 1): number
 }
 
 /**
- * Whether the player's xterm handles a key. xterm cancels Esc on its own textarea, which would stop it reaching the page's
- * handlers, so Esc goes to the page: there it moves focus to the Recording tab.
+ * Whether the player's xterm handles a key. xterm cancels Esc and Tab on its own textarea, even with input off, which would
+ * stop Esc reaching the page's handlers and trap Tab in the screen. So both go to the page: Esc moves focus to the Recording
+ * tab, and Tab moves on to the controls.
  */
-export const terminalTakesKey = (e: Pick<KeyboardEvent, "key">): boolean => e.key !== "Escape";
+export const terminalTakesKey = (e: Pick<KeyboardEvent, "key">): boolean => e.key !== "Escape" && e.key !== "Tab";
 
 /** `m:ss`, or `h:mm:ss` when the recording (`totalMs`) is an hour or longer. */
 export function clock(ms: number, totalMs: number): string {
