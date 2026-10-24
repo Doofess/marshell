@@ -7,6 +7,7 @@ use crate::agents::common::{PlanError, TAG, is_ours};
 use crate::config::hash::hash_bytes;
 use crate::config::jsonc::{parse_problem, read_value};
 use crate::paths;
+use crate::profiles::detect::{posix_quote, powershell_quote};
 use marshell_protocol::agents::{HookInstall, HookPlanRequest};
 use marshell_protocol::config::{Applies, ChangeSet, ConfigScope, EditOp, FileEdit};
 use serde_json::{Value, json};
@@ -43,11 +44,21 @@ fn bridge_path(home: &Path) -> String {
     paths::bridge_exe(home).to_string_lossy().replace('\\', "/")
 }
 
-/// The command string of a hook entry: the quoted bridge path with forward slashes. Codex runs it
-/// through PowerShell on Windows, where a quoted path needs the `&` call operator.
+/// The bridge path quoted for the shell Codex runs a hook through: PowerShell on Windows, `sh`
+/// elsewhere. Single quotes in both, so a `$` or a backtick in the path is never expanded.
+fn quoted_bridge(home: &Path) -> String {
+    if cfg!(windows) {
+        powershell_quote(&bridge_path(home))
+    } else {
+        posix_quote(&bridge_path(home))
+    }
+}
+
+/// The command string of a hook entry: the single-quoted bridge path with forward slashes. Codex
+/// runs it through PowerShell on Windows, where a quoted path needs the `&` call operator.
 pub fn hook_command(home: &Path, role: &str) -> String {
     let call = if cfg!(windows) { "& " } else { "" };
-    format!("{call}\"{}\" {role} --agent {AGENT} --tag {TAG}", bridge_path(home))
+    format!("{call}{} {role} --agent {AGENT} --tag {TAG}", quoted_bridge(home))
 }
 
 fn hook_entry(home: &Path, event: &str) -> Value {
@@ -240,7 +251,10 @@ pub struct Found {
 pub fn inspect(hooks: &Value, home: &Path) -> Found {
     let ours = ours_of(hooks);
     let bridge_exists = paths::bridge_exe(home).exists();
-    let quoted = format!("\"{}\"", bridge_path(home));
+    // The first 6a wrote the path in double quotes; those entries still point at the bridge, so
+    // they are not orphaned, only not exact (a reinstall sets the single-quoted form in place).
+    let quoted = quoted_bridge(home);
+    let old_quoted = format!("\"{}\"", bridge_path(home));
     let exact_one = |event: &str| {
         let mut it = ours.iter().filter(|(e, _)| *e == event);
         matches!((it.next(), it.next()), (Some((_, entry)), None) if **entry == hook_entry(home, event))
@@ -254,7 +268,7 @@ pub fn inspect(hooks: &Value, home: &Path) -> Found {
         || ours.iter().any(|(_, e)| {
             !e.get("command")
                 .and_then(Value::as_str)
-                .is_some_and(|c| c.contains(&quoted))
+                .is_some_and(|c| c.contains(&quoted) || c.contains(&old_quoted))
         })
     {
         HookInstall::Orphaned
@@ -503,7 +517,7 @@ mod tests {
                 "SessionEnd" | "Interrupt" => ("event", 2),
                 _ => ("event", 5),
             };
-            assert!(command.contains(&format!("\" {role} --agent")), "{event}: {command}");
+            assert!(command.contains(&format!("' {role} --agent")), "{event}: {command}");
             assert_eq!(entry["timeout"], timeout, "{event}");
         }
     }
@@ -516,7 +530,70 @@ mod tests {
             std::env::consts::EXE_SUFFIX
         );
         let prefix = if cfg!(windows) { "& " } else { "" };
-        assert_eq!(command, format!("{prefix}\"{bridge}\" event --agent codex --tag mshl1"));
+        assert_eq!(command, format!("{prefix}'{bridge}' event --agent codex --tag mshl1"));
+    }
+
+    #[test]
+    fn hook_command_never_lets_the_shell_expand_the_path() {
+        let home = PathBuf::from("C:/Users/a$b `c` it's/.marshell");
+        let command = hook_command(&home, "event");
+        let bridge = format!(
+            "C:/Users/a$b `c` it's/.marshell/bin/marshell-hook{}",
+            std::env::consts::EXE_SUFFIX
+        );
+        let quoted = if cfg!(windows) {
+            // PowerShell: single quotes, a quote inside doubled.
+            bridge.replace('\'', "''")
+        } else {
+            // sh: a quote inside closes, escapes and reopens.
+            bridge.replace('\'', "'\\''")
+        };
+        let prefix = if cfg!(windows) { "& " } else { "" };
+        assert_eq!(command, format!("{prefix}'{quoted}' event --agent codex --tag mshl1"));
+        assert!(!command.contains('"'), "{command}");
+    }
+
+    /// The command the first 6a builds wrote: the path in double quotes.
+    fn old_command(home: &Path, role: &str) -> String {
+        let call = if cfg!(windows) { "& " } else { "" };
+        format!("{call}\"{}\" {role} --agent codex --tag mshl1", bridge_path(home))
+    }
+
+    fn old_form_file(home: &Path) -> String {
+        let entry = |role: &str, timeout: u64| json!({ "hooks": [{ "type": "command", "command": old_command(home, role), "timeout": timeout }] });
+        json!({ "hooks": {
+            "Stop": [{ "hooks": [{ "type": "command", "command": "echo mine" }] }, entry("event", 5)],
+            "SessionEnd": [entry("event", 2)],
+        } })
+        .to_string()
+    }
+
+    #[test]
+    fn double_quoted_entries_are_still_ours_and_get_repaired() {
+        let home = real_home();
+        let before = old_form_file(&home);
+        // Recognised as ours and not orphaned: the bridge is there, the quoting is just old.
+        assert_eq!(inspect(&value(&before), &home).install, HookInstall::Partial);
+        // A reinstall sets the new form where the old entry stands.
+        let (_, after) = install(Some(&before), &home, &STATUS);
+        let v = value(&after.unwrap());
+        assert_eq!(v["hooks"]["Stop"].as_array().unwrap().len(), 2);
+        assert_eq!(v["hooks"]["Stop"][1]["hooks"][0], hook_entry(&home, "Stop"));
+        assert_eq!(v["hooks"]["SessionEnd"][0]["hooks"][0], hook_entry(&home, "SessionEnd"));
+        assert!(!v.to_string().contains(&old_command(&home, "event")));
+    }
+
+    #[test]
+    fn removal_takes_double_quoted_entries_too() {
+        let home = real_home();
+        let before = old_form_file(&home);
+        let cs = remove_plan(&file(), Some(&before), &home).unwrap();
+        let after = apply(&cs, Some(&before)).unwrap();
+        assert!(!after.contains("mshl1"), "{after}");
+        assert_eq!(
+            value(&after)["hooks"]["Stop"],
+            json!([{ "hooks": [{ "type": "command", "command": "echo mine" }] }])
+        );
     }
 
     #[test]
