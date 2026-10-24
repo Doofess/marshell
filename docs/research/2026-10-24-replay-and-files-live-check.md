@@ -34,3 +34,15 @@
 3. **The recording was confined to the 80ch reading column.** Tab A had been resized to 210x55 once the window attached to it, so at the 8 px floor half of each line was clipped in the 513 px column, while the rest of the pane was empty. Fixed in 443b727: the conversation drops its width cap while the Recording tab is open (a `:has()` rule). The same commit makes a later change to the terminal font size refit the player rather than override the fit. Checked live (the screen is 1,097 px wide, and 210 columns fit at 8 px); no unit test, since the fit needs a DOM.
 4. **The Files changed tab shows each path three times:** the file heading, the shared diff view's caption, and its `---`/`+++` lines. Not fixed; a minor.
 5. **The webview console had a 404 for `ws://…/v1/pty/t99ee7ed6b680`.** The route answers 404 only for an unknown tab, and this branch doesn't touch the pty socket or the session code. Not investigated here.
+
+## Re-check after the review fixes
+
+- Date: 2026-10-24, 03:43 to 03:50 local time, on `phase-5c` at ccf30fd, with a new scratch home and the same driver script. No desktop input was sent; `~/.claude/settings.json` kept its modified time (03:18:31, set before the re-check started) throughout.
+
+| Check | Result |
+| --- | --- |
+| Recording links (ccf30fd) | Pass. The sidecar gives tab A `first_ms` at its SessionStart and `last_ms` at its last Stop, and tab B its own. Both parts stay inside their links. Part 0 is unclipped here, as tab A's last Stop came after its last output. |
+| Play from here keeps focus (68b6df7) | Pass. "Play turn 2 from here" leaves focus on the Recording tab, which is selected. |
+| Tab leaves the screen (244952a) | Pass. Tab from the screen's textarea moves focus to Play, outside the xterm. |
+| Go to turn keeps focus (68b6df7) | Pass. "Go to turn 3" selects Conversation and focuses turn 3's prompt, "Update the notes after the resume", in view and `:focus-visible`. |
+| Seeks during playback (a47e059) | Pass. Four ArrowRight presses on Position while playing end at 0:20, paused, with no problem line, and the screen shows each line of tab A once, with nothing from before the seeks. Ending paused is the deferred minor. |
