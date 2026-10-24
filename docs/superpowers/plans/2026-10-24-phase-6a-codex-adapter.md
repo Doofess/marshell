@@ -244,17 +244,17 @@ Runs before Task 3, which consumes it.
   - `codex --version` prints `codex-cli 0.163.0`, and the gate reads the version after the prefix.
 - `fold_live(st, agent, role, tab, body, at_ms)` checks `status_off` for `agent`. It gets the version from `agent_version(agent, exe)` in `spawn_blocking` and gates with that agent's gate. Only Claude takes `Statusline`. The `if agent == "claude"` guard in `post` becomes `matches!(agent.as_str(), "claude" | "codex")`.
 
-- [ ] **Step 1: Write the failing tests.**
+- [x] **Step 1: Write the failing tests.**
   - One test per row of the table, loading the Task 1 fixture with `include_str!`: `session_start_is_idle`, `prompt_is_thinking`, `shell_tool_is_running_its_command`, `apply_patch_is_editing_its_file`, `permission_request_needs_permission`, `post_tool_after_a_permission_is_thinking`, `stop_is_done_with_its_recap` (`Stop-recap.json`), `stop_without_a_reply_has_no_recap` (`Stop.json`), `interrupt_is_idle`, `session_end_is_ended`, `an_unknown_event_is_none`.
   - Timing: `session_end_with_no_earlier_event_is_ended` (`prev = None`), `a_denied_request_then_stop_is_done`, `a_retried_tool_keeps_running`, `session_end_leaves_the_mode_alone`, `apply_patch_without_a_file_line_is_editing_files`.
   - `the_version_is_read_after_codex_cli`: `codex-cli 0.163.0` gives a known version.
   - Gate tests: `codex_0_163_is_known`; `codex_0_170_is_not_recorded`, asserting the exact note "Codex 0.170.0 is not one Marshell has recorded yet"; `codex_0_162_is_older`.
   - `claude_gate_messages_are_unchanged`.
   - In `agents_api.rs`: `a_codex_event_folds_into_its_tab` (needs a live tab, as Claude's fold tests do) and `codex_status_off_sets_its_note`.
-- [ ] **Step 2: Run `cargo test -p marshell-core -j 4 --lib codex::` and `cargo test -p marshell-core -j 4 --test agents_api`.** Expected: FAIL.
-- [ ] **Step 3: Implement it.**
-- [ ] **Step 4: Run Step 2's commands, then `cargo test -p marshell-core -j 4 claude::`.** Expected: PASS.
-- [ ] **Step 5: Run `cargo fmt --all` and commit** as `feat(codex): fold Codex's hook events into live status, gated on the recorded version`.
+- [x] **Step 2: Run `cargo test -p marshell-core -j 4 --lib codex::` and `cargo test -p marshell-core -j 4 --test agents_api`.** Expected: FAIL.
+- [x] **Step 3: Implement it.**
+- [x] **Step 4: Run Step 2's commands, then `cargo test -p marshell-core -j 4 claude::`.** Expected: PASS.
+- [x] **Step 5: Run `cargo fmt --all` and commit** as `feat(codex): fold Codex's hook events into live status, gated on the recorded version`.
 
 ### Task 5: Codex approvals
 
