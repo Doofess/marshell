@@ -218,6 +218,14 @@ impl Index {
         Ok(self.conn.query_row(&sql, params![tab_id], read_row).optional()?)
     }
 
+    /// The tab's session of `agent` with the highest updated_ms. A CLI started from inside another inherits the
+    /// tab id, so a tab can hold rows of more than one agent.
+    pub fn latest_for_tab_of(&self, tab_id: &str, agent: &str) -> anyhow::Result<Option<SessionMeta>> {
+        let sql =
+            format!("SELECT {COLUMNS} FROM sessions WHERE tab_id = ?1 AND agent = ?2 ORDER BY updated_ms DESC LIMIT 1");
+        Ok(self.conn.query_row(&sql, params![tab_id, agent], read_row).optional()?)
+    }
+
     /// Replaces the session's full-text rows and conversation fields in one transaction. The session's row is
     /// made from `meta` when it isn't there yet; an existing row keeps its own tab and times.
     /// `indexed_len` is the length of the archive file the conversation was read from.
@@ -1253,6 +1261,27 @@ mod tests {
         assert_eq!(index.latest_for_tab("t1").unwrap(), Some(b));
         assert_eq!(index.latest_for_tab("t2").unwrap(), Some(c));
         assert_eq!(index.latest_for_tab("t3").unwrap(), None);
+    }
+
+    /// A CLI started from inside another (a Claude tool call that runs `codex exec`) inherits the tab id, so one
+    /// tab can hold rows of two agents. Each agent's resume looks only at its own.
+    #[test]
+    fn latest_for_tab_of_skips_other_agents() {
+        let (_home, index) = fresh();
+        let claude = meta("A", "t1", 10, None);
+        index.upsert(&claude).unwrap();
+        index
+            .upsert(&SessionMeta {
+                agent: "codex".into(),
+                ..meta("B", "t1", 20, None)
+            })
+            .unwrap();
+        assert_eq!(index.latest_for_tab_of("t1", "claude").unwrap(), Some(claude));
+        assert_eq!(
+            index.latest_for_tab_of("t1", "codex").unwrap().map(|m| m.session_id),
+            Some("B".into())
+        );
+        assert_eq!(index.latest_for_tab_of("t1", "antigravity").unwrap(), None);
     }
 
     #[test]

@@ -307,6 +307,17 @@ impl History {
             .flatten()
     }
 
+    /// The tab's most recent session of `agent`, if the index knows one.
+    pub fn latest_for_tab_of(&self, tab_id: &str, agent: &str) -> Option<SessionMeta> {
+        self.index
+            .lock()
+            .unwrap()
+            .as_ref()?
+            .latest_for_tab_of(tab_id, agent)
+            .ok()
+            .flatten()
+    }
+
     /// False when the index could not be opened: history is off for this run.
     pub fn is_on(&self) -> bool {
         self.index.lock().unwrap().is_some()

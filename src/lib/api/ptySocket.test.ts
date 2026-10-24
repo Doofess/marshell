@@ -36,7 +36,7 @@ class FakeWebSocket {
 }
 
 const endpoint: Endpoint = { port: 1, token: "t", platform: "windows" };
-const handlers = { onOutput: vi.fn(), onReset: vi.fn(), onExit: vi.fn() };
+const handlers = { onOutput: vi.fn(), onReset: vi.fn(), onLive: vi.fn(), onExit: vi.fn() };
 const opcodes = (ws: FakeWebSocket) => ws.sent.map((f) => f[0]);
 const resizeJson = (f: Uint8Array) => JSON.parse(new TextDecoder().decode(f.subarray(1)));
 

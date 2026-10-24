@@ -20,6 +20,9 @@ describe("decodeServerFrame", () => {
   it("decodes a negative exit code", () => {
     expect(decodeServerFrame(buf([2, 255, 255, 255, 255]))).toEqual({ kind: "exit", code: -1 });
   });
+  it("decodes a live frame", () => {
+    expect(decodeServerFrame(buf([4, 0, 0, 0, 0, 0, 0, 1, 2]))).toEqual({ kind: "live", seq: 258 });
+  });
   it("rejects short and unknown frames", () => {
     expect(decodeServerFrame(buf([]))).toBeNull();
     expect(decodeServerFrame(buf([1, 0, 0]))).toBeNull();

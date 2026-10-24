@@ -4,6 +4,7 @@ import type { Resize } from "../../generated/Resize";
 export type ServerFrame =
   | { kind: "output"; seq: number; bytes: Uint8Array }
   | { kind: "reset"; seq: number; screen: Uint8Array }
+  | { kind: "live"; seq: number }
   | { kind: "exit"; code: number };
 
 export function decodeServerFrame(buf: ArrayBuffer): ServerFrame | null {
@@ -15,6 +16,10 @@ export function decodeServerFrame(buf: ArrayBuffer): ServerFrame | null {
     const seq = Number(view.getBigUint64(1));
     const bytes = new Uint8Array(buf, 9);
     return op === FRAME.OUTPUT ? { kind: "output", seq, bytes } : { kind: "reset", seq, screen: bytes };
+  }
+  if (op === FRAME.LIVE) {
+    if (buf.byteLength < 9) return null;
+    return { kind: "live", seq: Number(view.getBigUint64(1)) };
   }
   if (op === FRAME.EXIT) {
     if (buf.byteLength < 5) return null;

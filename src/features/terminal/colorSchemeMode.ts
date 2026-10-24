@@ -13,7 +13,13 @@ const has = (params: (number | number[])[], n: number) => params.some((p) => p =
  * Mode 2031 (the colour-scheme update notice, from Contour): a program that turns it on is told each time the terminal
  * switches between dark and light. CSI ? 996 n asks for the current scheme at any time.
  */
-export function trackColorSchemeMode(term: SchemeTerm, send: (data: string) => void, current: () => Scheme): { notify(scheme: Scheme): void; dispose(): void } {
+export function trackColorSchemeMode(
+  term: SchemeTerm,
+  send: (data: string) => void,
+  current: () => Scheme,
+  // The answer to CSI ? 996 n is a reply to a query, so a caller can hold it back; a notice (`send`) is never held back.
+  answer: (data: string) => void = send,
+): { notify(scheme: Scheme): void; dispose(): void } {
   let on = false;
   let last: Scheme | null = null;
   const subs: IDisposable[] = [
@@ -32,7 +38,7 @@ export function trackColorSchemeMode(term: SchemeTerm, send: (data: string) => v
     term.parser.registerCsiHandler({ prefix: "?", final: "n" }, (params) => {
       if (!has(params, 996)) return false;
       last = current();
-      send(report(last));
+      answer(report(last));
       return true;
     }),
     // A full reset (RIS) turns every mode off.

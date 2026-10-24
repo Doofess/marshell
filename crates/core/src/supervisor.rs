@@ -214,7 +214,7 @@ mod tests {
     }
 
     async fn exits_within(session: &Session, timeout: Duration) -> bool {
-        let generation = session.attach();
+        let (generation, _) = session.attach();
         session.resume(0);
         let deadline = Instant::now() + timeout;
         let mut cursor = 0;

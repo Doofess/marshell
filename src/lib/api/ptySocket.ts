@@ -6,6 +6,8 @@ import { decodeServerFrame, encodeAck, encodeBinaryString, encodeInput, encodeRe
 export interface PtyHandlers {
   onOutput(seq: number, bytes: Uint8Array): void;
   onReset(seq: number, screen: Uint8Array): void;
+  /** Output before `seq` was written before this renderer attached; sent after every resume. */
+  onLive(seq: number): void;
   onExit(code: number): void;
 }
 
@@ -48,6 +50,7 @@ export class PtySocket {
       if (!frame) return;
       if (frame.kind === "output") this.handlers.onOutput(frame.seq, frame.bytes);
       else if (frame.kind === "reset") this.handlers.onReset(frame.seq, frame.screen);
+      else if (frame.kind === "live") this.handlers.onLive(frame.seq);
       else {
         this.done = true;
         this.handlers.onExit(frame.code);

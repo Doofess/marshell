@@ -30,6 +30,22 @@ describe("TerminalView: focus on a new terminal", () => {
   });
 });
 
+describe("TerminalView: the replay gate", () => {
+  const src = readFileSync(new URL("./TerminalView.tsx", import.meta.url), "utf8");
+  it("creates the gate before the colour-scheme tracker that uses it", () => {
+    const gate = src.indexOf("new ReplayGate()");
+    const tracker = src.search(/trackColorSchemeMode\(\s*term,/);
+    expect(gate).toBeGreaterThan(-1);
+    expect(tracker).toBeGreaterThan(-1);
+    expect(gate).toBeLessThan(tracker);
+  });
+  it("sends the mode-996 answer only when the gate allows it", () => {
+    const call = /trackColorSchemeMode\(\s*term,[^;]*;/.exec(src);
+    expect(call).not.toBeNull();
+    expect(call![0]).toMatch(/gate\.allows\(/);
+  });
+});
+
 describe("TerminalView: options", () => {
   it("turns on xterm's proposed API, which the exit-code marks need (registerDecoration throws without it)", () => {
     const o = terminalOptions({ fontFamily: "x", fontSize: 13, theme: {}, minimumContrastRatio: 1 });

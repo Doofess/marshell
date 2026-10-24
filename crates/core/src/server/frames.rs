@@ -15,6 +15,13 @@ pub fn encode_reset(seq: u64, screen: &[u8]) -> Vec<u8> {
     f
 }
 
+/// Where live output starts. Output before `seq` is a replay.
+pub fn encode_live(seq: u64) -> Vec<u8> {
+    let mut f = vec![op::LIVE];
+    f.extend_from_slice(&seq.to_be_bytes());
+    f
+}
+
 pub fn encode_exit(code: i32) -> Vec<u8> {
     let mut f = vec![op::EXIT];
     f.extend_from_slice(&code.to_be_bytes());
@@ -49,6 +56,11 @@ mod tests {
     #[test]
     fn output_layout() {
         assert_eq!(encode_output(258, b"hi"), vec![1, 0, 0, 0, 0, 0, 0, 1, 2, b'h', b'i']);
+    }
+
+    #[test]
+    fn live_layout() {
+        assert_eq!(encode_live(258), vec![4, 0, 0, 0, 0, 0, 0, 1, 2]);
     }
 
     #[test]

@@ -441,16 +441,17 @@ impl Session {
             .map(|r| r.path().to_path_buf())
     }
 
-    /// A renderer connected. Returns a generation number for `detach`.
-    /// From now on the renderer (xterm) answers cursor queries itself.
-    pub fn attach(&self) -> u64 {
+    /// A renderer connected. Returns a generation number for `detach`, and the offset where live
+    /// output starts. From that exact byte the renderer (xterm) answers queries itself and the core
+    /// stops answering cursor queries, so no query falls between the two.
+    pub fn attach(&self) -> (u64, u64) {
         let mut out = self.output.lock().unwrap();
         let carry = out.dsr.take_carry();
         out.screen.process(&carry);
         out.buf.push(&carry);
         out.attached = true;
         out.generation += 1;
-        out.generation
+        (out.generation, out.buf.end())
     }
 
     /// Only the latest connection may detach (a reconnect replaces the old socket).
@@ -697,5 +698,42 @@ mod tests {
         assert_eq!(session.open_recording(), None);
         assert_eq!(session.recording_path(), Some(path.clone()));
         assert!(std::fs::read_to_string(path).unwrap().contains("last recording output"));
+    }
+
+    #[test]
+    fn attach_returns_the_buffer_end_as_the_live_offset() {
+        let dir = tempfile::tempdir().unwrap();
+        let spec = SpawnSpec {
+            argv: vec![
+                std::env::current_exe().unwrap().to_string_lossy().into_owned(),
+                "--exact".into(),
+                "pty::session::tests::attach_returns_the_buffer_end_as_the_live_offset".into(),
+                "--nocapture".into(),
+            ],
+            cwd: Some(dir.path().to_path_buf()),
+            env: vec![("MARSHELL_TEST_LIVE_CHILD".into(), "1".into())],
+            env_remove: vec![],
+            cols: 80,
+            rows: 24,
+            on_exit: None,
+            on_mark: None,
+            record: None,
+        };
+        if std::env::var_os("MARSHELL_TEST_LIVE_CHILD").is_some() {
+            // The child: output, then a query cut short, which the filter holds as its carry.
+            print!("some output\x1b[6");
+            std::io::Write::flush(&mut std::io::stdout()).unwrap();
+            return;
+        }
+        let session = Session::spawn("t-live".into(), spec).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while !session.output.lock().unwrap().reader_done && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        let before = session.counters().0;
+        assert!(before > 0, "the child printed nothing");
+        let (_generation, live_from) = session.attach();
+        assert_eq!(live_from, session.counters().0);
+        assert!(live_from >= before);
     }
 }

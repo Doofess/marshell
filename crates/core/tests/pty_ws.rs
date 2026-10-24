@@ -89,6 +89,8 @@ struct Received {
     exit: Option<i32>,
     end: u64,
     resets: usize,
+    /// The offset of every LIVE frame, in arrival order.
+    live: Vec<u64>,
 }
 
 /// Reads frames, acking each, until EXIT, `stop` matches, or the timeout passes.
@@ -98,6 +100,7 @@ async fn read_until(ws: &mut Ws, timeout: Duration, stop: impl Fn(&[u8]) -> bool
         exit: None,
         end: 0,
         resets: 0,
+        live: vec![],
     };
     let deadline = Instant::now() + timeout;
     while Instant::now() < deadline && !stop(&r.bytes) {
@@ -121,6 +124,11 @@ async fn read_until(ws: &mut Ws, timeout: Duration, stop: impl Fn(&[u8]) -> bool
             0x02 => {
                 r.exit = Some(i32::from_be_bytes(f[1..5].try_into().unwrap()));
                 break;
+            }
+            // LIVE carries no output and needs no ack.
+            0x04 => {
+                r.live.push(seq());
+                continue;
             }
             _ => {}
         }
@@ -235,6 +243,198 @@ async fn reconnect_resumes_without_duplicates() {
         "replayed output that was already acked"
     );
     assert!(text(&second.bytes).contains("got:two"));
+}
+
+/// The next binary frame of `ws`, which must be LIVE: returns its offset.
+async fn expect_live_first(ws: &mut Ws) -> u64 {
+    let f = loop {
+        match tokio::time::timeout(Duration::from_secs(10), ws.next())
+            .await
+            .expect("no frame")
+        {
+            Some(Ok(Message::Binary(f))) => break f,
+            Some(Ok(_)) => continue,
+            other => panic!("socket ended before the first frame: {other:?}"),
+        }
+    };
+    assert_eq!(f[0], 0x04, "the first frame must be LIVE, got opcode {}", f[0]);
+    assert_eq!(f.len(), 9);
+    u64::from_be_bytes(f[1..9].try_into().unwrap())
+}
+
+/// Starts an echo session, lets it print one line, and waits until its output stops growing.
+/// Returns the tab and the final length of its output.
+async fn session_with_one_line(core: &RunningCore) -> (String, u64) {
+    let tab = create(core, fake(&["echo"]), None).await.unwrap();
+    let mut ws = connect(core, &tab, 0).await;
+    let mut input = vec![0x10];
+    input.extend_from_slice(b"ping\r");
+    ws.send(Message::Binary(input.into())).await.unwrap();
+    let first = read_until(&mut ws, Duration::from_secs(10), |b| text(b).contains("got:ping")).await;
+    assert!(text(&first.bytes).contains("got:ping"));
+    drop(ws);
+    let session = core.state.session(&tab).unwrap();
+    let mut stable = (session.counters().0, Instant::now());
+    while stable.1.elapsed() < Duration::from_millis(300) {
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        let end = session.counters().0;
+        if end != stable.0 {
+            stable = (end, Instant::now());
+        }
+    }
+    (tab, stable.0)
+}
+
+#[tokio::test]
+async fn resume_sends_live_before_the_replay() {
+    let (core, _home) = core().await;
+    let (tab, end) = session_with_one_line(&core).await;
+    let mut ws = connect(&core, &tab, 0).await;
+    let live = expect_live_first(&mut ws).await;
+    assert_eq!(live, end, "live starts where the output ended at attach");
+    // The replay covers exactly 0..live.
+    let got = read_until(&mut ws, Duration::from_secs(10), |b| b.len() as u64 >= live).await;
+    assert_eq!(got.resets, 0);
+    assert_eq!(got.bytes.len() as u64, live);
+    assert_eq!(got.end, live);
+    assert!(text(&got.bytes).contains("got:ping"));
+    assert!(got.live.is_empty(), "one Resume gets one LIVE");
+}
+
+#[tokio::test]
+async fn a_reconnect_gets_its_own_live() {
+    let (core, _home) = core().await;
+    let (tab, end) = session_with_one_line(&core).await;
+    let mut ws = connect(&core, &tab, 0).await;
+    assert_eq!(expect_live_first(&mut ws).await, end);
+    drop(ws);
+    let mut ws = connect(&core, &tab, end).await;
+    assert_eq!(expect_live_first(&mut ws).await, end);
+}
+
+/// Reads Output frames as (offset, length), acking each, until the output reaches `until`. Other frames are skipped.
+async fn output_frames_until(ws: &mut Ws, until: u64) -> Vec<(u64, usize)> {
+    let mut frames = vec![];
+    let deadline = Instant::now() + Duration::from_secs(20);
+    let mut end = 0;
+    while end < until {
+        assert!(Instant::now() < deadline, "output stopped at {end} of {until}");
+        let f = match tokio::time::timeout(Duration::from_millis(200), ws.next()).await {
+            Err(_) => continue,
+            Ok(Some(Ok(Message::Binary(f)))) => f,
+            other => panic!("socket ended at {end} of {until}: {other:?}"),
+        };
+        if f[0] != 0x01 {
+            continue;
+        }
+        let seq = u64::from_be_bytes(f[1..9].try_into().unwrap());
+        frames.push((seq, f.len() - 9));
+        end = seq + (f.len() - 9) as u64;
+        let mut ack = vec![0x12];
+        ack.extend_from_slice(&end.to_be_bytes());
+        ws.send(Message::Binary(ack.into())).await.unwrap();
+    }
+    frames
+}
+
+/// No replayed Output frame may cross the live offset. The cap is only visible when the session holds output
+/// from after attach, so the test asks for the replay a second time, on the same socket (which keeps its LIVE
+/// offset), once the child has printed more.
+#[tokio::test]
+async fn no_replayed_frame_straddles_the_live_offset() {
+    let (core, _home) = core().await;
+    let tab = create(&core, fake(&["echo"]), None).await.unwrap();
+    let mut ws = connect(&core, &tab, 0).await;
+    expect_live_first(&mut ws).await;
+
+    // Print well over two flushes (FLUSH_BYTES = 64 KiB), then wait for the last line.
+    let line = "x".repeat(200);
+    for _ in 0..400 {
+        let mut input = vec![0x10];
+        input.extend_from_slice(format!("{line}\r").as_bytes());
+        ws.send(Message::Binary(input.into())).await.unwrap();
+    }
+    let mut input = vec![0x10];
+    input.extend_from_slice(b"done\r");
+    ws.send(Message::Binary(input.into())).await.unwrap();
+    let printed = read_until(&mut ws, Duration::from_secs(20), |b| text(b).contains("got:done")).await;
+    assert!(text(&printed.bytes).contains("got:done"));
+    drop(ws);
+    let session = core.state.session(&tab).unwrap();
+    let mut stable = (session.counters().0, Instant::now());
+    while stable.1.elapsed() < Duration::from_millis(300) {
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        let end = session.counters().0;
+        if end != stable.0 {
+            stable = (end, Instant::now());
+        }
+    }
+
+    // Attach again: the output so far is the replay, and `live` is where it ends.
+    let mut ws = connect(&core, &tab, 0).await;
+    let live = expect_live_first(&mut ws).await;
+    assert_eq!(live, stable.0);
+    assert!(
+        live > 2 * 64 * 1024 + 1000,
+        "the replay must span several flushes, got {live} bytes"
+    );
+    assert_ne!(
+        live % (64 * 1024),
+        0,
+        "a live offset on a flush boundary cannot show a straddle"
+    );
+    // Output from after attach: a line the replay does not hold yet.
+    let mut input = vec![0x10];
+    input.extend_from_slice(b"after\r");
+    ws.send(Message::Binary(input.into())).await.unwrap();
+    let seen = read_until(&mut ws, Duration::from_secs(10), |b| text(b).contains("got:after")).await;
+    assert!(text(&seen.bytes).contains("got:after"));
+    assert!(seen.end > live);
+    // The echo's last bytes can trail "got:after"; let the output settle so the replay's length is known.
+    let mut stable = (session.counters().0, Instant::now());
+    while stable.1.elapsed() < Duration::from_millis(300) {
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        let end = session.counters().0;
+        if end != stable.0 {
+            stable = (end, Instant::now());
+        }
+    }
+    let total = stable.0;
+
+    // The second Resume replays from 0 again, with the session now holding bytes past `live`.
+    let mut resume = vec![0x13];
+    resume.extend_from_slice(&0u64.to_be_bytes());
+    ws.send(Message::Binary(resume.into())).await.unwrap();
+    // Frames still in flight from before the Resume come first; the Resume's own LIVE precedes its replay.
+    loop {
+        match tokio::time::timeout(Duration::from_secs(10), ws.next())
+            .await
+            .expect("no LIVE for the second Resume")
+        {
+            Some(Ok(Message::Binary(f))) if f[0] == 0x04 => {
+                assert_eq!(u64::from_be_bytes(f[1..9].try_into().unwrap()), live);
+                break;
+            }
+            Some(Ok(_)) => continue,
+            other => panic!("socket ended before the second LIVE: {other:?}"),
+        }
+    }
+    let frames = output_frames_until(&mut ws, total).await;
+    for &(seq, len) in &frames {
+        let end = seq + len as u64;
+        assert!(
+            end <= live || seq >= live,
+            "frame {seq}..{end} straddles live at {live}"
+        );
+    }
+    assert!(
+        frames.iter().any(|&(seq, len)| seq + len as u64 == live),
+        "no frame ends at live ({live})"
+    );
+    assert!(
+        frames.iter().any(|&(seq, _)| seq >= live),
+        "no output continues past live"
+    );
 }
 
 #[tokio::test]

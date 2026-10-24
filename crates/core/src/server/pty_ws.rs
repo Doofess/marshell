@@ -1,5 +1,5 @@
 use super::AppState;
-use super::frames::{ClientFrame, decode_client, encode_exit, encode_output, encode_reset};
+use super::frames::{ClientFrame, decode_client, encode_exit, encode_live, encode_output, encode_reset};
 use crate::pty::{FLUSH_BYTES, Pull, Session};
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::extract::{Path, State};
@@ -56,11 +56,24 @@ fn hold_until(avail: u64, last_sent: Option<Instant>, now: Instant) -> Option<In
     last_sent.map(|t| t + FLUSH_INTERVAL).filter(|d| *d > now)
 }
 
+/// How many bytes one frame may carry. A replay (below `live_from`) ends exactly at `live_from`,
+/// so the terminal can tell the replay from live output by the frame boundary.
+fn pull_limit(cursor: u64, live_from: u64, flush: usize) -> usize {
+    if cursor < live_from {
+        flush.min(usize::try_from(live_from - cursor).unwrap_or(usize::MAX))
+    } else {
+        flush
+    }
+}
+
 async fn run(socket: WebSocket, session: Arc<Session>, st: AppState, tab: String) {
     let (mut tx, mut rx) = socket.split();
     // Set when the first RESUME arrives; nothing is attached before that.
     let mut guard: Option<AttachGuard> = None;
     let mut cursor: Option<u64> = None;
+    // Where live output starts, from `attach()`. The replay below it is pulled up to this offset
+    // and no further, so no frame straddles it.
+    let mut live_from: u64 = 0;
     // When pending output must be flushed at the latest; derived from `hold_until`.
     let mut deadline: Option<Instant> = None;
     // When the last OUTPUT or RESET frame went out (a RESET is a paint too); decides whether
@@ -92,10 +105,20 @@ async fn run(socket: WebSocket, session: Arc<Session>, st: AppState, tab: String
                     Some(ClientFrame::Ack(n)) => session.ack(n),
                     Some(ClientFrame::Resume(from)) => {
                         if guard.is_none() {
-                            guard = Some(AttachGuard { generation: session.attach(), session: session.clone() });
+                            let (generation, live) = session.attach();
+                            live_from = live;
+                            guard = Some(AttachGuard { generation, session: session.clone() });
                         }
                         let from = from.min(session.counters().0);
                         session.resume(from);
+                        // Tell the terminal where live output starts, before any output of this
+                        // Resume. A later Resume on this socket reuses the offset: what the
+                        // terminal got on this connection was never written before it attached.
+                        match tokio::time::timeout(SEND_TIMEOUT, tx.send(Message::Binary(encode_live(live_from).into()))).await {
+                            Ok(Ok(())) => {}
+                            // Send failed or timed out: the peer is gone or stuck.
+                            _ => break,
+                        }
                         cursor = Some(from);
                         check = true;
                     }
@@ -126,7 +149,7 @@ async fn run(socket: WebSocket, session: Arc<Session>, st: AppState, tab: String
         }
         let mut done = false;
         loop {
-            let (frame, exited) = match session.pull(c, FLUSH_BYTES) {
+            let (frame, exited) = match session.pull(c, pull_limit(c, live_from, FLUSH_BYTES)) {
                 Pull::Data { seq, bytes } => {
                     c = seq + bytes.len() as u64;
                     (encode_output(seq, &bytes), false)
@@ -209,6 +232,14 @@ mod tests {
     fn nothing_pending_never_holds_so_exit_is_noticed() {
         let now = Instant::now();
         assert_eq!(hold_until(0, Some(now - MS), now), None);
+    }
+
+    #[test]
+    fn replay_is_capped_at_live() {
+        assert_eq!(pull_limit(0, 10, 64), 10);
+        assert_eq!(pull_limit(10, 10, 64), 64);
+        assert_eq!(pull_limit(0, 1000, 64), 64);
+        assert_eq!(pull_limit(11, 10, 64), 64);
     }
 
     #[test]
