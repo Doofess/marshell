@@ -71,7 +71,87 @@ pub fn copy_from(home: &Path, meta: &SessionMeta, source: &Path) -> anyhow::Resu
     let (archive, _) = archive_paths(home, &meta.agent, &meta.session_id);
     store::write_bytes_atomic(&archive, &packed)?;
     write_meta(home, meta)?;
+    // A copy made again is the user's to keep: the conversation is no longer a deleted one.
+    clear_tombstone(home, &meta.agent, &meta.session_id);
     Ok(archive)
+}
+
+/// One conversation whose copy the user deleted.
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+struct Tombstone {
+    agent: String,
+    session_id: String,
+    deleted_at_ms: u64,
+}
+
+/// `<home>/history/deleted.json`: the conversations whose copy was deleted, so the importer doesn't copy an
+/// unchanged source file back. A conversation leaves the list when a copy of it is made again.
+#[derive(Default, serde::Serialize, serde::Deserialize)]
+struct Tombstones {
+    #[serde(default)]
+    deleted: Vec<Tombstone>,
+}
+
+impl store::Versioned for Tombstones {
+    const VERSION: u32 = 1;
+}
+
+/// One writer at a time: the file is read, changed and written back.
+static TOMBSTONES: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+fn tombstones_path(home: &Path) -> PathBuf {
+    paths::history_dir(home).join("deleted.json")
+}
+
+fn read_tombstones(home: &Path) -> anyhow::Result<Tombstones> {
+    Ok(store::read::<Tombstones>(&tombstones_path(home))?.unwrap_or_default())
+}
+
+/// Notes that the session's copy was deleted at `deleted_at_ms`.
+pub fn add_tombstone(home: &Path, agent: &str, session_id: &str, deleted_at_ms: u64) -> anyhow::Result<()> {
+    let _guard = TOMBSTONES.lock().unwrap_or_else(|e| e.into_inner());
+    let mut doc = read_tombstones(home)?;
+    doc.deleted
+        .retain(|t| !(t.agent == agent && t.session_id == session_id));
+    doc.deleted.push(Tombstone {
+        agent: agent.into(),
+        session_id: session_id.into(),
+        deleted_at_ms,
+    });
+    store::write(&tombstones_path(home), &doc)
+}
+
+/// When the session's copy was deleted, or None when it wasn't (or the list can't be read).
+pub fn deleted_at(home: &Path, agent: &str, session_id: &str) -> Option<u64> {
+    let _guard = TOMBSTONES.lock().unwrap_or_else(|e| e.into_inner());
+    match read_tombstones(home) {
+        Ok(doc) => doc
+            .deleted
+            .iter()
+            .find(|t| t.agent == agent && t.session_id == session_id)
+            .map(|t| t.deleted_at_ms),
+        Err(err) => {
+            tracing::warn!("the list of deleted conversations could not be read: {err:#}");
+            None
+        }
+    }
+}
+
+/// Forgets that the session's copy was deleted. Does nothing when it wasn't.
+pub fn clear_tombstone(home: &Path, agent: &str, session_id: &str) {
+    let _guard = TOMBSTONES.lock().unwrap_or_else(|e| e.into_inner());
+    let result = read_tombstones(home).and_then(|mut doc| {
+        let before = doc.deleted.len();
+        doc.deleted
+            .retain(|t| !(t.agent == agent && t.session_id == session_id));
+        if doc.deleted.len() == before {
+            return Ok(());
+        }
+        store::write(&tombstones_path(home), &doc)
+    });
+    if let Err(err) = result {
+        tracing::warn!("the list of deleted conversations could not be updated: {err:#}");
+    }
 }
 
 /// The bytes of a transcript file; a `.zst` file is decoded, and fails once it decodes past `MAX_DECODED_BYTES`.
@@ -184,6 +264,22 @@ mod tests {
             recordings: vec![],
             client: Default::default(),
         }
+    }
+
+    #[test]
+    fn a_tombstone_is_kept_until_a_copy_is_made_again() {
+        let home = tempfile::tempdir().unwrap();
+        assert_eq!(deleted_at(home.path(), "claude", "s1"), None);
+        add_tombstone(home.path(), "claude", "s1", 10).unwrap();
+        add_tombstone(home.path(), "codex", "s1", 20).unwrap();
+        add_tombstone(home.path(), "claude", "s1", 30).unwrap();
+        assert_eq!(deleted_at(home.path(), "claude", "s1"), Some(30));
+        assert_eq!(deleted_at(home.path(), "codex", "s1"), Some(20));
+        let src = home.path().join("s1.jsonl");
+        std::fs::write(&src, b"{\"a\":1}\n").unwrap();
+        copy_transcript(home.path(), &meta("s1", &src)).unwrap();
+        assert_eq!(deleted_at(home.path(), "claude", "s1"), None);
+        assert_eq!(deleted_at(home.path(), "codex", "s1"), Some(20));
     }
 
     #[test]

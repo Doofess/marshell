@@ -544,6 +544,12 @@ impl History {
         {
             return Err(DeleteRefusal::RunningInATab);
         }
+        // Before anything is removed, so a delete that can't be remembered doesn't happen: the importer would
+        // copy an unchanged source file back.
+        let deleted_at_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_millis() as u64);
+        archive::add_tombstone(&self.home, agent, session_id, deleted_at_ms)?;
         index.remove(agent, session_id)?;
         drop(guard);
         let (archive, meta) = archive::archive_paths(&self.home, agent, session_id);

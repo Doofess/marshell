@@ -424,6 +424,14 @@ impl Worker {
         };
         match prepared {
             Prepared::Skip(agent) => self.record(path, size, agent, ""),
+            // The user deleted this conversation's copy and the file has not changed since: it stays deleted.
+            // A file written after the delete is a conversation that went on, and is copied.
+            Prepared::Copy(meta)
+                if archive::deleted_at(self.history.home(), &meta.agent, &meta.session_id)
+                    .is_some_and(|deleted_ms| modified_ms(&md) <= deleted_ms) =>
+            {
+                self.record(path, size, &meta.agent, &meta.session_id);
+            }
             Prepared::Copy(meta) => match self.history.import(&meta, path) {
                 Ok(true) => {
                     #[cfg(test)]
@@ -1068,6 +1076,61 @@ mod tests {
             rig.archived("claude", CLAUDE_A) == Some(text.clone())
         });
         assert!(rig.history.get("claude", CLAUDE_A).unwrap().is_some());
+    }
+
+    /// Copies the Claude file the way a hook would, with the importer never having seen it.
+    fn copy_without_the_importer(rig: &Rig, path: &Path) {
+        let text = std::fs::read_to_string(path).unwrap();
+        let md = std::fs::metadata(path).unwrap();
+        let Prepared::Copy(meta) = prepare(Kind::Claude, path, &text, &md) else {
+            panic!("the file should be copyable");
+        };
+        assert!(rig.history.import(&meta, path).unwrap());
+    }
+
+    #[test]
+    fn a_copy_deleted_while_the_switch_was_off_stays_deleted() {
+        let rig = rig();
+        let path = write_claude(&rig, CLAUDE_A, "cli", "2026-10-20T09:00:00.000Z");
+        copy_without_the_importer(&rig, &path);
+        rig.history.delete_copy("claude", CLAUDE_A).unwrap();
+        assert!(rig.archived("claude", CLAUDE_A).is_none());
+        assert!(archive::deleted_at(rig.home.path(), "claude", CLAUDE_A).is_some());
+        // The importer has never recorded this file, so only the delete remembers it.
+        let importer = rig.start(true, FAST);
+        wait_idle(&importer, 1);
+        std::thread::sleep(FAST.rescan * 2);
+        assert!(rig.archived("claude", CLAUDE_A).is_none());
+        assert!(rig.history.get("claude", CLAUDE_A).unwrap().is_none());
+        let state: StateDoc = store::read(&rig.home.path().join("history").join("import.json"))
+            .unwrap()
+            .unwrap();
+        let known = state.files.get(&key(&path)).expect("the file is recorded");
+        assert_eq!(known.size, std::fs::metadata(&path).unwrap().len());
+        // The delete is still remembered: the file is skipped again after a restart.
+        assert!(archive::deleted_at(rig.home.path(), "claude", CLAUDE_A).is_some());
+    }
+
+    #[test]
+    fn a_deleted_conversation_that_goes_on_is_copied_again() {
+        let rig = rig();
+        let path = write_claude(&rig, CLAUDE_A, "cli", "2026-10-20T09:00:00.000Z");
+        copy_without_the_importer(&rig, &path);
+        rig.history.delete_copy("claude", CLAUDE_A).unwrap();
+        assert!(archive::deleted_at(rig.home.path(), "claude", CLAUDE_A).is_some());
+        // The conversation goes on after the delete: the file's modification time is later.
+        std::thread::sleep(Duration::from_millis(50));
+        let mut text = std::fs::read_to_string(&path).unwrap();
+        text.push_str(&claude_user_line("cli", "2026-10-20T10:00:00.000Z", "back again"));
+        text.push('\n');
+        std::fs::write(&path, &text).unwrap();
+        let importer = rig.start(true, FAST);
+        wait_for("the copy of the conversation that went on", || {
+            rig.archived("claude", CLAUDE_A) == Some(text.clone())
+        });
+        wait_idle(&importer, 1);
+        assert!(rig.history.get("claude", CLAUDE_A).unwrap().is_some());
+        assert!(archive::deleted_at(rig.home.path(), "claude", CLAUDE_A).is_none());
     }
 
     #[test]
