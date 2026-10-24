@@ -1093,6 +1093,41 @@ fn seed_recorded(env: &Env, id: &str) {
 const NO_PART: &str = "No such part of the recording.";
 
 #[tokio::test]
+async fn recording_frames_serves_a_compressed_part() {
+    let env = env();
+    seed_recorded(&env, ID);
+    let base = format!("/v1/history/claude/{ID}/recordings");
+    let (status, plain_parts) = get_json(&env.app, &base).await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, first) = get_json(&env.app, &format!("{base}/0/frames")).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(first["screen"].is_string());
+    assert!(!first["events"].as_array().unwrap().is_empty());
+    let offset = first["next_offset"].as_u64().unwrap();
+    let next_url = format!("{base}/0/frames?offset={offset}");
+    let (status, next) = get_json(&env.app, &next_url).await;
+    assert_eq!(status, StatusCode::OK);
+    let path = marshell_core::paths::recordings_dir(env.home.path()).join(CAST_NAME);
+    let bytes = std::fs::read(&path).unwrap();
+    std::fs::write(
+        path.with_extension("cast.zst"),
+        zstd::encode_all(bytes.as_slice(), 3).unwrap(),
+    )
+    .unwrap();
+    std::fs::remove_file(&path).unwrap();
+    let (status, parts) = get_json(&env.app, &base).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(parts, plain_parts);
+    assert_eq!(parts[0]["file"], CAST_NAME);
+    let (status, compressed) = get_json(&env.app, &format!("{base}/0/frames")).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(compressed, first);
+    let (status, compressed) = get_json(&env.app, &next_url).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(compressed, next);
+}
+
+#[tokio::test]
 async fn recordings_route_lists_parts_and_frames_play_them() {
     let env = env();
     seed_recorded(&env, ID);

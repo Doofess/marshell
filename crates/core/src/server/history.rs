@@ -301,7 +301,8 @@ pub async fn recording_frames(
         };
         // The part's last event is at `ended_ms`, and `to_ms` is exclusive.
         let to_ms = query.to_ms.unwrap_or(part.ended_ms + 1);
-        let path = paths::recordings_dir(&home).join(&part.file);
+        let path =
+            cast::resolve(&paths::recordings_dir(&home), &part.file).ok_or((StatusCode::NOT_FOUND, NO_PART.into()))?;
         cast::frames(&path, part.started_ms, start, to_ms, FRAMES_BUDGET).map_err(|err| match err {
             FramesError::NotABoundary => (StatusCode::BAD_REQUEST, err.to_string()),
             FramesError::Failed(err) => failed(err),

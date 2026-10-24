@@ -197,21 +197,8 @@ fn to_asciicast_with_limit(
     let mut raw = 0usize;
     let mut clock = 0u64;
     for (k, part) in parts.iter().enumerate() {
-        if !cast::valid_recording_name(&part.file) {
-            return Err(anyhow::anyhow!("{:?} is not a recording name", part.file).into());
-        }
-        let path = dir.join(&part.file);
-        // The span's end is the last moment of the conversation, so it is included.
-        let to_ms = part.span_to_ms.saturating_add(1);
         let base = if k == 0 { 0 } else { clock + PART_GAP_MS };
-        let mut got = cast::frames(
-            &path,
-            part.started_ms,
-            FrameStart::At(part.span_from_ms),
-            to_ms,
-            FRAMES_BUDGET,
-        )
-        .map_err(|err| anyhow::anyhow!("{err}"))?;
+        let mut got = part_frames(&dir, part, FrameStart::At(part.span_from_ms))?;
         // The header carries the first part's size; a different size at the clip point is a resize.
         if k > 0 || (got.cols, got.rows) != (part.cols, part.rows) {
             events.push(Ev {
@@ -257,8 +244,7 @@ fn to_asciicast_with_limit(
                 return Err(AsciicastError::TooLarge);
             }
             let Some(offset) = got.next_offset else { break };
-            got = cast::frames(&path, part.started_ms, FrameStart::Offset(offset), to_ms, FRAMES_BUDGET)
-                .map_err(|err| anyhow::anyhow!("{err}"))?;
+            got = part_frames(&dir, part, FrameStart::Offset(offset))?;
         }
     }
     if let Some(redactor) = redactor {
@@ -299,6 +285,23 @@ fn to_asciicast_with_limit(
         }
     }
     Ok(text)
+}
+
+/// Reads pages clipped to one export part, including the last moment of the conversation.
+fn part_frames(dir: &Path, part: &RecordingPart, start: FrameStart) -> anyhow::Result<cast::Frames> {
+    if !cast::valid_recording_name(&part.file) {
+        anyhow::bail!("{:?} is not a recording name", part.file);
+    }
+    // Compression can replace the plain file between pages; the link name stays the same.
+    let path = cast::resolve(dir, &part.file).ok_or_else(|| anyhow::anyhow!("recording {:?} is missing", part.file))?;
+    cast::frames(
+        &path,
+        part.started_ms,
+        start,
+        part.span_to_ms.saturating_add(1),
+        FRAMES_BUDGET,
+    )
+    .map_err(|err| anyhow::anyhow!("{err}"))
 }
 
 /// Merges runs of output events less than 100 ms apart (up to 64 KiB each, at the first one's time), then
@@ -472,6 +475,58 @@ All done.
         assert!(off.contains("abcdefgh12345678"), "{off}");
     }
 
+    #[test]
+    fn asciicast_from_a_compressed_recording_matches_plain() {
+        let home = tempfile::tempdir().unwrap();
+        let large = "output\r\n".repeat(FRAMES_BUDGET / 8);
+        let mut part = asciicast::write(
+            home.path(),
+            1000,
+            (80, 24),
+            &[
+                (0.0, "o", "before"),
+                (1.0, "o", &large),
+                (2.0, "m", "prompt"),
+                (3.0, "o", "after"),
+            ],
+        );
+        part.span_from_ms = 1500;
+        let parts = [part];
+        let plain = to_asciicast(home.path(), &parts, "My chat", None).unwrap();
+        let path = paths::recordings_dir(home.path()).join(&parts[0].file);
+        let bytes = std::fs::read(&path).unwrap();
+        std::fs::write(
+            path.with_extension("cast.zst"),
+            zstd::encode_all(bytes.as_slice(), 3).unwrap(),
+        )
+        .unwrap();
+        std::fs::remove_file(&path).unwrap();
+        assert_eq!(to_asciicast(home.path(), &parts, "My chat", None).unwrap(), plain);
+    }
+
+    #[test]
+    fn asciicast_pages_continue_when_the_plain_recording_is_compressed() {
+        let home = tempfile::tempdir().unwrap();
+        let large = "x".repeat(FRAMES_BUDGET);
+        let part = asciicast::write(home.path(), 1000, (80, 24), &[(1.0, "o", &large), (2.0, "o", "last")]);
+        let dir = paths::recordings_dir(home.path());
+        let read = |start| part_frames(&dir, &part, start);
+        let first = read(FrameStart::At(part.span_from_ms)).unwrap();
+        assert_eq!(first.events.len(), 1);
+        let next = first.next_offset.unwrap();
+        let plain_page = read(FrameStart::Offset(next)).unwrap();
+        assert_eq!(plain_page.events[0].data, "last");
+        let path = dir.join(&part.file);
+        let bytes = std::fs::read(&path).unwrap();
+        std::fs::write(
+            path.with_extension("cast.zst"),
+            zstd::encode_all(bytes.as_slice(), 3).unwrap(),
+        )
+        .unwrap();
+        std::fs::remove_file(&path).unwrap();
+        assert_eq!(read(FrameStart::Offset(next)).unwrap(), plain_page);
+    }
+
     mod asciicast {
         use super::*;
         use crate::pty::record::{CastHeader, header_line};
@@ -485,7 +540,7 @@ All done.
         }
 
         /// Writes a recording of `size` that starts at `start` and holds `lines` (seconds, code, data).
-        fn write(home: &Path, start: u64, size: (u16, u16), lines: &[(f64, &str, &str)]) -> RecordingPart {
+        pub(super) fn write(home: &Path, start: u64, size: (u16, u16), lines: &[(f64, &str, &str)]) -> RecordingPart {
             let dir = paths::recordings_dir(home);
             std::fs::create_dir_all(&dir).unwrap();
             let mut text = header_line(&CastHeader {
