@@ -41,18 +41,23 @@
 **Interfaces:**
 - Produces: `marshell_protocol::frames::LIVE: u8 = 0x04`, documented as "Server -> client: `[LIVE][seq u64]`. Sent after every Resume, before any output: output before `seq` was written before this renderer attached (a replay), so the renderer doesn't answer queries in it." `FRAME.LIVE` is 4 in `src/generated/constants.ts`.
 - Produces: `pub fn encode_live(seq: u64) -> Vec<u8>` in `crates/core/src/server/frames.rs`.
+- Changes: `Session::attach(&self) -> (u64, u64)` in `crates/core/src/pty/session.rs` returns `(generation, live_from)`, where `live_from` is `out.buf.end()` read under the same lock that sets `attached`, after the DSR carry is pushed. The core stops answering cursor queries at that exact byte, and the terminal answers everything after it, so no query falls between the two. Its callers are `pty_ws.rs:95` and `supervisor.rs:217`.
+- Also read: `.claude/rules/pty.md`. Update its DSR-until-attach line to say the attach offset is also where the renderer starts answering (the `LIVE` frame).
+- Tests that decode `/v1/pty` frames and may expect OUTPUT first: `crates/core/tests/pty_ws.rs` (`connect` and `read_until`) and `src/lib/api/frames.test.ts`. Update them on purpose.
 
 - [ ] **Step 1: Write the failing tests.**
   - `frames.rs`: `live_layout` asserts `encode_live(258) == vec![4, 0, 0, 0, 0, 0, 0, 1, 2]`.
   - `crates/core/tests/pty_ws.rs`: `resume_sends_live_before_the_replay`. Create a session that prints one known line and then waits for input (as the file's other tests do with `fake(...)`). Read that line on a first connection (`connect(&core, &tab, 0)`, then `read_until`), count the output bytes, and close it. A second connection with `resume_from` 0 gets a first binary frame of `[4][seq]`, where `seq` equals that byte count, followed by output frames covering 0 to `seq`. A second test, `a_reconnect_gets_its_own_live`, reconnects with `resume_from = seq` and gets `LIVE(seq)` again.
+  - `session.rs` unit: `attach_returns_the_buffer_end_as_the_live_offset`. After output and a DSR carry, `attach().1 == counters().0`.
   - `pty_ws.rs` unit: `replay_is_capped_at_live`. Extract `fn pull_limit(cursor: u64, live_from: u64, flush: usize) -> usize`, which returns `min(flush, live_from - cursor)` while `cursor < live_from` and `flush` after. Assert `pull_limit(0, 10, 64) == 10`, `pull_limit(10, 10, 64) == 64` and `pull_limit(0, 1000, 64) == 64`.
 - [ ] **Step 2: Run them and see them fail.** `cargo test -p marshell-core -j 4 --lib frames` and `cargo test -p marshell-core -j 4 --test pty_ws`. Expected: compile errors for `encode_live` and `pull_limit`, then assertion failures on the first frame.
 - [ ] **Step 3: Implement.**
-  - On `ClientFrame::Resume(from)`, after `session.resume(from)`, read `live_from = session.counters().0` and send `encode_live(live_from)` (same send timeout and error handling as the output loop) before setting `cursor`.
+  - On the first `ClientFrame::Resume(from)`, keep the `live_from` that `attach()` returns. A later Resume on the same socket reuses it. After `session.resume(from)`, send `encode_live(live_from)` before setting `cursor`, with the same send timeout and error handling as the output loop.
   - Keep `live_from` beside `cursor`, and pull with `pull_limit(c, live_from, FLUSH_BYTES)` instead of `FLUSH_BYTES`.
   - Add `LIVE: {l}` to the `FRAME` format string in `crates/protocol/src/lib.rs`, then run `cargo test -p marshell-protocol` to regenerate `src/generated/constants.ts`.
 - [ ] **Step 4: Run them and see them pass.** Run the same two commands, plus `pnpm check:generated` and `pnpm test src/lib/api` (the frontend still ignores the new frame). Expected: all pass.
-- [ ] **Step 5: Commit** as `feat(pty): tell the terminal where live output starts after a resume, and end the replay there` (`cargo fmt --all` first).
+- [ ] **Step 5: Investigate the 404, and report only.** #60 also reports a pty WebSocket 404 right after an API create. Compare when `start_session` (`crates/core/src/server/sessions.rs`) puts the session where `pty_ws::handler` looks it up. Report whether a request can arrive in between. Don't fix it here: the main thread decides whether it goes in this slice or into its own issue.
+- [ ] **Step 6: Commit** as `feat(pty): tell the terminal where live output starts after a resume, and end the replay there` (`cargo fmt --all` first).
 
 ### Task 2: The terminal drops its replies to the replay (frontend)
 
@@ -97,19 +102,24 @@
 - Test: the `#[cfg(test)]` module in `crates/core/src/server/sessions.rs`
 
 **Interfaces:**
-- Consumes: `History::latest_for_tab(&str) -> Option<SessionMeta>`, `crate::history::sidecar_allowed(agent, path, id)`, and `resume_args("codex", ResumeTarget::Session(id)) == ["resume", id]` (all existing).
+- Consumes: `crate::history::sidecar_allowed(agent, path, id)` and `resume_args("codex", ResumeTarget::Session(id)) == ["resume", id]` (both existing).
+- Produces:
+  - `Index::latest_for_tab_of(&self, tab_id: &str, agent: &str) -> anyhow::Result<Option<SessionMeta>>` in `crates/core/src/history/index.rs`: `latest_for_tab` with `AND agent = ?2` in its query.
+  - `History::latest_for_tab_of(&self, tab_id: &str, agent: &str) -> Option<SessionMeta>` in `crates/core/src/history/recorder.rs`, beside `latest_for_tab`.
+  - `resume_session` uses `latest_for_tab_of` for both agents, so a newer row from another agent on the same tab can't hide the tab's own conversation. That happens when `MARSHELL_TAB_ID` is inherited by a CLI started from inside another, for example a Claude tool call that runs `codex exec`.
 - Produces: `resume_session(st, tab, Some("codex"))` returns:
   - `Resume::Last` when there's no Codex row for the tab, or the row fails `sidecar_allowed`.
   - `Resume::Session(id)` when the rollout file exists.
   - `Resume::Fresh` when it doesn't.
-  It never returns `Err` for Codex. A row whose `agent` differs from the tab's agent counts as no row, for Claude too.
+  It never returns `Err` for Codex.
 
 - [ ] **Step 1: Write the failing tests** (next to `resume_session_prefers_the_tab_id`, indexing rows the way those tests do; a Codex rollout is a temp file named `rollout-2026-10-25T10-00-00-<id>.jsonl`):
   - `a_codex_tab_resumes_its_own_conversation_by_id`: `Ok(Resume::Session(ID))`.
   - `a_codex_tab_with_no_conversation_on_record_resumes_the_last`: `Ok(Resume::Last)`.
   - `a_codex_tab_whose_rollout_is_gone_starts_fresh`: the row exists and the file was deleted. Expect `Ok(Resume::Fresh)`.
   - `a_codex_row_that_fails_the_check_resumes_the_last`: the rollout path is relative, or named `notes.txt`. Expect `Ok(Resume::Last)`.
-  - `a_tab_resumes_only_its_own_agents_conversation`: t1's latest row is Claude's and the tab is Codex, so `Ok(Resume::Last)`. The reverse also gives `Ok(Resume::Last)`.
+  - `a_tab_resumes_only_its_own_agents_conversation`: t1 has an older Claude row and a newer Codex row, both with their files. The Claude tab gives `Ok(Resume::Session(claude_id))`, and the Codex tab gives `Ok(Resume::Session(codex_id))`.
+  - `index.rs` unit: `latest_for_tab_of_skips_other_agents`. With an older Claude row and a newer Codex row on t1, `latest_for_tab_of("t1", "claude")` is the Claude row, and `latest_for_tab_of("t1", "antigravity")` is `None`.
   - `a_resumed_codex_tab_runs_resume_with_its_id`: `resolved_codex_line(Some("0.163.0"), Some(ResumeTarget::Session(ID)))` equals `format!("& codex resume {ID} --no-daemon")`.
   - Update the two existing asserts that expect `Resume::Last` for `Some("codex")` (`sessions.rs:982`, `:1037`). Each becomes what its fixture now implies, with a comment.
 - [ ] **Step 2: Run them and see them fail.** `cargo test -p marshell-core -j 4 --lib server::sessions`. Expected: the Codex tests fail with `Last`.
@@ -131,5 +141,5 @@
   6. A Codex tab without hooks (a profile run with hooks off, or a fresh scratch home before setup) restarts with `resume --last` (decision 3).
   7. The real `~/.codex/config.toml` keeps its modified time, and `~/.codex/hooks.json` is absent.
 - [ ] **Step 2: Fix each finding test-first** and record it in the research note, with its commit.
-- [ ] **Step 3: Run what CI runs.** `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace -j 4`, `pnpm test`, `pnpm test:claude`, `pnpm check:generated`, `pnpm build` and `pnpm tauri build --no-bundle`. Expected: all pass.
+- [ ] **Step 3: Run what CI runs.** `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace -j 4`, `pnpm test`, `pnpm test:claude`, `pnpm check:generated`, `pnpm build` and `pnpm tauri build --no-bundle`. The branch touches the pty WebSocket, so also run the two S6 throughput tests in release (`s6_raw_conpty_50mb` and `s6_throughput_50mb`, as `.github/workflows/ci.yml` runs them). Expected: all pass.
 - [ ] **Step 4: Commit** as `docs(research): the slice 6a2 live check`. Then the whole-branch review (`marshell-reviewer`, Opus), one fix pass, and `marshell-ship`. The PR closes #60 and #61.
