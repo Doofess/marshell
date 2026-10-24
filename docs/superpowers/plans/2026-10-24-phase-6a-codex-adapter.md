@@ -297,16 +297,16 @@ Runs before Task 3, which consumes it.
 - `History::note_event(&self, agent: &str, tab_id: &str, recording: Option<&str>, body: &Value, at_ms: u64) -> Option<SessionMeta>`. For `codex`, the path check is `sidecar_allowed("codex", path, id)`. It writes the sidecar's agent, tab, recording and `client: Marshell`, and returns None, so no copy is scheduled: 5d's importer copies the rollout. Claude's behaviour is unchanged.
 - For Codex, the link is made by the first event of a session that carries `session_id` and `transcript_path`, not only by `SessionStart`. Task 1 found `SessionStart` fires with the first prompt, and a Codex quit with no prompt sends only `SessionEnd` yet leaves a rollout, which would otherwise be labelled "Outside Marshell". `record_history` passes every Codex event through, and `note_event` makes the link once.
 
-- [ ] **Step 1: Write the failing tests.**
+- [x] **Step 1: Write the failing tests.**
   - `a_codex_start_in_a_tab_records_the_tab`.
   - `the_importer_keeps_a_codex_tab_session_marshells`: note a Codex `SessionStart` for `t1`, then import the same rollout. The row has `client: Marshell` and `tab_id: "t1"`, whichever runs first.
   - `a_codex_rollout_path_with_the_wrong_name_is_ignored`.
   - `a_codex_session_with_only_session_end_is_linked`, from `SessionEnd.json`.
   - `a_later_codex_event_does_not_rewrite_the_link`.
-- [ ] **Step 2: Run `cargo test -p marshell-core -j 4 history::`.** Expected: FAIL.
-- [ ] **Step 3: Implement it.** Add the `agent` argument at every caller, and widen `record_history`'s guard to Codex.
-- [ ] **Step 4: Run Step 2's command.** Expected: PASS.
-- [ ] **Step 5: Run `cargo fmt --all` and commit** as `feat(history): link a Codex session run in a tab to that tab`.
+- [x] **Step 2: Run `cargo test -p marshell-core -j 4 history::`.** Expected: FAIL.
+- [x] **Step 3: Implement it.** Add the `agent` argument at every caller, and widen `record_history`'s guard to Codex.
+- [x] **Step 4: Run Step 2's command.** Expected: PASS.
+- [x] **Step 5: Run `cargo fmt --all` and commit** as `feat(history): link a Codex session run in a tab to that tab`.
 
 ### Task 7: Codex in the Agents dialog and onboarding
 
