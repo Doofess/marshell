@@ -15,9 +15,9 @@
 ## Global constraints
 
 - Marshell writes only `$CODEX_HOME/hooks.json`, or `~/.codex/hooks.json` when `CODEX_HOME` is unset. It never writes `config.toml`, and never writes anything else under the Codex home (decision 3).
-- Marshell never automates, bypasses or records Codex's hook trust. The copy tells the person to trust the hooks in `/hooks` (decision 3).
+- Marshell never automates, bypasses or writes Codex's hook trust. The copy tells the person to trust the hooks in `/hooks` (decision 3). It reads `config.toml` read-only to report whether they are trusted (decision 10).
 - Tests and live checks never read or write the real `~/.codex`. They use `AppState::with_codex_hooks(<temp>)` or an injected env, and the live check uses a scratch `CODEX_HOME`. The live check copies `~/.codex/auth.json` into the scratch home and deletes it with the scratch folder. That copy is the only file it reads from the real Codex home.
-- No new dependencies.
+- One new dependency: `toml = "1.1"` in `marshell-core` (decision 10), already in `Cargo.lock` through Tauri (MIT/Apache, active upstream, no network). It parses `config.toml` to read `[hooks.state]` and nothing else. `sha2` is already a core dependency.
 - New protocol fields go in `crates/protocol`, and `pnpm check:generated` passes afterwards. An `Option<u64>` gets `#[ts(type = "number | null")]`.
 - No new route. Existing `/v1/agents/{agent}/...` routes accept `codex`. `antigravity` and unknown ids still get 404 "no such agent".
 - Never hold a `MutexGuard` across `.await` or file I/O. Running `codex --version` and reading files happen in `spawn_blocking`.
@@ -28,8 +28,11 @@
   - Status notes: "Live status is off for Codex"; "Codex's version could not be read"; "Codex <v> is older than the versions Marshell knows"; "Codex <v> is not one Marshell has recorded yet".
   - The core's refusal of an "Always allow" decision: "Codex can't keep an always-allow rule from Marshell. Allow once, or answer in the terminal."
   - Consent card source line: "The hook entries go in <code>hooks.json</code> only, not in <code>config.toml</code> as well: Codex reads both and would warn about duplicates." Consent card trust line (amended after Task 1, A3): "Codex runs hooks only after you trust them. The next time Codex starts, it lists them as new: choose <strong>Trust all and continue</strong>, or review them first in <code>/hooks</code>."
-  - Agents dialog, Codex installed and no hook seen since Marshell started: "Marshell hasn't seen these hooks run yet. If Codex shows no live status, type <code>/hooks</code> in Codex and trust Marshell's entries."
-  - Agents dialog, once seen: "Codex ran these hooks <relative time> ago." The relative time uses the dialog's existing time formatter.
+  - Agents dialog trust line (decision 10), by `AgentSetup.trust`:
+    - `trusted`: "Trusted: Codex runs these hooks."
+    - `untrusted`: "Not trusted yet: Codex won't run these hooks until you trust them. The next time Codex starts, choose <strong>Trust all and continue</strong>, or review them first in <code>/hooks</code>."
+    - `changed`: "Changed since you trusted them: Codex won't run the changed hooks until you trust them again in <code>/hooks</code>."
+    - `null` (Claude, no entries of Marshell's, or a `config.toml` that doesn't parse): no trust line.
 - Every UI change works with the keyboard alone and in forced colours. Each CLI gets its own consent card, and there is no bulk allow.
 
 ## Assumptions Task 1 confirms or corrects
@@ -49,7 +52,7 @@ The research describes the documented Codex behaviour. Task 1 checks it against 
 
 ## Review focus
 
-1. **Hooks installed but not trusted.** Codex runs nothing, so the row must not show live status or claim the hooks work. The row keeps the limited fallback, and the Agents dialog shows the "hasn't seen these hooks run yet" line. Tests in Tasks 3 and 8.
+1. **Hooks installed but not trusted.** Codex runs nothing, so the row must not show live status or claim the hooks work. The row keeps the limited fallback, and the Agents dialog says "Not trusted yet". Tests in Tasks 3, 3b and 8.
 2. **A user's own `hooks.json`** (BOM, CRLF, comments, their own hook on the same event). Their bytes stay as they were, apart from Marshell's entries, on install and on removal. Tests in Task 2.
 3. **Codex run outside Marshell with the hooks installed** (Windows Terminal, or Marshell closed). The bridge prints nothing, Codex asks the person itself, and the only delay is the 50 ms connect timeout. Test in Task 5.
 4. **Two Codex tabs asking at once.** Each card answers its own request, and an answer never reaches the other tab. Test in Task 5.
@@ -70,6 +73,7 @@ This task runs in the main thread, not through a worker. It needs a real Codex s
 - [ ] **Step 2: Start the live check.** Run `live-check.ps1 start -CodexAuth` with a fresh literal scratch folder. Write `<Scratch>\cx\hooks.json` by hand: every event in the research table, each running `"<scratch bridge>" record --agent codex --tag mshl1`. The `record` role saves each stdin under the record directory and posts it.
 - [ ] **Step 3: Drive a session.** Open a Codex tab in the dev app with `-a untrusted`, so shell commands ask. Over CDP, run `/hooks`, trust the entries, then send one prompt that runs a shell command, one that makes an `apply_patch` edit, and then interrupt a turn. Answer each Codex prompt in the terminal.
 - [ ] **Step 4: Check A2 and A6 by hand.** Point the `PermissionRequest` entry at a two-line `.cmd` stub in the scratch folder that prints the A6 allow JSON. Confirm Codex runs the command without asking. Then use a deny stub with a message, then an empty stub. Note whether editing the entry made `/hooks` ask for trust again (A3).
+- [ ] **Step 4b: Record two trust-hash test vectors (decision 10).** Add two extra groups to the scratch `hooks.json` whose commands name a neutral path, `& "C:/Users/someone/.marshell/bin/marshell-hook.exe" event --agent codex --tag mshl1`: one on `Stop` with `timeout` 5, one on `SessionEnd` with `timeout` 2. Restart Codex, choose **Trust all and continue**, and copy each entry's `trusted_hash` from the scratch `config.toml` into the research doc beside its event, command and timeout. Check that the recipe in Task 3b reproduces both. These are Task 3b's vectors, and they carry no real user name.
 - [ ] **Step 5: Write the fixtures.** Copy one recorded body per event (`SessionStart.json`, `UserPromptSubmit.json`, `PreToolUse-shell.json`, `PreToolUse-apply_patch.json`, `PermissionRequest-shell.json`, `PermissionRequest-apply_patch.json`, `PostToolUse.json`, `Stop.json`, `Interrupt.json`, `SessionEnd.json`) into `crates/core/tests/fixtures/codex/hooks/0.163.0/`. Run `pnpm scrub:fixtures crates/core/tests/fixtures/codex/hooks`, then `cargo test -p marshell-core -j 4 --test fixtures_scrubbed`. Expected: PASS.
 - [ ] **Step 6: Write `docs/research/2026-10-24-codex-hooks.md`.** It answers A1–A6, each with evidence, plus the Codex version, the exact `hooks.json` that ran, and the real `~/.codex` check: `config.toml`'s modified time before and after, and `hooks.json` still absent. Stop the check by PID and remove the scratch folder.
 - [ ] **Step 7: Amend this plan where a finding differs, and commit.**
@@ -122,23 +126,50 @@ git commit -m "docs(research): record Codex 0.163's hooks, trust and payloads, w
 
 **Interfaces:**
 - Consumes: Task 2's `codex::hooks::*`.
-- Produces, on `AgentSetup`: `pub needs_trust: bool` (true only for codex) and `pub hooks_seen_ms: Option<u64>`, the last time Marshell got an `event` or `permission` post from this agent since it started.
+- Consumes Task 3b's `codex::trust::state` and `HookTrust`.
+- Produces, on `AgentSetup`: `pub needs_trust: bool` (true only for codex) and `pub trust: Option<HookTrust>` (serialized as `null` when `None`), filled from `codex::trust::state` over the hooks file and the `config.toml` beside it. Always `None` for Claude.
 - Produces on `AppState`:
   - `with_codex_hooks(path: PathBuf) -> Self` and `with_codex_version(version: Option<String>) -> Self`, which mirror the Claude ones.
-  - `pub(crate) fn note_hook_seen(&self, agent: &str, at_ms: u64)` and `pub(crate) fn hook_seen(&self, agent: &str) -> Option<u64>`, over a `Mutex<HashMap<String, u64>>`.
+  - Codex's `config.toml` is `with_codex_hooks`'s path with the file name `config.toml`, read in the same `spawn_blocking` as the hooks file.
 - In `server/agents.rs`, `only_claude` becomes `fn adapter(agent: &str) -> Result<Adapter, Fail>` with `enum Adapter { Claude, Codex }`. `setup`, `plan` and `remove_plan` dispatch on it, and `codex_setup_of(st: &AppState) -> Result<AgentSetup, Fail>` fills `has_own_statusline: false` and `chained: false`.
 
 - [ ] **Step 1: Write the failing tests** in `agents_api.rs`, each with `with_codex_hooks(<temp>/hooks.json)` and `with_codex_version(Some("0.163.0"))`:
-  - `codex_setup_reports_a_missing_file`: `Missing`, `needs_trust: true`, `hooks_seen_ms: null`.
+  - `codex_setup_reports_a_missing_file`: `Missing`, `needs_trust: true`, `trust: null`.
   - `codex_plan_then_apply_installs`: the plan, `/v1/config/apply`, then setup reads `Installed` with `approve_installed`.
   - `codex_remove_plan_after_install_leaves_the_users_hooks`.
-  - `codex_hooks_seen_after_an_event`: a `POST /v1/hook` with role `event` and agent `codex` sets `hooks_seen_ms`. A post with role `record` doesn't.
+  - `codex_setup_reads_trust_from_config_toml`: after install, setup says `untrusted`; with a `config.toml` holding `trust::hook_hash` for every entry it says `trusted`; with one hash altered, `changed`. The `config.toml` bytes are unchanged afterwards.
   - `antigravity_is_still_404`.
   - In `uninstall.rs`: `removes_codex_hooks_too` (both diffs printed, one question, both applied on yes), `a_codex_only_install_is_found`, and `nothing_installed_says_so` still passing with neither installed.
 - [ ] **Step 2: Run `cargo test -p marshell-core -j 4 --test agents_api` and `cargo test -p marshell-cli -j 4`.** Expected: FAIL.
 - [ ] **Step 3: Implement it.** `uninstall::run` builds both remove plans, prints each diff under its file's path, asks once, and applies each in turn. A refused file still exits 1, as today.
 - [ ] **Step 4: Run Step 2's commands, plus `cargo test -p marshell-protocol` and `pnpm check:generated`.** Expected: PASS.
 - [ ] **Step 5: Run `cargo fmt --all` and commit** as `feat(codex): set up, preview and remove Codex hooks through the agents routes and marshell uninstall`.
+
+### Task 3b: Read Codex's hook trust (decision 10)
+
+Runs before Task 3, which consumes it.
+
+**Files:**
+- Modify: `crates/core/Cargo.toml` (`toml = "1.1"`), `Cargo.lock`
+- Modify: `crates/protocol/src/agents.rs` (`HookTrust`), `src/generated/HookTrust.ts` (generated)
+- Create: `crates/core/src/agents/codex/trust.rs`; Modify: `crates/core/src/agents/codex/mod.rs`
+- Test: unit tests in `trust.rs`
+
+**Interfaces:**
+- Produces in `marshell_protocol::agents`: `pub enum HookTrust { Trusted, Untrusted, Changed }`, serialized lowercase, with ts-rs.
+- Produces in `agents::codex::trust`:
+  - `pub fn hook_hash(event: &str, group: &Value, entry: &Value) -> String`: `"sha256:"` + lowercase hex of SHA-256 over Codex's identity JSON, compact, keys sorted, non-ASCII unescaped: `{"event_name": <snake_case event>, "hooks": [{"async": false, "command": <command>, "timeout": <t>, "type": "command"}], "matcher": <the group's matcher>}`. `matcher` appears only when the group has one and the event is not `UserPromptSubmit`, `Stop` or `Interrupt`. `t` is the entry's `timeout` or 600, capped at 3 for `SessionEnd` and `Interrupt`, and at least 1. `statusMessage` joins the hook object only when the entry sets it. `commandWindows` never counts. Insert each object's keys in sorted order, so the bytes don't depend on serde_json's `preserve_order`. Source: openai/codex `rust-v0.163.0`, `hooks/src/engine/discovery.rs` (`hook_hash`) and `config/src/fingerprint.rs`.
+  - `pub fn state(hooks_path: &Path, hooks: &Value, config_toml: Option<&str>) -> Option<HookTrust>`. `None` when Marshell has no entries in `hooks` or `config_toml` doesn't parse. Each Marshell entry at event `E`, group `g`, handler `h` is looked up in `[hooks.state]` under the key `<hooks_path>:<snake E>:<g>:<h>`. The path part is Codex's (native separators) and is compared ignoring case and `/` against `\`. A key whose `trusted_hash` differs from `hook_hash` is changed. A missing key, a missing `trusted_hash` or `enabled = false` is untrusted. Any changed gives `Changed`, else any untrusted gives `Untrusted`, else `Trusted`. A missing `config.toml` (`None`) is `Untrusted`.
+
+- [ ] **Step 1: Write the failing tests** in `trust.rs`:
+  - `hash_matches_codex_for_the_recorded_vectors`: the two vectors Task 1 recorded in its research doc (event, command and timeout in; `trusted_hash` out).
+  - `a_missing_config_is_untrusted`, `every_entry_trusted_is_trusted`, `one_altered_hash_is_changed`, `an_entry_without_state_is_untrusted`, `a_disabled_entry_is_untrusted`.
+  - `the_key_counts_the_users_groups_first`: a user group at index 0 puts Marshell's entry at `:1:0`.
+  - `a_config_that_does_not_parse_gives_no_answer` and `no_entries_of_ours_gives_no_answer`.
+- [ ] **Step 2: Run `cargo test -p marshell-core -j 4 --lib codex::trust`.** Expected: FAIL, because the module doesn't exist.
+- [ ] **Step 3: Implement it.** Add `toml` with `cargo add -p marshell-core toml@1.1`, and check that `Cargo.lock` gains no new package.
+- [ ] **Step 4: Run Step 2's command, then `cargo test -p marshell-protocol` and `pnpm check:generated`.** Expected: PASS.
+- [ ] **Step 5: Run `cargo fmt --all` and commit** as `feat(codex): read whether Codex trusts Marshell's hook entries from config.toml`.
 
 ### Task 4: Live status from Codex's hooks
 
@@ -243,12 +274,13 @@ git commit -m "docs(research): record Codex 0.163's hooks, trust and payloads, w
 - `export type HookAgent = "claude" | "codex"` in `src/lib/api/agents.ts`. `getSetup`, `planInstall` and `planRemove` take a `HookAgent`. `toDetections` no longer marks Codex `later`.
 - `useInstallFlow(endpoint, agent: HookAgent, onApplied)`.
 - `consentProps(s, flow)` uses `s.agent` for `cli` and `removalCopy`, and `s.needs_trust` for `needsTrust`.
+- The Agents dialog shows the trust line for `s.trust` (the exact strings from the constraints) under Codex's install state.
 - `CAPABILITIES.codex.status.entries` becomes 7.
 - `fixtures.ts`'s Codex sample becomes the `hooks.json` JSON shape from Task 1.
 
 - [ ] **Step 1: Write the failing tests.**
   - `shows a Codex section with its own consent when Codex is found`.
-  - `Codex's trust line before and after a hook is seen` (the exact strings from the constraints).
+  - `Codex's trust line for each trust state, and none for null` (the exact strings from the constraints).
   - `consentProps for Codex asks for trust and uses Codex's removal copy`.
   - `the install flow plans at /v1/agents/codex/hooks/plan`.
   - `the source line names hooks.json, not config.toml`.
@@ -270,7 +302,7 @@ git commit -m "docs(research): record Codex 0.163's hooks, trust and payloads, w
 
 - [ ] **Step 1: Write the failing tests.**
   - `a Codex row without hooks offers the setup`.
-  - `an installed but silent Codex keeps the limited fallback with no setup link`.
+  - `an installed but untrusted Codex keeps the limited fallback with no setup link`.
   - `a Codex row with live status shows its phrase`.
   - `a Codex card offers no Always allow`.
 - [ ] **Step 2: Run `pnpm test src/features/sessions/toRow.test.ts src/features/approval`.** Expected: FAIL.
@@ -287,8 +319,8 @@ git commit -m "docs(research): record Codex 0.163's hooks, trust and payloads, w
 - [ ] **Step 1: Run `cargo test -p marshell-core -j 4 codex`.** Expected: PASS. This is the exit's "fixture suites from the real CLIs" for Codex.
 - [ ] **Step 2: Run the live check.** Use `marshell-live-check` with `-CodexAuth` on the `phase-6a` head and check, in order:
   1. Onboarding shows a Codex card beside Claude's, with the exact `hooks.json` diff in the scratch `CODEX_HOME`.
-  2. Apply it. The Agents dialog says the hooks haven't been seen.
-  3. A Codex tab: `/hooks`, trust. The row shows Thinking, then Running, then Done, and the dialog says when the hooks ran.
+  2. Apply it. The Agents dialog says "Not trusted yet".
+  3. A Codex tab: choose **Trust all and continue**. The row shows Thinking, then Running, then Done, and the dialog, reopened, says "Trusted". Change one entry's timeout in the scratch `hooks.json` by hand: the dialog says "Changed since you trusted them".
   4. In `-a untrusted`, a shell command reaches the card. Allow runs it, and Deny stops it with the message.
   5. The banner appears with the window unfocused, and the request shows in Departures.
   6. With Marshell closed, Codex asks itself.
