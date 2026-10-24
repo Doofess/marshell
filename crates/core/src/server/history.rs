@@ -595,7 +595,9 @@ async fn open_in_new_tab(
     } else {
         ResumeTarget::Session(&meta.session_id)
     };
-    let run = resolve(&st, None, Some(agent_name.as_str()), None, Some(target), None).map_err(boxed)?;
+    let run = resolve(&st, None, Some(agent_name.as_str()), None, Some(target), None)
+        .await
+        .map_err(boxed)?;
     let created = start_session(
         &st,
         run,

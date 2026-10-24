@@ -17,10 +17,56 @@ pub fn version_gate(version: Option<&str>) -> Gate {
     super::common::version_gate("Codex", FIXTURE_VERSIONS, version)
 }
 
+/// The first Codex verified to accept `--no-daemon` (slice 6a decision 14).
+const NO_DAEMON_SINCE: (u32, u32, u32) = (0, 163, 0);
+
+/// Whether Marshell starts this Codex with `--no-daemon`: its version is 0.163.0 or newer. An older
+/// version, a pre-release of 0.163.0 itself, or one that can't be read gets no flag.
+pub fn supports_no_daemon(version: Option<&str>) -> bool {
+    let Some(version) = version else {
+        return false;
+    };
+    let (core, prerelease) = match version.find(['-', '+']) {
+        Some(at) => (&version[..at], version[at..].starts_with('-')),
+        None => (version, false),
+    };
+    let mut parts = core.split('.').map(|p| p.parse::<u32>().ok());
+    let (Some(Some(major)), Some(Some(minor)), Some(Some(patch)), None) =
+        (parts.next(), parts.next(), parts.next(), parts.next())
+    else {
+        return false;
+    };
+    let triple = (major, minor, patch);
+    triple > NO_DAEMON_SINCE || (triple == NO_DAEMON_SINCE && !prerelease)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::agents::parse_any_version;
+
+    #[test]
+    fn no_daemon_goes_to_0_163_and_newer() {
+        for v in ["0.163.0", "0.170.2", "1.0.0", "0.163.0+build", "0.164.0-alpha.1"] {
+            assert!(supports_no_daemon(Some(v)), "{v}");
+        }
+    }
+
+    #[test]
+    fn no_daemon_stays_off_for_older_or_unreadable_versions() {
+        for v in [
+            "0.162.9",
+            "0.100.0",
+            "0.163.0-alpha.1",
+            "0.162.9-rc.1",
+            "garbage",
+            "0.163",
+            "",
+        ] {
+            assert!(!supports_no_daemon(Some(v)), "{v}");
+        }
+        assert!(!supports_no_daemon(None));
+    }
 
     #[test]
     fn the_version_is_read_after_codex_cli() {

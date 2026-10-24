@@ -451,14 +451,16 @@ fn is_windows_powershell_5(profile: &Profile) -> bool {
 }
 
 /// The argv that starts `agent` (with an optional first prompt and mode) inside `profile`'s shell.
-/// With no agent it is the profile's own command.
+/// With no agent it is the profile's own command. `no_daemon` adds Codex's `--no-daemon`, and only for
+/// Codex: the caller says so when the detected version accepts it (slice 6a decision 14).
 pub fn launch_argv(
     profile: &Profile,
     agent: Option<&str>,
     prompt: Option<&str>,
     mode: Option<SessionMode>,
+    no_daemon: bool,
 ) -> Result<Vec<String>, String> {
-    build_argv(profile, agent, prompt, &[], mode)
+    build_argv(profile, agent, prompt, &[], mode, no_daemon)
 }
 
 /// Like `launch_argv` with no prompt, but the agent is told to continue the conversation `target` names.
@@ -469,9 +471,10 @@ pub fn launch_argv_resume(
     agent: Option<&str>,
     mode: Option<SessionMode>,
     target: ResumeTarget,
+    no_daemon: bool,
 ) -> Result<Vec<String>, String> {
     let extra = agent.map_or_else(Vec::new, |agent| resume_args(agent, target));
-    build_argv(profile, agent, None, &extra, mode)
+    build_argv(profile, agent, None, &extra, mode, no_daemon)
 }
 
 /// `extra` goes right after the agent's program name, then the mode flags, then any prompt.
@@ -481,6 +484,7 @@ fn build_argv(
     prompt: Option<&str>,
     extra: &[String],
     mode: Option<SessionMode>,
+    no_daemon: bool,
 ) -> Result<Vec<String>, String> {
     let Some(agent) = agent else {
         return Ok(profile.command.clone());
@@ -489,7 +493,12 @@ fn build_argv(
     let mut program_line = program.to_string();
     let mode_flags = mode.map_or(&[][..], |m| mode_args(agent, m));
     // Codex's shared daemon runs every session's hooks with the first tab's id (slice 6a decision 12).
-    let own_server: &[&str] = if agent == "codex" { &["--no-daemon"] } else { &[] };
+    // Only a version that accepts the flag gets it (decision 14).
+    let own_server: &[&str] = if agent == "codex" && no_daemon {
+        &["--no-daemon"]
+    } else {
+        &[]
+    };
     for arg in extra
         .iter()
         .map(String::as_str)
@@ -556,6 +565,26 @@ fn build_argv(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `launch_argv` without Codex's `--no-daemon`; the tests that want the flag call `super::launch_argv` with `true`.
+    fn launch_argv(
+        profile: &Profile,
+        agent: Option<&str>,
+        prompt: Option<&str>,
+        mode: Option<SessionMode>,
+    ) -> Result<Vec<String>, String> {
+        super::launch_argv(profile, agent, prompt, mode, false)
+    }
+
+    /// `launch_argv_resume` without Codex's `--no-daemon`.
+    fn launch_argv_resume(
+        profile: &Profile,
+        agent: Option<&str>,
+        mode: Option<SessionMode>,
+        target: ResumeTarget,
+    ) -> Result<Vec<String>, String> {
+        super::launch_argv_resume(profile, agent, mode, target, false)
+    }
 
     #[test]
     fn found_in_tries_the_endings() {
@@ -736,7 +765,7 @@ mod tests {
     fn cmd_without_prompt_builds_k_line() {
         let cmd = profile("cmd", &["cmd.exe"], ShellFamily::Cmd);
         assert_eq!(
-            launch_argv(&cmd, Some("codex"), None, None).unwrap(),
+            super::launch_argv(&cmd, Some("codex"), None, None, true).unwrap(),
             ["cmd.exe", "/k", "codex --no-daemon"]
         );
     }
@@ -823,7 +852,7 @@ mod tests {
     #[test]
     fn wsl_agent_argv_runs_bash_login() {
         let wsl = profile("wsl-ubuntu", &["wsl.exe", "-d", "Ubuntu"], ShellFamily::Wsl);
-        let argv = launch_argv(&wsl, Some("codex"), Some("hi"), None).unwrap();
+        let argv = super::launch_argv(&wsl, Some("codex"), Some("hi"), None, true).unwrap();
         assert_eq!(
             argv,
             [
@@ -945,7 +974,7 @@ mod tests {
         let argv = launch_argv_resume(&ps, Some("claude"), None, ResumeTarget::Last).unwrap();
         assert_eq!(argv.last().unwrap(), "& claude --continue");
         let sh = profile("bash", &["bash"], ShellFamily::Posix);
-        let argv = launch_argv_resume(&sh, Some("codex"), None, ResumeTarget::Last).unwrap();
+        let argv = super::launch_argv_resume(&sh, Some("codex"), None, ResumeTarget::Last, true).unwrap();
         assert!(
             argv.last()
                 .unwrap()
@@ -976,7 +1005,7 @@ mod tests {
             argv.last().unwrap(),
             "& claude --resume abc-1 --permission-mode bypassPermissions"
         );
-        let argv = launch_argv_resume(&ps, Some("codex"), None, by_id).unwrap();
+        let argv = super::launch_argv_resume(&ps, Some("codex"), None, by_id, true).unwrap();
         assert_eq!(argv.last().unwrap(), "& codex resume abc-1 --no-daemon");
     }
 
@@ -1039,10 +1068,20 @@ mod tests {
     fn codex_starts_with_its_own_app_server() {
         // In Codex's shared daemon every session's hooks carry the first tab's id (slice 6a decision 12).
         let ps = profile("pwsh", &["pwsh.exe"], ShellFamily::PowerShell);
-        let argv = launch_argv(&ps, Some("codex"), Some("hi"), Some(SessionMode::Manual)).unwrap();
+        let argv = super::launch_argv(&ps, Some("codex"), Some("hi"), Some(SessionMode::Manual), true).unwrap();
         assert!(argv.last().unwrap().starts_with("& codex --no-daemon "), "{argv:?}");
-        let argv = launch_argv(&ps, Some("claude"), None, None).unwrap();
+        // The flag is Codex's own: no other agent gets it, whatever the caller says.
+        let argv = super::launch_argv(&ps, Some("claude"), None, None, true).unwrap();
         assert!(!argv.last().unwrap().contains("--no-daemon"));
+    }
+
+    #[test]
+    fn codex_starts_without_no_daemon_when_the_version_does_not_take_it() {
+        let ps = profile("pwsh", &["pwsh.exe"], ShellFamily::PowerShell);
+        let argv = super::launch_argv(&ps, Some("codex"), Some("hi"), None, false).unwrap();
+        assert_eq!(argv.last().unwrap(), "& codex 'hi'");
+        let argv = super::launch_argv_resume(&ps, Some("codex"), None, ResumeTarget::Last, false).unwrap();
+        assert_eq!(argv.last().unwrap(), "& codex resume --last");
     }
 
     #[test]
@@ -1053,7 +1092,14 @@ mod tests {
             argv.last().unwrap(),
             "& claude --continue --permission-mode bypassPermissions"
         );
-        let argv = launch_argv_resume(&ps, Some("codex"), Some(SessionMode::FullAuto), ResumeTarget::Last).unwrap();
+        let argv = super::launch_argv_resume(
+            &ps,
+            Some("codex"),
+            Some(SessionMode::FullAuto),
+            ResumeTarget::Last,
+            true,
+        )
+        .unwrap();
         assert_eq!(
             argv.last().unwrap(),
             "& codex resume --last --no-daemon --approve-for-me"
