@@ -45,6 +45,8 @@ pub enum BackupRefusal {
     OtherInstall,
     /// It already has a "Marshell history" folder with files in it that Marshell didn't make.
     NotOurs,
+    /// The folder couldn't be checked just now (this install's id couldn't be read); trying again may work.
+    Unchecked,
 }
 
 impl BackupRefusal {
@@ -54,6 +56,7 @@ impl BackupRefusal {
             BackupRefusal::Missing => "That folder doesn't exist.",
             BackupRefusal::InsideHome => "Choose a folder outside Marshell's own folder.",
             BackupRefusal::OtherInstall => "That folder holds another Marshell's backup. Choose another folder.",
+            BackupRefusal::Unchecked => "Marshell couldn't check that folder just now. Try again in a minute.",
             BackupRefusal::NotOurs => {
                 "That folder already has a \"Marshell history\" folder that Marshell didn't make. Choose another folder."
             }
@@ -162,10 +165,12 @@ fn checked(home: &Path, dir: &Path) -> Result<PathBuf, BackupRefusal> {
                 .ok()
                 .and_then(|text| serde_json::from_str::<Marker>(&text).ok())
                 .ok_or(BackupRefusal::NotOurs)?;
-            // An id that can't be read can't be shown to match, so the folder is refused.
+            // An id that can't be read can't be shown to match, so the folder is refused, but not as another
+            // install's: the read may only have failed for now.
             match install_id(home) {
                 Ok(ours) if ours == theirs.install_id => Ok(target),
-                _ => Err(BackupRefusal::OtherInstall),
+                Ok(_) => Err(BackupRefusal::OtherInstall),
+                Err(_) => Err(BackupRefusal::Unchecked),
             }
         }
         _ => Err(BackupRefusal::NotOurs),
@@ -766,6 +771,29 @@ mod tests {
         assert_eq!(install_id(home.path()).unwrap(), id);
         std::fs::write(&file, b"not an id").unwrap();
         assert_ne!(install_id(home.path()).unwrap(), id, "an invalid id is still replaced");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn an_install_id_that_cannot_be_read_just_now_is_not_another_installs_backup() {
+        use std::os::windows::fs::OpenOptionsExt;
+        let home = tempfile::tempdir().unwrap();
+        let backup = tempfile::tempdir().unwrap();
+        let id = install_id(home.path()).unwrap();
+        let target = backup.path().join(TARGET_NAME);
+        std::fs::create_dir_all(&target).unwrap();
+        std::fs::write(target.join(MARKER), format!(r#"{{"install_id":"{id}"}}"#)).unwrap();
+        let file = paths::history_dir(home.path()).join("install-id");
+
+        // The id file is held, so it can't be read: that is not a different install's folder.
+        let held = File::options().read(true).share_mode(4).open(&file).unwrap();
+        assert_eq!(check_folder(home.path(), backup.path()), Err(BackupRefusal::Unchecked));
+        drop(held);
+        assert_eq!(check_folder(home.path(), backup.path()), Ok(()));
+        assert_eq!(
+            BackupRefusal::Unchecked.message(),
+            "Marshell couldn't check that folder just now. Try again in a minute."
+        );
     }
 
     #[cfg(unix)]

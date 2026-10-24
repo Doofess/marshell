@@ -8,6 +8,28 @@ pub async fn get(State(st): State<AppState>) -> Json<Settings> {
     Json(st.0.settings.lock().unwrap().clone())
 }
 
+/// Test hook: a test can park the folder check of one folder, to look at what else can run meanwhile.
+#[cfg(test)]
+static CHECK_GATE: std::sync::Mutex<Option<CheckGate>> = std::sync::Mutex::new(None);
+
+/// The folder to park, what says the check has started, and what lets it go on.
+#[cfg(test)]
+type CheckGate = (String, std::sync::mpsc::Sender<()>, std::sync::mpsc::Receiver<()>);
+
+fn before_folder_check(_dir: &str) {
+    #[cfg(test)]
+    {
+        let mut gate = CHECK_GATE.lock().unwrap();
+        if gate.as_ref().is_some_and(|(dir, ..)| dir == _dir)
+            && let Some((_, entered, release)) = gate.take()
+        {
+            drop(gate);
+            let _ = entered.send(());
+            let _ = release.recv();
+        }
+    }
+}
+
 pub async fn put(
     State(st): State<AppState>,
     Json(settings): Json<Settings>,
@@ -19,17 +41,22 @@ pub async fn put(
     // before the file is written until the copy in memory is replaced, so two saves at once happen
     // one after the other and the file and the memory always hold the same settings.
     let refused = tokio::task::spawn_blocking(move || {
-        let mut current = state.0.settings.lock().unwrap();
         // A folder that is already the backup folder isn't asked again here: an unplugged drive must not stop
-        // the theme from saving. Every copy checks the folder anyway.
-        let backup_changed = current.history_backup_dir != to_save.history_backup_dir;
-        if backup_changed
-            && let Some(dir) = &to_save.history_backup_dir
-            && let Err(refusal) =
-                crate::history::storage::backup::check_folder(&state.0.home, std::path::Path::new(dir))
+        // the theme from saving. Every copy checks the folder anyway. The check reads the disk and can hang on a
+        // network drive, so it runs before the settings lock is taken, which other requests wait for.
+        let saved_dir = state.0.settings.lock().unwrap().history_backup_dir.clone();
+        if let Some(dir) = &to_save.history_backup_dir
+            && saved_dir.as_ref() != Some(dir)
         {
-            return anyhow::Ok(Some(refusal));
+            before_folder_check(dir);
+            if let Err(refusal) =
+                crate::history::storage::backup::check_folder(&state.0.home, std::path::Path::new(dir))
+            {
+                return anyhow::Ok(Some(refusal));
+            }
         }
+        let mut current = state.0.settings.lock().unwrap();
+        let backup_changed = current.history_backup_dir != to_save.history_backup_dir;
         crate::settings::save(&state.0.home, &to_save)?;
         let import = to_save.history_import;
         let limits_changed = current.history_limit_gb != to_save.history_limit_gb
@@ -100,5 +127,44 @@ mod tests {
         assert_eq!(answer.appearance.accent, "teal");
         assert!(file.exists());
         assert_eq!(st.0.settings.lock().unwrap().appearance.accent, "teal");
+    }
+
+    /// The folder check can hang on a network drive, so it must not run while the settings lock is held: that
+    /// lock is also taken by GET /v1/settings and by every hook event. The check is parked here, and the lock
+    /// must be free meanwhile.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn put_checks_the_backup_folder_without_the_settings_lock() {
+        let home = tempfile::tempdir().unwrap();
+        let backup = tempfile::tempdir().unwrap();
+        let dir = backup.path().to_string_lossy().into_owned();
+        let st = AppState::new("t".into(), 1, Vec::new(), home.path().to_path_buf(), Vec::new());
+        let settings = Settings {
+            history_backup_dir: Some(dir.clone()),
+            ..Settings::default()
+        };
+
+        let (entered_tx, entered_rx) = std::sync::mpsc::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel();
+        *CHECK_GATE.lock().unwrap() = Some((dir.clone(), entered_tx, release_rx));
+        let task = tokio::spawn(put(State(st.clone()), Json(settings)));
+        tokio::task::spawn_blocking(move || entered_rx.recv_timeout(Duration::from_secs(10)))
+            .await
+            .unwrap()
+            .expect("the folder check never started");
+
+        {
+            let free = st.0.settings.try_lock();
+            assert!(free.is_ok(), "the folder check runs while the settings lock is held");
+        }
+        assert!(!crate::paths::settings_file(home.path()).exists());
+        release_tx.send(()).unwrap();
+
+        let Json(answer) = task.await.unwrap().unwrap();
+        assert_eq!(answer.history_backup_dir.as_deref(), Some(dir.as_str()));
+        assert_eq!(
+            st.0.settings.lock().unwrap().history_backup_dir.as_deref(),
+            Some(dir.as_str())
+        );
+        assert!(crate::paths::settings_file(home.path()).exists());
     }
 }
