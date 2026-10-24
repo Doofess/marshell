@@ -10,14 +10,16 @@ const NOT_AN_EXPORT: &str = "Not a conversation export.";
 const MAX_NAME: usize = 60;
 const MAX_BYTES: usize = 64 * 1024 * 1024;
 
-/// The file's extension when the name is `<words>-YYYY-MM-DD.md` or `.json`: lower-case letters and digits
-/// in words joined by single hyphens, then the date. At most 60 characters.
+/// The file's extension when the name is `<words>-YYYY-MM-DD.md`, `.json` or `.cast`: lower-case letters and
+/// digits in words joined by single hyphens, then the date. At most 60 characters.
 fn extension_of(name: &str) -> Option<&'static str> {
     if name.len() > MAX_NAME {
         return None;
     }
     let (stem, extension) = if let Some(stem) = name.strip_suffix(".md") {
         (stem, "md")
+    } else if let Some(stem) = name.strip_suffix(".cast") {
+        (stem, "cast")
     } else {
         (name.strip_suffix(".json")?, "json")
     };
@@ -61,7 +63,11 @@ pub async fn save_conversation(window: tauri::Window, request: Request<'_>) -> R
         .unwrap_or_default()
         .to_string();
     let extension = check(&name, bytes)?;
-    let label = if extension == "md" { "Markdown" } else { "JSON" };
+    let label = match extension {
+        "md" => "Markdown",
+        "cast" => "Asciicast",
+        _ => "JSON",
+    };
     let bytes = bytes.clone();
     // The blocking call waits on a pool thread, so neither the UI thread nor the async runtime stalls.
     tauri::async_runtime::spawn_blocking(move || {
@@ -93,6 +99,7 @@ mod tests {
         assert_eq!(check("my-chat-2026-10-23.md", text), Ok("md"));
         assert_eq!(check("conversation-2026-10-23.json", b"{}"), Ok("json"));
         assert_eq!(check("a-2026-10-23.md", b""), Ok("md"));
+        assert_eq!(check("my-chat-2026-10-24.cast", b"{}\n"), Ok("cast"));
         // The longest name that is allowed, and one character more.
         let long = format!("{}-2026-10-23.md", "a".repeat(MAX_NAME - 14));
         assert_eq!(long.len(), MAX_NAME);
@@ -109,6 +116,9 @@ mod tests {
             "x-2026-10-23.zip",
             "X-2026-10-23.md",
             "x-2026-10-23.MD",
+            "x-2026-10-23.CAST",
+            "x-2026-10-23.cast.exe",
+            "x-2026-10-23.casts",
             "x-2026-10-23",
             "-2026-10-23.md",
             "2026-10-23.md",

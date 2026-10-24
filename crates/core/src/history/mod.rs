@@ -7,10 +7,12 @@ use serde::{Deserialize, Serialize};
 use std::path::Path;
 
 pub mod archive;
+pub mod cast;
 pub mod export;
 pub mod index;
 pub mod marks;
 pub mod recorder;
+pub mod recordings;
 
 /// What Marshell knows about one agent conversation. Stored as the `<id>.meta.json` sidecar.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -24,10 +26,24 @@ pub struct SessionMeta {
     pub updated_ms: u64,
     /// The session this tab had before this one (after a /clear), if any.
     pub previous_in_tab: Option<String>,
+    /// The recordings (in `recordings/`) of the tabs this conversation ran in, oldest first.
+    #[serde(default)]
+    pub recordings: Vec<RecordingLink>,
+}
+
+/// One recording a conversation ran in, and when.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RecordingLink {
+    /// The file name in `recordings/`.
+    pub file: String,
+    /// The first hook event of this conversation in that recording, unix ms.
+    pub first_ms: u64,
+    /// The last hook event of this conversation in that recording, unix ms.
+    pub last_ms: u64,
 }
 
 impl store::Versioned for SessionMeta {
-    const VERSION: u32 = 1;
+    const VERSION: u32 = 2;
 }
 
 /// A session id is used in file names and as a command-line argument, so it must be 1 to 64 letters, digits,

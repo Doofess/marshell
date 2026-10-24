@@ -58,7 +58,7 @@ export type HistoryViewProps = {
   banner?: ReactNode;
   /** A file or web link clicked in assistant text. */
   onLink?: ConversationViewProps["onLink"];
-} & Partial<Pick<ConversationViewProps, "onFork" | "onPatch" | "onBookmark" | "onExport" | "onCopyMarkdown" | "onDelete" | "editor" | "onEditor" | "error">>;
+} & Partial<Pick<ConversationViewProps, "onFork" | "onPatch" | "onBookmark" | "onExport" | "onCopyMarkdown" | "onDelete" | "editor" | "onEditor" | "error" | "tab" | "onTab" | "playableTurns" | "onPlayFrom" | "recording">>;
 
 export const EMPTY_LIST_COPY = "No conversations yet. Claude Code sessions you run in Marshell show up here when their first turn ends.";
 export const noHitsCopy = (query: string) => `Nothing matches “${query}”.`;
@@ -349,6 +349,11 @@ export function HistoryView(p: HistoryViewProps) {
               editor={p.editor ?? null}
               onEditor={p.onEditor ?? noop}
               error={p.error}
+              tab={p.tab}
+              onTab={p.onTab}
+              playableTurns={p.playableTurns}
+              onPlayFrom={p.onPlayFrom}
+              recording={p.recording}
             />
           )}
         </div>

@@ -93,9 +93,13 @@ pub async fn post(
 /// runs on its own and the response does not wait for it.
 async fn record_history(st: &AppState, tab: &str, body: &serde_json::Value, at_ms: u64) {
     let history = st.history();
+    let recording = st
+        .session(tab)
+        .and_then(|s| s.recording_path())
+        .and_then(|path| path.file_name().map(|name| name.to_string_lossy().into_owned()));
     let (tab, body) = (tab.to_string(), body.clone());
     let noter = history.clone();
-    let meta = tokio::task::spawn_blocking(move || noter.note_event(&tab, &body, at_ms))
+    let meta = tokio::task::spawn_blocking(move || noter.note_event(&tab, recording.as_deref(), &body, at_ms))
         .await
         .unwrap_or(None);
     if let Some(meta) = meta {

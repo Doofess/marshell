@@ -114,8 +114,30 @@ pub struct ToolCard {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub detail: Option<String>,
+    /// The file an Edit or Write call changed. Not set for a failed call or any other tool.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub file: Option<EditedFile>,
     /// The call failed or was interrupted.
     pub error: bool,
+}
+
+/// One file changed by an Edit or Write call.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct EditedFile {
+    /// Relative to the conversation's folder when inside it, else as the agent gave it.
+    pub path: String,
+    /// Lines added; `None` when the result didn't say.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub added: Option<u32>,
+    /// Lines removed; `None` when the result didn't say.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub removed: Option<u32>,
+    /// The call created the file.
+    pub created: bool,
 }
 
 /// One row of the History list: an archived conversation as the index knows it.
@@ -200,4 +222,57 @@ pub struct HistoryQuery {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub archived: Option<bool>,
+}
+
+/// One event of an asciicast recording, with its time already placed on the Unix clock.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct CastEvent {
+    /// The part's start plus the event's offset, in ms since the Unix epoch.
+    #[ts(type = "number")]
+    pub at_ms: u64,
+    /// "o" output, "r" resize ("80x24") or "m" mark.
+    pub code: String,
+    pub data: String,
+}
+
+/// One recording file of a conversation (a tab's run), with the stretch of it the conversation covers.
+/// All times are ms since the Unix epoch.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct RecordingPart {
+    /// Parts are numbered from 0 in time order.
+    pub index: u32,
+    /// The recording's file name in Marshell's recordings folder.
+    pub file: String,
+    #[ts(type = "number")]
+    pub started_ms: u64,
+    #[ts(type = "number")]
+    pub ended_ms: u64,
+    pub cols: u16,
+    pub rows: u16,
+    /// The conversation's span clipped to this part.
+    #[ts(type = "number")]
+    pub span_from_ms: u64,
+    #[ts(type = "number")]
+    pub span_to_ms: u64,
+    /// Times of the prompt marks.
+    #[ts(type = "Array<number>")]
+    pub marks_ms: Vec<u64>,
+    /// The "Recording stopped:" marker text, when the recording ends with one.
+    pub stopped: Option<String>,
+}
+
+/// A stretch of a recording's events. `screen` comes only with the first answer of a seek.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct RecordingFrames {
+    pub cols: u16,
+    pub rows: u16,
+    /// The screen at the start, as escape sequences.
+    pub screen: Option<String>,
+    pub events: Vec<CastEvent>,
+    /// Where to continue, or null at the end of the range.
+    #[ts(type = "number | null")]
+    pub next_offset: Option<u64>,
 }

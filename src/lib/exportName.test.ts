@@ -8,6 +8,9 @@ describe("exportFileName", () => {
     expect(exportFileName("Fix: the API!", "markdown", day)).toBe("fix-the-api-2026-10-23.md");
     expect(exportFileName("Retry limit work", "json", day)).toBe("retry-limit-work-2026-10-23.json");
   });
+  it("gives a recording the .cast extension", () => {
+    expect(exportFileName("Fix: the API!", "asciicast", day)).toBe("fix-the-api-2026-10-23.cast");
+  });
   it("falls back to 'conversation' when nothing ASCII is left", () => {
     expect(exportFileName("שלום עולם", "markdown", day)).toBe("conversation-2026-10-23.md");
     expect(exportFileName("  !!! ", "json", day)).toBe("conversation-2026-10-23.json");
@@ -26,9 +29,9 @@ describe("exportFileName", () => {
     expect(exportFileName("Notes", "markdown", new Date(2026, 0, 5, 0, 1))).toBe("notes-2026-01-05.md");
   });
   it("always fits the shell's name check", () => {
-    const shape = /^[a-z0-9]+(?:-[a-z0-9]+)*-\d{4}-\d{2}-\d{2}\.(md|json)$/;
+    const shape = /^[a-z0-9]+(?:-[a-z0-9]+)*-\d{4}-\d{2}-\d{2}\.(md|json|cast)$/;
     for (const title of ["", "Ünïcode ✓ title", "a-b--c", "---", "9".repeat(80), "x y\nz\t!"]) {
-      for (const format of ["markdown", "json"] as const) {
+      for (const format of ["markdown", "json", "asciicast"] as const) {
         const name = exportFileName(title, format, day);
         expect(name).toMatch(shape);
         expect(name.length).toBeLessThanOrEqual(60);
@@ -50,6 +53,13 @@ describe("exportTitle", () => {
   it("reads the redacted title from a JSON export", () => {
     const text = JSON.stringify({ title: "fix <home>/app", turns: [] });
     expect(exportFileName(exportTitle(text, "json", "fix C:\Users\rotem\app", true), "json", day)).toContain("home");
+  });
+  it("reads the redacted title from the header line of an asciicast", () => {
+    const text = `${JSON.stringify({ version: 2, width: 80, height: 24, title: "use <anthropic-key> here" })}\n[0,"o","x"]\n`;
+    const name = exportFileName(exportTitle(text, "asciicast", raw, true), "asciicast", day);
+    expect(name).toBe("use-anthropic-key-here-2026-10-23.cast");
+    expect(exportTitle(text, "asciicast", raw, false)).toBe(raw);
+    expect(exportTitle("not a header\n", "asciicast", raw, true)).toBe("");
   });
   it("never falls back to the raw title when the redacted text has none", () => {
     expect(exportTitle("not json", "json", raw, true)).toBe("");

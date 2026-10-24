@@ -202,6 +202,10 @@
   max-inline-size: 80ch;
   padding: var(--space-6) var(--space-6) var(--space-8);
 }
+/* A recording is as wide as its terminal was, so its tab takes the pane's width rather than the reading column. */
+.conversation:has(> [role="tabpanel"]:not([hidden]) > .recording) {
+  max-inline-size: none;
+}
 .conversation__head {
   display: flex;
   align-items: flex-start;
@@ -304,6 +308,8 @@
 .conversation__action:focus-visible,
 .conversation__input:focus-visible,
 .turn__bookmark:focus-visible,
+.conversation__tab:focus-visible,
+.file__goto:focus-visible,
 .tool__summary:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
@@ -318,6 +324,27 @@
   border-inline-start: 3px solid var(--caution);
   background: var(--fill);
   text-wrap: pretty;
+}
+
+/* The tabs under the header: quiet buttons on the fill; the chosen one carries SelectedMark's fill, end bar and forced-colors outline. */
+.conversation__tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  margin-block-start: var(--space-6);
+}
+.conversation__tab {
+  padding: var(--space-1) var(--space-3);
+  border-radius: var(--radius);
+  background: var(--fill);
+  color: var(--text-2);
+  font-size: var(--text-13);
+}
+.conversation__tab:active {
+  box-shadow: inset 0 0 0 100vmax var(--selected);
+}
+[role="tabpanel"] {
+  min-inline-size: 0;
 }
 
 /* A turn: the prompt is its heading, with a bar down its start edge; what the agent did sits indented under it. */
@@ -337,6 +364,10 @@
 }
 .turn[data-target="true"] .turn__prompt {
   background: var(--selected);
+}
+.turn__prompt:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 .turn__meta {
   display: flex;
@@ -528,12 +559,91 @@ details.tool[open] > summary {
   }
 }
 
+/* Files changed: one block per file, its path and totals on a line, then each edit with its diff. Set apart by space and a hairline, not boxes. */
+.files {
+  display: grid;
+  gap: var(--space-4);
+  margin-block-start: var(--space-6);
+}
+.files__heading {
+  margin: 0;
+  font-size: var(--text-15);
+}
+.files__note,
+.files__empty {
+  margin: 0;
+  max-inline-size: 70ch;
+  color: var(--text-2);
+  font-size: var(--text-12);
+  text-wrap: pretty;
+}
+.files__list,
+.file__edits {
+  display: grid;
+  gap: var(--space-4);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.file {
+  padding-block-start: var(--space-4);
+  border-block-start: 1px solid var(--hairline);
+}
+.file__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-1) var(--space-3);
+  margin: 0 0 var(--space-3);
+  font-size: var(--text-13);
+}
+.file__path {
+  min-inline-size: 0;
+  font-family: var(--font-mono);
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.file__count {
+  font-variant-numeric: tabular-nums;
+  color: var(--text-2);
+}
+.file__new {
+  padding: 0 var(--space-2);
+  border-radius: var(--radius);
+  background: var(--fill-strong);
+  color: var(--text-1);
+  font-size: var(--text-12);
+}
+.file__edit {
+  display: grid;
+  gap: var(--space-2);
+}
+.file__edit-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  color: var(--text-2);
+  font-size: var(--text-12);
+}
+.file__goto {
+  padding: 0 var(--space-2);
+  border-radius: var(--radius);
+  background: var(--fill);
+  color: var(--text-1);
+  font-size: var(--text-12);
+}
+.file__goto:active {
+  box-shadow: inset 0 0 0 100vmax var(--selected);
+}
+
 @media (hover: hover) and (pointer: fine) {
   .history__row:hover:not([aria-selected="true"]) {
     background: var(--hover);
   }
   .conversation__action:hover,
   .turn__bookmark:hover,
+  .conversation__tab:hover:not([aria-selected="true"]),
+  .file__goto:hover,
   .history__back:hover {
     box-shadow: inset 0 0 0 100vmax var(--hover);
   }
@@ -549,6 +659,8 @@ details.tool[open] > summary {
   .conversation__action,
   .conversation__input,
   .turn__bookmark,
+  .conversation__tab,
+  .file__goto,
   .tool {
     outline: 1px solid CanvasText;
   }

@@ -1,9 +1,12 @@
 import { useEffect, useId, useRef, useState } from "react";
+import { selectedProps } from "../../components/a11y/SelectedMark";
 import { Chip } from "../../components/Chip/Chip";
 import { ContextMenu, type MenuItem } from "../../components/ContextMenu/ContextMenu";
 import type { Conversation } from "../../generated/Conversation";
 import type { HistoryPatch } from "../../generated/HistoryPatch";
 import type { TurnItem } from "../../generated/TurnItem";
+import { filesChanged } from "./changedFiles";
+import { FilesChanged } from "./FilesChanged";
 import { MarkdownText, type MarkdownTextProps } from "./MarkdownText";
 import { ToolCard } from "./ToolCard";
 import "./History.css";
@@ -15,6 +18,20 @@ const limitedNotice = (version: string | undefined) =>
   version
     ? `Status limited: Claude Code ${version} saved this conversation, and Marshell hasn't been tested with that version. Some parts may be missing.`
     : "Status limited: this conversation has no Claude Code version, so some parts may be missing.";
+
+/** The conversation view's tabs, in order. */
+export type ConversationTab = "conversation" | "recording" | "files";
+const TABS: ConversationTab[] = ["conversation", "recording", "files"];
+
+/** The tab a key moves to from `current` (ArrowLeft and ArrowRight wrap, Home and End jump), or null for any other key. */
+export function tabKey(current: ConversationTab, key: string): ConversationTab | null {
+  const i = TABS.indexOf(current);
+  if (key === "ArrowRight") return TABS[(i + 1) % TABS.length]!;
+  if (key === "ArrowLeft") return TABS[(i + TABS.length - 1) % TABS.length]!;
+  if (key === "Home") return TABS[0]!;
+  if (key === "End") return TABS[TABS.length - 1]!;
+  return null;
+}
 
 /** Which inline editor is open in the header. */
 export type ConversationEditor = "rename" | "tags" | "delete";
@@ -44,7 +61,18 @@ export type ConversationViewProps = {
   onEditor: (e: ConversationEditor | null) => void;
   /** The core's reason for refusing the last change, shown under the open editor. */
   error?: string;
+  /** The open tab. Without it the view shows the conversation. */
+  tab?: ConversationTab;
+  onTab?: (t: ConversationTab) => void;
+  /** The turns (0-based) that "Play from here" can start: the ones inside the recording. */
+  playableTurns?: ReadonlySet<number>;
+  /** Plays the recording from this turn (0-based); the owner switches to the Recording tab. */
+  onPlayFrom?: (turn: number) => void;
+  /** The Recording panel, which the owner builds. */
+  recording?: React.ReactNode;
 };
+
+const NO_TURNS: ReadonlySet<number> = new Set();
 
 /** The "More actions" menu, in order. Pin and Archive turn into Unpin and Unarchive when set. */
 export function moreActions(marks: { pinned: boolean; archived: boolean }): MenuItem[] {
@@ -114,6 +142,11 @@ export function ConversationView({
   editor,
   onEditor,
   error,
+  tab = "conversation",
+  onTab = () => {},
+  playableTurns = NO_TURNS,
+  onPlayFrom = () => {},
+  recording = null,
 }: ConversationViewProps) {
   const uid = useId();
   const root = useRef<HTMLElement>(null);
@@ -121,6 +154,8 @@ export function ConversationView({
   const boxRef = useRef<HTMLInputElement>(null);
   const deleteRef = useRef<HTMLButtonElement>(null);
   const shownEditor = useRef<ConversationEditor | null>(null);
+  const tabRefs = useRef<Partial<Record<ConversationTab, HTMLButtonElement | null>>>({});
+  const pendingTurn = useRef<number | null>(null);
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
 
   // Keyed on the conversation's identity, not `c`: a refresh after a bookmark, pin or rename replaces `c`, and the view must stay where the person is.
@@ -128,6 +163,16 @@ export function ConversationView({
     if (scrollToTurn === undefined) return;
     root.current?.querySelector(`[data-turn="${scrollToTurn}"]`)?.scrollIntoView?.({ block: "start" });
   }, [c.agent, c.session_id, scrollToTurn]);
+
+  // "Go to turn" from the Files changed tab: the turns exist once the Conversation tab is showing. The button that was pressed
+  // is gone with its tab, so focus goes to the turn's prompt.
+  useEffect(() => {
+    if (tab !== "conversation" || pendingTurn.current === null) return;
+    const turn = root.current?.querySelector(`[data-turn="${pendingTurn.current}"]`);
+    turn?.scrollIntoView?.({ block: "start" });
+    turn?.querySelector<HTMLElement>(".turn__prompt")?.focus({ preventScroll: true });
+    pendingTurn.current = null;
+  }, [tab]);
 
   // An editor takes focus when it opens; when it closes, focus goes back to "More actions".
   useEffect(() => {
@@ -141,7 +186,29 @@ export function ConversationView({
   const errorId = `${uid}-error`;
   const hintId = `${uid}-hint`;
 
-  const openMenu = () => {
+  const fileCount = filesChanged(c).length;
+  const labels: Record<ConversationTab, string> = {
+    conversation: "Conversation",
+    recording: "Recording",
+    files: fileCount > 0 ? `Files changed (${fileCount})` : "Files changed",
+  };
+  const tabId = (t: ConversationTab) => `${uid}-tab-${t}`;
+  const panelId = (t: ConversationTab) => `${uid}-panel-${t}`;
+  const onTabKey = (e: React.KeyboardEvent) => {
+    const next = tabKey(tab, e.key);
+    if (next === null) return;
+    e.preventDefault();
+    onTab(next);
+    tabRefs.current[next]?.focus();
+  };
+  // Esc inside the player first returns to the Recording tab; the key is handled here, so it doesn't also close the view.
+  const recordingKey = (e: React.KeyboardEvent) => {
+    if (e.key !== "Escape" || !(e.target instanceof Element) || !e.target.closest(".player")) return;
+    e.preventDefault();
+    tabRefs.current.recording?.focus();
+  };
+
+  const openMenu =() => {
     const r = moreRef.current?.getBoundingClientRect();
     setMenu({ x: r?.left ?? 0, y: r?.bottom ?? 0 });
   };
@@ -293,45 +360,92 @@ export function ConversationView({
           {limitedNotice(c.version)}
         </p>
       )}
-      {c.turns.map((t) => {
-        const marked = c.marks.bookmarked_turns.includes(t.index);
-        return (
-          <section
-            key={t.index}
-            className="turn"
-            data-turn={t.index}
-            data-target={t.index === scrollToTurn ? "true" : undefined}
-            aria-labelledby={`${uid}-turn-${t.index}`}
+      <div className="conversation__tabs" role="tablist" aria-label="Conversation views" onKeyDown={onTabKey}>
+        {TABS.map((t) => (
+          <button
+            key={t}
+            ref={(el) => {
+              tabRefs.current[t] = el;
+            }}
+            type="button"
+            role="tab"
+            id={tabId(t)}
+            aria-controls={panelId(t)}
+            tabIndex={tab === t ? 0 : -1}
+            {...selectedProps(tab === t, "selected", "conversation__tab")}
+            onClick={() => onTab(t)}
           >
-            <h3 className="turn__prompt" id={`${uid}-turn-${t.index}`} dir="auto">
-              {t.prompt}
-            </h3>
-            <div className="turn__meta">
-              {t.at_ms > 0 && (
-                <time className="turn__time" dateTime={new Date(t.at_ms).toISOString()}>
-                  {when(t.at_ms)}
-                </time>
-              )}
-              <button
-                type="button"
-                className="turn__bookmark"
-                aria-label={`Bookmark turn ${t.index + 1}`}
-                aria-pressed={marked}
-                onClick={() => onBookmark(t.index, !marked)}
+            {labels[t]}
+          </button>
+        ))}
+      </div>
+      <div role="tabpanel" id={panelId("conversation")} aria-labelledby={tabId("conversation")} hidden={tab !== "conversation"}>
+        {tab === "conversation" &&
+          c.turns.map((t) => {
+            const marked = c.marks.bookmarked_turns.includes(t.index);
+            return (
+              <section
+                key={t.index}
+                className="turn"
+                data-turn={t.index}
+                data-target={t.index === scrollToTurn ? "true" : undefined}
+                aria-labelledby={`${uid}-turn-${t.index}`}
               >
-                {marked ? "Bookmarked" : "Bookmark"}
-              </button>
-            </div>
-            {t.items.length > 0 && (
-              <div className="turn__items">
-                {t.items.map((item, i) => (
-                  <Item key={i} item={item} cwd={c.cwd} onLink={onLink} />
-                ))}
-              </div>
-            )}
-          </section>
-        );
-      })}
+                <h3 className="turn__prompt" id={`${uid}-turn-${t.index}`} dir="auto" tabIndex={-1}>
+                  {t.prompt}
+                </h3>
+                <div className="turn__meta">
+                  {t.at_ms > 0 && (
+                    <time className="turn__time" dateTime={new Date(t.at_ms).toISOString()}>
+                      {when(t.at_ms)}
+                    </time>
+                  )}
+                  {playableTurns.has(t.index) && (
+                    <button type="button" className="turn__bookmark" aria-label={`Play turn ${t.index + 1} from here`}
+                      onClick={() => {
+                        // The button goes with the Conversation tab; focus goes to the Recording tab, as Esc in the player does.
+                        onPlayFrom(t.index);
+                        tabRefs.current.recording?.focus();
+                      }}
+                    >
+                      Play from here
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    className="turn__bookmark"
+                    aria-label={`Bookmark turn ${t.index + 1}`}
+                    aria-pressed={marked}
+                    onClick={() => onBookmark(t.index, !marked)}
+                  >
+                    {marked ? "Bookmarked" : "Bookmark"}
+                  </button>
+                </div>
+                {t.items.length > 0 && (
+                  <div className="turn__items">
+                    {t.items.map((item, i) => (
+                      <Item key={i} item={item} cwd={c.cwd} onLink={onLink} />
+                    ))}
+                  </div>
+                )}
+              </section>
+            );
+          })}
+      </div>
+      <div role="tabpanel" id={panelId("recording")} aria-labelledby={tabId("recording")} hidden={tab !== "recording"} onKeyDown={recordingKey}>
+        {tab === "recording" && recording}
+      </div>
+      <div role="tabpanel" id={panelId("files")} aria-labelledby={tabId("files")} hidden={tab !== "files"}>
+        {tab === "files" && (
+          <FilesChanged
+            conversation={c}
+            onGoToTurn={(turn) => {
+              pendingTurn.current = turn;
+              onTab("conversation");
+            }}
+          />
+        )}
+      </div>
     </article>
   );
 }

@@ -6,17 +6,21 @@
 use super::AppState;
 use super::sessions::{NO_CONVERSATION, ResumeRequest, cannot_resume, resolve, start_session};
 use crate::agents::claude::transcript;
-use crate::history::export::{ExportFormat, export_text};
+use crate::history::cast::{self, FrameStart, FramesError};
+use crate::history::export::{AsciicastError, ExportFormat, export_text, to_asciicast};
 use crate::history::marks::normalize_name;
 use crate::history::recorder::{BookmarkRefusal, BookmarkTurnRefusal, DeleteRefusal, History};
-use crate::history::{SessionMeta, archive, transcript_allowed, valid_session_id};
+use crate::history::{SessionMeta, archive, recordings, transcript_allowed, valid_session_id};
+use crate::paths;
 use crate::profiles::detect::ResumeTarget;
 use axum::Json;
 use axum::extract::{Path, Query, State};
 use axum::http::{StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use marshell_protocol::api::{CreateSessionResponse, SessionState};
-use marshell_protocol::history::{Bookmarked, Conversation, HistoryEntry, HistoryPatch, HistoryQuery, SearchHit};
+use marshell_protocol::history::{
+    Bookmarked, Conversation, HistoryEntry, HistoryPatch, HistoryQuery, RecordingFrames, RecordingPart, SearchHit,
+};
 use serde::Deserialize;
 use std::sync::Arc;
 
@@ -164,8 +168,8 @@ fn yes() -> bool {
     true
 }
 
-/// The conversation as markdown (the default) or JSON, with secrets and personal paths hidden unless
-/// `redact=false`. The text is built here; the Save dialog is the shell's.
+/// The conversation as markdown (the default), JSON or an asciicast of its recording, with secrets and personal
+/// paths hidden unless `redact=false`. The text is built here; the Save dialog is the shell's.
 pub async fn export(
     State(st): State<AppState>,
     Path((agent, session_id)): Path<(String, String)>,
@@ -174,16 +178,117 @@ pub async fn export(
     check(&agent, &session_id)?;
     let history = st.history();
     let home = st.home().to_path_buf();
-    let text = blocking(move || {
-        let conversation = load_conversation(&history, &home, &session_id)?;
-        Ok(export_text(conversation, query.format, query.redact))
+    let (format, redact) = (query.format, query.redact);
+    let text = blocking(move || match format {
+        ExportFormat::Asciicast => asciicast(&history, &home, &session_id, redact),
+        _ => {
+            let conversation = load_conversation(&history, &home, &session_id)?;
+            Ok(export_text(conversation, format, redact))
+        }
     })
     .await?;
-    let kind = match query.format {
+    let kind = match format {
         ExportFormat::Markdown => "text/markdown; charset=utf-8",
         ExportFormat::Json => "application/json",
+        ExportFormat::Asciicast => "application/x-asciicast",
     };
     Ok(([(header::CONTENT_TYPE, kind)], text).into_response())
+}
+
+const NO_RECORDING: &str = "Marshell has no recording of this conversation.";
+const RECORDING_TOO_LARGE: &str = "This recording is over 64 MiB, too large to export.";
+
+/// The conversation's recording as an asciicast, titled with its name or its title. Blocking.
+fn asciicast(history: &History, home: &std::path::Path, session_id: &str, redact: bool) -> Result<String, Fail> {
+    let parts = recording_parts(history, home, session_id)?;
+    if parts.is_empty() {
+        return Err((StatusCode::NOT_FOUND, NO_RECORDING.into()));
+    }
+    let entry = history.entry(AGENT, session_id).map_err(failed)?.ok_or_else(no_such)?;
+    let title = history.marks(AGENT, session_id).name.unwrap_or(entry.title);
+    let redactor = redact.then(crate::diagnostics::redact::global);
+    to_asciicast(home, &parts, &title, redactor).map_err(|err| match err {
+        AsciicastError::TooLarge => (StatusCode::PAYLOAD_TOO_LARGE, RECORDING_TOO_LARGE.into()),
+        AsciicastError::Failed(err) => failed(err),
+    })
+}
+
+const NO_PART: &str = "No such part of the recording.";
+
+/// The most event data one frames answer carries.
+const FRAMES_BUDGET: usize = 1 << 20;
+
+/// The parts of the conversation's recording, from its sidecar. The span starts at the first prompt whose time
+/// is known (the index has the turn times, so the transcript isn't parsed again) and ends at the sidecar's last
+/// update. Blocking.
+fn recording_parts(history: &History, home: &std::path::Path, session_id: &str) -> Result<Vec<RecordingPart>, Fail> {
+    require_on(history)?;
+    let meta = archive::read_meta(home, AGENT, session_id)
+        .map_err(failed)?
+        .ok_or_else(no_such)?;
+    let from = history
+        .first_prompt_ms(AGENT, session_id)
+        .map_err(failed)?
+        .unwrap_or(meta.started_ms);
+    Ok(recordings::parts(home, &meta, (from, meta.updated_ms), history.casts()))
+}
+
+/// The recording files that cover the conversation, in time order; empty when it has none.
+pub async fn recordings(
+    State(st): State<AppState>,
+    Path((agent, session_id)): Path<(String, String)>,
+) -> Result<Json<Vec<RecordingPart>>, Fail> {
+    check(&agent, &session_id)?;
+    let history = st.history();
+    let home = st.home().to_path_buf();
+    let parts = blocking(move || recording_parts(&history, &home, &session_id)).await?;
+    Ok(Json(parts))
+}
+
+#[derive(Deserialize)]
+pub struct FramesQuery {
+    from_ms: Option<u64>,
+    to_ms: Option<u64>,
+    offset: Option<u64>,
+}
+
+/// A stretch of one part's events. `offset` (from an earlier answer's `next_offset`) continues where it stopped;
+/// otherwise `from_ms` (default: the part's start) seeks, and the answer carries the screen at that moment.
+/// `to_ms` is exclusive and defaults to the end of the part.
+pub async fn recording_frames(
+    State(st): State<AppState>,
+    Path((agent, session_id, part)): Path<(String, String, u32)>,
+    Query(query): Query<FramesQuery>,
+) -> Result<Json<RecordingFrames>, Fail> {
+    check(&agent, &session_id)?;
+    let history = st.history();
+    let home = st.home().to_path_buf();
+    let frames = blocking(move || {
+        let parts = recording_parts(&history, &home, &session_id)?;
+        let part = parts
+            .into_iter()
+            .find(|p| p.index == part)
+            .ok_or((StatusCode::NOT_FOUND, NO_PART.into()))?;
+        let start = match query.offset {
+            Some(offset) => FrameStart::Offset(offset),
+            None => FrameStart::At(query.from_ms.unwrap_or(part.started_ms)),
+        };
+        // The part's last event is at `ended_ms`, and `to_ms` is exclusive.
+        let to_ms = query.to_ms.unwrap_or(part.ended_ms + 1);
+        let path = paths::recordings_dir(&home).join(&part.file);
+        cast::frames(&path, part.started_ms, start, to_ms, FRAMES_BUDGET).map_err(|err| match err {
+            FramesError::NotABoundary => (StatusCode::BAD_REQUEST, err.to_string()),
+            FramesError::Failed(err) => failed(err),
+        })
+    })
+    .await?;
+    Ok(Json(RecordingFrames {
+        cols: frames.cols,
+        rows: frames.rows,
+        screen: frames.screen,
+        events: frames.events,
+        next_offset: frames.next_offset,
+    }))
 }
 
 pub async fn patch(
@@ -338,7 +443,7 @@ fn boxed(err: impl IntoResponse) -> Box<Response> {
 /// What the lookup before a Resume or Fork found.
 enum Found {
     /// The conversation, and the name its new tab opens under, if the person named it.
-    Usable(SessionMeta, Option<String>),
+    Usable(Box<SessionMeta>, Option<String>),
     /// Claude's transcript file is gone.
     Gone,
     RunningInATab,
@@ -392,12 +497,12 @@ async fn open_in_new_tab(
         } else {
             name
         };
-        Ok(Found::Usable(meta, tab_name))
+        Ok(Found::Usable(Box::new(meta), tab_name))
     })
     .await
     .map_err(boxed)?;
     let (meta, tab_name) = match meta {
-        Found::Usable(meta, tab_name) => (meta, tab_name),
+        Found::Usable(meta, tab_name) => (*meta, tab_name),
         Found::Gone => return Err(Box::new(cannot_resume(NO_CONVERSATION))),
         Found::RunningInATab => return Err(Box::new(cannot_resume(RUNNING_IN_A_TAB))),
     };

@@ -3,7 +3,8 @@
 
 use super::index::{Index, Opened};
 use super::marks::{self, Marks};
-use super::{SessionMeta, archive, transcript_allowed};
+use super::recordings::CastCache;
+use super::{RecordingLink, SessionMeta, archive, cast, transcript_allowed};
 use crate::agents::claude::transcript;
 use crate::registry::Registry;
 use marshell_protocol::api::SessionState;
@@ -121,6 +122,8 @@ pub struct History {
     settle: Mutex<Duration>,
     /// Set by `flush`: every settle wait ends at once.
     hurry: AtomicBool,
+    /// Summaries of recordings already scanned, for the Recording tab.
+    casts: CastCache,
 }
 
 impl History {
@@ -156,6 +159,7 @@ impl History {
             copying: Mutex::new(HashMap::new()),
             settle: Mutex::new(SETTLE),
             hurry: AtomicBool::new(false),
+            casts: CastCache::default(),
         }
     }
 
@@ -170,8 +174,13 @@ impl History {
     }
 
     /// Validates the body, updates the index and sidecar when it is a session start, stop or end or a session not
-    /// yet seen in this tab, and says whether a copy should follow. Blocking: call inside spawn_blocking.
-    pub fn note_event(&self, tab_id: &str, body: &Value, at_ms: u64) -> Option<SessionMeta> {
+    /// yet seen in this tab, and says whether a copy should follow. `recording` is the file name of the tab's
+    /// recording; the sidecar lists it once, also when the event would not otherwise write the sidecar (a restart
+    /// in the same tab starts a new file). Blocking: call inside spawn_blocking.
+    pub fn note_event(&self, tab_id: &str, recording: Option<&str>, body: &Value, at_ms: u64) -> Option<SessionMeta> {
+        let recording = recording
+            .filter(|name| cast::valid_recording_name(name))
+            .map(str::to_string);
         let text = |key: &str| body.get(key).and_then(Value::as_str);
         let event = text("hook_event_name")?;
         let session_id = text("session_id")?;
@@ -216,6 +225,14 @@ impl History {
             started_ms,
             updated_ms: at_ms,
             previous_in_tab,
+            recordings: recording
+                .iter()
+                .map(|file| RecordingLink {
+                    file: file.clone(),
+                    first_ms: at_ms,
+                    last_ms: at_ms,
+                })
+                .collect(),
         };
         let ends_turn = matches!(event, "Stop" | "StopFailure" | "SessionEnd");
         if is_new || ends_turn || event == "SessionStart" {
@@ -233,6 +250,16 @@ impl History {
                         tracing::warn!("history name inheritance failed: {err:#}");
                     }
                 }
+            }
+        } else if let Some(name) = &recording {
+            match archive::read_meta(&self.home, AGENT, session_id) {
+                Ok(Some(listed)) if !listed.recordings.iter().any(|l| &l.file == name) => {
+                    if let Err(err) = archive::write_meta(&self.home, &meta) {
+                        tracing::warn!("history sidecar write failed: {err:#}");
+                    }
+                }
+                Ok(_) => {}
+                Err(err) => tracing::warn!("history sidecar read failed: {err:#}"),
             }
         }
         ends_turn.then_some(meta)
@@ -259,6 +286,24 @@ impl History {
     pub fn get(&self, agent: &str, session_id: &str) -> anyhow::Result<Option<SessionMeta>> {
         match self.index.lock().unwrap().as_ref() {
             Some(index) => index.get(agent, session_id),
+            None => Ok(None),
+        }
+    }
+
+    /// The recording summaries cache.
+    pub fn casts(&self) -> &CastCache {
+        &self.casts
+    }
+
+    /// When the conversation's first prompt with a known time was sent, from the index. None when it has none
+    /// yet, and when history is off. Blocking.
+    pub fn first_prompt_ms(&self, agent: &str, session_id: &str) -> anyhow::Result<Option<u64>> {
+        match self.index.lock().unwrap().as_ref() {
+            Some(index) => Ok(index
+                .turn_times(agent, session_id)?
+                .into_iter()
+                .map(|(_, at_ms)| at_ms)
+                .find(|at_ms| *at_ms != 0)),
             None => Ok(None),
         }
     }
@@ -676,26 +721,36 @@ mod tests {
         let home = tempfile::tempdir().unwrap();
         let history = History::open(home.path());
 
-        assert_eq!(history.note_event("t1", &body(START, home.path(), ID), 1000), None);
+        assert_eq!(
+            history.note_event("t1", None, &body(START, home.path(), ID), 1000),
+            None
+        );
         let row = history.latest_for_tab("t1").unwrap();
         assert_eq!(row.session_id, ID);
         assert_eq!(row.started_ms, 1000);
         assert!(sidecar(home.path(), ID).exists());
 
-        let stopped = history.note_event("t1", &body(STOP, home.path(), ID), 2000).unwrap();
+        let stopped = history
+            .note_event("t1", None, &body(STOP, home.path(), ID), 2000)
+            .unwrap();
         assert_eq!(stopped.started_ms, 1000);
         assert_eq!(stopped.updated_ms, 2000);
 
         let before_bytes = std::fs::read(sidecar(home.path(), ID)).unwrap();
         let before_time = std::fs::metadata(sidecar(home.path(), ID)).unwrap().modified().unwrap();
-        assert_eq!(history.note_event("t1", &body(PRE_TOOL, home.path(), ID), 3000), None);
+        assert_eq!(
+            history.note_event("t1", None, &body(PRE_TOOL, home.path(), ID), 3000),
+            None
+        );
         assert_eq!(std::fs::read(sidecar(home.path(), ID)).unwrap(), before_bytes);
         assert_eq!(
             std::fs::metadata(sidecar(home.path(), ID)).unwrap().modified().unwrap(),
             before_time
         );
 
-        let ended = history.note_event("t1", &body(END, home.path(), ID), 4000).unwrap();
+        let ended = history
+            .note_event("t1", None, &body(END, home.path(), ID), 4000)
+            .unwrap();
         assert_eq!(ended.started_ms, 1000);
         assert_eq!(ended.updated_ms, 4000);
     }
@@ -704,9 +759,11 @@ mod tests {
     fn stop_failure_ends_a_turn() {
         let home = tempfile::tempdir().unwrap();
         let history = History::open(home.path());
-        history.note_event("t1", &body(START, home.path(), ID), 1000);
+        history.note_event("t1", None, &body(START, home.path(), ID), 1000);
         let failure = include_str!("../../tests/fixtures/claude/2.1.309/StopFailure.json");
-        let meta = history.note_event("t1", &body(failure, home.path(), ID), 2000).unwrap();
+        let meta = history
+            .note_event("t1", None, &body(failure, home.path(), ID), 2000)
+            .unwrap();
         assert_eq!(meta.updated_ms, 2000);
     }
 
@@ -724,7 +781,9 @@ mod tests {
         )
         .unwrap();
 
-        let meta = history.note_event("t1", &body(STOP, home.path(), ID), 2000).unwrap();
+        let meta = history
+            .note_event("t1", None, &body(STOP, home.path(), ID), 2000)
+            .unwrap();
         schedule_copy(history.clone(), meta);
         // Claude writes the turn's last lines a moment after the Stop hook fires.
         tokio::time::sleep(Duration::from_millis(50)).await;
@@ -750,7 +809,9 @@ mod tests {
         let transcript = home.path().join(format!("{ID}.jsonl"));
         std::fs::write(&transcript, "{\"n\":1}\n{\"n\":2}\n").unwrap();
 
-        let meta = history.note_event("t1", &body(STOP, home.path(), ID), 2000).unwrap();
+        let meta = history
+            .note_event("t1", None, &body(STOP, home.path(), ID), 2000)
+            .unwrap();
         schedule_copy(history.clone(), meta);
         assert!(!history.is_idle());
 
@@ -764,7 +825,9 @@ mod tests {
 
         // A copy asked for after the flush skips the wait too.
         std::fs::write(&transcript, "{\"n\":1}\n{\"n\":2}\n{\"n\":3}\n").unwrap();
-        let meta = history.note_event("t1", &body(STOP, home.path(), ID), 3000).unwrap();
+        let meta = history
+            .note_event("t1", None, &body(STOP, home.path(), ID), 3000)
+            .unwrap();
         schedule_copy(history.clone(), meta);
         history.flush(Duration::from_secs(3));
         let decoded = zstd::decode_all(std::fs::File::open(&archive).unwrap()).unwrap();
@@ -775,8 +838,8 @@ mod tests {
     fn clear_links_previous_in_tab() {
         let home = tempfile::tempdir().unwrap();
         let history = History::open(home.path());
-        history.note_event("t1", &body(START, home.path(), "aaa"), 1000);
-        history.note_event("t1", &body(START, home.path(), "bbb"), 2000);
+        history.note_event("t1", None, &body(START, home.path(), "aaa"), 1000);
+        history.note_event("t1", None, &body(START, home.path(), "bbb"), 2000);
         let latest = history.latest_for_tab("t1").unwrap();
         assert_eq!(latest.session_id, "bbb");
         assert_eq!(latest.previous_in_tab.as_deref(), Some("aaa"));
@@ -784,10 +847,85 @@ mod tests {
     }
 
     #[test]
+    fn note_event_lists_each_tab_recording_once_in_order() {
+        let home = tempfile::tempdir().unwrap();
+        let history = History::open(home.path());
+        let listed = || {
+            archive::read_meta(home.path(), "claude", ID)
+                .unwrap()
+                .unwrap()
+                .recordings
+                .into_iter()
+                .map(|link| link.file)
+                .collect::<Vec<_>>()
+        };
+        let (a, b, b2) = ("ta-1000.cast", "tb-2000.cast", "tb-3000.cast");
+
+        history.note_event("ta", Some(a), &body(START, home.path(), ID), 1000);
+        assert_eq!(listed(), [a]);
+        // Resumed in tab B.
+        history.note_event("tb", Some(b), &body(START, home.path(), ID), 2000);
+        assert_eq!(listed(), [a, b]);
+        // A restart in tab B: a new file, with no start or stop event to write the sidecar for it.
+        history.note_event("tb", Some(b2), &body(PRE_TOOL, home.path(), ID), 3000);
+        assert_eq!(listed(), [a, b, b2]);
+        // Nothing new: the sidecar is not rewritten.
+        let before = std::fs::metadata(sidecar(home.path(), ID)).unwrap().modified().unwrap();
+        history.note_event("tb", Some(b2), &body(PRE_TOOL, home.path(), ID), 3500);
+        history.note_event("tb", None, &body(PRE_TOOL, home.path(), ID), 3600);
+        assert_eq!(listed(), [a, b, b2]);
+        assert_eq!(
+            std::fs::metadata(sidecar(home.path(), ID)).unwrap().modified().unwrap(),
+            before
+        );
+        // A name that is not a recording name is never listed.
+        history.note_event("tb", Some("..\\x.cast"), &body(STOP, home.path(), ID), 4000);
+        assert_eq!(listed(), [a, b, b2]);
+    }
+
+    #[test]
+    fn a_turn_end_moves_the_recordings_last_event_and_other_events_write_nothing() {
+        let home = tempfile::tempdir().unwrap();
+        let history = History::open(home.path());
+        let links = || {
+            archive::read_meta(home.path(), "claude", ID)
+                .unwrap()
+                .unwrap()
+                .recordings
+        };
+        let link = |file: &str, first_ms, last_ms| RecordingLink {
+            file: file.into(),
+            first_ms,
+            last_ms,
+        };
+        let (a, b) = ("ta-1000.cast", "tb-2000.cast");
+        history.note_event("ta", Some(a), &body(START, home.path(), ID), 1000);
+        assert_eq!(links(), [link(a, 1000, 1000)]);
+        history.note_event("ta", Some(a), &body(STOP, home.path(), ID), 5000);
+        assert_eq!(links(), [link(a, 1000, 5000)]);
+        // Resumed in tab B: A keeps where it ended, and B starts its own.
+        history.note_event("tb", Some(b), &body(START, home.path(), ID), 9000);
+        assert_eq!(links(), [link(a, 1000, 5000), link(b, 9000, 9000)]);
+        history.note_event("tb", Some(b), &body(STOP, home.path(), ID), 12_000);
+        assert_eq!(links(), [link(a, 1000, 5000), link(b, 9000, 12_000)]);
+        // An event in a recording the sidecar already lists writes nothing.
+        let before = std::fs::metadata(sidecar(home.path(), ID)).unwrap().modified().unwrap();
+        history.note_event("tb", Some(b), &body(PRE_TOOL, home.path(), ID), 13_000);
+        assert_eq!(links(), [link(a, 1000, 5000), link(b, 9000, 12_000)]);
+        assert_eq!(
+            std::fs::metadata(sidecar(home.path(), ID)).unwrap().modified().unwrap(),
+            before
+        );
+    }
+
+    #[test]
     fn an_unseen_session_is_recorded_on_any_event() {
         let home = tempfile::tempdir().unwrap();
         let history = History::open(home.path());
-        assert_eq!(history.note_event("t1", &body(PRE_TOOL, home.path(), ID), 1500), None);
+        assert_eq!(
+            history.note_event("t1", None, &body(PRE_TOOL, home.path(), ID), 1500),
+            None
+        );
         assert_eq!(history.latest_for_tab("t1").unwrap().started_ms, 1500);
         assert!(sidecar(home.path(), ID).exists());
     }
@@ -810,7 +948,7 @@ mod tests {
         no_cwd.as_object_mut().unwrap().remove("cwd");
 
         for hostile in [bad_id, unc, device, other_name, no_cwd] {
-            assert_eq!(history.note_event("t1", &hostile, 1000), None);
+            assert_eq!(history.note_event("t1", None, &hostile, 1000), None);
         }
         assert_eq!(history.latest_for_tab("t1"), None);
         let archive = paths::archive_dir(home.path(), "claude");
@@ -823,7 +961,7 @@ mod tests {
     /// A transcript at `<dir>/<id>.jsonl` and the Stop event that asks for its copy.
     fn stopped(history: &History, dir: &Path, id: &str, text: &str, at_ms: u64) -> SessionMeta {
         std::fs::write(dir.join(format!("{id}.jsonl")), text).unwrap();
-        history.note_event("t1", &body(STOP, dir, id), at_ms).unwrap()
+        history.note_event("t1", None, &body(STOP, dir, id), at_ms).unwrap()
     }
 
     async fn idle(history: &History) {

@@ -5,12 +5,13 @@ import type { Endpoint } from "../../generated/Endpoint";
 import type { HistoryEntry } from "../../generated/HistoryEntry";
 import type { SearchHit } from "../../generated/SearchHit";
 import type { HistoryPatch } from "../../generated/HistoryPatch";
+import type { RecordingPart } from "../../generated/RecordingPart";
 import { history, saveConversation } from "../../lib/api/history";
 import { ApiError } from "../../lib/api/client";
 import { commandById, shortcutLabel, type Os } from "../../lib/keymap";
 import { WebLinkBar } from "../preview/WebLinkBar";
 import type { RowModel } from "../sidebar/types";
-import { NO_ARCHIVE_COPY, type ConversationEditor } from "./ConversationView";
+import { NO_ARCHIVE_COPY, type ConversationEditor, type ConversationTab } from "./ConversationView";
 import { copyExport, ExportDialog } from "./ExportDialog";
 import { actionAnnouncement, deleteConversation, forkConversation } from "./historyActions";
 import {
@@ -24,6 +25,8 @@ import {
   type When,
 } from "./HistoryView";
 import { bookmarkQuery, escapeAction, listQuery } from "./historyState";
+import { RecordingTab, type PlayRequest, type RecordingState } from "./recording/RecordingTab";
+import type { TerminalThemeProp } from "../terminal/TerminalView";
 
 /** How long the search waits after the last keystroke. */
 const SEARCH_DELAY_MS = 150;
@@ -37,6 +40,13 @@ export function listEmptyText(filters: HistoryFilters, loaded: boolean, error: s
   if (filters.bookmarked) return noBookmarksCopy(bookmarkShortcut);
   const filtered = filters.when !== "any" || Boolean(filters.agent || filters.project || filters.branch || filters.model || filters.tag);
   return filtered ? NO_FILTER_MATCH_COPY : EMPTY_LIST_COPY;
+}
+
+/** The turns (0-based) "Play from here" can start: a turn with a time that falls inside one of the recording's parts. */
+export function playableTurns(parts: Pick<RecordingPart, "started_ms" | "ended_ms">[], turns: { index: number; at_ms: number }[]): Set<number> {
+  const out = new Set<number>();
+  for (const t of turns) if (t.at_ms > 0 && parts.some((p) => t.at_ms >= p.started_ms && t.at_ms <= p.ended_ms)) out.add(t.index);
+  return out;
 }
 
 /** The tab that holds an entry's session right now: a row of that tab whose state isn't Ended (an Ended tab has no session to go to). */
@@ -81,10 +91,13 @@ export type LiveHistoryProps = {
   /** A file link in assistant text: the window opens it in the preview, as the preview's own links do. */
   onOpenFile: (link: { path: string; line?: number }) => void;
   onClose: () => void;
+  /** The live terminals' look, which the recording player shares. */
+  theme?: TerminalThemeProp;
+  font?: { family: string; size: number };
 };
 
 /** The History view wired to the core: it fetches the list on open and on each filter change, searches 150 ms after the last keystroke, opens a conversation on Enter or a click, and resumes it. */
-export function LiveHistory({ endpoint, rows, os, searchFocus, size, announce, onGoTo, onResumed, onOpenFile, onClose }: LiveHistoryProps) {
+export function LiveHistory({ endpoint, rows, os, searchFocus, size, announce, onGoTo, onResumed, onOpenFile, onClose, theme, font }: LiveHistoryProps) {
   const [filters, setFilters] = useState<HistoryFilters>({ when: "any", bookmarked: false, archived: false });
   const [listed, setListed] = useState<Listed>({ entries: [], now: Date.now(), loaded: false, error: null });
   const [query, setQuery] = useState("");
@@ -104,6 +117,25 @@ export function LiveHistory({ endpoint, rows, os, searchFocus, size, announce, o
   const shown = typeof conversation === "object" && conversation !== null && "turns" in conversation ? conversation : null;
   const shownRef = useRef(shown);
   shownRef.current = shown;
+  const [tab, setTab] = useState<ConversationTab>("conversation");
+  const [request, setRequest] = useState<PlayRequest | null>(null);
+  const [parts, setParts] = useState<RecordingState>({ status: "loading" });
+
+  // The recording's parts load beside the conversation, once per conversation (a refresh after a bookmark keeps them).
+  const shownAgent = shown?.agent;
+  const shownId = shown?.session_id;
+  useEffect(() => {
+    if (shownAgent === undefined || shownId === undefined) return;
+    let live = true;
+    setParts({ status: "loading" });
+    history.recordingParts(endpoint, shownAgent, shownId).then(
+      (list) => live && setParts({ status: "ready", parts: list }),
+      (e: unknown) => live && setParts({ status: "failed", reason: failureText(e) }),
+    );
+    return () => {
+      live = false;
+    };
+  }, [endpoint, shownAgent, shownId]);
 
   // Loads the list and the open conversation again: after a change, and when a session is renamed (a conversation shares its tab's name).
   const refresh = () => {
@@ -199,6 +231,8 @@ export function LiveHistory({ endpoint, rows, os, searchFocus, size, announce, o
     setRefusal(null);
     setWeb(null);
     setConversation("loading");
+    setTab("conversation");
+    setRequest(null);
     setEditor(null);
     setEditorError(undefined);
     history.get(endpoint, target.agent, target.session_id).then(
@@ -387,6 +421,32 @@ export function LiveHistory({ endpoint, rows, os, searchFocus, size, announce, o
         setEditorError(undefined);
       }}
       error={editorError}
+      tab={tab}
+      onTab={(t) => {
+        setTab(t);
+        setRequest(null);
+      }}
+      playableTurns={shown && parts.status === "ready" ? playableTurns(parts.parts, shown.turns) : undefined}
+      onPlayFrom={(turn) => {
+        const at = shown?.turns.find((t) => t.index === turn)?.at_ms ?? 0;
+        setRequest({ turn, atMs: at });
+        setTab("recording");
+      }}
+      recording={
+        shown ? (
+          <RecordingTab
+            agent={shown.agent}
+            id={shown.session_id}
+            parts={parts}
+            turnTimes={shown.turns.map((t) => t.at_ms)}
+            request={request}
+            frames={(part, q) => history.recordingFrames(endpoint, shown.agent, shown.session_id, part, q)}
+            theme={theme}
+            font={font}
+            platform={endpoint.platform}
+          />
+        ) : undefined
+      }
     />
   );
   return (
