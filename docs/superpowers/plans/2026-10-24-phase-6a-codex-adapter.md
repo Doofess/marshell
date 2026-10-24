@@ -269,7 +269,7 @@ Runs before Task 3, which consumes it.
   - `codex::permission_output(decision: &PermissionDecision, request: &Value) -> Result<Value, &'static str>`: allow gives exactly the A6 JSON, and deny adds `message` from the decision (Claude's text when there is none). `PermissionScope::Project` gives `Err` with the exact refusal copy from the constraints.
 - `agents::supports_permissions` matches `"claude" | "codex"`. `permission_view` and `permission_output` dispatch on the agent.
 
-- [ ] **Step 1: Write the failing tests.**
+- [x] **Step 1: Write the failing tests.**
   - `a_shell_request_is_a_bash_detail` and `an_apply_patch_request_is_an_edit_of_its_file`, from the fixtures.
   - `an_unknown_tool_is_other_with_its_input`.
   - `allow_is_exactly_codexs_shape`: string equality with the A6 JSON.
@@ -282,10 +282,10 @@ Runs before Task 3, which consumes it.
     - `no_decision_returns_204`, using `with_permission_hold`.
   - In `permission.rs`: `accepts_codex_allow_and_deny` for a Codex request body.
   - In the bridge tests: `a_codex_permission_without_tab_prints_nothing`.
-- [ ] **Step 2: Run `cargo test -p marshell-core -j 4 --lib codex::request`, `cargo test -p marshell-core -j 4 --test permissions` and `cargo test -p marshell-hook -j 4`.** Expected: FAIL.
-- [ ] **Step 3: Implement it.**
-- [ ] **Step 4: Run Step 2's commands.** Expected: PASS.
-- [ ] **Step 5: Run `cargo fmt --all` and commit** as `feat(codex): hold Codex's permission requests for the approve card and answer in Codex's shape`.
+- [x] **Step 2: Run `cargo test -p marshell-core -j 4 --lib codex::request`, `cargo test -p marshell-core -j 4 --test permissions` and `cargo test -p marshell-hook -j 4`.** Expected: FAIL.
+- [x] **Step 3: Implement it.**
+- [x] **Step 4: Run Step 2's commands.** Expected: PASS.
+- [x] **Step 5: Run `cargo fmt --all` and commit** as `feat(codex): hold Codex's permission requests for the approve card and answer in Codex's shape`.
 
 ### Task 6: A Codex session in a tab belongs to that tab in History
 
