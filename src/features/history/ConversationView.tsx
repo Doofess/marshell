@@ -164,10 +164,13 @@ export function ConversationView({
     root.current?.querySelector(`[data-turn="${scrollToTurn}"]`)?.scrollIntoView?.({ block: "start" });
   }, [c.agent, c.session_id, scrollToTurn]);
 
-  // "Go to turn" from the Files changed tab: the turns exist once the Conversation tab is showing.
+  // "Go to turn" from the Files changed tab: the turns exist once the Conversation tab is showing. The button that was pressed
+  // is gone with its tab, so focus goes to the turn's prompt.
   useEffect(() => {
     if (tab !== "conversation" || pendingTurn.current === null) return;
-    root.current?.querySelector(`[data-turn="${pendingTurn.current}"]`)?.scrollIntoView?.({ block: "start" });
+    const turn = root.current?.querySelector(`[data-turn="${pendingTurn.current}"]`);
+    turn?.scrollIntoView?.({ block: "start" });
+    turn?.querySelector<HTMLElement>(".turn__prompt")?.focus({ preventScroll: true });
     pendingTurn.current = null;
   }, [tab]);
 
@@ -388,7 +391,7 @@ export function ConversationView({
                 data-target={t.index === scrollToTurn ? "true" : undefined}
                 aria-labelledby={`${uid}-turn-${t.index}`}
               >
-                <h3 className="turn__prompt" id={`${uid}-turn-${t.index}`} dir="auto">
+                <h3 className="turn__prompt" id={`${uid}-turn-${t.index}`} dir="auto" tabIndex={-1}>
                   {t.prompt}
                 </h3>
                 <div className="turn__meta">
@@ -398,7 +401,13 @@ export function ConversationView({
                     </time>
                   )}
                   {playableTurns.has(t.index) && (
-                    <button type="button" className="turn__bookmark" aria-label={`Play turn ${t.index + 1} from here`} onClick={() => onPlayFrom(t.index)}>
+                    <button type="button" className="turn__bookmark" aria-label={`Play turn ${t.index + 1} from here`}
+                      onClick={() => {
+                        // The button goes with the Conversation tab; focus goes to the Recording tab, as Esc in the player does.
+                        onPlayFrom(t.index);
+                        tabRefs.current.recording?.focus();
+                      }}
+                    >
                       Play from here
                     </button>
                   )}

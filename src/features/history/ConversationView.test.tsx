@@ -310,6 +310,12 @@ describe("ConversationView tabs", () => {
     expect(out).not.toContain('aria-label="Play turn 1 from here"');
     expect(html(two())).not.toContain("Play from here");
   });
+
+  it("lets a turn's prompt take focus from a script but not from Tab, so Go to turn has somewhere to put it", () => {
+    const prompts = [...html(two()).matchAll(/<h3[^>]*class="turn__prompt"[^>]*>/g)].map((m) => m[0]);
+    expect(prompts).toHaveLength(2);
+    for (const p of prompts) expect(p).toContain('tabindex="-1"');
+  });
 });
 
 describe("tabKey", () => {
