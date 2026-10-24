@@ -650,6 +650,57 @@ mod tests {
         assert_eq!(inspect(&json!({}), &mine).install, HookInstall::None);
     }
 
+    /// Everything of the user's in the fixture up to the end of their `Stop` group, and what
+    /// follows their groups to the end of the file.
+    fn user_head_and_tail(text: &str) -> (&str, &str) {
+        let at = text.find(USER_GROUP).unwrap() + USER_GROUP.len();
+        let tail = if text.contains("/* mine */") {
+            "\n  },\n}\n"
+        } else {
+            "\n  }\n}\n"
+        };
+        (&text[..at], tail)
+    }
+
+    #[test]
+    fn install_leaves_every_byte_outside_ours_alone() {
+        for text in [plain(), bom(), crlf(), comments()] {
+            let crlf = text.contains("\r\n");
+            let (head, tail) = user_head_and_tail(&text);
+            let tail = if crlf {
+                tail.replace('\n', "\r\n")
+            } else {
+                tail.to_string()
+            };
+            let (_, after) = install(Some(&text), &fake_home(), &STATUS);
+            let after = after.unwrap();
+            // The BOM, the line endings, the comments and the user's group, byte for byte, then
+            // the comma that now separates it from Marshell's group.
+            assert!(after.starts_with(&format!("{head},")), "{after:?}");
+            assert!(after.ends_with(&tail), "{after:?}");
+            if text.contains("/* mine */") {
+                assert!(after.contains("}], /* mine */\n    \"SessionStart\""), "{after:?}");
+            }
+            // The line endings stay all one kind.
+            assert_eq!(
+                after.matches("\r\n").count(),
+                if crlf { after.matches('\n').count() } else { 0 }
+            );
+        }
+    }
+
+    #[test]
+    #[ignore = "defect: removing a trailing Marshell group adds a newline before `]` and drops a trailing comma"]
+    fn removing_a_trailing_group_restores_the_original_bytes() {
+        for text in [plain(), bom(), crlf(), comments()] {
+            let home = fake_home();
+            let (_, installed) = install(Some(&text), &home, &BOTH);
+            let installed = installed.unwrap();
+            let cs = remove_plan(&file(), Some(&installed), &home).unwrap();
+            assert_eq!(apply(&cs, Some(&installed)).unwrap(), text);
+        }
+    }
+
     #[test]
     fn remove_takes_only_ours() {
         for text in [plain(), bom(), crlf(), comments()] {
@@ -683,6 +734,12 @@ mod tests {
             assert!(after.contains(USER_GROUP));
             assert_eq!(after.starts_with('\u{feff}'), text.starts_with('\u{feff}'));
             assert_eq!(after.contains("\r\n"), text.contains("\r\n"));
+            // Only Marshell's group changed, into the empty placeholder; the text on both sides is
+            // the user's, byte for byte.
+            let eol = if text.contains("\r\n") { "\r\n" } else { "\n" };
+            let (head, tail) = before.split_once(&ours_stop(&home)).unwrap();
+            let placeholder = format!("{{{eol}        \"hooks\": []{eol}      }}");
+            assert_eq!(after, format!("{head}{placeholder}{tail}"));
         }
     }
 
