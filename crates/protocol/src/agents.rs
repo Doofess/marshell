@@ -16,6 +16,19 @@ pub enum HookInstall {
     Orphaned,
 }
 
+/// Whether Codex trusts the hook entries Marshell added, as its `config.toml` records it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub enum HookTrust {
+    /// Every entry has a recorded hash that matches and is not disabled.
+    Trusted,
+    /// An entry has no recorded hash, or is disabled, and none has a different hash.
+    Untrusted,
+    /// An entry's recorded hash differs from the hash of what is in `hooks.json` now.
+    Changed,
+}
+
 /// Whether an agent's settings file could be read for a plan.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
