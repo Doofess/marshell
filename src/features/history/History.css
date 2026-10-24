@@ -202,6 +202,10 @@
   max-inline-size: 80ch;
   padding: var(--space-6) var(--space-6) var(--space-8);
 }
+/* A recording is as wide as its terminal was, so its tab takes the pane's width rather than the reading column. */
+.conversation:has(> [role="tabpanel"]:not([hidden]) > .recording) {
+  max-inline-size: none;
+}
 .conversation__head {
   display: flex;
   align-items: flex-start;

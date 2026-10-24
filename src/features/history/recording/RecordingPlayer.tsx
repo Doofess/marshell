@@ -36,7 +36,7 @@ const clamp = (v: number, lo: number, hi: number) => Math.min(Math.max(v, lo), h
 const rangeOf = (part: RecordingPart, whole: boolean) =>
   whole || part.span_to_ms <= part.span_from_ms ? { from: part.started_ms, to: part.ended_ms } : { from: part.span_from_ms, to: part.span_to_ms };
 
-type Control = { seek: (ms: number, play: boolean) => void; play: (on: boolean) => void };
+type Control = { seek: (ms: number, play: boolean) => void; play: (on: boolean) => void; fit: () => void };
 
 /**
  * A read-only xterm.js that replays one part of a recording. The core sends a screen for a seek and events after it; the player
@@ -289,7 +289,7 @@ export function RecordingPlayer({
           },
         );
       };
-      ctl.current = { seek, play };
+      ctl.current = { seek, play, fit };
       setReady(true);
 
       dispose = () => {
@@ -311,12 +311,12 @@ export function RecordingPlayer({
     };
   }, [platform]);
 
-  // The font follows the settings.
+  // The font follows the settings: the family as it is, the size as the most the fit may use.
   useEffect(() => {
     const term = termRef.current;
     if (!term) return;
     term.options.fontFamily = fontStack(font.family);
-    term.options.fontSize = font.size;
+    ctl.current?.fit();
   }, [font.family, font.size, ready]);
 
   // A new part, a new "play from here", or the switch: seek. Only the switch keeps the current position.
