@@ -3,6 +3,7 @@
 pub mod claude;
 pub mod codex;
 pub mod common;
+pub mod manifest;
 
 use std::path::Path;
 use std::process::{Command, Stdio};

@@ -83,7 +83,7 @@ pub struct CreateSessionRequest {
 }
 
 /// How much an agent may do before it asks. The core turns it into the CLI's own flags.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, TS)]
 #[serde(rename_all = "kebab-case")]
 #[ts(export)]
 pub enum SessionMode {
