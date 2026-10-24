@@ -14,6 +14,11 @@ fn app(hold: Duration) -> (axum::Router, AppState) {
 }
 
 fn app_on(port: u16, hold: Duration) -> (axum::Router, AppState) {
+    app_with_codex(port, hold, "0.163.0")
+}
+
+/// An app whose Codex version is pinned, so no test runs the `codex --version` on this machine.
+fn app_with_codex(port: u16, hold: Duration, codex_version: &str) -> (axum::Router, AppState) {
     let home = tempfile::tempdir().unwrap().keep();
     let st = AppState::new(
         TOKEN.into(),
@@ -23,6 +28,8 @@ fn app_on(port: u16, hold: Duration) -> (axum::Router, AppState) {
         Vec::new(),
     )
     .with_claude_version(Some("2.1.302".into()))
+    .with_codex_version(Some(codex_version.into()))
+    .with_agent_path(|_| None)
     .with_permission_hold(hold);
     // A row with no process: enough for a request to name an open tab.
     for tab in ["t0", "t1", "t2"] {
@@ -269,6 +276,33 @@ async fn a_codex_project_decision_is_409() {
     assert_eq!(pending(&app).await.len(), 1);
     assert!(!hook.is_finished());
     hook.abort();
+}
+
+/// An unrecorded Codex version only limits the row's status note; the card and the answer still work.
+#[tokio::test]
+async fn a_codex_permission_is_answered_on_an_unrecorded_version() {
+    let (app, st) = app_with_codex(PORT, Duration::from_secs(30), "0.170.0");
+    let hook = spawn_agent_hook("codex", &app, Some("t1"), codex_request("Set-Content out.txt hi"));
+    let entry = wait_one(&app).await;
+    assert_eq!(
+        (entry["agent"].as_str(), entry["tab"].as_str()),
+        (Some("codex"), Some("t1"))
+    );
+    assert_eq!(st.permission_views().len(), 1);
+    let (status, _) = post_to(
+        &app,
+        &format!("/v1/permissions/{}/decision", rid_of(&entry)),
+        r#"{"behavior":"allow"}"#,
+    )
+    .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    let answer = hook.await.unwrap();
+    assert_eq!(answer.0, StatusCode::OK);
+    assert_eq!(
+        answer_json(&answer),
+        codex_answer(serde_json::json!({"behavior":"allow"}))
+    );
+    assert!(pending(&app).await.is_empty());
 }
 
 #[tokio::test]

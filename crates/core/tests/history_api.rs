@@ -71,7 +71,9 @@ fn env_with(home: tempfile::TempDir, work: tempfile::TempDir, profile: Profile) 
         home.path().to_path_buf(),
         vec![profile],
     )
-    .with_agent_check(|_| true);
+    .with_agent_check(|_| true)
+    // Codex's version is not read from the machine; a resume must not run the real `codex --version`.
+    .with_codex_version(None);
     Env {
         app: router(state.clone()),
         state,
