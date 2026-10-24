@@ -6,7 +6,7 @@ import { pickFolder } from "../../lib/folderPicker";
 import { formatBytes } from "../../lib/format";
 import type { SettingsSync } from "../appearance/settingsSync";
 import { relativeTime } from "./historyState";
-import { type PendingLimits, chooseBackupFolder, proposeLimits, reportAfterCleanup, storageErrorText } from "./storageActions";
+import { type PendingLimits, chooseBackupFolder, proposeLimits, removalQuestion, reportAfterCleanup, storageErrorText } from "./storageActions";
 import "../settings/Settings.css";
 import "../notifications/NotificationsDialog.css";
 import "./StorageSection.css";
@@ -16,6 +16,7 @@ const SIZE_CHOICES: [number | null, string][] = [[null, "No size limit"], [1, "1
 const AGE_CHOICES: [number | null, string][] = [[null, "Forever"], [30, "30 days"], [90, "90 days"], [180, "180 days"], [365, "1 year"]];
 
 export const LIMITS_HINT = "Transcripts are always kept. Recordings and images of pinned and bookmarked conversations are never removed.";
+const QUESTION_ID = "storage-removal-question";
 export const BACKUP_HINT = 'Marshell keeps an exact copy of its history in a "Marshell history" folder there. A recording or conversation removed here is removed there too.';
 /** The core's reasons for refusing a backup folder that waiting won't fix. One of them in the status is shown as it is; any other error, a folder gone missing (an unplugged drive) included, reads as Can't reach. */
 const REFUSALS = [
@@ -23,15 +24,6 @@ const REFUSALS = [
   "That folder holds another Marshell's backup. Choose another folder.",
   'That folder already has a "Marshell history" folder that Marshell didn\'t make. Choose another folder.',
 ];
-
-const DATE = new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "long", year: "numeric" });
-
-function removalQuestion({ preview }: PendingLimits): string {
-  const size = formatBytes(preview.bytes);
-  const from = preview.oldest_ms === null ? null : DATE.format(new Date(preview.oldest_ms));
-  if (preview.files === 1) return `This removes 1 recording or image now (${size})${from ? `, from ${from}` : ""}.`;
-  return `This removes ${preview.files} recordings and images now (${size})${from ? `, the oldest from ${from}` : ""}.`;
-}
 
 function cleanupLine(run: NonNullable<StorageReport["last_cleanup"]>, now: number): string {
   const when = `Last cleanup ${relativeTime(now - run.at_ms)}`;
@@ -74,6 +66,7 @@ export function StorageSectionView({ report, pending, error, busy, now, sizeRef,
     ["Total", report ? report.transcripts + report.recordings + report.attachments + report.snapshots + report.logs + report.index : undefined],
   ];
   const shown = pending?.limits ?? report?.limits;
+  const described = pending ? `storage-limits-hint ${QUESTION_ID}` : "storage-limits-hint";
   const limited = report !== null && (report.limits.limit_gb !== null || report.limits.limit_days !== null);
   return (
     <section className="notifications-dialog__group storage" aria-labelledby="storage-title">
@@ -94,7 +87,7 @@ export function StorageSectionView({ report, pending, error, busy, now, sizeRef,
             <label className="field__label" htmlFor="storage-size">
               Keep recordings and images up to
             </label>
-            <select id="storage-size" ref={sizeRef} className="field__control" aria-describedby="storage-limits-hint" value={shown.limit_gb ?? ""} onChange={(e) => onLimits({ ...shown, limit_gb: e.target.value === "" ? null : Number(e.target.value) }, "size")}>
+            <select id="storage-size" ref={sizeRef} className="field__control" aria-describedby={described} value={shown.limit_gb ?? ""} onChange={(e) => onLimits({ ...shown, limit_gb: e.target.value === "" ? null : Number(e.target.value) }, "size")}>
               {SIZE_CHOICES.map(([v, text]) => (
                 <option key={text} value={v ?? ""}>
                   {text}
@@ -106,7 +99,7 @@ export function StorageSectionView({ report, pending, error, busy, now, sizeRef,
             <label className="field__label" htmlFor="storage-age">
               Keep recordings and images for
             </label>
-            <select id="storage-age" ref={ageRef} className="field__control" aria-describedby="storage-limits-hint" value={shown.limit_days ?? ""} onChange={(e) => onLimits({ ...shown, limit_days: e.target.value === "" ? null : Number(e.target.value) }, "age")}>
+            <select id="storage-age" ref={ageRef} className="field__control" aria-describedby={described} value={shown.limit_days ?? ""} onChange={(e) => onLimits({ ...shown, limit_days: e.target.value === "" ? null : Number(e.target.value) }, "age")}>
               {AGE_CHOICES.map(([v, text]) => (
                 <option key={text} value={v ?? ""}>
                   {text}
@@ -119,7 +112,7 @@ export function StorageSectionView({ report, pending, error, busy, now, sizeRef,
           </p>
           {pending && (
             <div className="storage__confirm">
-              <p className="notifications-dialog__line storage__ask">{removalQuestion(pending)}</p>
+              <p id={QUESTION_ID} className="notifications-dialog__line storage__ask">{removalQuestion(pending)}</p>
               <div className="storage__actions">
                 <button type="button" className="notifications-dialog__btn" disabled={busy} onClick={onConfirm}>
                   Remove and save
@@ -159,7 +152,7 @@ export function StorageSectionView({ report, pending, error, busy, now, sizeRef,
 }
 
 /** The Storage section on the app's settings. Limits and the backup folder are saved through `SettingsSync`; the sizes and the report are read again after each save. */
-export function StorageSection({ sync }: { sync?: SettingsSync }) {
+export function StorageSection({ sync, announce }: { sync?: SettingsSync; announce?: (text: string) => void }) {
   const [report, setReport] = useState<StorageReport | null>(null);
   const [pending, setPending] = useState<PendingLimits | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -221,7 +214,7 @@ export function StorageSection({ sync }: { sync?: SettingsSync }) {
         field.current = which;
         void run(async () => {
           if (!sync) return;
-          const ask = await proposeLimits(previewRetention, saveLimits, limits);
+          const ask = await proposeLimits(previewRetention, saveLimits, limits, announce);
           setPending(ask);
         });
       }}

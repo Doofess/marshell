@@ -2,19 +2,32 @@ import type { RetentionLimits } from "../../generated/RetentionLimits";
 import type { RetentionPreview } from "../../generated/RetentionPreview";
 import type { StorageReport } from "../../generated/StorageReport";
 import { failureText } from "../agents/useInstallFlow";
+import { formatBytes } from "../../lib/format";
 import { SettingsReadError } from "../appearance/settingsSync";
 
 /** A change to the limits that would remove files, waiting for the person's yes. */
 export type PendingLimits = { limits: RetentionLimits; preview: RetentionPreview };
 
-/** Asks what `limits` would remove. Nothing: the limits are saved and null comes back. Something: the question to ask. */
-export async function proposeLimits(preview: (l: RetentionLimits) => Promise<RetentionPreview>, save: (l: RetentionLimits) => Promise<void>, limits: RetentionLimits): Promise<PendingLimits | null> {
+const DATE = new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "long", year: "numeric" });
+
+/** The line that asks whether to remove what a change to the limits would remove. */
+export function removalQuestion({ preview }: PendingLimits): string {
+  const size = formatBytes(preview.bytes);
+  const from = preview.oldest_ms === null ? null : DATE.format(new Date(preview.oldest_ms));
+  if (preview.files === 1) return `This removes 1 recording or image now (${size})${from ? `, from ${from}` : ""}.`;
+  return `This removes ${preview.files} recordings and images now (${size})${from ? `, the oldest from ${from}` : ""}.`;
+}
+
+/** Asks what `limits` would remove. Nothing: the limits are saved and null comes back. Something: the question to ask, said through `announce` too, since focus stays on the select. */
+export async function proposeLimits(preview: (l: RetentionLimits) => Promise<RetentionPreview>, save: (l: RetentionLimits) => Promise<void>, limits: RetentionLimits, announce?: (text: string) => void): Promise<PendingLimits | null> {
   const found = await preview(limits);
   if (found.files === 0) {
     await save(limits);
     return null;
   }
-  return { limits, preview: found };
+  const ask = { limits, preview: found };
+  announce?.(removalQuestion(ask));
+  return ask;
 }
 
 /** The report once the cleanup a limits save asked for has run: the core runs it on its storage thread just after the save, so a report read at once still shows the files it removes. Reads again until the last cleanup is newer than `before` (its time before the save), at most 20 times, a quarter second apart; then the last report read. */

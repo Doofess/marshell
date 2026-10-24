@@ -52,6 +52,14 @@ describe("StorageSectionView", () => {
     const h = view({ pending: { limits: { limit_gb: 1, limit_days: null }, preview: { files: 2, bytes: 1024, oldest_ms: NOW } } });
     expect(h).toMatch(/<option value="1" selected="">1 GB<\/option>/);
   });
+  it("describes both selects by the removal question while it shows, and by the hint alone otherwise", () => {
+    const h = view({ pending: { limits: { limit_gb: 1, limit_days: null }, preview: { files: 2, bytes: 1024, oldest_ms: NOW } } });
+    expect(h.match(/aria-describedby="storage-limits-hint storage-removal-question"/g)).toHaveLength(2);
+    expect(h).toMatch(/<p id="storage-removal-question"[^>]*>This removes 2 recordings/);
+    const idle = view();
+    expect(idle.match(/aria-describedby="storage-limits-hint"/g)).toHaveLength(2);
+    expect(idle).not.toContain("storage-removal-question");
+  });
   it("asks before removing 42 files, with the size and the oldest date", () => {
     const oldest = new Date(2026, 2, 3, 12).getTime();
     const h = view({ pending: { limits: { limit_gb: 1, limit_days: null }, preview: { files: 42, bytes: 1.3 * 1024 ** 3, oldest_ms: oldest } } });
