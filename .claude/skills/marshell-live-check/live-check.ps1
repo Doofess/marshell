@@ -13,7 +13,8 @@ tree:  prints the process tree under the recorded root PID and stops nothing.
 stop:  prints the tree and stops it by PID, leaves first. If the tree holds an agent CLI (claude.exe,
        codex.exe, node_repl.exe), nothing is stopped unless every such PID is named in -AlsoStop:
        the person may be using the dev window, and their sessions are not the check's to end.
-Nothing here deletes a folder.
+Nothing here deletes a folder. With -CodexAuth, start copies ~/.codex/auth.json into the scratch CODEX_HOME
+       and stop deletes that copy.
 
 .EXAMPLE
 pwsh -NoProfile -File live-check.ps1 start -Scratch C:\Users\me\AppData\Local\Temp\lc-5b-1
@@ -26,6 +27,9 @@ param(
     [int[]]$AlsoStop = @(),
     # start only: a folder whose cc and cx subfolders are copied into the scratch CLAUDE_CONFIG_DIR and CODEX_HOME.
     [string]$Seed,
+    # start only: copies ~/.codex/auth.json (and nothing else) into the scratch CODEX_HOME, so a real Codex can sign in.
+    # stop deletes that one copy once the tree is gone.
+    [switch]$CodexAuth,
     # The checkout to run; defaults to the one holding this script.
     [string]$Repo = (Join-Path $PSScriptRoot '..\..\..'),
     [int]$Port = 9333
@@ -93,6 +97,11 @@ switch ($Mode) {
                 if (Test-Path -LiteralPath $from) { Copy-Item -Path (Join-Path $from '*') -Destination $pair[1].FullName -Recurse }
             }
         }
+        if ($CodexAuth) {
+            $auth = Join-Path $HOME '.codex/auth.json'
+            if (-not (Test-Path -LiteralPath $auth)) { throw "No Codex sign-in to copy: $auth" }
+            Copy-Item -LiteralPath $auth -Destination (Join-Path $cx.FullName 'auth.json')
+        }
         $settings = Join-Path (New-Item -ItemType Directory -Path (Join-Path $Scratch 'proj\.claude')).FullName 'settings.local.json'
         Set-Content -LiteralPath $settings -Value '{}' -Encoding utf8NoBOM
         $repo = (Resolve-Path -LiteralPath $Repo).Path
@@ -108,7 +117,7 @@ switch ($Mode) {
         $created = (Get-CimInstance Win32_Process -Filter "ProcessId = $($proc.Id)" -Property CreationDate).CreationDate
         [ordered]@{
             root = $proc.Id; name = 'cmd.exe'; created = $created.ToUniversalTime().ToString('o')
-            repo = $repo; marshellHome = $mh.FullName; claudeConfigDir = $cc.FullName; codexHome = $cx.FullName; claudeSettings = $settings; cdp = "http://127.0.0.1:$Port"
+            repo = $repo; marshellHome = $mh.FullName; claudeConfigDir = $cc.FullName; codexHome = $cx.FullName; codexAuth = [bool]$CodexAuth; claudeSettings = $settings; cdp = "http://127.0.0.1:$Port"
         } | ConvertTo-Json | Set-Content -LiteralPath $PidsFile -Encoding utf8NoBOM
         Write-Output "Started pnpm tauri dev in $repo, root PID $($proc.Id)."
         Write-Output "MARSHELL_HOME=$($mh.FullName)"
@@ -144,6 +153,12 @@ switch ($Mode) {
         Start-Sleep -Milliseconds 500
         $left = @($tree | Where-Object { Get-Process -Id $_.PID -ErrorAction SilentlyContinue })
         if ($left.Count) { Write-Output "Still running: $(($left | ForEach-Object { "$($_.Name) $($_.PID)" }) -join ', ')"; exit 1 }
+        # The copied Codex sign-in is the one file removed here: a known literal name in the recorded CODEX_HOME.
+        $authCopy = Join-Path $rec.codexHome 'auth.json'
+        if ($rec.codexAuth -and (Test-Path -LiteralPath $authCopy)) {
+            Remove-Item -LiteralPath $authCopy -Force
+            Write-Output "Deleted the copied Codex sign-in: $authCopy"
+        }
         Write-Output "All $($tree.Count) recorded processes are gone. $Scratch was left in place."
     }
 }

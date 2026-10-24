@@ -27,7 +27,7 @@
   - Change titles: "Set up Codex hooks", "Turn Codex hooks off".
   - Status notes: "Live status is off for Codex"; "Codex's version could not be read"; "Codex <v> is older than the versions Marshell knows"; "Codex <v> is not one Marshell has recorded yet".
   - The core's refusal of an "Always allow" decision: "Codex can't keep an always-allow rule from Marshell. Allow once, or answer in the terminal."
-  - Consent card source line: "The hook entries go in <code>hooks.json</code> only, not in <code>config.toml</code> as well: Codex reads both and would warn about duplicates." The trust line stays as it is.
+  - Consent card source line: "The hook entries go in <code>hooks.json</code> only, not in <code>config.toml</code> as well: Codex reads both and would warn about duplicates." Consent card trust line (amended after Task 1, A3): "Codex runs hooks only after you trust them. The next time Codex starts, it lists them as new: choose <strong>Trust all and continue</strong>, or review them first in <code>/hooks</code>."
   - Agents dialog, Codex installed and no hook seen since Marshell started: "Marshell hasn't seen these hooks run yet. If Codex shows no live status, type <code>/hooks</code> in Codex and trust Marshell's entries."
   - Agents dialog, once seen: "Codex ran these hooks <relative time> ago." The relative time uses the dialog's existing time formatter.
 - Every UI change works with the keyboard alone and in forced colours. Each CLI gets its own consent card, and there is no bulk allow.
@@ -38,6 +38,10 @@ The research describes the documented Codex behaviour. Task 1 checks it against 
 
 - **A1.** `$CODEX_HOME/hooks.json` is `{"hooks": {"<Event>": [{"matcher": "<regex>", "hooks": [{"type": "command", "command": "<string>", "timeout": <secs>}]}]}}`, and `matcher` is optional for events that have no tool.
 - **A2.** On Windows, `command` = `"C:/Users/<user>/.marshell/bin/marshell-hook.exe" event --agent codex --tag mshl1` runs, quoted path with a space included. If it doesn't, the form that does run is recorded (`commandWindows`, or a different quoting).
+  - **Finding (Task 1):** it doesn't run. Codex 0.163 runs a hook command through PowerShell on Windows (pwsh 7.6.8 here), where a quoted path followed by arguments is a parse error. `& "<bridge>" <role> --agent codex --tag mshl1` runs, with a space in the path. So Windows uses the call operator, and other platforms use the plain quoted form.
+  - **Finding (A3):** trust is per entry and hash-bound. It's stored in the Codex home's `config.toml` as `[hooks.state.'<hooks.json path>:<event_snake>:<group>:<handler>'] trusted_hash = "sha256:…"`. At its next start, Codex lists new or changed entries ("12 hooks are new or changed") with "Trust all and continue". Changing one entry asks again for that entry only.
+  - **Finding (A4):** `MARSHELL_HOME` and `MARSHELL_TAB_ID` reach the hook. The core received the record post with the tab.
+  - **Finding:** a turn that ends in an error (a usage limit) fires no `Stop`, and Codex has no StopFailure-like event. The row stays Working until the next event, and the slice's Known limits say so.
 - **A3.** Hooks don't run until they are trusted in `/hooks`. The finding records where trust is kept and whether changing one entry un-trusts the others.
 - **A4.** `TAB_ID` and the rest of the session's environment reach the hook process. If Codex scrubs the environment, the bridge can't name the tab, and this plan stops for a ruling.
 - **A5.** Payloads carry `session_id`, `transcript_path` (the rollout), `cwd`, `hook_event_name`, `model` and `permission_mode`. `PreToolUse` and `PermissionRequest` add `tool_name` and `tool_input`. The finding names the exact tool names and input fields for a shell command and an `apply_patch`.
@@ -87,7 +91,7 @@ git commit -m "docs(research): record Codex 0.163's hooks, trust and payloads, w
 - Produces in `agents::codex::hooks`:
   - `pub const STATUS_EVENTS: [&str; 7] = ["SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse", "Stop", "Interrupt", "SessionEnd"]`
   - `pub fn hooks_path(env: &dyn Fn(&str) -> Option<String>, user_home: &Path) -> PathBuf`: `$CODEX_HOME/hooks.json` when `CODEX_HOME` is non-empty, else `<user_home>/.codex/hooks.json`
-  - `pub fn hook_command(home: &Path, role: &str) -> String`: the A2 form, with the bridge path in forward slashes and quoted
+  - `pub fn hook_command(home: &Path, role: &str) -> String`: on Windows `& "<bridge>" <role> --agent codex --tag mshl1`, elsewhere `"<bridge>" <role> --agent codex --tag mshl1`, with the bridge path in forward slashes and quoted (the A2 finding)
   - `pub struct Found { pub install: HookInstall, pub approve_installed: bool }`
   - `pub fn inspect(hooks: &Value, home: &Path) -> Found`
   - `pub fn install_plan(path: &Path, text: Option<&str>, home: &Path, want: &HookPlanRequest) -> Result<ChangeSet, PlanError>`, titled "Set up Codex hooks"
