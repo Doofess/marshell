@@ -53,6 +53,36 @@ mod tests {
     }
 
     #[test]
+    fn a_prerelease_of_a_newer_line_is_not_recorded() {
+        assert_eq!(
+            version_gate(Some("0.164.0-alpha.1")),
+            Gate::Unknown("Codex 0.164.0-alpha.1 is not one Marshell has recorded yet".to_string())
+        );
+    }
+
+    #[test]
+    fn a_prerelease_is_never_known() {
+        assert_eq!(
+            version_gate(Some("0.163.0-alpha.1")),
+            Gate::Unknown("Codex 0.163.0-alpha.1 is older than the versions Marshell knows".to_string())
+        );
+        assert_eq!(
+            version_gate(Some("0.163.4-pre")),
+            Gate::Unknown("Codex 0.163.4-pre is not one Marshell has recorded yet".to_string())
+        );
+        assert_eq!(
+            version_gate(Some("0.100.0-beta")),
+            Gate::Unknown("Codex 0.100.0-beta is older than the versions Marshell knows".to_string())
+        );
+    }
+
+    #[test]
+    fn build_metadata_is_the_same_release() {
+        assert_eq!(version_gate(Some("0.163.0+build")), Gate::Known);
+        assert_eq!(version_gate(Some("0.163.2+build.7")), Gate::Known);
+    }
+
+    #[test]
     fn an_unreadable_codex_version_says_so() {
         let unread = Gate::Unknown("Codex's version could not be read".to_string());
         assert_eq!(version_gate(None), unread);

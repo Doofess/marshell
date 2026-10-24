@@ -200,17 +200,27 @@ pub enum Gate {
 
 /// Known: the same minor line as a recorded fixture set (`known`, one entry per minor line: its oldest
 /// recorded patch), and not older than that patch. `name` is how the agent is called in the note.
+/// Build metadata (`+build`) is the same release; a pre-release suffix (`-alpha.1`) is never Known,
+/// because it is not the build that was recorded.
 pub fn version_gate(name: &str, known: &[(u32, u32, u32)], version: Option<&str>) -> Gate {
     let parsed = version.and_then(|v| {
-        let mut parts = v.split('.').map(|p| p.parse::<u32>().ok());
+        let (core, suffix) = match v.find(['-', '+']) {
+            Some(at) => v.split_at(at),
+            None => (v, ""),
+        };
+        let mut parts = core.split('.').map(|p| p.parse::<u32>().ok());
         let triple = (parts.next()??, parts.next()??, parts.next()??);
-        parts.next().is_none().then_some((v, triple))
+        parts
+            .next()
+            .is_none()
+            .then_some((v, triple, suffix.starts_with('-')))
     });
-    let Some((v, (major, minor, patch))) = parsed else {
+    let Some((v, (major, minor, patch), prerelease)) = parsed else {
         return Gate::Unknown(format!("{name}'s version could not be read"));
     };
     match known.iter().find(|f| f.0 == major && f.1 == minor) {
-        Some(f) if patch >= f.2 => Gate::Known,
+        Some(f) if patch >= f.2 && !prerelease => Gate::Known,
+        Some(f) if patch > f.2 => Gate::Unknown(format!("{name} {v} is not one Marshell has recorded yet")),
         Some(_) => Gate::Unknown(format!("{name} {v} is older than the versions Marshell knows")),
         None if known.iter().all(|f| (major, minor) < (f.0, f.1)) => {
             Gate::Unknown(format!("{name} {v} is older than the versions Marshell knows"))
