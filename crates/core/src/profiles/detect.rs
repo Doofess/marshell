@@ -364,6 +364,7 @@ pub fn resume_args(agent: &str, target: ResumeTarget) -> Vec<String> {
         ("claude", ResumeTarget::Session(id)) => vec!["--resume", id],
         ("claude", ResumeTarget::Fork(id)) => vec!["--resume", id, "--fork-session"],
         ("claude", ResumeTarget::Last) => vec!["--continue"],
+        ("codex", ResumeTarget::Session(id)) => vec!["resume", id],
         ("codex", _) => vec!["resume", "--last"],
         ("antigravity", _) => vec!["--continue"],
         _ => Vec::new(),
@@ -916,6 +917,14 @@ mod tests {
     }
 
     #[test]
+    fn codex_resumes_a_session_by_id() {
+        assert_eq!(
+            resume_args("codex", ResumeTarget::Session("abc-1")),
+            ["resume", "abc-1"]
+        );
+    }
+
+    #[test]
     fn resume_args_per_agent() {
         assert_eq!(resume_args("claude", ResumeTarget::Last), ["--continue"]);
         assert_eq!(resume_args("codex", ResumeTarget::Last), ["resume", "--last"]);
@@ -957,7 +966,7 @@ mod tests {
             "& claude --resume abc-1 --permission-mode bypassPermissions"
         );
         let argv = launch_argv_resume(&ps, Some("codex"), None, by_id).unwrap();
-        assert_eq!(argv.last().unwrap(), "& codex resume --last");
+        assert_eq!(argv.last().unwrap(), "& codex resume abc-1");
     }
 
     #[test]

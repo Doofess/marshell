@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { HistoryEntry } from "../../generated/HistoryEntry";
-import { bookmarkQuery, escapeAction, filterOptions, groupByProject, listQuery, moveSelection, rowMeta, sinceFor } from "./historyState";
+import { bookmarkQuery, clientMark, historyAgentLabel, importEndLine, importLine, escapeAction, filterOptions, groupByProject, listQuery, moveSelection, resumeWarning, rowMeta, sinceFor } from "./historyState";
 
 const entry = (over: Partial<HistoryEntry>): HistoryEntry => ({
   agent: "claude",
@@ -14,6 +14,7 @@ const entry = (over: Partial<HistoryEntry>): HistoryEntry => ({
   archived: false,
   bookmarks: 0,
   named: false,
+  client: "marshell",
   turns: 2,
   started_ms: 0,
   updated_ms: 0,
@@ -130,12 +131,64 @@ describe("filterOptions tags", () => {
 });
 
 describe("the queries the view sends", () => {
-  const filters = { when: "any", tag: "bug", bookmarked: true, archived: true, agent: "claude" } as const;
+  const filters = { when: "any", tag: "bug", bookmarked: true, archived: true, agent: "claude", place: "any", headless: false } as const;
   it("passes archived=true and the tag to the list, which never filters by bookmarks itself", () => {
     expect(listQuery(filters, 0)).toEqual({ agent: "claude", tag: "bug", archived: true, since_ms: undefined });
-    expect(listQuery({ when: "any", bookmarked: false, archived: false }, 0).archived).toBe(false);
+    expect(listQuery({ when: "any", bookmarked: false, archived: false, place: "any", headless: false }, 0).archived).toBe(false);
   });
   it("asks the bookmarks route with the same filters and bookmarked=true", () => {
     expect(bookmarkQuery(filters, 0)).toEqual({ agent: "claude", tag: "bug", archived: true, bookmarked: true, since_ms: undefined });
+  });
+});
+
+describe("where a conversation ran", () => {
+  const f = { when: "any", bookmarked: false, archived: false, place: "any", headless: false } as const;
+  it("sends place only when it is not Any, and headless only when on", () => {
+    expect(listQuery({ ...f, place: "outside" }, 0).place).toBe("outside");
+    expect(listQuery({ ...f, place: "marshell" }, 0).place).toBe("marshell");
+    expect("place" in listQuery(f, 0)).toBe(false);
+    expect(listQuery({ ...f, headless: true }, 0).headless).toBe(true);
+    expect("headless" in listQuery(f, 0)).toBe(false);
+  });
+  it("marks each client but Marshell", () => {
+    expect(clientMark("marshell")).toBeNull();
+    expect(clientMark("terminal")).toBe("Outside Marshell");
+    expect(clientMark("vscode")).toBe("VS Code");
+    expect(clientMark("desktop")).toBe("Desktop app");
+    expect(clientMark("headless")).toBe("Headless");
+  });
+  it("names the agents", () => {
+    expect(historyAgentLabel("claude")).toBe("Claude Code");
+    expect(historyAgentLabel("codex")).toBe("Codex CLI");
+    expect(historyAgentLabel("other")).toBe("other");
+  });
+  it("words the import's progress, or says nothing when it isn't copying", () => {
+    expect(importLine({ copying: true, done: 120, total: 355, on: true })).toBe("Copying conversations from Claude Code and Codex: 120 of 355.");
+    expect(importLine({ copying: false, done: 355, total: 355, on: true })).toBeNull();
+    expect(importLine(null)).toBeNull();
+  });
+
+  it("words the end of a copy: finished, stopped by the switch, or unknown after a failed read", () => {
+    expect(importEndLine({ copying: false, done: 355, total: 355, on: true })).toBe("Finished copying conversations from Claude Code and Codex.");
+    expect(importEndLine({ copying: false, done: 576, total: 1500, on: false })).toBe("Stopped copying conversations from Claude Code and Codex: 576 of 1500 copied.");
+    expect(importEndLine(null)).toBeNull();
+  });
+});
+
+describe("resumeWarning", () => {
+  const now = 10_000_000;
+  const copy = (when: string) => `This conversation changed ${when} and may still be open in another terminal. Resume here anyway?`;
+  it("is null for a Marshell conversation", () => {
+    expect(resumeWarning("marshell", now - 1000, now)).toBeNull();
+  });
+  it("names whole minutes for an outside conversation", () => {
+    expect(resumeWarning("terminal", now - 3 * 60_000 - 20_000, now)).toBe(copy("3 min ago"));
+  });
+  it("says less than a minute under 60 seconds", () => {
+    expect(resumeWarning("vscode", now - 30_000, now)).toBe(copy("less than a minute ago"));
+  });
+  it("is null from 10 minutes on", () => {
+    expect(resumeWarning("terminal", now - 600_000, now)).toBeNull();
+    expect(resumeWarning("terminal", now - 599_000, now)).not.toBeNull();
   });
 });

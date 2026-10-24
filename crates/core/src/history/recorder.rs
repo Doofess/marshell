@@ -5,7 +5,6 @@ use super::index::{Index, Opened};
 use super::marks::{self, Marks};
 use super::recordings::CastCache;
 use super::{RecordingLink, SessionMeta, archive, cast, transcript_allowed};
-use crate::agents::claude::transcript;
 use crate::registry::Registry;
 use marshell_protocol::api::SessionState;
 use marshell_protocol::history::{ConversationMarks, HistoryEntry, HistoryPatch, HistoryQuery, SearchHit};
@@ -233,6 +232,7 @@ impl History {
                     last_ms: at_ms,
                 })
                 .collect(),
+            client: Default::default(),
         };
         let ends_turn = matches!(event, "Stop" | "StopFailure" | "SessionEnd");
         if is_new || ends_turn || event == "SessionStart" {
@@ -325,9 +325,9 @@ impl History {
     }
 
     /// Full-text search over the indexed conversations. Empty when history is off for this run. Blocking.
-    pub fn search(&self, query: &str, include_archived: bool) -> anyhow::Result<Vec<SearchHit>> {
+    pub fn search(&self, query: &str, include_archived: bool, headless: bool) -> anyhow::Result<Vec<SearchHit>> {
         match self.index.lock().unwrap().as_ref() {
-            Some(index) => index.search(query, include_archived),
+            Some(index) => index.search(query, include_archived, headless),
             None => Ok(Vec::new()),
         }
     }
@@ -544,6 +544,12 @@ impl History {
         {
             return Err(DeleteRefusal::RunningInATab);
         }
+        // Before anything is removed, so a delete that can't be remembered doesn't happen: the importer would
+        // copy an unchanged source file back.
+        let deleted_at_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_millis() as u64);
+        archive::add_tombstone(&self.home, agent, session_id, deleted_at_ms)?;
         index.remove(agent, session_id)?;
         drop(guard);
         let (archive, meta) = archive::archive_paths(&self.home, agent, session_id);
@@ -564,7 +570,7 @@ impl History {
     /// the session listed, marked limited, with nothing to search. Does nothing when there is no archive or
     /// the agent isn't one whose transcripts Marshell reads. Blocking.
     pub fn reindex(&self, meta: &SessionMeta) {
-        if meta.agent != AGENT {
+        if super::parse_for(&meta.agent, "", &meta.session_id).is_none() {
             return;
         }
         let (archive, _) = archive::archive_paths(&self.home, &meta.agent, &meta.session_id);
@@ -573,7 +579,7 @@ impl History {
             return;
         };
         let conversation = match archive::read_archive(&self.home, &meta.agent, &meta.session_id) {
-            Ok(Some(text)) => Some(transcript::parse(&text, &meta.session_id)),
+            Ok(Some(text)) => super::parse_for(&meta.agent, &text, &meta.session_id),
             Ok(None) => return,
             Err(err) => {
                 tracing::warn!("could not read archived transcript {}: {err:#}", meta.session_id);
@@ -595,6 +601,79 @@ impl History {
         };
         if let Err(err) = written {
             tracing::warn!("could not index conversation {}: {err:#}", meta.session_id);
+        }
+    }
+
+    /// Copies a conversation the importer found outside Marshell into the archive and indexes it, on the
+    /// caller's thread. The row goes into the index first, and the session counts as copying until the end, so
+    /// "Delete Marshell's copy" refuses meanwhile and `flush` waits for it. `Ok(false)` when nothing was
+    /// done: the session is being copied by the hook path (the next scan tries again), or history is off.
+    /// A Marshell tab's ownership is kept by the index and the sidecar when `meta` has no tab. Blocking.
+    pub fn import(&self, meta: &SessionMeta, source: &Path) -> anyhow::Result<bool> {
+        self.import_bytes(meta, &archive::read_source(source)?)
+    }
+
+    /// Like `import`, for a transcript the caller has already read.
+    pub fn import_bytes(&self, meta: &SessionMeta, bytes: &[u8]) -> anyhow::Result<bool> {
+        let existed = {
+            let _marks = self.marks.lock().unwrap();
+            let mut copying = self.copying.lock().unwrap();
+            if copying.contains_key(&meta.session_id) {
+                return Ok(false);
+            }
+            let guard = self.index.lock().unwrap();
+            let Some(index) = guard.as_ref() else {
+                return Ok(false);
+            };
+            let existed = index.get(&meta.agent, &meta.session_id)?.is_some();
+            index.upsert(meta)?;
+            copying.insert(meta.session_id.clone(), None);
+            existed
+        };
+        let result = match archive::copy_bytes(&self.home, meta, bytes) {
+            Ok(_) => {
+                // Not during a flush: shutdown is waiting, and the backfill reads this copy next start.
+                if !self.hurry.load(Ordering::SeqCst) {
+                    self.reindex(meta);
+                }
+                Ok(true)
+            }
+            Err(err) => {
+                if !existed {
+                    // No archive was made, so don't leave a row that lists nothing.
+                    let _marks = self.marks.lock().unwrap();
+                    if let Some(index) = self.index.lock().unwrap().as_ref() {
+                        let _ = index.remove(&meta.agent, &meta.session_id);
+                    }
+                }
+                Err(err)
+            }
+        };
+        self.finish_copying(&meta.session_id);
+        result
+    }
+
+    /// Ends an import's hold on the session. A hook copy asked for meanwhile waited on it (`schedule_copy` only
+    /// queues behind a running copy), so it runs here, as `schedule_copy`'s own loop would run it.
+    fn finish_copying(&self, session_id: &str) {
+        loop {
+            let next = {
+                let mut copying = self.copying.lock().unwrap();
+                match copying.get_mut(session_id).and_then(Option::take) {
+                    Some(next) => next,
+                    None => {
+                        copying.remove(session_id);
+                        return;
+                    }
+                }
+            };
+            let settle = *self.settle.lock().unwrap();
+            self.settle_wait(settle);
+            match archive::copy_transcript(&self.home, &next) {
+                Ok(_) if !self.hurry.load(Ordering::SeqCst) => self.reindex(&next),
+                Ok(_) => {}
+                Err(err) => tracing::warn!("could not archive transcript {session_id}: {err:#}"),
+            }
         }
     }
 
@@ -626,6 +705,16 @@ impl History {
     /// True when no copy is running or waiting.
     pub fn is_idle(&self) -> bool {
         self.copying.lock().unwrap().is_empty()
+    }
+
+    /// The Marshell home folder this history lives in.
+    pub fn home(&self) -> &Path {
+        &self.home
+    }
+
+    /// True once a flush has started: shutdown is under way and nothing new should begin.
+    pub fn is_hurrying(&self) -> bool {
+        self.hurry.load(Ordering::SeqCst)
     }
 
     /// Sleeps `settle` in short slices, and stops at once when a flush has set the hurry.
@@ -978,12 +1067,12 @@ mod tests {
         let history = Arc::new(History::open(home.path()));
         history.set_settle(Duration::from_millis(20));
         let meta = stopped(&history, home.path(), ID, TOOLS, 2000);
-        assert!(history.search("typo", false).unwrap().is_empty());
+        assert!(history.search("typo", false, false).unwrap().is_empty());
 
         schedule_copy(history.clone(), meta);
         idle(&history).await;
 
-        let hits = history.search("typo", false).unwrap();
+        let hits = history.search("typo", false, false).unwrap();
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].session_id, ID);
         assert!(hits[0].snippet.contains("\u{2}typo\u{3}"));
@@ -991,6 +1080,28 @@ mod tests {
         assert_eq!(listed.len(), 1);
         assert_eq!((listed[0].turns, listed[0].branch.as_deref()), (1, Some("main")));
         assert!(!listed[0].limited);
+    }
+
+    #[test]
+    fn a_hook_copy_asked_for_during_an_import_still_runs() {
+        let home = tempfile::tempdir().unwrap();
+        let history = History::open(home.path());
+        history.set_settle(Duration::from_millis(20));
+        let mut hook = stopped(&history, home.path(), ID, TOOLS, 2000);
+        hook.recordings.push(RecordingLink {
+            file: "t1-1.cast".into(),
+            first_ms: 1,
+            last_ms: 2,
+        });
+        // An import holds the session, and a hook asks for a copy meanwhile: schedule_copy leaves it waiting.
+        history.copying.lock().unwrap().insert(ID.into(), Some(hook));
+        history.finish_copying(ID);
+        assert!(history.is_idle());
+        let meta = crate::history::archive::read_meta(home.path(), "claude", ID)
+            .unwrap()
+            .unwrap();
+        assert_eq!(meta.recordings.len(), 1, "the waiting hook copy was dropped");
+        assert_eq!(history.search("typo", false, false).unwrap().len(), 1);
     }
 
     #[tokio::test]
@@ -1001,11 +1112,11 @@ mod tests {
             let meta = stopped(&history, home.path(), ID, TOOLS, 2000);
             // Archived, but never indexed: as after an upgrade from schema 1.
             crate::history::archive::copy_transcript(home.path(), &meta).unwrap();
-            assert!(history.search("typo", false).unwrap().is_empty());
+            assert!(history.search("typo", false, false).unwrap().is_empty());
         }
         let history = Arc::new(History::open(home.path()));
         history.clone().backfill().await.unwrap();
-        assert_eq!(history.search("typo", false).unwrap().len(), 1);
+        assert_eq!(history.search("typo", false, false).unwrap().len(), 1);
         // Everything is current now: a second pass has nothing to do.
         assert!(
             history
@@ -1032,7 +1143,7 @@ mod tests {
         let listed = history.list(&HistoryQuery::default()).unwrap();
         assert_eq!(listed.len(), 1);
         assert!(listed[0].limited);
-        assert!(history.search("typo", false).unwrap().is_empty());
+        assert!(history.search("typo", false, false).unwrap().is_empty());
         // Already read once: not stale again until the archive changes.
         assert!(
             history

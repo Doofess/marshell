@@ -1,6 +1,6 @@
 //! Compressed copies of agent transcripts, each with a small `.meta.json` sidecar.
 
-use super::{SessionMeta, transcript_allowed};
+use super::{SessionMeta, sidecar_allowed};
 use crate::{paths, store};
 use anyhow::Context;
 use std::path::{Path, PathBuf};
@@ -19,14 +19,11 @@ pub const MAX_RECORDINGS: usize = 100;
 
 /// Writes the sidecar for a session. The recording links already in the file stay, in their order, and the
 /// new ones follow, so no writer (a copy running on old data included) drops a link. A recording listed twice
-/// is one link, from the earliest first event to the latest last one.
+/// is one link, from the earliest first event to the latest last one. A stored owner (a tab) and its client stay.
 pub fn write_meta(home: &Path, meta: &SessionMeta) -> anyhow::Result<()> {
     let (_, sidecar) = archive_paths(home, &meta.agent, &meta.session_id);
-    let mut merged = match store::read::<SessionMeta>(&sidecar) {
-        Ok(Some(old)) => old.recordings,
-        // A sidecar that can't be read is replaced, as before.
-        Ok(None) | Err(_) => Vec::new(),
-    };
+    let stored = store::read::<SessionMeta>(&sidecar).ok().flatten();
+    let mut merged = stored.as_ref().map(|old| old.recordings.clone()).unwrap_or_default();
     for link in &meta.recordings {
         match merged.iter_mut().find(|l| l.file == link.file) {
             Some(known) => {
@@ -38,13 +35,20 @@ pub fn write_meta(home: &Path, meta: &SessionMeta) -> anyhow::Result<()> {
     }
     let excess = merged.len().saturating_sub(MAX_RECORDINGS);
     merged.drain(..excess);
-    store::write(
-        &sidecar,
-        &SessionMeta {
-            recordings: merged,
-            ..meta.clone()
-        },
-    )
+    let mut out = SessionMeta {
+        recordings: merged,
+        ..meta.clone()
+    };
+    // A conversation that ran in a Marshell tab stays Marshell's when a writer with no tab (an import) comes
+    // after. A writer with a tab, such as a resume in another tab, takes it.
+    if let Some(old) = stored.filter(|old| !old.tab_id.is_empty() && meta.tab_id.is_empty()) {
+        out.tab_id = old.tab_id;
+        out.client = old.client;
+        out.previous_in_tab = old.previous_in_tab;
+        out.started_ms = old.started_ms.min(meta.started_ms);
+        out.updated_ms = old.updated_ms.max(meta.updated_ms);
+    }
+    store::write(&sidecar, &out)
 }
 
 /// The session's sidecar, or None when it has none.
@@ -56,12 +60,138 @@ pub fn read_meta(home: &Path, agent: &str, session_id: &str) -> anyhow::Result<O
 /// Reads the whole transcript, compresses it, and replaces the archive copy and the sidecar.
 /// If the transcript can't be read, returns an error and leaves the old copy as it was.
 pub fn copy_transcript(home: &Path, meta: &SessionMeta) -> anyhow::Result<PathBuf> {
-    let bytes = std::fs::read(&meta.transcript_path).with_context(|| format!("reading {}", meta.transcript_path))?;
-    let packed = zstd::encode_all(bytes.as_slice(), 3).context("compressing the transcript")?;
+    copy_from(home, meta, Path::new(&meta.transcript_path))
+}
+
+/// Like `copy_transcript`, but from `source`, which may be a `.jsonl.zst` (decoded first, with the archive's
+/// cap). The source is only opened for reading.
+pub fn copy_from(home: &Path, meta: &SessionMeta, source: &Path) -> anyhow::Result<PathBuf> {
+    copy_bytes(home, meta, &read_source(source)?)
+}
+
+/// Compresses `bytes`, a transcript already read, and replaces the archive copy and the sidecar.
+pub fn copy_bytes(home: &Path, meta: &SessionMeta, bytes: &[u8]) -> anyhow::Result<PathBuf> {
+    let packed = zstd::encode_all(bytes, 3).context("compressing the transcript")?;
     let (archive, _) = archive_paths(home, &meta.agent, &meta.session_id);
     store::write_bytes_atomic(&archive, &packed)?;
     write_meta(home, meta)?;
+    // A copy made again is the user's to keep: the conversation is no longer a deleted one.
+    clear_tombstone(home, &meta.agent, &meta.session_id);
     Ok(archive)
+}
+
+/// One conversation whose copy the user deleted.
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+struct Tombstone {
+    agent: String,
+    session_id: String,
+    deleted_at_ms: u64,
+}
+
+/// `<home>/history/deleted.json`: the conversations whose copy was deleted, so the importer doesn't copy an
+/// unchanged source file back. A conversation leaves the list when a copy of it is made again.
+#[derive(Default, serde::Serialize, serde::Deserialize)]
+struct Tombstones {
+    #[serde(default)]
+    deleted: Vec<Tombstone>,
+}
+
+impl store::Versioned for Tombstones {
+    const VERSION: u32 = 1;
+}
+
+/// One writer at a time: the file is read, changed and written back.
+static TOMBSTONES: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+fn tombstones_path(home: &Path) -> PathBuf {
+    paths::history_dir(home).join("deleted.json")
+}
+
+fn read_tombstones(home: &Path) -> anyhow::Result<Tombstones> {
+    Ok(store::read::<Tombstones>(&tombstones_path(home))?.unwrap_or_default())
+}
+
+/// Notes that the session's copy was deleted at `deleted_at_ms`.
+pub fn add_tombstone(home: &Path, agent: &str, session_id: &str, deleted_at_ms: u64) -> anyhow::Result<()> {
+    let _guard = TOMBSTONES.lock().unwrap_or_else(|e| e.into_inner());
+    let mut doc = read_tombstones(home)?;
+    doc.deleted
+        .retain(|t| !(t.agent == agent && t.session_id == session_id));
+    doc.deleted.push(Tombstone {
+        agent: agent.into(),
+        session_id: session_id.into(),
+        deleted_at_ms,
+    });
+    store::write(&tombstones_path(home), &doc)
+}
+
+/// When the session's copy was deleted, or None when it wasn't (or the list can't be read).
+pub fn deleted_at(home: &Path, agent: &str, session_id: &str) -> Option<u64> {
+    let _guard = TOMBSTONES.lock().unwrap_or_else(|e| e.into_inner());
+    match read_tombstones(home) {
+        Ok(doc) => doc
+            .deleted
+            .iter()
+            .find(|t| t.agent == agent && t.session_id == session_id)
+            .map(|t| t.deleted_at_ms),
+        Err(err) => {
+            tracing::warn!("the list of deleted conversations could not be read: {err:#}");
+            None
+        }
+    }
+}
+
+/// Forgets that the session's copy was deleted. Does nothing when it wasn't.
+pub fn clear_tombstone(home: &Path, agent: &str, session_id: &str) {
+    let _guard = TOMBSTONES.lock().unwrap_or_else(|e| e.into_inner());
+    let result = read_tombstones(home).and_then(|mut doc| {
+        let before = doc.deleted.len();
+        doc.deleted
+            .retain(|t| !(t.agent == agent && t.session_id == session_id));
+        if doc.deleted.len() == before {
+            return Ok(());
+        }
+        store::write(&tombstones_path(home), &doc)
+    });
+    if let Err(err) = result {
+        tracing::warn!("the list of deleted conversations could not be updated: {err:#}");
+    }
+}
+
+/// The bytes of a transcript file; a `.zst` file is decoded. Fails once the file, or what it decodes to, is over
+/// `MAX_DECODED_BYTES`: the archive could not be read back past that.
+pub fn read_source(source: &Path) -> anyhow::Result<Vec<u8>> {
+    read_source_capped(source, MAX_DECODED_BYTES)
+}
+
+/// `read_source` with a different cap.
+pub fn read_source_capped(source: &Path, cap: u64) -> anyhow::Result<Vec<u8>> {
+    use std::io::Read;
+    let reading = || format!("reading {}", source.display());
+    let file = std::fs::File::open(source).with_context(reading)?;
+    let mut bytes = Vec::new();
+    if source.extension().is_some_and(|ext| ext == "zst") {
+        zstd::Decoder::new(file)
+            .context("starting to decompress the transcript")?
+            .take(cap + 1)
+            .read_to_end(&mut bytes)
+            .with_context(reading)?;
+    } else {
+        // Before reading any of it: a file this large is not worth the memory.
+        let len = file.metadata().with_context(reading)?.len();
+        anyhow::ensure!(
+            len <= cap,
+            "{} is {len} bytes, over the {cap} byte limit",
+            source.display()
+        );
+        file.take(cap + 1).read_to_end(&mut bytes).with_context(reading)?;
+    }
+    anyhow::ensure!(
+        bytes.len() as u64 <= cap,
+        "{} is over {cap} bytes decoded",
+        source.display()
+    );
+    Ok(bytes)
 }
 
 /// The most a transcript may decode to before Marshell stops reading it.
@@ -99,7 +229,7 @@ fn read_archive_capped(home: &Path, agent: &str, session_id: &str, cap: u64) -> 
 }
 
 /// Every readable sidecar in the archive. One that can't be read, or whose id or transcript path fails
-/// `transcript_allowed`, is skipped with a warning, so a rebuild never indexes it.
+/// `sidecar_allowed`, is skipped with a warning, so a rebuild never indexes it.
 pub fn read_all_meta(home: &Path) -> Vec<SessionMeta> {
     let mut found = Vec::new();
     let Ok(agents) = std::fs::read_dir(paths::history_dir(home).join("archive")) else {
@@ -115,7 +245,9 @@ pub fn read_all_meta(home: &Path) -> Vec<SessionMeta> {
                 continue;
             }
             match store::read::<SessionMeta>(&path) {
-                Ok(Some(meta)) if transcript_allowed(&meta.transcript_path, &meta.session_id) => found.push(meta),
+                Ok(Some(meta)) if sidecar_allowed(&meta.agent, &meta.transcript_path, &meta.session_id) => {
+                    found.push(meta)
+                }
                 Ok(Some(_)) => tracing::warn!(
                     "skipping history sidecar {}: unsafe session id or transcript path",
                     path.display()
@@ -133,6 +265,7 @@ mod tests {
     use super::super::{RecordingLink, SessionMeta};
     use super::*;
     use crate::store;
+    use marshell_protocol::history::Client;
 
     fn meta(id: &str, transcript: &std::path::Path) -> SessionMeta {
         SessionMeta {
@@ -145,7 +278,24 @@ mod tests {
             updated_ms: 2,
             previous_in_tab: None,
             recordings: vec![],
+            client: Default::default(),
         }
+    }
+
+    #[test]
+    fn a_tombstone_is_kept_until_a_copy_is_made_again() {
+        let home = tempfile::tempdir().unwrap();
+        assert_eq!(deleted_at(home.path(), "claude", "s1"), None);
+        add_tombstone(home.path(), "claude", "s1", 10).unwrap();
+        add_tombstone(home.path(), "codex", "s1", 20).unwrap();
+        add_tombstone(home.path(), "claude", "s1", 30).unwrap();
+        assert_eq!(deleted_at(home.path(), "claude", "s1"), Some(30));
+        assert_eq!(deleted_at(home.path(), "codex", "s1"), Some(20));
+        let src = home.path().join("s1.jsonl");
+        std::fs::write(&src, b"{\"a\":1}\n").unwrap();
+        copy_transcript(home.path(), &meta("s1", &src)).unwrap();
+        assert_eq!(deleted_at(home.path(), "claude", "s1"), None);
+        assert_eq!(deleted_at(home.path(), "codex", "s1"), Some(20));
     }
 
     #[test]
@@ -203,6 +353,68 @@ mod tests {
         write_meta(home.path(), &m).unwrap();
         let listed = read_meta(home.path(), "claude", "s1").unwrap().unwrap().recordings;
         assert_eq!(listed, [link("a-1.cast", 100, 900), link("b-2.cast", 250, 400)]);
+    }
+
+    #[test]
+    fn an_old_sidecar_without_a_client_reads_as_marshell() {
+        let home = tempfile::tempdir().unwrap();
+        let (_, sidecar) = archive_paths(home.path(), "claude", "s1");
+        std::fs::create_dir_all(sidecar.parent().unwrap()).unwrap();
+        std::fs::write(
+            &sidecar,
+            r#"{"version":2,"agent":"claude","session_id":"s1","tab_id":"t1","cwd":"c","transcript_path":"p","started_ms":1,"updated_ms":2,"previous_in_tab":null,"recordings":[]}"#,
+        )
+        .unwrap();
+        let got = read_meta(home.path(), "claude", "s1").unwrap().unwrap();
+        assert_eq!(got.client, Client::Marshell);
+    }
+
+    #[test]
+    fn write_meta_keeps_a_marshell_owner() {
+        let home = tempfile::tempdir().unwrap();
+        let mut owned = meta("s1", &home.path().join("s1.jsonl"));
+        owned.started_ms = 5;
+        owned.updated_ms = 10;
+        write_meta(home.path(), &owned).unwrap();
+        let mut imported = owned.clone();
+        imported.tab_id = String::new();
+        imported.client = Client::Terminal;
+        imported.started_ms = 3;
+        imported.updated_ms = 20;
+        write_meta(home.path(), &imported).unwrap();
+        let got = read_meta(home.path(), "claude", "s1").unwrap().unwrap();
+        assert_eq!(got.tab_id, "t1");
+        assert_eq!(got.client, Client::Marshell);
+        assert_eq!(got.updated_ms, 20);
+        assert_eq!(got.started_ms, 3);
+    }
+
+    #[test]
+    fn write_meta_lets_marshell_take_over_an_imported_session() {
+        let home = tempfile::tempdir().unwrap();
+        let mut imported = meta("s1", &home.path().join("s1.jsonl"));
+        imported.tab_id = String::new();
+        imported.client = Client::Terminal;
+        write_meta(home.path(), &imported).unwrap();
+        let owned = meta("s1", &home.path().join("s1.jsonl"));
+        write_meta(home.path(), &owned).unwrap();
+        let got = read_meta(home.path(), "claude", "s1").unwrap().unwrap();
+        assert_eq!(got.tab_id, "t1");
+        assert_eq!(got.client, Client::Marshell);
+    }
+
+    #[test]
+    fn write_meta_lets_a_resume_in_another_tab_take_the_session() {
+        let home = tempfile::tempdir().unwrap();
+        let owned = meta("s1", &home.path().join("s1.jsonl"));
+        write_meta(home.path(), &owned).unwrap();
+        let mut resumed = owned.clone();
+        resumed.tab_id = "t2".into();
+        resumed.previous_in_tab = Some("s0".into());
+        write_meta(home.path(), &resumed).unwrap();
+        let got = read_meta(home.path(), "claude", "s1").unwrap().unwrap();
+        assert_eq!(got.tab_id, "t2");
+        assert_eq!(got.previous_in_tab.as_deref(), Some("s0"));
     }
 
     #[test]

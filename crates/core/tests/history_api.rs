@@ -465,8 +465,8 @@ async fn history_off_is_503() {
             "{method} {uri}"
         );
     }
-    // A bad id is still a 404 first.
-    let (status, text) = call(&env.app, req("GET", "/v1/history/codex/x", None)).await;
+    // An unknown agent is still a 404 first.
+    let (status, text) = call(&env.app, req("GET", "/v1/history/gemini/x", None)).await;
     assert_eq!((status, text.as_str()), (StatusCode::NOT_FOUND, NO_SUCH));
 }
 
@@ -1306,10 +1306,203 @@ fn seed_history_home() {
             updated_ms: now - age,
             previous_in_tab: None,
             recordings: vec![],
+            client: Default::default(),
         };
         copy_transcript(&home, &meta).unwrap();
         if id.ends_with("b4") {
             std::fs::remove_file(&transcript).unwrap();
         }
+    }
+}
+
+const CLAUDE_OUTSIDE: &str = "00000000-0000-4000-8000-0000000000e1";
+const CODEX_OUTSIDE: &str = "00000000-0000-4000-8000-0000000000e2";
+
+#[tokio::test]
+async fn import_status_route_reports_progress() {
+    use marshell_core::history::import::{ImportRoots, Timing};
+    let env = env();
+    // Without an importer the route answers from the settings alone.
+    let (status, idle) = get_json(&env.app, "/v1/history/import").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(idle, json!({ "on": true, "copying": false, "done": 0, "total": 0 }));
+
+    let claude = tempfile::tempdir().unwrap();
+    let codex = tempfile::tempdir().unwrap();
+    let project = claude.path().join("p1");
+    std::fs::create_dir_all(&project).unwrap();
+    std::fs::write(project.join(format!("{CLAUDE_OUTSIDE}.jsonl")), BASIC).unwrap();
+    let day = codex.path().join("2026").join("10").join("21");
+    std::fs::create_dir_all(&day).unwrap();
+    let rollout = json!({
+        "timestamp": "2026-10-21T09:00:00.000Z", "ordinal": 0, "type": "session_meta",
+        "payload": { "id": CODEX_OUTSIDE, "timestamp": "2026-10-21T09:00:00.000Z", "cwd": "/work/demo",
+            "originator": "codex-tui", "thread_source": "user" },
+    });
+    std::fs::write(
+        day.join(format!("rollout-2026-10-21T09-00-00-{CODEX_OUTSIDE}.jsonl")),
+        format!("{rollout}\n"),
+    )
+    .unwrap();
+
+    env.state.start_importer_with(
+        ImportRoots {
+            claude: Some(claude.path().to_path_buf()),
+            codex: Some(codex.path().to_path_buf()),
+        },
+        Timing {
+            settle: Duration::from_millis(100),
+            rescan: Duration::from_millis(300),
+        },
+    );
+    let deadline = Instant::now() + Duration::from_secs(15);
+    loop {
+        let (status, body) = get_json(&env.app, "/v1/history/import").await;
+        assert_eq!(status, StatusCode::OK);
+        if body == json!({ "on": true, "copying": false, "done": 2, "total": 2 }) {
+            break;
+        }
+        assert!(Instant::now() < deadline, "the import did not finish: {body}");
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert!(archive_paths(env.home.path(), "claude", CLAUDE_OUTSIDE).0.exists());
+    assert!(archive_paths(env.home.path(), "codex", CODEX_OUTSIDE).0.exists());
+
+    // The settings route flips the switch.
+    let (_, mut settings) = get_json(&env.app, "/v1/settings").await;
+    assert_eq!(settings["history_import"], true);
+    settings["history_import"] = json!(false);
+    let (status, _) = call(&env.app, req("PUT", "/v1/settings", Some(settings))).await;
+    assert_eq!(status, StatusCode::OK);
+    let (_, off) = get_json(&env.app, "/v1/history/import").await;
+    assert_eq!(off["on"], false);
+}
+
+#[tokio::test]
+async fn import_status_route_refuses_without_the_bearer() {
+    let env = env();
+    let mut request = req("GET", "/v1/history/import", None);
+    request.headers_mut().remove(header::AUTHORIZATION);
+    let (status, _) = call(&env.app, request).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+}
+
+const CODEX_ID: &str = "00000000-0000-4000-8000-0000000000c2";
+const CODEX_ROLLOUT: &str = include_str!("fixtures/codex/exec.jsonl");
+
+/// Copies the exec fixture into the archive as a Codex conversation run outside Marshell. The rollout file sits
+/// in a Codex-style folder under `dir`, and the conversation's folder is the env's work folder.
+fn seed_codex(env: &Env, dir: &Path) -> PathBuf {
+    let folder = dir.join("sessions/2026/10/24");
+    std::fs::create_dir_all(&folder).unwrap();
+    let source = folder.join(format!("rollout-2026-10-24T09-00-00-{CODEX_ID}.jsonl"));
+    std::fs::write(&source, CODEX_ROLLOUT).unwrap();
+    let meta = marshell_core::history::SessionMeta {
+        agent: "codex".into(),
+        session_id: CODEX_ID.into(),
+        tab_id: String::new(),
+        cwd: env.work.path().to_string_lossy().into_owned(),
+        transcript_path: source.to_string_lossy().into_owned(),
+        started_ms: 1_000,
+        updated_ms: 2_000,
+        previous_in_tab: None,
+        recordings: Vec::new(),
+        client: marshell_protocol::history::Client::Terminal,
+    };
+    assert!(env.state.history().import(&meta, &source).unwrap());
+    source
+}
+
+#[tokio::test]
+async fn a_codex_conversation_opens_from_the_archive() {
+    let env = env();
+    let dir = tempfile::tempdir().unwrap();
+    seed_codex(&env, dir.path());
+    let (status, body) = get_json(&env.app, &format!("/v1/history/codex/{CODEX_ID}")).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["agent"], "codex");
+    assert_eq!(body["session_id"], CODEX_ID);
+    assert!(!body["turns"].as_array().unwrap().is_empty(), "{body}");
+}
+
+#[tokio::test]
+async fn search_finds_a_codex_turn() {
+    let env = env();
+    let dir = tempfile::tempdir().unwrap();
+    seed_codex(&env, dir.path());
+    let (status, hits) = get_json(&env.app, "/v1/history/search?q=tests").await;
+    assert_eq!(status, StatusCode::OK, "{hits}");
+    assert!(hits.as_array().unwrap().iter().any(|h| h["agent"] == "codex"), "{hits}");
+}
+
+#[tokio::test]
+async fn export_works_for_a_codex_conversation() {
+    let env = env();
+    let dir = tempfile::tempdir().unwrap();
+    seed_codex(&env, dir.path());
+    let uri = format!("/v1/history/codex/{CODEX_ID}/export?format=markdown");
+    let (status, text) = call(&env.app, req("GET", &uri, None)).await;
+    assert_eq!(status, StatusCode::OK, "{text}");
+    assert!(text.contains("Run the tests"), "{text}");
+}
+
+#[tokio::test]
+async fn an_unknown_agent_is_not_found() {
+    let env = env();
+    let (status, text) = call(&env.app, req("GET", &format!("/v1/history/gemini/{ID}"), None)).await;
+    assert_eq!((status, text.as_str()), (StatusCode::NOT_FOUND, NO_SUCH));
+}
+
+#[tokio::test]
+async fn fork_refuses_a_codex_conversation() {
+    let env = env();
+    let dir = tempfile::tempdir().unwrap();
+    seed_codex(&env, dir.path());
+    let (status, text) = call(
+        &env.app,
+        req(
+            "POST",
+            &format!("/v1/history/codex/{CODEX_ID}/fork"),
+            Some(resume_body()),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{text}");
+    let body: Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(body["reason"], "Fork works only for Claude Code conversations.");
+    assert_eq!(env.state.live_session_count(), 0);
+}
+
+#[tokio::test]
+async fn resume_opens_codex_in_the_conversations_folder() {
+    let env = env();
+    let dir = tempfile::tempdir().unwrap();
+    seed_codex(&env, dir.path());
+    let (status, text) = call(
+        &env.app,
+        req(
+            "POST",
+            &format!("/v1/history/codex/{CODEX_ID}/resume"),
+            Some(resume_body()),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{text}");
+    let created: Value = serde_json::from_str(&text).unwrap();
+    let tab = created["tab_id"].as_str().unwrap().to_string();
+    let rows = peek_until(&env.app, &tab, &format!("resume {CODEX_ID}")).await;
+    assert!(rows.contains("codex"), "{rows}");
+    assert!(!rows.contains("--last"), "{rows}");
+    let (_, sessions) = get_json(&env.app, "/v1/sessions").await;
+    let row = sessions["sessions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|s| s["tab_id"] == tab.as_str())
+        .unwrap();
+    assert_eq!(row["agent"], "codex");
+    assert_eq!(row["cwd"], env.work.path().to_string_lossy().as_ref());
+    if let Some(session) = env.state.remove_session(&tab) {
+        session.force_kill();
     }
 }

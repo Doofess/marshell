@@ -3,12 +3,14 @@
 
 use crate::hooks::risk::is_remote_path;
 use crate::store;
+use marshell_protocol::history::Client;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
 pub mod archive;
 pub mod cast;
 pub mod export;
+pub mod import;
 pub mod index;
 pub mod marks;
 pub mod recorder;
@@ -29,6 +31,9 @@ pub struct SessionMeta {
     /// The recordings (in `recordings/`) of the tabs this conversation ran in, oldest first.
     #[serde(default)]
     pub recordings: Vec<RecordingLink>,
+    /// Where the conversation ran. Sidecars from before this field read as Marshell.
+    #[serde(default)]
+    pub client: Client,
 }
 
 /// One recording a conversation ran in, and when.
@@ -65,6 +70,32 @@ pub fn transcript_allowed(path: &str, session_id: &str) -> bool {
         && path
             .file_name()
             .is_some_and(|name| *name == *format!("{session_id}.jsonl"))
+}
+
+/// Like `transcript_allowed` for a sidecar read back from the archive. A Codex conversation's source is a
+/// rollout named `rollout-<time>-<id>.jsonl` (or `.jsonl.zst`), so only its place and kind are checked.
+pub fn sidecar_allowed(agent: &str, path: &str, session_id: &str) -> bool {
+    if agent != "codex" {
+        return transcript_allowed(path, session_id);
+    }
+    let path = Path::new(path);
+    valid_session_id(session_id)
+        && !is_remote_path(&path.to_string_lossy())
+        && path.is_absolute()
+        && path
+            .file_name()
+            .map(|name| name.to_string_lossy())
+            .is_some_and(|name| name.ends_with(".jsonl") || name.ends_with(".jsonl.zst"))
+}
+
+/// Reads the conversation in `text`, the decoded transcript of `agent`'s session. None for an agent whose
+/// transcripts Marshell doesn't read.
+pub fn parse_for(agent: &str, text: &str, session_id: &str) -> Option<marshell_protocol::history::Conversation> {
+    match agent {
+        "claude" => Some(crate::agents::claude::transcript::parse(text, session_id)),
+        "codex" => Some(crate::agents::codex::rollout::parse(text, session_id)),
+        _ => None,
+    }
 }
 
 #[cfg(test)]

@@ -23,6 +23,9 @@ struct FileDoc {
     /// falls back on its own, so it cannot take the rest of the file with it.
     #[serde(default, deserialize_with = "lenient_notifications")]
     notifications: Option<NotifySettings>,
+    /// None (a file from before the switch) means on.
+    #[serde(default)]
+    history_import: Option<bool>,
     /// Read only, to migrate an older file; never written.
     #[serde(default, skip_serializing)]
     sound_off: bool,
@@ -85,6 +88,7 @@ pub fn load(home: &Path) -> Settings {
         close_to_tray: doc.close_to_tray,
         status_off,
         notifications,
+        history_import: doc.history_import.unwrap_or(true),
     }
 }
 
@@ -128,6 +132,7 @@ pub fn save(home: &Path, s: &Settings) -> anyhow::Result<()> {
             close_to_tray: s.close_to_tray,
             status_off: clean_status_off(s.status_off.clone()),
             notifications: Some(s.notifications.clone()),
+            history_import: Some(s.history_import),
             sound_off: false,
         },
     )
@@ -278,6 +283,24 @@ mod tests {
         for json in [r#"{"version":1}"#, r#"{"version":1,"close_to_tray":null}"#] {
             std::fs::write(&file, json).unwrap();
             assert_eq!(load(home.path()).close_to_tray, None);
+        }
+    }
+
+    #[test]
+    fn history_import_defaults_to_on() {
+        let home = tempfile::tempdir().unwrap();
+        assert!(Settings::default().history_import);
+        assert!(load(home.path()).history_import);
+        let file = crate::paths::settings_file(home.path());
+        std::fs::write(&file, r#"{"version":1}"#).unwrap();
+        assert!(load(home.path()).history_import);
+        for on in [false, true] {
+            let s = Settings {
+                history_import: on,
+                ..Settings::default()
+            };
+            save(home.path(), &s).unwrap();
+            assert_eq!(load(home.path()).history_import, on);
         }
     }
 

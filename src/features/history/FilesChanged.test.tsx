@@ -54,6 +54,13 @@ describe("FilesChanged", () => {
     expect(out).toContain("Only edits");
   });
 
+  it("names Codex and its apply_patch in a Codex conversation", () => {
+    const out = html({ ...conv([[]]), agent: "codex" });
+    expect(out).toContain("Only edits made with Codex&#x27;s apply_patch are listed. Changes made through shell commands, such as sed or a code generator, aren&#x27;t.");
+    expect(out).toContain("Codex didn&#x27;t edit any files in this conversation.");
+    expect(out).not.toContain("Claude Code");
+  });
+
   it("renders a path as text", () => {
     const out = html(conv([[card("<img src=x onerror=alert(1)>.ts", 1, 0)]]));
     expect(out).not.toContain("<img");

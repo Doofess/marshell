@@ -282,6 +282,7 @@ fn main() {
                 notify: None,
                 notify_paused: Default::default(),
                 window_hidden: Default::default(),
+                import: marshell_core::history::import::system_roots(),
             };
             let handle = app.handle().clone();
             let supervisor =

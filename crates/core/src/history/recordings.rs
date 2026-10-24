@@ -165,6 +165,7 @@ mod tests {
                     last_ms: *last_ms,
                 })
                 .collect(),
+            client: Default::default(),
         }
     }
 
@@ -215,6 +216,16 @@ mod tests {
         cast_file(home.path(), "t2", T0 + 10_000, &[1.0, 20.0]);
         let parts = parts(home.path(), &meta("t1", &[]), (T0, T0 + 100_000), &CastCache::default());
         assert_eq!(files(&parts), [overlapping.as_str()]);
+    }
+
+    #[test]
+    fn a_conversation_with_no_tab_has_no_parts() {
+        let home = tempfile::tempdir().unwrap();
+        cast_file(home.path(), "t1", T0, &[1.0, 20.0]);
+        cast_file(home.path(), "t2", T0, &[1.0, 20.0]);
+        cast_file(home.path(), "", T0, &[1.0, 20.0]);
+        let parts = parts(home.path(), &meta("", &[]), (T0, T0 + 100_000), &CastCache::default());
+        assert!(parts.is_empty(), "{:?}", files(&parts));
     }
 
     #[test]

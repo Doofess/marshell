@@ -19,6 +19,7 @@ async fn core() -> (RunningCore, tempfile::TempDir) {
         notify: None,
         notify_paused: Default::default(),
         window_hidden: Default::default(),
+        import: None,
     })
     .await
     .unwrap();
