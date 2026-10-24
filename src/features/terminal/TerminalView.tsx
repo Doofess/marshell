@@ -164,11 +164,16 @@ export function TerminalView({ endpoint, tabId, placeholder, onOutput, onSize, a
     // Shell integration marks (OSC 133): remember each prompt's line, and mark a finished command's exit code beside it.
     const tracker = trackPrompts(term);
     promptsRef.current = tracker.prompts;
-    // Mode 2031: tell a program that asked when the terminal switches between dark and light.
-    const schemeMode = trackColorSchemeMode(term, (d) => core === "live" && socket.sendInput(d), () => current);
-
     // Replies xterm generates while it parses output from before this terminal attached answer nobody (#60).
     const gate = new ReplayGate();
+    // Mode 2031: tell a program that asked when the terminal switches between dark and light. The answer to a 996 query
+    // does not pass through term.onData, so it asks the gate itself; a notice is never held back.
+    const schemeMode = trackColorSchemeMode(
+      term,
+      (d) => core === "live" && socket.sendInput(d),
+      () => current,
+      (d) => core === "live" && gate.allows(d) && socket.sendInput(d),
+    );
     const socket = new PtySocket(endpoint, tabId, {
       onOutput: (seq, bytes) => {
         if (bytes.length > 0) {

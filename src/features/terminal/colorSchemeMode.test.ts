@@ -16,15 +16,16 @@ function setup(start: Scheme = "dark") {
     },
   };
   const sent: string[] = [];
+  const answered: string[] = [];
   let scheme = start;
-  const mode = trackColorSchemeMode(term, (d) => sent.push(d), () => scheme);
+  const mode = trackColorSchemeMode(term, (d) => sent.push(d), () => scheme, (d) => answered.push(d));
   const send = (final: string, ...params: number[]) => csi.find((h) => h.id.prefix === "?" && h.id.final === final)!.fn(params);
   const reset = () => esc.find((h) => h.id.final === "c")!.fn();
   const flip = (s: Scheme) => {
     scheme = s;
     mode.notify(s);
   };
-  return { sent, send, reset, flip };
+  return { sent, answered, send, reset, flip };
 }
 
 describe("mode 2031", () => {
@@ -62,7 +63,19 @@ describe("mode 2031", () => {
   it("answers the 996 query at once even without 2031", () => {
     const t = setup("light");
     expect(t.send("n", 996)).toBe(true);
+    expect(t.answered).toEqual(["\x1b[?997;2n"]);
+  });
+  it("sends the 996 answer to its own sender, not the notice's", () => {
+    const t = setup("light");
+    t.send("n", 996);
+    expect(t.sent).toEqual([]);
+  });
+  it("still sends a notice to the notice sender, not the answer sender", () => {
+    const t = setup("dark");
+    t.send("h", 2031);
+    t.flip("light");
     expect(t.sent).toEqual(["\x1b[?997;2n"]);
+    expect(t.answered).toEqual([]);
   });
   it("leaves other DSR queries to xterm", () => {
     const t = setup();
