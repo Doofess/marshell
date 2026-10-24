@@ -16,6 +16,7 @@ import { ENDED_LINE, FAILED_LINE, SESSION_ENDED } from "./coreRestart";
 import { jumpFrom, promptTarget, trackPrompts, type Prompt } from "./promptMarks";
 import "./PromptMarks.css";
 import { pathLinkProvider } from "./pathLinks";
+import { ReplayGate } from "./replayGate";
 import { registerTerminal } from "./terminals";
 import { loadRenderer, type RendererKind } from "./renderer";
 import { trackColorSchemeMode } from "./colorSchemeMode";
@@ -166,14 +167,20 @@ export function TerminalView({ endpoint, tabId, placeholder, onOutput, onSize, a
     // Mode 2031: tell a program that asked when the terminal switches between dark and light.
     const schemeMode = trackColorSchemeMode(term, (d) => core === "live" && socket.sendInput(d), () => current);
 
+    // Replies xterm generates while it parses output from before this terminal attached answer nobody (#60).
+    const gate = new ReplayGate();
     const socket = new PtySocket(endpoint, tabId, {
       onOutput: (seq, bytes) => {
         if (bytes.length > 0) {
           setGotOutput(true);
           outputRef.current?.();
         }
-        term.write(bytes, () => socket.processed(seq + bytes.length));
+        term.write(bytes, () => {
+          gate.parsed(seq + bytes.length);
+          socket.processed(seq + bytes.length);
+        });
       },
+      onLive: (seq) => gate.live(seq),
       onReset: (seq, screen) => {
         if (screen.length > 0) {
           setGotOutput(true);
@@ -182,7 +189,10 @@ export function TerminalView({ endpoint, tabId, placeholder, onOutput, onSize, a
         term.reset();
         tracker.reset();
         landedRef.current = null;
-        term.write(screen, () => socket.processed(seq));
+        term.write(screen, () => {
+          gate.parsed(seq);
+          socket.processed(seq);
+        });
       },
       onExit: (code) => term.write(`\r\n\x1b[2mProcess exited with code ${code}. ${SESSION_ENDED}\x1b[0m\r\n`),
     });
@@ -199,6 +209,7 @@ export function TerminalView({ endpoint, tabId, placeholder, onOutput, onSize, a
     const subs = [
       term.onData((d) => {
         if (core !== "live") return;
+        if (!gate.allows(d)) return;
         if (blockedInput(core, pausedRef.current)) return isTerminalReport(d) ? undefined : blockedRef.current?.();
         meter.markInput();
         socket.sendInput(d);

@@ -146,7 +146,7 @@ Stories are fed by `fake-agent` scenario scripts, so the same 5-agent run drives
 - Setting: **Follow app** (default), **Always dark**, **Always light**, or an imported theme; a profile can override it. Switching applies to every open terminal at once through xterm's live `options.theme`, keeping scrollback.
 - Switching changes the default foreground and background, cursor, selection and the 16 ANSI colours. Colours a program painted in 24-bit RGB stay as drawn, so `minimumContrastRatio` (default 4.5) is on to keep them readable.
 - Programs that read the background once at startup keep their old look until restarted. Marshell helps in three ways: it answers OSC 10/11 colour queries with the current theme, sets `COLORFGBG` at launch, and sends the colour-scheme-change notice (mode 2031) to programs that opt in. The setting's help text says what a running program may not pick up.
-- xterm.js answers the OSC 10/11 queries while a renderer is attached. Before one attaches, or with none attached, nothing answers, so a program that asks at that moment gets no reply.
+- xterm.js answers the OSC 10/11 queries while a renderer is attached. Before one attaches, or with none attached, nothing answers, so a program that asks at that moment gets no reply. A query in output written before the terminal attached gets no reply, even when that output is replayed (slice 6a2 decision 1).
 
 **Hover-freeze rule.** While the pointer is inside the sidebar, lane height changes are deferred until the pointer leaves, with a 3 s cap. Meanwhile a "1 new" chip appears in the lane header.
 
