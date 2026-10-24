@@ -32,6 +32,9 @@ struct FileDoc {
     /// None keeps recordings and images forever. A value off the list of choices reads as none.
     #[serde(default)]
     history_limit_days: Option<u32>,
+    /// None is no backup. The folder is checked when it is saved and again at every copy.
+    #[serde(default)]
+    history_backup_dir: Option<String>,
     /// Read only, to migrate an older file; never written.
     #[serde(default, skip_serializing)]
     sound_off: bool,
@@ -119,6 +122,7 @@ pub fn load(home: &Path) -> Settings {
         history_import: doc.history_import.unwrap_or(true),
         history_limit_gb,
         history_limit_days,
+        history_backup_dir: doc.history_backup_dir.filter(|dir| !dir.trim().is_empty()),
     }
 }
 
@@ -165,6 +169,7 @@ pub fn save(home: &Path, s: &Settings) -> anyhow::Result<()> {
             history_import: Some(s.history_import),
             history_limit_gb: s.history_limit_gb,
             history_limit_days: s.history_limit_days,
+            history_backup_dir: s.history_backup_dir.clone(),
             sound_off: false,
         },
     )
@@ -370,6 +375,22 @@ mod tests {
         std::fs::write(&file, r#"{"version":1,"history_limit_gb":3,"history_limit_days":90}"#).unwrap();
         let back = load(home.path());
         assert_eq!((back.history_limit_gb, back.history_limit_days), (None, Some(90)));
+    }
+
+    #[test]
+    fn the_backup_folder_round_trips_and_a_blank_one_reads_as_none() {
+        let home = tempfile::tempdir().unwrap();
+        assert_eq!(load(home.path()).history_backup_dir, None);
+        let s = Settings {
+            history_backup_dir: Some("D:/Backups".into()),
+            ..Settings::default()
+        };
+        assert!(validate(&s).is_ok());
+        save(home.path(), &s).unwrap();
+        assert_eq!(load(home.path()).history_backup_dir.as_deref(), Some("D:/Backups"));
+        let file = crate::paths::settings_file(home.path());
+        std::fs::write(&file, r#"{"version":1,"history_backup_dir":"  "}"#).unwrap();
+        assert_eq!(load(home.path()).history_backup_dir, None);
     }
 
     #[test]

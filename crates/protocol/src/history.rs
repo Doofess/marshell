@@ -231,6 +231,19 @@ pub struct CleanupRun {
     pub bytes: u64,
 }
 
+/// How the backup mirror stands: the folder it copies into, when it last finished, and why it could not.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct BackupStatus {
+    /// The backup folder as saved in the settings. None when there is no backup.
+    pub dir: Option<String>,
+    /// When the last copy finished, unix ms. None until one has for this folder.
+    #[ts(type = "number | null")]
+    pub last_copy_ms: Option<u64>,
+    /// Why the last attempt failed. None when it worked, or none has run yet.
+    pub error: Option<String>,
+}
+
 /// The History list's "Where" filter.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[ts(export)]

@@ -18,8 +18,18 @@ pub async fn put(
     // Saving touches the disk: keep it off the async worker threads. The settings lock is held from
     // before the file is written until the copy in memory is replaced, so two saves at once happen
     // one after the other and the file and the memory always hold the same settings.
-    tokio::task::spawn_blocking(move || {
+    let refused = tokio::task::spawn_blocking(move || {
         let mut current = state.0.settings.lock().unwrap();
+        // A folder that is already the backup folder isn't asked again here: an unplugged drive must not stop
+        // the theme from saving. Every copy checks the folder anyway.
+        let backup_changed = current.history_backup_dir != to_save.history_backup_dir;
+        if backup_changed
+            && let Some(dir) = &to_save.history_backup_dir
+            && let Err(refusal) =
+                crate::history::storage::backup::check_folder(&state.0.home, std::path::Path::new(dir))
+        {
+            return anyhow::Ok(Some(refusal));
+        }
         crate::settings::save(&state.0.home, &to_save)?;
         let import = to_save.history_import;
         let limits_changed = current.history_limit_gb != to_save.history_limit_gb
@@ -28,15 +38,22 @@ pub async fn put(
         if let Some(importer) = state.0.importer.get() {
             importer.set_on(import);
         }
-        // The file is saved, which is where the cleanup reads the limits from.
-        if limits_changed && let Some(storage) = state.storage() {
-            storage.nudge(crate::history::storage::Nudge::Cleanup);
+        // The file is saved, which is where the cleanup and the backup read their settings from.
+        if let Some(storage) = state.storage() {
+            if limits_changed {
+                storage.nudge(crate::history::storage::Nudge::Cleanup);
+            } else if backup_changed {
+                storage.nudge(crate::history::storage::Nudge::Tick);
+            }
         }
-        anyhow::Ok(())
+        anyhow::Ok(None)
     })
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("{e:#}")))?;
+    if let Some(refusal) = refused {
+        return Err((StatusCode::BAD_REQUEST, refusal.message().to_owned()));
+    }
     Ok(Json(settings))
 }
 

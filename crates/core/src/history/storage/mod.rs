@@ -5,12 +5,13 @@
 //! of the tick is the backup mirror. It owns one plain `std::thread`, as the importer does, and checks for a
 //! halt between files.
 
+pub mod backup;
 pub mod compress;
 pub mod retention;
 
 use super::recorder::History;
 use crate::paths;
-use marshell_protocol::history::{CleanupRun, RetentionLimits, RetentionPreview};
+use marshell_protocol::history::{BackupStatus, CleanupRun, RetentionLimits, RetentionPreview};
 use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -74,6 +75,8 @@ struct Shared {
     settle: Duration,
     /// The last cleanup that ran. Never held across file work.
     last_cleanup: Mutex<Option<CleanupRun>>,
+    /// How the backup mirror stands. Never held across file work.
+    backup: Mutex<BackupStatus>,
 }
 
 struct Worker {
@@ -82,6 +85,8 @@ struct Worker {
     stopped: Arc<AtomicBool>,
     /// When the cleanup last ran. None until the first tick has.
     cleaned_at: Option<Instant>,
+    /// The last backup error written to the log, so a folder that stays unreachable is logged once.
+    backup_logged: Option<String>,
 }
 
 pub struct Storage {
@@ -108,12 +113,14 @@ impl Storage {
             open,
             settle: timing.settle,
             last_cleanup: Mutex::new(None),
+            backup: Mutex::new(BackupStatus::default()),
         });
         let worker = Worker {
             shared: shared.clone(),
             timing,
             stopped: stopped.clone(),
             cleaned_at: None,
+            backup_logged: None,
         };
         let thread = std::thread::Builder::new()
             .name("storage".into())
@@ -149,6 +156,11 @@ impl Storage {
     /// The last cleanup that ran. None until one has, and while no limit has been set.
     pub fn last_cleanup(&self) -> Option<CleanupRun> {
         *self.shared.last_cleanup.lock().unwrap()
+    }
+
+    /// How the backup mirror stands: the folder, when it last finished, and why it could not.
+    pub fn backup_status(&self) -> BackupStatus {
+        self.shared.backup.lock().unwrap().clone()
     }
 
     /// Tells the thread to end and returns at once. It stops between files.
@@ -199,7 +211,7 @@ impl Worker {
         }
     }
 
-    /// One pass, in order: compress, cleanup when it is due or was asked for, then (in a later task) mirror.
+    /// One pass, in order: compress, cleanup when it is due or was asked for, then mirror.
     /// A step that fails is logged and the next still runs.
     fn tick(&mut self, cleanup_now: bool) {
         if self.stopped.load(Ordering::SeqCst) {
@@ -215,6 +227,65 @@ impl Worker {
         if cleanup_now || due {
             self.cleaned_at = Some(Instant::now());
             self.cleanup();
+        }
+        if self.stopped.load(Ordering::SeqCst) {
+            return;
+        }
+        self.mirror();
+    }
+
+    /// Copies the history into the backup folder when one is set. A folder that can't be reached, or is refused,
+    /// sets the error and is tried again on the next tick; the other steps of the tick don't wait for it.
+    fn mirror(&mut self) {
+        let settings = crate::settings::load(&self.shared.home);
+        let Some(dir) = settings.history_backup_dir else {
+            *self.shared.backup.lock().unwrap() = BackupStatus::default();
+            self.backup_logged = None;
+            return;
+        };
+        if !self.shared.history.is_on() {
+            return;
+        }
+        let stopped = self.stopped.clone();
+        let outcome = backup::mirror_with(
+            &self.shared.home,
+            std::path::Path::new(&dir),
+            &*self.shared.open,
+            self.timing.settle,
+            &|| stopped.load(Ordering::SeqCst),
+        );
+        if self.stopped.load(Ordering::SeqCst) {
+            return;
+        }
+        let mut status = self.shared.backup.lock().unwrap();
+        if status.dir.as_deref() != Some(dir.as_str()) {
+            *status = BackupStatus {
+                dir: Some(dir),
+                ..BackupStatus::default()
+            };
+        }
+        match outcome {
+            Ok(report) => {
+                status.last_copy_ms = Some(retention::unix_ms(SystemTime::now()));
+                status.error = None;
+                self.backup_logged = None;
+                if report.copied + report.removed > 0 {
+                    tracing::info!(
+                        "backup copied {} files ({} bytes) and removed {}",
+                        report.copied,
+                        report.bytes,
+                        report.removed
+                    );
+                }
+            }
+            Err(err) => {
+                let message = format!("{err:#}");
+                if self.backup_logged.as_deref() != Some(message.as_str()) {
+                    tracing::warn!("backup failed: {message}");
+                    self.backup_logged = Some(message.clone());
+                }
+                status.error = Some(message);
+            }
         }
     }
 
@@ -317,6 +388,48 @@ mod tests {
         std::thread::sleep(Duration::from_millis(200));
         assert!(open.exists());
         assert!(!dir.join("t1-1000.cast.zst").exists());
+        storage.stop();
+    }
+
+    #[test]
+    fn an_unreachable_backup_sets_the_error_and_recovers() {
+        let home = tempfile::tempdir().unwrap();
+        let outer = tempfile::tempdir().unwrap();
+        let dir = outer.path().join("usb");
+        let recordings = paths::recordings_dir(home.path());
+        std::fs::create_dir_all(&recordings).unwrap();
+        std::fs::write(recordings.join("t1-1000.cast.zst"), b"recording").unwrap();
+        let settings = marshell_protocol::api::Settings {
+            history_backup_dir: Some(dir.to_string_lossy().into_owned()),
+            ..Default::default()
+        };
+        crate::settings::save(home.path(), &settings).unwrap();
+        // A recording to compress still gets compressed while the backup fails.
+        std::fs::write(recordings.join("t2-2000.cast"), b"finished").unwrap();
+        let storage = start(home.path(), Open::default());
+        assert!(wait_for(|| storage.backup_status().error.is_some()));
+        let status = storage.backup_status();
+        assert_eq!(status.dir.as_deref(), Some(dir.to_string_lossy().as_ref()));
+        assert_eq!(status.last_copy_ms, None);
+        assert_eq!(status.error.as_deref(), Some("That folder doesn't exist."));
+        assert!(wait_for(|| recordings.join("t2-2000.cast.zst").exists()));
+
+        std::fs::create_dir(&dir).unwrap();
+        storage.nudge(Nudge::Tick);
+        assert!(wait_for(|| storage.backup_status().last_copy_ms.is_some()));
+        let status = storage.backup_status();
+        assert_eq!(status.error, None);
+        let copy = dir
+            .join(backup::TARGET_NAME)
+            .join("recordings")
+            .join("t1-1000.cast.zst");
+        assert_eq!(std::fs::read(copy).unwrap(), b"recording");
+
+        // Stopping the backup clears the status and leaves the copy where it is.
+        crate::settings::save(home.path(), &marshell_protocol::api::Settings::default()).unwrap();
+        storage.nudge(Nudge::Tick);
+        assert!(wait_for(|| storage.backup_status() == BackupStatus::default()));
+        assert!(dir.join(backup::TARGET_NAME).exists());
         storage.stop();
     }
 

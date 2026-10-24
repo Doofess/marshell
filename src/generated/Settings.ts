@@ -37,4 +37,8 @@ history_limit_gb: number | null,
 /**
  * Recordings and images older than this many days are removed. None keeps them forever.
  */
-history_limit_days: number | null, };
+history_limit_days: number | null, 
+/**
+ * A folder that holds an exact copy of the history, in a "Marshell history" folder of its own. None is no backup.
+ */
+history_backup_dir: string | null, };

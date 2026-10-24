@@ -815,6 +815,8 @@ pub struct Settings {
     pub history_limit_gb: Option<u32>,
     /// Recordings and images older than this many days are removed. None keeps them forever.
     pub history_limit_days: Option<u32>,
+    /// A folder that holds an exact copy of the history, in a "Marshell history" folder of its own. None is no backup.
+    pub history_backup_dir: Option<String>,
 }
 
 impl Default for Settings {
@@ -829,6 +831,7 @@ impl Default for Settings {
             history_import: true,
             history_limit_gb: None,
             history_limit_days: None,
+            history_backup_dir: None,
         }
     }
 }

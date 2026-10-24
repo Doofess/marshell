@@ -48,6 +48,8 @@ export class SettingsSync {
   private limitGb: number | null = null;
   /** The age limit on recordings and images, in days. Kept from the last read, so every save sends it back unchanged. */
   private limitDays: number | null = null;
+  /** The backup folder for the history. Kept from the last read, so every save sends it back unchanged. */
+  private backupDir: string | null = null;
   /** The appearance the core last stored, which a pause-warning write sends back unchanged. */
   private appearance: Appearance | null = null;
 
@@ -69,6 +71,7 @@ export class SettingsSync {
     this.importOn = s.history_import;
     this.limitGb = s.history_limit_gb;
     this.limitDays = s.history_limit_days;
+    this.backupDir = s.history_backup_dir;
     this.appearance = s.appearance;
     return s.appearance;
   }
@@ -112,7 +115,7 @@ export class SettingsSync {
         throw new SettingsReadError();
       }
     }
-    const s = await this.api.put(await this.getEndpoint(), { appearance: next, pause_warned: this.warned, onboarded: this.seen, close_to_tray: this.tray, status_off: this.off, notifications: this.notify, history_import: this.importOn, history_limit_gb: this.limitGb, history_limit_days: this.limitDays });
+    const s = await this.api.put(await this.getEndpoint(), { appearance: next, pause_warned: this.warned, onboarded: this.seen, close_to_tray: this.tray, status_off: this.off, notifications: this.notify, history_import: this.importOn, history_limit_gb: this.limitGb, history_limit_days: this.limitDays, history_backup_dir: this.backupDir });
     this.warned = s.pause_warned;
     this.seen = s.onboarded;
     this.tray = s.close_to_tray;
@@ -121,6 +124,7 @@ export class SettingsSync {
     this.importOn = s.history_import;
     this.limitGb = s.history_limit_gb;
     this.limitDays = s.history_limit_days;
+    this.backupDir = s.history_backup_dir;
     this.appearance = s.appearance;
     return s.appearance;
   }
@@ -186,6 +190,7 @@ export class SettingsSync {
       history_import: this.importOn,
       history_limit_gb: this.limitGb,
       history_limit_days: this.limitDays,
+      history_backup_dir: this.backupDir,
       ...change,
     });
     this.warned = s.pause_warned;
@@ -196,6 +201,7 @@ export class SettingsSync {
     this.importOn = s.history_import;
     this.limitGb = s.history_limit_gb;
     this.limitDays = s.history_limit_days;
+    this.backupDir = s.history_backup_dir;
     this.appearance = s.appearance;
   }
 }

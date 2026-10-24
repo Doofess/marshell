@@ -1624,6 +1624,60 @@ async fn the_settings_route_refuses_a_limit_off_the_list_and_keeps_a_listed_one(
 }
 
 #[tokio::test]
+async fn the_settings_route_refuses_a_backup_folder_with_the_reason_and_does_not_save_it() {
+    let env = env();
+    let (_, settings) = get_json(&env.app, "/v1/settings").await;
+    assert_eq!(settings["history_backup_dir"], Value::Null);
+    let outer = tempfile::tempdir().unwrap();
+    let theirs = tempfile::tempdir().unwrap();
+    let target = theirs.path().join("Marshell history");
+    std::fs::create_dir(&target).unwrap();
+    std::fs::write(
+        target.join(".marshell-backup.json"),
+        r#"{"install_id":"00000000000000000000000000000000"}"#,
+    )
+    .unwrap();
+    let unmarked = tempfile::tempdir().unwrap();
+    std::fs::create_dir(unmarked.path().join("Marshell history")).unwrap();
+    std::fs::write(unmarked.path().join("Marshell history").join("notes.txt"), b"mine").unwrap();
+    let cases = [
+        (outer.path().join("nope"), "That folder doesn't exist."),
+        (
+            env.home.path().to_path_buf(),
+            "Choose a folder outside Marshell's own folder.",
+        ),
+        (
+            theirs.path().to_path_buf(),
+            "That folder holds another Marshell's backup. Choose another folder.",
+        ),
+        (
+            unmarked.path().to_path_buf(),
+            "That folder already has a \"Marshell history\" folder that Marshell didn't make. Choose another folder.",
+        ),
+    ];
+    for (dir, copy) in cases {
+        let mut bad = settings.clone();
+        bad["history_backup_dir"] = json!(dir.to_string_lossy());
+        let (status, body) = call(&env.app, req("PUT", "/v1/settings", Some(bad))).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{dir:?}");
+        assert_eq!(body, copy);
+        let (_, back) = get_json(&env.app, "/v1/settings").await;
+        assert_eq!(back["history_backup_dir"], Value::Null, "{dir:?} was saved");
+    }
+    assert_eq!(
+        std::fs::read(unmarked.path().join("Marshell history").join("notes.txt")).unwrap(),
+        b"mine"
+    );
+    let good = tempfile::tempdir().unwrap();
+    let mut ok = settings.clone();
+    ok["history_backup_dir"] = json!(good.path().to_string_lossy());
+    let (status, _) = call(&env.app, req("PUT", "/v1/settings", Some(ok))).await;
+    assert_eq!(status, StatusCode::OK);
+    let (_, back) = get_json(&env.app, "/v1/settings").await;
+    assert_eq!(back["history_backup_dir"], json!(good.path().to_string_lossy()));
+}
+
+#[tokio::test]
 async fn a_saved_age_limit_removes_what_the_preview_listed_and_the_last_cleanup_says_so() {
     let env = env();
     let rec = env.home.path().join("history/recordings");
