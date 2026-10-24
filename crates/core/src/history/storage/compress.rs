@@ -124,8 +124,15 @@ pub fn compress(path: &Path) -> anyhow::Result<u64> {
 fn encode(from: &Path, to: &Path) -> anyhow::Result<()> {
     let input = File::open(from).with_context(|| format!("could not open {}", from.display()))?;
     let mut output = File::create(to).with_context(|| format!("could not create {}", to.display()))?;
+    let modified = input.metadata().and_then(|meta| meta.modified());
     zstd::stream::copy_encode(BufReader::new(input), &mut output, LEVEL)
         .with_context(|| format!("could not compress {}", from.display()))?;
+    // Retention dates a recording by its modified time: the compressed copy keeps the plain one's.
+    if let Ok(modified) = modified {
+        output
+            .set_modified(modified)
+            .with_context(|| format!("could not date {}", to.display()))?;
+    }
     output
         .sync_all()
         .with_context(|| format!("could not sync {}", to.display()))
@@ -180,6 +187,17 @@ mod tests {
         assert_eq!(zstd::decode_all(File::open(&zst).unwrap()).unwrap(), body);
         assert_eq!(saved, body.len() as u64 - std::fs::metadata(&zst).unwrap().len());
         assert!(!dir.path().join("t1-1000.cast.zst.tmp").exists());
+    }
+
+    #[test]
+    fn compress_keeps_the_recordings_modified_time() {
+        // Retention dates a recording by its modified time, so compressing it must not make it new.
+        let dir = tempfile::tempdir().unwrap();
+        let plain = write_old(dir.path(), "t1-1000.cast", b"{\"version\":2}\n");
+        let then = std::fs::metadata(&plain).unwrap().modified().unwrap();
+        compress(&plain).unwrap();
+        let zst = std::fs::metadata(dir.path().join("t1-1000.cast.zst")).unwrap();
+        assert_eq!(zst.modified().unwrap(), then);
     }
 
     #[test]
