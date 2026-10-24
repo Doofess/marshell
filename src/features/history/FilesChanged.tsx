@@ -2,25 +2,34 @@ import { DiffView } from "../../components/DiffView/DiffView";
 import type { Conversation } from "../../generated/Conversation";
 import { editDiff, filesChanged } from "./changedFiles";
 
-export const FILES_NOTE =
-  "Only edits made with Claude Code's Edit and Write tools are listed. Changes made through shell commands, such as sed or a code generator, aren't.";
-export const NO_FILES_COPY = "Claude Code didn't edit any files in this conversation.";
+/** The note and the empty line, per agent: each names the tools whose edits the transcript records. */
+const COPY: Record<string, { note: string; none: string }> = {
+  claude: {
+    note: "Only edits made with Claude Code's Edit and Write tools are listed. Changes made through shell commands, such as sed or a code generator, aren't.",
+    none: "Claude Code didn't edit any files in this conversation.",
+  },
+  codex: {
+    note: "Only edits made with Codex's apply_patch are listed. Changes made through shell commands, such as sed or a code generator, aren't.",
+    none: "Codex didn't edit any files in this conversation.",
+  },
+};
 
 /** `+3 −1`, with an en dash for a count the transcript didn't give. */
 const counts = (added: number | null, removed: number | null) => `+${added ?? "–"} −${removed ?? "–"}`;
 
 /**
- * The files Claude Code edited, per file, each edit with its diff and a button back to its turn. Paths and diff lines render as
+ * The files the agent edited, per file, each edit with its diff and a button back to its turn. Paths and diff lines render as
  * text. `turn` counts from 0 (as `Turn.index` does), so the visible number and the button's label are `turn + 1`.
  */
 export function FilesChanged({ conversation, onGoToTurn }: { conversation: Conversation; onGoToTurn: (turn: number) => void }) {
   const files = filesChanged(conversation);
+  const copy = COPY[conversation.agent] ?? COPY.claude;
   return (
     <section className="files" aria-label="Files changed">
       <h3 className="files__heading">{files.length === 1 ? "1 file changed" : `${files.length} files changed`}</h3>
-      <p className="files__note">{FILES_NOTE}</p>
+      <p className="files__note">{copy.note}</p>
       {files.length === 0 ? (
-        <p className="files__empty">{NO_FILES_COPY}</p>
+        <p className="files__empty">{copy.none}</p>
       ) : (
         <ul className="files__list">
           {files.map((f) => (
