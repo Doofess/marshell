@@ -39,10 +39,12 @@ pub fn write_meta(home: &Path, meta: &SessionMeta) -> anyhow::Result<()> {
         recordings: merged,
         ..meta.clone()
     };
-    // A conversation that ran in a Marshell tab stays Marshell's, whichever writer comes after.
-    if let Some(old) = stored.filter(|old| !old.tab_id.is_empty()) {
+    // A conversation that ran in a Marshell tab stays Marshell's when a writer with no tab (an import) comes
+    // after. A writer with a tab, such as a resume in another tab, takes it.
+    if let Some(old) = stored.filter(|old| !old.tab_id.is_empty() && meta.tab_id.is_empty()) {
         out.tab_id = old.tab_id;
         out.client = old.client;
+        out.previous_in_tab = old.previous_in_tab;
         out.started_ms = old.started_ms.min(meta.started_ms);
         out.updated_ms = old.updated_ms.max(meta.updated_ms);
     }
@@ -255,6 +257,20 @@ mod tests {
         let got = read_meta(home.path(), "claude", "s1").unwrap().unwrap();
         assert_eq!(got.tab_id, "t1");
         assert_eq!(got.client, Client::Marshell);
+    }
+
+    #[test]
+    fn write_meta_lets_a_resume_in_another_tab_take_the_session() {
+        let home = tempfile::tempdir().unwrap();
+        let owned = meta("s1", &home.path().join("s1.jsonl"));
+        write_meta(home.path(), &owned).unwrap();
+        let mut resumed = owned.clone();
+        resumed.tab_id = "t2".into();
+        resumed.previous_in_tab = Some("s0".into());
+        write_meta(home.path(), &resumed).unwrap();
+        let got = read_meta(home.path(), "claude", "s1").unwrap().unwrap();
+        assert_eq!(got.tab_id, "t2");
+        assert_eq!(got.previous_in_tab.as_deref(), Some("s0"));
     }
 
     #[test]

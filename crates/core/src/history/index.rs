@@ -596,14 +596,22 @@ fn check(file: &Path) -> Health {
     }
 }
 
+/// An import (no tab) over a row a Marshell tab owns keeps the owner, as `archive::write_meta` does.
+const KEEP_OWNER: &str = "sessions.tab_id <> '' AND excluded.tab_id = ''";
+
 fn insert(conn: &Connection, meta: &SessionMeta) -> anyhow::Result<()> {
     conn.execute(
         &format!(
             "INSERT INTO sessions ({COLUMNS}) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
-             ON CONFLICT (agent, session_id) DO UPDATE SET tab_id = excluded.tab_id, cwd = excluded.cwd,
-                 transcript_path = excluded.transcript_path, started_ms = excluded.started_ms,
-                 updated_ms = excluded.updated_ms, previous_in_tab = excluded.previous_in_tab,
-                 client = excluded.client"
+             ON CONFLICT (agent, session_id) DO UPDATE SET cwd = excluded.cwd,
+                 transcript_path = excluded.transcript_path,
+                 started_ms = CASE WHEN {KEEP_OWNER} THEN min(started_ms, excluded.started_ms)
+                     ELSE excluded.started_ms END,
+                 updated_ms = CASE WHEN {KEEP_OWNER} THEN max(updated_ms, excluded.updated_ms)
+                     ELSE excluded.updated_ms END,
+                 previous_in_tab = CASE WHEN {KEEP_OWNER} THEN previous_in_tab ELSE excluded.previous_in_tab END,
+                 client = CASE WHEN {KEEP_OWNER} THEN client ELSE excluded.client END,
+                 tab_id = CASE WHEN {KEEP_OWNER} THEN tab_id ELSE excluded.tab_id END"
         ),
         params![
             meta.agent,
@@ -981,6 +989,21 @@ mod tests {
         let mut ids: Vec<String> = index.list(&q).unwrap().into_iter().map(|e| e.session_id).collect();
         ids.sort();
         ids
+    }
+
+    #[test]
+    fn an_import_upsert_keeps_the_marshell_owner() {
+        let (_home, index) = fresh();
+        index.upsert(&meta("s", "t1", 10, Some("p"))).unwrap();
+        let mut imported = with_client("s", Client::Terminal);
+        imported.updated_ms = 20;
+        index.upsert(&imported).unwrap();
+        let entry = index.entry("claude", "s").unwrap().unwrap();
+        assert_eq!((entry.tab_id.as_str(), entry.client), ("t1", Client::Marshell));
+        assert_eq!(entry.updated_ms, 20);
+        // A resume in another tab still takes the session.
+        index.upsert(&meta("s", "t2", 30, None)).unwrap();
+        assert_eq!(index.entry("claude", "s").unwrap().unwrap().tab_id, "t2");
     }
 
     #[test]
