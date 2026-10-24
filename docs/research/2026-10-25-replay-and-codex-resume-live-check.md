@@ -1,0 +1,25 @@
+# Replayed queries and Codex resume live check (slice 6a2)
+
+- Date: 2026-10-25, 00:35 to 00:47 local time.
+- Build: `phase-6a2` at dc803fb under `pnpm tauri dev` on Windows 11 Pro (26300), Codex CLI 0.163.0.
+- Home: a scratch `MARSHELL_HOME`, `CLAUDE_CONFIG_DIR` and `MARSHELL_CLAUDE_SETTINGS`, with CDP on port 9333. `CODEX_HOME` was `%TEMP%\lc-6a2-cx`, holding a copy of `auth.json` only (`live-check.ps1 start -CodexAuth -CodexHome`). Onboarding was allowed to write both scratch targets (11 Claude Code hook entries and a status line, 8 Codex hook entries), and the first Codex tab trusted the 8 hooks with **Trust all and continue**.
+- Data: none seeded. Two Codex tabs in one folder were each sent a prompt naming the tab ("Reply with exactly: tab A", "… tab B"), which made two real conversations.
+- How it was driven: the core API with the scratch `mh\run\endpoint.json` (create, restart, peek, sessions, history, recording), keys to the check's own tabs over the pty WebSocket without a Resume (so they never attached), and the webview over CDP with evaluations returning small JSON to choose the shown tab. No screenshots and no desktop input. The person used the same dev window during the check (a Claude Code and then a Codex session in its first shell tab, and the split layout); those were left alone.
+
+## Results
+
+| Check | Result |
+| --- | --- |
+| 1. A Codex tab created in the background, then shown: no `]10;` or `]11;` in its composer (#60) | Pass. With the shell tab shown, `POST /v1/sessions` started Codex in `proj\cxdir`. Its recording holds one `ESC]10;?` and one `ESC]11;?`, written before any renderer attached. Once the tab was shown, peek read "› Ask Codex to do anything", an empty composer. |
+| 2. Restart a Codex tab while another tab is shown, then show it (#60) | Pass. Tabs A and B were restarted while the check's own shell tab was shown. Each new run's recording again holds one `ESC]10;?` and one `ESC]11;?`. Shown afterwards, both composers read "› Ask Codex to do anything". |
+| 3. A live query in a shown pwsh tab still gets its answer | Pass. A `node` probe in raw mode wrote `ESC]11;?BEL` and read for 1 s. It printed `REPLY:"\u001b]11;rgb:ffff/ffff/ffff\u001b\\"`. |
+| 4. Two Codex tabs in one folder restart into their own conversations (#61) | Pass. History linked `01a16fd9-…` to tab A and `01a16fda-…` (the newer) to tab B. After both quit and were restarted, the processes ran `codex.exe resume 01a16fd9-e7f4-7850-b987-27e256228606 …` and `codex.exe resume 01a16fda-8965-7b93-b7bf-8d137838edf8 …`. Peek showed "› Reply with exactly: tab A" then "• tab A" in A, and the same for B. Neither showed "This conversation is open in another app". History kept each link. |
+| 5. A Codex tab whose rollout file is gone starts fresh (decision 4) | Pass. Tab A quit, its rollout was renamed to `moved-away-01a16fd9.bak`, and Restart ran `codex.exe --no-daemon --sandbox read-only --ask-for-approval on-request` with no resume argument. Peek showed a new conversation with no earlier turns. |
+| 6. A Codex tab with no conversation on record restarts with `resume --last` (decision 3) | Pass. With the scratch `hooks.json` set aside, tab C started, answered "tab C" and quit. Its conversation appeared in History (imported from the rollout) with no tab link. With `hooks.json` back (same SHA-256), Restart ran `codex.exe resume --last …`. |
+| 7. The real `~/.codex` is untouched | Pass. `~/.codex/config.toml` kept its modified time (2026-10-24 18:35:18) and `~/.codex/hooks.json` is absent. `~/.claude/settings.json` kept its modified time (2026-10-24 20:59:06). |
+
+## Findings
+
+1. **The pty WebSocket 404 is the benign race the plan predicted.** The console shows one `WebSocket connection to 'ws://127.0.0.1:…/v1/pty/tcdcc8af9a81f' failed: … 404`, for a tab created through the API. The registry row exists before the session is in the map (`sessions.rs`, from the row at :205 to `insert_session` at :359, and during a Resume or Restart respawn), and `PtySocket` retries with backoff from 100 ms to 2 s, so the terminal connected on the retry. Not fixed (Task 1 ruling).
+2. **A tab that is hidden after being shown is resized to 10x4.** Every recording of a tab that was shown and then hidden has an `"r","10x4"` event at the moment another tab was shown, and a return to full size when it is shown again (tab A: `210x55` at 46.6 s, `10x4` at 72.9 s). The program in the hidden tab redraws at 10 columns, so peek of a hidden Codex tab read "› Ask Cod". This slice doesn't touch the fit or resize code (`TerminalView`'s `ResizeObserver` and `onResize`), so the cause lies elsewhere. Not fixed: a follow-up issue.
+3. **The Restart bar's copy still names `codex resume --last`.** The process now runs `resume <id>` when the conversation is on record. The copy is outside this slice. Not fixed.
