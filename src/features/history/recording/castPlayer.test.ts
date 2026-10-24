@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { RecordingPart } from "../../../generated/RecordingPart";
-import { clock, jumpTargets, nextTarget, playbackDelay } from "./castPlayer";
+import { clock, jumpTargets, nextTarget, playbackDelay, terminalTakesKey } from "./castPlayer";
 
 const part = (over: Partial<RecordingPart> = {}): RecordingPart => ({
   index: 0,
@@ -57,5 +57,10 @@ describe("clock", () => {
     expect(clock(3_723_000, 4_000_000)).toBe("1:02:03");
     expect(clock(5_000, 4_000_000)).toBe("0:00:05");
     expect(clock(-5, 60_000)).toBe("0:00");
+  });
+  it("leaves Esc to the page, so it reaches the Recording tab instead of being cancelled by the terminal", () => {
+    expect(terminalTakesKey({ key: "Escape" })).toBe(false);
+    expect(terminalTakesKey({ key: " " })).toBe(true);
+    expect(terminalTakesKey({ key: "ArrowDown" })).toBe(true);
   });
 });

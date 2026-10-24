@@ -8,7 +8,7 @@ import { ApiError } from "../../../lib/api/client";
 import { reasonOf } from "../../../lib/api/sessions";
 import { BUNDLED_FONT, fontStack } from "../../terminal/terminalFont";
 import { appScheme, resolveTerminalTheme, type TerminalThemeInput } from "../../terminal/terminalTheme";
-import { clock, jumpTargets, nextTarget, playbackDelay } from "./castPlayer";
+import { clock, jumpTargets, nextTarget, playbackDelay, terminalTakesKey } from "./castPlayer";
 import "./RecordingPlayer.css";
 
 export type FramesQuery = { fromMs?: number; toMs?: number; offset?: number };
@@ -118,6 +118,7 @@ export function RecordingPlayer({
         minimumContrastRatio: first.minimumContrastRatio,
       });
       term.open(el);
+      term.attachCustomKeyEventHandler(terminalTakesKey);
       loadRenderer(term, platform, () => {});
       termRef.current = term;
       el.style.backgroundColor = first.theme.background ?? "";

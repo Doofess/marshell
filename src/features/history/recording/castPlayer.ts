@@ -28,6 +28,12 @@ export function nextTarget(targets: number[], posMs: number, by: -1 | 1): number
   return [...targets].reverse().find((t) => t <= posMs - BACK_SKIP_MS) ?? null;
 }
 
+/**
+ * Whether the player's xterm handles a key. xterm cancels Esc on its own textarea, which would stop it reaching the page's
+ * handlers, so Esc goes to the page: there it moves focus to the Recording tab.
+ */
+export const terminalTakesKey = (e: Pick<KeyboardEvent, "key">): boolean => e.key !== "Escape";
+
 /** `m:ss`, or `h:mm:ss` when the recording (`totalMs`) is an hour or longer. */
 export function clock(ms: number, totalMs: number): string {
   const s = Math.floor(Math.max(0, ms) / 1000);
