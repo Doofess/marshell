@@ -344,15 +344,15 @@ Runs before Task 3, which consumes it.
 **Interfaces:**
 - The setup map passed to `toRow` is `Partial<Record<HookAgent, HookInstall>>`. The setup link shows for `setup?.[info.agent]` when it is set and not `"installed"`.
 
-- [ ] **Step 1: Write the failing tests.**
+- [x] **Step 1: Write the failing tests.**
   - `a Codex row without hooks offers the setup`.
   - `an installed but untrusted Codex keeps the limited fallback with no setup link`.
   - `a Codex row with live status shows its phrase`.
   - `a Codex card offers no Always allow`.
-- [ ] **Step 2: Run `pnpm test src/features/sessions/toRow.test.ts src/features/approval`.** Expected: FAIL.
-- [ ] **Step 3: Implement it.**
-- [ ] **Step 4: Run Step 2's command, then `pnpm build`.** Expected: PASS.
-- [ ] **Step 5: Commit** as `feat(sessions): show Codex's live status and setup link in its row`.
+- [x] **Step 2: Run `pnpm test src/features/sessions/toRow.test.ts src/features/approval`.** Expected: FAIL.
+- [x] **Step 3: Implement it.**
+- [x] **Step 4: Run Step 2's command, then `pnpm build`.** Expected: PASS.
+- [x] **Step 5: Commit** as `feat(sessions): show Codex's live status and setup link in its row`.
 
 ### Task 9: Live check and the slice's exit (main thread)
 
