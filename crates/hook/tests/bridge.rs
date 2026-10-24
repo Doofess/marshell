@@ -139,6 +139,30 @@ fn permission_without_a_tab_asks_nothing() {
 }
 
 #[test]
+fn a_codex_permission_without_tab_prints_nothing() {
+    // Codex run outside Marshell: no tab, so no connection is tried and Codex asks the person itself.
+    let home = tempfile::tempdir().unwrap();
+    let fake = serve(Reply::new(200, &decision(r#"{"behavior":"allow"}"#)));
+    write_endpoint(home.path(), fake.port, "t");
+    let args: Vec<String> = ["permission", "--agent", "codex", "--tag", "mshl1"]
+        .map(String::from)
+        .to_vec();
+    let started = Instant::now();
+    let request = br#"{"hook_event_name":"PermissionRequest","tool_name":"Bash","tool_input":{"command":"dir"}}"#;
+    assert!(go(home.path(), &[], args, request).is_empty());
+    assert!(
+        started.elapsed() < Duration::from_millis(200),
+        "{:?}",
+        started.elapsed()
+    );
+    assert!(
+        fake.captured(Duration::from_millis(300)).is_none(),
+        "the bridge posted without a tab"
+    );
+    assert!(log_lines(home.path()).is_empty());
+}
+
+#[test]
 fn permission_prints_nothing_for_an_answer_marshell_never_gives() {
     // Whatever answers on the port might not be the core (ADR 0001, reviewed for 3d): only the core's own shapes pass.
     let other_rule = SUGGESTED.replace("node *", "*");

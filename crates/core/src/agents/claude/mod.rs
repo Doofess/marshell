@@ -49,7 +49,7 @@ pub fn permission_output(decision: &PermissionDecision, request: &Value) -> Resu
                 .message
                 .as_deref()
                 .filter(|m| !m.is_empty())
-                .unwrap_or("Denied in Marshell.");
+                .unwrap_or(super::common::DENIED_TEXT);
             json!({ "behavior": "deny", "message": message })
         }
         PermissionBehavior::Allow => {

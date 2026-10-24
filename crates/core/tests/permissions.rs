@@ -79,8 +79,27 @@ fn spawn_hook_on(
     tab: Option<&str>,
     body: serde_json::Value,
 ) -> tokio::task::JoinHandle<Answer> {
+    spawn_agent_hook_on(port, "claude", app, tab, body)
+}
+
+fn spawn_agent_hook(
+    agent: &str,
+    app: &axum::Router,
+    tab: Option<&str>,
+    body: serde_json::Value,
+) -> tokio::task::JoinHandle<Answer> {
+    spawn_agent_hook_on(PORT, agent, app, tab, body)
+}
+
+fn spawn_agent_hook_on(
+    port: u16,
+    agent: &str,
+    app: &axum::Router,
+    tab: Option<&str>,
+    body: serde_json::Value,
+) -> tokio::task::JoinHandle<Answer> {
     let app = app.clone();
-    let req = hook_request_on(port, "claude", tab, &body);
+    let req = hook_request_on(port, agent, tab, &body);
     tokio::spawn(async move {
         let res = app.oneshot(req).await.unwrap();
         let status = res.status();
@@ -171,6 +190,132 @@ async fn decision_answers_the_held_hook() {
         body,
         serde_json::json!({"hookSpecificOutput":{"hookEventName":"PermissionRequest","decision":{"behavior":"allow"}}})
     );
+    assert!(pending(&app).await.is_empty());
+}
+
+fn codex_request(command: &str) -> serde_json::Value {
+    serde_json::json!({"hook_event_name":"PermissionRequest","tool_name":"Bash",
+        "tool_input":{"command":command,"description":"Allow running the requested command?"}})
+}
+
+fn codex_answer(decision: serde_json::Value) -> serde_json::Value {
+    serde_json::json!({"hookSpecificOutput":{"hookEventName":"PermissionRequest","decision":decision}})
+}
+
+fn answer_json(answer: &Answer) -> serde_json::Value {
+    serde_json::from_slice(&answer.2).unwrap()
+}
+
+#[tokio::test]
+async fn a_codex_permission_is_held_and_answered() {
+    let (app, _) = app(Duration::from_secs(30));
+    let hook = spawn_agent_hook("codex", &app, Some("t1"), codex_request("Set-Content out.txt hi"));
+    let entry = wait_one(&app).await;
+    assert_eq!(
+        (entry["agent"].as_str(), entry["tab"].as_str()),
+        (Some("codex"), Some("t1"))
+    );
+    let (status, _) = post_to(
+        &app,
+        &format!("/v1/permissions/{}/decision", rid_of(&entry)),
+        r#"{"behavior":"allow"}"#,
+    )
+    .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    let answer = hook.await.unwrap();
+    assert_eq!(answer.0, StatusCode::OK);
+    assert_eq!(
+        String::from_utf8(answer.2).unwrap(),
+        r#"{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decision":{"behavior":"allow"}}}"#
+    );
+    assert!(pending(&app).await.is_empty());
+}
+
+#[tokio::test]
+async fn a_codex_permission_shows_a_card_with_no_always_rule() {
+    let (app, st) = app(Duration::from_secs(30));
+    let hook = spawn_agent_hook("codex", &app, Some("t1"), codex_request("Set-Content out.txt hi"));
+    wait_one(&app).await;
+    let views = st.permission_views();
+    assert_eq!(views.len(), 1);
+    assert_eq!((views[0].agent.as_str(), views[0].tab.as_str()), ("codex", "t1"));
+    assert_eq!(views[0].always_rule, None);
+    assert_eq!(
+        views[0].detail,
+        marshell_protocol::hook::PermissionDetail::Bash {
+            command: "Set-Content out.txt hi".into(),
+            cwd: None
+        }
+    );
+    hook.abort();
+}
+
+#[tokio::test]
+async fn a_codex_project_decision_is_409() {
+    let (app, _) = app(Duration::from_secs(30));
+    let hook = spawn_agent_hook("codex", &app, Some("t0"), codex_request("npm test"));
+    let rid = rid_of(&wait_one(&app).await);
+    let (status, text) = post_to(
+        &app,
+        &format!("/v1/permissions/{rid}/decision"),
+        r#"{"behavior":"allow","scope":"project"}"#,
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    assert_eq!(
+        text,
+        "Codex can't keep an always-allow rule from Marshell. Allow once, or answer in the terminal."
+    );
+    assert_eq!(pending(&app).await.len(), 1);
+    assert!(!hook.is_finished());
+    hook.abort();
+}
+
+#[tokio::test]
+async fn two_codex_tabs_get_their_own_answers() {
+    let (app, _) = app(Duration::from_secs(30));
+    let first = spawn_agent_hook("codex", &app, Some("t1"), codex_request("first command"));
+    wait_pending(&app, |p| p.len() == 1).await;
+    let second = spawn_agent_hook("codex", &app, Some("t2"), codex_request("second command"));
+    let entries = wait_pending(&app, |p| p.len() == 2).await;
+    let rid_for = |tab: &str| rid_of(entries.iter().find(|e| e["tab"] == tab).unwrap());
+    // Answer the later tab first, with a different decision from the earlier one.
+    let (status, _) = post_to(
+        &app,
+        &format!("/v1/permissions/{}/decision", rid_for("t2")),
+        r#"{"behavior":"deny","message":"second only"}"#,
+    )
+    .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    let second = second.await.unwrap();
+    assert_eq!(
+        answer_json(&second),
+        codex_answer(serde_json::json!({"behavior":"deny","message":"second only"}))
+    );
+    // The first tab is still waiting, and its request is the only one left.
+    assert!(!first.is_finished());
+    let left = pending(&app).await;
+    assert_eq!((left.len(), left[0]["tab"].as_str()), (1, Some("t1")));
+    let (status, _) = post_to(
+        &app,
+        &format!("/v1/permissions/{}/decision", rid_for("t1")),
+        r#"{"behavior":"allow"}"#,
+    )
+    .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    assert_eq!(
+        answer_json(&first.await.unwrap()),
+        codex_answer(serde_json::json!({"behavior":"allow"}))
+    );
+}
+
+#[tokio::test]
+async fn no_decision_returns_204() {
+    let (app, _) = app(Duration::from_millis(100));
+    let hook = spawn_agent_hook("codex", &app, Some("t1"), codex_request("npm test"));
+    let (status, ct, body) = hook.await.unwrap();
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    assert!(body.is_empty(), "{ct:?}");
     assert!(pending(&app).await.is_empty());
 }
 
@@ -313,7 +458,7 @@ async fn scoped_allow_without_a_rule_is_409() {
 #[tokio::test]
 async fn unsupported_agent_decision_is_409_and_stays_pending() {
     let (app, st) = app(Duration::from_secs(30));
-    let (_hold, _rx) = st.holds().open(Some("t0".into()), "codex".into(), bash_request());
+    let (_hold, _rx) = st.holds().open(Some("t0".into()), "antigravity".into(), bash_request());
     let rid = rid_of(&wait_one(&app).await);
     let (status, text) = post_to(
         &app,
@@ -329,7 +474,7 @@ async fn unsupported_agent_decision_is_409_and_stays_pending() {
 #[tokio::test]
 async fn permission_without_a_view_is_answered_at_once() {
     let (app, _) = app(Duration::from_secs(120));
-    let req = hook_request("codex", Some("t0"), &bash_request());
+    let req = hook_request("antigravity", Some("t0"), &bash_request());
     let response = tokio::time::timeout(Duration::from_secs(1), app.clone().oneshot(req))
         .await
         .expect("a request without a card was held")

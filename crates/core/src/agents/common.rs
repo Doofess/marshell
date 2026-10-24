@@ -8,6 +8,18 @@ use std::path::PathBuf;
 /// Cap on a tool card's detail, in characters.
 pub const DETAIL_CAP: usize = 4_000;
 
+/// What a denial says when the person gave no reason.
+pub const DENIED_TEXT: &str = "Denied in Marshell.";
+
+/// A tool's input as `key: value` lines: an object's fields, or the whole value as `input`.
+pub fn flatten_input(input: &Value) -> Vec<(String, String)> {
+    let render = |value: &Value| value.as_str().map(str::to_owned).unwrap_or_else(|| value.to_string());
+    match input.as_object() {
+        Some(object) => object.iter().map(|(key, value)| (key.clone(), render(value))).collect(),
+        None => vec![("input".into(), render(input))],
+    }
+}
+
 /// "Created src/a.ts, 3 lines".
 pub fn created_summary(path: &str, lines: usize) -> String {
     format!("Created {path}, {lines} {}", if lines == 1 { "line" } else { "lines" })

@@ -38,16 +38,20 @@ fn str_at<'a>(body: &'a Value, pointer: &str) -> Option<&'a str> {
         .filter(|s| !s.trim().is_empty())
 }
 
-/// The file `apply_patch` touches first: the path on the patch's first `*** Add File:`,
-/// `*** Update File:` or `*** Delete File:` line.
-fn patched_file(body: &Value) -> Option<String> {
-    str_at(body, "/tool_input/command")?.lines().find_map(|line| {
+/// The path on a patch's first `*** Add File:`, `*** Update File:` or `*** Delete File:` line.
+pub(crate) fn first_patch_file(patch: &str) -> Option<&str> {
+    patch.lines().find_map(|line| {
         let path = ["*** Add File:", "*** Update File:", "*** Delete File:"]
             .iter()
             .find_map(|prefix| line.trim().strip_prefix(prefix))?
             .trim();
-        (!path.is_empty()).then(|| first_line(path, 60))
+        (!path.is_empty()).then_some(path)
     })
+}
+
+/// The file `apply_patch` touches first, cut to fit a row.
+fn patched_file(body: &Value) -> Option<String> {
+    first_patch_file(str_at(body, "/tool_input/command")?).map(|path| first_line(path, 60))
 }
 
 fn tool_name(body: &Value) -> &str {

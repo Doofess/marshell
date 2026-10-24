@@ -66,3 +66,23 @@ fn without_destination(v: &Value) -> Value {
     }
     v
 }
+
+#[cfg(test)]
+mod tests {
+    use super::accepted;
+
+    const REQUEST: &[u8] = br#"{"hook_event_name":"PermissionRequest","tool_name":"Bash","tool_input":{"command":"Set-Content out.txt hi","description":"Allow running the requested command?"}}"#;
+
+    #[test]
+    fn accepts_codex_allow_and_deny() {
+        for answer in [
+            r#"{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decision":{"behavior":"allow"}}}"#,
+            r#"{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decision":{"behavior":"deny","message":"Denied in Marshell."}}}"#,
+        ] {
+            assert!(accepted(answer.as_bytes(), REQUEST), "{answer}");
+        }
+        // A Codex request has no suggestions, so a scoped allow is never one the core gives.
+        let scoped = r#"{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decision":{"behavior":"allow","updatedPermissions":[{"type":"addRules","rules":[{"toolName":"Bash"}],"behavior":"allow","destination":"session"}]}}}"#;
+        assert!(!accepted(scoped.as_bytes(), REQUEST));
+    }
+}
