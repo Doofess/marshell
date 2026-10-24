@@ -14,10 +14,13 @@ import "./History.css";
 /** For a conversation Marshell never archived. The view that fetches it shows this when the core answers 404. */
 export const NO_ARCHIVE_COPY = "Marshell has no copy of this conversation yet.";
 
-const limitedNotice = (version: string | undefined) =>
+/** The agent's name in the view's sentences; an agent not named here reads as Claude Code, the one History had before Codex. */
+const agentName = (agent: string) => (agent === "codex" ? "Codex" : "Claude Code");
+
+const limitedNotice = (agent: string, version: string | undefined) =>
   version
-    ? `Status limited: Claude Code ${version} saved this conversation, and Marshell hasn't been tested with that version. Some parts may be missing.`
-    : "Status limited: this conversation has no Claude Code version, so some parts may be missing.";
+    ? `Status limited: ${agentName(agent)} ${version} saved this conversation, and Marshell hasn't been tested with that version. Some parts may be missing.`
+    : `Status limited: this conversation has no ${agentName(agent)} version, so some parts may be missing.`;
 
 /** The conversation view's tabs, in order. */
 export type ConversationTab = "conversation" | "recording" | "files";
@@ -328,7 +331,7 @@ export function ConversationView({
           />
           {editor === "rename" && (
             <p id={hintId} className="conversation__hint">
-              Leave empty to use Claude Code&apos;s title.
+              {c.agent === "codex" ? "Leave empty to use the first prompt." : "Leave empty to use Claude Code's title."}
             </p>
           )}
           {error && (
@@ -341,7 +344,7 @@ export function ConversationView({
       {editor === "delete" && (
         <div className="conversation__editor" onKeyDown={confirmKey}>
           <p className="conversation__confirm" id={`${uid}-confirm`} dir="auto">
-            {`Delete Marshell's copy of “${title}”? Claude Code's own file is not touched.`}
+            {`Delete Marshell's copy of “${title}”? ${agentName(c.agent)}'s own file is not touched.`}
           </p>
           {error && (
             <p className="conversation__error" id={errorId}>
@@ -388,7 +391,7 @@ export function ConversationView({
       )}
       {c.limited && (
         <p className="conversation__notice" role="note">
-          {limitedNotice(c.version)}
+          {limitedNotice(c.agent, c.version)}
         </p>
       )}
       <div className="conversation__tabs" role="tablist" aria-label="Conversation views" onKeyDown={onTabKey}>

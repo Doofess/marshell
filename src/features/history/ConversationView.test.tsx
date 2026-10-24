@@ -348,4 +348,14 @@ describe("ConversationView resume confirm and Fork", () => {
     expect(html(conv([], { agent: "codex" }))).not.toContain(">Fork<");
     expect(html(conv([]))).toContain(">Fork<");
   });
+  it("names Codex, not Claude Code, in a Codex conversation's notices and editors", () => {
+    const codex = conv([], { agent: "codex", limited: true, version: "0.164.0" });
+    expect(html(codex)).toContain(
+      "Status limited: Codex 0.164.0 saved this conversation, and Marshell hasn&#x27;t been tested with that version. Some parts may be missing.",
+    );
+    expect(html({ ...codex, version: undefined })).toContain("Status limited: this conversation has no Codex version, so some parts may be missing.");
+    expect(html(codex, { editor: "rename" })).toContain("Leave empty to use the first prompt.");
+    expect(html(codex, { editor: "delete" })).toContain("Delete Marshell&#x27;s copy of “Fix the invoice rounding”? Codex&#x27;s own file is not touched.");
+    for (const editor of [undefined, "rename", "delete"] as const) expect(html(codex, editor ? { editor } : {})).not.toContain("Claude Code");
+  });
 });
