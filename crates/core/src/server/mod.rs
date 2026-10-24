@@ -420,6 +420,11 @@ impl AppState {
     pub fn session(&self, tab: &str) -> Option<Arc<crate::pty::Session>> {
         self.0.sessions.lock().unwrap().get(tab).cloned()
     }
+    /// Files still held by session recording writers. Release the map lock before asking each session.
+    pub fn open_recordings(&self) -> HashSet<PathBuf> {
+        let sessions: Vec<_> = self.0.sessions.lock().unwrap().values().cloned().collect();
+        sessions.iter().filter_map(|s| s.open_recording()).collect()
+    }
     /// How many sessions have a running process. Ended tabs have none.
     pub fn live_session_count(&self) -> usize {
         self.0.sessions.lock().unwrap().len()
