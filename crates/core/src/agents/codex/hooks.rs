@@ -690,7 +690,7 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "defect: removing a trailing Marshell group adds a newline before `]` and drops a trailing comma"]
+    #[ignore = "issue #63: removing a trailing Marshell group leaves a newline before `]` and drops a trailing comma"]
     fn removing_a_trailing_group_restores_the_original_bytes() {
         for text in [plain(), bom(), crlf(), comments()] {
             let home = fake_home();
