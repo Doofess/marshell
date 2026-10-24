@@ -87,6 +87,21 @@ pub async fn storage_preview(
     Ok(Json(preview))
 }
 
+/// What Marshell keeps on disk, with the saved limits, the last cleanup and the backup. 503 when history is
+/// off for this run, as there is no storage thread then.
+pub async fn storage_report(
+    State(st): State<AppState>,
+) -> Result<Json<marshell_protocol::history::StorageReport>, Fail> {
+    let storage = st.storage().ok_or_else(off)?;
+    let settings = st.settings_snapshot();
+    let limits = RetentionLimits {
+        limit_gb: settings.history_limit_gb,
+        limit_days: settings.history_limit_days,
+    };
+    let report = blocking(move || Ok(storage.usage(limits))).await?;
+    Ok(Json(report))
+}
+
 pub async fn list(
     State(st): State<AppState>,
     Query(query): Query<HistoryQuery>,

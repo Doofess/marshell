@@ -1,0 +1,59 @@
+/* The Storage section sits in the History settings sheet: the sheet's group fill, the shared field look from Settings.css. Tokens only; fills, never boxes. */
+.storage__rows {
+  display: grid;
+  gap: var(--space-1);
+  margin: 0;
+}
+.storage__row {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+.storage__row dt {
+  color: var(--text-2);
+}
+.storage__row dd {
+  margin: 0;
+  font-variant-numeric: tabular-nums;
+}
+/* The total is told apart by weight and a little space above, not by a rule. */
+.storage__row:last-child {
+  margin-block-start: var(--space-1);
+  font-weight: 600;
+}
+.storage__row:last-child dt {
+  color: var(--text-1);
+}
+.storage__field {
+  display: grid;
+  gap: var(--space-1);
+  justify-items: start;
+}
+.storage__path {
+  max-inline-size: 100%;
+  overflow-wrap: anywhere;
+  color: var(--text-1);
+}
+.storage__confirm {
+  display: grid;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border-radius: var(--radius);
+  background: var(--fill-strong);
+}
+.storage__ask {
+  color: var(--text-1);
+}
+.storage__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+.storage__actions .notifications-dialog__btn:disabled {
+  color: var(--text-2);
+}
+@media (forced-colors: active) {
+  .storage__confirm {
+    outline: 1px solid CanvasText;
+  }
+}

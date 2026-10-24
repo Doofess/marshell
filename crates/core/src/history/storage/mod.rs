@@ -11,7 +11,7 @@ pub mod retention;
 
 use super::recorder::History;
 use crate::paths;
-use marshell_protocol::history::{BackupStatus, CleanupRun, RetentionLimits, RetentionPreview};
+use marshell_protocol::history::{BackupStatus, CleanupRun, RetentionLimits, RetentionPreview, StorageReport};
 use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -153,6 +153,33 @@ impl Storage {
         }
     }
 
+    /// How many bytes each kind of file takes now, with `limits` (the saved settings) and the last cleanup
+    /// and backup state. It walks the folders on the caller's thread, so a route runs it in `spawn_blocking`.
+    /// Links are skipped.
+    pub fn usage(&self, limits: RetentionLimits) -> StorageReport {
+        let home = &self.shared.home;
+        let index = paths::index_file(home);
+        let with = |suffix: &str| {
+            let mut name = index.clone().into_os_string();
+            name.push(suffix);
+            PathBuf::from(name)
+        };
+        StorageReport {
+            transcripts: folder_bytes(&paths::archive_root(home)),
+            recordings: folder_bytes(&paths::recordings_dir(home)),
+            attachments: folder_bytes(&paths::attachments_dir(home)),
+            snapshots: folder_bytes(&paths::snapshots_dir(home)),
+            logs: folder_bytes(&paths::logs_dir(home)),
+            index: [index.clone(), with("-wal"), with("-shm")]
+                .iter()
+                .map(|f| file_bytes(f))
+                .sum(),
+            limits,
+            last_cleanup: self.last_cleanup(),
+            backup: self.backup_status(),
+        }
+    }
+
     /// The last cleanup that ran. None until one has, and while no limit has been set.
     pub fn last_cleanup(&self) -> Option<CleanupRun> {
         *self.shared.last_cleanup.lock().unwrap()
@@ -179,6 +206,42 @@ impl Storage {
         {
             let _ = handle.join();
         }
+    }
+}
+
+/// The size of a regular file; 0 for a link, a folder or a missing file.
+fn file_bytes(path: &std::path::Path) -> u64 {
+    match std::fs::symlink_metadata(path) {
+        Ok(meta) if meta.is_file() => meta.len(),
+        _ => 0,
+    }
+}
+
+/// The bytes of every regular file under `dir`. A link (or junction) is not followed or counted.
+fn folder_bytes(dir: &std::path::Path) -> u64 {
+    let Ok(entries) = std::fs::read_dir(dir) else { return 0 };
+    entries
+        .flatten()
+        .map(|entry| match entry.metadata() {
+            // `DirEntry::metadata` does not follow links.
+            Ok(meta) if meta.is_file() => meta.len(),
+            Ok(meta) if meta.is_dir() && !is_reparse(&meta) => folder_bytes(&entry.path()),
+            _ => 0,
+        })
+        .sum()
+}
+
+/// A Windows junction or other reparse point, which `is_dir` can report as a folder.
+fn is_reparse(meta: &std::fs::Metadata) -> bool {
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        meta.file_attributes() & 0x400 != 0
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = meta;
+        false
     }
 }
 
@@ -358,6 +421,46 @@ mod tests {
             Arc::new(move || open.clone()),
             timing(),
         )
+    }
+
+    #[test]
+    fn usage_counts_each_folder() {
+        let home = tempfile::tempdir().unwrap();
+        let h = home.path();
+        let put = |path: PathBuf, n: usize| {
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, vec![b'x'; n]).unwrap();
+        };
+        put(paths::archive_dir(h, "claude").join("a.jsonl.zst"), 10);
+        put(paths::archive_dir(h, "codex").join("b.jsonl.zst"), 5);
+        put(paths::recordings_dir(h).join("t-1.cast.zst"), 20);
+        put(paths::attachments_dir(h).join("t1").join("i.png"), 30);
+        put(paths::snapshots_dir(h).join("s1").join("f"), 40);
+        put(paths::logs_dir(h).join("marshell.log"), 50);
+        let storage = start(h, Open::default());
+        // Opening the history made the index; the side files are added after.
+        put(h.join("history").join("index.sqlite-wal"), 7);
+        put(h.join("history").join("index.sqlite-shm"), 3);
+        let index_len = std::fs::metadata(paths::index_file(h)).unwrap().len();
+        let limits = RetentionLimits {
+            limit_gb: Some(5),
+            limit_days: None,
+        };
+        let report = storage.usage(limits);
+        assert_eq!(
+            (
+                report.transcripts,
+                report.recordings,
+                report.attachments,
+                report.snapshots,
+                report.logs,
+                report.index
+            ),
+            (15, 20, 30, 40, 50, index_len + 10)
+        );
+        assert_eq!(report.limits, limits);
+        assert_eq!(report.last_cleanup, None);
+        storage.stop();
     }
 
     #[test]

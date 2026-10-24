@@ -1,6 +1,7 @@
 import type { Appearance } from "../../generated/Appearance";
 import type { Endpoint } from "../../generated/Endpoint";
 import type { NotifySettings } from "../../generated/NotifySettings";
+import type { RetentionLimits } from "../../generated/RetentionLimits";
 import type { Settings } from "../../generated/Settings";
 
 export const READ_FAILED = "Couldn't read your settings, so nothing was saved. Try again in a moment.";
@@ -81,6 +82,16 @@ export class SettingsSync {
     return this.importOn;
   }
 
+  /** The size and age limits on recordings and images, as of the last read or write. No limits until a read works. */
+  get historyLimits(): RetentionLimits {
+    return { limit_gb: this.limitGb, limit_days: this.limitDays };
+  }
+
+  /** The backup folder for the history, as of the last read or write: null when there is none. */
+  get historyBackupDir(): string | null {
+    return this.backupDir;
+  }
+
   /** The notification settings, as of the last read or write. The defaults until a read works. */
   get notifications(): NotifySettings {
     return this.notify;
@@ -155,6 +166,16 @@ export class SettingsSync {
     await this.writeFlags({ history_import: on });
   }
 
+  /** Saves the limits on recordings and images. Reads first, like `save`, and sends every other field back unchanged. A refusal (400) rejects with the core's body as the message. */
+  async setHistoryLimits(limits: RetentionLimits): Promise<void> {
+    await this.writeFlags({ history_limit_gb: limits.limit_gb, history_limit_days: limits.limit_days });
+  }
+
+  /** Saves the backup folder, or clears it with null. Reads first, like `save`, and sends every other field back unchanged. A refusal (400) rejects with the core's body as the message. */
+  async setHistoryBackupDir(dir: string | null): Promise<void> {
+    await this.writeFlags({ history_backup_dir: dir });
+  }
+
   /** Records that the onboarding was seen. Reads first, like `save`, and sends the appearance and the pause warning back unchanged. */
   async markOnboarded(): Promise<void> {
     await this.writeFlags({ onboarded: true });
@@ -172,7 +193,7 @@ export class SettingsSync {
     return this.off;
   }
 
-  private async writeFlags(change: Partial<Pick<Settings, "pause_warned" | "onboarded" | "close_to_tray" | "status_off" | "notifications" | "history_import">>): Promise<void> {
+  private async writeFlags(change: Partial<Pick<Settings, "pause_warned" | "onboarded" | "close_to_tray" | "status_off" | "notifications" | "history_import" | "history_limit_gb" | "history_limit_days" | "history_backup_dir">>): Promise<void> {
     if (!this.hasRead) {
       try {
         await this.load();

@@ -244,6 +244,31 @@ pub struct BackupStatus {
     pub error: Option<String>,
 }
 
+/// GET /v1/history/storage: what Marshell keeps on disk, the retention limits, the last cleanup and the backup.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct StorageReport {
+    /// Bytes under `<home>/history/archive`.
+    #[ts(type = "number")]
+    pub transcripts: u64,
+    #[ts(type = "number")]
+    pub recordings: u64,
+    /// The saved images (`<home>/attachments`).
+    #[ts(type = "number")]
+    pub attachments: u64,
+    #[ts(type = "number")]
+    pub snapshots: u64,
+    #[ts(type = "number")]
+    pub logs: u64,
+    /// The sessions index with its `-wal` and `-shm` files.
+    #[ts(type = "number")]
+    pub index: u64,
+    /// The limits in the saved settings.
+    pub limits: RetentionLimits,
+    pub last_cleanup: Option<CleanupRun>,
+    pub backup: BackupStatus,
+}
+
 /// The History list's "Where" filter.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[ts(export)]

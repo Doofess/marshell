@@ -626,6 +626,7 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/agents/{agent}/hooks/remove-plan", post(agents::remove_plan))
         .route("/v1/history", get(history::list))
         .route("/v1/history/import", get(history::import_status))
+        .route("/v1/history/storage", get(history::storage_report))
         .route("/v1/history/storage/preview", post(history::storage_preview))
         .route("/v1/history/search", get(history::search))
         .route("/v1/history/bookmarks", get(history::bookmarks))

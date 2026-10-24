@@ -103,6 +103,45 @@ describe("SettingsSync", () => {
     expect(api.put).toHaveBeenLastCalledWith(ep, expect.objectContaining({ history_backup_dir: "D:\Backups" }));
   });
 
+  it("setHistoryLimits saves both limits, and a later appearance save sends them back unchanged", async () => {
+    const { api, sync } = setup(async () => ({ appearance: teal, pause_warned: false, onboarded: false, close_to_tray: null, status_off: [], notifications: N, history_import: true, history_limit_gb: null, history_limit_days: null, history_backup_dir: "D:/B" }));
+    await sync.load();
+    expect(sync.historyLimits).toEqual({ limit_gb: null, limit_days: null });
+    await sync.setHistoryLimits({ limit_gb: 5, limit_days: 90 });
+    expect(api.put).toHaveBeenLastCalledWith(ep, { appearance: teal, pause_warned: false, onboarded: false, close_to_tray: null, status_off: [], notifications: N, history_import: true, history_limit_gb: 5, history_limit_days: 90, history_backup_dir: "D:/B" });
+    expect(sync.historyLimits).toEqual({ limit_gb: 5, limit_days: 90 });
+    await sync.save(teal);
+    expect(api.put).toHaveBeenLastCalledWith(ep, expect.objectContaining({ history_limit_gb: 5, history_limit_days: 90, history_backup_dir: "D:/B" }));
+  });
+
+  it("setHistoryBackupDir saves the folder or clears it, keeping the limits", async () => {
+    const { api, sync } = setup(async () => ({ appearance: teal, pause_warned: false, onboarded: false, close_to_tray: null, status_off: [], notifications: N, history_import: true, history_limit_gb: 2, history_limit_days: null, history_backup_dir: null }));
+    await sync.load();
+    expect(sync.historyBackupDir).toBeNull();
+    await sync.setHistoryBackupDir("E:/Backups");
+    expect(api.put).toHaveBeenLastCalledWith(ep, expect.objectContaining({ history_backup_dir: "E:/Backups", history_limit_gb: 2 }));
+    expect(sync.historyBackupDir).toBe("E:/Backups");
+    await sync.setHistoryBackupDir(null);
+    expect(api.put).toHaveBeenLastCalledWith(ep, expect.objectContaining({ history_backup_dir: null, history_limit_gb: 2 }));
+    expect(sync.historyBackupDir).toBeNull();
+  });
+
+  it("a refused history save rejects with the core's error and keeps the values it had", async () => {
+    const { api, sync } = setup(async () => ({ appearance: teal, pause_warned: false, onboarded: false, close_to_tray: null, status_off: [], notifications: N, history_import: true, history_limit_gb: null, history_limit_days: null, history_backup_dir: null }));
+    await sync.load();
+    api.put.mockRejectedValueOnce(new Error("That folder doesn't exist."));
+    await expect(sync.setHistoryBackupDir("Z:/nope")).rejects.toThrow("That folder doesn't exist.");
+    expect(sync.historyBackupDir).toBeNull();
+  });
+
+  it("setHistoryLimits sends nothing when the read fails", async () => {
+    const { api, sync } = setup(async () => {
+      throw new Error("no core");
+    });
+    await expect(sync.setHistoryLimits({ limit_gb: 1, limit_days: null })).rejects.toBeInstanceOf(SettingsReadError);
+    expect(api.put).not.toHaveBeenCalled();
+  });
+
   it("setHistoryImport sends nothing when the read fails", async () => {
     const { api, sync } = setup(async () => {
       throw new Error("no core");

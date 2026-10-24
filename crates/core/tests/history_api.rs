@@ -1575,6 +1575,23 @@ async fn storage_preview_refuses_without_the_bearer() {
 }
 
 #[tokio::test]
+async fn storage_report_refuses_without_the_bearer_and_answers_503_without_storage() {
+    let env = env();
+    let (status, _) = call(&env.app, req("GET", "/v1/history/storage", None)).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "no storage thread yet");
+    start_storage(&env);
+    let mut request = req("GET", "/v1/history/storage", None);
+    request.headers_mut().remove(header::AUTHORIZATION);
+    let (status, _) = call(&env.app, request).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    let (status, body) = call(&env.app, req("GET", "/v1/history/storage", None)).await;
+    assert_eq!(status, StatusCode::OK);
+    let report: Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(report["transcripts"], 0);
+    assert_eq!(report["backup"]["dir"], Value::Null);
+}
+
+#[tokio::test]
 async fn storage_preview_refuses_a_limit_off_the_list_and_answers_503_without_storage() {
     let env = env();
     let (status, _) = call(
