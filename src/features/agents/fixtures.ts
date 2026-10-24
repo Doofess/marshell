@@ -14,6 +14,7 @@ export const SETUP: AgentSetup = {
   approve_installed: false,
   has_own_statusline: true,
   chained: false,
+  needs_trust: false,
   bridge_path: "C:/m/bin/marshell-hook.exe",
   snapshots_dir: "C:/m/snapshots",
 };

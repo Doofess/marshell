@@ -1,8 +1,9 @@
 //! What Marshell knows about an agent's hook setup, and the previews that install and remove it.
-//! Only `claude` has an adapter; any other agent is a 404. Applying goes through `/v1/config/apply`.
+//! Only `claude` and `codex` have an adapter; any other agent is a 404. Applying goes through `/v1/config/apply`.
 
 use super::AppState;
 use crate::agents::claude::{self, hooks};
+use crate::agents::codex::{self, trust};
 use crate::agents::{parse_any_version, run_version_text};
 use crate::bridge;
 use crate::config::jsonc::{parse_problem, read_value};
@@ -22,6 +23,7 @@ use std::sync::Mutex;
 use std::time::{Duration, SystemTime};
 
 const AGENT: &str = "claude";
+const CODEX: &str = "codex";
 const VERSION_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// A status and the message the route replies with.
@@ -31,11 +33,18 @@ fn failed(err: impl std::fmt::Display) -> Fail {
     (StatusCode::INTERNAL_SERVER_ERROR, err.to_string())
 }
 
-fn only_claude(agent: &str) -> Result<(), Fail> {
-    if agent == AGENT {
-        Ok(())
-    } else {
-        Err((StatusCode::NOT_FOUND, "no such agent".to_string()))
+/// The agents that have a hook adapter.
+#[derive(Clone, Copy)]
+enum Adapter {
+    Claude,
+    Codex,
+}
+
+fn adapter(agent: &str) -> Result<Adapter, Fail> {
+    match agent {
+        AGENT => Ok(Adapter::Claude),
+        CODEX => Ok(Adapter::Codex),
+        _ => Err((StatusCode::NOT_FOUND, "no such agent".to_string())),
     }
 }
 
@@ -75,7 +84,36 @@ struct Inputs {
     chain_text: Option<String>,
 }
 
+/// The user's home folder, Codex's `hooks.json` and its text.
+struct CodexInputs {
+    hooks_path: PathBuf,
+    text: Option<String>,
+}
+
 impl AppState {
+    fn codex_hooks_path(&self, user_home: &Path) -> PathBuf {
+        match &self.0.codex_hooks {
+            Some(path) => path.clone(),
+            None => codex::hooks::hooks_path(&|k| std::env::var(k).ok(), user_home),
+        }
+    }
+
+    fn codex_inputs(&self) -> Result<CodexInputs, Fail> {
+        let user_home = super::files::home_dir().ok_or_else(|| failed("the user's home folder is not known"))?;
+        let hooks_path = self.codex_hooks_path(&user_home);
+        let text = read_text(&hooks_path).map_err(|e| refused(&e))?;
+        Ok(CodexInputs { hooks_path, text })
+    }
+
+    /// The Codex version of `exe`, or the one a test pinned. May run a process, so async callers go
+    /// through `spawn_blocking`.
+    pub(crate) fn codex_version(&self, exe: Option<&Path>) -> Option<String> {
+        match &self.0.codex_version {
+            Some(pinned) => pinned.clone(),
+            None => exe.and_then(|exe| self.version_of(exe, parse_any_version)),
+        }
+    }
+
     fn claude_settings_path(&self, user_home: &Path) -> PathBuf {
         match &self.0.claude_settings {
             Some(path) => path.clone(),
@@ -143,6 +181,8 @@ impl AppState {
     pub(crate) fn agent_version(&self, agent: &str, exe: Option<&Path>) -> Option<String> {
         if agent == AGENT {
             self.claude_version(exe)
+        } else if agent == CODEX && self.0.codex_version.is_some() {
+            self.codex_version(exe)
         } else {
             exe.and_then(|exe| self.version_of(exe, parse_any_version))
         }
@@ -201,6 +241,8 @@ pub(crate) fn setup_of(st: &AppState) -> Result<AgentSetup, Fail> {
         approve_installed: false,
         has_own_statusline: false,
         chained: false,
+        needs_trust: false,
+        trust: None,
         bridge_path: paths::bridge_exe(home).to_string_lossy().into_owned(),
         snapshots_dir: paths::snapshots_dir(home).to_string_lossy().into_owned(),
     };
@@ -245,11 +287,76 @@ pub(crate) fn setup_of(st: &AppState) -> Result<AgentSetup, Fail> {
     Ok(setup)
 }
 
+/// Codex's setup: the hooks file, and the `config.toml` beside it read (never written) for trust.
+pub(crate) fn codex_setup_of(st: &AppState) -> Result<AgentSetup, Fail> {
+    let home = &st.0.home;
+    let user_home = super::files::home_dir().ok_or_else(|| failed("the user's home folder is not known"))?;
+    let hooks_path = st.codex_hooks_path(&user_home);
+    let exe = st.agent_exe_of(CODEX);
+    let version = st.codex_version(exe.as_deref());
+
+    let mut setup = AgentSetup {
+        agent: CODEX.to_string(),
+        found: exe.is_some(),
+        version,
+        exe_path: exe.map(|p| p.to_string_lossy().into_owned()),
+        settings_path: hooks_path.to_string_lossy().into_owned(),
+        settings_state: SettingsState::Ok,
+        parse_error: None,
+        hooks: HookInstall::None,
+        approve_installed: false,
+        has_own_statusline: false,
+        chained: false,
+        needs_trust: true,
+        trust: None,
+        bridge_path: paths::bridge_exe(home).to_string_lossy().into_owned(),
+        snapshots_dir: paths::snapshots_dir(home).to_string_lossy().into_owned(),
+    };
+
+    let text = match std::fs::read_to_string(&hooks_path) {
+        Ok(text) => text,
+        Err(e) if e.kind() == ErrorKind::NotFound => {
+            setup.settings_state = SettingsState::Missing;
+            return Ok(setup);
+        }
+        Err(e) => {
+            setup.settings_state = SettingsState::Unparsable;
+            setup.parse_error = Some(ParseProblem {
+                line: 1,
+                message: e.to_string(),
+            });
+            return Ok(setup);
+        }
+    };
+    let hooks_value = match (parse_problem(&text), read_value(&text)) {
+        (None, Ok(value)) => value,
+        (problem, _) => {
+            let (line, message) = problem.unwrap_or((1, "the file does not parse".to_string()));
+            setup.settings_state = SettingsState::Unparsable;
+            setup.parse_error = Some(ParseProblem { line, message });
+            return Ok(setup);
+        }
+    };
+    if std::fs::metadata(&hooks_path).is_ok_and(|m| m.permissions().readonly()) {
+        setup.settings_state = SettingsState::ReadOnly;
+    }
+    let found = codex::hooks::inspect(&hooks_value, home);
+    setup.hooks = found.install;
+    setup.approve_installed = found.approve_installed;
+    // Read only. A missing or unreadable `config.toml` is no record of trust.
+    let config_toml = std::fs::read_to_string(hooks_path.with_file_name("config.toml")).ok();
+    setup.trust = trust::state(&hooks_path, &hooks_value, config_toml.as_deref());
+    Ok(setup)
+}
+
 pub async fn setup(State(st): State<AppState>, UrlPath(agent): UrlPath<String>) -> Result<Json<AgentSetup>, Fail> {
-    only_claude(&agent)?;
-    let setup = tokio::task::spawn_blocking(move || setup_of(&st))
-        .await
-        .map_err(failed)??;
+    let adapter = adapter(&agent)?;
+    let setup = tokio::task::spawn_blocking(move || match adapter {
+        Adapter::Claude => setup_of(&st),
+        Adapter::Codex => codex_setup_of(&st),
+    })
+    .await
+    .map_err(failed)??;
     Ok(Json(setup))
 }
 
@@ -280,18 +387,27 @@ pub async fn plan(
     UrlPath(agent): UrlPath<String>,
     Json(want): Json<HookPlanRequest>,
 ) -> Result<Json<ConfigPreview>, Fail> {
-    only_claude(&agent)?;
+    let adapter = adapter(&agent)?;
     let preview = tokio::task::spawn_blocking(move || {
-        let inputs = st.inputs()?;
-        st.ensure_bridge(&want)?;
-        let changes = hooks::install_plan(
-            &inputs.settings_path,
-            &inputs.user_home,
-            inputs.text.as_deref(),
-            inputs.chain_text.as_deref(),
-            &st.0.home,
-            &want,
-        )
+        let changes = match adapter {
+            Adapter::Claude => {
+                let inputs = st.inputs()?;
+                st.ensure_bridge(&want)?;
+                hooks::install_plan(
+                    &inputs.settings_path,
+                    &inputs.user_home,
+                    inputs.text.as_deref(),
+                    inputs.chain_text.as_deref(),
+                    &st.0.home,
+                    &want,
+                )
+            }
+            Adapter::Codex => {
+                let inputs = st.codex_inputs()?;
+                st.ensure_bridge(&want)?;
+                codex::hooks::install_plan(&inputs.hooks_path, inputs.text.as_deref(), &st.0.home, &want)
+            }
+        }
         .map_err(|e| refused(&e))?;
         Ok::<_, Fail>(st.0.config.preview(changes))
     })
@@ -304,21 +420,32 @@ pub async fn remove_plan(
     State(st): State<AppState>,
     UrlPath(agent): UrlPath<String>,
 ) -> Result<Json<RemovePreview>, Fail> {
-    only_claude(&agent)?;
-    let removal = tokio::task::spawn_blocking(move || {
-        let inputs = st.inputs()?;
-        let plan = hooks::remove_plan(
-            &inputs.settings_path,
-            &inputs.user_home,
-            inputs.text.as_deref(),
-            inputs.chain_text.as_deref(),
-            &st.0.home,
-        )
-        .map_err(|e| refused(&e))?;
-        Ok::<_, Fail>(RemovePreview {
-            preview: st.0.config.preview(plan.changes),
-            statusline_left: plan.statusline_left,
-        })
+    let adapter = adapter(&agent)?;
+    let removal = tokio::task::spawn_blocking(move || match adapter {
+        Adapter::Claude => {
+            let inputs = st.inputs()?;
+            let plan = hooks::remove_plan(
+                &inputs.settings_path,
+                &inputs.user_home,
+                inputs.text.as_deref(),
+                inputs.chain_text.as_deref(),
+                &st.0.home,
+            )
+            .map_err(|e| refused(&e))?;
+            Ok::<_, Fail>(RemovePreview {
+                preview: st.0.config.preview(plan.changes),
+                statusline_left: plan.statusline_left,
+            })
+        }
+        Adapter::Codex => {
+            let inputs = st.codex_inputs()?;
+            let changes = codex::hooks::remove_plan(&inputs.hooks_path, inputs.text.as_deref(), &st.0.home)
+                .map_err(|e| refused(&e))?;
+            Ok(RemovePreview {
+                preview: st.0.config.preview(changes),
+                statusline_left: false,
+            })
+        }
     })
     .await
     .map_err(failed)??;

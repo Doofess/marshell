@@ -1,12 +1,13 @@
-//! `marshell uninstall`: shows what taking Marshell out of Claude Code would change, asks, and does it
+//! `marshell uninstall`: shows what taking Marshell out of Claude Code and Codex would change, asks, and does it
 //! through the config service (so it is hashed, snapshotted and undoable), then removes `<home>/bin`.
 //!
 //! Exit codes: 0 done or nothing to do, 1 refused, failed or declined.
 
 use marshell_core::agents::claude::hooks::{remove_plan, settings_path};
+use marshell_core::agents::codex::hooks as codex_hooks;
 use marshell_core::config::service::{ApplyError, ConfigService};
 use marshell_core::paths;
-use marshell_protocol::config::{ApplyRequest, ExpectedHash, FileStatus};
+use marshell_protocol::config::{ApplyRequest, ChangeSet, ExpectedHash, FileStatus};
 use std::io::{BufRead, Write};
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -156,19 +157,51 @@ pub fn run(
             return 1;
         }
     };
-    let plan = match remove_plan(&settings, user_home, text.as_deref(), chain_text.as_deref(), home) {
+    let mut plan = match remove_plan(&settings, user_home, text.as_deref(), chain_text.as_deref(), home) {
         Ok(plan) => plan,
         Err(e) => {
             let _ = writeln!(out, "{e}");
             return 1;
         }
     };
+    // Codex's hooks.json. Nothing about its config.toml is read or written here.
+    let codex_file = codex_hooks::hooks_path(env, user_home);
+    let codex_text = match read_text(&codex_file) {
+        Ok(text) => text,
+        Err(e) => {
+            let _ = writeln!(out, "{e}");
+            return 1;
+        }
+    };
+    let codex_changes = match codex_hooks::remove_plan(&codex_file, codex_text.as_deref(), home) {
+        Ok(changes) => changes,
+        Err(e) => {
+            let _ = writeln!(out, "{e}");
+            return 1;
+        }
+    };
+    let claude_empty = plan.changes.edits.is_empty();
+    if codex_changes.edits.is_empty() {
+        if codex_text.is_some() {
+            let _ = writeln!(out, "Marshell has no hooks in {}.", codex_file.display());
+        }
+    } else if claude_empty {
+        plan.changes = codex_changes;
+    } else {
+        plan.changes = ChangeSet {
+            title: "Turn Marshell's hooks off".to_string(),
+            reason: format!("{} {}", plan.changes.reason, codex_changes.reason),
+            edits: plan.changes.edits.into_iter().chain(codex_changes.edits).collect(),
+        };
+    }
     let bin = paths::bin_dir(home);
     let has_bin = bin.exists();
     let left_note = "Your status line was changed since the setup and was left as it is.";
 
     if plan.changes.edits.is_empty() {
-        let _ = writeln!(out, "Marshell has no hooks in {}.", settings.display());
+        if claude_empty {
+            let _ = writeln!(out, "Marshell has no hooks in {}.", settings.display());
+        }
         if plan.statusline_left {
             let _ = writeln!(out, "{left_note}");
         }
@@ -412,6 +445,74 @@ mod tests {
         let mut out = Vec::new();
         let code = run(&f.home, &f.user_home, &no_env, &mut input.as_bytes(), &mut out, yes);
         (code, String::from_utf8(out).unwrap())
+    }
+
+    /// Installs Codex's hooks into `<user home>/.codex/hooks.json` through the real plan and service.
+    fn install_codex(f: &Fixture, original: Option<&str>) -> PathBuf {
+        use marshell_core::agents::codex::hooks as ch;
+        let path = ch::hooks_path(&no_env, &f.user_home);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        if let Some(text) = original {
+            std::fs::write(&path, text).unwrap();
+        }
+        let want = HookPlanRequest {
+            status: true,
+            statusline: false,
+            approve: false,
+        };
+        let changes = ch::install_plan(&path, original, &f.home, &want).unwrap();
+        let service = ConfigService::new(f.home.clone());
+        let preview = service.preview(changes);
+        assert!(preview.can_apply, "{preview:?}");
+        let request = ApplyRequest {
+            changeset_id: preview.changeset_id.clone(),
+            expected_hashes: preview
+                .files
+                .iter()
+                .map(|f| ExpectedHash {
+                    path: f.path.clone(),
+                    hash: f.before_hash.clone(),
+                })
+                .collect(),
+        };
+        service.apply(&request, 2).unwrap();
+        assert!(std::fs::read_to_string(&path).unwrap().contains("mshl1"));
+        path
+    }
+
+    #[test]
+    fn removes_codex_hooks_too() {
+        let f = installed(ORIGINAL);
+        let mine = "{\"hooks\": {\"Stop\": [{\"hooks\": [{\"type\": \"command\", \"command\": \"my-stop\"}]}]}}
+";
+        let codex = install_codex(&f, Some(mine));
+        let (code, out) = run_with(
+            &f, "y
+", false,
+        );
+        assert_eq!(code, 0, "{out}");
+        assert_eq!(out.matches("Apply these changes?").count(), 1, "{out}");
+        assert!(out.contains(&*f.settings.to_string_lossy()), "{out}");
+        assert!(out.contains("hooks.json"), "{out}");
+        assert_eq!(std::fs::read_to_string(&f.settings).unwrap(), ORIGINAL);
+        let after = std::fs::read_to_string(&codex).unwrap();
+        assert!(after.contains("my-stop") && !after.contains("mshl1"), "{after}");
+    }
+
+    #[test]
+    fn a_codex_only_install_is_found() {
+        // Claude's hooks are gone; only Codex's are left.
+        let f2 = installed(ORIGINAL);
+        std::fs::write(&f2.settings, ORIGINAL).unwrap();
+        let codex = install_codex(&f2, None);
+        let (code, out) = run_with(
+            &f2, "y
+", false,
+        );
+        assert_eq!(code, 0, "{out}");
+        assert!(out.contains("hooks.json"), "{out}");
+        assert!(!std::fs::read_to_string(&codex).unwrap().contains("mshl1"));
+        assert_eq!(std::fs::read_to_string(&f2.settings).unwrap(), ORIGINAL);
     }
 
     #[test]

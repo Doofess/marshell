@@ -14,7 +14,7 @@ const DEFAULT_TIMEOUT: u64 = 600;
 const SHORT_TIMEOUT_CAP: u64 = 3;
 
 /// `PreToolUse` as `pre_tool_use`, the form Codex puts in its identity JSON and in its keys.
-fn snake_case(event: &str) -> String {
+pub fn snake_case(event: &str) -> String {
     let mut out = String::with_capacity(event.len() + 4);
     for (i, c) in event.chars().enumerate() {
         if c.is_ascii_uppercase() {
