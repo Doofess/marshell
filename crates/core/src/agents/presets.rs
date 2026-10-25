@@ -47,13 +47,10 @@ pub fn strips(name: &str) -> bool {
     upper.starts_with("ANTHROPIC_") || ALWAYS_REMOVED.contains(&upper.as_str())
 }
 
-fn preset_sets(name: &str) -> bool {
-    name.eq_ignore_ascii_case(TOKEN_VAR) || DEEPSEEK_ENV.iter().any(|(k, _)| name.eq_ignore_ascii_case(k))
-}
-
-/// The DeepSeek launch. `key` is `DEEPSEEK_API_KEY` as read now (empty or blank counts as unset), `parent` the names of
-/// Marshell's own environment variables.
-pub fn deepseek(key: Option<String>, family: ShellFamily, parent: &[String]) -> Result<PresetLaunch, String> {
+/// The DeepSeek launch. `key` is `DEEPSEEK_API_KEY` as read now (empty or blank counts as unset). The child's inherited
+/// `ANTHROPIC_*` variables are not listed here: the spawn drops what `strips` accepts from the environment the pty
+/// really builds, which includes the registry's values that Marshell's own names would miss.
+pub fn deepseek(key: Option<String>, family: ShellFamily) -> Result<PresetLaunch, String> {
     if family == ShellFamily::Wsl {
         return Err(NOT_ON_WSL.into());
     }
@@ -63,12 +60,7 @@ pub fn deepseek(key: Option<String>, family: ShellFamily, parent: &[String]) -> 
     };
     let mut env = vec![(TOKEN_VAR.to_string(), key)];
     env.extend(DEEPSEEK_ENV.iter().map(|(k, v)| (k.to_string(), v.to_string())));
-    let mut env_remove: Vec<String> = Vec::new();
-    for name in parent.iter().map(String::as_str).chain(ALWAYS_REMOVED) {
-        if strips(name) && !preset_sets(name) && !env_remove.iter().any(|r| r.eq_ignore_ascii_case(name)) {
-            env_remove.push(name.to_string());
-        }
-    }
+    let env_remove = ALWAYS_REMOVED.iter().map(|n| n.to_string()).collect();
     Ok(PresetLaunch { env, env_remove })
 }
 
@@ -89,13 +81,9 @@ mod tests {
 
     const KEY: &str = "sk-marshell-test-0000";
 
-    fn parent(names: &[&str]) -> Vec<String> {
-        names.iter().map(|n| n.to_string()).collect()
-    }
-
     #[test]
     fn deepseek_env_is_the_documented_set() {
-        let launch = deepseek(Some(KEY.into()), ShellFamily::PowerShell, &[]).unwrap();
+        let launch = deepseek(Some(KEY.into()), ShellFamily::PowerShell).unwrap();
         let get = |k: &str| launch.env.iter().find(|(n, _)| n == k).map(|(_, v)| v.as_str());
         assert_eq!(launch.env.len(), 9);
         assert_eq!(get("ANTHROPIC_BASE_URL"), Some("https://api.deepseek.com/anthropic"));
@@ -114,17 +102,17 @@ mod tests {
             assert!(launch.env_remove.iter().any(|n| n == name), "{name}");
         }
         // The same set on Posix and cmd.
-        assert!(deepseek(Some(KEY.into()), ShellFamily::Posix, &[]).is_ok());
-        assert!(deepseek(Some(KEY.into()), ShellFamily::Cmd, &[]).is_ok());
+        assert!(deepseek(Some(KEY.into()), ShellFamily::Posix).is_ok());
+        assert!(deepseek(Some(KEY.into()), ShellFamily::Cmd).is_ok());
     }
 
     #[test]
     fn deepseek_refuses_without_a_key_and_on_wsl() {
         for key in [None, Some(String::new()), Some("  ".into())] {
-            let err = deepseek(key, ShellFamily::PowerShell, &[]).err().unwrap();
+            let err = deepseek(key, ShellFamily::PowerShell).err().unwrap();
             assert_eq!(err, "Set DEEPSEEK_API_KEY, then restart Marshell to start DeepSeek.");
         }
-        let err = deepseek(Some(KEY.into()), ShellFamily::Wsl, &[]).err().unwrap();
+        let err = deepseek(Some(KEY.into()), ShellFamily::Wsl).err().unwrap();
         assert_eq!(err, "DeepSeek starts from a Windows shell profile, not WSL.");
         assert!(!err.contains(KEY));
         assert_eq!(problem(DEEPSEEK, None).as_deref(), Some(NO_KEY));
@@ -133,26 +121,30 @@ mod tests {
     }
 
     #[test]
-    fn inherited_anthropic_variables_are_stripped() {
-        let inherited = parent(&[
-            "PATH",
+    fn strips_every_anthropic_variable_and_the_provider_switches_without_case() {
+        for name in [
             "ANTHROPIC_API_KEY",
+            "anthropic_api_key",
             "Anthropic_Custom_Headers",
             "ANTHROPIC_BASE_URL",
             "ANTHROPIC_AUTH_TOKEN",
-            "ANTHROPIC_MODEL",
-        ]);
-        let launch = deepseek(Some(KEY.into()), ShellFamily::PowerShell, &inherited).unwrap();
-        for name in ["ANTHROPIC_API_KEY", "Anthropic_Custom_Headers"] {
-            assert!(launch.env_remove.iter().any(|n| n == name), "{name}");
-            assert!(!launch.env.iter().any(|(n, _)| n == name), "{name}");
+            "CLAUDE_CODE_USE_BEDROCK",
+            "claude_code_use_vertex",
+            "DEEPSEEK_API_KEY",
+        ] {
+            assert!(strips(name), "{name}");
         }
-        // What the preset sets is replaced, not removed (removal comes first, and would hide a value if it came last).
-        for name in ["ANTHROPIC_BASE_URL", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_MODEL", "PATH"] {
-            assert!(!launch.env_remove.iter().any(|n| n == name), "{name}");
+        for name in [
+            "PATH",
+            "CLAUDE_CODE_GIT_BASH_PATH",
+            "ANTHROPICX",
+            "CLAUDE_CODE_EFFORT_LEVEL",
+        ] {
+            assert!(!strips(name), "{name}");
         }
-        assert!(!launch.env.iter().any(|(_, v)| v == "ANTHROPIC_API_KEY"));
-        assert!(strips("anthropic_api_key"));
-        assert!(!strips("CLAUDE_CODE_GIT_BASH_PATH"));
+        // The preset's own values are applied after the strip, so it never has to leave its names out of `strips`.
+        let launch = deepseek(Some(KEY.into()), ShellFamily::PowerShell).unwrap();
+        assert!(launch.env.iter().any(|(n, _)| n == "ANTHROPIC_BASE_URL"));
+        assert!(!launch.env_remove.iter().any(|n| n == "ANTHROPIC_BASE_URL"));
     }
 }

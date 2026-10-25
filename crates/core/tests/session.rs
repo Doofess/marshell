@@ -13,6 +13,7 @@ fn fake(args: &[&str]) -> SpawnSpec {
         cwd: None,
         env: vec![],
         env_remove: vec![],
+        env_strip: None,
         cols: 80,
         rows: 24,
         on_exit: None,
@@ -268,6 +269,7 @@ fn on_exit_callback_gets_the_code() {
         cwd: None,
         env: vec![],
         env_remove: vec![],
+        env_strip: None,
         cols: 80,
         rows: 24,
         on_exit: Some(Box::new(move |code| {
@@ -433,6 +435,7 @@ fn printer(nested: bool) -> SpawnSpec {
         cwd: None,
         env: vec![],
         env_remove: vec![],
+        env_strip: None,
         cols: 80,
         rows: 24,
         on_exit: None,

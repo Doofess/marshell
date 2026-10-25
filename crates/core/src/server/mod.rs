@@ -113,8 +113,6 @@ struct Inner {
     /// `DEEPSEEK_API_KEY`, read when a DeepSeek session starts or the catalog is built. Tests swap it. The value goes
     /// only into that child's spawn environment.
     deepseek_key: fn() -> Option<String>,
-    /// The names of Marshell's own environment variables, for the variables a preset keeps from the child. Tests swap it.
-    parent_env: fn() -> Vec<String>,
     /// `~/.marshell/agents.json`, read again when the file's modified time changes. `AppState::agents` adds the shipped
     /// manifests to the valid entries.
     own_agents: crate::agents::own::OwnCache,
@@ -224,11 +222,6 @@ impl AppState {
             agent_on_path: crate::profiles::detect::command_on_path,
             agent_path: crate::profiles::detect::command_path,
             deepseek_key: || std::env::var(crate::agents::presets::DEEPSEEK_KEY_VAR).ok(),
-            parent_env: || {
-                std::env::vars_os()
-                    .map(|(name, _)| name.to_string_lossy().into_owned())
-                    .collect()
-            },
             own_agents: crate::agents::own::OwnCache::default(),
             own_agents_write: Mutex::new(()),
             agent_versions: Arc::new(crate::agents::identify::VersionCache::default()),
@@ -378,13 +371,6 @@ impl AppState {
         Arc::get_mut(&mut self.0)
             .expect("with_deepseek_key runs before the state is shared")
             .deepseek_key = read;
-        self
-    }
-    /// Replaces the list of Marshell's own environment variable names. Call it before the state is cloned.
-    pub fn with_parent_env(mut self, names: fn() -> Vec<String>) -> Self {
-        Arc::get_mut(&mut self.0)
-            .expect("with_parent_env runs before the state is shared")
-            .parent_env = names;
         self
     }
     /// Replaces the `--version` reader the manifest agents' programs are checked with. Call it before the state is cloned.

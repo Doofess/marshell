@@ -39,17 +39,31 @@ fn sleeper() -> Profile {
     }
 }
 
+/// A profile whose command reports which of `names` are in its environment ("NAME=present" or "NAME=absent"), then
+/// exits. It never prints a value.
+fn reporter(names: &[&str]) -> Profile {
+    let mut profile = sleeper();
+    profile.id = "reporter".into();
+    profile.name = "reporter".into();
+    profile.command = vec![env!("CARGO_BIN_EXE_fake-agent").into(), "env-present".into()];
+    profile.command.extend(names.iter().map(|n| n.to_string()));
+    profile
+}
+
 fn state_with(home: &Path, key: fn() -> Option<String>) -> AppState {
+    state_of(home, key, sleeper())
+}
+
+fn state_of(home: &Path, key: fn() -> Option<String>, profile: Profile) -> AppState {
     AppState::new(
         TOKEN.into(),
         PORT,
         vec![ORIGIN.into()],
         home.to_path_buf(),
-        vec![sleeper()],
+        vec![profile],
     )
     .with_agent_check(|_| true)
     .with_deepseek_key(key)
-    .with_parent_env(|| vec!["ANTHROPIC_API_KEY".into(), "PATH".into()])
 }
 
 fn api(method: &str, path: &str, body: Option<serde_json::Value>) -> Request<Body> {
@@ -121,6 +135,33 @@ fn files_under(dir: &Path, out: &mut Vec<(std::path::PathBuf, Vec<u8>)>) {
             out.push((path, bytes));
         }
     }
+}
+
+/// What the session printed until it exited.
+fn output_of(session: &std::sync::Arc<marshell_core::pty::Session>) -> String {
+    use marshell_core::pty::Pull;
+    let (generation, _) = session.attach();
+    session.resume(0);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    let (mut cursor, mut all) = (0u64, Vec::new());
+    while std::time::Instant::now() < deadline {
+        match session.pull(cursor, 64 * 1024) {
+            Pull::Data { seq, bytes } => {
+                cursor = seq + bytes.len() as u64;
+                all.extend(bytes);
+                session.ack(cursor);
+            }
+            Pull::Reset { seq, screen } => {
+                cursor = seq;
+                all.extend(screen);
+                session.ack(cursor);
+            }
+            Pull::Exit(_) => break,
+            Pull::Idle => std::thread::sleep(std::time::Duration::from_millis(5)),
+        }
+    }
+    session.detach(generation);
+    String::from_utf8_lossy(&all).into_owned()
 }
 
 fn contains(haystack: &[u8], needle: &str) -> bool {
@@ -215,6 +256,38 @@ mod preset {
         for (path, bytes) in &files {
             assert!(!contains(bytes, KEY), "{} holds the key", path.display());
         }
+        stop(&state, &[&tab]);
+    }
+
+    /// portable-pty fills a child's environment from the process and the registry. A variable Marshell's own names do
+    /// not list (here one set in this process, standing in for a `setx` made while Marshell runs)
+    /// must still not reach the DeepSeek child. The child reports names only, never a value.
+    #[tokio::test]
+    async fn a_variable_only_the_spawn_environment_holds_is_stripped_from_the_deepseek_child() {
+        const SENTINEL: &str = "ANTHROPIC_MARSHELL_SENTINEL";
+        unsafe { std::env::set_var(SENTINEL, "1") };
+        let names = [
+            SENTINEL,
+            "ANTHROPIC_BASE_URL",
+            "ANTHROPIC_AUTH_TOKEN",
+            "DEEPSEEK_API_KEY",
+        ];
+        let home = tempfile::tempdir().unwrap();
+        let work = tempfile::tempdir().unwrap();
+        let state = state_of(home.path(), key_set, reporter(&names));
+        let app = router(state.clone());
+        let mut body = create_body(work.path(), Some("claude"), Some("deepseek"));
+        body["profile_id"] = "reporter".into();
+        let (status, created) = send(&app, api("POST", "/v1/sessions", Some(body))).await;
+        assert_eq!(status, StatusCode::OK, "{created}");
+        let tab = tab_of(&created);
+        let session = state.session(&tab).unwrap();
+        let printed = tokio::task::spawn_blocking(move || output_of(&session)).await.unwrap();
+        assert!(!printed.contains(KEY), "the child printed the key");
+        assert!(printed.contains("ANTHROPIC_BASE_URL=present"), "{printed}");
+        assert!(printed.contains("ANTHROPIC_AUTH_TOKEN=present"), "{printed}");
+        assert!(printed.contains("DEEPSEEK_API_KEY=absent"), "{printed}");
+        assert!(printed.contains(&format!("{SENTINEL}=absent")), "{printed}");
         stop(&state, &[&tab]);
     }
 

@@ -196,6 +196,7 @@ mod tests {
                 cwd: None,
                 env: Vec::new(),
                 env_remove: Vec::new(),
+                env_strip: None,
                 cols: 80,
                 rows: 24,
                 on_exit: None,

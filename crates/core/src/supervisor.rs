@@ -205,6 +205,7 @@ mod tests {
             cwd: None,
             env: vec![],
             env_remove: vec![],
+            env_strip: None,
             cols: 80,
             rows: 24,
             on_exit: None,

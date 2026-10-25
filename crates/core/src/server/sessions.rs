@@ -69,12 +69,13 @@ fn check_preset(agent: Option<&str>, preset: &str) -> Result<(), ApiError> {
     }
 }
 
-/// The environment a preset adds, built from the key and Marshell's own environment as they are now. A refusal
+/// The environment a preset adds, built from the key as it is now. A refusal
 /// (no key, a WSL profile) is a 400 and never starts anything.
 fn preset_launch(st: &AppState, preset: &str, family: ShellFamily) -> Result<PresetLaunch, ApiError> {
     match preset {
-        presets::DEEPSEEK => presets::deepseek((st.0.deepseek_key)(), family, &(st.0.parent_env)())
-            .map_err(|message| (StatusCode::BAD_REQUEST, message)),
+        presets::DEEPSEEK => {
+            presets::deepseek((st.0.deepseek_key)(), family).map_err(|message| (StatusCode::BAD_REQUEST, message))
+        }
         other => Err((StatusCode::BAD_REQUEST, format!("Unknown preset: {other}."))),
     }
 }
@@ -89,6 +90,8 @@ pub(super) struct Resolved {
     env: Vec<(String, String)>,
     /// Variables the child must not inherit, on top of the session markers: a preset's.
     env_remove: Vec<String>,
+    /// Inherited variables the child must not get, decided at spawn from the environment the pty really builds.
+    env_strip: Option<fn(&str) -> bool>,
     cwd: Option<String>,
     /// Shell integration is on, so the output carries prompt marks.
     marks: bool,
@@ -147,11 +150,13 @@ pub(super) async fn resolve(
             let mut argv = argv.map_err(|msg| (StatusCode::BAD_REQUEST, msg))?;
             let mut env = p.env.clone();
             let mut env_remove = Vec::new();
+            let mut env_strip = None;
             if let Some(launch) = launch {
                 // The profile's own provider variables too: an ANTHROPIC_API_KEY set there must not reach the preset's endpoint.
                 env.retain(|(name, _)| !presets::strips(name));
                 env.extend(launch.env);
                 env_remove = launch.env_remove;
+                env_strip = Some(presets::strips as fn(&str) -> bool);
             }
             let mut marks = false;
             // Shell integration is for a plain shell; an agent session runs the agent instead.
@@ -171,6 +176,7 @@ pub(super) async fn resolve(
                 argv,
                 env,
                 env_remove,
+                env_strip,
                 cwd: p.cwd,
                 marks,
             })
@@ -232,6 +238,7 @@ fn custom(argv: Vec<String>) -> Resolved {
         argv,
         env: Vec::new(),
         env_remove: Vec::new(),
+        env_strip: None,
         cwd: None,
         marks: false,
     }
@@ -416,6 +423,7 @@ pub(super) async fn spawn_into_map(
             .map(|k| k.to_string())
             .chain(run.env_remove)
             .collect(),
+        env_strip: run.env_strip,
         cols: size.0,
         rows: size.1,
         on_exit: Some(Box::new(move |code| {
@@ -1072,7 +1080,6 @@ mod tests {
         AppState::new("t".into(), 1, Vec::new(), home, vec![profile])
             .with_agent_path(|_| None)
             .with_deepseek_key(key)
-            .with_parent_env(|| vec!["ANTHROPIC_API_KEY".into(), "ANTHROPIC_BASE_URL".into(), "PATH".into()])
     }
 
     fn resolve_preset(st: &AppState, agent: Option<&str>, preset: Option<&str>) -> Result<Resolved, ApiError> {
@@ -1090,11 +1097,13 @@ mod tests {
         assert_eq!(get("ANTHROPIC_AUTH_TOKEN"), Some(TEST_KEY));
         assert_eq!(get("ANTHROPIC_BASE_URL"), Some("https://api.deepseek.com/anthropic"));
         assert_eq!(get("KEEP"), Some("1"));
-        // The profile's own ANTHROPIC_API_KEY is gone, and the inherited one is removed from the child.
+        // The profile's own ANTHROPIC_API_KEY is gone, and what the child inherits is stripped at spawn.
         assert_eq!(get("ANTHROPIC_API_KEY"), None);
-        assert!(run.env_remove.contains(&"ANTHROPIC_API_KEY".to_string()));
         assert!(run.env_remove.contains(&"CLAUDE_CODE_USE_BEDROCK".to_string()));
         assert!(!run.env_remove.contains(&"ANTHROPIC_BASE_URL".to_string()));
+        let strip = run.env_strip.expect("a preset launch strips at spawn");
+        assert!(strip("ANTHROPIC_API_KEY") && strip("anthropic_custom_headers"));
+        assert!(!strip("PATH"));
         // The key is in the child's env and nowhere else the spawn takes.
         assert!(run.argv.iter().all(|word| !word.contains(TEST_KEY)), "{:?}", run.argv);
         let spawn = spawn_env(Some(ColorScheme::Dark), &run.env);
@@ -1104,6 +1113,7 @@ mod tests {
         // Without a preset nothing of this is added.
         let plain = resolve_preset(&st, Some("claude"), None).unwrap();
         assert!(plain.env_remove.is_empty());
+        assert!(plain.env_strip.is_none());
         assert!(plain.env.iter().any(|(k, _)| k == "ANTHROPIC_API_KEY"));
         assert!(plain.env.iter().all(|(k, _)| k != "ANTHROPIC_AUTH_TOKEN"));
     }
