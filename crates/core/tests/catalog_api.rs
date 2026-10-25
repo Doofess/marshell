@@ -361,6 +361,121 @@ async fn a_broken_agents_file_is_reported_and_kept() {
 }
 
 #[tokio::test]
+async fn one_bad_entry_is_one_problem_and_the_other_agents_still_load() {
+    let e = build();
+    // A typo in one field of the second entry, and a missing `cli` in the fourth.
+    let mut typo = own_agent("typo", "Typo");
+    typo["continue_args"] = json!(["--continue"]);
+    let mut no_cli = own_agent("nocli", "No cli");
+    no_cli.as_object_mut().unwrap().remove("cli");
+    let text = json!({"version": 1, "agents": [own_agent("good", "Good"), typo, own_agent("fine", "Fine"), no_cli]})
+        .to_string();
+    std::fs::write(&e.agents_file, &text).unwrap();
+
+    let (status, own) = get(&e.app, "/v1/agents/own").await;
+    assert_eq!(status, StatusCode::OK, "{own}");
+    // One problem for each bad entry, at its place in the file, with the reason in words.
+    let problems = own["problems"].as_array().unwrap();
+    assert_eq!(problems.len(), 2, "{own}");
+    assert_eq!(
+        (problems[0]["index"].as_u64(), problems[0]["id"].as_str()),
+        (Some(1), Some("typo"))
+    );
+    let reason = problems[0]["reason"].as_str().unwrap();
+    assert!(
+        reason.starts_with("It has an unexpected shape (unknown field `continue_args`"),
+        "{reason}"
+    );
+    assert_eq!(
+        (problems[1]["index"].as_u64(), problems[1]["id"].as_str()),
+        (Some(3), Some("nocli"))
+    );
+    let reason = problems[1]["reason"].as_str().unwrap();
+    assert!(
+        reason.starts_with("It has an unexpected shape (missing field `cli`"),
+        "{reason}"
+    );
+    // Every entry stays in the list at its place, so an index names the entry the editor shows.
+    let ids: Vec<&str> = own["agents"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|a| a["id"].as_str().unwrap())
+        .collect();
+    assert_eq!(ids, ["good", "typo", "fine", "nocli"]);
+
+    // The two good ones work; the bad ones are not offered.
+    let (_, catalog) = get(&e.app, "/v1/agents/catalog").await;
+    assert_eq!(entry(&catalog, "good")["own"], true);
+    assert_eq!(entry(&catalog, "fine")["own"], true);
+    for id in ["typo", "nocli"] {
+        assert!(
+            !catalog["agents"].as_array().unwrap().iter().any(|a| a["id"] == id),
+            "{id}"
+        );
+    }
+    // Reading never rewrites the file.
+    assert_eq!(std::fs::read_to_string(&e.agents_file).unwrap(), text);
+
+    // A file that is not JSON, or has no list of agents, is still one problem for the file.
+    for (text, why) in [
+        (
+            r#"{"version": 1}"#,
+            "it has an unexpected shape (missing field `agents`)",
+        ),
+        (
+            r#"{"version": 1, "agents": {}}"#,
+            "it has an unexpected shape (`agents` isn't a list)",
+        ),
+    ] {
+        std::fs::write(&e.agents_file, text).unwrap();
+        let (_, own) = get(&e.app, "/v1/agents/own").await;
+        assert_eq!(own["agents"], json!([]), "{text}");
+        assert_eq!(
+            own["problems"],
+            json!([{"index": 0, "id": null, "reason": format!("agents.json can't be read: {why}.")}]),
+            "{text}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn a_save_still_validates_every_entry_it_is_sent() {
+    let e = build();
+    let mut typo = own_agent("typo", "Typo");
+    typo["continue_args"] = json!(["--continue"]);
+    let text = json!({"version": 1, "agents": [own_agent("good", "Good"), typo]}).to_string();
+    std::fs::write(&e.agents_file, &text).unwrap();
+    let (_, own) = get(&e.app, "/v1/agents/own").await;
+
+    // The editor sends back what it was shown, plus a new entry that takes a built-in's id: the save is refused with that
+    // entry's problem, at its place, and the file stays as it was.
+    let (status, body) = put(
+        &e.app,
+        "/v1/agents/own",
+        json!({"agents": [own_agent("good", "Good"), own_agent("claude", "Impostor")], "version": own["version"]}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+    assert_eq!(
+        body,
+        json!([{"index": 1, "id": "claude", "reason": "The id \"claude\" is taken by a built-in agent."}])
+    );
+    assert_eq!(std::fs::read_to_string(&e.agents_file).unwrap(), text);
+
+    // Saved valid entries replace the file, and the typo is gone with the entry that held it.
+    let (status, saved) = put(
+        &e.app,
+        "/v1/agents/own",
+        json!({"agents": [own_agent("good", "Good")], "version": own["version"]}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{saved}");
+    assert_eq!(saved["problems"], json!([]));
+    assert_eq!(saved["agents"].as_array().unwrap().len(), 1);
+}
+
+#[tokio::test]
 async fn catalog_routes_refuse_without_the_bearer() {
     let e = build();
     for (method, uri) in [

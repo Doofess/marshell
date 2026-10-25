@@ -1,12 +1,12 @@
 //! The agents the person defined themselves, in `~/.marshell/agents.json` (`{"version":1,"agents":[...]}`).
 //!
 //! Reading never repairs or rewrites the file: one that can't be read gives no agents and one problem, and a save is refused
-//! until the person fixes it. Writing goes through `crate::store` (versioned, atomic) after a changed-since-read check.
+//! until the person fixes it. One entry that does not fit is that entry's problem, listed at its place, and the others load. Writing goes through `crate::store` (versioned, atomic) after a changed-since-read check.
 
 use crate::agents::manifest::{AgentManifest, Agents, OwnAgentProblem, Reserved, validate_own};
 use crate::paths;
 use crate::store::{self, Versioned};
-use marshell_protocol::manifest::{OwnAgents, OwnAgentsSave};
+use marshell_protocol::manifest::{OwnAgents, OwnAgentsSave, PromptStyle};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -39,16 +39,65 @@ fn version_of(bytes: Option<&[u8]>) -> String {
     bytes.map(|b| hex::encode(Sha256::digest(b))).unwrap_or_default()
 }
 
-/// The entries in the file's bytes, or why they can't be read.
-fn parse(bytes: &[u8]) -> Result<Vec<AgentManifest>, String> {
+/// One entry of the file's `agents` list.
+struct Slot {
+    /// The entry as parsed. For one that could not be, what could be read of it (see `placeholder`), so the list keeps
+    /// its places and an index names the entry the editor shows.
+    manifest: AgentManifest,
+    /// Why the entry could not be parsed, in words.
+    broken: Option<String>,
+}
+
+/// What can be read of an entry that does not parse, for the editor to show beside its problem.
+fn placeholder(entry: &Value) -> AgentManifest {
+    let text = |key: &str| entry.get(key).and_then(Value::as_str).unwrap_or_default().to_string();
+    let words = |key: &str| -> Vec<String> {
+        entry
+            .get(key)
+            .and_then(Value::as_array)
+            .map(|list| list.iter().filter_map(|v| v.as_str().map(str::to_string)).collect())
+            .unwrap_or_default()
+    };
+    AgentManifest {
+        id: text("id"),
+        name: text("name"),
+        cli: text("cli"),
+        mark: "generic".into(),
+        commands: words("commands"),
+        reject_paths: Vec::new(),
+        version_shape: None,
+        exe_names: words("exe_names"),
+        packages: words("packages"),
+        prompt: PromptStyle::Positional,
+        continue_args: None,
+        modes: Default::default(),
+    }
+}
+
+/// The entries in the file's bytes, each on its own, or why the file as a whole can't be read. One entry that does not
+/// fit (a typo in a field name, a missing `cli`) is that entry's problem and leaves the others alone.
+fn parse(bytes: &[u8]) -> Result<Vec<Slot>, String> {
     let value: Value = serde_json::from_slice(bytes).map_err(|e| format!("it isn't valid JSON (line {})", e.line()))?;
     let version = value.get("version").and_then(Value::as_u64).unwrap_or(0);
     if version > u64::from(FileDoc::VERSION) {
         return Err("it was written by a newer Marshell".into());
     }
-    serde_json::from_value::<FileDoc>(value)
-        .map(|doc| doc.agents)
-        .map_err(|e| format!("it has an unexpected shape ({e})"))
+    let Some(agents) = value.get("agents") else {
+        return Err("it has an unexpected shape (missing field `agents`)".into());
+    };
+    let Some(list) = agents.as_array() else {
+        return Err("it has an unexpected shape (`agents` isn't a list)".into());
+    };
+    Ok(list
+        .iter()
+        .map(|entry| match serde_json::from_value::<AgentManifest>(entry.clone()) {
+            Ok(manifest) => Slot { manifest, broken: None },
+            Err(e) => Slot {
+                manifest: placeholder(entry),
+                broken: Some(format!("It has an unexpected shape ({e}).")),
+            },
+        })
+        .collect())
 }
 
 /// Reads `agents.json`. The file is never written here.
@@ -61,11 +110,28 @@ pub fn load_full(home: &Path) -> Loaded {
         }
     };
     let version = version_of(bytes.as_deref());
-    let list = match bytes.as_deref().map(parse).transpose() {
-        Ok(list) => list.unwrap_or_default(),
+    let slots = match bytes.as_deref().map(parse).transpose() {
+        Ok(slots) => slots.unwrap_or_default(),
         Err(why) => return unreadable(version, why),
     };
-    let (valid, problems) = validate_own(&list, &Reserved::builtin());
+    // Only the entries that parsed are checked, and a problem is moved back to the entry's place in the file.
+    let places: Vec<usize> = (0..slots.len()).filter(|&i| slots[i].broken.is_none()).collect();
+    let parsed: Vec<AgentManifest> = places.iter().map(|&i| slots[i].manifest.clone()).collect();
+    let (valid, mut problems) = validate_own(&parsed, &Reserved::builtin());
+    for problem in &mut problems {
+        problem.index = places[problem.index as usize] as u32;
+    }
+    for (index, slot) in slots.iter().enumerate() {
+        if let Some(reason) = &slot.broken {
+            problems.push(OwnAgentProblem {
+                index: index as u32,
+                id: Some(slot.manifest.id.clone()).filter(|id| !id.is_empty()),
+                reason: reason.clone(),
+            });
+        }
+    }
+    problems.sort_by_key(|p| p.index);
+    let list: Vec<AgentManifest> = slots.into_iter().map(|s| s.manifest).collect();
     Loaded {
         agents: Agents::with_own(valid),
         own: OwnAgents {
