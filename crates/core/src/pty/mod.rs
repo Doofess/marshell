@@ -10,7 +10,7 @@ mod session;
 pub use buffer::{FLUSH_BYTES, MAX_UNACKED, SCROLLBACK_BYTES};
 pub use freeze::FreezeError;
 pub use osc133::Mark;
-pub use session::{MarkCallback, Pull, Session, SpawnSpec};
+pub use session::{Classifier, MarkCallback, Pull, Session, SpawnSpec};
 
 /// `root` and every process it started, for reading their memory and CPU. `None` where the platform has no way to
 /// list them or `root` is gone.

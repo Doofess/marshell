@@ -202,6 +202,8 @@ mod tests {
                 on_exit: None,
                 on_mark: None,
                 record: None,
+                classify: None,
+                initial_command: None,
             },
         )
         .unwrap();

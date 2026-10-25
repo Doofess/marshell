@@ -73,6 +73,8 @@ impl Shell {
             on_exit: None,
             on_mark: Some(Box::new(move |m| sink.lock().unwrap().push(m))),
             record: None,
+            classify: None,
+            initial_command: None,
         };
         let session = Session::spawn("t".into(), spec).unwrap();
         session.attach();

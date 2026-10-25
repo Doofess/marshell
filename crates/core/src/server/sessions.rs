@@ -440,6 +440,8 @@ pub(super) async fn spawn_into_map(
         })),
         on_mark,
         record: Some((recording, shell)),
+        classify: None,
+        initial_command: None,
     };
     let id = tab_id.to_string();
     // Spawning touches the OS (process creation) and recording writes a file:

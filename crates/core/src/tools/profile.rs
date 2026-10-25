@@ -1,6 +1,7 @@
 //! The profile type, the shipped set, and the lookups that tell which tool a command line or a process is.
 
-use marshell_protocol::tools::{NeedsYouPattern, OwnToolProblem, ToolProfile};
+use super::secrets;
+use marshell_protocol::tools::{LaunchPreset, NeedsYouPattern, OwnToolProblem, ToolProfile};
 use regex::Regex;
 use std::collections::HashSet;
 use std::ops::Deref;
@@ -152,26 +153,14 @@ impl Tools {
     }
 
     fn classify_words(&self, words: &[String]) -> Classified {
-        let mut start = 0;
-        while words.get(start).is_some_and(|w| w == "&") {
-            start += 1;
-        }
-        let Some(first) = words.get(start) else {
-            return Classified::default();
-        };
+        let cmd = split_command(words);
         let mut out = Classified::default();
-        let mut at = start;
-        if let Some(used) = launcher_words(&normalize_word(first), words.get(start + 1).map(|w| normalize_word(w))) {
+        if cmd.launcher {
             out.profiles.extend(self.0.iter().filter(|p| p.launcher).cloned());
-            at = start + used;
-            while words.get(at).is_some_and(|w| w.starts_with('-')) {
-                at += 1;
-            }
         }
-        let Some(program) = words.get(at) else {
+        let Some(key) = cmd.program else {
             return out;
         };
-        let key = package_name(&normalize_word(program)).to_string();
         let found = self
             .0
             .iter()
@@ -180,13 +169,52 @@ impl Tools {
             out.profiles.push(p.clone());
             out.tool = Some(p.id.clone());
             out.rest = key;
-            for w in &words[at + 1..] {
+            for w in cmd.args {
                 out.rest.push(' ');
                 out.rest.push_str(w);
             }
         }
         out
     }
+}
+
+/// A command line's words from the program on, with a leading `&` and a launcher (`npx`, `pnpm dlx`, ...) and
+/// its flags skipped.
+pub(crate) struct Command<'a> {
+    /// A launcher came first.
+    pub launcher: bool,
+    /// The program word as profiles name it (`normalize_word`, without a `@version`). None when no word is left.
+    pub program: Option<String>,
+    /// The words after the program.
+    pub args: &'a [String],
+}
+
+pub(crate) fn split_command(words: &[String]) -> Command<'_> {
+    let mut start = 0;
+    while words.get(start).is_some_and(|w| w == "&") {
+        start += 1;
+    }
+    let mut cmd = Command {
+        launcher: false,
+        program: None,
+        args: &[],
+    };
+    let Some(first) = words.get(start) else {
+        return cmd;
+    };
+    let mut at = start;
+    if let Some(used) = launcher_words(&normalize_word(first), words.get(start + 1).map(|w| normalize_word(w))) {
+        cmd.launcher = true;
+        at = start + used;
+        while words.get(at).is_some_and(|w| w.starts_with('-')) {
+            at += 1;
+        }
+    }
+    if let Some(program) = words.get(at) {
+        cmd.program = Some(package_name(&normalize_word(program)).to_string());
+        cmd.args = &words[at + 1..];
+    }
+    cmd
 }
 
 /// How many words a launcher form takes (`npx` is 1, `pnpm dlx` is 2), or None when the first word is no launcher.
@@ -203,7 +231,7 @@ fn is_runtime(program: &str) -> bool {
 }
 
 /// Splits a command line into words, honouring single and double quotes (a backslash is not an escape).
-fn tokenize(line: &str) -> Vec<String> {
+pub(crate) fn tokenize(line: &str) -> Vec<String> {
     let mut words = Vec::new();
     let mut cur = String::new();
     let mut quote: Option<char> = None;
@@ -294,9 +322,30 @@ fn check_one(p: &ToolProfile, shipped: &Tools, seen: &HashSet<String>) -> Result
                 ));
             }
         }
-        // Task 4 adds the check that refuses a preset argument `secrets::scrub` would change.
+        if preset_holds_secret(preset) {
+            return Err(format!(
+                "The preset \"{}\" holds a secret. Ask for it as a field instead.",
+                preset.name
+            ));
+        }
     }
     Ok(())
+}
+
+/// Whether the preset's command line, with each field placeholder (and the flag before it) taken out, holds a flag or
+/// an argument that `secrets::scrub` would hide.
+fn preset_holds_secret(preset: &LaunchPreset) -> bool {
+    let mut words = vec![preset.program.clone()];
+    for arg in &preset.args {
+        if arg.contains('{') && arg.contains('}') {
+            if words.len() > 1 && words.last().is_some_and(|w| w.starts_with('-')) {
+                words.pop();
+            }
+        } else {
+            words.push(arg.clone());
+        }
+    }
+    secrets::takes_secret_words(&words)
 }
 
 /// Splits the own tools from `tools.json` into the usable ones and the refused ones.
@@ -672,7 +721,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "Task 4 adds secrets::scrub and the check that uses it; turn this on then"]
     fn own_tool_preset_holding_a_secret_is_refused() {
         let mut p = own("x");
         p.presets.push(preset("--token=sk_live_0123456789abcdefghijkl", &[]));
@@ -680,5 +728,19 @@ mod tests {
             reason_of(p),
             "The preset \"Run it\" holds a secret. Ask for it as a field instead."
         );
+    }
+
+    #[test]
+    fn own_tool_preset_may_ask_for_a_secret_as_a_field() {
+        let mut p = own("x");
+        let mut ask = preset("--token", &["token"]);
+        ask.args.push("{token}".into());
+        p.presets.push(ask);
+        let mut inline = preset("--api-key={key}", &["key"]);
+        inline.id = "q".into();
+        p.presets.push(inline);
+        let (ok, problems) = validate_own(&[p], &Tools::shipped());
+        assert!(problems.is_empty(), "{problems:?}");
+        assert_eq!(ok.len(), 1);
     }
 }
