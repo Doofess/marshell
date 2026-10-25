@@ -39,6 +39,8 @@ fn state(version: Option<&str>) -> AppState {
         vec![sleeper_profile()],
     )
     .with_agent_check(|_| true)
+    // No test here finds a program on this machine's PATH: CI has no Grok.
+    .with_tab_path(|| None)
     .with_claude_version(version.map(str::to_string))
     .with_claude_compact_paths(user_home, Vec::new())
 }
@@ -838,8 +840,9 @@ async fn start_as(app: &axum::Router, agent: Option<&str>) -> String {
         )
         .await
         .unwrap();
-    assert_eq!(res.status(), StatusCode::OK);
+    let status = res.status();
     let bytes = axum::body::to_bytes(res.into_body(), 64 * 1024).await.unwrap();
+    assert_eq!(status, StatusCode::OK, "{}", String::from_utf8_lossy(&bytes));
     serde_json::from_slice::<serde_json::Value>(&bytes).unwrap()["tab_id"]
         .as_str()
         .unwrap()
@@ -868,7 +871,17 @@ async fn assert_dropped(st: &AppState, app: &axum::Router, tab: &str) {
 
 #[tokio::test]
 async fn a_claude_event_from_a_grok_tab_is_dropped_before_any_hold() {
-    let st = state(Some(KNOWN)).with_permission_hold(std::time::Duration::from_secs(30));
+    // A stand-in Grok, found and named without running anything. The version cache reads its modified time, so it exists.
+    fn grok_stand_in() -> std::path::PathBuf {
+        std::path::Path::new(env!("CARGO_TARGET_TMPDIR")).join("hook-grok-marshell-test.exe")
+    }
+    std::fs::write(grok_stand_in(), "").unwrap();
+    let st = state(Some(KNOWN))
+        .with_permission_hold(std::time::Duration::from_secs(30))
+        .with_agent_path(|command| (command == "grok").then(grok_stand_in))
+        .with_agent_versions(marshell_core::agents::identify::VersionCache::with_reader(|_| {
+            Some("grok 1.2.3 (abc1234)\n".into())
+        }));
     let app = router(st.clone());
     let tab = start_as(&app, Some("grok")).await;
     assert_dropped(&st, &app, &tab).await;
