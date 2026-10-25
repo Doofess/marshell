@@ -1,6 +1,8 @@
-//! The activity watcher: the fallback for an agent row that has no live status. Once a second it
-//! looks at how much output each such session's pty has produced and puts Working (output in the
-//! last 2 s) or Idle (quieter than that) in the registry as `SessionInfo.activity`.
+//! The activity watcher: the fallback for an agent row that has no live status, launched as an agent
+//! or typed into a shell. Once a second it looks at how much output each such session's pty has
+//! produced and puts Working (output in the last 2 s) or Idle (quieter than that) in the registry as
+//! `SessionInfo.activity`. A program that reports OSC 9;4 progress holds Working in the registry,
+//! which turns the watcher's Idle into Working until the program clears it.
 //!
 //! It reads the stream end that `Session::counters` keeps, so there is no extra reader thread.
 

@@ -75,9 +75,30 @@ pub struct Entry {
     stuck: StuckTracker,
     /// When the person last typed into the session. Not serialized.
     last_input: Option<Instant>,
+    /// The program reported OSC 9;4 progress (normal or indeterminate) and has not cleared it: the
+    /// row holds Working, whatever the output watcher says. Only a row on the output fallback takes
+    /// it. Not serialized.
+    progress_hold: bool,
 }
 
 impl Entry {
+    /// True for a row the output watcher fills: Running, not paused, without live status, and an
+    /// agent, either launched as one or typed into a shell.
+    fn takes_activity(&self) -> bool {
+        self.info.state == SessionState::Running
+            && !self.info.paused
+            && self.info.live.is_none()
+            && (self.info.agent.is_some() || self.info.foreground.as_ref().is_some_and(|f| f.agent.is_some()))
+    }
+
+    /// A plain shell row that no longer runs an agent in front keeps no output activity or hold.
+    fn drop_activity_without_agent(&mut self) {
+        if !self.takes_activity() && self.info.agent.is_none() {
+            self.info.activity = None;
+            self.progress_hold = false;
+        }
+    }
+
     fn awaits_subagents_end(&self) -> bool {
         self.info.state == SessionState::Running
             && self.waiting
@@ -97,6 +118,7 @@ impl Entry {
         self.info.stuck = None;
         self.stuck = StuckTracker::default();
         self.info.activity = None;
+        self.progress_hold = false;
         self.info.status_note = None;
         self.running.clear();
         self.waiting = false;
@@ -244,6 +266,7 @@ impl Registry {
             pending_done: None,
             stuck: StuckTracker::default(),
             last_input: None,
+            progress_hold: false,
         });
         self.tx.send_replace(state.snapshot());
         number
@@ -290,6 +313,7 @@ impl Registry {
                 pending_done: None,
                 stuck: StuckTracker::default(),
                 last_input: None,
+                progress_hold: false,
             });
         }
         self.tx.send_replace(state.snapshot());
@@ -432,6 +456,7 @@ impl Registry {
             entry.info.paused = paused;
             if paused {
                 entry.info.activity = None;
+                entry.progress_hold = false;
             }
             self.tx.send_replace(state.snapshot());
         }
@@ -456,6 +481,7 @@ impl Registry {
             && entry.info.foreground != foreground
         {
             entry.info.foreground = foreground;
+            entry.drop_activity_without_agent();
             self.tx.send_replace(state.snapshot());
         }
     }
@@ -473,38 +499,38 @@ impl Registry {
     }
 
     /// Sets what an agent row is doing as far as its output shows, for a row without live status.
-    /// Applied only to a Running, unpaused row launched as an agent, with no `live`, whose
-    /// `generation` is current. Broadcasts only on a change.
+    /// Applied only to a Running, unpaused row with no `live` that was launched as an agent or shows
+    /// an agent typed into its shell, whose `generation` is current. While the program holds
+    /// progress (OSC 9;4), any activity the watcher sets reads Working. Broadcasts only on a change.
     pub fn set_activity(&self, tab_id: &str, generation: u64, activity: Option<Activity>) {
         let mut state = self.state.lock().unwrap();
         if let Some(entry) = state
             .open
             .iter_mut()
             .find(|e| e.info.tab_id == tab_id && e.generation == generation)
-            && entry.info.state == SessionState::Running
-            && entry.info.agent.is_some()
-            && !entry.info.paused
-            && entry.info.live.is_none()
-            && entry.info.activity != activity
+            && entry.takes_activity()
         {
-            entry.info.activity = activity;
-            self.tx.send_replace(state.snapshot());
+            let activity = if entry.progress_hold && activity.is_some() {
+                Some(Activity::Working)
+            } else {
+                activity
+            };
+            if entry.info.activity != activity {
+                entry.info.activity = activity;
+                self.tx.send_replace(state.snapshot());
+            }
         }
     }
 
-    /// The rows the activity watcher may look at: Running, not paused, launched as an agent and
-    /// without live status. Each is the tab id and its generation.
+    /// The rows the activity watcher may look at: Running, not paused, without live status, and
+    /// launched as an agent or running an agent typed into the shell. Each is the tab id and its
+    /// generation.
     pub fn activity_candidates(&self) -> Vec<(String, u64)> {
         let state = self.state.lock().unwrap();
         state
             .open
             .iter()
-            .filter(|e| {
-                e.info.state == SessionState::Running
-                    && !e.info.paused
-                    && e.info.agent.is_some()
-                    && e.info.live.is_none()
-            })
+            .filter(|e| e.takes_activity())
             .map(|e| (e.info.tab_id.clone(), e.generation))
             .collect()
     }
@@ -553,6 +579,23 @@ impl Registry {
         if entry.info.state != SessionState::Running {
             return;
         }
+        if let Mark::Progress(progress) = mark {
+            // Progress only drives the output fallback: a row with hook status ignores it. 1 and 3
+            // hold Working; 0, 2 and 4 release the hold and the ordinary fallback resumes.
+            let hold = match progress {
+                1 | 3 => true,
+                0 | 2 | 4 => false,
+                _ => return,
+            };
+            if entry.takes_activity() {
+                entry.progress_hold = hold;
+                if hold && entry.info.activity != Some(Activity::Working) {
+                    entry.info.activity = Some(Activity::Working);
+                    self.tx.send_replace(state.snapshot());
+                }
+            }
+            return;
+        }
         let signal = match &mark {
             Mark::Notify(message) => Some((message.clone(), false)),
             Mark::Bell => Some((None, true)),
@@ -574,11 +617,19 @@ impl Registry {
         };
         // The command is over or the prompt is back: whatever ran is gone.
         let cleared = matches!(mark, Mark::Finished(_) | Mark::PromptStart) && entry.info.foreground.take().is_some();
+        if cleared {
+            entry.drop_activity_without_agent();
+        }
         let next = match mark {
             Mark::Executed => CommandState::Running,
             Mark::Finished(Some(code)) => CommandState::Prompt { last_exit: Some(code) },
             Mark::Finished(None) | Mark::PromptStart => CommandState::Prompt { last_exit },
-            Mark::CommandStart | Mark::CommandLine(_) | Mark::Cwd(_) | Mark::Notify(_) | Mark::Bell => return,
+            Mark::CommandStart
+            | Mark::CommandLine(_)
+            | Mark::Cwd(_)
+            | Mark::Notify(_)
+            | Mark::Progress(_)
+            | Mark::Bell => return,
         };
         let changed = entry.info.command != next;
         if changed {
@@ -2576,5 +2627,110 @@ mod tests {
             reg.activity_candidates(),
             vec![("agent".to_string(), generation_of(&reg, "agent"))]
         );
+    }
+
+    fn typed(agent: Option<&str>) -> Foreground {
+        Foreground {
+            program: agent.unwrap_or("vim").into(),
+            command_line: None,
+            agent: agent.map(Into::into),
+        }
+    }
+
+    fn grok_relaunch(name: &str) -> Relaunch {
+        Relaunch {
+            agent: Some("grok".into()),
+            ..relaunch(name)
+        }
+    }
+
+    #[test]
+    fn progress_holds_working_until_cleared() {
+        let reg = Registry::new();
+        reg.reserve("g", grok_relaunch("G"));
+        let generation = generation_of(&reg, "g");
+        reg.set_activity("g", generation, Some(Activity::Idle));
+        assert_eq!(row(&reg, "g").activity, Some(Activity::Idle));
+        // Working and indeterminate progress hold Working, and the quiet tick cannot set Idle.
+        for state in [1, 3] {
+            reg.mark("g", Mark::Progress(0), &away());
+            reg.set_activity("g", generation, Some(Activity::Idle));
+            reg.mark("g", Mark::Progress(state), &away());
+            assert_eq!(row(&reg, "g").activity, Some(Activity::Working), "state {state}");
+            reg.set_activity("g", generation, Some(Activity::Idle));
+            assert_eq!(row(&reg, "g").activity, Some(Activity::Working), "state {state} tick");
+            reg.set_activity("g", generation, Some(Activity::Working));
+            assert_eq!(row(&reg, "g").activity, Some(Activity::Working));
+        }
+        // Clear, error and paused release the hold, and the ordinary fallback resumes.
+        for state in [0, 2, 4] {
+            reg.mark("g", Mark::Progress(1), &away());
+            reg.mark("g", Mark::Progress(state), &away());
+            reg.set_activity("g", generation, Some(Activity::Idle));
+            assert_eq!(row(&reg, "g").activity, Some(Activity::Idle), "state {state}");
+        }
+        // The scanner never yields another state, but a stray one changes nothing.
+        reg.mark("g", Mark::Progress(1), &away());
+        reg.mark("g", Mark::Progress(9), &away());
+        reg.set_activity("g", generation, Some(Activity::Idle));
+        assert_eq!(row(&reg, "g").activity, Some(Activity::Working));
+    }
+
+    #[test]
+    fn progress_is_ignored_by_hook_rows_plain_shells_and_ended_rows() {
+        let reg = Registry::new();
+        reg.reserve("hook", agent_relaunch("H"));
+        reg.reserve("plain", relaunch("P"));
+        reg.reserve("exited", grok_relaunch("E"));
+        reg.update_live("hook", |_| Some(live(LiveState::Idle)));
+        reg.set_foreground("plain", generation_of(&reg, "plain"), Some(typed(None)));
+        let before = reg.snapshot();
+        for id in ["hook", "plain"] {
+            reg.mark(id, Mark::Progress(1), &away());
+        }
+        assert_eq!(reg.snapshot(), before);
+        assert_eq!(row(&reg, "hook").live, Some(live(LiveState::Idle)));
+        assert_eq!(row(&reg, "hook").activity, None);
+        assert_eq!(row(&reg, "plain").activity, None);
+        // A hold from a row that later gets live status or ends is gone with it.
+        reg.mark("exited", Mark::Progress(1), &away());
+        reg.mark_exited("exited", generation_of(&reg, "exited"), 0);
+        assert_eq!(row(&reg, "exited").activity, None);
+        reg.begin_resume("exited").unwrap();
+        reg.set_activity("exited", generation_of(&reg, "exited"), Some(Activity::Idle));
+        assert_eq!(row(&reg, "exited").activity, Some(Activity::Idle));
+    }
+
+    #[test]
+    fn an_agent_typed_in_a_shell_gets_the_fallback() {
+        let reg = Registry::new();
+        reg.reserve("typed", relaunch("T"));
+        reg.reserve("vim", relaunch("V"));
+        reg.reserve("idle", relaunch("I"));
+        reg.reserve("paused", relaunch("P"));
+        let generation = generation_of(&reg, "typed");
+        reg.set_foreground("typed", generation, Some(typed(Some("grok"))));
+        reg.set_foreground("vim", generation_of(&reg, "vim"), Some(typed(None)));
+        reg.set_foreground("paused", generation_of(&reg, "paused"), Some(typed(Some("grok"))));
+        reg.set_paused("paused", generation_of(&reg, "paused"), true);
+        assert_eq!(reg.activity_candidates(), vec![("typed".to_string(), generation)]);
+
+        reg.set_activity("typed", generation, Some(Activity::Working));
+        assert_eq!(row(&reg, "typed").activity, Some(Activity::Working));
+        reg.set_activity("vim", generation_of(&reg, "vim"), Some(Activity::Working));
+        reg.set_activity("idle", generation_of(&reg, "idle"), Some(Activity::Working));
+        assert_eq!(row(&reg, "vim").activity, None);
+        assert_eq!(row(&reg, "idle").activity, None);
+
+        // Progress holds it too, and the prompt coming back takes the activity and the hold away.
+        reg.mark("typed", Mark::Progress(1), &away());
+        reg.set_activity("typed", generation, Some(Activity::Idle));
+        assert_eq!(row(&reg, "typed").activity, Some(Activity::Working));
+        reg.mark("typed", Mark::Finished(Some(0)), &away());
+        assert_eq!(row(&reg, "typed").foreground, None);
+        assert_eq!(row(&reg, "typed").activity, None);
+        assert!(reg.activity_candidates().is_empty());
+        reg.set_activity("typed", generation, Some(Activity::Idle));
+        assert_eq!(row(&reg, "typed").activity, None);
     }
 }
