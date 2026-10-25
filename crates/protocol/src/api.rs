@@ -76,6 +76,10 @@ pub struct CreateSessionRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub mode: Option<SessionMode>,
+    /// A preset the agent starts with ("deepseek", on Claude Code only). Absent starts the agent as it is.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub preset: Option<String>,
     /// The terminal's colour scheme right now. Absent means the core sets no `COLORFGBG`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
@@ -83,7 +87,7 @@ pub struct CreateSessionRequest {
 }
 
 /// How much an agent may do before it asks. The core turns it into the CLI's own flags.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, TS)]
 #[serde(rename_all = "kebab-case")]
 #[ts(export)]
 pub enum SessionMode {
@@ -171,6 +175,10 @@ pub struct SessionInfo {
     /// A hooked agent that repeats one tool call or goes quiet while Working. Never notifies.
     #[serde(default)]
     pub stuck: Option<Stuck>,
+    /// The preset the agent was started with ("deepseek"), shown beside the agent. The row's `agent` stays "claude".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub preset: Option<String>,
 }
 
 /// A terminal program's request for attention.
@@ -315,6 +323,11 @@ pub struct SavedTab {
     /// Whether the user muted this session's notifications. A layout.json from before this field existed reads as false.
     #[serde(default)]
     pub muted: bool,
+    /// The preset it started with. A layout.json from before this field existed reads as None. Never a key:
+    /// a restart reads the key again.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub preset: Option<String>,
 }
 
 /// How the window was laid out: which tabs sit in which panes, and the sidebar.
@@ -367,6 +380,10 @@ pub struct LauncherChoice {
     /// The mode last used here. Never Full auto or Bypass. A layout.json from before this field reads as None.
     #[serde(default)]
     pub mode: Option<SessionMode>,
+    /// The preset last used here. A layout.json from before this field reads as None.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub preset: Option<String>,
 }
 
 /// The whole of layout.json.
@@ -1047,6 +1064,7 @@ mod tests {
             muted: true,
             attention: None,
             stuck: None,
+            preset: None,
         };
         let mut value = serde_json::to_value(&info).unwrap();
         value.as_object_mut().unwrap().remove("muted");

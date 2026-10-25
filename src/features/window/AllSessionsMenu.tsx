@@ -22,7 +22,7 @@ export function AllSessionsMenu({ rows, selectedId, title = "All sessions" }: { 
       </header>
       <div className="all-sessions__list scroll-menu">
         {rows.map((r) => (
-          <button key={r.id} type="button" {...selectedProps(r.id === selectedId, "current", "all-sessions__row")} data-agent={r.agent} aria-label={`${sessionWord(r.number)}, ${r.name} ${r.project} ${r.phrase.replace(/`/g, "")}. ${kindName(r.agent)}, ${GLYPHS[r.status].label}.`}>
+          <button key={r.id} type="button" {...selectedProps(r.id === selectedId, "current", "all-sessions__row")} data-agent={r.agent} aria-label={`${sessionWord(r.number)}, ${r.name} ${r.project} ${r.phrase.replace(/`/g, "")}. ${kindName(r.agent, r.agentName)}, ${GLYPHS[r.status].label}.`}>
             <span className="all-sessions__stripe" aria-hidden="true" />
             <StatusGlyph kind={r.status} />
             <SessionNumber n={r.number} />{" "}

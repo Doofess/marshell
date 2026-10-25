@@ -100,11 +100,11 @@ const HIDDEN = new Map<string, readonly string[]>();
  * The palette commands left out now: Resume unless the session in focus can resume, Review unless it is a task, and Clean up a
  * missing task unless a task's folder is gone, Copy the recording path when no session is in focus, the Mode commands unless the session in focus is an agent, Pause unless it is running, and Continue unless it is paused. The same array for the same answers, so the palette's list is not rebuilt for them.
  */
-export function paletteHidden({ resumable, isTask, missing, focused = true, agent = true, pausable = true, paused = true }: { resumable: boolean; isTask: boolean; missing: boolean; focused?: boolean; agent?: boolean; pausable?: boolean; paused?: boolean }): readonly string[] {
-  const key = `${resumable}${isTask}${missing}${focused}${agent}${pausable}${paused}`;
+export function paletteHidden({ resumable, isTask, missing, focused = true, agent = true, pausable = true, paused = true, offered }: { resumable: boolean; isTask: boolean; missing: boolean; focused?: boolean; agent?: boolean; pausable?: boolean; paused?: boolean; /** The modes the focused agent offers (offeredModes); the other Mode commands are left out. Absent: all five. */ offered?: readonly string[] }): readonly string[] {
+  const key = `${resumable}${isTask}${missing}${focused}${agent}${pausable}${paused}${offered?.join(",") ?? "*"}`;
   let hidden = HIDDEN.get(key);
   if (!hidden) {
-    hidden = [...(resumable ? [] : ["resume"]), ...(isTask ? [] : ["review-task"]), ...(missing ? [] : ["clean-up-task"]), ...(focused ? [] : ["copy-recording-path"]), ...(agent ? [] : MODE_COMMANDS), ...(pausable ? [] : ["pause"]), ...(paused ? [] : ["continue"])];
+    hidden = [...(resumable ? [] : ["resume"]), ...(isTask ? [] : ["review-task"]), ...(missing ? [] : ["clean-up-task"]), ...(focused ? [] : ["copy-recording-path"]), ...(agent ? (offered === undefined ? [] : MODE_COMMANDS.filter((c) => !offered.includes(c.slice(5)))) : MODE_COMMANDS), ...(pausable ? [] : ["pause"]), ...(paused ? [] : ["continue"])];
     HIDDEN.set(key, hidden);
   }
   return hidden;

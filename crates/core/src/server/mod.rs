@@ -1,6 +1,7 @@
 mod activity;
 pub(crate) mod agents;
 mod attachments;
+mod catalog;
 mod config;
 mod diagnostics;
 mod events;
@@ -105,10 +106,24 @@ struct Inner {
     /// Wakes the foreground watcher when a command starts, so it does not wait out its second.
     /// An `Arc` so a session's mark callback can hold it without holding the state.
     foreground_wake: Arc<tokio::sync::Notify>,
-    /// Whether an agent's command (`claude`, `codex`, `agy`) runs from PATH. Tests swap it.
-    agent_on_path: fn(&str) -> bool,
-    /// The file an agent's command runs from PATH, for its setup and version. Tests swap it.
-    agent_path: fn(&str) -> Option<PathBuf>,
+    /// Whether an agent's command (`claude`, `codex`, `agy`) runs from PATH. Tests swap it; without a swap it is looked up
+    /// on the tab PATH (`AppState::agent_finder`).
+    agent_on_path: Option<fn(&str) -> bool>,
+    /// The file an agent's command runs from PATH, for its setup and version. Tests swap it; without a swap it is looked up
+    /// on the tab PATH.
+    agent_path: Option<fn(&str) -> Option<PathBuf>>,
+    /// The PATH a session's program is looked up on (see `detect::tab_path`). Tests swap it.
+    tab_path: fn() -> Option<std::ffi::OsString>,
+    /// `DEEPSEEK_API_KEY`, read when a DeepSeek session starts or the catalog is built. Tests swap it. The value goes
+    /// only into that child's spawn environment.
+    deepseek_key: fn() -> Option<String>,
+    /// `~/.marshell/agents.json`, read again when the file's modified time changes. `AppState::agents` adds the shipped
+    /// manifests to the valid entries.
+    own_agents: crate::agents::own::OwnCache,
+    /// One save of `agents.json` at a time, so the changed-since-read check and the write are not interleaved.
+    own_agents_write: Mutex<()>,
+    /// `--version` of the manifest agents' programs, for telling a program from another with the same name.
+    agent_versions: Arc<crate::agents::identify::VersionCache>,
     /// The last events the bridge sent, per live tab.
     hook_log: crate::hooks::log::HookLog,
     /// The permission requests being held for a decision.
@@ -182,6 +197,7 @@ impl AppState {
             cwd: tab.cwd.clone(),
             mode: tab.mode,
             name: tab.name.clone(),
+            preset: tab.preset.clone(),
         });
         let shell_dir = match crate::shell::install(&home) {
             Ok(dir) => Some(dir),
@@ -207,8 +223,13 @@ impl AppState {
             starting: Mutex::new(HashSet::new()),
             shell_panel: Mutex::new(None),
             foreground_wake: Arc::new(tokio::sync::Notify::new()),
-            agent_on_path: crate::profiles::detect::command_on_path,
-            agent_path: crate::profiles::detect::command_path,
+            agent_on_path: None,
+            agent_path: None,
+            tab_path: crate::profiles::detect::tab_path,
+            deepseek_key: || std::env::var(crate::agents::presets::DEEPSEEK_KEY_VAR).ok(),
+            own_agents: crate::agents::own::OwnCache::default(),
+            own_agents_write: Mutex::new(()),
+            agent_versions: Arc::new(crate::agents::identify::VersionCache::default()),
             hook_log: crate::hooks::log::HookLog::default(),
             holds: crate::hooks::holds::Holds::default(),
             permission_hold: DEFAULT_PERMISSION_HOLD,
@@ -340,15 +361,57 @@ impl AppState {
     pub fn with_agent_check(mut self, check: fn(&str) -> bool) -> Self {
         Arc::get_mut(&mut self.0)
             .expect("with_agent_check runs before the state is shared")
-            .agent_on_path = check;
+            .agent_on_path = Some(check);
         self
     }
     /// Replaces the PATH lookup of an agent's file. Call it before the state is cloned.
     pub fn with_agent_path(mut self, find: fn(&str) -> Option<PathBuf>) -> Self {
         Arc::get_mut(&mut self.0)
             .expect("with_agent_path runs before the state is shared")
-            .agent_path = find;
+            .agent_path = Some(find);
         self
+    }
+    /// How to find an agent's program: on the PATH a tab of that profile gets. Take one per request and use it for every
+    /// command: the PATH is read once, and only when a lookup needs it. `profile_env` is the launching profile's own
+    /// environment, whose PATH wins; the catalog has no profile and passes none.
+    pub(crate) fn agent_finder(&self, profile_env: &[(String, String)]) -> AgentFinder {
+        AgentFinder {
+            path_of: self.0.agent_path,
+            on_path: self.0.agent_on_path,
+            profile_path: profile_env
+                .iter()
+                .rev()
+                .find(|(name, _)| name.eq_ignore_ascii_case("PATH"))
+                .map(|(_, value)| value.into()),
+            read_tab_path: self.0.tab_path,
+            tab_path: std::sync::OnceLock::new(),
+        }
+    }
+    /// Replaces the PATH sessions are looked up on. Call it before the state is cloned.
+    pub fn with_tab_path(mut self, read: fn() -> Option<std::ffi::OsString>) -> Self {
+        Arc::get_mut(&mut self.0)
+            .expect("with_tab_path runs before the state is shared")
+            .tab_path = read;
+        self
+    }
+    /// Replaces the read of `DEEPSEEK_API_KEY`. Call it before the state is cloned.
+    pub fn with_deepseek_key(mut self, read: fn() -> Option<String>) -> Self {
+        Arc::get_mut(&mut self.0)
+            .expect("with_deepseek_key runs before the state is shared")
+            .deepseek_key = read;
+        self
+    }
+    /// Replaces the `--version` reader the manifest agents' programs are checked with. Call it before the state is cloned.
+    pub fn with_agent_versions(mut self, versions: crate::agents::identify::VersionCache) -> Self {
+        Arc::get_mut(&mut self.0)
+            .expect("with_agent_versions runs before the state is shared")
+            .agent_versions = Arc::new(versions);
+        self
+    }
+    /// The adapters' launch data, the shipped manifests and the valid own agents of `agents.json`. A saved or hand-edited
+    /// file shows without a restart: the file's modified time is checked on each call.
+    pub(crate) fn agents(&self) -> crate::agents::manifest::Agents {
+        self.0.own_agents.get(&self.0.home).agents.clone()
     }
     /// The sessions index and the transcript archive.
     pub fn history(&self) -> Arc<crate::history::recorder::History> {
@@ -564,6 +627,42 @@ impl Drop for StartClaim {
     }
 }
 
+/// Finds an agent's program on the PATH its tab will get. A test's swap (`with_agent_path`, `with_agent_check`) answers
+/// instead when it is set.
+pub(crate) struct AgentFinder {
+    path_of: Option<fn(&str) -> Option<PathBuf>>,
+    on_path: Option<fn(&str) -> bool>,
+    profile_path: Option<std::ffi::OsString>,
+    read_tab_path: fn() -> Option<std::ffi::OsString>,
+    tab_path: std::sync::OnceLock<Option<std::ffi::OsString>>,
+}
+
+impl AgentFinder {
+    fn path_in_use(&self) -> Option<&std::ffi::OsStr> {
+        self.profile_path
+            .as_deref()
+            .or_else(|| self.tab_path.get_or_init(self.read_tab_path).as_deref())
+    }
+
+    /// The file `command` runs from.
+    pub(crate) fn path_of(&self, command: &str) -> Option<PathBuf> {
+        match self.path_of {
+            Some(swap) => swap(command),
+            None => crate::profiles::detect::command_path_in(self.path_in_use()?, command),
+        }
+    }
+
+    /// Whether `command` runs at all.
+    pub(crate) fn on_path(&self, command: &str) -> bool {
+        match self.on_path {
+            Some(swap) => swap(command),
+            None => self
+                .path_in_use()
+                .is_some_and(|path| crate::profiles::detect::command_path_in(path, command).is_some()),
+        }
+    }
+}
+
 pub fn router(state: AppState) -> Router {
     // Here and not in `AppState::new`, which `with_agent_check` needs to be the only owner of.
     layout::spawn_layout_saver(&state);
@@ -647,6 +746,8 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/snapshots", get(config::snapshots))
         .route("/v1/snapshots/{id}/restore", post(config::restore))
         .route("/v1/agents", get(agents::found))
+        .route("/v1/agents/catalog", get(catalog::catalog))
+        .route("/v1/agents/own", get(catalog::get_own).put(catalog::put_own))
         .route("/v1/agents/{agent}/setup", get(agents::setup))
         .route("/v1/agents/{agent}/hooks/plan", post(agents::plan))
         .route("/v1/agents/{agent}/hooks/remove-plan", post(agents::remove_plan))

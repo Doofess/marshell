@@ -35,6 +35,10 @@ pub struct SessionMeta {
     /// Where the conversation ran. Sidecars from before this field read as Marshell.
     #[serde(default)]
     pub client: Client,
+    /// The preset the conversation's tab started with ("deepseek"), so Open in new tab starts it the same way. Only the
+    /// name: never a key. Sidecars from before this field read as None, and the index does not keep it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preset: Option<String>,
 }
 
 /// One recording a conversation ran in, and when.

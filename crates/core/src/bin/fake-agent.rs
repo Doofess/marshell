@@ -10,6 +10,8 @@
 //!   fake-agent osc133              print the OSC 133 marks A, C and D;7, exit 0
 //!   fake-agent folder <path>       report <path> as the shell's folder (OSC 9;9), sleep 60 s
 //!   fake-agent cmdline <text>      report <text> as the command line (633;E), mark C, sleep 2 s, mark D;0
+//!   fake-agent env-present <names> print "NAME=present" or "NAME=absent" for each name (never a value), exit 0;
+//!                                  the names end at a "-c" word, where a launch line starts
 //!   fake-agent capture-input <f>   read stdin raw, turn bracketed paste on (2004h), append every byte read to <f>
 use std::io::{BufRead, Read, Write};
 
@@ -61,6 +63,16 @@ fn main() {
                 let n = lines_left.min(lines_per_chunk);
                 out.write_all(&chunk[..n * line.len()]).unwrap();
                 lines_left -= n;
+            }
+        }
+        Some("env-present") => {
+            for name in args[1..].iter().take_while(|a| a.as_str() != "-c") {
+                let state = if std::env::var_os(name).is_some() {
+                    "present"
+                } else {
+                    "absent"
+                };
+                writeln!(out, "{name}={state}").unwrap();
             }
         }
         Some("cwd") => writeln!(out, "{}", std::env::current_dir().unwrap().display()).unwrap(),

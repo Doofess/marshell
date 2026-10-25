@@ -32,6 +32,10 @@ prompt?: string,
  */
 mode?: SessionMode, 
 /**
+ * A preset the agent starts with ("deepseek", on Claude Code only). Absent starts the agent as it is.
+ */
+preset?: string, 
+/**
  * The terminal's colour scheme right now. Absent means the core sets no `COLORFGBG`.
  */
 color_scheme?: ColorScheme, };

@@ -26,7 +26,8 @@
 }
 [data-agent="cursor"],
 [data-agent="opencode"],
-[data-agent="grok"] {
+[data-agent="grok"],
+[data-agent="kimi"] {
   --agent: var(--brand-codex);
   --agent-signal: var(--brand-codex);
 }

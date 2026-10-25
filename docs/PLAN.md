@@ -1137,6 +1137,43 @@ Decisions from the 2026-10-10 coverage audit (`docs/superpowers/plan-coverage-au
      2. Resume and Restart of a Codex tab use `codex resume <id>` for the tab's latest Codex conversation on record, checked as History's "Open in new tab" checks it (#61).
      3. A Codex tab with no conversation on record (hooks off, untrusted, or never fired) keeps `resume --last`, as Claude's tab keeps `--continue`.
      4. A Codex conversation on record whose rollout file is gone starts Codex fresh, with no resume argument. Marshell keeps no copy of Codex rollouts, so it can't tell a deleted conversation from one Codex never wrote.
+   - **Slice 6b decisions (2026-10-25).** Agent manifests and own agents. Evidence: `docs/research/2026-10-25-agent-and-tool-cli-manifests.md`.
+     1. Three tiers. Rust adapters are only for the hook-capable CLIs Marshell installs hooks for: Claude Code, Codex and Antigravity. Every other agent CLI is a data manifest. It holds how to launch the CLI with a first prompt, continue and resume, the flags for each mode, the exe names and install folders that identify it, and its mark. Developer tools that aren't agents get tool profiles (6c). Marshell ships a curated set of both, and a person can add their own.
+     2. The long tail comes before Antigravity. This pulls custom agents and port chips forward from the old 6f. Phase 6 now runs:
+        - 6b: agent manifests and own agents.
+        - 6c: tool profiles (launch presets, needs-you patterns, port chips).
+        - 6d: the Antigravity adapter (the old 6b).
+        - 6e: Accounts, CLI version and update, the settings pane and the terminal font (the old 6c).
+        - 6f: the company tabs (the old 6d).
+        - 6g: the `marshell` CLI, "Copy resume command" and "Open in system terminal" (the old 6e).
+        - 6h: repo scripts and project references (the old 6f, less what moved).
+        - 6i: WSL and `marshell-host` (the old 6g).
+
+        Slice 6a's decision 1 keeps the old letters as the record of that day.
+     3. Shipped manifests: GitHub Copilot CLI, Cursor CLI, opencode, Amp, Grok Build, Qwen Code, Kimi Code CLI, Aider and Crush. Kimi means Kimi Code CLI (`~/.kimi-code`). The archived Python `kimi-cli` is not covered.
+     4. A manifest agent's status comes from the terminal only. Marshell writes no hook or config file for these CLIs and guesses no status.
+        - It gets the pty fallback that every agent row without hooks has (slice 3c2 decision 4): Working while output flows and Idle when it's quiet, both marked "Status limited".
+        - Its own OSC 9;4 progress also shows Working.
+        - Its own notification (OSC 9, 99 or 777) or a bell shows Needs you.
+
+        (Amended the same day: the first answer, "signals only", was given without knowing about the fallback.)
+     5. DeepSeek is a Claude Code preset, not a manifest. "DeepSeek" in the picker starts Claude Code with DeepSeek's documented Anthropic-compatible environment (base URL and model names). The key comes from an environment variable the person sets (`DEEPSEEK_API_KEY`) and goes only into that process's environment. Marshell never stores, logs or shows it. The tab shows the DeepSeek mark and keeps Claude Code's adapter for status. With the variable unset, the entry says so and doesn't start.
+     6. Own agents live in `~/.marshell/agents.json` (§4). A person edits the file by hand or through a form. Settings isn't wired into the app until 6e, so in 6b the form is an "Add your own agent" section of the live Agents dialog, and it moves to Settings → Agents in 6e. The form covers name, command, the first-prompt flag, continue and resume flags, mode flags and the exe names to recognise. An invalid entry is listed with the reason, and the file is reloaded when it changes.
+     7. Grok runs Claude Code's hook files by default (`[compat.claude] hooks`). Marshell filters on its side and leaves Grok's settings alone:
+        - The core drops Claude hook events from a tab whose agent isn't Claude Code.
+        - The hook bridge exits quietly when Grok's `GROK_HOOK_EVENT` is set, which covers a Grok typed into a shell.
+
+        The person's own Claude hooks still run inside Grok.
+     8. Live check:
+        - Install opencode, Qwen Code, Crush and Kimi Code into a scratch prefix, and check their launch, resume and mode flags against `--help` and a real start, without signing in.
+        - Grok runs a real session in a scratch folder on the person's own account.
+        - Copilot, Cursor and Amp are checked from their docs only, and the pull request lists them under Known limits.
+   - **Slice 6c decisions (2026-10-25).** Tool profiles. The rest is asked when 6c starts.
+     1. A tool profile can carry three things:
+        - launch presets: start the tool from the picker with saved arguments and a folder;
+        - needs-you patterns: the text that marks the tab as waiting on the person, such as a `y/N` question or a sign-in prompt;
+        - port announcement lines, which become port chips the person can click.
+     2. While Marshell can see a command that prints secrets running in a tab, it doesn't scan that output for prompts or ports and doesn't record it. Examples are `op read`, `op item get --reveal`, `supabase status`, `gh auth token` and `kubectl get secret -o yaml`. Marshell sees the command from its process arguments or from the shell integration's command line. The recording gets a marker saying why. It is best effort: a command Marshell can't see is still recorded.
 7. **Doctor**: the fix actions, on top of the phase-3 config core: "Fix X issues" and one-click undo; folds in each CLI's own doctor; detects duplicate notifications and offers to turn off each CLI's own desktop notifications (brief §5.5, moved here by slice 4e decision 4); reports the tokens injected by project references; checks Codex hook trust; waste checks (unused MCP servers and skills, long descriptions, broad scopes, a token-cost estimate); offers to raise `cleanupPeriodDays`.
    - Added 2026-10-16 (research in `docs/research/2026-10-16-accounts-cloud-extensions.md`):
      - **One-click doctor per CLI.** It runs the CLI's own doctor (`claude doctor` text, `codex doctor --json`) and opens a summary window of suggested fixes. Every fix goes through preview, backup and undo; nothing is applied silently. Antigravity has no doctor command, so it gets none.

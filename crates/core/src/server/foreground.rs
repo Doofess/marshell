@@ -2,12 +2,16 @@
 //! puts it in the registry as `SessionInfo.foreground`. It also hands the shell panel's shell to
 //! the session list when that shell runs a known agent.
 //!
-//! A session is looked at only if it was not launched as an agent, is running and not paused, and
+//! A session launched as an agent is read too, for one thing: whether another agent has taken the launched one's place in
+//! front (see `displacing_agent`). That is not shown in the row; it decides whose hooks the tab takes.
+//!
+//! A shell session is looked at only if it was not launched as an agent, is running and not paused, and
 //! either has a command running, has never sent a C mark (cmd, and shells without integration), or
 //! still shows a program (so a result that lost a race with the D mark is cleared next tick).
 
 use super::AppState;
 use super::shell_panel::{PANEL_GENERATION, take_and_adopt};
+use crate::agents::manifest::Agents;
 use crate::profiles::detect::{agent_in, program_of};
 use crate::pty::Session;
 use marshell_protocol::api::Foreground;
@@ -80,26 +84,50 @@ async fn tick(st: &AppState, pending: &mut Option<(String, u64, Instant)>) {
         let epoch = session.command_epoch();
         work.push((Target::Panel { tab }, session, epoch));
     }
-    if work.is_empty() {
+    let mut launched: Vec<(String, u64, String, Arc<Session>)> = Vec::new();
+    for (tab, generation, agent) in st.0.registry.launched_candidates() {
+        if let Some(session) = st.session(&tab)
+            && polled(&session, false)
+        {
+            launched.push((tab, generation, agent, session));
+        }
+    }
+    if work.is_empty() && launched.is_empty() {
         *pending = None;
         return;
     }
     // One blocking task for the whole pass: reading a process list is not async.
+    let agents = st.agents();
     let readings = tokio::task::spawn_blocking(move || {
-        work.into_iter()
+        let shells = work
+            .into_iter()
             .map(|(target, session, epoch)| {
                 let prompt = at_prompt(session.ever_executed(), session.command_running());
-                let reading = reading_for(prompt, || read(&session));
+                let reading = reading_for(prompt, || read(&agents, &session));
                 // The session comes back for its epoch at apply time.
                 (target, session, epoch, reading)
             })
-            .collect::<Vec<_>>()
+            .collect::<Vec<_>>();
+        // `None` when the chain cannot be read: the row keeps what it had.
+        let displacing = launched
+            .into_iter()
+            .map(|(tab, generation, agent, session)| {
+                let chain = session.foreground_chain();
+                (tab, generation, chain.map(|c| displacing_agent(&agents, &c, &agent)))
+            })
+            .collect::<Vec<_>>();
+        (shells, displacing)
     })
     .await;
-    let Ok(readings) = readings else {
+    let Ok((readings, displacing)) = readings else {
         *pending = None;
         return;
     };
+    for (tab, generation, displacing) in displacing {
+        if let Some(displacing) = displacing {
+            st.0.registry.set_displacing_agent(&tab, generation, displacing);
+        }
+    }
     // The panel's agent in this pass, if any: the tab, the epoch it was read at and what it runs.
     let mut panel_agent: Option<(String, u64, Foreground)> = None;
     for (target, session, epoch, reading) in readings {
@@ -132,6 +160,23 @@ async fn tick(st: &AppState, pending: &mut Option<(String, u64, Instant)>) {
         }
         None => *pending = None,
     }
+}
+
+/// The other agent that runs in front of a row launched as `launched`, once the launched one has left the foreground: the
+/// person quit it and typed `grok` into the tab's shell. While any process of the chain (outermost first) is the launched
+/// agent, nothing displaces it, whatever it runs below itself: its Bash tool may start `qwen` and its hooks stay its own.
+/// Only when the launched agent is gone, and the chain's outermost program (what the shell itself runs) is another agent,
+/// does that agent take its place.
+fn displacing_agent(agents: &Agents, chain: &[String], launched: &str) -> Option<String> {
+    if chain
+        .iter()
+        .any(|name| agents.agent_of_exe(name).as_deref() == Some(launched))
+    {
+        return None;
+    }
+    // Only the program the shell itself runs can take its place. An npm Claude runs as `node`, which names no agent, and
+    // an agent deeper down is that program's child (its Bash tool's `qwen`), never what the person typed.
+    agents.agent_of_exe(chain.first()?)
 }
 
 /// What a pass learned about one session: `Some(None)` nothing runs, `Some(Some(_))` a program,
@@ -179,13 +224,17 @@ fn seen_twice(pending: &mut Option<(String, u64, Instant)>, tab: &str, epoch: u6
 }
 
 /// Reads the session's process chain and command line. Blocking.
-fn read(session: &Session) -> Option<Option<Foreground>> {
-    foreground_of(session.foreground_chain().as_deref(), session.command_line())
+fn read(agents: &Agents, session: &Session) -> Option<Option<Foreground>> {
+    foreground_of(agents, session.foreground_chain().as_deref(), session.command_line())
 }
 
 /// What the chain (outermost first) and the reported command line say the shell is running.
 /// `Some(None)`: nothing. `None`: something runs but it cannot be named.
-fn foreground_of(chain: Option<&[String]>, command_line: Option<String>) -> Option<Option<Foreground>> {
+fn foreground_of(
+    agents: &Agents,
+    chain: Option<&[String]>,
+    command_line: Option<String>,
+) -> Option<Option<Foreground>> {
     let chain = chain.unwrap_or(&[]);
     if chain.is_empty() && command_line.is_none() {
         return Some(None);
@@ -194,7 +243,7 @@ fn foreground_of(chain: Option<&[String]>, command_line: Option<String>) -> Opti
         Some(last) => last.clone(),
         None => program_of(command_line.as_deref()?)?,
     };
-    let agent = agent_in(chain, command_line.as_deref()).map(String::from);
+    let agent = agent_in(agents, chain, command_line.as_deref());
     Some(Some(Foreground {
         program,
         command_line,
@@ -271,14 +320,14 @@ mod tests {
 
     #[test]
     fn nothing_running_is_no_foreground() {
-        assert_eq!(foreground_of(None, None), Some(None));
-        assert_eq!(foreground_of(Some(&[][..]), None), Some(None));
+        assert_eq!(foreground_of(&Agents::shipped(), None, None), Some(None));
+        assert_eq!(foreground_of(&Agents::shipped(), Some(&[][..]), None), Some(None));
     }
 
     #[test]
     fn the_deepest_process_is_the_program() {
         let chain = names(&["pnpm", "node"]);
-        let fg = foreground_of(Some(chain.as_slice()), Some("pnpm dev".into()))
+        let fg = foreground_of(&Agents::shipped(), Some(chain.as_slice()), Some("pnpm dev".into()))
             .unwrap()
             .unwrap();
         assert_eq!(fg.program, "node");
@@ -288,7 +337,9 @@ mod tests {
 
     #[test]
     fn the_command_line_names_the_program_when_the_chain_is_empty() {
-        let fg = foreground_of(None, Some("npx @openai/codex".into())).unwrap().unwrap();
+        let fg = foreground_of(&Agents::shipped(), None, Some("npx @openai/codex".into()))
+            .unwrap()
+            .unwrap();
         assert_eq!(fg.program, "@openai/codex");
         assert_eq!(fg.agent.as_deref(), Some("codex"));
     }
@@ -296,13 +347,51 @@ mod tests {
     #[test]
     fn an_agent_anywhere_in_the_chain_names_it() {
         let chain = names(&["node", "codex-win32-x64"]);
-        let fg = foreground_of(Some(chain.as_slice()), None).unwrap().unwrap();
+        let fg = foreground_of(&Agents::shipped(), Some(chain.as_slice()), None)
+            .unwrap()
+            .unwrap();
         assert_eq!(fg.agent.as_deref(), Some("codex"));
         assert_eq!(fg.command_line, None);
     }
 
     #[test]
+    fn another_agent_takes_the_place_of_a_launched_one_that_left_the_foreground() {
+        let agents = Agents::shipped();
+        // Claude quit in its tab and `grok` was typed: the shell's child is Grok.
+        // The chain starts at the shell's child, so `grok` typed after Claude quit is its first program.
+        for chain in [names(&["grok"]), names(&["grok", "node"])] {
+            assert_eq!(
+                displacing_agent(&agents, &chain, "claude").as_deref(),
+                Some("grok"),
+                "{chain:?}"
+            );
+        }
+        // Nothing in front, or nothing that is an agent: nobody takes its place.
+        assert_eq!(displacing_agent(&agents, &[], "claude"), None);
+        assert_eq!(displacing_agent(&agents, &names(&["pwsh", "git"]), "claude"), None);
+    }
+
+    #[test]
+    fn a_launched_agent_in_the_chain_keeps_its_place_whatever_runs_below_it() {
+        let agents = Agents::shipped();
+        // Claude's Bash tool runs another agent: the deepest agent of the chain is Qwen, but Claude is still there.
+        for chain in [
+            names(&["claude", "qwen"]),
+            names(&["pwsh", "claude", "qwen"]),
+            // An npm-installed Claude runs as `node`, which is no agent by name: its Bash tool's `qwen` must not displace it.
+            names(&["node", "qwen"]),
+            names(&["cmd", "node", "qwen"]),
+            names(&["claude", "bash", "grok"]),
+            names(&["claude"]),
+        ] {
+            assert_eq!(displacing_agent(&agents, &chain, "claude"), None, "{chain:?}");
+        }
+        // The same holds for another launched agent.
+        assert_eq!(displacing_agent(&agents, &names(&["grok", "claude"]), "grok"), None);
+    }
+
+    #[test]
     fn a_command_line_that_names_nothing_is_skipped() {
-        assert_eq!(foreground_of(None, Some("&".into())), None);
+        assert_eq!(foreground_of(&Agents::shipped(), None, Some("&".into())), None);
     }
 }

@@ -16,4 +16,9 @@ mode: SessionMode | null,
 /**
  * Whether the user muted this session's notifications. A layout.json from before this field existed reads as false.
  */
-muted: boolean, };
+muted: boolean, 
+/**
+ * The preset it started with. A layout.json from before this field existed reads as None. Never a key:
+ * a restart reads the key again.
+ */
+preset?: string, };

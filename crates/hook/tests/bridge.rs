@@ -351,3 +351,25 @@ fn big_log_rotates_to_dot_1() {
     assert_eq!(std::fs::metadata(logs.join("bridge.log.1")).unwrap().len(), 1_048_577);
     assert_eq!(log_lines(home.path()).len(), 1);
 }
+
+#[test]
+fn grok_hook_env_makes_the_claude_bridge_exit_quietly() {
+    let extra = [("MARSHELL_TAB_ID", "tab1"), ("GROK_HOOK_EVENT", "pre_tool_use")];
+    for role in ["permission", "event"] {
+        let home = tempfile::tempdir().unwrap();
+        let fake = serve(Reply::new(200, &decision(r#"{"behavior":"allow"}"#)));
+        write_endpoint(home.path(), fake.port, "t");
+        assert!(go(home.path(), &extra, argv(role), permission_request().as_bytes()).is_empty());
+        assert!(
+            fake.captured(Duration::from_millis(300)).is_none(),
+            "{role}: the bridge posted for Grok"
+        );
+        assert!(log_lines(home.path()).is_empty());
+    }
+    // Codex is not affected by the variable.
+    let home = tempfile::tempdir().unwrap();
+    let fake = serve(Reply::new(204, ""));
+    write_endpoint(home.path(), fake.port, "t");
+    go(home.path(), &extra, codex("event"), b"{}");
+    assert!(fake.captured(WAIT).is_some());
+}

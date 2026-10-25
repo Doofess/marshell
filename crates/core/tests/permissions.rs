@@ -41,6 +41,7 @@ fn app_with_codex(port: u16, hold: Duration, codex_version: &str) -> (axum::Rout
                 cwd: String::new(),
                 mode: None,
                 name: tab.into(),
+                preset: None,
             },
         );
     }

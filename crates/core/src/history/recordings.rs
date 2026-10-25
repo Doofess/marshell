@@ -172,6 +172,7 @@ mod tests {
                 })
                 .collect(),
             client: Default::default(),
+            preset: None,
         }
     }
 

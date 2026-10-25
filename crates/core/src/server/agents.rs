@@ -165,7 +165,17 @@ impl AppState {
 
     /// The file sessions run for `agent`: a profile that runs it itself, else the one on PATH.
     pub(crate) fn agent_exe_of(&self, agent: &str) -> Option<PathBuf> {
-        agent_exe(&self.0.profiles.lock().unwrap().profiles, agent).or_else(|| (self.0.agent_path)(agent))
+        agent_exe(&self.0.profiles.lock().unwrap().profiles, agent).or_else(|| self.agent_finder(&[]).path_of(agent))
+    }
+
+    /// Where an adapter agent's program is: a profile that runs it, else its command on PATH. May touch the disk.
+    pub(super) fn adapter_exe(
+        &self,
+        profiles: &[marshell_protocol::api::Profile],
+        agent: &str,
+        finder: &super::AgentFinder,
+    ) -> Option<PathBuf> {
+        agent_exe(profiles, agent).or_else(|| agent_command(agent).and_then(|c| finder.path_of(c)))
     }
 
     /// The Claude Code version of `exe`, or the one a test pinned. Runs a process on a cold cache, so
@@ -364,11 +374,11 @@ pub async fn setup(State(st): State<AppState>, UrlPath(agent): UrlPath<String>) 
 pub async fn found(State(st): State<AppState>) -> Result<Json<Vec<AgentFound>>, Fail> {
     let list = tokio::task::spawn_blocking(move || {
         let profiles = st.0.profiles.lock().unwrap().profiles.clone();
+        let finder = st.agent_finder(&[]);
         ["claude", "codex", "antigravity"]
             .into_iter()
             .map(|agent| {
-                let exe =
-                    agent_exe(&profiles, agent).or_else(|| agent_command(agent).and_then(|c| (st.0.agent_path)(c)));
+                let exe = st.adapter_exe(&profiles, agent, &finder);
                 AgentFound {
                     agent: agent.to_string(),
                     found: exe.is_some(),

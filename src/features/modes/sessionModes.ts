@@ -1,3 +1,5 @@
+import type { AgentCatalog } from "../../generated/AgentCatalog";
+import type { SessionMode } from "../../generated/SessionMode";
 import type { CliId } from "../onboarding/types";
 import type { Mode } from "../sidebar/types";
 
@@ -10,9 +12,41 @@ import type { Mode } from "../sidebar/types";
  */
 export const MODES: Mode[] = ["manual", "plan", "auto-edit", "full-auto", "bypass"];
 
+/** The modes a catalog entry offers, in the chip's order. Don't ask is only ever reported, so it is never offered. */
+export const catalogModes = (offered: readonly SessionMode[]): Mode[] => MODES.filter((m) => offered.includes(m));
+
+/**
+ * The mode to use for an agent that offers `modes`: the one asked for if it is offered, else the first offered in `MODES` order,
+ * else none (the agent maps no mode, so none is sent or shown). `undefined` means the five every adapter has.
+ */
+export function offeredMode(modes: readonly Mode[] | undefined, mode: Mode): Mode | undefined {
+  if (modes === undefined || modes.includes(mode)) return mode;
+  return MODES.find((m) => modes.includes(m));
+}
+
+/** The mode the chip moves to next: the following offered mode, wrapping round; from a mode that is not offered, the first. */
+export function nextOffered(modes: readonly Mode[] | undefined, mode: Mode): Mode {
+  const list = modes === undefined ? MODES : modes;
+  return list[(list.indexOf(mode) + 1) % list.length] ?? mode;
+}
+
 export type Launch = { args: string[]; native: boolean };
 /** What a permission request touches: an edit (inside the project or not), a command, a fetch, an MCP tool. */
 export type Request = { kind: "edit" | "command" | "fetch" | "mcp" | "other"; inProject: boolean };
+
+/** Claude Code, Codex and Antigravity are the agents with an adapter; every other agent is a manifest and has no entry below. */
+const isAdapter = (cli: string): cli is CliId => cli === "claude" || cli === "codex" || cli === "antigravity";
+
+/**
+ * The modes a running session can switch to: the five for an adapter, a manifest agent's mapped ones from the catalog, and none
+ * for a manifest agent the catalog doesn't list (or no catalog), since the core refuses a mode it can't map.
+ */
+export function offeredModes(agent: string | null | undefined, catalog: AgentCatalog | null): Mode[] {
+  if (!agent) return [];
+  if (isAdapter(agent)) return MODES;
+  const entry = catalog?.agents.find((a) => a.id === agent);
+  return entry ? catalogModes(entry.modes) : [];
+}
 
 const STRICT: Record<CliId, string[]> = {
   claude: ["--permission-mode", "manual"],
@@ -56,8 +90,12 @@ const STAND_IN: Partial<Record<CliId, Partial<Record<Mode, string[]>>>> = { code
 /** The modes whose meaning lives in the CLI itself, so the session must start in them even with Marshell's hook on. */
 const KEEPS_NATIVE: Mode[] = ["plan", "full-auto"];
 
-/** How to start a CLI in a mode. With the hook on, the strictest start unless the mode needs the CLI's own; null when the mode can't be had. */
-export function launchArgs(cli: CliId, mode: Mode, hooksOn: boolean): Launch | null {
+/**
+ * How to start a CLI in a mode. With the hook on, the strictest start unless the mode needs the CLI's own; null when the mode can't be had.
+ * A manifest agent's flags live in its manifest and the core adds them, so there is none to give for it here.
+ */
+export function launchArgs(cli: string, mode: Mode, hooksOn: boolean): Launch | null {
+  if (!isAdapter(cli)) return null;
   const own = NATIVE[cli][mode];
   const standIn = STAND_IN[cli]?.[mode];
   if (!hooksOn) return own ? { args: own, native: true } : standIn ? { args: standIn, native: false } : null;
@@ -86,8 +124,12 @@ export function decide(cli: CliId, mode: Mode, request: Request, risky: boolean)
   }
 }
 
-/** Changing mode mid-session: instant when only Marshell's answer changes, native when the CLI's own mode must change too. */
-export function switchKind(cli: CliId, from: Mode, to: Mode, hooksOn: boolean): "instant" | "native" | "unavailable" {
+/**
+ * Changing mode mid-session: instant when only Marshell's answer changes, native when the CLI's own mode must change too.
+ * A manifest agent has no Marshell hook, so a mode it maps (`offered`, from the catalog) is always native and any other is unavailable.
+ */
+export function switchKind(cli: string, from: Mode, to: Mode, hooksOn: boolean, offered?: readonly Mode[]): "instant" | "native" | "unavailable" {
+  if (!isAdapter(cli)) return offered?.includes(to) ? "native" : "unavailable";
   if (!launchArgs(cli, to, hooksOn)) return "unavailable";
   if (!hooksOn) return "native";
   const a = launchArgs(cli, from, true)!;

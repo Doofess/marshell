@@ -149,7 +149,7 @@ export function SessionRow({
       {focused && <span className="session-row__bar" aria-hidden="true" />}
       {rename && <RenameBox original={row.name} onCommit={rename.onCommit} onCancel={rename.onCancel} />}
       <div className="session-row__line1" aria-hidden="true">
-        <AgentMark agent={row.agent} working={row.status === "working"} />
+        <AgentMark agent={row.agent} {...(row.agentName === undefined ? {} : { label: row.agentName })} working={row.status === "working"} />
         {row.elevated && <AuxGlyph kind="elevated" />}
         <SessionNumber n={row.number} title={SESSION_NUMBER_HINT} />{" "}
         {/* The lead clips, so whatever happens to the names, the right cluster always stays in the row. */}

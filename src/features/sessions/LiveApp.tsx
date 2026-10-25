@@ -47,6 +47,9 @@ import { DiagnosticsDialog } from "../diagnostics/DiagnosticsDialog";
 import { LiveOnboarding } from "../onboarding/LiveOnboarding";
 import { getSetup, type HookAgent } from "../../lib/api/agents";
 import type { HookInstall } from "../../generated/HookInstall";
+import type { AgentCatalog } from "../../generated/AgentCatalog";
+import { catalogApi } from "../../lib/api/catalog";
+import { offeredModes } from "../modes/sessionModes";
 import { AppearanceDialog } from "../appearance/AppearanceDialog";
 import { useAppearance } from "../appearance/AppearanceProvider";
 import { listen } from "@tauri-apps/api/event";
@@ -92,7 +95,7 @@ import { pruneClosed, without, type StartingTexts } from "./startingTexts";
 import { SHELL_FAILED } from "../window/ShellPanel";
 import { handedOff } from "./handOff";
 import { focusShellTerminal, shellAutoFolded, shellTerminalFocused } from "./shellPanelFocus";
-import { ENDED_PHRASE, lastSegment, planRing } from "./toRow";
+import { ENDED_PHRASE, lastSegment, nameAgents, planRing } from "./toRow";
 import { useSessions } from "./useSessions";
 
 /** The size a new session starts at until a terminal has been measured. */
@@ -210,6 +213,22 @@ export function LiveApp() {
   const [launcherOpen, setLauncherOpen] = useState(false);
   // The command palette, or the shell profiles page opened from it, over the window.
   const [overlay, setOverlay] = useState<"palette" | "profiles" | "appearance" | "agents" | "notifications" | "history-settings" | "diagnostics" | "shortcuts" | "departures" | null>(null);
+  // The agent catalog, for the modes a running manifest agent can switch to. Read when the window opens and again when the Agents
+  // dialog closes (own agents may have changed). Without it a manifest agent offers no mode, never one the core would refuse.
+  const [catalog, setCatalog] = useState<AgentCatalog | null>(null);
+  const agentsOpen = overlay === "agents";
+  useEffect(() => {
+    if (!endpoint || agentsOpen) return;
+    let live = true;
+    catalogApi.get(endpoint).then(
+      (c) => live && setCatalog(c),
+      () => {},
+    );
+    return () => {
+      live = false;
+    };
+  }, [endpoint, agentsOpen]);
+  const modesOf = useCallback((agent: string) => offeredModes(agent, catalog), [catalog]);
   // The Agents dialog opened from a row's "set up" starts on the Set up card.
   const [agentsFrom, setAgentsFrom] = useState<SetupStart | null>(null);
   // First run: shown once, when the saved settings say the onboarding was not seen. Nothing shows until that read has answered;
@@ -421,7 +440,7 @@ export function LiveApp() {
     return () => clearTimeout(id);
   }, [plan?.until]);
   const footer = useMemo(() => (plan ? { planPct: plan.pct, fiveHourPct: plan.pct } : null), [plan]);
-  const taskRows = useMemo(() => markTasks(rows, infos, tasks), [rows, infos, tasks]);
+  const taskRows = useMemo(() => markTasks(nameAgents(rows, infos, catalog?.agents), infos, tasks), [rows, infos, tasks, catalog]);
   const sidebarRows = useRowFlash(taskRows);
   // While the list is unknown the palette keeps Review for the session in focus, so choosing it can load the list again.
   const focusedIsTask = reviewTarget(infos, focusedId, tasks).kind !== "none";
@@ -433,6 +452,8 @@ export function LiveApp() {
     agent: focusedInfo?.agent != null && (focusedRow === undefined || offersModeChange(focusedRow, focusedInfo)),
     pausable: focusedInfo?.state.kind === "running" && !focusedInfo.paused,
     paused: focusedInfo?.state.kind === "running" && focusedInfo.paused,
+    // The palette lists the Mode commands the focused agent offers, the same as its row menu; the refusal in askRestart is the backstop.
+    ...(focusedInfo?.agent ? { offered: modesOf(focusedInfo.agent) } : {}),
   });
 
   // The Review sheet. It holds its own snapshot (the task, its changes, the session it was opened for), not a view of the lists above,
@@ -805,8 +826,12 @@ export function LiveApp() {
   // The row menu: which items a row shows, and what each one does. Every action takes the row's own id, so it never waits for a
   // selection update to land.
   const menuItems = useCallback(
-    (id: string) => sessionMenuItems(menuFacts(id, { infos, profiles, rows: taskRows, panes: view.panes, shown: shownRef.current ?? view.panes.length, fit: fitRef.current ?? PANE_LIMIT }), os ?? "windows"),
-    [infos, profiles, taskRows, view.panes, os],
+    (id: string) =>
+      sessionMenuItems(
+        menuFacts(id, { infos, profiles, rows: taskRows, panes: view.panes, shown: shownRef.current ?? view.panes.length, fit: fitRef.current ?? PANE_LIMIT, offered: modesOf }),
+        os ?? "windows",
+      ),
+    [infos, profiles, taskRows, view.panes, os, modesOf],
   );
   // Where focus goes when the mode menu ends without a bar: back to the row or the chip it came from.
   const returnFromModeMenu = (m: { id: string; from: "row" | "chip" }) => {
@@ -830,7 +855,10 @@ export function LiveApp() {
   const askRestart = useCallback(
     (id: string, mode: Mode): boolean => {
       const row = rows.find((r) => r.id === id);
-      if (row && !offersModeChange(row, infos.find((i) => i.tab_id === id))) return false;
+      const info = infos.find((i) => i.tab_id === id);
+      if (row && !offersModeChange(row, info)) return false;
+      // A manifest agent switches only to a mode its manifest maps (the palette's Mode commands name any of the five).
+      if (info?.agent && !modesOf(info.agent).includes(mode)) return false;
       if (!actions.askRestart(id, mode)) return false;
       actions.cancelClose();
       if (!(shownPanes.includes(id) && id === focusedId)) {
@@ -839,7 +867,7 @@ export function LiveApp() {
       }
       return true;
     },
-    [actions, shownPanes, focusedId, showInPane, rows, infos],
+    [actions, shownPanes, focusedId, showInPane, rows, infos, modesOf],
   );
   // Pause: the first one ever asks first, on the session's pane like the restart question; after that it acts at once.
   const pauseSession = useCallback(
@@ -1419,7 +1447,10 @@ export function LiveApp() {
       {modeMenu && (
         <ContextMenu
           label={`Mode for ${infos.find((i) => i.tab_id === modeMenu.id)?.name ?? "the session"}`}
-          items={modeMenuItems(infos.find((i) => i.tab_id === modeMenu.id)?.mode ?? undefined)}
+          items={(() => {
+            const info = infos.find((i) => i.tab_id === modeMenu.id);
+            return modeMenuItems(info?.mode ?? undefined, info?.agent ? modesOf(info.agent) : undefined);
+          })()}
           anchor={modeMenu.anchor}
           onRun={(itemId) => {
             setModeMenu(null);

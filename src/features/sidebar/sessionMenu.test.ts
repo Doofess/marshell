@@ -130,3 +130,10 @@ describe("Bookmark", () => {
     expect(list.indexOf("bookmark")).toBeLessThan(list.indexOf("mute"));
   });
 });
+
+describe("modeMenuItems for an agent that maps only some modes", () => {
+  it("lists only the offered ones, in MODES order", () => {
+    const items = modeMenuItems("manual", ["manual", "plan", "bypass"]);
+    expect(items.map((i) => ("separator" in i ? "-" : i.id))).toEqual(["mode-manual", "mode-plan", "mode-bypass"]);
+  });
+});

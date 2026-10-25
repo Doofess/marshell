@@ -13,4 +13,8 @@ seq: number,
 /**
  * The mode last used here. Never Full auto or Bypass. A layout.json from before this field reads as None.
  */
-mode: SessionMode | null, };
+mode: SessionMode | null, 
+/**
+ * The preset last used here. A layout.json from before this field reads as None.
+ */
+preset?: string, };

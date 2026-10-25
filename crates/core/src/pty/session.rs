@@ -24,6 +24,10 @@ pub struct SpawnSpec {
     pub env: Vec<(String, String)>,
     /// Variables the child must not inherit. Applied before `env`, so a name in both keeps its `env` value.
     pub env_remove: Vec<String>,
+    /// Also drops every inherited variable whose name this accepts. portable-pty fills a child's environment from
+    /// Marshell's own and from the registry's `Environment` values, so a list of Marshell's own names would miss a
+    /// variable that only the registry holds. Decided at spawn, before `env` is applied.
+    pub env_strip: Option<fn(&str) -> bool>,
     pub cols: u16,
     pub rows: u16,
     /// Called once, from the wait thread, with the exit code. Runs outside every session lock.
@@ -128,6 +132,17 @@ impl Session {
         }
         for k in &spec.env_remove {
             cmd.env_remove(k);
+        }
+        if let Some(strip) = spec.env_strip {
+            // The names only: a value is never read here.
+            let inherited: Vec<String> = cmd
+                .iter_full_env_as_str()
+                .filter(|(name, _)| strip(name))
+                .map(|(name, _)| name.to_string())
+                .collect();
+            for name in inherited {
+                cmd.env_remove(name);
+            }
         }
         for (k, v) in &spec.env {
             cmd.env(k, v);
@@ -312,7 +327,7 @@ impl Session {
                     track.epoch += 1;
                 }
                 Mark::CommandStart => {}
-                Mark::Notify(_) | Mark::Bell => {}
+                Mark::Notify(_) | Mark::Progress(_) | Mark::Bell => {}
                 Mark::Cwd(path) => *self.cwd.lock().unwrap() = Some(PathBuf::from(path)),
             }
         }
@@ -675,6 +690,7 @@ mod tests {
             cwd: Some(dir.path().to_path_buf()),
             env: vec![(CHILD.into(), "1".into())],
             env_remove: vec![],
+            env_strip: None,
             cols: 80,
             rows: 24,
             on_exit: None,
@@ -713,6 +729,7 @@ mod tests {
             cwd: Some(dir.path().to_path_buf()),
             env: vec![("MARSHELL_TEST_LIVE_CHILD".into(), "1".into())],
             env_remove: vec![],
+            env_strip: None,
             cols: 80,
             rows: 24,
             on_exit: None,

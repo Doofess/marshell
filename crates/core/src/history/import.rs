@@ -770,6 +770,7 @@ fn claude_meta(path: &Path, text: &str, md: &std::fs::Metadata) -> Prepared {
         previous_in_tab: None,
         recordings: Vec::new(),
         client: client.unwrap_or(Client::Terminal),
+        preset: None,
     })
 }
 
@@ -797,6 +798,7 @@ fn codex_meta(path: &Path, text: &str, md: &std::fs::Metadata) -> Prepared {
         previous_in_tab: None,
         recordings: Vec::new(),
         client: meta.client,
+        preset: None,
     })
 }
 

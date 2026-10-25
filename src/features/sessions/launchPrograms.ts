@@ -1,3 +1,6 @@
+import { isAgentId } from "../../components/AgentMark/agents";
+import type { AgentCatalog } from "../../generated/AgentCatalog";
+import type { CatalogAgent } from "../../generated/CatalogAgent";
 import type { CreateSessionRequest } from "../../generated/CreateSessionRequest";
 import type { FolderInfo } from "../../generated/FolderInfo";
 import type { LayoutDoc } from "../../generated/LayoutDoc";
@@ -13,19 +16,64 @@ import type { PathCheck } from "../launcher/folderRows";
 import { samePath } from "../tasks/taskOf";
 import type { TaskConfirm } from "../launcher/Launcher";
 import { LAUNCH_PROGRAMS, isAgentProgram, programById, type LaunchProgram, type LauncherChoice, type Mode, type ProgramId } from "../launcher/launchChoice";
+import { catalogModes, offeredMode } from "../modes/sessionModes";
 import { shellKind } from "./toRow";
 
-/** The agents the core can start today. The rest of `LAUNCH_PROGRAMS` stays hidden until their adapters exist. */
-const LIVE_AGENTS = ["claude", "codex", "antigravity"];
+/** The agents with a Rust adapter. Without a catalog these are all the live launcher lists, as before the core had one. */
+const ADAPTER_AGENTS = ["claude", "codex", "antigravity"];
 const PROFILE_PREFIX = "profile:";
+const PRESET_PREFIX = "preset:";
 
-/** What the live launcher offers: the three agents, then one shell per profile the core knows (marked by its family). */
-export function livePrograms(profiles: Profile[]): LaunchProgram[] {
-  const agents = LIVE_AGENTS.map((id) => LAUNCH_PROGRAMS.find((p) => p.id === id)!);
+const askFirst = (name: string) => `What should ${name} do first? (optional)`;
+
+/** A program for an agent the catalog lists. An adapter keeps the launcher's own names; any other agent is named by its manifest. */
+function agentProgram(a: CatalogAgent): LaunchProgram {
+  const own = ADAPTER_AGENTS.includes(a.id) ? LAUNCH_PROGRAMS.find((p) => p.id === a.id) : undefined;
+  const base: LaunchProgram = own ?? { id: a.id, kind: isAgentId(a.mark) ? a.mark : "generic", label: a.name, cli: a.cli, group: "Agents", first: askFirst(a.name) };
+  // A CLI with no way to take a first prompt gets no box for one: the core refuses a prompt it can't pass.
+  return { ...base, modes: catalogModes(a.modes), ...(a.prompt.style === "none" ? { noFirst: true } : {}) };
+}
+
+/**
+ * What the live launcher offers: the agents the catalog found on this machine (adapters first, then the shipped agents, then the
+ * person's own), the presets whose agent is found, then one shell per profile the core knows (marked by its family).
+ * With no catalog (it could not be read) it lists the three adapters as before and claims nothing about any other agent.
+ */
+export function livePrograms(catalog: AgentCatalog | null, profiles: Profile[]): LaunchProgram[] {
+  const found = catalog === null ? null : catalog.agents.filter((a) => a.found);
+  const agents = found === null ? ADAPTER_AGENTS.map((id) => LAUNCH_PROGRAMS.find((p) => p.id === id)!) : found.map(agentProgram);
+  const presets = (catalog?.presets ?? []).flatMap((preset): LaunchProgram[] => {
+    const target = found?.find((a) => a.id === preset.agent);
+    if (target === undefined) return [];
+    const starts = agentProgram(target);
+    return [
+      {
+        ...starts,
+        id: `${PRESET_PREFIX}${preset.id}`,
+        kind: isAgentId(preset.mark) ? preset.mark : "generic",
+        label: preset.name,
+        cli: preset.name,
+        first: askFirst(preset.name),
+        preset: preset.id,
+        agent: preset.agent,
+        ...(preset.problem === null ? {} : { problem: preset.problem }),
+      },
+    ];
+  });
   const shells = profiles.map(
     (p): LaunchProgram => ({ id: `${PROFILE_PREFIX}${p.id}`, kind: shellKind(p), label: p.name, cli: p.name, group: "Shells", first: "", noFirst: true }),
   );
-  return [...agents, ...shells];
+  return [...agents, ...presets, ...shells];
+}
+
+/** The program the launcher shows for a choice: the chosen one if it is listed, else the first listed (an agent that is not installed is not). */
+export function listedProgram(id: ProgramId, programs: LaunchProgram[]): ProgramId {
+  return programs.some((p) => p.id === id) ? id : (programs[0]?.id ?? id);
+}
+
+/** Why the chosen program can't be started yet (a preset without its key, say), or undefined. Starting it shows this and sends nothing. */
+export function startProblem(choice: LauncherChoice, programs: LaunchProgram[]): string | undefined {
+  return programById(choice.program, programs)?.problem;
 }
 
 /** The launcher's folder for one of the core's recent projects. The path is the id: the core knows no other. */
@@ -108,6 +156,8 @@ export function latestOnly() {
 export function preselect(doc: LayoutDoc | null, projectPath: string, programs: LaunchProgram[]): ProgramId | undefined {
   const remembered = doc?.launcher[projectPath];
   if (!remembered) return undefined;
+  const preset = remembered.preset === undefined ? undefined : programById(`${PRESET_PREFIX}${remembered.preset}`, programs);
+  if (preset !== undefined) return preset.id;
   const id: ProgramId = remembered.agent === null ? `${PROFILE_PREFIX}${remembered.profile_id}` : (remembered.agent as ProgramId);
   return programById(id, programs)?.id;
 }
@@ -133,12 +183,16 @@ export function launchRequest(
 ): CreateSessionRequest {
   const cwd = taskPath ?? projects.find((p) => p.id === choice.projectId)?.path;
   const base: CreateSessionRequest = { cols: size.cols, rows: size.rows, ...(cwd === undefined ? {} : { cwd }) };
-  const id = programById(choice.program, programs)?.id ?? choice.program;
+  const program = programById(choice.program, programs);
+  const id = program?.id ?? choice.program;
   if (id.startsWith(PROFILE_PREFIX)) return { ...base, profile_id: id.slice(PROFILE_PREFIX.length) };
-  const withAgent = { ...base, agent: id, profile_id: profiles.default_id };
+  // A preset starts its agent (Claude Code) with the preset named; the core reads whatever the preset needs, such as a key, itself.
+  const withAgent = { ...base, agent: program?.agent ?? id, profile_id: profiles.default_id, ...(program?.preset === undefined ? {} : { preset: program.preset }) };
   if (!isAgentProgram(id, programs)) return withAgent;
-  const withMode = { ...withAgent, mode: choice.mode };
-  return prompt.trim() !== "" ? { ...withMode, prompt } : withMode;
+  // Only what the agent maps is sent: the core refuses a mode its manifest has no flag for, and a prompt to a CLI that takes none.
+  const mode = offeredMode(program?.modes, choice.mode);
+  const withMode = mode === undefined ? withAgent : { ...withAgent, mode };
+  return prompt.trim() !== "" && program?.noFirst !== true ? { ...withMode, prompt } : withMode;
 }
 
 /**

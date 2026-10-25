@@ -43,7 +43,7 @@ pub fn save(home: &Path, doc: &LayoutDoc) -> anyhow::Result<()> {
 /// How many folders the launcher remembers a choice for.
 const MAX_LAUNCHER_FOLDERS: usize = 32;
 
-/// Notes the profile, agent and mode just used in `folder`. Full auto and Bypass are never remembered.
+/// Notes the profile, agent, mode and preset just used in `folder`. Full auto and Bypass are never remembered.
 /// The choice gets a number one higher than any other, so the order of use survives a restart;
 /// past 32 folders the one used longest ago is dropped.
 pub fn remember(
@@ -52,6 +52,7 @@ pub fn remember(
     profile_id: String,
     agent: Option<String>,
     mode: Option<SessionMode>,
+    preset: Option<String>,
 ) {
     let mode = mode.filter(|m| !matches!(m, SessionMode::FullAuto | SessionMode::Bypass));
     let newest = doc.launcher.values().map(|c| c.seq).max().unwrap_or(0);
@@ -63,6 +64,7 @@ pub fn remember(
             agent,
             seq,
             mode,
+            preset,
         },
     );
     while doc.launcher.len() > MAX_LAUNCHER_FOLDERS {
@@ -172,6 +174,7 @@ mod tests {
             cwd: "C:/work".into(),
             mode: None,
             muted: false,
+            preset: None,
         }
     }
 
@@ -289,7 +292,7 @@ mod tests {
     fn remember_numbers_choices_and_keeps_the_newest_32() {
         let mut doc = LayoutDoc::default();
         for i in 0..40 {
-            remember(&mut doc, &format!("C:/work/{i}"), "cmd".into(), None, None);
+            remember(&mut doc, &format!("C:/work/{i}"), "cmd".into(), None, None, None);
         }
         assert_eq!(doc.launcher.len(), 32);
         // The eight oldest folders are gone; the newest is numbered 40.
@@ -301,15 +304,38 @@ mod tests {
     #[test]
     fn remember_replaces_a_folders_choice_and_makes_it_the_newest() {
         let mut doc = LayoutDoc::default();
-        remember(&mut doc, "C:/a", "cmd".into(), None, None);
-        remember(&mut doc, "C:/b", "cmd".into(), None, None);
-        remember(&mut doc, "C:/a", "pwsh".into(), Some("claude".into()), None);
+        remember(&mut doc, "C:/a", "cmd".into(), None, None, None);
+        remember(&mut doc, "C:/b", "cmd".into(), None, None, None);
+        remember(&mut doc, "C:/a", "pwsh".into(), Some("claude".into()), None, None);
         assert_eq!(doc.launcher.len(), 2);
         let a = &doc.launcher["C:/a"];
         assert_eq!(
             (a.profile_id.as_str(), a.agent.as_deref(), a.seq),
             ("pwsh", Some("claude"), 3)
         );
+    }
+
+    #[test]
+    fn remember_keeps_the_preset_and_an_old_layout_reads_without_one() {
+        let mut doc = LayoutDoc::default();
+        remember(
+            &mut doc,
+            "C:/a",
+            "pwsh".into(),
+            Some("claude".into()),
+            None,
+            Some("deepseek".into()),
+        );
+        assert_eq!(doc.launcher["C:/a"].preset.as_deref(), Some("deepseek"));
+        // A layout.json from before the field existed has no `preset` on a tab or on a launcher choice.
+        let old = r#"{"tabs":[{"tab_id":"a","number":1,"name":"A","agent":"claude","profile_id":"cmd","cwd":"C:/w"}],
+            "view":{"panes":[null],"arrangement":null,"ratios":[],"active":0,"zoomed":null,"sidebar":"expanded","sidebar_width":280,"shell_hidden":false,"grouped":false},
+            "launcher":{"C:/w":{"profile_id":"cmd","agent":"claude","seq":1}}}"#;
+        let doc: LayoutDoc = serde_json::from_str(old).unwrap();
+        assert_eq!(doc.tabs[0].preset, None);
+        assert_eq!(doc.launcher["C:/w"].preset, None);
+        // And a tab without a preset writes none.
+        assert!(!serde_json::to_string(&doc).unwrap().contains("preset"));
     }
 
     #[test]
@@ -322,7 +348,7 @@ mod tests {
             (SessionMode::AutoEdit, Some(SessionMode::AutoEdit)),
             (SessionMode::Manual, Some(SessionMode::Manual)),
         ] {
-            remember(&mut doc, "C:/a", "pwsh".into(), Some("claude".into()), Some(mode));
+            remember(&mut doc, "C:/a", "pwsh".into(), Some("claude".into()), Some(mode), None);
             assert_eq!(doc.launcher["C:/a"].mode, kept);
         }
     }

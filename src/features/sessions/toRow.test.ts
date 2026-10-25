@@ -3,7 +3,7 @@ import type { LiveStatus } from "../../generated/LiveStatus";
 import type { Profile } from "../../generated/Profile";
 import type { SessionInfo } from "../../generated/SessionInfo";
 import { rowLabel, rowTitle } from "../sidebar/labels";
-import { ageTick, planRing, toRow } from "./toRow";
+import { ageTick, nameAgents, planRing, toRow } from "./toRow";
 
 const profile = (id: string, family: Profile["family"]): Profile => ({ id, name: id, command: [id], family, cwd: null, env: [], shell_integration: true, detected: true });
 const PROFILES: Profile[] = [
@@ -202,6 +202,54 @@ describe("toRow", () => {
     it("a launched agent row ignores the foreground", () => {
       const row = toRow(info({ agent: "claude", foreground: fg("docker", "docker compose up") }), PROFILES);
       expect(row).toMatchObject({ agent: "claude", status: "limited" });
+    });
+  });
+
+  describe("a manifest agent has no hooks to wait for", () => {
+    const fg = (program: string, agent: string) => ({ program, command_line: program, agent });
+    it("a row without activity reads Status limited, not Status arrives with hooks", () => {
+      for (const agent of ["grok", "kimi", "aider"]) {
+        expect(toRow(info({ agent }), PROFILES), agent).toMatchObject({ status: "limited", phrase: "Status limited" });
+      }
+    });
+    it("a row with activity reads Working or Idle · Status limited", () => {
+      expect(toRow(info({ agent: "grok", activity: "working" }), PROFILES)).toMatchObject({ status: "working", phrase: "Working · Status limited" });
+      expect(toRow(info({ agent: "grok", activity: "idle" }), PROFILES)).toMatchObject({ status: "idle", phrase: "Idle · Status limited" });
+    });
+    it("keeps the core's own note when it gives one", () => {
+      expect(toRow(info({ agent: "grok", status_note: "Grok 0.9 is older than Marshell knows" }), PROFILES).phrase).toBe("Grok 0.9 is older than Marshell knows");
+    });
+    it("a shell whose foreground is grok gets the same fallback", () => {
+      expect(toRow(info({ foreground: fg("grok", "grok") }), PROFILES)).toMatchObject({ agent: "grok", status: "limited", phrase: "Status limited" });
+      expect(toRow(info({ foreground: fg("grok", "grok"), activity: "working" }), PROFILES)).toMatchObject({ agent: "grok", status: "working", phrase: "Working · Status limited" });
+      expect(toRow(info({ foreground: fg("grok", "grok"), activity: "idle" }), PROFILES)).toMatchObject({ status: "idle", phrase: "Idle · Status limited" });
+    });
+    it("leaves the copy of the adapters unchanged", () => {
+      for (const agent of ["claude", "codex", "antigravity"]) {
+        expect(toRow(info({ agent }), PROFILES).phrase, agent).toBe("Status arrives with hooks");
+        expect(toRow(info({ foreground: fg(agent, agent), activity: "working" }), PROFILES), agent).toMatchObject({ status: "limited", phrase: "Status arrives with hooks" });
+      }
+    });
+    it("a row started with the DeepSeek preset shows the deepseek mark and keeps Claude's hook copy", () => {
+      const row = toRow(info({ agent: "claude", preset: "deepseek" }), PROFILES);
+      expect(row).toMatchObject({ agent: "deepseek", phrase: "Status arrives with hooks" });
+      expect(toRow(info({ agent: "claude" }), PROFILES).agent).toBe("claude");
+      expect(toRow(info({ agent: "claude", preset: "unknown-preset" }), PROFILES).agent).toBe("claude");
+    });
+    it("a manifest agent with no mark of its own gets the generic mark", () => {
+      expect(toRow(info({ agent: "aider" }), PROFILES).agent).toBe("generic");
+    });
+    it("names a generic-marked agent from the catalog, else from its program, else leaves the generic name", () => {
+      const crush = info({ agent: "crush", foreground: { program: "crush-cli", command_line: null, agent: null } });
+      const rows = [toRow(crush, PROFILES), toRow(info({ tab_id: "t2", agent: "own" }), PROFILES), toRow(info({ tab_id: "t3", agent: "claude" }), PROFILES)];
+      expect(rows[0]!.agentName).toBe("crush-cli");
+      const named = nameAgents(rows, [crush, info({ tab_id: "t2", agent: "own" }), info({ tab_id: "t3", agent: "claude" })], [{ id: "crush", name: "Crush" }]);
+      expect(named[0]!.agentName).toBe("Crush");
+      expect(named[1]!.agentName).toBeUndefined();
+      expect(named[2]!.agentName).toBeUndefined();
+      expect(rowLabel(named[0]!, "comfortable")).toContain("Crush");
+      expect(rowLabel(named[0]!, "comfortable")).not.toContain("Custom agent");
+      expect(rowLabel(named[1]!, "comfortable")).toContain("Custom agent");
     });
   });
 

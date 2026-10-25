@@ -747,6 +747,7 @@ All done.
                     },
                 ],
                 client: Default::default(),
+                preset: None,
             };
             let got = parts(home.path(), &meta, (T0 + 1000, T0 + 25_000), &CastCache::default());
             let text = to_asciicast(home.path(), &got, "x", None).unwrap();

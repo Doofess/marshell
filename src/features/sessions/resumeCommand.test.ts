@@ -22,6 +22,27 @@ describe("resumeCommand", () => {
   });
 });
 
+describe("resumeCommand for a manifest agent", () => {
+  it("is the manifest's command and continue arguments", () => {
+    expect(resumeCommand("grok", "PowerShell")).toBe("grok --continue");
+    expect(resumeCommand("amp", "PowerShell")).toBe("amp threads continue");
+    expect(resumeCommand("aider", "PowerShell")).toBe("aider --restore-chat-history");
+    expect(resumeCommand("cursor", "PowerShell")).toBe("cursor-agent --continue");
+  });
+  it("follows with the flags of the mode it started in, as the core does", () => {
+    expect(resumeCommand("grok", "pwsh", "bypass")).toBe("grok --continue --permission-mode bypassPermissions");
+    expect(resumeCommand("cursor", "pwsh", "manual")).toBe("cursor-agent --continue");
+    // A mode the manifest does not map adds nothing.
+    expect(resumeCommand("cursor", "pwsh", "auto-edit")).toBe("cursor-agent --continue");
+  });
+  it("shows only the name for an agent it has no manifest for, such as one of the person's own", () => {
+    expect(resumeCommand("my-agent", "pwsh", "plan")).toBe("my-agent");
+  });
+  it("is the same through a session", () => {
+    expect(sessionResumeCommand({ agent: "grok", mode: null }, "pwsh")).toBe("grok --continue");
+  });
+});
+
 describe("sessionResumeCommand", () => {
   // The core resumes with the saved mode, so an Ended Bypass tab's bar must say so.
   it("shows the mode the session was last started in", () => {

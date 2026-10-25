@@ -486,6 +486,7 @@ fn reserve_tab(env: &Env, tab: &str, agent: Option<&str>) {
             cwd: env.work.path().to_string_lossy().into_owned(),
             mode: None,
             name: "Original tab".into(),
+            preset: None,
         },
     );
 }
@@ -1356,6 +1357,7 @@ fn seed_history_home() {
             previous_in_tab: None,
             recordings: vec![],
             client: Default::default(),
+            preset: None,
         };
         copy_transcript(&home, &meta).unwrap();
         if id.ends_with("b4") {
@@ -1457,6 +1459,7 @@ fn seed_codex(env: &Env, dir: &Path) -> PathBuf {
         previous_in_tab: None,
         recordings: Vec::new(),
         client: marshell_protocol::history::Client::Terminal,
+        preset: None,
     };
     assert!(env.state.history().import(&meta, &source).unwrap());
     source
@@ -1734,6 +1737,7 @@ async fn a_saved_age_limit_removes_what_the_preview_listed_and_the_last_cleanup_
             last_ms: 2,
         }],
         client: Default::default(),
+        preset: None,
     };
     marshell_core::history::archive::write_meta(env.home.path(), &meta).unwrap();
     let pinned = marks::Marks {
@@ -1838,6 +1842,7 @@ async fn a_cleanup_keeps_the_images_of_a_tab_restored_from_the_last_run() {
         cwd: env.work.path().to_string_lossy().into_owned(),
         mode: None,
         muted: false,
+        preset: None,
     };
     env.state
         .registry()
@@ -1847,6 +1852,7 @@ async fn a_cleanup_keeps_the_images_of_a_tab_restored_from_the_last_run() {
             cwd: tab.cwd.clone(),
             mode: None,
             name: tab.name.clone(),
+            preset: None,
         });
     let image = marshell_core::paths::attachments_dir(env.home.path())
         .join("t7")

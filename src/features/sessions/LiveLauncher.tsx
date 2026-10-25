@@ -1,9 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import type { AgentCatalog } from "../../generated/AgentCatalog";
 import type { CreateSessionResponse } from "../../generated/CreateSessionResponse";
 import type { Endpoint } from "../../generated/Endpoint";
 import type { FolderInfo } from "../../generated/FolderInfo";
 import type { LayoutDoc } from "../../generated/LayoutDoc";
 import type { ProfilesDoc } from "../../generated/ProfilesDoc";
+import { catalogApi } from "../../lib/api/catalog";
 import { ApiError } from "../../lib/api/client";
 import { folders as foldersApi } from "../../lib/api/folders";
 import { layout as layoutApi } from "../../lib/api/layout";
@@ -18,16 +20,17 @@ import type { Project } from "../launcher/filter";
 import { Launcher, type TaskConfirm } from "../launcher/Launcher";
 import { typedPath, type PathCheck } from "../launcher/folderRows";
 import { openFolder, openPrograms, type OpenLists } from "../launcher/launcherKeys";
+import { offeredMode } from "../modes/sessionModes";
 import { taskNameFor } from "../tasks/taskName";
 import { appScheme } from "../terminal/terminalTheme";
 import { programById, startingText, type LauncherChoice } from "../launcher/launchChoice";
-import { browseFolder, checkState, chooseFolder, latestOnly, createRequest, createThenLaunch, initialFocus, launchRequest, progressText, refocus, rememberTasks, replansAfter, type FocusState, livePrograms, nameSource, preselect, preselectMode, startFailure, taskRequest, toLauncherProject, wantsTask } from "./launchPrograms";
+import { browseFolder, checkState, chooseFolder, latestOnly, createRequest, createThenLaunch, initialFocus, launchRequest, listedProgram, progressText, refocus, rememberTasks, replansAfter, type FocusState, livePrograms, nameSource, preselect, preselectMode, startFailure, startProblem, taskRequest, toLauncherProject, wantsTask } from "./launchPrograms";
 
 // The worktree flag is part of this state and nothing else: it is never read from or written to the remembered choices, so the chip starts off every time.
 const INITIAL: LauncherChoice = { program: "claude", projectId: "", mode: "manual", pace: "Balanced", worktree: false };
 
 /** `layout` is read on every opening, so a folder used a moment ago is already remembered; null when it could not be read. */
-type Loaded = { projects: Project[]; doc: ProfilesDoc; layout: LayoutDoc | null };
+type Loaded = { projects: Project[]; doc: ProfilesDoc; layout: LayoutDoc | null; catalog: AgentCatalog | null };
 
 type Props = {
   endpoint: Endpoint | null;
@@ -89,8 +92,10 @@ export function LiveLauncher({ endpoint, nextNumber, size, onStarted, onClose }:
     setLoadError(undefined);
     // The remembered choices are a convenience: if they cannot be read the launcher still opens, with its default.
     const remembered = layoutApi.get(endpoint).catch(() => null);
-    Promise.all([projectsApi.list(endpoint), profilesApi.get(endpoint), remembered])
-      .then(([list, doc, layout]) => current && setLoaded({ projects: list.map(toLauncherProject), doc, layout }))
+    // So are the agents found on this machine: if the catalog cannot be read the launcher lists the three adapters, as it did before it had one.
+    const catalog = catalogApi.get(endpoint).catch(() => null);
+    Promise.all([projectsApi.list(endpoint), profilesApi.get(endpoint), remembered, catalog])
+      .then(([list, doc, layout, agents]) => current && setLoaded({ projects: list.map(toLauncherProject), doc, layout, catalog: agents }))
       .catch((e: unknown) => current && setLoadError(`Couldn't load the launcher: ${startFailure(e)}`));
     return () => {
       current = false;
@@ -108,13 +113,15 @@ export function LiveLauncher({ endpoint, nextNumber, size, onStarted, onClose }:
 
   const recent = useMemo(() => loaded?.projects ?? [], [loaded]);
   const projects = useMemo(() => (extra && !recent.some((p) => p.id === extra.id) ? [extra, ...recent] : recent), [extra, recent]);
-  const programs = useMemo(() => livePrograms(loaded?.doc.profiles ?? []), [loaded]);
+  const programs = useMemo(() => livePrograms(loaded?.catalog ?? null, loaded?.doc.profiles ?? []), [loaded]);
   // The most recent folder until one is picked.
   const projectId = projects.some((p) => p.id === choice.projectId) ? choice.projectId : (projects[0]?.id ?? "");
-  // The program last started in this folder, unless the user has picked one themselves.
-  const program = programPicked ? choice.program : (preselect(loaded?.layout ?? null, projectId, programs) ?? choice.program);
+  // The program last started in this folder, unless the user has picked one themselves; an agent that is not listed (not installed) is replaced by the first that is.
+  const program = listedProgram(programPicked ? choice.program : (preselect(loaded?.layout ?? null, projectId, programs) ?? choice.program), programs);
   // The worktree chip is offered only in a folder in git: leaving for another folder must not keep a flag the user can no longer see.
-  const mode = modePicked ? choice.mode : (preselectMode(loaded?.layout ?? null, projectId) ?? choice.mode);
+  const wantedMode = modePicked ? choice.mode : (preselectMode(loaded?.layout ?? null, projectId) ?? choice.mode);
+  // Only a mode the agent offers is shown or sent; one it doesn't map falls back to the first it does.
+  const mode = offeredMode(programById(program, programs)?.modes, wantedMode) ?? wantedMode;
   const worktree = choice.worktree && projects.find((p) => p.id === projectId)?.branch !== undefined;
   const shown: LauncherChoice = { ...choice, projectId, program, mode, worktree };
 
@@ -227,6 +234,11 @@ export function LiveLauncher({ endpoint, nextNumber, size, onStarted, onClose }:
     // Only the commands on screen are sent; the core refuses them if they are no longer what it would run.
     const req = createRequest(taskRequest(shown, projects, taskName), confirm);
     if (!endpoint || !loaded || inFlight.current || req === null) return;
+    const problem = startProblem(shown, programs);
+    if (problem !== undefined) {
+      setError(problem);
+      return;
+    }
     inFlight.current = true;
     setStarting(true);
     setPhase("creating");
@@ -254,6 +266,12 @@ export function LiveLauncher({ endpoint, nextNumber, size, onStarted, onClose }:
 
   const start = async () => {
     if (!endpoint || !loaded || inFlight.current) return;
+    // A program that can't start yet says why and sends nothing; no worktree is made for it either.
+    const problem = startProblem(shown, programs);
+    if (problem !== undefined) {
+      setError(problem);
+      return;
+    }
     if (wantsTask(shown, projects)) {
       plan();
       return;

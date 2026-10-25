@@ -54,5 +54,5 @@ Decided against. Keep the reason; it saves re-arguing.
 - A "Jump to latest" pill in the terminal when scrolled up, since the main window shows no scrollbar to say where you are in the conversation.
 - Suggest collapsing the sidebar to the rail when four panes would each be under 80 columns (a hint, never automatic).
 - A setting to turn "accent follows the vendor" off and use one fixed accent everywhere.
-- DeepSeek has no first-party CLI, so it stays out of the launcher until we decide before phase 6.
+- DeepSeek has no first-party CLI. Since slice 6b it starts as a Claude Code preset, with the key from `DEEPSEEK_API_KEY`, which needs a Marshell restart after it is set. A start with a real key hasn't been checked live yet.
 - Rewrite the stale body of `docs/BRIEF.md` (the Airport name, `hooks.enabled`, the canvas fallback, the newest-first lane).

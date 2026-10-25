@@ -1,7 +1,12 @@
 use super::AppState;
 use crate::agents::codex::supports_no_daemon;
+use crate::agents::identify::{Missing, find};
+use crate::agents::manifest::mode_label;
+use crate::agents::presets::{self, PresetLaunch};
 use crate::auth;
-use crate::profiles::detect::{ResumeTarget, agent_command, default_shell, launch_argv, launch_argv_resume};
+use crate::profiles::detect::{
+    Program, ResumeTarget, agent_command, default_shell, launch_argv, launch_argv_resume, mode_args,
+};
 use crate::pty::{FreezeError, Session, SpawnSpec};
 use crate::registry::{Relaunch, ResumeRefusal};
 use axum::Json;
@@ -54,13 +59,39 @@ fn spawn_env(scheme: Option<ColorScheme>, profile_env: &[(String, String)]) -> V
     env
 }
 
+/// Refuses a preset that is unknown, or that is not on Claude Code. A DeepSeek launch changes Claude Code's
+/// environment only, so it has no meaning for another agent or a plain shell.
+fn check_preset(agent: Option<&str>, preset: &str) -> Result<(), ApiError> {
+    match preset {
+        presets::DEEPSEEK if agent == Some("claude") => Ok(()),
+        presets::DEEPSEEK => Err((StatusCode::BAD_REQUEST, presets::CLAUDE_ONLY.into())),
+        other => Err((StatusCode::BAD_REQUEST, format!("Unknown preset: {other}."))),
+    }
+}
+
+/// The environment a preset adds, built from the key as it is now. A refusal
+/// (no key, a WSL profile) is a 400 and never starts anything.
+fn preset_launch(st: &AppState, preset: &str, family: ShellFamily) -> Result<PresetLaunch, ApiError> {
+    match preset {
+        presets::DEEPSEEK => {
+            presets::deepseek((st.0.deepseek_key)(), family).map_err(|message| (StatusCode::BAD_REQUEST, message))
+        }
+        other => Err((StatusCode::BAD_REQUEST, format!("Unknown preset: {other}."))),
+    }
+}
+
 /// What to run: the profile it came from, the argv, and the profile's env and folder.
+/// No `Debug`: `env` can hold a preset's key.
 pub(super) struct Resolved {
     pub(super) profile_id: String,
     pub(super) profile_name: String,
     family: ShellFamily,
     argv: Vec<String>,
     env: Vec<(String, String)>,
+    /// Variables the child must not inherit, on top of the session markers: a preset's.
+    env_remove: Vec<String>,
+    /// Inherited variables the child must not get, decided at spawn from the environment the pty really builds.
+    env_strip: Option<fn(&str) -> bool>,
     cwd: Option<String>,
     /// Shell integration is on, so the output carries prompt marks.
     marks: bool,
@@ -70,6 +101,8 @@ pub(super) struct Resolved {
 /// With a `resume` target the agent is told to continue that conversation, and there is no prompt.
 /// The mode becomes the agent's own flags; a plain shell has none.
 /// A Codex launch reads Codex's version first (off the async workers), to know whether it takes `--no-daemon`.
+/// A `preset` adds its environment and takes the inherited provider variables away. It is looked at again on every
+/// start (a Restart, a Resume, a Reopen), so a key that is gone is a 400 and never a plain Claude session.
 pub(super) async fn resolve(
     st: &AppState,
     profile_id: Option<&str>,
@@ -77,8 +110,22 @@ pub(super) async fn resolve(
     prompt: Option<&str>,
     resume: Option<ResumeTarget<'_>>,
     mode: Option<SessionMode>,
+    preset: Option<&str>,
 ) -> Result<Resolved, ApiError> {
+    if let Some(preset) = preset {
+        check_preset(agent, preset)?;
+    }
     let no_daemon = agent == Some("codex") && codex_takes_no_daemon(st).await;
+    let agents = st.agents();
+    // A manifest agent has a mode only where its manifest maps one.
+    if let (Some(m), Some(mode)) = (agent.and_then(|a| agents.manifest(a)), mode)
+        && mode_args(&agents, &m.id, mode).is_none()
+    {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            format!("{} has no {} mode.", m.name, mode_label(mode)),
+        ));
+    }
     // Copy the profile out so the lock is gone before any await.
     let profile = {
         let doc = st.0.profiles.lock().unwrap();
@@ -87,12 +134,30 @@ pub(super) async fn resolve(
     };
     match (profile, profile_id) {
         (Some(p), _) => {
+            // Before anything is looked up: the refusal is the same whether or not the program is installed.
+            let launch = preset.map(|id| preset_launch(st, id, p.family)).transpose()?;
+            let command = match agent {
+                None => None,
+                Some(id) => Some(program_command(st, id, p.family == ShellFamily::Wsl, &p.env).await?),
+            };
+            let spec = agent
+                .zip(command.as_deref())
+                .map(|(id, c)| (id, Program::of_command(c)));
             let argv = match resume {
-                Some(target) => launch_argv_resume(&p, agent, mode, target, no_daemon),
-                None => launch_argv(&p, agent, prompt, mode, no_daemon),
+                Some(target) => launch_argv_resume(&p, &agents, spec, mode, target, no_daemon),
+                None => launch_argv(&p, &agents, spec, prompt, mode, no_daemon),
             };
             let mut argv = argv.map_err(|msg| (StatusCode::BAD_REQUEST, msg))?;
             let mut env = p.env.clone();
+            let mut env_remove = Vec::new();
+            let mut env_strip = None;
+            if let Some(launch) = launch {
+                // The profile's own provider variables too: an ANTHROPIC_API_KEY set there must not reach the preset's endpoint.
+                env.retain(|(name, _)| !presets::strips(name));
+                env.extend(launch.env);
+                env_remove = launch.env_remove;
+                env_strip = Some(presets::strips as fn(&str) -> bool);
+            }
             let mut marks = false;
             // Shell integration is for a plain shell; an agent session runs the agent instead.
             if agent.is_none()
@@ -110,6 +175,8 @@ pub(super) async fn resolve(
                 family: p.family,
                 argv,
                 env,
+                env_remove,
+                env_strip,
                 cwd: p.cwd,
                 marks,
             })
@@ -119,6 +186,39 @@ pub(super) async fn resolve(
         (None, id) => Err((
             StatusCode::BAD_REQUEST,
             format!("Unknown profile: {}.", id.unwrap_or("(default)")),
+        )),
+    }
+}
+
+/// The program word an agent starts with. An adapter's is fixed. A manifest agent's is the first of its
+/// commands that resolves on PATH as that agent (off the async workers: a version check may run its
+/// `--version`); a WSL distro has its own PATH, so there it is the first command. An unknown id gets
+/// itself, and `launch_argv` refuses it.
+async fn program_command(
+    st: &AppState,
+    id: &str,
+    wsl: bool,
+    profile_env: &[(String, String)],
+) -> Result<String, ApiError> {
+    if let Some(command) = agent_command(id) {
+        return Ok(command.to_string());
+    }
+    let Some(m) = st.agents().manifest(id).cloned() else {
+        return Ok(id.to_string());
+    };
+    if wsl {
+        return Ok(m.commands.first().cloned().unwrap_or_else(|| id.to_string()));
+    }
+    let (finder, versions) = (st.agent_finder(profile_env), st.0.agent_versions.clone());
+    let name = m.name.clone();
+    let found = tokio::task::spawn_blocking(move || find(&m, &|c| finder.path_of(c), &|p| versions.get(p)))
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    match found {
+        Ok(found) => Ok(found.command),
+        Err(Missing::NotOnPath | Missing::Rejected { .. } | Missing::WrongVersion { .. }) => Err((
+            StatusCode::BAD_REQUEST,
+            format!("{name} isn't installed, or isn't on PATH."),
         )),
     }
 }
@@ -142,6 +242,8 @@ fn custom(argv: Vec<String>) -> Resolved {
         family: ShellFamily::Posix,
         argv,
         env: Vec::new(),
+        env_remove: Vec::new(),
+        env_strip: None,
         cwd: None,
         marks: false,
     }
@@ -153,7 +255,7 @@ fn check_agent_installed(st: &AppState, run: &Resolved, agent: Option<&str>) -> 
     if let Some(agent) = agent
         && run.family != ShellFamily::Wsl
         && let Some(command) = agent_command(agent)
-        && !(st.0.agent_on_path)(command)
+        && !st.agent_finder(&run.env).on_path(command)
     {
         let name = agent_display_name(agent).unwrap_or(command);
         return Err((
@@ -185,6 +287,7 @@ pub(super) async fn start_session(
     size: (u16, u16),
     scheme: Option<ColorScheme>,
     mode: Option<SessionMode>,
+    preset: Option<String>,
 ) -> Result<CreateSessionResponse, ApiError> {
     check_agent_installed(st, &run, agent.as_deref())?;
     let cwd = start_folder(&run, cwd);
@@ -209,6 +312,7 @@ pub(super) async fn start_session(
             cwd: cwd.clone(),
             mode,
             name,
+            preset,
         },
     );
     if let Err(err) = launch(st, &tab_id, number, generation, run, agent, cwd, size, scheme).await {
@@ -318,8 +422,13 @@ pub(super) async fn spawn_into_map(
         cwd: (!cwd.is_empty()).then(|| PathBuf::from(cwd)),
         env,
         // Every session, shell or agent: the markers would reach a shell's children too. The profile's
-        // env still wins, since it is applied after.
-        env_remove: crate::agents::INHERITED_MARKERS.iter().map(|k| k.to_string()).collect(),
+        // env still wins, since it is applied after. A preset's list follows the markers.
+        env_remove: crate::agents::INHERITED_MARKERS
+            .iter()
+            .map(|k| k.to_string())
+            .chain(run.env_remove)
+            .collect(),
+        env_strip: run.env_strip,
         cols: size.0,
         rows: size.1,
         on_exit: Some(Box::new(move |code| {
@@ -364,12 +473,16 @@ pub async fn create(
     State(st): State<AppState>,
     Json(req): Json<CreateSessionRequest>,
 ) -> Result<Json<CreateSessionResponse>, ApiError> {
-    if let Some(agent) = req.agent.as_deref().filter(|a| agent_command(a).is_none()) {
+    if let Some(agent) = req.agent.as_deref().filter(|a| !st.agents().is_known(a)) {
         return Err((StatusCode::BAD_REQUEST, format!("Unknown agent: {agent}.")));
     }
     // An explicit argv keeps the old behaviour: run it as given, as a custom profile.
     // A plain shell has no mode.
     let mode = req.mode.filter(|_| req.agent.is_some() && req.shell.is_none());
+    // An explicit argv runs as given, so a preset has nothing to change there.
+    if let Some(preset) = req.preset.as_deref() {
+        check_preset(req.agent.as_deref().filter(|_| req.shell.is_none()), preset)?;
+    }
     let (run, agent) = match req.shell {
         Some(argv) => {
             if argv.is_empty() {
@@ -386,6 +499,7 @@ pub async fn create(
                 req.prompt.as_deref(),
                 None,
                 mode,
+                req.preset.as_deref(),
             )
             .await?,
             req.agent,
@@ -398,9 +512,20 @@ pub async fn create(
         .clone()
         .filter(|c| !c.is_empty() && run.profile_id != CUSTOM_PROFILE);
     let choice = folder.map(|folder| (folder, run.profile_id.clone(), agent.clone()));
-    let created = start_session(&st, run, agent, req.name, req.cwd, size, req.color_scheme, mode).await?;
+    let created = start_session(
+        &st,
+        run,
+        agent,
+        req.name,
+        req.cwd,
+        size,
+        req.color_scheme,
+        mode,
+        req.preset.clone(),
+    )
+    .await?;
     if let Some((folder, profile_id, agent)) = choice {
-        remember_choice(&st, folder, profile_id, agent, mode).await;
+        remember_choice(&st, folder, profile_id, agent, mode, req.preset).await;
     }
     Ok(Json(created))
 }
@@ -413,12 +538,13 @@ async fn remember_choice(
     profile_id: String,
     agent: Option<String>,
     mode: Option<SessionMode>,
+    preset: Option<String>,
 ) {
     let state = st.clone();
     let saved = tokio::task::spawn_blocking(move || {
         let mut current = state.0.layout.lock().unwrap_or_else(|e| e.into_inner());
         let mut next = current.clone();
-        crate::layout::remember(&mut next, &folder, profile_id, agent, mode);
+        crate::layout::remember(&mut next, &folder, profile_id, agent, mode, preset);
         let result = crate::layout::save(&state.0.home, &next);
         // The memory is updated even when the save failed, so the launcher still remembers this run.
         *current = next;
@@ -574,6 +700,7 @@ pub async fn reopen(State(st): State<AppState>, body: Bytes) -> Result<Json<Crea
         None,
         None,
         saved.mode,
+        saved.preset.as_deref(),
     )
     .await?;
     // The window resizes the terminal as soon as it attaches.
@@ -587,6 +714,7 @@ pub async fn reopen(State(st): State<AppState>, body: Bytes) -> Result<Json<Crea
         (80, 24),
         None,
         saved.mode,
+        saved.preset,
     )
     .await?;
     // Only now remove the entry. If another reopen took it first, drop the duplicate we started.
@@ -723,6 +851,7 @@ pub async fn resume(State(st): State<AppState>, Path(tab): Path<String>, Json(re
         None,
         session.target(),
         info.mode,
+        info.preset.as_deref(),
     )
     .await
     {
@@ -836,6 +965,7 @@ pub async fn restart(State(st): State<AppState>, Path(tab): Path<String>, Json(r
         None,
         session.target(),
         Some(req.mode),
+        info.preset.as_deref(),
     )
     .await
     {
@@ -916,7 +1046,7 @@ mod tests {
         let run = tokio::runtime::Builder::new_current_thread()
             .build()
             .unwrap()
-            .block_on(resolve(&st, Some("pwsh"), Some("codex"), None, resume, None))
+            .block_on(resolve(&st, Some("pwsh"), Some("codex"), None, resume, None, None))
             .unwrap();
         run.argv.last().unwrap().clone()
     }
@@ -934,6 +1064,96 @@ mod tests {
             resolved_codex_line(Some("garbage"), Some(ResumeTarget::Last)),
             "& codex resume --last"
         );
+    }
+
+    const TEST_KEY: &str = "sk-marshell-test-0000";
+
+    fn preset_state(family: ShellFamily, key: fn() -> Option<String>) -> AppState {
+        let profile = marshell_protocol::api::Profile {
+            id: "p".into(),
+            name: "p".into(),
+            command: vec!["pwsh.exe".into()],
+            family,
+            cwd: None,
+            // A provider variable set on the profile itself must not reach DeepSeek either.
+            env: vec![var("ANTHROPIC_API_KEY", "profile-secret"), var("KEEP", "1")],
+            shell_integration: false,
+            terminal_theme: None,
+            detected: true,
+        };
+        let home = tempfile::tempdir().unwrap().keep();
+        AppState::new("t".into(), 1, Vec::new(), home, vec![profile])
+            .with_agent_path(|_| None)
+            .with_deepseek_key(key)
+    }
+
+    fn resolve_preset(st: &AppState, agent: Option<&str>, preset: Option<&str>) -> Result<Resolved, ApiError> {
+        tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap()
+            .block_on(resolve(st, Some("p"), agent, None, None, None, preset))
+    }
+
+    #[test]
+    fn a_deepseek_launch_sets_the_env_and_keeps_the_key_out_of_the_command_line() {
+        let st = preset_state(ShellFamily::PowerShell, || Some(TEST_KEY.into()));
+        let run = resolve_preset(&st, Some("claude"), Some("deepseek")).unwrap();
+        let get = |name: &str| run.env.iter().find(|(k, _)| k == name).map(|(_, v)| v.as_str());
+        assert_eq!(get("ANTHROPIC_AUTH_TOKEN"), Some(TEST_KEY));
+        assert_eq!(get("ANTHROPIC_BASE_URL"), Some("https://api.deepseek.com/anthropic"));
+        assert_eq!(get("KEEP"), Some("1"));
+        // The profile's own ANTHROPIC_API_KEY is gone, and what the child inherits is stripped at spawn.
+        assert_eq!(get("ANTHROPIC_API_KEY"), None);
+        assert!(run.env_remove.contains(&"CLAUDE_CODE_USE_BEDROCK".to_string()));
+        assert!(!run.env_remove.contains(&"ANTHROPIC_BASE_URL".to_string()));
+        let strip = run.env_strip.expect("a preset launch strips at spawn");
+        assert!(strip("ANTHROPIC_API_KEY") && strip("anthropic_custom_headers"));
+        assert!(!strip("PATH"));
+        // The key is in the child's env and nowhere else the spawn takes.
+        assert!(run.argv.iter().all(|word| !word.contains(TEST_KEY)), "{:?}", run.argv);
+        let spawn = spawn_env(Some(ColorScheme::Dark), &run.env);
+        assert_eq!(spawn.iter().filter(|(_, v)| v.contains(TEST_KEY)).count(), 1);
+        assert_eq!(run.profile_id, "p");
+
+        // Without a preset nothing of this is added.
+        let plain = resolve_preset(&st, Some("claude"), None).unwrap();
+        assert!(plain.env_remove.is_empty());
+        assert!(plain.env_strip.is_none());
+        assert!(plain.env.iter().any(|(k, _)| k == "ANTHROPIC_API_KEY"));
+        assert!(plain.env.iter().all(|(k, _)| k != "ANTHROPIC_AUTH_TOKEN"));
+    }
+
+    #[test]
+    fn a_preset_is_refused_with_its_reason() {
+        let st = preset_state(ShellFamily::PowerShell, || Some(TEST_KEY.into()));
+        let refused = |r: Result<Resolved, ApiError>| r.err().unwrap();
+        assert_eq!(
+            refused(resolve_preset(&st, Some("codex"), Some("deepseek"))),
+            (
+                StatusCode::BAD_REQUEST,
+                "DeepSeek runs on Claude Code only.".to_string()
+            )
+        );
+        assert_eq!(
+            refused(resolve_preset(&st, None, Some("deepseek"))).1,
+            "DeepSeek runs on Claude Code only."
+        );
+        assert_eq!(
+            refused(resolve_preset(&st, Some("claude"), Some("x"))),
+            (StatusCode::BAD_REQUEST, "Unknown preset: x.".to_string())
+        );
+        let keyless = preset_state(ShellFamily::PowerShell, || None);
+        assert_eq!(
+            refused(resolve_preset(&keyless, Some("claude"), Some("deepseek"))),
+            (
+                StatusCode::BAD_REQUEST,
+                "Set DEEPSEEK_API_KEY, then restart Marshell to start DeepSeek.".to_string()
+            )
+        );
+        let wsl = preset_state(ShellFamily::Wsl, || Some(TEST_KEY.into()));
+        let (status, message) = refused(resolve_preset(&wsl, Some("claude"), Some("deepseek")));
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(message, "DeepSeek starts from a Windows shell profile, not WSL.");
     }
 
     fn var(name: &str, value: &str) -> (String, String) {
@@ -1011,6 +1231,7 @@ mod tests {
             previous_in_tab: None,
             recordings: vec![],
             client: Default::default(),
+            preset: None,
         };
         // An id that would reach the command line, with a transcript that really exists.
         let hostile = work.path().join("x; calc.jsonl");
@@ -1109,6 +1330,7 @@ mod tests {
             previous_in_tab: None,
             recordings: vec![],
             client: Default::default(),
+            preset: None,
         };
         // Rows written to the index directly, as a damaged or planted index would hold them: a file that is not a
         // rollout, a relative path, and an id that would reach the command line.

@@ -480,6 +480,7 @@ fn codex_live(version: Option<&str>) -> (AppState, axum::Router) {
             cwd: "C:/work".into(),
             mode: None,
             name: "Codex".into(),
+            preset: None,
         },
     );
     let app = router(st.clone());

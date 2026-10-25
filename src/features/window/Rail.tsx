@@ -37,7 +37,7 @@ export function Rail({ rows, needsYou, selectedId, visibleIds, os = "windows", o
               <SessionNumber n={r.number} />
             </span>
             <span className="rail__mark" aria-hidden="true">
-              <AgentMark agent={r.agent} size={20} working={r.status === "working"} />
+              <AgentMark agent={r.agent} {...(r.agentName === undefined ? {} : { label: r.agentName })} size={20} working={r.status === "working"} />
               {r.status !== "working" && <StatusGlyph kind={r.status} size={12} />}
             </span>
           </button>

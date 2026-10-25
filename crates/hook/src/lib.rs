@@ -66,6 +66,10 @@ fn call(args: &Args, stdin: &mut dyn Read, env: Env, ancestors: Ancestors, home:
         }
         return statusline::run(home, &args.agent, &bytes, env);
     }
+    // Grok Build runs Claude Code's hooks from `.claude/settings*.json`; its events are not Claude's.
+    if args.agent == "claude" && env("GROK_HOOK_EVENT").is_some_and(|v| !v.is_empty()) {
+        return Vec::new();
+    }
     let body = match post::read_capped(stdin) {
         Ok(Some(b)) => b,
         Ok(None) => return fail("stdin is over 1 MiB, nothing posted"),

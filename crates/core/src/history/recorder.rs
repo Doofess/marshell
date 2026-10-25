@@ -264,6 +264,12 @@ impl History {
                 })
                 .collect(),
             client: Default::default(),
+            // Only Claude Code tabs have a preset; the registry has the tab while it is open.
+            preset: self
+                .registry
+                .as_ref()
+                .filter(|_| !codex)
+                .and_then(|registry| registry.preset_of_tab(tab_id)),
         };
         let ends_turn = !codex && matches!(event, "Stop" | "StopFailure" | "SessionEnd");
         if is_new || ends_turn || (!codex && event == "SessionStart") {

@@ -1,0 +1,77 @@
+[
+  {
+    "id": "copilot", "name": "GitHub Copilot", "cli": "Copilot CLI", "mark": "copilot",
+    "commands": ["copilot"], "reject_paths": ["\\copilot-shim\\"],
+    "exe_names": ["copilot"], "packages": ["@github/copilot"],
+    "prompt": { "style": "flag", "flag": "-i" }, "continue": ["--continue"],
+    "modes": { "manual": [], "plan": ["--plan"], "bypass": ["--allow-all"] }
+  },
+  {
+    "id": "cursor", "name": "Cursor", "cli": "Cursor CLI", "mark": "cursor",
+    "commands": ["cursor-agent", "agent"], "reject_paths": ["\\.grok\\bin\\"],
+    "exe_names": ["cursor-agent"],
+    "prompt": { "style": "positional" }, "continue": ["--continue"],
+    "modes": { "manual": [], "plan": ["--plan"], "bypass": ["--force"] }
+  },
+  {
+    "id": "opencode", "name": "opencode", "cli": "opencode", "mark": "opencode",
+    "commands": ["opencode"],
+    "exe_names": ["opencode"], "packages": ["opencode-ai"],
+    "prompt": { "style": "flag", "flag": "--prompt" }, "continue": ["--continue"],
+    "modes": {}
+  },
+  {
+    "id": "amp", "name": "Amp", "cli": "Amp", "mark": "amp",
+    "commands": ["amp"],
+    "exe_names": ["amp"], "packages": ["@sourcegraph/amp"],
+    "prompt": { "style": "none" }, "continue": ["threads", "continue"],
+    "modes": { "bypass": [] }
+  },
+  {
+    "id": "grok", "name": "Grok", "cli": "Grok Build", "mark": "grok",
+    "commands": ["grok"], "version_shape": "^grok \\d+\\.\\d+\\.\\d+ \\(",
+    "exe_names": ["grok"],
+    "prompt": { "style": "positional" }, "continue": ["--continue"],
+    "modes": {
+      "manual": ["--permission-mode", "default"],
+      "plan": ["--permission-mode", "plan"],
+      "auto-edit": ["--permission-mode", "acceptEdits"],
+      "full-auto": ["--permission-mode", "auto"],
+      "bypass": ["--permission-mode", "bypassPermissions"]
+    }
+  },
+  {
+    "id": "qwen", "name": "Qwen", "cli": "Qwen Code", "mark": "qwen",
+    "commands": ["qwen"],
+    "exe_names": ["qwen"], "packages": ["@qwen-code/qwen-code"],
+    "prompt": { "style": "flag", "flag": "-i" }, "continue": ["--continue"],
+    "modes": {
+      "manual": ["--approval-mode", "default"],
+      "plan": ["--approval-mode", "plan"],
+      "auto-edit": ["--approval-mode", "auto-edit"],
+      "full-auto": ["--approval-mode", "auto"],
+      "bypass": ["--approval-mode", "yolo"]
+    }
+  },
+  {
+    "id": "kimi", "name": "Kimi", "cli": "Kimi Code CLI", "mark": "kimi",
+    "commands": ["kimi"],
+    "exe_names": ["kimi"],
+    "prompt": { "style": "none" }, "continue": ["--continue"],
+    "modes": { "manual": [], "plan": ["--plan"], "full-auto": ["--yolo"], "bypass": ["--auto"] }
+  },
+  {
+    "id": "aider", "name": "Aider", "cli": "Aider", "mark": "generic",
+    "commands": ["aider"],
+    "exe_names": ["aider"],
+    "prompt": { "style": "none" }, "continue": ["--restore-chat-history"],
+    "modes": { "manual": [], "bypass": ["--yes-always"] }
+  },
+  {
+    "id": "crush", "name": "Crush", "cli": "Crush", "mark": "generic",
+    "commands": ["crush"],
+    "exe_names": ["crush"],
+    "prompt": { "style": "none" }, "continue": ["--continue"],
+    "modes": { "manual": [], "bypass": ["--yolo"] }
+  }
+]
