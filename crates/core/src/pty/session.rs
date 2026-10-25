@@ -599,6 +599,12 @@ impl Session {
         self.command.lock().unwrap().watch.tool.clone()
     }
 
+    /// Whether the watched command's profile marks its port lines as transient (`vercel login`'s callback): the port
+    /// watcher makes no chip for a listener while it is set.
+    pub fn quiet_ports(&self) -> bool {
+        self.command.lock().unwrap().watch.quiet_ports
+    }
+
     /// The last folder the shell reported, or `None` if it never reported one.
     pub fn current_cwd(&self) -> Option<PathBuf> {
         self.cwd.lock().unwrap().clone()

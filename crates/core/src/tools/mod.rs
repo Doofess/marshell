@@ -1,6 +1,7 @@
 //! Tool profiles: how Marshell recognises a developer tool (`vercel`, `terraform`, `gcloud`, ...) in a shell
 //! and what it reads from the tool's output.
 
+pub mod listen;
 pub mod matcher;
 pub mod own;
 pub mod profile;

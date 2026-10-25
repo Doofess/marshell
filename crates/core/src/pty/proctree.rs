@@ -93,11 +93,45 @@ fn creation_time(pid: u32) -> Result<Option<u64>, ()> {
 /// process whose recorded parent pid was reused by one of ours is left alone. A child that is gone
 /// is skipped. `None` if `root` or a child cannot be queried, so the tree is never frozen in part.
 pub(super) fn descendants(root: u32) -> Option<Vec<u32>> {
-    let procs = processes()?;
+    descendants_in(&processes()?, root)
+}
+
+/// One read of the process list, to ask for several trees without listing the processes again.
+pub(super) struct Processes(Vec<(u32, u32, String)>);
+
+impl Processes {
+    pub(super) fn read() -> Option<Processes> {
+        processes().map(Processes)
+    }
+
+    /// `descendants` of `root` as `(pid, exe file name)`.
+    pub(super) fn tree(&self, root: u32) -> Option<Vec<(u32, String)>> {
+        let pids = descendants_in(&self.0, root)?;
+        Some(
+            pids.into_iter()
+                .map(|pid| {
+                    let name = self
+                        .0
+                        .iter()
+                        .find(|(p, _, _)| *p == pid)
+                        .map_or_else(String::new, |(_, _, n)| n.clone());
+                    (pid, name)
+                })
+                .collect(),
+        )
+    }
+
+    /// The first program of `foreground_chain_pids`: what `root` itself runs.
+    pub(super) fn outermost(&self, root: u32) -> Option<u32> {
+        chain_in(&self.0, root)?.first().map(|(pid, _)| *pid)
+    }
+}
+
+fn descendants_in(procs: &[(u32, u32, String)], root: u32) -> Option<Vec<u32>> {
     let mut tree: HashMap<u32, u64> = HashMap::from([(root, creation_time(root).ok()??)]);
     loop {
         let mut grew = false;
-        for &(pid, parent, _) in &procs {
+        for &(pid, parent, _) in procs {
             if pid == parent || tree.contains_key(&pid) {
                 continue;
             }
@@ -127,7 +161,10 @@ fn is_console_host(exe: &str) -> bool {
 /// (by the same rule as `descendants`) that is not a console host. Empty when `root` has no child.
 /// `None` if the snapshot cannot be taken or `root` is gone.
 pub(super) fn foreground_chain_pids(root: u32) -> Option<Vec<(u32, String)>> {
-    let procs = processes()?;
+    chain_in(&processes()?, root)
+}
+
+fn chain_in(procs: &[(u32, u32, String)], root: u32) -> Option<Vec<(u32, String)>> {
     let mut current = root;
     let mut born = creation_time(root).ok()??;
     let mut chain = Vec::new();

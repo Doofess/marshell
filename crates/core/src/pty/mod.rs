@@ -30,6 +30,111 @@ pub(crate) fn process_tree(root: u32) -> Option<Vec<u32>> {
     }
 }
 
+/// One read of the machine's process list, for asking about several sessions at once. Blocking to make.
+pub(crate) struct ProcessList {
+    #[cfg(windows)]
+    inner: proctree::Processes,
+    /// (pid, parent pid, name)
+    #[cfg(target_os = "linux")]
+    inner: Vec<(u32, u32, String)>,
+}
+
+impl ProcessList {
+    /// `None` where the platform has no way to list processes or the list cannot be read.
+    pub(crate) fn read() -> Option<ProcessList> {
+        #[cfg(windows)]
+        {
+            proctree::Processes::read().map(|inner| ProcessList { inner })
+        }
+        #[cfg(target_os = "linux")]
+        {
+            let mut inner = Vec::new();
+            for entry in std::fs::read_dir("/proc").ok()?.flatten() {
+                let Some(pid) = entry.file_name().to_str().and_then(|n| n.parse::<u32>().ok()) else {
+                    continue;
+                };
+                // A process that exits during the scan is skipped.
+                let Ok(stat) = std::fs::read_to_string(format!("/proc/{pid}/stat")) else {
+                    continue;
+                };
+                let Some(parent) = parent_pid(&stat) else { continue };
+                let name = std::fs::read_to_string(format!("/proc/{pid}/comm")).unwrap_or_default();
+                inner.push((pid, parent, name.trim().to_string()));
+            }
+            Some(ProcessList { inner })
+        }
+        #[cfg(not(any(windows, target_os = "linux")))]
+        {
+            None
+        }
+    }
+
+    /// `root` and every process it started as `(pid, name)`, the name as `detect::program_name` gives it. `None` when
+    /// `root` is gone or cannot be queried.
+    pub(crate) fn tree(&self, root: u32) -> Option<Vec<(u32, String)>> {
+        #[cfg(windows)]
+        {
+            let mut tree = self.inner.tree(root)?;
+            for (_, name) in &mut tree {
+                *name = crate::profiles::detect::program_name(name);
+            }
+            Some(tree)
+        }
+        #[cfg(target_os = "linux")]
+        {
+            if !self.inner.iter().any(|(pid, _, _)| *pid == root) {
+                return None;
+            }
+            let mut tree = vec![root];
+            let mut next = 0;
+            while next < tree.len() {
+                let parent = tree[next];
+                for (pid, ppid, _) in &self.inner {
+                    if *ppid == parent && !tree.contains(pid) {
+                        tree.push(*pid);
+                    }
+                }
+                next += 1;
+            }
+            Some(
+                tree.into_iter()
+                    .filter_map(|pid| {
+                        let (_, _, name) = self.inner.iter().find(|(p, _, _)| *p == pid)?;
+                        Some((pid, crate::profiles::detect::program_name(name)))
+                    })
+                    .collect(),
+            )
+        }
+        #[cfg(not(any(windows, target_os = "linux")))]
+        {
+            let _ = root;
+            None
+        }
+    }
+
+    /// The program `root` itself runs: its newest child that is not a console host. On Linux, its newest (highest pid)
+    /// child. `None` when `root` has no child or cannot be queried.
+    pub(crate) fn outermost(&self, root: u32) -> Option<u32> {
+        #[cfg(windows)]
+        {
+            self.inner.outermost(root)
+        }
+        #[cfg(target_os = "linux")]
+        {
+            self.inner
+                .iter()
+                .filter(|(pid, ppid, _)| *ppid == root && *pid != root)
+                .map(|(pid, _, _)| *pid)
+                .max()
+        }
+        #[cfg(not(any(windows, target_os = "linux")))]
+        {
+            let _ = root;
+            None
+        }
+    }
+}
+
 /// The command line of process `pid` as the OS keeps it, or `None` where it cannot be read (the process is gone, runs as
 /// another user, or the platform keeps none). Blocking.
 pub(crate) fn command_line(pid: u32) -> Option<String> {
