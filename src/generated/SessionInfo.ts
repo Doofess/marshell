@@ -4,6 +4,7 @@ import type { Attention } from "./Attention";
 import type { CommandState } from "./CommandState";
 import type { Foreground } from "./Foreground";
 import type { LiveStatus } from "./LiveStatus";
+import type { PortChip } from "./PortChip";
 import type { SessionMode } from "./SessionMode";
 import type { SessionState } from "./SessionState";
 import type { Stuck } from "./Stuck";
@@ -70,4 +71,8 @@ stuck: Stuck | null,
 /**
  * The preset the agent was started with ("deepseek"), shown beside the agent. The row's `agent` stays "claude".
  */
-preset?: string, };
+preset?: string, 
+/**
+ * The local ports the tab's tools announced, at most 8. A chip opens its loopback URL.
+ */
+ports?: Array<PortChip>, };

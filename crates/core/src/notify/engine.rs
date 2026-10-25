@@ -724,6 +724,7 @@ mod tests {
             attention: None,
             stuck: None,
             preset: None,
+            ports: Vec::new(),
         }
     }
 

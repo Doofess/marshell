@@ -407,6 +407,18 @@ pub(super) async fn spawn_into_map(
             }
         }))
     };
+    // What a profiled tool's output shows goes to the registry, the way marks do. Every session has a matcher; it reads
+    // only while the command in front of the shell is a profiled tool.
+    let on_tool: crate::pty::ToolCallback = {
+        let registry = st.0.registry.clone();
+        let tab = tab_id.to_string();
+        Box::new(move |event| registry.tool_event(&tab, event))
+    };
+    // The tools are read at each command, so an edited `tools.json` applies to the next one.
+    let classify: crate::pty::Classifier = {
+        let tools_now = st.tools_reader();
+        std::sync::Arc::new(move |line| crate::tools::watch_for(&tools_now(), line))
+    };
     // `spec` takes the cwd; the closure below records the same folder.
     let marshell_home = st.0.home.clone();
     let project = cwd.clone();
@@ -439,8 +451,9 @@ pub(super) async fn spawn_into_map(
             registry.mark_exited(&exited_tab, generation, code)
         })),
         on_mark,
+        on_tool: Some(on_tool),
         record: Some((recording, shell)),
-        classify: None,
+        classify: Some(classify),
         initial_command: None,
     };
     let id = tab_id.to_string();

@@ -123,10 +123,10 @@ fn is_console_host(exe: &str) -> bool {
     name == "conhost.exe" || name == "openconsole.exe"
 }
 
-/// The programs running under `root`, outermost first, root excluded: at each step the newest child
+/// The programs running under `root` as `(pid, name)`, outermost first, root excluded: at each step the newest child
 /// (by the same rule as `descendants`) that is not a console host. Empty when `root` has no child.
 /// `None` if the snapshot cannot be taken or `root` is gone.
-pub(super) fn foreground_chain(root: u32) -> Option<Vec<String>> {
+pub(super) fn foreground_chain_pids(root: u32) -> Option<Vec<(u32, String)>> {
     let procs = processes()?;
     let mut current = root;
     let mut born = creation_time(root).ok()??;
@@ -143,8 +143,181 @@ pub(super) fn foreground_chain(root: u32) -> Option<Vec<String>> {
         let Some((t, pid, exe)) = newest else {
             break;
         };
-        chain.push(program_name(exe));
+        chain.push((pid, program_name(exe)));
         (current, born) = (pid, t);
     }
     Some(chain)
+}
+
+/// The command line of process `pid`, or `None` if it is gone, cannot be opened (another user's, or elevated) or the
+/// query fails. `NtQueryInformationProcess` with `ProcessCommandLineInformation`, which needs only
+/// `PROCESS_QUERY_LIMITED_INFORMATION`. Blocking: the watcher calls it inside its `spawn_blocking`.
+pub(super) fn command_line(pid: u32) -> Option<String> {
+    use windows_sys::Wdk::System::Threading::{NtQueryInformationProcess, ProcessCommandLineInformation};
+    use windows_sys::Win32::Foundation::UNICODE_STRING;
+
+    // SAFETY: the result is checked; the handle is closed by `Owned` on every path.
+    let handle = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) };
+    if handle.is_null() {
+        return None;
+    }
+    let handle = Owned(handle);
+    // A first call with no room reports the length needed. Plain words, so the buffer is aligned for the
+    // `UNICODE_STRING` at its start (it holds a pointer).
+    let mut needed: u32 = 0;
+    // SAFETY: a null buffer of length 0 is the documented way to ask for the length; `needed` is a valid u32.
+    unsafe {
+        NtQueryInformationProcess(
+            handle.0,
+            ProcessCommandLineInformation,
+            std::ptr::null_mut(),
+            0,
+            &mut needed,
+        )
+    };
+    let header = size_of::<UNICODE_STRING>();
+    let bytes = (needed as usize).max(header);
+    // The command line is at most about 32k wide chars; a larger answer is not a command line.
+    if bytes > 1 << 20 {
+        return None;
+    }
+    let mut buffer = vec![0usize; bytes.div_ceil(size_of::<usize>())];
+    let capacity = buffer.len() * size_of::<usize>();
+    let mut returned: u32 = 0;
+    // SAFETY: `buffer` is writable for `capacity` bytes (at most 1 MiB, so it fits u32); `returned` is a valid u32.
+    let status = unsafe {
+        NtQueryInformationProcess(
+            handle.0,
+            ProcessCommandLineInformation,
+            buffer.as_mut_ptr().cast(),
+            capacity as u32,
+            &mut returned,
+        )
+    };
+    // A negative NTSTATUS is a failure, including a length mismatch if the process changed between the calls.
+    if status < 0 {
+        return None;
+    }
+    let base = buffer.as_ptr() as usize;
+    // SAFETY: the buffer is aligned for a `UNICODE_STRING` and holds at least its size; the kernel filled it.
+    let unicode = unsafe { std::ptr::read(buffer.as_ptr().cast::<UNICODE_STRING>()) };
+    let length = usize::from(unicode.Length);
+    let start = unicode.Buffer as usize;
+    let end = start.checked_add(length)?;
+    // The text lies inside this allocation, after the header, and is whole wide chars.
+    if length == 0
+        || length % 2 != 0
+        || !start.is_multiple_of(2)
+        || start < base + header
+        || end > base + capacity
+        || length > usize::from(unicode.MaximumLength)
+    {
+        return None;
+    }
+    // SAFETY: `start..end` was checked to lie inside `buffer`, is 2-aligned and a whole number of u16s.
+    let wide = unsafe { std::slice::from_raw_parts(start as *const u16, length / 2) };
+    Some(String::from_utf16_lossy(wide))
+}
+
+/// The words of a Windows command line, by the `CommandLineToArgvW` rules: whitespace separates words outside quotes;
+/// backslashes are literal unless a quote follows them; `2n` backslashes and a quote give `n` backslashes and toggle
+/// quoting, `2n+1` give `n` backslashes and a literal quote; inside quotes a doubled quote is a literal quote.
+pub(super) fn split_args(line: &str) -> Vec<String> {
+    let chars: Vec<char> = line.chars().collect();
+    let mut words = Vec::new();
+    let mut i = 0;
+    loop {
+        while i < chars.len() && matches!(chars[i], ' ' | '\t') {
+            i += 1;
+        }
+        if i >= chars.len() {
+            return words;
+        }
+        let mut word = String::new();
+        let mut quoted = false;
+        while i < chars.len() {
+            match chars[i] {
+                ' ' | '\t' if !quoted => break,
+                '\\' => {
+                    let mut slashes = 0;
+                    while i < chars.len() && chars[i] == '\\' {
+                        slashes += 1;
+                        i += 1;
+                    }
+                    if chars.get(i) == Some(&'"') {
+                        word.extend(std::iter::repeat_n('\\', slashes / 2));
+                        if slashes % 2 == 1 {
+                            word.push('"');
+                            i += 1;
+                        }
+                        // An even run leaves the quote to toggle on the next turn.
+                    } else {
+                        word.extend(std::iter::repeat_n('\\', slashes));
+                    }
+                }
+                '"' => {
+                    if quoted && chars.get(i + 1) == Some(&'"') {
+                        word.push('"');
+                        i += 2;
+                    } else {
+                        quoted = !quoted;
+                        i += 1;
+                    }
+                }
+                c => {
+                    word.push(c);
+                    i += 1;
+                }
+            }
+        }
+        words.push(word);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn words(items: &[&str]) -> Vec<String> {
+        items.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn command_line_of_this_process_names_the_test_binary() {
+        let line = command_line(std::process::id()).expect("the command line of this process");
+        let exe = std::env::current_exe().unwrap();
+        let name = exe.file_stem().unwrap().to_string_lossy().to_lowercase();
+        assert!(line.to_lowercase().contains(&name), "{line}");
+        // And it splits into words that start with that binary.
+        let argv = split_args(&line);
+        assert!(
+            argv[0].to_lowercase().contains(&name),
+            "{argv:?} does not start with {name}"
+        );
+        assert_eq!(command_line(u32::MAX - 1), None);
+    }
+
+    #[test]
+    fn split_args_follows_the_windows_quoting_rules() {
+        assert_eq!(split_args(""), Vec::<String>::new());
+        assert_eq!(split_args("  a   b "), words(&["a", "b"]));
+        // A quoted path with a space is one word.
+        assert_eq!(
+            split_args(r#""C:\Program Files\nodejs\node.exe" C:\x\main.js login"#),
+            words(&[r"C:\Program Files\nodejs\node.exe", r"C:\x\main.js", "login"])
+        );
+        // Backslashes are literal unless they come before a quote.
+        assert_eq!(split_args(r"a\b\\c d"), words(&[r"a\b\\c", "d"]));
+        // 2n backslashes then a quote: n backslashes, and the quote toggles.
+        assert_eq!(split_args(r#""a\\" b"#), words(&[r"a\", "b"]));
+        // 2n+1 backslashes then a quote: n backslashes and a literal quote.
+        assert_eq!(split_args(r#"a\"b c"#), words(&[r#"a"b"#, "c"]));
+        assert_eq!(split_args(r#""say \"hi\" now" x"#), words(&[r#"say "hi" now"#, "x"]));
+        assert_eq!(split_args(r#"a\\\"b"#), words(&[r#"a\"b"#]));
+        // A doubled quote inside quotes is a literal quote.
+        assert_eq!(split_args(r#""a ""b"" c" d"#), words(&[r#"a "b" c"#, "d"]));
+        // An empty quoted word stays a word; a missing closing quote runs to the end.
+        assert_eq!(split_args(r#"a "" b"#), words(&["a", "", "b"]));
+        assert_eq!(split_args(r#"a "b c"#), words(&["a", "b c"]));
+    }
 }

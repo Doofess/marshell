@@ -179,6 +179,10 @@ pub struct SessionInfo {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub preset: Option<String>,
+    /// The local ports the tab's tools announced, at most 8. A chip opens its loopback URL.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[ts(optional, as = "Option<Vec<crate::tools::PortChip>>")]
+    pub ports: Vec<crate::tools::PortChip>,
 }
 
 /// A terminal program's request for attention.
@@ -281,6 +285,10 @@ pub struct Foreground {
     pub command_line: Option<String>,
     /// "claude", "codex" or "antigravity" when the program is a known agent CLI.
     pub agent: Option<String>,
+    /// The id of the tool profile the running command matched ("vercel", "terraform"), if one did.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub tool: Option<String>,
 }
 
 /// A shell session's command state, folded from OSC 133 marks.
@@ -1065,6 +1073,7 @@ mod tests {
             attention: None,
             stuck: None,
             preset: None,
+            ports: Vec::new(),
         };
         let mut value = serde_json::to_value(&info).unwrap();
         value.as_object_mut().unwrap().remove("muted");

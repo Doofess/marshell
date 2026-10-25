@@ -422,6 +422,16 @@ impl AppState {
     pub fn tools(&self) -> Arc<crate::tools::Tools> {
         self.0.own_tools.get(&self.0.home).tools.clone()
     }
+    /// `tools` for a callback that outlives the call, such as a session's classifier. It holds a weak handle, not the
+    /// state: the state owns the sessions that own the callback. It reads the cache at each call, so an edited
+    /// `tools.json` applies to the next command. If the state is gone it answers with the shipped profiles.
+    pub(crate) fn tools_reader(&self) -> impl Fn() -> Arc<crate::tools::Tools> + Send + Sync + 'static {
+        let inner = Arc::downgrade(&self.0);
+        move || match inner.upgrade() {
+            Some(inner) => AppState(inner).tools(),
+            None => Arc::new(crate::tools::Tools::shipped()),
+        }
+    }
     /// The sessions index and the transcript archive.
     pub fn history(&self) -> Arc<crate::history::recorder::History> {
         self.0.history.clone()

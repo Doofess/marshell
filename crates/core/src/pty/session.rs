@@ -1,9 +1,9 @@
-use super::buffer::{MAX_UNACKED, OutputBuffer, SCROLLBACK_BYTES, peek_rows};
+use super::buffer::{MAX_UNACKED, OutputBuffer, SCROLLBACK_BYTES, peek_rows, tail_rows};
 use super::dsr::{DSR_REPLY, DsrFilter};
 use super::freeze::{self, FreezeError, Frozen};
 use super::osc133::{Mark, Osc133Scanner};
 use super::record::{CastHeader, Osc633Strip, Recorder};
-use crate::tools::{Watch, secrets};
+use crate::tools::{Matcher, Profile, ToolEvent, Watch, secrets};
 use portable_pty::{CommandBuilder, MasterPty, PtySize, native_pty_system};
 use std::ffi::OsString;
 use std::io::{Read, Write};
@@ -23,6 +23,10 @@ pub type Classifier = Arc<dyn Fn(&str) -> Watch + Send + Sync>;
 /// Called with each OSC 133 mark the shell prints, from the reader thread, outside every session lock.
 pub type MarkCallback = Box<dyn Fn(Mark) + Send + Sync>;
 
+/// Called with what a profiled tool's output shows (a prompt, its end, an announced port), from the reader thread or
+/// from `set_watch`, outside every session lock.
+pub type ToolCallback = Box<dyn Fn(ToolEvent) + Send + Sync>;
+
 pub struct SpawnSpec {
     pub argv: Vec<String>,
     pub cwd: Option<PathBuf>,
@@ -39,6 +43,8 @@ pub struct SpawnSpec {
     pub on_exit: Option<ExitCallback>,
     /// Called for each OSC 133 prompt or command mark in the output.
     pub on_mark: Option<MarkCallback>,
+    /// Called for each event the matcher raises while a profiled tool runs.
+    pub on_tool: Option<ToolCallback>,
     /// Where to write the asciicast recording, and the SHELL value for its header. A path that cannot
     /// be written leaves the session running without a recording.
     pub record: Option<(PathBuf, Option<String>)>,
@@ -77,6 +83,24 @@ struct Output {
     reader_done: bool,
     /// Windows: ConPTY's startup cursor query has been answered by the core.
     startup_dsr_answered: bool,
+    /// Reads the output of the watched command while its watch has profiles and does not print secrets.
+    tool: Option<ToolMatcher>,
+    /// The `CommandTrack::generation` the matcher was last settled for. A settle for an older one is stale.
+    tool_gen: u64,
+}
+
+/// A matcher beside the profiles it was built for, and whether it has raised a prompt that is still up.
+struct ToolMatcher {
+    matcher: Matcher,
+    profiles: Vec<Arc<Profile>>,
+    raised: bool,
+}
+
+/// What the matcher should do for the watch as it stands.
+struct ToolView {
+    generation: u64,
+    /// The profiles to read with and whether the command's port lines make no chip. `None`: nothing is read.
+    wanted: Option<(Vec<Arc<Profile>>, bool)>,
 }
 
 /// What the shell's marks say about the command it is running.
@@ -92,6 +116,8 @@ struct CommandTrack {
     /// The epoch the command line set `watch` at. A C mark moves it up with the epoch, so the foreground's later
     /// reading of the same command does not replace it.
     line_watch_epoch: Option<u64>,
+    /// Moves up whenever `watch` is replaced, so the matcher is never settled for an older watch than a newer one.
+    generation: u64,
 }
 
 impl CommandTrack {
@@ -99,6 +125,7 @@ impl CommandTrack {
         let mut track = CommandTrack::default();
         if let (Some(classify), Some(line)) = (classify, initial_command) {
             track.watch = classify(line);
+            track.generation += 1;
             track.line_watch_epoch = Some(track.epoch);
         }
         track
@@ -148,6 +175,7 @@ pub struct Session {
     /// Taken and called once when the child exits.
     exit_callback: Mutex<Option<ExitCallback>>,
     mark_callback: Option<MarkCallback>,
+    tool_callback: Option<ToolCallback>,
     recorder: Option<Recorder>,
     classify: Option<Classifier>,
     rec: Mutex<RecState>,
@@ -224,6 +252,8 @@ impl Session {
                 exit: None,
                 reader_done: false,
                 startup_dsr_answered: false,
+                tool: None,
+                tool_gen: 0,
             }),
             space: Condvar::new(),
             notify: tokio::sync::Notify::new(),
@@ -233,6 +263,7 @@ impl Session {
             exited: Arc::new(AtomicBool::new(false)),
             exit_callback: Mutex::new(spec.on_exit.take()),
             mark_callback: spec.on_mark.take(),
+            tool_callback: spec.on_tool.take(),
             recorder,
             classify: spec.classify.take(),
             rec: Mutex::new(RecState::default()),
@@ -333,11 +364,17 @@ impl Session {
         // secret, and the foreground may already have said so before it.
         let secret_before = self.secret_label();
         let secret_started = self.track_command(&marks);
+        let hide = secret_before.or(secret_started);
         self.notify.notify_one();
+        // The matcher reads the chunk against the watch as the marks left it, and never a chunk that may hold secrets.
+        let view = Self::tool_view(&self.command.lock().unwrap(), hide.is_some());
+        let tool_events = self.settle_tools(Some(&pass), view);
         // The recording gets what the terminal got, after the lock is dropped, but never a secret command's output.
         if let Some(rec) = &self.recorder {
-            self.record_chunk(rec, &pass, &marks, secret_before.or(secret_started));
+            self.record_chunk(rec, &pass, &marks, hide);
         }
+        // No session lock is held now: the callback takes the registry's lock.
+        self.emit_tool_events(tool_events);
         if let Some(cb) = &self.mark_callback {
             for mark in marks {
                 cb(mark);
@@ -393,6 +430,77 @@ impl Session {
         self.command.lock().unwrap().watch.secret
     }
 
+    /// What the matcher should read for the watch as it stands. Nothing while the command prints secrets, or when
+    /// `hide` says the chunk may hold some.
+    fn tool_view(track: &CommandTrack, hide: bool) -> ToolView {
+        let watch = &track.watch;
+        let wanted =
+            (!hide && !watch.secret && !watch.profiles.is_empty()).then(|| (watch.profiles.clone(), watch.quiet_ports));
+        ToolView {
+            generation: track.generation,
+            wanted,
+        }
+    }
+
+    /// Brings the matcher in line with `view` and, for a chunk (`pass`: what the terminal got), reads it. A matcher
+    /// is built when the watch has profiles and none matches them, and dropped when the watch loses its profiles or
+    /// turns secret; a raised prompt it held then ends with a `Cleared`. The screen's tail is taken while the output
+    /// lock is held, and the lock is never held across a callback: the events come back for the caller to emit.
+    fn settle_tools(&self, pass: Option<&[u8]>, view: ToolView) -> Vec<ToolEvent> {
+        let mut events = Vec::new();
+        let mut out = self.output.lock().unwrap();
+        // A newer watch has been settled already (the foreground set it while this chunk was being read).
+        if view.generation < out.tool_gen {
+            return events;
+        }
+        out.tool_gen = view.generation;
+        let same = match (&view.wanted, &out.tool) {
+            (Some((wanted, _)), Some(tool)) => {
+                wanted.len() == tool.profiles.len() && wanted.iter().zip(&tool.profiles).all(|(a, b)| Arc::ptr_eq(a, b))
+            }
+            _ => false,
+        };
+        if !same {
+            if let Some(old) = out.tool.take()
+                && old.raised
+            {
+                events.push(ToolEvent::Cleared);
+            }
+            if let (Some((profiles, _)), Some(_)) = (&view.wanted, pass) {
+                out.tool = Some(ToolMatcher {
+                    matcher: Matcher::new(profiles.clone()),
+                    profiles: profiles.clone(),
+                    raised: false,
+                });
+            }
+        }
+        if let (Some(pass), Some((_, quiet_ports))) = (pass, &view.wanted) {
+            let tail = tail_rows(out.screen.screen());
+            if let Some(tool) = out.tool.as_mut() {
+                for event in tool.matcher.feed(pass, &tail) {
+                    match &event {
+                        ToolEvent::NeedsYou(_) => tool.raised = true,
+                        ToolEvent::Cleared => tool.raised = false,
+                        // A command that lists its port lines as transient makes no chip.
+                        ToolEvent::Port(_) if *quiet_ports => continue,
+                        ToolEvent::Port(_) => {}
+                    }
+                    events.push(event);
+                }
+            }
+        }
+        events
+    }
+
+    /// Hands events to `on_tool`. The caller holds no session lock.
+    fn emit_tool_events(&self, events: Vec<ToolEvent>) {
+        if let Some(cb) = &self.tool_callback {
+            for event in events {
+                cb(event);
+            }
+        }
+    }
+
     /// Folds the shell's marks into the command tracking, before the mark callback sees them. Returns the label of
     /// a secret command that a command line among them put on watch, even if a later mark dropped it again.
     fn track_command(&self, marks: &[Mark]) -> Option<String> {
@@ -418,6 +526,7 @@ impl Session {
                             started = Some(watch.label.clone());
                         }
                         track.watch = watch;
+                        track.generation += 1;
                         track.line_watch_epoch = Some(track.epoch);
                     }
                 }
@@ -432,6 +541,7 @@ impl Session {
                     track.line = None;
                     track.epoch += 1;
                     track.watch = Watch::default();
+                    track.generation += 1;
                     track.line_watch_epoch = None;
                 }
                 Mark::CommandStart => {}
@@ -443,14 +553,44 @@ impl Session {
     }
 
     /// Sets the watch from the foreground process of the command that `epoch` was read at. Refused when a C, D or A
-    /// mark came since, or when the command's own line already set the watch. True when the watch changed.
+    /// mark came since. True when the watch changed.
+    ///
+    /// The command's own line is the better source of what the command is, so a watch it set stays. The process can
+    /// still tell more: an alias hides `gh auth token` from the line, so a reading may turn `secret` on (it never turns
+    /// it off), and may fill in the tool and profiles when the line named none. A raised prompt whose profiles go
+    /// is cleared through `on_tool` at once.
     pub fn set_watch(&self, epoch: u64, watch: Watch) -> bool {
-        let mut track = self.command.lock().unwrap();
-        if track.epoch != epoch || track.line_watch_epoch == Some(epoch) {
-            return false;
+        let (changed, view) = {
+            let mut track = self.command.lock().unwrap();
+            if track.epoch != epoch {
+                return false;
+            }
+            let next = if track.line_watch_epoch == Some(epoch) {
+                let mut next = track.watch.clone();
+                if watch.secret && !next.secret {
+                    next.secret = true;
+                    next.label = watch.label;
+                }
+                if next.tool.is_none() && watch.tool.is_some() {
+                    next.tool = watch.tool;
+                    next.profiles = watch.profiles;
+                    next.quiet_ports = watch.quiet_ports;
+                }
+                next
+            } else {
+                watch
+            };
+            let changed = track.watch.differs(&next);
+            if changed {
+                track.watch = next;
+                track.generation += 1;
+            }
+            (changed, Self::tool_view(&track, false))
+        };
+        if changed {
+            let events = self.settle_tools(None, view);
+            self.emit_tool_events(events);
         }
-        let changed = track.watch.differs(&watch);
-        track.watch = watch;
         changed
     }
 
@@ -714,13 +854,14 @@ impl Session {
         self.frozen.lock().unwrap().is_some()
     }
 
-    /// The programs running in front of the shell, outermost first, as `detect::program_name` names them.
-    /// Empty when the shell has no child. `None` when this cannot be read.
-    pub fn foreground_chain(&self) -> Option<Vec<String>> {
+    /// The programs running in front of the shell as `(pid, name)`, outermost first, the names as
+    /// `detect::program_name` gives them. Empty when the shell has no child. `None` when this cannot be read.
+    /// Blocking.
+    pub fn foreground_chain_pids(&self) -> Option<Vec<(u32, String)>> {
         let pid = self.pid.filter(|_| !self.exited.load(Ordering::SeqCst))?;
         #[cfg(windows)]
         {
-            super::proctree::foreground_chain(pid)
+            super::proctree::foreground_chain_pids(pid)
         }
         #[cfg(target_os = "linux")]
         {
@@ -735,7 +876,7 @@ impl Session {
                 return Some(Vec::new());
             }
             let comm = std::fs::read_to_string(format!("/proc/{group}/comm")).ok()?;
-            Some(vec![crate::profiles::detect::program_name(comm.trim())])
+            Some(vec![(group, crate::profiles::detect::program_name(comm.trim()))])
         }
         #[cfg(not(any(windows, target_os = "linux")))]
         {
@@ -743,6 +884,36 @@ impl Session {
             None
         }
     }
+
+    /// The programs running in front of the shell, outermost first, as `detect::program_name` names them.
+    /// Empty when the shell has no child. `None` when this cannot be read.
+    pub fn foreground_chain(&self) -> Option<Vec<String>> {
+        Some(names_of(&self.foreground_chain_pids()?))
+    }
+
+    /// The words of the deepest foreground process's command line. `None` when nothing runs or it cannot be read.
+    /// Blocking.
+    pub fn foreground_argv(&self) -> Option<Vec<String>> {
+        argv_of(&self.foreground_chain_pids()?)
+    }
+
+    /// The chain's names and the deepest process's words from one read of the process list. Blocking.
+    pub fn foreground_reading(&self) -> (Option<Vec<String>>, Option<Vec<String>>) {
+        match self.foreground_chain_pids() {
+            Some(chain) => (Some(names_of(&chain)), argv_of(&chain)),
+            None => (None, None),
+        }
+    }
+}
+
+fn names_of(chain: &[(u32, String)]) -> Vec<String> {
+    chain.iter().map(|(_, name)| name.clone()).collect()
+}
+
+fn argv_of(chain: &[(u32, String)]) -> Option<Vec<String>> {
+    let (pid, _) = chain.last()?;
+    let argv = super::split_args(&super::command_line(*pid)?);
+    (!argv.is_empty()).then_some(argv)
 }
 
 #[cfg(windows)]
@@ -821,6 +992,7 @@ mod tests {
             rows: 24,
             on_exit: None,
             on_mark: None,
+            on_tool: None,
             record: Some((path.clone(), None)),
             classify: None,
             initial_command: None,
@@ -862,6 +1034,7 @@ mod tests {
             rows: 24,
             on_exit: None,
             on_mark: None,
+            on_tool: None,
             record: None,
             classify: None,
             initial_command: None,
@@ -907,6 +1080,8 @@ mod tests {
                 exit: None,
                 reader_done: false,
                 startup_dsr_answered: true,
+                tool: None,
+                tool_gen: 0,
             }),
             space: Condvar::new(),
             notify: tokio::sync::Notify::new(),
@@ -916,6 +1091,7 @@ mod tests {
             exited: Arc::new(AtomicBool::new(false)),
             exit_callback: Mutex::new(None),
             mark_callback: None,
+            tool_callback: None,
             recorder: Some(Recorder::start(path.to_path_buf(), header).unwrap()),
             classify,
             rec: Mutex::new(RecState::default()),
@@ -1076,6 +1252,214 @@ mod tests {
         s.ingest(D_A);
         assert_eq!(s.watch_tool(), None);
         assert!(s.set_watch(s.command_epoch(), watch("vercel dev")));
+    }
+
+    /// What a session's `on_tool` hears, in order.
+    type Heard = Arc<Mutex<Vec<crate::tools::ToolEvent>>>;
+
+    fn listening(s: &mut Session) -> Heard {
+        let heard: Heard = Arc::default();
+        let sink = heard.clone();
+        s.tool_callback = Some(Box::new(move |event| sink.lock().unwrap().push(event)));
+        heard
+    }
+
+    fn heard(h: &Heard) -> Vec<crate::tools::ToolEvent> {
+        std::mem::take(&mut *h.lock().unwrap())
+    }
+
+    const E_VERCEL_LOGIN: &[u8] = b"\x1b]633;E;vercel login\x1b\\";
+    const WAITING: &str = "Waiting for sign-in in the browser";
+
+    fn raised() -> Vec<crate::tools::ToolEvent> {
+        vec![crate::tools::ToolEvent::NeedsYou(WAITING.into())]
+    }
+
+    #[test]
+    fn a_profiled_commands_prompt_raises_and_a_new_row_clears_it() {
+        use crate::tools::ToolEvent;
+        let dir = tempfile::tempdir().unwrap();
+        let mut s = bare(&dir.path().join("t1.cast"), Some(gh_classifier()), None);
+        let h = listening(&mut s);
+        s.ingest(b"$ ");
+        s.ingest(&cat(&[E_VERCEL_LOGIN, C, b"Waiting for authentication..."]));
+        assert_eq!(heard(&h), raised());
+        // A spinner redrawing its row is not new output.
+        for _ in 0..3 {
+            s.ingest("\r\x1b[2K\u{280b} Waiting for authentication...".as_bytes());
+        }
+        assert_eq!(heard(&h), []);
+        // One new row is not enough: the matcher reads the last 3 non-empty rows, and the prompt is still among them.
+        s.ingest(b"\r\nSuccess\r\n");
+        assert_eq!(heard(&h), []);
+        // Three rows of other text push it out, and the line breaks say it is new output.
+        s.ingest(b"one\r\ntwo\r\nthree\r\n");
+        assert_eq!(heard(&h), [ToolEvent::Cleared]);
+    }
+
+    #[test]
+    fn a_command_that_ends_while_its_prompt_shows_clears_it() {
+        use crate::tools::ToolEvent;
+        let dir = tempfile::tempdir().unwrap();
+        let mut s = bare(&dir.path().join("t2.cast"), Some(gh_classifier()), None);
+        let h = listening(&mut s);
+        s.ingest(&cat(&[E_VERCEL_LOGIN, C, b"Waiting for authentication..."]));
+        assert_eq!(heard(&h), raised());
+        // D and A with no line break: the watch drops, and the prompt with it.
+        s.ingest(D_A);
+        assert_eq!(heard(&h), [ToolEvent::Cleared]);
+        // Nothing is matched at the shell's own prompt.
+        s.ingest(b"Waiting for authentication...");
+        assert_eq!(heard(&h), []);
+    }
+
+    #[test]
+    fn a_shell_with_no_watch_matches_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut s = bare(&dir.path().join("t3.cast"), Some(gh_classifier()), None);
+        let h = listening(&mut s);
+        s.ingest(&cat(&[
+            b"\x1b]633;E;echo hi\x1b\\",
+            C,
+            b"Waiting for authentication...",
+        ]));
+        assert_eq!(heard(&h), []);
+        assert!(s.output.lock().unwrap().tool.is_none());
+    }
+
+    #[test]
+    fn a_secret_command_is_neither_matched_nor_announced() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut s = bare(&dir.path().join("t4.cast"), None, None);
+        let h = listening(&mut s);
+        let mut watch = crate::tools::watch_for(&crate::tools::Tools::shipped(), "vercel login");
+        watch.secret = true;
+        watch.label = "vercel login".into();
+        assert!(s.set_watch(s.command_epoch(), watch));
+        s.ingest(b"Waiting for authentication...\r\nReady! Available at http://localhost:3000\r\n");
+        assert_eq!(heard(&h), []);
+    }
+
+    #[test]
+    fn a_watch_that_loses_its_profiles_clears_a_raised_prompt_at_once() {
+        use crate::tools::ToolEvent;
+        let dir = tempfile::tempdir().unwrap();
+        let mut s = bare(&dir.path().join("t5.cast"), None, None);
+        let h = listening(&mut s);
+        let tools = crate::tools::Tools::shipped();
+        assert!(s.set_watch(s.command_epoch(), crate::tools::watch_for(&tools, "vercel login")));
+        s.ingest(b"Waiting for authentication...");
+        assert_eq!(heard(&h), raised());
+        // No output is needed for the prompt to go.
+        assert!(s.set_watch(s.command_epoch(), Watch::default()));
+        assert_eq!(heard(&h), [ToolEvent::Cleared]);
+        assert!(s.output.lock().unwrap().tool.is_none());
+    }
+
+    #[test]
+    fn an_announced_port_reaches_on_tool_once_unless_the_command_is_quiet() {
+        use crate::tools::ToolEvent;
+        let dir = tempfile::tempdir().unwrap();
+        let mut s = bare(&dir.path().join("t7.cast"), Some(gh_classifier()), None);
+        let h = listening(&mut s);
+        s.ingest(&cat(&[
+            b"\x1b]633;E;vercel dev\x1b\\",
+            C,
+            b"Ready! Available at http://localhost:3000\r\n",
+        ]));
+        let got = heard(&h);
+        assert_eq!(got.len(), 1, "{got:?}");
+        assert!(matches!(&got[0], ToolEvent::Port(chip) if chip.port == 3000 && chip.announced));
+        s.ingest(b"Ready! Available at http://localhost:3000\r\n");
+        assert_eq!(heard(&h), []);
+        // `vercel login` lists "login" in quiet_ports: its callback port makes no chip.
+        s.ingest(D_A);
+        s.ingest(&cat(&[
+            E_VERCEL_LOGIN,
+            C,
+            b"Ready! Available at http://localhost:4000\r\n",
+        ]));
+        assert_eq!(heard(&h), []);
+    }
+
+    #[test]
+    fn a_callback_runs_with_no_session_lock_held() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut s = bare(&dir.path().join("t8.cast"), Some(gh_classifier()), None);
+        let seen = Arc::new(AtomicBool::new(false));
+        let flag = seen.clone();
+        let probe: Arc<Mutex<Option<Arc<Session>>>> = Arc::default();
+        let from_callback = probe.clone();
+        s.tool_callback = Some(Box::new(move |_| {
+            let session = from_callback.lock().unwrap().clone().unwrap();
+            // Each of these takes a lock that the matcher's pass held.
+            let _ = (
+                session.peek(1),
+                session.command_epoch(),
+                session.secret_now(),
+                session.counters(),
+            );
+            flag.store(true, Ordering::SeqCst);
+        }));
+        let s = Arc::new(s);
+        *probe.lock().unwrap() = Some(s.clone());
+        let worker = s.clone();
+        let t = std::thread::spawn(move || {
+            worker.ingest(&cat(&[E_VERCEL_LOGIN, C, b"Waiting for authentication..."]));
+        });
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !seen.load(Ordering::SeqCst) && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(
+            seen.load(Ordering::SeqCst),
+            "the callback did not run, or it waited on a lock"
+        );
+        t.join().unwrap();
+        *probe.lock().unwrap() = None;
+    }
+
+    #[test]
+    fn a_command_line_watch_beats_a_late_watcher_reading() {
+        let dir = tempfile::tempdir().unwrap();
+        let s = bare(&dir.path().join("t9.cast"), Some(gh_classifier()), None);
+        let tools = crate::tools::Tools::shipped();
+        s.ingest(&cat(&[b"\x1b]633;E;docker ps\x1b\\", C]));
+        assert_eq!(s.watch_tool().as_deref(), Some("docker"));
+        // The foreground reads the same command as another tool: the line's tool stays.
+        assert!(!s.set_watch(s.command_epoch(), crate::tools::watch_for(&tools, "vercel dev")));
+        assert_eq!(s.watch_tool().as_deref(), Some("docker"));
+    }
+
+    #[test]
+    fn a_foreground_reading_can_turn_a_line_watch_secret() {
+        let dir = tempfile::tempdir().unwrap();
+        let tools = crate::tools::Tools::shipped();
+        let argv = |words: &[&str]| words.iter().map(|w| w.to_string()).collect::<Vec<_>>();
+        // An alias the line does not name: the line watch has no tool, and the process is `gh auth token`.
+        let s = bare(&dir.path().join("t10.cast"), Some(gh_classifier()), None);
+        s.ingest(&cat(&[b"\x1b]633;E;tok\x1b\\", C]));
+        assert!(!s.secret_now());
+        assert_eq!(s.watch_tool(), None);
+        let reading = crate::tools::watch_for_argv(&tools, &argv(&["gh.exe", "auth", "token"]));
+        assert!(s.set_watch(s.command_epoch(), reading));
+        assert!(s.secret_now());
+        assert_eq!(s.watch_tool().as_deref(), Some("gh"));
+        // The same reading again changes nothing.
+        let reading = crate::tools::watch_for_argv(&tools, &argv(&["gh.exe", "auth", "token"]));
+        assert!(!s.set_watch(s.command_epoch(), reading));
+        // A line watch with a tool keeps its tool, and still turns secret on.
+        let s = bare(&dir.path().join("t11.cast"), Some(gh_classifier()), None);
+        s.ingest(&cat(&[b"\x1b]633;E;docker\x1b\\", C]));
+        assert_eq!(s.watch_tool().as_deref(), Some("docker"));
+        let reading = crate::tools::watch_for_argv(&tools, &argv(&["gh.exe", "auth", "token"]));
+        assert!(s.set_watch(s.command_epoch(), reading));
+        assert!(s.secret_now());
+        assert_eq!(s.watch_tool().as_deref(), Some("docker"));
+        // It never turns secret off.
+        let reading = crate::tools::watch_for_argv(&tools, &argv(&["docker.exe", "ps"]));
+        s.set_watch(s.command_epoch(), reading);
+        assert!(s.secret_now());
     }
 
     #[test]

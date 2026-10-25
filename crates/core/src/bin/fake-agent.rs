@@ -11,6 +11,8 @@
 //!   fake-agent folder <path>       report <path> as the shell's folder (OSC 9;9), sleep 60 s
 //!   fake-agent cmdline <text>      report <text> as the command line (633;E), mark C, sleep 2 s, mark D;0
 //!   fake-agent secret-run <line> <out>  report <line> (633;E), mark C, print <out>, mark D and A, print "visible after"
+//!   fake-agent tool-prompt <line> <prompt>  report <line> (633;E), mark C, print <prompt> with no line break, then
+//!                                  three rows of other text, mark D and A
 //!   fake-agent env-present <names> print "NAME=present" or "NAME=absent" for each name (never a value), exit 0;
 //!                                  the names end at a "-c" word, where a launch line starts
 //!   fake-agent capture-input <f>   read stdin raw, turn bracketed paste on (2004h), append every byte read to <f>
@@ -134,6 +136,23 @@ fn main() {
             write!(out, "visible after\r\n").unwrap();
             out.flush().unwrap();
             pause();
+        }
+        Some("tool-prompt") => {
+            // A shell running a tool that asks something: report the line, mark C, print <prompt> with no line
+            // break, then three rows of other text, then mark D and A.
+            let pause = |ms| std::thread::sleep(std::time::Duration::from_millis(ms));
+            write!(out, "$ \x1b]633;E;{}\x1b\\\x1b]133;C\x07", escape_633(&args[1])).unwrap();
+            out.flush().unwrap();
+            pause(400);
+            write!(out, "{}", args[2]).unwrap();
+            out.flush().unwrap();
+            pause(800);
+            write!(out, "\r\nrow one\r\nrow two\r\nrow three\r\n").unwrap();
+            out.flush().unwrap();
+            pause(400);
+            write!(out, "\x1b]133;D;0\x07\x1b]133;A\x07").unwrap();
+            out.flush().unwrap();
+            pause(400);
         }
         Some("capture-input") => {
             raw_stdin();

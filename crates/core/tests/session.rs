@@ -18,6 +18,7 @@ fn fake(args: &[&str]) -> SpawnSpec {
         rows: 24,
         on_exit: None,
         on_mark: None,
+        on_tool: None,
         record: None,
         classify: None,
         initial_command: None,
@@ -278,6 +279,7 @@ fn on_exit_callback_gets_the_code() {
             let _ = tx.send(code);
         })),
         on_mark: None,
+        on_tool: None,
         record: None,
         classify: None,
         initial_command: None,
@@ -444,6 +446,7 @@ fn printer(nested: bool) -> SpawnSpec {
         rows: 24,
         on_exit: None,
         on_mark: None,
+        on_tool: None,
         record: None,
         classify: None,
         initial_command: None,
@@ -703,6 +706,25 @@ fn a_secret_command_hides_its_output_from_the_recording() {
     assert!(text.contains("visible after"), "{text}");
     assert_eq!(text.matches("Output hidden").count(), 1, "{text}");
     assert_eq!(text.matches("Output recorded again").count(), 1, "{text}");
+}
+
+#[test]
+fn a_profiled_tools_prompt_reaches_on_tool_through_a_pty() {
+    use marshell_core::tools::ToolEvent;
+    let (tx, rx) = std::sync::mpsc::channel();
+    let mut spec = fake(&["tool-prompt", "vercel login", "Waiting for authentication..."]);
+    spec.classify = Some(classify_with_shipped_tools());
+    spec.on_tool = Some(Box::new(move |event| {
+        let _ = tx.send(event);
+    }));
+    let s = Session::spawn("t-tool-prompt".into(), spec).unwrap();
+    let first = rx.recv_timeout(Duration::from_secs(10)).expect("a needs-you event");
+    assert_eq!(first, ToolEvent::NeedsYou("Waiting for sign-in in the browser".into()));
+    // Three rows of other text push the prompt out of the matcher's tail; that, and not the D mark, ends it.
+    let second = rx.recv_timeout(Duration::from_secs(10)).expect("a cleared event");
+    assert_eq!(second, ToolEvent::Cleared);
+    assert_eq!(drain(&s, Duration::from_secs(10)).1, Some(0));
+    assert!(rx.try_recv().is_err(), "an event came after the prompt cleared");
 }
 
 #[test]

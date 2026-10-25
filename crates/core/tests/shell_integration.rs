@@ -72,6 +72,7 @@ impl Shell {
             rows: 30,
             on_exit: None,
             on_mark: Some(Box::new(move |m| sink.lock().unwrap().push(m))),
+            on_tool: None,
             record: None,
             classify: None,
             initial_command: None,

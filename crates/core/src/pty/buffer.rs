@@ -19,6 +19,20 @@ pub(super) fn peek_rows(screen: &vt100::Screen, lines: usize) -> Vec<String> {
     rows.split_off(rows.len().saturating_sub(lines.clamp(1, 100)))
 }
 
+/// The rows a tool's prompt would be on: the screen's rows up to and including the cursor row, the last 3 non-empty
+/// ones, right-trimmed and joined with '\n'.
+pub(super) fn tail_rows(screen: &vt100::Screen) -> String {
+    let cursor_row = usize::from(screen.cursor_position().0);
+    let mut rows: Vec<String> = screen
+        .rows(0, screen.size().1)
+        .take(cursor_row + 1)
+        .map(|row| row.trim_end().to_string())
+        .filter(|row| !row.is_empty())
+        .collect();
+    rows.drain(..rows.len().saturating_sub(3));
+    rows.join("\n")
+}
+
 /// A ring of output bytes addressed by absolute byte offset ("seq").
 /// Old bytes fall off the front once `cap` is exceeded.
 pub struct OutputBuffer {
@@ -93,6 +107,18 @@ mod tests {
     fn peek_blank_screen_has_no_rows() {
         let parser = vt100::Parser::new(5, 20, 0);
         assert!(peek_rows(parser.screen(), 30).is_empty());
+    }
+
+    #[test]
+    fn the_tail_is_the_last_three_non_empty_rows_up_to_the_cursor_row() {
+        let mut parser = vt100::Parser::new(8, 20, 0);
+        parser.process(b"one\r\ntwo  \r\n\r\nthree\r\nfour   ok?");
+        assert_eq!(tail_rows(parser.screen()), "two\nthree\nfour   ok?");
+        // Rows below the cursor row are not part of it (a TUI that drew a footer, then moved up).
+        parser.process(b"\x1b[8;1Hfooter\x1b[2;1H");
+        assert_eq!(tail_rows(parser.screen()), "one\ntwo");
+        // A blank screen has no tail.
+        assert_eq!(tail_rows(vt100::Parser::new(5, 20, 0).screen()), "");
     }
 
     #[test]

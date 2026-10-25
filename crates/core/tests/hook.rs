@@ -912,6 +912,7 @@ async fn a_claude_event_from_a_shell_tab_running_grok_is_dropped() {
             program: "grok-marshell-test".into(),
             command_line: None,
             agent: Some("grok".into()),
+            tool: None,
         }),
     );
     assert_eq!(st.registry().effective_agent(&tab).as_deref(), Some("grok"));
