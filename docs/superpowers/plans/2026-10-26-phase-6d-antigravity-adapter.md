@@ -54,7 +54,7 @@ Task 1 checks each one against the real agy. If a finding differs, the plan is a
 
 **Rulings asked after Task 1** (through AskUserQuestion, recorded as §9 decisions 7 and 8, then folded into Tasks 2, 4, 6 and 7):
 
-- **R1: what gets a card.** `PreToolUse` fires before every tool, not only when agy would ask, so holding each one for a card would ask about every file read. The options depend on A3. The planned default is PLAN's "Hybrid" from "Session modes", done in the core: the hook answers at once by the tab's mode (reads pass; Manual asks about every edit and command; Auto-edit lets in-project edits pass; Full auto and Bypass ask only about the risky list), and agy starts in its strictest mode. An alternative is a matcher on Marshell's blocking entry, so read tools never reach it.
+- **R1: what gets a card.** `PreToolUse` fires before every tool, not only when agy would ask, so holding each one for a card would ask about every file read. The options depend on A3. The planned default answers at once by the tab's mode, in the core: reads pass; Manual asks about every edit and command; Auto-edit lets in-project edits pass; Full auto and Bypass ask only about the risky list. "Pass" means the neutral answer (Task 2), so agy's own mode and allow list decide, as they would with no hook. Launches keep the native flags the core's `mode_args` gives today (`--mode accept-edits`, `--dangerously-skip-permissions` and the rest), not PLAN's strict start, because a pass hands the call back to that mode. So in Bypass the risky-list card exists only if A3 shows `PreToolUse` fires under `--dangerously-skip-permissions`, and the question says so. An alternative is a matcher on Marshell's blocking entry, so read tools never reach it.
 - **R2: the plan meter.** agy's `quota` is one bucket per model with `remaining_fraction` and `reset_time`, and its window isn't known to be five hours. The row and the footer label the meter "5h". The planned default leaves Antigravity's meter out in 6d (model and context % only) unless Task 1 shows a five-hour window.
 
 ## Review focus
@@ -101,8 +101,10 @@ git commit -m "docs(research): record agy's hooks, status line and payloads, wit
 - Produces: `Args { role, agent, tag, event: Option<String> }`. `--event <Name>` is accepted once, with a non-empty value that is an identifier (`[A-Za-z]+`); anything else is an argument error, as an unknown flag is today.
 - Produces: when `event` is set and the stdin JSON is an object with no `hook_event_name`, the bridge adds `"hook_event_name": "<Name>"` before posting. An existing `hook_event_name` is never replaced. The `record` role saves the body as posted, under a file name that carries the event.
 - Produces in `permission.rs`: `pub fn neutral(agent: &str) -> &'static [u8]`: what the bridge prints for a `permission` call it can't take to a card (no tab, no core, the core's 204, the core's timeout, an answer that fails `accepted`). Claude and Codex: empty, as today. Antigravity: the answer A3 shows leaves agy as it would be with no hook (empty if empty is neutral; otherwise the neutral JSON A3 names).
+- Produces: `permission::accepted(answer, request)` takes agy's shape for agent `antigravity`: an object whose `decision` is `allow`, `deny`, `ask` or `force_ask`, with an optional string `reason` and nothing else. The core's answer is printed as it is. A Claude- or Codex-shaped answer on agent `antigravity` fails, and so falls back to `neutral`.
 
 - [ ] **Step 1: Write the failing tests.**
+  - `permission.rs`: `an_antigravity_allow_is_printed_as_it_is`, `an_antigravity_deny_with_a_reason_is_printed_as_it_is`, `a_codex_shaped_answer_on_antigravity_is_rejected`, `an_antigravity_answer_with_an_overwrite_is_rejected`.
   - `args.rs`: `parses_an_event`, `an_event_needs_a_value`, `an_event_that_is_not_an_identifier_is_an_error`, `a_second_event_is_an_error`.
   - `lib.rs`: `the_event_is_written_into_the_body` (body `{"conversationId":"c"}` with `--event Stop` posts `hook_event_name: "Stop"`), `an_existing_event_name_is_kept`, `a_body_that_is_not_an_object_is_posted_as_it_is`.
   - `permission.rs` or `lib.rs`: `antigravity_outside_a_tab_prints_the_neutral_answer` (no `MARSHELL_TAB_ID`), `antigravity_with_no_core_prints_the_neutral_answer` (no endpoint), `claude_and_codex_outside_a_tab_print_nothing`.
@@ -115,15 +117,17 @@ git commit -m "docs(research): record agy's hooks, status line and payloads, wit
 
 **Files:**
 - Modify: `crates/protocol/src/config.rs` (`EditOp`), `crates/core/src/config/preview.rs`, `crates/core/src/config/service.rs`, `crates/core/src/config/write.rs` if needed
-- Modify: `src/generated/EditOp.ts` (generated); the frontend's change-set preview if it switches on `EditOp`'s kind
-- Test: unit tests in `preview.rs` and `service.rs`
+- Modify: `src/generated/EditOp.ts` (generated); `src/features/onboarding/ConsentCard.tsx`
+- Test: unit tests in `preview.rs` and `service.rs`; `src/features/onboarding/ConsentCard.test.tsx`
 
 **Interfaces:**
 - Produces: `EditOp::DeleteFile` (no fields), applied to a file whose hash must equal `expected_hash`, which is required for this op. Preview: a unified diff from the file to nothing, with `after_hash: None` and `FileStatus::Changes`. A missing file is `NoChange`. Apply: the snapshot is taken first, then the file is removed with `write.rs`'s retrying remove. Undo restores the snapshot's bytes. The service's guard applies as to every op (managed, outside the allowed roots, Marshell's own, read-only and too large are refused with their existing reasons).
 - Produces: `Change::Deleted { path }` beside `Change::Created`, so undo knows to restore rather than remove.
+- The consent card names a file whose preview has `after_hash: None` and status `Changes` as "<file name> will be deleted" above its diff.
 
 - [ ] **Step 1: Write the failing tests.**
   - `delete_previews_every_line_removed`, `delete_of_a_missing_file_is_no_change`, `delete_without_an_expected_hash_is_refused` (`BadValue`), `delete_with_a_changed_file_is_a_conflict`, `delete_takes_a_snapshot_and_removes_the_file`, `undo_of_a_delete_puts_the_bytes_back` (BOM and CRLF content, byte-equal), `delete_of_a_managed_file_is_refused`.
+  - `ConsentCard.test.tsx`: `a_deleted_file_is_named_as_deleted` (not as unchanged or created).
 - [ ] **Step 2: Run `cargo test -p marshell-core -j 4 --lib config::`.** Expected: FAIL.
 - [ ] **Step 3: Implement it.** Then run `cargo test -p marshell-protocol` and `pnpm check:generated`.
 - [ ] **Step 4: Run Step 2's command and `pnpm test src/features/onboarding src/features/agents`.** Expected: PASS.
@@ -202,7 +206,7 @@ git commit -m "docs(research): record agy's hooks, status line and payloads, wit
 - Produces in `agents::antigravity`:
   - `pub const FIXTURE_VERSIONS: &[(u32, u32, u32)]`, holding Task 1's version
   - `pub fn version_gate(version: Option<&str>) -> Gate`, with name "Antigravity"
-  - `status::fold_event(prev: Option<&LiveStatus>, body: &Value, now_ms: u64) -> Option<LiveStatus>`
+  - `status::fold_event(prev: Option<&LiveStatus>, body: &Value, now_ms: u64, held: bool) -> Option<LiveStatus>`. `held` says the request waits for a card. In this task the caller passes `role == HookRole::Permission`; Task 7 passes the policy's outcome.
   - `status::fold_statusline(prev: Option<&LiveStatus>, body: &Value, now_ms: u64) -> LiveStatus`: `model` and `context_pct` (and the plan meter only if R2 says so), the state left as the hooks set it
   - `status::confirmation_pending(body: &Value) -> Option<bool>`: `tool_confirmation_pending`
 - Produces in `Registry`: `pub fn agent_prompt(&self, tab: &str, pending: bool)`. `true` sets an `Attention { message: "Waiting for you in the terminal", limited: true, .. }` when the row has no hook-raised Needs permission of its own. `false`, the next hook event, or typing into the tab clears it.
@@ -215,7 +219,7 @@ git commit -m "docs(research): record agy's hooks, status line and payloads, wit
   | `PreToolUse` edit or write tool | Working, "Editing \`<file name>\`" |
   | `PreToolUse` read tool | Working, "Reading \`<file name>\`" |
   | `PreToolUse` other | Working, "Using \`<tool>\`" |
-  | `PreToolUse` held for a card | NeedsPermission, "Wants to run \`<command>\`" or "Wants to use \`<tool>\`" |
+  | `PreToolUse` with `held` | NeedsPermission, "Wants to run \`<command>\`" or "Wants to use \`<tool>\`" |
   | `PostToolUse` | Working, "Thinking" after NeedsPermission, else the phrase is kept |
   | `PostInvocation` | unchanged (None) |
   | `Stop`, `terminationReason` `model_stop` | Done, "Done", no recap |
@@ -240,8 +244,8 @@ git commit -m "docs(research): record agy's hooks, status line and payloads, wit
 
 **Files:**
 - Create: `crates/core/src/agents/antigravity/request.rs`, `crates/core/src/agents/antigravity/policy.rs`
-- Modify: `crates/core/src/agents/mod.rs` (`supports_permissions`, `permission_view`, `permission_output`), `crates/core/src/server/hook.rs` (`hold_permission` asks the policy first), the release and timeout path that produces the hook's answer
-- Test: unit tests in `request.rs` and `policy.rs`; `crates/core/tests/permissions.rs`
+- Modify: `crates/core/src/agents/mod.rs` (`supports_permissions`, `permission_view`, `permission_output`), `crates/core/src/server/hook.rs` (`post`), the release and timeout path that produces the hook's answer
+- Test: unit tests in `request.rs`, `policy.rs` and `profiles/detect.rs`; `crates/core/tests/permissions.rs`
 
 **Interfaces:**
 - Produces in `agents::antigravity::request`:
@@ -249,13 +253,15 @@ git commit -m "docs(research): record agy's hooks, status line and payloads, wit
   - `pub fn view(p: &PendingPermission) -> Option<PermissionView>`, with `risk::classify` over the detail.
   - `pub fn permission_output(decision: &PermissionDecision, request: &Value) -> Result<Value, &'static str>`: allow → `{"decision":"allow"}`; deny → `{"decision":"deny","reason":<the person's message or common::DENIED_TEXT>}`; always allow → `Err` with the decision 5 copy (unless A7 found agy keeps the rule).
   - `pub const RELEASE: &str`: `"ask"`, or `"force_ask"` if A3 found `ask` skipped under skip-all (decision 4). A release and a timeout answer `{"decision": RELEASE}`.
-- Produces in `agents::antigravity::policy`: `pub fn immediate(mode: SessionMode, detail: &PermissionDetail, risky: bool, cwd: &Path) -> Option<Value>`. `Some(answer)` is returned at once with no card; `None` holds for the card. Its rules are R1's ruling. `mode` is the tab's `SessionInfo.mode`, Manual when it is absent. The planned default ports `sessionModes.ts`'s `decide` with reads always passing: a risky request → `None`; a read tool → allow; Manual and Plan → `None`; Auto-edit → allow for an in-project edit, else `None`; Full auto and Bypass → allow.
+- Produces in `agents::antigravity::policy`: `pub fn immediate(mode: SessionMode, detail: &PermissionDetail, risky: bool, cwd: &Path) -> Option<Value>`. `Some(answer)` is returned at once with no card; `None` holds for the card. Its rules are R1's ruling. `mode` is the tab's `SessionInfo.mode`, Manual when it is absent. The planned default ports `sessionModes.ts`'s `decide` with reads always passing, where "pass" is the neutral answer (Task 2) and launches keep `mode_args`' native flags: a risky request → `None`; a read tool → pass; Manual and Plan → `None`; Auto-edit → pass for an in-project edit, else `None`; Full auto and Bypass → pass.
+- For an Antigravity `permission` post, `post` runs in this order: the tab must be open and its effective agent `Some("antigravity")`, or the core answers neutral at once (an Antigravity IDE started from a plain shell tab inherits `MARSHELL_TAB_ID` and reads the same `hooks.json`). Then `policy::immediate`. Then `fold_live` with `held = immediate.is_none()`. Then, when held, `hold_permission`. An immediate answer folds as Working and raises no banner, sound or Departures entry.
 - `supports_permissions` includes `"antigravity"`.
 
 - [ ] **Step 1: Write the failing tests.**
   - `request.rs`: one `detail` test per Task 1 `PreToolUse` fixture; `an_unknown_tool_is_other_with_its_args`; `allow_answers_allow`; `deny_carries_the_reason`; `always_allow_is_refused_with_the_copy`; `a_release_answers_the_release_decision`.
   - `policy.rs`: one test per rule, and `a_risky_command_is_held_in_bypass`.
-  - `permissions.rs`: `an_antigravity_request_in_manual_waits_for_the_card`, `an_antigravity_read_is_answered_at_once`, `two_antigravity_tabs_each_get_their_own_answer`, `an_antigravity_request_from_an_unrecorded_version_still_reaches_the_card`, `an_antigravity_release_answers_ask`.
+  - `permissions.rs`: `an_antigravity_request_in_manual_waits_for_the_card`, `an_antigravity_read_is_answered_at_once`, `two_antigravity_tabs_each_get_their_own_answer`, `an_antigravity_request_from_an_unrecorded_version_still_reaches_the_card`, `an_antigravity_release_answers_ask`, `a_read_answered_at_once_never_shows_needs_permission`, `an_immediate_answer_raises_no_banner`, `an_antigravity_request_from_a_shell_tab_is_answered_neutrally`.
+  - `profiles/detect.rs`: `antigravity_launches_keep_their_native_mode_flags` (Manual none, Auto-edit `--mode accept-edits`, Bypass `--dangerously-skip-permissions`, with the hooks installed).
 - [ ] **Step 2: Run `cargo test -p marshell-core -j 4 --lib antigravity::` and `cargo test -p marshell-core -j 4 --test permissions`.** Expected: FAIL.
 - [ ] **Step 3: Implement it.**
 - [ ] **Step 4: Run Step 2's commands, then the Claude and Codex permission tests in the same file.** Expected: PASS.
