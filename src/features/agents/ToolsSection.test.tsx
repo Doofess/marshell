@@ -37,6 +37,19 @@ describe("ToolsView", () => {
     expect(h.indexOf("isn&#x27;t valid JSON")).toBeLessThan(h.indexOf("SSH"));
     expect(h.indexOf("Its id is used twice.")).toBeGreaterThan(h.indexOf("Mine"));
   });
+  it("lists a tool without presets, and a refused entry's reason under the tool whose id it took", () => {
+    const h = renderToStaticMarkup(
+      <ToolsView
+        catalog={{
+          tools: [...catalog.tools, { id: "aws", name: "AWS CLI", own: false, presets: [] }],
+          problems: [{ index: 1, id: "aws", reason: "The id \"aws\" is taken by a shipped tool." }],
+        }}
+      />,
+    );
+    expect(h).toContain("AWS CLI");
+    expect(h).toContain("No presets");
+    expect(h.indexOf("is taken by a shipped tool.")).toBeGreaterThan(h.indexOf("AWS CLI"));
+  });
   it("says a refused entry that is not listed, by its place", () => {
     const h = renderToStaticMarkup(<ToolsView catalog={{ ...catalog, problems: [{ index: 3, id: "gone", reason: "It has no presets." }] }} />);
     expect(h).toContain("It has no presets.");

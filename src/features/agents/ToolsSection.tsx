@@ -29,26 +29,24 @@ export function ToolsView({ catalog }: { catalog: ToolCatalog }) {
         </ul>
       )}
       <ul className="own-agents__list">
-        {catalog.tools
-          .filter((t) => t.presets.length > 0)
-          .map((t) => (
-            <li key={t.id} className="own-agents__item">
-              <div className="own-agents__summary">
-                <span className="own-agents__name" dir="auto">
-                  {t.name}
+        {catalog.tools.map((t) => (
+          <li key={t.id} className="own-agents__item">
+            <div className="own-agents__summary">
+              <span className="own-agents__name" dir="auto">
+                {t.name}
+              </span>
+              <span className="own-agents__command">{t.own ? "Own" : "Shipped"}</span>
+              <span className="own-agents__command" dir="auto">
+                {t.presets.length > 0 ? t.presets.map((p) => p.name).join(", ") : "No presets"}
+              </span>
+              {under(t.id).map((p) => (
+                <span key={`${p.index}-${p.reason}`} className="own-agents__problem" dir="auto">
+                  {p.reason}
                 </span>
-                <span className="own-agents__command">{t.own ? "Own" : "Shipped"}</span>
-                <span className="own-agents__command" dir="auto">
-                  {t.presets.map((p) => p.name).join(", ")}
-                </span>
-                {under(t.id).map((p) => (
-                  <span key={`${p.index}-${p.reason}`} className="own-agents__problem" dir="auto">
-                    {p.reason}
-                  </span>
-                ))}
-              </div>
-            </li>
-          ))}
+              ))}
+            </div>
+          </li>
+        ))}
       </ul>
       {unlisted.length > 0 && (
         <ul className="own-agents__problems">
