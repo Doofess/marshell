@@ -84,6 +84,10 @@ pub struct CreateSessionRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub color_scheme: Option<ColorScheme>,
+    /// A tool preset to type into the shell. It takes no agent, prompt, mode or agent preset.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub tool: Option<crate::tools::ToolLaunch>,
 }
 
 /// How much an agent may do before it asks. The core turns it into the CLI's own flags.

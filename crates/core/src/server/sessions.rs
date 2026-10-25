@@ -5,7 +5,8 @@ use crate::agents::manifest::mode_label;
 use crate::agents::presets::{self, PresetLaunch};
 use crate::auth;
 use crate::profiles::detect::{
-    Program, ResumeTarget, agent_command, default_shell, launch_argv, launch_argv_resume, mode_args,
+    PresetArg, Program, ResumeTarget, agent_command, command_on_path, default_shell, launch_argv, launch_argv_resume,
+    line_argv, mangles_double_quotes, mode_args, preset_line,
 };
 use crate::pty::{FreezeError, Session, SpawnSpec};
 use crate::registry::{Relaunch, ResumeRefusal};
@@ -20,6 +21,7 @@ use marshell_protocol::api::{
 };
 use marshell_protocol::brand;
 use marshell_protocol::hook::PeekRows;
+use marshell_protocol::tools::ToolLaunch;
 use serde::Deserialize;
 use std::path::PathBuf;
 
@@ -95,6 +97,8 @@ pub(super) struct Resolved {
     cwd: Option<String>,
     /// Shell integration is on, so the output carries prompt marks.
     marks: bool,
+    /// The line a tool preset runs first: it holds what the person typed, so it goes to the spawn and nowhere else.
+    initial_command: Option<String>,
 }
 
 /// Finds the profile (the default when `profile_id` is None) and builds the argv for the agent.
@@ -179,6 +183,7 @@ pub(super) async fn resolve(
                 env_strip,
                 cwd: p.cwd,
                 marks,
+                initial_command: None,
             })
         }
         // A reopened session that started from an explicit argv has no argv to restore.
@@ -246,7 +251,115 @@ fn custom(argv: Vec<String>) -> Resolved {
         env_strip: None,
         cwd: None,
         marks: false,
+        initial_command: None,
     }
+}
+
+const TOOL_NO_AGENT: &str = "A tool preset starts without an agent.";
+
+/// Turns a launch preset and the values for its fields into what to run: the default (or named) profile's shell, with
+/// the preset's command line typed as its first command. Returns the run and the session's name, the preset's own.
+/// The program comes from the preset only. Each field value becomes one whole argument of the program, quoted for the
+/// shell family or refused where the shell can't quote it. The values are never logged and live only in the returned
+/// `Resolved`, which goes to the spawn.
+pub(super) async fn resolve_tool(
+    st: &AppState,
+    profile_id: Option<&str>,
+    tool: &ToolLaunch,
+) -> Result<(Resolved, String), ApiError> {
+    let unknown = || {
+        (
+            StatusCode::BAD_REQUEST,
+            format!("Unknown tool preset: {}/{}.", tool.tool, tool.preset),
+        )
+    };
+    let tools = st.tools();
+    let preset = tools
+        .profile(&tool.tool)
+        .and_then(|p| p.def.presets.iter().find(|x| x.id == tool.preset))
+        .cloned()
+        .ok_or_else(unknown)?;
+    // Every field is asked for, used or not. A line break would end the typed command, and a NUL has no place in one.
+    let mut values: Vec<(&str, &str)> = Vec::new();
+    for field in &preset.fields {
+        let given = tool.fields.get(&field.id).map_or("", String::as_str);
+        let value = given.trim();
+        if value.is_empty() || given.contains(['\n', '\r', '\0']) {
+            return Err((StatusCode::BAD_REQUEST, format!("Fill in {}.", field.label)));
+        }
+        values.push((field.id.as_str(), value));
+    }
+    // A whole `{field-id}` argument takes the field's value; anything else is the preset's own text.
+    let args: Vec<PresetArg> = preset
+        .args
+        .iter()
+        .map(|arg| {
+            let id = arg.strip_prefix('{').and_then(|a| a.strip_suffix('}'));
+            match id.and_then(|id| values.iter().find(|(f, _)| *f == id)) {
+                Some((_, value)) => PresetArg::Field((*value).to_string()),
+                None => PresetArg::Literal(arg.clone()),
+            }
+        })
+        .collect();
+    // Copy the profile out so the lock is gone before any await.
+    let profile = {
+        let doc = st.0.profiles.lock().unwrap();
+        let id = profile_id.filter(|id| !id.is_empty()).unwrap_or(&doc.default_id);
+        doc.profiles.iter().find(|p| p.id == id).cloned()
+    };
+    let Some(p) = profile else {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            format!("Unknown profile: {}.", profile_id.unwrap_or("(default)")),
+        ));
+    };
+    if p.family == ShellFamily::PowerShell
+        && mangles_double_quotes(&p)
+        && args.iter().any(|a| matches!(a, PresetArg::Field(v) if v.contains('"')))
+    {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "Windows PowerShell 5 can't pass double quotes to the tool. Use PowerShell 7 or remove the quotes.".into(),
+        ));
+    }
+    let line = preset_line(p.family, &preset.program, &args).map_err(|msg| (StatusCode::BAD_REQUEST, msg))?;
+    // A WSL distro has its own PATH: those programs are not checked.
+    if p.family != ShellFamily::Wsl {
+        let program = preset.program.clone();
+        let found = tokio::task::spawn_blocking(move || command_on_path(&program))
+            .await
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        if !found {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                format!("{} isn't installed, or isn't on PATH.", preset.program),
+            ));
+        }
+    }
+    let mut env = p.env.clone();
+    let (argv, marks) = match &st.0.shell_dir {
+        Some(dir) => {
+            let (applied, marks) = crate::shell::integrate_with_command(&p, dir, &|k| std::env::var(k).ok(), &line);
+            // After the profile's env, so ours win.
+            env.extend(applied.env);
+            (applied.argv, marks)
+        }
+        None => (line_argv(&p, line.clone()), false),
+    };
+    let run = Resolved {
+        profile_id: p.id,
+        profile_name: p.name,
+        family: p.family,
+        argv,
+        env,
+        env_remove: Vec::new(),
+        env_strip: None,
+        cwd: p.cwd,
+        marks,
+        // Watched from the first byte: no OSC 633;E arrives for a command nobody typed.
+        initial_command: Some(line),
+    };
+    Ok((run, preset.name))
 }
 
 /// Refuses an agent whose program is not on PATH. The shell would start anyway and say so
@@ -454,7 +567,7 @@ pub(super) async fn spawn_into_map(
         on_tool: Some(on_tool),
         record: Some((recording, shell)),
         classify: Some(classify),
-        initial_command: None,
+        initial_command: run.initial_command,
     };
     let id = tab_id.to_string();
     // Spawning touches the OS (process creation) and recording writes a file:
@@ -488,6 +601,33 @@ pub async fn create(
     State(st): State<AppState>,
     Json(req): Json<CreateSessionRequest>,
 ) -> Result<Json<CreateSessionResponse>, ApiError> {
+    // A tool preset runs in a profile's shell: it takes no agent, prompt or mode, and no argv of its own. Nothing of it
+    // is remembered for the folder, and the row's relaunch is the plain shell (a restart never runs the tool again).
+    if let Some(tool) = req.tool.as_ref() {
+        if req.agent.is_some() || req.prompt.is_some() || req.mode.is_some() || req.preset.is_some() {
+            return Err((StatusCode::BAD_REQUEST, TOOL_NO_AGENT.into()));
+        }
+        if req.shell.is_some() {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                "A tool preset starts in a profile's shell.".into(),
+            ));
+        }
+        let (run, name) = resolve_tool(&st, req.profile_id.as_deref(), tool).await?;
+        let created = start_session(
+            &st,
+            run,
+            None,
+            Some(name),
+            req.cwd,
+            (req.cols, req.rows),
+            req.color_scheme,
+            None,
+            None,
+        )
+        .await?;
+        return Ok(Json(created));
+    }
     if let Some(agent) = req.agent.as_deref().filter(|a| !st.agents().is_known(a)) {
         return Err((StatusCode::BAD_REQUEST, format!("Unknown agent: {agent}.")));
     }
@@ -1169,6 +1309,152 @@ mod tests {
         let (status, message) = refused(resolve_preset(&wsl, Some("claude"), Some("deepseek")));
         assert_eq!(status, StatusCode::BAD_REQUEST);
         assert_eq!(message, "DeepSeek starts from a Windows shell profile, not WSL.");
+    }
+
+    /// A state whose only profile runs `command` in `family`, with an own tool `mine`. Its presets run `cargo` (always on
+    /// PATH under `cargo test`), `no-such-program-marshell-test` (never), and `cargo` with no field.
+    fn tool_state(family: ShellFamily, command: &[&str]) -> AppState {
+        let profile = marshell_protocol::api::Profile {
+            id: "p".into(),
+            name: "p".into(),
+            command: command.iter().map(|s| s.to_string()).collect(),
+            family,
+            cwd: None,
+            env: Vec::new(),
+            shell_integration: true,
+            terminal_theme: None,
+            detected: true,
+        };
+        let home = tempfile::tempdir().unwrap().keep();
+        std::fs::write(
+            crate::paths::tools_file(&home),
+            serde_json::json!({"version": 1, "tools": [{
+            "id": "mine", "name": "Mine", "commands": ["mine-marshell-test"], "presets": [
+                {"id": "build", "name": "Build it", "program": "cargo",
+                 "args": ["run", "{target}"], "fields": [{"id": "target", "label": "Target"}]},
+                {"id": "gone", "name": "Not installed", "program": "no-such-program-marshell-test"},
+                {"id": "plain", "name": "Plain", "program": "cargo", "args": ["--version"]}
+            ]}]})
+            .to_string(),
+        )
+        .unwrap();
+        AppState::new("t".into(), 1, Vec::new(), home, vec![profile])
+    }
+
+    fn launch_of(preset: &str, fields: &[(&str, &str)]) -> ToolLaunch {
+        ToolLaunch {
+            tool: "mine".into(),
+            preset: preset.into(),
+            fields: fields.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect(),
+        }
+    }
+
+    fn resolve_launch(st: &AppState, launch: &ToolLaunch) -> Result<(Resolved, String), ApiError> {
+        tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap()
+            .block_on(resolve_tool(st, Some("p"), launch))
+    }
+
+    #[test]
+    fn a_preset_runs_inside_the_integrated_powershell() {
+        let st = tool_state(ShellFamily::PowerShell, &["pwsh.exe", "-NoLogo"]);
+        let (run, name) = resolve_launch(&st, &launch_of("plain", &[])).unwrap();
+        assert_eq!(name, "Plain");
+        assert_eq!(run.argv[..4], ["pwsh.exe", "-NoLogo", "-NoExit", "-Command"]);
+        let last = run.argv.last().unwrap();
+        assert!(last.starts_with(". ([scriptblock]"), "{last}");
+        assert!(last.ends_with("; & cargo --version"), "{last}");
+        assert_eq!(run.initial_command.as_deref(), Some("& cargo --version"));
+        assert!(run.marks);
+        assert!(run.env_remove.is_empty() && run.env_strip.is_none());
+    }
+
+    #[test]
+    fn cmd_runs_a_preset_after_k_with_its_prompt_env() {
+        let st = tool_state(ShellFamily::Cmd, &["cmd.exe"]);
+        let (run, _) = resolve_launch(&st, &launch_of("build", &[("target", "web:3000")])).unwrap();
+        assert_eq!(run.argv, ["cmd.exe", "/k", "cargo run web:3000"]);
+        assert!(run.env.iter().any(|(k, v)| k == "PROMPT" && v.contains("]133;")));
+        assert_eq!(run.initial_command.as_deref(), Some("cargo run web:3000"));
+        // cmd can't quote, so a value that needs it is refused and nothing starts.
+        let (status, message) = resolve_launch(&st, &launch_of("build", &[("target", "my dir")]))
+            .err()
+            .unwrap();
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(
+            message,
+            "Command Prompt can't pass an argument that needs quoting. Use PowerShell."
+        );
+    }
+
+    #[test]
+    fn a_field_value_with_a_space_is_quoted_per_shell() {
+        let fields = [("target", "my dir")];
+        let st = tool_state(ShellFamily::PowerShell, &["pwsh.exe"]);
+        let (run, _) = resolve_launch(&st, &launch_of("build", &fields)).unwrap();
+        assert!(run.argv.last().unwrap().ends_with("; & cargo run 'my dir'"));
+        let st = tool_state(ShellFamily::Posix, &["fish", "-l"]);
+        let (run, _) = resolve_launch(&st, &launch_of("build", &fields)).unwrap();
+        // No integration for fish here, so it runs the way an agent does.
+        assert_eq!(run.argv, ["fish", "-l", "-c", "cargo run 'my dir'; exec \"$SHELL\" -l"]);
+        assert!(!run.marks);
+        assert_eq!(run.initial_command.as_deref(), Some("cargo run 'my dir'"));
+        let st = tool_state(ShellFamily::Wsl, &["wsl.exe"]);
+        let (run, _) = resolve_launch(&st, &launch_of("build", &fields)).unwrap();
+        assert_eq!(
+            run.argv,
+            ["wsl.exe", "--exec", "bash", "-lc", "cargo run 'my dir'; exec bash -l"]
+        );
+    }
+
+    #[test]
+    fn a_missing_field_is_refused_with_its_label() {
+        let st = tool_state(ShellFamily::PowerShell, &["pwsh.exe"]);
+        let refused = |fields: &[(&str, &str)]| resolve_launch(&st, &launch_of("build", fields)).err().unwrap();
+        let want = (StatusCode::BAD_REQUEST, "Fill in Target.".to_string());
+        assert_eq!(refused(&[]), want);
+        assert_eq!(refused(&[("target", "")]), want);
+        assert_eq!(refused(&[("target", "  ")]), want);
+        for bad in ["a\nb", "a\rb", "a\0b", "a\n"] {
+            assert_eq!(refused(&[("target", bad)]), want, "{bad:?}");
+        }
+    }
+
+    #[test]
+    fn an_unknown_preset_or_a_missing_program_is_refused() {
+        let st = tool_state(ShellFamily::PowerShell, &["pwsh.exe"]);
+        let refused = |launch: ToolLaunch| resolve_launch(&st, &launch).err().unwrap();
+        assert_eq!(
+            refused(launch_of("nope", &[])),
+            (StatusCode::BAD_REQUEST, "Unknown tool preset: mine/nope.".to_string())
+        );
+        let mut other = launch_of("build", &[]);
+        other.tool = "nothing".into();
+        assert_eq!(refused(other).1, "Unknown tool preset: nothing/build.");
+        assert_eq!(
+            refused(launch_of("gone", &[])),
+            (
+                StatusCode::BAD_REQUEST,
+                "no-such-program-marshell-test isn't installed, or isn't on PATH.".to_string()
+            )
+        );
+        // A shipped preset is valid too (it is refused here only when its program is missing).
+        let shipped = ToolLaunch {
+            tool: "vite".into(),
+            preset: "dev".into(),
+            fields: Default::default(),
+        };
+        let result = resolve_launch(&st, &shipped);
+        assert!(result.is_ok() || result.err().unwrap().1.ends_with("isn't installed, or isn't on PATH."));
+    }
+
+    #[test]
+    fn a_field_naming_a_program_cannot_change_the_program() {
+        // The program is the preset's; a value that looks like a command stays an argument.
+        let st = tool_state(ShellFamily::Posix, &["fish"]);
+        let (run, _) = resolve_launch(&st, &launch_of("build", &[("target", "x'; calc; '")])).unwrap();
+        assert_eq!(run.initial_command.as_deref(), Some("cargo run 'x'\\''; calc; '\\'''"));
     }
 
     fn var(name: &str, value: &str) -> (String, String) {

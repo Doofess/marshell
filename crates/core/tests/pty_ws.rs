@@ -45,6 +45,7 @@ async fn create(core: &RunningCore, shell: Vec<String>, cwd: Option<String>) -> 
         prompt: None,
         mode: None,
         color_scheme: None,
+        tool: None,
         preset: None,
     };
     tokio::task::spawn_blocking(move || {

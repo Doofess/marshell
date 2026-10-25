@@ -3,7 +3,7 @@
 //! environment. No user profile or rc file is ever written: each script loads the user's own
 //! startup files itself, or runs after the shell has loaded them.
 
-use crate::profiles::detect::{posix_quote, powershell_quote};
+use crate::profiles::detect::{line_argv, posix_quote, powershell_quote};
 use marshell_protocol::api::{IntegrationInfo, Profile};
 use std::path::{Path, PathBuf};
 
@@ -205,6 +205,40 @@ pub fn integrate(profile: &Profile, dir: &Path, outer_env: &dyn Fn(&str) -> Opti
     Ok(build(kind(profile)?, profile, dir, outer_env))
 }
 
+/// Like `integrate`, and `line` runs first: PowerShell gets `; <line>` after the integration script, and cmd gets
+/// `/k <line>` with its `PROMPT`. The other shells (and a profile whose integration is off or can't apply) run the line
+/// the way an agent runs, with no integration. The bool says whether the shell has integration, so prompt marks come.
+/// `line` is already quoted; it holds what the person typed, so nothing here logs or stores it.
+pub fn integrate_with_command(
+    profile: &Profile,
+    dir: &Path,
+    outer_env: &dyn Fn(&str) -> Option<String>,
+    line: &str,
+) -> (Applied, bool) {
+    match kind(profile) {
+        Ok(kind @ Kind::PowerShell) => {
+            let mut applied = build(kind, profile, dir, outer_env);
+            if let Some(command) = applied.argv.last_mut() {
+                command.push_str("; ");
+                command.push_str(line);
+            }
+            (applied, true)
+        }
+        Ok(kind @ Kind::Cmd) => {
+            let mut applied = build(kind, profile, dir, outer_env);
+            applied.argv.extend(["/k".into(), line.into()]);
+            (applied, true)
+        }
+        _ => (
+            Applied {
+                argv: line_argv(profile, line.into()),
+                env: Vec::new(),
+            },
+            false,
+        ),
+    }
+}
+
 /// What integration does for `profile`, for the profile page. `dir` is None when install failed.
 pub fn describe(profile: &Profile, dir: Option<&Path>, outer_env: &dyn Fn(&str) -> Option<String>) -> IntegrationInfo {
     let not_applied = |reason: &str| IntegrationInfo {
@@ -299,6 +333,49 @@ mod tests {
         assert!(reason.contains("WSL"), "{reason}");
         let git = profile(&[r"C:\Program Files\Git\bin\bash.exe"], ShellFamily::Posix);
         assert!(integrate(&git, Path::new(DIR), &no_env).is_ok());
+    }
+
+    #[test]
+    fn a_preset_runs_inside_the_integrated_powershell() {
+        let p = profile(&["pwsh.exe", "-NoLogo"], ShellFamily::PowerShell);
+        let (applied, integrated) = integrate_with_command(&p, Path::new(DIR), &no_env, "& npx vite");
+        assert!(integrated);
+        assert_eq!(applied.argv[..4], ["pwsh.exe", "-NoLogo", "-NoExit", "-Command"]);
+        let last = applied.argv.last().unwrap();
+        assert!(last.starts_with(". ([scriptblock]::Create("), "{last}");
+        assert!(last.ends_with("); & npx vite"), "{last}");
+        assert_eq!(applied.argv.len(), 5);
+    }
+
+    #[test]
+    fn cmd_runs_a_preset_after_k_with_its_prompt_env() {
+        let p = profile(&["cmd.exe"], ShellFamily::Cmd);
+        let (applied, integrated) = integrate_with_command(&p, Path::new(DIR), &no_env, "npx vite");
+        assert!(integrated);
+        assert_eq!(applied.argv, ["cmd.exe", "/k", "npx vite"]);
+        assert!(env_value(&applied, "PROMPT").unwrap().contains("]133;"));
+    }
+
+    #[test]
+    fn other_shells_run_a_preset_the_way_an_agent_runs() {
+        let bash = profile(&["bash", "-l"], ShellFamily::Posix);
+        let (applied, integrated) = integrate_with_command(&bash, Path::new(DIR), &no_env, "npx vite");
+        assert!(!integrated);
+        assert_eq!(applied.argv, ["bash", "-l", "-c", "npx vite; exec \"$SHELL\" -l"]);
+        assert!(applied.env.is_empty());
+        let wsl = profile(&["wsl.exe"], ShellFamily::Wsl);
+        let (applied, integrated) = integrate_with_command(&wsl, Path::new(DIR), &no_env, "npx vite");
+        assert!(!integrated);
+        assert_eq!(
+            applied.argv,
+            ["wsl.exe", "--exec", "bash", "-lc", "npx vite; exec bash -l"]
+        );
+        // A profile with integration off runs the line without it too.
+        let mut off = profile(&["pwsh.exe"], ShellFamily::PowerShell);
+        off.shell_integration = false;
+        let (applied, integrated) = integrate_with_command(&off, Path::new(DIR), &no_env, "& npx vite");
+        assert!(!integrated);
+        assert_eq!(applied.argv, ["pwsh.exe", "-NoExit", "-Command", "& npx vite"]);
     }
 
     #[test]

@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use ts_rs::TS;
 
 /// What the person has to do when a tool needs them.
@@ -121,6 +122,31 @@ pub struct CatalogTool {
 pub struct ToolCatalog {
     pub tools: Vec<CatalogTool>,
     pub problems: Vec<OwnToolProblem>,
+}
+
+/// A launch preset to start in a new tab, with the values the person filled in. The values are used for this start
+/// only: no layout, memory, history or log holds them.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct ToolLaunch {
+    /// The tool's id.
+    pub tool: String,
+    /// The preset's id within the tool.
+    pub preset: String,
+    /// A value for each of the preset's fields, by field id.
+    #[serde(default)]
+    pub fields: BTreeMap<String, String>,
+}
+
+// No derived Debug: `fields` holds what the person typed, and a debug print must not show it.
+impl std::fmt::Debug for ToolLaunch {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ToolLaunch")
+            .field("tool", &self.tool)
+            .field("preset", &self.preset)
+            .field("fields", &self.fields.keys().collect::<Vec<_>>())
+            .finish()
+    }
 }
 
 /// A local port a tab's tool announced or a process in the tab listens on, as the tab shows it.
