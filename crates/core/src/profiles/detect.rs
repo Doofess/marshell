@@ -34,10 +34,24 @@ pub fn command_on_path(name: &str) -> bool {
     command_path(name).is_some()
 }
 
-/// The file `name` runs from PATH, as `command_on_path` finds it.
+/// The file `name` runs from Marshell's own PATH, as `command_on_path` finds it.
 pub fn command_path(name: &str) -> Option<PathBuf> {
-    let path = std::env::var_os("PATH")?;
-    let dirs: Vec<PathBuf> = std::env::split_paths(&path).collect();
+    command_path_in(&std::env::var_os("PATH")?, name)
+}
+
+/// The PATH a session's program is looked up on. It is not Marshell's own: portable-pty builds a child's environment from
+/// the process plus the registry's `Environment` values (PATH merged), so a CLI installed while Marshell runs is on it, and
+/// one that only Marshell's PATH holds is not. It is read from portable-pty itself, so the two cannot drift. Reads the
+/// registry on Windows: take it once per request.
+pub fn tab_path() -> Option<std::ffi::OsString> {
+    portable_pty::CommandBuilder::new("x")
+        .get_env("PATH")
+        .map(std::ffi::OsStr::to_os_string)
+}
+
+/// The file `name` runs from the PATH `path`, with the PATHEXT endings on Windows.
+pub fn command_path_in(path: &std::ffi::OsStr, name: &str) -> Option<PathBuf> {
+    let dirs: Vec<PathBuf> = std::env::split_paths(path).collect();
     let pathext = std::env::var("PATHEXT").unwrap_or_else(|_| ".COM;.EXE;.BAT;.CMD".to_string());
     let exts: Vec<&str> = if cfg!(windows) {
         pathext.split(';').filter(|e| !e.is_empty()).collect()

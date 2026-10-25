@@ -138,7 +138,7 @@ pub(super) async fn resolve(
             let launch = preset.map(|id| preset_launch(st, id, p.family)).transpose()?;
             let command = match agent {
                 None => None,
-                Some(id) => Some(program_command(st, id, p.family == ShellFamily::Wsl).await?),
+                Some(id) => Some(program_command(st, id, p.family == ShellFamily::Wsl, &p.env).await?),
             };
             let spec = agent
                 .zip(command.as_deref())
@@ -194,7 +194,12 @@ pub(super) async fn resolve(
 /// commands that resolves on PATH as that agent (off the async workers: a version check may run its
 /// `--version`); a WSL distro has its own PATH, so there it is the first command. An unknown id gets
 /// itself, and `launch_argv` refuses it.
-async fn program_command(st: &AppState, id: &str, wsl: bool) -> Result<String, ApiError> {
+async fn program_command(
+    st: &AppState,
+    id: &str,
+    wsl: bool,
+    profile_env: &[(String, String)],
+) -> Result<String, ApiError> {
     if let Some(command) = agent_command(id) {
         return Ok(command.to_string());
     }
@@ -204,9 +209,9 @@ async fn program_command(st: &AppState, id: &str, wsl: bool) -> Result<String, A
     if wsl {
         return Ok(m.commands.first().cloned().unwrap_or_else(|| id.to_string()));
     }
-    let (path_of, versions) = (st.0.agent_path, st.0.agent_versions.clone());
+    let (finder, versions) = (st.agent_finder(profile_env), st.0.agent_versions.clone());
     let name = m.name.clone();
-    let found = tokio::task::spawn_blocking(move || find(&m, &|c| path_of(c), &|p| versions.get(p)))
+    let found = tokio::task::spawn_blocking(move || find(&m, &|c| finder.path_of(c), &|p| versions.get(p)))
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     match found {
@@ -250,7 +255,7 @@ fn check_agent_installed(st: &AppState, run: &Resolved, agent: Option<&str>) -> 
     if let Some(agent) = agent
         && run.family != ShellFamily::Wsl
         && let Some(command) = agent_command(agent)
-        && !(st.0.agent_on_path)(command)
+        && !st.agent_finder(&run.env).on_path(command)
     {
         let name = agent_display_name(agent).unwrap_or(command);
         return Err((

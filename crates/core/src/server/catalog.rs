@@ -1,6 +1,6 @@
 //! The agent catalog the launcher reads, and the person's own agents in `agents.json`.
 
-use super::AppState;
+use super::{AgentFinder, AppState};
 use crate::agents::identify::find;
 use crate::agents::manifest::{AgentManifest, PromptStyle, shipped};
 use crate::agents::own::{self, SaveError};
@@ -36,8 +36,8 @@ const OFFERED: [SessionMode; 5] = [
     SessionMode::Bypass,
 ];
 
-fn manifest_entry(st: &AppState, m: &AgentManifest, own: bool) -> CatalogAgent {
-    let found = find(m, &|c| (st.0.agent_path)(c), &|p| st.0.agent_versions.get(p)).ok();
+fn manifest_entry(st: &AppState, finder: &AgentFinder, m: &AgentManifest, own: bool) -> CatalogAgent {
+    let found = find(m, &|c| finder.path_of(c), &|p| st.0.agent_versions.get(p)).ok();
     CatalogAgent {
         id: m.id.clone(),
         name: m.name.clone(),
@@ -56,11 +56,13 @@ fn manifest_entry(st: &AppState, m: &AgentManifest, own: bool) -> CatalogAgent {
 /// Runs processes (`--version`) on a cold cache, so it goes through `spawn_blocking`.
 fn build(st: &AppState) -> AgentCatalog {
     let agents = st.agents();
+    // One PATH for the whole catalog: the one a tab gets, read once.
+    let finder = st.agent_finder(&[]);
     let profiles = st.0.profiles.lock().unwrap_or_else(|e| e.into_inner()).profiles.clone();
     let mut list: Vec<CatalogAgent> = adapters()
         .into_iter()
         .map(|(id, name, cli, prompt)| {
-            let exe = st.adapter_exe(&profiles, id);
+            let exe = st.adapter_exe(&profiles, id, &finder);
             let version = exe.as_deref().and_then(|exe| st.agent_version(id, Some(exe)));
             CatalogAgent {
                 id: id.into(),
@@ -85,7 +87,7 @@ fn build(st: &AppState) -> AgentCatalog {
         agents
             .manifests()
             .enumerate()
-            .map(|(i, m)| manifest_entry(st, m, i >= shipped_count)),
+            .map(|(i, m)| manifest_entry(st, &finder, m, i >= shipped_count)),
     );
     AgentCatalog {
         agents: list,
