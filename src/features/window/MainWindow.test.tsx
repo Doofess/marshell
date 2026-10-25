@@ -517,8 +517,9 @@ describe("MainWindow: renderTerminal", () => {
     expect((h.match(/data-live="/g) ?? []).length).toBe(2);
     expect(h).not.toContain("aria-label=\"Terminal for");
   });
-  it("shows the ports it is given instead of the scenario's", () => {
-    expect(html()).toContain("localhost:3000");
+  it("shows the ports it is given, and none of its own", () => {
+    expect(html()).not.toContain("localhost:3000");
+    expect(html({ ports: ["localhost:3000"] })).toContain("localhost:3000");
     expect(html({ ports: [] })).not.toContain("localhost:3000");
   });
 });

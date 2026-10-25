@@ -2,6 +2,8 @@ import { AgentMark } from "../../components/AgentMark/AgentMark";
 import { Chip } from "../../components/Chip/Chip";
 import { ContextRing } from "../../components/ContextRing/ContextRing";
 import { SessionNumber } from "../../components/SessionNumber/SessionNumber";
+import type { PortChip } from "../../generated/PortChip";
+import { PortChips, type PortMenuRequest } from "../ports/PortChips";
 import { sessionWord, SESSION_NUMBER_HINT } from "../sidebar/sessionNumber";
 import { AuxGlyph } from "../../components/StatusGlyph/StatusGlyph";
 import { modeCaution, subagentsText } from "../sidebar/format";
@@ -28,7 +30,7 @@ export const headerDanger = (mode?: Mode) => mode === "bypass" || mode === "full
  * The session header in the unified 40 px top bar: name, place, mode, model and effort, subagents, context, ports.
  * Unknown values are left out, never shown as a dash or guessed.
  */
-export function SessionHeader({ row, ports = [], onMode }: { row: RowModel; ports?: string[]; /** Makes the mode chip a button; it gives the chip's corner, where the mode menu opens. */ onMode?: (anchor: { x: number; y: number }) => void }) {
+export function SessionHeader({ row, ports, onMode, onPortMenu }: { row: RowModel; /** Replaces the row's own chips; for stories. */ ports?: PortChip[]; /** Asks the window to open a chip's menu. Without it a chip has none. */ onPortMenu?: (request: PortMenuRequest) => void; /** Makes the mode chip a button; it gives the chip's corner, where the mode menu opens. */ onMode?: (anchor: { x: number; y: number }) => void }) {
   const caution = modeCaution(row.mode);
   const modelAndEffort = [row.model, row.effort].filter(Boolean).join(" · ");
   return (
@@ -68,9 +70,7 @@ export function SessionHeader({ row, ports = [], onMode }: { row: RowModel; port
       {row.subagents !== undefined && <span className="session-header__meta">{subagentsText(row.subagents)}</span>}
       <span className="session-header__spacer" />
       <ContextRing pct={row.contextPct} />
-      {ports.map((p) => (
-        <Chip key={p}>{p}</Chip>
-      ))}
+      <PortChips ports={ports ?? row.ports ?? []} {...(onPortMenu ? { onMenu: onPortMenu } : {})} />
     </div>
   );
 }

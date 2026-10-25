@@ -1,0 +1,42 @@
+/* A port chip is a button that wears the chip's look: a pill told apart by fill, with no box. */
+.port-chip {
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+  padding: 0 6px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--fill);
+  color: var(--text-1);
+  font: inherit;
+  font-size: var(--text-11);
+  line-height: 18px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+/* A port the CLI itself announced reads a little stronger than one found by looking at what listens. */
+.port-chip[data-announced] {
+  background: color-mix(in oklch, var(--accent) 16%, var(--fill));
+}
+.port-chip:focus-visible {
+  outline: 2px solid var(--focus, var(--accent));
+  outline-offset: 2px;
+}
+.port-chip:active {
+  background: var(--selected);
+}
+@media (hover: hover) and (pointer: fine) {
+  .port-chip:hover {
+    background: var(--hover);
+  }
+}
+@media (forced-colors: active) {
+  .port-chip {
+    outline: 1px solid ButtonText;
+    background: ButtonFace;
+    color: ButtonText;
+  }
+  .port-chip:focus-visible {
+    outline: 2px solid Highlight;
+  }
+}

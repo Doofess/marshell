@@ -136,7 +136,7 @@
   background-image: linear-gradient(color-mix(in oklch, var(--agent-signal, var(--accent)) 12%, transparent), color-mix(in oklch, var(--agent-signal, var(--accent)) 12%, transparent));
 }
 /* The inactive header recedes; terminal text is never dimmed, and neither is a pane that needs you or its narrow-pane warning. */
-.pane[data-active="false"] .pane__header:not([data-needs="true"]) > :not(.chip) {
+.pane[data-active="false"] .pane__header:not([data-needs="true"]) > :not(.chip):not(.port-chip) {
   opacity: 0.6;
 }
 /* The header is the pane's title bar: the number and the name are the last things to give way. The project shrinks first. */
