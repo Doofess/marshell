@@ -109,3 +109,14 @@ describe("Bookmark fact", () => {
     expect(focusAfterMenu("bookmark", false)).toBe("row");
   });
 });
+
+describe("menuFacts for an agent's modes", () => {
+  const agentInfo = (mode: string) => ({ ...info("x"), agent: "cursor", mode }) as SessionInfo;
+  it("Mode ▸ is left out when the agent offers no other mode", () => {
+    expect(menuFacts("x", ctx({ infos: [agentInfo("manual")], offered: () => [] })).modeChangeable).toBe(false);
+    expect(menuFacts("x", ctx({ infos: [agentInfo("manual")], offered: () => ["manual"] })).modeChangeable).toBe(false);
+  });
+  it("Mode ▸ stays when another mode is offered", () => {
+    expect(menuFacts("x", ctx({ infos: [agentInfo("manual")], offered: () => ["manual", "plan"] })).modeChangeable).toBe(true);
+  });
+});

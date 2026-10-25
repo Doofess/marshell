@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
+import type { AgentCatalog } from "../../generated/AgentCatalog";
+import type { CatalogAgent } from "../../generated/CatalogAgent";
 import { commandById } from "../../lib/keymap";
-import { catalogModes, decide, effectiveMode, launchArgs, MODES, nextOffered, offeredMode, switchKind, type Request } from "./sessionModes";
+import { catalogModes, decide, effectiveMode, launchArgs, MODES, nextOffered, offeredMode, offeredModes, switchKind, type Request } from "./sessionModes";
 
 const edit: Request = { kind: "edit", inProject: true };
 const editOutside: Request = { kind: "edit", inProject: false };
@@ -145,5 +147,26 @@ describe("a manifest agent: only the modes its manifest maps", () => {
     expect(nextOffered([...cursor], "bypass")).toBe("manual");
     expect(nextOffered([...cursor], "auto-edit")).toBe("manual");
     expect(nextOffered(undefined, "bypass")).toBe("manual");
+  });
+});
+
+describe("offeredModes", () => {
+  const entry = (id: string, modes: string[], adapter = false) => ({ id, adapter, modes }) as unknown as CatalogAgent;
+  const catalog = {
+    agents: [entry("claude", ["manual", "plan", "auto-edit", "full-auto", "bypass"], true), entry("cursor", ["manual", "plan", "bypass"]), entry("opencode", [])],
+    presets: [],
+  } as unknown as AgentCatalog;
+  it("an adapter offers the five, with or without the catalog", () => {
+    expect(offeredModes("claude", catalog)).toEqual(MODES);
+    expect(offeredModes("codex", null)).toEqual(MODES);
+  });
+  it("a manifest agent offers what its catalog entry maps, in MODES order", () => {
+    expect(offeredModes("cursor", catalog)).toEqual(["manual", "plan", "bypass"]);
+    expect(offeredModes("opencode", catalog)).toEqual([]);
+  });
+  it("a manifest agent offers nothing when the catalog is missing or doesn't list it", () => {
+    expect(offeredModes("cursor", null)).toEqual([]);
+    expect(offeredModes("grok", catalog)).toEqual([]);
+    expect(offeredModes(null, catalog)).toEqual([]);
   });
 });

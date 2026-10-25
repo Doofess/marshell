@@ -1,3 +1,4 @@
+import type { AgentCatalog } from "../../generated/AgentCatalog";
 import type { SessionMode } from "../../generated/SessionMode";
 import type { CliId } from "../onboarding/types";
 import type { Mode } from "../sidebar/types";
@@ -35,6 +36,17 @@ export type Request = { kind: "edit" | "command" | "fetch" | "mcp" | "other"; in
 
 /** Claude Code, Codex and Antigravity are the agents with an adapter; every other agent is a manifest and has no entry below. */
 const isAdapter = (cli: string): cli is CliId => cli === "claude" || cli === "codex" || cli === "antigravity";
+
+/**
+ * The modes a running session can switch to: the five for an adapter, a manifest agent's mapped ones from the catalog, and none
+ * for a manifest agent the catalog doesn't list (or no catalog), since the core refuses a mode it can't map.
+ */
+export function offeredModes(agent: string | null | undefined, catalog: AgentCatalog | null): Mode[] {
+  if (!agent) return [];
+  if (isAdapter(agent)) return MODES;
+  const entry = catalog?.agents.find((a) => a.id === agent);
+  return entry ? catalogModes(entry.modes) : [];
+}
 
 const STRICT: Record<CliId, string[]> = {
   claude: ["--permission-mode", "manual"],

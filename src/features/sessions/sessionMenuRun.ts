@@ -10,14 +10,26 @@ import { offersModeChange, resumeBlockedReason } from "./resumeState";
 /** What the window knows about a session, as the row menu's item list needs it. `shown` panes are on screen; `fit` is the most the window has room for. */
 export function menuFacts(
   id: string,
-  ctx: { infos: SessionInfo[]; profiles: Profile[]; rows: RowModel[]; panes: (string | null)[]; shown: number; fit: number },
+  ctx: {
+    infos: SessionInfo[];
+    profiles: Profile[];
+    rows: RowModel[];
+    panes: (string | null)[];
+    shown: number;
+    fit: number;
+    /** The modes the session's agent can switch to; absent means the five. */
+    offered?: (agent: string) => readonly Mode[];
+  },
 ): SessionMenuFacts {
   const onScreen = ctx.panes.slice(0, ctx.shown);
   const info = ctx.infos.find((i) => i.tab_id === id);
   const row = ctx.rows.find((r) => r.id === id);
+  const offered = info?.agent && ctx.offered ? ctx.offered(info.agent) : MODES;
+  // Mode ▸ only when there is a mode to move to: an agent mapping one mode, or none, has nothing to offer.
+  const otherMode = offered.some((m) => m !== info?.mode);
   return {
     agent: info?.agent != null,
-    modeChangeable: row === undefined || offersModeChange(row, info),
+    modeChangeable: otherMode && (row === undefined || offersModeChange(row, info)),
     // Not where the Resume bar would be disabled (its profile was removed): an item that can't apply is left out, never offered to fail.
     resumable: info !== undefined && info.state.kind !== "running" && resumeBlockedReason(info.profile_id, ctx.profiles) === undefined,
     task: row?.task === true,

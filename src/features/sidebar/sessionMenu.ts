@@ -39,9 +39,9 @@ export function sessionMenuItems(facts: SessionMenuFacts, os: Os): MenuItem[] {
 }
 
 /**
- * The second menu Mode ▸ opens: the five modes, the one the session started in marked "(current)". The current one stays in the
- * list (the places of the others don't move) and the window leaves it out of the run.
+ * The second menu Mode ▸ opens: the modes the agent offers (the five for an adapter), the one the session started in marked
+ * "(current)". The current one stays in the list (the places of the others don't move) and the window leaves it out of the run.
  */
-export function modeMenuItems(current: Mode | undefined): MenuItem[] {
-  return MODES.map((m) => ({ id: `mode-${m}`, label: m === current ? `${modeLabel(m)} (current)` : modeLabel(m) }));
+export function modeMenuItems(current: Mode | undefined, offered: readonly Mode[] = MODES): MenuItem[] {
+  return MODES.filter((m) => offered.includes(m)).map((m) => ({ id: `mode-${m}`, label: m === current ? `${modeLabel(m)} (current)` : modeLabel(m) }));
 }
