@@ -289,6 +289,10 @@ The full list from the tool report. A name in this list with no tag in its secti
 - **Files never to read**: `~/.docker/config.json`, `~/.supabase/access-token`, `%APPDATA%\com.vercel.cli\Data\auth.json`, `.dev.vars` and `.env*`, `~/.aws/credentials`, `~/.aws/sso/cache/*.json`, `%USERPROFILE%\.azure\msal_token_cache.*`, `terraform.tfstate*`, `*.tfvars`, `%APPDATA%\netlify\Config\config.json`, `%LOCALAPPDATA%\ngrok\ngrok.yml`, `%USERPROFILE%\.config\stripe\config.toml`, `~/.grok/auth.json`, `~/.kimi-code/credentials/*.json`.
 - **Argv rule.** The report's list of flags that put a secret on the command line (see the items above) means saved launch commands, history and tab titles must be scrubbed, not only output.
 
+## Live check
+
+The slice 6b live check ran opencode 1.19.4, Qwen Code 0.26.1, Crush v0.98.2, Kimi Code CLI 2.3.1 and Grok 1.0.50 to 1.0.70 inside Marshell. The results are in [2026-10-25-agent-manifests-live-check.md](2026-10-25-agent-manifests-live-check.md): the flags, the argv per mode, the terminal signals, Grok's hook sources and process chain, and the findings.
+
 ## Open verification items
 
 Agent CLIs.
