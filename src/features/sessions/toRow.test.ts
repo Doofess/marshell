@@ -3,7 +3,7 @@ import type { LiveStatus } from "../../generated/LiveStatus";
 import type { Profile } from "../../generated/Profile";
 import type { SessionInfo } from "../../generated/SessionInfo";
 import { rowLabel, rowTitle } from "../sidebar/labels";
-import { ageTick, planRing, toRow } from "./toRow";
+import { ageTick, nameAgents, planRing, toRow } from "./toRow";
 
 const profile = (id: string, family: Profile["family"]): Profile => ({ id, name: id, command: [id], family, cwd: null, env: [], shell_integration: true, detected: true });
 const PROFILES: Profile[] = [
@@ -238,6 +238,18 @@ describe("toRow", () => {
     });
     it("a manifest agent with no mark of its own gets the generic mark", () => {
       expect(toRow(info({ agent: "aider" }), PROFILES).agent).toBe("generic");
+    });
+    it("names a generic-marked agent from the catalog, else from its program, else leaves the generic name", () => {
+      const crush = info({ agent: "crush", foreground: { program: "crush-cli", command_line: null, agent: null } });
+      const rows = [toRow(crush, PROFILES), toRow(info({ tab_id: "t2", agent: "own" }), PROFILES), toRow(info({ tab_id: "t3", agent: "claude" }), PROFILES)];
+      expect(rows[0]!.agentName).toBe("crush-cli");
+      const named = nameAgents(rows, [crush, info({ tab_id: "t2", agent: "own" }), info({ tab_id: "t3", agent: "claude" })], [{ id: "crush", name: "Crush" }]);
+      expect(named[0]!.agentName).toBe("Crush");
+      expect(named[1]!.agentName).toBeUndefined();
+      expect(named[2]!.agentName).toBeUndefined();
+      expect(rowLabel(named[0]!, "comfortable")).toContain("Crush");
+      expect(rowLabel(named[0]!, "comfortable")).not.toContain("Custom agent");
+      expect(rowLabel(named[1]!, "comfortable")).toContain("Custom agent");
     });
   });
 

@@ -148,6 +148,8 @@ export function toRow(info: SessionInfo, profiles: Profile[], setup?: Partial<Re
     project: lastSegment(info.project),
     projectKey: info.project,
     agent,
+    // A manifest agent with the generic mark: until the catalog names it (nameAgents), its program's name is the best there is.
+    ...(agent === "generic" && info.agent !== null && info.foreground !== null ? { agentName: info.foreground.program } : {}),
     ...(info.mode === null ? {} : { mode: info.mode }),
     ...(info.muted ? { muted: true } : {}),
   };
@@ -177,4 +179,18 @@ export function toRow(info: SessionInfo, profiles: Profile[], setup?: Partial<Re
     return { ...base, status: "idle", phrase: `Last command failed (exit ${command.last_exit})` };
   }
   return { ...base, status: "idle", phrase: "" };
+}
+
+/**
+ * Gives each generic-marked agent row (Crush, Aider, an agent of the person's own) its catalog name, so the mark and the row say
+ * "Crush" and not "Custom agent". Without a catalog entry the row keeps the foreground program's name, and without that, no name.
+ */
+export function nameAgents(rows: RowModel[], infos: SessionInfo[], agents: { id: string; name: string }[] | undefined): RowModel[] {
+  if (agents === undefined) return rows;
+  return rows.map((r) => {
+    if (r.agent !== "generic") return r;
+    const id = infos.find((i) => i.tab_id === r.id)?.agent;
+    const name = agents.find((a) => a.id === id)?.name;
+    return name === undefined ? r : { ...r, agentName: name };
+  });
 }

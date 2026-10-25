@@ -23,6 +23,8 @@ export type RowModel = {
   task?: boolean;
   /** An AI agent, or a manual CLI (a plain terminal: no animation, ring, model or prompt line). */
   agent: SessionKind;
+  /** The agent's own name, when its mark is the generic one (a manifest agent such as Crush): the mark and the row say it instead of "Custom agent". */
+  agentName?: string;
   status: GlyphKind;
   /** Line 2, e.g. "Wants to run `npm test`". */
   phrase: string;

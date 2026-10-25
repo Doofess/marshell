@@ -95,7 +95,7 @@ import { pruneClosed, without, type StartingTexts } from "./startingTexts";
 import { SHELL_FAILED } from "../window/ShellPanel";
 import { handedOff } from "./handOff";
 import { focusShellTerminal, shellAutoFolded, shellTerminalFocused } from "./shellPanelFocus";
-import { ENDED_PHRASE, lastSegment, planRing } from "./toRow";
+import { ENDED_PHRASE, lastSegment, nameAgents, planRing } from "./toRow";
 import { useSessions } from "./useSessions";
 
 /** The size a new session starts at until a terminal has been measured. */
@@ -440,7 +440,7 @@ export function LiveApp() {
     return () => clearTimeout(id);
   }, [plan?.until]);
   const footer = useMemo(() => (plan ? { planPct: plan.pct, fiveHourPct: plan.pct } : null), [plan]);
-  const taskRows = useMemo(() => markTasks(rows, infos, tasks), [rows, infos, tasks]);
+  const taskRows = useMemo(() => markTasks(nameAgents(rows, infos, catalog?.agents), infos, tasks), [rows, infos, tasks, catalog]);
   const sidebarRows = useRowFlash(taskRows);
   // While the list is unknown the palette keeps Review for the session in focus, so choosing it can load the list again.
   const focusedIsTask = reviewTarget(infos, focusedId, tasks).kind !== "none";

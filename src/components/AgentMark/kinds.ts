@@ -12,6 +12,7 @@ export const isTool = (kind: string): kind is ToolId => isToolId(kind);
 export const isKind = (v: string): v is SessionKind => isAgentId(v) || isToolId(v);
 
 /** The name a screen reader and a tooltip use for the mark. */
-export function kindName(kind: SessionKind): string {
+export function kindName(kind: SessionKind, own?: string): string {
+  if (kind === "generic" && own) return own;
   return isToolId(kind) ? TOOL_NAMES[kind] : AGENT_NAMES[kind];
 }

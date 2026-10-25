@@ -72,7 +72,7 @@ export function boardRows(rows: RowModel[]): BoardRow[] {
       name: r.name,
       where: r.branch ? `${r.project} · ${r.branch}` : r.project,
       agent: r.agent,
-      agentName: kindName(r.agent),
+      agentName: kindName(r.agent, r.agentName),
       status: r.status,
       statusText: statusText(r.status, manual),
       waitingText: waitingText(r.waitingMs),

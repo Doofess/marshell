@@ -8,7 +8,7 @@ import type { Density, RowModel } from "./types";
 const plain = (s: string) => s.replace(/`/g, "");
 
 /** "Claude Opus 5.5", or just "Claude" when the CLI doesn't report a model. */
-const agentAndModel = (r: RowModel) => [kindName(r.agent), r.model].filter(Boolean).join(" ");
+const agentAndModel = (r: RowModel) => [kindName(r.agent, r.agentName), r.model].filter(Boolean).join(" ");
 
 /** "my-app · main", with the Task tag right after the project when the row shows it ("my-app Task · marshell/fix-login"), as it is drawn. */
 const projectAndBranch = (r: RowModel) => {

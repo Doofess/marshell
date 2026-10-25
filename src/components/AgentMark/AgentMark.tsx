@@ -47,10 +47,10 @@ const ZONES = [
   { x: 5, y: 11, width: 14, height: 12, tempo: 1.25, phase: 0.02 },
 ] as const;
 
-export function AgentMark({ agent, size = 16, working = false }: { agent: SessionKind; size?: 12 | 16 | 20; working?: boolean }) {
+export function AgentMark({ agent, size = 16, working = false, label }: { agent: SessionKind; size?: 12 | 16 | 20; working?: boolean; /** The name of an agent whose mark is the generic one (a manifest agent): it replaces "Custom agent". */ label?: string }) {
   // A manual CLI's mark is always still: it is drawn from its own path and `working` means nothing to it.
   if (isToolId(agent)) return <ToolMark tool={agent} size={size} />;
-  return <VendorMark agent={agent} size={size} working={working} />;
+  return <VendorMark agent={agent} size={size} working={working} {...(label === undefined ? {} : { label })} />;
 }
 
 function ToolMark({ tool, size }: { tool: ToolId; size: 12 | 16 | 20 }) {
@@ -61,7 +61,7 @@ function ToolMark({ tool, size }: { tool: ToolId; size: 12 | 16 | 20 }) {
   );
 }
 
-function VendorMark({ agent, size, working }: { agent: AgentId; size: 12 | 16 | 20; working: boolean }) {
+function VendorMark({ agent, size, working, label }: { agent: AgentId; size: 12 | 16 | 20; working: boolean; label?: string }) {
   const id: AgentId = isAgentId(agent) ? agent : "generic";
   const d = MARK_PATHS[id];
   const breath = BREATHING[id];
@@ -71,7 +71,7 @@ function VendorMark({ agent, size, working }: { agent: AgentId; size: 12 | 16 | 
   const jelly = id === "antigravity" && working;
   const uid = useId().replace(/[^a-zA-Z0-9]/g, "");
   return (
-    <svg className="agent-mark" data-agent={id} data-working={working || undefined} role="img" aria-label={AGENT_NAMES[id]} width={size} height={size} viewBox="0 0 24 24">
+    <svg className="agent-mark" data-agent={id} data-working={working || undefined} role="img" aria-label={id === "generic" && label ? label : AGENT_NAMES[id]} width={size} height={size} viewBox="0 0 24 24">
       <path className="agent-mark__body" style={breath ? ({ "--s": breath.outer } as CSSProperties) : undefined} d={d} fill="currentColor" fillRule="evenodd" />
       {pieces && (
         <g className="agent-mark__pieces" aria-hidden="true">

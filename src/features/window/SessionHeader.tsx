@@ -33,7 +33,7 @@ export function SessionHeader({ row, ports = [], onMode }: { row: RowModel; port
   const modelAndEffort = [row.model, row.effort].filter(Boolean).join(" · ");
   return (
     <div className="session-header" role="group" aria-label={`${sessionWord(row.number)}, ${row.name}`} data-danger={headerDanger(row.mode) || undefined} data-agent={row.agent}>
-      <AgentMark agent={row.agent} />
+      <AgentMark agent={row.agent} {...(row.agentName === undefined ? {} : { label: row.agentName })} />
       {row.elevated && <AuxGlyph kind="elevated" label="Administrator" />}
       <SessionNumber n={row.number} title={SESSION_NUMBER_HINT} />
       <span className="session-header__name" dir="auto">

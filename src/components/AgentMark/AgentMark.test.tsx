@@ -8,6 +8,11 @@ import { AgentMark } from "./AgentMark";
 const css = readFileSync(new URL("./agent-colors.css", import.meta.url), "utf8");
 
 describe("AgentMark", () => {
+  it("labels a generic mark with the name it is given", () => {
+    expect(renderToStaticMarkup(<AgentMark agent="generic" label="Crush" />)).toContain('aria-label="Crush"');
+    expect(renderToStaticMarkup(<AgentMark agent="generic" />)).toContain(`aria-label="${AGENT_NAMES.generic}"`);
+    expect(renderToStaticMarkup(<AgentMark agent="claude" label="Crush" />)).toContain(`aria-label="${AGENT_NAMES.claude}"`);
+  });
   it("knows the CLIs people run, with a generic fallback", () => {
     for (const id of ["claude", "codex", "antigravity", "copilot", "cursor", "generic"]) expect(AGENT_IDS).toContain(id);
   });

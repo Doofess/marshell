@@ -110,7 +110,7 @@ export function DeparturesBoard({ rows, heightPx, active, layout, card, keep, st
           <span dir="auto">{r.where}</span>
         </td>
         <td role="cell" className="board__agent" data-agent={r.agent}>
-          <AgentMark agent={r.agent} size={12} /> <span>{r.agentName}</span>
+          <AgentMark agent={r.agent} {...(r.agentName === undefined ? {} : { label: r.agentName })} size={12} /> <span>{r.agentName}</span>
         </td>
         <td role="cell" className="board__waiting">
           {live ? <LiveFlipCell text={waitingNow} reduced={reduced} /> : <FlipCell from={f?.waiting?.from ?? waitingNow} to={waitingNow} at={f?.waiting?.at} reduced={reduced} track={track?.waiting} />}
