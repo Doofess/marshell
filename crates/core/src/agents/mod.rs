@@ -6,6 +6,7 @@ pub mod common;
 pub mod identify;
 pub mod manifest;
 pub mod own;
+pub mod presets;
 
 use std::path::Path;
 use std::process::{Command, Stdio};

@@ -106,6 +106,7 @@ fn meta(transcript: &Path) -> SessionMeta {
         previous_in_tab: None,
         recordings: vec![],
         client: Default::default(),
+        preset: None,
     }
 }
 

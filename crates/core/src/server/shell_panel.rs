@@ -87,7 +87,7 @@ pub async fn open(State(st): State<AppState>, Json(req): Json<PanelRequest>) -> 
     if let Some(tab_id) = alive_panel(&st) {
         return Ok(Json(PanelResponse { tab_id }));
     }
-    let run = resolve(&st, None, None, None, None, None).await?;
+    let run = resolve(&st, None, None, None, None, None, None).await?;
     let cwd = start_folder(&run, Some(req.cwd));
     let tab_id = auth::new_id("t");
     let shell = PanelShell {
@@ -158,6 +158,7 @@ pub(super) fn take_and_adopt(st: &AppState, only: Option<&str>) -> Option<String
             cwd: shell.cwd,
             mode: None,
             name: shell.name,
+            preset: None,
         },
     );
     Some(tab_id)
@@ -216,6 +217,7 @@ mod tests {
             cwd: String::new(),
             mode: None,
             name: "Shell".into(),
+            preset: None,
         };
         adopt_session(&registry, &session, relaunch);
         let row = registry.snapshot().sessions.remove(0);

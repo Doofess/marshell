@@ -35,6 +35,7 @@ fn core() -> (axum::Router, AppState, Got, tokio::task::JoinHandle<()>) {
                 cwd: String::new(),
                 mode: None,
                 name: tab.into(),
+                preset: None,
             },
         );
     }

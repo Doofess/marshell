@@ -723,6 +723,7 @@ mod tests {
             muted: false,
             attention: None,
             stuck: None,
+            preset: None,
         }
     }
 

@@ -45,6 +45,9 @@ pub struct Relaunch {
     pub mode: Option<SessionMode>,
     /// The base name, as given (a renamed name when the user renamed it).
     pub name: String,
+    /// The preset it started with ("deepseek"). Only the name: a restart or reopen recomputes the preset's
+    /// environment, with the key, from the environment at that moment.
+    pub preset: Option<String>,
 }
 
 /// Why `begin_resume` said no.
@@ -222,6 +225,7 @@ impl Registry {
                 cwd: relaunch.cwd.clone(),
                 project: crate::projects::project_of(&relaunch.cwd),
                 mode: relaunch.mode,
+                preset: relaunch.preset.clone(),
                 state: SessionState::Running,
                 command: CommandState::Unknown,
                 paused: false,
@@ -267,6 +271,7 @@ impl Registry {
                     cwd: tab.cwd.clone(),
                     project: crate::projects::project_of(&tab.cwd),
                     mode: tab.mode,
+                    preset: tab.preset.clone(),
                     state: SessionState::Ended,
                     command: CommandState::Unknown,
                     paused: false,
@@ -305,6 +310,7 @@ impl Registry {
                 cwd: e.info.cwd.clone(),
                 mode: e.info.mode,
                 muted: e.info.muted,
+                preset: e.spec.preset.clone(),
             })
             .collect()
     }
@@ -918,6 +924,17 @@ impl Registry {
         state.open.iter().any(|e| e.info.tab_id == tab_id)
     }
 
+    /// The preset the tab started with, whether the tab is open or among the recently closed.
+    pub fn preset_of_tab(&self, tab_id: &str) -> Option<String> {
+        let state = self.state.lock().unwrap();
+        state
+            .open
+            .iter()
+            .chain(state.closed.iter())
+            .find(|e| e.info.tab_id == tab_id)
+            .and_then(|e| e.spec.preset.clone())
+    }
+
     /// Looks at a closed entry without removing it: its tab id and how to relaunch it.
     /// None means the most recent. Reopen peeks first, so a failed start loses nothing.
     pub fn peek_closed(&self, tab_id: Option<&str>) -> Option<(String, Relaunch)> {
@@ -971,6 +988,7 @@ mod tests {
             cwd: "C:/work".into(),
             mode: None,
             name: name.into(),
+            preset: None,
         }
     }
 
@@ -1444,6 +1462,7 @@ mod tests {
             cwd: "C:/work".into(),
             mode: None,
             muted: false,
+            preset: None,
         }
     }
 
@@ -1454,6 +1473,7 @@ mod tests {
             cwd: t.cwd.clone(),
             mode: t.mode,
             name: t.name.clone(),
+            preset: None,
         });
     }
 

@@ -4,13 +4,14 @@ use super::AppState;
 use crate::agents::identify::find;
 use crate::agents::manifest::{AgentManifest, PromptStyle, shipped};
 use crate::agents::own::{self, SaveError};
+use crate::agents::presets;
 use crate::profiles::detect::mode_args;
 use axum::Json;
 use axum::extract::State;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use marshell_protocol::api::SessionMode;
-use marshell_protocol::manifest::{AgentCatalog, CatalogAgent, OwnAgents, OwnAgentsSave};
+use marshell_protocol::manifest::{AgentCatalog, CatalogAgent, CatalogPreset, OwnAgents, OwnAgentsSave};
 
 /// The agents with a Rust adapter, in launcher order: id, name, CLI, first-prompt style.
 fn adapters() -> [(&'static str, &'static str, &'static str, PromptStyle); 3] {
@@ -88,7 +89,14 @@ fn build(st: &AppState) -> AgentCatalog {
     );
     AgentCatalog {
         agents: list,
-        presets: Vec::new(),
+        // Whether the key is set is all that is read of it; the value goes nowhere.
+        presets: vec![CatalogPreset {
+            id: presets::DEEPSEEK.into(),
+            name: "DeepSeek".into(),
+            agent: "claude".into(),
+            mark: presets::DEEPSEEK.into(),
+            problem: presets::problem(presets::DEEPSEEK, (st.0.deepseek_key)()),
+        }],
     }
 }
 

@@ -34,6 +34,10 @@ struct Env {
 }
 
 fn build() -> Env {
+    build_with_key(|| None)
+}
+
+fn build_with_key(key: fn() -> Option<String>) -> Env {
     let stand_in = grok_stand_in();
     std::fs::create_dir_all(stand_in.parent().unwrap()).unwrap();
     std::fs::write(&stand_in, "").unwrap();
@@ -48,6 +52,7 @@ fn build() -> Env {
         Vec::new(),
     )
     .with_agent_path(only_grok)
+    .with_deepseek_key(key)
     .with_agent_versions(VersionCache::with_reader(|_| Some("grok 1.2.3 (abc1234)\n".into())));
     Env {
         agents_file: paths::agents_file(&home),
@@ -144,7 +149,17 @@ async fn catalog_lists_adapters_shipped_and_own_with_found_flags() {
             "mine"
         ]
     );
-    assert_eq!(catalog["presets"], json!([]));
+    // The one preset, with the reason it can't start while the key is unset.
+    assert_eq!(
+        catalog["presets"],
+        json!([{
+            "id": "deepseek",
+            "name": "DeepSeek",
+            "agent": "claude",
+            "mark": "deepseek",
+            "problem": "Set DEEPSEEK_API_KEY, then restart Marshell to start DeepSeek."
+        }])
+    );
 
     // Adapters: nothing on the injected PATH, so not found; the five modes the launcher offers, Codex's Plan included.
     let claude = entry(&catalog, "claude");
@@ -191,6 +206,16 @@ async fn catalog_lists_adapters_shipped_and_own_with_found_flags() {
     assert_eq!(mine["can_continue"], false);
     assert_eq!(mine["modes"], json!(["manual", "bypass"]));
     assert_eq!(mine["prompt"], json!({"style": "flag", "flag": "--prompt"}));
+}
+
+#[tokio::test]
+async fn the_deepseek_preset_has_no_problem_with_a_key_and_never_shows_it() {
+    let e = build_with_key(|| Some("sk-marshell-test-0000".into()));
+    let (status, catalog) = get(&e.app, "/v1/agents/catalog").await;
+    assert_eq!(status, StatusCode::OK, "{catalog}");
+    assert_eq!(catalog["presets"][0]["id"], "deepseek");
+    assert_eq!(catalog["presets"][0]["problem"], Value::Null);
+    assert!(!catalog.to_string().contains("sk-marshell-test-0000"));
 }
 
 #[tokio::test]

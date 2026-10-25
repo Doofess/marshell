@@ -145,6 +145,7 @@ mod tests {
                     subagents: 0,
                     subagents_finished: 0,
                 }),
+                preset: None,
             }],
             closed: Vec::new(),
         }
@@ -233,6 +234,7 @@ mod tests {
                 cwd: "C:/work".into(),
                 mode: None,
                 name: "A".into(),
+                preset: None,
             },
         );
         let view = UiView {

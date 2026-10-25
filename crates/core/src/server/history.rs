@@ -551,8 +551,14 @@ async fn open_in_new_tab(
         .filter(|s| s.state == SessionState::Running)
         .map(|s| s.tab_id)
         .collect();
+    let home = st.home().to_path_buf();
     let meta = blocking(move || {
-        let meta = session_meta(&history, &agent, &id)?;
+        let mut meta = session_meta(&history, &agent, &id)?;
+        // The index does not keep the preset; the sidecar does.
+        meta.preset = crate::history::archive::read_meta(&home, &agent, &id)
+            .ok()
+            .flatten()
+            .and_then(|stored| stored.preset);
         // A fork starts a conversation of its own, so a running original is no reason to refuse.
         let in_tab = !fork
             && running_tabs.contains(&meta.tab_id)
@@ -595,9 +601,22 @@ async fn open_in_new_tab(
     } else {
         ResumeTarget::Session(&meta.session_id)
     };
-    let run = resolve(&st, None, Some(agent_name.as_str()), None, Some(target), None)
-        .await
-        .map_err(boxed)?;
+    // The conversation's tab, if Marshell still has it: a DeepSeek conversation opens on DeepSeek again.
+    let preset = meta
+        .preset
+        .clone()
+        .or_else(|| st.registry().preset_of_tab(&meta.tab_id));
+    let run = resolve(
+        &st,
+        None,
+        Some(agent_name.as_str()),
+        None,
+        Some(target),
+        None,
+        preset.as_deref(),
+    )
+    .await
+    .map_err(boxed)?;
     let created = start_session(
         &st,
         run,
@@ -607,6 +626,7 @@ async fn open_in_new_tab(
         (req.cols, req.rows),
         None,
         None,
+        preset,
     )
     .await
     .map_err(boxed)?;

@@ -280,6 +280,7 @@ mod tests {
                 cwd: "C:/work".into(),
                 mode: None,
                 name: "A".into(),
+                preset: None,
             },
         );
         let call = json!({"hook_event_name": "PreToolUse", "tool_name": "Bash", "tool_input": {"command": "pwd"}});

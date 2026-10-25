@@ -1367,6 +1367,7 @@ async fn remove_closes_sessions_and_deletes_everything() {
         cwd: task.path.clone(),
         mode: None,
         muted: false,
+        preset: None,
     };
     state
         .registry()
@@ -1376,6 +1377,7 @@ async fn remove_closes_sessions_and_deletes_everything() {
             cwd: tab.cwd.clone(),
             mode: None,
             name: tab.name.clone(),
+            preset: None,
         });
     assert_eq!(state.registry().snapshot().sessions.len(), 4);
 

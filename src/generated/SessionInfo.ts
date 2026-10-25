@@ -66,4 +66,8 @@ attention: Attention | null,
 /**
  * A hooked agent that repeats one tool call or goes quiet while Working. Never notifies.
  */
-stuck: Stuck | null, };
+stuck: Stuck | null, 
+/**
+ * The preset the agent was started with ("deepseek"), shown beside the agent. The row's `agent` stays "claude".
+ */
+preset?: string, };

@@ -35,8 +35,14 @@ pub fn write_meta(home: &Path, meta: &SessionMeta) -> anyhow::Result<()> {
     }
     let excess = merged.len().saturating_sub(MAX_RECORDINGS);
     merged.drain(..excess);
+    // A writer that does not know the preset (the tab is gone, or an import) keeps the stored one.
+    let preset = meta
+        .preset
+        .clone()
+        .or_else(|| stored.as_ref().and_then(|old| old.preset.clone()));
     let mut out = SessionMeta {
         recordings: merged,
+        preset,
         ..meta.clone()
     };
     // A conversation that ran in a Marshell tab stays Marshell's when a writer with no tab (an import) comes
@@ -279,6 +285,7 @@ mod tests {
             previous_in_tab: None,
             recordings: vec![],
             client: Default::default(),
+            preset: None,
         }
     }
 

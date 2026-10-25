@@ -397,6 +397,7 @@ mod tests {
                 })
                 .collect(),
             client: Client::default(),
+            preset: None,
         };
         archive::write_meta(home, &meta).unwrap();
     }

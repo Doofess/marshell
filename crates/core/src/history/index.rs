@@ -741,6 +741,7 @@ fn read_row(row: &Row) -> rusqlite::Result<SessionMeta> {
         previous_in_tab: row.get(7)?,
         recordings: vec![],
         client: Client::from_name(&row.get::<_, String>(8)?),
+        preset: None,
     })
 }
 
@@ -763,6 +764,7 @@ mod tests {
             previous_in_tab: previous.map(Into::into),
             recordings: vec![],
             client: Default::default(),
+            preset: None,
         }
     }
 
