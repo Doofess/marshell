@@ -69,6 +69,13 @@ pub async fn post(
         body: json.clone(),
     };
     st.hook_log().push(rec, |tab| st.session(tab).is_some());
+    // Grok Build runs Claude Code's hooks too. A tab that runs another agent takes no event or hold
+    // from this one, so its own prompt applies.
+    if let Some(tab) = tab.as_deref()
+        && st.registry().effective_agent(tab).is_some_and(|a| a != agent)
+    {
+        return Ok(StatusCode::NO_CONTENT.into_response());
+    }
     if matches!(agent.as_str(), "claude" | "codex")
         && let Some(tab) = tab.as_deref()
     {

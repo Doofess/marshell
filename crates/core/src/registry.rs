@@ -924,6 +924,15 @@ impl Registry {
         state.open.iter().any(|e| e.info.tab_id == tab_id)
     }
 
+    /// The agent the open row runs: the one it was launched as, else the one in a shell's foreground.
+    pub fn effective_agent(&self, tab_id: &str) -> Option<String> {
+        let state = self.state.lock().unwrap();
+        let info = &state.open.iter().find(|e| e.info.tab_id == tab_id)?.info;
+        info.agent
+            .clone()
+            .or_else(|| info.foreground.as_ref().and_then(|f| f.agent.clone()))
+    }
+
     /// The preset the tab started with, whether the tab is open or among the recently closed.
     pub fn preset_of_tab(&self, tab_id: &str) -> Option<String> {
         let state = self.state.lock().unwrap();

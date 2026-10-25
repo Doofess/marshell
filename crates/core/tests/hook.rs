@@ -821,3 +821,87 @@ async fn hostile_history_body_still_updates_live_status() {
     let written = std::fs::read_dir(&archive).map_or(0, |dir| dir.count());
     assert_eq!(written, 0, "something was written under {}", archive.display());
 }
+
+/// Starts a session of the sleeper profile launched as `agent` (None: a plain shell row) and returns its tab.
+async fn start_as(app: &axum::Router, agent: Option<&str>) -> String {
+    let mut body = serde_json::json!({ "cols": 80, "rows": 24, "profile_id": "sleeper" });
+    if let Some(a) = agent {
+        body["agent"] = a.into();
+    }
+    let res = app
+        .clone()
+        .oneshot(
+            base("POST", "/v1/sessions")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(body.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let bytes = axum::body::to_bytes(res.into_body(), 64 * 1024).await.unwrap();
+    serde_json::from_slice::<serde_json::Value>(&bytes).unwrap()["tab_id"]
+        .as_str()
+        .unwrap()
+        .to_string()
+}
+
+async fn assert_dropped(st: &AppState, app: &axum::Router, tab: &str) {
+    let started = std::time::Instant::now();
+    let code = post_fixture(app, "permission", tab, "PermissionRequest").await;
+    assert_eq!(code, StatusCode::NO_CONTENT);
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(2),
+        "a hold was opened: {:?}",
+        started.elapsed()
+    );
+    assert!(st.holds().pending().is_empty());
+    assert_eq!(
+        post_fixture(app, "event", tab, "UserPromptSubmit").await,
+        StatusCode::NO_CONTENT
+    );
+    assert_eq!(post_fixture(app, "event", tab, "Stop").await, StatusCode::NO_CONTENT);
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    assert!(row(st, tab).live.is_none());
+    assert_eq!(st.history().latest_for_tab(tab), None);
+}
+
+#[tokio::test]
+async fn a_claude_event_from_a_grok_tab_is_dropped_before_any_hold() {
+    let st = state(Some(KNOWN)).with_permission_hold(std::time::Duration::from_secs(30));
+    let app = router(st.clone());
+    let tab = start_as(&app, Some("grok")).await;
+    assert_dropped(&st, &app, &tab).await;
+    stop(&st, &tab);
+}
+
+#[tokio::test]
+async fn a_claude_event_from_a_claude_tab_still_folds() {
+    let st = state(Some(KNOWN));
+    let app = router(st.clone());
+    let tab = start_claude(&app).await;
+    post_fixture(&app, "event", &tab, "UserPromptSubmit").await;
+    let live = row(&st, &tab).live;
+    stop(&st, &tab);
+    assert_eq!(live.unwrap().state, LiveState::Working);
+}
+
+#[tokio::test]
+async fn a_claude_event_from_a_shell_tab_running_grok_is_dropped() {
+    let st = state(Some(KNOWN)).with_permission_hold(std::time::Duration::from_secs(30));
+    let app = router(st.clone());
+    let tab = start_as(&app, None).await;
+    let generation = st.registry().generation(&tab).unwrap();
+    st.registry().set_foreground(
+        &tab,
+        generation,
+        Some(marshell_protocol::api::Foreground {
+            program: "grok-marshell-test".into(),
+            command_line: None,
+            agent: Some("grok".into()),
+        }),
+    );
+    assert_eq!(st.registry().effective_agent(&tab).as_deref(), Some("grok"));
+    assert_dropped(&st, &app, &tab).await;
+    stop(&st, &tab);
+}
