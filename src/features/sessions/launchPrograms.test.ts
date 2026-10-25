@@ -136,6 +136,12 @@ describe("starting from the catalog's programs", () => {
     expect(preselect(doc, "C:/a", programs)).toBe("grok");
     expect(preselect(doc, "C:/b", programs)).toBeUndefined();
   });
+  it("preselects the remembered preset while it is listed, else the agent", () => {
+    const docOf = (preset?: string): LayoutDoc => ({ tabs: [], view: {} as LayoutDoc["view"], launcher: { "C:/a": { profile_id: "pwsh", agent: "claude", seq: 1, mode: null, ...(preset === undefined ? {} : { preset }) } } });
+    expect(preselect(docOf("deepseek"), "C:/a", programs)).toBe("preset:deepseek");
+    expect(preselect(docOf("gone"), "C:/a", programs)).toBe("claude");
+    expect(preselect(docOf(), "C:/a", programs)).toBe("claude");
+  });
 });
 
 describe("livePrograms with no catalog", () => {

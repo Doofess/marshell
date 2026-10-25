@@ -156,6 +156,8 @@ export function latestOnly() {
 export function preselect(doc: LayoutDoc | null, projectPath: string, programs: LaunchProgram[]): ProgramId | undefined {
   const remembered = doc?.launcher[projectPath];
   if (!remembered) return undefined;
+  const preset = remembered.preset === undefined ? undefined : programById(`${PRESET_PREFIX}${remembered.preset}`, programs);
+  if (preset !== undefined) return preset.id;
   const id: ProgramId = remembered.agent === null ? `${PROFILE_PREFIX}${remembered.profile_id}` : (remembered.agent as ProgramId);
   return programById(id, programs)?.id;
 }
