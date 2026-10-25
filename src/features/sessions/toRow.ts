@@ -157,7 +157,12 @@ export function toRow(info: SessionInfo, profiles: Profile[], setup?: Partial<Re
   if (info.state.kind === "ended") return { ...base, status: "ended", phrase: ENDED_PHRASE };
   if (info.state.kind === "exited") return { ...base, status: "ended", phrase: `Exited with code ${info.state.code}` };
   if (info.paused) return { ...base, status: "paused", phrase: "" };
-  if (info.live === null && info.attention !== null) return { ...base, status: "needs-question", phrase: info.attention.message ?? "Wants your attention" };
+  if (info.live === null && info.attention !== null) {
+    const message = info.attention.message ?? "Wants your attention";
+    // A prompt matched from a tool's output text is a guess, not a hook: say so.
+    if (info.attention.limited === true) return { ...base, status: "needs-question", phrase: `${message} · ${LIMITED_NOTE}`, note: LIMITED_NOTE };
+    return { ...base, status: "needs-question", phrase: message };
+  }
   if (info.agent !== null) {
     if (info.live !== null) return { ...base, ...liveRow(info.live, info.stuck, now) };
     // A hook agent (Claude Code, Codex) without Marshell's hooks: say so and offer the setup, ahead of the output fallback. An unknown state (not fetched yet) says and offers nothing.

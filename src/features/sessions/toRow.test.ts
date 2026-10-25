@@ -45,6 +45,15 @@ describe("toRow", () => {
     }
   });
 
+  it("attention from a tool's prompt is marked Status limited, a plain one is not", () => {
+    const limited = toRow(info({ attention: { message: "Asks to continue", since_ms: 1000, limited: true } }), PROFILES);
+    expect(limited).toMatchObject({ status: "needs-question", phrase: "Asks to continue · Status limited", note: "Status limited" });
+    expect(rowLabel(limited)).toContain("Asks to continue · Status limited");
+    const plain = toRow(info({ attention: { message: "Asks to continue", since_ms: 1000 } }), PROFILES);
+    expect(plain).toMatchObject({ phrase: "Asks to continue" });
+    expect(plain.note).toBeUndefined();
+  });
+
   it("attention without a message says Wants your attention", () => {
     expect(toRow(info({ attention: { message: null, since_ms: 1000 } }), PROFILES)).toMatchObject({ status: "needs-question", phrase: "Wants your attention" });
   });

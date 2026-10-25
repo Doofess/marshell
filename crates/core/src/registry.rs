@@ -176,7 +176,11 @@ impl Entry {
                 let since_ms = std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
                     .map_or(0, |d| d.as_millis() as u64);
-                self.info.attention = Some(Attention { message, since_ms });
+                self.info.attention = Some(Attention {
+                    message,
+                    since_ms,
+                    limited: false,
+                });
                 true
             }
         }
@@ -699,6 +703,9 @@ impl Registry {
             ToolEvent::NeedsYou(phrase) => {
                 if entry.info.live.is_none() && entry.info.attention.is_none() {
                     entry.note_attention(Some(phrase));
+                    if let Some(attention) = &mut entry.info.attention {
+                        attention.limited = true;
+                    }
                     entry.tool_attention = true;
                     true
                 } else {
@@ -2187,6 +2194,26 @@ mod tests {
         reg.tool_event("a", needs_you("Asks to continue"));
         reg.tool_event("a", crate::tools::ToolEvent::Cleared);
         assert!(row(&reg, "a").attention.is_some());
+    }
+
+    #[test]
+    fn a_tool_prompts_needs_you_is_marked_limited_and_a_bell_is_not() {
+        let reg = Registry::new();
+        reg.reserve("a", relaunch("A"));
+        reg.reserve("b", relaunch("B"));
+        reg.reserve("c", relaunch("C"));
+        for tab in ["a", "b", "c"] {
+            reg.mark(tab, Mark::Executed, &away());
+        }
+        reg.tool_event("a", needs_you("Asks to continue"));
+        assert!(row(&reg, "a").attention.expect("attention").limited);
+        reg.mark("b", Mark::Bell, &away());
+        assert!(!row(&reg, "b").attention.expect("attention").limited);
+        reg.mark("c", Mark::Notify(Some("Build done".into())), &away());
+        assert!(!row(&reg, "c").attention.expect("attention").limited);
+        // A prompt over a bell's attention leaves it the bell's.
+        reg.tool_event("b", needs_you("Asks to continue"));
+        assert!(!row(&reg, "b").attention.expect("attention").limited);
     }
 
     #[test]

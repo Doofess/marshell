@@ -198,6 +198,10 @@ pub struct Attention {
     /// When the first signal of this attention arrived. A flood keeps the first time.
     #[ts(type = "number")]
     pub since_ms: u64,
+    /// True when the attention comes from a tool's prompt text matched on screen: a guess from text, not a hook.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    #[ts(optional, as = "Option<bool>")]
+    pub limited: bool,
 }
 
 /// Why an agent looks stuck.
