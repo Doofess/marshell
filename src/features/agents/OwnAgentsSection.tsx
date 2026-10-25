@@ -87,7 +87,7 @@ export function OwnAgentsView({ own, editing, conflict, message, sectionRef, ...
         </div>
       )}
       {message && (
-        <p className="own-agents__problem" role="alert" dir="auto">
+        <p className="own-agents__problem" dir="auto">
           {message}
         </p>
       )}
