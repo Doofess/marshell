@@ -24,4 +24,5 @@ pub mod store;
 pub mod stuck;
 pub mod supervisor;
 pub mod tasks;
+pub mod tools;
 pub mod wt;
