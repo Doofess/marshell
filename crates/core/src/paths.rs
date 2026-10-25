@@ -25,6 +25,11 @@ pub fn layout_file(home: &Path) -> PathBuf {
     home.join("layout.json")
 }
 
+/// `<home>/agents.json`: the agents the person defined themselves.
+pub fn agents_file(home: &Path) -> PathBuf {
+    home.join("agents.json")
+}
+
 /// `<home>/logs/marshell.log`: the core's own log. Older copies are `marshell.log.1` to `.4`.
 pub fn marshell_log(home: &Path) -> PathBuf {
     home.join("logs").join("marshell.log")

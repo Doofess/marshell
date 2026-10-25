@@ -1,6 +1,7 @@
 mod activity;
 pub(crate) mod agents;
 mod attachments;
+mod catalog;
 mod config;
 mod diagnostics;
 mod events;
@@ -109,8 +110,11 @@ struct Inner {
     agent_on_path: fn(&str) -> bool,
     /// The file an agent's command runs from PATH, for its setup and version. Tests swap it.
     agent_path: fn(&str) -> Option<PathBuf>,
-    /// The adapters' launch data plus the shipped and own manifest agents.
-    agents: crate::agents::manifest::Agents,
+    /// `~/.marshell/agents.json`, read again when the file's modified time changes. `AppState::agents` adds the shipped
+    /// manifests to the valid entries.
+    own_agents: crate::agents::own::OwnCache,
+    /// One save of `agents.json` at a time, so the changed-since-read check and the write are not interleaved.
+    own_agents_write: Mutex<()>,
     /// `--version` of the manifest agents' programs, for telling a program from another with the same name.
     agent_versions: Arc<crate::agents::identify::VersionCache>,
     /// The last events the bridge sent, per live tab.
@@ -213,7 +217,8 @@ impl AppState {
             foreground_wake: Arc::new(tokio::sync::Notify::new()),
             agent_on_path: crate::profiles::detect::command_on_path,
             agent_path: crate::profiles::detect::command_path,
-            agents: crate::agents::manifest::Agents::shipped(),
+            own_agents: crate::agents::own::OwnCache::default(),
+            own_agents_write: Mutex::new(()),
             agent_versions: Arc::new(crate::agents::identify::VersionCache::default()),
             hook_log: crate::hooks::log::HookLog::default(),
             holds: crate::hooks::holds::Holds::default(),
@@ -355,6 +360,18 @@ impl AppState {
             .expect("with_agent_path runs before the state is shared")
             .agent_path = find;
         self
+    }
+    /// Replaces the `--version` reader the manifest agents' programs are checked with. Call it before the state is cloned.
+    pub fn with_agent_versions(mut self, versions: crate::agents::identify::VersionCache) -> Self {
+        Arc::get_mut(&mut self.0)
+            .expect("with_agent_versions runs before the state is shared")
+            .agent_versions = Arc::new(versions);
+        self
+    }
+    /// The adapters' launch data, the shipped manifests and the valid own agents of `agents.json`. A saved or hand-edited
+    /// file shows without a restart: the file's modified time is checked on each call.
+    pub(crate) fn agents(&self) -> crate::agents::manifest::Agents {
+        self.0.own_agents.get(&self.0.home).agents.clone()
     }
     /// The sessions index and the transcript archive.
     pub fn history(&self) -> Arc<crate::history::recorder::History> {
@@ -653,6 +670,8 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/snapshots", get(config::snapshots))
         .route("/v1/snapshots/{id}/restore", post(config::restore))
         .route("/v1/agents", get(agents::found))
+        .route("/v1/agents/catalog", get(catalog::catalog))
+        .route("/v1/agents/own", get(catalog::get_own).put(catalog::put_own))
         .route("/v1/agents/{agent}/setup", get(agents::setup))
         .route("/v1/agents/{agent}/hooks/plan", post(agents::plan))
         .route("/v1/agents/{agent}/hooks/remove-plan", post(agents::remove_plan))

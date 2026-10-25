@@ -168,6 +168,11 @@ impl AppState {
         agent_exe(&self.0.profiles.lock().unwrap().profiles, agent).or_else(|| (self.0.agent_path)(agent))
     }
 
+    /// Where an adapter agent's program is: a profile that runs it, else its command on PATH. May touch the disk.
+    pub(super) fn adapter_exe(&self, profiles: &[marshell_protocol::api::Profile], agent: &str) -> Option<PathBuf> {
+        agent_exe(profiles, agent).or_else(|| agent_command(agent).and_then(|c| (self.0.agent_path)(c)))
+    }
+
     /// The Claude Code version of `exe`, or the one a test pinned. Runs a process on a cold cache, so
     /// async callers go through `spawn_blocking`.
     pub(crate) fn claude_version(&self, exe: Option<&Path>) -> Option<String> {
@@ -367,8 +372,7 @@ pub async fn found(State(st): State<AppState>) -> Result<Json<Vec<AgentFound>>, 
         ["claude", "codex", "antigravity"]
             .into_iter()
             .map(|agent| {
-                let exe =
-                    agent_exe(&profiles, agent).or_else(|| agent_command(agent).and_then(|c| (st.0.agent_path)(c)));
+                let exe = st.adapter_exe(&profiles, agent);
                 AgentFound {
                     agent: agent.to_string(),
                     found: exe.is_some(),

@@ -83,7 +83,7 @@ pub(super) async fn resolve(
     mode: Option<SessionMode>,
 ) -> Result<Resolved, ApiError> {
     let no_daemon = agent == Some("codex") && codex_takes_no_daemon(st).await;
-    let agents = st.0.agents.clone();
+    let agents = st.agents();
     // A manifest agent has a mode only where its manifest maps one.
     if let (Some(m), Some(mode)) = (agent.and_then(|a| agents.manifest(a)), mode)
         && mode_args(&agents, &m.id, mode).is_none()
@@ -152,7 +152,7 @@ async fn program_command(st: &AppState, id: &str, wsl: bool) -> Result<String, A
     if let Some(command) = agent_command(id) {
         return Ok(command.to_string());
     }
-    let Some(m) = st.0.agents.manifest(id).cloned() else {
+    let Some(m) = st.agents().manifest(id).cloned() else {
         return Ok(id.to_string());
     };
     if wsl {
@@ -413,7 +413,7 @@ pub async fn create(
     State(st): State<AppState>,
     Json(req): Json<CreateSessionRequest>,
 ) -> Result<Json<CreateSessionResponse>, ApiError> {
-    if let Some(agent) = req.agent.as_deref().filter(|a| !st.0.agents.is_known(a)) {
+    if let Some(agent) = req.agent.as_deref().filter(|a| !st.agents().is_known(a)) {
         return Err((StatusCode::BAD_REQUEST, format!("Unknown agent: {agent}.")));
     }
     // An explicit argv keeps the old behaviour: run it as given, as a custom profile.

@@ -86,7 +86,7 @@ async fn tick(st: &AppState, pending: &mut Option<(String, u64, Instant)>) {
         return;
     }
     // One blocking task for the whole pass: reading a process list is not async.
-    let agents = st.0.agents.clone();
+    let agents = st.agents();
     let readings = tokio::task::spawn_blocking(move || {
         work.into_iter()
             .map(|(target, session, epoch)| {
