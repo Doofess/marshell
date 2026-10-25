@@ -331,3 +331,59 @@ async fn an_adopt_by_hand_wins_the_panel_and_the_row_still_follows_its_program()
     assert!(found.is_ok(), "the adopted row never showed its agent: {found:?}");
     assert_eq!(rows, 1);
 }
+
+#[tokio::test]
+async fn a_tab_launched_as_claude_runs_the_agent_that_took_its_place() {
+    // Another agent is in front of the tab, and no process in the chain is Claude. The agent is an own agent that claims
+    // the fake agent's executable name, so no real CLI's name is used.
+    let home = tempfile::tempdir().unwrap();
+    let work = tempfile::tempdir().unwrap();
+    let own = serde_json::json!({
+        "id": "stand-in", "name": "Stand in", "cli": "Stand in", "mark": "copilot", "commands": ["stand-in-marshell-test"],
+        "exe_names": ["fake-agent"], "prompt": {"style": "flag", "flag": "--prompt"}, "continue": null,
+        "modes": {"manual": []},
+    });
+    std::fs::write(
+        home.path().join("agents.json"),
+        serde_json::json!({"version": 1, "agents": [own]}).to_string(),
+    )
+    .unwrap();
+    common::tie_children_to_test();
+    let fake = env!("CARGO_BIN_EXE_fake-agent");
+    // The session's own process starts a fake agent below it: that child is what stands in the foreground.
+    let tree = profile("tree", ShellFamily::Posix, vec![fake.into(), "spawn-child".into()]);
+    let state = AppState::new(
+        TOKEN.into(),
+        PORT,
+        vec![ORIGIN.into()],
+        home.path().to_path_buf(),
+        vec![tree],
+    )
+    .with_agent_check(|_| true)
+    .with_codex_version(None);
+    let app = router(state.clone());
+    let tab = create(&app, "tree", work.path(), Some("claude")).await;
+    assert_eq!(
+        state.registry().effective_agent(&tab).as_deref(),
+        Some("claude"),
+        "before any sighting"
+    );
+
+    let start = Instant::now();
+    while state.registry().effective_agent(&tab).as_deref() != Some("stand-in")
+        && start.elapsed() < Duration::from_secs(10)
+    {
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    let seen = state.registry().effective_agent(&tab);
+    let shown = row(&app, &tab).await.unwrap();
+    stop(&state, &tab);
+    assert_eq!(
+        seen.as_deref(),
+        Some("stand-in"),
+        "the watcher never saw the other agent"
+    );
+    // The row still says what the tab was launched as, and shows no foreground of its own.
+    assert_eq!(shown["agent"], "claude");
+    assert!(shown["foreground"].is_null());
+}

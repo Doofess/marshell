@@ -905,3 +905,46 @@ async fn a_claude_event_from_a_shell_tab_running_grok_is_dropped() {
     assert_dropped(&st, &app, &tab).await;
     stop(&st, &tab);
 }
+
+/// What the foreground watcher records for a tab launched as Claude: `agent` runs in front of it and Claude is gone from
+/// the foreground (`None`: Claude is still there).
+fn displace(st: &AppState, tab: &str, agent: Option<&str>) {
+    let generation = st.registry().generation(tab).unwrap();
+    st.registry()
+        .set_displacing_agent(tab, generation, agent.map(str::to_string));
+}
+
+#[tokio::test]
+async fn a_claude_event_from_a_claude_tab_where_grok_took_over_is_dropped() {
+    let st = state(Some(KNOWN)).with_permission_hold(std::time::Duration::from_secs(30));
+    let app = router(st.clone());
+    let tab = start_claude(&app).await;
+    // Claude exited in its shell and the person typed `grok`, which runs Claude's own hooks.
+    displace(&st, &tab, Some("grok"));
+    assert_eq!(st.registry().effective_agent(&tab).as_deref(), Some("grok"));
+    assert_dropped(&st, &app, &tab).await;
+    stop(&st, &tab);
+}
+
+#[tokio::test]
+async fn claude_keeps_its_hooks_while_it_is_in_the_foreground_and_before_any_sighting() {
+    let st = state(Some(KNOWN)).with_permission_hold(std::time::Duration::from_millis(300));
+    let app = router(st.clone());
+    let tab = start_claude(&app).await;
+    // No foreground sample yet: the agent the tab was launched as.
+    assert_eq!(st.registry().effective_agent(&tab).as_deref(), Some("claude"));
+    // Sampled, with Claude still in the chain (its Bash tool runs another agent): still Claude.
+    displace(&st, &tab, None);
+    assert_eq!(st.registry().effective_agent(&tab).as_deref(), Some("claude"));
+    assert_eq!(
+        post_fixture(&app, "permission", &tab, "PermissionRequest").await,
+        StatusCode::NO_CONTENT
+    );
+    let live = row(&st, &tab).live.unwrap();
+    // Grok takes over, then quits and Claude is typed again: Claude's hooks count again.
+    displace(&st, &tab, Some("grok"));
+    displace(&st, &tab, None);
+    assert_eq!(st.registry().effective_agent(&tab).as_deref(), Some("claude"));
+    stop(&st, &tab);
+    assert_eq!(live.state, LiveState::NeedsPermission);
+}

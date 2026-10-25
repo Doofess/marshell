@@ -79,6 +79,9 @@ pub struct Entry {
     /// row holds Working, whatever the output watcher says. Only a row on the output fallback takes
     /// it. Not serialized.
     progress_hold: bool,
+    /// Another agent runs in front of a row that was launched as an agent, and the launched one is gone from the
+    /// foreground: the agent the watcher saw. The row still says what it was launched as. Not serialized.
+    displaced_by: Option<String>,
 }
 
 impl Entry {
@@ -119,6 +122,7 @@ impl Entry {
         self.stuck = StuckTracker::default();
         self.info.activity = None;
         self.progress_hold = false;
+        self.displaced_by = None;
         self.info.status_note = None;
         self.running.clear();
         self.waiting = false;
@@ -267,6 +271,7 @@ impl Registry {
             stuck: StuckTracker::default(),
             last_input: None,
             progress_hold: false,
+            displaced_by: None,
         });
         self.tx.send_replace(state.snapshot());
         number
@@ -314,6 +319,7 @@ impl Registry {
                 stuck: StuckTracker::default(),
                 last_input: None,
                 progress_hold: false,
+                displaced_by: None,
             });
         }
         self.tx.send_replace(state.snapshot());
@@ -975,13 +981,46 @@ impl Registry {
         state.open.iter().any(|e| e.info.tab_id == tab_id)
     }
 
-    /// The agent the open row runs: the one it was launched as, else the one in a shell's foreground.
+    /// The agent the open row runs: the one it was launched as while that agent is still in the foreground, else the other
+    /// agent the watcher saw take its place (the launched one exited and the person typed another), else the one in a
+    /// shell's foreground.
     pub fn effective_agent(&self, tab_id: &str) -> Option<String> {
         let state = self.state.lock().unwrap();
-        let info = &state.open.iter().find(|e| e.info.tab_id == tab_id)?.info;
-        info.agent
+        let entry = state.open.iter().find(|e| e.info.tab_id == tab_id)?;
+        let info = &entry.info;
+        entry
+            .displaced_by
             .clone()
+            .or_else(|| info.agent.clone())
             .or_else(|| info.foreground.as_ref().and_then(|f| f.agent.clone()))
+    }
+
+    /// The rows launched as an agent that the watcher reads the foreground of: Running and not paused.
+    /// Each is the tab id, its generation and the agent it was launched as.
+    pub fn launched_candidates(&self) -> Vec<(String, u64, String)> {
+        let state = self.state.lock().unwrap();
+        state
+            .open
+            .iter()
+            .filter(|e| e.info.state == SessionState::Running && !e.info.paused)
+            .filter_map(|e| Some((e.info.tab_id.clone(), e.generation, e.info.agent.clone()?)))
+            .collect()
+    }
+
+    /// Records that `agent` runs in front of a row launched as another agent, with the launched one gone from the
+    /// foreground; `None` when it is not so. Ignored for an old `generation`, a row that is not Running or one that was
+    /// not launched as an agent. Not part of the row, so nothing is broadcast.
+    pub fn set_displacing_agent(&self, tab_id: &str, generation: u64, agent: Option<String>) {
+        let mut state = self.state.lock().unwrap();
+        if let Some(entry) = state
+            .open
+            .iter_mut()
+            .find(|e| e.info.tab_id == tab_id && e.generation == generation)
+            && entry.info.state == SessionState::Running
+            && entry.info.agent.is_some()
+        {
+            entry.displaced_by = agent.filter(|a| entry.info.agent.as_deref() != Some(a.as_str()));
+        }
     }
 
     /// The preset the tab started with, whether the tab is open or among the recently closed.
@@ -1763,6 +1802,45 @@ mod tests {
             .map(|(id, _, has)| (id, has))
             .collect();
         assert_eq!(ids, vec![("shell".to_string(), true)]);
+    }
+
+    #[test]
+    fn a_launched_agent_gives_way_to_the_agent_that_took_its_place() {
+        let reg = Registry::new();
+        let launched = |agent: &str| Relaunch {
+            agent: Some(agent.into()),
+            ..relaunch("A")
+        };
+        reg.reserve("agent", launched("claude"));
+        reg.reserve("shell", relaunch("B"));
+        let generation = generation_of(&reg, "agent");
+        // Only a Running row launched as an agent is read by the watcher for this.
+        let candidates = reg.launched_candidates();
+        assert_eq!(
+            candidates,
+            vec![("agent".to_string(), generation, "claude".to_string())]
+        );
+
+        assert_eq!(
+            reg.effective_agent("agent").as_deref(),
+            Some("claude"),
+            "no sighting yet"
+        );
+        reg.set_displacing_agent("agent", generation, Some("grok".into()));
+        assert_eq!(reg.effective_agent("agent").as_deref(), Some("grok"));
+        // The row itself still says what it was launched as.
+        assert_eq!(row(&reg, "agent").agent.as_deref(), Some("claude"));
+        // An old process's reading, a plain shell row and the launched agent itself change nothing.
+        reg.set_displacing_agent("agent", generation + 1, None);
+        assert_eq!(reg.effective_agent("agent").as_deref(), Some("grok"));
+        reg.set_displacing_agent("shell", generation_of(&reg, "shell"), Some("grok".into()));
+        assert_eq!(reg.effective_agent("shell"), None);
+        reg.set_displacing_agent("agent", generation, Some("claude".into()));
+        assert_eq!(reg.effective_agent("agent").as_deref(), Some("claude"));
+        // A restart forgets it.
+        reg.set_displacing_agent("agent", generation, Some("grok".into()));
+        reg.mark_exited("agent", generation, 0);
+        assert_eq!(reg.effective_agent("agent").as_deref(), Some("claude"));
     }
 
     fn live(state: LiveState) -> LiveStatus {
