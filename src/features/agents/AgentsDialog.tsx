@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { AgentMark } from "../../components/AgentMark/AgentMark";
 import { Switch } from "../../components/Switch/Switch";
 import { DiffView } from "../../components/DiffView/DiffView";
@@ -11,6 +11,7 @@ import { SettingsReadError, type SettingsSync } from "../appearance/settingsSync
 import { ConsentCard } from "../onboarding/ConsentCard";
 import { CLI_NAME, type Capability } from "../onboarding/consent";
 import { actions, consentProps, hooksOffNotice, liveStatusOn, removalBlock, setupLine, setupWant, type InstallFlow, type SetupStart } from "./agentsState";
+import { OwnAgentsSection } from "./OwnAgentsSection";
 import { failureText, useInstallFlow } from "./useInstallFlow";
 import "./AgentsDialog.css";
 
@@ -52,8 +53,11 @@ export function AgentsDialogView({
   liveStatusError,
   codexLiveStatus = null,
   codexLiveStatusError,
+  own,
   ...on
 }: {
+  /** The section for the person's own agents, after the hook sections. */
+  own?: ReactNode;
   setup: AgentSetup | "loading" | "failed";
   /** Codex's setup; its section shows only when it was read and Codex is found. */
   codex?: AgentSetup | null;
@@ -86,6 +90,7 @@ export function AgentsDialogView({
             <>
               <AgentList setup={setup} agent="claude" liveStatus={liveStatus} error={liveStatusError} on={on} />
               {codex?.found && <AgentList setup={codex} agent="codex" liveStatus={codexLiveStatus} error={codexLiveStatusError} on={on} />}
+              {own}
             </>
           )}
           {target && panel.kind === "setup" && <SetupPanel setup={target} flow={panel.flow} on={on} />}
@@ -390,6 +395,7 @@ export function AgentsDialog({
     <AgentsDialogView
       setup={setup}
       codex={codex}
+      own={<OwnAgentsSection endpoint={endpoint} onNotice={onNotice} />}
       panel={panel}
       liveStatus={liveStatus.claude}
       liveStatusError={saveError?.agent === "claude" ? saveError.text : null}
