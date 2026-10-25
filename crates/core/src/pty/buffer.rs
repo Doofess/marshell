@@ -19,18 +19,25 @@ pub(super) fn peek_rows(screen: &vt100::Screen, lines: usize) -> Vec<String> {
     rows.split_off(rows.len().saturating_sub(lines.clamp(1, 100)))
 }
 
-/// The rows a tool's prompt would be on: the screen's rows up to and including the cursor row, the last 3 non-empty
-/// ones, right-trimmed and joined with '\n'.
+/// The lines a tool's prompt would be on: the screen's rows up to and including the cursor row, with each soft-wrapped
+/// row joined to the next (a long URL is one line, not five), the last 3 non-empty ones, right-trimmed and joined
+/// with '\n'.
 pub(super) fn tail_rows(screen: &vt100::Screen) -> String {
-    let cursor_row = usize::from(screen.cursor_position().0);
-    let mut rows: Vec<String> = screen
-        .rows(0, screen.size().1)
-        .take(cursor_row + 1)
-        .map(|row| row.trim_end().to_string())
-        .filter(|row| !row.is_empty())
-        .collect();
-    rows.drain(..rows.len().saturating_sub(3));
-    rows.join("\n")
+    let cursor_row = screen.cursor_position().0;
+    let mut lines: Vec<String> = Vec::new();
+    let mut current = String::new();
+    for (row, text) in (0..=cursor_row).zip(screen.rows(0, screen.size().1)) {
+        current.push_str(&text);
+        if !screen.row_wrapped(row) || row == cursor_row {
+            let line = current.trim_end();
+            if !line.is_empty() {
+                lines.push(line.to_string());
+            }
+            current.clear();
+        }
+    }
+    lines.drain(..lines.len().saturating_sub(3));
+    lines.join("\n")
 }
 
 /// A ring of output bytes addressed by absolute byte offset ("seq").
@@ -119,6 +126,19 @@ mod tests {
         assert_eq!(tail_rows(parser.screen()), "one\ntwo");
         // A blank screen has no tail.
         assert_eq!(tail_rows(vt100::Parser::new(5, 20, 0).screen()), "");
+    }
+
+    #[test]
+    fn a_soft_wrapped_line_is_one_line_of_the_tail() {
+        // gcloud auth login: the prompt, a blank row and a URL long enough to wrap over several rows.
+        let mut parser = vt100::Parser::new(12, 10, 0);
+        let url = "https://accounts.google.com/o/oauth2/auth?x=1";
+        parser.process(format!("Open this:\r\n\r\n    {url}\r\n").as_bytes());
+        assert_eq!(tail_rows(parser.screen()), format!("Open this:\n    {url}"));
+        // A sentence that wraps mid-word still reads as one line.
+        let mut parser = vt100::Parser::new(6, 10, 0);
+        parser.process(b"go to microsoft.com/devicelogin now");
+        assert_eq!(tail_rows(parser.screen()), "go to microsoft.com/devicelogin now");
     }
 
     #[test]
