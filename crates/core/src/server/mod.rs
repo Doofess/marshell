@@ -22,6 +22,7 @@ mod sessions;
 mod settings;
 mod shell_panel;
 mod tasks;
+mod tools;
 mod view;
 
 pub(crate) use files::existing_file as local_file;
@@ -122,6 +123,8 @@ struct Inner {
     own_agents: crate::agents::own::OwnCache,
     /// One save of `agents.json` at a time, so the changed-since-read check and the write are not interleaved.
     own_agents_write: Mutex<()>,
+    /// `~/.marshell/tools.json`, read again when the file's modified time or length changes. Only ever read.
+    own_tools: crate::tools::own::ToolsCache,
     /// `--version` of the manifest agents' programs, for telling a program from another with the same name.
     agent_versions: Arc<crate::agents::identify::VersionCache>,
     /// The last events the bridge sent, per live tab.
@@ -229,6 +232,7 @@ impl AppState {
             deepseek_key: || std::env::var(crate::agents::presets::DEEPSEEK_KEY_VAR).ok(),
             own_agents: crate::agents::own::OwnCache::default(),
             own_agents_write: Mutex::new(()),
+            own_tools: crate::tools::own::ToolsCache::default(),
             agent_versions: Arc::new(crate::agents::identify::VersionCache::default()),
             hook_log: crate::hooks::log::HookLog::default(),
             holds: crate::hooks::holds::Holds::default(),
@@ -412,6 +416,11 @@ impl AppState {
     /// file shows without a restart: the file's modified time is checked on each call.
     pub(crate) fn agents(&self) -> crate::agents::manifest::Agents {
         self.0.own_agents.get(&self.0.home).agents.clone()
+    }
+    /// The shipped tool profiles and the valid own ones of `tools.json`. A hand-edited file shows without a restart: the
+    /// file's modified time and length are checked on each call.
+    pub fn tools(&self) -> Arc<crate::tools::Tools> {
+        self.0.own_tools.get(&self.0.home).tools.clone()
     }
     /// The sessions index and the transcript archive.
     pub fn history(&self) -> Arc<crate::history::recorder::History> {
@@ -748,6 +757,7 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/agents", get(agents::found))
         .route("/v1/agents/catalog", get(catalog::catalog))
         .route("/v1/agents/own", get(catalog::get_own).put(catalog::put_own))
+        .route("/v1/tools", get(tools::catalog))
         .route("/v1/agents/{agent}/setup", get(agents::setup))
         .route("/v1/agents/{agent}/hooks/plan", post(agents::plan))
         .route("/v1/agents/{agent}/hooks/remove-plan", post(agents::remove_plan))

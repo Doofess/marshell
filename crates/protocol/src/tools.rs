@@ -92,3 +92,33 @@ pub struct OwnToolProblem {
     pub id: Option<String>,
     pub reason: String,
 }
+
+/// A launch preset as the launcher lists it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct CatalogToolPreset {
+    pub id: String,
+    pub name: String,
+    pub fields: Vec<PresetField>,
+    /// Whether the preset's `program` resolves on the core's PATH.
+    pub found: bool,
+}
+
+/// A tool profile as the launcher lists it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct CatalogTool {
+    pub id: String,
+    pub name: String,
+    /// Defined in `tools.json` rather than shipped.
+    pub own: bool,
+    pub presets: Vec<CatalogToolPreset>,
+}
+
+/// `GET /v1/tools`: the shipped and the own tools, and why own entries were refused.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct ToolCatalog {
+    pub tools: Vec<CatalogTool>,
+    pub problems: Vec<OwnToolProblem>,
+}

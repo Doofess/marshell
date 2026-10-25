@@ -30,6 +30,11 @@ pub fn agents_file(home: &Path) -> PathBuf {
     home.join("agents.json")
 }
 
+/// `<home>/tools.json`: the tool profiles the person defined themselves. Marshell only reads it.
+pub fn tools_file(home: &Path) -> PathBuf {
+    home.join("tools.json")
+}
+
 /// `<home>/logs/marshell.log`: the core's own log. Older copies are `marshell.log.1` to `.4`.
 pub fn marshell_log(home: &Path) -> PathBuf {
     home.join("logs").join("marshell.log")
