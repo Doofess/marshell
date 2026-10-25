@@ -13,6 +13,8 @@ import { profiles as profilesApi } from "../../lib/api/profiles";
 import { projects as projectsApi } from "../../lib/api/projects";
 import { sessions as sessionsApi } from "../../lib/api/sessions";
 import { tasksApi } from "../../lib/api/tasks";
+import { toolsApi } from "../../lib/api/tools";
+import type { ToolCatalog } from "../../generated/ToolCatalog";
 import { pickFolder } from "../../lib/folderPicker";
 import { useAppearance } from "../appearance/AppearanceProvider";
 import { withColorScheme } from "../appearance/terminalSettings";
@@ -24,13 +26,13 @@ import { offeredMode } from "../modes/sessionModes";
 import { taskNameFor } from "../tasks/taskName";
 import { appScheme } from "../terminal/terminalTheme";
 import { programById, startingText, type LauncherChoice } from "../launcher/launchChoice";
-import { browseFolder, checkState, chooseFolder, latestOnly, createRequest, createThenLaunch, initialFocus, launchRequest, listedProgram, progressText, refocus, rememberTasks, replansAfter, type FocusState, livePrograms, nameSource, preselect, preselectMode, startFailure, startProblem, taskRequest, toLauncherProject, wantsTask } from "./launchPrograms";
+import { fieldsFilled, browseFolder, checkState, chooseFolder, latestOnly, createRequest, createThenLaunch, initialFocus, launchRequest, listedProgram, progressText, refocus, rememberTasks, replansAfter, type FocusState, livePrograms, nameSource, preselect, preselectMode, startFailure, startProblem, taskRequest, toLauncherProject, wantsTask } from "./launchPrograms";
 
 // The worktree flag is part of this state and nothing else: it is never read from or written to the remembered choices, so the chip starts off every time.
 const INITIAL: LauncherChoice = { program: "claude", projectId: "", mode: "manual", pace: "Balanced", worktree: false };
 
 /** `layout` is read on every opening, so a folder used a moment ago is already remembered; null when it could not be read. */
-type Loaded = { projects: Project[]; doc: ProfilesDoc; layout: LayoutDoc | null; catalog: AgentCatalog | null };
+type Loaded = { projects: Project[]; doc: ProfilesDoc; layout: LayoutDoc | null; catalog: AgentCatalog | null; tools: ToolCatalog | null };
 
 type Props = {
   endpoint: Endpoint | null;
@@ -60,6 +62,8 @@ export function LiveLauncher({ endpoint, nextNumber, size, onStarted, onClose }:
   const [activeIndex, setActiveIndex] = useState(0);
   const [prompt, setPrompt] = useState("");
   const [error, setError] = useState<string>();
+  // What was typed for a tool preset's fields, by field id. Kept here only: it goes into the create request and nowhere else.
+  const [fieldValues, setFieldValues] = useState<Record<string, string>>({});
   // Why the lists did not load. Unlike `error` no edit clears it: Start stays disabled until they do.
   const [loadError, setLoadError] = useState<string>();
   const [starting, setStarting] = useState(false);
@@ -94,8 +98,10 @@ export function LiveLauncher({ endpoint, nextNumber, size, onStarted, onClose }:
     const remembered = layoutApi.get(endpoint).catch(() => null);
     // So are the agents found on this machine: if the catalog cannot be read the launcher lists the three adapters, as it did before it had one.
     const catalog = catalogApi.get(endpoint).catch(() => null);
-    Promise.all([projectsApi.list(endpoint), profilesApi.get(endpoint), remembered, catalog])
-      .then(([list, doc, layout, agents]) => current && setLoaded({ projects: list.map(toLauncherProject), doc, layout, catalog: agents }))
+    // And the tool presets: without the list the launcher simply offers none.
+    const tools = toolsApi.get(endpoint).catch(() => null);
+    Promise.all([projectsApi.list(endpoint), profilesApi.get(endpoint), remembered, catalog, tools])
+      .then(([list, doc, layout, agents, toolList]) => current && setLoaded({ projects: list.map(toLauncherProject), doc, layout, catalog: agents, tools: toolList }))
       .catch((e: unknown) => current && setLoadError(`Couldn't load the launcher: ${startFailure(e)}`));
     return () => {
       current = false;
@@ -113,7 +119,7 @@ export function LiveLauncher({ endpoint, nextNumber, size, onStarted, onClose }:
 
   const recent = useMemo(() => loaded?.projects ?? [], [loaded]);
   const projects = useMemo(() => (extra && !recent.some((p) => p.id === extra.id) ? [extra, ...recent] : recent), [extra, recent]);
-  const programs = useMemo(() => livePrograms(loaded?.catalog ?? null, loaded?.doc.profiles ?? []), [loaded]);
+  const programs = useMemo(() => livePrograms(loaded?.catalog ?? null, loaded?.doc.profiles ?? [], loaded?.tools ?? null), [loaded]);
   // The most recent folder until one is picked.
   const projectId = projects.some((p) => p.id === choice.projectId) ? choice.projectId : (projects[0]?.id ?? "");
   // The program last started in this folder, unless the user has picked one themselves; an agent that is not listed (not installed) is replaced by the first that is.
@@ -131,7 +137,9 @@ export function LiveLauncher({ endpoint, nextNumber, size, onStarted, onClose }:
   useEffect(() => {
     const target = refocus(lastFocus.current, focusState);
     lastFocus.current = focusState;
-    if (target) root.current?.querySelector<HTMLElement>(target === "prompt" ? ".launcher__prompt" : ".launcher__start")?.focus();
+    // A tool preset with boxes to fill takes the cursor in its first box; Start would be disabled anyway.
+    const firstBox = programById(focusState.program, programs)?.fields?.length ? ".launcher__field-input" : undefined;
+    if (target) root.current?.querySelector<HTMLElement>(target === "prompt" ? ".launcher__prompt" : (firstBox ?? ".launcher__start"))?.focus();
     // eslint-disable-next-line react-hooks/exhaustive-deps -- focusState is rebuilt every render; its three fields are the dependencies.
   }, [focusState.program, focusState.prompt, focusState.ready]);
 
@@ -159,7 +167,10 @@ export function LiveLauncher({ endpoint, nextNumber, size, onStarted, onClose }:
   const shownCheck = query !== null && pathCheck !== null && pathCheck.path === typedPath(query) ? pathCheck : null;
 
   const patch = (p: Partial<LauncherChoice>) => {
-    if (p.program !== undefined) setProgramPicked(true);
+    if (p.program !== undefined) {
+      setProgramPicked(true);
+      setFieldValues({});
+    }
     if (p.mode !== undefined) setModePicked(true);
     setChoice((c) => ({ ...c, ...p }));
     setError(undefined);
@@ -191,6 +202,42 @@ export function LiveLauncher({ endpoint, nextNumber, size, onStarted, onClose }:
       browsing.current = false;
     }
   };
+
+  const chosen = programById(shown.program, programs);
+  const toolFields = chosen?.fields ?? [];
+  const filled = fieldsFilled(chosen, fieldValues);
+  const setField = (id: string, value: string) => {
+    setFieldValues((v) => ({ ...v, [id]: value }));
+    setError(undefined);
+  };
+  const fieldBoxes =
+    toolFields.length === 0 ? undefined : (
+      <>
+        {toolFields.map((f, i) => (
+          <div key={f.id} className="launcher__task">
+            <label className="launcher__task-label" htmlFor={`launcher-field-${f.id}`}>
+              {f.label}
+            </label>
+            <input
+              id={`launcher-field-${f.id}`}
+              className="launcher__task-input launcher__field-input"
+              type="text"
+              value={fieldValues[f.id] ?? ""}
+              spellCheck={false}
+              autoComplete="off"
+              onChange={(e) => setField(f.id, e.target.value)}
+              onKeyDown={(e) => {
+                // Enter in a box other than the last moves on; in the last one it reaches the launcher, which starts.
+                if (e.key !== "Enter" || e.shiftKey || i === toolFields.length - 1) return;
+                e.preventDefault();
+                e.stopPropagation();
+                root.current?.querySelectorAll<HTMLElement>(".launcher__field-input")[i + 1]?.focus();
+              }}
+            />
+          </div>
+        ))}
+      </>
+    );
 
   // A shell takes no first prompt, so text typed for an agent before switching doesn't name its task.
   const taskName = taskNameFor(nameEdit, nameSource(shown, prompt, programs));
@@ -250,7 +297,7 @@ export function LiveLauncher({ endpoint, nextNumber, size, onStarted, onClose }:
         (task) => {
           made = true;
           setPhase("starting");
-          return sessionsApi.create(endpoint, withColorScheme(launchRequest(shown, prompt, programs, loaded.doc, projects, size(), task.path), loaded.doc.profiles, appearance, appScheme()));
+          return sessionsApi.create(endpoint, withColorScheme(launchRequest(shown, prompt, programs, loaded.doc, projects, size(), task.path, fieldValues), loaded.doc.profiles, appearance, appScheme()));
         },
       );
       const folder = projects.find((p) => p.id === shown.projectId)?.name ?? "your home folder";
@@ -272,6 +319,8 @@ export function LiveLauncher({ endpoint, nextNumber, size, onStarted, onClose }:
       setError(problem);
       return;
     }
+    // Enter reaches here even while Start is disabled: an empty box starts nothing.
+    if (!filled) return;
     if (wantsTask(shown, projects)) {
       plan();
       return;
@@ -280,7 +329,7 @@ export function LiveLauncher({ endpoint, nextNumber, size, onStarted, onClose }:
     setStarting(true);
     setError(undefined);
     try {
-      const request = launchRequest(shown, prompt, programs, loaded.doc, projects, size());
+      const request = launchRequest(shown, prompt, programs, loaded.doc, projects, size(), undefined, fieldValues);
       const created = await sessionsApi.create(endpoint, withColorScheme(request, loaded.doc.profiles, appearance, appScheme()));
       const folder = projects.find((p) => p.id === shown.projectId)?.name ?? "your home folder";
       onStarted(created, startingText(shown.program, folder, programs));
@@ -298,7 +347,8 @@ export function LiveLauncher({ endpoint, nextNumber, size, onStarted, onClose }:
         programs={programs}
         paceChip={false}
         error={error ?? loadError}
-        busy={starting || loaded === null}
+        busy={starting || loaded === null || !filled}
+        fields={fieldBoxes}
         busyText={progressText(phase, programById(shown.program, programs)?.label ?? shown.program)}
         onChange={patch}
         onQuery={(q) => {

@@ -1,5 +1,6 @@
 import { isTool, type SessionKind } from "../../components/AgentMark/kinds";
 import { TOOL_NAMES, type ToolId } from "../../components/AgentMark/tools";
+import type { PresetField } from "../../generated/PresetField";
 import { MODES, offeredMode } from "../modes/sessionModes";
 import type { Mode } from "../sidebar/types";
 import { modeLabel } from "../window/SessionHeader";
@@ -43,6 +44,10 @@ export type LaunchProgram = {
   agent?: string;
   /** Why the program can't be started yet. Starting it shows this and sends nothing. */
   problem?: string;
+  /** The values a tool preset asks for before it starts, one box each. */
+  fields?: PresetField[];
+  /** The tool preset this program starts. */
+  toolLaunch?: { tool: string; preset: string };
 };
 
 const agent = (id: SessionKind, label: string, cli: string): LaunchProgram => ({ id, kind: id, label, cli, group: "Agents", first: `What should ${label} do first? (optional)` });

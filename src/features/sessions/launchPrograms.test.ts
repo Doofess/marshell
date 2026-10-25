@@ -9,7 +9,8 @@ import type { LayoutDoc } from "../../generated/LayoutDoc";
 import type { FolderInfo } from "../../generated/FolderInfo";
 import type { AgentCatalog } from "../../generated/AgentCatalog";
 import type { CatalogAgent } from "../../generated/CatalogAgent";
-import { browseFolder, checkState, chooseFolder, latestOnly, samePath, createRequest, createThenLaunch, initialFocus, launchRequest, listedProgram, nameSource, preselect, preselectMode, progressText, refocus, rememberTasks, livePrograms, replansAfter, startFailure, startProblem, taskRequest, toLauncherProject, wantsTask } from "./launchPrograms";
+import type { ToolCatalog } from "../../generated/ToolCatalog";
+import { fieldsFilled, browseFolder, checkState, chooseFolder, latestOnly, samePath, createRequest, createThenLaunch, initialFocus, launchRequest, listedProgram, nameSource, preselect, preselectMode, progressText, refocus, rememberTasks, livePrograms, replansAfter, startFailure, startProblem, taskRequest, toLauncherProject, wantsTask } from "./launchPrograms";
 
 const profile = (id: string, family: Profile["family"], name = id): Profile => ({ id, name, command: [id], family, cwd: null, env: [], shell_integration: true, detected: true });
 const PROFILES: Profile[] = [profile("pwsh", "power_shell", "PowerShell 7"), profile("cmd", "cmd", "Command Prompt"), profile("git-bash", "posix", "Git Bash"), profile("wsl-ubuntu", "wsl", "Ubuntu")];
@@ -491,5 +492,56 @@ describe("browseFolder", () => {
     expect(fail).toHaveBeenCalledWith("Couldn't use C:\dev: gone");
     expect(focusField).toHaveBeenCalledTimes(1);
     expect(take).not.toHaveBeenCalled();
+  });
+});
+
+const toolCatalog = (found = true): ToolCatalog => ({
+  tools: [
+    { id: "npx", name: "npx", own: false, presets: [] },
+    { id: "ssh", name: "SSH", own: false, presets: [{ id: "host", name: "Connect to a host", fields: [{ id: "host", label: "Host" }, { id: "user", label: "User" }], found }] },
+  ],
+  problems: [],
+});
+
+describe("livePrograms: tool presets", () => {
+  it("lists a tool preset in the Tools group after the shells, and npx adds nothing", () => {
+    const programs = livePrograms(CATALOG, PROFILES, toolCatalog());
+    const tool = programs.find((p) => p.id === "tool:ssh:host")!;
+    expect(tool).toMatchObject({ label: "Connect to a host", cli: "SSH", group: "Tools", noFirst: true });
+    expect(tool.problem).toBeUndefined();
+    expect(programs.findIndex((p) => p.id === "tool:ssh:host")).toBeGreaterThan(programs.map((p) => p.group).lastIndexOf("Shells"));
+    expect(programs.filter((p) => p.id.startsWith("tool:"))).toHaveLength(1);
+  });
+  it("carries the problem of a preset whose program is missing, and Start refuses it", () => {
+    const programs = livePrograms(CATALOG, PROFILES, toolCatalog(false));
+    expect(programs.find((p) => p.id === "tool:ssh:host")!.problem).toBe("Not installed, or not on PATH.");
+    expect(startProblem(choice("tool:ssh:host"), programs)).toBe("Not installed, or not on PATH.");
+  });
+  it("is unchanged without a tool catalog", () => {
+    expect(livePrograms(CATALOG, PROFILES, null).some((p) => p.id.startsWith("tool:"))).toBe(false);
+  });
+});
+
+describe("launchRequest: a tool preset", () => {
+  const programs = livePrograms(CATALOG, PROFILES, toolCatalog());
+  it("sends tool with its fields and nothing of an agent", () => {
+    const req = launchRequest(choice("tool:ssh:host"), "ignored prompt", programs, DOC, PROJECTS, SIZE, undefined, { host: "example.org", user: "me" });
+    expect(req).toEqual({ cols: 120, rows: 30, cwd: "C:/dev/my-app", profile_id: "pwsh", tool: { tool: "ssh", preset: "host", fields: { host: "example.org", user: "me" } } });
+    for (const key of ["agent", "prompt", "mode", "preset", "shell"]) expect(req).not.toHaveProperty(key);
+  });
+  it("is the only place the field values appear: the choice and the programs never hold them", () => {
+    const secret = "s3cret-value";
+    const req = launchRequest(choice("tool:ssh:host"), "", programs, DOC, PROJECTS, SIZE, undefined, { host: secret, user: "me" });
+    expect(JSON.stringify(req)).toContain(secret);
+    // The launcher memory is the core's, written from the request's agent, profile and mode; the frontend saves nothing of its own.
+    expect(JSON.stringify(choice("tool:ssh:host"))).not.toContain(secret);
+    expect(JSON.stringify(programs)).not.toContain(secret);
+    expect(preselect({ launcher: {} } as unknown as LayoutDoc, "C:/dev/my-app", programs)).toBeUndefined();
+  });
+  it("tells when every field is filled", () => {
+    const p = programs.find((x) => x.id === "tool:ssh:host");
+    expect(fieldsFilled(p, { host: "a", user: " " })).toBe(false);
+    expect(fieldsFilled(p, { host: "a", user: "b" })).toBe(true);
+    expect(fieldsFilled(programs[0], {})).toBe(true);
   });
 });
