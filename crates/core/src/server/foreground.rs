@@ -165,7 +165,8 @@ async fn tick(st: &AppState, pending: &mut Option<(String, u64, Instant)>) {
 /// The other agent that runs in front of a row launched as `launched`, once the launched one has left the foreground: the
 /// person quit it and typed `grok` into the tab's shell. While any process of the chain (outermost first) is the launched
 /// agent, nothing displaces it, whatever it runs below itself: its Bash tool may start `qwen` and its hooks stay its own.
-/// Only when the launched agent is gone does the deepest agent of the chain, if there is one, take its place.
+/// Only when the launched agent is gone, and the chain's outermost program (what the shell itself runs) is another agent,
+/// does that agent take its place.
 fn displacing_agent(agents: &Agents, chain: &[String], launched: &str) -> Option<String> {
     if chain
         .iter()
@@ -173,7 +174,9 @@ fn displacing_agent(agents: &Agents, chain: &[String], launched: &str) -> Option
     {
         return None;
     }
-    agent_in(agents, chain, None)
+    // Only the program the shell itself runs can take its place. An npm Claude runs as `node`, which names no agent, and
+    // an agent deeper down is that program's child (its Bash tool's `qwen`), never what the person typed.
+    agents.agent_of_exe(chain.first()?)
 }
 
 /// What a pass learned about one session: `Some(None)` nothing runs, `Some(Some(_))` a program,
@@ -355,7 +358,8 @@ mod tests {
     fn another_agent_takes_the_place_of_a_launched_one_that_left_the_foreground() {
         let agents = Agents::shipped();
         // Claude quit in its tab and `grok` was typed: the shell's child is Grok.
-        for chain in [names(&["grok"]), names(&["pwsh", "grok"])] {
+        // The chain starts at the shell's child, so `grok` typed after Claude quit is its first program.
+        for chain in [names(&["grok"]), names(&["grok", "node"])] {
             assert_eq!(
                 displacing_agent(&agents, &chain, "claude").as_deref(),
                 Some("grok"),
@@ -374,6 +378,9 @@ mod tests {
         for chain in [
             names(&["claude", "qwen"]),
             names(&["pwsh", "claude", "qwen"]),
+            // An npm-installed Claude runs as `node`, which is no agent by name: its Bash tool's `qwen` must not displace it.
+            names(&["node", "qwen"]),
+            names(&["cmd", "node", "qwen"]),
             names(&["claude", "bash", "grok"]),
             names(&["claude"]),
         ] {
