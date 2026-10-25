@@ -122,3 +122,14 @@ pub struct ToolCatalog {
     pub tools: Vec<CatalogTool>,
     pub problems: Vec<OwnToolProblem>,
 }
+
+/// A local port a tab's tool announced or a process in the tab listens on, as the tab shows it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct PortChip {
+    pub port: u16,
+    /// `scheme://host:port/path` with a loopback host: `localhost`, `127.0.0.1` or `[::1]`.
+    pub url: String,
+    /// The tool printed this port, as against a listener found in the TCP table.
+    pub announced: bool,
+}
