@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import type { Endpoint } from "../../generated/Endpoint";
 import type { OwnAgents } from "../../generated/OwnAgents";
 import { ownAgents } from "../../lib/api/catalog";
-import { blankForm, buildManifest, buildSave, CONFLICT_TEXT, deriveId, fileProblems, formFromManifest, OWN_MODE_LABELS, OWN_MODES, outcomeOf, type Change, type OwnForm } from "./ownAgents";
+import { blankForm, buildManifest, buildSave, CONFLICT_TEXT, deriveId, fileProblems, formFromManifest, mergeManifest, OWN_MODE_LABELS, OWN_MODES, outcomeOf, splitProblems, type Change, type OwnForm } from "./ownAgents";
 import "./OwnAgentsSection.css";
 
 /** The open form: a new agent (`index` null) or one being edited, with the core's reason when it refused the entry. */
@@ -84,7 +84,11 @@ export function OwnAgentsView({ own, editing, conflict, message, ...on }: OwnAge
           </button>
         </div>
       )}
-      {message && <p className="own-agents__problem">{message}</p>}
+      {message && (
+        <p className="own-agents__problem" role="alert" dir="auto">
+          {message}
+        </p>
+      )}
       {editing ? (
         <OwnAgentForm editing={editing} onChange={on.onChange} onSave={on.onSave} onCancel={on.onCancel} />
       ) : (
@@ -230,12 +234,16 @@ export function OwnAgentsSection({ endpoint, onNotice }: { endpoint: Endpoint; o
         setEditing((cur) => (cur ? { ...cur, busy: false } : cur));
         onNotice?.(out.text);
       } else if (out.kind === "refused") {
-        const sent = "remove" in change ? own.agents.length - 1 : index === null ? own.agents.length : index;
-        const mine = out.problems.find((p) => p.index === sent) ?? out.problems[0];
-        const reason = mine?.reason ?? "Marshell's core refused this entry.";
-        if (editing) setEditing({ ...editing, busy: false, problem: reason });
-        else setMessage(reason);
-        onNotice?.(reason);
+        const sent = buildSave(own.agents, own.version, change).agents;
+        const at = "remove" in change ? null : index === null ? own.agents.length : index;
+        const { mine, others } = splitProblems(sent, out.problems, at);
+        // The entry's own problem goes on its form; another entry's is said once for the section, naming that entry.
+        const generic = "Marshell's core refused this entry.";
+        const aside = others.length > 0 ? others.join(" ") : null;
+        const onForm = editing ? (mine?.reason ?? (aside === null ? generic : undefined)) : undefined;
+        if (editing) setEditing({ ...editing, busy: false, ...(onForm === undefined ? {} : { problem: onForm }) });
+        setMessage(editing ? aside : (aside ?? generic));
+        onNotice?.(onForm ?? aside ?? generic);
       } else {
         if (editing) setEditing({ ...editing, busy: false, problem: out.text });
         else setMessage(out.text);
@@ -247,7 +255,8 @@ export function OwnAgentsSection({ endpoint, onNotice }: { endpoint: Endpoint; o
   const save = () => {
     if (!editing || !own) return;
     setEditing({ ...editing, busy: true, problem: undefined });
-    const manifest = buildManifest(editing.form);
+    const existing = editing.index === null ? undefined : own.agents[editing.index];
+    const manifest = existing ? mergeManifest(existing, editing.form) : buildManifest(editing.form);
     const change: Change = editing.index === null ? { add: manifest } : { replace: editing.index, with: manifest };
     void send(change, `${manifest.name || "The agent"} saved.`, editing.index);
   };

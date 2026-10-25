@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { ApiError } from "../../lib/api/client";
-import { blankForm, buildManifest, buildSave, deriveId, formFromManifest, joinFlags, outcomeOf, splitFlags, splitNames } from "./ownAgents";
+import type { AgentManifest } from "../../generated/AgentManifest";
+import { blankForm, buildManifest, buildSave, deriveId, formFromManifest, joinFlags, mergeManifest, outcomeOf, splitFlags, splitNames, splitProblems } from "./ownAgents";
 
 describe("deriveId", () => {
   it("lowercases and dashes the name", () => {
@@ -85,5 +86,54 @@ describe("outcomeOf", () => {
     expect(outcomeOf(new ApiError(500, "x")).kind).toBe("failed");
     expect(outcomeOf(new ApiError(422, "not json")).kind).toBe("failed");
     expect(outcomeOf(new Error("offline")).kind).toBe("failed");
+  });
+});
+
+describe("mergeManifest", () => {
+  const existing: AgentManifest = {
+    id: "hand",
+    name: "Hand",
+    cli: "Hand CLI",
+    mark: "generic",
+    commands: ["hand", "hand2"],
+    reject_paths: ["C:/old"],
+    version_shape: "^\\d+$",
+    exe_names: ["hand"],
+    packages: ["@x/hand"],
+    prompt: { style: "none" },
+    continue: null,
+    modes: { bypass: ["--yolo"], "dont-ask": ["--quiet"] },
+  };
+  it("keeps what the form does not show when one flag changes", () => {
+    const form = { ...formFromManifest(existing), continueFlags: "--resume" };
+    const merged = mergeManifest(existing, form);
+    expect(merged.commands).toEqual(["hand", "hand2"]);
+    expect(merged.packages).toEqual(["@x/hand"]);
+    expect(merged.reject_paths).toEqual(["C:/old"]);
+    expect(merged.version_shape).toBe("^\\d+$");
+    expect(merged.cli).toBe("Hand CLI");
+    expect(merged.modes["dont-ask"]).toEqual(["--quiet"]);
+    expect(merged.continue).toEqual(["--resume"]);
+  });
+  it("replaces only the first command when the form's command changed", () => {
+    const merged = mergeManifest(existing, { ...formFromManifest(existing), command: "C:/new/hand.exe" });
+    expect(merged.commands).toEqual(["C:/new/hand.exe", "hand2"]);
+  });
+});
+
+describe("splitProblems", () => {
+  const sent = [
+    { id: "Bad Id", name: "Bad Id" },
+    { id: "good", name: "Good" },
+  ] as AgentManifest[];
+  it("keeps another entry's problem off the form being saved and names that entry", () => {
+    const out = splitProblems(sent, [{ index: 0, id: "Bad Id", reason: "The id may only use a-z." }], 1);
+    expect(out.mine).toBeUndefined();
+    expect(out.others).toEqual(["Fix or remove “Bad Id” first: The id may only use a-z."]);
+  });
+  it("gives the saved entry its own problem", () => {
+    const out = splitProblems(sent, [{ index: 1, id: "good", reason: "No command." }, { index: 0, id: "Bad Id", reason: "Bad." }], 1);
+    expect(out.mine?.reason).toBe("No command.");
+    expect(out.others).toHaveLength(1);
   });
 });

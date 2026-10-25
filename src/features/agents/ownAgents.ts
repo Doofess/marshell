@@ -130,3 +130,36 @@ export function outcomeOf(e: unknown): SaveOutcome {
 
 /** Problems that belong to the file, not to one entry: the file couldn't be read, so no entry exists at their index. */
 export const fileProblems = (agents: readonly AgentManifest[], problems: readonly OwnAgentProblem[]): OwnAgentProblem[] => problems.filter((p) => p.index >= agents.length);
+
+/**
+ * An edit of a listed entry: the form's fields on top of the entry, so what the form does not show (a second command, packages,
+ * reject paths, the version shape, the cli name, a mode it does not offer) is kept. Only the first command is the form's.
+ */
+export function mergeManifest(existing: AgentManifest, form: OwnForm): AgentManifest {
+  const built = buildManifest(form);
+  const command = built.commands[0] ?? "";
+  const modes: AgentManifest["modes"] = { ...built.modes };
+  for (const [mode, flags] of Object.entries(existing.modes)) {
+    if (!(OWN_MODES as readonly string[]).includes(mode)) Object.assign(modes, { [mode]: flags });
+  }
+  return {
+    ...existing,
+    id: built.id,
+    name: built.name,
+    commands: command === (existing.commands[0] ?? "") ? existing.commands : [command, ...existing.commands.slice(1)],
+    exe_names: built.exe_names,
+    prompt: built.prompt,
+    continue: built.continue,
+    modes,
+  };
+}
+
+/**
+ * Sorts a refusal: the problem of the entry being saved (it belongs on the form) from the others (they are in the file already,
+ * and are said once, naming the entry). `sentIndex` is the saved entry's place in `sent`, or null when none is (a removal).
+ */
+export function splitProblems(sent: readonly AgentManifest[], problems: readonly OwnAgentProblem[], sentIndex: number | null): { mine: OwnAgentProblem | undefined; others: string[] } {
+  const mine = sentIndex === null ? undefined : problems.find((p) => p.index === sentIndex);
+  const others = problems.filter((p) => p !== mine).map((p) => `Fix or remove “${sent[p.index]?.name || p.id || `entry ${p.index + 1}`}” first: ${p.reason}`);
+  return { mine, others };
+}
