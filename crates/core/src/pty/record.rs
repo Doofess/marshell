@@ -83,6 +83,9 @@ fn event(t: f64, code: &str, data: &str) -> String {
 /// A recording stops growing here; runaway output (`yes`) cannot fill the disk.
 pub const MAX_RECORDING_BYTES: u64 = 256 * 1024 * 1024;
 
+/// A 633 sequence longer than this is not followed any further.
+const MAX_OSC633: usize = 64 * 1024;
+
 const LIMIT_MARKER: &str = "Recording stopped: it reached the size limit.";
 
 const BEHIND_MARKER: &str = "Recording stopped: it fell behind.";
@@ -348,6 +351,121 @@ impl Writer {
     fn time(&mut self, t: f64) -> f64 {
         self.last_t = self.last_t.max(t);
         self.last_t
+    }
+}
+
+/// Drops every OSC 633 sequence (`ESC ] 633 ; ... BEL` or `... ESC \`) from the bytes going to a recording. The
+/// shell integration's 633;E carries the typed command line, unscrubbed, and the player has no use for it.
+/// A sequence cut by the end of a chunk is followed across chunks.
+#[derive(Default)]
+pub struct Osc633Strip {
+    state: StripState,
+    /// The bytes of a possible `ESC ] 633 ;` read so far.
+    held: Vec<u8>,
+}
+
+#[derive(Default, Clone, Copy)]
+enum StripState {
+    #[default]
+    Text,
+    /// `held` is a proper prefix of `ESC ] 633 ;`.
+    Prefix,
+    /// Inside a sequence; `esc` is set when the last byte was ESC.
+    Body { len: usize, esc: bool },
+}
+
+const OSC633_START: &[u8] = b"]633;";
+
+impl Osc633Strip {
+    /// `bytes` without its OSC 633 sequences. A prefix that is not one comes out whole, with the next chunk.
+    pub fn filter(&mut self, bytes: &[u8]) -> Vec<u8> {
+        let mut out = Vec::with_capacity(bytes.len());
+        for &b in bytes {
+            loop {
+                match self.state {
+                    StripState::Text => {
+                        if b == 0x1b {
+                            self.held.push(b);
+                            self.state = StripState::Prefix;
+                        } else {
+                            out.push(b);
+                        }
+                    }
+                    StripState::Prefix => {
+                        if b == OSC633_START[self.held.len()] {
+                            self.held.push(b);
+                            if self.held.len() == OSC633_START.len() {
+                                self.held.clear();
+                                self.state = StripState::Body { len: 0, esc: false };
+                            }
+                        } else {
+                            out.append(&mut self.held);
+                            self.state = StripState::Text;
+                            continue;
+                        }
+                    }
+                    StripState::Body { len, esc } => {
+                        // BEL, or ST (ESC followed by a backslash, 0x5c), ends it.
+                        if b == 0x07 || (esc && b == 0x5c) {
+                            self.state = StripState::Text;
+                        } else if len >= MAX_OSC633 {
+                            // Give up on a sequence that never ends, so the recording goes on.
+                            self.state = StripState::Text;
+                            out.push(b);
+                        } else {
+                            self.state = StripState::Body {
+                                len: len + 1,
+                                esc: b == 0x1b,
+                            };
+                        }
+                    }
+                }
+                break;
+            }
+        }
+        out
+    }
+}
+
+#[cfg(test)]
+mod strip_tests {
+    use super::*;
+
+    fn run(chunks: &[&[u8]]) -> Vec<u8> {
+        let mut f = Osc633Strip::default();
+        chunks.iter().flat_map(|c| f.filter(c)).collect()
+    }
+
+    #[test]
+    fn osc633_never_reaches_the_recording() {
+        let e: &[u8] = b"a\x1b]633;E;docker login -p hunter2\x1b\\b\x1b]633;E;x\x07c";
+        assert_eq!(run(&[e]), b"abc");
+        assert_eq!(run(&[b"\x1b]633;A\x07\x1b]633;D;0\x07"]), b"");
+        // Other sequences and lone escapes stay.
+        let keep: &[u8] = b"\x1b[31mred\x1b[0m \x1b]133;A\x07 \x1b]0;title\x07 \x1b] \x1b";
+        assert_eq!(run(&[keep]), &keep[..keep.len() - 1]);
+        // Cut at every byte of the sequence, in every place.
+        for cut in 0..=e.len() {
+            assert_eq!(run(&[&e[..cut], &e[cut..]]), b"abc", "cut at {cut}");
+        }
+        // Three chunks, the terminator split from its ESC.
+        assert_eq!(run(&[b"x\x1b]633;E;sec", b"ret\x1b", b"\\y"]), b"xy");
+        // A prefix that turns out to be something else comes out whole.
+        assert_eq!(run(&[b"\x1b]63", b"4;z"]), b"\x1b]634;z");
+        assert_eq!(run(&[b"\x1b\x1b]633;E;s\x07"]), b"\x1b");
+    }
+
+    #[test]
+    fn an_unterminated_osc633_is_dropped_up_to_its_bound() {
+        let mut f = Osc633Strip::default();
+        let mut got = f.filter(b"ok \x1b]633;E;");
+        let junk = vec![b's'; MAX_OSC633 + 10];
+        got.extend(f.filter(&junk));
+        // Past the bound the filter gives up and lets text through again.
+        got.extend(f.filter(b" back"));
+        assert!(got.starts_with(b"ok "));
+        assert!(got.ends_with(b" back"));
+        assert!(got.len() < 3 + 20 + 5 + 10, "the sequence body was recorded");
     }
 }
 

@@ -64,7 +64,8 @@ function limit(id: "limit5" | "limit7", label: string, words: string, w: { pct: 
 }
 
 /** The items in the order they are read, left to right. A core item always comes first, so a separator never leads the line. */
-export function statusItems(row: RowModel, plan: PlanUsage | undefined, ports: string[] = []): StripItem[] {
+/** `ports` (host:port strings) stands in for the row's own, for stories; a live row passes none. */
+export function statusItems(row: RowModel, plan: PlanUsage | undefined, ports?: string[]): StripItem[] {
   const out: Array<StripItem | null> = [];
   if (row.model)
     out.push({
@@ -128,7 +129,7 @@ export function statusItems(row: RowModel, plan: PlanUsage | undefined, ports: s
   if (known(row.skills) && row.skills > 0) out.push({ id: "skills", kind: "text", priority: PRIORITY.skills, label: "skills", value: String(row.skills), name: `${row.skills} skills`, droppable: true });
   if (row.venv) out.push({ id: "venv", kind: "text", priority: PRIORITY.venv, label: "venv", value: row.venv, name: `Python environment ${row.venv}`, droppable: true });
 
-  const shown = ports.map((p) => p.split(":").pop()).filter((p): p is string => !!p && /^\d+$/.test(p));
+  const shown = (ports ?? (row.ports ?? []).map((c) => String(c.port))).map((p) => p.split(":").pop()).filter((p): p is string => !!p && /^\d+$/.test(p));
   if (shown.length) out.push({ id: "ports", kind: "text", priority: PRIORITY.ports, value: shown.map((p) => `:${p}`).join(" "), name: `Listening on ${shown.map((p) => `port ${p}`).join(", ")}`, droppable: true });
 
   return out.filter((i): i is StripItem => i !== null);

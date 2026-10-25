@@ -146,6 +146,7 @@ mod tests {
                     subagents_finished: 0,
                 }),
                 preset: None,
+                ports: Vec::new(),
             }],
             closed: Vec::new(),
         }

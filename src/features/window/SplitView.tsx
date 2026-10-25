@@ -4,6 +4,7 @@ import { hasPromptLine } from "../sidebar/promptLine";
 import type { RowModel } from "../sidebar/types";
 import type { TerminalThemeSetting } from "../terminal/terminalTheme";
 import { EmptyPane, Pane } from "./Pane";
+import type { PortMenuRequest } from "../ports/PortChips";
 import { ARRANGEMENTS, CELL, HANDLE, PANE_LIMIT, RATIO, chooseArrangement, dragRatio, paneCells, planFor, tracks, type Arrangement, type Handle, type PaneCount, type Plan, type Ratios, type Size } from "./splitLayout";
 import "./SplitView.css";
 
@@ -42,6 +43,8 @@ export type SplitViewProps = {
   onPick?: (index: number, tabId: string) => void;
   /** A divider dragged or moved with the arrow keys gives the whole new ratios, kept so every pane stays usable. */
   onRatios?: (ratios: Ratios) => void;
+  /** A pane header's port chip asks for its menu. */
+  onPortMenu?: (request: PortMenuRequest) => void;
 };
 
 /** How far one arrow key press moves a divider. */
@@ -72,7 +75,7 @@ function handleLabel(plan: Plan, h: Handle): string {
  * the user's choice stands once made. Dividers cost one pixel (the 8 px hit area overhangs the panes). A zoomed
  * pane fills the view and the others keep running.
  */
-export function SplitView({ panes, size, activeIndex = 0, arrangement, ratios = {}, zoomed, choices = [], hidden = 0, composerValues = {}, composers = true, setting = "follow-app", os = "windows", renderTerminal, paneBar, onFocus, onZoom, onRemove, onPick, onRatios }: SplitViewProps) {
+export function SplitView({ panes, size, activeIndex = 0, arrangement, ratios = {}, zoomed, choices = [], hidden = 0, composerValues = {}, composers = true, setting = "follow-app", os = "windows", renderTerminal, paneBar, onFocus, onZoom, onRemove, onPick, onRatios, onPortMenu }: SplitViewProps) {
   const splitRef = useRef<HTMLDivElement>(null);
   if (panes.length > PANE_LIMIT) throw new Error(`At most ${PANE_LIMIT} panes can be on screen`);
   const isZoomed = zoomed !== undefined && panes[zoomed] != null;
@@ -130,7 +133,7 @@ export function SplitView({ panes, size, activeIndex = 0, arrangement, ratios = 
     >
       {visible.map(({ row, index }, k) =>
         row ? (
-          <Pane key={row.id} row={row} active={index === activeIndex} split={split} navIndex={index} setting={setting} style={gridArea(plan.cells[k]!)} cells={cells[k]} zoomedOf={isZoomed ? panes.length : undefined} othersRunning={isZoomed ? panes.filter(Boolean).length - 1 : undefined} runningElsewhere={index === activeIndex && hidden > 0 ? hidden : undefined} value={composerValues[row.id]} composer={composers} os={os} renderTerminal={renderTerminal} bar={paneBar?.id === row.id ? paneBar.node : undefined} onFocus={at(onFocus, index)} onZoom={at(onZoom, index)} onRemove={at(onRemove, index)} />
+          <Pane key={row.id} row={row} active={index === activeIndex} split={split} navIndex={index} setting={setting} style={gridArea(plan.cells[k]!)} cells={cells[k]} zoomedOf={isZoomed ? panes.length : undefined} othersRunning={isZoomed ? panes.filter(Boolean).length - 1 : undefined} runningElsewhere={index === activeIndex && hidden > 0 ? hidden : undefined} value={composerValues[row.id]} composer={composers} os={os} renderTerminal={renderTerminal} bar={paneBar?.id === row.id ? paneBar.node : undefined} onFocus={at(onFocus, index)} onZoom={at(onZoom, index)} onRemove={at(onRemove, index)} onPortMenu={onPortMenu} />
         ) : (
           <EmptyPane key={`empty-${index}`} choices={choices} active={index === activeIndex} split={split} navIndex={index} style={gridArea(plan.cells[k]!)} os={os} onFocus={at(onFocus, index)} onRemove={at(onRemove, index)} onPick={at(onPick, index)} />
         ),

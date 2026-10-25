@@ -593,8 +593,7 @@ fn build_argv(
             quote(text)
         }
     };
-    let mut argv = profile.command.clone();
-    match profile.family {
+    let line = match profile.family {
         ShellFamily::PowerShell => {
             let mut line = format!("& {}", word(&program_word, powershell_quote));
             for arg in &args {
@@ -615,7 +614,7 @@ fn build_argv(
                 }
                 line.push_str(&format!(" {}", powershell_quote(p)));
             }
-            argv.extend(["-NoExit".into(), "-Command".into(), line]);
+            line
         }
         ShellFamily::Cmd => {
             // The `/k` string gets quoted on its way to cmd, which splits a prompt into
@@ -636,7 +635,7 @@ fn build_argv(
                 line.push(' ');
                 line.push_str(arg);
             }
-            argv.extend(["/k".into(), line]);
+            line
         }
         ShellFamily::Posix | ShellFamily::Wsl => {
             let mut line = word(&program_word, posix_quote);
@@ -651,24 +650,111 @@ fn build_argv(
                 }
                 line.push_str(&format!(" {}", posix_quote(p)));
             }
-            if profile.family == ShellFamily::Wsl {
-                line.push_str("; exec bash -l");
-                // --exec starts bash directly; plain `--` would run the line through the
-                // distro's default shell first, which expands $(...) inside the prompt.
-                argv.extend(["--exec".into(), "bash".into(), "-lc".into(), line]);
+            line
+        }
+    };
+    Ok(line_argv(profile, line))
+}
+
+/// The argv that runs `line` in `profile`'s shell, the way an agent session does: PowerShell stays open after it,
+/// `cmd /k` stays open, and a POSIX shell runs it and then replaces itself with a login shell. No integration.
+pub(crate) fn line_argv(profile: &Profile, mut line: String) -> Vec<String> {
+    let mut argv = profile.command.clone();
+    match profile.family {
+        ShellFamily::PowerShell => argv.extend(["-NoExit".into(), "-Command".into(), line]),
+        ShellFamily::Cmd => argv.extend(["/k".into(), line]),
+        ShellFamily::Wsl => {
+            line.push_str("; exec bash -l");
+            // --exec starts bash directly; plain `--` would run the line through the
+            // distro's default shell first, which expands $(...) inside the prompt.
+            argv.extend(["--exec".into(), "bash".into(), "-lc".into(), line]);
+        }
+        ShellFamily::Posix => {
+            // Git Bash returns to itself by path; other login shells use $SHELL.
+            if profile.id == "git-bash" {
+                let bash = profile.command.first().map(String::as_str).unwrap_or("bash");
+                line.push_str(&format!("; exec {} -l", posix_quote(bash)));
             } else {
-                // Git Bash returns to itself by path; other login shells use $SHELL.
-                if profile.id == "git-bash" {
-                    let bash = profile.command.first().map(String::as_str).unwrap_or("bash");
-                    line.push_str(&format!("; exec {} -l", posix_quote(bash)));
-                } else {
-                    line.push_str("; exec \"$SHELL\" -l");
+                line.push_str("; exec \"$SHELL\" -l");
+            }
+            argv.extend(["-c".into(), line]);
+        }
+    }
+    argv
+}
+
+/// One argument of a launch preset, as it goes into the command line.
+#[derive(Clone, PartialEq, Eq)]
+pub enum PresetArg {
+    /// Written in the preset itself.
+    Literal(String),
+    /// A value the person typed: always one argument, and never read as a flag where the shell can't quote it.
+    Field(String),
+}
+
+/// What cmd takes as it is inside a `/k` string: no character it treats as an operator, quote, expansion or space.
+fn is_cmd_safe(text: &str) -> bool {
+    !text.is_empty()
+        && text
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | ':' | '/' | '=' | '@' | ',' | '+' | '-'))
+}
+
+/// True when the profile runs `powershell.exe` (Windows PowerShell 5): it mangles double quotes in a native call.
+pub(crate) fn mangles_double_quotes(profile: &Profile) -> bool {
+    is_windows_powershell_5(profile)
+}
+
+/// The line that runs `program` with `args` in a shell of `family`. The program comes from the preset only. Each argument
+/// is exactly one argument of the program: quoted per shell, and refused where the shell can't quote it (cmd).
+pub fn preset_line(family: ShellFamily, program: &str, args: &[PresetArg]) -> Result<String, String> {
+    const CMD_REFUSED: &str = "Command Prompt can't pass an argument that needs quoting. Use PowerShell.";
+    let posix = matches!(family, ShellFamily::Posix | ShellFamily::Wsl);
+    let word = |text: &str, quote: fn(&str) -> String| {
+        if is_plain_word(text) && !(posix && text.contains('\\')) {
+            text.to_string()
+        } else {
+            quote(text)
+        }
+    };
+    let mut line = String::new();
+    match family {
+        ShellFamily::PowerShell => {
+            line.push_str(&format!("& {}", word(program, powershell_quote)));
+            for arg in args {
+                let (PresetArg::Literal(text) | PresetArg::Field(text)) = arg;
+                line.push(' ');
+                line.push_str(&word(text, powershell_quote));
+            }
+        }
+        ShellFamily::Cmd => {
+            if !is_plain_word(program) {
+                return Err("Command Prompt can't start a program whose path has a space. Use PowerShell.".into());
+            }
+            line.push_str(program);
+            for arg in args {
+                let ok = match arg {
+                    PresetArg::Literal(text) => is_plain_word(text) || is_cmd_safe(text),
+                    PresetArg::Field(text) => is_cmd_safe(text) && !text.starts_with('-'),
+                };
+                if !ok {
+                    return Err(CMD_REFUSED.into());
                 }
-                argv.extend(["-c".into(), line]);
+                let (PresetArg::Literal(text) | PresetArg::Field(text)) = arg;
+                line.push(' ');
+                line.push_str(text);
+            }
+        }
+        ShellFamily::Posix | ShellFamily::Wsl => {
+            line.push_str(&word(program, posix_quote));
+            for arg in args {
+                let (PresetArg::Literal(text) | PresetArg::Field(text)) = arg;
+                line.push(' ');
+                line.push_str(&word(text, posix_quote));
             }
         }
     }
-    Ok(argv)
+    Ok(line)
 }
 
 #[cfg(test)]
@@ -1534,6 +1620,157 @@ mod tests {
         assert_eq!(
             line(&sh, "claude", None).last().unwrap(),
             "claude 'hi'; exec \"$SHELL\" -l"
+        );
+    }
+
+    fn field(text: &str) -> PresetArg {
+        PresetArg::Field(text.into())
+    }
+
+    fn literal(text: &str) -> PresetArg {
+        PresetArg::Literal(text.into())
+    }
+
+    /// The text a PowerShell single-quoted string holds, or None if `quoted` is not exactly one such string.
+    fn powershell_unquote(quoted: &str) -> Option<String> {
+        let inner = quoted.strip_prefix('\'')?.strip_suffix('\'')?;
+        let mut out = String::new();
+        let mut chars = inner.chars();
+        while let Some(c) = chars.next() {
+            if matches!(c, '\'' | '\u{2018}' | '\u{2019}' | '\u{201A}' | '\u{201B}') {
+                // A quote inside must be doubled.
+                if chars.next() != Some(c) {
+                    return None;
+                }
+            }
+            out.push(c);
+        }
+        Some(out)
+    }
+
+    /// The text a POSIX single-quoted word holds, or None if `quoted` is not exactly one such word.
+    fn posix_unquote(quoted: &str) -> Option<String> {
+        let mut rest = quoted;
+        let mut out = String::new();
+        loop {
+            let body = rest.strip_prefix('\'')?;
+            let end = body.find('\'')?;
+            out.push_str(&body[..end]);
+            rest = &body[end + 1..];
+            if rest.is_empty() {
+                return Some(out);
+            }
+            // The only thing between two quoted runs is an escaped quote.
+            rest = rest.strip_prefix("\\'")?;
+            out.push('\'');
+        }
+    }
+
+    #[test]
+    fn a_preset_line_quotes_per_shell() {
+        let args = [literal("run"), field("my dir")];
+        assert_eq!(
+            preset_line(ShellFamily::PowerShell, "cargo", &args).unwrap(),
+            "& cargo run 'my dir'"
+        );
+        assert_eq!(
+            preset_line(ShellFamily::Posix, "cargo", &args).unwrap(),
+            "cargo run 'my dir'"
+        );
+        assert_eq!(
+            preset_line(ShellFamily::Wsl, "cargo", &args).unwrap(),
+            "cargo run 'my dir'"
+        );
+        assert_eq!(
+            preset_line(ShellFamily::Cmd, "npx", &[literal("vite"), field("web:3000")]).unwrap(),
+            "npx vite web:3000"
+        );
+        assert_eq!(
+            preset_line(ShellFamily::PowerShell, "npx", &[literal("vite")]).unwrap(),
+            "& npx vite"
+        );
+    }
+
+    #[test]
+    fn cmd_refuses_what_needs_quoting() {
+        let refused = "Command Prompt can't pass an argument that needs quoting. Use PowerShell.";
+        assert_eq!(
+            preset_line(ShellFamily::Cmd, "kubectl", &[field("my dir")]).unwrap_err(),
+            refused
+        );
+        // A leading dash from a field would be read as a flag of the tool.
+        assert_eq!(
+            preset_line(ShellFamily::Cmd, "kubectl", &[field("-v")]).unwrap_err(),
+            refused
+        );
+        // The preset's own flags are fine.
+        assert_eq!(
+            preset_line(ShellFamily::Cmd, "kubectl", &[literal("-v"), field("pod/x")]).unwrap(),
+            "kubectl -v pod/x"
+        );
+        assert!(preset_line(ShellFamily::Cmd, "npx", &[field("")]).is_err());
+    }
+
+    #[test]
+    fn a_field_value_cannot_break_out_of_its_argument() {
+        let values = [
+            "x'; calc; '",
+            "$(calc)",
+            "`calc`",
+            "a b",
+            "a\"b",
+            "x & calc",
+            "x | calc",
+            "%PATH%",
+            "x^y",
+            "(a)",
+            "<a>",
+            "!a!",
+            "a\\b",
+            "\u{2019}; calc; \u{2018}",
+            "a;b",
+            "x\ty",
+        ];
+        for value in values {
+            let ps = preset_line(ShellFamily::PowerShell, "tool", &[literal("go"), field(value)]).unwrap();
+            let arg = ps.strip_prefix("& tool go ").unwrap();
+            // A plain word (letters, digits and `._:/\=-`) is one argument as it is; anything else is one quoted string.
+            let bare = is_plain_word(value) && arg == value;
+            assert!(
+                bare || powershell_unquote(arg).as_deref() == Some(value),
+                "powershell {value:?}"
+            );
+            for family in [ShellFamily::Posix, ShellFamily::Wsl] {
+                let sh = preset_line(family, "tool", &[literal("go"), field(value)]).unwrap();
+                let arg = sh.strip_prefix("tool go ").unwrap();
+                assert_eq!(posix_unquote(arg).as_deref(), Some(value), "posix {value:?}");
+            }
+            assert_eq!(
+                preset_line(ShellFamily::Cmd, "tool", &[literal("go"), field(value)]).unwrap_err(),
+                "Command Prompt can't pass an argument that needs quoting. Use PowerShell.",
+                "cmd {value:?}"
+            );
+        }
+        // A plain value goes in as it is, and the program is never quoted from a field.
+        assert_eq!(
+            preset_line(ShellFamily::Posix, "tool", &[field("web-1")]).unwrap(),
+            "tool web-1"
+        );
+    }
+
+    #[test]
+    fn a_run_line_goes_after_the_shell_the_way_an_agent_does() {
+        let line = |p: &Profile| line_argv(p, "tool go".into());
+        let pwsh = profile("pwsh", &["pwsh.exe", "-NoLogo"], ShellFamily::PowerShell);
+        assert_eq!(line(&pwsh), ["pwsh.exe", "-NoLogo", "-NoExit", "-Command", "tool go"]);
+        let cmd = profile("cmd", &["cmd.exe"], ShellFamily::Cmd);
+        assert_eq!(line(&cmd), ["cmd.exe", "/k", "tool go"]);
+        let sh = profile("bash", &["bash", "-l"], ShellFamily::Posix);
+        assert_eq!(line(&sh), ["bash", "-l", "-c", "tool go; exec \"$SHELL\" -l"]);
+        let wsl = profile("wsl", &["wsl.exe"], ShellFamily::Wsl);
+        assert_eq!(
+            line(&wsl),
+            ["wsl.exe", "--exec", "bash", "-lc", "tool go; exec bash -l"]
         );
     }
 }

@@ -1,0 +1,283 @@
+[
+  {
+    "id": "npx",
+    "name": "npx",
+    "commands": ["npx", "bunx"],
+    "launcher": true,
+    "needs_you": [
+      { "pattern": "Ok to proceed\\?(?:\\s*\\(y\\))?\\s*$", "phrase": "Asks to continue", "kind": "text" }
+    ]
+  },
+  {
+    "id": "vite",
+    "name": "Vite",
+    "commands": ["vite"],
+    "scripts": ["node_modules/vite/"],
+    "ports": [
+      { "pattern": "➜\\s+Local:\\s+(https?://\\S+)" }
+    ],
+    "presets": [
+      { "id": "dev", "name": "Vite dev server", "program": "npx", "args": ["vite"] }
+    ]
+  },
+  {
+    "id": "next",
+    "name": "Next.js",
+    "commands": ["next"],
+    "scripts": ["node_modules/next/"],
+    "ports": [
+      { "pattern": "Local:\\s+(https?://\\S+)" }
+    ],
+    "presets": [
+      { "id": "dev", "name": "Next.js dev server", "program": "npx", "args": ["next", "dev"] }
+    ]
+  },
+  {
+    "id": "vercel",
+    "name": "Vercel",
+    "commands": ["vercel"],
+    "scripts": ["node_modules/vercel/"],
+    "needs_you": [
+      { "pattern": "Visit\\s+(?:https://)?vercel\\.com", "phrase": "Waiting for sign-in in the browser", "kind": "browser" },
+      { "pattern": "Waiting for authentication\\.\\.\\.", "phrase": "Waiting for sign-in in the browser", "kind": "browser" }
+    ],
+    "ports": [
+      { "pattern": "Ready! Available at (https?://\\S+)" }
+    ],
+    "quiet_ports": ["login"],
+    "presets": [
+      { "id": "dev", "name": "Vercel dev", "program": "npx", "args": ["vercel", "dev"] }
+    ]
+  },
+  {
+    "id": "wrangler",
+    "name": "Wrangler",
+    "commands": ["wrangler"],
+    "scripts": ["node_modules/wrangler/"],
+    "needs_you": [
+      { "pattern": "Attempting to login via OAuth\\.\\.\\.", "phrase": "Waiting for sign-in in the browser", "kind": "browser" },
+      { "pattern": "Opening a link in your default browser", "phrase": "Waiting for sign-in in the browser", "kind": "browser" },
+      { "pattern": "Enter a secret value:\\s*$", "phrase": "Asks for a value", "kind": "text" }
+    ],
+    "ports": [
+      { "pattern": "Ready on (https?://\\S+)" }
+    ],
+    "quiet_ports": ["login"],
+    "presets": [
+      { "id": "dev", "name": "Wrangler dev", "program": "npx", "args": ["wrangler", "dev"] }
+    ]
+  },
+  {
+    "id": "netlify",
+    "name": "Netlify",
+    "commands": ["netlify", "netlify-cli"],
+    "scripts": ["node_modules/netlify-cli/"],
+    "needs_you": [
+      { "pattern": "Opening\\s+https?://\\S+", "phrase": "Waiting for sign-in in the browser", "kind": "browser" },
+      { "pattern": "Waiting for authorization\\.\\.\\.", "phrase": "Waiting for sign-in in the browser", "kind": "browser" }
+    ],
+    "ports": [
+      { "pattern": "Local dev server ready:\\s+(https?://\\S+)" }
+    ],
+    "quiet_ports": ["login"],
+    "presets": [
+      { "id": "dev", "name": "Netlify dev", "program": "npx", "args": ["netlify", "dev"] }
+    ]
+  },
+  {
+    "id": "firebase",
+    "name": "Firebase",
+    "commands": ["firebase", "firebase-tools"],
+    "scripts": ["node_modules/firebase-tools/"],
+    "needs_you": [
+      { "pattern": "Visit this URL on this device to log in:", "phrase": "Waiting for sign-in in the browser", "kind": "browser" },
+      { "pattern": "Waiting for authentication\\.\\.\\.", "phrase": "Waiting for sign-in in the browser", "kind": "browser" },
+      { "pattern": "Paste or enter the authorization code below once you have it:", "phrase": "Asks for a sign-in code", "kind": "text" },
+      { "pattern": "Enter authorization code:\\s*$", "phrase": "Asks for a sign-in code", "kind": "text" },
+      { "pattern": "Do you want to continue\\?", "phrase": "Asks to continue", "kind": "text" }
+    ],
+    "ports": [
+      { "pattern": "^\\s*[A-Za-z][\\w ]*?\\s{2,}((?:\\d{1,3}(?:\\.\\d{1,3}){3}|\\[[0-9a-fA-F:]*\\]|localhost):\\d+)(?:\\s|$)" },
+      { "pattern": "View Emulator UI at (https?://\\S+)" }
+    ],
+    "quiet_ports": ["login"],
+    "presets": [
+      { "id": "emulators", "name": "Firebase emulators", "program": "npx", "args": ["firebase", "emulators:start"] }
+    ]
+  },
+  {
+    "id": "supabase",
+    "name": "Supabase",
+    "commands": ["supabase"],
+    "scripts": ["node_modules/supabase/"],
+    "needs_you": [
+      { "pattern": "Press Enter to open browser and login automatically", "phrase": "Waiting for sign-in in the browser", "kind": "browser" },
+      { "pattern": "Here is your login link in case browser did not open", "phrase": "Waiting for sign-in in the browser", "kind": "browser" },
+      { "pattern": "Enter your verification code:\\s*$", "phrase": "Asks for a sign-in code", "kind": "text" },
+      { "pattern": "Enter your access token:\\s*$", "phrase": "Asks for a sign-in code", "kind": "text" }
+    ],
+    "quiet_ports": ["login"]
+  },
+  {
+    "id": "docker",
+    "name": "Docker",
+    "commands": ["docker"],
+    "needs_you": [
+      { "pattern": "one-time device confirmation code", "phrase": "Waiting for sign-in in the browser", "kind": "browser" },
+      { "pattern": "login\\.docker\\.com/activate", "phrase": "Waiting for sign-in in the browser", "kind": "browser" },
+      { "pattern": "Press ENTER to open the URL in your browser", "phrase": "Waiting for sign-in in the browser", "kind": "browser" },
+      { "pattern": "(?:Username|Password):\\s*$", "phrase": "Asks for a value", "kind": "text" },
+      { "pattern": "Are you sure you want to continue\\? \\[y/N\\]\\s*$", "phrase": "Asks to continue", "kind": "text" }
+    ],
+    "quiet_ports": ["login"],
+    "presets": [
+      { "id": "compose-up", "name": "Compose up", "program": "docker", "args": ["compose", "up"] }
+    ]
+  },
+  {
+    "id": "gh",
+    "name": "GitHub CLI",
+    "commands": ["gh"],
+    "needs_you": [
+      { "pattern": "First copy your one-time code: ([A-Z0-9]{4}-[A-Z0-9]{4})", "phrase": "Waiting for sign-in in the browser", "kind": "browser" },
+      { "pattern": "Press Enter to open \\S+ in your browser", "phrase": "Waiting for sign-in in the browser", "kind": "browser" },
+      { "pattern": "Where do you use GitHub\\?", "phrase": "Asks for a value", "kind": "text" },
+      { "pattern": "How would you like to authenticate GitHub CLI\\?", "phrase": "Asks for a value", "kind": "text" }
+    ],
+    "ports": [
+      { "pattern": "Forwarding ports: remote \\d+ <=> local ((?:\\d{1,3}(?:\\.\\d{1,3}){3}|\\[[0-9a-fA-F:]*\\]):\\d+)" }
+    ],
+    "quiet_ports": ["auth login"],
+    "presets": [
+      { "id": "sign-in", "name": "Sign in", "program": "gh", "args": ["auth", "login"] }
+    ]
+  },
+  {
+    "id": "kubectl",
+    "name": "kubectl",
+    "commands": ["kubectl"],
+    "needs_you": [
+      { "pattern": "You are about to delete the following \\d+ resource\\(s\\):", "phrase": "Asks to continue", "kind": "text" },
+      { "pattern": "Do you want to continue\\? \\(y/N\\):\\s*$", "phrase": "Asks to continue", "kind": "text" }
+    ],
+    "ports": [
+      { "pattern": "Forwarding from ((?:\\d{1,3}(?:\\.\\d{1,3}){3}|\\[[0-9a-fA-F:]*\\]):\\d+)" },
+      { "pattern": "Starting to serve on ((?:\\d{1,3}(?:\\.\\d{1,3}){3}|\\[[0-9a-fA-F:]*\\]):\\d+)" }
+    ],
+    "presets": [
+      {
+        "id": "port-forward",
+        "name": "Port forward",
+        "program": "kubectl",
+        "args": ["port-forward", "{target}", "{ports}"],
+        "fields": [
+          { "id": "target", "label": "Resource (pod/name or svc/name)" },
+          { "id": "ports", "label": "Ports (local:remote)" }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "gcloud",
+    "name": "Google Cloud CLI",
+    "commands": ["gcloud"],
+    "scripts": ["google-cloud-sdk/lib/gcloud.py"],
+    "needs_you": [
+      { "pattern": "\\((?:Y/n|y/N)\\)\\?\\s*$", "phrase": "Asks to continue", "kind": "text" },
+      { "pattern": "Your browser has been opened to visit:", "phrase": "Waiting for sign-in in the browser", "kind": "browser" },
+      { "pattern": "Go to the following link in your browser, and complete the sign-in prompts:", "phrase": "Waiting for sign-in in the browser", "kind": "browser" },
+      { "pattern": "Once finished, enter the verification code provided in your browser:", "phrase": "Asks for a sign-in code", "kind": "text" },
+      { "pattern": "Enter the output of the above command:", "phrase": "Asks for a sign-in code", "kind": "text" }
+    ],
+    "ports": [
+      { "pattern": "Listening on port \\[(\\d+)\\]" }
+    ],
+    "quiet_ports": ["auth login"]
+  },
+  {
+    "id": "aws",
+    "name": "AWS CLI",
+    "commands": ["aws"],
+    "needs_you": [
+      { "pattern": "Then enter the code:", "phrase": "Waiting for sign-in in the browser", "kind": "browser" },
+      { "pattern": "Attempting to open your default browser\\.", "phrase": "Waiting for sign-in in the browser", "kind": "browser" },
+      { "pattern": "https://(?:device\\.sso|oidc)\\.\\S+", "phrase": "Waiting for sign-in in the browser", "kind": "browser" },
+      { "pattern": "(?:SSO session name \\(Recommended\\)|SSO start URL \\[[^\\]]*\\]|SSO region \\[[^\\]]*\\]|Default client Region \\[[^\\]]*\\]|Profile name \\[[^\\]]*\\]):\\s*$", "phrase": "Asks for a value", "kind": "text" },
+      { "pattern": "\\(y/n\\):\\s*$", "phrase": "Asks to continue", "kind": "text" }
+    ],
+    "ports": [
+      { "pattern": "Port (\\d+) opened for sessionId" }
+    ],
+    "quiet_ports": ["login"]
+  },
+  {
+    "id": "az",
+    "name": "Azure CLI",
+    "commands": ["az"],
+    "scripts": ["azure.cli", "azure-cli"],
+    "needs_you": [
+      { "pattern": "microsoft\\.com/devicelogin|aka\\.ms/devicelogin", "phrase": "Waiting for sign-in in the browser", "kind": "browser" },
+      { "pattern": "Please continue the login in the web browser", "phrase": "Waiting for sign-in in the browser", "kind": "browser" },
+      { "pattern": "Select a subscription and tenant \\(Type a number or Enter for no changes\\):", "phrase": "Asks for a value", "kind": "text" }
+    ],
+    "quiet_ports": ["login"]
+  },
+  {
+    "id": "terraform",
+    "name": "Terraform",
+    "commands": ["terraform"],
+    "needs_you": [
+      { "pattern": "Enter a value:\\s*$", "phrase": "Asks for a value", "kind": "text" },
+      { "pattern": "Only 'yes' will be accepted", "phrase": "Asks to continue", "kind": "text" },
+      { "pattern": "Do you want to perform these actions", "phrase": "Asks to continue", "kind": "text" },
+      { "pattern": "Do you really want to destroy all resources", "phrase": "Asks to continue", "kind": "text" },
+      { "pattern": "Would you like to update the Terraform state to reflect these detected changes\\?", "phrase": "Asks to continue", "kind": "text" },
+      { "pattern": "Do you want to proceed\\?\\s*$", "phrase": "Asks to continue", "kind": "text" },
+      { "pattern": "Open the following URL to access the login page for", "phrase": "Waiting for sign-in in the browser", "kind": "browser" },
+      { "pattern": "Terraform will now wait for the host to signal that login was successful\\.", "phrase": "Waiting for sign-in in the browser", "kind": "browser" },
+      { "pattern": "Generate a token using your browser, and copy-paste it into this prompt\\.", "phrase": "Waiting for sign-in in the browser", "kind": "browser" },
+      { "pattern": "Token for \\S+:\\s*$", "phrase": "Asks for a sign-in code", "kind": "text" }
+    ],
+    "quiet_ports": ["login"],
+    "presets": [
+      { "id": "plan", "name": "Plan", "program": "terraform", "args": ["plan"] },
+      { "id": "apply", "name": "Apply", "program": "terraform", "args": ["apply"] }
+    ]
+  },
+  {
+    "id": "fly",
+    "name": "Fly.io",
+    "commands": ["fly", "flyctl"],
+    "needs_you": [
+      { "pattern": "Opening\\s+https?://\\S+", "phrase": "Waiting for sign-in in the browser", "kind": "browser" },
+      { "pattern": "Waiting for session\\.\\.\\.", "phrase": "Waiting for sign-in in the browser", "kind": "browser" },
+      { "pattern": "Open this URL in a browser and approve the fly auth login:", "phrase": "Waiting for sign-in in the browser", "kind": "browser" },
+      { "pattern": "Destroy app \\S+\\?", "phrase": "Asks to continue", "kind": "text" }
+    ],
+    "quiet_ports": ["login"]
+  },
+  {
+    "id": "stripe",
+    "name": "Stripe CLI",
+    "commands": ["stripe"],
+    "needs_you": [
+      { "pattern": "Your pairing code is:", "phrase": "Waiting for sign-in in the browser", "kind": "browser" },
+      { "pattern": "Press Enter to open the browser or visit", "phrase": "Waiting for sign-in in the browser", "kind": "browser" },
+      { "pattern": "To authenticate with Stripe, please go to:", "phrase": "Waiting for sign-in in the browser", "kind": "browser" },
+      { "pattern": "Waiting for confirmation\\.\\.\\.", "phrase": "Waiting for sign-in in the browser", "kind": "browser" },
+      { "pattern": "When prompted, confirm your verification code:", "phrase": "Waiting for sign-in in the browser", "kind": "browser" },
+      { "pattern": "Enter your API key:\\s*$", "phrase": "Asks for a value", "kind": "text" }
+    ],
+    "quiet_ports": ["login"]
+  },
+  {
+    "id": "ngrok",
+    "name": "ngrok",
+    "commands": ["ngrok"]
+  },
+  {
+    "id": "op",
+    "name": "1Password CLI",
+    "commands": ["op"]
+  }
+]

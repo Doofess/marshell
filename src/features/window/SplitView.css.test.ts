@@ -9,7 +9,7 @@ const rule = (s: string) => {
 
 describe("SplitView.css", () => {
   it("dims what an inactive pane header holds to 60%, but never the terminal text, a pane that needs you, or the narrow-pane warning", () => {
-    expect(rule('.pane[data-active="false"] .pane__header:not([data-needs="true"]) > :not(.chip)')).toContain("opacity: 0.6");
+    expect(rule('.pane[data-active="false"] .pane__header:not([data-needs="true"]) > :not(.chip):not(.port-chip)')).toContain("opacity: 0.6");
     expect(css).not.toMatch(/\.pane[^{]*\.scripted-terminal[^{]*\{[^}]*opacity/);
   });
   it("rings the focused pane with a 1 px focus inset and a 4 px 14% halo, on an overlay that is invisible on every other pane", () => {

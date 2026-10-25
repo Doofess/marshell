@@ -11,4 +11,8 @@ message: string | null,
 /**
  * When the first signal of this attention arrived. A flood keeps the first time.
  */
-since_ms: number, };
+since_ms: number, 
+/**
+ * True when the attention comes from a tool's prompt text matched on screen: a guess from text, not a hook.
+ */
+limited?: boolean, };

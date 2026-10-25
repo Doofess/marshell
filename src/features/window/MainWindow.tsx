@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState, type CSSProperties, type KeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
-import type { MenuItem } from "../../components/ContextMenu/ContextMenu";
+import { ContextMenu, type MenuItem } from "../../components/ContextMenu/ContextMenu";
+import type { PortMenuRequest } from "../ports/PortChips";
+import { chipLabel, chipMenuItems, runChipItem } from "../ports/ports";
 import { setTitle as setWindowTitle } from "../../lib/window/appWindow";
 import { Logo } from "../../components/Logo/Logo";
 import { Wordmark } from "../../components/Logo/Wordmark";
@@ -25,7 +27,7 @@ import type { Rect } from "../../lib/navigation/types";
 import { KeptTerminals } from "./keptTerminals";
 import { NavCursor, NO_SELECTION_TEXT } from "./NavCursor";
 import { Rail } from "./Rail";
-import { SCENARIO_FOOTER, SCENARIO_PLAN, SCENARIO_PORTS, SCENARIO_REQUESTS, SCENARIO_ROWS } from "./scenario";
+import { SCENARIO_FOOTER, SCENARIO_PLAN,SCENARIO_REQUESTS, SCENARIO_ROWS } from "./scenario";
 import type { Notice } from "./announce";
 import { SessionAnnouncer } from "./SessionAnnouncer";
 import { SessionHeader } from "./SessionHeader";
@@ -114,7 +116,7 @@ export type MainWindowProps = {
   composerValues?: Record<string, string>;
   /** Replaces the scripted terminal of every pane with the real one. Leave out in stories. `shown` is false for a kept terminal behind the selected one (single window only). */
   renderTerminal?: (row: RowModel, shown?: boolean) => ReactNode;
-  /** The ports the session header lists; defaults to the scenario's. */
+  /** Ports as `host:port`, for stories: used in place of the rows' own chips, and only when given. */
   ports?: string[];
   /** What the sidebar footer shows; defaults to the scenario's plan and doctor numbers. `null` leaves the footer out (the live app has none to show yet). */
   footer?: SidebarFooter | null;
@@ -245,7 +247,7 @@ export function MainWindow({
   shell = true,
   shellCollapsed = false,
   renderTerminal,
-  ports = SCENARIO_PORTS,
+  ports,
   footer = SCENARIO_FOOTER,
   needsYou = 0,
   headerBar,
@@ -286,6 +288,9 @@ export function MainWindow({
   const waiting = pendingSessionCount(requests);
   // Focus mode hides the session header until the pointer reaches the top edge; the pane headers stay. Keyboard users leave focus mode instead.
   const [peeking, setPeeking] = useState(false);
+  // A port chip's menu: the window holds it so it sits outside any pane's [data-agent] element.
+  const [portMenu, setPortMenu] = useState<PortMenuRequest | null>(null);
+  const chipPorts = ports?.map((p) => ({ port: Number(p.split(":").pop()), url: `http://${p}/`, announced: false }));
   // Leaving focus mode with the pointer on the bar must not leave the peek set for the next time focus mode starts.
   useEffect(() => {
     if (mode !== "focus") setPeeking(false);
@@ -425,6 +430,22 @@ export function MainWindow({
   return (
     <div className="window" style={{ inlineSize: width, blockSize: height, "--side-w": `${sideW}px` } as CSSProperties} data-mode={mode} data-layout={layout} data-title={title}>
       <SessionAnnouncer row={active} needsYou={waiting} notice={notice} />
+      {portMenu && (
+        <ContextMenu
+          label={portMenu.chips.length === 1 ? `Port ${chipLabel(portMenu.chips[0]!)}` : "More ports"}
+          items={chipMenuItems(portMenu.chips)}
+          anchor={portMenu.anchor}
+          onRun={(id) => {
+            runChipItem(portMenu.chips, id);
+            setPortMenu(null);
+            portMenu.opener?.focus();
+          }}
+          onClose={({ refocus }) => {
+            setPortMenu(null);
+            if (refocus) portMenu.opener?.focus();
+          }}
+        />
+      )}
       {/* data-tauri-drag-region: a bare attribute moves the window only when the press lands on that very element, so buttons and
           the text inside never start a drag; "deep" (the session header's area) also takes its text, while buttons still refuse. */}
       <header className="window__bar" data-tauri-drag-region>
@@ -451,7 +472,7 @@ export function MainWindow({
           )}
         </div>
         <div className="window__bar-main" data-tauri-drag-region="deep" onPointerLeave={mode === "focus" ? () => setPeeking(false) : undefined}>
-          {topBar ?? (showHeader && !manyPanes && active && <SessionHeader row={active} ports={ports} onMode={onModeMenu && (canChangeMode?.(active) ?? true) ? (anchor) => onModeMenu(active.id, anchor) : undefined} />)}
+          {topBar ?? (showHeader && !manyPanes && active && <SessionHeader row={active} ports={chipPorts} onPortMenu={setPortMenu} onMode={onModeMenu && (canChangeMode?.(active) ?? true) ? (anchor) => onModeMenu(active.id, anchor) : undefined} />)}
           {/* Focus mode: the pointer at the top edge brings the header up, and leaving the bar puts it away. A pointer affordance only; the keyboard leaves focus mode. */}
           {mode === "focus" && !showHeader && !manyPanes && <div className="window__peek" aria-hidden="true" onPointerEnter={() => setPeeking(true)} />}
         </div>
@@ -540,7 +561,7 @@ export function MainWindow({
               </div>
             )
           ) : split && !previewing && !viewing ? (
-            <SplitView panes={shown} size={{ w: space.w, h: space.h }} activeIndex={noneSelected ? -1 : focusedIdx} hidden={hiddenCount} arrangement={chosen} ratios={ratios} zoomed={zoomIdx} choices={choices} composerValues={composerValues} composers={showComposer} setting={terminalSetting} os={os} renderTerminal={renderTerminal} paneBar={barInPane ? paneBar : undefined} {...paneHandlers} />
+            <SplitView panes={shown} size={{ w: space.w, h: space.h }} activeIndex={noneSelected ? -1 : focusedIdx} hidden={hiddenCount} arrangement={chosen} ratios={ratios} zoomed={zoomIdx} choices={choices} composerValues={composerValues} composers={showComposer} setting={terminalSetting} os={os} renderTerminal={renderTerminal} paneBar={barInPane ? paneBar : undefined} onPortMenu={setPortMenu} {...paneHandlers} />
           ) : renderTerminal ? (
             // While the preview is open in a split view, the focused pane's session is the one beside it; the others stay mounted behind.
             // Under a main view the same: every terminal stays mounted and none is on screen.

@@ -4,6 +4,7 @@ import { Chip } from "../../components/Chip/Chip";
 import { StatusGlyph } from "../../components/StatusGlyph/StatusGlyph";
 import { SessionNumber } from "../../components/SessionNumber/SessionNumber";
 import { GLYPHS } from "../../components/StatusGlyph/glyphs";
+import { PortChips, type PortMenuRequest } from "../ports/PortChips";
 import { hasPromptLine } from "../sidebar/promptLine";
 import { sessionWord } from "../sidebar/sessionNumber";
 import { commandById, shortcutLabel, type Os } from "../../lib/keymap";
@@ -17,6 +18,8 @@ import { COMPOSER } from "./layout";
 import "./SplitView.css";
 
 const NARROW = 80;
+/** A pane header shows this many port chips; the rest sit behind a +N chip. */
+const PANE_PORTS = 2;
 /** The main window never scrolls, so an empty pane lists what fits and sends the rest to the command palette. */
 const CHOICE_LIMIT = 5;
 export const needsYou = (r: RowModel) => r.status === "needs-permission" || r.status === "needs-question";
@@ -62,6 +65,8 @@ export type PaneProps = {
   onRemove?: () => void;
   /** A question about this session (the restart bar), drawn in the place of the pane's header. */
   bar?: ReactNode;
+  /** A port chip asks for its menu. Without it the chips have none. */
+  onPortMenu?: (request: PortMenuRequest) => void;
 };
 
 /**
@@ -72,7 +77,7 @@ export type PaneProps = {
  * the status glyph (the vendor mark moving, while working), the name, the project and, only when it applies,
  * how tight the pane is. A pane that needs you never recedes with the inactive headers.
  */
-export function Pane({ row, active, split, navIndex, setting, style, cells, zoomedOf, othersRunning, runningElsewhere, value, composer = true, os = "windows", renderTerminal, onFocus, onZoom, onRemove, bar }: PaneProps) {
+export function Pane({ row, active, split, navIndex, setting, style, cells, zoomedOf, othersRunning, runningElsewhere, value, composer = true, os = "windows", renderTerminal, onFocus, onZoom, onRemove, bar, onPortMenu }: PaneProps) {
   const needs = needsYou(row);
   // A manual CLI is a plain terminal: no prompt line of ours, and its rows go to the terminal.
   const line = composer && hasPromptLine(row);
@@ -106,6 +111,7 @@ export function Pane({ row, active, split, navIndex, setting, style, cells, zoom
         <span className="pane__spacer" />
         {zoomed && running > 0 && <span className="pane__running">{running} more running</span>}
         {!zoomed && runningElsewhere !== undefined && runningElsewhere > 0 && <span className="pane__running">{runningElsewhere} more running</span>}
+        <PortChips ports={row.ports ?? []} max={PANE_PORTS} {...(onPortMenu ? { onMenu: onPortMenu } : {})} />
         {narrow && (
           <Chip tone="caution" title={`This pane is narrower than ${NARROW} columns, which many CLIs need. Zoom it (${zoomKeys}) or change the layout.`}>
             {cells.cols}×{cells.rows}

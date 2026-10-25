@@ -1,3 +1,4 @@
+import type { PortChip } from "../../generated/PortChip";
 import type { AgentId } from "../../components/AgentMark/agents";
 import type { SessionKind } from "../../components/AgentMark/kinds";
 import type { GlyphKind } from "../../components/StatusGlyph/glyphs";
@@ -62,4 +63,6 @@ export type RowModel = {
   dirty?: number;
   /** The CLI's version, e.g. "2.1.296". */
   version?: string;
+  /** The ports the session listens on, as chips that open in the browser. Absent when there are none. */
+  ports?: PortChip[];
 };

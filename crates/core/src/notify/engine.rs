@@ -724,6 +724,7 @@ mod tests {
             attention: None,
             stuck: None,
             preset: None,
+            ports: Vec::new(),
         }
     }
 
@@ -747,6 +748,7 @@ mod tests {
         info.attention = Some(Attention {
             message: message.map(String::from),
             since_ms,
+            limited: false,
         });
         info
     }

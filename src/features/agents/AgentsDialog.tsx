@@ -12,6 +12,7 @@ import { ConsentCard } from "../onboarding/ConsentCard";
 import { CLI_NAME, type Capability } from "../onboarding/consent";
 import { actions, consentProps, hooksOffNotice, liveStatusOn, removalBlock, setupLine, setupWant, type InstallFlow, type SetupStart } from "./agentsState";
 import { OwnAgentsSection } from "./OwnAgentsSection";
+import { ToolsSection } from "./ToolsSection";
 import { failureText, useInstallFlow } from "./useInstallFlow";
 import "./AgentsDialog.css";
 
@@ -395,7 +396,12 @@ export function AgentsDialog({
     <AgentsDialogView
       setup={setup}
       codex={codex}
-      own={<OwnAgentsSection endpoint={endpoint} onNotice={onNotice} />}
+      own={
+        <>
+          <OwnAgentsSection endpoint={endpoint} onNotice={onNotice} />
+          <ToolsSection endpoint={endpoint} />
+        </>
+      }
       panel={panel}
       liveStatus={liveStatus.claude}
       liveStatusError={saveError?.agent === "claude" ? saveError.text : null}

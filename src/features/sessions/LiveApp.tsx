@@ -1398,7 +1398,6 @@ export function LiveApp() {
           drawer={drawerRequest !== undefined}
           drawerCard={drawerRequest && liveCard(drawerRequest, true)}
           onDrawerClose={() => setDrawerId(undefined)}
-          ports={[]}
           footer={footer}
           shell={{ terminal: shellTerminal, cwd: panelTab?.folder, hidden: view.shell_hidden, failed: shellFailed, onRetry: retryShell, openDisabled: !panelTab, forceOpen: shellForced, onToggle: toggleShell, onOpenInPane: () => void openInPane() }}
           composer={false}

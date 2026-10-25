@@ -84,6 +84,10 @@ pub struct CreateSessionRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub color_scheme: Option<ColorScheme>,
+    /// A tool preset to type into the shell. It takes no agent, prompt, mode or agent preset.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub tool: Option<crate::tools::ToolLaunch>,
 }
 
 /// How much an agent may do before it asks. The core turns it into the CLI's own flags.
@@ -179,6 +183,10 @@ pub struct SessionInfo {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub preset: Option<String>,
+    /// The local ports the tab's tools announced, at most 8. A chip opens its loopback URL.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[ts(optional, as = "Option<Vec<crate::tools::PortChip>>")]
+    pub ports: Vec<crate::tools::PortChip>,
 }
 
 /// A terminal program's request for attention.
@@ -190,6 +198,10 @@ pub struct Attention {
     /// When the first signal of this attention arrived. A flood keeps the first time.
     #[ts(type = "number")]
     pub since_ms: u64,
+    /// True when the attention comes from a tool's prompt text matched on screen: a guess from text, not a hook.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    #[ts(optional, as = "Option<bool>")]
+    pub limited: bool,
 }
 
 /// Why an agent looks stuck.
@@ -281,6 +293,10 @@ pub struct Foreground {
     pub command_line: Option<String>,
     /// "claude", "codex" or "antigravity" when the program is a known agent CLI.
     pub agent: Option<String>,
+    /// The id of the tool profile the running command matched ("vercel", "terraform"), if one did.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub tool: Option<String>,
 }
 
 /// A shell session's command state, folded from OSC 133 marks.
@@ -1065,6 +1081,7 @@ mod tests {
             attention: None,
             stuck: None,
             preset: None,
+            ports: Vec::new(),
         };
         let mut value = serde_json::to_value(&info).unwrap();
         value.as_object_mut().unwrap().remove("muted");

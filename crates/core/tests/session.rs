@@ -18,7 +18,10 @@ fn fake(args: &[&str]) -> SpawnSpec {
         rows: 24,
         on_exit: None,
         on_mark: None,
+        on_tool: None,
         record: None,
+        classify: None,
+        initial_command: None,
     }
 }
 
@@ -276,7 +279,10 @@ fn on_exit_callback_gets_the_code() {
             let _ = tx.send(code);
         })),
         on_mark: None,
+        on_tool: None,
         record: None,
+        classify: None,
+        initial_command: None,
     };
     let _session = Session::spawn("t-exit-cb".into(), spec).unwrap();
     assert_eq!(rx.recv_timeout(Duration::from_secs(5)), Ok(3));
@@ -440,7 +446,10 @@ fn printer(nested: bool) -> SpawnSpec {
         rows: 24,
         on_exit: None,
         on_mark: None,
+        on_tool: None,
         record: None,
+        classify: None,
+        initial_command: None,
     }
 }
 
@@ -669,4 +678,67 @@ fn a_name_in_env_and_env_remove_keeps_the_env_value() {
     spec.env_remove = vec!["MARSHELL_TEST_INHERITED_BOTH".into()];
     let out = environment_of("t-env-both", spec);
     assert!(out.contains("MARSHELL_TEST_INHERITED_BOTH=on-purpose"), "{out}");
+}
+
+fn classify_with_shipped_tools() -> marshell_core::pty::Classifier {
+    let tools = marshell_core::tools::Tools::shipped();
+    Arc::new(move |line| marshell_core::tools::watch_for(&tools, line))
+}
+
+#[test]
+fn a_secret_command_hides_its_output_from_the_recording() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("t-secret.cast");
+    let mut spec = fake(&["secret-run", "gh auth token", "gho_SECRET"]);
+    spec.record = Some((path.clone(), None));
+    spec.classify = Some(classify_with_shipped_tools());
+    let s = Session::spawn("t-rec-secret".into(), spec).unwrap();
+    let (out, code) = drain(&s, Duration::from_secs(10));
+    assert_eq!(code, Some(0));
+    // The terminal gets the output; the recording does not.
+    assert!(String::from_utf8_lossy(&out).contains("gho_SECRET"));
+    let text = wait_for_recording(&path, "Output recorded again");
+    assert!(text.contains("Output hidden: gh auth token … prints secrets"), "{text}");
+    assert!(text.contains("Output recorded again"), "{text}");
+    assert!(!text.contains("gho_SECRET"), "{text}");
+    assert!(!text.contains("]633;"), "{text}");
+    let text = wait_for_recording(&path, "visible after");
+    assert!(text.contains("visible after"), "{text}");
+    assert_eq!(text.matches("Output hidden").count(), 1, "{text}");
+    assert_eq!(text.matches("Output recorded again").count(), 1, "{text}");
+}
+
+#[test]
+fn a_profiled_tools_prompt_reaches_on_tool_through_a_pty() {
+    use marshell_core::tools::ToolEvent;
+    let (tx, rx) = std::sync::mpsc::channel();
+    let mut spec = fake(&["tool-prompt", "vercel login", "Waiting for authentication..."]);
+    spec.classify = Some(classify_with_shipped_tools());
+    spec.on_tool = Some(Box::new(move |event| {
+        let _ = tx.send(event);
+    }));
+    let s = Session::spawn("t-tool-prompt".into(), spec).unwrap();
+    let first = rx.recv_timeout(Duration::from_secs(10)).expect("a needs-you event");
+    assert_eq!(first, ToolEvent::NeedsYou("Waiting for sign-in in the browser".into()));
+    // Three rows of other text push the prompt out of the matcher's tail; that, and not the D mark, ends it.
+    let second = rx.recv_timeout(Duration::from_secs(10)).expect("a cleared event");
+    assert_eq!(second, ToolEvent::Cleared);
+    assert_eq!(drain(&s, Duration::from_secs(10)).1, Some(0));
+    assert!(rx.try_recv().is_err(), "an event came after the prompt cleared");
+}
+
+#[test]
+fn a_secret_flag_in_the_command_line_never_reaches_the_cast_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("t-flag.cast");
+    let mut spec = fake(&["secret-run", "docker login -u me -p hunter2", "Login Succeeded"]);
+    spec.record = Some((path.clone(), None));
+    spec.classify = Some(classify_with_shipped_tools());
+    let s = Session::spawn("t-rec-flag".into(), spec).unwrap();
+    assert_eq!(drain(&s, Duration::from_secs(10)).1, Some(0));
+    let text = wait_for_recording(&path, "visible after");
+    assert!(text.contains("Login Succeeded"), "{text}");
+    assert!(!text.contains("hunter2"), "{text}");
+    assert!(!text.contains("]633;"), "{text}");
+    assert!(!text.contains("Output hidden"), "{text}");
 }

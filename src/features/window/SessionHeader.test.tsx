@@ -31,7 +31,7 @@ describe("modeLabel / headerDanger", () => {
 });
 
 describe("SessionHeader", () => {
-  const h = renderToStaticMarkup(<SessionHeader row={row("working")} ports={["localhost:3000"]} />);
+  const h = renderToStaticMarkup(<SessionHeader row={row("working")} ports={[{ port: 3000, url: "http://localhost:3000/", announced: false }]} />);
   it("says one subagent in the singular", () => {
     const one = renderToStaticMarkup(<SessionHeader row={{ ...row("working"), subagents: 1 }} />);
     expect(one).toContain("1 subagent<");

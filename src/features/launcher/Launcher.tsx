@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, type KeyboardEvent } from "react";
+import { useEffect, useId, useRef, type KeyboardEvent, type ReactNode } from "react";
 import { AgentMark } from "../../components/AgentMark/AgentMark";
 import { tabbableIn } from "../../lib/focusGuard";
 import { usePopupFocus } from "../../lib/usePopupFocus";
@@ -80,6 +80,8 @@ type Props = {
   busy?: boolean;
   /** The confirm view's one status line while busy: the worktree being made, then the program starting. Default "Creating the worktree…". */
   busyText?: string;
+  /** The boxes a tool preset asks to fill, shown where the prompt line is. */
+  fields?: ReactNode;
 };
 
 const PATH_VERB: Record<PathCheck["state"], string> = { found: "Use", missing: "No folder at", checking: "Checking", failed: "Couldn't check" };
@@ -109,7 +111,7 @@ const cycle = <T,>(all: T[], now: T) => all[(all.indexOf(now) + 1) % all.length]
  * first command (it can still run in a worktree). The prompt line is set like the one in every pane (a flat command line), in the vendor's colour for an
  * agent. Presentational: the parent owns the state.
  */
-export function Launcher({ view, onChange, onQuery, onPick, onUsePath, onBrowse, onPrograms, onActive, onPrompt, onStart, onTaskName, onConfirm, onBack, onClose, paceChip = true, programs = LAUNCH_PROGRAMS, error, busy = false, busyText = "Creating the worktree…" }: Props) {
+export function Launcher({ view, onChange, onQuery, onPick, onUsePath, onBrowse, onPrograms, onActive, onPrompt, onStart, onTaskName, onConfirm, onBack, onClose, paceChip = true, programs = LAUNCH_PROGRAMS, error, busy = false, busyText = "Creating the worktree…", fields }: Props) {
   const { choice, projects, query, activeIndex, remembered, nextNumber, taskName, confirm } = view;
   const project = projects.find((p) => p.id === choice.projectId);
   const agentRun = isAgentProgram(choice.program, programs);
@@ -463,6 +465,8 @@ export function Launcher({ view, onChange, onQuery, onPick, onUsePath, onBrowse,
                 />
               </div>
             )}
+
+            {fields}
 
             {showTask && (
               <div className="launcher__task">

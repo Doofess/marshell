@@ -182,7 +182,7 @@ Hook-capable and deny-capable here means a host can answer or observe a tool cal
 5. Needs-you comes in three kinds: `text` (a prompt on the TTY), `browser` (a URL or code printed, the user acts outside the terminal), `os-dialog` (nothing useful printed).
 6. Device-code sentences can be server-supplied or localized. The `az` sentence is MSAL's `message` field, so match loosely on `microsoft.com/devicelogin` or `aka.ms/devicelogin`.
 7. npm-installed tools are `.cmd` shims on Windows (`firebase.cmd`, `vercel.cmd`, `netlify.cmd`, `wrangler.cmd`, `npm.cmd`, `npx.cmd`, `pnpm.cmd`); `az.cmd` and `gcloud.cmd` wrap Python. The real child is `node.exe` or `python.exe`, so process-name matching on the child will not identify the tool. People also launch through `npx`, `pnpm dlx`, `pnpm exec`, `npm exec` or `bunx`. Key the profile on the tool token after the launcher.
-8. `npx` itself prompts: `Need to install the following packages:` then `<pkg>` then `Ok to proceed? ` ([src] `workspaces/libnpmexec/lib/index.js:304`; the trailing `(y)` is [unverified]). A generic needs-you pattern for any `npx <tool>` launch.
+8. `npx` itself prompts: `Need to install the following packages:` then `<pkg>` then `Ok to proceed? ` ([src] `workspaces/libnpmexec/lib/index.js:304`; npm 11.19 then shows its default, `Ok to proceed? (y) `, [local] seen with `npx vite@8.3.5` in the slice 6c live check). A generic needs-you pattern for any `npx <tool>` launch.
 9. Launch presets are inert templates with no secret in the argument list. A target such as `kubectl port-forward <target>` is a fill-in field, never a saved literal.
 
 ### Tool executables and installed versions
@@ -203,7 +203,7 @@ Hook-capable and deny-capable here means a host can answer or observe a tool cal
 
 | Tool | Command | Exact line | Regex-relevant shape | Evidence |
 |---|---|---|---|---|
-| Vite | `vite`, `vite preview` | `➜  Local:   http://localhost:5173/` | `➜\s+Local:\s+(https?://\S+)` after stripping ANSI. Preview default 4173. | [src] `cli.ts`, `logger.ts`, `constants.ts` |
+| Vite | `vite`, `vite preview` | `➜  Local:   http://localhost:5173/` | `➜\s+Local:\s+(https?://\S+)` after stripping ANSI. Preview default 4173. | [src] `cli.ts`, `logger.ts`, `constants.ts`; [local] vite 8.3.5 in the slice 6c live check |
 | Next.js | `next dev`, `next start` | `- Local:        http://localhost:3000`, then `✓ Ready in 1.2s` | `Local:\s+(https?://\S+)`. Padding varies by version. `Ready in` is the stable "up" signal. | [src] `app-info-log.ts`, `start-server.ts` |
 | Vercel | `vercel dev` | `> Ready! Available at http://localhost:3000` | `Ready! Available at (https?://\S+)`. Strip ANSI and OSC 8. | [src] `util/dev/server.ts:1570`, `create-output.ts:157` |
 | Wrangler | `wrangler dev` | `[wrangler:info] Ready on http://localhost:8787` | `Ready on (https?://\S+)`. The log-level tag varies (`[wrangler:inf]` in older versions). Older versions print `127.0.0.1`. | [src] `e2e/helpers/normalize.ts:192` |
@@ -255,7 +255,7 @@ Kinds are in brackets. Evidence tags are from the tool report.
 - **vercel** (`browser`) [src] `packages/cli/src/commands/login/future.ts:113-158`. `Visit vercel.com/<device path>` plus ` and enter <USER_CODE>`, or the full URL; spinner `Waiting for authentication...`. Match `Visit ` plus `vercel.com` only, not a fixed path. Setup prompts (`Set up and develop ...?`, `Link to existing project?`) are [unverified].
 - **wrangler** (`browser`) [docs] https://developers.cloudflare.com/workers/wrangler/commands/general/ . `Attempting to login via OAuth...` and `Opening a link in your default browser: <url>`. `wrangler secret put` prompts `? Enter a secret value:` [docs]. `wrangler delete` confirmation is [unverified]. Dev hotkeys (`[b] open a browser`, `[d] open devtools`, `[x] to exit`) are not prompts [src] `packages/wrangler/src/dev/hotkeys.ts`.
 - **op** (`text`, manual sign-in only). Verbatim strings are [unverified] (closed source): `Enter the password for <email> at <address>:`, `Enter your six-digit authentication code:`, `Enter your Secret Key`. Sources: https://www.1password.dev/cli/sign-in-manually/ and https://1password.community/discussion/comment/582262/ [T]. `op read -o` and `op inject -o` confirm before overwriting [local]; the text is not verified.
-- **npx / pnpm dlx** (`text`): `Ok to proceed? ` (see rule 8).
+- **npx / pnpm dlx** (`text`): `Ok to proceed? ` or `Ok to proceed? (y) ` (see rule 8).
 - **ngrok**: no prompts in a normal `ngrok http` session. A missing authtoken exits with an `ERR_NGROK_4018` style message [unverified]; not a prompt.
 
 ### Prompts that text cannot detect

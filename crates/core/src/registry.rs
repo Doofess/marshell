@@ -8,6 +8,7 @@ use std::time::{Duration, Instant};
 
 use crate::pty::Mark;
 use crate::stuck::{StuckSignal, StuckTracker};
+use crate::tools::{PortChip, ToolEvent};
 use marshell_protocol::api::{
     Activity, Attention, CommandState, Foreground, LiveState, LiveStatus, SavedTab, SessionInfo, SessionMode,
     SessionState, SessionsSnapshot, UiView,
@@ -31,6 +32,9 @@ pub(crate) fn attention_allowed(info: &SessionInfo, bell: bool, last_input: Opti
     let busy = info.agent.is_some() || info.command == CommandState::Running || info.foreground.is_some();
     busy && last_input.is_none_or(|at| now.saturating_duration_since(at) >= TYPING_ECHO)
 }
+
+/// How many port chips a row keeps.
+const MAX_PORTS: usize = 8;
 
 /// How many closed sessions we remember for Reopen.
 const MAX_CLOSED: usize = 10;
@@ -82,9 +86,27 @@ pub struct Entry {
     /// Another agent runs in front of a row that was launched as an agent, and the launched one is gone from the
     /// foreground: the agent the watcher saw. The row still says what it was launched as. Not serialized.
     displaced_by: Option<String>,
+    /// The row's attention is a tool's prompt (a profiled command asked the person something), raised by
+    /// `tool_event`. It is a full Needs you: looking at the tab does not clear it. Only typing, the tool's next
+    /// output, the command's end and a new process take it. Not serialized.
+    tool_attention: bool,
+    /// Ports the last port poll saw listening that are not chips yet: a port becomes a chip on its second poll in a row.
+    /// Not serialized.
+    listen_pending: Vec<u16>,
+    /// Announced chips a port poll has seen listening. An announced chip goes on a poll that misses it only once it was
+    /// seen, so a slow server's chip survives until its listener appears. Not serialized.
+    announced_seen: Vec<u16>,
 }
 
 impl Entry {
+    /// Drops the announced chips, whose command has ended. True when there were some.
+    fn drop_announced_ports(&mut self) -> bool {
+        let before = self.info.ports.len();
+        self.info.ports.retain(|p| !p.announced);
+        self.announced_seen.clear();
+        self.info.ports.len() != before
+    }
+
     /// True for a row the output watcher fills: Running, not paused, without live status, and an
     /// agent, either launched as one or typed into a shell.
     fn takes_activity(&self) -> bool {
@@ -117,7 +139,7 @@ impl Entry {
     /// that said why there was no status. A new process, or none, starts blank.
     fn clear_live(&mut self) {
         self.info.live = None;
-        self.info.attention = None;
+        self.drop_attention();
         self.info.stuck = None;
         self.stuck = StuckTracker::default();
         self.info.activity = None;
@@ -127,6 +149,15 @@ impl Entry {
         self.running.clear();
         self.waiting = false;
         self.pending_done = None;
+        self.info.ports.clear();
+        self.listen_pending.clear();
+        self.announced_seen.clear();
+    }
+
+    /// Takes the row's attention, whoever raised it, and the claim a tool prompt had on it. True when there was some.
+    fn drop_attention(&mut self) -> bool {
+        self.tool_attention = false;
+        self.info.attention.take().is_some()
     }
 
     /// Sets attention, or keeps the one already set: a flood of bells is one attention, from its first
@@ -145,7 +176,11 @@ impl Entry {
                 let since_ms = std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
                     .map_or(0, |d| d.as_millis() as u64);
-                self.info.attention = Some(Attention { message, since_ms });
+                self.info.attention = Some(Attention {
+                    message,
+                    since_ms,
+                    limited: false,
+                });
                 true
             }
         }
@@ -262,6 +297,7 @@ impl Registry {
                 muted: false,
                 attention: None,
                 stuck: None,
+                ports: Vec::new(),
             },
             spec: relaunch,
             generation,
@@ -272,6 +308,9 @@ impl Registry {
             last_input: None,
             progress_hold: false,
             displaced_by: None,
+            tool_attention: false,
+            listen_pending: Vec::new(),
+            announced_seen: Vec::new(),
         });
         self.tx.send_replace(state.snapshot());
         number
@@ -310,6 +349,7 @@ impl Registry {
                     muted: tab.muted,
                     attention: None,
                     stuck: None,
+                    ports: Vec::new(),
                 },
                 spec: relaunch_of(tab),
                 generation,
@@ -320,6 +360,9 @@ impl Registry {
                 last_input: None,
                 progress_hold: false,
                 displaced_by: None,
+                tool_attention: false,
+                listen_pending: Vec::new(),
+                announced_seen: Vec::new(),
             });
         }
         self.tx.send_replace(state.snapshot());
@@ -486,8 +529,15 @@ impl Registry {
             && !(foreground.is_some() && matches!(entry.info.command, CommandState::Prompt { .. }))
             && entry.info.foreground != foreground
         {
+            // On a shell without marks the foreground clearing is the only sign that a command ended. A shell that
+            // reports a running command keeps its announced ports: the foreground may only be between two programs.
+            let ended =
+                foreground.is_none() && entry.info.foreground.is_some() && entry.info.command != CommandState::Running;
             entry.info.foreground = foreground;
             entry.drop_activity_without_agent();
+            if ended {
+                entry.drop_announced_ports();
+            }
             self.tx.send_replace(state.snapshot());
         }
     }
@@ -502,6 +552,88 @@ impl Registry {
             .filter(|e| e.info.state == SessionState::Running && !e.info.paused && e.info.agent.is_none())
             .map(|e| (e.info.tab_id.clone(), e.generation, e.info.foreground.is_some()))
             .collect()
+    }
+
+    /// The rows the port watcher may look at: Running and not paused. Each is the tab id and its generation.
+    pub fn ports_candidates(&self) -> Vec<(String, u64)> {
+        let state = self.state.lock().unwrap();
+        state
+            .open
+            .iter()
+            .filter(|e| e.info.state == SessionState::Running && !e.info.paused)
+            .map(|e| (e.info.tab_id.clone(), e.generation))
+            .collect()
+    }
+
+    /// Whether the row was launched as an agent or shows one in front: its outermost process is the agent itself, so
+    /// its own listeners get no chip.
+    pub fn runs_agent(&self, tab_id: &str) -> bool {
+        let state = self.state.lock().unwrap();
+        state
+            .open
+            .iter()
+            .find(|e| e.info.tab_id == tab_id)
+            .is_some_and(|e| e.info.agent.is_some() || e.info.foreground.as_ref().is_some_and(|f| f.agent.is_some()))
+    }
+
+    /// What the port watcher found: `ports` are the ports a process of the tab listens on (ascending). Applied to a
+    /// Running, unpaused row of this `generation` only. The chip list is ordered by first sight, at most 8.
+    ///
+    /// - A listening port becomes a chip on its second poll in a row, and goes on the first poll that misses it.
+    /// - An announced chip stays through polls that miss it until one has seen it; after that a miss drops it.
+    /// - A listening port that is already a chip (announced or not) adds nothing.
+    ///
+    /// Broadcasts only when the list changes.
+    pub fn set_listening(&self, tab_id: &str, generation: u64, ports: &[u16]) {
+        let mut state = self.state.lock().unwrap();
+        let Some(entry) = state
+            .open
+            .iter_mut()
+            .find(|e| e.info.tab_id == tab_id && e.generation == generation)
+        else {
+            return;
+        };
+        if entry.info.state != SessionState::Running || entry.info.paused {
+            return;
+        }
+        let before = entry.info.ports.clone();
+        let seen_before = std::mem::take(&mut entry.announced_seen);
+        let mut kept = Vec::with_capacity(before.len());
+        for chip in before.iter().cloned() {
+            let listening = ports.contains(&chip.port);
+            if chip.announced {
+                if listening {
+                    entry.announced_seen.push(chip.port);
+                } else if seen_before.contains(&chip.port) {
+                    continue;
+                } else {
+                    // Not seen yet: the server may still be starting.
+                }
+                kept.push(chip);
+            } else if listening {
+                kept.push(chip);
+            }
+        }
+        let pending = std::mem::take(&mut entry.listen_pending);
+        for &port in ports {
+            if kept.iter().any(|c| c.port == port) || entry.listen_pending.contains(&port) {
+                continue;
+            }
+            if pending.contains(&port) && kept.len() < MAX_PORTS {
+                kept.push(PortChip {
+                    port,
+                    url: format!("http://localhost:{port}/"),
+                    announced: false,
+                });
+            } else {
+                // First sight, or no room yet: asked again next poll.
+                entry.listen_pending.push(port);
+            }
+        }
+        if kept != before {
+            entry.info.ports = kept;
+            self.tx.send_replace(state.snapshot());
+        }
     }
 
     /// Sets what an agent row is doing as far as its output shows, for a row without live status.
@@ -549,7 +681,57 @@ impl Registry {
             return;
         };
         entry.last_input = Some(Instant::now());
-        if entry.info.attention.take().is_some() {
+        if entry.drop_attention() {
+            self.tx.send_replace(state.snapshot());
+        }
+    }
+
+    /// What the tab's tool output showed. A prompt is a full Needs you on a Running row without hook status: it is
+    /// raised even when the tab is on screen, and only typing, the tool's next output (`Cleared`), the command's end
+    /// and a new process take it. Attention that was already there (a bell, a notification) is kept and stays the
+    /// bell's; `Cleared` never takes it. An announced port is added if new, up to 8; the list's lifetime is the
+    /// port watcher's. Broadcasts only on a change.
+    pub fn tool_event(&self, tab_id: &str, event: ToolEvent) {
+        let mut state = self.state.lock().unwrap();
+        let Some(entry) = state.open.iter_mut().find(|e| e.info.tab_id == tab_id) else {
+            return;
+        };
+        if entry.info.state != SessionState::Running {
+            return;
+        }
+        let changed = match event {
+            ToolEvent::NeedsYou(phrase) => {
+                if entry.info.live.is_none() && entry.info.attention.is_none() {
+                    entry.note_attention(Some(phrase));
+                    if let Some(attention) = &mut entry.info.attention {
+                        attention.limited = true;
+                    }
+                    entry.tool_attention = true;
+                    true
+                } else {
+                    false
+                }
+            }
+            ToolEvent::Cleared => entry.tool_attention && entry.drop_attention(),
+            ToolEvent::Port(chip) => {
+                if let Some(listened) = entry
+                    .info
+                    .ports
+                    .iter_mut()
+                    .find(|p| p.port == chip.port && !p.announced)
+                {
+                    // The listener's chip came first: the announcement's URL keeps its scheme and path.
+                    *listened = chip;
+                    true
+                } else if entry.info.ports.len() < MAX_PORTS && !entry.info.ports.iter().any(|p| p.port == chip.port) {
+                    entry.info.ports.push(chip);
+                    true
+                } else {
+                    false
+                }
+            }
+        };
+        if changed {
             self.tx.send_replace(state.snapshot());
         }
     }
@@ -565,9 +747,9 @@ impl Registry {
         for entry in state
             .open
             .iter_mut()
-            .filter(|e| view.visible_tabs.contains(&e.info.tab_id))
+            .filter(|e| view.visible_tabs.contains(&e.info.tab_id) && !e.tool_attention)
         {
-            changed |= entry.info.attention.take().is_some();
+            changed |= entry.drop_attention();
         }
         if changed {
             self.tx.send_replace(state.snapshot());
@@ -622,10 +804,15 @@ impl Registry {
             _ => None,
         };
         // The command is over or the prompt is back: whatever ran is gone.
-        let cleared = matches!(mark, Mark::Finished(_) | Mark::PromptStart) && entry.info.foreground.take().is_some();
+        let command_ended = matches!(mark, Mark::Finished(_) | Mark::PromptStart);
+        let cleared = command_ended && entry.info.foreground.take().is_some();
         if cleared {
             entry.drop_activity_without_agent();
         }
+        // The command's announced ports go with it; a listener that outlives it is the port watcher's to drop.
+        let cleared = (command_ended && entry.drop_announced_ports()) | cleared;
+        // A tool's prompt goes with its command. A bell's or hook's attention stays.
+        let cleared = (command_ended && entry.tool_attention && entry.drop_attention()) | cleared;
         let next = match mark {
             Mark::Executed => CommandState::Running,
             Mark::Finished(Some(code)) => CommandState::Prompt { last_exit: Some(code) },
@@ -659,7 +846,7 @@ impl Registry {
             entry.info.live = Some(next);
             entry.clear_stuck_outside_working();
             entry.info.activity = None;
-            entry.info.attention = None;
+            entry.drop_attention();
             self.tx.send_replace(state.snapshot());
         }
     }
@@ -1649,6 +1836,7 @@ mod tests {
             program: program.into(),
             command_line: None,
             agent: None,
+            tool: None,
         })
     }
 
@@ -1888,6 +2076,7 @@ mod tests {
                 program: "python".into(),
                 command_line: None,
                 agent: None,
+                tool: None,
             }),
             ..shell.clone()
         };
@@ -1958,6 +2147,322 @@ mod tests {
             assert!(row(&reg, "a").attention.is_some(), "{view:?}");
             assert!(rx.has_changed().unwrap(), "{view:?}");
         }
+    }
+
+    fn needs_you(phrase: &str) -> crate::tools::ToolEvent {
+        crate::tools::ToolEvent::NeedsYou(phrase.into())
+    }
+
+    #[test]
+    fn a_tool_prompt_raises_attention_and_typing_clears_it() {
+        let reg = Registry::new();
+        reg.reserve("a", relaunch("A"));
+        reg.mark("a", Mark::Executed, &away());
+        let mut rx = reg.subscribe();
+        rx.borrow_and_update();
+        reg.tool_event("a", needs_you("Asks to continue"));
+        let attention = row(&reg, "a").attention.expect("attention");
+        assert_eq!(attention.message.as_deref(), Some("Asks to continue"));
+        assert!(rx.has_changed().unwrap());
+        // A second raise of the same prompt changes nothing.
+        rx.borrow_and_update();
+        reg.tool_event("a", needs_you("Asks to continue"));
+        assert!(!rx.has_changed().unwrap());
+        // Typing answers it.
+        reg.note_input("a");
+        assert_eq!(row(&reg, "a").attention, None);
+        // More output (the cleared event) after the person answered has nothing left to take.
+        rx.borrow_and_update();
+        reg.tool_event("a", crate::tools::ToolEvent::Cleared);
+        assert!(!rx.has_changed().unwrap());
+    }
+
+    #[test]
+    fn a_cleared_event_takes_the_tool_prompt_but_not_a_bells_attention() {
+        let reg = Registry::new();
+        reg.reserve("a", relaunch("A"));
+        reg.mark("a", Mark::Executed, &away());
+        reg.tool_event("a", needs_you("Asks to continue"));
+        reg.tool_event("a", crate::tools::ToolEvent::Cleared);
+        assert_eq!(row(&reg, "a").attention, None);
+        // A bell's attention is not the tool's to take.
+        reg.mark("a", Mark::Bell, &away());
+        assert!(row(&reg, "a").attention.is_some());
+        reg.tool_event("a", crate::tools::ToolEvent::Cleared);
+        assert!(row(&reg, "a").attention.is_some());
+        // And a bell's attention that was there first stays when a prompt shows and clears.
+        reg.tool_event("a", needs_you("Asks to continue"));
+        reg.tool_event("a", crate::tools::ToolEvent::Cleared);
+        assert!(row(&reg, "a").attention.is_some());
+    }
+
+    #[test]
+    fn a_tool_prompts_needs_you_is_marked_limited_and_a_bell_is_not() {
+        let reg = Registry::new();
+        reg.reserve("a", relaunch("A"));
+        reg.reserve("b", relaunch("B"));
+        reg.reserve("c", relaunch("C"));
+        for tab in ["a", "b", "c"] {
+            reg.mark(tab, Mark::Executed, &away());
+        }
+        reg.tool_event("a", needs_you("Asks to continue"));
+        assert!(row(&reg, "a").attention.expect("attention").limited);
+        reg.mark("b", Mark::Bell, &away());
+        assert!(!row(&reg, "b").attention.expect("attention").limited);
+        reg.mark("c", Mark::Notify(Some("Build done".into())), &away());
+        assert!(!row(&reg, "c").attention.expect("attention").limited);
+        // A prompt over a bell's attention leaves it the bell's.
+        reg.tool_event("b", needs_you("Asks to continue"));
+        assert!(!row(&reg, "b").attention.expect("attention").limited);
+    }
+
+    #[test]
+    fn a_cleared_event_does_not_take_a_bells_attention() {
+        let reg = Registry::new();
+        reg.reserve("a", relaunch("A"));
+        reg.mark("a", Mark::Executed, &away());
+        reg.mark("a", Mark::Bell, &away());
+        reg.tool_event("a", crate::tools::ToolEvent::Cleared);
+        assert!(row(&reg, "a").attention.is_some());
+    }
+
+    #[test]
+    fn a_tool_prompt_on_screen_stays_until_typed() {
+        let reg = Registry::new();
+        reg.reserve("a", relaunch("A"));
+        reg.mark("a", Mark::Executed, &away());
+        // Raised while the tab is on screen in a focused window: a tool prompt is a full Needs you.
+        reg.tool_event("a", needs_you("Waiting for sign-in in the browser"));
+        assert!(row(&reg, "a").attention.is_some());
+        reg.clear_attention_seen(&UiView {
+            window_focused: true,
+            visible_tabs: vec!["a".into()],
+        });
+        assert!(row(&reg, "a").attention.is_some(), "looking at it must not clear it");
+        reg.note_input("a");
+        assert_eq!(row(&reg, "a").attention, None);
+    }
+
+    #[test]
+    fn a_tool_prompt_goes_when_its_command_ends() {
+        for end in [Mark::Finished(Some(0)), Mark::Finished(None), Mark::PromptStart] {
+            let reg = Registry::new();
+            reg.reserve("a", relaunch("A"));
+            reg.mark("a", Mark::Executed, &away());
+            reg.tool_event("a", needs_you("Asks to continue"));
+            let mut rx = reg.subscribe();
+            rx.borrow_and_update();
+            reg.mark("a", end.clone(), &away());
+            assert_eq!(row(&reg, "a").attention, None, "{end:?}");
+            assert!(rx.has_changed().unwrap(), "{end:?}");
+        }
+        // Not when the session ends or a status arrives from hooks either.
+        let reg = Registry::new();
+        let (_, generation) = reg.reserve("a", relaunch("A"));
+        reg.tool_event("a", needs_you("Asks to continue"));
+        reg.mark_exited("a", generation, 0);
+        assert_eq!(row(&reg, "a").attention, None);
+        let reg = Registry::new();
+        reg.reserve("a", relaunch("A"));
+        reg.tool_event("a", needs_you("Asks to continue"));
+        reg.update_live("a", |_| Some(live(LiveState::Working)));
+        assert_eq!(row(&reg, "a").attention, None);
+    }
+
+    #[test]
+    fn a_tool_prompt_never_replaces_the_attention_already_there_and_ignores_other_rows() {
+        let reg = Registry::new();
+        reg.reserve("a", relaunch("A"));
+        reg.mark("a", Mark::Notify(Some("Build done".into())), &away());
+        let before = row(&reg, "a").attention.unwrap();
+        reg.tool_event("a", needs_you("Asks to continue"));
+        assert_eq!(row(&reg, "a").attention, Some(before));
+        // A row with hook status, an unknown tab and an exited row take nothing.
+        let reg = Registry::new();
+        let (_, generation) = reg.reserve("a", relaunch("A"));
+        reg.update_live("a", |_| Some(live(LiveState::Working)));
+        reg.tool_event("a", needs_you("Asks to continue"));
+        assert_eq!(row(&reg, "a").attention, None);
+        reg.tool_event("missing", needs_you("Asks to continue"));
+        reg.mark_exited("a", generation, 0);
+        reg.tool_event("a", needs_you("Asks to continue"));
+        assert_eq!(row(&reg, "a").attention, None);
+    }
+
+    #[test]
+    fn announced_ports_are_added_once_up_to_eight() {
+        use crate::tools::{PortChip, ToolEvent};
+        let chip = |port: u16| PortChip {
+            port,
+            url: format!("http://localhost:{port}"),
+            announced: true,
+        };
+        let reg = Registry::new();
+        reg.reserve("a", relaunch("A"));
+        let mut rx = reg.subscribe();
+        rx.borrow_and_update();
+        reg.tool_event("a", ToolEvent::Port(chip(3000)));
+        assert_eq!(row(&reg, "a").ports, [chip(3000)]);
+        assert!(rx.has_changed().unwrap());
+        rx.borrow_and_update();
+        reg.tool_event("a", ToolEvent::Port(chip(3000)));
+        assert!(!rx.has_changed().unwrap());
+        for port in 3001..3020 {
+            reg.tool_event("a", ToolEvent::Port(chip(port)));
+        }
+        let ports = row(&reg, "a").ports;
+        assert_eq!(ports.len(), 8);
+        assert_eq!(ports[7], chip(3007));
+        reg.tool_event("missing", ToolEvent::Port(chip(1)));
+    }
+
+    fn announced_chip(port: u16) -> crate::tools::PortChip {
+        crate::tools::PortChip {
+            port,
+            url: format!("http://localhost:{port}/app"),
+            announced: true,
+        }
+    }
+
+    fn chip_ports(reg: &Registry, tab: &str) -> Vec<u16> {
+        row(reg, tab).ports.iter().map(|p| p.port).collect()
+    }
+
+    #[test]
+    fn an_announced_chip_outlives_a_slow_listener_and_goes_with_its_command() {
+        use crate::tools::ToolEvent;
+        let reg = Registry::new();
+        reg.reserve("a", relaunch("A"));
+        let generation = generation_of(&reg, "a");
+        // A slow server: the chip stays through polls that miss it until one has seen it.
+        reg.tool_event("a", ToolEvent::Port(announced_chip(3000)));
+        reg.set_listening("a", generation, &[]);
+        reg.set_listening("a", generation, &[]);
+        assert_eq!(row(&reg, "a").ports, [announced_chip(3000)]);
+        reg.set_listening("a", generation, &[3000]);
+        reg.set_listening("a", generation, &[3000]);
+        assert_eq!(
+            row(&reg, "a").ports,
+            [announced_chip(3000)],
+            "it keeps the announced URL"
+        );
+        reg.set_listening("a", generation, &[]);
+        assert_eq!(chip_ports(&reg, "a"), Vec::<u16>::new());
+        // It goes with its command: the end mark.
+        for end in [Mark::Finished(Some(0)), Mark::Finished(None), Mark::PromptStart] {
+            reg.mark("a", Mark::Executed, &away());
+            reg.tool_event("a", ToolEvent::Port(announced_chip(4000)));
+            reg.mark("a", end, &away());
+            assert_eq!(chip_ports(&reg, "a"), Vec::<u16>::new());
+        }
+        // A listener that outlives its command stays until a poll misses it.
+        reg.mark("a", Mark::Executed, &away());
+        reg.set_listening("a", generation, &[4100]);
+        reg.set_listening("a", generation, &[4100]);
+        reg.mark("a", Mark::Finished(Some(0)), &away());
+        assert_eq!(chip_ports(&reg, "a"), [4100]);
+        reg.set_listening("a", generation, &[]);
+        assert_eq!(chip_ports(&reg, "a"), Vec::<u16>::new());
+        // A shell without marks: the foreground clearing ends the command. While a command runs it doesn't.
+        let reg = Registry::new();
+        reg.reserve("b", relaunch("B"));
+        reg.set_foreground("b", generation_of(&reg, "b"), running("node"));
+        reg.tool_event("b", ToolEvent::Port(announced_chip(5000)));
+        reg.set_foreground("b", generation_of(&reg, "b"), None);
+        assert_eq!(chip_ports(&reg, "b"), Vec::<u16>::new());
+        let reg = Registry::new();
+        reg.reserve("c", relaunch("C"));
+        reg.mark("c", Mark::Executed, &away());
+        reg.set_foreground("c", generation_of(&reg, "c"), running("node"));
+        reg.tool_event("c", ToolEvent::Port(announced_chip(5000)));
+        reg.set_foreground("c", generation_of(&reg, "c"), None);
+        assert_eq!(chip_ports(&reg, "c"), [5000]);
+        // An exit clears the list, and the exited row takes none.
+        let generation = generation_of(&reg, "c");
+        reg.set_listening("c", generation, &[6000]);
+        reg.set_listening("c", generation, &[6000]);
+        assert_eq!(chip_ports(&reg, "c"), [5000, 6000]);
+        reg.mark_exited("c", generation, 0);
+        assert_eq!(chip_ports(&reg, "c"), Vec::<u16>::new());
+        reg.set_listening("c", generation, &[6000]);
+        reg.set_listening("c", generation, &[6000]);
+        assert_eq!(chip_ports(&reg, "c"), Vec::<u16>::new());
+    }
+
+    #[test]
+    fn an_announced_and_listening_port_is_one_chip() {
+        use crate::tools::ToolEvent;
+        let reg = Registry::new();
+        reg.reserve("a", relaunch("A"));
+        let generation = generation_of(&reg, "a");
+        reg.tool_event("a", ToolEvent::Port(announced_chip(3000)));
+        reg.set_listening("a", generation, &[3000]);
+        reg.set_listening("a", generation, &[3000]);
+        assert_eq!(row(&reg, "a").ports, [announced_chip(3000)]);
+        // The other way round: the listener's chip first, then the announcement.
+        reg.set_listening("a", generation, &[3000, 3001]);
+        reg.set_listening("a", generation, &[3000, 3001]);
+        reg.tool_event("a", ToolEvent::Port(announced_chip(3001)));
+        assert_eq!(chip_ports(&reg, "a"), [3000, 3001]);
+        // The announcement's URL (its scheme and path) replaces the listener's plain one, in place.
+        assert_eq!(row(&reg, "a").ports[1], announced_chip(3001));
+    }
+
+    #[test]
+    fn the_chip_list_stops_at_eight() {
+        let reg = Registry::new();
+        reg.reserve("a", relaunch("A"));
+        let generation = generation_of(&reg, "a");
+        let mut rx = reg.subscribe();
+        let all: Vec<u16> = (3000..3012).collect();
+        reg.set_listening("a", generation, &all);
+        assert_eq!(chip_ports(&reg, "a"), Vec::<u16>::new());
+        rx.borrow_and_update();
+        reg.set_listening("a", generation, &all);
+        assert!(rx.has_changed().unwrap());
+        rx.borrow_and_update();
+        let expected: Vec<u16> = (3000..3008).collect();
+        assert_eq!(chip_ports(&reg, "a"), expected);
+        let first = row(&reg, "a").ports[0].clone();
+        assert_eq!(first.url, "http://localhost:3000/");
+        assert!(!first.announced);
+        // The same reading again changes nothing; a stale generation is ignored.
+        reg.set_listening("a", generation, &all);
+        reg.set_listening("a", generation + 1, &[]);
+        assert!(!rx.has_changed().unwrap());
+        assert_eq!(chip_ports(&reg, "a"), expected);
+        // A gone port frees a place for one that waited.
+        reg.set_listening("a", generation, &[3001, 3008]);
+        reg.set_listening("a", generation, &[3001, 3008]);
+        assert_eq!(chip_ports(&reg, "a"), [3001, 3008]);
+    }
+
+    #[test]
+    fn ports_candidates_are_running_unpaused_rows() {
+        let reg = Registry::new();
+        reg.reserve("shell", relaunch("A"));
+        reg.reserve(
+            "agent",
+            Relaunch {
+                agent: Some("claude".into()),
+                ..relaunch("B")
+            },
+        );
+        reg.reserve("paused", relaunch("C"));
+        reg.reserve("exited", relaunch("D"));
+        reg.set_paused("paused", generation_of(&reg, "paused"), true);
+        reg.mark_exited("exited", generation_of(&reg, "exited"), 0);
+        let ids: Vec<_> = reg.ports_candidates().into_iter().map(|(tab, _)| tab).collect();
+        assert_eq!(ids, ["shell", "agent"]);
+        assert!(!reg.runs_agent("shell"));
+        assert!(reg.runs_agent("agent"));
+        assert!(!reg.runs_agent("missing"));
+        let codex = Foreground {
+            agent: Some("codex".into()),
+            ..running("node").unwrap()
+        };
+        reg.set_foreground("shell", generation_of(&reg, "shell"), Some(codex));
+        assert!(reg.runs_agent("shell"));
     }
 
     #[test]
@@ -2712,6 +3217,7 @@ mod tests {
             program: agent.unwrap_or("vim").into(),
             command_line: None,
             agent: agent.map(Into::into),
+            tool: None,
         }
     }
 

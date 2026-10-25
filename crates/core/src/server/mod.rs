@@ -14,6 +14,7 @@ mod history;
 mod hook;
 mod layout;
 mod permissions;
+mod ports;
 mod profiles;
 mod projects;
 mod pty_ws;
@@ -22,6 +23,7 @@ mod sessions;
 mod settings;
 mod shell_panel;
 mod tasks;
+mod tools;
 mod view;
 
 pub(crate) use files::existing_file as local_file;
@@ -122,6 +124,8 @@ struct Inner {
     own_agents: crate::agents::own::OwnCache,
     /// One save of `agents.json` at a time, so the changed-since-read check and the write are not interleaved.
     own_agents_write: Mutex<()>,
+    /// `~/.marshell/tools.json`, read again when the file's modified time or length changes. Only ever read.
+    own_tools: crate::tools::own::ToolsCache,
     /// `--version` of the manifest agents' programs, for telling a program from another with the same name.
     agent_versions: Arc<crate::agents::identify::VersionCache>,
     /// The last events the bridge sent, per live tab.
@@ -229,6 +233,7 @@ impl AppState {
             deepseek_key: || std::env::var(crate::agents::presets::DEEPSEEK_KEY_VAR).ok(),
             own_agents: crate::agents::own::OwnCache::default(),
             own_agents_write: Mutex::new(()),
+            own_tools: crate::tools::own::ToolsCache::default(),
             agent_versions: Arc::new(crate::agents::identify::VersionCache::default()),
             hook_log: crate::hooks::log::HookLog::default(),
             holds: crate::hooks::holds::Holds::default(),
@@ -412,6 +417,21 @@ impl AppState {
     /// file shows without a restart: the file's modified time is checked on each call.
     pub(crate) fn agents(&self) -> crate::agents::manifest::Agents {
         self.0.own_agents.get(&self.0.home).agents.clone()
+    }
+    /// The shipped tool profiles and the valid own ones of `tools.json`. A hand-edited file shows without a restart: the
+    /// file's modified time and length are checked on each call.
+    pub fn tools(&self) -> Arc<crate::tools::Tools> {
+        self.0.own_tools.get(&self.0.home).tools.clone()
+    }
+    /// `tools` for a callback that outlives the call, such as a session's classifier. It holds a weak handle, not the
+    /// state: the state owns the sessions that own the callback. It reads the cache at each call, so an edited
+    /// `tools.json` applies to the next command. If the state is gone it answers with the shipped profiles.
+    pub(crate) fn tools_reader(&self) -> impl Fn() -> Arc<crate::tools::Tools> + Send + Sync + 'static {
+        let inner = Arc::downgrade(&self.0);
+        move || match inner.upgrade() {
+            Some(inner) => AppState(inner).tools(),
+            None => Arc::new(crate::tools::Tools::shipped()),
+        }
     }
     /// The sessions index and the transcript archive.
     pub fn history(&self) -> Arc<crate::history::recorder::History> {
@@ -667,6 +687,7 @@ pub fn router(state: AppState) -> Router {
     // Here and not in `AppState::new`, which `with_agent_check` needs to be the only owner of.
     layout::spawn_layout_saver(&state);
     foreground::spawn_watcher(&state);
+    ports::spawn_watcher(&state);
     activity::spawn_watcher(&state);
     let origins: Vec<HeaderValue> = state.0.allowed_origins.iter().filter_map(|o| o.parse().ok()).collect();
     let cors = CorsLayer::new()
@@ -748,6 +769,7 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/agents", get(agents::found))
         .route("/v1/agents/catalog", get(catalog::catalog))
         .route("/v1/agents/own", get(catalog::get_own).put(catalog::put_own))
+        .route("/v1/tools", get(tools::catalog))
         .route("/v1/agents/{agent}/setup", get(agents::setup))
         .route("/v1/agents/{agent}/hooks/plan", post(agents::plan))
         .route("/v1/agents/{agent}/hooks/remove-plan", post(agents::remove_plan))
