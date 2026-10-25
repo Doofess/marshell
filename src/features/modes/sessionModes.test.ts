@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { commandById } from "../../lib/keymap";
-import { decide, effectiveMode, launchArgs, MODES, switchKind, type Request } from "./sessionModes";
+import { catalogModes, decide, effectiveMode, launchArgs, MODES, nextOffered, offeredMode, switchKind, type Request } from "./sessionModes";
 
 const edit: Request = { kind: "edit", inProject: true };
 const editOutside: Request = { kind: "edit", inProject: false };
@@ -103,5 +103,47 @@ describe("effectiveMode: a CLI setting that skips every prompt", () => {
   });
   it("leaves the mode alone otherwise", () => {
     for (const mode of MODES) expect(effectiveMode(mode, false), mode).toBe(mode);
+  });
+});
+
+describe("a manifest agent: only the modes its manifest maps", () => {
+  const cursor = ["manual", "plan", "bypass"] as const;
+  it("catalogModes keeps the catalog's modes in MODES order and drops Don't ask", () => {
+    expect(catalogModes(["bypass", "dont-ask", "manual", "plan", "full-auto", "auto-edit"])).toEqual(MODES);
+    expect(catalogModes(["bypass", "manual"])).toEqual(["manual", "bypass"]);
+    expect(catalogModes([])).toEqual([]);
+  });
+  it("switchKind is native for an offered mode and unavailable for an unmapped one, hooks on or off", () => {
+    for (const hooksOn of [false, true]) {
+      expect(switchKind("grok", "manual", "plan", hooksOn, [...MODES])).toBe("native");
+      expect(switchKind("cursor", "manual", "bypass", hooksOn, [...cursor])).toBe("native");
+      expect(switchKind("cursor", "manual", "auto-edit", hooksOn, [...cursor])).toBe("unavailable");
+      expect(switchKind("opencode", "manual", "plan", hooksOn, [])).toBe("unavailable");
+      expect(switchKind("grok", "manual", "plan", hooksOn)).toBe("unavailable");
+    }
+  });
+  it("launchArgs answers null for an id that is not an adapter instead of throwing", () => {
+    expect(launchArgs("grok", "plan", false)).toBeNull();
+    expect(launchArgs("grok", "plan", true)).toBeNull();
+  });
+  it("keeps the adapters' answers as they were", () => {
+    expect(switchKind("claude", "manual", "plan", true)).toBe("native");
+    expect(switchKind("codex", "manual", "auto-edit", true)).toBe("instant");
+    expect(switchKind("codex", "manual", "full-auto", true)).toBe("native");
+    expect(switchKind("claude", "auto-edit", "bypass", true)).toBe("instant");
+  });
+  it("offeredMode keeps an offered mode, else falls to the first offered in MODES order, else none", () => {
+    expect(offeredMode(undefined, "auto-edit")).toBe("auto-edit");
+    expect(offeredMode([...cursor], "plan")).toBe("plan");
+    expect(offeredMode([...cursor], "auto-edit")).toBe("manual");
+    expect(offeredMode(["bypass"], "manual")).toBe("bypass");
+    expect(offeredMode([], "manual")).toBeUndefined();
+  });
+  it("nextOffered cycles only the offered modes", () => {
+    expect(nextOffered([...cursor], "manual")).toBe("plan");
+    expect(nextOffered([...cursor], "plan")).toBe("bypass");
+    expect(nextOffered([...cursor], "bypass")).toBe("manual");
+    expect(nextOffered([...cursor], "auto-edit")).toBe("manual");
+    expect(nextOffered(undefined, "bypass")).toBe("manual");
   });
 });

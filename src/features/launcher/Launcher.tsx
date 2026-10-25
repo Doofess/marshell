@@ -22,6 +22,7 @@ import {
   type LauncherChoice,
   type Remembered,
 } from "./launchChoice";
+import { nextOffered, offeredMode } from "../modes/sessionModes";
 import { focusFellOut, listNavKeys, stepActive } from "./launcherKeys";
 import "./Launcher.css";
 
@@ -117,6 +118,9 @@ export function Launcher({ view, onChange, onQuery, onPick, onUsePath, onBrowse,
   const showWorktree = paceChip || inGit;
   const showTask = showWorktree && choice.worktree && inGit && taskName !== undefined;
   const program = programById(choice.program, programs) ?? programs[0] ?? LAUNCH_PROGRAMS[0]!;
+  // The modes this agent offers; none means no mode chip. The chosen mode shown is one of them.
+  const modes = program.modes ?? MODES;
+  const mode = offeredMode(program.modes, choice.mode) ?? choice.mode;
   const note = agentRun ? rememberedNote(project?.name ?? "this folder", remembered) : null;
   const folderOpen = query !== null;
   const programsOpen = !folderOpen && view.programsOpen === true;
@@ -307,22 +311,22 @@ export function Launcher({ view, onChange, onQuery, onPick, onUsePath, onBrowse,
                   {project ? projectLabel(project) : "Choose a folder"}
                 </button>
               )}
-              {agentRun && (
+              {agentRun && modes.length > 0 && (
                 <>
                   <span> {"·"} </span>
                   <button
                     type="button"
                     className="launcher__chip"
-                    aria-label={`Mode: ${modeLabel(choice.mode)}`}
-                    onClick={() => onChange?.({ mode: cycle(MODES, choice.mode) })}
-                    onKeyDown={chipKeys(MODES, MODES.indexOf(choice.mode), (i) => onChange?.({ mode: MODES[i]! }))}
+                    aria-label={`Mode: ${modeLabel(mode)}`}
+                    onClick={() => onChange?.({ mode: nextOffered(program.modes, mode) })}
+                    onKeyDown={chipKeys(modes, modes.indexOf(mode), (i) => onChange?.({ mode: modes[i]! }))}
                   >
-                    {headerDanger(choice.mode) && (
+                    {headerDanger(mode) && (
                       <span className="launcher__risk" aria-hidden="true">
                         {"⚠ "}
                       </span>
                     )}
-                    {modeLabel(choice.mode)}
+                    {modeLabel(mode)}
                   </button>
                 </>
               )}

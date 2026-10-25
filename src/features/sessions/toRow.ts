@@ -106,6 +106,18 @@ export function planRing(infos: SessionInfo[], now = Date.now()): { pct: number;
 
 const isHookAgent = (agent: string): agent is HookAgent => agent === "claude" || agent === "codex";
 
+/** The agents with a Rust adapter. Any other agent is a manifest: Marshell writes no hooks for it, so there are none to wait for. */
+const isManifestAgent = (agent: string): boolean => agent !== "claude" && agent !== "codex" && agent !== "antigravity";
+
+/** The pty fallback of an agent without live status: Working or Idle from its output, noted as limited. Undefined without activity. */
+function fallbackRow(info: SessionInfo, base: Omit<RowModel, "status" | "phrase">): RowModel | undefined {
+  const note = info.status_note === null ? LIMITED_NOTE : `${LIMITED_NOTE} · ${info.status_note}`;
+  const statusNote = info.status_note === null ? {} : { statusNote: info.status_note };
+  if (info.activity === "working") return { ...base, status: "working", phrase: `Working · ${LIMITED_NOTE}`, note, ...statusNote };
+  if (info.activity === "idle") return { ...base, status: "idle", phrase: `Idle · ${LIMITED_NOTE}`, note, ...statusNote };
+  return undefined;
+}
+
 /**
  * The sidebar row for one open session the core lists. An agent with live status shows it. One without shows the pty
  * fallback (Working or Idle, noted as limited) or, with no activity either, a limited row that says why. A shell row's
@@ -124,7 +136,10 @@ export function toRow(info: SessionInfo, profiles: Profile[], setup?: Partial<Re
       : info.agent === null
         ? shellKind(profile)
         : isAgentId(info.agent)
-          ? info.agent
+          ? // A preset has its own mark ("deepseek" runs Claude Code); `info.agent` stays what the hooks and the status are keyed by.
+            info.preset != null && isAgentId(info.preset)
+            ? info.preset
+            : info.agent
           : "generic";
   const base = {
     id: info.tab_id,
@@ -146,13 +161,13 @@ export function toRow(info: SessionInfo, profiles: Profile[], setup?: Partial<Re
     // Installed hooks offer nothing, even for a Codex that has not trusted them yet: the row keeps the limited fallback and never claims they work.
     const hooks = isHookAgent(info.agent) ? setup?.[info.agent] : undefined;
     if (hooks !== undefined && hooks !== "installed") return { ...base, status: "limited", phrase: "Status limited · set up", setupLink: true };
-    const note = info.status_note === null ? LIMITED_NOTE : `${LIMITED_NOTE} · ${info.status_note}`;
-    const statusNote = info.status_note === null ? {} : { statusNote: info.status_note };
-    if (info.activity === "working") return { ...base, status: "working", phrase: `Working · ${LIMITED_NOTE}`, note, ...statusNote };
-    if (info.activity === "idle") return { ...base, status: "idle", phrase: `Idle · ${LIMITED_NOTE}`, note, ...statusNote };
-    return { ...base, status: "limited", phrase: info.status_note ?? "Status arrives with hooks" };
+    const fallback = fallbackRow(info, base);
+    if (fallback !== undefined) return fallback;
+    // A manifest agent has no hooks coming, so it never says it waits for them.
+    return { ...base, status: "limited", phrase: info.status_note ?? (isManifestAgent(info.agent) ? LIMITED_NOTE : "Status arrives with hooks") };
   }
   if (fg !== null) {
+    if (fg.agent !== null && isManifestAgent(fg.agent)) return fallbackRow(info, base) ?? { ...base, status: "limited", phrase: LIMITED_NOTE };
     if (fg.agent !== null) return { ...base, status: "limited", phrase: "Status arrives with hooks" };
     return { ...base, status: "working", phrase: `Running ${fg.command_line ?? fg.program}` };
   }

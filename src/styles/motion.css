@@ -117,6 +117,11 @@
   50%, 74% { opacity: 1; }
   75%, 100% { opacity: 0; }
 }
+/* Kimi: the mark rises and settles, a slow bob. */
+@keyframes mark-bob {
+  0%, 100% { transform: translateY(1px); }
+  50% { transform: translateY(-1.5px); }
+}
 @keyframes mark-swim {
   0%, 100% { transform: translateY(1px) rotate(-6deg); }
   50% { transform: translateY(-1px) rotate(6deg); }
@@ -201,6 +206,9 @@
   }
   :root:not([data-motion="reduce"]) .agent-mark[data-working][data-agent="grok"] {
     animation: mark-spin-back var(--dur-loop-slow) linear infinite;
+  }
+  :root:not([data-motion="reduce"]) .agent-mark[data-working][data-agent="kimi"] {
+    animation: mark-bob var(--dur-loop) ease-in-out infinite;
   }
   :root:not([data-motion="reduce"]) .agent-mark[data-working][data-agent="deepseek"] {
     animation: mark-swim var(--dur-loop) ease-in-out infinite;

@@ -205,6 +205,42 @@ describe("toRow", () => {
     });
   });
 
+  describe("a manifest agent has no hooks to wait for", () => {
+    const fg = (program: string, agent: string) => ({ program, command_line: program, agent });
+    it("a row without activity reads Status limited, not Status arrives with hooks", () => {
+      for (const agent of ["grok", "kimi", "aider"]) {
+        expect(toRow(info({ agent }), PROFILES), agent).toMatchObject({ status: "limited", phrase: "Status limited" });
+      }
+    });
+    it("a row with activity reads Working or Idle · Status limited", () => {
+      expect(toRow(info({ agent: "grok", activity: "working" }), PROFILES)).toMatchObject({ status: "working", phrase: "Working · Status limited" });
+      expect(toRow(info({ agent: "grok", activity: "idle" }), PROFILES)).toMatchObject({ status: "idle", phrase: "Idle · Status limited" });
+    });
+    it("keeps the core's own note when it gives one", () => {
+      expect(toRow(info({ agent: "grok", status_note: "Grok 0.9 is older than Marshell knows" }), PROFILES).phrase).toBe("Grok 0.9 is older than Marshell knows");
+    });
+    it("a shell whose foreground is grok gets the same fallback", () => {
+      expect(toRow(info({ foreground: fg("grok", "grok") }), PROFILES)).toMatchObject({ agent: "grok", status: "limited", phrase: "Status limited" });
+      expect(toRow(info({ foreground: fg("grok", "grok"), activity: "working" }), PROFILES)).toMatchObject({ agent: "grok", status: "working", phrase: "Working · Status limited" });
+      expect(toRow(info({ foreground: fg("grok", "grok"), activity: "idle" }), PROFILES)).toMatchObject({ status: "idle", phrase: "Idle · Status limited" });
+    });
+    it("leaves the copy of the adapters unchanged", () => {
+      for (const agent of ["claude", "codex", "antigravity"]) {
+        expect(toRow(info({ agent }), PROFILES).phrase, agent).toBe("Status arrives with hooks");
+        expect(toRow(info({ foreground: fg(agent, agent), activity: "working" }), PROFILES), agent).toMatchObject({ status: "limited", phrase: "Status arrives with hooks" });
+      }
+    });
+    it("a row started with the DeepSeek preset shows the deepseek mark and keeps Claude's hook copy", () => {
+      const row = toRow(info({ agent: "claude", preset: "deepseek" }), PROFILES);
+      expect(row).toMatchObject({ agent: "deepseek", phrase: "Status arrives with hooks" });
+      expect(toRow(info({ agent: "claude" }), PROFILES).agent).toBe("claude");
+      expect(toRow(info({ agent: "claude", preset: "unknown-preset" }), PROFILES).agent).toBe("claude");
+    });
+    it("a manifest agent with no mark of its own gets the generic mark", () => {
+      expect(toRow(info({ agent: "aider" }), PROFILES).agent).toBe("generic");
+    });
+  });
+
   describe("the set up link", () => {
     it("a claude row without hooks links to set up", () => {
       for (const claude of ["none", "partial", "orphaned"] as const) {

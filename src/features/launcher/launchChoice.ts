@@ -1,6 +1,6 @@
 import { isTool, type SessionKind } from "../../components/AgentMark/kinds";
 import { TOOL_NAMES, type ToolId } from "../../components/AgentMark/tools";
-import { MODES } from "../modes/sessionModes";
+import { MODES, offeredMode } from "../modes/sessionModes";
 import type { Mode } from "../sidebar/types";
 import { modeLabel } from "../window/SessionHeader";
 import type { Project } from "./filter";
@@ -15,8 +15,11 @@ export const PACES: Pace[] = ["Quick", "Balanced", "Deep"];
 export const LAUNCH_GROUPS = ["Agents", "Shells", "Tools"] as const;
 export type LaunchGroup = (typeof LAUNCH_GROUPS)[number];
 
-/** What the launcher picks by: a built-in agent or tool, or a live shell profile as `profile:<id>`. */
-export type ProgramId = SessionKind | `profile:${string}`;
+/**
+ * What the launcher picks by: a built-in agent or tool (its kind), any other agent the core lists (its id, such as an agent of the
+ * person's own), a live shell profile as `profile:<id>`, or a preset as `preset:<id>`.
+ */
+export type ProgramId = string;
 
 /** Something the launcher can start: an AI agent, or a manual CLI that is just a terminal. */
 export type LaunchProgram = {
@@ -30,15 +33,23 @@ export type LaunchProgram = {
   group: LaunchGroup;
   /** The hint in the box under the sentence: what to say first, or the command to run first. */
   first: string;
-  /** True when there is nothing to type first: a shell profile takes no prompt. */
+  /** True when there is nothing to type first: a shell profile takes no prompt, and neither does an agent CLI with no way to take one. */
   noFirst?: boolean;
+  /** The modes the agent offers, in `MODES` order. Absent means the five; empty means none, so there is no mode chip. */
+  modes?: Mode[];
+  /** A preset this program starts its agent with (`deepseek`); the core adds what the preset needs. */
+  preset?: string;
+  /** The agent a preset starts. */
+  agent?: string;
+  /** Why the program can't be started yet. Starting it shows this and sends nothing. */
+  problem?: string;
 };
 
 const agent = (id: SessionKind, label: string, cli: string): LaunchProgram => ({ id, kind: id, label, cli, group: "Agents", first: `What should ${label} do first? (optional)` });
 const shell = (id: ToolId): LaunchProgram => ({ id, kind: id, label: TOOL_NAMES[id], cli: TOOL_NAMES[id], group: "Shells", first: "Run a command first (optional)" });
 const tool = (id: ToolId, first: string, label = TOOL_NAMES[id], cli = label): LaunchProgram => ({ id, kind: id, label, cli, group: "Tools", first });
 
-/** Every AI agent CLI with a first-party command line. DeepSeek has none, so it is not listed; Google's is Antigravity (`agy`), Gemini CLI is dropped. Which ones can be started still depends on the adapters of phase 6; the launcher lists them all. */
+/** The agents the launcher design lists. The live launcher builds its own list from the core's catalog (`livePrograms`). DeepSeek has no command line of its own; it is a preset that starts Claude Code. Google's agent is Antigravity (`agy`), Gemini CLI is dropped. */
 export const LAUNCH_PROGRAMS: LaunchProgram[] = [
   agent("claude", "Claude", "Claude Code"),
   agent("codex", "Codex", "Codex CLI"),
@@ -83,7 +94,10 @@ export function launcherSentence(c: LauncherChoice, projects: Project[], program
   const p = projects.find((x) => x.id === c.projectId);
   const where = p ? (p.branch ? `${p.name} on ${p.branch}` : p.name) : "an unknown folder";
   const start = `Start ${label} in ${where}`;
-  if (isAgentProgram(c.program, programs)) return `${start}, ${modeLabel(c.mode)} mode, ${c.pace}, ${c.worktree ? "in a new worktree" : "no worktree"}`;
+  if (isAgentProgram(c.program, programs)) {
+    const mode = offeredMode(programById(c.program, programs)?.modes, c.mode);
+    return `${start}, ${mode === undefined ? "" : `${modeLabel(mode)} mode, `}${c.pace}, ${c.worktree ? "in a new worktree" : "no worktree"}`;
+  }
   return c.worktree ? `${start}, in a new worktree` : start;
 }
 
@@ -92,9 +106,11 @@ export function startingText(program: ProgramId, projectName: string, programs: 
   return `Starting ${programById(program, programs)?.cli ?? program} in ${projectName}…`;
 }
 
-export function applyRemembered(c: LauncherChoice, r: Remembered | undefined): LauncherChoice {
+export function applyRemembered(c: LauncherChoice, r: Remembered | undefined, programs: LaunchProgram[] = LAUNCH_PROGRAMS): LauncherChoice {
   // Only mode and pace: an old entry that still carries a worktree flag must not turn the chip on.
-  return { ...c, ...(r?.mode === undefined ? {} : { mode: r.mode }), ...(r?.pace === undefined ? {} : { pace: r.pace }) };
+  // A remembered mode the program does not offer falls back to the first it does; a program with none keeps the remembered one, unsent.
+  const mode = r?.mode === undefined ? undefined : (offeredMode(programById(c.program, programs)?.modes, r.mode) ?? r.mode);
+  return { ...c, ...(mode === undefined ? {} : { mode }), ...(r?.pace === undefined ? {} : { pace: r.pace }) };
 }
 
 export function rememberedNote(projectName: string, r: Remembered | undefined): string | null {

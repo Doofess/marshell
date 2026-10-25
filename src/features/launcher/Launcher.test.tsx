@@ -379,6 +379,34 @@ describe("Launcher: live programs", () => {
     expect(live({ ...DEFAULT_CHOICE, program: "profile:cmd" })).not.toContain("<textarea");
     expect(live(DEFAULT_CHOICE)).toContain("<textarea");
   });
+  describe("an agent whose manifest maps some modes", () => {
+    const agentOf = (id: string, modes: LaunchProgram["modes"], extra: Partial<LaunchProgram> = {}): LaunchProgram => ({
+      id,
+      kind: id as LaunchProgram["kind"],
+      label: id,
+      cli: id,
+      group: "Agents",
+      first: `What should ${id} do first? (optional)`,
+      ...(modes === undefined ? {} : { modes }),
+      ...extra,
+    });
+    const list = [agentOf("cursor", ["manual", "plan", "bypass"]), agentOf("opencode", []), agentOf("kimi", ["manual", "bypass"], { noFirst: true })];
+    const on = (program: string, mode: LauncherChoice["mode"] = "manual") => renderToStaticMarkup(<Launcher view={view({ choice: { ...DEFAULT_CHOICE, program, mode } })} programs={list} paceChip={false} />);
+    it("shows the mode chip for an agent with modes", () => {
+      expect(on("cursor", "plan")).toContain("Mode: Plan");
+    });
+    it("shows no mode chip, and no mode in the sentence, for an agent with none", () => {
+      const h = on("opencode");
+      expect(h).not.toContain("Mode:");
+      expect(h).not.toContain("mode,");
+      expect(h).toContain("Start opencode in my-app on main");
+    });
+    it("hides the first-prompt box for a CLI that takes no first prompt and keeps its mode chip", () => {
+      const h = on("kimi");
+      expect(h).not.toContain("<textarea");
+      expect(h).toContain("Mode: Manual");
+    });
+  });
   it("lists only the programs it was given, and no empty group", () => {
     const h = live(DEFAULT_CHOICE, true);
     expect(count(h, /role="option"/g)).toBe(2);

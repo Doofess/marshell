@@ -7,7 +7,9 @@ import { startingText, type LauncherChoice, type ProgramId } from "../launcher/l
 import { ApiError } from "../../lib/api/client";
 import type { LayoutDoc } from "../../generated/LayoutDoc";
 import type { FolderInfo } from "../../generated/FolderInfo";
-import { browseFolder, checkState, chooseFolder, latestOnly, samePath, createRequest, createThenLaunch, initialFocus, launchRequest, nameSource, preselect, preselectMode, progressText, refocus, rememberTasks, livePrograms, replansAfter, startFailure, taskRequest, toLauncherProject, wantsTask } from "./launchPrograms";
+import type { AgentCatalog } from "../../generated/AgentCatalog";
+import type { CatalogAgent } from "../../generated/CatalogAgent";
+import { browseFolder, checkState, chooseFolder, latestOnly, samePath, createRequest, createThenLaunch, initialFocus, launchRequest, listedProgram, nameSource, preselect, preselectMode, progressText, refocus, rememberTasks, livePrograms, replansAfter, startFailure, startProblem, taskRequest, toLauncherProject, wantsTask } from "./launchPrograms";
 
 const profile = (id: string, family: Profile["family"], name = id): Profile => ({ id, name, command: [id], family, cwd: null, env: [], shell_integration: true, detected: true });
 const PROFILES: Profile[] = [profile("pwsh", "power_shell", "PowerShell 7"), profile("cmd", "cmd", "Command Prompt"), profile("git-bash", "posix", "Git Bash"), profile("wsl-ubuntu", "wsl", "Ubuntu")];
@@ -16,31 +18,151 @@ const PROJECTS: Project[] = [{ id: "C:/dev/my-app", name: "my-app", branch: "mai
 const SIZE = { cols: 120, rows: 30 };
 const choice = (program: ProgramId): LauncherChoice => ({ program, projectId: "C:/dev/my-app", mode: "manual", pace: "Balanced", worktree: false });
 
-describe("livePrograms", () => {
+const catalogAgent = (over: Partial<CatalogAgent> & Pick<CatalogAgent, "id" | "name">): CatalogAgent => ({
+  cli: over.name,
+  mark: over.id,
+  adapter: false,
+  own: false,
+  found: true,
+  version: null,
+  prompt: { style: "positional" },
+  modes: [],
+  can_continue: true,
+  ...over,
+});
+const ALL_MODES: CatalogAgent["modes"] = ["bypass", "manual", "full-auto", "plan", "auto-edit"];
+const adapter = (id: string, name: string): CatalogAgent => catalogAgent({ id, name, adapter: true, modes: ALL_MODES });
+const DEEPSEEK = { id: "deepseek", name: "DeepSeek", agent: "claude", mark: "deepseek", problem: null };
+const catalogWith = (agents: CatalogAgent[], presets: AgentCatalog["presets"] = [DEEPSEEK]): AgentCatalog => ({ agents, presets });
+const CATALOG = catalogWith([
+  adapter("claude", "Claude Code"),
+  adapter("codex", "Codex"),
+  adapter("antigravity", "Antigravity"),
+  catalogAgent({ id: "grok", name: "Grok", cli: "Grok Build", modes: ALL_MODES }),
+  catalogAgent({ id: "cursor", name: "Cursor", modes: ["plan", "bypass", "manual"] }),
+  catalogAgent({ id: "opencode", name: "opencode", modes: [], prompt: { style: "flag", flag: "--prompt" } }),
+  catalogAgent({ id: "amp", name: "Amp", prompt: { style: "none" }, modes: ["bypass"] }),
+  catalogAgent({ id: "kimi", name: "Kimi", prompt: { style: "none" }, modes: ["manual", "plan", "full-auto", "bypass"] }),
+  catalogAgent({ id: "aider", name: "Aider", found: false, prompt: { style: "none" }, modes: ["manual", "bypass"] }),
+  catalogAgent({ id: "crush", name: "Crush", mark: "generic", prompt: { style: "none" }, modes: ["manual", "bypass"] }),
+]);
+
+describe("livePrograms from the catalog", () => {
+  const programs = livePrograms(CATALOG, PROFILES);
+  const byId = (id: string) => programs.find((p) => p.id === id)!;
+  it("lists the found agents in the catalog's order, then the preset, then the shells; a not-found agent is absent", () => {
+    expect(programs.map((p) => p.id)).toEqual(["claude", "codex", "antigravity", "grok", "cursor", "opencode", "amp", "kimi", "crush", "preset:deepseek", "profile:pwsh", "profile:cmd", "profile:git-bash", "profile:wsl-ubuntu"]);
+    expect(programs.some((p) => p.id === "aider")).toBe(false);
+  });
+  it("labels a manifest agent by its catalog name and CLI, and keeps the adapters' own labels", () => {
+    expect(byId("grok")).toMatchObject({ label: "Grok", cli: "Grok Build", group: "Agents", kind: "grok" });
+    expect(byId("claude")).toMatchObject({ label: "Claude", cli: "Claude Code" });
+    expect(byId("antigravity")).toMatchObject({ label: "Antigravity", cli: "Antigravity CLI" });
+  });
+  it("hides the first-prompt box for a CLI that takes no first prompt, and only for those", () => {
+    for (const id of ["kimi", "crush", "amp"]) expect(byId(id).noFirst, id).toBe(true);
+    for (const id of ["claude", "grok", "cursor", "opencode"]) expect(byId(id).noFirst, id).toBeUndefined();
+    const aider = livePrograms(catalogWith([catalogAgent({ id: "aider", name: "Aider", prompt: { style: "none" } })], []), []);
+    expect(aider[0]!.noFirst).toBe(true);
+  });
+  it("offers only the modes the manifest maps, in MODES order, and none for opencode", () => {
+    expect(byId("cursor").modes).toEqual(["manual", "plan", "bypass"]);
+    expect(byId("grok").modes).toEqual(["manual", "plan", "auto-edit", "full-auto", "bypass"]);
+    expect(byId("amp").modes).toEqual(["bypass"]);
+    expect(byId("opencode").modes).toEqual([]);
+    expect(byId("claude").modes).toEqual(["manual", "plan", "auto-edit", "full-auto", "bypass"]);
+  });
+  it("marks an agent with its own mark, or the generic one when the catalog names a mark the app has none for", () => {
+    expect(byId("grok").kind).toBe("grok");
+    expect(byId("crush").kind).toBe("generic");
+    const own = livePrograms(catalogWith([catalogAgent({ id: "mine", name: "Mine", mark: "no-such-mark", own: true })], []), []);
+    expect(own[0]).toMatchObject({ id: "mine", kind: "generic", label: "Mine" });
+  });
+  it("lists the DeepSeek preset with its problem, started through Claude Code", () => {
+    const p = livePrograms(catalogWith(CATALOG.agents, [{ ...DEEPSEEK, problem: "Set DEEPSEEK_API_KEY, then restart Marshell to start DeepSeek." }]), [])[9]!;
+    expect(p).toMatchObject({ id: "preset:deepseek", label: "DeepSeek", cli: "DeepSeek", kind: "deepseek", group: "Agents", preset: "deepseek", agent: "claude", problem: "Set DEEPSEEK_API_KEY, then restart Marshell to start DeepSeek." });
+    expect(byId("preset:deepseek").problem).toBeUndefined();
+    expect(byId("preset:deepseek").modes).toEqual(byId("claude").modes);
+  });
+  it("leaves the preset out when the agent it starts is not found", () => {
+    const noClaude = catalogWith(CATALOG.agents.map((a) => (a.id === "claude" ? { ...a, found: false } : a)));
+    expect(livePrograms(noClaude, []).map((p) => p.id)).not.toContain("preset:deepseek");
+    expect(livePrograms(noClaude, []).map((p) => p.id)).not.toContain("claude");
+  });
+  it("a catalog that could not be read lists the three adapters as before and claims nothing about the rest", () => {
+    const fallback = livePrograms(null, PROFILES);
+    expect(fallback.map((p) => p.id)).toEqual(["claude", "codex", "antigravity", "profile:pwsh", "profile:cmd", "profile:git-bash", "profile:wsl-ubuntu"]);
+    expect(fallback[0]!.modes).toBeUndefined();
+  });
+});
+
+describe("starting from the catalog's programs", () => {
+  const programs = livePrograms(CATALOG, PROFILES);
+  const withProblem = livePrograms(catalogWith(CATALOG.agents, [{ ...DEEPSEEK, problem: "Set DEEPSEEK_API_KEY, then restart Marshell to start DeepSeek." }]), PROFILES);
+  it("the preset sends Claude Code with the preset, and the key is not part of the request", () => {
+    const req = launchRequest(choice("preset:deepseek"), "fix it", programs, DOC, PROJECTS, SIZE);
+    expect(req).toEqual({ agent: "claude", preset: "deepseek", profile_id: "pwsh", cwd: "C:/dev/my-app", mode: "manual", prompt: "fix it", cols: 120, rows: 30 });
+    expect(JSON.stringify(req)).not.toMatch(/key|token/i);
+  });
+  it("a preset that can't start shows its problem, and a program that can has none", () => {
+    expect(startProblem(choice("preset:deepseek"), withProblem)).toBe("Set DEEPSEEK_API_KEY, then restart Marshell to start DeepSeek.");
+    expect(startProblem(choice("preset:deepseek"), programs)).toBeUndefined();
+    expect(startProblem(choice("claude"), withProblem)).toBeUndefined();
+    expect(startProblem(choice("profile:cmd"), withProblem)).toBeUndefined();
+  });
+  it("sends no prompt to a CLI that takes none, even with text typed before switching to it", () => {
+    for (const id of ["kimi", "amp", "crush"]) expect(launchRequest(choice(id), "fix it", programs, DOC, PROJECTS, SIZE), id).not.toHaveProperty("prompt");
+    expect(launchRequest(choice("grok"), "fix it", programs, DOC, PROJECTS, SIZE).prompt).toBe("fix it");
+  });
+  it("sends a mode the manifest maps, falls back to the first one it maps, and sends none when it maps none", () => {
+    expect(launchRequest({ ...choice("grok"), mode: "plan" }, "", programs, DOC, PROJECTS, SIZE).mode).toBe("plan");
+    expect(launchRequest({ ...choice("cursor"), mode: "auto-edit" }, "", programs, DOC, PROJECTS, SIZE).mode).toBe("manual");
+    expect(launchRequest({ ...choice("amp"), mode: "manual" }, "", programs, DOC, PROJECTS, SIZE).mode).toBe("bypass");
+    const opencode = launchRequest({ ...choice("opencode"), mode: "plan" }, "", programs, DOC, PROJECTS, SIZE);
+    expect(opencode).not.toHaveProperty("mode");
+    expect(opencode.agent).toBe("opencode");
+  });
+  it("sends the adapters exactly what it did", () => {
+    expect(launchRequest({ ...choice("codex"), mode: "plan" }, "go", programs, DOC, PROJECTS, SIZE)).toEqual({ agent: "codex", profile_id: "pwsh", cwd: "C:/dev/my-app", mode: "plan", prompt: "go", cols: 120, rows: 30 });
+  });
+  it("shows the program that is listed when the chosen one is not (an agent that is not installed)", () => {
+    expect(listedProgram("aider", programs)).toBe("claude");
+    expect(listedProgram("grok", programs)).toBe("grok");
+    expect(listedProgram("profile:cmd", programs)).toBe("profile:cmd");
+    expect(listedProgram("claude", [])).toBe("claude");
+  });
+  it("preselects a remembered manifest agent only while it is found", () => {
+    const doc: LayoutDoc = { tabs: [], view: {} as LayoutDoc["view"], launcher: { "C:/a": { profile_id: "pwsh", agent: "grok", seq: 1, mode: null }, "C:/b": { profile_id: "pwsh", agent: "aider", seq: 2, mode: null } } };
+    expect(preselect(doc, "C:/a", programs)).toBe("grok");
+    expect(preselect(doc, "C:/b", programs)).toBeUndefined();
+  });
+});
+
+describe("livePrograms with no catalog", () => {
   it("agents come first and only the three", () => {
-    const programs = livePrograms(PROFILES);
+    const programs = livePrograms(null, PROFILES);
     expect(programs.slice(0, 3).map((p) => p.id)).toEqual(["claude", "codex", "antigravity"]);
     expect(programs.slice(0, 3).every((p) => p.group === "Agents")).toBe(true);
     expect(programs.slice(3).every((p) => p.group === "Shells")).toBe(true);
     expect(programs.length).toBe(3 + PROFILES.length);
   });
   it("lists one program per profile, named for it, with the mark of its family", () => {
-    const shells = livePrograms(PROFILES).slice(3);
+    const shells = livePrograms(null, PROFILES).slice(3);
     expect(shells.map((p) => p.id)).toEqual(["profile:pwsh", "profile:cmd", "profile:git-bash", "profile:wsl-ubuntu"]);
     expect(shells.map((p) => p.kind)).toEqual(["powershell", "cmd", "gitbash", "wsl"]);
     expect(shells.map((p) => p.label)).toEqual(["PowerShell 7", "Command Prompt", "Git Bash", "Ubuntu"]);
   });
   it("lists just the agents when no profile loaded", () => {
-    expect(livePrograms([]).map((p) => p.id)).toEqual(["claude", "codex", "antigravity"]);
+    expect(livePrograms(null, []).map((p) => p.id)).toEqual(["claude", "codex", "antigravity"]);
   });
   it("starting text names a profile program by its profile name", () => {
-    expect(startingText("profile:cmd", "my-app", livePrograms(PROFILES))).toBe("Starting Command Prompt in my-app…");
-    expect(startingText("claude", "my-app", livePrograms(PROFILES))).toBe("Starting Claude Code in my-app…");
+    expect(startingText("profile:cmd", "my-app", livePrograms(null, PROFILES))).toBe("Starting Command Prompt in my-app…");
+    expect(startingText("claude", "my-app", livePrograms(null, PROFILES))).toBe("Starting Claude Code in my-app…");
   });
 });
 
 describe("launchRequest", () => {
-  const programs = livePrograms(PROFILES);
+  const programs = livePrograms(null, PROFILES);
   it("agent request uses the default profile", () => {
     expect(launchRequest(choice("codex"), "fix the bug", programs, DOC, PROJECTS, SIZE)).toEqual({
       agent: "codex",
@@ -123,7 +245,7 @@ describe("toLauncherProject", () => {
 });
 
 describe("preselect", () => {
-  const programs = livePrograms(PROFILES);
+  const programs = livePrograms(null, PROFILES);
   const docWith = (launcher: LayoutDoc["launcher"]): LayoutDoc => ({ tabs: [], view: {} as LayoutDoc["view"], launcher });
   it("remembered choice preselects only when its profile exists", () => {
     const doc = docWith({
@@ -156,7 +278,7 @@ describe("preselectMode", () => {
 });
 
 describe("starting a task in a worktree", () => {
-  const programs = livePrograms(PROFILES);
+  const programs = livePrograms(null, PROFILES);
   const task: Task = { id: "t1", name: "fix-login", branch: "marshell/fix-login", base_branch: "main", repo_root: "C:/dev/my-app", path: "C:/dev/.marshell/my-app/fix-login", created_ms: 1, folder_missing: false };
   const on = (program: ProgramId): LauncherChoice => ({ ...choice(program), worktree: true });
   const NO_GIT: Project[] = [{ id: "C:/dev/scratch", name: "scratch", path: "C:/dev/scratch", lastUsedMs: 1 }];

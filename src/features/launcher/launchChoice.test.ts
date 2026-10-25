@@ -14,6 +14,7 @@ import {
   programsIn,
   rememberedNote,
   startingText,
+  type LaunchProgram,
   type LauncherChoice,
 } from "./launchChoice";
 
@@ -28,6 +29,10 @@ describe("launcherSentence", () => {
   });
   it("copes with a project that is not in the list", () => {
     expect(launcherSentence({ ...base, projectId: "gone" }, PROJECTS)).toContain("in an unknown folder");
+  });
+  it("leaves the mode out for an agent that offers none", () => {
+    const opencode: LaunchProgram = { id: "opencode", kind: "opencode", label: "opencode", cli: "opencode", group: "Agents", first: "What should opencode do first? (optional)", modes: [] };
+    expect(launcherSentence({ ...base, program: "opencode" }, PROJECTS, [opencode])).toBe("Start opencode in my-app on main, Quick, no worktree");
   });
   it("is shorter for a manual CLI: no mode, no pace, and the worktree only when it is on", () => {
     expect(launcherSentence({ ...base, program: "powershell" }, PROJECTS)).toBe("Start PowerShell in my-app on main");
@@ -88,6 +93,17 @@ describe("remembered choices", () => {
   it("applies what was remembered for the project and leaves the rest", () => {
     expect(applyRemembered(base, { mode: "auto-edit" })).toEqual({ ...base, mode: "auto-edit" });
     expect(applyRemembered(base, undefined)).toEqual(base);
+  });
+  it("falls back to the first mode the program offers when the remembered one is not offered", () => {
+    const cursor: LaunchProgram = { id: "cursor", kind: "cursor", label: "Cursor", cli: "Cursor CLI", group: "Agents", first: "What should Cursor do first? (optional)", modes: ["manual", "plan", "bypass"] };
+    const opencode: LaunchProgram = { ...cursor, id: "opencode", kind: "opencode", label: "opencode", modes: [] };
+    const on = (program: LaunchProgram["id"]): LauncherChoice => ({ ...base, program });
+    expect(applyRemembered(on("cursor"), { mode: "auto-edit" }, [cursor, opencode])).toEqual({ ...base, program: "cursor", mode: "manual" });
+    expect(applyRemembered(on("cursor"), { mode: "plan" }, [cursor, opencode])).toMatchObject({ mode: "plan" });
+    // No modes: the remembered one is kept as data, but nothing sends or shows it.
+    expect(applyRemembered(on("opencode"), { mode: "auto-edit" }, [cursor, opencode])).toMatchObject({ mode: "auto-edit" });
+    // A program the list lacks, or one with no `modes` field (the five), keeps what was remembered.
+    expect(applyRemembered(on("claude"), { mode: "auto-edit" })).toMatchObject({ mode: "auto-edit" });
   });
   it("never brings the worktree flag back: the chip starts off every time", () => {
     // A stale entry that still carries the flag is ignored, and the note does not mention it.
