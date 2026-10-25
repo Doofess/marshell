@@ -475,6 +475,73 @@ async fn a_save_still_validates_every_entry_it_is_sent() {
     assert_eq!(saved["agents"].as_array().unwrap().len(), 1);
 }
 
+/// The `agents` list of the file as it is on disk now.
+fn raw_agents(e: &Env) -> Vec<Value> {
+    let doc: Value = serde_json::from_slice(&std::fs::read(&e.agents_file).unwrap()).unwrap();
+    doc["agents"].as_array().unwrap().clone()
+}
+
+#[tokio::test]
+async fn a_save_writes_a_broken_entry_back_exactly_as_it_was_unless_it_was_edited_or_removed() {
+    let e = build();
+    // An entry whose only fault is a typo'd field, with modes, a prompt style and flags that the form must not lose.
+    let mut broken = own_agent("broken", "Broken");
+    broken["continue_args"] = json!(["--continue"]);
+    broken["modes"] = json!({"manual": [], "plan": ["--plan"], "bypass": ["--yolo"]});
+    broken["reject_paths"] = json!(["C:\\Shim"]);
+    broken["version_shape"] = json!("^broken ");
+    let seed = json!({"version": 1, "agents": [own_agent("good", "Good"), broken.clone()]}).to_string();
+    std::fs::write(&e.agents_file, &seed).unwrap();
+    let (_, own) = get(&e.app, "/v1/agents/own").await;
+    let loaded = own["agents"].as_array().unwrap().clone();
+    assert_eq!(loaded.len(), 2);
+
+    // The person adds another agent from the form: every listed entry goes back, the broken one as it was shown.
+    let mut sent = loaded.clone();
+    sent.push(own_agent("added", "Added"));
+    let (status, saved) = put(
+        &e.app,
+        "/v1/agents/own",
+        json!({"agents": sent, "version": own["version"]}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{saved}");
+    let written = raw_agents(&e);
+    assert_eq!(written.len(), 3);
+    assert_eq!(written[1], broken, "the broken entry was rewritten");
+    assert_eq!(written[2]["id"], "added");
+
+    // An entry the person edited is written as sent: a repair through the form.
+    let (_, own) = get(&e.app, "/v1/agents/own").await;
+    let mut sent = own["agents"].as_array().unwrap().clone();
+    sent[1]["name"] = json!("Fixed");
+    let (status, saved) = put(
+        &e.app,
+        "/v1/agents/own",
+        json!({"agents": sent, "version": own["version"]}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{saved}");
+    let written = raw_agents(&e);
+    assert_eq!(written[1]["name"], "Fixed");
+    assert!(written[1].get("continue_args").is_none());
+
+    // One left out is a Remove.
+    std::fs::write(&e.agents_file, &seed).unwrap();
+    let (_, own) = get(&e.app, "/v1/agents/own").await;
+    let sent = vec![own["agents"][0].clone()];
+    let (status, saved) = put(
+        &e.app,
+        "/v1/agents/own",
+        json!({"agents": sent, "version": own["version"]}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{saved}");
+    let written = raw_agents(&e);
+    assert_eq!(written.len(), 1);
+    assert_eq!(written[0]["id"], "good");
+}
+
 #[tokio::test]
 async fn catalog_routes_refuse_without_the_bearer() {
     let e = build();

@@ -17,7 +17,8 @@ use std::time::SystemTime;
 
 #[derive(Serialize, Deserialize)]
 struct FileDoc {
-    agents: Vec<AgentManifest>,
+    /// Valid entries as serialized; an entry that did not parse, as it was in the file.
+    agents: Vec<Value>,
 }
 
 impl Versioned for FileDoc {
@@ -32,6 +33,8 @@ pub struct Loaded {
     pub agents: Agents,
     /// The file is missing or parsed. False for a broken or newer file, which a save must not replace.
     pub readable: bool,
+    /// The entries that did not parse: what the editor was shown for each, and the entry as the file held it.
+    broken: Vec<(AgentManifest, Value)>,
 }
 
 /// SHA-256 (hex) of the file's bytes, or "" when there is no file.
@@ -46,6 +49,8 @@ struct Slot {
     manifest: AgentManifest,
     /// Why the entry could not be parsed, in words.
     broken: Option<String>,
+    /// The entry as the file held it.
+    raw: Value,
 }
 
 /// What can be read of an entry that does not parse, for the editor to show beside its problem.
@@ -91,10 +96,15 @@ fn parse(bytes: &[u8]) -> Result<Vec<Slot>, String> {
     Ok(list
         .iter()
         .map(|entry| match serde_json::from_value::<AgentManifest>(entry.clone()) {
-            Ok(manifest) => Slot { manifest, broken: None },
+            Ok(manifest) => Slot {
+                manifest,
+                broken: None,
+                raw: entry.clone(),
+            },
             Err(e) => Slot {
                 manifest: placeholder(entry),
                 broken: Some(format!("It has an unexpected shape ({e}).")),
+                raw: entry.clone(),
             },
         })
         .collect())
@@ -131,6 +141,11 @@ pub fn load_full(home: &Path) -> Loaded {
         }
     }
     problems.sort_by_key(|p| p.index);
+    let broken: Vec<(AgentManifest, Value)> = slots
+        .iter()
+        .filter(|s| s.broken.is_some())
+        .map(|s| (s.manifest.clone(), s.raw.clone()))
+        .collect();
     let list: Vec<AgentManifest> = slots.into_iter().map(|s| s.manifest).collect();
     Loaded {
         agents: Agents::with_own(valid),
@@ -140,6 +155,7 @@ pub fn load_full(home: &Path) -> Loaded {
             version,
         },
         readable: true,
+        broken,
     }
 }
 
@@ -156,6 +172,7 @@ fn unreadable(version: String, why: String) -> Loaded {
             version,
         },
         readable: false,
+        broken: Vec::new(),
     }
 }
 
@@ -189,7 +206,22 @@ pub fn save(home: &Path, req: OwnAgentsSave) -> Result<OwnAgents, SaveError> {
     if !problems.is_empty() {
         return Err(SaveError::Invalid(problems));
     }
-    store::write(&paths::agents_file(home), &FileDoc { agents: valid }).map_err(SaveError::Io)?;
+    // An entry sent back exactly as a broken one was shown goes back to the file as it was there, with its modes and flags
+    // and whatever field made it fail: saving another agent must not edit it. One the person changed is written as sent,
+    // and one left out is gone.
+    let mut untouched: Vec<Option<&(AgentManifest, Value)>> = current.broken.iter().map(Some).collect();
+    let mut agents = Vec::with_capacity(valid.len());
+    for (sent, valid) in req.agents.iter().zip(valid) {
+        let original = untouched
+            .iter_mut()
+            .find(|slot| slot.is_some_and(|(shown, _)| shown == sent))
+            .and_then(Option::take);
+        agents.push(match original {
+            Some((_, raw)) => raw.clone(),
+            None => serde_json::to_value(valid).map_err(|e| SaveError::Io(e.into()))?,
+        });
+    }
+    store::write(&paths::agents_file(home), &FileDoc { agents }).map_err(SaveError::Io)?;
     Ok(load(home))
 }
 
