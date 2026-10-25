@@ -5,7 +5,7 @@
     "commands": ["npx", "bunx"],
     "launcher": true,
     "needs_you": [
-      { "pattern": "Ok to proceed\\?\\s*$", "phrase": "Asks to continue", "kind": "text" }
+      { "pattern": "Ok to proceed\\?(?:\\s*\\(y\\))?\\s*$", "phrase": "Asks to continue", "kind": "text" }
     ]
   },
   {

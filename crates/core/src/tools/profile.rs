@@ -526,7 +526,9 @@ mod tests {
                 .map(|n| (n.pattern.kind, n.pattern.phrase.clone()))
         };
         assert_eq!(hit("npx", "Ok to proceed? ").unwrap().0, PromptKind::Text);
-        assert!(hit("npx", "Ok to proceed? (y)").is_none());
+        // npm 11 shows its default after the question (seen live with `npx vite`); once answered, the line no longer asks.
+        assert_eq!(hit("npx", "Ok to proceed? (y) ").unwrap().0, PromptKind::Text);
+        assert!(hit("npx", "Ok to proceed? (y) y").is_none());
         assert!(hit("terraform", "  Enter a value: ").is_some());
         assert!(hit("gcloud", "Do you want to continue (Y/n)?  ").is_some());
         assert_eq!(
