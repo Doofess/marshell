@@ -133,7 +133,7 @@ impl Tools {
             return None;
         }
         let at = 1 + argv[1..].iter().position(|a| !a.starts_with('-'))?;
-        let script = argv[at].replace('\\', "/").to_lowercase();
+        let script = collapse_dots(&argv[at].replace('\\', "/").to_lowercase());
         let p = self.0.iter().find(|p| {
             !p.launcher
                 && p.scripts
@@ -215,6 +215,21 @@ pub(crate) fn split_command(words: &[String]) -> Command<'_> {
         cmd.args = &words[at + 1..];
     }
     cmd
+}
+
+/// A `/`-separated path with its `..` and `.` segments resolved: launchers such as gcloud.cmd run `<root>\bin\..\lib\x.py`.
+fn collapse_dots(path: &str) -> String {
+    let mut out: Vec<&str> = Vec::new();
+    for segment in path.split('/') {
+        match segment {
+            "." => {}
+            ".." if out.last().is_some_and(|s| !s.is_empty() && *s != "..") => {
+                out.pop();
+            }
+            _ => out.push(segment),
+        }
+    }
+    out.join("/")
 }
 
 /// How many words a launcher form takes (`npx` is 1, `pnpm dlx` is 2), or None when the first word is no launcher.
@@ -605,6 +620,27 @@ mod tests {
         ]));
         assert_eq!(c.tool.as_deref(), Some("gcloud"));
         assert_eq!(c.rest, "gcloud auth login");
+
+        // What gcloud.cmd really runs: its root is `%~dp0..`, so the script path climbs out of `bin`.
+        let c = tools.classify_argv(&argv(&[
+            "python.exe",
+            "-S",
+            "C:\\Program Files (x86)\\Google\\Cloud SDK\\google-cloud-sdk\\bin\\..\\lib\\gcloud.py",
+            "auth",
+            "login",
+        ]));
+        assert_eq!(c.tool.as_deref(), Some("gcloud"));
+        assert_eq!(c.rest, "gcloud auth login");
+
+        // az.cmd runs the azure.cli module (`-IBm azure.cli`, build_scripts/windows/scripts/az_msi.cmd).
+        let c = tools.classify_argv(&argv(&[
+            "C:\\Program Files\\Microsoft SDKs\\Azure\\CLI2\\python.exe",
+            "-IBm",
+            "azure.cli",
+            "login",
+        ]));
+        assert_eq!(c.tool.as_deref(), Some("az"));
+        assert_eq!(c.rest, "az login");
 
         // A tool run directly, and a node child that is not a profiled script.
         let c = tools.classify_argv(&argv(&["C:\\tools\\Terraform.EXE", "plan"]));

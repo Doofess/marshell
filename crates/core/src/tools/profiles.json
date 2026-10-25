@@ -214,7 +214,7 @@
     "id": "az",
     "name": "Azure CLI",
     "commands": ["az"],
-    "scripts": ["azure-cli"],
+    "scripts": ["azure.cli", "azure-cli"],
     "needs_you": [
       { "pattern": "microsoft\\.com/devicelogin|aka\\.ms/devicelogin", "phrase": "Waiting for sign-in in the browser", "kind": "browser" },
       { "pattern": "Please continue the login in the web browser", "phrase": "Waiting for sign-in in the browser", "kind": "browser" },
