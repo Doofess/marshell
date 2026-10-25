@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { ApiError } from "../../lib/api/client";
 import type { AgentManifest } from "../../generated/AgentManifest";
-import { blankForm, buildManifest, buildSave, deriveId, formFromManifest, joinFlags, mergeManifest, outcomeOf, splitFlags, splitNames, splitProblems } from "./ownAgents";
+import { blankForm, buildManifest, buildSave, deriveId, formFromManifest, joinFlags, focusAfterCancel, focusAfterRemove, focusAfterSave, mergeManifest, outcomeOf, removedText, splitFlags, splitNames, splitProblems } from "./ownAgents";
 
 describe("deriveId", () => {
   it("lowercases and dashes the name", () => {
@@ -135,5 +135,30 @@ describe("splitProblems", () => {
     const out = splitProblems(sent, [{ index: 1, id: "good", reason: "No command." }, { index: 0, id: "Bad Id", reason: "Bad." }], 1);
     expect(out.mine?.reason).toBe("No command.");
     expect(out.others).toHaveLength(1);
+  });
+});
+
+describe("where focus goes after the form", () => {
+  const list = [{ id: "a" }, { id: "b" }, { id: "c" }] as AgentManifest[];
+  it("Cancel returns to the button that opened the form", () => {
+    expect(focusAfterCancel(1)).toEqual({ to: "edit", index: 1 });
+    expect(focusAfterCancel(null)).toEqual({ to: "add" });
+  });
+  it("Save returns to the edited agent's Edit, or to the new agent's Edit when it is found, else Add an agent", () => {
+    expect(focusAfterSave(1, list, "b")).toEqual({ to: "edit", index: 1 });
+    expect(focusAfterSave(null, list, "c")).toEqual({ to: "edit", index: 2 });
+    expect(focusAfterSave(null, list, "zzz")).toEqual({ to: "add" });
+  });
+  it("Remove goes to the next agent's Edit, else the previous one's, else Add an agent", () => {
+    expect(focusAfterRemove(0, 2)).toEqual({ to: "edit", index: 0 });
+    expect(focusAfterRemove(1, 2)).toEqual({ to: "edit", index: 1 });
+    expect(focusAfterRemove(2, 2)).toEqual({ to: "edit", index: 1 });
+    expect(focusAfterRemove(0, 0)).toEqual({ to: "add" });
+  });
+});
+
+describe("removedText", () => {
+  it("names the undo path: the previous file is kept as agents.json.bak", () => {
+    expect(removedText("Crush")).toBe("Crush removed. The previous file is saved as agents.json.bak.");
   });
 });

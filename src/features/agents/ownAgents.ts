@@ -163,3 +163,25 @@ export function splitProblems(sent: readonly AgentManifest[], problems: readonly
   const others = problems.filter((p) => p !== mine).map((p) => `Fix or remove “${sent[p.index]?.name || p.id || `entry ${p.index + 1}`}” first: ${p.reason}`);
   return { mine, others };
 }
+
+/** Where focus goes when the form closes or an agent goes: an agent's Edit button, or "Add an agent". */
+export type FormFocus = { to: "edit"; index: number } | { to: "add" };
+
+/** Cancel returns to the button that opened the form. */
+export const focusAfterCancel = (openedFrom: number | null): FormFocus => (openedFrom === null ? { to: "add" } : { to: "edit", index: openedFrom });
+
+/** Save returns to the edited agent's Edit, or to the new agent's Edit when it is in the saved list, else to "Add an agent". */
+export function focusAfterSave(openedFrom: number | null, saved: readonly AgentManifest[], id: string): FormFocus {
+  if (openedFrom !== null) return openedFrom < saved.length ? { to: "edit", index: openedFrom } : { to: "add" };
+  const at = saved.findIndex((a) => a.id === id);
+  return at < 0 ? { to: "add" } : { to: "edit", index: at };
+}
+
+/** After Remove: the next agent's Edit (it moves into the removed place), else the previous one's, else "Add an agent". */
+export function focusAfterRemove(removed: number, remaining: number): FormFocus {
+  if (removed < remaining) return { to: "edit", index: removed };
+  return remaining > 0 ? { to: "edit", index: remaining - 1 } : { to: "add" };
+}
+
+/** Remove acts at once, so the announcement names the undo path: the core keeps the file it replaced next to it (store::write). */
+export const removedText = (name: string): string => `${name} removed. The previous file is saved as agents.json.bak.`;

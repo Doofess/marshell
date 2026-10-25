@@ -1,8 +1,8 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type Ref } from "react";
 import type { Endpoint } from "../../generated/Endpoint";
 import type { OwnAgents } from "../../generated/OwnAgents";
 import { ownAgents } from "../../lib/api/catalog";
-import { blankForm, buildManifest, buildSave, CONFLICT_TEXT, deriveId, fileProblems, formFromManifest, mergeManifest, OWN_MODE_LABELS, OWN_MODES, outcomeOf, splitProblems, type Change, type OwnForm } from "./ownAgents";
+import { blankForm, buildManifest, buildSave, CONFLICT_TEXT, deriveId, fileProblems, focusAfterCancel, focusAfterRemove, focusAfterSave, formFromManifest, mergeManifest, OWN_MODE_LABELS, OWN_MODES, outcomeOf, removedText, splitProblems, type Change, type FormFocus, type OwnForm } from "./ownAgents";
 import "./OwnAgentsSection.css";
 
 /** The open form: a new agent (`index` null) or one being edited, with the core's reason when it refused the entry. */
@@ -18,6 +18,8 @@ export type OwnAgentsViewProps = {
   conflict?: boolean;
   /** A failure that belongs to no field. */
   message?: string | null;
+  /** The section element, so its owner can move focus to a button in it. */
+  sectionRef?: Ref<HTMLElement>;
   onAdd: () => void;
   onEdit: (index: number) => void;
   onRemove: (index: number) => void;
@@ -28,11 +30,11 @@ export type OwnAgentsViewProps = {
 };
 
 /** The "Your own agents" section of the Agents dialog: the list, and the form to add or edit one. Presentational. */
-export function OwnAgentsView({ own, editing, conflict, message, ...on }: OwnAgentsViewProps) {
+export function OwnAgentsView({ own, editing, conflict, message, sectionRef, ...on }: OwnAgentsViewProps) {
   const problems = own ? own.problems : [];
   const file = own ? fileProblems(own.agents, problems) : [];
   return (
-    <section className="own-agents" aria-label="Your own agents">
+    <section ref={sectionRef} className="own-agents" aria-label="Your own agents">
       <h3 className="own-agents__title">Your own agents</h3>
       {file.length > 0 && (
         <ul className="own-agents__problems">
@@ -65,7 +67,7 @@ export function OwnAgentsView({ own, editing, conflict, message, ...on }: OwnAge
                   ))}
               </div>
               <div className="own-agents__actions">
-                <button type="button" className="own-agents__btn" aria-label={`Edit ${a.name}`} onClick={() => on.onEdit(i)}>
+                <button type="button" className="own-agents__btn" data-own-focus={`edit-${i}`} aria-label={`Edit ${a.name}`} onClick={() => on.onEdit(i)}>
                   Edit
                 </button>
                 <button type="button" className="own-agents__btn" aria-label={`Remove ${a.name}`} onClick={() => on.onRemove(i)}>
@@ -94,7 +96,7 @@ export function OwnAgentsView({ own, editing, conflict, message, ...on }: OwnAge
       ) : (
         own && (
           <div className="own-agents__actions">
-            <button type="button" className="own-agents__btn" onClick={on.onAdd}>
+            <button type="button" className="own-agents__btn" data-own-focus="add" onClick={on.onAdd}>
               Add an agent
             </button>
           </div>
@@ -107,6 +109,10 @@ export function OwnAgentsView({ own, editing, conflict, message, ...on }: OwnAge
 /** The form. Its fields are in the order they are read and tabbed: name, command, first prompt, continue, the modes, program names, then Save and Cancel. */
 function OwnAgentForm({ editing, onChange, onSave, onCancel }: { editing: Editing; onChange: (form: OwnForm) => void; onSave: () => void; onCancel: () => void }) {
   const { form, problem, busy } = editing;
+  // Opening the form puts the cursor in its first field; the Add or Edit button that opened it is gone from the screen.
+  useEffect(() => {
+    document.getElementById("own-agent-name")?.focus();
+  }, []);
   const set = <K extends keyof OwnForm>(key: K, value: OwnForm[K]) => onChange({ ...form, [key]: value });
   const setMode = (mode: (typeof OWN_MODES)[number], value: string) => onChange({ ...form, modes: { ...form.modes, [mode]: value }, manualNoFlags: mode === "manual" && value.trim() ? false : form.manualNoFlags });
   const id = deriveId(form.name);
@@ -205,6 +211,15 @@ export function OwnAgentsSection({ endpoint, onNotice }: { endpoint: Endpoint; o
   const [editing, setEditing] = useState<Editing | null>(null);
   const [conflict, setConflict] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
+  // Where focus goes once the screen has the buttons it names: the control that had it is gone when the form closes or an agent is removed.
+  const [focusNext, setFocusNext] = useState<FormFocus | null>(null);
+  const sectionRef = useRef<HTMLElement>(null);
+  useEffect(() => {
+    if (!focusNext) return;
+    const key = focusNext.to === "add" ? "add" : `edit-${focusNext.index}`;
+    sectionRef.current?.querySelector<HTMLElement>(`[data-own-focus="${key}"]`)?.focus();
+    setFocusNext(null);
+  }, [focusNext, own, editing]);
 
   const load = useCallback(async () => {
     try {
@@ -225,6 +240,7 @@ export function OwnAgentsSection({ endpoint, onNotice }: { endpoint: Endpoint; o
       const saved = await ownAgents.save(endpoint, buildSave(own.agents, own.version, change));
       setOwn(saved);
       setEditing(null);
+      setFocusNext("remove" in change ? focusAfterRemove(change.remove, saved.agents.length) : focusAfterSave(index, saved.agents, "add" in change ? change.add.id : change.with.id));
       setConflict(false);
       onNotice?.(done);
     } catch (e) {
@@ -274,11 +290,15 @@ export function OwnAgentsSection({ endpoint, onNotice }: { endpoint: Endpoint; o
       }}
       onRemove={(i) => {
         const a = own?.agents[i];
-        if (a) void send({ remove: i }, `${a.name} removed.`, i);
+        if (a) void send({ remove: i }, removedText(a.name), i);
       }}
       onChange={(form) => setEditing((cur) => (cur ? { ...cur, form } : cur))}
       onSave={save}
-      onCancel={() => setEditing(null)}
+      onCancel={() => {
+        setFocusNext(focusAfterCancel(editing?.index ?? null));
+        setEditing(null);
+      }}
+      sectionRef={sectionRef}
       onReload={() => {
         setConflict(false);
         // An edit of a listed entry points into a list that may have changed; a new agent can stay.
