@@ -452,6 +452,8 @@ export function LiveApp() {
     agent: focusedInfo?.agent != null && (focusedRow === undefined || offersModeChange(focusedRow, focusedInfo)),
     pausable: focusedInfo?.state.kind === "running" && !focusedInfo.paused,
     paused: focusedInfo?.state.kind === "running" && focusedInfo.paused,
+    // The palette lists the Mode commands the focused agent offers, the same as its row menu; the refusal in askRestart is the backstop.
+    ...(focusedInfo?.agent ? { offered: modesOf(focusedInfo.agent) } : {}),
   });
 
   // The Review sheet. It holds its own snapshot (the task, its changes, the session it was opened for), not a view of the lists above,

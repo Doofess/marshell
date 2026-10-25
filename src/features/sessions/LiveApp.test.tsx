@@ -525,6 +525,12 @@ describe("LiveApp: the palette's Review command", () => {
     expect(paletteHidden({ resumable: true, isTask: true, missing: true, focused: false })).toEqual(["copy-recording-path"]);
     expect(paletteHidden({ resumable: true, isTask: true, missing: true, focused: true })).toEqual([]);
   });
+  it("lists only the Mode commands the focused agent offers, as the row menu does", () => {
+    const base = { resumable: true, isTask: true, missing: true } as const;
+    expect(paletteHidden({ ...base, offered: ["manual", "bypass"] })).toEqual(["mode-plan", "mode-auto-edit", "mode-full-auto"]);
+    expect(paletteHidden({ ...base, offered: [] })).toEqual(["mode-manual", "mode-plan", "mode-auto-edit", "mode-full-auto", "mode-bypass"]);
+    expect(paletteHidden({ ...base })).toEqual([]);
+  });
   it("hides the Mode commands unless the focused session is an agent: a plain shell has no mode to change", () => {
     const modes = ["mode-manual", "mode-plan", "mode-auto-edit", "mode-full-auto", "mode-bypass"];
     expect(paletteHidden({ resumable: true, isTask: true, missing: true, agent: false })).toEqual(modes);
