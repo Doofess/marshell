@@ -707,7 +707,16 @@ impl Registry {
             }
             ToolEvent::Cleared => entry.tool_attention && entry.drop_attention(),
             ToolEvent::Port(chip) => {
-                if entry.info.ports.len() < MAX_PORTS && !entry.info.ports.iter().any(|p| p.port == chip.port) {
+                if let Some(listened) = entry
+                    .info
+                    .ports
+                    .iter_mut()
+                    .find(|p| p.port == chip.port && !p.announced)
+                {
+                    // The listener's chip came first: the announcement's URL keeps its scheme and path.
+                    *listened = chip;
+                    true
+                } else if entry.info.ports.len() < MAX_PORTS && !entry.info.ports.iter().any(|p| p.port == chip.port) {
                     entry.info.ports.push(chip);
                     true
                 } else {
@@ -2368,6 +2377,8 @@ mod tests {
         reg.set_listening("a", generation, &[3000, 3001]);
         reg.tool_event("a", ToolEvent::Port(announced_chip(3001)));
         assert_eq!(chip_ports(&reg, "a"), [3000, 3001]);
+        // The announcement's URL (its scheme and path) replaces the listener's plain one, in place.
+        assert_eq!(row(&reg, "a").ports[1], announced_chip(3001));
     }
 
     #[test]

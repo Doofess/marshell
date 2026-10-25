@@ -86,12 +86,39 @@ fn read(agents: &Agents, work: Vec<Candidate>) -> Option<Vec<(String, u64, Vec<u
         work.into_iter()
             .filter_map(|c| {
                 let tree = processes.tree(c.pid)?;
-                let outermost = if c.runs_agent { processes.outermost(c.pid) } else { None };
+                let outermost = if c.runs_agent {
+                    processes
+                        .outermost(c.pid)
+                        .map(|first| agent_root(&tree, first, |pid| processes.outermost(pid)))
+                } else {
+                    None
+                };
                 let agent = agent_pids(agents, &tree, outermost, c.runs_agent);
                 Some((c.tab, c.generation, chips_for(&table, &tree, &agent, c.quiet)))
             })
             .collect(),
     )
+}
+
+/// The agent among the first processes a row runs: `first`, or, when that is a `cmd.exe` shim (PowerShell runs an
+/// npm-installed agent's `.cmd` through one), the process under it (`child_of` gives a process's first child).
+fn agent_root(tree: &[(u32, String)], first: u32, child_of: impl Fn(u32) -> Option<u32>) -> u32 {
+    let is_shim = |pid: u32| {
+        tree.iter().any(|(p, name)| {
+            *p == pid && {
+                let name = name.to_ascii_lowercase();
+                name == "cmd.exe" || name == "cmd"
+            }
+        })
+    };
+    let mut pid = first;
+    while is_shim(pid) {
+        match child_of(pid) {
+            Some(child) => pid = child,
+            None => break,
+        }
+    }
+    pid
 }
 
 /// The processes of a tab's `tree` (pid, program name) whose listeners are an agent's own, not a dev server's: every
@@ -170,5 +197,21 @@ mod tests {
         assert!(ports(&reg).is_empty());
         reg.set_listening(&tab, generation, &[3000]);
         assert_eq!(ports(&reg), [3000]);
+    }
+
+    #[test]
+    fn an_agent_started_through_a_cmd_shim_is_the_shims_child() {
+        // PowerShell runs an npm-installed agent's `claude.cmd` through cmd.exe: the agent is the node under it.
+        let t = tree(&[(1, "pwsh.exe"), (30, "cmd.exe"), (31, "node.exe"), (32, "node.exe")]);
+        let child = |pid: u32| match pid {
+            30 => Some(31),
+            31 => Some(32),
+            _ => None,
+        };
+        assert_eq!(agent_root(&t, 30, child), 31);
+        // A first process that is no shim is the agent itself.
+        assert_eq!(agent_root(&t, 31, child), 31);
+        // A shim with nothing under it stays.
+        assert_eq!(agent_root(&t, 30, |_| None), 30);
     }
 }
