@@ -153,6 +153,8 @@ struct Inner {
     claude_settings: Option<PathBuf>,
     /// Codex's `hooks.json` when a test or a caller names one; None means `$CODEX_HOME`, else `~/.codex`.
     codex_hooks: Option<PathBuf>,
+    /// The user home Antigravity's files are planned under when a test names one; None means the user's home.
+    agy_home: Option<PathBuf>,
     /// Home and managed settings paths for reading Claude's compact window; tests supply scratch paths.
     claude_compact_paths: Option<(PathBuf, Vec<PathBuf>)>,
     /// Where the app's own programs sit, so setting up hooks can put a missing bridge back. None in tests.
@@ -165,6 +167,8 @@ struct Inner {
     claude_version: Option<Option<String>>,
     /// A Codex version a test pins, in place of asking the executable. `Some(None)` cannot be read.
     codex_version: Option<Option<String>>,
+    /// An Antigravity version a test pins, in place of asking the executable. `Some(None)` cannot be read.
+    agy_version: Option<Option<String>>,
     /// The previous process readings, so each `/v1/perf` call can tell the CPU used since the last one.
     sampler: Mutex<crate::diagnostics::perf::Sampler>,
     /// The diagnostics export waiting to be read and saved.
@@ -247,11 +251,13 @@ impl AppState {
             storage: std::sync::OnceLock::new(),
             claude_settings: None,
             codex_hooks: None,
+            agy_home: None,
             claude_compact_paths: None,
             programs_dir: None,
             versions: Mutex::new(HashMap::new()),
             claude_version: None,
             codex_version: None,
+            agy_version: None,
             sampler: Mutex::new(crate::diagnostics::perf::Sampler::new()),
             previews: crate::diagnostics::export::Previews::default(),
             view: tokio::sync::watch::channel(marshell_protocol::api::UiView {
@@ -285,6 +291,15 @@ impl AppState {
             .codex_hooks = Some(path);
         self
     }
+    /// Names the user home under which Antigravity's `.gemini/config/hooks.json` and
+    /// `.gemini/antigravity-cli/settings.json` are planned, in place of the environment. Call it before the state
+    /// is cloned.
+    pub fn with_agy_home(mut self, user_home: PathBuf) -> Self {
+        Arc::get_mut(&mut self.0)
+            .expect("with_agy_home runs before the state is shared")
+            .agy_home = Some(user_home);
+        self
+    }
     /// Names the user home and managed files used for Claude's compact window, before state is shared.
     pub fn with_claude_compact_paths(mut self, user_home: PathBuf, managed: Vec<PathBuf>) -> Self {
         Arc::get_mut(&mut self.0)
@@ -313,6 +328,14 @@ impl AppState {
         Arc::get_mut(&mut self.0)
             .expect("with_codex_version runs before the state is shared")
             .codex_version = Some(version);
+        self
+    }
+    /// Pins the Antigravity version live status sees, so a test never runs a real `agy`. `None` is a version that
+    /// cannot be read. Call it before the state is cloned.
+    pub fn with_agy_version(mut self, version: Option<String>) -> Self {
+        Arc::get_mut(&mut self.0)
+            .expect("with_agy_version runs before the state is shared")
+            .agy_version = Some(version);
         self
     }
     /// Sets how long a permission request is held. Call it before the state is cloned.
@@ -924,10 +947,12 @@ impl RunningCore {
     }
 }
 
-/// `MARSHELL_PERMISSION_HOLD_SECS` clamped to 1..=590 s, or the default when unset or not a number.
+/// `MARSHELL_PERMISSION_HOLD_SECS` clamped to 1..=580 s, or the default when unset or not a number. The cap sits
+/// below the bridge's 590 s `Permission` budget (`crates/hook/src/post.rs`), so the core's answer, a deny for
+/// Antigravity, always arrives before the bridge gives up and prints nothing.
 fn permission_hold_from_env(value: Option<&str>) -> Duration {
     match value.and_then(|v| v.trim().parse::<u64>().ok()) {
-        Some(secs) => Duration::from_secs(secs.clamp(1, 590)),
+        Some(secs) => Duration::from_secs(secs.clamp(1, 580)),
         None => DEFAULT_PERMISSION_HOLD,
     }
 }
@@ -1037,6 +1062,17 @@ mod tests {
         assert_eq!(permission_hold_from_env(Some("abc")), DEFAULT_PERMISSION_HOLD);
         assert_eq!(permission_hold_from_env(Some("0")), Duration::from_secs(1));
         assert_eq!(permission_hold_from_env(Some("45")), Duration::from_secs(45));
-        assert_eq!(permission_hold_from_env(Some("9999")), Duration::from_secs(590));
+        assert_eq!(permission_hold_from_env(Some("9999")), Duration::from_secs(580));
+    }
+
+    #[test]
+    fn the_hold_clamp_ends_before_the_bridge_budget() {
+        // The bridge's `Permission` budget (`crates/hook/src/post.rs`, `budget`). The core can't import the
+        // hook crate, so it is written out here; change both together.
+        const BRIDGE_PERMISSION_BUDGET: Duration = Duration::from_secs(590);
+        let longest = permission_hold_from_env(Some("9999"));
+        assert_eq!(longest, Duration::from_secs(580));
+        assert!(longest < BRIDGE_PERMISSION_BUDGET);
+        assert!(DEFAULT_PERMISSION_HOLD < longest);
     }
 }

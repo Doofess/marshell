@@ -80,6 +80,9 @@ pub fn transcript_allowed(path: &str, session_id: &str) -> bool {
 /// Like `transcript_allowed` for a sidecar read back from the archive. A Codex conversation's source is a
 /// rollout named `rollout-<time>-<id>.jsonl` (or `.jsonl.zst`), so only its place and kind are checked.
 pub fn sidecar_allowed(agent: &str, path: &str, session_id: &str) -> bool {
+    if agent == "antigravity" {
+        return antigravity_transcript_allowed(path, session_id);
+    }
     if agent != "codex" {
         return transcript_allowed(path, session_id);
     }
@@ -91,6 +94,34 @@ pub fn sidecar_allowed(agent: &str, path: &str, session_id: &str) -> bool {
             .file_name()
             .map(|name| name.to_string_lossy())
             .is_some_and(|name| name.ends_with(".jsonl") || name.ends_with(".jsonl.zst"))
+}
+
+/// An Antigravity conversation id: a UUID, 8-4-4-4-12 hex digits.
+fn is_uuid(id: &str) -> bool {
+    id.len() == 36
+        && id.char_indices().all(|(at, c)| match at {
+            8 | 13 | 18 | 23 => c == '-',
+            _ => c.is_ascii_hexdigit(),
+        })
+}
+
+/// True when `path` is absolute, local, free of `..`, and ends in agy's transcript for this conversation:
+/// `antigravity-cli/brain/<id>/.system_generated/logs/transcript_full.jsonl`, with `/` or `\` between the
+/// parts. Makes no filesystem call.
+fn antigravity_transcript_allowed(path: &str, session_id: &str) -> bool {
+    if !is_uuid(session_id) || is_remote_path(path) || !Path::new(path).is_absolute() {
+        return false;
+    }
+    let parts: Vec<&str> = path.split(['/', '\\']).collect();
+    parts.iter().all(|part| *part != "..")
+        && parts.ends_with(&[
+            "antigravity-cli",
+            "brain",
+            session_id,
+            ".system_generated",
+            "logs",
+            "transcript_full.jsonl",
+        ])
 }
 
 /// Reads the conversation in `text`, the decoded transcript of `agent`'s session. None for an agent whose
@@ -138,5 +169,73 @@ mod tests {
         assert!(!transcript_allowed(&format!(r"\\.\pipe\{ID}.jsonl"), ID));
         assert!(!transcript_allowed(&format!("{}other.jsonl", dir_prefix()), ID));
         assert!(!transcript_allowed(&format!("{}{ID}.json", dir_prefix()), ID));
+    }
+
+    fn agy_path(sep: char, id: &str) -> String {
+        let parts = [
+            "C:",
+            "Users",
+            "u",
+            ".gemini",
+            "antigravity-cli",
+            "brain",
+            id,
+            ".system_generated",
+            "logs",
+            "transcript_full.jsonl",
+        ];
+        parts.join(&sep.to_string())
+    }
+
+    #[test]
+    fn an_antigravity_path_under_brain_is_allowed_with_either_separator() {
+        for sep in ['/', '\\'] {
+            assert!(sidecar_allowed("antigravity", &agy_path(sep, ID), ID), "{sep}");
+        }
+    }
+
+    #[test]
+    fn an_antigravity_path_outside_brain_is_refused() {
+        let good = agy_path('/', ID);
+        let bad = [
+            // Not the transcript file, or not in the logs folder.
+            good.replace("transcript_full.jsonl", "transcript.jsonl"),
+            good.replace("/logs/", "/other/"),
+            good.replace(".system_generated", "system"),
+            good.replace("antigravity-cli/brain", "antigravity-cli/other"),
+            // The id in the path is another conversation's.
+            agy_path('/', "00000000-0000-4000-8000-000000000002"),
+            // Traversal, a remote path, a relative path, and a path with more in front of the tail.
+            good.replace("/brain/", "/brain/../brain/"),
+            format!("C:/x/..{}", &good[good.find("/antigravity-cli").unwrap()..]),
+            format!("//host/share{}", &good[good.find("/antigravity-cli").unwrap()..]),
+            format!(r"\\?\{}", good.replace('/', r"\")),
+            good[good.find("antigravity-cli").unwrap()..].to_string(),
+            format!("{good}/more"),
+            String::new(),
+        ];
+        for path in &bad {
+            assert!(!sidecar_allowed("antigravity", path, ID), "{path}");
+        }
+    }
+
+    #[test]
+    fn an_antigravity_id_that_is_not_a_uuid_is_refused() {
+        for id in [
+            "",
+            "abc-1",
+            "../x",
+            "x; calc",
+            "00000000-0000-4000-8000-00000000000",
+            "00000000-0000-4000-8000-0000000000012",
+            "0000000000004000800000000000000001",
+            "0000000g-0000-4000-8000-000000000001",
+            "-0000000-0000-4000-8000-000000000001",
+        ] {
+            assert!(!sidecar_allowed("antigravity", &agy_path('/', id), id), "{id:?}");
+        }
+        // The hex digits may be in either case.
+        let upper = ID.replace('0', "A");
+        assert!(sidecar_allowed("antigravity", &agy_path('/', &upper), &upper));
     }
 }

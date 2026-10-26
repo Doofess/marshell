@@ -125,12 +125,12 @@ function useElementSize() {
 
 /** The real app: the main window on the core's live session list, and the launcher that adds to it. */
 export function LiveApp() {
-  // Each hook agent's (Claude Code, Codex) hook state, read when the window opens and again after each change in the Agents dialog or the onboarding. Never polled.
+  // Each hook agent's (Claude Code, Codex, Antigravity) hook state, read when the window opens and again after each change in the Agents dialog or the onboarding. Never polled.
   const [hooks, setHooks] = useState<Partial<Record<HookAgent, HookInstall>>>({});
   const { endpoint, profiles, rows, infos, permissions, now, selectedId, loaded, select, reloadProfiles, error } = useSessions(hooks);
   const refreshSetup = useCallback(() => {
     if (!endpoint) return;
-    for (const agent of ["claude", "codex"] as const) {
+    for (const agent of ["claude", "codex", "antigravity"] as const) {
       getSetup(endpoint, agent).then(
         (s) => setHooks((h) => ({ ...h, [agent]: s.found ? s.hooks : undefined })),
         () => {},

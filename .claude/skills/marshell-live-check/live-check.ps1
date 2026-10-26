@@ -16,6 +16,10 @@ stop:  prints the tree and stops it by PID, leaves first. If the tree holds an a
 Nothing here deletes a folder. With -CodexAuth, start copies ~/.codex/auth.json into the scratch CODEX_HOME
        and stop deletes that copy. -CodexHome <short path> puts CODEX_HOME there instead of <Scratch>\cx; that
        folder is deleted with the scratch folder at the end of the work.
+       With -AgyAuth, start creates <Scratch>\home\.gemini, copies ~/.gemini/oauth_creds.json and google_accounts.json
+       into it (nothing else), and starts the app with USERPROFILE=<Scratch>\home, so agy and the core's plans for
+       agy's files use the scratch home; CARGO_HOME and RUSTUP_HOME are pinned to the real ones first. stop deletes
+       those two copies.
 
 .EXAMPLE
 pwsh -NoProfile -File live-check.ps1 start -Scratch C:\Users\me\AppData\Local\Temp\lc-5b-1
@@ -34,12 +38,15 @@ param(
     # start only: a new, short literal folder (at most 60 characters) to use as CODEX_HOME instead of <Scratch>\cx.
     # Codex 0.163 can't start its app-server under a longer one ("path must be shorter than SUN_LEN").
     [string]$CodexHome,
+    # start only: a scratch USERPROFILE (<Scratch>\home) holding copies of ~/.gemini/oauth_creds.json and
+    # google_accounts.json (and nothing else), so a real agy can sign in; stop deletes the two copies.
+    [switch]$AgyAuth,
     # The checkout to run; defaults to the one holding this script.
     [string]$Repo = (Join-Path $PSScriptRoot '..\..\..'),
     [int]$Port = 9333
 )
 $ErrorActionPreference = 'Stop'
-$AgentNames = @('claude.exe', 'codex.exe', 'node_repl.exe')
+$AgentNames = @('claude.exe', 'codex.exe', 'node_repl.exe', 'agy.exe')
 
 if (-not [System.IO.Path]::IsPathRooted($Scratch)) { throw "Scratch must be an absolute path: $Scratch" }
 # In PowerShell 7, GetFullPath also expands 8.3 short names (C:\Users\JANEDO~1) in the part that exists.
@@ -49,7 +56,7 @@ if ($CodexHome) {
     $CodexHome = [System.IO.Path]::GetFullPath($CodexHome).TrimEnd('\')
     if ($CodexHome.Length -gt 60) { throw "CodexHome is $($CodexHome.Length) characters; Codex needs at most 60: $CodexHome" }
 }
-foreach ($real in @("$HOME\.marshell", "$HOME\.claude", "$HOME\.codex")) {
+foreach ($real in @("$HOME\.marshell", "$HOME\.claude", "$HOME\.codex", "$HOME\.gemini")) {
     $r = [System.IO.Path]::GetFullPath($real).TrimEnd('\')
     foreach ($path in @($Scratch, $CodexHome) | Where-Object { $_ }) {
         if ($path -ieq $r -or $path.StartsWith("$r\", 'OrdinalIgnoreCase')) { throw "$path is inside a real config folder: $real" }
@@ -93,13 +100,23 @@ function Read-Record {
     return $rec
 }
 
-# The copied Codex sign-in is the one file removed here: a known literal name in the recorded CODEX_HOME.
+# The copied sign-ins are the only files removed here: known literal names in the recorded scratch homes.
 function Remove-AuthCopy($rec) {
-    if (-not $rec.codexAuth -or -not $rec.codexHome) { return }
-    $authCopy = Join-Path $rec.codexHome 'auth.json'
-    if (Test-Path -LiteralPath $authCopy) {
-        Remove-Item -LiteralPath $authCopy -Force
-        Write-Output "Deleted the copied Codex sign-in: $authCopy"
+    if ($rec.codexAuth -and $rec.codexHome) {
+        $authCopy = Join-Path $rec.codexHome 'auth.json'
+        if (Test-Path -LiteralPath $authCopy) {
+            Remove-Item -LiteralPath $authCopy -Force
+            Write-Output "Deleted the copied Codex sign-in: $authCopy"
+        }
+    }
+    if ($rec.agyAuth -and $rec.agyHome) {
+        foreach ($name in @('oauth_creds.json', 'google_accounts.json')) {
+            $copy = Join-Path $rec.agyHome ".gemini\$name"
+            if (Test-Path -LiteralPath $copy) {
+                Remove-Item -LiteralPath $copy -Force
+                Write-Output "Deleted the copied agy sign-in: $copy"
+            }
+        }
     }
 }
 
@@ -134,6 +151,16 @@ switch ($Mode) {
             if (-not (Test-Path -LiteralPath $auth)) { throw "No Codex sign-in to copy: $auth" }
             Copy-Item -LiteralPath $auth -Destination (Join-Path $cx.FullName 'auth.json')
         }
+        $agyHome = $null
+        if ($AgyAuth) {
+            $agyHome = (New-Item -ItemType Directory -Path (Join-Path $Scratch 'home')).FullName
+            $gemini = (New-Item -ItemType Directory -Path (Join-Path $agyHome '.gemini')).FullName
+            foreach ($name in @('oauth_creds.json', 'google_accounts.json')) {
+                $from = Join-Path $HOME ".gemini\$name"
+                if (-not (Test-Path -LiteralPath $from)) { throw "No agy sign-in to copy: $from" }
+                Copy-Item -LiteralPath $from -Destination (Join-Path $gemini $name)
+            }
+        }
         $settings = Join-Path (New-Item -ItemType Directory -Path (Join-Path $Scratch 'proj\.claude')).FullName 'settings.local.json'
         Set-Content -LiteralPath $settings -Value '{}' -Encoding utf8NoBOM
         $repo = (Resolve-Path -LiteralPath $Repo).Path
@@ -142,6 +169,12 @@ switch ($Mode) {
         $env:CLAUDE_CONFIG_DIR = $cc.FullName
         $env:CODEX_HOME = $cx.FullName
         $env:MARSHELL_CLAUDE_SETTINGS = $settings
+        if ($agyHome) {
+            # Cargo and rustup find their homes through USERPROFILE too; keep the real ones for the build.
+            if (-not $env:CARGO_HOME) { $env:CARGO_HOME = Join-Path $HOME '.cargo' }
+            if (-not $env:RUSTUP_HOME) { $env:RUSTUP_HOME = Join-Path $HOME '.rustup' }
+            $env:USERPROFILE = $agyHome
+        }
         $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = "--remote-debugging-port=$Port"
         $proc = Start-Process -FilePath 'cmd.exe' -ArgumentList '/d', '/c', 'pnpm tauri dev' -WorkingDirectory $repo `
             -NoNewWindow -PassThru -RedirectStandardOutput (Join-Path $Scratch 'dev.out.log') `
@@ -149,13 +182,14 @@ switch ($Mode) {
         $created = (Get-CimInstance Win32_Process -Filter "ProcessId = $($proc.Id)" -Property CreationDate).CreationDate
         [ordered]@{
             root = $proc.Id; name = 'cmd.exe'; created = $created.ToUniversalTime().ToString('o')
-            repo = $repo; marshellHome = $mh.FullName; claudeConfigDir = $cc.FullName; codexHome = $cx.FullName; codexAuth = [bool]$CodexAuth; claudeSettings = $settings; cdp = "http://127.0.0.1:$Port"
+            repo = $repo; marshellHome = $mh.FullName; claudeConfigDir = $cc.FullName; codexHome = $cx.FullName; codexAuth = [bool]$CodexAuth; agyAuth = [bool]$AgyAuth; agyHome = $agyHome; claudeSettings = $settings; cdp = "http://127.0.0.1:$Port"
         } | ConvertTo-Json | Set-Content -LiteralPath $PidsFile -Encoding utf8NoBOM
         Write-Output "Started pnpm tauri dev in $repo, root PID $($proc.Id)."
         Write-Output "MARSHELL_HOME=$($mh.FullName)"
         Write-Output "CLAUDE_CONFIG_DIR=$($cc.FullName)"
         Write-Output "CODEX_HOME=$($cx.FullName)"
         Write-Output "MARSHELL_CLAUDE_SETTINGS=$settings"
+        if ($agyHome) { Write-Output "USERPROFILE=$agyHome (agy's scratch home)" }
         Write-Output "Logs: $Scratch\dev.out.log, $Scratch\dev.err.log. CDP: http://127.0.0.1:$Port/json/version"
     }
     'tree' {

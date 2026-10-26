@@ -16,4 +16,9 @@ risk: string | null,
 /**
  * The exact rule "Always allow" would add, such as `Bash(npm test:*)`; absent when there is none.
  */
-always_rule: string | null, };
+always_rule: string | null, 
+/**
+ * When the core's hold for this request ends and it answers on its own (Unix milliseconds): `at_ms` plus the
+ * hold. Absent where no hold applies.
+ */
+deadline_ms: number | null, };

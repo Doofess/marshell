@@ -1,12 +1,14 @@
 use marshell_protocol::hook::HookRole;
 
-/// The command line of one bridge call: `<role> --agent <name> [--tag <marker>]`.
+/// The command line of one bridge call: `<role> --agent <name> [--event <Name>] [--tag <marker>]`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Args {
     pub role: HookRole,
     pub agent: String,
     /// The marker the installer puts on the command, so it can find its own entries. Unused here.
     pub tag: Option<String>,
+    /// The hook's event name, for an agent whose payload doesn't carry one (Antigravity's).
+    pub event: Option<String>,
 }
 
 /// `argv` is the arguments after the program name.
@@ -16,17 +18,32 @@ pub fn parse(argv: &[String]) -> Result<Args, String> {
     let role = HookRole::parse(role).ok_or_else(|| format!("unknown role {role:?}"))?;
     let mut agent = None;
     let mut tag = None;
+    let mut event = None;
     while let Some(flag) = it.next() {
         let slot = match flag.as_str() {
             "--agent" => &mut agent,
             "--tag" => &mut tag,
+            "--event" => &mut event,
             other => return Err(format!("unknown argument {other:?}")),
         };
         let value = it.next().ok_or_else(|| format!("{flag} needs a value"))?;
+        if flag == "--event" {
+            if slot.is_some() {
+                return Err("--event given twice".into());
+            }
+            if value.is_empty() || !value.chars().all(|c| c.is_ascii_alphabetic()) {
+                return Err(format!("--event {value:?} is not an identifier"));
+            }
+        }
         *slot = Some(value.clone());
     }
     let agent = agent.filter(|a| !a.is_empty()).ok_or("missing --agent")?;
-    Ok(Args { role, agent, tag })
+    Ok(Args {
+        role,
+        agent,
+        tag,
+        event,
+    })
 }
 
 #[cfg(test)]
@@ -59,5 +76,46 @@ mod tests {
         assert!(parse(&v(&["event", "--agent"])).is_err());
         assert!(parse(&v(&["event", "--agent", ""])).is_err());
         assert!(parse(&v(&["event", "--agent", "claude", "--what"])).is_err());
+    }
+
+    #[test]
+    fn parses_an_event() {
+        let a = parse(&v(&[
+            "event",
+            "--agent",
+            "antigravity",
+            "--event",
+            "PreInvocation",
+            "--tag",
+            "mshl1",
+        ]))
+        .unwrap();
+        assert_eq!(a.event.as_deref(), Some("PreInvocation"));
+        assert_eq!(a.tag.as_deref(), Some("mshl1"));
+        assert_eq!(parse(&v(&["event", "--agent", "claude"])).unwrap().event, None);
+    }
+
+    #[test]
+    fn an_event_needs_a_value() {
+        assert!(parse(&v(&["event", "--agent", "antigravity", "--event"])).is_err());
+        assert!(parse(&v(&["event", "--agent", "antigravity", "--event", ""])).is_err());
+    }
+
+    #[test]
+    fn an_event_that_is_not_an_identifier_is_an_error() {
+        for bad in [
+            "Pre Tool", "Pre-Tool", "Pre_Tool", "Stop1", "Stöp", "Stop\n", "--tag", "\"Stop\"", "%Stop%",
+        ] {
+            assert!(
+                parse(&v(&["event", "--agent", "antigravity", "--event", bad])).is_err(),
+                "{bad:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_second_event_is_an_error() {
+        let argv = v(&["event", "--agent", "antigravity", "--event", "Stop", "--event", "Stop"]);
+        assert!(parse(&argv).is_err());
     }
 }

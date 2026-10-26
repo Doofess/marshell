@@ -17,6 +17,7 @@ const view = (over: Partial<PermissionView> = {}): PermissionView => ({
   detail: { kind: "bash", command: "npm test", cwd: null },
   risk: null,
   always_rule: "Bash(npm test:*)",
+  deadline_ms: null,
   ...over,
 });
 
@@ -31,6 +32,11 @@ describe("toRequest", () => {
     expect(r.risk).toEqual({ level: "risky", reason: "Deletes files recursively" });
     expect(r.alwaysRule).toBeUndefined();
   });
+  it("an_antigravity_card_shows_its_command: an agy view maps to an antigravity request with its command", () => {
+    const r = toRequest(view({ agent: "antigravity", always_rule: null }), undefined, NOW);
+    expect(r.session.agent).toBe("antigravity");
+    expect(r.detail).toEqual({ kind: "bash", command: "npm test", cwd: undefined });
+  });
   it("still maps a request whose session row is not listed yet", () => {
     const r = toRequest(view(), undefined, NOW);
     expect(r.session.name).toBe("tab-a");
@@ -38,6 +44,10 @@ describe("toRequest", () => {
   });
   it("never shows a negative wait", () => {
     expect(toRequest(view({ at_ms: NOW + 5000 }), row(), NOW).waitingMs).toBe(0);
+  });
+  it("the_hold_deadline_becomes_the_cards_hold", () => {
+    expect(toRequest(view({ deadline_ms: NOW - 65_000 + 120_000 }), row(), NOW).holdMs).toBe(120_000);
+    expect(toRequest(view(), row(), NOW).holdMs).toBeUndefined();
   });
 });
 

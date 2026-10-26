@@ -20,6 +20,7 @@ pub enum Change<'a> {
     Set { path: &'a Path, pointer: &'a str },
     Remove { path: &'a Path, pointer: &'a str },
     Created { path: &'a Path },
+    Deleted { path: &'a Path },
     Restored { path: &'a Path, changeset_id: &'a str },
 }
 
@@ -78,6 +79,11 @@ pub fn updated(home: &Path, changeset_id: &str, changes: &[Change], now_ms: u64)
                 });
             }
             Change::Created { path } => upsert(&mut entries, &path.to_string_lossy(), None, changeset_id, now_ms),
+            // Nothing of Marshell's is left in a file that is gone, so its entries go.
+            Change::Deleted { path } => {
+                let path = path.to_string_lossy();
+                entries.retain(|e| !same_path(&e.path, &path));
+            }
             Change::Restored {
                 path,
                 changeset_id: undone,

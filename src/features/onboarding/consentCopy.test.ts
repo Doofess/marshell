@@ -252,7 +252,7 @@ describe("headline and card wording", () => {
     expect(consentHeadline(d, ALL)).toBe(`Add 5 hook entries in ${hooks} (a new file) and chain your status line in ${d.configPath}.`);
     expect(consentHeadline(d, { status: true, approve: true, statusline: false })).toBe(`Add 5 hook entries in ${hooks} (a new file).`);
     expect(consentHeadline(d, { status: false, approve: false, statusline: true })).toBe(`Chain your status line in ${d.configPath}.`);
-    expect(consentHeadline({ ...d, hooks: { path: hooks, exists: true } }, { status: true, approve: false, statusline: false })).toBe(`Add 4 hook entries in ${hooks}.`);
+    expect(consentHeadline({ ...d, hooks: { path: hooks, exists: true } }, { status: true, approve: false, statusline: false })).toBe(`Add 5 hook entries in ${hooks}.`);
     expect(consentHeadline(d, { status: false, approve: false, statusline: false })).toBe("Change nothing. Antigravity CLI will show limited status.");
     expect(consentHeadline(d, ALL)).not.toMatch(/hooksConfig|Gemini/);
   });

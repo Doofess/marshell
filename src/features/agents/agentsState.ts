@@ -1,8 +1,8 @@
 import type { AgentSetup } from "../../generated/AgentSetup";
 import type { ConfigPreview } from "../../generated/ConfigPreview";
 import type { HookPlanRequest } from "../../generated/HookPlanRequest";
-import { previewDiff, toDetection, type HookAgent } from "../../lib/api/agents";
-import { addsStatusLine, CLI_NAME, consentHeadline, removalCopy, type Capability, type CliId, type ConsentPlan, type Detection } from "../onboarding/consent";
+import { deletedFiles, previewDiff, toDetection, type HookAgent } from "../../lib/api/agents";
+import { addsStatusLine, CLI_NAME, consentHeadline, fileName, removalCopy, type Capability, type CliId, type ConsentPlan, type Detection } from "../onboarding/consent";
 
 /** The capabilities offered for a new Claude Code setup. */
 export const OFFER: Capability[] = ["status", "approve", "statusline"];
@@ -24,7 +24,7 @@ export const setupWant = (s: AgentSetup): Want => s.hooks === "installed" ? { st
 
 /** Where the Agents dialog opens from a session row's "set up" link: on that row's agent's Set up card. */
 export type SetupStart = { setup: HookAgent };
-export const rowSetupStart = (agent: string): SetupStart => ({ setup: agent === "codex" ? "codex" : "claude" });
+export const rowSetupStart = (agent: string): SetupStart => ({ setup: agent === "codex" || agent === "antigravity" ? agent : "claude" });
 
 /** Whether an agent's live status is on: it is unless the agent is in the settings' `status_off`. */
 export const liveStatusOn = (statusOff: string[], agent: string): boolean => !statusOff.includes(agent);
@@ -40,18 +40,23 @@ export function setupLine(s: AgentSetup): string {
   const name = CLI_NAME[s.agent as CliId];
   if (!s.found) return `${name} was not found on this computer.`;
   if (refused(s)) return consentHeadline(toDetection(s), ON);
+  // Antigravity keeps its hooks in a file of their own.
+  const file = s.hooks_path ?? s.settings_path;
   switch (s.hooks) {
     case "none":
       return "Not set up. Sessions show limited status.";
     case "installed":
       // Codex runs hooks only after the person trusts them (slice 6a decision 10), so an untrusted or changed set reports nothing yet.
       return s.agent === "codex" && (s.trust === "untrusted" || s.trust === "changed")
-        ? `Hooks on in ${s.settings_path}. New sessions report status once Codex trusts them.`
-        : `Hooks on in ${s.settings_path}. New sessions report status.`;
+        ? `Hooks on in ${file}. New sessions report status once Codex trusts them.`
+        : `Hooks on in ${file}. New sessions report status.`;
     case "partial":
-      return `Some hooks are missing in ${s.settings_path}. Set up again to repair them.`;
-    case "orphaned":
-      return `Marshell's hooks are in ${s.settings_path}, but the bridge at ${s.bridge_path} is missing, so ${name} reports a failing hook each time one fires. Turn the hooks off, or set up again.`;
+      return `Some hooks are missing in ${file}. Set up again to repair them.`;
+    case "orphaned": {
+      // agy blocks a tool call whose PreToolUse command can't start (6d research, A3); the others only report it.
+      const effect = s.agent === "antigravity" ? "blocks every tool call, outside Marshell too" : "reports a failing hook each time one fires";
+      return `Marshell's hooks are in ${file}, but the bridge at ${s.bridge_path} is missing, so ${name} ${effect}. Turn the hooks off, or set up again.`;
+    }
   }
 }
 
@@ -95,8 +100,11 @@ export function consentProps(s: AgentSetup, flow: InstallFlow) {
   const want = flow.want ?? setupWant(s);
   const cli = s.agent as CliId;
   const on = onOf(want, cli === "codex" ? "codex" : "claude");
-  const detection: Detection = toDetection(s);
   const files = flow.preview?.files ?? [];
+  const base = toDetection(s);
+  // With a preview, whether hooks.json exists is what the core read: a file with a hash before it.
+  const hooksFile = s.hooks_path === undefined || !flow.preview ? undefined : files.find((f) => f.path === s.hooks_path);
+  const detection: Detection = base.hooks && flow.preview ? { ...base, hooks: { path: base.hooks.path, exists: hooksFile?.before_hash !== undefined } } : base;
   const chain = files.find((f) => /statusline-chain\.json$/.test(f.path));
   const unchanged = Boolean(flow.preview && alreadyDone(flow.preview));
   const installed = s.hooks !== "none" || s.approve_installed || s.chained;
@@ -106,8 +114,9 @@ export function consentProps(s: AgentSetup, flow: InstallFlow) {
     on,
     configPath: s.settings_path,
     backupPath: s.snapshots_dir,
-    removal: removalCopy(cli, on, undefined, undefined, addsStatusLine(detection, on)),
+    removal: removalCopy(cli, on, s.hooks_path === undefined ? undefined : { hooksFile: fileName(s.hooks_path), created: true }, undefined, addsStatusLine(detection, on)),
     diff: flow.preview ? previewDiff(flow.preview) : "",
+    deleted: flow.preview ? deletedFiles(flow.preview) : undefined,
     needsTrust: s.needs_trust,
     chainPath: chain?.path,
     // A Partial install's repair changes only what is missing or wrong (the diff shows which), so it isn't the whole install's count.

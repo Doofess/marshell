@@ -773,6 +773,7 @@ mod tests {
             },
             risk: risk.map(String::from),
             always_rule: None,
+            deadline_ms: None,
         }
     }
 

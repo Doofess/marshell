@@ -493,7 +493,7 @@ async fn scoped_allow_without_a_rule_is_409() {
 #[tokio::test]
 async fn unsupported_agent_decision_is_409_and_stays_pending() {
     let (app, st) = app(Duration::from_secs(30));
-    let (_hold, _rx) = st.holds().open(Some("t0".into()), "antigravity".into(), bash_request());
+    let (_hold, _rx) = st.holds().open(Some("t0".into()), "grok".into(), bash_request());
     let rid = rid_of(&wait_one(&app).await);
     let (status, text) = post_to(
         &app,
@@ -895,5 +895,383 @@ async fn decision_sends_sessions_before_permissions() {
         assert_eq!(frame["type"], "permissions");
         assert_eq!(frame["data"], serde_json::json!([]));
         assert_eq!(hook.await.unwrap().0, StatusCode::OK);
+    }
+}
+
+// Antigravity. Only a risky request in a Bypass tab waits for a card; every other call passes at once
+// (204, so the bridge prints nothing) and agy's own mode decides.
+
+const AGY_CWD: &str = if cfg!(windows) { "C:/proj" } else { "/proj" };
+
+/// An app with Antigravity tabs: `a1` and `a2` in Bypass, `m1` in Manual, `p1` in Plan, `e1` in Auto-edit, `f1` in
+/// Full auto, and `s1`, a shell tab (no agent) in Bypass. `tc` runs Claude Code. The agy version is pinned.
+fn agy_app(hold: Duration, agy_version: &str) -> (axum::Router, AppState) {
+    use marshell_protocol::api::SessionMode;
+    let home = tempfile::tempdir().unwrap().keep();
+    let st = AppState::new(
+        TOKEN.into(),
+        PORT,
+        vec!["http://tauri.localhost".into()],
+        home,
+        Vec::new(),
+    )
+    .with_claude_version(Some("2.1.302".into()))
+    .with_codex_version(Some("0.163.0".into()))
+    .with_agy_version(Some(agy_version.into()))
+    .with_agent_path(|_| None)
+    .with_permission_hold(hold);
+    for (tab, agent, mode) in [
+        ("a1", Some("antigravity"), SessionMode::Bypass),
+        ("a2", Some("antigravity"), SessionMode::Bypass),
+        ("m1", Some("antigravity"), SessionMode::Manual),
+        ("p1", Some("antigravity"), SessionMode::Plan),
+        ("e1", Some("antigravity"), SessionMode::AutoEdit),
+        ("f1", Some("antigravity"), SessionMode::FullAuto),
+        ("s1", None, SessionMode::Bypass),
+        ("tc", Some("claude"), SessionMode::Bypass),
+    ] {
+        st.registry().reserve(
+            tab,
+            marshell_core::registry::Relaunch {
+                profile_id: "none".into(),
+                agent: agent.map(str::to_owned),
+                cwd: AGY_CWD.into(),
+                mode: Some(mode),
+                name: tab.into(),
+                preset: None,
+            },
+        );
+    }
+    (router(st.clone()), st)
+}
+
+/// What the bridge posts for agy's `PreToolUse`: the body plus the event name it adds.
+fn agy_request(command: &str) -> serde_json::Value {
+    serde_json::json!({
+        "hook_event_name": "PreToolUse",
+        "conversationId": "00000000-0000-4000-8000-000000000002",
+        "modelName": "gemini-3.8-flash-high",
+        "stepIdx": 2,
+        "workspacePaths": [],
+        "toolCall": {"name": "run_command", "args": {"CommandLine": command, "WaitMsBeforeAsync": 5000}}
+    })
+}
+
+const RISKY: &str = "rm -rf build";
+const SAFE: &str = "echo hi";
+
+fn agy_deny(reason: &str) -> serde_json::Value {
+    serde_json::json!({"decision": "deny", "reason": reason})
+}
+
+async fn decide(app: &axum::Router, rid: &str, body: &str) {
+    let (status, _) = post_to(app, &format!("/v1/permissions/{rid}/decision"), body).await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+}
+
+fn row_of(st: &AppState, tab: &str) -> marshell_protocol::api::SessionInfo {
+    st.registry()
+        .snapshot()
+        .sessions
+        .into_iter()
+        .find(|s| s.tab_id == tab)
+        .unwrap()
+}
+
+#[tokio::test]
+async fn an_antigravity_risky_request_in_bypass_waits_for_the_card() {
+    use marshell_protocol::api::LiveState;
+    let (app, st) = agy_app(Duration::from_secs(30), "1.4.7");
+    let hook = spawn_agent_hook("antigravity", &app, Some("a1"), agy_request(RISKY));
+    let entry = wait_one(&app).await;
+    assert_eq!(
+        (entry["agent"].as_str(), entry["tab"].as_str()),
+        (Some("antigravity"), Some("a1"))
+    );
+    assert_eq!(entry["request"]["toolCall"]["args"]["CommandLine"], RISKY);
+    assert!(!hook.is_finished());
+    let views = st.permission_views();
+    assert_eq!(views.len(), 1);
+    assert_eq!(views[0].risk.as_deref(), Some("Deletes files recursively"));
+    assert_eq!(views[0].always_rule, None);
+    let live = live_of(&st, "a1");
+    assert_eq!(live.state, LiveState::NeedsPermission);
+    assert!(live.phrase.contains(RISKY), "{}", live.phrase);
+    decide(&app, &rid_of(&entry), r#"{"behavior":"deny"}"#).await;
+    assert_eq!(hook.await.unwrap().0, StatusCode::OK);
+}
+
+#[tokio::test]
+async fn an_antigravity_request_in_manual_passes_at_once() {
+    let (app, st) = agy_app(Duration::from_secs(30), "1.4.7");
+    for tab in ["m1", "p1", "e1", "f1"] {
+        for command in [RISKY, SAFE] {
+            let hook = spawn_agent_hook("antigravity", &app, Some(tab), agy_request(command));
+            let (status, _, body) = tokio::time::timeout(Duration::from_secs(2), hook)
+                .await
+                .expect("a pass waited")
+                .unwrap();
+            assert_eq!(status, StatusCode::NO_CONTENT, "{tab} {command}");
+            assert!(body.is_empty(), "{tab} {command}");
+        }
+    }
+    assert!(pending(&app).await.is_empty());
+    assert!(st.permission_views().is_empty());
+}
+
+#[tokio::test]
+async fn a_safe_antigravity_request_in_bypass_passes_at_once() {
+    let (app, _) = agy_app(Duration::from_secs(30), "1.4.7");
+    let hook = spawn_agent_hook("antigravity", &app, Some("a1"), agy_request(SAFE));
+    let (status, _, body) = tokio::time::timeout(Duration::from_secs(2), hook)
+        .await
+        .expect("a pass waited")
+        .unwrap();
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    assert!(body.is_empty());
+    assert!(pending(&app).await.is_empty());
+}
+
+#[tokio::test]
+async fn two_antigravity_tabs_each_get_their_own_answer() {
+    let (app, _) = agy_app(Duration::from_secs(30), "1.4.7");
+    let first = spawn_agent_hook("antigravity", &app, Some("a1"), agy_request("rm -rf first"));
+    wait_pending(&app, |p| p.len() == 1).await;
+    let second = spawn_agent_hook("antigravity", &app, Some("a2"), agy_request("rm -rf second"));
+    let entries = wait_pending(&app, |p| p.len() == 2).await;
+    let entry_for = |tab: &str| entries.iter().find(|e| e["tab"] == tab).unwrap().clone();
+    assert_eq!(
+        entry_for("a1")["request"]["toolCall"]["args"]["CommandLine"],
+        "rm -rf first"
+    );
+    assert_eq!(
+        entry_for("a2")["request"]["toolCall"]["args"]["CommandLine"],
+        "rm -rf second"
+    );
+    // Answer the later tab first, with a different decision from the earlier one.
+    decide(
+        &app,
+        &rid_of(&entry_for("a2")),
+        r#"{"behavior":"deny","message":"second only"}"#,
+    )
+    .await;
+    let second = second.await.unwrap();
+    assert_eq!(
+        (second.0, answer_json(&second)),
+        (StatusCode::OK, agy_deny("second only"))
+    );
+    // The first tab is still waiting, and its request is the only one left.
+    assert!(!first.is_finished());
+    let left = pending(&app).await;
+    assert_eq!((left.len(), left[0]["tab"].as_str()), (1, Some("a1")));
+    decide(&app, &rid_of(&entry_for("a1")), r#"{"behavior":"allow"}"#).await;
+    let first = first.await.unwrap();
+    assert_eq!(
+        (first.0, answer_json(&first)),
+        (StatusCode::OK, serde_json::json!({"decision": "ask"}))
+    );
+}
+
+#[tokio::test]
+async fn an_antigravity_request_from_an_unrecorded_version_still_reaches_the_card() {
+    let (app, st) = agy_app(Duration::from_secs(30), "1.9.0");
+    let hook = spawn_agent_hook("antigravity", &app, Some("a1"), agy_request(RISKY));
+    let entry = wait_one(&app).await;
+    assert_eq!(entry["tab"], "a1");
+    assert_eq!(st.permission_views().len(), 1);
+    // No guessed status: the row carries the note instead.
+    let row = row_of(&st, "a1");
+    assert_eq!(
+        row.status_note.as_deref(),
+        Some("Antigravity 1.9.0 is not one Marshell has recorded yet")
+    );
+    assert!(row.live.is_none());
+    decide(&app, &rid_of(&entry), r#"{"behavior":"allow"}"#).await;
+    assert_eq!(
+        answer_json(&hook.await.unwrap()),
+        serde_json::json!({"decision": "ask"})
+    );
+}
+
+/// An agy update that renames a tool or its arguments still gets a card in Bypass, showing the raw arguments
+/// (slice 6d decision 10). agy's own read still passes at once.
+#[tokio::test]
+async fn an_antigravity_call_marshell_cant_read_is_held_in_bypass() {
+    let (app, st) = agy_app(Duration::from_secs(30), "1.9.0");
+    let mut renamed = agy_request(RISKY);
+    renamed["toolCall"] = serde_json::json!({"name": "shell_exec", "args": {"Command": RISKY}});
+    let hook = spawn_agent_hook("antigravity", &app, Some("a1"), renamed);
+    let entry = wait_one(&app).await;
+    let views = st.permission_views();
+    assert_eq!(views[0].risk.as_deref(), Some("Marshell can't read this call"));
+    assert_eq!(
+        views[0].detail,
+        marshell_protocol::hook::PermissionDetail::Other {
+            tool: "shell_exec".into(),
+            args: vec![("Command".into(), RISKY.into())]
+        }
+    );
+    decide(&app, &rid_of(&entry), r#"{"behavior":"deny"}"#).await;
+    assert_eq!(answer_json(&hook.await.unwrap()), agy_deny("Denied in Marshell."));
+
+    let mut read = agy_request(SAFE);
+    read["toolCall"] = serde_json::json!({"name": "read_file", "args": {"Path": "C:/outside/notes.txt"}});
+    let answer = spawn_agent_hook("antigravity", &app, Some("a1"), read).await.unwrap();
+    assert_eq!(answer.0, StatusCode::NO_CONTENT);
+}
+
+#[tokio::test]
+async fn an_antigravity_release_denies() {
+    let (app, _) = agy_app(Duration::from_secs(30), "1.4.7");
+    let hook = spawn_agent_hook("antigravity", &app, Some("a1"), agy_request(RISKY));
+    let rid = rid_of(&wait_one(&app).await);
+    let (status, _) = post_to(&app, &format!("/v1/permissions/{rid}/release"), "").await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    let answer = hook.await.unwrap();
+    assert_eq!(answer.0, StatusCode::OK);
+    assert_eq!(answer.1.as_deref(), Some("application/json"));
+    assert_eq!(answer_json(&answer), agy_deny("Denied in Marshell."));
+    assert!(pending(&app).await.is_empty());
+}
+
+#[tokio::test]
+async fn an_antigravity_hold_that_times_out_denies() {
+    let (app, _) = agy_app(Duration::from_secs(1), "1.4.7");
+    let started = Instant::now();
+    let hook = spawn_agent_hook("antigravity", &app, Some("a1"), agy_request(RISKY));
+    let answer = tokio::time::timeout(Duration::from_secs(5), hook)
+        .await
+        .expect("the hold did not expire in 5 s")
+        .unwrap();
+    assert!(started.elapsed() >= Duration::from_millis(900));
+    assert_eq!(answer.0, StatusCode::OK);
+    assert_eq!(answer_json(&answer), agy_deny("Denied in Marshell."));
+    assert!(pending(&app).await.is_empty());
+}
+
+#[tokio::test]
+async fn allow_on_an_antigravity_card_answers_ask() {
+    let (app, _) = agy_app(Duration::from_secs(30), "1.4.7");
+    let hook = spawn_agent_hook("antigravity", &app, Some("a1"), agy_request(RISKY));
+    let rid = rid_of(&wait_one(&app).await);
+    decide(&app, &rid, r#"{"behavior":"allow"}"#).await;
+    let answer = hook.await.unwrap();
+    assert_eq!(answer.0, StatusCode::OK);
+    assert_eq!(answer.1.as_deref(), Some("application/json"));
+    assert_eq!(String::from_utf8(answer.2).unwrap(), r#"{"decision":"ask"}"#);
+}
+
+#[tokio::test]
+async fn an_antigravity_project_decision_is_409() {
+    let (app, _) = agy_app(Duration::from_secs(30), "1.4.7");
+    let hook = spawn_agent_hook("antigravity", &app, Some("a1"), agy_request(RISKY));
+    let rid = rid_of(&wait_one(&app).await);
+    let (status, body) = post_to(
+        &app,
+        &format!("/v1/permissions/{rid}/decision"),
+        r#"{"behavior":"allow","scope":"project"}"#,
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    assert!(body.contains("Antigravity can't keep an always-allow rule from Marshell. Allow this once instead."));
+    assert_eq!(pending(&app).await.len(), 1);
+    assert!(!hook.is_finished());
+}
+
+#[tokio::test]
+async fn a_claude_release_still_answers_204() {
+    let (app, _) = agy_app(Duration::from_secs(30), "1.4.7");
+    for agent in ["claude", "codex"] {
+        let hook = spawn_agent_hook(agent, &app, Some("s1"), bash_request());
+        let rid = rid_of(&wait_one(&app).await);
+        let (status, _) = post_to(&app, &format!("/v1/permissions/{rid}/release"), "").await;
+        assert_eq!(status, StatusCode::NO_CONTENT);
+        let (status, _, body) = hook.await.unwrap();
+        assert_eq!(status, StatusCode::NO_CONTENT, "{agent}");
+        assert!(body.is_empty(), "{agent}");
+    }
+    // And the timeout is still a 204 for them.
+    let (app, _) = agy_app(Duration::from_secs(1), "1.4.7");
+    let hook = spawn_agent_hook("claude", &app, Some("s1"), bash_request());
+    let (status, _, body) = hook.await.unwrap();
+    assert_eq!((status, body.is_empty()), (StatusCode::NO_CONTENT, true));
+}
+
+#[tokio::test]
+async fn a_pass_never_shows_needs_permission() {
+    use marshell_protocol::api::LiveState;
+    let (app, st) = agy_app(Duration::from_secs(30), "1.4.7");
+    for (tab, command) in [("m1", RISKY), ("a1", SAFE)] {
+        let hook = spawn_agent_hook("antigravity", &app, Some(tab), agy_request(command));
+        assert_eq!(hook.await.unwrap().0, StatusCode::NO_CONTENT);
+        let live = live_of(&st, tab);
+        assert_eq!(live.state, LiveState::Working, "{tab}");
+        assert!(!live.phrase.starts_with("Wants to"), "{}", live.phrase);
+    }
+}
+
+#[tokio::test]
+async fn a_pass_raises_no_banner() {
+    // The notifier follows a row's attention and a Needs permission state; a pass sets neither.
+    let (app, st) = agy_app(Duration::from_secs(30), "1.4.7");
+    for tab in ["m1", "e1", "f1"] {
+        let hook = spawn_agent_hook("antigravity", &app, Some(tab), agy_request(RISKY));
+        assert_eq!(hook.await.unwrap().0, StatusCode::NO_CONTENT, "{tab}");
+        let row = row_of(&st, tab);
+        assert!(row.attention.is_none(), "{tab}");
+        assert_eq!(
+            row.live.as_ref().map(|l| l.state),
+            Some(marshell_protocol::api::LiveState::Working),
+            "{tab}"
+        );
+    }
+    assert!(st.permission_views().is_empty());
+}
+
+#[tokio::test]
+async fn an_antigravity_request_from_a_shell_tab_passes() {
+    let (app, st) = agy_app(Duration::from_secs(30), "1.4.7");
+    // `s1` runs no agent (an Antigravity IDE started from a plain shell inherits its tab id); `tc` runs
+    // Claude Code; `zz` is no tab at all; and a post with no tab id has none to hold for.
+    for tab in [Some("s1"), Some("tc"), Some("zz"), None] {
+        let hook = spawn_agent_hook("antigravity", &app, tab, agy_request(RISKY));
+        let (status, _, body) = tokio::time::timeout(Duration::from_secs(2), hook)
+            .await
+            .expect("a pass waited")
+            .unwrap();
+        assert_eq!(status, StatusCode::NO_CONTENT, "{tab:?}");
+        assert!(body.is_empty(), "{tab:?}");
+    }
+    assert!(pending(&app).await.is_empty());
+    for tab in ["s1", "tc"] {
+        assert!(row_of(&st, tab).live.is_none(), "{tab} took antigravity's status");
+    }
+}
+
+#[tokio::test]
+async fn a_held_request_view_carries_the_hold_deadline() {
+    let hold = Duration::from_secs(45);
+    let (app, st) = agy_app(hold, "1.4.7");
+    for (agent, tab, body) in [
+        ("claude", "s1", bash_request()),
+        ("codex", "s1", codex_request("npm test")),
+        ("antigravity", "a1", agy_request(RISKY)),
+    ] {
+        let hook = spawn_agent_hook(agent, &app, Some(tab), body);
+        let entry = wait_one(&app).await;
+        let views = st.permission_views();
+        assert_eq!(views.len(), 1, "{agent}");
+        assert_eq!(
+            views[0].deadline_ms,
+            Some(entry["at_ms"].as_u64().unwrap() + 45_000),
+            "{agent}"
+        );
+        assert_eq!(
+            views[0].deadline_ms.unwrap(),
+            views[0].at_ms + hold.as_millis() as u64,
+            "{agent}"
+        );
+        post_to(&app, &format!("/v1/permissions/{}/release", rid_of(&entry)), "").await;
+        hook.await.unwrap();
     }
 }

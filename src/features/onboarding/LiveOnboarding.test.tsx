@@ -1,6 +1,6 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { CODEX_SETUP, PREVIEW, SETUP } from "../agents/fixtures";
+import { AGY_SETUP, CODEX_SETUP, PREVIEW, SETUP } from "../agents/fixtures";
 import { OnboardingView, type OnboardingState } from "./LiveOnboarding";
 
 const none = () => {};
@@ -35,6 +35,19 @@ describe("OnboardingView", () => {
     expect(h).toContain("C:/bin/codex.cmd");
     expect(h).toContain("Live status and setup come in a later version.");
     expect(h).toContain("Not installed");
+  });
+  it("onboarding_offers_antigravity_when_agy_is_found: Detected lists it from its own setup, then its card names both files", () => {
+    const list = view({ kind: "detected", setup: SETUP, found: [{ agent: "antigravity", found: true, exe_path: "C:/bin/agy.exe" }], antigravity: AGY_SETUP });
+    expect(list).toContain("Antigravity");
+    expect(list).toContain("version 1.4.7");
+    expect(list).toContain("C:/h/.gemini/antigravity-cli/settings.json");
+    expect(list).not.toContain("Live status and setup come in a later version.");
+    const h = view({ kind: "consent", setup: AGY_SETUP, flow: { preview: PREVIEW, open: false, busy: false } });
+    expect(h).toContain('data-agent="antigravity"');
+    expect(h).toContain("Add 5 hook entries in C:/h/.gemini/config/hooks.json (a new file) and chain your status line in C:/h/.gemini/antigravity-cli/settings.json.");
+    expect(h).toContain("Cards for risky commands in Bypass. In other modes Antigravity asks in its terminal.");
+    expect(h).not.toContain("Let Marshell set the mode");
+    expect(h).toContain(">Allow these changes</button>");
   });
   it("renders the consent card with the preview diff", () => {
     const h = view({ kind: "consent", setup: SETUP, flow: { preview: PREVIEW, open: true, busy: false } });

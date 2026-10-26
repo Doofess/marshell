@@ -3,7 +3,7 @@ import type { AgentSetup } from "../../generated/AgentSetup";
 import { actions, consentProps, consentQueue, DEFAULT_WANT, hooksOffNotice, installRequest, liveStatusOn, rowSetupStart, setupLine, setupWant } from "./agentsState";
 import type { ConfigPreview } from "../../generated/ConfigPreview";
 import type { FilePreview } from "../../generated/FilePreview";
-import { CODEX_SETUP, PREVIEW, SETUP } from "./fixtures";
+import { AGY_SETUP, CODEX_SETUP, PREVIEW, SETUP } from "./fixtures";
 
 const s = (patch: Partial<AgentSetup>): AgentSetup => ({ ...SETUP, ...patch });
 
@@ -200,5 +200,45 @@ describe("Codex", () => {
     expect(consentQueue([SETUP, { ...CODEX_SETUP, found: false }]).map((x) => x.agent)).toEqual(["claude"]);
     expect(consentQueue([{ ...SETUP, found: false }, CODEX_SETUP]).map((x) => x.agent)).toEqual(["codex"]);
     expect(consentQueue([{ ...SETUP, hooks: "installed", approve_installed: true }, CODEX_SETUP]).map((x) => x.agent)).toEqual(["codex"]);
+  });
+});
+
+describe("Antigravity", () => {
+  const flow = { preview: PREVIEW, open: false, busy: false };
+  it("onboarding_offers_antigravity_when_agy_is_found: its card comes after Claude's and Codex's, and only when it is found", () => {
+    expect(consentQueue([SETUP, CODEX_SETUP, AGY_SETUP]).map((x) => x.agent)).toEqual(["claude", "codex", "antigravity"]);
+    expect(consentQueue([SETUP, { ...AGY_SETUP, found: false }]).map((x) => x.agent)).toEqual(["claude"]);
+    expect(consentQueue([{ ...AGY_SETUP, settings_state: "unparsable" }])).toEqual([]);
+  });
+  it("consentProps names both files, offers all three switches and no hand-over, and asks for no trust", () => {
+    const p = consentProps(AGY_SETUP, flow);
+    expect(p.scenario.detection.cli).toBe("antigravity");
+    // hooks.json is new unless the preview read one (a file with a hash before).
+    expect(p.scenario.detection.hooks).toEqual({ path: "C:/h/.gemini/config/hooks.json", exists: false });
+    const existing = { ...PREVIEW, files: [{ ...PREVIEW.files[0]!, path: "C:/h/.gemini/config/hooks.json" }] };
+    expect(consentProps(AGY_SETUP, { ...flow, preview: existing }).scenario.detection.hooks?.exists).toBe(true);
+    expect(p.scenario.detection.skipsAll).toBeUndefined();
+    expect(p.scenario.plan.configPath).toBe("C:/h/.gemini/antigravity-cli/settings.json");
+    expect(p.scenario.plan.needsTrust).toBe(false);
+    expect(p.offer).toEqual(["status", "approve", "statusline"]);
+    expect(consentProps(AGY_SETUP, { preview: null, open: false, busy: true }).scenario.detection.hooks?.exists).toBe(false);
+  });
+  it("installRequest asks Antigravity for a status line like Claude Code", () => {
+    expect(installRequest(DEFAULT_WANT, "antigravity")).toEqual({ status: true, statusline: true, approve: true });
+  });
+  it("setupLine names hooks.json, not settings.json, for the hooks", () => {
+    const on = { ...AGY_SETUP, hooks: "installed" as const };
+    expect(setupLine(on)).toBe("Hooks on in C:/h/.gemini/config/hooks.json. New sessions report status.");
+    expect(setupLine({ ...on, hooks: "partial" })).toContain("Some hooks are missing in C:/h/.gemini/config/hooks.json.");
+    expect(setupLine({ ...on, hooks: "orphaned" })).toContain("Marshell's hooks are in C:/h/.gemini/config/hooks.json");
+  });
+  it("setupLine says orphaned hooks stop every Antigravity tool call", () => {
+    // agy blocks a tool call whose PreToolUse command can't start (6d research, A3), outside Marshell too.
+    expect(setupLine({ ...AGY_SETUP, hooks: "orphaned" })).toBe(
+      "Marshell's hooks are in C:/h/.gemini/config/hooks.json, but the bridge at C:/m/bin/marshell-hook.exe is missing, so Antigravity CLI blocks every tool call, outside Marshell too. Turn the hooks off, or set up again.",
+    );
+  });
+  it("rowSetupStart opens Antigravity's setup", () => {
+    expect(rowSetupStart("antigravity")).toEqual({ setup: "antigravity" });
   });
 });

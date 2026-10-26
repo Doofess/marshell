@@ -98,6 +98,8 @@ export function launchArgs(cli: string, mode: Mode, hooksOn: boolean): Launch | 
   if (!isAdapter(cli)) return null;
   const own = NATIVE[cli][mode];
   const standIn = STAND_IN[cli]?.[mode];
+  // Antigravity starts in its own flags with the hooks on or off (slice 6d decision 7: no strict start); the core's policy holds a call only in Bypass.
+  if (cli === "antigravity") return own ? { args: own, native: true } : null;
   if (!hooksOn) return own ? { args: own, native: true } : standIn ? { args: standIn, native: false } : null;
   if (KEEPS_NATIVE.includes(mode)) return own ? { args: own, native: true } : { args: STRICT[cli], native: false };
   return { args: STRICT[cli], native: mode === "manual" };
@@ -131,7 +133,8 @@ export function decide(cli: CliId, mode: Mode, request: Request, risky: boolean)
 export function switchKind(cli: string, from: Mode, to: Mode, hooksOn: boolean, offered?: readonly Mode[]): "instant" | "native" | "unavailable" {
   if (!isAdapter(cli)) return offered?.includes(to) ? "native" : "unavailable";
   if (!launchArgs(cli, to, hooksOn)) return "unavailable";
-  if (!hooksOn) return "native";
+  // Antigravity's mode is its own flag whatever Marshell's hook does, so a switch is never only Marshell's answer.
+  if (!hooksOn || cli === "antigravity") return "native";
   const a = launchArgs(cli, from, true)!;
   const b = launchArgs(cli, to, true)!;
   return a.args.join(" ") === b.args.join(" ") ? "instant" : "native";

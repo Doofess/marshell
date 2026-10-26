@@ -96,7 +96,8 @@ export function ApproveCard({ request, expanded = false, armed = true, holdProgr
     return (
       <div className="approve-card approve-card--receipt" data-agent={session.agent} data-phase="released" data-exiting={leaving}>
         <span className="approve-card__receipt-text">
-          Timed out after {formatDuration(state.afterMs)}. {agent} is asking in its own terminal now.
+          Timed out after {formatDuration(state.afterMs)}.{" "}
+          {session.agent === "antigravity" ? `${agent} denied it.` : `${agent} is asking in its own terminal now.`}
         </span>
       </div>
     );
@@ -108,7 +109,9 @@ export function ApproveCard({ request, expanded = false, armed = true, holdProgr
   const risky = risk.level === "risky";
   const isQuestion = detail.kind === "question";
   const cwd = detail.kind === "bash" && detail.cwd && detail.cwd !== request.sessionCwd ? detail.cwd : null;
-  const ctx = { risky, armed, hasAlways: Boolean(request.alwaysRule), truncated, expanded };
+  // Antigravity's card is Allow and Deny only: it keeps no always-allow rule, and in Bypass it has no prompt to hand over to, so a request that runs out is denied.
+  const denies = session.agent === "antigravity" && !isQuestion;
+  const ctx = { risky, armed, hasAlways: Boolean(request.alwaysRule) && !denies, truncated, expanded, noTerminal: denies };
 
   const fire = (a: CardAction | `answer:${number}`) => {
     if (!armed && a !== "jump" && a !== "expand") return;
@@ -200,6 +203,9 @@ export function ApproveCard({ request, expanded = false, armed = true, holdProgr
           <span>{state.notice}</span>
         </p>
       )}
+      {denies && !isQuestion && request.holdMs !== undefined && (
+        <p className="approve-card__cwd">Denies in {Math.max(0, Math.ceil((request.holdMs - request.waitingMs) / 1000))} s</p>
+      )}
       {risky && risk.reason && (
         <p className="approve-card__risk" id={riskId}>
           <AuxGlyph kind="caution" label="Risky" />
@@ -245,7 +251,7 @@ export function ApproveCard({ request, expanded = false, armed = true, holdProgr
         </div>
       )}
 
-      {!risky && !isQuestion && request.alwaysRule && (
+      {!risky && !isQuestion && !denies && request.alwaysRule && (
         <button type="button" className="approve-card__link" aria-disabled={disabled} aria-keyshortcuts="A" onClick={() => fire(collapsed ? "expand" : "always")}>
           <span>
             Always allow <code>{request.alwaysRule}</code> in this project
@@ -253,10 +259,12 @@ export function ApproveCard({ request, expanded = false, armed = true, holdProgr
           <Kbd k="A" />
         </button>
       )}
-      <button type="button" className="approve-card__link" aria-disabled={disabled} aria-keyshortcuts="T" onClick={() => fire("terminal")}>
-        <span>Answer in terminal</span>
-        <Kbd k="T" />
-      </button>
+      {!denies && (
+        <button type="button" className="approve-card__link" aria-disabled={disabled} aria-keyshortcuts="T" onClick={() => fire("terminal")}>
+          <span>Answer in terminal</span>
+          <Kbd k="T" />
+        </button>
+      )}
     </div>
   );
 }

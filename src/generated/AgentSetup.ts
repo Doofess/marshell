@@ -15,7 +15,11 @@ agent: string,
 /**
  * A detected profile runs this agent.
  */
-found: boolean, version?: string, exe_path?: string, settings_path: string, settings_state: SettingsState, parse_error?: ParseProblem, hooks: HookInstall, 
+found: boolean, version?: string, exe_path?: string, settings_path: string, 
+/**
+ * The file the agent's hooks live in when that is not `settings_path` (Antigravity's `hooks.json`).
+ */
+hooks_path?: string, settings_state: SettingsState, parse_error?: ParseProblem, hooks: HookInstall, 
 /**
  * The PermissionRequest hook is in place.
  */

@@ -36,6 +36,7 @@ export function toRequest(v: PermissionView, row: RowModel | undefined, now: num
     session: { name: row?.name ?? v.tab, agent: agentOf(row, v), number: row?.number },
     sessionCwd: "",
     waitingMs: Math.max(0, now - v.at_ms),
+    ...(v.deadline_ms !== null && { holdMs: Math.max(0, v.deadline_ms - v.at_ms) }),
     detail: toDetail(v.detail),
     risk: { level: v.risk ? "risky" : "normal", reason: v.risk ?? undefined },
     alwaysRule: v.always_rule ?? undefined,

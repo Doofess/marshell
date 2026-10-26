@@ -34,6 +34,8 @@ export type ConsentPlan = {
   backupPath: string;
   removal: string;
   diff: string;
+  /** Paths of files the change deletes (a preview with no `after_hash` and status Changes); the card names each as deleted above the diff. */
+  deleted?: string[];
   needsTrust: boolean;
   /** Where the user's own status line command is kept when it is chained (shown on the card and in the diff). */
   chainPath?: string;
