@@ -188,33 +188,165 @@ fn is_secret_name(name: &str) -> bool {
         && is_secret_key(bare)
 }
 
+/// Hides, anywhere in `s`: the password of URL userinfo, the value after a secret-named `Name:` (to the end of the
+/// quoted string it sits in, or of `s`), and the value of a secret-named `NAME=value`.
 fn hide_assignments(s: &str) -> Cow<'_, str> {
-    if let Some((name, rest)) = s.split_once(':')
-        && !rest.trim().is_empty()
-        && is_secret_name(name)
-    {
-        return Cow::Owned(format!("{name}: {HIDDEN}"));
-    }
-    let is_sep = |c: char| c.is_whitespace() || c == '&' || c == '?';
+    let out = hide_assignment_values(&hide_headers(&hide_url_credentials(s)));
+    if out == s { Cow::Borrowed(s) } else { Cow::Owned(out) }
+}
+
+/// `scheme://user:password@host` shows as `scheme://user:hidden@host`; a userinfo with no password is hidden whole.
+fn hide_url_credentials(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
-    let mut changed = false;
-    for piece in s.split_inclusive(is_sep) {
-        let (body, sep) = match piece.char_indices().last() {
-            Some((at, c)) if is_sep(c) => piece.split_at(at),
-            _ => (piece, ""),
-        };
-        match body.split_once('=') {
-            Some((name, value)) if !value.is_empty() && value != HIDDEN && is_secret_name(name) => {
-                out.push_str(name);
-                out.push('=');
+    let mut rest = s;
+    while let Some(at) = rest.find("://") {
+        let (head, tail) = rest.split_at(at + 3);
+        out.push_str(head);
+        let end = tail
+            .find(|c: char| c.is_whitespace() || matches!(c, '/' | '?' | '#' | '"' | '\'' | '\\'))
+            .unwrap_or(tail.len());
+        let (authority, after) = tail.split_at(end);
+        match authority.rfind('@') {
+            Some(i) => {
+                let (userinfo, host) = authority.split_at(i);
+                if let Some((user, _)) = userinfo.split_once(':') {
+                    out.push_str(user);
+                    out.push(':');
+                }
                 out.push_str(HIDDEN);
-                changed = true;
+                out.push_str(host);
             }
-            _ => out.push_str(body),
+            None => out.push_str(authority),
         }
-        out.push_str(sep);
+        rest = after;
     }
-    if changed { Cow::Owned(out) } else { Cow::Borrowed(s) }
+    out.push_str(rest);
+    out
+}
+
+/// The byte offset of the first `quote` in `text` that no backslash escapes.
+fn find_unescaped(text: &str, quote: char) -> Option<usize> {
+    let mut escaped = false;
+    for (i, c) in text.char_indices() {
+        if escaped {
+            escaped = false;
+        } else if c == '\\' {
+            escaped = true;
+        } else if c == quote {
+            return Some(i);
+        }
+    }
+    None
+}
+
+/// `Name: value` with a secret name (a leading quote or dashes allowed, one closing quote before the colon) hides the
+/// value up to the closing quote of the string the colon sits in, or the end of `s` when it isn't quoted.
+fn hide_headers(s: &str) -> String {
+    let is_name_char = |c: char| c.is_alphanumeric() || matches!(c, '_' | '-' | '.');
+    let mut out = String::with_capacity(s.len());
+    // Everything before `copied` is in `out` or hidden.
+    let mut copied = 0;
+    let mut quote: Option<char> = None;
+    let mut escaped = false;
+    for (i, c) in s.char_indices() {
+        if i < copied {
+            continue;
+        }
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        match c {
+            '\\' => escaped = true,
+            '"' | '\'' => match quote {
+                None => quote = Some(c),
+                Some(q) if q == c => quote = None,
+                Some(_) => {}
+            },
+            ':' => {
+                let before = s[..i].strip_suffix(['"', '\'']).unwrap_or(&s[..i]);
+                let name_at = before
+                    .char_indices()
+                    .rev()
+                    .find(|(_, c)| !is_name_char(*c))
+                    .map_or(0, |(k, c)| k + c.len_utf8());
+                let value = &s[i + 1..];
+                if is_secret_name(&before[name_at..]) && !value.trim().is_empty() {
+                    let end = quote
+                        .and_then(|q| find_unescaped(value, q))
+                        .map_or(s.len(), |k| i + 1 + k);
+                    out.push_str(&s[copied..=i]);
+                    out.push(' ');
+                    out.push_str(HIDDEN);
+                    copied = end;
+                }
+            }
+            _ => {}
+        }
+    }
+    out.push_str(&s[copied.min(s.len())..]);
+    out
+}
+
+fn is_assignment_separator(c: char) -> bool {
+    c.is_whitespace() || c == '&' || c == '?'
+}
+
+/// The first word of `text`, up to a space, `&` or `?`.
+fn first_word(text: &str) -> &str {
+    &text[..text.find(is_assignment_separator).unwrap_or(text.len())]
+}
+
+/// Where the value that starts at byte `at` of `s` ends: a quoted value at its closing quote, an auth scheme word
+/// (`Bearer`, `Basic`, `Token`) after the word that follows it, any other value at the next space, `&` or `?`.
+fn value_end(s: &str, at: usize) -> usize {
+    let value = &s[at..];
+    let unslashed = value.trim_start_matches('\\');
+    if let Some(q @ ('"' | '\'')) = unslashed.chars().next() {
+        let opened = at + (value.len() - unslashed.len()) + 1;
+        return s[opened..].find(q).map_or(s.len(), |k| opened + k + 1);
+    }
+    let word_end = at + first_word(value).len();
+    let is_scheme = ["bearer", "basic", "token"]
+        .iter()
+        .any(|w| first_word(value).eq_ignore_ascii_case(w));
+    if is_scheme && s[word_end..].starts_with(char::is_whitespace) {
+        let next = s.len() - s[word_end..].trim_start_matches(char::is_whitespace).len();
+        return next + first_word(&s[next..]).len();
+    }
+    word_end
+}
+
+/// `NAME=value` with a secret name hides the value, however `value_end` finds its end.
+fn hide_assignment_values(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut at = 0;
+    while at < s.len() {
+        let token_end = at + first_word(&s[at..]).len();
+        let token = &s[at..token_end];
+        let lead = token.len() - token.trim_start_matches(['"', '\'']).len();
+        let hidden_name = token[lead..]
+            .split_once('=')
+            .filter(|(name, value)| !value.is_empty() && *value != HIDDEN && is_secret_name(name));
+        let mut end = token_end;
+        if let Some((name, _)) = hidden_name {
+            let value_at = at + lead + name.len() + 1;
+            out.push_str(&s[at..value_at]);
+            out.push_str(HIDDEN);
+            end = value_end(s, value_at);
+        } else {
+            out.push_str(token);
+        }
+        // The separator that ended it stays.
+        match s[end..].chars().next() {
+            Some(c) if is_assignment_separator(c) => {
+                out.push(c);
+                at = end + c.len_utf8();
+            }
+            _ => at = end,
+        }
+    }
+    out
 }
 
 // ---- the view ----
@@ -600,5 +732,102 @@ mod tests {
         );
         let all = format!("{v:?}");
         assert!(!all.contains("sk-1") && !all.contains("op read"), "{all}");
+    }
+
+    fn masked(s: &str) -> String {
+        mask_string(s).into_owned()
+    }
+
+    #[test]
+    fn a_secret_header_inside_a_command_is_hidden() {
+        assert_eq!(
+            masked("curl -H 'Authorization: Bearer sk-live-1' https://x"),
+            "curl -H 'Authorization: hidden' https://x"
+        );
+        assert_eq!(
+            masked("curl -H \"X-Api-Key: sk-live-2\" https://x"),
+            "curl -H \"X-Api-Key: hidden\" https://x"
+        );
+        assert_eq!(
+            masked("bash -c \"curl -H \\\"Authorization: Bearer sk-live-3\\\" https://x\""),
+            "bash -c \"curl -H \\\"Authorization: hidden\""
+        );
+        // Not quoted: hidden to the end of the string.
+        let out = masked("curl --header Authorization: Bearer sk-live-4 https://x");
+        assert!(
+            !out.contains("sk-live-4") && out.contains("Authorization: hidden"),
+            "{out}"
+        );
+        assert_eq!(masked("Authorization: Bearer abc123"), "Authorization: hidden");
+        assert_eq!(masked("--token: sk-live-5"), "--token: hidden");
+        assert_eq!(
+            masked("Content-Type: application/json"),
+            "Content-Type: application/json"
+        );
+    }
+
+    #[test]
+    fn a_scheme_value_after_a_secret_assignment_is_hidden() {
+        assert_eq!(
+            masked("AUTH_HEADER=Bearer sk-x node s.js"),
+            "AUTH_HEADER=hidden node s.js"
+        );
+        assert_eq!(
+            masked("AUTH_HEADER=basic sk-x node s.js"),
+            "AUTH_HEADER=hidden node s.js"
+        );
+        assert_eq!(masked("API_TOKEN=Token sk-x run"), "API_TOKEN=hidden run");
+        assert_eq!(masked("TOKEN=\"a b c\" run"), "TOKEN=hidden run");
+        assert_eq!(masked("TOKEN='a b c' run"), "TOKEN=hidden run");
+        assert_eq!(masked("TOKEN=\\\"a b c\\\" run"), "TOKEN=hidden run");
+        assert_eq!(masked("FOO=bar API_KEY=k1 node"), "FOO=bar API_KEY=hidden node");
+        assert_eq!(masked("TOKEN=sk-1 run"), "TOKEN=hidden run");
+        assert_eq!(masked("NOTE=bearer sk-y"), "NOTE=bearer sk-y");
+    }
+
+    #[test]
+    fn url_credentials_are_hidden() {
+        assert_eq!(masked("postgresql://u:pw@h/db"), "postgresql://u:hidden@h/db");
+        assert_eq!(
+            masked("run postgres://u:pw@h:5432/db?sslmode=require now"),
+            "run postgres://u:hidden@h:5432/db?sslmode=require now"
+        );
+        assert_eq!(masked("https://ghp_tok@github.com/x"), "https://hidden@github.com/x");
+        assert_eq!(masked("https://example.com/a"), "https://example.com/a");
+        assert_eq!(masked("postgresql://u:hidden@h/db"), "postgresql://u:hidden@h/db");
+        let mut v = json!({"mcp": {"url": "https://u:pw@h/x"}, "env2": ["see postgresql://u:pw@h/db"]});
+        mask(&mut v);
+        assert!(!v.to_string().contains("pw@"), "{v}");
+    }
+
+    #[test]
+    fn a_url_with_credentials_in_a_codex_args_array_is_hidden() {
+        let text = "[mcp_servers.pg]
+command = \"npx\"
+args = [\"-y\",\"@modelcontextprotocol/server-postgres\",\"postgresql://u:pw@h/db\"]
+";
+        let v = run("codex", text);
+        let all = format!("{v:?}");
+        assert!(!all.contains("pw@"), "{all}");
+        assert!(v.raw.unwrap().contains("u:hidden@h/db"));
+    }
+
+    #[test]
+    fn a_hooks_command_with_a_secret_header_leaks_nothing_through_the_view() {
+        let text = json!({
+            "hooks": {"PostToolUse": [{"hooks": [{"type": "command",
+                "command": "curl -H 'Authorization: Bearer sk-live-1' https://x && AUTH_HEADER=Bearer sk-x node s.js"}]}]},
+            "statusLine": {"type": "command", "command": "TOKEN=\"a b c\" run postgresql://u:pw@h/db"}
+        })
+        .to_string();
+        for agent in ["claude"] {
+            let v = run(agent, &text);
+            let all = format!("{v:?}");
+            for gone in ["sk-live-1", "sk-x", "a b c", "u:pw@"] {
+                assert!(!all.contains(gone), "{gone} in {all}");
+            }
+            assert!(v.raw.unwrap().contains("Authorization: hidden"));
+            assert!(value_of(&v.others, "hooks").is_some());
+        }
     }
 }
