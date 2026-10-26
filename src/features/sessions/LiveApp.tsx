@@ -36,7 +36,7 @@ import { paletteSessions } from "../palette/sessions";
 import { LiveHistory } from "../history/LiveHistory";
 import { LiveSettings } from "../settings/LiveSettings";
 import { closesSettings, isTextEntry, paletteSection, settingsStart } from "../settings/settingsRouting";
-import type { SettingsSection } from "../settings/settingsSections";
+import { SETTINGS_SECTIONS, type SettingsSection } from "../settings/settingsSections";
 import { Preview } from "../preview/Preview";
 import { PreviewContext } from "../preview/PreviewContext";
 import { currentOf, usePreview } from "../preview/previewState";
@@ -217,7 +217,7 @@ export function LiveApp() {
   const lastSettingsSection = useRef<SettingsSection | null>(null);
   // `null` opens the section shown last in this run, else Appearance.
   const openSettings = (section: SettingsSection | null) => {
-    const next = section ?? settingsStart(lastSettingsSection.current);
+    const next = section ?? settingsStart(lastSettingsSection.current, SETTINGS_SECTIONS.map((s) => s.id));
     lastSettingsSection.current = next;
     setSettingsSection(next);
     setOverlay("settings");

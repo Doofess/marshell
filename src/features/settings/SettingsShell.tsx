@@ -14,8 +14,20 @@ export function settingsKey(e: { key: string; defaultPrevented: boolean }): "clo
  * The Settings page: the section nav beside (or, when narrow, above) the shown section. Presentational: the caller holds
  * the section, moves focus to the heading on open and listens for Esc with `settingsKey`. The body scrolls in `.page__body`.
  */
-export function SettingsShell({ section, onSection, onClose, children }: { section: SettingsSection; onSection(id: SettingsSection): void; onClose(): void; children: ReactNode }) {
-  const label = SETTINGS_SECTIONS.find((s) => s.id === section)?.label ?? "";
+export function SettingsShell({
+  section,
+  sections = SETTINGS_SECTIONS,
+  onSection,
+  onClose,
+  children,
+}: {
+  section: SettingsSection;
+  sections?: Array<{ id: SettingsSection; label: string }>;
+  onSection(id: SettingsSection): void;
+  onClose(): void;
+  children: ReactNode;
+}) {
+  const label = sections.find((s) => s.id === section)?.label ?? "";
   return (
     <div className="settings-shell">
       <Page
@@ -28,7 +40,7 @@ export function SettingsShell({ section, onSection, onClose, children }: { secti
         }
       >
         <div className="settings-shell__layout">
-          <SettingsNav items={SETTINGS_SECTIONS} current={section} onPick={onSection} className="settings__nav settings-shell__nav" ariaCurrent="page" />
+          <SettingsNav items={sections} current={section} onPick={onSection} className="settings__nav settings-shell__nav" ariaCurrent="page" />
           <div className="settings-shell__section">
             <h2 tabIndex={-1} className="settings-shell__heading">
               {label}

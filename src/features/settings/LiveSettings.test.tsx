@@ -24,11 +24,23 @@ describe("paletteSection", () => {
   });
 });
 
+describe("paletteSection and the company sections", () => {
+  it("has no palette command for Accounts or the company sections", () => {
+    for (const id of ["accounts", "claude", "codex", "antigravity"]) expect(paletteSection(id), id).toBeNull();
+  });
+});
+
 describe("settingsStart", () => {
   it("opens the section shown last in this run, else Appearance", () => {
-    expect(settingsStart(null)).toBe("appearance");
-    expect(settingsStart("history")).toBe("history");
-    expect(settingsStart("advanced")).toBe("advanced");
+    const all = SETTINGS_SECTIONS.map((s) => s.id);
+    expect(settingsStart(null, all)).toBe("appearance");
+    expect(settingsStart("history", all)).toBe("history");
+    expect(settingsStart("advanced", all)).toBe("advanced");
+  });
+  it("falls back to Appearance when the last section is no longer listed", () => {
+    const without = SETTINGS_SECTIONS.map((s) => s.id).filter((id) => id !== "codex");
+    expect(settingsStart("codex", without)).toBe("appearance");
+    expect(settingsStart("codex", [...without, "codex"])).toBe("codex");
   });
 });
 

@@ -22,9 +22,9 @@ export function paletteSection(id: string): SettingsSection | null {
   }
 }
 
-/** Where the tray's Settings… opens: the section shown last in this run, else Appearance. */
-export function settingsStart(last: SettingsSection | null): SettingsSection {
-  return last ?? "appearance";
+/** Where the tray's Settings… opens: the section shown last in this run when it is still listed, else Appearance. */
+export function settingsStart(last: SettingsSection | null, shown: readonly SettingsSection[]): SettingsSection {
+  return last !== null && shown.includes(last) ? last : "appearance";
 }
 
 /** A jump to a session closes the page, so the selection never changes behind it: Ctrl+Shift+1 to 9, the oldest waiting, a palette session. */

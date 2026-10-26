@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { SETTINGS_SECTIONS, type SettingsSection } from "./settingsSections";
+import { SETTINGS_SECTIONS, shownSections, type SettingsSection } from "./settingsSections";
 import { SettingsShell, settingsKey } from "./SettingsShell";
 
 const css = readFileSync(new URL("./SettingsShell.css", import.meta.url), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
@@ -16,11 +16,27 @@ const html = (section: SettingsSection = "terminal") =>
   );
 
 describe("SettingsShell", () => {
-  it("lists the seven sections in order", () => {
-    expect(SETTINGS_SECTIONS.map((s) => s.label)).toEqual(["Appearance", "Terminal", "Notifications", "Shell profiles", "History", "Agents", "Advanced"]);
-    expect(SETTINGS_SECTIONS.map((s) => s.id)).toEqual(["appearance", "terminal", "notifications", "profiles", "history", "agents", "advanced"]);
+  it("lists the eleven sections in order", () => {
+    expect(SETTINGS_SECTIONS.map((s) => s.label)).toEqual(["Appearance", "Terminal", "Notifications", "Shell profiles", "History", "Agents", "Accounts", "Claude Code", "Codex", "Antigravity", "Advanced"]);
+    expect(SETTINGS_SECTIONS.map((s) => s.id)).toEqual(["appearance", "terminal", "notifications", "profiles", "history", "agents", "accounts", "claude", "codex", "antigravity", "advanced"]);
   });
-  it("has a nav of the seven labels, and only the current one is marked", () => {
+  it("lists a company section only when its CLI is found, and Accounts always", () => {
+    const ids = (f: Parameters<typeof shownSections>[0]) => shownSections(f).map((s) => s.id);
+    expect(ids(new Set())).toEqual(["appearance", "terminal", "notifications", "profiles", "history", "agents", "accounts", "advanced"]);
+    expect(ids(new Set(["codex"]))).toEqual(["appearance", "terminal", "notifications", "profiles", "history", "agents", "accounts", "codex", "advanced"]);
+    expect(shownSections(new Set(["claude", "codex", "antigravity"]))).toEqual(SETTINGS_SECTIONS);
+  });
+  it("renders only the sections it is given", () => {
+    const h = renderToStaticMarkup(
+      <SettingsShell section="codex" sections={[{ id: "codex", label: "Codex" }, { id: "advanced", label: "Advanced" }]} onSection={() => {}} onClose={() => {}}>
+        <p>body</p>
+      </SettingsShell>,
+    );
+    const nav = h.match(/<nav[\s\S]*?<\/nav>/)?.[0] ?? "";
+    expect([...nav.matchAll(/<button[^>]*>([^<]*)<\/button>/g)].map((m) => m[1])).toEqual(["Codex", "Advanced"]);
+    expect(h).toMatch(/<h2[^>]*>Codex<\/h2>/);
+  });
+  it("has a nav of the eleven labels, and only the current one is marked", () => {
     const h = html();
     const nav = h.match(/<nav[^>]*aria-label="Settings sections"[^>]*>[\s\S]*?<\/nav>/)?.[0] ?? "";
     expect(nav).not.toBe("");
@@ -59,8 +75,16 @@ describe("settingsKey", () => {
 });
 
 describe("SettingsShell.css", () => {
-  it("scrolls nowhere itself: the page body scrolls", () => {
-    expect(css).not.toMatch(/overflow(?:-[xy])?:\s*(?:auto|scroll|overlay)/);
+  it("scrolls nowhere itself but the nav: the page body scrolls the section", () => {
+    expect(css.replace(/\.settings-shell__nav\s*\{[^}]*\}/g, "")).not.toMatch(/overflow(?:-[xy])?:\s*(?:auto|scroll|overlay)/);
+  });
+  it("lets the nav scroll on its own, within the body's height", () => {
+    expect(rule(".settings-shell__nav")).toMatch(/overflow-y:\s*auto/);
+    expect(rule(".settings-shell__nav")).toMatch(/max-block-size:/);
+    expect(rule(".settings-shell__nav")).toMatch(/overscroll-behavior:\s*contain/);
+  });
+  it("keeps the narrow layout in one column", () => {
+    expect(css).toMatch(/@container settings \(inline-size < 720px\)\s*\{[\s\S]*grid-template-columns:\s*minmax\(0,\s*1fr\)/);
   });
   it("has no fixed width over 720px", () => {
     for (const m of css.matchAll(/(?:^|[\s;])(?:inline-size|width|min-inline-size|min-width|max-inline-size|max-width)\s*:\s*(\d+)px/g)) expect(Number(m[1]), m[0]).toBeLessThanOrEqual(720);

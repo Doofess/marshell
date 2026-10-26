@@ -131,6 +131,11 @@ export function LiveSettings({ endpoint, sync, section, onSection, agentsStart, 
         return <HistorySection sync={sync} announce={announce} />;
       case "agents":
         return endpoint && <AgentsSection endpoint={endpoint} sync={sync} startWith={agentsStart} announce={announce} onChanged={onAgentsChanged} onNotifications={onNotifications} />;
+      case "accounts":
+      case "claude":
+      case "codex":
+      case "antigravity":
+        return null;
       case "advanced":
         return endpoint && <AdvancedSection endpoint={endpoint} announce={announce} />;
     }
