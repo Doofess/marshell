@@ -6,7 +6,7 @@ import type { Profile } from "../../generated/Profile";
 import type { ProfilesDoc } from "../../generated/ProfilesDoc";
 import { ApiError } from "../../lib/api/client";
 import { splitCommand, joinCommand } from "./profilesDoc";
-import { canClose, ProfilesPageView, type ProfilesHandlers } from "./ProfilesPage";
+import { canClose, ProfilesView, type ProfilesHandlers } from "./ProfilesSection";
 import { ProfilesStore } from "./ProfilesStore";
 
 const ep: Endpoint = { port: 1, token: "t", platform: "windows" };
@@ -25,9 +25,9 @@ function setup(over: { put?: (ep: Endpoint, doc: ProfilesDoc) => Promise<Profile
 
 const noop = () => {};
 const handlers: ProfilesHandlers = { onSelect: noop, onPatch: noop, onAdd: noop, onRemove: noop, onMakeDefault: noop, onReset: noop, onSave: noop, onDiscard: noop, onToggleScript: noop };
-const html = (store: ProfilesStore) => renderToStaticMarkup(<ProfilesPageView state={store.getState()} handlers={handlers} />);
+const html = (store: ProfilesStore) => renderToStaticMarkup(<ProfilesView state={store.getState()} handlers={handlers} />);
 
-describe("ProfilesPage", () => {
+describe("ProfilesSection", () => {
   it("edits a detected profile and saves the doc", async () => {
     const { store, put } = setup();
     await store.load();
@@ -111,7 +111,7 @@ describe("ProfilesPage", () => {
   });
 });
 
-describe("ProfilesPage: the rest of the page", () => {
+describe("ProfilesSection: the rest of the page", () => {
   it("lists the profiles with Detected and Default badges, and the form of the selected one", async () => {
     const { store } = setup();
     await store.load();
@@ -174,7 +174,7 @@ describe("ProfilesPage: the rest of the page", () => {
   });
 });
 
-describe("ProfilesPage: a command the one-line field cannot write", () => {
+describe("ProfilesSection: a command the one-line field cannot write", () => {
   // The kind of argv a hand-edited profiles.json holds.
   const QUOTED = ["sh", "-c", 'echo "hi"'];
   it("renders (no re-render loop), read-only, with a note, and keeps the argv", async () => {
@@ -195,30 +195,29 @@ describe("ProfilesPage: a command the one-line field cannot write", () => {
   });
 });
 
-describe("ProfilesPage: leaving with unsaved edits", () => {
-  const closeButton = /<button[^>]*>Close<\/button>/;
-  const withClose = (store: ProfilesStore) => renderToStaticMarkup(<ProfilesPageView state={store.getState()} handlers={{ ...handlers, onClose: noop }} />);
-  it("Close works when nothing changed", async () => {
+describe("ProfilesSection: leaving with unsaved edits", () => {
+  it("draws no Close button, title or dialog shell: the Settings page owns them", async () => {
     const { store } = setup();
     await store.load();
-    expect(withClose(store).match(closeButton)![0]).not.toContain("disabled");
-    expect(canClose(store.getState())).toBe(true);
+    const h = html(store);
+    expect(h).not.toContain(">Close</button>");
+    expect(h).not.toContain('role="dialog"');
+    expect(h).not.toMatch(/<h1/);
+    expect(h).not.toContain("Shell profiles");
   });
-  it("Close does nothing while there are unsaved edits, and the page says why", async () => {
+  it("keeps the change bar while there are unsaved edits, and canClose tells the owner", async () => {
     const { store } = setup();
     await store.load();
+    expect(canClose(store.getState())).toBe(true);
     store.patch({ name: "Edited" });
-    const h = withClose(store);
-    expect(h.match(closeButton)![0]).toContain('disabled=""');
-    expect(h).toContain("Save or discard");
-    expect(h).toContain("change-bar");
+    expect(html(store)).toContain("change-bar");
     expect(canClose(store.getState())).toBe(false);
     store.discard();
     expect(canClose(store.getState())).toBe(true);
   });
 });
 
-describe("ProfilesPage: shell integration", () => {
+describe("ProfilesSection: shell integration", () => {
   it("shows a Shell integration switch that turns it off in the saved doc", async () => {
     const { store, put } = setup();
     await store.load();
@@ -266,7 +265,7 @@ describe("ProfilesPage: shell integration", () => {
   });
 });
 
-describe("ProfilesPage: environment variables named twice", () => {
+describe("ProfilesSection: environment variables named twice", () => {
   it("says which one, and not otherwise", async () => {
     const { store } = setup();
     await store.load();
@@ -277,11 +276,11 @@ describe("ProfilesPage: environment variables named twice", () => {
   });
 });
 
-describe("ProfilesPage: terminal theme", () => {
+describe("ProfilesSection: terminal theme", () => {
   it("profile terminal theme select offers same-as-app and imported themes", async () => {
     const { store } = setup({ doc: { profiles: [profile("pwsh", { detected: true, terminal_theme: "wt:nord" }), profile("cmd", { detected: true })], default_id: "pwsh" } });
     await store.load();
-    const h = renderToStaticMarkup(<ProfilesPageView state={store.getState()} handlers={handlers} themes={[{ id: "wt:nord", name: "Nord" }]} />);
+    const h = renderToStaticMarkup(<ProfilesView state={store.getState()} handlers={handlers} themes={[{ id: "wt:nord", name: "Nord" }]} />);
     const select = h.match(/<select[^>]*>.*?<\/select>/s)?.[0] ?? "";
     expect(select).toContain('<option value="">Same as the app setting</option>');
     expect(select).toContain('<option value="dark">Dark</option>');

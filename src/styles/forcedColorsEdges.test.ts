@@ -26,7 +26,7 @@ const EDGES: Record<string, string[]> = {
   "features/window/Rail.css": [".rail__tool"],
   "features/launcher/Launcher.css": [".launcher__sheet", ".launcher__chip", ".launcher__input", ".launcher__start", ".launcher__program"],
   "features/palette/Palette.css": [".palette__sheet", ".palette__input"],
-  "features/notifications/NotificationsDialog.css": [".notifications-dialog__sheet", ".notifications-dialog__group", ".notifications-dialog__input", ".notifications-dialog__btn"],
+  "features/notifications/NotificationsSection.css": [".notifications-dialog__sheet", ".notifications-dialog__group", ".notifications-dialog__input", ".notifications-dialog__btn"],
   "features/agents/AgentsDialog.css": [".agents-dialog__sheet", ".agents-dialog__btn", ".agents-dialog__warning"],
 };
 

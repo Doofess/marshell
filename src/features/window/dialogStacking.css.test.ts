@@ -16,11 +16,11 @@ const DIALOGS: [string, string][] = [
   ["../departures/LiveDepartures.css", ".departures"],
   ["../appearance/AppearanceSections.css", ".appearance-dialog"],
   ["../sessions/LiveShortcuts.css", ".live-shortcuts"],
-  ["../settings/ProfilesPage.css", ".profiles-dialog"],
+  ["../settings/ProfilesSection.css", ".profiles-dialog"],
   ["../tasks/ReviewSheet.css", ".review"],
-  ["../notifications/NotificationsDialog.css", ".notifications-dialog"],
+  ["../notifications/NotificationsSection.css", ".notifications-dialog"],
   ["../agents/AgentsDialog.css", ".agents-dialog"],
-  ["../diagnostics/DiagnosticsDialog.css", ".diagnostics-dialog"],
+  ["../diagnostics/AdvancedSection.css", ".diagnostics-dialog"],
   ["./CloseDialog.css", ".close-dialog"],
 ];
 

@@ -1,15 +1,17 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { HistorySettingsDialogView } from "./HistorySettingsDialog";
+import { HistorySettingsView } from "./HistorySection";
 
 const none = () => {};
-const view = (on: boolean | null, error: string | null = null) => renderToStaticMarkup(<HistorySettingsDialogView on={on} error={error} onChange={none} onClose={none} />);
+const view = (on: boolean | null, error: string | null = null) => renderToStaticMarkup(<HistorySettingsView on={on} error={error} onChange={none} />);
 
-describe("HistorySettingsDialogView", () => {
-  it("is a modal dialog titled History settings", () => {
+describe("HistorySettingsView", () => {
+  it("draws no dialog shell, title or Close button: the Settings page owns them", () => {
     const h = view(true);
-    expect(h).toMatch(/role="dialog"[^>]*aria-modal="true"[^>]*aria-label="History settings"/);
-    expect(h).toContain(">History settings</h2>");
+    expect(h).not.toContain('role="dialog"');
+    expect(h).not.toMatch(/<h[12]/);
+    expect(h).not.toContain("History settings");
+    expect(h).not.toContain(">Close</button>");
   });
   it("has the switch and the hint, word for word", () => {
     const h = view(true);

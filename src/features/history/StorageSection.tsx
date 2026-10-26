@@ -8,7 +8,7 @@ import type { SettingsSync } from "../appearance/settingsSync";
 import { relativeTime } from "./historyState";
 import { type PendingLimits, chooseBackupFolder, proposeLimits, removalQuestion, reportAfterCleanup, storageErrorText } from "./storageActions";
 import "../settings/Settings.css";
-import "../notifications/NotificationsDialog.css";
+import "../notifications/NotificationsSection.css";
 import "./StorageSection.css";
 
 const DASH = "–";

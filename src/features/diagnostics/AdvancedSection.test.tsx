@@ -3,10 +3,10 @@ import { describe, expect, it } from "vitest";
 import type { ExportPreview } from "../../generated/ExportPreview";
 import type { LoggingState } from "../../generated/LoggingState";
 import { exportName, formatBytes } from "../../lib/api/diagnostics";
-import { DiagnosticsDialogView, diagnosticsFocusTarget, exportReadyMessage } from "./DiagnosticsDialog";
+import { AdvancedView, diagnosticsFocusTarget, exportReadyMessage } from "./AdvancedSection";
 
 const none = () => {};
-const handlers = { onClose: none, onDetailed: none, onPrepare: none, onView: none, onBack: none, onSave: none };
+const handlers = { onDetailed: none, onPrepare: none, onView: none, onBack: none, onSave: none };
 const PREVIEW: ExportPreview = {
   id: "x",
   files: [
@@ -16,8 +16,8 @@ const PREVIEW: ExportPreview = {
   ],
   total_bytes: 3_252_560,
 };
-const view = (logging: LoggingState | "loading" | "failed", preview: Parameters<typeof DiagnosticsDialogView>[0]["preview"] = "idle", viewing: { name: string; text: string } | null = null) =>
-  renderToStaticMarkup(<DiagnosticsDialogView logging={logging} preview={preview} viewing={viewing} {...handlers} />);
+const view = (logging: LoggingState | "loading" | "failed", preview: Parameters<typeof AdvancedView>[0]["preview"] = "idle", viewing: { name: string; text: string } | null = null) =>
+  renderToStaticMarkup(<AdvancedView logging={logging} preview={preview} viewing={viewing} {...handlers} />);
 const ON: LoggingState = { available: true, detailed: false };
 
 describe("diagnosticsFocusTarget", () => {
@@ -30,9 +30,9 @@ describe("diagnosticsFocusTarget", () => {
     expect(diagnosticsFocusTarget("expired", "preparing")).toBe("diagnostics-prepare");
     expect(diagnosticsFocusTarget("failed", "preparing")).toBe("diagnostics-prepare");
   });
-  it("focuses the title after preparing an export, including an empty one", () => {
-    expect(diagnosticsFocusTarget("preparing", PREVIEW)).toBe("diagnostics-title");
-    expect(diagnosticsFocusTarget("preparing", { ...PREVIEW, files: [] })).toBe("diagnostics-title");
+  it("focuses the export heading after preparing an export, including an empty one", () => {
+    expect(diagnosticsFocusTarget("preparing", PREVIEW)).toBe("diagnostics-export-heading");
+    expect(diagnosticsFocusTarget("preparing", { ...PREVIEW, files: [] })).toBe("diagnostics-export-heading");
   });
   it("does not refocus on unchanged preview state or ordinary viewer navigation", () => {
     for (const state of ["idle", "preparing", "expired", "failed", PREVIEW] as const) {
@@ -62,27 +62,28 @@ describe("exportReadyMessage", () => {
   });
 });
 
-describe("DiagnosticsDialogView", () => {
-  it("keeps an empty polite status region mounted when idle, ready and viewing", () => {
-    for (const h of [view(ON), view(ON, PREVIEW), view(ON, PREVIEW, { name: "about.json", text: "{}" })]) {
-      expect(h).toMatch(/<p[^>]*role="status"[^>]*aria-live="polite"[^>]*><\/p>/);
-      expect(h.match(/role="status"/g)).toHaveLength(1);
+describe("AdvancedView", () => {
+  it("draws no live region of its own: announcements go through the announce prop", () => {
+    for (const h of [view(ON), view(ON, "preparing"), view(ON, "expired"), view(ON, PREVIEW), view(ON, PREVIEW, { name: "about.json", text: "{}" })]) {
+      expect(h).not.toContain('role="status"');
+      expect(h).not.toContain("aria-live");
     }
   });
-  it("puts preparing text into the persistent polite region", () => {
-    const h = view(ON, "preparing");
-    expect(h).toMatch(/<p[^>]*role="status"[^>]*aria-live="polite"[^>]*>Preparing the export…<\/p>/);
-    expect(h.match(/role="status"/g)).toHaveLength(1);
-  });
-  it("announces expiration through just the polite region, without a second alert", () => {
+  it("shows the preparing and expired text, without a second alert", () => {
+    expect(view(ON, "preparing")).toContain("Preparing the export…");
     const h = view(ON, "expired");
-    expect(h).toMatch(/<p[^>]*role="status"[^>]*aria-live="polite"[^>]*>This export has expired\. Prepare it again\.<\/p>/);
     expect(h.match(/This export has expired/g)).toHaveLength(1);
     expect(h).not.toContain('role="alert"');
   });
-  it("shows the title, the logs switch and the export copy", () => {
+  it("draws no dialog shell, title heading or Close button: the Settings page owns them", () => {
     const h = view(ON);
-    expect(h).toContain('aria-label="Diagnostics"');
+    expect(h).not.toContain('role="dialog"');
+    expect(h).not.toMatch(/<h[12]/);
+    expect(h).not.toContain(">Close</button>");
+    expect(h).toContain('<h3 id="diagnostics-export-heading"');
+  });
+  it("shows the logs switch and the export copy", () => {
+    const h = view(ON);
     expect(h).toContain("Detailed logs");
     expect(h).toContain("Writes debug lines to Marshell&#x27;s log until Marshell restarts.");
     expect(h).toContain("Export diagnostics");
@@ -119,7 +120,7 @@ describe("DiagnosticsDialogView", () => {
     for (const state of ["expired", "failed", "preparing"] as const) {
       expect(view(ON, state)).toMatch(/<button[^>]*id="diagnostics-prepare"[^>]*>Prepare export<\/button>/);
     }
-    expect(view(ON, PREVIEW)).toMatch(/<h2[^>]*id="diagnostics-title"[^>]*tabindex="-1"/);
+    expect(view(ON, PREVIEW)).toMatch(/<h3[^>]*id="diagnostics-export-heading"[^>]*tabindex="-1"/);
   });
   it("shows the text of the viewed file in a labelled read-only region", () => {
     const h = view(ON, PREVIEW, { name: "logs/marshell.log", text: "line one\nline two" });
@@ -132,11 +133,11 @@ describe("DiagnosticsDialogView", () => {
     expect(view(ON, "preparing")).toContain("Preparing the export…");
     expect(view(ON, "failed")).toContain("Couldn&#x27;t prepare the export.");
   });
-  it("keeps focus on a button that is busy: aria-disabled, never disabled, so Escape still reaches the dialog", () => {
+  it("keeps focus on a button that is busy: aria-disabled, never disabled, so Escape and Tab still reach the page", () => {
     const preparing = view(ON, "preparing");
     expect(preparing).toMatch(/<button[^>]*aria-disabled="true"[^>]*>Prepare export<\/button>/);
     expect(preparing).not.toMatch(/<button[^>]*\sdisabled[^>]*>Prepare export/);
-    const saving = renderToStaticMarkup(<DiagnosticsDialogView logging={ON} preview={PREVIEW} viewing={null} saving {...handlers} />);
+    const saving = renderToStaticMarkup(<AdvancedView logging={ON} preview={PREVIEW} viewing={null} saving {...handlers} />);
     expect(saving).toMatch(/<button[^>]*aria-disabled="true"[^>]*>Save…<\/button>/);
     expect(saving).not.toMatch(/<button[^>]*\sdisabled[^>]*>Save…/);
     expect(view(ON, PREVIEW)).not.toContain("aria-disabled");

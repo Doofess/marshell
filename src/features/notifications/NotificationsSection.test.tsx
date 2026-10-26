@@ -1,7 +1,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import type { NotifySettings } from "../../generated/NotifySettings";
-import { NotificationsDialogView } from "./NotificationsDialog";
+import { NotificationsView } from "./NotificationsSection";
 
 const DEFAULTS: NotifySettings = {
   needs_you: { banner: true, sound: true },
@@ -13,13 +13,21 @@ const DEFAULTS: NotifySettings = {
 };
 const none = () => {};
 const view = (settings: NotifySettings | null = DEFAULTS, error: string | null = null) =>
-  renderToStaticMarkup(<NotificationsDialogView settings={settings} error={error} onChange={none} onClose={none} />);
+  renderToStaticMarkup(<NotificationsView settings={settings} error={error} onChange={none} />);
 const group = (h: string, name: string) => h.match(new RegExp(`<section[^>]*aria-label="${name}"[^>]*>[\\s\\S]*?</section>`))?.[0] ?? "";
 const switchLabels = (h: string) => [...h.matchAll(/<span class="switch__text">([^<]*)</g)].map((m) => m[1]);
 
-describe("NotificationsDialogView", () => {
-  it("is a modal dialog named Notifications", () => {
-    expect(view()).toMatch(/role="dialog"[^>]*aria-modal="true"[^>]*aria-label="Notifications"/);
+describe("NotificationsView", () => {
+  it("draws no dialog shell, title or Close button: the Settings page owns them", () => {
+    const h = view();
+    expect(h).not.toContain('role="dialog"');
+    expect(h).not.toContain("<h1");
+    expect(h).not.toContain("<h2");
+    expect(h).not.toContain(">Close</button>");
+    expect(h).not.toContain("backdrop");
+  });
+  it("starts its subheadings at h3, under the page's section heading", () => {
+    expect(view()).toContain('<h3 class="notifications-dialog__name">Needs you</h3>');
   });
   it("gives Needs you, Done and Error a Banner and a Sound switch each", () => {
     const h = view();
@@ -59,7 +67,7 @@ describe("NotificationsDialogView", () => {
     expect(g).toMatch(/<label[^>]*>(?:(?!<\/label>)[\s\S])*To(?:(?!<\/label>)[\s\S])*<input/);
   });
   it("has a Close button group with one checkbox for keeping Marshell in the tray, checked unless the choice is no", () => {
-    const withChoice = (closeToTray: boolean | null) => renderToStaticMarkup(<NotificationsDialogView settings={DEFAULTS} closeToTray={closeToTray} error={null} onChange={none} onClose={none} />);
+    const withChoice = (closeToTray: boolean | null) => renderToStaticMarkup(<NotificationsView settings={DEFAULTS} closeToTray={closeToTray} error={null} onChange={none} />);
     for (const [choice, checked] of [[null, true], [true, true], [false, false]] as const) {
       const g = group(withChoice(choice), "Close button");
       expect(switchLabels(g)).toEqual(["Keep Marshell running in the tray when I close the window"]);
@@ -81,7 +89,7 @@ describe("NotificationsDialogView", () => {
   });
   it("shows the notification centre switch only when the link state is known", () => {
     const withLink = (link?: boolean | null) =>
-      renderToStaticMarkup(<NotificationsDialogView settings={DEFAULTS} error={null} link={link} onChange={none} onClose={none} />);
+      renderToStaticMarkup(<NotificationsView settings={DEFAULTS} error={null} link={link} onChange={none} />);
     const h = withLink(false);
     expect(h).toContain("Notification centre");
     expect(h).toContain("Open sessions from the notification centre");

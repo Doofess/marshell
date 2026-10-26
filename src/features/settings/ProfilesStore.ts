@@ -39,7 +39,7 @@ export const isDirty = (s: ProfilesState): boolean => s.saved !== null && s.draf
 
 /**
  * The profiles page's state: load, edit in memory, save on request. Nothing is sent until `save`. Plain class so it is tested
- * without a DOM; ProfilesPage wraps it with useSyncExternalStore.
+ * without a DOM; ProfilesSection wraps it with useSyncExternalStore.
  */
 export class ProfilesStore {
   private state: ProfilesState = INITIAL;

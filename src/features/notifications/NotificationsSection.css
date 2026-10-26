@@ -31,6 +31,12 @@
   font-size: var(--text-15);
   font-weight: 600;
 }
+.notifications,
+.history-settings {
+  display: grid;
+  gap: var(--space-3);
+  align-content: start;
+}
 .notifications-dialog__body {
   display: grid;
   gap: var(--space-3);
