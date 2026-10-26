@@ -45,8 +45,10 @@
 - **`tools.json`.**
   - Saves are atomic, through `store::write`.
   - 409 with "tools.json changed since you opened it." when the version is stale. 422 with the problems list.
-  - A broken entry sent back as it was shown is written back as it was in the file.
+  - Broken entries are kept as `agents/own.rs` keeps them. An entry that doesn't parse as a `ToolProfile` (an unknown field, a wrong type) is listed as a placeholder profile, built from its `id` and `name`, with the reason "It has an unexpected shape (…)". An entry that parses but fails validation (a bad regex) is listed as it is. Either one, sent back equal to how it was shown, is written back as the file's raw `Value`. Left out, it is gone.
   - An own id that equals a shipped profile's id is refused, with the reason "<id> is a shipped tool's id".
+- **Drafts.** A section mounts the first time it is shown and stays mounted, hidden, until the page closes, so switching sections keeps an unsaved form. Closing the page drops it, as closing its dialog did. The pull request lists that under Known limits.
+- **Full window.** Every `LiveApp` guard that tests `overlay === "departures"` (the close and restart bar's Escape at `:670`, `:682` and the others) treats `"settings"` the same way. Every jump to a session closes Settings: Ctrl+Shift+1–9, next waiting, a palette session jump, a banner click, a Departures jump, History's "open" and the tray's "Go to session". Otherwise the selection would change behind the page.
 - Every UI change works with the keyboard alone and in forced colours. The guard tests (`noScrollInMainWindow`, `dialogBodies`, `noBoxedOutlines`, `forcedColorsEdges`) are updated to name the new files, never loosened.
 - Moved tests are re-homed, not deleted. A dialog's shell tests (focus trap, its Close button) are replaced by the page's equivalents.
 - Run `cargo fmt --all` before every Rust commit. `pnpm check:generated` passes after the protocol change.
@@ -56,8 +58,9 @@
 1. **Esc inside a section's own popup** (the Agents consent card and its diff, the own-agent or own-tool remove confirmation, a theme import's file list, the font field) closes only that popup and keeps the page and any unsaved form. Tests in Task 5 (the page's rule) and Tasks 6 to 8 (each popup prevents its Esc).
 2. **A tray "Go to session", a banner click, Departures or a jump from History while Settings is open** closes Settings and shows the session, as it does for the board today. Tests in Task 9 (`trayClosesBoard` and the overlay transitions).
 3. **`tools.json` edited by hand while the editor is open.** Save gets 409, the form keeps its draft and says "tools.json changed since you opened it. Reload to see it." A file that can't be read (bad JSON) gets 422 and is never overwritten. Tests in Task 3 (route) and Task 4 (form).
-4. **A saved family written another way** (`"cascadia mono "`, `"JETBRAINS MONO"`) selects the bundled choice. A family that isn't installed (a typo under "Another font…") still renders through the fallback stack. Tests in Task 1.
-5. **A window at 720 by 480 and text size Larger:** the nav and the "Back to sessions" button stay reachable, and the body scrolls in `.page__body`. Test in Task 5 (CSS guard), checked live in Task 10.
+4. **A hand-written `tools.json` entry the form can't show** (an unknown field) survives a save of another entry unchanged. Tests in Task 3.
+5. **A saved family written another way** (`"cascadia mono "`, `"JETBRAINS MONO"`) selects the bundled choice. A family that isn't installed (a typo under "Another font…") still renders through the fallback stack. Tests in Task 1.
+6. **A window at 720 by 480 and text size Larger:** the nav and the "Back to sessions" button stay reachable, and the body scrolls in `.page__body`. Test in Task 5 (CSS guard), checked live in Task 10.
 
 ---
 
@@ -100,6 +103,7 @@
   - Add a "Fonts" entry per font to `THIRD_PARTY_NOTICES.md`: name, version or commit, source URL, the copyright line quoted in "Checked before planning", and "SIL Open Font License 1.1", with the full OFL text once.
   - The stack follows PLAN "Terminal font setting": the chosen font, the bundled JetBrains Mono, system monospace, then the Windows Terminal (Nerd) font, so powerline glyphs still resolve.
   - Callers of `fontStack` (`AppearanceDialog`, `RecordingPlayer`, `TerminalView` through `LiveApp`) pass `wtFamily` where they have it.
+  - `TerminalView`'s `loadFont` already waits for the face before setting `fontFamily`. It now loads the bold face too (`bold ${size}px …`) alongside the regular one, under the same one-second cap, so a new bundled font's bold isn't drawn from the fallback.
 - [ ] **Step 4: Run the same tests.** Expect them to pass. Then run `pnpm test`: expect every test to pass.
 - [ ] **Step 5: Commit** "feat(terminal): bundle Cascadia Mono and Atkinson Hyperlegible Mono, with every font's notice".
 
@@ -119,6 +123,7 @@
   - Each label's `style.fontFamily` is `fontStack` of its font. Match my terminal uses `wtFamily ?? "JetBrains Mono"`.
   - Each label carries the sample line.
   - "Another font…" checked renders the text field (label "Font family", the saved text as its value). With another choice checked, there is no field.
+  - Picking "Another font…" shows the field and calls no `onPick`. Committing a non-empty name calls `onPick(name)`. Committing an empty field calls no `onPick` and returns to the choice shown before.
   - In forced colours (CSS test on `FontPicker.css`), no `color` or `background` is set inside `@media (forced-colors: active)` except system colours.
   - Pressing Esc in the field reverts the text and calls `preventDefault`. A pure helper `fieldKey(key, draft, saved)` returns `{ next, prevent }`.
 - [ ] **Step 2: Run `pnpm test src/features/terminal/FontPicker.test.tsx`.** Expect it to fail.
@@ -149,14 +154,15 @@
   - `save_refuses_a_stale_version`: the file changed after `load`, so the result is `Stale` and the bytes are unchanged.
   - `save_refuses_an_unreadable_file_and_leaves_it`: bad JSON gives `Unreadable` and the bytes are unchanged.
   - `save_refuses_an_invalid_regex_with_its_index`.
+  - `an_entry_that_does_not_parse_is_listed_as_a_placeholder_and_kept_on_save`: an entry with an unknown field, and an entry whose `commands` is a string, are each listed with the "unexpected shape" reason. Saving another entry while sending the placeholder back leaves each one's `Value` equal to the file's. Leaving it out removes it.
   - `save_refuses_a_shipped_id`: reason "<id> is a shipped tool's id".
-  - `a_broken_entry_sent_back_unchanged_is_kept_byte_equal_in_value`: a hand-written entry with an unknown field stays as the file had it.
+  - `an_invalid_entry_sent_back_unchanged_keeps_its_value`: an entry with a bad regex, sent back as shown, stays as the file had it.
   - `get_own_lists_broken_entries_with_their_problems`.
   - Route tests: PUT returns 200, 409 with the exact message, or 422 with a JSON list. A GET after the PUT shows the new entry with no restart, and `/v1/tools` lists it.
 - [ ] **Step 2: Run `cargo test -p marshell-core -j 4 tools::own server::`.** Expect it to fail.
 - [ ] **Step 3: Implement the save.**
   - Mirror `agents/own.rs::save`.
-  - `load_full` keeps the raw `Value` of refused entries, so `save` can write them back.
+  - `load_full` reads entries as `Value` first, as `agents/own.rs::load_full` does. It keeps a placeholder for each one that doesn't parse (shaped like `agents/own.rs::placeholder`) and the raw `Value` of every refused entry, so `save` can write them back.
   - The file is `{"version":1,"tools":[…]}`.
   - The handler takes the write mutex, saves in `spawn_blocking` and calls `forget()` after every attempt.
   - Then run `cargo test -p marshell-protocol` and `pnpm check:generated`.
@@ -234,9 +240,12 @@
   - Appearance holds the app theme, accent, contrast and text size.
   - Terminal holds the terminal theme and its preview, the font picker, the font size and the imported themes and theme import.
 
-- [ ] **Step 1: Re-home the tests.** Split them between the two views, drop the dialog-shell assertions (focus trap, the Close button), and add one test per section that it renders no `role="dialog"`. The theme import's list, when open, prevents its Esc.
+- [ ] **Step 1: Re-home the tests.**
+  - Split them between the two views and drop the dialog-shell assertions (focus trap, the Close button).
+  - Add one test per section: it renders no `role="dialog"`, no `Page` (no `.page__body` and no `h1`), and no heading of its own above its first field. The shell's `h2` is the heading.
+  - The theme import's list, when open, prevents its Esc.
 - [ ] **Step 2: Run `pnpm test src/features/appearance`.** Expect it to fail.
-- [ ] **Step 3: Split the view and drop the shell.** Delete `AppearanceDialog`.
+- [ ] **Step 3: Split the view and drop the shell.** `AppearanceView`'s `<Page title="Appearance">` wrapper goes. Each view renders only its fields, inside the shell's `.page__body`. Delete `AppearanceDialog`.
 - [ ] **Step 4: Run `pnpm test src/features/appearance src/styles`.** Expect it to pass.
 - [ ] **Step 5: Commit** "refactor(settings): Appearance and Terminal become Settings sections".
 
@@ -255,9 +264,9 @@
 
   The props are the dialog's own, minus `onClose`.
 
-- [ ] **Step 1: Re-home each dialog's tests the same way as Task 6.** Shell assertions go, each section renders no `role="dialog"`, and every nested confirmation prevents its Esc.
+- [ ] **Step 1: Re-home each dialog's tests the same way as Task 6.** Shell assertions go. Each section renders no `role="dialog"`, no `Page` and no title heading of its own. Every nested confirmation prevents its Esc.
 - [ ] **Step 2: Run `pnpm test src/features/notifications src/features/settings src/features/history src/features/diagnostics`.** Expect it to fail.
-- [ ] **Step 3: Drop the shells and rename the files.**
+- [ ] **Step 3: Drop the shells and rename the files.** `ProfilesPageView`'s `<Page title="Shell profiles">` goes, like Appearance's. Each dialog's own title heading goes, and any subheadings move down one level, under the shell's `h2`.
 - [ ] **Step 4: Run the same tests plus `src/styles`.** Expect them to pass.
 - [ ] **Step 5: Commit** "refactor(settings): Notifications, Shell profiles, History and Advanced become Settings sections".
 
@@ -303,7 +312,8 @@
   - `actionFor("settings")` is `{ kind: "overlay", overlay: "settings" }`.
   - `trayClosesOverlay` is true for `goto` and `nextWaiting` over `settings`, and false for `togglePause`.
   - The palette lists "Settings…" in Tools with no shortcut, and `COMMANDS` has no duplicate ids.
-  - `LiveSettings` (pure parts) shows the section it was opened at; a tray "Settings…" reopens the last section shown in this run; a section change moves focus to the new `h2`.
+  - `LiveSettings` (pure parts) shows the section it was opened at; a tray "Settings…" reopens the last section shown in this run; a section change moves focus to the new `h2`; a section once shown stays mounted and hidden after a switch.
+  - A pure `closesSettings(command)` is true for `focus-session-1`…`9`, next waiting and a palette session jump.
 - [ ] **Step 2: Run `pnpm test src/features/settings src/features/tray src/lib src/features/sessions`.** Expect it to fail.
 - [ ] **Step 3: Wire it in.** Any jump to a session closes Settings: a banner click, a Departures jump, a History "open" or a palette session jump. Remove the old dialog imports.
 - [ ] **Step 4: Run `pnpm test`, `pnpm build` and `cargo test -p marshell-app -j 4`** (if `tray.rs` changed). Expect all to pass.
@@ -314,7 +324,8 @@
 - [ ] **Step 1: Start the app** with the `marshell-live-check` skill: a scratch `MARSHELL_HOME`, a `tools.json` holding one valid and one broken entry, and a Windows Terminal font present. No agent session is needed.
 - [ ] **Step 2: Check over CDP** (small JSON evaluations):
   - `document.fonts.check('13px "Cascadia Mono"')` and the same for the other two families are true after the picker shows them;
-  - each choice changes xterm's `fontFamily` live, and Match my terminal gives Windows Terminal's family;
+  - each choice changes the terminal's measured cell width to that font's advance (xterm's `_core._renderService.dimensions.css.cell.width`, compared before and after), and Match my terminal gives Windows Terminal's family;
+  - Ctrl+Shift+1 with Settings open closes it and focuses session 1;
   - the palette's six old commands and "Settings…" open the right sections;
   - the tray's "Settings…" opens the last section shown;
   - Esc closes the page, but Esc inside the own-tool remove question doesn't;
