@@ -1,7 +1,8 @@
 //! What Marshell knows about an agent's hook setup, and the previews that install and remove it.
-//! Only `claude` and `codex` have an adapter; any other agent is a 404. Applying goes through `/v1/config/apply`.
+//! Only `claude`, `codex` and `antigravity` have an adapter; any other agent is a 404. Applying goes through `/v1/config/apply`.
 
 use super::AppState;
+use crate::agents::antigravity::hooks as agy;
 use crate::agents::claude::{self, hooks};
 use crate::agents::codex::{self, trust};
 use crate::agents::{parse_any_version, run_version_text};
@@ -24,6 +25,7 @@ use std::time::{Duration, SystemTime};
 
 const AGENT: &str = "claude";
 const CODEX: &str = "codex";
+const ANTIGRAVITY: &str = "antigravity";
 const VERSION_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// A status and the message the route replies with.
@@ -38,12 +40,14 @@ fn failed(err: impl std::fmt::Display) -> Fail {
 enum Adapter {
     Claude,
     Codex,
+    Antigravity,
 }
 
 fn adapter(agent: &str) -> Result<Adapter, Fail> {
     match agent {
         AGENT => Ok(Adapter::Claude),
         CODEX => Ok(Adapter::Codex),
+        ANTIGRAVITY => Ok(Adapter::Antigravity),
         _ => Err((StatusCode::NOT_FOUND, "no such agent".to_string())),
     }
 }
@@ -85,6 +89,14 @@ struct Inputs {
     chain_text: Option<String>,
 }
 
+/// The user home, Antigravity's two files and the chain, as text (`None` for a missing file).
+struct AgyInputs {
+    user_home: PathBuf,
+    hooks_text: Option<String>,
+    settings_text: Option<String>,
+    chain_text: Option<String>,
+}
+
 /// The user's home folder, Codex's `hooks.json` and its text.
 struct CodexInputs {
     hooks_path: PathBuf,
@@ -97,6 +109,28 @@ impl AppState {
             Some(path) => path.clone(),
             None => codex::hooks::hooks_path(&|k| std::env::var(k).ok(), user_home),
         }
+    }
+
+    /// The user home Antigravity's files sit under.
+    fn agy_user_home(&self) -> Result<PathBuf, Fail> {
+        match &self.0.agy_home {
+            Some(home) => Ok(home.clone()),
+            None => super::files::home_dir().ok_or_else(|| failed("the user's home folder is not known")),
+        }
+    }
+
+    fn agy_inputs(&self) -> Result<AgyInputs, Fail> {
+        let user_home = self.agy_user_home()?;
+        let hooks_text = read_text(&agy::hooks_path(&user_home)).map_err(|e| refused(&e))?;
+        let settings_text = read_text(&agy::settings_path(&user_home)).map_err(|e| refused(&e))?;
+        // The chain is Marshell's own file; a chain that cannot be read is the same as none.
+        let chain_text = std::fs::read_to_string(paths::statusline_chain(&self.0.home, ANTIGRAVITY)).ok();
+        Ok(AgyInputs {
+            user_home,
+            hooks_text,
+            settings_text,
+            chain_text,
+        })
     }
 
     fn codex_inputs(&self) -> Result<CodexInputs, Fail> {
@@ -246,6 +280,7 @@ pub(crate) fn setup_of(st: &AppState) -> Result<AgentSetup, Fail> {
         version,
         exe_path: exe.map(|p| p.to_string_lossy().into_owned()),
         settings_path: settings_path.to_string_lossy().into_owned(),
+        hooks_path: None,
         settings_state: SettingsState::Ok,
         parse_error: None,
         hooks: HookInstall::None,
@@ -312,6 +347,7 @@ pub(crate) fn codex_setup_of(st: &AppState) -> Result<AgentSetup, Fail> {
         version,
         exe_path: exe.map(|p| p.to_string_lossy().into_owned()),
         settings_path: hooks_path.to_string_lossy().into_owned(),
+        hooks_path: None,
         settings_state: SettingsState::Ok,
         parse_error: None,
         hooks: HookInstall::None,
@@ -360,11 +396,88 @@ pub(crate) fn codex_setup_of(st: &AppState) -> Result<AgentSetup, Fail> {
     Ok(setup)
 }
 
+/// Antigravity's setup: `hooks.json` and `settings.json`, both read and neither written.
+pub(crate) fn agy_setup_of(st: &AppState) -> Result<AgentSetup, Fail> {
+    let home = &st.0.home;
+    let user_home = st.agy_user_home()?;
+    let (hooks_file, settings_file) = (agy::hooks_path(&user_home), agy::settings_path(&user_home));
+    let exe = st.agent_exe_of(ANTIGRAVITY);
+    let version = exe.as_deref().and_then(|exe| st.version_of(exe, parse_any_version));
+
+    let mut setup = AgentSetup {
+        agent: ANTIGRAVITY.to_string(),
+        found: exe.is_some(),
+        version,
+        exe_path: exe.map(|p| p.to_string_lossy().into_owned()),
+        settings_path: settings_file.to_string_lossy().into_owned(),
+        hooks_path: Some(hooks_file.to_string_lossy().into_owned()),
+        settings_state: SettingsState::Ok,
+        parse_error: None,
+        hooks: HookInstall::None,
+        approve_installed: false,
+        has_own_statusline: false,
+        chained: false,
+        needs_trust: false,
+        trust: None,
+        bridge_path: paths::bridge_exe(home).to_string_lossy().into_owned(),
+        snapshots_dir: paths::snapshots_dir(home).to_string_lossy().into_owned(),
+    };
+
+    // A missing file is `None`; one that cannot be read or parsed makes the state unparsable.
+    let mut readonly = false;
+    let mut values = Vec::new();
+    for file in [&hooks_file, &settings_file] {
+        let text = match std::fs::read_to_string(file) {
+            Ok(text) => text,
+            Err(e) if e.kind() == ErrorKind::NotFound => {
+                values.push(None);
+                continue;
+            }
+            Err(e) => {
+                setup.settings_state = SettingsState::Unparsable;
+                setup.parse_error = Some(ParseProblem {
+                    line: 1,
+                    message: format!("{}: {e}", file.display()),
+                });
+                return Ok(setup);
+            }
+        };
+        match (parse_problem(&text), read_value(&text)) {
+            (None, Ok(value)) => values.push(Some(value)),
+            (problem, _) => {
+                let (line, message) = problem.unwrap_or((1, "the file does not parse".to_string()));
+                setup.settings_state = SettingsState::Unparsable;
+                setup.parse_error = Some(ParseProblem {
+                    line,
+                    message: format!("{}: {message}", file.display()),
+                });
+                return Ok(setup);
+            }
+        }
+        readonly |= std::fs::metadata(file).is_ok_and(|m| m.permissions().readonly());
+    }
+    if values.iter().all(Option::is_none) {
+        setup.settings_state = SettingsState::Missing;
+    } else if readonly {
+        setup.settings_state = SettingsState::ReadOnly;
+    }
+    let chain = std::fs::read_to_string(paths::statusline_chain(home, ANTIGRAVITY))
+        .ok()
+        .and_then(|t| read_value(&t).ok());
+    let found = agy::inspect(values[0].as_ref(), values[1].as_ref(), chain.as_ref(), home);
+    setup.hooks = found.install;
+    setup.approve_installed = found.approve_installed;
+    setup.has_own_statusline = found.has_own_statusline;
+    setup.chained = found.chained;
+    Ok(setup)
+}
+
 pub async fn setup(State(st): State<AppState>, UrlPath(agent): UrlPath<String>) -> Result<Json<AgentSetup>, Fail> {
     let adapter = adapter(&agent)?;
     let setup = tokio::task::spawn_blocking(move || match adapter {
         Adapter::Claude => setup_of(&st),
         Adapter::Codex => codex_setup_of(&st),
+        Adapter::Antigravity => agy_setup_of(&st),
     })
     .await
     .map_err(failed)??;
@@ -418,6 +531,18 @@ pub async fn plan(
                 st.ensure_bridge(&want)?;
                 codex::hooks::install_plan(&inputs.hooks_path, inputs.text.as_deref(), &st.0.home, &want)
             }
+            Adapter::Antigravity => {
+                let inputs = st.agy_inputs()?;
+                st.ensure_bridge(&want)?;
+                agy::install_plan(
+                    &inputs.user_home,
+                    inputs.hooks_text.as_deref(),
+                    inputs.settings_text.as_deref(),
+                    inputs.chain_text.as_deref(),
+                    &st.0.home,
+                    &want,
+                )
+            }
         }
         .map_err(|e| refused(&e))?;
         Ok::<_, Fail>(st.0.config.preview(changes))
@@ -452,6 +577,21 @@ pub async fn remove_plan(
             let inputs = st.codex_inputs()?;
             let changes = codex::hooks::remove_plan(&inputs.hooks_path, inputs.text.as_deref(), &st.0.home)
                 .map_err(|e| refused(&e))?;
+            Ok(RemovePreview {
+                preview: st.0.config.preview(changes),
+                statusline_left: false,
+            })
+        }
+        Adapter::Antigravity => {
+            let inputs = st.agy_inputs()?;
+            let changes = agy::remove_plan(
+                &inputs.user_home,
+                inputs.hooks_text.as_deref(),
+                inputs.settings_text.as_deref(),
+                inputs.chain_text.as_deref(),
+                &st.0.home,
+            )
+            .map_err(|e| refused(&e))?;
             Ok(RemovePreview {
                 preview: st.0.config.preview(changes),
                 statusline_left: false,

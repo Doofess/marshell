@@ -225,15 +225,15 @@ async fn remove_plan_after_install_restores_the_file() {
 }
 
 #[tokio::test]
-async fn antigravity_is_still_404() {
+async fn an_unknown_agent_is_still_404() {
     let e = env();
-    let (status, _) = get(&e.app, "/v1/agents/antigravity/setup").await;
+    let (status, body) = get(&e.app, "/v1/agents/nope/setup").await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+    let (status, _) = post(&e.app, "/v1/agents/nope/hooks/plan", WANT()).await;
     assert_eq!(status, StatusCode::NOT_FOUND);
-    let (status, _) = post(&e.app, "/v1/agents/antigravity/hooks/plan", WANT()).await;
+    let (status, _) = post(&e.app, "/v1/agents/nope/hooks/remove-plan", json!({})).await;
     assert_eq!(status, StatusCode::NOT_FOUND);
-    let (status, _) = post(&e.app, "/v1/agents/antigravity/hooks/remove-plan", json!({})).await;
-    assert_eq!(status, StatusCode::NOT_FOUND);
-    let (status, _) = get(&e.app, "/v1/agents/nope/setup").await;
+    let (status, _) = get(&e.app, "/v1/agents/gemini/setup").await;
     assert_eq!(status, StatusCode::NOT_FOUND);
 }
 
@@ -295,6 +295,204 @@ async fn setup_never_copies_the_programs() {
     let (status, _) = get(&e.app, "/v1/agents/claude/setup").await;
     assert_eq!(status, StatusCode::OK);
     assert!(!paths::bridge_exe(&e.home).exists());
+}
+
+// ---- Antigravity ----
+
+struct AgyEnv {
+    _dir: tempfile::TempDir,
+    app: axum::Router,
+    home: PathBuf,
+    hooks: PathBuf,
+    settings: PathBuf,
+}
+
+/// A state whose Antigravity user home is a folder inside the recorded project, so the config service may write
+/// it. `home_name` is the Marshell home's folder name; the bridge file exists when `bridge` is set.
+fn agy_env_in(dir: tempfile::TempDir, home_name: &str, bridge: bool) -> AgyEnv {
+    let root = canonical(dir.path());
+    let home = root.join(home_name);
+    let project = root.join("project");
+    let user_home = project.join("user");
+    std::fs::create_dir_all(&home).unwrap();
+    std::fs::create_dir_all(&user_home).unwrap();
+    record(&home, &project, 1).unwrap();
+    let st = AppState::new(
+        TOKEN.into(),
+        PORT,
+        vec!["http://tauri.localhost".into()],
+        home.clone(),
+        Vec::new(),
+    )
+    .with_claude_settings(project.join("settings.json"))
+    .with_agy_home(user_home.clone())
+    .with_agent_path(|_| None);
+    if bridge {
+        let bridge = paths::bridge_exe(&home);
+        std::fs::create_dir_all(bridge.parent().unwrap()).unwrap();
+        std::fs::write(&bridge, "").unwrap();
+    }
+    AgyEnv {
+        _dir: dir,
+        app: router(st),
+        home,
+        hooks: marshell_core::agents::antigravity::hooks::hooks_path(&user_home),
+        settings: marshell_core::agents::antigravity::hooks::settings_path(&user_home),
+    }
+}
+
+fn agy_env() -> AgyEnv {
+    agy_env_in(tempfile::tempdir().unwrap(), "home", true)
+}
+
+async fn install_agy(e: &AgyEnv) {
+    let (status, preview) = post(&e.app, "/v1/agents/antigravity/hooks/plan", WANT()).await;
+    assert_eq!(status, StatusCode::OK, "{preview}");
+    assert_eq!(preview["can_apply"], true, "{preview}");
+    let (status, applied) = post(&e.app, "/v1/config/apply", shown(&preview)).await;
+    assert_eq!(status, StatusCode::OK, "{applied}");
+}
+
+#[tokio::test]
+async fn antigravity_setup_reports_both_files() {
+    let e = agy_env();
+    let (status, setup) = get(&e.app, "/v1/agents/antigravity/setup").await;
+    assert_eq!(status, StatusCode::OK, "{setup}");
+    assert_eq!(setup["agent"], "antigravity");
+    assert_eq!(setup["found"], false);
+    assert_eq!(setup["settings_state"], "missing");
+    assert_eq!(setup["hooks"], "none");
+    assert_eq!(setup["needs_trust"], false);
+    assert!(setup.get("trust").is_none(), "{setup}");
+    assert_eq!(setup["settings_path"], e.settings.to_string_lossy().as_ref());
+    assert_eq!(setup["hooks_path"], e.hooks.to_string_lossy().as_ref());
+    assert!(setup["hooks_path"].as_str().unwrap().ends_with("hooks.json"));
+    assert!(setup["settings_path"].as_str().unwrap().ends_with("settings.json"));
+    // Only Antigravity names a second file.
+    let (_, claude) = get(&e.app, "/v1/agents/claude/setup").await;
+    assert!(claude.get("hooks_path").is_none(), "{claude}");
+    let (_, codex) = get(&e.app, "/v1/agents/codex/setup").await;
+    assert!(codex.get("hooks_path").is_none(), "{codex}");
+
+    install_agy(&e).await;
+    let (_, setup) = get(&e.app, "/v1/agents/antigravity/setup").await;
+    assert_eq!(setup["settings_state"], "ok", "{setup}");
+    assert_eq!(setup["hooks"], "installed", "{setup}");
+}
+
+#[tokio::test]
+async fn antigravity_install_then_remove_round_trips() {
+    // Both files missing: they end missing (hooks.json deleted, settings.json gone with its statusLine).
+    let e = agy_env();
+    install_agy(&e).await;
+    assert!(e.hooks.exists() && e.settings.exists());
+    let (status, removal) = post(&e.app, "/v1/agents/antigravity/hooks/remove-plan", json!({})).await;
+    assert_eq!(status, StatusCode::OK, "{removal}");
+    assert_eq!(removal["statusline_left"], false);
+    let (status, applied) = post(&e.app, "/v1/config/apply", shown(&removal["preview"])).await;
+    assert_eq!(status, StatusCode::OK, "{applied}");
+    assert!(!e.hooks.exists(), "hooks.json should be gone");
+    if e.settings.exists() {
+        let left = std::fs::read_to_string(&e.settings).unwrap();
+        assert!(!left.contains("mshl1"), "{left}");
+    }
+    let (_, setup) = get(&e.app, "/v1/agents/antigravity/setup").await;
+    assert_eq!(setup["hooks"], "none", "{setup}");
+
+    // The person's own files: BOM, CRLF, their own named hook and status line.
+    let e = agy_env();
+    let hooks = "\u{feff}{\r\n  \"mine\": {\r\n    \"enabled\": true,\r\n    \"Stop\": [{\"type\": \"command\", \"command\": \"my-stop\"}]\r\n  }\r\n}\r\n";
+    let settings =
+        "{\r\n  \"theme\": \"dark\",\r\n  \"statusLine\": {\"type\": \"command\", \"command\": \"my-line\"}\r\n}\r\n";
+    std::fs::create_dir_all(e.hooks.parent().unwrap()).unwrap();
+    std::fs::create_dir_all(e.settings.parent().unwrap()).unwrap();
+    std::fs::write(&e.hooks, hooks).unwrap();
+    std::fs::write(&e.settings, settings).unwrap();
+    install_agy(&e).await;
+    let during = std::fs::read_to_string(&e.hooks).unwrap();
+    assert!(during.contains("my-stop") && during.contains("mshl1"), "{during}");
+    let (_, removal) = post(&e.app, "/v1/agents/antigravity/hooks/remove-plan", json!({})).await;
+    let (status, applied) = post(&e.app, "/v1/config/apply", shown(&removal["preview"])).await;
+    assert_eq!(status, StatusCode::OK, "{applied}");
+    assert_eq!(std::fs::read_to_string(&e.hooks).unwrap(), hooks);
+    assert_eq!(std::fs::read_to_string(&e.settings).unwrap(), settings);
+}
+
+#[tokio::test]
+async fn antigravity_plan_on_an_unparsable_hooks_file_is_422() {
+    let e = agy_env();
+    std::fs::create_dir_all(e.hooks.parent().unwrap()).unwrap();
+    std::fs::write(&e.hooks, "{ \"mine\": [oops\n").unwrap();
+    let (status, body) = post(&e.app, "/v1/agents/antigravity/hooks/plan", WANT()).await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+    let (status, _) = post(&e.app, "/v1/agents/antigravity/hooks/remove-plan", json!({})).await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(std::fs::read_to_string(&e.hooks).unwrap(), "{ \"mine\": [oops\n");
+    let (_, setup) = get(&e.app, "/v1/agents/antigravity/setup").await;
+    assert_eq!(setup["settings_state"], "unparsable", "{setup}");
+}
+
+#[tokio::test]
+async fn antigravity_plan_with_a_bridge_path_agy_cant_run_is_422() {
+    let e = agy_env_in(tempfile::tempdir().unwrap(), "100%home", true);
+    let (status, body) = post_raw(&e.app, "/v1/agents/antigravity/hooks/plan", WANT()).await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    let text = String::from_utf8_lossy(&body);
+    if cfg!(windows) {
+        assert!(
+            text.contains("Antigravity can't run Marshell's hook from")
+                && text.contains("the path holds a % or a quote"),
+            "{text}"
+        );
+    }
+    assert!(!e.hooks.exists());
+}
+
+#[tokio::test]
+async fn antigravity_entries_from_another_home_are_orphaned() {
+    let e = agy_env();
+    install_agy(&e).await;
+    // The hooks stay while the bridge they run is gone (a moved Marshell home, a half-finished uninstall).
+    std::fs::remove_file(paths::bridge_exe(&e.home)).unwrap();
+    let (_, setup) = get(&e.app, "/v1/agents/antigravity/setup").await;
+    assert_eq!(setup["hooks"], "orphaned", "{setup}");
+
+    // A second app, another Marshell home with a bridge, over the same hooks.json.
+    let other = {
+        let dir = tempfile::tempdir().unwrap();
+        let root = canonical(dir.path());
+        let home = root.join("other-home");
+        let user_home = e
+            .hooks
+            .parent()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .to_path_buf();
+        std::fs::create_dir_all(paths::bridge_exe(&home).parent().unwrap()).unwrap();
+        std::fs::write(paths::bridge_exe(&home), "").unwrap();
+        let st = AppState::new(
+            TOKEN.into(),
+            PORT,
+            vec!["http://tauri.localhost".into()],
+            home,
+            Vec::new(),
+        )
+        .with_agy_home(user_home)
+        .with_agent_path(|_| None);
+        (dir, router(st))
+    };
+    let (_, setup) = get(&other.1, "/v1/agents/antigravity/setup").await;
+    assert_eq!(setup["hooks"], "orphaned", "{setup}");
+
+    // The removal is offered, and it takes the entries out.
+    let (status, removal) = post(&e.app, "/v1/agents/antigravity/hooks/remove-plan", json!({})).await;
+    assert_eq!(status, StatusCode::OK, "{removal}");
+    let (status, applied) = post(&e.app, "/v1/config/apply", shown(&removal["preview"])).await;
+    assert_eq!(status, StatusCode::OK, "{applied}");
+    assert!(!e.hooks.exists());
 }
 
 // ---- Codex ----

@@ -3,6 +3,7 @@
 //!
 //! Exit codes: 0 done or nothing to do, 1 refused, failed or declined.
 
+use marshell_core::agents::antigravity::hooks as agy_hooks;
 use marshell_core::agents::claude::hooks::{remove_plan, settings_path};
 use marshell_core::agents::codex::hooks as codex_hooks;
 use marshell_core::config::service::{ApplyError, ConfigService};
@@ -173,44 +174,70 @@ pub fn run(
             .map(|changes| (text, changes))
             .map_err(|e| e.to_string())
     });
-    let (codex_text, codex_changes, codex_failed) = match codex {
-        Ok((text, changes)) => (text, changes, false),
+    let mut others_failed = false;
+    let mut extras = Vec::new();
+    match codex {
+        Ok((text, changes)) => {
+            if !changes.edits.is_empty() {
+                extras.push(changes);
+            } else if text.is_some() {
+                let _ = writeln!(out, "Marshell has no hooks in {}.", codex_file.display());
+            }
+        }
         Err(e) => {
             let _ = writeln!(out, "{e}");
-            (
-                None,
-                ChangeSet {
-                    title: String::new(),
-                    reason: String::new(),
-                    edits: Vec::new(),
-                },
-                true,
-            )
+            others_failed = true;
         }
-    };
+    }
+    // Antigravity's hooks.json and settings.json, the same way: a problem is reported and the rest goes on.
+    let agy_file = agy_hooks::hooks_path(user_home);
+    let agy = read_text(&agy_file).and_then(|hooks_text| {
+        let settings_text = read_text(&agy_hooks::settings_path(user_home))?;
+        let chain_text = read_text(&paths::statusline_chain(home, "antigravity"))?;
+        agy_hooks::remove_plan(
+            user_home,
+            hooks_text.as_deref(),
+            settings_text.as_deref(),
+            chain_text.as_deref(),
+            home,
+        )
+        .map(|changes| (hooks_text, changes))
+        .map_err(|e| e.to_string())
+    });
+    match agy {
+        Ok((text, changes)) => {
+            if !changes.edits.is_empty() {
+                extras.push(changes);
+            } else if text.is_some() {
+                let _ = writeln!(out, "Marshell has no hooks in {}.", agy_file.display());
+            }
+        }
+        Err(e) => {
+            let _ = writeln!(out, "{e}");
+            others_failed = true;
+        }
+    }
     let claude_empty = plan.changes.edits.is_empty();
-    if codex_changes.edits.is_empty() {
-        if codex_text.is_some() {
-            let _ = writeln!(out, "Marshell has no hooks in {}.", codex_file.display());
+    for changes in extras {
+        if plan.changes.edits.is_empty() {
+            plan.changes = changes;
+        } else {
+            plan.changes = ChangeSet {
+                title: "Turn Marshell's hooks off".to_string(),
+                reason: format!("{} {}", plan.changes.reason, changes.reason),
+                edits: plan.changes.edits.into_iter().chain(changes.edits).collect(),
+            };
         }
-    } else if claude_empty {
-        plan.changes = codex_changes;
-    } else {
-        plan.changes = ChangeSet {
-            title: "Turn Marshell's hooks off".to_string(),
-            reason: format!("{} {}", plan.changes.reason, codex_changes.reason),
-            edits: plan.changes.edits.into_iter().chain(codex_changes.edits).collect(),
-        };
     }
     let bin = paths::bin_dir(home);
-    let has_bin = bin.exists() && !codex_failed;
+    let has_bin = bin.exists() && !others_failed;
     // Non-zero when something was left, so a script notices.
-    let ok = i32::from(codex_failed);
+    let ok = i32::from(others_failed);
     let keep_note = |out: &mut dyn Write| {
-        if codex_failed && bin.exists() {
+        if others_failed && bin.exists() {
             let _ = writeln!(
                 out,
-                "The folder {} was left in place, because Codex's hooks may still point at it.",
+                "The folder {} was left in place, because Codex's or Antigravity's hooks may still point at it.",
                 bin.display()
             );
         }
@@ -576,6 +603,71 @@ mod tests {
         assert!(out.contains("left in place"), "{out}");
         assert!(!out.contains("will be removed"), "{out}");
         let _ = broken;
+    }
+
+    /// Installs Antigravity's hooks under the fixture's user home with the real plan and config service.
+    fn install_agy(f: &Fixture, mine: Option<&str>) -> PathBuf {
+        use marshell_core::agents::antigravity::hooks as ah;
+        let path = ah::hooks_path(&f.user_home);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        if let Some(text) = mine {
+            std::fs::write(&path, text).unwrap();
+        }
+        let want = HookPlanRequest {
+            status: true,
+            statusline: false,
+            approve: false,
+        };
+        let changes = ah::install_plan(&f.user_home, mine, None, None, &f.home, &want).unwrap();
+        let service = ConfigService::new(f.home.clone());
+        let preview = service.preview(changes);
+        assert!(preview.can_apply, "{preview:?}");
+        let request = ApplyRequest {
+            changeset_id: preview.changeset_id.clone(),
+            expected_hashes: preview
+                .files
+                .iter()
+                .map(|f| ExpectedHash {
+                    path: f.path.clone(),
+                    hash: f.before_hash.clone(),
+                })
+                .collect(),
+        };
+        service.apply(&request, 3).unwrap();
+        assert!(std::fs::read_to_string(&path).unwrap().contains("mshl1"));
+        path
+    }
+
+    #[test]
+    fn uninstall_removes_antigravity_hooks() {
+        let f = installed(ORIGINAL);
+        let mine = "{\"mine\": {\"enabled\": true, \"Stop\": [{\"type\": \"command\", \"command\": \"my-stop\"}]}}\n";
+        let agy = install_agy(&f, Some(mine));
+        let (code, out) = run_with(&f, "y\n", false);
+        assert_eq!(code, 0, "{out}");
+        assert_eq!(out.matches("Apply these changes?").count(), 1, "{out}");
+        assert!(out.contains("hooks.json"), "{out}");
+        let after = std::fs::read_to_string(&agy).unwrap();
+        assert!(after.contains("my-stop") && !after.contains("mshl1"), "{after}");
+        assert_eq!(std::fs::read_to_string(&f.settings).unwrap(), ORIGINAL);
+        assert!(!marshell_core::paths::bin_dir(&f.home).exists(), "{out}");
+    }
+
+    #[test]
+    fn uninstall_goes_on_past_an_unreadable_hooks_json() {
+        let f = installed(ORIGINAL);
+        // A folder where the file should be: it can't be read.
+        let agy = marshell_core::agents::antigravity::hooks::hooks_path(&f.user_home);
+        std::fs::create_dir_all(&agy).unwrap();
+        let (code, out) = run_with(&f, "y\n", false);
+        assert!(out.contains("hooks.json"), "{out}");
+        assert_eq!(out.matches("Apply these changes?").count(), 1, "{out}");
+        assert_eq!(std::fs::read_to_string(&f.settings).unwrap(), ORIGINAL);
+        assert!(agy.is_dir());
+        // The bridge may still be what its entries run, so bin stays and the exit says so.
+        assert!(marshell_core::paths::bridge_exe(&f.home).exists());
+        assert!(out.contains("left in place"), "{out}");
+        assert_ne!(code, 0, "{out}");
     }
 
     #[test]

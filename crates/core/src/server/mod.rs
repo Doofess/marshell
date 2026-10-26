@@ -153,6 +153,8 @@ struct Inner {
     claude_settings: Option<PathBuf>,
     /// Codex's `hooks.json` when a test or a caller names one; None means `$CODEX_HOME`, else `~/.codex`.
     codex_hooks: Option<PathBuf>,
+    /// The user home Antigravity's files are planned under when a test names one; None means the user's home.
+    agy_home: Option<PathBuf>,
     /// Home and managed settings paths for reading Claude's compact window; tests supply scratch paths.
     claude_compact_paths: Option<(PathBuf, Vec<PathBuf>)>,
     /// Where the app's own programs sit, so setting up hooks can put a missing bridge back. None in tests.
@@ -247,6 +249,7 @@ impl AppState {
             storage: std::sync::OnceLock::new(),
             claude_settings: None,
             codex_hooks: None,
+            agy_home: None,
             claude_compact_paths: None,
             programs_dir: None,
             versions: Mutex::new(HashMap::new()),
@@ -283,6 +286,15 @@ impl AppState {
         Arc::get_mut(&mut self.0)
             .expect("with_codex_hooks runs before the state is shared")
             .codex_hooks = Some(path);
+        self
+    }
+    /// Names the user home under which Antigravity's `.gemini/config/hooks.json` and
+    /// `.gemini/antigravity-cli/settings.json` are planned, in place of the environment. Call it before the state
+    /// is cloned.
+    pub fn with_agy_home(mut self, user_home: PathBuf) -> Self {
+        Arc::get_mut(&mut self.0)
+            .expect("with_agy_home runs before the state is shared")
+            .agy_home = Some(user_home);
         self
     }
     /// Names the user home and managed files used for Claude's compact window, before state is shared.
