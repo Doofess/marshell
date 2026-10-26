@@ -60,6 +60,7 @@ fn refused(err: &hooks::PlanError) -> Fail {
             "{} has a {pointer} that is not an object, so Marshell will not edit it.",
             path.display()
         ),
+        hooks::PlanError::BridgePath { .. } => format!("{err}."),
     };
     (StatusCode::UNPROCESSABLE_ENTITY, message)
 }

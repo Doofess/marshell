@@ -131,6 +131,12 @@ pub enum PlanError {
     DoesNotParse { path: PathBuf, problem: (u32, String) },
     /// A value the CLI expects to be an object or array is something else, at `pointer`.
     NotAnObject { path: PathBuf, pointer: String },
+    /// The bridge's path can't be written into a command line the agent's shell runs safely.
+    BridgePath {
+        agent: &'static str,
+        path: PathBuf,
+        reason: &'static str,
+    },
 }
 
 impl fmt::Display for PlanError {
@@ -151,6 +157,9 @@ impl fmt::Display for PlanError {
                     "{} has a value at {pointer} of a kind the agent does not use",
                     path.display()
                 )
+            }
+            PlanError::BridgePath { agent, path, reason } => {
+                write!(f, "{agent} can't run Marshell's hook from {}: {reason}", path.display())
             }
         }
     }

@@ -202,6 +202,34 @@ fn describe(d: Duration) -> String {
 mod tests {
     use super::*;
 
+    /// agy shows "Statusline Error" for a status line that fails, so the bridge never does for it.
+    #[test]
+    fn antigravity_with_no_line_of_its_own_prints_nothing() {
+        let env = |_: &str| None;
+        let home = tempfile::tempdir().unwrap();
+        let chain = home.path().join("agents").join("antigravity");
+        std::fs::create_dir_all(&chain).unwrap();
+        let chain = chain.join("statusline-chain.json");
+        let chains: [Option<&str>; 5] = [
+            None,
+            Some(r#"{"statusLine":null}"#),
+            Some("not json"),
+            Some(r#"{"statusLine":{"type":"command"}}"#),
+            Some(r#"{"statusLine":{"type":"command","command":"x --tag mshl1"}}"#),
+        ];
+        for text in chains {
+            match text {
+                Some(text) => std::fs::write(&chain, text).unwrap(),
+                None => drop(std::fs::remove_file(&chain)),
+            }
+            assert!(
+                run(Some(home.path()), "antigravity", b"{}", &env).is_empty(),
+                "{text:?}"
+            );
+        }
+        assert!(run(None, "antigravity", b"{}", &env).is_empty());
+    }
+
     #[test]
     fn a_hung_original_is_cut_off() {
         let path = std::env::var("PATH").unwrap_or_default();

@@ -1,5 +1,6 @@
 //! One module per agent CLI. Each holds that agent's own JSON; the code around it stays vendor-neutral.
 
+pub mod antigravity;
 pub mod claude;
 pub mod codex;
 pub mod common;
