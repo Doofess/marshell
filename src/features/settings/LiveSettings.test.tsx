@@ -96,6 +96,19 @@ describe("visibleControls", () => {
     expect(visibleControls([control(true)])).toEqual([]);
     expect(visibleControls([shown])[0]).toBe(shown);
   });
+
+  it("stops once on a radio group, at its checked radio, as the browser's own Tab does", () => {
+    const radio = (name: string, checked: boolean) => ({ closest: () => null, type: "radio", name, checked, tabIndex: 0 });
+    const button = { closest: () => null, type: "button", name: "", checked: false, tabIndex: 0 };
+    const [dark, light, system] = [radio("theme", false), radio("theme", true), radio("theme", false)];
+    const [small, large] = [radio("size", false), radio("size", false)];
+    expect(visibleControls([button, dark, light, system, small, large])).toEqual([button, light, small]);
+  });
+
+  it("leaves out a control taken out of the tab order", () => {
+    const out = { closest: () => null, tabIndex: -1 };
+    expect(visibleControls([out])).toEqual([]);
+  });
 });
 
 describe("closeOrRefuse", () => {

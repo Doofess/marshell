@@ -42,9 +42,20 @@ export function focusSettingsHeading(root: { querySelector(selector: string): { 
   root?.querySelector(".settings-shell__heading")?.focus();
 }
 
-/** The controls Tab walks: a section kept mounted after a switch is hidden, and its controls are out of reach. */
-export function visibleControls<T extends { closest(selector: string): unknown }>(controls: T[]): T[] {
-  return controls.filter((c) => !c.closest("[hidden]"));
+type Control = { closest(selector: string): unknown; tabIndex?: number; type?: string; name?: string; checked?: boolean };
+
+/**
+ * The controls Tab walks: a section kept mounted after a switch is hidden, and its controls are out of reach. A group of native
+ * radios is one stop, at its checked radio (else its first), as the browser's own Tab has it; the arrows move inside the group.
+ */
+export function visibleControls<T extends Control>(controls: T[]): T[] {
+  const shown = controls.filter((c) => !c.closest("[hidden]") && (c.tabIndex ?? 0) >= 0);
+  const radios = (name: string) => shown.filter((c) => c.type === "radio" && c.name === name);
+  return shown.filter((c) => {
+    if (c.type !== "radio" || !c.name) return true;
+    const group = radios(c.name);
+    return c.checked || (!group.some((r) => r.checked) && group[0] === c);
+  });
 }
 
 /** Closing is refused while the shell profiles hold unsaved edits, as their dialog refused: the change bar stays until saved or discarded. */
