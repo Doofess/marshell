@@ -117,7 +117,7 @@ git commit -m "docs(research): record agy's hooks, status line and payloads, wit
   - `permission.rs`: `an_antigravity_allow_is_printed_as_it_is`, `an_antigravity_deny_with_a_reason_is_printed_as_it_is`, `a_codex_shaped_answer_on_antigravity_is_rejected`, `an_antigravity_answer_with_an_overwrite_is_rejected`, `an_empty_object_on_antigravity_is_rejected`, `the_antigravity_neutral_answer_is_empty`.
   - `args.rs`: `parses_an_event`, `an_event_needs_a_value`, `an_event_that_is_not_an_identifier_is_an_error`, `a_second_event_is_an_error`.
   - `lib.rs`: `the_event_is_written_into_the_body` (body `{"conversationId":"c"}` with `--event Stop` posts `hook_event_name: "Stop"`), `an_existing_event_name_is_kept`, `a_body_that_is_not_an_object_is_posted_as_it_is`.
-  - `permission.rs` or `lib.rs`: `antigravity_outside_a_tab_prints_the_neutral_answer` (no `MARSHELL_TAB_ID`), `antigravity_with_no_core_prints_the_neutral_answer` (no endpoint), `antigravity_with_a_server_error_prints_nothing` (a 500 from a test server), `an_antigravity_event_prints_nothing`, `claude_and_codex_outside_a_tab_print_nothing`. Each asserts empty stdout and exit code 0.
+  - `permission.rs` or `lib.rs`: `antigravity_outside_a_tab_prints_the_neutral_answer` (no `MARSHELL_TAB_ID`), `antigravity_with_no_core_prints_the_neutral_answer` (no endpoint), `antigravity_with_a_server_error_prints_nothing` (a 500 from a test server), `an_antigravity_event_prints_nothing`, `an_unknown_flag_on_antigravity_prints_nothing` (an older bridge meeting a newer flag must not block agy; `main.rs` already exits 0 and catches panics), `garbage_stdin_on_antigravity_prints_nothing`, `claude_and_codex_outside_a_tab_print_nothing`. Each asserts empty stdout and exit code 0.
 - [ ] **Step 2: Run `cargo test -p marshell-hook -j 4`.** Expected: FAIL.
 - [ ] **Step 3: Implement it.**
 - [ ] **Step 4: Run Step 2's command.** Expected: PASS.
@@ -242,6 +242,7 @@ git commit -m "docs(research): record agy's hooks, status line and payloads, wit
 
   No fold reads `lastUserInput`, and nothing from it reaches `LiveStatus`.
 
+- Produces in `agents::antigravity`: `pub fn strip_personal(body: &mut Value)`, which removes a top-level `lastUserInput` and `email`. `server::hook::post` calls it for agent `antigravity` right after parsing, before the hook log (`HookEventRecord.body`, the 200-event ring), the latest-status-line store, the fold, history and holds, so neither value is kept anywhere in the core.
 - `post`'s `matches!(agent, "claude" | "codex")` becomes `"claude" | "codex" | "antigravity"`. `fold_live` takes `Statusline` from Claude and Antigravity, and gates Antigravity with its gate.
 
 - [ ] **Step 1: Write the failing tests.**
@@ -250,7 +251,8 @@ git commit -m "docs(research): record agy's hooks, status line and payloads, wit
   - `the_status_line_sets_model_and_context` (from `statusline/1.4.7/working.json`), `the_status_line_leaves_the_state_alone`, `the_status_line_sets_no_plan_meter`, `pending_is_read_from_pending_json`, `a_missing_pending_key_is_false` (`idle.json`).
   - Gate: `antigravity_1_4_7_is_known`; `a_later_version_is_not_recorded`, asserting the exact note; `an_earlier_version_is_older`.
   - Registry: `an_agent_prompt_is_a_limited_needs_you`, `an_agent_prompt_does_not_cover_a_held_request`, `an_agent_prompt_clears_on_false_on_the_next_event_and_on_typing`.
-  - `agents_api.rs`: `an_antigravity_event_folds_into_its_tab`, `an_antigravity_status_line_with_pending_raises_needs_you`, `antigravity_status_off_sets_its_note`.
+  - `strip_personal_removes_the_last_user_input_and_the_email` (the `Stop` and `working.json` fixtures).
+  - `agents_api.rs`: `the_event_log_keeps_no_last_user_input_or_email` (post the 1.4.7 `Stop` fixture and `working.json`, then read the events route: neither fixture's value appears), `an_antigravity_event_folds_into_its_tab`, `an_antigravity_status_line_with_pending_raises_needs_you`, `antigravity_status_off_sets_its_note`.
 - [ ] **Step 2: Run `cargo test -p marshell-core -j 4 --lib antigravity:: registry::` and `cargo test -p marshell-core -j 4 --test agents_api`.** Expected: FAIL.
 - [ ] **Step 3: Implement it.**
 - [ ] **Step 4: Run Step 2's commands, then `cargo test -p marshell-core -j 4 --lib claude:: codex::`.** Expected: PASS.
@@ -260,7 +262,7 @@ git commit -m "docs(research): record agy's hooks, status line and payloads, wit
 
 **Files:**
 - Create: `crates/core/src/agents/antigravity/request.rs`, `crates/core/src/agents/antigravity/policy.rs`
-- Modify: `crates/core/src/agents/mod.rs` (`supports_permissions`, `permission_view`, `permission_output`), `crates/core/src/server/hook.rs` (`post`), the release and timeout path that produces the hook's answer
+- Modify: `crates/core/src/server/mod.rs` (`permission_hold_from_env`'s clamp), `crates/core/src/agents/mod.rs` (`supports_permissions`, `permission_view`, `permission_output`, `release_output`), `crates/core/src/server/hook.rs` (`post`), the release and timeout path that produces the hook's answer
 - Test: unit tests in `request.rs`, `policy.rs` and `profiles/detect.rs`; `crates/core/tests/permissions.rs`
 
 **Interfaces:**
@@ -268,7 +270,7 @@ git commit -m "docs(research): record agy's hooks, status line and payloads, wit
   - `pub fn detail(request: &Value) -> PermissionDetail`, from `toolCall{name,args}` (1.4.7 names and keys): `run_command` → `Bash { command: args.CommandLine, cwd }` (`cwd` only when it differs from the tab's); `edit_file` → `Edit` (`Path`, `Target`, `Replacement`); `write_file` → `Write` (`Path`, `Content`); an `mcp_`-prefixed tool → `Mcp`; anything else (`read_file` included) → `Other` with its arguments flattened by `common::flatten_input`. Task 1 saw no URL tool (the agent fetched with `curl.exe` through `run_command`), so there is no `Fetch` arm.
   - `pub fn view(p: &PendingPermission) -> Option<PermissionView>`, with `risk::classify` over the detail.
   - `pub fn permission_output(decision: &PermissionDecision, request: &Value) -> Result<Value, &'static str>` (the shared signature): allow → `{"decision":"ask"}`, which Task 1 saw run the call with no prompt under `--dangerously-skip-permissions` (a bare `allow` was never tried under the flag, and only Bypass holds); deny → `{"decision":"deny","reason":<the person's message or common::DENIED_TEXT>}`; always allow → `Err` with the decision 7 copy (A7: `permissionOverrides` grants nothing).
-  - `pub fn release_output() -> Value`: `{"decision":"deny","reason":common::DENIED_TEXT}`. A release and the core's hold timeout both answer it (decision 7; only Bypass holds, and under its flag an empty answer, `ask` and `force_ask` all run the call). The default hold (120 s, `MARSHELL_PERMISSION_HOLD_SECS` clamped to 590) ends before the bridge's 590 s deadline.
+  - `pub fn release_output() -> Value`: `{"decision":"deny","reason":common::DENIED_TEXT}`. A release and the core's hold timeout both answer it (decision 7; only Bypass holds, and under its flag an empty answer, `ask` and `force_ask` all run the call). The default hold is 120 s. `server::permission_hold_from_env` now clamps `MARSHELL_PERMISSION_HOLD_SECS` to 1..=580 s (was 590), so the core's answer always arrives before the bridge's 590 s budget runs out and prints nothing.
 - Produces in `agents`: `pub fn release_output(agent: &str, request: &Value) -> Option<Value>`: `None` for Claude and Codex (204, as today), `Some(antigravity::request::release_output())` for Antigravity. `server::hook::hold_permission` answers 200 with it for `Outcome::Released` and the timeout, instead of the 204.
 - Produces in `agents::antigravity::policy`: `pub fn holds(mode: SessionMode, risky: bool) -> bool`: `true` only for `Bypass` with a risky request (decision 7). Every other call passes at once (204), and agy's own mode decides, asking in its terminal where it would. `mode` is the tab's `SessionInfo.mode`, Manual when it is absent.
 - For an Antigravity `permission` post, `post` runs in this order: the tab must be open and its effective agent `Some("antigravity")`, or the core answers 204 at once (an Antigravity IDE started from a plain shell tab inherits `MARSHELL_TAB_ID` and reads the same `hooks.json`). Then `policy::holds`. Then `fold_live` with `held`. Then, when held, `hold_permission`. A pass folds as Working and raises no banner, sound or Departures entry.
@@ -279,6 +281,7 @@ git commit -m "docs(research): record agy's hooks, status line and payloads, wit
   - `request.rs`: one `detail` test per 1.4.7 `PreToolUse` fixture (`run_command`, `write_file`, `edit_file`, `read_file`, `read_file-outside`); `an_unknown_tool_is_other_with_its_args`; `allow_answers_ask`; `deny_carries_the_reason`; `always_allow_is_refused_with_the_copy`; `a_release_denies`.
   - `policy.rs`: `a_risky_command_is_held_in_bypass`, `a_safe_command_passes_in_bypass`, and `nothing_is_held_outside_bypass` (Manual, Plan, Auto-edit, Full auto, each with a risky and a safe request).
   - `permissions.rs`: `an_antigravity_risky_request_in_bypass_waits_for_the_card`, `an_antigravity_request_in_manual_passes_at_once`, `two_antigravity_tabs_each_get_their_own_answer` (both Bypass, both risky), `an_antigravity_request_from_an_unrecorded_version_still_reaches_the_card`, `an_antigravity_release_denies`, `an_antigravity_hold_that_times_out_denies` (a 1 s hold), `allow_on_an_antigravity_card_answers_ask`, `a_claude_release_still_answers_204`, `a_pass_never_shows_needs_permission`, `a_pass_raises_no_banner`, `an_antigravity_request_from_a_shell_tab_passes`.
+  - `server/mod.rs`: `the_hold_clamp_ends_before_the_bridge_budget` (`permission_hold_from_env(Some("9999"))` is 580 s, below the bridge's `Permission` budget).
   - `profiles/detect.rs`: `antigravity_launches_keep_their_native_mode_flags` (Manual none, Auto-edit `--mode accept-edits`, Bypass `--dangerously-skip-permissions`, with the hooks installed).
 - [ ] **Step 2: Run `cargo test -p marshell-core -j 4 --lib antigravity::` and `cargo test -p marshell-core -j 4 --test permissions`.** Expected: FAIL.
 - [ ] **Step 3: Implement it.**
@@ -309,20 +312,22 @@ git commit -m "docs(research): record agy's hooks, status line and payloads, wit
 ### Task 9: Antigravity in the Agents dialog, onboarding, rows and cards
 
 **Files:**
-- Modify: `src/lib/api/agents.ts` (`HookAgent`), `src/features/agents/AgentsDialog.tsx`, `src/features/agents/agentsState.ts`, `src/features/onboarding/LiveOnboarding.tsx`, `src/features/onboarding/consent.ts` (entry counts from Task 4), `src/features/approval/fromCore.ts`, `src/features/approval/ApproveCard.tsx` or `LiveCard.tsx` (no Answer in terminal for Antigravity), `src/features/sessions/toRow.ts`
+- Modify: `src/lib/api/agents.ts` (`HookAgent`), `src/features/agents/AgentsDialog.tsx`, `src/features/agents/agentsState.ts`, `src/features/onboarding/LiveOnboarding.tsx`, `src/features/onboarding/consent.ts` (entry counts from Task 4), `src/features/approval/fromCore.ts`, `src/features/approval/ApproveCard.tsx` or `LiveCard.tsx` (no Answer in terminal for Antigravity), `src/features/sessions/toRow.ts`, `src/features/modes/sessionModes.ts`
 - Test: the matching `*.test.ts(x)` files
 
 **Interfaces:**
 - Consumes: `AgentSetup.hooks_path` (Task 5), `Attention.limited` (Task 6), `PermissionView.agent`.
 - The Agents dialog's Antigravity section names both files and offers status, approve and status line. There is no hand-over switch (decision 9). Its removal copy is the Global constraints copy. Its approve toggle says what it does for agy: "Cards for risky commands in Bypass. In other modes Antigravity asks in its terminal." A plan refused with `PlanError::BridgePath` shows its message as the dialog's error.
+- `sessionModes.ts`: `launchArgs("antigravity", mode, hooksOn)` gives agy's native flags whether the hooks are on or off (decision 7: no strict start), so `switchKind` for Antigravity is `"native"` for every change between different flags and never `"instant"`; `decide` is not used for Antigravity (the core's `policy::holds` is). Today every mode change restarts the session through `begin_restart`, so this keeps the helpers truthful for a later instant switch.
 - An Antigravity card offers Allow and Deny only: no Answer in terminal (agy in Bypass has no prompt to hand over to, so a release denies) and no Always allow. A card that runs out denies, and the card's countdown copy says "Denies in <n> s".
 
 - [ ] **Step 1: Write the failing tests.**
   - `the_agents_dialog_lists_antigravity_with_both_files`, `the_antigravity_approve_toggle_says_bypass_only`, `antigravity_removal_copy_is_exact`, `a_bridge_path_refusal_shows_its_message`.
+  - `sessionModes.test.ts`: `antigravity_launches_natively_with_hooks_on`, `every_antigravity_mode_switch_is_native`.
   - `onboarding_offers_antigravity_when_agy_is_found`, `antigravity_entry_counts_match_the_plan`.
   - `an_antigravity_card_shows_its_command`, `an_antigravity_card_offers_allow_and_deny_only`, `an_antigravity_card_says_it_denies_when_it_runs_out`, `an_antigravity_row_with_a_limited_needs_you_says_status_limited`, `an_antigravity_row_shows_no_plan_meter`.
   - Each new control is reached by Tab, and its forced-colours rule exists (`rules.test.tsx` passes).
-- [ ] **Step 2: Run `pnpm test src/features/agents src/features/onboarding src/features/approval src/features/sessions`.** Expected: FAIL.
+- [ ] **Step 2: Run `pnpm test src/features/agents src/features/onboarding src/features/approval src/features/sessions src/features/modes`.** Expected: FAIL.
 - [ ] **Step 3: Implement it.**
 - [ ] **Step 4: Run Step 2's command, then `pnpm test` and `pnpm build`.** Expected: PASS.
 - [ ] **Step 5: Commit** as `feat(antigravity): show Antigravity in the Agents dialog, onboarding, rows and cards`.
