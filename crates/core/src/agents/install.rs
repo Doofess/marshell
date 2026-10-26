@@ -90,7 +90,12 @@ pub fn install_kind(agent: &str, exe: &Path, exists: &dyn Fn(&Path) -> bool) -> 
     };
     let native = match agent {
         "claude" => file == "claude.exe" && folder.ends_with(&[".local".into(), "bin".into()]),
-        "codex" => has_sequence(folder, &["programs", "openai", "codex", "bin"]),
+        // `Programs\OpenAI\Codex\bin` is a junction into `.codex\packages\standalone\releases\<version>\bin`.
+        "codex" => {
+            has_sequence(folder, &["programs", "openai", "codex", "bin"])
+                || (has_sequence(folder, &[".codex", "packages", "standalone"])
+                    && folder.last().is_some_and(|d| d == "bin"))
+        }
         "antigravity" => file == "agy.exe" && folder.ends_with(&["agy".into(), "bin".into()]),
         _ => false,
     };
@@ -250,6 +255,15 @@ mod tests {
         );
         assert_eq!(
             kind("antigravity", r"C:\Users\u\AppData\Local\agy\bin\agy.exe"),
+            InstallKind::Native
+        );
+        // Codex's installer makes `Programs\OpenAI\Codex\bin` a junction into its release folder, which is what
+        // the caller's canonicalized path shows.
+        assert_eq!(
+            kind(
+                "codex",
+                r"C:\Users\u\.codex\packages\standalone\releases\0.164.0-x86_64-pc-windows-msvc\bin\codex.exe"
+            ),
             InstallKind::Native
         );
         assert_eq!(kind("claude", r"C:\tools\claude.exe"), InstallKind::Unknown);
