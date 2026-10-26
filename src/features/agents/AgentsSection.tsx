@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode, type Ref } from "react";
 import { AgentMark } from "../../components/AgentMark/AgentMark";
 import { Switch } from "../../components/Switch/Switch";
 import { DiffView } from "../../components/DiffView/DiffView";
@@ -14,12 +14,13 @@ import { actions, consentProps, hooksOffNotice, liveStatusOn, removalBlock, setu
 import { OwnAgentsSection } from "./OwnAgentsSection";
 import { ToolsSection } from "./ToolsSection";
 import { failureText, useInstallFlow } from "./useInstallFlow";
-import "./AgentsDialog.css";
+import { OwnToolsSection } from "./OwnToolsSection";
+import "./AgentsSection.css";
 
 /** The name a section and the change titles use: "Antigravity" (as "Set up Antigravity hooks"), where the consent card's own is "Antigravity CLI". */
 const agentTitle = (agent: HookAgent): string => (agent === "antigravity" ? "Antigravity" : CLI_NAME[agent]);
 
-export const SETUP_UNREADABLE = "Couldn't read the setup from Marshell's core. Close this and try again.";
+export const SETUP_UNREADABLE = "Couldn't read the setup from Marshell's core. Close Settings and open it again.";
 
 /** What the dialog shows below its title: the state, the card for Set up, or the diff for turning the hooks off. */
 export type Panel =
@@ -27,8 +28,7 @@ export type Panel =
   | { kind: "setup"; flow: InstallFlow; agent?: HookAgent }
   | { kind: "off"; removal: RemovePreview | null; busy: boolean; error?: string; conflict?: boolean; agent?: HookAgent };
 
-export type AgentsDialogHandlers = {
-  onClose: () => void;
+export type AgentsHandlers = {
   onSetup: (agent: HookAgent) => void;
   onHooksOff: (agent: HookAgent) => void;
   onBack: () => void;
@@ -41,15 +41,22 @@ export type AgentsDialogHandlers = {
   onSwitch: (capability: Capability, checked: boolean) => void;
   /** The Live status switch of one agent. */
   onLiveStatus: (checked: boolean, agent: HookAgent) => void;
-  /** Opens the Notifications dialog, where the sounds and banners are set. */
+  /** Opens the Notifications section, where the sounds and banners are set. */
   onNotifications: () => void;
 };
 
+/** Esc on the consent card (and its diff) or on the Hooks off preview leaves that panel and keeps the page from also closing. */
+export function escapeLeavesPanel(e: { key: string; preventDefault: () => void }, panel: Panel, leave: () => void): void {
+  if (e.key !== "Escape" || panel.kind === "list") return;
+  e.preventDefault();
+  leave();
+}
+
 /**
- * Settings → Agents (docs/PLAN.md slice 3c, decision 5), as a modal dialog over the window: Claude Code's install state, with Set up,
- * Hooks off (preview, then apply) and the orphaned-hooks warning. Presentational: `AgentsDialog` fetches and acts, this draws.
+ * Settings → Agents (docs/PLAN.md slice 3c, decision 5), one section of the Settings page: each CLI's install state, with Set up,
+ * Hooks off (preview, then apply) and the orphaned-hooks warning, then the own agents and the tools. Presentational: `AgentsSection` fetches and acts, this draws.
  */
-export function AgentsDialogView({
+export function AgentsSectionView({
   setup,
   codex,
   panel,
@@ -61,8 +68,13 @@ export function AgentsDialogView({
   antigravityLiveStatus = null,
   antigravityLiveStatusError,
   own,
+  tools,
+  rootRef,
   ...on
 }: {
+  /** The tools, after the own agents. */
+  tools?: ReactNode;
+  rootRef?: Ref<HTMLDivElement>;
   /** Antigravity's setup; its section shows only when it was read and agy is found. */
   antigravity?: AgentSetup | null;
   antigravityLiveStatus?: boolean | null;
@@ -77,44 +89,29 @@ export function AgentsDialogView({
   liveStatusError?: string | null;
   codexLiveStatus?: boolean | null;
   codexLiveStatusError?: string | null;
-} & AgentsDialogHandlers) {
+} & AgentsHandlers) {
   // The card and the turn-off panel belong to the agent the person chose.
   const chosen = panel.kind === "list" ? undefined : panel.agent === "codex" ? codex : panel.agent === "antigravity" ? antigravity : undefined;
   const target = chosen ?? (typeof setup === "object" ? setup : null);
-  const dialog = useRef<HTMLDivElement>(null);
-  const title = useRef<HTMLHeadingElement>(null);
-  useDialogFocus(dialog, title, on.onClose);
   return (
-    <div className="agents-dialog">
-      <div className="agents-dialog__backdrop" onClick={on.onClose} />
-      <div ref={dialog} className="agents-dialog__sheet" role="dialog" aria-modal="true" aria-label="Agents">
-        <h2 ref={title} tabIndex={-1} className="agents-dialog__title">
-          Agents
-        </h2>
-        <div className="agents-dialog__body">
-          {setup === "loading" && <p className="agents-dialog__line">Reading the setup…</p>}
-          {setup === "failed" && (
-            <p className="agents-dialog__error" role="alert">
-              {SETUP_UNREADABLE}
-            </p>
-          )}
-          {typeof setup === "object" && panel.kind === "list" && (
-            <>
-              <AgentList setup={setup} agent="claude" liveStatus={liveStatus} error={liveStatusError} on={on} />
-              {codex?.found && <AgentList setup={codex} agent="codex" liveStatus={codexLiveStatus} error={codexLiveStatusError} on={on} />}
-              {antigravity?.found && <AgentList setup={antigravity} agent="antigravity" liveStatus={antigravityLiveStatus} error={antigravityLiveStatusError} on={on} />}
-              {own}
-            </>
-          )}
-          {target && panel.kind === "setup" && <SetupPanel setup={target} flow={panel.flow} on={on} />}
-          {target && panel.kind === "off" && <OffPanel agent={target.agent as HookAgent} panel={panel} on={on} />}
-        </div>
-        <footer className="agents-dialog__foot">
-          <button type="button" className="agents-dialog__btn" onClick={on.onClose}>
-            Close
-          </button>
-        </footer>
-      </div>
+    <div ref={rootRef} className="agents" onKeyDown={(e) => escapeLeavesPanel(e, panel, on.onBack)}>
+      {setup === "loading" && <p className="agents-dialog__line">Reading the setup…</p>}
+      {setup === "failed" && (
+        <p className="agents-dialog__error" role="alert">
+          {SETUP_UNREADABLE}
+        </p>
+      )}
+      {typeof setup === "object" && panel.kind === "list" && (
+        <>
+          <AgentList setup={setup} agent="claude" liveStatus={liveStatus} error={liveStatusError} on={on} />
+          {codex?.found && <AgentList setup={codex} agent="codex" liveStatus={codexLiveStatus} error={codexLiveStatusError} on={on} />}
+          {antigravity?.found && <AgentList setup={antigravity} agent="antigravity" liveStatus={antigravityLiveStatus} error={antigravityLiveStatusError} on={on} />}
+          {own}
+          {tools}
+        </>
+      )}
+      {target && panel.kind === "setup" && <SetupPanel setup={target} flow={panel.flow} on={on} />}
+      {target && panel.kind === "off" && <OffPanel agent={target.agent as HookAgent} panel={panel} on={on} />}
     </div>
   );
 }
@@ -140,12 +137,12 @@ function TrustLine({ trust }: { trust: NonNullable<AgentSetup["trust"]> }) {
 }
 
 /** One agent's section: its state, its Live status switch, and Set up or Hooks off. Claude Code's has the Notifications link; Codex has no status line. */
-function AgentList({ setup, agent, liveStatus, error, on }: { setup: AgentSetup; agent: HookAgent; liveStatus: boolean | null; error?: string | null; on: AgentsDialogHandlers }) {
+function AgentList({ setup, agent, liveStatus, error, on }: { setup: AgentSetup; agent: HookAgent; liveStatus: boolean | null; error?: string | null; on: AgentsHandlers }) {
   const todo = actions(setup);
   const orphaned = setup.found && setup.hooks === "orphaned" && setup.settings_state !== "unparsable";
   const name = agentTitle(agent);
   return (
-    <section className="agents-dialog__agent" aria-label={name}>
+    <section className="agents-dialog__agent" aria-label={name} data-agent-card={agent} tabIndex={-1}>
       <header className="agents-dialog__agent-head">
         <AgentMark agent={agent} size={20} />
         <h3 className="agents-dialog__name">{name}</h3>
@@ -197,7 +194,7 @@ function AgentList({ setup, agent, liveStatus, error, on }: { setup: AgentSetup;
   );
 }
 
-function SetupPanel({ setup, flow, on }: { setup: AgentSetup; flow: InstallFlow; on: AgentsDialogHandlers }) {
+function SetupPanel({ setup, flow, on }: { setup: AgentSetup; flow: InstallFlow; on: AgentsHandlers }) {
   const { allow, done, ...card } = consentProps(setup, flow);
   return (
     <ConsentCard
@@ -212,7 +209,7 @@ function SetupPanel({ setup, flow, on }: { setup: AgentSetup; flow: InstallFlow;
   );
 }
 
-function OffPanel({ agent, panel, on }: { agent: HookAgent; panel: Extract<Panel, { kind: "off" }>; on: AgentsDialogHandlers }) {
+function OffPanel({ agent, panel, on }: { agent: HookAgent; panel: Extract<Panel, { kind: "off" }>; on: AgentsHandlers }) {
   const { removal } = panel;
   const block = removal ? removalBlock(removal.preview) : undefined;
   return (
@@ -259,25 +256,24 @@ function OffPanel({ agent, panel, on }: { agent: HookAgent; panel: Extract<Panel
 }
 
 /**
- * The Agents dialog on the core's data. The state is read when it opens and again after each apply; nothing polls.
+ * The Agents section on the core's data. The state is read when it mounts and again after each apply; nothing polls.
  * `startWith: { setup: agent }` opens straight on that agent's Set up card (the row link). It only talks to the core's HTTP API.
  */
-export function AgentsDialog({
+export function AgentsSection({
   endpoint,
-  onClose,
-  onNotice,
+  announce,
   onChanged,
   onNotifications,
   startWith,
   sync,
 }: {
   endpoint: Endpoint;
-  onClose: () => void;
-  onNotice?: (text: string) => void;
+  /** Says a result through the window's announcer. */
+  announce?: (text: string) => void;
   /** The hooks were set up or turned off: the window reads the state again. */
   onChanged?: () => void;
   startWith?: SetupStart;
-  /** Opens the Notifications dialog. */
+  /** Moves to the Notifications section. */
   onNotifications: () => void;
   /** The settings the Live status switch reads and saves. */
   sync?: SettingsSync;
@@ -370,6 +366,7 @@ export function AgentsDialog({
   useEffect(() => {
     if (!first.current) return;
     first.current = false;
+    // The row's link opens straight on that CLI's Set up card (PLAN §9, slice 3 decision 5).
     void load().then(async (found) => {
       if (!startWith) return;
       if (startWith.setup === "claude") {
@@ -382,6 +379,7 @@ export function AgentsDialog({
       if (own) startSetup(agent, own);
     });
   }, [load, startWith, startSetup, endpoint]);
+  const root = useRef<HTMLDivElement>(null);
 
   const turnOff = async () => {
     if (!off.removal) return;
@@ -390,7 +388,7 @@ export function AgentsDialog({
     try {
       const out = await applyPreview(endpoint, removal.preview);
       if (out.ok) {
-        onNotice?.(hooksOffNotice(removal.statusline_left));
+        announce?.(hooksOffNotice(removal.statusline_left));
         setMode("list");
         void load();
         onChanged?.();
@@ -416,15 +414,12 @@ export function AgentsDialog({
         ? off
         : { kind: "list" };
   return (
-    <AgentsDialogView
+    <AgentsSectionView
+      rootRef={root}
       setup={setup}
       codex={codex}
-      own={
-        <>
-          <OwnAgentsSection endpoint={endpoint} onNotice={onNotice} />
-          <ToolsSection endpoint={endpoint} />
-        </>
-      }
+      own={<OwnAgentsSection endpoint={endpoint} onNotice={announce} />}
+      tools={<ToolsSection endpoint={endpoint} ownEditor={<OwnToolsSection endpoint={endpoint} announce={announce} />} />}
       panel={panel}
       liveStatus={liveStatus.claude}
       liveStatusError={saveError?.agent === "claude" ? saveError.text : null}
@@ -435,7 +430,6 @@ export function AgentsDialog({
       antigravityLiveStatusError={saveError?.agent === "antigravity" ? saveError.text : null}
       onLiveStatus={(on, agent) => void switchLiveStatus(on, agent)}
       onNotifications={onNotifications}
-      onClose={onClose}
       onSetup={(agent) => startSetup(agent)}
       onHooksOff={(agent) => void startOff(agent)}
       onBack={back}
@@ -446,5 +440,42 @@ export function AgentsDialog({
       onReload={() => void (mode === "off" ? startOff(active) : install.plan())}
       onTurnOff={() => void turnOff()}
     />
+  );
+}
+
+/** Temporary until the Settings page is wired in (slice 6e1 Task 9). */
+export function AgentsDialog({
+  onClose,
+  onNotice,
+  ...section
+}: {
+  endpoint: Endpoint;
+  onClose: () => void;
+  onNotice?: (text: string) => void;
+  onChanged?: () => void;
+  startWith?: SetupStart;
+  onNotifications: () => void;
+  sync?: SettingsSync;
+}) {
+  const dialog = useRef<HTMLDivElement>(null);
+  const title = useRef<HTMLHeadingElement>(null);
+  useDialogFocus(dialog, title, onClose);
+  return (
+    <div className="agents-dialog">
+      <div className="agents-dialog__backdrop" onClick={onClose} />
+      <div ref={dialog} className="agents-dialog__sheet" role="dialog" aria-modal="true" aria-label="Agents">
+        <h2 ref={title} tabIndex={-1} className="agents-dialog__title">
+          Agents
+        </h2>
+        <div className="agents-dialog__body">
+          <AgentsSection {...section} announce={onNotice} />
+        </div>
+        <footer className="agents-dialog__foot">
+          <button type="button" className="agents-dialog__btn" onClick={onClose}>
+            Close
+          </button>
+        </footer>
+      </div>
+    </div>
   );
 }

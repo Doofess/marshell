@@ -65,7 +65,7 @@ export function ToolsView({ catalog, actions, footer }: { catalog: ToolCatalog; 
 }
 
 /** The Tools section on the core's data, read when the dialog opens. A failed read says so and offers Try again. */
-export function ToolsSection({ endpoint }: { endpoint: Endpoint }) {
+export function ToolsSection({ endpoint, ownEditor }: { endpoint: Endpoint; ownEditor?: ReactNode }) {
   const [catalog, setCatalog] = useState<ToolCatalog | null>(null);
   const [failed, setFailed] = useState(false);
   const load = useCallback(() => {
@@ -98,5 +98,7 @@ export function ToolsSection({ endpoint }: { endpoint: Endpoint }) {
       </section>
     );
   }
+  // With the editor beside it, the catalog lists only the shipped tools: the editor lists the person's own, and their problems.
+  if (ownEditor) return <ToolsView catalog={{ ...catalog, tools: catalog.tools.filter((t) => !t.own), problems: [] }} footer={ownEditor} />;
   return <ToolsView catalog={catalog} />;
 }

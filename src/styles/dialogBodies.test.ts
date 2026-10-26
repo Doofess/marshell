@@ -36,7 +36,7 @@ describe("dialog bodies", () => {
   // A grid's auto row grows to its item, so a sheet's `max-block-size: 100%` held only in a row as tall as the window (live check 6a).
   for (const w of [
     { name: "the onboarding frame", file: "styles/app.css", wrapper: ".live-app__onboarding" },
-    { name: "the Agents dialog", file: "features/agents/AgentsDialog.css", wrapper: ".agents-dialog" },
+    { name: "the Agents dialog", file: "features/agents/AgentsSection.css", wrapper: ".agents-dialog" },
   ]) {
     it(`${w.name}: sits in a row as tall as the window, so its body scrolls`, () => {
       expect(rule(read(w.file), w.wrapper)).toMatch(/grid-template-rows:\s*minmax\(0,\s*1fr\)/);

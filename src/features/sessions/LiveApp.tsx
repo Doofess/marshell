@@ -41,7 +41,7 @@ import { ProfilesDialog } from "../settings/ProfilesSection";
 import { modeMenuItems, sessionMenuItems } from "../sidebar/sessionMenu";
 import { nextSessionNumber } from "../sidebar/sessionNumber";
 import type { Mode, RowModel } from "../sidebar/types";
-import { AgentsDialog } from "../agents/AgentsDialog";
+import { AgentsDialog } from "../agents/AgentsSection";
 import { rowSetupStart, type SetupStart } from "../agents/agentsState";
 import { DiagnosticsDialog } from "../diagnostics/AdvancedSection";
 import { LiveOnboarding } from "../onboarding/LiveOnboarding";

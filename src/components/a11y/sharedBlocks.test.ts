@@ -37,7 +37,7 @@ const ALLOWED: Record<string, { reason: string; migrate?: true }> = {
   "features/onboarding/ConsentCard.tsx": { reason: "the error from an Allow press (the file could not be written) appears beside the button that has focus and is not announced anywhere else; it exists only after a failed attempt" },
   "features/window/CloseDialog.tsx": { reason: "the one-time close dialog's save failure alert, in a modal sheet that owns focus; it exists only after a failed save and the window's announcer is quiet while it is open" },
   "features/notifications/NotificationsSection.tsx": { reason: "the section's read and save failure alert, beside the switch that was pressed; it exists only after a failed request" },
-  "features/agents/AgentsDialog.tsx": { reason: "the dialog's read and refusal alerts, in a modal sheet that owns focus; they exist only after a failed request and the window's announcer is quiet while it is open" },
+  "features/agents/AgentsSection.tsx": { reason: "the dialog's read and refusal alerts, in a modal sheet that owns focus; they exist only after a failed request and the window's announcer is quiet while it is open" },
   "features/diagnostics/AdvancedSection.tsx": { reason: "the section's read and prepare failure alerts, beside the control that was pressed; they exist only after a failed request, and the preparing and expired texts go through the announce prop" },
   "features/onboarding/LiveOnboarding.tsx": { reason: "'Couldn't read the setup', in the first-run screen that owns focus; it exists only after a failed read and the window's announcer is quiet while it is up" },
   "features/palette/Palette.tsx": { reason: "'No command matches' while typing in a modal sheet that owns focus; the window's announcer is quiet while it is open" },

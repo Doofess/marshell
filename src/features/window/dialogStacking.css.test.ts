@@ -19,7 +19,7 @@ const DIALOGS: [string, string][] = [
   ["../settings/ProfilesSection.css", ".profiles-dialog"],
   ["../tasks/ReviewSheet.css", ".review"],
   ["../notifications/NotificationsSection.css", ".notifications-dialog"],
-  ["../agents/AgentsDialog.css", ".agents-dialog"],
+  ["../agents/AgentsSection.css", ".agents-dialog"],
   ["../diagnostics/AdvancedSection.css", ".diagnostics-dialog"],
   ["./CloseDialog.css", ".close-dialog"],
 ];
