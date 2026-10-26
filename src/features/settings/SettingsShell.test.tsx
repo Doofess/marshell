@@ -29,6 +29,13 @@ describe("SettingsShell", () => {
     expect(nav.match(/aria-current="page"/g)).toHaveLength(1);
     expect(nav).toMatch(/aria-current="page"[^>]*>Terminal</);
   });
+  it("draws the shared selected mark on the current section, which SelectedMark.css keys on aria-current=true or data-selected", () => {
+    const nav = html().match(/<nav[\s\S]*?<\/nav>/)?.[0] ?? "";
+    const current = nav.match(/<button[^>]*>Terminal</)?.[0] ?? "";
+    expect(current).toContain("is-selected-mark");
+    expect(current).toContain('data-selected="true"');
+    expect(nav.match(/data-selected="true"/g)).toHaveLength(1);
+  });
   it("puts the section label in an h2 that can take focus", () => {
     expect(html()).toMatch(/<h2[^>]*tabindex="-1"[^>]*>Terminal<\/h2>/i);
     expect(html("history")).toMatch(/<h2[^>]*>History<\/h2>/);

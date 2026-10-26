@@ -21,7 +21,8 @@ export function SettingsNav<Id extends string>({
           const props = selectedProps(n.id === current, "current", "settings__nav-item");
           return (
             <li key={n.id}>
-              <button type="button" {...props} {...(props["aria-current"] ? { "aria-current": ariaCurrent } : {})} onClick={onPick ? () => onPick(n.id) : undefined}>
+              {/* SelectedMark.css keys on aria-current="true", so "page" also needs data-selected to draw the mark. */}
+              <button type="button" {...props} {...(props["aria-current"] ? { "aria-current": ariaCurrent, "data-selected": ariaCurrent === "page" ? "true" : undefined } : {})} onClick={onPick ? () => onPick(n.id) : undefined}>
                 {n.label}
               </button>
             </li>
