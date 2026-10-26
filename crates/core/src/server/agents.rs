@@ -556,6 +556,13 @@ pub async fn install(
     Ok(Json(info))
 }
 
+/// How `exe` was installed. Only the match looks at the resolved path (a WinGet link points into `Packages`); the caller
+/// keeps `exe` as found. Touches the disk.
+pub(super) fn install_kind_of(agent: &str, exe: &Path) -> InstallKind {
+    let resolved = std::fs::canonicalize(exe).unwrap_or_else(|_| exe.to_path_buf());
+    install_kind(agent, &resolved, &|p| p.is_file())
+}
+
 fn install_of(st: &AppState, agent: &str, recheck: bool) -> AgentInstall {
     let Some(exe) = st.agent_exe_of(agent) else {
         return AgentInstall {
@@ -571,9 +578,7 @@ fn install_of(st: &AppState, agent: &str, recheck: bool) -> AgentInstall {
         st.forget_version(&exe);
     }
     let version = st.agent_version(agent, Some(&exe));
-    // Only the match looks at the resolved path (a WinGet link points into `Packages`); what is shown keeps the path as found.
-    let resolved = std::fs::canonicalize(&exe).unwrap_or_else(|_| exe.clone());
-    let install = install_kind(agent, &resolved, &|p| p.is_file());
+    let install = install_kind_of(agent, &exe);
     let newer_version = if agent == CODEX {
         version
             .as_deref()

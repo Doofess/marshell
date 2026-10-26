@@ -627,6 +627,7 @@ async fn open_in_new_tab(
         None,
         None,
         preset,
+        true,
     )
     .await
     .map_err(boxed)?;

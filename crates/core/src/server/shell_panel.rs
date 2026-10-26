@@ -107,6 +107,7 @@ pub async fn open(State(st): State<AppState>, Json(req): Json<PanelRequest>) -> 
         cwd,
         (req.cols, req.rows),
         None,
+        true,
     )
     .await?;
     // Two requests can both start a shell; the first to store its id wins.

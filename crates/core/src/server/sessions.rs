@@ -1,6 +1,8 @@
 use super::AppState;
+use super::agents::install_kind_of;
 use crate::agents::codex::supports_no_daemon;
 use crate::agents::identify::{Missing, find};
+use crate::agents::install::update_argv;
 use crate::agents::manifest::mode_label;
 use crate::agents::presets::{self, PresetLaunch};
 use crate::auth;
@@ -16,11 +18,13 @@ use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use marshell_protocol::api::{
-    ColorScheme, CreateSessionRequest, CreateSessionResponse, InputRequest, RenameRequest, ReopenRequest,
-    ReorderRequest, RestartRequest, ResumeError, SessionInfo, SessionMode, SessionState, SessionsSnapshot, ShellFamily,
+    CliTask, CliTaskKind, ColorScheme, CreateSessionRequest, CreateSessionResponse, InputRequest, RenameRequest,
+    ReopenRequest, ReorderRequest, RestartRequest, ResumeError, SessionInfo, SessionMode, SessionState,
+    SessionsSnapshot, ShellFamily,
 };
 use marshell_protocol::brand;
 use marshell_protocol::hook::PeekRows;
+use marshell_protocol::install::InstallKind;
 use marshell_protocol::tools::ToolLaunch;
 use serde::Deserialize;
 use std::path::PathBuf;
@@ -255,6 +259,103 @@ fn custom(argv: Vec<String>) -> Resolved {
     }
 }
 
+/// The argv of a sign-in or update tab for `agent`, built from the CLI's own command. `exe` is the file as found
+/// (a `.cmd` shim stays a shim); `install` is how it was installed, which picks the update command.
+pub(super) fn cli_task_argv(
+    agent: &str,
+    kind: CliTaskKind,
+    exe: &std::path::Path,
+    install: &InstallKind,
+) -> Result<Vec<String>, ApiError> {
+    let name =
+        agent_display_name(agent).ok_or_else(|| (StatusCode::BAD_REQUEST, format!("Unknown agent: {agent}.")))?;
+    match kind {
+        CliTaskKind::SignIn => {
+            let args: &[&str] = match agent {
+                "claude" => &["auth", "login"],
+                "codex" => &["login"],
+                _ => return Err((StatusCode::BAD_REQUEST, format!("{name} has no sign-in command."))),
+            };
+            // A shim is not a program the pty can start: cmd.exe runs it.
+            let shim = exe
+                .extension()
+                .is_some_and(|e| e.eq_ignore_ascii_case("cmd") || e.eq_ignore_ascii_case("bat"));
+            let mut argv: Vec<String> = if shim {
+                ["cmd.exe", "/d", "/c"].map(String::from).to_vec()
+            } else {
+                Vec::new()
+            };
+            argv.push(exe.to_string_lossy().into_owned());
+            argv.extend(args.iter().map(|a| a.to_string()));
+            Ok(argv)
+        }
+        CliTaskKind::Update => update_argv(agent, install, exe).ok_or_else(|| {
+            (
+                StatusCode::CONFLICT,
+                format!("Marshell can't tell how {name} was installed."),
+            )
+        }),
+    }
+}
+
+/// The refusal for a CLI-task request that also names something else to run.
+const CLI_TASK_ONLY: &str = "A sign-in or update tab takes nothing else.";
+
+/// Starts a sign-in or update tab. The core builds the command from the CLI it finds, and the tab runs it as a custom
+/// argv in the home folder. It is remembered for no folder, and a restart or a reopen starts the default shell, so an
+/// update never runs again by itself. A sign-in tab is not recorded: what is typed and printed there is a credential's.
+async fn start_cli_task(
+    st: &AppState,
+    req: CreateSessionRequest,
+    task: CliTask,
+) -> Result<CreateSessionResponse, ApiError> {
+    if req.shell.is_some()
+        || req.agent.is_some()
+        || req.prompt.is_some()
+        || req.mode.is_some()
+        || req.preset.is_some()
+        || req.tool.is_some()
+    {
+        return Err((StatusCode::BAD_REQUEST, CLI_TASK_ONLY.into()));
+    }
+    let Some(name) = agent_display_name(&task.agent) else {
+        return Err((StatusCode::BAD_REQUEST, format!("Unknown agent: {}.", task.agent)));
+    };
+    // The same file and install type the Accounts page showed. Looking for it may touch the disk.
+    let looked = {
+        let (st, agent) = (st.clone(), task.agent.clone());
+        tokio::task::spawn_blocking(move || {
+            st.agent_exe_of(&agent).map(|exe| {
+                let install = install_kind_of(&agent, &exe);
+                (exe, install)
+            })
+        })
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+    };
+    let Some((exe, install)) = looked else {
+        return Err((StatusCode::CONFLICT, format!("{name} isn't installed.")));
+    };
+    let argv = cli_task_argv(&task.agent, task.kind, &exe, &install)?;
+    let title = match task.kind {
+        CliTaskKind::SignIn => format!("Sign in to {name}"),
+        CliTaskKind::Update => format!("Update {name}"),
+    };
+    start_session(
+        st,
+        custom(argv),
+        None,
+        Some(title),
+        None,
+        (req.cols, req.rows),
+        req.color_scheme,
+        None,
+        None,
+        task.kind != CliTaskKind::SignIn,
+    )
+    .await
+}
+
 const TOOL_NO_AGENT: &str = "A tool preset starts without an agent.";
 
 /// Turns a launch preset and the values for its fields into what to run: the default (or named) profile's shell, with
@@ -401,6 +502,7 @@ pub(super) async fn start_session(
     scheme: Option<ColorScheme>,
     mode: Option<SessionMode>,
     preset: Option<String>,
+    record: bool,
 ) -> Result<CreateSessionResponse, ApiError> {
     check_agent_installed(st, &run, agent.as_deref())?;
     let cwd = start_folder(&run, cwd);
@@ -428,7 +530,7 @@ pub(super) async fn start_session(
             preset,
         },
     );
-    if let Err(err) = launch(st, &tab_id, number, generation, run, agent, cwd, size, scheme).await {
+    if let Err(err) = launch(st, &tab_id, number, generation, run, agent, cwd, size, scheme, record).await {
         // A spawn failed, or the tab was closed while it started (then there is no open row to release).
         st.0.registry.release(&tab_id);
         return Err(err);
@@ -449,8 +551,9 @@ async fn launch(
     cwd: String,
     size: (u16, u16),
     scheme: Option<ColorScheme>,
+    record: bool,
 ) -> Result<(), ApiError> {
-    spawn_into_map(st, tab_id, number, generation, run, agent, cwd, size, scheme).await?;
+    spawn_into_map(st, tab_id, number, generation, run, agent, cwd, size, scheme, record).await?;
     // A close can land between reserve and insert, when the map has nothing to kill yet.
     // Checking after the insert catches it: a later close finds the session in the map.
     if !st.0.registry.is_open(tab_id) {
@@ -469,6 +572,7 @@ async fn launch(
 /// The exit and mark callbacks name the tab in the registry and do nothing while it has no row:
 /// the shell panel starts here and only gets a row when it is adopted. The exit callback carries
 /// `generation`, so a process that a restart replaced cannot mark its successor Exited.
+/// `record` is false for a tab whose output must not be kept (a sign-in tab); every other start passes true.
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn spawn_into_map(
     st: &AppState,
@@ -480,6 +584,7 @@ pub(super) async fn spawn_into_map(
     cwd: String,
     size: (u16, u16),
     scheme: Option<ColorScheme>,
+    record: bool,
 ) -> Result<(), ApiError> {
     let agent = agent.unwrap_or_else(|| "shell".into());
     let program = run
@@ -565,7 +670,7 @@ pub(super) async fn spawn_into_map(
         })),
         on_mark,
         on_tool: Some(on_tool),
-        record: Some((recording, shell)),
+        record: record.then_some((recording, shell)),
         classify: Some(classify),
         initial_command: run.initial_command,
     };
@@ -601,6 +706,9 @@ pub async fn create(
     State(st): State<AppState>,
     Json(req): Json<CreateSessionRequest>,
 ) -> Result<Json<CreateSessionResponse>, ApiError> {
+    if let Some(task) = req.cli_task.clone() {
+        return Ok(Json(start_cli_task(&st, req, task).await?));
+    }
     // A tool preset runs in a profile's shell: it takes no agent, prompt or mode, and no argv of its own. Nothing of it
     // is remembered for the folder, and the row's relaunch is the plain shell (a restart never runs the tool again).
     if let Some(tool) = req.tool.as_ref() {
@@ -624,6 +732,7 @@ pub async fn create(
             req.color_scheme,
             None,
             None,
+            true,
         )
         .await?;
         return Ok(Json(created));
@@ -677,6 +786,7 @@ pub async fn create(
         req.color_scheme,
         mode,
         req.preset.clone(),
+        true,
     )
     .await?;
     if let Some((folder, profile_id, agent)) = choice {
@@ -870,6 +980,7 @@ pub async fn reopen(State(st): State<AppState>, body: Bytes) -> Result<Json<Crea
         None,
         saved.mode,
         saved.preset,
+        true,
     )
     .await?;
     // Only now remove the entry. If another reopen took it first, drop the duplicate we started.
@@ -1040,6 +1151,7 @@ pub async fn resume(State(st): State<AppState>, Path(tab): Path<String>, Json(re
         saved.cwd,
         (req.cols, req.rows),
         None,
+        true,
     )
     .await
     {
@@ -1153,6 +1265,7 @@ pub async fn restart(State(st): State<AppState>, Path(tab): Path<String>, Json(r
         saved.cwd,
         (req.cols, req.rows),
         None,
+        true,
     )
     .await
     {
@@ -1220,6 +1333,130 @@ mod tests {
         assert_eq!(
             resolved_codex_line(Some("garbage"), Some(ResumeTarget::Last)),
             "& codex resume --last"
+        );
+    }
+
+    fn argv_of(agent: &str, kind: CliTaskKind, exe: &str, install: &InstallKind) -> Result<Vec<String>, ApiError> {
+        cli_task_argv(agent, kind, std::path::Path::new(exe), install)
+    }
+
+    fn words(v: &[&str]) -> Vec<String> {
+        v.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn a_sign_in_tab_runs_the_cli_own_command() {
+        let unknown = InstallKind::Unknown;
+        assert_eq!(
+            argv_of("claude", CliTaskKind::SignIn, r"C:\x\claude.exe", &unknown).unwrap(),
+            words(&[r"C:\x\claude.exe", "auth", "login"])
+        );
+        assert_eq!(
+            argv_of("codex", CliTaskKind::SignIn, r"C:\x\codex.exe", &unknown).unwrap(),
+            words(&[r"C:\x\codex.exe", "login"])
+        );
+    }
+
+    #[test]
+    fn a_cmd_shim_runs_through_cmd_exe() {
+        let unknown = InstallKind::Unknown;
+        for exe in [r"C:\x\npm\claude.cmd", r"C:\x\npm\CLAUDE.BAT"] {
+            assert_eq!(
+                argv_of("claude", CliTaskKind::SignIn, exe, &unknown).unwrap(),
+                words(&["cmd.exe", "/d", "/c", exe, "auth", "login"])
+            );
+        }
+        // A space in the path stays in one word; the pty quotes it.
+        let spaced = r"C:\Users\Home Office\AppData\Roaming\npm\codex.cmd";
+        assert_eq!(
+            argv_of("codex", CliTaskKind::SignIn, spaced, &unknown).unwrap(),
+            words(&["cmd.exe", "/d", "/c", spaced, "login"])
+        );
+    }
+
+    /// The real thing: a `.cmd` in a folder with a space, as `C:\Users\Home Office\AppData\Roaming\npm\claude.cmd` is,
+    /// started through the pty a session uses.
+    #[cfg(windows)]
+    #[test]
+    fn a_cmd_shim_in_a_folder_with_a_space_runs_through_the_pty() {
+        use crate::pty::Pull;
+        let dir = tempfile::tempdir().unwrap();
+        let folder = dir.path().join("Has Space");
+        std::fs::create_dir_all(&folder).unwrap();
+        let shim = folder.join("fake-signin.cmd");
+        std::fs::write(&shim, "@echo signin-ok %*\r\n").unwrap();
+        let argv = cli_task_argv("claude", CliTaskKind::SignIn, &shim, &InstallKind::Unknown).unwrap();
+        let spec = SpawnSpec {
+            argv,
+            cwd: None,
+            env: vec![],
+            env_remove: vec![],
+            env_strip: None,
+            cols: 120,
+            rows: 24,
+            on_exit: None,
+            on_mark: None,
+            on_tool: None,
+            record: None,
+            classify: None,
+            initial_command: None,
+        };
+        let session = Session::spawn("t-cmd-shim".into(), spec).unwrap();
+        let (generation, _) = session.attach();
+        session.resume(0);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+        let (mut cursor, mut all, mut exit) = (0u64, Vec::new(), None);
+        while std::time::Instant::now() < deadline && exit.is_none() {
+            match session.pull(cursor, 64 * 1024) {
+                Pull::Data { seq, bytes } => {
+                    cursor = seq + bytes.len() as u64;
+                    all.extend(bytes);
+                    session.ack(cursor);
+                }
+                Pull::Reset { seq, screen } => {
+                    cursor = seq;
+                    all.extend(screen);
+                    session.ack(cursor);
+                }
+                Pull::Exit(code) => exit = Some(code),
+                Pull::Idle => std::thread::sleep(std::time::Duration::from_millis(20)),
+            }
+        }
+        session.detach(generation);
+        let text = String::from_utf8_lossy(&all).into_owned();
+        assert!(text.contains("signin-ok auth login"), "exit {exit:?}, output {text:?}");
+        assert_eq!(exit, Some(0), "output {text:?}");
+    }
+
+    #[test]
+    fn antigravity_has_no_sign_in_command() {
+        assert_eq!(
+            argv_of(
+                "antigravity",
+                CliTaskKind::SignIn,
+                r"C:\x\agy.exe",
+                &InstallKind::Native
+            )
+            .unwrap_err(),
+            (
+                StatusCode::BAD_REQUEST,
+                "Antigravity has no sign-in command.".to_string()
+            )
+        );
+    }
+
+    #[test]
+    fn an_update_tab_runs_the_update_command_or_is_refused() {
+        assert_eq!(
+            argv_of("claude", CliTaskKind::Update, r"C:\x\claude.exe", &InstallKind::Native).unwrap(),
+            words(&[r"C:\x\claude.exe", "update"])
+        );
+        assert_eq!(
+            argv_of("codex", CliTaskKind::Update, r"C:\x\codex.exe", &InstallKind::Unknown).unwrap_err(),
+            (
+                StatusCode::CONFLICT,
+                "Marshell can't tell how Codex was installed.".to_string()
+            )
         );
     }
 
