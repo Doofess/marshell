@@ -69,7 +69,7 @@ pub fn run(home: Option<&Path>, agent: &str, stdin_bytes: &[u8], env: Env) -> Ve
             // Running it would start this bridge again, which would read the same chain, and so on.
             Err("the chain names Marshell's own status line, so it was not run".to_string())
         }
-        Ok(Some(command)) => run_original(&command, stdin_bytes, env, ORIGINAL_TIMEOUT),
+        Ok(Some(command)) => run_original(&command, &shell_for(agent, env), stdin_bytes, env, ORIGINAL_TIMEOUT),
         Ok(None) => Ok(Vec::new()),
         Err(e) => Err(e),
     };
@@ -104,12 +104,29 @@ pub fn read_chain(home: &Path, agent: &str) -> Result<Option<String>, String> {
         .ok_or_else(|| "the chain file has no statusLine.command".to_string())
 }
 
-/// Runs `command` through the resolved shell with `stdin_bytes` on its stdin. `Ok` holds its stdout
-/// for an exit 0. After `timeout` the command and everything it started are ended and the result is
-/// an error. No output text and no input appear in an error.
-fn run_original(command: &str, stdin_bytes: &[u8], env: Env, timeout: Duration) -> Result<Vec<u8>, String> {
+/// The shell the agent itself runs a status line with. On Windows agy runs it as `cmd /c "<command>"`
+/// (the 6d research, A2); Claude Code picks its own (`shell::resolve`).
+fn shell_for(agent: &str, env: Env) -> shell::ShellCmd {
+    if cfg!(windows) && agent == "antigravity" {
+        return shell::ShellCmd {
+            program: PathBuf::from("cmd.exe"),
+            args_before_command: vec!["/c".into()],
+        };
+    }
     let path_var = env("PATH").or_else(|| env("Path"));
-    let sh = shell::resolve(env, &|p| p.is_file(), shell::find_git_on_path(path_var.as_deref()));
+    shell::resolve(env, &|p| p.is_file(), shell::find_git_on_path(path_var.as_deref()))
+}
+
+/// Runs `command` through `sh` with `stdin_bytes` on its stdin. `Ok` holds its stdout for an exit 0.
+/// After `timeout` the command and everything it started are ended and the result is an error. No
+/// output text and no input appear in an error.
+fn run_original(
+    command: &str,
+    sh: &shell::ShellCmd,
+    stdin_bytes: &[u8],
+    env: Env,
+    timeout: Duration,
+) -> Result<Vec<u8>, String> {
     let mut cmd = Command::new(&sh.program);
     cmd.args(&sh.args_before_command)
         .arg(command)
@@ -230,6 +247,24 @@ mod tests {
         assert!(run(None, "antigravity", b"{}", &env).is_empty());
     }
 
+    /// agy runs a status line as `cmd /c "<command>"`, so the person's own line runs under cmd, not Claude's shell.
+    #[cfg(windows)]
+    #[test]
+    fn antigravity_runs_its_own_line_under_cmd() {
+        let home = tempfile::tempdir().unwrap();
+        let chain = home.path().join("agents").join("antigravity");
+        std::fs::create_dir_all(&chain).unwrap();
+        std::fs::write(
+            chain.join("statusline-chain.json"),
+            r#"{"statusLine":{"type":"command","command":"echo %COMSPEC%"}}"#,
+        )
+        .unwrap();
+        let path = std::env::var("PATH").unwrap_or_default();
+        let env = move |k: &str| (k == "PATH").then(|| path.clone());
+        let out = String::from_utf8(run(Some(home.path()), "antigravity", b"{}", &env)).unwrap();
+        assert!(out.trim_end().to_ascii_lowercase().ends_with("cmd.exe"), "{out:?}");
+    }
+
     #[test]
     fn a_hung_original_is_cut_off() {
         let path = std::env::var("PATH").unwrap_or_default();
@@ -241,7 +276,13 @@ mod tests {
             "sleep 30"
         };
         let started = Instant::now();
-        let result = run_original(command, b"{}", &env, Duration::from_millis(300));
+        let result = run_original(
+            command,
+            &shell_for("claude", &env),
+            b"{}",
+            &env,
+            Duration::from_millis(300),
+        );
         let took = started.elapsed();
         let err = result.expect_err("a hung command has no output");
         assert!(err.contains("took longer than"), "{err}");
@@ -257,7 +298,16 @@ mod tests {
         let path = std::env::var("PATH").unwrap_or_default();
         let env = move |k: &str| (k == "PATH").then(|| path.clone());
         let command = format!("(sleep 2; touch '{marker}') & sleep 30");
-        assert!(run_original(&command, b"{}", &env, Duration::from_millis(500)).is_err());
+        assert!(
+            run_original(
+                &command,
+                &shell_for("claude", &env),
+                b"{}",
+                &env,
+                Duration::from_millis(500)
+            )
+            .is_err()
+        );
         std::thread::sleep(Duration::from_secs(3));
         assert!(!dir.path().join("survived").exists(), "a child outlived the cut-off");
     }
