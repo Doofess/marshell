@@ -1,10 +1,10 @@
 import { readFileSync } from "node:fs";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
-import { SETTINGS_SECTIONS, type SettingsSection } from "./settingsSections";
+import { SETTINGS_SECTIONS, type CompanyAgent, type SettingsSection } from "./settingsSections";
 import { SettingsPanels } from "./LiveSettings";
 import { holdFocus, type GuardDom } from "../../lib/focusGuard";
-import { closeOrRefuse, closesSettings, focusSettingsHeading, isTextEntry, mountedWith, paletteSection, settingsFocusFallback, settingsStart, settingsTabTarget, visibleControls } from "./settingsRouting";
+import { closeOrRefuse, closesSettings, focusSettingsHeading, freshSettingsStart, isTextEntry, mountedWith, paletteSection, settingsFocusFallback, settingsStart, settingsTabTarget, visibleControls } from "./settingsRouting";
 
 describe("paletteSection", () => {
   it.each([
@@ -41,6 +41,27 @@ describe("settingsStart", () => {
     const without = SETTINGS_SECTIONS.map((s) => s.id).filter((id) => id !== "codex");
     expect(settingsStart("codex", without)).toBe("appearance");
     expect(settingsStart("codex", [...without, "codex"])).toBe("codex");
+  });
+});
+
+describe("freshSettingsStart", () => {
+  const known = new Set<CompanyAgent>(["claude", "codex"]);
+  it("reads the CLIs again before reopening at a CLI's section, and opens Appearance when that CLI is gone", async () => {
+    const read = vi.fn(async () => new Set<CompanyAgent>(["claude"]));
+    expect(await freshSettingsStart("codex", known, read)).toEqual({ start: "appearance", found: new Set(["claude"]) });
+    expect(read).toHaveBeenCalledOnce();
+  });
+  it("reopens at the CLI's section when it is still found", async () => {
+    expect(await freshSettingsStart("codex", known, async () => new Set<CompanyAgent>(["codex"]))).toEqual({ start: "codex", found: new Set(["codex"]) });
+  });
+  it("keeps what it knew when the read fails", async () => {
+    expect(await freshSettingsStart("codex", known, () => Promise.reject(new Error("down")))).toEqual({ start: "codex", found: null });
+  });
+  it("doesn't read for any other section", async () => {
+    const read = vi.fn(async () => new Set<CompanyAgent>());
+    expect(await freshSettingsStart("history", known, read)).toEqual({ start: "history", found: null });
+    expect(await freshSettingsStart(null, known, read)).toEqual({ start: "appearance", found: null });
+    expect(read).not.toHaveBeenCalled();
   });
 });
 

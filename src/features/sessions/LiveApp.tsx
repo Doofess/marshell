@@ -35,8 +35,8 @@ import { osOfPlatform } from "../../lib/keymap";
 import { paletteSessions } from "../palette/sessions";
 import { LiveHistory } from "../history/LiveHistory";
 import { LiveSettings } from "../settings/LiveSettings";
-import { closesSettings, isTextEntry, paletteSection, settingsStart } from "../settings/settingsRouting";
-import { COMPANY_NAMES, shownSections, type CompanyAgent, type SettingsSection } from "../settings/settingsSections";
+import { closesSettings, isTextEntry, freshSettingsStart, paletteSection } from "../settings/settingsRouting";
+import { COMPANY_NAMES, type CompanyAgent, type SettingsSection } from "../settings/settingsSections";
 import { cliTaskRequest, exitedTasks, runningCount, updateResult, type CliTaskKind, type PendingTask } from "../settings/cliTasks";
 import { accountLine, UNREACHABLE } from "../accounts/accountsText";
 import { getAccount, getInstall } from "../../lib/api/accounts";
@@ -131,19 +131,21 @@ export function LiveApp() {
   const { endpoint, profiles, rows, infos, permissions, now, selectedId, loaded, select, reloadProfiles, error } = useSessions(hooks);
   // The company CLIs found on this machine: Settings lists Accounts and a section for each. Read with the hooks.
   const [found, setFound] = useState<ReadonlySet<CompanyAgent>>(() => new Set());
+  const readFound = useCallback(async (): Promise<ReadonlySet<CompanyAgent>> => {
+    if (!endpoint) throw new Error("no core yet");
+    const list = await listAgents(endpoint);
+    return new Set(list.filter((a) => a.found && a.agent in COMPANY_NAMES).map((a) => a.agent as CompanyAgent));
+  }, [endpoint]);
   const refreshSetup = useCallback(() => {
     if (!endpoint) return;
-    listAgents(endpoint).then(
-      (list) => setFound(new Set(list.filter((a) => a.found && a.agent in COMPANY_NAMES).map((a) => a.agent as CompanyAgent))),
-      () => {},
-    );
+    readFound().then(setFound, () => {});
     for (const agent of ["claude", "codex", "antigravity"] as const) {
       getSetup(endpoint, agent).then(
         (s) => setHooks((h) => ({ ...h, [agent]: s.found ? s.hooks : undefined })),
         () => {},
       );
     }
-  }, [endpoint]);
+  }, [endpoint, readFound]);
   useEffect(refreshSetup, [refreshSetup]);
   const [maximized, setMaximized] = useState(false);
   useEffect(() => onMaximizedChange(setMaximized), []);
@@ -224,12 +226,19 @@ export function LiveApp() {
   // The Settings page's section, and the one shown last in this run: the tray's Settings… reopens that one.
   const [settingsSection, setSettingsSection] = useState<SettingsSection>("appearance");
   const lastSettingsSection = useRef<SettingsSection | null>(null);
-  // `null` opens the section shown last in this run, else Appearance.
+  // `null` opens the section shown last in this run, else Appearance. A CLI's section is checked against a fresh read of the CLIs first,
+  // since the CLI may have been uninstalled while the page was closed.
   const openSettings = (section: SettingsSection | null) => {
-    const next = section ?? settingsStart(lastSettingsSection.current, shownSections(found).map((s) => s.id));
-    lastSettingsSection.current = next;
-    setSettingsSection(next);
-    setOverlay("settings");
+    const show = (next: SettingsSection) => {
+      lastSettingsSection.current = next;
+      setSettingsSection(next);
+      setOverlay("settings");
+    };
+    if (section) return show(section);
+    void freshSettingsStart(lastSettingsSection.current, found, readFound).then(({ start, found: fresh }) => {
+      if (fresh) setFound(fresh);
+      show(start);
+    });
   };
   const showSettingsSection = (section: SettingsSection) => {
     lastSettingsSection.current = section;

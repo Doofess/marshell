@@ -1,4 +1,4 @@
-import type { SettingsSection } from "./settingsSections";
+import { COMPANY_NAMES, shownSections, type CompanyAgent, type SettingsSection } from "./settingsSections";
 
 /**
  * The palette commands that open the Settings page, and the section each opens at: the old per-page commands keep their labels
@@ -25,6 +25,21 @@ export function paletteSection(id: string): SettingsSection | null {
 /** Where the tray's Settings… opens: the section shown last in this run when it is still listed, else Appearance. */
 export function settingsStart(last: SettingsSection | null, shown: readonly SettingsSection[]): SettingsSection {
   return last !== null && shown.includes(last) ? last : "appearance";
+}
+
+/**
+ * `settingsStart` for the tray's Settings…, when the last section may belong to a CLI uninstalled since: before reopening at a CLI's
+ * section, the CLIs are read again (`found` is that read, for the caller to keep). Any other section opens without a read, and a
+ * failed read keeps what was known.
+ */
+export async function freshSettingsStart(
+  last: SettingsSection | null,
+  known: ReadonlySet<CompanyAgent>,
+  readFound: () => Promise<ReadonlySet<CompanyAgent>>,
+): Promise<{ start: SettingsSection; found: ReadonlySet<CompanyAgent> | null }> {
+  if (last === null || !(last in COMPANY_NAMES)) return { start: settingsStart(last, shownSections(known).map((s) => s.id)), found: null };
+  const found = await readFound().catch(() => null);
+  return { start: settingsStart(last, shownSections(found ?? known).map((s) => s.id)), found };
 }
 
 /** A jump to a session closes the page, so the selection never changes behind it: Ctrl+Shift+1 to 9, the oldest waiting, a palette session. */
