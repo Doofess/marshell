@@ -1,0 +1,68 @@
+/* The terminal font list: each option is its name over a sample line, both drawn in that font (set inline on the label).
+   A native radio group, so the arrow keys move the choice; the chosen option carries the shared selected mark. */
+.font-picker {
+  display: grid;
+  gap: var(--space-2);
+  min-inline-size: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+.font-picker__list {
+  display: grid;
+  gap: var(--space-1);
+}
+.font-picker__option {
+  display: grid;
+  gap: 2px;
+  min-block-size: 44px;
+  padding: var(--space-2) var(--space-4) var(--space-2) var(--space-3);
+  border-radius: var(--radius);
+  background: var(--fill);
+  color: var(--text-1);
+  cursor: pointer;
+}
+/* The native radio stays in the tab order and the accessibility tree; the option is what is seen. */
+.font-picker__option input {
+  position: absolute;
+  opacity: 0;
+  inline-size: 1px;
+  block-size: 1px;
+  margin: 0;
+}
+.font-picker__option:has(input:focus-visible) {
+  outline: 2px solid var(--focus, var(--accent));
+  outline-offset: 2px;
+}
+.font-picker__name {
+  font-size: var(--text-15);
+  font-weight: 600;
+}
+.font-picker__sample {
+  font-size: var(--text-13);
+  color: var(--text-2);
+  overflow-wrap: anywhere;
+}
+.font-picker__option:active {
+  background: var(--fill-strong);
+}
+@media (hover: hover) and (pointer: fine) {
+  .font-picker__option:hover {
+    background: var(--hover, var(--fill-strong));
+  }
+}
+.font-picker__other {
+  display: grid;
+  gap: var(--space-1);
+  max-inline-size: 32ch;
+}
+
+@media (forced-colors: active) {
+  .font-picker__option {
+    background: Canvas;
+    color: CanvasText;
+  }
+  .font-picker__sample {
+    color: CanvasText;
+  }
+}

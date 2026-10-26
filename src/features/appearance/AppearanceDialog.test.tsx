@@ -6,8 +6,8 @@ import { AppearanceView, type AppearanceHandlers, type AppearanceViewState } fro
 import { DEFAULT_APPEARANCE } from "./rootState";
 
 const noop = () => {};
-const handlers: AppearanceHandlers = { save: noop, onAccentText: noop, commitAccent: noop, blurAccent: noop, pickAccent: noop, onFontText: noop, commitFont: noop, onSizeText: noop, commitSize: noop, importFile: noop };
-const STATE: AppearanceViewState = { appearance: DEFAULT_APPEARANCE, app: "dark", wtFiles: [], error: null, accent: { text: "", reason: null }, font: "", size: { text: "13", reason: null }, importError: null };
+const handlers: AppearanceHandlers = { save: noop, onAccentText: noop, commitAccent: noop, blurAccent: noop, pickAccent: noop, pickFont: noop, onSizeText: noop, commitSize: noop, importFile: noop };
+const STATE: AppearanceViewState = { appearance: DEFAULT_APPEARANCE, app: "dark", wtFiles: [], error: null, accent: { text: "", reason: null }, size: { text: "13", reason: null }, importError: null };
 const html = (over: Partial<AppearanceViewState> = {}) => renderToStaticMarkup(<AppearanceView state={{ ...STATE, ...over }} handlers={handlers} />);
 
 const ANSI = Array.from({ length: 16 }, (_, i) => `#${(i * 16).toString(16).padStart(2, "0")}0000`);
@@ -59,10 +59,14 @@ describe("AppearanceView", () => {
     expect(html()).toContain("A running program may not notice the change until it redraws or restarts.");
   });
 
-  it("shows where the terminal font comes from", () => {
-    expect(html()).toContain("Bundled: JetBrains Mono");
-    const wt = { path: "x", text: '{ "profiles": { "defaults": { "font": { "face": "Cascadia Mono" } } } }' };
-    expect(html({ wtFiles: [wt] })).toContain("From Windows Terminal: Cascadia Mono");
+  it("offers the font picker in place of the free-text field", () => {
+    const m = html();
+    expect(m).toMatch(/<legend[^>]*>Terminal font<\/legend>/);
+    expect(radio(m, "Match my terminal")).toContain('checked=""');
+    expect(m).not.toContain('data-field="font"');
+    const other = html({ appearance: { ...DEFAULT_APPEARANCE, terminal_font: { ...DEFAULT_APPEARANCE.terminal_font, family: "Fira Code" } } });
+    expect(radio(other, "Another font…")).toContain('checked=""');
+    expect(other).toContain('value="Fira Code"');
   });
 
   it("a failed save shows next to its section", () => {

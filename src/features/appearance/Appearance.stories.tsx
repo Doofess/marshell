@@ -7,14 +7,14 @@ const meta: Meta = { title: "Settings/Appearance", parameters: { layout: "fullsc
 export default meta;
 
 const noop = () => {};
-const handlers: AppearanceHandlers = { save: noop, onAccentText: noop, commitAccent: noop, blurAccent: noop, pickAccent: noop, onFontText: noop, commitFont: noop, onSizeText: noop, commitSize: noop, importFile: noop, onClose: noop };
+const handlers: AppearanceHandlers = { save: noop, onAccentText: noop, commitAccent: noop, blurAccent: noop, pickAccent: noop, pickFont: noop, onSizeText: noop, commitSize: noop, importFile: noop, onClose: noop };
 const state = (over: Partial<AppearanceViewState> = {}): AppearanceViewState => ({
   appearance: DEFAULT_APPEARANCE,
   app: "dark",
   wtFiles: [],
   error: null,
   accent: { text: "", reason: null },
-  font: "",
+ 
   size: { text: "13", reason: null },
   importError: null,
   ...over,

@@ -5,7 +5,8 @@ import type { Appearance } from "../../generated/Appearance";
 import type { FoundFile } from "../../generated/FoundFile";
 import type { ImportedTheme } from "../../generated/ImportedTheme";
 import { useDialogFocus } from "../../lib/useDialogFocus";
-import { BUNDLED_FONT, fontStack, resolveTerminalFont } from "../terminal/terminalFont";
+import { FontPicker } from "../terminal/FontPicker";
+import { fontChoiceOf, fontStack, resolveTerminalFont } from "../terminal/terminalFont";
 import { appScheme, resolveTerminalTheme, type Scheme } from "../terminal/terminalTheme";
 import { addImported, removeImported } from "./appearanceEdits";
 import { useAppearance } from "./AppearanceProvider";
@@ -26,7 +27,6 @@ export type AppearanceViewState = {
   wtFiles: FoundFile[] | null;
   error: { at: AppearanceSection; text: string } | null;
   accent: Draft;
-  font: string;
   size: Draft;
   importError: string | null;
 };
@@ -40,8 +40,8 @@ export type AppearanceHandlers = {
   blurAccent(): void;
   /** Picks one of the preset accents and empties the custom colour field. */
   pickAccent(accent: string): void;
-  onFontText(text: string): void;
-  commitFont(): void;
+  /** The family to save for the terminal font: "" is Match my terminal. */
+  pickFont(family: string): void;
   onSizeText(text: string): void;
   commitSize(): void;
   importFile(file: File): void;
@@ -61,8 +61,6 @@ const ACCENTS = [
 ] as const;
 
 const ANSI_KEYS = ["black", "red", "green", "yellow", "blue", "magenta", "cyan", "white", "brightBlack", "brightRed", "brightGreen", "brightYellow", "brightBlue", "brightMagenta", "brightCyan", "brightWhite"] as const;
-
-const FONT_SOURCE = { yours: "Yours", "windows-terminal": "From Windows Terminal", bundled: "Bundled" } as const;
 
 const onEnter = (commit: () => void) => (e: KeyboardEvent) => {
   if (e.key === "Enter") commit();
@@ -112,7 +110,7 @@ function Section({ title, children }: { title: string; children: ReactNode }) {
 /** The Appearance settings: app theme, accent, contrast, text size, the terminal's theme and font, and imported themes. */
 export function AppearanceView({ state, handlers }: { state: AppearanceViewState; handlers: AppearanceHandlers }) {
   const { appearance: a, error } = state;
-  const ids = { accentHelp: useId(), accentWhy: useId(), themeHelp: useId(), font: useId(), fontHelp: useId(), size: useId(), sizeWhy: useId(), file: useId() };
+  const ids = { accentHelp: useId(), accentWhy: useId(), themeHelp: useId(), size: useId(), sizeWhy: useId(), file: useId() };
   const custom = a.accent.startsWith("#");
   const preview = resolveTerminalTheme({ ...terminalThemeOf(a, null), app: state.app }).theme;
   const font = resolveTerminalFont(a.terminal_font, wtFont(state.wtFiles ?? []));
@@ -212,14 +210,7 @@ export function AppearanceView({ state, handlers }: { state: AppearanceViewState
           </div>
 
           <div className="appearance__group">
-            <label className="field__label" htmlFor={ids.font}>
-              Terminal font
-            </label>
-            <p id={ids.fontHelp} className="field__help">
-              {FONT_SOURCE[font.source]}: {font.family}. Leave the field empty to use {state.wtFiles?.length ? "Windows Terminal's font, or " : ""}
-              {BUNDLED_FONT}.
-            </p>
-            <input id={ids.font} type="text" className="field__control" data-field="font" spellCheck={false} placeholder="Automatic" value={state.font} aria-describedby={ids.fontHelp} onChange={(e) => handlers.onFontText(e.target.value)} onBlur={handlers.commitFont} onKeyDown={onEnter(handlers.commitFont)} />
+            <FontPicker family={a.terminal_font.family ?? ""} wtFamily={wtFont(state.wtFiles ?? [])?.family} onPick={handlers.pickFont} />
           </div>
 
           <div className="appearance__group">
@@ -337,9 +328,8 @@ export function AppearanceDialog({ onClose, onNotice }: { onClose: () => void; o
   const { appearance, save, error, wtFiles } = useAppearance();
   const [at, setAt] = useState<AppearanceSection>("theme");
   const [drafts, setDrafts] = useState(() => draftsOf(appearance));
-  const { accent, font, size } = drafts;
+  const { accent, size } = drafts;
   const setAccent = (next: Draft) => setDrafts((d) => ({ ...d, accent: next }));
-  const setFont = (next: string) => setDrafts((d) => ({ ...d, font: next }));
   const setSize = (next: Draft) => setDrafts((d) => ({ ...d, size: next }));
   const [importError, setImportError] = useState<string | null>(null);
   // The settings may arrive after the dialog opened: the fields then take the saved values, except one being typed in.
@@ -376,10 +366,12 @@ export function AppearanceDialog({ onClose, onNotice }: { onClose: () => void; o
       setDrafts(pickPreset(drafts));
       handlers.save({ ...appearance, accent }, "accent");
     },
-    onFontText: setFont,
-    commitFont() {
-      const family = font.trim() || null;
-      if (family !== appearance.terminal_font.family) handlers.save({ ...appearance, terminal_font: { ...appearance.terminal_font, family } }, "terminal");
+    pickFont(picked) {
+      const family = picked.trim() || null;
+      if (family === appearance.terminal_font.family) return;
+      handlers.save({ ...appearance, terminal_font: { ...appearance.terminal_font, family } }, "terminal");
+      const choice = fontChoiceOf(family);
+      onNotice?.(`Terminal font: ${choice.kind === "match" ? "Match my terminal" : choice.family}`);
     },
     onSizeText: (text) => setSize({ text, reason: null }),
     commitSize() {
@@ -404,7 +396,7 @@ export function AppearanceDialog({ onClose, onNotice }: { onClose: () => void; o
     onClose,
   };
 
-  const state: AppearanceViewState = { appearance, app: appearance.theme === "follow-system" ? appScheme() : appearance.theme, wtFiles, error: error ? { at, text: error } : null, accent, font, size, importError };
+  const state: AppearanceViewState = { appearance, app: appearance.theme === "follow-system" ? appScheme() : appearance.theme, wtFiles, error: error ? { at, text: error } : null, accent, size, importError };
   return (
     <div ref={dialog} className="appearance-dialog" role="dialog" aria-modal="true" aria-label="Appearance" tabIndex={-1}>
       <AppearanceView state={state} handlers={handlers} />
