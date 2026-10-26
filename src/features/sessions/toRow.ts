@@ -157,7 +157,9 @@ export function toRow(info: SessionInfo, profiles: Profile[], setup?: Partial<Re
   if (info.state.kind === "ended") return { ...base, status: "ended", phrase: ENDED_PHRASE };
   if (info.state.kind === "exited") return { ...base, status: "ended", phrase: `Exited with code ${info.state.code}` };
   if (info.paused) return { ...base, status: "paused", phrase: "" };
-  if (info.live === null && info.attention !== null) {
+  // A limited Needs you shows over live status too: on a live row only the core's "the agent shows its own prompt" sets
+  // one (Antigravity's status line), and its hooks keep the row live meanwhile. A bell stays behind live status.
+  if (info.attention !== null && (info.live === null || info.attention.limited === true)) {
     const message = info.attention.message ?? "Wants your attention";
     // A prompt matched from a tool's output text is a guess, not a hook: say so.
     if (info.attention.limited === true) return { ...base, status: "needs-question", phrase: `${message} · ${LIMITED_NOTE}`, note: LIMITED_NOTE };

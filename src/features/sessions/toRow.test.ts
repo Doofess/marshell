@@ -50,6 +50,14 @@ describe("toRow", () => {
     expect(limited).toMatchObject({ agent: "antigravity", status: "needs-question", phrase: "Waiting for you in the terminal · Status limited", note: "Status limited" });
     expect(rowLabel(limited)).toContain("Waiting for you in the terminal · Status limited");
   });
+  it("an_antigravity_prompt_shows_over_its_live_status: agy's hooks keep the row live while its own prompt waits", () => {
+    const live: LiveStatus = { state: "working", phrase: "Running `echo hi`", since_ms: 0, recap: null, model: null, effort: null, context_pct: null, five_hour_pct: null, five_hour_resets_at: null, seven_day_pct: null, subagents: 0 };
+    const row = toRow(info({ agent: "antigravity", live, attention: { message: "Waiting for you in the terminal", since_ms: 1000, limited: true } }), PROFILES);
+    expect(row).toMatchObject({ status: "needs-question", phrase: "Waiting for you in the terminal · Status limited", note: "Status limited" });
+    // A bell or a notification on a live row stays behind the live status, as before.
+    const bell = toRow(info({ agent: "claude", live, attention: { message: null, since_ms: 1000 } }), PROFILES);
+    expect(bell).toMatchObject({ status: "working" });
+  });
   it("an_antigravity_row_shows_no_plan_meter: only Claude Code's five-hour use makes the ring", () => {
     const live: LiveStatus = { state: "idle", phrase: "", since_ms: 0, recap: null, model: null, effort: null, context_pct: null, five_hour_pct: 80, five_hour_resets_at: null, seven_day_pct: null, subagents: 0 };
     expect(planRing([info({ agent: "antigravity", live })])).toBeUndefined();
