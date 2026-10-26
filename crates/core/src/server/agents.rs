@@ -7,6 +7,7 @@ use crate::agents::antigravity::hooks as agy;
 use crate::agents::claude::{self, hooks};
 use crate::agents::codex::{self, trust};
 use crate::agents::install::{codex_newer, install_kind, update_text};
+use crate::agents::settings_view::{read_managed, view};
 use crate::agents::{parse_any_version, run_version_text};
 use crate::bridge;
 use crate::config::jsonc::{parse_problem, read_value};
@@ -21,6 +22,7 @@ use marshell_protocol::agents::{
 };
 use marshell_protocol::config::ConfigPreview;
 use marshell_protocol::install::{AgentInstall, InstallKind};
+use marshell_protocol::settings_view::AgentSettingsView;
 use std::collections::HashMap;
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
@@ -638,6 +640,39 @@ fn account_of(st: &AppState, agent: &str, kind: Adapter) -> AccountStatus {
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |d| d.as_millis() as u64);
     status
+}
+
+/// An agent CLI's user settings file, read and never written, with secrets masked before anything leaves. A file that
+/// doesn't parse or can't be read gives no values and no text.
+pub async fn settings_view(
+    State(st): State<AppState>,
+    UrlPath(agent): UrlPath<String>,
+) -> Result<Json<AgentSettingsView>, Fail> {
+    let kind = adapter(&agent)?;
+    let view = tokio::task::spawn_blocking(move || settings_view_of(&st, &agent, kind))
+        .await
+        .map_err(failed)??;
+    Ok(Json(view))
+}
+
+fn settings_view_of(st: &AppState, agent: &str, kind: Adapter) -> Result<AgentSettingsView, Fail> {
+    let no_home = || failed("the user's home folder is not known");
+    let (path, managed) = match kind {
+        Adapter::Claude => {
+            let user_home = super::files::home_dir()
+                .or_else(|| st.0.claude_settings.as_ref().map(|_| PathBuf::new()))
+                .ok_or_else(no_home)?;
+            // The managed files a test names, else the organization's folder.
+            let managed_paths = match &st.0.claude_compact_paths {
+                Some((_, managed)) => managed.clone(),
+                None => claude::compact::managed_settings_paths(),
+            };
+            (st.claude_settings_path(&user_home), read_managed(&managed_paths))
+        }
+        Adapter::Codex => (st.codex_dir().ok_or_else(no_home)?.join("config.toml"), None),
+        Adapter::Antigravity => (agy::settings_path(&st.agy_user_home()?), None),
+    };
+    Ok(view(agent, &path, std::fs::read_to_string(&path), managed))
 }
 
 /// Codex's `version.json` in `dir`, read against the installed `version`. A file that can't be read is no news.

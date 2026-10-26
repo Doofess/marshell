@@ -10,6 +10,7 @@ pub mod install;
 pub mod manifest;
 pub mod own;
 pub mod presets;
+pub mod settings_view;
 
 use std::path::Path;
 use std::process::{Command, Stdio};
