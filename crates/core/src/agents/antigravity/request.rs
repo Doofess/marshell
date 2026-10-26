@@ -82,11 +82,21 @@ fn known_detail(tool: &str, args: &Value, request: &Value) -> Option<PermissionD
     })
 }
 
+/// The risk a call Marshell can't read carries (slice 6d decision 10).
+const UNREADABLE: &str = "Marshell can't read this call";
+
 /// The first risk the request carries, judged against the request's `cwd`: the core sets it to the tab's
-/// folder, because agy's `workspacePaths` is empty.
+/// folder, because agy's `workspacePaths` is empty. A call Marshell can't read is risky, so an agy update that
+/// renames a tool or its arguments still reaches a card in Bypass: any `Other` but agy's own `read_file`.
 pub fn risk_of(request: &Value) -> Option<String> {
     let cwd = Path::new(request["cwd"].as_str().unwrap_or(""));
-    risk::classify(&detail(request), cwd)
+    let detail = detail(request);
+    if let PermissionDetail::Other { tool, .. } = &detail
+        && !(tool == "read_file" && request["toolCall"]["args"]["Path"].is_string())
+    {
+        return Some(UNREADABLE.into());
+    }
+    risk::classify(&detail, cwd)
 }
 
 /// Builds a card without changing the held request or answering it. agy keeps no rule from Marshell, so
@@ -239,6 +249,32 @@ mod tests {
                 args: vec![("input".into(), "null".into())]
             }
         );
+    }
+
+    /// A call Marshell can't read is risky (slice 6d decision 10): a tool it doesn't know, or a known one without
+    /// the arguments it reads. agy's own read and an MCP tool are not.
+    #[test]
+    fn a_call_marshell_cant_read_is_risky() {
+        for request in [
+            json!({"toolCall": {"name": "browse_page", "args": {"Url": "https://example.com"}}}),
+            json!({"toolCall": {"name": "run_command", "args": {"Command": "rm -rf build"}}}),
+            json!({"toolCall": {"name": "write_file", "args": {"Path": "a.txt"}}}),
+            json!({"toolCall": {"name": "read_file", "args": {}}}),
+            json!({"stepIdx": 3}),
+        ] {
+            assert_eq!(
+                risk_of(&request).as_deref(),
+                Some("Marshell can't read this call"),
+                "{request}"
+            );
+        }
+        for request in [
+            fixture!("PreToolUse-read_file"),
+            fixture!("PreToolUse-read_file-outside"),
+            json!({"toolCall": {"name": "mcp_files_read", "args": {"path": "a.txt"}}}),
+        ] {
+            assert_eq!(risk_of(&request), None, "{request}");
+        }
     }
 
     #[test]

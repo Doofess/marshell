@@ -1093,6 +1093,33 @@ async fn an_antigravity_request_from_an_unrecorded_version_still_reaches_the_car
     );
 }
 
+/// An agy update that renames a tool or its arguments still gets a card in Bypass, showing the raw arguments
+/// (slice 6d decision 10). agy's own read still passes at once.
+#[tokio::test]
+async fn an_antigravity_call_marshell_cant_read_is_held_in_bypass() {
+    let (app, st) = agy_app(Duration::from_secs(30), "1.9.0");
+    let mut renamed = agy_request(RISKY);
+    renamed["toolCall"] = serde_json::json!({"name": "shell_exec", "args": {"Command": RISKY}});
+    let hook = spawn_agent_hook("antigravity", &app, Some("a1"), renamed);
+    let entry = wait_one(&app).await;
+    let views = st.permission_views();
+    assert_eq!(views[0].risk.as_deref(), Some("Marshell can't read this call"));
+    assert_eq!(
+        views[0].detail,
+        marshell_protocol::hook::PermissionDetail::Other {
+            tool: "shell_exec".into(),
+            args: vec![("Command".into(), RISKY.into())]
+        }
+    );
+    decide(&app, &rid_of(&entry), r#"{"behavior":"deny"}"#).await;
+    assert_eq!(answer_json(&hook.await.unwrap()), agy_deny("Denied in Marshell."));
+
+    let mut read = agy_request(SAFE);
+    read["toolCall"] = serde_json::json!({"name": "read_file", "args": {"Path": "C:/outside/notes.txt"}});
+    let answer = spawn_agent_hook("antigravity", &app, Some("a1"), read).await.unwrap();
+    assert_eq!(answer.0, StatusCode::NO_CONTENT);
+}
+
 #[tokio::test]
 async fn an_antigravity_release_denies() {
     let (app, _) = agy_app(Duration::from_secs(30), "1.4.7");
