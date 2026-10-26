@@ -45,6 +45,7 @@ pub fn run(home: Option<&Path>, agent: &str, stdin_bytes: &[u8], env: Env) -> Ve
             role: HookRole::Statusline,
             agent: agent.to_string(),
             tag: None,
+            event: None,
         };
         let tab = env(&brand::env_var("TAB_ID")).filter(|t| !t.is_empty());
         let body = stdin_bytes.to_vec();

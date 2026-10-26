@@ -4,14 +4,24 @@
 
 use serde_json::{Map, Value};
 
-/// True when `answer` is one the core gives for `request` (both as the bridge read them).
-pub fn accepted(answer: &[u8], request: &[u8]) -> bool {
+/// What the bridge prints for a permission call it can't take to a card: no tab, no core, the core's
+/// 204 or timeout, an answer that fails `accepted`. Empty for every agent: Claude and Codex take it as
+/// "no opinion", and for Antigravity zero bytes with exit 0 is the neutral answer (`{}` would deny).
+pub fn neutral(_agent: &str) -> &'static [u8] {
+    b""
+}
+
+/// True when `answer` is one the core gives `agent` for `request` (both as the bridge read them).
+pub fn accepted(agent: &str, answer: &[u8], request: &[u8]) -> bool {
     let (Ok(answer), Ok(request)) = (
         serde_json::from_slice::<Value>(answer),
         serde_json::from_slice::<Value>(request),
     ) else {
         return false;
     };
+    if agent == "antigravity" {
+        return antigravity(&answer);
+    }
     let Some(top) = answer.as_object().filter(|top| top.len() == 1) else {
         return false;
     };
@@ -34,6 +44,20 @@ pub fn accepted(answer: &[u8], request: &[u8]) -> bool {
         }
         _ => false,
     }
+}
+
+/// Antigravity's `PreToolUse` answer: a `decision` and at most a string `reason`. Never `overwrite`, and
+/// never `{}`, which agy reads as a deny.
+fn antigravity(answer: &Value) -> bool {
+    let Some(top) = answer.as_object() else {
+        return false;
+    };
+    matches!(
+        top.get("decision").and_then(Value::as_str),
+        Some("allow" | "deny" | "ask" | "force_ask")
+    ) && top
+        .iter()
+        .all(|(k, v)| k == "decision" || (k == "reason" && v.is_string()))
 }
 
 /// The decision holds `behavior` and at most `key`.
@@ -69,7 +93,13 @@ fn without_destination(v: &Value) -> Value {
 
 #[cfg(test)]
 mod tests {
-    use super::accepted;
+    use super::{accepted, neutral};
+
+    const AGY_REQUEST: &[u8] = br#"{"toolName":"run_command","toolInput":{"CommandLine":"echo hi"}}"#;
+
+    fn agy(answer: &str) -> bool {
+        accepted("antigravity", answer.as_bytes(), AGY_REQUEST)
+    }
 
     const REQUEST: &[u8] = br#"{"hook_event_name":"PermissionRequest","tool_name":"Bash","tool_input":{"command":"Set-Content out.txt hi","description":"Allow running the requested command?"}}"#;
 
@@ -79,10 +109,56 @@ mod tests {
             r#"{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decision":{"behavior":"allow"}}}"#,
             r#"{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decision":{"behavior":"deny","message":"Denied in Marshell."}}}"#,
         ] {
-            assert!(accepted(answer.as_bytes(), REQUEST), "{answer}");
+            assert!(accepted("codex", answer.as_bytes(), REQUEST), "{answer}");
         }
         // A Codex request has no suggestions, so a scoped allow is never one the core gives.
         let scoped = r#"{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decision":{"behavior":"allow","updatedPermissions":[{"type":"addRules","rules":[{"toolName":"Bash"}],"behavior":"allow","destination":"session"}]}}}"#;
-        assert!(!accepted(scoped.as_bytes(), REQUEST));
+        assert!(!accepted("codex", scoped.as_bytes(), REQUEST));
+    }
+
+    #[test]
+    fn an_antigravity_allow_is_printed_as_it_is() {
+        for decision in ["allow", "deny", "ask", "force_ask"] {
+            assert!(agy(&format!(r#"{{"decision":"{decision}"}}"#)), "{decision}");
+        }
+    }
+
+    #[test]
+    fn an_antigravity_deny_with_a_reason_is_printed_as_it_is() {
+        assert!(agy(r#"{"decision":"deny","reason":"Denied in Marshell."}"#));
+        assert!(!agy(r#"{"decision":"deny","reason":7}"#));
+        assert!(!agy(r#"{"decision":"maybe"}"#));
+        assert!(!agy(r#"{"decision":true}"#));
+        assert!(!agy("not json"));
+    }
+
+    #[test]
+    fn a_codex_shaped_answer_on_antigravity_is_rejected() {
+        let codex = r#"{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decision":{"behavior":"allow"}}}"#;
+        assert!(!agy(codex));
+        // And the other way round: agy's shape is not one Claude or Codex are given.
+        for agent in ["claude", "codex"] {
+            assert!(!accepted(agent, br#"{"decision":"deny"}"#, REQUEST), "{agent}");
+        }
+    }
+
+    #[test]
+    fn an_antigravity_answer_with_an_overwrite_is_rejected() {
+        assert!(!agy(r#"{"decision":"allow","overwrite":{"toolInput":{}}}"#));
+        assert!(!agy(r#"{"decision":"allow","reason":"x","overwrite":null}"#));
+    }
+
+    #[test]
+    fn an_empty_object_on_antigravity_is_rejected() {
+        // agy reads `{}` as a deny, so it must never come out of the bridge.
+        assert!(!agy("{}"));
+        assert!(!agy(""));
+    }
+
+    #[test]
+    fn the_antigravity_neutral_answer_is_empty() {
+        for agent in ["antigravity", "claude", "codex", "other"] {
+            assert!(neutral(agent).is_empty(), "{agent}");
+        }
     }
 }

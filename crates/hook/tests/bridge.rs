@@ -373,3 +373,219 @@ fn grok_hook_env_makes_the_claude_bridge_exit_quietly() {
     go(home.path(), &extra, codex("event"), b"{}");
     assert!(fake.captured(WAIT).is_some());
 }
+
+fn agy(role: &str, event: Option<&str>) -> Vec<String> {
+    let mut v: Vec<String> = [role, "--agent", "antigravity"].iter().map(|s| s.to_string()).collect();
+    if let Some(event) = event {
+        v.extend(["--event".to_string(), event.to_string()]);
+    }
+    v.extend(["--tag".to_string(), "mshl1".to_string()]);
+    v
+}
+
+#[test]
+fn the_event_is_written_into_the_body() {
+    let home = tempfile::tempdir().unwrap();
+    let fake = serve(Reply::new(204, ""));
+    write_endpoint(home.path(), fake.port, "t");
+    assert!(
+        go(
+            home.path(),
+            TAB,
+            agy("event", Some("Stop")),
+            br#"{"conversationId":"c"}"#
+        )
+        .is_empty()
+    );
+    let body: serde_json::Value = serde_json::from_slice(&fake.captured(WAIT).unwrap().body).unwrap();
+    assert_eq!(body, serde_json::json!({"conversationId":"c","hook_event_name":"Stop"}));
+}
+
+#[test]
+fn an_existing_event_name_is_kept() {
+    let home = tempfile::tempdir().unwrap();
+    let fake = serve(Reply::new(204, ""));
+    write_endpoint(home.path(), fake.port, "t");
+    let stdin = br#"{"hook_event_name":"PostToolUse","conversationId":"c"}"#;
+    go(home.path(), TAB, agy("event", Some("Stop")), stdin);
+    assert_eq!(fake.captured(WAIT).unwrap().body, stdin);
+}
+
+#[test]
+fn a_body_that_is_not_an_object_is_posted_as_it_is() {
+    for stdin in [&b"[1,2]"[..], b"\"Stop\"", b"not json", b""] {
+        let home = tempfile::tempdir().unwrap();
+        let fake = serve(Reply::new(204, ""));
+        write_endpoint(home.path(), fake.port, "t");
+        go(home.path(), TAB, agy("event", Some("Stop")), stdin);
+        assert_eq!(fake.captured(WAIT).unwrap().body, stdin);
+    }
+}
+
+#[test]
+fn a_body_without_an_event_flag_is_posted_as_it_is() {
+    let home = tempfile::tempdir().unwrap();
+    let fake = serve(Reply::new(204, ""));
+    write_endpoint(home.path(), fake.port, "t");
+    go(home.path(), TAB, agy("event", None), br#"{"conversationId":"c"}"#);
+    assert_eq!(fake.captured(WAIT).unwrap().body, br#"{"conversationId":"c"}"#);
+}
+
+#[test]
+fn record_saves_the_body_as_posted_under_the_event_name() {
+    let home = tempfile::tempdir().unwrap();
+    let rec = tempfile::tempdir().unwrap();
+    let rec_dir = rec.path().to_string_lossy().into_owned();
+    let extra = [("MARSHELL_RECORD_DIR", rec_dir.as_str())];
+    let fake = serve(Reply::new(204, ""));
+    write_endpoint(home.path(), fake.port, "t");
+    go(
+        home.path(),
+        &extra,
+        agy("record", Some("PreInvocation")),
+        br#"{"conversationId":"c"}"#,
+    );
+    let posted = fake.captured(WAIT).unwrap().body;
+    assert_eq!(std::fs::read(rec.path().join("PreInvocation.json")).unwrap(), posted);
+    assert!(
+        String::from_utf8(posted)
+            .unwrap()
+            .contains(r#""hook_event_name":"PreInvocation""#)
+    );
+    // A body that is not an object has no name of its own, so the file carries the event.
+    go(home.path(), &extra, agy("record", Some("Stop")), b"not json");
+    assert_eq!(std::fs::read(rec.path().join("Stop.json")).unwrap(), b"not json");
+}
+
+/// Runs the real bridge with only `MARSHELL_HOME` and `extra` in its environment, and returns what it
+/// printed and its exit code.
+fn run_binary(home: &std::path::Path, extra: &[(&str, &str)], args: &[String], stdin: &[u8]) -> (Vec<u8>, Option<i32>) {
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_marshell-hook"));
+    cmd.args(args)
+        .env_clear()
+        .env("MARSHELL_HOME", home)
+        .envs(extra.iter().copied())
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null());
+    if let Some(root) = std::env::var_os("SystemRoot") {
+        cmd.env("SystemRoot", root);
+    }
+    let mut child = cmd.spawn().unwrap();
+    let mut pipe = child.stdin.take().unwrap();
+    let _ = pipe.write_all(stdin);
+    drop(pipe);
+    let out = child.wait_with_output().unwrap();
+    (out.stdout, out.status.code())
+}
+
+const AGY_REQUEST: &[u8] = br#"{"toolName":"run_command","toolInput":{"CommandLine":"echo hi"}}"#;
+
+#[test]
+fn antigravity_outside_a_tab_prints_the_neutral_answer() {
+    // A stale endpoint with an eager listener must not get the chance to answer.
+    let home = tempfile::tempdir().unwrap();
+    let fake = serve(Reply::new(200, r#"{"decision":"allow"}"#));
+    write_endpoint(home.path(), fake.port, "t");
+    let (out, code) = run_binary(home.path(), &[], &agy("permission", Some("PreToolUse")), AGY_REQUEST);
+    assert!(out.is_empty());
+    assert_eq!(code, Some(0));
+    assert!(fake.captured(Duration::from_millis(300)).is_none());
+}
+
+#[test]
+fn antigravity_with_no_core_prints_the_neutral_answer() {
+    let home = tempfile::tempdir().unwrap();
+    let (out, code) = run_binary(home.path(), TAB, &agy("permission", Some("PreToolUse")), AGY_REQUEST);
+    assert!(out.is_empty());
+    assert_eq!(code, Some(0));
+    write_endpoint(home.path(), refused_port(), "t");
+    let (out, code) = run_binary(home.path(), TAB, &agy("permission", Some("PreToolUse")), AGY_REQUEST);
+    assert!(out.is_empty());
+    assert_eq!(code, Some(0));
+}
+
+#[test]
+fn antigravity_with_a_server_error_prints_nothing() {
+    let home = tempfile::tempdir().unwrap();
+    let fake = serve(Reply::new(500, "boom"));
+    write_endpoint(home.path(), fake.port, "t");
+    let (out, code) = run_binary(home.path(), TAB, &agy("permission", Some("PreToolUse")), AGY_REQUEST);
+    assert!(out.is_empty());
+    assert_eq!(code, Some(0));
+    assert!(fake.captured(WAIT).is_some());
+}
+
+#[test]
+fn antigravity_prints_a_deny_the_core_gives_and_nothing_for_other_answers() {
+    for (body, printed) in [
+        (r#"{"decision":"deny","reason":"Denied in Marshell."}"#, true),
+        (r#"{}"#, false),
+        (r#"{"decision":"allow","overwrite":{}}"#, false),
+        (
+            r#"{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decision":{"behavior":"allow"}}}"#,
+            false,
+        ),
+    ] {
+        let home = tempfile::tempdir().unwrap();
+        let fake = serve(Reply::new(200, body));
+        write_endpoint(home.path(), fake.port, "t");
+        let (out, code) = run_binary(home.path(), TAB, &agy("permission", Some("PreToolUse")), AGY_REQUEST);
+        assert_eq!(out, if printed { body.as_bytes() } else { b"" }, "{body}");
+        assert_eq!(code, Some(0));
+    }
+}
+
+#[test]
+fn an_antigravity_event_prints_nothing() {
+    for (status, body) in [(204, ""), (200, r#"{"decision":"deny"}"#)] {
+        let home = tempfile::tempdir().unwrap();
+        let fake = serve(Reply::new(status, body));
+        write_endpoint(home.path(), fake.port, "t");
+        let (out, code) = run_binary(home.path(), TAB, &agy("event", Some("PostToolUse")), AGY_REQUEST);
+        assert!(out.is_empty(), "{status}");
+        assert_eq!(code, Some(0));
+    }
+}
+
+#[test]
+fn an_unknown_flag_on_antigravity_prints_nothing() {
+    // An older bridge meeting a newer flag must not block agy.
+    let home = tempfile::tempdir().unwrap();
+    let fake = serve(Reply::new(200, r#"{"decision":"allow"}"#));
+    write_endpoint(home.path(), fake.port, "t");
+    let mut args = agy("permission", Some("PreToolUse"));
+    args.extend(["--newer-flag".to_string(), "x".to_string()]);
+    let (out, code) = run_binary(home.path(), TAB, &args, AGY_REQUEST);
+    assert!(out.is_empty());
+    assert_eq!(code, Some(0));
+    assert!(fake.captured(Duration::from_millis(300)).is_none());
+}
+
+#[test]
+fn garbage_stdin_on_antigravity_prints_nothing() {
+    let home = tempfile::tempdir().unwrap();
+    let fake = serve(Reply::new(200, r#"{"decision":"allow"}"#));
+    write_endpoint(home.path(), fake.port, "t");
+    let (out, code) = run_binary(
+        home.path(),
+        TAB,
+        &agy("permission", Some("PreToolUse")),
+        b"\xff\xfe not json",
+    );
+    assert!(out.is_empty());
+    assert_eq!(code, Some(0));
+}
+
+#[test]
+fn claude_and_codex_outside_a_tab_print_nothing() {
+    for agent in ["claude", "codex"] {
+        let home = tempfile::tempdir().unwrap();
+        let args: Vec<String> = ["permission", "--agent", agent].iter().map(|s| s.to_string()).collect();
+        let (out, code) = run_binary(home.path(), &[], &args, permission_request().as_bytes());
+        assert!(out.is_empty(), "{agent}");
+        assert_eq!(code, Some(0));
+    }
+}

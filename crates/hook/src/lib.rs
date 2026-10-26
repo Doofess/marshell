@@ -71,7 +71,7 @@ fn call(args: &Args, stdin: &mut dyn Read, env: Env, ancestors: Ancestors, home:
         return Vec::new();
     }
     let body = match post::read_capped(stdin) {
-        Ok(Some(b)) => b,
+        Ok(Some(b)) => with_event(b, args.event.as_deref()),
         Ok(None) => return fail("stdin is over 1 MiB, nothing posted"),
         Err(e) => return fail(&format!("cannot read stdin: {e}")),
     };
@@ -79,7 +79,7 @@ fn call(args: &Args, stdin: &mut dyn Read, env: Env, ancestors: Ancestors, home:
         && let Some(home) = home
     {
         let dir = record::dir(env, home, &args.agent);
-        if let Err(e) = record::save(&dir, role.as_str(), &body) {
+        if let Err(e) = record::save(&dir, args.event.as_deref().unwrap_or(role.as_str()), &body) {
             fail(&format!("cannot save the recording: {e}"));
         }
     }
@@ -89,24 +89,48 @@ fn call(args: &Args, stdin: &mut dyn Read, env: Env, ancestors: Ancestors, home:
         .filter(|_| !(args.agent == "codex" && codex_daemon::runs_in_daemon(&ancestors())));
     if role == HookRole::Permission && tab.is_none() {
         // The core answers a request from outside Marshell with 204, so there is nothing to ask.
-        return Vec::new();
+        return neutral(args);
     }
     let Some((_, port, token)) = endpoint::discover(env) else {
-        return Vec::new();
+        return neutral(args);
     };
     let budget = post::budget(role);
     match post::post(port, &token, args, tab.as_deref(), &body, budget) {
         Ok((200, bytes)) if role == HookRole::Permission => {
-            if permission::accepted(&bytes, &body) {
+            if permission::accepted(&args.agent, &bytes, &body) {
                 bytes
             } else {
                 fail("the answer is not one Marshell gives, nothing printed")
             }
         }
         Ok((200, bytes)) if role == HookRole::Context => bytes,
-        Ok((status, _)) if (200..300).contains(&status) => Vec::new(),
+        Ok((status, _)) if (200..300).contains(&status) => neutral(args),
         Ok((status, _)) => fail(&format!("the core answered {status}")),
-        Err(PostError::Closed) => Vec::new(),
+        Err(PostError::Closed) => neutral(args),
         Err(PostError::Failed(msg)) => fail(&msg.replace(&token, "***")),
+    }
+}
+
+/// What a call without an answer from the core prints: the permission role's neutral bytes, nothing
+/// for every other role.
+fn neutral(args: &Args) -> Vec<u8> {
+    match args.role {
+        HookRole::Permission => permission::neutral(&args.agent).to_vec(),
+        _ => Vec::new(),
+    }
+}
+
+/// `body` with `"hook_event_name": <event>` added when it is a JSON object that has none. An existing
+/// name is never replaced, and anything that is not an object is returned as it is.
+fn with_event(body: Vec<u8>, event: Option<&str>) -> Vec<u8> {
+    let Some(event) = event else {
+        return body;
+    };
+    match serde_json::from_slice::<serde_json::Value>(&body) {
+        Ok(serde_json::Value::Object(mut object)) if !object.contains_key("hook_event_name") => {
+            object.insert("hook_event_name".into(), event.into());
+            serde_json::to_vec(&object).unwrap_or(body)
+        }
+        _ => body,
     }
 }
