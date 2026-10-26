@@ -5,6 +5,7 @@ pub mod claude;
 pub mod codex;
 pub mod common;
 pub mod identify;
+pub mod install;
 pub mod manifest;
 pub mod own;
 pub mod presets;
@@ -53,6 +54,52 @@ pub fn run_version_text(exe: &Path, timeout: Duration) -> Option<String> {
     }
     let out = reader.join().ok()?;
     Some(String::from_utf8_lossy(&out).into_owned())
+}
+
+/// Runs `<exe> <args>` with no stdin and returns its exit code and its stdout then stderr, joined. The process is
+/// killed after `timeout`, which gives `None`, as does a program that can't start.
+pub fn run_capture(exe: &Path, args: &[&str], timeout: Duration) -> Option<(i32, String)> {
+    let mut cmd = Command::new(exe);
+    cmd.args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        // CREATE_NO_WINDOW: no console window flashes.
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+    let mut child = cmd.spawn().ok()?;
+    let stdout = child.stdout.take()?;
+    let stderr = child.stderr.take()?;
+    // Each pipe is read on its own thread, so a full pipe cannot hold the child past the deadline.
+    fn read(mut pipe: impl std::io::Read + Send + 'static) -> std::thread::JoinHandle<Vec<u8>> {
+        std::thread::spawn(move || {
+            let mut out = Vec::new();
+            let _ = pipe.read_to_end(&mut out);
+            out
+        })
+    }
+    let out_reader = read(stdout);
+    let err_reader = read(stderr);
+    let deadline = Instant::now() + timeout;
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break status,
+            Ok(None) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(20)),
+            _ => {
+                let _ = child.kill();
+                let _ = child.wait();
+                // After a kill the readers are left alone: a grandchild may still hold a pipe open.
+                return None;
+            }
+        }
+    };
+    let mut text = String::from_utf8_lossy(&out_reader.join().ok()?).into_owned();
+    text.push_str(&String::from_utf8_lossy(&err_reader.join().ok()?));
+    Some((status.code().unwrap_or(-1), text))
 }
 
 /// The first version-shaped token, with an optional leading `v` removed and a suffix kept.

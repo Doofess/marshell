@@ -5,18 +5,20 @@ use super::AppState;
 use crate::agents::antigravity::hooks as agy;
 use crate::agents::claude::{self, hooks};
 use crate::agents::codex::{self, trust};
+use crate::agents::install::{codex_newer, install_kind, update_text};
 use crate::agents::{parse_any_version, run_version_text};
 use crate::bridge;
 use crate::config::jsonc::{parse_problem, read_value};
 use crate::paths;
 use crate::profiles::detect::{agent_command, agent_exe};
 use axum::Json;
-use axum::extract::{Path as UrlPath, State};
+use axum::extract::{Path as UrlPath, Query, State};
 use axum::http::StatusCode;
 use marshell_protocol::agents::{
     AgentFound, AgentSetup, HookInstall, HookPlanRequest, ParseProblem, RemovePreview, SettingsState,
 };
 use marshell_protocol::config::ConfigPreview;
+use marshell_protocol::install::{AgentInstall, InstallKind};
 use std::collections::HashMap;
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
@@ -239,6 +241,21 @@ impl AppState {
         }
     }
 
+    /// Drops the remembered version of `exe`: an npm update can leave the shim's modified time as it was.
+    pub(crate) fn forget_version(&self, exe: &Path) {
+        forget_cached(&self.0.versions, exe);
+    }
+
+    /// The folder Codex keeps its own files in: where its `hooks.json` is.
+    fn codex_dir(&self) -> Option<PathBuf> {
+        let user_home = match super::files::home_dir() {
+            Some(home) => home,
+            None if self.0.codex_hooks.is_some() => PathBuf::new(),
+            None => return None,
+        };
+        self.codex_hooks_path(&user_home).parent().map(Path::to_path_buf)
+    }
+
     /// Cache stdout per executable and modified time; parse on every read so a generic lookup
     /// cannot make Claude's strict gate accept output it would otherwise reject.
     fn version_of(&self, exe: &Path, parse: fn(&str) -> Option<String>) -> Option<String> {
@@ -270,6 +287,11 @@ fn cached_version(
         .unwrap()
         .insert(exe.to_path_buf(), (modified, version.clone()));
     Some(version)
+}
+
+/// Drops what `cache` knows of `exe`, so the next read asks the program again.
+fn forget_cached(cache: &Mutex<HashMap<PathBuf, (Option<SystemTime>, String)>>, exe: &Path) {
+    cache.lock().unwrap().remove(exe);
 }
 
 pub(crate) fn setup_of(st: &AppState) -> Result<AgentSetup, Fail> {
@@ -512,6 +534,68 @@ pub async fn found(State(st): State<AppState>) -> Result<Json<Vec<AgentFound>>, 
     Ok(Json(list))
 }
 
+#[derive(serde::Deserialize)]
+pub struct InstallQuery {
+    /// Read the version from the program again, not from what was remembered.
+    #[serde(default)]
+    recheck: bool,
+}
+
+/// The install type, version and update command of one agent CLI, and Codex's note about a newer version.
+pub async fn install(
+    State(st): State<AppState>,
+    UrlPath(agent): UrlPath<String>,
+    Query(query): Query<InstallQuery>,
+) -> Result<Json<AgentInstall>, Fail> {
+    adapter(&agent)?;
+    let info = tokio::task::spawn_blocking(move || install_of(&st, &agent, query.recheck))
+        .await
+        .map_err(failed)?;
+    Ok(Json(info))
+}
+
+fn install_of(st: &AppState, agent: &str, recheck: bool) -> AgentInstall {
+    let Some(exe) = st.agent_exe_of(agent) else {
+        return AgentInstall {
+            agent: agent.to_string(),
+            found: false,
+            version: None,
+            install: InstallKind::Unknown,
+            update_command: None,
+            newer_version: None,
+        };
+    };
+    if recheck {
+        st.forget_version(&exe);
+    }
+    let version = st.agent_version(agent, Some(&exe));
+    // Only the match looks at the resolved path (a WinGet link points into `Packages`); what is shown keeps the path as found.
+    let resolved = std::fs::canonicalize(&exe).unwrap_or_else(|_| exe.clone());
+    let install = install_kind(agent, &resolved, &|p| p.is_file());
+    let newer_version = if agent == CODEX {
+        version
+            .as_deref()
+            .zip(st.codex_dir())
+            .and_then(|(version, dir)| codex_newer_in(&dir, version))
+    } else {
+        None
+    };
+    AgentInstall {
+        agent: agent.to_string(),
+        found: true,
+        version,
+        update_command: update_text(agent, &install),
+        install,
+        newer_version,
+    }
+}
+
+/// Codex's `version.json` in `dir`, read against the installed `version`. A file that can't be read is no news.
+fn codex_newer_in(dir: &Path, version: &str) -> Option<String> {
+    let text = std::fs::read_to_string(dir.join("version.json")).ok()?;
+    codex_newer(&text, version)
+}
+
 pub async fn plan(
     State(st): State<AppState>,
     UrlPath(agent): UrlPath<String>,
@@ -649,5 +733,22 @@ mod tests {
         assert_eq!(cached_version(&cache, exe, at(10), || None), None);
         let retry = cached_version(&cache, exe, at(10), || Some("2.1.303".to_string()));
         assert_eq!(retry.as_deref(), Some("2.1.303"));
+    }
+
+    #[test]
+    fn recheck_drops_the_cached_version() {
+        let cache = Mutex::new(HashMap::new());
+        let exe = Path::new("claude");
+        let runs = Cell::new(0);
+        let ask = || {
+            runs.set(runs.get() + 1);
+            Some("2.1.303".to_string())
+        };
+        cached_version(&cache, exe, at(10), ask);
+        cached_version(&cache, exe, at(10), ask);
+        assert_eq!(runs.get(), 1);
+        forget_cached(&cache, exe);
+        cached_version(&cache, exe, at(10), ask);
+        assert_eq!(runs.get(), 2);
     }
 }

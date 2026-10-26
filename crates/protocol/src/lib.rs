@@ -6,6 +6,7 @@ pub mod diagnostics;
 pub mod frames;
 pub mod history;
 pub mod hook;
+pub mod install;
 pub mod manifest;
 pub mod tools;
 

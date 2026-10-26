@@ -996,3 +996,94 @@ async fn antigravity_status_off_sets_its_note() {
     agy_post(&app, "statusline", None, agy_statusline("pending")).await;
     assert_eq!(agy_row(&st).attention, None);
 }
+
+// ---- Install type ----
+
+/// A state with the given agent files "found" (paths that don't exist, so nothing is run) and every version pinned.
+fn install_env(codex_home: Option<&std::path::Path>) -> (tempfile::TempDir, axum::Router) {
+    let dir = tempfile::tempdir().unwrap();
+    let home = dir.path().join("home");
+    std::fs::create_dir_all(&home).unwrap();
+    let mut st = AppState::new(
+        TOKEN.into(),
+        PORT,
+        vec!["http://tauri.localhost".into()],
+        home,
+        Vec::new(),
+    )
+    .with_claude_version(Some("2.1.303".into()))
+    .with_codex_version(Some("0.163.2".into()))
+    .with_agy_version(None);
+    if let Some(codex_home) = codex_home {
+        st = st
+            .with_codex_hooks(codex_home.join("hooks.json"))
+            .with_agent_path(|name| {
+                (name == "codex").then(|| PathBuf::from(r"Z:\nowhere\Programs\OpenAI\Codex\bin\codex.exe"))
+            });
+    } else {
+        st = st.with_agent_path(|_| None);
+    }
+    (dir, router(st))
+}
+
+#[tokio::test]
+async fn install_is_refused_without_the_bearer() {
+    let (_dir, app) = install_env(None);
+    let req = Request::builder()
+        .method("GET")
+        .uri("/v1/agents/claude/install")
+        .header(header::HOST, format!("127.0.0.1:{PORT}"))
+        .body(Body::empty())
+        .unwrap();
+    let (status, _) = send(&app, req).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn install_for_an_unknown_agent_is_404() {
+    let (_dir, app) = install_env(None);
+    let (status, body) = get(&app, "/v1/agents/nope/install").await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+}
+
+#[tokio::test]
+async fn install_reports_not_found() {
+    let (_dir, app) = install_env(None);
+    let (status, body) = get(&app, "/v1/agents/claude/install").await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["agent"], "claude");
+    assert_eq!(body["found"], false);
+    assert_eq!(body["version"], Value::Null);
+    assert_eq!(body["install"]["kind"], "unknown");
+    assert_eq!(body["update_command"], Value::Null);
+    assert_eq!(body["newer_version"], Value::Null);
+}
+
+#[tokio::test]
+async fn install_reads_codex_version_json() {
+    let dir = tempfile::tempdir().unwrap();
+    let codex_home = dir.path().join("codex-home");
+    std::fs::create_dir_all(&codex_home).unwrap();
+    std::fs::write(
+        codex_home.join("version.json"),
+        r#"{"latest_version":"0.164.0","last_checked_at":"2026-10-27T00:00:00Z","dismissed_version":null}"#,
+    )
+    .unwrap();
+    let (_keep, app) = install_env(Some(&codex_home));
+    let (status, body) = get(&app, "/v1/agents/codex/install?recheck=true").await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["found"], true);
+    assert_eq!(body["version"], "0.163.2");
+    assert_eq!(body["install"]["kind"], "native");
+    assert_eq!(body["update_command"], "codex update");
+    assert_eq!(body["newer_version"], "0.164.0");
+
+    // A dismissed version is no news.
+    std::fs::write(
+        codex_home.join("version.json"),
+        r#"{"latest_version":"0.164.0","dismissed_version":"0.164.0"}"#,
+    )
+    .unwrap();
+    let (_, body) = get(&app, "/v1/agents/codex/install").await;
+    assert_eq!(body["newer_version"], Value::Null, "{body}");
+}
