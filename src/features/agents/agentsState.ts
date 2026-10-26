@@ -52,8 +52,11 @@ export function setupLine(s: AgentSetup): string {
         : `Hooks on in ${file}. New sessions report status.`;
     case "partial":
       return `Some hooks are missing in ${file}. Set up again to repair them.`;
-    case "orphaned":
-      return `Marshell's hooks are in ${file}, but the bridge at ${s.bridge_path} is missing, so ${name} reports a failing hook each time one fires. Turn the hooks off, or set up again.`;
+    case "orphaned": {
+      // agy blocks a tool call whose PreToolUse command can't start (6d research, A3); the others only report it.
+      const effect = s.agent === "antigravity" ? "blocks every tool call, outside Marshell too" : "reports a failing hook each time one fires";
+      return `Marshell's hooks are in ${file}, but the bridge at ${s.bridge_path} is missing, so ${name} ${effect}. Turn the hooks off, or set up again.`;
+    }
   }
 }
 

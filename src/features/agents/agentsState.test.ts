@@ -232,6 +232,12 @@ describe("Antigravity", () => {
     expect(setupLine({ ...on, hooks: "partial" })).toContain("Some hooks are missing in C:/h/.gemini/config/hooks.json.");
     expect(setupLine({ ...on, hooks: "orphaned" })).toContain("Marshell's hooks are in C:/h/.gemini/config/hooks.json");
   });
+  it("setupLine says orphaned hooks stop every Antigravity tool call", () => {
+    // agy blocks a tool call whose PreToolUse command can't start (6d research, A3), outside Marshell too.
+    expect(setupLine({ ...AGY_SETUP, hooks: "orphaned" })).toBe(
+      "Marshell's hooks are in C:/h/.gemini/config/hooks.json, but the bridge at C:/m/bin/marshell-hook.exe is missing, so Antigravity CLI blocks every tool call, outside Marshell too. Turn the hooks off, or set up again.",
+    );
+  });
   it("rowSetupStart opens Antigravity's setup", () => {
     expect(rowSetupStart("antigravity")).toEqual({ setup: "antigravity" });
   });
