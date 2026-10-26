@@ -90,6 +90,9 @@ pub struct Entry {
     /// `tool_event`. It is a full Needs you: looking at the tab does not clear it. Only typing, the tool's next
     /// output, the command's end and a new process take it. Not serialized.
     tool_attention: bool,
+    /// The row's attention is an agent's own prompt that its status line reported (`agent_prompt`). Like
+    /// `tool_attention`, looking at the tab does not clear it. Not serialized.
+    agent_prompt: bool,
     /// Ports the last port poll saw listening that are not chips yet: a port becomes a chip on its second poll in a row.
     /// Not serialized.
     listen_pending: Vec<u16>,
@@ -157,6 +160,7 @@ impl Entry {
     /// Takes the row's attention, whoever raised it, and the claim a tool prompt had on it. True when there was some.
     fn drop_attention(&mut self) -> bool {
         self.tool_attention = false;
+        self.agent_prompt = false;
         self.info.attention.take().is_some()
     }
 
@@ -309,6 +313,7 @@ impl Registry {
             progress_hold: false,
             displaced_by: None,
             tool_attention: false,
+            agent_prompt: false,
             listen_pending: Vec::new(),
             announced_seen: Vec::new(),
         });
@@ -361,6 +366,7 @@ impl Registry {
                 progress_hold: false,
                 displaced_by: None,
                 tool_attention: false,
+                agent_prompt: false,
                 listen_pending: Vec::new(),
                 announced_seen: Vec::new(),
             });
@@ -736,6 +742,43 @@ impl Registry {
         }
     }
 
+    /// Whether the agent shows its own prompt that only the person can answer in the terminal (Antigravity's status
+    /// line reports it). `true` raises a limited "Waiting for you in the terminal" on an open Running row. It does
+    /// not cover a hook-raised Needs permission, and it never replaces attention that is already there. `false` takes
+    /// only the attention this raised. A hook event that changes the status, and typing into the tab, take it too.
+    /// Broadcasts only on a change.
+    pub fn agent_prompt(&self, tab_id: &str, pending: bool) {
+        let mut state = self.state.lock().unwrap();
+        let Some(entry) = state.open.iter_mut().find(|e| e.info.tab_id == tab_id) else {
+            return;
+        };
+        if entry.info.state != SessionState::Running {
+            return;
+        }
+        let changed = if pending {
+            let needs_permission = entry
+                .info
+                .live
+                .as_ref()
+                .is_some_and(|live| live.state == LiveState::NeedsPermission);
+            if needs_permission || entry.info.attention.is_some() {
+                false
+            } else {
+                entry.note_attention(Some("Waiting for you in the terminal".to_string()));
+                if let Some(attention) = &mut entry.info.attention {
+                    attention.limited = true;
+                }
+                entry.agent_prompt = true;
+                true
+            }
+        } else {
+            entry.agent_prompt && entry.drop_attention()
+        };
+        if changed {
+            self.tx.send_replace(state.snapshot());
+        }
+    }
+
     /// The person is looking at these sessions: with the window focused, their attention is seen.
     /// Broadcasts only on a change.
     pub fn clear_attention_seen(&self, view: &UiView) {
@@ -747,7 +790,7 @@ impl Registry {
         for entry in state
             .open
             .iter_mut()
-            .filter(|e| view.visible_tabs.contains(&e.info.tab_id) && !e.tool_attention)
+            .filter(|e| view.visible_tabs.contains(&e.info.tab_id) && !e.tool_attention && !e.agent_prompt)
         {
             changed |= entry.drop_attention();
         }
@@ -2205,6 +2248,77 @@ mod tests {
         reg.tool_event("a", needs_you("Asks to continue"));
         reg.tool_event("a", crate::tools::ToolEvent::Cleared);
         assert!(row(&reg, "a").attention.is_some());
+    }
+
+    #[test]
+    fn an_agent_prompt_is_a_limited_needs_you() {
+        let reg = Registry::new();
+        reg.reserve("a", relaunch("A"));
+        reg.update_live("a", |_| Some(live(LiveState::Working)));
+        let mut rx = reg.subscribe();
+        rx.borrow_and_update();
+        reg.agent_prompt("a", true);
+        let attention = row(&reg, "a").attention.expect("attention");
+        assert_eq!(attention.message.as_deref(), Some("Waiting for you in the terminal"));
+        assert!(attention.limited);
+        assert!(rx.has_changed().unwrap());
+        // The same status line again changes nothing, and keeps the time it first came.
+        rx.borrow_and_update();
+        reg.agent_prompt("a", true);
+        assert!(!rx.has_changed().unwrap());
+        assert_eq!(row(&reg, "a").attention.unwrap().since_ms, attention.since_ms);
+        // Looking at the tab does not answer agy's prompt.
+        reg.clear_attention_seen(&UiView {
+            window_focused: true,
+            visible_tabs: vec!["a".into()],
+        });
+        assert!(row(&reg, "a").attention.is_some());
+        // An unknown tab is ignored.
+        reg.agent_prompt("nope", true);
+    }
+
+    #[test]
+    fn an_agent_prompt_does_not_cover_a_held_request() {
+        let reg = Registry::new();
+        reg.reserve("a", relaunch("A"));
+        reg.update_live("a", |_| Some(live(LiveState::NeedsPermission)));
+        reg.agent_prompt("a", true);
+        assert_eq!(row(&reg, "a").attention, None);
+        // Nor a bell or notification's attention that is already there.
+        reg.reserve("b", relaunch("B"));
+        reg.mark("b", Mark::Executed, &away());
+        reg.mark("b", Mark::Bell, &away());
+        let before = row(&reg, "b").attention.unwrap();
+        reg.agent_prompt("b", true);
+        assert_eq!(row(&reg, "b").attention, Some(before));
+        // And false never takes what is not its own.
+        reg.agent_prompt("b", false);
+        assert!(row(&reg, "b").attention.is_some());
+    }
+
+    #[test]
+    fn an_agent_prompt_clears_on_false_on_the_next_event_and_on_typing() {
+        let reg = Registry::new();
+        for tab in ["a", "b", "c"] {
+            reg.reserve(tab, relaunch(tab));
+            reg.update_live(tab, |_| Some(live(LiveState::Working)));
+            reg.agent_prompt(tab, true);
+            assert!(row(&reg, tab).attention.is_some(), "{tab}");
+        }
+        // The status line says the prompt is gone.
+        reg.agent_prompt("a", false);
+        assert_eq!(row(&reg, "a").attention, None);
+        // The next hook event moves the status.
+        reg.update_live("b", |_| Some(live(LiveState::Done)));
+        assert_eq!(row(&reg, "b").attention, None);
+        // Typing answers it.
+        reg.note_input("c");
+        assert_eq!(row(&reg, "c").attention, None);
+        // A later false has nothing left to take.
+        let mut rx = reg.subscribe();
+        rx.borrow_and_update();
+        reg.agent_prompt("c", false);
+        assert!(!rx.has_changed().unwrap());
     }
 
     #[test]

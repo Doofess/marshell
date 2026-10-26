@@ -200,7 +200,9 @@ impl AppState {
 
     /// The file sessions run for `agent`: a profile that runs it itself, else the one on PATH.
     pub(crate) fn agent_exe_of(&self, agent: &str) -> Option<PathBuf> {
-        agent_exe(&self.0.profiles.lock().unwrap().profiles, agent).or_else(|| self.agent_finder(&[]).path_of(agent))
+        // The lock is dropped before PATH is searched. An adapter's program can differ from its id (`agy`).
+        let from_profile = agent_exe(&self.0.profiles.lock().unwrap().profiles, agent);
+        from_profile.or_else(|| self.agent_finder(&[]).path_of(agent_command(agent).unwrap_or(agent)))
     }
 
     /// Where an adapter agent's program is: a profile that runs it, else its command on PATH. May touch the disk.
@@ -228,6 +230,10 @@ impl AppState {
             self.claude_version(exe)
         } else if agent == CODEX && self.0.codex_version.is_some() {
             self.codex_version(exe)
+        } else if agent == ANTIGRAVITY
+            && let Some(pinned) = &self.0.agy_version
+        {
+            pinned.clone()
         } else {
             exe.and_then(|exe| self.version_of(exe, parse_any_version))
         }
@@ -402,7 +408,7 @@ pub(crate) fn agy_setup_of(st: &AppState) -> Result<AgentSetup, Fail> {
     let user_home = st.agy_user_home()?;
     let (hooks_file, settings_file) = (agy::hooks_path(&user_home), agy::settings_path(&user_home));
     let exe = st.agent_exe_of(ANTIGRAVITY);
-    let version = exe.as_deref().and_then(|exe| st.version_of(exe, parse_any_version));
+    let version = st.agent_version(ANTIGRAVITY, exe.as_deref());
 
     let mut setup = AgentSetup {
         agent: ANTIGRAVITY.to_string(),

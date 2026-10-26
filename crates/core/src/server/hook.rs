@@ -1,8 +1,8 @@
 use super::AppState;
 use crate::agents::claude::compact;
 use crate::agents::claude::status::{fold_event, fold_statusline_with_window, mode_of};
-use crate::agents::codex;
 use crate::agents::common::Gate;
+use crate::agents::{antigravity, codex};
 use crate::history::recorder::schedule_copy;
 use crate::hooks::holds::Outcome;
 use crate::hooks::log::HookEventRecord;
@@ -41,8 +41,13 @@ pub async fn post(
     let agent = header(&headers, HEADER_AGENT)
         .ok_or((StatusCode::BAD_REQUEST, "missing agent".to_string()))?
         .to_string();
-    let json: serde_json::Value =
+    let mut json: serde_json::Value =
         serde_json::from_slice(&body).map_err(|e| (StatusCode::BAD_REQUEST, format!("body is not JSON: {e}")))?;
+    // A prompt or an email is personal: it goes before anything else sees the body (the log, the fold,
+    // the history, a hold), so the core keeps neither.
+    if agent == "antigravity" {
+        antigravity::strip_personal(&mut json);
+    }
     let tab = header(&headers, HEADER_TAB).map(str::to_string);
     // Both come from the sender, so only a short identifier is logged: never free text a payload could carry.
     tracing::debug!(
@@ -76,7 +81,7 @@ pub async fn post(
     {
         return Ok(StatusCode::NO_CONTENT.into_response());
     }
-    if matches!(agent.as_str(), "claude" | "codex")
+    if matches!(agent.as_str(), "claude" | "codex" | "antigravity")
         && let Some(tab) = tab.as_deref()
     {
         fold_live(&st, &agent, role, tab, &json, at_ms).await;
@@ -115,12 +120,12 @@ async fn record_history(st: &AppState, agent: &str, tab: &str, body: &serde_json
     }
 }
 
-/// Folds what an agent (Claude Code or Codex) reported into the tab's live status. A permission request
-/// counts as an event (it folds to Needs permission). Without a known version, or with the switch off,
-/// the row gets a note saying why and keeps no status. Only Claude Code sends a status line.
+/// Folds what an agent (Claude Code, Codex or Antigravity) reported into the tab's live status. A permission
+/// request counts as an event (it folds to Needs permission). Without a known version, or with the switch off,
+/// the row gets a note saying why and keeps no status. Claude Code and Antigravity send a status line.
 async fn fold_live(st: &AppState, agent: &str, role: HookRole, tab: &str, body: &serde_json::Value, at_ms: u64) {
     if !matches!(role, HookRole::Event | HookRole::Permission | HookRole::Statusline)
-        || (role == HookRole::Statusline && agent != "claude")
+        || (role == HookRole::Statusline && !matches!(agent, "claude" | "antigravity"))
         || !st.registry().is_open(tab)
     {
         return;
@@ -128,6 +133,7 @@ async fn fold_live(st: &AppState, agent: &str, role: HookRole, tab: &str, body: 
     let (name, gate): (&str, fn(Option<&str>) -> Gate) = match agent {
         "claude" => ("Claude Code", crate::agents::claude::version_gate),
         "codex" => ("Codex", codex::version_gate),
+        "antigravity" => ("Antigravity", antigravity::version_gate),
         _ => return,
     };
     let off = st.0.settings.lock().unwrap().status_off.iter().any(|a| a == agent);
@@ -151,6 +157,25 @@ async fn fold_live(st: &AppState, agent: &str, role: HookRole, tab: &str, body: 
                 .update_live(tab, |prev| codex::status::fold_event(prev, body, at_ms));
             if let Some(mode) = codex::status::mode_of(body) {
                 st.registry().set_live_mode(tab, mode);
+            }
+            st.registry().set_status_note(tab, None);
+        }
+        Gate::Known if agent == "antigravity" => {
+            if role == HookRole::Statusline {
+                // The status line is folded first: a change to the status takes attention, so a prompt
+                // that is still showing is raised again after it.
+                st.registry().update_live(tab, |prev| {
+                    Some(antigravity::status::fold_statusline(prev, body, at_ms))
+                });
+                if let Some(pending) = antigravity::status::confirmation_pending(body) {
+                    st.registry().agent_prompt(tab, pending);
+                }
+            } else {
+                // Any hook event means agy went on: its own prompt, if one was showing, is answered.
+                st.registry().agent_prompt(tab, false);
+                // No card exists yet, so no request is held.
+                st.registry()
+                    .update_live(tab, |prev| antigravity::status::fold_event(prev, body, at_ms, false));
             }
             st.registry().set_status_note(tab, None);
         }

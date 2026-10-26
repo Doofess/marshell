@@ -381,6 +381,32 @@ async fn antigravity_setup_reports_both_files() {
 }
 
 #[tokio::test]
+async fn antigravity_setup_finds_agy_by_its_program_name() {
+    // agy's program is `agy`, not its agent id: PATH knows only `agy`.
+    let dir = tempfile::tempdir().unwrap();
+    let root = canonical(dir.path());
+    let home = root.join("home");
+    std::fs::create_dir_all(&home).unwrap();
+    let st = AppState::new(
+        TOKEN.into(),
+        PORT,
+        vec!["http://tauri.localhost".into()],
+        home,
+        Vec::new(),
+    )
+    .with_claude_settings(root.join("settings.json"))
+    .with_agy_home(root.join("user"))
+    .with_agy_version(Some("1.4.7".into()))
+    .with_agent_path(|command| (command == "agy").then(|| PathBuf::from(r"C:\tools\agy.exe")));
+    let app = router(st);
+    let (status, setup) = get(&app, "/v1/agents/antigravity/setup").await;
+    assert_eq!(status, StatusCode::OK, "{setup}");
+    assert_eq!(setup["found"], true, "{setup}");
+    assert_eq!(setup["exe_path"], r"C:\tools\agy.exe", "{setup}");
+    assert_eq!(setup["version"], "1.4.7", "{setup}");
+}
+
+#[tokio::test]
 async fn antigravity_install_then_remove_round_trips() {
     // Both files missing: they end missing (hooks.json deleted, settings.json gone with its statusLine).
     let e = agy_env();
@@ -763,4 +789,210 @@ async fn codex_status_off_sets_its_note() {
     let row = codex_row(&st);
     assert_eq!(row.live, None);
     assert_eq!(row.status_note.as_deref(), Some("Live status is off for Codex"));
+}
+
+// ---- Antigravity live status ----
+
+/// A state with one open Antigravity row, "ag", and the Antigravity version pinned so no `agy` is ever run.
+fn agy_live(version: Option<&str>) -> (AppState, axum::Router) {
+    let home = tempfile::tempdir().unwrap().keep();
+    let st = AppState::new(
+        TOKEN.into(),
+        PORT,
+        vec!["http://tauri.localhost".into()],
+        home,
+        Vec::new(),
+    )
+    .with_agy_version(version.map(str::to_string))
+    .with_agent_path(|_| None);
+    st.registry().reserve(
+        "ag",
+        marshell_core::registry::Relaunch {
+            profile_id: "test".into(),
+            agent: Some("antigravity".into()),
+            cwd: "C:/work".into(),
+            mode: None,
+            name: "Antigravity".into(),
+            preset: None,
+        },
+    );
+    let app = router(st.clone());
+    (st, app)
+}
+
+/// Posts an agy body as the bridge does: the event name goes in the body, the role in the header.
+async fn agy_post(app: &axum::Router, role: &str, event: Option<&str>, mut body: Value) -> StatusCode {
+    if let Some(event) = event {
+        body["hook_event_name"] = json!(event);
+    }
+    let req = base("POST", "/v1/hook")
+        .header("x-marshell-role", role)
+        .header("x-marshell-agent", "antigravity")
+        .header("x-marshell-tab", "ag")
+        .header("x-marshell-version", "0.0.0")
+        .body(Body::from(body.to_string()))
+        .unwrap();
+    send(app, req).await.0
+}
+
+fn agy_row(st: &AppState) -> marshell_protocol::api::SessionInfo {
+    st.registry()
+        .snapshot()
+        .sessions
+        .into_iter()
+        .find(|s| s.tab_id == "ag")
+        .unwrap()
+}
+
+fn agy_fixture(dir: &str, name: &str) -> Value {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/antigravity")
+        .join(dir)
+        .join("1.4.7")
+        .join(format!("{name}.json"));
+    serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap()
+}
+
+fn agy_hook(name: &str) -> Value {
+    agy_fixture("hooks", name)
+}
+
+fn agy_statusline(name: &str) -> Value {
+    agy_fixture("statusline", name)
+}
+
+#[tokio::test]
+async fn an_antigravity_event_folds_into_its_tab() {
+    use marshell_protocol::api::LiveState;
+    let (st, app) = agy_live(Some("1.4.7"));
+    let pre = agy_hook("PreToolUse-run_command");
+    assert_eq!(
+        agy_post(&app, "event", Some("PreToolUse"), pre).await,
+        StatusCode::NO_CONTENT
+    );
+    let row = agy_row(&st);
+    let live = row.live.expect("the row has a live status");
+    assert_eq!(
+        (live.state, live.phrase.as_str()),
+        (LiveState::Working, "Running `echo hello-6d`")
+    );
+    assert_eq!(row.status_note, None);
+
+    // The status line adds the model and the context, and leaves the state the hooks set.
+    agy_post(&app, "statusline", None, agy_statusline("working")).await;
+    let live = agy_row(&st).live.unwrap();
+    assert_eq!(live.model.as_deref(), Some("Gemini 3.8 Flash (High)"));
+    assert_eq!(live.context_pct, Some(1));
+    assert_eq!(
+        (live.state, live.phrase.as_str()),
+        (LiveState::Working, "Running `echo hello-6d`")
+    );
+
+    // A turn ends.
+    agy_post(&app, "event", Some("Stop"), agy_hook("Stop")).await;
+    let live = agy_row(&st).live.unwrap();
+    assert_eq!((live.state, live.phrase.as_str()), (LiveState::Done, "Done"));
+    assert_eq!(live.recap, None);
+}
+
+#[tokio::test]
+async fn an_unrecorded_antigravity_version_leaves_no_status_and_says_why() {
+    for (version, note) in [
+        (Some("1.5.0"), "Antigravity 1.5.0 is not one Marshell has recorded yet"),
+        (None, "Antigravity's version could not be read"),
+    ] {
+        let (st, app) = agy_live(version);
+        agy_post(&app, "event", Some("PreInvocation"), agy_hook("PreInvocation")).await;
+        let row = agy_row(&st);
+        assert_eq!(row.live, None, "{version:?}");
+        assert_eq!(row.status_note.as_deref(), Some(note));
+    }
+}
+
+#[tokio::test]
+async fn the_event_log_keeps_no_last_user_input_or_email() {
+    let (st, app) = agy_live(Some("1.4.7"));
+    let stop = agy_hook("Stop");
+    let line = agy_statusline("working");
+    let input = stop["lastUserInput"].as_str().unwrap().to_string();
+    let email = line["email"].as_str().unwrap().to_string();
+    assert_eq!(
+        agy_post(&app, "event", Some("Stop"), stop).await,
+        StatusCode::NO_CONTENT
+    );
+    agy_post(&app, "statusline", None, line).await;
+
+    // The row has no pty session, so its records are filed with the untabbed ones: the event in the ring, the
+    // status line in the latest-status-line slot.
+    let (status, events) = get(&app, "/v1/hook/events").await;
+    assert_eq!(status, StatusCode::OK);
+    let mut kept = events.to_string();
+    assert!(events.as_array().is_some_and(|a| a.len() == 1), "{kept}");
+    assert!(kept.contains("NO_TOOL_CALL"), "the rest of the body is kept: {kept}");
+    let line = st.hook_log().latest_statusline(None).expect("the status line is kept");
+    assert_eq!(line.body["agent_state"], "working");
+    kept.push_str(&line.body.to_string());
+    assert!(!kept.contains(&input), "{kept}");
+    assert!(!kept.contains(&email), "{kept}");
+    assert!(!kept.contains("lastUserInput"), "{kept}");
+    assert!(line.body.get("email").is_none(), "{kept}");
+    // Nor in the row.
+    let row = format!("{:?}", agy_row(&st));
+    assert!(!row.contains(&input) && !row.contains(&email), "{row}");
+}
+
+#[tokio::test]
+async fn an_antigravity_status_line_with_pending_raises_needs_you() {
+    let (st, app) = agy_live(Some("1.4.7"));
+    agy_post(&app, "event", Some("PreToolUse"), agy_hook("PreToolUse-run_command")).await;
+    assert_eq!(agy_row(&st).attention, None);
+
+    agy_post(&app, "statusline", None, agy_statusline("pending")).await;
+    let attention = agy_row(&st).attention.expect("agy's own prompt raises attention");
+    assert_eq!(attention.message.as_deref(), Some("Waiting for you in the terminal"));
+    assert!(attention.limited);
+    // The status the hooks set is still there.
+    assert_eq!(agy_row(&st).live.unwrap().phrase, "Running `echo hello-6d`");
+
+    // The same status line again keeps it, and so does one that changes the context.
+    agy_post(&app, "statusline", None, agy_statusline("pending")).await;
+    assert!(agy_row(&st).attention.is_some());
+    let mut more = agy_statusline("pending");
+    more["context_window"]["used_percentage"] = json!(40.0);
+    agy_post(&app, "statusline", None, more).await;
+    assert!(agy_row(&st).attention.is_some());
+    assert_eq!(agy_row(&st).live.unwrap().context_pct, Some(40));
+
+    // The prompt is answered: the next status line has no pending key.
+    agy_post(&app, "statusline", None, agy_statusline("working")).await;
+    assert_eq!(agy_row(&st).attention, None);
+
+    // Another raise ends with the next hook event, even one that leaves the status as it was.
+    agy_post(&app, "statusline", None, agy_statusline("pending")).await;
+    assert!(agy_row(&st).attention.is_some());
+    agy_post(&app, "event", Some("PostInvocation"), agy_hook("PostInvocation")).await;
+    assert_eq!(agy_row(&st).attention, None);
+}
+
+#[tokio::test]
+async fn antigravity_status_off_sets_its_note() {
+    let (st, app) = agy_live(Some("1.4.7"));
+    let (status, _) = send(
+        &app,
+        base("PUT", "/v1/settings")
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(
+                json!({"appearance": {}, "status_off": ["antigravity"]}).to_string(),
+            ))
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    agy_post(&app, "event", Some("PreInvocation"), agy_hook("PreInvocation")).await;
+    let row = agy_row(&st);
+    assert_eq!(row.live, None);
+    assert_eq!(row.status_note.as_deref(), Some("Live status is off for Antigravity"));
+    // A status line raises nothing while status is off.
+    agy_post(&app, "statusline", None, agy_statusline("pending")).await;
+    assert_eq!(agy_row(&st).attention, None);
 }

@@ -167,6 +167,8 @@ struct Inner {
     claude_version: Option<Option<String>>,
     /// A Codex version a test pins, in place of asking the executable. `Some(None)` cannot be read.
     codex_version: Option<Option<String>>,
+    /// An Antigravity version a test pins, in place of asking the executable. `Some(None)` cannot be read.
+    agy_version: Option<Option<String>>,
     /// The previous process readings, so each `/v1/perf` call can tell the CPU used since the last one.
     sampler: Mutex<crate::diagnostics::perf::Sampler>,
     /// The diagnostics export waiting to be read and saved.
@@ -255,6 +257,7 @@ impl AppState {
             versions: Mutex::new(HashMap::new()),
             claude_version: None,
             codex_version: None,
+            agy_version: None,
             sampler: Mutex::new(crate::diagnostics::perf::Sampler::new()),
             previews: crate::diagnostics::export::Previews::default(),
             view: tokio::sync::watch::channel(marshell_protocol::api::UiView {
@@ -325,6 +328,14 @@ impl AppState {
         Arc::get_mut(&mut self.0)
             .expect("with_codex_version runs before the state is shared")
             .codex_version = Some(version);
+        self
+    }
+    /// Pins the Antigravity version live status sees, so a test never runs a real `agy`. `None` is a version that
+    /// cannot be read. Call it before the state is cloned.
+    pub fn with_agy_version(mut self, version: Option<String>) -> Self {
+        Arc::get_mut(&mut self.0)
+            .expect("with_agy_version runs before the state is shared")
+            .agy_version = Some(version);
         self
     }
     /// Sets how long a permission request is held. Call it before the state is cloned.
