@@ -437,6 +437,7 @@ impl ConfigService {
                         pointer,
                     },
                     EditOp::CreateFile { .. } => Change::Created { path: &file.target },
+                    EditOp::DeleteFile => Change::Deleted { path: &file.target },
                     EditOp::Restore { snapshot_id } => Change::Restored {
                         path: &file.target,
                         changeset_id: &restored[snapshot_id.as_str()],
@@ -974,5 +975,43 @@ mod tests {
         let p3 = e.svc.preview(changeset(vec![edit(&path, set("/b", "1"))]));
         std::thread::sleep(Duration::from_secs(1));
         assert!(!e.svc.get_preview(&p3.changeset_id).unwrap().stale);
+    }
+
+    /// The edit a caller sends to delete `path`, against the bytes it read.
+    fn delete(path: &Path) -> FileEdit {
+        let mut e = edit(path, EditOp::DeleteFile);
+        e.expected_hash = Some(hash_bytes(&std::fs::read(path).unwrap()));
+        e
+    }
+
+    #[test]
+    fn delete_takes_a_snapshot_and_removes_the_file() {
+        let e = env();
+        let path = e.root.join("hooks.json");
+        write(&path, "{}\n");
+        let preview = e.svc.preview(changeset(vec![delete(&path)]));
+        assert!(preview.can_apply);
+        let result = apply_shown(&e.svc, &preview).unwrap();
+        assert!(!path.exists());
+        assert_eq!(result.files[0].after_hash, None);
+        let snapshots = e.svc.snapshots().list(Some(&path)).unwrap();
+        assert_eq!(snapshots.len(), 1);
+        assert_eq!(snapshots[0].id, result.snapshot_id);
+        assert_eq!(snapshots[0].files[0].after_hash, None);
+    }
+
+    #[test]
+    fn undo_of_a_delete_puts_the_bytes_back() {
+        let e = env();
+        let path = e.root.join("hooks.json");
+        let original: &[u8] = b"\xEF\xBB\xBF{\r\n  \"a\": 1\r\n}\r\n";
+        std::fs::write(&path, original).unwrap();
+        let preview = e.svc.preview(changeset(vec![delete(&path)]));
+        let applied = apply_shown(&e.svc, &preview).unwrap();
+        assert!(!path.exists());
+        let restore = e.svc.restore_preview(&applied.snapshot_id).unwrap();
+        assert!(restore.can_apply);
+        apply_shown(&e.svc, &restore).unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), original);
     }
 }

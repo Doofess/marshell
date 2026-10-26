@@ -78,6 +78,13 @@ describe("ConsentCard", () => {
     expect(renderToStaticMarkup(<ConsentCard scenario={CONSENT.antigravity} on={on} />)).not.toContain("Let Marshell set the mode");
     expect(renderToStaticMarkup(<ConsentCard scenario={CONSENT.claude} on={on} />)).not.toContain("Let Marshell set the mode");
   });
+  it("a_deleted_file_is_named_as_deleted", () => {
+    const plan = { ...CONSENT.antigravity.plan, deleted: ["C:\\Users\\Home Office\\.gemini\\config\\hooks.json"] };
+    const h = renderToStaticMarkup(<ConsentCard scenario={{ ...CONSENT.antigravity, plan }} on={on} open />);
+    expect(h).toContain("<code>hooks.json</code> will be deleted");
+    expect(h.indexOf("will be deleted")).toBeLessThan(h.indexOf("diff__lines"));
+    expect(renderToStaticMarkup(<ConsentCard scenario={CONSENT.antigravity} on={on} open />)).not.toContain("will be deleted");
+  });
   it("hides the diff until asked, then shows the exact change", () => {
     expect(renderToStaticMarkup(<ConsentCard scenario={CONSENT.claude} on={on} />)).not.toContain("diff__lines");
     const h = renderToStaticMarkup(<ConsentCard scenario={CONSENT.claude} on={on} open />);

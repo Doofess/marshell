@@ -69,6 +69,11 @@ export function previewDiff(p: ConfigPreview): string {
   }, "");
 }
 
+/** The files the preview deletes: changed, with no hash after. */
+export function deletedFiles(p: ConfigPreview): string[] {
+  return p.files.filter((f) => f.status.kind === "changes" && f.after_hash === undefined).map((f) => f.path);
+}
+
 const STATE: Record<AgentSetup["settings_state"], ConfigState> = { ok: "ok", missing: "missing", unparsable: "unparsable", readOnly: "read-only" };
 
 /** The core's setup as the onboarding's `Detection`. `managed` and `skipsAll` have no source in `AgentSetup`, so they stay unset. */

@@ -89,6 +89,12 @@ export function ConsentCard({
           <button type="button" className="consent__toggle" aria-expanded={open} onClick={onToggleDiff}>
             View exact changes
           </button>
+          {open &&
+            plan.deleted?.map((path) => (
+              <p key={path} className="consent__meta">
+                <code>{fileName(path)}</code> will be deleted
+              </p>
+            ))}
           {open && <DiffView diff={plan.diff} label={`Exact changes to ${d.hooks ? `${d.hooks.path} and ${d.configPath}` : d.configPath}`} />}
           {plan.chainPath && on.statusline && d.hasOwnStatusLine !== false && CAPABILITIES[d.cli].statusline.available && (
             <p className="consent__chain">

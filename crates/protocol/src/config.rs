@@ -69,6 +69,8 @@ pub enum EditOp {
     CreateFile {
         content: String,
     },
+    /// Removes a file. `expected_hash` is required: the file is deleted only if it still holds what the caller saw.
+    DeleteFile,
     /// Puts a file back the way a snapshot saved it.
     Restore {
         snapshot_id: String,

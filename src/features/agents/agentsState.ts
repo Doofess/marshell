@@ -1,7 +1,7 @@
 import type { AgentSetup } from "../../generated/AgentSetup";
 import type { ConfigPreview } from "../../generated/ConfigPreview";
 import type { HookPlanRequest } from "../../generated/HookPlanRequest";
-import { previewDiff, toDetection, type HookAgent } from "../../lib/api/agents";
+import { deletedFiles, previewDiff, toDetection, type HookAgent } from "../../lib/api/agents";
 import { addsStatusLine, CLI_NAME, consentHeadline, removalCopy, type Capability, type CliId, type ConsentPlan, type Detection } from "../onboarding/consent";
 
 /** The capabilities offered for a new Claude Code setup. */
@@ -108,6 +108,7 @@ export function consentProps(s: AgentSetup, flow: InstallFlow) {
     backupPath: s.snapshots_dir,
     removal: removalCopy(cli, on, undefined, undefined, addsStatusLine(detection, on)),
     diff: flow.preview ? previewDiff(flow.preview) : "",
+    deleted: flow.preview ? deletedFiles(flow.preview) : undefined,
     needsTrust: s.needs_trust,
     chainPath: chain?.path,
     // A Partial install's repair changes only what is missing or wrong (the diff shows which), so it isn't the whole install's count.

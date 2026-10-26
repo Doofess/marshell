@@ -173,11 +173,21 @@ fn compute(
         Err(e) => return refuse(RefuseReason::Unreadable, format!("Could not read the file: {e}")),
     };
 
-    let before_hash = before.as_deref().map(hash_bytes);
+    // A delete is only ever made against bytes the caller saw.
     if edits
         .iter()
-        .any(|e| e.expected_hash.is_some() && e.expected_hash != before_hash)
+        .any(|e| e.op == EditOp::DeleteFile && e.expected_hash.is_none())
     {
+        return refuse(
+            RefuseReason::BadValue,
+            "Deleting a file needs the hash of the file it was planned against.",
+        );
+    }
+    let before_hash = before.as_deref().map(hash_bytes);
+    // A file that is already gone has nothing left to delete, whatever it held when the edit was planned.
+    if edits.iter().any(|e| {
+        e.expected_hash.is_some() && e.expected_hash != before_hash && !(e.op == EditOp::DeleteFile && before.is_none())
+    }) {
         return refuse(RefuseReason::Conflict, "The file changed since the edit was made.");
     }
 
@@ -211,6 +221,7 @@ fn apply_op(op: &EditOp, working: Bytes, target: &std::path::Path, snapshots: &S
             }
             Ok(Some(content.clone().into_bytes()))
         }
+        EditOp::DeleteFile => Ok(None),
         EditOp::Restore { snapshot_id } => match snapshots.blob(snapshot_id, target) {
             Ok(Some(bytes)) => Ok(bytes),
             Ok(None) => refuse(RefuseReason::SnapshotMissing, "The snapshot has no copy of this file."),
@@ -444,5 +455,63 @@ mod tests {
             &snapshots,
         );
         assert_eq!(refused(&files[0]), Some(RefuseReason::BadValue));
+    }
+
+    #[test]
+    fn delete_previews_every_line_removed() {
+        let (_dir, root, guard, snapshots) = setup();
+        let path = root.join("hooks.json");
+        let content = b"{\n  \"a\": 1\n}\n";
+        std::fs::write(&path, content).unwrap();
+        let cs = changeset(vec![edit(&path, EditOp::DeleteFile, Some(hash_bytes(content)))]);
+        let files = plan(&cs, &guard, &snapshots);
+        assert_eq!(files[0].status, FileStatus::Changes);
+        assert_eq!(files[0].after, None);
+        let preview = to_preview("id", &cs, &files);
+        let file = &preview.files[0];
+        assert_eq!(file.after_hash, None);
+        assert!(file.before_hash.is_some());
+        assert!(preview.can_apply);
+        let body: Vec<&str> = file.diff.lines().skip(2).filter(|l| !l.starts_with("@@")).collect();
+        assert_eq!(body, ["-{", "-  \"a\": 1", "-}"]);
+    }
+
+    #[test]
+    fn delete_of_a_missing_file_is_no_change() {
+        let (_dir, root, guard, snapshots) = setup();
+        let path = root.join("hooks.json");
+        let cs = changeset(vec![edit(&path, EditOp::DeleteFile, Some(hash_bytes(b"gone")))]);
+        let files = plan(&cs, &guard, &snapshots);
+        assert_eq!(files[0].status, FileStatus::NoChange);
+        assert!(!to_preview("id", &cs, &files).can_apply);
+    }
+
+    #[test]
+    fn delete_without_an_expected_hash_is_refused() {
+        let (_dir, root, guard, snapshots) = setup();
+        let path = root.join("hooks.json");
+        std::fs::write(&path, b"{}\n").unwrap();
+        let cs = changeset(vec![edit(&path, EditOp::DeleteFile, None)]);
+        let files = plan(&cs, &guard, &snapshots);
+        assert_eq!(refused(&files[0]), Some(RefuseReason::BadValue));
+    }
+
+    #[test]
+    fn delete_with_a_changed_file_is_a_conflict() {
+        let (_dir, root, guard, snapshots) = setup();
+        let path = root.join("hooks.json");
+        std::fs::write(&path, b"{}\n").unwrap();
+        let cs = changeset(vec![edit(&path, EditOp::DeleteFile, Some(hash_bytes(b"other")))]);
+        let files = plan(&cs, &guard, &snapshots);
+        assert_eq!(refused(&files[0]), Some(RefuseReason::Conflict));
+    }
+
+    #[test]
+    fn delete_of_a_managed_file_is_refused() {
+        let (_dir, root, guard, snapshots) = setup();
+        let path = root.join("managed-settings.json");
+        let cs = changeset(vec![edit(&path, EditOp::DeleteFile, Some(hash_bytes(b"x")))]);
+        let files = plan(&cs, &guard, &snapshots);
+        assert_eq!(refused(&files[0]), Some(RefuseReason::Managed));
     }
 }
