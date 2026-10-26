@@ -1,5 +1,4 @@
 import { useId } from "react";
-import { selectedProps } from "../../components/a11y/SelectedMark";
 import { EmptyState } from "../../components/EmptyState/EmptyState";
 import { Page } from "../../components/Page/Page";
 import { EMPTY_STATES } from "../onboarding/emptyStates";
@@ -8,6 +7,7 @@ import { parseRaw } from "./raw";
 import { ChangeBar } from "./ChangeBar";
 import { FieldRow } from "./FieldRow";
 import { RawEditor } from "./RawEditor";
+import { SettingsNav } from "./SettingsNav";
 import { fileReason } from "./fields";
 import { SETTINGS_FIELDS, SETTINGS_NAV, SETTINGS_TEXT } from "./fixtures";
 import { settingsPath, type SettingsState } from "./settingsUi";
@@ -52,17 +52,7 @@ export function SettingsPage({ category, mode, state, edits, opened = SETTINGS_T
         }
       >
         <div className="settings__layout">
-          <nav aria-label="Settings sections" className="settings__nav">
-            <ul>
-              {SETTINGS_NAV.map((n) => (
-                <li key={n.id}>
-                  <button type="button" {...selectedProps(n.id === category, "current", "settings__nav-item")}>
-                    {n.label}
-                  </button>
-                </li>
-              ))}
-            </ul>
-          </nav>
+          <SettingsNav items={SETTINGS_NAV} current={category} />
           <div className="settings__body">
             {reason && <p className="settings__banner" data-tone="blocked">{reason}</p>}
             {state.conflict && (
