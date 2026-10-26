@@ -1088,6 +1088,54 @@ async fn install_reads_codex_version_json() {
     assert_eq!(body["newer_version"], Value::Null, "{body}");
 }
 
+/// The probe script of `install_recheck_reads_the_version_again`; the agent-path seam is a plain `fn`, so it reads this.
+static VERSION_PROBE: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+
+#[tokio::test]
+async fn install_recheck_reads_the_version_again() {
+    let dir = tempfile::tempdir().unwrap();
+    let home = dir.path().join("home");
+    std::fs::create_dir_all(&home).unwrap();
+    // The script prints the text of a sibling file, so changing the version leaves the script's modified time as it was.
+    let text = dir.path().join("probe-version.txt");
+    std::fs::write(&text, "2.0.0\n").unwrap();
+    let script = if cfg!(windows) {
+        let script = dir.path().join("version-probe.cmd");
+        std::fs::write(&script, "@echo off\r\ntype \"%~dp0probe-version.txt\"\r\n").unwrap();
+        script
+    } else {
+        let script = dir.path().join("version-probe.sh");
+        std::fs::write(&script, "#!/bin/sh\ncat \"$(dirname \"$0\")/probe-version.txt\"\n").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        script
+    };
+    VERSION_PROBE.set(script).unwrap();
+    // No version is pinned for Antigravity, so the program is asked and the answer is remembered.
+    let st = AppState::new(
+        TOKEN.into(),
+        PORT,
+        vec!["http://tauri.localhost".into()],
+        home,
+        Vec::new(),
+    )
+    .with_agent_path(|name| (name == "agy").then(|| VERSION_PROBE.get().cloned()).flatten());
+    let app = router(st);
+
+    let (_, body) = get(&app, "/v1/agents/antigravity/install").await;
+    assert_eq!(body["version"], "2.0.0", "{body}");
+
+    std::fs::write(&text, "2.1.0\n").unwrap();
+    let (_, body) = get(&app, "/v1/agents/antigravity/install").await;
+    assert_eq!(body["version"], "2.0.0", "the remembered version: {body}");
+
+    let (_, body) = get(&app, "/v1/agents/antigravity/install?recheck=true").await;
+    assert_eq!(body["version"], "2.1.0", "{body}");
+}
+
 // ---- Sign-in status ----
 
 static ANTIGRAVITY_RUNS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
