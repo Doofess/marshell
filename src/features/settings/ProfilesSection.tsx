@@ -1,11 +1,9 @@
-import { useEffect, useEffectEvent, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { useEffect, useEffectEvent, useMemo, useState, useSyncExternalStore } from "react";
 import { selectedProps } from "../../components/a11y/SelectedMark";
 import { EmptyState } from "../../components/EmptyState/EmptyState";
-import { Page } from "../../components/Page/Page";
 import type { Endpoint } from "../../generated/Endpoint";
 import type { Profile } from "../../generated/Profile";
 import { profiles as profilesApi } from "../../lib/api/profiles";
-import { useDialogFocus } from "../../lib/useDialogFocus";
 import { useAppearance } from "../appearance/AppearanceProvider";
 import { changeCount, commandRoundTrips, duplicateEnvKeys, forSave, joinCommand, profileKind, splitCommand, type ProfilePatch } from "./profilesDoc";
 import { Switch } from "../../components/Switch/Switch";
@@ -14,9 +12,9 @@ import { ChangeBar } from "./ChangeBar";
 import { FieldRow } from "./FieldRow";
 import type { SettingField } from "./fields";
 import "./Settings.css";
-import "./ProfilesPage.css";
+import "./ProfilesSection.css";
 
-/** The page may be closed when it holds no unsaved edits (also while it is still loading or failed to load). */
+/** The section may be left when it holds no unsaved edits (also while it is still loading or failed to load). */
 export const canClose = (state: ProfilesState): boolean => !isDirty(state);
 
 export type ProfilesHandlers = {
@@ -29,7 +27,6 @@ export type ProfilesHandlers = {
   onSave: () => void;
   onDiscard: () => void;
   onToggleScript: () => void;
-  onClose?: () => void;
 };
 
 const field = (key: string, label: string, help: string): SettingField => ({ category: "profiles", key, label, help, kind: "text", scope: "marshell", applies: "new-sessions" });
@@ -171,22 +168,15 @@ const KIND_NOTE = {
 } as const;
 
 /**
- * The shell profiles: the list on one side, the selected profile's form on the other. Presentational: ProfilesPage owns the
+ * The shell profiles: the list on one side, the selected profile's form on the other. Presentational: ProfilesSection owns the
  * store. Nothing is saved until Save; the bar shows what the core said when it refused.
  */
-export function ProfilesPageView({ state, handlers, level = 2, themes = [] }: { state: ProfilesState; handlers: ProfilesHandlers; level?: 1 | 2; themes?: { id: string; name: string }[] }) {
+export function ProfilesView({ state, handlers, themes = [] }: { state: ProfilesState; handlers: ProfilesHandlers; themes?: { id: string; name: string }[] }) {
   const { draft, detected, selectedId } = state;
   const selected: Profile | undefined = draft?.profiles.find((p) => p.id === selectedId);
   const kind = selected ? profileKind(selected, detected) : "custom";
   const dirty = isDirty(state);
   const count = state.saved && draft ? changeCount(state.saved, forSave(draft)) : 0;
-  // Unsaved edits are not thrown away by a stray Close: the bar stays, and Save or Discard comes first.
-  const close = handlers.onClose && (
-    <button type="button" className="settings__btn" disabled={!canClose(state)} onClick={handlers.onClose}>
-      Close
-    </button>
-  );
-
   let body;
   if (state.phase === "loading") {
     body = <p className="profiles__status">Loading the profiles…</p>;
@@ -257,26 +247,23 @@ export function ProfilesPageView({ state, handlers, level = 2, themes = [] }: { 
   }
   return (
     <div className="settings profiles">
-      <Page title="Shell profiles" subtitle="The shells Marshell starts sessions in." level={level} actions={close}>
-        {body}
-        {state.justSaved && <p className="profiles__saved">Saved.</p>}
-        {handlers.onClose && !canClose(state) && <p className="field__help profiles__saved">Save or discard the changes to close.</p>}
-      </Page>
+      {body}
+      {state.justSaved && <p className="profiles__saved">Saved.</p>}
     </div>
   );
 }
 
-/** The shell profiles on the core. Mounted only while open, so each opening loads afresh. */
-export function ProfilesPage({ endpoint, onClose, onNotice, onCanClose, onSaved }: { endpoint: Endpoint; onClose?: () => void; onNotice?: (text: string) => void; onCanClose?: (can: boolean) => void; onSaved?: () => void }) {
+/** The shell profiles on the core. Mounted when the section is first shown, so it loads then. */
+export function ProfilesSection({ endpoint, announce, onSaved, onCanClose }: { endpoint: Endpoint; announce?: (text: string) => void; onSaved?: () => void; onCanClose?: (can: boolean) => void }) {
   const store = useMemo(() => new ProfilesStore(profilesApi, endpoint, onSaved), [endpoint, onSaved]);
   useEffect(() => {
     void store.load();
   }, [store]);
   const state = useSyncExternalStore(store.subscribe, store.getState);
   const { appearance } = useAppearance();
-  // The window has one live region (its announcer); the result of Save goes there instead of a region of this page.
-  const say = useEffectEvent((text: string) => onNotice?.(text));
-  // The dialog around the page needs to know too, so Escape leaves unsaved edits alone as Close does.
+  // The window has one live region (its announcer); the result of Save goes there instead of a region of this section.
+  const say = useEffectEvent((text: string) => announce?.(text));
+  // The owner needs to know too, so it can leave unsaved edits alone as the old Close did.
   const tell = useEffectEvent((can: boolean) => onCanClose?.(can));
   const can = canClose(state);
   useEffect(() => tell(can), [can]);
@@ -297,24 +284,8 @@ export function ProfilesPage({ endpoint, onClose, onNotice, onCanClose, onSaved 
       onSave: () => void store.save(),
       onDiscard: () => store.discard(),
       onToggleScript: () => void store.toggleScript(),
-      onClose,
     }),
-    [store, onClose],
+    [store],
   );
-  return <ProfilesPageView state={state} handlers={handlers} themes={appearance.imported_themes} />;
-}
-
-/** The page as a dialog over the window: focus moves in, Tab stays inside, Escape closes and focus goes back to where it was. */
-export function ProfilesDialog({ endpoint, onClose, onNotice, onSaved }: { endpoint: Endpoint; onClose: () => void; onNotice?: (text: string) => void; onSaved?: () => void }) {
-  const dialog = useRef<HTMLDivElement>(null);
-  const closable = useRef(true);
-  // Escape does nothing while there are unsaved edits (the change bar stays); Close is off then too.
-  useDialogFocus(dialog, dialog, () => {
-    if (closable.current) onClose();
-  });
-  return (
-    <div ref={dialog} className="profiles-dialog" role="dialog" aria-modal="true" aria-label="Shell profiles" tabIndex={-1}>
-      <ProfilesPage endpoint={endpoint} onClose={onClose} onNotice={onNotice} onSaved={onSaved} onCanClose={(can) => (closable.current = can)} />
-    </div>
-  );
+  return <ProfilesView state={state} handlers={handlers} themes={appearance.imported_themes} />;
 }

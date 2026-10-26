@@ -1,15 +1,15 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import type { AgentSetup } from "../../generated/AgentSetup";
-import { AgentsDialogView, type Panel } from "./AgentsDialog";
+import { AgentsSectionView, escapeLeavesPanel, SETUP_UNREADABLE, type Panel } from "./AgentsSection";
 import { AGY_SETUP, CODEX_SETUP, PREVIEW, SETUP } from "./fixtures";
 import { nameContainsLabel } from "../../lib/labelInName";
 
 const none = () => {};
-const handlers = { onClose: none, onSetup: none, onHooksOff: none, onBack: none, onDone: none, onAllow: none, onToggleDiff: none, onReload: none, onTurnOff: none, onSwitch: none, onLiveStatus: none, onNotifications: none };
-const view = (setup: AgentSetup | "loading" | "failed", panel: Panel = { kind: "list" }, liveStatus: boolean | null = true) => renderToStaticMarkup(<AgentsDialogView setup={setup} panel={panel} liveStatus={liveStatus} {...handlers} />);
+const handlers = { onSetup: none, onHooksOff: none, onBack: none, onDone: none, onAllow: none, onToggleDiff: none, onReload: none, onTurnOff: none, onSwitch: none, onLiveStatus: none, onNotifications: none };
+const view = (setup: AgentSetup | "loading" | "failed", panel: Panel = { kind: "list" }, liveStatus: boolean | null = true) => renderToStaticMarkup(<AgentsSectionView setup={setup} panel={panel} liveStatus={liveStatus} {...handlers} />);
 
-describe("AgentsDialogView switches", () => {
+describe("AgentsSectionView switches", () => {
   const switchOf = (h: string, label: string) => h.match(new RegExp(`<input[^>]*role="switch"[^>]*>(?=<span class="switch__track"[^>]*></span><span class="switch__text">${label}<)`))?.[0] ?? "";
   it("renders the status line switch unchecked when the person turned it off", () => {
     const h = view(SETUP, { kind: "setup", flow: { preview: PREVIEW, open: false, busy: false, want: { status: true, statusline: false, approve: false } } });
@@ -23,7 +23,7 @@ describe("AgentsDialogView switches", () => {
   });
 });
 
-describe("AgentsDialogView", () => {
+describe("AgentsSectionView", () => {
   it("offers Set up for approval missing from an installed status setup", () => {
     const h = view({ ...SETUP, hooks: "installed", approve_installed: false });
     expect(h).toContain("Approve from anywhere: off");
@@ -36,10 +36,29 @@ describe("AgentsDialogView", () => {
     expect(h).toMatch(/<button[^>]*>Notifications…<\/button>/);
     expect(h).not.toContain("Needs-you sound");
   });
-  it("is a modal dialog named Agents", () => {
+  it("draws no dialog shell, page title, Close button or live region of its own", () => {
     const h = view(SETUP);
-    expect(h).toMatch(/role="dialog"[^>]*aria-modal="true"/);
-    expect(h).toMatch(/role="dialog"[^>]*aria-label="Agents"/);
+    expect(h).not.toContain('role="dialog"');
+    expect(h).not.toContain("<h1");
+    expect(h).not.toContain("<h2");
+    expect(h).not.toContain(">Close</button>");
+    expect(h).not.toContain("aria-live");
+    expect(h).not.toContain("role=\"status\"");
+  });
+  it("lists setup per CLI, then the own agents, then the tools", () => {
+    const h = renderToStaticMarkup(<AgentsSectionView setup={SETUP} panel={{ kind: "list" }} liveStatus={true} own={<h3>Your own agents</h3>} tools={<h3>Tools</h3>} {...handlers} />);
+    const at = (t: string) => h.indexOf(t);
+    expect(at('aria-label="Claude Code"')).toBeGreaterThan(-1);
+    expect(at('aria-label="Claude Code"')).toBeLessThan(at("Your own agents"));
+    expect(at("Your own agents")).toBeLessThan(at("<h3>Tools</h3>"));
+  });
+  it("does not say to close a dialog when the setup cannot be read", () => {
+    expect(SETUP_UNREADABLE).not.toMatch(/close this/i);
+  });
+  it("makes each CLI card focusable by script and names it for the start-with focus", () => {
+    const h = renderToStaticMarkup(<AgentsSectionView setup={SETUP} codex={CODEX_SETUP} panel={{ kind: "list" }} liveStatus={true} {...handlers} />);
+    expect(h).toMatch(/<section[^>]*data-agent-card="codex"[^>]*tabindex="-1"|<section[^>]*tabindex="-1"[^>]*data-agent-card="codex"/);
+    expect(h).toMatch(/data-agent-card="claude"/);
   });
   it("renders the orphaned warning and both buttons", () => {
     const h = view({ ...SETUP, hooks: "orphaned" });
@@ -132,7 +151,7 @@ describe("AgentsDialogView", () => {
   });
 });
 
-describe("AgentsDialogView: the Live status switch", () => {
+describe("AgentsSectionView: the Live status switch", () => {
   const sw = (h: string) => h.match(/<input[^>]*role="switch"[^>]*>(?=<span class="switch__track"[^>]*><\/span><span class="switch__text">Live status<)/)?.[0] ?? "";
   it("is on when live status is not switched off for Claude Code", () => {
     expect(sw(view({ ...SETUP, hooks: "installed" }, { kind: "list" }, true))).toContain("checked");
@@ -147,9 +166,9 @@ describe("AgentsDialogView: the Live status switch", () => {
   });
 });
 
-describe("AgentsDialogView: Codex", () => {
+describe("AgentsSectionView: Codex", () => {
   const withCodex = (codex: AgentSetup | null, panel: Panel = { kind: "list" }, codexLiveStatus: boolean | null = true) =>
-    renderToStaticMarkup(<AgentsDialogView setup={SETUP} codex={codex} panel={panel} liveStatus={true} codexLiveStatus={codexLiveStatus} {...handlers} />);
+    renderToStaticMarkup(<AgentsSectionView setup={SETUP} codex={codex} panel={panel} liveStatus={true} codexLiveStatus={codexLiveStatus} {...handlers} />);
   const codexSection = (h: string) => h.slice(h.indexOf('aria-label="Codex"'));
 
   it("shows a Codex section with its own consent when Codex is found", () => {
@@ -196,9 +215,9 @@ describe("AgentsDialogView: Codex", () => {
   });
 });
 
-describe("AgentsDialogView: Antigravity", () => {
+describe("AgentsSectionView: Antigravity", () => {
   const withAgy = (agy: AgentSetup | null, panel: Panel = { kind: "list" }, antigravityLiveStatus: boolean | null = true) =>
-    renderToStaticMarkup(<AgentsDialogView setup={SETUP} antigravity={agy} panel={panel} liveStatus={true} antigravityLiveStatus={antigravityLiveStatus} {...handlers} />);
+    renderToStaticMarkup(<AgentsSectionView setup={SETUP} antigravity={agy} panel={panel} liveStatus={true} antigravityLiveStatus={antigravityLiveStatus} {...handlers} />);
   const agySection = (h: string) => h.slice(h.indexOf('aria-label="Antigravity"'));
   const switchLabels = (h: string) => [...h.matchAll(/<span class="switch__text">([^<]*)</g)].map((m) => m[1]);
   const card = (preview = PREVIEW): Panel => ({ kind: "setup", agent: "antigravity", flow: { preview, open: false, busy: false } });
@@ -241,5 +260,44 @@ describe("AgentsDialogView: Antigravity", () => {
     const h = withAgy(AGY_SETUP, { kind: "setup", agent: "antigravity", flow: { preview: null, open: false, busy: false, error: message } });
     expect(h).toMatch(/role="alert"[^>]*>Antigravity can&#x27;t run Marshell&#x27;s hook from C:\/100%\/m\/bin\/marshell-hook\.exe: the path holds a % or a quote\.</);
     expect(h).not.toContain("consent__apply");
+  });
+});
+
+describe("Esc inside the section", () => {
+  const press = (key: string, panel: Panel) => {
+    let prevented = false;
+    let left = false;
+    escapeLeavesPanel({ key, preventDefault: () => (prevented = true) }, panel, () => (left = true));
+    return { prevented, left };
+  };
+  it("on the consent card (with its diff) leaves the card and keeps the page open", () => {
+    expect(press("Escape", { kind: "setup", flow: { preview: PREVIEW, open: true, busy: false } })).toEqual({ prevented: true, left: true });
+  });
+  it("on the Hooks off preview leaves the preview and keeps the page open", () => {
+    expect(press("Escape", { kind: "off", removal: { preview: PREVIEW, statusline_left: false }, busy: false })).toEqual({ prevented: true, left: true });
+  });
+  it("leaves Esc to the page on the list, and ignores other keys", () => {
+    expect(press("Escape", { kind: "list" })).toEqual({ prevented: false, left: false });
+    expect(press("a", { kind: "off", removal: null, busy: false })).toEqual({ prevented: false, left: false });
+  });
+});
+
+describe("AgentsSectionView errors", () => {
+  const withErrors = (setup: AgentSetup | "loading" | "failed", panel: Panel = { kind: "list" }) =>
+    renderToStaticMarkup(<AgentsSectionView setup={setup} panel={panel} liveStatus={true} liveStatusError="Couldn't save the status setting." {...handlers} />);
+  it("shows the unreadable setup as plain text: the section announces it through the page, it draws no live region", () => {
+    const h = withErrors("failed");
+    expect(h).toContain(`>${SETUP_UNREADABLE.replaceAll("'", "&#x27;")}</p>`);
+    expect(h).not.toContain('role="alert"');
+  });
+  it("shows a Live status save error beside the card as plain text", () => {
+    const h = withErrors(SETUP);
+    expect(h).toContain(">Couldn&#x27;t save the status setting.</p>");
+    expect(h).not.toContain('role="alert"');
+  });
+  it("shows the turn-off panel's error as plain text", () => {
+    const h = withErrors(SETUP, { kind: "off", removal: null, busy: false, error: "The file is read-only." });
+    expect(h).toContain(">The file is read-only.</p>");
+    expect(h).not.toContain('role="alert"');
   });
 });

@@ -41,14 +41,17 @@ export function trayModel(state: TrayState): TrayModel {
 }
 
 /** What a tray menu choice does in the window. Open and Quit are the shell's own and never get here. */
-export type TrayAction = { kind: "goto"; number: number } | { kind: "nextWaiting" } | { kind: "overlay"; overlay: "notifications" | "departures" } | { kind: "togglePause" };
+export type TrayAction = { kind: "goto"; number: number } | { kind: "nextWaiting" } | { kind: "overlay"; overlay: "settings" | "departures" } | { kind: "togglePause" };
 
-/** A jump to a session from outside the window (a tray choice, a banner) closes the board or the palette over it: neither holds a draft. */
+/**
+ * A jump to a session from outside the window (a tray choice, a banner) closes the board, the Settings page or the palette over it,
+ * so the selection never changes behind a full-window page. Settings drops an unsaved form with it, as closing it does.
+ */
 export function jumpCloses(overlay: string | null): boolean {
-  return overlay === "departures" || overlay === "palette";
+  return overlay === "departures" || overlay === "settings" || overlay === "palette";
 }
 
-export function trayClosesBoard(action: TrayAction, overlay: string | null): boolean {
+export function trayClosesOverlay(action: TrayAction, overlay: string | null): boolean {
   return jumpCloses(overlay) && (action.kind === "goto" || action.kind === "nextWaiting");
 }
 
@@ -60,8 +63,8 @@ export function actionFor(id: string): TrayAction | null {
     case "next-waiting":
     case "more":
       return { kind: "nextWaiting" };
-    case "notifications":
-      return { kind: "overlay", overlay: "notifications" };
+    case "settings":
+      return { kind: "overlay", overlay: "settings" };
     case "departures":
       return { kind: "overlay", overlay: "departures" };
     case "pause":

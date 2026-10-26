@@ -2,7 +2,7 @@ import type { Meta, StoryObj } from "@storybook/react-vite";
 import type { Profile } from "../../generated/Profile";
 import type { ProfilesDoc } from "../../generated/ProfilesDoc";
 import { ThemePair } from "../../design/ThemePair";
-import { ProfilesPageView, type ProfilesHandlers } from "./ProfilesPage";
+import { ProfilesView, type ProfilesHandlers } from "./ProfilesSection";
 import { updateProfile } from "./profilesDoc";
 import type { ProfilesState } from "./ProfilesStore";
 
@@ -38,11 +38,11 @@ const state = (over: Partial<ProfilesState> = {}): ProfilesState => ({
 const withDoc = (doc: ProfilesDoc, over: Partial<ProfilesState> = {}) => state({ saved: doc, draft: doc, ...over });
 
 const noop = () => {};
-const handlers: ProfilesHandlers = { onSelect: noop, onPatch: noop, onAdd: noop, onRemove: noop, onMakeDefault: noop, onReset: noop, onSave: noop, onDiscard: noop, onToggleScript: noop, onClose: noop };
+const handlers: ProfilesHandlers = { onSelect: noop, onPatch: noop, onAdd: noop, onRemove: noop, onMakeDefault: noop, onReset: noop, onSave: noop, onDiscard: noop, onToggleScript: noop };
 const show = (label: string, s: ProfilesState, height = 760) => (
   <ThemePair label={label} stack>
     <div style={{ inlineSize: 960, maxInlineSize: "100%", blockSize: height }}>
-      <ProfilesPageView state={s} handlers={handlers} />
+      <ProfilesView state={s} handlers={handlers} />
     </div>
   </ThemePair>
 );
@@ -79,7 +79,7 @@ export const NarrowWindow: StoryObj = {
   render: () => (
     <ThemePair label="At 640 px wide the list sits above the form" stack>
       <div style={{ inlineSize: 640, maxInlineSize: "100%", blockSize: 820 }}>
-        <ProfilesPageView state={withDoc(WITH_CUSTOM, { selectedId: "custom-1" })} handlers={handlers} />
+        <ProfilesView state={withDoc(WITH_CUSTOM, { selectedId: "custom-1" })} handlers={handlers} />
       </div>
     </ThemePair>
   ),

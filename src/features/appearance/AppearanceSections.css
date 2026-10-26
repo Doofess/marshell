@@ -1,10 +1,5 @@
 /* Appearance. One column of sections; choices are fill chips (the selected mark shows the pick), and the terminal preview is
    the one piece drawn in the terminal's own colours and font. */
-.appearance-dialog {
-  position: absolute;
-  inset: 0;
-  z-index: 20;
-}
 .appearance {
   display: grid;
   gap: var(--space-8);

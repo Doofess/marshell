@@ -1,20 +1,20 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import { ThemePair } from "../../design/ThemePair";
-import { AppearanceView, type AppearanceHandlers, type AppearanceViewState } from "./AppearanceDialog";
+import { AppearanceView, TerminalView, type AppearanceHandlers, type AppearanceViewState } from "./AppearanceSections";
 import { DEFAULT_APPEARANCE } from "./rootState";
 
 const meta: Meta = { title: "Settings/Appearance", parameters: { layout: "fullscreen" } };
 export default meta;
 
 const noop = () => {};
-const handlers: AppearanceHandlers = { save: noop, onAccentText: noop, commitAccent: noop, blurAccent: noop, pickAccent: noop, onFontText: noop, commitFont: noop, onSizeText: noop, commitSize: noop, importFile: noop, onClose: noop };
+const handlers: AppearanceHandlers = { save: noop, onAccentText: noop, commitAccent: noop, blurAccent: noop, pickAccent: noop, pickFont: noop, onSizeText: noop, commitSize: noop, importFile: noop };
 const state = (over: Partial<AppearanceViewState> = {}): AppearanceViewState => ({
   appearance: DEFAULT_APPEARANCE,
   app: "dark",
   wtFiles: [],
   error: null,
   accent: { text: "", reason: null },
-  font: "",
+ 
   size: { text: "13", reason: null },
   importError: null,
   ...over,
@@ -23,6 +23,7 @@ const show = (label: string, s: AppearanceViewState) => (
   <ThemePair label={label} stack>
     <div style={{ inlineSize: 760, maxInlineSize: "100%", blockSize: 1500 }}>
       <AppearanceView state={s} handlers={handlers} />
+      <TerminalView state={s} handlers={handlers} />
     </div>
   </ThemePair>
 );

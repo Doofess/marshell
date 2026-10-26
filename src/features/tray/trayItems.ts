@@ -14,7 +14,7 @@ const sep = (n: number): TrayItem => ({ id: `sep-${n}`, label: "", kind: "separa
 
 /**
  * The tray menu: open the window, open Departures, who needs you (at most five, with their numbers, then how many more),
- * go to the oldest waiting, then pause, the doctor, Notifications, and quit last. Only sessions that wait on the user are listed.
+ * go to the oldest waiting, then pause, the doctor, Settings, and quit last. Only sessions that wait on the user are listed.
  * The live app opens Departures; `doctorIssues: null` leaves out the Doctor until it is available. The design stories show both.
  */
 export function trayItems(s: TrayState): TrayItem[] {
@@ -33,7 +33,7 @@ export function trayItems(s: TrayState): TrayItem[] {
     { id: "pause", label: s.paused ? "Resume notifications" : "Pause notifications", kind: "item" },
   );
   if (s.doctorIssues !== null) items.push({ id: "doctor", label: s.doctorIssues === 0 ? "Doctor: all clear" : `Doctor: ${s.doctorIssues} ${s.doctorIssues === 1 ? "issue" : "issues"}`, kind: "item" });
-  items.push({ id: "notifications", label: "Notifications…", kind: "item" }, sep(3), { id: "quit", label: "Quit Marshell", kind: "item" });
+  items.push({ id: "settings", label: "Settings…", kind: "item" }, sep(3), { id: "quit", label: "Quit Marshell", kind: "item" });
   return items;
 }
 

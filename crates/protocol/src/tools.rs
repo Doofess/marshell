@@ -94,6 +94,27 @@ pub struct OwnToolProblem {
     pub reason: String,
 }
 
+/// The tools in `tools.json`, and the entries or the file the core refused.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct OwnTools {
+    /// The entries as stored, so a problem's `index` points into this list. An entry that does not parse is listed as a
+    /// placeholder built from what could be read of it. A file that can't be read gives none.
+    pub tools: Vec<ToolProfile>,
+    pub problems: Vec<OwnToolProblem>,
+    /// SHA-256 (hex) of the file's bytes, or "" when there is no file. A save names the version it was based on.
+    pub version: String,
+}
+
+/// A request to replace the own tools.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct OwnToolsSave {
+    pub tools: Vec<ToolProfile>,
+    /// The `version` of the `OwnTools` this edit started from.
+    pub version: String,
+}
+
 /// A launch preset as the launcher lists it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[ts(export)]

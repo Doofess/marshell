@@ -49,7 +49,7 @@ export function RecordingTab({
   request: PlayRequest | null;
   frames: (part: number, q: FramesQuery) => Promise<RecordingFrames>;
   theme?: Omit<TerminalThemeInput, "app">;
-  font?: { family: string; size: number };
+  font?: { family: string; size: number; wtFamily?: string };
   platform?: Platform;
 }) {
   // A part picked with the buttons holds only for the request it was picked under; a new request picks its own part.

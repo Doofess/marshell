@@ -138,3 +138,38 @@ describe("limitsShown", () => {
     expect(limitsShown(null, null, null)).toBeUndefined();
   });
 });
+
+describe("the removal question's Esc", () => {
+  const ask = { limits: { limit_gb: 1, limit_days: null }, preview: { files: 2, bytes: 3000, oldest_ms: null } };
+  type KeyProps = { onKeyDown?: (e: { key: string; preventDefault: () => void }) => void };
+  /** The props of the "Remove and save?" block: the view has no hooks, so it can be called and its element tree walked. */
+  const confirmProps = (onCancel: () => void, busy: boolean): KeyProps | undefined => {
+    let found: KeyProps | undefined;
+    const walk = (n: unknown): void => {
+      if (found || !n || typeof n !== "object") return;
+      if (Array.isArray(n)) return n.forEach(walk);
+      const props = (n as { props?: { className?: string; children?: unknown } }).props;
+      if (!props) return;
+      if (props.className?.split(" ").includes("storage__confirm")) found = props as KeyProps;
+      else walk(props.children);
+    };
+    walk(StorageSectionView({ report: report(), pending: ask, error: null, busy, now: NOW, onLimits: none, onConfirm: none, onCancel, onChoose: none, onStop: none }));
+    return found;
+  };
+  const press = (key: string, busy = false) => {
+    let cancelled = 0;
+    let prevented = 0;
+    const props = confirmProps(() => cancelled++, busy);
+    props?.onKeyDown?.({ key, preventDefault: () => prevented++ });
+    return { wired: props?.onKeyDown !== undefined, cancelled, prevented };
+  };
+  it("cancels the question and keeps the page open", () => {
+    expect(press("Escape")).toEqual({ wired: true, cancelled: 1, prevented: 1 });
+  });
+  it("leaves every other key alone", () => {
+    expect(press("a")).toEqual({ wired: true, cancelled: 0, prevented: 0 });
+  });
+  it("keeps the page open but does not cancel while the save is in flight", () => {
+    expect(press("Escape", true)).toEqual({ wired: true, cancelled: 0, prevented: 1 });
+  });
+});

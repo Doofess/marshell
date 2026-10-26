@@ -5,10 +5,12 @@ import type { ExportPreview } from "../../generated/ExportPreview";
 import type { LoggingState } from "../../generated/LoggingState";
 import { ApiError } from "../../lib/api/client";
 import { diagnostics, exportName, formatBytes, saveExport } from "../../lib/api/diagnostics";
-import { useDialogFocus } from "../../lib/useDialogFocus";
-import "./DiagnosticsDialog.css";
+import { useAnnounceOnce } from "../../lib/useAnnounceOnce";
+import "./AdvancedSection.css";
 
 export const EXPIRED = "This export has expired. Prepare it again.";
+export const LOGGING_UNREADABLE = "Couldn't read the log setting from Marshell's core. Close this and try again.";
+export const PREPARE_FAILED = "Couldn't prepare the export. Try again.";
 
 export function exportReadyMessage(preview: ExportPreview): string {
   return `Export ready: ${preview.files.length} ${preview.files.length === 1 ? "file" : "files"}, ${formatBytes(preview.total_bytes)}.`;
@@ -17,15 +19,14 @@ export function exportReadyMessage(preview: ExportPreview): string {
 type PreviewState = ExportPreview | "idle" | "preparing" | "expired" | "failed";
 
 /** User-requested export transitions can replace the focused control. Unrelated renders leave focus alone. */
-export function diagnosticsFocusTarget(previous: PreviewState, next: PreviewState): "diagnostics-prepare" | "diagnostics-title" | null {
+export function diagnosticsFocusTarget(previous: PreviewState, next: PreviewState): "diagnostics-prepare" | "diagnostics-export-heading" | null {
   if (previous === next) return null;
-  if (typeof next === "object") return "diagnostics-title";
+  if (typeof next === "object") return "diagnostics-export-heading";
   if (next === "preparing" || next === "expired" || next === "failed") return "diagnostics-prepare";
   return null;
 }
 
 export type DiagnosticsHandlers = {
-  onClose: () => void;
   onDetailed: (checked: boolean) => void;
   onPrepare: () => void;
   onView: (name: string) => void;
@@ -35,13 +36,13 @@ export type DiagnosticsHandlers = {
 };
 
 /**
- * Tools → Diagnostics, as a modal dialog like Agents: the detailed-logs switch and a previewed export. Presentational:
- * `DiagnosticsDialog` fetches and acts, this draws. Focus: on open the title; opening a file moves it to the text, and
+ * Settings → Advanced: the detailed-logs switch and a previewed export. Presentational:
+ * `AdvancedSection` fetches and acts, this draws. Focus: after an export is prepared the export heading; opening a file moves it to the text, and
  * Back to the files moves it to that file's View button. A button that is busy (Prepare while it builds, Save while the native
  * dialog is open) is `aria-disabled`, not `disabled`: a disabled button that has focus drops it to the page, and then Escape
- * and Tab no longer reach the dialog. The handlers ignore a press while busy.
+ * and Tab no longer reach the page. The handlers ignore a press while busy.
  */
-export function DiagnosticsDialogView({
+export function AdvancedView({
   logging,
   preview,
   viewing,
@@ -53,13 +54,11 @@ export function DiagnosticsDialogView({
   viewing: { name: string; text: string } | null;
   saving?: boolean;
 } & DiagnosticsHandlers) {
-  const dialog = useRef<HTMLDivElement>(null);
-  const title = useRef<HTMLHeadingElement>(null);
+  const root = useRef<HTMLDivElement>(null);
   const text = useRef<HTMLPreElement>(null);
   const viewButtons = useRef(new Map<string, HTMLButtonElement>());
   const lastViewed = useRef<string | null>(null);
   const previousPreview = useRef(preview);
-  useDialogFocus(dialog, title, on.onClose);
 
   const viewingName = viewing?.name ?? null;
   useEffect(() => {
@@ -67,7 +66,7 @@ export function DiagnosticsDialogView({
     previousPreview.current = preview;
     if (target !== null) {
       lastViewed.current = null;
-      dialog.current?.querySelector<HTMLElement>(`#${target}`)?.focus();
+      root.current?.querySelector<HTMLElement>(`#${target}`)?.focus();
       return;
     }
     if (viewingName !== null) {
@@ -81,19 +80,11 @@ export function DiagnosticsDialogView({
 
   const files = typeof preview === "object" ? preview : null;
   return (
-    <div className="diagnostics-dialog">
-      <div className="diagnostics-dialog__backdrop" onClick={on.onClose} />
-      <div ref={dialog} className="diagnostics-dialog__sheet" role="dialog" aria-modal="true" aria-label="Diagnostics">
-        <h2 ref={title} id="diagnostics-title" tabIndex={-1} className="diagnostics-dialog__title">
-          Diagnostics
-        </h2>
-        <div className="diagnostics-dialog__body">
+    <div ref={root} className="advanced">
           <section className="diagnostics-dialog__section" aria-label="Logs">
             {logging === "loading" && <p className="diagnostics-dialog__line">Reading the log setting…</p>}
             {logging === "failed" && (
-              <p className="diagnostics-dialog__error" role="alert">
-                Couldn&apos;t read the log setting from Marshell&apos;s core. Close this and try again.
-              </p>
+              <p className="diagnostics-dialog__error">{LOGGING_UNREADABLE}</p>
             )}
             {typeof logging === "object" && (
               <Switch
@@ -106,13 +97,13 @@ export function DiagnosticsDialogView({
             )}
           </section>
           <section className="diagnostics-dialog__section" aria-labelledby="diagnostics-export-heading">
-            <h3 id="diagnostics-export-heading" className="diagnostics-dialog__name">
+            <h3 id="diagnostics-export-heading" tabIndex={-1} className="diagnostics-dialog__name">
               Export diagnostics
             </h3>
             <p className="diagnostics-dialog__line">Logs and setup only: no transcripts, recordings, prompts or hook events. Keys, tokens, your home folder and user name are replaced.</p>
-            <p className={`diagnostics-dialog__status ${preview === "expired" ? "diagnostics-dialog__error" : "diagnostics-dialog__line"}`} role="status" aria-live="polite" aria-atomic="true">
-              {preview === "preparing" ? "Preparing the export…" : preview === "expired" ? EXPIRED : ""}
-            </p>
+            {(preview === "preparing" || preview === "expired") && (
+              <p className={preview === "expired" ? "diagnostics-dialog__error" : "diagnostics-dialog__line"}>{preview === "preparing" ? "Preparing the export…" : EXPIRED}</p>
+            )}
             {viewing ? (
               <div className="diagnostics-dialog__viewer">
                 <h4 id="diagnostics-file-heading" className="diagnostics-dialog__file-name" dir="auto">
@@ -130,9 +121,7 @@ export function DiagnosticsDialogView({
             ) : (
               <>
                 {preview === "failed" && (
-                  <p className="diagnostics-dialog__error" role="alert">
-                    Couldn&apos;t prepare the export. Try again.
-                  </p>
+                  <p className="diagnostics-dialog__error">{PREPARE_FAILED}</p>
                 )}
                 {files && (
                   <>
@@ -176,13 +165,6 @@ export function DiagnosticsDialogView({
               </>
             )}
           </section>
-        </div>
-        <footer className="diagnostics-dialog__foot">
-          <button type="button" className="diagnostics-dialog__btn" onClick={on.onClose}>
-            Close
-          </button>
-        </footer>
-      </div>
     </div>
   );
 }
@@ -190,15 +172,18 @@ export function DiagnosticsDialogView({
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
 /**
- * The Diagnostics dialog on the core's data. Nothing polls: the logging state is read when it opens, and the export is built
+ * The Advanced section on the core's data. Nothing polls: the logging state is read when it opens, and the export is built
  * only when asked for. The zip is fetched from the core and written by the app's native Save dialog.
  */
-export function DiagnosticsDialog({ endpoint, onClose, onNotice }: { endpoint: Endpoint; onClose: () => void; onNotice?: (text: string) => void }) {
+export function AdvancedSection({ endpoint, announce }: { endpoint: Endpoint; announce?: (text: string) => void }) {
   const [logging, setLogging] = useState<LoggingState | "loading" | "failed">("loading");
   const [preview, setPreview] = useState<PreviewState>("idle");
   const [viewing, setViewing] = useState<{ name: string; text: string } | null>(null);
   const [saving, setSaving] = useState(false);
   const exportId = typeof preview === "object" ? preview.id : null;
+  // The view draws these two as plain text; the page's announcer says each once, when it appears.
+  useAnnounceOnce(logging === "failed" ? LOGGING_UNREADABLE : null, announce);
+  useAnnounceOnce(preview === "failed" ? PREPARE_FAILED : null, announce);
 
   useEffect(() => {
     let live = true;
@@ -215,7 +200,7 @@ export function DiagnosticsDialog({ endpoint, onClose, onNotice }: { endpoint: E
     try {
       setLogging(await diagnostics.setDetailed(endpoint, on));
     } catch (e) {
-      onNotice?.(`Couldn't change the log level: ${message(e)}`);
+      announce?.(`Couldn't change the log level: ${message(e)}`);
       diagnostics.logging(endpoint).then(setLogging, () => {});
     }
   };
@@ -224,10 +209,11 @@ export function DiagnosticsDialog({ endpoint, onClose, onNotice }: { endpoint: E
     if (preview === "preparing") return;
     setViewing(null);
     setPreview("preparing");
+    announce?.("Preparing the export…");
     try {
       const next = await diagnostics.prepare(endpoint);
       setPreview(next);
-      onNotice?.(exportReadyMessage(next));
+      announce?.(exportReadyMessage(next));
     } catch {
       setPreview("failed");
     }
@@ -237,6 +223,7 @@ export function DiagnosticsDialog({ endpoint, onClose, onNotice }: { endpoint: E
     if (!(e instanceof ApiError && e.status === 404)) return false;
     setViewing(null);
     setPreview("expired");
+    announce?.(EXPIRED);
     return true;
   };
 
@@ -245,7 +232,7 @@ export function DiagnosticsDialog({ endpoint, onClose, onNotice }: { endpoint: E
     try {
       setViewing({ name, text: await diagnostics.file(endpoint, exportId, name) });
     } catch (e) {
-      if (!expired(e)) onNotice?.(`Couldn't open ${name}: ${message(e)}`);
+      if (!expired(e)) announce?.(`Couldn't open ${name}: ${message(e)}`);
     }
   };
 
@@ -254,21 +241,20 @@ export function DiagnosticsDialog({ endpoint, onClose, onNotice }: { endpoint: E
     setSaving(true);
     try {
       const path = await saveExport(await diagnostics.zip(endpoint, exportId), exportName(new Date()));
-      if (path !== null) onNotice?.(`Saved to ${path}`);
+      if (path !== null) announce?.(`Saved to ${path}`);
     } catch (e) {
-      if (!expired(e)) onNotice?.(`Couldn't save the export: ${message(e)}`);
+      if (!expired(e)) announce?.(`Couldn't save the export: ${message(e)}`);
     } finally {
       setSaving(false);
     }
   };
 
   return (
-    <DiagnosticsDialogView
+    <AdvancedView
       logging={logging}
       preview={preview}
       viewing={viewing}
       saving={saving}
-      onClose={onClose}
       onDetailed={(on) => void detailed(on)}
       onPrepare={() => void prepare()}
       onView={(name) => void view(name)}

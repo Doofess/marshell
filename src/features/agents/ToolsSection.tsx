@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
+import type { CatalogTool } from "../../generated/CatalogTool";
 import type { Endpoint } from "../../generated/Endpoint";
 import type { OwnToolProblem } from "../../generated/OwnToolProblem";
 import type { ToolCatalog } from "../../generated/ToolCatalog";
@@ -9,7 +10,7 @@ import "./OwnAgentsSection.css";
 const isFileProblem = (p: OwnToolProblem) => p.id === null && p.index === 0;
 
 /** The "Tools" section of the Agents dialog: the shipped and own tool profiles with their presets. Presentational. */
-export function ToolsView({ catalog }: { catalog: ToolCatalog }) {
+export function ToolsView({ catalog, actions, footer }: { catalog: ToolCatalog; actions?: (tool: CatalogTool) => ReactNode; footer?: ReactNode }) {
   const file = catalog.problems.filter(isFileProblem);
   const rest = catalog.problems.filter((p) => !isFileProblem(p));
   const listed = new Set(catalog.tools.map((t) => t.id));
@@ -45,6 +46,7 @@ export function ToolsView({ catalog }: { catalog: ToolCatalog }) {
                 </span>
               ))}
             </div>
+            {t.own && actions?.(t)}
           </li>
         ))}
       </ul>
@@ -57,13 +59,13 @@ export function ToolsView({ catalog }: { catalog: ToolCatalog }) {
           ))}
         </ul>
       )}
-      <p className="own-agents__line">Add your own in tools.json in the Marshell folder. Settings gets an editor later.</p>
+      {footer ?? <p className="own-agents__line">Add your own in tools.json in the Marshell folder. Settings gets an editor later.</p>}
     </section>
   );
 }
 
 /** The Tools section on the core's data, read when the dialog opens. A failed read says so and offers Try again. */
-export function ToolsSection({ endpoint }: { endpoint: Endpoint }) {
+export function ToolsSection({ endpoint, ownEditor }: { endpoint: Endpoint; ownEditor?: ReactNode }) {
   const [catalog, setCatalog] = useState<ToolCatalog | null>(null);
   const [failed, setFailed] = useState(false);
   const load = useCallback(() => {
@@ -96,5 +98,7 @@ export function ToolsSection({ endpoint }: { endpoint: Endpoint }) {
       </section>
     );
   }
+  // With the editor beside it, the catalog lists only the shipped tools: the editor lists the person's own, and their problems.
+  if (ownEditor) return <ToolsView catalog={{ ...catalog, tools: catalog.tools.filter((t) => !t.own), problems: [] }} footer={ownEditor} />;
   return <ToolsView catalog={catalog} />;
 }

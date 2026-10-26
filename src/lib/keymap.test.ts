@@ -200,3 +200,12 @@ describe("history settings command", () => {
     expect(commandById("history-settings")?.binding).toBeUndefined();
   });
 });
+
+describe("settings command", () => {
+  it("is Settings… in Tools, with no key of its own, and every id is listed once", () => {
+    expect(commandById("settings")).toMatchObject({ label: "Settings…", group: "Tools" });
+    expect(commandById("settings")?.binding).toBeUndefined();
+    const ids = COMMANDS.map((c) => c.id);
+    expect(new Set(ids).size).toBe(ids.length);
+  });
+});

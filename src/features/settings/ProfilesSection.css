@@ -1,9 +1,4 @@
 /* Shell profiles. Built on the settings page's own pieces (nav list, fields, change bar); only what is new is here. */
-.profiles-dialog {
-  position: absolute;
-  inset: 0;
-  z-index: 20;
-}
 .profiles__list {
   display: grid;
   gap: var(--space-2);

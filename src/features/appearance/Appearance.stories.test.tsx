@@ -14,7 +14,7 @@ describe("the Appearance stories", () => {
   it("show the refused accent's reason, and Windows Terminal's font and schemes", () => {
     expect(render("CustomAccentRefused")).toContain("Too light for the light theme");
     const wt = render("WithWindowsTerminal");
-    expect(wt).toContain("From Windows Terminal: Cascadia Code");
+    expect(wt).toContain("font-family:&quot;Cascadia Code&quot;");
     expect(wt).toContain('aria-label="Add One Half Light"');
     expect(wt).toContain(">Added<");
   });

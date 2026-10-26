@@ -1,11 +1,10 @@
-import { useEffect, useEffectEvent, useId, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
-import { Page } from "../../components/Page/Page";
+import { useEffect, useEffectEvent, useId, useMemo, useState, type KeyboardEvent, type ReactNode } from "react";
 import { Switch } from "../../components/Switch/Switch";
 import type { Appearance } from "../../generated/Appearance";
 import type { FoundFile } from "../../generated/FoundFile";
 import type { ImportedTheme } from "../../generated/ImportedTheme";
-import { useDialogFocus } from "../../lib/useDialogFocus";
-import { BUNDLED_FONT, fontStack, resolveTerminalFont } from "../terminal/terminalFont";
+import { FontPicker } from "../terminal/FontPicker";
+import { fontChoiceOf, fontStack, resolveTerminalFont } from "../terminal/terminalFont";
 import { appScheme, resolveTerminalTheme, type Scheme } from "../terminal/terminalTheme";
 import { addImported, removeImported } from "./appearanceEdits";
 import { useAppearance } from "./AppearanceProvider";
@@ -14,25 +13,24 @@ import { importThemeFile, MAX_THEME_FILE } from "./import/importTheme";
 import { schemesInFiles } from "./import/windowsTerminal";
 import { terminalThemeOf, wtFont } from "./terminalSettings";
 import "../settings/Settings.css";
-import "./AppearanceDialog.css";
+import "./AppearanceSections.css";
 
 /** Where a failed save is shown: next to the part that was changed. */
-export type AppearanceSection = "theme" | "accent" | "terminal" | "imported";
+export type ErrorPlace = "theme" | "accent" | "terminal" | "imported";
 
 export type AppearanceViewState = {
   appearance: Appearance;
   /** The scheme the app shows now, for the terminal preview. */
   app: Scheme;
   wtFiles: FoundFile[] | null;
-  error: { at: AppearanceSection; text: string } | null;
+  error: { at: ErrorPlace; text: string } | null;
   accent: Draft;
-  font: string;
   size: Draft;
   importError: string | null;
 };
 
 export type AppearanceHandlers = {
-  save(next: Appearance, at: AppearanceSection): void;
+  save(next: Appearance, at: ErrorPlace): void;
   onAccentText(text: string): void;
   /** Saves the custom accent if it passes the check; otherwise the reason shows and the accent stays. */
   commitAccent(): void;
@@ -40,8 +38,8 @@ export type AppearanceHandlers = {
   blurAccent(): void;
   /** Picks one of the preset accents and empties the custom colour field. */
   pickAccent(accent: string): void;
-  onFontText(text: string): void;
-  commitFont(): void;
+  /** The family to save for the terminal font: "" is Match my terminal. */
+  pickFont(family: string): void;
   onSizeText(text: string): void;
   commitSize(): void;
   importFile(file: File): void;
@@ -62,13 +60,11 @@ const ACCENTS = [
 
 const ANSI_KEYS = ["black", "red", "green", "yellow", "blue", "magenta", "cyan", "white", "brightBlack", "brightRed", "brightGreen", "brightYellow", "brightBlue", "brightMagenta", "brightCyan", "brightWhite"] as const;
 
-const FONT_SOURCE = { yours: "Yours", "windows-terminal": "From Windows Terminal", bundled: "Bundled" } as const;
-
 const onEnter = (commit: () => void) => (e: KeyboardEvent) => {
   if (e.key === "Enter") commit();
 };
 
-function ErrorAt({ at, error }: { at: AppearanceSection; error: AppearanceViewState["error"] }) {
+function ErrorAt({ at, error }: { at: ErrorPlace; error: AppearanceViewState["error"] }) {
   return error?.at === at ? (
     <p className="appearance__error">{error.text}</p>
   ) : null;
@@ -109,79 +105,85 @@ function Section({ title, children }: { title: string; children: ReactNode }) {
   );
 }
 
-/** The Appearance settings: app theme, accent, contrast, text size, the terminal's theme and font, and imported themes. */
+const setter = (a: Appearance, handlers: AppearanceHandlers) => (patch: Partial<Appearance>, at: ErrorPlace) => handlers.save({ ...a, ...patch }, at);
+
+/** The Appearance section's fields: app theme, contrast, text size and accent. The shell draws the heading and the page. */
 export function AppearanceView({ state, handlers }: { state: AppearanceViewState; handlers: AppearanceHandlers }) {
   const { appearance: a, error } = state;
-  const ids = { accentHelp: useId(), accentWhy: useId(), themeHelp: useId(), font: useId(), fontHelp: useId(), size: useId(), sizeWhy: useId(), file: useId() };
+  const ids = { accentHelp: useId(), accentWhy: useId() };
   const custom = a.accent.startsWith("#");
+  const set = setter(a, handlers);
+
+  return (
+    <div className="appearance">
+      <div className="appearance__section">
+        <Choice legend="Theme" name="theme" value={a.theme} options={[["follow-system", "Follow system"], ["dark", "Dark"], ["light", "Light"]]} onPick={(theme) => set({ theme }, "theme")} />
+        <Choice legend="High contrast" help="Follow system turns this on when Windows asks for more contrast." name="contrast" value={a.contrast} options={[["follow-system", "Follow system"], ["on", "On"], ["off", "Off"]]} onPick={(contrast) => set({ contrast }, "theme")} />
+        <Choice legend="Text size" help="Changes the size of Marshell's text. The terminal font size is set in Terminal." name="text-size" value={a.text_size} options={[["default", "Default"], ["large", "Large"], ["larger", "Larger"]]} onPick={(text_size) => set({ text_size }, "theme")} />
+        <ErrorAt at="theme" error={error} />
+      </div>
+
+      <Section title="Accent">
+        <fieldset className="appearance__group" aria-describedby={ids.accentHelp}>
+          <legend className="field__label">Accent colour</legend>
+          <p id={ids.accentHelp} className="field__help">
+            Sessions use their agent&apos;s colour. Your accent shows everywhere else.
+          </p>
+          <div className="appearance__chips">
+            {ACCENTS.map(([v, label]) => (
+              <label key={v} className="appearance__chip is-selected-mark" data-selected={a.accent === v ? "true" : undefined}>
+                <input type="radio" name="accent" value={v} checked={a.accent === v} onChange={() => handlers.pickAccent(v)} />
+                <span className="appearance__swatch" data-accent={v} aria-hidden="true" />
+                <span>{label}</span>
+              </label>
+            ))}
+            <label className="appearance__chip is-selected-mark" data-selected={custom ? "true" : undefined}>
+              <input type="radio" name="accent" value="custom" checked={custom} onChange={handlers.commitAccent} />
+              <span className="appearance__swatch appearance__swatch--custom" style={custom ? { background: a.accent } : undefined} aria-hidden="true" />
+              <span>Custom</span>
+            </label>
+          </div>
+          <label className="appearance__inline">
+            <span>Custom colour</span>
+            <input
+              type="text"
+              className="field__control appearance__hex"
+              data-field="accent"
+              spellCheck={false}
+              placeholder="#3a7bd5"
+              value={state.accent.text}
+              aria-invalid={state.accent.reason ? true : undefined}
+              aria-describedby={state.accent.reason ? ids.accentWhy : undefined}
+              onChange={(e) => handlers.onAccentText(e.target.value)}
+              onBlur={handlers.blurAccent}
+              onKeyDown={onEnter(handlers.commitAccent)}
+            />
+          </label>
+          {state.accent.reason && (
+            <p id={ids.accentWhy} className="field__why">
+              {state.accent.reason}
+            </p>
+          )}
+        </fieldset>
+        <ErrorAt at="accent" error={error} />
+      </Section>
+    </div>
+  );
+}
+
+/** The Terminal section's fields: the terminal theme and its preview, the font, the font size, and imported themes. */
+export function TerminalView({ state, handlers }: { state: AppearanceViewState; handlers: AppearanceHandlers }) {
+  const { appearance: a, error } = state;
+  const ids = { themeHelp: useId(), size: useId(), sizeWhy: useId(), file: useId() };
   const preview = resolveTerminalTheme({ ...terminalThemeOf(a, null), app: state.app }).theme;
   const font = resolveTerminalFont(a.terminal_font, wtFont(state.wtFiles ?? []));
   const { themes: found, note: skippedNote } = useMemo(() => schemesInFiles((state.wtFiles ?? []).map((f) => f.text)), [state.wtFiles]);
   const have = new Set(a.imported_themes.map((t) => t.id));
-  const set = (patch: Partial<Appearance>, at: AppearanceSection) => handlers.save({ ...a, ...patch }, at);
-
-  const close = handlers.onClose && (
-    <button type="button" className="settings__btn" onClick={handlers.onClose}>
-      Close
-    </button>
-  );
+  const set = setter(a, handlers);
 
   return (
-    <Page title="Appearance" subtitle="How Marshell and its terminals look." actions={close}>
-      <div className="appearance">
-        <Section title="App">
-          <Choice legend="Theme" name="theme" value={a.theme} options={[["follow-system", "Follow system"], ["dark", "Dark"], ["light", "Light"]]} onPick={(theme) => set({ theme }, "theme")} />
-          <Choice legend="High contrast" help="Follow system turns this on when Windows asks for more contrast." name="contrast" value={a.contrast} options={[["follow-system", "Follow system"], ["on", "On"], ["off", "Off"]]} onPick={(contrast) => set({ contrast }, "theme")} />
-          <Choice legend="Text size" help="Changes the size of Marshell's text. The terminal font size is set below." name="text-size" value={a.text_size} options={[["default", "Default"], ["large", "Large"], ["larger", "Larger"]]} onPick={(text_size) => set({ text_size }, "theme")} />
-          <ErrorAt at="theme" error={error} />
-        </Section>
-
-        <Section title="Accent">
-          <fieldset className="appearance__group" aria-describedby={ids.accentHelp}>
-            <legend className="field__label">Accent colour</legend>
-            <p id={ids.accentHelp} className="field__help">
-              Sessions use their agent&apos;s colour. Your accent shows everywhere else.
-            </p>
-            <div className="appearance__chips">
-              {ACCENTS.map(([v, label]) => (
-                <label key={v} className="appearance__chip is-selected-mark" data-selected={a.accent === v ? "true" : undefined}>
-                  <input type="radio" name="accent" value={v} checked={a.accent === v} onChange={() => handlers.pickAccent(v)} />
-                  <span className="appearance__swatch" data-accent={v} aria-hidden="true" />
-                  <span>{label}</span>
-                </label>
-              ))}
-              <label className="appearance__chip is-selected-mark" data-selected={custom ? "true" : undefined}>
-                <input type="radio" name="accent" value="custom" checked={custom} onChange={handlers.commitAccent} />
-                <span className="appearance__swatch appearance__swatch--custom" style={custom ? { background: a.accent } : undefined} aria-hidden="true" />
-                <span>Custom</span>
-              </label>
-            </div>
-            <label className="appearance__inline">
-              <span>Custom colour</span>
-              <input
-                type="text"
-                className="field__control appearance__hex"
-                data-field="accent"
-                spellCheck={false}
-                placeholder="#3a7bd5"
-                value={state.accent.text}
-                aria-invalid={state.accent.reason ? true : undefined}
-                aria-describedby={state.accent.reason ? ids.accentWhy : undefined}
-                onChange={(e) => handlers.onAccentText(e.target.value)}
-                onBlur={handlers.blurAccent}
-                onKeyDown={onEnter(handlers.commitAccent)}
-              />
-            </label>
-            {state.accent.reason && (
-              <p id={ids.accentWhy} className="field__why">
-                {state.accent.reason}
-              </p>
-            )}
-          </fieldset>
-          <ErrorAt at="accent" error={error} />
-        </Section>
-
-        <Section title="Terminal">
+    <div className="appearance">
+      <div className="appearance__section">
           <div className="appearance__group">
             <label className="field__label" htmlFor={`${ids.themeHelp}-select`}>
               Terminal theme
@@ -199,7 +201,7 @@ export function AppearanceView({ state, handlers }: { state: AppearanceViewState
                 </option>
               ))}
             </select>
-            <div className="appearance__preview" style={{ background: preview.background, color: preview.foreground, fontFamily: fontStack(font.family) }} role="img" aria-label="Preview of the terminal theme's colours">
+            <div className="appearance__preview" style={{ background: preview.background, color: preview.foreground, fontFamily: fontStack(font.family, wtFont(state.wtFiles ?? [])?.family) }} role="img" aria-label="Preview of the terminal theme's colours">
               <span className="appearance__preview-text" aria-hidden="true">
                 ~/marshell $ ls
               </span>
@@ -212,14 +214,7 @@ export function AppearanceView({ state, handlers }: { state: AppearanceViewState
           </div>
 
           <div className="appearance__group">
-            <label className="field__label" htmlFor={ids.font}>
-              Terminal font
-            </label>
-            <p id={ids.fontHelp} className="field__help">
-              {FONT_SOURCE[font.source]}: {font.family}. Leave the field empty to use {state.wtFiles?.length ? "Windows Terminal's font, or " : ""}
-              {BUNDLED_FONT}.
-            </p>
-            <input id={ids.font} type="text" className="field__control" data-field="font" spellCheck={false} placeholder="Automatic" value={state.font} aria-describedby={ids.fontHelp} onChange={(e) => handlers.onFontText(e.target.value)} onBlur={handlers.commitFont} onKeyDown={onEnter(handlers.commitFont)} />
+            <FontPicker family={a.terminal_font.family ?? ""} wtFamily={wtFont(state.wtFiles ?? [])?.family} onPick={handlers.pickFont} />
           </div>
 
           <div className="appearance__group">
@@ -253,7 +248,7 @@ export function AppearanceView({ state, handlers }: { state: AppearanceViewState
             <p className="field__help">Lifts dim text so it stays readable on the terminal&apos;s background.</p>
           </div>
           <ErrorAt at="terminal" error={error} />
-        </Section>
+      </div>
 
         <Section title="Imported themes">
           <div className="appearance__group">
@@ -312,8 +307,7 @@ export function AppearanceView({ state, handlers }: { state: AppearanceViewState
           {found.length > 0 && skippedNote && <p className="field__help">{skippedNote}</p>}
           <ErrorAt at="imported" error={error} />
         </Section>
-      </div>
-    </Page>
+    </div>
   );
 }
 
@@ -330,19 +324,17 @@ function ThemeDots({ theme }: { theme: ImportedTheme }) {
 
 const sizeReason = "Enter a whole number from 8 to 32.";
 
-/** The Appearance dialog over the live window. Each change saves at once; Escape or Close closes it. */
-export function AppearanceDialog({ onClose, onNotice }: { onClose: () => void; onNotice?: (text: string) => void }) {
-  const dialog = useRef<HTMLDivElement>(null);
-  useDialogFocus(dialog, dialog, onClose);
+/** The state and handlers both sections share: the saved settings, the drafts being typed, and where a failed save shows. */
+function useAppearanceSection(announce: ((text: string) => void) | undefined, onClose?: () => void) {
   const { appearance, save, error, wtFiles } = useAppearance();
-  const [at, setAt] = useState<AppearanceSection>("theme");
+  // Which part this section last saved. A failed save shows (and is said) only in the section that made it.
+  const [at, setAt] = useState<ErrorPlace | null>(null);
   const [drafts, setDrafts] = useState(() => draftsOf(appearance));
-  const { accent, font, size } = drafts;
+  const { accent, size } = drafts;
   const setAccent = (next: Draft) => setDrafts((d) => ({ ...d, accent: next }));
-  const setFont = (next: string) => setDrafts((d) => ({ ...d, font: next }));
   const setSize = (next: Draft) => setDrafts((d) => ({ ...d, size: next }));
   const [importError, setImportError] = useState<string | null>(null);
-  // The settings may arrive after the dialog opened: the fields then take the saved values, except one being typed in.
+  // The settings may arrive after the section mounted: the fields then take the saved values, except one being typed in.
   const refillNow = useEffectEvent(() => {
     const focused = document.activeElement instanceof HTMLElement ? (document.activeElement.dataset.field as Field | undefined) : undefined;
     setDrafts((d) => refill(d, appearance, focused ?? null));
@@ -351,9 +343,10 @@ export function AppearanceDialog({ onClose, onNotice }: { onClose: () => void; o
     refillNow();
   }, [appearance.accent, appearance.terminal_font.family, appearance.terminal_font.size]);
   // The window has one live region (its announcer): failures are said there and shown in words beside their section.
-  const say = useEffectEvent((text: string) => onNotice?.(text));
+  const say = useEffectEvent((text: string) => announce?.(text));
+  const mine = useEffectEvent(() => at !== null);
   useEffect(() => {
-    if (error) say(error);
+    if (error && mine()) say(error);
   }, [error]);
   useEffect(() => {
     if (importError) say(importError);
@@ -376,10 +369,12 @@ export function AppearanceDialog({ onClose, onNotice }: { onClose: () => void; o
       setDrafts(pickPreset(drafts));
       handlers.save({ ...appearance, accent }, "accent");
     },
-    onFontText: setFont,
-    commitFont() {
-      const family = font.trim() || null;
-      if (family !== appearance.terminal_font.family) handlers.save({ ...appearance, terminal_font: { ...appearance.terminal_font, family } }, "terminal");
+    pickFont(picked) {
+      const family = picked.trim() || null;
+      if (family === appearance.terminal_font.family) return;
+      handlers.save({ ...appearance, terminal_font: { ...appearance.terminal_font, family } }, "terminal");
+      const choice = fontChoiceOf(family);
+      announce?.(`Terminal font: ${choice.kind === "match" ? "Match my terminal" : choice.family}`);
     },
     onSizeText: (text) => setSize({ text, reason: null }),
     commitSize() {
@@ -397,17 +392,31 @@ export function AppearanceDialog({ onClose, onNotice }: { onClose: () => void; o
           if (!result.ok) return setImportError(result.reason);
           handlers.save(addImported(appearance, result.themes), "imported");
           const imported = result.themes.length === 1 ? `Imported ${result.themes[0]!.name}.` : `Imported ${result.themes.length} themes.`;
-          onNotice?.(result.note ? `${imported} ${result.note}` : imported);
+          announce?.(result.note ? `${imported} ${result.note}` : imported);
         })
         .catch(() => setImportError(`Couldn't read ${file.name}.`));
     },
     onClose,
   };
 
-  const state: AppearanceViewState = { appearance, app: appearance.theme === "follow-system" ? appScheme() : appearance.theme, wtFiles, error: error ? { at, text: error } : null, accent, font, size, importError };
-  return (
-    <div ref={dialog} className="appearance-dialog" role="dialog" aria-modal="true" aria-label="Appearance" tabIndex={-1}>
-      <AppearanceView state={state} handlers={handlers} />
-    </div>
-  );
+  const state: AppearanceViewState = { appearance, app: appearance.theme === "follow-system" ? appScheme() : appearance.theme, wtFiles, error: error && at ? { at, text: error } : null, accent, size, importError };
+  return { state, handlers };
+}
+
+/**
+ * The Appearance section of the Settings page: app theme, contrast, text size and accent. It draws no heading, dialog or Close
+ * button (the shell does) and says failures through `announce`. Nothing in it opens a popup, so it never handles Escape.
+ */
+export function AppearanceSection({ announce }: { announce?: (text: string) => void }) {
+  const { state, handlers } = useAppearanceSection(announce);
+  return <AppearanceView state={state} handlers={handlers} />;
+}
+
+/**
+ * The Terminal section: terminal theme and preview, font, font size and imported themes. The font picker's own field prevents
+ * its Escape, so the page stays open (`settingsKey`); the theme import has no popup.
+ */
+export function TerminalSection({ announce }: { announce?: (text: string) => void }) {
+  const { state, handlers } = useAppearanceSection(announce);
+  return <TerminalView state={state} handlers={handlers} />;
 }

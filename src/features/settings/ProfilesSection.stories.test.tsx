@@ -1,6 +1,6 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import * as stories from "./ProfilesPage.stories";
+import * as stories from "./ProfilesSection.stories";
 
 type Story = { render: () => React.ReactElement };
 const names = Object.keys(stories).filter((k) => k !== "default") as Array<keyof typeof stories>;

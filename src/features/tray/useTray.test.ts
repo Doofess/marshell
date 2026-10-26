@@ -4,36 +4,39 @@ import { mountHook } from "../../test/hooks";
 import type { ApprovalRequest } from "../approval/types";
 import type { RowModel } from "../sidebar/types";
 import type { TrayState } from "./trayItems";
-import { actionFor, jumpCloses, trayClosesBoard, trayModel, traySessions, useTray, type TrayAction } from "./useTray";
+import { actionFor, jumpCloses, trayClosesOverlay, trayModel, traySessions, useTray, type TrayAction } from "./useTray";
 
 vi.mock("react", async () => ({ ...await vi.importActual("react"), ...(await import("../../test/hooks")).hooks }));
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 afterEach(() => vi.clearAllMocks());
 
 describe("jumpCloses", () => {
-  it("closes the board and the palette for a jump from outside the window, and leaves a dialog or nothing alone", () => {
+  it("closes the board, Settings and the palette for a jump from outside the window, and leaves a dialog or nothing alone", () => {
     expect(jumpCloses("departures")).toBe(true);
+    expect(jumpCloses("settings")).toBe(true);
     expect(jumpCloses("palette")).toBe(true);
-    expect(jumpCloses("appearance")).toBe(false);
-    expect(jumpCloses("notifications")).toBe(false);
+    expect(jumpCloses("shortcuts")).toBe(false);
     expect(jumpCloses(null)).toBe(false);
   });
 });
 
-describe("trayClosesBoard", () => {
+describe("trayClosesOverlay", () => {
   it.each([
     [{ kind: "goto", number: 2 }, "departures", true],
     [{ kind: "nextWaiting" }, "departures", true],
     [{ kind: "goto", number: 2 }, "palette", true],
     [{ kind: "nextWaiting" }, "palette", true],
-    [{ kind: "goto", number: 2 }, "appearance", false],
+    [{ kind: "goto", number: 2 }, "settings", true],
+    [{ kind: "nextWaiting" }, "settings", true],
+    [{ kind: "goto", number: 2 }, "shortcuts", false],
     [{ kind: "goto", number: 2 }, null, false],
     [{ kind: "nextWaiting" }, null, false],
     [{ kind: "overlay", overlay: "departures" }, "departures", false],
-    [{ kind: "overlay", overlay: "notifications" }, "departures", false],
+    [{ kind: "overlay", overlay: "settings" }, "departures", false],
+    [{ kind: "togglePause" }, "settings", false],
     [{ kind: "togglePause" }, "departures", false],
-  ] satisfies [TrayAction, string | null, boolean][])("action %j with overlay %s closes board: %s", (action, overlay, expected) => {
-    expect(trayClosesBoard(action, overlay)).toBe(expected);
+  ] satisfies [TrayAction, string | null, boolean][])("action %j with overlay %s closes the overlay: %s", (action, overlay, expected) => {
+    expect(trayClosesOverlay(action, overlay)).toBe(expected);
   });
 });
 
@@ -96,8 +99,9 @@ describe("actionFor", () => {
     expect(actionFor("next-waiting")).toEqual({ kind: "nextWaiting" });
     expect(actionFor("more")).toEqual({ kind: "nextWaiting" });
   });
-  it("opens Notifications and toggles notifications, never the palette's Pause session", () => {
-    expect(actionFor("notifications")).toEqual({ kind: "overlay", overlay: "notifications" });
+  it("opens Settings and toggles notifications, never the palette's Pause session", () => {
+    expect(actionFor("settings")).toEqual({ kind: "overlay", overlay: "settings" });
+    expect(actionFor("notifications")).toBeNull();
     expect(actionFor("pause")).toEqual({ kind: "togglePause" });
   });
   it("opens the Departures board", () => {

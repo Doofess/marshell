@@ -17,8 +17,34 @@ export function resolveTerminalFont(setting: TerminalFont, wt: { family?: string
   return { family: BUNDLED_FONT, size: setting.size, source: "bundled" };
 }
 
-/** The CSS font stack xterm gets: the family, then the bundled font for any glyph it lacks. */
-export function fontStack(family: string): string {
-  const name = family.replace(/["\\]/g, "");
-  return name === BUNDLED_FONT ? `"${BUNDLED_FONT}", monospace` : `"${name}", "${BUNDLED_FONT}", monospace`;
+/** The fonts shipped with the app (src/styles/fonts.css), in the order the picker lists them. */
+export const BUNDLED_FONTS = ["JetBrains Mono", "Cascadia Mono", "Atkinson Hyperlegible Mono"] as const;
+export type BundledFont = (typeof BUNDLED_FONTS)[number];
+
+/** What the saved family string means: Match my terminal, one of the bundled fonts, or any other installed font. */
+export type FontChoice = { kind: "match" } | { kind: "bundled"; family: BundledFont } | { kind: "other"; family: string };
+
+export function fontChoiceOf(family: string | null | undefined): FontChoice {
+  const text = family?.trim() ?? "";
+  if (!text) return { kind: "match" };
+  const bundled = BUNDLED_FONTS.find((f) => f.toLowerCase() === text.toLowerCase());
+  return bundled ? { kind: "bundled", family: bundled } : { kind: "other", family: text };
+}
+
+/** The family string that is saved for a choice. */
+export function familyOf(choice: FontChoice): string {
+  return choice.kind === "match" ? "" : choice.family;
+}
+
+/**
+ * The CSS font stack xterm gets: the family, the bundled font for any glyph it lacks, system monospace, then Windows
+ * Terminal's (Nerd) font so powerline glyphs still resolve.
+ */
+export function fontStack(family: string, wtFamily?: string): string {
+  const clean = (s: string) => s.replace(/["\\]/g, "");
+  const name = clean(family);
+  const stack = name === BUNDLED_FONT ? [`"${BUNDLED_FONT}"`, "monospace"] : [`"${name}"`, `"${BUNDLED_FONT}"`, "monospace"];
+  const wt = wtFamily ? clean(wtFamily).trim() : "";
+  if (wt && wt.toLowerCase() !== name.toLowerCase() && wt.toLowerCase() !== BUNDLED_FONT.toLowerCase()) stack.push(`"${wt}"`);
+  return stack.join(", ");
 }

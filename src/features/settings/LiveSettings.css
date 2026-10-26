@@ -1,0 +1,17 @@
+/* The Settings page over the live window: below the title bar, as Departures is, so the window controls stay in reach. The sessions
+   stay mounted behind it. The page body (Page.css) is the only scroller. */
+.live-settings {
+  position: absolute;
+  inset: 40px 0 0 0;
+  z-index: 20;
+  background: var(--bg-base);
+  display: grid;
+  grid-template-rows: minmax(0, 1fr);
+  min-block-size: 0;
+}
+
+@media (forced-colors: active) {
+  .live-settings {
+    background: Canvas;
+  }
+}

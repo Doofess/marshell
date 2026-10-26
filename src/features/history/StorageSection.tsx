@@ -4,11 +4,12 @@ import type { StorageReport } from "../../generated/StorageReport";
 import { getStorage, previewRetention } from "../../lib/api/storage";
 import { pickFolder } from "../../lib/folderPicker";
 import { formatBytes } from "../../lib/format";
+import { escapeCancels } from "../agents/ownTools";
 import type { SettingsSync } from "../appearance/settingsSync";
 import { relativeTime } from "./historyState";
 import { type PendingLimits, chooseBackupFolder, proposeLimits, removalQuestion, reportAfterCleanup, storageErrorText } from "./storageActions";
 import "../settings/Settings.css";
-import "../notifications/NotificationsDialog.css";
+import "../notifications/NotificationsSection.css";
 import "./StorageSection.css";
 
 const DASH = "–";
@@ -118,7 +119,7 @@ export function StorageSectionView({ report, pending, chosen = null, error, busy
             {LIMITS_HINT}
           </p>
           {pending && (
-            <div className="storage__confirm">
+            <div className="storage__confirm" onKeyDown={(e) => escapeCancels(e, busy ? () => {} : onCancel)}>
               <p id={QUESTION_ID} className="notifications-dialog__line storage__ask">{removalQuestion(pending)}</p>
               <div className="storage__actions">
                 <button type="button" className="notifications-dialog__btn" disabled={busy} onClick={onConfirm}>

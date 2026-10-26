@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 const css = readFileSync(new URL("./Settings.css", import.meta.url), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
-const page = readFileSync(new URL("./SettingsPage.tsx", import.meta.url), "utf8");
+const page = readFileSync(new URL("./SettingsNav.tsx", import.meta.url), "utf8");
 
 describe("Settings.css", () => {
   it("draws no box: the only borders are radius and a start-edge bar", () => {
