@@ -18,6 +18,9 @@ export const SETTINGS_SECTIONS: Array<{ id: SettingsSection; label: string }> = 
 /** The agent CLIs that have a section of their own. */
 export type CompanyAgent = "claude" | "codex" | "antigravity";
 
+/** What the person sees for each company CLI. */
+export const COMPANY_NAMES: Record<CompanyAgent, string> = { claude: "Claude Code", codex: "Codex", antigravity: "Antigravity" };
+
 const COMPANY: ReadonlySet<SettingsSection> = new Set<SettingsSection>(["claude", "codex", "antigravity"]);
 
 /** The sections the nav lists: a company section only when its CLI was found, Accounts always. */

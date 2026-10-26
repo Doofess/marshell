@@ -76,6 +76,11 @@ describe("SettingsPanels", () => {
     expect(h).not.toContain("body of appearance");
     expect(h).not.toMatch(/hidden/);
   });
+  it("renders accounts and codex through render, the shown one visible and the other hidden", () => {
+    const h = html("codex", ["accounts", "codex"]);
+    expect(h).toMatch(/<div[^>]*hidden=""[^>]*><p>body of accounts<\/p><\/div>/);
+    expect(h).toMatch(/<div[^>]*><p>body of codex<\/p><\/div>/);
+  });
   it("keeps a section that was shown mounted but hidden after a switch, so an unsaved form survives", () => {
     const h = html("agents", ["profiles", "agents"]);
     expect(h).toMatch(/<div[^>]*hidden=""[^>]*><p>body of profiles<\/p><\/div>/);

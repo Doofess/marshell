@@ -36,7 +36,10 @@ import { paletteSessions } from "../palette/sessions";
 import { LiveHistory } from "../history/LiveHistory";
 import { LiveSettings } from "../settings/LiveSettings";
 import { closesSettings, isTextEntry, paletteSection, settingsStart } from "../settings/settingsRouting";
-import { SETTINGS_SECTIONS, type SettingsSection } from "../settings/settingsSections";
+import { COMPANY_NAMES, shownSections, type CompanyAgent, type SettingsSection } from "../settings/settingsSections";
+import { cliTaskRequest, exitedTasks, runningCount, updateResult, type CliTaskKind, type PendingTask } from "../settings/cliTasks";
+import { accountLine, UNREACHABLE } from "../accounts/accountsText";
+import { getAccount, getInstall } from "../../lib/api/accounts";
 import { Preview } from "../preview/Preview";
 import { PreviewContext } from "../preview/PreviewContext";
 import { currentOf, usePreview } from "../preview/previewState";
@@ -45,7 +48,7 @@ import { nextSessionNumber } from "../sidebar/sessionNumber";
 import type { Mode, RowModel } from "../sidebar/types";
 import { rowSetupStart, type SetupStart } from "../agents/agentsState";
 import { LiveOnboarding } from "../onboarding/LiveOnboarding";
-import { getSetup, type HookAgent } from "../../lib/api/agents";
+import { getSetup, listAgents, type HookAgent } from "../../lib/api/agents";
 import type { HookInstall } from "../../generated/HookInstall";
 import type { AgentCatalog } from "../../generated/AgentCatalog";
 import { catalogApi } from "../../lib/api/catalog";
@@ -126,8 +129,14 @@ export function LiveApp() {
   // Each hook agent's (Claude Code, Codex, Antigravity) hook state, read when the window opens and again after each change in the Agents dialog or the onboarding. Never polled.
   const [hooks, setHooks] = useState<Partial<Record<HookAgent, HookInstall>>>({});
   const { endpoint, profiles, rows, infos, permissions, now, selectedId, loaded, select, reloadProfiles, error } = useSessions(hooks);
+  // The company CLIs found on this machine: Settings lists Accounts and a section for each. Read with the hooks.
+  const [found, setFound] = useState<ReadonlySet<CompanyAgent>>(() => new Set());
   const refreshSetup = useCallback(() => {
     if (!endpoint) return;
+    listAgents(endpoint).then(
+      (list) => setFound(new Set(list.filter((a) => a.found && a.agent in COMPANY_NAMES).map((a) => a.agent as CompanyAgent))),
+      () => {},
+    );
     for (const agent of ["claude", "codex", "antigravity"] as const) {
       getSetup(endpoint, agent).then(
         (s) => setHooks((h) => ({ ...h, [agent]: s.found ? s.hooks : undefined })),
@@ -217,7 +226,7 @@ export function LiveApp() {
   const lastSettingsSection = useRef<SettingsSection | null>(null);
   // `null` opens the section shown last in this run, else Appearance.
   const openSettings = (section: SettingsSection | null) => {
-    const next = section ?? settingsStart(lastSettingsSection.current, SETTINGS_SECTIONS.map((s) => s.id));
+    const next = section ?? settingsStart(lastSettingsSection.current, shownSections(found).map((s) => s.id));
     lastSettingsSection.current = next;
     setSettingsSection(next);
     setOverlay("settings");
@@ -255,6 +264,15 @@ export function LiveApp() {
       refreshSetupRef.current();
     };
   }, [settingsOpen]);
+  // The sign-in and update tabs Settings opened, by tab id, and what each is waiting on. They live here, not in Settings, so a tab that
+  // exits after the page closed is still checked. A tab counts as exited only once the list has shown it, since a new tab reaches the
+  // list a moment after the create answers.
+  const pendingTasks = useRef(new Map<string, PendingTask>());
+  const seenTasks = useRef(new Set<string>());
+  const versionBefore = useRef(new Map<string, string | null>());
+  const openingTask = useRef(false);
+  const [accountsRefresh, setAccountsRefresh] = useState(0);
+  const [companyRefresh, setCompanyRefresh] = useState<Record<CompanyAgent, number>>({ claude: 0, codex: 0, antigravity: 0 });
   // First run: shown once, when the saved settings say the onboarding was not seen. Nothing shows until that read has answered;
   // a failed read shows none.
   const [onboardingShown, setOnboardingShown] = useState<OnboardingShown>("unknown");
@@ -1285,6 +1303,65 @@ export function LiveApp() {
     void refreshTasks();
   };
 
+  // Settings -> Accounts "Sign in to ..." and a company section's "Update ...": the core builds the command, the tab only starts it (nothing is
+  // pressed). The page closes and the new tab is selected. The version an update starts from is the one the section last showed, which is
+  // the core's cached read.
+  const openCliTask = async (agent: CompanyAgent, kind: CliTaskKind) => {
+    if (!endpoint || openingTask.current) return;
+    openingTask.current = true;
+    try {
+      const before = kind === "update" ? await getInstall(endpoint, agent, false).then((i) => i.version, () => null) : null;
+      const created = await sessions.create(endpoint, cliTaskRequest(agent, kind, size.current));
+      pendingTasks.current.set(created.tab_id, { tabId: created.tab_id, agent, kind });
+      if (kind === "update") versionBefore.current.set(created.tab_id, before);
+      started(created, kind === "sign_in" ? `Starting sign-in to ${COMPANY_NAMES[agent]}…` : `Starting the update of ${COMPANY_NAMES[agent]}…`);
+      setOverlay(null);
+      setTimeout(() => actions.focusTerminal(), 0);
+    } catch (e) {
+      announce(`Couldn't open the tab: ${e instanceof ApiError ? e.message : String(e)}`);
+    } finally {
+      openingTask.current = false;
+    }
+  };
+  const finishTask = async (ep: Endpoint, task: PendingTask, before: string | null) => {
+    const name = COMPANY_NAMES[task.agent];
+    if (task.kind === "sign_in") {
+      try {
+        announce(`${name}: ${accountLine(await getAccount(ep, task.agent), name, Date.now())}`);
+      } catch {
+        announce(`${name}: ${UNREACHABLE}`);
+      }
+      setAccountsRefresh((n) => n + 1);
+      return;
+    }
+    try {
+      announce(updateResult(name, before, await getInstall(ep, task.agent, true)));
+    } catch {
+      announce(`Couldn't read ${name}'s version.`);
+    }
+    setCompanyRefresh((r) => ({ ...r, [task.agent]: r[task.agent] + 1 }));
+  };
+  useEffect(() => {
+    const pending = pendingTasks.current;
+    if (!endpoint || pending.size === 0) return;
+    for (const i of infos) if (pending.has(i.tab_id)) seenTasks.current.add(i.tab_id);
+    const listedTasks = new Map([...pending].filter(([id]) => seenTasks.current.has(id)));
+    for (const task of exitedTasks(listedTasks, infos).done) {
+      pending.delete(task.tabId);
+      seenTasks.current.delete(task.tabId);
+      const before = versionBefore.current.get(task.tabId) ?? null;
+      versionBefore.current.delete(task.tabId);
+      void finishTask(endpoint, task, before);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- finishTask only reads stable setters and announce.
+  }, [infos, endpoint]);
+  // The tabs of each CLI that are running, not counting the sign-in and update tabs Settings opened (an update would warn about itself).
+  const runningTabs = useMemo(() => {
+    const others = infos.filter((i) => !pendingTasks.current.has(i.tab_id));
+    return { claude: runningCount(others, "claude"), codex: runningCount(others, "codex"), antigravity: runningCount(others, "antigravity") };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- the pending map is a ref; it changes together with the overlay.
+  }, [infos, overlay]);
+
   // One tab's content, in the single window and in every split pane: its terminal, and under it the Resume strip while it is Ended or
   // Exited. An Ended tab has no terminal at all. The wrapper is the same for every state, so a session that exits keeps its terminal
   // (and its scrollback) mounted when the strip appears.
@@ -1566,6 +1643,12 @@ export function LiveApp() {
           announce={announce}
           onProfilesSaved={reloadProfiles}
           onAgentsChanged={refreshSetup}
+          found={found}
+          accountsRefresh={accountsRefresh}
+          companyRefresh={companyRefresh}
+          running={runningTabs}
+          onSignIn={(agent) => void openCliTask(agent, "sign_in")}
+          onUpdate={(agent) => void openCliTask(agent, "update")}
           onNotifications={() => {
             setAgentsFrom(null);
             showSettingsSection("notifications");

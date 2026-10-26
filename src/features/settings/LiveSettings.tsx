@@ -4,8 +4,10 @@ import { FOCUSABLE } from "../../lib/dialogFocus";
 import { usePopupFocus } from "../../lib/usePopupFocus";
 import { AgentsSection } from "../agents/AgentsSection";
 import type { SetupStart } from "../agents/agentsState";
+import { AccountsSection } from "../accounts/AccountsSection";
 import { AppearanceSection, TerminalSection } from "../appearance/AppearanceSections";
 import type { SettingsSync } from "../appearance/settingsSync";
+import { CompanySection } from "../companies/CompanySection";
 import { openerUsable } from "../departures/liveBoard";
 import { AdvancedSection } from "../diagnostics/AdvancedSection";
 import { HistorySection } from "../history/HistorySection";
@@ -13,7 +15,7 @@ import { NotificationsSection } from "../notifications/NotificationsSection";
 import { closeOrRefuse, focusSettingsHeading, mountedWith, settingsFocusFallback, settingsTabTarget, visibleControls } from "./settingsRouting";
 import { ProfilesSection } from "./ProfilesSection";
 import { SettingsShell, settingsKey } from "./SettingsShell";
-import type { SettingsSection } from "./settingsSections";
+import { COMPANY_NAMES, shownSections, type CompanyAgent, type SettingsSection } from "./settingsSections";
 import "./LiveSettings.css";
 
 /** Said when a close is refused over unsaved shell profile edits: the words the profiles dialog showed beside its disabled Close. */
@@ -35,6 +37,10 @@ export function SettingsPanels({ section, mounted, render }: { section: Settings
   );
 }
 
+const NONE: ReadonlySet<CompanyAgent> = new Set();
+const ZERO: Record<CompanyAgent, number> = { claude: 0, codex: 0, antigravity: 0 };
+const noop = () => {};
+
 type Props = {
   /** The core's endpoint. Shell profiles, Agents and Advanced talk to the core and show nothing without it. */
   endpoint?: Endpoint;
@@ -48,6 +54,17 @@ type Props = {
   onAgentsChanged?: () => void;
   /** "Notifications" inside Agents: the window moves to that section. */
   onNotifications: () => void;
+  /** The company CLIs found on this machine: Accounts lists them and each has a section. */
+  found?: ReadonlySet<CompanyAgent>;
+  /** Bumped when a sign-in tab exits, so Accounts reads the status again. */
+  accountsRefresh?: number;
+  /** Bumped per CLI when its update tab exits, so its section reads the version again. */
+  companyRefresh?: Record<CompanyAgent, number>;
+  /** How many tabs are running each CLI. */
+  running?: Record<CompanyAgent, number>;
+  /** "Sign in to …" and "Update …" open a tab; the window closes Settings and selects it. */
+  onSignIn?: (agent: "claude" | "codex") => void;
+  onUpdate?: (agent: CompanyAgent) => void;
   /** `focusTerminal` is true when the element that had the focus before the page opened can't take it back. */
   onClose: (focusTerminal: boolean) => void;
 };
@@ -57,7 +74,7 @@ type Props = {
  * Focus moves to the shown section's heading on open and on a section change. Esc and "Back to sessions" close it, unless
  * something inside already handled that Esc or the shell profiles hold unsaved edits; focus then returns to what had it before.
  */
-export function LiveSettings({ endpoint, sync, section, onSection, agentsStart, announce, onProfilesSaved, onAgentsChanged, onNotifications, onClose }: Props) {
+export function LiveSettings({ endpoint, sync, section, onSection, agentsStart, announce, onProfilesSaved, onAgentsChanged, onNotifications, found = NONE, accountsRefresh = 0, companyRefresh = ZERO, running = ZERO, onSignIn = noop, onUpdate = noop, onClose }: Props) {
   const root = useRef<HTMLDivElement>(null);
   const opener = useRef<HTMLElement | null | undefined>(undefined);
   const profilesCanClose = useRef(true);
@@ -132,10 +149,11 @@ export function LiveSettings({ endpoint, sync, section, onSection, agentsStart, 
       case "agents":
         return endpoint && <AgentsSection endpoint={endpoint} sync={sync} startWith={agentsStart} announce={announce} onChanged={onAgentsChanged} onNotifications={onNotifications} />;
       case "accounts":
+        return endpoint && <AccountsSection endpoint={endpoint} found={found} onSignIn={onSignIn} refresh={accountsRefresh} announce={announce} />;
       case "claude":
       case "codex":
       case "antigravity":
-        return null;
+        return endpoint && <CompanySection endpoint={endpoint} agent={id} name={COMPANY_NAMES[id]} running={running[id]} onUpdate={onUpdate} refresh={companyRefresh[id]} />;
       case "advanced":
         return endpoint && <AdvancedSection endpoint={endpoint} announce={announce} />;
     }
@@ -143,7 +161,7 @@ export function LiveSettings({ endpoint, sync, section, onSection, agentsStart, 
 
   return (
     <div ref={root} className="live-settings" role="dialog" aria-modal="true" aria-label="Settings" tabIndex={-1} onKeyDown={onKeyDown}>
-      <SettingsShell section={section} onSection={onSection} onClose={close}>
+      <SettingsShell section={section} onSection={onSection} onClose={close} sections={shownSections(found)}>
         <SettingsPanels section={section} mounted={shown} render={render} />
       </SettingsShell>
     </div>
