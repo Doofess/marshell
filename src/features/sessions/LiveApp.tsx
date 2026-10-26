@@ -50,7 +50,7 @@ import type { HookInstall } from "../../generated/HookInstall";
 import type { AgentCatalog } from "../../generated/AgentCatalog";
 import { catalogApi } from "../../lib/api/catalog";
 import { offeredModes } from "../modes/sessionModes";
-import { AppearanceDialog } from "../appearance/AppearanceDialog";
+import { AppearanceDialog } from "../appearance/AppearanceSections";
 import { useAppearance } from "../appearance/AppearanceProvider";
 import { listen } from "@tauri-apps/api/event";
 import { needsYouCount } from "../attention/attention";
