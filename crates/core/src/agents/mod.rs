@@ -87,7 +87,7 @@ use serde_json::Value;
 
 /// Whether Marshell can show and answer this agent's permission requests.
 pub fn supports_permissions(agent: &str) -> bool {
-    matches!(agent, "claude" | "codex")
+    matches!(agent, "claude" | "codex" | "antigravity")
 }
 
 /// A held request's card, when its agent is known and it belongs to a tab.
@@ -99,6 +99,7 @@ pub fn permission_view(p: &PendingPermission) -> Option<PermissionView> {
     match p.agent.as_str() {
         "claude" => claude::request::view(p),
         "codex" => codex::request::view(p),
+        "antigravity" => antigravity::request::view(p),
         _ => None,
     }
 }
@@ -108,7 +109,18 @@ pub fn permission_output(agent: &str, decision: &PermissionDecision, request: &V
     match agent {
         "claude" => claude::permission_output(decision, request),
         "codex" => codex::request::permission_output(decision, request),
+        "antigravity" => antigravity::request::permission_output(decision, request),
         _ => Err("This agent can't take a decision yet."),
+    }
+}
+
+/// What a released or timed-out hold answers instead of the 204. `None` for an agent whose own prompt takes
+/// over (Claude Code, Codex). Antigravity gets a deny: only a Bypass tab is held, and there agy runs the call
+/// on an empty answer.
+pub fn release_output(agent: &str, _request: &Value) -> Option<Value> {
+    match agent {
+        "antigravity" => Some(antigravity::request::release_output()),
+        _ => None,
     }
 }
 

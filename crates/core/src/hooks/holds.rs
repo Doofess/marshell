@@ -90,6 +90,28 @@ fn new_rid() -> String {
 
 impl Holds {
     pub fn open(&self, tab: Option<String>, agent: String, request: Value) -> (Hold, oneshot::Receiver<Outcome>) {
+        self.open_with(tab, agent, request, None)
+    }
+
+    /// `open` for a request the core holds for at most `hold`: its card carries the `deadline_ms` when it answers on
+    /// its own.
+    pub fn open_for(
+        &self,
+        tab: Option<String>,
+        agent: String,
+        request: Value,
+        hold: std::time::Duration,
+    ) -> (Hold, oneshot::Receiver<Outcome>) {
+        self.open_with(tab, agent, request, Some(hold))
+    }
+
+    fn open_with(
+        &self,
+        tab: Option<String>,
+        agent: String,
+        request: Value,
+        hold: Option<std::time::Duration>,
+    ) -> (Hold, oneshot::Receiver<Outcome>) {
         let rid = new_rid();
         let (tx, rx) = oneshot::channel();
         let at_ms = std::time::SystemTime::now()
@@ -106,7 +128,10 @@ impl Holds {
             request,
         };
         // Before the lock: building a view can diff a large edit.
-        let view = crate::agents::permission_view(&info);
+        let mut view = crate::agents::permission_view(&info);
+        if let (Some(view), Some(hold)) = (view.as_mut(), hold) {
+            view.deadline_ms = Some(at_ms.saturating_add(hold.as_millis() as u64));
+        }
         lock(&self.map).insert(rid.clone(), Entry { info, view, tx });
         bump(&self.changes);
         (
@@ -272,7 +297,7 @@ mod tests {
         let holds = Holds::default();
         let (a, _ra) = holds.open(Some("t1".into()), "claude".into(), request());
         let (_b, _rb) = holds.open(None, "claude".into(), request());
-        let (_c, _rc) = holds.open(Some("t2".into()), "antigravity".into(), request());
+        let (_c, _rc) = holds.open(Some("t2".into()), "grok".into(), request());
         let (d, _rd) = holds.open(Some("t3".into()), "claude".into(), request());
         let (e, _re) = holds.open(Some("t4".into()), "claude".into(), request());
         {

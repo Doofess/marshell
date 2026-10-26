@@ -947,10 +947,12 @@ impl RunningCore {
     }
 }
 
-/// `MARSHELL_PERMISSION_HOLD_SECS` clamped to 1..=590 s, or the default when unset or not a number.
+/// `MARSHELL_PERMISSION_HOLD_SECS` clamped to 1..=580 s, or the default when unset or not a number. The cap sits
+/// below the bridge's 590 s `Permission` budget (`crates/hook/src/post.rs`), so the core's answer, a deny for
+/// Antigravity, always arrives before the bridge gives up and prints nothing.
 fn permission_hold_from_env(value: Option<&str>) -> Duration {
     match value.and_then(|v| v.trim().parse::<u64>().ok()) {
-        Some(secs) => Duration::from_secs(secs.clamp(1, 590)),
+        Some(secs) => Duration::from_secs(secs.clamp(1, 580)),
         None => DEFAULT_PERMISSION_HOLD,
     }
 }
@@ -1060,6 +1062,17 @@ mod tests {
         assert_eq!(permission_hold_from_env(Some("abc")), DEFAULT_PERMISSION_HOLD);
         assert_eq!(permission_hold_from_env(Some("0")), Duration::from_secs(1));
         assert_eq!(permission_hold_from_env(Some("45")), Duration::from_secs(45));
-        assert_eq!(permission_hold_from_env(Some("9999")), Duration::from_secs(590));
+        assert_eq!(permission_hold_from_env(Some("9999")), Duration::from_secs(580));
+    }
+
+    #[test]
+    fn the_hold_clamp_ends_before_the_bridge_budget() {
+        // The bridge's `Permission` budget (`crates/hook/src/post.rs`, `budget`). The core can't import the
+        // hook crate, so it is written out here; change both together.
+        const BRIDGE_PERMISSION_BUDGET: Duration = Duration::from_secs(590);
+        let longest = permission_hold_from_env(Some("9999"));
+        assert_eq!(longest, Duration::from_secs(580));
+        assert!(longest < BRIDGE_PERMISSION_BUDGET);
+        assert!(DEFAULT_PERMISSION_HOLD < longest);
     }
 }

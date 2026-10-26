@@ -141,6 +141,11 @@ pub struct PermissionView {
     pub risk: Option<String>,
     /// The exact rule "Always allow" would add, such as `Bash(npm test:*)`; absent when there is none.
     pub always_rule: Option<String>,
+    /// When the core's hold for this request ends and it answers on its own (Unix milliseconds): `at_ms` plus the
+    /// hold. Absent where no hold applies.
+    #[serde(default)]
+    #[ts(type = "number | null")]
+    pub deadline_ms: Option<u64>,
 }
 
 /// GET /v1/sessions/{tab}/peek body: the session's last rendered rows, as plain text.

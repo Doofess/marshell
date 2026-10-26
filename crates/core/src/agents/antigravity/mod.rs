@@ -2,6 +2,8 @@
 //! status line folded into live status.
 
 pub mod hooks;
+pub mod policy;
+pub mod request;
 pub mod status;
 
 use serde_json::Value;

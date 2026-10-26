@@ -95,6 +95,7 @@ pub fn view(p: &PendingPermission) -> Option<PermissionView> {
         risk: risk::classify(&detail, cwd).or_else(|| later_file_risk(&p.request, cwd)),
         detail,
         always_rule: None,
+        deadline_ms: None,
     })
 }
 

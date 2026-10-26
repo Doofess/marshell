@@ -1380,6 +1380,30 @@ mod tests {
     }
 
     #[test]
+    fn antigravity_launches_keep_their_native_mode_flags() {
+        // With Marshell's hooks installed or not, agy starts with its own flags: a call the core passes goes
+        // back to agy's mode, and in Bypass only the flag makes agy run what a card allowed.
+        let ps = profile("pwsh", &["pwsh.exe"], ShellFamily::PowerShell);
+        for (mode, flags) in [
+            (SessionMode::Manual, ""),
+            (SessionMode::AutoEdit, " --mode accept-edits"),
+            (SessionMode::Bypass, " --dangerously-skip-permissions"),
+        ] {
+            let argv = launch_argv(&ps, Some("antigravity"), None, Some(mode)).unwrap();
+            assert_eq!(argv.last().unwrap(), &format!("& agy{flags}"), "{mode:?}");
+        }
+        assert!(mode_args("antigravity", SessionMode::Manual).unwrap().is_empty());
+        assert_eq!(
+            mode_args("antigravity", SessionMode::AutoEdit).unwrap(),
+            ["--mode", "accept-edits"]
+        );
+        assert_eq!(
+            mode_args("antigravity", SessionMode::Bypass).unwrap(),
+            ["--dangerously-skip-permissions"]
+        );
+    }
+
+    #[test]
     fn a_plain_shell_ignores_the_mode() {
         let ps = profile("pwsh", &["pwsh.exe", "-NoLogo"], ShellFamily::PowerShell);
         assert_eq!(

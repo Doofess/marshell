@@ -11,7 +11,7 @@ use axum::body::Bytes;
 use axum::extract::{Query, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
-use marshell_protocol::api::LiveState;
+use marshell_protocol::api::{LiveState, SessionMode};
 use marshell_protocol::hook::{HEADER_AGENT, HEADER_ROLE, HEADER_TAB, HEADER_VERSION, HookRole};
 use serde::Deserialize;
 
@@ -81,17 +81,39 @@ pub async fn post(
     {
         return Ok(StatusCode::NO_CONTENT.into_response());
     }
+    // Whether an Antigravity request waits for a card. Every other call passes at once (204): agy's own mode
+    // decides, and it asks in its terminal where it would.
+    let mut held = false;
+    if agent == "antigravity" && role == HookRole::Permission {
+        // An Antigravity IDE started from a plain shell tab inherits the tab's id and reads the same
+        // hooks.json: only a tab that runs agy has a say, and anything else passes before it folds anything.
+        let Some(tab) = tab
+            .as_deref()
+            .filter(|t| st.registry().is_open(t) && st.registry().effective_agent(t).as_deref() == Some("antigravity"))
+        else {
+            return Ok(StatusCode::NO_CONTENT.into_response());
+        };
+        // agy's `workspacePaths` is empty, so the risk rules judge paths against the tab's folder.
+        if json.get("cwd").is_none()
+            && let Some(cwd) = st.registry().cwd_of_tab(tab)
+            && let Some(object) = json.as_object_mut()
+        {
+            object.insert("cwd".into(), cwd.into());
+        }
+        let mode = st.registry().mode_of_open_tab(tab).unwrap_or(SessionMode::Manual);
+        held = antigravity::policy::holds(mode, antigravity::request::risk_of(&json).is_some());
+    }
     if matches!(agent.as_str(), "claude" | "codex" | "antigravity")
         && let Some(tab) = tab.as_deref()
     {
-        fold_live(&st, &agent, role, tab, &json, at_ms).await;
+        fold_live_with(&st, &agent, role, tab, &json, at_ms, held).await;
         if role == HookRole::Event && st.registry().is_open(tab) {
             record_history(&st, &agent, tab, &json, at_ms).await;
         }
     }
     if role == HookRole::Permission {
         // Without a card or an open tab, the agent must ask the person itself.
-        if !crate::agents::supports_permissions(&agent) {
+        if !crate::agents::supports_permissions(&agent) || (agent == "antigravity" && !held) {
             return Ok(StatusCode::NO_CONTENT.into_response());
         }
         let Some(tab) = tab.filter(|t| st.registry().is_open(t)) else {
@@ -123,7 +145,21 @@ async fn record_history(st: &AppState, agent: &str, tab: &str, body: &serde_json
 /// Folds what an agent (Claude Code, Codex or Antigravity) reported into the tab's live status. A permission
 /// request counts as an event (it folds to Needs permission). Without a known version, or with the switch off,
 /// the row gets a note saying why and keeps no status. Claude Code and Antigravity send a status line.
+#[cfg(test)]
 async fn fold_live(st: &AppState, agent: &str, role: HookRole, tab: &str, body: &serde_json::Value, at_ms: u64) {
+    fold_live_with(st, agent, role, tab, body, at_ms, false).await;
+}
+
+/// `fold_live`, where `held` says an Antigravity permission request waits for a card (it folds to Needs permission).
+async fn fold_live_with(
+    st: &AppState,
+    agent: &str,
+    role: HookRole,
+    tab: &str,
+    body: &serde_json::Value,
+    at_ms: u64,
+    held: bool,
+) {
     if !matches!(role, HookRole::Event | HookRole::Permission | HookRole::Statusline)
         || (role == HookRole::Statusline && !matches!(agent, "claude" | "antigravity"))
         || !st.registry().is_open(tab)
@@ -173,9 +209,8 @@ async fn fold_live(st: &AppState, agent: &str, role: HookRole, tab: &str, body: 
             } else {
                 // Any hook event means agy went on: its own prompt, if one was showing, is answered.
                 st.registry().agent_prompt(tab, false);
-                // No card exists yet, so no request is held.
                 st.registry()
-                    .update_live(tab, |prev| antigravity::status::fold_event(prev, body, at_ms, false));
+                    .update_live(tab, |prev| antigravity::status::fold_event(prev, body, at_ms, held));
             }
             st.registry().set_status_note(tab, None);
         }
@@ -257,12 +292,15 @@ fn is_stop(body: &serde_json::Value) -> bool {
 }
 
 /// Holds the bridge's request until a decision, a release, the hold running out, or the bridge
-/// leaving. 200 with the agent's JSON for a decision, else 204 so the agent asks the person itself.
+/// leaving. 200 with the agent's JSON for a decision; for a release or the hold running out, 200 with the agent's
+/// release answer (Antigravity's deny) or else 204, so the agent asks the person itself.
 ///
 /// This future owns the `Hold`: when the bridge disconnects axum drops the future, and the guard
 /// takes the request out of the pending list.
 async fn hold_permission(st: &AppState, tab: Option<String>, agent: String, request: serde_json::Value) -> Response {
-    let (_hold, mut rx) = st.holds().open(tab, agent.clone(), request.clone());
+    let (_hold, mut rx) = st
+        .holds()
+        .open_for(tab, agent.clone(), request.clone(), st.permission_hold());
     let outcome = match tokio::time::timeout(st.permission_hold(), &mut rx).await {
         Ok(Ok(outcome)) => outcome,
         Ok(Err(_)) => Outcome::Released,
@@ -273,12 +311,21 @@ async fn hold_permission(st: &AppState, tab: Option<String>, agent: String, requ
         }
     };
     let Outcome::Decided(decision) = outcome else {
-        return StatusCode::NO_CONTENT.into_response();
+        return unanswered(&agent, &request);
     };
     match crate::agents::permission_output(&agent, &decision, &request) {
         Ok(output) => Json(output).into_response(),
-        // The decision route checked this already; if it still fails, let the agent ask.
-        Err(_) => StatusCode::NO_CONTENT.into_response(),
+        // The decision route checked this already; if it still fails, the agent gets what a release gets.
+        Err(_) => unanswered(&agent, &request),
+    }
+}
+
+/// The answer for a hold that ended with no decision: the agent's own release answer (Antigravity's deny, since
+/// under its Bypass flag an empty answer runs the call), else 204 so the agent asks the person itself.
+fn unanswered(agent: &str, request: &serde_json::Value) -> Response {
+    match crate::agents::release_output(agent, request) {
+        Some(output) => Json(output).into_response(),
+        None => StatusCode::NO_CONTENT.into_response(),
     }
 }
 
