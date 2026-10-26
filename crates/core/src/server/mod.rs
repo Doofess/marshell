@@ -124,8 +124,10 @@ struct Inner {
     own_agents: crate::agents::own::OwnCache,
     /// One save of `agents.json` at a time, so the changed-since-read check and the write are not interleaved.
     own_agents_write: Mutex<()>,
-    /// `~/.marshell/tools.json`, read again when the file's modified time or length changes. Only ever read.
+    /// `~/.marshell/tools.json`, read again when the file's modified time or length changes.
     own_tools: crate::tools::own::ToolsCache,
+    /// One save of `tools.json` at a time, so the changed-since-read check and the write are not interleaved.
+    own_tools_write: Mutex<()>,
     /// `--version` of the manifest agents' programs, for telling a program from another with the same name.
     agent_versions: Arc<crate::agents::identify::VersionCache>,
     /// The last events the bridge sent, per live tab.
@@ -238,6 +240,7 @@ impl AppState {
             own_agents: crate::agents::own::OwnCache::default(),
             own_agents_write: Mutex::new(()),
             own_tools: crate::tools::own::ToolsCache::default(),
+            own_tools_write: Mutex::new(()),
             agent_versions: Arc::new(crate::agents::identify::VersionCache::default()),
             hook_log: crate::hooks::log::HookLog::default(),
             holds: crate::hooks::holds::Holds::default(),
@@ -793,6 +796,7 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/agents/catalog", get(catalog::catalog))
         .route("/v1/agents/own", get(catalog::get_own).put(catalog::put_own))
         .route("/v1/tools", get(tools::catalog))
+        .route("/v1/tools/own", get(tools::get_own).put(tools::put_own))
         .route("/v1/agents/{agent}/setup", get(agents::setup))
         .route("/v1/agents/{agent}/hooks/plan", post(agents::plan))
         .route("/v1/agents/{agent}/hooks/remove-plan", post(agents::remove_plan))
