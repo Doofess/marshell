@@ -104,7 +104,7 @@ export function planRing(infos: SessionInfo[], now = Date.now()): { pct: number;
   return best;
 }
 
-const isHookAgent = (agent: string): agent is HookAgent => agent === "claude" || agent === "codex";
+const isHookAgent = (agent: string): agent is HookAgent => agent === "claude" || agent === "codex" || agent === "antigravity";
 
 /** The agents with a Rust adapter. Any other agent is a manifest: Marshell writes no hooks for it, so there are none to wait for. */
 const isManifestAgent = (agent: string): boolean => agent !== "claude" && agent !== "codex" && agent !== "antigravity";
@@ -165,7 +165,7 @@ export function toRow(info: SessionInfo, profiles: Profile[], setup?: Partial<Re
   }
   if (info.agent !== null) {
     if (info.live !== null) return { ...base, ...liveRow(info.live, info.stuck, now) };
-    // A hook agent (Claude Code, Codex) without Marshell's hooks: say so and offer the setup, ahead of the output fallback. An unknown state (not fetched yet) says and offers nothing.
+    // A hook agent (Claude Code, Codex, Antigravity) without Marshell's hooks: say so and offer the setup, ahead of the output fallback. An unknown state (not fetched yet) says and offers nothing.
     // Installed hooks offer nothing, even for a Codex that has not trusted them yet: the row keeps the limited fallback and never claims they work.
     const hooks = isHookAgent(info.agent) ? setup?.[info.agent] : undefined;
     if (hooks !== undefined && hooks !== "installed") return { ...base, status: "limited", phrase: "Status limited · set up", setupLink: true };

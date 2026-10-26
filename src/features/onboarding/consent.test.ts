@@ -14,8 +14,14 @@ describe("entryCount", () => {
   });
   it("counts only what the CLI can do", () => {
     expect(entryCount("antigravity", all)).toBe(5);
-    expect(entryCount("antigravity", { status: true, approve: false, statusline: true })).toBe(4);
     expect(entryCount("codex", all)).toBe(8);
+  });
+  it("antigravity_entry_counts_match_the_plan: one PreToolUse and four status events, and the one PreToolUse serves both", () => {
+    expect(entryCount("antigravity", all)).toBe(5);
+    // Status writes the PreToolUse entry too (its permission answer follows `approve`), so status alone is still five.
+    expect(entryCount("antigravity", { status: true, approve: false, statusline: true })).toBe(5);
+    expect(entryCount("antigravity", { status: false, approve: true, statusline: false })).toBe(1);
+    expect(entryCount("antigravity", { status: false, approve: false, statusline: true })).toBe(0);
   });
 });
 

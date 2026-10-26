@@ -80,6 +80,7 @@ export function ConsentCard({
             )}
           </ul>
           {offer.includes("approve") && offer.includes("status") && <p className="consent__meta">Approve from anywhere needs live status to know when a request is answered.</p>}
+          {d.cli === "antigravity" && offer.includes("approve") && <p className="consent__meta">Cards for risky commands in Bypass. In other modes Antigravity asks in its terminal.</p>}
           {d.skipsAll && (
             <p className="consent__handover">
               {name} is set to skip every permission prompt (<code>{d.skipsAll.setting}</code>), so Marshell can&apos;t ask you about anything. Turning it off lets each

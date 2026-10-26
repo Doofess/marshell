@@ -2,12 +2,13 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { applyPreview, planInstall } from "../../lib/api/agents";
 import { PREVIEW } from "./fixtures";
-import { useInstallFlow } from "./useInstallFlow";
+import { ApiError } from "../../lib/api/client";
+import { failureText, useInstallFlow } from "./useInstallFlow";
 
 vi.mock("../../lib/api/agents", () => ({ planInstall: vi.fn(), applyPreview: vi.fn() }));
 const endpoint = { port: 9, token: "test", platform: "windows" as const };
 
-function flow(agent: "claude" | "codex" = "claude") {
+function flow(agent: "claude" | "codex" | "antigravity" = "claude") {
   let result!: ReturnType<typeof useInstallFlow>;
   function Harness() {
     result = useInstallFlow(endpoint, agent, vi.fn());
@@ -46,5 +47,16 @@ describe("useInstallFlow requests", () => {
     await install.plan();
     expect(planInstall).toHaveBeenLastCalledWith(endpoint, "claude", { status: false, statusline: false, approve: false });
     expect(applyPreview).not.toHaveBeenCalled();
+  });
+});
+
+describe("useInstallFlow: Antigravity", () => {
+  it("plans at /v1/agents/antigravity/hooks/plan with a status line", async () => {
+    await flow("antigravity").plan();
+    expect(planInstall).toHaveBeenLastCalledWith(endpoint, "antigravity", { status: true, statusline: true, approve: true });
+  });
+  it("shows a bridge-path refusal's own message", () => {
+    const message = "Antigravity can't run Marshell's hook from C:/100%/m/bin/marshell-hook.exe: the path holds a % or a quote.";
+    expect(failureText(new ApiError(422, message))).toBe(message);
   });
 });

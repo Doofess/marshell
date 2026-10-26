@@ -25,6 +25,8 @@ export type ApprovalRequest = {
   session: { name: string; agent: AgentId; number?: number };
   sessionCwd: string;
   waitingMs: number;
+  /** How long the core holds the request before it answers on its own (its `deadline_ms` less `at_ms`); absent when it doesn't say. */
+  holdMs?: number;
   detail: ToolDetail;
   risk: Risk;
   /** The exact rule "Always allow" would add, e.g. "Bash(npm test:*)". Absent when no rule can be offered. */

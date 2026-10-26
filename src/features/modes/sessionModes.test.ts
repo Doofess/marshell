@@ -27,7 +27,6 @@ describe("launchArgs: with Marshell's hooks on, a session starts strict and the 
     for (const mode of ["manual", "auto-edit", "bypass"] as const) {
       expect(launchArgs("claude", mode, true), mode).toEqual({ args: ["--permission-mode", "manual"], native: mode === "manual" });
       expect(launchArgs("codex", mode, true), mode).toEqual({ args: ["--sandbox", "read-only", "--ask-for-approval", "on-request"], native: mode === "manual" });
-      expect(launchArgs("antigravity", mode, true), mode).toEqual({ args: [], native: mode === "manual" });
     }
   });
   it("Plan uses the CLI's own plan mode; Codex has no plan flag, so a read-only sandbox stands in", () => {
@@ -84,7 +83,6 @@ describe("decide: what Marshell's hook answers when a CLI asks", () => {
 describe("switchKind: changing mode mid-session", () => {
   it("is instant when the session's native start stays the same (only Marshell's answer changes)", () => {
     expect(switchKind("claude", "manual", "bypass", true)).toBe("instant");
-    expect(switchKind("antigravity", "auto-edit", "bypass", true)).toBe("instant");
   });
   it("needs the CLI's own mode when the native start differs (Plan, or a classifier)", () => {
     expect(switchKind("claude", "manual", "plan", true)).toBe("native");
@@ -168,5 +166,20 @@ describe("offeredModes", () => {
     expect(offeredModes("cursor", null)).toEqual([]);
     expect(offeredModes("grok", catalog)).toEqual([]);
     expect(offeredModes(null, catalog)).toEqual([]);
+  });
+});
+
+describe("Antigravity never starts or switches in a Marshell-held strict mode (slice 6d decision 7)", () => {
+  it("antigravity_launches_natively_with_hooks_on", () => {
+    for (const hooksOn of [true, false]) {
+      expect(launchArgs("antigravity", "manual", hooksOn), `manual ${hooksOn}`).toEqual({ args: [], native: true });
+      expect(launchArgs("antigravity", "plan", hooksOn), `plan ${hooksOn}`).toEqual({ args: ["--mode", "plan"], native: true });
+      expect(launchArgs("antigravity", "auto-edit", hooksOn), `auto-edit ${hooksOn}`).toEqual({ args: ["--mode", "accept-edits"], native: true });
+      expect(launchArgs("antigravity", "full-auto", hooksOn), `full-auto ${hooksOn}`).toEqual({ args: ["--mode", "auto"], native: true });
+      expect(launchArgs("antigravity", "bypass", hooksOn), `bypass ${hooksOn}`).toEqual({ args: ["--dangerously-skip-permissions"], native: true });
+    }
+  });
+  it("every_antigravity_mode_switch_is_native", () => {
+    for (const hooksOn of [true, false]) for (const from of MODES) for (const to of MODES) expect(switchKind("antigravity", from, to, hooksOn), `${from} to ${to} ${hooksOn}`).toBe("native");
   });
 });

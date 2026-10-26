@@ -12,6 +12,8 @@ export type KeyContext = {
   /** The payload is longer than four lines. */
   truncated: boolean;
   expanded: boolean;
+  /** The agent has no prompt of its own to hand the request to (Antigravity: a release denies), so T does nothing. */
+  noTerminal?: boolean;
 };
 
 /** Buttons and keys are inert until 500 ms after the card gained focus or its content changed. */
@@ -48,7 +50,7 @@ export function keyAction(key: string, ctx: KeyContext): CardAction | null {
       if (ctx.risky || !ctx.hasAlways) return null;
       return hidden ? "expand" : "always";
     case "t":
-      return "terminal";
+      return ctx.noTerminal ? null : "terminal";
     default:
       return null;
   }

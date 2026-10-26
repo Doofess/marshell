@@ -16,6 +16,9 @@ import { ToolsSection } from "./ToolsSection";
 import { failureText, useInstallFlow } from "./useInstallFlow";
 import "./AgentsDialog.css";
 
+/** The name a section and the change titles use: "Antigravity" (as "Set up Antigravity hooks"), where the consent card's own is "Antigravity CLI". */
+const agentTitle = (agent: HookAgent): string => (agent === "antigravity" ? "Antigravity" : CLI_NAME[agent]);
+
 export const SETUP_UNREADABLE = "Couldn't read the setup from Marshell's core. Close this and try again.";
 
 /** What the dialog shows below its title: the state, the card for Set up, or the diff for turning the hooks off. */
@@ -54,9 +57,16 @@ export function AgentsDialogView({
   liveStatusError,
   codexLiveStatus = null,
   codexLiveStatusError,
+  antigravity,
+  antigravityLiveStatus = null,
+  antigravityLiveStatusError,
   own,
   ...on
 }: {
+  /** Antigravity's setup; its section shows only when it was read and agy is found. */
+  antigravity?: AgentSetup | null;
+  antigravityLiveStatus?: boolean | null;
+  antigravityLiveStatusError?: string | null;
   /** The section for the person's own agents, after the hook sections. */
   own?: ReactNode;
   setup: AgentSetup | "loading" | "failed";
@@ -69,7 +79,8 @@ export function AgentsDialogView({
   codexLiveStatusError?: string | null;
 } & AgentsDialogHandlers) {
   // The card and the turn-off panel belong to the agent the person chose.
-  const target = panel.kind !== "list" && panel.agent === "codex" && codex ? codex : typeof setup === "object" ? setup : null;
+  const chosen = panel.kind === "list" ? undefined : panel.agent === "codex" ? codex : panel.agent === "antigravity" ? antigravity : undefined;
+  const target = chosen ?? (typeof setup === "object" ? setup : null);
   const dialog = useRef<HTMLDivElement>(null);
   const title = useRef<HTMLHeadingElement>(null);
   useDialogFocus(dialog, title, on.onClose);
@@ -91,6 +102,7 @@ export function AgentsDialogView({
             <>
               <AgentList setup={setup} agent="claude" liveStatus={liveStatus} error={liveStatusError} on={on} />
               {codex?.found && <AgentList setup={codex} agent="codex" liveStatus={codexLiveStatus} error={codexLiveStatusError} on={on} />}
+              {antigravity?.found && <AgentList setup={antigravity} agent="antigravity" liveStatus={antigravityLiveStatus} error={antigravityLiveStatusError} on={on} />}
               {own}
             </>
           )}
@@ -131,7 +143,7 @@ function TrustLine({ trust }: { trust: NonNullable<AgentSetup["trust"]> }) {
 function AgentList({ setup, agent, liveStatus, error, on }: { setup: AgentSetup; agent: HookAgent; liveStatus: boolean | null; error?: string | null; on: AgentsDialogHandlers }) {
   const todo = actions(setup);
   const orphaned = setup.found && setup.hooks === "orphaned" && setup.settings_state !== "unparsable";
-  const name = CLI_NAME[agent];
+  const name = agentTitle(agent);
   return (
     <section className="agents-dialog__agent" aria-label={name}>
       <header className="agents-dialog__agent-head">
@@ -143,6 +155,12 @@ function AgentList({ setup, agent, liveStatus, error, on }: { setup: AgentSetup;
         {setupLine(setup)}
       </p>
       {agent === "codex" && setup.trust && <TrustLine trust={setup.trust} />}
+      {/* Antigravity's hooks and its status line live in two files; both are named. */}
+      {setup.hooks_path !== undefined && (
+        <p className="agents-dialog__line" dir="auto">
+          Hooks file: <code>{setup.hooks_path}</code>. Status line file: <code>{setup.settings_path}</code>.
+        </p>
+      )}
       {setup.hooks === "installed" && !setup.approve_installed && <p className="agents-dialog__line">Approve from anywhere: off</p>}
       {/* Left out until the settings have been read: an unread value is never shown as off. */}
       {liveStatus !== null && (
@@ -198,8 +216,8 @@ function OffPanel({ agent, panel, on }: { agent: HookAgent; panel: Extract<Panel
   const { removal } = panel;
   const block = removal ? removalBlock(removal.preview) : undefined;
   return (
-    <section className="agents-dialog__off" aria-label={`Turn ${CLI_NAME[agent]} hooks off`}>
-      <h3 className="agents-dialog__name">Turn {CLI_NAME[agent]} hooks off</h3>
+    <section className="agents-dialog__off" aria-label={`Turn ${agentTitle(agent)} hooks off`}>
+      <h3 className="agents-dialog__name">Turn {agentTitle(agent)} hooks off</h3>
       {removal ? (
         <>
           <p className="agents-dialog__line" dir="auto">
@@ -266,20 +284,21 @@ export function AgentsDialog({
 }) {
   const [setup, setSetup] = useState<AgentSetup | "loading" | "failed">("loading");
   const [codex, setCodex] = useState<AgentSetup | null>(null);
+  const [antigravity, setAntigravity] = useState<AgentSetup | null>(null);
   const [mode, setMode] = useState<"list" | "setup" | "off">("list");
   // The agent whose card or turn-off panel is open.
   const [active, setActive] = useState<HookAgent>("claude");
   const [off, setOff] = useState<Extract<Panel, { kind: "off" }>>({ kind: "off", removal: null, busy: false });
 
   // null until the settings have been read.
-  const [liveStatus, setLiveStatus] = useState<Record<HookAgent, boolean | null>>({ claude: null, codex: null });
+  const [liveStatus, setLiveStatus] = useState<Record<HookAgent, boolean | null>>({ claude: null, codex: null, antigravity: null });
   const [saveError, setSaveError] = useState<{ agent: HookAgent; text: string } | null>(null);
   useEffect(() => {
     let live = true;
     sync?.load().then(
       () => {
         if (!live) return;
-        setLiveStatus({ claude: liveStatusOn(sync.statusOff, "claude"), codex: liveStatusOn(sync.statusOff, "codex") });
+        setLiveStatus({ claude: liveStatusOn(sync.statusOff, "claude"), codex: liveStatusOn(sync.statusOff, "codex"), antigravity: liveStatusOn(sync.statusOff, "antigravity") });
       },
       () => {},
     );
@@ -301,6 +320,7 @@ export function AgentsDialog({
   const load = useCallback(async () => {
     // Codex's section is a bonus: a setup that cannot be read leaves it out and never fails Claude's.
     void getSetup(endpoint, "codex").then(setCodex, () => {});
+    void getSetup(endpoint, "antigravity").then(setAntigravity, () => {});
     try {
       const found = await getSetup(endpoint, "claude");
       setSetup(found);
@@ -318,17 +338,19 @@ export function AgentsDialog({
   // One flow per agent, so choosing an agent and planning never wait on a render.
   const claudeInstall = useInstallFlow(endpoint, "claude", installed);
   const codexInstall = useInstallFlow(endpoint, "codex", installed);
-  const install = active === "codex" ? codexInstall : claudeInstall;
+  const antigravityInstall = useInstallFlow(endpoint, "antigravity", installed);
+  const installs = { claude: claudeInstall, codex: codexInstall, antigravity: antigravityInstall };
+  const install = installs[active];
 
   const startSetup = useCallback(
     (agent: HookAgent = "claude", current?: AgentSetup) => {
-      const found = current ?? (agent === "codex" ? codex : setup);
+      const found = current ?? (agent === "codex" ? codex : agent === "antigravity" ? antigravity : setup);
       if (typeof found !== "object" || found === null) return;
       setActive(agent);
       setMode("setup");
-      void (agent === "codex" ? codexInstall : claudeInstall).plan(setupWant(found));
+      void (agent === "codex" ? codexInstall : agent === "antigravity" ? antigravityInstall : claudeInstall).plan(setupWant(found));
     },
-    [claudeInstall.plan, codexInstall.plan, setup, codex],
+    [claudeInstall.plan, codexInstall.plan, antigravityInstall.plan, setup, codex, antigravity],
   );
   const startOff = useCallback(
     async (agent: HookAgent = "claude") => {
@@ -354,9 +376,10 @@ export function AgentsDialog({
         if (found) startSetup("claude", found);
         return;
       }
-      // Codex's own setup is read here, so its card does not wait on the section's load.
-      const codexFound = await getSetup(endpoint, "codex").catch(() => null);
-      if (codexFound) startSetup("codex", codexFound);
+      // Codex's or Antigravity's own setup is read here, so its card does not wait on the section's load.
+      const agent = startWith.setup;
+      const own = await getSetup(endpoint, agent).catch(() => null);
+      if (own) startSetup(agent, own);
     });
   }, [load, startWith, startSetup, endpoint]);
 
@@ -407,6 +430,9 @@ export function AgentsDialog({
       liveStatusError={saveError?.agent === "claude" ? saveError.text : null}
       codexLiveStatus={liveStatus.codex}
       codexLiveStatusError={saveError?.agent === "codex" ? saveError.text : null}
+      antigravity={antigravity}
+      antigravityLiveStatus={liveStatus.antigravity}
+      antigravityLiveStatusError={saveError?.agent === "antigravity" ? saveError.text : null}
       onLiveStatus={(on, agent) => void switchLiveStatus(on, agent)}
       onNotifications={onNotifications}
       onClose={onClose}

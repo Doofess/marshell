@@ -18,6 +18,8 @@ export const CAPABILITIES: Record<CliId, Record<Capability, { available: boolean
 };
 
 export function entryCount(cli: CliId, on: Record<Capability, boolean>): number {
+  // Antigravity's one PreToolUse entry serves both: status writes it too (its answer follows approve), so status is 4 events + it, and approve alone is just it.
+  if (cli === "antigravity") return (on.status && CAPABILITIES[cli].status.available ? CAPABILITIES[cli].status.entries : 0) + (on.status || on.approve ? 1 : 0);
   return (Object.keys(CAPABILITIES[cli]) as Capability[]).reduce((n, c) => n + (on[c] && CAPABILITIES[cli][c].available ? CAPABILITIES[cli][c].entries : 0), 0);
 }
 
@@ -78,7 +80,7 @@ export function consentHeadline(d: Detection, on: Record<Capability, boolean>, h
   }
   if (d.hooks) {
     // Two files: each named with what goes in it.
-    const text = [n > 0 && `${add} in ${d.hooks.path}${d.hooks.exists ? "" : " (a new file)"}`, chain && `chain your status line in ${d.configPath}`]
+    const text = [n > 0 && `${add} in ${d.hooks.path}${d.hooks.exists ? "" : " (a new file)"}`, chain && `chain your status line in ${d.configPath}`, added && `add a status line in ${d.configPath}`]
       .filter((p): p is string => typeof p === "string")
       .join(" and ");
     return sentence(text);

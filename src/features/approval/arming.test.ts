@@ -43,6 +43,18 @@ describe("keyAction on a safe request", () => {
   });
 });
 
+describe("a card with no terminal to hand over to (Antigravity)", () => {
+  it("ignores T, and still answers Y and N", () => {
+    const agy: KeyContext = { ...safe, hasAlways: false, noTerminal: true };
+    expect(keyAction("t", agy)).toBeNull();
+    expect(keyAction("T", agy)).toBeNull();
+    expect(keyAction("y", agy)).toBe("allow");
+    expect(keyAction("n", agy)).toBe("deny");
+    expect(keyAction("a", agy)).toBeNull();
+    expect(keyAction("t", safe)).toBe("terminal");
+  });
+});
+
 describe("Enter never allows (review focus 2)", () => {
   it("jumps to the session, even before arming and on a risky card", () => {
     expect(keyAction("Enter", safe)).toBe("jump");

@@ -45,6 +45,16 @@ describe("toRow", () => {
     }
   });
 
+  it("an_antigravity_row_with_a_limited_needs_you_says_status_limited", () => {
+    const limited = toRow(info({ agent: "antigravity", attention: { message: "Waiting for you in the terminal", since_ms: 1000, limited: true } }), PROFILES);
+    expect(limited).toMatchObject({ agent: "antigravity", status: "needs-question", phrase: "Waiting for you in the terminal · Status limited", note: "Status limited" });
+    expect(rowLabel(limited)).toContain("Waiting for you in the terminal · Status limited");
+  });
+  it("an_antigravity_row_shows_no_plan_meter: only Claude Code's five-hour use makes the ring", () => {
+    const live: LiveStatus = { state: "idle", phrase: "", since_ms: 0, recap: null, model: null, effort: null, context_pct: null, five_hour_pct: 80, five_hour_resets_at: null, seven_day_pct: null, subagents: 0 };
+    expect(planRing([info({ agent: "antigravity", live })])).toBeUndefined();
+    expect(toRow(info({ agent: "antigravity", live }), PROFILES)).not.toHaveProperty("planPct");
+  });
   it("attention from a tool's prompt is marked Status limited, a plain one is not", () => {
     const limited = toRow(info({ attention: { message: "Asks to continue", since_ms: 1000, limited: true } }), PROFILES);
     expect(limited).toMatchObject({ status: "needs-question", phrase: "Asks to continue · Status limited", note: "Status limited" });

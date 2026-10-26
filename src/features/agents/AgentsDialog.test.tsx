@@ -2,7 +2,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import type { AgentSetup } from "../../generated/AgentSetup";
 import { AgentsDialogView, type Panel } from "./AgentsDialog";
-import { CODEX_SETUP, PREVIEW, SETUP } from "./fixtures";
+import { AGY_SETUP, CODEX_SETUP, PREVIEW, SETUP } from "./fixtures";
 import { nameContainsLabel } from "../../lib/labelInName";
 
 const none = () => {};
@@ -193,5 +193,53 @@ describe("AgentsDialogView: Codex", () => {
     const h = withCodex(CODEX_SETUP, { kind: "off", agent: "codex", removal: null, busy: false });
     expect(h).toContain("Turn Codex hooks off");
     expect(h).not.toContain("Turn Claude Code hooks off");
+  });
+});
+
+describe("AgentsDialogView: Antigravity", () => {
+  const withAgy = (agy: AgentSetup | null, panel: Panel = { kind: "list" }, antigravityLiveStatus: boolean | null = true) =>
+    renderToStaticMarkup(<AgentsDialogView setup={SETUP} antigravity={agy} panel={panel} liveStatus={true} antigravityLiveStatus={antigravityLiveStatus} {...handlers} />);
+  const agySection = (h: string) => h.slice(h.indexOf('aria-label="Antigravity"'));
+  const switchLabels = (h: string) => [...h.matchAll(/<span class="switch__text">([^<]*)</g)].map((m) => m[1]);
+  const card = (preview = PREVIEW): Panel => ({ kind: "setup", agent: "antigravity", flow: { preview, open: false, busy: false } });
+
+  it("the_agents_dialog_lists_antigravity_with_both_files", () => {
+    const h = agySection(withAgy(AGY_SETUP, { kind: "list" }));
+    expect(h).toContain("version 1.4.7");
+    expect(h).toContain("C:/h/.gemini/config/hooks.json");
+    expect(h).toContain("C:/h/.gemini/antigravity-cli/settings.json");
+    expect(h).toContain(">Set up</button>");
+    expect(h).toContain("Live status");
+    expect(withAgy(null)).not.toContain('aria-label="Antigravity"');
+    expect(withAgy({ ...AGY_SETUP, found: false })).not.toContain('aria-label="Antigravity"');
+    const on = agySection(withAgy({ ...AGY_SETUP, hooks: "installed", approve_installed: true }));
+    expect(on).toContain("Hooks on in C:/h/.gemini/config/hooks.json.");
+    expect(on).toContain(">Hooks off</button>");
+  });
+  it("offers status, approve and the status line, and no hand-over, each switch reachable by Tab", () => {
+    const h = withAgy(AGY_SETUP, card());
+    expect(h).toContain('data-agent="antigravity"');
+    expect(switchLabels(h)).toEqual(["Show status and context", "Approve from anywhere", "Keep my status line working"]);
+    expect(h).not.toContain("Let Marshell set the mode");
+    expect(h).not.toMatch(/<(input|button)[^>]*tabindex="-1"/);
+    expect(h).toContain("Add 5 hook entries in C:/h/.gemini/config/hooks.json (a new file) and chain your status line in C:/h/.gemini/antigravity-cli/settings.json.");
+  });
+  it("the_antigravity_approve_toggle_says_bypass_only", () => {
+    expect(withAgy(AGY_SETUP, card())).toContain("Cards for risky commands in Bypass. In other modes Antigravity asks in its terminal.");
+    // Claude Code's card says nothing of the kind.
+    expect(view(SETUP, { kind: "setup", flow: { preview: PREVIEW, open: false, busy: false } })).not.toContain("Cards for risky commands in Bypass");
+  });
+  it("antigravity_removal_copy_is_exact", () => {
+    expect(withAgy(AGY_SETUP, card())).toContain(
+      "Marshell removes the hook entries it added, deletes hooks.json if nothing else is in it, and puts your own status line back from statusline-chain.json; the rest of each file stays as it is",
+    );
+    const off = withAgy({ ...AGY_SETUP, hooks: "installed" }, { kind: "off", agent: "antigravity", removal: null, busy: false });
+    expect(off).toContain("Turn Antigravity hooks off");
+  });
+  it("a_bridge_path_refusal_shows_its_message", () => {
+    const message = "Antigravity can't run Marshell's hook from C:/100%/m/bin/marshell-hook.exe: the path holds a % or a quote.";
+    const h = withAgy(AGY_SETUP, { kind: "setup", agent: "antigravity", flow: { preview: null, open: false, busy: false, error: message } });
+    expect(h).toMatch(/role="alert"[^>]*>Antigravity can&#x27;t run Marshell&#x27;s hook from C:\/100%\/m\/bin\/marshell-hook\.exe: the path holds a % or a quote\.</);
+    expect(h).not.toContain("consent__apply");
   });
 });

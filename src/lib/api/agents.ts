@@ -9,8 +9,8 @@ import type { RemovePreview } from "../../generated/RemovePreview";
 import type { ConfigState, Detection } from "../../features/onboarding/types";
 import { api, ApiError } from "./client";
 
-/** The agents whose hooks Marshell sets up through `/v1/agents/{agent}/...`. Antigravity has no adapter yet. */
-export type HookAgent = "claude" | "codex";
+/** The agents whose hooks Marshell sets up through `/v1/agents/{agent}/...`. */
+export type HookAgent = "claude" | "codex" | "antigravity";
 
 const base = (agent: string) => `/v1/agents/${encodeURIComponent(agent)}`;
 
@@ -87,17 +87,20 @@ export function toDetection(s: AgentSetup): Detection {
     configState: STATE[s.settings_state],
     parseError: s.parse_error ? { line: s.parse_error.line, message: s.parse_error.message } : undefined,
     hasOwnStatusLine: s.has_own_statusline,
+    // Antigravity's hooks go in a file of their own; without a preview, hooks.json is taken as there once Marshell's hooks are.
+    ...(s.hooks_path === undefined ? {} : { hooks: { path: s.hooks_path, exists: s.hooks !== "none" } }),
   };
 }
 
 /**
- * Every row of the first-run screen: Claude's from its setup, Codex's from its own setup when there is one, then the rest from the found
- * list, which gives no version and no settings and so stays a "later" row. `found` null (the list could not be read) leaves Claude's row
- * alone, and Codex's too unless its setup was read. Claude's and unknown entries in `found` are ignored.
+ * Every row of the first-run screen: Claude's from its setup, Codex's and Antigravity's from their own setups when there are some, then the
+ * rest from the found list, which gives no version and no settings and so stays a "later" row. `found` null (the list could not be read)
+ * leaves Claude's row alone, and the others' too unless their setups were read. Claude's and unknown entries in `found` are ignored.
  */
-export function toDetections(setup: AgentSetup, found: AgentFound[] | null, codex?: AgentSetup | null): Detection[] {
+export function toDetections(setup: AgentSetup, found: AgentFound[] | null, codex?: AgentSetup | null, antigravity?: AgentSetup | null): Detection[] {
   const later = (["codex", "antigravity"] as const).flatMap((cli): Detection[] => {
     if (cli === "codex" && codex) return [toDetection(codex)];
+    if (cli === "antigravity" && antigravity) return [toDetection(antigravity)];
     const f = found?.find((x) => x.agent === cli);
     return f ? [{ cli, installed: f.found, exePath: f.exe_path, configPath: "", configState: "ok", later: true }] : [];
   });

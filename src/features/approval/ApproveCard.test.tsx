@@ -32,6 +32,41 @@ describe("ApproveCard: a safe request", () => {
   });
 });
 
+describe("ApproveCard: an Antigravity request", () => {
+  const agy: ApprovalRequest = { ...APPROVALS.safeBash, session: { ...APPROVALS.safeBash.session, agent: "antigravity" } };
+  it("an_antigravity_card_shows_its_command", () => {
+    const h = html(agy);
+    expect(h).toContain("Run a command");
+    expect(h).toContain("npm test");
+    expect(h).toContain('data-agent="antigravity"');
+  });
+  it("an_antigravity_card_offers_allow_and_deny_only: no Always allow, even with a rule, and no Answer in terminal", () => {
+    const h = html(agy);
+    expect(agy.alwaysRule).toBeDefined();
+    expect(h).toContain("Allow once");
+    expect(h).toContain("Deny");
+    expect(h).not.toContain("Always allow");
+    expect(h).not.toContain("Answer in terminal");
+    expect(h).not.toContain('aria-keyshortcuts="A"');
+    expect(h).not.toContain('aria-keyshortcuts="T"');
+    // Both answers are buttons, so Tab reaches them.
+    expect(h).toMatch(/<button[^>]*data-kind="deny"/);
+    expect(h).toMatch(/<button[^>]*data-kind="allow"/);
+    const risky = html({ ...agy, risk: { level: "risky", reason: "Deletes files recursively" } });
+    expect(risky).toContain("Hold to allow");
+    expect(risky).not.toContain("Answer in terminal");
+  });
+  it("an_antigravity_card_says_it_denies_when_it_runs_out", () => {
+    // The core's hold (120 s by default) less the 65 s it has waited.
+    expect(html({ ...agy, holdMs: 120_000 })).toContain("Denies in 55 s");
+    expect(html({ ...agy, holdMs: 120_000, waitingMs: 119_100 })).toContain("Denies in 1 s");
+    expect(html({ ...agy, holdMs: 120_000, waitingMs: 200_000 })).toContain("Denies in 0 s");
+    // No deadline from the core: no number is guessed.
+    expect(html(agy)).not.toContain("Denies in");
+    expect(html({ ...APPROVALS.safeBash, holdMs: 120_000 })).not.toContain("Denies in");
+  });
+});
+
 describe("ApproveCard: a Codex request", () => {
   it("a Codex card offers no Always allow", () => {
     const { alwaysRule: _rule, ...rest } = APPROVALS.safeBash;

@@ -31,6 +31,16 @@ export const CODEX_SETUP: AgentSetup = {
   needs_trust: true,
 };
 
+/** Test input only: what the core sends for an Antigravity with no hooks of Marshell's yet (hooks.json is missing; the status line is in settings.json). */
+export const AGY_SETUP: AgentSetup = {
+  ...SETUP,
+  agent: "antigravity",
+  version: "1.4.7",
+  exe_path: "C:/bin/agy.exe",
+  settings_path: "C:/h/.gemini/antigravity-cli/settings.json",
+  hooks_path: "C:/h/.gemini/config/hooks.json",
+};
+
 const file = (path: string, diff: string): FilePreview => ({ path, scope: "user", applies: "newSessions", before_hash: "h0", diff, status: { kind: "changes" } }) as FilePreview;
 
 export const DIFF = '--- a/C:/h/.claude/settings.json\n+++ b/C:/h/.claude/settings.json\n@@ -1,1 +1,2 @@\n {\n+  "hooks": {}\n';
