@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import type { Endpoint } from "../../generated/Endpoint";
 import { FOCUSABLE } from "../../lib/dialogFocus";
-import { trapKey } from "../../lib/focusTrap";
+import { usePopupFocus } from "../../lib/usePopupFocus";
 import { AgentsSection } from "../agents/AgentsSection";
 import type { SetupStart } from "../agents/agentsState";
 import { AppearanceSection, TerminalSection } from "../appearance/AppearanceSections";
@@ -10,7 +10,7 @@ import { openerUsable } from "../departures/liveBoard";
 import { AdvancedSection } from "../diagnostics/AdvancedSection";
 import { HistorySection } from "../history/HistorySection";
 import { NotificationsSection } from "../notifications/NotificationsSection";
-import { closeOrRefuse, focusSettingsHeading, mountedWith, visibleControls } from "./settingsRouting";
+import { closeOrRefuse, focusSettingsHeading, mountedWith, settingsFocusFallback, settingsTabTarget, visibleControls } from "./settingsRouting";
 import { ProfilesSection } from "./ProfilesSection";
 import { SettingsShell, settingsKey } from "./SettingsShell";
 import type { SettingsSection } from "./settingsSections";
@@ -71,6 +71,8 @@ export function LiveSettings({ endpoint, sync, section, onSection, agentsStart, 
     if (opener.current === undefined) opener.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
   }, []);
   useEffect(() => focusSettingsHeading(root.current), [section]);
+  // Stray focus (a button that disables, a panel that swaps, a field that unmounts) comes back to the heading. Tab is the page's own.
+  usePopupFocus(root, () => settingsFocusFallback(root.current) as HTMLElement | null, { tab: false });
 
   const close = () => {
     if (closeOrRefuse(profilesCanClose.current) === "refuse") {
@@ -88,9 +90,10 @@ export function LiveSettings({ endpoint, sync, section, onSection, agentsStart, 
       // A popup inside that keeps Tab for itself has already prevented it.
       if (e.defaultPrevented) return;
       const controls = visibleControls([...e.currentTarget.querySelectorAll<HTMLElement>(FOCUSABLE)]);
-      const action = trapKey(e, controls.length, controls.indexOf(document.activeElement as HTMLElement));
+      const active = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+      const target = settingsTabTarget(controls, active, e.shiftKey);
       e.preventDefault();
-      if (action?.kind === "focus") controls[action.index]?.focus();
+      if (target !== null) controls[target]?.focus();
       return;
     }
     if (settingsKey(e) !== "close") return;
@@ -106,7 +109,7 @@ export function LiveSettings({ endpoint, sync, section, onSection, agentsStart, 
       case "terminal":
         return <TerminalSection announce={announce} />;
       case "notifications":
-        return <NotificationsSection sync={sync} />;
+        return <NotificationsSection sync={sync} announce={announce} />;
       case "profiles":
         return (
           endpoint && (

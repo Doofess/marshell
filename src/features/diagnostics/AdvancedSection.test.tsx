@@ -69,6 +69,14 @@ describe("AdvancedView", () => {
       expect(h).not.toContain("aria-live");
     }
   });
+  it("shows a failed read of the log setting and a failed export as plain text, with no role=alert", () => {
+    const logs = view("failed");
+    expect(logs).toContain(">Couldn&#x27;t read the log setting from Marshell&#x27;s core. Close this and try again.</p>");
+    expect(logs).not.toContain('role="alert"');
+    const prepare = view(ON, "failed");
+    expect(prepare).toContain(">Couldn&#x27;t prepare the export. Try again.</p>");
+    expect(prepare).not.toContain('role="alert"');
+  });
   it("shows the preparing and expired text, without a second alert", () => {
     expect(view(ON, "preparing")).toContain("Preparing the export…");
     const h = view(ON, "expired");

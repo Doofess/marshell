@@ -5,9 +5,12 @@ import type { ExportPreview } from "../../generated/ExportPreview";
 import type { LoggingState } from "../../generated/LoggingState";
 import { ApiError } from "../../lib/api/client";
 import { diagnostics, exportName, formatBytes, saveExport } from "../../lib/api/diagnostics";
+import { useAnnounceOnce } from "../../lib/useAnnounceOnce";
 import "./AdvancedSection.css";
 
 export const EXPIRED = "This export has expired. Prepare it again.";
+export const LOGGING_UNREADABLE = "Couldn't read the log setting from Marshell's core. Close this and try again.";
+export const PREPARE_FAILED = "Couldn't prepare the export. Try again.";
 
 export function exportReadyMessage(preview: ExportPreview): string {
   return `Export ready: ${preview.files.length} ${preview.files.length === 1 ? "file" : "files"}, ${formatBytes(preview.total_bytes)}.`;
@@ -81,9 +84,7 @@ export function AdvancedView({
           <section className="diagnostics-dialog__section" aria-label="Logs">
             {logging === "loading" && <p className="diagnostics-dialog__line">Reading the log setting…</p>}
             {logging === "failed" && (
-              <p className="diagnostics-dialog__error" role="alert">
-                Couldn&apos;t read the log setting from Marshell&apos;s core. Close this and try again.
-              </p>
+              <p className="diagnostics-dialog__error">{LOGGING_UNREADABLE}</p>
             )}
             {typeof logging === "object" && (
               <Switch
@@ -120,9 +121,7 @@ export function AdvancedView({
             ) : (
               <>
                 {preview === "failed" && (
-                  <p className="diagnostics-dialog__error" role="alert">
-                    Couldn&apos;t prepare the export. Try again.
-                  </p>
+                  <p className="diagnostics-dialog__error">{PREPARE_FAILED}</p>
                 )}
                 {files && (
                   <>
@@ -182,6 +181,9 @@ export function AdvancedSection({ endpoint, announce }: { endpoint: Endpoint; an
   const [viewing, setViewing] = useState<{ name: string; text: string } | null>(null);
   const [saving, setSaving] = useState(false);
   const exportId = typeof preview === "object" ? preview.id : null;
+  // The view draws these two as plain text; the page's announcer says each once, when it appears.
+  useAnnounceOnce(logging === "failed" ? LOGGING_UNREADABLE : null, announce);
+  useAnnounceOnce(preview === "failed" ? PREPARE_FAILED : null, announce);
 
   useEffect(() => {
     let live = true;

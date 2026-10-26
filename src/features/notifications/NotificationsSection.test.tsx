@@ -84,8 +84,10 @@ describe("NotificationsView", () => {
     expect(h).toContain("Reading your settings…");
     expect(h).not.toContain('role="switch"');
   });
-  it("shows a save error as an alert", () => {
-    expect(view(DEFAULTS, "Save failed.")).toMatch(/role="alert"[^>]*>Save failed\./);
+  it("shows a save error as plain text: the section announces it through the page, it draws no live region", () => {
+    const h = view(DEFAULTS, "Save failed.");
+    expect(h).toContain('<p class="notifications-dialog__error">Save failed.</p>');
+    expect(h).not.toMatch(/role="alert"|aria-live/);
   });
   it("shows the notification centre switch only when the link state is known", () => {
     const withLink = (link?: boolean | null) =>

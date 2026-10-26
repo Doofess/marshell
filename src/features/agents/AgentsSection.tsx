@@ -6,6 +6,7 @@ import type { AgentSetup } from "../../generated/AgentSetup";
 import type { Endpoint } from "../../generated/Endpoint";
 import type { RemovePreview } from "../../generated/RemovePreview";
 import { applyPreview, getSetup, planRemove, previewDiff, type HookAgent } from "../../lib/api/agents";
+import { useAnnounceOnce } from "../../lib/useAnnounceOnce";
 import { SettingsReadError, type SettingsSync } from "../appearance/settingsSync";
 import { ConsentCard } from "../onboarding/ConsentCard";
 import { CLI_NAME, type Capability } from "../onboarding/consent";
@@ -96,7 +97,7 @@ export function AgentsSectionView({
     <div ref={rootRef} className="agents" onKeyDown={(e) => escapeLeavesPanel(e, panel, on.onBack)}>
       {setup === "loading" && <p className="agents-dialog__line">Reading the setup…</p>}
       {setup === "failed" && (
-        <p className="agents-dialog__error" role="alert">
+        <p className="agents-dialog__error">
           {SETUP_UNREADABLE}
         </p>
       )}
@@ -171,7 +172,7 @@ function AgentList({ setup, agent, liveStatus, error, on }: { setup: AgentSetup;
         </p>
       )}
       {error && (
-        <p className="agents-dialog__error" role="alert">
+        <p className="agents-dialog__error">
           {error}
         </p>
       )}
@@ -230,7 +231,7 @@ function OffPanel({ agent, panel, on }: { agent: HookAgent; panel: Extract<Panel
         </p>
       )}
       {panel.error && (
-        <p className="agents-dialog__error" role="alert">
+        <p className="agents-dialog__error">
           {panel.error}
         </p>
       )}
@@ -406,6 +407,10 @@ export function AgentsSection({
     install.reset();
     installed();
   };
+  // The view draws these errors as plain text; the page's announcer says each once, when it appears.
+  useAnnounceOnce(setup === "failed" ? SETUP_UNREADABLE : null, announce);
+  useAnnounceOnce(saveError?.text, announce);
+  useAnnounceOnce(mode === "off" ? off.error : null, announce);
   const panel: Panel =
     mode === "setup"
       ? { kind: "setup", agent: active, flow: install.flow ?? { preview: null, open: false, busy: true, want: install.want } }

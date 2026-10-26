@@ -3,7 +3,7 @@ import type { OwnToolsSave } from "../../generated/OwnToolsSave";
 import type { PromptKind } from "../../generated/PromptKind";
 import type { ToolProfile } from "../../generated/ToolProfile";
 import { ApiError } from "../../lib/api/client";
-import { deriveId } from "./ownAgents";
+import { deriveId, type FormFocus } from "./ownAgents";
 
 export const CONFLICT_TEXT = "tools.json changed since you opened it. Reload to see it.";
 
@@ -140,6 +140,18 @@ export function escapeCancels(e: { key: string; preventDefault: () => void }, ca
   if (e.key !== "Escape") return;
   e.preventDefault();
   cancel();
+}
+
+/** The core's reason for an entry that could not be read into a tool: what the form would show is only a blank placeholder. */
+export const UNEXPECTED_SHAPE = "It has an unexpected shape";
+export const FIX_IN_FILE = "Fix this one in tools.json, or remove it.";
+
+/** An entry that could not be read has nothing to edit: saving the form would replace the hand-written entry with the placeholder. */
+export const canEditEntry = (reasons: readonly string[]): boolean => !reasons.some((r) => r.startsWith(UNEXPECTED_SHAPE));
+
+/** The `data-own-focus` keys a focus goes to, in order: an entry's Edit, else its Remove (a row without Edit), or "Add your own tool". */
+export function focusKeys(to: FormFocus): string[] {
+  return to.to === "add" ? ["add"] : [`edit-${to.index}`, `remove-${to.index}`];
 }
 
 export const savedText = (name: string): string => `Saved ${name}`;

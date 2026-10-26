@@ -281,3 +281,23 @@ describe("Esc inside the section", () => {
     expect(press("a", { kind: "off", removal: null, busy: false })).toEqual({ prevented: false, left: false });
   });
 });
+
+describe("AgentsSectionView errors", () => {
+  const withErrors = (setup: AgentSetup | "loading" | "failed", panel: Panel = { kind: "list" }) =>
+    renderToStaticMarkup(<AgentsSectionView setup={setup} panel={panel} liveStatus={true} liveStatusError="Couldn't save the status setting." {...handlers} />);
+  it("shows the unreadable setup as plain text: the section announces it through the page, it draws no live region", () => {
+    const h = withErrors("failed");
+    expect(h).toContain(`>${SETUP_UNREADABLE.replaceAll("'", "&#x27;")}</p>`);
+    expect(h).not.toContain('role="alert"');
+  });
+  it("shows a Live status save error beside the card as plain text", () => {
+    const h = withErrors(SETUP);
+    expect(h).toContain(">Couldn&#x27;t save the status setting.</p>");
+    expect(h).not.toContain('role="alert"');
+  });
+  it("shows the turn-off panel's error as plain text", () => {
+    const h = withErrors(SETUP, { kind: "off", removal: null, busy: false, error: "The file is read-only." });
+    expect(h).toContain(">The file is read-only.</p>");
+    expect(h).not.toContain('role="alert"');
+  });
+});

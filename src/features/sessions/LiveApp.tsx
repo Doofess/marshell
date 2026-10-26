@@ -35,7 +35,7 @@ import { osOfPlatform } from "../../lib/keymap";
 import { paletteSessions } from "../palette/sessions";
 import { LiveHistory } from "../history/LiveHistory";
 import { LiveSettings } from "../settings/LiveSettings";
-import { closesSettings, paletteSection, settingsStart } from "../settings/settingsRouting";
+import { closesSettings, isTextEntry, paletteSection, settingsStart } from "../settings/settingsRouting";
 import type { SettingsSection } from "../settings/settingsSections";
 import { Preview } from "../preview/Preview";
 import { PreviewContext } from "../preview/PreviewContext";
@@ -1146,13 +1146,13 @@ export function LiveApp() {
   }, [os, launcherOpen, overlay, review, closeAsk, actions, jumpPrompt, paneCommand]);
 
   // The other shortcuts are off under the Settings page, but a jump to a session still works: it closes the page and goes there.
-  // A text box keeps its own keys.
+  // A field that takes text keeps its own keys; a radio or a switch does not.
   useEffect(() => {
     if (!os || overlay !== "settings") return;
     const onKey = (e: KeyboardEvent) => {
       const id = findCommand(e, os)?.id;
       const shortcut = id !== undefined && closesSettings(id) ? sessionShortcut(e, os) : null;
-      if (!shortcut || isTextBox(e.target as HTMLElement | null)) return;
+      if (!shortcut || isTextEntry(e.target as HTMLElement | null)) return;
       e.preventDefault();
       if (e.repeat) return;
       setOverlay(null);

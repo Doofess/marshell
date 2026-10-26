@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Switch } from "../../components/Switch/Switch";
 import type { NotifyChannel } from "../../generated/NotifyChannel";
 import type { NotifySettings } from "../../generated/NotifySettings";
+import { useAnnounceOnce } from "../../lib/useAnnounceOnce";
 import { SettingsReadError, type SettingsSync } from "../appearance/settingsSync";
 import { failureText } from "../agents/useInstallFlow";
 import { readNotificationLink, setNotificationLink } from "./notificationLink";
@@ -120,21 +121,18 @@ export function NotificationsView({
           <Switch label="Keep Marshell running in the tray when I close the window" checked={closeToTray !== false} onChange={(keep) => onCloseToTray?.(keep)} />
         </section>
       )}
-      {error && (
-        <p className="notifications-dialog__error" role="alert">
-          {error}
-        </p>
-      )}
+      {error && <p className="notifications-dialog__error">{error}</p>}
     </div>
   );
 }
 
 /** The Notifications section on the app's settings: each change is saved as it is made, and the switches show what the core stored. */
-export function NotificationsSection({ sync }: { sync?: SettingsSync }) {
+export function NotificationsSection({ sync, announce }: { sync?: SettingsSync; announce?: (text: string) => void }) {
   const [settings, setSettings] = useState<NotifySettings | null>(null);
   const [closeToTray, setCloseToTray] = useState<boolean | null>(null);
   const [link, setLink] = useState<boolean | null>(null);
   const [error, setError] = useState<string | null>(null);
+  useAnnounceOnce(error, announce);
   useEffect(() => {
     let live = true;
     void readNotificationLink().then((on) => live && setLink(on));

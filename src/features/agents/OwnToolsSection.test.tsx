@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { OwnTools } from "../../generated/OwnTools";
 import type { ToolProfile } from "../../generated/ToolProfile";
 import { OwnToolsView, type OwnToolsViewProps } from "./OwnToolsSection";
-import { blankDraft, draftOf } from "./ownTools";
+import { blankDraft, draftOf, focusKeys } from "./ownTools";
 
 const none = () => {};
 const handlers = { onAdd: none, onEdit: none, onRemove: none, onConfirmRemove: none, onCancelRemove: none, onChange: none, onSave: none, onCancel: none, onReload: none };
@@ -63,5 +63,39 @@ describe("OwnToolsView", () => {
     const h = view({ editing: { index: null, draft: blankDraft(), busy: false, problem: "It needs a command." } });
     expect(h).toMatch(/<input[^>]*aria-invalid="true"[^>]*aria-describedby="own-tool-error[ "]/);
     expect(h).toMatch(/id="own-tool-error"[^>]*>It needs a command\./);
+  });
+});
+
+describe("an own tool that could not be read", () => {
+  const SHAPE = "It has an unexpected shape (missing field `commands`).";
+  const broken = (reason: string) => view({ own: { ...own, problems: [{ index: 0, id: "my-tool", reason }] } });
+  it("offers Remove but not Edit, and says where to fix it", () => {
+    const h = broken(SHAPE);
+    expect(h).toContain(SHAPE);
+    expect(h).toContain("Fix this one in tools.json, or remove it.");
+    expect(h.indexOf("Fix this one")).toBeGreaterThan(h.indexOf("unexpected shape"));
+    expect(h).not.toContain('aria-label="Edit My Tool"');
+    expect(h).not.toContain('data-own-focus="edit-0"');
+    expect(h).toContain('aria-label="Remove My Tool"');
+    expect(h).toContain('data-own-focus="remove-0"');
+  });
+  it("keeps Edit for an entry that parsed but failed validation", () => {
+    const h = broken("Its pattern is not a regular expression.");
+    expect(h).toContain('aria-label="Edit My Tool"');
+    expect(h).toContain('aria-label="Remove My Tool"');
+    expect(h).not.toContain("Fix this one in tools.json");
+  });
+  it("keeps Edit on the entries beside it", () => {
+    const two: OwnTools = { tools: [tool, { ...tool, id: "other", name: "Other" }], problems: [{ index: 0, id: "my-tool", reason: SHAPE }], version: "v" };
+    const h = view({ own: two });
+    expect(h).not.toContain('aria-label="Edit My Tool"');
+    expect(h).toContain('aria-label="Edit Other"');
+  });
+});
+
+describe("focusKeys", () => {
+  it("names the Edit button first and the Remove button of the same row as the fallback, so a row without Edit still takes the focus", () => {
+    expect(focusKeys({ to: "edit", index: 2 })).toEqual(["edit-2", "remove-2"]);
+    expect(focusKeys({ to: "add" })).toEqual(["add"]);
   });
 });

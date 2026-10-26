@@ -3,7 +3,8 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import { SETTINGS_SECTIONS, type SettingsSection } from "./settingsSections";
 import { SettingsPanels } from "./LiveSettings";
-import { closeOrRefuse, closesSettings, focusSettingsHeading, mountedWith, paletteSection, settingsStart, visibleControls } from "./settingsRouting";
+import { holdFocus, type GuardDom } from "../../lib/focusGuard";
+import { closeOrRefuse, closesSettings, focusSettingsHeading, isTextEntry, mountedWith, paletteSection, settingsFocusFallback, settingsStart, settingsTabTarget, visibleControls } from "./settingsRouting";
 
 describe("paletteSection", () => {
   it.each([
@@ -132,5 +133,96 @@ describe("LiveSettings.css", () => {
   });
   it("scrolls nowhere itself: the page body scrolls", () => {
     expect(css).not.toMatch(/overflow(?:-[xy])?:\s*(?:auto|scroll|overlay)/);
+  });
+});
+
+describe("settingsFocusFallback", () => {
+  it("is the shown section's heading, where stray focus goes", () => {
+    const heading = { focus: vi.fn() };
+    const query = vi.fn(() => heading);
+    expect(settingsFocusFallback({ querySelector: query })).toBe(heading);
+    expect(query).toHaveBeenCalledWith(".settings-shell__heading");
+  });
+  it("is null without the page or its heading", () => {
+    expect(settingsFocusFallback(null)).toBeNull();
+    expect(settingsFocusFallback({ querySelector: () => null })).toBeNull();
+  });
+  it("pulls focus back to the heading when the control that held it has left the page (the font field on Enter)", () => {
+    const heading = { focus: vi.fn(), isConnected: true };
+    const field = { isConnected: true, focus: vi.fn() };
+    const page = { contains: (n: unknown) => n === heading || n === field, isConnected: true };
+    let active: unknown = null;
+    const focusIn: ((t: unknown) => void)[] = [];
+    const frames: (() => void)[] = [];
+    const none = () => () => {};
+    const dom: GuardDom = {
+      active: () => active,
+      inOtherLayer: () => false,
+      onFocusIn: (h) => (focusIn.push(h), none()),
+      onFocusOut: none,
+      onWindowFocus: none,
+      onPress: none,
+      later: (f) => (frames.push(f), none()),
+    };
+    const stop = holdFocus(page, dom, () => settingsFocusFallback({ querySelector: () => heading }), []);
+    focusIn.forEach((h) => h(field));
+    field.isConnected = false;
+    active = null;
+    focusIn.forEach((h) => h(null));
+    frames.forEach((f) => f());
+    expect(heading.focus).toHaveBeenCalledTimes(1);
+    stop();
+  });
+});
+
+describe("settingsTabTarget", () => {
+  /** A control at a place in the document: compareDocumentPosition says whether another is before (2) or after (4) it. */
+  const at = (place: number) => ({ place, compareDocumentPosition: (o: { place: number }) => (o.place > place ? 4 : o.place < place ? 2 : 0) });
+  const [back, nav1, nav2, first, second, last] = [at(10), at(20), at(30), at(50), at(60), at(70)];
+  const controls = [back, nav1, nav2, first, second, last];
+  const heading = at(40);
+
+  it("goes to the next control, and wraps, when the focus is on one of them", () => {
+    expect(settingsTabTarget(controls, first, false)).toBe(4);
+    expect(settingsTabTarget(controls, last, false)).toBe(0);
+    expect(settingsTabTarget(controls, first, true)).toBe(2);
+    expect(settingsTabTarget(controls, back, true)).toBe(5);
+  });
+  it("goes from the heading to the section's first control with Tab, and to the nav's last with Shift+Tab", () => {
+    expect(settingsTabTarget(controls, heading, false)).toBe(3);
+    expect(settingsTabTarget(controls, heading, true)).toBe(2);
+  });
+  it("wraps when no control follows (Tab) or precedes (Shift+Tab) the focus", () => {
+    const after = at(99);
+    const before = at(1);
+    expect(settingsTabTarget(controls, after, false)).toBe(0);
+    expect(settingsTabTarget(controls, after, true)).toBe(5);
+    expect(settingsTabTarget(controls, before, true)).toBe(5);
+    expect(settingsTabTarget(controls, before, false)).toBe(0);
+  });
+  it("starts at the first control (Tab) or the last (Shift+Tab) when nothing has the focus, and stays put without controls", () => {
+    expect(settingsTabTarget(controls, null, false)).toBe(0);
+    expect(settingsTabTarget(controls, null, true)).toBe(5);
+    expect(settingsTabTarget([], heading, false)).toBeNull();
+  });
+});
+
+describe("isTextEntry", () => {
+  const input = (type: string | undefined) => ({ tagName: "INPUT", type });
+  it("is true where typing a digit or letter belongs to the field", () => {
+    for (const type of ["text", "search", "number", "email", "url", "tel", "password", "date", "time", "datetime-local", "month", "week"]) expect(isTextEntry(input(type)), type).toBe(true);
+    expect(isTextEntry(input(undefined))).toBe(true);
+    expect(isTextEntry(input("TEXT"))).toBe(true);
+    expect(isTextEntry({ tagName: "TEXTAREA" })).toBe(true);
+    expect(isTextEntry({ tagName: "DIV", isContentEditable: true })).toBe(true);
+  });
+  it("is false for a radio, a switch, a range, a color, a file and the buttons", () => {
+    for (const type of ["radio", "checkbox", "range", "color", "file", "button", "submit", "reset", "image", "hidden"]) expect(isTextEntry(input(type)), type).toBe(false);
+    for (const tagName of ["BUTTON", "SELECT", "A", "H2", "DIV"]) expect(isTextEntry({ tagName }), tagName).toBe(false);
+    expect(isTextEntry(null)).toBe(false);
+    expect(isTextEntry({})).toBe(false);
+  });
+  it("leaves the terminal's hidden textarea alone, as isTextBox does", () => {
+    expect(isTextEntry({ tagName: "TEXTAREA", classList: { contains: (n: string) => n === "xterm-helper-textarea" } })).toBe(false);
   });
 });

@@ -5,7 +5,7 @@ import type { OwnTools } from "../../generated/OwnTools";
 import type { PromptKind } from "../../generated/PromptKind";
 import { ownTools } from "../../lib/api/catalog";
 import { focusAfterCancel, focusAfterRemove, type FormFocus } from "./ownAgents";
-import { blankDraft, blankPattern, blankPreset, buildSave, CONFLICT_TEXT, draftOf, escapeCancels, outcomeOf, placeholders, profileOf, refusalOf, removedText, savedText, slug, type Change, type ChangeKind, type ToolDraft } from "./ownTools";
+import { blankDraft, blankPattern, blankPreset, buildSave, CONFLICT_TEXT, canEditEntry, draftOf, escapeCancels, FIX_IN_FILE, focusKeys, outcomeOf, placeholders, profileOf, refusalOf, removedText, savedText, slug, type Change, type ChangeKind, type ToolDraft } from "./ownTools";
 import "./OwnAgentsSection.css";
 import "./OwnToolsSection.css";
 
@@ -58,47 +58,52 @@ export function OwnToolsView({ own, problems: shown, editing, removing, conflict
       {own && tools.length === 0 && !editing && <p className="own-agents__line">No tools of your own yet.</p>}
       {own && tools.length > 0 && (
         <ul className="own-agents__list">
-          {tools.map((t, i) => (
-            <li key={`${i}-${t.id}`} className="own-agents__item">
-              <div className="own-agents__summary">
-                <span className="own-agents__name" dir="auto">
-                  {t.name}
-                </span>
-                <span className="own-agents__command" dir="auto">
-                  {t.commands.length > 0 ? t.commands.join(", ") : "–"}
-                </span>
-                {problems
-                  .filter((p) => p.index === i)
-                  .map((p) => (
-                    <span key={p.reason} className="own-agents__problem" dir="auto">
-                      {p.reason}
+          {tools.map((t, i) => {
+            const reasons = problems.filter((p) => p.index === i).map((p) => p.reason);
+            const editable = canEditEntry(reasons);
+            return (
+              <li key={`${i}-${t.id}`} className="own-agents__item">
+                <div className="own-agents__summary">
+                  <span className="own-agents__name" dir="auto">
+                    {t.name}
+                  </span>
+                  <span className="own-agents__command" dir="auto">
+                    {t.commands.length > 0 ? t.commands.join(", ") : "–"}
+                  </span>
+                  {reasons.map((reason) => (
+                    <span key={reason} className="own-agents__problem" dir="auto">
+                      {reason}
                     </span>
                   ))}
-              </div>
-              {removing === i ? (
-                <div className="own-agents__actions" role="group" aria-label={`Remove ${t.name}?`} onKeyDown={(e) => escapeCancels(e, on.onCancelRemove)}>
-                  <span className="own-agents__line own-agents__line--strong" dir="auto">
-                    {`Remove ${t.name}?`}
-                  </span>
-                  <button type="button" className="own-agents__btn" data-own-focus="confirm" autoFocus onClick={on.onConfirmRemove}>
-                    Remove
-                  </button>
-                  <button type="button" className="own-agents__btn" onClick={on.onCancelRemove}>
-                    Cancel
-                  </button>
+                  {!editable && <span className="own-agents__hint">{FIX_IN_FILE}</span>}
                 </div>
-              ) : (
-                <div className="own-agents__actions">
-                  <button type="button" className="own-agents__btn" data-own-focus={`edit-${i}`} aria-label={`Edit ${t.name}`} onClick={() => on.onEdit(i)}>
-                    Edit
-                  </button>
-                  <button type="button" className="own-agents__btn" aria-label={`Remove ${t.name}`} onClick={() => on.onRemove(i)}>
-                    Remove
-                  </button>
-                </div>
-              )}
-            </li>
-          ))}
+                {removing === i ? (
+                  <div className="own-agents__actions" role="group" aria-label={`Remove ${t.name}?`} onKeyDown={(e) => escapeCancels(e, on.onCancelRemove)}>
+                    <span className="own-agents__line own-agents__line--strong" dir="auto">
+                      {`Remove ${t.name}?`}
+                    </span>
+                    <button type="button" className="own-agents__btn" data-own-focus="confirm" autoFocus onClick={on.onConfirmRemove}>
+                      Remove
+                    </button>
+                    <button type="button" className="own-agents__btn" onClick={on.onCancelRemove}>
+                      Cancel
+                    </button>
+                  </div>
+                ) : (
+                  <div className="own-agents__actions">
+                    {editable && (
+                      <button type="button" className="own-agents__btn" data-own-focus={`edit-${i}`} aria-label={`Edit ${t.name}`} onClick={() => on.onEdit(i)}>
+                        Edit
+                      </button>
+                    )}
+                    <button type="button" className="own-agents__btn" data-own-focus={`remove-${i}`} aria-label={`Remove ${t.name}`} onClick={() => on.onRemove(i)}>
+                      Remove
+                    </button>
+                  </div>
+                )}
+              </li>
+            );
+          })}
         </ul>
       )}
       {conflict && (
@@ -300,8 +305,13 @@ export function OwnToolsSection({ endpoint, announce }: { endpoint: Endpoint; an
   const sectionRef = useRef<HTMLElement>(null);
   useEffect(() => {
     if (!focusNext) return;
-    const key = focusNext.to === "add" ? "add" : `edit-${focusNext.index}`;
-    sectionRef.current?.querySelector<HTMLElement>(`[data-own-focus="${key}"]`)?.focus();
+    for (const key of focusKeys(focusNext)) {
+      const target = sectionRef.current?.querySelector<HTMLElement>(`[data-own-focus="${key}"]`);
+      if (target) {
+        target.focus();
+        break;
+      }
+    }
     setFocusNext(null);
   }, [focusNext, own, editing]);
 
