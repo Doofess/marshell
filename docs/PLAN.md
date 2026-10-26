@@ -1195,6 +1195,28 @@ Decisions from the 2026-10-10 coverage audit (`docs/superpowers/plan-coverage-au
      8. The plan meter is left out for Antigravity. Its `quota` has two weekly buckets and no five-hour window, so an agy row shows model and context % only.
      9. No hand-over. agy 1.4.7 ignores `dangerouslySkipPermissions` in `settings.json` (it still prompted, and the binary has no such key). Marshell makes no edit to that key, and a session's mode comes only from its launch flags. The "A CLI setting that skips every prompt" rule under "Session modes" doesn't apply to Antigravity.
      10. In Bypass, a call Marshell can't read is held for a card too, on any agy version: a tool it doesn't know, or a known tool without the arguments it reads. The card shows the tool's name and raw arguments, with the risk "Marshell can't read this call". agy's own `read_file` and MCP tools still pass. This widens decision 7's risky list, so an agy update that renames `run_command` or its arguments can't run a risky command with no card (the final review, 2026-10-26).
+   - **Slice 6e decisions (2026-10-26).** Settings, Accounts, CLI versions and the terminal font. Made together for both halves of the split.
+     1. 6e runs as two slices, each with its own plan, live check, review and PR. 6b decision 2's other letters stand.
+        - 6e1: the Settings page, the dialogs moved into it, the terminal font picker and its bundled fonts, the own-agent form (6b decision 6) and the `tools.json` editor (6c decision 8) in Settings → Agents.
+        - 6e2: Accounts, CLI version and update, and the read-only company tabs.
+     2. Settings is one page in the main window, the phase-0 design with a section nav. Sessions keep running behind it, and Esc goes back to them. Today's Appearance, Notifications, History settings, Agents, Shell profiles and Diagnostics dialogs become its sections, and the separate dialogs go away. Their palette commands open Settings at that section.
+     3. The sections in 6e1, in order:
+        - Appearance: app theme, accent, contrast and text size.
+        - Terminal: the terminal theme, the font picker, the font size and theme import.
+        - Notifications, with the close button.
+        - Shell profiles.
+        - History, with Storage.
+        - Agents: setup per CLI, own agents, and the tools list with its editor.
+        - Advanced: Diagnostics (slice 5d decision 5).
+
+        General is left out until it has a live field. 6e2 adds Accounts, Claude Code, Codex and Antigravity.
+     4. Settings has no keyboard shortcut. The shortcut audit keeps punctuation out of bindings and has no free letter. "Settings…" sits in the palette's Tools group, and the tray's "Notifications…" becomes "Settings…" (slice 4b decision 4).
+     5. The terminal font picker lists Match my terminal, JetBrains Mono, Cascadia Mono, Atkinson Hyperlegible Mono and "Another font…". The last one reveals today's text field. A saved family that isn't one of the bundled names shows as "Another font…", so nobody's font changes.
+     6. Cascadia Mono and Atkinson Hyperlegible Mono are bundled as Regular and Bold woff2, like JetBrains Mono. The files come from the fonts' official releases unchanged. All three fonts get SIL OFL notices in `THIRD_PARTY_NOTICES.md`; JetBrains Mono, bundled since phase 1, had none.
+     7. The company tabs are read-only in 6e2: the CLI's user settings as a form with scope badges (an en dash for an unset key) and a read-only raw view. 6f adds editing through the config service. A tab appears once its CLI is detected. This amends the "Company tabs" rule above, which waited for a sign-in: Antigravity has no sign-in status, so under that rule its tab could never appear.
+     8. Accounts checks `claude auth status` and `codex login status` when Settings → Accounts opens, again when a "Sign in to …" tab exits (slice 6a decision 9), and on a Check again button. There is no background polling and no Sign out button. Codex shows the method its text gives, without an email. Antigravity's section says it has no sign-in status command, so Marshell can't show one. Nothing is read from its running sessions.
+     9. A CLI's Update button opens a tab named "Update <CLI>". It runs the command that fits the install type: native `claude update`, npm `npm install -g <package>@latest`, WinGet `winget upgrade <id>`, `codex update` or `agy update`. The version is read again when the tab exits. If tabs of that CLI are running, the button notes that the update may fail while they run.
+     10. "Newer version available" comes only from data the CLI already keeps, such as Codex's `version.json`. Marshell makes no network request of its own. Otherwise Settings shows the installed version only.
 7. **Doctor**: the fix actions, on top of the phase-3 config core: "Fix X issues" and one-click undo; folds in each CLI's own doctor; detects duplicate notifications and offers to turn off each CLI's own desktop notifications (brief §5.5, moved here by slice 4e decision 4); reports the tokens injected by project references; checks Codex hook trust; waste checks (unused MCP servers and skills, long descriptions, broad scopes, a token-cost estimate); offers to raise `cleanupPeriodDays`.
    - Added 2026-10-16 (research in `docs/research/2026-10-16-accounts-cloud-extensions.md`):
      - **One-click doctor per CLI.** It runs the CLI's own doctor (`claude doctor` text, `codex doctor --json`) and opens a summary window of suggested fixes. Every fix goes through preview, backup and undo; nothing is applied silently. Antigravity has no doctor command, so it gets none.
