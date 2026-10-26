@@ -13,7 +13,11 @@ fn text_field(value: &serde_json::Value, key: &str) -> Option<String> {
 
 /// `claude auth status` (JSON): the state, the email and the plan. Anything unreadable is `Unknown`.
 pub fn claude_status(stdout: &str, code: i32) -> (SignIn, Option<String>, Option<String>) {
-    let parsed: Option<serde_json::Value> = serde_json::from_str(stdout).ok();
+    // The first JSON value only: `run_capture` appends stderr, so a warning may follow it.
+    let parsed: Option<serde_json::Value> = serde_json::Deserializer::from_str(stdout)
+        .into_iter()
+        .next()
+        .and_then(Result::ok);
     match parsed.as_ref().and_then(|v| v.get("loggedIn")?.as_bool()) {
         Some(true) => {
             let value = parsed.as_ref().expect("loggedIn came from it");
@@ -76,6 +80,17 @@ mod tests {
         let out = r#"{"loggedIn":false,"authMethod":"none"}"#;
         assert_eq!(claude_status(out, 1), (SignIn::SignedOut, None, None));
         assert_eq!(claude_status("", 1), (SignIn::SignedOut, None, None));
+    }
+
+    #[test]
+    fn claude_reads_the_json_before_stderr() {
+        // `run_capture` puts stderr after stdout, so a warning follows the JSON.
+        let out = "{\"loggedIn\":true,\"email\":\"a@example.com\"}\nwarning: something on stderr\n";
+        assert_eq!(claude_status(out, 0), (SignIn::SignedIn, s("a@example.com"), None));
+        assert_eq!(
+            claude_status("{\"loggedIn\":false}\nerror: x\n", 1),
+            (SignIn::SignedOut, None, None)
+        );
     }
 
     #[test]
