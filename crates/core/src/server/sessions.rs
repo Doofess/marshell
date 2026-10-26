@@ -920,9 +920,9 @@ pub(super) const NO_CONVERSATION: &str = "Claude Code no longer has this convers
 /// What a Resume or Restart starts.
 #[derive(Debug, PartialEq, Eq)]
 enum Resume {
-    /// One Claude or Codex conversation, by its session id.
+    /// One Claude, Codex or Antigravity conversation, by its session id.
     Session(String),
-    /// The CLI's own continue flag: nothing is known about the tab, or the agent is neither Claude nor Codex.
+    /// The CLI's own continue flag: nothing is known about the tab, or the agent is none of those three.
     Last,
     /// A session with no transcript (Claude's never written, Codex's rollout missing): start the CLI with no
     /// resume flag. (Not its continue flag, which could pick up another tab's conversation in the same folder.)
@@ -943,16 +943,17 @@ impl Resume {
 /// Which conversation a Resume or Restart of `tab` should pick up, from the sessions index: the tab's latest
 /// conversation of its own agent. It never falls back to another conversation: `Err(message)` means Marshell
 /// had this one and Claude has lost it.
-/// - No row of the tab's agent, a row that fails the id and path check, or an agent other than Claude and
-///   Codex: `Resume::Last`.
-/// - The transcript (Codex's rollout) is a file: `Resume::Session(id)`.
+/// - No row of the tab's agent, a row that fails the id and path check, or an agent other than Claude, Codex
+///   and Antigravity: `Resume::Last`.
+/// - The transcript (Codex's rollout, agy's `transcript_full.jsonl`) is a file: `Resume::Session(id)`.
 /// - Claude's transcript is missing and Marshell holds an archive of it: `Err`, the conversation is lost.
 /// - Claude's transcript is missing and there is no archive: the session never wrote anything (Claude may create
 ///   the file only at the first message, after the SessionStart that indexed it), so `Resume::Fresh`.
 /// - Codex's rollout is missing: `Resume::Fresh`. Marshell keeps no copy of a rollout, so a deleted one can't be
-///   told from one Codex never wrote (slice 6a2 decision 4).
+///   told from one Codex never wrote (slice 6a2 decision 4). So is agy's transcript: the file exists from the
+///   first prompt, so a missing one starts fresh.
 fn resume_session(st: &AppState, tab: &str, agent: Option<&str>) -> Result<Resume, &'static str> {
-    let Some(agent @ ("claude" | "codex")) = agent else {
+    let Some(agent @ ("claude" | "codex" | "antigravity")) = agent else {
         return Ok(Resume::Last);
     };
     let Some(meta) = st.history().latest_for_tab_of(tab, agent) else {
@@ -966,7 +967,8 @@ fn resume_session(st: &AppState, tab: &str, agent: Option<&str>) -> Result<Resum
     if std::path::Path::new(&meta.transcript_path).is_file() {
         return Ok(Resume::Session(meta.session_id));
     }
-    if agent == "codex" {
+    // Marshell keeps no copy of an agy transcript either; agy writes the file from the first prompt.
+    if agent != "claude" {
         return Ok(Resume::Fresh);
     }
     let (archive, _) = crate::history::archive::archive_paths(st.home(), "claude", &meta.session_id);
@@ -1674,6 +1676,79 @@ mod tests {
             resolved_codex_line(Some("0.163.0"), Some(ResumeTarget::Session(CODEX_ID))),
             format!("& codex resume {CODEX_ID} --no-daemon")
         );
+    }
+
+    const AGY_PRE: &str = include_str!("../../tests/fixtures/antigravity/hooks/1.4.7/PreInvocation.json");
+    const AGY_ID: &str = "00000000-0000-4000-8000-000000000002";
+
+    /// agy's PreInvocation for `id` in `tab`, as the bridge posts it, with agy's transcript path under `dir`.
+    /// The tab is opened in the registry first, as it is when a hook arrives. Returns the transcript's path;
+    /// the file itself is not written.
+    fn note_agy(st: &AppState, tab: &str, id: &str, dir: &std::path::Path, at_ms: u64) -> std::path::PathBuf {
+        let transcript = dir
+            .join("antigravity-cli")
+            .join("brain")
+            .join(id)
+            .join(".system_generated")
+            .join("logs")
+            .join("transcript_full.jsonl");
+        st.registry().reserve(
+            tab,
+            crate::registry::Relaunch {
+                profile_id: "pwsh".into(),
+                agent: Some("antigravity".into()),
+                cwd: dir.to_string_lossy().into_owned(),
+                mode: None,
+                name: "agy".into(),
+                preset: None,
+            },
+        );
+        let mut body: serde_json::Value = serde_json::from_str(AGY_PRE).unwrap();
+        body["hook_event_name"] = serde_json::json!("PreInvocation");
+        body["conversationId"] = serde_json::json!(id);
+        body["transcriptPath"] = serde_json::json!(transcript.to_string_lossy());
+        st.history().note_event("antigravity", tab, None, &body, at_ms);
+        transcript
+    }
+
+    #[test]
+    fn resume_of_an_antigravity_tab_uses_its_conversation() {
+        let home = tempfile::tempdir().unwrap();
+        let work = tempfile::tempdir().unwrap();
+        let st = AppState::new("t".into(), 1, Vec::new(), home.path().to_path_buf(), Vec::new());
+        let transcript = note_agy(&st, "t1", AGY_ID, work.path(), 1);
+        // agy writes the file from the first prompt.
+        std::fs::create_dir_all(transcript.parent().unwrap()).unwrap();
+        std::fs::write(&transcript, "{}\n").unwrap();
+        assert_eq!(
+            resume_session(&st, "t1", Some("antigravity")),
+            Ok(Resume::Session(AGY_ID.to_string()))
+        );
+        // The target the launch is given turns into `--conversation <id>`.
+        assert_eq!(
+            resume_session(&st, "t1", Some("antigravity")).unwrap().target(),
+            Some(ResumeTarget::Session(AGY_ID))
+        );
+        // The conversation is the tab's own: another tab continues.
+        assert_eq!(resume_session(&st, "t2", Some("antigravity")), Ok(Resume::Last));
+    }
+
+    #[test]
+    fn an_antigravity_tab_with_none_on_record_continues() {
+        let home = tempfile::tempdir().unwrap();
+        let st = AppState::new("t".into(), 1, Vec::new(), home.path().to_path_buf(), Vec::new());
+        assert_eq!(resume_session(&st, "t1", Some("antigravity")), Ok(Resume::Last));
+    }
+
+    /// agy's transcript exists from the first prompt, so a missing one is a conversation that is gone: start
+    /// fresh, never with `--continue`, which could pick up another tab's.
+    #[test]
+    fn an_antigravity_tab_whose_transcript_is_gone_starts_fresh() {
+        let home = tempfile::tempdir().unwrap();
+        let work = tempfile::tempdir().unwrap();
+        let st = AppState::new("t".into(), 1, Vec::new(), home.path().to_path_buf(), Vec::new());
+        note_agy(&st, "t1", AGY_ID, work.path(), 1);
+        assert_eq!(resume_session(&st, "t1", Some("antigravity")), Ok(Resume::Fresh));
     }
 
     #[test]

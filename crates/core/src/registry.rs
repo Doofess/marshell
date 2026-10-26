@@ -1221,6 +1221,17 @@ impl Registry {
             .and_then(|e| e.spec.preset.clone())
     }
 
+    /// The folder the tab started in, whether the tab is open or among the recently closed.
+    pub fn cwd_of_tab(&self, tab_id: &str) -> Option<String> {
+        let state = self.state.lock().unwrap();
+        state
+            .open
+            .iter()
+            .chain(state.closed.iter())
+            .find(|e| e.info.tab_id == tab_id)
+            .map(|e| e.spec.cwd.clone())
+    }
+
     /// Looks at a closed entry without removing it: its tab id and how to relaunch it.
     /// None means the most recent. Reopen peeks first, so a failed start loses nothing.
     pub fn peek_closed(&self, tab_id: Option<&str>) -> Option<(String, Relaunch)> {

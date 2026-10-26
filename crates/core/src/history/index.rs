@@ -641,7 +641,7 @@ fn insert(conn: &Connection, meta: &SessionMeta) -> anyhow::Result<()> {
 /// Parameters ?1 to ?8 are the query's fields, ?9 the place and ?10 whether headless runs show.
 fn filters() -> String {
     format!(
-        "(?1 IS NULL OR sessions.agent = ?1) AND (?2 IS NULL OR cwd = ?2)
+        "(?1 IS NULL OR sessions.agent = ?1) AND sessions.agent != 'antigravity' AND (?2 IS NULL OR cwd = ?2)
     AND (?3 IS NULL OR branch = ?3) AND (?4 IS NULL OR model = ?4)
     AND (?5 IS NULL OR updated_ms >= ?5)
     AND (?6 IS NULL OR EXISTS (SELECT 1 FROM tags WHERE tags.agent = sessions.agent

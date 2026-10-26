@@ -177,7 +177,8 @@ impl History {
     /// recording; the sidecar lists it once, also when the event would not otherwise write the sidecar (a restart
     /// in the same tab starts a new file). A Codex session is linked by the first event that names it, whatever
     /// the event (a quit with no prompt sends only `SessionEnd`), and never asks for a copy: the importer copies
-    /// the rollout. Blocking: call inside spawn_blocking.
+    /// the rollout. An Antigravity conversation is linked the same way, for Resume only: its folder is the tab's
+    /// and its `lastUserInput` is never read. Blocking: call inside spawn_blocking.
     pub fn note_event(
         &self,
         agent: &str,
@@ -186,19 +187,36 @@ impl History {
         body: &Value,
         at_ms: u64,
     ) -> Option<SessionMeta> {
-        let codex = match agent {
-            "claude" => false,
-            "codex" => true,
+        // Codex's and Antigravity's sessions are linked by the first event that names them, whatever it is.
+        let (codex, antigravity) = match agent {
+            "claude" => (false, false),
+            "codex" => (true, false),
+            "antigravity" => (true, true),
             _ => return None,
         };
         let recording = recording
             .filter(|name| cast::valid_recording_name(name))
             .map(str::to_string);
         let text = |key: &str| body.get(key).and_then(Value::as_str);
-        let event = text("hook_event_name")?;
-        let session_id = text("session_id")?;
-        let transcript_path = text("transcript_path")?;
-        let cwd = text("cwd")?;
+        // Only the fields below are read from an agy body: its `lastUserInput` is the person's own text.
+        let (event, session_id, transcript_path, cwd) = if antigravity {
+            // agy's body has no event name; the bridge adds it from `--event`. The folder is the tab's: agy's
+            // `workspacePaths` is always empty. A tab the registry doesn't know has no folder, so no link.
+            let cwd = self.registry.as_ref()?.cwd_of_tab(tab_id)?;
+            (
+                text("hook_event_name")?,
+                text("conversationId")?,
+                text("transcriptPath")?,
+                cwd,
+            )
+        } else {
+            (
+                text("hook_event_name")?,
+                text("session_id")?,
+                text("transcript_path")?,
+                text("cwd")?.to_string(),
+            )
+        };
         let allowed = if codex {
             sidecar_allowed(agent, transcript_path, session_id)
         } else {
@@ -250,7 +268,7 @@ impl History {
             agent: agent.to_string(),
             session_id: session_id.to_string(),
             tab_id: tab_id.to_string(),
-            cwd: cwd.to_string(),
+            cwd,
             transcript_path: transcript_path.to_string(),
             started_ms,
             updated_ms: at_ms,
@@ -272,7 +290,16 @@ impl History {
                 .and_then(|registry| registry.preset_of_tab(tab_id)),
         };
         let ends_turn = !codex && matches!(event, "Stop" | "StopFailure" | "SessionEnd");
-        if is_new || ends_turn || (!codex && event == "SessionStart") {
+        // An event of an agy conversation the tab went back to makes it the tab's latest again (the latest is the
+        // row with the newest `updated_ms`); events of the tab's current one write nothing.
+        let returned = antigravity
+            && !is_new
+            && index
+                .latest_for_tab_of(tab_id, agent)
+                .ok()
+                .flatten()
+                .is_some_and(|latest| latest.session_id != session_id);
+        if is_new || returned || ends_turn || (!codex && event == "SessionStart") {
             if let Err(err) = index.upsert(&meta) {
                 tracing::warn!("history index write failed: {err:#}");
             }
@@ -1186,6 +1213,164 @@ mod tests {
         assert_eq!(std::fs::metadata(&side).unwrap().modified().unwrap(), before_time);
         let row = history.get("codex", ID).unwrap().unwrap();
         assert_eq!((row.started_ms, row.updated_ms), (1000, 1000));
+    }
+
+    const AGY_PRE: &str = include_str!("../../tests/fixtures/antigravity/hooks/1.4.7/PreInvocation.json");
+    const AGY_START: &str = include_str!("../../tests/fixtures/antigravity/hooks/1.4.7/SessionStart.json");
+    const AGY_ID_2: &str = "00000000-0000-4000-8000-000000000002";
+
+    /// agy's hook body as the bridge posts it: the fixture plus the event name from `--event`, with the
+    /// transcript where agy keeps it under `dir`.
+    fn agy_body(fixture: &str, event: &str, dir: &Path, id: &str) -> Value {
+        let mut v: Value = serde_json::from_str(fixture).unwrap();
+        v["hook_event_name"] = json!(event);
+        v["conversationId"] = json!(id);
+        v["transcriptPath"] = json!(
+            dir.join("antigravity-cli")
+                .join("brain")
+                .join(id)
+                .join(".system_generated")
+                .join("logs")
+                .join("transcript_full.jsonl")
+                .to_string_lossy()
+        );
+        v
+    }
+
+    /// A history whose registry has tab `t1`, started in `cwd`.
+    fn agy_history(home: &Path, cwd: &str) -> History {
+        let registry = Arc::new(Registry::new());
+        registry.reserve(
+            "t1",
+            crate::registry::Relaunch {
+                profile_id: "pwsh".into(),
+                agent: Some("antigravity".into()),
+                cwd: cwd.into(),
+                mode: None,
+                name: "agy".into(),
+                preset: None,
+            },
+        );
+        History::open(home).with_registry(registry)
+    }
+
+    #[test]
+    fn an_antigravity_event_links_its_conversation_to_the_tab() {
+        let home = tempfile::tempdir().unwrap();
+        let history = agy_history(home.path(), "C:/work/app");
+        let body = agy_body(AGY_PRE, "PreInvocation", home.path(), ID);
+        assert_eq!(
+            history.note_event("antigravity", "t1", Some("t1-1000.cast"), &body, 1000),
+            None
+        );
+        let row = history.get("antigravity", ID).unwrap().unwrap();
+        // The folder is the tab's: the fixture's workspacePaths is empty.
+        assert_eq!(
+            (row.tab_id.as_str(), row.cwd.as_str(), row.client),
+            ("t1", "C:/work/app", Client::Marshell)
+        );
+        assert_eq!(row.transcript_path, body["transcriptPath"].as_str().unwrap());
+        assert_eq!((row.started_ms, row.updated_ms), (1000, 1000));
+        assert_eq!(history.latest_for_tab_of("t1", "antigravity").unwrap().session_id, ID);
+        // Claude's lookup doesn't see it.
+        assert_eq!(history.latest_for_tab_of("t1", "claude"), None);
+        let meta = crate::history::archive::read_meta(home.path(), "antigravity", ID)
+            .unwrap()
+            .unwrap();
+        assert_eq!((meta.agent.as_str(), meta.tab_id.as_str()), ("antigravity", "t1"));
+        assert_eq!(meta.recordings.len(), 1);
+        // Any event that names the conversation links it, `SessionStart` too.
+        let other = agy_body(AGY_START, "SessionStart", home.path(), AGY_ID_2);
+        assert_eq!(history.note_event("antigravity", "t1", None, &other, 2000), None);
+        assert!(history.get("antigravity", AGY_ID_2).unwrap().is_some());
+    }
+
+    #[test]
+    fn a_later_conversation_in_the_tab_replaces_the_earlier() {
+        let home = tempfile::tempdir().unwrap();
+        let history = agy_history(home.path(), "C:/work/app");
+        let first = agy_body(AGY_PRE, "PreInvocation", home.path(), ID);
+        let second = agy_body(AGY_PRE, "PreInvocation", home.path(), AGY_ID_2);
+        history.note_event("antigravity", "t1", None, &first, 1000);
+        history.note_event("antigravity", "t1", None, &second, 2000);
+        let latest = history.latest_for_tab_of("t1", "antigravity").unwrap();
+        assert_eq!(latest.session_id, AGY_ID_2);
+        assert_eq!(latest.previous_in_tab.as_deref(), Some(ID));
+        // Another event of the first one in the same tab makes it the tab's latest again.
+        history.note_event("antigravity", "t1", None, &first, 3000);
+        assert_eq!(history.latest_for_tab_of("t1", "antigravity").unwrap().session_id, ID);
+    }
+
+    #[test]
+    fn an_antigravity_event_of_a_tab_the_registry_does_not_know_is_ignored() {
+        let home = tempfile::tempdir().unwrap();
+        let history = History::open(home.path()).with_registry(Arc::new(Registry::new()));
+        let body = agy_body(AGY_PRE, "PreInvocation", home.path(), ID);
+        assert_eq!(history.note_event("antigravity", "t1", None, &body, 1000), None);
+        assert!(history.get("antigravity", ID).unwrap().is_none());
+    }
+
+    #[test]
+    fn an_antigravity_event_with_a_hostile_path_or_id_is_ignored() {
+        let home = tempfile::tempdir().unwrap();
+        let history = agy_history(home.path(), "C:/work/app");
+        let mut outside = agy_body(AGY_PRE, "PreInvocation", home.path(), ID);
+        outside["transcriptPath"] = json!(home.path().join("notes.jsonl").to_string_lossy());
+        let bad_id = agy_body(AGY_PRE, "PreInvocation", home.path(), "../x");
+        for hostile in [outside, bad_id] {
+            assert_eq!(history.note_event("antigravity", "t1", None, &hostile, 1000), None);
+        }
+        assert_eq!(history.latest_for_tab_of("t1", "antigravity"), None);
+    }
+
+    /// Every file under `dir`, read as bytes, holds none of `needle`.
+    fn assert_no_file_holds(dir: &Path, needle: &str) {
+        for entry in std::fs::read_dir(dir).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                assert_no_file_holds(&path, needle);
+            } else if let Ok(bytes) = std::fs::read(&path) {
+                let hit = bytes.windows(needle.len()).any(|w| w == needle.as_bytes());
+                assert!(!hit, "{} holds the prompt text", path.display());
+            }
+        }
+    }
+
+    #[test]
+    fn the_last_user_input_is_not_kept() {
+        let home = tempfile::tempdir().unwrap();
+        let history = agy_history(home.path(), "C:/work/app");
+        let body = agy_body(AGY_PRE, "PreInvocation", home.path(), ID);
+        let typed = body["lastUserInput"].as_str().unwrap().to_string();
+        assert!(!typed.is_empty());
+        history.note_event("antigravity", "t1", None, &body, 1000);
+        let row = history.get("antigravity", ID).unwrap().unwrap();
+        assert!(!format!("{row:?}").contains(&typed));
+        assert_no_file_holds(home.path(), &typed);
+    }
+
+    #[test]
+    fn history_lists_no_antigravity_rows() {
+        let home = tempfile::tempdir().unwrap();
+        let history = agy_history(home.path(), "C:/work/app");
+        history.note_event(
+            "antigravity",
+            "t1",
+            None,
+            &agy_body(AGY_PRE, "PreInvocation", home.path(), ID),
+            1000,
+        );
+        assert!(history.get("antigravity", ID).unwrap().is_some());
+        for agent in [None, Some("antigravity".to_string())] {
+            let query = HistoryQuery {
+                agent,
+                headless: Some(true),
+                archived: Some(true),
+                ..Default::default()
+            };
+            assert!(history.list(&query).unwrap().is_empty());
+            assert!(history.bookmarks(&query).unwrap().is_empty());
+        }
     }
 
     const TOOLS: &str = include_str!("../../tests/fixtures/claude/transcripts/2.1.309/tools.jsonl");

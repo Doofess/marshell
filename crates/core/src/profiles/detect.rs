@@ -367,7 +367,7 @@ pub fn agent_in(agents: &Agents, chain: &[String], command_line: Option<&str>) -
 pub enum ResumeTarget<'a> {
     /// The CLI's own "last conversation in this folder".
     Last,
-    /// One conversation by the CLI's session id. Claude Code and Codex take one.
+    /// One conversation by the CLI's session id. Claude Code, Codex and Antigravity take one.
     Session(&'a str),
     /// A new conversation that starts from one by the CLI's session id, leaving the original as it is.
     /// Only Claude Code can fork; every other agent continues its last conversation as `Last` does.
@@ -387,6 +387,7 @@ pub fn resume_args(agents: &Agents, agent: &str, target: ResumeTarget) -> Vec<St
         ("claude", ResumeTarget::Last) => vec!["--continue"],
         ("codex", ResumeTarget::Session(id)) => vec!["resume", id],
         ("codex", _) => vec!["resume", "--last"],
+        ("antigravity", ResumeTarget::Session(id)) => vec!["--conversation", id],
         ("antigravity", _) => vec!["--continue"],
         _ => Vec::new(),
     };
@@ -1214,10 +1215,20 @@ mod tests {
     }
 
     #[test]
+    fn antigravity_resumes_a_conversation_by_id() {
+        let id = "00000000-0000-4000-8000-000000000001";
+        assert_eq!(
+            resume_args("antigravity", ResumeTarget::Session(id)),
+            ["--conversation", id]
+        );
+    }
+
+    #[test]
     fn resume_args_per_agent() {
         assert_eq!(resume_args("claude", ResumeTarget::Last), ["--continue"]);
         assert_eq!(resume_args("codex", ResumeTarget::Last), ["resume", "--last"]);
         assert_eq!(resume_args("antigravity", ResumeTarget::Last), ["--continue"]);
+        assert_eq!(resume_args("antigravity", ResumeTarget::Fork("abc-1")), ["--continue"]);
         assert_eq!(resume_args("aider", ResumeTarget::Last), ["--restore-chat-history"]);
         assert!(resume_args("nope", ResumeTarget::Last).is_empty());
     }
