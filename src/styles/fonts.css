@@ -14,3 +14,34 @@
   font-style: normal;
   font-display: block;
 }
+
+/* Cascadia Mono 2407.24 and Atkinson Hyperlegible Mono (googlefonts/atkinson-hyperlegible-next-mono at 154d503), both under
+   the SIL Open Font License. Notices in THIRD_PARTY_NOTICES.md. Chosen in Settings → Terminal. */
+@font-face {
+  font-family: "Cascadia Mono";
+  src: url("../assets/fonts/CascadiaMono-Regular.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: block;
+}
+@font-face {
+  font-family: "Cascadia Mono";
+  src: url("../assets/fonts/CascadiaMono-Bold.woff2") format("woff2");
+  font-weight: 700;
+  font-style: normal;
+  font-display: block;
+}
+@font-face {
+  font-family: "Atkinson Hyperlegible Mono";
+  src: url("../assets/fonts/AtkinsonHyperlegibleMono-Regular.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: block;
+}
+@font-face {
+  font-family: "Atkinson Hyperlegible Mono";
+  src: url("../assets/fonts/AtkinsonHyperlegibleMono-Bold.woff2") format("woff2");
+  font-weight: 700;
+  font-style: normal;
+  font-display: block;
+}

@@ -97,7 +97,7 @@ export type LiveHistoryProps = {
   onSettings?: () => void;
   /** The live terminals' look, which the recording player shares. */
   theme?: TerminalThemeProp;
-  font?: { family: string; size: number };
+  font?: { family: string; size: number; wtFamily?: string };
 };
 
 /** The History view wired to the core: it fetches the list on open and on each filter change, searches 150 ms after the last keystroke, opens a conversation on Enter or a click, and resumes it. */

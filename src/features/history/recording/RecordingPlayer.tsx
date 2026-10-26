@@ -59,7 +59,7 @@ export function RecordingPlayer({
   /** Play the whole file, not only the stretch the conversation covers. */
   whole: boolean;
   theme?: Omit<TerminalThemeInput, "app">;
-  font?: { family: string; size: number };
+  font?: { family: string; size: number; wtFamily?: string };
   platform?: Platform;
 }) {
   const range = rangeOf(part, whole);
@@ -102,7 +102,7 @@ export function RecordingPlayer({
       let cols = live.current.part.cols;
       let rows = live.current.part.rows;
       const term = new Terminal({
-        fontFamily: fontStack(live.current.font.family),
+        fontFamily: fontStack(live.current.font.family, live.current.font.wtFamily),
         fontSize: live.current.font.size,
         cols,
         rows,
@@ -123,7 +123,7 @@ export function RecordingPlayer({
       const cellRatio = () => {
         const ctx = document.createElement("canvas").getContext("2d");
         if (!ctx) return 0.6;
-        ctx.font = `100px ${fontStack(live.current.font.family)}`;
+        ctx.font = `100px ${fontStack(live.current.font.family, live.current.font.wtFamily)}`;
         const w = ctx.measureText("M").width / 100;
         return w > 0 ? w : 0.6;
       };
@@ -200,9 +200,9 @@ export function RecordingPlayer({
   useEffect(() => {
     const term = termRef.current;
     if (!term) return;
-    term.options.fontFamily = fontStack(font.family);
+    term.options.fontFamily = fontStack(font.family, font.wtFamily);
     ctl.current?.fit();
-  }, [font.family, font.size, ready]);
+  }, [font.family, font.wtFamily, font.size, ready]);
 
   // A new part, a new "play from here", or the switch: seek. Only the switch keeps the current position.
   const previous = useRef<{ key: string; whole: boolean } | null>(null);

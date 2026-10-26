@@ -209,7 +209,8 @@ export function LiveApp() {
   );
   const wt = useMemo(() => (wtFiles ? wtFont(wtFiles) : null), [wtFiles]);
   const font = resolveTerminalFont(appearance.terminal_font, wt);
-  const terminalFont = useMemo(() => ({ family: font.family, size: font.size }), [font.family, font.size]);
+  const wtFamily = wt?.family?.trim() || undefined;
+  const terminalFont = useMemo(() => ({ family: font.family, size: font.size, wtFamily }), [font.family, font.size, wtFamily]);
   const [launcherOpen, setLauncherOpen] = useState(false);
   // The command palette, or the shell profiles page opened from it, over the window.
   const [overlay, setOverlay] = useState<"palette" | "profiles" | "appearance" | "agents" | "notifications" | "history-settings" | "diagnostics" | "shortcuts" | "departures" | null>(null);

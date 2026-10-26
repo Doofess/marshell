@@ -63,7 +63,7 @@ type Props = {
   /** The Appearance terminal theme and this profile's override. A change applies at once. Default: follow the app. */
   theme?: TerminalThemeProp;
   /** The resolved terminal font (terminalFont.ts). A change applies at once. Default: the bundled font at 13 px. */
-  font?: { family: string; size: number };
+  font?: { family: string; size: number; wtFamily?: string };
   /** Hears an image-only paste (Ctrl+Shift+V with an image on the clipboard). Any other paste goes to the terminal as before. */
   onImagePaste?: (image: Blob) => void;
 };
@@ -76,8 +76,10 @@ export function terminalOptions(o: Pick<ITerminalOptions, "fontFamily" | "fontSi
 }
 
 /** Waits for a font so xterm measures its cells with the right glyphs. Gives up after a second; a missing font is not an error. */
-function loadFont(family: string, size: number): Promise<void> {
-  const load = document.fonts.load(`${size}px ${fontStack(family)}`).then(() => {});
+function loadFont(family: string, size: number, wtFamily?: string): Promise<void> {
+  const stack = fontStack(family, wtFamily);
+  // The bold face too, so a bundled font's bold isn't drawn from the fallback.
+  const load = Promise.all([document.fonts.load(`${size}px ${stack}`), document.fonts.load(`bold ${size}px ${stack}`)]).then(() => {});
   const timeout = new Promise<void>((done) => setTimeout(done, 1000));
   return Promise.race([load, timeout]).catch(() => {});
 }
@@ -121,7 +123,7 @@ export function TerminalView({ endpoint, tabId, placeholder, onOutput, onSize, a
   const [fontReady, setFontReady] = useState(false);
   useEffect(() => {
     let live = true;
-    void loadFont(fontRef.current.family, fontRef.current.size).then(() => live && setFontReady(true));
+    void loadFont(fontRef.current.family, fontRef.current.size, fontRef.current.wtFamily).then(() => live && setFontReady(true));
     return () => {
       live = false;
     };
@@ -130,7 +132,7 @@ export function TerminalView({ endpoint, tabId, placeholder, onOutput, onSize, a
   useEffect(() => {
     const el = host.current;
     if (!el || !fontReady) return;
-    const fontFamily = fontStack(fontRef.current.family);
+    const fontFamily = fontStack(fontRef.current.family, fontRef.current.wtFamily);
     const fontSize = fontRef.current.size;
     const resolve = () => resolveTerminalTheme({ ...themeRef.current, app: appScheme() });
     const first = resolve();
@@ -287,17 +289,17 @@ export function TerminalView({ endpoint, tabId, placeholder, onOutput, onSize, a
   // A changed font applies to the running terminal once it has loaded, then the grid is re-fitted to the new cell size.
   useEffect(() => {
     let live = true;
-    void loadFont(font.family, font.size).then(() => {
+    void loadFont(font.family, font.size, font.wtFamily).then(() => {
       const term = termRef.current;
       if (!live || !term) return;
-      term.options.fontFamily = fontStack(font.family);
+      term.options.fontFamily = fontStack(font.family, font.wtFamily);
       term.options.fontSize = font.size;
       fitRef.current?.fit();
     });
     return () => {
       live = false;
     };
-  }, [font.family, font.size]);
+  }, [font.family, font.size, font.wtFamily]);
 
   // A changed setting or override restyles the running terminal; no restart.
   useEffect(() => {

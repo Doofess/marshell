@@ -199,7 +199,7 @@ export function AppearanceView({ state, handlers }: { state: AppearanceViewState
                 </option>
               ))}
             </select>
-            <div className="appearance__preview" style={{ background: preview.background, color: preview.foreground, fontFamily: fontStack(font.family) }} role="img" aria-label="Preview of the terminal theme's colours">
+            <div className="appearance__preview" style={{ background: preview.background, color: preview.foreground, fontFamily: fontStack(font.family, wtFont(state.wtFiles ?? [])?.family) }} role="img" aria-label="Preview of the terminal theme's colours">
               <span className="appearance__preview-text" aria-hidden="true">
                 ~/marshell $ ls
               </span>
