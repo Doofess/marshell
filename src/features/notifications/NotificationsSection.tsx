@@ -1,8 +1,7 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { Switch } from "../../components/Switch/Switch";
 import type { NotifyChannel } from "../../generated/NotifyChannel";
 import type { NotifySettings } from "../../generated/NotifySettings";
-import { useDialogFocus } from "../../lib/useDialogFocus";
 import { SettingsReadError, type SettingsSync } from "../appearance/settingsSync";
 import { failureText } from "../agents/useInstallFlow";
 import { readNotificationLink, setNotificationLink } from "./notificationLink";
@@ -189,30 +188,5 @@ export function NotificationsSection({ sync }: { sync?: SettingsSync }) {
       onCloseToTray={(keep) => void saveCloseToTray(keep)}
       onLink={(on) => void saveLink(on)}
     />
-  );
-}
-
-/** Temporary until the Settings page is wired in (slice 6e1 Task 9). */
-export function NotificationsDialog({ sync, onClose }: { sync?: SettingsSync; onClose: () => void }) {
-  const dialog = useRef<HTMLDivElement>(null);
-  const title = useRef<HTMLHeadingElement>(null);
-  useDialogFocus(dialog, title, onClose);
-  return (
-    <div className="notifications-dialog">
-      <div className="notifications-dialog__backdrop" onClick={onClose} />
-      <div ref={dialog} className="notifications-dialog__sheet" role="dialog" aria-modal="true" aria-label="Notifications">
-        <h2 ref={title} tabIndex={-1} className="notifications-dialog__title">
-          Notifications
-        </h2>
-        <div className="notifications-dialog__body">
-          <NotificationsSection sync={sync} />
-        </div>
-        <footer className="notifications-dialog__foot">
-          <button type="button" className="notifications-dialog__btn" onClick={onClose}>
-            Close
-          </button>
-        </footer>
-      </div>
-    </div>
   );
 }

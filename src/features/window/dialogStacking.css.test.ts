@@ -14,13 +14,9 @@ const zIndexOf = (css: string, selector: string) => {
 // Each of these covers the whole live window as a sibling of the sidebar, so it has to sit above the sidebar's resize handle.
 const DIALOGS: [string, string][] = [
   ["../departures/LiveDepartures.css", ".departures"],
-  ["../appearance/AppearanceSections.css", ".appearance-dialog"],
+  ["../settings/LiveSettings.css", ".live-settings"],
   ["../sessions/LiveShortcuts.css", ".live-shortcuts"],
-  ["../settings/ProfilesSection.css", ".profiles-dialog"],
   ["../tasks/ReviewSheet.css", ".review"],
-  ["../notifications/NotificationsSection.css", ".notifications-dialog"],
-  ["../agents/AgentsSection.css", ".agents-dialog"],
-  ["../diagnostics/AdvancedSection.css", ".diagnostics-dialog"],
   ["./CloseDialog.css", ".close-dialog"],
 ];
 

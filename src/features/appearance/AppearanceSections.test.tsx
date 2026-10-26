@@ -2,7 +2,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import type { ImportedTheme } from "../../generated/ImportedTheme";
 import { addImported, removeImported } from "./appearanceEdits";
-import { AppearanceDialog, AppearanceView, TerminalView, type AppearanceHandlers, type AppearanceViewState } from "./AppearanceSections";
+import { AppearanceView, TerminalView, type AppearanceHandlers, type AppearanceViewState } from "./AppearanceSections";
 import { DEFAULT_APPEARANCE } from "./rootState";
 
 const noop = () => {};
@@ -117,12 +117,6 @@ describe("TerminalView (the Terminal section)", () => {
     expect(m).not.toContain('role="alert"');
     expect(m).toMatch(/Terminal font size(?:(?!<h3).)*the core didn&#x27;t answer/s);
     expect(terminalHtml({ error: { at: "theme", text: "elsewhere" } })).not.toContain("elsewhere");
-  });
-});
-
-describe("the temporary dialog", () => {
-  it("is still exported until the Settings page is wired in", () => {
-    expect(typeof AppearanceDialog).toBe("function");
   });
 });
 

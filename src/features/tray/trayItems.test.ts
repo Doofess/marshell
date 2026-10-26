@@ -39,12 +39,12 @@ describe("trayItems", () => {
   });
   it("leaves out Departures and the Doctor in the live app, which has neither to open", () => {
     const live = { ...state, doctorIssues: null, departures: false };
-    expect(ids({ ...live, sessions: [] })).toEqual(["open", "sep-1", "none", "next-waiting", "sep-2", "pause", "notifications", "sep-3", "quit"]);
-    expect(ids(live)).toEqual(["open", "sep-1", "session-3", "session-2", "next-waiting", "sep-2", "pause", "notifications", "sep-3", "quit"]);
+    expect(ids({ ...live, sessions: [] })).toEqual(["open", "sep-1", "none", "next-waiting", "sep-2", "pause", "settings", "sep-3", "quit"]);
+    expect(ids(live)).toEqual(["open", "sep-1", "session-3", "session-2", "next-waiting", "sep-2", "pause", "settings", "sep-3", "quit"]);
   });
-  it("opens Notifications where Settings used to be, and the design state still lists Departures and the Doctor", () => {
-    expect(trayItems(state).find((i) => i.id === "notifications")).toMatchObject({ label: "Notifications…", kind: "item" });
-    expect(ids(state)).not.toContain("settings");
+  it("lists Settings where Notifications was, and the design state still lists Departures and the Doctor", () => {
+    expect(trayItems(state).find((i) => i.id === "settings")).toMatchObject({ label: "Settings…", kind: "item" });
+    expect(ids(state)).not.toContain("notifications");
     expect(ids(state)).toEqual(expect.arrayContaining(["departures", "doctor"]));
   });
   it("never lists a session that is not waiting", () => {

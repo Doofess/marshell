@@ -1,10 +1,8 @@
-import { useEffect, useEffectEvent, useId, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
-import { Page } from "../../components/Page/Page";
+import { useEffect, useEffectEvent, useId, useMemo, useState, type KeyboardEvent, type ReactNode } from "react";
 import { Switch } from "../../components/Switch/Switch";
 import type { Appearance } from "../../generated/Appearance";
 import type { FoundFile } from "../../generated/FoundFile";
 import type { ImportedTheme } from "../../generated/ImportedTheme";
-import { useDialogFocus } from "../../lib/useDialogFocus";
 import { FontPicker } from "../terminal/FontPicker";
 import { fontChoiceOf, fontStack, resolveTerminalFont } from "../terminal/terminalFont";
 import { appScheme, resolveTerminalTheme, type Scheme } from "../terminal/terminalTheme";
@@ -421,23 +419,4 @@ export function AppearanceSection({ announce }: { announce?: (text: string) => v
 export function TerminalSection({ announce }: { announce?: (text: string) => void }) {
   const { state, handlers } = useAppearanceSection(announce);
   return <TerminalView state={state} handlers={handlers} />;
-}
-
-/** Temporary until the Settings page is wired in (slice 6e1 Task 9). */
-export function AppearanceDialog({ onClose, onNotice }: { onClose: () => void; onNotice?: (text: string) => void }) {
-  const dialog = useRef<HTMLDivElement>(null);
-  useDialogFocus(dialog, dialog, onClose);
-  const close = (
-    <button type="button" className="settings__btn" onClick={onClose}>
-      Close
-    </button>
-  );
-  return (
-    <div ref={dialog} className="appearance-dialog" role="dialog" aria-modal="true" aria-label="Appearance" tabIndex={-1}>
-      <Page title="Appearance" subtitle="How Marshell and its terminals look." actions={close}>
-        <AppearanceSection announce={onNotice} />
-        <TerminalSection announce={onNotice} />
-      </Page>
-    </div>
-  );
 }

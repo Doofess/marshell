@@ -1,0 +1,143 @@
+import { useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
+import type { Endpoint } from "../../generated/Endpoint";
+import { FOCUSABLE } from "../../lib/dialogFocus";
+import { trapKey } from "../../lib/focusTrap";
+import { AgentsSection } from "../agents/AgentsSection";
+import type { SetupStart } from "../agents/agentsState";
+import { AppearanceSection, TerminalSection } from "../appearance/AppearanceSections";
+import type { SettingsSync } from "../appearance/settingsSync";
+import { openerUsable } from "../departures/liveBoard";
+import { AdvancedSection } from "../diagnostics/AdvancedSection";
+import { HistorySection } from "../history/HistorySection";
+import { NotificationsSection } from "../notifications/NotificationsSection";
+import { closeOrRefuse, focusSettingsHeading, mountedWith, visibleControls } from "./settingsRouting";
+import { ProfilesSection } from "./ProfilesSection";
+import { SettingsShell, settingsKey } from "./SettingsShell";
+import type { SettingsSection } from "./settingsSections";
+import "./LiveSettings.css";
+
+/** Said when a close is refused over unsaved shell profile edits: the words the profiles dialog showed beside its disabled Close. */
+const SAVE_FIRST = "Save or discard the changes to close.";
+
+/**
+ * The sections that have been shown, each in a panel of its own. A section mounts the first time it is shown and stays mounted,
+ * hidden, so switching keeps an unsaved form; the `hidden` attribute is the only thing that hides it.
+ */
+export function SettingsPanels({ section, mounted, render }: { section: SettingsSection; mounted: SettingsSection[]; render: (id: SettingsSection) => ReactNode }) {
+  return (
+    <>
+      {mounted.map((id) => (
+        <div key={id} hidden={id !== section}>
+          {render(id)}
+        </div>
+      ))}
+    </>
+  );
+}
+
+type Props = {
+  /** The core's endpoint. Shell profiles, Agents and Advanced talk to the core and show nothing without it. */
+  endpoint?: Endpoint;
+  sync?: SettingsSync;
+  section: SettingsSection;
+  onSection: (id: SettingsSection) => void;
+  /** The row's "set up" link: Agents opens on that CLI's card. */
+  agentsStart?: SetupStart;
+  announce: (text: string) => void;
+  onProfilesSaved?: () => void;
+  onAgentsChanged?: () => void;
+  /** "Notifications" inside Agents: the window moves to that section. */
+  onNotifications: () => void;
+  /** `focusTerminal` is true when the element that had the focus before the page opened can't take it back. */
+  onClose: (focusTerminal: boolean) => void;
+};
+
+/**
+ * The Settings page in the live window: it covers the window as Departures does, and the session area stays mounted behind it.
+ * Focus moves to the shown section's heading on open and on a section change. Esc and "Back to sessions" close it, unless
+ * something inside already handled that Esc or the shell profiles hold unsaved edits; focus then returns to what had it before.
+ */
+export function LiveSettings({ endpoint, sync, section, onSection, agentsStart, announce, onProfilesSaved, onAgentsChanged, onNotifications, onClose }: Props) {
+  const root = useRef<HTMLDivElement>(null);
+  const opener = useRef<HTMLElement | null | undefined>(undefined);
+  const profilesCanClose = useRef(true);
+  const [profilesClosable, setProfilesClosable] = useState(true);
+  const [mounted, setMounted] = useState<SettingsSection[]>([section]);
+  const shown = mountedWith(mounted, section);
+  if (shown !== mounted) setMounted(shown);
+
+  // First, so the heading doesn't become the opener: it is read once, however often the effects run.
+  useEffect(() => {
+    if (opener.current === undefined) opener.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+  }, []);
+  useEffect(() => focusSettingsHeading(root.current), [section]);
+
+  const close = () => {
+    if (closeOrRefuse(profilesCanClose.current) === "refuse") {
+      announce(SAVE_FIRST);
+      onSection("profiles");
+      return;
+    }
+    const usable = openerUsable(opener.current, document.body);
+    onClose(!usable);
+    if (usable) opener.current?.focus();
+  };
+
+  const onKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
+    if (e.key === "Tab") {
+      // A popup inside that keeps Tab for itself has already prevented it.
+      if (e.defaultPrevented) return;
+      const controls = visibleControls([...e.currentTarget.querySelectorAll<HTMLElement>(FOCUSABLE)]);
+      const action = trapKey(e, controls.length, controls.indexOf(document.activeElement as HTMLElement));
+      e.preventDefault();
+      if (action?.kind === "focus") controls[action.index]?.focus();
+      return;
+    }
+    if (settingsKey(e) !== "close") return;
+    e.preventDefault();
+    e.stopPropagation();
+    if (!e.repeat) close();
+  };
+
+  const render = (id: SettingsSection): ReactNode => {
+    switch (id) {
+      case "appearance":
+        return <AppearanceSection announce={announce} />;
+      case "terminal":
+        return <TerminalSection announce={announce} />;
+      case "notifications":
+        return <NotificationsSection sync={sync} />;
+      case "profiles":
+        return (
+          endpoint && (
+            <>
+              <ProfilesSection
+                endpoint={endpoint}
+                announce={announce}
+                onSaved={onProfilesSaved}
+                onCanClose={(can) => {
+                  profilesCanClose.current = can;
+                  setProfilesClosable(can);
+                }}
+              />
+              {!profilesClosable && <p className="field__help profiles__saved">{SAVE_FIRST}</p>}
+            </>
+          )
+        );
+      case "history":
+        return <HistorySection sync={sync} announce={announce} />;
+      case "agents":
+        return endpoint && <AgentsSection endpoint={endpoint} sync={sync} startWith={agentsStart} announce={announce} onChanged={onAgentsChanged} onNotifications={onNotifications} />;
+      case "advanced":
+        return endpoint && <AdvancedSection endpoint={endpoint} announce={announce} />;
+    }
+  };
+
+  return (
+    <div ref={root} className="live-settings" role="dialog" aria-modal="true" aria-label="Settings" tabIndex={-1} onKeyDown={onKeyDown}>
+      <SettingsShell section={section} onSection={onSection} onClose={close}>
+        <SettingsPanels section={section} mounted={shown} render={render} />
+      </SettingsShell>
+    </div>
+  );
+}

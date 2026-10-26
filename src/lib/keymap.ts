@@ -93,6 +93,7 @@ export const COMMANDS: Command[] = [
   { id: "prompt-prev", label: "Jump to the previous prompt", group: "Tools", binding: { code: "PageUp" } },
   { id: "prompt-next", label: "Jump to the next prompt", group: "Tools", binding: { code: "PageDown" } },
   { id: "cheatsheet", label: "Keyboard shortcuts", group: "Tools", binding: { code: "KeyO" } },
+  { id: "settings", label: "Settings…", group: "Tools" },
   { id: "profiles", label: "Shell profiles…", group: "Tools" },
   { id: "appearance", label: "Appearance…", group: "Tools" },
   { id: "agents", label: "Agents…", group: "Tools" },

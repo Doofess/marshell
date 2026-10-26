@@ -5,7 +5,6 @@ import type { ExportPreview } from "../../generated/ExportPreview";
 import type { LoggingState } from "../../generated/LoggingState";
 import { ApiError } from "../../lib/api/client";
 import { diagnostics, exportName, formatBytes, saveExport } from "../../lib/api/diagnostics";
-import { useDialogFocus } from "../../lib/useDialogFocus";
 import "./AdvancedSection.css";
 
 export const EXPIRED = "This export has expired. Prepare it again.";
@@ -260,30 +259,5 @@ export function AdvancedSection({ endpoint, announce }: { endpoint: Endpoint; an
       onBack={() => setViewing(null)}
       onSave={() => void save()}
     />
-  );
-}
-
-/** Temporary until the Settings page is wired in (slice 6e1 Task 9). */
-export function DiagnosticsDialog({ endpoint, onClose, onNotice }: { endpoint: Endpoint; onClose: () => void; onNotice?: (text: string) => void }) {
-  const dialog = useRef<HTMLDivElement>(null);
-  const title = useRef<HTMLHeadingElement>(null);
-  useDialogFocus(dialog, title, onClose);
-  return (
-    <div className="diagnostics-dialog">
-      <div className="diagnostics-dialog__backdrop" onClick={onClose} />
-      <div ref={dialog} className="diagnostics-dialog__sheet" role="dialog" aria-modal="true" aria-label="Diagnostics">
-        <h2 ref={title} tabIndex={-1} className="diagnostics-dialog__title">
-          Diagnostics
-        </h2>
-        <div className="diagnostics-dialog__body">
-          <AdvancedSection endpoint={endpoint} announce={onNotice} />
-        </div>
-        <footer className="diagnostics-dialog__foot">
-          <button type="button" className="diagnostics-dialog__btn" onClick={onClose}>
-            Close
-          </button>
-        </footer>
-      </div>
-    </div>
   );
 }

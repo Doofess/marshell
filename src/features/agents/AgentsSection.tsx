@@ -6,7 +6,6 @@ import type { AgentSetup } from "../../generated/AgentSetup";
 import type { Endpoint } from "../../generated/Endpoint";
 import type { RemovePreview } from "../../generated/RemovePreview";
 import { applyPreview, getSetup, planRemove, previewDiff, type HookAgent } from "../../lib/api/agents";
-import { useDialogFocus } from "../../lib/useDialogFocus";
 import { SettingsReadError, type SettingsSync } from "../appearance/settingsSync";
 import { ConsentCard } from "../onboarding/ConsentCard";
 import { CLI_NAME, type Capability } from "../onboarding/consent";
@@ -440,42 +439,5 @@ export function AgentsSection({
       onReload={() => void (mode === "off" ? startOff(active) : install.plan())}
       onTurnOff={() => void turnOff()}
     />
-  );
-}
-
-/** Temporary until the Settings page is wired in (slice 6e1 Task 9). */
-export function AgentsDialog({
-  onClose,
-  onNotice,
-  ...section
-}: {
-  endpoint: Endpoint;
-  onClose: () => void;
-  onNotice?: (text: string) => void;
-  onChanged?: () => void;
-  startWith?: SetupStart;
-  onNotifications: () => void;
-  sync?: SettingsSync;
-}) {
-  const dialog = useRef<HTMLDivElement>(null);
-  const title = useRef<HTMLHeadingElement>(null);
-  useDialogFocus(dialog, title, onClose);
-  return (
-    <div className="agents-dialog">
-      <div className="agents-dialog__backdrop" onClick={onClose} />
-      <div ref={dialog} className="agents-dialog__sheet" role="dialog" aria-modal="true" aria-label="Agents">
-        <h2 ref={title} tabIndex={-1} className="agents-dialog__title">
-          Agents
-        </h2>
-        <div className="agents-dialog__body">
-          <AgentsSection {...section} announce={onNotice} />
-        </div>
-        <footer className="agents-dialog__foot">
-          <button type="button" className="agents-dialog__btn" onClick={onClose}>
-            Close
-          </button>
-        </footer>
-      </div>
-    </div>
   );
 }

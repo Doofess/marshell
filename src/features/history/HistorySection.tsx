@@ -1,6 +1,5 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { Switch } from "../../components/Switch/Switch";
-import { useDialogFocus } from "../../lib/useDialogFocus";
 import { failureText } from "../agents/useInstallFlow";
 import { SettingsReadError, type SettingsSync } from "../appearance/settingsSync";
 import { SETTINGS_UNREADABLE } from "../notifications/NotificationsSection";
@@ -48,29 +47,4 @@ export function HistorySection({ sync, announce }: { sync?: SettingsSync; announ
     }
   };
   return <HistorySettingsView on={on} error={error} sync={sync} announce={announce} onChange={(next) => void save(next)} />;
-}
-
-/** Temporary until the Settings page is wired in (slice 6e1 Task 9). */
-export function HistorySettingsDialog({ sync, announce, onClose }: { sync?: SettingsSync; announce?: (text: string) => void; onClose: () => void }) {
-  const dialog = useRef<HTMLDivElement>(null);
-  const title = useRef<HTMLHeadingElement>(null);
-  useDialogFocus(dialog, title, onClose);
-  return (
-    <div className="notifications-dialog">
-      <div className="notifications-dialog__backdrop" onClick={onClose} />
-      <div ref={dialog} className="notifications-dialog__sheet" role="dialog" aria-modal="true" aria-label="History settings">
-        <h2 ref={title} tabIndex={-1} className="notifications-dialog__title">
-          History settings
-        </h2>
-        <div className="notifications-dialog__body">
-          <HistorySection sync={sync} announce={announce} />
-        </div>
-        <footer className="notifications-dialog__foot">
-          <button type="button" className="notifications-dialog__btn" onClick={onClose}>
-            Close
-          </button>
-        </footer>
-      </div>
-    </div>
-  );
 }

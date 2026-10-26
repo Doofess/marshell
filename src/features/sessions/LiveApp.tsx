@@ -27,40 +27,38 @@ import { inMenu } from "../../components/ContextMenu/menuKeys";
 import { focusAfterMenu, menuFacts, modeOfItem } from "./sessionMenuRun";
 import { ContextMenu } from "../../components/ContextMenu/ContextMenu";
 import { tasksApi } from "../../lib/api/tasks";
+import { findCommand } from "../../lib/bindings";
 import { cancelsCloseBar, commandShortcut, sessionShortcut, type SessionShortcut } from "../../lib/appShortcuts";
 import { nextWaiting } from "../lane/laneLayout";
 import { focusPendingCard } from "../approval/focusPendingCard";
 import { osOfPlatform } from "../../lib/keymap";
 import { paletteSessions } from "../palette/sessions";
-import { HistorySettingsDialog } from "../history/HistorySection";
 import { LiveHistory } from "../history/LiveHistory";
+import { LiveSettings } from "../settings/LiveSettings";
+import { closesSettings, paletteSection, settingsStart } from "../settings/settingsRouting";
+import type { SettingsSection } from "../settings/settingsSections";
 import { Preview } from "../preview/Preview";
 import { PreviewContext } from "../preview/PreviewContext";
 import { currentOf, usePreview } from "../preview/previewState";
-import { ProfilesDialog } from "../settings/ProfilesSection";
 import { modeMenuItems, sessionMenuItems } from "../sidebar/sessionMenu";
 import { nextSessionNumber } from "../sidebar/sessionNumber";
 import type { Mode, RowModel } from "../sidebar/types";
-import { AgentsDialog } from "../agents/AgentsSection";
 import { rowSetupStart, type SetupStart } from "../agents/agentsState";
-import { DiagnosticsDialog } from "../diagnostics/AdvancedSection";
 import { LiveOnboarding } from "../onboarding/LiveOnboarding";
 import { getSetup, type HookAgent } from "../../lib/api/agents";
 import type { HookInstall } from "../../generated/HookInstall";
 import type { AgentCatalog } from "../../generated/AgentCatalog";
 import { catalogApi } from "../../lib/api/catalog";
 import { offeredModes } from "../modes/sessionModes";
-import { AppearanceDialog } from "../appearance/AppearanceSections";
 import { useAppearance } from "../appearance/AppearanceProvider";
 import { listen } from "@tauri-apps/api/event";
 import { needsYouCount } from "../attention/attention";
 import { useAttention } from "../attention/useAttention";
 import { useRowFlash } from "../attention/rowFlash";
 import { notify } from "../../lib/api/notify";
-import { jumpCloses, trayClosesBoard, traySessions, useTray, useTrayActions, type TrayAction } from "../tray/useTray";
+import { jumpCloses, trayClosesOverlay, traySessions, useTray, useTrayActions, type TrayAction } from "../tray/useTray";
 import { CloseDialog } from "../window/CloseDialog";
 import { chooseClose as applyCloseChoice } from "../window/closeChoice";
-import { NotificationsDialog } from "../notifications/NotificationsSection";
 import { useViewReport } from "../notifications/useViewReport";
 import { focusTarget, linkFocusSelector } from "../notifications/notificationLink";
 import { terminalThemeOf, wtFont } from "../appearance/terminalSettings";
@@ -212,12 +210,26 @@ export function LiveApp() {
   const wtFamily = wt?.family?.trim() || undefined;
   const terminalFont = useMemo(() => ({ family: font.family, size: font.size, wtFamily }), [font.family, font.size, wtFamily]);
   const [launcherOpen, setLauncherOpen] = useState(false);
-  // The command palette, or the shell profiles page opened from it, over the window.
-  const [overlay, setOverlay] = useState<"palette" | "profiles" | "appearance" | "agents" | "notifications" | "history-settings" | "diagnostics" | "shortcuts" | "departures" | null>(null);
-  // The agent catalog, for the modes a running manifest agent can switch to. Read when the window opens and again when the Agents
-  // dialog closes (own agents may have changed). Without it a manifest agent offers no mode, never one the core would refuse.
+  // The command palette, the Departures board or the Settings page, over the window.
+  const [overlay, setOverlay] = useState<"palette" | "settings" | "shortcuts" | "departures" | null>(null);
+  // The Settings page's section, and the one shown last in this run: the tray's Settings… reopens that one.
+  const [settingsSection, setSettingsSection] = useState<SettingsSection>("appearance");
+  const lastSettingsSection = useRef<SettingsSection | null>(null);
+  // `null` opens the section shown last in this run, else Appearance.
+  const openSettings = (section: SettingsSection | null) => {
+    const next = section ?? settingsStart(lastSettingsSection.current);
+    lastSettingsSection.current = next;
+    setSettingsSection(next);
+    setOverlay("settings");
+  };
+  const showSettingsSection = (section: SettingsSection) => {
+    lastSettingsSection.current = section;
+    setSettingsSection(section);
+  };
+  // The agent catalog, for the modes a running manifest agent can switch to. Read when the window opens and again when the Settings
+  // page closes (own agents may have changed). Without it a manifest agent offers no mode, never one the core would refuse.
   const [catalog, setCatalog] = useState<AgentCatalog | null>(null);
-  const agentsOpen = overlay === "agents";
+  const agentsOpen = overlay === "settings";
   useEffect(() => {
     if (!endpoint || agentsOpen) return;
     let live = true;
@@ -230,8 +242,19 @@ export function LiveApp() {
     };
   }, [endpoint, agentsOpen]);
   const modesOf = useCallback((agent: string) => offeredModes(agent, catalog), [catalog]);
-  // The Agents dialog opened from a row's "set up" starts on the Set up card.
+  // The Agents section opened from a row's "set up" starts on the Set up card.
   const [agentsFrom, setAgentsFrom] = useState<SetupStart | null>(null);
+  // Leaving the Settings page, by Back, Esc or a jump to a session, forgets that start and reads the hooks again.
+  const refreshSetupRef = useRef(refreshSetup);
+  refreshSetupRef.current = refreshSetup;
+  const settingsOpen = overlay === "settings";
+  useEffect(() => {
+    if (!settingsOpen) return;
+    return () => {
+      setAgentsFrom(null);
+      refreshSetupRef.current();
+    };
+  }, [settingsOpen]);
   // First run: shown once, when the saved settings say the onboarding was not seen. Nothing shows until that read has answered;
   // a failed read shows none.
   const [onboardingShown, setOnboardingShown] = useState<OnboardingShown>("unknown");
@@ -668,7 +691,7 @@ export function LiveApp() {
   // Escape cancels the bar from anywhere. Captured, so it never reaches the terminal: Escape would interrupt the agent the bar is about.
   const barOpen = closing !== null || restarting !== null || pauseBar !== null;
   useEffect(() => {
-    if (!barOpen || overlay === "departures") return;
+    if (!barOpen || overlay === "departures" || overlay === "settings") return;
     const onEscape = (e: KeyboardEvent) => {
       // An open row menu has its own Escape, which closes it and nothing else.
       if (!cancelsCloseBar(e, true) || inMenu(e.target)) return;
@@ -1122,9 +1145,29 @@ export function LiveApp() {
     return () => window.removeEventListener("keydown", onKey);
   }, [os, launcherOpen, overlay, review, closeAsk, actions, jumpPrompt, paneCommand]);
 
+  // The other shortcuts are off under the Settings page, but a jump to a session still works: it closes the page and goes there.
+  // A text box keeps its own keys.
+  useEffect(() => {
+    if (!os || overlay !== "settings") return;
+    const onKey = (e: KeyboardEvent) => {
+      const id = findCommand(e, os)?.id;
+      const shortcut = id !== undefined && closesSettings(id) ? sessionShortcut(e, os) : null;
+      if (!shortcut || isTextBox(e.target as HTMLElement | null)) return;
+      e.preventDefault();
+      if (e.repeat) return;
+      setOverlay(null);
+      if (!paneCommand(shortcut)) actions.handle(shortcut);
+      if (shortcut.kind === "goto") setTimeout(() => actions.focusTerminal(), 0);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [os, overlay, actions, paneCommand]);
+
   // A palette row: a session to go to, the profiles page, or a command the window runs (LivePalette lists only those).
   const runFromPalette = (id: string) => {
-    setOverlay(id === "profiles" || id === "appearance" || id === "agents" || id === "notifications" || id === "history-settings" || id === "diagnostics" || id === "departures" ? id : id === "cheatsheet" ? "shortcuts" : null);
+    const section = paletteSection(id);
+    if (section) return openSettings(section);
+    setOverlay(id === "departures" ? id : id === "cheatsheet" ? "shortcuts" : null);
     if (id.startsWith("session:")) return pick(id.slice("session:".length));
     // Palette-only commands. The menu opens after the palette has given the focus back, so it keeps the focus it takes.
     if (id === "pause-notifications") return void togglePause();
@@ -1188,10 +1231,10 @@ export function LiveApp() {
   useTray(trayState);
   // A tray menu choice. The shell has already brought the window forward for the ones that need it.
   useTrayActions((action: TrayAction) => {
-    if (trayClosesBoard(action, overlay)) setOverlay(null);
+    if (trayClosesOverlay(action, overlay)) setOverlay(null);
     if (action.kind === "goto") actions.handle({ kind: "goto", number: action.number });
     else if (action.kind === "nextWaiting") paneCommand({ kind: "nextWaiting" });
-    else if (action.kind === "overlay") setOverlay(action.overlay);
+    else if (action.kind === "overlay") action.overlay === "settings" ? openSettings(null) : setOverlay(action.overlay);
     else void togglePause();
   });
   // The close button with no choice saved: the shell keeps the window open and asks for the one-time dialog.
@@ -1372,11 +1415,12 @@ export function LiveApp() {
                 size={() => size.current}
                 announce={announce}
                 onGoTo={(tabId) => {
+                  setOverlay((o) => (jumpCloses(o) ? null : o));
                   pick(tabId);
                   setTimeout(() => actions.focusTerminal(), 0);
                 }}
                 onResumed={pick}
-                onSettings={() => setOverlay("history-settings")}
+                onSettings={() => openSettings("history")}
                 onOpenFile={(link) => {
                   setMainView("sessions");
                   preview.open(link);
@@ -1434,7 +1478,7 @@ export function LiveApp() {
           onReview={reviewSession}
           onSetup={(id) => {
             setAgentsFrom(rowSetupStart(sidebarRows.find((r) => r.id === id)?.agent ?? "claude"));
-            setOverlay("agents");
+            openSettings("agents");
           }}
           menuItems={os ? menuItems : undefined}
           onMenuRun={onMenuRun}
@@ -1512,11 +1556,26 @@ export function LiveApp() {
           onAskAgent={askAgent}
         />
       )}
-      {overlay === "profiles" && endpoint && <ProfilesDialog endpoint={endpoint} onClose={() => setOverlay(null)} onNotice={announce} onSaved={reloadProfiles} />}
-      {overlay === "agents" && endpoint && <AgentsDialog endpoint={endpoint} sync={sync ?? undefined} startWith={agentsFrom ?? undefined} onClose={() => { setOverlay(null); setAgentsFrom(null); refreshSetup(); }} onNotice={announce} onChanged={refreshSetup} onNotifications={() => { setAgentsFrom(null); setOverlay("notifications"); }} />}
-      {overlay === "notifications" && <NotificationsDialog sync={sync ?? undefined} onClose={() => setOverlay(null)} />}
-      {overlay === "history-settings" && <HistorySettingsDialog sync={sync ?? undefined} announce={announce} onClose={() => setOverlay(null)} />}
-      {overlay === "diagnostics" && endpoint && <DiagnosticsDialog endpoint={endpoint} onClose={() => setOverlay(null)} onNotice={announce} />}
+      {overlay === "settings" && (
+        <LiveSettings
+          endpoint={endpoint ?? undefined}
+          sync={sync ?? undefined}
+          section={settingsSection}
+          onSection={showSettingsSection}
+          agentsStart={agentsFrom ?? undefined}
+          announce={announce}
+          onProfilesSaved={reloadProfiles}
+          onAgentsChanged={refreshSetup}
+          onNotifications={() => {
+            setAgentsFrom(null);
+            showSettingsSection("notifications");
+          }}
+          onClose={(focusTerminal) => {
+            setOverlay(null);
+            if (focusTerminal) setTimeout(() => actions.focusTerminal(), 0);
+          }}
+        />
+      )}
       {onboarding && endpoint && (
         <div className="live-app__onboarding">
           <LiveOnboarding
@@ -1529,7 +1588,6 @@ export function LiveApp() {
           />
         </div>
       )}
-      {overlay === "appearance" && <AppearanceDialog onClose={() => setOverlay(null)} onNotice={announce} />}
       {overlay === "shortcuts" && os && <LiveShortcuts os={os} onClose={() => setOverlay(null)} />}
       {closeAsk && <CloseDialog busy={closeAsk.busy} error={closeAsk.error} onChoose={(keep) => void chooseClose(keep)} onCancel={cancelCloseAsk} />}
       {launcherOpen && (

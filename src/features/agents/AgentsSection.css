@@ -1,49 +1,8 @@
-/* The Agents section, and its temporary dialog frame (until the Settings page is wired in): a sheet over the window like the launcher's. Fills, never boxes; only the body scrolls, so Close is always reachable. */
+/* The Agents section of the Settings page. Fills, never boxes; the page body scrolls. */
 .agents {
   display: grid;
   gap: var(--space-3);
   align-content: start;
-}
-.agents-dialog {
-  position: absolute;
-  inset: 0;
-  z-index: 20;
-  display: grid;
-  grid-template-rows: minmax(0, 1fr);
-  place-items: center;
-  padding: var(--space-4);
-  color: var(--text-1);
-  font-size: var(--text-13);
-}
-.agents-dialog__backdrop {
-  position: absolute;
-  inset: 0;
-  background: color-mix(in oklch, var(--bg-base) 55%, transparent);
-}
-.agents-dialog__sheet {
-  position: relative;
-  display: grid;
-  grid-template-rows: auto minmax(0, 1fr) auto;
-  gap: var(--space-3);
-  inline-size: min(640px, 100%);
-  max-block-size: 100%;
-  padding: var(--space-4);
-  border-radius: var(--radius);
-  background: var(--bg-overlay);
-  box-shadow: var(--shadow-menu);
-}
-.agents-dialog__title {
-  margin: 0;
-  font-size: var(--text-15);
-  font-weight: 600;
-}
-.agents-dialog__body {
-  display: grid;
-  gap: var(--space-3);
-  align-content: start;
-  min-block-size: 0;
-  overflow-y: auto;
-  scrollbar-gutter: stable;
 }
 .agents-dialog__agent,
 .agents-dialog__off {
@@ -89,14 +48,10 @@
 .agents-dialog__error {
   color: var(--caution);
 }
-.agents-dialog__actions,
-.agents-dialog__foot {
+.agents-dialog__actions {
   display: flex;
   flex-wrap: wrap;
   gap: var(--space-2);
-}
-.agents-dialog__foot {
-  justify-content: flex-end;
 }
 .agents-dialog__btn {
   padding: var(--space-1) var(--space-3);
@@ -113,9 +68,7 @@
   background: var(--selected, var(--fill-strong));
 }
 .agents-dialog__btn:focus-visible,
-.agents-dialog__title:focus-visible,
-.agents-dialog__agent:focus-visible,
-.agents-dialog__body:focus-visible {
+.agents-dialog__agent:focus-visible {
   outline: 2px solid var(--focus, var(--accent));
   outline-offset: 2px;
 }
@@ -125,7 +78,6 @@
   }
 }
 @media (forced-colors: active) {
-  .agents-dialog__sheet,
   .agents-dialog__btn {
     outline: 1px solid CanvasText;
   }

@@ -1,11 +1,9 @@
-import { useEffect, useEffectEvent, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { useEffect, useEffectEvent, useMemo, useState, useSyncExternalStore } from "react";
 import { selectedProps } from "../../components/a11y/SelectedMark";
 import { EmptyState } from "../../components/EmptyState/EmptyState";
-import { Page } from "../../components/Page/Page";
 import type { Endpoint } from "../../generated/Endpoint";
 import type { Profile } from "../../generated/Profile";
 import { profiles as profilesApi } from "../../lib/api/profiles";
-import { useDialogFocus } from "../../lib/useDialogFocus";
 import { useAppearance } from "../appearance/AppearanceProvider";
 import { changeCount, commandRoundTrips, duplicateEnvKeys, forSave, joinCommand, profileKind, splitCommand, type ProfilePatch } from "./profilesDoc";
 import { Switch } from "../../components/Switch/Switch";
@@ -290,32 +288,4 @@ export function ProfilesSection({ endpoint, announce, onSaved, onCanClose }: { e
     [store],
   );
   return <ProfilesView state={state} handlers={handlers} themes={appearance.imported_themes} />;
-}
-
-/** Temporary until the Settings page is wired in (slice 6e1 Task 9). */
-export function ProfilesDialog({ endpoint, onClose, onNotice, onSaved }: { endpoint: Endpoint; onClose: () => void; onNotice?: (text: string) => void; onSaved?: () => void }) {
-  const dialog = useRef<HTMLDivElement>(null);
-  const [closable, setClosable] = useState(true);
-  const closableNow = useRef(true);
-  // Escape does nothing while there are unsaved edits (the change bar stays); Close is off then too.
-  useDialogFocus(dialog, dialog, () => {
-    if (closableNow.current) onClose();
-  });
-  const onCanClose = (can: boolean) => {
-    closableNow.current = can;
-    setClosable(can);
-  };
-  const close = (
-    <button type="button" className="settings__btn" disabled={!closable} onClick={onClose}>
-      Close
-    </button>
-  );
-  return (
-    <div ref={dialog} className="profiles-dialog" role="dialog" aria-modal="true" aria-label="Shell profiles" tabIndex={-1}>
-      <Page title="Shell profiles" subtitle="The shells Marshell starts sessions in." actions={close}>
-        <ProfilesSection endpoint={endpoint} announce={onNotice} onSaved={onSaved} onCanClose={onCanClose} />
-        {!closable && <p className="field__help profiles__saved">Save or discard the changes to close.</p>}
-      </Page>
-    </div>
-  );
 }
