@@ -1087,3 +1087,126 @@ async fn install_reads_codex_version_json() {
     let (_, body) = get(&app, "/v1/agents/codex/install").await;
     assert_eq!(body["newer_version"], Value::Null, "{body}");
 }
+
+// ---- Sign-in status ----
+
+static ANTIGRAVITY_RUNS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+static MISSING_RUNS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+type Runner = fn(&std::path::Path, &[&str]) -> Option<(i32, String)>;
+
+/// A state whose agents are at paths that don't exist and whose status command is `runner`: nothing real is run.
+fn account_app(find: fn(&str) -> Option<PathBuf>, runner: Runner) -> (tempfile::TempDir, axum::Router) {
+    let dir = tempfile::tempdir().unwrap();
+    let home = dir.path().join("home");
+    std::fs::create_dir_all(&home).unwrap();
+    let st = AppState::new(
+        TOKEN.into(),
+        PORT,
+        vec!["http://tauri.localhost".into()],
+        home,
+        Vec::new(),
+    )
+    .with_agent_path(find)
+    .with_status_runner(runner);
+    (dir, router(st))
+}
+
+fn fake_path(name: &str) -> Option<PathBuf> {
+    Some(PathBuf::from(format!(r"Z:\nowhere\{name}.exe")))
+}
+
+#[tokio::test]
+async fn account_is_refused_without_the_bearer() {
+    let (_dir, app) = account_app(fake_path, |_, _| None);
+    let req = Request::builder()
+        .method("GET")
+        .uri("/v1/agents/claude/account")
+        .header(header::HOST, format!("127.0.0.1:{PORT}"))
+        .body(Body::empty())
+        .unwrap();
+    let (status, _) = send(&app, req).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn account_for_an_unknown_agent_is_404() {
+    let (_dir, app) = account_app(fake_path, |_, _| None);
+    let (status, body) = get(&app, "/v1/agents/nope/account").await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+}
+
+#[tokio::test]
+async fn account_for_antigravity_is_no_command() {
+    use std::sync::atomic::Ordering;
+    let (_dir, app) = account_app(fake_path, |_, _| {
+        ANTIGRAVITY_RUNS.fetch_add(1, Ordering::SeqCst);
+        None
+    });
+    let (status, body) = get(&app, "/v1/agents/antigravity/account").await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["agent"], "antigravity");
+    assert_eq!(body["sign_in"], "no_command");
+    assert_eq!(ANTIGRAVITY_RUNS.load(Ordering::SeqCst), 0, "nothing ran");
+}
+
+#[tokio::test]
+async fn account_for_a_missing_cli_is_unknown() {
+    use std::sync::atomic::Ordering;
+    let (_dir, app) = account_app(
+        |_| None,
+        |_, _| {
+            MISSING_RUNS.fetch_add(1, Ordering::SeqCst);
+            None
+        },
+    );
+    for agent in ["claude", "codex"] {
+        let (status, body) = get(&app, &format!("/v1/agents/{agent}/account")).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["agent"], agent);
+        assert_eq!(body["sign_in"], "unknown");
+        assert_eq!(body["email"], Value::Null);
+        assert_eq!(body["plan"], Value::Null);
+        assert_eq!(body["method"], Value::Null);
+    }
+    assert_eq!(MISSING_RUNS.load(std::sync::atomic::Ordering::SeqCst), 0, "nothing ran");
+}
+
+#[tokio::test]
+async fn account_reads_claude_status_from_the_runner() {
+    let (_dir, app) = account_app(fake_path, |_, args| {
+        assert_eq!(args, ["auth", "status"]);
+        Some((
+            0,
+            r#"{"loggedIn":true,"authMethod":"claude.ai","email":"a@example.com","subscriptionType":"max"}"#.into(),
+        ))
+    });
+    let (status, body) = get(&app, "/v1/agents/claude/account").await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["sign_in"], "signed_in");
+    assert_eq!(body["email"], "a@example.com");
+    assert_eq!(body["plan"], "max");
+    assert_eq!(body["method"], Value::Null);
+    // Milliseconds since the Unix epoch (after 2020).
+    assert!(body["checked_ms"].as_u64().unwrap() > 1_600_000_000_000, "{body}");
+}
+
+#[tokio::test]
+async fn account_never_returns_the_codex_output() {
+    let (_dir, app) = account_app(fake_path, |_, args| {
+        assert_eq!(args, ["login", "status"]);
+        Some((0, "Logged in using an API key - sk-proj-***abcd\n".into()))
+    });
+    let (status, body) = get(&app, "/v1/agents/codex/account").await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["sign_in"], "signed_in");
+    assert_eq!(body["method"], "an API key");
+    assert!(!body.to_string().contains("sk-"), "{body}");
+}
+
+#[tokio::test]
+async fn account_is_unknown_when_the_command_times_out() {
+    let (_dir, app) = account_app(fake_path, |_, _| None);
+    let (_, body) = get(&app, "/v1/agents/codex/account").await;
+    assert_eq!(body["sign_in"], "unknown", "{body}");
+}

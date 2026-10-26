@@ -2,6 +2,7 @@
 //! Only `claude`, `codex` and `antigravity` have an adapter; any other agent is a 404. Applying goes through `/v1/config/apply`.
 
 use super::AppState;
+use crate::agents::account::{claude_status, codex_status};
 use crate::agents::antigravity::hooks as agy;
 use crate::agents::claude::{self, hooks};
 use crate::agents::codex::{self, trust};
@@ -14,6 +15,7 @@ use crate::profiles::detect::{agent_command, agent_exe};
 use axum::Json;
 use axum::extract::{Path as UrlPath, Query, State};
 use axum::http::StatusCode;
+use marshell_protocol::account::{AccountStatus, SignIn};
 use marshell_protocol::agents::{
     AgentFound, AgentSetup, HookInstall, HookPlanRequest, ParseProblem, RemovePreview, SettingsState,
 };
@@ -588,6 +590,49 @@ fn install_of(st: &AppState, agent: &str, recheck: bool) -> AgentInstall {
         install,
         newer_version,
     }
+}
+
+/// Whether one agent CLI is signed in, asked of the CLI's own status command. Its output stays in here: only the state,
+/// the email, the plan and how it is signed in go out.
+pub async fn account(State(st): State<AppState>, UrlPath(agent): UrlPath<String>) -> Result<Json<AccountStatus>, Fail> {
+    let kind = adapter(&agent)?;
+    let status = tokio::task::spawn_blocking(move || account_of(&st, &agent, kind))
+        .await
+        .map_err(failed)?;
+    Ok(Json(status))
+}
+
+fn account_of(st: &AppState, agent: &str, kind: Adapter) -> AccountStatus {
+    let mut status = AccountStatus {
+        agent: agent.to_string(),
+        sign_in: SignIn::Unknown,
+        email: None,
+        plan: None,
+        method: None,
+        checked_ms: 0,
+    };
+    match kind {
+        // Antigravity has no status command, so nothing is run.
+        Adapter::Antigravity => status.sign_in = SignIn::NoCommand,
+        Adapter::Claude => {
+            if let Some(exe) = st.agent_exe_of(agent)
+                && let Some((code, out)) = (st.0.status_runner)(&exe, &["auth", "status"])
+            {
+                (status.sign_in, status.email, status.plan) = claude_status(&out, code);
+            }
+        }
+        Adapter::Codex => {
+            if let Some(exe) = st.agent_exe_of(agent)
+                && let Some((code, out)) = (st.0.status_runner)(&exe, &["login", "status"])
+            {
+                (status.sign_in, status.method) = codex_status(&out, code);
+            }
+        }
+    }
+    status.checked_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_millis() as u64);
+    status
 }
 
 /// Codex's `version.json` in `dir`, read against the installed `version`. A file that can't be read is no news.
