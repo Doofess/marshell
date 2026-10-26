@@ -38,6 +38,11 @@ describe("CompanyView", () => {
     expect(html).toContain("Version 2.2.0 is available.");
     expect(html).toContain("Claude Code is running in 2 tabs. The update may fail while they run.");
   });
+  it("shows no scope badge for a setting the file doesn't set", () => {
+    const html = render({ view: view({ curated: [{ key: "effortLevel", value: null, scope: "user" }] }) });
+    expect(html).toContain("–");
+    expect(html).not.toContain("data-scope");
+  });
   it("shows an en dash for an unset curated key and the Managed badge", () => {
     const html = render();
     expect(html).toContain("Default model");

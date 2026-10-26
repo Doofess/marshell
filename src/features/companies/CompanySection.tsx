@@ -99,7 +99,7 @@ export function CompanyView({ agent, name, install, view, running, mode, onMode,
                     <li key={f.key} className="field">
                       <div className="field__head">
                         <span className="field__label">{f.label}</span>
-                        <ScopeBadge scope={v?.scope ?? "user"} />
+                        {v?.value != null && <ScopeBadge scope={v.scope} />}
                       </div>
                       <p className="field__help" dir="auto">
                         {f.help}

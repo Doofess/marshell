@@ -28,6 +28,7 @@ const EDGES: Record<string, string[]> = {
   "features/palette/Palette.css": [".palette__sheet", ".palette__input"],
   "features/notifications/NotificationsSection.css": [".notifications-dialog__group", ".notifications-dialog__input", ".notifications-dialog__btn"],
   "features/agents/AgentsSection.css": [".agents-dialog__btn", ".agents-dialog__warning"],
+  "features/accounts/AccountsSection.css": [".accounts__btn"],
 };
 
 const read = (f: string) => readFileSync(new URL(`../${f}`, import.meta.url), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
