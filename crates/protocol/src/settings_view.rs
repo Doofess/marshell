@@ -105,8 +105,8 @@ pub struct AgentSettingsView {
     pub curated: Vec<SettingValue>,
     /// The file's other top-level keys, sorted.
     pub others: Vec<SettingValue>,
-    /// The masked values written back out as pretty JSON (TOML for Codex); comments and layout are left out. Only
-    /// the diff of a hidden-value file uses it.
+    /// The masked values written back out as pretty JSON (TOML for Codex); comments and layout are left out. The raw
+    /// view shows it when `text` isn't given out, and the diff of a hidden-value file uses it; None turns Raw file off.
     pub raw: Option<String>,
     /// Claude Code, Codex or Antigravity, and the file is `ok` or `missing`: a form edit can be planned.
     pub editable: bool,

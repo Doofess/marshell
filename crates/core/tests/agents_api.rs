@@ -2245,6 +2245,45 @@ async fn a_raw_save_keeps_the_files_bom() {
     let bytes = std::fs::read(&e.codex).unwrap();
     assert_eq!(leading_boms(&bytes), 1, "{bytes:?}");
     assert!(text(&bytes).contains("model = \"b\""));
+    // Two pasted BOMs: TOML's lexer skips one more, so both must go before the file's own comes back.
+    e.write("codex", "\u{feff}model = \"a\"\n");
+    e.apply_raw("codex", "\u{feff}\u{feff}model = \"c\"\n").await;
+    let bytes = std::fs::read(&e.codex).unwrap();
+    assert_eq!(leading_boms(&bytes), 1, "{bytes:?}");
+    assert!(text(&bytes).contains("model = \"c\""));
+}
+
+#[tokio::test]
+async fn a_raw_save_of_telemetry_is_refused() {
+    let e = agy_env();
+    std::fs::create_dir_all(e.settings.parent().unwrap()).unwrap();
+    let raw = |text_in: &str| {
+        json!({
+            "expected_hash": hash_at(&e.settings),
+            "change": {"kind": "raw", "text": text_in},
+        })
+    };
+    // Added, changed, and dropped: each would write the key Antigravity keeps with the Google account.
+    let cases = [
+        ("{\"model\": \"x\"}", "{\"model\": \"x\", \"enableTelemetry\": false}"),
+        ("{\"enableTelemetry\": true}", "{\"enableTelemetry\": false}"),
+        ("{\"model\": \"x\", \"enableTelemetry\": true}", "{\"model\": \"x\"}"),
+    ];
+    for (file, sent) in cases {
+        std::fs::write(&e.settings, file).unwrap();
+        let (status, bytes) = post_raw(&e.app, "/v1/agents/antigravity/settings/plan", raw(sent)).await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{file} -> {sent}");
+        assert_eq!(
+            text(&bytes),
+            "Antigravity keeps this with your Google account, not in this file. Change it with /config in Antigravity."
+        );
+        assert_eq!(std::fs::read_to_string(&e.settings).unwrap(), file);
+    }
+    // Left as it is, the key doesn't stop a raw save of the rest.
+    std::fs::write(&e.settings, "{\"model\": \"x\", \"enableTelemetry\": true}").unwrap();
+    let sent = "{\"model\": \"y\", \"enableTelemetry\": true}";
+    let (status, bytes) = post_raw(&e.app, "/v1/agents/antigravity/settings/plan", raw(sent)).await;
+    assert_eq!(status, StatusCode::OK, "{}", text(&bytes));
 }
 
 #[tokio::test]

@@ -749,7 +749,7 @@ fn now_ms() -> u64 {
         .map_or(0, |d| d.as_millis() as u64)
 }
 
-/// Plans a change to Claude's or Codex's user settings file. Everything is checked before a ChangeSet is made, no
+/// Plans a change to a company CLI's user settings file. Everything is checked before a ChangeSet is made, no
 /// message quotes a value, and the diff never shows a value the settings view hides.
 pub async fn settings_plan(
     State(st): State<AppState>,
@@ -851,11 +851,7 @@ fn form_ops(agent: &str, view: &AgentSettingsView, edits: &[SettingEdit]) -> Res
                     "{key} holds a secret value, so the form can't change it."
                 )));
             }
-            Some(FieldLock::Account) => {
-                return Err(unprocessable(
-                    "Antigravity keeps this with your Google account, not in this file. Change it with /config in Antigravity.",
-                ));
-            }
+            Some(FieldLock::Account) => return Err(unprocessable(ACCOUNT_LINE)),
             None => {}
         }
         let value = edit
@@ -911,6 +907,15 @@ fn checked(key: &str, control: &FieldControl, text: &str) -> Result<Value, Refus
     }
 }
 
+/// Why a key Antigravity keeps with the Google account (`enableTelemetry`) is never written, from the form or as text.
+const ACCOUNT_LINE: &str =
+    "Antigravity keeps this with your Google account, not in this file. Change it with /config in Antigravity.";
+
+/// The JSON value of `key` at the top of `text`; None when the text doesn't hold it.
+fn top_value(text: &str, key: &str) -> Option<Value> {
+    serde_json::from_str::<Value>(text).ok()?.get(key).cloned()
+}
+
 /// The op that replaces the file's whole text, when the view gives that text out and the new text parses.
 /// A BOM the file had stays, and only one: the text the person edits never carries it.
 fn raw_op(agent: &str, view: &AgentSettingsView, had_bom: bool, text: &str) -> Result<EditOp, Refusal> {
@@ -933,9 +938,16 @@ fn raw_op(agent: &str, view: &AgentSettingsView, had_bom: bool, text: &str) -> R
             "This file holds secret values, so Marshell doesn't edit it as text.",
         ));
     }
-    let body = text.strip_prefix('\u{feff}').unwrap_or(text);
+    // Every pasted BOM goes: TOML's lexer skips one more, so a second would reach the file.
+    let body = text.trim_start_matches('\u{feff}');
     if let Some(line) = text_problem(agent, body) {
         return Err(unprocessable(format!("The text doesn't parse at line {line}.")));
+    }
+    if agent == "antigravity" {
+        let before = view.text.as_deref().and_then(|t| top_value(t, "enableTelemetry"));
+        if top_value(body, "enableTelemetry") != before {
+            return Err(unprocessable(ACCOUNT_LINE));
+        }
     }
     let content = if had_bom {
         format!("\u{feff}{body}")

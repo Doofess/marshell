@@ -610,7 +610,7 @@ pub(crate) fn parse_masked(agent: &str, text: &str) -> Result<Parsed, u32> {
             Some(RawLock::Hidden)
         } else if hides.repeated_key {
             Some(RawLock::RepeatedKey)
-        } else if serde_json::from_str::<Value>(body).is_err() {
+        } else if !body.trim().is_empty() && serde_json::from_str::<Value>(body).is_err() {
             Some(RawLock::NotPlainJson)
         } else {
             None
@@ -1212,6 +1212,16 @@ args = [\"-y\",\"@modelcontextprotocol/server-postgres\",\"postgresql://u:pw@h/d
         let v = run("claude", text);
         assert_eq!(v.raw_lock, Some(RawLock::NotPlainJson));
         assert_eq!(v.text.as_deref(), Some(text));
+    }
+
+    #[test]
+    fn an_empty_json_file_needs_no_raw_lock() {
+        // Blank text reads as `{}` everywhere else, and has no comments or layout to lose.
+        for (agent, text) in [("claude", ""), ("antigravity", "  \n")] {
+            let v = run(agent, text);
+            assert_eq!(v.raw_lock, None, "{agent}");
+            assert_eq!(v.text.as_deref(), Some(text), "{agent}");
+        }
     }
 
     #[test]

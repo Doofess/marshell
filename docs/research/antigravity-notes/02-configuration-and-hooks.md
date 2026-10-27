@@ -76,4 +76,4 @@ How agy treats the file:
 - It also writes the file from `/config` (alias `/settings`), `/model`, `/effort`, `/statusline`, `/title`, `/permissions`, "always" answers at permission prompts, and `trustedWorkspaces`.
 - Unknown keys are kept: "The CLI ignores keys it doesn't recognize, such as `$schema` or a setting from a newer version, and keeps them when it saves the file."
 - No managed or system settings file is documented, and no variable moves the settings folder or home. Whether `~` is `USERPROFILE` or `HOME` on Windows is not documented; the live-check script sets `USERPROFILE`.
-- Open: whether a running session overwrites a change made to the file while it runs (slice 6g's live check answers this).
+- Open: whether a running session overwrites a change made to the file while it runs. Slice 6g's live check didn't answer it: agy's first run in a scratch home stops at its "Terms of Service & Data Use" screen, which the check doesn't answer for the person (`docs/research/2026-10-27-company-tab-parity-live-check.md`).
