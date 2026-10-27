@@ -50,6 +50,7 @@ CI (`.github/workflows/ci.yml`, Windows only for now) runs the format check, cli
 ## Working rules
 
 - Preserve the multi-CLI architecture. Keep vendor-specific behavior inside adapters or clearly scoped vendor modules; generic terminal sessions must remain useful without an agent.
+- Support every agent CLI equally; Claude Code gets no special treatment. A feature built for one CLI is built for the others too, as far as each CLI allows. Where a CLI can't support something (it has no command, file or setting for it), the UI says so rather than leaving it out silently, and the slice's decisions record why.
 - Keep one CLI's conventions out of the others: Codex hook trust and `AGENTS.md` generation stay in Codex code, Claude Code's settings hooks stay in Claude Code code.
 - Keep UI decisions consistent with `docs/PLAN.md`: keyboard-first, accessible, no guessed status values, and respect the documented layout and visual rules. Every UI change works with the keyboard alone and in forced colors; screen-reader hand checks happen at release sign-off (`docs/a11y/`).
 - Treat configuration and instruction-file writes as safety-critical. Follow the planned config service, preview, backup, atomic-write, managed-file, and undo rules. Never silently edit a user's CLI configuration.
