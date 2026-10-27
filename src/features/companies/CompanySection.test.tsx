@@ -16,6 +16,9 @@ const view = (over: Partial<AgentSettingsView> = {}): AgentSettingsView => ({
   ],
   others: [],
   raw: '{\n  "model": "opus"\n}',
+  editable: true,
+  hash: null,
+  text: null,
   ...over,
 });
 const render = (over: Partial<Parameters<typeof CompanyView>[0]> = {}) =>

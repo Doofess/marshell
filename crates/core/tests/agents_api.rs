@@ -1363,8 +1363,17 @@ async fn settings_view_reads_the_claude_file() {
         (curated("theme")["value"].as_str(), curated("theme")["scope"].as_str()),
         (Some("light"), Some("managed"))
     );
+    assert_eq!(curated("theme")["lock"]["kind"], "managed");
+    assert_eq!(curated("theme")["lock"]["path"], e.managed.to_string_lossy().as_ref());
+    assert_eq!(curated("model")["control"], json!({"kind": "text"}));
+    assert!(curated("model").get("lock").is_none());
     let raw = body["raw"].as_str().unwrap();
     assert!(raw.contains("hidden"), "{raw}");
+    // A file that holds secrets gives its hash, and no text.
+    assert_eq!(body["editable"], true);
+    assert_eq!(body["text"], Value::Null);
+    let bytes = std::fs::read(&e.claude).unwrap();
+    assert_eq!(body["hash"], marshell_core::config::hash::hash_bytes(&bytes));
     let text = body.to_string();
     for secret in [
         "sk-ant-secret",
@@ -1392,6 +1401,27 @@ async fn settings_view_reads_codex_config_toml_beside_the_hooks_file() {
     assert_eq!(body["curated"][0]["value"], "gpt-5");
     assert!(body["raw"].as_str().unwrap().contains("hidden"));
     assert!(!body.to_string().contains("abc-secret"), "{body}");
+    assert_eq!((body["editable"].as_bool(), &body["text"]), (Some(true), &Value::Null));
+}
+
+#[tokio::test]
+async fn settings_view_gives_the_text_of_a_file_without_secrets() {
+    let e = view_env();
+    let claude = "{ // a note\n  \"model\": \"opus\"\n}\n";
+    let codex = "# a note\nmodel = \"gpt-5\"\n\n[profiles.x]\nmodel = \"o3\"\n";
+    std::fs::write(&e.claude, claude).unwrap();
+    std::fs::write(&e.codex, codex).unwrap();
+    for (agent, text) in [("claude", claude), ("codex", codex)] {
+        let (status, body) = get(&e.app, &format!("/v1/agents/{agent}/settings-view")).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["text"], text, "{agent}");
+        assert_eq!(body["editable"], true, "{agent}");
+        assert_eq!(
+            body["hash"],
+            marshell_core::config::hash::hash_bytes(text.as_bytes()),
+            "{agent}"
+        );
+    }
 }
 
 #[tokio::test]
@@ -1402,6 +1432,8 @@ async fn settings_view_reads_the_antigravity_file() {
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["curated"][0]["value"], "gemini");
     assert!(!body.to_string().contains("agy-secret"), "{body}");
+    assert_eq!((body["editable"].as_bool(), &body["text"]), (Some(false), &Value::Null));
+    assert!(body["curated"][0].get("control").is_none());
 }
 
 #[tokio::test]
@@ -1413,6 +1445,8 @@ async fn settings_view_of_a_missing_file_is_missing() {
         assert_eq!(body["state"]["kind"], "missing", "{agent}");
         assert_eq!(body["curated"].as_array().unwrap().len(), 6);
         assert_eq!(body["raw"], Value::Null);
+        assert_eq!(body["editable"], agent != "antigravity", "{agent}");
+        assert_eq!((&body["hash"], &body["text"]), (&Value::Null, &Value::Null), "{agent}");
     }
 }
 
@@ -1433,6 +1467,8 @@ async fn settings_view_of_a_file_that_does_not_parse_leaks_nothing() {
         assert_eq!(body["curated"], json!([]));
         assert_eq!(body["others"], json!([]));
         assert_eq!(body["raw"], Value::Null);
+        assert_eq!(body["editable"], false, "{agent}");
+        assert_eq!((&body["hash"], &body["text"]), (&Value::Null, &Value::Null), "{agent}");
         assert!(!body.to_string().contains("sk-broken-secret"), "{body}");
         assert!(!body.to_string().contains("gpt-5"), "{body}");
     }
@@ -1447,4 +1483,8 @@ async fn settings_view_of_a_folder_is_unreadable() {
     assert_eq!(body["state"]["kind"], "unreadable", "{body}");
     assert_eq!(body["curated"], json!([]));
     assert_eq!(body["raw"], Value::Null);
+    assert_eq!(
+        (body["editable"].as_bool(), &body["hash"], &body["text"]),
+        (Some(false), &Value::Null, &Value::Null)
+    );
 }

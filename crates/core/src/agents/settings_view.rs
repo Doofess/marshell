@@ -1,9 +1,14 @@
 //! An agent CLI's user settings file, read for a view that never writes it. Everything that leaves this module has
 //! been masked first; a file that doesn't parse or can't be read gives no value and no text. No value is logged.
 
+use crate::config::hash::hash_bytes;
 use crate::config::jsonc::{parse_problem, read_value};
 use crate::tools::secrets::{scrub, shown_words, takes_secret_words};
-use marshell_protocol::settings_view::{AgentSettingsView, SettingValue, ViewScope, ViewState};
+use jsonc_parser::ast::Value as Node;
+use jsonc_parser::{CollectOptions, CommentCollectionStrategy, ParseOptions, parse_to_ast};
+use marshell_protocol::settings_view::{
+    AgentSettingsView, FieldControl, FieldLock, SettingValue, ViewScope, ViewState,
+};
 use serde_json::Value;
 use std::borrow::Cow;
 use std::io::ErrorKind;
@@ -43,6 +48,39 @@ pub fn curated(agent: &str) -> &'static [&'static str] {
         ],
         _ => &[],
     }
+}
+
+/// The form's control for a curated key, the one place the choices are written down. Antigravity's view is not
+/// editable, so it has none. The values are SchemaStore's `claude-code-settings.json` and Codex `rust-v0.164.0`;
+/// Codex's `untrusted` is refused at load and `on-failure` is a deprecated alias, so neither is offered.
+pub(crate) fn control(agent: &str, key: &str) -> Option<FieldControl> {
+    let choice = |values: &[&str]| FieldControl::Choice {
+        values: values.iter().map(|v| v.to_string()).collect(),
+    };
+    Some(match (agent, key) {
+        ("claude" | "codex", "model") => FieldControl::Text,
+        ("claude", "effortLevel") => choice(&["low", "medium", "high", "xhigh"]),
+        ("claude", "permissions.defaultMode") => {
+            choice(&["default", "acceptEdits", "plan", "auto", "dontAsk", "bypassPermissions"])
+        }
+        ("claude", "cleanupPeriodDays") => FieldControl::Number { min: 1 },
+        ("claude", "autoUpdatesChannel") => choice(&["stable", "latest"]),
+        ("claude", "theme") => choice(&[
+            "auto",
+            "dark",
+            "light",
+            "dark-daltonized",
+            "light-daltonized",
+            "dark-ansi",
+            "light-ansi",
+        ]),
+        ("codex", "model_reasoning_effort") => choice(&["none", "minimal", "low", "medium", "high", "xhigh"]),
+        ("codex", "approval_policy") => choice(&["on-request", "never"]),
+        ("codex", "sandbox_mode") => choice(&["read-only", "workspace-write", "danger-full-access"]),
+        ("codex", "project_doc_max_bytes") => FieldControl::Number { min: 0 },
+        ("codex", "check_for_update_on_startup") => FieldControl::Switch,
+        _ => return None,
+    })
 }
 
 /// Whether a key's value is a secret: the key holds `key`, `token`, `secret`, `password` or `auth`, in any case.
@@ -351,15 +389,102 @@ fn hide_assignment_values(s: &str) -> String {
 
 // ---- the view ----
 
-/// The first of the managed files that reads and parses (highest precedence first).
-pub fn read_managed(paths: &[PathBuf]) -> Option<Value> {
+/// The first of the managed files that reads and parses (highest precedence first), with its path.
+pub fn read_managed(paths: &[PathBuf]) -> Option<(PathBuf, Value)> {
     paths.iter().find_map(|path| {
         let text = std::fs::read_to_string(path).ok()?;
         if parse_problem(&text).is_some() {
             return None;
         }
-        read_value(&text).ok()
+        Some((path.clone(), read_value(&text).ok()?))
     })
+}
+
+// ---- what the masked tree can't show: comments and repeated keys ----
+
+/// Whether a comment could hold a secret: it names one (`api_key = "x"` left in a comment) or `mask_string` changes it.
+fn comment_is_clean(comment: &str) -> bool {
+    !is_secret_key(comment) && mask_string(comment) == comment
+}
+
+/// Whether two properties of one JSON object share a name; the parsed tree keeps only the last, so the first could
+/// hold a secret the masked tree no longer shows.
+fn repeats_a_key(node: &Node) -> bool {
+    match node {
+        Node::Object(object) => {
+            let mut seen = std::collections::HashSet::new();
+            object
+                .properties
+                .iter()
+                .any(|p| !seen.insert(p.name.as_str().to_string()) || repeats_a_key(&p.value))
+        }
+        Node::Array(array) => array.elements.iter().any(repeats_a_key),
+        _ => false,
+    }
+}
+
+/// Whether the JSONC `text` holds no comment that could carry a secret and no repeated key, the two places the
+/// masked tree can't see. A text that doesn't parse is not clean.
+fn json_hides_nothing(text: &str) -> bool {
+    let body = text.strip_prefix('\u{feff}').unwrap_or(text);
+    let options = CollectOptions {
+        comments: CommentCollectionStrategy::Separate,
+        tokens: false,
+    };
+    let Ok(parsed) = parse_to_ast(body, &options, &ParseOptions::default()) else {
+        return false;
+    };
+    let comments_clean = parsed
+        .comments
+        .iter()
+        .flat_map(|map| map.values())
+        .flat_map(|list| list.iter())
+        .all(|c| comment_is_clean(c.text()));
+    comments_clean && !parsed.value.as_ref().is_some_and(repeats_a_key)
+}
+
+/// The comments of TOML `text` (each from its `#` to the end of the line), skipping `#` inside any of the four kinds
+/// of string.
+fn toml_comments(text: &str) -> Vec<&str> {
+    let bytes = text.as_bytes();
+    let mut comments = Vec::new();
+    let mut at = 0;
+    while at < bytes.len() {
+        match bytes[at] {
+            b'#' => {
+                let end = text[at..].find('\n').map_or(text.len(), |k| at + k);
+                comments.push(&text[at..end]);
+                at = end;
+            }
+            quote @ (b'"' | b'\'') => {
+                let triple = bytes[at..].starts_with(&[quote; 3]);
+                at += if triple { 3 } else { 1 };
+                while at < bytes.len() {
+                    if quote == b'"' && bytes[at] == b'\\' {
+                        at += 2;
+                    } else if triple && bytes[at..].starts_with(&[quote; 3]) {
+                        at += 3;
+                        // Up to two more quotes can belong to the string's text.
+                        for _ in 0..2 {
+                            if bytes.get(at) == Some(&quote) {
+                                at += 1;
+                            }
+                        }
+                        break;
+                    } else if !triple && bytes[at] == quote {
+                        at += 1;
+                        break;
+                    } else if !triple && bytes[at] == b'\n' {
+                        break;
+                    } else {
+                        at += 1;
+                    }
+                }
+            }
+            _ => at += 1,
+        }
+    }
+    comments
 }
 
 fn toml_json(value: &toml::Value) -> Value {
@@ -405,12 +530,12 @@ fn line_at(text: &str, at: usize) -> u32 {
 }
 
 /// The view of `agent`'s settings file at `path`, given what reading it gave. `managed` is Claude's managed settings
-/// (already read); it is ignored for any other agent.
+/// (already read, with the path of the file it came from); it is ignored for any other agent.
 pub fn view(
     agent: &str,
     path: &Path,
     text: Result<String, std::io::Error>,
-    managed: Option<Value>,
+    managed: Option<(PathBuf, Value)>,
 ) -> AgentSettingsView {
     let mut out = AgentSettingsView {
         agent: agent.to_string(),
@@ -419,16 +544,26 @@ pub fn view(
         curated: Vec::new(),
         others: Vec::new(),
         raw: None,
+        editable: false,
+        hash: None,
+        text: None,
     };
     let mut managed = managed.filter(|_| agent == "claude");
-    if let Some(m) = managed.as_mut() {
+    if let Some((_, m)) = managed.as_mut() {
         mask(m);
     }
+    let hash = text.as_ref().ok().map(|t| hash_bytes(t.as_bytes()));
+    // The text itself, kept only when masking changes nothing in the file.
+    let mut plain = None;
     let (user, raw) = match text {
         Ok(text) if agent == "codex" => match text.strip_prefix('\u{feff}').unwrap_or(&text).parse::<toml::Table>() {
             Ok(table) => {
                 let mut value = toml::Value::Table(table);
+                let before = value.clone();
                 mask_toml(&mut value);
+                if value == before && toml_comments(&text).into_iter().all(comment_is_clean) {
+                    plain = Some(text.clone());
+                }
                 (Some(toml_json(&value)), toml::to_string_pretty(&value).ok())
             }
             Err(e) => {
@@ -445,7 +580,11 @@ pub fn view(
             };
             match parsed {
                 Ok(mut value) => {
+                    let before = value.clone();
                     mask(&mut value);
+                    if value == before && json_hides_nothing(&text) {
+                        plain = Some(text.clone());
+                    }
                     let raw = serde_json::to_string_pretty(&value).ok();
                     (Some(value), raw)
                 }
@@ -465,16 +604,37 @@ pub fn view(
         }
     };
     out.raw = raw;
+    out.editable = matches!(agent, "claude" | "codex");
+    out.hash = hash;
+    out.text = plain;
     let value_of = |key: &str| -> SettingValue {
-        let from_managed = managed.as_ref().and_then(|m| lookup(m, key)).map(shown);
-        let (value, scope) = match from_managed {
-            Some(v) => (Some(v), ViewScope::Managed),
-            None => (user.as_ref().and_then(|u| lookup(u, key)).map(shown), ViewScope::User),
+        let from_managed = managed.as_ref().and_then(|(path, m)| lookup(m, key).map(|v| (path, v)));
+        let user_value = user.as_ref().and_then(|u| lookup(u, key));
+        let control = control(agent, key);
+        let (value, scope, lock) = match (from_managed, user_value) {
+            (Some((path, v)), _) => (
+                Some(shown(v)),
+                ViewScope::Managed,
+                control.as_ref().map(|_| FieldLock::Managed {
+                    path: path.to_string_lossy().into_owned(),
+                }),
+            ),
+            (None, Some(v)) => (
+                Some(shown(v)),
+                ViewScope::User,
+                control
+                    .as_ref()
+                    .filter(|_| matches!(v, Value::Object(_) | Value::Array(_)))
+                    .map(|_| FieldLock::NotScalar),
+            ),
+            (None, None) => (None, ViewScope::User, None),
         };
         SettingValue {
             key: key.to_string(),
             value,
             scope,
+            control,
+            lock,
         }
     };
     out.curated = curated(agent).iter().map(|key| value_of(key)).collect();
@@ -487,6 +647,8 @@ pub fn view(
                 key: k.clone(),
                 value: Some(shown(&map[k])),
                 scope: ViewScope::User,
+                control: None,
+                lock: None,
             })
             .collect();
     }
@@ -680,7 +842,10 @@ mod tests {
             "claude",
             Path::new("s.json"),
             Ok("{\"permissions\":{\"defaultMode\":\"plan\"}}".into()),
-            Some(json!({"permissions": {"defaultMode": "default"}})),
+            Some((
+                PathBuf::from("managed.json"),
+                json!({"permissions": {"defaultMode": "default"}}),
+            )),
         );
         let m = value_of(&v.curated, "permissions.defaultMode").unwrap();
         assert_eq!(m.value.as_deref(), Some("default"));
@@ -694,14 +859,17 @@ mod tests {
             "claude",
             Path::new("s.json"),
             Err(Error::from(ErrorKind::NotFound)),
-            Some(json!({"theme": "dark", "env": {"A": "b"}})),
+            Some((
+                PathBuf::from("managed.json"),
+                json!({"theme": "dark", "env": {"A": "b"}}),
+            )),
         );
         assert_eq!(value_of(&v.curated, "theme").unwrap().scope, ViewScope::Managed);
         let v = view(
             "codex",
             Path::new("c.toml"),
             Ok("model = \"gpt-5\"".into()),
-            Some(json!({"model": "x"})),
+            Some((PathBuf::from("managed.json"), json!({"model": "x"}))),
         );
         let m = value_of(&v.curated, "model").unwrap();
         assert_eq!((m.value.as_deref(), m.scope), (Some("gpt-5"), ViewScope::User));
@@ -829,5 +997,227 @@ args = [\"-y\",\"@modelcontextprotocol/server-postgres\",\"postgresql://u:pw@h/d
             assert!(v.raw.unwrap().contains("Authorization: hidden"));
             assert!(value_of(&v.others, "hooks").is_some());
         }
+    }
+
+    fn choice(values: &[&str]) -> Option<FieldControl> {
+        Some(FieldControl::Choice {
+            values: values.iter().map(|v| v.to_string()).collect(),
+        })
+    }
+
+    fn controls(v: &AgentSettingsView) -> Vec<Option<FieldControl>> {
+        v.curated.iter().map(|s| s.control.clone()).collect()
+    }
+
+    #[test]
+    fn curated_claude_keys_carry_their_controls() {
+        let v = run("claude", "{}");
+        assert_eq!(
+            controls(&v),
+            [
+                Some(FieldControl::Text),
+                choice(&["low", "medium", "high", "xhigh"]),
+                choice(&["default", "acceptEdits", "plan", "auto", "dontAsk", "bypassPermissions"]),
+                Some(FieldControl::Number { min: 1 }),
+                choice(&["stable", "latest"]),
+                choice(&[
+                    "auto",
+                    "dark",
+                    "light",
+                    "dark-daltonized",
+                    "light-daltonized",
+                    "dark-ansi",
+                    "light-ansi"
+                ]),
+            ]
+        );
+        assert!(v.editable);
+    }
+
+    #[test]
+    fn curated_codex_keys_carry_their_controls() {
+        let v = run("codex", "");
+        assert_eq!(
+            controls(&v),
+            [
+                Some(FieldControl::Text),
+                choice(&["none", "minimal", "low", "medium", "high", "xhigh"]),
+                choice(&["on-request", "never"]),
+                choice(&["read-only", "workspace-write", "danger-full-access"]),
+                Some(FieldControl::Number { min: 0 }),
+                Some(FieldControl::Switch),
+            ]
+        );
+        assert!(v.editable);
+    }
+
+    #[test]
+    fn antigravity_is_not_editable_and_has_no_controls() {
+        let v = run("antigravity", "{\"model\": \"gemini\"}");
+        assert!(!v.editable);
+        assert!(v.curated.iter().all(|s| s.control.is_none() && s.lock.is_none()));
+        assert_eq!(control("antigravity", "model"), None);
+    }
+
+    #[test]
+    fn a_file_without_secrets_gives_its_own_text_and_hash() {
+        let text = "{\r\n  // note\r\n  \"model\": \"opus\", /* inline */\r\n}\r\n";
+        let v = run("claude", text);
+        assert_eq!(v.text.as_deref(), Some(text));
+        assert_eq!(v.hash, Some(hash_bytes(text.as_bytes())));
+        let text = "# the model\nmodel = \"gpt-5\"\n\n[profiles.x]\nmodel = \"o3\" # fast\n";
+        let v = run("codex", text);
+        assert_eq!(v.text.as_deref(), Some(text));
+        assert_eq!(v.hash, Some(hash_bytes(text.as_bytes())));
+    }
+
+    #[test]
+    fn a_file_with_a_secret_gives_no_text() {
+        for text in [
+            "{\"env\": {\"X\": \"1\"}}",
+            "{\"apiKeyHelper\": \"op read x\"}",
+            "{\"model\": \"opus\", \"mcp\": {\"headers\": {\"Authorization\": \"Bearer x\"}}}",
+            "{\"statusLine\": {\"command\": \"curl -H 'Authorization: Bearer x' https://x\"}}",
+            "{\"x\": \"AUTH_HEADER=Bearer sk-x node s.js\"}",
+            "{\"url\": \"https://u:pw@h/x\"}",
+            "{\"args\": [\"--token\", \"abc\"]}",
+            "{\"args\": [\"-y\", \"srv\", \"--api-key=abc\"]}",
+            "{\"list\": [{\"token\": \"z\"}]}",
+            // A secret the parsed tree no longer holds: a comment, and the first of two equal keys.
+            "{\"model\": \"opus\" // \"apiKeyHelper\": \"op read x\"\n}",
+            "{/* Authorization: Bearer abc */ \"model\": \"opus\"}",
+            "{\"apiKeyHelper\": \"op read x\", \"apiKeyHelper\": \"hidden\"}",
+            "{\"model\": \"a\", \"model\": \"opus\"}",
+        ] {
+            let v = run("claude", text);
+            assert_eq!(v.state, ViewState::Ok, "{text}");
+            assert_eq!(v.text, None, "{text}");
+            assert!(v.editable, "{text}");
+            assert!(v.hash.is_some(), "{text}");
+            assert!(v.raw.is_some(), "{text}");
+        }
+        for text in [
+            "[mcp_servers.x.env]\nK = \"v\"\n",
+            "api_key = \"abc\"\n",
+            "[mcp_servers.x]\nargs = [\"--token\", \"abc\"]\n",
+            "[mcp_servers.pg]\nargs = [\"postgresql://u:pw@h/db\"]\n",
+            "[mcp_servers.x.headers]\nAuthorization = \"Bearer abc\"\n",
+            "model = \"gpt-5\"\nnote = \"curl -H 'Authorization: Bearer x' https://x\"\n",
+            "model = \"gpt-5\" # api_key = \"abc\"\n",
+            "# password = \"abc\"\nmodel = \"gpt-5\"\n",
+            "x = { env = { K = \"v\" } }\n",
+        ] {
+            let v = run("codex", text);
+            assert_eq!(v.state, ViewState::Ok, "{text}");
+            assert_eq!(v.text, None, "{text}");
+            assert!(v.hash.is_some() && v.raw.is_some(), "{text}");
+        }
+        // The masked render of a file with a secret still shows `hidden`.
+        let v = run("claude", "{\"env\": {\"X\": \"1\"}}");
+        assert!(v.raw.unwrap().contains("hidden"));
+    }
+
+    #[test]
+    fn a_comment_marker_inside_a_string_is_not_a_comment() {
+        let toml = "model = \"a # b\"\nnote = 'c # d' # fine\ntext = \"\"\"\nx # y\n\"\"\"\n";
+        assert_eq!(toml_comments(toml), ["# fine"]);
+        let v = run("codex", "model = \"a # b\"\n");
+        assert_eq!(v.text.as_deref(), Some("model = \"a # b\"\n"));
+        let v = run("claude", "{\"model\": \"http://x // y\"}");
+        assert!(v.text.is_some());
+    }
+
+    #[test]
+    fn a_missing_file_is_editable_with_no_hash_or_text() {
+        for (agent, name) in [("claude", "s.json"), ("codex", "c.toml")] {
+            let v = view(agent, Path::new(name), Err(Error::from(ErrorKind::NotFound)), None);
+            assert_eq!(v.state, ViewState::Missing);
+            assert!(v.editable, "{agent}");
+            assert_eq!((v.hash, v.text), (None, None), "{agent}");
+            assert!(v.curated.iter().all(|s| s.control.is_some()));
+        }
+        let v = view(
+            "antigravity",
+            Path::new("a.json"),
+            Err(Error::from(ErrorKind::NotFound)),
+            None,
+        );
+        assert!(!v.editable);
+    }
+
+    #[test]
+    fn an_unparsable_file_is_not_editable() {
+        for (agent, text) in [("claude", "{\"model\": \"opus\","), ("codex", "model = ")] {
+            let v = run(agent, text);
+            assert!(matches!(v.state, ViewState::Unparsable { .. }), "{agent}");
+            assert!(!v.editable, "{agent}");
+            assert_eq!((v.hash, v.text), (None, None), "{agent}");
+        }
+        let v = view(
+            "claude",
+            Path::new("s.json"),
+            Err(Error::from(ErrorKind::PermissionDenied)),
+            None,
+        );
+        assert!(!v.editable && v.hash.is_none() && v.text.is_none());
+    }
+
+    #[test]
+    fn a_managed_curated_key_is_locked_with_its_file() {
+        let v = view(
+            "claude",
+            Path::new("s.json"),
+            Ok("{\"theme\":\"dark\",\"model\":\"opus\"}".into()),
+            Some((PathBuf::from("C:/org/managed-settings.json"), json!({"theme": "light"}))),
+        );
+        let theme = value_of(&v.curated, "theme").unwrap();
+        assert_eq!(
+            theme.lock,
+            Some(FieldLock::Managed {
+                path: "C:/org/managed-settings.json".into()
+            })
+        );
+        assert!(theme.control.is_some());
+        assert_eq!(value_of(&v.curated, "model").unwrap().lock, None);
+    }
+
+    #[test]
+    fn a_table_value_locks_its_row() {
+        let text = "approval_policy = { granular = { sandbox_approval = true, rules = true, mcp_elicitations = false } }\nmodel = \"gpt-5\"\n";
+        let v = run("codex", text);
+        let row = value_of(&v.curated, "approval_policy").unwrap();
+        assert_eq!(row.lock, Some(FieldLock::NotScalar));
+        assert!(row.value.as_deref().unwrap().contains("granular"));
+        assert_eq!(value_of(&v.curated, "model").unwrap().lock, None);
+        let v = run("claude", "{\"model\": [\"a\"]}");
+        assert_eq!(value_of(&v.curated, "model").unwrap().lock, Some(FieldLock::NotScalar));
+    }
+
+    #[test]
+    fn a_value_outside_the_choices_is_shown_as_it_is() {
+        let v = run("claude", "{\"theme\": \"custom:ocean\"}");
+        let row = value_of(&v.curated, "theme").unwrap();
+        assert_eq!(row.value.as_deref(), Some("custom:ocean"));
+        assert_eq!(row.lock, None);
+        assert!(matches!(row.control, Some(FieldControl::Choice { .. })));
+        let v = run("codex", "approval_policy = \"on-failure\"\n");
+        let row = value_of(&v.curated, "approval_policy").unwrap();
+        assert_eq!((row.value.as_deref(), row.lock.as_ref()), (Some("on-failure"), None));
+    }
+
+    #[test]
+    fn read_managed_returns_the_file_that_won() {
+        let dir = tempfile::tempdir().unwrap();
+        let (broken, first, second) = (
+            dir.path().join("a.json"),
+            dir.path().join("b.json"),
+            dir.path().join("c.json"),
+        );
+        std::fs::write(&broken, "{").unwrap();
+        std::fs::write(&first, "{\"theme\": \"light\"}").unwrap();
+        std::fs::write(&second, "{\"theme\": \"dark\"}").unwrap();
+        let (path, value) = read_managed(&[dir.path().join("none.json"), broken, first.clone(), second]).unwrap();
+        assert_eq!((path, value), (first, json!({"theme": "light"})));
+        assert!(read_managed(&[]).is_none());
     }
 }

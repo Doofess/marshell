@@ -17,4 +17,17 @@ others: Array<SettingValue>,
 /**
  * The masked values written back out as pretty JSON (TOML for Codex); comments and layout are left out.
  */
-raw: string | null, };
+raw: string | null, 
+/**
+ * Claude Code or Codex, and the file is `ok` or `missing`: a form edit can be planned.
+ */
+editable: boolean, 
+/**
+ * The SHA-256 of the file's bytes; None when the file is missing, doesn't parse or can't be read.
+ */
+hash: string | null, 
+/**
+ * The file's own text, comments and layout included. Some only when the file is `ok` and masking changes
+ * nothing in it, so it holds no value the view would hide.
+ */
+text: string | null, };
