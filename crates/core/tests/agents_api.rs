@@ -1363,8 +1363,17 @@ async fn settings_view_reads_the_claude_file() {
         (curated("theme")["value"].as_str(), curated("theme")["scope"].as_str()),
         (Some("light"), Some("managed"))
     );
+    assert_eq!(curated("theme")["lock"]["kind"], "managed");
+    assert_eq!(curated("theme")["lock"]["path"], e.managed.to_string_lossy().as_ref());
+    assert_eq!(curated("model")["control"], json!({"kind": "text"}));
+    assert!(curated("model").get("lock").is_none());
     let raw = body["raw"].as_str().unwrap();
     assert!(raw.contains("hidden"), "{raw}");
+    // A file that holds secrets gives its hash, and no text.
+    assert_eq!(body["editable"], true);
+    assert_eq!(body["text"], Value::Null);
+    let bytes = std::fs::read(&e.claude).unwrap();
+    assert_eq!(body["hash"], marshell_core::config::hash::hash_bytes(&bytes));
     let text = body.to_string();
     for secret in [
         "sk-ant-secret",
@@ -1392,6 +1401,27 @@ async fn settings_view_reads_codex_config_toml_beside_the_hooks_file() {
     assert_eq!(body["curated"][0]["value"], "gpt-5");
     assert!(body["raw"].as_str().unwrap().contains("hidden"));
     assert!(!body.to_string().contains("abc-secret"), "{body}");
+    assert_eq!((body["editable"].as_bool(), &body["text"]), (Some(true), &Value::Null));
+}
+
+#[tokio::test]
+async fn settings_view_gives_the_text_of_a_file_without_secrets() {
+    let e = view_env();
+    let claude = "{ // a note\n  \"model\": \"opus\"\n}\n";
+    let codex = "# a note\nmodel = \"gpt-5\"\n\n[profiles.x]\nmodel = \"o3\"\n";
+    std::fs::write(&e.claude, claude).unwrap();
+    std::fs::write(&e.codex, codex).unwrap();
+    for (agent, text) in [("claude", claude), ("codex", codex)] {
+        let (status, body) = get(&e.app, &format!("/v1/agents/{agent}/settings-view")).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["text"], text, "{agent}");
+        assert_eq!(body["editable"], true, "{agent}");
+        assert_eq!(
+            body["hash"],
+            marshell_core::config::hash::hash_bytes(text.as_bytes()),
+            "{agent}"
+        );
+    }
 }
 
 #[tokio::test]
@@ -1402,6 +1432,8 @@ async fn settings_view_reads_the_antigravity_file() {
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["curated"][0]["value"], "gemini");
     assert!(!body.to_string().contains("agy-secret"), "{body}");
+    assert_eq!((body["editable"].as_bool(), &body["text"]), (Some(false), &Value::Null));
+    assert!(body["curated"][0].get("control").is_none());
 }
 
 #[tokio::test]
@@ -1413,6 +1445,8 @@ async fn settings_view_of_a_missing_file_is_missing() {
         assert_eq!(body["state"]["kind"], "missing", "{agent}");
         assert_eq!(body["curated"].as_array().unwrap().len(), 6);
         assert_eq!(body["raw"], Value::Null);
+        assert_eq!(body["editable"], agent != "antigravity", "{agent}");
+        assert_eq!((&body["hash"], &body["text"]), (&Value::Null, &Value::Null), "{agent}");
     }
 }
 
@@ -1433,6 +1467,8 @@ async fn settings_view_of_a_file_that_does_not_parse_leaks_nothing() {
         assert_eq!(body["curated"], json!([]));
         assert_eq!(body["others"], json!([]));
         assert_eq!(body["raw"], Value::Null);
+        assert_eq!(body["editable"], false, "{agent}");
+        assert_eq!((&body["hash"], &body["text"]), (&Value::Null, &Value::Null), "{agent}");
         assert!(!body.to_string().contains("sk-broken-secret"), "{body}");
         assert!(!body.to_string().contains("gpt-5"), "{body}");
     }
@@ -1447,4 +1483,643 @@ async fn settings_view_of_a_folder_is_unreadable() {
     assert_eq!(body["state"]["kind"], "unreadable", "{body}");
     assert_eq!(body["curated"], json!([]));
     assert_eq!(body["raw"], Value::Null);
+    assert_eq!(
+        (body["editable"].as_bool(), &body["hash"], &body["text"]),
+        (Some(false), &Value::Null, &Value::Null)
+    );
+}
+
+// ---- planning and undoing a settings change ----
+
+/// Claude's and Codex's settings sit inside a recorded project, so the config service may write them. The managed
+/// Claude file is outside it, so the service could never write it, and only the view reads it.
+struct PlanEnv {
+    _dir: tempfile::TempDir,
+    app: axum::Router,
+    claude: PathBuf,
+    managed: PathBuf,
+    codex: PathBuf,
+}
+
+fn plan_env() -> PlanEnv {
+    let dir = tempfile::tempdir().unwrap();
+    let root = canonical(dir.path());
+    let home = root.join("home");
+    let project = root.join("project");
+    let claude = project.join("claude").join("settings.json");
+    let codex = project.join("codex").join("config.toml");
+    let managed = root.join("org").join("managed.json");
+    for file in [&claude, &codex, &managed] {
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+    }
+    std::fs::create_dir_all(&home).unwrap();
+    record(&home, &project, 1).unwrap();
+    let st = AppState::new(
+        TOKEN.into(),
+        PORT,
+        vec!["http://tauri.localhost".into()],
+        home,
+        Vec::new(),
+    )
+    .with_claude_settings(claude.clone())
+    .with_codex_hooks(project.join("codex").join("hooks.json"))
+    .with_claude_compact_paths(root.join("user"), vec![managed.clone()]);
+    PlanEnv {
+        _dir: dir,
+        app: router(st),
+        claude,
+        managed,
+        codex,
+    }
+}
+
+impl PlanEnv {
+    fn path(&self, agent: &str) -> &PathBuf {
+        if agent == "claude" { &self.claude } else { &self.codex }
+    }
+
+    /// The hash a form sends: the file's now, or null when it is missing.
+    fn hash(&self, agent: &str) -> Value {
+        match std::fs::read(self.path(agent)) {
+            Ok(bytes) => json!(marshell_core::config::hash::hash_bytes(&bytes)),
+            Err(_) => Value::Null,
+        }
+    }
+
+    fn write(&self, agent: &str, text: &str) {
+        std::fs::write(self.path(agent), text).unwrap();
+    }
+
+    fn read(&self, agent: &str) -> String {
+        std::fs::read_to_string(self.path(agent)).unwrap()
+    }
+
+    /// A form edit against the file as it is now.
+    async fn form(&self, agent: &str, edits: Value) -> (StatusCode, Vec<u8>) {
+        let body = json!({"expected_hash": self.hash(agent), "change": {"kind": "form", "edits": edits}});
+        post_raw(&self.app, &format!("/v1/agents/{agent}/settings/plan"), body).await
+    }
+
+    async fn raw(&self, agent: &str, text: &str) -> (StatusCode, Vec<u8>) {
+        let body = json!({"expected_hash": self.hash(agent), "change": {"kind": "raw", "text": text}});
+        post_raw(&self.app, &format!("/v1/agents/{agent}/settings/plan"), body).await
+    }
+
+    async fn undo(&self, agent: &str, snapshot_id: &str) -> (StatusCode, Vec<u8>) {
+        let body = json!({"snapshot_id": snapshot_id});
+        post_raw(&self.app, &format!("/v1/agents/{agent}/settings/undo"), body).await
+    }
+
+    /// Plans a form edit, expects 200, applies it and returns the snapshot id.
+    async fn change(&self, agent: &str, edits: Value) -> String {
+        let (status, bytes) = self.form(agent, edits).await;
+        assert_eq!(status, StatusCode::OK, "{}", text(&bytes));
+        let plan: Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(plan["preview"]["can_apply"], true, "{plan}");
+        let (status, applied) = post(&self.app, "/v1/config/apply", shown(&plan["preview"])).await;
+        assert_eq!(status, StatusCode::OK, "{applied}");
+        applied["snapshot_id"].as_str().unwrap().to_string()
+    }
+}
+
+fn text(bytes: &[u8]) -> String {
+    String::from_utf8_lossy(bytes).into_owned()
+}
+
+fn json_of(bytes: &[u8]) -> Value {
+    serde_json::from_slice(bytes).unwrap_or_else(|_| panic!("not JSON: {}", text(bytes)))
+}
+
+fn edit(key: &str, value: &str) -> Value {
+    json!([{"key": key, "value": value}])
+}
+
+#[tokio::test]
+async fn settings_plan_is_refused_without_the_bearer() {
+    let e = plan_env();
+    let req = Request::builder()
+        .method("POST")
+        .uri("/v1/agents/claude/settings/plan")
+        .header(header::HOST, format!("127.0.0.1:{PORT}"))
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(
+            json!({"expected_hash": null, "change": {"kind": "form", "edits": []}}).to_string(),
+        ))
+        .unwrap();
+    let (status, _) = send(&e.app, req).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn settings_undo_is_refused_without_the_bearer() {
+    let e = plan_env();
+    let req = Request::builder()
+        .method("POST")
+        .uri("/v1/agents/claude/settings/undo")
+        .header(header::HOST, format!("127.0.0.1:{PORT}"))
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(json!({"snapshot_id": "s1"}).to_string()))
+        .unwrap();
+    let (status, _) = send(&e.app, req).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn settings_plan_for_an_unknown_agent_is_404() {
+    let e = plan_env();
+    let (status, _) = e.form("nope", json!([])).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    let (status, _) = e.undo("nope", "s1").await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn a_claude_form_edit_plans_applies_and_writes_the_key() {
+    let e = plan_env();
+    e.write("claude", "{\n  \"theme\": \"dark\"\n}\n");
+    let (status, bytes) = e.form("claude", edit("model", "\"sonnet\"")).await;
+    assert_eq!(status, StatusCode::OK, "{}", text(&bytes));
+    let plan = json_of(&bytes);
+    assert_eq!(plan["normalized"], false);
+    assert_eq!(plan["preview"]["title"], "Change Claude Code settings");
+    assert_eq!(plan["preview"]["reason"], "Edited in Settings.");
+    assert_eq!(plan["preview"]["can_apply"], true);
+    assert_eq!(plan["preview"]["files"][0]["path"], e.claude.to_string_lossy().as_ref());
+    assert_eq!(plan["preview"]["files"][0]["applies"], "newSessions");
+    let (status, applied) = post(&e.app, "/v1/config/apply", shown(&plan["preview"])).await;
+    assert_eq!(status, StatusCode::OK, "{applied}");
+    let now: Value = serde_json::from_str(&e.read("claude")).unwrap();
+    assert_eq!(now, json!({"theme": "dark", "model": "sonnet"}));
+}
+
+#[tokio::test]
+async fn a_claude_form_edit_can_remove_a_key_and_set_a_nested_one() {
+    let e = plan_env();
+    e.write(
+        "claude",
+        "{\"model\": \"opus\", \"permissions\": {\"allow\": [\"Bash\"]}}\n",
+    );
+    e.change(
+        "claude",
+        json!([
+            {"key": "model"},
+            {"key": "permissions.defaultMode", "value": "\"plan\""},
+            {"key": "cleanupPeriodDays", "value": "30"}
+        ]),
+    )
+    .await;
+    let now: Value = serde_json::from_str(&e.read("claude")).unwrap();
+    assert_eq!(
+        now,
+        json!({"permissions": {"allow": ["Bash"], "defaultMode": "plan"}, "cleanupPeriodDays": 30})
+    );
+}
+
+const COMMENTED_TOML: &str = "# mine\nmodel = \"a\" # why\n\n[profiles.x]\nmodel = \"b\"\n";
+
+#[tokio::test]
+async fn a_codex_form_edit_keeps_comments() {
+    let e = plan_env();
+    e.write("codex", COMMENTED_TOML);
+    e.change("codex", edit("model", "\"c\"")).await;
+    assert_eq!(
+        e.read("codex"),
+        "# mine\nmodel = \"c\" # why\n\n[profiles.x]\nmodel = \"b\"\n"
+    );
+}
+
+#[tokio::test]
+async fn undo_puts_back_the_identical_bytes() {
+    let e = plan_env();
+    let claude: &[u8] = b"\xEF\xBB\xBF{\r\n  // keep\r\n  \"model\": \"opus\"\r\n}\r\n";
+    std::fs::write(&e.claude, claude).unwrap();
+    e.write("codex", COMMENTED_TOML);
+    for (agent, value) in [("claude", "\"sonnet\""), ("codex", "\"c\"")] {
+        let before = std::fs::read(e.path(agent)).unwrap();
+        let snapshot = e.change(agent, edit("model", value)).await;
+        assert_ne!(std::fs::read(e.path(agent)).unwrap(), before, "{agent}");
+        let (status, bytes) = e.undo(agent, &snapshot).await;
+        assert_eq!(status, StatusCode::OK, "{agent}: {}", text(&bytes));
+        let result = json_of(&bytes);
+        assert_eq!(
+            result["files"][0]["after_hash"],
+            marshell_core::config::hash::hash_bytes(&before),
+            "{agent}"
+        );
+        assert_eq!(std::fs::read(e.path(agent)).unwrap(), before, "{agent}");
+    }
+}
+
+#[tokio::test]
+async fn undo_after_a_hand_edit_is_409() {
+    let e = plan_env();
+    e.write("claude", "{\"model\": \"opus\"}\n");
+    let snapshot = e.change("claude", edit("model", "\"sonnet\"")).await;
+    e.write("claude", "{\"model\": \"mine\"}\n");
+    let (status, bytes) = e.undo("claude", &snapshot).await;
+    assert_eq!(status, StatusCode::CONFLICT, "{}", text(&bytes));
+    let conflict = json_of(&bytes);
+    assert_eq!(conflict["reason"], "changed");
+    assert_eq!(conflict["paths"], json!([e.claude.to_string_lossy()]));
+    assert_eq!(e.read("claude"), "{\"model\": \"mine\"}\n");
+}
+
+#[tokio::test]
+async fn undo_of_another_files_snapshot_is_422() {
+    let e = plan_env();
+    let other = e.claude.parent().unwrap().join("other.json");
+    let (status, preview) = post(
+        &e.app,
+        "/v1/config/preview",
+        json!({"title": "t", "reason": "r", "edits": [{
+            "path": other.to_string_lossy(), "scope": "user", "applies": "newSessions",
+            "op": {"kind": "createFile", "content": "{}\n"}
+        }]}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{preview}");
+    let (status, applied) = post(&e.app, "/v1/config/apply", shown(&preview)).await;
+    assert_eq!(status, StatusCode::OK, "{applied}");
+    let snapshot = applied["snapshot_id"].as_str().unwrap();
+    e.write("claude", "{\"model\": \"opus\"}\n");
+    let (status, bytes) = e.undo("claude", snapshot).await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{}", text(&bytes));
+    assert!(other.exists());
+    assert_eq!(e.read("claude"), "{\"model\": \"opus\"}\n");
+    let (status, _) = e.undo("claude", "no-such-snapshot").await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn a_form_edit_on_a_missing_file_creates_it_and_undo_removes_it() {
+    let e = plan_env();
+    for agent in ["claude", "codex"] {
+        assert!(!e.path(agent).exists());
+        let snapshot = e.change(agent, edit("model", "\"sonnet\"")).await;
+        if agent == "claude" {
+            let now: Value = serde_json::from_str(&e.read(agent)).unwrap();
+            assert_eq!(now, json!({"model": "sonnet"}));
+        } else {
+            assert_eq!(e.read(agent), "model = \"sonnet\"\n");
+        }
+        let (status, bytes) = e.undo(agent, &snapshot).await;
+        assert_eq!(status, StatusCode::OK, "{agent}: {}", text(&bytes));
+        assert!(!e.path(agent).exists(), "{agent}");
+    }
+}
+
+#[tokio::test]
+async fn a_plan_against_an_old_hash_is_409() {
+    let e = plan_env();
+    e.write("claude", "{\"model\": \"opus\"}\n");
+    let body = json!({
+        "expected_hash": marshell_core::config::hash::hash_bytes(b"something else"),
+        "change": {"kind": "form", "edits": edit("model", "\"sonnet\"")}
+    });
+    let (status, bytes) = post_raw(&e.app, "/v1/agents/claude/settings/plan", body).await;
+    assert_eq!(status, StatusCode::CONFLICT, "{}", text(&bytes));
+    assert_eq!(json_of(&bytes)["reason"], "changed");
+    assert_eq!(json_of(&bytes)["paths"], json!([e.claude.to_string_lossy()]));
+    // A form opened on a missing file, and the file has appeared since.
+    let body = json!({"expected_hash": null, "change": {"kind": "form", "edits": edit("model", "\"sonnet\"")}});
+    let (status, _) = post_raw(&e.app, "/v1/agents/claude/settings/plan", body).await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    assert_eq!(e.read("claude"), "{\"model\": \"opus\"}\n");
+}
+
+#[tokio::test]
+async fn a_hand_edit_between_plan_and_apply_is_409() {
+    let e = plan_env();
+    e.write("claude", "{\"model\": \"opus\"}\n");
+    let (_, bytes) = e.form("claude", edit("model", "\"sonnet\"")).await;
+    let plan = json_of(&bytes);
+    e.write("claude", "{\"model\": \"mine\"}\n");
+    let (status, _) = post(&e.app, "/v1/config/apply", shown(&plan["preview"])).await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    assert_eq!(e.read("claude"), "{\"model\": \"mine\"}\n");
+}
+
+const SECRET: &str = "sk-live-9";
+
+#[tokio::test]
+async fn the_diff_never_shows_a_secret() {
+    let e = plan_env();
+    e.write(
+        "claude",
+        &format!(
+            "{{\n  \"model\": \"opus\",\n  \"env\": {{\"ANTHROPIC_API_KEY\": \"{SECRET}\"}},\n  \"apiKeyHelper\": \"get-key --token {SECRET}\"\n}}\n"
+        ),
+    );
+    let (status, bytes) = e.form("claude", edit("model", "\"sonnet\"")).await;
+    assert_eq!(status, StatusCode::OK, "{}", text(&bytes));
+    assert!(!text(&bytes).contains(SECRET), "{}", text(&bytes));
+    let plan = json_of(&bytes);
+    assert_eq!(plan["normalized"], true);
+    let diff = plan["preview"]["files"][0]["diff"].as_str().unwrap();
+    assert!(diff.contains("sonnet") && diff.contains("hidden"), "{diff}");
+    let id = plan["preview"]["changeset_id"].as_str().unwrap();
+    let uri = format!("/v1/config/preview/{id}");
+    let (status, stored) = send(&e.app, base("GET", &uri).body(Body::empty()).unwrap()).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(!text(&stored).contains(SECRET), "{}", text(&stored));
+    assert_eq!(json_of(&stored), plan["preview"]);
+    // The apply still writes the real bytes, secret included.
+    let (status, applied) = post(&e.app, "/v1/config/apply", shown(&plan["preview"])).await;
+    assert_eq!(status, StatusCode::OK, "{applied}");
+    assert!(e.read("claude").contains(SECRET));
+    assert!(!applied.to_string().contains(SECRET));
+}
+
+#[tokio::test]
+async fn the_diff_of_a_codex_file_with_a_secret_is_masked_too() {
+    let e = plan_env();
+    e.write(
+        "codex",
+        &format!("model = \"gpt-5\"\n[mcp_servers.x.env]\nAPI_KEY = \"{SECRET}\"\n"),
+    );
+    let (status, bytes) = e.form("codex", edit("model", "\"o3\"")).await;
+    assert_eq!(status, StatusCode::OK, "{}", text(&bytes));
+    assert!(!text(&bytes).contains(SECRET), "{}", text(&bytes));
+    assert_eq!(json_of(&bytes)["normalized"], true);
+}
+
+#[tokio::test]
+async fn undo_of_a_file_with_a_secret_stores_no_secret() {
+    let e = plan_env();
+    let original = format!("{{\"model\": \"opus\", \"env\": {{\"K\": \"{SECRET}\"}}}}\n");
+    e.write("claude", &original);
+    let snapshot = e.change("claude", edit("model", "\"sonnet\"")).await;
+    let (status, bytes) = e.undo("claude", &snapshot).await;
+    assert_eq!(status, StatusCode::OK, "{}", text(&bytes));
+    assert!(!text(&bytes).contains(SECRET));
+    assert_eq!(e.read("claude"), original);
+    // A hand edit that leaves a secret in the file: the 409 names no value.
+    let snapshot = e.change("claude", edit("model", "\"haiku\"")).await;
+    e.write("claude", &format!("{{\"env\": {{\"K\": \"{SECRET}-2\"}}}}\n"));
+    let (status, bytes) = e.undo("claude", &snapshot).await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    assert!(!text(&bytes).contains(SECRET));
+}
+
+#[tokio::test]
+async fn a_file_without_secrets_shows_its_real_diff() {
+    let e = plan_env();
+    e.write("claude", "{\n  // keep me\n  \"model\": \"opus\"\n}\n");
+    let (status, bytes) = e.form("claude", edit("model", "\"sonnet\"")).await;
+    assert_eq!(status, StatusCode::OK, "{}", text(&bytes));
+    let plan = json_of(&bytes);
+    assert_eq!(plan["normalized"], false);
+    let diff = plan["preview"]["files"][0]["diff"].as_str().unwrap();
+    assert!(
+        diff.lines().any(|l| l.starts_with(' ') && l.contains("// keep me")),
+        "{diff}"
+    );
+    assert!(diff.contains("-  \"model\": \"opus\""), "{diff}");
+    assert!(diff.contains("+  \"model\": \"sonnet\""), "{diff}");
+}
+
+#[tokio::test]
+async fn bad_form_edits_are_422_with_the_exact_message() {
+    let e = plan_env();
+    let managed_path = e.managed.to_string_lossy().into_owned();
+    std::fs::write(&e.managed, r#"{"theme": "light"}"#).unwrap();
+    let table = "approval_policy = { granular = { rules = true, sandbox_approval = true } }\n";
+    // (agent, the file's text, the edits, the message)
+    let cases: Vec<(&str, &str, Value, String)> = vec![
+        (
+            "claude",
+            "{}",
+            edit("env.X", "\"1\""),
+            "env.X isn't one of the settings this form changes.".into(),
+        ),
+        (
+            "codex",
+            "",
+            json!([{"key": "mcp_servers"}]),
+            "mcp_servers isn't one of the settings this form changes.".into(),
+        ),
+        (
+            "claude",
+            "{}",
+            edit("theme", "\"dark\""),
+            format!("theme is set by {managed_path}, so Marshell can't change it here."),
+        ),
+        (
+            "codex",
+            table,
+            edit("approval_policy", "\"never\""),
+            "approval_policy is set as a table in the file, so the form can't change it.".into(),
+        ),
+        (
+            "claude",
+            "{\"model\": \"TOKEN=abc-secret\"}",
+            edit("model", "\"sonnet\""),
+            "model holds a secret value, so the form can't change it.".into(),
+        ),
+        (
+            "codex",
+            "model = \"API_KEY=abc-secret\"\n",
+            json!([{"key": "model"}]),
+            "model holds a secret value, so the form can't change it.".into(),
+        ),
+        (
+            "claude",
+            "{}",
+            edit("cleanupPeriodDays", "0"),
+            "cleanupPeriodDays needs a whole number of at least 1.".into(),
+        ),
+        (
+            "claude",
+            "{}",
+            edit("cleanupPeriodDays", "1.5"),
+            "cleanupPeriodDays needs a whole number of at least 1.".into(),
+        ),
+        (
+            "claude",
+            "{}",
+            edit("cleanupPeriodDays", "\"30\""),
+            "cleanupPeriodDays needs a whole number of at least 1.".into(),
+        ),
+        (
+            "codex",
+            "",
+            edit("project_doc_max_bytes", "-1"),
+            "project_doc_max_bytes needs a whole number of at least 0.".into(),
+        ),
+        (
+            "claude",
+            "{}",
+            edit("effortLevel", "\"max\""),
+            "effortLevel needs one of: low, medium, high, xhigh.".into(),
+        ),
+        (
+            "codex",
+            "",
+            edit("approval_policy", "\"on-failure\""),
+            "approval_policy needs one of: on-request, never.".into(),
+        ),
+        (
+            "codex",
+            "",
+            edit("check_for_update_on_startup", "\"yes\""),
+            "check_for_update_on_startup needs on or off.".into(),
+        ),
+        ("claude", "{}", edit("model", "\"\""), "model needs text.".into()),
+        ("claude", "{}", edit("model", "7"), "model needs text.".into()),
+        ("claude", "{}", edit("model", "not json"), "model needs text.".into()),
+    ];
+    for (agent, file, edits, message) in cases {
+        e.write(agent, file);
+        let (status, bytes) = e.form(agent, edits.clone()).await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{agent} {edits}");
+        assert_eq!(text(&bytes), message, "{agent} {edits}");
+        assert!(!text(&bytes).contains("abc-secret"));
+        assert_eq!(e.read(agent), file, "nothing is written");
+    }
+}
+
+#[tokio::test]
+async fn an_unparsable_file_and_an_empty_change_are_422() {
+    let e = plan_env();
+    e.write(
+        "claude",
+        "{\n  \"model\": \"opus\",\n  \"env\": {\"K\": \"sk-broken\"} oops\n",
+    );
+    let (status, bytes) = e.form("claude", edit("model", "\"sonnet\"")).await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    let message = text(&bytes);
+    assert!(
+        message.starts_with("The file doesn't parse (line ") && message.ends_with("), so Marshell doesn't change it."),
+        "{message}"
+    );
+    assert!(!message.contains("sk-broken"));
+    e.write("codex", "model = \nx = 1\n");
+    let (status, bytes) = e.form("codex", edit("model", "\"o3\"")).await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(
+        text(&bytes),
+        "The file doesn't parse (line 1), so Marshell doesn't change it."
+    );
+    // The value is already there, and removing a key that isn't there changes nothing.
+    e.write("claude", "{\"model\": \"opus\"}\n");
+    for edits in [edit("model", "\"opus\""), json!([{"key": "theme"}]), json!([])] {
+        let (status, bytes) = e.form("claude", edits).await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+        assert_eq!(text(&bytes), "Nothing changes.");
+    }
+}
+
+#[tokio::test]
+async fn raw_replaces_the_whole_text() {
+    let e = plan_env();
+    e.write("claude", "{\n  // old\n  \"model\": \"opus\"\n}\n");
+    let (status, bytes) = e.raw("claude", "{\"model\": \"haiku\"}\n").await;
+    assert_eq!(status, StatusCode::OK, "{}", text(&bytes));
+    let plan = json_of(&bytes);
+    assert_eq!(plan["normalized"], false);
+    let (status, applied) = post(&e.app, "/v1/config/apply", shown(&plan["preview"])).await;
+    assert_eq!(status, StatusCode::OK, "{applied}");
+    assert_eq!(e.read("claude"), "{\"model\": \"haiku\"}\n");
+    e.write("codex", COMMENTED_TOML);
+    let (status, bytes) = e.raw("codex", "# new\nmodel = \"z\"\n").await;
+    assert_eq!(status, StatusCode::OK, "{}", text(&bytes));
+    let (status, applied) = post(&e.app, "/v1/config/apply", shown(&json_of(&bytes)["preview"])).await;
+    assert_eq!(status, StatusCode::OK, "{applied}");
+    assert_eq!(e.read("codex"), "# new\nmodel = \"z\"\n");
+}
+
+#[tokio::test]
+async fn raw_that_adds_a_secret_is_masked_in_the_diff() {
+    let e = plan_env();
+    e.write("claude", "{\"model\": \"opus\"}\n");
+    let new = format!("{{\"model\": \"opus\", \"env\": {{\"K\": \"{SECRET}\"}}}}\n");
+    let (status, bytes) = e.raw("claude", &new).await;
+    assert_eq!(status, StatusCode::OK, "{}", text(&bytes));
+    assert!(!text(&bytes).contains(SECRET));
+    assert_eq!(json_of(&bytes)["normalized"], true);
+}
+
+#[tokio::test]
+async fn raw_on_a_file_with_secrets_is_422() {
+    let e = plan_env();
+    let message = "This file holds secret values, so Marshell doesn't edit it as text.";
+    e.write("claude", &format!("{{\"env\": {{\"K\": \"{SECRET}\"}}}}\n"));
+    let (status, bytes) = e.raw("claude", "{}").await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(text(&bytes), message);
+    e.write("codex", &format!("[mcp_servers.x.env]\nAPI_KEY = \"{SECRET}\"\n"));
+    let (status, bytes) = e.raw("codex", "").await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(text(&bytes), message);
+    // A comment that names a secret counts as one.
+    e.write("claude", "{\n  // api_key = 1\n  \"model\": \"opus\"\n}\n");
+    let (status, bytes) = e.raw("claude", "{}").await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(text(&bytes), message);
+}
+
+#[tokio::test]
+async fn raw_that_does_not_parse_names_the_line() {
+    let e = plan_env();
+    e.write("claude", "{\"model\": \"opus\"}\n");
+    let (status, bytes) = e.raw("claude", "{\n  \"model\": \"a\",\n  \"x\": \n}\n").await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(text(&bytes), "The text doesn't parse at line 4.");
+    let (status, bytes) = e.raw("claude", "[1]").await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(text(&bytes), "The text doesn't parse at line 1.");
+    e.write("codex", "model = \"a\"\n");
+    let (status, bytes) = e.raw("codex", "model = \"a\"\nx = \n").await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(text(&bytes), "The text doesn't parse at line 2.");
+}
+
+#[tokio::test]
+async fn claude_raw_with_a_comment_is_refused() {
+    let e = plan_env();
+    e.write("claude", "{\"model\": \"opus\"}\n");
+    let (status, bytes) = e.raw("claude", "{\n  // mine\n  \"model\": \"a\"\n}\n").await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    assert!(
+        text(&bytes).starts_with("The text doesn't parse at line "),
+        "{}",
+        text(&bytes)
+    );
+    assert_eq!(e.read("claude"), "{\"model\": \"opus\"}\n");
+}
+
+#[tokio::test]
+async fn raw_on_a_missing_file_is_422() {
+    let e = plan_env();
+    let (status, bytes) = e.raw("claude", "{}").await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(text(&bytes), "There is no file to edit as text.");
+    assert!(!e.claude.exists());
+}
+
+#[tokio::test]
+async fn antigravity_settings_plan_is_422() {
+    let e = plan_env();
+    let message = "Antigravity's settings are read-only in Marshell.";
+    let (status, bytes) = e.form("antigravity", edit("model", "\"x\"")).await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(text(&bytes), message);
+    let (status, bytes) = e.raw("antigravity", "{}").await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(text(&bytes), message);
+    let (status, bytes) = e.undo("antigravity", "s1").await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(text(&bytes), message);
+}
+
+#[tokio::test]
+async fn a_row_whose_value_masking_changed_is_locked_in_the_view() {
+    let e = plan_env();
+    e.write("claude", "{\"model\": \"TOKEN=abc-secret\"}");
+    let (status, body) = get(&e.app, "/v1/agents/claude/settings-view").await;
+    assert_eq!(status, StatusCode::OK);
+    let rows = body["curated"].as_array().unwrap();
+    let model = rows.iter().find(|s| s["key"] == "model").unwrap();
+    assert_eq!(model["lock"], json!({"kind": "hidden"}));
+    assert!(!body.to_string().contains("abc-secret"));
 }

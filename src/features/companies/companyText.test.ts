@@ -4,7 +4,7 @@ import type { AgentSettingsView } from "../../generated/AgentSettingsView";
 import { fileLine, manualUpdateLine, newerLine, runningNote, versionLine } from "./companyText";
 
 const install = (over: Partial<AgentInstall> = {}): AgentInstall => ({ agent: "claude", found: true, version: "2.1.0", install: { kind: "native" }, update_command: "claude update", newer_version: null, ...over });
-const view = (state: AgentSettingsView["state"]): AgentSettingsView => ({ agent: "claude", path: "C:/u/.claude/settings.json", state, curated: [], others: [], raw: null });
+const view = (state: AgentSettingsView["state"]): AgentSettingsView => ({ agent: "claude", path: "C:/u/.claude/settings.json", state, curated: [], others: [], raw: null, editable: false, hash: null, text: null });
 
 describe("companyText", () => {
   it("versionLine", () => {

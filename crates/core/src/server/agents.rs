@@ -7,22 +7,33 @@ use crate::agents::antigravity::hooks as agy;
 use crate::agents::claude::{self, hooks};
 use crate::agents::codex::{self, trust};
 use crate::agents::install::{codex_newer, install_kind, update_text};
-use crate::agents::settings_view::{read_managed, view};
+use crate::agents::settings_view::{control, masked_render, parse_masked, read_managed, text_problem, view};
 use crate::agents::{parse_any_version, run_version_text};
 use crate::bridge;
 use crate::config::jsonc::{parse_problem, read_value};
+use crate::config::preview::{PlannedFile, unified_diff};
+use crate::config::service::ApplyError;
 use crate::paths;
 use crate::profiles::detect::{agent_command, agent_exe};
 use axum::Json;
 use axum::extract::{Path as UrlPath, Query, State};
 use axum::http::StatusCode;
+use axum::response::{IntoResponse, Response};
 use marshell_protocol::account::{AccountStatus, SignIn};
 use marshell_protocol::agents::{
     AgentFound, AgentSetup, HookInstall, HookPlanRequest, ParseProblem, RemovePreview, SettingsState,
 };
-use marshell_protocol::config::ConfigPreview;
+use marshell_protocol::config::{
+    Applies, ApplyConflict, ApplyRequest, ApplyResult, ChangeSet, ConfigPreview, ConfigScope, EditOp, ExpectedHash,
+    FileEdit, FileStatus, RefuseReason,
+};
 use marshell_protocol::install::{AgentInstall, InstallKind};
-use marshell_protocol::settings_view::AgentSettingsView;
+use marshell_protocol::settings_view::{
+    AgentSettingsView, FieldControl, FieldLock, SettingEdit, SettingsChange, SettingsPlan, SettingsPlanRequest,
+    SettingsUndoRequest, ViewState,
+};
+use serde_json::Value;
+use std::cell::Cell;
 use std::collections::HashMap;
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
@@ -655,9 +666,10 @@ pub async fn settings_view(
     Ok(Json(view))
 }
 
-fn settings_view_of(st: &AppState, agent: &str, kind: Adapter) -> Result<AgentSettingsView, Fail> {
+/// Where an agent's user settings file is, and Claude's managed settings (the first managed file that parses).
+fn settings_file(st: &AppState, kind: Adapter) -> Result<(PathBuf, Option<(PathBuf, Value)>), Fail> {
     let no_home = || failed("the user's home folder is not known");
-    let (path, managed) = match kind {
+    Ok(match kind {
         Adapter::Claude => {
             let user_home = super::files::home_dir()
                 .or_else(|| st.0.claude_settings.as_ref().map(|_| PathBuf::new()))
@@ -671,7 +683,11 @@ fn settings_view_of(st: &AppState, agent: &str, kind: Adapter) -> Result<AgentSe
         }
         Adapter::Codex => (st.codex_dir().ok_or_else(no_home)?.join("config.toml"), None),
         Adapter::Antigravity => (agy::settings_path(&st.agy_user_home()?), None),
-    };
+    })
+}
+
+fn settings_view_of(st: &AppState, agent: &str, kind: Adapter) -> Result<AgentSettingsView, Fail> {
+    let (path, managed) = settings_file(st, kind)?;
     Ok(view(agent, &path, std::fs::read_to_string(&path), managed))
 }
 
@@ -679,6 +695,353 @@ fn settings_view_of(st: &AppState, agent: &str, kind: Adapter) -> Result<AgentSe
 fn codex_newer_in(dir: &Path, version: &str) -> Option<String> {
     let text = std::fs::read_to_string(dir.join("version.json")).ok()?;
     codex_newer(&text, version)
+}
+
+// ---- planning and undoing a settings change ----
+
+const READ_ONLY: &str = "Antigravity's settings are read-only in Marshell.";
+const NOT_THIS_FILE: &str = "That snapshot isn't of this agent's settings file.";
+
+/// Why a settings change isn't made: a plain sentence, or a 409 naming the files that changed since the person looked.
+enum Refusal {
+    Plain(StatusCode, String),
+    Changed(Vec<String>),
+}
+
+impl From<Fail> for Refusal {
+    fn from((status, message): Fail) -> Self {
+        Refusal::Plain(status, message)
+    }
+}
+
+impl IntoResponse for Refusal {
+    fn into_response(self) -> Response {
+        match self {
+            Refusal::Plain(status, message) => (status, message).into_response(),
+            Refusal::Changed(paths) => {
+                let conflict = ApplyConflict {
+                    reason: "changed".to_string(),
+                    paths,
+                };
+                (StatusCode::CONFLICT, Json(conflict)).into_response()
+            }
+        }
+    }
+}
+
+fn unprocessable(message: impl Into<String>) -> Refusal {
+    Refusal::Plain(StatusCode::UNPROCESSABLE_ENTITY, message.into())
+}
+
+fn changed_since(paths: Vec<String>) -> Refusal {
+    Refusal::Changed(paths)
+}
+
+fn now_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .map_or(0, |d| d.as_millis() as u64)
+}
+
+/// Plans a change to Claude's or Codex's user settings file. Everything is checked before a ChangeSet is made, no
+/// message quotes a value, and the diff never shows a value the settings view hides.
+pub async fn settings_plan(
+    State(st): State<AppState>,
+    UrlPath(agent): UrlPath<String>,
+    Json(req): Json<SettingsPlanRequest>,
+) -> Response {
+    let kind = match adapter(&agent) {
+        Ok(kind) => kind,
+        Err(fail) => return fail.into_response(),
+    };
+    match tokio::task::spawn_blocking(move || settings_plan_of(&st, &agent, kind, req)).await {
+        Ok(Ok(plan)) => Json(plan).into_response(),
+        Ok(Err(refusal)) => refusal.into_response(),
+        Err(e) => failed(e).into_response(),
+    }
+}
+
+fn settings_plan_of(
+    st: &AppState,
+    agent: &str,
+    kind: Adapter,
+    req: SettingsPlanRequest,
+) -> Result<SettingsPlan, Refusal> {
+    if matches!(kind, Adapter::Antigravity) {
+        return Err(unprocessable(READ_ONLY));
+    }
+    let view = settings_view_of(st, agent, kind).map_err(Refusal::from)?;
+    match view.state {
+        ViewState::Unparsable { line } => {
+            return Err(unprocessable(format!(
+                "The file doesn't parse (line {line}), so Marshell doesn't change it."
+            )));
+        }
+        ViewState::Unreadable => {
+            return Err(unprocessable("Marshell can't read the file, so it doesn't change it."));
+        }
+        ViewState::Ok | ViewState::Missing => {}
+    }
+    // The form was opened on another version of the file, or on none.
+    if view.hash != req.expected_hash {
+        return Err(changed_since(vec![view.path]));
+    }
+    let ops = match &req.change {
+        SettingsChange::Form { edits } => form_ops(agent, &view, edits)?,
+        SettingsChange::Raw { text } => vec![raw_op(agent, &view, text)?],
+    };
+    let title = match kind {
+        Adapter::Claude => "Change Claude Code settings",
+        _ => "Change Codex settings",
+    };
+    let cs = ChangeSet {
+        title: title.to_string(),
+        reason: "Edited in Settings.".to_string(),
+        edits: ops
+            .into_iter()
+            .map(|op| FileEdit {
+                path: view.path.clone(),
+                scope: ConfigScope::User,
+                op,
+                expected_hash: req.expected_hash.clone(),
+                applies: Applies::NewSessions,
+            })
+            .collect(),
+    };
+    let normalized = Cell::new(false);
+    let preview = st.0.config.preview_own(cs, &masked_diff(agent, &normalized));
+    Ok(SettingsPlan {
+        preview: changes_of(preview)?,
+        normalized: normalized.get(),
+    })
+}
+
+/// The edit ops of a form change, each checked against the control and lock the view gives its key.
+fn form_ops(agent: &str, view: &AgentSettingsView, edits: &[SettingEdit]) -> Result<Vec<EditOp>, Refusal> {
+    let mut ops = Vec::new();
+    for edit in edits {
+        let key = edit.key.as_str();
+        let Some(control) = control(agent, key) else {
+            return Err(unprocessable(format!(
+                "{key} isn't one of the settings this form changes."
+            )));
+        };
+        let lock = view
+            .curated
+            .iter()
+            .find(|row| row.key == key)
+            .and_then(|row| row.lock.as_ref());
+        match lock {
+            Some(FieldLock::Managed { path }) => {
+                return Err(unprocessable(format!(
+                    "{key} is set by {path}, so Marshell can't change it here."
+                )));
+            }
+            Some(FieldLock::NotScalar) => {
+                return Err(unprocessable(format!(
+                    "{key} is set as a table in the file, so the form can't change it."
+                )));
+            }
+            Some(FieldLock::Hidden) => {
+                return Err(unprocessable(format!(
+                    "{key} holds a secret value, so the form can't change it."
+                )));
+            }
+            None => {}
+        }
+        let value = edit
+            .value
+            .as_deref()
+            .map(|text| checked(key, &control, text))
+            .transpose()?;
+        let toml_key = || key.split('.').map(str::to_string).collect();
+        let pointer = || format!("/{}", key.replace('.', "/"));
+        ops.push(match (agent, value) {
+            ("codex", Some(value)) => EditOp::TomlSet {
+                key: toml_key(),
+                value: value.to_string(),
+            },
+            ("codex", None) => EditOp::TomlRemove { key: toml_key() },
+            (_, Some(value)) => EditOp::JsonSet {
+                pointer: pointer(),
+                value: value.to_string(),
+            },
+            (_, None) => EditOp::JsonRemove { pointer: pointer() },
+        });
+    }
+    Ok(ops)
+}
+
+/// The JSON value `text` stands for when `control` offers it; the message never quotes `text`.
+fn checked(key: &str, control: &FieldControl, text: &str) -> Result<Value, Refusal> {
+    let parsed: Option<Value> = serde_json::from_str(text).ok();
+    let (ok, message) = match control {
+        FieldControl::Text => (
+            matches!(&parsed, Some(Value::String(s)) if !s.is_empty()),
+            format!("{key} needs text."),
+        ),
+        FieldControl::Number { min } => (
+            parsed
+                .as_ref()
+                .and_then(Value::as_i64)
+                .is_some_and(|n| n >= i64::from(*min)),
+            format!("{key} needs a whole number of at least {min}."),
+        ),
+        FieldControl::Switch => (
+            matches!(parsed, Some(Value::Bool(_))),
+            format!("{key} needs on or off."),
+        ),
+        FieldControl::Choice { values } => (
+            matches!(&parsed, Some(Value::String(s)) if values.contains(s)),
+            format!("{key} needs one of: {}.", values.join(", ")),
+        ),
+    };
+    match parsed {
+        Some(value) if ok => Ok(value),
+        _ => Err(unprocessable(message)),
+    }
+}
+
+/// The op that replaces the file's whole text, when the view gives that text out and the new text parses.
+fn raw_op(agent: &str, view: &AgentSettingsView, text: &str) -> Result<EditOp, Refusal> {
+    if view.state == ViewState::Missing {
+        return Err(unprocessable("There is no file to edit as text."));
+    }
+    if view.text.is_none() {
+        return Err(unprocessable(
+            "This file holds secret values, so Marshell doesn't edit it as text.",
+        ));
+    }
+    if let Some(line) = text_problem(agent, text) {
+        return Err(unprocessable(format!("The text doesn't parse at line {line}.")));
+    }
+    Ok(EditOp::ReplaceText {
+        content: text.to_string(),
+    })
+}
+
+/// What `preview_shown` takes for a settings file: when the text before or after holds a value the view hides, the
+/// diff is of the masked render of both and `normalized` is set. Otherwise the file's real diff stands.
+fn masked_diff<'a>(agent: &'a str, normalized: &'a Cell<bool>) -> impl Fn(&PlannedFile) -> Option<String> + 'a {
+    move |file| {
+        if file.status != FileStatus::Changes {
+            return None;
+        }
+        let text = |bytes: &Option<Vec<u8>>| bytes.as_deref().map(|b| String::from_utf8_lossy(b).into_owned());
+        let (before, after) = (text(&file.before), text(&file.after));
+        let plain = |text: &Option<String>| {
+            text.as_deref()
+                .is_none_or(|t| parse_masked(agent, t).is_ok_and(|p| p.plain))
+        };
+        if plain(&before) && plain(&after) {
+            return None;
+        }
+        normalized.set(true);
+        let render = |text: &Option<String>| {
+            text.as_deref()
+                .and_then(|t| masked_render(agent, t))
+                .unwrap_or_default()
+        };
+        Some(unified_diff(
+            &file.path.to_string_lossy(),
+            file.before.is_some(),
+            &render(&before),
+            &render(&after),
+        ))
+    }
+}
+
+/// The preview when it has a change to apply. A file changed since is a 409; any other refusal, or no change, is a 422.
+/// A refusal's detail can quote the file, so only the details that can't are passed on.
+fn changes_of(preview: ConfigPreview) -> Result<ConfigPreview, Refusal> {
+    for file in &preview.files {
+        if let FileStatus::Refused { reason, detail } = &file.status {
+            return Err(match reason {
+                RefuseReason::Conflict => changed_since(vec![file.path.clone()]),
+                RefuseReason::DoesNotParse | RefuseReason::BadPointer | RefuseReason::BadValue => {
+                    unprocessable("Marshell can't make this change to the file.")
+                }
+                _ => unprocessable(detail.clone()),
+            });
+        }
+    }
+    if preview.files.iter().all(|f| f.status != FileStatus::Changes) {
+        return Err(unprocessable("Nothing changes."));
+    }
+    Ok(preview)
+}
+
+/// Puts a settings file back as a snapshot of it had it, if the file is still as that change left it.
+pub async fn settings_undo(
+    State(st): State<AppState>,
+    UrlPath(agent): UrlPath<String>,
+    Json(req): Json<SettingsUndoRequest>,
+) -> Response {
+    let kind = match adapter(&agent) {
+        Ok(kind) => kind,
+        Err(fail) => return fail.into_response(),
+    };
+    match tokio::task::spawn_blocking(move || settings_undo_of(&st, &agent, kind, &req.snapshot_id)).await {
+        Ok(Ok(result)) => Json(result).into_response(),
+        Ok(Err(refusal)) => refusal.into_response(),
+        Err(e) => failed(e).into_response(),
+    }
+}
+
+fn settings_undo_of(st: &AppState, agent: &str, kind: Adapter, snapshot_id: &str) -> Result<ApplyResult, Refusal> {
+    if matches!(kind, Adapter::Antigravity) {
+        return Err(unprocessable(READ_ONLY));
+    }
+    let (path, _) = settings_file(st, kind).map_err(Refusal::from)?;
+    let info = match st.0.config.snapshots().get(snapshot_id) {
+        Ok(Some(info)) => info,
+        Ok(None) => return Err(Refusal::Plain(StatusCode::NOT_FOUND, "no such snapshot".to_string())),
+        Err(e) => return Err(Refusal::from(failed(format!("{e:#}")))),
+    };
+    // Only a snapshot of this agent's settings file, and of nothing else.
+    let [file] = info.files.as_slice() else {
+        return Err(unprocessable(NOT_THIS_FILE));
+    };
+    let target = st.0.config.resolve_target(&path);
+    if target.is_none() || target != st.0.config.resolve_target(Path::new(&file.path)) {
+        return Err(unprocessable(NOT_THIS_FILE));
+    }
+    // The file must still be as the change left it: its hash, or gone when the change removed it.
+    if file.after_hash.is_none() && path.exists() {
+        return Err(changed_since(vec![file.path.clone()]));
+    }
+    let cs = ChangeSet {
+        title: format!("Restore: {}", info.title),
+        reason: "Puts the files back as they were before this change.".to_string(),
+        edits: vec![FileEdit {
+            path: file.path.clone(),
+            scope: file.scope,
+            op: EditOp::Restore {
+                snapshot_id: snapshot_id.to_string(),
+            },
+            expected_hash: file.after_hash.clone(),
+            applies: file.applies,
+        }],
+    };
+    let preview = st.0.config.preview_shown(cs, &masked_diff(agent, &Cell::new(false)));
+    let preview = changes_of(preview)?;
+    let apply = ApplyRequest {
+        changeset_id: preview.changeset_id.clone(),
+        expected_hashes: preview
+            .files
+            .iter()
+            .map(|f| ExpectedHash {
+                path: f.path.clone(),
+                hash: f.before_hash.clone(),
+            })
+            .collect(),
+    };
+    match st.0.config.apply(&apply, now_ms()) {
+        Ok(result) => Ok(result),
+        Err(ApplyError::Conflict { paths, .. }) => Err(changed_since(paths)),
+        Err(ApplyError::UnknownChangeSet) => Err(changed_since(vec![file.path.clone()])),
+        Err(ApplyError::Failed(e)) => Err(Refusal::from(failed(format!("{e:#}")))),
+    }
 }
 
 pub async fn plan(

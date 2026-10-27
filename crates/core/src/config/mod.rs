@@ -10,5 +10,6 @@ pub mod merge;
 pub mod preview;
 pub mod service;
 pub mod snapshots;
+pub mod toml_doc;
 pub mod watch;
 pub mod write;

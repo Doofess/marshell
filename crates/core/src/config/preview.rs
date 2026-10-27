@@ -6,6 +6,7 @@ use crate::config::guard::{Guard, Refusal};
 use crate::config::hash::hash_bytes;
 use crate::config::jsonc::{EditError, JsonOp, apply_ops};
 use crate::config::snapshots::Snapshots;
+use crate::config::toml_doc::{TomlOp, apply_toml_ops};
 use crate::config::write::resolve_link;
 use marshell_protocol::config::{
     Applies, ChangeSet, ConfigPreview, ConfigScope, EditOp, FileEdit, FilePreview, FileStatus, RefuseReason,
@@ -63,20 +64,26 @@ pub fn to_preview(changeset_id: &str, cs: &ChangeSet, files: &[PlannedFile]) -> 
     }
 }
 
+/// The unified diff from `before` to `after` of the file at `path`, with `--- a/<path>` (`/dev/null` when the file
+/// did not exist before) and `+++ b/<path>` header lines.
+pub fn unified_diff(path: &str, existed: bool, before: &str, after: &str) -> String {
+    let original = if existed {
+        format!("a/{path}")
+    } else {
+        "/dev/null".to_string()
+    };
+    // diffy quotes a name holding a backslash or a space, so its two header lines are replaced.
+    let patch = diffy::create_patch(before, after).to_string();
+    let hunks = patch.splitn(3, '\n').nth(2).unwrap_or("");
+    format!("--- {original}\n+++ b/{path}\n{hunks}")
+}
+
 fn file_preview(file: &PlannedFile) -> FilePreview {
     let diff = if file.status == FileStatus::Changes {
         let text = |bytes: &Option<Vec<u8>>| bytes.as_deref().map(|b| String::from_utf8_lossy(b).into_owned());
         let before = text(&file.before).unwrap_or_default();
         let after = text(&file.after).unwrap_or_default();
-        let path = file.path.to_string_lossy();
-        let original = match file.before {
-            Some(_) => format!("a/{path}"),
-            None => "/dev/null".to_string(),
-        };
-        // diffy quotes a name holding a backslash or a space, so its two header lines are replaced.
-        let patch = diffy::create_patch(&before, &after).to_string();
-        let hunks = patch.splitn(3, '\n').nth(2).unwrap_or("");
-        format!("--- {original}\n+++ b/{path}\n{hunks}")
+        unified_diff(&file.path.to_string_lossy(), file.before.is_some(), &before, &after)
     } else {
         String::new()
     };
@@ -183,6 +190,24 @@ fn compute(
             "Deleting a file needs the hash of the file it was planned against.",
         );
     }
+    // A whole-text replace is only ever made against bytes the caller saw, so it needs the file and its hash.
+    if edits.iter().any(|e| matches!(e.op, EditOp::ReplaceText { .. })) {
+        if before.is_none() {
+            return refuse(
+                RefuseReason::BadValue,
+                "Replacing a file's text needs a file that exists.",
+            );
+        }
+        if edits
+            .iter()
+            .any(|e| matches!(e.op, EditOp::ReplaceText { .. }) && e.expected_hash.is_none())
+        {
+            return refuse(
+                RefuseReason::BadValue,
+                "Replacing a file's text needs the hash of the file it was planned against.",
+            );
+        }
+    }
     let before_hash = before.as_deref().map(hash_bytes);
     // A file that is already gone has nothing left to delete, whatever it held when the edit was planned.
     if edits.iter().any(|e| {
@@ -215,6 +240,36 @@ fn apply_op(op: &EditOp, working: Bytes, target: &std::path::Path, snapshots: &S
             let text = json_text(working, "{}\n")?;
             edit_json(&text, JsonOp::Remove { pointer })
         }
+        EditOp::TomlSet { key, value } => {
+            if key.is_empty() {
+                return refuse(RefuseReason::BadValue, "The key is empty.");
+            }
+            let value: Value = match serde_json::from_str(value) {
+                Ok(v) => v,
+                Err(e) => return refuse(RefuseReason::BadValue, format!("The value is not JSON: {e}")),
+            };
+            if !matches!(value, Value::String(_) | Value::Number(_) | Value::Bool(_)) {
+                return refuse(
+                    RefuseReason::BadValue,
+                    "The value must be a string, an integer, a float or a bool.",
+                );
+            }
+            let text = json_text(working, "")?;
+            edit_toml(&text, TomlOp::Set { key, value: &value })
+        }
+        EditOp::TomlRemove { key } => {
+            if working.is_none() {
+                return Ok(None);
+            }
+            let text = json_text(working, "")?;
+            edit_toml(&text, TomlOp::Remove { key })
+        }
+        EditOp::ReplaceText { content } => {
+            if working.is_none() {
+                return refuse(RefuseReason::BadValue, "The file does not exist.");
+            }
+            Ok(Some(content.clone().into_bytes()))
+        }
         EditOp::CreateFile { content } => {
             if working.is_some() {
                 return refuse(RefuseReason::Exists, "The file already exists.");
@@ -230,7 +285,7 @@ fn apply_op(op: &EditOp, working: Bytes, target: &std::path::Path, snapshots: &S
     }
 }
 
-/// The file as text for a JSON edit; a missing file starts from `empty`.
+/// The file as text for a JSON or TOML edit; a missing file starts from `empty`.
 fn json_text(working: Bytes, empty: &str) -> Result<String, Refused> {
     match working {
         None => Ok(empty.to_string()),
@@ -242,7 +297,15 @@ fn json_text(working: Bytes, empty: &str) -> Result<String, Refused> {
 }
 
 fn edit_json(text: &str, op: JsonOp) -> Result<Bytes, Refused> {
-    match apply_ops(text, &[op]) {
+    edited(apply_ops(text, &[op]))
+}
+
+fn edit_toml(text: &str, op: TomlOp) -> Result<Bytes, Refused> {
+    edited(apply_toml_ops(text, &[op]))
+}
+
+fn edited(result: Result<String, EditError>) -> Result<Bytes, Refused> {
+    match result {
         Ok(new_text) => Ok(Some(new_text.into_bytes())),
         Err(EditError::DoesNotParse(detail)) | Err(EditError::Internal(detail)) => {
             refuse(RefuseReason::DoesNotParse, detail)
@@ -513,5 +576,96 @@ mod tests {
         let cs = changeset(vec![edit(&path, EditOp::DeleteFile, Some(hash_bytes(b"x")))]);
         let files = plan(&cs, &guard, &snapshots);
         assert_eq!(refused(&files[0]), Some(RefuseReason::Managed));
+    }
+
+    #[test]
+    fn replace_text_needs_an_expected_hash() {
+        let (_dir, root, guard, snapshots) = setup();
+        let path = root.join("config.toml");
+        std::fs::write(&path, b"a = 1\n").unwrap();
+        let op = EditOp::ReplaceText {
+            content: "b = 2\n".into(),
+        };
+        let files = plan(&changeset(vec![edit(&path, op, None)]), &guard, &snapshots);
+        assert_eq!(refused(&files[0]), Some(RefuseReason::BadValue));
+    }
+
+    #[test]
+    fn replace_text_on_a_missing_file_is_refused() {
+        let (_dir, root, guard, snapshots) = setup();
+        let path = root.join("config.toml");
+        let op = EditOp::ReplaceText {
+            content: "b = 2\n".into(),
+        };
+        let with_hash = edit(&path, op.clone(), Some(hash_bytes(b"a = 1\n")));
+        let files = plan(&changeset(vec![with_hash]), &guard, &snapshots);
+        assert_eq!(refused(&files[0]), Some(RefuseReason::BadValue));
+        let files = plan(&changeset(vec![edit(&path, op, None)]), &guard, &snapshots);
+        assert_eq!(refused(&files[0]), Some(RefuseReason::BadValue));
+    }
+
+    #[test]
+    fn replace_text_with_the_right_hash_gives_the_new_bytes() {
+        let (_dir, root, guard, snapshots) = setup();
+        let path = root.join("config.toml");
+        std::fs::write(&path, b"a = 1\n").unwrap();
+        let op = EditOp::ReplaceText {
+            content: "b = 2\n".into(),
+        };
+        let cs = changeset(vec![edit(&path, op.clone(), Some(hash_bytes(b"a = 1\n")))]);
+        let files = plan(&cs, &guard, &snapshots);
+        assert_eq!(files[0].status, FileStatus::Changes);
+        assert_eq!(files[0].after.as_deref(), Some(b"b = 2\n".as_slice()));
+        assert!(to_preview("id", &cs, &files).can_apply);
+        // A different hash on disk is a conflict.
+        let stale = changeset(vec![edit(&path, op, Some(hash_bytes(b"other")))]);
+        assert_eq!(
+            refused(&plan(&stale, &guard, &snapshots)[0]),
+            Some(RefuseReason::Conflict)
+        );
+    }
+
+    #[test]
+    fn toml_set_on_a_missing_file_starts_empty() {
+        let (_dir, root, guard, snapshots) = setup();
+        let path = root.join("config.toml");
+        let op = EditOp::TomlSet {
+            key: vec!["model".into()],
+            value: "\"gpt\"".into(),
+        };
+        let files = plan(&changeset(vec![edit(&path, op, None)]), &guard, &snapshots);
+        assert_eq!(files[0].status, FileStatus::Changes);
+        assert_eq!(files[0].before, None);
+        assert_eq!(files[0].after.as_deref(), Some(b"model = \"gpt\"\n".as_slice()));
+    }
+
+    #[test]
+    fn toml_remove_on_a_missing_file_is_no_change() {
+        let (_dir, root, guard, snapshots) = setup();
+        let path = root.join("config.toml");
+        let op = EditOp::TomlRemove {
+            key: vec!["model".into()],
+        };
+        let files = plan(&changeset(vec![edit(&path, op, None)]), &guard, &snapshots);
+        assert_eq!(files[0].status, FileStatus::NoChange);
+    }
+
+    #[test]
+    fn toml_set_refuses_a_table_value_a_bad_key_and_bad_text() {
+        let (_dir, root, guard, snapshots) = setup();
+        let path = root.join("config.toml");
+        std::fs::write(&path, b"model = \"a\"\n").unwrap();
+        let set_toml = |key: &[&str], value: &str| EditOp::TomlSet {
+            key: key.iter().map(|k| k.to_string()).collect(),
+            value: value.into(),
+        };
+        let reason = |op: EditOp| refused(&plan(&changeset(vec![edit(&path, op, None)]), &guard, &snapshots)[0]);
+        assert_eq!(reason(set_toml(&["a"], "{\"b\": 1}")), Some(RefuseReason::BadValue));
+        assert_eq!(reason(set_toml(&["a"], "[1]")), Some(RefuseReason::BadValue));
+        assert_eq!(reason(set_toml(&["a"], "{nope")), Some(RefuseReason::BadValue));
+        assert_eq!(reason(set_toml(&[], "1")), Some(RefuseReason::BadValue));
+        assert_eq!(reason(set_toml(&["model", "x"], "1")), Some(RefuseReason::BadPointer));
+        std::fs::write(&path, b"model = \n").unwrap();
+        assert_eq!(reason(set_toml(&["a"], "1")), Some(RefuseReason::DoesNotParse));
     }
 }

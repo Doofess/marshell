@@ -1,3 +1,7 @@
+import type { ApplyResult } from "../../generated/ApplyResult";
+import type { SettingsPlan } from "../../generated/SettingsPlan";
+import type { SettingsPlanRequest } from "../../generated/SettingsPlanRequest";
+import type { SettingsUndoRequest } from "../../generated/SettingsUndoRequest";
 import type { AccountStatus } from "../../generated/AccountStatus";
 import type { AgentInstall } from "../../generated/AgentInstall";
 import type { AgentSettingsView } from "../../generated/AgentSettingsView";
@@ -15,3 +19,10 @@ export const getAccount = (ep: Endpoint, agent: HookAgent) => api<AccountStatus>
 
 /** The CLI's user settings for a read-only view, with secrets masked. */
 export const getSettingsView = (ep: Endpoint, agent: HookAgent) => api<AgentSettingsView>(ep, "GET", `${base(agent)}/settings-view`);
+
+/** Plans a settings change against the file as the view showed it. A 409 ApiError means the file changed since; a 422 carries the core's sentence as its message. */
+export const planSettings = (ep: Endpoint, agent: "claude" | "codex", req: SettingsPlanRequest) => api<SettingsPlan>(ep, "POST", `${base(agent)}/settings/plan`, req);
+
+/** Puts the settings file back as a snapshot had it. */
+export const undoSettings = (ep: Endpoint, agent: "claude" | "codex", snapshotId: string) =>
+  api<ApplyResult>(ep, "POST", `${base(agent)}/settings/undo`, { snapshot_id: snapshotId } satisfies SettingsUndoRequest);

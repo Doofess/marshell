@@ -98,6 +98,9 @@ describe("SettingsShell.css", () => {
     expect(css).toMatch(/@container settings \(inline-size < 720px\)/);
     expect(css).not.toMatch(/@media\s*\([^)]*(?:width|height)/);
   });
+  it("scrolls a focused control clear of the sticky change strip, even with an error line in it", () => {
+    expect(rule(".settings-shell .page__body")).toMatch(/scroll-padding-block-end:\s*calc\(var\(--space-8\)\s*\*\s*5\)/);
+  });
   it("names the container its query asks", () => {
     expect(rule(".settings-shell")).toMatch(/container:\s*settings\s*\/\s*inline-size/);
   });

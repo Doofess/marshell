@@ -60,6 +60,30 @@
     background: var(--selected, var(--fill-strong));
   }
 }
+.company__lock,
+.company__result {
+  margin: 0;
+  font-size: var(--text-12);
+  color: var(--text-2);
+  text-wrap: pretty;
+  overflow-wrap: anywhere;
+}
+.company__result {
+  display: grid;
+  justify-items: start;
+  gap: var(--space-2);
+}
+.field__error {
+  margin: 0;
+  padding-inline-start: var(--space-3);
+  border-inline-start: 3px solid var(--error);
+  font-size: var(--text-12);
+  color: var(--text-1);
+  overflow-wrap: anywhere;
+}
+.settings__btn[aria-disabled="true"] {
+  color: var(--text-3);
+}
 .company__value {
   margin: 0;
   font-size: var(--text-13);

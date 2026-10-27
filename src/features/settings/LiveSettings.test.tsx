@@ -157,6 +157,13 @@ describe("closeOrRefuse", () => {
   });
 });
 
+describe("LiveSettings and CompanySection", () => {
+  it("hands the company sections the announce it gives the other sections", () => {
+    const src = readFileSync(new URL("./LiveSettings.tsx", import.meta.url), "utf8");
+    expect(src).toMatch(/<CompanySection[^>]*announce=\{announce\}/);
+  });
+});
+
 describe("LiveSettings.css", () => {
   const css = readFileSync(new URL("./LiveSettings.css", import.meta.url), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
   const rule = (sel: string) => [...css.matchAll(/([^{}]+)\{([^{}]*)\}/g)].filter((m) => m[1]!.split(",").map((s) => s.trim()).includes(sel)).map((m) => m[2]).join(";");

@@ -24,6 +24,8 @@
 /* The page body has a definite height (the Page grid's 1fr row), so it can be asked for: 100cqb above is its scrollport height. */
 .settings-shell .page__body {
   container: settings-body / size;
+  /* A control focused by Tab scrolls clear of the sticky change strip, which can hold an error line too. */
+  scroll-padding-block-end: calc(var(--space-8) * 5);
 }
 .settings-shell__section {
   min-inline-size: 0;

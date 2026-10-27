@@ -3,4 +3,4 @@
 /**
  * One edit to one config file. Edits to the same path are applied in order.
  */
-export type EditOp = { "kind": "jsonSet", pointer: string, value: string, } | { "kind": "jsonRemove", pointer: string, } | { "kind": "createFile", content: string, } | { "kind": "deleteFile" } | { "kind": "restore", snapshot_id: string, };
+export type EditOp = { "kind": "jsonSet", pointer: string, value: string, } | { "kind": "jsonRemove", pointer: string, } | { "kind": "createFile", content: string, } | { "kind": "tomlSet", key: Array<string>, value: string, } | { "kind": "tomlRemove", key: Array<string>, } | { "kind": "replaceText", content: string, } | { "kind": "deleteFile" } | { "kind": "restore", snapshot_id: string, };

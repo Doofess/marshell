@@ -29,6 +29,7 @@ zstd = "0.13"
 rusqlite = { version = "0.40.2", features = ["bundled"] }
 zip = { version = "9.0.5", default-features = false, features = ["deflate-flate2-zlib-rs"] }
 toml = "1.1"
+toml_edit = "0.25"
 
 [target."cfg(unix)".dependencies]
 libc = "0.2.190"
