@@ -428,6 +428,9 @@ impl ConfigService {
         for file in &changing {
             for op in &file.ops {
                 changes.push(match op {
+                    // The person's own TOML keys and whole-text edits aren't Marshell's entries, so
+                    // `managed.json` records nothing for them.
+                    EditOp::TomlSet { .. } | EditOp::TomlRemove { .. } | EditOp::ReplaceText { .. } => continue,
                     EditOp::JsonSet { pointer, .. } => Change::Set {
                         path: &file.target,
                         pointer,

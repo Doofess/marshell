@@ -69,6 +69,20 @@ pub enum EditOp {
     CreateFile {
         content: String,
     },
+    /// Sets the key at a TOML key path, keeping the file's comments and key order. `value` is JSON text and
+    /// must be a string, an integer, a float or a bool; anything else is refused as `BadValue`.
+    TomlSet {
+        key: Vec<String>,
+        value: String,
+    },
+    TomlRemove {
+        key: Vec<String>,
+    },
+    /// Replaces a whole file's text. `expected_hash` is required and the file must exist: the text is replaced
+    /// only if the file still holds what the caller saw.
+    ReplaceText {
+        content: String,
+    },
     /// Removes a file. `expected_hash` is required: the file is deleted only if it still holds what the caller saw.
     DeleteFile,
     /// Puts a file back the way a snapshot saved it.
