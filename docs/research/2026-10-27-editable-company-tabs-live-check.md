@@ -1,0 +1,24 @@
+# Editable company tabs live check (slice 6f)
+
+- Date: 2026-10-27, 18:30 to 18:41 local time.
+- Build: `phase-6f` under `pnpm tauri dev` on Windows 11 Pro (26300).
+- Home: a scratch `MARSHELL_HOME`, `CLAUDE_CONFIG_DIR` and `MARSHELL_CLAUDE_SETTINGS`, and a short scratch `CODEX_HOME` under `%TEMP%`, with CDP on port 9333. Onboarding was stepped through with "Skip: use limited status" for all three CLIs, so no hooks were installed anywhere.
+- Data: the scratch Claude file (`MARSHELL_CLAUDE_SETTINGS`, which the Claude Code section edits in a live check) was seeded with `model`, `permissions.defaultMode = "default"` and a fake `env.ANTHROPIC_API_KEY`. The scratch `config.toml` was seeded with three comments, `model`, `sandbox_mode = "read-only"`, `approval_policy = "on-request"` and a `[profiles.x]` table with a comment of its own. Both were copied before the first edit for byte compares.
+- How it was driven: CDP evaluations and CDP keys from a script (the `webview` MCP server didn't connect), emulated forced colours (not a real high-contrast theme), 2 screenshots. No desktop input. No agent session was started.
+
+## Results
+
+| Check | Result |
+| --- | --- |
+| 1. A Claude form edit of `permissions.defaultMode` | Pass. ArrowDown on the select gave `acceptEdits` and the strip "1 change". Review showed "Shown as Marshell reads it: comments and layout are left out, and secret values show as hidden. The file keeps its comments and layout." first, and the key as `"hidden"`. The page held no `sk-ant-fake` anywhere. "Review the change to <path>." was announced. Apply changed only that line of the scratch file, made a snapshot under the scratch `MARSHELL_HOME`, showed "Saved. New Claude Code sessions use it." and announced "Saved <path>.". Undo announced "Put <path> back as it was.", and `cmp` with the copy taken before said the bytes are identical. |
+| 2. A Codex form edit of `sandbox_mode` | Pass. The select offered "Not set, Read-only, Workspace write, Full access". Review showed the file's own diff, with `# How Codex sandboxes commands.` as context and no normalized note. After Apply, `diff` against the copy showed only the `sandbox_mode` line changed. Every comment and `[profiles.x]` were still there. |
+| 3. A Codex raw edit | Pass. The raw view was an editable textarea with "This is the file itself. Review shows the exact change before anything is written.". Changing `model` gave the strip "Raw file changed". Review showed that one line's diff, and Apply wrote it. |
+| 4. Raw is locked for the Claude file with the secret | Pass. Raw file showed the read-only render with "Raw editing is off: this file holds secret values, and they show as hidden here.", and no `sk-ant-fake`. |
+| 5. A hand edit of `config.toml` between Review and Apply | Pass. A comment was appended to the scratch file while the review was open. Apply showed and announced "<path> changed since you opened it. Reload to see it." and wrote nothing (`approval_policy` was still `on-request`). Reload kept the draft: the select still read `never` and the strip "1 change". |
+| 6. Keyboard only, then emulated forced colours | Pass after the fix below. Tab, ArrowDown and Enter alone went through the Claude form, Review changes, Apply and Undo. In emulated forced colours the controls, the focus rings, the diff's markers and the buttons were all visible on the form and on the review. |
+| 7. The real `~/.claude/settings.json` and `~/.codex/config.toml` | Pass. Modified times were `2026-10-25T12:04:04.3335430Z` and `2026-10-24T22:14:46.4439977Z` before the check and after it was stopped. |
+
+## Findings
+
+1. **Each step dropped the keyboard focus on the section heading.** Review changes, Apply, Back to editing and Undo each remove the focused button, and Settings' focus guard then falls back to the heading. Apply was then three Tabs away, past "Update Claude Code". Fixed in 917dbeb: focus moves to the review section, to the "Saved" or conflict line, or back to Review changes, never onto Apply or Undo, so a held Enter can't apply or undo. The test `focusAfter` in `companyFlow.test.ts` and the focus-marker test in `CompanySection.test.tsx` failed first. Re-checked live: after Review the focus was on "Review of the changes", with Apply the next Tab; after Apply it was on the "Saved" line, with Undo the next Tab.
+2. **A control Tab reached could sit behind the sticky change strip.** With a change pending, Tab to Theme, the last form row, left the focused select fully under the strip. Fixed in 917dbeb with `scroll-padding-block-end: calc(var(--space-8) * 5)` on the Settings scroller. That is 160px, and the tallest strip, with an error line, measured 115px plus its 16px inset. The rule is on the shared scroller, so it covers every section's strip. The `SettingsShell.test.tsx` rule test failed first. Re-checked live: Theme was no longer covered.
