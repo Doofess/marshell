@@ -154,6 +154,7 @@ Behaviour:
   - A key with no control: `<key> isn't one of the settings this form changes.`
   - A locked key, managed: `<key> is set by <path>, so Marshell can't change it here.`
   - A locked key, not scalar: `<key> is set as a table in the file, so the form can't change it.`
+  - A locked key, hidden: `<key> holds a secret value, so the form can't change it.` (Ruling after Task 2: protocol `FieldLock` gains `Hidden`, set on a curated row whose shown value masking changed, such as `model = "TOKEN=abc"`, so a draft can never start from masked text.)
   - Number: `<key> needs a whole number of at least <min>.`
   - Choice: `<key> needs one of: <v1>, <v2>, ….`
   - Switch: `<key> needs on or off.`
@@ -252,7 +253,7 @@ What it renders when `view.editable`:
     - Text: `<input type="text">`.
   - Number and Text add the help sentence `Empty means not set.`.
   - A field error appears under the control, linked with `aria-describedby`.
-  - A locked row shows its value as today, with one line: `Set by <path>, so Marshell can't change it here.` for Managed, or `Set as a table in the file. Edit it in Raw file.` for NotScalar. That second line becomes `Set as a table in the file.` when `view.text === null`.
+  - A locked row shows its value as today, with one line: `Set by <path>, so Marshell can't change it here.` for Managed, or `Set as a table in the file. Edit it in Raw file.` for NotScalar. That second line becomes `Set as a table in the file.` when `view.text === null`. A `Hidden` lock reads `Holds a value shown as hidden, so the form can't change it.`
 - **Raw file.**
   - With `view.text !== null`, it is an editable textarea (class `raw-editor__text`, `aria-label` the path) holding `rawDraft ?? view.text`, with the note `This is the file itself. Review shows the exact change before anything is written.`
   - Otherwise it is today's read-only render and note, plus the line `Raw editing is off: this file holds secret values, and they show as hidden here.`
