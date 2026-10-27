@@ -529,6 +529,73 @@ fn line_at(text: &str, at: usize) -> u32 {
     u32::try_from(breaks + 1).unwrap_or(u32::MAX)
 }
 
+/// A settings text read once: the tree as written, the same tree masked, the masked render, and whether masking
+/// changed nothing.
+pub(crate) struct Parsed {
+    unmasked: Value,
+    shown: Value,
+    /// The masked values written back out as pretty JSON (TOML for Codex).
+    raw: Option<String>,
+    /// Masking changes nothing in the text, comments and repeated keys included, so it holds no value the view hides.
+    pub(crate) plain: bool,
+}
+
+/// Parses and masks `text` for `agent`; the error is the 1-based line of the first problem.
+pub(crate) fn parse_masked(agent: &str, text: &str) -> Result<Parsed, u32> {
+    if agent == "codex" {
+        let table = text
+            .strip_prefix('\u{feff}')
+            .unwrap_or(text)
+            .parse::<toml::Table>()
+            .map_err(|e| e.span().map_or(1, |span| line_at(text, span.start)))?;
+        let mut value = toml::Value::Table(table);
+        let before = value.clone();
+        mask_toml(&mut value);
+        let plain = value == before && toml_comments(text).into_iter().all(comment_is_clean);
+        Ok(Parsed {
+            unmasked: toml_json(&before),
+            shown: toml_json(&value),
+            raw: toml::to_string_pretty(&value).ok(),
+            plain,
+        })
+    } else {
+        let mut value = match parse_problem(text) {
+            Some((line, _)) => return Err(line),
+            None => read_value(text).map_err(|_| 1u32)?,
+        };
+        let before = value.clone();
+        mask(&mut value);
+        let plain = value == before && json_hides_nothing(text);
+        Ok(Parsed {
+            raw: serde_json::to_string_pretty(&value).ok(),
+            unmasked: before,
+            shown: value,
+            plain,
+        })
+    }
+}
+
+/// The masked render of `text` as the view's `raw` gives it; None when it doesn't parse.
+pub(crate) fn masked_render(agent: &str, text: &str) -> Option<String> {
+    parse_masked(agent, text).ok().and_then(|p| p.raw)
+}
+
+/// The line of the first problem when `text` is not a whole settings file for `agent`: strict JSON with an object at
+/// the top for Claude Code, TOML for Codex.
+pub(crate) fn text_problem(agent: &str, text: &str) -> Option<u32> {
+    if agent == "codex" {
+        return text
+            .parse::<toml::Table>()
+            .err()
+            .map(|e| e.span().map_or(1, |span| line_at(text, span.start)));
+    }
+    match serde_json::from_str::<Value>(text) {
+        Ok(Value::Object(_)) => None,
+        Ok(_) => Some(1),
+        Err(e) => Some(u32::try_from(e.line().max(1)).unwrap_or(u32::MAX)),
+    }
+}
+
 /// The view of `agent`'s settings file at `path`, given what reading it gave. `managed` is Claude's managed settings
 /// (already read, with the path of the file it came from); it is ignored for any other agent.
 pub fn view(
@@ -555,45 +622,21 @@ pub fn view(
     let hash = text.as_ref().ok().map(|t| hash_bytes(t.as_bytes()));
     // The text itself, kept only when masking changes nothing in the file.
     let mut plain = None;
+    let mut unmasked = None;
     let (user, raw) = match text {
-        Ok(text) if agent == "codex" => match text.strip_prefix('\u{feff}').unwrap_or(&text).parse::<toml::Table>() {
-            Ok(table) => {
-                let mut value = toml::Value::Table(table);
-                let before = value.clone();
-                mask_toml(&mut value);
-                if value == before && toml_comments(&text).into_iter().all(comment_is_clean) {
-                    plain = Some(text.clone());
+        Ok(text) => match parse_masked(agent, &text) {
+            Ok(parsed) => {
+                if parsed.plain {
+                    plain = Some(text);
                 }
-                (Some(toml_json(&value)), toml::to_string_pretty(&value).ok())
+                unmasked = Some(parsed.unmasked);
+                (Some(parsed.shown), parsed.raw)
             }
-            Err(e) => {
-                out.state = ViewState::Unparsable {
-                    line: e.span().map_or(1, |span| line_at(&text, span.start)),
-                };
+            Err(line) => {
+                out.state = ViewState::Unparsable { line };
                 return out;
             }
         },
-        Ok(text) => {
-            let parsed = match parse_problem(&text) {
-                Some((line, _)) => Err(line),
-                None => read_value(&text).map_err(|_| 1),
-            };
-            match parsed {
-                Ok(mut value) => {
-                    let before = value.clone();
-                    mask(&mut value);
-                    if value == before && json_hides_nothing(&text) {
-                        plain = Some(text.clone());
-                    }
-                    let raw = serde_json::to_string_pretty(&value).ok();
-                    (Some(value), raw)
-                }
-                Err(line) => {
-                    out.state = ViewState::Unparsable { line };
-                    return out;
-                }
-            }
-        }
         Err(e) if e.kind() == ErrorKind::NotFound => {
             out.state = ViewState::Missing;
             (None, None)
@@ -622,10 +665,16 @@ pub fn view(
             (None, Some(v)) => (
                 Some(shown(v)),
                 ViewScope::User,
-                control
-                    .as_ref()
-                    .filter(|_| matches!(v, Value::Object(_) | Value::Array(_)))
-                    .map(|_| FieldLock::NotScalar),
+                control.as_ref().and_then(|_| {
+                    // A value that masking changed shows as other than it is, so a draft can't start from it.
+                    if unmasked.as_ref().and_then(|u| lookup(u, key)) != Some(v) {
+                        Some(FieldLock::Hidden)
+                    } else if matches!(v, Value::Object(_) | Value::Array(_)) {
+                        Some(FieldLock::NotScalar)
+                    } else {
+                        None
+                    }
+                }),
             ),
             (None, None) => (None, ViewScope::User, None),
         };
@@ -1203,6 +1252,24 @@ args = [\"-y\",\"@modelcontextprotocol/server-postgres\",\"postgresql://u:pw@h/d
         let v = run("codex", "approval_policy = \"on-failure\"\n");
         let row = value_of(&v.curated, "approval_policy").unwrap();
         assert_eq!((row.value.as_deref(), row.lock.as_ref()), (Some("on-failure"), None));
+    }
+
+    #[test]
+    fn a_row_whose_value_masking_changed_is_locked_as_hidden() {
+        let v = run("claude", "{\"model\": \"TOKEN=abc-secret\", \"theme\": \"dark\"}");
+        let row = value_of(&v.curated, "model").unwrap();
+        assert_eq!(row.lock, Some(FieldLock::Hidden));
+        assert_eq!(row.value.as_deref(), Some("TOKEN=hidden"));
+        assert_eq!(value_of(&v.curated, "theme").unwrap().lock, None);
+        let v = run("codex", "model = \"API_KEY=abc-secret\"\n");
+        assert_eq!(value_of(&v.curated, "model").unwrap().lock, Some(FieldLock::Hidden));
+        // A table that masking changed is hidden before it is not scalar.
+        let v = run("codex", "approval_policy = { token = \"abc-secret\" }\n");
+        assert_eq!(
+            value_of(&v.curated, "approval_policy").unwrap().lock,
+            Some(FieldLock::Hidden)
+        );
+        assert!(!serde_json::to_string(&v).unwrap().contains("abc-secret"));
     }
 
     #[test]

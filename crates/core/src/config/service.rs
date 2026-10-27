@@ -214,9 +214,20 @@ impl ConfigService {
 
     /// Plans the ChangeSet from what is on disk now, stores it, and returns what the user would see.
     pub fn preview(&self, cs: ChangeSet) -> ConfigPreview {
+        self.preview_shown(cs, &|_| None)
+    }
+
+    /// `preview`, except that when `shown` gives `Some` for a file, that text is the file's diff in the returned and
+    /// in the stored preview. Apply still writes the planned bytes; only what is shown differs.
+    pub fn preview_shown(&self, cs: ChangeSet, shown: &dyn Fn(&PlannedFile) -> Option<String>) -> ConfigPreview {
         let files = plan(&cs, &self.shared.guard(), &self.shared.snapshots);
         let id = new_id("c");
-        let preview = to_preview(&id, &cs, &files);
+        let mut preview = to_preview(&id, &cs, &files);
+        for (file, shown_file) in files.iter().zip(preview.files.iter_mut()) {
+            if let Some(diff) = shown(file) {
+                shown_file.diff = diff;
+            }
+        }
         let targets = files.iter().map(|f| f.target.clone()).collect();
         let mut previews = lock(&self.shared.previews);
         let seq = previews.next_seq;
@@ -235,6 +246,13 @@ impl ConfigService {
         drop(previews);
         self.watch(&files);
         preview
+    }
+
+    /// Where a write to `path` would land: the guard's resolved path with links followed. None when the guard refuses
+    /// the path.
+    pub fn resolve_target(&self, path: &Path) -> Option<PathBuf> {
+        let resolved = self.shared.guard().check(path).ok()?;
+        write::resolve_link(&resolved).ok()
     }
 
     /// Starts the watcher on the first call and watches the folder of each file that isn't refused.

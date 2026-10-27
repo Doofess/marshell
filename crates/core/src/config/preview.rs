@@ -64,20 +64,26 @@ pub fn to_preview(changeset_id: &str, cs: &ChangeSet, files: &[PlannedFile]) -> 
     }
 }
 
+/// The unified diff from `before` to `after` of the file at `path`, with `--- a/<path>` (`/dev/null` when the file
+/// did not exist before) and `+++ b/<path>` header lines.
+pub fn unified_diff(path: &str, existed: bool, before: &str, after: &str) -> String {
+    let original = if existed {
+        format!("a/{path}")
+    } else {
+        "/dev/null".to_string()
+    };
+    // diffy quotes a name holding a backslash or a space, so its two header lines are replaced.
+    let patch = diffy::create_patch(before, after).to_string();
+    let hunks = patch.splitn(3, '\n').nth(2).unwrap_or("");
+    format!("--- {original}\n+++ b/{path}\n{hunks}")
+}
+
 fn file_preview(file: &PlannedFile) -> FilePreview {
     let diff = if file.status == FileStatus::Changes {
         let text = |bytes: &Option<Vec<u8>>| bytes.as_deref().map(|b| String::from_utf8_lossy(b).into_owned());
         let before = text(&file.before).unwrap_or_default();
         let after = text(&file.after).unwrap_or_default();
-        let path = file.path.to_string_lossy();
-        let original = match file.before {
-            Some(_) => format!("a/{path}"),
-            None => "/dev/null".to_string(),
-        };
-        // diffy quotes a name holding a backslash or a space, so its two header lines are replaced.
-        let patch = diffy::create_patch(&before, &after).to_string();
-        let hunks = patch.splitn(3, '\n').nth(2).unwrap_or("");
-        format!("--- {original}\n+++ b/{path}\n{hunks}")
+        unified_diff(&file.path.to_string_lossy(), file.before.is_some(), &before, &after)
     } else {
         String::new()
     };

@@ -3,4 +3,4 @@
 /**
  * Why a curated setting can't be edited from the form.
  */
-export type FieldLock = { "kind": "managed", path: string, } | { "kind": "not_scalar" };
+export type FieldLock = { "kind": "managed", path: string, } | { "kind": "not_scalar" } | { "kind": "hidden" };

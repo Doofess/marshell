@@ -815,6 +815,8 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/agents/{agent}/install", get(agents::install))
         .route("/v1/agents/{agent}/account", get(agents::account))
         .route("/v1/agents/{agent}/settings-view", get(agents::settings_view))
+        .route("/v1/agents/{agent}/settings/plan", post(agents::settings_plan))
+        .route("/v1/agents/{agent}/settings/undo", post(agents::settings_undo))
         .route("/v1/agents/{agent}/hooks/plan", post(agents::plan))
         .route("/v1/agents/{agent}/hooks/remove-plan", post(agents::remove_plan))
         .route("/v1/history", get(history::list))
