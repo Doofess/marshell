@@ -53,6 +53,11 @@ export const fieldFocus = (key: string) => `field:${key}`;
 /** The control to focus after Discard (the last one edited) or Reload (the last one focused); null when there was none. */
 export const focusBack = (action: "discard" | "reload", lastEdited: string | null, lastFocused: string | null): string | null => (action === "discard" ? lastEdited : lastFocused);
 
+/** Focuses the `data-focus` target inside `root`. A target that went away (now locked, or the view fell back to Form) leaves focus to the Settings fallback. */
+export const focusIn = (root: { querySelector(selector: string): { focus(): void } | null } | null, key: string): void => {
+  root?.querySelector(`[data-focus="${key}"]`)?.focus();
+};
+
 /** What `announce` says when the flow lands on a state; null when it says nothing. */
 export const announcement = (review: CompanyReview, _name: string, path: string): string | null => {
   switch (review.kind) {

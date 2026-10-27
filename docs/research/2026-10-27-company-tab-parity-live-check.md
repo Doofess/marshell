@@ -27,6 +27,6 @@
 
 ## Findings
 
-1. **The overwrite question stays open.** Without the probe there is no evidence that agy saves its settings over a change Marshell made while it runs, so slice 6g adds no warning (decision "Warn while sessions run" applies only if an overwrite is shown). A later check can answer it from a scratch home where agy's first run is already done. Not fixed.
+1. **The overwrite question stays open.** Without the probe there is no evidence either way that agy saves its settings over a change Marshell made while it runs. agy documents that it replaces the whole file in one step when it saves, so slice 6g adds decision 3's warning anyway (decision 9): Review says "Antigravity is running in 1 tab. If it saves its settings, it may undo this change." while agy runs. A later check can answer the question from a scratch home where agy's first run is already done.
 2. **Switching company tabs inside an open Settings shows the file as it was when Settings opened.** A file changed by hand only shows after Settings is reopened, or as a conflict at Review, which then offers Reload. This predates slice 6g, and the conflict path keeps it safe. Not fixed.
 3. **The review says "A backup is saved first, in ~/.marshell/snapshots/" under a scratch `MARSHELL_HOME`.** It is the fixed, approved copy used since 2026-10-10, and it is right whenever `MARSHELL_HOME` isn't set. Not fixed.

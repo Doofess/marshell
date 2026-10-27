@@ -1,3 +1,4 @@
+import { isValidElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import type { AgentInstall } from "../../generated/AgentInstall";
@@ -136,6 +137,10 @@ describe("CompanyView", () => {
       const h = render({ view: form([t], { text: null }) });
       expect(h).toContain("Set as a table in the file.");
       expect(h).not.toContain("Edit it in Raw file.");
+      // The file's text is shown, but raw editing is off, so Raw file is no way to change the table.
+      const locked = render({ view: form([t], { text: "{ // c\n}", raw_lock: "not_plain_json" }) });
+      expect(locked).toContain("Set as a table in the file.");
+      expect(locked).not.toContain("Edit it in Raw file.");
     });
     it("explains a hidden row", () => {
       const t: SettingValue = { key: "model", value: "hidden", scope: "user", control: { kind: "text" }, lock: { kind: "hidden" } };
@@ -249,6 +254,17 @@ describe("CompanyView", () => {
       expect(h).toContain("<select");
       expect(h).toContain("Review changes");
     });
+    it("warns at Review that a running Antigravity may undo the change, and leaves Apply as it is", () => {
+      const line = "Antigravity is running in 2 tabs. If it saves its settings, it may undo this change.";
+      const h = render({ agent: "antigravity", name: "Antigravity", view: agy([days]), running: 2, review: { kind: "review", plan: plan(false) } });
+      expect(h).toContain(`<p class="change-bar__note">${line}</p>`);
+      expect(h).toMatch(/<button[^>]*>Apply<\/button>/);
+      expect(h).not.toMatch(/<button(?=[^>]*aria-disabled)[^>]*>Apply<\/button>/);
+      // Not while editing, not with no Antigravity running, and never for another CLI.
+      expect(render({ agent: "antigravity", name: "Antigravity", view: agy([days]), running: 2 })).not.toContain("may undo this change");
+      expect(render({ agent: "antigravity", name: "Antigravity", view: agy([days]), running: 0, review: { kind: "review", plan: plan(false) } })).not.toContain("may undo this change");
+      expect(render({ view: form([days]), running: 2, review: { kind: "review", plan: plan(false) } })).not.toContain("may undo this change");
+    });
     it("gives a telemetry row held by the account its line and no control", () => {
       const t: SettingValue = { key: "enableTelemetry", value: "true", scope: "user", control: { kind: "switch" }, lock: { kind: "account" } };
       const h = render({ agent: "antigravity", view: agy([t]) });
@@ -271,6 +287,20 @@ describe("CompanyView", () => {
       expect(h).not.toMatch(/<textarea(?![^>]*readOnly)/);
       expect(h).toContain("// c");
       expect(h).toContain("Raw editing is off: this file isn&#x27;t plain JSON, and Marshell saves it as plain JSON.");
+    });
+    it("ties the read-only text to the view, so Undo and Reload show the file as it is now", () => {
+      // A `defaultValue` is read once, when the textarea mounts; static markup can't show the difference, so read the element.
+      const text = "{ // c\n}";
+      const tree = CompanyView({ agent: "claude", name: "Claude Code", install: install(), view: form([days], { text, raw_lock: "not_plain_json" }), running: 0, mode: "raw", onMode: noop, onUpdate: noop, ...noEdit });
+      const find = (n: unknown): { type: unknown; props: Record<string, unknown> } | null => {
+        if (Array.isArray(n)) return n.map(find).find(Boolean) ?? null;
+        if (!isValidElement(n)) return null;
+        const el = n as { type: unknown; props: Record<string, unknown> };
+        return el.type === "textarea" ? el : find(el.props.children);
+      };
+      const area = find(tree);
+      expect(area?.props.value).toBe(text);
+      expect(area?.props.defaultValue).toBeUndefined();
     });
     it("says a key appears twice", () => {
       const h = render({ mode: "raw", view: form([days], { text: null, raw_lock: "repeated_key" }) });

@@ -15,9 +15,9 @@ import { RawEditor } from "../settings/RawEditor";
 import { ScopeBadge } from "../settings/ScopeBadge";
 import type { CompanyAgent } from "../settings/settingsSections";
 import { choiceOptions, draftValue, editSummary, formEdits, switchOptions, type Draft } from "./companyEdit";
-import { afterApply, afterEdit, afterPlan, afterReload, afterUndo, announcement, fieldFocus, focusAfter, focusBack, isBusy, rawChange, rawDroppedLine, undoneLine, type PlanResult, type UndoResult } from "./companyFlow";
+import { afterApply, afterEdit, afterPlan, afterReload, afterUndo, announcement, fieldFocus, focusAfter, focusBack, focusIn, isBusy, rawChange, rawDroppedLine, undoneLine, type PlanResult, type UndoResult } from "./companyFlow";
 import { COMPANY_FIELDS, type CompanyField } from "./companyFields";
-import { fileLine, MANUAL_UPDATE, newerLine, runningNote, versionLine } from "./companyText";
+import { fileLine, MANUAL_UPDATE, newerLine, rewriteNote, runningNote, versionLine } from "./companyText";
 import "../settings/Settings.css";
 import "./CompanySection.css";
 
@@ -163,6 +163,7 @@ function ManualUpdate({ agent, name }: { agent: CompanyAgent; name: string }) {
 export function CompanyView({ agent, name, install, view, running, mode, onMode, onUpdate, draft, onDraft, rawDraft, onRawDraft, rawDropped = false, review, onReview, onApply, onBack, onDiscard, onReload, onUndo, onFocusField, rootRef }: CompanyViewProps) {
   const newer = install ? newerLine(install) : null;
   const note = runningNote(name, running);
+  const rewrite = rewriteNote(agent, running);
   const file = view ? fileLine(view) : null;
   const byKey = new Map((view?.curated ?? []).map((v) => [v.key, v]));
   const editable = view?.editable === true;
@@ -214,6 +215,7 @@ export function CompanyView({ agent, name, install, view, running, mode, onMode,
                 <code>~/.marshell/snapshots/</code>
                 {". To undo, Marshell puts that backup back, for as long as the file is unchanged since this change."}
               </p>
+              {rewrite && <p className="change-bar__note">{rewrite}</p>}
               <div className="change-bar__actions">
                 <Btn primary busy={review.kind === "applying"} onClick={onApply}>
                   Apply
@@ -229,7 +231,7 @@ export function CompanyView({ agent, name, install, view, running, mode, onMode,
               {editable && view.text !== null && view.raw_lock === null ? (
                 <textarea className="raw-editor__text" aria-label={view.path} data-focus="raw" onFocus={() => onFocusField?.("raw")} rows={Math.min(24, Math.max(6, (rawDraft ?? view.text).split("\n").length))} spellCheck={false} value={rawDraft ?? view.text} onChange={(e) => onRawDraft(e.target.value)} />
               ) : view.raw_lock === "not_plain_json" && view.text !== null ? (
-                <textarea className="raw-editor__text" aria-label={view.path} rows={Math.min(24, Math.max(6, view.text.split("\n").length))} spellCheck={false} defaultValue={view.text} readOnly />
+                <textarea className="raw-editor__text" aria-label={view.path} rows={Math.min(24, Math.max(6, view.text.split("\n").length))} spellCheck={false} value={view.text} readOnly />
               ) : agent === "codex" ? (
                 <textarea className="raw-editor__text" aria-label={view.path} rows={Math.min(24, Math.max(6, view.raw.split("\n").length))} spellCheck={false} defaultValue={view.raw} readOnly />
               ) : (
@@ -251,7 +253,7 @@ export function CompanyView({ agent, name, install, view, running, mode, onMode,
               <ul className="settings__fields">
                 {COMPANY_FIELDS[agent].map((f) => {
                   const v = byKey.get(f.key);
-                  if (editable) return <EditableRow key={f.key} field={f} v={v} input={draft[f.key] ?? (v ? draftValue(v) : "")} error={errors[f.key]} hasText={view.text !== null} onDraft={onDraft} onFocusField={onFocusField} />;
+                  if (editable) return <EditableRow key={f.key} field={f} v={v} input={draft[f.key] ?? (v ? draftValue(v) : "")} error={errors[f.key]} hasText={view.text !== null && view.raw_lock === null} onDraft={onDraft} onFocusField={onFocusField} />;
                   return (
                     <li key={f.key} className="field">
                       <div className="field__head">
@@ -362,14 +364,14 @@ export function CompanySection({ endpoint, agent, name, running, onUpdate, refre
   // Discard and Reload change what is on screen, so the control is focused after that render; no match leaves focus alone.
   useEffect(() => {
     if (pendingFocus === null) return;
-    root.current?.querySelector<HTMLElement>(`[data-focus="${pendingFocus}"]`)?.focus();
+    focusIn(root.current, pendingFocus);
     setPendingFocus(null);
   }, [pendingFocus]);
   const shownKind = useRef(review.kind);
   useEffect(() => {
     const target = focusAfter(shownKind.current, review.kind);
     shownKind.current = review.kind;
-    if (target) root.current?.querySelector<HTMLElement>(`[data-focus="${target}"]`)?.focus();
+    if (target) focusIn(root.current, target);
   }, [review.kind]);
   useEffect(() => {
     let live = true;

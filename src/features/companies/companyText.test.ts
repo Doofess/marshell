@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { AgentInstall } from "../../generated/AgentInstall";
 import type { AgentSettingsView } from "../../generated/AgentSettingsView";
-import { fileLine, manualUpdateLine, newerLine, runningNote, versionLine } from "./companyText";
+import { fileLine, manualUpdateLine, newerLine, rewriteNote, runningNote, versionLine } from "./companyText";
 
 const install = (over: Partial<AgentInstall> = {}): AgentInstall => ({ agent: "claude", found: true, version: "2.1.0", install: { kind: "native" }, update_command: "claude update", newer_version: null, ...over });
 const view = (state: AgentSettingsView["state"]): AgentSettingsView => ({ agent: "claude", path: "C:/u/.claude/settings.json", state, curated: [], others: [], raw: null, editable: false, hash: null, text: null, raw_lock: null });
@@ -19,6 +19,13 @@ describe("companyText", () => {
     expect(manualUpdateLine("claude", "Claude Code")).toBe("Marshell can't tell how Claude Code was installed. Update it with claude update, or npm install -g @anthropic-ai/claude-code@latest for an npm install.");
     expect(manualUpdateLine("codex", "Codex")).toBe("Marshell can't tell how Codex was installed. Update it with codex update, or npm install -g @openai/codex@latest for an npm install.");
     expect(manualUpdateLine("antigravity", "Antigravity")).toBe("Marshell can't tell how Antigravity was installed. Update it with agy update.");
+  });
+  it("rewriteNote", () => {
+    expect(rewriteNote("antigravity", 0)).toBeNull();
+    expect(rewriteNote("antigravity", 1)).toBe("Antigravity is running in 1 tab. If it saves its settings, it may undo this change.");
+    expect(rewriteNote("antigravity", 3)).toBe("Antigravity is running in 3 tabs. If it saves its settings, it may undo this change.");
+    expect(rewriteNote("claude", 2)).toBeNull();
+    expect(rewriteNote("codex", 2)).toBeNull();
   });
   it("runningNote", () => {
     expect(runningNote("Claude Code", 0)).toBeNull();

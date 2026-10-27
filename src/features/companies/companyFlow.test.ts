@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { ApplyResult } from "../../generated/ApplyResult";
 import type { SettingsPlan } from "../../generated/SettingsPlan";
 import type { AgentSettingsView } from "../../generated/AgentSettingsView";
-import { afterApply, afterEdit, afterPlan, afterReload, afterUndo, announcement, focusAfter, focusBack, isBusy, rawChange, rawDroppedLine } from "./companyFlow";
+import { afterApply, afterEdit, afterPlan, afterReload, afterUndo, announcement, focusAfter, focusBack, focusIn, isBusy, rawChange, rawDroppedLine } from "./companyFlow";
 
 const plan = { preview: { changeset_id: "c" }, normalized: false } as unknown as SettingsPlan;
 const P = "C:/u/.claude/settings.json";
@@ -58,6 +58,24 @@ describe("afterEdit and isBusy", () => {
     expect(isBusy({ kind: "applying" })).toBe(true);
     expect(isBusy({ kind: "undoing", snapshotId: "s" })).toBe(true);
     expect(isBusy({ kind: "editing" })).toBe(false);
+  });
+});
+describe("focusIn", () => {
+  it("focuses the control when it is there, and does nothing when it went away (locked, or the view fell back to Form)", () => {
+    let focused = 0;
+    const asked: string[] = [];
+    const root = (found: boolean) => ({
+      querySelector: (sel: string) => {
+        asked.push(sel);
+        return found ? { focus: () => void (focused += 1) } : null;
+      },
+    });
+    expect(() => focusIn(root(false), "field:model")).not.toThrow();
+    expect(focused).toBe(0);
+    expect(() => focusIn(null, "field:model")).not.toThrow();
+    focusIn(root(true), "field:model");
+    expect(focused).toBe(1);
+    expect(asked).toEqual(['[data-focus="field:model"]', '[data-focus="field:model"]']);
   });
 });
 describe("announcement", () => {
