@@ -16,10 +16,10 @@ stop:  prints the tree and stops it by PID, leaves first. If the tree holds an a
 Nothing here deletes a folder. With -CodexAuth, start copies ~/.codex/auth.json into the scratch CODEX_HOME
        and stop deletes that copy. -CodexHome <short path> puts CODEX_HOME there instead of <Scratch>\cx; that
        folder is deleted with the scratch folder at the end of the work.
-       With -AgyAuth, start creates <Scratch>\home\.gemini, copies ~/.gemini/oauth_creds.json and google_accounts.json
-       into it (nothing else), and starts the app with USERPROFILE=<Scratch>\home, so agy and the core's plans for
-       agy's files use the scratch home; CARGO_HOME and RUSTUP_HOME are pinned to the real ones first. stop deletes
-       those two copies.
+       start always creates <Scratch>\home\.gemini and starts the app with USERPROFILE=<Scratch>\home, so agy and
+       the core's reads and writes of agy's settings.json use the scratch home; CARGO_HOME and RUSTUP_HOME are pinned
+       to the real ones first. With -AgyAuth, it also copies ~/.gemini/oauth_creds.json and google_accounts.json into
+       <Scratch>\home\.gemini (nothing else), and stop deletes those two copies.
 
 .EXAMPLE
 pwsh -NoProfile -File live-check.ps1 start -Scratch C:\Users\me\AppData\Local\Temp\lc-5b-1
@@ -38,8 +38,8 @@ param(
     # start only: a new, short literal folder (at most 60 characters) to use as CODEX_HOME instead of <Scratch>\cx.
     # Codex 0.163 can't start its app-server under a longer one ("path must be shorter than SUN_LEN").
     [string]$CodexHome,
-    # start only: a scratch USERPROFILE (<Scratch>\home) holding copies of ~/.gemini/oauth_creds.json and
-    # google_accounts.json (and nothing else), so a real agy can sign in; stop deletes the two copies.
+    # start only: copies ~/.gemini/oauth_creds.json and google_accounts.json (and nothing else) into the scratch
+    # USERPROFILE's .gemini, so a real agy can sign in; stop deletes the two copies.
     [switch]$AgyAuth,
     # The checkout to run; defaults to the one holding this script.
     [string]$Repo = (Join-Path $PSScriptRoot '..\..\..'),
@@ -151,10 +151,10 @@ switch ($Mode) {
             if (-not (Test-Path -LiteralPath $auth)) { throw "No Codex sign-in to copy: $auth" }
             Copy-Item -LiteralPath $auth -Destination (Join-Path $cx.FullName 'auth.json')
         }
-        $agyHome = $null
+        # Always a scratch home: agy has no home variable of its own, and the app writes agy's settings.json.
+        $agyHome = (New-Item -ItemType Directory -Path (Join-Path $Scratch 'home')).FullName
+        $gemini = (New-Item -ItemType Directory -Path (Join-Path $agyHome '.gemini')).FullName
         if ($AgyAuth) {
-            $agyHome = (New-Item -ItemType Directory -Path (Join-Path $Scratch 'home')).FullName
-            $gemini = (New-Item -ItemType Directory -Path (Join-Path $agyHome '.gemini')).FullName
             foreach ($name in @('oauth_creds.json', 'google_accounts.json')) {
                 $from = Join-Path $HOME ".gemini\$name"
                 if (-not (Test-Path -LiteralPath $from)) { throw "No agy sign-in to copy: $from" }
@@ -169,12 +169,10 @@ switch ($Mode) {
         $env:CLAUDE_CONFIG_DIR = $cc.FullName
         $env:CODEX_HOME = $cx.FullName
         $env:MARSHELL_CLAUDE_SETTINGS = $settings
-        if ($agyHome) {
-            # Cargo and rustup find their homes through USERPROFILE too; keep the real ones for the build.
-            if (-not $env:CARGO_HOME) { $env:CARGO_HOME = Join-Path $HOME '.cargo' }
-            if (-not $env:RUSTUP_HOME) { $env:RUSTUP_HOME = Join-Path $HOME '.rustup' }
-            $env:USERPROFILE = $agyHome
-        }
+        # Cargo and rustup find their homes through USERPROFILE too; keep the real ones for the build.
+        if (-not $env:CARGO_HOME) { $env:CARGO_HOME = Join-Path $HOME '.cargo' }
+        if (-not $env:RUSTUP_HOME) { $env:RUSTUP_HOME = Join-Path $HOME '.rustup' }
+        $env:USERPROFILE = $agyHome
         $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = "--remote-debugging-port=$Port"
         $proc = Start-Process -FilePath 'cmd.exe' -ArgumentList '/d', '/c', 'pnpm tauri dev' -WorkingDirectory $repo `
             -NoNewWindow -PassThru -RedirectStandardOutput (Join-Path $Scratch 'dev.out.log') `
@@ -189,7 +187,7 @@ switch ($Mode) {
         Write-Output "CLAUDE_CONFIG_DIR=$($cc.FullName)"
         Write-Output "CODEX_HOME=$($cx.FullName)"
         Write-Output "MARSHELL_CLAUDE_SETTINGS=$settings"
-        if ($agyHome) { Write-Output "USERPROFILE=$agyHome (agy's scratch home)" }
+        Write-Output "USERPROFILE=$agyHome (agy's scratch home)"
         Write-Output "Logs: $Scratch\dev.out.log, $Scratch\dev.err.log. CDP: http://127.0.0.1:$Port/json/version"
     }
     'tree' {

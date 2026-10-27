@@ -4,6 +4,7 @@ import type { AgentInstall } from "../../generated/AgentInstall";
 import type { AgentSettingsView } from "../../generated/AgentSettingsView";
 import type { Endpoint } from "../../generated/Endpoint";
 import type { FieldLock } from "../../generated/FieldLock";
+import type { RawLock } from "../../generated/RawLock";
 import type { SettingsChange } from "../../generated/SettingsChange";
 import type { SettingsPlan } from "../../generated/SettingsPlan";
 import type { SettingValue } from "../../generated/SettingValue";
@@ -13,17 +14,17 @@ import { ApiError } from "../../lib/api/client";
 import { RawEditor } from "../settings/RawEditor";
 import { ScopeBadge } from "../settings/ScopeBadge";
 import type { CompanyAgent } from "../settings/settingsSections";
-import { choiceOptions, draftValue, editSummary, formEdits, type Draft } from "./companyEdit";
-import { afterApply, afterEdit, afterPlan, afterReload, afterUndo, announcement, focusAfter, isBusy, rawChange, rawDroppedLine, undoneLine, type PlanResult, type UndoResult } from "./companyFlow";
+import { choiceOptions, draftValue, editSummary, formEdits, switchOptions, type Draft } from "./companyEdit";
+import { afterApply, afterEdit, afterPlan, afterReload, afterUndo, announcement, fieldFocus, focusAfter, focusBack, focusIn, isBusy, rawChange, rawDroppedLine, undoneLine, type PlanResult, type UndoResult } from "./companyFlow";
 import { COMPANY_FIELDS, type CompanyField } from "./companyFields";
-import { fileLine, MANUAL_UPDATE, newerLine, runningNote, versionLine } from "./companyText";
+import { fileLine, MANUAL_UPDATE, newerLine, rewriteNote, runningNote, versionLine } from "./companyText";
 import "../settings/Settings.css";
 import "./CompanySection.css";
 
 export type CompanyMode = "form" | "raw";
 
 /** Where the edit flow stands; the stateful wrapper owns it. */
-export type CompanyReview = { kind: "editing" } | { kind: "planning" } | { kind: "review"; plan: SettingsPlan } | { kind: "applying" } | { kind: "saved"; snapshotId: string } | { kind: "undoing"; snapshotId: string } | { kind: "conflict" } | { kind: "error"; message: string };
+export type CompanyReview = { kind: "editing" } | { kind: "planning" } | { kind: "review"; plan: SettingsPlan } | { kind: "applying" } | { kind: "saved"; snapshotId: string } | { kind: "undone" } | { kind: "undoing"; snapshotId: string } | { kind: "conflict" } | { kind: "error"; message: string };
 
 export type CompanyViewProps = {
   agent: CompanyAgent;
@@ -47,17 +48,25 @@ export type CompanyViewProps = {
   onDiscard: () => void;
   onReload: () => void;
   onUndo: () => void;
+  /** A control took focus; the container remembers which, so Reload can put focus back. */
+  onFocusField?: (focusKey: string) => void;
   /** The root element, so the container can move focus inside it. */
   rootRef?: Ref<HTMLDivElement>;
 };
 
 const shown = (v: SettingValue | undefined) => v?.value ?? "–";
 
-const SWITCH_OPTIONS = [
-  { value: "", label: "Not set" },
-  { value: "on", label: "On" },
-  { value: "off", label: "Off" },
-];
+/** Why the raw file can't be edited as text. */
+export const rawLockLine = (lock: RawLock) => {
+  switch (lock) {
+    case "not_plain_json":
+      return "Raw editing is off: this file isn't plain JSON, and Marshell saves it as plain JSON.";
+    case "repeated_key":
+      return "Raw editing is off: a key appears twice in this file.";
+    case "hidden":
+      return "Raw editing is off: this file holds secret values, and they show as hidden here.";
+  }
+};
 
 const lockLine = (lock: FieldLock, hasText: boolean) => {
   switch (lock.kind) {
@@ -67,6 +76,8 @@ const lockLine = (lock: FieldLock, hasText: boolean) => {
       return hasText ? "Set as a table in the file. Edit it in Raw file." : "Set as a table in the file.";
     case "hidden":
       return "Holds a value shown as hidden, so the form can't change it.";
+    case "account":
+      return "Antigravity keeps this with your Google account, not in this file. Change it with /config in Antigravity.";
   }
 };
 
@@ -80,12 +91,14 @@ function Btn({ children, busy = false, primary = false, focusKey, onClick }: { c
 }
 
 /** One curated row of an editable file: a control, or the value as today with the reason it is locked. */
-function EditableRow({ field, v, input, error, hasText, onDraft }: { field: CompanyField; v: SettingValue | undefined; input: string; error: string | undefined; hasText: boolean; onDraft: (key: string, input: string) => void }) {
+function EditableRow({ field, v, input, error, hasText, onDraft, onFocusField }: { field: CompanyField; v: SettingValue | undefined; input: string; error: string | undefined; hasText: boolean; onDraft: (key: string, input: string) => void; onFocusField?: (focusKey: string) => void }) {
   const id = useId();
   const control = v && !v.lock ? v.control : undefined;
   const empty = control?.kind === "number" || control?.kind === "text";
   const describedBy = [`${id}-help`, error ? `${id}-error` : null].filter(Boolean).join(" ");
-  const options = control?.kind === "choice" ? choiceOptions(control, input) : control?.kind === "switch" ? SWITCH_OPTIONS : null;
+  const focusKey = fieldFocus(field.key);
+  const focusProps = { "data-focus": focusKey, onFocus: () => onFocusField?.(focusKey) };
+  const options = control?.kind === "choice" ? choiceOptions(control, input) : control?.kind === "switch" ? switchOptions(input) : null;
   return (
     <li className="field" data-locked={v?.lock ? "" : undefined}>
       <div className="field__head">
@@ -102,7 +115,7 @@ function EditableRow({ field, v, input, error, hasText, onDraft }: { field: Comp
         {empty ? `${field.help} Empty means not set.` : field.help}
       </p>
       {options && (
-        <select id={id} className="field__control" aria-describedby={describedBy} value={input} onChange={(e) => onDraft(field.key, e.target.value)}>
+        <select id={id} className="field__control" {...focusProps} aria-describedby={describedBy} value={input} onChange={(e) => onDraft(field.key, e.target.value)}>
           {options.map((o) => (
             <option key={o.value} value={o.value}>
               {o.label}
@@ -110,8 +123,8 @@ function EditableRow({ field, v, input, error, hasText, onDraft }: { field: Comp
           ))}
         </select>
       )}
-      {control?.kind === "number" && <input id={id} className="field__control" type="number" min={control.min} value={input} aria-describedby={describedBy} aria-invalid={error ? true : undefined} onChange={(e) => onDraft(field.key, e.target.value)} />}
-      {control?.kind === "text" && <input id={id} className="field__control" type="text" value={input} spellCheck={false} aria-describedby={describedBy} aria-invalid={error ? true : undefined} onChange={(e) => onDraft(field.key, e.target.value)} />}
+      {control?.kind === "number" && <input id={id} className="field__control" type="text" inputMode="numeric" {...focusProps} value={input} aria-describedby={describedBy} aria-invalid={error ? true : undefined} onChange={(e) => onDraft(field.key, e.target.value)} />}
+      {control?.kind === "text" && <input id={id} className="field__control" type="text" {...focusProps} value={input} spellCheck={false} aria-describedby={describedBy} aria-invalid={error ? true : undefined} onChange={(e) => onDraft(field.key, e.target.value)} />}
       {error && (
         <p id={`${id}-error`} className="field__error">
           {error}
@@ -147,9 +160,10 @@ function ManualUpdate({ agent, name }: { agent: CompanyAgent; name: string }) {
 }
 
 /** One company CLI: version and Update, then its user settings file as a form or as text, editable when the core says so. Presentational. */
-export function CompanyView({ agent, name, install, view, running, mode, onMode, onUpdate, draft, onDraft, rawDraft, onRawDraft, rawDropped = false, review, onReview, onApply, onBack, onDiscard, onReload, onUndo, rootRef }: CompanyViewProps) {
+export function CompanyView({ agent, name, install, view, running, mode, onMode, onUpdate, draft, onDraft, rawDraft, onRawDraft, rawDropped = false, review, onReview, onApply, onBack, onDiscard, onReload, onUndo, onFocusField, rootRef }: CompanyViewProps) {
   const newer = install ? newerLine(install) : null;
   const note = runningNote(name, running);
+  const rewrite = rewriteNote(agent, running);
   const file = view ? fileLine(view) : null;
   const byKey = new Map((view?.curated ?? []).map((v) => [v.key, v]));
   const editable = view?.editable === true;
@@ -158,7 +172,7 @@ export function CompanyView({ agent, name, install, view, running, mode, onMode,
   const changeCount = rawChanged ? 1 : edits.length;
   const blocked = !rawChanged && Object.keys(errors).length > 0;
   const inReview = review.kind === "review" || review.kind === "applying";
-  const stripShown = editable && (review.kind === "editing" || review.kind === "planning" || review.kind === "error") && (changeCount > 0 || blocked);
+  const stripShown = editable && (review.kind === "editing" || review.kind === "planning" || review.kind === "error" || review.kind === "undone") && (changeCount > 0 || blocked);
   return (
     <div className="company" ref={rootRef}>
       {!install && !view && <p className="company__line">{`Reading ${name}…`}</p>}
@@ -201,6 +215,7 @@ export function CompanyView({ agent, name, install, view, running, mode, onMode,
                 <code>~/.marshell/snapshots/</code>
                 {". To undo, Marshell puts that backup back, for as long as the file is unchanged since this change."}
               </p>
+              {rewrite && <p className="change-bar__note">{rewrite}</p>}
               <div className="change-bar__actions">
                 <Btn primary busy={review.kind === "applying"} onClick={onApply}>
                   Apply
@@ -213,19 +228,23 @@ export function CompanyView({ agent, name, install, view, running, mode, onMode,
           ) : mode === "raw" && view.raw !== null ? (
             <div className="company__raw">
               {rawDropped && <p className="company__note">{rawDroppedLine(view.path)}</p>}
-              {editable && view.text !== null ? (
-                <textarea className="raw-editor__text" aria-label={view.path} rows={Math.min(24, Math.max(6, (rawDraft ?? view.text).split("\n").length))} spellCheck={false} value={rawDraft ?? view.text} onChange={(e) => onRawDraft(e.target.value)} />
+              {editable && view.text !== null && view.raw_lock === null ? (
+                <textarea className="raw-editor__text" aria-label={view.path} data-focus="raw" onFocus={() => onFocusField?.("raw")} rows={Math.min(24, Math.max(6, (rawDraft ?? view.text).split("\n").length))} spellCheck={false} value={rawDraft ?? view.text} onChange={(e) => onRawDraft(e.target.value)} />
+              ) : view.raw_lock === "not_plain_json" && view.text !== null ? (
+                <textarea className="raw-editor__text" aria-label={view.path} rows={Math.min(24, Math.max(6, view.text.split("\n").length))} spellCheck={false} value={view.text} readOnly />
               ) : agent === "codex" ? (
                 <textarea className="raw-editor__text" aria-label={view.path} rows={Math.min(24, Math.max(6, view.raw.split("\n").length))} spellCheck={false} defaultValue={view.raw} readOnly />
               ) : (
                 <RawEditor path={view.path} text={view.raw} readOnly />
               )}
-              {editable && view.text !== null ? (
+              {editable && view.text !== null && view.raw_lock === null ? (
                 <p className="company__note">This is the file itself. Review shows the exact change before anything is written.</p>
+              ) : view.raw_lock === "not_plain_json" && view.text !== null ? (
+                <p className="company__note">{rawLockLine(view.raw_lock)}</p>
               ) : (
                 <>
                   <p className="company__note">Shown as Marshell reads it: comments and layout are left out, and secret values show as hidden.</p>
-                  {editable && <p className="company__note">Raw editing is off: this file holds secret values, and they show as hidden here.</p>}
+                  {view.raw_lock !== null && <p className="company__note">{rawLockLine(view.raw_lock)}</p>}
                 </>
               )}
             </div>
@@ -234,7 +253,7 @@ export function CompanyView({ agent, name, install, view, running, mode, onMode,
               <ul className="settings__fields">
                 {COMPANY_FIELDS[agent].map((f) => {
                   const v = byKey.get(f.key);
-                  if (editable) return <EditableRow key={f.key} field={f} v={v} input={draft[f.key] ?? (v ? draftValue(v) : "")} error={errors[f.key]} hasText={view.text !== null} onDraft={onDraft} />;
+                  if (editable) return <EditableRow key={f.key} field={f} v={v} input={draft[f.key] ?? (v ? draftValue(v) : "")} error={errors[f.key]} hasText={view.text !== null && view.raw_lock === null} onDraft={onDraft} onFocusField={onFocusField} />;
                   return (
                     <li key={f.key} className="field">
                       <div className="field__head">
@@ -297,6 +316,11 @@ export function CompanyView({ agent, name, install, view, running, mode, onMode,
               </Btn>
             </div>
           )}
+          {review.kind === "undone" && (
+            <div className="company__result" tabIndex={-1} data-focus="result">
+              <p className="company__line">{undoneLine(view.path)}</p>
+            </div>
+          )}
           {review.kind === "error" && !stripShown && (
             <div className="company__result" tabIndex={-1} data-focus="result">
               <p className="change-bar__error">{review.message}</p>
@@ -334,11 +358,20 @@ export function CompanySection({ endpoint, agent, name, running, onUpdate, refre
   );
   // The focused button goes away with each step, so focus moves to what replaced it (see focusAfter).
   const root = useRef<HTMLDivElement>(null);
+  const lastEdited = useRef<string | null>(null);
+  const lastFocused = useRef<string | null>(null);
+  const [pendingFocus, setPendingFocus] = useState<string | null>(null);
+  // Discard and Reload change what is on screen, so the control is focused after that render; no match leaves focus alone.
+  useEffect(() => {
+    if (pendingFocus === null) return;
+    focusIn(root.current, pendingFocus);
+    setPendingFocus(null);
+  }, [pendingFocus]);
   const shownKind = useRef(review.kind);
   useEffect(() => {
     const target = focusAfter(shownKind.current, review.kind);
     shownKind.current = review.kind;
-    if (target) root.current?.querySelector<HTMLElement>(`[data-focus="${target}"]`)?.focus();
+    if (target) focusIn(root.current, target);
   }, [review.kind]);
   useEffect(() => {
     let live = true;
@@ -373,17 +406,19 @@ export function CompanySection({ endpoint, agent, name, running, onUpdate, refre
   };
   const onDraft = (key: string, input: string) => {
     if (isBusy(review)) return;
+    lastEdited.current = fieldFocus(key);
     setDraft((d) => ({ ...d, [key]: input }));
     setReview((r) => afterEdit(r));
   };
   const onRawDraft = (text: string) => {
     if (isBusy(review)) return;
+    lastEdited.current = "raw";
     setRawDraft(text);
     setRawDropped(false);
     setReview((r) => afterEdit(r));
   };
   const onReview = async () => {
-    if (!view || agent === "antigravity" || isBusy(review)) return; // Antigravity's file is never editable here.
+    if (!view || isBusy(review)) return;
     const mine = ++request.current;
     const raw = rawChange(shownMode, view, rawDraft);
     const change: SettingsChange = raw !== null ? { kind: "raw", text: raw } : { kind: "form", edits: formEdits(view.curated, draft).edits };
@@ -428,6 +463,8 @@ export function CompanySection({ endpoint, agent, name, running, onUpdate, refre
     setRawDraft(null);
     setRawDropped(false);
     setReview({ kind: "editing" });
+    setPendingFocus(focusBack("discard", lastEdited.current, lastFocused.current));
+    lastEdited.current = null;
   };
   const onReload = async () => {
     if (isBusy(review)) return;
@@ -444,12 +481,13 @@ export function CompanySection({ endpoint, agent, name, running, onUpdate, refre
         announce(rawDroppedLine(v.path));
       }
       setReview({ kind: "editing" });
+      setPendingFocus(focusBack("reload", lastEdited.current, lastFocused.current));
     } catch {
       if (request.current === mine) land({ kind: "error", message: `Couldn't read ${path} again. Close Settings and try again.` });
     }
   };
   const onUndo = async () => {
-    if (review.kind !== "saved" || agent === "antigravity") return;
+    if (review.kind !== "saved") return;
     const mine = ++request.current;
     const snapshotId = review.snapshotId;
     setReview({ kind: "undoing", snapshotId });
@@ -469,8 +507,7 @@ export function CompanySection({ endpoint, agent, name, running, onUpdate, refre
     if (request.current !== mine) return;
     setDraft({});
     setRawDraft(null);
-    setReview(afterUndo(result, path));
-    announce(undoneLine(path));
+    land(afterUndo(result, path));
   };
   return (
     <>
@@ -497,6 +534,7 @@ export function CompanySection({ endpoint, agent, name, running, onUpdate, refre
           onDiscard={onDiscard}
           onReload={() => void onReload()}
           onUndo={() => void onUndo()}
+          onFocusField={(k) => (lastFocused.current = k)}
           rootRef={root}
         />
       )}

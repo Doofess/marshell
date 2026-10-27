@@ -24,6 +24,12 @@ export function runningNote(name: string, count: number): string | null {
   return count === 1 ? `${name} is running in 1 tab. The update may fail while it runs.` : `${name} is running in ${count} tabs. The update may fail while they run.`;
 }
 
+/** At Review: Antigravity rewrites its whole settings file when it saves, so a running session may put back what it read at start (slice 6g decision 3). */
+export function rewriteNote(agent: CompanyAgent, running: number): string | null {
+  if (agent !== "antigravity" || running <= 0) return null;
+  return `Antigravity is running in ${running === 1 ? "1 tab" : `${running} tabs`}. If it saves its settings, it may undo this change.`;
+}
+
 export function fileLine(view: AgentSettingsView): string | null {
   switch (view.state.kind) {
     case "missing":

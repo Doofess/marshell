@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { ApplyResult } from "../../generated/ApplyResult";
 import type { SettingsPlan } from "../../generated/SettingsPlan";
 import type { AgentSettingsView } from "../../generated/AgentSettingsView";
-import { afterApply, afterEdit, afterPlan, afterReload, afterUndo, announcement, focusAfter, isBusy, rawChange, rawDroppedLine } from "./companyFlow";
+import { afterApply, afterEdit, afterPlan, afterReload, afterUndo, announcement, focusAfter, focusBack, focusIn, isBusy, rawChange, rawDroppedLine } from "./companyFlow";
 
 const plan = { preview: { changeset_id: "c" }, normalized: false } as unknown as SettingsPlan;
 const P = "C:/u/.claude/settings.json";
@@ -38,7 +38,7 @@ describe("afterApply", () => {
 });
 describe("afterUndo", () => {
   it("goes back to editing, or errors with the exact sentence", () => {
-    expect(afterUndo({ ok: true }, P)).toEqual({ kind: "editing" });
+    expect(afterUndo({ ok: true }, P)).toEqual({ kind: "undone" });
     expect(afterUndo({ ok: false, status: 409, message: "x" }, P)).toEqual({ kind: "error", message: `${P} changed since this change, so undo would overwrite it.` });
     expect(afterUndo({ ok: false, status: 500, message: "Disk full." }, P)).toEqual({ kind: "error", message: "Disk full." });
   });
@@ -47,10 +47,35 @@ describe("afterEdit and isBusy", () => {
   it("returns saved, conflict and error to editing, and leaves the rest", () => {
     for (const r of [{ kind: "saved", snapshotId: "s" }, { kind: "conflict" }, { kind: "error", message: "m" }] as const) expect(afterEdit(r)).toEqual({ kind: "editing" });
     for (const r of [{ kind: "planning" }, { kind: "applying" }, { kind: "undoing", snapshotId: "s" }, { kind: "editing" }] as const) expect(afterEdit(r)).toBe(r);
+    expect(afterEdit({ kind: "undone" })).toEqual({ kind: "editing" });
+    expect(isBusy({ kind: "undone" })).toBe(false);
+    expect(focusAfter("undoing", "undone")).toBe("result");
+    expect(announcement({ kind: "undone" }, "n", "p")).toBe("Put p back as it was.");
+    expect(focusBack("discard", "field:model", "raw")).toBe("field:model");
+    expect(focusBack("reload", "field:model", "raw")).toBe("raw");
+    expect(focusBack("discard", null, null)).toBeNull();
     expect(isBusy({ kind: "planning" })).toBe(true);
     expect(isBusy({ kind: "applying" })).toBe(true);
     expect(isBusy({ kind: "undoing", snapshotId: "s" })).toBe(true);
     expect(isBusy({ kind: "editing" })).toBe(false);
+  });
+});
+describe("focusIn", () => {
+  it("focuses the control when it is there, and does nothing when it went away (locked, or the view fell back to Form)", () => {
+    let focused = 0;
+    const asked: string[] = [];
+    const root = (found: boolean) => ({
+      querySelector: (sel: string) => {
+        asked.push(sel);
+        return found ? { focus: () => void (focused += 1) } : null;
+      },
+    });
+    expect(() => focusIn(root(false), "field:model")).not.toThrow();
+    expect(focused).toBe(0);
+    expect(() => focusIn(null, "field:model")).not.toThrow();
+    focusIn(root(true), "field:model");
+    expect(focused).toBe(1);
+    expect(asked).toEqual(['[data-focus="field:model"]', '[data-focus="field:model"]']);
   });
 });
 describe("announcement", () => {
@@ -64,7 +89,7 @@ describe("announcement", () => {
   });
 });
 
-const sv = (over: Partial<AgentSettingsView> = {}): AgentSettingsView => ({ agent: "codex", path: P, state: { kind: "ok" }, curated: [], others: [], raw: "a = 1\n", editable: true, hash: "h", text: "a = 1\n", ...over });
+const sv = (over: Partial<AgentSettingsView> = {}): AgentSettingsView => ({ agent: "codex", path: P, state: { kind: "ok" }, curated: [], others: [], raw: "a = 1\n", editable: true, hash: "h", text: "a = 1\n", raw_lock: null, ...over });
 describe("afterReload", () => {
   it("keeps the form draft through a conflict and Reload, and the raw draft only while the file's text is the same", () => {
     expect(afterReload("a = 1\n", sv(), { a: "2" }, "a = 3\n")).toEqual({ draft: { a: "2" }, rawDraft: "a = 3\n", rawDropped: false });
@@ -86,5 +111,7 @@ describe("rawChange", () => {
     expect(rawChange("raw", sv({ editable: false }), "a = 2\n")).toBeNull();
     expect(rawChange("raw", sv({ raw: null }), "a = 2\n")).toBeNull();
     expect(rawChange("raw", null, "a = 2\n")).toBeNull();
+    expect(rawChange("raw", sv({ raw_lock: "not_plain_json", text: "x" }), "y")).toBeNull();
+    expect(rawChange("raw", sv({ raw_lock: null, text: "x" }), "y")).toBe("y");
   });
 });

@@ -7,7 +7,7 @@ use crate::agents::antigravity::hooks as agy;
 use crate::agents::claude::{self, hooks};
 use crate::agents::codex::{self, trust};
 use crate::agents::install::{codex_newer, install_kind, update_text};
-use crate::agents::settings_view::{control, masked_render, parse_masked, read_managed, text_problem, view};
+use crate::agents::settings_view::{control, has_bom, masked_render, parse_masked, read_managed, text_problem, view};
 use crate::agents::{parse_any_version, run_version_text};
 use crate::bridge;
 use crate::config::jsonc::{parse_problem, read_value};
@@ -29,8 +29,8 @@ use marshell_protocol::config::{
 };
 use marshell_protocol::install::{AgentInstall, InstallKind};
 use marshell_protocol::settings_view::{
-    AgentSettingsView, FieldControl, FieldLock, SettingEdit, SettingsChange, SettingsPlan, SettingsPlanRequest,
-    SettingsUndoRequest, ViewState,
+    AgentSettingsView, FieldControl, FieldLock, RawLock, SettingEdit, SettingsChange, SettingsPlan,
+    SettingsPlanRequest, SettingsUndoRequest, ViewState,
 };
 use serde_json::Value;
 use std::cell::Cell;
@@ -687,8 +687,15 @@ fn settings_file(st: &AppState, kind: Adapter) -> Result<(PathBuf, Option<(PathB
 }
 
 fn settings_view_of(st: &AppState, agent: &str, kind: Adapter) -> Result<AgentSettingsView, Fail> {
+    settings_read(st, agent, kind).map(|(view, _)| view)
+}
+
+/// The settings view and whether the file's text starts with a byte-order mark, from one read.
+fn settings_read(st: &AppState, agent: &str, kind: Adapter) -> Result<(AgentSettingsView, bool), Fail> {
     let (path, managed) = settings_file(st, kind)?;
-    Ok(view(agent, &path, std::fs::read_to_string(&path), managed))
+    let text = std::fs::read_to_string(&path);
+    let had_bom = text.as_deref().is_ok_and(has_bom);
+    Ok((view(agent, &path, text, managed), had_bom))
 }
 
 /// Codex's `version.json` in `dir`, read against the installed `version`. A file that can't be read is no news.
@@ -699,7 +706,6 @@ fn codex_newer_in(dir: &Path, version: &str) -> Option<String> {
 
 // ---- planning and undoing a settings change ----
 
-const READ_ONLY: &str = "Antigravity's settings are read-only in Marshell.";
 const NOT_THIS_FILE: &str = "That snapshot isn't of this agent's settings file.";
 
 /// Why a settings change isn't made: a plain sentence, or a 409 naming the files that changed since the person looked.
@@ -743,7 +749,7 @@ fn now_ms() -> u64 {
         .map_or(0, |d| d.as_millis() as u64)
 }
 
-/// Plans a change to Claude's or Codex's user settings file. Everything is checked before a ChangeSet is made, no
+/// Plans a change to a company CLI's user settings file. Everything is checked before a ChangeSet is made, no
 /// message quotes a value, and the diff never shows a value the settings view hides.
 pub async fn settings_plan(
     State(st): State<AppState>,
@@ -767,10 +773,7 @@ fn settings_plan_of(
     kind: Adapter,
     req: SettingsPlanRequest,
 ) -> Result<SettingsPlan, Refusal> {
-    if matches!(kind, Adapter::Antigravity) {
-        return Err(unprocessable(READ_ONLY));
-    }
-    let view = settings_view_of(st, agent, kind).map_err(Refusal::from)?;
+    let (view, had_bom) = settings_read(st, agent, kind).map_err(Refusal::from)?;
     match view.state {
         ViewState::Unparsable { line } => {
             return Err(unprocessable(format!(
@@ -788,11 +791,12 @@ fn settings_plan_of(
     }
     let ops = match &req.change {
         SettingsChange::Form { edits } => form_ops(agent, &view, edits)?,
-        SettingsChange::Raw { text } => vec![raw_op(agent, &view, text)?],
+        SettingsChange::Raw { text } => vec![raw_op(agent, &view, had_bom, text)?],
     };
     let title = match kind {
         Adapter::Claude => "Change Claude Code settings",
-        _ => "Change Codex settings",
+        Adapter::Codex => "Change Codex settings",
+        Adapter::Antigravity => "Change Antigravity settings",
     };
     let cs = ChangeSet {
         title: title.to_string(),
@@ -847,6 +851,7 @@ fn form_ops(agent: &str, view: &AgentSettingsView, edits: &[SettingEdit]) -> Res
                     "{key} holds a secret value, so the form can't change it."
                 )));
             }
+            Some(FieldLock::Account) => return Err(unprocessable(ACCOUNT_LINE)),
             None => {}
         }
         let value = edit
@@ -902,22 +907,54 @@ fn checked(key: &str, control: &FieldControl, text: &str) -> Result<Value, Refus
     }
 }
 
+/// Why a key Antigravity keeps with the Google account (`enableTelemetry`) is never written, from the form or as text.
+const ACCOUNT_LINE: &str =
+    "Antigravity keeps this with your Google account, not in this file. Change it with /config in Antigravity.";
+
+/// The JSON value of `key` at the top of `text`; None when the text doesn't hold it.
+fn top_value(text: &str, key: &str) -> Option<Value> {
+    serde_json::from_str::<Value>(text).ok()?.get(key).cloned()
+}
+
 /// The op that replaces the file's whole text, when the view gives that text out and the new text parses.
-fn raw_op(agent: &str, view: &AgentSettingsView, text: &str) -> Result<EditOp, Refusal> {
+/// A BOM the file had stays, and only one: the text the person edits never carries it.
+fn raw_op(agent: &str, view: &AgentSettingsView, had_bom: bool, text: &str) -> Result<EditOp, Refusal> {
     if view.state == ViewState::Missing {
         return Err(unprocessable("There is no file to edit as text."));
+    }
+    match view.raw_lock {
+        Some(RawLock::NotPlainJson) => {
+            return Err(unprocessable(
+                "Raw editing is off: this file isn't plain JSON, and Marshell saves it as plain JSON.",
+            ));
+        }
+        Some(RawLock::RepeatedKey) => {
+            return Err(unprocessable("Raw editing is off: a key appears twice in this file."));
+        }
+        Some(RawLock::Hidden) | None => {}
     }
     if view.text.is_none() {
         return Err(unprocessable(
             "This file holds secret values, so Marshell doesn't edit it as text.",
         ));
     }
-    if let Some(line) = text_problem(agent, text) {
+    // Every pasted BOM goes: TOML's lexer skips one more, so a second would reach the file.
+    let body = text.trim_start_matches('\u{feff}');
+    if let Some(line) = text_problem(agent, body) {
         return Err(unprocessable(format!("The text doesn't parse at line {line}.")));
     }
-    Ok(EditOp::ReplaceText {
-        content: text.to_string(),
-    })
+    if agent == "antigravity" {
+        let before = view.text.as_deref().and_then(|t| top_value(t, "enableTelemetry"));
+        if top_value(body, "enableTelemetry") != before {
+            return Err(unprocessable(ACCOUNT_LINE));
+        }
+    }
+    let content = if had_bom {
+        format!("\u{feff}{body}")
+    } else {
+        body.to_string()
+    };
+    Ok(EditOp::ReplaceText { content })
 }
 
 /// What `preview_shown` takes for a settings file: when the text before or after holds a value the view hides, the
@@ -931,7 +968,7 @@ fn masked_diff<'a>(agent: &'a str, normalized: &'a Cell<bool>) -> impl Fn(&Plann
         let (before, after) = (text(&file.before), text(&file.after));
         let plain = |text: &Option<String>| {
             text.as_deref()
-                .is_none_or(|t| parse_masked(agent, t).is_ok_and(|p| p.plain))
+                .is_none_or(|t| parse_masked(agent, t).is_ok_and(|p| p.plain()))
         };
         if plain(&before) && plain(&after) {
             return None;
@@ -989,9 +1026,6 @@ pub async fn settings_undo(
 }
 
 fn settings_undo_of(st: &AppState, agent: &str, kind: Adapter, snapshot_id: &str) -> Result<ApplyResult, Refusal> {
-    if matches!(kind, Adapter::Antigravity) {
-        return Err(unprocessable(READ_ONLY));
-    }
     let (path, _) = settings_file(st, kind).map_err(Refusal::from)?;
     let info = match st.0.config.snapshots().get(snapshot_id) {
         Ok(Some(info)) => info,

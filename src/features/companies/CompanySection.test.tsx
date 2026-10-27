@@ -1,3 +1,4 @@
+import { isValidElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import type { AgentInstall } from "../../generated/AgentInstall";
@@ -21,6 +22,7 @@ const view = (over: Partial<AgentSettingsView> = {}): AgentSettingsView => ({
   editable: true,
   hash: null,
   text: null,
+  raw_lock: null,
   ...over,
 });
 const noop = () => {};
@@ -108,8 +110,6 @@ describe("CompanyView", () => {
     it("labels each control and links its help", () => {
       const h = render({ view: form([days, effort]) });
       expect(h).toMatch(/<label[^>]*for="[^"]+"[^>]*>Delete transcripts after \(days\)<\/label>/);
-      expect(h).toContain('type="number"');
-      expect(h).toContain('min="1"');
       expect(h).toContain('type="text"');
       expect(h.match(/Empty means not set\./g)).toHaveLength(2);
       expect(h).toMatch(/aria-describedby="[^"]+"/);
@@ -137,10 +137,24 @@ describe("CompanyView", () => {
       const h = render({ view: form([t], { text: null }) });
       expect(h).toContain("Set as a table in the file.");
       expect(h).not.toContain("Edit it in Raw file.");
+      // The file's text is shown, but raw editing is off, so Raw file is no way to change the table.
+      const locked = render({ view: form([t], { text: "{ // c\n}", raw_lock: "not_plain_json" }) });
+      expect(locked).toContain("Set as a table in the file.");
+      expect(locked).not.toContain("Edit it in Raw file.");
     });
     it("explains a hidden row", () => {
       const t: SettingValue = { key: "model", value: "hidden", scope: "user", control: { kind: "text" }, lock: { kind: "hidden" } };
       expect(render({ view: form([t]) })).toContain("Holds a value shown as hidden, so the form can&#x27;t change it.");
+    });
+    it("marks each control and the editable raw textarea as a focus target", () => {
+      expect(render({ view: form([mode]) })).toMatch(/<select[^>]*data-focus="field:permissions.defaultMode"/);
+      expect(render({ view: form([days]) })).toMatch(/<input[^>]*data-focus="field:cleanupPeriodDays"/);
+      expect(render({ view: form([effort]) })).toMatch(/<input[^>]*data-focus="field:effortLevel"/);
+      expect(render({ mode: "raw", view: form([mode], { text: "a = 1\n" }) })).toMatch(/<textarea[^>]*data-focus="raw"/);
+      expect(render({ mode: "raw", view: form([mode], { text: null, raw_lock: "hidden" }) })).not.toContain('data-focus="raw"');
+    });
+    it("leaves Undo's line on screen after an undo", () => {
+      expect(render({ view: form([days]), review: { kind: "undone" } })).toContain('<div class="company__result" tabindex="-1" data-focus="result"><p class="company__line">Put C:/u/.claude/settings.json back as it was.</p></div>');
     });
     it("makes the raw text editable when the core sent it, and says why not when it did not", () => {
       const on = render({ mode: "raw", view: form([mode], { text: "a = 1\n" }), rawDraft: "a = 2\n" });
@@ -149,7 +163,7 @@ describe("CompanyView", () => {
       expect(on).not.toMatch(/<textarea[^>]*readOnly/);
       expect(on).toContain("a = 2");
       expect(on).toContain("This is the file itself. Review shows the exact change before anything is written.");
-      const off = render({ mode: "raw", view: form([mode], { text: null }) });
+      const off = render({ mode: "raw", view: form([mode], { text: null, raw_lock: "hidden" }) });
       expect(off).toMatch(/<textarea[^>]*readOnly/);
       expect(off).toContain("Raw editing is off: this file holds secret values, and they show as hidden here.");
     });
@@ -233,12 +247,69 @@ describe("CompanyView", () => {
       expect(h).not.toContain('type="text"');
       expect(h).not.toContain("Review changes");
     });
-    it("renders Antigravity read-only: no select, no strip", () => {
-      const h = render({ agent: "antigravity", view: view({ agent: "antigravity", editable: false, curated: [mode, days] }), draft: { cleanupPeriodDays: "45" } });
+    const agy = (curated: SettingValue[], over: Partial<AgentSettingsView> = {}) => form(curated, { agent: "antigravity", ...over });
+    it("edits Antigravity: a select for toolPermission and Review changes when drafted", () => {
+      const tp: SettingValue = { key: "toolPermission", value: "ask", scope: "user", control: { kind: "choice", values: ["ask", "allow"] } };
+      const h = render({ agent: "antigravity", view: agy([tp]), draft: { toolPermission: "allow" } });
+      expect(h).toContain("<select");
+      expect(h).toContain("Review changes");
+    });
+    it("warns at Review that a running Antigravity may undo the change, and leaves Apply as it is", () => {
+      const line = "Antigravity is running in 2 tabs. If it saves its settings, it may undo this change.";
+      const h = render({ agent: "antigravity", name: "Antigravity", view: agy([days]), running: 2, review: { kind: "review", plan: plan(false) } });
+      expect(h).toContain(`<p class="change-bar__note">${line}</p>`);
+      expect(h).toMatch(/<button[^>]*>Apply<\/button>/);
+      expect(h).not.toMatch(/<button(?=[^>]*aria-disabled)[^>]*>Apply<\/button>/);
+      // Not while editing, not with no Antigravity running, and never for another CLI.
+      expect(render({ agent: "antigravity", name: "Antigravity", view: agy([days]), running: 2 })).not.toContain("may undo this change");
+      expect(render({ agent: "antigravity", name: "Antigravity", view: agy([days]), running: 0, review: { kind: "review", plan: plan(false) } })).not.toContain("may undo this change");
+      expect(render({ view: form([days]), running: 2, review: { kind: "review", plan: plan(false) } })).not.toContain("may undo this change");
+    });
+    it("gives a telemetry row held by the account its line and no control", () => {
+      const t: SettingValue = { key: "enableTelemetry", value: "true", scope: "user", control: { kind: "switch" }, lock: { kind: "account" } };
+      const h = render({ agent: "antigravity", view: agy([t]) });
+      expect(h).toContain("Antigravity keeps this with your Google account, not in this file. Change it with /config in Antigravity.");
       expect(h).not.toContain("<select");
+    });
+    it("renders a number as text with a numeric keyboard, never type=number", () => {
+      const h = render({ view: form([days]) });
+      expect(h).toContain('type="text"');
+      expect(h).toContain('inputMode="numeric"');
       expect(h).not.toContain('type="number"');
-      expect(h).not.toContain("Review changes");
-      expect(h).not.toContain("Empty means not set.");
+    });
+    it("shows a switch holding yes as from the file", () => {
+      const sw: SettingValue = { key: "enableTerminalSandbox", value: "yes", scope: "user", control: { kind: "switch" } };
+      expect(render({ agent: "antigravity", view: agy([sw]) })).toContain('<option value="yes" selected="">yes (from the file)</option>');
+    });
+    it("shows a file that isn't plain JSON read-only, with its line", () => {
+      const h = render({ mode: "raw", view: form([days], { text: "{ // c\n}", raw_lock: "not_plain_json" }) });
+      expect(h).toMatch(/<textarea[^>]*readOnly/);
+      expect(h).not.toMatch(/<textarea(?![^>]*readOnly)/);
+      expect(h).toContain("// c");
+      expect(h).toContain("Raw editing is off: this file isn&#x27;t plain JSON, and Marshell saves it as plain JSON.");
+    });
+    it("ties the read-only text to the view, so Undo and Reload show the file as it is now", () => {
+      // A `defaultValue` is read once, when the textarea mounts; static markup can't show the difference, so read the element.
+      const text = "{ // c\n}";
+      const tree = CompanyView({ agent: "claude", name: "Claude Code", install: install(), view: form([days], { text, raw_lock: "not_plain_json" }), running: 0, mode: "raw", onMode: noop, onUpdate: noop, ...noEdit });
+      const find = (n: unknown): { type: unknown; props: Record<string, unknown> } | null => {
+        if (Array.isArray(n)) return n.map(find).find(Boolean) ?? null;
+        if (!isValidElement(n)) return null;
+        const el = n as { type: unknown; props: Record<string, unknown> };
+        return el.type === "textarea" ? el : find(el.props.children);
+      };
+      const area = find(tree);
+      expect(area?.props.value).toBe(text);
+      expect(area?.props.defaultValue).toBeUndefined();
+    });
+    it("says a key appears twice", () => {
+      const h = render({ mode: "raw", view: form([days], { text: null, raw_lock: "repeated_key" }) });
+      expect(h).toContain("Raw editing is off: a key appears twice in this file.");
+      expect(h).not.toMatch(/<textarea(?![^>]*readOnly)/);
+    });
+    it("keeps the hidden line for a hidden lock", () => {
+      const h = render({ mode: "raw", view: form([days], { text: null, raw_lock: "hidden" }) });
+      expect(h).toContain("Raw editing is off: this file holds secret values, and they show as hidden here.");
     });
   });
 });

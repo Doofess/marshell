@@ -21,7 +21,7 @@ export const COMPANY_FIELDS: Record<CompanyAgent, CompanyField[]> = {
     { key: "check_for_update_on_startup", label: "Check for updates at start", help: "Whether Codex looks for a new version when it starts." },
   ],
   antigravity: [
-    { key: "model", label: "Default model", help: "The model a new Antigravity session starts with." },
+    { key: "model", label: "Default model", help: "The model a new Antigravity session starts with, by the name /model shows, such as Gemini 3.1 Pro." },
     { key: "toolPermission", label: "Tool permission", help: "When Antigravity asks before it uses a tool." },
     { key: "enableTerminalSandbox", label: "Terminal sandbox", help: "Whether Antigravity's commands run in a sandbox." },
     { key: "colorScheme", label: "Colour scheme", help: "Antigravity's own colours in the terminal." },
