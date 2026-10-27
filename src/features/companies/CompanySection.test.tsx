@@ -141,6 +141,16 @@ describe("CompanyView", () => {
       const t: SettingValue = { key: "model", value: "hidden", scope: "user", control: { kind: "text" }, lock: { kind: "hidden" } };
       expect(render({ view: form([t]) })).toContain("Holds a value shown as hidden, so the form can&#x27;t change it.");
     });
+    it("marks each control and the editable raw textarea as a focus target", () => {
+      expect(render({ view: form([mode]) })).toMatch(/<select[^>]*data-focus="field:permissions.defaultMode"/);
+      expect(render({ view: form([days]) })).toMatch(/<input[^>]*data-focus="field:cleanupPeriodDays"/);
+      expect(render({ view: form([effort]) })).toMatch(/<input[^>]*data-focus="field:effortLevel"/);
+      expect(render({ mode: "raw", view: form([mode], { text: "a = 1\n" }) })).toMatch(/<textarea[^>]*data-focus="raw"/);
+      expect(render({ mode: "raw", view: form([mode], { text: null, raw_lock: "hidden" }) })).not.toContain('data-focus="raw"');
+    });
+    it("leaves Undo's line on screen after an undo", () => {
+      expect(render({ view: form([days]), review: { kind: "undone" } })).toContain('<div class="company__result" tabindex="-1" data-focus="result"><p class="company__line">Put C:/u/.claude/settings.json back as it was.</p></div>');
+    });
     it("makes the raw text editable when the core sent it, and says why not when it did not", () => {
       const on = render({ mode: "raw", view: form([mode], { text: "a = 1\n" }), rawDraft: "a = 2\n" });
       expect(on).toMatch(/<textarea[^>]*aria-label="C:\/u\/.claude\/settings.json"/);

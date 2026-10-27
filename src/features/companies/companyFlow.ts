@@ -18,10 +18,10 @@ export const afterPlan = (r: PlanResult): CompanyReview => (r.ok ? { kind: "revi
 export const afterApply = (o: ApplyOutcome): CompanyReview => (o.ok ? { kind: "saved", snapshotId: o.result.snapshot_id } : o.conflict ? { kind: "conflict" } : { kind: "error", message: o.message });
 
 /** Undo puts the file back, so the form is editable again; a 409 means the file moved on since. */
-export const afterUndo = (r: UndoResult, path: string): CompanyReview => (r.ok ? { kind: "editing" } : r.status === 409 ? { kind: "error", message: undoConflictLine(path) } : { kind: "error", message: r.message });
+export const afterUndo = (r: UndoResult, path: string): CompanyReview => (r.ok ? { kind: "undone" } : r.status === 409 ? { kind: "error", message: undoConflictLine(path) } : { kind: "error", message: r.message });
 
 /** A draft edit leaves a finished result behind; a busy state is left alone. */
-export const afterEdit = (review: CompanyReview): CompanyReview => (review.kind === "saved" || review.kind === "conflict" || review.kind === "error" ? { kind: "editing" } : review);
+export const afterEdit = (review: CompanyReview): CompanyReview => (review.kind === "saved" || review.kind === "undone" || review.kind === "conflict" || review.kind === "error" ? { kind: "editing" } : review);
 
 /** Planning, applying and undoing take no new request. */
 export const isBusy = (review: CompanyReview) => review.kind === "planning" || review.kind === "applying" || review.kind === "undoing";
@@ -43,16 +43,23 @@ export const afterReload = (prevText: string | null, next: AgentSettingsView, dr
  */
 export const focusAfter = (prev: CompanyReview["kind"], next: CompanyReview["kind"]): "review" | "result" | "review-button" | null => {
   if (next === "review") return "review";
-  if (next === "saved" || next === "conflict" || next === "error") return "result";
+  if (next === "saved" || next === "undone" || next === "conflict" || next === "error") return "result";
   if (prev === "review" && next === "editing") return "review-button";
   return null;
 };
+
+export const fieldFocus = (key: string) => `field:${key}`;
+
+/** The control to focus after Discard (the last one edited) or Reload (the last one focused); null when there was none. */
+export const focusBack = (action: "discard" | "reload", lastEdited: string | null, lastFocused: string | null): string | null => (action === "discard" ? lastEdited : lastFocused);
 
 /** What `announce` says when the flow lands on a state; null when it says nothing. */
 export const announcement = (review: CompanyReview, _name: string, path: string): string | null => {
   switch (review.kind) {
     case "review":
       return `Review the change to ${path}.`;
+    case "undone":
+      return undoneLine(path);
     case "saved":
       return `Saved ${path}.`;
     case "conflict":

@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { ApplyResult } from "../../generated/ApplyResult";
 import type { SettingsPlan } from "../../generated/SettingsPlan";
 import type { AgentSettingsView } from "../../generated/AgentSettingsView";
-import { afterApply, afterEdit, afterPlan, afterReload, afterUndo, announcement, focusAfter, isBusy, rawChange, rawDroppedLine } from "./companyFlow";
+import { afterApply, afterEdit, afterPlan, afterReload, afterUndo, announcement, focusAfter, focusBack, isBusy, rawChange, rawDroppedLine } from "./companyFlow";
 
 const plan = { preview: { changeset_id: "c" }, normalized: false } as unknown as SettingsPlan;
 const P = "C:/u/.claude/settings.json";
@@ -38,7 +38,7 @@ describe("afterApply", () => {
 });
 describe("afterUndo", () => {
   it("goes back to editing, or errors with the exact sentence", () => {
-    expect(afterUndo({ ok: true }, P)).toEqual({ kind: "editing" });
+    expect(afterUndo({ ok: true }, P)).toEqual({ kind: "undone" });
     expect(afterUndo({ ok: false, status: 409, message: "x" }, P)).toEqual({ kind: "error", message: `${P} changed since this change, so undo would overwrite it.` });
     expect(afterUndo({ ok: false, status: 500, message: "Disk full." }, P)).toEqual({ kind: "error", message: "Disk full." });
   });
@@ -47,6 +47,13 @@ describe("afterEdit and isBusy", () => {
   it("returns saved, conflict and error to editing, and leaves the rest", () => {
     for (const r of [{ kind: "saved", snapshotId: "s" }, { kind: "conflict" }, { kind: "error", message: "m" }] as const) expect(afterEdit(r)).toEqual({ kind: "editing" });
     for (const r of [{ kind: "planning" }, { kind: "applying" }, { kind: "undoing", snapshotId: "s" }, { kind: "editing" }] as const) expect(afterEdit(r)).toBe(r);
+    expect(afterEdit({ kind: "undone" })).toEqual({ kind: "editing" });
+    expect(isBusy({ kind: "undone" })).toBe(false);
+    expect(focusAfter("undoing", "undone")).toBe("result");
+    expect(announcement({ kind: "undone" }, "n", "p")).toBe("Put p back as it was.");
+    expect(focusBack("discard", "field:model", "raw")).toBe("field:model");
+    expect(focusBack("reload", "field:model", "raw")).toBe("raw");
+    expect(focusBack("discard", null, null)).toBeNull();
     expect(isBusy({ kind: "planning" })).toBe(true);
     expect(isBusy({ kind: "applying" })).toBe(true);
     expect(isBusy({ kind: "undoing", snapshotId: "s" })).toBe(true);
