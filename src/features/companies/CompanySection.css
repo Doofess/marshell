@@ -105,4 +105,9 @@
     color: GrayText;
     text-decoration: line-through;
   }
+  /* A busy button stays focusable (aria-disabled), so it needs its own unavailable look. */
+  .company .settings__btn[aria-disabled="true"] {
+    color: GrayText;
+    outline-color: GrayText;
+  }
 }
