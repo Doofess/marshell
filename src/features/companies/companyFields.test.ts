@@ -19,5 +19,6 @@ describe("COMPANY_FIELDS", () => {
     expect(COMPANY_FIELDS.claude[3]).toEqual({ key: "cleanupPeriodDays", label: "Delete transcripts after (days)", help: "Claude deletes its own transcripts after this long. Marshell keeps its own copy." });
     expect(COMPANY_FIELDS.codex[4]?.label).toBe("AGENTS.md size limit (bytes)");
     expect(COMPANY_FIELDS.antigravity[3]?.label).toBe("Colour scheme");
+    expect(COMPANY_FIELDS.antigravity[0]?.help).toBe("The model a new Antigravity session starts with, by the name /model shows, such as Gemini 3.1 Pro.");
   });
 });

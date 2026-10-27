@@ -64,7 +64,7 @@ describe("announcement", () => {
   });
 });
 
-const sv = (over: Partial<AgentSettingsView> = {}): AgentSettingsView => ({ agent: "codex", path: P, state: { kind: "ok" }, curated: [], others: [], raw: "a = 1\n", editable: true, hash: "h", text: "a = 1\n", ...over });
+const sv = (over: Partial<AgentSettingsView> = {}): AgentSettingsView => ({ agent: "codex", path: P, state: { kind: "ok" }, curated: [], others: [], raw: "a = 1\n", editable: true, hash: "h", text: "a = 1\n", raw_lock: null, ...over });
 describe("afterReload", () => {
   it("keeps the form draft through a conflict and Reload, and the raw draft only while the file's text is the same", () => {
     expect(afterReload("a = 1\n", sv(), { a: "2" }, "a = 3\n")).toEqual({ draft: { a: "2" }, rawDraft: "a = 3\n", rawDropped: false });
@@ -86,5 +86,7 @@ describe("rawChange", () => {
     expect(rawChange("raw", sv({ editable: false }), "a = 2\n")).toBeNull();
     expect(rawChange("raw", sv({ raw: null }), "a = 2\n")).toBeNull();
     expect(rawChange("raw", null, "a = 2\n")).toBeNull();
+    expect(rawChange("raw", sv({ raw_lock: "not_plain_json", text: "x" }), "y")).toBeNull();
+    expect(rawChange("raw", sv({ raw_lock: null, text: "x" }), "y")).toBe("y");
   });
 });

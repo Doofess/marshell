@@ -4,6 +4,7 @@ import type { AgentInstall } from "../../generated/AgentInstall";
 import type { AgentSettingsView } from "../../generated/AgentSettingsView";
 import type { Endpoint } from "../../generated/Endpoint";
 import type { FieldLock } from "../../generated/FieldLock";
+import type { RawLock } from "../../generated/RawLock";
 import type { SettingsChange } from "../../generated/SettingsChange";
 import type { SettingsPlan } from "../../generated/SettingsPlan";
 import type { SettingValue } from "../../generated/SettingValue";
@@ -13,7 +14,7 @@ import { ApiError } from "../../lib/api/client";
 import { RawEditor } from "../settings/RawEditor";
 import { ScopeBadge } from "../settings/ScopeBadge";
 import type { CompanyAgent } from "../settings/settingsSections";
-import { choiceOptions, draftValue, editSummary, formEdits, type Draft } from "./companyEdit";
+import { choiceOptions, draftValue, editSummary, formEdits, switchOptions, type Draft } from "./companyEdit";
 import { afterApply, afterEdit, afterPlan, afterReload, afterUndo, announcement, focusAfter, isBusy, rawChange, rawDroppedLine, undoneLine, type PlanResult, type UndoResult } from "./companyFlow";
 import { COMPANY_FIELDS, type CompanyField } from "./companyFields";
 import { fileLine, MANUAL_UPDATE, newerLine, runningNote, versionLine } from "./companyText";
@@ -53,11 +54,17 @@ export type CompanyViewProps = {
 
 const shown = (v: SettingValue | undefined) => v?.value ?? "–";
 
-const SWITCH_OPTIONS = [
-  { value: "", label: "Not set" },
-  { value: "on", label: "On" },
-  { value: "off", label: "Off" },
-];
+/** Why the raw file can't be edited as text. */
+export const rawLockLine = (lock: RawLock) => {
+  switch (lock) {
+    case "not_plain_json":
+      return "Raw editing is off: this file isn't plain JSON, and Marshell saves it as plain JSON.";
+    case "repeated_key":
+      return "Raw editing is off: a key appears twice in this file.";
+    case "hidden":
+      return "Raw editing is off: this file holds secret values, and they show as hidden here.";
+  }
+};
 
 const lockLine = (lock: FieldLock, hasText: boolean) => {
   switch (lock.kind) {
@@ -67,6 +74,8 @@ const lockLine = (lock: FieldLock, hasText: boolean) => {
       return hasText ? "Set as a table in the file. Edit it in Raw file." : "Set as a table in the file.";
     case "hidden":
       return "Holds a value shown as hidden, so the form can't change it.";
+    case "account":
+      return "Antigravity keeps this with your Google account, not in this file. Change it with /config in Antigravity.";
   }
 };
 
@@ -85,7 +94,7 @@ function EditableRow({ field, v, input, error, hasText, onDraft }: { field: Comp
   const control = v && !v.lock ? v.control : undefined;
   const empty = control?.kind === "number" || control?.kind === "text";
   const describedBy = [`${id}-help`, error ? `${id}-error` : null].filter(Boolean).join(" ");
-  const options = control?.kind === "choice" ? choiceOptions(control, input) : control?.kind === "switch" ? SWITCH_OPTIONS : null;
+  const options = control?.kind === "choice" ? choiceOptions(control, input) : control?.kind === "switch" ? switchOptions(input) : null;
   return (
     <li className="field" data-locked={v?.lock ? "" : undefined}>
       <div className="field__head">
@@ -110,7 +119,7 @@ function EditableRow({ field, v, input, error, hasText, onDraft }: { field: Comp
           ))}
         </select>
       )}
-      {control?.kind === "number" && <input id={id} className="field__control" type="number" min={control.min} value={input} aria-describedby={describedBy} aria-invalid={error ? true : undefined} onChange={(e) => onDraft(field.key, e.target.value)} />}
+      {control?.kind === "number" && <input id={id} className="field__control" type="text" inputMode="numeric" value={input} aria-describedby={describedBy} aria-invalid={error ? true : undefined} onChange={(e) => onDraft(field.key, e.target.value)} />}
       {control?.kind === "text" && <input id={id} className="field__control" type="text" value={input} spellCheck={false} aria-describedby={describedBy} aria-invalid={error ? true : undefined} onChange={(e) => onDraft(field.key, e.target.value)} />}
       {error && (
         <p id={`${id}-error`} className="field__error">
@@ -213,19 +222,23 @@ export function CompanyView({ agent, name, install, view, running, mode, onMode,
           ) : mode === "raw" && view.raw !== null ? (
             <div className="company__raw">
               {rawDropped && <p className="company__note">{rawDroppedLine(view.path)}</p>}
-              {editable && view.text !== null ? (
+              {editable && view.text !== null && view.raw_lock === null ? (
                 <textarea className="raw-editor__text" aria-label={view.path} rows={Math.min(24, Math.max(6, (rawDraft ?? view.text).split("\n").length))} spellCheck={false} value={rawDraft ?? view.text} onChange={(e) => onRawDraft(e.target.value)} />
+              ) : view.raw_lock === "not_plain_json" && view.text !== null ? (
+                <textarea className="raw-editor__text" aria-label={view.path} rows={Math.min(24, Math.max(6, view.text.split("\n").length))} spellCheck={false} defaultValue={view.text} readOnly />
               ) : agent === "codex" ? (
                 <textarea className="raw-editor__text" aria-label={view.path} rows={Math.min(24, Math.max(6, view.raw.split("\n").length))} spellCheck={false} defaultValue={view.raw} readOnly />
               ) : (
                 <RawEditor path={view.path} text={view.raw} readOnly />
               )}
-              {editable && view.text !== null ? (
+              {editable && view.text !== null && view.raw_lock === null ? (
                 <p className="company__note">This is the file itself. Review shows the exact change before anything is written.</p>
+              ) : view.raw_lock === "not_plain_json" && view.text !== null ? (
+                <p className="company__note">{rawLockLine(view.raw_lock)}</p>
               ) : (
                 <>
                   <p className="company__note">Shown as Marshell reads it: comments and layout are left out, and secret values show as hidden.</p>
-                  {editable && <p className="company__note">Raw editing is off: this file holds secret values, and they show as hidden here.</p>}
+                  {view.raw_lock !== null && <p className="company__note">{rawLockLine(view.raw_lock)}</p>}
                 </>
               )}
             </div>
@@ -383,7 +396,7 @@ export function CompanySection({ endpoint, agent, name, running, onUpdate, refre
     setReview((r) => afterEdit(r));
   };
   const onReview = async () => {
-    if (!view || agent === "antigravity" || isBusy(review)) return; // Antigravity's file is never editable here.
+    if (!view || isBusy(review)) return;
     const mine = ++request.current;
     const raw = rawChange(shownMode, view, rawDraft);
     const change: SettingsChange = raw !== null ? { kind: "raw", text: raw } : { kind: "form", edits: formEdits(view.curated, draft).edits };
@@ -449,7 +462,7 @@ export function CompanySection({ endpoint, agent, name, running, onUpdate, refre
     }
   };
   const onUndo = async () => {
-    if (review.kind !== "saved" || agent === "antigravity") return;
+    if (review.kind !== "saved") return;
     const mine = ++request.current;
     const snapshotId = review.snapshotId;
     setReview({ kind: "undoing", snapshotId });

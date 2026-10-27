@@ -28,7 +28,7 @@ export const isBusy = (review: CompanyReview) => review.kind === "planning" || r
 
 /** The whole text a Review sends: only for the raw file shown, when it is editable as text and differs from the file. */
 export const rawChange = (mode: CompanyMode, view: AgentSettingsView | null, rawDraft: string | null): string | null =>
-  mode === "raw" && view !== null && view.editable && view.raw !== null && view.text !== null && rawDraft !== null && rawDraft !== view.text ? rawDraft : null;
+  mode === "raw" && view !== null && view.editable && view.raw !== null && view.text !== null && view.raw_lock === null && rawDraft !== null && rawDraft !== view.text ? rawDraft : null;
 
 /**
  * The drafts Reload keeps. A form draft is per key, so it stays and the review shows any key the file changed. A raw

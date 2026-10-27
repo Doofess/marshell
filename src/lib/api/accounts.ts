@@ -21,8 +21,8 @@ export const getAccount = (ep: Endpoint, agent: HookAgent) => api<AccountStatus>
 export const getSettingsView = (ep: Endpoint, agent: HookAgent) => api<AgentSettingsView>(ep, "GET", `${base(agent)}/settings-view`);
 
 /** Plans a settings change against the file as the view showed it. A 409 ApiError means the file changed since; a 422 carries the core's sentence as its message. */
-export const planSettings = (ep: Endpoint, agent: "claude" | "codex", req: SettingsPlanRequest) => api<SettingsPlan>(ep, "POST", `${base(agent)}/settings/plan`, req);
+export const planSettings = (ep: Endpoint, agent: "claude" | "codex" | "antigravity", req: SettingsPlanRequest) => api<SettingsPlan>(ep, "POST", `${base(agent)}/settings/plan`, req);
 
 /** Puts the settings file back as a snapshot had it. */
-export const undoSettings = (ep: Endpoint, agent: "claude" | "codex", snapshotId: string) =>
+export const undoSettings = (ep: Endpoint, agent: "claude" | "codex" | "antigravity", snapshotId: string) =>
   api<ApplyResult>(ep, "POST", `${base(agent)}/settings/undo`, { snapshot_id: snapshotId } satisfies SettingsUndoRequest);

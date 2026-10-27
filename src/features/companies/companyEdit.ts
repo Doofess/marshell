@@ -12,9 +12,18 @@ type Choice = Extract<FieldControl, { kind: "choice" }>;
 /** The draft string for a value the file holds. */
 export function draftValue(v: SettingValue): string {
   if (v.value === null) return "";
-  if (v.control?.kind === "switch") return v.value === "true" ? "on" : "off";
+  if (v.control?.kind === "switch") return v.value === "true" ? "on" : v.value === "false" ? "off" : v.value;
   return v.value;
 }
+
+const SWITCH_OPTIONS = [
+  { value: "", label: "Not set" },
+  { value: "on", label: "On" },
+  { value: "off", label: "Off" },
+];
+
+/** Not set, On and Off; a current value outside them comes next, marked as from the file. */
+export const switchOptions = (current: string): { value: string; label: string }[] => (current === "" || current === "on" || current === "off" ? SWITCH_OPTIONS : [...SWITCH_OPTIONS, { value: current, label: `${current} (from the file)` }]);
 
 /** The input as JSON text for the core (`null` for Not set), or the message for the field's error line. */
 export function parseField(control: FieldControl, input: string): { ok: true; json: string | null } | { ok: false; message: string } {

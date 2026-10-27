@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { FieldControl } from "../../generated/FieldControl";
 import type { SettingValue } from "../../generated/SettingValue";
-import { choiceOptions, draftValue, editSummary, formEdits, parseField } from "./companyEdit";
+import { choiceOptions, draftValue, editSummary, formEdits, parseField, switchOptions } from "./companyEdit";
 
 const num: FieldControl = { kind: "number", min: 1 };
 const sw: FieldControl = { kind: "switch" };
@@ -21,6 +21,34 @@ describe("parseField", () => {
     expect(parseField(sw, "on")).toEqual({ ok: true, json: "true" });
     expect(parseField(sw, "off")).toEqual({ ok: true, json: "false" });
     expect(parseField(txt, "opus")).toEqual({ ok: true, json: '"opus"' });
+  });
+});
+
+describe("number control input", () => {
+  it("rejects stray characters and trims spaces", () => {
+    for (const bad of ["-", "1e"]) expect(parseField(num, bad)).toEqual({ ok: false, message: "Use a whole number of at least 1." });
+    expect(parseField(num, " 45 ")).toEqual({ ok: true, json: "45" });
+    expect(parseField(num, "")).toEqual({ ok: true, json: null });
+  });
+});
+
+describe("switchOptions", () => {
+  it("adds a value from the file after the three", () => {
+    expect(switchOptions("yes").at(-1)).toEqual({ value: "yes", label: "yes (from the file)" });
+    expect(switchOptions("on")).toHaveLength(3);
+    expect(switchOptions("")).toHaveLength(3);
+  });
+  it("keeps an odd value as it is", () => {
+    expect(draftValue(sv("c", "yes", sw))).toBe("yes");
+    expect(draftValue(sv("c", "true", sw))).toBe("on");
+    expect(draftValue(sv("c", "false", sw))).toBe("off");
+  });
+});
+
+describe("untouched odd values", () => {
+  it("plans no edit when the draft does not hold the key", () => {
+    const odd = [sv("a", "yes", sw), sv("b", "abc", num), sv("c", "dracula", ch)];
+    expect(formEdits(odd, {})).toEqual({ edits: [], errors: {} });
   });
 });
 

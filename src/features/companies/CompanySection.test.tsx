@@ -21,6 +21,7 @@ const view = (over: Partial<AgentSettingsView> = {}): AgentSettingsView => ({
   editable: true,
   hash: null,
   text: null,
+  raw_lock: null,
   ...over,
 });
 const noop = () => {};
@@ -108,8 +109,6 @@ describe("CompanyView", () => {
     it("labels each control and links its help", () => {
       const h = render({ view: form([days, effort]) });
       expect(h).toMatch(/<label[^>]*for="[^"]+"[^>]*>Delete transcripts after \(days\)<\/label>/);
-      expect(h).toContain('type="number"');
-      expect(h).toContain('min="1"');
       expect(h).toContain('type="text"');
       expect(h.match(/Empty means not set\./g)).toHaveLength(2);
       expect(h).toMatch(/aria-describedby="[^"]+"/);
@@ -149,7 +148,7 @@ describe("CompanyView", () => {
       expect(on).not.toMatch(/<textarea[^>]*readOnly/);
       expect(on).toContain("a = 2");
       expect(on).toContain("This is the file itself. Review shows the exact change before anything is written.");
-      const off = render({ mode: "raw", view: form([mode], { text: null }) });
+      const off = render({ mode: "raw", view: form([mode], { text: null, raw_lock: "hidden" }) });
       expect(off).toMatch(/<textarea[^>]*readOnly/);
       expect(off).toContain("Raw editing is off: this file holds secret values, and they show as hidden here.");
     });
@@ -233,12 +232,44 @@ describe("CompanyView", () => {
       expect(h).not.toContain('type="text"');
       expect(h).not.toContain("Review changes");
     });
-    it("renders Antigravity read-only: no select, no strip", () => {
-      const h = render({ agent: "antigravity", view: view({ agent: "antigravity", editable: false, curated: [mode, days] }), draft: { cleanupPeriodDays: "45" } });
+    const agy = (curated: SettingValue[], over: Partial<AgentSettingsView> = {}) => form(curated, { agent: "antigravity", ...over });
+    it("edits Antigravity: a select for toolPermission and Review changes when drafted", () => {
+      const tp: SettingValue = { key: "toolPermission", value: "ask", scope: "user", control: { kind: "choice", values: ["ask", "allow"] } };
+      const h = render({ agent: "antigravity", view: agy([tp]), draft: { toolPermission: "allow" } });
+      expect(h).toContain("<select");
+      expect(h).toContain("Review changes");
+    });
+    it("gives a telemetry row held by the account its line and no control", () => {
+      const t: SettingValue = { key: "enableTelemetry", value: "true", scope: "user", control: { kind: "switch" }, lock: { kind: "account" } };
+      const h = render({ agent: "antigravity", view: agy([t]) });
+      expect(h).toContain("Antigravity keeps this with your Google account, not in this file. Change it with /config in Antigravity.");
       expect(h).not.toContain("<select");
+    });
+    it("renders a number as text with a numeric keyboard, never type=number", () => {
+      const h = render({ view: form([days]) });
+      expect(h).toContain('type="text"');
+      expect(h).toContain('inputMode="numeric"');
       expect(h).not.toContain('type="number"');
-      expect(h).not.toContain("Review changes");
-      expect(h).not.toContain("Empty means not set.");
+    });
+    it("shows a switch holding yes as from the file", () => {
+      const sw: SettingValue = { key: "enableTerminalSandbox", value: "yes", scope: "user", control: { kind: "switch" } };
+      expect(render({ agent: "antigravity", view: agy([sw]) })).toContain('<option value="yes" selected="">yes (from the file)</option>');
+    });
+    it("shows a file that isn't plain JSON read-only, with its line", () => {
+      const h = render({ mode: "raw", view: form([days], { text: "{ // c\n}", raw_lock: "not_plain_json" }) });
+      expect(h).toMatch(/<textarea[^>]*readOnly/);
+      expect(h).not.toMatch(/<textarea(?![^>]*readOnly)/);
+      expect(h).toContain("// c");
+      expect(h).toContain("Raw editing is off: this file isn&#x27;t plain JSON, and Marshell saves it as plain JSON.");
+    });
+    it("says a key appears twice", () => {
+      const h = render({ mode: "raw", view: form([days], { text: null, raw_lock: "repeated_key" }) });
+      expect(h).toContain("Raw editing is off: a key appears twice in this file.");
+      expect(h).not.toMatch(/<textarea(?![^>]*readOnly)/);
+    });
+    it("keeps the hidden line for a hidden lock", () => {
+      const h = render({ mode: "raw", view: form([days], { text: null, raw_lock: "hidden" }) });
+      expect(h).toContain("Raw editing is off: this file holds secret values, and they show as hidden here.");
     });
   });
 });
