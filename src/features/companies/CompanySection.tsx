@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState } from "react";
+import { type Ref, useEffect, useId, useRef, useState } from "react";
 import { DiffView } from "../../components/DiffView/DiffView";
 import type { AgentInstall } from "../../generated/AgentInstall";
 import type { AgentSettingsView } from "../../generated/AgentSettingsView";
@@ -14,7 +14,7 @@ import { RawEditor } from "../settings/RawEditor";
 import { ScopeBadge } from "../settings/ScopeBadge";
 import type { CompanyAgent } from "../settings/settingsSections";
 import { choiceOptions, draftValue, editSummary, formEdits, type Draft } from "./companyEdit";
-import { afterApply, afterEdit, afterPlan, afterUndo, announcement, isBusy, undoneLine, type PlanResult, type UndoResult } from "./companyFlow";
+import { afterApply, afterEdit, afterPlan, afterUndo, announcement, focusAfter, isBusy, undoneLine, type PlanResult, type UndoResult } from "./companyFlow";
 import { COMPANY_FIELDS, type CompanyField } from "./companyFields";
 import { fileLine, MANUAL_UPDATE, newerLine, runningNote, versionLine } from "./companyText";
 import "../settings/Settings.css";
@@ -45,6 +45,8 @@ export type CompanyViewProps = {
   onDiscard: () => void;
   onReload: () => void;
   onUndo: () => void;
+  /** The root element, so the container can move focus inside it. */
+  rootRef?: Ref<HTMLDivElement>;
 };
 
 const shown = (v: SettingValue | undefined) => v?.value ?? "–";
@@ -67,9 +69,9 @@ const lockLine = (lock: FieldLock, hasText: boolean) => {
 };
 
 /** A button that stays focusable while busy: `aria-disabled` and a swallowed click, never `disabled`. */
-function Btn({ children, busy = false, primary = false, onClick }: { children: string; busy?: boolean; primary?: boolean; onClick: () => void }) {
+function Btn({ children, busy = false, primary = false, focusKey, onClick }: { children: string; busy?: boolean; primary?: boolean; focusKey?: string; onClick: () => void }) {
   return (
-    <button type="button" className="settings__btn" data-primary={primary || undefined} aria-disabled={busy || undefined} onClick={() => !busy && onClick()}>
+    <button type="button" className="settings__btn" data-primary={primary || undefined} aria-disabled={busy || undefined} data-focus={focusKey} onClick={() => !busy && onClick()}>
       {children}
     </button>
   );
@@ -143,7 +145,7 @@ function ManualUpdate({ agent, name }: { agent: CompanyAgent; name: string }) {
 }
 
 /** One company CLI: version and Update, then its user settings file as a form or as text, editable when the core says so. Presentational. */
-export function CompanyView({ agent, name, install, view, running, mode, onMode, onUpdate, draft, onDraft, rawDraft, onRawDraft, review, onReview, onApply, onBack, onDiscard, onReload, onUndo }: CompanyViewProps) {
+export function CompanyView({ agent, name, install, view, running, mode, onMode, onUpdate, draft, onDraft, rawDraft, onRawDraft, review, onReview, onApply, onBack, onDiscard, onReload, onUndo, rootRef }: CompanyViewProps) {
   const newer = install ? newerLine(install) : null;
   const note = runningNote(name, running);
   const file = view ? fileLine(view) : null;
@@ -156,7 +158,7 @@ export function CompanyView({ agent, name, install, view, running, mode, onMode,
   const inReview = review.kind === "review" || review.kind === "applying";
   const stripShown = editable && (review.kind === "editing" || review.kind === "planning" || review.kind === "error") && (changeCount > 0 || blocked);
   return (
-    <div className="company">
+    <div className="company" ref={rootRef}>
       {!install && !view && <p className="company__line">{`Reading ${name}…`}</p>}
       {install && (
         <div className="company__version">
@@ -189,7 +191,7 @@ export function CompanyView({ agent, name, install, view, running, mode, onMode,
             </label>
           </div>
           {inReview ? (
-            <div className="change-review">
+            <section className="change-review" aria-label="Review of the changes" tabIndex={-1} data-focus="review">
               {review.kind === "review" && review.plan.normalized && <p className="change-bar__note">Shown as Marshell reads it: comments and layout are left out, and secret values show as hidden. The file keeps its comments and layout.</p>}
               {review.kind === "review" && <DiffView diff={previewDiff(review.plan.preview)} label={`Changes to ${view.path}`} />}
               <p className="change-bar__note">
@@ -205,7 +207,7 @@ export function CompanyView({ agent, name, install, view, running, mode, onMode,
                   Back to editing
                 </Btn>
               </div>
-            </div>
+            </section>
           ) : mode === "raw" && view.raw !== null ? (
             <div className="company__raw">
               {editable && view.text !== null ? (
@@ -271,7 +273,7 @@ export function CompanyView({ agent, name, install, view, running, mode, onMode,
               <p className="change-bar__summary">{rawChanged ? "Raw file changed" : editSummary(changeCount)}</p>
               {review.kind === "error" && <p className="change-bar__error">{review.message}</p>}
               <div className="change-bar__actions">
-                <Btn primary busy={blocked || review.kind === "planning"} onClick={onReview}>
+                <Btn primary busy={blocked || review.kind === "planning"} focusKey="review-button" onClick={onReview}>
                   Review changes
                 </Btn>
                 <Btn busy={review.kind === "planning"} onClick={onDiscard}>
@@ -281,13 +283,13 @@ export function CompanyView({ agent, name, install, view, running, mode, onMode,
             </section>
           )}
           {review.kind === "saved" && (
-            <div className="company__result">
+            <div className="company__result" tabIndex={-1} data-focus="result">
               <p className="company__line">{`Saved. New ${name} sessions use it.`}</p>
               <Btn onClick={onUndo}>Undo</Btn>
             </div>
           )}
           {review.kind === "conflict" && (
-            <div className="company__result">
+            <div className="company__result" tabIndex={-1} data-focus="result">
               <p className="company__line">{`${view.path} changed since you opened it. Reload to see it.`}</p>
               <Btn onClick={onReload}>Reload</Btn>
             </div>
@@ -315,6 +317,14 @@ export function CompanySection({ endpoint, agent, name, running, onUpdate, refre
     },
     [],
   );
+  // The focused button goes away with each step, so focus moves to what replaced it (see focusAfter).
+  const root = useRef<HTMLDivElement>(null);
+  const shownKind = useRef(review.kind);
+  useEffect(() => {
+    const target = focusAfter(shownKind.current, review.kind);
+    shownKind.current = review.kind;
+    if (target) root.current?.querySelector<HTMLElement>(`[data-focus="${target}"]`)?.focus();
+  }, [review.kind]);
   useEffect(() => {
     let live = true;
     void (async () => {
@@ -453,6 +463,7 @@ export function CompanySection({ endpoint, agent, name, running, onUpdate, refre
           onDiscard={onDiscard}
           onReload={() => void onReload()}
           onUndo={() => void onUndo()}
+          rootRef={root}
         />
       )}
     </>

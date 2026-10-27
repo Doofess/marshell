@@ -23,6 +23,17 @@ export const afterEdit = (review: CompanyReview): CompanyReview => (review.kind 
 /** Planning and applying take no new request. */
 export const isBusy = (review: CompanyReview) => review.kind === "planning" || review.kind === "applying";
 
+/**
+ * Where focus goes when the flow moves from `prev` to `next`, since the focused button has gone: the review or the result line,
+ * so a held Enter can't land on Apply or Undo, or Review changes on the way back. Null leaves it to the page's own fallback.
+ */
+export const focusAfter = (prev: CompanyReview["kind"], next: CompanyReview["kind"]): "review" | "result" | "review-button" | null => {
+  if (next === "review") return "review";
+  if (next === "saved" || next === "conflict") return "result";
+  if (prev === "review" && next === "editing") return "review-button";
+  return null;
+};
+
 /** What `announce` says when the flow lands on a state; null when it says nothing. */
 export const announcement = (review: CompanyReview, _name: string, path: string): string | null => {
   switch (review.kind) {

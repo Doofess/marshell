@@ -1,10 +1,23 @@
 import { describe, expect, it } from "vitest";
 import type { ApplyResult } from "../../generated/ApplyResult";
 import type { SettingsPlan } from "../../generated/SettingsPlan";
-import { afterApply, afterEdit, afterPlan, afterUndo, announcement, isBusy } from "./companyFlow";
+import { afterApply, afterEdit, afterPlan, afterUndo, announcement, focusAfter, isBusy } from "./companyFlow";
 
 const plan = { preview: { changeset_id: "c" }, normalized: false } as unknown as SettingsPlan;
 const P = "C:/u/.claude/settings.json";
+
+describe("focusAfter", () => {
+  it("moves focus to the review, to the result line, or back to Review changes, never onto Apply or Undo", () => {
+    expect(focusAfter("planning", "review")).toBe("review");
+    expect(focusAfter("applying", "saved")).toBe("result");
+    expect(focusAfter("applying", "conflict")).toBe("result");
+    expect(focusAfter("planning", "conflict")).toBe("result");
+    expect(focusAfter("review", "editing")).toBe("review-button");
+    expect(focusAfter("planning", "error")).toBeNull();
+    expect(focusAfter("saved", "editing")).toBeNull();
+    expect(focusAfter("editing", "editing")).toBeNull();
+  });
+});
 
 describe("afterPlan", () => {
   it("goes to review, conflict on a 409, and error with the core's sentence otherwise", () => {

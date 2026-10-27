@@ -203,6 +203,12 @@ describe("CompanyView", () => {
       expect(c).toContain("C:/u/.claude/settings.json changed since you opened it. Reload to see it.");
       expect(c).toContain(">Reload</button>");
     });
+    it("marks where focus goes after each step: the review and the result line take focus, Review changes is the way back", () => {
+      expect(render({ view: form([days]), review: { kind: "review", plan: plan(false) } })).toMatch(/<section class="change-review" aria-label="Review of the changes" tabindex="-1" data-focus="review">/);
+      expect(render({ view: form([days]), review: { kind: "saved", snapshotId: "s1" } })).toMatch(/<div class="company__result" tabindex="-1" data-focus="result">/);
+      expect(render({ view: form([days]), review: { kind: "conflict" } })).toMatch(/<div class="company__result" tabindex="-1" data-focus="result">/);
+      expect(render({ view: form([days]), draft: { cleanupPeriodDays: "45" } })).toMatch(/<button[^>]*data-focus="review-button"[^>]*>Review changes/);
+    });
     it("shows no controls for a file that does not parse", () => {
       const h = render({ view: view({ state: { kind: "unparsable", line: 1, message: "x" } as never, editable: true, curated: [{ key: "model", value: null, scope: "user" }] }) });
       expect(h).not.toContain("<select");
