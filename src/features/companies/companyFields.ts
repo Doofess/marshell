@@ -29,3 +29,19 @@ export const COMPANY_FIELDS: Record<CompanyAgent, CompanyField[]> = {
     { key: "enableTelemetry", label: "Telemetry", help: "Whether Antigravity sends usage data to Google." },
   ],
 };
+
+/** Labels for choice values whose raw spelling reads badly; any other value shows capitalised. */
+export const CHOICE_LABELS: Record<string, string> = {
+  acceptEdits: "Accept edits",
+  bypassPermissions: "Bypass permissions",
+  dontAsk: "Don't ask",
+  "on-request": "On request",
+  "read-only": "Read-only",
+  "workspace-write": "Workspace write",
+  "danger-full-access": "Full access",
+  "dark-daltonized": "Dark, colour-blind friendly",
+  "light-daltonized": "Light, colour-blind friendly",
+  "dark-ansi": "Dark, terminal colours",
+  "light-ansi": "Light, terminal colours",
+  xhigh: "Extra high",
+};
