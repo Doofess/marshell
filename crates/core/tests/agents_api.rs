@@ -2013,7 +2013,7 @@ async fn an_unparsable_file_and_an_empty_change_are_422() {
 #[tokio::test]
 async fn raw_replaces_the_whole_text() {
     let e = plan_env();
-    e.write("claude", "{\n  // old\n  \"model\": \"opus\"\n}\n");
+    e.write("claude", "{\n  \"model\": \"opus\"\n}\n");
     let (status, bytes) = e.raw("claude", "{\"model\": \"haiku\"}\n").await;
     assert_eq!(status, StatusCode::OK, "{}", text(&bytes));
     let plan = json_of(&bytes);
@@ -2098,19 +2098,180 @@ async fn raw_on_a_missing_file_is_422() {
     assert!(!e.claude.exists());
 }
 
+/// The hash a form sends for the file at `path`: the file's now, or null when it is missing.
+fn hash_at(path: &std::path::Path) -> Value {
+    match std::fs::read(path) {
+        Ok(bytes) => json!(marshell_core::config::hash::hash_bytes(&bytes)),
+        Err(_) => Value::Null,
+    }
+}
+
+/// Plans a change to Antigravity's settings file, expects 200, applies it and returns the snapshot id.
+async fn agy_change(e: &AgyEnv, expected_hash: Value, change: Value) -> String {
+    let body = json!({"expected_hash": expected_hash, "change": change});
+    let (status, bytes) = post_raw(&e.app, "/v1/agents/antigravity/settings/plan", body).await;
+    assert_eq!(status, StatusCode::OK, "{}", text(&bytes));
+    let plan = json_of(&bytes);
+    assert_eq!(plan["preview"]["can_apply"], true, "{plan}");
+    let (status, applied) = post(&e.app, "/v1/config/apply", shown(&plan["preview"])).await;
+    assert_eq!(status, StatusCode::OK, "{applied}");
+    applied["snapshot_id"].as_str().unwrap().to_string()
+}
+
 #[tokio::test]
-async fn antigravity_settings_plan_is_422() {
+async fn antigravity_form_edit_plans_applies_and_undoes() {
+    let e = agy_env();
+    let original = "{\"model\": \"x\"}";
+    std::fs::create_dir_all(e.settings.parent().unwrap()).unwrap();
+    std::fs::write(&e.settings, original).unwrap();
+    let snapshot = agy_change(
+        &e,
+        hash_at(&e.settings),
+        json!({"kind": "form", "edits": edit("toolPermission", "\"strict\"")}),
+    )
+    .await;
+    let now = std::fs::read_to_string(&e.settings).unwrap();
+    assert!(now.contains("\"toolPermission\": \"strict\""), "{now}");
+    assert!(now.contains("\"model\": \"x\""), "{now}");
+    let body = json!({"snapshot_id": snapshot});
+    let (status, bytes) = post_raw(&e.app, "/v1/agents/antigravity/settings/undo", body).await;
+    assert_eq!(status, StatusCode::OK, "{}", text(&bytes));
+    assert_eq!(std::fs::read(&e.settings).unwrap(), original.as_bytes());
+}
+
+#[tokio::test]
+async fn antigravity_form_edit_creates_a_missing_file() {
+    let e = agy_env();
+    assert!(!e.settings.exists() && !e.settings.parent().unwrap().exists());
+    let snapshot = agy_change(
+        &e,
+        Value::Null,
+        json!({"kind": "form", "edits": edit("verbosity", "\"low\"")}),
+    )
+    .await;
+    let now = std::fs::read_to_string(&e.settings).unwrap();
+    assert!(now.contains("\"verbosity\": \"low\""), "{now}");
+    let body = json!({"snapshot_id": snapshot});
+    let (status, bytes) = post_raw(&e.app, "/v1/agents/antigravity/settings/undo", body).await;
+    assert_eq!(status, StatusCode::OK, "{}", text(&bytes));
+    assert!(!e.settings.exists());
+}
+
+const BOM: [u8; 3] = [0xEF, 0xBB, 0xBF];
+
+/// How many byte-order marks the file starts with.
+fn leading_boms(bytes: &[u8]) -> usize {
+    let mut n = 0;
+    while bytes[n * 3..].starts_with(&BOM) {
+        n += 1;
+    }
+    n
+}
+
+impl PlanEnv {
+    /// Plans a raw edit against the file as it is now, expects 200 and applies it.
+    async fn apply_raw(&self, agent: &str, text_in: &str) {
+        let (status, bytes) = self.raw(agent, text_in).await;
+        assert_eq!(status, StatusCode::OK, "{}", text(&bytes));
+        let plan = json_of(&bytes);
+        let (status, applied) = post(&self.app, "/v1/config/apply", shown(&plan["preview"])).await;
+        assert_eq!(status, StatusCode::OK, "{applied}");
+    }
+}
+
+#[tokio::test]
+async fn a_codex_form_edit_keeps_the_files_bom() {
     let e = plan_env();
-    let message = "Antigravity's settings are read-only in Marshell.";
-    let (status, bytes) = e.form("antigravity", edit("model", "\"x\"")).await;
+    e.write("codex", "\u{feff}model = \"a\"\n");
+    e.change("codex", edit("model", "\"b\"")).await;
+    let bytes = std::fs::read(&e.codex).unwrap();
+    assert_eq!(leading_boms(&bytes), 1, "{bytes:?}");
+    assert!(text(&bytes).contains("model = \"b\""));
+}
+
+#[tokio::test]
+async fn a_claude_form_edit_keeps_the_files_bom() {
+    let e = plan_env();
+    e.write("claude", "\u{feff}{\"model\": \"a\"}");
+    e.change("claude", edit("model", "\"b\"")).await;
+    let bytes = std::fs::read(&e.claude).unwrap();
+    assert_eq!(leading_boms(&bytes), 1, "{bytes:?}");
+    assert!(text(&bytes).contains("\"b\""));
+}
+
+#[tokio::test]
+async fn the_telemetry_row_is_refused() {
+    let e = agy_env();
+    let original = "{\"model\": \"x\"}";
+    std::fs::create_dir_all(e.settings.parent().unwrap()).unwrap();
+    std::fs::write(&e.settings, original).unwrap();
+    let body = json!({
+        "expected_hash": hash_at(&e.settings),
+        "change": {"kind": "form", "edits": edit("enableTelemetry", "true")},
+    });
+    let (status, bytes) = post_raw(&e.app, "/v1/agents/antigravity/settings/plan", body).await;
     assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
-    assert_eq!(text(&bytes), message);
-    let (status, bytes) = e.raw("antigravity", "{}").await;
-    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
-    assert_eq!(text(&bytes), message);
-    let (status, bytes) = e.undo("antigravity", "s1").await;
-    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
-    assert_eq!(text(&bytes), message);
+    assert_eq!(
+        text(&bytes),
+        "Antigravity keeps this with your Google account, not in this file. Change it with /config in Antigravity."
+    );
+    assert_eq!(std::fs::read_to_string(&e.settings).unwrap(), original);
+}
+
+#[tokio::test]
+async fn a_raw_save_keeps_the_files_bom() {
+    let e = plan_env();
+    // Claude Code: the file had a BOM, the sent text has none.
+    e.write("claude", "\u{feff}{\"model\": \"a\"}");
+    e.apply_raw("claude", "{\"model\": \"b\"}").await;
+    let bytes = std::fs::read(&e.claude).unwrap();
+    assert_eq!(leading_boms(&bytes), 1, "{bytes:?}");
+    assert!(text(&bytes).contains("\"b\""));
+    // The sent text starts with a BOM itself: still one.
+    e.write("claude", "\u{feff}{\"model\": \"a\"}");
+    e.apply_raw("claude", "\u{feff}{\"model\": \"c\"}").await;
+    let bytes = std::fs::read(&e.claude).unwrap();
+    assert_eq!(leading_boms(&bytes), 1, "{bytes:?}");
+    assert!(text(&bytes).contains("\"c\""));
+    // No BOM in the file: a pasted one adds none.
+    e.write("claude", "{\"model\": \"a\"}");
+    e.apply_raw("claude", "\u{feff}{\"model\": \"d\"}").await;
+    let bytes = std::fs::read(&e.claude).unwrap();
+    assert_eq!(leading_boms(&bytes), 0, "{bytes:?}");
+    assert!(text(&bytes).contains("\"d\""));
+    // Codex.
+    e.write("codex", "\u{feff}model = \"a\"\n");
+    e.apply_raw("codex", "model = \"b\"\n").await;
+    let bytes = std::fs::read(&e.codex).unwrap();
+    assert_eq!(leading_boms(&bytes), 1, "{bytes:?}");
+    assert!(text(&bytes).contains("model = \"b\""));
+}
+
+#[tokio::test]
+async fn a_raw_save_is_refused_for_each_raw_lock() {
+    let e = plan_env();
+    let secret = format!("{{\"env\": {{\"K\": \"{SECRET}\"}}}}\n");
+    let cases = [
+        (
+            "{\n  // mine\n  \"model\": \"a\"\n}\n",
+            "Raw editing is off: this file isn't plain JSON, and Marshell saves it as plain JSON.",
+        ),
+        (
+            "{\"model\": \"a\", \"model\": \"b\"}",
+            "Raw editing is off: a key appears twice in this file.",
+        ),
+        (
+            secret.as_str(),
+            "This file holds secret values, so Marshell doesn't edit it as text.",
+        ),
+    ];
+    for (file, message) in cases {
+        e.write("claude", file);
+        let (status, bytes) = e.raw("claude", "{}").await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{file}");
+        assert_eq!(text(&bytes), message, "{file}");
+        assert_eq!(e.read("claude"), file);
+    }
 }
 
 #[tokio::test]

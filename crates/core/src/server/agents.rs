@@ -7,7 +7,7 @@ use crate::agents::antigravity::hooks as agy;
 use crate::agents::claude::{self, hooks};
 use crate::agents::codex::{self, trust};
 use crate::agents::install::{codex_newer, install_kind, update_text};
-use crate::agents::settings_view::{control, masked_render, parse_masked, read_managed, text_problem, view};
+use crate::agents::settings_view::{control, has_bom, masked_render, parse_masked, read_managed, text_problem, view};
 use crate::agents::{parse_any_version, run_version_text};
 use crate::bridge;
 use crate::config::jsonc::{parse_problem, read_value};
@@ -29,8 +29,8 @@ use marshell_protocol::config::{
 };
 use marshell_protocol::install::{AgentInstall, InstallKind};
 use marshell_protocol::settings_view::{
-    AgentSettingsView, FieldControl, FieldLock, SettingEdit, SettingsChange, SettingsPlan, SettingsPlanRequest,
-    SettingsUndoRequest, ViewState,
+    AgentSettingsView, FieldControl, FieldLock, RawLock, SettingEdit, SettingsChange, SettingsPlan,
+    SettingsPlanRequest, SettingsUndoRequest, ViewState,
 };
 use serde_json::Value;
 use std::cell::Cell;
@@ -687,8 +687,15 @@ fn settings_file(st: &AppState, kind: Adapter) -> Result<(PathBuf, Option<(PathB
 }
 
 fn settings_view_of(st: &AppState, agent: &str, kind: Adapter) -> Result<AgentSettingsView, Fail> {
+    settings_read(st, agent, kind).map(|(view, _)| view)
+}
+
+/// The settings view and whether the file's text starts with a byte-order mark, from one read.
+fn settings_read(st: &AppState, agent: &str, kind: Adapter) -> Result<(AgentSettingsView, bool), Fail> {
     let (path, managed) = settings_file(st, kind)?;
-    Ok(view(agent, &path, std::fs::read_to_string(&path), managed))
+    let text = std::fs::read_to_string(&path);
+    let had_bom = text.as_deref().is_ok_and(has_bom);
+    Ok((view(agent, &path, text, managed), had_bom))
 }
 
 /// Codex's `version.json` in `dir`, read against the installed `version`. A file that can't be read is no news.
@@ -699,7 +706,6 @@ fn codex_newer_in(dir: &Path, version: &str) -> Option<String> {
 
 // ---- planning and undoing a settings change ----
 
-const READ_ONLY: &str = "Antigravity's settings are read-only in Marshell.";
 const NOT_THIS_FILE: &str = "That snapshot isn't of this agent's settings file.";
 
 /// Why a settings change isn't made: a plain sentence, or a 409 naming the files that changed since the person looked.
@@ -767,10 +773,7 @@ fn settings_plan_of(
     kind: Adapter,
     req: SettingsPlanRequest,
 ) -> Result<SettingsPlan, Refusal> {
-    if matches!(kind, Adapter::Antigravity) {
-        return Err(unprocessable(READ_ONLY));
-    }
-    let view = settings_view_of(st, agent, kind).map_err(Refusal::from)?;
+    let (view, had_bom) = settings_read(st, agent, kind).map_err(Refusal::from)?;
     match view.state {
         ViewState::Unparsable { line } => {
             return Err(unprocessable(format!(
@@ -788,11 +791,12 @@ fn settings_plan_of(
     }
     let ops = match &req.change {
         SettingsChange::Form { edits } => form_ops(agent, &view, edits)?,
-        SettingsChange::Raw { text } => vec![raw_op(agent, &view, text)?],
+        SettingsChange::Raw { text } => vec![raw_op(agent, &view, had_bom, text)?],
     };
     let title = match kind {
         Adapter::Claude => "Change Claude Code settings",
-        _ => "Change Codex settings",
+        Adapter::Codex => "Change Codex settings",
+        Adapter::Antigravity => "Change Antigravity settings",
     };
     let cs = ChangeSet {
         title: title.to_string(),
@@ -848,9 +852,9 @@ fn form_ops(agent: &str, view: &AgentSettingsView, edits: &[SettingEdit]) -> Res
                 )));
             }
             Some(FieldLock::Account) => {
-                return Err(unprocessable(format!(
-                    "{key} is kept with the person's account, so the form can't change it."
-                )));
+                return Err(unprocessable(
+                    "Antigravity keeps this with your Google account, not in this file. Change it with /config in Antigravity.",
+                ));
             }
             None => {}
         }
@@ -908,21 +912,37 @@ fn checked(key: &str, control: &FieldControl, text: &str) -> Result<Value, Refus
 }
 
 /// The op that replaces the file's whole text, when the view gives that text out and the new text parses.
-fn raw_op(agent: &str, view: &AgentSettingsView, text: &str) -> Result<EditOp, Refusal> {
+/// A BOM the file had stays, and only one: the text the person edits never carries it.
+fn raw_op(agent: &str, view: &AgentSettingsView, had_bom: bool, text: &str) -> Result<EditOp, Refusal> {
     if view.state == ViewState::Missing {
         return Err(unprocessable("There is no file to edit as text."));
+    }
+    match view.raw_lock {
+        Some(RawLock::NotPlainJson) => {
+            return Err(unprocessable(
+                "Raw editing is off: this file isn't plain JSON, and Marshell saves it as plain JSON.",
+            ));
+        }
+        Some(RawLock::RepeatedKey) => {
+            return Err(unprocessable("Raw editing is off: a key appears twice in this file."));
+        }
+        Some(RawLock::Hidden) | None => {}
     }
     if view.text.is_none() {
         return Err(unprocessable(
             "This file holds secret values, so Marshell doesn't edit it as text.",
         ));
     }
-    if let Some(line) = text_problem(agent, text) {
+    let body = text.strip_prefix('\u{feff}').unwrap_or(text);
+    if let Some(line) = text_problem(agent, body) {
         return Err(unprocessable(format!("The text doesn't parse at line {line}.")));
     }
-    Ok(EditOp::ReplaceText {
-        content: text.to_string(),
-    })
+    let content = if had_bom {
+        format!("\u{feff}{body}")
+    } else {
+        body.to_string()
+    };
+    Ok(EditOp::ReplaceText { content })
 }
 
 /// What `preview_shown` takes for a settings file: when the text before or after holds a value the view hides, the
@@ -994,9 +1014,6 @@ pub async fn settings_undo(
 }
 
 fn settings_undo_of(st: &AppState, agent: &str, kind: Adapter, snapshot_id: &str) -> Result<ApplyResult, Refusal> {
-    if matches!(kind, Adapter::Antigravity) {
-        return Err(unprocessable(READ_ONLY));
-    }
     let (path, _) = settings_file(st, kind).map_err(Refusal::from)?;
     let info = match st.0.config.snapshots().get(snapshot_id) {
         Ok(Some(info)) => info,
