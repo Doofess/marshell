@@ -23,7 +23,7 @@
 Exact copy used in this slice:
 - Model help (Antigravity): "The model a new Antigravity session starts with, by the name /model shows, such as Gemini 3.1 Pro."
 - Telemetry lock: "Antigravity keeps this with your Google account, not in this file. Change it with /config in Antigravity."
-- Raw lock, comments: "Raw editing is off: this file has comments, and Marshell saves it as plain JSON."
+- Raw lock, not plain JSON (comments or a trailing comma): "Raw editing is off: this file isn't plain JSON, and Marshell saves it as plain JSON."
 - Raw lock, repeated key: "Raw editing is off: a key appears twice in this file."
 - Raw lock, hidden (existing): "Raw editing is off: this file holds secret values, and they show as hidden here."
 - Undo result (existing): "Put <path> back as it was."
@@ -50,18 +50,18 @@ Exact copy used in this slice:
 
 **Interfaces:**
 - Produces:
-  - `pub enum RawLock { Hidden, Comments, RepeatedKey }`, with `#[serde(rename_all = "snake_case")]` and `#[ts(export)]`, so the TypeScript type is `"hidden" | "comments" | "repeated_key"`.
+  - `pub enum RawLock { Hidden, NotPlainJson, RepeatedKey }`, with `#[serde(rename_all = "snake_case")]` and `#[ts(export)]`, so the TypeScript type is `"hidden" | "not_plain_json" | "repeated_key"`.
   - `AgentSettingsView.raw_lock: Option<RawLock>`, serialized as `null` when None (not skipped), like `text`. It is Some only when `editable` is true and the state is `ok`.
   - `FieldLock::Account`, set on Antigravity's `enableTelemetry` row whatever its value.
-  - `AgentSettingsView.text` is the file's text without a leading U+FEFF. It is Some when `raw_lock` is None or `Comments`, and None for `Hidden` and `RepeatedKey`.
+  - `AgentSettingsView.text` is the file's text without a leading U+FEFF. It is Some when `raw_lock` is None or `NotPlainJson`, and None for `Hidden` and `RepeatedKey`.
   - `pub(crate) fn has_bom(text: &str) -> bool` in `settings_view.rs`, used by Task 2.
   - `control("antigravity", …)`: `model` → `Text`; `toolPermission` → `Choice["request-review", "proceed-in-sandbox", "always-proceed", "strict"]`; `enableTerminalSandbox` → `Switch`; `colorScheme` → `Choice["terminal", "light", "solarized light", "colorblind-friendly light", "dark", "solarized dark", "colorblind-friendly dark", "tokyo night"]`; `verbosity` → `Choice["high", "medium", "low"]`; `enableTelemetry` → `Switch` (its `Account` lock keeps it read-only).
   - `editable` is true for `claude`, `codex` and `antigravity` when the state is `ok` or `missing`.
 
 - [ ] **Step 1: Write the failing tests** in `settings_view.rs`'s test module (use the module's `run(agent, text)` helper):
   - `antigravity_is_editable_with_its_controls`: `run("antigravity", "{}")` has `editable == true`. The curated controls equal the list above in order. `enableTelemetry`'s lock is `Some(FieldLock::Account)`, both when the file omits it and when the file sets `"enableTelemetry": true`.
-  - `a_json_file_with_comments_has_the_comments_raw_lock`: for both `claude` and `antigravity`, `"{\n  // mine\n  \"model\": \"x\"\n}"` gives `raw_lock == Some(RawLock::Comments)` and `text == Some(<the same text>)`.
-  - `a_trailing_comma_has_the_comments_raw_lock`: `"{\"model\": \"x\",}"` for `claude` gives `Some(RawLock::Comments)`.
+  - `a_json_file_with_comments_has_the_not_plain_json_raw_lock`: for both `claude` and `antigravity`, `"{\n  // mine\n  \"model\": \"x\"\n}"` gives `raw_lock == Some(RawLock::NotPlainJson)` and `text == Some(<the same text>)`.
+  - `a_trailing_comma_has_the_not_plain_json_raw_lock`: `"{\"model\": \"x\",}"` for `claude` gives `Some(RawLock::NotPlainJson)`.
   - `a_repeated_key_has_its_raw_lock_and_no_text`: `"{\"model\": \"a\", \"model\": \"b\"}"` for `claude` and `antigravity` gives `raw_lock == Some(RawLock::RepeatedKey)` and `text == None`.
   - `a_secret_wins_over_comments_and_a_repeated_key` (Review Focus 3): `"{\n  // api_key = \"x\"\n  \"model\": \"a\", \"model\": \"b\"\n}"` gives `Some(RawLock::Hidden)` and `text == None`.
   - `codex_comments_need_no_raw_lock`: `run("codex", "# mine\nmodel = \"x\"\n")` gives `raw_lock == None` and `text == Some(..)`.
@@ -74,12 +74,12 @@ Exact copy used in this slice:
   - In `parse_masked`, replace `plain: bool` with `raw_lock: Option<RawLock>`, computed once per text:
     - `Hidden` when masking changed the tree or any comment fails `comment_is_clean`;
     - else, for JSON only, `RepeatedKey` when `repeats_a_key`;
-    - else, for JSON only, `Comments` when `serde_json::from_str::<Value>(body)` fails on the BOM-stripped body;
+    - else, for JSON only, `NotPlainJson` when `serde_json::from_str::<Value>(body)` fails on the BOM-stripped body;
     - else None.
     
     `json_hides_nothing` splits into the parts this needs.
   - In `view`:
-    - set `text` from the BOM-stripped text when `raw_lock` is None or `Comments`;
+    - set `text` from the BOM-stripped text when `raw_lock` is None or `NotPlainJson`;
     - set `raw_lock` only when editable;
     - set `editable = matches!(agent, "claude" | "codex" | "antigravity")`;
     - give `("antigravity", "enableTelemetry")` the `Account` lock in `value_of`, ahead of the `Hidden`/`NotScalar` checks.
@@ -105,7 +105,7 @@ Exact copy used in this slice:
   - `a_codex_form_edit_keeps_the_files_bom`: in a Codex `config.toml` of `"\u{feff}model = \"a\"\n"`, a form edit of `model = "b"` writes bytes that start with exactly one `EF BB BF`. If `toml_doc.rs` drops it, re-insert it there the way `jsonc.rs:52` does for JSON.
   - `the_telemetry_row_is_refused`: a form edit of `enableTelemetry` gets 422 with the telemetry lock line from Global Constraints as its body, and nothing is written.
   - `a_raw_save_keeps_the_files_bom` (Review Focus 1): for Claude, `"\u{feff}{\"model\": \"a\"}"` with raw text `{"model": "b"}` applies to bytes that start with exactly one `EF BB BF`. The same holds when the sent text itself starts with U+FEFF. For Codex, `"\u{feff}model = \"a\"\n"` keeps one BOM. A Claude file without a BOM saved from raw text that starts with U+FEFF gets no BOM.
-  - `a_raw_save_is_refused_for_each_raw_lock`: a Claude file with a comment gets 422 with the body "Raw editing is off: this file has comments, and Marshell saves it as plain JSON.". A repeated key gets "Raw editing is off: a key appears twice in this file.". The existing secret-file test keeps its line. Nothing is written in any of the three.
+  - `a_raw_save_is_refused_for_each_raw_lock`: a Claude file with a comment gets 422 with the body "Raw editing is off: this file isn't plain JSON, and Marshell saves it as plain JSON.". A repeated key gets "Raw editing is off: a key appears twice in this file.". The existing secret-file test keeps its line. Nothing is written in any of the three.
   - Delete or invert the existing tests that assert Antigravity's plan and undo answer 422 with "Antigravity's settings are read-only in Marshell." They become the two tests above.
 - [ ] **Step 2: Run them.** `cargo test -j 4 -p marshell-core --test agents_api`. Expected: the new tests FAIL, with Antigravity refused and the BOM lost.
 - [ ] **Step 3: Implement.**
@@ -113,7 +113,7 @@ Exact copy used in this slice:
   - `settings_plan_of` uses `settings_read`, and its title match gets `Adapter::Antigravity => "Change Antigravity settings"`.
   - `form_ops` refuses `FieldLock::Account` with the line from the test.
   - `raw_op`:
-    - refuses per `view.raw_lock`: `Hidden` keeps today's sentence, and `Comments` and `RepeatedKey` use the two lines from the test;
+    - refuses per `view.raw_lock`: `Hidden` keeps today's sentence, and `NotPlainJson` and `RepeatedKey` use the two lines from the test;
     - strips one leading U+FEFF from `text` before `text_problem`;
     - prepends U+FEFF to the `ReplaceText` content when `had_bom`.
   - Check that `masked_diff` and the undo path treat `"antigravity"` as JSON. The non-Codex arm should already do so; if a match names `"claude"` alone, widen it.
@@ -160,14 +160,14 @@ A scratch `USERPROFILE` doesn't move the config service's path guard. `Guard::fo
     - `switchOptions("yes")` ends with `{ value: "yes", label: "yes (from the file)" }`, and `switchOptions("on")` has three options.
     - `parseField` for a number control: `"-"` and `"1e"` give `{ ok: false, message: "Use a whole number of at least 1." }` (min 1); `" 45 "` is ok with 45; `""` is ok and means not set.
     - Review Focus 5: `formEdits` with an untouched switch row `"yes"`, an untouched number row `"abc"` and an untouched choice row `"dracula"`, each with the draft not holding the key, gives `edits.length === 0` and no errors.
-  - `companyFlow.test.ts`: `rawChange("raw", view({ raw_lock: "comments", text: "x" }), "y")` is null, and the same with `raw_lock: null` is `"y"`.
+  - `companyFlow.test.ts`: `rawChange("raw", view({ raw_lock: "not_plain_json", text: "x" }), "y")` is null, and the same with `raw_lock: null` is `"y"`.
   - `companyFields.test.ts`: Antigravity's `model` help equals the exact model help line.
   - `CompanySection.test.tsx`:
     - Antigravity with `editable: true` renders `<select` for `toolPermission` and Review changes when drafted.
     - The `enableTelemetry` row with `lock: { kind: "account" }` renders the telemetry lock line and no control.
     - A number row renders `type="text"` and `inputmode="numeric"` and never `type="number"`.
     - A switch row holding `"yes"` renders `<option value="yes" selected="">yes (from the file)</option>`.
-    - Raw mode with `raw_lock: "comments"` and `text` set renders the file's text read-only (no editable textarea) and the comments line.
+    - Raw mode with `raw_lock: "not_plain_json"` and `text` set renders the file's text read-only (no editable textarea) and the not-plain-JSON line.
     - Raw mode with `raw_lock: "repeated_key"` renders the repeated-key line.
     - Raw mode with `raw_lock: "hidden"` renders today's hidden line.
     - Replace the "renders Antigravity read-only" test with these.
@@ -179,7 +179,7 @@ A scratch `USERPROFILE` doesn't move the config service's path guard. `Guard::fo
     - `lockLine` gets `case "account"` with the telemetry line.
   - The raw branch:
     - an editable textarea only when `editable && view.text !== null && view.raw_lock === null`;
-    - with `raw_lock === "comments"`, the file's own `view.text` read-only (the Codex-style read-only textarea for every agent), then the comments line;
+    - with `raw_lock === "not_plain_json"`, the file's own `view.text` read-only (the Codex-style read-only textarea for every agent), then the not-plain-JSON line;
     - otherwise today's masked render with the "Shown as Marshell reads it" note, plus `rawLockLine(view.raw_lock)` when it is set.
   - Remove both `agent === "antigravity"` checks and the comment on `onReview`.
   - `rawChange` also needs `view.raw_lock === null`.
@@ -258,7 +258,7 @@ Seed through the app's own paths, with no hand edits under the real homes:
   - The Telemetry row: read-only, with the line.
   - An odd `colorScheme` value seeded as `"dracula"`, shown as "dracula (from the file)".
 - [ ] **Step 3: Raw locks and the BOM.**
-  - A Claude file with a comment shows the comments line, and its form still applies.
+  - A Claude file with a comment shows the not-plain-JSON line, and its form still applies.
   - A repeated key shows its line.
   - A Claude file and a Codex file that start with a BOM: a raw save keeps exactly one BOM. Check the first three bytes of each file.
 - [ ] **Step 4: Odd values and focus.**
