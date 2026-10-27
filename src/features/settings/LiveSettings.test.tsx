@@ -1,10 +1,10 @@
 import { readFileSync } from "node:fs";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
-import { SETTINGS_SECTIONS, type SettingsSection } from "./settingsSections";
+import { SETTINGS_SECTIONS, type CompanyAgent, type SettingsSection } from "./settingsSections";
 import { SettingsPanels } from "./LiveSettings";
 import { holdFocus, type GuardDom } from "../../lib/focusGuard";
-import { closeOrRefuse, closesSettings, focusSettingsHeading, isTextEntry, mountedWith, paletteSection, settingsFocusFallback, settingsStart, settingsTabTarget, visibleControls } from "./settingsRouting";
+import { closeOrRefuse, closesSettings, focusSettingsHeading, freshSettingsStart, isTextEntry, mountedWith, paletteSection, settingsFocusFallback, settingsStart, settingsTabTarget, visibleControls } from "./settingsRouting";
 
 describe("paletteSection", () => {
   it.each([
@@ -24,11 +24,44 @@ describe("paletteSection", () => {
   });
 });
 
+describe("paletteSection and the company sections", () => {
+  it("has no palette command for Accounts or the company sections", () => {
+    for (const id of ["accounts", "claude", "codex", "antigravity"]) expect(paletteSection(id), id).toBeNull();
+  });
+});
+
 describe("settingsStart", () => {
   it("opens the section shown last in this run, else Appearance", () => {
-    expect(settingsStart(null)).toBe("appearance");
-    expect(settingsStart("history")).toBe("history");
-    expect(settingsStart("advanced")).toBe("advanced");
+    const all = SETTINGS_SECTIONS.map((s) => s.id);
+    expect(settingsStart(null, all)).toBe("appearance");
+    expect(settingsStart("history", all)).toBe("history");
+    expect(settingsStart("advanced", all)).toBe("advanced");
+  });
+  it("falls back to Appearance when the last section is no longer listed", () => {
+    const without = SETTINGS_SECTIONS.map((s) => s.id).filter((id) => id !== "codex");
+    expect(settingsStart("codex", without)).toBe("appearance");
+    expect(settingsStart("codex", [...without, "codex"])).toBe("codex");
+  });
+});
+
+describe("freshSettingsStart", () => {
+  const known = new Set<CompanyAgent>(["claude", "codex"]);
+  it("reads the CLIs again before reopening at a CLI's section, and opens Appearance when that CLI is gone", async () => {
+    const read = vi.fn(async () => new Set<CompanyAgent>(["claude"]));
+    expect(await freshSettingsStart("codex", known, read)).toEqual({ start: "appearance", found: new Set(["claude"]) });
+    expect(read).toHaveBeenCalledOnce();
+  });
+  it("reopens at the CLI's section when it is still found", async () => {
+    expect(await freshSettingsStart("codex", known, async () => new Set<CompanyAgent>(["codex"]))).toEqual({ start: "codex", found: new Set(["codex"]) });
+  });
+  it("keeps what it knew when the read fails", async () => {
+    expect(await freshSettingsStart("codex", known, () => Promise.reject(new Error("down")))).toEqual({ start: "codex", found: null });
+  });
+  it("doesn't read for any other section", async () => {
+    const read = vi.fn(async () => new Set<CompanyAgent>());
+    expect(await freshSettingsStart("history", known, read)).toEqual({ start: "history", found: null });
+    expect(await freshSettingsStart(null, known, read)).toEqual({ start: "appearance", found: null });
+    expect(read).not.toHaveBeenCalled();
   });
 });
 
@@ -63,6 +96,11 @@ describe("SettingsPanels", () => {
     expect(h).toContain("body of history");
     expect(h).not.toContain("body of appearance");
     expect(h).not.toMatch(/hidden/);
+  });
+  it("renders accounts and codex through render, the shown one visible and the other hidden", () => {
+    const h = html("codex", ["accounts", "codex"]);
+    expect(h).toMatch(/<div[^>]*hidden=""[^>]*><p>body of accounts<\/p><\/div>/);
+    expect(h).toMatch(/<div[^>]*><p>body of codex<\/p><\/div>/);
   });
   it("keeps a section that was shown mounted but hidden after a switch, so an unsaved form survives", () => {
     const h = html("agents", ["profiles", "agents"]);

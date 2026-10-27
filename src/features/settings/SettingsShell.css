@@ -14,7 +14,16 @@
 .settings-shell__nav {
   position: sticky;
   inset-block-start: 0;
+  /* The nav is as tall as the page body at most (the body is a size container below), and scrolls on its own past that. */
+  max-block-size: 100cqb;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
   background: var(--bg-base);
+}
+/* The page body has a definite height (the Page grid's 1fr row), so it can be asked for: 100cqb above is its scrollport height. */
+.settings-shell .page__body {
+  container: settings-body / size;
 }
 .settings-shell__section {
   min-inline-size: 0;
@@ -41,5 +50,7 @@
   }
   .settings-shell__nav {
     padding-block: var(--space-1);
+    max-block-size: none;
+    overflow-y: visible;
   }
 }

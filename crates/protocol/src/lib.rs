@@ -1,3 +1,4 @@
+pub mod account;
 pub mod agents;
 pub mod api;
 pub mod brand;
@@ -6,7 +7,9 @@ pub mod diagnostics;
 pub mod frames;
 pub mod history;
 pub mod hook;
+pub mod install;
 pub mod manifest;
+pub mod settings_view;
 pub mod tools;
 
 /// TypeScript source for the constants ts-rs cannot export (names and frame opcodes).

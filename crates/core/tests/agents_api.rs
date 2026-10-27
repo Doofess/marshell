@@ -996,3 +996,455 @@ async fn antigravity_status_off_sets_its_note() {
     agy_post(&app, "statusline", None, agy_statusline("pending")).await;
     assert_eq!(agy_row(&st).attention, None);
 }
+
+// ---- Install type ----
+
+/// A state with the given agent files "found" (paths that don't exist, so nothing is run) and every version pinned.
+fn install_env(codex_home: Option<&std::path::Path>) -> (tempfile::TempDir, axum::Router) {
+    let dir = tempfile::tempdir().unwrap();
+    let home = dir.path().join("home");
+    std::fs::create_dir_all(&home).unwrap();
+    let mut st = AppState::new(
+        TOKEN.into(),
+        PORT,
+        vec!["http://tauri.localhost".into()],
+        home,
+        Vec::new(),
+    )
+    .with_claude_version(Some("2.1.303".into()))
+    .with_codex_version(Some("0.163.2".into()))
+    .with_agy_version(None);
+    if let Some(codex_home) = codex_home {
+        st = st
+            .with_codex_hooks(codex_home.join("hooks.json"))
+            .with_agent_path(|name| {
+                (name == "codex").then(|| PathBuf::from(r"Z:\nowhere\Programs\OpenAI\Codex\bin\codex.exe"))
+            });
+    } else {
+        st = st.with_agent_path(|_| None);
+    }
+    (dir, router(st))
+}
+
+#[tokio::test]
+async fn install_is_refused_without_the_bearer() {
+    let (_dir, app) = install_env(None);
+    let req = Request::builder()
+        .method("GET")
+        .uri("/v1/agents/claude/install")
+        .header(header::HOST, format!("127.0.0.1:{PORT}"))
+        .body(Body::empty())
+        .unwrap();
+    let (status, _) = send(&app, req).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn install_for_an_unknown_agent_is_404() {
+    let (_dir, app) = install_env(None);
+    let (status, body) = get(&app, "/v1/agents/nope/install").await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+}
+
+#[tokio::test]
+async fn install_reports_not_found() {
+    let (_dir, app) = install_env(None);
+    let (status, body) = get(&app, "/v1/agents/claude/install").await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["agent"], "claude");
+    assert_eq!(body["found"], false);
+    assert_eq!(body["version"], Value::Null);
+    assert_eq!(body["install"]["kind"], "unknown");
+    assert_eq!(body["update_command"], Value::Null);
+    assert_eq!(body["newer_version"], Value::Null);
+}
+
+#[tokio::test]
+async fn install_reads_codex_version_json() {
+    let dir = tempfile::tempdir().unwrap();
+    let codex_home = dir.path().join("codex-home");
+    std::fs::create_dir_all(&codex_home).unwrap();
+    std::fs::write(
+        codex_home.join("version.json"),
+        r#"{"latest_version":"0.164.0","last_checked_at":"2026-10-27T00:00:00Z","dismissed_version":null}"#,
+    )
+    .unwrap();
+    let (_keep, app) = install_env(Some(&codex_home));
+    let (status, body) = get(&app, "/v1/agents/codex/install?recheck=true").await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["found"], true);
+    assert_eq!(body["version"], "0.163.2");
+    assert_eq!(body["install"]["kind"], "native");
+    assert_eq!(body["update_command"], "codex update");
+    assert_eq!(body["newer_version"], "0.164.0");
+
+    // A dismissed version is no news.
+    std::fs::write(
+        codex_home.join("version.json"),
+        r#"{"latest_version":"0.164.0","dismissed_version":"0.164.0"}"#,
+    )
+    .unwrap();
+    let (_, body) = get(&app, "/v1/agents/codex/install").await;
+    assert_eq!(body["newer_version"], Value::Null, "{body}");
+}
+
+/// The probe script of `install_recheck_reads_the_version_again`; the agent-path seam is a plain `fn`, so it reads this.
+static VERSION_PROBE: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+
+#[tokio::test]
+async fn install_recheck_reads_the_version_again() {
+    let dir = tempfile::tempdir().unwrap();
+    let home = dir.path().join("home");
+    std::fs::create_dir_all(&home).unwrap();
+    // The script prints the text of a sibling file, so changing the version leaves the script's modified time as it was.
+    let text = dir.path().join("probe-version.txt");
+    std::fs::write(&text, "2.0.0\n").unwrap();
+    let script = if cfg!(windows) {
+        let script = dir.path().join("version-probe.cmd");
+        std::fs::write(&script, "@echo off\r\ntype \"%~dp0probe-version.txt\"\r\n").unwrap();
+        script
+    } else {
+        let script = dir.path().join("version-probe.sh");
+        std::fs::write(&script, "#!/bin/sh\ncat \"$(dirname \"$0\")/probe-version.txt\"\n").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        script
+    };
+    VERSION_PROBE.set(script).unwrap();
+    // No version is pinned for Antigravity, so the program is asked and the answer is remembered.
+    let st = AppState::new(
+        TOKEN.into(),
+        PORT,
+        vec!["http://tauri.localhost".into()],
+        home,
+        Vec::new(),
+    )
+    .with_agent_path(|name| (name == "agy").then(|| VERSION_PROBE.get().cloned()).flatten());
+    let app = router(st);
+
+    let (_, body) = get(&app, "/v1/agents/antigravity/install").await;
+    assert_eq!(body["version"], "2.0.0", "{body}");
+
+    std::fs::write(&text, "2.1.0\n").unwrap();
+    let (_, body) = get(&app, "/v1/agents/antigravity/install").await;
+    assert_eq!(body["version"], "2.0.0", "the remembered version: {body}");
+
+    let (_, body) = get(&app, "/v1/agents/antigravity/install?recheck=true").await;
+    assert_eq!(body["version"], "2.1.0", "{body}");
+}
+
+// ---- Sign-in status ----
+
+static ANTIGRAVITY_RUNS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+static MISSING_RUNS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+type Runner = fn(&std::path::Path, &[&str]) -> Option<(i32, String)>;
+
+/// A state whose agents are at paths that don't exist and whose status command is `runner`: nothing real is run.
+fn account_app(find: fn(&str) -> Option<PathBuf>, runner: Runner) -> (tempfile::TempDir, axum::Router) {
+    let dir = tempfile::tempdir().unwrap();
+    let home = dir.path().join("home");
+    std::fs::create_dir_all(&home).unwrap();
+    let st = AppState::new(
+        TOKEN.into(),
+        PORT,
+        vec!["http://tauri.localhost".into()],
+        home,
+        Vec::new(),
+    )
+    .with_agent_path(find)
+    .with_status_runner(runner);
+    (dir, router(st))
+}
+
+fn fake_path(name: &str) -> Option<PathBuf> {
+    Some(PathBuf::from(format!(r"Z:\nowhere\{name}.exe")))
+}
+
+#[tokio::test]
+async fn account_is_refused_without_the_bearer() {
+    let (_dir, app) = account_app(fake_path, |_, _| None);
+    let req = Request::builder()
+        .method("GET")
+        .uri("/v1/agents/claude/account")
+        .header(header::HOST, format!("127.0.0.1:{PORT}"))
+        .body(Body::empty())
+        .unwrap();
+    let (status, _) = send(&app, req).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn account_for_an_unknown_agent_is_404() {
+    let (_dir, app) = account_app(fake_path, |_, _| None);
+    let (status, body) = get(&app, "/v1/agents/nope/account").await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+}
+
+#[tokio::test]
+async fn account_for_antigravity_is_no_command() {
+    use std::sync::atomic::Ordering;
+    let (_dir, app) = account_app(fake_path, |_, _| {
+        ANTIGRAVITY_RUNS.fetch_add(1, Ordering::SeqCst);
+        None
+    });
+    let (status, body) = get(&app, "/v1/agents/antigravity/account").await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["agent"], "antigravity");
+    assert_eq!(body["sign_in"], "no_command");
+    assert_eq!(ANTIGRAVITY_RUNS.load(Ordering::SeqCst), 0, "nothing ran");
+}
+
+#[tokio::test]
+async fn account_for_a_missing_cli_is_unknown() {
+    use std::sync::atomic::Ordering;
+    let (_dir, app) = account_app(
+        |_| None,
+        |_, _| {
+            MISSING_RUNS.fetch_add(1, Ordering::SeqCst);
+            None
+        },
+    );
+    for agent in ["claude", "codex"] {
+        let (status, body) = get(&app, &format!("/v1/agents/{agent}/account")).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["agent"], agent);
+        assert_eq!(body["sign_in"], "unknown");
+        assert_eq!(body["email"], Value::Null);
+        assert_eq!(body["plan"], Value::Null);
+        assert_eq!(body["method"], Value::Null);
+    }
+    assert_eq!(MISSING_RUNS.load(std::sync::atomic::Ordering::SeqCst), 0, "nothing ran");
+}
+
+#[tokio::test]
+async fn account_reads_claude_status_from_the_runner() {
+    let (_dir, app) = account_app(fake_path, |_, args| {
+        assert_eq!(args, ["auth", "status"]);
+        Some((
+            0,
+            r#"{"loggedIn":true,"authMethod":"claude.ai","email":"a@example.com","subscriptionType":"max"}"#.into(),
+        ))
+    });
+    let (status, body) = get(&app, "/v1/agents/claude/account").await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["sign_in"], "signed_in");
+    assert_eq!(body["email"], "a@example.com");
+    assert_eq!(body["plan"], "max");
+    assert_eq!(body["method"], Value::Null);
+    // Milliseconds since the Unix epoch (after 2020).
+    assert!(body["checked_ms"].as_u64().unwrap() > 1_600_000_000_000, "{body}");
+}
+
+#[tokio::test]
+async fn account_never_returns_the_codex_output() {
+    let (_dir, app) = account_app(fake_path, |_, args| {
+        assert_eq!(args, ["login", "status"]);
+        Some((0, "Logged in using an API key - sk-proj-***abcd\n".into()))
+    });
+    let (status, body) = get(&app, "/v1/agents/codex/account").await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["sign_in"], "signed_in");
+    assert_eq!(body["method"], "an API key");
+    assert!(!body.to_string().contains("sk-"), "{body}");
+}
+
+#[tokio::test]
+async fn account_is_unknown_when_the_command_times_out() {
+    let (_dir, app) = account_app(fake_path, |_, _| None);
+    let (_, body) = get(&app, "/v1/agents/codex/account").await;
+    assert_eq!(body["sign_in"], "unknown", "{body}");
+}
+
+/// Every file the settings view reads sits in this temp folder: the user's Claude, Codex and Antigravity files and a
+/// managed Claude file. Nothing under the real `~/.claude`, `~/.codex` or `~/.gemini` is named, and the real
+/// organization folder is replaced by the temp managed file.
+struct ViewEnv {
+    _dir: tempfile::TempDir,
+    app: axum::Router,
+    claude: PathBuf,
+    managed: PathBuf,
+    codex: PathBuf,
+    agy: PathBuf,
+}
+
+fn view_env() -> ViewEnv {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().to_path_buf();
+    let home = root.join("home");
+    let (claude, managed) = (
+        root.join("claude").join("settings.json"),
+        root.join("org").join("managed.json"),
+    );
+    let codex = root.join("codex").join("config.toml");
+    let agy_home = root.join("agyhome");
+    let agy = agy_home.join(".gemini").join("antigravity-cli").join("settings.json");
+    for file in [&claude, &managed, &codex, &agy] {
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+    }
+    std::fs::create_dir_all(&home).unwrap();
+    let st = AppState::new(
+        TOKEN.into(),
+        PORT,
+        vec!["http://tauri.localhost".into()],
+        home,
+        Vec::new(),
+    )
+    .with_claude_settings(claude.clone())
+    .with_codex_hooks(root.join("codex").join("hooks.json"))
+    .with_agy_home(agy_home)
+    .with_claude_compact_paths(root.join("user"), vec![managed.clone()]);
+    ViewEnv {
+        _dir: dir,
+        app: router(st),
+        claude,
+        managed,
+        codex,
+        agy,
+    }
+}
+
+#[tokio::test]
+async fn settings_view_is_refused_without_the_bearer() {
+    let e = view_env();
+    let req = Request::builder()
+        .method("GET")
+        .uri("/v1/agents/claude/settings-view")
+        .header(header::HOST, format!("127.0.0.1:{PORT}"))
+        .body(Body::empty())
+        .unwrap();
+    let (status, _) = send(&e.app, req).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn settings_view_for_an_unknown_agent_is_404() {
+    let e = view_env();
+    let (status, body) = get(&e.app, "/v1/agents/nope/settings-view").await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+}
+
+#[tokio::test]
+async fn settings_view_reads_the_claude_file() {
+    let e = view_env();
+    std::fs::write(
+        &e.claude,
+        r#"{ // a comment
+          "model": "opus", "theme": "dark",
+          "env": {"ANTHROPIC_API_KEY": "sk-ant-secret"},
+          "apiKeyHelper": "op read op://v/i/secret-ref",
+          "mcpServers": {"s": {"command": "npx", "args": ["-y", "srv", "--api-key", "sk-arg-secret"]}},
+          "statusLine": {"type": "command", "command": "bar --token tok-secret"}
+        }"#,
+    )
+    .unwrap();
+    std::fs::write(&e.managed, r#"{"theme": "light", "env": {"ORG": "org-secret"}}"#).unwrap();
+    let (status, body) = get(&e.app, "/v1/agents/claude/settings-view").await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["state"]["kind"], "ok");
+    assert_eq!(body["path"], e.claude.to_string_lossy().as_ref());
+    let curated = |key: &str| {
+        body["curated"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|s| s["key"] == key)
+            .unwrap()
+            .clone()
+    };
+    assert_eq!(
+        (curated("model")["value"].as_str(), curated("model")["scope"].as_str()),
+        (Some("opus"), Some("user"))
+    );
+    assert_eq!(
+        (curated("theme")["value"].as_str(), curated("theme")["scope"].as_str()),
+        (Some("light"), Some("managed"))
+    );
+    let raw = body["raw"].as_str().unwrap();
+    assert!(raw.contains("hidden"), "{raw}");
+    let text = body.to_string();
+    for secret in [
+        "sk-ant-secret",
+        "secret-ref",
+        "sk-arg-secret",
+        "tok-secret",
+        "org-secret",
+    ] {
+        assert!(!text.contains(secret), "{secret} in {text}");
+    }
+}
+
+#[tokio::test]
+async fn settings_view_reads_codex_config_toml_beside_the_hooks_file() {
+    let e = view_env();
+    std::fs::write(
+        &e.codex,
+        "model = \"gpt-5\"\n[mcp_servers.x]\ncommand = \"node\"\nargs = [\"--token\", \"abc-secret\"]\n[mcp_servers.x.env]\nAPI_KEY = \"abc-secret\"\n[mcp_servers.x.headers]\nAuthorization = \"Bearer abc-secret\"\n",
+    )
+    .unwrap();
+    let (status, body) = get(&e.app, "/v1/agents/codex/settings-view").await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["state"]["kind"], "ok");
+    assert_eq!(body["curated"][0]["key"], "model");
+    assert_eq!(body["curated"][0]["value"], "gpt-5");
+    assert!(body["raw"].as_str().unwrap().contains("hidden"));
+    assert!(!body.to_string().contains("abc-secret"), "{body}");
+}
+
+#[tokio::test]
+async fn settings_view_reads_the_antigravity_file() {
+    let e = view_env();
+    std::fs::write(&e.agy, r#"{"model": "gemini", "authToken": "agy-secret"}"#).unwrap();
+    let (status, body) = get(&e.app, "/v1/agents/antigravity/settings-view").await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["curated"][0]["value"], "gemini");
+    assert!(!body.to_string().contains("agy-secret"), "{body}");
+}
+
+#[tokio::test]
+async fn settings_view_of_a_missing_file_is_missing() {
+    let e = view_env();
+    for agent in ["claude", "codex", "antigravity"] {
+        let (status, body) = get(&e.app, &format!("/v1/agents/{agent}/settings-view")).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["state"]["kind"], "missing", "{agent}");
+        assert_eq!(body["curated"].as_array().unwrap().len(), 6);
+        assert_eq!(body["raw"], Value::Null);
+    }
+}
+
+#[tokio::test]
+async fn settings_view_of_a_file_that_does_not_parse_leaks_nothing() {
+    let e = view_env();
+    std::fs::write(
+        &e.claude,
+        "{\n\"model\": \"opus\",\n\"env\": {\"K\": \"sk-broken-secret\"} oops\n",
+    )
+    .unwrap();
+    std::fs::write(&e.codex, "model = \"gpt-5\"\napi_key = \"sk-broken-secret\"\nbad = \n").unwrap();
+    for agent in ["claude", "codex"] {
+        let (status, body) = get(&e.app, &format!("/v1/agents/{agent}/settings-view")).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["state"]["kind"], "unparsable", "{agent}: {body}");
+        assert!(body["state"]["line"].as_u64().unwrap() >= 1);
+        assert_eq!(body["curated"], json!([]));
+        assert_eq!(body["others"], json!([]));
+        assert_eq!(body["raw"], Value::Null);
+        assert!(!body.to_string().contains("sk-broken-secret"), "{body}");
+        assert!(!body.to_string().contains("gpt-5"), "{body}");
+    }
+}
+
+#[tokio::test]
+async fn settings_view_of_a_folder_is_unreadable() {
+    let e = view_env();
+    std::fs::create_dir_all(&e.claude).unwrap();
+    let (status, body) = get(&e.app, "/v1/agents/claude/settings-view").await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["state"]["kind"], "unreadable", "{body}");
+    assert_eq!(body["curated"], json!([]));
+    assert_eq!(body["raw"], Value::Null);
+}

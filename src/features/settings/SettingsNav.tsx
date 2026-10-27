@@ -1,3 +1,4 @@
+import { useEffect, useRef } from "react";
 import { selectedProps } from "../../components/a11y/SelectedMark";
 
 /** The settings sections as a nav: one button each, the current one marked with the shared selected mark. */
@@ -14,8 +15,13 @@ export function SettingsNav<Id extends string>({
   className?: string;
   ariaCurrent?: "true" | "page";
 }) {
+  const nav = useRef<HTMLElement>(null);
+  // The nav scrolls on its own when it is taller than the page: keep the current section in view after a change.
+  useEffect(() => {
+    nav.current?.querySelector<HTMLElement>('[aria-current]')?.scrollIntoView?.({ block: "nearest" });
+  }, [current]);
   return (
-    <nav aria-label="Settings sections" className={className}>
+    <nav ref={nav} aria-label="Settings sections" className={className}>
       <ul>
         {items.map((n) => {
           const props = selectedProps(n.id === current, "current", "settings__nav-item");

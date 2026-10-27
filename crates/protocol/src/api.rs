@@ -88,6 +88,30 @@ pub struct CreateSessionRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub tool: Option<crate::tools::ToolLaunch>,
+    /// A sign-in or update tab for a company CLI. It takes no shell, agent, prompt, mode, preset or tool.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub cli_task: Option<CliTask>,
+}
+
+/// What a CLI-task tab runs. The core builds the command; the frontend never sends one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum CliTaskKind {
+    /// The CLI's own sign-in command.
+    SignIn,
+    /// The CLI's update command, by how it was installed.
+    Update,
+}
+
+/// A sign-in or update tab for one company CLI.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct CliTask {
+    /// "claude", "codex" or "antigravity".
+    pub agent: String,
+    pub kind: CliTaskKind,
 }
 
 /// How much an agent may do before it asks. The core turns it into the CLI's own flags.
@@ -1130,6 +1154,21 @@ mod tests {
         assert!(req.profile_id.is_none() && req.agent.is_none());
         assert!(req.name.is_none() && req.prompt.is_none());
         assert!(req.mode.is_none());
+        assert!(req.cli_task.is_none());
+    }
+
+    #[test]
+    fn cli_task_is_snake_case() {
+        let req: CreateSessionRequest =
+            serde_json::from_str(r#"{"cols":80,"rows":24,"cli_task":{"agent":"claude","kind":"sign_in"}}"#).unwrap();
+        assert_eq!(
+            req.cli_task,
+            Some(CliTask {
+                agent: "claude".into(),
+                kind: CliTaskKind::SignIn
+            })
+        );
+        assert_eq!(serde_json::to_string(&CliTaskKind::Update).unwrap(), r#""update""#);
     }
 
     #[test]

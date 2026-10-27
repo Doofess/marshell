@@ -68,6 +68,7 @@ async fn create(core: &RunningCore) {
         color_scheme: None,
         tool: None,
         preset: None,
+        cli_task: None,
     };
     tokio::task::spawn_blocking(move || {
         let res = ureq::post(&url)

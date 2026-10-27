@@ -39,7 +39,7 @@ use marshell_protocol::api::{Endpoint, Health, LayoutDoc, Platform, Profile, Pro
 use marshell_protocol::brand;
 use std::collections::{HashMap, HashSet};
 use std::net::Ipv4Addr;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -74,6 +74,9 @@ fn effective(reported: &marshell_protocol::api::UiView, hidden: bool) -> marshel
     }
     view
 }
+
+/// Runs `<exe> <args>` and returns its exit code and output; `None` when it can't start or times out.
+pub type StatusRunner = fn(&Path, &[&str]) -> Option<(i32, String)>;
 
 /// Shared server state. Cloning is cheap (one `Arc`).
 #[derive(Clone)]
@@ -119,6 +122,9 @@ struct Inner {
     /// `DEEPSEEK_API_KEY`, read when a DeepSeek session starts or the catalog is built. Tests swap it. The value goes
     /// only into that child's spawn environment.
     deepseek_key: fn() -> Option<String>,
+    /// Runs an agent's status command (`claude auth status`, `codex login status`) and returns its exit code and output.
+    /// Tests swap it, so none runs a real CLI.
+    status_runner: StatusRunner,
     /// `~/.marshell/agents.json`, read again when the file's modified time changes. `AppState::agents` adds the shipped
     /// manifests to the valid entries.
     own_agents: crate::agents::own::OwnCache,
@@ -237,6 +243,7 @@ impl AppState {
             agent_path: None,
             tab_path: crate::profiles::detect::tab_path,
             deepseek_key: || std::env::var(crate::agents::presets::DEEPSEEK_KEY_VAR).ok(),
+            status_runner: |exe, args| crate::agents::run_capture(exe, args, std::time::Duration::from_secs(10)),
             own_agents: crate::agents::own::OwnCache::default(),
             own_agents_write: Mutex::new(()),
             own_tools: crate::tools::own::ToolsCache::default(),
@@ -430,6 +437,13 @@ impl AppState {
         Arc::get_mut(&mut self.0)
             .expect("with_deepseek_key runs before the state is shared")
             .deepseek_key = read;
+        self
+    }
+    /// Replaces the run of an agent's status command. Call it before the state is cloned.
+    pub fn with_status_runner(mut self, run: StatusRunner) -> Self {
+        Arc::get_mut(&mut self.0)
+            .expect("with_status_runner runs before the state is shared")
+            .status_runner = run;
         self
     }
     /// Replaces the `--version` reader the manifest agents' programs are checked with. Call it before the state is cloned.
@@ -798,6 +812,9 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/tools", get(tools::catalog))
         .route("/v1/tools/own", get(tools::get_own).put(tools::put_own))
         .route("/v1/agents/{agent}/setup", get(agents::setup))
+        .route("/v1/agents/{agent}/install", get(agents::install))
+        .route("/v1/agents/{agent}/account", get(agents::account))
+        .route("/v1/agents/{agent}/settings-view", get(agents::settings_view))
         .route("/v1/agents/{agent}/hooks/plan", post(agents::plan))
         .route("/v1/agents/{agent}/hooks/remove-plan", post(agents::remove_plan))
         .route("/v1/history", get(history::list))
