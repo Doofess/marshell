@@ -153,7 +153,7 @@ export function LiveSettings({ endpoint, sync, section, onSection, agentsStart, 
       case "claude":
       case "codex":
       case "antigravity":
-        return endpoint && <CompanySection endpoint={endpoint} agent={id} name={COMPANY_NAMES[id]} running={running[id]} onUpdate={onUpdate} refresh={companyRefresh[id]} />;
+        return endpoint && <CompanySection endpoint={endpoint} agent={id} name={COMPANY_NAMES[id]} running={running[id]} onUpdate={onUpdate} refresh={companyRefresh[id]} announce={announce} />;
       case "advanced":
         return endpoint && <AdvancedSection endpoint={endpoint} announce={announce} />;
     }

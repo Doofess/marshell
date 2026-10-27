@@ -163,6 +163,13 @@ describe("CompanyView", () => {
       expect(bad).toMatch(/<button[^>]*aria-disabled="true"[^>]*>Review changes/);
       expect(render({ mode: "raw", view: form([days]), rawDraft: "x" })).toContain("Raw file changed");
     });
+    it("counts a raw change only while the raw file is shown, so the strip matches the change sent", () => {
+      const v = form([days], { text: "a = 1\n" });
+      expect(render({ mode: "raw", view: v, rawDraft: "a = 2\n" })).toContain("Raw file changed");
+      const h = render({ mode: "form", view: v, rawDraft: "a = 2\n" });
+      expect(h).not.toContain("Raw file changed");
+      expect(h).not.toContain("Review changes");
+    });
     it("keeps the strip and the busy button while planning, and with an error", () => {
       const h = render({ view: form([days]), draft: { cleanupPeriodDays: "45" }, review: { kind: "planning" } });
       expect(h).toMatch(/<button[^>]*aria-disabled="true"[^>]*>Review changes/);

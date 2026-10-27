@@ -1,17 +1,20 @@
-import { useEffect, useId, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { DiffView } from "../../components/DiffView/DiffView";
 import type { AgentInstall } from "../../generated/AgentInstall";
 import type { AgentSettingsView } from "../../generated/AgentSettingsView";
 import type { Endpoint } from "../../generated/Endpoint";
 import type { FieldLock } from "../../generated/FieldLock";
+import type { SettingsChange } from "../../generated/SettingsChange";
 import type { SettingsPlan } from "../../generated/SettingsPlan";
 import type { SettingValue } from "../../generated/SettingValue";
-import { getInstall, getSettingsView } from "../../lib/api/accounts";
-import { previewDiff } from "../../lib/api/agents";
+import { getInstall, getSettingsView, planSettings, undoSettings } from "../../lib/api/accounts";
+import { applyPreview, previewDiff } from "../../lib/api/agents";
+import { ApiError } from "../../lib/api/client";
 import { RawEditor } from "../settings/RawEditor";
 import { ScopeBadge } from "../settings/ScopeBadge";
 import type { CompanyAgent } from "../settings/settingsSections";
 import { choiceOptions, draftValue, editSummary, formEdits, type Draft } from "./companyEdit";
+import { afterApply, afterEdit, afterPlan, afterUndo, announcement, isBusy, undoneLine, type PlanResult, type UndoResult } from "./companyFlow";
 import { COMPANY_FIELDS, type CompanyField } from "./companyFields";
 import { fileLine, MANUAL_UPDATE, newerLine, runningNote, versionLine } from "./companyText";
 import "../settings/Settings.css";
@@ -147,7 +150,7 @@ export function CompanyView({ agent, name, install, view, running, mode, onMode,
   const byKey = new Map((view?.curated ?? []).map((v) => [v.key, v]));
   const editable = view?.editable === true;
   const { edits, errors } = view && editable ? formEdits(view.curated, draft) : { edits: [], errors: {} as Record<string, string> };
-  const rawChanged = view !== null && editable && view.text !== null && rawDraft !== null && rawDraft !== view.text;
+  const rawChanged = mode === "raw" && view !== null && editable && view.text !== null && rawDraft !== null && rawDraft !== view.text;
   const changeCount = rawChanged ? 1 : edits.length;
   const blocked = !rawChanged && Object.keys(errors).length > 0;
   const inReview = review.kind === "review" || review.kind === "applying";
@@ -295,12 +298,23 @@ export function CompanyView({ agent, name, install, view, running, mode, onMode,
   );
 }
 
-/** Fetches the CLI's install and settings view when it opens and again, with a fresh version read, whenever `refresh` changes. */
-export function CompanySection({ endpoint, agent, name, running, onUpdate, refresh }: { endpoint: Endpoint; agent: CompanyAgent; name: string; running: number; onUpdate: (agent: CompanyAgent) => void; refresh: number }) {
+/** Fetches the CLI's install and settings view when it opens and again, with a fresh version read, whenever `refresh` changes. Owns the edit flow. */
+export function CompanySection({ endpoint, agent, name, running, onUpdate, refresh, announce }: { endpoint: Endpoint; agent: CompanyAgent; name: string; running: number; onUpdate: (agent: CompanyAgent) => void; refresh: number; announce: (text: string) => void }) {
   const [install, setInstall] = useState<AgentInstall | null>(null);
   const [view, setView] = useState<AgentSettingsView | null>(null);
   const [failed, setFailed] = useState(false);
   const [mode, setMode] = useState<CompanyMode>("form");
+  const [draft, setDraft] = useState<Draft>({});
+  const [rawDraft, setRawDraft] = useState<string | null>(null);
+  const [review, setReview] = useState<CompanyReview>({ kind: "editing" });
+  // Each plan, apply or undo takes a number; a result whose number is no longer current (Discard, Back, a newer request, unmount) is dropped.
+  const request = useRef(0);
+  useEffect(
+    () => () => {
+      request.current += 1;
+    },
+    [],
+  );
   useEffect(() => {
     let live = true;
     void (async () => {
@@ -318,7 +332,103 @@ export function CompanySection({ endpoint, agent, name, running, onUpdate, refre
       live = false;
     };
   }, [endpoint, agent, refresh]);
-  const noop = () => {};
+  const path = view?.path ?? "";
+  const land = (next: CompanyReview) => {
+    setReview(next);
+    const text = announcement(next, name, path);
+    if (text) announce(text);
+  };
+  const reread = async () => {
+    try {
+      setView(await getSettingsView(endpoint, agent));
+    } catch {
+      // The view stays as it was; Reload reads again.
+    }
+  };
+  const onDraft = (key: string, input: string) => {
+    if (isBusy(review)) return;
+    setDraft((d) => ({ ...d, [key]: input }));
+    setReview((r) => afterEdit(r));
+  };
+  const onRawDraft = (text: string) => {
+    if (isBusy(review)) return;
+    setRawDraft(text);
+    setReview((r) => afterEdit(r));
+  };
+  const onReview = async () => {
+    if (!view || agent === "antigravity" || isBusy(review)) return; // Antigravity's file is never editable here.
+    const mine = ++request.current;
+    const change: SettingsChange = mode === "raw" && rawDraft !== null && rawDraft !== view.text ? { kind: "raw", text: rawDraft } : { kind: "form", edits: formEdits(view.curated, draft).edits };
+    setReview({ kind: "planning" });
+    let result: PlanResult;
+    try {
+      result = { ok: true, plan: await planSettings(endpoint, agent, { expected_hash: view.hash ?? undefined, change }) };
+    } catch (e) {
+      result = { ok: false, status: e instanceof ApiError ? e.status : 0, message: e instanceof Error ? e.message : String(e) };
+    }
+    if (request.current !== mine) return;
+    land(afterPlan(result));
+  };
+  const onApply = async () => {
+    if (review.kind !== "review") return;
+    const mine = ++request.current;
+    setReview({ kind: "applying" });
+    const outcome = await applyPreview(endpoint, review.plan.preview);
+    if (request.current !== mine) return;
+    if (outcome.ok) {
+      await reread();
+      if (request.current !== mine) return;
+      setDraft({});
+      setRawDraft(null);
+    }
+    land(afterApply(outcome));
+  };
+  const onBack = () => {
+    if (review.kind !== "review") return;
+    request.current += 1;
+    setReview({ kind: "editing" });
+  };
+  const onDiscard = () => {
+    if (isBusy(review)) return;
+    request.current += 1;
+    setDraft({});
+    setRawDraft(null);
+    setReview({ kind: "editing" });
+  };
+  const onReload = async () => {
+    if (isBusy(review)) return;
+    const mine = ++request.current;
+    try {
+      const v = await getSettingsView(endpoint, agent);
+      if (request.current !== mine) return;
+      setView(v);
+      setReview({ kind: "editing" });
+    } catch {
+      if (request.current === mine) land({ kind: "error", message: `Couldn't read ${path} again. Close Settings and try again.` });
+    }
+  };
+  const onUndo = async () => {
+    if (review.kind !== "saved" || agent === "antigravity") return;
+    const mine = ++request.current;
+    let result: UndoResult;
+    try {
+      await undoSettings(endpoint, agent, review.snapshotId);
+      result = { ok: true };
+    } catch (e) {
+      result = { ok: false, status: e instanceof ApiError ? e.status : 0, message: e instanceof Error ? e.message : String(e) };
+    }
+    if (request.current !== mine) return;
+    if (!result.ok) {
+      land(afterUndo(result, path));
+      return;
+    }
+    await reread();
+    if (request.current !== mine) return;
+    setDraft({});
+    setRawDraft(null);
+    setReview(afterUndo(result, path));
+    announce(undoneLine(path));
+  };
   return (
     <>
       {failed && <p className="company__error">{`Couldn't read ${name} from Marshell's core. Close Settings and try again.`}</p>}
@@ -332,17 +442,17 @@ export function CompanySection({ endpoint, agent, name, running, onUpdate, refre
           mode={view?.raw === null ? "form" : mode}
           onMode={setMode}
           onUpdate={() => onUpdate(agent)}
-          draft={{}}
-          onDraft={noop}
-          rawDraft={null}
-          onRawDraft={noop}
-          review={{ kind: "editing" }}
-          onReview={noop}
-          onApply={noop}
-          onBack={noop}
-          onDiscard={noop}
-          onReload={noop}
-          onUndo={noop}
+          draft={draft}
+          onDraft={onDraft}
+          rawDraft={rawDraft}
+          onRawDraft={onRawDraft}
+          review={review}
+          onReview={() => void onReview()}
+          onApply={() => void onApply()}
+          onBack={onBack}
+          onDiscard={onDiscard}
+          onReload={() => void onReload()}
+          onUndo={() => void onUndo()}
         />
       )}
     </>
