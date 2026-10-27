@@ -847,6 +847,11 @@ fn form_ops(agent: &str, view: &AgentSettingsView, edits: &[SettingEdit]) -> Res
                     "{key} holds a secret value, so the form can't change it."
                 )));
             }
+            Some(FieldLock::Account) => {
+                return Err(unprocessable(format!(
+                    "{key} is kept with the person's account, so the form can't change it."
+                )));
+            }
             None => {}
         }
         let value = edit
@@ -931,7 +936,7 @@ fn masked_diff<'a>(agent: &'a str, normalized: &'a Cell<bool>) -> impl Fn(&Plann
         let (before, after) = (text(&file.before), text(&file.after));
         let plain = |text: &Option<String>| {
             text.as_deref()
-                .is_none_or(|t| parse_masked(agent, t).is_ok_and(|p| p.plain))
+                .is_none_or(|t| parse_masked(agent, t).is_ok_and(|p| p.plain()))
         };
         if plain(&before) && plain(&after) {
             return None;

@@ -7,7 +7,7 @@ use crate::tools::secrets::{scrub, shown_words, takes_secret_words};
 use jsonc_parser::ast::Value as Node;
 use jsonc_parser::{CollectOptions, CommentCollectionStrategy, ParseOptions, parse_to_ast};
 use marshell_protocol::settings_view::{
-    AgentSettingsView, FieldControl, FieldLock, SettingValue, ViewScope, ViewState,
+    AgentSettingsView, FieldControl, FieldLock, RawLock, SettingValue, ViewScope, ViewState,
 };
 use serde_json::Value;
 use std::borrow::Cow;
@@ -50,15 +50,16 @@ pub fn curated(agent: &str) -> &'static [&'static str] {
     }
 }
 
-/// The form's control for a curated key, the one place the choices are written down. Antigravity's view is not
-/// editable, so it has none. The values are SchemaStore's `claude-code-settings.json` and Codex `rust-v0.164.0`;
-/// Codex's `untrusted` is refused at load and `on-failure` is a deprecated alias, so neither is offered.
+/// The form's control for a curated key, the one place the choices are written down. The values are SchemaStore's
+/// `claude-code-settings.json`, Codex `rust-v0.164.0` and Antigravity's schema
+/// (`antigravity.google/schemas/v1/settings.json`); Codex's `untrusted` is refused at load and `on-failure` is a
+/// deprecated alias, so neither is offered.
 pub(crate) fn control(agent: &str, key: &str) -> Option<FieldControl> {
     let choice = |values: &[&str]| FieldControl::Choice {
         values: values.iter().map(|v| v.to_string()).collect(),
     };
     Some(match (agent, key) {
-        ("claude" | "codex", "model") => FieldControl::Text,
+        ("claude" | "codex" | "antigravity", "model") => FieldControl::Text,
         ("claude", "effortLevel") => choice(&["low", "medium", "high", "xhigh"]),
         ("claude", "permissions.defaultMode") => {
             choice(&["default", "acceptEdits", "plan", "auto", "dontAsk", "bypassPermissions"])
@@ -79,6 +80,21 @@ pub(crate) fn control(agent: &str, key: &str) -> Option<FieldControl> {
         ("codex", "sandbox_mode") => choice(&["read-only", "workspace-write", "danger-full-access"]),
         ("codex", "project_doc_max_bytes") => FieldControl::Number { min: 0 },
         ("codex", "check_for_update_on_startup") => FieldControl::Switch,
+        ("antigravity", "toolPermission") => {
+            choice(&["request-review", "proceed-in-sandbox", "always-proceed", "strict"])
+        }
+        ("antigravity", "enableTerminalSandbox" | "enableTelemetry") => FieldControl::Switch,
+        ("antigravity", "colorScheme") => choice(&[
+            "terminal",
+            "light",
+            "solarized light",
+            "colorblind-friendly light",
+            "dark",
+            "solarized dark",
+            "colorblind-friendly dark",
+            "tokyo night",
+        ]),
+        ("antigravity", "verbosity") => choice(&["high", "medium", "low"]),
         _ => return None,
     })
 }
@@ -423,24 +439,34 @@ fn repeats_a_key(node: &Node) -> bool {
     }
 }
 
-/// Whether the JSONC `text` holds no comment that could carry a secret and no repeated key, the two places the
-/// masked tree can't see. A text that doesn't parse is not clean.
-fn json_hides_nothing(text: &str) -> bool {
-    let body = text.strip_prefix('\u{feff}').unwrap_or(text);
+/// What the JSONC `body` (BOM already removed) holds that the masked tree can't show.
+struct JsonHides {
+    /// A comment that could carry a secret. A body that doesn't parse counts as holding one.
+    comment: bool,
+    /// Two properties of one object share a name.
+    repeated_key: bool,
+}
+
+fn json_hides(body: &str) -> JsonHides {
     let options = CollectOptions {
         comments: CommentCollectionStrategy::Separate,
         tokens: false,
     };
     let Ok(parsed) = parse_to_ast(body, &options, &ParseOptions::default()) else {
-        return false;
+        return JsonHides {
+            comment: true,
+            repeated_key: false,
+        };
     };
-    let comments_clean = parsed
-        .comments
-        .iter()
-        .flat_map(|map| map.values())
-        .flat_map(|list| list.iter())
-        .all(|c| comment_is_clean(c.text()));
-    comments_clean && !parsed.value.as_ref().is_some_and(repeats_a_key)
+    JsonHides {
+        comment: !parsed
+            .comments
+            .iter()
+            .flat_map(|map| map.values())
+            .flat_map(|list| list.iter())
+            .all(|c| comment_is_clean(c.text())),
+        repeated_key: parsed.value.as_ref().is_some_and(repeats_a_key),
+    }
 }
 
 /// The comments of TOML `text` (each from its `#` to the end of the line), skipping `#` inside any of the four kinds
@@ -529,15 +555,27 @@ fn line_at(text: &str, at: usize) -> u32 {
     u32::try_from(breaks + 1).unwrap_or(u32::MAX)
 }
 
-/// A settings text read once: the tree as written, the same tree masked, the masked render, and whether masking
-/// changed nothing.
+/// A settings text read once: the tree as written, the same tree masked, the masked render, and why raw editing is
+/// off, if it is.
 pub(crate) struct Parsed {
     unmasked: Value,
     shown: Value,
     /// The masked values written back out as pretty JSON (TOML for Codex).
     raw: Option<String>,
+    /// Why raw editing is off; None when the text can be edited as it is.
+    pub(crate) raw_lock: Option<RawLock>,
+}
+
+impl Parsed {
     /// Masking changes nothing in the text, comments and repeated keys included, so it holds no value the view hides.
-    pub(crate) plain: bool,
+    pub(crate) fn plain(&self) -> bool {
+        matches!(self.raw_lock, None | Some(RawLock::NotPlainJson))
+    }
+}
+
+/// Whether `text` starts with a byte-order mark.
+pub(crate) fn has_bom(text: &str) -> bool {
+    text.starts_with('\u{feff}')
 }
 
 /// Parses and masks `text` for `agent`; the error is the 1-based line of the first problem.
@@ -551,12 +589,12 @@ pub(crate) fn parse_masked(agent: &str, text: &str) -> Result<Parsed, u32> {
         let mut value = toml::Value::Table(table);
         let before = value.clone();
         mask_toml(&mut value);
-        let plain = value == before && toml_comments(text).into_iter().all(comment_is_clean);
+        let hidden = value != before || !toml_comments(text).into_iter().all(comment_is_clean);
         Ok(Parsed {
             unmasked: toml_json(&before),
             shown: toml_json(&value),
             raw: toml::to_string_pretty(&value).ok(),
-            plain,
+            raw_lock: hidden.then_some(RawLock::Hidden),
         })
     } else {
         let mut value = match parse_problem(text) {
@@ -565,12 +603,23 @@ pub(crate) fn parse_masked(agent: &str, text: &str) -> Result<Parsed, u32> {
         };
         let before = value.clone();
         mask(&mut value);
-        let plain = value == before && json_hides_nothing(text);
+        let body = text.strip_prefix('\u{feff}').unwrap_or(text);
+        let hides = json_hides(body);
+        // A secret wins over the other reasons: it keeps the text from the page altogether.
+        let raw_lock = if value != before || hides.comment {
+            Some(RawLock::Hidden)
+        } else if hides.repeated_key {
+            Some(RawLock::RepeatedKey)
+        } else if serde_json::from_str::<Value>(body).is_err() {
+            Some(RawLock::NotPlainJson)
+        } else {
+            None
+        };
         Ok(Parsed {
             raw: serde_json::to_string_pretty(&value).ok(),
             unmasked: before,
             shown: value,
-            plain,
+            raw_lock,
         })
     }
 }
@@ -614,21 +663,24 @@ pub fn view(
         editable: false,
         hash: None,
         text: None,
+        raw_lock: None,
     };
     let mut managed = managed.filter(|_| agent == "claude");
     if let Some((_, m)) = managed.as_mut() {
         mask(m);
     }
     let hash = text.as_ref().ok().map(|t| hash_bytes(t.as_bytes()));
-    // The text itself, kept only when masking changes nothing in the file.
+    // The text itself, kept only when masking changes nothing in the file and no repeated key stands in the way.
     let mut plain = None;
+    let mut raw_lock = None;
     let mut unmasked = None;
     let (user, raw) = match text {
         Ok(text) => match parse_masked(agent, &text) {
             Ok(parsed) => {
-                if parsed.plain {
-                    plain = Some(text);
+                if parsed.plain() {
+                    plain = Some(text.strip_prefix('\u{feff}').map_or(text.clone(), str::to_string));
                 }
+                raw_lock = parsed.raw_lock;
                 unmasked = Some(parsed.unmasked);
                 (Some(parsed.shown), parsed.raw)
             }
@@ -647,13 +699,18 @@ pub fn view(
         }
     };
     out.raw = raw;
-    out.editable = matches!(agent, "claude" | "codex");
+    out.editable = matches!(agent, "claude" | "codex" | "antigravity");
     out.hash = hash;
     out.text = plain;
+    if out.editable && out.state == ViewState::Ok {
+        out.raw_lock = raw_lock;
+    }
     let value_of = |key: &str| -> SettingValue {
         let from_managed = managed.as_ref().and_then(|(path, m)| lookup(m, key).map(|v| (path, v)));
         let user_value = user.as_ref().and_then(|u| lookup(u, key));
         let control = control(agent, key);
+        // Antigravity keeps this with the person's account, so the form leaves it alone whatever the file says.
+        let account = (agent, key) == ("antigravity", "enableTelemetry");
         let (value, scope, lock) = match (from_managed, user_value) {
             (Some((path, v)), _) => (
                 Some(shown(v)),
@@ -667,7 +724,9 @@ pub fn view(
                 ViewScope::User,
                 control.as_ref().and_then(|_| {
                     // A value that masking changed shows as other than it is, so a draft can't start from it.
-                    if unmasked.as_ref().and_then(|u| lookup(u, key)) != Some(v) {
+                    if account {
+                        Some(FieldLock::Account)
+                    } else if unmasked.as_ref().and_then(|u| lookup(u, key)) != Some(v) {
                         Some(FieldLock::Hidden)
                     } else if matches!(v, Value::Object(_) | Value::Array(_)) {
                         Some(FieldLock::NotScalar)
@@ -676,7 +735,7 @@ pub fn view(
                     }
                 }),
             ),
-            (None, None) => (None, ViewScope::User, None),
+            (None, None) => (None, ViewScope::User, account.then_some(FieldLock::Account)),
         };
         SettingValue {
             key: key.to_string(),
@@ -1101,11 +1160,108 @@ args = [\"-y\",\"@modelcontextprotocol/server-postgres\",\"postgresql://u:pw@h/d
     }
 
     #[test]
-    fn antigravity_is_not_editable_and_has_no_controls() {
-        let v = run("antigravity", "{\"model\": \"gemini\"}");
-        assert!(!v.editable);
-        assert!(v.curated.iter().all(|s| s.control.is_none() && s.lock.is_none()));
-        assert_eq!(control("antigravity", "model"), None);
+    fn antigravity_is_editable_with_its_controls() {
+        let v = run("antigravity", "{}");
+        assert!(v.editable);
+        assert_eq!(
+            controls(&v),
+            [
+                Some(FieldControl::Text),
+                choice(&["request-review", "proceed-in-sandbox", "always-proceed", "strict"]),
+                Some(FieldControl::Switch),
+                choice(&[
+                    "terminal",
+                    "light",
+                    "solarized light",
+                    "colorblind-friendly light",
+                    "dark",
+                    "solarized dark",
+                    "colorblind-friendly dark",
+                    "tokyo night",
+                ]),
+                choice(&["high", "medium", "low"]),
+                Some(FieldControl::Switch),
+            ]
+        );
+        assert_eq!(control("antigravity", "model"), Some(FieldControl::Text));
+        let telemetry = |v: &AgentSettingsView| value_of(&v.curated, "enableTelemetry").unwrap().lock.clone();
+        assert_eq!(telemetry(&v), Some(FieldLock::Account));
+        let v = run("antigravity", "{\"enableTelemetry\": true}");
+        assert_eq!(telemetry(&v), Some(FieldLock::Account));
+        assert!(
+            v.curated
+                .iter()
+                .filter(|s| s.key != "enableTelemetry")
+                .all(|s| s.lock.is_none())
+        );
+    }
+
+    #[test]
+    fn a_json_file_with_comments_has_the_not_plain_json_raw_lock() {
+        let text = "{\n  // mine\n  \"model\": \"x\"\n}";
+        for agent in ["claude", "antigravity"] {
+            let v = run(agent, text);
+            assert_eq!(v.raw_lock, Some(RawLock::NotPlainJson), "{agent}");
+            assert_eq!(v.text.as_deref(), Some(text), "{agent}");
+        }
+    }
+
+    #[test]
+    fn a_trailing_comma_has_the_not_plain_json_raw_lock() {
+        let text = "{\"model\": \"x\",}";
+        let v = run("claude", text);
+        assert_eq!(v.raw_lock, Some(RawLock::NotPlainJson));
+        assert_eq!(v.text.as_deref(), Some(text));
+    }
+
+    #[test]
+    fn a_repeated_key_has_its_raw_lock_and_no_text() {
+        for agent in ["claude", "antigravity"] {
+            let v = run(agent, "{\"model\": \"a\", \"model\": \"b\"}");
+            assert_eq!(v.raw_lock, Some(RawLock::RepeatedKey), "{agent}");
+            assert_eq!(v.text, None, "{agent}");
+        }
+    }
+
+    #[test]
+    fn a_secret_wins_over_comments_and_a_repeated_key() {
+        let v = run(
+            "claude",
+            "{\n  // api_key = \"x\"\n  \"model\": \"a\", \"model\": \"b\"\n}",
+        );
+        assert_eq!(v.raw_lock, Some(RawLock::Hidden));
+        assert_eq!(v.text, None);
+    }
+
+    #[test]
+    fn codex_comments_need_no_raw_lock() {
+        let text = "# mine\nmodel = \"x\"\n";
+        let v = run("codex", text);
+        assert_eq!(v.raw_lock, None);
+        assert_eq!(v.text.as_deref(), Some(text));
+    }
+
+    #[test]
+    fn the_text_leaves_out_a_bom() {
+        for (agent, text) in [
+            ("claude", "\u{feff}{\"model\": \"x\"}"),
+            ("codex", "\u{feff}model = \"x\"\n"),
+        ] {
+            let v = run(agent, text);
+            let shown = v.text.as_deref().expect(agent);
+            assert!(!shown.starts_with('\u{feff}'), "{agent}");
+            assert_eq!(shown, text.trim_start_matches('\u{feff}'), "{agent}");
+            assert_eq!(v.raw_lock, None, "{agent}");
+            assert_eq!(v.hash, Some(hash_bytes(text.as_bytes())), "{agent}");
+        }
+    }
+
+    #[test]
+    fn an_odd_antigravity_value_shows_as_it_is() {
+        let v = run("antigravity", "{\"colorScheme\": \"dracula\"}");
+        let row = value_of(&v.curated, "colorScheme").unwrap();
+        assert_eq!(row.value.as_deref(), Some("dracula"));
+        assert_eq!(row.lock, None);
     }
 
     #[test]
@@ -1178,20 +1334,13 @@ args = [\"-y\",\"@modelcontextprotocol/server-postgres\",\"postgresql://u:pw@h/d
 
     #[test]
     fn a_missing_file_is_editable_with_no_hash_or_text() {
-        for (agent, name) in [("claude", "s.json"), ("codex", "c.toml")] {
+        for (agent, name) in [("claude", "s.json"), ("codex", "c.toml"), ("antigravity", "a.json")] {
             let v = view(agent, Path::new(name), Err(Error::from(ErrorKind::NotFound)), None);
             assert_eq!(v.state, ViewState::Missing);
             assert!(v.editable, "{agent}");
-            assert_eq!((v.hash, v.text), (None, None), "{agent}");
+            assert_eq!((v.hash, v.text, v.raw_lock), (None, None, None), "{agent}");
             assert!(v.curated.iter().all(|s| s.control.is_some()));
         }
-        let v = view(
-            "antigravity",
-            Path::new("a.json"),
-            Err(Error::from(ErrorKind::NotFound)),
-            None,
-        );
-        assert!(!v.editable);
     }
 
     #[test]

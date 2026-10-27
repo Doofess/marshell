@@ -1432,8 +1432,9 @@ async fn settings_view_reads_the_antigravity_file() {
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["curated"][0]["value"], "gemini");
     assert!(!body.to_string().contains("agy-secret"), "{body}");
-    assert_eq!((body["editable"].as_bool(), &body["text"]), (Some(false), &Value::Null));
-    assert!(body["curated"][0].get("control").is_none());
+    assert_eq!((body["editable"].as_bool(), &body["text"]), (Some(true), &Value::Null));
+    assert_eq!(body["raw_lock"], "hidden");
+    assert_eq!(body["curated"][0]["control"]["kind"], "text");
 }
 
 #[tokio::test]
@@ -1445,7 +1446,7 @@ async fn settings_view_of_a_missing_file_is_missing() {
         assert_eq!(body["state"]["kind"], "missing", "{agent}");
         assert_eq!(body["curated"].as_array().unwrap().len(), 6);
         assert_eq!(body["raw"], Value::Null);
-        assert_eq!(body["editable"], agent != "antigravity", "{agent}");
+        assert_eq!(body["editable"], true, "{agent}");
         assert_eq!((&body["hash"], &body["text"]), (&Value::Null, &Value::Null), "{agent}");
     }
 }

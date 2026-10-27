@@ -56,6 +56,23 @@ pub enum FieldLock {
     /// The value shows as other than it is, because masking changed it (`TOKEN=abc` in `model`), so a draft
     /// could never start from what is shown.
     Hidden,
+    /// Antigravity keeps it with the person's Google account, not in the file, so the form shows it and leaves it
+    /// alone whatever the file says.
+    Account,
+}
+
+/// Why the raw editor is off for a file whose form works.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum RawLock {
+    /// The file holds a secret value, or a comment that could, and the view hides them; the text never leaves the core.
+    Hidden,
+    /// A JSON file with comments or a trailing comma, which a raw save would write back as plain JSON. The text is
+    /// still given, to read.
+    NotPlainJson,
+    /// A JSON object repeats a key, so the text is not given.
+    RepeatedKey,
 }
 
 /// One setting as it may be shown: secrets are already the word `hidden`.
@@ -88,15 +105,18 @@ pub struct AgentSettingsView {
     pub curated: Vec<SettingValue>,
     /// The file's other top-level keys, sorted.
     pub others: Vec<SettingValue>,
-    /// The masked values written back out as pretty JSON (TOML for Codex); comments and layout are left out.
+    /// The masked values written back out as pretty JSON (TOML for Codex); comments and layout are left out. Only
+    /// the diff of a hidden-value file uses it.
     pub raw: Option<String>,
-    /// Claude Code or Codex, and the file is `ok` or `missing`: a form edit can be planned.
+    /// Claude Code, Codex or Antigravity, and the file is `ok` or `missing`: a form edit can be planned.
     pub editable: bool,
     /// The SHA-256 of the file's bytes; None when the file is missing, doesn't parse or can't be read.
     pub hash: Option<String>,
-    /// The file's own text, comments and layout included. Some only when the file is `ok` and masking changes
-    /// nothing in it, so it holds no value the view would hide.
+    /// The file's own text, comments and layout included, without a leading byte-order mark. Some only when the file
+    /// is `ok`, masking changes nothing in it, and `raw_lock` is None or `not_plain_json`.
     pub text: Option<String>,
+    /// Why the raw editor is off. Some only when `editable` is true and the state is `ok`; None means it is on.
+    pub raw_lock: Option<RawLock>,
 }
 
 /// One form edit to a curated setting.
