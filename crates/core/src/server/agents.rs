@@ -809,7 +809,7 @@ fn settings_plan_of(
             .collect(),
     };
     let normalized = Cell::new(false);
-    let preview = st.0.config.preview_shown(cs, &masked_diff(agent, &normalized));
+    let preview = st.0.config.preview_own(cs, &masked_diff(agent, &normalized));
     Ok(SettingsPlan {
         preview: changes_of(preview)?,
         normalized: normalized.get(),

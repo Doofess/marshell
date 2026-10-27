@@ -8,13 +8,13 @@ import type { SettingsChange } from "../../generated/SettingsChange";
 import type { SettingsPlan } from "../../generated/SettingsPlan";
 import type { SettingValue } from "../../generated/SettingValue";
 import { getInstall, getSettingsView, planSettings, undoSettings } from "../../lib/api/accounts";
-import { applyPreview, previewDiff } from "../../lib/api/agents";
+import { type ApplyOutcome, applyPreview, previewDiff } from "../../lib/api/agents";
 import { ApiError } from "../../lib/api/client";
 import { RawEditor } from "../settings/RawEditor";
 import { ScopeBadge } from "../settings/ScopeBadge";
 import type { CompanyAgent } from "../settings/settingsSections";
 import { choiceOptions, draftValue, editSummary, formEdits, type Draft } from "./companyEdit";
-import { afterApply, afterEdit, afterPlan, afterUndo, announcement, focusAfter, isBusy, undoneLine, type PlanResult, type UndoResult } from "./companyFlow";
+import { afterApply, afterEdit, afterPlan, afterReload, afterUndo, announcement, focusAfter, isBusy, rawChange, rawDroppedLine, undoneLine, type PlanResult, type UndoResult } from "./companyFlow";
 import { COMPANY_FIELDS, type CompanyField } from "./companyFields";
 import { fileLine, MANUAL_UPDATE, newerLine, runningNote, versionLine } from "./companyText";
 import "../settings/Settings.css";
@@ -23,7 +23,7 @@ import "./CompanySection.css";
 export type CompanyMode = "form" | "raw";
 
 /** Where the edit flow stands; the stateful wrapper owns it. */
-export type CompanyReview = { kind: "editing" } | { kind: "planning" } | { kind: "review"; plan: SettingsPlan } | { kind: "applying" } | { kind: "saved"; snapshotId: string } | { kind: "conflict" } | { kind: "error"; message: string };
+export type CompanyReview = { kind: "editing" } | { kind: "planning" } | { kind: "review"; plan: SettingsPlan } | { kind: "applying" } | { kind: "saved"; snapshotId: string } | { kind: "undoing"; snapshotId: string } | { kind: "conflict" } | { kind: "error"; message: string };
 
 export type CompanyViewProps = {
   agent: CompanyAgent;
@@ -38,6 +38,8 @@ export type CompanyViewProps = {
   onDraft: (key: string, input: string) => void;
   rawDraft: string | null;
   onRawDraft: (text: string) => void;
+  /** Reload dropped the raw draft because the file's text changed. */
+  rawDropped?: boolean;
   review: CompanyReview;
   onReview: () => void;
   onApply: () => void;
@@ -145,14 +147,14 @@ function ManualUpdate({ agent, name }: { agent: CompanyAgent; name: string }) {
 }
 
 /** One company CLI: version and Update, then its user settings file as a form or as text, editable when the core says so. Presentational. */
-export function CompanyView({ agent, name, install, view, running, mode, onMode, onUpdate, draft, onDraft, rawDraft, onRawDraft, review, onReview, onApply, onBack, onDiscard, onReload, onUndo, rootRef }: CompanyViewProps) {
+export function CompanyView({ agent, name, install, view, running, mode, onMode, onUpdate, draft, onDraft, rawDraft, onRawDraft, rawDropped = false, review, onReview, onApply, onBack, onDiscard, onReload, onUndo, rootRef }: CompanyViewProps) {
   const newer = install ? newerLine(install) : null;
   const note = runningNote(name, running);
   const file = view ? fileLine(view) : null;
   const byKey = new Map((view?.curated ?? []).map((v) => [v.key, v]));
   const editable = view?.editable === true;
   const { edits, errors } = view && editable ? formEdits(view.curated, draft) : { edits: [], errors: {} as Record<string, string> };
-  const rawChanged = mode === "raw" && view !== null && editable && view.text !== null && rawDraft !== null && rawDraft !== view.text;
+  const rawChanged = rawChange(mode, view, rawDraft) !== null;
   const changeCount = rawChanged ? 1 : edits.length;
   const blocked = !rawChanged && Object.keys(errors).length > 0;
   const inReview = review.kind === "review" || review.kind === "applying";
@@ -210,6 +212,7 @@ export function CompanyView({ agent, name, install, view, running, mode, onMode,
             </section>
           ) : mode === "raw" && view.raw !== null ? (
             <div className="company__raw">
+              {rawDropped && <p className="company__note">{rawDroppedLine(view.path)}</p>}
               {editable && view.text !== null ? (
                 <textarea className="raw-editor__text" aria-label={view.path} rows={Math.min(24, Math.max(6, (rawDraft ?? view.text).split("\n").length))} spellCheck={false} value={rawDraft ?? view.text} onChange={(e) => onRawDraft(e.target.value)} />
               ) : agent === "codex" ? (
@@ -271,7 +274,11 @@ export function CompanyView({ agent, name, install, view, running, mode, onMode,
           {stripShown && (
             <section className="change-bar" aria-label="Pending changes">
               <p className="change-bar__summary">{rawChanged ? "Raw file changed" : editSummary(changeCount)}</p>
-              {review.kind === "error" && <p className="change-bar__error">{review.message}</p>}
+              {review.kind === "error" && (
+                <p className="change-bar__error" tabIndex={-1} data-focus="result">
+                  {review.message}
+                </p>
+              )}
               <div className="change-bar__actions">
                 <Btn primary busy={blocked || review.kind === "planning"} focusKey="review-button" onClick={onReview}>
                   Review changes
@@ -282,10 +289,17 @@ export function CompanyView({ agent, name, install, view, running, mode, onMode,
               </div>
             </section>
           )}
-          {review.kind === "saved" && (
+          {(review.kind === "saved" || review.kind === "undoing") && (
             <div className="company__result" tabIndex={-1} data-focus="result">
               <p className="company__line">{`Saved. New ${name} sessions use it.`}</p>
-              <Btn onClick={onUndo}>Undo</Btn>
+              <Btn busy={review.kind === "undoing"} onClick={onUndo}>
+                Undo
+              </Btn>
+            </div>
+          )}
+          {review.kind === "error" && !stripShown && (
+            <div className="company__result" tabIndex={-1} data-focus="result">
+              <p className="change-bar__error">{review.message}</p>
             </div>
           )}
           {review.kind === "conflict" && (
@@ -308,6 +322,7 @@ export function CompanySection({ endpoint, agent, name, running, onUpdate, refre
   const [mode, setMode] = useState<CompanyMode>("form");
   const [draft, setDraft] = useState<Draft>({});
   const [rawDraft, setRawDraft] = useState<string | null>(null);
+  const [rawDropped, setRawDropped] = useState(false);
   const [review, setReview] = useState<CompanyReview>({ kind: "editing" });
   // Each plan, apply or undo takes a number; a result whose number is no longer current (Discard, Back, a newer request, unmount) is dropped.
   const request = useRef(0);
@@ -343,6 +358,7 @@ export function CompanySection({ endpoint, agent, name, running, onUpdate, refre
     };
   }, [endpoint, agent, refresh]);
   const path = view?.path ?? "";
+  const shownMode: CompanyMode = view?.raw === null ? "form" : mode;
   const land = (next: CompanyReview) => {
     setReview(next);
     const text = announcement(next, name, path);
@@ -363,12 +379,14 @@ export function CompanySection({ endpoint, agent, name, running, onUpdate, refre
   const onRawDraft = (text: string) => {
     if (isBusy(review)) return;
     setRawDraft(text);
+    setRawDropped(false);
     setReview((r) => afterEdit(r));
   };
   const onReview = async () => {
     if (!view || agent === "antigravity" || isBusy(review)) return; // Antigravity's file is never editable here.
     const mine = ++request.current;
-    const change: SettingsChange = mode === "raw" && rawDraft !== null && rawDraft !== view.text ? { kind: "raw", text: rawDraft } : { kind: "form", edits: formEdits(view.curated, draft).edits };
+    const raw = rawChange(shownMode, view, rawDraft);
+    const change: SettingsChange = raw !== null ? { kind: "raw", text: raw } : { kind: "form", edits: formEdits(view.curated, draft).edits };
     setReview({ kind: "planning" });
     let result: PlanResult;
     try {
@@ -383,7 +401,12 @@ export function CompanySection({ endpoint, agent, name, running, onUpdate, refre
     if (review.kind !== "review") return;
     const mine = ++request.current;
     setReview({ kind: "applying" });
-    const outcome = await applyPreview(endpoint, review.plan.preview);
+    let outcome: ApplyOutcome;
+    try {
+      outcome = await applyPreview(endpoint, review.plan.preview);
+    } catch (e) {
+      outcome = { ok: false, conflict: false, message: e instanceof Error ? e.message : String(e) };
+    }
     if (request.current !== mine) return;
     if (outcome.ok) {
       await reread();
@@ -403,6 +426,7 @@ export function CompanySection({ endpoint, agent, name, running, onUpdate, refre
     request.current += 1;
     setDraft({});
     setRawDraft(null);
+    setRawDropped(false);
     setReview({ kind: "editing" });
   };
   const onReload = async () => {
@@ -411,7 +435,14 @@ export function CompanySection({ endpoint, agent, name, running, onUpdate, refre
     try {
       const v = await getSettingsView(endpoint, agent);
       if (request.current !== mine) return;
+      const kept = afterReload(view?.text ?? null, v, draft, rawDraft);
       setView(v);
+      setDraft(kept.draft);
+      setRawDraft(kept.rawDraft);
+      if (kept.rawDropped) {
+        setRawDropped(true);
+        announce(rawDroppedLine(v.path));
+      }
       setReview({ kind: "editing" });
     } catch {
       if (request.current === mine) land({ kind: "error", message: `Couldn't read ${path} again. Close Settings and try again.` });
@@ -420,9 +451,11 @@ export function CompanySection({ endpoint, agent, name, running, onUpdate, refre
   const onUndo = async () => {
     if (review.kind !== "saved" || agent === "antigravity") return;
     const mine = ++request.current;
+    const snapshotId = review.snapshotId;
+    setReview({ kind: "undoing", snapshotId });
     let result: UndoResult;
     try {
-      await undoSettings(endpoint, agent, review.snapshotId);
+      await undoSettings(endpoint, agent, snapshotId);
       result = { ok: true };
     } catch (e) {
       result = { ok: false, status: e instanceof ApiError ? e.status : 0, message: e instanceof Error ? e.message : String(e) };
@@ -449,13 +482,14 @@ export function CompanySection({ endpoint, agent, name, running, onUpdate, refre
           install={install}
           view={view}
           running={running}
-          mode={view?.raw === null ? "form" : mode}
+          mode={shownMode}
           onMode={setMode}
           onUpdate={() => onUpdate(agent)}
           draft={draft}
           onDraft={onDraft}
           rawDraft={rawDraft}
           onRawDraft={onRawDraft}
+          rawDropped={rawDropped}
           review={review}
           onReview={() => void onReview()}
           onApply={() => void onApply()}

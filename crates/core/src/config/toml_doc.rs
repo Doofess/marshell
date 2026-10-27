@@ -3,7 +3,7 @@
 
 use crate::config::jsonc::EditError;
 use serde_json::Value;
-use toml_edit::{DocumentMut, Item, Table, TableLike, Value as TomlValue};
+use toml_edit::{Decor, DocumentMut, Item, RawString, Table, TableLike, Value as TomlValue};
 
 const BOM: char = '\u{feff}';
 
@@ -27,7 +27,7 @@ pub fn apply_toml_ops(text: &str, ops: &[TomlOp]) -> Result<String, EditError> {
     for op in ops {
         changed |= match op {
             TomlOp::Set { key, value } => set(doc.as_table_mut(), key, value)?,
-            TomlOp::Remove { key } => remove(doc.as_table_mut(), key),
+            TomlOp::Remove { key } => remove(&mut doc, key),
         };
     }
     if !changed {
@@ -138,19 +138,115 @@ fn set(root: &mut Table, key: &[String], value: &Value) -> Result<bool, EditErro
     Ok(true)
 }
 
-/// Removes `key` and its line; says whether anything was there.
-fn remove(root: &mut Table, key: &[String]) -> bool {
+/// Removes `key` and its line; says whether anything was there. `toml_edit` keeps the comments and blank lines
+/// written above a key as part of that key, so when they hold a comment they move to what comes next in the text:
+/// the next key of the same table, else the next table header, else the end of the file.
+fn remove(doc: &mut DocumentMut, key: &[String]) -> bool {
     let Some((last, parents)) = key.split_last() else {
         return false;
     };
-    let mut table: &mut dyn TableLike = root;
+    // Where the key's table sits among the headers; the root comes before every one of them.
+    let position = if parents.is_empty() {
+        Some(isize::MIN)
+    } else {
+        table_at(doc.as_table(), parents).and_then(Table::position)
+    };
+    let mut table: &mut dyn TableLike = doc.as_table_mut();
     for part in parents {
         match table.get_mut(part).and_then(Item::as_table_like_mut) {
             Some(next) => table = next,
             None => return false,
         }
     }
-    table.remove(last).is_some()
+    let Some(prefix) = table.key(last).map(|k| prefix_of(k.leaf_decor())) else {
+        return false;
+    };
+    let names: Vec<String> = table.iter().map(|(k, _)| k.to_string()).collect();
+    let next = names
+        .iter()
+        .skip_while(|n| *n != last)
+        .skip(1)
+        .find(|n| table.get(n).is_some_and(Item::is_value))
+        .cloned();
+    table.remove(last);
+    if !prefix.contains('#') {
+        return true;
+    }
+    if let Some(next) = next {
+        if let Some(mut k) = table.key_mut(&next) {
+            prepend(k.leaf_decor_mut(), &prefix);
+        }
+        return true;
+    }
+    let Some(position) = position else {
+        return true;
+    };
+    let mut headers = Vec::new();
+    header_positions(doc.as_table(), &mut headers);
+    match headers.into_iter().filter(|p| *p > position).min() {
+        Some(header) => {
+            visit_header(doc.as_table_mut(), header, &mut |t| prepend(t.decor_mut(), &prefix));
+        }
+        None => {
+            let trailing = format!("{prefix}{}", doc.trailing().as_str().unwrap_or(""));
+            doc.set_trailing(trailing);
+        }
+    }
+    true
+}
+
+fn table_at<'a>(root: &'a Table, parts: &[String]) -> Option<&'a Table> {
+    parts
+        .iter()
+        .try_fold(root, |table, part| table.get(part).and_then(Item::as_table))
+}
+
+fn prefix_of(decor: &Decor) -> String {
+    decor.prefix().and_then(RawString::as_str).unwrap_or("").to_string()
+}
+
+fn prepend(decor: &mut Decor, text: &str) {
+    let old = prefix_of(decor);
+    decor.set_prefix(format!("{text}{old}"));
+}
+
+/// The positions of the tables written as a `[header]` (or `[[header]]`) line.
+fn header_positions(table: &Table, out: &mut Vec<isize>) {
+    let add = |t: &Table, out: &mut Vec<isize>| {
+        if !t.is_implicit() && !t.is_dotted() {
+            out.extend(t.position());
+        }
+        header_positions(t, out);
+    };
+    for (_, item) in table.iter() {
+        match item {
+            Item::Table(t) => add(t, out),
+            Item::ArrayOfTables(a) => a.iter().for_each(|t| add(t, out)),
+            _ => {}
+        }
+    }
+}
+
+/// Calls `f` on the table whose header has `position`; says whether it found one.
+fn visit_header(table: &mut Table, position: isize, f: &mut dyn FnMut(&mut Table)) -> bool {
+    let check = |t: &mut Table, f: &mut dyn FnMut(&mut Table)| {
+        if !t.is_implicit() && !t.is_dotted() && t.position() == Some(position) {
+            f(t);
+            return true;
+        }
+        visit_header(t, position, f)
+    };
+    for (_, item) in table.iter_mut() {
+        let found = match item {
+            Item::Table(t) => check(t, f),
+            Item::ArrayOfTables(a) => a.iter_mut().any(|t| check(t, f)),
+            _ => false,
+        };
+        if found {
+            return true;
+        }
+    }
+    false
 }
 
 #[cfg(test)]
@@ -233,6 +329,45 @@ mod tests {
         let text = "x = 1\n";
         assert_eq!(remove(text, &["model"]).unwrap(), text);
         assert_eq!(remove(text, &["model", "deeper"]).unwrap(), text);
+    }
+
+    #[test]
+    fn removing_the_first_key_keeps_the_file_header() {
+        let text = "# My Codex config\n# do not touch\n\nmodel = \"o3\"\nsandbox_mode = \"read-only\"\n";
+        assert_eq!(
+            remove(text, &["model"]).unwrap(),
+            "# My Codex config\n# do not touch\n\nsandbox_mode = \"read-only\"\n"
+        );
+    }
+
+    #[test]
+    fn removing_a_key_keeps_the_comment_above_it() {
+        let text = "a = 1\n# why\nmodel = \"o3\"\nb = 2\n";
+        assert_eq!(remove(text, &["model"]).unwrap(), "a = 1\n# why\nb = 2\n");
+    }
+
+    #[test]
+    fn removing_the_last_top_level_key_moves_its_comments_above_the_next_table() {
+        let text = "# head\nmodel = \"o3\"\n\n[profiles.x]\nmodel = \"b\"\n";
+        assert_eq!(
+            remove(text, &["model"]).unwrap(),
+            "# head\n\n[profiles.x]\nmodel = \"b\"\n"
+        );
+    }
+
+    #[test]
+    fn removing_the_last_key_of_a_table_moves_its_comments_above_the_next_table() {
+        let text = "[t]\n# about b\nb = 2\n\n[u]\nc = 3\n";
+        assert_eq!(remove(text, &["t", "b"]).unwrap(), "[t]\n# about b\n\n[u]\nc = 3\n");
+    }
+
+    #[test]
+    fn removing_the_last_key_of_the_file_keeps_its_comments_at_the_end() {
+        assert_eq!(
+            remove("[t]\na = 1\n# about b\nb = 2\n", &["t", "b"]).unwrap(),
+            "[t]\na = 1\n# about b\n"
+        );
+        assert_eq!(remove("# head\nmodel = \"o3\"\n", &["model"]).unwrap(), "# head\n");
     }
 
     #[test]

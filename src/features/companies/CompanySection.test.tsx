@@ -203,6 +203,24 @@ describe("CompanyView", () => {
       expect(c).toContain("C:/u/.claude/settings.json changed since you opened it. Reload to see it.");
       expect(c).toContain(">Reload</button>");
     });
+    it("shows an error with no pending change in the result area, where focus can land", () => {
+      const h = render({ view: form([days]), review: { kind: "error", message: "C:/u/.claude/settings.json changed since this change, so undo would overwrite it." } });
+      expect(h).toMatch(/<div class="company__result" tabindex="-1" data-focus="result"><p class="change-bar__error">C:\/u\/\.claude\/settings\.json changed since this change, so undo would overwrite it\.<\/p><\/div>/);
+      expect(h).not.toContain("Review changes");
+      const s = render({ view: form([days]), draft: { cleanupPeriodDays: "45" }, review: { kind: "error", message: "The core said no." } });
+      expect(s).toMatch(/<p class="change-bar__error" tabindex="-1" data-focus="result">The core said no\.<\/p>/);
+      expect(s.match(/The core said no\./g)).toHaveLength(1);
+    });
+    it("keeps Saved and a busy Undo while undoing", () => {
+      const h = render({ view: form([days]), review: { kind: "undoing", snapshotId: "s1" } });
+      expect(h).toContain("Saved. New Claude Code sessions use it.");
+      expect(h).toMatch(/<button[^>]*aria-disabled="true"[^>]*>Undo/);
+    });
+    it("says when Reload dropped the raw edit", () => {
+      const h = render({ mode: "raw", view: form([days], { text: "a = 1\n" }), rawDropped: true });
+      expect(h).toContain("C:/u/.claude/settings.json changed, so your raw edit was dropped. The text is the file as it is now.");
+      expect(render({ mode: "raw", view: form([days], { text: "a = 1\n" }) })).not.toContain("raw edit was dropped");
+    });
     it("marks where focus goes after each step: the review and the result line take focus, Review changes is the way back", () => {
       expect(render({ view: form([days]), review: { kind: "review", plan: plan(false) } })).toMatch(/<section class="change-review" aria-label="Review of the changes" tabindex="-1" data-focus="review">/);
       expect(render({ view: form([days]), review: { kind: "saved", snapshotId: "s1" } })).toMatch(/<div class="company__result" tabindex="-1" data-focus="result">/);

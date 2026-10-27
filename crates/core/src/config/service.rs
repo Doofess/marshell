@@ -79,6 +79,8 @@ struct Stored {
     /// The planned files' targets, in the preview's order.
     targets: Vec<PathBuf>,
     created: Instant,
+    /// The person's own edit (Settings' form or raw text): `managed.json` records none of its keys.
+    own: bool,
 }
 
 #[derive(Default)]
@@ -220,6 +222,16 @@ impl ConfigService {
     /// `preview`, except that when `shown` gives `Some` for a file, that text is the file's diff in the returned and
     /// in the stored preview. Apply still writes the planned bytes; only what is shown differs.
     pub fn preview_shown(&self, cs: ChangeSet, shown: &dyn Fn(&PlannedFile) -> Option<String>) -> ConfigPreview {
+        self.store_preview(cs, shown, false)
+    }
+
+    /// `preview_shown` for the person's own edit of a file: the keys it sets and removes are theirs, not Marshell's
+    /// entries, so applying it records nothing in `managed.json`.
+    pub fn preview_own(&self, cs: ChangeSet, shown: &dyn Fn(&PlannedFile) -> Option<String>) -> ConfigPreview {
+        self.store_preview(cs, shown, true)
+    }
+
+    fn store_preview(&self, cs: ChangeSet, shown: &dyn Fn(&PlannedFile) -> Option<String>, own: bool) -> ConfigPreview {
         let files = plan(&cs, &self.shared.guard(), &self.shared.snapshots);
         let id = new_id("c");
         let mut preview = to_preview(&id, &cs, &files);
@@ -240,6 +252,7 @@ impl ConfigService {
                 preview: preview.clone(),
                 targets,
                 created: Instant::now(),
+                own,
             },
         );
         previews.prune();
@@ -322,7 +335,7 @@ impl ConfigService {
     }
 
     /// The stored preview, or why it can't be applied now.
-    fn stored(&self, id: &str) -> Result<(ChangeSet, ConfigPreview, Vec<PathBuf>), ApplyError> {
+    fn stored(&self, id: &str) -> Result<(ChangeSet, ConfigPreview, Vec<PathBuf>, bool), ApplyError> {
         let mut previews = lock(&self.shared.previews);
         previews.prune();
         let stored = previews.map.get(id).ok_or(ApplyError::UnknownChangeSet)?;
@@ -347,13 +360,13 @@ impl ConfigService {
                 paths_where(&|s| matches!(s, FileStatus::Refused { .. })),
             ));
         }
-        Ok((stored.cs.clone(), preview.clone(), stored.targets.clone()))
+        Ok((stored.cs.clone(), preview.clone(), stored.targets.clone(), stored.own))
     }
 
     fn apply_with(&self, req: &ApplyRequest, now_ms: u64, write: Writer) -> Result<ApplyResult, ApplyError> {
         let shared = &*self.shared;
         // 1. The stored preview.
-        let (cs, preview, targets) = self.stored(&req.changeset_id)?;
+        let (cs, preview, targets, own) = self.stored(&req.changeset_id)?;
 
         // 2. Exactly the hashes that were shown, one per file.
         let mut mismatched: Vec<String> = Vec::new();
@@ -378,7 +391,7 @@ impl ConfigService {
         let arcs = shared.path_locks(&targets);
         let _held: Vec<MutexGuard<'_, ()>> = arcs.iter().map(|l| lock(l)).collect();
         // A racing apply may have used or staled this preview while we waited.
-        let (_, _, _) = self.stored(&req.changeset_id)?;
+        let (_, _, _, _) = self.stored(&req.changeset_id)?;
 
         // 4. Plan again from disk: nothing may have moved since the user looked.
         let files = plan(&cs, &shared.guard(), &shared.snapshots);
@@ -449,6 +462,7 @@ impl ConfigService {
                     // The person's own TOML keys and whole-text edits aren't Marshell's entries, so
                     // `managed.json` records nothing for them.
                     EditOp::TomlSet { .. } | EditOp::TomlRemove { .. } | EditOp::ReplaceText { .. } => continue,
+                    EditOp::JsonSet { .. } | EditOp::JsonRemove { .. } if own => continue,
                     EditOp::JsonSet { pointer, .. } => Change::Set {
                         path: &file.target,
                         pointer,
@@ -649,6 +663,24 @@ mod tests {
         assert_eq!(managed.len(), 1);
         assert_eq!(managed[0].pointer.as_deref(), Some("/hooks/Stop"));
         assert_eq!(Path::new(&managed[0].path), path);
+    }
+
+    #[test]
+    fn the_persons_own_edit_records_nothing_in_managed() {
+        let e = env();
+        let path = e.root.join("settings.json");
+        write(&path, "{\"model\": \"a\", \"x\": 1}\n");
+        let preview = e.svc.preview_own(
+            changeset(vec![
+                edit(&path, set("/model", "\"b\"")),
+                edit(&path, EditOp::JsonRemove { pointer: "/x".into() }),
+            ]),
+            &|_| None,
+        );
+        apply_shown(&e.svc, &preview).unwrap();
+        let value: serde_json::Value = serde_json::from_str(&read(&path)).unwrap();
+        assert_eq!(value, serde_json::json!({"model": "b"}));
+        assert!(crate::config::managed::list(&e.home).unwrap().is_empty());
     }
 
     #[test]
