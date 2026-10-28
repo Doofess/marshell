@@ -55,13 +55,45 @@ fn colorfgbg(scheme: ColorScheme) -> &'static str {
 }
 
 /// The variables a session starts with before ours: `COLORFGBG` for the scheme (none when the
-/// scheme is unknown), then the profile's own, which come after so a profile can override it.
-fn spawn_env(scheme: Option<ColorScheme>, profile_env: &[(String, String)]) -> Vec<(String, String)> {
+/// scheme is unknown), then the profile's own, which come after so a profile can override it. `PATH` has
+/// Marshell's `bin` folder in front (the profile's own `PATH` if it sets one, else the app's), so an agent in
+/// the session runs `marshell` by name. That is this session's environment only; nothing is written to the
+/// person's own PATH. A WSL session is a Linux that can't run it (slice 6j).
+fn spawn_env(
+    scheme: Option<ColorScheme>,
+    profile_env: &[(String, String)],
+    home: &std::path::Path,
+    family: ShellFamily,
+) -> Vec<(String, String)> {
     let mut env = Vec::new();
     if let Some(scheme) = scheme {
         env.push(("COLORFGBG".to_string(), colorfgbg(scheme).to_string()));
     }
     env.extend(profile_env.iter().cloned());
+    if family != ShellFamily::Wsl {
+        let is_path = |key: &str| {
+            if cfg!(windows) {
+                key.eq_ignore_ascii_case("PATH")
+            } else {
+                key == "PATH"
+            }
+        };
+        let slot = env.iter().position(|(k, _)| is_path(k));
+        let rest = match slot {
+            Some(i) => std::ffi::OsString::from(&env[i].1),
+            None => std::env::var_os("PATH").unwrap_or_default(),
+        };
+        // Split first: `join_paths` would take a whole PATH as one folder and quote it.
+        let parts = std::iter::once(crate::paths::bin_dir(home)).chain(std::env::split_paths(&rest));
+        // A folder that can't be in a PATH (it holds the separator) is left out rather than breaking the PATH.
+        if let Ok(joined) = std::env::join_paths(parts) {
+            let joined = joined.to_string_lossy().into_owned();
+            match slot {
+                Some(i) => env[i].1 = joined,
+                None => env.push(("PATH".to_string(), joined)),
+            }
+        }
+    }
     env
 }
 
@@ -593,7 +625,7 @@ pub(super) async fn spawn_into_map(
         .and_then(|p| std::path::Path::new(p).file_name())
         .map(|p| p.to_string_lossy().into_owned());
     // The profile's variables first, so ours win.
-    let mut env = spawn_env(scheme, &run.env);
+    let mut env = spawn_env(scheme, &run.env, &st.0.home, run.family);
     env.extend([
         (brand::env_var("TAB_ID"), tab_id.to_string()),
         (brand::env_var("SESSION_NUMBER"), number.to_string()),
@@ -1505,7 +1537,7 @@ mod tests {
         assert!(!strip("PATH"));
         // The key is in the child's env and nowhere else the spawn takes.
         assert!(run.argv.iter().all(|word| !word.contains(TEST_KEY)), "{:?}", run.argv);
-        let spawn = spawn_env(Some(ColorScheme::Dark), &run.env);
+        let spawn = spawn_env(Some(ColorScheme::Dark), &run.env, std::path::Path::new("h"), run.family);
         assert_eq!(spawn.iter().filter(|(_, v)| v.contains(TEST_KEY)).count(), 1);
         assert_eq!(run.profile_id, "p");
 
@@ -1994,20 +2026,52 @@ mod tests {
         assert_eq!(colorfgbg(ColorScheme::Light), "0;15");
     }
 
+    /// The env without `PATH`, which `spawn_env` always adds.
+    fn without_path(env: Vec<(String, String)>) -> Vec<(String, String)> {
+        env.into_iter().filter(|(k, _)| k != "PATH").collect()
+    }
+
     #[test]
     fn spawn_env_puts_colorfgbg_before_profile_env() {
+        let home = std::path::Path::new("h");
         // The profile sets its own COLORFGBG: it comes last, so it wins.
-        let env = spawn_env(Some(ColorScheme::Dark), &[var("COLORFGBG", "7;0")]);
+        let env = spawn_env(
+            Some(ColorScheme::Dark),
+            &[var("COLORFGBG", "7;0")],
+            home,
+            ShellFamily::Posix,
+        );
         let last = env.iter().rev().find(|(k, _)| k == "COLORFGBG").unwrap();
         assert_eq!(last.1, "7;0");
 
-        let env = spawn_env(Some(ColorScheme::Dark), &[]);
+        let env = spawn_env(Some(ColorScheme::Dark), &[], home, ShellFamily::Posix);
         assert!(env.contains(&var("COLORFGBG", "15;0")));
     }
 
     #[test]
     fn spawn_env_without_a_scheme_sets_no_colorfgbg() {
-        let env = spawn_env(None, &[var("A", "1")]);
+        let env = spawn_env(None, &[var("A", "1")], std::path::Path::new("h"), ShellFamily::Posix);
+        assert_eq!(without_path(env), vec![var("A", "1")]);
+    }
+
+    #[test]
+    fn spawn_env_puts_bin_first_on_path() {
+        let home = std::path::Path::new("C:/m home");
+        let bin = crate::paths::bin_dir(home);
+        let sep = if cfg!(windows) { ';' } else { ':' };
+        let joined = |rest: &std::ffi::OsStr| format!("{}{sep}{}", bin.display(), rest.to_string_lossy());
+        // A profile PATH: the bin dir goes in front of it, and the profile's entry is the one that changes.
+        let env = spawn_env(None, &[var("PATH", "C:\\a"), var("A", "1")], home, ShellFamily::Posix);
+        assert_eq!(
+            env,
+            vec![var("PATH", &joined(std::ffi::OsStr::new("C:\\a"))), var("A", "1")]
+        );
+        // No profile PATH: the bin dir, then the app's own PATH.
+        let own = std::env::var_os("PATH").unwrap_or_default();
+        let env = spawn_env(None, &[], home, ShellFamily::Posix);
+        assert_eq!(env, vec![var("PATH", &joined(&own))]);
+        // A WSL session runs in a Linux that has no use for it (slice 6j).
+        let env = spawn_env(None, &[var("A", "1")], home, ShellFamily::Wsl);
         assert_eq!(env, vec![var("A", "1")]);
     }
 }

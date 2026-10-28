@@ -592,6 +592,17 @@ pub struct InputRequest {
     pub text: String,
 }
 
+/// POST /v1/sessions/{tab}/fill body: text for the session's prompt line. Like `InputRequest`, it never presses
+/// Enter, and it refuses every control character, so the text can't submit itself.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct FillRequest {
+    pub text: String,
+    /// Hold the text back until the agent is ready for it (for a session that has only just started). It is
+    /// refused with `ResumeError { reason: "not_ready" }` when that takes more than 30 s.
+    pub wait: bool,
+}
+
 /// POST /v1/sessions/{tab}/resolve body: text that may name files, such as paths from terminal output.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[ts(export)]

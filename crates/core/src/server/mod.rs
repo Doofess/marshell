@@ -6,6 +6,7 @@ mod config;
 mod diagnostics;
 mod events;
 mod files;
+mod fill;
 mod folders;
 mod foreground;
 pub mod frames;
@@ -769,6 +770,7 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/sessions/{tab}/pause", post(sessions::pause))
         .route("/v1/sessions/{tab}/continue", post(sessions::cont))
         .route("/v1/sessions/{tab}/input", post(sessions::input))
+        .route("/v1/sessions/{tab}/fill", post(fill::fill))
         .route("/v1/sessions/{tab}/recording", get(sessions::recording))
         .route("/v1/sessions/{tab}/peek", get(sessions::peek))
         .route("/v1/sessions/{tab}/resolve", post(files::resolve))
