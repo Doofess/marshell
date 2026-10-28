@@ -10,8 +10,12 @@ path = "src/main.rs"
 
 [dependencies]
 marshell-core.workspace = true
+marshell-hook = { path = "../hook" }
 marshell-protocol.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+ureq.workspace = true
 
 [dev-dependencies]
-serde_json.workspace = true
 tempfile = "3.27.0"
+tokio = { version = "1.53.2", features = ["rt-multi-thread", "macros", "time"] }
