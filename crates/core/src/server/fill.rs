@@ -68,6 +68,9 @@ pub async fn fill(State(st): State<AppState>, Path(tab): Path<String>, Json(req)
         if session.has_exited() {
             return cannot_resume("ended");
         }
+        if session.is_frozen() {
+            return cannot_resume("It is paused.");
+        }
         if !req.wait {
             return write(&st, &tab, &session, req.text);
         }

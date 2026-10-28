@@ -184,3 +184,31 @@ async fn fill_refuses_an_ended_row() {
         assert_eq!(body_of(res).await, r#"{"reason":"ended"}"#);
     }
 }
+
+#[tokio::test]
+async fn fill_refuses_a_paused_session() {
+    let tmp = tempfile::tempdir().unwrap();
+    let st = state(&tmp.path().join("home"));
+    let app = router(st.clone());
+    let tab = start(&app, "echoer", tmp.path()).await;
+    let res = app
+        .clone()
+        .oneshot(api("POST", &format!("/v1/sessions/{tab}/pause"), None))
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::NO_CONTENT);
+    // Like `/input`: a frozen process would take the text only once it is continued.
+    for wait in [false, true] {
+        let res = app
+            .clone()
+            .oneshot(api(
+                "POST",
+                &format!("/v1/sessions/{tab}/fill"),
+                fill_body("hello", wait),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::CONFLICT);
+        assert_eq!(body_of(res).await, r#"{"reason":"It is paused."}"#);
+    }
+}
