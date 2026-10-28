@@ -209,3 +209,24 @@ describe("history recordings", () => {
     expect(call(some).url).toBe("http://127.0.0.1:9/v1/history/claude/s/recordings/0/frames?from_ms=0&to_ms=5000&offset=123");
   });
 });
+
+describe("history.resumeCommand and openOutside", () => {
+  it("gets the command from the encoded conversation path", async () => {
+    const ok = respond({ command: "codex resume a", form: "by_id" });
+    vi.stubGlobal("fetch", ok);
+    await expect(history.resumeCommand(endpoint, "co dex", "a/b")).resolves.toEqual({ ok: true, command: "codex resume a", form: "by_id" });
+    expect(call(ok)).toMatchObject({ url: "http://127.0.0.1:9/v1/history/co%20dex/a%2Fb/resume-command", method: "GET" });
+  });
+  it("returns the core's reason on a 409", async () => {
+    vi.stubGlobal("fetch", respond({ reason: "Its folder no longer exists: X" }, 409));
+    await expect(history.resumeCommand(endpoint, "claude", "a")).resolves.toEqual({ ok: false, reason: "Its folder no longer exists: X" });
+  });
+  it("posts open-outside and carries a 409 reason", async () => {
+    const ok = vi.fn().mockResolvedValue(new Response(null, { status: 204 }));
+    vi.stubGlobal("fetch", ok);
+    await expect(history.openOutside(endpoint, "claude", "a b")).resolves.toEqual({ ok: true });
+    expect(call(ok)).toMatchObject({ url: "http://127.0.0.1:9/v1/history/claude/a%20b/open-outside", method: "POST" });
+    vi.stubGlobal("fetch", respond({ reason: "End the session first." }, 409));
+    await expect(history.openOutside(endpoint, "claude", "a")).resolves.toEqual({ ok: false, reason: "End the session first." });
+  });
+});

@@ -26,6 +26,7 @@ import {
   type When,
 } from "./HistoryView";
 import { bookmarkQuery, escapeAction, importEndLine, importLine, listQuery, resumeWarning } from "./historyState";
+import { copyResumeCommand, openInSystemTerminal } from "../sessions/resumeActions";
 import { RecordingTab, type PlayRequest, type RecordingState } from "./recording/RecordingTab";
 import type { TerminalThemeProp } from "../terminal/TerminalView";
 
@@ -358,6 +359,18 @@ export function LiveHistory({ endpoint, rows, os, searchFocus, size, announce, o
     }
   };
 
+  const copyResume = async () => {
+    const c = shown;
+    if (!c) return;
+    await copyResumeCommand(() => history.resumeCommand(endpoint, c.agent, c.session_id), (t) => navigator.clipboard.writeText(t), announce);
+  };
+
+  const openOutside = async () => {
+    const c = shown;
+    if (!c) return;
+    await openInSystemTerminal(() => history.openOutside(endpoint, c.agent, c.session_id), announce);
+  };
+
   const remove = async () => {
     const c = shown;
     if (!c) return;
@@ -458,6 +471,8 @@ export function LiveHistory({ endpoint, rows, os, searchFocus, size, announce, o
       onBookmark={(turn, on) => void bookmarkTurn(turn, on)}
       onExport={() => shown && setExporting({ target: shown, title: shown.title })}
       onCopyMarkdown={() => void copyMarkdown()}
+      onCopyResume={() => void copyResume()}
+      onOpenOutside={() => void openOutside()}
       onDelete={() => void remove()}
       editor={editor}
       onEditor={(e) => {

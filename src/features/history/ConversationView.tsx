@@ -60,6 +60,8 @@ export type ConversationViewProps = {
   onBookmark: (turn: number, on: boolean) => void;
   onExport: () => void;
   onCopyMarkdown: () => void;
+  onCopyResume: () => void;
+  onOpenOutside: () => void;
   onDelete: () => void;
   /** The open editor, or null. */
   editor: ConversationEditor | null;
@@ -88,6 +90,8 @@ export function moreActions(marks: { pinned: boolean; archived: boolean }): Menu
     { id: "archive", label: marks.archived ? "Unarchive" : "Archive" },
     { id: "export", label: "Export…" },
     { id: "copy", label: "Copy as markdown" },
+    { id: "copy-resume", label: "Copy resume command" },
+    { id: "open-outside", label: "Open in system terminal" },
     { id: "delete", label: "Delete Marshell's copy…" },
   ];
 }
@@ -144,6 +148,8 @@ export function ConversationView({
   onBookmark,
   onExport,
   onCopyMarkdown,
+  onCopyResume,
+  onOpenOutside,
   onDelete,
   editor,
   onEditor,
@@ -231,6 +237,8 @@ export function ConversationView({
     else if (id === "archive") onPatch({ archived: !c.marks.archived });
     else if (id === "export") onExport();
     else if (id === "copy") onCopyMarkdown();
+    else if (id === "copy-resume") onCopyResume();
+    else if (id === "open-outside") onOpenOutside();
   };
 
   // Enter saves and Esc cancels; the key goes no further, so Esc doesn't also close the conversation.

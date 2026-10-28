@@ -170,3 +170,28 @@ describe("profiles and projects", () => {
     expect(call(list)).toMatchObject({ url: "http://127.0.0.1:9/v1/projects", method: "GET" });
   });
 });
+
+describe("sessions.resumeCommand and openOutside", () => {
+  it("gets the command from the encoded tab path", async () => {
+    const ok = respond({ command: "cd x; claude --resume 1", form: "by_id" });
+    vi.stubGlobal("fetch", ok);
+    await expect(sessions.resumeCommand(endpoint, "t 1")).resolves.toEqual({ ok: true, command: "cd x; claude --resume 1", form: "by_id" });
+    expect(call(ok)).toMatchObject({ url: "http://127.0.0.1:9/v1/sessions/t%201/resume-command", method: "GET" });
+  });
+  it("returns the core's reason on a 409 and rejects on a 404", async () => {
+    vi.stubGlobal("fetch", respond({ reason: "Codex has no resume command." }, 409));
+    await expect(sessions.resumeCommand(endpoint, "t1")).resolves.toEqual({ ok: false, reason: "Codex has no resume command." });
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response("No such session.", { status: 404 })));
+    await expect(sessions.resumeCommand(endpoint, "t1")).rejects.toBeInstanceOf(ApiError);
+  });
+  it("posts open-outside and resolves ok on a 204, with the reason on a 409", async () => {
+    const ok = vi.fn().mockResolvedValue(new Response(null, { status: 204 }));
+    vi.stubGlobal("fetch", ok);
+    await expect(sessions.openOutside(endpoint, "t 1")).resolves.toEqual({ ok: true });
+    expect(call(ok)).toMatchObject({ url: "http://127.0.0.1:9/v1/sessions/t%201/open-outside", method: "POST" });
+    vi.stubGlobal("fetch", respond({ reason: "End the session first." }, 409));
+    await expect(sessions.openOutside(endpoint, "t1")).resolves.toEqual({ ok: false, reason: "End the session first." });
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response("boom", { status: 500 })));
+    await expect(sessions.openOutside(endpoint, "t1")).rejects.toBeInstanceOf(ApiError);
+  });
+});

@@ -1,8 +1,10 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import type { Endpoint } from "../../generated/Endpoint";
 import type { Profile } from "../../generated/Profile";
 import type { SessionInfo } from "../../generated/SessionInfo";
 import type { RowModel } from "../sidebar/types";
-import { focusAfterMenu, menuFacts, modeOfItem } from "./sessionMenuRun";
+import { focusAfterMenu, menuFacts, modeOfItem, runResumeItem } from "./sessionMenuRun";
+import { toastFor } from "./resumeActions";
 
 const info = (tab_id: string, running = true, profile_id = "pwsh"): SessionInfo =>
   ({ tab_id, profile_id, state: running ? { kind: "running" } : { kind: "exited", code: 0 } }) as SessionInfo;
@@ -119,4 +121,60 @@ describe("menuFacts for an agent's modes", () => {
   it("Mode ▸ stays when another mode is offered", () => {
     expect(menuFacts("x", ctx({ infos: [agentInfo("manual")], offered: () => ["manual", "plan"] })).modeChangeable).toBe(true);
   });
+});
+
+describe("runResumeItem", () => {
+  const endpoint = { port: 9, token: "t", platform: "windows" } as Endpoint;
+  const setup = () => {
+    const api = {
+      resumeCommand: vi.fn().mockResolvedValue({ ok: true, command: "cd x; claude --resume 1", form: "by_id" }),
+      openOutside: vi.fn().mockResolvedValue({ ok: true }),
+    };
+    const announce = vi.fn();
+    const write = vi.fn().mockResolvedValue(undefined);
+    return { api, announce, write, deps: { endpoint, announce, write, api } };
+  };
+  it("open_outside_on_a_running_session_toasts and calls no API", async () => {
+    const s = setup();
+    await runResumeItem("open-outside", { tabId: "t1", running: true }, s.deps);
+    expect(s.announce).toHaveBeenCalledWith("End the session first.");
+    expect(s.api.openOutside).not.toHaveBeenCalled();
+  });
+  it("open-outside on an ended session asks the core and says so", async () => {
+    const s = setup();
+    await runResumeItem("open-outside", { tabId: "t1", running: false }, s.deps);
+    expect(s.api.openOutside).toHaveBeenCalledWith(endpoint, "t1");
+    expect(s.announce).toHaveBeenCalledWith("Opened in a system terminal.");
+  });
+  it("copy works on a running session: copies the command and toasts its form", async () => {
+    const s = setup();
+    await runResumeItem("copy-resume", { tabId: "t1", running: true }, s.deps);
+    expect(s.write).toHaveBeenCalledWith("cd x; claude --resume 1");
+    expect(s.announce).toHaveBeenCalledWith("Copied the resume command.");
+  });
+  it("a refused copy shows the core's reason and copies nothing", async () => {
+    const s = setup();
+    s.api.resumeCommand.mockResolvedValue({ ok: false, reason: "Codex has no resume command." });
+    await runResumeItem("copy-resume", { tabId: "t1", running: false }, s.deps);
+    expect(s.announce).toHaveBeenCalledWith("Codex has no resume command.");
+    expect(s.write).not.toHaveBeenCalled();
+  });
+  it("a refused open shows the core's reason", async () => {
+    const s = setup();
+    s.api.openOutside.mockResolvedValue({ ok: false, reason: "Open in system terminal works on Windows only for now." });
+    await runResumeItem("open-outside", { tabId: "t1", running: false }, s.deps);
+    expect(s.announce).toHaveBeenCalledWith("Open in system terminal works on Windows only for now.");
+  });
+  it("a failed request is announced, not thrown", async () => {
+    const s = setup();
+    s.api.resumeCommand.mockRejectedValue(new Error("down"));
+    await runResumeItem("copy-resume", { tabId: "t1", running: false }, s.deps);
+    expect(s.announce).toHaveBeenCalledWith("Couldn't copy the resume command: down");
+  });
+});
+
+describe("toastFor", () => {
+  it("toastFor_maps_forms: by_id", () => expect(toastFor("by_id")).toBe("Copied the resume command."));
+  it("toastFor_maps_forms: continue_last", () => expect(toastFor("continue_last")).toBe("Copied. It continues the last conversation in this folder."));
+  it("toastFor_maps_forms: fresh", () => expect(toastFor("fresh")).toBe("Copied. It starts a new conversation: this one was never saved."));
 });

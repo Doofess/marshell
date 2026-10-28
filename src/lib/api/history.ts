@@ -6,12 +6,13 @@ import type { HistoryEntry } from "../../generated/HistoryEntry";
 import type { HistoryPatch } from "../../generated/HistoryPatch";
 import type { HistoryQuery } from "../../generated/HistoryQuery";
 import type { ImportStatus } from "../../generated/ImportStatus";
+import type { ResumeCommand } from "../../generated/ResumeCommand";
 import type { RecordingFrames } from "../../generated/RecordingFrames";
 import type { RecordingPart } from "../../generated/RecordingPart";
 import type { SearchHit } from "../../generated/SearchHit";
 import type { ExportFormat } from "../exportName";
 import { ApiError, api, coreFetch } from "./client";
-import { reasonOf, refusable } from "./sessions";
+import { reasonOf, refusable, resumeCommandOf, type ResumeCommandResult, type Started } from "./sessions";
 
 const conversation = (agent: string, id: string) =>
   `/v1/history/${encodeURIComponent(agent)}/${encodeURIComponent(id)}`;
@@ -89,6 +90,12 @@ export const history = {
   /** Starts the conversation again in a new tab. A 409 comes back as `{ ok: false, reason }`, as for `sessions.resume`. */
   resume: (ep: Endpoint, agent: string, id: string, size: Size): Promise<Resumed> =>
     startAgain(ep, `${conversation(agent, id)}/resume`, size),
+  /** The line that starts the conversation's CLI again, to paste into a terminal. A 409 comes back as `{ ok: false, reason }`. */
+  resumeCommand: (ep: Endpoint, agent: string, id: string): Promise<ResumeCommandResult> =>
+    resumeCommandOf(() => api<ResumeCommand>(ep, "GET", `${conversation(agent, id)}/resume-command`)),
+  /** Starts the resume command in a system terminal window. A 409 comes back as `{ ok: false, reason }`. */
+  openOutside: (ep: Endpoint, agent: string, id: string): Promise<Started> =>
+    refusable(() => api<void>(ep, "POST", `${conversation(agent, id)}/open-outside`)),
   /** Like `resume`, but Claude starts a new conversation from this one. */
   fork: (ep: Endpoint, agent: string, id: string, size: Size): Promise<Resumed> =>
     startAgain(ep, `${conversation(agent, id)}/fork`, size),
