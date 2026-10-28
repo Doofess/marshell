@@ -1,7 +1,7 @@
 //! The CLI's client of the running app's loopback API. It finds the app through `<home>/run/endpoint.json`, as the
 //! hook bridge does, and sends the token as a bearer. The token is never printed: it is replaced in any error text.
 
-use marshell_protocol::api::{FillRequest, SessionInfo, SessionsSnapshot};
+use marshell_protocol::api::{CreateSessionRequest, CreateSessionResponse, FillRequest, SessionInfo, SessionsSnapshot};
 use std::io;
 use std::time::Duration;
 
@@ -21,6 +21,19 @@ pub enum Refusal {
     Ended,
     /// The agent wasn't ready within the core's 30 s.
     NotReady,
+}
+
+impl Refusal {
+    /// The line to print for session `number`.
+    pub fn message(&self, number: u32) -> String {
+        match self {
+            Refusal::Line(line) => line.clone(),
+            Refusal::Ended => format!("Session {number} has ended, so it can't take text."),
+            Refusal::NotReady => {
+                format!("Session {number} wasn't ready within 30 s, so its prompt line wasn't filled.")
+            }
+        }
+    }
 }
 
 pub struct Client {
@@ -64,10 +77,32 @@ impl Client {
         }
     }
 
-    /// POSTs `body` as JSON. Returns the status and the body text of the answer.
-    #[allow(dead_code)] // `new` posts through this.
-    pub fn post(&self, path: &str, body: &serde_json::Value) -> io::Result<(u16, String)> {
-        self.request(path, Some(body), TIMEOUT)
+    /// `GET /v1/health`: whether the app answers. A closed port and a wrong answer are both `false`.
+    pub fn health(&self) -> bool {
+        matches!(self.request("/v1/health", None, TIMEOUT), Ok((200, _)))
+    }
+
+    /// `POST /v1/sessions`. An `Err` is one line to print: the core's own, or why it could not be reached.
+    pub fn create(&self, req: &CreateSessionRequest) -> Result<CreateSessionResponse, String> {
+        let body = serde_json::to_value(req).map_err(|e| e.to_string())?;
+        match self.request("/v1/sessions", Some(&body), TIMEOUT) {
+            Ok((200, body)) => serde_json::from_str(&body).map_err(|e| format!("Marshell's answer didn't parse: {e}")),
+            Ok((_, body)) => Err(body.trim().to_string()),
+            Err(e) => Err(e.to_string()),
+        }
+    }
+
+    /// `POST /v1/sessions/{tab}/focus`. An `Err` is one line to print.
+    pub fn focus(&self, tab: &str) -> Result<(), String> {
+        match self.request(
+            &format!("/v1/sessions/{tab}/focus"),
+            Some(&serde_json::json!({})),
+            TIMEOUT,
+        ) {
+            Ok((204, _)) => Ok(()),
+            Ok((_, body)) => Err(body.trim().to_string()),
+            Err(e) => Err(e.to_string()),
+        }
     }
 
     /// A GET without a body, a POST with one.
@@ -166,6 +201,16 @@ mod tests {
         assert!(resolve(&snapshot, "tab").is_none());
         assert!(resolve(&snapshot, "+1").is_none());
         assert!(resolve(&snapshot, "").is_none());
+    }
+
+    #[test]
+    fn a_refusal_prints_as_one_line() {
+        assert_eq!(Refusal::Ended.message(4), "Session 4 has ended, so it can't take text.");
+        assert_eq!(
+            Refusal::NotReady.message(4),
+            "Session 4 wasn't ready within 30 s, so its prompt line wasn't filled."
+        );
+        assert_eq!(Refusal::Line("x".into()).message(4), "x");
     }
 
     #[test]

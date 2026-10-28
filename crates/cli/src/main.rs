@@ -1,13 +1,17 @@
-//! `marshell`: the command line program. `list` and `send` drive the running app, `uninstall` takes Marshell out.
+//! `marshell`: the command line program. `list`, `send`, `new` and `focus` drive the running app (and `new` and
+//! `focus` can start it), `uninstall` takes Marshell out.
 
 mod args;
 mod client;
+mod focus;
 mod list;
+mod new;
 mod send;
+mod start;
 mod uninstall;
 
 use args::Command;
-use std::io::{stderr, stdin, stdout};
+use std::io::{IsTerminal, stderr, stdin, stdout};
 use std::path::PathBuf;
 use std::process::ExitCode;
 
@@ -29,6 +33,56 @@ fn main() -> ExitCode {
         Ok(Command::Send { session, text }) => {
             let env = |name: &str| std::env::var(name).ok();
             exit(send::run(&env, &session, &text, &mut stdout(), &mut stderr()))
+        }
+        Ok(Command::New {
+            agent,
+            cwd,
+            prompt,
+            mode,
+            name,
+            start,
+        }) => {
+            let current = match std::env::current_dir() {
+                Ok(dir) => dir,
+                Err(e) => {
+                    eprintln!("Could not read the current folder: {e}");
+                    return ExitCode::from(1);
+                }
+            };
+            let options = new::Options {
+                agent,
+                cwd,
+                prompt,
+                mode,
+                name,
+                start,
+            };
+            let env = |name: &str| std::env::var(name).ok();
+            let tty = stdin().is_terminal();
+            let code = new::run(
+                &env,
+                options,
+                &current,
+                tty,
+                &mut stdin().lock(),
+                &mut stdout(),
+                &mut stderr(),
+            );
+            exit(code)
+        }
+        Ok(Command::Focus { session, start }) => {
+            let env = |name: &str| std::env::var(name).ok();
+            let tty = stdin().is_terminal();
+            let code = focus::run(
+                &env,
+                &session,
+                start,
+                tty,
+                &mut stdin().lock(),
+                &mut stdout(),
+                &mut stderr(),
+            );
+            exit(code)
         }
         Ok(Command::Uninstall { yes }) => {
             let home = match marshell_core::paths::home_dir() {

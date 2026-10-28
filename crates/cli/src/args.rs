@@ -1,5 +1,8 @@
-//! The command line, parsed by hand: `marshell list [--json]`, `send <session> <text>`, `uninstall [--yes]`,
-//! `--help`, `--version`.
+//! The command line, parsed by hand: `marshell list [--json]`, `send <session> <text>`, `new [options]`,
+//! `focus <session> [--start]`, `uninstall [--yes]`, `--help`, `--version`.
+
+use marshell_protocol::api::SessionMode;
+use std::path::Path;
 
 pub const USAGE: &str = "Usage: marshell <command>
 
@@ -9,6 +12,14 @@ Commands:
   send <session> <text>
                       Put <text> on the session's prompt line. Marshell never presses Enter. <session> is
                       a session number or a tab id.
+  new [--agent <agent>] [--cwd <folder>] [--prompt <text>] [--mode <mode>] [--name <name>] [--start]
+                      Start a session. --cwd defaults to the current folder. --prompt puts <text> on the
+                      agent's prompt line once it is ready; Marshell never presses Enter. <mode> is one of
+                      manual, plan, auto-edit, full-auto, bypass, dont-ask. --start starts Marshell first
+                      when it is closed, without asking.
+  focus <session> [--start]
+                      Bring Marshell's window to the session. --start starts Marshell first when it is
+                      closed, without asking.
   uninstall [--yes]   Take Marshell's hooks out of Claude Code's settings and remove the program
                       folder <home>/bin. Shows what changes first and asks; --yes skips the question.
 
@@ -18,15 +29,42 @@ Options:
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum Command {
-    List { json: bool },
-    Send { session: String, text: String },
-    Uninstall { yes: bool },
+    List {
+        json: bool,
+    },
+    Send {
+        session: String,
+        text: String,
+    },
+    New {
+        agent: Option<String>,
+        /// Absolute. `None` when `--cwd` was not given: the command then uses the CLI's own folder.
+        cwd: Option<String>,
+        prompt: Option<String>,
+        mode: Option<SessionMode>,
+        name: Option<String>,
+        start: bool,
+    },
+    Focus {
+        session: String,
+        start: bool,
+    },
+    Uninstall {
+        yes: bool,
+    },
     Help,
     Version,
 }
 
 /// `argv` is the arguments after the program name. An `Err` is a usage error: the message, then the usage.
+/// A relative `--cwd` is made absolute from the CLI's own folder.
 pub fn parse(argv: &[String]) -> Result<Command, String> {
+    let current = std::env::current_dir().map_err(|e| format!("Could not read the current folder: {e}"))?;
+    parse_in(argv, &current)
+}
+
+/// `parse`, with the CLI's own folder given.
+pub fn parse_in(argv: &[String], current_dir: &Path) -> Result<Command, String> {
     let Some((first, rest)) = argv.split_first() else {
         return Err(USAGE.to_string());
     };
@@ -60,6 +98,39 @@ pub fn parse(argv: &[String]) -> Result<Command, String> {
 {USAGE}"
             )),
         },
+        "new" => parse_new(rest, current_dir),
+        "focus" => {
+            let mut session = None;
+            let mut start = false;
+            for arg in rest {
+                match arg.as_str() {
+                    "--start" => start = true,
+                    flag if flag.starts_with("--") => {
+                        return Err(format!(
+                            "Unknown argument `{flag}` for focus.
+
+{USAGE}"
+                        ));
+                    }
+                    other if session.is_none() => session = Some(other.to_string()),
+                    _ => {
+                        return Err(format!(
+                            "focus takes one session.
+
+{USAGE}"
+                        ));
+                    }
+                }
+            }
+            match session {
+                Some(session) => Ok(Command::Focus { session, start }),
+                None => Err(format!(
+                    "focus takes a session number or a tab id.
+
+{USAGE}"
+                )),
+            }
+        }
         "uninstall" => {
             let mut yes = false;
             for arg in rest {
@@ -72,6 +143,61 @@ pub fn parse(argv: &[String]) -> Result<Command, String> {
         }
         other => Err(format!("Unknown command `{other}`.\n\n{USAGE}")),
     }
+}
+
+fn parse_new(rest: &[String], current_dir: &Path) -> Result<Command, String> {
+    let (mut agent, mut cwd, mut prompt, mut mode, mut name, mut start) = (None, None, None, None, None, false);
+    let mut args = rest.iter();
+    while let Some(arg) = args.next() {
+        let mut value = |flag: &str| {
+            args.next().cloned().ok_or_else(|| {
+                format!(
+                    "{flag} takes a value.
+
+{USAGE}"
+                )
+            })
+        };
+        match arg.as_str() {
+            "--agent" => agent = Some(value("--agent")?),
+            "--cwd" => {
+                let given = value("--cwd")?;
+                let joined = current_dir.join(&given);
+                let absolute = std::path::absolute(&joined).unwrap_or(joined);
+                cwd = Some(absolute.to_string_lossy().into_owned());
+            }
+            "--prompt" => prompt = Some(value("--prompt")?),
+            "--name" => name = Some(value("--name")?),
+            "--mode" => {
+                let word = value("--mode")?;
+                mode = Some(
+                    serde_json::from_value::<SessionMode>(serde_json::Value::String(word.clone())).map_err(|_| {
+                        format!(
+                            "Unknown mode `{word}`: use manual, plan, auto-edit, full-auto, bypass or dont-ask.
+
+{USAGE}"
+                        )
+                    })?,
+                );
+            }
+            "--start" => start = true,
+            other => {
+                return Err(format!(
+                    "Unknown argument `{other}` for new.
+
+{USAGE}"
+                ));
+            }
+        }
+    }
+    Ok(Command::New {
+        agent,
+        cwd,
+        prompt,
+        mode,
+        name,
+        start,
+    })
 }
 
 #[cfg(test)]
@@ -120,6 +246,99 @@ mod tests {
         assert!(e.contains("Usage:"), "{e}");
         assert!(parse(&args(&["send"])).is_err());
         assert!(parse(&args(&["send", "6", "a", "b"])).is_err());
+    }
+
+    #[test]
+    fn args_parse_new_and_focus() {
+        let here = std::env::temp_dir().join("app");
+        let p = |list: &[&str]| parse_in(&args(list), &here);
+        let abs = std::path::absolute(here.join("."))
+            .unwrap()
+            .to_string_lossy()
+            .into_owned();
+        assert_eq!(
+            p(&[
+                "new", "--agent", "claude", "--cwd", ".", "--prompt", "x", "--mode", "plan", "--name", "n", "--start"
+            ]),
+            Ok(Command::New {
+                agent: Some("claude".into()),
+                cwd: Some(abs.clone()),
+                prompt: Some("x".into()),
+                mode: Some(SessionMode::Plan),
+                name: Some("n".into()),
+                start: true,
+            })
+        );
+        assert_eq!(
+            p(&["new"]),
+            Ok(Command::New {
+                agent: None,
+                cwd: None,
+                prompt: None,
+                mode: None,
+                name: None,
+                start: false
+            })
+        );
+        // An absolute folder is kept as it is, and a relative one is joined to the CLI's own folder.
+        let other = std::env::temp_dir().join("other").to_string_lossy().into_owned();
+        let Ok(Command::New { cwd, .. }) = p(&["new", "--cwd", &other]) else {
+            panic!()
+        };
+        assert_eq!(cwd, Some(other));
+        let Ok(Command::New { cwd, .. }) = p(&["new", "--cwd", "sub"]) else {
+            panic!()
+        };
+        assert_eq!(
+            cwd.map(std::path::PathBuf::from),
+            Some(here.join("sub")).map(|p| std::path::absolute(&p).unwrap())
+        );
+        // Every mode by its protocol name.
+        for (word, mode) in [
+            ("manual", SessionMode::Manual),
+            ("auto-edit", SessionMode::AutoEdit),
+            ("full-auto", SessionMode::FullAuto),
+            ("bypass", SessionMode::Bypass),
+            ("dont-ask", SessionMode::DontAsk),
+        ] {
+            let Ok(Command::New { mode: got, .. }) = p(&["new", "--mode", word]) else {
+                panic!("{word}")
+            };
+            assert_eq!(got, Some(mode));
+        }
+        assert_eq!(
+            p(&["focus", "3", "--start"]),
+            Ok(Command::Focus {
+                session: "3".into(),
+                start: true
+            })
+        );
+        assert_eq!(
+            p(&["focus", "tab-a"]),
+            Ok(Command::Focus {
+                session: "tab-a".into(),
+                start: false
+            })
+        );
+    }
+
+    #[test]
+    fn new_and_focus_usage_errors() {
+        let here = std::env::temp_dir().join("app");
+        for list in [
+            &["new", "--mode", "sideways"][..],
+            &["new", "--agent"],
+            &["new", "--bogus"],
+            &["new", "stray"],
+            &["focus"],
+            &["focus", "1", "2"],
+            &["focus", "1", "--bogus"],
+        ] {
+            let e = parse_in(&args(list), &here).unwrap_err();
+            assert!(e.contains("Usage:"), "{list:?}: {e}");
+        }
+        let e = parse_in(&args(&["new", "--mode", "sideways"]), &here).unwrap_err();
+        assert!(e.contains("sideways") && e.contains("plan"), "{e}");
     }
 
     #[test]

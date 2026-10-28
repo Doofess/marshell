@@ -3,7 +3,7 @@
 //!
 //! Exit codes: 0 filled, 1 refused, failed or the app is closed.
 
-use crate::client::{Client, NOT_RUNNING, Refusal, resolve};
+use crate::client::{Client, NOT_RUNNING, resolve};
 use marshell_protocol::api::SessionState;
 use std::io::{self, Write};
 
@@ -46,19 +46,8 @@ pub fn run(
             let _ = writeln!(out, "Filled session {number}'s prompt line.");
             0
         }
-        Err(Refusal::Ended) => {
-            let _ = writeln!(err, "{ended}");
-            1
-        }
-        Err(Refusal::NotReady) => {
-            let _ = writeln!(
-                err,
-                "Session {number} wasn't ready within 30 s, so its prompt line wasn't filled."
-            );
-            1
-        }
-        Err(Refusal::Line(line)) => {
-            let _ = writeln!(err, "{line}");
+        Err(refusal) => {
+            let _ = writeln!(err, "{}", refusal.message(number));
             1
         }
     }

@@ -29,6 +29,8 @@ mod tools;
 mod view;
 
 pub(crate) use files::existing_file as local_file;
+/// The text check of `fill`, for the command line to run before it creates a session.
+pub use fill::check_text;
 
 use crate::profiles::detect::{Probe, detect_profiles};
 use crate::registry::{Registry, Relaunch};
