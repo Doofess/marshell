@@ -23,14 +23,14 @@
 
 Copy decided in PLAN §9 6h1: "Marshell isn't running. Start it? [y/N] " and "End the session first."
 
-Copy proposed for approval at plan review (nothing else is new):
+Copy approved at plan review (slice 6h1 decision 12; nothing else is new):
 - CLI, app closed: "Marshell isn't running." Starting it: "Couldn't start Marshell: open it once from the Start menu first." (no record of the app), "Couldn't start Marshell: <path> isn't there.", "Marshell didn't start within 30 s."
 - CLI, sessions: "No sessions." / "No session <x>." / "Session <n> has ended, so it can't take text." / "Started session <n>." / "Filled session <n>'s prompt line." / "Session <n> wasn't ready within 30 s, so its prompt line wasn't filled."
 - Text refusals (from the core, shown by the CLI): "The text can't hold line breaks or other control characters: Marshell never presses Enter." / "The text is over 4000 characters."
 - Menu items: "Copy resume command", "Open in system terminal".
 - Toasts: "Copied the resume command." / "Copied. It continues the last conversation in this folder." (the continue-last form; see the change below) / "Copied. It starts a new conversation: this one was never saved." / "Opened in a system terminal."
 - Refusals: "A DeepSeek session needs Marshell to start it, so there is no command to copy." / "<Agent> has no resume command." / "Open in system terminal works on Windows only for now." / existing `NO_CONVERSATION`, `gone()` and "Its folder no longer exists: <folder>".
-- **A change to decision 5:** the menu item can't say in advance which form it copies, because the menu is built from the session row, and the row doesn't know whether a hook reported an id. Instead, the toast after copying says so. The alternative is a new `SessionInfo` field, filled from a history lookup on every snapshot.
+- **Decision 5, as decision 12 amends it:** the menu item is always "Copy resume command", and the toast after copying says which form was copied.
 
 ## Review Focus
 
