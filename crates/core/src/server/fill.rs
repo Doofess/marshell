@@ -8,6 +8,7 @@ use axum::Json;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
+use marshell_protocol::agents::HookInstall;
 use marshell_protocol::api::{FillRequest, SessionState};
 use std::time::{Duration, Instant};
 
@@ -45,6 +46,12 @@ pub fn ready(claude_hooked: bool, started: bool, end: u64, quiet_for: Duration) 
     end > 0 && quiet_for >= FILL_QUIET && (!claude_hooked || started)
 }
 
+/// Whether a row waits for Claude Code's `SessionStart`: a Claude row with Marshell's hooks installed and live status
+/// on. Without the hooks `SessionStart` never reaches Marshell, so quiet output is all there is to go on.
+pub fn claude_hooked(agent: Option<&str>, status_note: Option<&str>, hooks: Option<HookInstall>) -> bool {
+    agent == Some("claude") && status_note.is_none() && hooks == Some(HookInstall::Installed)
+}
+
 pub async fn fill(State(st): State<AppState>, Path(tab): Path<String>, Json(req): Json<FillRequest>) -> Response {
     if st.registry().row(&tab).is_none() {
         return (StatusCode::NOT_FOUND, "No such session.").into_response();
@@ -52,6 +59,20 @@ pub async fn fill(State(st): State<AppState>, Path(tab): Path<String>, Json(req)
     if let Err(line) = check_text(&req.text) {
         return (StatusCode::BAD_REQUEST, line).into_response();
     }
+    // Claude Code's settings are read once, off the async workers.
+    let claude = st
+        .registry()
+        .row(&tab)
+        .is_some_and(|r| r.agent.as_deref() == Some("claude"));
+    let hooks = if req.wait && claude {
+        let asker = st.clone();
+        tokio::task::spawn_blocking(move || super::agents::setup_of(&asker).ok().map(|s| s.hooks))
+            .await
+            .ok()
+            .flatten()
+    } else {
+        None
+    };
     let deadline = Instant::now() + FILL_TIMEOUT;
     // The stream end last seen, and when it last changed.
     let mut seen: Option<(u64, Instant)> = None;
@@ -81,7 +102,7 @@ pub async fn fill(State(st): State<AppState>, Path(tab): Path<String>, Json(req)
             _ => now,
         };
         seen = Some((end, changed));
-        let hooked = row.agent.as_deref() == Some("claude") && row.status_note.is_none();
+        let hooked = claude_hooked(row.agent.as_deref(), row.status_note.as_deref(), hooks);
         if ready(hooked, st.registry().session_started(&tab), end, now - changed) {
             return write(&st, &tab, &session, req.text);
         }
@@ -130,6 +151,28 @@ mod tests {
         assert!(!ready(false, false, 0, Duration::from_secs(10)));
         assert!(!ready(false, false, 10, Duration::from_millis(1499)));
         assert!(ready(false, false, 10, Duration::from_millis(1500)));
+    }
+
+    #[test]
+    fn only_installed_claude_hooks_wait_for_session_start() {
+        assert!(claude_hooked(Some("claude"), None, Some(HookInstall::Installed)));
+        // No hooks, or not all of them: SessionStart never comes, so quiet output is the signal.
+        for hooks in [
+            None,
+            Some(HookInstall::None),
+            Some(HookInstall::Partial),
+            Some(HookInstall::Orphaned),
+        ] {
+            assert!(!claude_hooked(Some("claude"), None, hooks), "{hooks:?}");
+        }
+        // Live status off or an unknown version: the hooks may run, but nothing waits on them.
+        assert!(!claude_hooked(
+            Some("claude"),
+            Some("off"),
+            Some(HookInstall::Installed)
+        ));
+        assert!(!claude_hooked(Some("codex"), None, Some(HookInstall::Installed)));
+        assert!(!claude_hooked(None, None, Some(HookInstall::Installed)));
     }
 
     #[test]
