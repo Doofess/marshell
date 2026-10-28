@@ -14,6 +14,7 @@ mod guard;
 mod history;
 mod hook;
 mod layout;
+mod outside;
 mod permissions;
 mod ports;
 mod profiles;
@@ -789,6 +790,8 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/sessions/{tab}/input", post(sessions::input))
         .route("/v1/sessions/{tab}/fill", post(fill::fill))
         .route("/v1/sessions/{tab}/focus", post(sessions::focus))
+        .route("/v1/sessions/{tab}/resume-command", get(outside::tab_resume_command))
+        .route("/v1/sessions/{tab}/open-outside", post(outside::tab_open_outside))
         .route("/v1/sessions/{tab}/recording", get(sessions::recording))
         .route("/v1/sessions/{tab}/peek", get(sessions::peek))
         .route("/v1/sessions/{tab}/resolve", post(files::resolve))
@@ -857,6 +860,14 @@ pub fn router(state: AppState) -> Router {
         )
         .route("/v1/history/{agent}/{session_id}/resume", post(history::resume))
         .route("/v1/history/{agent}/{session_id}/fork", post(history::fork))
+        .route(
+            "/v1/history/{agent}/{session_id}/resume-command",
+            get(outside::history_resume_command),
+        )
+        .route(
+            "/v1/history/{agent}/{session_id}/open-outside",
+            post(outside::history_open_outside),
+        )
         .route("/v1/history/{agent}/{session_id}/export", get(history::export))
         .route("/v1/history/{agent}/{session_id}/recordings", get(history::recordings))
         .route(

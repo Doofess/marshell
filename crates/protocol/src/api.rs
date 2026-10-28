@@ -443,6 +443,28 @@ pub struct ResumeError {
     pub reason: String,
 }
 
+/// Which conversation a copied resume command continues.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum ResumeForm {
+    /// One conversation, by the CLI's session id.
+    ById,
+    /// The CLI's own "last conversation in this folder": no id is known.
+    ContinueLast,
+    /// A new conversation: the session never wrote one, so there is nothing to continue.
+    Fresh,
+}
+
+/// GET /v1/sessions/{tab}/resume-command and GET /v1/history/{agent}/{session_id}/resume-command reply: one line
+/// that changes to the session's folder and starts its CLI again, for the person to paste into a terminal.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct ResumeCommand {
+    pub command: String,
+    pub form: ResumeForm,
+}
+
 /// POST /v1/sessions/{tab}/restart body: start an agent session again in another mode.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[ts(export)]

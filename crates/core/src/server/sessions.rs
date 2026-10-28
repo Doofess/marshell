@@ -36,7 +36,7 @@ const CUSTOM_PROFILE: &str = "custom";
 
 /// The name an agent session gets when the request names none.
 /// None for an id that is not a launcher agent; callers validate the id first.
-fn agent_display_name(agent: &str) -> Option<&'static str> {
+pub(super) fn agent_display_name(agent: &str) -> Option<&'static str> {
     match agent {
         "claude" => Some("Claude Code"),
         "codex" => Some("Codex"),
@@ -123,14 +123,14 @@ fn preset_launch(st: &AppState, preset: &str, family: ShellFamily) -> Result<Pre
 pub(super) struct Resolved {
     pub(super) profile_id: String,
     pub(super) profile_name: String,
-    family: ShellFamily,
-    argv: Vec<String>,
-    env: Vec<(String, String)>,
+    pub(super) family: ShellFamily,
+    pub(super) argv: Vec<String>,
+    pub(super) env: Vec<(String, String)>,
     /// Variables the child must not inherit, on top of the session markers: a preset's.
     env_remove: Vec<String>,
     /// Inherited variables the child must not get, decided at spawn from the environment the pty really builds.
     env_strip: Option<fn(&str) -> bool>,
-    cwd: Option<String>,
+    pub(super) cwd: Option<String>,
     /// Shell integration is on, so the output carries prompt marks.
     marks: bool,
     /// The line a tool preset runs first: it holds what the person typed, so it goes to the spawn and nowhere else.
@@ -497,7 +497,7 @@ pub(super) async fn resolve_tool(
 
 /// Refuses an agent whose program is not on PATH. The shell would start anyway and say so
 /// itself, so look for the agent first. A WSL distro has its own PATH: those are not checked.
-fn check_agent_installed(st: &AppState, run: &Resolved, agent: Option<&str>) -> Result<(), ApiError> {
+pub(super) fn check_agent_installed(st: &AppState, run: &Resolved, agent: Option<&str>) -> Result<(), ApiError> {
     if let Some(agent) = agent
         && run.family != ShellFamily::Wsl
         && let Some(command) = agent_command(agent)
@@ -1038,7 +1038,7 @@ pub(super) fn cannot_resume(reason: impl Into<String>) -> Response {
 }
 
 /// Why the tab's profile or folder rules out starting it again (Resume and Restart), if they do.
-fn cannot_start_again(st: &AppState, info: &SessionInfo) -> Option<String> {
+pub(super) fn cannot_start_again(st: &AppState, info: &SessionInfo) -> Option<String> {
     let profile_known = info.profile_id == CUSTOM_PROFILE
         || st
             .0
@@ -1062,7 +1062,7 @@ pub(super) const NO_CONVERSATION: &str = "Claude Code no longer has this convers
 
 /// What a Resume or Restart starts.
 #[derive(Debug, PartialEq, Eq)]
-enum Resume {
+pub(super) enum Resume {
     /// One Claude, Codex or Antigravity conversation, by its session id.
     Session(String),
     /// The CLI's own continue flag: nothing is known about the tab, or the agent is none of those three.
@@ -1074,7 +1074,7 @@ enum Resume {
 
 impl Resume {
     /// The target `resolve` is given; None starts the agent plainly.
-    fn target(&self) -> Option<ResumeTarget<'_>> {
+    pub(super) fn target(&self) -> Option<ResumeTarget<'_>> {
         match self {
             Resume::Session(id) => Some(ResumeTarget::Session(id)),
             Resume::Last => Some(ResumeTarget::Last),
@@ -1095,7 +1095,7 @@ impl Resume {
 /// - Codex's rollout is missing: `Resume::Fresh`. Marshell keeps no copy of a rollout, so a deleted one can't be
 ///   told from one Codex never wrote (slice 6a2 decision 4). So is agy's transcript: the file exists from the
 ///   first prompt, so a missing one starts fresh.
-fn resume_session(st: &AppState, tab: &str, agent: Option<&str>) -> Result<Resume, &'static str> {
+pub(super) fn resume_session(st: &AppState, tab: &str, agent: Option<&str>) -> Result<Resume, &'static str> {
     let Some(agent @ ("claude" | "codex" | "antigravity")) = agent else {
         return Ok(Resume::Last);
     };

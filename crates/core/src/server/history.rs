@@ -28,7 +28,7 @@ use std::sync::Arc;
 const AGENTS: [&str; 2] = ["claude", "codex"];
 
 /// Resume's refusal when a live tab already holds the conversation.
-const RUNNING_IN_A_TAB: &str = "This conversation is already running in a tab. Use Go to session.";
+pub(super) const RUNNING_IN_A_TAB: &str = "This conversation is already running in a tab. Use Go to session.";
 
 /// Fork starts from a Claude Code conversation only.
 const FORK_CLAUDE_ONLY: &str = "Fork works only for Claude Code conversations.";
@@ -500,7 +500,7 @@ fn answer(result: Result<CreateSessionResponse, Box<Response>>) -> Response {
 }
 
 /// Why a conversation can't be resumed when its source file is gone.
-fn gone(agent: &str) -> String {
+pub(super) fn gone(agent: &str) -> String {
     if agent == "codex" {
         "Codex no longer has this conversation, so it can't be resumed.".into()
     } else {
@@ -514,8 +514,8 @@ fn boxed(err: impl IntoResponse) -> Box<Response> {
 }
 
 /// What the lookup before a Resume or Fork found.
-enum Found {
-    /// The conversation, and the name its new tab opens under, if the person named it.
+pub(super) enum Found {
+    /// The conversation, and the name the person gave it, if any.
     Usable(Box<SessionMeta>, Option<String>),
     /// Claude's transcript file is gone.
     Gone,
@@ -529,20 +529,13 @@ fn fork_name(name: &str) -> Option<String> {
     normalize_name(&format!("{}{SUFFIX}", name.chars().take(room).collect::<String>()))
 }
 
-async fn open_in_new_tab(
-    st: AppState,
-    agent: String,
-    session_id: String,
-    req: ResumeRequest,
-    fork: bool,
-) -> Result<CreateSessionResponse, Box<Response>> {
-    check(&agent, &session_id).map_err(boxed)?;
-    if fork && agent != "claude" {
-        return Err(Box::new(cannot_resume(FORK_CLAUDE_ONLY)));
-    }
+/// Finds the conversation a Resume, a Fork, a copied command or an outside terminal starts from: its sidecar, the
+/// preset it ran with and the name its tab opens under. `refuse_running` answers `RunningInATab` when a live tab holds
+/// it as its latest conversation. `Gone` is a transcript that fails the path check or is no longer a file.
+pub(super) async fn look_up(st: &AppState, agent: &str, session_id: &str, refuse_running: bool) -> Result<Found, Fail> {
+    check(agent, session_id)?;
     let history = st.history();
-    let id = session_id.clone();
-    let agent_name = agent.clone();
+    let (id, agent) = (session_id.to_string(), agent.to_string());
     let running_tabs: Vec<String> = st
         .registry()
         .snapshot()
@@ -552,15 +545,14 @@ async fn open_in_new_tab(
         .map(|s| s.tab_id)
         .collect();
     let home = st.home().to_path_buf();
-    let meta = blocking(move || {
+    blocking(move || {
         let mut meta = session_meta(&history, &agent, &id)?;
         // The index does not keep the preset; the sidecar does.
         meta.preset = crate::history::archive::read_meta(&home, &agent, &id)
             .ok()
             .flatten()
             .and_then(|stored| stored.preset);
-        // A fork starts a conversation of its own, so a running original is no reason to refuse.
-        let in_tab = !fork
+        let in_tab = refuse_running
             && running_tabs.contains(&meta.tab_id)
             && history
                 .latest_for_tab(&meta.tab_id)
@@ -575,19 +567,33 @@ async fn open_in_new_tab(
             return Ok(Found::Gone);
         }
         let name = history.marks(&agent, &meta.session_id).name;
-        let tab_name = if fork {
-            name.as_deref().and_then(fork_name)
-        } else {
-            name
-        };
-        Ok(Found::Usable(Box::new(meta), tab_name))
+        Ok(Found::Usable(Box::new(meta), name))
     })
     .await
-    .map_err(boxed)?;
+}
+
+async fn open_in_new_tab(
+    st: AppState,
+    agent: String,
+    session_id: String,
+    req: ResumeRequest,
+    fork: bool,
+) -> Result<CreateSessionResponse, Box<Response>> {
+    check(&agent, &session_id).map_err(boxed)?;
+    if fork && agent != "claude" {
+        return Err(Box::new(cannot_resume(FORK_CLAUDE_ONLY)));
+    }
+    let agent_name = agent.clone();
+    let meta = look_up(&st, &agent, &session_id, !fork).await.map_err(boxed)?;
     let (meta, tab_name) = match meta {
-        Found::Usable(meta, tab_name) => (*meta, tab_name),
+        Found::Usable(meta, name) => (*meta, name),
         Found::Gone => return Err(Box::new(cannot_resume(gone(&agent_name)))),
         Found::RunningInATab => return Err(Box::new(cannot_resume(RUNNING_IN_A_TAB))),
+    };
+    let tab_name = if fork {
+        tab_name.as_deref().and_then(fork_name)
+    } else {
+        tab_name
     };
     // The same check the tab Resume makes before it starts anything.
     let folder = meta.cwd.clone();
