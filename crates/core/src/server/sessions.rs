@@ -1315,6 +1315,23 @@ pub async fn restart(State(st): State<AppState>, Path(tab): Path<String>, Json(r
     }
 }
 
+/// `POST /v1/sessions/{tab}/focus`: asks the shell to bring its window forward on this session's tab. An ended
+/// session that is still open can be focused too.
+pub async fn focus(State(st): State<AppState>, Path(tab): Path<String>) -> Response {
+    if st.registry().row(&tab).is_none() {
+        return (StatusCode::NOT_FOUND, "No such session.").into_response();
+    }
+    let Some(sink) = st.focus_sink() else {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            "Marshell's window isn't there to focus.",
+        )
+            .into_response();
+    };
+    sink(tab);
+    StatusCode::NO_CONTENT.into_response()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

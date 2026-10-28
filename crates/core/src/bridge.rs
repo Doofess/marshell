@@ -136,9 +136,26 @@ fn swap_in(
     }
 }
 
+/// Writes `<home>/bin/app.json`, `{ "exe": "<path>" }`, atomically, so the command line program can start the app
+/// when it is not running.
+pub fn write_app_record(home: &Path, exe: &Path) -> anyhow::Result<()> {
+    let record = serde_json::json!({ "exe": exe });
+    crate::store::write_bytes_atomic(&crate::paths::app_record(home), record.to_string().as_bytes())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn app_record_holds_the_exe() {
+        let home = tempfile::tempdir().unwrap();
+        let exe = home.path().join("Marshell.exe");
+        write_app_record(home.path(), &exe).unwrap();
+        let json: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(paths::app_record(home.path())).unwrap()).unwrap();
+        assert_eq!(json["exe"].as_str().unwrap(), exe.to_str().unwrap());
+    }
 
     #[test]
     fn a_failed_swap_puts_the_old_copy_back() {

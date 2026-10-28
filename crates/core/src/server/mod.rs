@@ -46,6 +46,9 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tower_http::cors::{AllowOrigin, CorsLayer};
 
+/// Asked to bring Marshell's window forward and select a session's tab.
+pub type FocusSink = Arc<dyn Fn(String) + Send + Sync>;
+
 #[derive(Clone)]
 pub struct CoreConfig {
     /// Usually `paths::home_dir()`; a temp dir in tests.
@@ -58,6 +61,8 @@ pub struct CoreConfig {
     /// Where the notifier hands what it decided (banners, sounds, flashes). None in tests that don't care:
     /// then no notifier runs.
     pub notify: Option<crate::notify::NotifySink>,
+    /// Where `POST /v1/sessions/{tab}/focus` hands the tab. None in tests that don't care: the route then answers 503.
+    pub focus: Option<FocusSink>,
     /// Shared by every core the supervisor starts; neither flag is saved to disk.
     pub notify_paused: Arc<AtomicBool>,
     pub window_hidden: Arc<AtomicBool>,
@@ -186,6 +191,7 @@ struct Inner {
     view: tokio::sync::watch::Sender<marshell_protocol::api::UiView>,
     notify_paused: Arc<AtomicBool>,
     window_hidden: Arc<AtomicBool>,
+    focus: Option<FocusSink>,
 }
 
 /// How long a permission request is held when `MARSHELL_PERMISSION_HOLD_SECS` is not set.
@@ -278,7 +284,18 @@ impl AppState {
             .0,
             notify_paused: Arc::default(),
             window_hidden: Arc::default(),
+            focus: None,
         }))
+    }
+    /// Names where the focus route sends a tab, in place of answering 503. Call it before the state is cloned.
+    pub fn with_focus(mut self, sink: FocusSink) -> Self {
+        Arc::get_mut(&mut self.0)
+            .expect("with_focus runs before the state is shared")
+            .focus = Some(sink);
+        self
+    }
+    pub(crate) fn focus_sink(&self) -> Option<FocusSink> {
+        self.0.focus.clone()
     }
     /// Shares the supervisor's flags with this core, before the state is cloned.
     pub(crate) fn with_notification_flags(mut self, paused: Arc<AtomicBool>, hidden: Arc<AtomicBool>) -> Self {
@@ -771,6 +788,7 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/sessions/{tab}/continue", post(sessions::cont))
         .route("/v1/sessions/{tab}/input", post(sessions::input))
         .route("/v1/sessions/{tab}/fill", post(fill::fill))
+        .route("/v1/sessions/{tab}/focus", post(sessions::focus))
         .route("/v1/sessions/{tab}/recording", get(sessions::recording))
         .route("/v1/sessions/{tab}/peek", get(sessions::peek))
         .route("/v1/sessions/{tab}/resolve", post(files::resolve))
@@ -1023,6 +1041,9 @@ pub async fn start(cfg: CoreConfig) -> anyhow::Result<RunningCore> {
         ));
     if let Some(dir) = cfg.programs_dir {
         state = state.with_programs_dir(dir);
+    }
+    if let Some(sink) = cfg.focus {
+        state = state.with_focus(sink);
     }
     // Last, so the endpoint is only advertised once the state is ready to serve.
     auth::write_endpoint_file(&endpoint_file, &endpoint)?;

@@ -22,6 +22,8 @@ pub enum CoreEvent {
     Failed,
     /// The notifier wants a banner, a sound or a flash. Not a core lifecycle event: the app shell shows it.
     Notify(NotifyRequest),
+    /// A local API caller wants the window brought to this session's tab. The app shell does it.
+    Focus { tab_id: String },
 }
 
 pub struct Supervisor {
@@ -42,7 +44,7 @@ fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
 
 impl Supervisor {
     /// Starts the first core. `on_event` is called on every restart, on `Failed` and for each notification
-    /// the core decides on (`Notify`), also from the cores that replace this one.
+    /// the core decides on (`Notify`) and each request to focus a session (`Focus`), also from the cores that replace this one.
     pub async fn start(
         mut cfg: CoreConfig,
         on_event: impl Fn(CoreEvent) + Send + Sync + 'static,
@@ -51,6 +53,8 @@ impl Supervisor {
         let notifier = on_event.clone();
         // The config is cloned for every restart, so each new core notifies through the same sink.
         cfg.notify = Some(Arc::new(move |request| notifier(CoreEvent::Notify(request))));
+        let focuser = on_event.clone();
+        cfg.focus = Some(Arc::new(move |tab_id| focuser(CoreEvent::Focus { tab_id })));
         let core = server::start(cfg.clone()).await?;
         // Only the first core counts: a restart leaves the startup time where it was.
         crate::diagnostics::perf::mark_ready();
@@ -173,6 +177,7 @@ mod tests {
             allowed_origins: vec![],
             programs_dir: None,
             notify: None,
+            focus: None,
             notify_paused: Default::default(),
             window_hidden: Default::default(),
             import: None,
