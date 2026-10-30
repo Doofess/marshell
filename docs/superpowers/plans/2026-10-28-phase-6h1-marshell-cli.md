@@ -107,7 +107,7 @@ Copy approved at plan review (slice 6h1 decision 12; nothing else is new):
 
 - [ ] **Step 1: Write the failing tests**
   - `copy_line_quotes_per_shell`:
-    - PowerShell, `C:\My 'x'`: `Set-Location -LiteralPath 'C:\My ''x'''; <line>`.
+    - PowerShell, `C:\My 'x'`: `Set-Location -LiteralPath 'C:\My ''x''' -ErrorAction Stop; <line>`.
     - Cmd, `C:\My x`: `cd /d "C:\My x" && <line>`.
     - Posix, `/home/a b`: `cd '/home/a b' && <line>`.
     - No result contains `\r` or `\n`.

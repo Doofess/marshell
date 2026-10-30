@@ -130,6 +130,8 @@ struct Inner {
     tab_path: fn() -> Option<std::ffi::OsString>,
     /// Opens "Open in system terminal"'s console (`outside::open_console`). Tests swap it, so none opens a window.
     open_console: crate::outside::ConsoleOpener,
+    /// The consoles that opener started and that still run, per conversation (see `outside::Consoles`).
+    consoles: crate::outside::Consoles,
     /// `DEEPSEEK_API_KEY`, read when a DeepSeek session starts or the catalog is built. Tests swap it. The value goes
     /// only into that child's spawn environment.
     deepseek_key: fn() -> Option<String>,
@@ -255,6 +257,7 @@ impl AppState {
             agent_path: None,
             tab_path: crate::profiles::detect::tab_path,
             open_console: crate::outside::open_console,
+            consoles: crate::outside::Consoles::default(),
             deepseek_key: || std::env::var(crate::agents::presets::DEEPSEEK_KEY_VAR).ok(),
             status_runner: |exe, args| crate::agents::run_capture(exe, args, std::time::Duration::from_secs(10)),
             own_agents: crate::agents::own::OwnCache::default(),

@@ -4,14 +4,21 @@
 use crate::profiles::detect::{posix_quote, powershell_quote};
 use marshell_protocol::api::ShellFamily;
 use marshell_protocol::brand;
+use std::collections::HashMap;
+use std::ffi::OsStr;
 use std::io;
 use std::path::Path;
+use std::sync::{Arc, Mutex};
 
 /// What a system terminal says off Windows.
 pub const WINDOWS_ONLY: &str = "Open in system terminal works on Windows only for now.";
 
-/// What starts the console: `argv`, the variables to add and to remove, and the folder.
-pub type ConsoleOpener = fn(&[String], &[(String, String)], &[String], &Path) -> io::Result<()>;
+/// Answers "is the console still running?". Dropping it lets go of whatever it watches.
+pub type ConsoleProbe = Box<dyn Fn() -> bool + Send + Sync>;
+
+/// What starts the console: `argv`, the whole environment it gets, the PATH its program is looked up on, and the
+/// folder. It answers with a probe of the console it started.
+pub type ConsoleOpener = fn(&[String], &[(String, String)], Option<&OsStr>, &Path) -> io::Result<ConsoleProbe>;
 
 /// One line that changes to `cwd` and then runs `line`, quoted for a shell of `family`, so pasting it runs nothing
 /// until the person presses Enter. With no folder it is the line itself. `cwd` must hold no control character (the
@@ -22,7 +29,11 @@ pub fn copy_line(family: ShellFamily, cwd: &str, line: &str) -> String {
         return line.to_string();
     }
     match family {
-        ShellFamily::PowerShell => format!("Set-Location -LiteralPath {}; {line}", powershell_quote(cwd)),
+        // `-ErrorAction Stop` ends the line when the folder is gone, so the agent never runs in the wrong one.
+        ShellFamily::PowerShell => format!(
+            "Set-Location -LiteralPath {} -ErrorAction Stop; {line}",
+            powershell_quote(cwd)
+        ),
         ShellFamily::Cmd => format!("cd /d \"{cwd}\" && {line}"),
         ShellFamily::Posix | ShellFamily::Wsl => format!("cd {} && {line}", posix_quote(cwd)),
     }
@@ -33,36 +44,231 @@ fn marshell_markers() -> [String; 3] {
     ["TAB_ID", "SESSION_NUMBER", "AGENT"].map(brand::env_var)
 }
 
+/// Whether two environment names are the same: Windows ignores case.
+fn same_name(a: &str, b: &str) -> bool {
+    if cfg!(windows) {
+        a.eq_ignore_ascii_case(b)
+    } else {
+        a == b
+    }
+}
+
 fn is_marker(name: &str) -> bool {
-    marshell_markers().iter().any(|marker| {
-        if cfg!(windows) {
-            name.eq_ignore_ascii_case(marker)
-        } else {
-            name == marker
-        }
-    })
+    marshell_markers().iter().any(|marker| same_name(name, marker))
 }
 
 /// The environment for the outside terminal: the profile's own variables without Marshell's session markers, and
 /// the names the child must not inherit from the app (the markers again, in case the app was started from one of
-/// its own sessions). Never `PATH` with Marshell's `bin` folder in it: that is a session's environment only.
+/// its own sessions, and the Claude Code session it may have been started from, as a session drops them). Never
+/// `PATH` with Marshell's `bin` folder in it: that is a session's environment only.
 pub fn outside_env(profile_env: &[(String, String)]) -> (Vec<(String, String)>, Vec<String>) {
     let kept = profile_env
         .iter()
         .filter(|(name, _)| !is_marker(name))
         .cloned()
         .collect();
-    (kept, marshell_markers().to_vec())
+    let removed = marshell_markers()
+        .into_iter()
+        .chain(crate::agents::INHERITED_MARKERS.iter().map(|name| name.to_string()))
+        .collect();
+    (kept, removed)
+}
+
+/// `path` without the entries that are the folder `bin`.
+fn without_folder(path: &str, bin: &Path) -> String {
+    let bin = bin.to_string_lossy();
+    let normal = |text: &str| {
+        let trimmed = text.trim_end_matches(['/', '\\']);
+        if cfg!(windows) {
+            trimmed.replace('/', "\\").to_lowercase()
+        } else {
+            trimmed.to_string()
+        }
+    };
+    let bin = normal(&bin);
+    let kept: Vec<_> = std::env::split_paths(path)
+        .filter(|entry| normal(&entry.to_string_lossy()) != bin)
+        .collect();
+    std::env::join_paths(kept).map_or_else(|_| path.to_string(), |joined| joined.to_string_lossy().into_owned())
+}
+
+/// The whole environment of the console: `base` (what a session starts from, see `detect::session_base_env`)
+/// without Marshell's session markers, the profile's own variables over it as a session has them, and no `bin`
+/// folder of Marshell's in any `PATH`.
+pub fn console_env(
+    base: impl IntoIterator<Item = (String, String)>,
+    profile_env: &[(String, String)],
+    bin: &Path,
+) -> Vec<(String, String)> {
+    let (profile, removed) = outside_env(profile_env);
+    let mut env: Vec<(String, String)> = base
+        .into_iter()
+        .filter(|(name, _)| !removed.iter().any(|marker| same_name(name, marker)))
+        .collect();
+    for (name, value) in profile {
+        env.retain(|(have, _)| !same_name(have, &name));
+        env.push((name, value));
+    }
+    for (name, value) in &mut env {
+        if same_name(name, "PATH") {
+            *value = without_folder(value, bin);
+        }
+    }
+    env
+}
+
+/// The PATH the console's program is looked up on: the profile's own when it sets one, else `tab_path` (the PATH a
+/// session's program is looked up on), without Marshell's `bin` folder.
+pub fn lookup_path(
+    profile_env: &[(String, String)],
+    tab_path: Option<std::ffi::OsString>,
+    bin: &Path,
+) -> Option<std::ffi::OsString> {
+    let path = profile_env
+        .iter()
+        .rev()
+        .find(|(name, _)| same_name(name, "PATH"))
+        .map(|(_, value)| std::ffi::OsString::from(value))
+        .or(tab_path)?;
+    Some(without_folder(&path.to_string_lossy(), bin).into())
+}
+
+/// Which conversation a console holds. A resume by id names it; "continue the last conversation" names only the agent
+/// and the folder it looks in, so a console started that way can't be told from one started by id for the same
+/// conversation (see `Consoles`).
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum ConversationKey {
+    Id { agent: String, id: String },
+    LastIn { agent: String, folder: String },
+}
+
+impl ConversationKey {
+    pub fn by_id(agent: &str, id: &str) -> Self {
+        ConversationKey::Id {
+            agent: agent.to_string(),
+            id: id.to_string(),
+        }
+    }
+
+    /// The folder compares the way the file system does: Windows ignores case and the kind of slash, and a closing
+    /// separator makes no difference.
+    pub fn last_in(agent: &str, folder: &str) -> Self {
+        let trimmed = folder.trim_end_matches(['/', '\\']);
+        let folder = if cfg!(windows) {
+            trimmed.replace('/', "\\").to_lowercase()
+        } else {
+            trimmed.to_string()
+        };
+        ConversationKey::LastIn {
+            agent: agent.to_string(),
+            folder,
+        }
+    }
+}
+
+enum Entry {
+    /// A console is being started for it.
+    Starting,
+    Open(Arc<dyn Fn() -> bool + Send + Sync>),
+}
+
+/// The consoles Marshell opened, kept per conversation while they run, so a conversation is never resumed a second
+/// time next to the console that holds it. In memory only: it is forgotten when Marshell quits. What it can't know:
+/// a console it didn't open, and an agent ending while its window stays (the console is `pwsh -NoExit`, so the
+/// probe follows the window, not the agent).
+#[derive(Clone, Default)]
+pub struct Consoles(Arc<Mutex<HashMap<ConversationKey, Entry>>>);
+
+impl Consoles {
+    /// Whether a console holds `key` or is starting for it. With `reserve` it also takes the key when none does.
+    /// A dead console's entry is dropped on the way. A probe is called with no lock held.
+    fn busy(&self, key: &ConversationKey, reserve: bool) -> bool {
+        loop {
+            let probe = {
+                let mut map = self.0.lock().unwrap();
+                match map.get(key) {
+                    None => {
+                        if reserve {
+                            map.insert(key.clone(), Entry::Starting);
+                        }
+                        return false;
+                    }
+                    Some(Entry::Starting) => return true,
+                    Some(Entry::Open(probe)) => probe.clone(),
+                }
+            };
+            if probe() {
+                return true;
+            }
+            let mut map = self.0.lock().unwrap();
+            if matches!(map.get(key), Some(Entry::Open(have)) if Arc::ptr_eq(have, &probe)) {
+                map.remove(key);
+            }
+        }
+    }
+
+    /// Whether a console still holds the conversation. A resume asks this.
+    pub fn is_open(&self, key: &ConversationKey) -> bool {
+        self.busy(key, false)
+    }
+
+    /// Takes `key` for a console about to be started: None while one holds it or is starting. Dropped without
+    /// `finish`, it gives the key back.
+    pub fn reserve(&self, key: ConversationKey) -> Option<Reservation> {
+        if self.busy(&key, true) {
+            return None;
+        }
+        Some(Reservation {
+            consoles: self.clone(),
+            key,
+            done: false,
+        })
+    }
+}
+
+/// A key taken by `Consoles::reserve`.
+pub struct Reservation {
+    consoles: Consoles,
+    key: ConversationKey,
+    done: bool,
+}
+
+impl Reservation {
+    /// The console started: keep its probe under the key.
+    pub fn finish(mut self, probe: ConsoleProbe) {
+        self.done = true;
+        self.consoles
+            .0
+            .lock()
+            .unwrap()
+            .insert(self.key.clone(), Entry::Open(Arc::from(probe)));
+    }
+}
+
+impl Drop for Reservation {
+    fn drop(&mut self) {
+        if !self.done {
+            let mut map = self.consoles.0.lock().unwrap();
+            if matches!(map.get(&self.key), Some(Entry::Starting)) {
+                map.remove(&self.key);
+            }
+        }
+    }
 }
 
 /// Starts `argv` in a new console window in `cwd`, and doesn't wait for it. Windows hands the console to the
-/// terminal app the person chose, so Marshell picks none.
+/// terminal app the person chose, so Marshell picks none. `env` is the console's whole environment.
 #[cfg(windows)]
-pub fn open_console(argv: &[String], env: &[(String, String)], env_remove: &[String], cwd: &Path) -> io::Result<()> {
+pub fn open_console(
+    argv: &[String],
+    env: &[(String, String)],
+    path: Option<&OsStr>,
+    cwd: &Path,
+) -> io::Result<ConsoleProbe> {
     console::start(
         argv,
         env,
-        env_remove,
+        path,
         cwd,
         windows_sys::Win32::System::Threading::CREATE_NEW_CONSOLE,
     )
@@ -74,20 +280,46 @@ pub fn open_console(argv: &[String], env: &[(String, String)], env_remove: &[Str
 /// child gets no handles, so its new console supplies them.
 #[cfg(windows)]
 mod console {
+    use super::ConsoleProbe;
     use std::collections::BTreeMap;
     use std::ffi::{OsStr, OsString};
     use std::io;
     use std::os::windows::ffi::OsStrExt;
     use std::path::{Path, PathBuf};
-    use windows_sys::Win32::Foundation::CloseHandle;
+    use windows_sys::Win32::Foundation::{CloseHandle, HANDLE, WAIT_TIMEOUT};
     use windows_sys::Win32::System::Threading::{
         CREATE_BREAKAWAY_FROM_JOB, CREATE_UNICODE_ENVIRONMENT, CreateProcessW, PROCESS_INFORMATION, STARTUPINFOW,
+        WaitForSingleObject,
     };
 
     const ERROR_ACCESS_DENIED: i32 = 5;
 
     fn invalid(message: impl Into<String>) -> io::Error {
         io::Error::new(io::ErrorKind::InvalidInput, message.into())
+    }
+
+    /// A process handle that is closed when this is dropped.
+    struct Process(HANDLE);
+
+    // SAFETY: a process handle is valid on any thread, and `WaitForSingleObject` may be called on it from several.
+    unsafe impl Send for Process {}
+    unsafe impl Sync for Process {}
+
+    impl Process {
+        /// Whether the process is still running.
+        fn alive(&self) -> bool {
+            // SAFETY: the handle is open until `self` is dropped; a zero timeout only polls it.
+            unsafe { WaitForSingleObject(self.0, 0) == WAIT_TIMEOUT }
+        }
+    }
+
+    impl Drop for Process {
+        fn drop(&mut self) {
+            // SAFETY: the handle came from `CreateProcessW` and is closed only here.
+            unsafe {
+                CloseHandle(self.0);
+            }
+        }
     }
 
     fn wide(text: &OsStr) -> Vec<u16> {
@@ -105,9 +337,9 @@ mod console {
         }
     }
 
-    /// The file `program` names, never looked up in the current directory. A name with a path separator is used
-    /// as given; any other is searched for in the absolute folders of `path` (a relative one, `.` included, is
-    /// skipped). A name with no extension also tries each of `pathext`.
+    /// The file `program` names, never looked up in the current directory. A name with a path separator or a `:` must be
+    /// absolute and is used as given; any other is searched for in the absolute folders of `path` (a relative one,
+    /// `.` included, is skipped). A name with no extension also tries each of `pathext`.
     pub(super) fn resolve_program(program: &str, path: Option<&OsStr>, pathext: Option<&OsStr>) -> io::Result<PathBuf> {
         let not_found = || io::Error::new(io::ErrorKind::NotFound, format!("Couldn't find `{program}` to run."));
         if program.is_empty() || program.contains('\0') {
@@ -132,7 +364,13 @@ mod console {
                 })
                 .collect()
         };
-        let found = if program.contains(['/', '\\']) {
+        // A `:` makes a name a path too: `C:tool.exe` is a file in drive C's current folder, which `join` would pick.
+        let found = if program.contains(['/', '\\', ':']) {
+            if !Path::new(program).is_absolute() {
+                return Err(invalid(format!(
+                    "`{program}` is a relative path, and the console only runs a program by its full path."
+                )));
+            }
             candidates(Path::new("")).into_iter().find(|file| file.is_file())
         } else {
             let dirs: Vec<PathBuf> = path
@@ -144,6 +382,15 @@ mod console {
                 .find(|file| file.is_file())
         };
         found.ok_or_else(not_found)
+    }
+
+    /// Whether Windows runs `file` as a batch file. It ignores trailing dots and spaces in a name (`x.bat.` and
+    /// `x.bat ` both run as `x.bat`), so those are cut before the extension is read.
+    pub(super) fn is_batch(file: &Path) -> bool {
+        let name = file.file_name().map(|name| name.to_string_lossy().into_owned());
+        let name = name.as_deref().unwrap_or_default().trim_end_matches(['.', ' ']);
+        name.rsplit_once('.')
+            .is_some_and(|(_, ext)| ext.eq_ignore_ascii_case("bat") || ext.eq_ignore_ascii_case("cmd"))
     }
 
     /// Adds `arg` to `line` the way Rust's `std::process::Command` does for an ordinary program (the rules of the
@@ -255,24 +502,25 @@ mod console {
     }
 
     /// Starts `argv` with `console` among its creation flags (a test passes `CREATE_NO_WINDOW`), breaking away
-    /// from the app's job when the job allows it.
+    /// from the app's job when the job allows it. `env` is the whole environment, and the program is looked up on
+    /// `path`. The probe answers whether the process still runs, and holds its handle until it is dropped.
     pub(super) fn start(
         argv: &[String],
         env: &[(String, String)],
-        env_remove: &[String],
+        path: Option<&OsStr>,
         cwd: &Path,
         console: u32,
-    ) -> io::Result<()> {
+    ) -> io::Result<ConsoleProbe> {
         let Some((program, args)) = argv.split_first() else {
             return Err(invalid("There is nothing to run."));
         };
-        let file = resolve_program(
-            program,
-            std::env::var_os("PATH").as_deref(),
-            std::env::var_os("PATHEXT").as_deref(),
-        )?;
-        let extension = file.extension().map(|ext| ext.to_string_lossy().to_ascii_lowercase());
-        if matches!(extension.as_deref(), Some("bat" | "cmd")) {
+        let pathext = env
+            .iter()
+            .rev()
+            .find(|(name, _)| name.eq_ignore_ascii_case("PATHEXT"))
+            .map(|(_, value)| OsString::from(value));
+        let file = resolve_program(program, path, pathext.as_deref())?;
+        if is_batch(&file) {
             // cmd.exe reads a batch file's arguments by rules of its own, and they need the escaping std does for
             // them (and a refusal of what can't be escaped). That isn't ported yet.
             return Err(io::Error::new(
@@ -282,9 +530,9 @@ mod console {
         }
         let application = wide(file.as_os_str());
         let line = command_line(program, args)?;
-        let block = env_block(std::env::vars_os(), env, env_remove)?;
+        let block = env_block([], env, &[])?;
         let cwd = wide(cwd.as_os_str());
-        let launch = |breakaway: bool| -> io::Result<()> {
+        let launch = |breakaway: bool| -> io::Result<Process> {
             // CreateProcessW may write to its command line, so each try gets its own copy.
             let mut line = line.clone();
             // SAFETY: both are plain C structs for which all zeros is valid.
@@ -310,25 +558,26 @@ mod console {
             if ok == 0 {
                 return Err(io::Error::last_os_error());
             }
-            // SAFETY: both handles came from the successful call and aren't used again.
+            // SAFETY: the thread handle came from the successful call and isn't used again. The process handle
+            // is kept, for the probe.
             unsafe {
-                CloseHandle(info.hProcess);
                 CloseHandle(info.hThread);
             }
-            Ok(())
+            Ok(Process(info.hProcess))
         };
-        match launch(true) {
+        let process = match launch(true) {
             // A job that doesn't allow breakaway refuses it. The console then stays in Marshell's job, which is
             // better than no console: it opens either way.
-            Err(err) if err.raw_os_error() == Some(ERROR_ACCESS_DENIED) => launch(false),
-            other => other,
-        }
+            Err(err) if err.raw_os_error() == Some(ERROR_ACCESS_DENIED) => launch(false)?,
+            other => other?,
+        };
+        Ok(Box::new(move || process.alive()))
     }
 }
 
 /// Windows only for now.
 #[cfg(not(windows))]
-pub fn open_console(_: &[String], _: &[(String, String)], _: &[String], _: &Path) -> io::Result<()> {
+pub fn open_console(_: &[String], _: &[(String, String)], _: Option<&OsStr>, _: &Path) -> io::Result<ConsoleProbe> {
     Err(io::Error::new(io::ErrorKind::Unsupported, WINDOWS_ONLY))
 }
 
@@ -345,7 +594,10 @@ mod tests {
     fn copy_line_quotes_per_shell() {
         let line = "claude --resume abc";
         let ps = copy_line(ShellFamily::PowerShell, r"C:\My 'x'", line);
-        assert_eq!(ps, r"Set-Location -LiteralPath 'C:\My ''x'''; claude --resume abc");
+        assert_eq!(
+            ps,
+            r"Set-Location -LiteralPath 'C:\My ''x''' -ErrorAction Stop; claude --resume abc"
+        );
         let cmd = copy_line(ShellFamily::Cmd, r"C:\My x", line);
         assert_eq!(cmd, r#"cd /d "C:\My x" && claude --resume abc"#);
         let posix = copy_line(ShellFamily::Posix, "/home/a b", line);
@@ -384,9 +636,123 @@ mod tests {
         assert!(!removed.iter().any(|r| r.eq_ignore_ascii_case("PATH")));
     }
 
+    fn pairs(items: &[(&str, &str)]) -> Vec<(String, String)> {
+        env(items)
+    }
+
+    fn value<'a>(env: &'a [(String, String)], name: &str) -> Option<&'a str> {
+        env.iter().find(|(n, _)| same_name(n, name)).map(|(_, v)| v.as_str())
+    }
+
+    #[test]
+    fn console_env_keeps_what_only_the_app_has_and_drops_the_markers() {
+        let base = pairs(&[
+            ("CLAUDE_CONFIG_DIR", "C:\\scratch"),
+            ("MARSHELL_TAB_ID", "t1"),
+            ("marshell_agent", "claude"),
+            ("MARSHELL_SESSION_NUMBER", "3"),
+            ("CLAUDECODE", "1"),
+            ("CLAUDE_CODE_SESSION_ID", "s1"),
+            ("CLAUDE_CODE_GIT_BASH_PATH", "C:\\git\\bash.exe"),
+            ("EDITOR", "nano"),
+        ]);
+        let profile = pairs(&[("EDITOR", "vim"), ("MARSHELL_AGENT", "codex")]);
+        let env = console_env(base, &profile, Path::new("C:\\m\\bin"));
+        assert_eq!(value(&env, "CLAUDE_CONFIG_DIR"), Some("C:\\scratch"));
+        assert_eq!(value(&env, "EDITOR"), Some("vim"), "the profile's value wins");
+        assert_eq!(env.iter().filter(|(n, _)| same_name(n, "EDITOR")).count(), 1);
+        for marker in [
+            "MARSHELL_TAB_ID",
+            "MARSHELL_AGENT",
+            "MARSHELL_SESSION_NUMBER",
+            "CLAUDECODE",
+            "CLAUDE_CODE_SESSION_ID",
+        ] {
+            assert_eq!(value(&env, marker), None, "{marker}");
+        }
+        // A user setting, not the identity of the Claude Code session the app was started from.
+        assert_eq!(value(&env, "CLAUDE_CODE_GIT_BASH_PATH"), Some("C:\\git\\bash.exe"));
+    }
+
+    #[test]
+    fn console_env_never_has_the_bin_folder_in_path() {
+        let bin = Path::new("/m/bin");
+        let path = |parts: &[&str]| std::env::join_paths(parts).unwrap().to_string_lossy().into_owned();
+        // The app's own PATH (started from a Marshell session) holds it; the profile's PATH may too.
+        let base = pairs(&[("PATH", &path(&["/m/bin", "/usr/bin"]))]);
+        let env = console_env(base.clone(), &[], bin);
+        assert_eq!(value(&env, "PATH"), Some(path(&["/usr/bin"]).as_str()));
+        let profile = pairs(&[("PATH", &path(&["/a", "/m/bin/", "/b"]))]);
+        let env = console_env(base, &profile, bin);
+        assert_eq!(value(&env, "PATH"), Some(path(&["/a", "/b"]).as_str()));
+        assert_eq!(env.iter().filter(|(n, _)| same_name(n, "PATH")).count(), 1);
+    }
+
+    #[test]
+    fn lookup_path_is_the_profiles_else_the_tab_path_without_bin() {
+        let bin = Path::new("/m/bin");
+        let path = |parts: &[&str]| std::env::join_paths(parts).unwrap();
+        let tab = Some(path(&["/m/bin", "/tab"]));
+        assert_eq!(lookup_path(&[], tab.clone(), bin), Some(path(&["/tab"])));
+        let own = path(&["/own"]).to_string_lossy().into_owned();
+        let profile = pairs(&[("Path", own.as_str())]);
+        let found = lookup_path(&profile, tab, bin);
+        if cfg!(windows) {
+            assert_eq!(found, Some(path(&["/own"])));
+        } else {
+            // Another case is another variable off Windows.
+            assert_eq!(found, Some(path(&["/tab"])));
+        }
+        assert_eq!(lookup_path(&[], None, bin), None);
+    }
+
+    fn alive_until(flag: &Arc<std::sync::atomic::AtomicBool>) -> ConsoleProbe {
+        let flag = flag.clone();
+        Box::new(move || flag.load(std::sync::atomic::Ordering::SeqCst))
+    }
+
+    #[test]
+    fn a_conversation_is_held_while_its_console_runs() {
+        let consoles = Consoles::default();
+        let key = ConversationKey::by_id("claude", "abc");
+        assert!(!consoles.is_open(&key));
+        let alive = Arc::new(std::sync::atomic::AtomicBool::new(true));
+        consoles.reserve(key.clone()).unwrap().finish(alive_until(&alive));
+        assert!(consoles.is_open(&key));
+        assert!(consoles.reserve(key.clone()).is_none(), "refused while it runs");
+        assert!(!consoles.is_open(&ConversationKey::by_id("claude", "other")));
+        assert!(!consoles.is_open(&ConversationKey::by_id("codex", "abc")));
+        alive.store(false, std::sync::atomic::Ordering::SeqCst);
+        assert!(!consoles.is_open(&key), "free once it exits");
+        assert!(consoles.reserve(key).is_some());
+    }
+
+    #[test]
+    fn a_console_that_is_starting_holds_the_conversation_and_a_failed_start_gives_it_back() {
+        let consoles = Consoles::default();
+        let key = ConversationKey::by_id("codex", "x");
+        let first = consoles.reserve(key.clone()).unwrap();
+        assert!(consoles.is_open(&key));
+        assert!(consoles.reserve(key.clone()).is_none());
+        drop(first);
+        assert!(!consoles.is_open(&key));
+        assert!(consoles.reserve(key).is_some());
+    }
+
+    #[test]
+    fn continue_last_is_keyed_by_agent_and_folder() {
+        let a = ConversationKey::last_in("claude", "C:\\Work\\App\\");
+        if cfg!(windows) {
+            assert_eq!(a, ConversationKey::last_in("claude", "c:/work/app"));
+        }
+        assert_ne!(a, ConversationKey::last_in("codex", "C:\\Work\\App\\"));
+        assert_ne!(a, ConversationKey::last_in("claude", "C:\\Work\\Other"));
+        assert_ne!(a, ConversationKey::by_id("claude", "C:\\Work\\App"));
+    }
+
     #[cfg(windows)]
     mod console_tests {
-        use super::super::console::{command_line, env_block, flags, resolve_program, start};
+        use super::super::console::{command_line, env_block, flags, is_batch, resolve_program, start};
         use std::ffi::{OsStr, OsString};
         use std::io::ErrorKind;
         use std::path::Path;
@@ -581,6 +947,46 @@ mod tests {
         }
 
         #[test]
+        fn resolve_program_refuses_a_relative_path_with_a_separator() {
+            let here = tempfile::tempdir().unwrap();
+            std::fs::write(here.path().join("zz-marshell-probe.exe"), b"").unwrap();
+            for name in [
+                ".\\zz-marshell-probe.exe",
+                "sub\\zz-marshell-probe.exe",
+                "./zz-marshell-probe.exe",
+                "..\\zz-marshell-probe",
+                "\\zz-marshell-probe.exe",
+                "C:zz-marshell-probe.exe",
+            ] {
+                let err = resolve_program(name, None, None).unwrap_err();
+                assert_eq!(err.kind(), ErrorKind::InvalidInput, "{name}");
+            }
+        }
+
+        /// The probe follows the process: alive while it runs, and false once it has exited.
+        #[test]
+        fn the_probe_answers_whether_the_console_still_runs() {
+            let dir = tempfile::tempdir().unwrap();
+            let argv = strings(&[
+                "powershell.exe",
+                "-NoProfile",
+                "-NonInteractive",
+                "-Command",
+                "Start-Sleep -Milliseconds 1500",
+            ]);
+            let path = std::env::var_os("PATH");
+            let env: Vec<_> = std::env::vars().collect();
+            let probe = start(&argv, &env, path.as_deref(), dir.path(), CREATE_NO_WINDOW).unwrap();
+            assert!(probe(), "alive just after it started");
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+            while probe() {
+                assert!(std::time::Instant::now() < deadline, "the process never ended");
+                std::thread::sleep(std::time::Duration::from_millis(100));
+            }
+            assert!(!probe(), "and stays ended");
+        }
+
+        #[test]
         fn flags_open_a_new_console_and_break_away() {
             const NEW_CONSOLE: u32 = 0x10;
             const BREAKAWAY: u32 = 0x0100_0000;
@@ -594,10 +1000,35 @@ mod tests {
 
         #[test]
         fn start_refuses_nothing_to_run_and_an_unknown_program() {
-            let err = start(&[], &[], &[], Path::new("."), CREATE_NO_WINDOW).unwrap_err();
+            let err = start(&[], &[], None, Path::new("."), CREATE_NO_WINDOW)
+                .err()
+                .expect("refused");
             assert_eq!(err.kind(), ErrorKind::InvalidInput);
             let argv = strings(&["zz-marshell-no-such-program"]);
-            let err = start(&argv, &[], &[], Path::new("."), CREATE_NO_WINDOW).unwrap_err();
+            let path = std::env::var_os("PATH");
+            let err = start(&argv, &[], path.as_deref(), Path::new("."), CREATE_NO_WINDOW)
+                .err()
+                .expect("refused");
+            assert_eq!(err.kind(), ErrorKind::NotFound);
+        }
+
+        #[test]
+        fn start_finds_the_program_on_the_path_it_is_given() {
+            let dir = tempfile::tempdir().unwrap();
+            let bat = dir.path().join("zz-marshell-probe.cmd");
+            std::fs::write(&bat, b"@echo off\r\n").unwrap();
+            // Found on the given PATH (and, being a batch file, refused for that reason, not as missing).
+            let path = std::env::join_paths([dir.path()]).unwrap();
+            let argv = strings(&["zz-marshell-probe"]);
+            let pathext = [("PATHEXT".to_string(), ".EXE;.CMD".to_string())];
+            let err = start(&argv, &pathext, Some(&path), dir.path(), CREATE_NO_WINDOW)
+                .err()
+                .expect("refused");
+            assert_eq!(err.kind(), ErrorKind::Unsupported);
+            // The app's own PATH is not consulted.
+            let err = start(&argv, &pathext, None, dir.path(), CREATE_NO_WINDOW)
+                .err()
+                .expect("refused");
             assert_eq!(err.kind(), ErrorKind::NotFound);
         }
 
@@ -607,8 +1038,29 @@ mod tests {
             let bat = dir.path().join("zz-marshell-probe.BAT");
             std::fs::write(&bat, b"@echo off\r\n").unwrap();
             let argv = vec![bat.to_str().unwrap().to_string()];
-            let err = start(&argv, &[], &[], dir.path(), CREATE_NO_WINDOW).unwrap_err();
+            let err = start(&argv, &[], None, dir.path(), CREATE_NO_WINDOW)
+                .err()
+                .expect("refused");
             assert_eq!(err.kind(), ErrorKind::Unsupported);
+            // Windows runs `x.BAT.` and `x.BAT ` as the same batch file.
+            for tail in [".", " ", ". .", " ."] {
+                let argv = vec![format!("{}{tail}", bat.to_str().unwrap())];
+                let err = start(&argv, &[], None, dir.path(), CREATE_NO_WINDOW)
+                    .err()
+                    .expect("refused");
+                assert_ne!(err.kind(), ErrorKind::NotFound, "{argv:?}");
+                assert_eq!(err.kind(), ErrorKind::Unsupported, "{argv:?}");
+            }
+        }
+
+        #[test]
+        fn is_batch_ignores_trailing_dots_and_spaces() {
+            for name in ["a.bat", "a.CMD", "C:\\x\\a.bat.", "a.bat ", "a.cmd. .", "a.b.bat"] {
+                assert!(is_batch(Path::new(name)), "{name}");
+            }
+            for name in ["a.exe", "a.bat.exe", "a", "bat", "a.batx", "a.exe.", ""] {
+                assert!(!is_batch(Path::new(name)), "{name}");
+            }
         }
 
         /// The bug: a console started with std's `Command` got the app's own (piped) standard handles, so the
@@ -623,7 +1075,10 @@ mod tests {
                 out.display()
             );
             let argv = strings(&["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", &script]);
-            start(&argv, &[], &[], dir.path(), CREATE_NO_WINDOW).unwrap();
+            let path = std::env::var_os("PATH");
+            let env: Vec<_> = std::env::vars().collect();
+            let probe = start(&argv, &env, path.as_deref(), dir.path(), CREATE_NO_WINDOW).unwrap();
+            drop(probe);
             let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
             let seen = loop {
                 if let Ok(content) = std::fs::read_to_string(&out)

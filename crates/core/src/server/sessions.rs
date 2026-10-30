@@ -1161,6 +1161,11 @@ pub async fn resume(State(st): State<AppState>, Path(tab): Path<String>, Json(re
     if let Err((_, message)) = check_agent_installed(&st, &run, info.agent.as_deref()) {
         return cannot_resume(message);
     }
+    // A console Marshell opened for the conversation still runs: two CLIs must not write one conversation.
+    let folder = start_folder(&run, Some(info.cwd.clone()));
+    if super::outside::in_console(&st, info.agent.as_deref(), &session, &folder) {
+        return cannot_resume(super::outside::OPEN_IN_TERMINAL);
+    }
     // The check and the change to Running happen under one lock: of two resumes at once, one wins.
     let (saved, previous, generation) = match st.0.registry.begin_resume(&tab) {
         Ok(started) => started,
@@ -1275,6 +1280,10 @@ pub async fn restart(State(st): State<AppState>, Path(tab): Path<String>, Json(r
     };
     if let Err((_, message)) = check_agent_installed(&st, &run, info.agent.as_deref()) {
         return cannot_resume(message);
+    }
+    let folder = start_folder(&run, Some(info.cwd.clone()));
+    if super::outside::in_console(&st, info.agent.as_deref(), &session, &folder) {
+        return cannot_resume(super::outside::OPEN_IN_TERMINAL);
     }
     // From here the restart goes ahead. The row takes the new mode and a new generation first, so the
     // old process's exit (which the kill below causes) no longer touches it.

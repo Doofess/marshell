@@ -49,6 +49,17 @@ pub fn tab_path() -> Option<std::ffi::OsString> {
         .map(std::ffi::OsStr::to_os_string)
 }
 
+/// The environment a session's process starts from, before Marshell's own changes: the process's, plus the registry's
+/// system and user variables on Windows (PATH merged). It is read from portable-pty itself, as `tab_path` is, so a
+/// console opened outside gets what a session gets. A name or value that isn't valid Unicode is left out. Reads the
+/// registry on Windows: take it once per request, off the async workers.
+pub fn session_base_env() -> Vec<(String, String)> {
+    portable_pty::CommandBuilder::new("x")
+        .iter_full_env_as_str()
+        .map(|(name, value)| (name.to_string(), value.to_string()))
+        .collect()
+}
+
 /// The file `name` runs from the PATH `path`, with the PATHEXT endings on Windows.
 pub fn command_path_in(path: &std::ffi::OsStr, name: &str) -> Option<PathBuf> {
     let dirs: Vec<PathBuf> = std::env::split_paths(path).collect();

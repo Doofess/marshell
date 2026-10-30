@@ -4,10 +4,12 @@
 
 use super::AppState;
 use super::history::{Found, gone, look_up};
-use super::sessions::{Resume, cannot_resume, cannot_start_again, check_agent_installed, resolve, resume_session};
+use super::sessions::{
+    Resume, cannot_resume, cannot_start_again, check_agent_installed, resolve, resume_session, start_folder,
+};
 use crate::agents::presets;
-use crate::outside::{copy_line, outside_env};
-use crate::profiles::detect::{Program, agent_command, resume_line};
+use crate::outside::{ConversationKey, console_env, copy_line, lookup_path};
+use crate::profiles::detect::{Program, agent_command, resume_line, session_base_env};
 use axum::Json;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
@@ -17,9 +19,31 @@ use std::path::PathBuf;
 
 /// Why a running session can't be opened outside: two CLIs must not write one conversation.
 const END_FIRST: &str = "End the session first.";
+/// Why a conversation can't be resumed or opened again while the console Marshell opened for it still runs.
+pub(super) const OPEN_IN_TERMINAL: &str = "It's open in a system terminal.";
 const NO_AGENT: &str = "A plain terminal has no resume command.";
 const CONTROL_IN_FOLDER: &str =
     "Its folder's name holds a line break or another control character, so there is no one-line command to copy.";
+const CONTROL_IN_COMMAND: &str =
+    "Its command holds a line break or another control character, so there is no one-line command to copy.";
+
+/// The conversation a start of `agent` with `resume` in `folder` would write, if it is one. A plain shell has none,
+/// and a start with no resume flag is a new conversation, so neither is kept. "Continue the last conversation" is
+/// keyed by agent and folder, which is as close as Marshell can say which one that is.
+pub(super) fn console_key(agent: Option<&str>, resume: &Resume, folder: &str) -> Option<ConversationKey> {
+    let agent = agent?;
+    match resume {
+        Resume::Session(id) => Some(ConversationKey::by_id(agent, id)),
+        Resume::Last => Some(ConversationKey::last_in(agent, folder)),
+        Resume::Fresh => None,
+    }
+}
+
+/// Whether a console Marshell opened still holds the conversation `resume` would start. A Resume or a Restart asks
+/// this before it starts anything.
+pub(super) fn in_console(st: &AppState, agent: Option<&str>, resume: &Resume, folder: &str) -> bool {
+    console_key(agent, resume, folder).is_some_and(|key| st.0.consoles.is_open(&key))
+}
 
 /// What the command or the console is built from, taken from the core's own record.
 struct Plan {
@@ -58,12 +82,16 @@ fn no_resume(st: &AppState, agent: &str) -> Option<String> {
         .then(|| format!("{} has no resume command.", m.name))
 }
 
-/// `copy_line`, refusing a folder whose name would make the result more than one line.
+/// `copy_line`, refusing a folder whose name, or a command that, would make the result more than one line.
 fn one_line(family: ShellFamily, cwd: &str, line: &str) -> Result<String, &'static str> {
     if cwd.chars().any(char::is_control) {
         return Err(CONTROL_IN_FOLDER);
     }
-    Ok(copy_line(family, cwd, line))
+    let copied = copy_line(family, cwd, line);
+    if copied.chars().any(char::is_control) {
+        return Err(CONTROL_IN_COMMAND);
+    }
+    Ok(copied)
 }
 
 fn tab_plan(st: &AppState, info: &SessionInfo, purpose: Purpose) -> Result<Plan, String> {
@@ -205,26 +233,39 @@ async fn open(st: &AppState, plan: Plan) -> Response {
     if let Err((_, message)) = check_agent_installed(st, &run, Some(&plan.agent)) {
         return cannot_resume(message);
     }
-    let (env, env_remove) = outside_env(&run.env);
-    let cwd = if plan.cwd.is_empty() {
-        run.cwd
-            .clone()
-            .map(PathBuf::from)
-            .or_else(dirs::home_dir)
-            .unwrap_or_default()
-    } else {
-        PathBuf::from(&plan.cwd)
+    let folder = start_folder(&run, Some(plan.cwd.clone()));
+    // Taken before anything starts and held until the console is in the map, so a second open of the conversation
+    // is refused while this one is starting. No lock is held across the spawn.
+    let reservation = match console_key(Some(&plan.agent), &plan.resume, &folder) {
+        Some(key) => match st.0.consoles.reserve(key) {
+            Some(reservation) => Some(reservation),
+            None => return cannot_resume(OPEN_IN_TERMINAL),
+        },
+        None => None,
     };
+    let cwd = PathBuf::from(&folder);
+    let profile_env = run.env.clone();
+    let bin = crate::paths::bin_dir(st.home());
+    let read_tab_path = st.0.tab_path;
     let argv = run.argv;
     let open_console = st.console_opener();
-    match tokio::task::spawn_blocking(move || open_console(&argv, &env, &env_remove, &cwd)).await {
-        Ok(Ok(())) => StatusCode::NO_CONTENT.into_response(),
+    // The environment and the PATH are read as a session's are (the registry on Windows), off the async workers.
+    let started = tokio::task::spawn_blocking(move || {
+        let env = console_env(session_base_env(), &profile_env, &bin);
+        let path = lookup_path(&profile_env, read_tab_path(), &bin);
+        open_console(&argv, &env, path.as_deref(), &cwd)
+    })
+    .await;
+    match started {
+        Ok(Ok(probe)) => {
+            if let Some(reservation) = reservation {
+                reservation.finish(probe);
+            }
+            StatusCode::NO_CONTENT.into_response()
+        }
         Ok(Err(err)) if err.kind() == std::io::ErrorKind::Unsupported => cannot_resume(err.to_string()),
-        Ok(Err(err)) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("Couldn't open a system terminal: {err}"),
-        )
-            .into_response(),
+        // The page adds "Couldn't open a system terminal: " itself.
+        Ok(Err(err)) => (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()).into_response(),
         Err(err) => (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()).into_response(),
     }
 }
@@ -337,6 +378,13 @@ mod tests {
     fn open_outside_one_line_refuses_a_folder_with_a_control_character() {
         assert!(one_line(ShellFamily::Posix, "/a\nb", "claude").is_err());
         assert!(one_line(ShellFamily::PowerShell, "C:/a\tb", "claude").is_err());
+        // The command itself: a manifest's `commands` or `continue` could hold a line break.
+        assert_eq!(
+            one_line(ShellFamily::Posix, "/a", "claude --x\ny"),
+            Err(CONTROL_IN_COMMAND)
+        );
+        assert_eq!(one_line(ShellFamily::Posix, "", "claude\r"), Err(CONTROL_IN_COMMAND));
+        assert!(one_line(ShellFamily::Cmd, "C:\\a", "claude\u{1b}[31m").is_err());
         assert_eq!(
             one_line(ShellFamily::Posix, "/a b", "claude").unwrap(),
             "cd '/a b' && claude"

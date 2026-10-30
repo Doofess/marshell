@@ -590,6 +590,18 @@ async fn open_in_new_tab(
         Found::Gone => return Err(Box::new(cannot_resume(gone(&agent_name)))),
         Found::RunningInATab => return Err(Box::new(cannot_resume(RUNNING_IN_A_TAB))),
     };
+    // A console Marshell opened for it still runs: a Resume would be a second CLI on one conversation. A fork
+    // starts a new conversation, so it may go on.
+    if !fork
+        && super::outside::in_console(
+            &st,
+            Some(&agent_name),
+            &super::sessions::Resume::Session(meta.session_id.clone()),
+            "",
+        )
+    {
+        return Err(Box::new(cannot_resume(super::outside::OPEN_IN_TERMINAL)));
+    }
     let tab_name = if fork {
         tab_name.as_deref().and_then(fork_name)
     } else {
