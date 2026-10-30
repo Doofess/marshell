@@ -40,7 +40,8 @@ export function rowLabel(r: RowModel, density: Density = "comfortable"): string 
     if (r.recap) seen.push(r.recap.text, `${formatAge(r.recap.ageMs)} ago`);
     seen.push(formatUsage(r.usage));
   }
-  const parts = [`${sessionWord(r.number)}, ${seen.filter(Boolean).join(" ")}.`, `${agentAndModel(r)}, ${GLYPHS[r.status].label}.`];
+  // A setup note already ends its sentence; the name's own period isn't doubled after it.
+  const parts = [`${sessionWord(r.number)}, ${seen.filter(Boolean).join(" ").replace(/\.$/, "")}.`, `${agentAndModel(r)}, ${GLYPHS[r.status].label}.`];
   if (r.elevated) parts.push("Administrator.");
   if (caution) parts.push(`${caution}.`);
   if (r.muted) parts.push("Muted.");

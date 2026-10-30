@@ -34,6 +34,7 @@ describe("rowLabel", () => {
   it("reads a setup note where the row draws it, after the phrase", () => {
     const l = rowLabel({ ...base, muted: false, setupNote: { text: "Setup failed (exit 2).", tabId: "t9" } });
     expect(l).toContain("npm test · Setup failed (exit 2).");
+    expect(l).not.toContain("..");
     expect(rowLabel({ ...base, phrase: "", muted: false, setupNote: { text: "Setup failed (exit 2)." } })).toContain("Setup failed (exit 2).");
   });
 
