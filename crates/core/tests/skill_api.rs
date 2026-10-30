@@ -277,3 +277,25 @@ async fn hooks_plan_with_skill_adds_the_skill_file() {
     assert_eq!(status, StatusCode::OK, "{preview}");
     assert_eq!(paths_of(&preview), hooks_only);
 }
+
+#[tokio::test]
+async fn remove_plan_refuses_an_edited_skill() {
+    let e = env();
+    let file = skill_file(&e.user, "codex");
+    std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+    std::fs::write(&file, b"mine").unwrap();
+    let req = base("POST", "/v1/agents/codex/skill/remove-plan")
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from("{}"))
+        .unwrap();
+    let res = e.app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    let bytes = axum::body::to_bytes(res.into_body(), 1 << 22).await.unwrap();
+    let body = String::from_utf8_lossy(&bytes);
+    let message = format!(
+        "{} was edited after Marshell installed it, so Marshell leaves it.",
+        file.display()
+    );
+    assert!(body.contains(&message), "{body}");
+    assert_eq!(std::fs::read(&file).unwrap(), b"mine");
+}

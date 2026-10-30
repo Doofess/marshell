@@ -1215,6 +1215,15 @@ pub async fn skill_remove_plan(
     let preview = tokio::task::spawn_blocking(move || {
         let path = st.skill_file(&agent)?;
         let bytes = AppState::skill_bytes(&path)?;
+        if skill::state_of(bytes.as_deref()) == SkillInstall::Edited {
+            return Err((
+                StatusCode::UNPROCESSABLE_ENTITY,
+                format!(
+                    "{} was edited after Marshell installed it, so Marshell leaves it.",
+                    path.display()
+                ),
+            ));
+        }
         let changes = skill::remove_plan(adapter.cli_name(), &path, bytes.as_deref());
         Ok::<_, Fail>(st.0.config.preview(changes))
     })
