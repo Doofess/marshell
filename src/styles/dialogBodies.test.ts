@@ -42,6 +42,14 @@ describe("dialog bodies", () => {
       expect(rule(read(w.file), w.wrapper)).toMatch(/grid-template-rows:\s*minmax\(0,\s*1fr\)/);
     });
   }
+  it("the scripts trust card: only its list scrolls, capped below the window, with the scrollbar visible", () => {
+    const css = read("features/scripts/ScriptsTrust.css");
+    expect(rule(css, ".scripts-trust__list")).toMatch(/overflow-y:\s*auto/);
+    expect(rule(css, ".scripts-trust__list")).toMatch(/max-block-size:\s*min\(40vh/);
+    expect(css).not.toMatch(/scrollbar-width:\s*none|::-webkit-scrollbar\s*\{\s*display:\s*none/);
+    const scrollers = [...css.matchAll(/([^{}]+)\{([^{}]*overflow(?:-x|-y)?:\s*(?:auto|scroll)[^{}]*)\}/g)].map((m) => m[1]!.trim());
+    expect(scrollers).toEqual([".scripts-trust__list"]);
+  });
   it("lists both bodies in the no-scroll allowlist, with a reason", () => {
     const test = readFileSync(join(SRC, "styles/noScrollInMainWindow.test.ts"), "utf8");
     expect(test).toContain("fix-sheet__body");

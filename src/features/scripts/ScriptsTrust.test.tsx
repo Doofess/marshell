@@ -31,4 +31,19 @@ describe("ScriptsTrust", () => {
     expect(out.match(/aria-disabled="true"/g)?.length).toBe(2);
     expect(out).not.toMatch(/\sdisabled=/);
   });
+  it("scrolls the script lines in their own focusable region, with both buttons outside it", () => {
+    const out = h({ setup: "pnpm install" });
+    const open = out.indexOf('<div class="scripts-trust__list"');
+    expect(open).toBeGreaterThan(-1);
+    const tag = out.slice(open, out.indexOf(">", open));
+    expect(tag).toContain('tabindex="0"');
+    expect(tag).toContain('role="region"');
+    expect(tag).toContain('aria-label="Scripts"');
+    const close = out.indexOf("</div>", open);
+    const inside = out.slice(open, close);
+    expect(inside).toContain("setup: pnpm install");
+    expect(inside).not.toContain("<button");
+    expect(out.indexOf("Allow and run")).toBeGreaterThan(close);
+    expect(out.indexOf(">Cancel<")).toBeGreaterThan(close);
+  });
 });

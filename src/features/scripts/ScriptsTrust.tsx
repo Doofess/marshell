@@ -2,6 +2,7 @@ import type { Ref } from "react";
 import type { RepoScripts } from "../../generated/RepoScripts";
 import { CommandList } from "../tasks/CommandList";
 import { scriptLines } from "./confirmScripts";
+import "./ScriptsTrust.css";
 
 /**
  * The question a repo's `marshell.json` asks before any of it runs: the exact commands, in text. It uses the launcher's heading,
@@ -33,7 +34,9 @@ export function ScriptsTrust({
       <p className="launcher__lede" dir="auto">
         {`marshell.json in ${scripts.root} runs these commands on this computer:`}
       </p>
-      <CommandList commands={scriptLines(scripts)} />
+      <div className="scripts-trust__list" tabIndex={0} role="region" aria-label="Scripts">
+        <CommandList commands={scriptLines(scripts)} />
+      </div>
       <div className="launcher__actions">
         <button type="button" className="launcher__start" data-allow aria-disabled={busy || undefined} onClick={() => !busy && onAllow()}>
           {allowLabel}

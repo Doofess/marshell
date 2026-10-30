@@ -11,6 +11,7 @@ import { sessions } from "../../lib/api/sessions";
 import { allowScripts, getScripts, runScript } from "../../lib/api/scripts";
 import { readyPending, type PendingSetup } from "../scripts/afterSetup";
 import { runControl } from "../scripts/confirmScripts";
+import { afterReread, askOnRunFailure } from "../scripts/runRetry";
 import { ScriptsTrustDialog } from "../scripts/ScriptsTrustDialog";
 import { decide, release } from "../../lib/api/permissions";
 import { peek as peekScreen } from "../../lib/api/peek";
@@ -520,15 +521,18 @@ export function LiveApp() {
   // The trust card over the window, for a Run on a file not yet allowed.
   const [runAsk, setRunAsk] = useState<{ scripts: RepoScripts; busy: boolean; error: string | null } | null>(null);
   const scriptsError = (e: unknown) => (e instanceof ApiError ? e.message : String(e));
-  /** Starts the run script as its own tab and selects it. A 409 (the file changed since it was shown) reads it again and asks again. */
-  const startRun = async (scripts: RepoScripts): Promise<void> => {
+  /**
+   * Starts the run script as its own tab and selects it. A 409 (the file changed since it was shown) or a 403 (trust for the repo
+   * was replaced since) reads the file again and asks again; a retried call refused again announces the error and stops.
+   */
+  const startRun = async (scripts: RepoScripts, retried = false): Promise<void> => {
     if (!endpoint || scripts.hash === null) return;
     try {
       const created = await runScript(endpoint, { cwd: scripts.root, script: "run", hash: scripts.hash, ...size.current });
       setRunAsk(null);
       pick(created.tab_id);
     } catch (e) {
-      if (!(e instanceof ApiError && e.status === 409)) {
+      if (!askOnRunFailure(e instanceof ApiError ? e.status : undefined, retried)) {
         setRunAsk((a) => (a === null ? a : { ...a, busy: false, error: scriptsError(e) }));
         announce(scriptsError(e));
         return;
@@ -536,12 +540,17 @@ export function LiveApp() {
       await askAgain(scripts.root);
     }
   };
-  /** The file changed under the person: read it again and show the card for the new one (nothing runs if it no longer asks). */
+  /** The file changed or its trust was replaced: read it again, then show the card, start it if it is trusted now, or close. */
   const askAgain = async (root: string) => {
     if (!endpoint) return;
     const again = await getScripts(endpoint, root).catch(() => null);
     if (focusedId !== undefined && again !== null) setRepoScripts({ id: focusedId, scripts: again });
-    setRunAsk(again !== null && again.run !== null && again.problem === null && again.hash !== null && !again.trusted ? { scripts: again, busy: false, error: null } : null);
+    const next = afterReread(again);
+    if (next.kind === "start") {
+      await startRun(next.scripts, true);
+      return;
+    }
+    setRunAsk(next.kind === "ask" ? { scripts: next.scripts, busy: false, error: null } : null);
   };
   /** Run: a trusted file starts at once; any other asks first. */
   const runRepoScript = () => {

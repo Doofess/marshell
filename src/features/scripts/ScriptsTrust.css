@@ -1,0 +1,17 @@
+/* The trust card's script list scrolls on its own, so the heading and the buttons stay in view however long a script is.
+   The themed scrollbar stays visible: it is the sign that there is more to read before allowing. */
+.scripts-trust__list {
+  max-block-size: min(40vh, 20rem);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  border-radius: var(--radius);
+}
+.scripts-trust__list:focus-visible {
+  outline: 2px solid var(--focus, var(--accent));
+  outline-offset: 2px;
+}
+@media (forced-colors: active) {
+  .scripts-trust__list:focus-visible {
+    outline-color: Highlight;
+  }
+}
