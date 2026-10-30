@@ -21,6 +21,8 @@ pub enum Refusal {
     Ended,
     /// The agent wasn't ready within the core's 30 s.
     NotReady,
+    /// The agent is waiting for an answer (a permission or a question), which text would land in.
+    Waiting,
 }
 
 impl Refusal {
@@ -32,6 +34,7 @@ impl Refusal {
             Refusal::NotReady => {
                 format!("Session {number} wasn't ready within 30 s, so its prompt line wasn't filled.")
             }
+            Refusal::Waiting => format!("Session {number} is waiting for an answer, so it can't take text."),
         }
     }
 }
@@ -159,6 +162,7 @@ fn refusal(body: &str) -> Refusal {
     match reason.as_deref() {
         Some("ended") => Refusal::Ended,
         Some("not_ready") => Refusal::NotReady,
+        Some("waiting") => Refusal::Waiting,
         Some(other) => Refusal::Line(other.to_string()),
         None => Refusal::Line(body.trim().to_string()),
     }
@@ -221,6 +225,10 @@ mod tests {
             Refusal::NotReady.message(4),
             "Session 4 wasn't ready within 30 s, so its prompt line wasn't filled."
         );
+        assert_eq!(
+            Refusal::Waiting.message(4),
+            "Session 4 is waiting for an answer, so it can't take text."
+        );
         assert_eq!(Refusal::Line("x".into()).message(4), "x");
     }
 
@@ -228,6 +236,7 @@ mod tests {
     fn a_409_reason_becomes_a_refusal() {
         assert_eq!(refusal(r#"{"reason":"ended"}"#), Refusal::Ended);
         assert_eq!(refusal(r#"{"reason":"not_ready"}"#), Refusal::NotReady);
+        assert_eq!(refusal(r#"{"reason":"waiting"}"#), Refusal::Waiting);
         assert_eq!(
             refusal(r#"{"reason":"It is paused."}"#),
             Refusal::Line("It is paused.".into())

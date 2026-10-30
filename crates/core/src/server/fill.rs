@@ -9,7 +9,7 @@ use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use marshell_protocol::agents::HookInstall;
-use marshell_protocol::api::FillRequest;
+use marshell_protocol::api::{FillRequest, LiveState};
 use std::time::{Duration, Instant};
 
 /// The refusal for text that holds a control character.
@@ -59,6 +59,8 @@ pub async fn fill(State(st): State<AppState>, Path(tab): Path<String>, Json(req)
     if let Err(line) = check_text(&req.text) {
         return (StatusCode::BAD_REQUEST, line).into_response();
     }
+    // The 30 s start here, so a slow settings or version lookup counts against them.
+    let deadline = Instant::now() + FILL_TIMEOUT;
     // Claude Code's settings are read once, off the async workers.
     let claude = st
         .registry()
@@ -66,14 +68,14 @@ pub async fn fill(State(st): State<AppState>, Path(tab): Path<String>, Json(req)
         .is_some_and(|r| r.agent.as_deref() == Some("claude"));
     let hooks = if req.wait && claude {
         let asker = st.clone();
-        tokio::task::spawn_blocking(move || super::agents::setup_of(&asker).ok().map(|s| s.hooks))
-            .await
-            .ok()
-            .flatten()
+        let lookup = tokio::task::spawn_blocking(move || super::agents::setup_of(&asker).ok().map(|s| s.hooks));
+        match tokio::time::timeout_at(tokio::time::Instant::from_std(deadline), lookup).await {
+            Ok(done) => done.ok().flatten(),
+            Err(_) => return cannot_resume("not_ready"),
+        }
     } else {
         None
     };
-    let deadline = Instant::now() + FILL_TIMEOUT;
     // The stream end last seen, and when it last changed.
     let mut seen: Option<(u64, Instant)> = None;
     loop {
@@ -92,6 +94,16 @@ pub async fn fill(State(st): State<AppState>, Path(tab): Path<String>, Json(req)
         if session.is_frozen() {
             return cannot_resume("It is paused.");
         }
+        // A pending answer would take the text as its own keys (a digit, `y`), so nothing is typed until it is
+        // answered, and Marshell's held card is left alone.
+        let waiting = st.holds().has_tab(&tab)
+            || row
+                .live
+                .as_ref()
+                .is_some_and(|l| matches!(l.state, LiveState::NeedsPermission | LiveState::NeedsQuestion));
+        if waiting && !req.wait {
+            return cannot_resume("waiting");
+        }
         if !req.wait {
             return write(&st, &tab, &session, req.text);
         }
@@ -103,7 +115,7 @@ pub async fn fill(State(st): State<AppState>, Path(tab): Path<String>, Json(req)
         };
         seen = Some((end, changed));
         let hooked = claude_hooked(row.agent.as_deref(), row.status_note.as_deref(), hooks);
-        if ready(hooked, st.registry().session_started(&tab), end, now - changed) {
+        if !waiting && ready(hooked, st.registry().session_started(&tab), end, now - changed) {
             return write(&st, &tab, &session, req.text);
         }
         if now >= deadline {
@@ -113,9 +125,9 @@ pub async fn fill(State(st): State<AppState>, Path(tab): Path<String>, Json(req)
     }
 }
 
-/// Types the text into the session, as `/input` does: answering in the terminal.
+/// Types the text into the session. Unlike `/input` it never releases a held permission card: it is only called
+/// with nothing pending.
 fn write(st: &AppState, tab: &str, session: &crate::pty::Session, text: String) -> Response {
-    st.holds().release_tab(tab);
     st.registry().note_input(tab);
     session.write_input(text.into_bytes());
     StatusCode::NO_CONTENT.into_response()

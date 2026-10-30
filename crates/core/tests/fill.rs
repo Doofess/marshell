@@ -83,6 +83,47 @@ fn output_has(session: &Session, needle: &str, wait: Duration) -> bool {
     }
 }
 
+/// A state whose Claude Code version and settings are pinned to scratch values, so no test runs a real `claude`
+/// or reads the user's settings.
+fn claude_state(home: &Path) -> AppState {
+    state(home)
+        .with_claude_version(Some("2.1.302".into()))
+        .with_claude_compact_paths(home.join("user"), Vec::new())
+        .with_claude_settings(home.join("claude-settings.json"))
+}
+
+async fn start_claude(app: &axum::Router, cwd: &Path) -> String {
+    let body = serde_json::json!({
+        "cols": 80, "rows": 24, "profile_id": "echoer", "agent": "claude", "cwd": cwd.to_string_lossy(),
+    });
+    let res = app
+        .clone()
+        .oneshot(api("POST", "/v1/sessions", Some(body)))
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    serde_json::from_str::<serde_json::Value>(&body_of(res).await).unwrap()["tab_id"]
+        .as_str()
+        .unwrap()
+        .to_string()
+}
+
+/// A Claude hook call carrying a recorded fixture.
+fn hook_request(role: &str, tab: &str, name: &str) -> Request<Body> {
+    let file = format!(
+        "{}/tests/fixtures/claude/2.1.302/{name}.json",
+        env!("CARGO_MANIFEST_DIR")
+    );
+    let mut req = api("POST", "/v1/hook", None);
+    *req.body_mut() = Body::from(std::fs::read(file).unwrap());
+    let h = req.headers_mut();
+    h.insert("x-marshell-role", role.parse().unwrap());
+    h.insert("x-marshell-agent", "claude".parse().unwrap());
+    h.insert("x-marshell-tab", tab.parse().unwrap());
+    h.insert("x-marshell-version", "0.0.0".parse().unwrap());
+    req
+}
+
 fn fill_body(text: &str, wait: bool) -> Option<serde_json::Value> {
     Some(serde_json::json!({ "text": text, "wait": wait }))
 }
@@ -190,36 +231,10 @@ async fn fill_refuses_an_ended_row() {
 async fn fill_refuses_a_row_whose_agent_has_ended() {
     let tmp = tempfile::tempdir().unwrap();
     let home = tmp.path().join("home");
-    let st = state(&home)
-        .with_claude_version(Some("2.1.302".into()))
-        .with_claude_compact_paths(home.join("user"), Vec::new());
+    let st = claude_state(&home);
     let app = router(st.clone());
-    let body = serde_json::json!({
-        "cols": 80, "rows": 24, "profile_id": "echoer", "agent": "claude", "cwd": tmp.path().to_string_lossy(),
-    });
-    let res = app
-        .clone()
-        .oneshot(api("POST", "/v1/sessions", Some(body)))
-        .await
-        .unwrap();
-    let tab = serde_json::from_str::<serde_json::Value>(&body_of(res).await).unwrap()["tab_id"]
-        .as_str()
-        .unwrap()
-        .to_string();
-    let hook = |name: &str| {
-        let file = format!(
-            "{}/tests/fixtures/claude/2.1.302/{name}.json",
-            env!("CARGO_MANIFEST_DIR")
-        );
-        let mut req = api("POST", "/v1/hook", None);
-        *req.body_mut() = Body::from(std::fs::read(file).unwrap());
-        let h = req.headers_mut();
-        h.insert("x-marshell-role", "event".parse().unwrap());
-        h.insert("x-marshell-agent", "claude".parse().unwrap());
-        h.insert("x-marshell-tab", tab.parse().unwrap());
-        h.insert("x-marshell-version", "0.0.0".parse().unwrap());
-        req
-    };
+    let tab = start_claude(&app, tmp.path()).await;
+    let hook = |name: &str| hook_request("event", &tab, name);
     let live = || st.registry().row(&tab).unwrap().live.map(|l| l.state);
     let res = app.clone().oneshot(hook("SessionStart")).await.unwrap();
     assert_eq!(res.status(), StatusCode::NO_CONTENT);
@@ -285,5 +300,139 @@ async fn fill_refuses_a_paused_session() {
             .unwrap();
         assert_eq!(res.status(), StatusCode::CONFLICT);
         assert_eq!(body_of(res).await, r#"{"reason":"It is paused."}"#);
+    }
+}
+
+/// A session that waits for an answer takes no text: the held card stays, and nothing reaches the pty.
+#[tokio::test]
+async fn fill_refuses_a_session_waiting_for_an_answer() {
+    let tmp = tempfile::tempdir().unwrap();
+    let st = claude_state(&tmp.path().join("home"));
+    let app = router(st.clone());
+    let tab = start_claude(&app, tmp.path()).await;
+    let session = st.session(&tab).unwrap();
+    let res = app
+        .clone()
+        .oneshot(hook_request("event", &tab, "SessionStart"))
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::NO_CONTENT);
+    // The permission request holds its call open until it is answered.
+    let held = tokio::spawn({
+        let app = app.clone();
+        let req = hook_request("permission", &tab, "PermissionRequest");
+        async move { app.oneshot(req).await.unwrap().status() }
+    });
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while !st.holds().has_tab(&tab) {
+        assert!(Instant::now() < deadline, "the permission request was never held");
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    let route = format!("/v1/sessions/{tab}/fill");
+    let res = app
+        .clone()
+        .oneshot(api("POST", &route, fill_body("1", false)))
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::CONFLICT);
+    assert_eq!(body_of(res).await, r#"{"reason":"waiting"}"#);
+    // The card is still pending: the fill did not release it to the CLI's own dialog.
+    assert!(st.holds().has_tab(&tab));
+    // Nothing was typed: the person's Enter reaches the echo agent as an empty line.
+    session.write_input(b"\r".to_vec());
+    assert!(output_has(&session, "got:", Duration::from_secs(10)));
+    assert!(
+        !output_has(&session, "got:1", Duration::from_millis(300)),
+        "the text was typed"
+    );
+
+    // Answered: the state clears and the fill lands.
+    let rid = st.holds().pending()[0].rid.clone();
+    assert!(st.holds().release(&rid));
+    assert_eq!(held.await.unwrap(), StatusCode::NO_CONTENT);
+    let res = app
+        .clone()
+        .oneshot(hook_request("event", &tab, "PostToolUse"))
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::NO_CONTENT);
+    let live = st.registry().row(&tab).unwrap().live.map(|l| l.state);
+    assert_ne!(live, Some(marshell_protocol::api::LiveState::NeedsPermission));
+    let res = app
+        .clone()
+        .oneshot(api("POST", &route, fill_body("hello", false)))
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::NO_CONTENT);
+    if let Some(session) = st.remove_session(&tab) {
+        session.force_kill();
+    }
+}
+
+/// A Claude row with Marshell's hooks installed is not ready until its SessionStart arrives, however quiet it is.
+#[tokio::test]
+async fn fill_with_wait_holds_for_session_start_when_the_hooks_are_installed() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = tmp.path().join("home");
+    // Settings may be written only in a recorded project folder.
+    let project = marshell_core::projects::canonical(tmp.path());
+    std::fs::create_dir_all(&home).unwrap();
+    marshell_core::projects::record(&home, &project, 1).unwrap();
+    let st = claude_state(&home).with_claude_settings(project.join("settings.json"));
+    let app = router(st.clone());
+    // Install the hooks the way the app does: plan, then apply what was shown.
+    let bridge = marshell_core::paths::bridge_exe(&home);
+    std::fs::create_dir_all(bridge.parent().unwrap()).unwrap();
+    std::fs::write(&bridge, "").unwrap();
+    let post_json = |uri: &str, body: serde_json::Value| {
+        let app = app.clone();
+        let req = api("POST", uri, Some(body));
+        async move {
+            let res = app.oneshot(req).await.unwrap();
+            let status = res.status();
+            let json = serde_json::from_str::<serde_json::Value>(&body_of(res).await).unwrap_or_default();
+            (status, json)
+        }
+    };
+    let (status, preview) = post_json(
+        "/v1/agents/claude/hooks/plan",
+        serde_json::json!({"status": true, "statusline": true}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{preview}");
+    let hashes: Vec<serde_json::Value> = preview["files"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|f| serde_json::json!({"path": f["path"], "hash": f.get("before_hash").cloned().unwrap_or_default()}))
+        .collect();
+    let (status, applied) = post_json(
+        "/v1/config/apply",
+        serde_json::json!({"changeset_id": preview["changeset_id"], "expected_hashes": hashes}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{applied}");
+
+    let tab = start_claude(&app, tmp.path()).await;
+    let route = format!("/v1/sessions/{tab}/fill");
+    let started = Instant::now();
+    let filling = tokio::spawn({
+        let app = app.clone();
+        let req = api("POST", &route, fill_body("hello", true));
+        async move { app.oneshot(req).await.unwrap().status() }
+    });
+    // Quiet for well over 1.5 s, but no SessionStart yet.
+    tokio::time::sleep(Duration::from_secs(3)).await;
+    assert!(!filling.is_finished(), "filled before the SessionStart");
+    let res = app
+        .clone()
+        .oneshot(hook_request("event", &tab, "SessionStart"))
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::NO_CONTENT);
+    assert_eq!(filling.await.unwrap(), StatusCode::NO_CONTENT);
+    assert!(started.elapsed() >= Duration::from_secs(3));
+    if let Some(session) = st.remove_session(&tab) {
+        session.force_kill();
     }
 }
