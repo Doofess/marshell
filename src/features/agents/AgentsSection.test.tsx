@@ -241,7 +241,7 @@ describe("AgentsSectionView: Antigravity", () => {
     expect(switchLabels(h)).toEqual(["Show status and context", "Approve from anywhere", "Keep my status line working", "Install the marshell skill"]);
     expect(h).not.toContain("Let Marshell set the mode");
     expect(h).not.toMatch(/<(input|button)[^>]*tabindex="-1"/);
-    expect(h).toContain("Add 5 hook entries in C:/h/.gemini/config/hooks.json (a new file) and chain your status line in C:/h/.gemini/antigravity-cli/settings.json. Add the marshell skill in C:/h/.claude/skills/marshell/SKILL.md.");
+    expect(h).toContain("Add 5 hook entries in C:/h/.gemini/config/hooks.json (a new file) and chain your status line in C:/h/.gemini/antigravity-cli/settings.json. Add the marshell skill in C:/h/.gemini/config/skills/marshell/SKILL.md.");
   });
   it("the_antigravity_approve_toggle_says_bypass_only", () => {
     expect(withAgy(AGY_SETUP, card())).toContain("Cards for risky commands in Bypass. In other modes Antigravity asks in its terminal.");
