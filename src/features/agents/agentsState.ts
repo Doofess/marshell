@@ -2,25 +2,26 @@ import type { AgentSetup } from "../../generated/AgentSetup";
 import type { ConfigPreview } from "../../generated/ConfigPreview";
 import type { HookPlanRequest } from "../../generated/HookPlanRequest";
 import { deletedFiles, previewDiff, toDetection, type HookAgent } from "../../lib/api/agents";
-import { addsStatusLine, CLI_NAME, consentHeadline, fileName, removalCopy, type Capability, type CliId, type ConsentPlan, type Detection } from "../onboarding/consent";
+import { addsStatusLine, CLI_NAME, consentHeadline, fileName, opensDiff, removalCopy, skillUndo, type Capability, type CliId, type ConsentPlan, type Detection } from "../onboarding/consent";
 
 /** The capabilities offered for a new Claude Code setup. */
-export const OFFER: Capability[] = ["status", "approve", "statusline"];
+export const OFFER: Capability[] = ["status", "approve", "statusline", "skill"];
 /** Codex has no status line, so its card has no status line controls. */
-const CODEX_OFFER: Capability[] = ["status", "approve"];
+const CODEX_OFFER: Capability[] = ["status", "approve", "skill"];
 export type Want = HookPlanRequest;
-export const DEFAULT_WANT: Want = { status: true, statusline: true, approve: true };
+export const DEFAULT_WANT: Want = { status: true, statusline: true, approve: true, skill: true };
 /** Approval can be added on its own; chaining still needs status. */
 export const installRequest = (w: Want, agent: HookAgent = "claude"): HookPlanRequest => ({
   status: w.status,
   statusline: agent !== "codex" && w.status && w.statusline,
   approve: w.approve,
+  skill: w.skill,
 });
 const onOf = installRequest;
 const ON = onOf(DEFAULT_WANT);
 
 /** An existing status install needs only the permission hook. */
-export const setupWant = (s: AgentSetup): Want => s.hooks === "installed" ? { status: false, statusline: false, approve: true } : DEFAULT_WANT;
+export const setupWant = (s: AgentSetup): Want => ({ ...(s.hooks === "installed" ? { status: false, statusline: false, approve: true } : DEFAULT_WANT), skill: s.skill !== "installed" && s.skill !== "unavailable" });
 
 /** Where the Agents dialog opens from a session row's "set up" link: on that row's agent's Set up card. */
 export type SetupStart = { setup: HookAgent };
@@ -78,6 +79,9 @@ export function actions(s: AgentSetup): Array<"setup" | "hooksOff"> {
 export const hooksOffNotice = (statuslineLeft: boolean): string =>
   `Hooks off. Sessions started from now show limited status.${statuslineLeft ? " Your status line was changed since setup, so it was left as it is." : ""}`;
 
+/** Whether a Set up's diff starts open: an edited skill that is about to be replaced is shown, never replaced silently. */
+export const startsOpen = (want: Want, skill: AgentSetup["skill"] | undefined): boolean => opensDiff(want.skill, skill);
+
 /** Where a Set up is: the preview the core made (none when the file is refused), and what the card says about it. */
 export type InstallFlow = { preview: ConfigPreview | null; open: boolean; busy: boolean; error?: string; conflict?: boolean; want?: Want };
 
@@ -114,7 +118,7 @@ export function consentProps(s: AgentSetup, flow: InstallFlow) {
     on,
     configPath: s.settings_path,
     backupPath: s.snapshots_dir,
-    removal: removalCopy(cli, on, s.hooks_path === undefined ? undefined : { hooksFile: fileName(s.hooks_path), created: true }, undefined, addsStatusLine(detection, on)),
+    removal: removalCopy(cli, on, s.hooks_path === undefined ? undefined : { hooksFile: fileName(s.hooks_path), created: true }, undefined, addsStatusLine(detection, on), skillUndo(on.skill, s.skill)),
     diff: flow.preview ? previewDiff(flow.preview) : "",
     deleted: flow.preview ? deletedFiles(flow.preview) : undefined,
     needsTrust: s.needs_trust,
@@ -124,5 +128,5 @@ export function consentProps(s: AgentSetup, flow: InstallFlow) {
   };
   // Allow is for a preview the core can apply; `done` is the one that has nothing left to change, whose Skip becomes Done.
   const allow = Boolean(flow.preview?.can_apply) && !flow.conflict;
-  return { scenario: { detection, plan }, on, offer: s.hooks === "installed" ? (["approve"] as Capability[]) : cli === "codex" ? CODEX_OFFER : OFFER, open: flow.open, busy: flow.busy, error: flow.error, allow, done };
+  return { scenario: { detection, plan }, on, offer: s.hooks === "installed" ? (["approve", "skill"] as Capability[]) : cli === "codex" ? CODEX_OFFER : OFFER, open: flow.open, busy: flow.busy, error: flow.error, allow, done };
 }

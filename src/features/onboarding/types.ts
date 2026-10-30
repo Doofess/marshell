@@ -19,11 +19,16 @@ export type Detection = {
   skipsAll?: { setting: string };
   /** The user has a status line of their own. `false` means there is none, so a status line is added rather than chained; unset means unknown. */
   hasOwnStatusLine?: boolean;
+  /** The state of the marshell skill file and where it goes. Unset means unknown, which offers nothing. */
+  skill?: "none" | "installed" | "outdated" | "edited" | "unavailable";
+  skillPath?: string;
+  /** Why the skill is unavailable: Marshell can't read the file, it is too large, or the config guard refuses its path. */
+  skillProblem?: string;
   /** Marshell runs this CLI as a terminal session but has no adapter for it yet, so it has no settings to show or change here. */
   later?: boolean;
 };
 
-export type Capability = "status" | "approve" | "statusline";
+export type Capability = "status" | "approve" | "statusline" | "skill";
 export type Availability = { available: boolean; reason?: string };
 
 /** What the owner agrees to for one CLI: the switches, the exact diff, the backup and the way out. */

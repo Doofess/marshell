@@ -8,7 +8,7 @@ import { canEdit, CAPABILITIES, consentHeadline, entryCount, removalCopy, type C
 import { emptyStatesFor } from "./emptyStates";
 import { CONSENT, DETECTIONS } from "./fixtures";
 
-const ALL: Record<Capability, boolean> = { status: true, approve: true, statusline: true };
+const ALL: Record<Capability, boolean> = { status: true, approve: true, statusline: true, skill: false };
 const added = (diff: string) => parseUnifiedDiff(diff).lines.filter((l) => l.kind === "add").map((l) => l.text);
 const entriesIn = (diff: string) => added(diff).filter((t) => /(?:event|permission) --agent/.test(t)).length;
 
@@ -153,7 +153,7 @@ describe("the Antigravity diff writes ~/.gemini/config/hooks.json in the shape i
     expect(consentHeadline(s.detection, ALL, true)).toBe(
       "Add 5 hook entries in C:\\Users\\Home Office\\.gemini\\config\\hooks.json (a new file). In C:\\Users\\Home Office\\.gemini\\antigravity-cli\\settings.json, chain your status line and turn off dangerouslySkipPermissions.",
     );
-    expect(consentHeadline(s.detection, { status: false, approve: false, statusline: false }, true)).toBe(
+    expect(consentHeadline(s.detection, { status: false, approve: false, statusline: false, skill: false }, true)).toBe(
       "Turn off dangerouslySkipPermissions in C:\\Users\\Home Office\\.gemini\\antigravity-cli\\settings.json.",
     );
     expect(s.plan.removal).toBe(
@@ -201,16 +201,16 @@ describe("undo copy says what removal does for each CLI, and promises nothing mo
     expect(CONSENT.antigravity.plan.removal).toBe(
       "Marshell removes the hook entries it added, deletes hooks.json if nothing else is in it, and puts your own status line back from statusline-chain.json; the rest of each file stays as it is.",
     );
-    expect(removalCopy("antigravity", { status: false, approve: false, statusline: true }, { hooksFile: "hooks.json", created: true })).toBe(
+    expect(removalCopy("antigravity", { status: false, approve: false, statusline: true, skill: false }, { hooksFile: "hooks.json", created: true })).toBe(
       "Marshell puts your own status line back from statusline-chain.json; the rest of the file stays as it is.",
     );
-    expect(removalCopy("antigravity", { status: true, approve: true, statusline: false }, { hooksFile: "hooks.json", created: false })).toBe(
+    expect(removalCopy("antigravity", { status: true, approve: true, statusline: false, skill: false }, { hooksFile: "hooks.json", created: false })).toBe(
       "Marshell removes the hook entries it added; the rest of the file stays as it is.",
     );
   });
   it("follows the switches: with the status line off, Claude's undo does not mention the chain file", () => {
-    expect(removalCopy("claude", { status: true, approve: true, statusline: false })).toBe("Marshell removes the hook entries it added; the rest of the file stays as it is.");
-    expect(removalCopy("claude", { status: false, approve: false, statusline: false })).toBe("Marshell changes nothing, so there is nothing to undo.");
+    expect(removalCopy("claude", { status: true, approve: true, statusline: false, skill: false })).toBe("Marshell removes the hook entries it added; the rest of the file stays as it is.");
+    expect(removalCopy("claude", { status: false, approve: false, statusline: false, skill: false })).toBe("Marshell changes nothing, so there is nothing to undo.");
   });
   it("never claims that only added entries are removed when a status line command was replaced, and never names a page that does not exist", () => {
     for (const s of Object.values(CONSENT)) expect(s.plan.removal).not.toMatch(/byte for byte|Remove all hooks|Advanced|removes only the entries/);
@@ -250,10 +250,10 @@ describe("headline and card wording", () => {
     expect(d.cli).toBe("antigravity");
     const hooks = "C:\\Users\\Home Office\\.gemini\\config\\hooks.json";
     expect(consentHeadline(d, ALL)).toBe(`Add 5 hook entries in ${hooks} (a new file) and chain your status line in ${d.configPath}.`);
-    expect(consentHeadline(d, { status: true, approve: true, statusline: false })).toBe(`Add 5 hook entries in ${hooks} (a new file).`);
-    expect(consentHeadline(d, { status: false, approve: false, statusline: true })).toBe(`Chain your status line in ${d.configPath}.`);
-    expect(consentHeadline({ ...d, hooks: { path: hooks, exists: true } }, { status: true, approve: false, statusline: false })).toBe(`Add 5 hook entries in ${hooks}.`);
-    expect(consentHeadline(d, { status: false, approve: false, statusline: false })).toBe("Change nothing. Antigravity CLI will show limited status.");
+    expect(consentHeadline(d, { status: true, approve: true, statusline: false, skill: false })).toBe(`Add 5 hook entries in ${hooks} (a new file).`);
+    expect(consentHeadline(d, { status: false, approve: false, statusline: true, skill: false })).toBe(`Chain your status line in ${d.configPath}.`);
+    expect(consentHeadline({ ...d, hooks: { path: hooks, exists: true } }, { status: true, approve: false, statusline: false, skill: false })).toBe(`Add 5 hook entries in ${hooks}.`);
+    expect(consentHeadline(d, { status: false, approve: false, statusline: false, skill: false })).toBe("Change nothing. Antigravity CLI will show limited status.");
     expect(consentHeadline(d, ALL)).not.toMatch(/hooksConfig|Gemini/);
   });
   it("the Codex trust sentence says /hooks once", () => {

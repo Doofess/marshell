@@ -530,6 +530,7 @@ mod tests {
         status: true,
         statusline: true,
         approve: false,
+        skill: false,
     };
 
     fn home() -> PathBuf {
@@ -916,6 +917,7 @@ mod tests {
                 status: false,
                 statusline: false,
                 approve: true,
+                skill: false,
             },
         );
         assert!(!plan.edits.is_empty());
@@ -934,6 +936,7 @@ mod tests {
                 status: false,
                 statusline: false,
                 approve: false,
+                skill: false,
             },
         );
         assert!(
@@ -958,6 +961,7 @@ mod tests {
             status: false,
             statusline: true,
             approve: false,
+            skill: false,
         };
         let cs = try_install(&Files::settings("{}\n"), want, &home()).unwrap();
         assert!(cs.edits.is_empty());
@@ -1005,6 +1009,7 @@ mod tests {
             status: true,
             statusline: false,
             approve: false,
+            skill: false,
         };
         let (_, after_off) = install(&Files::settings(&fixture("no-statusline.json")), off);
         assert_eq!(after_off.settings_value()["statusLine"]["command"], ours_statusline());
@@ -1017,6 +1022,7 @@ mod tests {
             status: true,
             statusline: false,
             approve: false,
+            skill: false,
         };
         let (cs, after) = install(&before, off);
         assert!(pointers(&cs, &sfile()).iter().all(|p| !p.starts_with("/statusLine")));

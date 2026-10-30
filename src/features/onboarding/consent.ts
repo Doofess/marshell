@@ -12,9 +12,9 @@ const no = (reason: string) => ({ available: false, reason, entries: 0 });
  * line is `statusLine` in ~/.gemini/antigravity-cli/settings.json.
  */
 export const CAPABILITIES: Record<CliId, Record<Capability, { available: boolean; reason?: string; entries: number }>> = {
-  claude: { status: { available: true, entries: 10 }, approve: { available: true, entries: 1 }, statusline: { available: true, entries: 0 } },
-  codex: { status: { available: true, entries: 7 }, approve: { available: true, entries: 1 }, statusline: no("Codex has no status line to chain.") },
-  antigravity: { status: { available: true, entries: 4 }, approve: { available: true, entries: 1 }, statusline: { available: true, entries: 0 } },
+  claude: { status: { available: true, entries: 10 }, approve: { available: true, entries: 1 }, statusline: { available: true, entries: 0 }, skill: { available: true, entries: 0 } },
+  codex: { status: { available: true, entries: 7 }, approve: { available: true, entries: 1 }, statusline: no("Codex has no status line to chain."), skill: { available: true, entries: 0 } },
+  antigravity: { status: { available: true, entries: 4 }, approve: { available: true, entries: 1 }, statusline: { available: true, entries: 0 }, skill: { available: true, entries: 0 } },
 };
 
 export function entryCount(cli: CliId, on: Record<Capability, boolean>): number {
@@ -41,7 +41,7 @@ export function canEdit(d: Detection): { ok: boolean; reason?: string } {
  * what it added" would not be true of it). Nothing else in the file is touched. When the hooks go in a file of their own that
  * Marshell creates, removal deletes that file too, but only if nothing else was put in it since.
  */
-export function removalCopy(cli: CliId, on: Record<Capability, boolean>, hooks?: { hooksFile: string; created: boolean }, handedOver?: string, addedStatusLine = false): string {
+export function removalCopy(cli: CliId, on: Record<Capability, boolean>, hooks?: { hooksFile: string; created: boolean }, handedOver?: string, addedStatusLine = false, skill?: "add" | "update"): string {
   const entries = entryCount(cli, on) > 0;
   const chain = on.statusline && CAPABILITIES[cli].statusline.available && !addedStatusLine;
   const parts = [
@@ -51,24 +51,51 @@ export function removalCopy(cli: CliId, on: Record<Capability, boolean>, hooks?:
     chain && "puts your own status line back from statusline-chain.json",
     handedOver && `turns ${handedOver} back on`,
   ].filter((p): p is string => typeof p === "string");
-  if (parts.length === 0) return "Marshell changes nothing, so there is nothing to undo.";
+  const skillPart = skill === "add" ? "removes the marshell skill it added" : skill === "update" ? "puts the earlier marshell skill back" : undefined;
+  if (parts.length === 0 && skillPart === undefined) return "Marshell changes nothing, so there is nothing to undo.";
+  if (parts.length === 0 && skillPart !== undefined) return `Marshell ${skillPart}.`;
+  if (skillPart !== undefined) parts.push(skillPart);
   const list = parts.length > 2 ? `${parts.slice(0, -1).join(", ")}, and ${parts.at(-1)}` : parts.join(" and ");
   const twoFiles = entries && (chain || Boolean(handedOver)) && hooks !== undefined;
   return `Marshell ${list}; the rest of ${twoFiles ? "each" : "the"} file stays as it is.`;
 }
+
+/** How the skill part of the undo sentence reads: nothing when the switch is off, the state is unknown, the skill is already installed or Marshell can't touch it. */
+export function skillUndo(skillOn: boolean, state?: Detection["skill"]): "add" | "update" | undefined {
+  if (!skillOn || !state || state === "installed" || state === "unavailable") return undefined;
+  return state === "none" ? "add" : "update";
+}
+
+/** The diff starts open when the switch is on and the skill file was edited: replacing it is shown, never silent. */
+export const opensDiff = (skillOn: boolean, state?: Detection["skill"]): boolean => skillOn && state === "edited";
 
 const sentence = (text: string) => `${text.charAt(0).toUpperCase()}${text.slice(1)}.`;
 
 /** Status is on and the user has no status line: install adds one (so context and plan data arrive) instead of chaining theirs. */
 export const addsStatusLine = (d: Detection, on: Record<Capability, boolean>) => d.hasOwnStatusLine === false && on.status && CAPABILITIES[d.cli].statusline.available;
 
+/** The sentence about the skill file: nothing when it is off, already installed, unavailable or unknown. */
+function skillSentence(d: Detection, on: Record<Capability, boolean>): string | undefined {
+  if (!on.skill || !d.skill || d.skill === "installed" || d.skill === "unavailable" || d.skillPath === undefined) return undefined;
+  return `${d.skill === "none" ? "Add" : "Update"} the marshell skill in ${d.skillPath}.`;
+}
+
 export function consentHeadline(d: Detection, on: Record<Capability, boolean>, handOver = false): string {
+  // A file Marshell will not edit says only that.
+  const skill = d.configState === "unparsable" || d.configState === "read-only" ? undefined : skillSentence(d, on);
+  const hooks = hooksHeadline(d, on, handOver, skill !== undefined);
+  return skill === undefined ? hooks : hooks === "" ? skill : `${hooks} ${skill}`;
+}
+
+/** The hooks part of the headline; empty when the hooks change nothing and the skill sentence carries the line. */
+function hooksHeadline(d: Detection, on: Record<Capability, boolean>, handOver: boolean, skillOnly: boolean): string {
   if (d.configState === "unparsable") return `${d.configPath} does not parse (line ${d.parseError?.line ?? "–"}), so Marshell will not edit it.`;
   if (d.configState === "read-only") return `${d.configPath} is read-only, so Marshell will not edit it.`;
   const n = entryCount(d.cli, on);
   const added = addsStatusLine(d, on);
   const chain = on.statusline && CAPABILITIES[d.cli].statusline.available && d.hasOwnStatusLine !== false;
   const turnOff = handOver && d.skipsAll ? `turn off ${d.skipsAll.setting}` : undefined;
+  if (n === 0 && !chain && !turnOff && !added && skillOnly) return "";
   if (n === 0 && !chain && !turnOff && !added) return `Change nothing. ${CLI_NAME[d.cli]} will show limited status.`;
   const add = `Add ${n} hook ${n === 1 ? "entry" : "entries"}`;
   if (turnOff) {

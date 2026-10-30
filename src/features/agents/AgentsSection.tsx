@@ -13,13 +13,16 @@ import { CLI_NAME, type Capability } from "../onboarding/consent";
 import { actions, consentProps, hooksOffNotice, liveStatusOn, removalBlock, setupLine, setupWant, type InstallFlow, type SetupStart } from "./agentsState";
 import { OwnAgentsSection } from "./OwnAgentsSection";
 import { ToolsSection } from "./ToolsSection";
+import { SkillRow, type SkillRowHandlers } from "./SkillRow";
 import { failureText, useInstallFlow } from "./useInstallFlow";
+import { useSkillFlow, type SkillFlow } from "./useSkillFlow";
 import { OwnToolsSection } from "./OwnToolsSection";
 import "./AgentsSection.css";
 
 /** The name a section and the change titles use: "Antigravity" (as "Set up Antigravity hooks"), where the consent card's own is "Antigravity CLI". */
 const agentTitle = (agent: HookAgent): string => (agent === "antigravity" ? "Antigravity" : CLI_NAME[agent]);
 
+export const SKILL_CONFLICT = "The skill file changed. Reload to see it.";
 export const SETUP_UNREADABLE = "Couldn't read the setup from Marshell's core. Close Settings and open it again.";
 
 /** What the dialog shows below its title: the state, the card for Set up, or the diff for turning the hooks off. */
@@ -70,8 +73,11 @@ export function AgentsSectionView({
   own,
   tools,
   rootRef,
+  skills,
   ...on
 }: {
+  /** Each agent's marshell skill flow and handlers; without it the rows are left out. */
+  skills?: Record<HookAgent, { flow: SkillFlow | null; on: SkillRowHandlers }>;
   /** The tools, after the own agents. */
   tools?: ReactNode;
   rootRef?: Ref<HTMLDivElement>;
@@ -103,9 +109,9 @@ export function AgentsSectionView({
       )}
       {typeof setup === "object" && panel.kind === "list" && (
         <>
-          <AgentList setup={setup} agent="claude" liveStatus={liveStatus} error={liveStatusError} on={on} />
-          {codex?.found && <AgentList setup={codex} agent="codex" liveStatus={codexLiveStatus} error={codexLiveStatusError} on={on} />}
-          {antigravity?.found && <AgentList setup={antigravity} agent="antigravity" liveStatus={antigravityLiveStatus} error={antigravityLiveStatusError} on={on} />}
+          <AgentList setup={setup} agent="claude" liveStatus={liveStatus} error={liveStatusError} on={on} skill={skills?.claude} />
+          {codex?.found && <AgentList setup={codex} agent="codex" liveStatus={codexLiveStatus} error={codexLiveStatusError} on={on} skill={skills?.codex} />}
+          {antigravity?.found && <AgentList setup={antigravity} agent="antigravity" liveStatus={antigravityLiveStatus} error={antigravityLiveStatusError} on={on} skill={skills?.antigravity} />}
           {own}
           {tools}
         </>
@@ -137,7 +143,7 @@ function TrustLine({ trust }: { trust: NonNullable<AgentSetup["trust"]> }) {
 }
 
 /** One agent's section: its state, its Live status switch, and Set up or Hooks off. Claude Code's has the Notifications link; Codex has no status line. */
-function AgentList({ setup, agent, liveStatus, error, on }: { setup: AgentSetup; agent: HookAgent; liveStatus: boolean | null; error?: string | null; on: AgentsHandlers }) {
+function AgentList({ setup, agent, liveStatus, error, on, skill }: { setup: AgentSetup; agent: HookAgent; liveStatus: boolean | null; error?: string | null; on: AgentsHandlers; skill?: { flow: SkillFlow | null; on: SkillRowHandlers } }) {
   const todo = actions(setup);
   const orphaned = setup.found && setup.hooks === "orphaned" && setup.settings_state !== "unparsable";
   const name = agentTitle(agent);
@@ -152,6 +158,7 @@ function AgentList({ setup, agent, liveStatus, error, on }: { setup: AgentSetup;
         {setupLine(setup)}
       </p>
       {agent === "codex" && setup.trust && <TrustLine trust={setup.trust} />}
+      {skill && setup.found && <SkillRow agent={agent} setup={setup} flow={skill.flow} on={skill.on} />}
       {/* Antigravity's hooks and its status line live in two files; both are named. */}
       {setup.hooks_path !== undefined && (
         <p className="agents-dialog__line" dir="auto">
@@ -335,6 +342,32 @@ export function AgentsSection({
   const claudeInstall = useInstallFlow(endpoint, "claude", installed);
   const codexInstall = useInstallFlow(endpoint, "codex", installed);
   const antigravityInstall = useInstallFlow(endpoint, "antigravity", installed);
+  // The skill rows: after an apply the section reads the setup again, and the announcer says what was done.
+  const setups = { claude: setup, codex, antigravity };
+  const skillApplied = (agent: HookAgent) => (kind: SkillFlow["kind"]) => {
+    const current = setups[agent];
+    const updating = typeof current === "object" && current !== null && (current.skill === "outdated" || current.skill === "edited");
+    const verb = kind === "remove" ? "Removed" : updating ? "Updated" : "Installed";
+    announce?.(`${verb} the marshell skill for ${CLI_NAME[agent]}.`);
+    void load();
+    onChanged?.();
+  };
+  const skillOf = (s: AgentSetup | "loading" | "failed" | null | undefined) => (typeof s === "object" && s !== null ? s.skill : undefined);
+  const reloadSetups = useCallback(() => void load(), [load]);
+  const claudeSkill = useSkillFlow(endpoint, "claude", skillApplied("claude"), skillOf(setup), reloadSetups);
+  const codexSkill = useSkillFlow(endpoint, "codex", skillApplied("codex"), skillOf(codex), reloadSetups);
+  const antigravitySkill = useSkillFlow(endpoint, "antigravity", skillApplied("antigravity"), skillOf(antigravity), reloadSetups);
+  const skillFlows = { claude: claudeSkill, codex: codexSkill, antigravity: antigravitySkill };
+  const skills = Object.fromEntries(
+    (Object.keys(skillFlows) as HookAgent[]).map((a) => {
+      const f = skillFlows[a];
+      return [a, { flow: f.flow, on: { install: () => void f.install(), remove: () => void f.remove(), apply: () => void f.apply(), toggleDiff: f.toggleDiff, reload: () => void f.reload(), cancel: f.cancel } }];
+    }),
+  ) as Record<HookAgent, { flow: SkillFlow | null; on: SkillRowHandlers }>;
+  // A conflict is said once, when it appears.
+  useAnnounceOnce(claudeSkill.flow?.conflict ? SKILL_CONFLICT : null, announce);
+  useAnnounceOnce(codexSkill.flow?.conflict ? SKILL_CONFLICT : null, announce);
+  useAnnounceOnce(antigravitySkill.flow?.conflict ? SKILL_CONFLICT : null, announce);
   const installs = { claude: claudeInstall, codex: codexInstall, antigravity: antigravityInstall };
   const install = installs[active];
 
@@ -344,7 +377,7 @@ export function AgentsSection({
       if (typeof found !== "object" || found === null) return;
       setActive(agent);
       setMode("setup");
-      void (agent === "codex" ? codexInstall : agent === "antigravity" ? antigravityInstall : claudeInstall).plan(setupWant(found));
+      void (agent === "codex" ? codexInstall : agent === "antigravity" ? antigravityInstall : claudeInstall).plan(setupWant(found), found.skill);
     },
     [claudeInstall.plan, codexInstall.plan, antigravityInstall.plan, setup, codex, antigravity],
   );
@@ -420,6 +453,7 @@ export function AgentsSection({
   return (
     <AgentsSectionView
       rootRef={root}
+      skills={skills}
       setup={setup}
       codex={codex}
       own={<OwnAgentsSection endpoint={endpoint} onNotice={announce} />}

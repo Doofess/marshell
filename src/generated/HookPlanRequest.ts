@@ -15,4 +15,8 @@ statusline: boolean,
 /**
  * Add the PermissionRequest hook so requests can be answered from Marshell.
  */
-approve: boolean, };
+approve: boolean, 
+/**
+ * Add the `marshell` skill file to the same preview.
+ */
+skill: boolean, };

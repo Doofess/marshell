@@ -6,9 +6,12 @@
 use marshell_core::agents::antigravity::hooks as agy_hooks;
 use marshell_core::agents::claude::hooks::{remove_plan, settings_path};
 use marshell_core::agents::codex::hooks as codex_hooks;
+use marshell_core::agents::skill;
+use marshell_core::config::preview::{MAX_CONFIG_BYTES, TOO_LARGE_DETAIL};
 use marshell_core::config::service::{ApplyError, ConfigService};
 use marshell_core::paths;
-use marshell_protocol::config::{ApplyRequest, ChangeSet, ExpectedHash, FileStatus};
+use marshell_protocol::agents::SkillInstall;
+use marshell_protocol::config::{ApplyRequest, ChangeSet, ConfigPreview, ExpectedHash, FileStatus};
 use std::io::{BufRead, Write};
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -22,6 +25,18 @@ fn read_text(path: &Path) -> Result<Option<String>, String> {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
         Err(e) => Err(format!("Couldn't read {}: {e}", path.display())),
     }
+}
+
+/// The files a preview refuses, as (path, why).
+fn refusals(preview: &ConfigPreview) -> Vec<(&str, &str)> {
+    preview
+        .files
+        .iter()
+        .filter_map(|f| match &f.status {
+            FileStatus::Refused { detail, .. } => Some((f.path.as_str(), detail.as_str())),
+            _ => None,
+        })
+        .collect()
 }
 
 fn confirmed(input: &mut dyn BufRead, out: &mut dyn Write, question: &str) -> bool {
@@ -174,7 +189,10 @@ pub fn run(
             .map(|changes| (text, changes))
             .map_err(|e| e.to_string())
     });
-    let mut others_failed = false;
+    // Codex's or Antigravity's hooks could not be planned, so their entries may still point at the bridge.
+    let mut hooks_failed = false;
+    // A skill file could not be read: the removal goes on without it, but the exit code says it was left.
+    let mut skill_unread = false;
     let mut extras = Vec::new();
     match codex {
         Ok((text, changes)) => {
@@ -186,7 +204,7 @@ pub fn run(
         }
         Err(e) => {
             let _ = writeln!(out, "{e}");
-            others_failed = true;
+            hooks_failed = true;
         }
     }
     // Antigravity's hooks.json and settings.json, the same way: a problem is reported and the rest goes on.
@@ -214,7 +232,53 @@ pub fn run(
         }
         Err(e) => {
             let _ = writeln!(out, "{e}");
-            others_failed = true;
+            hooks_failed = true;
+        }
+    }
+    // The marshell skill each CLI has: one Marshell wrote joins the removal, an edited one is left. Each removal
+    // is previewed on its own first, so a skill the config service refuses is left out and the rest goes on.
+    let service = ConfigService::new(home.to_path_buf());
+    for (agent, name) in skill::AGENTS {
+        let Some(path) = skill::skill_path(agent, env, user_home) else {
+            continue;
+        };
+        let read = match std::fs::metadata(&path) {
+            Ok(meta) if meta.len() > MAX_CONFIG_BYTES => Err(TOO_LARGE_DETAIL.to_string()),
+            _ => match std::fs::read(&path) {
+                Ok(bytes) => Ok(Some(bytes)),
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+                Err(e) => Err(e.to_string()),
+            },
+        };
+        let bytes = match read {
+            Ok(bytes) => bytes,
+            Err(why) => {
+                let _ = writeln!(out, "Couldn't read {}: {why}", path.display());
+                skill_unread = true;
+                continue;
+            }
+        };
+        match skill::state_of(bytes.as_deref()) {
+            SkillInstall::None | SkillInstall::Unavailable => {}
+            SkillInstall::Installed | SkillInstall::Outdated => {
+                let changes = skill::remove_plan(name, &path, bytes.as_deref());
+                let preview = service.preview(changes.clone());
+                let refused = refusals(&preview);
+                if refused.is_empty() && preview.can_apply {
+                    extras.push(changes);
+                } else {
+                    for (path, detail) in refused {
+                        let _ = writeln!(out, "Marshell can't change {path}: {detail}");
+                    }
+                }
+            }
+            SkillInstall::Edited => {
+                let _ = writeln!(
+                    out,
+                    "Left {}: it was edited after Marshell installed it.",
+                    path.display()
+                );
+            }
         }
     }
     let claude_empty = plan.changes.edits.is_empty();
@@ -230,11 +294,12 @@ pub fn run(
         }
     }
     let bin = paths::bin_dir(home);
+    let others_failed = hooks_failed || skill_unread;
     let has_bin = bin.exists() && !others_failed;
     // Non-zero when something was left, so a script notices.
     let ok = i32::from(others_failed);
     let keep_note = |out: &mut dyn Write| {
-        if others_failed && bin.exists() {
+        if hooks_failed && bin.exists() {
             let _ = writeln!(
                 out,
                 "The folder {} was left in place, because Codex's or Antigravity's hooks may still point at it.",
@@ -268,16 +333,8 @@ pub fn run(
         return ok;
     }
 
-    let service = ConfigService::new(home.to_path_buf());
     let preview = service.preview(plan.changes);
-    let refused: Vec<_> = preview
-        .files
-        .iter()
-        .filter_map(|f| match &f.status {
-            FileStatus::Refused { detail, .. } => Some((f.path.as_str(), detail.as_str())),
-            _ => None,
-        })
-        .collect();
+    let refused = refusals(&preview);
     if !refused.is_empty() || !preview.can_apply {
         for (path, detail) in &refused {
             let _ = writeln!(out, "Marshell can't change {path}: {detail}");
@@ -460,6 +517,7 @@ mod tests {
             status: true,
             statusline: true,
             approve: false,
+            skill: false,
         };
         let changes = install_plan(&settings, &user_home, Some(original), None, &home, &want).unwrap();
         let service = ConfigService::new(home.clone());
@@ -510,6 +568,7 @@ mod tests {
             status: true,
             statusline: false,
             approve: false,
+            skill: false,
         };
         let changes = ch::install_plan(&path, original, &f.home, &want).unwrap();
         let service = ConfigService::new(f.home.clone());
@@ -617,6 +676,7 @@ mod tests {
             status: true,
             statusline: false,
             approve: false,
+            skill: false,
         };
         let changes = ah::install_plan(&f.user_home, mine, None, None, &f.home, &want).unwrap();
         let service = ConfigService::new(f.home.clone());
@@ -844,5 +904,145 @@ mod tests {
         let after = std::fs::read_to_string(&f.settings).unwrap();
         assert!(after.contains("their-new-line"), "{after}");
         assert!(!after.contains("marshell-hook"), "{after}");
+    }
+
+    fn put_skill(f: &Fixture, agent: &str, bytes: &[u8]) -> PathBuf {
+        let path = marshell_core::agents::skill::skill_path(agent, &no_env, &f.user_home).unwrap();
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, bytes).unwrap();
+        path
+    }
+
+    #[test]
+    fn uninstall_removes_skills_marshell_wrote() {
+        let f = installed(ORIGINAL);
+        let text = marshell_core::agents::skill::SKILL_TEXT.as_bytes();
+        let claude = put_skill(&f, "claude", text);
+        let codex = put_skill(&f, "codex", text);
+        let (code, out) = run_with(&f, "", true);
+        assert_eq!(code, 0, "{out}");
+        for path in [&claude, &codex] {
+            assert!(out.contains(&*path.to_string_lossy()), "{out}");
+            assert!(!path.exists(), "{out}");
+            assert!(!path.parent().unwrap().exists(), "{out}");
+        }
+        assert!(!out.contains("Left "), "{out}");
+    }
+
+    #[test]
+    fn uninstall_removes_a_skill_when_there_are_no_hooks() {
+        let f = installed(ORIGINAL);
+        std::fs::write(&f.settings, ORIGINAL).unwrap();
+        let path = put_skill(&f, "antigravity", marshell_core::agents::skill::SKILL_TEXT.as_bytes());
+        let (code, out) = run_with(
+            &f, "y
+", false,
+        );
+        assert_eq!(code, 0, "{out}");
+        assert!(!path.exists() && !path.parent().unwrap().exists(), "{out}");
+    }
+
+    #[test]
+    fn uninstall_leaves_an_edited_skill() {
+        let f = installed(ORIGINAL);
+        let path = put_skill(&f, "codex", b"mine");
+        let (code, out) = run_with(&f, "", true);
+        assert_eq!(code, 0, "{out}");
+        assert_eq!(std::fs::read(&path).unwrap(), b"mine");
+        assert!(
+            out.contains(&format!(
+                "Left {}: it was edited after Marshell installed it.",
+                path.display()
+            )),
+            "{out}"
+        );
+    }
+
+    /// An environment that moves Claude Code's skill folder under Marshell's own data folder, which the config
+    /// guard refuses.
+    fn refusing_env(f: &Fixture) -> impl Fn(&str) -> Option<String> + use<> {
+        let dir = f.home.join("claude-config").to_string_lossy().into_owned();
+        move |name: &str| (name == "CLAUDE_CONFIG_DIR").then(|| dir.clone())
+    }
+
+    #[test]
+    fn a_skill_the_guard_refuses_is_left_and_the_rest_goes_on() {
+        let f = installed(ORIGINAL);
+        let env = refusing_env(&f);
+        let refused = marshell_core::agents::skill::skill_path("claude", &env, &f.user_home).unwrap();
+        std::fs::create_dir_all(refused.parent().unwrap()).unwrap();
+        std::fs::write(&refused, marshell_core::agents::skill::SKILL_TEXT).unwrap();
+        let codex = put_skill(&f, "codex", marshell_core::agents::skill::SKILL_TEXT.as_bytes());
+        let mut out = Vec::new();
+        let code = run(&f.home, &f.user_home, &env, &mut "".as_bytes(), &mut out, true);
+        let out = String::from_utf8(out).unwrap();
+        assert_eq!(code, 0, "{out}");
+        assert!(
+            out.contains(&format!(
+                "Marshell can't change {}: This is Marshell's own data folder.",
+                refused.display()
+            )),
+            "{out}"
+        );
+        assert!(refused.exists(), "the refused skill stays: {out}");
+        assert!(!codex.exists(), "the other skill goes: {out}");
+        let after = std::fs::read_to_string(&f.settings).unwrap();
+        assert!(!after.contains("marshell-hook"), "the hooks are removed: {after}");
+        assert!(
+            !marshell_core::paths::bin_dir(&f.home).exists(),
+            "a skill does not point at bin"
+        );
+    }
+
+    #[test]
+    fn an_unreadable_skill_keeps_bin_without_blaming_the_other_hooks() {
+        let f = installed(ORIGINAL);
+        // A folder named SKILL.md cannot be read as a file.
+        let path = marshell_core::agents::skill::skill_path("codex", &no_env, &f.user_home).unwrap();
+        std::fs::create_dir_all(&path).unwrap();
+        let (code, out) = run_with(&f, "", true);
+        assert_eq!(code, 1, "{out}");
+        assert!(out.contains(&format!("Couldn't read {}", path.display())), "{out}");
+        assert!(!out.contains("Codex's or Antigravity's"), "{out}");
+        assert!(marshell_core::paths::bin_dir(&f.home).exists(), "{out}");
+    }
+
+    #[test]
+    fn a_skill_over_the_size_limit_is_reported_like_an_unreadable_one() {
+        let f = installed(ORIGINAL);
+        let path = put_skill(&f, "codex", b"");
+        let big = std::fs::OpenOptions::new().write(true).open(&path).unwrap();
+        big.set_len(marshell_core::config::preview::MAX_CONFIG_BYTES + 1)
+            .unwrap();
+        drop(big);
+        let (code, out) = run_with(&f, "", true);
+        assert_eq!(code, 1, "{out}");
+        assert!(
+            out.contains(&format!(
+                "Couldn't read {}: The file is larger than 4 MiB.",
+                path.display()
+            )),
+            "{out}"
+        );
+        assert!(path.exists());
+        assert!(marshell_core::paths::bin_dir(&f.home).exists(), "{out}");
+    }
+
+    #[test]
+    fn an_unreadable_codex_hooks_file_still_blames_the_other_hooks() {
+        let f = installed(ORIGINAL);
+        let (path, _) = broken_codex(&f);
+        let (code, out) = run_with(&f, "", true);
+        assert_eq!(code, 1, "{out}");
+        assert!(out.contains("Codex's or Antigravity's"), "{out}");
+        assert!(path.exists());
+    }
+
+    #[test]
+    fn uninstall_without_skills_says_nothing_about_them() {
+        let f = installed(ORIGINAL);
+        let (code, out) = run_with(&f, "", true);
+        assert_eq!(code, 0, "{out}");
+        assert!(!out.to_lowercase().contains("skill"), "{out}");
     }
 }

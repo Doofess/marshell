@@ -20,8 +20,9 @@ Commands:
   focus <session> [--start]
                       Bring Marshell's window to the session. --start starts Marshell first when it is
                       closed, without asking.
-  uninstall [--yes]   Take Marshell's hooks out of Claude Code's settings and remove the program
-                      folder <home>/bin. Shows what changes first and asks; --yes skips the question.
+  uninstall [--yes]   Take Marshell's hooks and its marshell skill out of each agent CLI's files and
+                      remove the program folder <home>/bin. Shows what changes first and asks; --yes
+                      skips the question.
 
 Options:
   --help, -h          Show this text.

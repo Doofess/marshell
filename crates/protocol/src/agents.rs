@@ -16,6 +16,24 @@ pub enum HookInstall {
     Orphaned,
 }
 
+/// Whether the `marshell` skill file is in place for an agent, judged by the file's hash.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum SkillInstall {
+    /// No skill file.
+    None,
+    /// The file holds the text this Marshell ships.
+    Installed,
+    /// The file holds a text an earlier Marshell shipped.
+    Outdated,
+    /// The file holds anything else: the person edited it, or Marshell didn't write it.
+    Edited,
+    /// Marshell can't touch the file: it can't be read, it is too large, or the config guard refuses its path.
+    /// `AgentSetup::skill_problem` says why.
+    Unavailable,
+}
+
 /// Whether Codex trusts the hook entries Marshell added, as its `config.toml` records it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
@@ -88,6 +106,14 @@ pub struct AgentSetup {
     pub trust: Option<HookTrust>,
     pub bridge_path: String,
     pub snapshots_dir: String,
+    /// What the file at `skill_path` holds: none, Marshell's current skill, an older one, or other text.
+    pub skill: SkillInstall,
+    /// Where this agent's user-level `marshell` skill file goes.
+    pub skill_path: String,
+    /// Why the skill is `unavailable`; absent for every other state.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub skill_problem: Option<String>,
 }
 
 /// Whether one agent's CLI is on this machine, which is all Marshell knows about an agent it has no adapter for.
@@ -114,6 +140,9 @@ pub struct HookPlanRequest {
     /// Add the PermissionRequest hook so requests can be answered from Marshell.
     #[serde(default)]
     pub approve: bool,
+    /// Add the `marshell` skill file to the same preview.
+    #[serde(default)]
+    pub skill: bool,
 }
 
 /// What removing an agent's hooks would do: the preview, and whether the user's changed status

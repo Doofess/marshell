@@ -12,6 +12,12 @@
   border-radius: var(--radius);
   background: var(--fill);
 }
+/* The skill row sits inside the agent's fill, so it needs no box of its own. */
+.agents-dialog__skill {
+  display: grid;
+  gap: var(--space-2);
+  justify-items: start;
+}
 .agents-dialog__agent-head {
   display: flex;
   align-items: center;

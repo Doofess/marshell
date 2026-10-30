@@ -5,9 +5,17 @@ import { Switch } from "../../components/Switch/Switch";
 import { canEdit, CAPABILITIES, CLI_NAME, consentHeadline, fileName, folderOf, type Capability, type ConsentPlan, type Detection } from "./consent";
 import "./Onboarding.css";
 
-const CAP_LABEL: Record<Capability, string> = { status: "Show status and context", approve: "Approve from anywhere", statusline: "Keep my status line working" };
+const CAP_LABEL: Record<Capability, string> = { status: "Show status and context", approve: "Approve from anywhere", statusline: "Keep my status line working", skill: "Install the marshell skill" };
 
-const ALL: Capability[] = ["status", "approve", "statusline"];
+const ALL: Capability[] = ["status", "approve", "statusline", "skill"];
+
+/** The files the plan touches: the hooks file, the settings file, and the skill file when it is added or updated. */
+function changedFiles(d: Detection, skillOn: boolean): string[] {
+  const skill = skillOn && d.skill !== undefined && d.skill !== "installed" && d.skill !== "unavailable" && d.skillPath !== undefined ? [d.skillPath] : [];
+  return [...(d.hooks ? [d.hooks.path] : []), d.configPath, ...skill];
+}
+
+const listFiles = (files: string[]) => (files.length < 3 ? files.join(" and ") : `${files.slice(0, -1).join(", ")} and ${files.at(-1)}`);
 
 /** Screen 2: one card per CLI, in plain words: what changes and where, the exact diff on request, the backup and the way out. A file that cannot be edited gets the reason instead of controls. */
 export function ConsentCard({
@@ -68,7 +76,7 @@ export function ConsentCard({
       {edit.ok ? (
         <>
           <ul className="consent__switches">
-            {offer.filter((c) => c !== "statusline" || d.hasOwnStatusLine !== false).map((c) => (
+            {offer.filter((c) => (c !== "statusline" || d.hasOwnStatusLine !== false) && (c !== "skill" || d.skill !== "unavailable")).map((c) => (
               <li key={c}>
                 <Switch label={CAP_LABEL[c]} checked={on[c] && CAPABILITIES[d.cli][c].available} disabled={!CAPABILITIES[d.cli][c].available} reason={CAPABILITIES[d.cli][c].reason} onChange={onSwitch && ((v) => change(c, v))} />
               </li>
@@ -80,6 +88,7 @@ export function ConsentCard({
             )}
           </ul>
           {offer.includes("approve") && offer.includes("status") && <p className="consent__meta">Approve from anywhere needs live status to know when a request is answered.</p>}
+          {offer.includes("skill") && (d.skill === "unavailable" ? d.skillProblem !== undefined && <p className="consent__meta" dir="auto">{d.skillProblem}</p> : <p className="consent__meta">Teaches {name} the marshell command: list, send, new and focus.</p>)}
           {d.cli === "antigravity" && offer.includes("approve") && <p className="consent__meta">Cards for risky commands in Bypass. In other modes Antigravity asks in its terminal.</p>}
           {d.skipsAll && (
             <p className="consent__handover">
@@ -96,7 +105,7 @@ export function ConsentCard({
                 <code>{fileName(path)}</code> will be deleted
               </p>
             ))}
-          {open && <DiffView diff={plan.diff} label={`Exact changes to ${d.hooks ? `${d.hooks.path} and ${d.configPath}` : d.configPath}`} />}
+          {open && <DiffView diff={plan.diff} label={`Exact changes to ${listFiles(changedFiles(d, on.skill))}`} />}
           {plan.chainPath && on.statusline && d.hasOwnStatusLine !== false && CAPABILITIES[d.cli].statusline.available && (
             <p className="consent__chain">
               Your own status line command is saved in <code>{plan.chainPath}</code> and keeps running: Marshell&apos;s runs first and then yours.

@@ -12,14 +12,26 @@ const view = (setup: AgentSetup | "loading" | "failed", panel: Panel = { kind: "
 describe("AgentsSectionView switches", () => {
   const switchOf = (h: string, label: string) => h.match(new RegExp(`<input[^>]*role="switch"[^>]*>(?=<span class="switch__track"[^>]*></span><span class="switch__text">${label}<)`))?.[0] ?? "";
   it("renders the status line switch unchecked when the person turned it off", () => {
-    const h = view(SETUP, { kind: "setup", flow: { preview: PREVIEW, open: false, busy: false, want: { status: true, statusline: false, approve: false } } });
+    const h = view(SETUP, { kind: "setup", flow: { preview: PREVIEW, open: false, busy: false, want: { status: true, statusline: false, approve: false, skill: false } } });
     expect(switchOf(h, "Keep my status line working")).not.toContain("checked");
     expect(switchOf(h, "Show status and context")).toContain("checked");
   });
   it("offers no Allow when status is off, and keeps Skip", () => {
-    const h = view(SETUP, { kind: "setup", flow: { preview: null, open: false, busy: false, want: { status: false, statusline: true, approve: false } } });
+    const h = view(SETUP, { kind: "setup", flow: { preview: null, open: false, busy: false, want: { status: false, statusline: true, approve: false, skill: false } } });
     expect(h).not.toContain("consent__apply");
     expect(h).toContain("Skip: use limited status");
+  });
+});
+
+describe("AgentsSectionView skill row", () => {
+  const skillHandlers = { install: none, remove: none, apply: none, toggleDiff: none, reload: none, cancel: none };
+  const skills = { claude: { flow: null, on: skillHandlers }, codex: { flow: null, on: skillHandlers }, antigravity: { flow: null, on: skillHandlers } };
+  const withSkills = (setup: AgentSetup) => renderToStaticMarkup(<AgentsSectionView setup={setup} panel={{ kind: "list" }} liveStatus={true} skills={skills} {...handlers} />);
+  it("shows the skill row for a CLI that is found", () => {
+    expect(withSkills(SETUP)).toContain('data-agent-skill="claude"');
+  });
+  it("leaves the skill row out for a CLI that is not found", () => {
+    expect(withSkills({ ...SETUP, found: false })).not.toContain("data-agent-skill");
   });
 });
 
@@ -110,7 +122,7 @@ describe("AgentsSectionView", () => {
     expect(h).toMatch(/consent__skip[^>]*>Done</);
   });
   it("keeps Skip for an empty fresh setup", () => {
-    const h = view(SETUP, { kind: "setup", flow: { preview: { ...PREVIEW, can_apply: false, files: [] }, open: false, busy: false, want: { status: false, approve: false, statusline: false } } });
+    const h = view(SETUP, { kind: "setup", flow: { preview: { ...PREVIEW, can_apply: false, files: [] }, open: false, busy: false, want: { status: false, approve: false, statusline: false, skill: false } } });
     expect(h).toContain("Nothing will change: status is off.");
     expect(h).toMatch(/consent__skip[^>]*>Skip: use limited status</);
     expect(h).not.toContain("Already set up");
@@ -238,10 +250,10 @@ describe("AgentsSectionView: Antigravity", () => {
   it("offers status, approve and the status line, and no hand-over, each switch reachable by Tab", () => {
     const h = withAgy(AGY_SETUP, card());
     expect(h).toContain('data-agent="antigravity"');
-    expect(switchLabels(h)).toEqual(["Show status and context", "Approve from anywhere", "Keep my status line working"]);
+    expect(switchLabels(h)).toEqual(["Show status and context", "Approve from anywhere", "Keep my status line working", "Install the marshell skill"]);
     expect(h).not.toContain("Let Marshell set the mode");
     expect(h).not.toMatch(/<(input|button)[^>]*tabindex="-1"/);
-    expect(h).toContain("Add 5 hook entries in C:/h/.gemini/config/hooks.json (a new file) and chain your status line in C:/h/.gemini/antigravity-cli/settings.json.");
+    expect(h).toContain("Add 5 hook entries in C:/h/.gemini/config/hooks.json (a new file) and chain your status line in C:/h/.gemini/antigravity-cli/settings.json. Add the marshell skill in C:/h/.gemini/config/skills/marshell/SKILL.md.");
   });
   it("the_antigravity_approve_toggle_says_bypass_only", () => {
     expect(withAgy(AGY_SETUP, card())).toContain("Cards for risky commands in Bypass. In other modes Antigravity asks in its terminal.");
@@ -250,7 +262,7 @@ describe("AgentsSectionView: Antigravity", () => {
   });
   it("antigravity_removal_copy_is_exact", () => {
     expect(withAgy(AGY_SETUP, card())).toContain(
-      "Marshell removes the hook entries it added, deletes hooks.json if nothing else is in it, and puts your own status line back from statusline-chain.json; the rest of each file stays as it is",
+      "Marshell removes the hook entries it added, deletes hooks.json if nothing else is in it, puts your own status line back from statusline-chain.json, and removes the marshell skill it added; the rest of each file stays as it is",
     );
     const off = withAgy({ ...AGY_SETUP, hooks: "installed" }, { kind: "off", agent: "antigravity", removal: null, busy: false });
     expect(off).toContain("Turn Antigravity hooks off");

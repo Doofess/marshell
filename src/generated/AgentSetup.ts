@@ -3,6 +3,7 @@ import type { HookInstall } from "./HookInstall";
 import type { HookTrust } from "./HookTrust";
 import type { ParseProblem } from "./ParseProblem";
 import type { SettingsState } from "./SettingsState";
+import type { SkillInstall } from "./SkillInstall";
 
 /**
  * What Marshell knows about one agent's setup: the CLI, its settings file and the hooks in it.
@@ -40,4 +41,16 @@ needs_trust: boolean,
  * What the agent's own config says about Marshell's hook entries; absent when it holds none of ours
  * or when the agent has no such trust.
  */
-trust?: HookTrust, bridge_path: string, snapshots_dir: string, };
+trust?: HookTrust, bridge_path: string, snapshots_dir: string, 
+/**
+ * What the file at `skill_path` holds: none, Marshell's current skill, an older one, or other text.
+ */
+skill: SkillInstall, 
+/**
+ * Where this agent's user-level `marshell` skill file goes.
+ */
+skill_path: string, 
+/**
+ * Why the skill is `unavailable`; absent for every other state.
+ */
+skill_problem?: string, };

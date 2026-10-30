@@ -17,6 +17,8 @@ export const SETUP: AgentSetup = {
   needs_trust: false,
   bridge_path: "C:/m/bin/marshell-hook.exe",
   snapshots_dir: "C:/m/snapshots",
+  skill: "none",
+  skill_path: "C:/h/.claude/skills/marshell/SKILL.md",
 };
 
 /** Test input only: what the core sends for a Codex with no hooks of Marshell's yet. */
@@ -29,6 +31,7 @@ export const CODEX_SETUP: AgentSetup = {
   settings_state: "missing",
   has_own_statusline: false,
   needs_trust: true,
+  skill_path: "C:/h/.agents/skills/marshell/SKILL.md",
 };
 
 /** Test input only: what the core sends for an Antigravity with no hooks of Marshell's yet (hooks.json is missing; the status line is in settings.json). */
@@ -39,6 +42,7 @@ export const AGY_SETUP: AgentSetup = {
   exe_path: "C:/bin/agy.exe",
   settings_path: "C:/h/.gemini/antigravity-cli/settings.json",
   hooks_path: "C:/h/.gemini/config/hooks.json",
+  skill_path: "C:/h/.gemini/config/skills/marshell/SKILL.md",
 };
 
 const file = (path: string, diff: string): FilePreview => ({ path, scope: "user", applies: "newSessions", before_hash: "h0", diff, status: { kind: "changes" } }) as FilePreview;

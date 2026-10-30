@@ -7,7 +7,7 @@ import { elements } from "../../test/hooks";
 import { Switch } from "../../components/Switch/Switch";
 import type { Capability } from "./consent";
 
-const on = { status: true, approve: true, statusline: true };
+const on = { status: true, approve: true, statusline: true, skill: false };
 
 describe("ConsentCard", () => {
   function switches(value: typeof on, offer?: Capability[]) {
@@ -21,7 +21,7 @@ describe("ConsentCard", () => {
     return { html, changes, toggle: (label: string, checked: boolean) => elements(tree).find((e) => e.type === Switch && e.props.label === label)!.props.onChange(checked) };
   }
   it("turns live status on when approval is enabled", () => {
-    const card = switches({ status: false, approve: false, statusline: false });
+    const card = switches({ status: false, approve: false, statusline: false, skill: false });
     card.toggle("Approve from anywhere", true);
     expect(card.changes).toEqual([["status", true], ["approve", true]]);
     expect(card.html).toContain("Approve from anywhere needs live status to know when a request is answered.");
@@ -32,7 +32,7 @@ describe("ConsentCard", () => {
     expect(card.changes).toEqual([["approve", false], ["status", false]]);
   });
   it("leaves the approval-only upgrade request intact", () => {
-    const card = switches({ status: false, approve: false, statusline: false }, ["approve"]);
+    const card = switches({ status: false, approve: false, statusline: false, skill: false }, ["approve"]);
     card.toggle("Approve from anywhere", true);
     expect(card.changes).toEqual([["approve", true]]);
   });
@@ -46,8 +46,28 @@ describe("ConsentCard", () => {
   });
   it("has a switch for each capability and explains an unavailable one", () => {
     const h = renderToStaticMarkup(<ConsentCard scenario={CONSENT.codex} on={on} />);
-    expect(h.match(/role="switch"/g)).toHaveLength(3);
+    expect(h.match(/role="switch"/g)).toHaveLength(4);
     expect(h).toContain("Codex has no status line to chain.");
+  });
+  it("shows the skill problem in place of the switch for a skill Marshell can't touch", () => {
+    const d = { ...CONSENT.claude.detection, skill: "unavailable" as const, skillPath: "C:\h\SKILL.md", skillProblem: "Marshell will not edit C:\h\SKILL.md: No." };
+    const h = renderToStaticMarkup(<ConsentCard scenario={{ ...CONSENT.claude, detection: d }} on={{ ...on, skill: true }} open />);
+    expect(h).not.toContain("Install the marshell skill");
+    expect(h).not.toContain("Teaches");
+    expect(h).toContain("Marshell will not edit C:\h\SKILL.md: No.");
+    expect(h).toContain('class="consent__meta"');
+    expect(h).not.toContain(`Exact changes to ${d.configPath} and`);
+  });
+  it("names the skill file in the diff label when the skill is added or updated", () => {
+    const skill = { ...CONSENT.claude.detection, skill: "none" as const, skillPath: "C:\h\.claude\skills\marshell\SKILL.md" };
+    const one = renderToStaticMarkup(<ConsentCard scenario={{ ...CONSENT.claude, detection: skill }} on={{ ...on, skill: true }} open />);
+    expect(one).toContain(`Exact changes to ${skill.configPath} and ${skill.skillPath}`);
+    const agy = { ...CONSENT.antigravity.detection, skill: "outdated" as const, skillPath: "C:\h\skills\SKILL.md" };
+    const three = renderToStaticMarkup(<ConsentCard scenario={{ ...CONSENT.antigravity, detection: agy }} on={{ ...on, skill: true }} open />);
+    expect(three).toContain(`Exact changes to ${agy.hooks!.path}, ${agy.configPath} and ${agy.skillPath}`);
+    const installed = renderToStaticMarkup(<ConsentCard scenario={{ ...CONSENT.claude, detection: { ...skill, skill: "installed" } }} on={{ ...on, skill: true }} open />);
+    expect(installed).not.toContain(skill.skillPath);
+    expect(renderToStaticMarkup(<ConsentCard scenario={{ ...CONSENT.claude, detection: skill }} on={on} open />)).not.toContain(skill.skillPath);
   });
   it("names both Antigravity files: hooks in its shared hooks.json, the status line in its own settings", () => {
     const h = renderToStaticMarkup(<ConsentCard scenario={CONSENT.antigravity} on={on} open />);
@@ -70,7 +90,7 @@ describe("ConsentCard", () => {
     expect(h).toContain("Let Marshell set the mode");
     expect(h).toContain("Antigravity CLI is set to skip every permission prompt (<code>dangerouslySkipPermissions</code>), so Marshell can&#x27;t ask you about anything.");
     expect(h).toContain("Turning it off lets each session&#x27;s mode decide; Bypass keeps today&#x27;s behaviour.");
-    expect(h.match(/role="switch"/g)).toHaveLength(4);
+    expect(h.match(/role="switch"/g)).toHaveLength(5);
     // The switch shows the plan's choice: on here, so the headline and the diff turn the setting off.
     const handOver = /<input([^>]*)>(?:(?!<input)[\s\S])*?Let Marshell set the mode/.exec(h)![1]!;
     expect(handOver).toContain('checked=""');

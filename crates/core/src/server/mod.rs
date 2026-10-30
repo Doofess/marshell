@@ -176,6 +176,9 @@ struct Inner {
     codex_hooks: Option<PathBuf>,
     /// The user home Antigravity's files are planned under when a test names one; None means the user's home.
     agy_home: Option<PathBuf>,
+    /// The user home the `marshell` skill files are planned under when a test names one; None means the user's
+    /// home, and `CLAUDE_CONFIG_DIR` from the environment. A named home also stops the environment from being read.
+    skill_home: Option<PathBuf>,
     /// Home and managed settings paths for reading Claude's compact window; tests supply scratch paths.
     claude_compact_paths: Option<(PathBuf, Vec<PathBuf>)>,
     /// Where the app's own programs sit, so setting up hooks can put a missing bridge back. None in tests.
@@ -278,6 +281,7 @@ impl AppState {
             claude_settings: None,
             codex_hooks: None,
             agy_home: None,
+            skill_home: None,
             claude_compact_paths: None,
             programs_dir: None,
             versions: Mutex::new(HashMap::new()),
@@ -335,6 +339,15 @@ impl AppState {
         Arc::get_mut(&mut self.0)
             .expect("with_agy_home runs before the state is shared")
             .agy_home = Some(user_home);
+        self
+    }
+    /// Names the user home under which the `marshell` skill files of all three CLIs are planned, in place of the
+    /// environment. The process environment is not read either, so a `CLAUDE_CONFIG_DIR` of the developer's cannot
+    /// move Claude Code's skill out of it. Call it before the state is cloned.
+    pub fn with_skill_home(mut self, user_home: PathBuf) -> Self {
+        Arc::get_mut(&mut self.0)
+            .expect("with_skill_home runs before the state is shared")
+            .skill_home = Some(user_home);
         self
     }
     /// Names the user home and managed files used for Claude's compact window, before state is shared.
@@ -860,6 +873,8 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/agents/{agent}/settings/undo", post(agents::settings_undo))
         .route("/v1/agents/{agent}/hooks/plan", post(agents::plan))
         .route("/v1/agents/{agent}/hooks/remove-plan", post(agents::remove_plan))
+        .route("/v1/agents/{agent}/skill/plan", post(agents::skill_plan))
+        .route("/v1/agents/{agent}/skill/remove-plan", post(agents::skill_remove_plan))
         .route("/v1/history", get(history::list))
         .route("/v1/history/import", get(history::import_status))
         .route("/v1/history/storage", get(history::storage_report))
