@@ -49,6 +49,15 @@ describe("ConsentCard", () => {
     expect(h.match(/role="switch"/g)).toHaveLength(4);
     expect(h).toContain("Codex has no status line to chain.");
   });
+  it("shows the skill problem in place of the switch for a skill Marshell can't touch", () => {
+    const d = { ...CONSENT.claude.detection, skill: "unavailable" as const, skillPath: "C:\h\SKILL.md", skillProblem: "Marshell will not edit C:\h\SKILL.md: No." };
+    const h = renderToStaticMarkup(<ConsentCard scenario={{ ...CONSENT.claude, detection: d }} on={{ ...on, skill: true }} open />);
+    expect(h).not.toContain("Install the marshell skill");
+    expect(h).not.toContain("Teaches");
+    expect(h).toContain("Marshell will not edit C:\h\SKILL.md: No.");
+    expect(h).toContain('class="consent__meta"');
+    expect(h).not.toContain(`Exact changes to ${d.configPath} and`);
+  });
   it("names the skill file in the diff label when the skill is added or updated", () => {
     const skill = { ...CONSENT.claude.detection, skill: "none" as const, skillPath: "C:\h\.claude\skills\marshell\SKILL.md" };
     const one = renderToStaticMarkup(<ConsentCard scenario={{ ...CONSENT.claude, detection: skill }} on={{ ...on, skill: true }} open />);

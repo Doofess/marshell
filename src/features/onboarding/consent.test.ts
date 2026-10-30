@@ -63,6 +63,11 @@ describe("consentHeadline", () => {
     expect(consentHeadline({ ...claude, skill: "outdated", skillPath }, all)).toContain("Update the marshell skill in");
     expect(consentHeadline({ ...claude, skill: "installed", skillPath }, all)).not.toContain("marshell skill");
   });
+  it("adds no skill sentence for a skill Marshell can't touch", () => {
+    const h = consentHeadline({ ...claude, skill: "unavailable", skillPath: "/s", skillProblem: "No." }, all);
+    expect(h).not.toContain("marshell skill");
+    expect(h).toBe(consentHeadline(claude, all));
+  });
   it("says only the skill sentence when nothing else is on", () => {
     const off = { status: false, approve: false, statusline: false, skill: true };
     expect(consentHeadline({ ...claude, skill: "none", skillPath: "/s" }, off)).toBe("Add the marshell skill in /s.");
@@ -116,5 +121,7 @@ describe("a status line added rather than chained", () => {
     expect(opensDiff(false, "edited")).toBe(false);
     expect(opensDiff(true, "outdated")).toBe(false);
     expect(opensDiff(true, undefined)).toBe(false);
+    expect(skillUndo(true, "unavailable")).toBeUndefined();
+    expect(opensDiff(true, "unavailable")).toBe(false);
   });
 });

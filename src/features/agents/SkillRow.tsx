@@ -7,7 +7,7 @@ import type { SkillFlow } from "./useSkillFlow";
 export type SkillRowHandlers = { install(): void; remove(): void; apply(): void; toggleDiff(): void; reload(): void; cancel(): void };
 
 /** The skill's state as a line and the button for what the person can do about it. */
-function stateOf(setup: AgentSetup): { line: string; label: string; act: "install" | "remove" } {
+function stateOf(setup: AgentSetup): { line: string; label: string; act: "install" | "remove" } | { line: string; label?: undefined; act?: undefined } {
   switch (setup.skill) {
     case "none":
       return { line: "Not installed.", label: "Install the marshell skill", act: "install" };
@@ -17,6 +17,8 @@ function stateOf(setup: AgentSetup): { line: string; label: string; act: "instal
       return { line: "A newer version is ready.", label: "Update the marshell skill", act: "install" };
     case "edited":
       return { line: "Changed since Marshell wrote it. Updating shows what changes.", label: "Update the marshell skill", act: "install" };
+    case "unavailable":
+      return { line: setup.skill_problem ?? "Marshell can't change the marshell skill file." };
   }
 }
 
@@ -29,7 +31,7 @@ export function SkillRow({ agent, setup, flow, on }: { agent: HookAgent; setup: 
       <p className="agents-dialog__line" dir="auto">
         {line}
       </p>
-      {!flow && (
+      {!flow && label !== undefined && (
         <div className="agents-dialog__actions">
           <button type="button" className="agents-dialog__btn" onClick={on[act]}>
             {label}

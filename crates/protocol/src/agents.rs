@@ -29,6 +29,9 @@ pub enum SkillInstall {
     Outdated,
     /// The file holds anything else: the person edited it, or Marshell didn't write it.
     Edited,
+    /// Marshell can't touch the file: it can't be read, it is too large, or the config guard refuses its path.
+    /// `AgentSetup::skill_problem` says why.
+    Unavailable,
 }
 
 /// Whether Codex trusts the hook entries Marshell added, as its `config.toml` records it.
@@ -107,6 +110,10 @@ pub struct AgentSetup {
     pub skill: SkillInstall,
     /// Where this agent's user-level `marshell` skill file goes.
     pub skill_path: String,
+    /// Why the skill is `unavailable`; absent for every other state.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub skill_problem: Option<String>,
 }
 
 /// Whether one agent's CLI is on this machine, which is all Marshell knows about an agent it has no adapter for.

@@ -95,6 +95,7 @@ export function toDetection(s: AgentSetup): Detection {
     hasOwnStatusLine: s.has_own_statusline,
     skill: s.skill,
     skillPath: s.skill_path,
+    skillProblem: s.skill_problem,
     // Antigravity's hooks go in a file of their own; without a preview, hooks.json is taken as there once Marshell's hooks are.
     ...(s.hooks_path === undefined ? {} : { hooks: { path: s.hooks_path, exists: s.hooks !== "none" } }),
   };

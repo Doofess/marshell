@@ -12,6 +12,18 @@ pub const SKILL_TEXT: &str = include_str!("skill/SKILL.md");
 /// The `hash_bytes` hex of every earlier shipped `SKILL_TEXT`. A release that changes the text adds the old hash.
 pub const PREVIOUS: &[&str] = &[];
 
+/// Every agent with a skill: its id and the CLI's name, as a plan's title says it.
+pub const AGENTS: [(&str, &str); 3] = [
+    ("claude", "Claude Code"),
+    ("codex", "Codex"),
+    ("antigravity", "Antigravity CLI"),
+];
+
+/// The CLI's name for `agent`'s id.
+pub fn cli_name(agent: &str) -> Option<&'static str> {
+    AGENTS.iter().find(|(id, _)| *id == agent).map(|(_, name)| *name)
+}
+
 /// Where `agent`'s user-level skill file goes, or None for an agent without skills. `CLAUDE_CONFIG_DIR` moves
 /// Claude Code's only when it is set and not blank.
 pub fn skill_path(agent: &str, env: &dyn Fn(&str) -> Option<String>, user_home: &Path) -> Option<PathBuf> {
@@ -57,13 +69,13 @@ pub fn install_edit(path: &Path, bytes: Option<&[u8]>) -> Option<FileEdit> {
     match state_of(bytes) {
         SkillInstall::None => Some(edit(path, EditOp::CreateFile { content }, None)),
         SkillInstall::Outdated | SkillInstall::Edited => Some(edit(path, EditOp::ReplaceText { content }, bytes)),
-        SkillInstall::Installed => None,
+        SkillInstall::Installed | SkillInstall::Unavailable => None,
     }
 }
 
 pub fn install_plan(agent_name: &str, path: &Path, bytes: Option<&[u8]>) -> ChangeSet {
     let verb = match state_of(bytes) {
-        SkillInstall::None | SkillInstall::Installed => "Install",
+        SkillInstall::None | SkillInstall::Installed | SkillInstall::Unavailable => "Install",
         SkillInstall::Outdated | SkillInstall::Edited => "Update",
     };
     ChangeSet {
@@ -119,6 +131,15 @@ mod tests {
         assert_eq!(p("codex", &no_env), Some(tail("/h/.agents")));
         assert_eq!(p("antigravity", &no_env), Some(tail("/h/.gemini/config")));
         assert_eq!(p("grok", &no_env), None);
+    }
+
+    #[test]
+    fn every_agent_in_the_table_has_a_skill_path_and_a_name() {
+        for (id, name) in AGENTS {
+            assert!(skill_path(id, &no_env, Path::new("/h")).is_some(), "{id}");
+            assert_eq!(cli_name(id), Some(name));
+        }
+        assert_eq!(cli_name("grok"), None);
     }
 
     #[test]

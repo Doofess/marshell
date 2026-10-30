@@ -16,6 +16,8 @@ use std::path::PathBuf;
 
 /// A config file bigger than this is refused rather than read.
 pub const MAX_CONFIG_BYTES: u64 = 4 * 1024 * 1024;
+/// What a refused file's detail says when it is over `MAX_CONFIG_BYTES`.
+pub const TOO_LARGE_DETAIL: &str = "The file is larger than 4 MiB.";
 
 /// One file of a ChangeSet, with the bytes it has now and the bytes it would have.
 #[derive(Debug, Clone)]
@@ -132,14 +134,9 @@ fn refuse<T>(reason: RefuseReason, detail: impl Into<String>) -> Result<T, Refus
     Err((reason, detail.into()))
 }
 
-/// The file's bytes before and after, or the first reason it can't be changed. Sets `file.target`.
-fn compute(
-    file: &mut PlannedFile,
-    edits: &[&FileEdit],
-    guard: &Guard,
-    snapshots: &Snapshots,
-) -> Result<(Bytes, Bytes), Refused> {
-    let resolved = guard.check(&file.path).map_err(|r| match r {
+/// Where a write to `path` lands (links followed), or why the guard refuses it. The first check of every file.
+fn locate(guard: &Guard, path: &std::path::Path) -> Result<PathBuf, Refused> {
+    let resolved = guard.check(path).map_err(|r| match r {
         Refusal::NotAbsolute => (
             RefuseReason::NotAbsolute,
             "The path must be absolute, with no .. parts.".to_string(),
@@ -157,16 +154,31 @@ fn compute(
             "This is Marshell's own data folder.".to_string(),
         ),
     })?;
-    let target = match resolve_link(&resolved) {
-        Ok(target) => target,
-        Err(e) => return refuse(RefuseReason::Unreadable, format!("Could not follow the link: {e}")),
-    };
+    match resolve_link(&resolved) {
+        Ok(target) => Ok(target),
+        Err(e) => refuse(RefuseReason::Unreadable, format!("Could not follow the link: {e}")),
+    }
+}
+
+/// Why a preview would refuse `path` before it reads it (the detail it shows), or None when the path is open.
+pub fn path_refusal(guard: &Guard, path: &std::path::Path) -> Option<String> {
+    locate(guard, path).err().map(|(_, detail)| detail)
+}
+
+/// The file's bytes before and after, or the first reason it can't be changed. Sets `file.target`.
+fn compute(
+    file: &mut PlannedFile,
+    edits: &[&FileEdit],
+    guard: &Guard,
+    snapshots: &Snapshots,
+) -> Result<(Bytes, Bytes), Refused> {
+    let target = locate(guard, &file.path)?;
     file.target = target.clone();
 
     let before = match std::fs::metadata(&target) {
         Ok(meta) => {
             if meta.len() > MAX_CONFIG_BYTES {
-                return refuse(RefuseReason::TooLarge, "The file is larger than 4 MiB.");
+                return refuse(RefuseReason::TooLarge, TOO_LARGE_DETAIL);
             }
             if meta.permissions().readonly() {
                 return refuse(RefuseReason::ReadOnly, "The file is read-only.");

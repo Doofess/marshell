@@ -49,4 +49,8 @@ skill: SkillInstall,
 /**
  * Where this agent's user-level `marshell` skill file goes.
  */
-skill_path: string, };
+skill_path: string, 
+/**
+ * Why the skill is `unavailable`; absent for every other state.
+ */
+skill_problem?: string, };

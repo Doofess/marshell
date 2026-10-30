@@ -1,11 +1,12 @@
 import { renderToStaticMarkup } from "react-dom/server";
+import type { AgentSetup } from "../../generated/AgentSetup";
 import { describe, expect, it, vi } from "vitest";
 import { PREVIEW, SETUP } from "./fixtures";
 import { SkillRow } from "./SkillRow";
 import type { SkillFlow } from "./useSkillFlow";
 
 const on = { install: vi.fn(), remove: vi.fn(), apply: vi.fn(), toggleDiff: vi.fn(), reload: vi.fn(), cancel: vi.fn() };
-const html = (skill: "none" | "installed" | "outdated" | "edited", flow: SkillFlow | null = null) => renderToStaticMarkup(<SkillRow agent="claude" setup={{ ...SETUP, skill }} flow={flow} on={on} />);
+const html = (skill: AgentSetup["skill"], flow: SkillFlow | null = null, skill_problem?: string) => renderToStaticMarkup(<SkillRow agent="claude" setup={{ ...SETUP, skill, skill_problem }} flow={flow} on={on} />);
 const text = (h: string) => h.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
 
 describe("SkillRow", () => {
@@ -22,6 +23,11 @@ describe("SkillRow", () => {
   });
   it("edited: says it changed and that updating shows what changes", () => {
     expect(text(html("edited"))).toBe("Changed since Marshell wrote it. Updating shows what changes. Update the marshell skill");
+  });
+  it("unavailable: its line is the problem and there is no button", () => {
+    const h = html("unavailable", null, "Marshell will not edit X: No.");
+    expect(text(h)).toBe("Marshell will not edit X: No.");
+    expect(h).not.toContain("<button");
   });
   it("an open flow shows the diff toggle and Apply", () => {
     const h = html("none", { kind: "install", preview: PREVIEW, open: true, busy: false });

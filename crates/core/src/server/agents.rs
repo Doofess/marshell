@@ -12,7 +12,7 @@ use crate::agents::skill;
 use crate::agents::{parse_any_version, run_version_text};
 use crate::bridge;
 use crate::config::jsonc::{parse_problem, read_value};
-use crate::config::preview::{PlannedFile, unified_diff};
+use crate::config::preview::{MAX_CONFIG_BYTES, PlannedFile, TOO_LARGE_DETAIL, unified_diff};
 use crate::config::service::ApplyError;
 use crate::paths;
 use crate::profiles::detect::{agent_command, agent_exe};
@@ -73,11 +73,12 @@ fn adapter(agent: &str) -> Result<Adapter, Fail> {
 impl Adapter {
     /// The CLI's name in a plan's title: "Install the marshell skill for Codex".
     fn cli_name(self) -> &'static str {
-        match self {
-            Adapter::Claude => "Claude Code",
-            Adapter::Codex => "Codex",
-            Adapter::Antigravity => "Antigravity CLI",
-        }
+        let id = match self {
+            Adapter::Claude => AGENT,
+            Adapter::Codex => CODEX,
+            Adapter::Antigravity => ANTIGRAVITY,
+        };
+        skill::cli_name(id).unwrap_or(id)
     }
 }
 
@@ -161,30 +162,40 @@ impl AppState {
         path.ok_or_else(|| (StatusCode::NOT_FOUND, "no such agent".to_string()))
     }
 
-    /// The bytes of the skill file: `None` when it is missing. A file that cannot be read is a 422 that names it.
-    fn skill_bytes(path: &Path) -> Result<Option<Vec<u8>>, Fail> {
+    /// The bytes of the skill file: `None` when it is missing. A path the config guard refuses, a file over the
+    /// config service's size limit and a file that cannot be read are each a 422 that says why.
+    fn skill_bytes(&self, path: &Path) -> Result<Option<Vec<u8>>, Fail> {
+        let unavailable = |message: String| (StatusCode::UNPROCESSABLE_ENTITY, message);
+        if let Some(detail) = self.0.config.path_refusal(path) {
+            return Err(unavailable(format!(
+                "Marshell will not edit {}: {detail}",
+                path.display()
+            )));
+        }
+        if std::fs::metadata(path).is_ok_and(|meta| meta.len() > MAX_CONFIG_BYTES) {
+            return Err(unavailable(format!(
+                "Marshell will not edit {}: {TOO_LARGE_DETAIL}",
+                path.display()
+            )));
+        }
         match std::fs::read(path) {
             Ok(bytes) => Ok(Some(bytes)),
             Err(e) if e.kind() == ErrorKind::NotFound => Ok(None),
-            Err(e) => Err((
-                StatusCode::UNPROCESSABLE_ENTITY,
-                format!(
-                    "{} can't be read ({e}), so Marshell will not change it.",
-                    path.display()
-                ),
-            )),
+            Err(e) => Err(unavailable(format!(
+                "{} can't be read ({e}), so Marshell will not change it.",
+                path.display()
+            ))),
         }
     }
 
-    /// The skill's install state and path for `agent`'s setup. A file that can't be read counts as edited: it is
-    /// there, and it is not Marshell's text.
-    fn skill_of(&self, agent: &str) -> Result<(SkillInstall, String), Fail> {
+    /// The skill's install state, path and, when it is unavailable, the problem, for `agent`'s setup.
+    fn skill_of(&self, agent: &str) -> Result<(SkillInstall, String, Option<String>), Fail> {
         let path = self.skill_file(agent)?;
-        let state = match Self::skill_bytes(&path) {
-            Ok(bytes) => skill::state_of(bytes.as_deref()),
-            Err(_) => SkillInstall::Edited,
+        let (state, problem) = match self.skill_bytes(&path) {
+            Ok(bytes) => (skill::state_of(bytes.as_deref()), None),
+            Err((_, problem)) => (SkillInstall::Unavailable, Some(problem)),
         };
-        Ok((state, path.to_string_lossy().into_owned()))
+        Ok((state, path.to_string_lossy().into_owned(), problem))
     }
 
     fn agy_inputs(&self) -> Result<AgyInputs, Fail> {
@@ -367,7 +378,7 @@ pub(crate) fn setup_of(st: &AppState) -> Result<AgentSetup, Fail> {
 
     let exe = st.claude_exe();
     let version = st.claude_version(exe.as_deref());
-    let (skill, skill_path) = st.skill_of(AGENT)?;
+    let (skill, skill_path, skill_problem) = st.skill_of(AGENT)?;
 
     let mut setup = AgentSetup {
         agent: AGENT.to_string(),
@@ -388,6 +399,7 @@ pub(crate) fn setup_of(st: &AppState) -> Result<AgentSetup, Fail> {
         snapshots_dir: paths::snapshots_dir(home).to_string_lossy().into_owned(),
         skill,
         skill_path,
+        skill_problem,
     };
 
     let text = match std::fs::read_to_string(&settings_path) {
@@ -437,7 +449,7 @@ pub(crate) fn codex_setup_of(st: &AppState) -> Result<AgentSetup, Fail> {
     let hooks_path = st.codex_hooks_path(&user_home);
     let exe = st.agent_exe_of(CODEX);
     let version = st.codex_version(exe.as_deref());
-    let (skill, skill_path) = st.skill_of(CODEX)?;
+    let (skill, skill_path, skill_problem) = st.skill_of(CODEX)?;
 
     let mut setup = AgentSetup {
         agent: CODEX.to_string(),
@@ -458,6 +470,7 @@ pub(crate) fn codex_setup_of(st: &AppState) -> Result<AgentSetup, Fail> {
         snapshots_dir: paths::snapshots_dir(home).to_string_lossy().into_owned(),
         skill,
         skill_path,
+        skill_problem,
     };
 
     let text = match std::fs::read_to_string(&hooks_path) {
@@ -503,7 +516,7 @@ pub(crate) fn agy_setup_of(st: &AppState) -> Result<AgentSetup, Fail> {
     let (hooks_file, settings_file) = (agy::hooks_path(&user_home), agy::settings_path(&user_home));
     let exe = st.agent_exe_of(ANTIGRAVITY);
     let version = st.agent_version(ANTIGRAVITY, exe.as_deref());
-    let (skill, skill_path) = st.skill_of(ANTIGRAVITY)?;
+    let (skill, skill_path, skill_problem) = st.skill_of(ANTIGRAVITY)?;
 
     let mut setup = AgentSetup {
         agent: ANTIGRAVITY.to_string(),
@@ -524,6 +537,7 @@ pub(crate) fn agy_setup_of(st: &AppState) -> Result<AgentSetup, Fail> {
         snapshots_dir: paths::snapshots_dir(home).to_string_lossy().into_owned(),
         skill,
         skill_path,
+        skill_problem,
     };
 
     // A missing file is `None`; one that cannot be read or parsed makes the state unparsable.
@@ -1178,9 +1192,11 @@ pub async fn plan(
         }
         .map_err(|e| refused(&e))?;
         if want.skill {
+            // A skill Marshell can't touch is left out: it must not block the hooks.
             let path = st.skill_file(&agent)?;
-            let bytes = AppState::skill_bytes(&path)?;
-            changes.edits.extend(skill::install_edit(&path, bytes.as_deref()));
+            if let Ok(bytes) = st.skill_bytes(&path) {
+                changes.edits.extend(skill::install_edit(&path, bytes.as_deref()));
+            }
         }
         Ok::<_, Fail>(st.0.config.preview(changes))
     })
@@ -1197,7 +1213,7 @@ pub async fn skill_plan(
     let adapter = adapter(&agent)?;
     let preview = tokio::task::spawn_blocking(move || {
         let path = st.skill_file(&agent)?;
-        let bytes = AppState::skill_bytes(&path)?;
+        let bytes = st.skill_bytes(&path)?;
         let changes = skill::install_plan(adapter.cli_name(), &path, bytes.as_deref());
         Ok::<_, Fail>(st.0.config.preview(changes))
     })
@@ -1214,7 +1230,7 @@ pub async fn skill_remove_plan(
     let adapter = adapter(&agent)?;
     let preview = tokio::task::spawn_blocking(move || {
         let path = st.skill_file(&agent)?;
-        let bytes = AppState::skill_bytes(&path)?;
+        let bytes = st.skill_bytes(&path)?;
         if skill::state_of(bytes.as_deref()) == SkillInstall::Edited {
             return Err((
                 StatusCode::UNPROCESSABLE_ENTITY,

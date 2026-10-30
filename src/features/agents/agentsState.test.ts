@@ -114,6 +114,17 @@ describe("the switches the person sets", () => {
     expect(setupWant(s({ skill: "installed" }))).toEqual({ ...DEFAULT_WANT, skill: false });
     expect(setupWant(s({ hooks: "installed", skill: "installed" })).skill).toBe(false);
     expect(setupWant(s({ hooks: "installed", skill: "edited" })).skill).toBe(true);
+    // A skill Marshell can't touch is never asked for.
+    expect(setupWant(s({ skill: "unavailable", skill_problem: "No." })).skill).toBe(false);
+    expect(setupWant(s({ hooks: "installed", skill: "unavailable" })).skill).toBe(false);
+  });
+  it("carries the skill problem to the consent card and offers no diff, undo or sentence for it", () => {
+    const p = consentProps(s({ skill: "unavailable", skill_problem: "Marshell will not edit X: No." }), { preview: PREVIEW, open: false, busy: false });
+    expect(p.scenario.detection.skill).toBe("unavailable");
+    expect(p.scenario.detection.skillProblem).toBe("Marshell will not edit X: No.");
+    expect(p.on.skill).toBe(false);
+    expect(p.scenario.plan.removal).not.toContain("skill");
+    expect(startsOpen({ ...DEFAULT_WANT, skill: true }, "unavailable")).toBe(false);
   });
   it("sends the approval switch in the hook plan request", () => {
     expect(installRequest({ ...DEFAULT_WANT, approve: true, skill: false }).approve).toBe(true);

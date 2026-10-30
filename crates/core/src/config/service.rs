@@ -20,7 +20,7 @@ use crate::auth::new_id;
 use crate::config::guard::Guard;
 use crate::config::hash::{hash_bytes, hash_file};
 use crate::config::managed::{self, Change};
-use crate::config::preview::{PlannedFile, plan, to_preview};
+use crate::config::preview::{PlannedFile, path_refusal, plan, to_preview};
 use crate::config::snapshots::{SnapshotInput, Snapshots};
 use crate::config::watch::Watcher;
 use crate::config::write;
@@ -259,6 +259,11 @@ impl ConfigService {
         drop(previews);
         self.watch(&files);
         preview
+    }
+
+    /// Why a preview would refuse `path` on its location alone (the detail the person is shown), or None.
+    pub fn path_refusal(&self, path: &Path) -> Option<String> {
+        path_refusal(&self.shared.guard(), path)
     }
 
     /// Where a write to `path` would land: the guard's resolved path with links followed. None when the guard refuses

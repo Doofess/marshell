@@ -3,4 +3,4 @@
 /**
  * Whether the `marshell` skill file is in place for an agent, judged by the file's hash.
  */
-export type SkillInstall = "none" | "installed" | "outdated" | "edited";
+export type SkillInstall = "none" | "installed" | "outdated" | "edited" | "unavailable";

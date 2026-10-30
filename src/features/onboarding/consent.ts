@@ -60,9 +60,9 @@ export function removalCopy(cli: CliId, on: Record<Capability, boolean>, hooks?:
   return `Marshell ${list}; the rest of ${twoFiles ? "each" : "the"} file stays as it is.`;
 }
 
-/** How the skill part of the undo sentence reads: nothing when the switch is off, the state is unknown or the skill is already installed. */
+/** How the skill part of the undo sentence reads: nothing when the switch is off, the state is unknown, the skill is already installed or Marshell can't touch it. */
 export function skillUndo(skillOn: boolean, state?: Detection["skill"]): "add" | "update" | undefined {
-  if (!skillOn || !state || state === "installed") return undefined;
+  if (!skillOn || !state || state === "installed" || state === "unavailable") return undefined;
   return state === "none" ? "add" : "update";
 }
 
@@ -74,9 +74,9 @@ const sentence = (text: string) => `${text.charAt(0).toUpperCase()}${text.slice(
 /** Status is on and the user has no status line: install adds one (so context and plan data arrive) instead of chaining theirs. */
 export const addsStatusLine = (d: Detection, on: Record<Capability, boolean>) => d.hasOwnStatusLine === false && on.status && CAPABILITIES[d.cli].statusline.available;
 
-/** The sentence about the skill file: nothing when it is off, already installed or unknown. */
+/** The sentence about the skill file: nothing when it is off, already installed, unavailable or unknown. */
 function skillSentence(d: Detection, on: Record<Capability, boolean>): string | undefined {
-  if (!on.skill || !d.skill || d.skill === "installed" || d.skillPath === undefined) return undefined;
+  if (!on.skill || !d.skill || d.skill === "installed" || d.skill === "unavailable" || d.skillPath === undefined) return undefined;
   return `${d.skill === "none" ? "Add" : "Update"} the marshell skill in ${d.skillPath}.`;
 }
 

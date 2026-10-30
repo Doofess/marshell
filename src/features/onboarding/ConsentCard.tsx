@@ -11,7 +11,7 @@ const ALL: Capability[] = ["status", "approve", "statusline", "skill"];
 
 /** The files the plan touches: the hooks file, the settings file, and the skill file when it is added or updated. */
 function changedFiles(d: Detection, skillOn: boolean): string[] {
-  const skill = skillOn && d.skill !== undefined && d.skill !== "installed" && d.skillPath !== undefined ? [d.skillPath] : [];
+  const skill = skillOn && d.skill !== undefined && d.skill !== "installed" && d.skill !== "unavailable" && d.skillPath !== undefined ? [d.skillPath] : [];
   return [...(d.hooks ? [d.hooks.path] : []), d.configPath, ...skill];
 }
 
@@ -76,7 +76,7 @@ export function ConsentCard({
       {edit.ok ? (
         <>
           <ul className="consent__switches">
-            {offer.filter((c) => c !== "statusline" || d.hasOwnStatusLine !== false).map((c) => (
+            {offer.filter((c) => (c !== "statusline" || d.hasOwnStatusLine !== false) && (c !== "skill" || d.skill !== "unavailable")).map((c) => (
               <li key={c}>
                 <Switch label={CAP_LABEL[c]} checked={on[c] && CAPABILITIES[d.cli][c].available} disabled={!CAPABILITIES[d.cli][c].available} reason={CAPABILITIES[d.cli][c].reason} onChange={onSwitch && ((v) => change(c, v))} />
               </li>
@@ -88,7 +88,7 @@ export function ConsentCard({
             )}
           </ul>
           {offer.includes("approve") && offer.includes("status") && <p className="consent__meta">Approve from anywhere needs live status to know when a request is answered.</p>}
-          {offer.includes("skill") && <p className="consent__meta">Teaches {name} the marshell command: list, send, new and focus.</p>}
+          {offer.includes("skill") && (d.skill === "unavailable" ? d.skillProblem !== undefined && <p className="consent__meta" dir="auto">{d.skillProblem}</p> : <p className="consent__meta">Teaches {name} the marshell command: list, send, new and focus.</p>)}
           {d.cli === "antigravity" && offer.includes("approve") && <p className="consent__meta">Cards for risky commands in Bypass. In other modes Antigravity asks in its terminal.</p>}
           {d.skipsAll && (
             <p className="consent__handover">

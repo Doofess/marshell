@@ -25,6 +25,11 @@ struct Env {
 /// A temp Marshell home and a recorded project that holds the user home, the settings file and Codex's hooks, so
 /// the config service may write them. The skill home, Codex's hooks and Antigravity's home are all handed over.
 fn env() -> Env {
+    env_with(|_home, user| user.to_path_buf())
+}
+
+/// `env`, with the skill home chosen from the Marshell home and the user home.
+fn env_with(skill_home: impl FnOnce(&std::path::Path, &std::path::Path) -> PathBuf) -> Env {
     let dir = tempfile::tempdir().unwrap();
     let root = canonical(dir.path());
     let home = root.join("home");
@@ -38,13 +43,13 @@ fn env() -> Env {
         TOKEN.into(),
         PORT,
         vec!["http://tauri.localhost".into()],
-        home,
+        home.clone(),
         Vec::new(),
     )
     .with_claude_settings(settings.clone())
     .with_codex_hooks(project.join("codex").join("hooks.json"))
     .with_agy_home(user.clone())
-    .with_skill_home(user.clone())
+    .with_skill_home(skill_home(&home, &user))
     .with_agent_path(|_| None);
     Env {
         _dir: dir,
@@ -298,4 +303,91 @@ async fn remove_plan_refuses_an_edited_skill() {
     );
     assert!(body.contains(&message), "{body}");
     assert_eq!(std::fs::read(&file).unwrap(), b"mine");
+}
+
+/// A skill path under Marshell's own data folder: the config guard refuses it.
+fn refused_env() -> Env {
+    env_with(|home, _| home.to_path_buf())
+}
+
+fn hooks_want(skill: bool) -> Value {
+    json!({"status": true, "statusline": true, "approve": true, "skill": skill})
+}
+
+#[tokio::test]
+async fn a_skill_the_guard_refuses_is_unavailable_and_does_not_block_the_hooks() {
+    let e = refused_env();
+    let (status, setup) = get(&e.app, "/v1/agents/claude/setup").await;
+    assert_eq!(status, StatusCode::OK, "{setup}");
+    assert_eq!(setup["skill"], "unavailable", "{setup}");
+    let problem = setup["skill_problem"].as_str().unwrap();
+    let path = setup["skill_path"].as_str().unwrap();
+    assert_eq!(
+        problem,
+        format!("Marshell will not edit {path}: This is Marshell's own data folder.")
+    );
+
+    // A stale request that still asks for the skill: the hooks plan goes on without it.
+    let (status, preview) = post(&e.app, "/v1/agents/claude/hooks/plan", hooks_want(true)).await;
+    assert_eq!(status, StatusCode::OK, "{preview}");
+    assert_eq!(preview["can_apply"], true, "{preview}");
+    let paths = paths_of(&preview);
+    assert!(paths.contains(&e.settings.to_string_lossy().to_string()), "{paths:?}");
+    assert!(!paths.contains(&path.to_string()), "{paths:?}");
+
+    // The skill's own routes say why.
+    for route in ["skill/plan", "skill/remove-plan"] {
+        let (status, body) = post(&e.app, &format!("/v1/agents/claude/{route}"), json!({})).await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{route}: {body}");
+    }
+}
+
+#[tokio::test]
+async fn a_skill_file_that_cannot_be_read_is_unavailable() {
+    let e = env();
+    let file = skill_file(&e.user, "claude");
+    // A folder named SKILL.md: reading it fails with something other than "not found".
+    std::fs::create_dir_all(&file).unwrap();
+    let (_, setup) = get(&e.app, "/v1/agents/claude/setup").await;
+    assert_eq!(setup["skill"], "unavailable", "{setup}");
+    let problem = setup["skill_problem"].as_str().unwrap();
+    assert!(
+        problem.starts_with(&format!("{} can't be read (", file.display()))
+            && problem.ends_with("), so Marshell will not change it."),
+        "{problem}"
+    );
+    let (status, preview) = post(&e.app, "/v1/agents/claude/hooks/plan", hooks_want(true)).await;
+    assert_eq!(status, StatusCode::OK, "{preview}");
+    assert_eq!(preview["can_apply"], true, "{preview}");
+    assert!(!paths_of(&preview).contains(&file.to_string_lossy().to_string()));
+    let (status, body) = post(&e.app, "/v1/agents/claude/skill/plan", json!({})).await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+}
+
+#[tokio::test]
+async fn a_skill_file_over_the_size_limit_is_unavailable() {
+    let e = env();
+    let file = skill_file(&e.user, "codex");
+    std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+    let big = std::fs::File::create(&file).unwrap();
+    big.set_len(marshell_core::config::preview::MAX_CONFIG_BYTES + 1)
+        .unwrap();
+    drop(big);
+    let (_, setup) = get(&e.app, "/v1/agents/codex/setup").await;
+    assert_eq!(setup["skill"], "unavailable", "{setup}");
+    assert_eq!(
+        setup["skill_problem"],
+        format!(
+            "Marshell will not edit {}: The file is larger than 4 MiB.",
+            file.display()
+        ),
+        "{setup}"
+    );
+    for route in ["skill/plan", "skill/remove-plan"] {
+        let (status, body) = post(&e.app, &format!("/v1/agents/codex/{route}"), json!({})).await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{route}: {body}");
+    }
+    let (status, preview) = post(&e.app, "/v1/agents/codex/hooks/plan", hooks_want(true)).await;
+    assert_eq!(status, StatusCode::OK, "{preview}");
+    assert_eq!(preview["can_apply"], true, "{preview}");
 }
