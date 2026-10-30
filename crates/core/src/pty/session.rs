@@ -938,7 +938,7 @@ fn kill_tree(pid: u32, _exited: Arc<AtomicBool>) {
 }
 
 #[cfg(windows)]
-fn force_kill_tree(pid: u32) {
+pub(crate) fn force_kill_tree(pid: u32) {
     taskkill(pid);
 }
 
@@ -962,7 +962,7 @@ fn kill_tree(pid: u32, exited: Arc<AtomicBool>) {
 }
 
 #[cfg(unix)]
-fn force_kill_tree(pid: u32) {
+pub(crate) fn force_kill_tree(pid: u32) {
     unsafe {
         libc::killpg(pid as i32, libc::SIGKILL);
     }

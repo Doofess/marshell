@@ -85,6 +85,10 @@ describe("shown is run: what is sent is the list on screen", () => {
     expect(removeRequest(rp)).toEqual({ commands: ["git worktree remove x"], warnings: ["A session is open."] });
     expect(removeRequest(null)).toBeNull();
   });
+  it("sends the teardown the plan showed, and none when it showed none", () => {
+    const rp: RemovePlan = { commands: ["git worktree remove x"], warnings: [], sessions: 0, teardown: "pnpm run stop" };
+    expect(removeRequest(rp)).toEqual({ commands: ["git worktree remove x"], warnings: [], teardown: "pnpm run stop" });
+  });
 });
 
 describe("the words", () => {
@@ -109,6 +113,12 @@ describe("the words", () => {
       "Merged marshell/fix-login into main. The task folder changed during the merge, so the worktree was kept.",
     );
     expect(removedToast(TASK)).toBe("Removed marshell/fix-login.");
+  });
+  it("adds the removal's notes to the toast", () => {
+    expect(removedToast(TASK, [])).toBe("Removed marshell/fix-login.");
+    expect(removedToast(TASK, ["Teardown failed (exit 3); the worktree was removed anyway."])).toBe(
+      "Removed marshell/fix-login. Teardown failed (exit 3); the worktree was removed anyway.",
+    );
   });
   it("labels the removal 'Remove anyway' when there are warnings", () => {
     expect(removeLabel([])).toBe("Remove");
@@ -153,9 +163,12 @@ describe("runMerge", () => {
 });
 
 describe("runRemove", () => {
-  it("is ok when the core says 204, and sends the request untouched", async () => {
-    const remove = vi.fn().mockResolvedValue(undefined);
-    expect(await runRemove(api({ remove }), { commands: ["a"], warnings: ["w"] })).toEqual({ ok: true });
+  it("is ok with the core's notes, and sends the request untouched", async () => {
+    const remove = vi.fn().mockResolvedValue({ notes: ["Teardown failed (exit 3); the worktree was removed anyway."] });
+    expect(await runRemove(api({ remove }), { commands: ["a"], warnings: ["w"] })).toEqual({
+      ok: true,
+      notes: ["Teardown failed (exit 3); the worktree was removed anyway."],
+    });
     expect(remove).toHaveBeenCalledWith({ commands: ["a"], warnings: ["w"] });
   });
   it("returns the core's reason on a refusal, and a sentence on any other error", async () => {
@@ -246,6 +259,10 @@ describe("confirmRemoveRequest", () => {
   const args = { step: "remove" as const, running: false, round: 3 };
   it("sends the commands and warnings of the current plan, as shown", () => {
     expect(confirmRemoveRequest({ ...args, load: rl(3) })).toEqual({ commands: plan.commands, warnings: plan.warnings });
+  });
+  it("carries the teardown of the current plan", () => {
+    const withTeardown = { ...plan, teardown: "pnpm run stop" };
+    expect(confirmRemoveRequest({ ...args, load: rl(3, withTeardown) })?.teardown).toBe("pnpm run stop");
   });
   it("is null for an older round, no plan, a run going, or another step", () => {
     expect(confirmRemoveRequest({ ...args, load: rl(2) })).toBeNull();

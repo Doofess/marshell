@@ -3,6 +3,7 @@
 
 use crate::git::{self, GitStep};
 use crate::projects;
+use crate::scripts;
 use crate::server::AppState;
 use crate::store::{self, Versioned};
 use marshell_protocol::api::{
@@ -12,6 +13,7 @@ use marshell_protocol::api::{
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
+use std::time::{Duration, Instant};
 
 /// The longest task name made from a prompt.
 const MAX_NAME: usize = 40;
@@ -636,8 +638,9 @@ pub fn merge(st: &AppState, task: &Task, req: &MergeRequest) -> MergeOutcome {
     if let Some(why) = changed_since(task, merged_tip.as_deref()) {
         return kept(why);
     }
-    match run_removal(st, task, removal_steps) {
-        Ok(()) => MergeOutcome::Merged {
+    // The merge plan doesn't show a teardown, so none runs here: a script the user wasn't shown never runs.
+    match run_removal(st, task, None, removal_steps) {
+        Ok(_) => MergeOutcome::Merged {
             removed: true,
             removal_note: None,
         },
@@ -754,12 +757,13 @@ fn unmerged_commits(task: &Task) -> Option<u32> {
 
 /// What removing the task would run and lose, with the git steps that run it. `open_sessions` is
 /// how many running sessions the removal would close. The steps shown are the steps run.
-pub fn plan_remove(task: &Task, open_sessions: u32) -> (RemovePlan, Vec<GitStep>) {
+pub fn plan_remove(task: &Task, open_sessions: u32, home: &Path) -> (RemovePlan, Vec<GitStep>) {
     if !own_branch(task) {
         let plan = RemovePlan {
             commands: Vec::new(),
             warnings: vec![OWN_BRANCH_ONLY.to_string()],
             sessions: 0,
+            teardown: None,
         };
         return (plan, Vec::new());
     }
@@ -855,11 +859,26 @@ pub fn plan_remove(task: &Task, open_sessions: u32) -> (RemovePlan, Vec<GitStep>
             )),
         }
     }
+    // The repo's teardown runs only when its scripts are allowed; otherwise the person is told it won't.
+    let mut teardown = None;
+    if folder_there {
+        let found = scripts::read(dir, home);
+        if found.problem.is_some() {
+            warnings.push("marshell.json can't be read, so its teardown won't run.".into());
+        } else if found.teardown.is_some() {
+            if found.trusted {
+                teardown = found.teardown;
+            } else {
+                warnings.push("marshell.json's teardown won't run: this repo's scripts aren't allowed.".into());
+            }
+        }
+    }
     warnings.extend(sessions_line(open_sessions));
     let plan = RemovePlan {
         commands: steps.iter().map(git::display).collect(),
         warnings,
         sessions: open_sessions,
+        teardown,
     };
     (plan, steps)
 }
@@ -896,10 +915,86 @@ fn close_sessions(st: &AppState, task: &Task) {
 const REMOVE_RETRIES: u32 = 5;
 const REMOVE_RETRY_WAIT: std::time::Duration = std::time::Duration::from_millis(200);
 
-/// Runs the removal steps and forgets the task. The task is forgotten only when every step worked.
-/// The sessions are closed already. The caller holds `MERGE_LOCK`; `TASKS_LOCK` is taken only for
-/// the last write, not while git runs.
-fn run_removal(st: &AppState, task: &Task, steps: &[GitStep]) -> Result<(), String> {
+/// How long a teardown may run before it is stopped.
+const TEARDOWN_TIMEOUT: Duration = Duration::from_secs(300);
+
+/// Runs `argv` in `dir` with its output discarded, and waits up to `timeout`; a script still running
+/// then is stopped with everything it started. The note says what went wrong, in a sentence that
+/// ends with the removal going on; None when the script exited with 0.
+fn run_teardown_argv(argv: &[String], dir: &Path, timeout: Duration) -> Option<String> {
+    use std::process::{Command, Stdio};
+    let anyway = "the worktree was removed anyway.";
+    let Some((program, args)) = argv.split_first() else {
+        return Some(format!("Teardown couldn't start (no shell); {anyway}"));
+    };
+    let mut cmd = Command::new(program);
+    cmd.args(args)
+        .current_dir(dir)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        // CREATE_NO_WINDOW: no console window flashes.
+        cmd.creation_flags(0x0800_0000);
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        // Its own process group, so a timeout can stop everything the script started.
+        cmd.process_group(0);
+    }
+    let mut child = match cmd.spawn() {
+        Ok(child) => child,
+        Err(e) => return Some(format!("Teardown couldn't start ({e}); {anyway}")),
+    };
+    let deadline = Instant::now() + timeout;
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                return match status.code() {
+                    Some(0) => None,
+                    Some(code) => Some(format!("Teardown failed (exit {code}); {anyway}")),
+                    None => Some(format!("Teardown failed; {anyway}")),
+                };
+            }
+            Ok(None) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(50)),
+            Ok(None) => {
+                crate::pty::force_kill_tree(child.id());
+                let _ = child.kill();
+                let _ = child.wait();
+                return Some(format!("Teardown didn't finish within 5 minutes; {anyway}"));
+            }
+            Err(e) => {
+                crate::pty::force_kill_tree(child.id());
+                let _ = child.kill();
+                let _ = child.wait();
+                return Some(format!("Teardown couldn't be watched ({e}); {anyway}"));
+            }
+        }
+    }
+}
+
+/// Runs the repo's teardown `script` in the worktree, as the default shell would.
+fn run_teardown(script: &str, dir: &Path, timeout: Duration) -> Option<String> {
+    run_teardown_argv(&scripts::argv(&scripts::default_shell(), script), dir, timeout)
+}
+
+/// Runs the teardown (when there is one), then the removal steps, and forgets the task. The task is
+/// forgotten only when every step worked; a teardown that fails or hangs only adds a note, which is
+/// returned. The sessions are closed already. The caller holds `MERGE_LOCK`, which the teardown runs
+/// under; `TASKS_LOCK` is taken only for the last write, not while the teardown or git runs.
+fn run_removal(
+    st: &AppState,
+    task: &Task,
+    teardown: Option<(&str, Duration)>,
+    steps: &[GitStep],
+) -> Result<Vec<String>, String> {
+    let notes: Vec<String> = teardown
+        .and_then(|(script, timeout)| run_teardown(script, Path::new(&task.path), timeout))
+        .into_iter()
+        .collect();
     let leftover = |reason: String| {
         if Path::new(&task.path).exists() {
             format!("{reason} The folder {} is left on disk.", task.path)
@@ -957,30 +1052,46 @@ fn run_removal(st: &AppState, task: &Task, steps: &[GitStep]) -> Result<(), Stri
         .unwrap_or_default();
     doc.tasks.retain(|t| t.id != task.id);
     store::write(&file(st.home()), &doc)
-        .map_err(|e| format!("The task was removed, but the task list couldn't be saved: {e:#}"))
+        .map_err(|e| format!("The task was removed, but the task list couldn't be saved: {e:#}"))?;
+    Ok(notes)
 }
 
-/// Removes the task: closes its sessions, deletes its worktree and branch, and forgets it. Plans
-/// again first and stops when the commands differ from the ones the user was shown.
-pub fn remove(st: &AppState, task: &Task, req: &RemoveRequest) -> Result<(), String> {
+/// Removes the task: closes its sessions, runs its teardown, deletes its worktree and branch, and
+/// forgets it. Plans again first and stops when the commands, warnings or teardown differ from the
+/// ones the user was shown. Returns the notes about the teardown, if it failed.
+pub fn remove(st: &AppState, task: &Task, req: &RemoveRequest) -> Result<Vec<String>, String> {
+    remove_with_timeout(st, task, req, TEARDOWN_TIMEOUT)
+}
+
+fn remove_with_timeout(
+    st: &AppState,
+    task: &Task,
+    req: &RemoveRequest,
+    teardown_timeout: Duration,
+) -> Result<Vec<String>, String> {
     let _guard = MERGE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     if !own_branch(task) {
         return Err(OWN_BRANCH_ONLY.into());
     }
-    let (plan, _) = plan_remove(task, running_sessions(st, task));
-    if plan.commands != req.commands || plan.warnings != req.warnings {
+    let (plan, _) = plan_remove(task, running_sessions(st, task), st.home());
+    if plan.commands != req.commands || plan.warnings != req.warnings || plan.teardown != req.teardown {
         return Err(CHANGED.into());
     }
     close_sessions(st, task);
     // Closing the sessions can change what the folder holds. The user saw the plan with the
     // "Closes N sessions" line, and that line is the only one allowed to be gone now. When this
     // refuses, the sessions are already closed.
-    let (plan, steps) = plan_remove(task, 0);
+    let (plan, steps) = plan_remove(task, 0, st.home());
     let seen: Vec<&String> = req.warnings.iter().filter(|w| !is_sessions_line(w)).collect();
-    if plan.commands != req.commands || plan.warnings.iter().ne(seen) {
+    if plan.commands != req.commands || plan.warnings.iter().ne(seen) || plan.teardown != req.teardown {
         return Err(CHANGED.into());
     }
-    run_removal(st, task, &steps)
+    run_removal(
+        st,
+        task,
+        plan.teardown.as_deref().map(|script| (script, teardown_timeout)),
+        &steps,
+    )
 }
 
 /// The warning for the sessions a removal closes, when there are any.
@@ -995,4 +1106,192 @@ fn sessions_line(open_sessions: u32) -> Option<String> {
 /// The "Closes N session(s) running in this worktree." warning.
 fn is_sessions_line(warning: &str) -> bool {
     warning.starts_with("Closes ") && warning.ends_with(" running in this worktree.")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::scripts;
+    use std::time::{Duration, Instant};
+
+    const SHORT: Duration = Duration::from_secs(1);
+
+    /// A repo with one commit on `main`, a task worktree made from it, and a `home`.
+    fn new_task(tmp: &tempfile::TempDir) -> (PathBuf, Task) {
+        let base = projects::canonical(tmp.path());
+        let repo = base.join("repo");
+        std::fs::create_dir(&repo).unwrap();
+        for args in [
+            &["init", "-q", "-b", "main"][..],
+            &["config", "user.name", "T"][..],
+            &["config", "user.email", "t@example.invalid"][..],
+        ] {
+            assert!(git::run(&repo, args).unwrap().ok);
+        }
+        std::fs::write(repo.join("a.txt"), "a\n").unwrap();
+        assert!(git::run(&repo, &["add", "a.txt"]).unwrap().ok);
+        assert!(git::run(&repo, &["commit", "-q", "-m", "first"]).unwrap().ok);
+        let home = base.join("home");
+        let (plan, _) = plan_create(&home, &repo, "Fix login", 1).unwrap();
+        let req = TaskCreateRequest {
+            cwd: repo.to_string_lossy().into_owned(),
+            name: "Fix login".into(),
+            commands: plan.commands,
+        };
+        let task = create(&home, &req, 1).unwrap();
+        (home, task)
+    }
+
+    fn state_in(home: &Path) -> AppState {
+        AppState::new("token".into(), 5557, Vec::new(), home.to_path_buf(), Vec::new())
+    }
+
+    /// Writes `marshell.json` into the worktree with this teardown, and allows the repo's scripts when `trusted`.
+    fn teardown_file(home: &Path, task: &Task, script: &str, trusted: bool) {
+        let dir = Path::new(&task.path);
+        let body = serde_json::json!({ "teardown": script }).to_string();
+        std::fs::write(dir.join(scripts::FILE_NAME), body).unwrap();
+        if trusted {
+            let hash = scripts::read(dir, home).hash.unwrap();
+            let repo = projects::repo_root(dir).unwrap();
+            scripts::allow(home, &repo, &hash).unwrap();
+        }
+    }
+
+    fn request_for(home: &Path, task: &Task) -> RemoveRequest {
+        let plan = plan_remove(task, 0, home).0;
+        RemoveRequest {
+            commands: plan.commands,
+            warnings: plan.warnings,
+            teardown: plan.teardown,
+        }
+    }
+
+    /// A script (for the default shell) that writes `x` into the file at the absolute path `marker`.
+    fn write_marker(marker: &Path) -> String {
+        let path = marker.to_string_lossy();
+        if cfg!(windows) {
+            format!("Set-Content -LiteralPath '{path}' -Value x")
+        } else {
+            format!("echo x > '{path}'")
+        }
+    }
+
+    #[test]
+    fn plan_remove_puts_a_trusted_teardown_first() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (home, task) = new_task(&tmp);
+        let before = plan_remove(&task, 0, &home).0;
+        teardown_file(&home, &task, "pnpm run stop", true);
+        let (plan, steps) = plan_remove(&task, 0, &home);
+        assert_eq!(plan.teardown.as_deref(), Some("pnpm run stop"));
+        assert_eq!(plan.commands.len(), steps.len());
+        assert_eq!(plan.commands.len(), before.commands.len());
+        assert!(
+            !plan.warnings.iter().any(|w| w.contains("teardown")),
+            "{:?}",
+            plan.warnings
+        );
+    }
+
+    #[test]
+    fn plan_remove_warns_about_an_untrusted_teardown() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (home, task) = new_task(&tmp);
+        teardown_file(&home, &task, "pnpm run stop", false);
+        let plan = plan_remove(&task, 0, &home).0;
+        assert_eq!(plan.teardown, None);
+        assert!(
+            plan.warnings
+                .contains(&"marshell.json's teardown won't run: this repo's scripts aren't allowed.".to_string()),
+            "{:?}",
+            plan.warnings
+        );
+    }
+
+    #[test]
+    fn plan_remove_warns_about_a_file_that_cannot_be_read() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (home, task) = new_task(&tmp);
+        std::fs::write(Path::new(&task.path).join(scripts::FILE_NAME), "{ not json").unwrap();
+        let plan = plan_remove(&task, 0, &home).0;
+        assert_eq!(plan.teardown, None);
+        assert!(
+            plan.warnings
+                .contains(&"marshell.json can't be read, so its teardown won't run.".to_string()),
+            "{:?}",
+            plan.warnings
+        );
+    }
+
+    #[test]
+    fn a_changed_teardown_is_refused() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (home, task) = new_task(&tmp);
+        teardown_file(&home, &task, "pnpm run stop", true);
+        let mut req = request_for(&home, &task);
+        req.teardown = Some("something else".into());
+        assert_eq!(remove(&state_in(&home), &task, &req).unwrap_err(), CHANGED);
+        assert!(Path::new(&task.path).exists());
+    }
+
+    #[test]
+    fn teardown_runs_in_the_worktree_before_git() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (home, task) = new_task(&tmp);
+        let marker = tmp.path().join("marker.txt");
+        teardown_file(&home, &task, &write_marker(&marker), true);
+        let req = request_for(&home, &task);
+        let notes = remove_with_timeout(&state_in(&home), &task, &req, SHORT).unwrap();
+        assert!(notes.is_empty(), "{notes:?}");
+        assert!(marker.exists());
+        assert!(!Path::new(&task.path).exists());
+    }
+
+    #[test]
+    fn a_failed_teardown_still_removes() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (home, task) = new_task(&tmp);
+        teardown_file(&home, &task, "exit 3", true);
+        let req = request_for(&home, &task);
+        let notes = remove_with_timeout(&state_in(&home), &task, &req, SHORT).unwrap();
+        assert_eq!(notes, ["Teardown failed (exit 3); the worktree was removed anyway."]);
+        assert!(!Path::new(&task.path).exists());
+    }
+
+    #[test]
+    fn a_teardown_that_hangs_is_stopped() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (home, task) = new_task(&tmp);
+        let marker = tmp.path().join("late.txt");
+        // A child of the script's shell: it writes the marker after 3 s unless the whole tree is killed.
+        let late = marker.to_string_lossy();
+        let script = if cfg!(windows) {
+            format!(
+                "& (Get-Process -Id $PID).Path -NoProfile -Command \"Start-Sleep 3; Set-Content -LiteralPath '{late}' -Value x\""
+            )
+        } else {
+            format!("sh -c \"sleep 3; echo x > '{late}'\"")
+        };
+        teardown_file(&home, &task, &script, true);
+        let req = request_for(&home, &task);
+        let started = Instant::now();
+        let notes = remove_with_timeout(&state_in(&home), &task, &req, SHORT).unwrap();
+        assert_eq!(
+            notes,
+            ["Teardown didn't finish within 5 minutes; the worktree was removed anyway."]
+        );
+        assert!(started.elapsed() < Duration::from_secs(20));
+        assert!(!Path::new(&task.path).exists());
+        std::thread::sleep(Duration::from_secs(4));
+        assert!(!marker.exists(), "the script's child outlived the timeout");
+    }
+
+    #[test]
+    fn a_teardown_that_cannot_start_is_a_note() {
+        let tmp = tempfile::tempdir().unwrap();
+        let note = run_teardown_argv(&["no-such-program-marshell".into()], tmp.path(), SHORT).unwrap();
+        assert!(note.starts_with("Teardown couldn't start ("), "{note}");
+        assert!(note.ends_with("); the worktree was removed anyway."), "{note}");
+    }
 }

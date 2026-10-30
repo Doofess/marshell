@@ -19,3 +19,15 @@ describe("CommandList", () => {
     expect(renderToStaticMarkup(<CommandList commands={["<img src=x onerror=alert(1)>"]} />)).not.toContain("<img");
   });
 });
+
+describe("CommandList with a teardown", () => {
+  const h = renderToStaticMarkup(<CommandList commands={["git worktree remove w"]} teardown="pnpm run stop" />);
+  it("shows the teardown as the first item, before the git commands", () => {
+    expect(count(h, /<li[ >]/g)).toBe(2);
+    expect(h.indexOf("teardown: pnpm run stop")).toBeGreaterThan(-1);
+    expect(h.indexOf("teardown: pnpm run stop")).toBeLessThan(h.indexOf("git worktree remove w"));
+  });
+  it("renders a hostile script as text", () => {
+    expect(renderToStaticMarkup(<CommandList commands={[]} teardown="<img src=x onerror=alert(1)>" />)).not.toContain("<img");
+  });
+});

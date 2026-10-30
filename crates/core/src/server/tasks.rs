@@ -3,7 +3,9 @@ use axum::Json;
 use axum::extract::{Path as UrlPath, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
-use marshell_protocol::api::{MergeRequest, RemoveRequest, ResumeError, TaskCreateRequest, TaskPlanRequest};
+use marshell_protocol::api::{
+    MergeRequest, RemoveRequest, RemoveResult, ResumeError, TaskCreateRequest, TaskPlanRequest,
+};
 use std::path::Path;
 
 fn refused(reason: String) -> Response {
@@ -116,7 +118,7 @@ pub async fn remove_plan(State(st): State<AppState>, UrlPath(id): UrlPath<String
     let planned = tokio::task::spawn_blocking(move || {
         crate::tasks::find(&st.0.home, &id).map(|task| {
             let sessions = crate::tasks::running_sessions(&st, &task);
-            crate::tasks::plan_remove(&task, sessions).0
+            crate::tasks::plan_remove(&task, sessions, &st.0.home).0
         })
     })
     .await;
@@ -138,7 +140,7 @@ pub async fn remove(
     })
     .await;
     match removed {
-        Ok(Some(Ok(()))) => StatusCode::NO_CONTENT.into_response(),
+        Ok(Some(Ok(notes))) => Json(RemoveResult { notes }).into_response(),
         Ok(Some(Err(reason))) => refused(reason),
         Ok(None) => StatusCode::NOT_FOUND.into_response(),
         Err(e) => failed(e),

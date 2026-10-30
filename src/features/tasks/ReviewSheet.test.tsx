@@ -21,7 +21,7 @@ const CHANGES: TaskChanges = {
   ahead: 2,
   uncommitted: true,
 };
-const API: ReviewApi = { mergePlan: async () => ({ commands: [], warnings: [], blocker: null }), merge: async () => ({ kind: "merged", removed: false, removal_note: null }), removePlan: async () => ({ commands: [], warnings: [], sessions: 0 }), remove: async () => {} };
+const API: ReviewApi = { mergePlan: async () => ({ commands: [], warnings: [], blocker: null }), merge: async () => ({ kind: "merged", removed: false, removal_note: null }), removePlan: async () => ({ commands: [], warnings: [], sessions: 0 }), remove: async () => ({ notes: [] }) };
 const sheet = (changes: Partial<TaskChanges> = {}, props: Partial<Parameters<typeof ReviewSheet>[0]> = {}) =>
   renderToStaticMarkup(<ReviewSheet task={TASK} changes={{ ...CHANGES, ...changes }} agentName="Claude Code" api={API} onClose={() => {}} onDone={() => {}} onAskAgent={() => {}} {...props} />);
 const view = (selected: number, changes: Partial<TaskChanges> = {}) =>
@@ -323,6 +323,12 @@ describe("the remove step", () => {
     expect(h).toContain(">Remove</button>");
     expect(h).toContain(">Back</button>");
     expect(h).toContain("Remove marshell/fix-login");
+  });
+  it("shows a teardown as the first command, and none when the plan has none", () => {
+    const withTeardown = step("remove", { remove: { ...REMOVE, plan: { ...REMOVE.plan!, teardown: "pnpm run stop" } } });
+    expect(withTeardown).toContain("teardown: pnpm run stop");
+    expect(withTeardown.indexOf("teardown: pnpm run stop")).toBeLessThan(withTeardown.indexOf("worktree remove"));
+    expect(h).not.toContain("teardown:");
   });
   it("lists the warnings and reads 'Remove anyway' when there are some", () => {
     const warned = step("remove", { remove: { ...REMOVE, plan: { ...REMOVE.plan!, warnings: ["Two commits are not on main.", "A session is open."] } } });

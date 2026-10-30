@@ -4,6 +4,7 @@ import type { MergePlan } from "../../generated/MergePlan";
 import type { MergeRequest } from "../../generated/MergeRequest";
 import type { RemovePlan } from "../../generated/RemovePlan";
 import type { RemoveRequest } from "../../generated/RemoveRequest";
+import type { RemoveResult } from "../../generated/RemoveResult";
 import type { Task } from "../../generated/Task";
 import { ApiError } from "../../lib/api/client";
 import { tasksApi } from "../../lib/api/tasks";
@@ -16,7 +17,7 @@ export type ReviewApi = {
   mergePlan(req: MergeRequest): Promise<MergePlan>;
   merge(req: MergeRequest): Promise<MergeOutcome>;
   removePlan(): Promise<RemovePlan>;
-  remove(req: RemoveRequest): Promise<void>;
+  remove(req: RemoveRequest): Promise<RemoveResult>;
 };
 
 export const reviewApi = (ep: Endpoint, id: string): ReviewApi => ({
@@ -72,7 +73,8 @@ export function mergeRequest(message: string, remove: boolean, shown: { key: str
 }
 
 /** The request to remove, built from the plan on screen: its commands and its warnings, as shown. */
-export const removeRequest = (shown: RemovePlan | null): RemoveRequest | null => (shown ? { commands: shown.commands, warnings: shown.warnings } : null);
+export const removeRequest = (shown: RemovePlan | null): RemoveRequest | null =>
+  shown ? { commands: shown.commands, warnings: shown.warnings, ...(shown.teardown === undefined ? {} : { teardown: shown.teardown }) } : null;
 
 export const conflictHeading = (files: number, base: string): string =>
   `Merging stopped: ${files} ${files === 1 ? "file conflicts" : "files conflict"} with ${base}. Nothing on ${base} was changed.`;
@@ -86,7 +88,7 @@ export function conflictPrompt(task: Task, files: string[]): string {
 /** The merge, then the removal: done, or the core's one sentence on why the worktree was kept. */
 export const mergedToast = (task: Task, removed: boolean, removalNote: string | null): string =>
   `Merged ${task.branch} into ${task.base_branch}.${removed ? " Removed the worktree." : ""}${removalNote ? ` ${removalNote}` : ""}`;
-export const removedToast = (task: Task): string => `Removed ${task.branch}.`;
+export const removedToast = (task: Task, notes: string[] = []): string => [`Removed ${task.branch}.`, ...notes].join(" ");
 export const removeLabel = (warnings: string[]): string => (warnings.length > 0 ? "Remove anyway" : "Remove");
 
 const detail = (e: unknown): string => (e instanceof ApiError ? e.message : String(e));
@@ -104,10 +106,10 @@ export async function runMerge(api: ReviewApi, req: MergeRequest): Promise<Merge
   }
 }
 
-export async function runRemove(api: ReviewApi, req: RemoveRequest): Promise<{ ok: true } | { ok: false; reason: string }> {
+export async function runRemove(api: ReviewApi, req: RemoveRequest): Promise<{ ok: true; notes: string[] } | { ok: false; reason: string }> {
   try {
-    await api.remove(req);
-    return { ok: true };
+    const result = await api.remove(req);
+    return { ok: true, notes: result?.notes ?? [] };
   } catch (e) {
     return { ok: false, reason: e instanceof ApiError && e.status === 409 ? e.message : `Couldn't remove: ${detail(e)}` };
   }

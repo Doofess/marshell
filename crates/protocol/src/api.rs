@@ -610,6 +610,11 @@ pub struct RemovePlan {
     pub commands: Vec<String>,
     pub warnings: Vec<String>,
     pub sessions: u32,
+    /// The repo's trusted `teardown` script, run in the worktree before the git commands. None when
+    /// there is none or the repo's scripts aren't allowed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub teardown: Option<String>,
 }
 
 /// POST /v1/tasks/{id}/remove body.
@@ -621,6 +626,18 @@ pub struct RemoveRequest {
     /// The warnings the user was shown, under the same rule: what would be lost is part of what
     /// they agreed to.
     pub warnings: Vec<String>,
+    /// The teardown script the user was shown, under the same rule.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub teardown: Option<String>,
+}
+
+/// POST /v1/tasks/{id}/remove success body.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct RemoveResult {
+    /// What went wrong with the teardown, if anything, in sentences. The worktree was removed anyway.
+    pub notes: Vec<String>,
 }
 
 /// POST /v1/sessions/{tab}/input body.
