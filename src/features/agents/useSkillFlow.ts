@@ -11,6 +11,10 @@ export type SkillFlow = { kind: "install" | "remove"; preview: ConfigPreview | n
 /** Whether a new flow starts with its diff open: replacing an edited skill file shows what changes first. */
 export const skillFlowStartsOpen = (kind: SkillFlow["kind"], skill: AgentSetup["skill"] | undefined): boolean => kind === "install" && skill === "edited";
 
+/** Whether a flow's diff is open once the core's preview is in: the starting rule, or the preview replaces a file that is there. */
+export const skillFlowOpens = (kind: SkillFlow["kind"], skill: AgentSetup["skill"] | undefined, preview: ConfigPreview): boolean =>
+  skillFlowStartsOpen(kind, skill) || (kind === "install" && preview.files.some((f) => f.before_hash !== undefined));
+
 /**
  * Install, update or remove one agent's marshell skill file: plan, apply through the same config apply as the hooks, and re-plan after a
  * conflict. Nothing is applied without a preview whose file hashes the core checks; a conflict offers a reload, never an overwrite.
@@ -27,7 +31,7 @@ export function useSkillFlow(endpoint: Endpoint, agent: HookAgent, onApplied: (k
       setFlow({ kind, preview: null, open, busy: true });
       try {
         const preview = await (kind === "install" ? planSkill(endpoint, agent) : planSkillRemove(endpoint, agent));
-        if (mine === latest.current) setFlow({ kind, preview, open, busy: false });
+        if (mine === latest.current) setFlow({ kind, preview, open: skillFlowOpens(kind, skill, preview), busy: false });
       } catch (e) {
         if (mine === latest.current) setFlow({ kind, preview: null, open, busy: false, error: failureText(e) });
       }
