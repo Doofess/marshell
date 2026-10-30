@@ -6,6 +6,7 @@ mod config;
 mod diagnostics;
 mod events;
 mod files;
+mod fill;
 mod folders;
 mod foreground;
 pub mod frames;
@@ -13,6 +14,7 @@ mod guard;
 mod history;
 mod hook;
 mod layout;
+mod outside;
 mod permissions;
 mod ports;
 mod profiles;
@@ -27,6 +29,8 @@ mod tools;
 mod view;
 
 pub(crate) use files::existing_file as local_file;
+/// The text check of `fill`, for the command line to run before it creates a session.
+pub use fill::check_text;
 
 use crate::profiles::detect::{Probe, detect_profiles};
 use crate::registry::{Registry, Relaunch};
@@ -45,6 +49,9 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tower_http::cors::{AllowOrigin, CorsLayer};
 
+/// Asked to bring Marshell's window forward and select a session's tab.
+pub type FocusSink = Arc<dyn Fn(String) + Send + Sync>;
+
 #[derive(Clone)]
 pub struct CoreConfig {
     /// Usually `paths::home_dir()`; a temp dir in tests.
@@ -57,6 +64,8 @@ pub struct CoreConfig {
     /// Where the notifier hands what it decided (banners, sounds, flashes). None in tests that don't care:
     /// then no notifier runs.
     pub notify: Option<crate::notify::NotifySink>,
+    /// Where `POST /v1/sessions/{tab}/focus` hands the tab. None in tests that don't care: the route then answers 503.
+    pub focus: Option<FocusSink>,
     /// Shared by every core the supervisor starts; neither flag is saved to disk.
     pub notify_paused: Arc<AtomicBool>,
     pub window_hidden: Arc<AtomicBool>,
@@ -119,6 +128,10 @@ struct Inner {
     agent_path: Option<fn(&str) -> Option<PathBuf>>,
     /// The PATH a session's program is looked up on (see `detect::tab_path`). Tests swap it.
     tab_path: fn() -> Option<std::ffi::OsString>,
+    /// Opens "Open in system terminal"'s console (`outside::open_console`). Tests swap it, so none opens a window.
+    open_console: crate::outside::ConsoleOpener,
+    /// The consoles that opener started and that still run, per conversation (see `outside::Consoles`).
+    consoles: crate::outside::Consoles,
     /// `DEEPSEEK_API_KEY`, read when a DeepSeek session starts or the catalog is built. Tests swap it. The value goes
     /// only into that child's spawn environment.
     deepseek_key: fn() -> Option<String>,
@@ -185,6 +198,7 @@ struct Inner {
     view: tokio::sync::watch::Sender<marshell_protocol::api::UiView>,
     notify_paused: Arc<AtomicBool>,
     window_hidden: Arc<AtomicBool>,
+    focus: Option<FocusSink>,
 }
 
 /// How long a permission request is held when `MARSHELL_PERMISSION_HOLD_SECS` is not set.
@@ -242,6 +256,8 @@ impl AppState {
             agent_on_path: None,
             agent_path: None,
             tab_path: crate::profiles::detect::tab_path,
+            open_console: crate::outside::open_console,
+            consoles: crate::outside::Consoles::default(),
             deepseek_key: || std::env::var(crate::agents::presets::DEEPSEEK_KEY_VAR).ok(),
             status_runner: |exe, args| crate::agents::run_capture(exe, args, std::time::Duration::from_secs(10)),
             own_agents: crate::agents::own::OwnCache::default(),
@@ -277,7 +293,18 @@ impl AppState {
             .0,
             notify_paused: Arc::default(),
             window_hidden: Arc::default(),
+            focus: None,
         }))
+    }
+    /// Names where the focus route sends a tab, in place of answering 503. Call it before the state is cloned.
+    pub fn with_focus(mut self, sink: FocusSink) -> Self {
+        Arc::get_mut(&mut self.0)
+            .expect("with_focus runs before the state is shared")
+            .focus = Some(sink);
+        self
+    }
+    pub(crate) fn focus_sink(&self) -> Option<FocusSink> {
+        self.0.focus.clone()
     }
     /// Shares the supervisor's flags with this core, before the state is cloned.
     pub(crate) fn with_notification_flags(mut self, paused: Arc<AtomicBool>, hidden: Arc<AtomicBool>) -> Self {
@@ -401,6 +428,16 @@ impl AppState {
             .expect("with_agent_check runs before the state is shared")
             .agent_on_path = Some(check);
         self
+    }
+    /// Replaces the console "Open in system terminal" opens. Call it before the state is cloned.
+    pub fn with_console(mut self, open: crate::outside::ConsoleOpener) -> Self {
+        Arc::get_mut(&mut self.0)
+            .expect("with_console runs before the state is shared")
+            .open_console = open;
+        self
+    }
+    pub(crate) fn console_opener(&self) -> crate::outside::ConsoleOpener {
+        self.0.open_console
     }
     /// Replaces the PATH lookup of an agent's file. Call it before the state is cloned.
     pub fn with_agent_path(mut self, find: fn(&str) -> Option<PathBuf>) -> Self {
@@ -769,6 +806,10 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/sessions/{tab}/pause", post(sessions::pause))
         .route("/v1/sessions/{tab}/continue", post(sessions::cont))
         .route("/v1/sessions/{tab}/input", post(sessions::input))
+        .route("/v1/sessions/{tab}/fill", post(fill::fill))
+        .route("/v1/sessions/{tab}/focus", post(sessions::focus))
+        .route("/v1/sessions/{tab}/resume-command", get(outside::tab_resume_command))
+        .route("/v1/sessions/{tab}/open-outside", post(outside::tab_open_outside))
         .route("/v1/sessions/{tab}/recording", get(sessions::recording))
         .route("/v1/sessions/{tab}/peek", get(sessions::peek))
         .route("/v1/sessions/{tab}/resolve", post(files::resolve))
@@ -837,6 +878,14 @@ pub fn router(state: AppState) -> Router {
         )
         .route("/v1/history/{agent}/{session_id}/resume", post(history::resume))
         .route("/v1/history/{agent}/{session_id}/fork", post(history::fork))
+        .route(
+            "/v1/history/{agent}/{session_id}/resume-command",
+            get(outside::history_resume_command),
+        )
+        .route(
+            "/v1/history/{agent}/{session_id}/open-outside",
+            post(outside::history_open_outside),
+        )
         .route("/v1/history/{agent}/{session_id}/export", get(history::export))
         .route("/v1/history/{agent}/{session_id}/recordings", get(history::recordings))
         .route(
@@ -1021,6 +1070,9 @@ pub async fn start(cfg: CoreConfig) -> anyhow::Result<RunningCore> {
         ));
     if let Some(dir) = cfg.programs_dir {
         state = state.with_programs_dir(dir);
+    }
+    if let Some(sink) = cfg.focus {
+        state = state.with_focus(sink);
     }
     // Last, so the endpoint is only advertised once the state is ready to serve.
     auth::write_endpoint_file(&endpoint_file, &endpoint)?;

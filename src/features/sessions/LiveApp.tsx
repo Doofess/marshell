@@ -24,7 +24,7 @@ import { deliveryTo, type DropTarget } from "../drop/dropTarget";
 import { useFileDrop } from "../drop/useFileDrop";
 import { statFile } from "../preview/previewApi";
 import { inMenu } from "../../components/ContextMenu/menuKeys";
-import { focusAfterMenu, menuFacts, modeOfItem } from "./sessionMenuRun";
+import { focusAfterMenu, menuFacts, modeOfItem, runResumeItem } from "./sessionMenuRun";
 import { ContextMenu } from "../../components/ContextMenu/ContextMenu";
 import { tasksApi } from "../../lib/api/tasks";
 import { findCommand } from "../../lib/bindings";
@@ -87,7 +87,7 @@ import { LivePalette } from "./LivePalette";
 import { LiveShortcuts } from "./LiveShortcuts";
 import { ResumeBar } from "./ResumeBar";
 import { sessionResumeCommand } from "./resumeCommand";
-import { holdsResume, offersModeChange, offersResume, resumeBlockedReason, resumeStateOf } from "./resumeState";
+import { holdsResume, offersModeChange, offersResume, resumeBlockedReason, resumeStateOf, sessionRunning } from "./resumeState";
 import { PAUSED_TYPING_TEXT, SessionActions, closeBarText, needsCloseConfirm, pauseBarStale, pauseBarText, restartBarStale, restartBarText, tabIdOfNumber } from "./sessionActions";
 import { navPanesOf, useNavigation } from "./useNavigation";
 import type { NavEffect } from "../../lib/navigation/types";
@@ -960,6 +960,10 @@ export function LiveApp() {
           break;
         case "bookmark":
           if (endpoint) void bookmarkSession(endpoint, id, announce);
+          break;
+        case "copy-resume":
+        case "open-outside":
+          if (endpoint && info) void runResumeItem(itemId, { tabId: id, running: sessionRunning(info) }, { endpoint, announce, write: (t) => navigator.clipboard.writeText(t) });
           break;
         case "mute":
         case "unmute":

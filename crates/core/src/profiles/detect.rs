@@ -49,6 +49,17 @@ pub fn tab_path() -> Option<std::ffi::OsString> {
         .map(std::ffi::OsStr::to_os_string)
 }
 
+/// The environment a session's process starts from, before Marshell's own changes: the process's, plus the registry's
+/// system and user variables on Windows (PATH merged). It is read from portable-pty itself, as `tab_path` is, so a
+/// console opened outside gets what a session gets. A name or value that isn't valid Unicode is left out. Reads the
+/// registry on Windows: take it once per request, off the async workers.
+pub fn session_base_env() -> Vec<(String, String)> {
+    portable_pty::CommandBuilder::new("x")
+        .iter_full_env_as_str()
+        .map(|(name, value)| (name.to_string(), value.to_string()))
+        .collect()
+}
+
 /// The file `name` runs from the PATH `path`, with the PATHEXT endings on Windows.
 pub fn command_path_in(path: &std::ffi::OsStr, name: &str) -> Option<PathBuf> {
     let dirs: Vec<PathBuf> = std::env::split_paths(path).collect();
@@ -548,6 +559,25 @@ fn build_argv(
     let Some((agent, program)) = agent else {
         return Ok(profile.command.clone());
     };
+    Ok(line_argv(
+        profile,
+        build_line(profile, agents, agent, program, prompt, extra, mode, no_daemon)?,
+    ))
+}
+
+/// The line that starts `agent` in a shell of `profile`'s family, before the shell's own wrapper (`line_argv`).
+/// The one place an agent's command line is written: a session runs it, and "Copy resume command" copies it.
+#[allow(clippy::too_many_arguments)]
+fn build_line(
+    profile: &Profile,
+    agents: &Agents,
+    agent: &str,
+    program: Program,
+    prompt: Option<&str>,
+    extra: &[String],
+    mode: Option<SessionMode>,
+    no_daemon: bool,
+) -> Result<String, String> {
     if !agents.is_known(agent) {
         return Err(format!("Unknown agent: {agent}."));
     }
@@ -654,7 +684,22 @@ fn build_argv(
             line
         }
     };
-    Ok(line_argv(profile, line))
+    Ok(line)
+}
+
+/// The line that starts `agent` again for a person to paste into a terminal: its own command with the resume
+/// arguments for `target` (None starts a new conversation) and the flags of `mode`. Never `--no-daemon`: that is for
+/// the sessions Marshell starts. Refused where the shell can't quote a word (Command Prompt).
+pub fn resume_line(
+    profile: &Profile,
+    agents: &Agents,
+    agent: &str,
+    program: Program,
+    mode: Option<SessionMode>,
+    target: Option<ResumeTarget>,
+) -> Result<String, String> {
+    let extra = target.map_or_else(Vec::new, |t| resume_args(agents, agent, t));
+    build_line(profile, agents, agent, program, None, &extra, mode, false)
 }
 
 /// The argv that runs `line` in `profile`'s shell, the way an agent session does: PowerShell stays open after it,
@@ -1272,6 +1317,74 @@ mod tests {
         );
         let argv = launch_argv_resume_nd(&ps, Some("codex"), None, by_id, true).unwrap();
         assert_eq!(argv.last().unwrap(), "& codex resume abc-1 --no-daemon");
+    }
+
+    #[test]
+    fn resume_command_line_is_the_one_the_session_runs() {
+        let agents = Agents::shipped();
+        let target = Some(ResumeTarget::Session("abc-1"));
+        for (family, command) in [
+            (ShellFamily::PowerShell, "pwsh.exe"),
+            (ShellFamily::Cmd, "cmd.exe"),
+            (ShellFamily::Posix, "bash"),
+        ] {
+            let p = profile("p", &[command], family);
+            let line = resume_line(
+                &p,
+                &agents,
+                "claude",
+                Program::Name("claude"),
+                Some(SessionMode::Plan),
+                target,
+            )
+            .unwrap();
+            let argv = launch_argv_resume(
+                &p,
+                Some("claude"),
+                Some(SessionMode::Plan),
+                ResumeTarget::Session("abc-1"),
+            )
+            .unwrap();
+            // The shell's own wrapper is all the argv adds to the line.
+            assert!(argv.iter().any(|a| a.starts_with(&line)), "{line:?} not in {argv:?}");
+            assert!(line.contains("--resume abc-1 --permission-mode plan"), "{line}");
+        }
+        let ps = profile("pwsh", &["pwsh.exe"], ShellFamily::PowerShell);
+        // No target: a new conversation, with the mode's flags.
+        let fresh = resume_line(
+            &ps,
+            &agents,
+            "claude",
+            Program::Name("claude"),
+            Some(SessionMode::Plan),
+            None,
+        )
+        .unwrap();
+        assert_eq!(fresh, "& claude --permission-mode plan");
+        // Codex never gets `--no-daemon` in a line meant for a person's own terminal.
+        let codex = resume_line(
+            &ps,
+            &agents,
+            "codex",
+            Program::Name("codex"),
+            None,
+            Some(ResumeTarget::Session("x1")),
+        )
+        .unwrap();
+        assert_eq!(codex, "& codex resume x1");
+        // Command Prompt refuses what it can't quote.
+        let cmd = profile("cmd", &["cmd.exe"], ShellFamily::Cmd);
+        assert!(
+            resume_line(
+                &cmd,
+                &agents,
+                "claude",
+                Program::Path(Path::new(r"C:\Program Files\claude.exe")),
+                None,
+                None
+            )
+            .is_err()
+        );
     }
 
     #[test]

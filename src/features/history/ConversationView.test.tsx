@@ -35,6 +35,8 @@ const html = (c: Conversation, over: Partial<Parameters<typeof ConversationView>
       onBookmark={noop}
       onExport={noop}
       onCopyMarkdown={noop}
+      onCopyResume={noop}
+      onOpenOutside={noop}
       onDelete={noop}
       editor={null}
       onEditor={noop}
@@ -200,6 +202,8 @@ describe("ConversationView actions", () => {
       "Archive",
       "Export…",
       "Copy as markdown",
+      "Copy resume command",
+      "Open in system terminal",
       "Delete Marshell's copy…",
     ]);
     expect(labels({ pinned: true, archived: true })).toEqual([
@@ -209,6 +213,8 @@ describe("ConversationView actions", () => {
       "Unarchive",
       "Export…",
       "Copy as markdown",
+      "Copy resume command",
+      "Open in system terminal",
       "Delete Marshell's copy…",
     ]);
   });

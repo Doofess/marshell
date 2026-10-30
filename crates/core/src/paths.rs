@@ -90,6 +90,11 @@ pub fn bin_dir(home: &Path) -> PathBuf {
     home.join("bin")
 }
 
+/// `<home>/bin/app.json`: `{ "exe": "<path>" }`, where the app is, for the command line program.
+pub fn app_record(home: &Path) -> PathBuf {
+    bin_dir(home).join("app.json")
+}
+
 /// `<home>/bin/marshell-hook` (`.exe` on Windows).
 pub fn bridge_exe(home: &Path) -> PathBuf {
     bin_dir(home).join(format!("marshell-hook{}", std::env::consts::EXE_SUFFIX))
@@ -123,6 +128,12 @@ pub fn managed_file(home: &Path) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn app_record_is_in_bin() {
+        let p = app_record(Path::new("/x/.marshell"));
+        assert!(p.ends_with("bin/app.json") || p.ends_with(r"bin\app.json"));
+    }
 
     #[test]
     fn endpoint_file_is_under_run() {

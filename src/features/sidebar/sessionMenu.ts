@@ -28,6 +28,8 @@ export function sessionMenuItems(facts: SessionMenuFacts, os: Os): MenuItem[] {
   const items: MenuItem[] = [{ id: "rename", label: "Rename", shortcut: shortcut("rename") }];
   if (!facts.inShownPane && facts.paneAvailable) items.push({ id: "split", label: "Split into a pane" });
   if (facts.resumable) items.push({ id: "resume", label: "Resume" });
+  // On every agent session, running or not (slice 6h1 decision 11): a running one answers "End the session first." instead of opening.
+  if (facts.agent) items.push({ id: "copy-resume", label: "Copy resume command" }, { id: "open-outside", label: "Open in system terminal" });
   if (facts.agent && facts.modeChangeable) items.push({ id: "mode", label: "Mode ▸" });
   if (facts.pausable) items.push({ id: "pause", label: "Pause" });
   if (facts.paused) items.push({ id: "continue", label: "Continue" });

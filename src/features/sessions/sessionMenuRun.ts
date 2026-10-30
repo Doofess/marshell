@@ -5,6 +5,9 @@ import type { RowModel } from "../sidebar/types";
 import { roomForPane } from "../window/viewState";
 import { MODES } from "../modes/sessionModes";
 import type { Mode } from "../sidebar/types";
+import type { Endpoint } from "../../generated/Endpoint";
+import { sessions } from "../../lib/api/sessions";
+import { ENDED_FIRST, copyResumeCommand, openInSystemTerminal } from "./resumeActions";
 import { offersModeChange, resumeBlockedReason } from "./resumeState";
 
 /** What the window knows about a session, as the row menu's item list needs it. `shown` panes are on screen; `fit` is the most the window has room for. */
@@ -43,6 +46,21 @@ export function menuFacts(
 }
 
 /**
+ * The row menu's "Copy resume command" and "Open in system terminal". Opening a running session is refused here, without asking the
+ * core, so two CLIs never write the same conversation (decision 6): the toast says "End the session first."
+ */
+export async function runResumeItem(
+  itemId: "copy-resume" | "open-outside",
+  session: { tabId: string; running: boolean },
+  deps: { endpoint: Endpoint; announce: (text: string) => void; write: (text: string) => Promise<void>; api?: Pick<typeof sessions, "resumeCommand" | "openOutside"> },
+): Promise<void> {
+  const api = deps.api ?? sessions;
+  if (itemId === "copy-resume") return copyResumeCommand(() => api.resumeCommand(deps.endpoint, session.tabId), deps.write, deps.announce);
+  if (session.running) return deps.announce(ENDED_FIRST);
+  return openInSystemTerminal(() => api.openOutside(deps.endpoint, session.tabId), deps.announce);
+}
+
+/**
  * Where focus goes once a menu item has run (the focused item unmounted, so it would fall to the page). Rename and Review changes
  * are null: the rename box and the sheet take it themselves, and so does the close bar, which `confirms`.
  */
@@ -50,6 +68,8 @@ export function focusAfterMenu(itemId: string, confirms: boolean): "row" | "term
   switch (itemId) {
     case "resume":
     case "bookmark":
+    case "copy-resume":
+    case "open-outside":
     case "mute":
     case "unmute":
       return "row";

@@ -14,9 +14,11 @@ const ids = (facts: SessionMenuFacts) =>
 describe("sessionMenuItems", () => {
   it("shows every item in order with its shortcut", () => {
     const items = sessionMenuItems(all, "windows");
-    expect(ids(all)).toEqual(["rename", "split", "resume", "mode", "pause", "bookmark", "mute", "review-task", "-", "close"]);
+    expect(ids(all)).toEqual(["rename", "split", "resume", "copy-resume", "open-outside", "mode", "pause", "bookmark", "mute", "review-task", "-", "close"]);
     expect(items.map((i) => ("separator" in i ? undefined : i.shortcut))).toEqual([
       "F2",
+      undefined,
+      undefined,
       undefined,
       undefined,
       undefined,
@@ -27,6 +29,19 @@ describe("sessionMenuItems", () => {
       undefined,
       "Ctrl+Shift+W",
     ]);
+  });
+  it("agent_sessions_get_both_items: after Resume and before Mode, running or not, and a plain shell has neither", () => {
+    for (const facts of [all, { ...all, resumable: false, pausable: false }]) {
+      const got = ids(facts);
+      expect(got.indexOf("copy-resume")).toBeGreaterThan(-1);
+      expect(got.indexOf("open-outside")).toBe(got.indexOf("copy-resume") + 1);
+      expect(got.indexOf("mode")).toBe(got.indexOf("open-outside") + 1);
+    }
+    expect(ids({ ...all, modeChangeable: false })).toEqual(expect.arrayContaining(["copy-resume", "open-outside"]));
+    expect(ids(none)).not.toContain("copy-resume");
+    expect(ids(none)).not.toContain("open-outside");
+    const labels = sessionMenuItems(all, "windows").flatMap((i) => ("separator" in i ? [] : [i.label]));
+    expect(labels).toEqual(expect.arrayContaining(["Copy resume command", "Open in system terminal"]));
   });
   it("hides Split for a session already in a shown pane", () => {
     expect(ids({ ...all, inShownPane: true })).not.toContain("split");

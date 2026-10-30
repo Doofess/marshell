@@ -4,7 +4,7 @@ import type { LiveStatus } from "../../generated/LiveStatus";
 import type { Profile } from "../../generated/Profile";
 import type { SessionInfo } from "../../generated/SessionInfo";
 import type { RowModel } from "../sidebar/types";
-import { holdsResume, offersModeChange, offersResume, resumeDisabledReason } from "./resumeState";
+import { holdsResume, offersModeChange, offersResume, resumeDisabledReason, sessionRunning } from "./resumeState";
 import { toRow } from "./toRow";
 
 const profile = (id: string) => ({ id }) as Profile;
@@ -99,5 +99,17 @@ describe("holdsResume", () => {
   it("a refusal drops the hold at once, and a rollback frame after it changes nothing", () => {
     expect(holdsResume(pressed, "live", "refused")).toBe(false);
     expect(holdsResume(pressed, pressed, "refused")).toBe(false);
+  });
+});
+
+describe("sessionRunning", () => {
+  const live = (state: LiveStatus["state"]) => ({ state, phrase: "", since_ms: 0, recap: null }) as LiveStatus;
+  it("follows the process, except for an agent that has ended", () => {
+    expect(sessionRunning(info())).toBe(true);
+    expect(sessionRunning(info({ live: live("idle") }))).toBe(true);
+    expect(sessionRunning(info({ live: live("ended") }))).toBe(false);
+    expect(sessionRunning(info({ agent: null, live: live("ended") }))).toBe(true);
+    expect(sessionRunning(info({ state: { kind: "exited", code: 0 } }))).toBe(false);
+    expect(sessionRunning(info({ state: { kind: "ended" } }))).toBe(false);
   });
 });

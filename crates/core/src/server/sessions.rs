@@ -36,7 +36,7 @@ const CUSTOM_PROFILE: &str = "custom";
 
 /// The name an agent session gets when the request names none.
 /// None for an id that is not a launcher agent; callers validate the id first.
-fn agent_display_name(agent: &str) -> Option<&'static str> {
+pub(super) fn agent_display_name(agent: &str) -> Option<&'static str> {
     match agent {
         "claude" => Some("Claude Code"),
         "codex" => Some("Codex"),
@@ -55,13 +55,50 @@ fn colorfgbg(scheme: ColorScheme) -> &'static str {
 }
 
 /// The variables a session starts with before ours: `COLORFGBG` for the scheme (none when the
-/// scheme is unknown), then the profile's own, which come after so a profile can override it.
-fn spawn_env(scheme: Option<ColorScheme>, profile_env: &[(String, String)]) -> Vec<(String, String)> {
+/// scheme is unknown), then the profile's own, which come after so a profile can override it. `PATH` has
+/// Marshell's `bin` folder in front (the profile's own `PATH` if it sets one, else `tab_path`, the PATH a new
+/// tab gets, which on Windows has the registry's current value; the app's own if that can't be read), so an agent in
+/// the session runs `marshell` by name. That is this session's environment only; nothing is written to the
+/// person's own PATH. A WSL session is a Linux that can't run it (slice 6j).
+fn spawn_env(
+    scheme: Option<ColorScheme>,
+    profile_env: &[(String, String)],
+    home: &std::path::Path,
+    family: ShellFamily,
+    tab_path: Option<&std::ffi::OsStr>,
+) -> Vec<(String, String)> {
     let mut env = Vec::new();
     if let Some(scheme) = scheme {
         env.push(("COLORFGBG".to_string(), colorfgbg(scheme).to_string()));
     }
     env.extend(profile_env.iter().cloned());
+    if family != ShellFamily::Wsl {
+        let is_path = |key: &str| {
+            if cfg!(windows) {
+                key.eq_ignore_ascii_case("PATH")
+            } else {
+                key == "PATH"
+            }
+        };
+        let slot = env.iter().position(|(k, _)| is_path(k));
+        let rest = match slot {
+            Some(i) => std::ffi::OsString::from(&env[i].1),
+            None => tab_path
+                .map(std::ffi::OsStr::to_os_string)
+                .or_else(|| std::env::var_os("PATH"))
+                .unwrap_or_default(),
+        };
+        // Split first: `join_paths` would take a whole PATH as one folder and quote it.
+        let parts = std::iter::once(crate::paths::bin_dir(home)).chain(std::env::split_paths(&rest));
+        // A folder that can't be in a PATH (it holds the separator) is left out rather than breaking the PATH.
+        if let Ok(joined) = std::env::join_paths(parts) {
+            let joined = joined.to_string_lossy().into_owned();
+            match slot {
+                Some(i) => env[i].1 = joined,
+                None => env.push(("PATH".to_string(), joined)),
+            }
+        }
+    }
     env
 }
 
@@ -91,14 +128,14 @@ fn preset_launch(st: &AppState, preset: &str, family: ShellFamily) -> Result<Pre
 pub(super) struct Resolved {
     pub(super) profile_id: String,
     pub(super) profile_name: String,
-    family: ShellFamily,
-    argv: Vec<String>,
-    env: Vec<(String, String)>,
+    pub(super) family: ShellFamily,
+    pub(super) argv: Vec<String>,
+    pub(super) env: Vec<(String, String)>,
     /// Variables the child must not inherit, on top of the session markers: a preset's.
     env_remove: Vec<String>,
     /// Inherited variables the child must not get, decided at spawn from the environment the pty really builds.
     env_strip: Option<fn(&str) -> bool>,
-    cwd: Option<String>,
+    pub(super) cwd: Option<String>,
     /// Shell integration is on, so the output carries prompt marks.
     marks: bool,
     /// The line a tool preset runs first: it holds what the person typed, so it goes to the spawn and nowhere else.
@@ -120,10 +157,26 @@ pub(super) async fn resolve(
     mode: Option<SessionMode>,
     preset: Option<&str>,
 ) -> Result<Resolved, ApiError> {
+    resolve_with(st, profile_id, agent, prompt, resume, mode, preset, true).await
+}
+
+/// `resolve`, where `daemonless` says whether Codex gets `--no-daemon`: it is for the sessions Marshell starts,
+/// and a console the person opens outside runs the plain command, as the copied line does.
+#[allow(clippy::too_many_arguments)]
+pub(super) async fn resolve_with(
+    st: &AppState,
+    profile_id: Option<&str>,
+    agent: Option<&str>,
+    prompt: Option<&str>,
+    resume: Option<ResumeTarget<'_>>,
+    mode: Option<SessionMode>,
+    preset: Option<&str>,
+    daemonless: bool,
+) -> Result<Resolved, ApiError> {
     if let Some(preset) = preset {
         check_preset(agent, preset)?;
     }
-    let no_daemon = agent == Some("codex") && codex_takes_no_daemon(st).await;
+    let no_daemon = daemonless && agent == Some("codex") && codex_takes_no_daemon(st).await;
     let agents = st.agents();
     // A manifest agent has a mode only where its manifest maps one.
     if let (Some(m), Some(mode)) = (agent.and_then(|a| agents.manifest(a)), mode)
@@ -465,7 +518,7 @@ pub(super) async fn resolve_tool(
 
 /// Refuses an agent whose program is not on PATH. The shell would start anyway and say so
 /// itself, so look for the agent first. A WSL distro has its own PATH: those are not checked.
-fn check_agent_installed(st: &AppState, run: &Resolved, agent: Option<&str>) -> Result<(), ApiError> {
+pub(super) fn check_agent_installed(st: &AppState, run: &Resolved, agent: Option<&str>) -> Result<(), ApiError> {
     if let Some(agent) = agent
         && run.family != ShellFamily::Wsl
         && let Some(command) = agent_command(agent)
@@ -593,7 +646,9 @@ pub(super) async fn spawn_into_map(
         .and_then(|p| std::path::Path::new(p).file_name())
         .map(|p| p.to_string_lossy().into_owned());
     // The profile's variables first, so ours win.
-    let mut env = spawn_env(scheme, &run.env);
+    // Read like a console's is, off the async workers: on Windows it reads the registry.
+    let tab_path = tokio::task::spawn_blocking(st.0.tab_path).await.unwrap_or(None);
+    let mut env = spawn_env(scheme, &run.env, &st.0.home, run.family, tab_path.as_deref());
     env.extend([
         (brand::env_var("TAB_ID"), tab_id.to_string()),
         (brand::env_var("SESSION_NUMBER"), number.to_string()),
@@ -1006,7 +1061,7 @@ pub(super) fn cannot_resume(reason: impl Into<String>) -> Response {
 }
 
 /// Why the tab's profile or folder rules out starting it again (Resume and Restart), if they do.
-fn cannot_start_again(st: &AppState, info: &SessionInfo) -> Option<String> {
+pub(super) fn cannot_start_again(st: &AppState, info: &SessionInfo) -> Option<String> {
     let profile_known = info.profile_id == CUSTOM_PROFILE
         || st
             .0
@@ -1030,7 +1085,7 @@ pub(super) const NO_CONVERSATION: &str = "Claude Code no longer has this convers
 
 /// What a Resume or Restart starts.
 #[derive(Debug, PartialEq, Eq)]
-enum Resume {
+pub(super) enum Resume {
     /// One Claude, Codex or Antigravity conversation, by its session id.
     Session(String),
     /// The CLI's own continue flag: nothing is known about the tab, or the agent is none of those three.
@@ -1042,7 +1097,7 @@ enum Resume {
 
 impl Resume {
     /// The target `resolve` is given; None starts the agent plainly.
-    fn target(&self) -> Option<ResumeTarget<'_>> {
+    pub(super) fn target(&self) -> Option<ResumeTarget<'_>> {
         match self {
             Resume::Session(id) => Some(ResumeTarget::Session(id)),
             Resume::Last => Some(ResumeTarget::Last),
@@ -1063,7 +1118,7 @@ impl Resume {
 /// - Codex's rollout is missing: `Resume::Fresh`. Marshell keeps no copy of a rollout, so a deleted one can't be
 ///   told from one Codex never wrote (slice 6a2 decision 4). So is agy's transcript: the file exists from the
 ///   first prompt, so a missing one starts fresh.
-fn resume_session(st: &AppState, tab: &str, agent: Option<&str>) -> Result<Resume, &'static str> {
+pub(super) fn resume_session(st: &AppState, tab: &str, agent: Option<&str>) -> Result<Resume, &'static str> {
     let Some(agent @ ("claude" | "codex" | "antigravity")) = agent else {
         return Ok(Resume::Last);
     };
@@ -1128,6 +1183,11 @@ pub async fn resume(State(st): State<AppState>, Path(tab): Path<String>, Json(re
     };
     if let Err((_, message)) = check_agent_installed(&st, &run, info.agent.as_deref()) {
         return cannot_resume(message);
+    }
+    // A console Marshell opened for the conversation still runs: two CLIs must not write one conversation.
+    let folder = start_folder(&run, Some(info.cwd.clone()));
+    if super::outside::in_console(&st, info.agent.as_deref(), &session, &folder) {
+        return cannot_resume(super::outside::OPEN_IN_TERMINAL);
     }
     // The check and the change to Running happen under one lock: of two resumes at once, one wins.
     let (saved, previous, generation) = match st.0.registry.begin_resume(&tab) {
@@ -1244,6 +1304,10 @@ pub async fn restart(State(st): State<AppState>, Path(tab): Path<String>, Json(r
     if let Err((_, message)) = check_agent_installed(&st, &run, info.agent.as_deref()) {
         return cannot_resume(message);
     }
+    let folder = start_folder(&run, Some(info.cwd.clone()));
+    if super::outside::in_console(&st, info.agent.as_deref(), &session, &folder) {
+        return cannot_resume(super::outside::OPEN_IN_TERMINAL);
+    }
     // From here the restart goes ahead. The row takes the new mode and a new generation first, so the
     // old process's exit (which the kill below causes) no longer touches it.
     let (saved, generation) = match st.0.registry.begin_restart(&tab, req.mode) {
@@ -1281,6 +1345,23 @@ pub async fn restart(State(st): State<AppState>, Path(tab): Path<String>, Json(r
             err.into_response()
         }
     }
+}
+
+/// `POST /v1/sessions/{tab}/focus`: asks the shell to bring its window forward on this session's tab. An ended
+/// session that is still open can be focused too.
+pub async fn focus(State(st): State<AppState>, Path(tab): Path<String>) -> Response {
+    if st.registry().row(&tab).is_none() {
+        return (StatusCode::NOT_FOUND, "No such session.").into_response();
+    }
+    let Some(sink) = st.focus_sink() else {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            "Marshell's window isn't there to focus.",
+        )
+            .into_response();
+    };
+    sink(tab);
+    StatusCode::NO_CONTENT.into_response()
 }
 
 #[cfg(test)]
@@ -1505,7 +1586,13 @@ mod tests {
         assert!(!strip("PATH"));
         // The key is in the child's env and nowhere else the spawn takes.
         assert!(run.argv.iter().all(|word| !word.contains(TEST_KEY)), "{:?}", run.argv);
-        let spawn = spawn_env(Some(ColorScheme::Dark), &run.env);
+        let spawn = spawn_env(
+            Some(ColorScheme::Dark),
+            &run.env,
+            std::path::Path::new("h"),
+            run.family,
+            None,
+        );
         assert_eq!(spawn.iter().filter(|(_, v)| v.contains(TEST_KEY)).count(), 1);
         assert_eq!(run.profile_id, "p");
 
@@ -1994,20 +2081,78 @@ mod tests {
         assert_eq!(colorfgbg(ColorScheme::Light), "0;15");
     }
 
+    /// The env without `PATH`, which `spawn_env` always adds.
+    fn without_path(env: Vec<(String, String)>) -> Vec<(String, String)> {
+        env.into_iter().filter(|(k, _)| k != "PATH").collect()
+    }
+
     #[test]
     fn spawn_env_puts_colorfgbg_before_profile_env() {
+        let home = std::path::Path::new("h");
         // The profile sets its own COLORFGBG: it comes last, so it wins.
-        let env = spawn_env(Some(ColorScheme::Dark), &[var("COLORFGBG", "7;0")]);
+        let env = spawn_env(
+            Some(ColorScheme::Dark),
+            &[var("COLORFGBG", "7;0")],
+            home,
+            ShellFamily::Posix,
+            None,
+        );
         let last = env.iter().rev().find(|(k, _)| k == "COLORFGBG").unwrap();
         assert_eq!(last.1, "7;0");
 
-        let env = spawn_env(Some(ColorScheme::Dark), &[]);
+        let env = spawn_env(Some(ColorScheme::Dark), &[], home, ShellFamily::Posix, None);
         assert!(env.contains(&var("COLORFGBG", "15;0")));
     }
 
     #[test]
     fn spawn_env_without_a_scheme_sets_no_colorfgbg() {
-        let env = spawn_env(None, &[var("A", "1")]);
+        let env = spawn_env(
+            None,
+            &[var("A", "1")],
+            std::path::Path::new("h"),
+            ShellFamily::Posix,
+            None,
+        );
+        assert_eq!(without_path(env), vec![var("A", "1")]);
+    }
+
+    #[test]
+    fn spawn_env_puts_bin_first_on_path() {
+        let home = std::path::Path::new("C:/m home");
+        let bin = crate::paths::bin_dir(home);
+        let sep = if cfg!(windows) { ';' } else { ':' };
+        let joined = |rest: &std::ffi::OsStr| format!("{}{sep}{}", bin.display(), rest.to_string_lossy());
+        // A profile PATH: the bin dir goes in front of it, and the profile's entry is the one that changes.
+        let env = spawn_env(
+            None,
+            &[var("PATH", "C:\\a"), var("A", "1")],
+            home,
+            ShellFamily::Posix,
+            None,
+        );
+        assert_eq!(
+            env,
+            vec![var("PATH", &joined(std::ffi::OsStr::new("C:\\a"))), var("A", "1")]
+        );
+        // No profile PATH: the bin dir, then the tab PATH (the registry's on Windows), not the app's own.
+        let tab = std::ffi::OsString::from("C:\\tab-only");
+        let env = spawn_env(None, &[], home, ShellFamily::Posix, Some(&tab));
+        assert_eq!(env, vec![var("PATH", &joined(&tab))]);
+        // A profile PATH wins over the tab PATH.
+        let env = spawn_env(None, &[var("PATH", "C:\\a")], home, ShellFamily::Posix, Some(&tab));
+        assert_eq!(env, vec![var("PATH", &joined(std::ffi::OsStr::new("C:\\a")))]);
+        // No tab PATH to read: the app's own.
+        let own = std::env::var_os("PATH").unwrap_or_default();
+        let env = spawn_env(None, &[], home, ShellFamily::Posix, None);
+        assert_eq!(env, vec![var("PATH", &joined(&own))]);
+        // A WSL session runs in a Linux that has no use for it (slice 6j).
+        let env = spawn_env(
+            None,
+            &[var("A", "1")],
+            home,
+            ShellFamily::Wsl,
+            Some(std::ffi::OsStr::new("C:\\tab-only")),
+        );
         assert_eq!(env, vec![var("A", "1")]);
     }
 }

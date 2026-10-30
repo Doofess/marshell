@@ -309,6 +309,14 @@ mod tests {
     }
 
     #[test]
+    fn session_start_after_session_end_is_idle_again() {
+        let ended = fold(None, &fixture!("SessionEnd"), 10);
+        assert_eq!(ended.state, LiveState::Ended);
+        let s = fold(Some(&ended), &json!({"hook_event_name": "SessionStart"}), 20);
+        assert_eq!((s.state, s.phrase.as_str(), s.since_ms), (LiveState::Idle, "", 20));
+    }
+
+    #[test]
     fn an_unknown_event_is_none() {
         for body in [
             json!({"hook_event_name": "PreCompact"}),

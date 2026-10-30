@@ -67,7 +67,7 @@ export type HistoryViewProps = {
   onLink?: ConversationViewProps["onLink"];
   /** Opens the History settings dialog; without it the header has no button. */
   onSettings?: () => void;
-} & Partial<Pick<ConversationViewProps, "resumeWarning" | "onFork" | "onPatch" | "onBookmark" | "onExport" | "onCopyMarkdown" | "onDelete" | "editor" | "onEditor" | "error" | "tab" | "onTab" | "playableTurns" | "onPlayFrom" | "recording">>;
+} & Partial<Pick<ConversationViewProps, "resumeWarning" | "onFork" | "onPatch" | "onBookmark" | "onExport" | "onCopyMarkdown" | "onCopyResume" | "onOpenOutside" | "onDelete" | "editor" | "onEditor" | "error" | "tab" | "onTab" | "playableTurns" | "onPlayFrom" | "recording">>;
 
 export const EMPTY_LIST_COPY = "No conversations yet. Claude Code sessions you run in Marshell show up here when their first turn ends.";
 export const noHitsCopy = (query: string) => `Nothing matches “${query}”.`;
@@ -379,6 +379,8 @@ export function HistoryView(p: HistoryViewProps) {
               onBookmark={p.onBookmark ?? noop}
               onExport={p.onExport ?? noop}
               onCopyMarkdown={p.onCopyMarkdown ?? noop}
+              onCopyResume={p.onCopyResume ?? noop}
+              onOpenOutside={p.onOpenOutside ?? noop}
               onDelete={p.onDelete ?? noop}
               editor={p.editor ?? null}
               onEditor={p.onEditor ?? noop}

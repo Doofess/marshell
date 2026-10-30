@@ -213,6 +213,18 @@ pub struct SessionInfo {
     pub ports: Vec<crate::tools::PortChip>,
 }
 
+impl SessionInfo {
+    /// True while the tab takes the person's text as a running session: its process runs and, on an agent row,
+    /// the agent has not ended. An agent whose hooks reported SessionEnd counts as ended while its shell lives
+    /// on; a later SessionStart (a `--resume` typed in the same tab) makes it running again. A plain shell, and an
+    /// agent row with no `live`, follow the process. Whether the process itself runs (pausing, closing, the pty)
+    /// is `state == SessionState::Running`, not this.
+    pub fn running(&self) -> bool {
+        self.state == SessionState::Running
+            && !(self.agent.is_some() && self.live.as_ref().is_some_and(|l| l.state == LiveState::Ended))
+    }
+}
+
 /// A terminal program's request for attention.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[ts(export)]
@@ -443,6 +455,28 @@ pub struct ResumeError {
     pub reason: String,
 }
 
+/// Which conversation a copied resume command continues.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum ResumeForm {
+    /// One conversation, by the CLI's session id.
+    ById,
+    /// The CLI's own "last conversation in this folder": no id is known.
+    ContinueLast,
+    /// A new conversation: the session never wrote one, so there is nothing to continue.
+    Fresh,
+}
+
+/// GET /v1/sessions/{tab}/resume-command and GET /v1/history/{agent}/{session_id}/resume-command reply: one line
+/// that changes to the session's folder and starts its CLI again, for the person to paste into a terminal.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct ResumeCommand {
+    pub command: String,
+    pub form: ResumeForm,
+}
+
 /// POST /v1/sessions/{tab}/restart body: start an agent session again in another mode.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[ts(export)]
@@ -590,6 +624,17 @@ pub struct RemoveRequest {
 #[ts(export)]
 pub struct InputRequest {
     pub text: String,
+}
+
+/// POST /v1/sessions/{tab}/fill body: text for the session's prompt line. Like `InputRequest`, it never presses
+/// Enter, and it refuses every control character, so the text can't submit itself.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct FillRequest {
+    pub text: String,
+    /// Hold the text back until the agent is ready for it (for a session that has only just started). It is
+    /// refused with `ResumeError { reason: "not_ready" }` when that takes more than 30 s.
+    pub wait: bool,
 }
 
 /// POST /v1/sessions/{tab}/resolve body: text that may name files, such as paths from terminal output.
@@ -1111,6 +1156,32 @@ mod tests {
         value.as_object_mut().unwrap().remove("muted");
         let back: SessionInfo = serde_json::from_value(value).unwrap();
         assert!(!back.muted);
+    }
+
+    #[test]
+    fn running_follows_the_process_and_an_ended_agent() {
+        let row = |state, agent: Option<&str>, live: Option<LiveState>| {
+            let mut v = serde_json::json!({
+                "tab_id": "a", "number": 1, "name": "n", "agent": agent, "profile_id": "p", "cwd": "c",
+                "project": "c", "mode": null, "state": { "kind": "running" }, "command": { "kind": "unknown" },
+            });
+            if let Some(l) = live {
+                v["live"] = serde_json::json!({
+                    "state": l, "phrase": "", "since_ms": 0, "recap": null, "model": null, "effort": null,
+                    "context_pct": null, "five_hour_pct": null, "five_hour_resets_at": null,
+                    "seven_day_pct": null, "subagents": 0, "subagents_finished": 0,
+                });
+            }
+            let mut info: SessionInfo = serde_json::from_value(v).unwrap();
+            info.state = state;
+            info
+        };
+        assert!(row(SessionState::Running, Some("claude"), None).running());
+        assert!(!row(SessionState::Running, Some("claude"), Some(LiveState::Ended)).running());
+        assert!(row(SessionState::Running, Some("claude"), Some(LiveState::Idle)).running());
+        assert!(row(SessionState::Running, None, None).running());
+        assert!(!row(SessionState::Exited { code: 0 }, Some("claude"), Some(LiveState::Idle)).running());
+        assert!(!row(SessionState::Ended, None, None).running());
     }
 
     #[test]

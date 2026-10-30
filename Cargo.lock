@@ -2373,9 +2373,14 @@ name = "marshell-cli"
 version = "0.1.0"
 dependencies = [
  "marshell-core",
+ "marshell-hook",
  "marshell-protocol",
+ "serde",
  "serde_json",
  "tempfile",
+ "tokio",
+ "ureq",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

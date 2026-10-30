@@ -34,6 +34,7 @@ fn emit_core_event(app: &tauri::AppHandle, event: CoreEvent) {
         CoreEvent::Restarted { .. } => "core-restarted",
         CoreEvent::Failed => "core-failed",
         CoreEvent::Notify(request) => return notify::deliver(app, request),
+        CoreEvent::Focus { tab_id } => return link::open(app, Some(link::Link::Focus(tab_id))),
     };
     let sent = app.emit(name, event);
     if let Err(e) = sent {
@@ -267,6 +268,10 @@ fn main() {
                         }
                         Err(e) => eprintln!("Marshell: {BRIDGE_EXE} or {CLI_EXE} was not installed: {e}"),
                     }
+                    // Where the app is, for `marshell focus` to start it when it is not running.
+                    if let Err(e) = marshell_core::bridge::write_app_record(&bridge_home, &exe) {
+                        eprintln!("Marshell: could not record where the app is: {e:#}");
+                    }
                     if source_next_to(&exe, CLI_EXE).is_none() {
                         eprintln!(
                             "Marshell: no marshell program next to the app, `marshell uninstall` will not be there"
@@ -280,6 +285,7 @@ fn main() {
                 allowed_origins: allowed_origins(),
                 programs_dir,
                 notify: None,
+                focus: None,
                 notify_paused: Default::default(),
                 window_hidden: Default::default(),
                 import: marshell_core::history::import::system_roots(),

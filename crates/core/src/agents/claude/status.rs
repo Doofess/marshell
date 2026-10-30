@@ -573,6 +573,15 @@ mod tests {
     }
 
     #[test]
+    fn session_start_after_session_end_is_idle_again() {
+        let working = fold(None, &fixture!("UserPromptSubmit"));
+        let ended = fold(Some(&working), &fixture!("SessionEnd"));
+        assert_eq!(ended.state, LiveState::Ended);
+        let s = fold(Some(&ended), &fixture!("SessionStart"));
+        assert_eq!((s.state, s.phrase.as_str()), (LiveState::Idle, ""));
+    }
+
+    #[test]
     fn events_without_status_say_nothing() {
         assert_eq!(fold_event(None, &fixture!("InstructionsLoaded"), 1), None);
         assert_eq!(fold_event(None, &fixture!("MessageDisplay"), 1), None);

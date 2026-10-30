@@ -45,9 +45,8 @@ fn process_alive(_pid: u32) -> bool {
     true
 }
 
-/// Reads `<home>/run/endpoint.json`. A missing or unreadable file gives `None`: the app is closed.
-/// So does a file whose `pid` names a process that is gone. A file without `pid` (an older core) is used as is.
-pub fn discover(env: &dyn Fn(&str) -> Option<String>) -> Option<(PathBuf, u16, String)> {
+/// The parsed `<home>/run/endpoint.json`: the home folder, the endpoint, and the `pid` when the file has one.
+fn read(env: &dyn Fn(&str) -> Option<String>) -> Option<(PathBuf, Endpoint, Option<u32>)> {
     let home = home(env)?;
     let text = std::fs::read_to_string(home.join("run").join("endpoint.json")).ok()?;
     let ep: Endpoint = serde_json::from_str(&text).ok()?;
@@ -55,10 +54,24 @@ pub fn discover(env: &dyn Fn(&str) -> Option<String>) -> Option<(PathBuf, u16, S
         .ok()
         .and_then(|v| v.get("pid")?.as_u64())
         .and_then(|p| u32::try_from(p).ok());
+    Some((home, ep, pid))
+}
+
+/// Reads `<home>/run/endpoint.json`. A missing or unreadable file gives `None`: the app is closed.
+/// So does a file whose `pid` names a process that is gone. A file without `pid` (an older core) is used as is.
+pub fn discover(env: &dyn Fn(&str) -> Option<String>) -> Option<(PathBuf, u16, String)> {
+    let (home, ep, pid) = read(env)?;
     if pid.is_some_and(|pid| !process_alive(pid)) {
         return None;
     }
     Some((home, ep.port, ep.token))
+}
+
+/// The id of the running app's process, from `endpoint.json`. `None` when the app is closed, when the file names a
+/// process that is gone, or when the file has no `pid` (an older core).
+pub fn discover_pid(env: &dyn Fn(&str) -> Option<String>) -> Option<u32> {
+    let (_, _, pid) = read(env)?;
+    pid.filter(|pid| process_alive(*pid))
 }
 
 #[cfg(test)]
@@ -66,6 +79,10 @@ mod tests {
     use super::*;
 
     fn discover_with(pid_field: &str) -> Option<(PathBuf, u16, String)> {
+        discover_in_home(pid_field, |env| discover(env))
+    }
+
+    fn discover_in_home<T>(pid_field: &str, f: impl Fn(&dyn Fn(&str) -> Option<String>) -> T) -> T {
         let home = tempfile::tempdir().unwrap();
         std::fs::create_dir_all(home.path().join("run")).unwrap();
         std::fs::write(
@@ -74,7 +91,7 @@ mod tests {
         )
         .unwrap();
         let path = home.path().to_string_lossy().into_owned();
-        discover(&|k| (k == "MARSHELL_HOME").then(|| path.clone()))
+        f(&|k| (k == "MARSHELL_HOME").then(|| path.clone()))
     }
 
     /// The id of a process that has already exited.
@@ -107,6 +124,26 @@ mod tests {
     #[test]
     fn a_file_without_a_pid_is_still_an_endpoint() {
         assert!(discover_with("").is_some());
+    }
+
+    #[test]
+    fn discover_pid_names_a_live_core_only() {
+        let me = std::process::id();
+        assert_eq!(
+            discover_in_home(&format!(r#","pid":{me}"#), |env| discover_pid(env)),
+            Some(me)
+        );
+        let dead = dead_pid();
+        assert_eq!(
+            discover_in_home(&format!(r#","pid":{dead}"#), |env| discover_pid(env)),
+            None
+        );
+        // An older core wrote no pid.
+        assert_eq!(discover_in_home("", |env| discover_pid(env)), None);
+        // No file: the app is closed.
+        let home = tempfile::tempdir().unwrap();
+        let path = home.path().to_string_lossy().into_owned();
+        assert_eq!(discover_pid(&|k| (k == "MARSHELL_HOME").then(|| path.clone())), None);
     }
 
     #[test]

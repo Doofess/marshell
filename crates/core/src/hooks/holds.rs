@@ -218,6 +218,11 @@ impl Holds {
         }
     }
 
+    /// Whether a request of the tab is pending.
+    pub fn has_tab(&self, tab: &str) -> bool {
+        lock(&self.map).values().any(|e| e.info.tab.as_deref() == Some(tab))
+    }
+
     /// One request, for validating a decision before it settles.
     pub fn get(&self, rid: &str) -> Option<PendingPermission> {
         lock(&self.map).get(rid).map(|e| e.info.clone())

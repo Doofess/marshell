@@ -11,6 +11,7 @@ pub mod hooks;
 pub mod job;
 pub mod layout;
 pub mod notify;
+pub mod outside;
 pub mod paths;
 pub mod private;
 pub mod profiles;
