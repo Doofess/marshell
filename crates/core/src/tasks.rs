@@ -512,13 +512,14 @@ pub fn plan_merge(task: &Task, req: &MergeRequest, open_sessions: u32, home: &Pa
     let mut warnings = Vec::new();
     let mut teardown = None;
     if req.remove && own_branch(task) {
-        // By then the merge has committed the folder's work and the branch is in the base, so
-        // the removal is the plain one whatever the folder holds now.
-        steps.extend(removal_steps(task, Worktree::Remove { force: false }, true));
         let dir = Path::new(&task.path);
         if dir.exists() {
             teardown = teardown_for(dir, home, &mut warnings);
         }
+        // By then the merge has committed the folder's work and the branch is in the base, and the removal goes ahead
+        // only if the folder is still clean; `--force` is for what the teardown leaves in it.
+        let force = teardown.is_some();
+        steps.extend(removal_steps(task, Worktree::Remove { force }, true));
         warnings.extend(sessions_line(open_sessions));
     }
 
@@ -786,12 +787,20 @@ pub fn plan_remove(task: &Task, open_sessions: u32, home: &Path) -> (RemovePlan,
     // A folder or branch that is already gone leaves nothing to run for it, so a removal that
     // stopped halfway can be finished.
     let folder_there = dir.exists();
+    // The repo's teardown runs only when its scripts are allowed; otherwise the person is told it won't.
+    let mut teardown_warnings = Vec::new();
+    let teardown = if folder_there {
+        teardown_for(dir, home, &mut teardown_warnings)
+    } else {
+        None
+    };
+    let dirty = folder_there && worktree_dirty(dir).unwrap_or(false);
     let branch_there = branch_exists(repo, &task.branch).unwrap_or(true);
     // When git can't say, it is taken as listed: the plain removal is the one that fails loudly.
     let listed = worktree_listed(task).unwrap_or(true);
     let worktree = match (folder_there, listed) {
         (true, true) => Worktree::Remove {
-            force: worktree_dirty(dir).unwrap_or(false),
+            force: dirty || teardown.is_some(),
         },
         // A half-done removal: git let go of the worktree but the folder stayed behind.
         (true, false) => Worktree::Prune,
@@ -802,7 +811,9 @@ pub fn plan_remove(task: &Task, open_sessions: u32, home: &Path) -> (RemovePlan,
     let steps = removal_steps(task, worktree, branch_there);
 
     let mut warnings = Vec::new();
-    if matches!(worktree, Worktree::Remove { force: true }) {
+    // A teardown can leave files in the folder (a log, a cache), which only `--force` removes. The second plan, made
+    // after the sessions close, still catches anything an agent wrote.
+    if matches!(worktree, Worktree::Remove { .. }) && dirty {
         warnings.push("The worktree has uncommitted changes. Removing deletes them.".to_string());
     }
     if folder_there && !listed {
@@ -873,12 +884,7 @@ pub fn plan_remove(task: &Task, open_sessions: u32, home: &Path) -> (RemovePlan,
             )),
         }
     }
-    // The repo's teardown runs only when its scripts are allowed; otherwise the person is told it won't.
-    let teardown = if folder_there {
-        teardown_for(dir, home, &mut warnings)
-    } else {
-        None
-    };
+    warnings.extend(teardown_warnings);
     warnings.extend(sessions_line(open_sessions));
     let plan = RemovePlan {
         commands: steps.iter().map(git::display).collect(),
@@ -943,13 +949,12 @@ fn teardown_for(dir: &Path, home: &Path, warnings: &mut Vec<String>) -> Option<S
 const TEARDOWN_TIMEOUT: Duration = Duration::from_secs(300);
 
 /// Runs `argv` in `dir` with its output discarded, and waits up to `timeout`; a script still running
-/// then is stopped with everything it started. The note says what went wrong, in a sentence that
-/// ends with the removal going on; None when the script exited with 0.
+/// then is stopped with everything it started. The note says what went wrong, in a sentence; None
+/// when the script exited with 0.
 fn run_teardown_argv(argv: &[String], dir: &Path, timeout: Duration) -> Option<String> {
     use std::process::{Command, Stdio};
-    let anyway = "the worktree was removed anyway.";
     let Some((program, args)) = argv.split_first() else {
-        return Some(format!("Teardown couldn't start (no shell); {anyway}"));
+        return Some("Teardown couldn't start (no shell).".into());
     };
     let mut cmd = Command::new(program);
     cmd.args(args)
@@ -971,7 +976,7 @@ fn run_teardown_argv(argv: &[String], dir: &Path, timeout: Duration) -> Option<S
     }
     let mut child = match cmd.spawn() {
         Ok(child) => child,
-        Err(e) => return Some(format!("Teardown couldn't start ({e}); {anyway}")),
+        Err(e) => return Some(format!("Teardown couldn't start ({e}).")),
     };
     let deadline = Instant::now() + timeout;
     loop {
@@ -979,8 +984,8 @@ fn run_teardown_argv(argv: &[String], dir: &Path, timeout: Duration) -> Option<S
             Ok(Some(status)) => {
                 return match status.code() {
                     Some(0) => None,
-                    Some(code) => Some(format!("Teardown failed (exit {code}); {anyway}")),
-                    None => Some(format!("Teardown failed; {anyway}")),
+                    Some(code) => Some(format!("Teardown failed (exit {code}).")),
+                    None => Some("Teardown failed.".into()),
                 };
             }
             Ok(None) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(50)),
@@ -988,13 +993,13 @@ fn run_teardown_argv(argv: &[String], dir: &Path, timeout: Duration) -> Option<S
                 crate::pty::force_kill_tree(child.id());
                 let _ = child.kill();
                 let _ = child.wait();
-                return Some(format!("Teardown didn't finish within 5 minutes; {anyway}"));
+                return Some("Teardown didn't finish within 5 minutes, so it was stopped.".into());
             }
             Err(e) => {
                 crate::pty::force_kill_tree(child.id());
                 let _ = child.kill();
                 let _ = child.wait();
-                return Some(format!("Teardown couldn't be watched ({e}); {anyway}"));
+                return Some(format!("Teardown couldn't be watched ({e}), so it was stopped."));
             }
         }
     }
@@ -1019,7 +1024,9 @@ fn run_removal(
         .and_then(|(script, timeout)| run_teardown(script, Path::new(&task.path), timeout))
         .into_iter()
         .collect();
+    // A removal that fails still says what the teardown did, before why the removal stopped.
     let leftover = |reason: String| {
+        let reason = notes.iter().chain([&reason]).cloned().collect::<Vec<_>>().join(" ");
         if Path::new(&task.path).exists() {
             format!("{reason} The folder {} is left on disk.", task.path)
         } else {
@@ -1272,6 +1279,65 @@ mod tests {
         assert!(!Path::new(&task.path).exists());
     }
 
+    /// Commits the worktree's files on the task branch, so the folder is clean.
+    fn commit_worktree(task: &Task) {
+        let dir = Path::new(&task.path);
+        assert!(git::run(dir, &["add", "-A"]).unwrap().ok);
+        assert!(git::run(dir, &["commit", "-q", "-m", "scripts"]).unwrap().ok);
+    }
+
+    #[test]
+    fn a_teardown_that_writes_in_a_clean_worktree_still_removes() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (home, task) = new_task(&tmp);
+        let log = Path::new(&task.path).join("teardown.log");
+        teardown_file(&home, &task, &write_marker(&log), true);
+        commit_worktree(&task);
+        let req = request_for(&home, &task);
+        assert!(
+            !req.warnings.iter().any(|w| w.contains("uncommitted")),
+            "{:?}",
+            req.warnings
+        );
+        let notes = remove_with_timeout(&state_in(&home), &task, &req, SHORT).unwrap();
+        assert!(notes.is_empty(), "{notes:?}");
+        assert!(!Path::new(&task.path).exists());
+    }
+
+    #[test]
+    fn merge_removes_after_a_teardown_that_writes_in_the_worktree() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (home, task) = new_task(&tmp);
+        std::fs::write(Path::new(&task.path).join("b.txt"), "b\n").unwrap();
+        let log = Path::new(&task.path).join("teardown.log");
+        teardown_file(&home, &task, &write_marker(&log), true);
+        let req = merge_request_for(&home, &task, true);
+        let outcome = merge_with_timeout(&state_in(&home), &task, &req, SHORT);
+        assert_eq!(
+            outcome,
+            MergeOutcome::Merged {
+                removed: true,
+                removal_note: None,
+                notes: Vec::new()
+            }
+        );
+        assert!(!Path::new(&task.path).exists());
+    }
+
+    #[test]
+    fn a_teardown_note_is_kept_when_the_removal_fails() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (home, task) = new_task(&tmp);
+        // A locked worktree can't be removed, even with --force.
+        teardown_file(&home, &task, "git worktree lock .; exit 3", true);
+        let req = request_for(&home, &task);
+        let reason = remove_with_timeout(&state_in(&home), &task, &req, SHORT).unwrap_err();
+        assert!(
+            reason.starts_with("Teardown failed (exit 3). Couldn't remove the worktree."),
+            "{reason}"
+        );
+    }
+
     #[test]
     fn a_failed_teardown_still_removes() {
         let tmp = tempfile::tempdir().unwrap();
@@ -1279,7 +1345,7 @@ mod tests {
         teardown_file(&home, &task, "exit 3", true);
         let req = request_for(&home, &task);
         let notes = remove_with_timeout(&state_in(&home), &task, &req, SHORT).unwrap();
-        assert_eq!(notes, ["Teardown failed (exit 3); the worktree was removed anyway."]);
+        assert_eq!(notes, ["Teardown failed (exit 3)."]);
         assert!(!Path::new(&task.path).exists());
     }
 
@@ -1301,10 +1367,7 @@ mod tests {
         let req = request_for(&home, &task);
         let started = Instant::now();
         let notes = remove_with_timeout(&state_in(&home), &task, &req, SHORT).unwrap();
-        assert_eq!(
-            notes,
-            ["Teardown didn't finish within 5 minutes; the worktree was removed anyway."]
-        );
+        assert_eq!(notes, ["Teardown didn't finish within 5 minutes, so it was stopped."]);
         assert!(started.elapsed() < Duration::from_secs(20));
         assert!(!Path::new(&task.path).exists());
         std::thread::sleep(Duration::from_secs(4));
@@ -1392,6 +1455,6 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let note = run_teardown_argv(&["no-such-program-marshell".into()], tmp.path(), SHORT).unwrap();
         assert!(note.starts_with("Teardown couldn't start ("), "{note}");
-        assert!(note.ends_with("); the worktree was removed anyway."), "{note}");
+        assert!(note.ends_with(")."), "{note}");
     }
 }

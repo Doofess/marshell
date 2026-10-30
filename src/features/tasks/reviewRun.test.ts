@@ -120,15 +120,15 @@ describe("the words", () => {
     expect(removedToast(TASK)).toBe("Removed marshell/fix-login.");
   });
   it("adds the teardown's notes to the merge toast", () => {
-    expect(mergedToast(TASK, true, null, ["Teardown failed (exit 3); the worktree was removed anyway."])).toBe(
-      "Merged marshell/fix-login into main. Removed the worktree. Teardown failed (exit 3); the worktree was removed anyway.",
+    expect(mergedToast(TASK, true, null, ["Teardown failed (exit 3)."])).toBe(
+      "Merged marshell/fix-login into main. Removed the worktree. Teardown failed (exit 3).",
     );
     expect(mergedToast(TASK, true, null, [])).toBe("Merged marshell/fix-login into main. Removed the worktree.");
   });
   it("adds the removal's notes to the toast", () => {
     expect(removedToast(TASK, [])).toBe("Removed marshell/fix-login.");
-    expect(removedToast(TASK, ["Teardown failed (exit 3); the worktree was removed anyway."])).toBe(
-      "Removed marshell/fix-login. Teardown failed (exit 3); the worktree was removed anyway.",
+    expect(removedToast(TASK, ["Teardown failed (exit 3)."])).toBe(
+      "Removed marshell/fix-login. Teardown failed (exit 3).",
     );
   });
   it("labels the removal 'Remove anyway' when there are warnings", () => {
@@ -175,10 +175,10 @@ describe("runMerge", () => {
 
 describe("runRemove", () => {
   it("is ok with the core's notes, and sends the request untouched", async () => {
-    const remove = vi.fn().mockResolvedValue({ notes: ["Teardown failed (exit 3); the worktree was removed anyway."] });
+    const remove = vi.fn().mockResolvedValue({ notes: ["Teardown failed (exit 3)."] });
     expect(await runRemove(api({ remove }), { commands: ["a"], warnings: ["w"] })).toEqual({
       ok: true,
-      notes: ["Teardown failed (exit 3); the worktree was removed anyway."],
+      notes: ["Teardown failed (exit 3)."],
     });
     expect(remove).toHaveBeenCalledWith({ commands: ["a"], warnings: ["w"] });
   });
