@@ -2,7 +2,7 @@
 //! `focus <session> [--start]`, `uninstall [--yes]`, `--help`, `--version`.
 
 use marshell_protocol::api::SessionMode;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 pub const USAGE: &str = "Usage: marshell <command>
 
@@ -59,12 +59,12 @@ pub enum Command {
 /// `argv` is the arguments after the program name. An `Err` is a usage error: the message, then the usage.
 /// A relative `--cwd` is made absolute from the CLI's own folder.
 pub fn parse(argv: &[String]) -> Result<Command, String> {
-    let current = std::env::current_dir().map_err(|e| format!("Could not read the current folder: {e}"))?;
-    parse_in(argv, &current)
+    parse_in(argv, &std::env::current_dir)
 }
 
-/// `parse`, with the CLI's own folder given.
-pub fn parse_in(argv: &[String], current_dir: &Path) -> Result<Command, String> {
+/// `parse`, with the way to read the CLI's own folder given. It is read only for a relative `--cwd`, so a command
+/// that has no use for it works in a folder that can't be read.
+pub fn parse_in(argv: &[String], current_dir: &dyn Fn() -> std::io::Result<PathBuf>) -> Result<Command, String> {
     let Some((first, rest)) = argv.split_first() else {
         return Err(USAGE.to_string());
     };
@@ -145,7 +145,7 @@ pub fn parse_in(argv: &[String], current_dir: &Path) -> Result<Command, String> 
     }
 }
 
-fn parse_new(rest: &[String], current_dir: &Path) -> Result<Command, String> {
+fn parse_new(rest: &[String], current_dir: &dyn Fn() -> std::io::Result<PathBuf>) -> Result<Command, String> {
     let (mut agent, mut cwd, mut prompt, mut mode, mut name, mut start) = (None, None, None, None, None, false);
     let mut args = rest.iter();
     while let Some(arg) = args.next() {
@@ -162,7 +162,12 @@ fn parse_new(rest: &[String], current_dir: &Path) -> Result<Command, String> {
             "--agent" => agent = Some(value("--agent")?),
             "--cwd" => {
                 let given = value("--cwd")?;
-                let joined = current_dir.join(&given);
+                let joined = if Path::new(&given).is_absolute() {
+                    PathBuf::from(&given)
+                } else {
+                    let here = current_dir().map_err(|e| format!("Could not read the current folder: {e}"))?;
+                    here.join(&given)
+                };
                 let absolute = std::path::absolute(&joined).unwrap_or(joined);
                 cwd = Some(absolute.to_string_lossy().into_owned());
             }
@@ -251,7 +256,7 @@ mod tests {
     #[test]
     fn args_parse_new_and_focus() {
         let here = std::env::temp_dir().join("app");
-        let p = |list: &[&str]| parse_in(&args(list), &here);
+        let p = |list: &[&str]| parse_in(&args(list), &|| Ok(here.clone()));
         let abs = std::path::absolute(here.join("."))
             .unwrap()
             .to_string_lossy()
@@ -334,11 +339,29 @@ mod tests {
             &["focus", "1", "2"],
             &["focus", "1", "--bogus"],
         ] {
-            let e = parse_in(&args(list), &here).unwrap_err();
+            let e = parse_in(&args(list), &|| Ok(here.clone())).unwrap_err();
             assert!(e.contains("Usage:"), "{list:?}: {e}");
         }
-        let e = parse_in(&args(&["new", "--mode", "sideways"]), &here).unwrap_err();
+        let e = parse_in(&args(&["new", "--mode", "sideways"]), &|| Ok(here.clone())).unwrap_err();
         assert!(e.contains("sideways") && e.contains("plan"), "{e}");
+    }
+
+    #[test]
+    fn the_current_folder_is_read_only_for_a_relative_cwd() {
+        let unreadable = || Err(std::io::Error::other("gone"));
+        for list in [
+            &["list"][..],
+            &["--version"],
+            &["--help"],
+            &["send", "1", "hi"],
+            &["new", "--agent", "codex"],
+        ] {
+            assert!(parse_in(&args(list), &unreadable).is_ok(), "{list:?}");
+        }
+        let absolute = std::env::temp_dir().to_string_lossy().into_owned();
+        assert!(parse_in(&args(&["new", "--cwd", &absolute]), &unreadable).is_ok());
+        let e = parse_in(&args(&["new", "--cwd", "sub"]), &unreadable).unwrap_err();
+        assert_eq!(e, "Could not read the current folder: gone");
     }
 
     #[test]

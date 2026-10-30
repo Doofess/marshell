@@ -48,6 +48,8 @@ pub struct Client {
 const TIMEOUT: Duration = Duration::from_secs(5);
 /// `fill` with `wait` is held by the core for up to 30 s: it gets a little longer than that.
 const WAIT_TIMEOUT: Duration = Duration::from_secs(35);
+/// `create` may wait on a cold version check; giving up early would fail a session that still opens, and a retry would open another.
+const CREATE_TIMEOUT: Duration = Duration::from_secs(30);
 
 impl Client {
     pub fn connect(env: &dyn Fn(&str) -> Option<String>) -> Result<Client, NotRunning> {
@@ -88,7 +90,7 @@ impl Client {
     /// `POST /v1/sessions`. An `Err` is one line to print: the core's own, or why it could not be reached.
     pub fn create(&self, req: &CreateSessionRequest) -> Result<CreateSessionResponse, String> {
         let body = serde_json::to_value(req).map_err(|e| e.to_string())?;
-        match self.request("/v1/sessions", Some(&body), TIMEOUT) {
+        match self.request("/v1/sessions", Some(&body), CREATE_TIMEOUT) {
             Ok((200, body)) => serde_json::from_str(&body).map_err(|e| format!("Marshell's answer didn't parse: {e}")),
             Ok((_, body)) => Err(body.trim().to_string()),
             Err(e) => Err(e.to_string()),
