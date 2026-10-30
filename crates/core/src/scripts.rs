@@ -55,6 +55,18 @@ pub fn checkout_root(dir: &Path) -> Option<PathBuf> {
     dir.ancestors().find(|d| d.join(".git").exists()).map(Path::to_path_buf)
 }
 
+/// The file's bytes with CRLF line endings as LF. Git's autocrlf checks a worktree's copy out with CRLF while the main
+/// checkout's may have LF, and a line ending can't change a script: a newline inside a JSON string is always escaped.
+fn lf_endings(bytes: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(bytes.len());
+    for (i, &b) in bytes.iter().enumerate() {
+        if !(b == b'\r' && bytes.get(i + 1) == Some(&b'\n')) {
+            out.push(b);
+        }
+    }
+    out
+}
+
 fn problem(why: impl std::fmt::Display) -> String {
     format!("{FILE_NAME} can't be read: {why}")
 }
@@ -94,7 +106,7 @@ pub fn read(dir: &Path, home: &Path) -> RepoScripts {
             return out;
         }
     };
-    let hash = hash_bytes(&bytes);
+    let hash = hash_bytes(&lf_endings(&bytes));
     match serde_json::from_slice::<ScriptFile>(&bytes) {
         Ok(file) => {
             let windows = cfg!(windows);
@@ -301,6 +313,19 @@ mod tests {
         if cfg!(windows) {
             assert!(is_trusted(home.path(), Path::new("/REPOS/A"), "h2"));
         }
+    }
+
+    /// Git's autocrlf checks a worktree's copy out with CRLF while the main checkout's file may have LF; the same
+    /// scripts are the same file.
+    #[test]
+    fn line_endings_dont_change_the_hash() {
+        let home = tempfile::tempdir().unwrap();
+        let lf = repo_with(Some(b"{\n  \"setup\": \"pnpm i\"\n}\n"));
+        let crlf = repo_with(Some(b"{\r\n  \"setup\": \"pnpm i\"\r\n}\r\n"));
+        let (a, b) = (read(lf.path(), home.path()), read(crlf.path(), home.path()));
+        assert_eq!(a.hash, b.hash);
+        let other = repo_with(Some(b"{\n  \"setup\": \"pnpm ci\"\n}\n"));
+        assert_ne!(a.hash, read(other.path(), home.path()).hash);
     }
 
     #[test]
