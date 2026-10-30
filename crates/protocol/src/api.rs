@@ -1033,6 +1033,35 @@ pub struct ProjectInfo {
     pub last_used_ms: u64,
 }
 
+/// Which of a repo's `marshell.json` scripts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum ScriptKind {
+    Setup,
+    Run,
+    Teardown,
+}
+
+/// A checkout's `marshell.json`, read and resolved for this OS.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct RepoScripts {
+    /// The checkout's own root (a linked worktree's, not the main repo's).
+    pub root: String,
+    /// `<root>/marshell.json`.
+    pub file: String,
+    /// SHA-256 of the file's bytes. None when there is no file or it is too large to read.
+    pub hash: Option<String>,
+    pub setup: Option<String>,
+    pub run: Option<String>,
+    pub teardown: Option<String>,
+    /// Whether the person allowed exactly this file for this repo.
+    pub trusted: bool,
+    /// Why the file can't be used. None when there is no file or it is fine.
+    pub problem: Option<String>,
+}
+
 /// A folder the launcher was given as text, as the core found it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[ts(export)]
