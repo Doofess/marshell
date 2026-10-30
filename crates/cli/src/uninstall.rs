@@ -6,8 +6,10 @@
 use marshell_core::agents::antigravity::hooks as agy_hooks;
 use marshell_core::agents::claude::hooks::{remove_plan, settings_path};
 use marshell_core::agents::codex::hooks as codex_hooks;
+use marshell_core::agents::skill;
 use marshell_core::config::service::{ApplyError, ConfigService};
 use marshell_core::paths;
+use marshell_protocol::agents::SkillInstall;
 use marshell_protocol::config::{ApplyRequest, ChangeSet, ExpectedHash, FileStatus};
 use std::io::{BufRead, Write};
 use std::path::Path;
@@ -217,6 +219,40 @@ pub fn run(
             others_failed = true;
         }
     }
+    // The marshell skill each CLI has: one Marshell wrote joins the removal, an edited one is left.
+    let mut skill_dirs = Vec::new();
+    for (agent, name) in [
+        ("claude", "Claude Code"),
+        ("codex", "Codex"),
+        ("antigravity", "Antigravity CLI"),
+    ] {
+        let Some(path) = skill::skill_path(agent, env, user_home) else {
+            continue;
+        };
+        let bytes = match std::fs::read(&path) {
+            Ok(bytes) => Some(bytes),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+            Err(e) => {
+                let _ = writeln!(out, "Couldn't read {}: {e}", path.display());
+                others_failed = true;
+                continue;
+            }
+        };
+        match skill::state_of(bytes.as_deref()) {
+            SkillInstall::None => {}
+            SkillInstall::Installed | SkillInstall::Outdated => {
+                extras.push(skill::remove_plan(name, &path, bytes.as_deref()));
+                skill_dirs.extend(path.parent().map(Path::to_path_buf));
+            }
+            SkillInstall::Edited => {
+                let _ = writeln!(
+                    out,
+                    "Left {}: it was edited after Marshell installed it.",
+                    path.display()
+                );
+            }
+        }
+    }
     let claude_empty = plan.changes.edits.is_empty();
     for changes in extras {
         if plan.changes.edits.is_empty() {
@@ -351,6 +387,10 @@ pub fn run(
             let _ = writeln!(out, "Nothing was removed: {e:#}");
             return 1;
         }
+    }
+    // The now-empty marshell folders; one that still holds something stays.
+    for dir in &skill_dirs {
+        let _ = std::fs::remove_dir(dir);
     }
     if has_bin {
         remove_bin(home, out);
@@ -844,5 +884,65 @@ mod tests {
         let after = std::fs::read_to_string(&f.settings).unwrap();
         assert!(after.contains("their-new-line"), "{after}");
         assert!(!after.contains("marshell-hook"), "{after}");
+    }
+
+    fn put_skill(f: &Fixture, agent: &str, bytes: &[u8]) -> PathBuf {
+        let path = marshell_core::agents::skill::skill_path(agent, &no_env, &f.user_home).unwrap();
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, bytes).unwrap();
+        path
+    }
+
+    #[test]
+    fn uninstall_removes_skills_marshell_wrote() {
+        let f = installed(ORIGINAL);
+        let text = marshell_core::agents::skill::SKILL_TEXT.as_bytes();
+        let claude = put_skill(&f, "claude", text);
+        let codex = put_skill(&f, "codex", text);
+        let (code, out) = run_with(&f, "", true);
+        assert_eq!(code, 0, "{out}");
+        for path in [&claude, &codex] {
+            assert!(out.contains(&*path.to_string_lossy()), "{out}");
+            assert!(!path.exists(), "{out}");
+            assert!(!path.parent().unwrap().exists(), "{out}");
+        }
+        assert!(!out.contains("Left "), "{out}");
+    }
+
+    #[test]
+    fn uninstall_removes_a_skill_when_there_are_no_hooks() {
+        let f = installed(ORIGINAL);
+        std::fs::write(&f.settings, ORIGINAL).unwrap();
+        let path = put_skill(&f, "antigravity", marshell_core::agents::skill::SKILL_TEXT.as_bytes());
+        let (code, out) = run_with(
+            &f, "y
+", false,
+        );
+        assert_eq!(code, 0, "{out}");
+        assert!(!path.exists() && !path.parent().unwrap().exists(), "{out}");
+    }
+
+    #[test]
+    fn uninstall_leaves_an_edited_skill() {
+        let f = installed(ORIGINAL);
+        let path = put_skill(&f, "codex", b"mine");
+        let (code, out) = run_with(&f, "", true);
+        assert_eq!(code, 0, "{out}");
+        assert_eq!(std::fs::read(&path).unwrap(), b"mine");
+        assert!(
+            out.contains(&format!(
+                "Left {}: it was edited after Marshell installed it.",
+                path.display()
+            )),
+            "{out}"
+        );
+    }
+
+    #[test]
+    fn uninstall_without_skills_says_nothing_about_them() {
+        let f = installed(ORIGINAL);
+        let (code, out) = run_with(&f, "", true);
+        assert_eq!(code, 0, "{out}");
+        assert!(!out.to_lowercase().contains("skill"), "{out}");
     }
 }
