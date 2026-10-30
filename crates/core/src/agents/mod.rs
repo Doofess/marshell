@@ -11,6 +11,7 @@ pub mod manifest;
 pub mod own;
 pub mod presets;
 pub mod settings_view;
+pub mod skill;
 
 use std::path::Path;
 use std::process::{Command, Stdio};

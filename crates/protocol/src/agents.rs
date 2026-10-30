@@ -16,6 +16,21 @@ pub enum HookInstall {
     Orphaned,
 }
 
+/// Whether the `marshell` skill file is in place for an agent, judged by the file's hash.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum SkillInstall {
+    /// No skill file.
+    None,
+    /// The file holds the text this Marshell ships.
+    Installed,
+    /// The file holds a text an earlier Marshell shipped.
+    Outdated,
+    /// The file holds anything else: the person edited it, or Marshell didn't write it.
+    Edited,
+}
+
 /// Whether Codex trusts the hook entries Marshell added, as its `config.toml` records it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
