@@ -84,12 +84,14 @@ fn output_has(session: &Session, needle: &str, wait: Duration) -> bool {
 }
 
 /// A state whose Claude Code version and settings are pinned to scratch values, so no test runs a real `claude`
-/// or reads the user's settings.
+/// or reads the user's settings. CI has no `claude`, so the installed check is swapped too.
 fn claude_state(home: &Path) -> AppState {
     state(home)
         .with_claude_version(Some("2.1.302".into()))
         .with_claude_compact_paths(home.join("user"), Vec::new())
         .with_claude_settings(home.join("claude-settings.json"))
+        .with_agent_check(|_| true)
+        .with_tab_path(|| None)
 }
 
 async fn start_claude(app: &axum::Router, cwd: &Path) -> String {
