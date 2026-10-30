@@ -4,13 +4,13 @@ import { consentProps } from "../agents/agentsState";
 import { SETUP } from "../agents/fixtures";
 
 const claude: Detection = { cli: "claude", installed: true, version: "2.1.296", configPath: "C:\Users\Home Office\.claude\settings.json", configState: "ok" };
-const all = { status: true, approve: true, statusline: true };
+const all = { status: true, approve: true, statusline: true, skill: true };
 
 describe("entryCount", () => {
   it("is 11 hook entries for Claude with status and approval on, and the status line adds none", () => {
     expect(entryCount("claude", all)).toBe(11);
-    expect(entryCount("claude", { status: true, approve: false, statusline: true })).toBe(10);
-    expect(entryCount("claude", { status: false, approve: false, statusline: false })).toBe(0);
+    expect(entryCount("claude", { status: true, approve: false, statusline: true, skill: false })).toBe(10);
+    expect(entryCount("claude", { status: false, approve: false, statusline: false, skill: false })).toBe(0);
   });
   it("counts only what the CLI can do", () => {
     expect(entryCount("antigravity", all)).toBe(5);
@@ -19,9 +19,9 @@ describe("entryCount", () => {
   it("antigravity_entry_counts_match_the_plan: one PreToolUse and four status events, and the one PreToolUse serves both", () => {
     expect(entryCount("antigravity", all)).toBe(5);
     // Status writes the PreToolUse entry too (its permission answer follows `approve`), so status alone is still five.
-    expect(entryCount("antigravity", { status: true, approve: false, statusline: true })).toBe(5);
-    expect(entryCount("antigravity", { status: false, approve: true, statusline: false })).toBe(1);
-    expect(entryCount("antigravity", { status: false, approve: false, statusline: true })).toBe(0);
+    expect(entryCount("antigravity", { status: true, approve: false, statusline: true, skill: false })).toBe(5);
+    expect(entryCount("antigravity", { status: false, approve: true, statusline: false, skill: false })).toBe(1);
+    expect(entryCount("antigravity", { status: false, approve: false, statusline: true, skill: false })).toBe(0);
   });
 });
 
@@ -36,6 +36,7 @@ describe("CAPABILITIES", () => {
       status: { available: true, entries: 4 },
       approve: { available: true, entries: 1 },
       statusline: { available: true, entries: 0 },
+      skill: { available: true, entries: 0 },
     });
     expect(CAPABILITIES.codex.statusline.available).toBe(false);
   });
@@ -52,7 +53,22 @@ describe("consentHeadline", () => {
     expect(consentHeadline(claude, { ...all, statusline: false })).toBe("Add 11 hook entries in C:\Users\Home Office\.claude\settings.json.");
   });
   it("says nothing changes when everything is off", () => {
-    expect(consentHeadline(claude, { status: false, approve: false, statusline: false })).toBe("Change nothing. Claude Code will show limited status.");
+    expect(consentHeadline(claude, { status: false, approve: false, statusline: false, skill: false })).toBe("Change nothing. Claude Code will show limited status.");
+  });
+  it("adds the skill sentence for a skill that is not there, or that needs an update", () => {
+    const skillPath = String.raw`C:\u\.claude\skills\marshell\SKILL.md`;
+    const none = consentHeadline({ ...claude, skill: "none", skillPath }, all);
+    expect(none.endsWith(` Add the marshell skill in ${skillPath}.`)).toBe(true);
+    expect(consentHeadline({ ...claude, skill: "edited", skillPath }, all).endsWith(` Update the marshell skill in ${skillPath}.`)).toBe(true);
+    expect(consentHeadline({ ...claude, skill: "outdated", skillPath }, all)).toContain("Update the marshell skill in");
+    expect(consentHeadline({ ...claude, skill: "installed", skillPath }, all)).not.toContain("marshell skill");
+  });
+  it("says only the skill sentence when nothing else is on", () => {
+    const off = { status: false, approve: false, statusline: false, skill: true };
+    expect(consentHeadline({ ...claude, skill: "none", skillPath: "/s" }, off)).toBe("Add the marshell skill in /s.");
+  });
+  it("offers the skill for all three CLIs", () => {
+    for (const c of Object.values(CAPABILITIES)) expect(c.skill).toEqual({ available: true, entries: 0 });
   });
   it("fails closed on a file that does not parse, naming the line", () => {
     const d: Detection = { ...claude, configState: "unparsable", parseError: { line: 14, message: "Unexpected token }" } };
@@ -64,13 +80,13 @@ describe("consentHeadline", () => {
     expect(canEdit({ ...claude, managed: { path: "C:\Program Files\ClaudeCode\managed-settings.json" } }).ok).toBe(true);
   });
   it("follows the copy rules: no exclamation marks, no 'successfully', no 'Oops'", () => {
-    for (const s of [consentHeadline(claude, all), consentHeadline(claude, { status: false, approve: false, statusline: false })]) expect(s).not.toMatch(/!|successfully|oops/i);
+    for (const s of [consentHeadline(claude, all), consentHeadline(claude, { status: false, approve: false, statusline: false, skill: false })]) expect(s).not.toMatch(/!|successfully|oops/i);
   });
 });
 
 describe("a status line added rather than chained", () => {
   const none: Detection = { ...claude, hasOwnStatusLine: false };
-  const on = { status: true, approve: false, statusline: false };
+  const on = { status: true, approve: false, statusline: false, skill: false };
   it("says the status line is added", () => {
     expect(consentHeadline(none, on)).toBe(`Add 10 hook entries and a status line in ${none.configPath}.`);
   });

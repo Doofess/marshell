@@ -95,8 +95,8 @@ describe("consentProps", () => {
     expect(p.scenario.plan.diff).toContain('"hooks": {}');
     expect(p.scenario.plan.backupPath).toBe("C:/m/snapshots");
     expect(p.scenario.plan.chainPath).toBe("C:/m/agents/claude/statusline-chain.json");
-    expect(p.offer).toEqual(["status", "approve", "statusline"]);
-    expect(p.on).toEqual({ status: true, approve: true, statusline: true, skill: false });
+    expect(p.offer).toEqual(["status", "approve", "statusline", "skill"]);
+    expect(p.on).toEqual({ status: true, approve: true, statusline: true, skill: true });
   });
   it("never describes a refused file as about to change", () => {
     const p = consentProps(SETUP, { preview: null, open: false, busy: false, error: "hooks is not an object" });
@@ -108,9 +108,12 @@ describe("consentProps", () => {
 
 describe("the switches the person sets", () => {
   it("starts an upgrade with only approval requested", () => {
-    expect(setupWant(s({ hooks: "installed", approve_installed: false }))).toEqual({ status: false, statusline: false, approve: true, skill: false });
-    expect(installRequest(setupWant(s({ hooks: "installed", approve_installed: false })))).toEqual({ status: false, statusline: false, approve: true, skill: false });
+    expect(setupWant(s({ hooks: "installed", approve_installed: false, skill: "none" }))).toEqual({ status: false, statusline: false, approve: true, skill: true });
+    expect(installRequest(setupWant(s({ hooks: "installed", approve_installed: false, skill: "none" })))).toEqual({ status: false, statusline: false, approve: true, skill: true });
     expect(setupWant(SETUP)).toEqual(DEFAULT_WANT);
+    expect(setupWant(s({ skill: "installed" }))).toEqual({ ...DEFAULT_WANT, skill: false });
+    expect(setupWant(s({ hooks: "installed", skill: "installed" })).skill).toBe(false);
+    expect(setupWant(s({ hooks: "installed", skill: "edited" })).skill).toBe(true);
   });
   it("sends the approval switch in the hook plan request", () => {
     expect(installRequest({ ...DEFAULT_WANT, approve: true, skill: false }).approve).toBe(true);
@@ -121,12 +124,12 @@ describe("the switches the person sets", () => {
       preview: PREVIEW, open: true, busy: false,
       want: { status: false, statusline: false, approve: true, skill: false },
     });
-    expect(p.offer).toEqual(["approve"]);
+    expect(p.offer).toEqual(["approve", "skill"]);
     expect(p.on).toEqual({ status: false, statusline: false, approve: true, skill: false });
     expect(p.scenario.plan.diff).toContain('"hooks": {}');
   });
   it("start with status and the status line on", () => {
-    expect(installRequest(DEFAULT_WANT)).toEqual({ status: true, statusline: true, approve: true, skill: false });
+    expect(installRequest(DEFAULT_WANT)).toEqual({ status: true, statusline: true, approve: true, skill: true });
   });
   it("send statusline:false when that switch is off, so the status line is never touched", () => {
     expect(installRequest({ status: true, statusline: false, approve: false, skill: false })).toEqual({ status: true, statusline: false, approve: false, skill: false });
@@ -170,17 +173,17 @@ describe("Codex", () => {
     expect(p.scenario.plan.cli).toBe("codex");
     expect(p.scenario.plan.needsTrust).toBe(true);
     expect(p.scenario.plan.configPath).toBe("C:/h/.codex/hooks.json");
-    expect(p.offer).toEqual(["status", "approve"]);
+    expect(p.offer).toEqual(["status", "approve", "skill"]);
     expect(p.on.statusline).toBe(false);
     expect(p.scenario.plan.removal).toBe("Marshell removes the hook entries it added; the rest of the file stays as it is.");
     expect(consentProps(SETUP, flow).scenario.plan.needsTrust).toBe(false);
   });
   it("an installed Codex offers approval only", () => {
-    expect(consentProps({ ...CODEX_SETUP, hooks: "installed" }, flow).offer).toEqual(["approve"]);
+    expect(consentProps({ ...CODEX_SETUP, hooks: "installed" }, flow).offer).toEqual(["approve", "skill"]);
   });
   it("installRequest never asks Codex for a status line", () => {
-    expect(installRequest(DEFAULT_WANT, "codex")).toEqual({ status: true, statusline: false, approve: true, skill: false });
-    expect(installRequest(DEFAULT_WANT)).toEqual({ status: true, statusline: true, approve: true, skill: false });
+    expect(installRequest(DEFAULT_WANT, "codex")).toEqual({ status: true, statusline: false, approve: true, skill: true });
+    expect(installRequest(DEFAULT_WANT)).toEqual({ status: true, statusline: true, approve: true, skill: true });
   });
   it("setupLine names Codex", () => {
     expect(setupLine(CODEX_SETUP)).toBe("Not set up. Sessions show limited status.");
@@ -220,11 +223,11 @@ describe("Antigravity", () => {
     expect(p.scenario.detection.skipsAll).toBeUndefined();
     expect(p.scenario.plan.configPath).toBe("C:/h/.gemini/antigravity-cli/settings.json");
     expect(p.scenario.plan.needsTrust).toBe(false);
-    expect(p.offer).toEqual(["status", "approve", "statusline"]);
+    expect(p.offer).toEqual(["status", "approve", "statusline", "skill"]);
     expect(consentProps(AGY_SETUP, { preview: null, open: false, busy: true }).scenario.detection.hooks?.exists).toBe(false);
   });
   it("installRequest asks Antigravity for a status line like Claude Code", () => {
-    expect(installRequest(DEFAULT_WANT, "antigravity")).toEqual({ status: true, statusline: true, approve: true, skill: false });
+    expect(installRequest(DEFAULT_WANT, "antigravity")).toEqual({ status: true, statusline: true, approve: true, skill: true });
   });
   it("setupLine names hooks.json, not settings.json, for the hooks", () => {
     const on = { ...AGY_SETUP, hooks: "installed" as const };

@@ -24,6 +24,12 @@ export const listAgents = (ep: Endpoint) => api<AgentFound[]>(ep, "GET", "/v1/ag
 export const planInstall = (ep: Endpoint, agent: HookAgent, want: HookPlanRequest) =>
   api<ConfigPreview>(ep, "POST", `${base(agent)}/hooks/plan`, want);
 
+/** The preview of installing or updating the marshell skill file (an edited file shows its diff). */
+export const planSkill = (ep: Endpoint, agent: HookAgent) => api<ConfigPreview>(ep, "POST", `${base(agent)}/skill/plan`);
+
+/** The preview of removing the marshell skill file. */
+export const planSkillRemove = (ep: Endpoint, agent: HookAgent) => api<ConfigPreview>(ep, "POST", `${base(agent)}/skill/remove-plan`);
+
 export const planRemove = (ep: Endpoint, agent: HookAgent) => api<RemovePreview>(ep, "POST", `${base(agent)}/hooks/remove-plan`);
 
 /** The 409 body's reason and the files it is about. A body that is not that JSON is read as a plain conflict. */
@@ -87,6 +93,8 @@ export function toDetection(s: AgentSetup): Detection {
     configState: STATE[s.settings_state],
     parseError: s.parse_error ? { line: s.parse_error.line, message: s.parse_error.message } : undefined,
     hasOwnStatusLine: s.has_own_statusline,
+    skill: s.skill,
+    skillPath: s.skill_path,
     // Antigravity's hooks go in a file of their own; without a preview, hooks.json is taken as there once Marshell's hooks are.
     ...(s.hooks_path === undefined ? {} : { hooks: { path: s.hooks_path, exists: s.hooks !== "none" } }),
   };

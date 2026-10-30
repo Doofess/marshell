@@ -12,9 +12,9 @@ const no = (reason: string) => ({ available: false, reason, entries: 0 });
  * line is `statusLine` in ~/.gemini/antigravity-cli/settings.json.
  */
 export const CAPABILITIES: Record<CliId, Record<Capability, { available: boolean; reason?: string; entries: number }>> = {
-  claude: { status: { available: true, entries: 10 }, approve: { available: true, entries: 1 }, statusline: { available: true, entries: 0 } },
-  codex: { status: { available: true, entries: 7 }, approve: { available: true, entries: 1 }, statusline: no("Codex has no status line to chain.") },
-  antigravity: { status: { available: true, entries: 4 }, approve: { available: true, entries: 1 }, statusline: { available: true, entries: 0 } },
+  claude: { status: { available: true, entries: 10 }, approve: { available: true, entries: 1 }, statusline: { available: true, entries: 0 }, skill: { available: true, entries: 0 } },
+  codex: { status: { available: true, entries: 7 }, approve: { available: true, entries: 1 }, statusline: no("Codex has no status line to chain."), skill: { available: true, entries: 0 } },
+  antigravity: { status: { available: true, entries: 4 }, approve: { available: true, entries: 1 }, statusline: { available: true, entries: 0 }, skill: { available: true, entries: 0 } },
 };
 
 export function entryCount(cli: CliId, on: Record<Capability, boolean>): number {
@@ -62,13 +62,28 @@ const sentence = (text: string) => `${text.charAt(0).toUpperCase()}${text.slice(
 /** Status is on and the user has no status line: install adds one (so context and plan data arrive) instead of chaining theirs. */
 export const addsStatusLine = (d: Detection, on: Record<Capability, boolean>) => d.hasOwnStatusLine === false && on.status && CAPABILITIES[d.cli].statusline.available;
 
+/** The sentence about the skill file: nothing when it is off, already installed or unknown. */
+function skillSentence(d: Detection, on: Record<Capability, boolean>): string | undefined {
+  if (!on.skill || !d.skill || d.skill === "installed" || d.skillPath === undefined) return undefined;
+  return `${d.skill === "none" ? "Add" : "Update"} the marshell skill in ${d.skillPath}.`;
+}
+
 export function consentHeadline(d: Detection, on: Record<Capability, boolean>, handOver = false): string {
+  // A file Marshell will not edit says only that.
+  const skill = d.configState === "unparsable" || d.configState === "read-only" ? undefined : skillSentence(d, on);
+  const hooks = hooksHeadline(d, on, handOver, skill !== undefined);
+  return skill === undefined ? hooks : hooks === "" ? skill : `${hooks} ${skill}`;
+}
+
+/** The hooks part of the headline; empty when the hooks change nothing and the skill sentence carries the line. */
+function hooksHeadline(d: Detection, on: Record<Capability, boolean>, handOver: boolean, skillOnly: boolean): string {
   if (d.configState === "unparsable") return `${d.configPath} does not parse (line ${d.parseError?.line ?? "–"}), so Marshell will not edit it.`;
   if (d.configState === "read-only") return `${d.configPath} is read-only, so Marshell will not edit it.`;
   const n = entryCount(d.cli, on);
   const added = addsStatusLine(d, on);
   const chain = on.statusline && CAPABILITIES[d.cli].statusline.available && d.hasOwnStatusLine !== false;
   const turnOff = handOver && d.skipsAll ? `turn off ${d.skipsAll.setting}` : undefined;
+  if (n === 0 && !chain && !turnOff && !added && skillOnly) return "";
   if (n === 0 && !chain && !turnOff && !added) return `Change nothing. ${CLI_NAME[d.cli]} will show limited status.`;
   const add = `Add ${n} hook ${n === 1 ? "entry" : "entries"}`;
   if (turnOff) {

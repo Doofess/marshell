@@ -5,9 +5,9 @@ import { Switch } from "../../components/Switch/Switch";
 import { canEdit, CAPABILITIES, CLI_NAME, consentHeadline, fileName, folderOf, type Capability, type ConsentPlan, type Detection } from "./consent";
 import "./Onboarding.css";
 
-const CAP_LABEL: Record<Capability, string> = { status: "Show status and context", approve: "Approve from anywhere", statusline: "Keep my status line working" };
+const CAP_LABEL: Record<Capability, string> = { status: "Show status and context", approve: "Approve from anywhere", statusline: "Keep my status line working", skill: "Install the marshell skill" };
 
-const ALL: Capability[] = ["status", "approve", "statusline"];
+const ALL: Capability[] = ["status", "approve", "statusline", "skill"];
 
 /** Screen 2: one card per CLI, in plain words: what changes and where, the exact diff on request, the backup and the way out. A file that cannot be edited gets the reason instead of controls. */
 export function ConsentCard({
@@ -80,6 +80,7 @@ export function ConsentCard({
             )}
           </ul>
           {offer.includes("approve") && offer.includes("status") && <p className="consent__meta">Approve from anywhere needs live status to know when a request is answered.</p>}
+          {offer.includes("skill") && <p className="consent__meta">Teaches {name} the marshell command: list, send, new and focus.</p>}
           {d.cli === "antigravity" && offer.includes("approve") && <p className="consent__meta">Cards for risky commands in Bypass. In other modes Antigravity asks in its terminal.</p>}
           {d.skipsAll && (
             <p className="consent__handover">

@@ -27,15 +27,15 @@ describe("useInstallFlow requests", () => {
   it("the install flow plans at /v1/agents/codex/hooks/plan, with no status line asked for", async () => {
     const install = flow("codex");
     await install.plan();
-    expect(planInstall).toHaveBeenLastCalledWith(endpoint, "codex", { status: true, statusline: false, approve: true, skill: false });
+    expect(planInstall).toHaveBeenLastCalledWith(endpoint, "codex", { status: true, statusline: false, approve: true, skill: true });
   });
 
   it("plans approval by default and replans when its switch changes without applying", async () => {
     const install = flow();
     await install.plan();
-    expect(planInstall).toHaveBeenLastCalledWith(endpoint, "claude", { status: true, statusline: true, approve: true, skill: false });
+    expect(planInstall).toHaveBeenLastCalledWith(endpoint, "claude", { status: true, statusline: true, approve: true, skill: true });
     install.choose("approve", false);
-    expect(planInstall).toHaveBeenLastCalledWith(endpoint, "claude", { status: true, statusline: true, approve: false, skill: false });
+    expect(planInstall).toHaveBeenLastCalledWith(endpoint, "claude", { status: true, statusline: true, approve: false, skill: true });
     expect(applyPreview).not.toHaveBeenCalled();
   });
 
@@ -53,7 +53,7 @@ describe("useInstallFlow requests", () => {
 describe("useInstallFlow: Antigravity", () => {
   it("plans at /v1/agents/antigravity/hooks/plan with a status line", async () => {
     await flow("antigravity").plan();
-    expect(planInstall).toHaveBeenLastCalledWith(endpoint, "antigravity", { status: true, statusline: true, approve: true, skill: false });
+    expect(planInstall).toHaveBeenLastCalledWith(endpoint, "antigravity", { status: true, statusline: true, approve: true, skill: true });
   });
   it("shows a bridge-path refusal's own message", () => {
     const message = "Antigravity can't run Marshell's hook from C:/100%/m/bin/marshell-hook.exe: the path holds a % or a quote.";

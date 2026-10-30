@@ -142,7 +142,7 @@ export const CONSENT_DIFFS = {
 };
 const antigravitySkips: Detection = { ...antigravity, skipsAll: { setting: "dangerouslySkipPermissions" } };
 
-const ALL_ON: Record<Capability, boolean> = { status: true, approve: true, statusline: true };
+const ALL_ON: Record<Capability, boolean> = { status: true, approve: true, statusline: true, skill: false };
 const plan = (d: Detection, diff: string, on: Record<Capability, boolean> = ALL_ON, handOver = false): ConsentPlan => ({
   cli: d.cli,
   on,

@@ -10,7 +10,7 @@ import { CONSENT, DETECTIONS } from "./fixtures";
 const meta: Meta = { title: "Onboarding", parameters: { layout: "fullscreen" } };
 export default meta;
 
-const ALL_ON = { status: true, approve: true, statusline: true };
+const ALL_ON = { status: true, approve: true, statusline: true, skill: false };
 const box = { maxInlineSize: 640, padding: 16 };
 
 export const DetectedAll: StoryObj = { render: () => <ThemePair label="Screen 1: all three found, each config shown whole, even under a folder with a space" stack><div style={box}><Detected detections={DETECTIONS.allThree} /></div></ThemePair> };

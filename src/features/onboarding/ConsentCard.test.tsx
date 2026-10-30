@@ -7,7 +7,7 @@ import { elements } from "../../test/hooks";
 import { Switch } from "../../components/Switch/Switch";
 import type { Capability } from "./consent";
 
-const on = { status: true, approve: true, statusline: true };
+const on = { status: true, approve: true, statusline: true, skill: false };
 
 describe("ConsentCard", () => {
   function switches(value: typeof on, offer?: Capability[]) {
@@ -21,7 +21,7 @@ describe("ConsentCard", () => {
     return { html, changes, toggle: (label: string, checked: boolean) => elements(tree).find((e) => e.type === Switch && e.props.label === label)!.props.onChange(checked) };
   }
   it("turns live status on when approval is enabled", () => {
-    const card = switches({ status: false, approve: false, statusline: false });
+    const card = switches({ status: false, approve: false, statusline: false, skill: false });
     card.toggle("Approve from anywhere", true);
     expect(card.changes).toEqual([["status", true], ["approve", true]]);
     expect(card.html).toContain("Approve from anywhere needs live status to know when a request is answered.");
@@ -32,7 +32,7 @@ describe("ConsentCard", () => {
     expect(card.changes).toEqual([["approve", false], ["status", false]]);
   });
   it("leaves the approval-only upgrade request intact", () => {
-    const card = switches({ status: false, approve: false, statusline: false }, ["approve"]);
+    const card = switches({ status: false, approve: false, statusline: false, skill: false }, ["approve"]);
     card.toggle("Approve from anywhere", true);
     expect(card.changes).toEqual([["approve", true]]);
   });
@@ -46,7 +46,7 @@ describe("ConsentCard", () => {
   });
   it("has a switch for each capability and explains an unavailable one", () => {
     const h = renderToStaticMarkup(<ConsentCard scenario={CONSENT.codex} on={on} />);
-    expect(h.match(/role="switch"/g)).toHaveLength(3);
+    expect(h.match(/role="switch"/g)).toHaveLength(4);
     expect(h).toContain("Codex has no status line to chain.");
   });
   it("names both Antigravity files: hooks in its shared hooks.json, the status line in its own settings", () => {
@@ -70,7 +70,7 @@ describe("ConsentCard", () => {
     expect(h).toContain("Let Marshell set the mode");
     expect(h).toContain("Antigravity CLI is set to skip every permission prompt (<code>dangerouslySkipPermissions</code>), so Marshell can&#x27;t ask you about anything.");
     expect(h).toContain("Turning it off lets each session&#x27;s mode decide; Bypass keeps today&#x27;s behaviour.");
-    expect(h.match(/role="switch"/g)).toHaveLength(4);
+    expect(h.match(/role="switch"/g)).toHaveLength(5);
     // The switch shows the plan's choice: on here, so the headline and the diff turn the setting off.
     const handOver = /<input([^>]*)>(?:(?!<input)[\s\S])*?Let Marshell set the mode/.exec(h)![1]!;
     expect(handOver).toContain('checked=""');
