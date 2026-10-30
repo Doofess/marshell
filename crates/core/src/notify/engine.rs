@@ -725,6 +725,8 @@ mod tests {
             stuck: None,
             preset: None,
             ports: Vec::new(),
+            script: None,
+            setup: None,
         }
     }
 

@@ -642,19 +642,25 @@ async fn changes_route_returns_changes_or_404() {
 // ---- merging a task back ----
 
 /// A request that only asks for a plan.
+/// The home for plans of a merge that keeps the worktree: nothing is read from it.
+fn no_home() -> &'static Path {
+    Path::new("")
+}
+
 fn merge_req(message: &str) -> MergeRequest {
     MergeRequest {
         message: message.into(),
         remove: false,
         commands: Vec::new(),
         warnings: Vec::new(),
+        teardown: None,
     }
 }
 
 /// The request the dialog sends: the message and the commands the plan showed for it.
 fn planned(task: &marshell_protocol::api::Task, message: &str) -> MergeRequest {
     let mut req = merge_req(message);
-    req.commands = tasks::plan_merge(task, &req, 0).0.commands;
+    req.commands = tasks::plan_merge(task, &req, 0, no_home()).0.commands;
     req
 }
 
@@ -689,7 +695,7 @@ fn merge_plan_lists_commands_in_order() {
     let dir = PathBuf::from(&task.path);
     std::fs::write(dir.join("a.txt"), "task\n").unwrap();
 
-    let (plan, steps) = tasks::plan_merge(&task, &merge_req("Fix login"), 0);
+    let (plan, steps) = tasks::plan_merge(&task, &merge_req("Fix login"), 0, no_home());
     assert_eq!(plan.blocker, None);
     assert_eq!(
         plan.commands,
@@ -707,7 +713,7 @@ fn merge_plan_lists_commands_in_order() {
 
     // A clean worktree has nothing to add or commit; the message is trimmed.
     commit_all(&dir, "edit a");
-    let (plan, _) = tasks::plan_merge(&task, &merge_req("  Fix login \n"), 0);
+    let (plan, _) = tasks::plan_merge(&task, &merge_req("  Fix login \n"), 0, no_home());
     assert_eq!(plan.blocker, None);
     assert_eq!(
         plan.commands,
@@ -726,7 +732,7 @@ fn merge_plan_blockers() {
     let repo = PathBuf::from(&task.repo_root);
     std::fs::write(Path::new(&task.path).join("b.txt"), "b\n").unwrap();
     std::fs::write(repo.join("a.txt"), "edited in the base\n").unwrap();
-    let (plan, _) = tasks::plan_merge(&task, &merge_req("Fix login"), 0);
+    let (plan, _) = tasks::plan_merge(&task, &merge_req("Fix login"), 0, no_home());
     assert_eq!(
         plan.blocker.as_deref(),
         Some("my repo has uncommitted changes. Commit or stash them, then merge.")
@@ -739,7 +745,7 @@ fn merge_plan_blockers() {
     let repo = PathBuf::from(&task.repo_root);
     std::fs::write(Path::new(&task.path).join("b.txt"), "b\n").unwrap();
     assert!(run(&repo, &["checkout", "-q", "-b", "other"]).unwrap().ok);
-    let (plan, _) = tasks::plan_merge(&task, &merge_req("Fix login"), 0);
+    let (plan, _) = tasks::plan_merge(&task, &merge_req("Fix login"), 0, no_home());
     assert_eq!(
         plan.blocker.as_deref(),
         Some("my repo is on other, not main. Switch it to main, then merge.")
@@ -749,7 +755,7 @@ fn merge_plan_blockers() {
     // Nothing ahead and nothing uncommitted.
     let tmp = spaced_tmp();
     let (_home, task) = new_task(&tmp);
-    let (plan, _) = tasks::plan_merge(&task, &merge_req("Fix login"), 0);
+    let (plan, _) = tasks::plan_merge(&task, &merge_req("Fix login"), 0, no_home());
     assert_eq!(
         plan.blocker.as_deref(),
         Some("marshell/fix-login has no changes to merge.")
@@ -760,7 +766,7 @@ fn merge_plan_blockers() {
     let tmp = spaced_tmp();
     let (_home, task) = new_task(&tmp);
     std::fs::write(Path::new(&task.path).join("b.txt"), "b\n").unwrap();
-    let (plan, _) = tasks::plan_merge(&task, &merge_req(" \t "), 0);
+    let (plan, _) = tasks::plan_merge(&task, &merge_req(" \t "), 0, no_home());
     assert_eq!(plan.blocker.as_deref(), Some("Write a commit message."));
     assert_eq!(plan.commands.len(), 4);
 }
@@ -784,7 +790,8 @@ fn merge_squashes_into_one_commit() {
         outcome,
         MergeOutcome::Merged {
             removed: false,
-            removal_note: None
+            removal_note: None,
+            notes: Vec::new()
         }
     );
     assert_eq!(commit_count(&repo), before + 1);
@@ -864,14 +871,15 @@ fn untracked_files_in_base_do_not_block() {
     std::fs::write(repo.join("notes.txt"), "mine\n").unwrap();
     std::fs::write(Path::new(&task.path).join("b.txt"), "b\n").unwrap();
 
-    let (plan, _) = tasks::plan_merge(&task, &merge_req("Fix login"), 0);
+    let (plan, _) = tasks::plan_merge(&task, &merge_req("Fix login"), 0, no_home());
     assert_eq!(plan.blocker, None);
     let outcome = tasks::merge(&state_in(&home), &task, &planned(&task, "Fix login"));
     assert_eq!(
         outcome,
         MergeOutcome::Merged {
             removed: false,
-            removal_note: None
+            removal_note: None,
+            notes: Vec::new()
         }
     );
     assert_eq!(std::fs::read_to_string(repo.join("notes.txt")).unwrap(), "mine\n");
@@ -1011,7 +1019,8 @@ fn merging_twice_reports_no_changes() {
         tasks::merge(&state, &task, &planned(&task, "Fix login")),
         MergeOutcome::Merged {
             removed: false,
-            removal_note: None
+            removal_note: None,
+            notes: Vec::new()
         }
     );
     let head = head_of(&repo);
@@ -1034,7 +1043,7 @@ fn merging_twice_reports_no_changes() {
     let head = head_of(&repo);
     let shown = planned(&task, "Fix login again");
     assert_eq!(shown.commands.len(), 2);
-    assert_eq!(tasks::plan_merge(&task, &shown, 0).0.blocker, None);
+    assert_eq!(tasks::plan_merge(&task, &shown, 0, &home).0.blocker, None);
 
     assert_eq!(tasks::merge(&state, &task, &shown), none);
     assert_eq!(head_of(&repo), head);
@@ -1239,11 +1248,12 @@ async fn input_types_text_without_enter() {
 
 // ---- removing a task ----
 
-fn remove_req(task: &marshell_protocol::api::Task, sessions: u32) -> RemoveRequest {
-    let plan = tasks::plan_remove(task, sessions).0;
+fn remove_req(task: &marshell_protocol::api::Task, sessions: u32, home: &Path) -> RemoveRequest {
+    let plan = tasks::plan_remove(task, sessions, home).0;
     RemoveRequest {
         commands: plan.commands,
         warnings: plan.warnings,
+        teardown: plan.teardown,
     }
 }
 
@@ -1265,7 +1275,7 @@ fn remove_plan_commands_and_warnings() {
     let repo = PathBuf::from(&task.repo_root);
 
     // A clean task with nothing on its branch: the plain commands and no warnings.
-    let (plan, steps) = tasks::plan_remove(&task, 0);
+    let (plan, steps) = tasks::plan_remove(&task, 0, &home);
     assert_eq!(
         plan.commands,
         vec![
@@ -1281,7 +1291,7 @@ fn remove_plan_commands_and_warnings() {
 
     // Uncommitted work: --force, and a warning.
     std::fs::write(dir.join("a.txt"), "edited\n").unwrap();
-    let (plan, _) = tasks::plan_remove(&task, 0);
+    let (plan, _) = tasks::plan_remove(&task, 0, &home);
     assert_eq!(
         plan.commands[0],
         format!(
@@ -1300,7 +1310,7 @@ fn remove_plan_commands_and_warnings() {
     // One commit that is not on main.
     std::fs::write(dir.join("b.txt"), "b\n").unwrap();
     commit_all(&dir, "add b");
-    let (plan, _) = tasks::plan_remove(&task, 0);
+    let (plan, _) = tasks::plan_remove(&task, 0, &home);
     assert_eq!(
         plan.warnings,
         vec!["marshell/fix-login has 1 commit that isn't on main. Removing deletes it.".to_string()]
@@ -1308,7 +1318,7 @@ fn remove_plan_commands_and_warnings() {
     // Two.
     std::fs::write(dir.join("c.txt"), "c\n").unwrap();
     commit_all(&dir, "add c");
-    let (plan, _) = tasks::plan_remove(&task, 0);
+    let (plan, _) = tasks::plan_remove(&task, 0, &home);
     assert_eq!(
         plan.warnings,
         vec!["marshell/fix-login has 2 commits that aren't on main. Removing deletes them.".to_string()]
@@ -1320,7 +1330,8 @@ fn remove_plan_commands_and_warnings() {
         merged,
         MergeOutcome::Merged {
             removed: false,
-            removal_note: None
+            removal_note: None,
+            notes: Vec::new()
         }
     );
     assert!(
@@ -1328,17 +1339,17 @@ fn remove_plan_commands_and_warnings() {
             .unwrap()
             .ok
     );
-    let (plan, _) = tasks::plan_remove(&task, 0);
+    let (plan, _) = tasks::plan_remove(&task, 0, &home);
     assert!(plan.warnings.is_empty(), "{:?}", plan.warnings);
 
     // Sessions are counted.
-    let (plan, _) = tasks::plan_remove(&task, 1);
+    let (plan, _) = tasks::plan_remove(&task, 1, &home);
     assert_eq!(
         plan.warnings,
         vec!["Closes 1 session running in this worktree.".to_string()]
     );
     assert_eq!(plan.sessions, 1);
-    let (plan, _) = tasks::plan_remove(&task, 2);
+    let (plan, _) = tasks::plan_remove(&task, 2, &home);
     assert_eq!(
         plan.warnings,
         vec!["Closes 2 sessions running in this worktree.".to_string()]
@@ -1394,6 +1405,7 @@ async fn remove_closes_sessions_and_deletes_everything() {
     let req = RemoveRequest {
         commands: serde_json::from_value(plan["commands"].clone()).unwrap(),
         warnings: serde_json::from_value(plan["warnings"].clone()).unwrap(),
+        teardown: None,
     };
     let (st, t) = (state.clone(), task.clone());
     tokio::task::spawn_blocking(move || tasks::remove(&st, &t, &req))
@@ -1417,7 +1429,7 @@ fn remove_refuses_when_commands_changed() {
     let tmp = spaced_tmp();
     let (home, task) = new_task(&tmp);
     let dir = PathBuf::from(&task.path);
-    let shown = remove_req(&task, 0);
+    let shown = remove_req(&task, 0, &home);
     // Work arrives after the commands were shown: the plan now has --force.
     std::fs::write(dir.join("new.txt"), "x\n").unwrap();
 
@@ -1442,7 +1454,7 @@ fn merge_with_remove_cleans_up() {
     // Uncommitted work is committed by the merge, so the shown removal is the clean one.
     let mut req = merge_req("Fix login");
     req.remove = true;
-    let (plan, _) = tasks::plan_merge(&task, &req, 0);
+    let (plan, _) = tasks::plan_merge(&task, &req, 0, &home);
     assert_eq!(plan.commands.len(), 6, "{:?}", plan.commands);
     assert_eq!(
         plan.commands[4],
@@ -1459,7 +1471,8 @@ fn merge_with_remove_cleans_up() {
         outcome,
         MergeOutcome::Merged {
             removed: true,
-            removal_note: None
+            removal_note: None,
+            notes: Vec::new()
         }
     );
     assert_eq!(text_of(&repo.join("b.txt")), "b\n");
@@ -1489,11 +1502,12 @@ fn a_removal_that_fails_after_a_merge_still_reports_the_merge() {
 
     let mut req = merge_req("Fix login");
     req.remove = true;
-    req.commands = tasks::plan_merge(&task, &req, 0).0.commands;
+    req.commands = tasks::plan_merge(&task, &req, 0, &home).0.commands;
     let outcome = tasks::merge(&state_in(&home), &task, &req);
     let MergeOutcome::Merged {
         removed: false,
         removal_note: Some(note),
+        ..
     } = outcome
     else {
         panic!("{outcome:?}");
@@ -1519,7 +1533,7 @@ fn remove_failure_keeps_the_task() {
         .share_mode(0)
         .open(dir.join("held.txt"))
         .unwrap();
-    let shown = remove_req(&task, 0);
+    let shown = remove_req(&task, 0, &home);
 
     let err = tasks::remove(&state_in(&home), &task, &shown).unwrap_err();
     assert!(err.starts_with("Couldn't remove the worktree. Git said: "), "{err}");
@@ -1534,10 +1548,11 @@ fn remove_failure_keeps_the_task() {
     // Git may have let go of the worktree before it failed on the folder. Once the file is free,
     // the task can still be removed, from whatever state git is in now.
     drop(held);
-    let (plan, _) = tasks::plan_remove(&task, 0);
+    let (plan, _) = tasks::plan_remove(&task, 0, &home);
     let again = RemoveRequest {
         commands: plan.commands.clone(),
         warnings: plan.warnings.clone(),
+        teardown: None,
     };
     tasks::remove(&state_in(&home), &task, &again).unwrap_or_else(|e| panic!("{e} for {plan:?}"));
     assert!(tasks::list(&home).is_empty());
@@ -1584,7 +1599,8 @@ async fn remove_routes_plan_remove_refuse_and_404() {
         ))
         .await
         .unwrap();
-    assert_eq!(res.status(), StatusCode::NO_CONTENT);
+    assert_eq!(res.status(), StatusCode::OK);
+    assert_eq!(json_of(res).await, serde_json::json!({ "notes": [] }));
     assert!(!Path::new(&task.path).exists());
 
     for (path, body) in [
@@ -1606,12 +1622,12 @@ const CHANGED: &str = "The task changed while you were reading the commands. Rev
 #[test]
 fn remove_plan_fails_closed_when_it_cannot_tell() {
     let tmp = spaced_tmp();
-    let (_home, task) = new_task(&tmp);
+    let (home, task) = new_task(&tmp);
     let repo = PathBuf::from(&task.repo_root);
     // The base branch is renamed, so "commits not on main" can't be asked.
     assert!(run(&repo, &["branch", "-m", "main", "trunk"]).unwrap().ok);
 
-    let (plan, _) = tasks::plan_remove(&task, 0);
+    let (plan, _) = tasks::plan_remove(&task, 0, &home);
     assert_eq!(
         plan.warnings,
         vec![
@@ -1626,13 +1642,13 @@ fn remove_refuses_when_what_would_be_lost_changed() {
     let tmp = spaced_tmp();
     let (home, task) = new_task(&tmp);
     let dir = PathBuf::from(&task.path);
-    let shown = remove_req(&task, 0);
+    let shown = remove_req(&task, 0, &home);
     assert!(shown.warnings.is_empty());
     // A commit lands: the tree is still clean and the commands are the same, but the branch now
     // holds work the user did not see warned about.
     std::fs::write(dir.join("b.txt"), "b\n").unwrap();
     commit_all(&dir, "add b");
-    assert_eq!(tasks::plan_remove(&task, 0).0.commands, shown.commands);
+    assert_eq!(tasks::plan_remove(&task, 0, &home).0.commands, shown.commands);
 
     let err = tasks::remove(&state_in(&home), &task, &shown).unwrap_err();
     assert_eq!(err, CHANGED);
@@ -1661,7 +1677,7 @@ fn merge_with_remove_after(
     commit_all(&dir, "add b");
     let mut req = merge_req("Fix login");
     req.remove = true;
-    req.commands = tasks::plan_merge(&task, &req, 0).0.commands;
+    req.commands = tasks::plan_merge(&task, &req, 0, &home).0.commands;
     // Something lands in the task folder after the merge's own commit.
     install_once_hook(&repo, &base(&tmp).join("ran"), &late(&dir));
 
@@ -1683,7 +1699,8 @@ fn merge_keeps_the_task_when_its_branch_moved_before_the_removal() {
         outcome,
         MergeOutcome::Merged {
             removed: false,
-            removal_note: Some("marshell/fix-login got new commits during the merge, so the worktree was kept.".into())
+            removal_note: Some("marshell/fix-login got new commits during the merge, so the worktree was kept.".into()),
+            notes: Vec::new()
         }
     );
     assert!(dir.exists());
@@ -1699,7 +1716,8 @@ fn merge_keeps_the_task_when_its_folder_got_dirty_before_the_removal() {
         outcome,
         MergeOutcome::Merged {
             removed: false,
-            removal_note: Some("The task folder changed during the merge, so the worktree was kept.".into())
+            removal_note: Some("The task folder changed during the merge, so the worktree was kept.".into()),
+            notes: Vec::new()
         }
     );
     assert!(dir.join("late.txt").exists());
@@ -1726,7 +1744,7 @@ async fn remove_closes_the_shell_panel_in_the_task_folder() {
     assert!(state.session(&panel).is_some());
 
     let (st, t) = (state.clone(), task.clone());
-    let plan = tokio::task::spawn_blocking(move || tasks::plan_remove(&t, tasks::running_sessions(&st, &t)).0)
+    let plan = tokio::task::spawn_blocking(move || tasks::plan_remove(&t, tasks::running_sessions(&st, &t), &home).0)
         .await
         .unwrap();
     assert_eq!(plan.sessions, 1);
@@ -1738,6 +1756,7 @@ async fn remove_closes_the_shell_panel_in_the_task_folder() {
     let req = RemoveRequest {
         commands: plan.commands,
         warnings: plan.warnings,
+        teardown: None,
     };
     let (st, t) = (state.clone(), task.clone());
     tokio::task::spawn_blocking(move || tasks::remove(&st, &t, &req))
@@ -1778,7 +1797,7 @@ fn only_marshell_branches_are_removed() {
     );
     task.branch = "feature/other".into();
 
-    let (plan, steps) = tasks::plan_remove(&task, 0);
+    let (plan, steps) = tasks::plan_remove(&task, 0, &home);
     assert!(plan.commands.is_empty());
     assert!(steps.is_empty());
     assert_eq!(
@@ -1788,6 +1807,7 @@ fn only_marshell_branches_are_removed() {
     let shown = RemoveRequest {
         commands: plan.commands,
         warnings: plan.warnings,
+        teardown: None,
     };
     let err = tasks::remove(&state_in(&home), &task, &shown).unwrap_err();
     assert_eq!(err, "Marshell only removes its own marshell/ branches.");
@@ -1799,14 +1819,15 @@ fn only_marshell_branches_are_removed() {
     commit_all(&dir, "add b");
     let mut req = merge_req("Fix login");
     req.remove = true;
-    let (plan, _) = tasks::plan_merge(&task, &req, 0);
+    let (plan, _) = tasks::plan_merge(&task, &req, 0, &home);
     assert_eq!(plan.commands.len(), 2);
     req.commands = plan.commands;
     assert_eq!(
         tasks::merge(&state_in(&home), &task, &req),
         MergeOutcome::Merged {
             removed: false,
-            removal_note: None
+            removal_note: None,
+            notes: Vec::new()
         }
     );
     assert!(branch_is_there(&task));
@@ -1822,7 +1843,7 @@ fn remove_finishes_when_the_folder_is_already_gone() {
 
     // Deleted by hand: git still lists the worktree, as prunable.
     std::fs::remove_dir_all(&task.path).unwrap();
-    let (plan, steps) = tasks::plan_remove(&task, 0);
+    let (plan, steps) = tasks::plan_remove(&task, 0, &home);
     assert_eq!(
         plan.commands,
         vec![
@@ -1832,7 +1853,7 @@ fn remove_finishes_when_the_folder_is_already_gone() {
     );
     assert_eq!(steps.iter().map(display).collect::<Vec<_>>(), plan.commands);
     assert!(plan.warnings.is_empty(), "{:?}", plan.warnings);
-    tasks::remove(&state_in(&home), &task, &remove_req(&task, 0)).unwrap();
+    tasks::remove(&state_in(&home), &task, &remove_req(&task, 0, &home)).unwrap();
     assert!(!branch_is_there(&task));
     assert!(tasks::list(&home).is_empty());
 
@@ -1840,12 +1861,12 @@ fn remove_finishes_when_the_folder_is_already_gone() {
     let again = make(&home, &repo, "Second", 2).unwrap();
     std::fs::remove_dir_all(&again.path).unwrap();
     assert!(run(&repo, &["worktree", "prune"]).unwrap().ok);
-    let (plan, _) = tasks::plan_remove(&again, 0);
+    let (plan, _) = tasks::plan_remove(&again, 0, &home);
     assert_eq!(
         plan.commands,
         vec![format!("git -C \"{}\" branch -D marshell/second", again.repo_root)]
     );
-    tasks::remove(&state_in(&home), &again, &remove_req(&again, 0)).unwrap();
+    tasks::remove(&state_in(&home), &again, &remove_req(&again, 0, &home)).unwrap();
     assert!(!branch_is_there(&again));
     assert!(tasks::list(&home).is_empty());
 }
@@ -1859,7 +1880,7 @@ fn remove_finishes_when_git_no_longer_lists_the_worktree() {
     std::fs::remove_dir_all(repo.join(".git").join("worktrees")).unwrap();
     assert!(Path::new(&task.path).exists());
 
-    let (plan, _) = tasks::plan_remove(&task, 0);
+    let (plan, _) = tasks::plan_remove(&task, 0, &home);
     assert_eq!(
         plan.commands,
         vec![
@@ -1874,7 +1895,7 @@ fn remove_finishes_when_git_no_longer_lists_the_worktree() {
             task.path
         )]
     );
-    tasks::remove(&state_in(&home), &task, &remove_req(&task, 0)).unwrap();
+    tasks::remove(&state_in(&home), &task, &remove_req(&task, 0, &home)).unwrap();
     assert!(!branch_is_there(&task));
     assert!(tasks::list(&home).is_empty());
     assert!(Path::new(&task.path).exists());
@@ -1902,7 +1923,7 @@ fn a_rebase_stopped_in_the_task_folder_blocks_the_merge_and_warns_the_removal() 
     // The rebase stops on the conflict with HEAD detached.
     assert!(!run(&dir, &["rebase", "main"]).unwrap().ok);
 
-    let (plan, _) = tasks::plan_merge(&task, &merge_req("Fix login"), 0);
+    let (plan, _) = tasks::plan_merge(&task, &merge_req("Fix login"), 0, no_home());
     assert_eq!(
         plan.blocker.as_deref(),
         Some("A rebase is in progress in the task folder. Finish or abort it there, then merge.")
@@ -1912,7 +1933,7 @@ fn a_rebase_stopped_in_the_task_folder_blocks_the_merge_and_warns_the_removal() 
     assert!(matches!(outcome, MergeOutcome::Failed { .. }), "{outcome:?}");
     assert_eq!(head_of(Path::new(&task.repo_root)), main_before);
 
-    let (plan, _) = tasks::plan_remove(&task, 0);
+    let (plan, _) = tasks::plan_remove(&task, 0, &home);
     assert!(
         plan.warnings
             .contains(&"A rebase is in progress in the task folder. Removing abandons it.".to_string()),
@@ -1929,7 +1950,7 @@ fn a_cherry_pick_stopped_in_the_task_folder_blocks_the_merge_and_warns_the_remov
     // Stops on the conflict while HEAD stays on the task branch.
     assert!(!run(&dir, &["cherry-pick", "main"]).unwrap().ok);
 
-    let (plan, _) = tasks::plan_merge(&task, &merge_req("Fix login"), 0);
+    let (plan, _) = tasks::plan_merge(&task, &merge_req("Fix login"), 0, no_home());
     assert_eq!(
         plan.blocker.as_deref(),
         Some("A cherry-pick or revert is in progress in the task folder. Finish or abort it there, then merge.")
@@ -1939,7 +1960,7 @@ fn a_cherry_pick_stopped_in_the_task_folder_blocks_the_merge_and_warns_the_remov
     assert!(matches!(outcome, MergeOutcome::Failed { .. }), "{outcome:?}");
     assert_eq!(head_of(Path::new(&task.repo_root)), main_before);
 
-    let (plan, _) = tasks::plan_remove(&task, 0);
+    let (plan, _) = tasks::plan_remove(&task, 0, &home);
     assert!(
         plan.warnings
             .contains(&"A cherry-pick or revert is in progress in the task folder. Removing abandons it.".to_string()),
@@ -1957,7 +1978,7 @@ fn unresolved_conflicts_in_the_task_folder_block_the_merge_and_warn_the_removal(
     assert!(!run(&dir, &["cherry-pick", "main"]).unwrap().ok);
     assert!(run(&dir, &["cherry-pick", "--quit"]).unwrap().ok);
 
-    let (plan, _) = tasks::plan_merge(&task, &merge_req("Fix login"), 0);
+    let (plan, _) = tasks::plan_merge(&task, &merge_req("Fix login"), 0, no_home());
     assert_eq!(
         plan.blocker.as_deref(),
         Some("The task folder has files with unresolved conflicts. Resolve them there, then merge.")
@@ -1967,7 +1988,7 @@ fn unresolved_conflicts_in_the_task_folder_block_the_merge_and_warn_the_removal(
     assert!(matches!(outcome, MergeOutcome::Failed { .. }), "{outcome:?}");
     assert_eq!(head_of(Path::new(&task.repo_root)), main_before);
 
-    let (plan, _) = tasks::plan_remove(&task, 0);
+    let (plan, _) = tasks::plan_remove(&task, 0, &home);
     assert!(
         plan.warnings
             .contains(&"The task folder has files with unresolved conflicts.".to_string()),
@@ -1979,16 +2000,16 @@ fn unresolved_conflicts_in_the_task_folder_block_the_merge_and_warn_the_removal(
 #[test]
 fn a_merge_stopped_in_the_task_folder_blocks_the_merge_and_warns_the_removal() {
     let tmp = spaced_tmp();
-    let (_home, task) = conflicting_task(&tmp);
+    let (home, task) = conflicting_task(&tmp);
     let dir = PathBuf::from(&task.path);
     assert!(!run(&dir, &["merge", "--no-ff", "-q", "main"]).unwrap().ok);
 
-    let (plan, _) = tasks::plan_merge(&task, &merge_req("Fix login"), 0);
+    let (plan, _) = tasks::plan_merge(&task, &merge_req("Fix login"), 0, no_home());
     assert_eq!(
         plan.blocker.as_deref(),
         Some("A merge is in progress in the task folder. Finish or abort it there, then merge.")
     );
-    let (plan, _) = tasks::plan_remove(&task, 0);
+    let (plan, _) = tasks::plan_remove(&task, 0, &home);
     assert!(
         plan.warnings
             .contains(&"A merge is in progress in the task folder. Removing abandons it.".to_string()),
@@ -2000,18 +2021,18 @@ fn a_merge_stopped_in_the_task_folder_blocks_the_merge_and_warns_the_removal() {
 #[test]
 fn a_task_folder_off_its_branch_blocks_the_merge_and_counts_its_commits() {
     let tmp = spaced_tmp();
-    let (_home, task) = new_task(&tmp);
+    let (home, task) = new_task(&tmp);
     let dir = PathBuf::from(&task.path);
     assert!(run(&dir, &["checkout", "-q", "--detach"]).unwrap().ok);
     std::fs::write(dir.join("b.txt"), "b\n").unwrap();
     commit_all(&dir, "on a detached HEAD");
 
-    let (plan, _) = tasks::plan_merge(&task, &merge_req("Fix login"), 0);
+    let (plan, _) = tasks::plan_merge(&task, &merge_req("Fix login"), 0, no_home());
     assert_eq!(
         plan.blocker.as_deref(),
         Some("marshell/fix-login isn't checked out in the task folder. Check it out there, then merge.")
     );
-    let (plan, _) = tasks::plan_remove(&task, 0);
+    let (plan, _) = tasks::plan_remove(&task, 0, &home);
     assert_eq!(
         plan.warnings,
         vec![
@@ -2040,6 +2061,7 @@ fn merge_req_from(plan: &serde_json::Value, remove: bool) -> MergeRequest {
         remove,
         commands: serde_json::from_value(plan["commands"].clone()).unwrap(),
         warnings: serde_json::from_value(plan["warnings"].clone()).unwrap(),
+        teardown: None,
     }
 }
 
@@ -2082,7 +2104,8 @@ async fn merge_with_remove_shows_and_checks_the_sessions_it_closes() {
         outcome,
         MergeOutcome::Merged {
             removed: true,
-            removal_note: None
+            removal_note: None,
+            notes: Vec::new()
         }
     );
     assert!(state.session(&tab).is_none());
@@ -2114,7 +2137,8 @@ async fn a_skipped_removal_after_a_merge_leaves_the_sessions_running() {
         outcome,
         MergeOutcome::Merged {
             removed: false,
-            removal_note: Some("The task folder changed during the merge, so the worktree was kept.".into())
+            removal_note: Some("The task folder changed during the merge, so the worktree was kept.".into()),
+            notes: Vec::new()
         }
     );
     assert!(

@@ -20,6 +20,8 @@ export type SessionMenuFacts = {
   muted: boolean;
   /** A Claude Code session: the only agent whose points can be bookmarked for now. */
   bookmarkable: boolean;
+  /** The row has a setup note whose output tab still exists. */
+  setupOutput: boolean;
 };
 
 /** The items a session row's menu shows. Items that don't apply are left out, never disabled. */
@@ -35,6 +37,7 @@ export function sessionMenuItems(facts: SessionMenuFacts, os: Os): MenuItem[] {
   if (facts.paused) items.push({ id: "continue", label: "Continue" });
   if (facts.bookmarkable) items.push({ id: "bookmark", label: "Bookmark", shortcut: shortcut("bookmark") });
   items.push(facts.muted ? { id: "unmute", label: "Unmute notifications" } : { id: "mute", label: "Mute notifications" });
+  if (facts.setupOutput) items.push({ id: "setup-output", label: "Open setup output" });
   if (facts.task) items.push({ id: "review-task", label: "Review changes", shortcut: shortcut("review-task") });
   items.push({ separator: true }, { id: "close", label: "Close", shortcut: shortcut("close") });
   return items;

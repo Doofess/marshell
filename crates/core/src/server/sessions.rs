@@ -19,8 +19,8 @@ use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use marshell_protocol::api::{
     CliTask, CliTaskKind, ColorScheme, CreateSessionRequest, CreateSessionResponse, InputRequest, RenameRequest,
-    ReopenRequest, ReorderRequest, RestartRequest, ResumeError, SessionInfo, SessionMode, SessionState,
-    SessionsSnapshot, ShellFamily,
+    ReopenRequest, ReorderRequest, RestartRequest, ResumeError, ScriptKind, SessionInfo, SessionMode, SessionState,
+    SessionsSnapshot, SetupResult, ShellFamily,
 };
 use marshell_protocol::brand;
 use marshell_protocol::hook::PeekRows;
@@ -557,6 +557,67 @@ pub(super) async fn start_session(
     preset: Option<String>,
     record: bool,
 ) -> Result<CreateSessionResponse, ApiError> {
+    start_session_as(
+        st, run, agent, name, cwd, size, scheme, mode, preset, record, None, None,
+    )
+    .await
+}
+
+/// Starts a repo's `setup` or `run` script as a session: no agent, `argv` as given, and the row marked with `script`.
+/// The row's relaunch is the plain default shell in that folder (a restart or reopen never runs the script again),
+/// and nothing of it is remembered as the folder's launcher choice.
+pub(super) async fn start_script(
+    st: &AppState,
+    argv: Vec<String>,
+    name: &str,
+    cwd: String,
+    size: (u16, u16),
+    script: ScriptKind,
+) -> Result<CreateSessionResponse, ApiError> {
+    // The default profile with the script as its argv: the row and its Resume or Restart name that profile and run its
+    // plain shell. No shell integration is injected into a script's shell. With no default profile, the argv runs as a
+    // custom one.
+    let run = match resolve(st, None, None, None, None, None, None).await {
+        Ok(mut run) => {
+            run.argv = argv;
+            run.initial_command = None;
+            run.marks = false;
+            run
+        }
+        Err(_) => custom(argv),
+    };
+    start_session_as(
+        st,
+        run,
+        None,
+        Some(name.to_string()),
+        Some(cwd),
+        size,
+        None,
+        None,
+        None,
+        true,
+        Some(script),
+        None,
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn start_session_as(
+    st: &AppState,
+    run: Resolved,
+    agent: Option<String>,
+    name: Option<String>,
+    cwd: Option<String>,
+    size: (u16, u16),
+    scheme: Option<ColorScheme>,
+    mode: Option<SessionMode>,
+    preset: Option<String>,
+    record: bool,
+    script: Option<ScriptKind>,
+    setup: Option<SetupResult>,
+) -> Result<CreateSessionResponse, ApiError> {
     check_agent_installed(st, &run, agent.as_deref())?;
     let cwd = start_folder(&run, cwd);
     // The base name: the requested one, else the agent, else the profile.
@@ -572,7 +633,7 @@ pub(super) async fn start_session(
     // The id is new, so the claim always succeeds. Held until the process is in the map, so a
     // Restart that finds the reserved row cannot start a second process for it.
     let _claim = st.claim_start(&tab_id);
-    let (number, generation) = st.0.registry.reserve(
+    let (number, generation) = st.0.registry.reserve_script(
         &tab_id,
         Relaunch {
             profile_id: run.profile_id.clone(),
@@ -582,6 +643,8 @@ pub(super) async fn start_session(
             name,
             preset,
         },
+        script,
+        setup,
     );
     if let Err(err) = launch(st, &tab_id, number, generation, run, agent, cwd, size, scheme, record).await {
         // A spawn failed, or the tab was closed while it started (then there is no open row to release).
@@ -831,7 +894,7 @@ pub async fn create(
         .clone()
         .filter(|c| !c.is_empty() && run.profile_id != CUSTOM_PROFILE);
     let choice = folder.map(|folder| (folder, run.profile_id.clone(), agent.clone()));
-    let created = start_session(
+    let created = start_session_as(
         &st,
         run,
         agent,
@@ -842,6 +905,8 @@ pub async fn create(
         mode,
         req.preset.clone(),
         true,
+        None,
+        req.setup,
     )
     .await?;
     if let Some((folder, profile_id, agent)) = choice {

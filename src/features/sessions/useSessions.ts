@@ -11,7 +11,7 @@ import type { HookAgent } from "../../lib/api/agents";
 import { profiles as profilesApi } from "../../lib/api/profiles";
 import type { RowModel } from "../sidebar/types";
 import type { HookInstall } from "../../generated/HookInstall";
-import { ageTick, toRow } from "./toRow";
+import { ageTick, dropGoneSetupTabs, toRow } from "./toRow";
 
 export type SessionsState = {
   endpoint: Endpoint | null;
@@ -170,6 +170,6 @@ export function useSessions(setup?: Partial<Record<HookAgent, HookInstall>>): {
     const id = setTimeout(() => setNow(Date.now()), tick);
     return () => clearTimeout(id);
   }, [state.infos, now]);
-  const rows = useMemo(() => state.infos.map((i) => toRow(i, state.profiles, setup, Math.max(now, Date.now()))), [state.infos, state.profiles, setup, now]);
+  const rows = useMemo(() => dropGoneSetupTabs(state.infos.map((i) => toRow(i, state.profiles, setup, Math.max(now, Date.now()))), state.infos), [state.infos, state.profiles, setup, now]);
   return { ...state, rows, now, select: store.select, reloadProfiles: store.reloadProfiles };
 }

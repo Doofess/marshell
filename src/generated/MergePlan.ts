@@ -4,4 +4,9 @@ export type MergePlan = { commands: Array<string>,
 /**
  * What the merge would close or lose, shown with the commands: the sessions a removal closes.
  */
-warnings: Array<string>, blocker: string | null, };
+warnings: Array<string>, blocker: string | null, 
+/**
+ * The repo's trusted `teardown` script, run in the worktree before a removal that follows the merge.
+ * None when the merge keeps the worktree, there is none, or the repo's scripts aren't allowed.
+ */
+teardown?: string, };

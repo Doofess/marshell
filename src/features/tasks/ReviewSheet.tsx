@@ -128,7 +128,7 @@ function Progress({ text }: { text: string }) {
  * The commands, dimmed and marked while they are not the current plan (the message or the checkbox changed, or the task may have).
  * The words above them are a polite status line: it stays mounted through a burst of typing, so it is said once, not per key.
  */
-function Commands({ commands, stale }: { commands: string[]; stale: boolean }) {
+function Commands({ commands, teardown, stale }: { commands: string[]; teardown?: string; stale: boolean }) {
   return (
     <div className="review__commands" data-stale={stale || undefined}>
       {stale && (
@@ -136,7 +136,7 @@ function Commands({ commands, stale }: { commands: string[]; stale: boolean }) {
           Updating the commands…
         </p>
       )}
-      <CommandList commands={commands} />
+      <CommandList commands={commands} teardown={teardown} />
     </div>
   );
 }
@@ -191,7 +191,7 @@ function MergeStep({ merge, busy }: { merge: MergeView; busy: boolean }) {
       {merge.plan && (
         <>
           <p className="review__lede">Marshell will run these commands.</p>
-          <Commands commands={merge.plan.commands} stale={!busy && isStale(merge.plan, merge.ready)} />
+          <Commands commands={merge.plan.commands} teardown={merge.plan.teardown} stale={!busy && isStale(merge.plan, merge.ready)} />
         </>
       )}
       {busy && <Progress text="Merging…" />}
@@ -210,7 +210,7 @@ function RemoveStep({ remove, busy, folderMissing }: { remove: RemoveView; busy:
       {remove.plan && (
         <>
           <p className="review__lede">Marshell will run these commands.</p>
-          <Commands commands={remove.plan.commands} stale={!busy && isStale(remove.plan, remove.ready)} />
+          <Commands commands={remove.plan.commands} teardown={remove.plan.teardown} stale={!busy && isStale(remove.plan, remove.ready)} />
         </>
       )}
       {busy && <Progress text="Removing…" />}
@@ -464,7 +464,7 @@ export function ReviewSheet({ task, changes, agentName, api, onClose, onDone, on
       if (!mounted.current) return;
       if (outcome.kind === "merged") {
         dispatch({ type: "finish" });
-        onDone(mergedToast(task, outcome.removed, outcome.removal_note));
+        onDone(mergedToast(task, outcome.removed, outcome.removal_note, outcome.notes));
         onClose();
       } else if (outcome.kind === "conflict") {
         setConflicts(outcome.files);
@@ -487,7 +487,7 @@ export function ReviewSheet({ task, changes, agentName, api, onClose, onDone, on
       if (!mounted.current) return;
       if (result.ok) {
         dispatch({ type: "finish" });
-        onDone(removedToast(task));
+        onDone(removedToast(task, result.notes));
         onClose();
       } else {
         setRun((s) => runFailed(s, result.reason));

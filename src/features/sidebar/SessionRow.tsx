@@ -204,6 +204,7 @@ export function SessionRow({
           {row.phrase}
           {lineSubagents && <span className="session-row__suffix">{row.phrase ? " · " : ""}{subagentsText(row.subagents!)}</span>}
           {row.muted && <span className="session-row__suffix"> · muted</span>}
+          {row.setupNote && <span className="session-row__suffix session-row__setup-note">{row.phrase ? " · " : ""}{row.setupNote.text}</span>}
         </span>
       </div>{" "}
       {density === "expanded" && (
@@ -240,7 +241,6 @@ export function SessionRow({
           Review changes
         </button>
       )}
-      {/* Same rules as the review button: outside the aria-hidden lines, in the row's tab order, and a click here is not a click on the row. */}
       {settable && (
         <button
           type="button"

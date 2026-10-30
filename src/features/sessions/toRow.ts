@@ -125,6 +125,23 @@ function fallbackRow(info: SessionInfo, base: Omit<RowModel, "status" | "phrase"
  * naming a failed last command. `now` is the clock the ages count from.
  */
 export function toRow(info: SessionInfo, profiles: Profile[], setup?: Partial<Record<HookAgent, HookInstall>>, now: number = Date.now()): RowModel {
+  const row = rowOf(info, profiles, setup, now);
+  const outcome = info.setup?.outcome;
+  if (info.setup === undefined || outcome === undefined || outcome.kind === "passed") return row;
+  const text = outcome.kind === "failed" ? `Setup failed (exit ${outcome.code}).` : "Setup was closed before it finished.";
+  return { ...row, setupNote: { text, tabId: info.setup.tab_id } };
+}
+
+/** Leaves the link out of a setup note whose tab is not in the session list any more. */
+export function dropGoneSetupTabs(rows: RowModel[], infos: SessionInfo[]): RowModel[] {
+  return rows.map((r) => {
+    const tabId = r.setupNote?.tabId;
+    if (r.setupNote === undefined || tabId === undefined || infos.some((i) => i.tab_id === tabId)) return r;
+    return { ...r, setupNote: { text: r.setupNote.text } };
+  });
+}
+
+function rowOf(info: SessionInfo, profiles: Profile[], setup: Partial<Record<HookAgent, HookInstall>> | undefined, now: number): RowModel {
   const profile = profiles.find((p) => p.id === info.profile_id);
   // The foreground only speaks for a shell that is running and not paused; a launched agent's row is its own.
   const fg = info.agent === null && info.state.kind === "running" && !info.paused ? info.foreground : null;

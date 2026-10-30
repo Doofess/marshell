@@ -256,3 +256,19 @@ describe("SessionRow: a task", () => {
     });
   });
 });
+
+describe("SessionRow: the setup note", () => {
+  const row = { ...FIXTURES[0]!, setupNote: { text: "Setup failed (exit 1).", tabId: "t-s" } };
+  it("shows the note text and no button: the output opens from the row menu", () => {
+    const html = renderToStaticMarkup(<SessionRow row={row} density="comfortable" tabStop />);
+    expect(html).toContain("Setup failed (exit 1).");
+    expect(html).not.toContain("Open its output");
+    expect(html).not.toContain("session-row__setup-output");
+    expect(html).not.toContain("data-setup-output");
+  });
+  it("shows nothing for a row with no note", () => {
+    const html = renderToStaticMarkup(<SessionRow row={FIXTURES[0]!} density="comfortable" />);
+    expect(html).not.toContain("Setup ");
+    expect(html).not.toContain("Open its output");
+  });
+});

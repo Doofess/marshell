@@ -76,6 +76,10 @@ pub struct CreateSessionRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub mode: Option<SessionMode>,
+    /// How the repo's `setup` ended, when the person started the agent after a setup that did not pass. Absent means none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub setup: Option<SetupResult>,
     /// A preset the agent starts with ("deepseek", on Claude Code only). Absent starts the agent as it is.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
@@ -211,6 +215,14 @@ pub struct SessionInfo {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     #[ts(optional, as = "Option<Vec<crate::tools::PortChip>>")]
     pub ports: Vec<crate::tools::PortChip>,
+    /// Set on a tab that runs a repo's `setup` or `run` script. Cleared when the tab restarts or reopens as a plain shell.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub script: Option<ScriptKind>,
+    /// How the repo's `setup` ended, on the agent row started after it. Shown on the row only; a Restart or resume clears it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub setup: Option<SetupResult>,
 }
 
 impl SessionInfo {
@@ -572,6 +584,11 @@ pub struct MergeRequest {
     /// The warnings the user was shown, under the same rule (the sessions a removal closes).
     /// Ignored when only planning.
     pub warnings: Vec<String>,
+    /// The teardown script the user was shown (only a merge that also removes has one), under the same rule.
+    /// Ignored when only planning.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub teardown: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -581,6 +598,11 @@ pub struct MergePlan {
     /// What the merge would close or lose, shown with the commands: the sessions a removal closes.
     pub warnings: Vec<String>,
     pub blocker: Option<String>,
+    /// The repo's trusted `teardown` script, run in the worktree before a removal that follows the merge.
+    /// None when the merge keeps the worktree, there is none, or the repo's scripts aren't allowed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub teardown: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -588,9 +610,12 @@ pub struct MergePlan {
 #[ts(export)]
 pub enum MergeOutcome {
     /// `removal_note`: why the worktree was kept when a removal was asked for, in one sentence.
+    /// `notes`: what went wrong with the teardown, if anything; the worktree was removed anyway.
     Merged {
         removed: bool,
         removal_note: Option<String>,
+        #[serde(default)]
+        notes: Vec<String>,
     },
     Conflict {
         files: Vec<String>,
@@ -606,6 +631,11 @@ pub struct RemovePlan {
     pub commands: Vec<String>,
     pub warnings: Vec<String>,
     pub sessions: u32,
+    /// The repo's trusted `teardown` script, run in the worktree before the git commands. None when
+    /// there is none or the repo's scripts aren't allowed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub teardown: Option<String>,
 }
 
 /// POST /v1/tasks/{id}/remove body.
@@ -617,6 +647,18 @@ pub struct RemoveRequest {
     /// The warnings the user was shown, under the same rule: what would be lost is part of what
     /// they agreed to.
     pub warnings: Vec<String>,
+    /// The teardown script the user was shown, under the same rule.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub teardown: Option<String>,
+}
+
+/// POST /v1/tasks/{id}/remove success body.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct RemoveResult {
+    /// What went wrong with the teardown, if anything, in sentences. The worktree was removed anyway.
+    pub notes: Vec<String>,
 }
 
 /// POST /v1/sessions/{tab}/input body.
@@ -1033,6 +1075,83 @@ pub struct ProjectInfo {
     pub last_used_ms: u64,
 }
 
+/// How a `setup` tab ended, and which tab it was.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct SetupResult {
+    pub tab_id: String,
+    pub outcome: SetupOutcome,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+#[ts(export)]
+pub enum SetupOutcome {
+    Passed,
+    Failed {
+        code: i32,
+    },
+    /// The tab was closed before it finished.
+    Closed,
+}
+
+/// Which of a repo's `marshell.json` scripts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum ScriptKind {
+    Setup,
+    Run,
+    Teardown,
+}
+
+/// A checkout's `marshell.json`, read and resolved for this OS.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct RepoScripts {
+    /// The checkout's own root (a linked worktree's, not the main repo's).
+    pub root: String,
+    /// `<root>/marshell.json`.
+    pub file: String,
+    /// SHA-256 of the file's bytes. None when there is no file or it is too large to read.
+    pub hash: Option<String>,
+    pub setup: Option<String>,
+    pub run: Option<String>,
+    pub teardown: Option<String>,
+    /// Whether the person allowed exactly this file for this repo.
+    pub trusted: bool,
+    /// Why the file can't be used. None when there is no file or it is fine.
+    pub problem: Option<String>,
+}
+
+/// `POST /v1/scripts/allow`: allow the repo's scripts exactly as the person was shown them.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct AllowScriptsRequest {
+    /// Any folder inside the checkout.
+    pub cwd: String,
+    /// The file's hash, as `RepoScripts.hash` showed it.
+    pub hash: String,
+}
+
+/// `POST /v1/scripts/run`: start `setup` or `run` as a session, only for a file the person allowed.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct RunScriptRequest {
+    /// Any folder inside the checkout.
+    pub cwd: String,
+    pub script: ScriptKind,
+    /// The file's hash, as `RepoScripts.hash` showed it.
+    pub hash: String,
+    /// The terminal's size. 80 by 24 when missing.
+    #[serde(default)]
+    #[ts(optional)]
+    pub cols: Option<u16>,
+    #[serde(default)]
+    #[ts(optional)]
+    pub rows: Option<u16>,
+}
+
 /// A folder the launcher was given as text, as the core found it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[ts(export)]
@@ -1151,6 +1270,8 @@ mod tests {
             stuck: None,
             preset: None,
             ports: Vec::new(),
+            script: None,
+            setup: None,
         };
         let mut value = serde_json::to_value(&info).unwrap();
         value.as_object_mut().unwrap().remove("muted");

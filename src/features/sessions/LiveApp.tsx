@@ -1,11 +1,18 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import type { CreateSessionRequest } from "../../generated/CreateSessionRequest";
 import type { CreateSessionResponse } from "../../generated/CreateSessionResponse";
+import type { RepoScripts } from "../../generated/RepoScripts";
 import type { Endpoint } from "../../generated/Endpoint";
 import type { Task } from "../../generated/Task";
 import type { TaskChanges } from "../../generated/TaskChanges";
 import { ApiError } from "../../lib/api/client";
 import { sessions } from "../../lib/api/sessions";
+import { allowScripts, getScripts, runScript } from "../../lib/api/scripts";
+import { readyPending, type PendingSetup } from "../scripts/afterSetup";
+import { runControl } from "../scripts/confirmScripts";
+import { afterReread, askOnRunFailure } from "../scripts/runRetry";
+import { ScriptsTrustDialog } from "../scripts/ScriptsTrustDialog";
 import { decide, release } from "../../lib/api/permissions";
 import { peek as peekScreen } from "../../lib/api/peek";
 import { decisionFor, laneEntries } from "../approval/fromCore";
@@ -495,7 +502,115 @@ export function LiveApp() {
   const sidebarRows = useRowFlash(taskRows);
   // While the list is unknown the palette keeps Review for the session in focus, so choosing it can load the list again.
   const focusedIsTask = reviewTarget(infos, focusedId, tasks).kind !== "none";
-  const hiddenCommands = paletteHidden({
+  // The selected session's repo scripts, read again whenever the selection changes (never on a timer). `id` says whose they are.
+  const [repoScripts, setRepoScripts] = useState<{ id: string; scripts: RepoScripts } | null>(null);
+  const scriptsCwd = focusedInfo?.cwd;
+  useEffect(() => {
+    if (!endpoint || focusedId === undefined || scriptsCwd === undefined) return;
+    let current = true;
+    getScripts(endpoint, scriptsCwd).then(
+      (scripts) => current && setRepoScripts({ id: focusedId, scripts }),
+      () => current && setRepoScripts(null),
+    );
+    return () => {
+      current = false;
+    };
+  }, [endpoint, focusedId, scriptsCwd]);
+  const focusedScripts = repoScripts !== null && repoScripts.id === focusedId ? repoScripts.scripts : null;
+  const scriptControl = useMemo(() => runControl(focusedScripts, infos), [focusedScripts, infos]);
+  // The trust card over the window, for a Run on a file not yet allowed.
+  const [runAsk, setRunAsk] = useState<{ scripts: RepoScripts; busy: boolean; error: string | null } | null>(null);
+  const scriptsError = (e: unknown) => (e instanceof ApiError ? e.message : String(e));
+  /**
+   * Starts the run script as its own tab and selects it. A 409 (the file changed since it was shown) or a 403 (trust for the repo
+   * was replaced since) reads the file again and asks again; a retried call refused again announces the error and stops.
+   */
+  const startRun = async (scripts: RepoScripts, retried = false): Promise<void> => {
+    if (!endpoint || scripts.hash === null) return;
+    try {
+      const created = await runScript(endpoint, { cwd: scripts.root, script: "run", hash: scripts.hash, ...size.current });
+      setRunAsk(null);
+      pick(created.tab_id);
+    } catch (e) {
+      if (!askOnRunFailure(e instanceof ApiError ? e.status : undefined, retried)) {
+        setRunAsk((a) => (a === null ? a : { ...a, busy: false, error: scriptsError(e) }));
+        announce(scriptsError(e));
+        return;
+      }
+      await askAgain(scripts.root);
+    }
+  };
+  /** The file changed or its trust was replaced: read it again, then show the card, start it if it is trusted now, or close. */
+  const askAgain = async (root: string) => {
+    if (!endpoint) return;
+    const again = await getScripts(endpoint, root).catch(() => null);
+    if (focusedId !== undefined && again !== null) setRepoScripts({ id: focusedId, scripts: again });
+    const next = afterReread(again);
+    if (next.kind === "start") {
+      await startRun(next.scripts, true);
+      return;
+    }
+    setRunAsk(next.kind === "ask" ? { scripts: next.scripts, busy: false, error: null } : null);
+  };
+  /** Run: a trusted file starts at once; any other asks first. */
+  const runRepoScript = () => {
+    const s = focusedScripts;
+    if (!s || s.run === null || s.problem !== null || s.hash === null) return;
+    if (s.trusted) void startRun(s);
+    else setRunAsk({ scripts: s, busy: false, error: null });
+  };
+  /** Stop: closes the run tab the way a tab close does. */
+  const stopRepoScript = () => {
+    if (scriptControl?.kind === "stop") void actions.requestClose(scriptControl.tabId);
+  };
+  const allowRun = async () => {
+    const ask = runAsk;
+    if (!endpoint || ask === null || ask.busy || ask.scripts.problem !== null || ask.scripts.hash === null) return;
+    setRunAsk({ ...ask, busy: true, error: null });
+    try {
+      const allowed = await allowScripts(endpoint, ask.scripts.root, ask.scripts.hash);
+      if (focusedId !== undefined) setRepoScripts({ id: focusedId, scripts: allowed });
+      await startRun(allowed);
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 409) {
+        await askAgain(ask.scripts.root);
+      } else {
+        setRunAsk({ ...ask, busy: false, error: scriptsError(e) });
+        announce(scriptsError(e));
+      }
+    }
+  };
+
+  // Agents waiting for their task's setup tab to end, by the setup tab's id. A ref, so an entry is gone the moment it is taken: the
+  // agent starts once however often the effect runs. `pendingTick` re-runs the effect when one is added.
+  const pendingAgents = useRef(new Map<string, PendingSetup & { request: CreateSessionRequest; text: string }>());
+  const [pendingTick, setPendingTick] = useState(0);
+  useEffect(() => {
+    const pending = pendingAgents.current;
+    if (pending.size === 0 || !endpoint) return;
+    const { seen, ready } = readyPending(pending, infos);
+    for (const id of seen) {
+      const entry = pending.get(id);
+      if (entry) entry.seen = true;
+    }
+    for (const { tabId, outcome } of ready) {
+      const entry = pending.get(tabId);
+      if (!entry) continue;
+      pending.delete(tabId);
+      sessions.create(endpoint, { ...entry.request, setup: { tab_id: tabId, outcome } }).then(
+        (created) => {
+          setStartingTexts((t) => ({ ...t, [created.tab_id]: entry.text }));
+          // The person may have moved on in the minutes setup took: the agent takes the selection only from the setup tab.
+          if (stateRef.current.focusedId === tabId) pick(created.tab_id);
+          void refreshTasks();
+        },
+        (e: unknown) => announce(`Couldn't start the agent after setup: ${scriptsError(e)}`),
+      );
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- pick, announce and refreshTasks are stable; the entries are read from the ref.
+  }, [infos, endpoint, pendingTick]);
+
+  const baseHidden = paletteHidden({
     resumable,
     isTask: focusedIsTask,
     missing: missingTask(tasks) !== null,
@@ -506,6 +621,8 @@ export function LiveApp() {
     // The palette lists the Mode commands the focused agent offers, the same as its row menu; the refusal in askRestart is the backstop.
     ...(focusedInfo?.agent ? { offered: modesOf(focusedInfo.agent) } : {}),
   });
+  // Only the script command the header would show is listed.
+  const hiddenCommands = useMemo(() => [...baseHidden, ...(scriptControl?.kind === "run" ? [] : ["run-script"]), ...(scriptControl?.kind === "stop" ? [] : ["stop-script"])], [baseHidden, scriptControl?.kind]);
 
   // The Review sheet. It holds its own snapshot (the task, its changes, the session it was opened for), not a view of the lists above,
   // so a task list or a session list that changes under it, a merge removing the task included, never unmounts it while the core works.
@@ -969,6 +1086,12 @@ export function LiveApp() {
         case "unmute":
           if (endpoint) void sessions.setMuted(endpoint, id, itemId === "mute").catch(() => announce("Couldn't change the mute. Try again."));
           break;
+        // Selects the setup tab; the row has no button for it, as the buttons covered the status.
+        case "setup-output": {
+          const tabId = rows.find((r) => r.id === id)?.setupNote?.tabId;
+          if (tabId !== undefined) pick(tabId);
+          break;
+        }
         // After the menu has gone, so the sheet takes the focus and the menu does not give it back to the row.
         case "review-task":
           setTimeout(() => reviewSession(id), 0);
@@ -1212,6 +1335,9 @@ export function LiveApp() {
     // After the palette has given focus back, so the bar's Cancel keeps the focus it takes. A plain shell has no mode: nothing happens.
     const mode = modeOfItem(id);
     if (mode) return void (focusedId && setTimeout(() => askRestart(focusedId, mode), 0));
+    // After the palette has given focus back, so the trust card returns it to where it was.
+    if (id === "run-script") return void setTimeout(runRepoScript, 0);
+    if (id === "stop-script") return void stopRepoScript();
     if (id === "copy-recording-path") return void (endpoint && focusedId && copyRecordingPath(endpoint, focusedId, announce));
     // After the palette has given focus back, so the sheet takes it from the right place and returns it there.
     if (id === "review-task") return void setTimeout(() => reviewSession(focusedId), 0);
@@ -1566,6 +1692,9 @@ export function LiveApp() {
           onSelect={pick}
           onToggle={togglePane}
           onReview={reviewSession}
+          scriptControl={scriptControl}
+          onRunScript={runRepoScript}
+          onStopScript={stopRepoScript}
           onSetup={(id) => {
             setAgentsFrom(rowSetupStart(sidebarRows.find((r) => r.id === id)?.agent ?? "claude"));
             openSettings("agents");
@@ -1685,6 +1814,7 @@ export function LiveApp() {
         </div>
       )}
       {overlay === "shortcuts" && os && <LiveShortcuts os={os} onClose={() => setOverlay(null)} />}
+      {runAsk && <ScriptsTrustDialog scripts={runAsk.scripts} busy={runAsk.busy} error={runAsk.error} allowLabel="Allow and run" cancelLabel="Cancel" onAllow={() => void allowRun()} onCancel={() => setRunAsk(null)} />}
       {closeAsk && <CloseDialog busy={closeAsk.busy} error={closeAsk.error} onChoose={(keep) => void chooseClose(keep)} onCancel={cancelCloseAsk} />}
       {launcherOpen && (
         <LiveLauncher
@@ -1692,6 +1822,11 @@ export function LiveApp() {
           nextNumber={nextSessionNumber(infos.map((i) => i.number))}
           size={() => size.current}
           onStarted={started}
+          onSetupStarted={({ tabId, request, text }) => {
+            pendingAgents.current.set(tabId, { seen: false, request, text });
+            setPendingTick((n) => n + 1);
+          }}
+          announce={announce}
           onClose={() => setLauncherOpen(false)}
         />
       )}

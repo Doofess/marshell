@@ -12,4 +12,8 @@ commands: Array<string>,
  * The warnings the user was shown, under the same rule: what would be lost is part of what
  * they agreed to.
  */
-warnings: Array<string>, };
+warnings: Array<string>, 
+/**
+ * The teardown script the user was shown, under the same rule.
+ */
+teardown?: string, };

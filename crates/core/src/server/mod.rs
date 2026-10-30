@@ -21,6 +21,7 @@ mod profiles;
 mod projects;
 mod pty_ws;
 mod reports;
+mod scripts;
 mod sessions;
 mod settings;
 mod shell_panel;
@@ -798,6 +799,9 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/import/windows-terminal", get(settings::windows_terminal))
         .route("/v1/projects", get(projects::get))
         .route("/v1/folders/check", get(folders::check))
+        .route("/v1/scripts", get(scripts::get))
+        .route("/v1/scripts/allow", post(scripts::allow))
+        .route("/v1/scripts/run", post(scripts::run))
         .route("/v1/tasks", get(tasks::list).post(tasks::create))
         .route("/v1/tasks/plan", post(tasks::plan))
         .route("/v1/tasks/{id}/changes", get(tasks::changes))

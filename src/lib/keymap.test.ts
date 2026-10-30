@@ -194,6 +194,15 @@ describe("diagnostics command", () => {
   });
 });
 
+describe("repo script commands", () => {
+  it("are Run and Stop in Tools, with no key of their own", () => {
+    expect(commandById("run-script")).toMatchObject({ label: "Run the repo's run script", group: "Tools" });
+    expect(commandById("stop-script")).toMatchObject({ label: "Stop the repo's run script", group: "Tools" });
+    expect(commandById("run-script").binding).toBeUndefined();
+    expect(commandById("stop-script").binding).toBeUndefined();
+  });
+});
+
 describe("history settings command", () => {
   it("is History settings… in Tools, with no key of its own", () => {
     expect(commandById("history-settings")).toMatchObject({ label: "History settings…", group: "Tools" });

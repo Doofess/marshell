@@ -1,3 +1,4 @@
+import type { ComponentProps } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { FIXTURES } from "../sidebar/fixtures";
@@ -27,6 +28,29 @@ describe("modeLabel / headerDanger", () => {
     expect(headerDanger("auto-edit")).toBe(false);
     expect(headerDanger("plan")).toBe(false);
     expect(headerDanger(undefined)).toBe(false);
+  });
+});
+
+describe("SessionHeader: Run and Stop", () => {
+  const w = (control?: ComponentProps<typeof SessionHeader>["scriptControl"]) =>
+    renderToStaticMarkup(<SessionHeader row={row("working")} ports={[{ port: 3000, url: "http://localhost:3000/", announced: false }]} {...(control === undefined ? {} : { scriptControl: control })} onRun={() => {}} onStop={() => {}} />);
+  it("shows no button without a run script", () => {
+    const out = w();
+    expect(out).not.toContain(">Run<");
+    expect(out).not.toContain(">Stop<");
+  });
+  it("shows Run after the port chips, with the script as its title", () => {
+    const out = w({ kind: "run", script: "pnpm dev" });
+    expect(out).toMatch(/<button[^>]*title="pnpm dev"[^>]*>Run<\/button>/);
+    expect(out.indexOf("localhost:3000")).toBeLessThan(out.indexOf(">Run<"));
+  });
+  it("shows Stop, not Run, when the repo's run session is going", () => {
+    const out = w({ kind: "stop", script: "pnpm dev", tabId: "r1" });
+    expect(out).toContain(">Stop<");
+    expect(out).not.toContain(">Run<");
+  });
+  it("shows no button when the window gives no handler", () => {
+    expect(renderToStaticMarkup(<SessionHeader row={row("working")} scriptControl={{ kind: "run", script: "pnpm dev" }} />)).not.toContain(">Run<");
   });
 });
 

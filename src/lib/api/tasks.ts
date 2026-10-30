@@ -4,6 +4,7 @@ import type { MergePlan } from "../../generated/MergePlan";
 import type { MergeRequest } from "../../generated/MergeRequest";
 import type { RemovePlan } from "../../generated/RemovePlan";
 import type { RemoveRequest } from "../../generated/RemoveRequest";
+import type { RemoveResult } from "../../generated/RemoveResult";
 import type { ResumeError } from "../../generated/ResumeError";
 import type { Task } from "../../generated/Task";
 import type { TaskChanges } from "../../generated/TaskChanges";
@@ -50,5 +51,5 @@ export const tasksApi = {
   /** A conflict or a git failure comes back as the outcome; only a refusal to start rejects. */
   merge: (ep: Endpoint, id: string, req: MergeRequest) => refusal(api<MergeOutcome>(ep, "POST", `${task(id)}/merge`, req)),
   removePlan: (ep: Endpoint, id: string) => api<RemovePlan>(ep, "POST", `${task(id)}/remove/plan`),
-  remove: (ep: Endpoint, id: string, req: RemoveRequest) => refusal(api<void>(ep, "POST", `${task(id)}/remove`, req)),
+  remove: (ep: Endpoint, id: string, req: RemoveRequest) => refusal(api<RemoveResult>(ep, "POST", `${task(id)}/remove`, req)),
 };

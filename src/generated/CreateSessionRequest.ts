@@ -2,6 +2,7 @@
 import type { CliTask } from "./CliTask";
 import type { ColorScheme } from "./ColorScheme";
 import type { SessionMode } from "./SessionMode";
+import type { SetupResult } from "./SetupResult";
 import type { ToolLaunch } from "./ToolLaunch";
 
 export type CreateSessionRequest = { 
@@ -33,6 +34,10 @@ prompt?: string,
  * The mode an agent session starts in. Absent starts it with no mode flags. A plain shell ignores it.
  */
 mode?: SessionMode, 
+/**
+ * How the repo's `setup` ended, when the person started the agent after a setup that did not pass. Absent means none.
+ */
+setup?: SetupResult, 
 /**
  * A preset the agent starts with ("deepseek", on Claude Code only). Absent starts the agent as it is.
  */

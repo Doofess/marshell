@@ -5,8 +5,10 @@ import type { CommandState } from "./CommandState";
 import type { Foreground } from "./Foreground";
 import type { LiveStatus } from "./LiveStatus";
 import type { PortChip } from "./PortChip";
+import type { ScriptKind } from "./ScriptKind";
 import type { SessionMode } from "./SessionMode";
 import type { SessionState } from "./SessionState";
+import type { SetupResult } from "./SetupResult";
 import type { Stuck } from "./Stuck";
 
 /**
@@ -75,4 +77,12 @@ preset?: string,
 /**
  * The local ports the tab's tools announced, at most 8. A chip opens its loopback URL.
  */
-ports?: Array<PortChip>, };
+ports?: Array<PortChip>, 
+/**
+ * Set on a tab that runs a repo's `setup` or `run` script. Cleared when the tab restarts or reopens as a plain shell.
+ */
+script?: ScriptKind, 
+/**
+ * How the repo's `setup` ended, on the agent row started after it. Shown on the row only; a Restart or resume clears it.
+ */
+setup?: SetupResult, };

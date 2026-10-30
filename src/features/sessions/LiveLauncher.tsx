@@ -1,6 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { AgentCatalog } from "../../generated/AgentCatalog";
+import type { CreateSessionRequest } from "../../generated/CreateSessionRequest";
 import type { CreateSessionResponse } from "../../generated/CreateSessionResponse";
+import type { RepoScripts } from "../../generated/RepoScripts";
+import type { Task } from "../../generated/Task";
+import { allowScripts, getScripts, runScript } from "../../lib/api/scripts";
+import { afterCreate } from "../scripts/afterSetup";
+import { confirmScripts } from "../scripts/confirmScripts";
 import type { Endpoint } from "../../generated/Endpoint";
 import type { FolderInfo } from "../../generated/FolderInfo";
 import type { LayoutDoc } from "../../generated/LayoutDoc";
@@ -42,14 +48,21 @@ type Props = {
   size: () => { cols: number; rows: number };
   /** The core created the session. `text` is what its tab says until the first output. */
   onStarted: (created: CreateSessionResponse, text: string) => void;
+  /** A task's setup tab was started: the agent's request waits in the window until that tab ends. Called before `onStarted` for the setup tab. */
+  onSetupStarted: (setup: { tabId: string; request: CreateSessionRequest; text: string }) => void;
+  /** Says something through the window's announcer. */
+  announce: (text: string) => void;
   onClose: () => void;
 };
+
+/** A task already made whose own marshell.json is waiting for a yes before its setup runs. */
+type Held = { task: Task; request: CreateSessionRequest; text: string; scripts: RepoScripts };
 
 /**
  * The launcher on the core: it lists the recent folders, the agents and the shell profiles, and Start creates the session.
  * Mounted only while open, so every opening starts fresh. When the core refuses, its text shows under Start and the launcher stays.
  */
-export function LiveLauncher({ endpoint, nextNumber, size, onStarted, onClose }: Props) {
+export function LiveLauncher({ endpoint, nextNumber, size, onStarted, onSetupStarted, announce, onClose }: Props) {
   const [loaded, setLoaded] = useState<Loaded | null>(null);
   const { appearance } = useAppearance();
   const [choice, setChoice] = useState(INITIAL);
@@ -78,6 +91,8 @@ export function LiveLauncher({ endpoint, nextNumber, size, onStarted, onClose }:
   // What the confirm view says while it works: the worktree being made, then the program starting in it.
   const [phase, setPhase] = useState<"creating" | "starting">("creating");
   const inFlight = useRef(false);
+  // Set while the confirm view shows the worktree's own marshell.json for a yes; the task is already made.
+  const held = useRef<Held | null>(null);
   const root = useRef<HTMLDivElement>(null);
 
   // Keys go to the launcher, not the terminal behind it; closing hands focus back if that terminal is still there.
@@ -258,9 +273,15 @@ export function LiveLauncher({ endpoint, nextNumber, size, onStarted, onClose }:
     const seq = ++planSeq.current;
     setConfirm({ state: "loading" });
     setError(reason);
-    tasksApi
-      .plan(endpoint, taskRequest(shown, projects, taskName))
-      .then((p) => seq === planSeq.current && setConfirm({ state: "ready", commands: p.commands }))
+    // The repo's marshell.json is read beside the plan; a file that can't be read leaves the plan as it was, with no scripts.
+    const projectPath = projects.find((p) => p.id === shown.projectId)?.path;
+    const read = projectPath === undefined ? Promise.resolve(null) : getScripts(endpoint, projectPath).catch(() => null);
+    Promise.all([tasksApi.plan(endpoint, taskRequest(shown, projects, taskName)), read])
+      .then(([p, found]) => {
+        if (seq !== planSeq.current) return;
+        const scripts = confirmScripts(found);
+        setConfirm({ state: "ready", commands: p.commands, ...(scripts === undefined ? {} : { scripts }) });
+      })
       .catch((e: unknown) => {
         if (seq !== planSeq.current) return;
         setError(undefined);
@@ -272,42 +293,123 @@ export function LiveLauncher({ endpoint, nextNumber, size, onStarted, onClose }:
     planSeq.current++;
     // The next plan may show other commands (another free name), so a task made for these ones must not be reused for them.
     tasks.forget();
+    held.current = null;
     setConfirm(null);
     setError(undefined);
   };
 
-  /** Create and start: the worktree first, then the session in its folder. */
-  const createAndStart = async () => {
+  /** Frees the confirm view after a failure, or when it waits for an answer. */
+  const release = () => {
+    inFlight.current = false;
+    setStarting(false);
+  };
+
+  /** Starts the agent session now, with the request built for this task. */
+  const startAgent = async (request: CreateSessionRequest, text: string) => {
+    const created = await sessionsApi.create(endpoint!, request);
+    onStarted(created, text);
+  };
+
+  /** The task exists and its own marshell.json needs a yes before its setup runs: the card shows alone, and the two buttons are the only ways on. */
+  const holdForAnswer = (task: Task, request: CreateSessionRequest, text: string, scripts: RepoScripts) => {
+    held.current = { task, request, text, scripts };
+    setConfirm({ state: "ready", commands: [], scripts: { kind: "ask", scripts, allowLabel: "Allow and run setup", cancelLabel: "Start without setup", only: true } });
+    release();
+  };
+
+  /**
+   * Runs the setup as a tab and keeps the agent's request for when it ends. A 409 (the worktree's file changed since it was read)
+   * reads it again and asks again.
+   */
+  const launchSetup = async (task: Task, hash: string, request: CreateSessionRequest, text: string): Promise<void> => {
+    try {
+      const setup = await runScript(endpoint!, { cwd: task.path, script: "setup", hash, ...size() });
+      onSetupStarted({ tabId: setup.tab_id, request, text });
+      onStarted(setup, `Running setup in ${task.name}…`);
+    } catch (e) {
+      if (!(e instanceof ApiError && e.status === 409)) throw e;
+      await settle(task, null, request, text, await getScripts(endpoint!, task.path).catch(() => null));
+    }
+  };
+
+  /** What happens once the worktree's own marshell.json has been read (see `afterCreate`). */
+  const settle = async (task: Task, shownHash: string | null, request: CreateSessionRequest, text: string, fresh: RepoScripts | null): Promise<void> => {
+    const next = afterCreate(shownHash, fresh);
+    if (next.kind === "run") return launchSetup(task, next.hash, request, text);
+    if (next.kind === "ask") return holdForAnswer(task, request, text, next.scripts);
+    announce(next.announce);
+    return startAgent(request, text);
+  };
+
+  /**
+   * Create and start: the worktree first, then the session in its folder. `how` is the button pressed: Create and start ("plain"),
+   * Allow and create ("allow"), or Create without scripts ("skip"). The repo's setup runs only for a plain create with a trusted
+   * setup, or after Allow; the agent then waits in the window until the setup tab ends.
+   */
+  const createAndStart = async (how: "plain" | "allow" | "skip" = "plain") => {
     // Only the commands on screen are sent; the core refuses them if they are no longer what it would run.
     const req = createRequest(taskRequest(shown, projects, taskName), confirm);
     if (!endpoint || !loaded || inFlight.current || req === null) return;
+    const scripts = confirm?.state === "ready" ? confirm.scripts : undefined;
+    // Allowing is always a press on the card's own button.
+    if (scripts?.kind === "ask" && how === "plain") return;
     const problem = startProblem(shown, programs);
     if (problem !== undefined) {
       setError(problem);
       return;
     }
+    const projectPath = projects.find((p) => p.id === shown.projectId)?.path;
+    const setupWanted = how !== "skip" && scripts !== undefined && scripts.kind !== "problem" && (scripts.kind === "setup" || how === "allow") && scripts.scripts.setup !== null;
     inFlight.current = true;
     setStarting(true);
     setPhase("creating");
     setError(undefined);
     let made = false;
     try {
-      const created = await createThenLaunch(
-        () => tasks.get(req, () => tasksApi.create(endpoint, req)),
-        (task) => {
-          made = true;
-          setPhase("starting");
-          return sessionsApi.create(endpoint, withColorScheme(launchRequest(shown, prompt, programs, loaded.doc, projects, size(), task.path, fieldValues), loaded.doc.profiles, appearance, appScheme()));
-        },
-      );
+      if (how === "allow" && scripts?.kind === "ask") {
+        // A file with a problem is never allowed.
+        if (scripts.scripts.problem !== null || scripts.scripts.hash === null || projectPath === undefined) return release();
+        await allowScripts(endpoint, projectPath, scripts.scripts.hash);
+      }
+      const task = await tasks.get(req, () => tasksApi.create(endpoint, req));
+      made = true;
+      setPhase("starting");
+      const request = withColorScheme(launchRequest(shown, prompt, programs, loaded.doc, projects, size(), task.path, fieldValues), loaded.doc.profiles, appearance, appScheme());
       const folder = projects.find((p) => p.id === shown.projectId)?.name ?? "your home folder";
-      onStarted(created, startingText(shown.program, folder, programs));
+      const text = startingText(shown.program, folder, programs);
+      if (!setupWanted) return await startAgent(request, text);
+      // The confirm view read the main checkout's file; the new worktree holds its own committed copy.
+      await settle(task, scripts.scripts.hash, request, text, await getScripts(endpoint, task.path).catch(() => null));
     } catch (e) {
-      inFlight.current = false;
-      setStarting(false);
-      // A refused create: say why, and show what the core would run now.
+      release();
+      // A refused create or allow (409: the commands or the file changed): say why, and show what would run now.
       if (!made && replansAfter(e)) plan(startFailure(e));
       else setError(startFailure(e));
+    }
+  };
+
+  /** The card shown after the task was made: Allow and run setup, or Start without setup. */
+  const continueHeld = async (allow: boolean) => {
+    const h = held.current;
+    if (!endpoint || h === null || inFlight.current) return;
+    inFlight.current = true;
+    setStarting(true);
+    setPhase("starting");
+    setError(undefined);
+    try {
+      if (!allow) return await startAgent(h.request, h.text);
+      if (h.scripts.problem !== null || h.scripts.hash === null) return release();
+      let hash = h.scripts.hash;
+      try {
+        hash = (await allowScripts(endpoint, h.task.path, hash)).hash ?? hash;
+      } catch (e) {
+        if (!(e instanceof ApiError && e.status === 409)) throw e;
+        return await settle(h.task, null, h.request, h.text, await getScripts(endpoint, h.task.path).catch(() => null));
+      }
+      await launchSetup(h.task, hash, h.request, h.text);
+    } catch (e) {
+      release();
+      setError(startFailure(e));
     }
   };
 
@@ -376,6 +478,8 @@ export function LiveLauncher({ endpoint, nextNumber, size, onStarted, onClose }:
           setError(undefined);
         }}
         onConfirm={() => void createAndStart()}
+        onAllow={() => void (held.current === null ? createAndStart("allow") : continueHeld(true))}
+        onSkipScripts={() => void (held.current === null ? createAndStart("skip") : continueHeld(false))}
         onBack={back}
         onClose={onClose}
       />
