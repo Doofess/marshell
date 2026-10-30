@@ -41,7 +41,7 @@ export function canEdit(d: Detection): { ok: boolean; reason?: string } {
  * what it added" would not be true of it). Nothing else in the file is touched. When the hooks go in a file of their own that
  * Marshell creates, removal deletes that file too, but only if nothing else was put in it since.
  */
-export function removalCopy(cli: CliId, on: Record<Capability, boolean>, hooks?: { hooksFile: string; created: boolean }, handedOver?: string, addedStatusLine = false): string {
+export function removalCopy(cli: CliId, on: Record<Capability, boolean>, hooks?: { hooksFile: string; created: boolean }, handedOver?: string, addedStatusLine = false, skill?: "add" | "update"): string {
   const entries = entryCount(cli, on) > 0;
   const chain = on.statusline && CAPABILITIES[cli].statusline.available && !addedStatusLine;
   const parts = [
@@ -51,11 +51,23 @@ export function removalCopy(cli: CliId, on: Record<Capability, boolean>, hooks?:
     chain && "puts your own status line back from statusline-chain.json",
     handedOver && `turns ${handedOver} back on`,
   ].filter((p): p is string => typeof p === "string");
-  if (parts.length === 0) return "Marshell changes nothing, so there is nothing to undo.";
+  const skillPart = skill === "add" ? "removes the marshell skill it added" : skill === "update" ? "puts the earlier marshell skill back" : undefined;
+  if (parts.length === 0 && skillPart === undefined) return "Marshell changes nothing, so there is nothing to undo.";
+  if (parts.length === 0 && skillPart !== undefined) return `Marshell ${skillPart}.`;
+  if (skillPart !== undefined) parts.push(skillPart);
   const list = parts.length > 2 ? `${parts.slice(0, -1).join(", ")}, and ${parts.at(-1)}` : parts.join(" and ");
   const twoFiles = entries && (chain || Boolean(handedOver)) && hooks !== undefined;
   return `Marshell ${list}; the rest of ${twoFiles ? "each" : "the"} file stays as it is.`;
 }
+
+/** How the skill part of the undo sentence reads: nothing when the switch is off, the state is unknown or the skill is already installed. */
+export function skillUndo(skillOn: boolean, state?: Detection["skill"]): "add" | "update" | undefined {
+  if (!skillOn || !state || state === "installed") return undefined;
+  return state === "none" ? "add" : "update";
+}
+
+/** The diff starts open when the switch is on and the skill file was edited: replacing it is shown, never silent. */
+export const opensDiff = (skillOn: boolean, state?: Detection["skill"]): boolean => skillOn && state === "edited";
 
 const sentence = (text: string) => `${text.charAt(0).toUpperCase()}${text.slice(1)}.`;
 

@@ -2,7 +2,7 @@ import type { AgentSetup } from "../../generated/AgentSetup";
 import type { ConfigPreview } from "../../generated/ConfigPreview";
 import type { HookPlanRequest } from "../../generated/HookPlanRequest";
 import { deletedFiles, previewDiff, toDetection, type HookAgent } from "../../lib/api/agents";
-import { addsStatusLine, CLI_NAME, consentHeadline, fileName, removalCopy, type Capability, type CliId, type ConsentPlan, type Detection } from "../onboarding/consent";
+import { addsStatusLine, CLI_NAME, consentHeadline, fileName, opensDiff, removalCopy, skillUndo, type Capability, type CliId, type ConsentPlan, type Detection } from "../onboarding/consent";
 
 /** The capabilities offered for a new Claude Code setup. */
 export const OFFER: Capability[] = ["status", "approve", "statusline", "skill"];
@@ -79,6 +79,9 @@ export function actions(s: AgentSetup): Array<"setup" | "hooksOff"> {
 export const hooksOffNotice = (statuslineLeft: boolean): string =>
   `Hooks off. Sessions started from now show limited status.${statuslineLeft ? " Your status line was changed since setup, so it was left as it is." : ""}`;
 
+/** Whether a Set up's diff starts open: an edited skill that is about to be replaced is shown, never replaced silently. */
+export const startsOpen = (want: Want, skill: AgentSetup["skill"] | undefined): boolean => opensDiff(want.skill, skill);
+
 /** Where a Set up is: the preview the core made (none when the file is refused), and what the card says about it. */
 export type InstallFlow = { preview: ConfigPreview | null; open: boolean; busy: boolean; error?: string; conflict?: boolean; want?: Want };
 
@@ -115,7 +118,7 @@ export function consentProps(s: AgentSetup, flow: InstallFlow) {
     on,
     configPath: s.settings_path,
     backupPath: s.snapshots_dir,
-    removal: removalCopy(cli, on, s.hooks_path === undefined ? undefined : { hooksFile: fileName(s.hooks_path), created: true }, undefined, addsStatusLine(detection, on)),
+    removal: removalCopy(cli, on, s.hooks_path === undefined ? undefined : { hooksFile: fileName(s.hooks_path), created: true }, undefined, addsStatusLine(detection, on), skillUndo(on.skill, s.skill)),
     diff: flow.preview ? previewDiff(flow.preview) : "",
     deleted: flow.preview ? deletedFiles(flow.preview) : undefined,
     needsTrust: s.needs_trust,

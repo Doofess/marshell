@@ -83,7 +83,7 @@ export function LiveOnboarding({ endpoint, onDone }: { endpoint: Endpoint; onDon
     const target = queue[i];
     if (!target) return onDone();
     setAt(i);
-    void flows[target.agent as HookAgent].plan(setupWant(target));
+    void flows[target.agent as HookAgent].plan(setupWant(target), target.skill);
   };
   const next = useRef(() => {});
   next.current = () => go((at ?? -1) + 1);

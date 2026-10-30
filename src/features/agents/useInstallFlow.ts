@@ -3,7 +3,7 @@ import type { Endpoint } from "../../generated/Endpoint";
 import { ApiError } from "../../lib/api/client";
 import { applyPreview, planInstall, type HookAgent } from "../../lib/api/agents";
 import type { Capability } from "../onboarding/consent";
-import { DEFAULT_WANT, installRequest, type InstallFlow, type Want } from "./agentsState";
+import { DEFAULT_WANT, installRequest, startsOpen, type InstallFlow, type Want } from "./agentsState";
 
 export const UNREACHABLE = "Couldn't reach Marshell's core. Try again in a moment.";
 
@@ -22,19 +22,24 @@ export function useInstallFlow(endpoint: Endpoint, agent: HookAgent, onApplied: 
   const [want, setWant] = useState<Want>(DEFAULT_WANT);
   const wantRef = useRef(want);
 
-  const plan = useCallback(async (initial?: Want) => {
+  // The skill file's state when the person chose Set up: an edited one starts the diff open.
+  const skillRef = useRef<Parameters<typeof startsOpen>[1]>(undefined);
+
+  const plan = useCallback(async (initial?: Want, skill?: Parameters<typeof startsOpen>[1]) => {
     if (initial) {
       wantRef.current = initial;
+      skillRef.current = skill;
       setWant(initial);
     }
     const mine = ++latest.current;
     const asked = wantRef.current;
-    setFlow({ preview: null, open: false, busy: true });
+    const open = startsOpen(asked, skillRef.current);
+    setFlow({ preview: null, open, busy: true });
     try {
       const preview = await planInstall(endpoint, agent, installRequest(asked, agent));
-      if (mine === latest.current) setFlow({ preview, open: false, busy: false });
+      if (mine === latest.current) setFlow({ preview, open, busy: false });
     } catch (e) {
-      if (mine === latest.current) setFlow({ preview: null, open: false, busy: false, error: failureText(e) });
+      if (mine === latest.current) setFlow({ preview: null, open, busy: false, error: failureText(e) });
     }
   }, [endpoint, agent]);
 
@@ -60,6 +65,7 @@ export function useInstallFlow(endpoint: Endpoint, agent: HookAgent, onApplied: 
   const reset = useCallback(() => {
     latest.current++;
     wantRef.current = DEFAULT_WANT;
+    skillRef.current = undefined;
     setWant(DEFAULT_WANT);
     setFlow(null);
   }, []);

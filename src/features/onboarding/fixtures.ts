@@ -1,5 +1,5 @@
 import { unifiedDiff } from "../../lib/diff";
-import { CAPABILITIES, CLI_NAME, fileName, removalCopy, type Capability, type CliId, type ConsentPlan, type Detection } from "./consent";
+import { CAPABILITIES, CLI_NAME, fileName, removalCopy, skillUndo, type Capability, type CliId, type ConsentPlan, type Detection } from "./consent";
 
 const HOME = "C:\\Users\\Home Office";
 const CLAUDE_PATH = `${HOME}\\.claude\\settings.json`;
@@ -149,7 +149,7 @@ const plan = (d: Detection, diff: string, on: Record<Capability, boolean> = ALL_
   handOver: d.skipsAll ? handOver : undefined,
   configPath: d.configPath,
   backupPath: `${HOME}\\.marshell\\snapshots\\2026-10-10T20-15\\${CLI_NAME[d.cli].toLowerCase().replace(/ /g, "-")}-${fileName(d.configPath)}`,
-  removal: removalCopy(d.cli, on, d.hooks && { hooksFile: fileName(d.hooks.path), created: !d.hooks.exists }, handOver ? d.skipsAll?.setting : undefined),
+  removal: removalCopy(d.cli, on, d.hooks && { hooksFile: fileName(d.hooks.path), created: !d.hooks.exists }, handOver ? d.skipsAll?.setting : undefined, false, skillUndo(on.skill, d.skill)),
   diff,
   needsTrust: d.cli === "codex" && (on.status || on.approve),
   chainPath: on.statusline && CAPABILITIES[d.cli].statusline.available ? chainPath(d.cli) : undefined,

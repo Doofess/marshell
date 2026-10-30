@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { AgentSetup } from "../../generated/AgentSetup";
-import { actions, consentProps, consentQueue, DEFAULT_WANT, hooksOffNotice, installRequest, liveStatusOn, rowSetupStart, setupLine, setupWant } from "./agentsState";
+import { actions, consentProps, consentQueue, DEFAULT_WANT, hooksOffNotice, installRequest, liveStatusOn, rowSetupStart, setupLine, setupWant, startsOpen } from "./agentsState";
 import type { ConfigPreview } from "../../generated/ConfigPreview";
 import type { FilePreview } from "../../generated/FilePreview";
 import { AGY_SETUP, CODEX_SETUP, PREVIEW, SETUP } from "./fixtures";
@@ -175,7 +175,7 @@ describe("Codex", () => {
     expect(p.scenario.plan.configPath).toBe("C:/h/.codex/hooks.json");
     expect(p.offer).toEqual(["status", "approve", "skill"]);
     expect(p.on.statusline).toBe(false);
-    expect(p.scenario.plan.removal).toBe("Marshell removes the hook entries it added; the rest of the file stays as it is.");
+    expect(p.scenario.plan.removal).toBe("Marshell removes the hook entries it added and removes the marshell skill it added; the rest of the file stays as it is.");
     expect(consentProps(SETUP, flow).scenario.plan.needsTrust).toBe(false);
   });
   it("an installed Codex offers approval only", () => {
@@ -243,5 +243,18 @@ describe("Antigravity", () => {
   });
   it("rowSetupStart opens Antigravity's setup", () => {
     expect(rowSetupStart("antigravity")).toEqual({ setup: "antigravity" });
+  });
+});
+
+describe("the skill in the consent card", () => {
+  const flow = { preview: PREVIEW, open: false, busy: false };
+  it("undoes an update by putting the earlier skill back, and says nothing for an installed one", () => {
+    expect(consentProps({ ...SETUP, skill: "edited" }, flow).scenario.plan.removal).toContain("puts the earlier marshell skill back");
+    expect(consentProps({ ...SETUP, skill: "installed" }, flow).scenario.plan.removal).not.toContain("skill");
+  });
+  it("opens the diff first only for an edited skill that is switched on", () => {
+    expect(startsOpen({ ...DEFAULT_WANT, skill: true }, "edited")).toBe(true);
+    expect(startsOpen({ ...DEFAULT_WANT, skill: false }, "edited")).toBe(false);
+    expect(startsOpen({ ...DEFAULT_WANT, skill: true }, "none")).toBe(false);
   });
 });

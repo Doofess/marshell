@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { canEdit, CAPABILITIES, consentHeadline, entryCount, removalCopy, type Detection } from "./consent";
+import { canEdit, CAPABILITIES, consentHeadline, entryCount, opensDiff, removalCopy, skillUndo, type Detection } from "./consent";
 import { consentProps } from "../agents/agentsState";
 import { SETUP } from "../agents/fixtures";
 
@@ -95,5 +95,26 @@ describe("a status line added rather than chained", () => {
   });
   it("removal says it removes what it added", () => {
     expect(removalCopy("claude", on, undefined, undefined, true)).toBe("Marshell removes the hook entries and the status line it added; the rest of the file stays as it is.");
+  });
+  it("says how the skill is undone, alone or with the hooks", () => {
+    const off = { status: false, approve: false, statusline: false, skill: true };
+    expect(removalCopy("claude", off, undefined, undefined, false, "add")).toBe("Marshell removes the marshell skill it added.");
+    expect(removalCopy("claude", off, undefined, undefined, false, "update")).toBe("Marshell puts the earlier marshell skill back.");
+    expect(removalCopy("claude", off)).toBe("Marshell changes nothing, so there is nothing to undo.");
+    expect(removalCopy("claude", { ...off, status: true }, undefined, undefined, false, "add")).toBe(
+      "Marshell removes the hook entries it added and removes the marshell skill it added; the rest of the file stays as it is.",
+    );
+  });
+  it("maps the switch and the skill state to the undo part and the diff", () => {
+    expect(skillUndo(true, "none")).toBe("add");
+    expect(skillUndo(true, "outdated")).toBe("update");
+    expect(skillUndo(true, "edited")).toBe("update");
+    expect(skillUndo(true, "installed")).toBeUndefined();
+    expect(skillUndo(false, "none")).toBeUndefined();
+    expect(skillUndo(true, undefined)).toBeUndefined();
+    expect(opensDiff(true, "edited")).toBe(true);
+    expect(opensDiff(false, "edited")).toBe(false);
+    expect(opensDiff(true, "outdated")).toBe(false);
+    expect(opensDiff(true, undefined)).toBe(false);
   });
 });

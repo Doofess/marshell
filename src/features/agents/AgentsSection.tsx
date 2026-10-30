@@ -352,9 +352,11 @@ export function AgentsSection({
     void load();
     onChanged?.();
   };
-  const claudeSkill = useSkillFlow(endpoint, "claude", skillApplied("claude"));
-  const codexSkill = useSkillFlow(endpoint, "codex", skillApplied("codex"));
-  const antigravitySkill = useSkillFlow(endpoint, "antigravity", skillApplied("antigravity"));
+  const skillOf = (s: AgentSetup | "loading" | "failed" | null | undefined) => (typeof s === "object" && s !== null ? s.skill : undefined);
+  const reloadSetups = useCallback(() => void load(), [load]);
+  const claudeSkill = useSkillFlow(endpoint, "claude", skillApplied("claude"), skillOf(setup), reloadSetups);
+  const codexSkill = useSkillFlow(endpoint, "codex", skillApplied("codex"), skillOf(codex), reloadSetups);
+  const antigravitySkill = useSkillFlow(endpoint, "antigravity", skillApplied("antigravity"), skillOf(antigravity), reloadSetups);
   const skillFlows = { claude: claudeSkill, codex: codexSkill, antigravity: antigravitySkill };
   const skills = Object.fromEntries(
     (Object.keys(skillFlows) as HookAgent[]).map((a) => {
@@ -375,7 +377,7 @@ export function AgentsSection({
       if (typeof found !== "object" || found === null) return;
       setActive(agent);
       setMode("setup");
-      void (agent === "codex" ? codexInstall : agent === "antigravity" ? antigravityInstall : claudeInstall).plan(setupWant(found));
+      void (agent === "codex" ? codexInstall : agent === "antigravity" ? antigravityInstall : claudeInstall).plan(setupWant(found), found.skill);
     },
     [claudeInstall.plan, codexInstall.plan, antigravityInstall.plan, setup, codex, antigravity],
   );
