@@ -191,3 +191,31 @@ async fn restart_starts_a_new_process_in_the_same_row_in_the_new_mode() {
     stop(&state, &tab);
     stop(&state, &other);
 }
+
+#[tokio::test]
+async fn a_setup_result_on_create_lists_back_and_a_restart_clears_it() {
+    let home = tempfile::tempdir().unwrap();
+    let work = tempfile::tempdir().unwrap();
+    let state = state_in(home.path(), |_| true);
+    let app = router(state.clone());
+    let body = serde_json::json!({
+        "cols": 80, "rows": 24, "profile_id": "sleeper", "cwd": work.path().to_string_lossy(),
+        "agent": "claude", "mode": "manual",
+        "setup": {"tab_id": "t-setup", "outcome": {"kind": "failed", "code": 1}},
+    });
+    let res = app
+        .clone()
+        .oneshot(api("POST", "/v1/sessions", Some(body)))
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let tab = json_of(res).await["tab_id"].as_str().unwrap().to_string();
+    let listed = sessions(&app).await;
+    assert_eq!(
+        listed["sessions"][0]["setup"],
+        serde_json::json!({"tab_id": "t-setup", "outcome": {"kind": "failed", "code": 1}})
+    );
+    assert_eq!(restart(&app, &tab, "bypass").await.status(), StatusCode::OK);
+    assert!(sessions(&app).await["sessions"][0].get("setup").is_none());
+    stop(&state, &tab);
+}

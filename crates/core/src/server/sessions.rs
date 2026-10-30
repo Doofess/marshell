@@ -20,7 +20,7 @@ use axum::response::{IntoResponse, Response};
 use marshell_protocol::api::{
     CliTask, CliTaskKind, ColorScheme, CreateSessionRequest, CreateSessionResponse, InputRequest, RenameRequest,
     ReopenRequest, ReorderRequest, RestartRequest, ResumeError, ScriptKind, SessionInfo, SessionMode, SessionState,
-    SessionsSnapshot, ShellFamily,
+    SessionsSnapshot, SetupResult, ShellFamily,
 };
 use marshell_protocol::brand;
 use marshell_protocol::hook::PeekRows;
@@ -557,7 +557,10 @@ pub(super) async fn start_session(
     preset: Option<String>,
     record: bool,
 ) -> Result<CreateSessionResponse, ApiError> {
-    start_session_as(st, run, agent, name, cwd, size, scheme, mode, preset, record, None).await
+    start_session_as(
+        st, run, agent, name, cwd, size, scheme, mode, preset, record, None, None,
+    )
+    .await
 }
 
 /// Starts a repo's `setup` or `run` script as a session: no agent, `argv` as given, and the row marked with `script`.
@@ -584,6 +587,7 @@ pub(super) async fn start_script(
         None,
         true,
         Some(script),
+        None,
     )
     .await
 }
@@ -601,6 +605,7 @@ async fn start_session_as(
     preset: Option<String>,
     record: bool,
     script: Option<ScriptKind>,
+    setup: Option<SetupResult>,
 ) -> Result<CreateSessionResponse, ApiError> {
     check_agent_installed(st, &run, agent.as_deref())?;
     let cwd = start_folder(&run, cwd);
@@ -628,6 +633,7 @@ async fn start_session_as(
             preset,
         },
         script,
+        setup,
     );
     if let Err(err) = launch(st, &tab_id, number, generation, run, agent, cwd, size, scheme, record).await {
         // A spawn failed, or the tab was closed while it started (then there is no open row to release).
@@ -877,7 +883,7 @@ pub async fn create(
         .clone()
         .filter(|c| !c.is_empty() && run.profile_id != CUSTOM_PROFILE);
     let choice = folder.map(|folder| (folder, run.profile_id.clone(), agent.clone()));
-    let created = start_session(
+    let created = start_session_as(
         &st,
         run,
         agent,
@@ -888,6 +894,8 @@ pub async fn create(
         mode,
         req.preset.clone(),
         true,
+        None,
+        req.setup,
     )
     .await?;
     if let Some((folder, profile_id, agent)) = choice {

@@ -11,7 +11,7 @@ use crate::stuck::{StuckSignal, StuckTracker};
 use crate::tools::{PortChip, ToolEvent};
 use marshell_protocol::api::{
     Activity, Attention, CommandState, Foreground, LiveState, LiveStatus, SavedTab, ScriptKind, SessionInfo,
-    SessionMode, SessionState, SessionsSnapshot, UiView,
+    SessionMode, SessionState, SessionsSnapshot, SetupResult, UiView,
 };
 use tokio::sync::watch;
 
@@ -270,24 +270,40 @@ impl Registry {
     /// the process about to start. If another open session already has exactly this name, the
     /// shown name becomes "<name> <number>". The stored `Relaunch` keeps the name.
     pub fn reserve(&self, tab_id: &str, relaunch: Relaunch) -> (u32, u64) {
-        self.reserve_script(tab_id, relaunch, None)
+        self.reserve_script(tab_id, relaunch, None, None)
     }
 
     /// `reserve`, for a tab that runs a repo script: the row carries `script` from the first snapshot. The
     /// `Relaunch` does not, so a Restart or reopen starts the plain shell.
-    pub fn reserve_script(&self, tab_id: &str, relaunch: Relaunch, script: Option<ScriptKind>) -> (u32, u64) {
+    pub fn reserve_script(
+        &self,
+        tab_id: &str,
+        relaunch: Relaunch,
+        script: Option<ScriptKind>,
+        setup: Option<SetupResult>,
+    ) -> (u32, u64) {
         let generation = self.state.lock().unwrap().next_generation();
-        (self.adopt_script(tab_id, relaunch, generation, script), generation)
+        (
+            self.adopt_script(tab_id, relaunch, generation, script, setup),
+            generation,
+        )
     }
 
     /// Adds a Running row at the end for a process that is already running (the shell panel's),
     /// whose exit callback was built with `generation`, and returns its number. Same naming rule
     /// as `reserve`.
     pub fn adopt(&self, tab_id: &str, relaunch: Relaunch, generation: u64) -> u32 {
-        self.adopt_script(tab_id, relaunch, generation, None)
+        self.adopt_script(tab_id, relaunch, generation, None, None)
     }
 
-    fn adopt_script(&self, tab_id: &str, relaunch: Relaunch, generation: u64, script: Option<ScriptKind>) -> u32 {
+    fn adopt_script(
+        &self,
+        tab_id: &str,
+        relaunch: Relaunch,
+        generation: u64,
+        script: Option<ScriptKind>,
+        setup: Option<SetupResult>,
+    ) -> u32 {
         let mut state = self.state.lock().unwrap();
         let number = state.lowest_free_number();
         let taken = state.open.iter().any(|e| e.info.name == relaunch.name);
@@ -319,6 +335,7 @@ impl Registry {
                 stuck: None,
                 ports: Vec::new(),
                 script,
+                setup,
             },
             spec: relaunch,
             generation,
@@ -375,6 +392,7 @@ impl Registry {
                     stuck: None,
                     ports: Vec::new(),
                     script: None,
+                    setup: None,
                 },
                 spec: relaunch_of(tab),
                 generation,
@@ -434,6 +452,7 @@ impl Registry {
         let previous = std::mem::replace(&mut entry.info.state, SessionState::Running);
         // The new process is the plain shell, never the script.
         entry.info.script = None;
+        entry.info.setup = None;
         entry.info.command = CommandState::Unknown;
         entry.info.paused = false;
         entry.info.foreground = None;
@@ -461,6 +480,7 @@ impl Registry {
         entry.spec.mode = Some(mode);
         entry.info.state = SessionState::Running;
         entry.info.script = None;
+        entry.info.setup = None;
         entry.info.command = CommandState::Unknown;
         entry.info.paused = false;
         entry.info.foreground = None;
@@ -1610,8 +1630,8 @@ mod tests {
     #[test]
     fn a_script_row_loses_its_marker_when_it_resumes_or_restarts() {
         let reg = Registry::new();
-        reg.reserve_script("a", relaunch("Run"), Some(ScriptKind::Run));
-        reg.reserve_script("b", relaunch("Setup"), Some(ScriptKind::Setup));
+        reg.reserve_script("a", relaunch("Run"), Some(ScriptKind::Run), None);
+        reg.reserve_script("b", relaunch("Setup"), Some(ScriptKind::Setup), None);
         let marked = |reg: &Registry, id: &str| reg.row(id).unwrap().script;
         assert_eq!(marked(&reg, "a"), Some(ScriptKind::Run));
         reg.mark_exited("a", generation_of(&reg, "a"), 0);

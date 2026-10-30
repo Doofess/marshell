@@ -43,6 +43,7 @@ pub fn create_request(
         name,
         prompt: None,
         mode,
+        setup: None,
         preset: None,
         color_scheme: None,
         tool: None,

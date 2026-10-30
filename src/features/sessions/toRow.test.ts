@@ -3,7 +3,7 @@ import type { LiveStatus } from "../../generated/LiveStatus";
 import type { Profile } from "../../generated/Profile";
 import type { SessionInfo } from "../../generated/SessionInfo";
 import { rowLabel, rowTitle } from "../sidebar/labels";
-import { ageTick, nameAgents, planRing, toRow } from "./toRow";
+import { ageTick, dropGoneSetupTabs, nameAgents, planRing, toRow } from "./toRow";
 
 const profile = (id: string, family: Profile["family"]): Profile => ({ id, name: id, command: [id], family, cwd: null, env: [], shell_integration: true, detected: true });
 const PROFILES: Profile[] = [
@@ -471,5 +471,27 @@ describe("planRing", () => {
     expect(planRing([c(1, 90, gone), c(2, 12, soon)], now)).toEqual({ pct: 12, until: soon * 1000 });
     expect(planRing([c(1, 90, gone)], now)).toBeUndefined();
     expect(planRing([c(1, 30, null)], now)).toEqual({ pct: 30 });
+  });
+});
+
+describe("toRow: the setup result on an agent row", () => {
+  const agent = (setup: SessionInfo["setup"]) => info({ agent: "claude", setup });
+  it("says a failed setup with its exit code and links to the setup tab", () => {
+    const row = toRow(agent({ tab_id: "t-s", outcome: { kind: "failed", code: 3 } }), PROFILES);
+    expect(row.setupNote).toEqual({ text: "Setup failed (exit 3).", tabId: "t-s" });
+  });
+  it("says a closed setup", () => {
+    const row = toRow(agent({ tab_id: "t-s", outcome: { kind: "closed" } }), PROFILES);
+    expect(row.setupNote).toEqual({ text: "Setup was closed before it finished.", tabId: "t-s" });
+  });
+  it("says nothing for a setup that passed or none", () => {
+    expect(toRow(agent({ tab_id: "t-s", outcome: { kind: "passed" } }), PROFILES).setupNote).toBeUndefined();
+    expect(toRow(agent(undefined), PROFILES).setupNote).toBeUndefined();
+  });
+  it("leaves the link out when the setup tab is not in the list", () => {
+    const failed = agent({ tab_id: "t-s", outcome: { kind: "failed", code: 1 } });
+    const rows = [toRow(failed, PROFILES)];
+    expect(dropGoneSetupTabs(rows, [failed])[0]?.setupNote).toEqual({ text: "Setup failed (exit 1)." });
+    expect(dropGoneSetupTabs(rows, [failed, info({ tab_id: "t-s" })])[0]?.setupNote?.tabId).toBe("t-s");
   });
 });

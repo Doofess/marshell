@@ -76,6 +76,10 @@ pub struct CreateSessionRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub mode: Option<SessionMode>,
+    /// How the repo's `setup` ended, when the person started the agent after a setup that did not pass. Absent means none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub setup: Option<SetupResult>,
     /// A preset the agent starts with ("deepseek", on Claude Code only). Absent starts the agent as it is.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
@@ -215,6 +219,10 @@ pub struct SessionInfo {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub script: Option<ScriptKind>,
+    /// How the repo's `setup` ended, on the agent row started after it. Shown on the row only; a Restart or resume clears it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub setup: Option<SetupResult>,
 }
 
 impl SessionInfo {
@@ -1067,6 +1075,26 @@ pub struct ProjectInfo {
     pub last_used_ms: u64,
 }
 
+/// How a `setup` tab ended, and which tab it was.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct SetupResult {
+    pub tab_id: String,
+    pub outcome: SetupOutcome,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+#[ts(export)]
+pub enum SetupOutcome {
+    Passed,
+    Failed {
+        code: i32,
+    },
+    /// The tab was closed before it finished.
+    Closed,
+}
+
 /// Which of a repo's `marshell.json` scripts.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
@@ -1243,6 +1271,7 @@ mod tests {
             preset: None,
             ports: Vec::new(),
             script: None,
+            setup: None,
         };
         let mut value = serde_json::to_value(&info).unwrap();
         value.as_object_mut().unwrap().remove("muted");

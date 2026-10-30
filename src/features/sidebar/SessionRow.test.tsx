@@ -256,3 +256,24 @@ describe("SessionRow: a task", () => {
     });
   });
 });
+
+describe("SessionRow: the setup note", () => {
+  const row = { ...FIXTURES[0]!, setupNote: { text: "Setup failed (exit 1).", tabId: "t-s" } };
+  it("shows the text and a keyboard-reachable button that opens the setup tab", () => {
+    const html = renderToStaticMarkup(<SessionRow row={row} density="comfortable" tabStop onSetupOutput={() => {}} />);
+    expect(html).toContain("Setup failed (exit 1).");
+    expect(html).toMatch(/<button[^>]*session-row__setup-output[^>]*tabindex="0"[^>]*>Open its output<\/button>/);
+  });
+  it("shows the text without a link when the tab is gone, without a handler, or while renaming", () => {
+    const gone = { ...row, setupNote: { text: "Setup was closed before it finished." } };
+    const html = renderToStaticMarkup(<SessionRow row={gone} density="comfortable" onSetupOutput={() => {}} />);
+    expect(html).toContain("Setup was closed before it finished.");
+    expect(html).not.toContain("Open its output");
+    expect(renderToStaticMarkup(<SessionRow row={row} density="comfortable" />)).not.toContain("Open its output");
+  });
+  it("shows nothing for a row with no note", () => {
+    const html = renderToStaticMarkup(<SessionRow row={FIXTURES[0]!} density="comfortable" onSetupOutput={() => {}} />);
+    expect(html).not.toContain("Setup ");
+    expect(html).not.toContain("Open its output");
+  });
+});

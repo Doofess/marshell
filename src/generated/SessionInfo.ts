@@ -8,6 +8,7 @@ import type { PortChip } from "./PortChip";
 import type { ScriptKind } from "./ScriptKind";
 import type { SessionMode } from "./SessionMode";
 import type { SessionState } from "./SessionState";
+import type { SetupResult } from "./SetupResult";
 import type { Stuck } from "./Stuck";
 
 /**
@@ -80,4 +81,8 @@ ports?: Array<PortChip>,
 /**
  * Set on a tab that runs a repo's `setup` or `run` script. Cleared when the tab restarts or reopens as a plain shell.
  */
-script?: ScriptKind, };
+script?: ScriptKind, 
+/**
+ * How the repo's `setup` ended, on the agent row started after it. Shown on the row only; a Restart or resume clears it.
+ */
+setup?: SetupResult, };

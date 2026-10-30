@@ -1566,6 +1566,7 @@ export function LiveApp() {
           onSelect={pick}
           onToggle={togglePane}
           onReview={reviewSession}
+          onSetupOutput={pick}
           onSetup={(id) => {
             setAgentsFrom(rowSetupStart(sidebarRows.find((r) => r.id === id)?.agent ?? "claude"));
             openSettings("agents");

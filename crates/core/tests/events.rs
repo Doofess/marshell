@@ -66,6 +66,7 @@ async fn create(core: &RunningCore) {
         name: None,
         prompt: None,
         mode: None,
+        setup: None,
         color_scheme: None,
         tool: None,
         preset: None,

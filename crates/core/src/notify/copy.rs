@@ -252,6 +252,7 @@ mod tests {
             preset: None,
             ports: Vec::new(),
             script: None,
+            setup: None,
         };
         assert_eq!(Who::of(&info("C:\\work\\my-app")).project, "my-app");
         assert_eq!(Who::of(&info("/home/me/my-app/")).project, "my-app");

@@ -346,6 +346,16 @@
 .session-row[data-setup] .session-row__phrase {
   padding-inline-end: calc(4rem + 8px + var(--space-2));
 }
+.session-row[data-setup-output] .session-row__phrase {
+  padding-inline-end: calc(7rem + 8px + var(--space-2));
+}
+/* Beside "set up" when a row has both. */
+.session-row[data-setup][data-setup-output] .session-row__setup-output {
+  inset-inline-end: calc(4rem + 16px + var(--space-2));
+}
+.session-row[data-setup][data-setup-output] .session-row__phrase {
+  padding-inline-end: calc(11rem + 16px + var(--space-2));
+}
 .session-row__setup:focus-visible {
   outline: 2px solid var(--focus, var(--accent));
   outline-offset: 0;
