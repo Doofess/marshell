@@ -6,13 +6,13 @@ use super::AppState;
 use super::history::{Found, gone, look_up};
 use super::sessions::{Resume, cannot_resume, cannot_start_again, check_agent_installed, resolve, resume_session};
 use crate::agents::presets;
-use crate::outside::{copy_line, open_console, outside_env};
+use crate::outside::{copy_line, outside_env};
 use crate::profiles::detect::{Program, agent_command, resume_line};
 use axum::Json;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
-use marshell_protocol::api::{Profile, ResumeCommand, ResumeForm, SessionInfo, SessionMode, SessionState, ShellFamily};
+use marshell_protocol::api::{Profile, ResumeCommand, ResumeForm, SessionInfo, SessionMode, ShellFamily};
 use std::path::PathBuf;
 
 /// Why a running session can't be opened outside: two CLIs must not write one conversation.
@@ -216,6 +216,7 @@ async fn open(st: &AppState, plan: Plan) -> Response {
         PathBuf::from(&plan.cwd)
     };
     let argv = run.argv;
+    let open_console = st.console_opener();
     match tokio::task::spawn_blocking(move || open_console(&argv, &env, &env_remove, &cwd)).await {
         Ok(Ok(())) => StatusCode::NO_CONTENT.into_response(),
         Ok(Err(err)) if err.kind() == std::io::ErrorKind::Unsupported => cannot_resume(err.to_string()),
@@ -244,7 +245,7 @@ pub async fn tab_open_outside(State(st): State<AppState>, Path(tab): Path<String
     let Some(info) = st.registry().row(&tab) else {
         return (StatusCode::NOT_FOUND, "No such session.").into_response();
     };
-    if info.state == SessionState::Running {
+    if info.running() {
         return cannot_resume(END_FIRST);
     }
     if let Some(reason) = cannot_start_again(&st, &info) {

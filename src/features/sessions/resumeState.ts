@@ -2,6 +2,12 @@ import type { Profile } from "../../generated/Profile";
 import type { SessionInfo } from "../../generated/SessionInfo";
 import type { RowModel } from "../sidebar/types";
 
+/**
+ * Whether the tab counts as running for "End the session first.": its process runs and, on an agent row, the agent has not ended.
+ * Mirrors the core's `SessionInfo::running`. An agent whose hooks reported SessionEnd counts as ended while its shell lives on.
+ */
+export const sessionRunning = (info: SessionInfo): boolean => info.state.kind === "running" && !(info.agent !== null && info.live?.state === "ended");
+
 /** An agent that ended inside a shell that still runs can't be resumed until the shell exits. */
 export const offersResume = (row: RowModel, info: SessionInfo | undefined): boolean => row.status === "ended" && info?.state.kind !== "running";
 

@@ -213,6 +213,18 @@ pub struct SessionInfo {
     pub ports: Vec<crate::tools::PortChip>,
 }
 
+impl SessionInfo {
+    /// True while the tab takes the person's text as a running session: its process runs and, on an agent row,
+    /// the agent has not ended. An agent whose hooks reported SessionEnd counts as ended while its shell lives
+    /// on; a later SessionStart (a `--resume` typed in the same tab) makes it running again. A plain shell, and an
+    /// agent row with no `live`, follow the process. Whether the process itself runs (pausing, closing, the pty)
+    /// is `state == SessionState::Running`, not this.
+    pub fn running(&self) -> bool {
+        self.state == SessionState::Running
+            && !(self.agent.is_some() && self.live.as_ref().is_some_and(|l| l.state == LiveState::Ended))
+    }
+}
+
 /// A terminal program's request for attention.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[ts(export)]
@@ -1144,6 +1156,32 @@ mod tests {
         value.as_object_mut().unwrap().remove("muted");
         let back: SessionInfo = serde_json::from_value(value).unwrap();
         assert!(!back.muted);
+    }
+
+    #[test]
+    fn running_follows_the_process_and_an_ended_agent() {
+        let row = |state, agent: Option<&str>, live: Option<LiveState>| {
+            let mut v = serde_json::json!({
+                "tab_id": "a", "number": 1, "name": "n", "agent": agent, "profile_id": "p", "cwd": "c",
+                "project": "c", "mode": null, "state": { "kind": "running" }, "command": { "kind": "unknown" },
+            });
+            if let Some(l) = live {
+                v["live"] = serde_json::json!({
+                    "state": l, "phrase": "", "since_ms": 0, "recap": null, "model": null, "effort": null,
+                    "context_pct": null, "five_hour_pct": null, "five_hour_resets_at": null,
+                    "seven_day_pct": null, "subagents": 0, "subagents_finished": 0,
+                });
+            }
+            let mut info: SessionInfo = serde_json::from_value(v).unwrap();
+            info.state = state;
+            info
+        };
+        assert!(row(SessionState::Running, Some("claude"), None).running());
+        assert!(!row(SessionState::Running, Some("claude"), Some(LiveState::Ended)).running());
+        assert!(row(SessionState::Running, Some("claude"), Some(LiveState::Idle)).running());
+        assert!(row(SessionState::Running, None, None).running());
+        assert!(!row(SessionState::Exited { code: 0 }, Some("claude"), Some(LiveState::Idle)).running());
+        assert!(!row(SessionState::Ended, None, None).running());
     }
 
     #[test]

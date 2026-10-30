@@ -128,6 +128,8 @@ struct Inner {
     agent_path: Option<fn(&str) -> Option<PathBuf>>,
     /// The PATH a session's program is looked up on (see `detect::tab_path`). Tests swap it.
     tab_path: fn() -> Option<std::ffi::OsString>,
+    /// Opens "Open in system terminal"'s console (`outside::open_console`). Tests swap it, so none opens a window.
+    open_console: crate::outside::ConsoleOpener,
     /// `DEEPSEEK_API_KEY`, read when a DeepSeek session starts or the catalog is built. Tests swap it. The value goes
     /// only into that child's spawn environment.
     deepseek_key: fn() -> Option<String>,
@@ -252,6 +254,7 @@ impl AppState {
             agent_on_path: None,
             agent_path: None,
             tab_path: crate::profiles::detect::tab_path,
+            open_console: crate::outside::open_console,
             deepseek_key: || std::env::var(crate::agents::presets::DEEPSEEK_KEY_VAR).ok(),
             status_runner: |exe, args| crate::agents::run_capture(exe, args, std::time::Duration::from_secs(10)),
             own_agents: crate::agents::own::OwnCache::default(),
@@ -422,6 +425,16 @@ impl AppState {
             .expect("with_agent_check runs before the state is shared")
             .agent_on_path = Some(check);
         self
+    }
+    /// Replaces the console "Open in system terminal" opens. Call it before the state is cloned.
+    pub fn with_console(mut self, open: crate::outside::ConsoleOpener) -> Self {
+        Arc::get_mut(&mut self.0)
+            .expect("with_console runs before the state is shared")
+            .open_console = open;
+        self
+    }
+    pub(crate) fn console_opener(&self) -> crate::outside::ConsoleOpener {
+        self.0.open_console
     }
     /// Replaces the PATH lookup of an agent's file. Call it before the state is cloned.
     pub fn with_agent_path(mut self, find: fn(&str) -> Option<PathBuf>) -> Self {

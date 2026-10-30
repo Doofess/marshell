@@ -185,6 +185,81 @@ async fn fill_refuses_an_ended_row() {
     }
 }
 
+/// An agent whose hooks reported SessionEnd while its shell lives on is ended for a fill.
+#[tokio::test]
+async fn fill_refuses_a_row_whose_agent_has_ended() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = tmp.path().join("home");
+    let st = state(&home)
+        .with_claude_version(Some("2.1.302".into()))
+        .with_claude_compact_paths(home.join("user"), Vec::new());
+    let app = router(st.clone());
+    let body = serde_json::json!({
+        "cols": 80, "rows": 24, "profile_id": "echoer", "agent": "claude", "cwd": tmp.path().to_string_lossy(),
+    });
+    let res = app
+        .clone()
+        .oneshot(api("POST", "/v1/sessions", Some(body)))
+        .await
+        .unwrap();
+    let tab = serde_json::from_str::<serde_json::Value>(&body_of(res).await).unwrap()["tab_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let hook = |name: &str| {
+        let file = format!(
+            "{}/tests/fixtures/claude/2.1.302/{name}.json",
+            env!("CARGO_MANIFEST_DIR")
+        );
+        let mut req = api("POST", "/v1/hook", None);
+        *req.body_mut() = Body::from(std::fs::read(file).unwrap());
+        let h = req.headers_mut();
+        h.insert("x-marshell-role", "event".parse().unwrap());
+        h.insert("x-marshell-agent", "claude".parse().unwrap());
+        h.insert("x-marshell-tab", tab.parse().unwrap());
+        h.insert("x-marshell-version", "0.0.0".parse().unwrap());
+        req
+    };
+    let live = || st.registry().row(&tab).unwrap().live.map(|l| l.state);
+    let res = app.clone().oneshot(hook("SessionStart")).await.unwrap();
+    assert_eq!(res.status(), StatusCode::NO_CONTENT);
+    assert_eq!(live(), Some(marshell_protocol::api::LiveState::Idle));
+    let res = app.clone().oneshot(hook("SessionEnd")).await.unwrap();
+    assert_eq!(res.status(), StatusCode::NO_CONTENT);
+    assert_eq!(live(), Some(marshell_protocol::api::LiveState::Ended));
+    // The pty is still alive; only the agent ended.
+    assert!(st.session(&tab).is_some_and(|s| !s.has_exited()));
+    for wait in [false, true] {
+        let res = app
+            .clone()
+            .oneshot(api(
+                "POST",
+                &format!("/v1/sessions/{tab}/fill"),
+                fill_body("hello", wait),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::CONFLICT);
+        assert_eq!(body_of(res).await, r#"{"reason":"ended"}"#);
+    }
+    // A SessionStart (a `--resume` typed in the same tab) makes it take text again.
+    let res = app.clone().oneshot(hook("SessionStart")).await.unwrap();
+    assert_eq!(res.status(), StatusCode::NO_CONTENT);
+    let res = app
+        .clone()
+        .oneshot(api(
+            "POST",
+            &format!("/v1/sessions/{tab}/fill"),
+            fill_body("hello", false),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::NO_CONTENT);
+    if let Some(session) = st.remove_session(&tab) {
+        session.force_kill();
+    }
+}
+
 #[tokio::test]
 async fn fill_refuses_a_paused_session() {
     let tmp = tempfile::tempdir().unwrap();

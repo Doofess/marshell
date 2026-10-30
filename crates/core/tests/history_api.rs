@@ -362,6 +362,80 @@ async fn resume_starts_claude_with_the_session_in_its_folder() {
     assert_eq!(env.state.live_session_count(), 0);
 }
 
+/// "Agent ended = ended": once the tab's Claude reported SessionEnd the conversation no longer runs in it, though the
+/// tab's shell lives on, so a Resume (which starts a new tab, never touches the old one) goes through.
+#[tokio::test]
+async fn resume_goes_on_when_the_agent_in_the_tab_has_ended() {
+    common::tie_children_to_test();
+    let home = tempfile::tempdir().unwrap();
+    let work = tempfile::tempdir().unwrap();
+    let state = AppState::new(
+        TOKEN.into(),
+        PORT,
+        vec!["http://tauri.localhost".into()],
+        home.path().to_path_buf(),
+        vec![waiter()],
+    )
+    .with_agent_check(|_| true)
+    .with_codex_version(None)
+    .with_claude_version(Some("2.1.302".into()))
+    .with_claude_compact_paths(home.path().join("user"), Vec::new());
+    let env = Env {
+        app: router(state.clone()),
+        state,
+        home,
+        work,
+    };
+    let claude_dir = tempfile::tempdir().unwrap();
+    index_session(&env, ID, claude_dir.path());
+    let meta = env.state.history().latest_for_tab("t1").unwrap();
+    copy_transcript(env.home.path(), &meta).unwrap();
+    env.state.history().reindex(&meta);
+    let uri = format!("/v1/history/claude/{ID}/resume");
+
+    let (status, text) = call(&env.app, req("POST", &uri, Some(resume_body()))).await;
+    assert_eq!(status, StatusCode::OK, "{text}");
+    let tab = serde_json::from_str::<Value>(&text).unwrap()["tab_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let body = json!({
+        "hook_event_name": "SessionStart",
+        "session_id": ID,
+        "transcript_path": claude_dir.path().join(format!("{ID}.jsonl")).to_string_lossy(),
+        "cwd": env.work.path().to_string_lossy(),
+    });
+    env.state.history().note_event("claude", &tab, None, &body, 2000);
+    let (status, text) = call(&env.app, req("POST", &uri, Some(resume_body()))).await;
+    assert_eq!(status, StatusCode::CONFLICT, "{text}");
+
+    // The agent ends; its shell stays.
+    let mut end = req("POST", "/v1/hook", None);
+    *end.body_mut() = Body::from(br#"{"hook_event_name":"SessionEnd"}"#.to_vec());
+    for (k, v) in [
+        ("x-marshell-role", "event"),
+        ("x-marshell-agent", "claude"),
+        ("x-marshell-tab", &tab),
+        ("x-marshell-version", "0.0.0"),
+    ] {
+        end.headers_mut().insert(k, v.parse().unwrap());
+    }
+    assert_eq!(call(&env.app, end).await.0, StatusCode::NO_CONTENT);
+    let row = env.state.registry().row(&tab).unwrap();
+    assert!(
+        !row.running() && row.state == marshell_protocol::api::SessionState::Running,
+        "{row:?}"
+    );
+    let (status, text) = call(&env.app, req("POST", &uri, Some(resume_body()))).await;
+    assert_eq!(status, StatusCode::OK, "{text}");
+    let second: Value = serde_json::from_str(&text).unwrap();
+    for t in [tab.as_str(), second["tab_id"].as_str().unwrap()] {
+        if let Some(session) = env.state.remove_session(t) {
+            session.force_kill();
+        }
+    }
+}
+
 #[tokio::test]
 async fn resume_refuses_a_conversation_running_in_a_tab() {
     common::tie_children_to_test();

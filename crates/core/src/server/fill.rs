@@ -9,7 +9,7 @@ use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use marshell_protocol::agents::HookInstall;
-use marshell_protocol::api::{FillRequest, SessionState};
+use marshell_protocol::api::FillRequest;
 use std::time::{Duration, Instant};
 
 /// The refusal for text that holds a control character.
@@ -80,7 +80,7 @@ pub async fn fill(State(st): State<AppState>, Path(tab): Path<String>, Json(req)
         let Some(row) = st.registry().row(&tab) else {
             return (StatusCode::NOT_FOUND, "No such session.").into_response();
         };
-        if row.state != SessionState::Running {
+        if !row.running() {
             return cannot_resume("ended");
         }
         let Some(session) = st.session(&tab) else {

@@ -1,5 +1,5 @@
 //! The resume command and "Open in system terminal" through the API. Every session runs the fake agent in `sleep`
-//! mode (the profile's command), and a refused open starts nothing: no test opens a console window.
+//! mode (the profile's command), and no test opens a console window: the state's console only records what it would run.
 
 mod common;
 
@@ -60,6 +60,18 @@ fn state(home: &Path) -> AppState {
     .with_agent_path(on_path)
     .with_codex_version(Some("9.9.9".into()))
     .with_deepseek_key(key)
+    .with_console(record_console)
+}
+
+/// Stands in for the console window: writes the command it would run to `opened.txt` in its folder.
+fn record_console(argv: &[String], _: &[(String, String)], _: &[String], cwd: &Path) -> std::io::Result<()> {
+    std::fs::write(
+        cwd.join("opened.txt"),
+        argv.join(
+            "
+",
+        ),
+    )
 }
 
 fn api(method: &str, path: &str, body: Option<Value>) -> Request<Body> {
@@ -275,6 +287,48 @@ async fn open_outside_refuses_a_running_tab() {
     let (status, body) = post(&app, &format!("/v1/sessions/{tab}/open-outside")).await;
     assert_eq!(status, StatusCode::CONFLICT);
     assert_eq!(reason(&body), "End the session first.");
+}
+
+/// Posts Claude's `name` hook event (a 2.1.302 fixture) from `tab`.
+async fn hook(app: &axum::Router, tab: &str, name: &str) {
+    let file = format!(
+        "{}/tests/fixtures/claude/2.1.302/{name}.json",
+        env!("CARGO_MANIFEST_DIR")
+    );
+    let mut req = api("POST", "/v1/hook", None);
+    *req.body_mut() = Body::from(std::fs::read(file).unwrap());
+    let headers = req.headers_mut();
+    headers.insert("x-marshell-role", "event".parse().unwrap());
+    headers.insert("x-marshell-agent", "claude".parse().unwrap());
+    headers.insert("x-marshell-tab", tab.parse().unwrap());
+    headers.insert("x-marshell-version", "0.0.0".parse().unwrap());
+    let (status, text) = send(app, req).await;
+    assert_eq!(status, StatusCode::NO_CONTENT, "{name}: {text}");
+}
+
+/// Once Claude's SessionEnd arrives, the tab's shell living on doesn't hold the conversation: it opens outside.
+#[tokio::test]
+async fn open_outside_opens_a_tab_whose_agent_has_ended() {
+    let home = tempfile::tempdir().unwrap();
+    let work = tempfile::tempdir().unwrap();
+    let st = state(home.path())
+        .with_claude_version(Some("2.1.302".into()))
+        .with_claude_compact_paths(home.path().join("user"), Vec::new());
+    let app = router(st.clone());
+
+    let tab = start(&app, Some("claude"), work.path(), json!({})).await;
+    hook(&app, &tab, "SessionStart").await;
+    let (status, body) = post(&app, &format!("/v1/sessions/{tab}/open-outside")).await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    assert_eq!(reason(&body), "End the session first.");
+    assert!(!work.path().join("opened.txt").exists());
+
+    hook(&app, &tab, "SessionEnd").await;
+    assert!(st.session(&tab).is_some_and(|s| !s.has_exited()), "the shell lives on");
+    let (status, body) = post(&app, &format!("/v1/sessions/{tab}/open-outside")).await;
+    assert_eq!(status, StatusCode::NO_CONTENT, "{body}");
+    let opened = std::fs::read_to_string(work.path().join("opened.txt")).unwrap();
+    assert!(opened.contains("claude"), "{opened}");
 }
 
 #[tokio::test]

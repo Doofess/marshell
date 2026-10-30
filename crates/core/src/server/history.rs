@@ -16,7 +16,7 @@ use axum::Json;
 use axum::extract::{Path, Query, State};
 use axum::http::{StatusCode, header};
 use axum::response::{IntoResponse, Response};
-use marshell_protocol::api::{CreateSessionResponse, SessionState};
+use marshell_protocol::api::CreateSessionResponse;
 use marshell_protocol::history::{
     Bookmarked, Conversation, HistoryEntry, HistoryPatch, HistoryQuery, RecordingFrames, RecordingPart,
     RetentionLimits, RetentionPreview, SearchHit,
@@ -541,7 +541,7 @@ pub(super) async fn look_up(st: &AppState, agent: &str, session_id: &str, refuse
         .snapshot()
         .sessions
         .into_iter()
-        .filter(|s| s.state == SessionState::Running)
+        .filter(|s| s.running())
         .map(|s| s.tab_id)
         .collect();
     let home = st.home().to_path_buf();

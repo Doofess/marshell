@@ -164,6 +164,17 @@ fn refusal(body: &str) -> Refusal {
     }
 }
 
+/// A live status whose agent has ended (its hooks reported SessionEnd).
+#[cfg(test)]
+pub fn ended_live() -> marshell_protocol::api::LiveStatus {
+    serde_json::from_value(serde_json::json!({
+        "state": "ended", "phrase": "Ended", "since_ms": 0, "recap": null, "model": null, "effort": null,
+        "context_pct": null, "five_hour_pct": null, "five_hour_resets_at": null, "seven_day_pct": null,
+        "subagents": 0, "subagents_finished": 0,
+    }))
+    .unwrap()
+}
+
 #[cfg(test)]
 pub fn sample(number: u32, tab: &str, state: marshell_protocol::api::SessionState) -> SessionInfo {
     let mut row: SessionInfo = serde_json::from_value(serde_json::json!({

@@ -87,7 +87,7 @@ import { LivePalette } from "./LivePalette";
 import { LiveShortcuts } from "./LiveShortcuts";
 import { ResumeBar } from "./ResumeBar";
 import { sessionResumeCommand } from "./resumeCommand";
-import { holdsResume, offersModeChange, offersResume, resumeBlockedReason, resumeStateOf } from "./resumeState";
+import { holdsResume, offersModeChange, offersResume, resumeBlockedReason, resumeStateOf, sessionRunning } from "./resumeState";
 import { PAUSED_TYPING_TEXT, SessionActions, closeBarText, needsCloseConfirm, pauseBarStale, pauseBarText, restartBarStale, restartBarText, tabIdOfNumber } from "./sessionActions";
 import { navPanesOf, useNavigation } from "./useNavigation";
 import type { NavEffect } from "../../lib/navigation/types";
@@ -963,7 +963,7 @@ export function LiveApp() {
           break;
         case "copy-resume":
         case "open-outside":
-          if (endpoint && info) void runResumeItem(itemId, { tabId: id, running: info.state.kind === "running" }, { endpoint, announce, write: (t) => navigator.clipboard.writeText(t) });
+          if (endpoint && info) void runResumeItem(itemId, { tabId: id, running: sessionRunning(info) }, { endpoint, announce, write: (t) => navigator.clipboard.writeText(t) });
           break;
         case "mute":
         case "unmute":

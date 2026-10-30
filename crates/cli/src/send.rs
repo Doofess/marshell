@@ -4,8 +4,13 @@
 //! Exit codes: 0 filled, 1 refused, failed or the app is closed.
 
 use crate::client::{Client, NOT_RUNNING, resolve};
-use marshell_protocol::api::SessionState;
+use marshell_protocol::api::SessionInfo;
 use std::io::{self, Write};
+
+/// The refusal for a row that can't take text: its process or its agent has ended.
+fn ended_message(row: &SessionInfo) -> Option<String> {
+    (!row.running()).then(|| format!("Session {} has ended, so it can't take text.", row.number))
+}
 
 pub fn run(
     env: &dyn Fn(&str) -> Option<String>,
@@ -34,9 +39,8 @@ pub fn run(
         return 1;
     };
     let number = row.number;
-    let ended = format!("Session {number} has ended, so it can't take text.");
-    // An ended or exited row is refused here, so nothing is ever written to a dead pty.
-    if row.state != SessionState::Running {
+    // An ended or exited row, or one whose agent has ended, is refused here, so nothing is written to a dead pty.
+    if let Some(ended) = ended_message(row) {
         let _ = writeln!(err, "{ended}");
         return 1;
     }
@@ -50,5 +54,29 @@ pub fn run(
             let _ = writeln!(err, "{}", refusal.message(number));
             1
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::client::{ended_live, sample};
+    use marshell_protocol::api::SessionState;
+
+    #[test]
+    fn an_ended_exited_or_agent_ended_row_is_refused() {
+        let message = "Session 3 has ended, so it can't take text.";
+        assert_eq!(
+            ended_message(&sample(3, "t", SessionState::Ended)).as_deref(),
+            Some(message)
+        );
+        assert_eq!(
+            ended_message(&sample(3, "t", SessionState::Exited { code: 0 })).as_deref(),
+            Some(message)
+        );
+        let mut agent_ended = sample(3, "t", SessionState::Running);
+        assert_eq!(ended_message(&agent_ended), None);
+        agent_ended.live = Some(ended_live());
+        assert_eq!(ended_message(&agent_ended).as_deref(), Some(message));
     }
 }

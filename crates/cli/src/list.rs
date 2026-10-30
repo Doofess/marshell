@@ -70,6 +70,7 @@ pub fn json(sessions: &[SessionInfo]) -> String {
 
 fn state_word(s: &SessionInfo) -> &'static str {
     match s.state {
+        SessionState::Running if !s.running() => "ended",
         SessionState::Running => "running",
         SessionState::Exited { .. } => "exited",
         SessionState::Ended => "ended",
@@ -111,6 +112,7 @@ pub fn run(env: &dyn Fn(&str) -> Option<String>, json_output: bool, out: &mut dy
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::client::ended_live;
     use crate::client::sample;
     use marshell_protocol::api::SessionState;
 
@@ -153,6 +155,19 @@ mod tests {
         assert_eq!(parsed[1]["state"], "exited");
         assert!(parsed[1]["agent"].is_null() && parsed[1]["mode"].is_null());
         assert_eq!(json(&[]).trim(), "[]");
+    }
+
+    #[test]
+    fn a_running_row_whose_agent_ended_is_state_ended() {
+        let mut row = sample(5, "t", SessionState::Running);
+        row.live = Some(ended_live());
+        assert_eq!(state_word(&row), "ended");
+        assert!(table(&[row.clone()]).contains("ended"));
+        let parsed: serde_json::Value = serde_json::from_str(&json(&[row.clone()])).unwrap();
+        assert_eq!(parsed[0]["state"], "ended");
+        // A plain shell follows its process.
+        row.agent = None;
+        assert_eq!(state_word(&row), "running");
     }
 
     #[test]
