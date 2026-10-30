@@ -95,12 +95,13 @@ pub async fn fill(State(st): State<AppState>, Path(tab): Path<String>, Json(req)
             return cannot_resume("It is paused.");
         }
         // A pending answer would take the text as its own keys (a digit, `y`), so nothing is typed until it is
-        // answered, and Marshell's held card is left alone.
+        // answered, and Marshell's held card is left alone. A dialog dismissed with Escape sends no hook, so the row
+        // keeps saying it waits: a key typed in the terminal since the dialog appeared counts as its answer.
         let waiting = st.holds().has_tab(&tab)
-            || row
-                .live
-                .as_ref()
-                .is_some_and(|l| matches!(l.state, LiveState::NeedsPermission | LiveState::NeedsQuestion));
+            || row.live.as_ref().is_some_and(|l| {
+                matches!(l.state, LiveState::NeedsPermission | LiveState::NeedsQuestion)
+                    && !st.registry().typed_since(&tab, l.since_ms)
+            });
         if waiting && !req.wait {
             return cannot_resume("waiting");
         }

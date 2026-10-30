@@ -82,6 +82,8 @@ pub struct Entry {
     stuck: StuckTracker,
     /// When the person last typed into the session. Not serialized.
     last_input: Option<Instant>,
+    /// The same, in ms since the Unix epoch, to compare with a live status's `since_ms`. Not serialized.
+    last_input_ms: Option<u64>,
     /// The program reported OSC 9;4 progress (normal or indeterminate) and has not cleared it: the
     /// row holds Working, whatever the output watcher says. Only a row on the output fallback takes
     /// it. Not serialized.
@@ -314,6 +316,7 @@ impl Registry {
             session_started: false,
             stuck: StuckTracker::default(),
             last_input: None,
+            last_input_ms: None,
             progress_hold: false,
             displaced_by: None,
             tool_attention: false,
@@ -368,6 +371,7 @@ impl Registry {
                 session_started: false,
                 stuck: StuckTracker::default(),
                 last_input: None,
+                last_input_ms: None,
                 progress_hold: false,
                 displaced_by: None,
                 tool_attention: false,
@@ -500,6 +504,17 @@ impl Registry {
             .iter()
             .find(|e| e.info.tab_id == tab_id)
             .map(|e| e.info.clone())
+    }
+
+    /// Whether the person typed into the session at or after `since_ms` (ms since the Unix epoch).
+    pub fn typed_since(&self, tab_id: &str, since_ms: u64) -> bool {
+        let state = self.state.lock().unwrap();
+        state
+            .open
+            .iter()
+            .find(|e| e.info.tab_id == tab_id)
+            .and_then(|e| e.last_input_ms)
+            .is_some_and(|at| at >= since_ms)
     }
 
     /// Whether a `SessionStart` hook event has landed for the tab's current process.
@@ -714,6 +729,10 @@ impl Registry {
             return;
         };
         entry.last_input = Some(Instant::now());
+        entry.last_input_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .ok()
+            .map(|d| d.as_millis() as u64);
         if entry.drop_attention() {
             self.tx.send_replace(state.snapshot());
         }

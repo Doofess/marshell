@@ -369,6 +369,71 @@ async fn fill_refuses_a_session_waiting_for_an_answer() {
     }
 }
 
+/// A question dismissed with Escape sends no hook, so the row keeps saying it has a question: a key typed in the
+/// terminal since the question appeared ends the wait (found at the live recheck).
+#[tokio::test]
+async fn fill_goes_on_once_the_person_typed_after_the_question() {
+    let tmp = tempfile::tempdir().unwrap();
+    let st = claude_state(&tmp.path().join("home"));
+    let app = router(st.clone());
+    let tab = start_claude(&app, tmp.path()).await;
+    let res = app
+        .clone()
+        .oneshot(hook_request("event", &tab, "SessionStart"))
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::NO_CONTENT);
+    // Typed before the question: it doesn't answer it.
+    let input = format!("/v1/sessions/{tab}/input");
+    let typed = |text: &str| api("POST", &input, Some(serde_json::json!({ "text": text })));
+    assert_eq!(
+        app.clone().oneshot(typed("a")).await.unwrap().status(),
+        StatusCode::NO_CONTENT
+    );
+    tokio::time::sleep(Duration::from_millis(20)).await;
+    let mut question = hook_request("event", &tab, "PreToolUse");
+    let mut body: serde_json::Value = serde_json::from_str(&body_of_request(&mut question).await).unwrap();
+    body["tool_name"] = "AskUserQuestion".into();
+    body["tool_input"] = serde_json::json!({ "questions": [] });
+    *question.body_mut() = Body::from(body.to_string());
+    assert_eq!(
+        app.clone().oneshot(question).await.unwrap().status(),
+        StatusCode::NO_CONTENT
+    );
+    let live = st.registry().row(&tab).unwrap().live.map(|l| l.state);
+    assert_eq!(live, Some(marshell_protocol::api::LiveState::NeedsQuestion));
+    let route = format!("/v1/sessions/{tab}/fill");
+    let res = app
+        .clone()
+        .oneshot(api("POST", &route, fill_body("hello", false)))
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::CONFLICT);
+    assert_eq!(body_of(res).await, r#"{"reason":"waiting"}"#);
+
+    // Escape in the terminal: no hook follows, and the row still says it has a question.
+    assert_eq!(
+        app.clone().oneshot(typed("\u{1b}")).await.unwrap().status(),
+        StatusCode::NO_CONTENT
+    );
+    let live = st.registry().row(&tab).unwrap().live.map(|l| l.state);
+    assert_eq!(live, Some(marshell_protocol::api::LiveState::NeedsQuestion));
+    let res = app
+        .clone()
+        .oneshot(api("POST", &route, fill_body("hello", false)))
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::NO_CONTENT);
+    if let Some(session) = st.remove_session(&tab) {
+        session.force_kill();
+    }
+}
+
+async fn body_of_request(req: &mut Request<Body>) -> String {
+    let body = std::mem::replace(req.body_mut(), Body::empty());
+    String::from_utf8(axum::body::to_bytes(body, usize::MAX).await.unwrap().to_vec()).unwrap()
+}
+
 /// A Claude row with Marshell's hooks installed is not ready until its SessionStart arrives, however quiet it is.
 #[tokio::test]
 async fn fill_with_wait_holds_for_session_start_when_the_hooks_are_installed() {
