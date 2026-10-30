@@ -49,7 +49,6 @@ export function Sidebar({
   onToggle,
   onReview,
   onSetup,
-  onSetupOutput,
   menuItems,
   onMenuRun,
   grouped = false,
@@ -92,7 +91,6 @@ export function Sidebar({
   onReview?: (id: string) => void;
   /** Opens the hooks setup from a Claude Code row that says "Status limited". */
   onSetup?: (id: string) => void;
-  onSetupOutput?: (tabId: string) => void;
   /** The items of a row's right-click menu. Left out, rows have no menu. */
   menuItems?: (id: string) => MenuItem[];
   /** A menu item was chosen: the row's session id and the item's id. */
@@ -235,7 +233,6 @@ export function Sidebar({
       onToggle={onToggle && (() => onToggle(r.id))}
       onReview={onReview && (() => onReview(r.id))}
       onSetup={onSetup && (() => onSetup(r.id))}
-      onSetupOutput={onSetupOutput}
       peek={readScreen ? { onOpen: (el) => peek.openFromKey(r.id, el), onHover: (el) => peek.hoverRow(r.id, el), onLeave: peek.leaveRow } : undefined}
       onMenu={
         menuItems &&

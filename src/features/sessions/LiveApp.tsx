@@ -1077,6 +1077,12 @@ export function LiveApp() {
         case "unmute":
           if (endpoint) void sessions.setMuted(endpoint, id, itemId === "mute").catch(() => announce("Couldn't change the mute. Try again."));
           break;
+        // Selects the setup tab; the row has no button for it, as the buttons covered the status.
+        case "setup-output": {
+          const tabId = rows.find((r) => r.id === id)?.setupNote?.tabId;
+          if (tabId !== undefined) pick(tabId);
+          break;
+        }
         // After the menu has gone, so the sheet takes the focus and the menu does not give it back to the row.
         case "review-task":
           setTimeout(() => reviewSession(id), 0);
@@ -1677,7 +1683,6 @@ export function LiveApp() {
           onSelect={pick}
           onToggle={togglePane}
           onReview={reviewSession}
-          onSetupOutput={pick}
           scriptControl={scriptControl}
           onRunScript={runRepoScript}
           onStopScript={stopRepoScript}

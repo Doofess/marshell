@@ -8,7 +8,7 @@ import { toastFor } from "./resumeActions";
 
 const info = (tab_id: string, running = true, profile_id = "pwsh"): SessionInfo =>
   ({ tab_id, profile_id, state: running ? { kind: "running" } : { kind: "exited", code: 0 } }) as SessionInfo;
-const row = (id: string, task = false) => ({ id, task }) as RowModel;
+const row = (id: string, task = false, setupTab?: string) => ({ id, task, ...(setupTab ? { setupNote: { text: "Setup failed (exit 2).", tabId: setupTab } } : {}) }) as RowModel;
 const ctx = (over: Partial<Parameters<typeof menuFacts>[1]> = {}) => ({
   infos: [info("x")],
   profiles: [{ id: "pwsh" }] as Profile[],
@@ -55,6 +55,17 @@ describe("menuFacts: Resume is offered only where the Resume bar would let it ru
   });
   it("an empty profile list is unknown, not removed", () => {
     expect(exited("gone", []).resumable).toBe(true);
+  });
+});
+
+describe("setupOutput fact", () => {
+  it("is true only when the row's setup note still has its tab", () => {
+    expect(menuFacts("x", ctx()).setupOutput).toBe(false);
+    expect(menuFacts("x", ctx({ rows: [row("x", false, "t-s")] })).setupOutput).toBe(true);
+    expect(menuFacts("x", ctx({ rows: [{ id: "x", setupNote: { text: "Setup was closed before it finished." } } as RowModel] })).setupOutput).toBe(false);
+  });
+  it("leaves focus to the setup tab it selects", () => {
+    expect(focusAfterMenu("setup-output", false)).toBeNull();
   });
 });
 

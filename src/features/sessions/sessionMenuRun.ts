@@ -36,6 +36,7 @@ export function menuFacts(
     // Not where the Resume bar would be disabled (its profile was removed): an item that can't apply is left out, never offered to fail.
     resumable: info !== undefined && info.state.kind !== "running" && resumeBlockedReason(info.profile_id, ctx.profiles) === undefined,
     task: row?.task === true,
+    setupOutput: row?.setupNote?.tabId !== undefined,
     muted: info?.muted === true,
     bookmarkable: info?.agent === "claude",
     inShownPane: onScreen.includes(id),

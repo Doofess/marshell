@@ -50,7 +50,6 @@ export function SessionRow({
   onToggle,
   onReview,
   onSetup,
-  onSetupOutput,
   onMenu,
   peek,
 }: {
@@ -72,8 +71,6 @@ export function SessionRow({
   onReview?: () => void;
   /** Opens the hooks setup. Shown on a row with `setupLink`; left out, there is no button (stories). */
   onSetup?: () => void;
-  /** Selects the setup tab, for the "Open its output" link of a row with a `setupNote`. Left out, there is no link (stories). */
-  onSetupOutput?: (tabId: string) => void;
   /** Right-click, Shift+F10 or the Menu key: where to open the row's menu. Left out, the row has no menu. */
   onMenu?: (anchor: { x: number; y: number }) => void;
   /** Space opens Peek (focus goes into it); a mouse resting on the row opens it after a delay. Left out, the row has no Peek. */
@@ -89,8 +86,6 @@ export function SessionRow({
   const branch = row.branch ? splitForMiddle(row.branch) : null;
   const reviewable = Boolean(row.task && onReview && !rename);
   const settable = Boolean(row.setupLink && onSetup && !rename);
-  const outputTab = row.setupNote?.tabId;
-  const outputLink = Boolean(outputTab !== undefined && onSetupOutput && !rename);
 
   return (
     <div
@@ -116,7 +111,6 @@ export function SessionRow({
       data-renaming={rename ? "" : undefined}
       data-review={reviewable ? (selected ? "open" : "") : undefined}
       data-setup={settable ? "" : undefined}
-      data-setup-output={outputLink ? "" : undefined}
       data-row-id={drag ? row.id : undefined}
       data-dragging={drag?.dragging ? "" : undefined}
       data-drop={drag?.dropEdge}
@@ -245,24 +239,6 @@ export function SessionRow({
           }}
         >
           Review changes
-        </button>
-      )}
-      {/* Same rules as the review button: outside the aria-hidden lines, in the row's tab order, and a click here is not a click on the row. */}
-      {outputLink && outputTab !== undefined && (
-        <button
-          type="button"
-          className="session-row__setup session-row__setup-output"
-          aria-label={`Open the setup output for ${row.name}`}
-          tabIndex={tabStop ? 0 : -1}
-          onClick={(e) => {
-            e.stopPropagation();
-            onSetupOutput?.(outputTab);
-          }}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" || e.key === " ") e.stopPropagation();
-          }}
-        >
-          Open its output
         </button>
       )}
       {settable && (

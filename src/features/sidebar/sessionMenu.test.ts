@@ -5,8 +5,8 @@ import { menuFacts } from "../sessions/sessionMenuRun";
 import { FIXTURES } from "./fixtures";
 import { modeMenuItems, sessionMenuItems, type SessionMenuFacts } from "./sessionMenu";
 
-const all: SessionMenuFacts = { agent: true, modeChangeable: true, resumable: true, task: true, inShownPane: false, paneAvailable: true, pausable: true, paused: false, muted: false, bookmarkable: true };
-const none: SessionMenuFacts = { agent: false, modeChangeable: true, resumable: false, task: false, inShownPane: false, paneAvailable: false, pausable: false, paused: false, muted: false, bookmarkable: false };
+const all: SessionMenuFacts = { agent: true, modeChangeable: true, resumable: true, task: true, inShownPane: false, paneAvailable: true, pausable: true, paused: false, muted: false, bookmarkable: true, setupOutput: false };
+const none: SessionMenuFacts = { agent: false, modeChangeable: true, resumable: false, task: false, inShownPane: false, paneAvailable: false, pausable: false, paused: false, muted: false, bookmarkable: false, setupOutput: false };
 
 const ids = (facts: SessionMenuFacts) =>
   sessionMenuItems(facts, "windows").map((i) => ("separator" in i ? "-" : i.id));
@@ -150,5 +150,17 @@ describe("modeMenuItems for an agent that maps only some modes", () => {
   it("lists only the offered ones, in MODES order", () => {
     const items = modeMenuItems("manual", ["manual", "plan", "bypass"]);
     expect(items.map((i) => ("separator" in i ? "-" : i.id))).toEqual(["mode-manual", "mode-plan", "mode-bypass"]);
+  });
+});
+
+describe("Open setup output", () => {
+  it("is offered only when the row has a setup tab to open, just before Review changes", () => {
+    expect(ids(all)).not.toContain("setup-output");
+    const list = ids({ ...all, setupOutput: true });
+    expect(list).toContain("setup-output");
+    expect(list.indexOf("setup-output")).toBe(list.indexOf("review-task") - 1);
+    const item = sessionMenuItems({ ...none, setupOutput: true }, "windows").find((i) => "id" in i && i.id === "setup-output");
+    expect(item).toMatchObject({ label: "Open setup output" });
+    expect(ids({ ...none, setupOutput: true })).toContain("setup-output");
   });
 });
