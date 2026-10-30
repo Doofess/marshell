@@ -31,6 +31,12 @@ describe("rowLabel", () => {
     expect(l).toContain("feat/auth-flow Opus 5.5. Claude Opus 5.5, Idle.");
     expect(l).not.toContain("·.");
   });
+  it("reads a setup note where the row draws it, after the phrase", () => {
+    const l = rowLabel({ ...base, muted: false, setupNote: { text: "Setup failed (exit 2).", tabId: "t9" } });
+    expect(l).toContain("npm test · Setup failed (exit 2).");
+    expect(rowLabel({ ...base, phrase: "", muted: false, setupNote: { text: "Setup failed (exit 2)." } })).toContain("Setup failed (exit 2).");
+  });
+
   it("adds what only the glyphs say (agent, state, elevated, mode, muted, context) after the visible text", () => {
     const l = rowLabel({ ...base, muted: true, elevated: true, mode: "full-auto" });
     expect(l).toContain("Administrator. Full auto. Muted.");

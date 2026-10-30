@@ -26,7 +26,8 @@ export function rowLabel(r: RowModel, density: Density = "comfortable"): string 
   const time = r.waitingMs ?? (r.status === "done-unseen" || r.status === "done-seen" || r.status === "ended" ? r.ageMs : undefined);
   // A comfortable row draws the subagent count after the phrase; an expanded one draws it on its meta line.
   const count = density !== "expanded" && r.subagents !== undefined ? subagentsText(r.subagents) : "";
-  const phrase = [plain(r.phrase), count].filter(Boolean).join(" \u00b7 ") + (r.muted ? " \u00b7 muted" : "");
+  const drawn = [plain(r.phrase), count].filter(Boolean).join(" \u00b7 ") + (r.muted ? " \u00b7 muted" : "");
+  const phrase = [drawn, r.setupNote?.text].filter(Boolean).join(" \u00b7 ");
   const seen: Array<string | null | undefined> = [
     r.name,
     projectAndBranch(r),
