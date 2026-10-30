@@ -23,6 +23,18 @@ describe("AgentsSectionView switches", () => {
   });
 });
 
+describe("AgentsSectionView skill row", () => {
+  const skillHandlers = { install: none, remove: none, apply: none, toggleDiff: none, reload: none, cancel: none };
+  const skills = { claude: { flow: null, on: skillHandlers }, codex: { flow: null, on: skillHandlers }, antigravity: { flow: null, on: skillHandlers } };
+  const withSkills = (setup: AgentSetup) => renderToStaticMarkup(<AgentsSectionView setup={setup} panel={{ kind: "list" }} liveStatus={true} skills={skills} {...handlers} />);
+  it("shows the skill row for a CLI that is found", () => {
+    expect(withSkills(SETUP)).toContain('data-agent-skill="claude"');
+  });
+  it("leaves the skill row out for a CLI that is not found", () => {
+    expect(withSkills({ ...SETUP, found: false })).not.toContain("data-agent-skill");
+  });
+});
+
 describe("AgentsSectionView", () => {
   it("offers Set up for approval missing from an installed status setup", () => {
     const h = view({ ...SETUP, hooks: "installed", approve_installed: false });
