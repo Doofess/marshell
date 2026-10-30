@@ -7,6 +7,7 @@ use axum::body::Body;
 use axum::http::{Request, StatusCode, header};
 use marshell_core::projects::canonical;
 use marshell_core::server::{AppState, router};
+use marshell_protocol::api::{Profile, ShellFamily};
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
@@ -33,12 +34,24 @@ fn env() -> Env {
     let repo = root.join("repo");
     std::fs::create_dir_all(&home).unwrap();
     std::fs::create_dir_all(repo.join(".git")).unwrap();
+    // One profile, the default: a script tab is that profile running the script.
+    let shell = Profile {
+        id: "shell".into(),
+        name: "Shell".into(),
+        command: vec![marshell_core::scripts::default_shell()],
+        family: ShellFamily::Posix,
+        cwd: None,
+        env: Vec::new(),
+        shell_integration: true,
+        terminal_theme: None,
+        detected: true,
+    };
     let st = AppState::new(
         TOKEN.into(),
         PORT,
         vec!["http://tauri.localhost".into()],
         home,
-        Vec::new(),
+        vec![shell],
     )
     .with_agent_path(|_| None);
     Env {
@@ -284,6 +297,8 @@ async fn run_starts_a_named_session_in_the_checkout_root() {
     assert_eq!(row["name"], "Run");
     assert_eq!(row["script"], "run");
     assert_eq!(row["agent"], Value::Null);
+    // The default profile, so a Resume or Restart of the tab runs that profile's shell, never a "custom" one.
+    assert_eq!(row["profile_id"], "shell");
     assert_eq!(canonical(Path::new(row["cwd"].as_str().unwrap())), e.repo);
 
     let marker = wait_for(&e.repo.join("marker.txt")).await;

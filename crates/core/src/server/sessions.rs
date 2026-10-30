@@ -574,7 +574,18 @@ pub(super) async fn start_script(
     size: (u16, u16),
     script: ScriptKind,
 ) -> Result<CreateSessionResponse, ApiError> {
-    let run = custom(argv);
+    // The default profile with the script as its argv: the row and its Resume or Restart name that profile and run its
+    // plain shell. No shell integration is injected into a script's shell. With no default profile, the argv runs as a
+    // custom one.
+    let run = match resolve(st, None, None, None, None, None, None).await {
+        Ok(mut run) => {
+            run.argv = argv;
+            run.initial_command = None;
+            run.marks = false;
+            run
+        }
+        Err(_) => custom(argv),
+    };
     start_session_as(
         st,
         run,
