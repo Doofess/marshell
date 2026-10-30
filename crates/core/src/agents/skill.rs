@@ -76,7 +76,7 @@ pub fn install_plan(agent_name: &str, path: &Path, bytes: Option<&[u8]>) -> Chan
 pub fn remove_plan(agent_name: &str, path: &Path, bytes: Option<&[u8]>) -> ChangeSet {
     ChangeSet {
         title: format!("Remove the marshell skill for {agent_name}"),
-        reason: "Marshell takes out the skill it installed.".to_string(),
+        reason: format!("Marshell takes out the skill it installed for {agent_name}."),
         edits: bytes
             .map(|_| edit(path, EditOp::DeleteFile, bytes))
             .into_iter()
@@ -155,6 +155,7 @@ mod tests {
         assert_eq!(plan.edits.len(), 1);
         assert!(matches!(plan.edits[0].op, EditOp::DeleteFile));
         assert_eq!(plan.edits[0].expected_hash, Some(hash_bytes(SKILL_TEXT.as_bytes())));
+        assert_eq!(plan.reason, "Marshell takes out the skill it installed for Codex.");
 
         assert!(remove_plan("Codex", path, None).edits.is_empty());
     }
