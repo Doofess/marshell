@@ -500,6 +500,7 @@ mod tests {
             status: true,
             statusline: true,
             approve: false,
+            skill: false,
         };
         let changes = install_plan(&settings, &user_home, Some(original), None, &home, &want).unwrap();
         let service = ConfigService::new(home.clone());
@@ -550,6 +551,7 @@ mod tests {
             status: true,
             statusline: false,
             approve: false,
+            skill: false,
         };
         let changes = ch::install_plan(&path, original, &f.home, &want).unwrap();
         let service = ConfigService::new(f.home.clone());
@@ -657,6 +659,7 @@ mod tests {
             status: true,
             statusline: false,
             approve: false,
+            skill: false,
         };
         let changes = ah::install_plan(&f.user_home, mine, None, None, &f.home, &want).unwrap();
         let service = ConfigService::new(f.home.clone());
