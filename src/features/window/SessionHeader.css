@@ -58,10 +58,38 @@
     background: var(--selected, var(--fill-strong));
   }
 }
+/* Run and Stop: a flat button set apart by its fill, like the launcher's Back. */
+.session-header__script {
+  flex: none;
+  min-block-size: 28px;
+  padding-inline: var(--space-3);
+  border: 0;
+  border-radius: var(--radius);
+  background: var(--fill);
+  color: var(--text-1);
+  font: inherit;
+  font-weight: 500;
+  cursor: pointer;
+}
+.session-header__script:focus-visible {
+  outline: 2px solid var(--focus, var(--accent));
+  outline-offset: 2px;
+}
+.session-header__script:active {
+  background: var(--fill-strong);
+}
+@media (hover: hover) and (pointer: fine) {
+  .session-header__script:hover {
+    background: var(--fill-strong);
+  }
+}
 .session-header__spacer {
   flex: 1 1 0;
 }
 @media (forced-colors: active) {
+  .session-header__script {
+    outline: 1px solid ButtonText;
+  }
   .session-header[data-danger] {
     outline: 2px solid CanvasText;
     outline-offset: -2px;

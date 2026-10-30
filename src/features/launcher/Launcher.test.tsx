@@ -4,6 +4,8 @@ import { describe, expect, it } from "vitest";
 import { DEFAULT_CHOICE, PROJECTS, REMEMBERED } from "./fixtures";
 import { LAUNCH_GROUPS, LAUNCH_PROGRAMS, MODES, applyRemembered, type LaunchProgram, type LauncherChoice } from "./launchChoice";
 import { Launcher, type LauncherView } from "./Launcher";
+import { confirmScripts } from "../scripts/confirmScripts";
+import { scriptsFixture } from "../scripts/fixtures";
 
 const view = (p: Partial<LauncherView> = {}): LauncherView => ({ choice: DEFAULT_CHOICE, projects: PROJECTS, query: null, activeIndex: 0, ...p });
 const html = (v: LauncherView = view()) => renderToStaticMarkup(<Launcher view={v} />);
@@ -343,6 +345,46 @@ describe("Launcher: confirm a task", () => {
     const out = h({ state: "ready", commands: cmds });
     expect(out).toMatch(/<kbd>Enter<\/kbd>/);
     expect(out).toMatch(/<kbd>Esc<\/kbd>/);
+  });
+});
+
+describe("Launcher: confirm a task with a marshell.json", () => {
+  const on = { ...DEFAULT_CHOICE, worktree: true };
+  const cmds = ["git worktree add -b marshell/x C:/w/x main", "git status"];
+  const h = (scripts: ReturnType<typeof confirmScripts>, extra: Partial<ComponentProps<typeof Launcher>> = {}) =>
+    renderToStaticMarkup(<Launcher view={view({ choice: on, taskName: "x", confirm: { state: "ready", commands: cmds, ...(scripts === undefined ? {} : { scripts }) } })} paceChip={false} {...extra} />);
+  it("asks for an untrusted file above the git commands, with Allow and create and Create without scripts", () => {
+    const out = h(confirmScripts(scriptsFixture()));
+    expect(out).toContain("Allow this repo&#x27;s scripts?");
+    expect(out).toContain(">Allow and create<");
+    expect(out).toContain(">Create without scripts<");
+    expect(out.indexOf("Allow this repo")).toBeLessThan(out.indexOf("git worktree add"));
+    expect(out).toContain(">Back<");
+  });
+  it("leaves out Create and start while the question is open, so only a deliberate press allows", () => {
+    expect(h(confirmScripts(scriptsFixture()))).not.toContain(">Create and start<");
+  });
+  it("adds setup: <script> as the last command line for a trusted setup", () => {
+    const out = h(confirmScripts(scriptsFixture({ trusted: true })));
+    const codes = [...out.matchAll(/<code[^>]*>([^<]*)<\/code>/g)].map((m) => m[1]);
+    expect(codes).toEqual([...cmds, "setup: pnpm install"]);
+    expect(out).toContain(">Create and start<");
+    expect(out).not.toContain("Allow this repo");
+  });
+  it("shows a problem as one line and keeps Create and start", () => {
+    const out = h(confirmScripts(scriptsFixture({ problem: "marshell.json: bad json" })));
+    expect(out).toContain("marshell.json: bad json");
+    expect(out).not.toContain("Allow this repo");
+    expect(out).toContain(">Create and start<");
+    expect(count(out, /<code[ >]/g)).toBe(2);
+  });
+  it("shows only the card when the task already exists, with no commands and no Back", () => {
+    const out = h({ kind: "ask", scripts: scriptsFixture(), allowLabel: "Allow and run setup", cancelLabel: "Start without setup", only: true });
+    expect(out).toContain(">Allow and run setup<");
+    expect(out).toContain(">Start without setup<");
+    expect(out).not.toContain("git worktree add");
+    expect(out).not.toContain(">Back<");
+    expect(out).not.toContain("Marshell will run these commands");
   });
 });
 

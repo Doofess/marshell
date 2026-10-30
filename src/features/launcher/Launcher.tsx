@@ -2,6 +2,8 @@ import { useEffect, useId, useRef, type KeyboardEvent, type ReactNode } from "re
 import { AgentMark } from "../../components/AgentMark/AgentMark";
 import { tabbableIn } from "../../lib/focusGuard";
 import { usePopupFocus } from "../../lib/usePopupFocus";
+import type { ConfirmScripts } from "../scripts/confirmScripts";
+import { ScriptsTrust } from "../scripts/ScriptsTrust";
 import { CommandList } from "../tasks/CommandList";
 import { branchHint } from "../tasks/taskName";
 import { headerDanger, modeLabel } from "../window/SessionHeader";
@@ -27,7 +29,11 @@ import { focusFellOut, listNavKeys, stepActive } from "./launcherKeys";
 import "./Launcher.css";
 
 /** The confirm step for a task: waiting for the core's plan, the commands it will run, or why it cannot be made. */
-export type TaskConfirm = { state: "loading" } | { state: "ready"; commands: string[] } | { state: "refused"; reason: string };
+export type TaskConfirm =
+  | { state: "loading" }
+  /** `commands` are the git commands exactly as the core will run them; `scripts` is what the repo's marshell.json adds, shown apart from them. */
+  | { state: "ready"; commands: string[]; scripts?: ConfirmScripts }
+  | { state: "refused"; reason: string };
 
 export type LauncherView = {
   choice: LauncherChoice;
@@ -69,6 +75,10 @@ type Props = {
   onConfirm?: () => void;
   /** Back to the sentence, in the confirm view. */
   onBack?: () => void;
+  /** The trust card's first button: allow this repo's scripts, then go on. */
+  onAllow?: () => void;
+  /** The trust card's second button: go on without the scripts. */
+  onSkipScripts?: () => void;
   onClose?: () => void;
   /** False hides the pace chip (the live app, until pace has an effect); the mode chip always shows for an agent, and the worktree chip then shows only for a folder in git. Default true. */
   paceChip?: boolean;
@@ -111,7 +121,7 @@ const cycle = <T,>(all: T[], now: T) => all[(all.indexOf(now) + 1) % all.length]
  * first command (it can still run in a worktree). The prompt line is set like the one in every pane (a flat command line), in the vendor's colour for an
  * agent. Presentational: the parent owns the state.
  */
-export function Launcher({ view, onChange, onQuery, onPick, onUsePath, onBrowse, onPrograms, onActive, onPrompt, onStart, onTaskName, onConfirm, onBack, onClose, paceChip = true, programs = LAUNCH_PROGRAMS, error, busy = false, busyText = "Creating the worktree…", fields }: Props) {
+export function Launcher({ view, onChange, onQuery, onPick, onUsePath, onBrowse, onPrograms, onActive, onPrompt, onStart, onTaskName, onConfirm, onBack, onAllow, onSkipScripts, onClose, paceChip = true, programs = LAUNCH_PROGRAMS, error, busy = false, busyText = "Creating the worktree…", fields }: Props) {
   const { choice, projects, query, activeIndex, remembered, nextNumber, taskName, confirm } = view;
   const project = projects.find((p) => p.id === choice.projectId);
   const agentRun = isAgentProgram(choice.program, programs);
@@ -159,16 +169,23 @@ export function Launcher({ view, onChange, onQuery, onPick, onUsePath, onBrowse,
   const createButton = useRef<HTMLButtonElement>(null);
   const backButton = useRef<HTMLButtonElement>(null);
   const confirmState = confirm?.state;
+  // A repo's scripts waiting for a yes: its card replaces Create and start, and focus goes to its heading, so Enter cannot allow by reflex.
+  const scripts = confirm?.state === "ready" ? confirm.scripts : undefined;
+  const asking = scripts?.kind === "ask" ? scripts : undefined;
+  const askKey = asking === undefined ? "" : asking.only ? "only" : "ask";
+  const trustHeading = useRef<HTMLHeadingElement>(null);
   useEffect(() => {
     if (confirmState === undefined) return;
-    (confirmState === "refused" ? backButton.current : createButton.current)?.focus();
-  }, [confirmState]);
-  const canCreate = confirm?.state === "ready" && !busy;
+    if (askKey !== "") trustHeading.current?.focus();
+    else (confirmState === "refused" ? backButton.current : createButton.current)?.focus();
+  }, [confirmState, askKey]);
+  const canCreate = confirm?.state === "ready" && !busy && asking === undefined;
   const create = () => {
     if (canCreate) onConfirm?.();
   };
   const back = () => {
-    if (!busy) onBack?.();
+    // Once the task exists, going back would leave a worktree with no session: the card's two buttons are the only ways on.
+    if (!busy && asking?.only !== true) onBack?.();
   };
 
   // The prompt line is missing in the confirm view and for a program with no first command; then the first control is the way back.
@@ -248,10 +265,16 @@ export function Launcher({ view, onChange, onQuery, onPick, onUsePath, onBrowse,
                 {confirm.reason}
               </p>
             )}
-            {confirm.state === "ready" && (
+            {asking && <ScriptsTrust scripts={asking.scripts} allowLabel={asking.allowLabel} cancelLabel={asking.cancelLabel} busy={busy} headingRef={trustHeading} onAllow={() => onAllow?.()} onCancel={() => onSkipScripts?.()} />}
+            {confirm.state === "ready" && asking?.only !== true && (
               <>
                 <p className="launcher__lede">Marshell will run these commands, then start {program.label} in the new folder.</p>
-                <CommandList commands={confirm.commands} />
+                <CommandList commands={scripts?.kind === "setup" ? [...confirm.commands, `setup: ${scripts.script}`] : confirm.commands} />
+                {scripts?.kind === "problem" && (
+                  <p className="launcher__error" dir="auto">
+                    {scripts.text}
+                  </p>
+                )}
               </>
             )}
             {busy && (
@@ -259,17 +282,26 @@ export function Launcher({ view, onChange, onQuery, onPick, onUsePath, onBrowse,
                 {busyText}
               </p>
             )}
-            <div className="launcher__actions">
-              <button ref={createButton} type="button" className="launcher__start" aria-disabled={!canCreate || undefined} onClick={create}>
-                Create and start
-              </button>
-              <button ref={backButton} type="button" className="launcher__back" aria-disabled={busy || undefined} onClick={back}>
-                Back
-              </button>
-              <span className="launcher__hint">
-                <kbd>Enter</kbd> creates {"·"} <kbd>Esc</kbd> goes back
-              </span>
-            </div>
+            {asking?.only !== true && (
+              <div className="launcher__actions">
+                {asking === undefined && (
+                  <button ref={createButton} type="button" className="launcher__start" aria-disabled={!canCreate || undefined} onClick={create}>
+                    Create and start
+                  </button>
+                )}
+                <button ref={backButton} type="button" className="launcher__back" aria-disabled={busy || undefined} onClick={back}>
+                  Back
+                </button>
+                <span className="launcher__hint">
+                  {asking === undefined && (
+                    <>
+                      <kbd>Enter</kbd> creates {"·"}{" "}
+                    </>
+                  )}
+                  <kbd>Esc</kbd> goes back
+                </span>
+              </div>
+            )}
           </>
         ) : (
           <>

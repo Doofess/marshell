@@ -31,6 +31,7 @@ import { SCENARIO_FOOTER, SCENARIO_PLAN,SCENARIO_REQUESTS, SCENARIO_ROWS } from 
 import type { Notice } from "./announce";
 import { SessionAnnouncer } from "./SessionAnnouncer";
 import { SessionHeader } from "./SessionHeader";
+import type { RunControl } from "../scripts/confirmScripts";
 import { windowTitle } from "./windowTitle";
 import { Sidebar, type SidebarFooter } from "./Sidebar";
 import { shellNameFor } from "./ShellPanel";
@@ -169,6 +170,10 @@ export type MainWindowProps = {
   onReview?: (id: string) => void;
   onSetup?: (id: string) => void;
   onSetupOutput?: (tabId: string) => void;
+  /** The selected session's repo run script: Run, or Stop while its tab is going. Both buttons live in the session header. */
+  scriptControl?: RunControl | null;
+  onRunScript?: () => void;
+  onStopScript?: () => void;
   /** The items of a sidebar row's menu, and what choosing one does. Left out, rows have no menu. */
   menuItems?: (id: string) => MenuItem[];
   onMenuRun?: (id: string, itemId: string, anchor: { x: number; y: number }) => void;
@@ -267,6 +272,9 @@ export function MainWindow({
   onReview,
   onSetup,
   onSetupOutput,
+  scriptControl,
+  onRunScript,
+  onStopScript,
   menuItems,
   onMenuRun,
   onPalette,
@@ -474,7 +482,7 @@ export function MainWindow({
           )}
         </div>
         <div className="window__bar-main" data-tauri-drag-region="deep" onPointerLeave={mode === "focus" ? () => setPeeking(false) : undefined}>
-          {topBar ?? (showHeader && !manyPanes && active && <SessionHeader row={active} ports={chipPorts} onPortMenu={setPortMenu} onMode={onModeMenu && (canChangeMode?.(active) ?? true) ? (anchor) => onModeMenu(active.id, anchor) : undefined} />)}
+          {topBar ?? (showHeader && !manyPanes && active && <SessionHeader row={active} ports={chipPorts} onPortMenu={setPortMenu} scriptControl={scriptControl} onRun={onRunScript} onStop={onStopScript} onMode={onModeMenu && (canChangeMode?.(active) ?? true) ? (anchor) => onModeMenu(active.id, anchor) : undefined} />)}
           {/* Focus mode: the pointer at the top edge brings the header up, and leaving the bar puts it away. A pointer affordance only; the keyboard leaves focus mode. */}
           {mode === "focus" && !showHeader && !manyPanes && <div className="window__peek" aria-hidden="true" onPointerEnter={() => setPeeking(true)} />}
         </div>
