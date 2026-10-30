@@ -19,7 +19,7 @@ use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use marshell_protocol::api::{
     CliTask, CliTaskKind, ColorScheme, CreateSessionRequest, CreateSessionResponse, InputRequest, RenameRequest,
-    ReopenRequest, ReorderRequest, RestartRequest, ResumeError, SessionInfo, SessionMode, SessionState,
+    ReopenRequest, ReorderRequest, RestartRequest, ResumeError, ScriptKind, SessionInfo, SessionMode, SessionState,
     SessionsSnapshot, ShellFamily,
 };
 use marshell_protocol::brand;
@@ -557,6 +557,51 @@ pub(super) async fn start_session(
     preset: Option<String>,
     record: bool,
 ) -> Result<CreateSessionResponse, ApiError> {
+    start_session_as(st, run, agent, name, cwd, size, scheme, mode, preset, record, None).await
+}
+
+/// Starts a repo's `setup` or `run` script as a session: no agent, `argv` as given, and the row marked with `script`.
+/// The row's relaunch is the plain default shell in that folder (a restart or reopen never runs the script again),
+/// and nothing of it is remembered as the folder's launcher choice.
+pub(super) async fn start_script(
+    st: &AppState,
+    argv: Vec<String>,
+    name: &str,
+    cwd: String,
+    size: (u16, u16),
+    script: ScriptKind,
+) -> Result<CreateSessionResponse, ApiError> {
+    let run = custom(argv);
+    start_session_as(
+        st,
+        run,
+        None,
+        Some(name.to_string()),
+        Some(cwd),
+        size,
+        None,
+        None,
+        None,
+        true,
+        Some(script),
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn start_session_as(
+    st: &AppState,
+    run: Resolved,
+    agent: Option<String>,
+    name: Option<String>,
+    cwd: Option<String>,
+    size: (u16, u16),
+    scheme: Option<ColorScheme>,
+    mode: Option<SessionMode>,
+    preset: Option<String>,
+    record: bool,
+    script: Option<ScriptKind>,
+) -> Result<CreateSessionResponse, ApiError> {
     check_agent_installed(st, &run, agent.as_deref())?;
     let cwd = start_folder(&run, cwd);
     // The base name: the requested one, else the agent, else the profile.
@@ -572,7 +617,7 @@ pub(super) async fn start_session(
     // The id is new, so the claim always succeeds. Held until the process is in the map, so a
     // Restart that finds the reserved row cannot start a second process for it.
     let _claim = st.claim_start(&tab_id);
-    let (number, generation) = st.0.registry.reserve(
+    let (number, generation) = st.0.registry.reserve_script(
         &tab_id,
         Relaunch {
             profile_id: run.profile_id.clone(),
@@ -582,6 +627,7 @@ pub(super) async fn start_session(
             name,
             preset,
         },
+        script,
     );
     if let Err(err) = launch(st, &tab_id, number, generation, run, agent, cwd, size, scheme, record).await {
         // A spawn failed, or the tab was closed while it started (then there is no open row to release).

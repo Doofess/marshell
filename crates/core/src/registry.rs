@@ -10,8 +10,8 @@ use crate::pty::Mark;
 use crate::stuck::{StuckSignal, StuckTracker};
 use crate::tools::{PortChip, ToolEvent};
 use marshell_protocol::api::{
-    Activity, Attention, CommandState, Foreground, LiveState, LiveStatus, SavedTab, SessionInfo, SessionMode,
-    SessionState, SessionsSnapshot, UiView,
+    Activity, Attention, CommandState, Foreground, LiveState, LiveStatus, SavedTab, ScriptKind, SessionInfo,
+    SessionMode, SessionState, SessionsSnapshot, UiView,
 };
 use tokio::sync::watch;
 
@@ -270,14 +270,24 @@ impl Registry {
     /// the process about to start. If another open session already has exactly this name, the
     /// shown name becomes "<name> <number>". The stored `Relaunch` keeps the name.
     pub fn reserve(&self, tab_id: &str, relaunch: Relaunch) -> (u32, u64) {
+        self.reserve_script(tab_id, relaunch, None)
+    }
+
+    /// `reserve`, for a tab that runs a repo script: the row carries `script` from the first snapshot. The
+    /// `Relaunch` does not, so a Restart or reopen starts the plain shell.
+    pub fn reserve_script(&self, tab_id: &str, relaunch: Relaunch, script: Option<ScriptKind>) -> (u32, u64) {
         let generation = self.state.lock().unwrap().next_generation();
-        (self.adopt(tab_id, relaunch, generation), generation)
+        (self.adopt_script(tab_id, relaunch, generation, script), generation)
     }
 
     /// Adds a Running row at the end for a process that is already running (the shell panel's),
     /// whose exit callback was built with `generation`, and returns its number. Same naming rule
     /// as `reserve`.
     pub fn adopt(&self, tab_id: &str, relaunch: Relaunch, generation: u64) -> u32 {
+        self.adopt_script(tab_id, relaunch, generation, None)
+    }
+
+    fn adopt_script(&self, tab_id: &str, relaunch: Relaunch, generation: u64, script: Option<ScriptKind>) -> u32 {
         let mut state = self.state.lock().unwrap();
         let number = state.lowest_free_number();
         let taken = state.open.iter().any(|e| e.info.name == relaunch.name);
@@ -308,6 +318,7 @@ impl Registry {
                 attention: None,
                 stuck: None,
                 ports: Vec::new(),
+                script,
             },
             spec: relaunch,
             generation,
@@ -363,6 +374,7 @@ impl Registry {
                     attention: None,
                     stuck: None,
                     ports: Vec::new(),
+                    script: None,
                 },
                 spec: relaunch_of(tab),
                 generation,
@@ -420,6 +432,8 @@ impl Registry {
             return Err(ResumeRefusal::AlreadyRunning);
         }
         let previous = std::mem::replace(&mut entry.info.state, SessionState::Running);
+        // The new process is the plain shell, never the script.
+        entry.info.script = None;
         entry.info.command = CommandState::Unknown;
         entry.info.paused = false;
         entry.info.foreground = None;
@@ -446,6 +460,7 @@ impl Registry {
         entry.info.mode = Some(mode);
         entry.spec.mode = Some(mode);
         entry.info.state = SessionState::Running;
+        entry.info.script = None;
         entry.info.command = CommandState::Unknown;
         entry.info.paused = false;
         entry.info.foreground = None;
@@ -1590,6 +1605,25 @@ mod tests {
         reg.set_paused("a", generation_of(&reg, "a"), true);
         reg.begin_restart("a", SessionMode::Plan).unwrap();
         assert!(!reg.snapshot().sessions[0].paused);
+    }
+
+    #[test]
+    fn a_script_row_loses_its_marker_when_it_resumes_or_restarts() {
+        let reg = Registry::new();
+        reg.reserve_script("a", relaunch("Run"), Some(ScriptKind::Run));
+        reg.reserve_script("b", relaunch("Setup"), Some(ScriptKind::Setup));
+        let marked = |reg: &Registry, id: &str| reg.row(id).unwrap().script;
+        assert_eq!(marked(&reg, "a"), Some(ScriptKind::Run));
+        reg.mark_exited("a", generation_of(&reg, "a"), 0);
+        reg.begin_resume("a").unwrap();
+        assert_eq!(marked(&reg, "a"), None);
+        reg.begin_restart("b", SessionMode::Plan).unwrap();
+        assert_eq!(marked(&reg, "b"), None);
+        // A reopened row is built from the relaunch, which never carries the marker.
+        reg.close("a");
+        let spec = reg.take_closed(Some("a")).unwrap();
+        reg.reserve("a2", spec);
+        assert_eq!(marked(&reg, "a2"), None);
     }
 
     #[test]

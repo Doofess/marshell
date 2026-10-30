@@ -147,6 +147,7 @@ mod tests {
                 }),
                 preset: None,
                 ports: Vec::new(),
+                script: None,
             }],
             closed: Vec::new(),
         }

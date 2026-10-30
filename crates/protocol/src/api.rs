@@ -211,6 +211,10 @@ pub struct SessionInfo {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     #[ts(optional, as = "Option<Vec<crate::tools::PortChip>>")]
     pub ports: Vec<crate::tools::PortChip>,
+    /// Set on a tab that runs a repo's `setup` or `run` script. Cleared when the tab restarts or reopens as a plain shell.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub script: Option<ScriptKind>,
 }
 
 impl SessionInfo {
@@ -1062,6 +1066,34 @@ pub struct RepoScripts {
     pub problem: Option<String>,
 }
 
+/// `POST /v1/scripts/allow`: allow the repo's scripts exactly as the person was shown them.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct AllowScriptsRequest {
+    /// Any folder inside the checkout.
+    pub cwd: String,
+    /// The file's hash, as `RepoScripts.hash` showed it.
+    pub hash: String,
+}
+
+/// `POST /v1/scripts/run`: start `setup` or `run` as a session, only for a file the person allowed.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct RunScriptRequest {
+    /// Any folder inside the checkout.
+    pub cwd: String,
+    pub script: ScriptKind,
+    /// The file's hash, as `RepoScripts.hash` showed it.
+    pub hash: String,
+    /// The terminal's size. 80 by 24 when missing.
+    #[serde(default)]
+    #[ts(optional)]
+    pub cols: Option<u16>,
+    #[serde(default)]
+    #[ts(optional)]
+    pub rows: Option<u16>,
+}
+
 /// A folder the launcher was given as text, as the core found it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[ts(export)]
@@ -1180,6 +1212,7 @@ mod tests {
             stuck: None,
             preset: None,
             ports: Vec::new(),
+            script: None,
         };
         let mut value = serde_json::to_value(&info).unwrap();
         value.as_object_mut().unwrap().remove("muted");
