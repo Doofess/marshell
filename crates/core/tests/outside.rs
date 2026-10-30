@@ -478,6 +478,25 @@ async fn post_json(app: &axum::Router, path: &str, body: Value) -> (StatusCode, 
     (status, serde_json::from_str(&text).unwrap_or(Value::String(text)))
 }
 
+/// A tab on this Codex starts with `--no-daemon`; the console opened outside is the person's own, so it does not.
+#[tokio::test]
+async fn open_outside_runs_codex_without_no_daemon() {
+    let home = tempfile::tempdir().unwrap();
+    let work = tempfile::tempdir().unwrap();
+    let st = state(home.path());
+    let app = router(st.clone());
+
+    let tab = start(&app, Some("codex"), work.path(), json!({})).await;
+    let rollout = work.path().join("rollout-2026-01-01T00-00-00-cdx-2.jsonl");
+    note(&st, "codex", &tab, "cdx-2", &rollout, work.path(), true);
+    end_tab(&st, &tab).await;
+    let (status, body) = post(&app, &format!("/v1/sessions/{tab}/open-outside")).await;
+    assert_eq!(status, StatusCode::NO_CONTENT, "{body}");
+    let argv = std::fs::read_to_string(work.path().join("opened.txt")).unwrap();
+    assert!(argv.contains("codex resume cdx-2"), "{argv}");
+    assert!(!argv.contains("--no-daemon"), "{argv}");
+}
+
 /// A tab opened outside leaves its console to hold the conversation: opening again, a tab Resume, a Restart and a
 /// History Resume or open are refused until the console is gone. Copying the command is not.
 #[tokio::test]

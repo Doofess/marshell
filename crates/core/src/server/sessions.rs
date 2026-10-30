@@ -56,7 +56,8 @@ fn colorfgbg(scheme: ColorScheme) -> &'static str {
 
 /// The variables a session starts with before ours: `COLORFGBG` for the scheme (none when the
 /// scheme is unknown), then the profile's own, which come after so a profile can override it. `PATH` has
-/// Marshell's `bin` folder in front (the profile's own `PATH` if it sets one, else the app's), so an agent in
+/// Marshell's `bin` folder in front (the profile's own `PATH` if it sets one, else `tab_path`, the PATH a new
+/// tab gets, which on Windows has the registry's current value; the app's own if that can't be read), so an agent in
 /// the session runs `marshell` by name. That is this session's environment only; nothing is written to the
 /// person's own PATH. A WSL session is a Linux that can't run it (slice 6j).
 fn spawn_env(
@@ -64,6 +65,7 @@ fn spawn_env(
     profile_env: &[(String, String)],
     home: &std::path::Path,
     family: ShellFamily,
+    tab_path: Option<&std::ffi::OsStr>,
 ) -> Vec<(String, String)> {
     let mut env = Vec::new();
     if let Some(scheme) = scheme {
@@ -81,7 +83,10 @@ fn spawn_env(
         let slot = env.iter().position(|(k, _)| is_path(k));
         let rest = match slot {
             Some(i) => std::ffi::OsString::from(&env[i].1),
-            None => std::env::var_os("PATH").unwrap_or_default(),
+            None => tab_path
+                .map(std::ffi::OsStr::to_os_string)
+                .or_else(|| std::env::var_os("PATH"))
+                .unwrap_or_default(),
         };
         // Split first: `join_paths` would take a whole PATH as one folder and quote it.
         let parts = std::iter::once(crate::paths::bin_dir(home)).chain(std::env::split_paths(&rest));
@@ -152,10 +157,26 @@ pub(super) async fn resolve(
     mode: Option<SessionMode>,
     preset: Option<&str>,
 ) -> Result<Resolved, ApiError> {
+    resolve_with(st, profile_id, agent, prompt, resume, mode, preset, true).await
+}
+
+/// `resolve`, where `daemonless` says whether Codex gets `--no-daemon`: it is for the sessions Marshell starts,
+/// and a console the person opens outside runs the plain command, as the copied line does.
+#[allow(clippy::too_many_arguments)]
+pub(super) async fn resolve_with(
+    st: &AppState,
+    profile_id: Option<&str>,
+    agent: Option<&str>,
+    prompt: Option<&str>,
+    resume: Option<ResumeTarget<'_>>,
+    mode: Option<SessionMode>,
+    preset: Option<&str>,
+    daemonless: bool,
+) -> Result<Resolved, ApiError> {
     if let Some(preset) = preset {
         check_preset(agent, preset)?;
     }
-    let no_daemon = agent == Some("codex") && codex_takes_no_daemon(st).await;
+    let no_daemon = daemonless && agent == Some("codex") && codex_takes_no_daemon(st).await;
     let agents = st.agents();
     // A manifest agent has a mode only where its manifest maps one.
     if let (Some(m), Some(mode)) = (agent.and_then(|a| agents.manifest(a)), mode)
@@ -625,7 +646,9 @@ pub(super) async fn spawn_into_map(
         .and_then(|p| std::path::Path::new(p).file_name())
         .map(|p| p.to_string_lossy().into_owned());
     // The profile's variables first, so ours win.
-    let mut env = spawn_env(scheme, &run.env, &st.0.home, run.family);
+    // Read like a console's is, off the async workers: on Windows it reads the registry.
+    let tab_path = tokio::task::spawn_blocking(st.0.tab_path).await.unwrap_or(None);
+    let mut env = spawn_env(scheme, &run.env, &st.0.home, run.family, tab_path.as_deref());
     env.extend([
         (brand::env_var("TAB_ID"), tab_id.to_string()),
         (brand::env_var("SESSION_NUMBER"), number.to_string()),
@@ -1563,7 +1586,13 @@ mod tests {
         assert!(!strip("PATH"));
         // The key is in the child's env and nowhere else the spawn takes.
         assert!(run.argv.iter().all(|word| !word.contains(TEST_KEY)), "{:?}", run.argv);
-        let spawn = spawn_env(Some(ColorScheme::Dark), &run.env, std::path::Path::new("h"), run.family);
+        let spawn = spawn_env(
+            Some(ColorScheme::Dark),
+            &run.env,
+            std::path::Path::new("h"),
+            run.family,
+            None,
+        );
         assert_eq!(spawn.iter().filter(|(_, v)| v.contains(TEST_KEY)).count(), 1);
         assert_eq!(run.profile_id, "p");
 
@@ -2066,17 +2095,24 @@ mod tests {
             &[var("COLORFGBG", "7;0")],
             home,
             ShellFamily::Posix,
+            None,
         );
         let last = env.iter().rev().find(|(k, _)| k == "COLORFGBG").unwrap();
         assert_eq!(last.1, "7;0");
 
-        let env = spawn_env(Some(ColorScheme::Dark), &[], home, ShellFamily::Posix);
+        let env = spawn_env(Some(ColorScheme::Dark), &[], home, ShellFamily::Posix, None);
         assert!(env.contains(&var("COLORFGBG", "15;0")));
     }
 
     #[test]
     fn spawn_env_without_a_scheme_sets_no_colorfgbg() {
-        let env = spawn_env(None, &[var("A", "1")], std::path::Path::new("h"), ShellFamily::Posix);
+        let env = spawn_env(
+            None,
+            &[var("A", "1")],
+            std::path::Path::new("h"),
+            ShellFamily::Posix,
+            None,
+        );
         assert_eq!(without_path(env), vec![var("A", "1")]);
     }
 
@@ -2087,17 +2123,36 @@ mod tests {
         let sep = if cfg!(windows) { ';' } else { ':' };
         let joined = |rest: &std::ffi::OsStr| format!("{}{sep}{}", bin.display(), rest.to_string_lossy());
         // A profile PATH: the bin dir goes in front of it, and the profile's entry is the one that changes.
-        let env = spawn_env(None, &[var("PATH", "C:\\a"), var("A", "1")], home, ShellFamily::Posix);
+        let env = spawn_env(
+            None,
+            &[var("PATH", "C:\\a"), var("A", "1")],
+            home,
+            ShellFamily::Posix,
+            None,
+        );
         assert_eq!(
             env,
             vec![var("PATH", &joined(std::ffi::OsStr::new("C:\\a"))), var("A", "1")]
         );
-        // No profile PATH: the bin dir, then the app's own PATH.
+        // No profile PATH: the bin dir, then the tab PATH (the registry's on Windows), not the app's own.
+        let tab = std::ffi::OsString::from("C:\\tab-only");
+        let env = spawn_env(None, &[], home, ShellFamily::Posix, Some(&tab));
+        assert_eq!(env, vec![var("PATH", &joined(&tab))]);
+        // A profile PATH wins over the tab PATH.
+        let env = spawn_env(None, &[var("PATH", "C:\\a")], home, ShellFamily::Posix, Some(&tab));
+        assert_eq!(env, vec![var("PATH", &joined(std::ffi::OsStr::new("C:\\a")))]);
+        // No tab PATH to read: the app's own.
         let own = std::env::var_os("PATH").unwrap_or_default();
-        let env = spawn_env(None, &[], home, ShellFamily::Posix);
+        let env = spawn_env(None, &[], home, ShellFamily::Posix, None);
         assert_eq!(env, vec![var("PATH", &joined(&own))]);
         // A WSL session runs in a Linux that has no use for it (slice 6j).
-        let env = spawn_env(None, &[var("A", "1")], home, ShellFamily::Wsl);
+        let env = spawn_env(
+            None,
+            &[var("A", "1")],
+            home,
+            ShellFamily::Wsl,
+            Some(std::ffi::OsStr::new("C:\\tab-only")),
+        );
         assert_eq!(env, vec![var("A", "1")]);
     }
 }

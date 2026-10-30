@@ -5,7 +5,7 @@
 use super::AppState;
 use super::history::{Found, gone, look_up};
 use super::sessions::{
-    Resume, cannot_resume, cannot_start_again, check_agent_installed, resolve, resume_session, start_folder,
+    Resume, cannot_resume, cannot_start_again, check_agent_installed, resolve_with, resume_session, start_folder,
 };
 use crate::agents::presets;
 use crate::outside::{ConversationKey, console_env, copy_line, lookup_path};
@@ -216,7 +216,7 @@ pub async fn history_resume_command(
 /// Runs the resume in a new console window: the profile's shell runs the agent and stays open after it. The profile's
 /// own variables are all it gets (a preset never reaches here), and none of Marshell's session markers.
 async fn open(st: &AppState, plan: Plan) -> Response {
-    let run = match resolve(
+    let run = match resolve_with(
         st,
         plan.profile_id.as_deref(),
         Some(&plan.agent),
@@ -224,6 +224,7 @@ async fn open(st: &AppState, plan: Plan) -> Response {
         plan.resume.target(),
         plan.mode,
         None,
+        false,
     )
     .await
     {
@@ -313,6 +314,7 @@ pub async fn history_open_outside(
 mod tests {
     use super::*;
     use crate::profiles::detect::ResumeTarget;
+    use crate::server::sessions::resolve;
     use marshell_protocol::api::Profile;
 
     fn profile(id: &str, family: ShellFamily, command: &[&str]) -> Profile {
