@@ -1078,18 +1078,14 @@ mod tests {
             let path = std::env::var_os("PATH");
             let env: Vec<_> = std::env::vars().collect();
             let probe = start(&argv, &env, path.as_deref(), dir.path(), CREATE_NO_WINDOW).unwrap();
-            drop(probe);
-            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
-            let seen = loop {
-                if let Ok(content) = std::fs::read_to_string(&out)
-                    && !content.trim().is_empty()
-                {
-                    break content.trim().to_string();
-                }
-                assert!(std::time::Instant::now() < deadline, "the child wrote nothing in 20 s");
+            // Until the child exits, not a fixed time: a cold PowerShell on a loaded CI runner took over 20 s.
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(120);
+            while probe() {
+                assert!(std::time::Instant::now() < deadline, "the child ran for over 120 s");
                 std::thread::sleep(std::time::Duration::from_millis(100));
-            };
-            assert_eq!(seen, "False");
+            }
+            let seen = std::fs::read_to_string(&out).unwrap_or_default();
+            assert_eq!(seen.trim(), "False", "the child exited having written {seen:?}");
         }
     }
 
