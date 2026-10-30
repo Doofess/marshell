@@ -1,6 +1,6 @@
 # marshell CLI live check (slice 6h1)
 
-- Date: 2026-10-30, 01:49 to 03:25 local time, in three runs: run 1 (to 02:25, when the dev window closed), run 2 (02:26 to 02:47) and run 3 (03:19 to 03:25, after the fixes in a994b7a).
+- Date: 2026-10-30, 01:49 to 03:25 local time, in three runs: run 1 (to 02:25, when the dev window closed), run 2 (02:26 to 02:47) and run 3 (03:19 to 03:25, after the fixes in a994b7a). Run 4 (10:42 to 10:56) rechecked the final-review fix pass (e6a42cf, e4f69e4, and 46923ed from its finding); see its section at the end.
 - Build: `phase-6h1` under `pnpm tauri dev` on Windows 11 Pro (26300). Claude Code 2.1.314, Codex 0.164.0, Antigravity CLI 1.4.10.
 - Home: a scratch `MARSHELL_HOME`, `CLAUDE_CONFIG_DIR` and `MARSHELL_CLAUDE_SETTINGS` per run, with CDP on port 9333. Runs 1 and 2 also had a scratch `CODEX_HOME` of at most 60 characters (`%TEMP%\lc-6h1-2-cx`, `%TEMP%\lc-6h1-3-cx`) and agy's scratch `USERPROFILE\.gemini`. Onboarding's "Allow these changes" installed hooks only into those scratch files; in run 3 only Claude's (Codex and agy skipped).
 - Data: run 1 and 2 started empty. The user signed Claude in by hand inside the scratch `CLAUDE_CONFIG_DIR` (no token copied from the real `~/.claude`); Codex and agy signed in through `-CodexAuth` and `-AgyAuth` copies, which `stop` deleted. Run 3 was started with `live-check.ps1 start -Seed <lc-6h1-2>`, which carried the scratch login and run 2's conversation `8bf6cf31` across.
@@ -35,3 +35,19 @@
 6. **Two terminal views of one session.** Right after `marshell new` started session 1 from the CLI, the page held a second, hidden view of it (0 × 0, 10 columns) next to the visible one. It went away when another row was selected. Not fixed; worth a look in the next slice that touches the session view.
 7. **A page reload, once.** In run 2 the webview reloaded at about 02:36:03, 4 s after Open in system terminal; the cause is unknown. Run 3 had one page load in its console log for the whole run, so it did not repeat.
 8. **A pty WebSocket 404, once.** Run 1's first session got a 404 on its first pty connect (likely a race with the session's registration). It wasn't seen again in runs 2 and 3. The favicon 404 is benign.
+
+## Run 4: the final-review fix pass
+
+- Build: `phase-6h1` at e4f69e4, then 46923ed (`tauri dev` rebuilt and restarted the app at 10:52; the check stopped the old app's orphaned shell and `claude` by PID). Scratch `lc-6h1-4`, Claude only (Codex and agy skipped at onboarding). The user signed Claude in by hand inside the scratch `CLAUDE_CONFIG_DIR`. Driven as before: the `marshell` CLI, CDP evaluations and keys in the webview, and the read-only console reader.
+
+| Check | Result |
+| --- | --- |
+| `send` while Claude shows its own question dialog | Pass. Claude's AskUserQuestion dialog was open: "Session 1 is waiting for an answer, so it can't take text.", exit 1, and the dialog kept its selection (the `2` wasn't typed). |
+| `send` after the question is dismissed with Escape | Failed at e4f69e4 (finding 9), pass at 46923ed. After the fix, Escape in session 2 and then `send 2 "/exit"`: "Filled session 2's prompt line." 7 s later. |
+| Open in system terminal on an ended Claude row | Pass. "Opened in a system terminal."; `pwsh.exe -NoLogo -NoExit -Command "& claude --resume 6442107d-… --permission-mode auto"`. Its screen showed the conversation, which exists only in the scratch config, so the console got the session environment's `CLAUDE_CONFIG_DIR`. |
+| A second Open, and the tab's Resume, while that console runs | Pass. Both answered "It's open in a system terminal." (409), and no second `claude` started. |
+| Open again after the console's window is closed | Pass. The console's `pwsh` and `claude` were stopped by PID; the next Open answered "Opened in a system terminal." and started a new console. |
+| Quit Marshell: the console stays | Pass. "Quit when I close" ended the app and its tab shell; the console's `pwsh` and `claude` kept running, at Claude's prompt in the resumed conversation. |
+| The real `~/.claude`, `~/.codex`, `~/.gemini` and `~/.marshell` are unchanged | Pass. Same times as in run 3; no project folder for `lc-6h1-4` in the real `~/.claude/projects`. |
+
+9. **A question dismissed with Escape kept `send` refused.** Claude treats Escape on its question or permission dialog as an interrupt ("[Request interrupted by user for tool use]" in the transcript) and sends no hook for it: no PostToolUse, no Stop, and no `idle_prompt` Notification within 2 minutes. The row kept "Has a question" and "Wants to use `AskUserQuestion`", and the new waiting refusal followed the row. Fixed in 46923ed (the user's ruling): a key typed in the terminal since the dialog appeared ends the wait, while a card Marshell holds still refuses. Failing first: `fill_goes_on_once_the_person_typed_after_the_question` (red with the typed check disabled). The row's own text stays stale until the next prompt; that is the status code's, and not fixed here.
