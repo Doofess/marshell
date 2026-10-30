@@ -10,4 +10,9 @@ commands: Array<string>,
  * The warnings the user was shown, under the same rule (the sessions a removal closes).
  * Ignored when only planning.
  */
-warnings: Array<string>, };
+warnings: Array<string>, 
+/**
+ * The teardown script the user was shown (only a merge that also removes has one), under the same rule.
+ * Ignored when only planning.
+ */
+teardown?: string, };

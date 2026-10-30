@@ -84,7 +84,7 @@ pub async fn merge_plan(
     let planned = tokio::task::spawn_blocking(move || {
         crate::tasks::find(&st.0.home, &id).map(|task| {
             let sessions = crate::tasks::running_sessions(&st, &task);
-            crate::tasks::plan_merge(&task, &req, sessions).0
+            crate::tasks::plan_merge(&task, &req, sessions, &st.0.home).0
         })
     })
     .await;

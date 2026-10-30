@@ -64,6 +64,11 @@ describe("the plan request", () => {
 describe("shown is run: what is sent is the list on screen", () => {
   const plan: MergePlan = { commands: ["git add -A", "git commit -m x"], warnings: ["Closes 1 session running in this worktree."], blocker: null };
   const shown = (message: string, remove: boolean, p: MergePlan = plan) => ({ key: planKey(message, remove), plan: p });
+  it("sends the teardown the plan showed", () => {
+    const withTeardown: MergePlan = { ...plan, teardown: "pnpm run stop" };
+    expect(mergeRequest("Fix login", true, shown("Fix login", true, withTeardown))?.teardown).toBe("pnpm run stop");
+    expect(mergeRequest("Fix login", true, shown("Fix login", true))).not.toHaveProperty("teardown");
+  });
   it("sends the message, the checkbox and the shown commands and warnings as they are", () => {
     expect(mergeRequest("Fix login", true, shown("Fix login", true))).toEqual({
       message: "Fix login",
@@ -114,6 +119,12 @@ describe("the words", () => {
     );
     expect(removedToast(TASK)).toBe("Removed marshell/fix-login.");
   });
+  it("adds the teardown's notes to the merge toast", () => {
+    expect(mergedToast(TASK, true, null, ["Teardown failed (exit 3); the worktree was removed anyway."])).toBe(
+      "Merged marshell/fix-login into main. Removed the worktree. Teardown failed (exit 3); the worktree was removed anyway.",
+    );
+    expect(mergedToast(TASK, true, null, [])).toBe("Merged marshell/fix-login into main. Removed the worktree.");
+  });
   it("adds the removal's notes to the toast", () => {
     expect(removedToast(TASK, [])).toBe("Removed marshell/fix-login.");
     expect(removedToast(TASK, ["Teardown failed (exit 3); the worktree was removed anyway."])).toBe(
@@ -144,12 +155,12 @@ const throws = (e: unknown) => async () => {
 
 describe("runMerge", () => {
   it("passes the core's outcome through", async () => {
-    expect(await runMerge(api({ merge: async () => ({ kind: "merged", removed: true, removal_note: null }) }), REQ)).toEqual({ kind: "merged", removed: true, removal_note: null });
+    expect(await runMerge(api({ merge: async () => ({ kind: "merged", removed: true, removal_note: null, notes: [] }) }), REQ)).toEqual({ kind: "merged", removed: true, removal_note: null, notes: [] });
     expect(await runMerge(api({ merge: async () => ({ kind: "conflict", files: ["a.txt"] }) }), REQ)).toEqual({ kind: "conflict", files: ["a.txt"] });
     expect(await runMerge(api({ merge: async () => ({ kind: "failed", reason: "Git said: no" }) }), REQ)).toEqual({ kind: "failed", reason: "Git said: no" });
   });
   it("sends the request it was given, untouched", async () => {
-    const merge = vi.fn().mockResolvedValue({ kind: "merged", removed: false, removal_note: null });
+    const merge = vi.fn().mockResolvedValue({ kind: "merged", removed: false, removal_note: null, notes: [] });
     await runMerge(api({ merge }), REQ);
     expect(merge).toHaveBeenCalledWith(REQ);
   });

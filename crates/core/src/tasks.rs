@@ -495,7 +495,7 @@ fn worktree_dirty(dir: &Path) -> Result<bool, String> {
 /// commit in the base checkout; the last two are always the base checkout's. A blocker is a
 /// reason it can't go ahead; the commands are still listed so the sheet can show them.
 /// `open_sessions` is how many running sessions the removal (when asked for) would close.
-pub fn plan_merge(task: &Task, req: &MergeRequest, open_sessions: u32) -> (MergePlan, Vec<GitStep>) {
+pub fn plan_merge(task: &Task, req: &MergeRequest, open_sessions: u32, home: &Path) -> (MergePlan, Vec<GitStep>) {
     let message = req.message.trim();
     let step = |dir: &str, args: &[&str]| GitStep {
         dir: PathBuf::from(dir),
@@ -510,10 +510,15 @@ pub fn plan_merge(task: &Task, req: &MergeRequest, open_sessions: u32) -> (Merge
     steps.push(step(&task.repo_root, &["merge", "--squash", "--ff", &task.branch]));
     steps.push(step(&task.repo_root, &["commit", "-q", "-m", message]));
     let mut warnings = Vec::new();
+    let mut teardown = None;
     if req.remove && own_branch(task) {
         // By then the merge has committed the folder's work and the branch is in the base, so
         // the removal is the plain one whatever the folder holds now.
         steps.extend(removal_steps(task, Worktree::Remove { force: false }, true));
+        let dir = Path::new(&task.path);
+        if dir.exists() {
+            teardown = teardown_for(dir, home, &mut warnings);
+        }
         warnings.extend(sessions_line(open_sessions));
     }
 
@@ -522,6 +527,7 @@ pub fn plan_merge(task: &Task, req: &MergeRequest, open_sessions: u32) -> (Merge
         commands: steps.iter().map(git::display).collect(),
         warnings,
         blocker,
+        teardown,
     };
     (plan, steps)
 }
@@ -552,10 +558,14 @@ fn with_restore_note(reason: String, note: Option<String>) -> MergeOutcome {
 /// commands or warnings differ from the ones the user was shown, or at a blocker. When the
 /// squash or the commit fails, the base checkout is put back as it was.
 pub fn merge(st: &AppState, task: &Task, req: &MergeRequest) -> MergeOutcome {
+    merge_with_timeout(st, task, req, TEARDOWN_TIMEOUT)
+}
+
+fn merge_with_timeout(st: &AppState, task: &Task, req: &MergeRequest, teardown_timeout: Duration) -> MergeOutcome {
     let _guard = MERGE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let failed = |reason: String| MergeOutcome::Failed { reason };
-    let (plan, steps) = plan_merge(task, req, running_sessions(st, task));
-    if plan.commands != req.commands || plan.warnings != req.warnings {
+    let (plan, steps) = plan_merge(task, req, running_sessions(st, task), st.home());
+    if plan.commands != req.commands || plan.warnings != req.warnings || plan.teardown != req.teardown {
         return failed(CHANGED.into());
     }
     if let Some(blocker) = plan.blocker {
@@ -618,6 +628,7 @@ pub fn merge(st: &AppState, task: &Task, req: &MergeRequest) -> MergeOutcome {
         return MergeOutcome::Merged {
             removed: false,
             removal_note: None,
+            notes: Vec::new(),
         };
     }
     // Work that reached the task after the merge took its branch is not in the merge. Deleting the
@@ -629,6 +640,7 @@ pub fn merge(st: &AppState, task: &Task, req: &MergeRequest) -> MergeOutcome {
         MergeOutcome::Merged {
             removed: false,
             removal_note: Some(why),
+            notes: Vec::new(),
         }
     };
     if let Some(why) = changed_since(task, merged_tip.as_deref()) {
@@ -638,11 +650,13 @@ pub fn merge(st: &AppState, task: &Task, req: &MergeRequest) -> MergeOutcome {
     if let Some(why) = changed_since(task, merged_tip.as_deref()) {
         return kept(why);
     }
-    // The merge plan doesn't show a teardown, so none runs here: a script the user wasn't shown never runs.
-    match run_removal(st, task, None, removal_steps) {
-        Ok(_) => MergeOutcome::Merged {
+    // The teardown is the one the plan showed (the re-plan above matched it), and runs after the checks that keep the worktree.
+    let teardown = plan.teardown.as_deref().map(|script| (script, teardown_timeout));
+    match run_removal(st, task, teardown, removal_steps) {
+        Ok(notes) => MergeOutcome::Merged {
             removed: true,
             removal_note: None,
+            notes,
         },
         Err(reason) => kept(reason),
     }
@@ -860,19 +874,11 @@ pub fn plan_remove(task: &Task, open_sessions: u32, home: &Path) -> (RemovePlan,
         }
     }
     // The repo's teardown runs only when its scripts are allowed; otherwise the person is told it won't.
-    let mut teardown = None;
-    if folder_there {
-        let found = scripts::read(dir, home);
-        if found.problem.is_some() {
-            warnings.push("marshell.json can't be read, so its teardown won't run.".into());
-        } else if found.teardown.is_some() {
-            if found.trusted {
-                teardown = found.teardown;
-            } else {
-                warnings.push("marshell.json's teardown won't run: this repo's scripts aren't allowed.".into());
-            }
-        }
-    }
+    let teardown = if folder_there {
+        teardown_for(dir, home, &mut warnings)
+    } else {
+        None
+    };
     warnings.extend(sessions_line(open_sessions));
     let plan = RemovePlan {
         commands: steps.iter().map(git::display).collect(),
@@ -914,6 +920,24 @@ fn close_sessions(st: &AppState, task: &Task) {
 /// is tried again.
 const REMOVE_RETRIES: u32 = 5;
 const REMOVE_RETRY_WAIT: std::time::Duration = std::time::Duration::from_millis(200);
+
+/// The trusted teardown of the checkout at `dir`, which runs before its worktree is removed. When
+/// the repo's file has one that won't run (its scripts aren't allowed, or the file can't be read),
+/// a warning says so and there is none.
+fn teardown_for(dir: &Path, home: &Path, warnings: &mut Vec<String>) -> Option<String> {
+    let found = scripts::read(dir, home);
+    if found.problem.is_some() {
+        warnings.push("marshell.json can't be read, so its teardown won't run.".into());
+        return None;
+    }
+    let script = found.teardown?;
+    if found.trusted {
+        Some(script)
+    } else {
+        warnings.push("marshell.json's teardown won't run: this repo's scripts aren't allowed.".into());
+        None
+    }
+}
 
 /// How long a teardown may run before it is stopped.
 const TEARDOWN_TIMEOUT: Duration = Duration::from_secs(300);
@@ -1285,6 +1309,82 @@ mod tests {
         assert!(!Path::new(&task.path).exists());
         std::thread::sleep(Duration::from_secs(4));
         assert!(!marker.exists(), "the script's child outlived the timeout");
+    }
+
+    fn merge_request_for(home: &Path, task: &Task, remove: bool) -> MergeRequest {
+        let mut req = MergeRequest {
+            message: "Fix login".into(),
+            remove,
+            commands: Vec::new(),
+            warnings: Vec::new(),
+            teardown: None,
+        };
+        let plan = plan_merge(task, &req, 0, home).0;
+        req.commands = plan.commands;
+        req.warnings = plan.warnings;
+        req.teardown = plan.teardown;
+        req
+    }
+
+    #[test]
+    fn merge_and_remove_runs_a_trusted_teardown() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (home, task) = new_task(&tmp);
+        std::fs::write(Path::new(&task.path).join("b.txt"), "b\n").unwrap();
+        let marker = tmp.path().join("merge-marker.txt");
+        teardown_file(&home, &task, &write_marker(&marker), true);
+        let req = merge_request_for(&home, &task, true);
+        assert!(req.teardown.is_some());
+        let outcome = merge_with_timeout(&state_in(&home), &task, &req, SHORT);
+        assert_eq!(
+            outcome,
+            MergeOutcome::Merged {
+                removed: true,
+                removal_note: None,
+                notes: Vec::new()
+            }
+        );
+        assert!(marker.exists());
+        assert!(!Path::new(&task.path).exists());
+    }
+
+    #[test]
+    fn merge_without_remove_shows_no_teardown() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (home, task) = new_task(&tmp);
+        let marker = tmp.path().join("merge-marker.txt");
+        teardown_file(&home, &task, &write_marker(&marker), true);
+        let plan = plan_merge(&task, &merge_request_for(&home, &task, false), 0, &home).0;
+        assert_eq!(plan.teardown, None);
+        assert!(
+            !plan.warnings.iter().any(|w| w.contains("teardown")),
+            "{:?}",
+            plan.warnings
+        );
+        // With the removal, the plan shows it, and an untrusted file is warned about instead.
+        let with = plan_merge(&task, &merge_request_for(&home, &task, true), 0, &home).0;
+        assert!(with.teardown.is_some());
+        teardown_file(&home, &task, "other", false);
+        let untrusted = plan_merge(&task, &merge_request_for(&home, &task, true), 0, &home).0;
+        assert_eq!(untrusted.teardown, None);
+        assert!(
+            untrusted
+                .warnings
+                .contains(&"marshell.json's teardown won't run: this repo's scripts aren't allowed.".to_string())
+        );
+    }
+
+    #[test]
+    fn a_changed_merge_teardown_is_refused() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (home, task) = new_task(&tmp);
+        teardown_file(&home, &task, "pnpm run stop", true);
+        let mut req = merge_request_for(&home, &task, true);
+        req.teardown = Some("something else".into());
+        assert_eq!(
+            merge_with_timeout(&state_in(&home), &task, &req, SHORT),
+            MergeOutcome::Failed { reason: CHANGED.into() }
+        );
     }
 
     #[test]

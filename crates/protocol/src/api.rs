@@ -576,6 +576,11 @@ pub struct MergeRequest {
     /// The warnings the user was shown, under the same rule (the sessions a removal closes).
     /// Ignored when only planning.
     pub warnings: Vec<String>,
+    /// The teardown script the user was shown (only a merge that also removes has one), under the same rule.
+    /// Ignored when only planning.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub teardown: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -585,6 +590,11 @@ pub struct MergePlan {
     /// What the merge would close or lose, shown with the commands: the sessions a removal closes.
     pub warnings: Vec<String>,
     pub blocker: Option<String>,
+    /// The repo's trusted `teardown` script, run in the worktree before a removal that follows the merge.
+    /// None when the merge keeps the worktree, there is none, or the repo's scripts aren't allowed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub teardown: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -592,9 +602,12 @@ pub struct MergePlan {
 #[ts(export)]
 pub enum MergeOutcome {
     /// `removal_note`: why the worktree was kept when a removal was asked for, in one sentence.
+    /// `notes`: what went wrong with the teardown, if anything; the worktree was removed anyway.
     Merged {
         removed: bool,
         removal_note: Option<String>,
+        #[serde(default)]
+        notes: Vec<String>,
     },
     Conflict {
         files: Vec<String>,

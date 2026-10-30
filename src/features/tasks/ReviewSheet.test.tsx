@@ -21,7 +21,7 @@ const CHANGES: TaskChanges = {
   ahead: 2,
   uncommitted: true,
 };
-const API: ReviewApi = { mergePlan: async () => ({ commands: [], warnings: [], blocker: null }), merge: async () => ({ kind: "merged", removed: false, removal_note: null }), removePlan: async () => ({ commands: [], warnings: [], sessions: 0 }), remove: async () => ({ notes: [] }) };
+const API: ReviewApi = { mergePlan: async () => ({ commands: [], warnings: [], blocker: null }), merge: async () => ({ kind: "merged", removed: false, removal_note: null, notes: [] }), removePlan: async () => ({ commands: [], warnings: [], sessions: 0 }), remove: async () => ({ notes: [] }) };
 const sheet = (changes: Partial<TaskChanges> = {}, props: Partial<Parameters<typeof ReviewSheet>[0]> = {}) =>
   renderToStaticMarkup(<ReviewSheet task={TASK} changes={{ ...CHANGES, ...changes }} agentName="Claude Code" api={API} onClose={() => {}} onDone={() => {}} onAskAgent={() => {}} {...props} />);
 const view = (selected: number, changes: Partial<TaskChanges> = {}) =>
@@ -189,6 +189,12 @@ describe("the merge step", () => {
   it("shows the commands from the plan", () => {
     expect(h).toContain('class="command-list"');
     expect(h).toContain("merge --squash --ff marshell/fix-login");
+  });
+  it("shows a teardown as the first command, and none when the plan has none", () => {
+    const withTeardown = step("merge", { merge: { ...MERGE, plan: { commands: CMDS, warnings: [], blocker: null, teardown: "pnpm run stop" } } });
+    expect(withTeardown).toContain("teardown: pnpm run stop");
+    expect(withTeardown.indexOf("teardown: pnpm run stop")).toBeLessThan(withTeardown.indexOf("merge --squash"));
+    expect(h).not.toContain("teardown:");
   });
   it("lists what the removal afterwards closes, above the commands, like the remove step", () => {
     const warned = step("merge", { merge: { ...MERGE, plan: { commands: CMDS, warnings: ["Closes 2 sessions running in this worktree."], blocker: null } } });

@@ -191,7 +191,7 @@ function MergeStep({ merge, busy }: { merge: MergeView; busy: boolean }) {
       {merge.plan && (
         <>
           <p className="review__lede">Marshell will run these commands.</p>
-          <Commands commands={merge.plan.commands} stale={!busy && isStale(merge.plan, merge.ready)} />
+          <Commands commands={merge.plan.commands} teardown={merge.plan.teardown} stale={!busy && isStale(merge.plan, merge.ready)} />
         </>
       )}
       {busy && <Progress text="Merging…" />}
@@ -464,7 +464,7 @@ export function ReviewSheet({ task, changes, agentName, api, onClose, onDone, on
       if (!mounted.current) return;
       if (outcome.kind === "merged") {
         dispatch({ type: "finish" });
-        onDone(mergedToast(task, outcome.removed, outcome.removal_note));
+        onDone(mergedToast(task, outcome.removed, outcome.removal_note, outcome.notes));
         onClose();
       } else if (outcome.kind === "conflict") {
         setConflicts(outcome.files);
