@@ -67,6 +67,24 @@ fn lf_endings(bytes: &[u8]) -> Vec<u8> {
     out
 }
 
+/// Everything `source` holds, or None when that is more than `MAX_BYTES`. It never reads past the limit, so a file
+/// that keeps growing (or a device that never ends) can't hold the read.
+fn read_limited(source: impl std::io::Read) -> std::io::Result<Option<Vec<u8>>> {
+    use std::io::Read;
+    let mut bytes = Vec::new();
+    source.take(MAX_BYTES + 1).read_to_end(&mut bytes)?;
+    Ok((bytes.len() as u64 <= MAX_BYTES).then_some(bytes))
+}
+
+/// The first character in `script` that can hide what it does on the card: a control character other than a tab or
+/// a line break, a direction mark or override, or a zero-width character.
+fn hidden_character(script: &str) -> Option<char> {
+    script.chars().find(|&c| {
+        (c.is_control() && !matches!(c, '\t' | '\n' | '\r'))
+            || matches!(c, '\u{061C}' | '\u{200B}'..='\u{200F}' | '\u{202A}'..='\u{202E}' | '\u{2060}'..='\u{2069}' | '\u{FEFF}')
+    })
+}
+
 fn problem(why: impl std::fmt::Display) -> String {
     format!("{FILE_NAME} can't be read: {why}")
 }
@@ -86,37 +104,58 @@ pub fn read(dir: &Path, home: &Path) -> RepoScripts {
         trusted: false,
         problem: None,
     };
+    // Checked before the open: opening a pipe would wait for a writer.
     match std::fs::metadata(&file_path) {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return out,
         Err(e) => {
             out.problem = Some(problem(e));
             return out;
         }
-        Ok(meta) if meta.len() > MAX_BYTES => {
-            out.problem = Some(problem("it is larger than 64 KiB."));
+        Ok(meta) if !meta.is_file() => {
+            out.problem = Some(problem("it isn't a file."));
             return out;
         }
         Ok(_) => {}
     }
-    let bytes = match std::fs::read(&file_path) {
-        Ok(bytes) => bytes,
+    let bytes = match std::fs::File::open(&file_path).and_then(read_limited) {
+        Ok(Some(bytes)) => bytes,
+        Ok(None) => {
+            out.problem = Some(problem("it is larger than 64 KiB."));
+            return out;
+        }
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return out,
         Err(e) => {
             out.problem = Some(problem(e));
             return out;
         }
     };
-    let hash = hash_bytes(&lf_endings(&bytes));
-    match serde_json::from_slice::<ScriptFile>(&bytes) {
+    // Windows PowerShell 5.1 writes UTF-8 with a byte order mark, which JSON doesn't allow and which changes no script.
+    let bytes = bytes.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(&bytes);
+    let hash = hash_bytes(&lf_endings(bytes));
+    match serde_json::from_slice::<ScriptFile>(bytes) {
         Ok(file) => {
             let windows = cfg!(windows);
             let pick = |v: &Option<ScriptValue>| v.as_ref().and_then(|v| resolve(v, windows));
-            out.setup = pick(&file.setup);
-            out.run = pick(&file.run);
-            out.teardown = pick(&file.teardown);
-            // A linked worktree is trusted under the main checkout, so one Allow covers a branch's copy of the same file.
-            let repo = projects::repo_root(&root).unwrap_or(root);
-            out.trusted = is_trusted(home, &repo, &hash);
+            let scripts = [
+                ("setup", pick(&file.setup)),
+                ("run", pick(&file.run)),
+                ("teardown", pick(&file.teardown)),
+            ];
+            let hidden = scripts
+                .iter()
+                .find_map(|(name, script)| script.as_deref().and_then(hidden_character).map(|c| (name, c)));
+            if let Some((name, c)) = hidden {
+                out.problem = Some(problem(format_args!(
+                    "its {name} script has a hidden character (U+{:04X}).",
+                    c as u32
+                )));
+            } else {
+                let [(_, setup), (_, run), (_, teardown)] = scripts;
+                (out.setup, out.run, out.teardown) = (setup, run, teardown);
+                // A linked worktree is trusted under the main checkout, so one Allow covers a branch's copy of the same file.
+                let repo = projects::repo_root(&root).unwrap_or(root);
+                out.trusted = is_trusted(home, &repo, &hash);
+            }
         }
         Err(e) => out.problem = Some(problem(e)),
     }
@@ -279,6 +318,80 @@ mod tests {
         );
         assert_eq!(got.hash, None);
         assert_eq!((got.setup, got.run, got.teardown), (None, None, None));
+    }
+
+    /// Windows PowerShell 5.1's `Set-Content -Encoding UTF8` starts the file with a byte order mark.
+    #[test]
+    fn a_byte_order_mark_is_skipped() {
+        let home = tempfile::tempdir().unwrap();
+        let bom = [b"\xEF\xBB\xBF", SAMPLE.as_bytes()].concat();
+        let got = read(repo_with(Some(&bom)).path(), home.path());
+        assert_eq!(got.problem, None);
+        assert_eq!(got.setup.as_deref(), Some("pnpm i"));
+        assert_eq!(
+            got.hash,
+            read(repo_with(Some(SAMPLE.as_bytes())).path(), home.path()).hash
+        );
+    }
+
+    #[test]
+    fn the_read_stops_after_the_limit() {
+        // A source that never ends, as /dev/zero or a file still growing would be.
+        assert_eq!(read_limited(std::io::repeat(b' ')).unwrap(), None);
+        let small = read_limited(&b"{}"[..]).unwrap();
+        assert_eq!(small.as_deref(), Some(&b"{}"[..]));
+    }
+
+    #[test]
+    fn a_folder_is_not_a_file() {
+        let home = tempfile::tempdir().unwrap();
+        let repo = repo_with(None);
+        std::fs::create_dir(repo.path().join(FILE_NAME)).unwrap();
+        let got = read(repo.path(), home.path());
+        assert_eq!(
+            got.problem.as_deref(),
+            Some("marshell.json can't be read: it isn't a file.")
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_link_to_a_device_is_not_read() {
+        let home = tempfile::tempdir().unwrap();
+        let repo = repo_with(None);
+        std::os::unix::fs::symlink("/dev/zero", repo.path().join(FILE_NAME)).unwrap();
+        let got = read(repo.path(), home.path());
+        assert_eq!(
+            got.problem.as_deref(),
+            Some("marshell.json can't be read: it isn't a file.")
+        );
+    }
+
+    /// Direction marks and zero-width characters can make the card show a command other than the one that runs.
+    #[test]
+    fn a_hidden_character_is_a_problem() {
+        let home = tempfile::tempdir().unwrap();
+        for (ch, code) in [
+            ('\u{202E}', "U+202E"),
+            ('\u{2066}', "U+2066"),
+            ('\u{200B}', "U+200B"),
+            ('\u{1B}', "U+001B"),
+        ] {
+            let body = serde_json::json!({ "setup": format!("echo hi{ch}; rm x") }).to_string();
+            let got = read(repo_with(Some(body.as_bytes())).path(), home.path());
+            assert_eq!(
+                got.problem,
+                Some(format!(
+                    "marshell.json can't be read: its setup script has a hidden character ({code})."
+                )),
+            );
+            assert_eq!((got.setup, got.run, got.teardown), (None, None, None));
+        }
+        // Tabs and newlines are part of ordinary scripts.
+        let body = serde_json::json!({ "run": "a\tb\nc\r\nd" }).to_string();
+        let got = read(repo_with(Some(body.as_bytes())).path(), home.path());
+        assert_eq!(got.problem, None);
+        assert_eq!(got.run.as_deref(), Some("a\tb\nc\r\nd"));
     }
 
     #[test]
