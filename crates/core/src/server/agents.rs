@@ -8,6 +8,7 @@ use crate::agents::claude::{self, hooks};
 use crate::agents::codex::{self, trust};
 use crate::agents::install::{codex_newer, install_kind, update_text};
 use crate::agents::settings_view::{control, has_bom, masked_render, parse_masked, read_managed, text_problem, view};
+use crate::agents::skill;
 use crate::agents::{parse_any_version, run_version_text};
 use crate::bridge;
 use crate::config::jsonc::{parse_problem, read_value};
@@ -21,7 +22,7 @@ use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use marshell_protocol::account::{AccountStatus, SignIn};
 use marshell_protocol::agents::{
-    AgentFound, AgentSetup, HookInstall, HookPlanRequest, ParseProblem, RemovePreview, SettingsState,
+    AgentFound, AgentSetup, HookInstall, HookPlanRequest, ParseProblem, RemovePreview, SettingsState, SkillInstall,
 };
 use marshell_protocol::config::{
     Applies, ApplyConflict, ApplyRequest, ApplyResult, ChangeSet, ConfigPreview, ConfigScope, EditOp, ExpectedHash,
@@ -66,6 +67,17 @@ fn adapter(agent: &str) -> Result<Adapter, Fail> {
         CODEX => Ok(Adapter::Codex),
         ANTIGRAVITY => Ok(Adapter::Antigravity),
         _ => Err((StatusCode::NOT_FOUND, "no such agent".to_string())),
+    }
+}
+
+impl Adapter {
+    /// The CLI's name in a plan's title: "Install the marshell skill for Codex".
+    fn cli_name(self) -> &'static str {
+        match self {
+            Adapter::Claude => "Claude Code",
+            Adapter::Codex => "Codex",
+            Adapter::Antigravity => "Antigravity CLI",
+        }
     }
 }
 
@@ -134,6 +146,45 @@ impl AppState {
             Some(home) => Ok(home.clone()),
             None => super::files::home_dir().ok_or_else(|| failed("the user's home folder is not known")),
         }
+    }
+
+    /// Where `agent`'s `marshell` skill file goes. A skill home named by a test replaces the user's home and the
+    /// process environment; otherwise it is the user's home, with `CLAUDE_CONFIG_DIR` from the environment.
+    fn skill_file(&self, agent: &str) -> Result<PathBuf, Fail> {
+        let path = match &self.0.skill_home {
+            Some(home) => skill::skill_path(agent, &|_| None, home),
+            None => {
+                let home = super::files::home_dir().ok_or_else(|| failed("the user's home folder is not known"))?;
+                skill::skill_path(agent, &|k| std::env::var(k).ok(), &home)
+            }
+        };
+        path.ok_or_else(|| (StatusCode::NOT_FOUND, "no such agent".to_string()))
+    }
+
+    /// The bytes of the skill file: `None` when it is missing. A file that cannot be read is a 422 that names it.
+    fn skill_bytes(path: &Path) -> Result<Option<Vec<u8>>, Fail> {
+        match std::fs::read(path) {
+            Ok(bytes) => Ok(Some(bytes)),
+            Err(e) if e.kind() == ErrorKind::NotFound => Ok(None),
+            Err(e) => Err((
+                StatusCode::UNPROCESSABLE_ENTITY,
+                format!(
+                    "{} can't be read ({e}), so Marshell will not change it.",
+                    path.display()
+                ),
+            )),
+        }
+    }
+
+    /// The skill's install state and path for `agent`'s setup. A file that can't be read counts as edited: it is
+    /// there, and it is not Marshell's text.
+    fn skill_of(&self, agent: &str) -> Result<(SkillInstall, String), Fail> {
+        let path = self.skill_file(agent)?;
+        let state = match Self::skill_bytes(&path) {
+            Ok(bytes) => skill::state_of(bytes.as_deref()),
+            Err(_) => SkillInstall::Edited,
+        };
+        Ok((state, path.to_string_lossy().into_owned()))
     }
 
     fn agy_inputs(&self) -> Result<AgyInputs, Fail> {
@@ -316,6 +367,7 @@ pub(crate) fn setup_of(st: &AppState) -> Result<AgentSetup, Fail> {
 
     let exe = st.claude_exe();
     let version = st.claude_version(exe.as_deref());
+    let (skill, skill_path) = st.skill_of(AGENT)?;
 
     let mut setup = AgentSetup {
         agent: AGENT.to_string(),
@@ -334,6 +386,8 @@ pub(crate) fn setup_of(st: &AppState) -> Result<AgentSetup, Fail> {
         trust: None,
         bridge_path: paths::bridge_exe(home).to_string_lossy().into_owned(),
         snapshots_dir: paths::snapshots_dir(home).to_string_lossy().into_owned(),
+        skill,
+        skill_path,
     };
 
     let text = match std::fs::read_to_string(&settings_path) {
@@ -383,6 +437,7 @@ pub(crate) fn codex_setup_of(st: &AppState) -> Result<AgentSetup, Fail> {
     let hooks_path = st.codex_hooks_path(&user_home);
     let exe = st.agent_exe_of(CODEX);
     let version = st.codex_version(exe.as_deref());
+    let (skill, skill_path) = st.skill_of(CODEX)?;
 
     let mut setup = AgentSetup {
         agent: CODEX.to_string(),
@@ -401,6 +456,8 @@ pub(crate) fn codex_setup_of(st: &AppState) -> Result<AgentSetup, Fail> {
         trust: None,
         bridge_path: paths::bridge_exe(home).to_string_lossy().into_owned(),
         snapshots_dir: paths::snapshots_dir(home).to_string_lossy().into_owned(),
+        skill,
+        skill_path,
     };
 
     let text = match std::fs::read_to_string(&hooks_path) {
@@ -446,6 +503,7 @@ pub(crate) fn agy_setup_of(st: &AppState) -> Result<AgentSetup, Fail> {
     let (hooks_file, settings_file) = (agy::hooks_path(&user_home), agy::settings_path(&user_home));
     let exe = st.agent_exe_of(ANTIGRAVITY);
     let version = st.agent_version(ANTIGRAVITY, exe.as_deref());
+    let (skill, skill_path) = st.skill_of(ANTIGRAVITY)?;
 
     let mut setup = AgentSetup {
         agent: ANTIGRAVITY.to_string(),
@@ -464,6 +522,8 @@ pub(crate) fn agy_setup_of(st: &AppState) -> Result<AgentSetup, Fail> {
         trust: None,
         bridge_path: paths::bridge_exe(home).to_string_lossy().into_owned(),
         snapshots_dir: paths::snapshots_dir(home).to_string_lossy().into_owned(),
+        skill,
+        skill_path,
     };
 
     // A missing file is `None`; one that cannot be read or parsed makes the state unparsable.
@@ -1085,7 +1145,7 @@ pub async fn plan(
 ) -> Result<Json<ConfigPreview>, Fail> {
     let adapter = adapter(&agent)?;
     let preview = tokio::task::spawn_blocking(move || {
-        let changes = match adapter {
+        let mut changes = match adapter {
             Adapter::Claude => {
                 let inputs = st.inputs()?;
                 st.ensure_bridge(&want)?;
@@ -1117,6 +1177,45 @@ pub async fn plan(
             }
         }
         .map_err(|e| refused(&e))?;
+        if want.skill {
+            let path = st.skill_file(&agent)?;
+            let bytes = AppState::skill_bytes(&path)?;
+            changes.edits.extend(skill::install_edit(&path, bytes.as_deref()));
+        }
+        Ok::<_, Fail>(st.0.config.preview(changes))
+    })
+    .await
+    .map_err(failed)??;
+    Ok(Json(preview))
+}
+
+/// Installs, or updates, the `marshell` skill on its own. An installed skill gives a preview with no files.
+pub async fn skill_plan(
+    State(st): State<AppState>,
+    UrlPath(agent): UrlPath<String>,
+) -> Result<Json<ConfigPreview>, Fail> {
+    let adapter = adapter(&agent)?;
+    let preview = tokio::task::spawn_blocking(move || {
+        let path = st.skill_file(&agent)?;
+        let bytes = AppState::skill_bytes(&path)?;
+        let changes = skill::install_plan(adapter.cli_name(), &path, bytes.as_deref());
+        Ok::<_, Fail>(st.0.config.preview(changes))
+    })
+    .await
+    .map_err(failed)??;
+    Ok(Json(preview))
+}
+
+/// Takes the `marshell` skill out. A missing file gives a preview with no files.
+pub async fn skill_remove_plan(
+    State(st): State<AppState>,
+    UrlPath(agent): UrlPath<String>,
+) -> Result<Json<ConfigPreview>, Fail> {
+    let adapter = adapter(&agent)?;
+    let preview = tokio::task::spawn_blocking(move || {
+        let path = st.skill_file(&agent)?;
+        let bytes = AppState::skill_bytes(&path)?;
+        let changes = skill::remove_plan(adapter.cli_name(), &path, bytes.as_deref());
         Ok::<_, Fail>(st.0.config.preview(changes))
     })
     .await

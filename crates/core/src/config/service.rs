@@ -514,6 +514,18 @@ impl ConfigService {
 
         drop(managed_lock);
 
+        // A removed skill leaves its `marshell` folder empty: take that folder too. `remove_dir` refuses a
+        // folder that holds anything else, which is then left as it is.
+        for file in &changing {
+            let deletes = file.ops.iter().any(|op| matches!(op, EditOp::DeleteFile));
+            if deletes
+                && file.target.file_name().is_some_and(|n| n == "SKILL.md")
+                && let Some(folder) = file.target.parent()
+            {
+                let _ = std::fs::remove_dir(folder);
+            }
+        }
+
         // 9. This preview is spent, and the others on these files no longer describe the disk.
         let written: Vec<PathBuf> = changing.iter().map(|f| f.target.clone()).collect();
         // Old snapshots go only now: a failed apply must not cost one, and a restore of the oldest

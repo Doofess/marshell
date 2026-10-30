@@ -17,6 +17,8 @@ export const SETUP: AgentSetup = {
   needs_trust: false,
   bridge_path: "C:/m/bin/marshell-hook.exe",
   snapshots_dir: "C:/m/snapshots",
+  skill: "none",
+  skill_path: "C:/h/.claude/skills/marshell/SKILL.md",
 };
 
 /** Test input only: what the core sends for a Codex with no hooks of Marshell's yet. */

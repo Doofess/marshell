@@ -26,6 +26,8 @@ const setup: AgentSetup = {
   needs_trust: false,
   bridge_path: "C:/m/bin/marshell-hook.exe",
   snapshots_dir: "C:/m/snapshots",
+  skill: "none",
+  skill_path: "C:/h/.claude/skills/marshell/SKILL.md",
 };
 
 afterEach(() => vi.unstubAllGlobals());
@@ -38,7 +40,7 @@ describe("agents api", () => {
     expect(call(g)).toMatchObject({ url: "http://127.0.0.1:9/v1/agents/codex/setup", method: "GET" });
     const p = reply(preview([]));
     vi.stubGlobal("fetch", p);
-    await planInstall(endpoint, "codex", { status: true, statusline: false, approve: true });
+    await planInstall(endpoint, "codex", { status: true, statusline: false, approve: true, skill: false });
     expect(call(p)).toMatchObject({ url: "http://127.0.0.1:9/v1/agents/codex/hooks/plan", method: "POST" });
     const r = reply({ ...preview([]), statusline_left: false, preview: preview([]) });
     vi.stubGlobal("fetch", r);
@@ -53,8 +55,8 @@ describe("agents api", () => {
     expect(call(g)).toMatchObject({ url: "http://127.0.0.1:9/v1/agents/claude/setup", method: "GET" });
     const p = reply(preview([]));
     vi.stubGlobal("fetch", p);
-    await planInstall(endpoint, "claude", { status: true, statusline: false, approve: true });
-    expect(call(p)).toMatchObject({ url: "http://127.0.0.1:9/v1/agents/claude/hooks/plan", method: "POST", body: { status: true, statusline: false, approve: true } });
+    await planInstall(endpoint, "claude", { status: true, statusline: false, approve: true, skill: false });
+    expect(call(p)).toMatchObject({ url: "http://127.0.0.1:9/v1/agents/claude/hooks/plan", method: "POST", body: { status: true, statusline: false, approve: true, skill: false } });
     const r = reply({ preview: preview([]), statusline_left: false });
     vi.stubGlobal("fetch", r);
     await planRemove(endpoint, "claude");

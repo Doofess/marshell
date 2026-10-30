@@ -12,12 +12,12 @@ const view = (setup: AgentSetup | "loading" | "failed", panel: Panel = { kind: "
 describe("AgentsSectionView switches", () => {
   const switchOf = (h: string, label: string) => h.match(new RegExp(`<input[^>]*role="switch"[^>]*>(?=<span class="switch__track"[^>]*></span><span class="switch__text">${label}<)`))?.[0] ?? "";
   it("renders the status line switch unchecked when the person turned it off", () => {
-    const h = view(SETUP, { kind: "setup", flow: { preview: PREVIEW, open: false, busy: false, want: { status: true, statusline: false, approve: false } } });
+    const h = view(SETUP, { kind: "setup", flow: { preview: PREVIEW, open: false, busy: false, want: { status: true, statusline: false, approve: false, skill: false } } });
     expect(switchOf(h, "Keep my status line working")).not.toContain("checked");
     expect(switchOf(h, "Show status and context")).toContain("checked");
   });
   it("offers no Allow when status is off, and keeps Skip", () => {
-    const h = view(SETUP, { kind: "setup", flow: { preview: null, open: false, busy: false, want: { status: false, statusline: true, approve: false } } });
+    const h = view(SETUP, { kind: "setup", flow: { preview: null, open: false, busy: false, want: { status: false, statusline: true, approve: false, skill: false } } });
     expect(h).not.toContain("consent__apply");
     expect(h).toContain("Skip: use limited status");
   });
@@ -110,7 +110,7 @@ describe("AgentsSectionView", () => {
     expect(h).toMatch(/consent__skip[^>]*>Done</);
   });
   it("keeps Skip for an empty fresh setup", () => {
-    const h = view(SETUP, { kind: "setup", flow: { preview: { ...PREVIEW, can_apply: false, files: [] }, open: false, busy: false, want: { status: false, approve: false, statusline: false } } });
+    const h = view(SETUP, { kind: "setup", flow: { preview: { ...PREVIEW, can_apply: false, files: [] }, open: false, busy: false, want: { status: false, approve: false, statusline: false, skill: false } } });
     expect(h).toContain("Nothing will change: status is off.");
     expect(h).toMatch(/consent__skip[^>]*>Skip: use limited status</);
     expect(h).not.toContain("Already set up");

@@ -9,18 +9,19 @@ export const OFFER: Capability[] = ["status", "approve", "statusline"];
 /** Codex has no status line, so its card has no status line controls. */
 const CODEX_OFFER: Capability[] = ["status", "approve"];
 export type Want = HookPlanRequest;
-export const DEFAULT_WANT: Want = { status: true, statusline: true, approve: true };
+export const DEFAULT_WANT: Want = { status: true, statusline: true, approve: true, skill: false };
 /** Approval can be added on its own; chaining still needs status. */
 export const installRequest = (w: Want, agent: HookAgent = "claude"): HookPlanRequest => ({
   status: w.status,
   statusline: agent !== "codex" && w.status && w.statusline,
   approve: w.approve,
+  skill: w.skill,
 });
 const onOf = installRequest;
 const ON = onOf(DEFAULT_WANT);
 
 /** An existing status install needs only the permission hook. */
-export const setupWant = (s: AgentSetup): Want => s.hooks === "installed" ? { status: false, statusline: false, approve: true } : DEFAULT_WANT;
+export const setupWant = (s: AgentSetup): Want => s.hooks === "installed" ? { status: false, statusline: false, approve: true, skill: false } : DEFAULT_WANT;
 
 /** Where the Agents dialog opens from a session row's "set up" link: on that row's agent's Set up card. */
 export type SetupStart = { setup: HookAgent };

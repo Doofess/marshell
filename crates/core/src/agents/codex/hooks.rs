@@ -428,11 +428,13 @@ mod tests {
         status: true,
         statusline: true,
         approve: false,
+        skill: false,
     };
     const BOTH: HookPlanRequest = HookPlanRequest {
         status: true,
         statusline: true,
         approve: true,
+        skill: false,
     };
     const USER_GROUP: &str = r#"{"hooks":[{"type":"command","command":"echo mine"}]}"#;
 

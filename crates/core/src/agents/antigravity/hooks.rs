@@ -566,11 +566,13 @@ mod tests {
         status: true,
         statusline: true,
         approve: false,
+        skill: false,
     };
     const BOTH: HookPlanRequest = HookPlanRequest {
         status: true,
         statusline: true,
         approve: true,
+        skill: false,
     };
     const USER_HOOK: &str = r#""mine": { "enabled": true, "Stop": [{ "type": "command", "command": "echo mine" }] }"#;
 
@@ -821,6 +823,7 @@ mod tests {
             status: false,
             statusline: false,
             approve: true,
+            skill: false,
         };
         let (cs, after) = install(&Files::default(), &want, &fake_home());
         let hook = &after.hooks_value()[HOOK_NAME];
@@ -839,6 +842,7 @@ mod tests {
             status: false,
             statusline: false,
             approve: false,
+            skill: false,
         };
         let (cs, after) = install(&installed, &want, &home);
         assert!(
@@ -1166,6 +1170,7 @@ mod tests {
             status: false,
             statusline: false,
             approve: false,
+            skill: false,
         };
         let cs = try_install(&Files::default(), &want, &fake_home()).unwrap();
         assert!(cs.edits.is_empty());
