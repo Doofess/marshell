@@ -338,7 +338,8 @@ async fn links_to_a_network_share_are_refused_without_touching_the_network() {
     assert!(list.contains(&"plain.txt".to_string()), "{list:?}");
     assert!(!list.iter().any(|f| f.contains("link")), "{list:?}");
     let took = before_git + after_git.elapsed();
-    assert!(took < Duration::from_secs(2), "took {took:?}");
+    // A lookup that reaches the share takes tens of seconds; a cold CI runner has taken 2.3 s for the rest.
+    assert!(took < Duration::from_secs(5), "took {took:?}");
 }
 
 #[cfg(windows)]
