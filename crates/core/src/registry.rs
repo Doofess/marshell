@@ -76,8 +76,9 @@ pub struct Entry {
     /// reads Done. Cleared by the next hook event, a process change or the end of a subagent wait.
     /// Not serialized.
     pending_done: Option<LiveStatus>,
-    /// A `SessionStart` hook event has landed for the current process (a new process clears it). Claude Code
-    /// runs that hook only after its folder-trust dialog is answered. Not serialized.
+    /// A `SessionStart`, or any later main-agent hook event but `SessionEnd`, has landed for the current process (a
+    /// new process clears it). Claude Code runs its hooks only after its folder-trust dialog is answered. Not
+    /// serialized.
     session_started: bool,
     stuck: StuckTracker,
     /// When the person last typed into the session. Not serialized.
@@ -525,6 +526,18 @@ impl Registry {
             .iter()
             .find(|e| e.info.tab_id == tab_id)
             .is_some_and(|e| e.session_started)
+    }
+
+    /// Whether the tab's agent shows its own prompt that its status line reported (`agent_prompt`). Typing into
+    /// the tab and any hook event that changes the status take the flag, so it is only true while the prompt is
+    /// unanswered as far as Marshell can tell.
+    pub fn agent_prompt_showing(&self, tab_id: &str) -> bool {
+        let state = self.state.lock().unwrap();
+        state
+            .open
+            .iter()
+            .find(|e| e.info.tab_id == tab_id)
+            .is_some_and(|e| e.agent_prompt)
     }
 
     /// The generation of the tab's current process, if the tab is open.
@@ -1043,11 +1056,14 @@ impl Registry {
             // Every hook event is newer than a held Done; a Stop holds its own after this runs.
             entry.pending_done = None;
             if body.get("agent_id").is_none() {
-                match body.get("hook_event_name").and_then(serde_json::Value::as_str) {
-                    Some("SessionStart") => {
-                        entry.waiting = false;
-                        entry.session_started = true;
-                    }
+                let event = body.get("hook_event_name").and_then(serde_json::Value::as_str);
+                // Every event but `SessionEnd` comes after the folder-trust dialog: one from a Claude that loaded the
+                // hooks after it started, and so sent no `SessionStart`, counts too.
+                if event.is_some_and(|e| e != "SessionEnd") {
+                    entry.session_started = true;
+                }
+                match event {
+                    Some("SessionStart") => entry.waiting = false,
                     Some("Stop") => entry.waiting = running_subagents(body).next().is_some(),
                     Some("UserPromptSubmit" | "SessionEnd" | "PreToolUse") => {
                         entry.waiting = false;
@@ -2772,8 +2788,17 @@ mod tests {
         let reg = Registry::new();
         reg.reserve("a", relaunch("A"));
         assert!(!reg.session_started("a"));
+        // A subagent's event or a SessionEnd says nothing about the dialog.
+        fold_claude_event(
+            &reg,
+            serde_json::json!({ "hook_event_name": "PreToolUse", "agent_id": "s1" }),
+        );
+        fold_claude_event(&reg, serde_json::json!({ "hook_event_name": "SessionEnd" }));
+        assert!(!reg.session_started("a"));
+        // A Claude that loaded the hooks after it started sends no SessionStart: its next event counts.
         fold_claude_event(&reg, serde_json::json!({ "hook_event_name": "UserPromptSubmit" }));
-        assert!(!reg.session_started("a"), "only SessionStart counts");
+        assert!(reg.session_started("a"));
+        reg.begin_restart("a", SessionMode::Plan).unwrap();
         fold_claude_event(&reg, serde_json::json!({ "hook_event_name": "SessionStart" }));
         assert!(reg.session_started("a"));
         // A restart is a new process: its SessionStart hasn't come yet.

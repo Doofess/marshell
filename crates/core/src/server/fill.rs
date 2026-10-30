@@ -61,12 +61,13 @@ pub async fn fill(State(st): State<AppState>, Path(tab): Path<String>, Json(req)
     }
     // The 30 s start here, so a slow settings or version lookup counts against them.
     let deadline = Instant::now() + FILL_TIMEOUT;
-    // Claude Code's settings are read once, off the async workers.
+    // Claude Code's settings are read once, off the async workers: with or without `wait`, a row with the hooks
+    // installed is not typed into before its `SessionStart`.
     let claude = st
         .registry()
         .row(&tab)
         .is_some_and(|r| r.agent.as_deref() == Some("claude"));
-    let hooks = if req.wait && claude {
+    let hooks = if claude {
         let asker = st.clone();
         let lookup = tokio::task::spawn_blocking(move || super::agents::setup_of(&asker).ok().map(|s| s.hooks));
         match tokio::time::timeout_at(tokio::time::Instant::from_std(deadline), lookup).await {
@@ -95,13 +96,20 @@ pub async fn fill(State(st): State<AppState>, Path(tab): Path<String>, Json(req)
             return cannot_resume("It is paused.");
         }
         // A pending answer would take the text as its own keys (a digit, `y`), so nothing is typed until it is
-        // answered, and Marshell's held card is left alone. A dialog dismissed with Escape sends no hook, so the row
-        // keeps saying it waits: a key typed in the terminal since the dialog appeared counts as its answer.
+        // answered, and Marshell's held card is left alone. A Claude dialog dismissed with Escape sends no hook, so the
+        // row keeps saying it waits: a key typed in the terminal since it appeared counts as its answer. Two more
+        // answers can be pending with no dialog state. A hooked Claude row without its `SessionStart` may still show
+        // the folder-trust dialog. An Antigravity row stays Working under its own tool prompt, and only the status
+        // line says it shows; typing takes that flag, so a key typed since counts as its answer too.
+        let hooked = claude_hooked(row.agent.as_deref(), row.status_note.as_deref(), hooks);
+        let started = st.registry().session_started(&tab);
         let waiting = st.holds().has_tab(&tab)
             || row.live.as_ref().is_some_and(|l| {
                 matches!(l.state, LiveState::NeedsPermission | LiveState::NeedsQuestion)
                     && !st.registry().typed_since(&tab, l.since_ms)
-            });
+            })
+            || (hooked && !started)
+            || st.registry().agent_prompt_showing(&tab);
         if waiting && !req.wait {
             return cannot_resume("waiting");
         }
@@ -115,8 +123,7 @@ pub async fn fill(State(st): State<AppState>, Path(tab): Path<String>, Json(req)
             _ => now,
         };
         seen = Some((end, changed));
-        let hooked = claude_hooked(row.agent.as_deref(), row.status_note.as_deref(), hooks);
-        if !waiting && ready(hooked, st.registry().session_started(&tab), end, now - changed) {
+        if !waiting && ready(hooked, started, end, now - changed) {
             return write(&st, &tab, &session, req.text);
         }
         if now >= deadline {

@@ -436,13 +436,12 @@ async fn body_of_request(req: &mut Request<Body>) -> String {
     String::from_utf8(axum::body::to_bytes(body, usize::MAX).await.unwrap().to_vec()).unwrap()
 }
 
-/// A Claude row with Marshell's hooks installed is not ready until its SessionStart arrives, however quiet it is.
-#[tokio::test]
-async fn fill_with_wait_holds_for_session_start_when_the_hooks_are_installed() {
-    let tmp = tempfile::tempdir().unwrap();
-    let home = tmp.path().join("home");
+/// A Claude state with Marshell's hooks installed in the scratch settings, the way the app does it: plan, then
+/// apply what was shown.
+async fn hooked_claude_state(tmp: &Path) -> (AppState, axum::Router) {
+    let home = tmp.join("home");
     // Settings may be written only in a recorded project folder.
-    let project = marshell_core::projects::canonical(tmp.path());
+    let project = marshell_core::projects::canonical(tmp);
     std::fs::create_dir_all(&home).unwrap();
     marshell_core::projects::record(&home, &project, 1).unwrap();
     let st = claude_state(&home).with_claude_settings(project.join("settings.json"));
@@ -480,6 +479,14 @@ async fn fill_with_wait_holds_for_session_start_when_the_hooks_are_installed() {
     .await;
     assert_eq!(status, StatusCode::OK, "{applied}");
 
+    (st, app)
+}
+
+/// A Claude row with Marshell's hooks installed is not ready until its SessionStart arrives, however quiet it is.
+#[tokio::test]
+async fn fill_with_wait_holds_for_session_start_when_the_hooks_are_installed() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (st, app) = hooked_claude_state(tmp.path()).await;
     let tab = start_claude(&app, tmp.path()).await;
     let route = format!("/v1/sessions/{tab}/fill");
     let started = Instant::now();
@@ -499,6 +506,163 @@ async fn fill_with_wait_holds_for_session_start_when_the_hooks_are_installed() {
     assert_eq!(res.status(), StatusCode::NO_CONTENT);
     assert_eq!(filling.await.unwrap(), StatusCode::NO_CONTENT);
     assert!(started.elapsed() >= Duration::from_secs(3));
+    if let Some(session) = st.remove_session(&tab) {
+        session.force_kill();
+    }
+}
+
+/// Claude sends `SessionStart` only after the folder-trust dialog is answered, and that dialog takes a typed
+/// digit as its answer. So a hooked row without its `SessionStart` takes no text, even without `wait`.
+#[tokio::test]
+async fn fill_without_wait_refuses_a_hooked_claude_row_before_its_session_start() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (st, app) = hooked_claude_state(tmp.path()).await;
+    let tab = start_claude(&app, tmp.path()).await;
+    let session = st.session(&tab).unwrap();
+    let route = format!("/v1/sessions/{tab}/fill");
+    let res = app
+        .clone()
+        .oneshot(api("POST", &route, fill_body("1", false)))
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::CONFLICT);
+    assert_eq!(body_of(res).await, r#"{"reason":"waiting"}"#);
+    // Nothing was typed: the person's Enter reaches the echo agent as an empty line.
+    session.write_input(b"\r".to_vec());
+    assert!(output_has(&session, "got:", Duration::from_secs(10)));
+    assert!(
+        !output_has(&session, "got:1", Duration::from_millis(300)),
+        "the text was typed"
+    );
+
+    // The dialog is answered and Claude starts: the fill lands.
+    let res = app
+        .clone()
+        .oneshot(hook_request("event", &tab, "SessionStart"))
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::NO_CONTENT);
+    let res = app
+        .clone()
+        .oneshot(api("POST", &route, fill_body("hello", false)))
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::NO_CONTENT);
+    if let Some(session) = st.remove_session(&tab) {
+        session.force_kill();
+    }
+}
+
+async fn start_agy(app: &axum::Router, cwd: &Path) -> String {
+    let body = serde_json::json!({
+        "cols": 80, "rows": 24, "profile_id": "echoer", "agent": "antigravity", "cwd": cwd.to_string_lossy(),
+    });
+    let res = app
+        .clone()
+        .oneshot(api("POST", "/v1/sessions", Some(body)))
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    serde_json::from_str::<serde_json::Value>(&body_of(res).await).unwrap()["tab_id"]
+        .as_str()
+        .unwrap()
+        .to_string()
+}
+
+/// An Antigravity hook call carrying a recorded fixture: `hooks/<name>` for an event, `statusline/<name>` for the
+/// status line.
+fn agy_request(role: &str, tab: &str, dir: &str, name: &str, event: Option<&str>) -> Request<Body> {
+    let file = format!(
+        "{}/tests/fixtures/antigravity/{dir}/1.4.7/{name}.json",
+        env!("CARGO_MANIFEST_DIR")
+    );
+    let mut body: serde_json::Value = serde_json::from_slice(&std::fs::read(file).unwrap()).unwrap();
+    if let Some(event) = event {
+        body["hook_event_name"] = event.into();
+    }
+    let mut req = api("POST", "/v1/hook", None);
+    *req.body_mut() = Body::from(body.to_string());
+    let h = req.headers_mut();
+    h.insert("x-marshell-role", role.parse().unwrap());
+    h.insert("x-marshell-agent", "antigravity".parse().unwrap());
+    h.insert("x-marshell-tab", tab.parse().unwrap());
+    h.insert("x-marshell-version", "0.0.0".parse().unwrap());
+    req
+}
+
+/// agy asks for a tool's confirmation in its own prompt and stays Working: only the status line's
+/// `tool_confirmation_pending` says so. A digit typed there would answer it.
+#[tokio::test]
+async fn fill_without_wait_refuses_an_antigravity_row_showing_its_own_prompt() {
+    let tmp = tempfile::tempdir().unwrap();
+    let st = state(&tmp.path().join("home"))
+        .with_agy_version(Some("1.4.7".into()))
+        .with_agent_check(|_| true)
+        .with_tab_path(|| None);
+    let app = router(st.clone());
+    let tab = start_agy(&app, tmp.path()).await;
+    let session = st.session(&tab).unwrap();
+    let post = |req: Request<Body>| {
+        let app = app.clone();
+        async move { app.oneshot(req).await.unwrap().status() }
+    };
+    let pre = agy_request("event", &tab, "hooks", "PreToolUse-run_command", Some("PreToolUse"));
+    assert_eq!(post(pre).await, StatusCode::NO_CONTENT);
+    let pending = || agy_request("statusline", &tab, "statusline", "pending", None);
+    assert_eq!(post(pending()).await, StatusCode::NO_CONTENT);
+    assert!(
+        st.registry().row(&tab).unwrap().attention.is_some(),
+        "agy's prompt raised no attention"
+    );
+
+    let route = format!("/v1/sessions/{tab}/fill");
+    let res = app
+        .clone()
+        .oneshot(api("POST", &route, fill_body("1", false)))
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::CONFLICT);
+    assert_eq!(body_of(res).await, r#"{"reason":"waiting"}"#);
+    // Nothing was typed: the person's Enter reaches the echo agent as an empty line.
+    session.write_input(b"\r".to_vec());
+    assert!(output_has(&session, "got:", Duration::from_secs(10)));
+    assert!(
+        !output_has(&session, "got:1", Duration::from_millis(300)),
+        "the text was typed"
+    );
+
+    // The prompt is answered: the next status line has no pending key, and the fill lands.
+    let working = agy_request("statusline", &tab, "statusline", "working", None);
+    assert_eq!(post(working).await, StatusCode::NO_CONTENT);
+    let res = app
+        .clone()
+        .oneshot(api("POST", &route, fill_body("hello", false)))
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::NO_CONTENT);
+
+    // A key typed in the terminal takes the flag, so it answers the prompt for fill too. The prompt is raised
+    // again if the next status line still says it shows.
+    assert_eq!(post(pending()).await, StatusCode::NO_CONTENT);
+    let res = app
+        .clone()
+        .oneshot(api("POST", &route, fill_body("1", false)))
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::CONFLICT);
+    let input = format!("/v1/sessions/{tab}/input");
+    let res = app
+        .clone()
+        .oneshot(api("POST", &input, Some(serde_json::json!({ "text": "y" }))))
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::NO_CONTENT);
+    let res = app
+        .clone()
+        .oneshot(api("POST", &route, fill_body("hello", false)))
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::NO_CONTENT);
     if let Some(session) = st.remove_session(&tab) {
         session.force_kill();
     }
