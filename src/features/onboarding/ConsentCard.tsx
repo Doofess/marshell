@@ -9,6 +9,14 @@ const CAP_LABEL: Record<Capability, string> = { status: "Show status and context
 
 const ALL: Capability[] = ["status", "approve", "statusline", "skill"];
 
+/** The files the plan touches: the hooks file, the settings file, and the skill file when it is added or updated. */
+function changedFiles(d: Detection, skillOn: boolean): string[] {
+  const skill = skillOn && d.skill !== undefined && d.skill !== "installed" && d.skillPath !== undefined ? [d.skillPath] : [];
+  return [...(d.hooks ? [d.hooks.path] : []), d.configPath, ...skill];
+}
+
+const listFiles = (files: string[]) => (files.length < 3 ? files.join(" and ") : `${files.slice(0, -1).join(", ")} and ${files.at(-1)}`);
+
 /** Screen 2: one card per CLI, in plain words: what changes and where, the exact diff on request, the backup and the way out. A file that cannot be edited gets the reason instead of controls. */
 export function ConsentCard({
   scenario,
@@ -97,7 +105,7 @@ export function ConsentCard({
                 <code>{fileName(path)}</code> will be deleted
               </p>
             ))}
-          {open && <DiffView diff={plan.diff} label={`Exact changes to ${d.hooks ? `${d.hooks.path} and ${d.configPath}` : d.configPath}`} />}
+          {open && <DiffView diff={plan.diff} label={`Exact changes to ${listFiles(changedFiles(d, on.skill))}`} />}
           {plan.chainPath && on.statusline && d.hasOwnStatusLine !== false && CAPABILITIES[d.cli].statusline.available && (
             <p className="consent__chain">
               Your own status line command is saved in <code>{plan.chainPath}</code> and keeps running: Marshell&apos;s runs first and then yours.

@@ -49,6 +49,17 @@ describe("ConsentCard", () => {
     expect(h.match(/role="switch"/g)).toHaveLength(4);
     expect(h).toContain("Codex has no status line to chain.");
   });
+  it("names the skill file in the diff label when the skill is added or updated", () => {
+    const skill = { ...CONSENT.claude.detection, skill: "none" as const, skillPath: "C:\h\.claude\skills\marshell\SKILL.md" };
+    const one = renderToStaticMarkup(<ConsentCard scenario={{ ...CONSENT.claude, detection: skill }} on={{ ...on, skill: true }} open />);
+    expect(one).toContain(`Exact changes to ${skill.configPath} and ${skill.skillPath}`);
+    const agy = { ...CONSENT.antigravity.detection, skill: "outdated" as const, skillPath: "C:\h\skills\SKILL.md" };
+    const three = renderToStaticMarkup(<ConsentCard scenario={{ ...CONSENT.antigravity, detection: agy }} on={{ ...on, skill: true }} open />);
+    expect(three).toContain(`Exact changes to ${agy.hooks!.path}, ${agy.configPath} and ${agy.skillPath}`);
+    const installed = renderToStaticMarkup(<ConsentCard scenario={{ ...CONSENT.claude, detection: { ...skill, skill: "installed" } }} on={{ ...on, skill: true }} open />);
+    expect(installed).not.toContain(skill.skillPath);
+    expect(renderToStaticMarkup(<ConsentCard scenario={{ ...CONSENT.claude, detection: skill }} on={on} open />)).not.toContain(skill.skillPath);
+  });
   it("names both Antigravity files: hooks in its shared hooks.json, the status line in its own settings", () => {
     const h = renderToStaticMarkup(<ConsentCard scenario={CONSENT.antigravity} on={on} open />);
     expect(h).toContain("Add 5 hook entries in C:\\Users\\Home Office\\.gemini\\config\\hooks.json (a new file) and chain your status line in C:\\Users\\Home Office\\.gemini\\antigravity-cli\\settings.json.");
