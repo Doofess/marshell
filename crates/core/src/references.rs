@@ -389,6 +389,33 @@ mod tests {
         assert_eq!(resolve(&d, &root, "read secret"), None);
     }
 
+    #[cfg(windows)]
+    #[test]
+    fn a_junction_out_of_the_checkout_is_never_sent() {
+        let (_dir, root) = checkout();
+        let outside = tempfile::tempdir().unwrap();
+        std::fs::write(outside.path().join("secret.txt"), "x").unwrap();
+        let link = root.join("src").join("out");
+        let made = std::process::Command::new("cmd")
+            .arg("/C")
+            .arg("mklink")
+            .arg("/J")
+            .arg(&link)
+            .arg(outside.path())
+            .output()
+            .unwrap();
+        assert!(made.status.success(), "{}", String::from_utf8_lossy(&made.stdout));
+        assert!(link.join("secret.txt").exists(), "the junction reaches the file");
+        let d = doc(true, &[("secret", "src/out/secret.txt")]);
+        assert_eq!(resolve(&d, &root, "read secret"), None);
+        let home = tempfile::tempdir().unwrap();
+        save(home.path(), &update(&root, true, d.aliases.clone())).unwrap();
+        let shown = info(home.path(), &root).unwrap();
+        assert!(!shown.aliases[0].exists, "{:?}", shown.aliases);
+        // Remove the junction itself first, so cleanup never walks into the target.
+        std::fs::remove_dir(&link).unwrap();
+    }
+
     #[test]
     fn disabled_sends_nothing() {
         let (_dir, root) = checkout();
