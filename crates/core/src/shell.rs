@@ -8,7 +8,7 @@ use marshell_protocol::api::{IntegrationInfo, Profile};
 use std::path::{Path, PathBuf};
 
 /// Every file in the script folder, as (path under the folder, text). Built into the binary.
-const FILES: [(&str, &str); 8] = [
+const FILES: [(&str, &str); 9] = [
     ("marshell.ps1", include_str!("../shell/marshell.ps1")),
     ("marshell.bash", include_str!("../shell/marshell.bash")),
     ("marshell.zsh", include_str!("../shell/marshell.zsh")),
@@ -17,6 +17,7 @@ const FILES: [(&str, &str); 8] = [
     ("zsh/.zprofile", include_str!("../shell/zsh/.zprofile")),
     ("zsh/.zshrc", include_str!("../shell/zsh/.zshrc")),
     ("zsh/.zlogin", include_str!("../shell/zsh/.zlogin")),
+    ("marshell-open", include_str!("../shell/marshell-open")),
 ];
 
 const OFF: &str = "Shell integration is off for this profile.";
@@ -147,6 +148,8 @@ fn wsl_dispatcher(dir: &Path) -> String {
         r#"s=${SHELL:-$(getent passwd "$(id -un)" | cut -d: -f7)}; s=${s:-/bin/sh}"#.to_string(),
         format!("d=$(wslpath -u {win_dir} 2>/dev/null) || d="),
         r#"[ -n "$d" ] || exec "$s" -l"#.to_string(),
+        // A bare distro can't open an agent's sign-in page: Marshell's opener stands in for the missing one.
+        r#"[ -z "${BROWSER:-}" ] && ! command -v wslview >/dev/null 2>&1 && ! command -v xdg-open >/dev/null 2>&1 && export BROWSER="$d/marshell-open""#.to_string(),
         r#"case "${s##*/}" in"#.to_string(),
         r#"bash) MARSHELL_BASH_LOGIN=1 exec "$s" --init-file "$d/marshell.bash" -i ;;"#.to_string(),
         r#"zsh) MARSHELL_USER_ZDOTDIR="${ZDOTDIR:-}" ZDOTDIR="$d/zsh" exec "$s" -l ;;"#.to_string(),
@@ -508,6 +511,34 @@ mod tests {
         );
         let p = profile(&["wsl.exe", "--cd", "~"], ShellFamily::Wsl);
         assert!(integrate(&p, Path::new(dir), &no_env).is_err());
+    }
+
+    #[test]
+    fn wsl_dispatcher_sets_browser_only_without_an_opener() {
+        let p = profile(&["wsl.exe", "-d", "Ubuntu"], ShellFamily::Wsl);
+        let applied = integrate(&p, Path::new(DIR), &no_env).unwrap();
+        let dispatcher = &applied.argv[6];
+        let set = dispatcher
+            .find(r#"export BROWSER="$d/marshell-open""#)
+            .expect(dispatcher);
+        let guard = dispatcher.find(r#"[ -z "${BROWSER:-}" ]"#).expect(dispatcher);
+        assert!(guard < set);
+        assert!(dispatcher[guard..set].contains("command -v wslview"));
+        assert!(dispatcher[guard..set].contains("command -v xdg-open"));
+        // After `d` is known (so it can name the script) and before any shell starts.
+        assert!(dispatcher.find(r#"[ -n "$d" ] || exec"#).unwrap() < guard);
+        assert!(set < dispatcher.find("case").unwrap());
+    }
+
+    #[test]
+    fn the_opener_refuses_non_http_urls() {
+        let (_, text) = FILES.iter().find(|(name, _)| *name == "marshell-open").unwrap();
+        assert!(text.starts_with("#!/bin/sh\n"));
+        assert!(text.contains(r#"case "$1" in http://*|https://*) ;; *) exit 1 ;; esac"#));
+        assert!(!text.contains('\r'));
+        let home = tempfile::tempdir().unwrap();
+        let dir = install(home.path()).unwrap();
+        assert!(!std::fs::read(dir.join("marshell-open")).unwrap().contains(&b'\r'));
     }
 
     #[test]
