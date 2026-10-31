@@ -28,6 +28,10 @@ fn sleeper_profile() -> marshell_protocol::api::Profile {
 const KNOWN: &str = "2.1.302";
 
 fn state(version: Option<&str>) -> AppState {
+    state_with(version, vec![sleeper_profile()])
+}
+
+fn state_with(version: Option<&str>, profiles: Vec<marshell_protocol::api::Profile>) -> AppState {
     common::tie_children_to_test();
     let home = tempfile::tempdir().unwrap().keep();
     let user_home = home.join("user");
@@ -36,7 +40,7 @@ fn state(version: Option<&str>) -> AppState {
         PORT,
         vec!["http://tauri.localhost".into()],
         home,
-        vec![sleeper_profile()],
+        profiles,
     )
     .with_agent_check(|_| true)
     // No test here finds a program on this machine's PATH: CI has no Grok.
@@ -1001,8 +1005,13 @@ fn save_refs(st: &AppState, root: &std::path::Path, enabled: bool, aliases: Vec<
 
 /// A session of the sleeper profile launched as `agent`, in `cwd`.
 async fn start_in(app: &axum::Router, agent: &str, cwd: &std::path::Path) -> String {
+    start_profile_in(app, "sleeper", agent, cwd).await
+}
+
+/// A session of `profile_id` launched as `agent`, in `cwd`.
+async fn start_profile_in(app: &axum::Router, profile_id: &str, agent: &str, cwd: &std::path::Path) -> String {
     let body = serde_json::json!({
-        "cols": 80, "rows": 24, "profile_id": "sleeper", "agent": agent, "cwd": cwd.to_string_lossy(),
+        "cols": 80, "rows": 24, "profile_id": profile_id, "agent": agent, "cwd": cwd.to_string_lossy(),
     });
     let res = app
         .clone()
@@ -1195,6 +1204,54 @@ async fn a_worktree_tab_checks_the_file_in_its_own_checkout() {
     assert_eq!(code, StatusCode::NO_CONTENT, "{text}");
     assert!(text.is_empty(), "{text}");
     assert_eq!(shown, None);
+}
+
+#[tokio::test]
+async fn a_prompt_resolves_in_the_folder_the_shell_is_in() {
+    // Started in repo A; the shell then moved into repo B, where the agent runs.
+    let a = project();
+    let b = project();
+    let reporter = marshell_protocol::api::Profile {
+        id: "reporter".into(),
+        name: "Reporter".into(),
+        command: vec![
+            env!("CARGO_BIN_EXE_fake-agent").into(),
+            "folder".into(),
+            b.repo.to_string_lossy().into_owned(),
+        ],
+        ..sleeper_profile()
+    };
+    let st = state_with(Some(KNOWN), vec![sleeper_profile(), reporter]);
+    let app = router(st.clone());
+    // Only B has references, so a note can only come from B's project.
+    save_refs(&st, &b.repo, true, login_button());
+    let tab = start_profile_in(&app, "reporter", "claude", &a.repo).await;
+    // The shell's report arrives some time after the process starts.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while st.session(&tab).and_then(|s| s.current_cwd()).is_none() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the shell never reported a folder"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    let (code, text) = submit(&app, "claude", Some(&tab), "fix the login button").await;
+    let shown = row(&st, &tab).references;
+    stop(&st, &tab);
+
+    assert_eq!(code, StatusCode::OK, "{text}");
+    let note = serde_json::from_str::<serde_json::Value>(&text).unwrap()["hookSpecificOutput"]["additionalContext"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert_eq!(
+        note,
+        format!(
+            "References: 'login button' = {}.",
+            b.repo.join("src").join("login.rs").display()
+        )
+    );
+    assert_eq!(shown.unwrap().names, ["login button"]);
 }
 
 #[tokio::test]

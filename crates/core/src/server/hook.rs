@@ -167,7 +167,9 @@ pub async fn post(
     Ok(StatusCode::NO_CONTENT.into_response())
 }
 
-/// The note for the aliases `prompt` names in the project of the tab's folder, with paths in the tab's own checkout.
+/// The note for the aliases `prompt` names in the project of the folder the agent runs in, with paths in that
+/// folder's own checkout. That folder is the one the tab's shell last reported (a shell opened in repo A where the
+/// person ran `cd ..\B; claude` is in B), and the tab's start folder when the shell reported none.
 /// None when there is no prompt, the references are off, the file can't be read, or nothing matches: the prompt
 /// then goes on as it is. The read is one small file, off the async workers.
 async fn references_for(
@@ -176,7 +178,12 @@ async fn references_for(
     prompt: Option<String>,
 ) -> Option<marshell_protocol::api::ReferenceNote> {
     let prompt = prompt?;
-    let cwd = st.registry().cwd_of_tab(tab).filter(|cwd| !cwd.is_empty())?;
+    let reported = st
+        .session(tab)
+        .and_then(|s| s.current_cwd())
+        .map(|p| p.to_string_lossy().into_owned())
+        .filter(|cwd| !cwd.is_empty());
+    let cwd = reported.or_else(|| st.registry().cwd_of_tab(tab).filter(|cwd| !cwd.is_empty()))?;
     let home = st.home().to_path_buf();
     tokio::task::spawn_blocking(move || {
         let root = std::path::PathBuf::from(crate::projects::project_of(&cwd));
