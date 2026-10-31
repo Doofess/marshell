@@ -370,6 +370,13 @@ describe("AgentsSectionView with a CLI missing on Windows", () => {
       expect(card).not.toContain(">Set up</button>");
       expect(card).not.toContain(">Hooks off</button>");
     });
+    it(`${agent}_not_found_on_windows_keeps_its_live_status_switch`, () => {
+      // Live status is Marshell's own setting, and it governs the agent's rows in a distro too.
+      const props = agent === "codex" ? { codex: { ...CODEX_SETUP, found: false }, codexLiveStatus: true } : { antigravity: { ...AGY_SETUP, found: false }, antigravityLiveStatus: true };
+      const h = renderToStaticMarkup(<AgentsSectionView setup={SETUP} {...props} panel={{ kind: "list" }} liveStatus={true} wslDistros={["Ubuntu"]} {...handlers} />);
+      const from = h.indexOf(`data-agent-card="${agent}"`);
+      expect(h.slice(from, h.indexOf("</section>", from))).toContain("Live status");
+    });
     it(`${agent}_not_found_and_no_distros_renders_nothing`, () => {
       expect(missing(agent, [])).not.toContain(`data-agent-card="${agent}"`);
       expect(missing(agent, undefined)).not.toContain(`data-agent-card="${agent}"`);

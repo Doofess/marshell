@@ -175,8 +175,8 @@ function AgentList({ setup, agent, liveStatus, error, on, skill, distros }: { se
         </p>
       )}
       {setup.found && setup.hooks === "installed" && !setup.approve_installed && <p className="agents-dialog__line">Approve from anywhere: off</p>}
-      {/* Left out until the settings have been read: an unread value is never shown as off. */}
-      {setup.found && liveStatus !== null && (
+      {/* Left out until the settings have been read: an unread value is never shown as off. Marshell's own setting, so it stays for a CLI found only in a distro. */}
+      {liveStatus !== null && (
         <Switch label="Live status" checked={liveStatus} onChange={(checked) => on.onLiveStatus(checked, agent)} reason={liveStatus ? undefined : "Rows use output activity only: Working or Idle."} />
       )}
       {agent === "claude" && (
