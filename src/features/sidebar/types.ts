@@ -1,4 +1,5 @@
 import type { PortChip } from "../../generated/PortChip";
+import type { ReferenceNote } from "../../generated/ReferenceNote";
 import type { AgentId } from "../../components/AgentMark/agents";
 import type { SessionKind } from "../../components/AgentMark/kinds";
 import type { GlyphKind } from "../../components/StatusGlyph/glyphs";
@@ -67,4 +68,6 @@ export type RowModel = {
   version?: string;
   /** The ports the session listens on, as chips that open in the browser. Absent when there are none. */
   ports?: PortChip[];
+  /** The aliases the last prompt named and the note it got. Absent when it named none. */
+  references?: ReferenceNote;
 };

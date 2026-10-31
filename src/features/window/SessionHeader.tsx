@@ -5,6 +5,7 @@ import { SessionNumber } from "../../components/SessionNumber/SessionNumber";
 import type { PortChip } from "../../generated/PortChip";
 import type { RunControl } from "../scripts/confirmScripts";
 import { PortChips, type PortMenuRequest } from "../ports/PortChips";
+import { ReferencesChip } from "../references/ReferencesChip";
 import { sessionWord, SESSION_NUMBER_HINT } from "../sidebar/sessionNumber";
 import { AuxGlyph } from "../../components/StatusGlyph/StatusGlyph";
 import { modeCaution, subagentsText } from "../sidebar/format";
@@ -71,6 +72,7 @@ export function SessionHeader({ row, ports, onMode, onPortMenu, scriptControl, o
       {row.subagents !== undefined && <span className="session-header__meta">{subagentsText(row.subagents)}</span>}
       <span className="session-header__spacer" />
       <ContextRing pct={row.contextPct} />
+      <ReferencesChip references={row.references} />
       <PortChips ports={ports ?? row.ports ?? []} {...(onPortMenu ? { onMenu: onPortMenu } : {})} />
       {/* One button for both, so the focus stays on it when Run becomes Stop. */}
       {scriptControl && (scriptControl.kind === "run" ? onRun : onStop) && (
