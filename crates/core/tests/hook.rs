@@ -1005,8 +1005,9 @@ async fn start_shell(app: &axum::Router, profile_id: &str) -> String {
         .to_string()
 }
 
+/// The state with a WSL tab; its distro's version is pinned, so no test asks a real `wsl.exe`.
 fn wsl_state() -> AppState {
-    state_with(Some(KNOWN), vec![sleeper_profile(), wsl_profile()])
+    state_with(Some(KNOWN), vec![sleeper_profile(), wsl_profile()]).with_wsl_version(Some(KNOWN.into()))
 }
 
 fn foreground_agent(st: &AppState, tab: &str) -> Option<String> {
@@ -1032,6 +1033,35 @@ async fn a_wsl_tab_takes_the_agent_from_its_hooks() {
         ("claude", Some("claude"))
     );
     assert_eq!(info.live.unwrap().state, LiveState::Working);
+}
+
+#[tokio::test]
+async fn a_wsl_tab_gates_on_the_distros_version() {
+    // The Windows claude is too old to be recorded; the distro's is recorded, so live is folded.
+    let st = state_with(Some("1.0.0"), vec![sleeper_profile(), wsl_profile()]).with_wsl_version(Some(KNOWN.into()));
+    let app = router(st.clone());
+    let tab = start_shell(&app, "wsl-ubuntu").await;
+    post_fixture(&app, "event", &tab, "UserPromptSubmit").await;
+    let info = row(&st, &tab);
+    stop(&st, &tab);
+    assert_eq!(info.live.unwrap().state, LiveState::Working);
+    assert_eq!(info.status_note, None);
+}
+
+#[tokio::test]
+async fn a_wsl_tab_without_a_version_gets_the_wsl_note() {
+    // The Windows claude is recorded; the distro's version can't be read, and that is what counts.
+    let st = state_with(Some(KNOWN), vec![sleeper_profile(), wsl_profile()]).with_wsl_version(None);
+    let app = router(st.clone());
+    let tab = start_shell(&app, "wsl-ubuntu").await;
+    post_fixture(&app, "event", &tab, "UserPromptSubmit").await;
+    let info = row(&st, &tab);
+    stop(&st, &tab);
+    assert_eq!(info.live, None);
+    assert_eq!(
+        info.status_note.as_deref(),
+        Some("Can't read Claude Code's version in Ubuntu")
+    );
 }
 
 #[tokio::test]

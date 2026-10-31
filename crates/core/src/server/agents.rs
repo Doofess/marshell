@@ -15,7 +15,7 @@ use crate::config::jsonc::{parse_problem, read_value};
 use crate::config::preview::{MAX_CONFIG_BYTES, PlannedFile, TOO_LARGE_DETAIL, unified_diff};
 use crate::config::service::ApplyError;
 use crate::paths;
-use crate::profiles::detect::{agent_command, agent_exe};
+use crate::profiles::detect::{agent_command, agent_exe, run_wsl};
 use axum::Json;
 use axum::extract::{Path as UrlPath, Query, State};
 use axum::http::StatusCode;
@@ -45,6 +45,20 @@ const AGENT: &str = "claude";
 const CODEX: &str = "codex";
 const ANTIGRAVITY: &str = "antigravity";
 const VERSION_TIMEOUT: Duration = Duration::from_secs(5);
+const WSL_VERSION_TIMEOUT: Duration = Duration::from_secs(8);
+const WSL_VERSION_TTL: Duration = Duration::from_secs(10 * 60);
+
+/// Run by `sh -c` inside the distro; `$0` is the program. WSL appends the Windows PATH, whose npm folder holds a
+/// `claude` or `codex` shim that would report the Windows version, so every `/mnt/` entry goes first. The usual
+/// install folders of a Linux CLI come before what is left, because `--exec` starts no login shell.
+const WSL_VERSION_SCRIPT: &str = r#"set -f; p=; IFS=:; for d in $PATH; do case $d in /mnt/*|'') ;; *) p="${p:+$p:}$d";; esac; done; unset IFS; set +f; [ -n "$p" ] || p=/usr/local/bin:/usr/bin:/bin; n=; for d in "$HOME"/.nvm/versions/node/*/bin; do [ -d "$d" ] && n="$n$d:"; done; PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$HOME/.bun/bin:$n$p"; exec "$0" --version"#;
+
+/// The arguments of the `wsl.exe` run that prints `<exe> --version` inside `distro`. `exe` is a constant program name.
+fn wsl_version_argv(distro: &str, exe: &str) -> Vec<String> {
+    ["-d", distro, "--exec", "sh", "-c", WSL_VERSION_SCRIPT, exe]
+        .map(String::from)
+        .to_vec()
+}
 
 /// A status and the message the route replies with.
 type Fail = (StatusCode, String);
@@ -316,6 +330,40 @@ impl AppState {
         } else {
             exe.and_then(|exe| self.version_of(exe, parse_any_version))
         }
+    }
+
+    /// The version of `agent` inside the WSL distro, or the one a test pinned. The distro's own CLI is asked, never
+    /// the Windows one. Remembered for 10 minutes per distro and agent, an unreadable answer included. Runs
+    /// `wsl.exe` on a cold cache, so async callers go through `spawn_blocking`.
+    pub(crate) fn agent_version_in(&self, distro: &str, agent: &str) -> Option<String> {
+        if let Some(pinned) = &self.0.wsl_version {
+            return pinned.clone();
+        }
+        let exe = agent_command(agent)?;
+        let parse: fn(&str) -> Option<String> = if agent == AGENT {
+            claude::parse_version
+        } else {
+            parse_any_version
+        };
+        let key = (distro.to_lowercase(), agent.to_string());
+        let known = self.0.wsl_versions.lock().unwrap().get(&key).cloned();
+        if let Some((at, version)) = known
+            && at.elapsed() < WSL_VERSION_TTL
+        {
+            return version;
+        }
+        // The lock is not held while `wsl.exe` runs.
+        let argv = wsl_version_argv(distro, exe);
+        let args: Vec<&str> = argv.iter().map(String::as_str).collect();
+        let out = run_wsl(&args, WSL_VERSION_TIMEOUT);
+        // A Linux program's output through `--exec` is UTF-8, not the UTF-16 of wsl.exe's own messages.
+        let version = parse(&String::from_utf8_lossy(&out));
+        self.0
+            .wsl_versions
+            .lock()
+            .unwrap()
+            .insert(key, (std::time::Instant::now(), version.clone()));
+        version
     }
 
     /// Drops the remembered version of `exe`: an npm update can leave the shim's modified time as it was.
@@ -1303,6 +1351,31 @@ pub async fn remove_plan(
 mod tests {
     use super::*;
     use std::cell::Cell;
+
+    #[test]
+    fn the_distro_version_run_drops_windows_path_entries_and_takes_the_program_as_dollar_zero() {
+        let argv = wsl_version_argv("Ubuntu", "codex");
+        assert_eq!(argv[..5], ["-d", "Ubuntu", "--exec", "sh", "-c"]);
+        // The program is the last argument, so `$0` in the script; it is not part of the script text.
+        assert_eq!(argv.last().map(String::as_str), Some("codex"));
+        assert_eq!(argv.len(), 7);
+        let script = &argv[5];
+        assert!(script.contains("/mnt/*"));
+        assert!(script.ends_with(r#"exec "$0" --version"#));
+        // The Windows entries are dropped before the Linux install folders are put in front.
+        assert!(script.find("/mnt/*") < script.find("$HOME/.local/bin"));
+        for folder in ["/.npm-global/bin", "/.bun/bin", "/.nvm/versions/node/*/bin"] {
+            assert!(script.contains(folder), "{folder}");
+        }
+        assert!(!script.contains("codex"));
+    }
+
+    #[test]
+    fn a_pinned_distro_version_never_runs_wsl() {
+        let st = AppState::new("t".into(), 1, vec![], tempfile::tempdir().unwrap().keep(), vec![])
+            .with_wsl_version(Some("2.1.302".into()));
+        assert_eq!(st.agent_version_in("Ubuntu", "claude").as_deref(), Some("2.1.302"));
+    }
 
     fn at(secs: u64) -> Option<SystemTime> {
         Some(SystemTime::UNIX_EPOCH + Duration::from_secs(secs))

@@ -305,14 +305,21 @@ async fn fold_live_with(
             .set_status_note(tab, Some(format!("Live status is off for {name}")));
         return;
     }
-    // A cold cache runs `<agent> --version`: keep that off the async workers.
-    let asker = st.clone();
+    // A cold cache runs `<agent> --version` (inside the distro for a WSL tab, whose agent is not the Windows one): keep
+    // that, and the distro lookup, off the async workers.
+    let (asker, tab_id) = (st.clone(), tab.to_string());
     let which = agent.to_string();
-    let version =
-        tokio::task::spawn_blocking(move || asker.agent_version(&which, asker.agent_exe_of(&which).as_deref()))
-            .await
-            .unwrap_or(None);
+    let (version, distro) = tokio::task::spawn_blocking(move || match asker.wsl_distro_of_tab(&tab_id) {
+        Some(distro) => (asker.agent_version_in(&distro, &which), Some(distro)),
+        None => (asker.agent_version(&which, asker.agent_exe_of(&which).as_deref()), None),
+    })
+    .await
+    .unwrap_or((None, None));
     match gate(version.as_deref()) {
+        Gate::Unknown(_) if version.is_none() && distro.is_some() => st.registry().set_status_note(
+            tab,
+            Some(format!("Can't read {name}'s version in {}", distro.unwrap_or_default())),
+        ),
         Gate::Unknown(note) => st.registry().set_status_note(tab, Some(note)),
         Gate::Known if agent == "codex" => {
             // No Done hold, subagent count or stuck check: those follow Claude Code's events.

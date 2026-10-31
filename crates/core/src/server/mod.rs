@@ -93,6 +93,9 @@ pub type StatusRunner = fn(&Path, &[&str]) -> Option<(i32, String)>;
 #[derive(Clone)]
 pub struct AppState(Arc<Inner>);
 
+/// When `wsl.exe` last answered for an agent in a distro, and the version it printed (None when none could be read).
+type WslVersion = (std::time::Instant, Option<String>);
+
 struct Inner {
     token: String,
     host: String,
@@ -195,6 +198,12 @@ struct Inner {
     codex_version: Option<Option<String>>,
     /// An Antigravity version a test pins, in place of asking the executable. `Some(None)` cannot be read.
     agy_version: Option<Option<String>>,
+    /// The version of an agent inside a WSL distro that a test pins, in place of asking `wsl.exe`. `Some(None)` cannot
+    /// be read.
+    wsl_version: Option<Option<String>>,
+    /// What `wsl.exe` last said of each `(distro lowercased, agent)`, and when. A version that could not be read is
+    /// kept too, so a distro without the CLI is not asked on every hook.
+    wsl_versions: Mutex<HashMap<(String, String), WslVersion>>,
     /// The previous process readings, so each `/v1/perf` call can tell the CPU used since the last one.
     sampler: Mutex<crate::diagnostics::perf::Sampler>,
     /// The diagnostics export waiting to be read and saved.
@@ -290,6 +299,8 @@ impl AppState {
             claude_version: None,
             codex_version: None,
             agy_version: None,
+            wsl_version: None,
+            wsl_versions: Mutex::new(HashMap::new()),
             sampler: Mutex::new(crate::diagnostics::perf::Sampler::new()),
             previews: crate::diagnostics::export::Previews::default(),
             view: tokio::sync::watch::channel(marshell_protocol::api::UiView {
@@ -388,6 +399,14 @@ impl AppState {
         Arc::get_mut(&mut self.0)
             .expect("with_agy_version runs before the state is shared")
             .agy_version = Some(version);
+        self
+    }
+    /// Pins the version of an agent inside a WSL distro that live status sees, so a test never runs `wsl.exe`. `None` is
+    /// a version that cannot be read. Call it before the state is cloned.
+    pub fn with_wsl_version(mut self, version: Option<String>) -> Self {
+        Arc::get_mut(&mut self.0)
+            .expect("with_wsl_version runs before the state is shared")
+            .wsl_version = Some(version);
         self
     }
     /// Sets how long a permission request is held. Call it before the state is cloned.
