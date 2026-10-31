@@ -158,8 +158,15 @@ fn find_word(text: &[char], needle: &[char], taken: &[(usize, usize)]) -> Option
 /// The note for the aliases `prompt` names, with paths in `checkout`. None when references are off, nothing
 /// matches, or no matching alias has a path that exists inside `checkout`. An alias is matched whole-word and
 /// case-insensitively, the longest aliases first, so a shorter alias inside a longer match is not added. The note
-/// names at most 8 aliases in prompt order, cut at a whole alias to fit 1,200 characters.
-pub fn resolve(doc: &RefDoc, checkout: &Path, prompt: &str) -> Option<ReferenceNote> {
+/// names at most 8 aliases in prompt order, cut at a whole alias to fit 1,200 characters. `render` spells a path the
+/// way the agent reads it (a WSL agent reads Linux paths); an alias whose path it can't spell is dropped like a
+/// missing one.
+pub fn resolve(
+    doc: &RefDoc,
+    checkout: &Path,
+    prompt: &str,
+    render: &dyn Fn(&Path) -> Option<String>,
+) -> Option<ReferenceNote> {
     if !doc.enabled || doc.aliases.is_empty() {
         return None;
     }
@@ -182,15 +189,18 @@ pub fn resolve(doc: &RefDoc, checkout: &Path, prompt: &str) -> Option<ReferenceN
     hits.sort_by_key(|&(at, _)| at);
 
     // A matched alias whose path is gone, or leaves the checkout, is dropped after it took its span.
-    let found: Vec<(&Alias, PathBuf)> = hits
+    let found: Vec<(&Alias, String)> = hits
         .into_iter()
-        .filter_map(|(_, alias)| locate(checkout, &alias.path).map(|path| (alias, path)))
+        .filter_map(|(_, alias)| {
+            let path = locate(checkout, &alias.path)?;
+            render(&path).map(|shown| (alias, shown))
+        })
         .take(MAX_NOTE_ALIASES)
         .collect();
 
     let parts: Vec<String> = found
         .iter()
-        .map(|(alias, path)| format!("'{}' = {}", alias.name, path.display()))
+        .map(|(alias, path)| format!("'{}' = {}", alias.name, path))
         .collect();
     let mut count = parts.len();
     let build = |n: usize| format!("References: {}.", parts[..n].join("; "));
@@ -251,6 +261,11 @@ mod tests {
         (dir, root)
     }
 
+    /// How a Windows tab spells a path.
+    fn plain(path: &Path) -> Option<String> {
+        Some(path.display().to_string())
+    }
+
     fn display(root: &Path, rel: &str) -> String {
         projects::canonical(&root.join(rel)).to_string_lossy().into_owned()
     }
@@ -267,7 +282,7 @@ mod tests {
     fn matches_whole_words_in_any_case() {
         let (_dir, root) = checkout();
         let d = doc(true, &[("login button", "src/LoginButton.tsx")]);
-        let got = resolve(&d, &root, "Fix the Login Button now").unwrap();
+        let got = resolve(&d, &root, "Fix the Login Button now", &plain).unwrap();
         assert_eq!(got.names, vec!["login button".to_string()]);
         assert_eq!(
             got.note,
@@ -277,8 +292,21 @@ mod tests {
             )
         );
         // Punctuation next to the alias is a word edge.
-        assert!(resolve(&d, &root, "(login button), please").is_some());
-        assert!(resolve(&d, &root, "login button").is_some());
+        assert!(resolve(&d, &root, "(login button), please", &plain).is_some());
+        assert!(resolve(&d, &root, "login button", &plain).is_some());
+    }
+
+    #[test]
+    fn resolve_renders_paths_with_the_given_function() {
+        let (_dir, root) = checkout();
+        let d = doc(true, &[("a", "src/a.rs"), ("b", "src/b.rs")]);
+        let a = root.join("src").join("a.rs");
+        let render = |path: &Path| (path == a.as_path()).then(|| "/mnt/c/p/src/a.rs".to_string());
+        let got = resolve(&d, &root, "a and b", &render).unwrap();
+        // The alias whose path can't be rendered is dropped like a missing file.
+        assert_eq!(got.names, vec!["a".to_string()]);
+        assert_eq!(got.note, "References: 'a' = /mnt/c/p/src/a.rs.");
+        assert_eq!(resolve(&d, &root, "b", &render), None);
     }
 
     #[test]
@@ -292,7 +320,7 @@ mod tests {
             "xlogin button",
             "login buttonx",
         ] {
-            assert_eq!(resolve(&d, &root, prompt), None, "{prompt}");
+            assert_eq!(resolve(&d, &root, prompt, &plain), None, "{prompt}");
         }
     }
 
@@ -303,10 +331,10 @@ mod tests {
             true,
             &[("login", "src/Login.tsx"), ("login button", "src/LoginButton.tsx")],
         );
-        let got = resolve(&d, &root, "the login button").unwrap();
+        let got = resolve(&d, &root, "the login button", &plain).unwrap();
         assert_eq!(got.names, vec!["login button".to_string()]);
         // Used on its own, the shorter alias still matches.
-        let got = resolve(&d, &root, "the login page and the login button").unwrap();
+        let got = resolve(&d, &root, "the login page and the login button", &plain).unwrap();
         assert_eq!(got.names, vec!["login".to_string(), "login button".to_string()]);
     }
 
@@ -322,7 +350,7 @@ mod tests {
         let d = doc(true, &pairs);
         // The prompt names them in reverse order.
         let prompt = "kj ki kh kg kf ke kd kc kb ka";
-        let got = resolve(&d, &root, prompt).unwrap();
+        let got = resolve(&d, &root, prompt, &plain).unwrap();
         assert_eq!(got.names, ["kj", "ki", "kh", "kg", "kf", "ke", "kd", "kc"]);
         assert!(got.note.chars().count() <= 1200);
         assert!(got.note.starts_with("References: 'kj' = "));
@@ -344,7 +372,7 @@ mod tests {
             enabled: true,
             aliases: pairs.iter().map(|(n, p)| alias(n, p)).collect(),
         };
-        let got = resolve(&d, &root, "w0 w1 w2 w3 w4 w5 w6 w7").unwrap();
+        let got = resolve(&d, &root, "w0 w1 w2 w3 w4 w5 w6 w7", &plain).unwrap();
         assert!(got.note.chars().count() <= 1200, "{}", got.note.chars().count());
         assert!(!got.names.is_empty() && got.names.len() < 8, "{:?}", got.names);
         // Every kept alias is whole, and the first ones are kept.
@@ -364,16 +392,16 @@ mod tests {
     fn a_missing_or_escaping_path_is_never_sent() {
         let (dir, root) = checkout();
         let missing = doc(true, &[("gone", "src/gone.rs")]);
-        assert_eq!(resolve(&missing, &root, "see gone"), None);
+        assert_eq!(resolve(&missing, &root, "see gone", &plain), None);
         let up = doc(true, &[("up", "../x")]);
-        assert_eq!(resolve(&up, &root, "see up"), None);
+        assert_eq!(resolve(&up, &root, "see up", &plain), None);
         // An absolute path is refused even when it points inside the checkout.
         let inside = root.join("src").join("a.rs").to_string_lossy().into_owned();
         let abs = doc(true, &[("abs", &inside)]);
-        assert_eq!(resolve(&abs, &root, "see abs"), None);
+        assert_eq!(resolve(&abs, &root, "see abs", &plain), None);
         // The good alias still goes when a broken one is named beside it.
         let mixed = doc(true, &[("gone", "src/gone.rs"), ("ok", "src/a.rs")]);
-        let got = resolve(&mixed, &root, "gone and ok").unwrap();
+        let got = resolve(&mixed, &root, "gone and ok", &plain).unwrap();
         assert_eq!(got.names, vec!["ok".to_string()]);
         drop(dir);
     }
@@ -386,7 +414,7 @@ mod tests {
         std::fs::write(outside.path().join("secret.txt"), "x").unwrap();
         std::os::unix::fs::symlink(outside.path(), root.join("src").join("out")).unwrap();
         let d = doc(true, &[("secret", "src/out/secret.txt")]);
-        assert_eq!(resolve(&d, &root, "read secret"), None);
+        assert_eq!(resolve(&d, &root, "read secret", &plain), None);
     }
 
     #[cfg(windows)]
@@ -407,7 +435,7 @@ mod tests {
         assert!(made.status.success(), "{}", String::from_utf8_lossy(&made.stdout));
         assert!(link.join("secret.txt").exists(), "the junction reaches the file");
         let d = doc(true, &[("secret", "src/out/secret.txt")]);
-        assert_eq!(resolve(&d, &root, "read secret"), None);
+        assert_eq!(resolve(&d, &root, "read secret", &plain), None);
         let home = tempfile::tempdir().unwrap();
         save(home.path(), &update(&root, true, d.aliases.clone())).unwrap();
         let shown = info(home.path(), &root).unwrap();
@@ -420,7 +448,7 @@ mod tests {
     fn disabled_sends_nothing() {
         let (_dir, root) = checkout();
         let d = doc(false, &[("login button", "src/LoginButton.tsx")]);
-        assert_eq!(resolve(&d, &root, "Fix the Login Button now"), None);
+        assert_eq!(resolve(&d, &root, "Fix the Login Button now", &plain), None);
     }
 
     #[test]

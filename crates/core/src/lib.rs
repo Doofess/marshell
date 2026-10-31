@@ -28,4 +28,5 @@ pub mod stuck;
 pub mod supervisor;
 pub mod tasks;
 pub mod tools;
+pub mod wsl;
 pub mod wt;

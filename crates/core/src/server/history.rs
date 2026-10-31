@@ -9,7 +9,7 @@ use crate::history::cast::{self, FrameStart, FramesError};
 use crate::history::export::{AsciicastError, ExportFormat, export_text, to_asciicast};
 use crate::history::marks::normalize_name;
 use crate::history::recorder::{BookmarkRefusal, BookmarkTurnRefusal, DeleteRefusal, History};
-use crate::history::{SessionMeta, archive, parse_for, recordings, sidecar_allowed, valid_session_id};
+use crate::history::{SessionMeta, archive, parse_for, recordings, sidecar_allowed_in, valid_session_id};
 use crate::paths;
 use crate::profiles::detect::ResumeTarget;
 use axum::Json;
@@ -547,11 +547,10 @@ pub(super) async fn look_up(st: &AppState, agent: &str, session_id: &str, refuse
     let home = st.home().to_path_buf();
     blocking(move || {
         let mut meta = session_meta(&history, &agent, &id)?;
-        // The index does not keep the preset; the sidecar does.
-        meta.preset = crate::history::archive::read_meta(&home, &agent, &id)
-            .ok()
-            .flatten()
-            .and_then(|stored| stored.preset);
+        // The index does not keep the preset or the WSL distro; the sidecar does.
+        let stored = crate::history::archive::read_meta(&home, &agent, &id).ok().flatten();
+        meta.preset = stored.as_ref().and_then(|stored| stored.preset.clone());
+        meta.distro = stored.and_then(|stored| stored.distro);
         let in_tab = refuse_running
             && running_tabs.contains(&meta.tab_id)
             && history
@@ -561,7 +560,7 @@ pub(super) async fn look_up(st: &AppState, agent: &str, session_id: &str, refuse
             return Ok(Found::RunningInATab);
         }
         // The row lives in the Marshell home: its path is checked again before a file call.
-        let usable = sidecar_allowed(&agent, &meta.transcript_path, &meta.session_id)
+        let usable = sidecar_allowed_in(&agent, &meta.transcript_path, &meta.session_id, meta.distro.as_deref())
             && std::path::Path::new(&meta.transcript_path).is_file();
         if !usable {
             return Ok(Found::Gone);
@@ -570,6 +569,18 @@ pub(super) async fn look_up(st: &AppState, agent: &str, session_id: &str, refuse
         Ok(Found::Usable(Box::new(meta), name))
     })
     .await
+}
+
+/// The id of the WSL profile that starts `distro` (its `-d` names it, whatever the case), if there is one.
+fn wsl_profile_of(st: &AppState, distro: &str) -> Option<String> {
+    st.profiles_snapshot()
+        .profiles
+        .into_iter()
+        .find(|p| {
+            matches!(p.family, marshell_protocol::api::ShellFamily::Wsl)
+                && crate::wsl::distro_of_argv(&p.command).is_some_and(|d| d.eq_ignore_ascii_case(distro))
+        })
+        .map(|p| p.id)
 }
 
 async fn open_in_new_tab(
@@ -607,6 +618,16 @@ async fn open_in_new_tab(
     } else {
         tab_name
     };
+    // A conversation that ran in a WSL distro starts in that distro's profile again; the folder is then a Windows path
+    // (a `\\wsl.localhost\<distro>\...` one, or a drive) that `wsl.exe` maps to the distro's own. Decided before the
+    // folder is touched: a UNC folder may wake a stopped distro.
+    let profile_id = match meta.distro.as_deref() {
+        Some(distro) => Some(
+            wsl_profile_of(&st, distro)
+                .ok_or_else(|| Box::new(cannot_resume(format!("No WSL profile for {distro}."))))?,
+        ),
+        None => None,
+    };
     // The same check the tab Resume makes before it starts anything.
     let folder = meta.cwd.clone();
     if !folder.is_empty() && !tokio::fs::metadata(&folder).await.is_ok_and(|m| m.is_dir()) {
@@ -626,7 +647,7 @@ async fn open_in_new_tab(
         .or_else(|| st.registry().preset_of_tab(&meta.tab_id));
     let run = resolve(
         &st,
-        None,
+        profile_id.as_deref(),
         Some(agent_name.as_str()),
         None,
         Some(target),

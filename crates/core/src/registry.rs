@@ -105,6 +105,17 @@ pub struct Entry {
     /// Announced chips a port poll has seen listening. An announced chip goes on a poll that misses it only once it was
     /// seen, so a slow server's chip survives until its listener appears. Not serialized.
     announced_seen: Vec<u16>,
+    /// The row's `foreground` names an agent because that agent's hooks said so (`mark_hook_agent`), not because the
+    /// watcher read it: a WSL tab's processes are Linux ones the watcher can't see. The watcher leaves such a
+    /// foreground alone; the shell's prompt, a restart, an exit or the agent's SessionEnd take it. Not serialized.
+    foreground_from_hooks: bool,
+    /// This process (generation) has sent an Executed mark at least once, so its prompt state can be trusted: a shell
+    /// that skips the DEBUG trap (the person has one already) never sends one, and stays at Prompt while an agent runs.
+    /// Reset by a restart or resume. Not serialized.
+    executed_seen: bool,
+    /// The session id of the last SessionEnd a hook reported for this process: a hook of that session that arrives
+    /// later (a status line) must not mark the row again. Reset by a restart or resume. Not serialized.
+    ended_session: Option<String>,
 }
 
 impl Entry {
@@ -147,6 +158,14 @@ impl Entry {
     /// Forgets what the old process reported: its live status, its output activity and the note
     /// that said why there was no status. A new process, or none, starts blank.
     fn clear_live(&mut self) {
+        self.clear_agent_status();
+        self.info.ports.clear();
+        self.listen_pending.clear();
+        self.announced_seen.clear();
+    }
+
+    /// `clear_live`, but the ports stay: they belong to the row's shell, not to the agent that reported.
+    fn clear_agent_status(&mut self) {
         self.info.live = None;
         self.drop_attention();
         self.info.stuck = None;
@@ -158,9 +177,17 @@ impl Entry {
         self.running.clear();
         self.waiting = false;
         self.pending_done = None;
-        self.info.ports.clear();
-        self.listen_pending.clear();
-        self.announced_seen.clear();
+    }
+
+    /// Takes away the agent a hook named: the foreground, and the status that agent reported. False when no hook
+    /// had named one.
+    fn drop_hook_agent(&mut self) -> bool {
+        if !std::mem::take(&mut self.foreground_from_hooks) {
+            return false;
+        }
+        self.info.foreground = None;
+        self.clear_agent_status();
+        true
     }
 
     /// Takes the row's attention, whoever raised it, and the claim a tool prompt had on it. True when there was some.
@@ -353,6 +380,9 @@ impl Registry {
             agent_prompt: false,
             listen_pending: Vec::new(),
             announced_seen: Vec::new(),
+            foreground_from_hooks: false,
+            executed_seen: false,
+            ended_session: None,
         });
         self.tx.send_replace(state.snapshot());
         number
@@ -411,6 +441,9 @@ impl Registry {
                 agent_prompt: false,
                 listen_pending: Vec::new(),
                 announced_seen: Vec::new(),
+                foreground_from_hooks: false,
+                executed_seen: false,
+                ended_session: None,
             });
         }
         self.tx.send_replace(state.snapshot());
@@ -459,6 +492,9 @@ impl Registry {
         entry.info.command = CommandState::Unknown;
         entry.info.paused = false;
         entry.info.foreground = None;
+        entry.foreground_from_hooks = false;
+        entry.executed_seen = false;
+        entry.ended_session = None;
         entry.clear_live();
         entry.generation = generation;
         entry.session_started = false;
@@ -488,6 +524,9 @@ impl Registry {
         entry.info.command = CommandState::Unknown;
         entry.info.paused = false;
         entry.info.foreground = None;
+        entry.foreground_from_hooks = false;
+        entry.executed_seen = false;
+        entry.ended_session = None;
         entry.clear_live();
         entry.generation = generation;
         entry.session_started = false;
@@ -531,6 +570,7 @@ impl Registry {
             entry.info.state = SessionState::Exited { code };
             entry.info.paused = false;
             entry.info.foreground = None;
+            entry.foreground_from_hooks = false;
             entry.clear_live();
             self.tx.send_replace(state.snapshot());
         }
@@ -626,6 +666,7 @@ impl Registry {
             && entry.info.state == SessionState::Running
             && entry.info.agent.is_none()
             && !entry.info.paused
+            && !entry.foreground_from_hooks
             && !(foreground.is_some() && matches!(entry.info.command, CommandState::Prompt { .. }))
             && entry.info.foreground != foreground
         {
@@ -640,6 +681,89 @@ impl Registry {
             }
             self.tx.send_replace(state.snapshot());
         }
+    }
+
+    /// A hook of `agent` came from this tab, whose processes the watcher can't read (a WSL tab): the row's foreground
+    /// names that agent, so everything that follows the foreground follows the agent. Applied only to a Running,
+    /// unpaused row that was not launched as an agent, whose shell is not at its prompt (a hook that arrives after the
+    /// agent exited must not mark the row again) and whose foreground names no other agent. The watcher then leaves
+    /// the foreground alone until the prompt mark, a restart, an exit or `clear_hook_agent` takes it. Broadcasts only
+    /// on a change; returns whether the row changed.
+    ///
+    /// The prompt refusal holds only once this process has sent an Executed mark: a shell that never does (it skips
+    /// the DEBUG trap) stays at Prompt while the agent runs. A hook of the session `session_id` names, when that
+    /// session's SessionEnd was already seen (`clear_hook_agent`), is refused too: it is the agent's last word.
+    pub fn mark_hook_agent(&self, tab_id: &str, agent: &str, session_id: Option<&str>) -> bool {
+        // The program names of the adapter agents (`ADAPTER_EXES` in the manifest).
+        let program = match agent {
+            "claude" => "claude",
+            "codex" => "codex",
+            "antigravity" => "agy",
+            _ => return false,
+        };
+        let mut state = self.state.lock().unwrap();
+        let Some(entry) = state.open.iter_mut().find(|e| e.info.tab_id == tab_id) else {
+            return false;
+        };
+        let other_agent = entry
+            .info
+            .foreground
+            .as_ref()
+            .and_then(|f| f.agent.as_deref())
+            .is_some_and(|a| a != agent);
+        if entry.info.state != SessionState::Running
+            || entry.info.paused
+            || entry.info.agent.is_some()
+            || (entry.executed_seen && matches!(entry.info.command, CommandState::Prompt { .. }))
+            || (session_id.is_some() && entry.ended_session.as_deref() == session_id)
+            || other_agent
+        {
+            return false;
+        }
+        let foreground = Some(Foreground {
+            program: program.into(),
+            command_line: None,
+            agent: Some(agent.into()),
+            tool: None,
+        });
+        entry.foreground_from_hooks = true;
+        if entry.info.foreground == foreground {
+            return false;
+        }
+        entry.info.foreground = foreground;
+        self.tx.send_replace(state.snapshot());
+        true
+    }
+
+    /// A SessionStart came from this tab: whatever session ended here before may run again (`claude --resume` keeps its
+    /// id), so `mark_hook_agent` no longer refuses it.
+    pub fn forget_ended_session(&self, tab_id: &str) {
+        let mut state = self.state.lock().unwrap();
+        if let Some(entry) = state.open.iter_mut().find(|e| e.info.tab_id == tab_id) {
+            entry.ended_session = None;
+        }
+    }
+
+    /// The agent's session ended: takes away the foreground a hook of `agent` set, with the status it reported. Does
+    /// nothing for a foreground the watcher set or one a hook of another agent named. `session_id` is the ended
+    /// session's: `mark_hook_agent` refuses it from then on, whether or not a mark was cleared. Broadcasts only on a
+    /// change; returns whether the row changed.
+    pub fn clear_hook_agent(&self, tab_id: &str, agent: &str, session_id: Option<&str>) -> bool {
+        let mut state = self.state.lock().unwrap();
+        let Some(entry) = state.open.iter_mut().find(|e| e.info.tab_id == tab_id) else {
+            return false;
+        };
+        if let Some(id) = session_id {
+            entry.ended_session = Some(id.to_string());
+        }
+        if entry.foreground_from_hooks
+            && entry.info.foreground.as_ref().and_then(|f| f.agent.as_deref()) == Some(agent)
+            && entry.drop_hook_agent()
+        {
+            self.tx.send_replace(state.snapshot());
+            return true;
+        }
+        false
     }
 
     /// The rows the foreground watcher may look at: Running, not paused, not launched as an agent.
@@ -946,7 +1070,8 @@ impl Registry {
         };
         // The command is over or the prompt is back: whatever ran is gone.
         let command_ended = matches!(mark, Mark::Finished(_) | Mark::PromptStart);
-        let cleared = command_ended && entry.info.foreground.take().is_some();
+        let hook_agent_cleared = command_ended && entry.drop_hook_agent();
+        let cleared = (command_ended && entry.info.foreground.take().is_some()) | hook_agent_cleared;
         if cleared {
             entry.drop_activity_without_agent();
         }
@@ -954,6 +1079,9 @@ impl Registry {
         let cleared = (command_ended && entry.drop_announced_ports()) | cleared;
         // A tool's prompt goes with its command. A bell's or hook's attention stays.
         let cleared = (command_ended && entry.tool_attention && entry.drop_attention()) | cleared;
+        if matches!(mark, Mark::Executed) {
+            entry.executed_seen = true;
+        }
         let next = match mark {
             Mark::Executed => CommandState::Running,
             Mark::Finished(Some(code)) => CommandState::Prompt { last_exit: Some(code) },
@@ -1286,6 +1414,7 @@ impl Registry {
         // Closing kills the process, which thaws it first.
         entry.info.paused = false;
         entry.info.foreground = None;
+        entry.foreground_from_hooks = false;
         entry.clear_live();
         let spec = entry.spec.clone();
         state.closed.push_front(entry);
@@ -1379,6 +1508,17 @@ impl Registry {
             .chain(state.closed.iter())
             .find(|e| e.info.tab_id == tab_id)
             .and_then(|e| e.spec.preset.clone())
+    }
+
+    /// The profile the tab started with, whether the tab is open or among the recently closed.
+    pub fn profile_of_tab(&self, tab_id: &str) -> Option<String> {
+        let state = self.state.lock().unwrap();
+        state
+            .open
+            .iter()
+            .chain(state.closed.iter())
+            .find(|e| e.info.tab_id == tab_id)
+            .map(|e| e.spec.profile_id.clone())
     }
 
     /// The mode the open tab runs in. None for a tab that isn't open, a plain shell, or an agent started with no mode.
@@ -2193,6 +2333,243 @@ mod tests {
 
         reg.close("close");
         assert_eq!(reg.snapshot().closed[0].foreground, None);
+    }
+
+    fn hook_agent(reg: &Registry, tab_id: &str) -> Option<String> {
+        foreground(reg, tab_id).and_then(|f| f.agent)
+    }
+
+    #[test]
+    fn a_hook_marks_a_running_shell_row() {
+        let reg = Registry::new();
+        reg.reserve("a", relaunch("A"));
+        let mut rx = reg.subscribe();
+        rx.borrow_and_update();
+        assert!(reg.mark_hook_agent("a", "claude", None));
+        assert!(rx.has_changed().unwrap());
+        assert_eq!(
+            foreground(&reg, "a"),
+            Some(Foreground {
+                program: "claude".into(),
+                command_line: None,
+                agent: Some("claude".into()),
+                tool: None,
+            })
+        );
+        assert_eq!(reg.effective_agent("a").as_deref(), Some("claude"));
+        assert!(reg.runs_agent("a"));
+        // The same hook again changes nothing and broadcasts nothing.
+        rx.borrow_and_update();
+        assert!(!reg.mark_hook_agent("a", "claude", None));
+        assert!(!rx.has_changed().unwrap());
+        // A running command does not refuse it, and the other adapters get their program names.
+        reg.mark("a", Mark::Executed, &away());
+        reg.clear_hook_agent("a", "claude", None);
+        assert!(reg.mark_hook_agent("a", "antigravity", None));
+        assert_eq!(foreground(&reg, "a").unwrap().program, "agy");
+        reg.clear_hook_agent("a", "antigravity", None);
+        assert!(reg.mark_hook_agent("a", "codex", None));
+        assert_eq!(foreground(&reg, "a").unwrap().program, "codex");
+        // An agent the core has no hooks for is no mark.
+        reg.clear_hook_agent("a", "codex", None);
+        assert!(!reg.mark_hook_agent("a", "grok", None));
+        assert!(!reg.mark_hook_agent("nope", "claude", None));
+    }
+
+    #[test]
+    fn a_hook_mark_is_refused_at_the_prompt_for_a_launched_agent_and_for_a_paused_row() {
+        let reg = Registry::new();
+        // At the prompt: a hook that arrives after the agent exited must not mark the row again.
+        // The shell reports its commands (it sent an Executed mark), so its prompt really means nothing runs.
+        reg.reserve("prompt", relaunch("P"));
+        reg.mark("prompt", Mark::Executed, &away());
+        reg.mark("prompt", Mark::PromptStart, &away());
+        assert!(!reg.mark_hook_agent("prompt", "claude", None));
+        assert_eq!(foreground(&reg, "prompt"), None);
+        // A command running again lifts the refusal.
+        reg.mark("prompt", Mark::Executed, &away());
+        assert!(reg.mark_hook_agent("prompt", "claude", None));
+        // A row launched as an agent keeps what it was launched as.
+        let mut launched = relaunch("L");
+        launched.agent = Some("claude".into());
+        reg.reserve("launched", launched);
+        assert!(!reg.mark_hook_agent("launched", "codex", None));
+        assert_eq!(foreground(&reg, "launched"), None);
+        // A paused row keeps what it showed.
+        reg.reserve("paused", relaunch("Z"));
+        reg.set_paused("paused", generation_of(&reg, "paused"), true);
+        assert!(!reg.mark_hook_agent("paused", "claude", None));
+        // An exited row.
+        reg.reserve("exited", relaunch("E"));
+        reg.mark_exited("exited", generation_of(&reg, "exited"), 0);
+        assert!(!reg.mark_hook_agent("exited", "claude", None));
+    }
+
+    #[test]
+    fn a_hook_mark_is_taken_at_the_prompt_when_the_shell_never_reports_a_command() {
+        // A shell that skips the DEBUG trap (starship, bash-preexec, atuin) sends no Executed mark: its state stays
+        // Prompt while the agent runs, and that must not refuse every mark.
+        let reg = Registry::new();
+        reg.reserve("quiet", relaunch("Q"));
+        reg.mark("quiet", Mark::PromptStart, &away());
+        assert!(reg.mark_hook_agent("quiet", "claude", None));
+        assert_eq!(hook_agent(&reg, "quiet").as_deref(), Some("claude"));
+        // A new process starts blank, and an Executed seen by the old one counts for nothing.
+        reg.mark("quiet", Mark::Executed, &away());
+        reg.begin_restart("quiet", SessionMode::Plan).unwrap();
+        reg.mark("quiet", Mark::PromptStart, &away());
+        assert!(reg.mark_hook_agent("quiet", "claude", None));
+        reg.clear_hook_agent("quiet", "claude", None);
+        reg.mark("quiet", Mark::Executed, &away());
+        reg.mark("quiet", Mark::PromptStart, &away());
+        assert!(!reg.mark_hook_agent("quiet", "claude", None));
+        // A Resume starts a new process too.
+        reg.mark_exited("quiet", generation_of(&reg, "quiet"), 0);
+        reg.begin_resume("quiet").unwrap();
+        reg.mark("quiet", Mark::PromptStart, &away());
+        assert!(reg.mark_hook_agent("quiet", "claude", None));
+    }
+
+    #[test]
+    fn a_hook_mark_of_an_ended_session_is_refused() {
+        // A tab with no prompt marks at all: after SessionEnd a status line can still post with the same session.
+        let reg = Registry::new();
+        reg.reserve("a", relaunch("A"));
+        assert!(reg.mark_hook_agent("a", "claude", Some("s1")));
+        assert!(reg.clear_hook_agent("a", "claude", Some("s1")));
+        assert!(!reg.mark_hook_agent("a", "claude", Some("s1")));
+        assert_eq!(foreground(&reg, "a"), None);
+        // A new session marks the row, and a hook that names none is not the ended one.
+        assert!(reg.mark_hook_agent("a", "claude", Some("s2")));
+        reg.clear_hook_agent("a", "claude", Some("s2"));
+        assert!(!reg.mark_hook_agent("a", "claude", Some("s2")));
+        assert!(reg.mark_hook_agent("a", "claude", None));
+        // A new process forgets it.
+        reg.clear_hook_agent("a", "claude", Some("s3"));
+        reg.begin_restart("a", SessionMode::Plan).unwrap();
+        assert!(reg.mark_hook_agent("a", "claude", Some("s3")));
+    }
+
+    #[test]
+    fn a_hook_mark_does_not_replace_another_agent() {
+        let reg = Registry::new();
+        reg.reserve("a", relaunch("A"));
+        let grok = Some(Foreground {
+            program: "grok".into(),
+            command_line: None,
+            agent: Some("grok".into()),
+            tool: None,
+        });
+        reg.set_foreground("a", generation_of(&reg, "a"), grok.clone());
+        assert!(!reg.mark_hook_agent("a", "claude", None));
+        assert_eq!(foreground(&reg, "a"), grok);
+        // A hook-marked agent is not replaced by another agent's hook either.
+        reg.reserve("b", relaunch("B"));
+        assert!(reg.mark_hook_agent("b", "claude", None));
+        assert!(!reg.mark_hook_agent("b", "codex", None));
+        assert_eq!(hook_agent(&reg, "b").as_deref(), Some("claude"));
+        // A program with no agent (a watcher reading) is replaced.
+        reg.reserve("c", relaunch("C"));
+        reg.set_foreground("c", generation_of(&reg, "c"), running("wsl"));
+        assert!(reg.mark_hook_agent("c", "claude", None));
+        assert_eq!(hook_agent(&reg, "c").as_deref(), Some("claude"));
+    }
+
+    #[test]
+    fn the_watcher_leaves_a_hook_mark_alone() {
+        let reg = Registry::new();
+        reg.reserve("a", relaunch("A"));
+        reg.mark_hook_agent("a", "claude", None);
+        let marked = foreground(&reg, "a");
+        let generation = generation_of(&reg, "a");
+        let mut rx = reg.subscribe();
+        rx.borrow_and_update();
+        reg.set_foreground("a", generation, None);
+        reg.set_foreground("a", generation, running("docker"));
+        assert_eq!(foreground(&reg, "a"), marked);
+        assert!(!rx.has_changed().unwrap());
+    }
+
+    #[test]
+    fn the_prompt_mark_clears_a_hook_mark() {
+        let reg = Registry::new();
+        reg.reserve("a", relaunch("A"));
+        reg.mark("a", Mark::Executed, &away());
+        reg.mark_hook_agent("a", "claude", None);
+        reg.update_live("a", |_| Some(live(LiveState::Working)));
+        reg.mark("a", Mark::PromptStart, &away());
+        assert_eq!(foreground(&reg, "a"), None);
+        // The status the agent reported goes with it: a shell row is a plain shell again.
+        assert_eq!(reg.row("a").unwrap().live, None);
+        // The watcher has the say again.
+        let generation = generation_of(&reg, "a");
+        reg.mark("a", Mark::Executed, &away());
+        reg.set_foreground("a", generation, running("docker"));
+        assert_eq!(foreground(&reg, "a"), running("docker"));
+        reg.set_foreground("a", generation, None);
+        assert_eq!(foreground(&reg, "a"), None);
+    }
+
+    #[test]
+    fn restart_clears_a_hook_mark() {
+        let reg = Registry::new();
+        for id in ["restart", "resume", "exit", "close"] {
+            reg.reserve(id, relaunch(id));
+            assert!(reg.mark_hook_agent(id, "claude", None));
+        }
+        reg.begin_restart("restart", SessionMode::Plan).unwrap();
+        reg.mark_exited("resume", generation_of(&reg, "resume"), 0);
+        reg.begin_resume("resume").unwrap();
+        reg.mark_exited("exit", generation_of(&reg, "exit"), 0);
+        reg.close("close");
+        for id in ["restart", "resume", "exit"] {
+            assert_eq!(foreground(&reg, id), None, "{id}");
+        }
+        assert_eq!(reg.snapshot().closed[0].foreground, None);
+        // The flag went too: the watcher applies to the new process, and a hook marks it again.
+        let generation = generation_of(&reg, "restart");
+        reg.set_foreground("restart", generation, running("docker"));
+        assert_eq!(foreground(&reg, "restart"), running("docker"));
+        reg.set_foreground("restart", generation, None);
+        assert!(reg.mark_hook_agent("restart", "claude", None));
+    }
+
+    #[test]
+    fn clear_hook_agent_clears_only_its_own_agent() {
+        let reg = Registry::new();
+        reg.reserve("a", relaunch("A"));
+        reg.mark_hook_agent("a", "claude", None);
+        reg.update_live("a", |_| Some(live(LiveState::Working)));
+        assert!(!reg.clear_hook_agent("a", "codex", None));
+        assert_eq!(hook_agent(&reg, "a").as_deref(), Some("claude"));
+        assert!(reg.clear_hook_agent("a", "claude", None));
+        assert_eq!(foreground(&reg, "a"), None);
+        assert_eq!(reg.row("a").unwrap().live, None);
+        assert!(!reg.clear_hook_agent("a", "claude", None));
+        // A foreground the watcher set is not the hooks' to clear.
+        reg.reserve("w", relaunch("W"));
+        let watched = Some(Foreground {
+            program: "claude".into(),
+            command_line: Some("claude".into()),
+            agent: Some("claude".into()),
+            tool: None,
+        });
+        reg.set_foreground("w", generation_of(&reg, "w"), watched.clone());
+        assert!(!reg.clear_hook_agent("w", "claude", None));
+        assert_eq!(foreground(&reg, "w"), watched);
+    }
+
+    #[test]
+    fn clearing_a_hook_mark_keeps_the_rows_ports() {
+        let reg = Registry::new();
+        reg.reserve("a", relaunch("A"));
+        let generation = generation_of(&reg, "a");
+        reg.set_listening("a", generation, &[3000]);
+        reg.set_listening("a", generation, &[3000]);
+        assert_eq!(reg.row("a").unwrap().ports.len(), 1);
+        reg.mark_hook_agent("a", "claude", None);
+        reg.clear_hook_agent("a", "claude", None);
+        assert_eq!(reg.row("a").unwrap().ports.len(), 1);
     }
 
     #[test]

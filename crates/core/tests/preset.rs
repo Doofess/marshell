@@ -238,7 +238,12 @@ mod preset {
             "hook_event_name": "SessionStart", "session_id": "s1",
             "transcript_path": transcript.to_string_lossy(), "cwd": work.path().to_string_lossy(),
         });
-        assert!(state.history().note_event("claude", &tab, None, &event, 1000).is_none());
+        assert!(
+            state
+                .history()
+                .note_event("claude", &tab, None, &event, 1000, None)
+                .is_none()
+        );
         let sidecar = marshell_core::history::archive::read_meta(home.path(), "claude", "s1")
             .unwrap()
             .expect("the SessionStart wrote a sidecar");
@@ -424,7 +429,7 @@ mod preset {
         let seed = state_with(home.path(), key_set);
         assert!(
             seed.history()
-                .note_event("claude", "t_gone", None, &meta_event, 1000)
+                .note_event("claude", "t_gone", None, &meta_event, 1000, None)
                 .is_none()
         );
         let mut sidecar = marshell_core::history::archive::read_meta(home.path(), "claude", "old1")

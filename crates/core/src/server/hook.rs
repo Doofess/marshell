@@ -104,6 +104,29 @@ pub async fn post(
         body: json.clone(),
     };
     st.hook_log().push(rec, |tab| st.session(tab).is_some());
+    // A WSL tab's processes are Linux ones the foreground watcher can't read: its hooks say which agent runs there. The
+    // mark comes first, so the check below sees it and an event of another agent in that tab is dropped.
+    let mut left_wsl = false;
+    let session_id = json.get("session_id").and_then(serde_json::Value::as_str);
+    if matches!(agent.as_str(), "claude" | "codex" | "antigravity")
+        && let Some(tab) = tab.as_deref()
+        && in_wsl(&st, tab).await
+    {
+        if json.get("hook_event_name").and_then(serde_json::Value::as_str) == Some("SessionEnd") {
+            // The agent is gone from the row: nothing is left to fold into a status, even when no earlier hook marked it.
+            // A row launched as an agent (History's Resume opens `claude --resume ...; exec bash -l`) outlives the agent
+            // and has no mark to clear: it folds the SessionEnd as a Windows tab does, and shows Ended.
+            let cleared = st.registry().clear_hook_agent(tab, &agent, session_id);
+            let launched = st.registry().row(tab).is_some_and(|row| row.agent.is_some());
+            left_wsl = cleared || !launched;
+        } else if matches!(role, HookRole::Event | HookRole::Permission | HookRole::Statusline) {
+            // A SessionStart runs the session again, even an ended one resumed under its own id.
+            if json.get("hook_event_name").and_then(serde_json::Value::as_str) == Some("SessionStart") {
+                st.registry().forget_ended_session(tab);
+            }
+            st.registry().mark_hook_agent(tab, &agent, session_id);
+        }
+    }
     // Grok Build runs Claude Code's hooks too. A tab that runs another agent takes no event or hold
     // from this one, so its own prompt applies.
     if let Some(tab) = tab.as_deref()
@@ -157,7 +180,9 @@ pub async fn post(
         if matches!(agent.as_str(), "claude" | "codex" | "antigravity")
             && let Some(tab) = tab.as_deref()
         {
-            fold_live_with(&st, &agent, role, tab, &json, at_ms, held).await;
+            if !left_wsl {
+                fold_live_with(&st, &agent, role, tab, &json, at_ms, held).await;
+            }
             if role == HookRole::Event && st.registry().is_open(tab) {
                 record_history(&st, &agent, tab, &json, at_ms).await;
             }
@@ -196,6 +221,15 @@ pub async fn post(
     Ok(StatusCode::NO_CONTENT.into_response())
 }
 
+/// Whether the tab's shell runs in a WSL distro. The first answer for a profile without `-d` asks `wsl.exe` for the default
+/// distro, so it runs off the async workers.
+async fn in_wsl(st: &AppState, tab: &str) -> bool {
+    let (asker, tab) = (st.clone(), tab.to_string());
+    tokio::task::spawn_blocking(move || asker.wsl_distro_of_tab(&tab).is_some())
+        .await
+        .unwrap_or(false)
+}
+
 /// The note for the aliases `prompt` names in the project of the folder the agent runs in, with paths in that
 /// folder's own checkout. That folder is the one the tab's shell last reported (a shell opened in repo A where the
 /// person ran `cd ..\B; claude` is in B), and the tab's start folder when the shell reported none.
@@ -213,13 +247,26 @@ async fn references_for(
         .map(|p| p.to_string_lossy().into_owned())
         .filter(|cwd| !cwd.is_empty());
     let cwd = reported.or_else(|| st.registry().cwd_of_tab(tab).filter(|cwd| !cwd.is_empty()))?;
-    let home = st.home().to_path_buf();
+    let (home, asker, tab) = (st.home().to_path_buf(), st.clone(), tab.to_string());
     tokio::task::spawn_blocking(move || {
+        // A WSL tab's folder is a Linux path (or the start folder, a Windows one): the files are read as Windows
+        // paths, and the note spells them the way the distro reads them.
+        let distro = asker.wsl_distro_of_tab(&tab);
+        let cwd = match &distro {
+            Some(distro) if cwd.starts_with('/') => {
+                crate::wsl::to_windows(distro, &cwd)?.to_string_lossy().into_owned()
+            }
+            Some(_) if !std::path::Path::new(&cwd).is_absolute() => return None,
+            _ => cwd,
+        };
         let root = std::path::PathBuf::from(crate::projects::project_of(&cwd));
         let checkout =
             crate::scripts::checkout_root(std::path::Path::new(&cwd)).unwrap_or_else(|| std::path::PathBuf::from(&cwd));
         let doc = crate::references::load(&home, &root).ok()?;
-        crate::references::resolve(&doc, &checkout, &prompt)
+        match distro {
+            Some(distro) => crate::references::resolve(&doc, &checkout, &prompt, &|p| crate::wsl::to_linux(&distro, p)),
+            None => crate::references::resolve(&doc, &checkout, &prompt, &|p| Some(p.display().to_string())),
+        }
     })
     .await
     .unwrap_or(None)
@@ -234,10 +281,15 @@ async fn record_history(st: &AppState, agent: &str, tab: &str, body: &serde_json
         .and_then(|s| s.recording_path())
         .and_then(|path| path.file_name().map(|name| name.to_string_lossy().into_owned()));
     let (agent, tab, body) = (agent.to_string(), tab.to_string(), body.clone());
-    let noter = history.clone();
-    let meta = tokio::task::spawn_blocking(move || noter.note_event(&agent, &tab, recording.as_deref(), &body, at_ms))
-        .await
-        .unwrap_or(None);
+    let (noter, asker) = (history.clone(), st.clone());
+    // A WSL tab's agent reports Linux paths: the note reads them under the tab's distro (the first lookup of a profile
+    // without `-d` runs `wsl.exe`, so it sits in the blocking task).
+    let meta = tokio::task::spawn_blocking(move || {
+        let distro = asker.wsl_distro_of_tab(&tab);
+        noter.note_event(&agent, &tab, recording.as_deref(), &body, at_ms, distro.as_deref())
+    })
+    .await
+    .unwrap_or(None);
     if let Some(meta) = meta {
         schedule_copy(history, meta);
     }
@@ -279,14 +331,21 @@ async fn fold_live_with(
             .set_status_note(tab, Some(format!("Live status is off for {name}")));
         return;
     }
-    // A cold cache runs `<agent> --version`: keep that off the async workers.
-    let asker = st.clone();
+    // A cold cache runs `<agent> --version` (inside the distro for a WSL tab, whose agent is not the Windows one): keep
+    // that, and the distro lookup, off the async workers.
+    let (asker, tab_id) = (st.clone(), tab.to_string());
     let which = agent.to_string();
-    let version =
-        tokio::task::spawn_blocking(move || asker.agent_version(&which, asker.agent_exe_of(&which).as_deref()))
-            .await
-            .unwrap_or(None);
+    let (version, distro) = tokio::task::spawn_blocking(move || match asker.wsl_distro_of_tab(&tab_id) {
+        Some(distro) => (asker.agent_version_in(&distro, &which), Some(distro)),
+        None => (asker.agent_version(&which, asker.agent_exe_of(&which).as_deref()), None),
+    })
+    .await
+    .unwrap_or((None, None));
     match gate(version.as_deref()) {
+        Gate::Unknown(_) if version.is_none() && distro.is_some() => st.registry().set_status_note(
+            tab,
+            Some(format!("Can't read {name}'s version in {}", distro.unwrap_or_default())),
+        ),
         Gate::Unknown(note) => st.registry().set_status_note(tab, Some(note)),
         Gate::Known if agent == "codex" => {
             // No Done hold, subagent count or stuck check: those follow Claude Code's events.

@@ -18,6 +18,19 @@
   gap: var(--space-2);
   justify-items: start;
 }
+/* The WSL group sits inside the agent's fill, after the Windows controls, separated from them by space alone. */
+.agents-dialog__wsl {
+  display: grid;
+  gap: var(--space-2);
+  justify-items: start;
+  padding-block-start: var(--space-2);
+}
+.agents-dialog__wsl-head {
+  margin: 0;
+  font-size: var(--text-12);
+  font-weight: 600;
+  color: var(--text-2);
+}
 .agents-dialog__agent-head {
   display: flex;
   align-items: center;

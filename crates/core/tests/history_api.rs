@@ -64,12 +64,16 @@ fn env_in(home: tempfile::TempDir, work: tempfile::TempDir) -> Env {
 }
 
 fn env_with(home: tempfile::TempDir, work: tempfile::TempDir, profile: Profile) -> Env {
+    env_with_profiles(home, work, vec![profile])
+}
+
+fn env_with_profiles(home: tempfile::TempDir, work: tempfile::TempDir, profiles: Vec<Profile>) -> Env {
     let state = AppState::new(
         TOKEN.into(),
         PORT,
         vec!["http://tauri.localhost".into()],
         home.path().to_path_buf(),
-        vec![profile],
+        profiles,
     )
     .with_agent_check(|_| true)
     // Codex's version is not read from the machine; a resume must not run the real `codex --version`.
@@ -127,7 +131,7 @@ fn index_session(env: &Env, id: &str, dir: &Path) -> PathBuf {
     assert!(
         env.state
             .history()
-            .note_event("claude", "t1", None, &body, 1000)
+            .note_event("claude", "t1", None, &body, 1000, None)
             .is_none()
     );
     transcript
@@ -362,6 +366,92 @@ async fn resume_starts_claude_with_the_session_in_its_folder() {
     assert_eq!(env.state.live_session_count(), 0);
 }
 
+/// A WSL profile for `distro` that runs the printing fake agent: only `-d <distro>` in its argv makes it that distro's
+/// profile, and the print shows the rest of the line `wsl.exe` would get. No test starts a real `wsl.exe`.
+fn wsl_printer(id: &str, distro: &str) -> Profile {
+    let mut command = printer().command;
+    command.extend(["-d".to_string(), distro.to_string()]);
+    Profile {
+        id: id.into(),
+        name: distro.into(),
+        command,
+        family: ShellFamily::Wsl,
+        ..printer()
+    }
+}
+
+/// Indexes a conversation of tab "t1" that the sidecar says ran in `distro`. The transcript is a local file: a
+/// `\\wsl.localhost` one can't be made in a test, and what Resume does with a recorded UNC path is `sidecar_allowed_in`'s
+/// (tested in the history module); this checks the profile and the folder the new tab gets.
+fn index_wsl_session(env: &Env, distro: &str) -> tempfile::TempDir {
+    let claude_dir = tempfile::tempdir().unwrap();
+    index_session(env, ID, claude_dir.path());
+    let mut meta = env.state.history().latest_for_tab("t1").unwrap();
+    meta.distro = Some(distro.to_string());
+    marshell_core::history::archive::write_meta(env.home.path(), &meta).unwrap();
+    // The caller keeps the folder (and the transcript in it) until the request is answered.
+    claude_dir
+}
+
+#[tokio::test]
+async fn resume_of_a_wsl_session_opens_its_distros_profile() {
+    let (home, work) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+    let profiles = vec![
+        printer(),
+        wsl_printer("wsl-debian", "Debian"),
+        wsl_printer("wsl-ubuntu", "Ubuntu"),
+    ];
+    let env = env_with_profiles(home, work, profiles);
+    // The distro name is spelled in another case in the sidecar than in the profile.
+    let _transcript_dir = index_wsl_session(&env, "ubuntu");
+
+    let (status, text) = call(
+        &env.app,
+        req("POST", &format!("/v1/history/claude/{ID}/resume"), Some(resume_body())),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{text}");
+    let created: Value = serde_json::from_str(&text).unwrap();
+    let tab = created["tab_id"].as_str().unwrap().to_string();
+    // The same resume command as on Windows, inside the distro's own profile.
+    let rows = peek_until(&env.app, &tab, &format!("--resume {ID}")).await;
+    assert!(rows.contains("-d Ubuntu"), "{rows}");
+    assert!(!rows.contains("Debian"), "{rows}");
+    let (_, sessions) = get_json(&env.app, "/v1/sessions").await;
+    let row = sessions["sessions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|s| s["tab_id"] == tab.as_str())
+        .unwrap();
+    assert_eq!(row["profile_id"], "wsl-ubuntu");
+    assert_eq!(row["agent"], "claude");
+    assert_eq!(row["cwd"], env.work.path().to_string_lossy().as_ref());
+    if let Some(session) = env.state.remove_session(&tab) {
+        session.force_kill();
+    }
+}
+
+#[tokio::test]
+async fn resume_of_a_wsl_session_without_its_distros_profile_is_refused() {
+    let (home, work) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+    // Debian's profile is there; the default (non-WSL) profile must not stand in for Fedora's.
+    let env = env_with_profiles(home, work, vec![printer(), wsl_printer("wsl-debian", "Debian")]);
+    let _transcript_dir = index_wsl_session(&env, "Fedora");
+
+    for route in ["resume", "fork"] {
+        let (status, text) = call(
+            &env.app,
+            req("POST", &format!("/v1/history/claude/{ID}/{route}"), Some(resume_body())),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CONFLICT, "{route}: {text}");
+        let body: Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(body["reason"], "No WSL profile for Fedora.", "{route}");
+    }
+    assert_eq!(env.state.live_session_count(), 0);
+}
+
 /// "Agent ended = ended": once the tab's Claude reported SessionEnd the conversation no longer runs in it, though the
 /// tab's shell lives on, so a Resume (which starts a new tab, never touches the old one) goes through.
 #[tokio::test]
@@ -405,7 +495,7 @@ async fn resume_goes_on_when_the_agent_in_the_tab_has_ended() {
         "transcript_path": claude_dir.path().join(format!("{ID}.jsonl")).to_string_lossy(),
         "cwd": env.work.path().to_string_lossy(),
     });
-    env.state.history().note_event("claude", &tab, None, &body, 2000);
+    env.state.history().note_event("claude", &tab, None, &body, 2000, None);
     let (status, text) = call(&env.app, req("POST", &uri, Some(resume_body()))).await;
     assert_eq!(status, StatusCode::CONFLICT, "{text}");
 
@@ -460,7 +550,7 @@ async fn resume_refuses_a_conversation_running_in_a_tab() {
         "transcript_path": claude_dir.path().join(format!("{ID}.jsonl")).to_string_lossy(),
         "cwd": env.work.path().to_string_lossy(),
     });
-    env.state.history().note_event("claude", &tab, None, &body, 2000);
+    env.state.history().note_event("claude", &tab, None, &body, 2000, None);
     assert_eq!(env.state.live_session_count(), 1);
 
     // A second Resume would start a second Claude on it: refused, and nothing starts.
@@ -480,7 +570,7 @@ async fn resume_refuses_a_conversation_running_in_a_tab() {
         "transcript_path": newer_path.to_string_lossy(),
         "cwd": env.work.path().to_string_lossy(),
     });
-    env.state.history().note_event("claude", &tab, None, &body, 3000);
+    env.state.history().note_event("claude", &tab, None, &body, 3000, None);
     let (status, text) = call(&env.app, req("POST", &uri, Some(resume_body()))).await;
     assert_eq!(status, StatusCode::OK, "{text}");
     assert_eq!(env.state.live_session_count(), 2);
@@ -766,7 +856,7 @@ async fn bookmark_now_waits_for_the_first_prompt() {
     assert!(
         env.state
             .history()
-            .note_event("claude", "t1", None, &prompt, 2000)
+            .note_event("claude", "t1", None, &prompt, 2000, None)
             .is_none()
     );
     let (status, text) = call(&env.app, req("POST", "/v1/sessions/t1/bookmark", None)).await;
@@ -846,7 +936,7 @@ async fn delete_refuses_a_running_conversation() {
     );
     assert!(archive_paths(env.home.path(), "claude", ID).0.exists());
     // A running tab on a different conversation does not block deleting this one.
-    env.state.history().note_event("claude", "t1", None, &json!({"hook_event_name":"SessionStart", "session_id":"newer", "transcript_path":env.work.path().join("newer.jsonl"), "cwd":env.work.path()}), 2000);
+    env.state.history().note_event("claude", "t1", None, &json!({"hook_event_name":"SessionStart", "session_id":"newer", "transcript_path":env.work.path().join("newer.jsonl"), "cwd":env.work.path()}), 2000, None);
     assert_eq!(
         call(&env.app, req("DELETE", &uri, None)).await.0,
         StatusCode::NO_CONTENT
@@ -1035,7 +1125,7 @@ async fn resume_opens_the_tab_under_the_name() {
         "transcript_path": newer_path.to_string_lossy(),
         "cwd": env.work.path().to_string_lossy(),
     });
-    env.state.history().note_event("claude", &tab, None, &body, 5000);
+    env.state.history().note_event("claude", &tab, None, &body, 5000, None);
     let (_, list) = get_json(&env.app, "/v1/history").await;
     let row = list
         .as_array()
@@ -1172,7 +1262,7 @@ fn seed_recorded(env: &Env, id: &str) {
         // A Stop asks for a copy of the transcript; this seed makes its own below.
         env.state
             .history()
-            .note_event("claude", "t1", Some(CAST_NAME), &body, at_ms);
+            .note_event("claude", "t1", Some(CAST_NAME), &body, at_ms, None);
     }
     let meta = env.state.history().latest_for_tab("t1").unwrap();
     copy_transcript(env.home.path(), &meta).unwrap();
@@ -1432,6 +1522,7 @@ fn seed_history_home() {
             recordings: vec![],
             client: Default::default(),
             preset: None,
+            distro: None,
         };
         copy_transcript(&home, &meta).unwrap();
         if id.ends_with("b4") {
@@ -1534,6 +1625,7 @@ fn seed_codex(env: &Env, dir: &Path) -> PathBuf {
         recordings: Vec::new(),
         client: marshell_protocol::history::Client::Terminal,
         preset: None,
+        distro: None,
     };
     assert!(env.state.history().import(&meta, &source).unwrap());
     source
@@ -1812,6 +1904,7 @@ async fn a_saved_age_limit_removes_what_the_preview_listed_and_the_last_cleanup_
         }],
         client: Default::default(),
         preset: None,
+        distro: None,
     };
     marshell_core::history::archive::write_meta(env.home.path(), &meta).unwrap();
     let pinned = marks::Marks {

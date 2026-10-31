@@ -742,6 +742,7 @@ fn read_row(row: &Row) -> rusqlite::Result<SessionMeta> {
         recordings: vec![],
         client: Client::from_name(&row.get::<_, String>(8)?),
         preset: None,
+        distro: None,
     })
 }
 
@@ -765,6 +766,7 @@ mod tests {
             recordings: vec![],
             client: Default::default(),
             preset: None,
+            distro: None,
         }
     }
 

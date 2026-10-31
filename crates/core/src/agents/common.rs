@@ -3,7 +3,7 @@
 use marshell_protocol::api::{LiveState, LiveStatus};
 use serde_json::Value;
 use std::fmt;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// Cap on a tool card's detail, in characters.
 pub const DETAIL_CAP: usize = 4_000;
@@ -124,6 +124,41 @@ pub fn rfc3339_ms(s: &str) -> Option<u64> {
 
 /// What marks a hook entry or a status line as Marshell's.
 pub const TAG: &str = "mshl1";
+
+/// The bridge a plan's hook entries run, and so where the plan is for.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Bridge {
+    /// Windows: the bridge under the Marshell home.
+    Local(PathBuf),
+    /// Inside a WSL distro: the bridge as the distro's Linux sees it (`/mnt/c/...`), run through interop.
+    Distro { name: String, path: String },
+}
+
+impl Bridge {
+    pub fn local(home: &Path) -> Self {
+        Bridge::Local(crate::paths::bridge_exe(home))
+    }
+
+    /// The bridge's path as the agent's own system reads it: forward slashes for Windows, the Linux path as given.
+    pub fn path(&self) -> String {
+        match self {
+            Bridge::Local(exe) => exe.to_string_lossy().replace('\\', "/"),
+            Bridge::Distro { path, .. } => path.clone(),
+        }
+    }
+
+    pub fn distro(&self) -> Option<&str> {
+        match self {
+            Bridge::Local(_) => None,
+            Bridge::Distro { name, .. } => Some(name),
+        }
+    }
+}
+
+/// What a plan says of a status line it leaves in a distro, where there is no chain to keep it in.
+pub fn statusline_left_note(distro: &str) -> String {
+    format!("{distro} already has a status line, so Marshell leaves it. The row won't show the model or context use.")
+}
 
 #[derive(Debug, PartialEq)]
 pub enum PlanError {

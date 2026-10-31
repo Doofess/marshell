@@ -130,7 +130,7 @@ pub struct AgentFound {
 }
 
 /// What an install plan should include.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[ts(export)]
 pub struct HookPlanRequest {
     /// Add the hook entries for status.
@@ -143,6 +143,11 @@ pub struct HookPlanRequest {
     /// Add the `marshell` skill file to the same preview.
     #[serde(default)]
     pub skill: bool,
+    /// Plan inside this WSL distro, whose files and bridge path are the distro's, instead of for Windows. It must
+    /// name a detected WSL profile's distro.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub distro: Option<String>,
 }
 
 /// What removing an agent's hooks would do: the preview, and whether the user's changed status

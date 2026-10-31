@@ -1,6 +1,6 @@
 //! Compressed copies of agent transcripts, each with a small `.meta.json` sidecar.
 
-use super::{SessionMeta, sidecar_allowed};
+use super::{SessionMeta, sidecar_allowed_in};
 use crate::{paths, store};
 use anyhow::Context;
 use std::path::{Path, PathBuf};
@@ -40,9 +40,15 @@ pub fn write_meta(home: &Path, meta: &SessionMeta) -> anyhow::Result<()> {
         .preset
         .clone()
         .or_else(|| stored.as_ref().and_then(|old| old.preset.clone()));
+    // The same for the distro: a writer with no tab (an import) doesn't know where the conversation ran.
+    let distro = meta
+        .distro
+        .clone()
+        .or_else(|| stored.as_ref().and_then(|old| old.distro.clone()));
     let mut out = SessionMeta {
         recordings: merged,
         preset,
+        distro,
         ..meta.clone()
     };
     // A conversation that ran in a Marshell tab stays Marshell's when a writer with no tab (an import) comes
@@ -251,7 +257,14 @@ pub fn read_all_meta(home: &Path) -> Vec<SessionMeta> {
                 continue;
             }
             match store::read::<SessionMeta>(&path) {
-                Ok(Some(meta)) if sidecar_allowed(&meta.agent, &meta.transcript_path, &meta.session_id) => {
+                Ok(Some(meta))
+                    if sidecar_allowed_in(
+                        &meta.agent,
+                        &meta.transcript_path,
+                        &meta.session_id,
+                        meta.distro.as_deref(),
+                    ) =>
+                {
                     found.push(meta)
                 }
                 Ok(Some(_)) => tracing::warn!(
@@ -286,6 +299,7 @@ mod tests {
             recordings: vec![],
             client: Default::default(),
             preset: None,
+            distro: None,
         }
     }
 
@@ -374,6 +388,46 @@ mod tests {
         .unwrap();
         let got = read_meta(home.path(), "claude", "s1").unwrap().unwrap();
         assert_eq!(got.client, Client::Marshell);
+    }
+
+    #[test]
+    fn an_old_sidecar_without_distro_still_reads() {
+        let home = tempfile::tempdir().unwrap();
+        let (_, sidecar) = archive_paths(home.path(), "claude", "s1");
+        std::fs::create_dir_all(sidecar.parent().unwrap()).unwrap();
+        std::fs::write(
+            &sidecar,
+            r#"{"version":2,"agent":"claude","session_id":"s1","tab_id":"t1","cwd":"c","transcript_path":"p","started_ms":1,"updated_ms":2,"previous_in_tab":null,"recordings":[],"client":"marshell"}"#,
+        )
+        .unwrap();
+        assert_eq!(read_meta(home.path(), "claude", "s1").unwrap().unwrap().distro, None);
+        // A sidecar of a WSL conversation keeps its distro, and a writer that does not know it leaves it.
+        let mut wsl = meta("s2", &home.path().join("s2.jsonl"));
+        wsl.distro = Some("Ubuntu".into());
+        write_meta(home.path(), &wsl).unwrap();
+        let mut again = wsl.clone();
+        again.distro = None;
+        write_meta(home.path(), &again).unwrap();
+        let got = read_meta(home.path(), "claude", "s2").unwrap().unwrap();
+        assert_eq!(got.distro.as_deref(), Some("Ubuntu"));
+        // No distro leaves no key in the file.
+        write_meta(home.path(), &meta("s3", &home.path().join("s3.jsonl"))).unwrap();
+        let text = std::fs::read_to_string(archive_paths(home.path(), "claude", "s3").1).unwrap();
+        assert!(!text.contains("distro"));
+    }
+
+    #[test]
+    fn a_rebuild_keeps_a_wsl_sidecar_only_with_its_own_distro() {
+        let home = tempfile::tempdir().unwrap();
+        let unc = |id: &str| format!(r"\\wsl.localhost\Ubuntu\home\u\.claude\projects\p\{id}.jsonl");
+        for (id, distro) in [("s1", Some("Ubuntu")), ("s2", None), ("s3", Some("Debian"))] {
+            let mut m = meta(id, &home.path().join(format!("{id}.jsonl")));
+            m.transcript_path = unc(id);
+            m.distro = distro.map(str::to_string);
+            write_meta(home.path(), &m).unwrap();
+        }
+        let kept: Vec<String> = read_all_meta(home.path()).into_iter().map(|m| m.session_id).collect();
+        assert_eq!(kept, ["s1"]);
     }
 
     #[test]

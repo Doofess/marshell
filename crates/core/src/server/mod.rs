@@ -93,6 +93,26 @@ pub type StatusRunner = fn(&Path, &[&str]) -> Option<(i32, String)>;
 #[derive(Clone)]
 pub struct AppState(Arc<Inner>);
 
+/// When `wsl.exe` last answered for an agent in a distro, and the version it printed (None when none could be read).
+type WslVersion = (std::time::Instant, Option<String>);
+
+/// Where Marshell's hooks go in a WSL distro: its home as a Windows (UNC) path the core can read and write, and the
+/// bridge's path as the distro's Linux sees it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DistroTarget {
+    pub home: PathBuf,
+    pub bridge: String,
+}
+
+/// The distros of the detected WSL profiles, spelt as the profiles name them.
+fn wsl_distros(doc: &ProfilesDoc) -> Vec<String> {
+    doc.profiles
+        .iter()
+        .filter(|p| matches!(p.family, marshell_protocol::api::ShellFamily::Wsl))
+        .filter_map(|p| crate::wsl::distro_of_argv(&p.command))
+        .collect()
+}
+
 struct Inner {
     token: String,
     host: String,
@@ -105,7 +125,7 @@ struct Inner {
     /// The shells found at startup. Detection runs once, not per request.
     detected: Vec<Profile>,
     /// Detected profiles merged with `profiles.json`.
-    profiles: Mutex<ProfilesDoc>,
+    profiles: Arc<Mutex<ProfilesDoc>>,
     /// The contents of `settings.json`, or the defaults.
     settings: Mutex<Settings>,
     /// The contents of `layout.json`, or the defaults.
@@ -195,6 +215,15 @@ struct Inner {
     codex_version: Option<Option<String>>,
     /// An Antigravity version a test pins, in place of asking the executable. `Some(None)` cannot be read.
     agy_version: Option<Option<String>>,
+    /// The version of an agent inside a WSL distro that a test pins, in place of asking `wsl.exe`. `Some(None)` cannot
+    /// be read.
+    wsl_version: Option<Option<String>>,
+    /// What `wsl.exe` last said of each `(distro lowercased, agent)`, and when. A version that could not be read is
+    /// kept too, so a distro without the CLI is not asked on every hook.
+    wsl_versions: Mutex<HashMap<(String, String), WslVersion>>,
+    /// The target of a distro that a test pins, in place of asking `wsl.exe`. `Some(None)` is a distro that can't be
+    /// reached.
+    distro_target: Option<Option<DistroTarget>>,
     /// The previous process readings, so each `/v1/perf` call can tell the CPU used since the last one.
     sampler: Mutex<crate::diagnostics::perf::Sampler>,
     /// The diagnostics export waiting to be read and saved.
@@ -241,7 +270,12 @@ impl AppState {
                 None
             }
         };
-        let config = crate::config::service::ConfigService::new(home.clone());
+        // The config guard reads the same profiles to know which WSL distros are still detected.
+        let shared_profiles = Arc::new(Mutex::new(profiles));
+        let config = crate::config::service::ConfigService::with_distros(home.clone(), {
+            let profiles = shared_profiles.clone();
+            Arc::new(move || wsl_distros(&profiles.lock().unwrap_or_else(|e| e.into_inner())))
+        });
         let history = Arc::new(crate::history::recorder::History::open(&home).with_registry(registry.clone()));
         Self(Arc::new(Inner {
             token,
@@ -250,7 +284,7 @@ impl AppState {
             home,
             shell_dir,
             detected,
-            profiles: Mutex::new(profiles),
+            profiles: shared_profiles,
             settings: Mutex::new(settings),
             layout: Mutex::new(layout),
             registry,
@@ -290,6 +324,9 @@ impl AppState {
             claude_version: None,
             codex_version: None,
             agy_version: None,
+            wsl_version: None,
+            wsl_versions: Mutex::new(HashMap::new()),
+            distro_target: None,
             sampler: Mutex::new(crate::diagnostics::perf::Sampler::new()),
             previews: crate::diagnostics::export::Previews::default(),
             view: tokio::sync::watch::channel(marshell_protocol::api::UiView {
@@ -388,6 +425,22 @@ impl AppState {
         Arc::get_mut(&mut self.0)
             .expect("with_agy_version runs before the state is shared")
             .agy_version = Some(version);
+        self
+    }
+    /// Pins the version of an agent inside a WSL distro that live status sees, so a test never runs `wsl.exe`. `None` is
+    /// a version that cannot be read. Call it before the state is cloned.
+    pub fn with_wsl_version(mut self, version: Option<String>) -> Self {
+        Arc::get_mut(&mut self.0)
+            .expect("with_wsl_version runs before the state is shared")
+            .wsl_version = Some(version);
+        self
+    }
+    /// Pins where hooks go in a WSL distro, so a test never runs `wsl.exe`. `None` is a distro that can't be reached.
+    /// Call it before the state is cloned.
+    pub fn with_distro_target(mut self, target: Option<DistroTarget>) -> Self {
+        Arc::get_mut(&mut self.0)
+            .expect("with_distro_target runs before the state is shared")
+            .distro_target = Some(target);
         self
     }
     /// Sets how long a permission request is held. Call it before the state is cloned.
@@ -695,6 +748,19 @@ impl AppState {
     /// A copy of the current profiles: detected ones merged with `profiles.json`.
     pub(crate) fn profiles_snapshot(&self) -> ProfilesDoc {
         self.0.profiles.lock().unwrap_or_else(|e| e.into_inner()).clone()
+    }
+    /// The WSL distro the tab's shell runs in. None for a tab of any other profile, or an unknown tab.
+    pub fn wsl_distro_of_tab(&self, tab: &str) -> Option<String> {
+        let profile_id = self.registry().profile_of_tab(tab)?;
+        let profile = self
+            .profiles_snapshot()
+            .profiles
+            .into_iter()
+            .find(|p| p.id == profile_id)?;
+        if !matches!(profile.family, marshell_protocol::api::ShellFamily::Wsl) {
+            return None;
+        }
+        crate::wsl::distro_of_argv(&profile.command).or_else(crate::wsl::default_distro)
     }
     pub fn insert_session(&self, session: Arc<crate::pty::Session>) {
         self.0
@@ -1170,5 +1236,49 @@ mod tests {
         assert_eq!(longest, Duration::from_secs(580));
         assert!(longest < BRIDGE_PERMISSION_BUDGET);
         assert!(DEFAULT_PERMISSION_HOLD < longest);
+    }
+
+    #[test]
+    fn a_wsl_tab_names_its_distro_and_no_other_tab_does() {
+        use marshell_protocol::api::{Profile, ShellFamily};
+        let profile = |id: &str, command: &[&str], family| Profile {
+            id: id.into(),
+            name: id.into(),
+            command: command.iter().map(|s| s.to_string()).collect(),
+            family,
+            cwd: None,
+            env: Vec::new(),
+            shell_integration: true,
+            terminal_theme: None,
+            detected: true,
+        };
+        let home = tempfile::tempdir().unwrap();
+        let st = AppState::new(
+            "t".into(),
+            1,
+            Vec::new(),
+            home.path().into(),
+            vec![
+                profile("wsl-my", &["wsl.exe", "-d", "My Distro"], ShellFamily::Wsl),
+                profile("pwsh", &["pwsh.exe"], ShellFamily::PowerShell),
+            ],
+        );
+        for (tab, profile_id) in [("a", "wsl-my"), ("b", "pwsh"), ("c", "gone")] {
+            st.registry().reserve(
+                tab,
+                crate::registry::Relaunch {
+                    profile_id: profile_id.into(),
+                    agent: None,
+                    cwd: "C:/work".into(),
+                    mode: None,
+                    name: tab.into(),
+                    preset: None,
+                },
+            );
+        }
+        assert_eq!(st.wsl_distro_of_tab("a").as_deref(), Some("My Distro"));
+        assert_eq!(st.wsl_distro_of_tab("b"), None);
+        assert_eq!(st.wsl_distro_of_tab("c"), None);
+        assert_eq!(st.wsl_distro_of_tab("missing"), None);
     }
 }

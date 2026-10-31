@@ -6,11 +6,12 @@ import type { AgentSetup } from "../../generated/AgentSetup";
 import type { Endpoint } from "../../generated/Endpoint";
 import type { RemovePreview } from "../../generated/RemovePreview";
 import { applyPreview, getSetup, planRemove, previewDiff, type HookAgent } from "../../lib/api/agents";
+import { profiles } from "../../lib/api/profiles";
 import { useAnnounceOnce } from "../../lib/useAnnounceOnce";
 import { SettingsReadError, type SettingsSync } from "../appearance/settingsSync";
 import { ConsentCard } from "../onboarding/ConsentCard";
 import { CLI_NAME, type Capability } from "../onboarding/consent";
-import { actions, consentProps, hooksOffNotice, liveStatusOn, removalBlock, setupLine, setupWant, type InstallFlow, type SetupStart } from "./agentsState";
+import { actions, consentProps, DEFAULT_WANT, hooksOffNotice, liveStatusOn, removalBlock, setupLine, setupWant, wslDistros, type InstallFlow, type SetupStart } from "./agentsState";
 import { OwnAgentsSection } from "./OwnAgentsSection";
 import { ToolsSection } from "./ToolsSection";
 import { SkillRow, type SkillRowHandlers } from "./SkillRow";
@@ -29,7 +30,7 @@ export const SETUP_UNREADABLE = "Couldn't read the setup from Marshell's core. C
 export type Panel =
   | { kind: "list" }
   | { kind: "setup"; flow: InstallFlow; agent?: HookAgent }
-  | { kind: "off"; removal: RemovePreview | null; busy: boolean; error?: string; conflict?: boolean; agent?: HookAgent };
+  | { kind: "off"; removal: RemovePreview | null; busy: boolean; error?: string; conflict?: boolean; agent?: HookAgent; distro?: string };
 
 export type AgentsHandlers = {
   onSetup: (agent: HookAgent) => void;
@@ -46,6 +47,10 @@ export type AgentsHandlers = {
   onLiveStatus: (checked: boolean, agent: HookAgent) => void;
   /** Opens the Notifications section, where the sounds and banners are set. */
   onNotifications: () => void;
+  /** Set up this agent's hooks inside a WSL distro. */
+  onWslSetup?: (agent: HookAgent, distro: string) => void;
+  /** Turn this agent's hooks off inside a WSL distro. */
+  onWslRemove?: (agent: HookAgent, distro: string) => void;
 };
 
 /** Esc on the consent card (and its diff) or on the Hooks off preview leaves that panel and keeps the page from also closing. */
@@ -74,8 +79,11 @@ export function AgentsSectionView({
   tools,
   rootRef,
   skills,
+  wslDistros: distros,
   ...on
 }: {
+  /** The WSL distros the session profiles name; the WSL group shows only once they are known. */
+  wslDistros?: string[];
   /** Each agent's marshell skill flow and handlers; without it the rows are left out. */
   skills?: Record<HookAgent, { flow: SkillFlow | null; on: SkillRowHandlers }>;
   /** The tools, after the own agents. */
@@ -109,9 +117,10 @@ export function AgentsSectionView({
       )}
       {typeof setup === "object" && panel.kind === "list" && (
         <>
-          <AgentList setup={setup} agent="claude" liveStatus={liveStatus} error={liveStatusError} on={on} skill={skills?.claude} />
-          {codex?.found && <AgentList setup={codex} agent="codex" liveStatus={codexLiveStatus} error={codexLiveStatusError} on={on} skill={skills?.codex} />}
-          {antigravity?.found && <AgentList setup={antigravity} agent="antigravity" liveStatus={antigravityLiveStatus} error={antigravityLiveStatusError} on={on} skill={skills?.antigravity} />}
+          <AgentList setup={setup} agent="claude" liveStatus={liveStatus} error={liveStatusError} on={on} skill={skills?.claude} distros={distros} />
+          {/* A CLI missing on Windows still gets its section when there are distros: it may be installed inside one. */}
+          {codex && (codex.found || (distros?.length ?? 0) > 0) && <AgentList setup={codex} agent="codex" liveStatus={codexLiveStatus} error={codexLiveStatusError} on={on} skill={skills?.codex} distros={distros} />}
+          {antigravity && (antigravity.found || (distros?.length ?? 0) > 0) && <AgentList setup={antigravity} agent="antigravity" liveStatus={antigravityLiveStatus} error={antigravityLiveStatusError} on={on} skill={skills?.antigravity} distros={distros} />}
           {own}
           {tools}
         </>
@@ -143,7 +152,7 @@ function TrustLine({ trust }: { trust: NonNullable<AgentSetup["trust"]> }) {
 }
 
 /** One agent's section: its state, its Live status switch, and Set up or Hooks off. Claude Code's has the Notifications link; Codex has no status line. */
-function AgentList({ setup, agent, liveStatus, error, on, skill }: { setup: AgentSetup; agent: HookAgent; liveStatus: boolean | null; error?: string | null; on: AgentsHandlers; skill?: { flow: SkillFlow | null; on: SkillRowHandlers } }) {
+function AgentList({ setup, agent, liveStatus, error, on, skill, distros }: { setup: AgentSetup; agent: HookAgent; liveStatus: boolean | null; error?: string | null; on: AgentsHandlers; skill?: { flow: SkillFlow | null; on: SkillRowHandlers }; distros?: string[] }) {
   const todo = actions(setup);
   const orphaned = setup.found && setup.hooks === "orphaned" && setup.settings_state !== "unparsable";
   const name = agentTitle(agent);
@@ -160,13 +169,13 @@ function AgentList({ setup, agent, liveStatus, error, on, skill }: { setup: Agen
       {agent === "codex" && setup.trust && <TrustLine trust={setup.trust} />}
       {skill && setup.found && <SkillRow agent={agent} setup={setup} flow={skill.flow} on={skill.on} />}
       {/* Antigravity's hooks and its status line live in two files; both are named. */}
-      {setup.hooks_path !== undefined && (
+      {setup.found && setup.hooks_path !== undefined && (
         <p className="agents-dialog__line" dir="auto">
           Hooks file: <code>{setup.hooks_path}</code>. Status line file: <code>{setup.settings_path}</code>.
         </p>
       )}
-      {setup.hooks === "installed" && !setup.approve_installed && <p className="agents-dialog__line">Approve from anywhere: off</p>}
-      {/* Left out until the settings have been read: an unread value is never shown as off. */}
+      {setup.found && setup.hooks === "installed" && !setup.approve_installed && <p className="agents-dialog__line">Approve from anywhere: off</p>}
+      {/* Left out until the settings have been read: an unread value is never shown as off. Marshell's own setting, so it stays for a CLI found only in a distro. */}
       {liveStatus !== null && (
         <Switch label="Live status" checked={liveStatus} onChange={(checked) => on.onLiveStatus(checked, agent)} reason={liveStatus ? undefined : "Rows use output activity only: Working or Idle."} />
       )}
@@ -197,7 +206,35 @@ function AgentList({ setup, agent, liveStatus, error, on, skill }: { setup: Agen
           )}
         </div>
       )}
+      {distros && <WslGroup agent={agent} distros={distros} on={on} />}
     </section>
+  );
+}
+
+/**
+ * Hook setup inside each WSL distro (slice 6j1). The distros come from the session profiles, so nothing here starts one:
+ * a distro is asked about only when one of its buttons is pressed. The skill file is not offered; the core installs none in a distro.
+ */
+function WslGroup({ agent, distros, on }: { agent: HookAgent; distros: string[]; on: AgentsHandlers }) {
+  return (
+    <div className="agents-dialog__wsl" role="group" aria-label="WSL" data-wsl-group={agent}>
+      <h4 className="agents-dialog__wsl-head">WSL</h4>
+      <p className="agents-dialog__line">Agents you run inside a WSL distro read their own settings there. Set up writes Marshell&apos;s hooks into that distro.</p>
+      {distros.length === 0 ? (
+        <p className="agents-dialog__line">No WSL distros found.</p>
+      ) : (
+        distros.map((distro) => (
+          <div key={distro} className="agents-dialog__actions" data-wsl-distro={distro}>
+            <button type="button" className="agents-dialog__btn" onClick={() => on.onWslSetup?.(agent, distro)}>
+              {`Set up in ${distro}`}
+            </button>
+            <button type="button" className="agents-dialog__btn" onClick={() => on.onWslRemove?.(agent, distro)}>
+              {`Remove from ${distro}`}
+            </button>
+          </div>
+        ))
+      )}
+    </div>
   );
 }
 
@@ -220,8 +257,8 @@ function OffPanel({ agent, panel, on }: { agent: HookAgent; panel: Extract<Panel
   const { removal } = panel;
   const block = removal ? removalBlock(removal.preview) : undefined;
   return (
-    <section className="agents-dialog__off" aria-label={`Turn ${agentTitle(agent)} hooks off`}>
-      <h3 className="agents-dialog__name">Turn {agentTitle(agent)} hooks off</h3>
+    <section className="agents-dialog__off" aria-label={`Turn ${agentTitle(agent)} hooks off${panel.distro ? ` in ${panel.distro}` : ""}`}>
+      <h3 className="agents-dialog__name">{`Turn ${agentTitle(agent)} hooks off${panel.distro ? ` in ${panel.distro}` : ""}`}</h3>
       {removal ? (
         <>
           <p className="agents-dialog__line" dir="auto">
@@ -382,17 +419,40 @@ export function AgentsSection({
     [claudeInstall.plan, codexInstall.plan, antigravityInstall.plan, setup, codex, antigravity],
   );
   const startOff = useCallback(
-    async (agent: HookAgent = "claude") => {
+    async (agent: HookAgent = "claude", distro?: string) => {
       setActive(agent);
       setMode("off");
-      setOff({ kind: "off", removal: null, busy: true, agent });
+      setOff({ kind: "off", removal: null, busy: true, agent, distro });
       try {
-        setOff({ kind: "off", removal: await planRemove(endpoint, agent), busy: false, agent });
+        setOff({ kind: "off", removal: await planRemove(endpoint, agent, distro), busy: false, agent, distro });
       } catch (e) {
-        setOff({ kind: "off", removal: null, busy: false, error: failureText(e), agent });
+        setOff({ kind: "off", removal: null, busy: false, error: failureText(e), agent, distro });
       }
     },
     [endpoint],
+  );
+  // The WSL distros come from the session profiles (one GET of the core's stored profiles; no distro is started and nothing polls).
+  const [distros, setDistros] = useState<string[] | undefined>(undefined);
+  useEffect(() => {
+    let live = true;
+    profiles.get(endpoint).then(
+      (doc) => {
+        if (live) setDistros(wslDistros(doc.profiles));
+      },
+      () => {},
+    );
+    return () => {
+      live = false;
+    };
+  }, [endpoint]);
+  const startWslSetup = useCallback(
+    (agent: HookAgent, distro: string) => {
+      // The hooks the Windows panel would offer by default; the core installs no skill file in a distro.
+      setActive(agent);
+      setMode("setup");
+      void (agent === "codex" ? codexInstall : agent === "antigravity" ? antigravityInstall : claudeInstall).plan(DEFAULT_WANT, undefined, distro);
+    },
+    [claudeInstall.plan, codexInstall.plan, antigravityInstall.plan],
   );
 
   const first = useRef(true);
@@ -468,6 +528,9 @@ export function AgentsSection({
       antigravityLiveStatusError={saveError?.agent === "antigravity" ? saveError.text : null}
       onLiveStatus={(on, agent) => void switchLiveStatus(on, agent)}
       onNotifications={onNotifications}
+      wslDistros={distros}
+      onWslSetup={startWslSetup}
+      onWslRemove={(agent, distro) => void startOff(agent, distro)}
       onSetup={(agent) => startSetup(agent)}
       onHooksOff={(agent) => void startOff(agent)}
       onBack={back}
@@ -475,7 +538,7 @@ export function AgentsSection({
       onAllow={() => void install.apply()}
       onToggleDiff={install.toggleDiff}
       onSwitch={install.choose}
-      onReload={() => void (mode === "off" ? startOff(active) : install.plan())}
+      onReload={() => void (mode === "off" ? startOff(active, off.distro) : install.plan())}
       onTurnOff={() => void turnOff()}
     />
   );

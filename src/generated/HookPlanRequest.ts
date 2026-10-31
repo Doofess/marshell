@@ -19,4 +19,9 @@ approve: boolean,
 /**
  * Add the `marshell` skill file to the same preview.
  */
-skill: boolean, };
+skill: boolean, 
+/**
+ * Plan inside this WSL distro, whose files and bridge path are the distro's, instead of for Windows. It must
+ * name a detected WSL profile's distro.
+ */
+distro?: string, };

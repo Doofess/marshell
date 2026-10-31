@@ -258,7 +258,7 @@ fn failed_in_the_system(err: &anyhow::Error) -> bool {
 /// What reading a source file's text decided.
 enum Prepared {
     /// Copy it with this meta.
-    Copy(SessionMeta),
+    Copy(Box<SessionMeta>),
     /// Record it and never copy it (until it grows).
     Skip(&'static str),
 }
@@ -759,7 +759,7 @@ fn claude_meta(path: &Path, text: &str, md: &std::fs::Metadata) -> Prepared {
     let started_ms = started.unwrap_or_else(|| modified_ms(md));
     // The last line may be half written; the last one that parses gives the time.
     let updated_ms = text.lines().rev().find_map(line_time).unwrap_or(started_ms);
-    Prepared::Copy(SessionMeta {
+    Prepared::Copy(Box::new(SessionMeta {
         agent: CLAUDE.into(),
         session_id: id.to_string(),
         tab_id: String::new(),
@@ -771,7 +771,8 @@ fn claude_meta(path: &Path, text: &str, md: &std::fs::Metadata) -> Prepared {
         recordings: Vec::new(),
         client: client.unwrap_or(Client::Terminal),
         preset: None,
-    })
+        distro: None,
+    }))
 }
 
 fn codex_meta(path: &Path, text: &str, md: &std::fs::Metadata) -> Prepared {
@@ -787,7 +788,7 @@ fn codex_meta(path: &Path, text: &str, md: &std::fs::Metadata) -> Prepared {
         meta.started_ms
     };
     let updated_ms = text.lines().rev().find_map(line_time).unwrap_or(started_ms);
-    Prepared::Copy(SessionMeta {
+    Prepared::Copy(Box::new(SessionMeta {
         agent: CODEX.into(),
         session_id: meta.id,
         tab_id: String::new(),
@@ -799,7 +800,8 @@ fn codex_meta(path: &Path, text: &str, md: &std::fs::Metadata) -> Prepared {
         recordings: Vec::new(),
         client: meta.client,
         preset: None,
-    })
+        distro: None,
+    }))
 }
 
 #[cfg(test)]
@@ -1113,7 +1115,7 @@ mod tests {
             "transcript_path": path.to_string_lossy(),
         });
         rig.history
-            .note_event("claude", "t1", Some("t1-1000.cast"), &hook, 1000);
+            .note_event("claude", "t1", Some("t1-1000.cast"), &hook, 1000, None);
         let before = rig.sidecar("claude", CLAUDE_A).unwrap();
         assert_eq!(before.tab_id, "t1");
         assert_eq!(before.recordings.len(), 1);
@@ -1146,7 +1148,7 @@ mod tests {
                 "transcript_path": path.to_string_lossy(),
             });
             let note = || {
-                assert!(rig.history.note_event("codex", "t1", None, &hook, 1000).is_none());
+                assert!(rig.history.note_event("codex", "t1", None, &hook, 1000, None).is_none());
             };
             if note_first {
                 note();

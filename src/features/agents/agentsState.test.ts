@@ -1,11 +1,25 @@
 import { describe, expect, it, vi } from "vitest";
 import type { AgentSetup } from "../../generated/AgentSetup";
-import { actions, consentProps, consentQueue, DEFAULT_WANT, hooksOffNotice, installRequest, liveStatusOn, rowSetupStart, setupLine, setupWant, startsOpen } from "./agentsState";
+import { actions, consentProps, consentQueue, DEFAULT_WANT, hooksOffNotice, installRequest, liveStatusOn, rowSetupStart, setupLine, setupWant, startsOpen, wslDistros } from "./agentsState";
 import type { ConfigPreview } from "../../generated/ConfigPreview";
 import type { FilePreview } from "../../generated/FilePreview";
 import { AGY_SETUP, CODEX_SETUP, PREVIEW, SETUP } from "./fixtures";
 
 const s = (patch: Partial<AgentSetup>): AgentSetup => ({ ...SETUP, ...patch });
+
+describe("wslDistros", () => {
+  const p = (name: string, command: string[], family: "wsl" | "cmd" = "wsl") => ({ name, command, family });
+  it("takes the distro from the -d argument, else the profile name, and skips other shells and repeats", () => {
+    expect(wslDistros([p("Ubuntu", ["wsl.exe", "-d", "Ubuntu"]), p("My shell", ["wsl.exe", "--distribution", "Debian"]), p("Arch", ["wsl.exe"]), p("cmd", ["cmd.exe"], "cmd"), p("again", ["wsl.exe", "-d", "ubuntu"])])).toEqual(["Ubuntu", "Debian", "Arch"]);
+  });
+});
+
+describe("installRequest for a distro", () => {
+  it("sends the distro and no skill, and sends neither key's value otherwise", () => {
+    expect(installRequest(DEFAULT_WANT, "claude", "Ubuntu")).toEqual({ status: true, statusline: true, approve: true, skill: false, distro: "Ubuntu" });
+    expect(installRequest(DEFAULT_WANT, "claude")).toEqual({ status: true, statusline: true, approve: true, skill: true });
+  });
+});
 
 describe("setupLine", () => {
   it("says each state in the plan's words", () => {

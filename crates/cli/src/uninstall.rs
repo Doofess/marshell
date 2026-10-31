@@ -173,7 +173,7 @@ pub fn run(
             return 1;
         }
     };
-    let mut plan = match remove_plan(&settings, user_home, text.as_deref(), chain_text.as_deref(), home) {
+    let mut plan = match remove_plan(&settings, user_home, text.as_deref(), chain_text.as_deref(), None) {
         Ok(plan) => plan,
         Err(e) => {
             let _ = writeln!(out, "{e}");
@@ -217,7 +217,7 @@ pub fn run(
             hooks_text.as_deref(),
             settings_text.as_deref(),
             chain_text.as_deref(),
-            home,
+            None,
         )
         .map(|changes| (hooks_text, changes))
         .map_err(|e| e.to_string())
@@ -421,6 +421,7 @@ pub fn run(
 mod tests {
     use super::*;
     use marshell_core::agents::claude::hooks::{install_plan, settings_path};
+    use marshell_core::agents::common::Bridge;
     use marshell_core::config::service::ConfigService;
     use marshell_protocol::agents::HookPlanRequest;
     use marshell_protocol::config::{ApplyRequest, ExpectedHash};
@@ -518,8 +519,20 @@ mod tests {
             statusline: true,
             approve: false,
             skill: false,
+            distro: None,
         };
-        let changes = install_plan(&settings, &user_home, Some(original), None, &home, &want).unwrap();
+        let chain = paths::statusline_chain(&home, "claude");
+        let bridge = Bridge::local(&home);
+        let changes = install_plan(
+            &settings,
+            &user_home,
+            Some(original),
+            None,
+            Some(&chain),
+            &bridge,
+            &want,
+        )
+        .unwrap();
         let service = ConfigService::new(home.clone());
         let preview = service.preview(changes);
         assert!(preview.can_apply, "{preview:?}");
@@ -569,8 +582,9 @@ mod tests {
             statusline: false,
             approve: false,
             skill: false,
+            distro: None,
         };
-        let changes = ch::install_plan(&path, original, &f.home, &want).unwrap();
+        let changes = ch::install_plan(&path, original, &Bridge::local(&f.home), &want).unwrap();
         let service = ConfigService::new(f.home.clone());
         let preview = service.preview(changes);
         assert!(preview.can_apply, "{preview:?}");
@@ -677,8 +691,11 @@ mod tests {
             statusline: false,
             approve: false,
             skill: false,
+            distro: None,
         };
-        let changes = ah::install_plan(&f.user_home, mine, None, None, &f.home, &want).unwrap();
+        let chain = paths::statusline_chain(&f.home, "antigravity");
+        let bridge = Bridge::local(&f.home);
+        let changes = ah::install_plan(&f.user_home, mine, None, None, Some(&chain), &bridge, &want).unwrap();
         let service = ConfigService::new(f.home.clone());
         let preview = service.preview(changes);
         assert!(preview.can_apply, "{preview:?}");

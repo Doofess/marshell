@@ -120,13 +120,20 @@ impl Probe {
 
 /// Runs `wsl.exe -l -q` on a thread and gives up after 2 seconds.
 fn system_wsl_list() -> Vec<u8> {
+    run_wsl(&["-l", "-q"], std::time::Duration::from_secs(2))
+}
+
+/// Runs `wsl.exe` with the arguments on a thread, with no console window, and gives up after `timeout`.
+/// Its raw stdout, or nothing when WSL is missing, fails or is too slow.
+pub(crate) fn run_wsl(args: &[&str], timeout: std::time::Duration) -> Vec<u8> {
     if !cfg!(windows) {
         return Vec::new();
     }
+    let args: Vec<String> = args.iter().map(|a| a.to_string()).collect();
     let (tx, rx) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
         let mut cmd = std::process::Command::new("wsl.exe");
-        cmd.args(["-l", "-q"]);
+        cmd.args(args);
         #[cfg(windows)]
         {
             use std::os::windows::process::CommandExt;
@@ -139,16 +146,16 @@ fn system_wsl_list() -> Vec<u8> {
         };
         let _ = tx.send(out);
     });
-    rx.recv_timeout(std::time::Duration::from_secs(2)).unwrap_or_default()
+    rx.recv_timeout(timeout).unwrap_or_default()
 }
 
-/// Distro names from `wsl.exe -l -q` output. WSL prints UTF-16LE, usually with a BOM.
-pub fn parse_wsl_list(stdout: &[u8]) -> Vec<String> {
+/// The text of `wsl.exe` output. WSL prints UTF-16LE, usually with a BOM.
+pub(crate) fn decode_wsl_output(stdout: &[u8]) -> String {
     let has_bom = stdout.starts_with(&[0xFF, 0xFE]);
     // ASCII text in UTF-16LE has a zero in every odd byte.
     let looks_utf16 =
         stdout.len() >= 2 && stdout.len().is_multiple_of(2) && stdout.iter().skip(1).step_by(2).all(|b| *b == 0);
-    let text = if has_bom || looks_utf16 {
+    if has_bom || looks_utf16 {
         let units: Vec<u16> = stdout
             .as_chunks::<2>()
             .0
@@ -160,8 +167,13 @@ pub fn parse_wsl_list(stdout: &[u8]) -> Vec<String> {
             .collect::<String>()
     } else {
         String::from_utf8_lossy(stdout).into_owned()
-    };
-    text.lines()
+    }
+}
+
+/// Distro names from `wsl.exe -l -q` output.
+pub fn parse_wsl_list(stdout: &[u8]) -> Vec<String> {
+    decode_wsl_output(stdout)
+        .lines()
         .map(|line| line.trim_matches(|c: char| c == '\0' || c == '\u{feff}' || c.is_whitespace()))
         .filter(|line| !line.is_empty())
         .map(|line| line.to_string())

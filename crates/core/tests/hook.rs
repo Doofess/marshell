@@ -967,6 +967,331 @@ async fn claude_keeps_its_hooks_while_it_is_in_the_foreground_and_before_any_sig
     assert_eq!(live.state, LiveState::NeedsPermission);
 }
 
+// ---- Agents inside WSL: a hook names the agent the tab runs ----
+
+/// A WSL profile that starts the sleeper: only `-d Ubuntu` in its argv makes it a tab of that distro, as `wsl.exe -d Ubuntu`
+/// would be. No test starts a real `wsl.exe`.
+fn wsl_profile() -> marshell_protocol::api::Profile {
+    let mut command = sleeper_profile().command;
+    command.extend(["-d".to_string(), "Ubuntu".to_string()]);
+    marshell_protocol::api::Profile {
+        id: "wsl-ubuntu".into(),
+        name: "Ubuntu".into(),
+        command,
+        family: marshell_protocol::api::ShellFamily::Wsl,
+        ..sleeper_profile()
+    }
+}
+
+/// A plain shell row (launched as no agent) of `profile_id`.
+async fn start_shell(app: &axum::Router, profile_id: &str) -> String {
+    let body = serde_json::json!({ "cols": 80, "rows": 24, "profile_id": profile_id });
+    let res = app
+        .clone()
+        .oneshot(
+            base("POST", "/v1/sessions")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(body.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let code = res.status();
+    let bytes = axum::body::to_bytes(res.into_body(), 64 * 1024).await.unwrap();
+    assert_eq!(code, StatusCode::OK, "{}", String::from_utf8_lossy(&bytes));
+    serde_json::from_slice::<serde_json::Value>(&bytes).unwrap()["tab_id"]
+        .as_str()
+        .unwrap()
+        .to_string()
+}
+
+/// The state with a WSL tab; its distro's version is pinned, so no test asks a real `wsl.exe`.
+fn wsl_state() -> AppState {
+    state_with(Some(KNOWN), vec![sleeper_profile(), wsl_profile()]).with_wsl_version(Some(KNOWN.into()))
+}
+
+fn foreground_agent(st: &AppState, tab: &str) -> Option<String> {
+    row(st, tab).foreground.and_then(|f| f.agent)
+}
+
+#[tokio::test]
+async fn a_wsl_tab_takes_the_agent_from_its_hooks() {
+    let st = wsl_state();
+    let app = router(st.clone());
+    let tab = start_shell(&app, "wsl-ubuntu").await;
+    assert_eq!(st.wsl_distro_of_tab(&tab).as_deref(), Some("Ubuntu"));
+    assert_eq!(foreground_agent(&st, &tab), None);
+    assert_eq!(
+        post_fixture(&app, "event", &tab, "UserPromptSubmit").await,
+        StatusCode::NO_CONTENT
+    );
+    let info = row(&st, &tab);
+    stop(&st, &tab);
+    let foreground = info.foreground.unwrap();
+    assert_eq!(
+        (foreground.program.as_str(), foreground.agent.as_deref()),
+        ("claude", Some("claude"))
+    );
+    assert_eq!(info.live.unwrap().state, LiveState::Working);
+}
+
+#[tokio::test]
+async fn a_wsl_tabs_history_row_reads_its_linux_paths_under_the_distro() {
+    let st = wsl_state();
+    let app = router(st.clone());
+    let tab = start_shell(&app, "wsl-ubuntu").await;
+    let id = "00000000-0000-4000-8000-000000000001";
+    let mut body: serde_json::Value = serde_json::from_slice(&fixture("SessionStart")).unwrap();
+    body["session_id"] = serde_json::json!(id);
+    body["transcript_path"] = serde_json::json!(format!("/home/u/.claude/projects/-home-u-proj/{id}.jsonl"));
+    body["cwd"] = serde_json::json!("/home/u/proj");
+    let sent = status(
+        &app,
+        hook(
+            Some("event"),
+            Some("claude"),
+            Some(&tab),
+            serde_json::to_vec(&body).unwrap(),
+        ),
+    )
+    .await;
+    let row = st.history().latest_for_tab(&tab);
+    let stored = marshell_core::history::archive::read_meta(st.home(), "claude", id).unwrap();
+    stop(&st, &tab);
+
+    assert_eq!(sent, StatusCode::NO_CONTENT);
+    let row = row.expect("the WSL tab's session is in the history");
+    assert_eq!(
+        row.transcript_path,
+        format!(r"\\wsl.localhost\Ubuntu\home\u\.claude\projects\-home-u-proj\{id}.jsonl")
+    );
+    assert_eq!(row.cwd, r"\\wsl.localhost\Ubuntu\home\u\proj");
+    assert_eq!(stored.unwrap().distro.as_deref(), Some("Ubuntu"));
+}
+
+#[tokio::test]
+async fn a_wsl_tab_gates_on_the_distros_version() {
+    // The Windows claude is too old to be recorded; the distro's is recorded, so live is folded.
+    let st = state_with(Some("1.0.0"), vec![sleeper_profile(), wsl_profile()]).with_wsl_version(Some(KNOWN.into()));
+    let app = router(st.clone());
+    let tab = start_shell(&app, "wsl-ubuntu").await;
+    post_fixture(&app, "event", &tab, "UserPromptSubmit").await;
+    let info = row(&st, &tab);
+    stop(&st, &tab);
+    assert_eq!(info.live.unwrap().state, LiveState::Working);
+    assert_eq!(info.status_note, None);
+}
+
+#[tokio::test]
+async fn a_wsl_tab_without_a_version_gets_the_wsl_note() {
+    // The Windows claude is recorded; the distro's version can't be read, and that is what counts.
+    let st = state_with(Some(KNOWN), vec![sleeper_profile(), wsl_profile()]).with_wsl_version(None);
+    let app = router(st.clone());
+    let tab = start_shell(&app, "wsl-ubuntu").await;
+    post_fixture(&app, "event", &tab, "UserPromptSubmit").await;
+    let info = row(&st, &tab);
+    stop(&st, &tab);
+    assert_eq!(info.live, None);
+    assert_eq!(
+        info.status_note.as_deref(),
+        Some("Can't read Claude Code's version in Ubuntu")
+    );
+}
+
+#[tokio::test]
+async fn a_status_line_names_the_agent_too() {
+    let st = wsl_state();
+    let app = router(st.clone());
+    let tab = start_shell(&app, "wsl-ubuntu").await;
+    assert_eq!(
+        post_fixture(&app, "statusline", &tab, "statusline").await,
+        StatusCode::NO_CONTENT
+    );
+    let (agent, live) = (foreground_agent(&st, &tab), row(&st, &tab).live);
+    stop(&st, &tab);
+    assert_eq!(agent.as_deref(), Some("claude"));
+    assert!(live.is_some());
+}
+
+#[tokio::test]
+async fn session_end_clears_the_wsl_agent() {
+    let st = wsl_state();
+    let app = router(st.clone());
+    let tab = start_shell(&app, "wsl-ubuntu").await;
+    post_fixture(&app, "event", &tab, "UserPromptSubmit").await;
+    assert_eq!(foreground_agent(&st, &tab).as_deref(), Some("claude"));
+    assert_eq!(
+        post_fixture(&app, "event", &tab, "SessionEnd").await,
+        StatusCode::NO_CONTENT
+    );
+    let info = row(&st, &tab);
+    stop(&st, &tab);
+    // The row is a plain shell again, with no status left behind.
+    assert_eq!(info.foreground, None);
+    assert_eq!(info.live, None);
+}
+
+#[tokio::test]
+async fn session_end_ends_a_wsl_tab_launched_as_an_agent() {
+    // History's Resume opens `bash -lc 'claude --resume ...; exec bash -l'`: the tab outlives the agent, and its row
+    // was launched as an agent, so no hook mark exists to clear. The row folds SessionEnd as a Windows tab does.
+    let st = wsl_state();
+    let app = router(st.clone());
+    let body = serde_json::json!({ "cols": 80, "rows": 24, "profile_id": "wsl-ubuntu", "agent": "claude" });
+    let res = app
+        .clone()
+        .oneshot(
+            base("POST", "/v1/sessions")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(body.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let code = res.status();
+    let bytes = axum::body::to_bytes(res.into_body(), 64 * 1024).await.unwrap();
+    assert_eq!(code, StatusCode::OK, "{}", String::from_utf8_lossy(&bytes));
+    let tab = serde_json::from_slice::<serde_json::Value>(&bytes).unwrap()["tab_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert_eq!(st.wsl_distro_of_tab(&tab).as_deref(), Some("Ubuntu"));
+    post_fixture(&app, "event", &tab, "SessionStart").await;
+    assert_eq!(row(&st, &tab).live.unwrap().state, LiveState::Idle);
+    assert_eq!(
+        post_fixture(&app, "event", &tab, "SessionEnd").await,
+        StatusCode::NO_CONTENT
+    );
+    let info = row(&st, &tab);
+    stop(&st, &tab);
+    assert_eq!(info.live.unwrap().state, LiveState::Ended);
+}
+
+#[tokio::test]
+async fn a_lone_session_end_in_a_wsl_tab_leaves_no_status() {
+    let st = wsl_state();
+    let app = router(st.clone());
+    let tab = start_shell(&app, "wsl-ubuntu").await;
+    post_fixture(&app, "event", &tab, "SessionEnd").await;
+    let info = row(&st, &tab);
+    stop(&st, &tab);
+    assert_eq!(info.foreground, None);
+    assert_eq!(info.live, None);
+}
+
+#[tokio::test]
+async fn a_non_wsl_shell_tab_is_not_marked_by_hooks() {
+    let st = wsl_state();
+    let app = router(st.clone());
+    let tab = start_shell(&app, "sleeper").await;
+    assert_eq!(st.wsl_distro_of_tab(&tab), None);
+    post_fixture(&app, "event", &tab, "UserPromptSubmit").await;
+    let info = row(&st, &tab);
+    stop(&st, &tab);
+    assert_eq!(info.foreground, None);
+}
+
+#[tokio::test]
+async fn another_agents_hook_in_a_marked_wsl_tab_is_ignored() {
+    let st = wsl_state().with_codex_version(Some("0.163.0".into()));
+    let app = router(st.clone());
+    let tab = start_shell(&app, "wsl-ubuntu").await;
+    post_fixture(&app, "event", &tab, "UserPromptSubmit").await;
+    let before = row(&st, &tab).live;
+    let body = serde_json::json!({ "hook_event_name": "Stop" })
+        .to_string()
+        .into_bytes();
+    assert_eq!(
+        status(&app, hook(Some("event"), Some("codex"), Some(&tab), body)).await,
+        StatusCode::NO_CONTENT
+    );
+    let info = row(&st, &tab);
+    stop(&st, &tab);
+    assert_eq!(info.foreground.and_then(|f| f.agent).as_deref(), Some("claude"));
+    assert_eq!(info.live, before);
+}
+
+#[tokio::test]
+async fn a_late_event_after_the_prompt_mark_does_not_mark_the_row_again() {
+    let st = wsl_state();
+    let app = router(st.clone());
+    let tab = start_shell(&app, "wsl-ubuntu").await;
+    post_fixture(&app, "event", &tab, "UserPromptSubmit").await;
+    // The agent exited and the shell is back at its prompt. This shell reports its commands (the agent was one).
+    let away = marshell_protocol::api::UiView {
+        window_focused: false,
+        visible_tabs: Vec::new(),
+    };
+    st.registry().mark(&tab, marshell_core::pty::Mark::Executed, &away);
+    st.registry().mark(&tab, marshell_core::pty::Mark::PromptStart, &away);
+    assert_eq!(foreground_agent(&st, &tab), None);
+    post_fixture(&app, "event", &tab, "PostToolUse").await;
+    let agent = foreground_agent(&st, &tab);
+    stop(&st, &tab);
+    assert_eq!(agent, None);
+}
+
+#[tokio::test]
+async fn a_status_line_after_session_end_does_not_mark_a_wsl_tab_again() {
+    // A tab with no prompt marks: nothing but the session id tells the late status line from a new session.
+    let st = wsl_state();
+    let app = router(st.clone());
+    let tab = start_shell(&app, "wsl-ubuntu").await;
+    post_fixture(&app, "event", &tab, "UserPromptSubmit").await;
+    assert_eq!(foreground_agent(&st, &tab).as_deref(), Some("claude"));
+    post_fixture(&app, "event", &tab, "SessionEnd").await;
+    assert_eq!(foreground_agent(&st, &tab), None);
+    post_fixture(&app, "statusline", &tab, "statusline").await;
+    let late = foreground_agent(&st, &tab);
+    // A new session (another id) marks the row.
+    let mut body: serde_json::Value = serde_json::from_slice(&fixture("UserPromptSubmit")).unwrap();
+    body["session_id"] = serde_json::json!("another-session");
+    status(
+        &app,
+        hook(
+            Some("event"),
+            Some("claude"),
+            Some(&tab),
+            serde_json::to_vec(&body).unwrap(),
+        ),
+    )
+    .await;
+    let next = foreground_agent(&st, &tab);
+    stop(&st, &tab);
+    assert_eq!(late, None);
+    assert_eq!(next.as_deref(), Some("claude"));
+}
+
+#[tokio::test]
+async fn resuming_the_ended_session_in_the_same_wsl_tab_marks_it_again() {
+    // `/exit`, then `claude --resume <id>` in the same shell: the resumed session keeps its id, and its SessionStart
+    // says it runs again.
+    let st = wsl_state();
+    let app = router(st.clone());
+    let tab = start_shell(&app, "wsl-ubuntu").await;
+    let prompt: serde_json::Value = serde_json::from_slice(&fixture("UserPromptSubmit")).unwrap();
+    let mut start: serde_json::Value = serde_json::from_slice(&fixture("SessionStart")).unwrap();
+    start["session_id"] = prompt["session_id"].clone();
+    let mut end: serde_json::Value = serde_json::from_slice(&fixture("SessionEnd")).unwrap();
+    end["session_id"] = prompt["session_id"].clone();
+    let post = |body: &serde_json::Value| {
+        let bytes = serde_json::to_vec(body).unwrap();
+        let app = app.clone();
+        let tab = tab.clone();
+        async move { status(&app, hook(Some("event"), Some("claude"), Some(&tab), bytes)).await }
+    };
+    post(&prompt).await;
+    post(&end).await;
+    assert_eq!(foreground_agent(&st, &tab), None);
+    post(&start).await;
+    let resumed = foreground_agent(&st, &tab);
+    post(&prompt).await;
+    let prompted = foreground_agent(&st, &tab);
+    stop(&st, &tab);
+    assert_eq!(resumed.as_deref(), Some("claude"));
+    assert_eq!(prompted.as_deref(), Some("claude"));
+}
+
 // ---- Project references: a matched alias's note reaches Claude Code and Codex ----
 
 /// A project with a `.git` folder and a file an alias can name.
@@ -1295,6 +1620,116 @@ async fn a_disabled_project_or_unreadable_file_is_a_204() {
         marshell_core::references::load(st.home(), &p.repo).is_err(),
         "both files must be refused for this test to reach the unreadable path"
     );
+    let (code, text) = submit(&app, "claude", Some(&tab), "fix the login button").await;
+    let shown = row(&st, &tab).references;
+    stop(&st, &tab);
+
+    assert_eq!(code, StatusCode::NO_CONTENT, "{text}");
+    assert!(text.is_empty(), "{text}");
+    assert_eq!(shown, None);
+}
+
+/// A WSL profile whose shell reports `folder` as its folder, as a distro's shell does over OSC 7 (a Linux path).
+fn wsl_reporter(folder: &str) -> marshell_protocol::api::Profile {
+    marshell_protocol::api::Profile {
+        id: "wsl-reporter".into(),
+        name: "Ubuntu".into(),
+        command: vec![
+            env!("CARGO_BIN_EXE_fake-agent").into(),
+            "folder".into(),
+            folder.into(),
+            "-d".into(),
+            "Ubuntu".into(),
+        ],
+        family: marshell_protocol::api::ShellFamily::Wsl,
+        ..sleeper_profile()
+    }
+}
+
+/// A WSL tab whose shell reports `folder`, once it has.
+async fn wsl_tab_reporting(st: &AppState, app: &axum::Router, folder: &str) -> String {
+    let tab = start_shell(app, "wsl-reporter").await;
+    assert_eq!(st.wsl_distro_of_tab(&tab).as_deref(), Some("Ubuntu"));
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while st.session(&tab).and_then(|s| s.current_cwd()).is_none() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the shell never reported {folder}"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    tab
+}
+
+fn wsl_state_reporting(folder: &str) -> AppState {
+    state_with(Some(KNOWN), vec![sleeper_profile(), wsl_reporter(folder)]).with_wsl_version(Some(KNOWN.into()))
+}
+
+/// `C:\a\b` as `/mnt/c/a/b`, spelled by hand.
+#[cfg(windows)]
+fn mnt_form(windows: &std::path::Path) -> String {
+    let text = windows.to_string_lossy().into_owned();
+    let (drive, rest) = text.split_at(2);
+    format!("/mnt/{}{}", drive[..1].to_lowercase(), rest.replace('\\', "/"))
+}
+
+#[cfg(windows)]
+#[tokio::test]
+async fn a_wsl_prompt_gets_linux_paths_in_its_note() {
+    let p = project();
+    let linux_repo = mnt_form(&p.repo);
+    let st = wsl_state_reporting(&linux_repo);
+    let app = router(st.clone());
+    save_refs(&st, &p.repo, true, login_button());
+    let tab = wsl_tab_reporting(&st, &app, &linux_repo).await;
+
+    let (code, text) = submit(&app, "claude", Some(&tab), "fix the login button").await;
+    let shown = row(&st, &tab).references;
+    stop(&st, &tab);
+
+    assert_eq!(code, StatusCode::OK, "{text}");
+    let answer: serde_json::Value = serde_json::from_str(&text).unwrap();
+    let note = format!("References: 'login button' = {linux_repo}/src/login.rs.");
+    assert_eq!(
+        answer,
+        serde_json::json!({"hookSpecificOutput": {"hookEventName": "UserPromptSubmit", "additionalContext": note}})
+    );
+    assert_eq!(shown.expect("the chip's note").names, ["login button"]);
+}
+
+#[cfg(windows)]
+#[tokio::test]
+async fn a_wsl_tab_started_in_a_windows_folder_gets_linux_paths() {
+    let p = project();
+    let st = state_with(Some(KNOWN), vec![sleeper_profile(), wsl_profile()]).with_wsl_version(Some(KNOWN.into()));
+    let app = router(st.clone());
+    save_refs(&st, &p.repo, true, login_button());
+    // The shell reports nothing, so the start folder (a Windows path) is the one used.
+    let tab = start_profile_in(&app, "wsl-ubuntu", "claude", &p.repo).await;
+
+    let (code, text) = submit(&app, "claude", Some(&tab), "fix the login button").await;
+    stop(&st, &tab);
+
+    assert_eq!(code, StatusCode::OK, "{text}");
+    let note = serde_json::from_str::<serde_json::Value>(&text).unwrap()["hookSpecificOutput"]["additionalContext"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert_eq!(
+        note,
+        format!("References: 'login button' = {}/src/login.rs.", mnt_form(&p.repo))
+    );
+}
+
+#[tokio::test]
+async fn a_wsl_tab_whose_folder_cannot_be_translated_gets_no_note() {
+    let p = project();
+    // A relative folder names no place a Windows path could be made from.
+    let st = wsl_state_reporting("proj/sub");
+    let app = router(st.clone());
+    save_refs(&st, &p.repo, true, login_button());
+    let tab = wsl_tab_reporting(&st, &app, "proj/sub").await;
+
     let (code, text) = submit(&app, "claude", Some(&tab), "fix the login button").await;
     let shown = row(&st, &tab).references;
     stop(&st, &tab);

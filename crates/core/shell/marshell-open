@@ -1,0 +1,5 @@
+#!/bin/sh
+# Marshell's BROWSER for a WSL distro with no opener of its own (no wslview or xdg-open): it opens an
+# http(s) URL in the Windows default browser, so an agent's sign-in page can open. Anything else is refused.
+case "$1" in http://*|https://*) ;; *) exit 1 ;; esac
+exec "$(wslpath -u 'C:\Windows\System32\rundll32.exe')" url.dll,FileProtocolHandler "$1"

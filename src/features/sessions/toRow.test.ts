@@ -215,6 +215,24 @@ describe("toRow", () => {
       expect(row).toMatchObject({ agent: "codex", status: "limited", phrase: "Status arrives with hooks" });
     });
 
+    it("a shell row running a hooked agent shows its live status", () => {
+      const live: LiveStatus = { state: "working", phrase: "Running `npm test`", since_ms: 0, recap: null, model: null, effort: null, context_pct: null, five_hour_pct: null, five_hour_resets_at: null, seven_day_pct: null, subagents: 0 };
+      for (const profile_id of ["wsl-ubuntu", "pwsh"]) {
+        const row = toRow(info({ profile_id, foreground: fg("claude", null, "claude"), live }), PROFILES);
+        expect(row, profile_id).toMatchObject({ agent: "claude", status: "working", phrase: "Running `npm test`" });
+      }
+    });
+
+    it("without live status it still waits for the hooks", () => {
+      const row = toRow(info({ profile_id: "wsl-ubuntu", foreground: fg("agy", null, "antigravity") }), PROFILES);
+      expect(row).toMatchObject({ agent: "antigravity", status: "limited", phrase: "Status arrives with hooks" });
+    });
+
+    it("a manifest agent in front keeps the fallback even with live status", () => {
+      const live: LiveStatus = { state: "working", phrase: "Editing", since_ms: 0, recap: null, model: null, effort: null, context_pct: null, five_hour_pct: null, five_hour_resets_at: null, seven_day_pct: null, subagents: 0 };
+      expect(toRow(info({ foreground: fg("grok", "grok", "grok"), live }), PROFILES)).toMatchObject({ agent: "grok", status: "limited", phrase: "Status limited" });
+    });
+
     it("no foreground keeps the shell's own mark", () => {
       expect(toRow(info({ foreground: null }), PROFILES).agent).toBe("powershell");
     });
@@ -286,6 +304,22 @@ describe("toRow", () => {
         const row = toRow(info({ agent: "claude" }), PROFILES, { claude });
         expect(row).toMatchObject({ status: "limited", phrase: "Status limited · set up", setupLink: true });
       }
+    });
+    it("wsl_agent_tab_ignores_the_windows_hooks_state", () => {
+      for (const agent of ["claude", "codex"] as const) {
+        const row = toRow(info({ agent, profile_id: "wsl-ubuntu" }), PROFILES, { [agent]: "none" });
+        expect(row.setupLink).toBeUndefined();
+        expect(row).toMatchObject({ status: "limited", phrase: "Status arrives with hooks" });
+      }
+      expect(toRow(info({ agent: "codex", profile_id: "wsl-ubuntu", status_note: "Can't read Codex's version in Ubuntu" }), PROFILES, { codex: "none" })).toMatchObject({ phrase: "Can't read Codex's version in Ubuntu" });
+    });
+    it("windows_agent_tab_still_links_to_set_up", () => {
+      expect(toRow(info({ agent: "codex", profile_id: "pwsh" }), PROFILES, { codex: "none" })).toMatchObject({ phrase: "Status limited · set up", setupLink: true });
+    });
+    it("wsl_shell_row_with_a_hook_agent_foreground_shows_the_status_note", () => {
+      const foreground = { program: "codex", command_line: null, agent: "codex" };
+      expect(toRow(info({ profile_id: "wsl-ubuntu", foreground, status_note: "Codex 0.166.0 is not one Marshell has recorded yet" }), PROFILES)).toMatchObject({ status: "limited", phrase: "Codex 0.166.0 is not one Marshell has recorded yet" });
+      expect(toRow(info({ profile_id: "wsl-ubuntu", foreground }), PROFILES).phrase).toBe("Status arrives with hooks");
     });
     it("an installed claude row has no link", () => {
       const row = toRow(info({ agent: "claude" }), PROFILES, { claude: "installed" });

@@ -30,7 +30,9 @@ export const planSkill = (ep: Endpoint, agent: HookAgent) => api<ConfigPreview>(
 /** The preview of removing the marshell skill file. */
 export const planSkillRemove = (ep: Endpoint, agent: HookAgent) => api<ConfigPreview>(ep, "POST", `${base(agent)}/skill/remove-plan`);
 
-export const planRemove = (ep: Endpoint, agent: HookAgent) => api<RemovePreview>(ep, "POST", `${base(agent)}/hooks/remove-plan`);
+/** The preview of turning the hooks off; with `distro`, the ones inside that WSL distro (a 400 or 422 ApiError says why not). */
+export const planRemove = (ep: Endpoint, agent: HookAgent, distro?: string) =>
+  api<RemovePreview>(ep, "POST", `${base(agent)}/hooks/remove-plan${distro === undefined ? "" : `?distro=${encodeURIComponent(distro)}`}`);
 
 /** The 409 body's reason and the files it is about. A body that is not that JSON is read as a plain conflict. */
 function conflictBody(text: string): { reason?: string; paths: string[] } {

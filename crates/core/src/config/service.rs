@@ -17,7 +17,7 @@
 //! dropping the last `ConfigService` drops the watcher, which ends its threads.
 
 use crate::auth::new_id;
-use crate::config::guard::Guard;
+use crate::config::guard::{DistroHome, Guard};
 use crate::config::hash::{hash_bytes, hash_file};
 use crate::config::managed::{self, Change};
 use crate::config::preview::{PlannedFile, path_refusal, plan, to_preview};
@@ -61,6 +61,9 @@ fn conflict(reason: &str, paths: Vec<String>) -> ApplyError {
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(|e| e.into_inner())
 }
+
+/// The names of the WSL distros that are detected now (the app's WSL profiles), read when a guard is built.
+pub type DetectedDistros = Arc<dyn Fn() -> Vec<String> + Send + Sync>;
 
 /// What `apply_with` calls to write one file; `None` bytes removes it.
 type Writer<'a> = &'a dyn Fn(&Path, Option<&[u8]>) -> io::Result<()>;
@@ -107,6 +110,10 @@ struct Shared {
     home: PathBuf,
     /// `None`: build `Guard::for_home` on every call, so a new project folder is seen.
     guard: Option<Guard>,
+    /// The distros whose home was looked up, kept for the life of the process. A preview does not outlive a restart,
+    /// but the same lookup is made again when an undo names a file in a distro.
+    distro_homes: Mutex<Vec<DistroHome>>,
+    detected_distros: DetectedDistros,
     snapshots: Snapshots,
     previews: Mutex<Previews>,
     locks: Mutex<HashMap<PathBuf, Arc<Mutex<()>>>>,
@@ -142,8 +149,21 @@ impl Shared {
         self.mark_stale(&[path]);
     }
 
+    /// The guard of this moment: the open folders, plus the agent folders of each looked-up distro that is still
+    /// detected.
     fn guard(&self) -> Guard {
-        self.guard.clone().unwrap_or_else(|| Guard::for_home(&self.home))
+        let guard = self.guard.clone().unwrap_or_else(|| Guard::for_home(&self.home));
+        // The lock is let go before the profiles are read or any path is touched.
+        let homes: Vec<DistroHome> = lock(&self.distro_homes).clone();
+        if homes.is_empty() {
+            return guard;
+        }
+        let detected = (self.detected_distros)();
+        let still_there: Vec<DistroHome> = homes
+            .into_iter()
+            .filter(|h| detected.iter().any(|d| d.eq_ignore_ascii_case(&h.distro)))
+            .collect();
+        guard.with_distro_homes(&still_there)
     }
 
     /// The per-path locks for `targets`, in sorted path order, without any of them taken.
@@ -181,21 +201,29 @@ pub struct ConfigService {
 }
 
 impl ConfigService {
+    /// A service that detects no WSL distro, so none is opened.
     pub fn new(home: PathBuf) -> Self {
-        Self::build(home, None)
+        Self::build(home, None, Arc::new(Vec::new))
+    }
+
+    /// `new`, with the distros the app detects: only a looked-up home of one of those is opened.
+    pub fn with_distros(home: PathBuf, detected: DetectedDistros) -> Self {
+        Self::build(home, None, detected)
     }
 
     /// For tests: a fixed guard instead of `Guard::for_home`.
     pub fn with_guard(home: PathBuf, guard: Guard) -> Self {
-        Self::build(home, Some(guard))
+        Self::build(home, Some(guard), Arc::new(Vec::new))
     }
 
-    fn build(home: PathBuf, guard: Option<Guard>) -> Self {
+    fn build(home: PathBuf, guard: Option<Guard>, detected_distros: DetectedDistros) -> Self {
         Self {
             shared: Arc::new(Shared {
                 snapshots: Snapshots::new(&home),
                 home,
                 guard,
+                distro_homes: Mutex::new(Vec::new()),
+                detected_distros,
                 previews: Mutex::new(Previews::default()),
                 locks: Mutex::new(HashMap::new()),
                 own_writes: Mutex::new(HashMap::new()),
@@ -203,6 +231,31 @@ impl ConfigService {
                 managed: Mutex::new(()),
             }),
         }
+    }
+
+    /// Records that `home` is `distro`'s home, so the agent folders in it can be written while the distro is detected.
+    /// A distro looked up again replaces its earlier home. `pinned` is for tests: the home is a plain folder.
+    pub fn record_distro_home(&self, distro: &str, home: &Path, pinned: bool) {
+        let entry = DistroHome {
+            distro: distro.to_string(),
+            home: home.to_path_buf(),
+            pinned,
+        };
+        let mut homes = lock(&self.shared.distro_homes);
+        homes.retain(|h| !h.distro.eq_ignore_ascii_case(distro));
+        homes.push(entry);
+    }
+
+    /// Whether `distro`'s home was looked up and recorded.
+    pub fn has_distro_home(&self, distro: &str) -> bool {
+        lock(&self.shared.distro_homes)
+            .iter()
+            .any(|h| h.distro.eq_ignore_ascii_case(distro))
+    }
+
+    /// The guard as it is now, for a caller that checks a path without a preview.
+    pub fn guard(&self) -> Guard {
+        self.shared.guard()
     }
 
     pub fn snapshots(&self) -> &Snapshots {
@@ -602,6 +655,42 @@ mod tests {
             home,
             svc,
         }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_distros_folders_are_open_only_while_the_distro_is_detected() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        let detected = Arc::new(AtomicBool::new(true));
+        let seen = detected.clone();
+        let names: DetectedDistros = Arc::new(move || {
+            if seen.load(Ordering::SeqCst) {
+                vec!["MarshellTestDistro".to_string()]
+            } else {
+                Vec::new()
+            }
+        });
+        let dir = tempfile::tempdir().unwrap();
+        let svc = ConfigService::with_distros(dir.path().to_path_buf(), names);
+        let file = Path::new(r"\\wsl.localhost\MarshellTestDistro\home\u\.claude\settings.json");
+        assert!(svc.guard().check(file).is_err(), "not looked up yet");
+        svc.record_distro_home(
+            "MarshellTestDistro",
+            Path::new(r"\\wsl.localhost\MarshellTestDistro\home\u"),
+            false,
+        );
+        assert!(svc.has_distro_home("marshelltestdistro"));
+        assert!(svc.guard().check(file).is_ok());
+        detected.store(false, Ordering::SeqCst);
+        assert!(svc.guard().check(file).is_err(), "no longer detected");
+        // A service that detects no distro (`new`) opens none, however it was told.
+        let plain = ConfigService::new(dir.path().to_path_buf());
+        plain.record_distro_home(
+            "MarshellTestDistro",
+            Path::new(r"\\wsl.localhost\MarshellTestDistro\home\u"),
+            false,
+        );
+        assert!(plain.guard().check(file).is_err());
     }
 
     fn edit(path: &Path, op: EditOp) -> FileEdit {

@@ -31,7 +31,10 @@ export function ConsentCard({
   conflict,
   onToggleDiff,
   onSwitch,
+  distro,
 }: {
+  /** The WSL distro this card is for; the heading then reads "<CLI> in <distro>". */
+  distro?: string;
   scenario: { detection: Detection; plan: ConsentPlan };
   on: Record<Capability, boolean>;
   open?: boolean;
@@ -67,7 +70,7 @@ export function ConsentCard({
       <header className="consent__head">
         <AgentMark agent={d.cli} size={20} />
         <h3 id={titleId} className="consent__name">
-          {name}
+          {distro ? `${name} in ${distro}` : name}
         </h3>
       </header>
       <p className="consent__what" dir="auto">
