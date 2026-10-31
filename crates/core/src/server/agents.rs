@@ -25,7 +25,6 @@ use marshell_protocol::account::{AccountStatus, SignIn};
 use marshell_protocol::agents::{
     AgentFound, AgentSetup, HookInstall, HookPlanRequest, ParseProblem, RemovePreview, SettingsState, SkillInstall,
 };
-use marshell_protocol::api::ShellFamily;
 use marshell_protocol::config::{
     Applies, ApplyConflict, ApplyRequest, ApplyResult, ChangeSet, ConfigPreview, ConfigScope, EditOp, ExpectedHash,
     FileEdit, FileStatus, RefuseReason,
@@ -228,13 +227,37 @@ impl AppState {
     /// The distro of the detected WSL profile that `name` equals, case-insensitively, spelt as detected. A request
     /// names a distro only to pick one of those; anything else is a 400.
     fn detected_distro(&self, name: &str) -> Result<String, Fail> {
-        self.profiles_snapshot()
-            .profiles
-            .iter()
-            .filter(|p| matches!(p.family, ShellFamily::Wsl))
-            .filter_map(|p| crate::wsl::distro_of_argv(&p.command))
+        super::wsl_distros(&self.profiles_snapshot())
+            .into_iter()
             .find(|distro| distro.to_lowercase() == name.to_lowercase())
             .ok_or_else(|| (StatusCode::BAD_REQUEST, format!("No WSL distro named \"{name}\".")))
+    }
+
+    /// For each detected distro that a path of `paths` is in and whose home is not recorded yet, looks the home up
+    /// (through `distro_target`, so a test's pinned target answers too), which lets the config guard admit that
+    /// distro's agent folders. This is for an undo after a restart. A distro that does not answer is left out and its
+    /// paths stay refused. Runs `wsl.exe`, so callers go through `spawn_blocking`.
+    pub(crate) fn record_distros_of<'a>(&self, paths: impl IntoIterator<Item = &'a Path>) {
+        let detected = super::wsl_distros(&self.profiles_snapshot());
+        // A test's pinned home is a plain folder that stands in for the share of every distro.
+        let pinned_home = self.0.distro_target.iter().flatten().map(|t| t.home.clone()).next();
+        let mut tried: Vec<String> = Vec::new();
+        for path in paths {
+            let path = crate::config::guard::unverbatim(path);
+            let in_share = |d: &String| {
+                crate::wsl::under_distro(d, &path) || pinned_home.as_ref().is_some_and(|home| path.starts_with(home))
+            };
+            let Some(distro) = detected.iter().find(|d| in_share(d)) else {
+                continue;
+            };
+            let key = distro.to_lowercase();
+            if tried.contains(&key) || self.0.config.has_distro_home(distro) {
+                continue;
+            }
+            tried.push(key);
+            // The target is recorded by the lookup; a failure leaves the distro unrecorded.
+            let _ = self.distro_target(distro);
+        }
     }
 
     /// Where Marshell's hooks go in `distro`: its home as a UNC path and the bridge as the distro sees it, or the one
@@ -248,7 +271,9 @@ impl AppState {
             )
         };
         if let Some(pinned) = &self.0.distro_target {
-            return pinned.clone().ok_or_else(unreachable);
+            let target = pinned.clone().ok_or_else(unreachable)?;
+            self.0.config.record_distro_home(distro, &target.home, true);
+            return Ok(target);
         }
         let text = |argv: &[&str]| {
             // A Linux program's output through `--exec` is UTF-8.
@@ -260,7 +285,10 @@ impl AppState {
         let bridge_exe = paths::bridge_exe(&self.0.home);
         let bridge_exe = bridge_exe.to_str().ok_or_else(unreachable)?;
         let bridge = text(&["-d", distro, "--exec", "wslpath", "-u", bridge_exe]);
-        distro_target_of(distro, &linux_home, &bridge).ok_or_else(unreachable)
+        let target = distro_target_of(distro, &linux_home, &bridge).ok_or_else(unreachable)?;
+        // Its home is under the distro's own share (`distro_target_of` checked), so the guard may open its agent folders.
+        self.0.config.record_distro_home(distro, &target.home, false);
+        Ok(target)
     }
 
     /// The plan to set up hooks inside `distro`: the same plan as on Windows, for the files under the distro's own

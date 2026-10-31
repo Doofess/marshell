@@ -2357,11 +2357,23 @@ fn wsl_profile(name: &str, family: ShellFamily) -> Profile {
 /// A state with a detected `Ubuntu` WSL profile (and a `Borrowed` one of another family that only has the command
 /// line of a WSL profile), whose distro target is faked: `reachable` false is a distro that does not answer.
 fn distro_env(reachable: bool) -> DistroEnv {
-    let dir = tempfile::tempdir().unwrap();
+    // Not the system temp folder: it sits inside the user's home, which the guard allows anyway.
+    let dir = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).unwrap();
     let root = canonical(dir.path());
+    let (app, wsl_home, settings) = distro_app(&root, reachable);
+    DistroEnv {
+        _dir: dir,
+        app,
+        wsl_home,
+        settings,
+    }
+}
+
+/// The app of `distro_env` over the folders under `root`: a second one over the same root is the app after a restart.
+fn distro_app(root: &std::path::Path, reachable: bool) -> (axum::Router, PathBuf, PathBuf) {
     let home = root.join("home");
     let project = root.join("project");
-    let wsl_home = project.join("ubuntu-home");
+    let wsl_home = root.join("ubuntu-home");
     std::fs::create_dir_all(&home).unwrap();
     std::fs::create_dir_all(&wsl_home).unwrap();
     record(&home, &project, 1).unwrap();
@@ -2386,12 +2398,7 @@ fn distro_env(reachable: bool) -> DistroEnv {
     .with_agy_home(project.join("agy-home"))
     .with_agent_path(|_| None)
     .with_distro_target(target);
-    DistroEnv {
-        _dir: dir,
-        app: router(st),
-        wsl_home,
-        settings,
-    }
+    (router(st), wsl_home, settings)
 }
 
 fn distro_want(distro: &str) -> Value {
@@ -2447,6 +2454,9 @@ async fn plan_for_a_distro_targets_its_home() {
         let (status, preview) = post(&e.app, &format!("/v1/agents/{agent}/hooks/plan"), distro_want("ubuntu")).await;
         assert_eq!(status, StatusCode::OK, "{agent}: {preview}");
         assert_eq!(preview["can_apply"], true, "{agent}: {preview}");
+        for file in preview["files"].as_array().unwrap() {
+            assert_ne!(file["status"]["kind"], "refused", "{agent}: {file}");
+        }
         // Only the distro's files: no chain file, and none of the Windows ones.
         let mut got = preview_paths(&preview);
         got.sort();
@@ -2462,6 +2472,53 @@ async fn plan_for_a_distro_targets_its_home() {
         }
     }
     assert!(!e.settings.exists(), "the Windows settings file is not the distro's");
+}
+
+/// A createFile preview of `path`, as the config route takes it.
+fn create_file(path: &std::path::Path) -> Value {
+    json!({"title": "t", "reason": "r", "edits": [{
+        "path": path.to_string_lossy(), "scope": "user", "applies": "newSessions",
+        "op": {"kind": "createFile", "content": "x\n"}
+    }]})
+}
+
+#[tokio::test]
+async fn the_rest_of_a_distro_stays_refused() {
+    let e = distro_env(true);
+    // Looks the distro's home up, which is what admits its agent folders.
+    let (status, _) = post(&e.app, "/v1/agents/codex/hooks/plan", distro_want("Ubuntu")).await;
+    assert_eq!(status, StatusCode::OK);
+    for outside in [e.wsl_home.join(".bashrc"), e.wsl_home.join("notes").join(".claude")] {
+        let (status, preview) = post(&e.app, "/v1/config/preview", create_file(&outside)).await;
+        assert_eq!(status, StatusCode::OK, "{preview}");
+        assert_eq!(preview["can_apply"], false, "{outside:?}: {preview}");
+        assert_eq!(preview["files"][0]["status"]["reason"], "outsideAllowed", "{preview}");
+    }
+    let inside = e.wsl_home.join(".claude").join("keep.json");
+    let (_, preview) = post(&e.app, "/v1/config/preview", create_file(&inside)).await;
+    assert_eq!(preview["can_apply"], true, "{preview}");
+}
+
+#[tokio::test]
+async fn undo_of_a_distro_change_works_after_a_restart() {
+    let e = distro_env(true);
+    let (_, preview) = post(&e.app, "/v1/agents/claude/hooks/plan", distro_want("Ubuntu")).await;
+    let (status, applied) = post(&e.app, "/v1/config/apply", shown(&preview)).await;
+    assert_eq!(status, StatusCode::OK, "{applied}");
+    let snapshot = applied["snapshot_id"].as_str().unwrap();
+
+    // A new app over the same folders has looked up no distro and holds no preview, as after a restart.
+    let (after, _, _) = distro_app(&canonical(e._dir.path()), true);
+    let (status, restore) = post(&after, &format!("/v1/snapshots/{snapshot}/restore"), json!({})).await;
+    assert_eq!(status, StatusCode::OK, "{restore}");
+    assert_eq!(restore["can_apply"], true, "{restore}");
+
+    // A distro that does not answer leaves its files refused.
+    let (silent, _, _) = distro_app(&canonical(e._dir.path()), false);
+    let (status, restore) = post(&silent, &format!("/v1/snapshots/{snapshot}/restore"), json!({})).await;
+    assert_eq!(status, StatusCode::OK, "{restore}");
+    assert_eq!(restore["can_apply"], false, "{restore}");
+    assert_eq!(restore["files"][0]["status"]["reason"], "outsideAllowed", "{restore}");
 }
 
 #[tokio::test]

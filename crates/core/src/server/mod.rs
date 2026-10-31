@@ -104,6 +104,15 @@ pub struct DistroTarget {
     pub bridge: String,
 }
 
+/// The distros of the detected WSL profiles, spelt as the profiles name them.
+fn wsl_distros(doc: &ProfilesDoc) -> Vec<String> {
+    doc.profiles
+        .iter()
+        .filter(|p| matches!(p.family, marshell_protocol::api::ShellFamily::Wsl))
+        .filter_map(|p| crate::wsl::distro_of_argv(&p.command))
+        .collect()
+}
+
 struct Inner {
     token: String,
     host: String,
@@ -116,7 +125,7 @@ struct Inner {
     /// The shells found at startup. Detection runs once, not per request.
     detected: Vec<Profile>,
     /// Detected profiles merged with `profiles.json`.
-    profiles: Mutex<ProfilesDoc>,
+    profiles: Arc<Mutex<ProfilesDoc>>,
     /// The contents of `settings.json`, or the defaults.
     settings: Mutex<Settings>,
     /// The contents of `layout.json`, or the defaults.
@@ -261,7 +270,12 @@ impl AppState {
                 None
             }
         };
-        let config = crate::config::service::ConfigService::new(home.clone());
+        // The config guard reads the same profiles to know which WSL distros are still detected.
+        let shared_profiles = Arc::new(Mutex::new(profiles));
+        let config = crate::config::service::ConfigService::with_distros(home.clone(), {
+            let profiles = shared_profiles.clone();
+            Arc::new(move || wsl_distros(&profiles.lock().unwrap_or_else(|e| e.into_inner())))
+        });
         let history = Arc::new(crate::history::recorder::History::open(&home).with_registry(registry.clone()));
         Self(Arc::new(Inner {
             token,
@@ -270,7 +284,7 @@ impl AppState {
             home,
             shell_dir,
             detected,
-            profiles: Mutex::new(profiles),
+            profiles: shared_profiles,
             settings: Mutex::new(settings),
             layout: Mutex::new(layout),
             registry,

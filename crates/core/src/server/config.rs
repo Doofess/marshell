@@ -47,10 +47,10 @@ fn refused_file(path: String, reason: RefuseReason) -> ConfigFile {
 
 /// Reads the file at `path` for the editor. Nothing is read for a path the guard refuses, except a
 /// managed file, which is readable but marked so the UI knows it can't be written.
-fn read_file(home: &Path, given: String) -> ConfigFile {
+fn read_file(guard: &Guard, given: String) -> ConfigFile {
     let path = Path::new(&given);
     let mut refused = None;
-    match Guard::for_home(home).check(path) {
+    match guard.check(path) {
         Ok(_) => {}
         Err(Refusal::NotAbsolute) => return refused_file(given, RefuseReason::NotAbsolute),
         Err(Refusal::OutsideAllowed) => return refused_file(given, RefuseReason::OutsideAllowed),
@@ -102,7 +102,7 @@ pub async fn file(State(st): State<AppState>, Query(q): Query<PathQuery>) -> Res
     let Some(path) = q.path else {
         return (StatusCode::BAD_REQUEST, "path is required").into_response();
     };
-    match tokio::task::spawn_blocking(move || read_file(&st.0.home, path)).await {
+    match tokio::task::spawn_blocking(move || read_file(&st.0.config.guard(), path)).await {
         Ok(file) => Json(file).into_response(),
         Err(e) => failed(e),
     }
@@ -156,7 +156,14 @@ pub async fn snapshots(State(st): State<AppState>, Query(q): Query<PathQuery>) -
 }
 
 pub async fn restore(State(st): State<AppState>, UrlPath(id): UrlPath<String>) -> Response {
-    match tokio::task::spawn_blocking(move || st.0.config.restore_preview(&id)).await {
+    let restore = move || {
+        // After a restart the person may undo a change in a distro before any plan has looked the distro up.
+        if let Ok(Some(info)) = st.0.config.snapshots().get(&id) {
+            st.record_distros_of(info.files.iter().map(|f| Path::new(&f.path)));
+        }
+        st.0.config.restore_preview(&id)
+    };
+    match tokio::task::spawn_blocking(restore).await {
         Ok(Some(preview)) => Json(preview).into_response(),
         Ok(None) => not_found("snapshot"),
         Err(e) => failed(e),

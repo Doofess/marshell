@@ -1,6 +1,7 @@
-//! Which paths the config service may write. Only the user's home folder, a project folder and
-//! `<marshell home>/agents` are open. Managed and organization paths are always refused, and so is
-//! the rest of the Marshell home. Elevation is never run.
+//! Which paths the config service may write. Only the user's home folder, a project folder,
+//! `<marshell home>/agents` and the agent folders of a WSL distro whose home was looked up are open.
+//! Managed and organization paths are always refused, and so is the rest of the Marshell home.
+//! Elevation is never run.
 
 use crate::projects::{canonical, is_inside};
 use std::path::{Component, Path, PathBuf};
@@ -16,9 +17,24 @@ pub enum Refusal {
     MarshellOwn,
 }
 
+/// The folders of a WSL distro's home that hold the agent CLIs' settings: nothing else in the distro is open.
+const DISTRO_AGENT_FOLDERS: [&str; 3] = [".claude", ".codex", ".gemini"];
+
+/// A WSL distro whose home Marshell has looked up (through `wsl.exe`), as the config service records it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DistroHome {
+    pub distro: String,
+    /// The home as a Windows path, such as `\\wsl.localhost\Ubuntu\home\me`.
+    pub home: PathBuf,
+    /// A test pinned this home, and it is a plain folder rather than the distro's share.
+    pub pinned: bool,
+}
+
 #[derive(Clone)]
 pub struct Guard {
     allowed: Vec<PathBuf>,
+    /// Each opened distro with its home as the distro's own Linux path: its agent folders are open, by that spelling.
+    distro_homes: Vec<(String, String)>,
     denied: Vec<PathBuf>,
     marshell_home: PathBuf,
 }
@@ -27,6 +43,7 @@ impl Guard {
     pub fn new(allowed: Vec<PathBuf>, denied: Vec<PathBuf>, marshell_home: PathBuf) -> Self {
         Self {
             allowed: allowed.iter().map(|p| canonical(p)).collect(),
+            distro_homes: Vec::new(),
             denied: denied.iter().map(|p| canonical(p)).collect(),
             marshell_home: canonical(&marshell_home),
         }
@@ -48,6 +65,21 @@ impl Guard {
         Self::new(allowed, denied_for_os(), home.to_path_buf())
     }
 
+    /// Also opens `.claude`, `.codex` and `.gemini` in each of these distro homes, and nothing else in the distro.
+    /// A home that is not under its own distro's share (`\\wsl.localhost\<distro>` or `\\wsl$\<distro>`) opens
+    /// nothing, except a pinned one, which a test says is a plain folder.
+    pub fn with_distro_homes(mut self, homes: &[DistroHome]) -> Self {
+        for home in homes {
+            if home.pinned {
+                let folders = DISTRO_AGENT_FOLDERS.map(|folder| canonical(&home.home.join(folder)));
+                self.allowed.extend(folders);
+            } else if let Some(linux) = linux_in_share(&home.distro, &home.home) {
+                self.distro_homes.push((home.distro.clone(), linux));
+            }
+        }
+        self
+    }
+
     /// The resolved path (links resolved) when the service may write it. A path with a `..` part is
     /// refused as `NotAbsolute` before anything is resolved: Win32 folds `..` by the path text before
     /// it opens a file, and a physical walk can't match that once a folder is missing or a link is
@@ -67,12 +99,54 @@ impl Guard {
         if in_denied || resolved.file_name().is_some_and(is_managed_name) {
             return Err(Refusal::Managed);
         }
-        if self.allowed.iter().any(|a| is_inside(&text, &a.to_string_lossy())) {
+        let in_allowed = self.allowed.iter().any(|a| is_inside(&text, &a.to_string_lossy()));
+        if in_allowed
+            || self
+                .distro_homes
+                .iter()
+                .any(|(d, home)| in_agent_folder(d, home, &resolved))
+        {
             Ok(resolved)
         } else {
             Err(Refusal::OutsideAllowed)
         }
     }
+}
+
+/// `\\?\UNC\server\share\x` as `\\server\share\x`: the verbatim spelling of a share, which `canonicalize` gives.
+pub fn unverbatim(path: &Path) -> PathBuf {
+    let text = path.to_string_lossy();
+    match text.strip_prefix(r"\\?\UNC\") {
+        Some(rest) => PathBuf::from(format!(r"\\{rest}")),
+        None => path.to_path_buf(),
+    }
+}
+
+/// The Linux path of `path` when it is under the distro's own share. `to_linux` also maps a drive to `/mnt/<drive>`,
+/// and a folder of Windows is not the distro's.
+fn linux_in_share(distro: &str, path: &Path) -> Option<String> {
+    let path = unverbatim(path);
+    crate::wsl::under_distro(distro, &path)
+        .then(|| crate::wsl::to_linux(distro, &path))
+        .flatten()
+}
+
+/// Whether `path` is one of the agent folders of the distro's home, or below one. `linux_home` is the home as the
+/// distro spells it, and the folders are matched by that spelling: a Linux file system tells `.Claude` from `.claude`.
+/// It compares text, so `\\wsl.localhost\x` and `\\wsl$\x` say the same, and a path outside the distro's share says no.
+fn in_agent_folder(distro: &str, linux_home: &str, path: &Path) -> bool {
+    let Some(linux) = linux_in_share(distro, path) else {
+        return false;
+    };
+    // `/home/me2` starts with `/home/me`, so what is left must start at a separator.
+    let Some(rest) = linux
+        .strip_prefix(linux_home.trim_end_matches('/'))
+        .and_then(|rest| rest.strip_prefix('/'))
+    else {
+        return false;
+    };
+    let folder = rest.split('/').next().unwrap_or("");
+    DISTRO_AGENT_FOLDERS.contains(&folder)
 }
 
 /// Resolves the path part by part: what exists goes through `canonical` (links and short names) and
@@ -309,6 +383,131 @@ mod tests {
         // never looked at `link`; the write would have landed in `target`.
         let sneaky = root.join("nope").join("..").join("link").join("new.json");
         assert_eq!(guard.check(&sneaky), Err(Refusal::NotAbsolute));
+    }
+
+    fn distro_home(distro: &str, home: &str) -> DistroHome {
+        DistroHome {
+            distro: distro.to_string(),
+            home: PathBuf::from(home),
+            pinned: false,
+        }
+    }
+
+    #[test]
+    fn a_distros_agent_folders_are_admitted() {
+        let home = "/home/u";
+        for path in [
+            r"\\wsl.localhost\Ubuntu\home\u\.claude\settings.json",
+            r"\\wsl.localhost\Ubuntu\home\u\.codex\hooks.json",
+            r"\\wsl.localhost\Ubuntu\home\u\.gemini\config\hooks.json",
+            r"\\wsl.localhost\Ubuntu\home\u\.claude",
+            // The other spellings of the same share: `\\wsl$`, a case-insensitive distro name, `/`, and the
+            // verbatim form that `canonicalize` gives.
+            r"\\wsl$\Ubuntu\home\u\.claude\settings.json",
+            r"\\WSL.LOCALHOST\ubuntu\home\u\.codex\hooks.json",
+            "//wsl.localhost/Ubuntu/home/u/.claude/settings.json",
+            r"\\?\UNC\wsl.localhost\Ubuntu\home\u\.gemini\config\hooks.json",
+        ] {
+            assert!(in_agent_folder("Ubuntu", home, Path::new(path)), "{path}");
+        }
+        // A root user's home with a trailing slash, and a home that is the distro's root.
+        let root_path = Path::new(r"\\wsl.localhost\Ubuntu\root\.claude\settings.json");
+        assert!(in_agent_folder("Ubuntu", "/root/", root_path));
+        assert!(in_agent_folder(
+            "Ubuntu",
+            "/",
+            Path::new(r"\\wsl.localhost\Ubuntu\.codex\hooks.json")
+        ));
+        assert!(!in_agent_folder(
+            "Ubuntu",
+            "/",
+            Path::new(r"\\wsl.localhost\Ubuntu\etc\x")
+        ));
+    }
+
+    #[test]
+    fn the_rest_of_a_distro_stays_refused() {
+        let home = "/home/u";
+        for path in [
+            r"\\wsl.localhost\Ubuntu\home\u\.bashrc",
+            r"\\wsl.localhost\Ubuntu\home\u",
+            r"\\wsl.localhost\Ubuntu\etc\x",
+            r"\\wsl.localhost\Ubuntu\home\u\notes\.claude\x",
+            // The home's own text is a prefix of this one, but it is another folder.
+            r"\\wsl.localhost\Ubuntu\home\u2\.claude\settings.json",
+            // Linux tells these from the agent folders.
+            r"\\wsl.localhost\Ubuntu\home\u\.Claude\settings.json",
+            r"\\wsl.localhost\Ubuntu\home\u\.claude.bak\x",
+            r"\\wsl.localhost\Ubuntu\home\u\.claude.\x",
+            // Another distro, a share on another server, and a Windows folder.
+            r"\\wsl.localhost\Debian\home\u\.claude\settings.json",
+            r"\\server\share\home\u\.claude\settings.json",
+            r"C:\home\u\.claude\settings.json",
+            r"\\wsl.localhost\Ubuntu\home\u\.claude\..\.bashrc",
+        ] {
+            assert!(!in_agent_folder("Ubuntu", home, Path::new(path)), "{path}");
+        }
+        // A distro's `/mnt/c` is a Windows folder, which the distro's share does not hold.
+        let windows = Path::new(r"C:\Users\me\.claude\settings.json");
+        assert!(!in_agent_folder("Ubuntu", "/mnt/c/Users/me", windows));
+    }
+
+    #[test]
+    fn a_home_outside_its_distro_opens_nothing() {
+        let guard = Guard::new(vec![], vec![], PathBuf::from("/marshell"));
+        let homes = [
+            distro_home("Ubuntu", r"C:\Users\me"),
+            distro_home("Ubuntu", r"\\server\share\home\u"),
+            distro_home("Ubuntu", r"\\wsl.localhost\Debian\home\u"),
+            distro_home("Ubuntu", "relative"),
+        ];
+        assert!(guard.with_distro_homes(&homes).distro_homes.is_empty());
+        let opened = Guard::new(vec![], vec![], PathBuf::from("/marshell"))
+            .with_distro_homes(&[distro_home("Ubuntu", r"\\?\UNC\wsl$\ubuntu\home\u")]);
+        assert_eq!(opened.distro_homes, [("Ubuntu".to_string(), "/home/u".to_string())]);
+    }
+
+    /// A guard with the fake distro's home open and its `locked` folder denied.
+    #[cfg(windows)]
+    fn distro_guard(denied: Vec<PathBuf>) -> Guard {
+        let home = distro_home("MarshellTestDistro", r"\\wsl.localhost\MarshellTestDistro\home\u");
+        Guard::new(vec![], denied, PathBuf::from(r"C:\marshell-test-home")).with_distro_homes(&[home])
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn the_guard_checks_a_distros_paths_the_same_way() {
+        let guard = distro_guard(vec![]);
+        let base = r"\\wsl.localhost\MarshellTestDistro\home\u";
+        for path in [
+            r".claude\settings.json",
+            r".codex\hooks.json",
+            r".gemini\config\hooks.json",
+        ] {
+            assert!(guard.check(Path::new(&format!(r"{base}\{path}"))).is_ok(), "{path}");
+        }
+        for path in [r".bashrc", r"..\..\etc\x", r".claude\..\.bashrc"] {
+            assert!(guard.check(Path::new(&format!(r"{base}\{path}"))).is_err(), "{path}");
+        }
+        let other = r"\\wsl.localhost\MarshellOtherDistro\home\u\.claude\settings.json";
+        assert_eq!(guard.check(Path::new(other)), Err(Refusal::OutsideAllowed));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn managed_and_denied_rules_still_apply_in_a_distro() {
+        let base = r"\\wsl.localhost\MarshellTestDistro\home\u";
+        let denied = vec![PathBuf::from(format!(r"{base}\.codex\locked"))];
+        let guard = distro_guard(denied);
+        for name in MANAGED_NAMES {
+            let path = format!(r"{base}\.claude\{name}");
+            assert_eq!(guard.check(Path::new(&path)), Err(Refusal::Managed), "{name}");
+        }
+        let in_denied = format!(r"{base}\.codex\locked\hooks.json");
+        assert_eq!(guard.check(Path::new(&in_denied)), Err(Refusal::Managed));
+        // Its neighbour in the same agent folder is still open.
+        let neighbour = format!(r"{base}\.codex\hooks.json");
+        assert!(guard.check(Path::new(&neighbour)).is_ok());
     }
 
     #[cfg(windows)]
