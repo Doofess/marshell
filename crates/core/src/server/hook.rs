@@ -239,13 +239,26 @@ async fn references_for(
         .map(|p| p.to_string_lossy().into_owned())
         .filter(|cwd| !cwd.is_empty());
     let cwd = reported.or_else(|| st.registry().cwd_of_tab(tab).filter(|cwd| !cwd.is_empty()))?;
-    let home = st.home().to_path_buf();
+    let (home, asker, tab) = (st.home().to_path_buf(), st.clone(), tab.to_string());
     tokio::task::spawn_blocking(move || {
+        // A WSL tab's folder is a Linux path (or the start folder, a Windows one): the files are read as Windows
+        // paths, and the note spells them the way the distro reads them.
+        let distro = asker.wsl_distro_of_tab(&tab);
+        let cwd = match &distro {
+            Some(distro) if cwd.starts_with('/') => {
+                crate::wsl::to_windows(distro, &cwd)?.to_string_lossy().into_owned()
+            }
+            Some(_) if !std::path::Path::new(&cwd).is_absolute() => return None,
+            _ => cwd,
+        };
         let root = std::path::PathBuf::from(crate::projects::project_of(&cwd));
         let checkout =
             crate::scripts::checkout_root(std::path::Path::new(&cwd)).unwrap_or_else(|| std::path::PathBuf::from(&cwd));
         let doc = crate::references::load(&home, &root).ok()?;
-        crate::references::resolve(&doc, &checkout, &prompt)
+        match distro {
+            Some(distro) => crate::references::resolve(&doc, &checkout, &prompt, &|p| crate::wsl::to_linux(&distro, p)),
+            None => crate::references::resolve(&doc, &checkout, &prompt, &|p| Some(p.display().to_string())),
+        }
     })
     .await
     .unwrap_or(None)

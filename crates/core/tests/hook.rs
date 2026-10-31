@@ -1497,6 +1497,116 @@ async fn a_disabled_project_or_unreadable_file_is_a_204() {
     assert_eq!(shown, None);
 }
 
+/// A WSL profile whose shell reports `folder` as its folder, as a distro's shell does over OSC 7 (a Linux path).
+fn wsl_reporter(folder: &str) -> marshell_protocol::api::Profile {
+    marshell_protocol::api::Profile {
+        id: "wsl-reporter".into(),
+        name: "Ubuntu".into(),
+        command: vec![
+            env!("CARGO_BIN_EXE_fake-agent").into(),
+            "folder".into(),
+            folder.into(),
+            "-d".into(),
+            "Ubuntu".into(),
+        ],
+        family: marshell_protocol::api::ShellFamily::Wsl,
+        ..sleeper_profile()
+    }
+}
+
+/// A WSL tab whose shell reports `folder`, once it has.
+async fn wsl_tab_reporting(st: &AppState, app: &axum::Router, folder: &str) -> String {
+    let tab = start_shell(app, "wsl-reporter").await;
+    assert_eq!(st.wsl_distro_of_tab(&tab).as_deref(), Some("Ubuntu"));
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while st.session(&tab).and_then(|s| s.current_cwd()).is_none() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the shell never reported {folder}"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    tab
+}
+
+fn wsl_state_reporting(folder: &str) -> AppState {
+    state_with(Some(KNOWN), vec![sleeper_profile(), wsl_reporter(folder)]).with_wsl_version(Some(KNOWN.into()))
+}
+
+/// `C:\a\b` as `/mnt/c/a/b`, spelled by hand.
+#[cfg(windows)]
+fn mnt_form(windows: &std::path::Path) -> String {
+    let text = windows.to_string_lossy().into_owned();
+    let (drive, rest) = text.split_at(2);
+    format!("/mnt/{}{}", drive[..1].to_lowercase(), rest.replace('\\', "/"))
+}
+
+#[cfg(windows)]
+#[tokio::test]
+async fn a_wsl_prompt_gets_linux_paths_in_its_note() {
+    let p = project();
+    let linux_repo = mnt_form(&p.repo);
+    let st = wsl_state_reporting(&linux_repo);
+    let app = router(st.clone());
+    save_refs(&st, &p.repo, true, login_button());
+    let tab = wsl_tab_reporting(&st, &app, &linux_repo).await;
+
+    let (code, text) = submit(&app, "claude", Some(&tab), "fix the login button").await;
+    let shown = row(&st, &tab).references;
+    stop(&st, &tab);
+
+    assert_eq!(code, StatusCode::OK, "{text}");
+    let answer: serde_json::Value = serde_json::from_str(&text).unwrap();
+    let note = format!("References: 'login button' = {linux_repo}/src/login.rs.");
+    assert_eq!(
+        answer,
+        serde_json::json!({"hookSpecificOutput": {"hookEventName": "UserPromptSubmit", "additionalContext": note}})
+    );
+    assert_eq!(shown.expect("the chip's note").names, ["login button"]);
+}
+
+#[cfg(windows)]
+#[tokio::test]
+async fn a_wsl_tab_started_in_a_windows_folder_gets_linux_paths() {
+    let p = project();
+    let st = state_with(Some(KNOWN), vec![sleeper_profile(), wsl_profile()]).with_wsl_version(Some(KNOWN.into()));
+    let app = router(st.clone());
+    save_refs(&st, &p.repo, true, login_button());
+    // The shell reports nothing, so the start folder (a Windows path) is the one used.
+    let tab = start_profile_in(&app, "wsl-ubuntu", "claude", &p.repo).await;
+
+    let (code, text) = submit(&app, "claude", Some(&tab), "fix the login button").await;
+    stop(&st, &tab);
+
+    assert_eq!(code, StatusCode::OK, "{text}");
+    let note = serde_json::from_str::<serde_json::Value>(&text).unwrap()["hookSpecificOutput"]["additionalContext"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert_eq!(
+        note,
+        format!("References: 'login button' = {}/src/login.rs.", mnt_form(&p.repo))
+    );
+}
+
+#[tokio::test]
+async fn a_wsl_tab_whose_folder_cannot_be_translated_gets_no_note() {
+    let p = project();
+    // A relative folder names no place a Windows path could be made from.
+    let st = wsl_state_reporting("proj/sub");
+    let app = router(st.clone());
+    save_refs(&st, &p.repo, true, login_button());
+    let tab = wsl_tab_reporting(&st, &app, "proj/sub").await;
+
+    let (code, text) = submit(&app, "claude", Some(&tab), "fix the login button").await;
+    let shown = row(&st, &tab).references;
+    stop(&st, &tab);
+
+    assert_eq!(code, StatusCode::NO_CONTENT, "{text}");
+    assert!(text.is_empty(), "{text}");
+    assert_eq!(shown, None);
+}
+
 /// Every file under `dir`, read as lossy text.
 fn texts_under(dir: &std::path::Path, out: &mut Vec<(std::path::PathBuf, String)>) {
     let Ok(entries) = std::fs::read_dir(dir) else {
