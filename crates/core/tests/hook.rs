@@ -1132,6 +1132,42 @@ async fn session_end_clears_the_wsl_agent() {
 }
 
 #[tokio::test]
+async fn session_end_ends_a_wsl_tab_launched_as_an_agent() {
+    // History's Resume opens `bash -lc 'claude --resume ...; exec bash -l'`: the tab outlives the agent, and its row
+    // was launched as an agent, so no hook mark exists to clear. The row folds SessionEnd as a Windows tab does.
+    let st = wsl_state();
+    let app = router(st.clone());
+    let body = serde_json::json!({ "cols": 80, "rows": 24, "profile_id": "wsl-ubuntu", "agent": "claude" });
+    let res = app
+        .clone()
+        .oneshot(
+            base("POST", "/v1/sessions")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(body.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let code = res.status();
+    let bytes = axum::body::to_bytes(res.into_body(), 64 * 1024).await.unwrap();
+    assert_eq!(code, StatusCode::OK, "{}", String::from_utf8_lossy(&bytes));
+    let tab = serde_json::from_slice::<serde_json::Value>(&bytes).unwrap()["tab_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert_eq!(st.wsl_distro_of_tab(&tab).as_deref(), Some("Ubuntu"));
+    post_fixture(&app, "event", &tab, "SessionStart").await;
+    assert_eq!(row(&st, &tab).live.unwrap().state, LiveState::Idle);
+    assert_eq!(
+        post_fixture(&app, "event", &tab, "SessionEnd").await,
+        StatusCode::NO_CONTENT
+    );
+    let info = row(&st, &tab);
+    stop(&st, &tab);
+    assert_eq!(info.live.unwrap().state, LiveState::Ended);
+}
+
+#[tokio::test]
 async fn a_lone_session_end_in_a_wsl_tab_leaves_no_status() {
     let st = wsl_state();
     let app = router(st.clone());
@@ -1181,17 +1217,79 @@ async fn a_late_event_after_the_prompt_mark_does_not_mark_the_row_again() {
     let app = router(st.clone());
     let tab = start_shell(&app, "wsl-ubuntu").await;
     post_fixture(&app, "event", &tab, "UserPromptSubmit").await;
-    // The agent exited and the shell is back at its prompt.
+    // The agent exited and the shell is back at its prompt. This shell reports its commands (the agent was one).
     let away = marshell_protocol::api::UiView {
         window_focused: false,
         visible_tabs: Vec::new(),
     };
+    st.registry().mark(&tab, marshell_core::pty::Mark::Executed, &away);
     st.registry().mark(&tab, marshell_core::pty::Mark::PromptStart, &away);
     assert_eq!(foreground_agent(&st, &tab), None);
     post_fixture(&app, "event", &tab, "PostToolUse").await;
     let agent = foreground_agent(&st, &tab);
     stop(&st, &tab);
     assert_eq!(agent, None);
+}
+
+#[tokio::test]
+async fn a_status_line_after_session_end_does_not_mark_a_wsl_tab_again() {
+    // A tab with no prompt marks: nothing but the session id tells the late status line from a new session.
+    let st = wsl_state();
+    let app = router(st.clone());
+    let tab = start_shell(&app, "wsl-ubuntu").await;
+    post_fixture(&app, "event", &tab, "UserPromptSubmit").await;
+    assert_eq!(foreground_agent(&st, &tab).as_deref(), Some("claude"));
+    post_fixture(&app, "event", &tab, "SessionEnd").await;
+    assert_eq!(foreground_agent(&st, &tab), None);
+    post_fixture(&app, "statusline", &tab, "statusline").await;
+    let late = foreground_agent(&st, &tab);
+    // A new session (another id) marks the row.
+    let mut body: serde_json::Value = serde_json::from_slice(&fixture("UserPromptSubmit")).unwrap();
+    body["session_id"] = serde_json::json!("another-session");
+    status(
+        &app,
+        hook(
+            Some("event"),
+            Some("claude"),
+            Some(&tab),
+            serde_json::to_vec(&body).unwrap(),
+        ),
+    )
+    .await;
+    let next = foreground_agent(&st, &tab);
+    stop(&st, &tab);
+    assert_eq!(late, None);
+    assert_eq!(next.as_deref(), Some("claude"));
+}
+
+#[tokio::test]
+async fn resuming_the_ended_session_in_the_same_wsl_tab_marks_it_again() {
+    // `/exit`, then `claude --resume <id>` in the same shell: the resumed session keeps its id, and its SessionStart
+    // says it runs again.
+    let st = wsl_state();
+    let app = router(st.clone());
+    let tab = start_shell(&app, "wsl-ubuntu").await;
+    let prompt: serde_json::Value = serde_json::from_slice(&fixture("UserPromptSubmit")).unwrap();
+    let mut start: serde_json::Value = serde_json::from_slice(&fixture("SessionStart")).unwrap();
+    start["session_id"] = prompt["session_id"].clone();
+    let mut end: serde_json::Value = serde_json::from_slice(&fixture("SessionEnd")).unwrap();
+    end["session_id"] = prompt["session_id"].clone();
+    let post = |body: &serde_json::Value| {
+        let bytes = serde_json::to_vec(body).unwrap();
+        let app = app.clone();
+        let tab = tab.clone();
+        async move { status(&app, hook(Some("event"), Some("claude"), Some(&tab), bytes)).await }
+    };
+    post(&prompt).await;
+    post(&end).await;
+    assert_eq!(foreground_agent(&st, &tab), None);
+    post(&start).await;
+    let resumed = foreground_agent(&st, &tab);
+    post(&prompt).await;
+    let prompted = foreground_agent(&st, &tab);
+    stop(&st, &tab);
+    assert_eq!(resumed.as_deref(), Some("claude"));
+    assert_eq!(prompted.as_deref(), Some("claude"));
 }
 
 // ---- Project references: a matched alias's note reaches Claude Code and Codex ----

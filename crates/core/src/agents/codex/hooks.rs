@@ -394,22 +394,25 @@ pub fn install_plan(
     } else {
         ""
     };
+    // A distro's Codex is the one that asks, so the sentence names the distro.
+    let trust = match bridge.distro() {
+        Some(distro) => format!("Codex inside {distro} asks you to trust them in /hooks."),
+        None => "Codex asks you to trust them in /hooks.".to_string(),
+    };
     let mut reason = match (want.status, approval.is_empty()) {
         (true, true) => format!(
-            "Adds {} hook entries so Marshell can show what Codex is doing. Codex asks you to trust them in /hooks.",
+            "Adds {} hook entries so Marshell can show what Codex is doing. {trust}",
             STATUS_EVENTS.len()
         ),
         (true, false) => format!(
-            "Adds {} hook entries so Marshell can show what Codex is doing. {approval}. Codex asks you to trust them in /hooks.",
+            "Adds {} hook entries so Marshell can show what Codex is doing. {approval}. {trust}",
             STATUS_EVENTS.len()
         ),
         (false, true) => "Nothing was asked for, so nothing changes.".to_string(),
         (false, false) => format!("{approval}."),
     };
-    if let Some(distro) = bridge.distro()
-        && (want.status || want.approve)
-    {
-        reason = format!("{reason} Then trust them in Codex's /hooks inside {distro}.");
+    if bridge.distro().is_some() && !want.status && want.approve {
+        reason = format!("{reason} {trust}");
     }
     Ok(ChangeSet {
         title,
@@ -880,10 +883,13 @@ mod tests {
             );
         }
         assert!(
-            cs.reason.ends_with("Then trust them in Codex's /hooks inside Ubuntu."),
+            cs.reason
+                .ends_with("Codex inside Ubuntu asks you to trust them in /hooks."),
             "{}",
             cs.reason
         );
+        // One trust sentence, not the Windows one and a second for the distro.
+        assert_eq!(cs.reason.matches("trust them").count(), 1, "{}", cs.reason);
 
         // A quote in the path is closed, escaped and opened again.
         let cs = install_plan(&file(), None, &distro_bridge("/mnt/c/it's/marshell-hook.exe"), &STATUS).unwrap();

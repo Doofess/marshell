@@ -107,16 +107,24 @@ pub async fn post(
     // A WSL tab's processes are Linux ones the foreground watcher can't read: its hooks say which agent runs there. The
     // mark comes first, so the check below sees it and an event of another agent in that tab is dropped.
     let mut left_wsl = false;
+    let session_id = json.get("session_id").and_then(serde_json::Value::as_str);
     if matches!(agent.as_str(), "claude" | "codex" | "antigravity")
         && let Some(tab) = tab.as_deref()
         && in_wsl(&st, tab).await
     {
         if json.get("hook_event_name").and_then(serde_json::Value::as_str) == Some("SessionEnd") {
             // The agent is gone from the row: nothing is left to fold into a status, even when no earlier hook marked it.
-            st.registry().clear_hook_agent(tab, &agent);
-            left_wsl = true;
+            // A row launched as an agent (History's Resume opens `claude --resume ...; exec bash -l`) outlives the agent
+            // and has no mark to clear: it folds the SessionEnd as a Windows tab does, and shows Ended.
+            let cleared = st.registry().clear_hook_agent(tab, &agent, session_id);
+            let launched = st.registry().row(tab).is_some_and(|row| row.agent.is_some());
+            left_wsl = cleared || !launched;
         } else if matches!(role, HookRole::Event | HookRole::Permission | HookRole::Statusline) {
-            st.registry().mark_hook_agent(tab, &agent);
+            // A SessionStart runs the session again, even an ended one resumed under its own id.
+            if json.get("hook_event_name").and_then(serde_json::Value::as_str) == Some("SessionStart") {
+                st.registry().forget_ended_session(tab);
+            }
+            st.registry().mark_hook_agent(tab, &agent, session_id);
         }
     }
     // Grok Build runs Claude Code's hooks too. A tab that runs another agent takes no event or hold

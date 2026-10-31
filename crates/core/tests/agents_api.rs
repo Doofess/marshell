@@ -2580,7 +2580,7 @@ async fn a_codex_plan_in_a_distro_sends_the_person_to_trust_the_hooks_there() {
         preview["reason"]
             .as_str()
             .unwrap()
-            .ends_with("Then trust them in Codex's /hooks inside Ubuntu."),
+            .ends_with("Codex inside Ubuntu asks you to trust them in /hooks."),
         "{preview}"
     );
 }
