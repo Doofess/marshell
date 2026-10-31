@@ -1293,3 +1293,111 @@ async fn a_tab_not_opened_by_marshell_gets_nothing() {
     assert_eq!(code, StatusCode::NO_CONTENT);
     assert_eq!(shown, None);
 }
+
+/// Posts an Antigravity `PreInvocation` of `prompt` as call `n` (the bridge adds `hook_event_name` from `--event`).
+async fn pre_invocation(app: &axum::Router, tab: &str, prompt: &str, n: u64) -> (StatusCode, String) {
+    let body = serde_json::json!({"hook_event_name": "PreInvocation", "invocationNum": n, "lastUserInput": prompt});
+    post_agy(app, tab, &body).await
+}
+
+async fn post_agy(app: &axum::Router, tab: &str, body: &serde_json::Value) -> (StatusCode, String) {
+    let res = app
+        .clone()
+        .oneshot(hook(
+            Some("event"),
+            Some("antigravity"),
+            Some(tab),
+            serde_json::to_vec(body).unwrap(),
+        ))
+        .await
+        .unwrap();
+    let code = res.status();
+    let bytes = axum::body::to_bytes(res.into_body(), 1 << 20).await.unwrap();
+    (code, String::from_utf8_lossy(&bytes).into_owned())
+}
+
+#[tokio::test]
+async fn antigravity_gets_the_note_once_per_prompt() {
+    let st = state(Some(KNOWN));
+    let app = router(st.clone());
+    let p = project();
+    save_refs(&st, &p.repo, true, login_button());
+    let tab = start_in(&app, "antigravity", &p.repo).await;
+
+    let (code, text) = pre_invocation(&app, &tab, "fix the login button", 0).await;
+    let first = row(&st, &tab).references;
+    // The next model call of the same prompt: the note is already in the model's context.
+    let (again, again_text) = pre_invocation(&app, &tab, "fix the login button", 1).await;
+    let kept = row(&st, &tab).references;
+    // A new prompt that names nothing clears the chip.
+    let (fresh, fresh_text) = pre_invocation(&app, &tab, "fix the logout link", 0).await;
+    let cleared = row(&st, &tab).references;
+    stop(&st, &tab);
+
+    assert_eq!(code, StatusCode::OK, "{text}");
+    let note = format!(
+        "References: 'login button' = {}.",
+        p.repo.join("src").join("login.rs").display()
+    );
+    let answer: serde_json::Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(answer, serde_json::json!({"injectSteps": [{"ephemeralMessage": note}]}));
+    let first = first.expect("the chip's note");
+    assert_eq!(first.names, ["login button"]);
+    assert_eq!(first.note, note);
+
+    assert_eq!(again, StatusCode::NO_CONTENT, "{again_text}");
+    assert!(again_text.is_empty());
+    assert_eq!(kept, Some(first));
+
+    assert_eq!(fresh, StatusCode::NO_CONTENT, "{fresh_text}");
+    assert_eq!(cleared, None);
+}
+
+#[tokio::test]
+async fn antigravity_ignores_a_call_without_a_first_invocation_number() {
+    let st = state(Some(KNOWN));
+    let app = router(st.clone());
+    let p = project();
+    save_refs(&st, &p.repo, true, login_button());
+    let tab = start_in(&app, "antigravity", &p.repo).await;
+
+    let missing = serde_json::json!({"hook_event_name": "PreInvocation", "lastUserInput": "fix the login button"});
+    let as_text = serde_json::json!({
+        "hook_event_name": "PreInvocation", "invocationNum": "0", "lastUserInput": "fix the login button",
+    });
+    let a = post_agy(&app, &tab, &missing).await.0;
+    let b = post_agy(&app, &tab, &as_text).await.0;
+    let shown = row(&st, &tab).references;
+    stop(&st, &tab);
+
+    assert_eq!((a, b), (StatusCode::NO_CONTENT, StatusCode::NO_CONTENT));
+    assert_eq!(shown, None);
+}
+
+#[tokio::test]
+async fn antigravity_input_is_still_stripped() {
+    let st = state(Some(KNOWN));
+    let app = router(st.clone());
+    let p = project();
+    save_refs(&st, &p.repo, true, login_button());
+    let tab = start_in(&app, "antigravity", &p.repo).await;
+
+    let secret = "AGYPROMPT-5530";
+    let (code, _) = pre_invocation(&app, &tab, &format!("{secret} fix the login button"), 0).await;
+    assert_eq!(code, StatusCode::OK);
+    pre_invocation(&app, &tab, &format!("{secret} fix the login button"), 1).await;
+
+    let logged = serde_json::to_string(&events(&app, Some(&tab)).await).unwrap();
+    let sessions = serde_json::to_string(&st.registry().snapshot().sessions).unwrap();
+    let mut files = Vec::new();
+    texts_under(st.home(), &mut files);
+    stop(&st, &tab);
+
+    assert!(logged.contains("PreInvocation"), "{logged}");
+    assert!(!logged.contains("lastUserInput"), "{logged}");
+    assert!(!logged.contains(secret), "the hook log has the prompt: {logged}");
+    assert!(!sessions.contains(secret), "the session list has the prompt");
+    for (path, content) in &files {
+        assert!(!content.contains(secret), "{} has the prompt", path.display());
+    }
+}

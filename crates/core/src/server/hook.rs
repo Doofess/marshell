@@ -45,10 +45,14 @@ pub async fn post(
         serde_json::from_slice(&body).map_err(|e| (StatusCode::BAD_REQUEST, format!("body is not JSON: {e}")))?;
     // A prompt or an email is personal: it goes before anything else sees the body (the log, the fold,
     // the history, a hold), so the core keeps neither.
-    // The prompt of a Claude Code or Codex turn is kept in this local for the references resolver alone. It is taken
-    // out of the body here, so the log, the fold, the history and a hold never see it.
+    // The prompt of a turn is kept in this local for the references resolver alone. It is taken out of the body
+    // here, so the log, the fold, the history and a hold never see it.
     let mut prompt = None;
     if agent == "antigravity" {
+        prompt = json
+            .get("lastUserInput")
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_string);
         antigravity::strip_personal(&mut json);
     } else if matches!(agent.as_str(), "claude" | "codex")
         && let Some(object) = json.as_object_mut()
@@ -122,10 +126,19 @@ pub async fn post(
         }
     }
     // A prompt that names an alias gets the note as context. Every prompt of a tab that Marshell opened sets the
-    // header chip, so a prompt that names nothing clears it.
+    // header chip, so a prompt that names nothing clears it. Antigravity has no prompt event: each model call of a
+    // prompt is a `PreInvocation`, and the note a call adds stays in the model's context for the rest of the prompt,
+    // so only the first call (`invocationNum` 0) is answered and the later ones leave the note and the chip alone.
+    let event = json.get("hook_event_name").and_then(serde_json::Value::as_str);
+    let starts_prompt = match agent.as_str() {
+        "claude" | "codex" => event == Some("UserPromptSubmit"),
+        "antigravity" => {
+            event == Some("PreInvocation") && json.get("invocationNum").and_then(serde_json::Value::as_u64) == Some(0)
+        }
+        _ => false,
+    };
     if role == HookRole::Event
-        && matches!(agent.as_str(), "claude" | "codex")
-        && json.get("hook_event_name").and_then(serde_json::Value::as_str) == Some("UserPromptSubmit")
+        && starts_prompt
         && let Some(tab) = tab.as_deref()
         && st.registry().is_open(tab)
         && st.registry().effective_agent(tab).as_deref() == Some(agent.as_str())
@@ -133,10 +146,10 @@ pub async fn post(
         let found = references_for(&st, tab, prompt).await;
         st.registry().set_references(tab, found.clone());
         if let Some(found) = found {
-            let output = if agent == "codex" {
-                codex::context_output(&found.note)
-            } else {
-                crate::agents::claude::context_output(&found.note)
+            let output = match agent.as_str() {
+                "codex" => codex::context_output(&found.note),
+                "antigravity" => antigravity::context_output(&found.note),
+                _ => crate::agents::claude::context_output(&found.note),
             };
             return Ok(Json(output).into_response());
         }

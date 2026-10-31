@@ -307,6 +307,47 @@ fn an_event_answer_is_printed_only_when_it_is_context() {
     }
 }
 
+/// What the bridge prints for an Antigravity `PreInvocation` when the core answers 200 with `body`.
+fn agy_answer(body: &str) -> (Vec<u8>, Vec<String>) {
+    let home = tempfile::tempdir().unwrap();
+    let fake = serve(Reply::new(200, body));
+    write_endpoint(home.path(), fake.port, "t");
+    let argv = [
+        "event",
+        "--agent",
+        "antigravity",
+        "--event",
+        "PreInvocation",
+        "--tag",
+        "mshl1",
+    ]
+    .map(String::from)
+    .to_vec();
+    let out = go(home.path(), TAB, argv, br#"{"invocationNum":0}"#);
+    (out, log_lines(home.path()))
+}
+
+#[test]
+fn an_antigravity_answer_is_printed_only_when_it_is_its_context_shape() {
+    let context = r#"{"injectSteps":[{"ephemeralMessage":"References: 'a' = C:/r/a."}]}"#;
+    let (out, log) = agy_answer(context);
+    assert_eq!(String::from_utf8(out).unwrap(), context);
+    assert!(log.is_empty(), "{log:?}");
+
+    for body in [
+        r#"{"hookSpecificOutput":{"hookEventName":"UserPromptSubmit","additionalContext":"x"}}"#,
+        r#"{"injectSteps":[{"ephemeralMessage":"x"}],"decision":"block"}"#,
+        r#"{"injectSteps":[{"ephemeralMessage":"x"},{"ephemeralMessage":"y"}]}"#,
+        r#"{"injectSteps":[{"userMessage":"x"}]}"#,
+        r#"{"injectSteps":[{"ephemeralMessage":1}]}"#,
+        "not json",
+    ] {
+        let (out, log) = agy_answer(body);
+        assert!(out.is_empty(), "printed {body}");
+        assert_eq!(log.len(), 1, "{body}: {log:?}");
+    }
+}
+
 #[test]
 fn a_204_prints_nothing() {
     for role in ["event", "permission"] {
