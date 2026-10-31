@@ -1,0 +1,66 @@
+/* Settings → Projects. Built on the settings page's own pieces (fields, buttons, the switch); only the alias table is new. */
+.projects {
+  display: grid;
+  gap: var(--space-3);
+  align-content: start;
+  max-inline-size: 48rem;
+}
+.projects__path {
+  font-family: var(--font-mono);
+  font-size: var(--text-12);
+  overflow-wrap: anywhere;
+}
+/* The page scrolls, not the table: the columns share the width and the fields shrink to fit it. */
+.projects__table {
+  inline-size: 100%;
+  border-collapse: separate;
+  border-spacing: 0 var(--space-2);
+  table-layout: fixed;
+}
+.projects__table th {
+  padding-inline: 0 var(--space-2);
+  text-align: start;
+  font-size: var(--text-12);
+  font-weight: 500;
+  color: var(--text-2);
+}
+.projects__table td {
+  padding-inline: 0 var(--space-2);
+  vertical-align: top;
+}
+.projects__table td:last-child {
+  inline-size: 6rem;
+  padding-inline-end: 0;
+}
+.projects__table th:first-child,
+.projects__table td:first-child {
+  inline-size: 30%;
+}
+.projects__input {
+  inline-size: 100%;
+  min-inline-size: 0;
+  box-sizing: border-box;
+}
+.projects__input--path {
+  font-family: var(--font-mono);
+}
+.projects__broken {
+  margin-block-start: var(--space-1);
+}
+.projects__error {
+  color: var(--text-1);
+}
+.projects__error:focus-visible {
+  outline: 2px solid var(--focus, var(--accent));
+  outline-offset: 2px;
+}
+.projects__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+.projects__saved {
+  font-size: var(--text-13);
+  color: var(--text-2);
+}

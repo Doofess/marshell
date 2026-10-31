@@ -1,0 +1,27 @@
+/* The references chip wears the port chips' look: a pill told apart by fill, with no box. It is text, so it has no hover or press state. */
+.references-chip {
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+  padding-inline: 6px;
+  border-radius: 999px;
+  background: var(--fill);
+  color: var(--text-1);
+  font-size: var(--text-11);
+  line-height: 18px;
+  white-space: nowrap;
+}
+.references-chip:focus-visible {
+  outline: 2px solid var(--focus, var(--accent));
+  outline-offset: 2px;
+}
+@media (forced-colors: active) {
+  .references-chip {
+    outline: 1px solid ButtonText;
+    background: ButtonFace;
+    color: ButtonText;
+  }
+  .references-chip:focus-visible {
+    outline: 2px solid Highlight;
+  }
+}

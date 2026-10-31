@@ -170,6 +170,7 @@ function rowOf(info: SessionInfo, profiles: Profile[], setup: Partial<Record<Hoo
     ...(info.mode === null ? {} : { mode: info.mode }),
     ...(info.muted ? { muted: true } : {}),
     ...(info.ports !== undefined && info.ports.length > 0 ? { ports: info.ports } : {}),
+    ...(info.references ? { references: info.references } : {}),
   };
   if (info.state.kind === "ended") return { ...base, status: "ended", phrase: ENDED_PHRASE };
   if (info.state.kind === "exited") return { ...base, status: "ended", phrase: `Exited with code ${info.state.code}` };

@@ -38,6 +38,12 @@ pub fn run_version(exe: &Path, timeout: Duration) -> Option<String> {
 use marshell_protocol::hook::{PermissionBehavior, PermissionDecision, PermissionScope};
 use serde_json::{Value, json};
 
+/// The `UserPromptSubmit` hook output that adds `note` to the prompt as context. Nothing else is set, so the prompt
+/// is never blocked or changed.
+pub fn context_output(note: &str) -> Value {
+    json!({"hookSpecificOutput": {"hookEventName": "UserPromptSubmit", "additionalContext": note}})
+}
+
 /// The hook output for a decision on `request` (the hook's stdin JSON).
 ///
 /// A scoped allow takes every `addRules` suggestion whose behavior is `allow` and rewrites its

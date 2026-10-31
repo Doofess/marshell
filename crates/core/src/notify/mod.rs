@@ -149,6 +149,7 @@ mod tests {
                 ports: Vec::new(),
                 script: None,
                 setup: None,
+                references: None,
             }],
             closed: Vec::new(),
         }

@@ -15,6 +15,20 @@ use marshell_protocol::api::{LiveState, SessionMode};
 use marshell_protocol::hook::{HEADER_AGENT, HEADER_ROLE, HEADER_TAB, HEADER_VERSION, HookRole};
 use serde::Deserialize;
 
+/// How long after the request arrived a note may still be answered. The bridge gives an event 400 ms for the whole
+/// request (`budget` in `crates/hook/src/post.rs`), then prints nothing and lets the prompt go on as it is, so a
+/// note that comes later reaches no agent. 350 ms leaves the rest for the connect and the response.
+pub const CONTEXT_BUDGET: std::time::Duration = std::time::Duration::from_millis(350);
+
+/// The note when it is ready in time to reach the agent, else None. The header chip shows what this returns, so it
+/// never claims a note the bridge had already given up on.
+fn note_in_budget(
+    found: Option<marshell_protocol::api::ReferenceNote>,
+    elapsed: std::time::Duration,
+) -> Option<marshell_protocol::api::ReferenceNote> {
+    found.filter(|_| elapsed <= CONTEXT_BUDGET)
+}
+
 fn header<'a>(headers: &'a HeaderMap, name: &str) -> Option<&'a str> {
     headers
         .get(name)
@@ -35,6 +49,8 @@ pub async fn post(
     headers: HeaderMap,
     body: Bytes,
 ) -> Result<Response, (StatusCode, String)> {
+    // The bridge's clock for this request started about now, so the note's budget is counted from here.
+    let started = std::time::Instant::now();
     let role = header(&headers, HEADER_ROLE)
         .and_then(HookRole::parse)
         .ok_or((StatusCode::BAD_REQUEST, "unknown or missing role".to_string()))?;
@@ -45,8 +61,22 @@ pub async fn post(
         serde_json::from_slice(&body).map_err(|e| (StatusCode::BAD_REQUEST, format!("body is not JSON: {e}")))?;
     // A prompt or an email is personal: it goes before anything else sees the body (the log, the fold,
     // the history, a hold), so the core keeps neither.
+    // The prompt of a turn is kept in this local for the references resolver alone. It is taken out of the body
+    // here, so the log, the fold, the history and a hold never see it.
+    let mut prompt = None;
     if agent == "antigravity" {
+        prompt = json
+            .get("lastUserInput")
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_string);
         antigravity::strip_personal(&mut json);
+    } else if matches!(agent.as_str(), "claude" | "codex")
+        && let Some(object) = json.as_object_mut()
+    {
+        prompt = match object.remove("prompt") {
+            Some(serde_json::Value::String(text)) => Some(text),
+            _ => None,
+        };
     }
     let tab = header(&headers, HEADER_TAB).map(str::to_string);
     // Both come from the sender, so only a short identifier is logged: never free text a payload could carry.
@@ -103,12 +133,54 @@ pub async fn post(
         let mode = st.registry().mode_of_open_tab(tab).unwrap_or(SessionMode::Manual);
         held = antigravity::policy::holds(mode, antigravity::request::risk_of(&json).is_some());
     }
-    if matches!(agent.as_str(), "claude" | "codex" | "antigravity")
-        && let Some(tab) = tab.as_deref()
-    {
-        fold_live_with(&st, &agent, role, tab, &json, at_ms, held).await;
-        if role == HookRole::Event && st.registry().is_open(tab) {
-            record_history(&st, &agent, tab, &json, at_ms).await;
+    // A prompt that names an alias gets the note as context. Every prompt of a tab that Marshell opened sets the
+    // header chip, so a prompt that names nothing clears it. Antigravity has no prompt event: each model call of a
+    // prompt is a `PreInvocation`, and the note a call adds stays in the model's context for the rest of the prompt,
+    // so only the first call (`invocationNum` 0) is answered and the later ones leave the note and the chip alone.
+    let event = json.get("hook_event_name").and_then(serde_json::Value::as_str);
+    let starts_prompt = match agent.as_str() {
+        "claude" | "codex" => event == Some("UserPromptSubmit"),
+        "antigravity" => {
+            event == Some("PreInvocation") && json.get("invocationNum").and_then(serde_json::Value::as_u64) == Some(0)
+        }
+        _ => false,
+    };
+    let note_tab = tab.as_deref().filter(|tab| {
+        role == HookRole::Event
+            && starts_prompt
+            && st.registry().is_open(tab)
+            && st.registry().effective_agent(tab).as_deref() == Some(agent.as_str())
+    });
+    // The lookup runs beside the fold and the history (the history's index lock can be held by a search) under what
+    // is left of the budget, so a slow fold can't make the answer later than the bridge waits.
+    let fold = async {
+        if matches!(agent.as_str(), "claude" | "codex" | "antigravity")
+            && let Some(tab) = tab.as_deref()
+        {
+            fold_live_with(&st, &agent, role, tab, &json, at_ms, held).await;
+            if role == HookRole::Event && st.registry().is_open(tab) {
+                record_history(&st, &agent, tab, &json, at_ms).await;
+            }
+        }
+    };
+    let lookup = async {
+        let tab = note_tab?;
+        let left = CONTEXT_BUDGET.saturating_sub(started.elapsed());
+        tokio::time::timeout(left, references_for(&st, tab, prompt))
+            .await
+            .unwrap_or(None)
+    };
+    let ((), found) = tokio::join!(fold, lookup);
+    if let Some(tab) = note_tab {
+        let found = note_in_budget(found, started.elapsed());
+        st.registry().set_references(tab, found.clone());
+        if let Some(found) = found {
+            let output = match agent.as_str() {
+                "codex" => codex::context_output(&found.note),
+                "antigravity" => antigravity::context_output(&found.note),
+                _ => crate::agents::claude::context_output(&found.note),
+            };
+            return Ok(Json(output).into_response());
         }
     }
     if role == HookRole::Permission {
@@ -122,6 +194,35 @@ pub async fn post(
         return Ok(hold_permission(&st, Some(tab), agent, json).await);
     }
     Ok(StatusCode::NO_CONTENT.into_response())
+}
+
+/// The note for the aliases `prompt` names in the project of the folder the agent runs in, with paths in that
+/// folder's own checkout. That folder is the one the tab's shell last reported (a shell opened in repo A where the
+/// person ran `cd ..\B; claude` is in B), and the tab's start folder when the shell reported none.
+/// None when there is no prompt, the references are off, the file can't be read, or nothing matches: the prompt
+/// then goes on as it is. The read is one small file, off the async workers.
+async fn references_for(
+    st: &AppState,
+    tab: &str,
+    prompt: Option<String>,
+) -> Option<marshell_protocol::api::ReferenceNote> {
+    let prompt = prompt?;
+    let reported = st
+        .session(tab)
+        .and_then(|s| s.current_cwd())
+        .map(|p| p.to_string_lossy().into_owned())
+        .filter(|cwd| !cwd.is_empty());
+    let cwd = reported.or_else(|| st.registry().cwd_of_tab(tab).filter(|cwd| !cwd.is_empty()))?;
+    let home = st.home().to_path_buf();
+    tokio::task::spawn_blocking(move || {
+        let root = std::path::PathBuf::from(crate::projects::project_of(&cwd));
+        let checkout =
+            crate::scripts::checkout_root(std::path::Path::new(&cwd)).unwrap_or_else(|| std::path::PathBuf::from(&cwd));
+        let doc = crate::references::load(&home, &root).ok()?;
+        crate::references::resolve(&doc, &checkout, &prompt)
+    })
+    .await
+    .unwrap_or(None)
 }
 
 /// Notes the event in the history. The index update is short, so it is awaited; the copy it may ask for
@@ -344,6 +445,27 @@ mod tests {
     use super::*;
     use marshell_protocol::api::{Stuck, StuckReason};
     use serde_json::json;
+    use std::time::Duration;
+
+    fn note() -> marshell_protocol::api::ReferenceNote {
+        marshell_protocol::api::ReferenceNote {
+            names: vec!["login button".into()],
+            note: "References: 'login button' = /x/login.rs.".into(),
+        }
+    }
+
+    #[test]
+    fn a_note_inside_the_budget_is_kept_and_a_late_one_is_dropped() {
+        assert_eq!(note_in_budget(Some(note()), Duration::from_millis(10)), Some(note()));
+        assert_eq!(note_in_budget(Some(note()), CONTEXT_BUDGET), Some(note()));
+        // The bridge has given up by then and printed nothing: the chip must not claim a note the agent never got.
+        assert_eq!(
+            note_in_budget(Some(note()), CONTEXT_BUDGET + Duration::from_millis(1)),
+            None
+        );
+        assert_eq!(note_in_budget(Some(note()), Duration::from_millis(500)), None);
+        assert_eq!(note_in_budget(None, Duration::from_millis(1)), None);
+    }
 
     #[tokio::test]
     async fn stuck_statusline_neither_resets_repeats_nor_counts_as_progress() {

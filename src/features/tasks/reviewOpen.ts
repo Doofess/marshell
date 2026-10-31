@@ -104,7 +104,7 @@ export function paletteHidden({ resumable, isTask, missing, focused = true, agen
   const key = `${resumable}${isTask}${missing}${focused}${agent}${pausable}${paused}${offered?.join(",") ?? "*"}`;
   let hidden = HIDDEN.get(key);
   if (!hidden) {
-    hidden = [...(resumable ? [] : ["resume"]), ...(isTask ? [] : ["review-task"]), ...(missing ? [] : ["clean-up-task"]), ...(focused ? [] : ["copy-recording-path"]), ...(agent ? (offered === undefined ? [] : MODE_COMMANDS.filter((c) => !offered.includes(c.slice(5)))) : MODE_COMMANDS), ...(pausable ? [] : ["pause"]), ...(paused ? [] : ["continue"])];
+    hidden = [...(resumable ? [] : ["resume"]), ...(isTask ? [] : ["review-task"]), ...(missing ? [] : ["clean-up-task"]), ...(focused ? [] : ["copy-recording-path", "edit-references"]), ...(agent ? (offered === undefined ? [] : MODE_COMMANDS.filter((c) => !offered.includes(c.slice(5)))) : MODE_COMMANDS), ...(pausable ? [] : ["pause"]), ...(paused ? [] : ["continue"])];
     HIDDEN.set(key, hidden);
   }
   return hidden;

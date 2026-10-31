@@ -28,10 +28,24 @@ pub fn strip_personal(body: &mut Value) {
     }
 }
 
+/// What `PreInvocation` answers to add `note` for the model: one ephemeral step, which the model sees and agy's
+/// terminal does not show. The same note text as Claude Code and Codex get.
+pub fn context_output(note: &str) -> Value {
+    serde_json::json!({ "injectSteps": [{ "ephemeralMessage": note }] })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn the_context_output_is_one_ephemeral_step() {
+        assert_eq!(
+            context_output("References: 'a' = /r/a."),
+            json!({"injectSteps": [{"ephemeralMessage": "References: 'a' = /r/a."}]})
+        );
+    }
 
     #[test]
     fn antigravity_1_4_7_is_known() {

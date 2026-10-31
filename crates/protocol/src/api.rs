@@ -223,6 +223,11 @@ pub struct SessionInfo {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub setup: Option<SetupResult>,
+    /// The note added to the agent's latest prompt, when it named an alias. Absent when that prompt named none. Only the
+    /// aliases and their paths, never the prompt. A Restart or resume clears it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub references: Option<ReferenceNote>,
 }
 
 impl SessionInfo {
@@ -1176,6 +1181,51 @@ pub struct Health {
     pub version: String,
 }
 
+/// One alias of a project: a name the person types in a prompt, and the file or folder it means.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct Alias {
+    pub name: String,
+    /// Relative to the project root, `/`-separated.
+    pub path: String,
+}
+
+/// An alias as the Projects section shows it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct AliasInfo {
+    pub name: String,
+    pub path: String,
+    /// Whether the path is found inside the project. A path that isn't is shown as broken and never sent.
+    pub exists: bool,
+}
+
+/// A project's references: the toggle and its aliases.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct ProjectReferences {
+    pub root: String,
+    pub enabled: bool,
+    pub aliases: Vec<AliasInfo>,
+}
+
+/// `PUT /v1/references`: replaces a project's toggle and aliases.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct ReferencesUpdate {
+    pub root: String,
+    pub enabled: bool,
+    pub aliases: Vec<Alias>,
+}
+
+/// The note added to a prompt that named aliases, and the names it covers.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct ReferenceNote {
+    pub names: Vec<String>,
+    pub note: String,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1272,6 +1322,7 @@ mod tests {
             ports: Vec::new(),
             script: None,
             setup: None,
+            references: None,
         };
         let mut value = serde_json::to_value(&info).unwrap();
         value.as_object_mut().unwrap().remove("muted");

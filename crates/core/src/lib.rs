@@ -17,6 +17,7 @@ pub mod private;
 pub mod profiles;
 pub mod projects;
 pub mod pty;
+pub mod references;
 pub mod registry;
 pub mod scripts;
 pub mod server;

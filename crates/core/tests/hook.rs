@@ -28,6 +28,10 @@ fn sleeper_profile() -> marshell_protocol::api::Profile {
 const KNOWN: &str = "2.1.302";
 
 fn state(version: Option<&str>) -> AppState {
+    state_with(version, vec![sleeper_profile()])
+}
+
+fn state_with(version: Option<&str>, profiles: Vec<marshell_protocol::api::Profile>) -> AppState {
     common::tie_children_to_test();
     let home = tempfile::tempdir().unwrap().keep();
     let user_home = home.join("user");
@@ -36,7 +40,7 @@ fn state(version: Option<&str>) -> AppState {
         PORT,
         vec!["http://tauri.localhost".into()],
         home,
-        vec![sleeper_profile()],
+        profiles,
     )
     .with_agent_check(|_| true)
     // No test here finds a program on this machine's PATH: CI has no Grok.
@@ -961,4 +965,534 @@ async fn claude_keeps_its_hooks_while_it_is_in_the_foreground_and_before_any_sig
     assert_eq!(st.registry().effective_agent(&tab).as_deref(), Some("claude"));
     stop(&st, &tab);
     assert_eq!(live.state, LiveState::NeedsPermission);
+}
+
+// ---- Project references: a matched alias's note reaches Claude Code and Codex ----
+
+/// A project with a `.git` folder and a file an alias can name.
+struct Project {
+    _dir: tempfile::TempDir,
+    repo: std::path::PathBuf,
+}
+
+fn project() -> Project {
+    let dir = tempfile::tempdir().unwrap();
+    let repo = marshell_core::projects::canonical(dir.path()).join("repo");
+    std::fs::create_dir_all(repo.join(".git")).unwrap();
+    std::fs::create_dir_all(repo.join("src")).unwrap();
+    std::fs::write(repo.join("src").join("login.rs"), "fn login() {}").unwrap();
+    Project { _dir: dir, repo }
+}
+
+fn alias(name: &str, path: &str) -> marshell_protocol::api::Alias {
+    marshell_protocol::api::Alias {
+        name: name.into(),
+        path: path.into(),
+    }
+}
+
+fn save_refs(st: &AppState, root: &std::path::Path, enabled: bool, aliases: Vec<marshell_protocol::api::Alias>) {
+    marshell_core::references::save(
+        st.home(),
+        &marshell_protocol::api::ReferencesUpdate {
+            root: root.to_string_lossy().into_owned(),
+            enabled,
+            aliases,
+        },
+    )
+    .unwrap();
+}
+
+/// A session of the sleeper profile launched as `agent`, in `cwd`.
+async fn start_in(app: &axum::Router, agent: &str, cwd: &std::path::Path) -> String {
+    start_profile_in(app, "sleeper", agent, cwd).await
+}
+
+/// A session of `profile_id` launched as `agent`, in `cwd`.
+async fn start_profile_in(app: &axum::Router, profile_id: &str, agent: &str, cwd: &std::path::Path) -> String {
+    let body = serde_json::json!({
+        "cols": 80, "rows": 24, "profile_id": profile_id, "agent": agent, "cwd": cwd.to_string_lossy(),
+    });
+    let res = app
+        .clone()
+        .oneshot(
+            base("POST", "/v1/sessions")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(body.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let code = res.status();
+    let bytes = axum::body::to_bytes(res.into_body(), 64 * 1024).await.unwrap();
+    assert_eq!(code, StatusCode::OK, "{}", String::from_utf8_lossy(&bytes));
+    serde_json::from_slice::<serde_json::Value>(&bytes).unwrap()["tab_id"]
+        .as_str()
+        .unwrap()
+        .to_string()
+}
+
+/// Posts a `UserPromptSubmit` for `agent` and returns the status and the body text.
+async fn submit(app: &axum::Router, agent: &str, tab: Option<&str>, prompt: &str) -> (StatusCode, String) {
+    let body = serde_json::json!({"hook_event_name": "UserPromptSubmit", "prompt": prompt});
+    let res = app
+        .clone()
+        .oneshot(hook(
+            Some("event"),
+            Some(agent),
+            tab,
+            serde_json::to_vec(&body).unwrap(),
+        ))
+        .await
+        .unwrap();
+    let code = res.status();
+    let bytes = axum::body::to_bytes(res.into_body(), 1 << 20).await.unwrap();
+    (code, String::from_utf8_lossy(&bytes).into_owned())
+}
+
+fn login_button() -> Vec<marshell_protocol::api::Alias> {
+    vec![alias("login button", "src/login.rs")]
+}
+
+#[tokio::test]
+async fn a_prompt_naming_an_alias_gets_its_note() {
+    let st = state(Some(KNOWN));
+    let app = router(st.clone());
+    let p = project();
+    save_refs(&st, &p.repo, true, login_button());
+    let tab = start_in(&app, "claude", &p.repo).await;
+
+    let (code, text) = submit(&app, "claude", Some(&tab), "fix the Login Button please").await;
+    let shown = row(&st, &tab).references;
+    stop(&st, &tab);
+
+    assert_eq!(code, StatusCode::OK, "{text}");
+    let answer: serde_json::Value = serde_json::from_str(&text).unwrap();
+    let file = p.repo.join("src").join("login.rs");
+    let note = format!("References: 'login button' = {}.", file.display());
+    assert_eq!(
+        answer,
+        serde_json::json!({"hookSpecificOutput": {"hookEventName": "UserPromptSubmit", "additionalContext": note}})
+    );
+    let shown = shown.expect("the chip's note");
+    assert_eq!(shown.names, ["login button"]);
+    assert_eq!(shown.note, note);
+}
+
+#[tokio::test]
+async fn codex_gets_the_same_note_as_json() {
+    let st = state(Some(KNOWN)).with_codex_version(Some("0.163.0".into()));
+    let app = router(st.clone());
+    let p = project();
+    save_refs(&st, &p.repo, true, login_button());
+    let tab = start_in(&app, "codex", &p.repo).await;
+
+    let (code, text) = submit(&app, "codex", Some(&tab), "fix the login button").await;
+    let shown = row(&st, &tab).references;
+    stop(&st, &tab);
+
+    assert_eq!(code, StatusCode::OK, "{text}");
+    let answer: serde_json::Value = serde_json::from_str(&text).unwrap();
+    let note = format!(
+        "References: 'login button' = {}.",
+        p.repo.join("src").join("login.rs").display()
+    );
+    assert_eq!(
+        answer,
+        serde_json::json!({"hookSpecificOutput": {"hookEventName": "UserPromptSubmit", "additionalContext": note}})
+    );
+    assert_eq!(shown.unwrap().names, ["login button"]);
+}
+
+#[tokio::test]
+async fn no_match_is_a_204_and_clears_the_chip() {
+    let st = state(Some(KNOWN));
+    let app = router(st.clone());
+    let p = project();
+    save_refs(&st, &p.repo, true, login_button());
+    let tab = start_in(&app, "claude", &p.repo).await;
+
+    assert_eq!(
+        submit(&app, "claude", Some(&tab), "fix the login button").await.0,
+        StatusCode::OK
+    );
+    assert!(row(&st, &tab).references.is_some());
+    let (code, text) = submit(&app, "claude", Some(&tab), "fix the logout link").await;
+    let shown = row(&st, &tab).references;
+    stop(&st, &tab);
+
+    assert_eq!(code, StatusCode::NO_CONTENT);
+    assert!(text.is_empty(), "{text}");
+    assert_eq!(shown, None);
+}
+
+/// Turns the project into a git repo with one commit and adds a linked worktree beside it, which it returns.
+fn linked_worktree(p: &Project) -> std::path::PathBuf {
+    // The `.git` folder `project` made is not a repo yet.
+    std::fs::remove_dir_all(p.repo.join(".git")).unwrap();
+    let run = |args: &[&str]| {
+        let out = std::process::Command::new("git")
+            .args(args)
+            .current_dir(&p.repo)
+            .env("GIT_CONFIG_GLOBAL", if cfg!(windows) { "NUL" } else { "/dev/null" })
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "git {args:?}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    };
+    run(&["init", "-q", "-b", "main"]);
+    run(&["add", "."]);
+    run(&[
+        "-c",
+        "user.name=t",
+        "-c",
+        "user.email=t@t",
+        "commit",
+        "-q",
+        "-m",
+        "first",
+    ]);
+    let tree = p.repo.parent().unwrap().join("tree");
+    run(&["worktree", "add", "-q", "-b", "side", &tree.to_string_lossy()]);
+    marshell_core::projects::canonical(&tree)
+}
+
+#[tokio::test]
+async fn a_worktree_tab_gets_paths_in_its_own_checkout() {
+    let st = state(Some(KNOWN));
+    let app = router(st.clone());
+    let p = project();
+    let tree = linked_worktree(&p);
+
+    save_refs(&st, &p.repo, true, login_button());
+    let tab = start_in(&app, "claude", &tree).await;
+    let (code, text) = submit(&app, "claude", Some(&tab), "fix the login button").await;
+    stop(&st, &tab);
+
+    assert_eq!(code, StatusCode::OK, "{text}");
+    let note = serde_json::from_str::<serde_json::Value>(&text).unwrap()["hookSpecificOutput"]["additionalContext"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let own = tree.join("src").join("login.rs");
+    assert_eq!(note, format!("References: 'login button' = {}.", own.display()));
+    assert!(
+        !note.contains(&p.repo.join("src").to_string_lossy().into_owned()),
+        "{note}"
+    );
+}
+
+#[tokio::test]
+async fn a_worktree_tab_checks_the_file_in_its_own_checkout() {
+    let st = state(Some(KNOWN));
+    let app = router(st.clone());
+    let p = project();
+    let tree = linked_worktree(&p);
+    // The file is in the main checkout and was in the worktree too; here it is gone from the worktree only.
+    assert!(p.repo.join("src").join("login.rs").exists());
+    std::fs::remove_file(tree.join("src").join("login.rs")).unwrap();
+
+    save_refs(&st, &p.repo, true, login_button());
+    let tab = start_in(&app, "claude", &tree).await;
+    let (code, text) = submit(&app, "claude", Some(&tab), "fix the login button").await;
+    let shown = row(&st, &tab).references;
+    stop(&st, &tab);
+
+    assert_eq!(code, StatusCode::NO_CONTENT, "{text}");
+    assert!(text.is_empty(), "{text}");
+    assert_eq!(shown, None);
+}
+
+#[tokio::test]
+async fn a_prompt_resolves_in_the_folder_the_shell_is_in() {
+    // Started in repo A; the shell then moved into repo B, where the agent runs.
+    let a = project();
+    let b = project();
+    let reporter = marshell_protocol::api::Profile {
+        id: "reporter".into(),
+        name: "Reporter".into(),
+        command: vec![
+            env!("CARGO_BIN_EXE_fake-agent").into(),
+            "folder".into(),
+            b.repo.to_string_lossy().into_owned(),
+        ],
+        ..sleeper_profile()
+    };
+    let st = state_with(Some(KNOWN), vec![sleeper_profile(), reporter]);
+    let app = router(st.clone());
+    // Only B has references, so a note can only come from B's project.
+    save_refs(&st, &b.repo, true, login_button());
+    let tab = start_profile_in(&app, "reporter", "claude", &a.repo).await;
+    // The shell's report arrives some time after the process starts.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while st.session(&tab).and_then(|s| s.current_cwd()).is_none() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the shell never reported a folder"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    let (code, text) = submit(&app, "claude", Some(&tab), "fix the login button").await;
+    let shown = row(&st, &tab).references;
+    stop(&st, &tab);
+
+    assert_eq!(code, StatusCode::OK, "{text}");
+    let note = serde_json::from_str::<serde_json::Value>(&text).unwrap()["hookSpecificOutput"]["additionalContext"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert_eq!(
+        note,
+        format!(
+            "References: 'login button' = {}.",
+            b.repo.join("src").join("login.rs").display()
+        )
+    );
+    assert_eq!(shown.unwrap().names, ["login button"]);
+}
+
+#[tokio::test]
+async fn a_disabled_project_or_unreadable_file_is_a_204() {
+    let st = state(Some(KNOWN));
+    let app = router(st.clone());
+    let p = project();
+    let tab = start_in(&app, "claude", &p.repo).await;
+
+    // No file at all: references are off.
+    assert_eq!(
+        submit(&app, "claude", Some(&tab), "fix the login button").await.0,
+        StatusCode::NO_CONTENT
+    );
+    // Saved but switched off.
+    save_refs(&st, &p.repo, false, login_button());
+    assert_eq!(
+        submit(&app, "claude", Some(&tab), "fix the login button").await.0,
+        StatusCode::NO_CONTENT
+    );
+    // On, and then the file is broken: the prompt goes on with nothing added.
+    save_refs(&st, &p.repo, true, login_button());
+    assert_eq!(
+        submit(&app, "claude", Some(&tab), "fix the login button").await.0,
+        StatusCode::OK
+    );
+    let file = st
+        .home()
+        .join("projects")
+        .join(marshell_core::references::project_id(&p.repo))
+        .join(marshell_core::references::FILE_NAME);
+    std::fs::write(&file, "{ this is not json").unwrap();
+    // The `.bak` still holds a readable copy, which is the fallback and is meant: the prompt is still answered.
+    assert!(
+        marshell_core::references::load(st.home(), &p.repo).is_ok(),
+        "the .bak is read when the main file is broken"
+    );
+    std::fs::write(marshell_core::store::bak_path(&file), "{ this is not json either").unwrap();
+    // Neither file is readable now, so the unreadable path itself is the one taken.
+    assert!(
+        marshell_core::references::load(st.home(), &p.repo).is_err(),
+        "both files must be refused for this test to reach the unreadable path"
+    );
+    let (code, text) = submit(&app, "claude", Some(&tab), "fix the login button").await;
+    let shown = row(&st, &tab).references;
+    stop(&st, &tab);
+
+    assert_eq!(code, StatusCode::NO_CONTENT, "{text}");
+    assert!(text.is_empty(), "{text}");
+    assert_eq!(shown, None);
+}
+
+/// Every file under `dir`, read as lossy text.
+fn texts_under(dir: &std::path::Path, out: &mut Vec<(std::path::PathBuf, String)>) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            texts_under(&path, out);
+        } else if let Ok(bytes) = std::fs::read(&path) {
+            out.push((path, String::from_utf8_lossy(&bytes).into_owned()));
+        }
+    }
+}
+
+#[tokio::test]
+async fn the_prompt_is_not_kept() {
+    let st = state(Some(KNOWN));
+    let app = router(st.clone());
+    let p = project();
+    save_refs(&st, &p.repo, true, login_button());
+    let tab = start_in(&app, "claude", &p.repo).await;
+
+    let secret = "PROMPTSECRET-4417";
+    let (code, _) = submit(&app, "claude", Some(&tab), &format!("{secret} fix the login button")).await;
+    assert_eq!(code, StatusCode::OK);
+    // agy's text is dropped too: this event is for another agent's tab, but the log keeps what was posted.
+    let agy = serde_json::json!({"hook_event_name": "PostToolUse", "lastUserInput": "AGYSECRET-9921", "email": "who@example.com"});
+    status(
+        &app,
+        hook(
+            Some("event"),
+            Some("antigravity"),
+            Some(&tab),
+            serde_json::to_vec(&agy).unwrap(),
+        ),
+    )
+    .await;
+
+    let logged = events(&app, Some(&tab)).await;
+    let sessions = serde_json::to_string(&st.registry().snapshot().sessions).unwrap();
+    let mut files = Vec::new();
+    texts_under(st.home(), &mut files);
+    stop(&st, &tab);
+
+    assert!(!logged.is_empty());
+    let logged = serde_json::to_string(&logged).unwrap();
+    for text in [secret, "AGYSECRET-9921", "who@example.com"] {
+        assert!(!logged.contains(text), "the hook log has {text}: {logged}");
+        assert!(!sessions.contains(text), "the session list has {text}");
+        for (path, content) in &files {
+            assert!(!content.contains(text), "{} has {text}", path.display());
+        }
+    }
+    // The rest of the body stays in the log.
+    assert!(logged.contains("UserPromptSubmit"));
+}
+
+#[tokio::test]
+async fn a_tab_not_opened_by_marshell_gets_nothing() {
+    let st = state(Some(KNOWN)).with_codex_version(Some("0.163.0".into()));
+    let app = router(st.clone());
+    let p = project();
+    save_refs(&st, &p.repo, true, login_button());
+
+    // No tab header, and a tab the registry never opened: nothing is added.
+    assert_eq!(
+        submit(&app, "claude", None, "fix the login button").await.0,
+        StatusCode::NO_CONTENT
+    );
+    assert_eq!(
+        submit(&app, "claude", Some("unknown-tab"), "fix the login button")
+            .await
+            .0,
+        StatusCode::NO_CONTENT
+    );
+    // A Codex prompt from a tab that runs Claude is not this tab's: no note and no chip.
+    let tab = start_in(&app, "claude", &p.repo).await;
+    let (code, _) = submit(&app, "codex", Some(&tab), "fix the login button").await;
+    let shown = row(&st, &tab).references;
+    stop(&st, &tab);
+    assert_eq!(code, StatusCode::NO_CONTENT);
+    assert_eq!(shown, None);
+}
+
+/// Posts an Antigravity `PreInvocation` of `prompt` as call `n` (the bridge adds `hook_event_name` from `--event`).
+async fn pre_invocation(app: &axum::Router, tab: &str, prompt: &str, n: u64) -> (StatusCode, String) {
+    let body = serde_json::json!({"hook_event_name": "PreInvocation", "invocationNum": n, "lastUserInput": prompt});
+    post_agy(app, tab, &body).await
+}
+
+async fn post_agy(app: &axum::Router, tab: &str, body: &serde_json::Value) -> (StatusCode, String) {
+    let res = app
+        .clone()
+        .oneshot(hook(
+            Some("event"),
+            Some("antigravity"),
+            Some(tab),
+            serde_json::to_vec(body).unwrap(),
+        ))
+        .await
+        .unwrap();
+    let code = res.status();
+    let bytes = axum::body::to_bytes(res.into_body(), 1 << 20).await.unwrap();
+    (code, String::from_utf8_lossy(&bytes).into_owned())
+}
+
+#[tokio::test]
+async fn antigravity_gets_the_note_once_per_prompt() {
+    let st = state(Some(KNOWN));
+    let app = router(st.clone());
+    let p = project();
+    save_refs(&st, &p.repo, true, login_button());
+    let tab = start_in(&app, "antigravity", &p.repo).await;
+
+    let (code, text) = pre_invocation(&app, &tab, "fix the login button", 0).await;
+    let first = row(&st, &tab).references;
+    // The next model call of the same prompt: the note is already in the model's context.
+    let (again, again_text) = pre_invocation(&app, &tab, "fix the login button", 1).await;
+    let kept = row(&st, &tab).references;
+    // A new prompt that names nothing clears the chip.
+    let (fresh, fresh_text) = pre_invocation(&app, &tab, "fix the logout link", 0).await;
+    let cleared = row(&st, &tab).references;
+    stop(&st, &tab);
+
+    assert_eq!(code, StatusCode::OK, "{text}");
+    let note = format!(
+        "References: 'login button' = {}.",
+        p.repo.join("src").join("login.rs").display()
+    );
+    let answer: serde_json::Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(answer, serde_json::json!({"injectSteps": [{"ephemeralMessage": note}]}));
+    let first = first.expect("the chip's note");
+    assert_eq!(first.names, ["login button"]);
+    assert_eq!(first.note, note);
+
+    assert_eq!(again, StatusCode::NO_CONTENT, "{again_text}");
+    assert!(again_text.is_empty());
+    assert_eq!(kept, Some(first));
+
+    assert_eq!(fresh, StatusCode::NO_CONTENT, "{fresh_text}");
+    assert_eq!(cleared, None);
+}
+
+#[tokio::test]
+async fn antigravity_ignores_a_call_without_a_first_invocation_number() {
+    let st = state(Some(KNOWN));
+    let app = router(st.clone());
+    let p = project();
+    save_refs(&st, &p.repo, true, login_button());
+    let tab = start_in(&app, "antigravity", &p.repo).await;
+
+    let missing = serde_json::json!({"hook_event_name": "PreInvocation", "lastUserInput": "fix the login button"});
+    let as_text = serde_json::json!({
+        "hook_event_name": "PreInvocation", "invocationNum": "0", "lastUserInput": "fix the login button",
+    });
+    let a = post_agy(&app, &tab, &missing).await.0;
+    let b = post_agy(&app, &tab, &as_text).await.0;
+    let shown = row(&st, &tab).references;
+    stop(&st, &tab);
+
+    assert_eq!((a, b), (StatusCode::NO_CONTENT, StatusCode::NO_CONTENT));
+    assert_eq!(shown, None);
+}
+
+#[tokio::test]
+async fn antigravity_input_is_still_stripped() {
+    let st = state(Some(KNOWN));
+    let app = router(st.clone());
+    let p = project();
+    save_refs(&st, &p.repo, true, login_button());
+    let tab = start_in(&app, "antigravity", &p.repo).await;
+
+    let secret = "AGYPROMPT-5530";
+    let (code, _) = pre_invocation(&app, &tab, &format!("{secret} fix the login button"), 0).await;
+    assert_eq!(code, StatusCode::OK);
+    pre_invocation(&app, &tab, &format!("{secret} fix the login button"), 1).await;
+
+    let logged = serde_json::to_string(&events(&app, Some(&tab)).await).unwrap();
+    let sessions = serde_json::to_string(&st.registry().snapshot().sessions).unwrap();
+    let mut files = Vec::new();
+    texts_under(st.home(), &mut files);
+    stop(&st, &tab);
+
+    assert!(logged.contains("PreInvocation"), "{logged}");
+    assert!(!logged.contains("lastUserInput"), "{logged}");
+    assert!(!logged.contains(secret), "the hook log has the prompt: {logged}");
+    assert!(!sessions.contains(secret), "the session list has the prompt");
+    for (path, content) in &files {
+        assert!(!content.contains(secret), "{} has the prompt", path.display());
+    }
 }
