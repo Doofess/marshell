@@ -3,7 +3,7 @@
 //! doubt fails closed: a file that does not parse, or a `hooks` value of the wrong shape, gives an
 //! error and no edits.
 
-use crate::agents::common::{PlanError, TAG, is_ours};
+use crate::agents::common::{Bridge, PlanError, TAG, is_ours};
 use crate::config::hash::hash_bytes;
 use crate::config::jsonc::{parse_problem, read_value};
 use crate::paths;
@@ -54,20 +54,42 @@ fn quoted_bridge(home: &Path) -> String {
     }
 }
 
-/// The command string of a hook entry: the single-quoted bridge path with forward slashes. Codex
-/// runs it through PowerShell on Windows, where a quoted path needs the `&` call operator.
-pub fn hook_command(home: &Path, role: &str) -> String {
-    let call = if cfg!(windows) { "& " } else { "" };
-    format!("{call}{} {role} --agent {AGENT} --tag {TAG}", quoted_bridge(home))
+/// What starts a hook command. Codex runs it through PowerShell on Windows, where a quoted path needs the `&`
+/// call operator. In a distro it runs it through `sh`: the Linux path in POSIX single quotes.
+fn bridge_command(bridge: &Bridge) -> String {
+    match bridge.distro() {
+        Some(_) => posix_quote(&bridge.path()),
+        None => {
+            let quoted = if cfg!(windows) {
+                powershell_quote(&bridge.path())
+            } else {
+                posix_quote(&bridge.path())
+            };
+            format!("{}{quoted}", if cfg!(windows) { "& " } else { "" })
+        }
+    }
 }
 
-fn hook_entry(home: &Path, event: &str) -> Value {
+fn command_of(bridge: &Bridge, role: &str) -> String {
+    format!("{} {role} --agent {AGENT} --tag {TAG}", bridge_command(bridge))
+}
+
+/// The command string of a hook entry: the single-quoted bridge path with forward slashes.
+pub fn hook_command(home: &Path, role: &str) -> String {
+    command_of(&Bridge::local(home), role)
+}
+
+fn entry_of(bridge: &Bridge, event: &str) -> Value {
     let (role, timeout) = match event {
         PERMISSION_EVENT => ("permission", PERMISSION_TIMEOUT),
         "SessionEnd" | "Interrupt" => ("event", SHORT_TIMEOUT),
         _ => ("event", HOOK_TIMEOUT),
     };
-    json!({ "type": "command", "command": hook_command(home, role), "timeout": timeout })
+    json!({ "type": "command", "command": command_of(bridge, role), "timeout": timeout })
+}
+
+fn hook_entry(home: &Path, event: &str) -> Value {
+    entry_of(&Bridge::local(home), event)
 }
 
 /// An RFC 6901 token.
@@ -313,10 +335,13 @@ fn remove_op(pointer: String) -> EditOp {
 /// user's groups stay where they are (Codex keys its trust by position). Other Marshell entries come
 /// out as in `remove_plan`, and an event without a Marshell group gets one at the end, after the
 /// user's own. A file that already holds exactly what is asked for gets no edits.
+///
+/// In a distro (`Bridge::Distro`) the entries run the Linux path of the bridge, and the reason sends the person
+/// to trust them in Codex's `/hooks` inside that distro.
 pub fn install_plan(
     path: &Path,
     text: Option<&str>,
-    home: &Path,
+    bridge: &Bridge,
     want: &HookPlanRequest,
 ) -> Result<ChangeSet, PlanError> {
     let title = "Set up Codex hooks".to_string();
@@ -334,7 +359,7 @@ pub fn install_plan(
     let in_place = ours
         .iter()
         .filter(|(e, _)| replaced(e))
-        .all(|(e, entry)| events.contains(e) && **entry == hook_entry(home, e))
+        .all(|(e, entry)| events.contains(e) && **entry == entry_of(bridge, e))
         && events
             .iter()
             .all(|ev| ours.iter().filter(|(e, _)| e == ev).count() == 1);
@@ -347,7 +372,7 @@ pub fn install_plan(
         });
     }
 
-    let group_of = |event: &str| json!({ "hooks": [hook_entry(home, event)] });
+    let group_of = |event: &str| json!({ "hooks": [entry_of(bridge, event)] });
     let (mut ops, replaced_in_place) = removal_ops(&root, false, &replaced, &|event| {
         events.contains(&event).then(|| group_of(event))
     });
@@ -369,7 +394,7 @@ pub fn install_plan(
     } else {
         ""
     };
-    let reason = match (want.status, approval.is_empty()) {
+    let mut reason = match (want.status, approval.is_empty()) {
         (true, true) => format!(
             "Adds {} hook entries so Marshell can show what Codex is doing. Codex asks you to trust them in /hooks.",
             STATUS_EVENTS.len()
@@ -381,6 +406,11 @@ pub fn install_plan(
         (false, true) => "Nothing was asked for, so nothing changes.".to_string(),
         (false, false) => format!("{approval}."),
     };
+    if let Some(distro) = bridge.distro()
+        && (want.status || want.approve)
+    {
+        reason = format!("{reason} Then trust them in Codex's /hooks inside {distro}.");
+    }
     Ok(ChangeSet {
         title,
         reason,
@@ -429,12 +459,14 @@ mod tests {
         statusline: true,
         approve: false,
         skill: false,
+        distro: None,
     };
     const BOTH: HookPlanRequest = HookPlanRequest {
         status: true,
         statusline: true,
         approve: true,
         skill: false,
+        distro: None,
     };
     const USER_GROUP: &str = r#"{"hooks":[{"type":"command","command":"echo mine"}]}"#;
 
@@ -493,7 +525,7 @@ mod tests {
         text
     }
     fn install(text: Option<&str>, home: &Path, want: &HookPlanRequest) -> (ChangeSet, Option<String>) {
-        let cs = install_plan(&file(), text, home, want).unwrap();
+        let cs = install_plan(&file(), text, &Bridge::local(home), want).unwrap();
         let after = apply(&cs, text);
         (cs, after)
     }
@@ -623,7 +655,7 @@ mod tests {
         let home = real_home();
         let (_, first) = install(Some(&plain()), &home, &BOTH);
         let first = first.unwrap();
-        let cs = install_plan(&file(), Some(&first), &home, &BOTH).unwrap();
+        let cs = install_plan(&file(), Some(&first), &Bridge::local(&home), &BOTH).unwrap();
         assert!(cs.edits.is_empty(), "{:?}", cs.edits);
         let found = inspect(&value(&first), &home);
         assert_eq!(found.install, HookInstall::Installed);
@@ -802,7 +834,7 @@ mod tests {
     #[test]
     fn an_unparsable_file_is_refused_with_its_line() {
         let bad = "{\n  \"hooks\": {\n    \"Stop\": [\n";
-        match install_plan(&file(), Some(bad), &fake_home(), &BOTH) {
+        match install_plan(&file(), Some(bad), &Bridge::local(&fake_home()), &BOTH) {
             Err(PlanError::DoesNotParse { problem, .. }) => assert!(problem.0 >= 1),
             other => panic!("{other:?}"),
         }
@@ -816,9 +848,56 @@ mod tests {
     fn a_hooks_value_of_the_wrong_shape_is_refused() {
         let bad = r#"{"hooks": {"Stop": {}}}"#;
         assert!(matches!(
-            install_plan(&file(), Some(bad), &fake_home(), &BOTH),
+            install_plan(&file(), Some(bad), &Bridge::local(&fake_home()), &BOTH),
             Err(PlanError::NotAnObject { .. })
         ));
+    }
+
+    fn distro_bridge(path: &str) -> Bridge {
+        Bridge::Distro {
+            name: "Ubuntu".into(),
+            path: path.into(),
+        }
+    }
+
+    #[test]
+    fn a_distro_plan_writes_the_linux_bridge() {
+        let linux = "/mnt/c/Users/x y/.marshell/bin/marshell-hook.exe";
+        let cs = install_plan(&file(), None, &distro_bridge(linux), &BOTH).unwrap();
+        let after = value(&apply(&cs, None).unwrap());
+        for event in STATUS_EVENTS.into_iter().chain(["PermissionRequest"]) {
+            let command = after["hooks"][event][0]["hooks"][0]["command"].as_str().unwrap();
+            let role = if event == "PermissionRequest" {
+                "permission"
+            } else {
+                "event"
+            };
+            // A shell string for `sh`: the path in single quotes, no PowerShell call operator.
+            assert_eq!(
+                command,
+                format!("'{linux}' {role} --agent codex --tag mshl1"),
+                "{event}"
+            );
+        }
+        assert!(
+            cs.reason.ends_with("Then trust them in Codex's /hooks inside Ubuntu."),
+            "{}",
+            cs.reason
+        );
+
+        // A quote in the path is closed, escaped and opened again.
+        let cs = install_plan(&file(), None, &distro_bridge("/mnt/c/it's/marshell-hook.exe"), &STATUS).unwrap();
+        let after = value(&apply(&cs, None).unwrap());
+        assert_eq!(
+            after["hooks"]["Stop"][0]["hooks"][0]["command"],
+            r"'/mnt/c/it'\''s/marshell-hook.exe' event --agent codex --tag mshl1"
+        );
+    }
+
+    #[test]
+    fn a_windows_plan_does_not_send_the_person_into_a_distro() {
+        let cs = install_plan(&file(), None, &Bridge::local(&fake_home()), &BOTH).unwrap();
+        assert!(!cs.reason.contains("inside"), "{}", cs.reason);
     }
 
     #[test]

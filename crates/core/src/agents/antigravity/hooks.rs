@@ -7,7 +7,7 @@
 //! person's own named hooks are never touched. The status line is `statusLine` in
 //! `~/.gemini/antigravity-cli/settings.json`, chained the way Claude Code's is.
 
-use crate::agents::common::{PlanError, TAG, is_ours};
+use crate::agents::common::{Bridge, PlanError, TAG, is_ours, statusline_left_note};
 use crate::config::hash::hash_bytes;
 use crate::config::jsonc::{parse_problem, read_value};
 use crate::paths;
@@ -54,14 +54,22 @@ pub fn settings_path(user_home: &Path) -> PathBuf {
 /// cmd, and a `"` is safe only next to a separator, so a path with either is refused, and so is one
 /// with no drive letter (a UNC path). A `\\?\C:\` prefix is dropped, and `\\?\UNC\...` refused as
 /// any other UNC path. Elsewhere the path is single-quoted for `sh`.
-fn bridge_prefix(home: &Path) -> Result<String, PlanError> {
-    let exe = paths::bridge_exe(home);
-    let forward = exe.to_string_lossy().replace('\\', "/");
+///
+/// In a distro agy runs the command through `sh`, so the Linux path is single-quoted.
+fn bridge_prefix_of(bridge: &Bridge) -> Result<String, PlanError> {
+    let Bridge::Local(exe) = bridge else {
+        return Ok(posix_quote(&bridge.path()));
+    };
+    let forward = bridge.path();
     if cfg!(windows) {
-        cmd_form(&exe, &forward)
+        cmd_form(exe, &forward)
     } else {
         Ok(posix_quote(&forward))
     }
+}
+
+fn bridge_prefix(home: &Path) -> Result<String, PlanError> {
+    bridge_prefix_of(&Bridge::local(home))
 }
 
 fn cmd_form(exe: &Path, forward: &str) -> Result<String, PlanError> {
@@ -89,33 +97,46 @@ fn cmd_form(exe: &Path, forward: &str) -> Result<String, PlanError> {
 
 /// The command string of a hook entry.
 pub fn hook_command(home: &Path, role: &str, event: &str) -> Result<String, PlanError> {
+    command_of(&Bridge::local(home), role, event)
+}
+
+fn command_of(bridge: &Bridge, role: &str, event: &str) -> Result<String, PlanError> {
     Ok(format!(
         "{} {role} --agent {AGENT} --event {event} --tag {TAG}",
-        bridge_prefix(home)?
+        bridge_prefix_of(bridge)?
     ))
 }
 
-/// The command string of Marshell's status line.
-pub fn statusline_command(home: &Path) -> Result<String, PlanError> {
+/// The command string of Marshell's status line. In a distro, which keeps no chain, it says `--no-chain`.
+fn statusline_of(bridge: &Bridge) -> Result<String, PlanError> {
+    let no_chain = if bridge.distro().is_some() { " --no-chain" } else { "" };
     Ok(format!(
-        "{} statusline --agent {AGENT} --tag {TAG}",
-        bridge_prefix(home)?
+        "{} statusline --agent {AGENT} --tag {TAG}{no_chain}",
+        bridge_prefix_of(bridge)?
     ))
+}
+
+pub fn statusline_command(home: &Path) -> Result<String, PlanError> {
+    statusline_of(&Bridge::local(home))
 }
 
 /// One event's value in the `marshell` hook. `PreToolUse` and `PostToolUse` take matcher groups, the
 /// other events a flat list of entries. `permission` makes `PreToolUse` the approve entry.
-fn event_value(home: &Path, event: &str, permission: bool) -> Result<Value, PlanError> {
+fn event_value_of(bridge: &Bridge, event: &str, permission: bool) -> Result<Value, PlanError> {
     let (role, timeout) = if permission && event == PRE_TOOL {
         ("permission", PERMISSION_TIMEOUT)
     } else {
         ("event", HOOK_TIMEOUT)
     };
-    let entry = json!({ "type": "command", "command": hook_command(home, role, event)?, "timeout": timeout });
+    let entry = json!({ "type": "command", "command": command_of(bridge, role, event)?, "timeout": timeout });
     Ok(match event {
         PRE_TOOL | "PostToolUse" => json!([{ "matcher": ".*", "hooks": [entry] }]),
         _ => json!([entry]),
     })
+}
+
+fn event_value(home: &Path, event: &str, permission: bool) -> Result<Value, PlanError> {
+    event_value_of(&Bridge::local(home), event, permission)
 }
 
 // ---- reading the files ----
@@ -303,12 +324,12 @@ fn remove_op(pointer: &str) -> EditOp {
 
 /// What the `marshell` hook should hold for this request. With status off the existing status
 /// events stay as they are, and only `PreToolUse` follows `approve`.
-fn desired_hook(home: &Path, want: &HookPlanRequest, existing: Option<&Value>) -> Result<Value, PlanError> {
+fn desired_hook(bridge: &Bridge, want: &HookPlanRequest, existing: Option<&Value>) -> Result<Value, PlanError> {
     let kept = |event: &str| existing.and_then(|h| h.get(event));
     let mut hook = Map::new();
     hook.insert("enabled".into(), Value::Bool(true));
     if want.approve || want.status {
-        hook.insert(PRE_TOOL.into(), event_value(home, PRE_TOOL, want.approve)?);
+        hook.insert(PRE_TOOL.into(), event_value_of(bridge, PRE_TOOL, want.approve)?);
     } else if let Some(old) = kept(PRE_TOOL)
         && !entries_of(&json!({ PRE_TOOL: old }))
             .iter()
@@ -318,7 +339,7 @@ fn desired_hook(home: &Path, want: &HookPlanRequest, existing: Option<&Value>) -
     }
     for event in STATUS_EVENTS {
         if want.status {
-            hook.insert(event.into(), event_value(home, event, false)?);
+            hook.insert(event.into(), event_value_of(bridge, event, false)?);
         } else if let Some(old) = kept(event) {
             hook.insert(event.into(), old.clone());
         }
@@ -346,12 +367,16 @@ fn hook_removal(hooks: &Value, path: &Path, text: Option<&str>) -> Option<FileEd
 /// whole in the chain file, and Marshell's keeps their `padding` and `stack_with_default`. With none
 /// of their own, `stack_with_default` is on, so agy's own line shows under the bridge's empty output.
 /// `dangerouslySkipPermissions` is never touched.
+///
+/// `chain` is the chain file, `None` in a distro (see `Bridge::Distro`): there the chain is neither read nor
+/// written, a status line that is not Marshell's stays as it is, and Marshell's own line says `--no-chain`.
 pub fn install_plan(
     user_home: &Path,
     hooks_text: Option<&str>,
     settings_text: Option<&str>,
     chain_text: Option<&str>,
-    home: &Path,
+    chain: Option<&Path>,
+    bridge: &Bridge,
     want: &HookPlanRequest,
 ) -> Result<ChangeSet, PlanError> {
     let title = "Set up Antigravity hooks".to_string();
@@ -359,7 +384,7 @@ pub fn install_plan(
     let hooks = parse_hooks(&hooks_file, hooks_text)?;
     let settings = parse_settings(&settings_file, settings_text)?;
     let existing = hooks.get(HOOK_NAME);
-    let desired = desired_hook(home, want, existing)?;
+    let desired = desired_hook(bridge, want, existing)?;
     let wanted_events = desired.as_object().is_some_and(|o| o.len() > 1);
 
     let mut edits = Vec::new();
@@ -394,8 +419,9 @@ pub fn install_plan(
     };
 
     let mut tail = "";
+    let mut left_alone = None;
     if want.status {
-        let ours = statusline_command(home)?;
+        let ours = statusline_of(bridge)?;
         let mut ops = Vec::new();
         let mut chain_op = None;
         let line = settings.get("statusLine").filter(|l| !l.is_null());
@@ -408,7 +434,7 @@ pub fn install_plan(
                     ops.push(set("/statusLine/command", &json!(ours)));
                 }
                 let saved = chain_text.and_then(|t| read_value(t).ok());
-                if !chain_usable(saved.as_ref()) {
+                if chain.is_some() && !chain_usable(saved.as_ref()) {
                     chain_op = Some(set("/statusLine", &Value::Null));
                     if line.get("stack_with_default") != Some(&Value::Bool(true)) {
                         ops.push(set("/statusLine/stack_with_default", &Value::Bool(true)));
@@ -416,6 +442,7 @@ pub fn install_plan(
                     tail = ", and runs Marshell's status line on its own, because the saved copy of yours is missing";
                 }
             }
+            Some(_) if chain.is_none() => left_alone = bridge.distro().map(statusline_left_note),
             Some(line) if want.statusline => {
                 ops.push(set("/statusLine/command", &json!(ours)));
                 chain_op = Some(set("/statusLine", line));
@@ -435,13 +462,12 @@ pub fn install_plan(
             ops.into_iter()
                 .map(|op| edit(&settings_file, ConfigScope::User, op, settings_text)),
         );
-        if let Some(op) = chain_op {
-            let chain = paths::statusline_chain(home, AGENT);
-            edits.push(edit(&chain, ConfigScope::Marshell, op, chain_text));
+        if let (Some(op), Some(chain)) = (chain_op, chain) {
+            edits.push(edit(chain, ConfigScope::Marshell, op, chain_text));
         }
     }
 
-    let reason = if edits.is_empty() {
+    let mut reason = if edits.is_empty() {
         if want.status || want.approve || existing.is_some() {
             "The Antigravity hooks Marshell needs are already in place, so nothing changes.".to_string()
         } else {
@@ -458,6 +484,9 @@ pub fn install_plan(
     } else {
         format!("{approval}.")
     };
+    if let Some(note) = left_alone {
+        reason = format!("{reason} {note}");
+    }
     Ok(ChangeSet { title, reason, edits })
 }
 
@@ -471,7 +500,10 @@ enum Saved {
     Unusable,
 }
 
-fn saved_line(chain_text: Option<&str>) -> Saved {
+fn saved_line(chain_text: Option<&str>, in_distro: bool) -> Saved {
+    if in_distro {
+        return Saved::Nothing;
+    }
     let Some(chain) = chain_text.and_then(|t| read_value(t).ok()) else {
         return Saved::Unusable;
     };
@@ -490,12 +522,15 @@ fn saved_line(chain_text: Option<&str>) -> Saved {
 /// `hooks.json` is deleted when nothing but the `marshell` hook is in it. The chain file is read and
 /// never changed. A status line that is no longer Marshell's was changed by the person since the
 /// install and is left alone.
+///
+/// In a distro (`distro` is its name) there is no chain: a status line of Marshell's was added by it, and goes,
+/// and any other is the person's, left alone.
 pub fn remove_plan(
     user_home: &Path,
     hooks_text: Option<&str>,
     settings_text: Option<&str>,
     chain_text: Option<&str>,
-    _home: &Path,
+    distro: Option<&str>,
 ) -> Result<ChangeSet, PlanError> {
     let title = "Turn Antigravity hooks off".to_string();
     let (hooks_file, settings_file) = (hooks_path(user_home), settings_path(user_home));
@@ -511,7 +546,7 @@ pub fn remove_plan(
     let mut line_note = "";
     let mut line_op = None;
     match settings.get("statusLine") {
-        Some(line) if line.is_object() && line_is_ours(line) => match saved_line(chain_text) {
+        Some(line) if line.is_object() && line_is_ours(line) => match saved_line(chain_text, distro.is_some()) {
             Saved::Command(command) => {
                 line_op = Some(set("/statusLine/command", &json!(command)));
                 line_note = "puts your status line back";
@@ -525,8 +560,12 @@ pub fn remove_plan(
                 line_note = "removes its status line, because the saved copy of yours is missing and there is nothing to put back";
             }
         },
-        Some(line) if !line.is_null() && chain_text.is_some() => {
-            line_note = "leaves your status line alone, because it was changed since the setup";
+        Some(line) if !line.is_null() && (chain_text.is_some() || distro.is_some()) => {
+            line_note = if distro.is_some() {
+                "leaves your status line alone, because it is not Marshell's"
+            } else {
+                "leaves your status line alone, because it was changed since the setup"
+            };
         }
         _ => {}
     }
@@ -567,12 +606,14 @@ mod tests {
         statusline: true,
         approve: false,
         skill: false,
+        distro: None,
     };
     const BOTH: HookPlanRequest = HookPlanRequest {
         status: true,
         statusline: true,
         approve: true,
         skill: false,
+        distro: None,
     };
     const USER_HOOK: &str = r#""mine": { "enabled": true, "Stop": [{ "type": "command", "command": "echo mine" }] }"#;
 
@@ -700,7 +741,8 @@ mod tests {
             files.hooks.as_deref(),
             files.settings.as_deref(),
             files.chain.as_deref(),
-            home,
+            Some(&paths::statusline_chain(home, AGENT)),
+            &Bridge::local(home),
             want,
         )
     }
@@ -715,7 +757,7 @@ mod tests {
             files.hooks.as_deref(),
             files.settings.as_deref(),
             files.chain.as_deref(),
-            home,
+            None,
         )
         .unwrap();
         let after = apply(&cs, files, home);
@@ -824,6 +866,7 @@ mod tests {
             statusline: false,
             approve: true,
             skill: false,
+            distro: None,
         };
         let (cs, after) = install(&Files::default(), &want, &fake_home());
         let hook = &after.hooks_value()[HOOK_NAME];
@@ -843,6 +886,7 @@ mod tests {
             statusline: false,
             approve: false,
             skill: false,
+            distro: None,
         };
         let (cs, after) = install(&installed, &want, &home);
         assert!(
@@ -1171,6 +1215,7 @@ mod tests {
             statusline: false,
             approve: false,
             skill: false,
+            distro: None,
         };
         let cs = try_install(&Files::default(), &want, &fake_home()).unwrap();
         assert!(cs.edits.is_empty());
@@ -1284,7 +1329,7 @@ mod tests {
                     files.hooks.as_deref(),
                     files.settings.as_deref(),
                     None,
-                    &home,
+                    None,
                 )
                 .unwrap_err(),
             );
@@ -1310,5 +1355,166 @@ mod tests {
                 PlanError::NotAnObject { path, pointer }
             );
         }
+    }
+
+    // ---- inside a WSL distro ----
+
+    const LINUX_BRIDGE: &str = "/mnt/c/Users/x y/.marshell/bin/marshell-hook.exe";
+    const THEIRS: &str = r#"{"statusLine":{"type":"command","command":"echo mine"}}"#;
+
+    fn distro_bridge(path: &str) -> Bridge {
+        Bridge::Distro {
+            name: "Ubuntu".into(),
+            path: path.into(),
+        }
+    }
+    fn distro_user_home() -> PathBuf {
+        PathBuf::from(r"\\wsl.localhost\Ubuntu\home\me")
+    }
+    fn distro_install(hooks: Option<&str>, settings: Option<&str>, want: &HookPlanRequest) -> ChangeSet {
+        install_plan(
+            &distro_user_home(),
+            hooks,
+            settings,
+            None,
+            None,
+            &distro_bridge(LINUX_BRIDGE),
+            want,
+        )
+        .unwrap()
+    }
+    /// What the edits set, by file name and pointer.
+    fn set_values(cs: &ChangeSet) -> Vec<(String, String, Value)> {
+        cs.edits
+            .iter()
+            .filter_map(|e| {
+                let name = e.path.rsplit(['\\', '/']).next().unwrap().to_string();
+                match &e.op {
+                    EditOp::JsonSet { pointer, value } => {
+                        Some((name, pointer.clone(), serde_json::from_str(value).unwrap()))
+                    }
+                    EditOp::CreateFile { content } => {
+                        Some((name, String::new(), serde_json::from_str(content).unwrap()))
+                    }
+                    _ => None,
+                }
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_distro_plan_writes_the_linux_bridge() {
+        let cs = distro_install(None, None, &BOTH);
+        // A shell string for `sh`: the path in single quotes, then the rest of the command.
+        let quoted = format!("'{LINUX_BRIDGE}'");
+        let values = set_values(&cs);
+        let hooks = values.iter().find(|(name, ..)| name == "hooks.json").unwrap();
+        let commands: Vec<String> = entries_of(&hooks.2[HOOK_NAME])
+            .iter()
+            .map(|(_, e)| e["command"].as_str().unwrap().to_string())
+            .collect();
+        assert_eq!(commands.len(), STATUS_EVENTS.len() + 1);
+        for command in &commands {
+            assert!(command.starts_with(&format!("{quoted} ")), "{command}");
+        }
+        assert!(
+            commands
+                .iter()
+                .any(|c| c.contains(" permission --agent antigravity --event PreToolUse "))
+        );
+        let line = values.iter().find(|(_, pointer, _)| pointer == "/statusLine").unwrap();
+        assert_eq!(
+            line.2["command"],
+            format!("{quoted} statusline --agent antigravity --tag mshl1 --no-chain")
+        );
+        // Both files are the distro's.
+        assert!(
+            cs.edits
+                .iter()
+                .all(|e| e.path.starts_with(r"\\wsl.localhost\Ubuntu\home\me"))
+        );
+
+        // A quote in the path is closed, escaped and opened again.
+        let cs = install_plan(
+            &distro_user_home(),
+            None,
+            None,
+            None,
+            None,
+            &distro_bridge("/mnt/c/it's/marshell-hook.exe"),
+            &STATUS,
+        )
+        .unwrap();
+        let line = set_values(&cs)
+            .into_iter()
+            .find(|(_, pointer, _)| pointer == "/statusLine")
+            .unwrap();
+        assert!(
+            line.2["command"]
+                .as_str()
+                .unwrap()
+                .starts_with(r"'/mnt/c/it'\''s/marshell-hook.exe' statusline"),
+            "{}",
+            line.2["command"]
+        );
+    }
+
+    #[test]
+    fn a_distro_plan_leaves_an_existing_statusline() {
+        for statusline in [true, false] {
+            let cs = distro_install(None, Some(THEIRS), &HookPlanRequest { statusline, ..BOTH });
+            assert!(
+                set_values(&cs).iter().all(|(name, ..)| name == "hooks.json"),
+                "statusline={statusline}: the person's status line is not touched"
+            );
+            assert!(cs.reason.ends_with(
+                "Ubuntu already has a status line, so Marshell leaves it. The row won't show the model or context use."
+            ));
+        }
+    }
+
+    #[test]
+    fn a_distro_plan_writes_no_chain_file() {
+        // Nothing there, the person's own line, and a line of Marshell's from a Windows setup.
+        let windows_line = statusline_command(&fake_home()).unwrap();
+        let ours = json!({ "statusLine": { "type": "command", "command": windows_line } }).to_string();
+        for settings in [None, Some(THEIRS.to_string()), Some(ours.clone())] {
+            let cs = distro_install(None, settings.as_deref(), &BOTH);
+            assert!(
+                cs.edits.iter().all(|e| e.scope != ConfigScope::Marshell),
+                "{settings:?}"
+            );
+            assert!(
+                cs.edits.iter().all(|e| !e.path.contains("statusline-chain")),
+                "{settings:?}"
+            );
+        }
+        // The line from the Windows setup is pointed at the distro's bridge, and says it has no chain.
+        let cs = distro_install(None, Some(&ours), &BOTH);
+        let line = set_values(&cs)
+            .into_iter()
+            .find(|(_, pointer, _)| pointer == "/statusLine/command")
+            .unwrap();
+        assert!(line.2.as_str().unwrap().ends_with(" --no-chain"));
+    }
+
+    #[test]
+    fn a_distro_remove_takes_out_its_own_line_and_leaves_the_persons() {
+        let installed = distro_install(None, None, &BOTH);
+        let line = set_values(&installed)
+            .into_iter()
+            .find(|(_, pointer, _)| pointer == "/statusLine")
+            .unwrap()
+            .2;
+        let ours = json!({ "statusLine": line }).to_string();
+        let cs = remove_plan(&distro_user_home(), None, Some(&ours), None, Some("Ubuntu")).unwrap();
+        assert!(
+            cs.edits
+                .iter()
+                .any(|e| matches!(&e.op, EditOp::JsonRemove { pointer } if pointer == "/statusLine"))
+        );
+
+        let cs = remove_plan(&distro_user_home(), None, Some(THEIRS), None, Some("Ubuntu")).unwrap();
+        assert!(cs.edits.is_empty(), "{cs:?}");
     }
 }

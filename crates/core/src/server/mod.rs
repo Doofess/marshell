@@ -96,6 +96,14 @@ pub struct AppState(Arc<Inner>);
 /// When `wsl.exe` last answered for an agent in a distro, and the version it printed (None when none could be read).
 type WslVersion = (std::time::Instant, Option<String>);
 
+/// Where Marshell's hooks go in a WSL distro: its home as a Windows (UNC) path the core can read and write, and the
+/// bridge's path as the distro's Linux sees it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DistroTarget {
+    pub home: PathBuf,
+    pub bridge: String,
+}
+
 struct Inner {
     token: String,
     host: String,
@@ -204,6 +212,9 @@ struct Inner {
     /// What `wsl.exe` last said of each `(distro lowercased, agent)`, and when. A version that could not be read is
     /// kept too, so a distro without the CLI is not asked on every hook.
     wsl_versions: Mutex<HashMap<(String, String), WslVersion>>,
+    /// The target of a distro that a test pins, in place of asking `wsl.exe`. `Some(None)` is a distro that can't be
+    /// reached.
+    distro_target: Option<Option<DistroTarget>>,
     /// The previous process readings, so each `/v1/perf` call can tell the CPU used since the last one.
     sampler: Mutex<crate::diagnostics::perf::Sampler>,
     /// The diagnostics export waiting to be read and saved.
@@ -301,6 +312,7 @@ impl AppState {
             agy_version: None,
             wsl_version: None,
             wsl_versions: Mutex::new(HashMap::new()),
+            distro_target: None,
             sampler: Mutex::new(crate::diagnostics::perf::Sampler::new()),
             previews: crate::diagnostics::export::Previews::default(),
             view: tokio::sync::watch::channel(marshell_protocol::api::UiView {
@@ -407,6 +419,14 @@ impl AppState {
         Arc::get_mut(&mut self.0)
             .expect("with_wsl_version runs before the state is shared")
             .wsl_version = Some(version);
+        self
+    }
+    /// Pins where hooks go in a WSL distro, so a test never runs `wsl.exe`. `None` is a distro that can't be reached.
+    /// Call it before the state is cloned.
+    pub fn with_distro_target(mut self, target: Option<DistroTarget>) -> Self {
+        Arc::get_mut(&mut self.0)
+            .expect("with_distro_target runs before the state is shared")
+            .distro_target = Some(target);
         self
     }
     /// Sets how long a permission request is held. Call it before the state is cloned.

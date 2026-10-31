@@ -680,3 +680,41 @@ fn claude_and_codex_outside_a_tab_print_nothing() {
         assert_eq!(code, Some(0));
     }
 }
+
+fn statusline(no_chain: bool) -> Vec<String> {
+    let mut args = argv("statusline");
+    if no_chain {
+        args.push("--no-chain".into());
+    }
+    args
+}
+
+fn write_chain(home: &std::path::Path, text: &str) {
+    let dir = home.join("agents").join("claude");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("statusline-chain.json"), text).unwrap();
+}
+
+#[test]
+fn statusline_no_chain_skips_the_chain() {
+    // A chain that cannot be read is logged by a run that reads it, so no line proves the flag never read it.
+    let home = tempfile::tempdir().unwrap();
+    write_chain(home.path(), "not json");
+    assert!(go(home.path(), &[], statusline(true), b"{}").is_empty());
+    assert!(log_lines(home.path()).is_empty(), "{:?}", log_lines(home.path()));
+    assert!(go(home.path(), &[], statusline(false), b"{}").is_empty());
+    assert_eq!(log_lines(home.path()).len(), 1);
+
+    // A chain that holds a command is not run either: Marshell's own line is empty.
+    write_chain(home.path(), r#"{"statusLine":{"type":"command","command":"echo ran"}}"#);
+    assert!(go(home.path(), &[], statusline(true), b"{}").is_empty());
+}
+
+#[test]
+fn no_chain_is_for_the_status_line_only() {
+    let home = tempfile::tempdir().unwrap();
+    let mut args = argv("event");
+    args.push("--no-chain".into());
+    assert!(go(home.path(), &[], args, b"{}").is_empty());
+    assert_eq!(log_lines(home.path()).len(), 1);
+}

@@ -65,7 +65,7 @@ fn call(args: &Args, stdin: &mut dyn Read, env: Env, ancestors: Ancestors, home:
         if let Err(e) = stdin.read_to_end(&mut bytes) {
             return fail(&format!("cannot read stdin: {e}"));
         }
-        return statusline::run(home, &args.agent, &bytes, env);
+        return statusline::run(home, &args.agent, &bytes, env, args.no_chain);
     }
     // Grok Build runs Claude Code's hooks from `.claude/settings*.json`; its events are not Claude's.
     if args.agent == "claude" && env("GROK_HOOK_EVENT").is_some_and(|v| !v.is_empty()) {

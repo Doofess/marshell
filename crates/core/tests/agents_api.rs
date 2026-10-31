@@ -2,7 +2,8 @@ use axum::body::Body;
 use axum::http::{Request, StatusCode, header};
 use marshell_core::paths;
 use marshell_core::projects::{canonical, record};
-use marshell_core::server::{AppState, router};
+use marshell_core::server::{AppState, DistroTarget, router};
+use marshell_protocol::api::{Profile, ShellFamily};
 use serde_json::{Value, json};
 use std::path::PathBuf;
 use tower::ServiceExt;
@@ -2323,4 +2324,247 @@ async fn a_row_whose_value_masking_changed_is_locked_in_the_view() {
     let model = rows.iter().find(|s| s["key"] == "model").unwrap();
     assert_eq!(model["lock"], json!({"kind": "hidden"}));
     assert!(!body.to_string().contains("abc-secret"));
+}
+
+// ---- hooks inside a WSL distro ----
+
+const LINUX_BRIDGE: &str = "/mnt/c/Users/x y/.marshell/bin/marshell-hook.exe";
+
+struct DistroEnv {
+    _dir: tempfile::TempDir,
+    app: axum::Router,
+    /// The distro's home, as the core reaches it. A folder of a recorded project stands in for the UNC share, so the
+    /// config guard (which does not admit a `\\wsl.localhost` path) is not exercised here.
+    wsl_home: PathBuf,
+    /// The Windows settings file, which a distro plan must leave alone.
+    settings: PathBuf,
+}
+
+fn wsl_profile(name: &str, family: ShellFamily) -> Profile {
+    Profile {
+        id: name.to_lowercase(),
+        name: name.into(),
+        command: vec!["wsl.exe".into(), "-d".into(), name.into()],
+        family,
+        cwd: None,
+        env: Vec::new(),
+        shell_integration: false,
+        terminal_theme: None,
+        detected: true,
+    }
+}
+
+/// A state with a detected `Ubuntu` WSL profile (and a `Borrowed` one of another family that only has the command
+/// line of a WSL profile), whose distro target is faked: `reachable` false is a distro that does not answer.
+fn distro_env(reachable: bool) -> DistroEnv {
+    let dir = tempfile::tempdir().unwrap();
+    let root = canonical(dir.path());
+    let home = root.join("home");
+    let project = root.join("project");
+    let wsl_home = project.join("ubuntu-home");
+    std::fs::create_dir_all(&home).unwrap();
+    std::fs::create_dir_all(&wsl_home).unwrap();
+    record(&home, &project, 1).unwrap();
+    let settings = project.join("settings.json");
+    let target = reachable.then(|| DistroTarget {
+        home: wsl_home.clone(),
+        bridge: LINUX_BRIDGE.into(),
+    });
+    let st = AppState::new(
+        TOKEN.into(),
+        PORT,
+        vec!["http://tauri.localhost".into()],
+        home,
+        vec![
+            wsl_profile("Ubuntu", ShellFamily::Wsl),
+            wsl_profile("Borrowed", ShellFamily::Posix),
+        ],
+    )
+    // The Windows overrides must not redirect a distro plan.
+    .with_claude_settings(settings.clone())
+    .with_codex_hooks(project.join("codex-hooks.json"))
+    .with_agy_home(project.join("agy-home"))
+    .with_agent_path(|_| None)
+    .with_distro_target(target);
+    DistroEnv {
+        _dir: dir,
+        app: router(st),
+        wsl_home,
+        settings,
+    }
+}
+
+fn distro_want(distro: &str) -> Value {
+    json!({"status": true, "statusline": true, "approve": true, "distro": distro})
+}
+
+/// The files of a preview, as paths.
+fn preview_paths(preview: &Value) -> Vec<PathBuf> {
+    preview["files"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|f| PathBuf::from(f["path"].as_str().unwrap()))
+        .collect()
+}
+
+#[tokio::test]
+async fn plan_refuses_an_unknown_distro() {
+    let e = distro_env(true);
+    // Not a profile, a profile that is not WSL, and names with more or less than the distro in them.
+    for name in ["Nope", "Borrowed", "Ubuntu ", "", "Ubuntu/../x"] {
+        let (status, bytes) = post_raw(&e.app, "/v1/agents/claude/hooks/plan", distro_want(name)).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{name:?}");
+        assert_eq!(
+            String::from_utf8(bytes).unwrap(),
+            format!("No WSL distro named \"{name}\"."),
+            "{name:?}"
+        );
+        let query = name.replace(' ', "%20").replace('/', "%2F");
+        let uri = format!("/v1/agents/claude/hooks/remove-plan?distro={query}");
+        let (status, _) = post_raw(&e.app, &uri, json!({})).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "remove {name:?}");
+    }
+    assert!(!e.settings.exists());
+}
+
+#[tokio::test]
+async fn plan_for_a_distro_targets_its_home() {
+    let e = distro_env(true);
+    let expected = [
+        ("claude", vec![e.wsl_home.join(".claude").join("settings.json")]),
+        ("codex", vec![e.wsl_home.join(".codex").join("hooks.json")]),
+        (
+            "antigravity",
+            vec![
+                e.wsl_home.join(".gemini").join("config").join("hooks.json"),
+                e.wsl_home.join(".gemini").join("antigravity-cli").join("settings.json"),
+            ],
+        ),
+    ];
+    for (agent, files) in expected {
+        // The distro's name is matched without regard to case.
+        let (status, preview) = post(&e.app, &format!("/v1/agents/{agent}/hooks/plan"), distro_want("ubuntu")).await;
+        assert_eq!(status, StatusCode::OK, "{agent}: {preview}");
+        assert_eq!(preview["can_apply"], true, "{agent}: {preview}");
+        // Only the distro's files: no chain file, and none of the Windows ones.
+        let mut got = preview_paths(&preview);
+        got.sort();
+        let mut want = files;
+        want.sort();
+        assert_eq!(got, want, "{agent}");
+
+        let (status, applied) = post(&e.app, "/v1/config/apply", shown(&preview)).await;
+        assert_eq!(status, StatusCode::OK, "{agent}: {applied}");
+        for file in &want {
+            let text = std::fs::read_to_string(file).unwrap();
+            assert!(text.contains(LINUX_BRIDGE), "{agent}: {text}");
+        }
+    }
+    assert!(!e.settings.exists(), "the Windows settings file is not the distro's");
+}
+
+#[tokio::test]
+async fn remove_plan_for_a_distro_targets_its_home() {
+    let e = distro_env(true);
+    let theirs = "{\n  \"statusLine\": {\"type\": \"command\", \"command\": \"echo mine\"}\n}\n";
+    let file = e.wsl_home.join(".claude").join("settings.json");
+    std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+    std::fs::write(&file, theirs).unwrap();
+
+    let (_, preview) = post(&e.app, "/v1/agents/claude/hooks/plan", distro_want("Ubuntu")).await;
+    let (status, applied) = post(&e.app, "/v1/config/apply", shown(&preview)).await;
+    assert_eq!(status, StatusCode::OK, "{applied}");
+    // The person's status line stays: Marshell's hooks are in and its own status line is not.
+    let written = std::fs::read_to_string(&file).unwrap();
+    assert!(
+        written.contains("echo mine") && written.contains(LINUX_BRIDGE),
+        "{written}"
+    );
+    assert!(!written.contains("--no-chain"), "{written}");
+    assert!(
+        preview["reason"].as_str().unwrap().ends_with(
+            "Ubuntu already has a status line, so Marshell leaves it. The row won't show the model or context use."
+        ),
+        "{preview}"
+    );
+
+    let (status, removal) = post(&e.app, "/v1/agents/claude/hooks/remove-plan?distro=Ubuntu", json!({})).await;
+    assert_eq!(status, StatusCode::OK, "{removal}");
+    assert_eq!(removal["statusline_left"], true, "{removal}");
+    assert_eq!(preview_paths(&removal["preview"]), std::slice::from_ref(&file));
+    let (status, applied) = post(&e.app, "/v1/config/apply", shown(&removal["preview"])).await;
+    assert_eq!(status, StatusCode::OK, "{applied}");
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), theirs);
+
+    // Codex and Antigravity: the same, for their own files.
+    for agent in ["codex", "antigravity"] {
+        let (_, preview) = post(&e.app, &format!("/v1/agents/{agent}/hooks/plan"), distro_want("Ubuntu")).await;
+        let (status, applied) = post(&e.app, "/v1/config/apply", shown(&preview)).await;
+        assert_eq!(status, StatusCode::OK, "{agent}: {applied}");
+        let uri = format!("/v1/agents/{agent}/hooks/remove-plan?distro=Ubuntu");
+        let (status, removal) = post(&e.app, &uri, json!({})).await;
+        assert_eq!(status, StatusCode::OK, "{agent}: {removal}");
+        let under = preview_paths(&removal["preview"]);
+        assert!(
+            !under.is_empty() && under.iter().all(|p| p.starts_with(&e.wsl_home)),
+            "{agent}: {under:?}"
+        );
+        let (status, applied) = post(&e.app, "/v1/config/apply", shown(&removal["preview"])).await;
+        assert_eq!(status, StatusCode::OK, "{agent}: {applied}");
+    }
+}
+
+#[tokio::test]
+async fn a_codex_plan_in_a_distro_sends_the_person_to_trust_the_hooks_there() {
+    let e = distro_env(true);
+    let (_, preview) = post(&e.app, "/v1/agents/codex/hooks/plan", distro_want("Ubuntu")).await;
+    assert!(
+        preview["reason"]
+            .as_str()
+            .unwrap()
+            .ends_with("Then trust them in Codex's /hooks inside Ubuntu."),
+        "{preview}"
+    );
+}
+
+#[tokio::test]
+async fn an_unreachable_distro_gets_the_422_copy() {
+    let e = distro_env(false);
+    for agent in ["claude", "codex", "antigravity"] {
+        let (status, bytes) = post_raw(&e.app, &format!("/v1/agents/{agent}/hooks/plan"), distro_want("Ubuntu")).await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{agent}");
+        assert_eq!(
+            String::from_utf8(bytes).unwrap(),
+            "Couldn't reach Ubuntu. Start it and try again."
+        );
+        let uri = format!("/v1/agents/{agent}/hooks/remove-plan?distro=Ubuntu");
+        let (status, bytes) = post_raw(&e.app, &uri, json!({})).await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "remove {agent}");
+        assert_eq!(
+            String::from_utf8(bytes).unwrap(),
+            "Couldn't reach Ubuntu. Start it and try again."
+        );
+    }
+    assert!(!e.wsl_home.join(".claude").exists());
+}
+
+#[tokio::test]
+async fn plan_is_refused_without_the_bearer() {
+    let e = distro_env(true);
+    for (uri, body) in [
+        ("/v1/agents/claude/hooks/plan", distro_want("Ubuntu")),
+        ("/v1/agents/claude/hooks/remove-plan?distro=Ubuntu", json!({})),
+    ] {
+        let req = Request::builder()
+            .method("POST")
+            .uri(uri)
+            .header(header::HOST, format!("127.0.0.1:{PORT}"))
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(body.to_string()))
+            .unwrap();
+        let (status, _) = send(&e.app, req).await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED, "{uri}");
+    }
+    assert!(!e.wsl_home.join(".claude").exists());
 }

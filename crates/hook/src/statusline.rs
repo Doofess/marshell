@@ -31,7 +31,9 @@ const OWN_TAG: &str = "--tag mshl1";
 /// The forward to the core runs beside it, whatever the chain holds (the core reads context and plan
 /// use from it), and is waited for only until its 100 ms budget is spent.
 /// `home` is `None` when there is nowhere to find a chain file, and then nothing is printed.
-pub fn run(home: Option<&Path>, agent: &str, stdin_bytes: &[u8], env: Env) -> Vec<u8> {
+/// With `no_chain` (an agent in a WSL distro, which has no chain file) the chain is neither read nor run, and
+/// Marshell's own line, which is empty, is all that prints.
+pub fn run(home: Option<&Path>, agent: &str, stdin_bytes: &[u8], env: Env, no_chain: bool) -> Vec<u8> {
     let Some(home) = home else {
         return Vec::new();
     };
@@ -46,6 +48,7 @@ pub fn run(home: Option<&Path>, agent: &str, stdin_bytes: &[u8], env: Env) -> Ve
             agent: agent.to_string(),
             tag: None,
             event: None,
+            no_chain: false,
         };
         let tab = env(&brand::env_var("TAB_ID")).filter(|t| !t.is_empty());
         let body = stdin_bytes.to_vec();
@@ -64,7 +67,8 @@ pub fn run(home: Option<&Path>, agent: &str, stdin_bytes: &[u8], env: Env) -> Ve
         drop(done_tx);
     }
 
-    let out = match read_chain(home, agent) {
+    let chain = if no_chain { Ok(None) } else { read_chain(home, agent) };
+    let out = match chain {
         Ok(Some(command)) if command.contains(OWN_TAG) => {
             // Running it would start this bridge again, which would read the same chain, and so on.
             Err("the chain names Marshell's own status line, so it was not run".to_string())
@@ -240,11 +244,11 @@ mod tests {
                 None => drop(std::fs::remove_file(&chain)),
             }
             assert!(
-                run(Some(home.path()), "antigravity", b"{}", &env).is_empty(),
+                run(Some(home.path()), "antigravity", b"{}", &env, false).is_empty(),
                 "{text:?}"
             );
         }
-        assert!(run(None, "antigravity", b"{}", &env).is_empty());
+        assert!(run(None, "antigravity", b"{}", &env, false).is_empty());
     }
 
     /// agy runs a status line as `cmd /c "<command>"`, so the person's own line runs under cmd, not Claude's shell.
@@ -261,7 +265,7 @@ mod tests {
         .unwrap();
         let path = std::env::var("PATH").unwrap_or_default();
         let env = move |k: &str| (k == "PATH").then(|| path.clone());
-        let out = String::from_utf8(run(Some(home.path()), "antigravity", b"{}", &env)).unwrap();
+        let out = String::from_utf8(run(Some(home.path()), "antigravity", b"{}", &env, false)).unwrap();
         assert!(out.trim_end().to_ascii_lowercase().ends_with("cmd.exe"), "{out:?}");
     }
 

@@ -1,11 +1,12 @@
 //! What Marshell knows about an agent's hook setup, and the previews that install and remove it.
 //! Only `claude`, `codex` and `antigravity` have an adapter; any other agent is a 404. Applying goes through `/v1/config/apply`.
 
-use super::AppState;
+use super::{AppState, DistroTarget};
 use crate::agents::account::{claude_status, codex_status};
 use crate::agents::antigravity::hooks as agy;
 use crate::agents::claude::{self, hooks};
 use crate::agents::codex::{self, trust};
+use crate::agents::common::Bridge;
 use crate::agents::install::{codex_newer, install_kind, update_text};
 use crate::agents::settings_view::{control, has_bom, masked_render, parse_masked, read_managed, text_problem, view};
 use crate::agents::skill;
@@ -24,6 +25,7 @@ use marshell_protocol::account::{AccountStatus, SignIn};
 use marshell_protocol::agents::{
     AgentFound, AgentSetup, HookInstall, HookPlanRequest, ParseProblem, RemovePreview, SettingsState, SkillInstall,
 };
+use marshell_protocol::api::ShellFamily;
 use marshell_protocol::config::{
     Applies, ApplyConflict, ApplyRequest, ApplyResult, ChangeSet, ConfigPreview, ConfigScope, EditOp, ExpectedHash,
     FileEdit, FileStatus, RefuseReason,
@@ -58,6 +60,17 @@ fn wsl_version_argv(distro: &str, exe: &str) -> Vec<String> {
     ["-d", distro, "--exec", "sh", "-c", WSL_VERSION_SCRIPT, exe]
         .map(String::from)
         .to_vec()
+}
+
+/// The target from what `distro` printed for its `$HOME` and for the bridge's Linux path. None for a home that is
+/// not under the distro's own share (one under `/mnt/c` is a folder of Windows, and a distro's hooks must never
+/// land in the Windows user's files), and for a bridge path that is not absolute.
+fn distro_target_of(distro: &str, linux_home: &str, linux_bridge: &str) -> Option<DistroTarget> {
+    let home = crate::wsl::to_windows(distro, linux_home).filter(|home| crate::wsl::under_distro(distro, home))?;
+    linux_bridge.starts_with('/').then(|| DistroTarget {
+        home,
+        bridge: linux_bridge.to_string(),
+    })
 }
 
 /// A status and the message the route replies with.
@@ -210,6 +223,120 @@ impl AppState {
             Err((_, problem)) => (SkillInstall::Unavailable, Some(problem)),
         };
         Ok((state, path.to_string_lossy().into_owned(), problem))
+    }
+
+    /// The distro of the detected WSL profile that `name` equals, case-insensitively, spelt as detected. A request
+    /// names a distro only to pick one of those; anything else is a 400.
+    fn detected_distro(&self, name: &str) -> Result<String, Fail> {
+        self.profiles_snapshot()
+            .profiles
+            .iter()
+            .filter(|p| matches!(p.family, ShellFamily::Wsl))
+            .filter_map(|p| crate::wsl::distro_of_argv(&p.command))
+            .find(|distro| distro.to_lowercase() == name.to_lowercase())
+            .ok_or_else(|| (StatusCode::BAD_REQUEST, format!("No WSL distro named \"{name}\".")))
+    }
+
+    /// Where Marshell's hooks go in `distro`: its home as a UNC path and the bridge as the distro sees it, or the one
+    /// a test pinned. Runs `wsl.exe` (which starts a stopped distro), so callers go through `spawn_blocking`. A distro
+    /// that does not answer, or answers with a path that can't be used, is a 422.
+    pub(crate) fn distro_target(&self, distro: &str) -> Result<DistroTarget, Fail> {
+        let unreachable = || {
+            (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                format!("Couldn't reach {distro}. Start it and try again."),
+            )
+        };
+        if let Some(pinned) = &self.0.distro_target {
+            return pinned.clone().ok_or_else(unreachable);
+        }
+        let text = |argv: &[&str]| {
+            // A Linux program's output through `--exec` is UTF-8.
+            let out = run_wsl(argv, WSL_VERSION_TIMEOUT);
+            String::from_utf8_lossy(&out).trim_end_matches(['\r', '\n']).to_string()
+        };
+        let linux_home = text(&["-d", distro, "--exec", "sh", "-c", r#"printf %s "$HOME""#]);
+        // The path goes as one argument, never through a shell.
+        let bridge_exe = paths::bridge_exe(&self.0.home);
+        let bridge_exe = bridge_exe.to_str().ok_or_else(unreachable)?;
+        let bridge = text(&["-d", distro, "--exec", "wslpath", "-u", bridge_exe]);
+        distro_target_of(distro, &linux_home, &bridge).ok_or_else(unreachable)
+    }
+
+    /// The plan to set up hooks inside `distro`: the same plan as on Windows, for the files under the distro's own
+    /// home and with the bridge named by its Linux path. The Windows overrides of the settings folders do not apply.
+    fn distro_install(&self, adapter: Adapter, distro: &str, want: &HookPlanRequest) -> Result<ChangeSet, Fail> {
+        let target = self.distro_target(distro)?;
+        self.ensure_bridge(want)?;
+        let bridge = Bridge::Distro {
+            name: distro.to_string(),
+            path: target.bridge,
+        };
+        let home = target.home;
+        match adapter {
+            Adapter::Claude => {
+                let path = home.join(".claude").join("settings.json");
+                let text = read_text(&path).map_err(|e| refused(&e))?;
+                hooks::install_plan(&path, &home, text.as_deref(), None, None, &bridge, want)
+            }
+            Adapter::Codex => {
+                let path = home.join(".codex").join("hooks.json");
+                let text = read_text(&path).map_err(|e| refused(&e))?;
+                codex::hooks::install_plan(&path, text.as_deref(), &bridge, want)
+            }
+            Adapter::Antigravity => {
+                let hooks_text = read_text(&agy::hooks_path(&home)).map_err(|e| refused(&e))?;
+                let settings_text = read_text(&agy::settings_path(&home)).map_err(|e| refused(&e))?;
+                agy::install_plan(
+                    &home,
+                    hooks_text.as_deref(),
+                    settings_text.as_deref(),
+                    None,
+                    None,
+                    &bridge,
+                    want,
+                )
+            }
+        }
+        .map_err(|e| refused(&e))
+    }
+
+    /// The plan to take Marshell's hooks out of `distro`.
+    fn distro_remove(&self, adapter: Adapter, distro: &str) -> Result<RemovePreview, Fail> {
+        let home = self.distro_target(distro)?.home;
+        let (changes, statusline_left) = match adapter {
+            Adapter::Claude => {
+                let path = home.join(".claude").join("settings.json");
+                let text = read_text(&path).map_err(|e| refused(&e))?;
+                let plan =
+                    hooks::remove_plan(&path, &home, text.as_deref(), None, Some(distro)).map_err(|e| refused(&e))?;
+                (plan.changes, plan.statusline_left)
+            }
+            Adapter::Codex => {
+                let path = home.join(".codex").join("hooks.json");
+                let text = read_text(&path).map_err(|e| refused(&e))?;
+                let changes =
+                    codex::hooks::remove_plan(&path, text.as_deref(), &self.0.home).map_err(|e| refused(&e))?;
+                (changes, false)
+            }
+            Adapter::Antigravity => {
+                let hooks_text = read_text(&agy::hooks_path(&home)).map_err(|e| refused(&e))?;
+                let settings_text = read_text(&agy::settings_path(&home)).map_err(|e| refused(&e))?;
+                let changes = agy::remove_plan(
+                    &home,
+                    hooks_text.as_deref(),
+                    settings_text.as_deref(),
+                    None,
+                    Some(distro),
+                )
+                .map_err(|e| refused(&e))?;
+                (changes, false)
+            }
+        };
+        Ok(RemovePreview {
+            preview: self.0.config.preview(changes),
+            statusline_left,
+        })
     }
 
     fn agy_inputs(&self) -> Result<AgyInputs, Fail> {
@@ -1206,40 +1333,53 @@ pub async fn plan(
     Json(want): Json<HookPlanRequest>,
 ) -> Result<Json<ConfigPreview>, Fail> {
     let adapter = adapter(&agent)?;
+    let distro = want.distro.as_deref().map(|d| st.detected_distro(d)).transpose()?;
     let preview = tokio::task::spawn_blocking(move || {
-        let mut changes = match adapter {
-            Adapter::Claude => {
-                let inputs = st.inputs()?;
-                st.ensure_bridge(&want)?;
-                hooks::install_plan(
-                    &inputs.settings_path,
-                    &inputs.user_home,
-                    inputs.text.as_deref(),
-                    inputs.chain_text.as_deref(),
-                    &st.0.home,
-                    &want,
-                )
+        let mut changes = match &distro {
+            Some(distro) => st.distro_install(adapter, distro, &want)?,
+            None => match adapter {
+                Adapter::Claude => {
+                    let inputs = st.inputs()?;
+                    st.ensure_bridge(&want)?;
+                    hooks::install_plan(
+                        &inputs.settings_path,
+                        &inputs.user_home,
+                        inputs.text.as_deref(),
+                        inputs.chain_text.as_deref(),
+                        Some(&paths::statusline_chain(&st.0.home, AGENT)),
+                        &Bridge::local(&st.0.home),
+                        &want,
+                    )
+                }
+                Adapter::Codex => {
+                    let inputs = st.codex_inputs()?;
+                    st.ensure_bridge(&want)?;
+                    codex::hooks::install_plan(
+                        &inputs.hooks_path,
+                        inputs.text.as_deref(),
+                        &Bridge::local(&st.0.home),
+                        &want,
+                    )
+                }
+                Adapter::Antigravity => {
+                    let inputs = st.agy_inputs()?;
+                    st.ensure_bridge(&want)?;
+                    agy::install_plan(
+                        &inputs.user_home,
+                        inputs.hooks_text.as_deref(),
+                        inputs.settings_text.as_deref(),
+                        inputs.chain_text.as_deref(),
+                        Some(&paths::statusline_chain(&st.0.home, ANTIGRAVITY)),
+                        &Bridge::local(&st.0.home),
+                        &want,
+                    )
+                }
             }
-            Adapter::Codex => {
-                let inputs = st.codex_inputs()?;
-                st.ensure_bridge(&want)?;
-                codex::hooks::install_plan(&inputs.hooks_path, inputs.text.as_deref(), &st.0.home, &want)
-            }
-            Adapter::Antigravity => {
-                let inputs = st.agy_inputs()?;
-                st.ensure_bridge(&want)?;
-                agy::install_plan(
-                    &inputs.user_home,
-                    inputs.hooks_text.as_deref(),
-                    inputs.settings_text.as_deref(),
-                    inputs.chain_text.as_deref(),
-                    &st.0.home,
-                    &want,
-                )
-            }
-        }
-        .map_err(|e| refused(&e))?;
-        if want.skill {
+            .map_err(|e| refused(&e))?,
+        };
+        // The skill file is the Windows home's. A distro's skill is not planned here, so a request for one inside a
+        // distro gets the hooks only.
+        if want.skill && distro.is_none() {
             // A skill Marshell can't touch is left out: it must not block the hooks.
             let path = st.skill_file(&agent)?;
             if let Ok(bytes) = st.skill_bytes(&path) {
@@ -1296,20 +1436,29 @@ pub async fn skill_remove_plan(
     Ok(Json(preview))
 }
 
+/// `?distro=<name>` on a remove plan: take the hooks out of that WSL distro instead of Windows.
+#[derive(serde::Deserialize)]
+pub struct DistroQuery {
+    distro: Option<String>,
+}
+
 pub async fn remove_plan(
     State(st): State<AppState>,
     UrlPath(agent): UrlPath<String>,
+    Query(query): Query<DistroQuery>,
 ) -> Result<Json<RemovePreview>, Fail> {
     let adapter = adapter(&agent)?;
-    let removal = tokio::task::spawn_blocking(move || match adapter {
-        Adapter::Claude => {
+    let distro = query.distro.as_deref().map(|d| st.detected_distro(d)).transpose()?;
+    let removal = tokio::task::spawn_blocking(move || match (adapter, distro) {
+        (adapter, Some(distro)) => st.distro_remove(adapter, &distro),
+        (Adapter::Claude, None) => {
             let inputs = st.inputs()?;
             let plan = hooks::remove_plan(
                 &inputs.settings_path,
                 &inputs.user_home,
                 inputs.text.as_deref(),
                 inputs.chain_text.as_deref(),
-                &st.0.home,
+                None,
             )
             .map_err(|e| refused(&e))?;
             Ok::<_, Fail>(RemovePreview {
@@ -1317,7 +1466,7 @@ pub async fn remove_plan(
                 statusline_left: plan.statusline_left,
             })
         }
-        Adapter::Codex => {
+        (Adapter::Codex, None) => {
             let inputs = st.codex_inputs()?;
             let changes = codex::hooks::remove_plan(&inputs.hooks_path, inputs.text.as_deref(), &st.0.home)
                 .map_err(|e| refused(&e))?;
@@ -1326,14 +1475,14 @@ pub async fn remove_plan(
                 statusline_left: false,
             })
         }
-        Adapter::Antigravity => {
+        (Adapter::Antigravity, None) => {
             let inputs = st.agy_inputs()?;
             let changes = agy::remove_plan(
                 &inputs.user_home,
                 inputs.hooks_text.as_deref(),
                 inputs.settings_text.as_deref(),
                 inputs.chain_text.as_deref(),
-                &st.0.home,
+                None,
             )
             .map_err(|e| refused(&e))?;
             Ok(RemovePreview {
@@ -1368,6 +1517,21 @@ mod tests {
             assert!(script.contains(folder), "{folder}");
         }
         assert!(!script.contains("codex"));
+    }
+
+    #[test]
+    fn a_distro_target_is_the_distros_own_share() {
+        let bridge = "/mnt/c/Users/x y/.marshell/bin/marshell-hook.exe";
+        let target = distro_target_of("Ubuntu", "/home/me", bridge).unwrap();
+        assert_eq!(target.home, PathBuf::from(r"\\wsl.localhost\Ubuntu\home\me"));
+        assert_eq!(target.bridge, bridge);
+        // A home on a Windows drive, an empty or relative one, and one with `..`: no target.
+        for home in ["/mnt/c/Users/me", "/mnt/c", "", "me", "/home/../mnt/c/x"] {
+            assert_eq!(distro_target_of("Ubuntu", home, bridge), None, "{home:?}");
+        }
+        // A bridge that is not a Linux path: no target.
+        assert_eq!(distro_target_of("Ubuntu", "/home/me", ""), None);
+        assert_eq!(distro_target_of("Ubuntu", "/home/me", r"C:\x"), None);
     }
 
     #[test]

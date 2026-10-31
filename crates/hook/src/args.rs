@@ -1,6 +1,7 @@
 use marshell_protocol::hook::HookRole;
 
-/// The command line of one bridge call: `<role> --agent <name> [--event <Name>] [--tag <marker>]`.
+/// The command line of one bridge call: `<role> --agent <name> [--event <Name>] [--tag <marker>]`, and for the
+/// `statusline` role `--no-chain`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Args {
     pub role: HookRole,
@@ -9,6 +10,8 @@ pub struct Args {
     pub tag: Option<String>,
     /// The hook's event name, for an agent whose payload doesn't carry one (Antigravity's).
     pub event: Option<String>,
+    /// `statusline` only: print only Marshell's own line, never run or read the chain. A distro has no chain file.
+    pub no_chain: bool,
 }
 
 /// `argv` is the arguments after the program name.
@@ -19,7 +22,12 @@ pub fn parse(argv: &[String]) -> Result<Args, String> {
     let mut agent = None;
     let mut tag = None;
     let mut event = None;
+    let mut no_chain = false;
     while let Some(flag) = it.next() {
+        if flag == "--no-chain" && role == HookRole::Statusline {
+            no_chain = true;
+            continue;
+        }
         let slot = match flag.as_str() {
             "--agent" => &mut agent,
             "--tag" => &mut tag,
@@ -43,6 +51,7 @@ pub fn parse(argv: &[String]) -> Result<Args, String> {
         agent,
         tag,
         event,
+        no_chain,
     })
 }
 
@@ -93,6 +102,14 @@ mod tests {
         assert_eq!(a.event.as_deref(), Some("PreInvocation"));
         assert_eq!(a.tag.as_deref(), Some("mshl1"));
         assert_eq!(parse(&v(&["event", "--agent", "claude"])).unwrap().event, None);
+    }
+
+    #[test]
+    fn no_chain_is_a_flag_of_the_status_line_only() {
+        let line = parse(&v(&["statusline", "--agent", "claude", "--tag", "mshl1", "--no-chain"])).unwrap();
+        assert!(line.no_chain);
+        assert!(!parse(&v(&["statusline", "--agent", "claude"])).unwrap().no_chain);
+        assert!(parse(&v(&["event", "--agent", "claude", "--no-chain"])).is_err());
     }
 
     #[test]
