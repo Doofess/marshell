@@ -112,8 +112,9 @@ pub async fn post(
         && in_wsl(&st, tab).await
     {
         if json.get("hook_event_name").and_then(serde_json::Value::as_str) == Some("SessionEnd") {
-            // The agent is gone from the row: nothing is left to fold into a status.
-            left_wsl = st.registry().clear_hook_agent(tab, &agent);
+            // The agent is gone from the row: nothing is left to fold into a status, even when no earlier hook marked it.
+            st.registry().clear_hook_agent(tab, &agent);
+            left_wsl = true;
         } else if matches!(role, HookRole::Event | HookRole::Permission | HookRole::Statusline) {
             st.registry().mark_hook_agent(tab, &agent);
         }

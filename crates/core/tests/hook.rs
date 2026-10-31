@@ -1068,6 +1068,18 @@ async fn session_end_clears_the_wsl_agent() {
 }
 
 #[tokio::test]
+async fn a_lone_session_end_in_a_wsl_tab_leaves_no_status() {
+    let st = wsl_state();
+    let app = router(st.clone());
+    let tab = start_shell(&app, "wsl-ubuntu").await;
+    post_fixture(&app, "event", &tab, "SessionEnd").await;
+    let info = row(&st, &tab);
+    stop(&st, &tab);
+    assert_eq!(info.foreground, None);
+    assert_eq!(info.live, None);
+}
+
+#[tokio::test]
 async fn a_non_wsl_shell_tab_is_not_marked_by_hooks() {
     let st = wsl_state();
     let app = router(st.clone());
