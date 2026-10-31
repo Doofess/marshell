@@ -20,6 +20,7 @@ mod ports;
 mod profiles;
 mod projects;
 mod pty_ws;
+mod references;
 mod reports;
 mod scripts;
 mod sessions;
@@ -799,6 +800,7 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/import/windows-terminal", get(settings::windows_terminal))
         .route("/v1/projects", get(projects::get))
         .route("/v1/folders/check", get(folders::check))
+        .route("/v1/references", get(references::get).put(references::put))
         .route("/v1/scripts", get(scripts::get))
         .route("/v1/scripts/allow", post(scripts::allow))
         .route("/v1/scripts/run", post(scripts::run))
