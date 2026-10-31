@@ -1,6 +1,7 @@
 import type { AgentSetup } from "../../generated/AgentSetup";
 import type { ConfigPreview } from "../../generated/ConfigPreview";
 import type { HookPlanRequest } from "../../generated/HookPlanRequest";
+import type { Profile } from "../../generated/Profile";
 import { deletedFiles, previewDiff, toDetection, type HookAgent } from "../../lib/api/agents";
 import { addsStatusLine, CLI_NAME, consentHeadline, fileName, opensDiff, removalCopy, skillUndo, type Capability, type CliId, type ConsentPlan, type Detection } from "../onboarding/consent";
 
@@ -11,17 +12,38 @@ const CODEX_OFFER: Capability[] = ["status", "approve", "skill"];
 export type Want = HookPlanRequest;
 export const DEFAULT_WANT: Want = { status: true, statusline: true, approve: true, skill: true };
 /** Approval can be added on its own; chaining still needs status. */
-export const installRequest = (w: Want, agent: HookAgent = "claude"): HookPlanRequest => ({
+export const installRequest = (w: Want, agent: HookAgent = "claude", distro?: string): HookPlanRequest => ({
   status: w.status,
   statusline: agent !== "codex" && w.status && w.statusline,
   approve: w.approve,
-  skill: w.skill,
+  // The core installs no skill file inside a distro.
+  skill: distro === undefined && w.skill,
+  ...(distro === undefined ? {} : { distro }),
 });
-const onOf = installRequest;
+const onOf = (w: Want, agent: HookAgent = "claude", distro?: string) => installRequest(w, agent, distro);
 const ON = onOf(DEFAULT_WANT);
 
 /** An existing status install needs only the permission hook. */
 export const setupWant = (s: AgentSetup): Want => ({ ...(s.hooks === "installed" ? { status: false, statusline: false, approve: true } : DEFAULT_WANT), skill: s.skill !== "installed" && s.skill !== "unavailable" });
+
+/**
+ * The WSL distros the session profiles name, once each. The name is the profile's `-d` / `--distribution` argument in `command`
+ * (what the launch passes to wsl.exe), else the profile's own name (which detection sets to the distro). No distro is asked for.
+ */
+export function wslDistros(profiles: Pick<Profile, "name" | "command" | "family">[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const p of profiles) {
+    if (p.family !== "wsl") continue;
+    const at = p.command.findIndex((a) => a === "-d" || a === "--distribution");
+    const fromFlag = at >= 0 ? p.command[at + 1] : p.command.find((a) => a.startsWith("--distribution="))?.slice("--distribution=".length);
+    const name = fromFlag?.trim() || p.name.trim();
+    if (name === "" || seen.has(name.toLowerCase())) continue;
+    seen.add(name.toLowerCase());
+    out.push(name);
+  }
+  return out;
+}
 
 /** Where the Agents dialog opens from a session row's "set up" link: on that row's agent's Set up card. */
 export type SetupStart = { setup: HookAgent };
@@ -83,7 +105,8 @@ export const hooksOffNotice = (statuslineLeft: boolean): string =>
 export const startsOpen = (want: Want, skill: AgentSetup["skill"] | undefined): boolean => opensDiff(want.skill, skill);
 
 /** Where a Set up is: the preview the core made (none when the file is refused), and what the card says about it. */
-export type InstallFlow = { preview: ConfigPreview | null; open: boolean; busy: boolean; error?: string; conflict?: boolean; want?: Want };
+/** `distro` is set when the flow is for a WSL distro: the card then shows the core's words and no skill switch. */
+export type InstallFlow = { preview: ConfigPreview | null; open: boolean; busy: boolean; error?: string; conflict?: boolean; want?: Want; distro?: string };
 
 /** The first file the core refuses, as the sentence that says so. */
 function refusal(p: ConfigPreview): string | undefined {
@@ -99,11 +122,31 @@ export function removalBlock(p: ConfigPreview): string | undefined {
   return p.can_apply ? undefined : (refusal(p) ?? p.reason);
 }
 
+/**
+ * The setup as the card should read it for a WSL distro: nothing of the Windows files shows, the settings file is the one the preview
+ * names, and there is no skill file. Whether the distro already has hooks is not read (that would boot it); the preview says what changes.
+ */
+function distroSetup(s: AgentSetup, flow: InstallFlow): AgentSetup {
+  return {
+    ...s,
+    settings_path: flow.preview?.files[0]?.path ?? flow.distro ?? s.settings_path,
+    hooks: "none",
+    hooks_path: undefined,
+    approve_installed: false,
+    chained: false,
+    has_own_statusline: false,
+    needs_trust: false,
+    skill: "unavailable",
+    skill_problem: undefined,
+  };
+}
+
 /** The consent card's input for the core's setup and preview. A refused file gets a headline that says nothing will change. */
-export function consentProps(s: AgentSetup, flow: InstallFlow) {
+export function consentProps(windows: AgentSetup, flow: InstallFlow) {
+  const s = flow.distro === undefined ? windows : distroSetup(windows, flow);
   const want = flow.want ?? setupWant(s);
   const cli = s.agent as CliId;
-  const on = onOf(want, cli === "codex" ? "codex" : "claude");
+  const on = onOf(want, cli === "codex" ? "codex" : "claude", flow.distro);
   const files = flow.preview?.files ?? [];
   const base = toDetection(s);
   // With a preview, whether hooks.json exists is what the core read: a file with a hash before it.
@@ -124,9 +167,9 @@ export function consentProps(s: AgentSetup, flow: InstallFlow) {
     needsTrust: s.needs_trust,
     chainPath: chain?.path,
     // A Partial install's repair changes only what is missing or wrong (the diff shows which), so it isn't the whole install's count.
-    headline: flow.preview ? (refusal(flow.preview) ?? (done ? `Already set up. Nothing in ${s.settings_path} changes.` : unchanged ? "Nothing will change: status is off." : s.hooks === "partial" ? `Repair the hook entries Marshell added in ${s.settings_path}.` : undefined)) : flow.error ? `Marshell will not edit ${s.settings_path}, so nothing will change.` : `Checking ${s.settings_path}…`,
+    headline: flow.preview ? (refusal(flow.preview) ?? (flow.distro !== undefined ? flow.preview.reason : done ? `Already set up. Nothing in ${s.settings_path} changes.` : unchanged ? "Nothing will change: status is off." : s.hooks === "partial" ? `Repair the hook entries Marshell added in ${s.settings_path}.` : undefined)) : flow.error ? `Marshell will not edit ${s.settings_path}, so nothing will change.` : `Checking ${s.settings_path}…`,
   };
   // Allow is for a preview the core can apply; `done` is the one that has nothing left to change, whose Skip becomes Done.
   const allow = Boolean(flow.preview?.can_apply) && !flow.conflict;
-  return { scenario: { detection, plan }, on, offer: s.hooks === "installed" ? (["approve", "skill"] as Capability[]) : cli === "codex" ? CODEX_OFFER : OFFER, open: flow.open, busy: flow.busy, error: flow.error, allow, done };
+  return { scenario: { detection, plan }, on, offer: flow.distro !== undefined ? (cli === "codex" ? CODEX_OFFER : OFFER).filter((c) => c !== "skill") : s.hooks === "installed" ? (["approve", "skill"] as Capability[]) : cli === "codex" ? CODEX_OFFER : OFFER, open: flow.open, busy: flow.busy, error: flow.error, allow, done };
 }

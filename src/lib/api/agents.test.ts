@@ -63,6 +63,18 @@ describe("agents api", () => {
     expect(call(r)).toMatchObject({ url: "http://127.0.0.1:9/v1/agents/claude/hooks/remove-plan", method: "POST" });
   });
 
+  it("planInstall_sends_the_distro", async () => {
+    const p = reply(preview([]));
+    vi.stubGlobal("fetch", p);
+    await planInstall(endpoint, "claude", { status: true, statusline: true, approve: true, skill: false, distro: "Ubuntu" });
+    expect(call(p).body).toMatchObject({ distro: "Ubuntu", skill: false });
+  });
+  it("planRemove_sends_the_distro_query", async () => {
+    const r = reply({ ...preview([]), statusline_left: false, preview: preview([]) });
+    vi.stubGlobal("fetch", r);
+    await planRemove(endpoint, "claude", "My Distro");
+    expect(call(r)).toMatchObject({ url: "http://127.0.0.1:9/v1/agents/claude/hooks/remove-plan?distro=My%20Distro", method: "POST" });
+  });
   it("applyPreview sends each file's before hash", async () => {
     const m = reply({ snapshot_id: "s1", files: [] });
     vi.stubGlobal("fetch", m);

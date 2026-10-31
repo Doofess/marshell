@@ -24,22 +24,26 @@ export function useInstallFlow(endpoint: Endpoint, agent: HookAgent, onApplied: 
 
   // The skill file's state when the person chose Set up: an edited one starts the diff open.
   const skillRef = useRef<Parameters<typeof startsOpen>[1]>(undefined);
+  // The WSL distro this flow is for; set by the plan that starts it and kept through a Reload and a switch.
+  const distroRef = useRef<string | undefined>(undefined);
 
-  const plan = useCallback(async (initial?: Want, skill?: Parameters<typeof startsOpen>[1]) => {
+  const plan = useCallback(async (initial?: Want, skill?: Parameters<typeof startsOpen>[1], distro?: string) => {
     if (initial) {
       wantRef.current = initial;
       skillRef.current = skill;
+      distroRef.current = distro;
       setWant(initial);
     }
     const mine = ++latest.current;
     const asked = wantRef.current;
     const open = startsOpen(asked, skillRef.current);
-    setFlow({ preview: null, open, busy: true });
+    const forDistro = distroRef.current;
+    setFlow({ preview: null, open, busy: true, distro: forDistro });
     try {
-      const preview = await planInstall(endpoint, agent, installRequest(asked, agent));
-      if (mine === latest.current) setFlow({ preview, open, busy: false });
+      const preview = await planInstall(endpoint, agent, installRequest(asked, agent, forDistro));
+      if (mine === latest.current) setFlow({ preview, open, busy: false, distro: forDistro });
     } catch (e) {
-      if (mine === latest.current) setFlow({ preview: null, open, busy: false, error: failureText(e) });
+      if (mine === latest.current) setFlow({ preview: null, open, busy: false, error: failureText(e), distro: forDistro });
     }
   }, [endpoint, agent]);
 
@@ -66,6 +70,7 @@ export function useInstallFlow(endpoint: Endpoint, agent: HookAgent, onApplied: 
     latest.current++;
     wantRef.current = DEFAULT_WANT;
     skillRef.current = undefined;
+    distroRef.current = undefined;
     setWant(DEFAULT_WANT);
     setFlow(null);
   }, []);

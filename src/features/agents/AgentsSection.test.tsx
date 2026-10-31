@@ -313,3 +313,29 @@ describe("AgentsSectionView errors", () => {
     expect(h).not.toContain('role="alert"');
   });
 });
+
+describe("AgentsSectionView WSL group", () => {
+  const wsl = (distros: string[] | undefined) =>
+    renderToStaticMarkup(<AgentsSectionView setup={SETUP} codex={CODEX_SETUP} antigravity={AGY_SETUP} panel={{ kind: "list" }} liveStatus={true} wslDistros={distros} {...handlers} />);
+  it("the_wsl_group_lists_each_distro", () => {
+    const h = wsl(["Ubuntu", "Debian"]);
+    for (const agent of ["claude", "codex", "antigravity"]) expect(h).toContain(`data-wsl-group="${agent}"`);
+    expect(h).toContain("Agents you run inside a WSL distro read their own settings there. Set up writes Marshell&#x27;s hooks into that distro.");
+    for (const d of ["Ubuntu", "Debian"]) {
+      expect(h).toContain(`>Set up in ${d}</button>`);
+      expect(h).toContain(`>Remove from ${d}</button>`);
+    }
+    expect(h.match(/>Set up in Ubuntu<\/button>/g)).toHaveLength(3);
+    // Set up comes before Remove, and the group comes after the Windows controls.
+    expect(h.indexOf(">Set up in Ubuntu<")).toBeLessThan(h.indexOf(">Remove from Ubuntu<"));
+    expect(h.indexOf(">Hooks off<")).toBeLessThan(h.indexOf('data-wsl-group="claude"'));
+  });
+  it("no_distros_says_so", () => {
+    const h = wsl([]);
+    expect(h).toContain("No WSL distros found.");
+    expect(h).not.toContain("Set up in ");
+  });
+  it("shows no group until the profiles were read", () => {
+    expect(wsl(undefined)).not.toContain("data-wsl-group");
+  });
+});
