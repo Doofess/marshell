@@ -164,7 +164,7 @@ fn note(st: &AppState, agent: &str, tab: &str, session: &str, transcript: &Path,
         "transcript_path": transcript.to_string_lossy(),
         "cwd": cwd.to_string_lossy(),
     });
-    assert!(st.history().note_event(agent, tab, None, &body, 1).is_none());
+    assert!(st.history().note_event(agent, tab, None, &body, 1, None).is_none());
     assert!(st.history().latest_for_tab(tab).is_some(), "the row was not indexed");
 }
 

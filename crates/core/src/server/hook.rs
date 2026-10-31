@@ -273,10 +273,15 @@ async fn record_history(st: &AppState, agent: &str, tab: &str, body: &serde_json
         .and_then(|s| s.recording_path())
         .and_then(|path| path.file_name().map(|name| name.to_string_lossy().into_owned()));
     let (agent, tab, body) = (agent.to_string(), tab.to_string(), body.clone());
-    let noter = history.clone();
-    let meta = tokio::task::spawn_blocking(move || noter.note_event(&agent, &tab, recording.as_deref(), &body, at_ms))
-        .await
-        .unwrap_or(None);
+    let (noter, asker) = (history.clone(), st.clone());
+    // A WSL tab's agent reports Linux paths: the note reads them under the tab's distro (the first lookup of a profile
+    // without `-d` runs `wsl.exe`, so it sits in the blocking task).
+    let meta = tokio::task::spawn_blocking(move || {
+        let distro = asker.wsl_distro_of_tab(&tab);
+        noter.note_event(&agent, &tab, recording.as_deref(), &body, at_ms, distro.as_deref())
+    })
+    .await
+    .unwrap_or(None);
     if let Some(meta) = meta {
         schedule_copy(history, meta);
     }

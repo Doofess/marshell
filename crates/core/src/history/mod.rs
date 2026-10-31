@@ -39,6 +39,11 @@ pub struct SessionMeta {
     /// name: never a key. Sidecars from before this field read as None, and the index does not keep it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub preset: Option<String>,
+    /// The WSL distro the conversation ran in. Its `transcript_path` and `cwd` are then Windows paths under
+    /// `\\wsl.localhost\<distro>` (or a drive, for a folder under `/mnt`). Sidecars from before this field read as
+    /// None, and the index does not keep it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub distro: Option<String>,
 }
 
 /// One recording a conversation ran in, and when.
@@ -64,36 +69,45 @@ pub fn valid_session_id(id: &str) -> bool {
         && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
 }
 
+/// True when `path` is somewhere a transcript may be read from: absolute and local, or, for a conversation in a WSL
+/// `distro`, under that distro's own share (`\\wsl.localhost\<distro>` or `\\wsl$\<distro>`, with no `..`). Every
+/// other UNC or device path is refused. Makes no filesystem call.
+fn readable_place(path: &str, distro: Option<&str>) -> bool {
+    distro.is_some_and(|d| crate::wsl::under_distro(d, Path::new(path)))
+        || (!is_remote_path(path) && Path::new(path).is_absolute())
+}
+
+/// The last component of `path`, split on both separators (a UNC path is not one `Path` on every host).
+fn last_component(path: &str) -> &str {
+    path.rsplit(['/', '\\']).next().unwrap_or_default()
+}
+
 /// True when the path is absolute, local (not UNC or a device path), and named exactly
-/// `<session_id>.jsonl`. Makes no filesystem call.
-pub fn transcript_allowed(path: &str, session_id: &str) -> bool {
-    if !valid_session_id(session_id) || is_remote_path(path) {
-        return false;
-    }
-    let path = Path::new(path);
-    path.is_absolute()
-        && path
-            .file_name()
-            .is_some_and(|name| *name == *format!("{session_id}.jsonl"))
+/// `<session_id>.jsonl`. With a `distro`, a path under that distro's share counts as local. Makes no filesystem call.
+pub fn transcript_allowed(path: &str, session_id: &str, distro: Option<&str>) -> bool {
+    valid_session_id(session_id)
+        && readable_place(path, distro)
+        && last_component(path) == format!("{session_id}.jsonl")
 }
 
 /// Like `transcript_allowed` for a sidecar read back from the archive. A Codex conversation's source is a
 /// rollout named `rollout-<time>-<id>.jsonl` (or `.jsonl.zst`), so only its place and kind are checked.
 pub fn sidecar_allowed(agent: &str, path: &str, session_id: &str) -> bool {
+    sidecar_allowed_in(agent, path, session_id, None)
+}
+
+/// `sidecar_allowed` for a conversation that ran in the WSL `distro`, if any: its share is a place the source may be.
+pub fn sidecar_allowed_in(agent: &str, path: &str, session_id: &str, distro: Option<&str>) -> bool {
     if agent == "antigravity" {
-        return antigravity_transcript_allowed(path, session_id);
+        return antigravity_transcript_allowed(path, session_id, distro);
     }
     if agent != "codex" {
-        return transcript_allowed(path, session_id);
+        return transcript_allowed(path, session_id, distro);
     }
-    let path = Path::new(path);
+    let name = last_component(path);
     valid_session_id(session_id)
-        && !is_remote_path(&path.to_string_lossy())
-        && path.is_absolute()
-        && path
-            .file_name()
-            .map(|name| name.to_string_lossy())
-            .is_some_and(|name| name.ends_with(".jsonl") || name.ends_with(".jsonl.zst"))
+        && readable_place(path, distro)
+        && (name.ends_with(".jsonl") || name.ends_with(".jsonl.zst"))
 }
 
 /// An Antigravity conversation id: a UUID, 8-4-4-4-12 hex digits.
@@ -105,11 +119,11 @@ fn is_uuid(id: &str) -> bool {
         })
 }
 
-/// True when `path` is absolute, local, free of `..`, and ends in agy's transcript for this conversation:
+/// True when `path` is absolute, local (or under the `distro`'s share), free of `..`, and ends in agy's transcript for this conversation:
 /// `antigravity-cli/brain/<id>/.system_generated/logs/transcript_full.jsonl`, with `/` or `\` between the
 /// parts. Makes no filesystem call.
-fn antigravity_transcript_allowed(path: &str, session_id: &str) -> bool {
-    if !is_uuid(session_id) || is_remote_path(path) || !Path::new(path).is_absolute() {
+fn antigravity_transcript_allowed(path: &str, session_id: &str, distro: Option<&str>) -> bool {
+    if !is_uuid(session_id) || !readable_place(path, distro) {
         return false;
     }
     let parts: Vec<&str> = path.split(['/', '\\']).collect();
@@ -162,13 +176,80 @@ mod tests {
         assert!(valid_session_id("a-_"));
         assert!(valid_session_id("0"));
 
-        assert!(transcript_allowed(&format!("{}{ID}.jsonl", dir_prefix()), ID));
-        assert!(!transcript_allowed(&format!("p/{ID}.jsonl"), ID));
-        assert!(!transcript_allowed(&format!(r"\\host\share\{ID}.jsonl"), ID));
-        assert!(!transcript_allowed(&format!(r"\\?\C:\x\{ID}.jsonl"), ID));
-        assert!(!transcript_allowed(&format!(r"\\.\pipe\{ID}.jsonl"), ID));
-        assert!(!transcript_allowed(&format!("{}other.jsonl", dir_prefix()), ID));
-        assert!(!transcript_allowed(&format!("{}{ID}.json", dir_prefix()), ID));
+        assert!(transcript_allowed(&format!("{}{ID}.jsonl", dir_prefix()), ID, None));
+        assert!(!transcript_allowed(&format!("p/{ID}.jsonl"), ID, None));
+        assert!(!transcript_allowed(&format!(r"\\host\share\{ID}.jsonl"), ID, None));
+        assert!(!transcript_allowed(&format!(r"\\?\C:\x\{ID}.jsonl"), ID, None));
+        assert!(!transcript_allowed(&format!(r"\\.\pipe\{ID}.jsonl"), ID, None));
+        assert!(!transcript_allowed(&format!("{}other.jsonl", dir_prefix()), ID, None));
+        assert!(!transcript_allowed(&format!("{}{ID}.json", dir_prefix()), ID, None));
+    }
+
+    #[test]
+    fn a_wsl_transcript_under_the_tabs_distro_is_allowed() {
+        let file = format!(r"\\wsl.localhost\Ubuntu\home\u\.claude\projects\p\{ID}.jsonl");
+        assert!(transcript_allowed(&file, ID, Some("Ubuntu")));
+        // The legacy host, the other separator and another case of the distro name.
+        assert!(transcript_allowed(
+            &file.replace("wsl.localhost", "wsl$"),
+            ID,
+            Some("Ubuntu")
+        ));
+        assert!(transcript_allowed(&file.replace('\\', "/"), ID, Some("Ubuntu")));
+        assert!(transcript_allowed(&file, ID, Some("ubuntu")));
+        // It is still Claude's file for this conversation, and not the share root.
+        assert!(!transcript_allowed(&file.replace(ID, "other"), ID, Some("Ubuntu")));
+        assert!(!transcript_allowed(
+            &file.replace(".jsonl", ".json"),
+            ID,
+            Some("Ubuntu")
+        ));
+        assert!(!transcript_allowed(&format!(r"{file}\"), ID, Some("Ubuntu")));
+        assert!(!transcript_allowed(r"\\wsl.localhost\Ubuntu", ID, Some("Ubuntu")));
+        assert!(!transcript_allowed(&file, "../x", Some("Ubuntu")));
+        // The other agents' sources too.
+        let rollout = r"\\wsl.localhost\Ubuntu\home\u\.codex\sessions\2026\10\31\rollout-2026-10-31T10-00-00-abc.jsonl";
+        assert!(sidecar_allowed_in("codex", rollout, ID, Some("Ubuntu")));
+        let agy = agy_path('\\', ID).replacen("C:\\Users", r"\\wsl.localhost\Ubuntu\home", 1);
+        assert!(sidecar_allowed_in("antigravity", &agy, ID, Some("Ubuntu")));
+    }
+
+    #[test]
+    fn another_distros_and_network_unc_stay_refused() {
+        let tail = format!(r"home\u\.claude\projects\p\{ID}.jsonl");
+        let bad = [
+            format!(r"\\wsl$\Debian\{tail}"),
+            format!(r"\\wsl.localhost\Debian\{tail}"),
+            format!(r"\\wsl.localhost\Ubuntu-24.04\{tail}"),
+            format!(r"\\server\share\{tail}"),
+            format!(r"\\server\Ubuntu\{tail}"),
+            format!(r"\\?\UNC\wsl.localhost\Ubuntu\{tail}"),
+            format!(r"\\?\C:\{tail}"),
+            format!(r"\\.\pipe\{tail}"),
+            format!(r"\\wsl.localhost\Ubuntu\..\x\{ID}.jsonl"),
+            format!(r"\\wsl.localhost\Ubuntu\home\..\..\x\{ID}.jsonl"),
+            format!(r"\\wsl.localhost\Ubuntu\home\..\{ID}.jsonl"),
+            format!("//server/share/{tail}"),
+        ];
+        for path in &bad {
+            assert!(!transcript_allowed(path, ID, Some("Ubuntu")), "{path}");
+            assert!(!sidecar_allowed_in("claude", path, ID, Some("Ubuntu")), "{path}");
+            // Nothing opens up for a conversation that did not run in WSL.
+            assert!(!transcript_allowed(path, ID, None), "{path}");
+        }
+        // An agy or Codex source follows the same rule.
+        let agy = agy_path('\\', ID).replacen("C:\\Users", r"\\wsl.localhost\Debian\home", 1);
+        assert!(!sidecar_allowed_in("antigravity", &agy, ID, Some("Ubuntu")));
+        let rollout = r"\\server\share\rollout-2026-10-31T10-00-00-abc.jsonl";
+        assert!(!sidecar_allowed_in("codex", rollout, ID, Some("Ubuntu")));
+        // A distro name that is not one path component opens nothing.
+        for distro in ["", r"Ubuntu\x", "a/b"] {
+            assert!(!transcript_allowed(
+                &format!(r"\\wsl.localhost\Ubuntu\{tail}"),
+                ID,
+                Some(distro)
+            ));
+        }
     }
 
     fn agy_path(sep: char, id: &str) -> String {

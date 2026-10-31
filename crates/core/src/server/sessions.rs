@@ -1873,7 +1873,7 @@ mod tests {
             "transcript_path": path.to_string_lossy(),
             "cwd": path.parent().unwrap().to_string_lossy(),
         });
-        assert!(st.history().note_event("claude", tab, None, &body, 1).is_none());
+        assert!(st.history().note_event("claude", tab, None, &body, 1, None).is_none());
     }
 
     #[test]
@@ -1924,6 +1924,7 @@ mod tests {
             recordings: vec![],
             client: Default::default(),
             preset: None,
+            distro: None,
         };
         // An id that would reach the command line, with a transcript that really exists.
         let hostile = work.path().join("x; calc.jsonl");
@@ -1966,7 +1967,7 @@ mod tests {
         body["session_id"] = serde_json::json!(id);
         body["transcript_path"] = serde_json::json!(rollout.to_string_lossy());
         body["cwd"] = serde_json::json!(dir.to_string_lossy());
-        st.history().note_event("codex", tab, None, &body, at_ms);
+        st.history().note_event("codex", tab, None, &body, at_ms, None);
         rollout
     }
 
@@ -2023,6 +2024,7 @@ mod tests {
             recordings: vec![],
             client: Default::default(),
             preset: None,
+            distro: None,
         };
         // Rows written to the index directly, as a damaged or planted index would hold them: a file that is not a
         // rollout, a relative path, and an id that would reach the command line.
@@ -2096,7 +2098,7 @@ mod tests {
         body["hook_event_name"] = serde_json::json!("PreInvocation");
         body["conversationId"] = serde_json::json!(id);
         body["transcriptPath"] = serde_json::json!(transcript.to_string_lossy());
-        st.history().note_event("antigravity", tab, None, &body, at_ms);
+        st.history().note_event("antigravity", tab, None, &body, at_ms, None);
         transcript
     }
 

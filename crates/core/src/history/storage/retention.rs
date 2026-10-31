@@ -398,6 +398,7 @@ mod tests {
                 .collect(),
             client: Client::default(),
             preset: None,
+            distro: None,
         };
         archive::write_meta(home, &meta).unwrap();
     }

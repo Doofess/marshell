@@ -107,6 +107,7 @@ fn meta(transcript: &Path) -> SessionMeta {
         recordings: vec![],
         client: Default::default(),
         preset: None,
+        distro: None,
     }
 }
 
@@ -135,7 +136,7 @@ async fn stops_in_a_row_copy_once_at_a_time_and_end_current() {
         "transcript_path": transcript.to_string_lossy(),
         "cwd": "c",
     });
-    history.note_event("claude", "t1", None, &start, 1);
+    history.note_event("claude", "t1", None, &start, 1, None);
     let m = meta(&transcript);
     for i in 0..5 {
         schedule_copy(history.clone(), m.clone());
@@ -187,7 +188,7 @@ async fn history_is_off_when_the_index_cannot_open() {
     let history = History::open(home.path());
     let (body, _) = stop_body(home.path());
     let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
-    assert_eq!(history.note_event("claude", "t1", None, &json, 1000), None);
+    assert_eq!(history.note_event("claude", "t1", None, &json, 1000, None), None);
     assert_eq!(history.latest_for_tab("t1"), None);
 
     let app = app(home.path().to_path_buf());

@@ -1036,6 +1036,40 @@ async fn a_wsl_tab_takes_the_agent_from_its_hooks() {
 }
 
 #[tokio::test]
+async fn a_wsl_tabs_history_row_reads_its_linux_paths_under_the_distro() {
+    let st = wsl_state();
+    let app = router(st.clone());
+    let tab = start_shell(&app, "wsl-ubuntu").await;
+    let id = "00000000-0000-4000-8000-000000000001";
+    let mut body: serde_json::Value = serde_json::from_slice(&fixture("SessionStart")).unwrap();
+    body["session_id"] = serde_json::json!(id);
+    body["transcript_path"] = serde_json::json!(format!("/home/u/.claude/projects/-home-u-proj/{id}.jsonl"));
+    body["cwd"] = serde_json::json!("/home/u/proj");
+    let sent = status(
+        &app,
+        hook(
+            Some("event"),
+            Some("claude"),
+            Some(&tab),
+            serde_json::to_vec(&body).unwrap(),
+        ),
+    )
+    .await;
+    let row = st.history().latest_for_tab(&tab);
+    let stored = marshell_core::history::archive::read_meta(st.home(), "claude", id).unwrap();
+    stop(&st, &tab);
+
+    assert_eq!(sent, StatusCode::NO_CONTENT);
+    let row = row.expect("the WSL tab's session is in the history");
+    assert_eq!(
+        row.transcript_path,
+        format!(r"\\wsl.localhost\Ubuntu\home\u\.claude\projects\-home-u-proj\{id}.jsonl")
+    );
+    assert_eq!(row.cwd, r"\\wsl.localhost\Ubuntu\home\u\proj");
+    assert_eq!(stored.unwrap().distro.as_deref(), Some("Ubuntu"));
+}
+
+#[tokio::test]
 async fn a_wsl_tab_gates_on_the_distros_version() {
     // The Windows claude is too old to be recorded; the distro's is recorded, so live is folded.
     let st = state_with(Some("1.0.0"), vec![sleeper_profile(), wsl_profile()]).with_wsl_version(Some(KNOWN.into()));
