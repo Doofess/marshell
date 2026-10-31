@@ -1201,11 +1201,23 @@ async fn a_disabled_project_or_unreadable_file_is_a_204() {
         .join(marshell_core::references::project_id(&p.repo))
         .join(marshell_core::references::FILE_NAME);
     std::fs::write(&file, "{ this is not json").unwrap();
+    // The `.bak` still holds a readable copy, which is the fallback and is meant: the prompt is still answered.
+    assert!(
+        marshell_core::references::load(st.home(), &p.repo).is_ok(),
+        "the .bak is read when the main file is broken"
+    );
+    std::fs::write(marshell_core::store::bak_path(&file), "{ this is not json either").unwrap();
+    // Neither file is readable now, so the unreadable path itself is the one taken.
+    assert!(
+        marshell_core::references::load(st.home(), &p.repo).is_err(),
+        "both files must be refused for this test to reach the unreadable path"
+    );
     let (code, text) = submit(&app, "claude", Some(&tab), "fix the login button").await;
     let shown = row(&st, &tab).references;
     stop(&st, &tab);
 
     assert_eq!(code, StatusCode::NO_CONTENT, "{text}");
+    assert!(text.is_empty(), "{text}");
     assert_eq!(shown, None);
 }
 
