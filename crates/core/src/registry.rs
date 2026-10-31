@@ -10,8 +10,8 @@ use crate::pty::Mark;
 use crate::stuck::{StuckSignal, StuckTracker};
 use crate::tools::{PortChip, ToolEvent};
 use marshell_protocol::api::{
-    Activity, Attention, CommandState, Foreground, LiveState, LiveStatus, SavedTab, ScriptKind, SessionInfo,
-    SessionMode, SessionState, SessionsSnapshot, SetupResult, UiView,
+    Activity, Attention, CommandState, Foreground, LiveState, LiveStatus, ReferenceNote, SavedTab, ScriptKind,
+    SessionInfo, SessionMode, SessionState, SessionsSnapshot, SetupResult, UiView,
 };
 use tokio::sync::watch;
 
@@ -336,6 +336,7 @@ impl Registry {
                 ports: Vec::new(),
                 script,
                 setup,
+                references: None,
             },
             spec: relaunch,
             generation,
@@ -393,6 +394,7 @@ impl Registry {
                     ports: Vec::new(),
                     script: None,
                     setup: None,
+                    references: None,
                 },
                 spec: relaunch_of(tab),
                 generation,
@@ -453,6 +455,7 @@ impl Registry {
         // The new process is the plain shell, never the script.
         entry.info.script = None;
         entry.info.setup = None;
+        entry.info.references = None;
         entry.info.command = CommandState::Unknown;
         entry.info.paused = false;
         entry.info.foreground = None;
@@ -481,6 +484,7 @@ impl Registry {
         entry.info.state = SessionState::Running;
         entry.info.script = None;
         entry.info.setup = None;
+        entry.info.references = None;
         entry.info.command = CommandState::Unknown;
         entry.info.paused = false;
         entry.info.foreground = None;
@@ -1194,6 +1198,18 @@ impl Registry {
         }
     }
 
+    /// Sets the note the open row's latest prompt got (None: that prompt named no alias). The change is sent to
+    /// subscribers only when it differs from what the row shows.
+    pub fn set_references(&self, tab_id: &str, references: Option<ReferenceNote>) {
+        let mut state = self.state.lock().unwrap();
+        if let Some(entry) = state.open.iter_mut().find(|e| e.info.tab_id == tab_id)
+            && entry.info.references != references
+        {
+            entry.info.references = references;
+            self.tx.send_replace(state.snapshot());
+        }
+    }
+
     /// Sets why a Claude Code row has no live status (a gated version, or the switch is off), or
     /// takes the note away. A note also drops the live status, so a switch turned off mid-session
     /// leaves no stale status. Applied only to an open Running row. Broadcasts only on a change.
@@ -1625,6 +1641,37 @@ mod tests {
         reg.set_paused("a", generation_of(&reg, "a"), true);
         reg.begin_restart("a", SessionMode::Plan).unwrap();
         assert!(!reg.snapshot().sessions[0].paused);
+    }
+
+    #[test]
+    fn restart_clears_references() {
+        let note = ReferenceNote {
+            names: vec!["login button".into()],
+            note: "References: 'login button' = C:/r/login.rs.".into(),
+        };
+        let reg = Registry::new();
+        reg.reserve("a", relaunch("A"));
+        reg.reserve("b", relaunch("B"));
+        let mut rx = reg.subscribe();
+        rx.borrow_and_update();
+        reg.set_references("a", Some(note.clone()));
+        assert!(rx.has_changed().unwrap());
+        assert_eq!(row(&reg, "a").references, Some(note.clone()));
+        // The same note again changes nothing and sends nothing; a note for an unknown tab is dropped.
+        rx.borrow_and_update();
+        reg.set_references("a", Some(note.clone()));
+        reg.set_references("nope", Some(note.clone()));
+        assert!(!rx.has_changed().unwrap());
+        reg.begin_restart("a", SessionMode::Plan).unwrap();
+        assert_eq!(row(&reg, "a").references, None);
+        // A resume is a new process too.
+        reg.set_references("b", Some(note));
+        reg.mark_exited("b", generation_of(&reg, "b"), 0);
+        reg.begin_resume("b").unwrap();
+        assert_eq!(row(&reg, "b").references, None);
+        // None clears a note.
+        reg.set_references("a", None);
+        assert_eq!(row(&reg, "a").references, None);
     }
 
     #[test]

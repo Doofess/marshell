@@ -45,8 +45,18 @@ pub async fn post(
         serde_json::from_slice(&body).map_err(|e| (StatusCode::BAD_REQUEST, format!("body is not JSON: {e}")))?;
     // A prompt or an email is personal: it goes before anything else sees the body (the log, the fold,
     // the history, a hold), so the core keeps neither.
+    // The prompt of a Claude Code or Codex turn is kept in this local for the references resolver alone. It is taken
+    // out of the body here, so the log, the fold, the history and a hold never see it.
+    let mut prompt = None;
     if agent == "antigravity" {
         antigravity::strip_personal(&mut json);
+    } else if matches!(agent.as_str(), "claude" | "codex")
+        && let Some(object) = json.as_object_mut()
+    {
+        prompt = match object.remove("prompt") {
+            Some(serde_json::Value::String(text)) => Some(text),
+            _ => None,
+        };
     }
     let tab = header(&headers, HEADER_TAB).map(str::to_string);
     // Both come from the sender, so only a short identifier is logged: never free text a payload could carry.
@@ -111,6 +121,26 @@ pub async fn post(
             record_history(&st, &agent, tab, &json, at_ms).await;
         }
     }
+    // A prompt that names an alias gets the note as context. Every prompt of a tab that Marshell opened sets the
+    // header chip, so a prompt that names nothing clears it.
+    if role == HookRole::Event
+        && matches!(agent.as_str(), "claude" | "codex")
+        && json.get("hook_event_name").and_then(serde_json::Value::as_str) == Some("UserPromptSubmit")
+        && let Some(tab) = tab.as_deref()
+        && st.registry().is_open(tab)
+        && st.registry().effective_agent(tab).as_deref() == Some(agent.as_str())
+    {
+        let found = references_for(&st, tab, prompt).await;
+        st.registry().set_references(tab, found.clone());
+        if let Some(found) = found {
+            let output = if agent == "codex" {
+                codex::context_output(&found.note)
+            } else {
+                crate::agents::claude::context_output(&found.note)
+            };
+            return Ok(Json(output).into_response());
+        }
+    }
     if role == HookRole::Permission {
         // Without a card or an open tab, the agent must ask the person itself.
         if !crate::agents::supports_permissions(&agent) || (agent == "antigravity" && !held) {
@@ -122,6 +152,28 @@ pub async fn post(
         return Ok(hold_permission(&st, Some(tab), agent, json).await);
     }
     Ok(StatusCode::NO_CONTENT.into_response())
+}
+
+/// The note for the aliases `prompt` names in the project of the tab's folder, with paths in the tab's own checkout.
+/// None when there is no prompt, the references are off, the file can't be read, or nothing matches: the prompt
+/// then goes on as it is. The read is one small file, off the async workers.
+async fn references_for(
+    st: &AppState,
+    tab: &str,
+    prompt: Option<String>,
+) -> Option<marshell_protocol::api::ReferenceNote> {
+    let prompt = prompt?;
+    let cwd = st.registry().cwd_of_tab(tab).filter(|cwd| !cwd.is_empty())?;
+    let home = st.home().to_path_buf();
+    tokio::task::spawn_blocking(move || {
+        let root = std::path::PathBuf::from(crate::projects::project_of(&cwd));
+        let checkout =
+            crate::scripts::checkout_root(std::path::Path::new(&cwd)).unwrap_or_else(|| std::path::PathBuf::from(&cwd));
+        let doc = crate::references::load(&home, &root).ok()?;
+        crate::references::resolve(&doc, &checkout, &prompt)
+    })
+    .await
+    .unwrap_or(None)
 }
 
 /// Notes the event in the history. The index update is short, so it is awaited; the copy it may ask for

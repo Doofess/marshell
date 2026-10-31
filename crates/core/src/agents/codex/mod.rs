@@ -8,6 +8,12 @@ pub mod trust;
 
 pub use super::common::Gate;
 
+/// The `UserPromptSubmit` hook output that adds `note` to the prompt as context. Codex fails the hook on plain
+/// stdout that is not JSON, so the note always travels as this object.
+pub fn context_output(note: &str) -> serde_json::Value {
+    serde_json::json!({"hookSpecificOutput": {"hookEventName": "UserPromptSubmit", "additionalContext": note}})
+}
+
 /// The Codex versions whose hook events are recorded in `tests/fixtures/codex/hooks/<version>/`.
 /// One entry per minor line: its oldest recorded patch.
 pub const FIXTURE_VERSIONS: &[(u32, u32, u32)] = &[(0, 163, 0)];

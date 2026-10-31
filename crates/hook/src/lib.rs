@@ -3,6 +3,7 @@
 
 pub mod args;
 mod codex_daemon;
+mod context;
 pub mod endpoint;
 mod job;
 pub mod log;
@@ -98,6 +99,13 @@ fn call(args: &Args, stdin: &mut dyn Read, env: Env, ancestors: Ancestors, home:
     match post::post(port, &token, args, tab.as_deref(), &body, budget) {
         Ok((200, bytes)) if role == HookRole::Permission => {
             if permission::accepted(&args.agent, &bytes, &body) {
+                bytes
+            } else {
+                fail("the answer is not one Marshell gives, nothing printed")
+            }
+        }
+        Ok((200, bytes)) if role == HookRole::Event => {
+            if context::accepted(&args.agent, &bytes) {
                 bytes
             } else {
                 fail("the answer is not one Marshell gives, nothing printed")

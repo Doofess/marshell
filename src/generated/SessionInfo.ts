@@ -5,6 +5,7 @@ import type { CommandState } from "./CommandState";
 import type { Foreground } from "./Foreground";
 import type { LiveStatus } from "./LiveStatus";
 import type { PortChip } from "./PortChip";
+import type { ReferenceNote } from "./ReferenceNote";
 import type { ScriptKind } from "./ScriptKind";
 import type { SessionMode } from "./SessionMode";
 import type { SessionState } from "./SessionState";
@@ -85,4 +86,9 @@ script?: ScriptKind,
 /**
  * How the repo's `setup` ended, on the agent row started after it. Shown on the row only; a Restart or resume clears it.
  */
-setup?: SetupResult, };
+setup?: SetupResult, 
+/**
+ * The note added to the agent's latest prompt, when it named an alias. Absent when that prompt named none. Only the
+ * aliases and their paths, never the prompt. A Restart or resume clears it.
+ */
+references?: ReferenceNote, };

@@ -223,6 +223,11 @@ pub struct SessionInfo {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub setup: Option<SetupResult>,
+    /// The note added to the agent's latest prompt, when it named an alias. Absent when that prompt named none. Only the
+    /// aliases and their paths, never the prompt. A Restart or resume clears it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub references: Option<ReferenceNote>,
 }
 
 impl SessionInfo {
@@ -1317,6 +1322,7 @@ mod tests {
             ports: Vec::new(),
             script: None,
             setup: None,
+            references: None,
         };
         let mut value = serde_json::to_value(&info).unwrap();
         value.as_object_mut().unwrap().remove("muted");
