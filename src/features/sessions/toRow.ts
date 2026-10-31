@@ -196,6 +196,8 @@ function rowOf(info: SessionInfo, profiles: Profile[], setup: Partial<Record<Hoo
   }
   if (fg !== null) {
     if (fg.agent !== null && isManifestAgent(fg.agent)) return fallbackRow(info, base) ?? { ...base, status: "limited", phrase: LIMITED_NOTE };
+    // A hook agent typed into a shell (on Windows, or one a WSL tab's hooks named) reports like a launched one.
+    if (fg.agent !== null && isHookAgent(fg.agent) && info.live !== null) return { ...base, ...liveRow(info.live, info.stuck, now) };
     if (fg.agent !== null) return { ...base, status: "limited", phrase: "Status arrives with hooks" };
     return { ...base, status: "working", phrase: `Running ${fg.command_line ?? fg.program}` };
   }

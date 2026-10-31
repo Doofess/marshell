@@ -215,6 +215,24 @@ describe("toRow", () => {
       expect(row).toMatchObject({ agent: "codex", status: "limited", phrase: "Status arrives with hooks" });
     });
 
+    it("a shell row running a hooked agent shows its live status", () => {
+      const live: LiveStatus = { state: "working", phrase: "Running `npm test`", since_ms: 0, recap: null, model: null, effort: null, context_pct: null, five_hour_pct: null, five_hour_resets_at: null, seven_day_pct: null, subagents: 0 };
+      for (const profile_id of ["wsl-ubuntu", "pwsh"]) {
+        const row = toRow(info({ profile_id, foreground: fg("claude", null, "claude"), live }), PROFILES);
+        expect(row, profile_id).toMatchObject({ agent: "claude", status: "working", phrase: "Running `npm test`" });
+      }
+    });
+
+    it("without live status it still waits for the hooks", () => {
+      const row = toRow(info({ profile_id: "wsl-ubuntu", foreground: fg("agy", null, "antigravity") }), PROFILES);
+      expect(row).toMatchObject({ agent: "antigravity", status: "limited", phrase: "Status arrives with hooks" });
+    });
+
+    it("a manifest agent in front keeps the fallback even with live status", () => {
+      const live: LiveStatus = { state: "working", phrase: "Editing", since_ms: 0, recap: null, model: null, effort: null, context_pct: null, five_hour_pct: null, five_hour_resets_at: null, seven_day_pct: null, subagents: 0 };
+      expect(toRow(info({ foreground: fg("grok", "grok", "grok"), live }), PROFILES)).toMatchObject({ agent: "grok", status: "limited", phrase: "Status limited" });
+    });
+
     it("no foreground keeps the shell's own mark", () => {
       expect(toRow(info({ foreground: null }), PROFILES).agent).toBe("powershell");
     });
