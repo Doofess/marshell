@@ -233,6 +233,8 @@ export function LiveApp() {
   // The Settings page's section, and the one shown last in this run: the tray's Settings… reopens that one.
   const [settingsSection, setSettingsSection] = useState<SettingsSection>("appearance");
   const lastSettingsSection = useRef<SettingsSection | null>(null);
+  // The folder the Projects section opens on, set when the palette routes there from the focused session.
+  const [settingsCwd, setSettingsCwd] = useState<string | undefined>(undefined);
   // `null` opens the section shown last in this run, else Appearance. A CLI's section is checked against a fresh read of the CLIs first,
   // since the CLI may have been uninstalled while the page was closed.
   const openSettings = (section: SettingsSection | null) => {
@@ -1319,6 +1321,7 @@ export function LiveApp() {
 
   // A palette row: a session to go to, the profiles page, or a command the window runs (LivePalette lists only those).
   const runFromPalette = (id: string) => {
+    setSettingsCwd(id === "edit-references" ? focusedInfo?.cwd : undefined);
     const section = paletteSection(id);
     if (section) return openSettings(section);
     setOverlay(id === "departures" ? id : id === "cheatsheet" ? "shortcuts" : null);
@@ -1782,6 +1785,7 @@ export function LiveApp() {
           section={settingsSection}
           onSection={showSettingsSection}
           agentsStart={agentsFrom ?? undefined}
+          initialCwd={settingsCwd}
           announce={announce}
           onProfilesSaved={reloadProfiles}
           onAgentsChanged={refreshSetup}

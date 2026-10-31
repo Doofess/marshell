@@ -1,5 +1,5 @@
 /** The sections of the Settings page, in the order the nav lists them. */
-export type SettingsSection = "appearance" | "terminal" | "notifications" | "profiles" | "history" | "agents" | "accounts" | "claude" | "codex" | "antigravity" | "advanced";
+export type SettingsSection = "appearance" | "terminal" | "notifications" | "profiles" | "history" | "projects" | "agents" | "accounts" | "claude" | "codex" | "antigravity" | "advanced";
 
 export const SETTINGS_SECTIONS: Array<{ id: SettingsSection; label: string }> = [
   { id: "appearance", label: "Appearance" },
@@ -7,6 +7,7 @@ export const SETTINGS_SECTIONS: Array<{ id: SettingsSection; label: string }> = 
   { id: "notifications", label: "Notifications" },
   { id: "profiles", label: "Shell profiles" },
   { id: "history", label: "History" },
+  { id: "projects", label: "Projects" },
   { id: "agents", label: "Agents" },
   { id: "accounts", label: "Accounts" },
   { id: "claude", label: "Claude Code" },

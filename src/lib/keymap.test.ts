@@ -194,6 +194,13 @@ describe("diagnostics command", () => {
   });
 });
 
+describe("edit-references command", () => {
+  it("is in Tools with no key of its own", () => {
+    expect(commandById("edit-references")).toMatchObject({ label: "Edit this project's references", group: "Tools" });
+    expect(commandById("edit-references").binding).toBeUndefined();
+  });
+});
+
 describe("repo script commands", () => {
   it("are Run and Stop in Tools, with no key of their own", () => {
     expect(commandById("run-script")).toMatchObject({ label: "Run the repo's run script", group: "Tools" });

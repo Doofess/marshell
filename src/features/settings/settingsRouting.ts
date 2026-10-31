@@ -13,6 +13,8 @@ export function paletteSection(id: string): SettingsSection | null {
       return id;
     case "diagnostics":
       return "advanced";
+    case "edit-references":
+      return "projects";
     case "history-settings":
       return "history";
     case "settings":

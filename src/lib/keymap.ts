@@ -92,6 +92,7 @@ export const COMMANDS: Command[] = [
   { id: "copy-recording-path", label: "Copy this session's recording path", group: "Tools" },
   { id: "run-script", label: "Run the repo's run script", group: "Tools" },
   { id: "stop-script", label: "Stop the repo's run script", group: "Tools" },
+  { id: "edit-references", label: "Edit this project's references", group: "Tools" },
   { id: "prompt-prev", label: "Jump to the previous prompt", group: "Tools", binding: { code: "PageUp" } },
   { id: "prompt-next", label: "Jump to the next prompt", group: "Tools", binding: { code: "PageDown" } },
   { id: "cheatsheet", label: "Keyboard shortcuts", group: "Tools", binding: { code: "KeyO" } },

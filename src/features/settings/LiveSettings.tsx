@@ -14,6 +14,7 @@ import { HistorySection } from "../history/HistorySection";
 import { NotificationsSection } from "../notifications/NotificationsSection";
 import { closeOrRefuse, focusSettingsHeading, mountedWith, settingsFocusFallback, settingsTabTarget, visibleControls } from "./settingsRouting";
 import { ProfilesSection } from "./ProfilesSection";
+import { ProjectsSection } from "./ProjectsSection";
 import { SettingsShell, settingsKey } from "./SettingsShell";
 import { COMPANY_NAMES, shownSections, type CompanyAgent, type SettingsSection } from "./settingsSections";
 import "./LiveSettings.css";
@@ -49,6 +50,8 @@ type Props = {
   onSection: (id: SettingsSection) => void;
   /** The row's "set up" link: Agents opens on that CLI's card. */
   agentsStart?: SetupStart;
+  /** The folder the Projects section opens on: the focused session's, when the palette routed there. */
+  initialCwd?: string;
   announce: (text: string) => void;
   onProfilesSaved?: () => void;
   onAgentsChanged?: () => void;
@@ -74,7 +77,7 @@ type Props = {
  * Focus moves to the shown section's heading on open and on a section change. Esc and "Back to sessions" close it, unless
  * something inside already handled that Esc or the shell profiles hold unsaved edits; focus then returns to what had it before.
  */
-export function LiveSettings({ endpoint, sync, section, onSection, agentsStart, announce, onProfilesSaved, onAgentsChanged, onNotifications, found = NONE, accountsRefresh = 0, companyRefresh = ZERO, running = ZERO, onSignIn = noop, onUpdate = noop, onClose }: Props) {
+export function LiveSettings({ endpoint, sync, section, onSection, agentsStart, initialCwd, announce, onProfilesSaved, onAgentsChanged, onNotifications, found = NONE, accountsRefresh = 0, companyRefresh = ZERO, running = ZERO, onSignIn = noop, onUpdate = noop, onClose }: Props) {
   const root = useRef<HTMLDivElement>(null);
   const opener = useRef<HTMLElement | null | undefined>(undefined);
   const profilesCanClose = useRef(true);
@@ -146,6 +149,8 @@ export function LiveSettings({ endpoint, sync, section, onSection, agentsStart, 
         );
       case "history":
         return <HistorySection sync={sync} announce={announce} />;
+      case "projects":
+        return endpoint && <ProjectsSection key={initialCwd ?? ""} endpoint={endpoint} initialCwd={initialCwd} announce={announce} />;
       case "agents":
         return endpoint && <AgentsSection endpoint={endpoint} sync={sync} startWith={agentsStart} announce={announce} onChanged={onAgentsChanged} onNotifications={onNotifications} />;
       case "accounts":

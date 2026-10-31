@@ -522,8 +522,12 @@ describe("LiveApp: the palette's Review command", () => {
     expect(paletteHidden({ resumable: true, isTask: true, missing: true })).toEqual([]);
   });
   it("hides Copy this session's recording path when no session is focused", () => {
-    expect(paletteHidden({ resumable: true, isTask: true, missing: true, focused: false })).toEqual(["copy-recording-path"]);
+    expect(paletteHidden({ resumable: true, isTask: true, missing: true, focused: false })).toEqual(["copy-recording-path", "edit-references"]);
     expect(paletteHidden({ resumable: true, isTask: true, missing: true, focused: true })).toEqual([]);
+  });
+  it("lists Edit this project's references only when a session is focused", () => {
+    expect(paletteHidden({ resumable: true, isTask: true, missing: true, focused: false })).toContain("edit-references");
+    expect(paletteHidden({ resumable: true, isTask: true, missing: true, focused: true })).not.toContain("edit-references");
   });
   it("lists only the Mode commands the focused agent offers, as the row menu does", () => {
     const base = { resumable: true, isTask: true, missing: true } as const;
