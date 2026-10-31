@@ -1117,11 +1117,8 @@ async fn no_match_is_a_204_and_clears_the_chip() {
     assert_eq!(shown, None);
 }
 
-#[tokio::test]
-async fn a_worktree_tab_gets_paths_in_its_own_checkout() {
-    let st = state(Some(KNOWN));
-    let app = router(st.clone());
-    let p = project();
+/// Turns the project into a git repo with one commit and adds a linked worktree beside it, which it returns.
+fn linked_worktree(p: &Project) -> std::path::PathBuf {
     // The `.git` folder `project` made is not a repo yet.
     std::fs::remove_dir_all(p.repo.join(".git")).unwrap();
     let run = |args: &[&str]| {
@@ -1151,7 +1148,15 @@ async fn a_worktree_tab_gets_paths_in_its_own_checkout() {
     ]);
     let tree = p.repo.parent().unwrap().join("tree");
     run(&["worktree", "add", "-q", "-b", "side", &tree.to_string_lossy()]);
-    let tree = marshell_core::projects::canonical(&tree);
+    marshell_core::projects::canonical(&tree)
+}
+
+#[tokio::test]
+async fn a_worktree_tab_gets_paths_in_its_own_checkout() {
+    let st = state(Some(KNOWN));
+    let app = router(st.clone());
+    let p = project();
+    let tree = linked_worktree(&p);
 
     save_refs(&st, &p.repo, true, login_button());
     let tab = start_in(&app, "claude", &tree).await;
@@ -1169,6 +1174,27 @@ async fn a_worktree_tab_gets_paths_in_its_own_checkout() {
         !note.contains(&p.repo.join("src").to_string_lossy().into_owned()),
         "{note}"
     );
+}
+
+#[tokio::test]
+async fn a_worktree_tab_checks_the_file_in_its_own_checkout() {
+    let st = state(Some(KNOWN));
+    let app = router(st.clone());
+    let p = project();
+    let tree = linked_worktree(&p);
+    // The file is in the main checkout and was in the worktree too; here it is gone from the worktree only.
+    assert!(p.repo.join("src").join("login.rs").exists());
+    std::fs::remove_file(tree.join("src").join("login.rs")).unwrap();
+
+    save_refs(&st, &p.repo, true, login_button());
+    let tab = start_in(&app, "claude", &tree).await;
+    let (code, text) = submit(&app, "claude", Some(&tab), "fix the login button").await;
+    let shown = row(&st, &tab).references;
+    stop(&st, &tab);
+
+    assert_eq!(code, StatusCode::NO_CONTENT, "{text}");
+    assert!(text.is_empty(), "{text}");
+    assert_eq!(shown, None);
 }
 
 #[tokio::test]
