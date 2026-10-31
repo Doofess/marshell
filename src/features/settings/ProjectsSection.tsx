@@ -4,12 +4,13 @@ import type { Endpoint } from "../../generated/Endpoint";
 import type { ProjectInfo } from "../../generated/ProjectInfo";
 import { projects as projectsApi } from "../../lib/api/projects";
 import { getReferences, putReferences } from "../../lib/api/references";
-import { addRow, firstProblem, forSave, patchRow, pickProject, removeRow, rowsOf, type Row } from "./projectsDoc";
+import { addRow, firstProblem, forSave, patchRow, pickProject, projectsDirty, removeRow, rowsOf, sameProject, type RefsDoc, type Row } from "./projectsDoc";
 import "./Settings.css";
 import "./ProjectsSection.css";
 
 export const NO_PROJECTS = "Start a session in a folder first; its project shows here.";
 export const TOGGLE_HELP = "When a prompt names an alias, Marshell tells the agent which file or folder it means. Off until you turn it on.";
+export const CLIS_HELP = "Claude Code, Codex and Antigravity get references. Other agents don't.";
 export const BROKEN_PATH = "Not found in the project, so it isn't sent.";
 // Antigravity: "Antigravity can't take references yet." belongs here, under the toggle, only if the agy spike fails.
 
@@ -21,6 +22,10 @@ export type ProjectsState = {
   root?: string;
   enabled: boolean;
   rows: Row[];
+  /** The doc as last loaded or saved: Discard restores it and the dirty check compares with it. */
+  loaded?: RefsDoc;
+  /** Edits not saved yet. */
+  dirty?: boolean;
   /** The core's refusal, or why the references didn't load. */
   error: string | null;
   /** Bumped per refusal, so the sentence remounts and takes the focus each time. */
@@ -36,6 +41,7 @@ export type ProjectsHandlers = {
   onAdd: () => void;
   onRemove: (index: number) => void;
   onSave: () => void;
+  onDiscard: () => void;
 };
 
 const takeFocus = (el: HTMLParagraphElement | null) => el?.focus();
@@ -56,7 +62,7 @@ export function ProjectsView({ projects, state, handlers }: { projects: ProjectI
         <label className="field__label" htmlFor="projects-picker">
           Project
         </label>
-        <select id="projects-picker" className="field__control" value={state.selected} onChange={(e) => handlers.onSelect(e.target.value)}>
+        <select id="projects-picker" className="field__control" disabled={state.dirty || state.saving || undefined} value={state.selected} onChange={(e) => handlers.onSelect(e.target.value)}>
           {projects.map((p) => (
             <option key={p.path} value={p.path}>
               {p.name}
@@ -72,6 +78,7 @@ export function ProjectsView({ projects, state, handlers }: { projects: ProjectI
       {state.phase === "ready" && (
         <>
           <Switch label="Add references to prompts" checked={state.enabled} onChange={handlers.onToggle} reason={TOGGLE_HELP} />
+          <p className="field__help">{CLIS_HELP}</p>
           {state.rows.length === 0 ? (
             <p className="field__help">No aliases yet.</p>
           ) : (
@@ -116,6 +123,11 @@ export function ProjectsView({ projects, state, handlers }: { projects: ProjectI
             <button type="button" className="settings__btn" data-primary aria-disabled={state.saving || undefined} onClick={() => !state.saving && handlers.onSave()}>
               {state.saving ? "Saving…" : "Save"}
             </button>
+            {state.dirty && (
+              <button type="button" className="settings__btn" data-discard onClick={handlers.onDiscard}>
+                Discard
+              </button>
+            )}
             {state.saved && <span className="projects__saved">Saved.</span>}
           </div>
         </>
@@ -131,12 +143,13 @@ const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
  * Settings → Projects, on the core. Mounted when first shown; `initialCwd` (the focused session's folder, from the palette) picks
  * the project, and a folder no recent project holds is offered as a project of its own.
  */
-export function ProjectsSection({ endpoint, announce, initialCwd }: { endpoint: Endpoint; announce?: (text: string) => void; initialCwd?: string }) {
+export function ProjectsSection({ endpoint, announce, initialCwd, onCanClose }: { endpoint: Endpoint; announce?: (text: string) => void; initialCwd?: string; onCanClose?: (can: boolean) => void }) {
   const [projects, setProjects] = useState<ProjectInfo[]>([]);
   const [state, setState] = useState<ProjectsState>(IDLE);
   const root = useRef<HTMLDivElement>(null);
   const afterEdit = useRef<{ row: number } | "add" | null>(null);
   const say = useEffectEvent((text: string) => announce?.(text));
+  const tell = useEffectEvent((can: boolean) => onCanClose?.(can));
 
   useEffect(() => {
     let live = true;
@@ -159,7 +172,7 @@ export function ProjectsSection({ endpoint, announce, initialCwd }: { endpoint: 
     let live = true;
     setState((s) => ({ ...s, phase: "loading", error: null, saved: false }));
     getReferences(endpoint, selected).then(
-      (r) => live && setState((s) => ({ ...s, phase: "ready", root: r.root, enabled: r.enabled, rows: rowsOf(r.aliases) })),
+      (r) => live && setState((s) => ({ ...s, phase: "ready", root: r.root, enabled: r.enabled, rows: rowsOf(r.aliases), loaded: { enabled: r.enabled, rows: rowsOf(r.aliases) }, dirty: false })),
       (e: unknown) => live && setState((s) => ({ ...s, phase: "failed", error: message(e) })),
     );
     return () => {
@@ -177,7 +190,14 @@ export function ProjectsSection({ endpoint, announce, initialCwd }: { endpoint: 
     el?.focus();
   }, [state.rows]);
 
-  const edit = (change: (s: ProjectsState) => Partial<ProjectsState>) => setState((s) => ({ ...s, ...change(s), error: null, saved: false }));
+  const edit = (change: (s: ProjectsState) => Partial<ProjectsState>) =>
+    setState((s) => {
+      const next = { ...s, ...change(s), error: null, saved: false };
+      return { ...next, dirty: next.loaded ? projectsDirty(next.loaded, next) : false };
+    });
+
+  const can = !state.dirty && !state.saving;
+  useEffect(() => tell(can), [can]);
 
   const save = async () => {
     if (state.root === undefined) return;
@@ -187,6 +207,8 @@ export function ProjectsSection({ endpoint, announce, initialCwd }: { endpoint: 
     };
     const problem = firstProblem(state.rows);
     if (problem) return fail(problem);
+    const saved = state.selected ?? state.root;
+    const sent = { enabled: state.enabled, rows: state.rows };
     setState((s) => ({ ...s, saving: true, error: null, saved: false }));
     try {
       await putReferences(endpoint, { root: state.root, enabled: state.enabled, aliases: forSave(state.rows) });
@@ -196,10 +218,16 @@ export function ProjectsSection({ endpoint, announce, initialCwd }: { endpoint: 
     say("Saved.");
     // Read it back: the core trims, and says which paths are found.
     try {
-      const r = await getReferences(endpoint, state.selected ?? state.root);
-      setState((s) => ({ ...s, saving: false, saved: true, error: null, enabled: r.enabled, rows: rowsOf(r.aliases) }));
+      const r = await getReferences(endpoint, saved);
+      // Only the project that was saved takes the read-back; another one selected meanwhile keeps its own.
+      setState((s) => {
+        if (!sameProject(saved, s.selected)) return { ...s, saving: false };
+        const doc = { enabled: r.enabled, rows: rowsOf(r.aliases) };
+        return { ...s, saving: false, saved: true, error: null, ...doc, loaded: doc, dirty: false };
+      });
     } catch {
-      setState((s) => ({ ...s, saving: false, saved: true }));
+      // The read-back failed, so what was sent is the saved doc.
+      setState((s) => (sameProject(saved, s.selected) ? { ...s, saving: false, saved: true, loaded: { enabled: sent.enabled, rows: sent.rows }, dirty: false } : { ...s, saving: false }));
     }
   };
 
@@ -216,6 +244,7 @@ export function ProjectsSection({ endpoint, announce, initialCwd }: { endpoint: 
       edit((s) => ({ rows: removeRow(s.rows, i) }));
     },
     onSave: () => void save(),
+    onDiscard: () => setState((s) => (s.loaded ? { ...s, enabled: s.loaded.enabled, rows: s.loaded.rows, dirty: false, error: null, saved: false } : s)),
   };
   return (
     <div ref={root}>

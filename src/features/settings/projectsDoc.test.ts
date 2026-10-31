@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ProjectInfo } from "../../generated/ProjectInfo";
-import { addRow, forSave, firstProblem, patchRow, pickProject, removeRow, rowsOf } from "./projectsDoc";
+import { addRow, forSave, firstProblem, patchRow, pickProject, projectsDirty, removeRow, rowsOf, sameProject } from "./projectsDoc";
 
 describe("rows", () => {
   it("start from the core's aliases, keeping which paths are broken", () => {
@@ -50,5 +50,26 @@ describe("pickProject", () => {
   it("picks the first project with no cwd, and none with no projects", () => {
     expect(pickProject(list, undefined).selected).toBe("C:\\dev\\a");
     expect(pickProject([], undefined).selected).toBeNull();
+  });
+});
+
+describe("projectsDirty", () => {
+  const loaded = { enabled: false, rows: [{ name: "a", path: "x", exists: true }] };
+  it("is false for the loaded doc, whatever the broken marks and surrounding spaces", () => {
+    expect(projectsDirty(loaded, { enabled: false, rows: [{ name: " a ", path: "x " }] })).toBe(false);
+  });
+  it("is true when the switch, a name, a path or the row count differs", () => {
+    expect(projectsDirty(loaded, { ...loaded, enabled: true })).toBe(true);
+    expect(projectsDirty(loaded, { ...loaded, rows: [{ name: "b", path: "x" }] })).toBe(true);
+    expect(projectsDirty(loaded, { ...loaded, rows: [{ name: "a", path: "y" }] })).toBe(true);
+    expect(projectsDirty(loaded, { ...loaded, rows: addRow(loaded.rows) })).toBe(true);
+  });
+});
+
+describe("sameProject", () => {
+  it("applies a save's read-back only while the saved project is still selected", () => {
+    expect(sameProject("C:\\dev\\a", "C:\\dev\\a")).toBe(true);
+    expect(sameProject("C:\\dev\\a", "C:\\dev\\b")).toBe(false);
+    expect(sameProject("C:\\dev\\a", null)).toBe(false);
   });
 });

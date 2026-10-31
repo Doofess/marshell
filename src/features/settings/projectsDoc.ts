@@ -26,6 +26,20 @@ export function patchRow(rows: Row[], index: number, patch: { name?: string; pat
 /** What Save sends: names and paths trimmed. The core trims too; this keeps the checks below on the same text. */
 export const forSave = (rows: Row[]): Alias[] => rows.map((r) => ({ name: r.name.trim(), path: r.path.trim() }));
 
+/** The part of a project's references that Save sends. */
+export type RefsDoc = { enabled: boolean; rows: Row[] };
+
+/** True when the switch or any alias differs from the last loaded or saved doc, compared as Save sends them (trimmed). */
+export function projectsDirty(loaded: RefsDoc, edited: RefsDoc): boolean {
+  if (loaded.enabled !== edited.enabled) return true;
+  const a = forSave(loaded.rows);
+  const b = forSave(edited.rows);
+  return a.length !== b.length || a.some((x, i) => x.name !== b[i]?.name || x.path !== b[i]?.path);
+}
+
+/** A save's read-back belongs on screen only while the project that was saved is still the selected one. */
+export const sameProject = (saved: string, selected: string | null): boolean => saved === selected;
+
 /**
  * The first refusal the core would give for this list, in the core's order, so the person hears it without a round trip.
  * "Isn't inside the project" is left to the core, which knows the project's root.

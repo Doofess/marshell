@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 import { SETTINGS_SECTIONS, type CompanyAgent, type SettingsSection } from "./settingsSections";
 import { SettingsPanels } from "./LiveSettings";
 import { holdFocus, type GuardDom } from "../../lib/focusGuard";
-import { closeOrRefuse, closesSettings, focusSettingsHeading, freshSettingsStart, isTextEntry, mountedWith, paletteSection, settingsFocusFallback, settingsStart, settingsTabTarget, visibleControls } from "./settingsRouting";
+import { closeOrRefuse, firstRefusing, closesSettings, focusSettingsHeading, freshSettingsStart, isTextEntry, mountedWith, paletteSection, settingsFocusFallback, settingsStart, settingsTabTarget, visibleControls } from "./settingsRouting";
 
 describe("paletteSection", () => {
   it.each([
@@ -154,6 +154,15 @@ describe("closeOrRefuse", () => {
   it("closes, unless the shell profiles hold unsaved edits", () => {
     expect(closeOrRefuse(true)).toBe("close");
     expect(closeOrRefuse(false)).toBe("refuse");
+  });
+});
+
+describe("firstRefusing", () => {
+  it("names the first section holding unsaved edits, or none", () => {
+    expect(firstRefusing({ profiles: true, projects: true })).toBeNull();
+    expect(firstRefusing({ profiles: true, projects: false })).toBe("projects");
+    expect(firstRefusing({ profiles: false, projects: false })).toBe("profiles");
+    expect(closeOrRefuse(true, false)).toBe("refuse");
   });
 });
 

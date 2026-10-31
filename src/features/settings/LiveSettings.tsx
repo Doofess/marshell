@@ -12,14 +12,14 @@ import { openerUsable } from "../departures/liveBoard";
 import { AdvancedSection } from "../diagnostics/AdvancedSection";
 import { HistorySection } from "../history/HistorySection";
 import { NotificationsSection } from "../notifications/NotificationsSection";
-import { closeOrRefuse, focusSettingsHeading, mountedWith, settingsFocusFallback, settingsTabTarget, visibleControls } from "./settingsRouting";
+import { firstRefusing, focusSettingsHeading, mountedWith, settingsFocusFallback, settingsTabTarget, visibleControls } from "./settingsRouting";
 import { ProfilesSection } from "./ProfilesSection";
 import { ProjectsSection } from "./ProjectsSection";
 import { SettingsShell, settingsKey } from "./SettingsShell";
 import { COMPANY_NAMES, shownSections, type CompanyAgent, type SettingsSection } from "./settingsSections";
 import "./LiveSettings.css";
 
-/** Said when a close is refused over unsaved shell profile edits: the words the profiles dialog showed beside its disabled Close. */
+/** Said when a close is refused over unsaved shell profile or project reference edits: the words the profiles dialog showed beside its disabled Close. */
 const SAVE_FIRST = "Save or discard the changes to close.";
 
 /**
@@ -82,6 +82,8 @@ export function LiveSettings({ endpoint, sync, section, onSection, agentsStart, 
   const opener = useRef<HTMLElement | null | undefined>(undefined);
   const profilesCanClose = useRef(true);
   const [profilesClosable, setProfilesClosable] = useState(true);
+  const projectsCanClose = useRef(true);
+  const [projectsClosable, setProjectsClosable] = useState(true);
   const [mounted, setMounted] = useState<SettingsSection[]>([section]);
   const shown = mountedWith(mounted, section);
   if (shown !== mounted) setMounted(shown);
@@ -95,9 +97,10 @@ export function LiveSettings({ endpoint, sync, section, onSection, agentsStart, 
   usePopupFocus(root, () => settingsFocusFallback(root.current) as HTMLElement | null, { tab: false });
 
   const close = () => {
-    if (closeOrRefuse(profilesCanClose.current) === "refuse") {
+    const refusing = firstRefusing({ profiles: profilesCanClose.current, projects: projectsCanClose.current });
+    if (refusing !== null) {
       announce(SAVE_FIRST);
-      onSection("profiles");
+      onSection(refusing);
       return;
     }
     const usable = openerUsable(opener.current, document.body);
@@ -150,7 +153,23 @@ export function LiveSettings({ endpoint, sync, section, onSection, agentsStart, 
       case "history":
         return <HistorySection sync={sync} announce={announce} />;
       case "projects":
-        return endpoint && <ProjectsSection key={initialCwd ?? ""} endpoint={endpoint} initialCwd={initialCwd} announce={announce} />;
+        return (
+          endpoint && (
+            <>
+              <ProjectsSection
+                key={initialCwd ?? ""}
+                endpoint={endpoint}
+                initialCwd={initialCwd}
+                announce={announce}
+                onCanClose={(can) => {
+                  projectsCanClose.current = can;
+                  setProjectsClosable(can);
+                }}
+              />
+              {!projectsClosable && <p className="field__help profiles__saved">{SAVE_FIRST}</p>}
+            </>
+          )
+        );
       case "agents":
         return endpoint && <AgentsSection endpoint={endpoint} sync={sync} startWith={agentsStart} announce={announce} onChanged={onAgentsChanged} onNotifications={onNotifications} />;
       case "accounts":

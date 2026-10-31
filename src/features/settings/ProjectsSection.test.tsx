@@ -4,7 +4,7 @@ import type { ProjectInfo } from "../../generated/ProjectInfo";
 import { ProjectsView, type ProjectsHandlers, type ProjectsState } from "./ProjectsSection";
 
 const noop = () => {};
-const handlers: ProjectsHandlers = { onSelect: noop, onToggle: noop, onPatch: noop, onAdd: noop, onRemove: noop, onSave: noop };
+const handlers: ProjectsHandlers = { onSelect: noop, onToggle: noop, onPatch: noop, onAdd: noop, onRemove: noop, onSave: noop, onDiscard: noop };
 const P: ProjectInfo[] = [{ path: "C:\\dev\\app", name: "app", branch: null, last_used_ms: 1 }];
 const state = (over: Partial<ProjectsState> = {}): ProjectsState => ({ phase: "ready", selected: "C:\\dev\\app", enabled: false, rows: [], error: null, saving: false, ...over });
 const html = (s: ProjectsState, projects = P) => renderToStaticMarkup(<ProjectsView projects={projects} state={s} handlers={handlers} />);
@@ -35,6 +35,18 @@ describe("ProjectsView", () => {
   });
   it("has no live region of its own", () => {
     expect(html(state({ error: "x" }))).not.toMatch(/aria-live|role="status"|role="alert"/);
+  });
+  it("says which CLIs get references", () => {
+    expect(html(state())).toContain("Claude Code, Codex and Antigravity get references. Other agents don&#x27;t.");
+  });
+  it("shows Discard only while there are unsaved edits, and locks the picker", () => {
+    const clean = html(state());
+    expect(clean).not.toContain("Discard");
+    expect(clean).not.toMatch(/<select[^>]*disabled/);
+    const dirty = html(state({ dirty: true }));
+    expect(dirty).toContain("Discard");
+    expect(dirty).toMatch(/<select[^>]*disabled/);
+    expect(html(state({ saving: true }))).toMatch(/<select[^>]*disabled/);
   });
   // The Antigravity line ("Antigravity can't take references yet.") waits on the spike; see ProjectsSection.tsx.
 });

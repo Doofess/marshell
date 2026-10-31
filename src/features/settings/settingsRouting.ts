@@ -120,7 +120,14 @@ export function visibleControls<T extends Control>(controls: T[]): T[] {
   });
 }
 
-/** Closing is refused while the shell profiles hold unsaved edits, as their dialog refused: the change bar stays until saved or discarded. */
-export function closeOrRefuse(profilesCanClose: boolean): "close" | "refuse" {
-  return profilesCanClose ? "close" : "refuse";
+/** Closing is refused while the shell profiles or the project references hold unsaved edits: they stay until saved or discarded. */
+export function closeOrRefuse(profilesCanClose: boolean, projectsCanClose = true): "close" | "refuse" {
+  return profilesCanClose && projectsCanClose ? "close" : "refuse";
+}
+
+/** The section a refused close goes to: the first one holding unsaved edits, or null when none does. */
+export function firstRefusing(can: { profiles: boolean; projects: boolean }): "profiles" | "projects" | null {
+  if (!can.profiles) return "profiles";
+  if (!can.projects) return "projects";
+  return null;
 }
