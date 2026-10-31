@@ -104,6 +104,20 @@ pub async fn post(
         body: json.clone(),
     };
     st.hook_log().push(rec, |tab| st.session(tab).is_some());
+    // A WSL tab's processes are Linux ones the foreground watcher can't read: its hooks say which agent runs there. The
+    // mark comes first, so the check below sees it and an event of another agent in that tab is dropped.
+    let mut left_wsl = false;
+    if matches!(agent.as_str(), "claude" | "codex" | "antigravity")
+        && let Some(tab) = tab.as_deref()
+        && in_wsl(&st, tab).await
+    {
+        if json.get("hook_event_name").and_then(serde_json::Value::as_str) == Some("SessionEnd") {
+            // The agent is gone from the row: nothing is left to fold into a status.
+            left_wsl = st.registry().clear_hook_agent(tab, &agent);
+        } else if matches!(role, HookRole::Event | HookRole::Permission | HookRole::Statusline) {
+            st.registry().mark_hook_agent(tab, &agent);
+        }
+    }
     // Grok Build runs Claude Code's hooks too. A tab that runs another agent takes no event or hold
     // from this one, so its own prompt applies.
     if let Some(tab) = tab.as_deref()
@@ -157,7 +171,9 @@ pub async fn post(
         if matches!(agent.as_str(), "claude" | "codex" | "antigravity")
             && let Some(tab) = tab.as_deref()
         {
-            fold_live_with(&st, &agent, role, tab, &json, at_ms, held).await;
+            if !left_wsl {
+                fold_live_with(&st, &agent, role, tab, &json, at_ms, held).await;
+            }
             if role == HookRole::Event && st.registry().is_open(tab) {
                 record_history(&st, &agent, tab, &json, at_ms).await;
             }
@@ -194,6 +210,15 @@ pub async fn post(
         return Ok(hold_permission(&st, Some(tab), agent, json).await);
     }
     Ok(StatusCode::NO_CONTENT.into_response())
+}
+
+/// Whether the tab's shell runs in a WSL distro. The first answer for a profile without `-d` asks `wsl.exe` for the default
+/// distro, so it runs off the async workers.
+async fn in_wsl(st: &AppState, tab: &str) -> bool {
+    let (asker, tab) = (st.clone(), tab.to_string());
+    tokio::task::spawn_blocking(move || asker.wsl_distro_of_tab(&tab).is_some())
+        .await
+        .unwrap_or(false)
 }
 
 /// The note for the aliases `prompt` names in the project of the folder the agent runs in, with paths in that

@@ -967,6 +967,157 @@ async fn claude_keeps_its_hooks_while_it_is_in_the_foreground_and_before_any_sig
     assert_eq!(live.state, LiveState::NeedsPermission);
 }
 
+// ---- Agents inside WSL: a hook names the agent the tab runs ----
+
+/// A WSL profile that starts the sleeper: only `-d Ubuntu` in its argv makes it a tab of that distro, as `wsl.exe -d Ubuntu`
+/// would be. No test starts a real `wsl.exe`.
+fn wsl_profile() -> marshell_protocol::api::Profile {
+    let mut command = sleeper_profile().command;
+    command.extend(["-d".to_string(), "Ubuntu".to_string()]);
+    marshell_protocol::api::Profile {
+        id: "wsl-ubuntu".into(),
+        name: "Ubuntu".into(),
+        command,
+        family: marshell_protocol::api::ShellFamily::Wsl,
+        ..sleeper_profile()
+    }
+}
+
+/// A plain shell row (launched as no agent) of `profile_id`.
+async fn start_shell(app: &axum::Router, profile_id: &str) -> String {
+    let body = serde_json::json!({ "cols": 80, "rows": 24, "profile_id": profile_id });
+    let res = app
+        .clone()
+        .oneshot(
+            base("POST", "/v1/sessions")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(body.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let code = res.status();
+    let bytes = axum::body::to_bytes(res.into_body(), 64 * 1024).await.unwrap();
+    assert_eq!(code, StatusCode::OK, "{}", String::from_utf8_lossy(&bytes));
+    serde_json::from_slice::<serde_json::Value>(&bytes).unwrap()["tab_id"]
+        .as_str()
+        .unwrap()
+        .to_string()
+}
+
+fn wsl_state() -> AppState {
+    state_with(Some(KNOWN), vec![sleeper_profile(), wsl_profile()])
+}
+
+fn foreground_agent(st: &AppState, tab: &str) -> Option<String> {
+    row(st, tab).foreground.and_then(|f| f.agent)
+}
+
+#[tokio::test]
+async fn a_wsl_tab_takes_the_agent_from_its_hooks() {
+    let st = wsl_state();
+    let app = router(st.clone());
+    let tab = start_shell(&app, "wsl-ubuntu").await;
+    assert_eq!(st.wsl_distro_of_tab(&tab).as_deref(), Some("Ubuntu"));
+    assert_eq!(foreground_agent(&st, &tab), None);
+    assert_eq!(
+        post_fixture(&app, "event", &tab, "UserPromptSubmit").await,
+        StatusCode::NO_CONTENT
+    );
+    let info = row(&st, &tab);
+    stop(&st, &tab);
+    let foreground = info.foreground.unwrap();
+    assert_eq!(
+        (foreground.program.as_str(), foreground.agent.as_deref()),
+        ("claude", Some("claude"))
+    );
+    assert_eq!(info.live.unwrap().state, LiveState::Working);
+}
+
+#[tokio::test]
+async fn a_status_line_names_the_agent_too() {
+    let st = wsl_state();
+    let app = router(st.clone());
+    let tab = start_shell(&app, "wsl-ubuntu").await;
+    assert_eq!(
+        post_fixture(&app, "statusline", &tab, "statusline").await,
+        StatusCode::NO_CONTENT
+    );
+    let (agent, live) = (foreground_agent(&st, &tab), row(&st, &tab).live);
+    stop(&st, &tab);
+    assert_eq!(agent.as_deref(), Some("claude"));
+    assert!(live.is_some());
+}
+
+#[tokio::test]
+async fn session_end_clears_the_wsl_agent() {
+    let st = wsl_state();
+    let app = router(st.clone());
+    let tab = start_shell(&app, "wsl-ubuntu").await;
+    post_fixture(&app, "event", &tab, "UserPromptSubmit").await;
+    assert_eq!(foreground_agent(&st, &tab).as_deref(), Some("claude"));
+    assert_eq!(
+        post_fixture(&app, "event", &tab, "SessionEnd").await,
+        StatusCode::NO_CONTENT
+    );
+    let info = row(&st, &tab);
+    stop(&st, &tab);
+    // The row is a plain shell again, with no status left behind.
+    assert_eq!(info.foreground, None);
+    assert_eq!(info.live, None);
+}
+
+#[tokio::test]
+async fn a_non_wsl_shell_tab_is_not_marked_by_hooks() {
+    let st = wsl_state();
+    let app = router(st.clone());
+    let tab = start_shell(&app, "sleeper").await;
+    assert_eq!(st.wsl_distro_of_tab(&tab), None);
+    post_fixture(&app, "event", &tab, "UserPromptSubmit").await;
+    let info = row(&st, &tab);
+    stop(&st, &tab);
+    assert_eq!(info.foreground, None);
+}
+
+#[tokio::test]
+async fn another_agents_hook_in_a_marked_wsl_tab_is_ignored() {
+    let st = wsl_state().with_codex_version(Some("0.163.0".into()));
+    let app = router(st.clone());
+    let tab = start_shell(&app, "wsl-ubuntu").await;
+    post_fixture(&app, "event", &tab, "UserPromptSubmit").await;
+    let before = row(&st, &tab).live;
+    let body = serde_json::json!({ "hook_event_name": "Stop" })
+        .to_string()
+        .into_bytes();
+    assert_eq!(
+        status(&app, hook(Some("event"), Some("codex"), Some(&tab), body)).await,
+        StatusCode::NO_CONTENT
+    );
+    let info = row(&st, &tab);
+    stop(&st, &tab);
+    assert_eq!(info.foreground.and_then(|f| f.agent).as_deref(), Some("claude"));
+    assert_eq!(info.live, before);
+}
+
+#[tokio::test]
+async fn a_late_event_after_the_prompt_mark_does_not_mark_the_row_again() {
+    let st = wsl_state();
+    let app = router(st.clone());
+    let tab = start_shell(&app, "wsl-ubuntu").await;
+    post_fixture(&app, "event", &tab, "UserPromptSubmit").await;
+    // The agent exited and the shell is back at its prompt.
+    let away = marshell_protocol::api::UiView {
+        window_focused: false,
+        visible_tabs: Vec::new(),
+    };
+    st.registry().mark(&tab, marshell_core::pty::Mark::PromptStart, &away);
+    assert_eq!(foreground_agent(&st, &tab), None);
+    post_fixture(&app, "event", &tab, "PostToolUse").await;
+    let agent = foreground_agent(&st, &tab);
+    stop(&st, &tab);
+    assert_eq!(agent, None);
+}
+
 // ---- Project references: a matched alias's note reaches Claude Code and Codex ----
 
 /// A project with a `.git` folder and a file an alias can name.
