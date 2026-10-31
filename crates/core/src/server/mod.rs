@@ -696,6 +696,19 @@ impl AppState {
     pub(crate) fn profiles_snapshot(&self) -> ProfilesDoc {
         self.0.profiles.lock().unwrap_or_else(|e| e.into_inner()).clone()
     }
+    /// The WSL distro the tab's shell runs in. None for a tab of any other profile, or an unknown tab.
+    pub fn wsl_distro_of_tab(&self, tab: &str) -> Option<String> {
+        let profile_id = self.registry().profile_of_tab(tab)?;
+        let profile = self
+            .profiles_snapshot()
+            .profiles
+            .into_iter()
+            .find(|p| p.id == profile_id)?;
+        if !matches!(profile.family, marshell_protocol::api::ShellFamily::Wsl) {
+            return None;
+        }
+        crate::wsl::distro_of_argv(&profile.command).or_else(crate::wsl::default_distro)
+    }
     pub fn insert_session(&self, session: Arc<crate::pty::Session>) {
         self.0
             .sessions
@@ -1170,5 +1183,49 @@ mod tests {
         assert_eq!(longest, Duration::from_secs(580));
         assert!(longest < BRIDGE_PERMISSION_BUDGET);
         assert!(DEFAULT_PERMISSION_HOLD < longest);
+    }
+
+    #[test]
+    fn a_wsl_tab_names_its_distro_and_no_other_tab_does() {
+        use marshell_protocol::api::{Profile, ShellFamily};
+        let profile = |id: &str, command: &[&str], family| Profile {
+            id: id.into(),
+            name: id.into(),
+            command: command.iter().map(|s| s.to_string()).collect(),
+            family,
+            cwd: None,
+            env: Vec::new(),
+            shell_integration: true,
+            terminal_theme: None,
+            detected: true,
+        };
+        let home = tempfile::tempdir().unwrap();
+        let st = AppState::new(
+            "t".into(),
+            1,
+            Vec::new(),
+            home.path().into(),
+            vec![
+                profile("wsl-my", &["wsl.exe", "-d", "My Distro"], ShellFamily::Wsl),
+                profile("pwsh", &["pwsh.exe"], ShellFamily::PowerShell),
+            ],
+        );
+        for (tab, profile_id) in [("a", "wsl-my"), ("b", "pwsh"), ("c", "gone")] {
+            st.registry().reserve(
+                tab,
+                crate::registry::Relaunch {
+                    profile_id: profile_id.into(),
+                    agent: None,
+                    cwd: "C:/work".into(),
+                    mode: None,
+                    name: tab.into(),
+                    preset: None,
+                },
+            );
+        }
+        assert_eq!(st.wsl_distro_of_tab("a").as_deref(), Some("My Distro"));
+        assert_eq!(st.wsl_distro_of_tab("b"), None);
+        assert_eq!(st.wsl_distro_of_tab("c"), None);
+        assert_eq!(st.wsl_distro_of_tab("missing"), None);
     }
 }

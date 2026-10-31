@@ -1381,6 +1381,17 @@ impl Registry {
             .and_then(|e| e.spec.preset.clone())
     }
 
+    /// The profile the tab started with, whether the tab is open or among the recently closed.
+    pub fn profile_of_tab(&self, tab_id: &str) -> Option<String> {
+        let state = self.state.lock().unwrap();
+        state
+            .open
+            .iter()
+            .chain(state.closed.iter())
+            .find(|e| e.info.tab_id == tab_id)
+            .map(|e| e.spec.profile_id.clone())
+    }
+
     /// The mode the open tab runs in. None for a tab that isn't open, a plain shell, or an agent started with no mode.
     pub fn mode_of_open_tab(&self, tab_id: &str) -> Option<SessionMode> {
         let state = self.state.lock().unwrap();
