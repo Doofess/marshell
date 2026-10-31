@@ -339,3 +339,40 @@ describe("AgentsSectionView WSL group", () => {
     expect(wsl(undefined)).not.toContain("data-wsl-group");
   });
 });
+
+describe("AgentsSectionView setup panel heading", () => {
+  const heading = (distro?: string) => {
+    const h = renderToStaticMarkup(<AgentsSectionView setup={SETUP} panel={{ kind: "setup", flow: { preview: PREVIEW, open: false, busy: false, distro } }} liveStatus={true} {...handlers} />);
+    return /<h3[^>]*class="consent__name"[^>]*>([^<]*)<\/h3>/.exec(h)?.[1];
+  };
+  it("setup_heading_names_the_distro_for_a_distro_flow", () => {
+    expect(heading("Marshell-LC")).toBe("Claude Code in Marshell-LC");
+  });
+  it("setup_heading_is_unchanged_for_windows", () => {
+    expect(heading()).toBe("Claude Code");
+  });
+});
+
+describe("AgentsSectionView with a CLI missing on Windows", () => {
+  const missing = (agent: "codex" | "antigravity", distros: string[] | undefined) => {
+    const props = agent === "codex" ? { codex: { ...CODEX_SETUP, found: false } } : { antigravity: { ...AGY_SETUP, found: false } };
+    return renderToStaticMarkup(<AgentsSectionView setup={SETUP} {...props} panel={{ kind: "list" }} liveStatus={true} wslDistros={distros} {...handlers} />);
+  };
+  for (const agent of ["codex", "antigravity"] as const) {
+    it(`${agent}_not_found_on_windows_still_offers_its_wsl_group`, () => {
+      const h = missing(agent, ["Ubuntu"]);
+      const from = h.indexOf(`data-agent-card="${agent}"`);
+      const card = h.slice(from, h.indexOf("</section>", from));
+      expect(card).toContain(`data-wsl-group="${agent}"`);
+      expect(card).toContain(">Set up in Ubuntu</button>");
+      expect(card).toContain("was not found on this computer.");
+      // No Windows buttons for a missing Windows CLI.
+      expect(card).not.toContain(">Set up</button>");
+      expect(card).not.toContain(">Hooks off</button>");
+    });
+    it(`${agent}_not_found_and_no_distros_renders_nothing`, () => {
+      expect(missing(agent, [])).not.toContain(`data-agent-card="${agent}"`);
+      expect(missing(agent, undefined)).not.toContain(`data-agent-card="${agent}"`);
+    });
+  }
+});

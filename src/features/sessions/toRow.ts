@@ -187,7 +187,8 @@ function rowOf(info: SessionInfo, profiles: Profile[], setup: Partial<Record<Hoo
     if (info.live !== null) return { ...base, ...liveRow(info.live, info.stuck, now) };
     // A hook agent (Claude Code, Codex, Antigravity) without Marshell's hooks: say so and offer the setup, ahead of the output fallback. An unknown state (not fetched yet) says and offers nothing.
     // Installed hooks offer nothing, even for a Codex that has not trusted them yet: the row keeps the limited fallback and never claims they work.
-    const hooks = isHookAgent(info.agent) ? setup?.[info.agent] : undefined;
+    // The setup state is the Windows files'; it says nothing about a WSL tab's distro, so a WSL tab never offers the Windows setup.
+    const hooks = isHookAgent(info.agent) && profile?.family !== "wsl" ? setup?.[info.agent] : undefined;
     if (hooks !== undefined && hooks !== "installed") return { ...base, status: "limited", phrase: "Status limited · set up", setupLink: true };
     const fallback = fallbackRow(info, base);
     if (fallback !== undefined) return fallback;
@@ -198,7 +199,7 @@ function rowOf(info: SessionInfo, profiles: Profile[], setup: Partial<Record<Hoo
     if (fg.agent !== null && isManifestAgent(fg.agent)) return fallbackRow(info, base) ?? { ...base, status: "limited", phrase: LIMITED_NOTE };
     // A hook agent typed into a shell (on Windows, or one a WSL tab's hooks named) reports like a launched one.
     if (fg.agent !== null && isHookAgent(fg.agent) && info.live !== null) return { ...base, ...liveRow(info.live, info.stuck, now) };
-    if (fg.agent !== null) return { ...base, status: "limited", phrase: "Status arrives with hooks" };
+    if (fg.agent !== null) return { ...base, status: "limited", phrase: info.status_note ?? "Status arrives with hooks" };
     return { ...base, status: "working", phrase: `Running ${fg.command_line ?? fg.program}` };
   }
   const command = info.command;

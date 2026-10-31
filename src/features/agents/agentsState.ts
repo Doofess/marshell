@@ -171,5 +171,5 @@ export function consentProps(windows: AgentSetup, flow: InstallFlow) {
   };
   // Allow is for a preview the core can apply; `done` is the one that has nothing left to change, whose Skip becomes Done.
   const allow = Boolean(flow.preview?.can_apply) && !flow.conflict;
-  return { scenario: { detection, plan }, on, offer: flow.distro !== undefined ? (cli === "codex" ? CODEX_OFFER : OFFER).filter((c) => c !== "skill") : s.hooks === "installed" ? (["approve", "skill"] as Capability[]) : cli === "codex" ? CODEX_OFFER : OFFER, open: flow.open, busy: flow.busy, error: flow.error, allow, done };
+  return { scenario: { detection, plan }, distro: flow.distro, on, offer: flow.distro !== undefined ? (cli === "codex" ? CODEX_OFFER : OFFER).filter((c) => c !== "skill") : s.hooks === "installed" ? (["approve", "skill"] as Capability[]) : cli === "codex" ? CODEX_OFFER : OFFER, open: flow.open, busy: flow.busy, error: flow.error, allow, done };
 }

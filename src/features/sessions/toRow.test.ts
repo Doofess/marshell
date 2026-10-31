@@ -305,6 +305,22 @@ describe("toRow", () => {
         expect(row).toMatchObject({ status: "limited", phrase: "Status limited · set up", setupLink: true });
       }
     });
+    it("wsl_agent_tab_ignores_the_windows_hooks_state", () => {
+      for (const agent of ["claude", "codex"] as const) {
+        const row = toRow(info({ agent, profile_id: "wsl-ubuntu" }), PROFILES, { [agent]: "none" });
+        expect(row.setupLink).toBeUndefined();
+        expect(row).toMatchObject({ status: "limited", phrase: "Status arrives with hooks" });
+      }
+      expect(toRow(info({ agent: "codex", profile_id: "wsl-ubuntu", status_note: "Can't read Codex's version in Ubuntu" }), PROFILES, { codex: "none" })).toMatchObject({ phrase: "Can't read Codex's version in Ubuntu" });
+    });
+    it("windows_agent_tab_still_links_to_set_up", () => {
+      expect(toRow(info({ agent: "codex", profile_id: "pwsh" }), PROFILES, { codex: "none" })).toMatchObject({ phrase: "Status limited · set up", setupLink: true });
+    });
+    it("wsl_shell_row_with_a_hook_agent_foreground_shows_the_status_note", () => {
+      const foreground = { program: "codex", command_line: null, agent: "codex" };
+      expect(toRow(info({ profile_id: "wsl-ubuntu", foreground, status_note: "Codex 0.166.0 is not one Marshell has recorded yet" }), PROFILES)).toMatchObject({ status: "limited", phrase: "Codex 0.166.0 is not one Marshell has recorded yet" });
+      expect(toRow(info({ profile_id: "wsl-ubuntu", foreground }), PROFILES).phrase).toBe("Status arrives with hooks");
+    });
     it("an installed claude row has no link", () => {
       const row = toRow(info({ agent: "claude" }), PROFILES, { claude: "installed" });
       expect(row.setupLink).toBeUndefined();

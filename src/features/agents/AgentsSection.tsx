@@ -118,8 +118,9 @@ export function AgentsSectionView({
       {typeof setup === "object" && panel.kind === "list" && (
         <>
           <AgentList setup={setup} agent="claude" liveStatus={liveStatus} error={liveStatusError} on={on} skill={skills?.claude} distros={distros} />
-          {codex?.found && <AgentList setup={codex} agent="codex" liveStatus={codexLiveStatus} error={codexLiveStatusError} on={on} skill={skills?.codex} distros={distros} />}
-          {antigravity?.found && <AgentList setup={antigravity} agent="antigravity" liveStatus={antigravityLiveStatus} error={antigravityLiveStatusError} on={on} skill={skills?.antigravity} distros={distros} />}
+          {/* A CLI missing on Windows still gets its section when there are distros: it may be installed inside one. */}
+          {codex && (codex.found || (distros?.length ?? 0) > 0) && <AgentList setup={codex} agent="codex" liveStatus={codexLiveStatus} error={codexLiveStatusError} on={on} skill={skills?.codex} distros={distros} />}
+          {antigravity && (antigravity.found || (distros?.length ?? 0) > 0) && <AgentList setup={antigravity} agent="antigravity" liveStatus={antigravityLiveStatus} error={antigravityLiveStatusError} on={on} skill={skills?.antigravity} distros={distros} />}
           {own}
           {tools}
         </>
@@ -168,14 +169,14 @@ function AgentList({ setup, agent, liveStatus, error, on, skill, distros }: { se
       {agent === "codex" && setup.trust && <TrustLine trust={setup.trust} />}
       {skill && setup.found && <SkillRow agent={agent} setup={setup} flow={skill.flow} on={skill.on} />}
       {/* Antigravity's hooks and its status line live in two files; both are named. */}
-      {setup.hooks_path !== undefined && (
+      {setup.found && setup.hooks_path !== undefined && (
         <p className="agents-dialog__line" dir="auto">
           Hooks file: <code>{setup.hooks_path}</code>. Status line file: <code>{setup.settings_path}</code>.
         </p>
       )}
-      {setup.hooks === "installed" && !setup.approve_installed && <p className="agents-dialog__line">Approve from anywhere: off</p>}
+      {setup.found && setup.hooks === "installed" && !setup.approve_installed && <p className="agents-dialog__line">Approve from anywhere: off</p>}
       {/* Left out until the settings have been read: an unread value is never shown as off. */}
-      {liveStatus !== null && (
+      {setup.found && liveStatus !== null && (
         <Switch label="Live status" checked={liveStatus} onChange={(checked) => on.onLiveStatus(checked, agent)} reason={liveStatus ? undefined : "Rows use output activity only: Working or Idle."} />
       )}
       {agent === "claude" && (
