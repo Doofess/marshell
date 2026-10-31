@@ -1,0 +1,27 @@
+# Project references live check (slice 6i2)
+
+- Date: 2026-10-31, 12:07 to 12:25 local time (UTC+2).
+- Build: `phase-6i2` at `c20c5c0` under `pnpm tauri dev` on Windows 11 Pro (26300).
+- Home: a scratch `MARSHELL_HOME`, `CLAUDE_CONFIG_DIR`, `MARSHELL_CLAUDE_SETTINGS` and `USERPROFILE` (agy's home), with CDP on port 9333, started by `live-check.ps1 start -CodexAuth -AgyAuth -CodexHome %TEMP%\lc-6i2-cx`. Onboarding installed all three CLIs' hooks, each into its scratch file. Codex's folder and Marshell's hooks were trusted with "Trust all and continue", and its non-admin sandbox was chosen.
+- Agents: Claude Code 2.1.316, Codex CLI 0.164.0, Antigravity CLI 1.4.12 (Gemini 3.8 Flash, High). The user approved real answers from all three; Claude was logged in by the user under the scratch `CLAUDE_CONFIG_DIR`.
+- Data: a scratch git repo `proj` (one commit) holding `src/LoginButton.tsx`, and a linked worktree `proj-wt` on branch `task`. Nothing was seeded into the homes.
+- How it was driven: CDP evaluations and CDP keys into the webview, emulated forced colors, and about 20 screenshots, used to read terminal text. No desktop input. agy's first-run screens were answered in its own terminal: the data-sharing box was left unticked, and the scratch worktree was trusted. One read-only command (`Get-Date`) was approved once in agy's own prompt.
+
+## Results
+
+| Check | Result |
+| --- | --- |
+| 1. Turn references on in Settings → Projects, add `login button` → `src/LoginButton.tsx`, save; `references.json` appears | Pass. The palette command "Edit this project's references" opened Projects on the focused session's project, with focus on the "Projects" heading. With the keyboard only: the switch (Space), Add alias, the Alias and Path fields, then Save. "Saved." was announced through the status region, and `mh\projects\2376eaf720b04ca6\references.json` appeared. |
+| 2. Claude Code: chip, tooltip, no hook text, the agent names the path | Pass. "Where is the Login Button defined? Answer with its full file path only, without running any command or tool." set the chip to "1 reference" with the note "References: 'login button' = C:\Users\Home Office\AppData\Local\Temp\lc-6i2-2\proj\src\LoginButton.tsx." Claude answered with that path. No hook text appeared in its terminal. Asked "Which file did Marshell point you to for the login button?", it said "A UserPromptSubmit hook gave me C:\Users\Home Office\AppData\Local\Temp\lc-6i2-2\proj\src\LoginButton.tsx, but nothing shows the hook came from Marshell." |
+| 2. Codex: chip, tooltip, no hook text, the agent names the path | Pass. The header read "1 reference", whose title and description were "References: 'login button' = C:\Users\Home Office\AppData\Local\Temp\lc-6i2-2\proj\src\LoginButton.tsx." Codex answered with that path without running a command. No hook text appeared in its terminal. |
+| 3. A prompt with no alias clears the chip | Pass. "Reply with the single word OK." cleared the chip, and Codex answered "OK". |
+| 4. Deleting the file shows the broken line, and the next prompt gets nothing | Pass. With `src/LoginButton.tsx` deleted, Settings showed "Not found in the project, so it isn't sent." beside the path. The next prompt naming the login button got no chip, and Codex, asked whether Marshell had pointed it to a file, said "No.". The file was restored with `git checkout`. |
+| 5. A task worktree session gets the path in its own checkout | Pass. A Codex tab in `proj-wt` got the note naming `...\lc-6i2-2\proj-wt\src\LoginButton.tsx` and answered with it. The references are the main repo's, read through the worktree. |
+| 6. agy: the note once per prompt (Task 5a) | Pass. In `proj-wt`, "Where is the login button defined? Answer with its full file path only, without running any command or tool." set the chip to the `proj-wt` path, and agy answered `C:\Users\Home Office\AppData\Local\Temp\lc-6i2-2\proj-wt\src\LoginButton.tsx`. A second prompt, "Run Get-Date, then tell me where the login button is defined.", made two model calls around the tool step. agy's scratch `transcript.jsonl` holds two `EPHEMERAL_MESSAGE` steps for the two prompts, one each, both with the note's exact text; the call after the tool step got none, and the answer written in it still named the path. No note text appeared in agy's terminal. |
+| 7. Keyboard only and emulated forced colors, on the section and the chip | Pass, emulated (not a real high-contrast theme). The chip takes focus as a `span` with `tabIndex` 0, and its `aria-describedby` text is the note. In forced colors it keeps a 1px `ButtonText` outline and, focused, a 2px `Highlight` ring. The Projects section's picker, fields and buttons all show system-colored borders, and the focused heading shows its ring. The switch's accessible name is "Add references to prompts" (`switch "Add references to prompts" [checked]`), and the remove button's is "Remove login button". |
+
+## Findings
+
+1. **The Projects picker lists a worktree and its main repo as two entries.** `proj` and `proj-wt` both appear, though both read and write the same `references.json`. Not fixed; minor.
+2. **Codex 0.164.0 shows "Status limited".** The sidebar says Codex 0.164.0 isn't a version Marshell has recorded yet. This predates the slice and doesn't affect references. Not fixed.
+3. **Playwright's forced-colors reset also switches the color scheme.** `emulateMedia({ forcedColors: 'none' })` left the webview in light mode until `colorScheme: null` was sent. A test-harness quirk, not an app bug.
