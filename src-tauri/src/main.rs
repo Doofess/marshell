@@ -28,6 +28,36 @@ fn core_endpoint(core: tauri::State<'_, CoreHandle>) -> Result<Endpoint, String>
     core.0.endpoint().ok_or_else(|| "the core is not running".to_string())
 }
 
+const CORE_DOWN: &str = "Marshell's core isn't running.";
+
+/// The window's trusted path to administrator sessions (decision 8). The token API refuses their input, resize and approval
+/// answers, so the window sends them here, to the in-process core. The error is the core's own sentence.
+#[tauri::command]
+fn elevated_input(core: tauri::State<'_, CoreHandle>, tab_id: String, text: String) -> Result<(), String> {
+    core.0
+        .trusted()
+        .ok_or_else(|| CORE_DOWN.to_string())?
+        .input(&tab_id, text.into_bytes())
+}
+
+#[tauri::command]
+fn elevated_resize(core: tauri::State<'_, CoreHandle>, tab_id: String, cols: u16, rows: u16) -> Result<(), String> {
+    core.0
+        .trusted()
+        .ok_or_else(|| CORE_DOWN.to_string())?
+        .resize(&tab_id, cols, rows)
+}
+
+#[tauri::command]
+async fn elevated_decide(
+    core: tauri::State<'_, CoreHandle>,
+    rid: String,
+    decision: marshell_protocol::hook::PermissionDecision,
+) -> Result<(), String> {
+    let trusted = core.0.trusted().ok_or_else(|| CORE_DOWN.to_string())?;
+    trusted.decide(&rid, decision).await.map_err(|(_status, text)| text)
+}
+
 /// Tells the window when the core restarted (its sessions ended) or gave up.
 fn emit_core_event(app: &tauri::AppHandle, event: CoreEvent) {
     let name = match event {
@@ -303,6 +333,9 @@ fn main() {
             export::save_conversation,
             folder_picker::pick_folder,
             core_endpoint,
+            elevated_input,
+            elevated_resize,
+            elevated_decide,
             close_once,
             capture::capture_screen_region,
             capture::cancel_capture,

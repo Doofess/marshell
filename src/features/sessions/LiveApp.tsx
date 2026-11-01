@@ -13,7 +13,8 @@ import { readyPending, type PendingSetup } from "../scripts/afterSetup";
 import { runControl } from "../scripts/confirmScripts";
 import { afterReread, askOnRunFailure } from "../scripts/runRetry";
 import { ScriptsTrustDialog } from "../scripts/ScriptsTrustDialog";
-import { decide, release } from "../../lib/api/permissions";
+import { decideAs, release } from "../../lib/api/permissions";
+import { typeText } from "../../lib/api/elevated";
 import { peek as peekScreen } from "../../lib/api/peek";
 import { decisionFor, laneEntries } from "../approval/fromCore";
 import { LiveCard, useCards, type Answer } from "../approval/LiveCard";
@@ -409,7 +410,9 @@ export function LiveApp() {
       cards.answer(r.id, verdict, async () => {
         setSendingRequests((current) => new Map(current).set(r.id, r.tab));
         try {
-          return await (a === "terminal" ? release(endpoint, r.id) : decide(endpoint, r.id, decisionFor(a)));
+          // An administrator row's answer goes through the window's own path; the token API refuses it.
+          const elevated = stateRef.current.infos.some((i) => i.tab_id === r.tab && i.elevated);
+          return await (a === "terminal" ? release(endpoint, r.id) : decideAs(endpoint, r.id, decisionFor(a), elevated));
         } finally {
           setSendingRequests((current) => {
             const next = new Map(current);
@@ -666,12 +669,13 @@ export function LiveApp() {
     },
     [actOn],
   );
-  const reviewReason = (e: unknown) => (e instanceof ApiError ? e.message : String(e));
+  const reviewReason = (e: unknown) => (e instanceof Error ? e.message : String(e));
   // "Ask <agent> to fix them": the prompt is typed into the task's session, never sent (no Enter), and the terminal gets the focus.
   const askAgent = (text: string) => {
     const r = reviewRef.current;
     if (!r) return;
-    sessions.input(r.endpoint, r.tabId, text).then(
+    const elevated = stateRef.current.infos.some((i) => i.tab_id === r.tabId && i.elevated);
+    typeText(r.tabId, text, elevated, () => sessions.input(r.endpoint, r.tabId, text)).then(
       () => {
         pick(r.tabId);
         actions.focusTerminal();
@@ -1527,6 +1531,7 @@ export function LiveApp() {
                 key={`${row.id}:${resumed[row.id] ?? 0}`}
                 endpoint={endpoint}
                 tabId={row.id}
+                elevated={info?.elevated === true}
                 placeholder={startingTexts[row.id]}
                 onOutput={() => setStartingTexts((t) => without(t, row.id))}
                 onSize={onSize}
