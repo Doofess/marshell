@@ -108,6 +108,7 @@ pub async fn open(State(st): State<AppState>, Json(req): Json<PanelRequest>) -> 
         (req.cols, req.rows),
         None,
         true,
+        false,
     )
     .await?;
     // Two requests can both start a shell; the first to store its id wins.
@@ -154,6 +155,7 @@ pub(super) fn take_and_adopt(st: &AppState, only: Option<&str>) -> Option<String
         &st.0.registry,
         &session,
         Relaunch {
+            elevated: false,
             profile_id: shell.profile_id,
             agent: None,
             cwd: shell.cwd,
@@ -217,6 +219,7 @@ mod tests {
 
         let registry = Registry::new();
         let relaunch = Relaunch {
+            elevated: false,
             profile_id: "p".into(),
             agent: None,
             cwd: String::new(),

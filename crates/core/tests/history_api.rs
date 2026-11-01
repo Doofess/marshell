@@ -645,6 +645,7 @@ fn reserve_tab(env: &Env, tab: &str, agent: Option<&str>) {
     env.state.registry().reserve(
         tab,
         marshell_core::registry::Relaunch {
+            elevated: false,
             profile_id: "printer".into(),
             agent: agent.map(str::to_string),
             cwd: env.work.path().to_string_lossy().into_owned(),
@@ -2015,6 +2016,7 @@ async fn a_cleanup_keeps_the_images_of_a_tab_restored_from_the_last_run() {
     env.state
         .registry()
         .seed_ended(&[saved], |tab| marshell_core::registry::Relaunch {
+            elevated: false,
             profile_id: tab.profile_id.clone(),
             agent: None,
             cwd: tab.cwd.clone(),

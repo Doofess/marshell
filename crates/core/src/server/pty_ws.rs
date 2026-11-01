@@ -89,6 +89,11 @@ async fn run(socket: WebSocket, session: Arc<Session>, st: AppState, tab: String
         tokio::select! {
             msg = rx.next() => match msg {
                 Some(Ok(Message::Binary(frame))) => match decode_client(&frame) {
+                    // An administrator session takes input and resizes only from Marshell's own window, through
+                    // the in-process door; the socket carries its output and acks. There is no error frame.
+                    Some(ClientFrame::Input(_) | ClientFrame::Resize(_)) if session.is_elevated() => {
+                        tracing::warn!(tab = %tab, "dropped a socket frame for an administrator session");
+                    }
                     Some(ClientFrame::Input(bytes)) => {
                         // A paused session takes no keys; the pane shows why.
                         if !session.is_frozen() {

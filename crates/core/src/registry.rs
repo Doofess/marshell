@@ -52,6 +52,9 @@ pub struct Relaunch {
     /// The preset it started with ("deepseek"). Only the name: a restart or reopen recomputes the preset's
     /// environment, with the key, from the environment at that moment.
     pub preset: Option<String>,
+    /// Runs as administrator through the elevated helper. A restart, resume or reopen starts it elevated again
+    /// (a new UAC prompt) and never falls back to an ordinary start.
+    pub elevated: bool,
 }
 
 /// Why `begin_resume` said no.
@@ -358,7 +361,7 @@ impl Registry {
                 activity: None,
                 status_note: None,
                 muted: false,
-                elevated: false,
+                elevated: relaunch.elevated,
                 attention: None,
                 stuck: None,
                 ports: Vec::new(),
@@ -1589,6 +1592,7 @@ mod tests {
 
     fn relaunch(name: &str) -> Relaunch {
         Relaunch {
+            elevated: false,
             profile_id: "pwsh".into(),
             agent: None,
             cwd: "C:/work".into(),
@@ -2125,6 +2129,7 @@ mod tests {
 
     fn seed(reg: &Registry, tabs: &[SavedTab]) {
         reg.seed_ended(tabs, |t| Relaunch {
+            elevated: false,
             profile_id: t.profile_id.clone(),
             agent: t.agent.clone(),
             cwd: t.cwd.clone(),

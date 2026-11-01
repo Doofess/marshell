@@ -700,6 +700,7 @@ fn codex_live(version: Option<&str>) -> (AppState, axum::Router) {
     st.registry().reserve(
         "cx",
         marshell_core::registry::Relaunch {
+            elevated: false,
             profile_id: "test".into(),
             agent: Some("codex".into()),
             cwd: "C:/work".into(),
@@ -809,6 +810,7 @@ fn agy_live(version: Option<&str>) -> (AppState, axum::Router) {
     st.registry().reserve(
         "ag",
         marshell_core::registry::Relaunch {
+            elevated: false,
             profile_id: "test".into(),
             agent: Some("antigravity".into()),
             cwd: "C:/work".into(),

@@ -234,6 +234,7 @@ mod tests {
         state.registry().reserve(
             "t1",
             crate::registry::Relaunch {
+                elevated: false,
                 profile_id: "pwsh".into(),
                 agent: None,
                 cwd: "C:/work".into(),

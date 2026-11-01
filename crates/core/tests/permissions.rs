@@ -36,6 +36,7 @@ fn app_with_codex(port: u16, hold: Duration, codex_version: &str) -> (axum::Rout
         st.registry().reserve(
             tab,
             marshell_core::registry::Relaunch {
+                elevated: false,
                 profile_id: "none".into(),
                 agent: None,
                 cwd: String::new(),
@@ -933,6 +934,7 @@ fn agy_app(hold: Duration, agy_version: &str) -> (axum::Router, AppState) {
         st.registry().reserve(
             tab,
             marshell_core::registry::Relaunch {
+                elevated: false,
                 profile_id: "none".into(),
                 agent: agent.map(str::to_owned),
                 cwd: AGY_CWD.into(),

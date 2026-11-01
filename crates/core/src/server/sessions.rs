@@ -558,7 +558,7 @@ pub(super) async fn start_session(
     record: bool,
 ) -> Result<CreateSessionResponse, ApiError> {
     start_session_as(
-        st, run, agent, name, cwd, size, scheme, mode, preset, record, None, None,
+        st, run, agent, name, cwd, size, scheme, mode, preset, record, None, None, false,
     )
     .await
 }
@@ -599,6 +599,7 @@ pub(super) async fn start_script(
         true,
         Some(script),
         None,
+        false,
     )
     .await
 }
@@ -617,6 +618,7 @@ async fn start_session_as(
     record: bool,
     script: Option<ScriptKind>,
     setup: Option<SetupResult>,
+    elevated: bool,
 ) -> Result<CreateSessionResponse, ApiError> {
     check_agent_installed(st, &run, agent.as_deref())?;
     let cwd = start_folder(&run, cwd);
@@ -636,6 +638,7 @@ async fn start_session_as(
     let (number, generation) = st.0.registry.reserve_script(
         &tab_id,
         Relaunch {
+            elevated,
             profile_id: run.profile_id.clone(),
             agent: agent.clone(),
             cwd: cwd.clone(),
@@ -646,7 +649,11 @@ async fn start_session_as(
         script,
         setup,
     );
-    if let Err(err) = launch(st, &tab_id, number, generation, run, agent, cwd, size, scheme, record).await {
+    if let Err(err) = launch(
+        st, &tab_id, number, generation, run, agent, cwd, size, scheme, record, elevated,
+    )
+    .await
+    {
         // A spawn failed, or the tab was closed while it started (then there is no open row to release).
         st.0.registry.release(&tab_id);
         return Err(err);
@@ -668,8 +675,12 @@ async fn launch(
     size: (u16, u16),
     scheme: Option<ColorScheme>,
     record: bool,
+    elevated: bool,
 ) -> Result<(), ApiError> {
-    spawn_into_map(st, tab_id, number, generation, run, agent, cwd, size, scheme, record).await?;
+    spawn_into_map(
+        st, tab_id, number, generation, run, agent, cwd, size, scheme, record, elevated,
+    )
+    .await?;
     // A close can land between reserve and insert, when the map has nothing to kill yet.
     // Checking after the insert catches it: a later close finds the session in the map.
     if !st.0.registry.is_open(tab_id) {
@@ -701,6 +712,7 @@ pub(super) async fn spawn_into_map(
     size: (u16, u16),
     scheme: Option<ColorScheme>,
     record: bool,
+    elevated: bool,
 ) -> Result<(), ApiError> {
     let agent = agent.unwrap_or_else(|| "shell".into());
     let program = run
@@ -793,10 +805,14 @@ pub(super) async fn spawn_into_map(
         initial_command: run.initial_command,
     };
     let id = tab_id.to_string();
-    // Spawning touches the OS (process creation) and recording writes a file:
+    let spawner = elevated.then(|| st.elevated_spawner());
+    // Spawning touches the OS (process creation, or the UAC prompt and the pipes) and recording writes a file:
     // keep both off the async worker threads.
     let spawned = tokio::task::spawn_blocking(move || {
-        let session = Session::spawn(id, spec)?;
+        let session = match spawner {
+            Some(spawn) => spawn(id, spec)?,
+            None => Session::spawn(id, spec)?,
+        };
         if !project.is_empty() {
             // The folder the process really started in. `record` skips the user's home folder.
             let now_ms = std::time::SystemTime::now()
@@ -812,7 +828,7 @@ pub(super) async fn spawn_into_map(
     let session = match spawned {
         Ok(Ok(session)) => session,
         // No prefix here: the UI already says "Couldn't start a shell." and appends this text.
-        Ok(Err(e)) => return Err((StatusCode::INTERNAL_SERVER_ERROR, format!("{e:#}"))),
+        Ok(Err(e)) => return Err(spawn_failure(&e)),
         Err(e) => return Err((StatusCode::INTERNAL_SERVER_ERROR, e.to_string())),
     };
     tracing::info!(tab_id, %agent, program = program.as_deref(), "session started");
@@ -820,10 +836,33 @@ pub(super) async fn spawn_into_map(
     Ok(())
 }
 
+/// The answer to a start that failed. A declined UAC prompt is a conflict, not a fault; the other helper failures
+/// say their own words. Anything else keeps the error chain.
+fn spawn_failure(error: &anyhow::Error) -> ApiError {
+    match error.downcast_ref::<crate::pty::elevated::ElevatedError>() {
+        Some(crate::pty::elevated::ElevatedError::Declined) => (StatusCode::CONFLICT, error.to_string()),
+        Some(other) => (StatusCode::INTERNAL_SERVER_ERROR, other.to_string()),
+        None => (StatusCode::INTERNAL_SERVER_ERROR, format!("{error:#}")),
+    }
+}
+
+/// The mode a session starts in. An agent that runs as administrator always starts in Manual, whatever was asked
+/// (slice 6j2 decision 2); a shell has none; an ordinary start keeps what was asked.
+fn launch_mode(elevated: bool, agent: Option<&str>, requested: Option<SessionMode>) -> Option<SessionMode> {
+    if elevated && agent.is_some() {
+        Some(SessionMode::Manual)
+    } else {
+        requested
+    }
+}
+
 pub async fn create(
     State(st): State<AppState>,
     Json(req): Json<CreateSessionRequest>,
 ) -> Result<Json<CreateSessionResponse>, ApiError> {
+    if req.elevated && !cfg!(windows) {
+        return Err((StatusCode::BAD_REQUEST, crate::pty::elevated::NON_WINDOWS_COPY.into()));
+    }
     if let Some(task) = req.cli_task.clone() {
         return Ok(Json(start_cli_task(&st, req, task).await?));
     }
@@ -840,7 +879,7 @@ pub async fn create(
             ));
         }
         let (run, name) = resolve_tool(&st, req.profile_id.as_deref(), tool).await?;
-        let created = start_session(
+        let created = start_session_as(
             &st,
             run,
             None,
@@ -851,6 +890,9 @@ pub async fn create(
             None,
             None,
             true,
+            None,
+            None,
+            req.elevated,
         )
         .await?;
         return Ok(Json(created));
@@ -860,7 +902,11 @@ pub async fn create(
     }
     // An explicit argv keeps the old behaviour: run it as given, as a custom profile.
     // A plain shell has no mode.
-    let mode = req.mode.filter(|_| req.agent.is_some() && req.shell.is_none());
+    let mode = launch_mode(
+        req.elevated,
+        req.agent.as_deref().filter(|_| req.shell.is_none()),
+        req.mode.filter(|_| req.agent.is_some() && req.shell.is_none()),
+    );
     // An explicit argv runs as given, so a preset has nothing to change there.
     if let Some(preset) = req.preset.as_deref() {
         check_preset(req.agent.as_deref().filter(|_| req.shell.is_none()), preset)?;
@@ -907,6 +953,7 @@ pub async fn create(
         true,
         None,
         req.setup,
+        req.elevated,
     )
     .await?;
     if let Some((folder, profile_id, agent)) = choice {
@@ -1026,6 +1073,10 @@ pub async fn input(State(st): State<AppState>, Path(tab): Path<String>, Json(req
     let Some(session) = st.session(&tab) else {
         return StatusCode::NOT_FOUND.into_response();
     };
+    // An administrator session takes input only from Marshell's own window.
+    if session.is_elevated() {
+        return cannot_resume(crate::pty::elevated::API_WRITE_COPY);
+    }
     if session.is_frozen() {
         return cannot_resume("It is paused.");
     }
@@ -1090,7 +1141,7 @@ pub async fn reopen(State(st): State<AppState>, body: Bytes) -> Result<Json<Crea
     .await?;
     // The window resizes the terminal as soon as it attaches.
     // The saved session has no colour scheme, so a reopened one starts without COLORFGBG.
-    let created = start_session(
+    let created = start_session_as(
         &st,
         run,
         saved.agent,
@@ -1101,6 +1152,9 @@ pub async fn reopen(State(st): State<AppState>, body: Bytes) -> Result<Json<Crea
         saved.mode,
         saved.preset,
         true,
+        None,
+        None,
+        saved.elevated,
     )
     .await?;
     // Only now remove the entry. If another reopen took it first, drop the duplicate we started.
@@ -1277,6 +1331,7 @@ pub async fn resume(State(st): State<AppState>, Path(tab): Path<String>, Json(re
         (req.cols, req.rows),
         None,
         true,
+        saved.elevated,
     )
     .await
     {
@@ -1395,6 +1450,7 @@ pub async fn restart(State(st): State<AppState>, Path(tab): Path<String>, Json(r
         (req.cols, req.rows),
         None,
         true,
+        saved.elevated,
     )
     .await
     {
@@ -1432,6 +1488,22 @@ pub async fn focus(State(st): State<AppState>, Path(tab): Path<String>) -> Respo
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn create_elevated_agent_starts_in_manual() {
+        use SessionMode::{Bypass, Manual, Plan};
+        // An agent that runs as administrator is Manual whatever was asked, and even when nothing was.
+        for requested in [Some(Bypass), Some(Plan), Some(Manual), None] {
+            assert_eq!(launch_mode(true, Some("claude"), requested), Some(Manual));
+        }
+        // A shell has no mode.
+        assert_eq!(launch_mode(true, None, None), None);
+        // Ordinary starts keep what was asked.
+        for requested in [Some(Bypass), Some(Plan), Some(Manual), None] {
+            assert_eq!(launch_mode(false, Some("claude"), requested), requested);
+            assert_eq!(launch_mode(false, None, requested), requested);
+        }
+    }
 
     #[test]
     fn peek_query_defaults_to_thirty_lines() {
@@ -2086,6 +2158,7 @@ mod tests {
         st.registry().reserve(
             tab,
             crate::registry::Relaunch {
+                elevated: false,
                 profile_id: "pwsh".into(),
                 agent: Some("antigravity".into()),
                 cwd: dir.to_string_lossy().into_owned(),

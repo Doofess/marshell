@@ -15,6 +15,17 @@ pub type ProcessHandle = std::os::fd::OwnedFd;
 
 pub const NON_WINDOWS_COPY: &str = "Running as administrator is available on Windows only for now.";
 
+/// The 409 for an API write (input, fill, paste, an approval) to a session that runs as administrator.
+pub const API_WRITE_COPY: &str =
+    "This session runs as administrator, so it takes input only from Marshell's own window.";
+
+/// The 409 for an always-allow answer on a session that runs as administrator.
+pub const ALWAYS_COPY: &str =
+    "A session running as administrator can't keep an always-allow rule from Marshell. Allow this once instead.";
+
+/// What the window's trusted door says to a session that does not run as administrator.
+pub const NOT_ELEVATED_COPY: &str = "Not an administrator session.";
+
 #[derive(Debug)]
 pub enum ElevatedError {
     Declined,
