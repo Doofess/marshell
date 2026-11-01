@@ -956,7 +956,8 @@ pub async fn create(
         req.elevated,
     )
     .await?;
-    if let Some((folder, profile_id, agent)) = choice {
+    // Decision 5: elevation is never remembered, and an elevated agent's Manual is forced, not chosen.
+    if let Some((folder, profile_id, agent)) = choice.filter(|_| !req.elevated) {
         remember_choice(&st, folder, profile_id, agent, mode, req.preset).await;
     }
     Ok(Json(created))

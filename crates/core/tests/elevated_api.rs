@@ -230,6 +230,29 @@ async fn create_elevated_starts_through_the_elevated_spawner_and_marks_the_row()
     st.remove_session(&tab).unwrap().force_kill();
 }
 
+/// Decision 5: elevation is never remembered, so an elevated start (whose agent mode is forced to Manual) leaves the
+/// folder's launcher memory as it was.
+#[cfg(windows)]
+#[tokio::test]
+async fn create_elevated_leaves_the_launcher_memory_alone() {
+    let home = tempfile::tempdir().unwrap();
+    let calls = Arc::new(AtomicUsize::new(0));
+    let st = state_in(home.path()).with_elevated_spawner(marked_spawner(calls.clone()));
+    let app = router(st.clone());
+    let cwd = home.path().to_string_lossy().to_string();
+    let mut body = create_body("sleeper");
+    body["cwd"] = serde_json::Value::String(cwd);
+    let (status, text) = send(&app, api("POST", "/v1/sessions", Some(body))).await;
+    assert_eq!(status, StatusCode::OK, "{text}");
+    let tab = serde_json::from_str::<serde_json::Value>(&text).unwrap()["tab_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let doc = marshell_core::layout::load(home.path());
+    assert!(doc.launcher.is_empty(), "{:?}", doc.launcher);
+    st.remove_session(&tab).unwrap().force_kill();
+}
+
 #[cfg(not(windows))]
 #[tokio::test]
 async fn create_elevated_off_windows_is_400() {
