@@ -169,11 +169,22 @@ mod session {
         let started = (|| -> anyhow::Result<_> {
             let pty = native_pty_system().openpty(size(req.cols, req.rows))?;
             let child = pty.slave.spawn_command(cmd)?;
+            // First thing after the start, so the shell's children join it too. Held until this
+            // process ends, however it ends. If Windows refuses, the helper's own job still covers
+            // every program that stays in it.
+            let child_job = child
+                .as_raw_handle()
+                .map(win::Job::tie_child)
+                .transpose()
+                .unwrap_or_else(|e| {
+                    eprintln!("{e}");
+                    None
+                });
             let reader = pty.master.try_clone_reader()?;
             let writer = pty.master.take_writer()?;
-            Ok((pty.master, child, reader, writer))
+            Ok((pty.master, child, reader, writer, child_job))
         })();
-        let (master, mut child, mut reader, writer) = match started {
+        let (master, mut child, mut reader, writer, _child_job) = match started {
             Ok(parts) => parts,
             Err(e) => {
                 send(&up, &FromHost::Failed(format!("{e:#}")));

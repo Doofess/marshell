@@ -41,23 +41,39 @@ pub fn is_elevated() -> bool {
     }
 }
 
-/// The job that kills every process in it when its handle closes (this process ends, however it ends).
-/// There is no breakaway, so every child joins it. Keep the value alive for the life of `main`.
+/// A job that kills every process in it when its handle closes (this process ends, however it ends).
+/// There is no breakaway, so a process in it takes its later children with it. Keep the value alive
+/// for the life of `main`.
 pub struct Job(HANDLE);
 
 impl Job {
     /// Creates the job and puts this process in it. Call before spawning anything.
     pub fn tie_this_process() -> anyhow::Result<Job> {
+        // SAFETY: GetCurrentProcess is a pseudo-handle that needs no closing.
+        Self::holding(unsafe { GetCurrentProcess() })
+            .map_err(|e| anyhow::anyhow!("could not put the helper in a job object: {e}"))
+    }
+
+    /// Puts the started program in a job of its own, right after it starts.
+    ///
+    /// The helper's own job does not always reach it: PowerShell 7 from the Microsoft Store, started
+    /// in a ConPTY from the bundled OpenConsole, is not in its creator's job. A killed core then took
+    /// the helper and OpenConsole down and left the shell and everything it ran (live check
+    /// 2026-11-01). A new, empty job takes any process, and its children from then on.
+    pub fn tie_child(process: RawHandle) -> anyhow::Result<Job> {
+        Self::holding(process as HANDLE).map_err(|e| anyhow::anyhow!("could not put the program in a job object: {e}"))
+    }
+
+    fn holding(process: HANDLE) -> std::io::Result<Job> {
         // SAFETY: both arguments may be null (default security, no name); the result is checked.
         let job = unsafe { CreateJobObjectW(std::ptr::null(), std::ptr::null()) };
         if job.is_null() {
-            anyhow::bail!("could not create a job object: {}", std::io::Error::last_os_error());
+            return Err(std::io::Error::last_os_error());
         }
         // SAFETY: an all-zero JOBOBJECT_EXTENDED_LIMIT_INFORMATION is valid (plain integers and sizes).
         let mut info: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = unsafe { std::mem::zeroed() };
         info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
-        // SAFETY: `job` is valid; the pointer and size describe `info`, which outlives the call.
-        // GetCurrentProcess is a pseudo-handle that needs no closing.
+        // SAFETY: `job` and `process` are valid; the pointer and size describe `info`, which outlives the call.
         let done = unsafe {
             SetInformationJobObject(
                 job,
@@ -65,13 +81,13 @@ impl Job {
                 (&raw const info).cast(),
                 size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
             ) != 0
-                && AssignProcessToJobObject(job, GetCurrentProcess()) != 0
+                && AssignProcessToJobObject(job, process) != 0
         };
         if !done {
             let err = std::io::Error::last_os_error();
             // SAFETY: `job` is a valid handle that nothing else uses.
             unsafe { CloseHandle(job) };
-            anyhow::bail!("could not put the helper in a job object: {err}");
+            return Err(err);
         }
         Ok(Job(job))
     }
