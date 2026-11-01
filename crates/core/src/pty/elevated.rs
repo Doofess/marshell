@@ -63,6 +63,10 @@ pub trait PtyControl: Send + Sync {
     fn resize(&self, cols: u16, rows: u16) -> anyhow::Result<()>;
     /// Closes the pipe to the helper. The helper sees EOF, ends the shell and exits.
     fn close(&self);
+    /// Unix: the terminal's foreground process group, for pausing. A pty with none says `None`.
+    fn foreground_group(&self) -> Option<u32> {
+        None
+    }
 }
 
 pub struct RemotePty {

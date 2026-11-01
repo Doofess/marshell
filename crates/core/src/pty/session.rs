@@ -1,13 +1,15 @@
 use super::buffer::{MAX_UNACKED, OutputBuffer, SCROLLBACK_BYTES, peek_rows, tail_rows};
 use super::dsr::{DSR_REPLY, DsrFilter};
+use super::elevated::{self, HostLauncher, PtyControl};
 use super::freeze::{self, FreezeError, Frozen};
 use super::osc133::{Mark, Osc133Scanner};
 use super::record::{CastHeader, Osc633Strip, Recorder};
 use crate::tools::{Matcher, Profile, ToolEvent, Watch, secrets};
+use marshell_protocol::host::SpawnRequest;
 use portable_pty::{CommandBuilder, MasterPty, PtySize, native_pty_system};
 use std::ffi::OsString;
 use std::io::{Read, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::sync::{Arc, Condvar, Mutex};
@@ -52,6 +54,112 @@ pub struct SpawnSpec {
     pub classify: Option<Classifier>,
     /// A command the shell was started with, classified at spawn and dropped at the first prompt mark.
     pub initial_command: Option<String>,
+}
+
+/// What `Session::start` needs of a pty, wherever it lives: the local ConPTY or the elevated helper's pipes.
+pub struct PtyParts {
+    pub reader: Box<dyn Read + Send>,
+    pub writer: Box<dyn Write + Send>,
+    pub control: Box<dyn PtyControl>,
+    /// Blocks until the child ends and gives its exit code.
+    pub wait: Box<dyn FnOnce() -> i32 + Send>,
+    pub pid: Option<u32>,
+    pub elevated: bool,
+}
+
+/// The local pty's control: the portable-pty master. Closing it drops the master.
+struct LocalControl {
+    master: Mutex<Option<Box<dyn MasterPty + Send>>>,
+}
+
+impl PtyControl for LocalControl {
+    fn resize(&self, cols: u16, rows: u16) -> anyhow::Result<()> {
+        if let Some(master) = self.master.lock().unwrap().as_ref() {
+            master.resize(PtySize {
+                rows,
+                cols,
+                pixel_width: 0,
+                pixel_height: 0,
+            })?;
+        }
+        Ok(())
+    }
+
+    fn close(&self) {
+        // Take it out of the mutex first: closing can block, and `resize` must not wait on it.
+        let master = self.master.lock().unwrap().take();
+        drop(master);
+    }
+
+    #[cfg(unix)]
+    fn foreground_group(&self) -> Option<u32> {
+        let group = self.master.lock().unwrap().as_ref()?.process_group_leader()?;
+        u32::try_from(group).ok()
+    }
+}
+
+/// Applies the spec's environment steps to `cmd`, in this order: `env_remove`, then the inherited names `env_strip`
+/// accepts, then `env`.
+fn apply_env(cmd: &mut CommandBuilder, spec: &SpawnSpec) {
+    for k in &spec.env_remove {
+        cmd.env_remove(k);
+    }
+    if let Some(strip) = spec.env_strip {
+        // The names only: a value is never read here.
+        let inherited: Vec<String> = cmd
+            .iter_full_env_as_str()
+            .filter(|(name, _)| strip(name))
+            .map(|(name, _)| name.to_string())
+            .collect();
+        for name in inherited {
+            cmd.env_remove(name);
+        }
+    }
+    for (k, v) in &spec.env {
+        cmd.env(k, v);
+    }
+}
+
+/// The whole environment the child gets: Marshell's own, with `apply_env`'s steps. The elevated helper starts with
+/// a fresh environment block, so the core sends it this.
+pub(crate) fn child_env(spec: &SpawnSpec) -> Vec<(String, String)> {
+    let mut cmd = CommandBuilder::new("");
+    apply_env(&mut cmd, spec);
+    cmd.iter_full_env_as_str()
+        .map(|(name, value)| (name.to_string(), value.to_string()))
+        .collect()
+}
+
+/// Opens a local pty and starts the spec's program in it.
+fn local_parts(spec: &SpawnSpec) -> anyhow::Result<PtyParts> {
+    let size = PtySize {
+        rows: spec.rows.max(1),
+        cols: spec.cols.max(1),
+        pixel_width: 0,
+        pixel_height: 0,
+    };
+    let pair = native_pty_system().openpty(size)?;
+    let mut cmd = CommandBuilder::from_argv(spec.argv.iter().map(OsString::from).collect());
+    if let Some(cwd) = &spec.cwd {
+        cmd.cwd(cwd);
+    }
+    apply_env(&mut cmd, spec);
+    let mut child = pair.slave.spawn_command(cmd)?;
+    // Our copy of the slave must close, or the reader never sees EOF on Unix.
+    drop(pair.slave);
+    let pid = child.process_id();
+    let reader = pair.master.try_clone_reader()?;
+    let writer = pair.master.take_writer()?;
+    Ok(PtyParts {
+        reader,
+        writer,
+        control: Box::new(LocalControl {
+            master: Mutex::new(Some(pair.master)),
+        }),
+        wait: Box::new(move || child.wait().map(|st| st.exit_code() as i32).unwrap_or(-1)),
+        pid,
+        elevated: false,
+    })
 }
 
 /// What the WebSocket task should send next.
@@ -168,8 +276,12 @@ pub struct Session {
     notify: tokio::sync::Notify,
     /// Input goes through a channel to a writer thread, so async code never blocks on the pty.
     input: mpsc::Sender<Vec<u8>>,
-    master: Mutex<Option<Box<dyn MasterPty + Send>>>,
+    /// The pty's control, local or through the elevated helper. Taken out when the session ends.
+    control: Mutex<Option<Box<dyn PtyControl>>>,
     pid: Option<u32>,
+    /// The session runs through the elevated helper: it takes no input from the API, cannot be paused, and is
+    /// ended by closing its pipes, never by `taskkill`.
+    elevated: bool,
     /// Set when the child has exited, so a late kill cannot hit a reused pid.
     exited: Arc<AtomicBool>,
     /// Taken and called once when the child exits.
@@ -184,41 +296,63 @@ pub struct Session {
 }
 
 impl Session {
-    pub fn spawn(id: String, mut spec: SpawnSpec) -> anyhow::Result<Arc<Session>> {
+    pub fn spawn(id: String, spec: SpawnSpec) -> anyhow::Result<Arc<Session>> {
+        let parts = local_parts(&spec)?;
+        Session::start(id, spec, parts)
+    }
+
+    /// Starts the session in the elevated helper (`launcher` starts `host_exe`). The returned error is an
+    /// `ElevatedError` underneath, so a caller can tell a declined prompt from the rest.
+    pub fn spawn_elevated(
+        id: String,
+        spec: SpawnSpec,
+        launcher: &dyn HostLauncher,
+        host_exe: &Path,
+    ) -> anyhow::Result<Arc<Session>> {
+        let request = SpawnRequest {
+            argv: spec.argv.clone(),
+            cwd: spec.cwd.as_ref().map(|c| c.to_string_lossy().into_owned()),
+            env: child_env(&spec),
+            cols: spec.cols.max(1),
+            rows: spec.rows.max(1),
+        };
+        let remote = elevated::connect(launcher, host_exe, request).map_err(anyhow::Error::new)?;
+        let parts = PtyParts {
+            reader: remote.reader,
+            writer: remote.writer,
+            control: remote.control,
+            wait: remote.wait,
+            pid: Some(remote.pid),
+            elevated: true,
+        };
+        Session::start(id, spec, parts)
+    }
+
+    /// Runs the session on the local backend but marks it elevated, so the API's guards can be tested without the
+    /// helper binary. Production never calls this.
+    #[doc(hidden)]
+    pub fn spawn_marked_elevated_for_tests(id: String, spec: SpawnSpec) -> anyhow::Result<Arc<Session>> {
+        let mut parts = local_parts(&spec)?;
+        parts.elevated = true;
+        Session::start(id, spec, parts)
+    }
+
+    /// The part of starting a session that does not depend on where its pty lives.
+    fn start(id: String, mut spec: SpawnSpec, parts: PtyParts) -> anyhow::Result<Arc<Session>> {
         let size = PtySize {
             rows: spec.rows.max(1),
             cols: spec.cols.max(1),
             pixel_width: 0,
             pixel_height: 0,
         };
-        let pair = native_pty_system().openpty(size)?;
-        let mut cmd = CommandBuilder::from_argv(spec.argv.iter().map(OsString::from).collect());
-        if let Some(cwd) = &spec.cwd {
-            cmd.cwd(cwd);
-        }
-        for k in &spec.env_remove {
-            cmd.env_remove(k);
-        }
-        if let Some(strip) = spec.env_strip {
-            // The names only: a value is never read here.
-            let inherited: Vec<String> = cmd
-                .iter_full_env_as_str()
-                .filter(|(name, _)| strip(name))
-                .map(|(name, _)| name.to_string())
-                .collect();
-            for name in inherited {
-                cmd.env_remove(name);
-            }
-        }
-        for (k, v) in &spec.env {
-            cmd.env(k, v);
-        }
-        let mut child = pair.slave.spawn_command(cmd)?;
-        // Our copy of the slave must close, or the reader never sees EOF on Unix.
-        drop(pair.slave);
-        let pid = child.process_id();
-        let reader = pair.master.try_clone_reader()?;
-        let mut writer = pair.master.take_writer()?;
+        let PtyParts {
+            reader,
+            mut writer,
+            control,
+            wait,
+            pid,
+            elevated,
+        } = parts;
         let (input_tx, input_rx) = mpsc::channel::<Vec<u8>>();
         let recorder = spec.record.take().and_then(|(path, shell)| {
             let header = CastHeader {
@@ -258,8 +392,9 @@ impl Session {
             space: Condvar::new(),
             notify: tokio::sync::Notify::new(),
             input: input_tx,
-            master: Mutex::new(Some(pair.master)),
+            control: Mutex::new(Some(control)),
             pid,
+            elevated,
             exited: Arc::new(AtomicBool::new(false)),
             exit_callback: Mutex::new(spec.on_exit.take()),
             mark_callback: spec.on_mark.take(),
@@ -289,11 +424,16 @@ impl Session {
         std::thread::Builder::new()
             .name(format!("pty-wait-{id}"))
             .spawn(move || {
-                let code = child.wait().map(|st| st.exit_code() as i32).unwrap_or(-1);
+                let code = wait();
                 s.on_exit(code);
             })?;
 
         Ok(session)
+    }
+
+    /// True when the session runs as administrator through the helper.
+    pub fn is_elevated(&self) -> bool {
+        self.elevated
     }
 
     pub fn id(&self) -> &str {
@@ -654,8 +794,10 @@ impl Session {
         self.space.notify_all();
         // Windows: the reader only gets EOF once the pseudoconsole is closed.
         // Take it out of the mutex first: closing can block, and `resize` must not wait on it.
-        let master = self.master.lock().unwrap().take();
-        drop(master);
+        let control = self.control.lock().unwrap().take();
+        if let Some(control) = control {
+            control.close();
+        }
         self.notify.notify_one();
         // `pull` gives up waiting for EOF after 500 ms; wake the async task so it re-pulls then.
         let s = self.clone();
@@ -691,13 +833,8 @@ impl Session {
         if cols == 0 || rows == 0 {
             return Ok(());
         }
-        if let Some(m) = self.master.lock().unwrap().as_ref() {
-            m.resize(PtySize {
-                rows,
-                cols,
-                pixel_width: 0,
-                pixel_height: 0,
-            })?;
+        if let Some(control) = self.control.lock().unwrap().as_ref() {
+            control.resize(cols, rows)?;
         }
         // vt100 0.16; on 0.15 this is `parser.set_size(rows, cols)`.
         let changed = {
@@ -809,7 +946,9 @@ impl Session {
             return;
         }
         self.thaw();
-        if let Some(pid) = self.pid {
+        if self.elevated {
+            self.close_control();
+        } else if let Some(pid) = self.pid {
             kill_tree(pid, self.exited.clone());
         }
     }
@@ -820,13 +959,27 @@ impl Session {
             return;
         }
         self.thaw();
-        if let Some(pid) = self.pid {
+        if self.elevated {
+            self.close_control();
+        } else if let Some(pid) = self.pid {
             force_kill_tree(pid);
+        }
+    }
+
+    /// Closes the pipes to the helper, which ends the shell and its tree. A core that is not elevated could not
+    /// `taskkill` an elevated process anyway.
+    fn close_control(&self) {
+        let control = self.control.lock().unwrap().take();
+        if let Some(control) = control {
+            control.close();
         }
     }
 
     /// Freezes the whole process tree, or none of it. Freezing a frozen session does nothing.
     pub fn freeze(&self) -> Result<(), FreezeError> {
+        if self.elevated {
+            return Err(FreezeError::Elevated);
+        }
         let mut frozen = self.frozen.lock().unwrap();
         if frozen.is_some() {
             return Ok(());
@@ -835,13 +988,7 @@ impl Session {
             return Err(FreezeError::NotRunning);
         };
         #[cfg(unix)]
-        let foreground = self
-            .master
-            .lock()
-            .unwrap()
-            .as_ref()
-            .and_then(|m| m.process_group_leader())
-            .and_then(|g| u32::try_from(g).ok());
+        let foreground = self.control.lock().unwrap().as_ref().and_then(|c| c.foreground_group());
         #[cfg(not(unix))]
         let foreground = None;
         *frozen = Some(freeze::freeze_tree(pid, foreground).map_err(|()| FreezeError::Partial)?);
@@ -872,12 +1019,11 @@ impl Session {
         #[cfg(target_os = "linux")]
         {
             let group = self
-                .master
+                .control
                 .lock()
                 .unwrap()
                 .as_ref()
-                .and_then(|m| m.process_group_leader())
-                .and_then(|g| u32::try_from(g).ok())?;
+                .and_then(|c| c.foreground_group())?;
             if group == pid {
                 return Some(Vec::new());
             }
@@ -971,6 +1117,64 @@ pub(crate) fn force_kill_tree(pid: u32) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn env_spec(env: Vec<(String, String)>, env_remove: Vec<String>, env_strip: Option<fn(&str) -> bool>) -> SpawnSpec {
+        SpawnSpec {
+            argv: vec![],
+            cwd: None,
+            env,
+            env_remove,
+            env_strip,
+            cols: 80,
+            rows: 24,
+            on_exit: None,
+            on_mark: None,
+            on_tool: None,
+            record: None,
+            classify: None,
+            initial_command: None,
+        }
+    }
+
+    /// The test process's variables are never changed, so the strip step is tried on names the process already has
+    /// (`SystemRoot` or `HOME`) and on a prefix no inherited name has.
+    #[test]
+    fn child_env_applies_remove_strip_and_env_in_order() {
+        fn strip(name: &str) -> bool {
+            name.starts_with("ZZ_STRIP_") || name.eq_ignore_ascii_case("SystemRoot") || name == "HOME"
+        }
+        let inherited = |name: &str| std::env::vars_os().any(|(k, _)| k.to_string_lossy().eq_ignore_ascii_case(name));
+        let spec = env_spec(
+            vec![
+                ("PATH".into(), "/set-by-env".into()),
+                ("ZZ_STRIP_AFTER".into(), "kept".into()),
+            ],
+            vec!["PATH".into()],
+            Some(strip),
+        );
+        let env = child_env(&spec);
+        let get = |name: &str| {
+            env.iter()
+                .find(|(k, _)| k.eq_ignore_ascii_case(name))
+                .map(|(_, v)| v.as_str())
+        };
+        // Removed, then set again by `env`.
+        assert_eq!(get("PATH"), Some("/set-by-env"));
+        // Stripped, though inherited.
+        assert!(
+            inherited("SystemRoot") || inherited("HOME"),
+            "no inherited name to strip"
+        );
+        assert_eq!(get("SystemRoot"), None);
+        assert_eq!(get("HOME"), None);
+        // `env` comes after the strip, so a name the strip accepts still keeps the value `env` gives it.
+        assert_eq!(get("ZZ_STRIP_AFTER"), Some("kept"));
+        // Everything else is inherited as it is.
+        assert!(env.len() > 3);
+        // Without a remove or strip, an inherited name stays.
+        let plain = child_env(&env_spec(vec![], vec![], None));
+        assert!(plain.iter().any(|(k, _)| k.eq_ignore_ascii_case("PATH")));
+    }
 
     #[test]
     fn the_recording_closes_when_the_output_ends() {
@@ -1092,8 +1296,9 @@ mod tests {
             space: Condvar::new(),
             notify: tokio::sync::Notify::new(),
             input: mpsc::channel().0,
-            master: Mutex::new(None),
+            control: Mutex::new(None),
             pid: None,
+            elevated: false,
             exited: Arc::new(AtomicBool::new(false)),
             exit_callback: Mutex::new(None),
             mark_callback: None,
