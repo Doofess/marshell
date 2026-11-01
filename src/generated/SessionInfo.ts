@@ -63,6 +63,10 @@ status_note: string | null,
  */
 muted: boolean, 
 /**
+ * True when the session runs as administrator through the elevated helper. Old JSON reads as false.
+ */
+elevated: boolean, 
+/**
  * A terminal program asked for attention (OSC 9, OSC 777 or a bell) in a session without hook
  * status. Cleared when the person types into the session or looks at it.
  */

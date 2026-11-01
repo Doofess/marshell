@@ -18,6 +18,10 @@ mode: SessionMode | null,
  */
 muted: boolean, 
 /**
+ * True when the session runs as administrator through the elevated helper. Old JSON reads as false.
+ */
+elevated: boolean, 
+/**
  * The preset it started with. A layout.json from before this field existed reads as None. Never a key:
  * a restart reads the key again.
  */

@@ -66,7 +66,7 @@ describe("toDetail", () => {
 describe("laneEntries", () => {
   const info = (patch: Partial<SessionInfo> = {}): SessionInfo => ({
     tab_id: "terminal", number: 4, name: "Shell", agent: null, profile_id: "pwsh", cwd: "C:/dev/app", project: "C:/dev/app", mode: null,
-    state: { kind: "running" }, command: { kind: "unknown" }, paused: false, foreground: null, live: null, activity: null, status_note: null, muted: false, attention: null, stuck: null, ...patch,
+    state: { kind: "running" }, command: { kind: "unknown" }, paused: false, elevated: false, foreground: null, live: null, activity: null, status_note: null, muted: false, attention: null, stuck: null, ...patch,
   });
   it("an attention row is a waiting entry", () => {
     const before = toRow(info(), [], undefined, NOW);

@@ -7,6 +7,7 @@ pub mod diagnostics;
 pub mod frames;
 pub mod history;
 pub mod hook;
+pub mod host;
 pub mod install;
 pub mod manifest;
 pub mod settings_view;

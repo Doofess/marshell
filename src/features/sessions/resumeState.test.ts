@@ -20,6 +20,7 @@ const info = (patch: Partial<SessionInfo> = {}): SessionInfo => ({
   state: { kind: "running" },
   command: { kind: "unknown" },
   paused: false,
+  elevated: false,
   foreground: null,
   live: null,
   activity: null,

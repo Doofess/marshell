@@ -27,6 +27,7 @@ export const infoFixture = (over: Partial<SessionInfo> = {}): SessionInfo => ({
   state: { kind: "running" },
   command: { kind: "unknown" } as SessionInfo["command"],
   paused: false,
+  elevated: false,
   foreground: null,
   live: null,
   activity: null,

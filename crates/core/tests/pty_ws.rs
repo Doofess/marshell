@@ -40,6 +40,7 @@ async fn create(core: &RunningCore, shell: Vec<String>, cwd: Option<String>) -> 
         cwd,
         cols: 80,
         rows: 24,
+        elevated: false,
         profile_id: None,
         agent: None,
         name: None,

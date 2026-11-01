@@ -358,6 +358,7 @@ impl Registry {
                 activity: None,
                 status_note: None,
                 muted: false,
+                elevated: false,
                 attention: None,
                 stuck: None,
                 ports: Vec::new(),
@@ -419,6 +420,7 @@ impl Registry {
                     activity: None,
                     status_note: None,
                     muted: tab.muted,
+                    elevated: tab.elevated,
                     attention: None,
                     stuck: None,
                     ports: Vec::new(),
@@ -464,6 +466,7 @@ impl Registry {
                 cwd: e.info.cwd.clone(),
                 mode: e.info.mode,
                 muted: e.info.muted,
+                elevated: e.info.elevated,
                 preset: e.spec.preset.clone(),
             })
             .collect()
@@ -2115,6 +2118,7 @@ mod tests {
             cwd: "C:/work".into(),
             mode: None,
             muted: false,
+            elevated: false,
             preset: None,
         }
     }

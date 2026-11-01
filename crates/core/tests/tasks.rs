@@ -1378,6 +1378,7 @@ async fn remove_closes_sessions_and_deletes_everything() {
         cwd: task.path.clone(),
         mode: None,
         muted: false,
+        elevated: false,
         preset: None,
     };
     state

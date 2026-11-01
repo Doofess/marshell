@@ -208,7 +208,7 @@ export function launchRequest(
   fields: Record<string, string> = {},
 ): CreateSessionRequest {
   const cwd = taskPath ?? projects.find((p) => p.id === choice.projectId)?.path;
-  const base: CreateSessionRequest = { cols: size.cols, rows: size.rows, ...(cwd === undefined ? {} : { cwd }) };
+  const base: CreateSessionRequest = { cols: size.cols, rows: size.rows, elevated: false, ...(cwd === undefined ? {} : { cwd }) };
   const program = programById(choice.program, programs);
   // A tool preset runs inside the default shell; the core refuses a request that mixes it with an agent, prompt, mode or preset.
   if (program?.toolLaunch !== undefined) {

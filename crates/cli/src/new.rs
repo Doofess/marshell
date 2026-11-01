@@ -38,6 +38,7 @@ pub fn create_request(
         cwd: Some(cwd),
         cols: COLS,
         rows: ROWS,
+        elevated: false,
         profile_id: None,
         agent,
         name,

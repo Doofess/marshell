@@ -8,8 +8,8 @@ const install = (version: string | null): AgentInstall => ({ agent: "claude", fo
 
 describe("cliTaskRequest", () => {
   it("sets only the size and the task", () => {
-    expect(cliTaskRequest("claude", "sign_in", { cols: 100, rows: 30 })).toStrictEqual({ cols: 100, rows: 30, cli_task: { agent: "claude", kind: "sign_in" } });
-    expect(cliTaskRequest("codex", "update", { cols: 80, rows: 24 })).toStrictEqual({ cols: 80, rows: 24, cli_task: { agent: "codex", kind: "update" } });
+    expect(cliTaskRequest("claude", "sign_in", { cols: 100, rows: 30 })).toStrictEqual({ cols: 100, rows: 30, elevated: false, cli_task: { agent: "claude", kind: "sign_in" } });
+    expect(cliTaskRequest("codex", "update", { cols: 80, rows: 24 })).toStrictEqual({ cols: 80, rows: 24, elevated: false, cli_task: { agent: "codex", kind: "update" } });
   });
 });
 

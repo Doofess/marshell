@@ -174,6 +174,7 @@ mod tests {
             cwd: "C:/work".into(),
             mode: None,
             muted: false,
+            elevated: false,
             preset: None,
         }
     }

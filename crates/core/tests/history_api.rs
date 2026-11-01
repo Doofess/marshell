@@ -2009,6 +2009,7 @@ async fn a_cleanup_keeps_the_images_of_a_tab_restored_from_the_last_run() {
         cwd: env.work.path().to_string_lossy().into_owned(),
         mode: None,
         muted: false,
+        elevated: false,
         preset: None,
     };
     env.state
