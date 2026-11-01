@@ -2436,6 +2436,7 @@ name = "marshell-host"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "marshell-core",
  "marshell-protocol",
  "portable-pty",
  "serde_json",

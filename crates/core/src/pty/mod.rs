@@ -1,5 +1,6 @@
 pub mod buffer;
 pub mod dsr;
+pub mod elevated;
 mod freeze;
 pub mod osc133;
 #[cfg(windows)]
