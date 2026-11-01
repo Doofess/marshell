@@ -87,10 +87,12 @@ export function ContextMenu({ items, label, anchor, onRun, onClose }: Props) {
             role="menuitem"
             tabIndex={-1}
             aria-keyshortcuts={it.shortcut}
-            onClick={() => onRun(it.id)}
+            aria-disabled={it.disabled === undefined ? undefined : true}
+            onClick={() => it.disabled === undefined && onRun(it.id)}
             onPointerMove={() => active !== i && setActive(i)}
           >
             <span className="context-menu__label">{it.label}</span>
+            {it.disabled !== undefined && <span className="context-menu__reason">{it.disabled}</span>}
             {it.shortcut && (
               <span className="context-menu__shortcut" aria-hidden="true">
                 {it.shortcut}

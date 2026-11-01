@@ -39,7 +39,9 @@ export function toRequest(v: PermissionView, row: RowModel | undefined, now: num
     ...(v.deadline_ms !== null && { holdMs: Math.max(0, v.deadline_ms - v.at_ms) }),
     detail: toDetail(v.detail),
     risk: { level: v.risk ? "risky" : "normal", reason: v.risk ?? undefined },
-    alwaysRule: v.always_rule ?? undefined,
+    // A session running as administrator never keeps an always-allow rule from Marshell (the core refuses it too).
+    alwaysRule: row?.elevated ? undefined : (v.always_rule ?? undefined),
+    ...(row?.elevated ? { elevated: true } : {}),
     state: { phase: "pending" },
   };
 }

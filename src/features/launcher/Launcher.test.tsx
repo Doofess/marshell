@@ -29,7 +29,7 @@ describe("Launcher: empty", () => {
     expect(html(view({ choice: { ...DEFAULT_CHOICE, program: "powershell" } }))).toContain('aria-label="Program: PowerShell"');
   });
   it("makes every chip a button the keyboard reaches with Tab", () => {
-    expect(count(h, /class="launcher__chip"/g)).toBe(5);
+    expect(count(h, /class="launcher__chip"/g)).toBe(6);
     expect(h).not.toContain('tabindex="-1" class="launcher__chip"');
   });
   it("has a prompt line and a hint line naming Enter and Esc", () => {
@@ -86,7 +86,7 @@ describe("Launcher: a manual CLI is a plain terminal", () => {
   const manual = view({ choice: { ...DEFAULT_CHOICE, program: "powershell" } });
   const h = html(manual);
   it("has the program, the folder and the worktree chips: no mode or pace", () => {
-    expect(count(h, /class="launcher__chip"/g)).toBe(3);
+    expect(count(h, /class="launcher__chip"/g)).toBe(4);
     expect(h).not.toContain("Balanced");
     expect(h).toContain('role="checkbox"');
   });
@@ -207,7 +207,7 @@ describe("Launcher: chips", () => {
   });
   it("keeps the mode chip and drops the pace chip when paceChip is false (the worktree chip is covered below)", () => {
     const h = renderToStaticMarkup(<Launcher view={view({ choice: { ...DEFAULT_CHOICE, projectId: "scratch" } })} paceChip={false} />);
-    expect(count(h, /class="launcher__chip"/g)).toBe(3);
+    expect(count(h, /class="launcher__chip"/g)).toBe(4);
     expect(h).toContain("Mode: Manual");
     expect(h).not.toContain("Pace:");
     expect(h).toContain("Start Claude in scratch");
@@ -232,18 +232,18 @@ describe("Launcher: the worktree chip in the live launcher", () => {
     const h = live();
     expect(h).toContain('role="checkbox"');
     expect(h).toContain('aria-checked="false"');
-    expect(count(h, /class="launcher__chip"/g)).toBe(4);
+    expect(count(h, /class="launcher__chip"/g)).toBe(5);
     expect(h).toContain("Mode: Manual");
     expect(h).not.toContain("Pace:");
   });
   it("is hidden for a folder with no branch", () => {
     const h = live(view({ choice: inScratch }));
-    expect(h).not.toContain('role="checkbox"');
-    expect(count(h, /class="launcher__chip"/g)).toBe(3);
+    expect(h).not.toContain(">worktree<");
+    expect(count(h, /class="launcher__chip"/g)).toBe(4);
   });
   it("is offered for a shell too: a worktree works for any program", () => {
-    expect(live(view({ choice: { ...DEFAULT_CHOICE, program: "powershell" } }))).toContain('role="checkbox"');
-    expect(live(view({ choice: { ...DEFAULT_CHOICE, program: "powershell", projectId: "scratch" } }))).not.toContain('role="checkbox"');
+    expect(live(view({ choice: { ...DEFAULT_CHOICE, program: "powershell" } }))).toContain("worktree<");
+    expect(live(view({ choice: { ...DEFAULT_CHOICE, program: "powershell", projectId: "scratch" } }))).not.toContain('worktree<');
   });
 });
 
@@ -491,5 +491,48 @@ describe("Launcher: ids and chip names", () => {
     const ref = /aria-describedby="([^"]+)"/.exec(h)?.[1];
     expect(ref).toBeTruthy();
     expect(h).toContain(`id="${ref}"`);
+  });
+});
+
+describe("Launcher: the Administrator chip", () => {
+  const admin = (v: Partial<LauncherView> = {}, p: Partial<ComponentProps<typeof Launcher>> = {}) => renderToStaticMarkup(<Launcher view={view(v)} {...p} />);
+  it("the_admin_chip_toggles_with_alt_a_and_sends_elevated: a checkbox after Pace, off by default, with a shield and Alt+A when on", () => {
+    const off = admin();
+    expect(off).toContain("Administrator");
+    expect(off.indexOf("Balanced")).toBeLessThan(off.indexOf("Administrator"));
+    expect(off).toMatch(/role="checkbox"[^>]*aria-checked="false"[^>]*aria-keyshortcuts="Alt\+A"|aria-keyshortcuts="Alt\+A"[^>]*role="checkbox"/);
+    expect(off).not.toContain('data-kind="elevated"');
+    const on = admin({ elevated: true });
+    expect(on).toContain('data-kind="elevated"');
+    expect(on).toMatch(/aria-checked="true"[^>]*aria-keyshortcuts="Alt\+A"/);
+    expect(on).toContain("as administrator");
+  });
+  it("shows for a shell too", () => {
+    expect(admin({ choice: { ...DEFAULT_CHOICE, program: "powershell" } })).toContain("Administrator");
+  });
+  it("the_admin_chip_is_disabled_off_windows_with_the_reason", () => {
+    for (const os of ["mac", "linux"] as const) {
+      const h = admin({ elevated: true }, { os });
+      expect(h).toContain("Administrator: available on Windows only for now.");
+      expect(h).toMatch(/role="checkbox"[^>]*aria-disabled="true"/);
+      expect(h).toContain('aria-checked="false"');
+      expect(h).not.toContain('data-kind="elevated"');
+    }
+    expect(admin({}, { os: "windows" })).not.toContain("available on Windows only");
+  });
+  it("an_agent_with_admin_on_is_manual_and_the_mode_chip_is_disabled", () => {
+    const h = admin({ elevated: true, choice: { ...DEFAULT_CHOICE, mode: "bypass" } });
+    expect(h).toContain('aria-label="Mode: Manual"');
+    expect(h).toMatch(/aria-label="Mode: Manual"[^>]*aria-disabled="true"/);
+    expect(h).toContain("An agent running as administrator starts in Manual.");
+    expect(admin({ choice: { ...DEFAULT_CHOICE, mode: "bypass" } })).not.toContain("starts in Manual");
+    // A shell has no mode chip, so no reason line either.
+    expect(admin({ elevated: true, choice: { ...DEFAULT_CHOICE, program: "powershell" } })).not.toContain("starts in Manual");
+  });
+  it("the_new_tab_waits_for_approval: while an elevated start is pending the launcher says so", () => {
+    expect(admin({ elevated: true }, { busy: true, pending: true })).toContain("Waiting for administrator approval…");
+    expect(admin({}, { busy: true, pending: true })).not.toContain("Waiting for administrator approval");
+    // Lists still loading is not a create in flight.
+    expect(admin({ elevated: true }, { busy: true })).not.toContain("Waiting for administrator approval");
   });
 });

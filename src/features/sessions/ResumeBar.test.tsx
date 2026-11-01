@@ -32,3 +32,11 @@ describe("ResumeBar", () => {
     expect(bar()).not.toMatch(/role="(alert|status)"|aria-live/);
   });
 });
+
+describe("ResumeBar: an administrator row", () => {
+  it("an_ended_elevated_row_offers_reopen_as_administrator", () => {
+    expect(bar({ row: row({ elevated: true }) })).toMatch(/<button[^>]*>Reopen as administrator<\/button>/);
+    expect(bar({ row: row({ elevated: true }) })).not.toMatch(/>Resume<\/button>/);
+    expect(bar()).toMatch(/<button[^>]*>Resume<\/button>/);
+  });
+});

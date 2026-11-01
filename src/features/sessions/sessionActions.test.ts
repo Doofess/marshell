@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { Endpoint } from "../../generated/Endpoint";
 import type { SessionInfo } from "../../generated/SessionInfo";
-import { SessionActions, pauseBarStale, pauseBarText, restartBarStale, restartBarText } from "./sessionActions";
+import { BYPASS_ACK_TEXT, PAUSE_UNAVAILABLE, SessionActions, needsBypassAck, pauseBarStale, pauseBarText, restartBarStale, restartBarText } from "./sessionActions";
 
 const endpoint = { port: 1, token: "t", platform: "windows" } as Endpoint;
 const info = (tab_id: string): SessionInfo => ({ tab_id, number: 1, name: tab_id, agent: null, profile_id: "pwsh", cwd: "C:/x", project: "C:/x", state: { kind: "running" } }) as SessionInfo;
@@ -254,5 +254,54 @@ describe("pause and continue", () => {
     expect(pauseBarStale({ ...base, kind: "typing", paused: false })).toBe(true);
     expect(pauseBarStale({ ...base, kind: "typing", paused: true, closing: "a" })).toBe(true);
     expect(pauseBarStale({ ...base, kind: "typing", paused: true, ids: [] })).toBe(true);
+  });
+});
+
+describe("a session running as administrator", () => {
+  const admin = { ...info("a"), number: 3, name: "infra", agent: "claude", mode: "manual", elevated: true } as SessionInfo;
+  const plain = { ...admin, tab_id: "p", elevated: false } as SessionInfo;
+  function adminSetup(infos: SessionInfo[] = [admin, plain]) {
+    const pause = vi.fn().mockResolvedValue({ ok: true });
+    const restart = vi.fn().mockResolvedValue({ ok: true });
+    const actions = new SessionActions({
+      api: { close: vi.fn(), reopen: vi.fn(), rename: vi.fn(), reorder: vi.fn(), resume: vi.fn(), restart, pause, cont: vi.fn() },
+      context: () => ({ endpoint, infos, selectedId: "a" }),
+      select: vi.fn(),
+      settings: { pauseWarned: true, markPauseWarned: vi.fn() },
+    });
+    return { actions, pause, restart };
+  }
+  it("pause_is_unavailable_on_an_elevated_row: nothing is asked or sent, and the copy is the core's", () => {
+    const { actions, pause } = adminSetup();
+    expect(actions.pause("a")).toBeNull();
+    expect(actions.getState().pauseBar).toBeNull();
+    expect(pause).not.toHaveBeenCalled();
+    expect(actions.pause("p")).toBe("sent");
+    expect(PAUSE_UNAVAILABLE).toBe("Pause isn't available for a session running as administrator.");
+  });
+  it("bypass_on_an_elevated_row_needs_the_checkbox: the bar asks for it, and Restart does nothing until it is ticked", async () => {
+    const { actions, restart } = adminSetup();
+    expect(actions.askRestart("a", "bypass")).toBe(true);
+    expect(actions.restartNeedsAck()).toBe(true);
+    await actions.confirmRestart(false);
+    expect(restart).not.toHaveBeenCalled();
+    expect(actions.getState().restarting).toEqual({ id: "a", mode: "bypass" });
+    await actions.confirmRestart(true);
+    expect(restart).toHaveBeenCalledWith(endpoint, "a", "bypass", { cols: 120, rows: 30 });
+  });
+  it("a switch to another mode, or any switch on a plain agent, needs no checkbox", () => {
+    const { actions } = adminSetup();
+    actions.askRestart("a", "plan");
+    expect(actions.restartNeedsAck()).toBe(false);
+    actions.askRestart("p", "bypass");
+    expect(actions.restartNeedsAck()).toBe(false);
+  });
+  it("an_instant_switch_to_bypass_on_an_elevated_row_uses_the_bar: also when the CLI's own settings make the effective mode Bypass", () => {
+    expect(needsBypassAck(admin, "bypass")).toBe(true);
+    expect(needsBypassAck(admin, "plan")).toBe(false);
+    expect(needsBypassAck(admin, "plan", true)).toBe(true);
+    expect(needsBypassAck(plain, "bypass")).toBe(false);
+    expect(needsBypassAck({ ...admin, agent: null }, "bypass")).toBe(false);
+    expect(BYPASS_ACK_TEXT).toBe("I understand this agent runs as administrator and Bypass lets it run admin commands without asking.");
   });
 });

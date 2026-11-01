@@ -1,4 +1,5 @@
 import type { MenuItem } from "../../components/ContextMenu/menuKeys";
+import { PAUSE_UNAVAILABLE, REOPEN_AS_ADMIN } from "../../lib/adminCopy";
 import { MODES } from "../modes/sessionModes";
 import { commandById, shortcutLabel, type Os } from "../../lib/keymap";
 import { modeLabel } from "../window/SessionHeader";
@@ -22,18 +23,26 @@ export type SessionMenuFacts = {
   bookmarkable: boolean;
   /** The row has a setup note whose output tab still exists. */
   setupOutput: boolean;
+  /** Running as administrator: Resume reads "Reopen as administrator". */
+  elevated?: boolean;
+  /** A running session that cannot be paused (administrator): Pause is listed disabled, with the reason. */
+  pauseUnavailable?: boolean;
 };
+
+/** The label an Ended elevated row's Resume takes (the button, the row menu and the palette); undefined keeps "Resume". */
+export const resumeLabel = (elevated: boolean | undefined): string | undefined => (elevated ? REOPEN_AS_ADMIN : undefined);
 
 /** The items a session row's menu shows. Items that don't apply are left out, never disabled. */
 export function sessionMenuItems(facts: SessionMenuFacts, os: Os): MenuItem[] {
   const shortcut = (id: string) => shortcutLabel(commandById(id).binding!, os);
   const items: MenuItem[] = [{ id: "rename", label: "Rename", shortcut: shortcut("rename") }];
   if (!facts.inShownPane && facts.paneAvailable) items.push({ id: "split", label: "Split into a pane" });
-  if (facts.resumable) items.push({ id: "resume", label: "Resume" });
+  if (facts.resumable) items.push({ id: "resume", label: resumeLabel(facts.elevated) ?? "Resume" });
   // On every agent session, running or not (slice 6h1 decision 11): a running one answers "End the session first." instead of opening.
   if (facts.agent) items.push({ id: "copy-resume", label: "Copy resume command" }, { id: "open-outside", label: "Open in system terminal" });
   if (facts.agent && facts.modeChangeable) items.push({ id: "mode", label: "Mode ▸" });
   if (facts.pausable) items.push({ id: "pause", label: "Pause" });
+  if (facts.pauseUnavailable) items.push({ id: "pause", label: "Pause", disabled: PAUSE_UNAVAILABLE });
   if (facts.paused) items.push({ id: "continue", label: "Continue" });
   if (facts.bookmarkable) items.push({ id: "bookmark", label: "Bookmark", shortcut: shortcut("bookmark") });
   items.push(facts.muted ? { id: "unmute", label: "Unmute notifications" } : { id: "mute", label: "Mute notifications" });

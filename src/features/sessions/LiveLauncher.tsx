@@ -31,7 +31,8 @@ import { openFolder, openPrograms, type OpenLists } from "../launcher/launcherKe
 import { offeredMode } from "../modes/sessionModes";
 import { taskNameFor } from "../tasks/taskName";
 import { appScheme } from "../terminal/terminalTheme";
-import { programById, startingText, type LauncherChoice } from "../launcher/launchChoice";
+import { adminChip, programById, startingText, WAITING_FOR_ADMIN, type LauncherChoice } from "../launcher/launchChoice";
+import type { Os } from "../../lib/keymap";
 import { fieldsFilled, browseFolder, checkState, chooseFolder, latestOnly, createRequest, createThenLaunch, initialFocus, launchRequest, listedProgram, progressText, refocus, rememberTasks, replansAfter, type FocusState, livePrograms, nameSource, preselect, preselectMode, startFailure, startProblem, taskRequest, toLauncherProject, wantsTask } from "./launchPrograms";
 
 // The worktree flag is part of this state and nothing else: it is never read from or written to the remembered choices, so the chip starts off every time.
@@ -42,6 +43,10 @@ type Loaded = { projects: Project[]; doc: ProfilesDoc; layout: LayoutDoc | null;
 
 type Props = {
   endpoint: Endpoint | null;
+  /** The palette's "New session as administrator" opens the launcher with the Administrator chip on. */
+  initialElevated?: boolean;
+  /** The platform; Administrator is available on Windows only. */
+  os?: Os;
   /** The number the new session takes. */
   nextNumber: number;
   /** The last measured terminal size, read when Start is pressed. */
@@ -62,10 +67,13 @@ type Held = { task: Task; request: CreateSessionRequest; text: string; scripts: 
  * The launcher on the core: it lists the recent folders, the agents and the shell profiles, and Start creates the session.
  * Mounted only while open, so every opening starts fresh. When the core refuses, its text shows under Start and the launcher stays.
  */
-export function LiveLauncher({ endpoint, nextNumber, size, onStarted, onSetupStarted, announce, onClose }: Props) {
+export function LiveLauncher({ endpoint, initialElevated = false, os = "windows", nextNumber, size, onStarted, onSetupStarted, announce, onClose }: Props) {
   const [loaded, setLoaded] = useState<Loaded | null>(null);
   const { appearance } = useAppearance();
   const [choice, setChoice] = useState(INITIAL);
+  // Launcher state only: not in the choice, not remembered, gone when the launcher closes.
+  const [elevatedWanted, setElevatedWanted] = useState(initialElevated);
+  const elevated = adminChip(elevatedWanted, os).on;
   // Once the user picks a program here, the remembered one no longer applies.
   const [programPicked, setProgramPicked] = useState(false);
   const [modePicked, setModePicked] = useState(false);
@@ -142,7 +150,7 @@ export function LiveLauncher({ endpoint, nextNumber, size, onStarted, onSetupSta
   // The worktree chip is offered only in a folder in git: leaving for another folder must not keep a flag the user can no longer see.
   const wantedMode = modePicked ? choice.mode : (preselectMode(loaded?.layout ?? null, projectId) ?? choice.mode);
   // Only a mode the agent offers is shown or sent; one it doesn't map falls back to the first it does.
-  const mode = offeredMode(programById(program, programs)?.modes, wantedMode) ?? wantedMode;
+  const mode = elevated ? "manual" : (offeredMode(programById(program, programs)?.modes, wantedMode) ?? wantedMode);
   const worktree = choice.worktree && projects.find((p) => p.id === projectId)?.branch !== undefined;
   const shown: LauncherChoice = { ...choice, projectId, program, mode, worktree };
 
@@ -374,7 +382,7 @@ export function LiveLauncher({ endpoint, nextNumber, size, onStarted, onSetupSta
       const task = await tasks.get(req, () => tasksApi.create(endpoint, req));
       made = true;
       setPhase("starting");
-      const request = withColorScheme(launchRequest(shown, prompt, programs, loaded.doc, projects, size(), task.path, fieldValues), loaded.doc.profiles, appearance, appScheme());
+      const request = withColorScheme(launchRequest(shown, prompt, programs, loaded.doc, projects, size(), task.path, fieldValues, elevated), loaded.doc.profiles, appearance, appScheme());
       const folder = projects.find((p) => p.id === shown.projectId)?.name ?? "your home folder";
       const text = startingText(shown.program, folder, programs);
       if (!setupWanted) return await startAgent(request, text);
@@ -431,7 +439,7 @@ export function LiveLauncher({ endpoint, nextNumber, size, onStarted, onSetupSta
     setStarting(true);
     setError(undefined);
     try {
-      const request = launchRequest(shown, prompt, programs, loaded.doc, projects, size(), undefined, fieldValues);
+      const request = launchRequest(shown, prompt, programs, loaded.doc, projects, size(), undefined, fieldValues, elevated);
       const created = await sessionsApi.create(endpoint, withColorScheme(request, loaded.doc.profiles, appearance, appScheme()));
       const folder = projects.find((p) => p.id === shown.projectId)?.name ?? "your home folder";
       onStarted(created, startingText(shown.program, folder, programs));
@@ -445,13 +453,16 @@ export function LiveLauncher({ endpoint, nextNumber, size, onStarted, onSetupSta
   return (
     <div ref={root} className="live-app__launcher">
       <Launcher
-        view={{ choice: shown, projects, query, pathCheck: shownCheck, activeIndex, programsOpen, prompt, nextNumber, taskName, ...(confirm === null ? {} : { confirm }) }}
+        view={{ choice: shown, elevated, projects, query, pathCheck: shownCheck, activeIndex, programsOpen, prompt, nextNumber, taskName, ...(confirm === null ? {} : { confirm }) }}
         programs={programs}
         paceChip={false}
+        os={os}
+        pending={starting}
+        onElevated={setElevatedWanted}
         error={error ?? loadError}
         busy={starting || loaded === null || !filled}
         fields={fieldBoxes}
-        busyText={progressText(phase, programById(shown.program, programs)?.label ?? shown.program)}
+        busyText={elevated && phase === "starting" ? WAITING_FOR_ADMIN : progressText(phase, programById(shown.program, programs)?.label ?? shown.program)}
         onChange={patch}
         onQuery={(q) => {
           setLists((l) => openFolder(l, q));

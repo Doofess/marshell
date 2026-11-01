@@ -1,4 +1,5 @@
 import { useId } from "react";
+import { resumeLabel } from "../sidebar/sessionMenu";
 import type { RowModel } from "../sidebar/types";
 import { ENDED_PHRASE } from "./toRow";
 import "./ResumeBar.css";
@@ -32,7 +33,7 @@ export function ResumeBar({ row, command, folder, disabledReason, onResume }: { 
           if (!disabledReason) onResume();
         }}
       >
-        Resume
+        {resumeLabel(row.elevated) ?? "Resume"}
       </button>
       {disabledReason && (
         <p className="resume-bar__reason" id={reasonId}>

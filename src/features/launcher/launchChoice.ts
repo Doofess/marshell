@@ -4,7 +4,11 @@ import type { PresetField } from "../../generated/PresetField";
 import { MODES, offeredMode } from "../modes/sessionModes";
 import type { Mode } from "../sidebar/types";
 import { modeLabel } from "../window/SessionHeader";
+import { WAITING_FOR_ADMIN } from "../../lib/adminCopy";
+import type { Os } from "../../lib/keymap";
 import type { Project } from "./filter";
+
+export { WAITING_FOR_ADMIN };
 
 export type { Mode };
 export type Pace = "Quick" | "Balanced" | "Deep";
@@ -94,16 +98,17 @@ export type LauncherChoice = { program: ProgramId; projectId: string; mode: Mode
 export type Remembered = Partial<Pick<LauncherChoice, "mode" | "pace">>;
 
 /** The launcher as one sentence, for the dialog's accessible description. */
-export function launcherSentence(c: LauncherChoice, projects: Project[], programs: LaunchProgram[] = LAUNCH_PROGRAMS): string {
+export function launcherSentence(c: LauncherChoice, projects: Project[], programs: LaunchProgram[] = LAUNCH_PROGRAMS, elevated = false): string {
   const label = programById(c.program, programs)?.label ?? c.program;
   const p = projects.find((x) => x.id === c.projectId);
   const where = p ? (p.branch ? `${p.name} on ${p.branch}` : p.name) : "an unknown folder";
   const start = `Start ${label} in ${where}`;
+  const admin = elevated ? ", as administrator" : "";
   if (isAgentProgram(c.program, programs)) {
     const mode = offeredMode(programById(c.program, programs)?.modes, c.mode);
-    return `${start}, ${mode === undefined ? "" : `${modeLabel(mode)} mode, `}${c.pace}, ${c.worktree ? "in a new worktree" : "no worktree"}`;
+    return `${start}, ${mode === undefined ? "" : `${modeLabel(mode)} mode, `}${c.pace}, ${c.worktree ? "in a new worktree" : "no worktree"}${admin}`;
   }
-  return c.worktree ? `${start}, in a new worktree` : start;
+  return `${c.worktree ? `${start}, in a new worktree` : start}${admin}`;
 }
 
 /** What the new tab shows within 100 ms, before the process answers. */
@@ -122,4 +127,13 @@ export function rememberedNote(projectName: string, r: Remembered | undefined): 
   if (!r) return null;
   const parts: string[] = [r.mode === undefined ? undefined : modeLabel(r.mode), r.pace].filter((x) => x !== undefined);
   return parts.length === 0 ? null : `Remembered for ${projectName}: ${parts.join(" · ")}. Change a choice to update it.`;
+}
+
+/**
+ * The Administrator chip is launcher state: it is not in `LauncherChoice` and never remembered. It is on only where it can work (Windows);
+ * an agent that starts as administrator starts in Manual, so its Mode chip shows that and is locked.
+ */
+export function adminChip(elevated: boolean | undefined, os: Os): { enabled: boolean; on: boolean } {
+  const enabled = os === "windows";
+  return { enabled, on: enabled && elevated === true };
 }

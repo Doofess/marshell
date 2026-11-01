@@ -89,3 +89,12 @@ describe("leavesMenu", () => {
     expect(leavesMenu(null, menu)).toBe(false);
   });
 });
+
+describe("a disabled item", () => {
+  const items: MenuItem[] = [{ id: "a", label: "A" }, { id: "b", label: "B", disabled: "Not now." }];
+  it("is reached by the arrows but never runs", () => {
+    expect(menuKey("ArrowDown", items, 0)).toEqual({ kind: "move", index: 1 });
+    expect(menuKey("Enter", items, 1)).toBeNull();
+    expect(menuKey("Enter", items, 0)).toEqual({ kind: "run", id: "a" });
+  });
+});

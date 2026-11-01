@@ -1,5 +1,8 @@
 import { useEffect, useId, useRef, type KeyboardEvent, type ReactNode } from "react";
 import { AgentMark } from "../../components/AgentMark/AgentMark";
+import { AuxGlyph } from "../../components/StatusGlyph/StatusGlyph";
+import { ADMIN_LABEL, ADMIN_MODE_REASON, ADMIN_OFF_WINDOWS, WAITING_FOR_ADMIN } from "../../lib/adminCopy";
+import type { Os } from "../../lib/keymap";
 import { tabbableIn } from "../../lib/focusGuard";
 import { usePopupFocus } from "../../lib/usePopupFocus";
 import type { ConfirmScripts } from "../scripts/confirmScripts";
@@ -15,6 +18,7 @@ import {
   LAUNCH_PROGRAMS,
   MODES,
   PACES,
+  adminChip,
   isAgentProgram,
   launcherSentence,
   programById,
@@ -25,7 +29,7 @@ import {
   type Remembered,
 } from "./launchChoice";
 import { nextOffered, offeredMode } from "../modes/sessionModes";
-import { focusFellOut, listNavKeys, stepActive } from "./launcherKeys";
+import { adminKey, focusFellOut, listNavKeys, stepActive } from "./launcherKeys";
 import "./Launcher.css";
 
 /** The confirm step for a task: waiting for the core's plan, the commands it will run, or why it cannot be made. */
@@ -49,6 +53,8 @@ export type LauncherView = {
   programsOpen?: boolean;
   remembered?: Remembered;
   prompt?: string;
+  /** The Administrator chip is on. Launcher state only: it is not part of `choice` and is never remembered. */
+  elevated?: boolean;
   /** The number the new session takes: the lowest one nobody holds. */
   nextNumber?: number;
   /** The task name field's text. The field shows while the worktree chip is on in a folder in git; without this it never shows. */
@@ -70,6 +76,8 @@ type Props = {
   onActive?: (index: number) => void;
   onPrompt?: (text: string) => void;
   onStart?: () => void;
+  /** The Administrator chip was toggled (the chip, or Alt+A anywhere in the sheet). */
+  onElevated?: (on: boolean) => void;
   onTaskName?: (text: string) => void;
   /** Create and start, in the confirm view. */
   onConfirm?: () => void;
@@ -82,6 +90,10 @@ type Props = {
   onClose?: () => void;
   /** False hides the pace chip (the live app, until pace has an effect); the mode chip always shows for an agent, and the worktree chip then shows only for a folder in git. Default true. */
   paceChip?: boolean;
+  /** A create is in flight (not just the lists loading). With the Administrator chip on, the launcher then says it waits for approval. */
+  pending?: boolean;
+  /** The platform; the Administrator chip is available on Windows only. Default "windows". */
+  os?: Os;
   /** What the first chip lists. Defaults to every program in `LAUNCH_PROGRAMS`. */
   programs?: LaunchProgram[];
   /** Why the core refused the launch, shown under Start. */
@@ -121,7 +133,7 @@ const cycle = <T,>(all: T[], now: T) => all[(all.indexOf(now) + 1) % all.length]
  * first command (it can still run in a worktree). The prompt line is set like the one in every pane (a flat command line), in the vendor's colour for an
  * agent. Presentational: the parent owns the state.
  */
-export function Launcher({ view, onChange, onQuery, onPick, onUsePath, onBrowse, onPrograms, onActive, onPrompt, onStart, onTaskName, onConfirm, onBack, onAllow, onSkipScripts, onClose, paceChip = true, programs = LAUNCH_PROGRAMS, error, busy = false, busyText = "Creating the worktree…", fields }: Props) {
+export function Launcher({ view, onChange, onQuery, onPick, onUsePath, onBrowse, onPrograms, onActive, onPrompt, onStart, onElevated, onTaskName, onConfirm, onBack, onAllow, onSkipScripts, onClose, paceChip = true, os = "windows", pending = false, programs = LAUNCH_PROGRAMS, error, busy = false, busyText = "Creating the worktree…", fields }: Props) {
   const { choice, projects, query, activeIndex, remembered, nextNumber, taskName, confirm } = view;
   const project = projects.find((p) => p.id === choice.projectId);
   const agentRun = isAgentProgram(choice.program, programs);
@@ -132,8 +144,11 @@ export function Launcher({ view, onChange, onQuery, onPick, onUsePath, onBrowse,
   const program = programById(choice.program, programs) ?? programs[0] ?? LAUNCH_PROGRAMS[0]!;
   // The modes this agent offers; none means no mode chip. The chosen mode shown is one of them.
   const modes = program.modes ?? MODES;
-  const mode = offeredMode(program.modes, choice.mode) ?? choice.mode;
-  const note = agentRun ? rememberedNote(project?.name ?? "this folder", remembered) : null;
+  const admin = adminChip(view.elevated, os);
+  // An agent running as administrator starts in Manual: the chip shows it and is locked.
+  const modeLocked = admin.on && agentRun;
+  const mode = modeLocked ? "manual" : (offeredMode(program.modes, choice.mode) ?? choice.mode);
+  const note = agentRun && !modeLocked ? rememberedNote(project?.name ?? "this folder", remembered) : null;
   const folderOpen = query !== null;
   const programsOpen = !folderOpen && view.programsOpen === true;
   const options = folderOpen ? filterProjects(query, projects) : [];
@@ -149,6 +164,9 @@ export function Launcher({ view, onChange, onQuery, onPick, onUsePath, onBrowse,
   // Ids belong to one launcher (the review page shows many at once).
   const uid = useId();
   const id = (name: string) => `${uid}-${name}`;
+  const toggleAdmin = () => {
+    if (admin.enabled) onElevated?.(!admin.on);
+  };
 
   // Esc or a pick closes the folder field, which swaps an input for a button; focus must not fall to the page, or Esc and Enter go dead.
   const folderChip = useRef<HTMLButtonElement>(null);
@@ -201,6 +219,11 @@ export function Launcher({ view, onChange, onQuery, onPick, onUsePath, onBrowse,
         e.preventDefault();
         create();
       }
+      return;
+    }
+    if (adminKey(e)) {
+      e.preventDefault();
+      toggleAdmin();
       return;
     }
     const listOpen = folderOpen || programsOpen;
@@ -352,8 +375,10 @@ export function Launcher({ view, onChange, onQuery, onPick, onUsePath, onBrowse,
                     type="button"
                     className="launcher__chip"
                     aria-label={`Mode: ${modeLabel(mode)}`}
-                    onClick={() => onChange?.({ mode: nextOffered(program.modes, mode) })}
-                    onKeyDown={chipKeys(modes, modes.indexOf(mode), (i) => onChange?.({ mode: modes[i]! }))}
+                    aria-disabled={modeLocked || undefined}
+                    aria-describedby={modeLocked ? id("admin-mode") : undefined}
+                    onClick={() => !modeLocked && onChange?.({ mode: nextOffered(program.modes, mode) })}
+                    onKeyDown={modeLocked ? undefined : chipKeys(modes, modes.indexOf(mode), (i) => onChange?.({ mode: modes[i]! }))}
                   >
                     {headerDanger(mode) && (
                       <span className="launcher__risk" aria-hidden="true">
@@ -387,7 +412,37 @@ export function Launcher({ view, onChange, onQuery, onPick, onUsePath, onBrowse,
                   </button>
                 </>
               )}
+              <span> {"·"} </span>
+              <button
+                type="button"
+                className="launcher__chip"
+                role="checkbox"
+                aria-checked={admin.on}
+                aria-disabled={admin.enabled ? undefined : true}
+                aria-describedby={admin.enabled ? undefined : id("admin-off")}
+                aria-keyshortcuts="Alt+A"
+                onClick={toggleAdmin}
+              >
+                <span className="launcher__box" aria-hidden="true" data-checked={admin.on || undefined} />
+                {admin.on && (
+                  <span aria-hidden="true" className="launcher__shield">
+                    <AuxGlyph kind="elevated" />
+                  </span>
+                )}
+                {ADMIN_LABEL}
+              </button>
             </p>
+
+            {!admin.enabled && (
+              <p className="launcher__reason" id={id("admin-off")}>
+                {ADMIN_OFF_WINDOWS}
+              </p>
+            )}
+            {modeLocked && (
+              <p className="launcher__reason" id={id("admin-mode")}>
+                {ADMIN_MODE_REASON}
+              </p>
+            )}
 
             {programsOpen && (
               <div className="launcher__programs" id={id("programs")} role="listbox" aria-label="Agents, shells and tools">
@@ -530,6 +585,11 @@ export function Launcher({ view, onChange, onQuery, onPick, onUsePath, onBrowse,
                 <button type="button" className="launcher__start" disabled={busy} onClick={onStart}>
                   Start <kbd>Enter</kbd>
                 </button>
+                {pending && admin.on && !confirm && (
+                  <span className="launcher__pending" role="status">
+                    {WAITING_FOR_ADMIN}
+                  </span>
+                )}
               </span>
             </footer>
           </>
@@ -540,7 +600,7 @@ export function Launcher({ view, onChange, onQuery, onPick, onUsePath, onBrowse,
           </p>
         )}
         <p className="launcher__sr" id={id("desc")}>
-          {launcherSentence(choice, projects, programs)}
+          {launcherSentence({ ...choice, mode }, projects, programs, admin.on)}
           {nextNumber !== undefined ? `. It becomes session ${nextNumber}` : ""}
         </p>
       </div>

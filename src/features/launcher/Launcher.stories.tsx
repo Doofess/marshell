@@ -90,3 +90,16 @@ function Live() {
 }
 export const Interactive: StoryObj = { render: () => <Live /> };
 
+
+export const AdministratorOn: StoryObj = {
+  render: () => <ThemePair label="Administrator on: a shield in the chip, and an agent starts in Manual with its Mode chip locked" stack>{frame({ ...base, elevated: true }, {}, 400)}</ThemePair>,
+};
+export const AdministratorOnForAShell: StoryObj = {
+  render: () => <ThemePair label="Administrator on for a shell: no mode chip, so no second line" stack>{frame({ ...manual("powershell"), elevated: true }, {}, 400)}</ThemePair>,
+};
+export const AdministratorOffWindows: StoryObj = {
+  render: () => <ThemePair label="Not on Windows: the Administrator chip is disabled and says why" stack>{frame(base, { os: "mac" }, 400)}</ThemePair>,
+};
+export const WaitingForAdministratorApproval: StoryObj = {
+  render: () => <ThemePair label="Start pressed while Windows asks: the launcher waits for approval" stack>{frame({ ...base, elevated: true }, { busy: true, pending: true }, 400)}</ThemePair>,
+};

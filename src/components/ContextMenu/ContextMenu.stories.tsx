@@ -26,3 +26,19 @@ export const Default: StoryObj = {
     </ThemePair>
   ),
 };
+
+export const AdministratorRowMenu: StoryObj = {
+  render: () => (
+    <ThemePair label="A session running as administrator: Pause stays listed, disabled, with the reason" stack>
+      <div style={{ blockSize: 260, position: "relative", transform: "translate(0)", background: "var(--bg-base)" }}>
+        <ContextMenu
+          items={[{ id: "rename", label: "Rename", shortcut: "F2" }, { id: "pause", label: "Pause", disabled: "Pause isn't available for a session running as administrator." }, { separator: true }, { id: "close", label: "Close", shortcut: "Ctrl+Shift+W" }]}
+          label="Session actions"
+          anchor={{ x: 24, y: 24 }}
+          onRun={noop}
+          onClose={noop}
+        />
+      </div>
+    </ThemePair>
+  ),
+};

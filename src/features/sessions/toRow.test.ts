@@ -530,3 +530,10 @@ describe("toRow: the setup result on an agent row", () => {
     expect(dropGoneSetupTabs(rows, [failed, info({ tab_id: "t-s" })])[0]?.setupNote?.tabId).toBe("t-s");
   });
 });
+
+describe("toRow: Administrator", () => {
+  it("carries the session elevated flag to the row", () => {
+    expect(toRow(info({ elevated: true }), PROFILES).elevated).toBe(true);
+    expect(toRow(info({ elevated: false }), PROFILES)).not.toHaveProperty("elevated");
+  });
+});

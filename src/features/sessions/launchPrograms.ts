@@ -206,9 +206,11 @@ export function launchRequest(
   taskPath?: string,
   /** The values typed for a tool preset's fields, by field id. They go into this request and nowhere else. */
   fields: Record<string, string> = {},
+  /** The launcher's Administrator chip. It is not part of `choice`: it is never remembered. */
+  elevated = false,
 ): CreateSessionRequest {
   const cwd = taskPath ?? projects.find((p) => p.id === choice.projectId)?.path;
-  const base: CreateSessionRequest = { cols: size.cols, rows: size.rows, elevated: false, ...(cwd === undefined ? {} : { cwd }) };
+  const base: CreateSessionRequest = { cols: size.cols, rows: size.rows, elevated, ...(cwd === undefined ? {} : { cwd }) };
   const program = programById(choice.program, programs);
   // A tool preset runs inside the default shell; the core refuses a request that mixes it with an agent, prompt, mode or preset.
   if (program?.toolLaunch !== undefined) {
@@ -221,7 +223,8 @@ export function launchRequest(
   const withAgent = { ...base, agent: program?.agent ?? id, profile_id: profiles.default_id, ...(program?.preset === undefined ? {} : { preset: program.preset }) };
   if (!isAgentProgram(id, programs)) return withAgent;
   // Only what the agent maps is sent: the core refuses a mode its manifest has no flag for, and a prompt to a CLI that takes none.
-  const mode = offeredMode(program?.modes, choice.mode);
+  // An agent running as administrator always starts in Manual (the core forces it too).
+  const mode = offeredMode(program?.modes, elevated ? "manual" : choice.mode);
   const withMode = mode === undefined ? withAgent : { ...withAgent, mode };
   return prompt.trim() !== "" && program?.noFirst !== true ? { ...withMode, prompt } : withMode;
 }

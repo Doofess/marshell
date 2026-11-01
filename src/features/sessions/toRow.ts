@@ -169,6 +169,7 @@ function rowOf(info: SessionInfo, profiles: Profile[], setup: Partial<Record<Hoo
     ...(agent === "generic" && info.agent !== null && info.foreground !== null ? { agentName: info.foreground.program } : {}),
     ...(info.mode === null ? {} : { mode: info.mode }),
     ...(info.muted ? { muted: true } : {}),
+    ...(info.elevated ? { elevated: true } : {}),
     ...(info.ports !== undefined && info.ports.length > 0 ? { ports: info.ports } : {}),
     ...(info.references ? { references: info.references } : {}),
   };

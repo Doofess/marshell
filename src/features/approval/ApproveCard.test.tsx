@@ -1,7 +1,11 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { APPROVALS } from "./fixtures";
+import type { PermissionView } from "../../generated/PermissionView";
+import type { RowModel } from "../sidebar/types";
 import { ApproveCard } from "./ApproveCard";
+import { keyAction } from "./arming";
+import { toRequest } from "./fromCore";
 import type { ApprovalRequest } from "./types";
 
 const html = (r: ApprovalRequest, p: Partial<Parameters<typeof ApproveCard>[0]> = {}) => renderToStaticMarkup(<ApproveCard request={r} {...p} />);
@@ -198,5 +202,32 @@ describe("ApproveCard: the vendor's colour", () => {
     expect(html(APPROVALS.longCommand)).toContain('data-agent="antigravity"');
     expect(html(APPROVALS.writeNew)).toContain('data-agent="codex"');
     for (const r of [APPROVALS.receipt, APPROVALS.answeredInTerminal, APPROVALS.released]) expect(html(r)).toContain(`data-agent="${r.session.agent}"`);
+  });
+});
+
+describe("ApproveCard: a session running as administrator", () => {
+  it("an_elevated_card_has_the_shield_and_no_always_allow", () => {
+    const h = html({ ...APPROVALS.safeBash, elevated: true });
+    expect(h).toContain('data-kind="elevated"');
+    expect(h.indexOf('data-kind="elevated"')).toBeLessThan(h.indexOf("approve-card__name"));
+    expect(h).not.toContain("Always allow");
+    expect(h).not.toContain('aria-keyshortcuts="A"');
+    expect(h).toContain("Allow once");
+    const plain = html(APPROVALS.safeBash);
+    expect(plain).toContain("Always allow");
+    expect(plain).not.toContain('data-kind="elevated"');
+  });
+  it("the key map drops the Always key", () => {
+    const ctx = { risky: false, armed: true, truncated: false, expanded: false, noTerminal: false };
+    expect(keyAction("a", { ...ctx, hasAlways: true })).toBe("always");
+    expect(keyAction("a", { ...ctx, hasAlways: false })).toBeNull();
+  });
+  it("comes from the row", () => {
+    const view = { rid: "r", tab: "t", agent: "claude", at_ms: 0, deadline_ms: null, risk: null, always_rule: "Bash(ls:*)", detail: { kind: "other", tool: "X", args: [] } } as unknown as PermissionView;
+    const row = { id: "t", number: 3, name: "infra", project: "p", projectKey: "p", agent: "claude", status: "idle", phrase: "", elevated: true } as RowModel;
+    const r = toRequest(view, row, 10);
+    expect(r.elevated).toBe(true);
+    expect(r.alwaysRule).toBeUndefined();
+    expect(toRequest(view, { ...row, elevated: undefined }, 10).alwaysRule).toBe("Bash(ls:*)");
   });
 });

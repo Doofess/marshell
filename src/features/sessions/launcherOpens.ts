@@ -1,3 +1,5 @@
+import type { Os } from "../../lib/keymap";
+
 /** Whether the first-run onboarding is not known yet (the saved settings haven't answered), shown, or seen and closed. */
 export type OnboardingShown = "unknown" | "showing" | "done";
 
@@ -10,3 +12,12 @@ export type OnboardingShown = "unknown" | "showing" | "done";
 export function launcherOpens(loaded: boolean, rowCount: number, onboarding: OnboardingShown): boolean {
   return loaded && rowCount === 0 && onboarding === "done";
 }
+
+/** What a palette command does to the launcher: "Start a session" opens it as usual, "New session as administrator" opens it with the chip on. Null for any other command. */
+export function launcherFromPalette(id: string): { elevated: boolean } | null {
+  if (id === "launcher") return { elevated: false };
+  return id === "new-session-admin" ? { elevated: true } : null;
+}
+
+/** "New session as administrator" is listed on Windows only (decision 4). */
+export const adminCommandHidden = (os: Os | undefined): boolean => os !== "windows";

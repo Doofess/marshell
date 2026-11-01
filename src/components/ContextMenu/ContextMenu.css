@@ -45,6 +45,20 @@
   color: var(--text-2);
   text-align: end;
 }
+/* An item that cannot run stays in the list, so the reason under it can be read. */
+.context-menu [role="menuitem"][aria-disabled="true"] {
+  flex-wrap: wrap;
+  block-size: auto;
+  padding-block: var(--space-1);
+  color: var(--text-2);
+}
+.context-menu__reason {
+  flex-basis: 100%;
+  max-inline-size: 30ch;
+  font-size: var(--text-12);
+  line-height: 1.35;
+  text-wrap: pretty;
+}
 .context-menu__sep {
   block-size: 1px;
   margin-block: var(--space-1);
@@ -59,6 +73,9 @@
     background: Highlight;
     color: HighlightText;
     forced-color-adjust: none;
+  }
+  .context-menu [role="menuitem"][aria-disabled="true"]:not(:focus) {
+    color: GrayText;
   }
   .context-menu [role="menuitem"]:focus .context-menu__shortcut {
     color: HighlightText;

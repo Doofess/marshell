@@ -49,6 +49,8 @@ export const COMMANDS: Command[] = [
   { id: "launcher", label: "Start a session", group: "Sessions", binding: { code: "KeyT" } },
   { id: "focus-prompt", label: "Write a prompt to the active session", group: "Sessions", binding: { code: "KeyL" } },
   ...SESSION_SHORTCUTS,
+  // Opens the launcher with the Administrator chip on. Windows only; the window hides it elsewhere.
+  { id: "new-session-admin", label: "New session as administrator", group: "Sessions" },
   { id: "go-to-session", label: "Go to session… (type its number, e.g. 12)", group: "Sessions" },
   { id: "next-waiting", label: "Go to the oldest waiting session", group: "Sessions", binding: { code: "KeyN" } },
   { id: "close", label: "Close session", group: "Sessions", binding: { code: "KeyW" } },

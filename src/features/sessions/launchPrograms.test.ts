@@ -547,3 +547,14 @@ describe("launchRequest: a tool preset", () => {
     expect(fieldsFilled(programs[0], {})).toBe(true);
   });
 });
+
+describe("an administrator start", () => {
+  it("the_admin_chip_toggles_with_alt_a_and_sends_elevated: the request carries elevated, and an agent asks for Manual", () => {
+    const programs = livePrograms(CATALOG, PROFILES);
+    expect(launchRequest(choice("claude"), "", programs, DOC, PROJECTS, SIZE).elevated).toBe(false);
+    const req = launchRequest({ ...choice("claude"), mode: "bypass" }, "", programs, DOC, PROJECTS, SIZE, undefined, {}, true);
+    expect(req.elevated).toBe(true);
+    expect(req.mode).toBe("manual");
+    expect(launchRequest(choice("profile:pwsh"), "", programs, DOC, PROJECTS, SIZE, undefined, {}, true)).toMatchObject({ elevated: true, profile_id: "pwsh" });
+  });
+});

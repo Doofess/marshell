@@ -4,6 +4,8 @@ import type { SessionInfo } from "../../generated/SessionInfo";
 import { ApiError } from "../../lib/api/client";
 import type { sessions } from "../../lib/api/sessions";
 import type { SessionShortcut } from "../../lib/appShortcuts";
+import { BYPASS_ACK_TEXT, PAUSE_UNAVAILABLE } from "../../lib/adminCopy";
+import { effectiveMode } from "../modes/sessionModes";
 import { moveWithinGroup } from "../sidebar/grouping";
 import { moveBy } from "../sidebar/reorder";
 import type { RowModel } from "../sidebar/types";
@@ -11,6 +13,16 @@ import { modeLabel } from "../window/SessionHeader";
 import type { Mode } from "../sidebar/types";
 import { resumeCommand } from "./resumeCommand";
 import { lastSegment } from "./toRow";
+
+export { BYPASS_ACK_TEXT, PAUSE_UNAVAILABLE };
+
+/**
+ * Whether putting this session's agent in `mode` needs the administrator confirmation: it runs as administrator and the mode it
+ * would really have is Bypass (`skipsAll`: the CLI's own settings skip every prompt, whatever was picked).
+ */
+export function needsBypassAck(info: SessionInfo, mode: Mode, skipsAll = false): boolean {
+  return info.elevated === true && info.agent !== null && effectiveMode(mode, skipsAll) === "bypass";
+}
 
 /** How long the "Closed <name>." toast stays, in milliseconds. */
 export const TOAST_MS = 10_000;
@@ -311,6 +323,13 @@ export class SessionActions {
     return true;
   }
 
+  /** Whether the restart bar that is up must hold the administrator checkbox. */
+  restartNeedsAck(): boolean {
+    const ask = this.state.restarting;
+    const info = ask && this.deps.context().infos.find((i) => i.tab_id === ask.id);
+    return Boolean(ask && info && needsBypassAck(info, ask.mode));
+  }
+
   /** Cancel or Escape on the restart bar: nothing is sent, and focus goes back to the session's terminal. */
   cancelRestart(): void {
     if (this.state.restarting !== null) this.set({ restarting: null, focusToken: this.refocus() });
@@ -321,10 +340,12 @@ export class SessionActions {
    * `resumed` count moves, so the window gives it a new terminal, attached after the response; a refusal (the core's 409) shows
    * its own words in the toast and changes nothing.
    */
-  async confirmRestart(): Promise<void> {
+  async confirmRestart(acknowledged = false): Promise<void> {
     const ask = this.state.restarting;
     const { endpoint } = this.deps.context();
     if (!ask) return;
+    // Bypass as administrator goes only with the ticked box; without it the bar stays up and nothing is sent.
+    if (this.restartNeedsAck() && !acknowledged) return;
     this.set({ restarting: null, focusToken: this.refocus() });
     if (!endpoint) return;
     try {
@@ -343,7 +364,8 @@ export class SessionActions {
    */
   pause(id: string): "asked" | "sent" | null {
     const info = this.deps.context().infos.find((i) => i.tab_id === id);
-    if (!info || info.state.kind !== "running" || info.paused) return null;
+    // Pause is unavailable as administrator (a non-elevated app can't freeze that process tree); the menu says why.
+    if (!info || info.state.kind !== "running" || info.paused || info.elevated === true) return null;
     if (this.deps.settings?.pauseWarned !== true) {
       this.set({ pauseBar: { id, kind: "confirm" }, closing: null, restarting: null });
       return "asked";

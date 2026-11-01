@@ -89,7 +89,8 @@ import { adoptTarget, fillsEmptyPane, focusedIndex, paneToggle, ratiosOf, roomFo
 import { CloseBar } from "./CloseBar";
 import { PauseBar } from "./PauseBar";
 import { RestartBar } from "./RestartBar";
-import { launcherOpens, type OnboardingShown } from "./launcherOpens";
+import { adminCommandHidden, launcherFromPalette, launcherOpens, type OnboardingShown } from "./launcherOpens";
+import { REOPEN_AS_ADMIN } from "../../lib/adminCopy";
 import { LiveLauncher } from "./LiveLauncher";
 import { LivePalette } from "./LivePalette";
 import { LiveShortcuts } from "./LiveShortcuts";
@@ -229,6 +230,11 @@ export function LiveApp() {
   const wtFamily = wt?.family?.trim() || undefined;
   const terminalFont = useMemo(() => ({ family: font.family, size: font.size, wtFamily }), [font.family, font.size, wtFamily]);
   const [launcherOpen, setLauncherOpen] = useState(false);
+  // The palette's "New session as administrator" opens the launcher with the Administrator chip on; every other opening starts with it off.
+  const [launcherElevated, setLauncherElevated] = useState(false);
+  useEffect(() => {
+    if (!launcherOpen) setLauncherElevated(false);
+  }, [launcherOpen]);
   // The command palette, the Departures board or the Settings page, over the window.
   const [overlay, setOverlay] = useState<"palette" | "settings" | "shortcuts" | "departures" | null>(null);
   // The Settings page's section, and the one shown last in this run: the tray's Settings… reopens that one.
@@ -621,13 +627,16 @@ export function LiveApp() {
     missing: missingTask(tasks) !== null,
     focused: focusedInfo !== undefined,
     agent: focusedInfo?.agent != null && (focusedRow === undefined || offersModeChange(focusedRow, focusedInfo)),
-    pausable: focusedInfo?.state.kind === "running" && !focusedInfo.paused,
+    pausable: focusedInfo?.state.kind === "running" && !focusedInfo.paused && focusedInfo.elevated !== true,
     paused: focusedInfo?.state.kind === "running" && focusedInfo.paused,
     // The palette lists the Mode commands the focused agent offers, the same as its row menu; the refusal in askRestart is the backstop.
     ...(focusedInfo?.agent ? { offered: modesOf(focusedInfo.agent) } : {}),
   });
   // Only the script command the header would show is listed.
-  const hiddenCommands = useMemo(() => [...baseHidden, ...(scriptControl?.kind === "run" ? [] : ["run-script"]), ...(scriptControl?.kind === "stop" ? [] : ["stop-script"])], [baseHidden, scriptControl?.kind]);
+  const os = endpoint ? osOfPlatform(endpoint.platform) : undefined;
+  const hiddenCommands = useMemo(() => [...baseHidden, ...(adminCommandHidden(os) ? ["new-session-admin"] : []), ...(scriptControl?.kind === "run" ? [] : ["run-script"]), ...(scriptControl?.kind === "stop" ? [] : ["stop-script"])], [baseHidden, scriptControl?.kind, os]);
+  // An Ended administrator row's Resume reads "Reopen as administrator" in the palette too.
+  const liveLabels = useMemo(() => (focusedRow?.elevated ? { ...paletteLabels, resume: REOPEN_AS_ADMIN } : paletteLabels), [paletteLabels, focusedRow?.elevated]);
 
   // The Review sheet. It holds its own snapshot (the task, its changes, the session it was opened for), not a view of the lists above,
   // so a task list or a session list that changes under it, a merge removing the task included, never unmounts it while the core works.
@@ -996,7 +1005,6 @@ export function LiveApp() {
   );
 
   // The app's shortcuts work from anywhere, the terminal included; the terminal lets these keys through (TerminalView).
-  const os = endpoint ? osOfPlatform(endpoint.platform) : undefined;
   // The row menu: which items a row shows, and what each one does. Every action takes the row's own id, so it never waits for a
   // selection update to land.
   const menuItems = useCallback(
@@ -1335,6 +1343,7 @@ export function LiveApp() {
     if (id === "unsplit") return dispatch({ type: "remove", index: focusIdxRef.current });
     if (id === "layout") return void setTimeout(() => setLayoutMenu(true), 0);
     if (id === "group-by-project") return dispatch({ type: "toggleGrouped" });
+    if (launcherFromPalette(id)?.elevated === true) return void (setLauncherElevated(true), setLauncherOpen(true));
     if (id === "resume") return void (focusedRow && startResume(focusedRow));
     // After the palette has given focus back, so the confirm bar's Cancel keeps the focus it takes.
     if (id === "pause") return void (focusedId && setTimeout(() => pauseSession(focusedId) === "sent" && actions.focusTerminal(), 0));
@@ -1674,7 +1683,7 @@ export function LiveApp() {
           renderTerminal={renderTerminal}
           paneBar={
             restartInfo
-              ? { id: restartInfo.tab_id, node: <RestartBar text={restartBarText(restartInfo, restarting!.mode, rows.find((r) => r.id === restartInfo.tab_id)?.status === "working")} onCancel={actions.cancelRestart.bind(actions)} onRestart={() => void actions.confirmRestart()} /> }
+              ? { id: restartInfo.tab_id, node: <RestartBar key={`${restartInfo.tab_id}-${restarting!.mode}`} needsAck={actions.restartNeedsAck()} text={restartBarText(restartInfo, restarting!.mode, rows.find((r) => r.id === restartInfo.tab_id)?.status === "working")} onCancel={actions.cancelRestart.bind(actions)} onRestart={(acknowledged) => void actions.confirmRestart(acknowledged)} /> }
               : pauseInfo && pauseBar
                 ? {
                     id: pauseInfo.tab_id,
@@ -1735,7 +1744,7 @@ export function LiveApp() {
           }}
         />
       )}
-      {overlay === "palette" && os && <LivePalette sessions={paletteSessions(rows)} os={os} labels={paletteLabels} hidden={hiddenCommands} tab={focusedId ?? null} filesOnly={filesOnly} onOpenFile={(path) => { setOverlay(null); preview.open({ path }); }} onRun={runFromPalette} onClose={() => setOverlay(null)} />}
+      {overlay === "palette" && os && <LivePalette sessions={paletteSessions(rows)} os={os} labels={liveLabels} hidden={hiddenCommands} tab={focusedId ?? null} filesOnly={filesOnly} onOpenFile={(path) => { setOverlay(null); preview.open({ path }); }} onRun={runFromPalette} onClose={() => setOverlay(null)} />}
       {overlay === "departures" && (
         <LiveDepartures
           rows={taskRows}
@@ -1828,6 +1837,8 @@ export function LiveApp() {
       {launcherOpen && (
         <LiveLauncher
           endpoint={endpoint}
+          initialElevated={launcherElevated}
+          os={os}
           nextNumber={nextSessionNumber(infos.map((i) => i.number))}
           size={() => size.current}
           onStarted={started}
