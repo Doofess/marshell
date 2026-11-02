@@ -53,6 +53,15 @@ export function restartBarText(info: SessionInfo, mode: Mode, working: boolean, 
   return working ? `${text} ${agentLabel(info.agent ?? "")} may be mid-task.` : text;
 }
 
+/** The closed row and the CLI setting that makes an administrator Reopen need the Bypass acknowledgement. */
+export function reopenBarText(info: SessionInfo | undefined, detection?: Detection, failed = false): string {
+  if (!info) return "Reopen the closed session as administrator? Antigravity may skip every prompt, so this session may run in Bypass.";
+  const question = `Reopen ${info.number} ${info.name} as administrator?`;
+  return detection?.skipsAll && !failed
+    ? `${question} Antigravity's own ${detection.skipsAll.setting} setting skips every prompt, so it runs in Bypass.`
+    : `${question} Marshell couldn't read Antigravity's settings, so it may skip every prompt.`;
+}
+
 /**
  * Whether the restart bar has nothing left to ask: its session is gone, a close question is up, or the focus is on
  * another session. `showing` is a session being brought on screen for the bar; until it is focused, that is not a move away.
@@ -112,6 +121,8 @@ type Context = {
   profiles?: Pick<Profile, "id" | "family">[];
   endpoint: Endpoint | null;
   infos: SessionInfo[];
+  /** Recently closed rows, newest first. Missing metadata keeps Reopen conservative. */
+  closed?: SessionInfo[];
   selectedId: string | undefined;
   /** False in the rail and focus layouts, which have no row to edit. Left out means expanded. */
   sidebarExpanded?: boolean;
@@ -286,8 +297,9 @@ export class SessionActions {
   }
 
   private async reopen(tabId: string | undefined): Promise<void> {
-    const { endpoint } = this.deps.context();
+    const { endpoint, closed } = this.deps.context();
     if (!endpoint) return;
+    const row = tabId === undefined ? closed?.[0] : closed?.find((info) => info.tab_id === tabId);
     let deferred = false;
     try {
       // No id means "the most recent": the core takes the absence of an id, not an empty one.
@@ -295,9 +307,9 @@ export class SessionActions {
         tabId,
         () => (tabId === undefined ? this.deps.api.reopen(endpoint) : this.deps.api.reopen(endpoint, tabId)),
         async (command, args) => {
-          // The API's 409 identifies an elevated closed row, but closed rows have no agent metadata. When Antigravity may
-          // bypass, conservatively ask before any elevated Reopen. Ordinary Reopen still succeeds through the API above.
-          if (command === "elevated_reopen" && this.antigravityMaySkipAll()) {
+          // The API's 409 identifies an elevated Reopen. Its closed row tells us whether Manual can really be Bypass;
+          // without that metadata, keep asking while Antigravity may skip every prompt.
+          if (command === "elevated_reopen" && (row ? needsBypassAck(row, "manual", this.sessionSkipsAll(row)) : this.antigravityMaySkipAll())) {
             deferred = true;
             this.set({ reopening: { tabId }, closing: null, restarting: null, pauseBar: null });
             throw new Error("Reopen needs the administrator Bypass confirmation.");

@@ -98,7 +98,7 @@ export function Pane({ row, active, split, navIndex, setting, style, cells, zoom
       onPointerDown={onFocus}
       onFocus={onFocus}
     >
-      {bar ?? (
+      {bar ? <div className="pane__bar">{bar}</div> : (
       <header className="pane__header" data-needs={needs || undefined} data-danger={headerDanger(row.mode) || undefined}>
         {row.status === "working" ? <AgentMark agent={row.agent} {...(row.agentName === undefined ? {} : { label: row.agentName })} size={16} working /> : <StatusGlyph kind={row.status} />}
         <SessionNumber n={row.number} />

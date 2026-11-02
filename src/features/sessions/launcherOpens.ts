@@ -9,8 +9,8 @@ export type OnboardingShown = "unknown" | "showing" | "done";
  * waits for the onboarding, which would otherwise sit under the launcher while the launcher holds the focus, so the Enter meant for
  * the onboarding would start a session; it opens when the onboarding ends.
  */
-export function launcherOpens(loaded: boolean, rowCount: number, onboarding: OnboardingShown): boolean {
-  return loaded && rowCount === 0 && onboarding === "done";
+export function launcherOpens(loaded: boolean, rowCount: number, onboarding: OnboardingShown, reopening = false): boolean {
+  return loaded && rowCount === 0 && onboarding === "done" && !reopening;
 }
 
 /** What a palette command does to the launcher: "Start a session" opens it as usual, "New session as administrator" opens it with the chip on. Null for any other command. */

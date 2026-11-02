@@ -78,8 +78,13 @@
 .pane[data-active="true"][data-split]::after {
   opacity: 1;
 }
-/* The restart bar in a pane's header slot is as tall as the header. */
-.pane > .close-bar {
+/* Keep the header's grid slot when the acknowledgement grows over this pane's terminal. */
+.pane__bar {
+  position: relative;
+  min-inline-size: 0;
+}
+/* A one-line restart bar in a pane's header slot stays as tall as the header. */
+.pane__bar > .close-bar:not(.close-bar--ack) {
   block-size: 28px;
 }
 /*

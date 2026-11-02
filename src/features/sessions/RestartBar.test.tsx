@@ -43,8 +43,14 @@ describe("RestartBar: the administrator confirmation", () => {
     expect(h).not.toContain("checkbox");
     expect(h).not.toContain("aria-disabled");
   });
-  it("Cancel still takes the focus first", () => {
-    expect(withAck()).toMatch(/data-initial-focus[^>]*>Cancel</);
+  it("marks only the acknowledgement bar for an overlay", () => {
+    expect(withAck()).toContain('class="close-bar close-bar--ack"');
+    expect(withAck({ needsAck: false })).not.toContain("close-bar--ack");
+  });
+  it("puts initial focus on the acknowledgement checkbox", () => {
+    const h = withAck();
+    expect(h.match(/data-initial-focus/g)).toHaveLength(1);
+    expect(h).toMatch(/<input[^>]*type="checkbox"[^>]*data-initial-focus/);
   });
   it("restart is allowed only when no ack is needed or it is ticked", () => {
     expect(restartAllowed(false, false)).toBe(true);

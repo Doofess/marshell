@@ -4,12 +4,18 @@ import { nameContainsLabel } from "../../lib/labelInName";
 import { SCENARIO_ROWS } from "./scenario";
 import { COMPOSER } from "./layout";
 import { SplitView, type SplitViewProps } from "./SplitView";
+import { RestartBar } from "../sessions/RestartBar";
 
 const [billing, infra, api, docs, bug] = SCENARIO_ROWS;
 const html = (p: Partial<SplitViewProps> = {}) => renderToStaticMarkup(<SplitView panes={[api!, billing!]} size={{ w: 1180, h: 760 }} {...p} />);
 const count = (h: string, re: RegExp) => (h.match(re) ?? []).length;
 
 describe("SplitView: panes", () => {
+  it("keeps the header's grid slot when an acknowledgement overlays a pane", () => {
+    const h = html({ paneBar: { id: api!.id, node: <RestartBar text="Restart?" needsAck onCancel={() => {}} onRestart={() => {}} /> } });
+    expect(h).toMatch(/<div class="pane__bar"><div class="close-bar close-bar--ack"/);
+    expect(count(h, /class="scripted-terminal"/g)).toBe(2);
+  });
   it("shows one pane and one live terminal per session, two to four of them", () => {
     for (const rows of [[api!, billing!], [api!, billing!, infra!], [api!, billing!, infra!, docs!]]) {
       const h = html({ panes: rows });

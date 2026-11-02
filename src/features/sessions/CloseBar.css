@@ -56,10 +56,17 @@
 }
 /* The Bypass confirmation: the question, the checkbox sentence and the buttons wrap instead of clipping, since the sentence is long. */
 .close-bar--ack {
+  position: absolute;
+  inset-inline: 0;
+  inset-block-start: 0;
+  /* Above xterm's layers (up to 11); pane isolation keeps it within that pane's stack. */
+  z-index: 13;
   flex-wrap: wrap;
   block-size: auto;
   padding-block: var(--space-2);
   white-space: normal;
+  background: color-mix(in oklch, var(--caution) 10%, var(--bg-raised));
+  border-block-end: 1px solid var(--hairline);
 }
 .close-bar--ack .close-bar__text {
   overflow: visible;
@@ -87,6 +94,10 @@
   color: var(--text-2);
 }
 @media (forced-colors: active) {
+  .close-bar--ack {
+    background: Canvas;
+    border: 1px solid CanvasText;
+  }
   .close-bar__btn[aria-disabled="true"] {
     color: GrayText;
   }

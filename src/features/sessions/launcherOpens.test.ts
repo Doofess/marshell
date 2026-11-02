@@ -8,6 +8,11 @@ describe("launcherOpens", () => {
     expect(launcherOpens(true, 0, "done")).toBe(true);
   });
 
+  it("stays closed for a Reopen confirmation and opens again after it ends", () => {
+    expect(launcherOpens(true, 0, "done", true)).toBe(false);
+    expect(launcherOpens(true, 0, "done", false)).toBe(true);
+  });
+
   it("stays closed until the core has sent its list", () => {
     expect(launcherOpens(false, 0, "done")).toBe(false);
   });

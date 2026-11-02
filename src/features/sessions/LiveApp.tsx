@@ -98,7 +98,7 @@ import { ResumeBar } from "./ResumeBar";
 import { recordSetupDetection, type SetupDetections } from "./setupDetections";
 import { sessionResumeCommand } from "./resumeCommand";
 import { holdsResume, offersModeChange, offersResume, resumeBlockedReason, resumeStateOf, sessionRunning } from "./resumeState";
-import { PAUSED_TYPING_TEXT, SessionActions, closeBarText, needsCloseConfirm, pauseBarStale, pauseBarText, restartBarStale, restartBarText, tabIdOfNumber } from "./sessionActions";
+import { PAUSED_TYPING_TEXT, SessionActions, closeBarText, needsCloseConfirm, pauseBarStale, pauseBarText, reopenBarText, restartBarStale, restartBarText, tabIdOfNumber } from "./sessionActions";
 import { navPanesOf, useNavigation } from "./useNavigation";
 import type { NavEffect } from "../../lib/navigation/types";
 import { Toast } from "./Toast";
@@ -139,7 +139,7 @@ export function LiveApp() {
   // Each hook agent's (Claude Code, Codex, Antigravity) hook state, read when the window opens and again after each change in the Agents dialog or the onboarding. Never polled.
   const [{ detections, detectionFailed }, setSetupDetections] = useState<SetupDetections>(() => ({ detections: [], detectionFailed: new Set() }));
   const [hooks, setHooks] = useState<Partial<Record<HookAgent, HookInstall>>>({});
-  const { endpoint, profiles, rows, infos, permissions, now, selectedId, loaded, select, reloadProfiles, error } = useSessions(hooks, detections);
+  const { endpoint, profiles, rows, infos, closed, permissions, now, selectedId, loaded, select, reloadProfiles, error } = useSessions(hooks, detections);
   // The company CLIs found on this machine: Settings lists Accounts and a section for each. Read with the hooks.
   const [found, setFound] = useState<ReadonlySet<CompanyAgent>>(() => new Set());
   const readFound = useCallback(async (): Promise<ReadonlySet<CompanyAgent>> => {
@@ -341,12 +341,6 @@ export function LiveApp() {
     if (cols > 0 && lines > 0) size.current = { cols, rows: lines };
   }, []);
 
-  // No sessions (first run, everything closed): the launcher opens, after the onboarding if one shows. A restarted core seeds the
-  // saved tabs, so it opens only if there are none.
-  useEffect(() => {
-    if (launcherOpens(loaded, rows.length, onboardingShown)) setLauncherOpen(true);
-  }, [loaded, rows.length, onboardingShown]);
-
   useEffect(() => {
     const current = new Set(rows.map((r) => r.id));
     setStartingTexts((t) => pruneClosed(t, current, listed.current));
@@ -362,8 +356,8 @@ export function LiveApp() {
   const paletteLabels = useMemo(() => ({ sidebar: sidebarPref === "expanded" ? "Collapse sidebar to the rail" : "Expand the sidebar", "group-by-project": view.grouped ? "Stop grouping by project" : "Group sessions by project" }), [sidebarPref, view.grouped]);
   // Grouping shows in the expanded sidebar only; the rail and focus layouts keep the core's order, and so do their moves.
   const groupedRows = view.grouped && sidebarExpanded ? rows : undefined;
-  const context = useRef({ endpoint, infos, selectedId: focusedId, sidebarExpanded, groupedRows, detections, detectionFailed, profiles });
-  context.current = { endpoint, infos, selectedId: focusedId, sidebarExpanded, groupedRows, detections, detectionFailed, profiles };
+  const context = useRef({ endpoint, infos, closed, selectedId: focusedId, sidebarExpanded, groupedRows, detections, detectionFailed, profiles });
+  context.current = { endpoint, infos, closed, selectedId: focusedId, sidebarExpanded, groupedRows, detections, detectionFailed, profiles };
   const pickRef = useRef(pick);
   pickRef.current = pick;
   // A clicked banner brings the window forward (the shell does that) and names the session; no tab means there is nothing to go to.
@@ -458,6 +452,11 @@ export function LiveApp() {
   }, [settled, loaded, selectedId, view.panes, dispatch]);
   useEffect(() => () => actions.dispose(), [actions]);
   const { toast, closing, restarting, reopening, pauseBar, renaming, focusToken, resuming, resumed } = useSyncExternalStore(actions.subscribe, actions.getState);
+  // Empty windows open the launcher after onboarding, except while Reopen needs the checkbox and the keyboard.
+  useEffect(() => {
+    if (reopening) setLauncherOpen(false);
+    else if (launcherOpens(loaded, rows.length, onboardingShown, reopening !== null)) setLauncherOpen(true);
+  }, [loaded, rows.length, onboardingShown, reopening]);
   // Asking for the terminal (a pane, a command) ends a link's hold.
   useEffect(() => setLinkHeld(false), [focusToken]);
   // The Ended or Exited row each tab had when Resume was pressed, and how many resumes of it had come back ok by then. The core says
@@ -1555,7 +1554,7 @@ export function LiveApp() {
                 placeholder={startingTexts[row.id]}
                 onOutput={() => setStartingTexts((t) => without(t, row.id))}
                 onSize={onSize}
-                autoFocus={!linkHeld && !launcherOpen && overlay === null && review === null && row.id === focusedId}
+                autoFocus={!linkHeld && !launcherOpen && !reopening && overlay === null && review === null && row.id === focusedId}
                 visible={shown}
                 paused={info?.paused === true}
                 onBlockedInput={() => actions.showPausedBar(row.id)}
@@ -1582,7 +1581,7 @@ export function LiveApp() {
         </div>
       );
     },
-    [endpoint, panelTab?.tabId, heldRow, resumed, infos, profiles, detections, detectionFailed, startResume, startingTexts, onSize, launcherOpen, overlay, review, focusedId, focusToken, linkHeld, promptJump, onPromptJump, themeFor, overrideOf, terminalFont],
+    [endpoint, panelTab?.tabId, heldRow, resumed, infos, profiles, detections, detectionFailed, startResume, startingTexts, onSize, launcherOpen, reopening, overlay, review, focusedId, focusToken, linkHeld, promptJump, onPromptJump, themeFor, overrideOf, terminalFont],
   );
 
   if (error) {
@@ -1712,7 +1711,7 @@ export function LiveApp() {
           onModeMenu={(id, anchor) => setModeMenu({ id, anchor, from: "chip" })}
           canChangeMode={(row) => offersModeChange(row, infos.find((i) => i.tab_id === row.id))}
           headerBar={reopening
-            ? <RestartBar key={`reopen-${reopening.tabId ?? "last"}`} text="Reopen the closed session as administrator? Antigravity may skip every prompt, so this session may run in Bypass." actionLabel="Reopen as administrator" needsAck onCancel={actions.cancelReopen.bind(actions)} onRestart={(acknowledged) => void actions.confirmReopen(acknowledged)} />
+            ? <RestartBar key={`reopen-${reopening.tabId ?? "last"}`} text={reopenBarText(reopening.tabId === undefined ? closed[0] : closed.find((info) => info.tab_id === reopening.tabId), detections.find((d) => d.cli === "antigravity"), detectionFailed.has("antigravity"))} actionLabel="Reopen as administrator" needsAck onCancel={actions.cancelReopen.bind(actions)} onRestart={(acknowledged) => void actions.confirmReopen(acknowledged)} />
             : closingInfo && <CloseBar text={closeBarText(closingInfo)} onCancel={actions.cancelClose.bind(actions)} onCloseNow={() => void actions.confirmClose()} />}
           toast={toast && <Toast text={toast.text} actionLabel={toast.reopenId ? "Reopen" : undefined} onAction={() => void actions.reopenFromToast()} />}
           notice={toast ? { id: toast.id, text: toast.text } : notice}
@@ -1849,7 +1848,7 @@ export function LiveApp() {
       {overlay === "shortcuts" && os && <LiveShortcuts os={os} onClose={() => setOverlay(null)} />}
       {runAsk && <ScriptsTrustDialog scripts={runAsk.scripts} busy={runAsk.busy} error={runAsk.error} allowLabel="Allow and run" cancelLabel="Cancel" onAllow={() => void allowRun()} onCancel={() => setRunAsk(null)} />}
       {closeAsk && <CloseDialog busy={closeAsk.busy} error={closeAsk.error} onChoose={(keep) => void chooseClose(keep)} onCancel={cancelCloseAsk} />}
-      {launcherOpen && (
+      {launcherOpen && !reopening && (
         <LiveLauncher
           detections={detections}
           detectionFailed={detectionFailed}

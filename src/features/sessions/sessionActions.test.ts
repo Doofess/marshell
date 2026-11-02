@@ -2,10 +2,28 @@ import { describe, expect, it, vi } from "vitest";
 import type { Endpoint } from "../../generated/Endpoint";
 import type { SessionInfo } from "../../generated/SessionInfo";
 import { ApiError } from "../../lib/api/client";
-import { BYPASS_ACK_TEXT, PAUSE_UNAVAILABLE, SessionActions, needsBypassAck, pauseBarStale, pauseBarText, restartBarStale, restartBarText } from "./sessionActions";
+import { BYPASS_ACK_TEXT, PAUSE_UNAVAILABLE, SessionActions, needsBypassAck, pauseBarStale, pauseBarText, reopenBarText, restartBarStale, restartBarText } from "./sessionActions";
 
 const endpoint = { port: 1, token: "t", platform: "windows" } as Endpoint;
 const info = (tab_id: string): SessionInfo => ({ tab_id, number: 1, name: tab_id, agent: null, profile_id: "pwsh", cwd: "C:/x", project: "C:/x", state: { kind: "running" } }) as SessionInfo;
+
+describe("reopenBarText", () => {
+  const row = { ...info("closed"), number: 3, name: "billing", agent: "antigravity", elevated: true } as SessionInfo;
+  const detection = { cli: "antigravity", installed: true, configPath: "settings.json", configState: "ok", skipsAll: { setting: "dangerouslySkipPermissions" } } as const;
+
+  it("names the closed row and the setting that makes it Bypass", () => {
+    expect(reopenBarText(row, detection)).toBe("Reopen 3 billing as administrator? Antigravity's own dangerouslySkipPermissions setting skips every prompt, so it runs in Bypass.");
+  });
+  it("explains a pending settings read", () => {
+    expect(reopenBarText(row)).toBe("Reopen 3 billing as administrator? Marshell couldn't read Antigravity's settings, so it may skip every prompt.");
+  });
+  it("explains a failed read even when an older detection says the setting is on", () => {
+    expect(reopenBarText(row, detection, true)).toBe("Reopen 3 billing as administrator? Marshell couldn't read Antigravity's settings, so it may skip every prompt.");
+  });
+  it("keeps the conservative copy when the closed row is unknown", () => {
+    expect(reopenBarText(undefined, detection)).toBe("Reopen the closed session as administrator? Antigravity may skip every prompt, so this session may run in Bypass.");
+  });
+});
 
 function setup(selectedId: string | undefined) {
   const close = vi.fn().mockResolvedValue(undefined);
@@ -396,16 +414,57 @@ describe("resuming an administrator Antigravity session", () => {
 });
 
 describe("reopening a closed administrator row when Antigravity may bypass", () => {
-  function reopenSetup(failed = false, pending = false) {
+  function reopenSetup(failed = false, pending = false, closed: SessionInfo[] = [], wsl = false) {
     const ask = vi.fn().mockResolvedValue({ tab_id: "new", number: 2 });
     const reopen = vi.fn().mockRejectedValue(new ApiError(409, "This session runs as administrator."));
     const actions = new SessionActions({
       api: { close: vi.fn(), reopen, rename: vi.fn(), reorder: vi.fn(), resume: vi.fn(), restart: vi.fn(), pause: vi.fn(), cont: vi.fn() },
-      context: () => ({ endpoint, infos: [{ ...info("a"), agent: "claude", mode: "manual" } as SessionInfo], selectedId: "a", detectionFailed: new Set(failed ? ["antigravity"] : []), detections: failed || pending ? [] : [{ cli: "antigravity", installed: true, configPath: "settings.json", configState: "ok", skipsAll: { setting: "dangerouslySkipPermissions" } }] }),
+      context: () => ({ endpoint, infos: [{ ...info("a"), agent: "claude", mode: "manual" } as SessionInfo], closed, profiles: [{ id: "pwsh", family: wsl ? "wsl" : "power_shell" }], selectedId: "a", detectionFailed: new Set(failed ? ["antigravity"] : []), detections: failed || pending ? [] : [{ cli: "antigravity", installed: true, configPath: "settings.json", configState: "ok", skipsAll: { setting: "dangerouslySkipPermissions" } }] }),
       select: vi.fn(), ask,
     });
     return { actions, ask, reopen };
   }
+  it.each(["claude", "codex"])("reopens a known elevated %s row without Antigravity's confirmation", async (agent) => {
+    const { actions, ask } = reopenSetup(false, false, [{ ...info("closed"), agent, elevated: true } as SessionInfo]);
+    await actions.reopenLast();
+    expect(actions.getState().reopening).toBeNull();
+    expect(ask).toHaveBeenCalledExactlyOnceWith("elevated_reopen", { tabId: null });
+  });
+  it.each([[false, false], [true, false], [false, true]])("asks for a known elevated Antigravity row (failed: %s, pending: %s)", async (failed, pending) => {
+    const { actions, ask } = reopenSetup(failed, pending, [{ ...info("closed"), agent: "antigravity", elevated: true } as SessionInfo]);
+    await actions.reopenLast();
+    expect(actions.getState().reopening).toEqual({ tabId: undefined });
+    expect(ask).not.toHaveBeenCalled();
+    await actions.confirmReopen(false);
+    expect(ask).not.toHaveBeenCalled();
+    await actions.confirmReopen(true);
+    expect(ask).toHaveBeenCalledExactlyOnceWith("elevated_reopen", { tabId: null });
+  });
+  it("uses the toast's closed row rather than the most recent one", async () => {
+    const { actions, ask } = reopenSetup(false, false, [
+      { ...info("other"), agent: "antigravity", elevated: true } as SessionInfo,
+      { ...info("a"), agent: "claude", elevated: true } as SessionInfo,
+    ]);
+    await actions.requestClose("a");
+    await actions.confirmClose();
+    await actions.reopenFromToast();
+    expect(actions.getState().reopening).toBeNull();
+    expect(ask).toHaveBeenCalledExactlyOnceWith("elevated_reopen", { tabId: "a" });
+  });
+  it("keeps asking when the toast's row is missing from closed", async () => {
+    const { actions, ask } = reopenSetup(false, false, [{ ...info("other"), agent: "claude", elevated: true } as SessionInfo]);
+    await actions.requestClose("a");
+    await actions.confirmClose();
+    await actions.reopenFromToast();
+    expect(actions.getState().reopening).toEqual({ tabId: "a" });
+    expect(ask).not.toHaveBeenCalled();
+  });
+  it("does not apply Windows Antigravity settings to a WSL closed row", async () => {
+    const { actions, ask } = reopenSetup(false, false, [{ ...info("closed"), agent: "antigravity", elevated: true } as SessionInfo], true);
+    await actions.reopenLast();
+    expect(actions.getState().reopening).toBeNull();
+    expect(ask).toHaveBeenCalledExactlyOnceWith("elevated_reopen", { tabId: null });
+  });
   it.each([false, true])("defers the window command until acknowledgement (failed: %s)", async (failed) => {
     const { actions, ask, reopen } = reopenSetup(failed);
     await actions.reopenLast();
