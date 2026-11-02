@@ -6,6 +6,7 @@ mod codex_daemon;
 mod context;
 pub mod elevation;
 pub mod endpoint;
+pub use codex_daemon::ancestor_pids;
 mod job;
 pub mod log;
 mod permission;

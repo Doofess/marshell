@@ -108,12 +108,16 @@ pub fn refused_port() -> u16 {
     l.local_addr().unwrap().port()
 }
 
-/// Writes `endpoint.json` as a running core does, `pid` included. The test process starts the bridge, so it
-/// stands in for the Marshell that is the bridge's ancestor: a bridge running as administrator (as on CI's
-/// Windows runners) answers only that endpoint (slice 6j2 decision 12).
+/// Writes `endpoint.json` as a running core does, `pid` included. The tests run the bridge in this process,
+/// so its parent (the test runner, alive for the whole run) stands in for the Marshell that is the bridge's
+/// ancestor: a bridge running as administrator (as on CI's Windows runners) answers only that endpoint
+/// (slice 6j2 decision 12). Off Windows there is no ancestor chain, and this process's own id is alive.
 pub fn write_endpoint(home: &Path, port: u16, token: &str) {
     std::fs::create_dir_all(home.join("run")).unwrap();
-    let pid = std::process::id();
+    let pid = marshell_hook::ancestor_pids()
+        .first()
+        .copied()
+        .unwrap_or_else(std::process::id);
     std::fs::write(
         home.join("run").join("endpoint.json"),
         format!(r#"{{"version":1,"port":{port},"token":"{token}","platform":"windows","pid":{pid}}}"#),

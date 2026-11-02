@@ -20,6 +20,16 @@ fn log_lines(home: &std::path::Path) -> Vec<String> {
 }
 
 #[test]
+fn the_test_endpoint_is_one_an_elevated_bridge_answers() {
+    // CI's Windows runners are elevated, so every test here takes the elevated bridge's lookup there.
+    let home = tempfile::tempdir().unwrap();
+    write_endpoint(home.path(), 4242, "t");
+    let env = env_of(home.path(), &[]);
+    let found = marshell_hook::endpoint::discover_elevated(&env, &marshell_hook::ancestor_pids());
+    assert_eq!(found.map(|(_, port, _)| port), Some(4242));
+}
+
+#[test]
 fn event_posts_stdin_with_headers_and_prints_nothing() {
     let home = tempfile::tempdir().unwrap();
     let fake = serve(Reply::new(204, ""));
