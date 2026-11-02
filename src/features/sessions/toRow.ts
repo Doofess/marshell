@@ -8,6 +8,8 @@ import type { LiveStatus } from "../../generated/LiveStatus";
 import type { Profile } from "../../generated/Profile";
 import type { SessionInfo } from "../../generated/SessionInfo";
 import type { GlyphKind } from "../../components/StatusGlyph/glyphs";
+import { effectiveMode } from "../modes/sessionModes";
+import type { Detection } from "../onboarding/types";
 import type { RowModel } from "../sidebar/types";
 
 /** The mark for a shell session, from its profile's family. A profile that no longer exists gets the generic program mark. */
@@ -124,8 +126,9 @@ function fallbackRow(info: SessionInfo, base: Omit<RowModel, "status" | "phrase"
  * status comes from its prompt marks: "working" while a command runs, and "idle" at the prompt (or before any mark),
  * naming a failed last command. `now` is the clock the ages count from.
  */
-export function toRow(info: SessionInfo, profiles: Profile[], setup?: Partial<Record<HookAgent, HookInstall>>, now: number = Date.now()): RowModel {
+export function toRow(info: SessionInfo, profiles: Profile[], setup?: Partial<Record<HookAgent, HookInstall>>, now: number = Date.now(), detections: Detection[] = []): RowModel {
   const row = rowOf(info, profiles, setup, now);
+  if (row.mode !== undefined && info.agent !== null && profiles.find((p) => p.id === info.profile_id)?.family !== "wsl") row.mode = effectiveMode(row.mode, detections.some((d) => d.cli === info.agent && d.skipsAll !== undefined));
   const outcome = info.setup?.outcome;
   if (info.setup === undefined || outcome === undefined || outcome.kind === "passed") return row;
   const text = outcome.kind === "failed" ? `Setup failed (exit ${outcome.code}).` : "Setup was closed before it finished.";

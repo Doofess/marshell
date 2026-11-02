@@ -84,7 +84,7 @@ export function deletedFiles(p: ConfigPreview): string[] {
 
 const STATE: Record<AgentSetup["settings_state"], ConfigState> = { ok: "ok", missing: "missing", unparsable: "unparsable", readOnly: "read-only" };
 
-/** The core's setup as the onboarding's `Detection`. `managed` and `skipsAll` have no source in `AgentSetup`, so they stay unset. */
+/** The core's setup as the onboarding's `Detection`. The CLI's own skip-every-prompt setting is reported; `managed` has no source and stays unset. */
 export function toDetection(s: AgentSetup): Detection {
   return {
     cli: s.agent as Detection["cli"],
@@ -98,6 +98,7 @@ export function toDetection(s: AgentSetup): Detection {
     skill: s.skill,
     skillPath: s.skill_path,
     skillProblem: s.skill_problem,
+    ...(s.skips_all === undefined ? {} : { skipsAll: { setting: s.skips_all } }),
     // Antigravity's hooks go in a file of their own; without a preview, hooks.json is taken as there once Marshell's hooks are.
     ...(s.hooks_path === undefined ? {} : { hooks: { path: s.hooks_path, exists: s.hooks !== "none" } }),
   };

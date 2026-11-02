@@ -1,7 +1,7 @@
 import { useEffect, useId, useRef, type KeyboardEvent, type ReactNode } from "react";
 import { AgentMark } from "../../components/AgentMark/AgentMark";
 import { AuxGlyph } from "../../components/StatusGlyph/StatusGlyph";
-import { ADMIN_LABEL, ADMIN_MODE_REASON, ADMIN_OFF_WINDOWS, WAITING_FOR_ADMIN } from "../../lib/adminCopy";
+import { ADMIN_LABEL, ADMIN_MODE_REASON, ADMIN_OFF_WINDOWS, BYPASS_ACK_TEXT, WAITING_FOR_ADMIN } from "../../lib/adminCopy";
 import type { Os } from "../../lib/keymap";
 import { tabbableIn } from "../../lib/focusGuard";
 import { usePopupFocus } from "../../lib/usePopupFocus";
@@ -28,9 +28,10 @@ import {
   type LauncherChoice,
   type Remembered,
 } from "./launchChoice";
-import { nextOffered, offeredMode } from "../modes/sessionModes";
+import { effectiveMode, nextOffered, offeredMode } from "../modes/sessionModes";
 import { adminKey, focusFellOut, listNavKeys, stepActive } from "./launcherKeys";
 import "./Launcher.css";
+import "../sessions/CloseBar.css";
 
 /** The confirm step for a task: waiting for the core's plan, the commands it will run, or why it cannot be made. */
 export type TaskConfirm =
@@ -55,6 +56,8 @@ export type LauncherView = {
   prompt?: string;
   /** The Administrator chip is on. Launcher state only: it is not part of `choice` and is never remembered. */
   elevated?: boolean;
+  /** The administrator Bypass warning was explicitly acknowledged for this program. */
+  bypassAcknowledged?: boolean;
   /** The number the new session takes: the lowest one nobody holds. */
   nextNumber?: number;
   /** The task name field's text. The field shows while the worktree chip is on in a folder in git; without this it never shows. */
@@ -78,6 +81,7 @@ type Props = {
   onStart?: () => void;
   /** The Administrator chip was toggled (the chip, or Alt+A anywhere in the sheet). */
   onElevated?: (on: boolean) => void;
+  onBypassAck?: (on: boolean) => void;
   onTaskName?: (text: string) => void;
   /** Create and start, in the confirm view. */
   onConfirm?: () => void;
@@ -133,7 +137,7 @@ const cycle = <T,>(all: T[], now: T) => all[(all.indexOf(now) + 1) % all.length]
  * first command (it can still run in a worktree). The prompt line is set like the one in every pane (a flat command line), in the vendor's colour for an
  * agent. Presentational: the parent owns the state.
  */
-export function Launcher({ view, onChange, onQuery, onPick, onUsePath, onBrowse, onPrograms, onActive, onPrompt, onStart, onElevated, onTaskName, onConfirm, onBack, onAllow, onSkipScripts, onClose, paceChip = true, os = "windows", pending = false, programs = LAUNCH_PROGRAMS, error, busy = false, busyText = "Creating the worktree…", fields }: Props) {
+export function Launcher({ view, onChange, onQuery, onPick, onUsePath, onBrowse, onPrograms, onActive, onPrompt, onStart, onElevated, onBypassAck, onTaskName, onConfirm, onBack, onAllow, onSkipScripts, onClose, paceChip = true, os = "windows", pending = false, programs = LAUNCH_PROGRAMS, error, busy = false, busyText = "Creating the worktree…", fields }: Props) {
   const { choice, projects, query, activeIndex, remembered, nextNumber, taskName, confirm } = view;
   const project = projects.find((p) => p.id === choice.projectId);
   const agentRun = isAgentProgram(choice.program, programs);
@@ -145,9 +149,16 @@ export function Launcher({ view, onChange, onQuery, onPick, onUsePath, onBrowse,
   // The modes this agent offers; none means no mode chip. The chosen mode shown is one of them.
   const modes = program.modes ?? MODES;
   const admin = adminChip(view.elevated, os);
-  // An agent running as administrator starts in Manual: the chip shows it and is locked.
+  // Administrator starts request Manual and lock the chip; an agent's own setting may still make that Bypass.
   const modeLocked = admin.on && agentRun;
-  const mode = modeLocked ? "manual" : (offeredMode(program.modes, choice.mode) ?? choice.mode);
+  const pickedMode = modeLocked ? "manual" : (offeredMode(program.modes, choice.mode) ?? choice.mode);
+  const mode = effectiveMode(pickedMode, program.skipsAll !== undefined);
+  const settingBypass = program.skipsAll;
+  const needsAck = admin.on && agentRun && (mode === "bypass" || program.adminSetupFailed === true);
+  const canStart = !busy && !(admin.on && program.adminSetupPending) && (!needsAck || view.bypassAcknowledged === true);
+  const start = () => {
+    if (canStart) onStart?.();
+  };
   const note = agentRun && !modeLocked ? rememberedNote(project?.name ?? "this folder", remembered) : null;
   const folderOpen = query !== null;
   const programsOpen = !folderOpen && view.programsOpen === true;
@@ -257,7 +268,7 @@ export function Launcher({ view, onChange, onQuery, onPick, onUsePath, onBrowse,
       }
     } else if (!onButton) {
       e.preventDefault();
-      onStart?.();
+      start();
     }
   };
 
@@ -377,8 +388,8 @@ export function Launcher({ view, onChange, onQuery, onPick, onUsePath, onBrowse,
                     aria-label={`Mode: ${modeLabel(mode)}`}
                     aria-disabled={modeLocked || undefined}
                     aria-describedby={modeLocked ? id("admin-mode") : undefined}
-                    onClick={() => !modeLocked && onChange?.({ mode: nextOffered(program.modes, mode) })}
-                    onKeyDown={modeLocked ? undefined : chipKeys(modes, modes.indexOf(mode), (i) => onChange?.({ mode: modes[i]! }))}
+                    onClick={() => !modeLocked && onChange?.({ mode: nextOffered(program.modes, pickedMode) })}
+                    onKeyDown={modeLocked ? undefined : chipKeys(modes, modes.indexOf(pickedMode), (i) => onChange?.({ mode: modes[i]! }))}
                   >
                     {headerDanger(mode) && (
                       <span className="launcher__risk" aria-hidden="true">
@@ -440,9 +451,12 @@ export function Launcher({ view, onChange, onQuery, onPick, onUsePath, onBrowse,
             )}
             {modeLocked && (
               <p className="launcher__reason" id={id("admin-mode")}>
-                {ADMIN_MODE_REASON}
+                {program.adminSetupFailed ? "Marshell couldn't read Antigravity's settings, so it may skip every prompt." : program.skipsAll ? `${program.label} runs as Bypass because its own ${program.skipsAll.setting} setting skips every prompt.` : ADMIN_MODE_REASON}
               </p>
             )}
+
+            {settingBypass && !modeLocked && <p className="launcher__reason">{program.label} runs as Bypass because its own {settingBypass.setting} setting skips every prompt.</p>}
+            {admin.on && program.adminSetupPending && <p className="launcher__reason">Checking Antigravity's settings…</p>}
 
             {programsOpen && (
               <div className="launcher__programs" id={id("programs")} role="listbox" aria-label="Agents, shells and tools">
@@ -576,13 +590,20 @@ export function Launcher({ view, onChange, onQuery, onPick, onUsePath, onBrowse,
               </div>
             )}
 
+            {needsAck && (
+              <label className="close-bar__ack" htmlFor={id("bypass-ack")}>
+                <input id={id("bypass-ack")} type="checkbox" checked={view.bypassAcknowledged === true} onChange={(e) => onBypassAck?.(e.target.checked)} />
+                <span>{BYPASS_ACK_TEXT}</span>
+              </label>
+            )}
+
             <footer className="launcher__footer">
               <span className="launcher__hint">
                 <kbd>Tab</kbd> moves between choices {"·"} type a letter to pick {"·"} <kbd>Esc</kbd> closes
               </span>
               <span className="launcher__go">
                 {nextNumber !== undefined && <span className="launcher__next">Session {nextNumber}</span>}
-                <button type="button" className="launcher__start" disabled={busy} onClick={onStart}>
+                <button type="button" className="launcher__start" disabled={!canStart} onClick={start}>
                   Start <kbd>Enter</kbd>
                 </button>
                 {pending && admin.on && !confirm && (

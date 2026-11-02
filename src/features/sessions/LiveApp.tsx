@@ -95,6 +95,7 @@ import { LiveLauncher } from "./LiveLauncher";
 import { LivePalette } from "./LivePalette";
 import { LiveShortcuts } from "./LiveShortcuts";
 import { ResumeBar } from "./ResumeBar";
+import { recordSetupDetection, type SetupDetections } from "./setupDetections";
 import { sessionResumeCommand } from "./resumeCommand";
 import { holdsResume, offersModeChange, offersResume, resumeBlockedReason, resumeStateOf, sessionRunning } from "./resumeState";
 import { PAUSED_TYPING_TEXT, SessionActions, closeBarText, needsCloseConfirm, pauseBarStale, pauseBarText, restartBarStale, restartBarText, tabIdOfNumber } from "./sessionActions";
@@ -136,8 +137,9 @@ function useElementSize() {
 /** The real app: the main window on the core's live session list, and the launcher that adds to it. */
 export function LiveApp() {
   // Each hook agent's (Claude Code, Codex, Antigravity) hook state, read when the window opens and again after each change in the Agents dialog or the onboarding. Never polled.
+  const [{ detections, detectionFailed }, setSetupDetections] = useState<SetupDetections>(() => ({ detections: [], detectionFailed: new Set() }));
   const [hooks, setHooks] = useState<Partial<Record<HookAgent, HookInstall>>>({});
-  const { endpoint, profiles, rows, infos, permissions, now, selectedId, loaded, select, reloadProfiles, error } = useSessions(hooks);
+  const { endpoint, profiles, rows, infos, permissions, now, selectedId, loaded, select, reloadProfiles, error } = useSessions(hooks, detections);
   // The company CLIs found on this machine: Settings lists Accounts and a section for each. Read with the hooks.
   const [found, setFound] = useState<ReadonlySet<CompanyAgent>>(() => new Set());
   const readFound = useCallback(async (): Promise<ReadonlySet<CompanyAgent>> => {
@@ -150,8 +152,11 @@ export function LiveApp() {
     readFound().then(setFound, () => {});
     for (const agent of ["claude", "codex", "antigravity"] as const) {
       getSetup(endpoint, agent).then(
-        (s) => setHooks((h) => ({ ...h, [agent]: s.found ? s.hooks : undefined })),
-        () => {},
+        (s) => {
+          setHooks((h) => ({ ...h, [agent]: s.found ? s.hooks : undefined }));
+          setSetupDetections((state) => recordSetupDetection(state, agent, s));
+        },
+        () => setSetupDetections((state) => recordSetupDetection(state, agent)),
       );
     }
   }, [endpoint, readFound]);
@@ -357,8 +362,8 @@ export function LiveApp() {
   const paletteLabels = useMemo(() => ({ sidebar: sidebarPref === "expanded" ? "Collapse sidebar to the rail" : "Expand the sidebar", "group-by-project": view.grouped ? "Stop grouping by project" : "Group sessions by project" }), [sidebarPref, view.grouped]);
   // Grouping shows in the expanded sidebar only; the rail and focus layouts keep the core's order, and so do their moves.
   const groupedRows = view.grouped && sidebarExpanded ? rows : undefined;
-  const context = useRef({ endpoint, infos, selectedId: focusedId, sidebarExpanded, groupedRows });
-  context.current = { endpoint, infos, selectedId: focusedId, sidebarExpanded, groupedRows };
+  const context = useRef({ endpoint, infos, selectedId: focusedId, sidebarExpanded, groupedRows, detections, detectionFailed, profiles });
+  context.current = { endpoint, infos, selectedId: focusedId, sidebarExpanded, groupedRows, detections, detectionFailed, profiles };
   const pickRef = useRef(pick);
   pickRef.current = pick;
   // A clicked banner brings the window forward (the shell does that) and names the session; no tab means there is nothing to go to.
@@ -452,7 +457,7 @@ export function LiveApp() {
     if (settled && loaded && fillsEmptyPane(view.panes, selectedId)) dispatch({ type: "select", tabId: selectedId! });
   }, [settled, loaded, selectedId, view.panes, dispatch]);
   useEffect(() => () => actions.dispose(), [actions]);
-  const { toast, closing, restarting, pauseBar, renaming, focusToken, resuming, resumed } = useSyncExternalStore(actions.subscribe, actions.getState);
+  const { toast, closing, restarting, reopening, pauseBar, renaming, focusToken, resuming, resumed } = useSyncExternalStore(actions.subscribe, actions.getState);
   // Asking for the terminal (a pane, a command) ends a link's hold.
   useEffect(() => setLinkHeld(false), [focusToken]);
   // The Ended or Exited row each tab had when Resume was pressed, and how many resumes of it had come back ok by then. The core says
@@ -460,11 +465,16 @@ export function LiveApp() {
   // until a snapshot shows the tab has really moved on (holdsResume), so it is drawn from this. Presence of an entry means "held".
   const resumeRows = useRef(new Map<string, { row: RowModel; resumed: number }>());
   const startResume = useCallback(
-    (row: RowModel) => {
+    (row: RowModel, acknowledged = false) => {
       // One press at a time: while a tab is held its request is out, or answered and not yet seen as Running.
       if (resumeRows.current.has(row.id)) return;
+      if (actions.resumeNeedsAck(row.id) && !acknowledged) {
+        // Menus and the palette bring the row's checkbox into view before any request or resume hold.
+        void actions.resume(row.id);
+        return;
+      }
       if (row.status === "ended") resumeRows.current.set(row.id, { row, resumed: actions.getState().resumed[row.id] ?? 0 });
-      void actions.resume(row.id);
+      void actions.resume(row.id, acknowledged);
     },
     [actions],
   );
@@ -1560,17 +1570,19 @@ export function LiveApp() {
           )}
           {bar && info && (
             <ResumeBar
+              key={bar.id}
               row={bar}
               command={sessionResumeCommand(info, profile?.name ?? info.profile_id)}
               folder={info.cwd}
               disabledReason={profileGone}
-              onResume={() => startResume(bar)}
+              needsAck={actions.resumeNeedsAck(bar.id)}
+              onResume={(acknowledged) => startResume(bar, acknowledged)}
             />
           )}
         </div>
       );
     },
-    [endpoint, panelTab?.tabId, heldRow, resumed, infos, profiles, startResume, startingTexts, onSize, launcherOpen, overlay, review, focusedId, focusToken, linkHeld, promptJump, onPromptJump, themeFor, overrideOf, terminalFont],
+    [endpoint, panelTab?.tabId, heldRow, resumed, infos, profiles, detections, detectionFailed, startResume, startingTexts, onSize, launcherOpen, overlay, review, focusedId, focusToken, linkHeld, promptJump, onPromptJump, themeFor, overrideOf, terminalFont],
   );
 
   if (error) {
@@ -1684,7 +1696,7 @@ export function LiveApp() {
           renderTerminal={renderTerminal}
           paneBar={
             restartInfo
-              ? { id: restartInfo.tab_id, node: <RestartBar key={`${restartInfo.tab_id}-${restarting!.mode}`} needsAck={actions.restartNeedsAck()} text={restartBarText(restartInfo, restarting!.mode, rows.find((r) => r.id === restartInfo.tab_id)?.status === "working")} onCancel={actions.cancelRestart.bind(actions)} onRestart={(acknowledged) => void actions.confirmRestart(acknowledged)} /> }
+              ? { id: restartInfo.tab_id, node: <RestartBar key={`${restartInfo.tab_id}-${restarting!.mode}`} needsAck={actions.restartNeedsAck()} text={restartBarText(restartInfo, restarting!.mode, rows.find((r) => r.id === restartInfo.tab_id)?.status === "working", actions.sessionSkipsAll(restartInfo))} onCancel={actions.cancelRestart.bind(actions)} onRestart={(acknowledged) => void actions.confirmRestart(acknowledged)} /> }
               : pauseInfo && pauseBar
                 ? {
                     id: pauseInfo.tab_id,
@@ -1699,7 +1711,9 @@ export function LiveApp() {
           }
           onModeMenu={(id, anchor) => setModeMenu({ id, anchor, from: "chip" })}
           canChangeMode={(row) => offersModeChange(row, infos.find((i) => i.tab_id === row.id))}
-          headerBar={closingInfo && <CloseBar text={closeBarText(closingInfo)} onCancel={actions.cancelClose.bind(actions)} onCloseNow={() => void actions.confirmClose()} />}
+          headerBar={reopening
+            ? <RestartBar key={`reopen-${reopening.tabId ?? "last"}`} text="Reopen the closed session as administrator? Antigravity may skip every prompt, so this session may run in Bypass." actionLabel="Reopen as administrator" needsAck onCancel={actions.cancelReopen.bind(actions)} onRestart={(acknowledged) => void actions.confirmReopen(acknowledged)} />
+            : closingInfo && <CloseBar text={closeBarText(closingInfo)} onCancel={actions.cancelClose.bind(actions)} onCloseNow={() => void actions.confirmClose()} />}
           toast={toast && <Toast text={toast.text} actionLabel={toast.reopenId ? "Reopen" : undefined} onAction={() => void actions.reopenFromToast()} />}
           notice={toast ? { id: toast.id, text: toast.text } : notice}
           renamingId={renaming}
@@ -1837,6 +1851,8 @@ export function LiveApp() {
       {closeAsk && <CloseDialog busy={closeAsk.busy} error={closeAsk.error} onChoose={(keep) => void chooseClose(keep)} onCancel={cancelCloseAsk} />}
       {launcherOpen && (
         <LiveLauncher
+          detections={detections}
+          detectionFailed={detectionFailed}
           endpoint={endpoint}
           initialElevated={launcherElevated}
           os={os}

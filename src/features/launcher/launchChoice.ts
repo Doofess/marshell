@@ -1,7 +1,7 @@
 import { isTool, type SessionKind } from "../../components/AgentMark/kinds";
 import { TOOL_NAMES, type ToolId } from "../../components/AgentMark/tools";
 import type { PresetField } from "../../generated/PresetField";
-import { MODES, offeredMode } from "../modes/sessionModes";
+import { MODES, effectiveMode, offeredMode } from "../modes/sessionModes";
 import type { Mode } from "../sidebar/types";
 import { modeLabel } from "../window/SessionHeader";
 import { WAITING_FOR_ADMIN } from "../../lib/adminCopy";
@@ -48,6 +48,12 @@ export type LaunchProgram = {
   agent?: string;
   /** Why the program can't be started yet. Starting it shows this and sends nothing. */
   problem?: string;
+  /** The agent's own setting skips every prompt. */
+  skipsAll?: { setting: string };
+  /** Antigravity's settings have not answered yet, so its administrator start must wait. */
+  adminSetupPending?: boolean;
+  /** Antigravity's settings could not be read, so an administrator start needs the Bypass confirmation. */
+  adminSetupFailed?: boolean;
   /** The values a tool preset asks for before it starts, one box each. */
   fields?: PresetField[];
   /** The tool preset this program starts. */
@@ -105,7 +111,9 @@ export function launcherSentence(c: LauncherChoice, projects: Project[], program
   const start = `Start ${label} in ${where}`;
   const admin = elevated ? ", as administrator" : "";
   if (isAgentProgram(c.program, programs)) {
-    const mode = offeredMode(programById(c.program, programs)?.modes, c.mode);
+    const program = programById(c.program, programs);
+    const offered = offeredMode(program?.modes, c.mode);
+    const mode = offered === undefined ? undefined : effectiveMode(offered, program?.skipsAll !== undefined);
     return `${start}, ${mode === undefined ? "" : `${modeLabel(mode)} mode, `}${c.pace}, ${c.worktree ? "in a new worktree" : "no worktree"}${admin}`;
   }
   return `${c.worktree ? `${start}, in a new worktree` : start}${admin}`;

@@ -1,3 +1,5 @@
+import type { Detection } from "../onboarding/types";
+import { launcherSetup } from "./launcherSetup";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { AgentCatalog } from "../../generated/AgentCatalog";
 import type { CreateSessionRequest } from "../../generated/CreateSessionRequest";
@@ -43,6 +45,8 @@ const INITIAL: LauncherChoice = { program: "claude", projectId: "", mode: "manua
 type Loaded = { projects: Project[]; doc: ProfilesDoc; layout: LayoutDoc | null; catalog: AgentCatalog | null; tools: ToolCatalog | null };
 
 type Props = {
+  detections?: Detection[];
+  detectionFailed?: ReadonlySet<string>;
   endpoint: Endpoint | null;
   /** The palette's "New session as administrator" opens the launcher with the Administrator chip on. */
   initialElevated?: boolean;
@@ -68,11 +72,12 @@ type Held = { task: Task; request: CreateSessionRequest; text: string; scripts: 
  * The launcher on the core: it lists the recent folders, the agents and the shell profiles, and Start creates the session.
  * Mounted only while open, so every opening starts fresh. When the core refuses, its text shows under Start and the launcher stays.
  */
-export function LiveLauncher({ endpoint, initialElevated = false, os = "windows", nextNumber, size, onStarted, onSetupStarted, announce, onClose }: Props) {
+export function LiveLauncher({ detections, detectionFailed, endpoint, initialElevated = false, os = "windows", nextNumber, size, onStarted, onSetupStarted, announce, onClose }: Props) {
   const [loaded, setLoaded] = useState<Loaded | null>(null);
   const { appearance } = useAppearance();
   const [choice, setChoice] = useState(INITIAL);
   // Launcher state only: not in the choice, not remembered, gone when the launcher closes.
+  const [bypassAck, setBypassAck] = useState<string | null>(null);
   const [elevatedWanted, setElevatedWanted] = useState(initialElevated);
   const elevated = adminChip(elevatedWanted, os).on;
   // Once the user picks a program here, the remembered one no longer applies.
@@ -143,7 +148,10 @@ export function LiveLauncher({ endpoint, initialElevated = false, os = "windows"
 
   const recent = useMemo(() => loaded?.projects ?? [], [loaded]);
   const projects = useMemo(() => (extra && !recent.some((p) => p.id === extra.id) ? [extra, ...recent] : recent), [extra, recent]);
-  const programs = useMemo(() => livePrograms(loaded?.catalog ?? null, loaded?.doc.profiles ?? [], loaded?.tools ?? null), [loaded]);
+  const programs = useMemo(() => {
+    const wsl = loaded?.doc.profiles.find((profile) => profile.id === loaded.doc.default_id)?.family === "wsl";
+    return launcherSetup(livePrograms(loaded?.catalog ?? null, loaded?.doc.profiles ?? [], loaded?.tools ?? null), wsl, detections, detectionFailed);
+  }, [loaded, detections, detectionFailed]);
   // The most recent folder until one is picked.
   const projectId = projects.some((p) => p.id === choice.projectId) ? choice.projectId : (projects[0]?.id ?? "");
   // The program last started in this folder, unless the user has picked one themselves; an agent that is not listed (not installed) is replaced by the first that is.
@@ -154,6 +162,10 @@ export function LiveLauncher({ endpoint, initialElevated = false, os = "windows"
   const mode = elevated ? "manual" : (offeredMode(programById(program, programs)?.modes, wantedMode) ?? wantedMode);
   const worktree = choice.worktree && projects.find((p) => p.id === projectId)?.branch !== undefined;
   const shown: LauncherChoice = { ...choice, projectId, program, mode, worktree };
+  const skipSetting = programById(program, programs)?.skipsAll?.setting ?? (programById(program, programs)?.adminSetupFailed ? "unknown" : undefined);
+  const ackKey = elevated && skipSetting !== undefined ? `${program}:${skipSetting}` : null;
+  const bypassAcknowledged = ackKey !== null && bypassAck === ackKey;
+  useEffect(() => setBypassAck(null), [ackKey]);
 
   // A pick leaves focus on the program chip, where Enter reopens the list; and Start is disabled until the lists load.
   const focusState: FocusState = { program: shown.program, prompt: !programById(shown.program, programs)?.noFirst, ready: loaded !== null };
@@ -423,7 +435,7 @@ export function LiveLauncher({ endpoint, initialElevated = false, os = "windows"
   };
 
   const start = async () => {
-    if (!endpoint || !loaded || inFlight.current) return;
+    if (!endpoint || !loaded || inFlight.current || (elevated && programById(program, programs)?.adminSetupPending) || (ackKey !== null && !bypassAcknowledged)) return;
     // A program that can't start yet says why and sends nothing; no worktree is made for it either.
     const problem = startProblem(shown, programs);
     if (problem !== undefined) {
@@ -455,12 +467,13 @@ export function LiveLauncher({ endpoint, initialElevated = false, os = "windows"
   return (
     <div ref={root} className="live-app__launcher">
       <Launcher
-        view={{ choice: shown, elevated, projects, query, pathCheck: shownCheck, activeIndex, programsOpen, prompt, nextNumber, taskName, ...(confirm === null ? {} : { confirm }) }}
+        view={{ choice: shown, elevated, bypassAcknowledged, projects, query, pathCheck: shownCheck, activeIndex, programsOpen, prompt, nextNumber, taskName, ...(confirm === null ? {} : { confirm }) }}
         programs={programs}
         paceChip={false}
         os={os}
         pending={starting}
         onElevated={setElevatedWanted}
+        onBypassAck={(on) => setBypassAck(on ? ackKey : null)}
         error={error ?? loadError}
         busy={starting || loaded === null || !filled}
         fields={fieldBoxes}

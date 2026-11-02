@@ -1,11 +1,14 @@
 import { AGENT_NAMES, isAgentId } from "../../components/AgentMark/agents";
+import { invoke } from "@tauri-apps/api/core";
 import type { Endpoint } from "../../generated/Endpoint";
+import type { Profile } from "../../generated/Profile";
 import type { SessionInfo } from "../../generated/SessionInfo";
 import { ApiError } from "../../lib/api/client";
 import { type Invoke, reopenSession, restartSession, resumeSession } from "../../lib/api/elevated";
 import type { sessions } from "../../lib/api/sessions";
 import type { SessionShortcut } from "../../lib/appShortcuts";
 import { BYPASS_ACK_TEXT, PAUSE_UNAVAILABLE } from "../../lib/adminCopy";
+import type { Detection } from "../onboarding/types";
 import { effectiveMode } from "../modes/sessionModes";
 import { moveWithinGroup } from "../sidebar/grouping";
 import { moveBy } from "../sidebar/reorder";
@@ -45,8 +48,8 @@ export function closeBarText(info: SessionInfo): string {
 }
 
 /** "Restart 3 billing in Bypass? It ends and runs claude --continue --permission-mode bypassPermissions." The command is what the core runs. */
-export function restartBarText(info: SessionInfo, mode: Mode, working: boolean): string {
-  const text = `Restart ${info.number} ${info.name} in ${modeLabel(mode)}? It ends and runs ${resumeCommand(info.agent, info.profile_id, mode)}.`;
+export function restartBarText(info: SessionInfo, mode: Mode, working: boolean, skipsAll = false): string {
+  const text = `Restart ${info.number} ${info.name} in ${modeLabel(effectiveMode(mode, skipsAll))}? It ends and runs ${resumeCommand(info.agent, info.profile_id, mode)}.`;
   return working ? `${text} ${agentLabel(info.agent ?? "")} may be mid-task.` : text;
 }
 
@@ -81,6 +84,8 @@ export const tabIdOfNumber = (infos: SessionInfo[], number: number): string | un
 export type Toast = { id: number; text: string; /** Set when the toast offers Reopen for this closed tab. */ reopenId?: string };
 export type ActionsState = {
   toast: Toast | null;
+  /** A closed elevated row needs acknowledgement before its window-only Reopen can proceed. */
+  reopening: { tabId: string | undefined } | null;
   /** The tab whose close bar is up. */
   closing: string | null;
   /** The tab whose restart bar is up, and the mode it would start in. */
@@ -102,6 +107,9 @@ export type ActionsState = {
 
 type Api = Pick<typeof sessions, "close" | "reopen" | "rename" | "reorder" | "restart" | "resume" | "pause" | "cont">;
 type Context = {
+  detections?: Detection[];
+  detectionFailed?: ReadonlySet<string>;
+  profiles?: Pick<Profile, "id" | "family">[];
   endpoint: Endpoint | null;
   infos: SessionInfo[];
   selectedId: string | undefined;
@@ -133,7 +141,7 @@ const reason = (e: unknown): string => (e instanceof ApiError ? e.message : Stri
  * core's next snapshot, so nothing here is optimistic. Plain class so it can be tested without a DOM; LiveApp wraps it.
  */
 export class SessionActions {
-  private state: ActionsState = { toast: null, closing: null, restarting: null, pauseBar: null, renaming: null, focusToken: 0, resuming: [], resumed: {} };
+  private state: ActionsState = { toast: null, reopening: null, closing: null, restarting: null, pauseBar: null, renaming: null, focusToken: 0, resuming: [], resumed: {} };
   private listeners = new Set<() => void>();
   private timer: ReturnType<typeof setTimeout> | undefined;
   private toastId = 0;
@@ -230,6 +238,7 @@ export class SessionActions {
     const info = infos.find((i) => i.tab_id === (tabId ?? selectedId));
     // While the bar is up, the key does nothing: closing must stay a deliberate press on "Close now".
     if (!info || this.state.closing === info.tab_id || this.closingNow.has(info.tab_id)) return;
+    if (this.state.reopening !== null) this.set({ reopening: null });
     if (needsCloseConfirm(info)) this.set({ closing: info.tab_id, pauseBar: null });
     else await this.close(info);
   }
@@ -279,16 +288,45 @@ export class SessionActions {
   private async reopen(tabId: string | undefined): Promise<void> {
     const { endpoint } = this.deps.context();
     if (!endpoint) return;
+    let deferred = false;
     try {
       // No id means "the most recent": the core takes the absence of an id, not an empty one.
       await reopenSession(
         tabId,
         () => (tabId === undefined ? this.deps.api.reopen(endpoint) : this.deps.api.reopen(endpoint, tabId)),
-        this.deps.ask,
+        async (command, args) => {
+          // The API's 409 identifies an elevated closed row, but closed rows have no agent metadata. When Antigravity may
+          // bypass, conservatively ask before any elevated Reopen. Ordinary Reopen still succeeds through the API above.
+          if (command === "elevated_reopen" && this.antigravityMaySkipAll()) {
+            deferred = true;
+            this.set({ reopening: { tabId }, closing: null, restarting: null, pauseBar: null });
+            throw new Error("Reopen needs the administrator Bypass confirmation.");
+          }
+          return (this.deps.ask ?? invoke)(command, args);
+        },
       );
       this.dismissToast();
     } catch (e) {
+      if (deferred) return;
       this.showToast(e instanceof ApiError && e.status === 404 ? "Nothing to reopen." : `Couldn't reopen the session: ${reason(e)}`);
+    }
+  }
+
+  /** Cancel the closed row's administrator confirmation without sending its window command. */
+  cancelReopen(): void {
+    if (this.state.reopening !== null) this.set({ reopening: null, focusToken: this.refocus() });
+  }
+
+  /** Only a ticked confirmation can finish a deferred elevated Reopen. The API already refused this exact request. */
+  async confirmReopen(acknowledged = false): Promise<void> {
+    const pending = this.state.reopening;
+    if (!pending || !acknowledged) return;
+    this.set({ reopening: null, focusToken: this.refocus() });
+    try {
+      await (this.deps.ask ?? invoke)("elevated_reopen", { tabId: pending.tabId ?? null });
+      this.dismissToast();
+    } catch (e) {
+      this.showToast(`Couldn't reopen the session: ${reason(e)}`);
     }
   }
 
@@ -297,11 +335,15 @@ export class SessionActions {
    * does nothing, and shows no error. A refusal (the core's 409) is announced in the core's own words; the button keeps its focus,
    * since nothing here moves it. Only a response that says ok frees the tab's terminal to attach (see `resuming`).
    */
-  async resume(tabId: string): Promise<void> {
+  async resume(tabId: string, acknowledged = false): Promise<void> {
     const { endpoint, infos } = this.deps.context();
     const info = infos.find((i) => i.tab_id === tabId);
     // Gone, or already running: there is nothing to start. (The core would refuse a running one too, but that is no news to show.)
     if (!endpoint || !info || info.state.kind === "running" || this.state.resuming.includes(tabId)) return;
+    if (this.resumeNeedsAck(tabId) && !acknowledged) {
+      this.deps.select(tabId);
+      return;
+    }
     this.set({ resuming: [...this.state.resuming, tabId] });
     let text: string;
     let ok = false;
@@ -328,15 +370,35 @@ export class SessionActions {
   askRestart(id: string, mode: Mode): boolean {
     const info = this.deps.context().infos.find((i) => i.tab_id === id);
     if (!info || info.agent === null || info.mode === mode) return false;
-    this.set({ restarting: { id, mode }, pauseBar: null });
+    this.set({ restarting: { id, mode }, pauseBar: null, reopening: null });
     return true;
   }
 
   /** Whether the restart bar that is up must hold the administrator checkbox. */
   restartNeedsAck(): boolean {
     const ask = this.state.restarting;
-    const info = ask && this.deps.context().infos.find((i) => i.tab_id === ask.id);
-    return Boolean(ask && info && needsBypassAck(info, ask.mode));
+    const { infos } = this.deps.context();
+    const info = ask && infos.find((i) => i.tab_id === ask.id);
+    return Boolean(ask && info && needsBypassAck(info, ask.mode, this.sessionSkipsAll(info)));
+  }
+
+  /** A failed Antigravity settings read is treated as possibly skipping every prompt; Windows settings do not apply to WSL. */
+  sessionSkipsAll(info: SessionInfo): boolean {
+    const { profiles, detections } = this.deps.context();
+    if (profiles?.find((p) => p.id === info.profile_id)?.family === "wsl") return false;
+    return Boolean(detections?.some((d) => d.cli === info.agent && d.skipsAll !== undefined) || (info.agent === "antigravity" && this.antigravityMaySkipAll()));
+  }
+
+  private antigravityMaySkipAll(): boolean {
+    const { detections, detectionFailed } = this.deps.context();
+    const detection = detections?.find((d) => d.cli === "antigravity");
+    return detectionFailed?.has("antigravity") === true || detection === undefined || detection.skipsAll !== undefined;
+  }
+
+  /** Elevated Resume/Reopen starts in Manual, which the agent's own setting can turn into Bypass. */
+  resumeNeedsAck(tabId: string): boolean {
+    const info = this.deps.context().infos.find((i) => i.tab_id === tabId);
+    return Boolean(info && needsBypassAck(info, "manual", this.sessionSkipsAll(info)));
   }
 
   /** Cancel or Escape on the restart bar: nothing is sent, and focus goes back to the session's terminal. */
@@ -377,6 +439,7 @@ export class SessionActions {
     const info = this.deps.context().infos.find((i) => i.tab_id === id);
     // Pause is unavailable as administrator (a non-elevated app can't freeze that process tree); the menu says why.
     if (!info || info.state.kind !== "running" || info.paused || info.elevated === true) return null;
+    if (this.state.reopening !== null) this.set({ reopening: null });
     if (this.deps.settings?.pauseWarned !== true) {
       this.set({ pauseBar: { id, kind: "confirm" }, closing: null, restarting: null });
       return "asked";
@@ -429,7 +492,7 @@ export class SessionActions {
   showPausedBar(id: string): void {
     const info = this.deps.context().infos.find((i) => i.tab_id === id);
     const bar = this.state.pauseBar;
-    if (!info || !info.paused || this.state.closing !== null || this.state.restarting !== null) return;
+    if (!info || !info.paused || this.state.closing !== null || this.state.restarting !== null || this.state.reopening !== null) return;
     if (bar?.id === id && bar.kind === "typing") return;
     this.set({ pauseBar: { id, kind: "typing" } });
   }

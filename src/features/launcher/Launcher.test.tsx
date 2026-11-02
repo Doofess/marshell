@@ -536,3 +536,55 @@ describe("Launcher: the Administrator chip", () => {
     expect(admin({ elevated: true }, { busy: true })).not.toContain("Waiting for administrator approval");
   });
 });
+
+
+describe("Launcher: an agent's own skip-every-prompt setting", () => {
+  const programs = LAUNCH_PROGRAMS.map((p) => p.id === "antigravity" ? { ...p, skipsAll: { setting: "dangerouslySkipPermissions" } } : p);
+  const skipView = (elevated: boolean, bypassAcknowledged = false) => view({ choice: { ...DEFAULT_CHOICE, program: "antigravity" }, elevated, bypassAcknowledged });
+  it("holds an administrator start until the Bypass box is ticked", () => {
+    const h = renderToStaticMarkup(<Launcher view={skipView(true)} programs={programs} />);
+    expect(h).toContain('aria-label="Mode: Bypass"');
+    expect(h).toContain('type="checkbox"');
+    expect(h).toContain("I understand this agent runs as administrator and Bypass lets it run admin commands without asking.");
+    expect(h).toMatch(/class="launcher__start"[^>]*disabled=""/);
+    const ticked = renderToStaticMarkup(<Launcher view={skipView(true, true)} programs={programs} />);
+    expect(ticked).not.toMatch(/class="launcher__start"[^>]*disabled=""/);
+    expect(ticked).toContain('checked=""');
+    expect(h).toContain("dangerouslySkipPermissions");
+    expect(h).not.toContain("starts in Manual");
+    expect(h).toContain("Bypass mode");
+  });
+  it("labels an ordinary start Bypass and enables Start without a checkbox", () => {
+    const h = renderToStaticMarkup(<Launcher view={skipView(false)} programs={programs} />);
+    expect(h).toContain('aria-label="Mode: Bypass"');
+    expect(h).not.toContain('type="checkbox"');
+    expect(h).not.toMatch(/class="launcher__start"[^>]*disabled=""/);
+  });
+  it.each(MODES)("explains why an ordinary %s start is Bypass", (mode) => {
+    const v = skipView(false);
+    const h = renderToStaticMarkup(<Launcher view={{ ...v, choice: { ...v.choice, mode } }} programs={programs} />);
+    expect(h).toContain('aria-label="Mode: Bypass"');
+    expect(h).toContain("runs as Bypass because its own dangerouslySkipPermissions setting skips every prompt.");
+  });
+});
+
+
+it("holds an administrator adapter start until its own settings have been read", () => {
+  const programs = LAUNCH_PROGRAMS.map((p) => p.id === "antigravity" ? { ...p, adminSetupPending: true } : p);
+  const v = view({ choice: { ...DEFAULT_CHOICE, program: "antigravity" }, elevated: true });
+  const h = renderToStaticMarkup(<Launcher view={v} programs={programs} />);
+  expect(h).toMatch(/class="launcher__start"[^>]*disabled=""/);
+  expect(h).toMatch(/class="launcher__reason"[^>]*>Checking Antigravity&#x27;s settings…<\/p>/);
+  expect(renderToStaticMarkup(<Launcher view={{ ...v, elevated: false }} programs={programs} />)).not.toMatch(/class="launcher__start"[^>]*disabled=""/);
+});
+
+it("lets an administrator start with unreadable Antigravity settings proceed only after the Bypass confirmation", () => {
+  const programs = LAUNCH_PROGRAMS.map((p) => p.id === "antigravity" ? { ...p, adminSetupFailed: true } : p);
+  const v = view({ choice: { ...DEFAULT_CHOICE, program: "antigravity" }, elevated: true });
+  const h = renderToStaticMarkup(<Launcher view={v} programs={programs} />);
+  expect(h).toContain("Marshell couldn&#x27;t read Antigravity&#x27;s settings, so it may skip every prompt.");
+  expect(h).toContain('type="checkbox"');
+  expect(h).toMatch(/class="launcher__start"[^>]*disabled=""/);
+  expect(renderToStaticMarkup(<Launcher view={{ ...v, bypassAcknowledged: true }} programs={programs} />)).not.toMatch(/class="launcher__start"[^>]*disabled=""/);
+  expect(renderToStaticMarkup(<Launcher view={{ ...v, elevated: false }} programs={programs} />)).not.toContain('type="checkbox"');
+});

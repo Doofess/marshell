@@ -239,13 +239,13 @@ describe("Antigravity", () => {
     expect(consentQueue([{ ...AGY_SETUP, settings_state: "unparsable" }])).toEqual([]);
   });
   it("consentProps names both files, offers all three switches and no hand-over, and asks for no trust", () => {
-    const p = consentProps(AGY_SETUP, flow);
+    const p = consentProps({ ...AGY_SETUP, skips_all: "dangerouslySkipPermissions" }, flow);
     expect(p.scenario.detection.cli).toBe("antigravity");
     // hooks.json is new unless the preview read one (a file with a hash before).
     expect(p.scenario.detection.hooks).toEqual({ path: "C:/h/.gemini/config/hooks.json", exists: false });
     const existing = { ...PREVIEW, files: [{ ...PREVIEW.files[0]!, path: "C:/h/.gemini/config/hooks.json" }] };
     expect(consentProps(AGY_SETUP, { ...flow, preview: existing }).scenario.detection.hooks?.exists).toBe(true);
-    expect(p.scenario.detection.skipsAll).toBeUndefined();
+    expect(p.scenario.detection.skipsAll).toEqual({ setting: "dangerouslySkipPermissions" });
     expect(p.scenario.plan.configPath).toBe("C:/h/.gemini/antigravity-cli/settings.json");
     expect(p.scenario.plan.needsTrust).toBe(false);
     expect(p.offer).toEqual(["status", "approve", "statusline", "skill"]);

@@ -537,3 +537,18 @@ describe("toRow: Administrator", () => {
     expect(toRow(info({ elevated: false }), PROFILES)).not.toHaveProperty("elevated");
   });
 });
+
+
+describe("an agent's own skip-every-prompt setting", () => {
+  it("labels a Manual session Bypass when its detection skips all prompts", () => {
+    const row = toRow(info({ agent: "antigravity", mode: "manual" }), PROFILES, undefined, 0, [{ cli: "antigravity", installed: true, configPath: "settings.json", configState: "ok", skipsAll: { setting: "dangerouslySkipPermissions" } }]);
+    expect(row.mode).toBe("bypass");
+    expect(rowLabel(row)).toContain("Bypass");
+  });
+});
+
+
+it("does not apply the Windows skip-every-prompt setting to a WSL session", () => {
+  const row = toRow(info({ agent: "antigravity", mode: "manual", profile_id: "wsl-ubuntu" }), PROFILES, undefined, 0, [{ cli: "antigravity", installed: true, configPath: "settings.json", configState: "ok", skipsAll: { setting: "dangerouslySkipPermissions" } }]);
+  expect(row.mode).toBe("manual");
+});

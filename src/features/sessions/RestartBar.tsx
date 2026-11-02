@@ -12,7 +12,7 @@ export const restartAllowed = (needsAck: boolean, ticked: boolean): boolean => !
  * appears in answer to a choice and holds a decision. For an agent running as administrator going to Bypass (`needsAck`) it also
  * holds a checkbox, reached by Tab and toggled by Space, and Restart does nothing until it is ticked.
  */
-export function RestartBar({ text, needsAck = false, onCancel, onRestart }: { text: string; needsAck?: boolean; onCancel: () => void; onRestart: (acknowledged: boolean) => void }) {
+export function RestartBar({ text, needsAck = false, actionLabel = "Restart", onCancel, onRestart }: { text: string; needsAck?: boolean; actionLabel?: string; onCancel: () => void; onRestart: (acknowledged: boolean) => void }) {
   const root = useRef<HTMLDivElement>(null);
   const ackId = useId();
   const [ticked, setTicked] = useState(false);
@@ -48,7 +48,7 @@ export function RestartBar({ text, needsAck = false, onCancel, onRestart }: { te
           if (allowed) onRestart(ticked);
         }}
       >
-        Restart
+        {actionLabel}
       </button>
     </div>
   );

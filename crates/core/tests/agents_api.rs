@@ -355,6 +355,37 @@ async fn install_agy(e: &AgyEnv) {
 }
 
 #[tokio::test]
+async fn antigravity_setup_reports_its_skip_setting_even_with_broken_hooks() {
+    let e = agy_env();
+    std::fs::create_dir_all(e.settings.parent().unwrap()).unwrap();
+    std::fs::write(&e.settings, r#"{"dangerouslySkipPermissions":true}"#).unwrap();
+    for hooks in ["{}", "not JSON"] {
+        std::fs::create_dir_all(e.hooks.parent().unwrap()).unwrap();
+        std::fs::write(&e.hooks, hooks).unwrap();
+        let (status, setup) = get(&e.app, "/v1/agents/antigravity/setup").await;
+        assert_eq!(status, StatusCode::OK, "{setup}");
+        assert_eq!(setup["skips_all"], "dangerouslySkipPermissions", "{setup}");
+    }
+}
+
+#[tokio::test]
+async fn agents_with_explicit_mode_flags_do_not_report_a_skip_setting() {
+    let (e, hooks) = codex_env();
+    std::fs::write(
+        &e.settings,
+        r#"{"permissions":{"defaultMode":"bypassPermissions"},"dangerouslySkipPermissions":true}"#,
+    )
+    .unwrap();
+    std::fs::write(&hooks, "{}").unwrap();
+    std::fs::write(hooks.with_file_name("config.toml"), "approval_policy = 'never'\n").unwrap();
+    for agent in ["claude", "codex"] {
+        let (status, setup) = get(&e.app, &format!("/v1/agents/{agent}/setup")).await;
+        assert_eq!(status, StatusCode::OK, "{setup}");
+        assert!(setup.get("skips_all").is_none(), "{setup}");
+    }
+}
+
+#[tokio::test]
 async fn antigravity_setup_reports_both_files() {
     let e = agy_env();
     let (status, setup) = get(&e.app, "/v1/agents/antigravity/setup").await;

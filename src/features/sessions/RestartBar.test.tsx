@@ -19,6 +19,11 @@ describe("RestartBar", () => {
     expect(h).toMatch(/>Restart</);
     expect(h.indexOf(">Cancel<")).toBeLessThan(h.indexOf(">Restart<"));
   });
+  it("can confirm a deferred administrator Reopen with the same checkbox", () => {
+    const h = renderToStaticMarkup(<RestartBar text="Reopen the session?" actionLabel="Reopen as administrator" needsAck onCancel={() => {}} onRestart={() => {}} />);
+    expect(h).toContain('type="checkbox"');
+    expect(h).toMatch(/aria-disabled="true"[^>]*>Reopen as administrator</);
+  });
   it("Escape cancels, by the same rule as the close bar", () => {
     expect(closeBarKey("Escape")).toBe("cancel");
   });
