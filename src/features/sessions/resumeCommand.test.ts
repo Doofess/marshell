@@ -51,4 +51,15 @@ describe("sessionResumeCommand", () => {
   it("shows no flags for a session without a mode", () => {
     expect(sessionResumeCommand({ agent: "codex", mode: null }, "pwsh")).toBe("codex resume --last");
   });
+  // Resume of an administrator agent always starts it in Manual (slice 6j2 decision 10); Bypass comes back only from the restart bar.
+  it("shows Manual for an administrator agent, whatever mode it was last in", () => {
+    const manual = resumeCommand("claude", "pwsh", "manual");
+    expect(manual).not.toContain("bypassPermissions");
+    expect(sessionResumeCommand({ agent: "claude", mode: "bypass", elevated: true }, "pwsh")).toBe(manual);
+    expect(sessionResumeCommand({ agent: "claude", mode: "plan", elevated: true }, "pwsh")).toBe(manual);
+    expect(sessionResumeCommand({ agent: "claude", mode: "bypass", elevated: false }, "pwsh")).toBe("claude --continue --permission-mode bypassPermissions");
+  });
+  it("leaves an administrator shell as its profile", () => {
+    expect(sessionResumeCommand({ agent: null, mode: null, elevated: true }, "pwsh")).toBe("pwsh");
+  });
 });

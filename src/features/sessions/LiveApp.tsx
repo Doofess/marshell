@@ -14,7 +14,7 @@ import { runControl } from "../scripts/confirmScripts";
 import { afterReread, askOnRunFailure } from "../scripts/runRetry";
 import { ScriptsTrustDialog } from "../scripts/ScriptsTrustDialog";
 import { decideAs, release } from "../../lib/api/permissions";
-import { typeText } from "../../lib/api/elevated";
+import { createSession, typeText } from "../../lib/api/elevated";
 import { peek as peekScreen } from "../../lib/api/peek";
 import { decisionFor, laneEntries } from "../approval/fromCore";
 import { LiveCard, useCards, type Answer } from "../approval/LiveCard";
@@ -608,7 +608,8 @@ export function LiveApp() {
       const entry = pending.get(tabId);
       if (!entry) continue;
       pending.delete(tabId);
-      sessions.create(endpoint, { ...entry.request, setup: { tab_id: tabId, outcome } }).then(
+      const after = { ...entry.request, setup: { tab_id: tabId, outcome } };
+      createSession(after, () => sessions.create(endpoint, after)).then(
         (created) => {
           setStartingTexts((t) => ({ ...t, [created.tab_id]: entry.text }));
           // The person may have moved on in the minutes setup took: the agent takes the selection only from the setup tab.

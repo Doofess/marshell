@@ -17,6 +17,7 @@ import { folders as foldersApi } from "../../lib/api/folders";
 import { layout as layoutApi } from "../../lib/api/layout";
 import { profiles as profilesApi } from "../../lib/api/profiles";
 import { projects as projectsApi } from "../../lib/api/projects";
+import { createSession } from "../../lib/api/elevated";
 import { sessions as sessionsApi } from "../../lib/api/sessions";
 import { tasksApi } from "../../lib/api/tasks";
 import { toolsApi } from "../../lib/api/tools";
@@ -314,7 +315,7 @@ export function LiveLauncher({ endpoint, initialElevated = false, os = "windows"
 
   /** Starts the agent session now, with the request built for this task. */
   const startAgent = async (request: CreateSessionRequest, text: string) => {
-    const created = await sessionsApi.create(endpoint!, request);
+    const created = await createSession(request, () => sessionsApi.create(endpoint!, request));
     onStarted(created, text);
   };
 
@@ -440,7 +441,8 @@ export function LiveLauncher({ endpoint, initialElevated = false, os = "windows"
     setError(undefined);
     try {
       const request = launchRequest(shown, prompt, programs, loaded.doc, projects, size(), undefined, fieldValues, elevated);
-      const created = await sessionsApi.create(endpoint, withColorScheme(request, loaded.doc.profiles, appearance, appScheme()));
+      const sent = withColorScheme(request, loaded.doc.profiles, appearance, appScheme());
+      const created = await createSession(sent, () => sessionsApi.create(endpoint, sent));
       const folder = projects.find((p) => p.id === shown.projectId)?.name ?? "your home folder";
       onStarted(created, startingText(shown.program, folder, programs));
     } catch (e) {

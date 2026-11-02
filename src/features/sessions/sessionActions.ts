@@ -2,6 +2,7 @@ import { AGENT_NAMES, isAgentId } from "../../components/AgentMark/agents";
 import type { Endpoint } from "../../generated/Endpoint";
 import type { SessionInfo } from "../../generated/SessionInfo";
 import { ApiError } from "../../lib/api/client";
+import { type Invoke, reopenSession, restartSession, resumeSession } from "../../lib/api/elevated";
 import type { sessions } from "../../lib/api/sessions";
 import type { SessionShortcut } from "../../lib/appShortcuts";
 import { BYPASS_ACK_TEXT, PAUSE_UNAVAILABLE } from "../../lib/adminCopy";
@@ -117,6 +118,8 @@ type Deps = {
   size?: () => { cols: number; rows: number };
   /** The settings writer's view of the first-Pause warning. Left out means it was never shown and nothing is saved. */
   settings?: { readonly pauseWarned: boolean; markPauseWarned(): Promise<void> };
+  /** Tauri's `invoke`, for starting an administrator session through the window (decision 10). Left out means the real one. */
+  ask?: Invoke;
 };
 
 /** The size a resumed session starts at until a terminal has been measured. */
@@ -278,7 +281,11 @@ export class SessionActions {
     if (!endpoint) return;
     try {
       // No id means "the most recent": the core takes the absence of an id, not an empty one.
-      await (tabId === undefined ? this.deps.api.reopen(endpoint) : this.deps.api.reopen(endpoint, tabId));
+      await reopenSession(
+        tabId,
+        () => (tabId === undefined ? this.deps.api.reopen(endpoint) : this.deps.api.reopen(endpoint, tabId)),
+        this.deps.ask,
+      );
       this.dismissToast();
     } catch (e) {
       this.showToast(e instanceof ApiError && e.status === 404 ? "Nothing to reopen." : `Couldn't reopen the session: ${reason(e)}`);
@@ -299,7 +306,9 @@ export class SessionActions {
     let text: string;
     let ok = false;
     try {
-      const result = await this.deps.api.resume(endpoint, tabId, this.deps.size?.() ?? DEFAULT_SIZE);
+      const size = this.deps.size?.() ?? DEFAULT_SIZE;
+      // An administrator row starts only through the window: the API refuses it.
+      const result = await resumeSession(info.elevated === true, tabId, size, () => this.deps.api.resume(endpoint, tabId, size), this.deps.ask);
       ok = result.ok;
       text = result.ok ? "Resumed" : result.reason;
     } catch (e) {
@@ -342,14 +351,16 @@ export class SessionActions {
    */
   async confirmRestart(acknowledged = false): Promise<void> {
     const ask = this.state.restarting;
-    const { endpoint } = this.deps.context();
+    const { endpoint, infos } = this.deps.context();
     if (!ask) return;
     // Bypass as administrator goes only with the ticked box; without it the bar stays up and nothing is sent.
     if (this.restartNeedsAck() && !acknowledged) return;
     this.set({ restarting: null, focusToken: this.refocus() });
     if (!endpoint) return;
     try {
-      const result = await this.deps.api.restart(endpoint, ask.id, ask.mode, this.deps.size?.() ?? DEFAULT_SIZE);
+      const size = this.deps.size?.() ?? DEFAULT_SIZE;
+      const elevated = infos.find((i) => i.tab_id === ask.id)?.elevated === true;
+      const result = await restartSession(elevated, ask.id, ask.mode, size, () => this.deps.api.restart(endpoint, ask.id, ask.mode, size), this.deps.ask);
       if (result.ok) this.set({ resumed: { ...this.state.resumed, [ask.id]: (this.state.resumed[ask.id] ?? 0) + 1 }, focusToken: this.refocus() });
       else this.showToast(result.reason);
     } catch (e) {

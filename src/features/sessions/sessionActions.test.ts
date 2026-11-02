@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { Endpoint } from "../../generated/Endpoint";
 import type { SessionInfo } from "../../generated/SessionInfo";
+import { ApiError } from "../../lib/api/client";
 import { BYPASS_ACK_TEXT, PAUSE_UNAVAILABLE, SessionActions, needsBypassAck, pauseBarStale, pauseBarText, restartBarStale, restartBarText } from "./sessionActions";
 
 const endpoint = { port: 1, token: "t", platform: "windows" } as Endpoint;
@@ -263,13 +264,17 @@ describe("a session running as administrator", () => {
   function adminSetup(infos: SessionInfo[] = [admin, plain]) {
     const pause = vi.fn().mockResolvedValue({ ok: true });
     const restart = vi.fn().mockResolvedValue({ ok: true });
+    const resume = vi.fn().mockResolvedValue({ ok: true });
+    const reopen = vi.fn().mockResolvedValue({ tab_id: "n", number: 9 });
+    const ask = vi.fn().mockResolvedValue({ tab_id: "n", number: 9 });
     const actions = new SessionActions({
-      api: { close: vi.fn(), reopen: vi.fn(), rename: vi.fn(), reorder: vi.fn(), resume: vi.fn(), restart, pause, cont: vi.fn() },
+      api: { close: vi.fn(), reopen, rename: vi.fn(), reorder: vi.fn(), resume, restart, pause, cont: vi.fn() },
       context: () => ({ endpoint, infos, selectedId: "a" }),
       select: vi.fn(),
       settings: { pauseWarned: true, markPauseWarned: vi.fn() },
+      ask,
     });
-    return { actions, pause, restart };
+    return { actions, pause, restart, resume, reopen, ask };
   }
   it("pause_is_unavailable_on_an_elevated_row: nothing is asked or sent, and the copy is the core's", () => {
     const { actions, pause } = adminSetup();
@@ -280,14 +285,36 @@ describe("a session running as administrator", () => {
     expect(PAUSE_UNAVAILABLE).toBe("Pause isn't available for a session running as administrator.");
   });
   it("bypass_on_an_elevated_row_needs_the_checkbox: the bar asks for it, and Restart does nothing until it is ticked", async () => {
-    const { actions, restart } = adminSetup();
+    const { actions, restart, ask } = adminSetup();
     expect(actions.askRestart("a", "bypass")).toBe(true);
     expect(actions.restartNeedsAck()).toBe(true);
     await actions.confirmRestart(false);
-    expect(restart).not.toHaveBeenCalled();
+    expect(ask).not.toHaveBeenCalled();
     expect(actions.getState().restarting).toEqual({ id: "a", mode: "bypass" });
     await actions.confirmRestart(true);
-    expect(restart).toHaveBeenCalledWith(endpoint, "a", "bypass", { cols: 120, rows: 30 });
+    // The token API refuses an administrator restart: it goes through the window.
+    expect(ask).toHaveBeenCalledWith("elevated_restart", { tabId: "a", req: { mode: "bypass", cols: 120, rows: 30 } });
+    expect(restart).not.toHaveBeenCalled();
+  });
+  it("starting_an_elevated_row_goes_through_the_window: resume and restart use the Tauri commands, a plain row the API", async () => {
+    const { actions, resume, restart, ask } = adminSetup([{ ...admin, state: { kind: "ended" } } as SessionInfo, { ...plain, state: { kind: "ended" } } as SessionInfo]);
+    await actions.resume("a");
+    expect(ask).toHaveBeenCalledWith("elevated_resume", { tabId: "a", cols: 120, rows: 30 });
+    expect(resume).not.toHaveBeenCalled();
+    await actions.resume("p");
+    expect(resume).toHaveBeenCalledWith(endpoint, "p", { cols: 120, rows: 30 });
+    expect(ask).toHaveBeenCalledTimes(1);
+    actions.askRestart("p", "plan");
+    await actions.confirmRestart();
+    expect(restart).toHaveBeenCalledWith(endpoint, "p", "plan", { cols: 120, rows: 30 });
+    expect(ask).toHaveBeenCalledTimes(1);
+  });
+  it("reopen_of_a_closed_administrator_row_goes_through_the_window: the API's 409 sends the same reopen to the window", async () => {
+    const { actions, reopen, ask } = adminSetup();
+    reopen.mockRejectedValueOnce(new ApiError(409, "This session runs as administrator, so only Marshell's own window can start it."));
+    await actions.reopenLast();
+    expect(ask).toHaveBeenCalledWith("elevated_reopen", { tabId: null });
+    expect(actions.getState().toast).toBeNull();
   });
   it("a switch to another mode, or any switch on a plain agent, needs no checkbox", () => {
     const { actions } = adminSetup();
