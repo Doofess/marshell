@@ -67,6 +67,16 @@ pub fn discover(env: &dyn Fn(&str) -> Option<String>) -> Option<(PathBuf, u16, S
     Some((home, ep.port, ep.token))
 }
 
+/// `discover` for a bridge that runs as administrator (slice 6j2 decision 12). `endpoint.json` is a file
+/// the user can write, so its `pid` must be set, running, and one of `ancestors` (this process's ancestor
+/// ids): the Marshell that started the administrator session. A file left by another or a closed Marshell,
+/// or one without `pid`, gives `None`.
+pub fn discover_elevated(env: &dyn Fn(&str) -> Option<String>, ancestors: &[u32]) -> Option<(PathBuf, u16, String)> {
+    let (home, ep, pid) = read(env)?;
+    pid.filter(|pid| ancestors.contains(pid) && process_alive(*pid))?;
+    Some((home, ep.port, ep.token))
+}
+
 /// The id of the running app's process, from `endpoint.json`. `None` when the app is closed, when the file names a
 /// process that is gone, or when the file has no `pid` (an older core).
 pub fn discover_pid(env: &dyn Fn(&str) -> Option<String>) -> Option<u32> {
@@ -144,6 +154,24 @@ mod tests {
         let home = tempfile::tempdir().unwrap();
         let path = home.path().to_string_lossy().into_owned();
         assert_eq!(discover_pid(&|k| (k == "MARSHELL_HOME").then(|| path.clone())), None);
+    }
+
+    #[test]
+    fn an_elevated_bridge_uses_only_an_endpoint_its_own_marshell_wrote() {
+        // This test process stands in for the Marshell that is an ancestor of the bridge.
+        let me = std::process::id();
+        let elevated = |pid_field: &str, ancestors: &[u32]| {
+            discover_in_home(pid_field, |env| {
+                discover_elevated(env, ancestors).map(|(_, port, _)| port)
+            })
+        };
+        assert_eq!(elevated(&format!(r#","pid":{me}"#), &[7, me]), Some(4242));
+        // A running process that is not an ancestor: a file another program wrote.
+        assert_eq!(elevated(&format!(r#","pid":{me}"#), &[7, 8]), None);
+        // An ancestor that is gone, and a file with no pid at all.
+        let dead = dead_pid();
+        assert_eq!(elevated(&format!(r#","pid":{dead}"#), &[dead]), None);
+        assert_eq!(elevated("", &[me]), None);
     }
 
     #[test]

@@ -25,6 +25,7 @@ const info = (patch: Partial<SessionInfo> = {}): SessionInfo => ({
   state: { kind: "running" },
   command: { kind: "unknown" },
   paused: false,
+  elevated: false,
   foreground: null,
   live: null,
   activity: null,
@@ -528,4 +529,26 @@ describe("toRow: the setup result on an agent row", () => {
     expect(dropGoneSetupTabs(rows, [failed])[0]?.setupNote).toEqual({ text: "Setup failed (exit 1)." });
     expect(dropGoneSetupTabs(rows, [failed, info({ tab_id: "t-s" })])[0]?.setupNote?.tabId).toBe("t-s");
   });
+});
+
+describe("toRow: Administrator", () => {
+  it("carries the session elevated flag to the row", () => {
+    expect(toRow(info({ elevated: true }), PROFILES).elevated).toBe(true);
+    expect(toRow(info({ elevated: false }), PROFILES)).not.toHaveProperty("elevated");
+  });
+});
+
+
+describe("an agent's own skip-every-prompt setting", () => {
+  it("labels a Manual session Bypass when its detection skips all prompts", () => {
+    const row = toRow(info({ agent: "antigravity", mode: "manual" }), PROFILES, undefined, 0, [{ cli: "antigravity", installed: true, configPath: "settings.json", configState: "ok", skipsAll: { setting: "dangerouslySkipPermissions" } }]);
+    expect(row.mode).toBe("bypass");
+    expect(rowLabel(row)).toContain("Bypass");
+  });
+});
+
+
+it("does not apply the Windows skip-every-prompt setting to a WSL session", () => {
+  const row = toRow(info({ agent: "antigravity", mode: "manual", profile_id: "wsl-ubuntu" }), PROFILES, undefined, 0, [{ cli: "antigravity", installed: true, configPath: "settings.json", configState: "ok", skipsAll: { setting: "dangerouslySkipPermissions" } }]);
+  expect(row.mode).toBe("manual");
 });

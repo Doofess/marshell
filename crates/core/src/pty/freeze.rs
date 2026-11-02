@@ -9,6 +9,8 @@ use std::fmt;
 pub enum FreezeError {
     NotRunning,
     Partial,
+    /// The session runs as administrator through the helper, whose tree the core cannot suspend.
+    Elevated,
 }
 
 impl fmt::Display for FreezeError {
@@ -16,6 +18,7 @@ impl fmt::Display for FreezeError {
         f.write_str(match self {
             FreezeError::NotRunning => "Only a running session can be paused.",
             FreezeError::Partial => "Part of it can't be paused, such as a program running as administrator.",
+            FreezeError::Elevated => "Pause isn't available for a session running as administrator.",
         })
     }
 }

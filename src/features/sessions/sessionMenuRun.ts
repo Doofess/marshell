@@ -40,7 +40,9 @@ export function menuFacts(
     muted: info?.muted === true,
     bookmarkable: info?.agent === "claude",
     inShownPane: onScreen.includes(id),
-    pausable: info !== undefined && info.state.kind === "running" && !info.paused,
+    pausable: info !== undefined && info.state.kind === "running" && !info.paused && info.elevated !== true,
+    pauseUnavailable: info !== undefined && info.state.kind === "running" && !info.paused && info.elevated === true,
+    elevated: info?.elevated === true,
     paused: info !== undefined && info.state.kind === "running" && info.paused,
     paneAvailable: onScreen.includes(null) || roomForPane(ctx.panes.length, ctx.fit),
   };

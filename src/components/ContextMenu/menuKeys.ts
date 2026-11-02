@@ -1,5 +1,6 @@
 /** One row of a context menu: an action, or a rule between groups. */
-export type MenuItem = { id: string; label: string; shortcut?: string } | { separator: true };
+/** `disabled` is the reason the item cannot run: it is still listed and reachable, so the reason can be read, but it never runs. */
+export type MenuItem = { id: string; label: string; shortcut?: string; disabled?: string } | { separator: true };
 
 export type MenuKeyResult =
   | { kind: "move"; index: number }
@@ -37,7 +38,7 @@ export function menuKey(key: string, items: MenuItem[], active: number, mods: Mo
     case "Enter":
     case " ": {
       const it = items[active];
-      return it && isAction(it) ? { kind: "run", id: it.id } : null;
+      return it && isAction(it) && it.disabled === undefined ? { kind: "run", id: it.id } : null;
     }
     case "Escape":
       return { kind: "close", refocus: true };

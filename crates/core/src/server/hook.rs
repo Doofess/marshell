@@ -535,6 +535,7 @@ mod tests {
         st.registry().reserve(
             "a",
             crate::registry::Relaunch {
+                elevated: false,
                 profile_id: "test".into(),
                 agent: Some("claude".into()),
                 cwd: "C:/work".into(),

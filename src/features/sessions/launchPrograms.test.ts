@@ -102,7 +102,7 @@ describe("starting from the catalog's programs", () => {
   const withProblem = livePrograms(catalogWith(CATALOG.agents, [{ ...DEEPSEEK, problem: "Set DEEPSEEK_API_KEY, then restart Marshell to start DeepSeek." }]), PROFILES);
   it("the preset sends Claude Code with the preset, and the key is not part of the request", () => {
     const req = launchRequest(choice("preset:deepseek"), "fix it", programs, DOC, PROJECTS, SIZE);
-    expect(req).toEqual({ agent: "claude", preset: "deepseek", profile_id: "pwsh", cwd: "C:/dev/my-app", mode: "manual", prompt: "fix it", cols: 120, rows: 30 });
+    expect(req).toEqual({ agent: "claude", preset: "deepseek", profile_id: "pwsh", cwd: "C:/dev/my-app", mode: "manual", prompt: "fix it", cols: 120, rows: 30, elevated: false });
     expect(JSON.stringify(req)).not.toMatch(/key|token/i);
   });
   it("a preset that can't start shows its problem, and a program that can has none", () => {
@@ -124,7 +124,7 @@ describe("starting from the catalog's programs", () => {
     expect(opencode.agent).toBe("opencode");
   });
   it("sends the adapters exactly what it did", () => {
-    expect(launchRequest({ ...choice("codex"), mode: "plan" }, "go", programs, DOC, PROJECTS, SIZE)).toEqual({ agent: "codex", profile_id: "pwsh", cwd: "C:/dev/my-app", mode: "plan", prompt: "go", cols: 120, rows: 30 });
+    expect(launchRequest({ ...choice("codex"), mode: "plan" }, "go", programs, DOC, PROJECTS, SIZE)).toEqual({ agent: "codex", profile_id: "pwsh", cwd: "C:/dev/my-app", mode: "plan", prompt: "go", cols: 120, rows: 30, elevated: false });
   });
   it("shows the program that is listed when the chosen one is not (an agent that is not installed)", () => {
     expect(listedProgram("aider", programs)).toBe("claude");
@@ -179,6 +179,7 @@ describe("launchRequest", () => {
       mode: "manual",
       cols: 120,
       rows: 30,
+      elevated: false,
     });
   });
   it("carries the chosen mode for an agent, and none for a shell", () => {
@@ -191,7 +192,7 @@ describe("launchRequest", () => {
   });
   it("shell request carries no prompt", () => {
     const req = launchRequest(choice("profile:cmd"), "dir", programs, DOC, PROJECTS, SIZE);
-    expect(req).toEqual({ profile_id: "cmd", cwd: "C:/dev/my-app", cols: 120, rows: 30 });
+    expect(req).toEqual({ profile_id: "cmd", cwd: "C:/dev/my-app", cols: 120, rows: 30, elevated: false });
     expect(req).not.toHaveProperty("agent");
     expect(req).not.toHaveProperty("prompt");
   });
@@ -396,6 +397,7 @@ describe("starting a task in a worktree", () => {
       mode: "manual",
       cols: 120,
       rows: 30,
+      elevated: false,
     });
     // With the worktree flag on and no task, nothing about the request changes: the flag is never sent.
     expect(launchRequest(on("claude"), "go", programs, DOC, PROJECTS, SIZE)).toEqual(launchRequest(choice("claude"), "go", programs, DOC, PROJECTS, SIZE));
@@ -526,7 +528,7 @@ describe("launchRequest: a tool preset", () => {
   const programs = livePrograms(CATALOG, PROFILES, toolCatalog());
   it("sends tool with its fields and nothing of an agent", () => {
     const req = launchRequest(choice("tool:ssh:host"), "ignored prompt", programs, DOC, PROJECTS, SIZE, undefined, { host: "example.org", user: "me" });
-    expect(req).toEqual({ cols: 120, rows: 30, cwd: "C:/dev/my-app", profile_id: "pwsh", tool: { tool: "ssh", preset: "host", fields: { host: "example.org", user: "me" } } });
+    expect(req).toEqual({ cols: 120, rows: 30, elevated: false, cwd: "C:/dev/my-app", profile_id: "pwsh", tool: { tool: "ssh", preset: "host", fields: { host: "example.org", user: "me" } } });
     for (const key of ["agent", "prompt", "mode", "preset", "shell"]) expect(req).not.toHaveProperty(key);
   });
   it("is the only place the field values appear: the choice and the programs never hold them", () => {
@@ -543,5 +545,16 @@ describe("launchRequest: a tool preset", () => {
     expect(fieldsFilled(p, { host: "a", user: " " })).toBe(false);
     expect(fieldsFilled(p, { host: "a", user: "b" })).toBe(true);
     expect(fieldsFilled(programs[0], {})).toBe(true);
+  });
+});
+
+describe("an administrator start", () => {
+  it("the_admin_chip_toggles_with_alt_a_and_sends_elevated: the request carries elevated, and an agent asks for Manual", () => {
+    const programs = livePrograms(CATALOG, PROFILES);
+    expect(launchRequest(choice("claude"), "", programs, DOC, PROJECTS, SIZE).elevated).toBe(false);
+    const req = launchRequest({ ...choice("claude"), mode: "bypass" }, "", programs, DOC, PROJECTS, SIZE, undefined, {}, true);
+    expect(req.elevated).toBe(true);
+    expect(req.mode).toBe("manual");
+    expect(launchRequest(choice("profile:pwsh"), "", programs, DOC, PROJECTS, SIZE, undefined, {}, true)).toMatchObject({ elevated: true, profile_id: "pwsh" });
   });
 });

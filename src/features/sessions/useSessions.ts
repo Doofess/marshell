@@ -10,6 +10,7 @@ import { EventSocket } from "../../lib/api/events";
 import type { HookAgent } from "../../lib/api/agents";
 import { profiles as profilesApi } from "../../lib/api/profiles";
 import type { RowModel } from "../sidebar/types";
+import type { Detection } from "../onboarding/types";
 import type { HookInstall } from "../../generated/HookInstall";
 import { ageTick, dropGoneSetupTabs, toRow } from "./toRow";
 
@@ -143,7 +144,7 @@ export class SessionsStore {
   }
 }
 
-export function useSessions(setup?: Partial<Record<HookAgent, HookInstall>>): {
+export function useSessions(setup?: Partial<Record<HookAgent, HookInstall>>, detections?: Detection[]): {
   endpoint: Endpoint | null;
   profiles: Profile[];
   rows: RowModel[];
@@ -170,6 +171,6 @@ export function useSessions(setup?: Partial<Record<HookAgent, HookInstall>>): {
     const id = setTimeout(() => setNow(Date.now()), tick);
     return () => clearTimeout(id);
   }, [state.infos, now]);
-  const rows = useMemo(() => dropGoneSetupTabs(state.infos.map((i) => toRow(i, state.profiles, setup, Math.max(now, Date.now()))), state.infos), [state.infos, state.profiles, setup, now]);
+  const rows = useMemo(() => dropGoneSetupTabs(state.infos.map((i) => toRow(i, state.profiles, setup, Math.max(now, Date.now()), detections)), state.infos), [state.infos, state.profiles, setup, now, detections]);
   return { ...state, rows, now, select: store.select, reloadProfiles: store.reloadProfiles };
 }

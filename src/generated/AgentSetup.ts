@@ -18,6 +18,14 @@ agent: string,
  */
 found: boolean, version?: string, exe_path?: string, settings_path: string, 
 /**
+ * The agent's own setting that skips every prompt unless Marshell's explicit mode flags override it.
+ */
+skips_all?: string, 
+/**
+ * Why this agent cannot start as administrator; absent when the adapter permits it.
+ */
+admin_unavailable?: string, 
+/**
  * The file the agent's hooks live in when that is not `settings_path` (Antigravity's `hooks.json`).
  */
 hooks_path?: string, settings_state: SettingsState, parse_error?: ParseProblem, hooks: HookInstall, 

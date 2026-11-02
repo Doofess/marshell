@@ -52,6 +52,9 @@ pub struct Relaunch {
     /// The preset it started with ("deepseek"). Only the name: a restart or reopen recomputes the preset's
     /// environment, with the key, from the environment at that moment.
     pub preset: Option<String>,
+    /// Runs as administrator through the elevated helper. A restart, resume or reopen starts it elevated again
+    /// (a new UAC prompt) and never falls back to an ordinary start.
+    pub elevated: bool,
 }
 
 /// Why `begin_resume` said no.
@@ -358,6 +361,7 @@ impl Registry {
                 activity: None,
                 status_note: None,
                 muted: false,
+                elevated: relaunch.elevated,
                 attention: None,
                 stuck: None,
                 ports: Vec::new(),
@@ -419,6 +423,7 @@ impl Registry {
                     activity: None,
                     status_note: None,
                     muted: tab.muted,
+                    elevated: tab.elevated,
                     attention: None,
                     stuck: None,
                     ports: Vec::new(),
@@ -464,6 +469,7 @@ impl Registry {
                 cwd: e.info.cwd.clone(),
                 mode: e.info.mode,
                 muted: e.info.muted,
+                elevated: e.info.elevated,
                 preset: e.spec.preset.clone(),
             })
             .collect()
@@ -544,6 +550,16 @@ impl Registry {
                 entry.info.stuck = None;
                 entry.stuck = StuckTracker::default();
             }
+            self.tx.send_replace(state.snapshot());
+        }
+    }
+
+    /// Sets a tab's mode, in its row and in what Resume, Reopen and layout.json keep.
+    pub fn set_mode(&self, tab_id: &str, mode: Option<SessionMode>) {
+        let mut state = self.state.lock().unwrap();
+        if let Some(entry) = state.open.iter_mut().find(|e| e.info.tab_id == tab_id) {
+            entry.info.mode = mode;
+            entry.spec.mode = mode;
             self.tx.send_replace(state.snapshot());
         }
     }
@@ -1586,6 +1602,7 @@ mod tests {
 
     fn relaunch(name: &str) -> Relaunch {
         Relaunch {
+            elevated: false,
             profile_id: "pwsh".into(),
             agent: None,
             cwd: "C:/work".into(),
@@ -2115,12 +2132,14 @@ mod tests {
             cwd: "C:/work".into(),
             mode: None,
             muted: false,
+            elevated: false,
             preset: None,
         }
     }
 
     fn seed(reg: &Registry, tabs: &[SavedTab]) {
         reg.seed_ended(tabs, |t| Relaunch {
+            elevated: false,
             profile_id: t.profile_id.clone(),
             agent: t.agent.clone(),
             cwd: t.cwd.clone(),

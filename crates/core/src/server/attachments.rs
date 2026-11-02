@@ -110,6 +110,10 @@ pub async fn paste(State(st): State<AppState>, Path(tab): Path<String>, Json(req
     let Some(session) = st.session(&tab) else {
         return StatusCode::NOT_FOUND.into_response();
     };
+    // An administrator session takes input only from Marshell's own window.
+    if session.is_elevated() {
+        return cannot_resume(crate::pty::elevated::API_WRITE_COPY);
+    }
     if session.is_frozen() {
         return cannot_resume("It is paused.");
     }
@@ -164,6 +168,10 @@ pub async fn paste_paths(
     let Some(session) = st.session(&tab) else {
         return StatusCode::NOT_FOUND.into_response();
     };
+    // An administrator session takes input only from Marshell's own window.
+    if session.is_elevated() {
+        return cannot_resume(crate::pty::elevated::API_WRITE_COPY);
+    }
     if session.is_frozen() {
         return cannot_resume("It is paused.");
     }

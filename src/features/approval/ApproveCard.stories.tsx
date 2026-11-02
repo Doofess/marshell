@@ -94,3 +94,5 @@ function Interactive({ initial }: { initial: ApprovalRequest }) {
 }
 export const InteractiveSafe: StoryObj = { render: () => <Interactive initial={APPROVALS.safeBash} /> };
 export const InteractiveRisky: StoryObj = { render: () => <Interactive initial={APPROVALS.riskyBash} /> };
+
+export const RunningAsAdministrator: StoryObj = one("A session running as administrator: the shield before the name, and no Always allow", { ...APPROVALS.safeBash, elevated: true });

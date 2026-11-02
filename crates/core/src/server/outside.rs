@@ -225,6 +225,7 @@ async fn open(st: &AppState, plan: Plan) -> Response {
         plan.mode,
         None,
         false,
+        false,
     )
     .await
     {

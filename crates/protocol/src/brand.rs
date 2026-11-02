@@ -4,6 +4,7 @@
 pub const APP_NAME: &str = "Marshell";
 pub const CLI_BIN: &str = "marshell";
 pub const HOOK_BIN: &str = "marshell-hook";
+pub const HOST_BIN: &str = "marshell-host";
 pub const HOME_DIR_NAME: &str = ".marshell";
 pub const ENV_PREFIX: &str = "MARSHELL_";
 pub const WS_SUBPROTOCOL: &str = "marshell.v1";

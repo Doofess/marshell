@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { focusFellOut, listNavKeys, openFolder, openPrograms, stepActive } from "./launcherKeys";
+import { adminKey, focusFellOut, listNavKeys, openFolder, openPrograms, stepActive } from "./launcherKeys";
 
 describe("launcherKeys: which keys move the highlighted option", () => {
   it("in the folder field only Up and Down do: Left and Right move the caret, so a typo can be fixed", () => {
@@ -52,5 +52,16 @@ describe("launcherKeys: one list open at a time", () => {
   it("closing either one leaves the other as it was", () => {
     expect(openPrograms({ query: null, programsOpen: true }, false)).toEqual({ query: null, programsOpen: false });
     expect(openFolder({ query: "ai", programsOpen: false }, null)).toEqual({ query: null, programsOpen: false });
+  });
+});
+
+describe("the Administrator chip's key", () => {
+  const key = (p: Partial<Parameters<typeof adminKey>[0]>) => ({ code: "KeyA", altKey: true, ctrlKey: false, metaKey: false, shiftKey: false, ...p });
+  it("the_admin_chip_toggles_with_alt_a_and_sends_elevated: Alt+A, by its physical key, and nothing else", () => {
+    expect(adminKey(key({}))).toBe(true);
+    expect(adminKey(key({ altKey: false }))).toBe(false);
+    expect(adminKey(key({ ctrlKey: true }))).toBe(false);
+    expect(adminKey(key({ shiftKey: true }))).toBe(false);
+    expect(adminKey(key({ code: "KeyB" }))).toBe(false);
   });
 });

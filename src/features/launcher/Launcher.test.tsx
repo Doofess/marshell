@@ -11,6 +11,21 @@ const view = (p: Partial<LauncherView> = {}): LauncherView => ({ choice: DEFAULT
 const html = (v: LauncherView = view()) => renderToStaticMarkup(<Launcher view={v} />);
 const count = (s: string, re: RegExp) => (s.match(re) ?? []).length;
 
+it("disables Administrator with the selected agent's reason, including a palette-requested start", () => {
+  const reason = "Codex 0.162.0 can't run as administrator. Marshell needs Codex 0.163.0 or newer to keep an administrator Codex apart from your other Codex sessions. Update Codex, then try again.";
+  const programs = LAUNCH_PROGRAMS.map((p) => p.id === "codex" ? { ...p, adminUnavailable: reason } : p);
+  for (const elevated of [false, true]) {
+    const h = renderToStaticMarkup(<Launcher programs={programs} view={view({ choice: { ...DEFAULT_CHOICE, program: "codex" }, elevated })} />);
+    expect(h).toMatch(/aria-checked="false" aria-disabled="true" aria-describedby="([^"]+)-admin-off"/);
+    expect(h).toContain(reason.replaceAll("'", "&#x27;"));
+    expect(h).not.toContain('data-kind="elevated"');
+    expect(h).not.toContain("as administrator</p>");
+  }
+  const other = renderToStaticMarkup(<Launcher programs={programs} view={view({ elevated: true })} />);
+  expect(other).toContain('aria-checked="true" aria-keyshortcuts="Alt+A"');
+  expect(other).not.toContain(reason.replaceAll("'", "&#x27;"));
+});
+
 describe("Launcher: empty", () => {
   const h = html();
   it("is a modal dialog with an accessible sentence", () => {
@@ -29,7 +44,7 @@ describe("Launcher: empty", () => {
     expect(html(view({ choice: { ...DEFAULT_CHOICE, program: "powershell" } }))).toContain('aria-label="Program: PowerShell"');
   });
   it("makes every chip a button the keyboard reaches with Tab", () => {
-    expect(count(h, /class="launcher__chip"/g)).toBe(5);
+    expect(count(h, /class="launcher__chip"/g)).toBe(6);
     expect(h).not.toContain('tabindex="-1" class="launcher__chip"');
   });
   it("has a prompt line and a hint line naming Enter and Esc", () => {
@@ -86,7 +101,7 @@ describe("Launcher: a manual CLI is a plain terminal", () => {
   const manual = view({ choice: { ...DEFAULT_CHOICE, program: "powershell" } });
   const h = html(manual);
   it("has the program, the folder and the worktree chips: no mode or pace", () => {
-    expect(count(h, /class="launcher__chip"/g)).toBe(3);
+    expect(count(h, /class="launcher__chip"/g)).toBe(4);
     expect(h).not.toContain("Balanced");
     expect(h).toContain('role="checkbox"');
   });
@@ -207,7 +222,7 @@ describe("Launcher: chips", () => {
   });
   it("keeps the mode chip and drops the pace chip when paceChip is false (the worktree chip is covered below)", () => {
     const h = renderToStaticMarkup(<Launcher view={view({ choice: { ...DEFAULT_CHOICE, projectId: "scratch" } })} paceChip={false} />);
-    expect(count(h, /class="launcher__chip"/g)).toBe(3);
+    expect(count(h, /class="launcher__chip"/g)).toBe(4);
     expect(h).toContain("Mode: Manual");
     expect(h).not.toContain("Pace:");
     expect(h).toContain("Start Claude in scratch");
@@ -232,18 +247,18 @@ describe("Launcher: the worktree chip in the live launcher", () => {
     const h = live();
     expect(h).toContain('role="checkbox"');
     expect(h).toContain('aria-checked="false"');
-    expect(count(h, /class="launcher__chip"/g)).toBe(4);
+    expect(count(h, /class="launcher__chip"/g)).toBe(5);
     expect(h).toContain("Mode: Manual");
     expect(h).not.toContain("Pace:");
   });
   it("is hidden for a folder with no branch", () => {
     const h = live(view({ choice: inScratch }));
-    expect(h).not.toContain('role="checkbox"');
-    expect(count(h, /class="launcher__chip"/g)).toBe(3);
+    expect(h).not.toContain(">worktree<");
+    expect(count(h, /class="launcher__chip"/g)).toBe(4);
   });
   it("is offered for a shell too: a worktree works for any program", () => {
-    expect(live(view({ choice: { ...DEFAULT_CHOICE, program: "powershell" } }))).toContain('role="checkbox"');
-    expect(live(view({ choice: { ...DEFAULT_CHOICE, program: "powershell", projectId: "scratch" } }))).not.toContain('role="checkbox"');
+    expect(live(view({ choice: { ...DEFAULT_CHOICE, program: "powershell" } }))).toContain("worktree<");
+    expect(live(view({ choice: { ...DEFAULT_CHOICE, program: "powershell", projectId: "scratch" } }))).not.toContain('worktree<');
   });
 });
 
@@ -492,4 +507,99 @@ describe("Launcher: ids and chip names", () => {
     expect(ref).toBeTruthy();
     expect(h).toContain(`id="${ref}"`);
   });
+});
+
+describe("Launcher: the Administrator chip", () => {
+  const admin = (v: Partial<LauncherView> = {}, p: Partial<ComponentProps<typeof Launcher>> = {}) => renderToStaticMarkup(<Launcher view={view(v)} {...p} />);
+  it("the_admin_chip_toggles_with_alt_a_and_sends_elevated: a checkbox after Pace, off by default, with a shield and Alt+A when on", () => {
+    const off = admin();
+    expect(off).toContain("Administrator");
+    expect(off.indexOf("Balanced")).toBeLessThan(off.indexOf("Administrator"));
+    expect(off).toMatch(/role="checkbox"[^>]*aria-checked="false"[^>]*aria-keyshortcuts="Alt\+A"|aria-keyshortcuts="Alt\+A"[^>]*role="checkbox"/);
+    expect(off).not.toContain('data-kind="elevated"');
+    const on = admin({ elevated: true });
+    expect(on).toContain('data-kind="elevated"');
+    expect(on).toMatch(/aria-checked="true"[^>]*aria-keyshortcuts="Alt\+A"/);
+    expect(on).toContain("as administrator");
+  });
+  it("shows for a shell too", () => {
+    expect(admin({ choice: { ...DEFAULT_CHOICE, program: "powershell" } })).toContain("Administrator");
+  });
+  it("the_admin_chip_is_disabled_off_windows_with_the_reason", () => {
+    for (const os of ["mac", "linux"] as const) {
+      const h = admin({ elevated: true }, { os });
+      expect(h).toContain("Administrator: available on Windows only for now.");
+      expect(h).toMatch(/role="checkbox"[^>]*aria-disabled="true"/);
+      expect(h).toContain('aria-checked="false"');
+      expect(h).not.toContain('data-kind="elevated"');
+    }
+    expect(admin({}, { os: "windows" })).not.toContain("available on Windows only");
+  });
+  it("an_agent_with_admin_on_is_manual_and_the_mode_chip_is_disabled", () => {
+    const h = admin({ elevated: true, choice: { ...DEFAULT_CHOICE, mode: "bypass" } });
+    expect(h).toContain('aria-label="Mode: Manual"');
+    expect(h).toMatch(/aria-label="Mode: Manual"[^>]*aria-disabled="true"/);
+    expect(h).toContain("An agent running as administrator starts in Manual.");
+    expect(admin({ choice: { ...DEFAULT_CHOICE, mode: "bypass" } })).not.toContain("starts in Manual");
+    // A shell has no mode chip, so no reason line either.
+    expect(admin({ elevated: true, choice: { ...DEFAULT_CHOICE, program: "powershell" } })).not.toContain("starts in Manual");
+  });
+  it("the_new_tab_waits_for_approval: while an elevated start is pending the launcher says so", () => {
+    expect(admin({ elevated: true }, { busy: true, pending: true })).toContain("Waiting for administrator approval…");
+    expect(admin({}, { busy: true, pending: true })).not.toContain("Waiting for administrator approval");
+    // Lists still loading is not a create in flight.
+    expect(admin({ elevated: true }, { busy: true })).not.toContain("Waiting for administrator approval");
+  });
+});
+
+
+describe("Launcher: an agent's own skip-every-prompt setting", () => {
+  const programs = LAUNCH_PROGRAMS.map((p) => p.id === "antigravity" ? { ...p, skipsAll: { setting: "dangerouslySkipPermissions" } } : p);
+  const skipView = (elevated: boolean, bypassAcknowledged = false) => view({ choice: { ...DEFAULT_CHOICE, program: "antigravity" }, elevated, bypassAcknowledged });
+  it("holds an administrator start until the Bypass box is ticked", () => {
+    const h = renderToStaticMarkup(<Launcher view={skipView(true)} programs={programs} />);
+    expect(h).toContain('aria-label="Mode: Bypass"');
+    expect(h).toContain('type="checkbox"');
+    expect(h).toContain("I understand this agent runs as administrator and Bypass lets it run admin commands without asking.");
+    expect(h).toMatch(/class="launcher__start"[^>]*disabled=""/);
+    const ticked = renderToStaticMarkup(<Launcher view={skipView(true, true)} programs={programs} />);
+    expect(ticked).not.toMatch(/class="launcher__start"[^>]*disabled=""/);
+    expect(ticked).toContain('checked=""');
+    expect(h).toContain("dangerouslySkipPermissions");
+    expect(h).not.toContain("starts in Manual");
+    expect(h).toContain("Bypass mode");
+  });
+  it("labels an ordinary start Bypass and enables Start without a checkbox", () => {
+    const h = renderToStaticMarkup(<Launcher view={skipView(false)} programs={programs} />);
+    expect(h).toContain('aria-label="Mode: Bypass"');
+    expect(h).not.toContain('type="checkbox"');
+    expect(h).not.toMatch(/class="launcher__start"[^>]*disabled=""/);
+  });
+  it.each(MODES)("explains why an ordinary %s start is Bypass", (mode) => {
+    const v = skipView(false);
+    const h = renderToStaticMarkup(<Launcher view={{ ...v, choice: { ...v.choice, mode } }} programs={programs} />);
+    expect(h).toContain('aria-label="Mode: Bypass"');
+    expect(h).toContain("runs as Bypass because its own dangerouslySkipPermissions setting skips every prompt.");
+  });
+});
+
+
+it("holds an administrator adapter start until its own settings have been read", () => {
+  const programs = LAUNCH_PROGRAMS.map((p) => p.id === "antigravity" ? { ...p, adminSetupPending: true } : p);
+  const v = view({ choice: { ...DEFAULT_CHOICE, program: "antigravity" }, elevated: true });
+  const h = renderToStaticMarkup(<Launcher view={v} programs={programs} />);
+  expect(h).toMatch(/class="launcher__start"[^>]*disabled=""/);
+  expect(h).toMatch(/class="launcher__reason"[^>]*>Checking Antigravity&#x27;s settings…<\/p>/);
+  expect(renderToStaticMarkup(<Launcher view={{ ...v, elevated: false }} programs={programs} />)).not.toMatch(/class="launcher__start"[^>]*disabled=""/);
+});
+
+it("lets an administrator start with unreadable Antigravity settings proceed only after the Bypass confirmation", () => {
+  const programs = LAUNCH_PROGRAMS.map((p) => p.id === "antigravity" ? { ...p, adminSetupFailed: true } : p);
+  const v = view({ choice: { ...DEFAULT_CHOICE, program: "antigravity" }, elevated: true });
+  const h = renderToStaticMarkup(<Launcher view={v} programs={programs} />);
+  expect(h).toContain("Marshell couldn&#x27;t read Antigravity&#x27;s settings, so it may skip every prompt.");
+  expect(h).toContain('type="checkbox"');
+  expect(h).toMatch(/class="launcher__start"[^>]*disabled=""/);
+  expect(renderToStaticMarkup(<Launcher view={{ ...v, bypassAcknowledged: true }} programs={programs} />)).not.toMatch(/class="launcher__start"[^>]*disabled=""/);
+  expect(renderToStaticMarkup(<Launcher view={{ ...v, elevated: false }} programs={programs} />)).not.toContain('type="checkbox"');
 });

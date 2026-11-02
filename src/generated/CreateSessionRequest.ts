@@ -15,6 +15,10 @@ shell?: Array<string>,
  */
 cwd?: string, cols: number, rows: number, 
 /**
+ * True when the session runs as administrator through the elevated helper. Old JSON reads as false.
+ */
+elevated: boolean, 
+/**
  * The profile this session was launched from. Absent means the default profile.
  */
 profile_id?: string, 

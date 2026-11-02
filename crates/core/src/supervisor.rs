@@ -73,6 +73,14 @@ impl Supervisor {
         lock(&self.current).as_ref().map(|c| c.endpoint.clone())
     }
 
+    /// The window's own door to administrator sessions, on the running core. `None` after `Failed` or `shutdown`,
+    /// or while a restart is pending. Take it for each call: a restarted core is a new one.
+    pub fn trusted(&self) -> Option<server::Trusted> {
+        lock(&self.current)
+            .as_ref()
+            .map(|c| server::Trusted::new(c.state.clone()))
+    }
+
     /// The app window lost focus: the running core stops counting it as focused, whatever the UI last said.
     pub fn window_blurred(&self) {
         if let Some(core) = lock(&self.current).as_ref() {
@@ -258,6 +266,16 @@ mod tests {
         assert_eq!(sup.generation(), 0);
         assert!(events.lock().unwrap().is_empty());
         sup.shutdown();
+    }
+
+    #[tokio::test]
+    async fn trusted_is_there_while_a_core_runs_and_gone_after_shutdown() {
+        let (_home, sup, _events) = started().await;
+        let trusted = sup.trusted().expect("a running core has a trusted door");
+        // No such session: the door refuses without panicking.
+        assert!(trusted.input("none", b"x".to_vec()).is_err());
+        sup.shutdown();
+        assert!(sup.trusted().is_none());
     }
 
     #[tokio::test]

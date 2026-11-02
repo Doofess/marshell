@@ -1,0 +1,70 @@
+# Elevated helper live check (slice 6j2)
+
+- Date: four runs.
+  - **Run 1:** 2026-11-01, 20:13 to about 22:00 local time (scratch `lc-6j2-1`).
+  - **Run 2:** started 2026-11-01 at 22:31 and driven 2026-11-02 from 10:45 to 10:49 (scratch `lc-6j2-2`).
+  - **Run 3:** 2026-11-02 (scratch `lc-6j2-3`), after the final review's fixes up to 2e772a9. It checked the Bypass confirmations and the window-only starts.
+  - **Run 4:** 2026-11-02 to 2026-11-03 (scratch `lc-6j2-4`), on b2b371c. It rechecked run 3's finding 9.
+- Build: `phase-6j2` under `pnpm tauri dev` on Windows 11 Pro (10.0.26300). Run 2 includes the fix in 2fad03e.
+- Runs 3 and 4 set the scratch Antigravity `settings.json` to skip every prompt, so the Bypass confirmations show for Antigravity. Onboarding was skipped.
+- Home: a scratch `MARSHELL_HOME`, `CLAUDE_CONFIG_DIR`, `CODEX_HOME`, `USERPROFILE` and `MARSHELL_CLAUDE_SETTINGS`, with CDP on port 9333.
+  - Run 1's onboarding allowed hooks for all three CLIs. Every target path was in the scratch folder.
+  - Run 2's onboarding skipped every CLI ("Skip: use limited status").
+- Data: none seeded. Claude Code ran with the scratch config, so it stopped at its first-run theme picker and was never signed in.
+- How it was driven:
+  - CDP evaluations, CDP keys and typing into the terminal through the webview.
+  - Forced colors were emulated, not a real high-contrast theme.
+  - No desktop input from the check. The user answered every UAC prompt (decision 7), and each prompt was announced first.
+  - Process trees were read with `Get-CimInstance Win32_Process`. Exit times were polled every 100 ms.
+- The real `~/.claude/settings.json` kept its modified time (2026-10-25 14:04:04) through all four runs. The user's own `claude.exe` processes (9308 and 25872) were left alone.
+
+## Results
+
+| Check | Result |
+| --- | --- |
+| 1. The decline path | **Pass (run 2).** <br>• Shown: "Administrator rights were declined. Nothing was started.", as a `role="alert"` inside the launcher. The launcher stayed open, with no session row. <br>• Tree: no `marshell-host.exe` was running. The only `pwsh`/`OpenConsole` children of the app were the sidebar's own Shell panel (20164, 28624), which started before the prompt. <br>• Run 1: the user declined the first prompt before the check watched for it, so only a 409 on `POST /v1/sessions` was seen in the console. |
+| 2. An approved shell | **Pass (run 1).** <br>• `whoami /groups` showed "Mandatory Label\High Mandatory Level". <br>• The row and header show the shield and "Administrator". <br>• `MARSHELL_TAB_ID` was set, and `CLAUDE_CONFIG_DIR`, `MARSHELL_HOME` and `USERPROFILE` pointed into the scratch folder. <br>• The prompt drew and typing in the window worked. <br>• The core-only variables were not listed by hand. The host test `the_shell_sees_the_core_computed_environment` covers them. |
+| 3. API input is refused | **Pass (run 1).** <br>• `marshell send 1 "echo from-api"` with the scratch `MARSHELL_HOME` printed "This session runs as administrator, so it takes input only from Marshell's own window." and exited 1. <br>• Nothing reached the terminal. |
+| 4. An approved agent | **Pass, with the Allow driven by a synthesized hook payload (run 1).** <br>• Launch: "New session as administrator" from the palette opens the launcher with Claude and forced Manual mode, noting "An agent running as administrator starts in Manual.", and shows "Waiting for administrator approval…" while UAC is up. <br>• Approve card: the scratch Claude was not signed in, so a PermissionRequest with `permission_suggestions` was piped into the scratch `marshell-hook.exe permission --agent claude` with the session's `MARSHELL_TAB_ID`. The card had the Administrator shield and Deny N / Allow once Y / Answer in terminal T, with no Always allow. Allow once returned `{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decision":{"behavior":"allow"}}}` and saved no rule. <br>• Bypass: choosing it shows "I understand this agent runs as administrator and Bypass lets it run admin commands without asking." Restart stays `aria-disabled` until that is ticked (Space ticks it). Restart then raised UAC again, the row read "Administrator. Bypass permissions.", and a new helper replaced the old one. |
+| 5. Pause is unavailable; Close | **Pass.** <br>• Pause: the menu item is `aria-disabled` with "Pause isn't available for a session running as administrator." <br>• Close (run 2): the session ran `pwsh -NoProfile -c "… Start-Sleep 900"`. After Close from the row menu at 10:47:15.501, helper 3884, OpenConsole 2348, conhost 38036, shell 4020 and its child 4020→40484 were all gone at 10:47:15.567. |
+| 6. Restart Marshell | **Pass (run 1).** <br>• After a `tauri dev` rebuild, the row came back as "Ended last time. Claude, Ended. Administrator. Bypass permissions." with "Reopen as administrator". <br>• No UAC prompt appeared. <br>• See findings 2 and 3. |
+| 7. Kill the app by PID | **Failed in run 1, pass in run 2 after 2fad03e.** <br>• Run 1: the helper and OpenConsole died at once, but the elevated `pwsh` and `claude` survived until they were stopped by PID (finding 1). <br>• Run 2: an elevated shell ran `pwsh -NoProfile -c "Start-Sleep 900"`, and app 14136 was stopped with `Stop-Process -Id 14136 -Force` at 10:48:46.045. Gone at 10:48:46.142: helper 24348, OpenConsole 20352, conhost 10172, shell 30668, child 32912, plus the sidebar's unelevated shell 20164 and its OpenConsole 28624. |
+| 8. A `subst` drive | **Not run.** The scratch `subst` was not set up. The copy is covered by `a_missing_cwd_fails_with_the_copy` and `a_missing_cwd_comes_back_as_the_helpers_words`. |
+| Keyboard and forced colors | **Pass.** <br>• Alt+A toggles the Administrator chip (`aria-checked`), and the summary reads "Start PowerShell 7 in proj, as administrator." <br>• With forced colors emulated, the shields on rows and header and the Bypass chip stay visible. |
+| 9. Only the window starts an elevated session (run 3) | **Pass.** <br>• An elevated create over the token API, plain and Codex, both got 409 "Only Marshell's own window can start a session as administrator." |
+| 10. Antigravity's own skip setting (run 3) | **Pass.** <br>• With the scratch agy setting on, the launcher read "Mode: Bypass" with the reason. <br>• With Administrator on, Start stayed disabled until the checkbox was ticked with Space. <br>• Codex 0.164.0 kept the Administrator chip enabled. |
+| 11. Restart into Bypass asks first (runs 3 and 4) | **Pass.** <br>• Run 3: an unticked Restart sent nothing. Once ticked, a new helper started and the row read Bypass. <br>• Run 4: the bar reads "Restart 1 Claude Code in Bypass? It ends and runs claude --continue --permission-mode bypassPermissions." It lies over the terminal (`position: absolute`, z-index 13, opaque), 87 px tall. The checkbox, Cancel and Restart each pass `elementFromPoint`. Focus starts on the checkbox. Tab moves to Cancel, and Enter cancels; the session stays Manual. <br>• With forced colors emulated, the bar has a Canvas background and a CanvasText border. |
+| 12. Close and Reopen (runs 3 and 4) | **Pass.** <br>• Close as administrator: the one-line busy question is unchanged ("Claude Code may be mid-task in proj."). After "Close now", the helper and `claude` were gone. <br>• Run 4: Reopen of the closed Claude row went straight to UAC with no checkbox bar. The row came back "Administrator", Manual, under a new helper. |
+| Real config untouched (runs 3 and 4) | **Pass.** `~/.claude/settings.json` kept its modified time. Every recorded process was gone after `stop`. |
+
+## Findings
+
+1. **A Store PowerShell outlived a killed Marshell, elevated and in Bypass.**
+   - **What happened:** in run 1, killing the app took down the helper and its OpenConsole, but the elevated `pwsh` and the `claude` it ran kept running with nothing controlling them. A plain `pwsh -c "Start-Sleep 900"` child reproduced it.
+   - **Cause:** PowerShell 7 from the Microsoft Store (`%LOCALAPPDATA%\Microsoft\WindowsApps\pwsh.exe`, a packaged app), started in a ConPTY from the bundled OpenConsole, is not placed in its creator's job. The helper's kill-on-close job therefore never held it.
+     - System conhost and `cmd` do not show this.
+     - Assigning the shell to the helper's own job fails with "Access is denied." (os error 5).
+     - A new, empty kill-on-close job takes it.
+   - **Fix:** 2fad03e. The helper puts the started program in a job of its own right after `spawn_command` and holds that job for the helper's life.
+   - **Tests:** `a_killed_core_ends_a_store_shell_and_its_child` failed first and passes now. `closing_ends_a_store_shell_and_its_child` passed before and after. Both skip on machines without Store PowerShell 7, such as CI.
+   - **Gap:** a process the shell starts before the assign escapes. Closing that needs a suspended start, which portable-pty does not offer.
+2. **Reopen restores Bypass without asking again.** Run 1's restored row read "Administrator. Bypass permissions." "Reopen as administrator" would start the agent elevated in Bypass with only UAC in between, not the Bypass checkbox. Fixed by a43e7ce (decision 10): an elevated start, restart, resume or reopen comes back in Manual. Run 3's Reopen came back Manual.
+3. **A restored elevated row keeps the wrong resume copy.** Beside "Reopen as administrator" the body still says "Resume runs claude --continue --permission-mode bypassPermissions …". Fixed by fa1f7d8: `sessionResumeCommand` names Manual for an elevated agent row.
+4. **The pending line names the wrong session number.** While the second session waited for UAC, the launcher said "It becomes session 3". Not fixed.
+5. **The terminal socket retries while a create is pending.** The webview logged WebSocket 404s on `/v1/pty/<id>` until the helper connected. They are harmless. Not fixed.
+6. **`marshell list` does not mark administrator sessions.** Not fixed.
+7. **A medium-integrity process can end the elevated processes.** `OpenProcess(PROCESS_TERMINATE)` from the unelevated side succeeded on the elevated shell. That is how the leftovers were stopped in run 1. It is no new risk, because the job closes them anyway. Recorded for the threat notes.
+8. **Unelevated sessions have the same Store PowerShell gap.** In probes outside the app, a local pty with the bundled OpenConsole left a busy Store `pwsh` and its child running after its creator was killed. The core's own job did not hold them. This predates 6j2 and is out of its scope.
+   - In run 2, the sidebar's idle shell did end with the app. The probe's case was a shell running a long child.
+9. **The Bypass checkbox bar was hidden under the terminal, and Reopen's bar misbehaved (run 3).**
+   - **Hidden bar:** the bar sits in the 40 px title bar. Only its question line showed; the checkbox and the buttons were under the main area, reachable only by keyboard.
+   - **Stolen focus:** on an empty window, the launcher opened by itself and took focus from the Reopen bar.
+   - **Wrong ask:** the Reopen bar asked for every administrator row, with Antigravity's copy.
+   - **Fix:** b2b371c.
+     - The ack bar is laid over the top of the main area.
+     - The launcher closes while the Reopen bar is up.
+     - Reopen asks only for an Antigravity row whose skip setting is on, unread or failed.
+   - **Tests:** `CloseBar.css.test.ts`, the `launcherOpens` reopening case, and the `sessionActions` Reopen cases.
+   - **Run 4** confirmed the overlay and the Claude Reopen. The Antigravity Reopen bar was not driven live; its rule is covered by those tests.
+10. **The window's shortcuts are off while the launcher is open (run 4).** On an empty window the launcher opens by itself, so Ctrl+Shift+Alt+T did nothing until Esc closed it. The toast's Reopen had timed out by then. This predates 6j2 (`LiveApp.tsx`, the session-shortcut effect). Not fixed.
+11. **WebSocket 404 retries after an elevated Reopen (run 4).** These are the same harmless retries as finding 5. Not fixed.

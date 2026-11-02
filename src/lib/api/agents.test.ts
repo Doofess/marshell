@@ -33,6 +33,11 @@ const setup: AgentSetup = {
 afterEach(() => vi.unstubAllGlobals());
 
 describe("agents api", () => {
+  it("carries an agent's administrator refusal into its detection", () => {
+    const reason = "Marshell couldn't read this Codex's version, so it can't start it as administrator.";
+    expect(toDetection({ ...setup, agent: "codex", admin_unavailable: reason }).adminUnavailable).toBe(reason);
+    expect(toDetection(setup).adminUnavailable).toBeUndefined();
+  });
   it("reaches Codex at /v1/agents/codex/...", async () => {
     const g = reply(setup);
     vi.stubGlobal("fetch", g);

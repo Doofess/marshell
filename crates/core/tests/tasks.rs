@@ -1378,11 +1378,13 @@ async fn remove_closes_sessions_and_deletes_everything() {
         cwd: task.path.clone(),
         mode: None,
         muted: false,
+        elevated: false,
         preset: None,
     };
     state
         .registry()
         .seed_ended(&[old], |tab| marshell_core::registry::Relaunch {
+            elevated: false,
             profile_id: tab.profile_id.clone(),
             agent: None,
             cwd: tab.cwd.clone(),

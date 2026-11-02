@@ -1,5 +1,6 @@
 pub mod buffer;
 pub mod dsr;
+pub mod elevated;
 mod freeze;
 pub mod osc133;
 #[cfg(windows)]
@@ -11,7 +12,7 @@ pub use buffer::{FLUSH_BYTES, MAX_UNACKED, SCROLLBACK_BYTES};
 pub use freeze::FreezeError;
 pub use osc133::Mark;
 pub(crate) use session::force_kill_tree;
-pub use session::{Classifier, MarkCallback, Pull, Session, SpawnSpec, ToolCallback};
+pub use session::{Classifier, MarkCallback, PtyParts, Pull, Session, SpawnSpec, ToolCallback};
 
 /// `root` and every process it started, for reading their memory and CPU. `None` where the platform has no way to
 /// list them or `root` is gone.

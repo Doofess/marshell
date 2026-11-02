@@ -51,6 +51,32 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tower_http::cors::{AllowOrigin, CorsLayer};
 
+/// Starts a session in the elevated helper: `(tab id, spec)` to the running session. Production finds the helper
+/// next to the app's exe and starts it through UAC; tests inject one that runs on the local pty or fails.
+pub type ElevatedSpawner =
+    Arc<dyn Fn(String, crate::pty::SpawnSpec) -> anyhow::Result<Arc<crate::pty::Session>> + Send + Sync>;
+
+/// The spawner a real app uses.
+fn production_elevated_spawner() -> ElevatedSpawner {
+    use crate::pty::elevated::ElevatedError;
+    Arc::new(|id, spec| {
+        #[cfg(windows)]
+        {
+            let exe = std::env::current_exe().map_err(|e| anyhow::Error::new(ElevatedError::Io(e)))?;
+            let host = crate::bridge::source_next_to(&exe, brand::HOST_BIN)
+                .ok_or_else(|| anyhow::Error::new(ElevatedError::Missing))?;
+            crate::pty::Session::spawn_elevated(id, spec, &crate::pty::elevated::RunAs, &host)
+        }
+        #[cfg(not(windows))]
+        {
+            let _ = (id, spec);
+            Err(anyhow::Error::new(ElevatedError::Failed(
+                crate::pty::elevated::NON_WINDOWS_COPY.to_string(),
+            )))
+        }
+    })
+}
+
 /// Asked to bring Marshell's window forward and select a session's tab.
 pub type FocusSink = Arc<dyn Fn(String) + Send + Sync>;
 
@@ -233,6 +259,8 @@ struct Inner {
     notify_paused: Arc<AtomicBool>,
     window_hidden: Arc<AtomicBool>,
     focus: Option<FocusSink>,
+    /// Starts a session in the elevated helper. Tests swap it.
+    elevated_spawner: ElevatedSpawner,
 }
 
 /// How long a permission request is held when `MARSHELL_PERMISSION_HOLD_SECS` is not set.
@@ -262,6 +290,7 @@ impl AppState {
             mode: tab.mode,
             name: tab.name.clone(),
             preset: tab.preset.clone(),
+            elevated: tab.elevated,
         });
         let shell_dir = match crate::shell::install(&home) {
             Ok(dir) => Some(dir),
@@ -337,7 +366,25 @@ impl AppState {
             notify_paused: Arc::default(),
             window_hidden: Arc::default(),
             focus: None,
+            elevated_spawner: production_elevated_spawner(),
         }))
+    }
+    /// Replaces how a session is started in the elevated helper, so a test needs no UAC prompt or helper. Call it
+    /// before the state is cloned.
+    pub fn with_elevated_spawner(mut self, spawner: ElevatedSpawner) -> Self {
+        Arc::get_mut(&mut self.0)
+            .expect("with_elevated_spawner runs before the state is shared")
+            .elevated_spawner = spawner;
+        self
+    }
+    pub(crate) fn elevated_spawner(&self) -> ElevatedSpawner {
+        self.0.elevated_spawner.clone()
+    }
+    /// The window's own door to administrator sessions (see `Trusted`). The supervisor hands it out; this is for
+    /// tests, which have no supervisor.
+    #[doc(hidden)]
+    pub fn trusted_for_tests(&self) -> Trusted {
+        Trusted(self.clone())
     }
     /// Names where the focus route sends a tab, in place of answering 503. Call it before the state is cloned.
     pub fn with_focus(mut self, sink: FocusSink) -> Self {
@@ -487,8 +534,19 @@ impl AppState {
         &self.0.holds
     }
     /// The cards of the held requests, oldest first. Each was built when its hold opened.
+    /// A card of an administrator session has no always-allow rule: Marshell can't keep one for it.
     pub fn permission_views(&self) -> Vec<marshell_protocol::hook::PermissionView> {
-        self.0.holds.views()
+        let mut views = self.0.holds.views();
+        for view in &mut views {
+            if view.always_rule.is_some() && self.tab_is_elevated(&view.tab) {
+                view.always_rule = None;
+            }
+        }
+        views
+    }
+    /// Whether the tab's row runs as administrator.
+    pub(crate) fn tab_is_elevated(&self, tab: &str) -> bool {
+        self.0.registry.row(tab).is_some_and(|row| row.elevated)
     }
     /// Replaces the PATH check for agent commands. Call it before the state is cloned.
     pub fn with_agent_check(mut self, check: fn(&str) -> bool) -> Self {
@@ -790,6 +848,100 @@ impl AppState {
     }
     pub fn origin_allowed(&self, origin: &str) -> bool {
         self.0.allowed_origins.iter().any(|o| o == origin)
+    }
+}
+
+/// The window's own door to administrator sessions. The token-guarded API refuses their input, resize and
+/// approvals, so the window sends them through Tauri commands that reach the in-process core here. Each call
+/// refuses a session that does not run as administrator, so every other session keeps its one input path.
+pub struct Trusted(AppState);
+
+impl Trusted {
+    pub(crate) fn new(state: AppState) -> Self {
+        Self(state)
+    }
+
+    fn elevated_session(&self, tab: &str) -> Result<Arc<crate::pty::Session>, String> {
+        let session = self.0.session(tab).ok_or_else(|| "No such session.".to_string())?;
+        if session.is_elevated() {
+            Ok(session)
+        } else {
+            Err(crate::pty::elevated::NOT_ELEVATED_COPY.to_string())
+        }
+    }
+
+    /// Types `bytes` into an administrator session, as a key in the pane does.
+    pub fn input(&self, tab: &str, bytes: Vec<u8>) -> Result<(), String> {
+        let session = self.elevated_session(tab)?;
+        // Typing means the person is answering in the terminal. Focus changes, mouse movement and replies to
+        // queries come from the terminal itself.
+        if !reports::is_passive_report(&bytes) {
+            self.0.holds().release_tab(tab);
+            self.0.registry().note_input(tab);
+        }
+        session.write_input(bytes);
+        Ok(())
+    }
+
+    /// Sizes an administrator session's terminal.
+    pub fn resize(&self, tab: &str, cols: u16, rows: u16) -> Result<(), String> {
+        self.elevated_session(tab)?
+            .resize(cols, rows)
+            .map_err(|e| format!("{e:#}"))
+    }
+
+    /// Starts a session as administrator, which the token-guarded API refuses (slice 6j2 decision 10). The request
+    /// must ask for it: an ordinary session starts through the API. An administrator agent starts in Manual.
+    pub async fn create(
+        &self,
+        req: marshell_protocol::api::CreateSessionRequest,
+    ) -> Result<marshell_protocol::api::CreateSessionResponse, String> {
+        sessions::create_as(&self.0, req, true).await.map_err(|(_, text)| text)
+    }
+
+    /// Starts an administrator agent row again in `req.mode`. This is the Bypass bar; the API refuses it.
+    pub async fn restart(
+        &self,
+        tab: &str,
+        req: marshell_protocol::api::RestartRequest,
+    ) -> Result<marshell_protocol::api::CreateSessionResponse, String> {
+        sessions::restart_as(&self.0, tab.to_string(), req, true)
+            .await
+            .map_err(sessions::Refusal::into_text)
+    }
+
+    /// Resumes an ended administrator row, in Manual for an agent.
+    pub async fn resume(
+        &self,
+        tab: &str,
+        cols: u16,
+        rows: u16,
+    ) -> Result<marshell_protocol::api::CreateSessionResponse, String> {
+        sessions::resume_as(&self.0, tab.to_string(), sessions::ResumeRequest { cols, rows }, true)
+            .await
+            .map_err(sessions::Refusal::into_text)
+    }
+
+    /// Reopens a closed administrator session (the given one, else the most recently closed), in Manual for an agent.
+    pub async fn reopen(&self, tab: Option<String>) -> Result<marshell_protocol::api::CreateSessionResponse, String> {
+        sessions::reopen_as(&self.0, tab, true).await.map_err(|(_, text)| text)
+    }
+
+    /// Answers a held permission request of an administrator tab.
+    pub async fn decide(
+        &self,
+        rid: &str,
+        decision: marshell_protocol::hook::PermissionDecision,
+    ) -> Result<(), (u16, String)> {
+        let pending = self.0.holds().get(rid);
+        let Some(pending) = pending else {
+            return Err((404, "no such request".to_string()));
+        };
+        let elevated = pending.tab.as_deref().is_some_and(|tab| self.0.tab_is_elevated(tab));
+        if !elevated {
+            return Err((409, crate::pty::elevated::NOT_ELEVATED_COPY.to_string()));
+        }
+        permissions::decide(&self.0, rid, decision).map_err(|(status, text)| (status.as_u16(), text))
     }
 }
 
@@ -1267,6 +1419,7 @@ mod tests {
             st.registry().reserve(
                 tab,
                 crate::registry::Relaunch {
+                    elevated: false,
                     profile_id: profile_id.into(),
                     agent: None,
                     cwd: "C:/work".into(),

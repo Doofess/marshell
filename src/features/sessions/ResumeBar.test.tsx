@@ -32,3 +32,19 @@ describe("ResumeBar", () => {
     expect(bar()).not.toMatch(/role="(alert|status)"|aria-live/);
   });
 });
+
+describe("ResumeBar: an administrator row", () => {
+  it("requires the Bypass confirmation before reopening an administrator agent", () => {
+    const h = bar({ row: row({ elevated: true, agent: "antigravity" }), needsAck: true });
+    expect(h).toContain("I understand this agent runs as administrator and Bypass lets it run admin commands without asking.");
+    expect(h).toMatch(/<label[^>]*class="close-bar__ack"[^>]*for="[^"]+"/);
+    expect(h).toMatch(/<input[^>]*type="checkbox"/);
+    expect(h).toMatch(/aria-disabled="true"[^>]*>Reopen as administrator<\/button>/);
+    expect(h).not.toMatch(/type="checkbox"[^>]*(?:disabled|tabindex="-1")/);
+  });
+  it("an_ended_elevated_row_offers_reopen_as_administrator", () => {
+    expect(bar({ row: row({ elevated: true }) })).toMatch(/<button[^>]*>Reopen as administrator<\/button>/);
+    expect(bar({ row: row({ elevated: true }) })).not.toMatch(/>Resume<\/button>/);
+    expect(bar()).toMatch(/<button[^>]*>Resume<\/button>/);
+  });
+});

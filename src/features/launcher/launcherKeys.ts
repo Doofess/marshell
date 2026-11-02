@@ -39,3 +39,8 @@ export function openFolder(lists: OpenLists, query: string | null): OpenLists {
 export function focusFellOut({ wasOpen, isOpen, activeIsBody }: { wasOpen: boolean; isOpen: boolean; activeIsBody: boolean }): boolean {
   return wasOpen && !isOpen && activeIsBody;
 }
+
+/** Alt+A, by its physical key so it sits in the same place on every layout: toggles the Administrator chip from anywhere in the sheet. */
+export function adminKey(e: { code: string; altKey: boolean; ctrlKey: boolean; metaKey: boolean; shiftKey: boolean }): boolean {
+  return e.code === "KeyA" && e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey;
+}

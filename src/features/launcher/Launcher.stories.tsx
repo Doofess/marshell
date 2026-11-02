@@ -90,3 +90,30 @@ function Live() {
 }
 export const Interactive: StoryObj = { render: () => <Live /> };
 
+
+export const AdministratorOn: StoryObj = {
+  render: () => <ThemePair label="Administrator on: a shield in the chip, and an agent starts in Manual with its Mode chip locked" stack>{frame({ ...base, elevated: true }, {}, 400)}</ThemePair>,
+};
+export const AdministratorOnForAShell: StoryObj = {
+  render: () => <ThemePair label="Administrator on for a shell: no mode chip, so no second line" stack>{frame({ ...manual("powershell"), elevated: true }, {}, 400)}</ThemePair>,
+};
+export const AdministratorOffWindows: StoryObj = {
+  render: () => <ThemePair label="Not on Windows: the Administrator chip is disabled and says why" stack>{frame(base, { os: "mac" }, 400)}</ThemePair>,
+};
+export const WaitingForAdministratorApproval: StoryObj = {
+  render: () => <ThemePair label="Start pressed while Windows asks: the launcher waits for approval" stack>{frame({ ...base, elevated: true }, { busy: true, pending: true }, 400)}</ThemePair>,
+};
+
+
+const skipPrograms = LAUNCH_PROGRAMS.map((p) => p.id === "antigravity" ? { ...p, skipsAll: { setting: "dangerouslySkipPermissions" } } : p);
+
+export const OwnSettingBypass: StoryObj = {
+  render: () => <ThemePair label="Antigravity's own setting makes Manual run as Bypass" stack>{frame(manual("antigravity"), { programs: skipPrograms })}</ThemePair>,
+};
+
+function AdministratorOwnSetting() {
+  const [bypassAcknowledged, setBypassAcknowledged] = useState(false);
+  return <ThemePair label="Administrator Bypass requires the explicit confirmation" stack>{frame({ ...manual("antigravity"), elevated: true, bypassAcknowledged }, { programs: skipPrograms, onBypassAck: setBypassAcknowledged })}</ThemePair>;
+}
+
+export const AdministratorOwnSettingBypass: StoryObj = { render: () => <AdministratorOwnSetting /> };

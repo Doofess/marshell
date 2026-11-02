@@ -1385,6 +1385,7 @@ mod tests {
         registry.reserve(
             "t1",
             crate::registry::Relaunch {
+                elevated: false,
                 profile_id: "pwsh".into(),
                 agent: Some("antigravity".into()),
                 cwd: cwd.into(),

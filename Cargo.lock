@@ -2432,6 +2432,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "marshell-host"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "marshell-core",
+ "marshell-protocol",
+ "portable-pty",
+ "serde_json",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
 name = "marshell-protocol"
 version = "0.1.0"
 dependencies = [

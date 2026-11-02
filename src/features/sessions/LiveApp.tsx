@@ -13,7 +13,8 @@ import { readyPending, type PendingSetup } from "../scripts/afterSetup";
 import { runControl } from "../scripts/confirmScripts";
 import { afterReread, askOnRunFailure } from "../scripts/runRetry";
 import { ScriptsTrustDialog } from "../scripts/ScriptsTrustDialog";
-import { decide, release } from "../../lib/api/permissions";
+import { decideAs, release } from "../../lib/api/permissions";
+import { createSession, typeText } from "../../lib/api/elevated";
 import { peek as peekScreen } from "../../lib/api/peek";
 import { decisionFor, laneEntries } from "../approval/fromCore";
 import { LiveCard, useCards, type Answer } from "../approval/LiveCard";
@@ -88,14 +89,16 @@ import { adoptTarget, fillsEmptyPane, focusedIndex, paneToggle, ratiosOf, roomFo
 import { CloseBar } from "./CloseBar";
 import { PauseBar } from "./PauseBar";
 import { RestartBar } from "./RestartBar";
-import { launcherOpens, type OnboardingShown } from "./launcherOpens";
+import { adminCommandHidden, launcherFromPalette, launcherOpens, type OnboardingShown } from "./launcherOpens";
+import { REOPEN_AS_ADMIN } from "../../lib/adminCopy";
 import { LiveLauncher } from "./LiveLauncher";
 import { LivePalette } from "./LivePalette";
 import { LiveShortcuts } from "./LiveShortcuts";
 import { ResumeBar } from "./ResumeBar";
+import { recordSetupDetection, type SetupDetections } from "./setupDetections";
 import { sessionResumeCommand } from "./resumeCommand";
 import { holdsResume, offersModeChange, offersResume, resumeBlockedReason, resumeStateOf, sessionRunning } from "./resumeState";
-import { PAUSED_TYPING_TEXT, SessionActions, closeBarText, needsCloseConfirm, pauseBarStale, pauseBarText, restartBarStale, restartBarText, tabIdOfNumber } from "./sessionActions";
+import { PAUSED_TYPING_TEXT, SessionActions, closeBarText, needsCloseConfirm, pauseBarStale, pauseBarText, reopenBarText, restartBarStale, restartBarText, tabIdOfNumber } from "./sessionActions";
 import { navPanesOf, useNavigation } from "./useNavigation";
 import type { NavEffect } from "../../lib/navigation/types";
 import { Toast } from "./Toast";
@@ -134,8 +137,9 @@ function useElementSize() {
 /** The real app: the main window on the core's live session list, and the launcher that adds to it. */
 export function LiveApp() {
   // Each hook agent's (Claude Code, Codex, Antigravity) hook state, read when the window opens and again after each change in the Agents dialog or the onboarding. Never polled.
+  const [{ detections, detectionFailed }, setSetupDetections] = useState<SetupDetections>(() => ({ detections: [], detectionFailed: new Set() }));
   const [hooks, setHooks] = useState<Partial<Record<HookAgent, HookInstall>>>({});
-  const { endpoint, profiles, rows, infos, permissions, now, selectedId, loaded, select, reloadProfiles, error } = useSessions(hooks);
+  const { endpoint, profiles, rows, infos, closed, permissions, now, selectedId, loaded, select, reloadProfiles, error } = useSessions(hooks, detections);
   // The company CLIs found on this machine: Settings lists Accounts and a section for each. Read with the hooks.
   const [found, setFound] = useState<ReadonlySet<CompanyAgent>>(() => new Set());
   const readFound = useCallback(async (): Promise<ReadonlySet<CompanyAgent>> => {
@@ -148,8 +152,11 @@ export function LiveApp() {
     readFound().then(setFound, () => {});
     for (const agent of ["claude", "codex", "antigravity"] as const) {
       getSetup(endpoint, agent).then(
-        (s) => setHooks((h) => ({ ...h, [agent]: s.found ? s.hooks : undefined })),
-        () => {},
+        (s) => {
+          setHooks((h) => ({ ...h, [agent]: s.found ? s.hooks : undefined }));
+          setSetupDetections((state) => recordSetupDetection(state, agent, s));
+        },
+        () => setSetupDetections((state) => recordSetupDetection(state, agent)),
       );
     }
   }, [endpoint, readFound]);
@@ -228,6 +235,11 @@ export function LiveApp() {
   const wtFamily = wt?.family?.trim() || undefined;
   const terminalFont = useMemo(() => ({ family: font.family, size: font.size, wtFamily }), [font.family, font.size, wtFamily]);
   const [launcherOpen, setLauncherOpen] = useState(false);
+  // The palette's "New session as administrator" opens the launcher with the Administrator chip on; every other opening starts with it off.
+  const [launcherElevated, setLauncherElevated] = useState(false);
+  useEffect(() => {
+    if (!launcherOpen) setLauncherElevated(false);
+  }, [launcherOpen]);
   // The command palette, the Departures board or the Settings page, over the window.
   const [overlay, setOverlay] = useState<"palette" | "settings" | "shortcuts" | "departures" | null>(null);
   // The Settings page's section, and the one shown last in this run: the tray's Settings… reopens that one.
@@ -329,12 +341,6 @@ export function LiveApp() {
     if (cols > 0 && lines > 0) size.current = { cols, rows: lines };
   }, []);
 
-  // No sessions (first run, everything closed): the launcher opens, after the onboarding if one shows. A restarted core seeds the
-  // saved tabs, so it opens only if there are none.
-  useEffect(() => {
-    if (launcherOpens(loaded, rows.length, onboardingShown)) setLauncherOpen(true);
-  }, [loaded, rows.length, onboardingShown]);
-
   useEffect(() => {
     const current = new Set(rows.map((r) => r.id));
     setStartingTexts((t) => pruneClosed(t, current, listed.current));
@@ -350,8 +356,8 @@ export function LiveApp() {
   const paletteLabels = useMemo(() => ({ sidebar: sidebarPref === "expanded" ? "Collapse sidebar to the rail" : "Expand the sidebar", "group-by-project": view.grouped ? "Stop grouping by project" : "Group sessions by project" }), [sidebarPref, view.grouped]);
   // Grouping shows in the expanded sidebar only; the rail and focus layouts keep the core's order, and so do their moves.
   const groupedRows = view.grouped && sidebarExpanded ? rows : undefined;
-  const context = useRef({ endpoint, infos, selectedId: focusedId, sidebarExpanded, groupedRows });
-  context.current = { endpoint, infos, selectedId: focusedId, sidebarExpanded, groupedRows };
+  const context = useRef({ endpoint, infos, closed, selectedId: focusedId, sidebarExpanded, groupedRows, detections, detectionFailed, profiles });
+  context.current = { endpoint, infos, closed, selectedId: focusedId, sidebarExpanded, groupedRows, detections, detectionFailed, profiles };
   const pickRef = useRef(pick);
   pickRef.current = pick;
   // A clicked banner brings the window forward (the shell does that) and names the session; no tab means there is nothing to go to.
@@ -409,7 +415,9 @@ export function LiveApp() {
       cards.answer(r.id, verdict, async () => {
         setSendingRequests((current) => new Map(current).set(r.id, r.tab));
         try {
-          return await (a === "terminal" ? release(endpoint, r.id) : decide(endpoint, r.id, decisionFor(a)));
+          // An administrator row's answer goes through the window's own path; the token API refuses it.
+          const elevated = stateRef.current.infos.some((i) => i.tab_id === r.tab && i.elevated);
+          return await (a === "terminal" ? release(endpoint, r.id) : decideAs(endpoint, r.id, decisionFor(a), elevated));
         } finally {
           setSendingRequests((current) => {
             const next = new Map(current);
@@ -443,7 +451,12 @@ export function LiveApp() {
     if (settled && loaded && fillsEmptyPane(view.panes, selectedId)) dispatch({ type: "select", tabId: selectedId! });
   }, [settled, loaded, selectedId, view.panes, dispatch]);
   useEffect(() => () => actions.dispose(), [actions]);
-  const { toast, closing, restarting, pauseBar, renaming, focusToken, resuming, resumed } = useSyncExternalStore(actions.subscribe, actions.getState);
+  const { toast, closing, restarting, reopening, pauseBar, renaming, focusToken, resuming, resumed } = useSyncExternalStore(actions.subscribe, actions.getState);
+  // Empty windows open the launcher after onboarding, except while Reopen needs the checkbox and the keyboard.
+  useEffect(() => {
+    if (reopening) setLauncherOpen(false);
+    else if (launcherOpens(loaded, rows.length, onboardingShown, reopening !== null)) setLauncherOpen(true);
+  }, [loaded, rows.length, onboardingShown, reopening]);
   // Asking for the terminal (a pane, a command) ends a link's hold.
   useEffect(() => setLinkHeld(false), [focusToken]);
   // The Ended or Exited row each tab had when Resume was pressed, and how many resumes of it had come back ok by then. The core says
@@ -451,11 +464,16 @@ export function LiveApp() {
   // until a snapshot shows the tab has really moved on (holdsResume), so it is drawn from this. Presence of an entry means "held".
   const resumeRows = useRef(new Map<string, { row: RowModel; resumed: number }>());
   const startResume = useCallback(
-    (row: RowModel) => {
+    (row: RowModel, acknowledged = false) => {
       // One press at a time: while a tab is held its request is out, or answered and not yet seen as Running.
       if (resumeRows.current.has(row.id)) return;
+      if (actions.resumeNeedsAck(row.id) && !acknowledged) {
+        // Menus and the palette bring the row's checkbox into view before any request or resume hold.
+        void actions.resume(row.id);
+        return;
+      }
       if (row.status === "ended") resumeRows.current.set(row.id, { row, resumed: actions.getState().resumed[row.id] ?? 0 });
-      void actions.resume(row.id);
+      void actions.resume(row.id, acknowledged);
     },
     [actions],
   );
@@ -599,7 +617,8 @@ export function LiveApp() {
       const entry = pending.get(tabId);
       if (!entry) continue;
       pending.delete(tabId);
-      sessions.create(endpoint, { ...entry.request, setup: { tab_id: tabId, outcome } }).then(
+      const after = { ...entry.request, setup: { tab_id: tabId, outcome } };
+      createSession(after, () => sessions.create(endpoint, after)).then(
         (created) => {
           setStartingTexts((t) => ({ ...t, [created.tab_id]: entry.text }));
           // The person may have moved on in the minutes setup took: the agent takes the selection only from the setup tab.
@@ -618,13 +637,16 @@ export function LiveApp() {
     missing: missingTask(tasks) !== null,
     focused: focusedInfo !== undefined,
     agent: focusedInfo?.agent != null && (focusedRow === undefined || offersModeChange(focusedRow, focusedInfo)),
-    pausable: focusedInfo?.state.kind === "running" && !focusedInfo.paused,
+    pausable: focusedInfo?.state.kind === "running" && !focusedInfo.paused && focusedInfo.elevated !== true,
     paused: focusedInfo?.state.kind === "running" && focusedInfo.paused,
     // The palette lists the Mode commands the focused agent offers, the same as its row menu; the refusal in askRestart is the backstop.
     ...(focusedInfo?.agent ? { offered: modesOf(focusedInfo.agent) } : {}),
   });
   // Only the script command the header would show is listed.
-  const hiddenCommands = useMemo(() => [...baseHidden, ...(scriptControl?.kind === "run" ? [] : ["run-script"]), ...(scriptControl?.kind === "stop" ? [] : ["stop-script"])], [baseHidden, scriptControl?.kind]);
+  const os = endpoint ? osOfPlatform(endpoint.platform) : undefined;
+  const hiddenCommands = useMemo(() => [...baseHidden, ...(adminCommandHidden(os) ? ["new-session-admin"] : []), ...(scriptControl?.kind === "run" ? [] : ["run-script"]), ...(scriptControl?.kind === "stop" ? [] : ["stop-script"])], [baseHidden, scriptControl?.kind, os]);
+  // An Ended administrator row's Resume reads "Reopen as administrator" in the palette too.
+  const liveLabels = useMemo(() => (focusedRow?.elevated ? { ...paletteLabels, resume: REOPEN_AS_ADMIN } : paletteLabels), [paletteLabels, focusedRow?.elevated]);
 
   // The Review sheet. It holds its own snapshot (the task, its changes, the session it was opened for), not a view of the lists above,
   // so a task list or a session list that changes under it, a merge removing the task included, never unmounts it while the core works.
@@ -666,12 +688,13 @@ export function LiveApp() {
     },
     [actOn],
   );
-  const reviewReason = (e: unknown) => (e instanceof ApiError ? e.message : String(e));
+  const reviewReason = (e: unknown) => (e instanceof Error ? e.message : String(e));
   // "Ask <agent> to fix them": the prompt is typed into the task's session, never sent (no Enter), and the terminal gets the focus.
   const askAgent = (text: string) => {
     const r = reviewRef.current;
     if (!r) return;
-    sessions.input(r.endpoint, r.tabId, text).then(
+    const elevated = stateRef.current.infos.some((i) => i.tab_id === r.tabId && i.elevated);
+    typeText(r.tabId, text, elevated, () => sessions.input(r.endpoint, r.tabId, text)).then(
       () => {
         pick(r.tabId);
         actions.focusTerminal();
@@ -992,7 +1015,6 @@ export function LiveApp() {
   );
 
   // The app's shortcuts work from anywhere, the terminal included; the terminal lets these keys through (TerminalView).
-  const os = endpoint ? osOfPlatform(endpoint.platform) : undefined;
   // The row menu: which items a row shows, and what each one does. Every action takes the row's own id, so it never waits for a
   // selection update to land.
   const menuItems = useCallback(
@@ -1331,6 +1353,7 @@ export function LiveApp() {
     if (id === "unsplit") return dispatch({ type: "remove", index: focusIdxRef.current });
     if (id === "layout") return void setTimeout(() => setLayoutMenu(true), 0);
     if (id === "group-by-project") return dispatch({ type: "toggleGrouped" });
+    if (launcherFromPalette(id)?.elevated === true) return void (setLauncherElevated(true), setLauncherOpen(true));
     if (id === "resume") return void (focusedRow && startResume(focusedRow));
     // After the palette has given focus back, so the confirm bar's Cancel keeps the focus it takes.
     if (id === "pause") return void (focusedId && setTimeout(() => pauseSession(focusedId) === "sent" && actions.focusTerminal(), 0));
@@ -1527,10 +1550,11 @@ export function LiveApp() {
                 key={`${row.id}:${resumed[row.id] ?? 0}`}
                 endpoint={endpoint}
                 tabId={row.id}
+                elevated={info?.elevated === true}
                 placeholder={startingTexts[row.id]}
                 onOutput={() => setStartingTexts((t) => without(t, row.id))}
                 onSize={onSize}
-                autoFocus={!linkHeld && !launcherOpen && overlay === null && review === null && row.id === focusedId}
+                autoFocus={!linkHeld && !launcherOpen && !reopening && overlay === null && review === null && row.id === focusedId}
                 visible={shown}
                 paused={info?.paused === true}
                 onBlockedInput={() => actions.showPausedBar(row.id)}
@@ -1545,17 +1569,19 @@ export function LiveApp() {
           )}
           {bar && info && (
             <ResumeBar
+              key={bar.id}
               row={bar}
               command={sessionResumeCommand(info, profile?.name ?? info.profile_id)}
               folder={info.cwd}
               disabledReason={profileGone}
-              onResume={() => startResume(bar)}
+              needsAck={actions.resumeNeedsAck(bar.id)}
+              onResume={(acknowledged) => startResume(bar, acknowledged)}
             />
           )}
         </div>
       );
     },
-    [endpoint, panelTab?.tabId, heldRow, resumed, infos, profiles, startResume, startingTexts, onSize, launcherOpen, overlay, review, focusedId, focusToken, linkHeld, promptJump, onPromptJump, themeFor, overrideOf, terminalFont],
+    [endpoint, panelTab?.tabId, heldRow, resumed, infos, profiles, detections, detectionFailed, startResume, startingTexts, onSize, launcherOpen, reopening, overlay, review, focusedId, focusToken, linkHeld, promptJump, onPromptJump, themeFor, overrideOf, terminalFont],
   );
 
   if (error) {
@@ -1669,7 +1695,7 @@ export function LiveApp() {
           renderTerminal={renderTerminal}
           paneBar={
             restartInfo
-              ? { id: restartInfo.tab_id, node: <RestartBar text={restartBarText(restartInfo, restarting!.mode, rows.find((r) => r.id === restartInfo.tab_id)?.status === "working")} onCancel={actions.cancelRestart.bind(actions)} onRestart={() => void actions.confirmRestart()} /> }
+              ? { id: restartInfo.tab_id, node: <RestartBar key={`${restartInfo.tab_id}-${restarting!.mode}`} needsAck={actions.restartNeedsAck()} text={restartBarText(restartInfo, restarting!.mode, rows.find((r) => r.id === restartInfo.tab_id)?.status === "working", actions.sessionSkipsAll(restartInfo))} onCancel={actions.cancelRestart.bind(actions)} onRestart={(acknowledged) => void actions.confirmRestart(acknowledged)} /> }
               : pauseInfo && pauseBar
                 ? {
                     id: pauseInfo.tab_id,
@@ -1684,7 +1710,9 @@ export function LiveApp() {
           }
           onModeMenu={(id, anchor) => setModeMenu({ id, anchor, from: "chip" })}
           canChangeMode={(row) => offersModeChange(row, infos.find((i) => i.tab_id === row.id))}
-          headerBar={closingInfo && <CloseBar text={closeBarText(closingInfo)} onCancel={actions.cancelClose.bind(actions)} onCloseNow={() => void actions.confirmClose()} />}
+          headerBar={reopening
+            ? <RestartBar key={`reopen-${reopening.tabId ?? "last"}`} text={reopenBarText(reopening.tabId === undefined ? closed[0] : closed.find((info) => info.tab_id === reopening.tabId), detections.find((d) => d.cli === "antigravity"), detectionFailed.has("antigravity"))} actionLabel="Reopen as administrator" needsAck onCancel={actions.cancelReopen.bind(actions)} onRestart={(acknowledged) => void actions.confirmReopen(acknowledged)} />
+            : closingInfo && <CloseBar text={closeBarText(closingInfo)} onCancel={actions.cancelClose.bind(actions)} onCloseNow={() => void actions.confirmClose()} />}
           toast={toast && <Toast text={toast.text} actionLabel={toast.reopenId ? "Reopen" : undefined} onAction={() => void actions.reopenFromToast()} />}
           notice={toast ? { id: toast.id, text: toast.text } : notice}
           renamingId={renaming}
@@ -1730,7 +1758,7 @@ export function LiveApp() {
           }}
         />
       )}
-      {overlay === "palette" && os && <LivePalette sessions={paletteSessions(rows)} os={os} labels={paletteLabels} hidden={hiddenCommands} tab={focusedId ?? null} filesOnly={filesOnly} onOpenFile={(path) => { setOverlay(null); preview.open({ path }); }} onRun={runFromPalette} onClose={() => setOverlay(null)} />}
+      {overlay === "palette" && os && <LivePalette sessions={paletteSessions(rows)} os={os} labels={liveLabels} hidden={hiddenCommands} tab={focusedId ?? null} filesOnly={filesOnly} onOpenFile={(path) => { setOverlay(null); preview.open({ path }); }} onRun={runFromPalette} onClose={() => setOverlay(null)} />}
       {overlay === "departures" && (
         <LiveDepartures
           rows={taskRows}
@@ -1820,9 +1848,13 @@ export function LiveApp() {
       {overlay === "shortcuts" && os && <LiveShortcuts os={os} onClose={() => setOverlay(null)} />}
       {runAsk && <ScriptsTrustDialog scripts={runAsk.scripts} busy={runAsk.busy} error={runAsk.error} allowLabel="Allow and run" cancelLabel="Cancel" onAllow={() => void allowRun()} onCancel={() => setRunAsk(null)} />}
       {closeAsk && <CloseDialog busy={closeAsk.busy} error={closeAsk.error} onChoose={(keep) => void chooseClose(keep)} onCancel={cancelCloseAsk} />}
-      {launcherOpen && (
+      {launcherOpen && !reopening && (
         <LiveLauncher
+          detections={detections}
+          detectionFailed={detectionFailed}
           endpoint={endpoint}
+          initialElevated={launcherElevated}
+          os={os}
           nextNumber={nextSessionNumber(infos.map((i) => i.number))}
           size={() => size.current}
           onStarted={started}

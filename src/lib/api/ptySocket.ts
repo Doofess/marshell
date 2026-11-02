@@ -1,6 +1,7 @@
 import { TOKEN_SUBPROTOCOL_PREFIX, WS_SUBPROTOCOL } from "../../generated/constants";
 import type { Endpoint } from "../../generated/Endpoint";
 import type { Resize } from "../../generated/Resize";
+import type { TrustedSink } from "./elevated";
 import { decodeServerFrame, encodeAck, encodeBinaryString, encodeInput, encodeResize, encodeResume } from "./frames";
 
 export interface PtyHandlers {
@@ -9,6 +10,8 @@ export interface PtyHandlers {
   /** Output before `seq` was written before this renderer attached; sent after every resume. */
   onLive(seq: number): void;
   onExit(code: number): void;
+  /** The window's own path for an administrator session refused a keystroke or a size; `message` is the core's sentence. */
+  onInputError?(message: string): void;
 }
 
 const ACK_EVERY_BYTES = 64 * 1024;
@@ -30,6 +33,7 @@ export class PtySocket {
     private readonly endpoint: Endpoint,
     private readonly tabId: string,
     private readonly handlers: PtyHandlers,
+    private trusted: TrustedSink | null = null,
   ) {
     this.connect();
   }
@@ -42,7 +46,8 @@ export class PtySocket {
     ws.onopen = () => {
       this.retries = 0;
       ws.send(encodeResume(this.processedUpTo));
-      if (this.lastSize) ws.send(encodeResize(this.lastSize));
+      // An administrator session's size goes through the window's own path, never this socket.
+      if (this.lastSize && !this.trusted) ws.send(encodeResize(this.lastSize));
     };
     ws.onmessage = (ev) => {
       if (!(ev.data instanceof ArrayBuffer)) return;
@@ -72,18 +77,38 @@ export class PtySocket {
     if (this.ws?.readyState === WebSocket.OPEN) this.ws.send(frame);
   }
 
-  sendInput(data: string): void {
-    this.send(encodeInput(data));
+  /**
+   * Routes input and size through the window's own path (an administrator session, which the core takes nothing from over this
+   * socket), or back to the socket with null. The size already known is sent through the new path at once.
+   */
+  setTrusted(sink: TrustedSink | null): void {
+    const changed = (sink !== null) !== (this.trusted !== null);
+    this.trusted = sink;
+    if (changed && sink && this.lastSize) this.viaWindow(sink.resize(this.lastSize.cols, this.lastSize.rows));
   }
 
+  private viaWindow(sent: Promise<void>): void {
+    sent.then(
+      () => {},
+      (e: unknown) => this.handlers.onInputError?.(e instanceof Error ? e.message : String(e)),
+    );
+  }
+
+  sendInput(data: string): void {
+    if (this.trusted) this.viaWindow(this.trusted.input(data));
+    else this.send(encodeInput(data));
+  }
+
+  /** Raw bytes above 0x7f (an old-style mouse report) can't travel as the window's text, so an administrator session gets none. */
   sendBytes(binary: string): void {
-    this.send(encodeBinaryString(binary));
+    if (!this.trusted) this.send(encodeBinaryString(binary));
   }
 
   resize(cols: number, rows: number): void {
     if (cols <= 0 || rows <= 0) return;
     this.lastSize = { cols, rows };
-    this.send(encodeResize(this.lastSize));
+    if (this.trusted) this.viaWindow(this.trusted.resize(cols, rows));
+    else this.send(encodeResize(this.lastSize));
   }
 
   /** The renderer has fully processed output before this byte offset. Acks are batched. */

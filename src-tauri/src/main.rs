@@ -28,6 +28,90 @@ fn core_endpoint(core: tauri::State<'_, CoreHandle>) -> Result<Endpoint, String>
     core.0.endpoint().ok_or_else(|| "the core is not running".to_string())
 }
 
+const CORE_DOWN: &str = "Marshell's core isn't running.";
+
+/// The window's trusted path to administrator sessions (decision 8). The token API refuses their input, resize and approval
+/// answers, so the window sends them here, to the in-process core. The error is the core's own sentence.
+/// The pipe write can wait on the helper, so it runs off the main thread, which also draws the window.
+#[tauri::command]
+async fn elevated_input(core: tauri::State<'_, CoreHandle>, tab_id: String, text: String) -> Result<(), String> {
+    let trusted = core.0.trusted().ok_or_else(|| CORE_DOWN.to_string())?;
+    tauri::async_runtime::spawn_blocking(move || trusted.input(&tab_id, text.into_bytes()))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn elevated_resize(
+    core: tauri::State<'_, CoreHandle>,
+    tab_id: String,
+    cols: u16,
+    rows: u16,
+) -> Result<(), String> {
+    let trusted = core.0.trusted().ok_or_else(|| CORE_DOWN.to_string())?;
+    tauri::async_runtime::spawn_blocking(move || trusted.resize(&tab_id, cols, rows))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// Starting a session as administrator is the window's alone too (decision 10): the token API refuses it.
+#[tauri::command]
+async fn elevated_create(
+    core: tauri::State<'_, CoreHandle>,
+    req: marshell_protocol::api::CreateSessionRequest,
+) -> Result<marshell_protocol::api::CreateSessionResponse, String> {
+    core.0.trusted().ok_or_else(|| CORE_DOWN.to_string())?.create(req).await
+}
+
+#[tauri::command]
+async fn elevated_restart(
+    core: tauri::State<'_, CoreHandle>,
+    tab_id: String,
+    req: marshell_protocol::api::RestartRequest,
+) -> Result<marshell_protocol::api::CreateSessionResponse, String> {
+    core.0
+        .trusted()
+        .ok_or_else(|| CORE_DOWN.to_string())?
+        .restart(&tab_id, req)
+        .await
+}
+
+#[tauri::command]
+async fn elevated_resume(
+    core: tauri::State<'_, CoreHandle>,
+    tab_id: String,
+    cols: u16,
+    rows: u16,
+) -> Result<marshell_protocol::api::CreateSessionResponse, String> {
+    core.0
+        .trusted()
+        .ok_or_else(|| CORE_DOWN.to_string())?
+        .resume(&tab_id, cols, rows)
+        .await
+}
+
+#[tauri::command]
+async fn elevated_reopen(
+    core: tauri::State<'_, CoreHandle>,
+    tab_id: Option<String>,
+) -> Result<marshell_protocol::api::CreateSessionResponse, String> {
+    core.0
+        .trusted()
+        .ok_or_else(|| CORE_DOWN.to_string())?
+        .reopen(tab_id)
+        .await
+}
+
+#[tauri::command]
+async fn elevated_decide(
+    core: tauri::State<'_, CoreHandle>,
+    rid: String,
+    decision: marshell_protocol::hook::PermissionDecision,
+) -> Result<(), String> {
+    let trusted = core.0.trusted().ok_or_else(|| CORE_DOWN.to_string())?;
+    trusted.decide(&rid, decision).await.map_err(|(_status, text)| text)
+}
+
 /// Tells the window when the core restarted (its sessions ended) or gave up.
 fn emit_core_event(app: &tauri::AppHandle, event: CoreEvent) {
     let name = match event {
@@ -303,6 +387,13 @@ fn main() {
             export::save_conversation,
             folder_picker::pick_folder,
             core_endpoint,
+            elevated_input,
+            elevated_resize,
+            elevated_create,
+            elevated_restart,
+            elevated_resume,
+            elevated_reopen,
+            elevated_decide,
             close_once,
             capture::capture_screen_region,
             capture::cancel_capture,

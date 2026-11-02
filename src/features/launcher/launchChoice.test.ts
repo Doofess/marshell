@@ -8,11 +8,14 @@ import {
   MODES,
   PACES,
   applyRemembered,
+  adminChip,
   isAgentProgram,
   launcherSentence,
   programById,
   programsIn,
   rememberedNote,
+  WAITING_FOR_ADMIN,
+  type Remembered,
   startingText,
   type LaunchProgram,
   type LauncherChoice,
@@ -117,5 +120,27 @@ describe("remembered choices", () => {
   it("says nothing when nothing was remembered", () => {
     expect(rememberedNote("my-app", undefined)).toBeNull();
     expect(rememberedNote("my-app", {})).toBeNull();
+  });
+});
+
+describe("Administrator is launcher state only", () => {
+  it("turns a requested Administrator chip off and disables toggling when the agent refuses", () => {
+    const reason = "Codex needs an update.";
+    expect(adminChip(true, "windows", reason)).toMatchObject({ enabled: false, on: false, reason });
+    expect(adminChip(false, "windows", reason)).toMatchObject({ enabled: false, on: false, reason });
+    expect(adminChip(true, "windows")).toMatchObject({ enabled: true, on: true });
+    expect(adminChip(true, "linux", reason).reason).toBe("Administrator: available on Windows only for now.");
+  });
+  it("admin_is_never_remembered_for_the_project", () => {
+    // Nothing in the choice, the default or the remembered shape can carry it.
+    expect(base).not.toHaveProperty("elevated");
+    const stored = { mode: "plan", pace: "Quick", elevated: true } as Remembered;
+    expect(applyRemembered(base, stored)).not.toHaveProperty("elevated");
+    expect(rememberedNote("my-app", stored)).not.toContain("dministrator");
+  });
+  it("the_new_tab_waits_for_approval: the text, and the sentence naming it", () => {
+    expect(WAITING_FOR_ADMIN).toBe("Waiting for administrator approval…");
+    expect(launcherSentence(base, PROJECTS, LAUNCH_PROGRAMS, true)).toContain("as administrator");
+    expect(launcherSentence(base, PROJECTS)).not.toContain("administrator");
   });
 });

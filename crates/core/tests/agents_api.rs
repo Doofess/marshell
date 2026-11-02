@@ -355,6 +355,37 @@ async fn install_agy(e: &AgyEnv) {
 }
 
 #[tokio::test]
+async fn antigravity_setup_reports_its_skip_setting_even_with_broken_hooks() {
+    let e = agy_env();
+    std::fs::create_dir_all(e.settings.parent().unwrap()).unwrap();
+    std::fs::write(&e.settings, r#"{"dangerouslySkipPermissions":true}"#).unwrap();
+    for hooks in ["{}", "not JSON"] {
+        std::fs::create_dir_all(e.hooks.parent().unwrap()).unwrap();
+        std::fs::write(&e.hooks, hooks).unwrap();
+        let (status, setup) = get(&e.app, "/v1/agents/antigravity/setup").await;
+        assert_eq!(status, StatusCode::OK, "{setup}");
+        assert_eq!(setup["skips_all"], "dangerouslySkipPermissions", "{setup}");
+    }
+}
+
+#[tokio::test]
+async fn agents_with_explicit_mode_flags_do_not_report_a_skip_setting() {
+    let (e, hooks) = codex_env();
+    std::fs::write(
+        &e.settings,
+        r#"{"permissions":{"defaultMode":"bypassPermissions"},"dangerouslySkipPermissions":true}"#,
+    )
+    .unwrap();
+    std::fs::write(&hooks, "{}").unwrap();
+    std::fs::write(hooks.with_file_name("config.toml"), "approval_policy = 'never'\n").unwrap();
+    for agent in ["claude", "codex"] {
+        let (status, setup) = get(&e.app, &format!("/v1/agents/{agent}/setup")).await;
+        assert_eq!(status, StatusCode::OK, "{setup}");
+        assert!(setup.get("skips_all").is_none(), "{setup}");
+    }
+}
+
+#[tokio::test]
 async fn antigravity_setup_reports_both_files() {
     let e = agy_env();
     let (status, setup) = get(&e.app, "/v1/agents/antigravity/setup").await;
@@ -527,6 +558,10 @@ async fn antigravity_entries_from_another_home_are_orphaned() {
 /// A state whose Codex home is a folder inside the recorded project, so the config service may write it.
 /// Returns the env and the `hooks.json` path. The bridge file exists, so installs read as installed.
 fn codex_env() -> (Env, PathBuf) {
+    codex_env_with_version(Some("0.163.0"))
+}
+
+fn codex_env_with_version(version: Option<&str>) -> (Env, PathBuf) {
     let dir = tempfile::tempdir().unwrap();
     let root = canonical(dir.path());
     let home = root.join("home");
@@ -546,7 +581,7 @@ fn codex_env() -> (Env, PathBuf) {
     )
     .with_claude_settings(settings.clone())
     .with_codex_hooks(hooks.clone())
-    .with_codex_version(Some("0.163.0".into()))
+    .with_codex_version(version.map(str::to_string))
     .with_agent_path(|_| None);
     let bridge = paths::bridge_exe(&home);
     std::fs::create_dir_all(bridge.parent().unwrap()).unwrap();
@@ -587,6 +622,39 @@ async fn codex_setup_reports_a_missing_file() {
     let (_, claude) = get(&e.app, "/v1/agents/claude/setup").await;
     assert_eq!(claude["needs_trust"], false, "{claude}");
     assert!(claude.get("trust").is_none(), "{claude}");
+}
+
+#[tokio::test]
+async fn codex_setup_reports_why_administrator_is_unavailable() {
+    for (version, expected) in [
+        (
+            Some("0.162.9"),
+            Some(
+                "Codex 0.162.9 can't run as administrator. Marshell needs Codex 0.163.0 or newer to keep an administrator Codex apart from your other Codex sessions. Update Codex, then try again.",
+            ),
+        ),
+        (
+            None,
+            Some("Marshell couldn't read this Codex's version, so it can't start it as administrator."),
+        ),
+        (
+            Some("garbage"),
+            Some("Marshell couldn't read this Codex's version, so it can't start it as administrator."),
+        ),
+        (Some("0.163.0"), None),
+        (Some("0.170.2"), None),
+    ] {
+        let (e, _) = codex_env_with_version(version);
+        let (status, setup) = get(&e.app, "/v1/agents/codex/setup").await;
+        assert_eq!(status, StatusCode::OK, "{setup}");
+        assert_eq!(
+            setup.get("admin_unavailable").and_then(|v| v.as_str()),
+            expected,
+            "{version:?}"
+        );
+        let (_, claude) = get(&e.app, "/v1/agents/claude/setup").await;
+        assert!(claude.get("admin_unavailable").is_none());
+    }
 }
 
 #[tokio::test]
@@ -700,6 +768,7 @@ fn codex_live(version: Option<&str>) -> (AppState, axum::Router) {
     st.registry().reserve(
         "cx",
         marshell_core::registry::Relaunch {
+            elevated: false,
             profile_id: "test".into(),
             agent: Some("codex".into()),
             cwd: "C:/work".into(),
@@ -809,6 +878,7 @@ fn agy_live(version: Option<&str>) -> (AppState, axum::Router) {
     st.registry().reserve(
         "ag",
         marshell_core::registry::Relaunch {
+            elevated: false,
             profile_id: "test".into(),
             agent: Some("antigravity".into()),
             cwd: "C:/work".into(),

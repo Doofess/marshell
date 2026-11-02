@@ -61,6 +61,7 @@ async fn create(core: &RunningCore) {
         cwd: None,
         cols: 80,
         rows: 24,
+        elevated: false,
         profile_id: None,
         agent: None,
         name: None,

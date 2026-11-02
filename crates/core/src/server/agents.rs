@@ -585,10 +585,12 @@ pub(crate) fn setup_of(st: &AppState) -> Result<AgentSetup, Fail> {
 
     let mut setup = AgentSetup {
         agent: AGENT.to_string(),
+        admin_unavailable: None,
         found: exe.is_some(),
         version,
         exe_path: exe.map(|p| p.to_string_lossy().into_owned()),
         settings_path: settings_path.to_string_lossy().into_owned(),
+        skips_all: None,
         hooks_path: None,
         settings_state: SettingsState::Ok,
         parse_error: None,
@@ -656,10 +658,12 @@ pub(crate) fn codex_setup_of(st: &AppState) -> Result<AgentSetup, Fail> {
 
     let mut setup = AgentSetup {
         agent: CODEX.to_string(),
+        admin_unavailable: crate::agents::codex::admin_unavailable(version.as_deref()),
         found: exe.is_some(),
         version,
         exe_path: exe.map(|p| p.to_string_lossy().into_owned()),
         settings_path: hooks_path.to_string_lossy().into_owned(),
+        skips_all: None,
         hooks_path: None,
         settings_state: SettingsState::Ok,
         parse_error: None,
@@ -723,10 +727,12 @@ pub(crate) fn agy_setup_of(st: &AppState) -> Result<AgentSetup, Fail> {
 
     let mut setup = AgentSetup {
         agent: ANTIGRAVITY.to_string(),
+        admin_unavailable: None,
         found: exe.is_some(),
         version,
         exe_path: exe.map(|p| p.to_string_lossy().into_owned()),
         settings_path: settings_file.to_string_lossy().into_owned(),
+        skips_all: crate::agents::antigravity::skips_all(&user_home),
         hooks_path: Some(hooks_file.to_string_lossy().into_owned()),
         settings_state: SettingsState::Ok,
         parse_error: None,

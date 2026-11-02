@@ -9,6 +9,7 @@ import { onCoreEvent } from "../../lib/api/coreEvents";
 import { claimsKey } from "../sessions/useNavigation";
 import { imageOnlyPaste } from "../regions/imagePaste";
 import { PtySocket } from "../../lib/api/ptySocket";
+import { trustedSink } from "../../lib/api/elevated";
 import { LatencyMeter } from "../perf/latency";
 import { useOpenPreview } from "../preview/PreviewContext";
 import { PerfOverlay } from "../perf/PerfOverlay";
@@ -40,6 +41,8 @@ export const isTerminalReport = (data: string): boolean => /^\x1b\[(?:[IO]|<\d+;
 type Props = {
   endpoint: Endpoint;
   tabId: string;
+  /** True for a session running as administrator: its keystrokes and size go through the window's own path, never the pty socket. */
+  elevated?: boolean;
   /** A line shown over the terminal until the first output arrives ("Starting Claude Code in my-app…"). */
   placeholder?: string;
   /** Hears the first output. The owner of `placeholder` drops it then, so it stays gone when this terminal is mounted again. */
@@ -85,7 +88,7 @@ function loadFont(family: string, size: number, wtFamily?: string): Promise<void
 }
 
 /** One session's terminal. */
-export function TerminalView({ endpoint, tabId, placeholder, onOutput, onSize, autoFocus = true, focusToken = 0, visible = true, paused = false, onBlockedInput, promptJump, onPromptJump, theme = FOLLOW_APP, font = BUNDLED, onImagePaste }: Props) {
+export function TerminalView({ endpoint, tabId, elevated = false, placeholder, onOutput, onSize, autoFocus = true, focusToken = 0, visible = true, paused = false, onBlockedInput, promptJump, onPromptJump, theme = FOLLOW_APP, font = BUNDLED, onImagePaste }: Props) {
   const host = useRef<HTMLDivElement>(null);
   const meter = useMemo(() => new LatencyMeter(), []);
   const [renderer, setRenderer] = useState<RendererKind>("dom");
@@ -96,6 +99,10 @@ export function TerminalView({ endpoint, tabId, placeholder, onOutput, onSize, a
   sizeRef.current = onSize;
   const outputRef = useRef(onOutput);
   outputRef.current = onOutput;
+  // The row's info can arrive after the terminal mounts, so a change re-routes the running socket instead of restarting the terminal.
+  const elevatedRef = useRef(elevated);
+  elevatedRef.current = elevated;
+  const socketRef = useRef<PtySocket | null>(null);
   const pausedRef = useRef(paused);
   pausedRef.current = paused;
   const imagePasteRef = useRef(onImagePaste);
@@ -176,6 +183,7 @@ export function TerminalView({ endpoint, tabId, placeholder, onOutput, onSize, a
       () => current,
       (d) => core === "live" && gate.allows(d) && socket.sendInput(d),
     );
+    let lastInputError = "";
     const socket = new PtySocket(endpoint, tabId, {
       onOutput: (seq, bytes) => {
         if (bytes.length > 0) {
@@ -202,7 +210,14 @@ export function TerminalView({ endpoint, tabId, placeholder, onOutput, onSize, a
         });
       },
       onExit: (code) => term.write(`\r\n\x1b[2mProcess exited with code ${code}. ${SESSION_ENDED}\x1b[0m\r\n`),
-    });
+      // The core's own sentence for a refused keystroke or size, written once per distinct message.
+      onInputError: (message) => {
+        if (message === lastInputError) return;
+        lastInputError = message;
+        term.write(`\r\n\x1b[2m${message}\x1b[0m\r\n`);
+      },
+    }, elevatedRef.current ? trustedSink(tabId) : null);
+    socketRef.current = socket;
 
     // After a core restart ("ended") or failure ("failed") the session is gone, so no input goes anywhere.
     let core: "live" | "ended" | "failed" = "live";
@@ -279,6 +294,7 @@ export function TerminalView({ endpoint, tabId, placeholder, onOutput, onSize, a
       cancelAnimationFrame(frame);
       subs.forEach((s) => s.dispose());
       socket.close();
+      socketRef.current = null;
       unregister();
       term.dispose();
       termRef.current = null;
@@ -300,6 +316,11 @@ export function TerminalView({ endpoint, tabId, placeholder, onOutput, onSize, a
       live = false;
     };
   }, [font.family, font.size, font.wtFamily]);
+
+  // A row that turns out to be elevated (or stops being) switches the running socket's route.
+  useEffect(() => {
+    socketRef.current?.setTrusted(elevated ? trustedSink(tabId) : null);
+  }, [elevated, tabId, endpoint, fontReady]);
 
   // A changed setting or override restyles the running terminal; no restart.
   useEffect(() => {

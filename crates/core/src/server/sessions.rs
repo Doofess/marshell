@@ -157,7 +157,7 @@ pub(super) async fn resolve(
     mode: Option<SessionMode>,
     preset: Option<&str>,
 ) -> Result<Resolved, ApiError> {
-    resolve_with(st, profile_id, agent, prompt, resume, mode, preset, true).await
+    resolve_with(st, profile_id, agent, prompt, resume, mode, preset, true, false).await
 }
 
 /// `resolve`, where `daemonless` says whether Codex gets `--no-daemon`: it is for the sessions Marshell starts,
@@ -172,11 +172,12 @@ pub(super) async fn resolve_with(
     mode: Option<SessionMode>,
     preset: Option<&str>,
     daemonless: bool,
+    elevated: bool,
 ) -> Result<Resolved, ApiError> {
     if let Some(preset) = preset {
         check_preset(agent, preset)?;
     }
-    let no_daemon = daemonless && agent == Some("codex") && codex_takes_no_daemon(st).await;
+    let no_daemon = daemonless && agent == Some("codex") && codex_takes_no_daemon(st, elevated).await?;
     let agents = st.agents();
     // A manifest agent has a mode only where its manifest maps one.
     if let (Some(m), Some(mode)) = (agent.and_then(|a| agents.manifest(a)), mode)
@@ -287,14 +288,19 @@ async fn program_command(
 
 /// Whether the Codex that sessions run accepts `--no-daemon` (slice 6a decision 14). A cold version
 /// cache runs `codex --version`, so this goes through `spawn_blocking`.
-async fn codex_takes_no_daemon(st: &AppState) -> bool {
+async fn codex_takes_no_daemon(st: &AppState, elevated: bool) -> Result<bool, ApiError> {
     let asker = st.clone();
-    tokio::task::spawn_blocking(move || {
+    let version = tokio::task::spawn_blocking(move || {
         let exe = asker.agent_exe_of("codex");
-        supports_no_daemon(asker.codex_version(exe.as_deref()).as_deref())
+        asker.codex_version(exe.as_deref())
     })
     .await
-    .unwrap_or(false)
+    .ok()
+    .flatten();
+    if elevated && let Some(reason) = crate::agents::codex::admin_unavailable(version.as_deref()) {
+        return Err((StatusCode::CONFLICT, reason));
+    }
+    Ok(supports_no_daemon(version.as_deref()))
 }
 
 fn custom(argv: Vec<String>) -> Resolved {
@@ -558,7 +564,7 @@ pub(super) async fn start_session(
     record: bool,
 ) -> Result<CreateSessionResponse, ApiError> {
     start_session_as(
-        st, run, agent, name, cwd, size, scheme, mode, preset, record, None, None,
+        st, run, agent, name, cwd, size, scheme, mode, preset, record, None, None, false,
     )
     .await
 }
@@ -599,6 +605,7 @@ pub(super) async fn start_script(
         true,
         Some(script),
         None,
+        false,
     )
     .await
 }
@@ -617,6 +624,7 @@ async fn start_session_as(
     record: bool,
     script: Option<ScriptKind>,
     setup: Option<SetupResult>,
+    elevated: bool,
 ) -> Result<CreateSessionResponse, ApiError> {
     check_agent_installed(st, &run, agent.as_deref())?;
     let cwd = start_folder(&run, cwd);
@@ -636,6 +644,7 @@ async fn start_session_as(
     let (number, generation) = st.0.registry.reserve_script(
         &tab_id,
         Relaunch {
+            elevated,
             profile_id: run.profile_id.clone(),
             agent: agent.clone(),
             cwd: cwd.clone(),
@@ -646,7 +655,11 @@ async fn start_session_as(
         script,
         setup,
     );
-    if let Err(err) = launch(st, &tab_id, number, generation, run, agent, cwd, size, scheme, record).await {
+    if let Err(err) = launch(
+        st, &tab_id, number, generation, run, agent, cwd, size, scheme, record, elevated,
+    )
+    .await
+    {
         // A spawn failed, or the tab was closed while it started (then there is no open row to release).
         st.0.registry.release(&tab_id);
         return Err(err);
@@ -668,8 +681,12 @@ async fn launch(
     size: (u16, u16),
     scheme: Option<ColorScheme>,
     record: bool,
+    elevated: bool,
 ) -> Result<(), ApiError> {
-    spawn_into_map(st, tab_id, number, generation, run, agent, cwd, size, scheme, record).await?;
+    spawn_into_map(
+        st, tab_id, number, generation, run, agent, cwd, size, scheme, record, elevated,
+    )
+    .await?;
     // A close can land between reserve and insert, when the map has nothing to kill yet.
     // Checking after the insert catches it: a later close finds the session in the map.
     if !st.0.registry.is_open(tab_id) {
@@ -701,6 +718,7 @@ pub(super) async fn spawn_into_map(
     size: (u16, u16),
     scheme: Option<ColorScheme>,
     record: bool,
+    elevated: bool,
 ) -> Result<(), ApiError> {
     let agent = agent.unwrap_or_else(|| "shell".into());
     let program = run
@@ -793,10 +811,14 @@ pub(super) async fn spawn_into_map(
         initial_command: run.initial_command,
     };
     let id = tab_id.to_string();
-    // Spawning touches the OS (process creation) and recording writes a file:
+    let spawner = elevated.then(|| st.elevated_spawner());
+    // Spawning touches the OS (process creation, or the UAC prompt and the pipes) and recording writes a file:
     // keep both off the async worker threads.
     let spawned = tokio::task::spawn_blocking(move || {
-        let session = Session::spawn(id, spec)?;
+        let session = match spawner {
+            Some(spawn) => spawn(id, spec)?,
+            None => Session::spawn(id, spec)?,
+        };
         if !project.is_empty() {
             // The folder the process really started in. `record` skips the user's home folder.
             let now_ms = std::time::SystemTime::now()
@@ -812,7 +834,7 @@ pub(super) async fn spawn_into_map(
     let session = match spawned {
         Ok(Ok(session)) => session,
         // No prefix here: the UI already says "Couldn't start a shell." and appends this text.
-        Ok(Err(e)) => return Err((StatusCode::INTERNAL_SERVER_ERROR, format!("{e:#}"))),
+        Ok(Err(e)) => return Err(spawn_failure(&e)),
         Err(e) => return Err((StatusCode::INTERNAL_SERVER_ERROR, e.to_string())),
     };
     tracing::info!(tab_id, %agent, program = program.as_deref(), "session started");
@@ -820,12 +842,55 @@ pub(super) async fn spawn_into_map(
     Ok(())
 }
 
+/// The answer to a start that failed. A declined UAC prompt is a conflict, not a fault; the other helper failures
+/// say their own words. Anything else keeps the error chain.
+fn spawn_failure(error: &anyhow::Error) -> ApiError {
+    match error.downcast_ref::<crate::pty::elevated::ElevatedError>() {
+        Some(crate::pty::elevated::ElevatedError::Declined) => (StatusCode::CONFLICT, error.to_string()),
+        Some(other) => (StatusCode::INTERNAL_SERVER_ERROR, other.to_string()),
+        None => (StatusCode::INTERNAL_SERVER_ERROR, format!("{error:#}")),
+    }
+}
+
+/// The mode a session starts in. An agent that runs as administrator always starts in Manual, whatever was asked
+/// (slice 6j2 decision 2); a shell has none; an ordinary start keeps what was asked.
+fn launch_mode(elevated: bool, agent: Option<&str>, requested: Option<SessionMode>) -> Option<SessionMode> {
+    if elevated && agent.is_some() {
+        Some(SessionMode::Manual)
+    } else {
+        requested
+    }
+}
+
 pub async fn create(
     State(st): State<AppState>,
     Json(req): Json<CreateSessionRequest>,
 ) -> Result<Json<CreateSessionResponse>, ApiError> {
+    create_as(&st, req, false).await.map(Json)
+}
+
+/// Starts a session. `window` is true only for the window's own trusted door, which starts administrator sessions
+/// and nothing else; the token-guarded route passes false and refuses an elevated start (slice 6j2 decision 10).
+pub(super) async fn create_as(
+    st: &AppState,
+    req: CreateSessionRequest,
+    window: bool,
+) -> Result<CreateSessionResponse, ApiError> {
+    if req.elevated && !cfg!(windows) {
+        return Err((StatusCode::BAD_REQUEST, crate::pty::elevated::NON_WINDOWS_COPY.into()));
+    }
+    if req.elevated && !window {
+        return Err((StatusCode::CONFLICT, crate::pty::elevated::API_CREATE_COPY.into()));
+    }
+    if window && !req.elevated {
+        return Err((StatusCode::CONFLICT, crate::pty::elevated::NOT_ELEVATED_COPY.into()));
+    }
     if let Some(task) = req.cli_task.clone() {
-        return Ok(Json(start_cli_task(&st, req, task).await?));
+        // A sign-in or update tab runs a CLI's own command in the home folder: never as administrator.
+        if req.elevated {
+            return Err((StatusCode::BAD_REQUEST, CLI_TASK_ONLY.into()));
+        }
+        return start_cli_task(st, req, task).await;
     }
     // A tool preset runs in a profile's shell: it takes no agent, prompt or mode, and no argv of its own. Nothing of it
     // is remembered for the folder, and the row's relaunch is the plain shell (a restart never runs the tool again).
@@ -839,9 +904,9 @@ pub async fn create(
                 "A tool preset starts in a profile's shell.".into(),
             ));
         }
-        let (run, name) = resolve_tool(&st, req.profile_id.as_deref(), tool).await?;
-        let created = start_session(
-            &st,
+        let (run, name) = resolve_tool(st, req.profile_id.as_deref(), tool).await?;
+        let created = start_session_as(
+            st,
             run,
             None,
             Some(name),
@@ -851,16 +916,23 @@ pub async fn create(
             None,
             None,
             true,
+            None,
+            None,
+            req.elevated,
         )
         .await?;
-        return Ok(Json(created));
+        return Ok(created);
     }
     if let Some(agent) = req.agent.as_deref().filter(|a| !st.agents().is_known(a)) {
         return Err((StatusCode::BAD_REQUEST, format!("Unknown agent: {agent}.")));
     }
     // An explicit argv keeps the old behaviour: run it as given, as a custom profile.
     // A plain shell has no mode.
-    let mode = req.mode.filter(|_| req.agent.is_some() && req.shell.is_none());
+    let mode = launch_mode(
+        req.elevated,
+        req.agent.as_deref().filter(|_| req.shell.is_none()),
+        req.mode.filter(|_| req.agent.is_some() && req.shell.is_none()),
+    );
     // An explicit argv runs as given, so a preset has nothing to change there.
     if let Some(preset) = req.preset.as_deref() {
         check_preset(req.agent.as_deref().filter(|_| req.shell.is_none()), preset)?;
@@ -874,14 +946,16 @@ pub async fn create(
             (custom(argv), None)
         }
         None => (
-            resolve(
-                &st,
+            resolve_with(
+                st,
                 req.profile_id.as_deref(),
                 req.agent.as_deref(),
                 req.prompt.as_deref(),
                 None,
                 mode,
                 req.preset.as_deref(),
+                true,
+                req.elevated,
             )
             .await?,
             req.agent,
@@ -895,7 +969,7 @@ pub async fn create(
         .filter(|c| !c.is_empty() && run.profile_id != CUSTOM_PROFILE);
     let choice = folder.map(|folder| (folder, run.profile_id.clone(), agent.clone()));
     let created = start_session_as(
-        &st,
+        st,
         run,
         agent,
         req.name,
@@ -907,12 +981,14 @@ pub async fn create(
         true,
         None,
         req.setup,
+        req.elevated,
     )
     .await?;
-    if let Some((folder, profile_id, agent)) = choice {
-        remember_choice(&st, folder, profile_id, agent, mode, req.preset).await;
+    // Decision 5: elevation is never remembered, and an elevated agent's Manual is forced, not chosen.
+    if let Some((folder, profile_id, agent)) = choice.filter(|_| !req.elevated) {
+        remember_choice(st, folder, profile_id, agent, mode, req.preset).await;
     }
-    Ok(Json(created))
+    Ok(created)
 }
 
 /// Saves the launcher choice in layout.json under the layout lock, like `put_view`.
@@ -1026,6 +1102,10 @@ pub async fn input(State(st): State<AppState>, Path(tab): Path<String>, Json(req
     let Some(session) = st.session(&tab) else {
         return StatusCode::NOT_FOUND.into_response();
     };
+    // An administrator session takes input only from Marshell's own window.
+    if session.is_elevated() {
+        return cannot_resume(crate::pty::elevated::API_WRITE_COPY);
+    }
     if session.is_frozen() {
         return cannot_resume("It is paused.");
     }
@@ -1073,34 +1153,59 @@ pub async fn reopen(State(st): State<AppState>, body: Bytes) -> Result<Json<Crea
             .map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?
             .tab_id
     };
+    reopen_as(&st, wanted, false).await.map(Json)
+}
+
+/// Reopens a closed session. `window` is true only for the window's own trusted door, which reopens administrator
+/// sessions and nothing else; the token-guarded route passes false and refuses one (slice 6j2 decision 10).
+pub(super) async fn reopen_as(
+    st: &AppState,
+    wanted: Option<String>,
+    window: bool,
+) -> Result<CreateSessionResponse, ApiError> {
     // Peek, not take: if the start fails below, the entry stays in the closed list.
     let Some((closed_id, saved)) = st.0.registry.peek_closed(wanted.as_deref()) else {
         return Err((StatusCode::NOT_FOUND, "Nothing to reopen.".into()));
     };
+    if saved.elevated != window {
+        let copy = if saved.elevated {
+            crate::pty::elevated::API_START_COPY
+        } else {
+            crate::pty::elevated::NOT_ELEVATED_COPY
+        };
+        return Err((StatusCode::CONFLICT, copy.into()));
+    }
+    // An administrator agent always comes back in Manual, whatever mode it was closed in (decision 2).
+    let mode = launch_mode(saved.elevated, saved.agent.as_deref(), saved.mode);
     // A fresh session from the saved profile, agent, folder and name (not the old row).
-    let run = resolve(
-        &st,
+    let run = resolve_with(
+        st,
         Some(&saved.profile_id),
         saved.agent.as_deref(),
         None,
         None,
-        saved.mode,
+        mode,
         saved.preset.as_deref(),
+        true,
+        saved.elevated,
     )
     .await?;
     // The window resizes the terminal as soon as it attaches.
     // The saved session has no colour scheme, so a reopened one starts without COLORFGBG.
-    let created = start_session(
-        &st,
+    let created = start_session_as(
+        st,
         run,
         saved.agent,
         Some(saved.name),
         Some(saved.cwd),
         (80, 24),
         None,
-        saved.mode,
+        mode,
         saved.preset,
         true,
+        None,
+        None,
+        saved.elevated,
     )
     .await?;
     // Only now remove the entry. If another reopen took it first, drop the duplicate we started.
@@ -1111,7 +1216,7 @@ pub async fn reopen(State(st): State<AppState>, body: Bytes) -> Result<Json<Crea
         }
         return Err((StatusCode::NOT_FOUND, "Nothing to reopen.".into()));
     }
-    Ok(Json(created))
+    Ok(created)
 }
 
 #[derive(Deserialize)]
@@ -1214,52 +1319,112 @@ pub(super) fn resume_session(st: &AppState, tab: &str, agent: Option<&str>) -> R
 /// Codex tab whose session is known gets it by id (`--resume <id>`, `resume <id>`), and one whose session has
 /// no transcript starts fresh (see `resume_session`).
 pub async fn resume(State(st): State<AppState>, Path(tab): Path<String>, Json(req): Json<ResumeRequest>) -> Response {
+    match resume_as(&st, tab, req, false).await {
+        Ok(started) => Json(started).into_response(),
+        Err(refusal) => refusal.into_response(),
+    }
+}
+
+/// Why a Resume or Restart did not start. A reason is the 409 `ResumeError` body the tab's bar shows; anything else
+/// keeps its own status and text.
+pub(super) enum Refusal {
+    Reason(String),
+    Plain(ApiError),
+}
+
+impl Refusal {
+    fn reason(reason: impl Into<String>) -> Self {
+        Self::Reason(reason.into())
+    }
+
+    fn not_found() -> Self {
+        Self::Plain((StatusCode::NOT_FOUND, "No such session.".into()))
+    }
+
+    /// The sentence the window shows.
+    pub(super) fn into_text(self) -> String {
+        match self {
+            Self::Reason(reason) => reason,
+            Self::Plain((_, text)) => text,
+        }
+    }
+
+    fn into_response(self) -> Response {
+        match self {
+            Self::Reason(reason) => cannot_resume(reason),
+            Self::Plain(err) => err.into_response(),
+        }
+    }
+}
+
+impl From<ApiError> for Refusal {
+    fn from(err: ApiError) -> Self {
+        Self::Plain(err)
+    }
+}
+
+/// Whether `window` (the trusted door) or the token-guarded route may start the row again (decision 10): the route
+/// never starts an administrator session, and the door starts nothing else.
+fn start_door(info: &SessionInfo, window: bool) -> Result<(), Refusal> {
+    match (info.elevated, window) {
+        (true, false) => Err(Refusal::reason(crate::pty::elevated::API_START_COPY)),
+        (false, true) => Err(Refusal::reason(crate::pty::elevated::NOT_ELEVATED_COPY)),
+        _ => Ok(()),
+    }
+}
+
+pub(super) async fn resume_as(
+    st: &AppState,
+    tab: String,
+    req: ResumeRequest,
+    window: bool,
+) -> Result<CreateSessionResponse, Refusal> {
     let Some(info) = st.0.registry.snapshot().sessions.into_iter().find(|s| s.tab_id == tab) else {
-        return (StatusCode::NOT_FOUND, "No such session.").into_response();
+        return Err(Refusal::not_found());
     };
+    start_door(&info, window)?;
     // Held until the new process is in the map. Another start shows the row Running already.
     let Some(_claim) = st.claim_start(&tab) else {
-        return cannot_resume("It is already running.");
+        return Err(Refusal::reason("It is already running."));
     };
     // These checks come before begin_resume, so a refusal leaves the tab as it was.
     if info.state == SessionState::Running {
-        return cannot_resume("It is already running.");
+        return Err(Refusal::reason("It is already running."));
     }
-    if let Some(reason) = cannot_start_again(&st, &info) {
-        return cannot_resume(reason);
+    if let Some(reason) = cannot_start_again(st, &info) {
+        return Err(Refusal::reason(reason));
     }
-    let session = match resume_session(&st, &tab, info.agent.as_deref()) {
-        Ok(session) => session,
-        Err(message) => return cannot_resume(message),
-    };
-    let run = match resolve(
-        &st,
+    let session = resume_session(st, &tab, info.agent.as_deref()).map_err(Refusal::reason)?;
+    // An administrator agent comes back in Manual; Bypass is only chosen on the restart bar (decision 2).
+    let mode = launch_mode(info.elevated, info.agent.as_deref(), info.mode);
+    let run = resolve_with(
+        st,
         Some(&info.profile_id),
         info.agent.as_deref(),
         None,
         session.target(),
-        info.mode,
+        mode,
         info.preset.as_deref(),
+        true,
+        info.elevated,
     )
-    .await
-    {
-        Ok(run) => run,
-        Err(err) => return err.into_response(),
-    };
-    if let Err((_, message)) = check_agent_installed(&st, &run, info.agent.as_deref()) {
-        return cannot_resume(message);
-    }
+    .await?;
+    check_agent_installed(st, &run, info.agent.as_deref()).map_err(|(_, message)| Refusal::reason(message))?;
     // A console Marshell opened for the conversation still runs: two CLIs must not write one conversation.
     let folder = start_folder(&run, Some(info.cwd.clone()));
-    if super::outside::in_console(&st, info.agent.as_deref(), &session, &folder) {
-        return cannot_resume(super::outside::OPEN_IN_TERMINAL);
+    if super::outside::in_console(st, info.agent.as_deref(), &session, &folder) {
+        return Err(Refusal::reason(super::outside::OPEN_IN_TERMINAL));
     }
     // The check and the change to Running happen under one lock: of two resumes at once, one wins.
     let (saved, previous, generation) = match st.0.registry.begin_resume(&tab) {
         Ok(started) => started,
-        Err(ResumeRefusal::NotFound) => return (StatusCode::NOT_FOUND, "No such session.").into_response(),
-        Err(ResumeRefusal::AlreadyRunning) => return cannot_resume("It is already running."),
+        Err(ResumeRefusal::NotFound) => return Err(Refusal::not_found()),
+        Err(ResumeRefusal::AlreadyRunning) => return Err(Refusal::reason("It is already running.")),
     };
+    let saved_mode = saved.mode;
+    if saved_mode != mode {
+        st.0.registry.set_mode(&tab, mode);
+    }
     // An Exited tab still has its old (finished) process in the map.
     if let Some(old) = st.remove_session(&tab) {
         old.kill();
@@ -1267,7 +1432,7 @@ pub async fn resume(State(st): State<AppState>, Path(tab): Path<String>, Json(re
     // The tab keeps its row, so its name is not touched: no naming path runs here.
     // The saved tab has no colour scheme, so a resumed session starts without COLORFGBG.
     match launch(
-        &st,
+        st,
         &tab,
         info.number,
         generation,
@@ -1277,17 +1442,18 @@ pub async fn resume(State(st): State<AppState>, Path(tab): Path<String>, Json(re
         (req.cols, req.rows),
         None,
         true,
+        saved.elevated,
     )
     .await
     {
-        Ok(()) => Json(CreateSessionResponse {
+        Ok(()) => Ok(CreateSessionResponse {
             tab_id: tab,
             number: info.number,
-        })
-        .into_response(),
+        }),
         Err(err) => {
             st.0.registry.set_state(&tab, previous);
-            err.into_response()
+            st.0.registry.set_mode(&tab, saved_mode);
+            Err(err.into())
         }
     }
 }
@@ -1335,57 +1501,63 @@ pub async fn cont(State(st): State<AppState>, Path(tab): Path<String>) -> Respon
 /// CLI's own continue flag). The old process, if any, is killed. Every refusal comes before
 /// that, so a refused restart leaves the session running.
 pub async fn restart(State(st): State<AppState>, Path(tab): Path<String>, Json(req): Json<RestartRequest>) -> Response {
+    match restart_as(&st, tab, req, false).await {
+        Ok(started) => Json(started).into_response(),
+        Err(refusal) => refusal.into_response(),
+    }
+}
+
+pub(super) async fn restart_as(
+    st: &AppState,
+    tab: String,
+    req: RestartRequest,
+    window: bool,
+) -> Result<CreateSessionResponse, Refusal> {
     let Some(info) = st.0.registry.snapshot().sessions.into_iter().find(|s| s.tab_id == tab) else {
-        return (StatusCode::NOT_FOUND, "No such session.").into_response();
+        return Err(Refusal::not_found());
     };
+    start_door(&info, window)?;
     if info.agent.is_none() {
-        return cannot_resume("Only an agent session has a mode.");
+        return Err(Refusal::reason("Only an agent session has a mode."));
     }
     // Held until the new process is in the map, so a second Restart or a Resume cannot start one too.
     let Some(_claim) = st.claim_start(&tab) else {
-        return cannot_resume("It is already starting.");
+        return Err(Refusal::reason("It is already starting."));
     };
-    if let Some(reason) = cannot_start_again(&st, &info) {
-        return cannot_resume(reason);
+    if let Some(reason) = cannot_start_again(st, &info) {
+        return Err(Refusal::reason(reason));
     }
-    let session = match resume_session(&st, &tab, info.agent.as_deref()) {
-        Ok(session) => session,
-        Err(message) => return cannot_resume(message),
-    };
-    let run = match resolve(
-        &st,
+    let session = resume_session(st, &tab, info.agent.as_deref()).map_err(Refusal::reason)?;
+    let run = resolve_with(
+        st,
         Some(&info.profile_id),
         info.agent.as_deref(),
         None,
         session.target(),
         Some(req.mode),
         info.preset.as_deref(),
+        true,
+        info.elevated,
     )
-    .await
-    {
-        Ok(run) => run,
-        Err(err) => return err.into_response(),
-    };
-    if let Err((_, message)) = check_agent_installed(&st, &run, info.agent.as_deref()) {
-        return cannot_resume(message);
-    }
+    .await?;
+    check_agent_installed(st, &run, info.agent.as_deref()).map_err(|(_, message)| Refusal::reason(message))?;
     let folder = start_folder(&run, Some(info.cwd.clone()));
-    if super::outside::in_console(&st, info.agent.as_deref(), &session, &folder) {
-        return cannot_resume(super::outside::OPEN_IN_TERMINAL);
+    if super::outside::in_console(st, info.agent.as_deref(), &session, &folder) {
+        return Err(Refusal::reason(super::outside::OPEN_IN_TERMINAL));
     }
     // From here the restart goes ahead. The row takes the new mode and a new generation first, so the
     // old process's exit (which the kill below causes) no longer touches it.
-    let (saved, generation) = match st.0.registry.begin_restart(&tab, req.mode) {
-        Ok(started) => started,
-        Err(_) => return (StatusCode::NOT_FOUND, "No such session.").into_response(),
-    };
+    let (saved, generation) =
+        st.0.registry
+            .begin_restart(&tab, req.mode)
+            .map_err(|_| Refusal::not_found())?;
     // No lock is held here: `remove_session` drops the map lock before it returns, and `kill` only
     // signals the process tree and returns.
     if let Some(old) = st.remove_session(&tab) {
         old.kill();
     }
     match launch(
-        &st,
+        st,
         &tab,
         info.number,
         generation,
@@ -1395,19 +1567,19 @@ pub async fn restart(State(st): State<AppState>, Path(tab): Path<String>, Json(r
         (req.cols, req.rows),
         None,
         true,
+        saved.elevated,
     )
     .await
     {
-        Ok(()) => Json(CreateSessionResponse {
+        Ok(()) => Ok(CreateSessionResponse {
             tab_id: tab,
             number: info.number,
-        })
-        .into_response(),
+        }),
         Err(err) => {
             // The old process is gone, so the row cannot go back to Running. Only this run's generation counts:
             // a newer restart of the same tab keeps its own state.
             st.0.registry.mark_exited(&tab, generation, -1);
-            err.into_response()
+            Err(err.into())
         }
     }
 }
@@ -1432,6 +1604,22 @@ pub async fn focus(State(st): State<AppState>, Path(tab): Path<String>) -> Respo
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn create_elevated_agent_starts_in_manual() {
+        use SessionMode::{Bypass, Manual, Plan};
+        // An agent that runs as administrator is Manual whatever was asked, and even when nothing was.
+        for requested in [Some(Bypass), Some(Plan), Some(Manual), None] {
+            assert_eq!(launch_mode(true, Some("claude"), requested), Some(Manual));
+        }
+        // A shell has no mode.
+        assert_eq!(launch_mode(true, None, None), None);
+        // Ordinary starts keep what was asked.
+        for requested in [Some(Bypass), Some(Plan), Some(Manual), None] {
+            assert_eq!(launch_mode(false, Some("claude"), requested), requested);
+            assert_eq!(launch_mode(false, None, requested), requested);
+        }
+    }
 
     #[test]
     fn peek_query_defaults_to_thirty_lines() {
@@ -2086,6 +2274,7 @@ mod tests {
         st.registry().reserve(
             tab,
             crate::registry::Relaunch {
+                elevated: false,
                 profile_id: "pwsh".into(),
                 agent: Some("antigravity".into()),
                 cwd: dir.to_string_lossy().into_owned(),

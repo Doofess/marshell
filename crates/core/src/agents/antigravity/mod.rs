@@ -7,8 +7,17 @@ pub mod request;
 pub mod status;
 
 use serde_json::Value;
+use std::path::Path;
 
 pub use super::common::Gate;
+
+/// The setting that skips every prompt, when Antigravity's user settings enable it.
+pub fn skips_all(user_home: &Path) -> Option<String> {
+    let text = std::fs::read_to_string(hooks::settings_path(user_home)).ok()?;
+    let settings: Value = serde_json::from_str(&text).ok()?;
+    (settings.get("dangerouslySkipPermissions")?.as_bool() == Some(true))
+        .then(|| "dangerouslySkipPermissions".to_string())
+}
 
 /// The Antigravity versions whose hook events and status line are recorded in
 /// `tests/fixtures/antigravity/{hooks,statusline}/<version>/`. One entry per minor line: its oldest recorded patch.
@@ -38,6 +47,38 @@ pub fn context_output(note: &str) -> Value {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn skip_setting_requires_a_json_boolean_true() {
+        let user_home = tempfile::tempdir().unwrap();
+        let settings = hooks::settings_path(user_home.path());
+        std::fs::create_dir_all(settings.parent().unwrap()).unwrap();
+        for (text, expected) in [
+            (
+                r#"{"dangerouslySkipPermissions":true}"#,
+                Some("dangerouslySkipPermissions"),
+            ),
+            (r#"{"dangerouslySkipPermissions":false}"#, None),
+            ("{}", None),
+            (r#"{"dangerouslySkipPermissions":"true"}"#, None),
+            (r#"{"dangerouslySkipPermissions":1}"#, None),
+            (r#"{"dangerouslySkipPermissions":null}"#, None),
+            (r#"{"dangerouslySkipPermissions":true"#, None),
+            (r#"{"dangerouslySkipPermissions":true,}"#, None),
+        ] {
+            std::fs::write(&settings, text).unwrap();
+            assert_eq!(skips_all(user_home.path()).as_deref(), expected, "{text}");
+        }
+    }
+
+    #[test]
+    fn a_missing_or_unreadable_settings_file_has_no_skip_setting() {
+        let user_home = tempfile::tempdir().unwrap();
+        assert_eq!(skips_all(user_home.path()), None);
+        // A directory at the file's path is unreadable as settings text on every platform.
+        std::fs::create_dir_all(hooks::settings_path(user_home.path())).unwrap();
+        assert_eq!(skips_all(user_home.path()), None);
+    }
 
     #[test]
     fn the_context_output_is_one_ephemeral_step() {

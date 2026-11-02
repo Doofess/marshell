@@ -120,6 +120,10 @@ describe("SplitView.css: a pane header is a title bar, so the session's name is 
 
 describe("SplitView.css: the restart bar in a pane", () => {
   it("is as tall as the pane header it replaces", () => {
-    expect(rule(".pane > .close-bar")).toContain("block-size: 28px");
+    expect(rule(".pane__bar > .close-bar:not(.close-bar--ack)")).toContain("block-size: 28px");
+  });
+  it("anchors the overlay within its pane while retaining the header slot", () => {
+    expect(rule(".pane__bar")).toContain("position: relative");
+    expect(rule(".pane__bar")).toContain("min-inline-size: 0");
   });
 });

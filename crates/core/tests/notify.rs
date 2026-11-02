@@ -30,6 +30,7 @@ fn core() -> (axum::Router, AppState, Got, tokio::task::JoinHandle<()>) {
         st.registry().reserve(
             tab,
             marshell_core::registry::Relaunch {
+                elevated: false,
                 profile_id: "none".into(),
                 agent: None,
                 cwd: String::new(),

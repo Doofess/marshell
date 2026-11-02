@@ -35,7 +35,11 @@ export function resumeCommand(agent: string | null, profileName: string, mode?: 
   return [base, ...flags].join(" ");
 }
 
-/** The Resume bar's command for a session. The core resumes with the mode it was last started in, so the flags show too. */
-export function sessionResumeCommand(info: Pick<SessionInfo, "agent" | "mode">, profileName: string): string {
-  return resumeCommand(info.agent, profileName, info.mode ?? undefined);
+/**
+ * The Resume bar's command for a session. The core resumes with the mode it was last started in, so the flags show too.
+ * An administrator agent is the exception: Resume uses Manual flags (decision 10); its own setting may still make it Bypass.
+ */
+export function sessionResumeCommand(info: Pick<SessionInfo, "agent" | "mode"> & { elevated?: boolean }, profileName: string): string {
+  const mode = info.elevated === true && info.agent !== null ? "manual" : (info.mode ?? undefined);
+  return resumeCommand(info.agent, profileName, mode);
 }

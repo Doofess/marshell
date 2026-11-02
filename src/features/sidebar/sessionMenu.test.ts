@@ -3,7 +3,7 @@ import { commandById, shortcutLabel } from "../../lib/keymap";
 import type { SessionInfo } from "../../generated/SessionInfo";
 import { menuFacts } from "../sessions/sessionMenuRun";
 import { FIXTURES } from "./fixtures";
-import { modeMenuItems, sessionMenuItems, type SessionMenuFacts } from "./sessionMenu";
+import { modeMenuItems, resumeLabel, sessionMenuItems, type SessionMenuFacts } from "./sessionMenu";
 
 const all: SessionMenuFacts = { agent: true, modeChangeable: true, resumable: true, task: true, inShownPane: false, paneAvailable: true, pausable: true, paused: false, muted: false, bookmarkable: true, setupOutput: false };
 const none: SessionMenuFacts = { agent: false, modeChangeable: true, resumable: false, task: false, inShownPane: false, paneAvailable: false, pausable: false, paused: false, muted: false, bookmarkable: false, setupOutput: false };
@@ -162,5 +162,25 @@ describe("Open setup output", () => {
     const item = sessionMenuItems({ ...none, setupOutput: true }, "windows").find((i) => "id" in i && i.id === "setup-output");
     expect(item).toMatchObject({ label: "Open setup output" });
     expect(ids({ ...none, setupOutput: true })).toContain("setup-output");
+  });
+});
+
+describe("a session running as administrator", () => {
+  const find = (facts: SessionMenuFacts, id: string) => sessionMenuItems(facts, "windows").find((i) => "id" in i && i.id === id);
+  it("an_ended_elevated_row_offers_reopen_as_administrator: in the row menu and the palette", () => {
+    expect(find({ ...all, elevated: true }, "resume")).toMatchObject({ label: "Reopen as administrator" });
+    expect(find(all, "resume")).toMatchObject({ label: "Resume" });
+    expect(resumeLabel(true)).toBe("Reopen as administrator");
+    expect(resumeLabel(false)).toBeUndefined();
+  });
+  it("pause_is_unavailable_on_an_elevated_row: listed, disabled, with the reason", () => {
+    const facts = { ...all, pausable: false, pauseUnavailable: true };
+    expect(find(facts, "pause")).toEqual({ id: "pause", label: "Pause", disabled: "Pause isn't available for a session running as administrator." });
+    expect(find(all, "pause")).not.toHaveProperty("disabled");
+  });
+  it("the window's facts say it from the session", () => {
+    const info = { tab_id: "a", agent: "claude", state: { kind: "running" }, paused: false, elevated: true, mode: "manual", profile_id: "pwsh" } as SessionInfo;
+    const facts = menuFacts("a", { infos: [info], profiles: [], rows: [], panes: [], shown: 1, fit: 4 });
+    expect(facts).toMatchObject({ pausable: false, pauseUnavailable: true, elevated: true });
   });
 });

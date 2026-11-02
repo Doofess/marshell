@@ -24,11 +24,11 @@ describe("sessions", () => {
 
     const create = respond({ tab_id: "t1", number: 1 });
     vi.stubGlobal("fetch", create);
-    await expect(sessions.create(endpoint, { cols: 80, rows: 24 })).resolves.toEqual({ tab_id: "t1", number: 1 });
+    await expect(sessions.create(endpoint, { cols: 80, rows: 24, elevated: false })).resolves.toEqual({ tab_id: "t1", number: 1 });
     expect(call(create)).toMatchObject({
       url: "http://127.0.0.1:9/v1/sessions",
       method: "POST",
-      body: { cols: 80, rows: 24 },
+      body: { cols: 80, rows: 24, elevated: false },
     });
   });
 

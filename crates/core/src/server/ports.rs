@@ -175,6 +175,7 @@ mod tests {
         reg.reserve(
             "a",
             Relaunch {
+                elevated: false,
                 profile_id: "pwsh".into(),
                 agent: None,
                 cwd: "C:/work".into(),

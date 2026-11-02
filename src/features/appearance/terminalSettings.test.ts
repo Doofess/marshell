@@ -18,7 +18,7 @@ describe("terminalThemeOf", () => {
 });
 
 describe("withColorScheme", () => {
-  const req = { cols: 80, rows: 24, profile_id: "pwsh" };
+  const req = { cols: 80, rows: 24, elevated: false, profile_id: "pwsh" };
   const profile = (terminal_theme?: string) => ({ id: "pwsh", name: "PowerShell", command: ["pwsh"], family: "power_shell" as const, cwd: null, env: [], shell_integration: true, detected: false, terminal_theme });
   it("tells the core the scheme the session's terminal will show", () => {
     expect(withColorScheme(req, [profile("light")], DEFAULT_APPEARANCE, "dark").color_scheme).toBe("light");

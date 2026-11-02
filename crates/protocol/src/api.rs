@@ -56,6 +56,9 @@ pub struct CreateSessionRequest {
     pub cwd: Option<String>,
     pub cols: u16,
     pub rows: u16,
+    /// True when the session runs as administrator through the elevated helper. Old JSON reads as false.
+    #[serde(default)]
+    pub elevated: bool,
     /// The profile this session was launched from. Absent means the default profile.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
@@ -200,6 +203,9 @@ pub struct SessionInfo {
     /// True while the user has muted this session's notifications.
     #[serde(default)]
     pub muted: bool,
+    /// True when the session runs as administrator through the elevated helper. Old JSON reads as false.
+    #[serde(default)]
+    pub elevated: bool,
     /// A terminal program asked for attention (OSC 9, OSC 777 or a bell) in a session without hook
     /// status. Cleared when the person types into the session or looks at it.
     #[serde(default)]
@@ -392,6 +398,9 @@ pub struct SavedTab {
     /// Whether the user muted this session's notifications. A layout.json from before this field existed reads as false.
     #[serde(default)]
     pub muted: bool,
+    /// True when the session runs as administrator through the elevated helper. Old JSON reads as false.
+    #[serde(default)]
+    pub elevated: bool,
     /// The preset it started with. A layout.json from before this field existed reads as None. Never a key:
     /// a restart reads the key again.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1292,6 +1301,14 @@ mod tests {
     }
 
     #[test]
+    fn elevated_defaults_to_false_in_old_json() {
+        let tab = r#"{"tab_id":"a","number":1,"name":"A","agent":null,"profile_id":"cmd","cwd":"C:/w"}"#;
+        assert!(!serde_json::from_str::<SavedTab>(tab).unwrap().elevated);
+        let req = r#"{"cols":80,"rows":24}"#;
+        assert!(!serde_json::from_str::<CreateSessionRequest>(req).unwrap().elevated);
+    }
+
+    #[test]
     fn saved_tab_without_muted_deserializes_false() {
         let json = r#"{"tab_id":"a","number":1,"name":"A","agent":null,"profile_id":"cmd","cwd":"C:/w"}"#;
         assert!(!serde_json::from_str::<SavedTab>(json).unwrap().muted);
@@ -1316,6 +1333,7 @@ mod tests {
             activity: None,
             status_note: None,
             muted: true,
+            elevated: false,
             attention: None,
             stuck: None,
             preset: None,

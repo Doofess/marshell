@@ -33,3 +33,10 @@ the helper process to appear. The user answered the UAC prompts.
 - **Fallback:** if these can't be made safe, open elevated sessions in a separate elevated Marshell window, which is Windows Terminal's approach.
 
 Decision: [x] helper approach viable for phase 6, with the requirements above  [ ] use separate elevated window
+
+## Shipped in 6j2
+
+- **Named pipes, not a token.** The core creates `\\.\pipe\<base>-down` and `-up` with `FILE_FLAG_FIRST_PIPE_INSTANCE` and `PIPE_REJECT_REMOTE_CLIENTS`. Each side checks the other's PID: the core checks `GetNamedPipeClientProcessId` against the pid `ShellExecuteExW` returned, and the helper checks `GetNamedPipeServerProcessId` against `--core-pid`. Nothing secret is on a command line or on disk, which retires finding 3 and the token threat notes.
+- **Decline:** observed in the 6j2 live check. "Administrator rights were declined. Nothing was started." appeared and no helper was left (`docs/research/2026-11-01-elevated-host-live-check.md`). `cancelling_the_uac_prompt_is_a_decline` pins the mapping of `ERROR_CANCELLED`.
+- **Wrong peer:** `a_client_that_is_not_the_launched_pid_is_refused`, `a_second_client_cannot_open_the_pipe` and `a_pipe_name_already_taken_fails_the_create` cover it.
+- **Lifetime (finding 2):** the helper runs in a kill-on-close job. The program it starts gets a new kill-on-close job of its own, because a Store PowerShell in a ConPTY from the bundled OpenConsole does not join its creator's job (live check finding 1).

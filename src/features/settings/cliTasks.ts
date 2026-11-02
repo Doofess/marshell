@@ -10,7 +10,7 @@ export type PendingTask = { tabId: string; agent: CompanyAgent; kind: CliTaskKin
 
 /** The request for a sign-in or update tab: the core builds the command and picks the folder, so only the size and the task are set. */
 export function cliTaskRequest(agent: CompanyAgent, kind: CliTaskKind, size: { cols: number; rows: number }): CreateSessionRequest {
-  return { cols: size.cols, rows: size.rows, cli_task: { agent, kind } };
+  return { cols: size.cols, rows: size.rows, elevated: false, cli_task: { agent, kind } };
 }
 
 /** How many sessions are running the CLI: started as it, or a shell with it in the foreground. */

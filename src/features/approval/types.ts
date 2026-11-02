@@ -32,6 +32,8 @@ export type ApprovalRequest = {
   /** The exact rule "Always allow" would add, e.g. "Bash(npm test:*)". Absent when no rule can be offered. */
   alwaysRule?: string;
   state: CardState;
+  /** The session runs as administrator: the card shows the shield and offers no "Always allow". */
+  elevated?: boolean;
   /** The session's tab, so the card can jump to it and the badge can tell muted sessions. */
   tab: string;
   /** A session needing you with no held request (the CLI asks in its own terminal): a one-liner that jumps to the session, never the full card. */

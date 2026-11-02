@@ -20,6 +20,16 @@ fn log_lines(home: &std::path::Path) -> Vec<String> {
 }
 
 #[test]
+fn the_test_endpoint_is_one_an_elevated_bridge_answers() {
+    // CI's Windows runners are elevated, so every test here takes the elevated bridge's lookup there.
+    let home = tempfile::tempdir().unwrap();
+    write_endpoint(home.path(), 4242, "t");
+    let env = env_of(home.path(), &[]);
+    let found = marshell_hook::endpoint::discover_elevated(&env, &marshell_hook::ancestor_pids());
+    assert_eq!(found.map(|(_, port, _)| port), Some(4242));
+}
+
+#[test]
 fn event_posts_stdin_with_headers_and_prints_nothing() {
     let home = tempfile::tempdir().unwrap();
     let fake = serve(Reply::new(204, ""));
@@ -120,6 +130,13 @@ fn permission_prints_an_allow_or_a_deny_verbatim() {
         )),
     ] {
         let (out, log) = permission_answer(&body);
+        // A bridge that runs as administrator (as on CI's Windows runners) passes on no saved rules
+        // (slice 6j2 decision 12), so it prints nothing for an answer that carries them.
+        if marshell_hook::elevation::is_elevated() && body.contains("updatedPermissions") {
+            assert!(out.is_empty(), "printed {body}");
+            assert_eq!(log.len(), 1, "{body}: {log:?}");
+            continue;
+        }
         assert_eq!(String::from_utf8(out).unwrap(), body);
         assert!(log.is_empty(), "{log:?}");
     }

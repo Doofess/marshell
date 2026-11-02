@@ -129,6 +129,7 @@ mod tests {
                 activity: None,
                 status_note: None,
                 muted: false,
+                elevated: false,
                 attention: None,
                 stuck: None,
                 live: Some(LiveStatus {
@@ -233,6 +234,7 @@ mod tests {
         state.registry().reserve(
             "t1",
             crate::registry::Relaunch {
+                elevated: false,
                 profile_id: "pwsh".into(),
                 agent: None,
                 cwd: "C:/work".into(),

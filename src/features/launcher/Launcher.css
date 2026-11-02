@@ -446,7 +446,36 @@
   }
 }
 
+/* Why a chip is locked (Administrator off Windows, Mode while Administrator is on): a line under the sentence, read with the chip. */
+.launcher__reason {
+  margin: 0;
+  color: var(--text-2);
+  font-size: var(--text-12);
+  text-wrap: pretty;
+}
+.launcher__chip[aria-disabled="true"] {
+  color: var(--text-2);
+  cursor: default;
+}
+.launcher__shield {
+  display: inline-flex;
+  color: var(--caution);
+}
+
 @media (forced-colors: active) {
+  .launcher__chip[aria-disabled="true"] {
+    color: GrayText;
+  }
+  .launcher__box {
+    outline: 1px solid CanvasText;
+  }
+  .launcher__box[data-checked] {
+    forced-color-adjust: none;
+    background: Highlight;
+  }
+  .launcher__shield {
+    color: CanvasText;
+  }
   .launcher__sheet,
   .launcher__chip,
   .launcher__input,

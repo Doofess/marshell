@@ -721,6 +721,7 @@ mod tests {
             activity: None,
             status_note: None,
             muted: false,
+            elevated: false,
             attention: None,
             stuck: None,
             preset: None,
