@@ -136,6 +136,142 @@ fn create_body(profile_id: &str) -> serde_json::Value {
     serde_json::json!({ "cols": 80, "rows": 24, "profile_id": profile_id, "elevated": true })
 }
 
+#[cfg(windows)]
+const OLD_CODEX_ADMIN: &str = "Codex 0.162.9 can't run as administrator. Marshell needs Codex 0.163.0 or newer to keep an administrator Codex apart from your other Codex sessions. Update Codex, then try again.";
+#[cfg(windows)]
+const UNREADABLE_CODEX_ADMIN: &str =
+    "Marshell couldn't read this Codex's version, so it can't start it as administrator.";
+
+/// Never starts the real Codex; counts starts and substitutes the test child.
+#[cfg(windows)]
+fn codex_spawner(calls: Arc<AtomicUsize>) -> ElevatedSpawner {
+    Arc::new(move |id, mut run| {
+        calls.fetch_add(1, Ordering::SeqCst);
+        run.argv = spec("sleep").argv;
+        Session::spawn_marked_elevated_for_tests(id, run)
+    })
+}
+
+#[cfg(windows)]
+async fn trusted_codex_create(version: Option<&str>, refusal: Option<&str>) {
+    let home = tempfile::tempdir().unwrap();
+    let calls = Arc::new(AtomicUsize::new(0));
+    let st = state_in(home.path())
+        .with_codex_version(version.map(str::to_string))
+        .with_agent_check(|_| true)
+        .with_elevated_spawner(codex_spawner(calls.clone()));
+    let app = router(st.clone());
+    let mut body = create_body("sleeper");
+    body["agent"] = serde_json::json!("codex");
+    let result = trusted_create(&st, body).await;
+    if let Some(reason) = refusal {
+        assert_eq!(result.unwrap_err(), reason);
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+        assert_eq!(st.live_session_count(), 0);
+        assert!(rows(&app).await.is_empty());
+    } else {
+        let tab = result.unwrap().tab_id;
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        assert!(st.session(&tab).unwrap().is_elevated());
+        st.remove_session(&tab).unwrap().force_kill();
+    }
+}
+
+#[cfg(windows)]
+#[tokio::test]
+async fn trusted_create_elevated_codex_refuses_an_old_version_without_starting() {
+    trusted_codex_create(Some("0.162.9"), Some(OLD_CODEX_ADMIN)).await;
+}
+
+#[cfg(windows)]
+#[tokio::test]
+async fn trusted_create_elevated_codex_refuses_an_unreadable_version_without_starting() {
+    for version in [None, Some("garbage")] {
+        trusted_codex_create(version, Some(UNREADABLE_CODEX_ADMIN)).await;
+    }
+}
+
+#[cfg(windows)]
+#[tokio::test]
+async fn trusted_create_elevated_codex_starts_at_the_no_daemon_version_or_newer() {
+    for version in ["0.163.0", "0.170.2"] {
+        trusted_codex_create(Some(version), None).await;
+    }
+}
+
+#[cfg(windows)]
+async fn trusted_codex_start_again(action: &str) {
+    use marshell_protocol::api::{RestartRequest, SessionMode};
+    for (version, reason) in [(Some("0.162.9"), OLD_CODEX_ADMIN), (None, UNREADABLE_CODEX_ADMIN)] {
+        let home = tempfile::tempdir().unwrap();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let st = state_in(home.path())
+            .with_codex_version(version.map(str::to_string))
+            .with_agent_check(|_| true)
+            .with_elevated_spawner(codex_spawner(calls.clone()));
+        st.registry().reserve(
+            "tc",
+            Relaunch {
+                profile_id: "sleeper".into(),
+                agent: Some("codex".into()),
+                cwd: String::new(),
+                mode: Some(SessionMode::Manual),
+                name: "Codex".into(),
+                preset: None,
+                elevated: true,
+            },
+        );
+        let session = Session::spawn_marked_elevated_for_tests("tc".into(), spec("sleep")).unwrap();
+        st.insert_session(session.clone());
+        let trusted = st.trusted_for_tests();
+        if action == "restart" {
+            let restart = serde_json::from_value::<RestartRequest>(
+                serde_json::json!({ "mode": "bypass", "cols": 80, "rows": 24 }),
+            )
+            .unwrap();
+            assert_eq!(trusted.restart("tc", restart).await.unwrap_err(), reason);
+            assert!(Arc::ptr_eq(&st.session("tc").unwrap(), &session));
+            assert_eq!(st.registry().row("tc").unwrap().mode, Some(SessionMode::Manual));
+            st.remove_session("tc").unwrap().force_kill();
+        } else {
+            st.remove_session("tc").unwrap().force_kill();
+            st.registry()
+                .mark_exited("tc", st.registry().generation("tc").unwrap(), 0);
+            if action == "resume" {
+                assert_eq!(trusted.resume("tc", 80, 24).await.unwrap_err(), reason);
+                assert!(matches!(
+                    st.registry().row("tc").unwrap().state,
+                    marshell_protocol::api::SessionState::Exited { .. }
+                ));
+            } else {
+                st.registry().close("tc");
+                assert_eq!(trusted.reopen(Some("tc".into())).await.unwrap_err(), reason);
+                assert!(st.registry().peek_closed(Some("tc")).is_some());
+            }
+            assert_eq!(st.live_session_count(), 0);
+        }
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+    }
+}
+
+#[cfg(windows)]
+#[tokio::test]
+async fn trusted_elevated_codex_restart_refuses_before_changing_the_row() {
+    trusted_codex_start_again("restart").await;
+}
+
+#[cfg(windows)]
+#[tokio::test]
+async fn trusted_elevated_codex_resume_refuses_before_changing_the_row() {
+    trusted_codex_start_again("resume").await;
+}
+
+#[cfg(windows)]
+#[tokio::test]
+async fn trusted_elevated_codex_reopen_refuses_before_changing_the_row() {
+    trusted_codex_start_again("reopen").await;
+}
+
 /// A Running elevated row with a (locally run, marked) session behind it.
 fn elevated_row(st: &AppState, tab: &str, mode: &str) -> Arc<Session> {
     st.registry().reserve(

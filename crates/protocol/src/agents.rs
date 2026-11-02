@@ -86,6 +86,10 @@ pub struct AgentSetup {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub skips_all: Option<String>,
+    /// Why this agent cannot start as administrator; absent when the adapter permits it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub admin_unavailable: Option<String>,
     /// The file the agent's hooks live in when that is not `settings_path` (Antigravity's `hooks.json`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]

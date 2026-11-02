@@ -585,6 +585,7 @@ pub(crate) fn setup_of(st: &AppState) -> Result<AgentSetup, Fail> {
 
     let mut setup = AgentSetup {
         agent: AGENT.to_string(),
+        admin_unavailable: None,
         found: exe.is_some(),
         version,
         exe_path: exe.map(|p| p.to_string_lossy().into_owned()),
@@ -657,6 +658,7 @@ pub(crate) fn codex_setup_of(st: &AppState) -> Result<AgentSetup, Fail> {
 
     let mut setup = AgentSetup {
         agent: CODEX.to_string(),
+        admin_unavailable: crate::agents::codex::admin_unavailable(version.as_deref()),
         found: exe.is_some(),
         version,
         exe_path: exe.map(|p| p.to_string_lossy().into_owned()),
@@ -725,6 +727,7 @@ pub(crate) fn agy_setup_of(st: &AppState) -> Result<AgentSetup, Fail> {
 
     let mut setup = AgentSetup {
         agent: ANTIGRAVITY.to_string(),
+        admin_unavailable: None,
         found: exe.is_some(),
         version,
         exe_path: exe.map(|p| p.to_string_lossy().into_owned()),

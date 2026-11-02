@@ -157,7 +157,7 @@ pub(super) async fn resolve(
     mode: Option<SessionMode>,
     preset: Option<&str>,
 ) -> Result<Resolved, ApiError> {
-    resolve_with(st, profile_id, agent, prompt, resume, mode, preset, true).await
+    resolve_with(st, profile_id, agent, prompt, resume, mode, preset, true, false).await
 }
 
 /// `resolve`, where `daemonless` says whether Codex gets `--no-daemon`: it is for the sessions Marshell starts,
@@ -172,11 +172,12 @@ pub(super) async fn resolve_with(
     mode: Option<SessionMode>,
     preset: Option<&str>,
     daemonless: bool,
+    elevated: bool,
 ) -> Result<Resolved, ApiError> {
     if let Some(preset) = preset {
         check_preset(agent, preset)?;
     }
-    let no_daemon = daemonless && agent == Some("codex") && codex_takes_no_daemon(st).await;
+    let no_daemon = daemonless && agent == Some("codex") && codex_takes_no_daemon(st, elevated).await?;
     let agents = st.agents();
     // A manifest agent has a mode only where its manifest maps one.
     if let (Some(m), Some(mode)) = (agent.and_then(|a| agents.manifest(a)), mode)
@@ -287,14 +288,19 @@ async fn program_command(
 
 /// Whether the Codex that sessions run accepts `--no-daemon` (slice 6a decision 14). A cold version
 /// cache runs `codex --version`, so this goes through `spawn_blocking`.
-async fn codex_takes_no_daemon(st: &AppState) -> bool {
+async fn codex_takes_no_daemon(st: &AppState, elevated: bool) -> Result<bool, ApiError> {
     let asker = st.clone();
-    tokio::task::spawn_blocking(move || {
+    let version = tokio::task::spawn_blocking(move || {
         let exe = asker.agent_exe_of("codex");
-        supports_no_daemon(asker.codex_version(exe.as_deref()).as_deref())
+        asker.codex_version(exe.as_deref())
     })
     .await
-    .unwrap_or(false)
+    .ok()
+    .flatten();
+    if elevated && let Some(reason) = crate::agents::codex::admin_unavailable(version.as_deref()) {
+        return Err((StatusCode::CONFLICT, reason));
+    }
+    Ok(supports_no_daemon(version.as_deref()))
 }
 
 fn custom(argv: Vec<String>) -> Resolved {
@@ -940,7 +946,7 @@ pub(super) async fn create_as(
             (custom(argv), None)
         }
         None => (
-            resolve(
+            resolve_with(
                 st,
                 req.profile_id.as_deref(),
                 req.agent.as_deref(),
@@ -948,6 +954,8 @@ pub(super) async fn create_as(
                 None,
                 mode,
                 req.preset.as_deref(),
+                true,
+                req.elevated,
             )
             .await?,
             req.agent,
@@ -1170,7 +1178,7 @@ pub(super) async fn reopen_as(
     // An administrator agent always comes back in Manual, whatever mode it was closed in (decision 2).
     let mode = launch_mode(saved.elevated, saved.agent.as_deref(), saved.mode);
     // A fresh session from the saved profile, agent, folder and name (not the old row).
-    let run = resolve(
+    let run = resolve_with(
         st,
         Some(&saved.profile_id),
         saved.agent.as_deref(),
@@ -1178,6 +1186,8 @@ pub(super) async fn reopen_as(
         None,
         mode,
         saved.preset.as_deref(),
+        true,
+        saved.elevated,
     )
     .await?;
     // The window resizes the terminal as soon as it attaches.
@@ -1387,7 +1397,7 @@ pub(super) async fn resume_as(
     let session = resume_session(st, &tab, info.agent.as_deref()).map_err(Refusal::reason)?;
     // An administrator agent comes back in Manual; Bypass is only chosen on the restart bar (decision 2).
     let mode = launch_mode(info.elevated, info.agent.as_deref(), info.mode);
-    let run = resolve(
+    let run = resolve_with(
         st,
         Some(&info.profile_id),
         info.agent.as_deref(),
@@ -1395,6 +1405,8 @@ pub(super) async fn resume_as(
         session.target(),
         mode,
         info.preset.as_deref(),
+        true,
+        info.elevated,
     )
     .await?;
     check_agent_installed(st, &run, info.agent.as_deref()).map_err(|(_, message)| Refusal::reason(message))?;
@@ -1516,7 +1528,7 @@ pub(super) async fn restart_as(
         return Err(Refusal::reason(reason));
     }
     let session = resume_session(st, &tab, info.agent.as_deref()).map_err(Refusal::reason)?;
-    let run = resolve(
+    let run = resolve_with(
         st,
         Some(&info.profile_id),
         info.agent.as_deref(),
@@ -1524,6 +1536,8 @@ pub(super) async fn restart_as(
         session.target(),
         Some(req.mode),
         info.preset.as_deref(),
+        true,
+        info.elevated,
     )
     .await?;
     check_agent_installed(st, &run, info.agent.as_deref()).map_err(|(_, message)| Refusal::reason(message))?;

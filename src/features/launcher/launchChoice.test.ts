@@ -8,6 +8,7 @@ import {
   MODES,
   PACES,
   applyRemembered,
+  adminChip,
   isAgentProgram,
   launcherSentence,
   programById,
@@ -123,6 +124,13 @@ describe("remembered choices", () => {
 });
 
 describe("Administrator is launcher state only", () => {
+  it("turns a requested Administrator chip off and disables toggling when the agent refuses", () => {
+    const reason = "Codex needs an update.";
+    expect(adminChip(true, "windows", reason)).toMatchObject({ enabled: false, on: false, reason });
+    expect(adminChip(false, "windows", reason)).toMatchObject({ enabled: false, on: false, reason });
+    expect(adminChip(true, "windows")).toMatchObject({ enabled: true, on: true });
+    expect(adminChip(true, "linux", reason).reason).toBe("Administrator: available on Windows only for now.");
+  });
   it("admin_is_never_remembered_for_the_project", () => {
     // Nothing in the choice, the default or the remembered shape can carry it.
     expect(base).not.toHaveProperty("elevated");

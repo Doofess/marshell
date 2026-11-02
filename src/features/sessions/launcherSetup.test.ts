@@ -7,6 +7,15 @@ const detected = (skipsAll = false): Detection => ({ cli: "antigravity", install
 const programs = [...LAUNCH_PROGRAMS, { ...LAUNCH_PROGRAMS[2]!, id: "preset:agy", agent: "antigravity" }];
 
 describe("launcher setup read state", () => {
+  it("carries an administrator refusal to the agent and tool presets that use it", () => {
+    const reason = "Marshell couldn't read this Codex's version, so it can't start it as administrator.";
+    const codex: Detection = { cli: "codex", installed: true, configPath: "config.toml", configState: "ok", adminUnavailable: reason };
+    const choices = [...programs, { ...LAUNCH_PROGRAMS[1]!, id: "preset:codex", agent: "codex", group: "Tools" as const }];
+    const result = launcherSetup(choices, false, [codex]);
+    expect(result.filter((p) => p.adminUnavailable).map((p) => p.id)).toEqual(["codex", "preset:codex"]);
+    expect(result.find((p) => p.id === "codex")?.adminUnavailable).toBe(reason);
+    expect(launcherSetup(choices, true, [codex]).filter((p) => p.adminUnavailable).map((p) => p.id)).toEqual(["codex", "preset:codex"]);
+  });
   it("only holds Antigravity and its presets while settings are pending", () => {
     const result = launcherSetup(programs, false);
     expect(result.filter((p) => p.adminSetupPending).map((p) => p.id)).toEqual(["antigravity", "preset:agy"]);

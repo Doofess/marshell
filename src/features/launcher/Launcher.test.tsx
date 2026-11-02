@@ -11,6 +11,21 @@ const view = (p: Partial<LauncherView> = {}): LauncherView => ({ choice: DEFAULT
 const html = (v: LauncherView = view()) => renderToStaticMarkup(<Launcher view={v} />);
 const count = (s: string, re: RegExp) => (s.match(re) ?? []).length;
 
+it("disables Administrator with the selected agent's reason, including a palette-requested start", () => {
+  const reason = "Codex 0.162.0 can't run as administrator. Marshell needs Codex 0.163.0 or newer to keep an administrator Codex apart from your other Codex sessions. Update Codex, then try again.";
+  const programs = LAUNCH_PROGRAMS.map((p) => p.id === "codex" ? { ...p, adminUnavailable: reason } : p);
+  for (const elevated of [false, true]) {
+    const h = renderToStaticMarkup(<Launcher programs={programs} view={view({ choice: { ...DEFAULT_CHOICE, program: "codex" }, elevated })} />);
+    expect(h).toMatch(/aria-checked="false" aria-disabled="true" aria-describedby="([^"]+)-admin-off"/);
+    expect(h).toContain(reason.replaceAll("'", "&#x27;"));
+    expect(h).not.toContain('data-kind="elevated"');
+    expect(h).not.toContain("as administrator</p>");
+  }
+  const other = renderToStaticMarkup(<Launcher programs={programs} view={view({ elevated: true })} />);
+  expect(other).toContain('aria-checked="true" aria-keyshortcuts="Alt+A"');
+  expect(other).not.toContain(reason.replaceAll("'", "&#x27;"));
+});
+
 describe("Launcher: empty", () => {
   const h = html();
   it("is a modal dialog with an accessible sentence", () => {

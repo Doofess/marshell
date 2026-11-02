@@ -4,7 +4,7 @@ import type { PresetField } from "../../generated/PresetField";
 import { MODES, effectiveMode, offeredMode } from "../modes/sessionModes";
 import type { Mode } from "../sidebar/types";
 import { modeLabel } from "../window/SessionHeader";
-import { WAITING_FOR_ADMIN } from "../../lib/adminCopy";
+import { ADMIN_OFF_WINDOWS, WAITING_FOR_ADMIN } from "../../lib/adminCopy";
 import type { Os } from "../../lib/keymap";
 import type { Project } from "./filter";
 
@@ -50,6 +50,8 @@ export type LaunchProgram = {
   problem?: string;
   /** The agent's own setting skips every prompt. */
   skipsAll?: { setting: string };
+  /** The adapter's reason this program cannot start as administrator. */
+  adminUnavailable?: string;
   /** Antigravity's settings have not answered yet, so its administrator start must wait. */
   adminSetupPending?: boolean;
   /** Antigravity's settings could not be read, so an administrator start needs the Bypass confirmation. */
@@ -138,10 +140,11 @@ export function rememberedNote(projectName: string, r: Remembered | undefined): 
 }
 
 /**
- * The Administrator chip is launcher state: it is not in `LauncherChoice` and never remembered. It is on only where it can work (Windows);
+ * The Administrator chip is launcher state: it is not in `LauncherChoice` and never remembered. It is on only where the OS and adapter allow it;
  * an agent that starts as administrator starts in Manual, so its Mode chip shows that and is locked.
  */
-export function adminChip(elevated: boolean | undefined, os: Os): { enabled: boolean; on: boolean } {
-  const enabled = os === "windows";
-  return { enabled, on: enabled && elevated === true };
+export function adminChip(elevated: boolean | undefined, os: Os, unavailable?: string): { enabled: boolean; on: boolean; reason?: string } {
+  const reason = os === "windows" ? unavailable : ADMIN_OFF_WINDOWS;
+  const enabled = reason === undefined;
+  return { enabled, on: enabled && elevated === true, ...(reason === undefined ? {} : { reason }) };
 }

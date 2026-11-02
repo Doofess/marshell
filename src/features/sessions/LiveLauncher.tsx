@@ -79,7 +79,6 @@ export function LiveLauncher({ detections, detectionFailed, endpoint, initialEle
   // Launcher state only: not in the choice, not remembered, gone when the launcher closes.
   const [bypassAck, setBypassAck] = useState<string | null>(null);
   const [elevatedWanted, setElevatedWanted] = useState(initialElevated);
-  const elevated = adminChip(elevatedWanted, os).on;
   // Once the user picks a program here, the remembered one no longer applies.
   const [programPicked, setProgramPicked] = useState(false);
   const [modePicked, setModePicked] = useState(false);
@@ -156,6 +155,11 @@ export function LiveLauncher({ detections, detectionFailed, endpoint, initialEle
   const projectId = projects.some((p) => p.id === choice.projectId) ? choice.projectId : (projects[0]?.id ?? "");
   // The program last started in this folder, unless the user has picked one themselves; an agent that is not listed (not installed) is replaced by the first that is.
   const program = listedProgram(programPicked ? choice.program : (preselect(loaded?.layout ?? null, projectId, programs) ?? choice.program), programs);
+  const admin = adminChip(elevatedWanted, os, programById(program, programs)?.adminUnavailable);
+  const elevated = admin.on;
+  useEffect(() => {
+    if (!admin.enabled) setElevatedWanted(false);
+  }, [admin.enabled]);
   // The worktree chip is offered only in a folder in git: leaving for another folder must not keep a flag the user can no longer see.
   const wantedMode = modePicked ? choice.mode : (preselectMode(loaded?.layout ?? null, projectId) ?? choice.mode);
   // Only a mode the agent offers is shown or sent; one it doesn't map falls back to the first it does.

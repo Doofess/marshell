@@ -29,9 +29,28 @@ const NO_DAEMON_SINCE: (u32, u32, u32) = (0, 163, 0);
 /// Whether Marshell starts this Codex with `--no-daemon`: its version is 0.163.0 or newer. An older
 /// version, a pre-release of 0.163.0 itself, or one that can't be read gets no flag.
 pub fn supports_no_daemon(version: Option<&str>) -> bool {
-    let Some(version) = version else {
+    let Some((triple, prerelease)) = no_daemon_version(version) else {
         return false;
     };
+    triple > NO_DAEMON_SINCE || (triple == NO_DAEMON_SINCE && !prerelease)
+}
+
+/// Why this Codex cannot start as administrator: without `--no-daemon` it may attach to an
+/// ordinary-user daemon, losing both elevation and the session's hook identity.
+pub fn admin_unavailable(version: Option<&str>) -> Option<String> {
+    if supports_no_daemon(version) {
+        return None;
+    }
+    match version.filter(|_| no_daemon_version(version).is_some()) {
+        Some(version) => Some(format!(
+            "Codex {version} can't run as administrator. Marshell needs Codex 0.163.0 or newer to keep an administrator Codex apart from your other Codex sessions. Update Codex, then try again."
+        )),
+        None => Some("Marshell couldn't read this Codex's version, so it can't start it as administrator.".into()),
+    }
+}
+
+fn no_daemon_version(version: Option<&str>) -> Option<((u32, u32, u32), bool)> {
+    let version = version?;
     let (core, prerelease) = match version.find(['-', '+']) {
         Some(at) => (&version[..at], version[at..].starts_with('-')),
         None => (version, false),
@@ -40,10 +59,9 @@ pub fn supports_no_daemon(version: Option<&str>) -> bool {
     let (Some(Some(major)), Some(Some(minor)), Some(Some(patch)), None) =
         (parts.next(), parts.next(), parts.next(), parts.next())
     else {
-        return false;
+        return None;
     };
-    let triple = (major, minor, patch);
-    triple > NO_DAEMON_SINCE || (triple == NO_DAEMON_SINCE && !prerelease)
+    Some(((major, minor, patch), prerelease))
 }
 
 #[cfg(test)]

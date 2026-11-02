@@ -17,6 +17,8 @@ export type Detection = {
   hooks?: { path: string; exists: boolean };
   /** A setting in `configPath` that skips every permission prompt (Antigravity's `dangerouslySkipPermissions: true`); while it is on, no mode below Bypass can work. */
   skipsAll?: { setting: string };
+  /** Why this agent cannot start as administrator. Unset means there is no adapter restriction. */
+  adminUnavailable?: string;
   /** The user has a status line of their own. `false` means there is none, so a status line is added rather than chained; unset means unknown. */
   hasOwnStatusLine?: boolean;
   /** The state of the marshell skill file and where it goes. Unset means unknown, which offers nothing. */

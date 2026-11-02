@@ -1,7 +1,7 @@
 import { useEffect, useId, useRef, type KeyboardEvent, type ReactNode } from "react";
 import { AgentMark } from "../../components/AgentMark/AgentMark";
 import { AuxGlyph } from "../../components/StatusGlyph/StatusGlyph";
-import { ADMIN_LABEL, ADMIN_MODE_REASON, ADMIN_OFF_WINDOWS, BYPASS_ACK_TEXT, WAITING_FOR_ADMIN } from "../../lib/adminCopy";
+import { ADMIN_LABEL, ADMIN_MODE_REASON, BYPASS_ACK_TEXT, WAITING_FOR_ADMIN } from "../../lib/adminCopy";
 import type { Os } from "../../lib/keymap";
 import { tabbableIn } from "../../lib/focusGuard";
 import { usePopupFocus } from "../../lib/usePopupFocus";
@@ -148,7 +148,7 @@ export function Launcher({ view, onChange, onQuery, onPick, onUsePath, onBrowse,
   const program = programById(choice.program, programs) ?? programs[0] ?? LAUNCH_PROGRAMS[0]!;
   // The modes this agent offers; none means no mode chip. The chosen mode shown is one of them.
   const modes = program.modes ?? MODES;
-  const admin = adminChip(view.elevated, os);
+  const admin = adminChip(view.elevated, os, program.adminUnavailable);
   // Administrator starts request Manual and lock the chip; an agent's own setting may still make that Bypass.
   const modeLocked = admin.on && agentRun;
   const pickedMode = modeLocked ? "manual" : (offeredMode(program.modes, choice.mode) ?? choice.mode);
@@ -446,7 +446,7 @@ export function Launcher({ view, onChange, onQuery, onPick, onUsePath, onBrowse,
 
             {!admin.enabled && (
               <p className="launcher__reason" id={id("admin-off")}>
-                {ADMIN_OFF_WINDOWS}
+                {admin.reason}
               </p>
             )}
             {modeLocked && (

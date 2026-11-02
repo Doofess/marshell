@@ -99,6 +99,7 @@ export function toDetection(s: AgentSetup): Detection {
     skillPath: s.skill_path,
     skillProblem: s.skill_problem,
     ...(s.skips_all === undefined ? {} : { skipsAll: { setting: s.skips_all } }),
+    ...(s.admin_unavailable === undefined ? {} : { adminUnavailable: s.admin_unavailable }),
     // Antigravity's hooks go in a file of their own; without a preview, hooks.json is taken as there once Marshell's hooks are.
     ...(s.hooks_path === undefined ? {} : { hooks: { path: s.hooks_path, exists: s.hooks !== "none" } }),
   };
