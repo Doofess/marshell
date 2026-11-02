@@ -120,6 +120,13 @@ fn permission_prints_an_allow_or_a_deny_verbatim() {
         )),
     ] {
         let (out, log) = permission_answer(&body);
+        // A bridge that runs as administrator (as on CI's Windows runners) passes on no saved rules
+        // (slice 6j2 decision 12), so it prints nothing for an answer that carries them.
+        if marshell_hook::elevation::is_elevated() && body.contains("updatedPermissions") {
+            assert!(out.is_empty(), "printed {body}");
+            assert_eq!(log.len(), 1, "{body}: {log:?}");
+            continue;
+        }
         assert_eq!(String::from_utf8(out).unwrap(), body);
         assert!(log.is_empty(), "{log:?}");
     }

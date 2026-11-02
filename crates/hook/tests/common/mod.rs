@@ -108,11 +108,15 @@ pub fn refused_port() -> u16 {
     l.local_addr().unwrap().port()
 }
 
+/// Writes `endpoint.json` as a running core does, `pid` included. The test process starts the bridge, so it
+/// stands in for the Marshell that is the bridge's ancestor: a bridge running as administrator (as on CI's
+/// Windows runners) answers only that endpoint (slice 6j2 decision 12).
 pub fn write_endpoint(home: &Path, port: u16, token: &str) {
     std::fs::create_dir_all(home.join("run")).unwrap();
+    let pid = std::process::id();
     std::fs::write(
         home.join("run").join("endpoint.json"),
-        format!(r#"{{"version":1,"port":{port},"token":"{token}","platform":"windows"}}"#),
+        format!(r#"{{"version":1,"port":{port},"token":"{token}","platform":"windows","pid":{pid}}}"#),
     )
     .unwrap();
 }

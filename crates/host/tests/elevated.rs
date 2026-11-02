@@ -208,6 +208,11 @@ fn a_missing_cwd_comes_back_as_the_helpers_words() {
     }
 }
 
+/// The helper's own token check, so this test knows which side of it it runs on.
+#[allow(dead_code)]
+#[path = "../src/win.rs"]
+mod win;
+
 #[test]
 fn the_helper_refuses_unelevated_without_the_switch() {
     let status = std::process::Command::new(HOST)
@@ -215,5 +220,10 @@ fn the_helper_refuses_unelevated_without_the_switch() {
         .env_remove("MARSHELL_HOST_ALLOW_UNELEVATED")
         .status()
         .expect("the helper starts");
-    assert_eq!(status.code(), Some(3));
+    if win::is_elevated() {
+        // CI's Windows runners run elevated: the check passes, and the helper fails later, at the pipe.
+        assert_ne!(status.code(), Some(3));
+    } else {
+        assert_eq!(status.code(), Some(3));
+    }
 }

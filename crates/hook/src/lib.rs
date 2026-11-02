@@ -4,7 +4,7 @@
 pub mod args;
 mod codex_daemon;
 mod context;
-mod elevation;
+pub mod elevation;
 pub mod endpoint;
 mod job;
 pub mod log;
