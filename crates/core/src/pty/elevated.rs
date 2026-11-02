@@ -19,6 +19,12 @@ pub const NON_WINDOWS_COPY: &str = "Running as administrator is available on Win
 pub const API_WRITE_COPY: &str =
     "This session runs as administrator, so it takes input only from Marshell's own window.";
 
+/// The 409 for an API create that asks to run as administrator.
+pub const API_CREATE_COPY: &str = "Only Marshell's own window can start a session as administrator.";
+
+/// The 409 for an API restart, resume or reopen of a session that runs as administrator.
+pub const API_START_COPY: &str = "This session runs as administrator, so only Marshell's own window can start it.";
+
 /// The 409 for an always-allow answer on a session that runs as administrator.
 pub const ALWAYS_COPY: &str =
     "A session running as administrator can't keep an always-allow rule from Marshell. Allow this once instead.";

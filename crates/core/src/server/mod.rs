@@ -890,6 +890,43 @@ impl Trusted {
             .map_err(|e| format!("{e:#}"))
     }
 
+    /// Starts a session as administrator, which the token-guarded API refuses (slice 6j2 decision 10). The request
+    /// must ask for it: an ordinary session starts through the API. An administrator agent starts in Manual.
+    pub async fn create(
+        &self,
+        req: marshell_protocol::api::CreateSessionRequest,
+    ) -> Result<marshell_protocol::api::CreateSessionResponse, String> {
+        sessions::create_as(&self.0, req, true).await.map_err(|(_, text)| text)
+    }
+
+    /// Starts an administrator agent row again in `req.mode`. This is the Bypass bar; the API refuses it.
+    pub async fn restart(
+        &self,
+        tab: &str,
+        req: marshell_protocol::api::RestartRequest,
+    ) -> Result<marshell_protocol::api::CreateSessionResponse, String> {
+        sessions::restart_as(&self.0, tab.to_string(), req, true)
+            .await
+            .map_err(sessions::Refusal::into_text)
+    }
+
+    /// Resumes an ended administrator row, in Manual for an agent.
+    pub async fn resume(
+        &self,
+        tab: &str,
+        cols: u16,
+        rows: u16,
+    ) -> Result<marshell_protocol::api::CreateSessionResponse, String> {
+        sessions::resume_as(&self.0, tab.to_string(), sessions::ResumeRequest { cols, rows }, true)
+            .await
+            .map_err(sessions::Refusal::into_text)
+    }
+
+    /// Reopens a closed administrator session (the given one, else the most recently closed), in Manual for an agent.
+    pub async fn reopen(&self, tab: Option<String>) -> Result<marshell_protocol::api::CreateSessionResponse, String> {
+        sessions::reopen_as(&self.0, tab, true).await.map_err(|(_, text)| text)
+    }
+
     /// Answers a held permission request of an administrator tab.
     pub async fn decide(
         &self,

@@ -554,6 +554,16 @@ impl Registry {
         }
     }
 
+    /// Sets a tab's mode, in its row and in what Resume, Reopen and layout.json keep.
+    pub fn set_mode(&self, tab_id: &str, mode: Option<SessionMode>) {
+        let mut state = self.state.lock().unwrap();
+        if let Some(entry) = state.open.iter_mut().find(|e| e.info.tab_id == tab_id) {
+            entry.info.mode = mode;
+            entry.spec.mode = mode;
+            self.tx.send_replace(state.snapshot());
+        }
+    }
+
     /// A spawn failed: drop the row and free its number. Not added to closed.
     pub fn release(&self, tab_id: &str) {
         let mut state = self.state.lock().unwrap();
