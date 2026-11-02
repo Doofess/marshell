@@ -4,6 +4,7 @@
 pub mod args;
 mod codex_daemon;
 mod context;
+mod elevation;
 pub mod endpoint;
 mod job;
 pub mod log;
@@ -92,13 +93,21 @@ fn call(args: &Args, stdin: &mut dyn Read, env: Env, ancestors: Ancestors, home:
         // The core answers a request from outside Marshell with 204, so there is nothing to ask.
         return neutral(args);
     }
-    let Some((_, port, token)) = endpoint::discover(env) else {
+    // An administrator session's bridge answers only its own Marshell and passes on no saved rules
+    // (slice 6j2 decision 12).
+    let elevated = elevation::is_elevated();
+    let found = if elevated {
+        endpoint::discover_elevated(env, &codex_daemon::ancestor_pids())
+    } else {
+        endpoint::discover(env)
+    };
+    let Some((_, port, token)) = found else {
         return neutral(args);
     };
     let budget = post::budget(role);
     match post::post(port, &token, args, tab.as_deref(), &body, budget) {
         Ok((200, bytes)) if role == HookRole::Permission => {
-            if permission::accepted(&args.agent, &bytes, &body) {
+            if permission::accepted(&args.agent, &bytes, &body, elevated) {
                 bytes
             } else {
                 fail("the answer is not one Marshell gives, nothing printed")

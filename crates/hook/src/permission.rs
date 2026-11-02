@@ -11,8 +11,10 @@ pub fn neutral(_agent: &str) -> &'static [u8] {
     b""
 }
 
-/// True when `answer` is one the core gives `agent` for `request` (both as the bridge read them).
-pub fn accepted(agent: &str, answer: &[u8], request: &[u8]) -> bool {
+/// True when `answer` is one the core gives `agent` for `request` (both as the bridge read them). A bridge
+/// that runs as administrator (`elevated`) passes on no saved rules, so no admin command becomes a standing
+/// rule, whatever answers on the port (slice 6j2 decisions 6 and 12).
+pub fn accepted(agent: &str, answer: &[u8], request: &[u8], elevated: bool) -> bool {
     let (Ok(answer), Ok(request)) = (
         serde_json::from_slice::<Value>(answer),
         serde_json::from_slice::<Value>(request),
@@ -36,6 +38,7 @@ pub fn accepted(agent: &str, answer: &[u8], request: &[u8]) -> bool {
     };
     match decision.get("behavior").and_then(Value::as_str) {
         Some("deny") => only(decision, "message") && decision.get("message").is_none_or(Value::is_string),
+        Some("allow") if elevated => only(decision, "behavior"),
         Some("allow") => {
             only(decision, "updatedPermissions")
                 && decision
@@ -98,7 +101,7 @@ mod tests {
     const AGY_REQUEST: &[u8] = br#"{"toolName":"run_command","toolInput":{"CommandLine":"echo hi"}}"#;
 
     fn agy(answer: &str) -> bool {
-        accepted("antigravity", answer.as_bytes(), AGY_REQUEST)
+        accepted("antigravity", answer.as_bytes(), AGY_REQUEST, false)
     }
 
     const REQUEST: &[u8] = br#"{"hook_event_name":"PermissionRequest","tool_name":"Bash","tool_input":{"command":"Set-Content out.txt hi","description":"Allow running the requested command?"}}"#;
@@ -109,11 +112,33 @@ mod tests {
             r#"{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decision":{"behavior":"allow"}}}"#,
             r#"{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decision":{"behavior":"deny","message":"Denied in Marshell."}}}"#,
         ] {
-            assert!(accepted("codex", answer.as_bytes(), REQUEST), "{answer}");
+            assert!(accepted("codex", answer.as_bytes(), REQUEST, false), "{answer}");
         }
         // A Codex request has no suggestions, so a scoped allow is never one the core gives.
         let scoped = r#"{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decision":{"behavior":"allow","updatedPermissions":[{"type":"addRules","rules":[{"toolName":"Bash"}],"behavior":"allow","destination":"session"}]}}}"#;
-        assert!(!accepted("codex", scoped.as_bytes(), REQUEST));
+        assert!(!accepted("codex", scoped.as_bytes(), REQUEST, false));
+    }
+
+    #[test]
+    fn an_elevated_bridge_passes_on_no_saved_rules() {
+        let suggested = r#"{"type":"addRules","rules":[{"toolName":"Bash","ruleContent":"node *"}],"behavior":"allow","destination":"localSettings"}"#;
+        let request = format!(r#"{{"tool_name":"Bash","permission_suggestions":[{suggested}]}}"#);
+        let with_rule = format!(
+            r#"{{"hookSpecificOutput":{{"hookEventName":"PermissionRequest","decision":{{"behavior":"allow","updatedPermissions":[{suggested}]}}}}}}"#
+        );
+        // The same answer an ordinary session's bridge prints is refused as administrator.
+        assert!(accepted("claude", with_rule.as_bytes(), request.as_bytes(), false));
+        assert!(!accepted("claude", with_rule.as_bytes(), request.as_bytes(), true));
+        // A plain allow and a deny still pass.
+        for answer in [
+            r#"{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decision":{"behavior":"allow"}}}"#,
+            r#"{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decision":{"behavior":"deny","message":"Denied in Marshell."}}}"#,
+        ] {
+            assert!(
+                accepted("claude", answer.as_bytes(), request.as_bytes(), true),
+                "{answer}"
+            );
+        }
     }
 
     #[test]
@@ -138,7 +163,7 @@ mod tests {
         assert!(!agy(codex));
         // And the other way round: agy's shape is not one Claude or Codex are given.
         for agent in ["claude", "codex"] {
-            assert!(!accepted(agent, br#"{"decision":"deny"}"#, REQUEST), "{agent}");
+            assert!(!accepted(agent, br#"{"decision":"deny"}"#, REQUEST, false), "{agent}");
         }
     }
 

@@ -5,6 +5,8 @@
 
 /// How far up the parent chain to look for Codex: the hook's shell, then Codex, with room to spare.
 const MAX_DEPTH: usize = 6;
+/// Deep enough for an agent that runs its hooks through a shell or two under `marshell-host`.
+const MAX_PID_DEPTH: usize = 16;
 
 /// True when the nearest `codex` among `ancestors` (image paths, parent first) is the daemon's: its
 /// binary lives under `app-server-daemon` in `CODEX_HOME`. A chain with no Codex in it is false.
@@ -26,24 +28,20 @@ fn is_codex(path: &str) -> bool {
         .is_some_and(|name| name.eq_ignore_ascii_case("codex.exe") || name == "codex")
 }
 
-/// This process's ancestors' image paths, parent first, up to `MAX_DEPTH`. An ancestor whose path
-/// can't be read ends the chain.
+/// Every running process's parent id, from one snapshot. Empty when the snapshot fails.
 #[cfg(windows)]
-pub fn ancestors() -> Vec<String> {
+fn parents() -> std::collections::HashMap<u32, u32> {
     use windows_sys::Win32::Foundation::{CloseHandle, INVALID_HANDLE_VALUE};
     use windows_sys::Win32::System::Diagnostics::ToolHelp::{
         CreateToolhelp32Snapshot, PROCESSENTRY32W, Process32FirstW, Process32NextW, TH32CS_SNAPPROCESS,
     };
-    use windows_sys::Win32::System::Threading::{
-        OpenProcess, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION, QueryFullProcessImageNameW,
-    };
 
+    let mut parents = std::collections::HashMap::new();
     // SAFETY: a process snapshot takes no pointers; the handle is checked and closed below.
     let snap = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) };
     if snap == INVALID_HANDLE_VALUE {
-        return Vec::new();
+        return parents;
     }
-    let mut parents = std::collections::HashMap::new();
     // SAFETY: an all-zero PROCESSENTRY32W is valid once dwSize is set.
     let mut entry: PROCESSENTRY32W = unsafe { std::mem::zeroed() };
     entry.dwSize = size_of::<PROCESSENTRY32W>() as u32;
@@ -56,7 +54,42 @@ pub fn ancestors() -> Vec<String> {
     }
     // SAFETY: `snap` is a valid handle that nothing else uses.
     unsafe { CloseHandle(snap) };
+    parents
+}
 
+/// The ids of this process's ancestors, parent first, up to `MAX_PID_DEPTH`. An elevated bridge sits a few
+/// levels under the Marshell that started its session: agent, shell, `marshell-host`, then Marshell.
+#[cfg(windows)]
+pub fn ancestor_pids() -> Vec<u32> {
+    let parents = parents();
+    let mut chain = Vec::new();
+    let mut pid = std::process::id();
+    while chain.len() < MAX_PID_DEPTH {
+        match parents.get(&pid) {
+            Some(&parent) if parent != 0 && parent != pid && !chain.contains(&parent) => pid = parent,
+            _ => break,
+        }
+        chain.push(pid);
+    }
+    chain
+}
+
+/// Off Windows there are no administrator sessions, so no chain.
+#[cfg(not(windows))]
+pub fn ancestor_pids() -> Vec<u32> {
+    Vec::new()
+}
+
+/// This process's ancestors' image paths, parent first, up to `MAX_DEPTH`. An ancestor whose path
+/// can't be read ends the chain.
+#[cfg(windows)]
+pub fn ancestors() -> Vec<String> {
+    use windows_sys::Win32::Foundation::CloseHandle;
+    use windows_sys::Win32::System::Threading::{
+        OpenProcess, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION, QueryFullProcessImageNameW,
+    };
+
+    let parents = parents();
     let image = |pid: u32| -> Option<String> {
         // SAFETY: OpenProcess takes no pointers; a null result is checked.
         let handle = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) };
@@ -140,6 +173,14 @@ mod tests {
     }
 
     #[cfg(windows)]
+    #[test]
+    fn ancestor_pids_reads_this_process_chain() {
+        // The test runner has a parent (cargo or a shell), and never appears in its own chain.
+        let chain = ancestor_pids();
+        assert!(!chain.is_empty());
+        assert!(!chain.contains(&std::process::id()), "{chain:?}");
+    }
+
     #[test]
     fn ancestors_reads_this_process_chain() {
         // The test runner has a parent (cargo or a shell) whose image path can be read.
