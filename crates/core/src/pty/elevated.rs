@@ -6,7 +6,9 @@ use marshell_protocol::host::{FromHost, MAX_FRAME, ToHost, read_from_host, write
 use std::fs::File;
 use std::io::{self, Read, Write};
 use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, mpsc};
+use std::time::{Duration, Instant};
 
 #[cfg(windows)]
 pub type ProcessHandle = std::os::windows::io::OwnedHandle;
@@ -96,7 +98,79 @@ pub struct RemotePty {
 
 /// The core's end of the pipe to the helper's input. One mutex so frames from different threads
 /// never interleave; `None` once closed.
-type Down = Arc<Mutex<Option<File>>>;
+struct DownPipe {
+    file: Mutex<Option<File>>,
+    /// A second handle to the same pipe. A frame write that waits on a helper which stopped reading holds the `file`
+    /// lock, so Close cancels that write through this handle instead of waiting for the lock.
+    cancel: Mutex<Option<File>>,
+    /// Set by Close: no new frame starts after it.
+    closing: AtomicBool,
+}
+
+type Down = Arc<DownPipe>;
+
+/// How long a resize waits for a frame write that is in progress. Past that the helper is not reading, and the resize is
+/// dropped: the next one carries the size anyway.
+const RESIZE_WAIT: Duration = Duration::from_secs(1);
+
+impl DownPipe {
+    fn new(file: File) -> Down {
+        let cancel = file.try_clone().ok();
+        Arc::new(Self {
+            file: Mutex::new(Some(file)),
+            cancel: Mutex::new(cancel),
+            closing: AtomicBool::new(false),
+        })
+    }
+
+    #[cfg(test)]
+    fn closed() -> Down {
+        Arc::new(Self {
+            file: Mutex::new(None),
+            cancel: Mutex::new(None),
+            closing: AtomicBool::new(false),
+        })
+    }
+
+    /// Waits at most `wait` for the pipe, so a stuck frame write cannot hold a caller for good.
+    fn lock_within(&self, wait: Duration) -> anyhow::Result<std::sync::MutexGuard<'_, Option<File>>> {
+        let deadline = Instant::now() + wait;
+        loop {
+            match self.file.try_lock() {
+                Ok(guard) => return Ok(guard),
+                Err(std::sync::TryLockError::Poisoned(_)) => return Err(closed().into()),
+                Err(std::sync::TryLockError::WouldBlock) => {
+                    anyhow::ensure!(
+                        Instant::now() < deadline,
+                        "The administrator session is not taking input right now."
+                    );
+                    std::thread::sleep(Duration::from_millis(5));
+                }
+            }
+        }
+    }
+
+    /// Ends a write that is stuck in the pipe.
+    fn cancel_pending_write(&self) {
+        let guard = self.cancel.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(file) = guard.as_ref() {
+            cancel_io(file);
+        }
+    }
+}
+
+#[cfg(windows)]
+fn cancel_io(file: &File) {
+    use std::os::windows::io::AsRawHandle;
+    // SAFETY: a valid pipe handle that `file` owns; no OVERLAPPED cancels every pending operation on it. Nothing
+    // pending is not an error worth reporting.
+    unsafe {
+        windows_sys::Win32::System::IO::CancelIoEx(file.as_raw_handle() as _, std::ptr::null());
+    }
+}
+
+#[cfg(not(windows))]
+fn cancel_io(_file: &File) {}
 
 fn closed() -> io::Error {
     io::Error::new(io::ErrorKind::BrokenPipe, "The administrator session is closed.")
@@ -113,7 +187,10 @@ impl Write for HostWriter {
             return Ok(0);
         }
         let n = buf.len().min(MAX_FRAME);
-        let mut guard = self.down.lock().map_err(|_| closed())?;
+        let mut guard = self.down.file.lock().map_err(|_| closed())?;
+        if self.down.closing.load(Ordering::SeqCst) {
+            return Err(closed());
+        }
         let file = guard.as_mut().ok_or_else(closed)?;
         write_to_host(file, &ToHost::Input(buf[..n].to_vec()))?;
         Ok(n)
@@ -135,7 +212,10 @@ impl PtyControl for HostControl {
             (1..=1000).contains(&cols) && (1..=1000).contains(&rows),
             "A terminal size of {cols}x{rows} is out of range."
         );
-        let mut guard = self.down.lock().map_err(|_| closed())?;
+        let mut guard = self.down.lock_within(RESIZE_WAIT)?;
+        if self.down.closing.load(Ordering::SeqCst) {
+            return Err(closed().into());
+        }
         let file = guard.as_mut().ok_or_else(closed)?;
         write_to_host(file, &ToHost::Resize { cols, rows })?;
         Ok(())
@@ -144,9 +224,27 @@ impl PtyControl for HostControl {
     fn close(&self) {
         // Dropping the handle is the helper's EOF. The up pipe is closed by the demux thread when
         // the helper has gone.
-        if let Ok(mut guard) = self.down.lock() {
-            guard.take();
+        self.down.closing.store(true, Ordering::SeqCst);
+        // A frame write waiting on a helper that stopped reading holds the lock: cancel it until the lock is free,
+        // which the failed write does. No frame starts after `closing`, so this ends.
+        loop {
+            match self.down.file.try_lock() {
+                Ok(mut guard) => {
+                    guard.take();
+                    break;
+                }
+                Err(std::sync::TryLockError::Poisoned(poisoned)) => {
+                    poisoned.into_inner().take();
+                    break;
+                }
+                Err(std::sync::TryLockError::WouldBlock) => {
+                    self.down.cancel_pending_write();
+                    std::thread::sleep(Duration::from_millis(5));
+                }
+            }
         }
+        // The helper sees EOF once both handles are gone.
+        self.down.cancel.lock().unwrap_or_else(|e| e.into_inner()).take();
     }
 }
 
@@ -182,7 +280,7 @@ impl Read for ChannelReader {
 /// pipe: `Output` feeds the reader, `Exit` is what `wait` returns, EOF without one makes it -1.
 #[cfg_attr(not(windows), allow(dead_code))]
 fn remote_pty(down: File, mut up: File, pid: u32) -> RemotePty {
-    let down: Down = Arc::new(Mutex::new(Some(down)));
+    let down: Down = DownPipe::new(down);
     let (tx, rx) = mpsc::channel::<Vec<u8>>();
     let demux = std::thread::Builder::new()
         .name("marshell-host-demux".into())
@@ -746,7 +844,7 @@ mod tests {
         use std::io::Seek;
         let file = tempfile::tempfile().unwrap();
         let mut reader = file.try_clone().unwrap();
-        let down: Down = Arc::new(Mutex::new(Some(file)));
+        let down: Down = DownPipe::new(file);
         let mut writer = HostWriter { down };
         let data: Vec<u8> = (0..(5 * MAX_FRAME / 2)).map(|i| (i % 251) as u8).collect();
         writer.write_all(&data).unwrap();
@@ -767,7 +865,7 @@ mod tests {
     #[test]
     fn a_closed_session_refuses_writes_and_resizes() {
         let control = HostControl {
-            down: Arc::new(Mutex::new(None)),
+            down: DownPipe::closed(),
         };
         assert!(control.resize(80, 24).is_err());
         let mut writer = HostWriter {
@@ -776,7 +874,7 @@ mod tests {
         assert_eq!(writer.write(b"x").unwrap_err().kind(), io::ErrorKind::BrokenPipe);
         // Out of range is refused before anything is written.
         let live = HostControl {
-            down: Arc::new(Mutex::new(Some(tempfile::tempfile().unwrap()))),
+            down: DownPipe::new(tempfile::tempfile().unwrap()),
         };
         assert!(live.resize(0, 24).is_err());
         assert!(live.resize(80, 1001).is_err());
@@ -802,5 +900,70 @@ mod tests {
             .err()
             .expect("an error");
         assert!(matches!(err, ElevatedError::Missing));
+    }
+}
+
+/// A helper that never drains `-down`, for the tests that a stuck frame write does not freeze the rest.
+#[cfg(all(test, windows))]
+pub(crate) mod stuck {
+    use super::*;
+    use std::os::windows::io::{FromRawHandle, RawHandle};
+    use windows_sys::Win32::Foundation::HANDLE;
+    use windows_sys::Win32::System::Pipes::CreatePipe;
+
+    /// An anonymous pipe with a small buffer: `(read end, write end)`.
+    fn pipe() -> (File, File) {
+        let (mut read, mut write): (HANDLE, HANDLE) = (std::ptr::null_mut(), std::ptr::null_mut());
+        // SAFETY: both out-pointers are valid locals; the result is checked.
+        let ok = unsafe { CreatePipe(&mut read, &mut write, std::ptr::null(), 4096) };
+        assert!(ok != 0, "CreatePipe failed");
+        // SAFETY: two fresh handles that only these Files own.
+        unsafe {
+            (
+                File::from_raw_handle(read as RawHandle),
+                File::from_raw_handle(write as RawHandle),
+            )
+        }
+    }
+
+    /// The core's pieces for a helper that reads nothing from `-down` and sends nothing on `-up`. Keep the returned
+    /// files alive: they are the helper's ends of the pipes.
+    pub(crate) fn stuck_remote() -> (RemotePty, Vec<File>) {
+        let (down_read, down_write) = pipe();
+        let (up_read, up_write) = pipe();
+        (remote_pty(down_write, up_read, 1), vec![down_read, up_write])
+    }
+
+    /// Runs `f` on its own thread and gives its result, or None when it has not returned within two seconds.
+    pub(crate) fn within_two_seconds<T: Send + 'static>(f: impl FnOnce() -> T + Send + 'static) -> Option<T> {
+        let (tx, rx) = mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = tx.send(f());
+        });
+        rx.recv_timeout(std::time::Duration::from_secs(2)).ok()
+    }
+
+    #[test]
+    fn resize_and_close_return_while_a_frame_write_is_stuck() {
+        let (remote, _helper) = stuck_remote();
+        let RemotePty {
+            mut writer, control, ..
+        } = remote;
+        let control: Arc<dyn PtyControl> = Arc::from(control);
+        // More than the pipe holds: the write waits for a helper that never reads.
+        std::thread::spawn(move || {
+            let _ = writer.write(&vec![b'x'; 60_000]);
+        });
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        let c = Arc::clone(&control);
+        assert!(
+            within_two_seconds(move || c.resize(100, 30)).is_some(),
+            "resize waited behind the stuck frame"
+        );
+        let c = Arc::clone(&control);
+        assert!(
+            within_two_seconds(move || c.close()).is_some(),
+            "close waited behind the stuck frame"
+        );
     }
 }

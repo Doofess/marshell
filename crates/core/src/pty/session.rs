@@ -277,7 +277,7 @@ pub struct Session {
     /// Input goes through a channel to a writer thread, so async code never blocks on the pty.
     input: mpsc::Sender<Vec<u8>>,
     /// The pty's control, local or through the elevated helper. Taken out when the session ends.
-    control: Mutex<Option<Box<dyn PtyControl>>>,
+    control: Mutex<Option<Arc<dyn PtyControl>>>,
     pid: Option<u32>,
     /// The session runs through the elevated helper: it takes no input from the API, cannot be paused, and is
     /// ended by closing its pipes, never by `taskkill`.
@@ -392,7 +392,7 @@ impl Session {
             space: Condvar::new(),
             notify: tokio::sync::Notify::new(),
             input: input_tx,
-            control: Mutex::new(Some(control)),
+            control: Mutex::new(Some(Arc::from(control))),
             pid,
             elevated,
             exited: Arc::new(AtomicBool::new(false)),
@@ -833,7 +833,10 @@ impl Session {
         if cols == 0 || rows == 0 {
             return Ok(());
         }
-        if let Some(control) = self.control.lock().unwrap().as_ref() {
+        // The lock is let go before the call: through the administrator helper it can wait on a pipe write, and
+        // Close needs this lock to end the session.
+        let control = self.control.lock().unwrap().clone();
+        if let Some(control) = control {
             control.resize(cols, rows)?;
         }
         // vt100 0.16; on 0.15 this is `parser.set_size(rows, cols)`.
@@ -1684,5 +1687,48 @@ mod tests {
         assert_eq!(s.watch_tool(), None);
         let (output, _) = cast_of(&s);
         assert!(!output.contains("gho_SECRET"), "{output}");
+    }
+
+    /// An administrator session whose helper stopped draining `-down` while a large input frame is being written: a
+    /// resize cannot freeze its caller, and Close and the kill after it do not wait behind the frame.
+    #[cfg(windows)]
+    #[test]
+    fn a_stuck_helper_does_not_hold_resize_or_kill() {
+        use super::super::elevated::stuck::{stuck_remote, within_two_seconds};
+        let (remote, _helper) = stuck_remote();
+        let parts = PtyParts {
+            reader: remote.reader,
+            writer: remote.writer,
+            control: remote.control,
+            wait: remote.wait,
+            pid: Some(remote.pid),
+            elevated: true,
+        };
+        let session = Session::start("t-stuck".into(), env_spec(vec![], vec![], None), parts).unwrap();
+        session.write_input(vec![b'x'; 60_000]);
+        std::thread::sleep(Duration::from_millis(300));
+        // The resize may fail (the frame never went out), but it returns.
+        let s = Arc::clone(&session);
+        assert!(
+            within_two_seconds(move || {
+                let _ = s.resize(100, 30);
+            })
+            .is_some(),
+            "resize did not return"
+        );
+        // A second resize stuck behind the first would hold the control lock the kill needs.
+        let s = Arc::clone(&session);
+        let resizing = std::thread::spawn(move || {
+            let _ = s.resize(90, 30);
+        });
+        std::thread::sleep(Duration::from_millis(100));
+        let s = Arc::clone(&session);
+        assert!(within_two_seconds(move || s.kill()).is_some(), "kill did not return");
+        let s = Arc::clone(&session);
+        assert!(
+            within_two_seconds(move || s.force_kill()).is_some(),
+            "force_kill did not return"
+        );
+        let _ = resizing.join();
     }
 }
