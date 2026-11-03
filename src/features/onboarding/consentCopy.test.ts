@@ -292,9 +292,9 @@ describe("Qwen Code's consent card", () => {
     expect(entryCount("qwen", ALL)).toBe(9);
     expect(entryCount("qwen", { ...ALL, status: false })).toBe(1);
   });
-  it("offers no skill switch and no bulk allow", () => {
+  it("offers the skill switch, as the other CLIs do (slice 6l2 decision 3), and no bulk allow", () => {
     const h = card(QWEN_SETUP);
-    expect(h).not.toContain("Install the marshell skill");
+    expect(h).toContain("Install the marshell skill");
     expect(h).not.toContain("Allow all");
   });
 });
