@@ -606,6 +606,56 @@ async fn install_qwen(e: &QwenEnv) -> Value {
     preview
 }
 
+#[tokio::test]
+async fn qwen_skill_plan_creates_the_file_under_the_qwen_home() {
+    let e = qwen_env();
+    let path = e
+        .settings
+        .parent()
+        .unwrap()
+        .join("skills")
+        .join("marshell")
+        .join("SKILL.md");
+    let (status, preview) = post(&e.app, "/v1/agents/qwen/skill/plan", json!({})).await;
+    assert_eq!(status, StatusCode::OK, "{preview}");
+    assert_eq!(preview["can_apply"], true, "{preview}");
+    assert!(!path.exists(), "planning must not write the skill");
+    let (status, applied) = post(&e.app, "/v1/config/apply", shown(&preview)).await;
+    assert_eq!(status, StatusCode::OK, "{applied}");
+    assert_eq!(
+        std::fs::read_to_string(&path).unwrap(),
+        marshell_core::agents::skill::SKILL_TEXT
+    );
+    let (_, setup) = get(&e.app, "/v1/agents/qwen/setup").await;
+    assert_eq!(setup["skill"], "installed");
+    assert_eq!(setup["skill_path"], path.to_string_lossy().as_ref());
+}
+
+#[tokio::test]
+async fn qwen_hooks_plan_with_skill_includes_it() {
+    let e = qwen_env();
+    let path = e
+        .settings
+        .parent()
+        .unwrap()
+        .join("skills")
+        .join("marshell")
+        .join("SKILL.md");
+    let mut want = WANT();
+    want["skill"] = json!(true);
+    let (status, preview) = post(&e.app, "/v1/agents/qwen/hooks/plan", want).await;
+    assert_eq!(status, StatusCode::OK, "{preview}");
+    assert_eq!(preview["can_apply"], true, "{preview}");
+    assert!(!path.exists(), "planning must not write the skill");
+    let (status, applied) = post(&e.app, "/v1/config/apply", shown(&preview)).await;
+    assert_eq!(status, StatusCode::OK, "{applied}");
+    assert_eq!(
+        std::fs::read_to_string(&path).unwrap(),
+        marshell_core::agents::skill::SKILL_TEXT
+    );
+    assert!(e.settings.exists());
+}
+
 const QWEN_OWN_LINE: &str = "\u{feff}{\r\n  \"theme\": \"dark\",\r\n  \"ui\": {\"statusLine\": {\"type\": \"command\", \"command\": \"my-line\"}}\r\n}\r\n";
 
 impl QwenEnv {

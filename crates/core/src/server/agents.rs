@@ -118,8 +118,7 @@ impl Adapter {
             Adapter::Claude => AGENT,
             Adapter::Codex => CODEX,
             Adapter::Antigravity => ANTIGRAVITY,
-            // Qwen Code has no skill until slice 6l2, so the skill table doesn't name it.
-            Adapter::Qwen => return "Qwen Code",
+            Adapter::Qwen => QWEN,
         };
         skill::cli_name(id).unwrap_or(id)
     }
@@ -232,7 +231,11 @@ impl AppState {
     /// Where `agent`'s `marshell` skill file goes. A skill home named by a test replaces the user's home and the
     /// process environment; otherwise it is the user's home, with `CLAUDE_CONFIG_DIR` from the environment.
     fn skill_file(&self, agent: &str) -> Result<PathBuf, Fail> {
+        // Qwen Code's skill follows its own home (`QWEN_HOME`), which a test names with `with_qwen_home`.
         let path = match &self.0.skill_home {
+            _ if agent == QWEN && self.0.qwen_home.is_some() => {
+                skill::skill_path(agent, &|_| None, self.0.qwen_home.as_deref().unwrap_or(Path::new("")))
+            }
             Some(home) => skill::skill_path(agent, &|_| None, home),
             None => {
                 let home = super::files::home_dir().ok_or_else(|| failed("the user's home folder is not known"))?;
@@ -919,6 +922,7 @@ pub(crate) fn qwen_setup_of(st: &AppState) -> Result<AgentSetup, Fail> {
     let settings_path = st.qwen_settings_path(&user_home);
     let exe = st.agent_exe_of(QWEN);
     let version = st.agent_version(QWEN, exe.as_deref());
+    let (skill, skill_path, skill_problem) = st.skill_of(QWEN)?;
 
     let mut setup = AgentSetup {
         agent: QWEN.to_string(),
@@ -940,10 +944,9 @@ pub(crate) fn qwen_setup_of(st: &AppState) -> Result<AgentSetup, Fail> {
         trust: None,
         bridge_path: paths::bridge_exe(home).to_string_lossy().into_owned(),
         snapshots_dir: paths::snapshots_dir(home).to_string_lossy().into_owned(),
-        // Qwen Code has no `marshell` skill until slice 6l2.
-        skill: SkillInstall::Unavailable,
-        skill_path: String::new(),
-        skill_problem: Some("The Marshell skill for Qwen Code comes in a later version.".to_string()),
+        skill,
+        skill_path,
+        skill_problem,
     };
 
     let text = match std::fs::read_to_string(&settings_path) {
@@ -1647,8 +1650,8 @@ pub async fn plan(
             .map_err(|e| refused(&e))?,
         };
         // The skill file is the Windows home's. A distro's skill is not planned here, so a request for one inside a
-        // distro gets the hooks only. Qwen Code has no skill until slice 6l2.
-        if want.skill && distro.is_none() && !matches!(adapter, Adapter::Qwen) {
+        // distro gets the hooks only.
+        if want.skill && distro.is_none() {
             // A skill Marshell can't touch is left out: it must not block the hooks.
             let path = st.skill_file(&agent)?;
             if let Ok(bytes) = st.skill_bytes(&path) {

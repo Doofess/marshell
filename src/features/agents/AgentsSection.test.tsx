@@ -407,11 +407,11 @@ describe("AgentsSectionView: Qwen Code", () => {
     expect(withQwen({ ...QWEN_SETUP, found: false })).not.toContain('aria-label="Qwen Code"');
     expect(section(withQwen({ ...QWEN_SETUP, hooks: "installed", approve_installed: true }))).toContain("Hooks on in C:/h/.qwen/settings.json.");
   });
-  it("Qwen's skill row says the skill isn't available for Qwen Code yet", () => {
+  it("Qwen's skill row offers Install the marshell skill", () => {
     const h = section(withQwen(QWEN_SETUP, { kind: "list" }, true));
     expect(h).toContain('data-agent-skill="qwen"');
-    expect(h).toContain("The Marshell skill for Qwen Code comes in a later version.");
-    expect(h).not.toContain("Install the marshell skill</button>");
+    expect(h).toContain("Install the marshell skill</button>");
+    expect(h).not.toContain("comes in a later version");
   });
   it("the Hooks off panel is titled for Qwen Code", () => {
     expect(withQwen({ ...QWEN_SETUP, hooks: "installed" }, { kind: "off", agent: "qwen", removal: null, busy: false })).toContain("Turn Qwen Code hooks off");
