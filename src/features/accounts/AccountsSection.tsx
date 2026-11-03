@@ -3,11 +3,11 @@ import type { AccountStatus } from "../../generated/AccountStatus";
 import type { Endpoint } from "../../generated/Endpoint";
 import { getAccount } from "../../lib/api/accounts";
 import type { CompanyAgent } from "../settings/settingsSections";
-import { accountLine, CHECKED, CHECKING, NONE_FOUND, UNREACHABLE } from "./accountsText";
+import { accountExtraLine, accountLine, CHECKED, CHECKING, NONE_FOUND, UNREACHABLE } from "./accountsText";
 import "./AccountsSection.css";
 
-const ORDER: CompanyAgent[] = ["claude", "codex", "antigravity"];
-const NAME: Record<CompanyAgent, string> = { claude: "Claude Code", codex: "Codex", antigravity: "Antigravity" };
+const ORDER: CompanyAgent[] = ["claude", "codex", "antigravity", "qwen"];
+const NAME: Record<CompanyAgent, string> = { claude: "Claude Code", codex: "Codex", antigravity: "Antigravity", qwen: "Qwen Code" };
 
 export type AccountRow = { agent: CompanyAgent; status: AccountStatus | "checking" | "failed" };
 
@@ -30,6 +30,7 @@ export function AccountsView({ rows, now, onSignIn, onCheckAgain }: { rows: Acco
             <li key={r.agent} className="accounts__row">
               <h3 className="accounts__name">{NAME[r.agent]}</h3>
               <p className="accounts__line">{lineOf(r, now)}</p>
+              {typeof r.status === "object" && accountExtraLine(r.status) && <p className="accounts__line">{accountExtraLine(r.status)}</p>}
               {needs && (r.agent === "claude" || r.agent === "codex") && (
                 <button type="button" className="accounts__btn" onClick={() => onSignIn(r.agent as "claude" | "codex")}>
                   Sign in to {NAME[r.agent]}

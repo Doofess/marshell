@@ -39,7 +39,7 @@ export function SettingsPanels({ section, mounted, render }: { section: Settings
 }
 
 const NONE: ReadonlySet<CompanyAgent> = new Set();
-const ZERO: Record<CompanyAgent, number> = { claude: 0, codex: 0, antigravity: 0 };
+const ZERO: Record<CompanyAgent, number> = { claude: 0, codex: 0, antigravity: 0, qwen: 0 };
 const noop = () => {};
 
 type Props = {
@@ -177,6 +177,7 @@ export function LiveSettings({ endpoint, sync, section, onSection, agentsStart, 
       case "claude":
       case "codex":
       case "antigravity":
+      case "qwen":
         return endpoint && <CompanySection endpoint={endpoint} agent={id} name={COMPANY_NAMES[id]} running={running[id]} onUpdate={onUpdate} refresh={companyRefresh[id]} announce={announce} />;
       case "advanced":
         return endpoint && <AdvancedSection endpoint={endpoint} announce={announce} />;

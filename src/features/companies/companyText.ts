@@ -11,6 +11,7 @@ export const MANUAL_UPDATE: Record<CompanyAgent, { update: string; npm: string |
   claude: { update: "claude update", npm: "npm install -g @anthropic-ai/claude-code@latest" },
   codex: { update: "codex update", npm: "npm install -g @openai/codex@latest" },
   antigravity: { update: "agy update", npm: null },
+  qwen: { update: "qwen update", npm: null },
 };
 
 /** What to say when the install type is unknown and so there is no Update button. */

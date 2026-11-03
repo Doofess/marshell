@@ -312,4 +312,40 @@ describe("CompanyView", () => {
       expect(h).toContain("Raw editing is off: this file holds secret values, and they show as hidden here.");
     });
   });
+
+  describe("Qwen Code", () => {
+    const qwenInstall = (over: Partial<AgentInstall> = {}) => install({ agent: "qwen", version: "0.26.5", update_command: "qwen update", ...over });
+    const qwenKeys = ["model.name", "tools.approvalMode", "general.enableAutoUpdate", "privacy.usageStatisticsEnabled", "ui.theme", "general.vimMode"];
+    const qview = (over: Partial<AgentSettingsView> = {}) =>
+      view({ agent: "qwen", path: "C:/u/.qwen/settings.json", curated: qwenKeys.map((key) => ({ key, value: null, scope: "user" }) as SettingValue), hash: "h", text: "{}", ...over });
+    const q = (over: Partial<Parameters<typeof CompanyView>[0]> = {}) => render({ agent: "qwen", name: "Qwen Code", install: qwenInstall(), view: qview(), ...over });
+    it("Qwen's tab lists its six settings with help", () => {
+      const h = q();
+      for (const help of [
+        "The model a new Qwen Code session starts with, by the name /model shows.",
+        "The approval mode Qwen Code starts in. Sessions Marshell starts pass their own mode, which wins.",
+        "Qwen Code checks for a newer version when it starts and installs it after the session ends.",
+        "Qwen Code sends usage statistics to its developers.",
+        "The theme&#x27;s name as /theme lists it, such as Qwen Dark.",
+        "Vim keys in Qwen Code&#x27;s prompt.",
+      ])
+        expect(h).toContain(help);
+    });
+    it("Qwen's raw view is editable for a file with comments", () => {
+      const h = q({ mode: "raw", view: qview({ text: '{\n  // note\n  "ui": {}\n}', raw_lock: null }) });
+      expect(h).toMatch(/<textarea[^>]*data-focus="raw"/);
+      expect(h).not.toMatch(/<textarea[^>]*readOnly/);
+    });
+    it("Qwen's Update runs qwen update", () => {
+      expect(q()).toContain("Update Qwen Code");
+      const h = q({ install: qwenInstall({ update_command: null, install: { kind: "unknown" } }) });
+      expect(h).not.toContain("Update Qwen Code");
+      expect(h).toContain("<code>qwen update</code>");
+      expect(q({ running: 2 })).toContain("Qwen Code is running in 2 tabs. The update may fail while they run.");
+    });
+    it("adds no running warning at Review", () => {
+      const h = q({ running: 2, review: { kind: "review", plan: { preview: { changeset_id: "c", title: "t", reason: "r", stale: false, can_apply: true, files: [] } as unknown as ConfigPreview, normalized: false } } });
+      expect(h).not.toContain("may undo this change");
+    });
+  });
 });
