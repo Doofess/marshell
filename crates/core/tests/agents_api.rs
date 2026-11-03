@@ -720,7 +720,7 @@ async fn qwen_raw_edit_saves_the_typed_jsonc() {
         } else {
             "{ // original\n}"
         });
-        let typed = "{\r\n  // keep this exactly\r\n  \"model\" : { \"name\": \"typed\", },\r\n}\r\n";
+        let typed = "{\r\n  // keep this exactly\r\n  \"model\" : { \"name\": \"typed\" /* and this */ }\r\n}\r\n";
         e.settings_change(json!({"kind":"raw", "text":format!("\u{feff}\u{feff}{typed}")}))
             .await;
         let expected = if bom { format!("\u{feff}{typed}") } else { typed.into() };
@@ -742,6 +742,23 @@ async fn qwen_raw_edit_that_does_not_parse_is_refused() {
     ] {
         let (status, bytes) = e.settings_plan(json!({"kind":"raw", "text":typed})).await;
         assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+        assert_eq!(text(&bytes), format!("The text doesn't parse at line {line}."));
+        assert_eq!(std::fs::read_to_string(&e.settings).unwrap(), original);
+    }
+}
+
+#[tokio::test]
+async fn qwen_raw_edit_refuses_text_qwen_code_cannot_load() {
+    let e = qwen_env();
+    let original = "{ // unchanged\n}";
+    e.write_settings(original);
+    for (typed, line) in [
+        ("{\n  \"model\": {\"name\": \"x\",},\n}", 2),
+        ("", 1),
+        ("{\n  model: 1\n}", 2),
+    ] {
+        let (status, bytes) = e.settings_plan(json!({"kind":"raw", "text":typed})).await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{typed:?}");
         assert_eq!(text(&bytes), format!("The text doesn't parse at line {line}."));
         assert_eq!(std::fs::read_to_string(&e.settings).unwrap(), original);
     }

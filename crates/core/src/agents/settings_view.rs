@@ -696,14 +696,75 @@ pub(crate) fn masked_render(agent: &str, text: &str) -> Option<String> {
     parse_masked(agent, text).ok().and_then(|p| p.raw)
 }
 
+/// `text` with its `//` and `/* */` comments blanked, as npm's strip-json-comments does with its defaults: every
+/// character of a comment but whitespace becomes a space, so the line numbers stay. Comment-like text inside a string
+/// is left alone, and a block comment that never closes runs to the end.
+fn blank_comments(text: &str) -> String {
+    let blank = |c: char| if c.is_whitespace() || c == '\u{feff}' { c } else { ' ' };
+    let mut out = String::with_capacity(text.len());
+    let mut chars = text.chars().peekable();
+    let mut in_string = false;
+    while let Some(c) = chars.next() {
+        if in_string {
+            out.push(c);
+            match c {
+                '\\' => out.extend(chars.next()),
+                '"' => in_string = false,
+                _ => {}
+            }
+        } else if c == '"' {
+            in_string = true;
+            out.push(c);
+        } else if c == '/' && chars.peek() == Some(&'/') {
+            out.push_str("  ");
+            chars.next();
+            while let Some(&n) = chars.peek() {
+                if n == '\n' {
+                    break;
+                }
+                out.push(blank(n));
+                chars.next();
+            }
+        } else if c == '/' && chars.peek() == Some(&'*') {
+            out.push_str("  ");
+            chars.next();
+            while let Some(n) = chars.next() {
+                if n == '*' && chars.peek() == Some(&'/') {
+                    out.push_str("  ");
+                    chars.next();
+                    break;
+                }
+                out.push(blank(n));
+            }
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
+/// The line of the first problem when `text` is not a settings file Qwen Code loads. Qwen Code reads it with
+/// `JSON.parse(stripJsonComments(stripUtf8Bom(text)))`: one leading BOM and comments are fine, and the rest is strict
+/// JSON (no trailing comma, no single quotes, no bare keys) with an object at the top. Line 1 when the text is empty
+/// or the top is not an object.
+fn qwen_text_problem(text: &str) -> Option<u32> {
+    let body = text.strip_prefix('\u{feff}').unwrap_or(text);
+    let plain = blank_comments(body);
+    if plain.trim().is_empty() {
+        return Some(1);
+    }
+    match serde_json::from_str::<Value>(&plain) {
+        Ok(Value::Object(_)) => None,
+        Ok(_) => Some(1),
+        Err(e) => Some(u32::try_from(e.line().max(1)).unwrap_or(u32::MAX)),
+    }
+}
+
 /// The line of the first problem when `text` is not a whole settings file for `agent`: strict JSON with an object at
 /// the top for Claude Code and Antigravity, JSONC for Qwen Code, TOML for Codex.
 pub(crate) fn text_problem(agent: &str, text: &str) -> Option<u32> {
     if agent == "qwen" {
-        if let Some((line, _)) = parse_problem(text) {
-            return Some(line);
-        }
-        return (!matches!(read_value(text), Ok(Value::Object(_)))).then_some(1);
+        return qwen_text_problem(text);
     }
     if agent == "codex" {
         return text
@@ -1024,7 +1085,45 @@ mod tests {
         assert!(v.editable);
         assert_eq!(v.raw_lock, None);
         assert_eq!(v.text.as_deref(), Some(text));
-        assert_eq!(text_problem("qwen", text), None);
+        // Shown and opened for editing, but saved only as text Qwen Code loads: the trailing comma is refused.
+        assert_eq!(text_problem("qwen", text), Some(2));
+    }
+
+    #[test]
+    fn a_qwen_save_accepts_comments_and_a_bom_and_nothing_looser() {
+        for ok in [
+            "{}",
+            "\u{feff}{}",
+            "// head\n{ /* in */ \"a\": 1 // tail\n}",
+            r#"{"u": "http://x", "v": "a/*b*/c", "w": "q\" // not a comment"}"#,
+            "{\"a\": 1}\n/* unterminated comment",
+            "{\r\n// c\r\n\"a\": 1\r\n}\r\n",
+        ] {
+            assert_eq!(text_problem("qwen", ok), None, "{ok:?}");
+        }
+    }
+
+    #[test]
+    fn a_qwen_save_refuses_what_qwen_code_cannot_load_with_the_line() {
+        for (bad, line) in [
+            ("{\n\"a\": 1,\n}", 3),
+            ("{\"a\": [1, 2,]}", 1),
+            ("", 1),
+            ("  \n\n", 1),
+            ("// only a comment\n", 1),
+            ("{\n\"a\": 'x'\n}", 2),
+            ("{\n\n a: 1\n}", 3),
+            ("{\"a\": 1\n\"b\": 2}", 2),
+            ("{\"a\": 0x10}", 1),
+            ("[]", 1),
+            ("\"text\"", 1),
+            ("1", 1),
+            ("{\"a\": 1} // c\n{\"b\": 2}", 2),
+            ("{\n/* two\nlines */ \"a\": ,\n}", 3),
+            ("{\"a\": \"x\"/*c*/ \"b\": 1}", 1),
+        ] {
+            assert_eq!(text_problem("qwen", bad), Some(line), "{bad:?}");
+        }
     }
 
     #[test]
