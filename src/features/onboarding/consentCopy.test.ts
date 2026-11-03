@@ -295,6 +295,8 @@ describe("Qwen Code's consent card", () => {
   it("offers the skill switch, as the other CLIs do (slice 6l2 decision 3), and no bulk allow", () => {
     const h = card(QWEN_SETUP);
     expect(h).toContain("Install the marshell skill");
+    expect(h).not.toContain("Not available yet");
+    expect(CAPABILITIES.qwen.skill.available).toBe(true);
     expect(h).not.toContain("Allow all");
   });
 });

@@ -15,7 +15,7 @@ export const CAPABILITIES: Record<CliId, Record<Capability, { available: boolean
   claude: { status: { available: true, entries: 10 }, approve: { available: true, entries: 1 }, statusline: { available: true, entries: 0 }, skill: { available: true, entries: 0 } },
   codex: { status: { available: true, entries: 7 }, approve: { available: true, entries: 1 }, statusline: no("Codex has no status line to chain."), skill: { available: true, entries: 0 } },
   antigravity: { status: { available: true, entries: 4 }, approve: { available: true, entries: 1 }, statusline: { available: true, entries: 0 }, skill: { available: true, entries: 0 } },
-  qwen: { status: { available: true, entries: 8 }, approve: { available: true, entries: 1 }, statusline: { available: true, entries: 0 }, skill: { available: false, reason: "Not available yet", entries: 0 } },
+  qwen: { status: { available: true, entries: 8 }, approve: { available: true, entries: 1 }, statusline: { available: true, entries: 0 }, skill: { available: true, entries: 0 } },
 };
 
 export function entryCount(cli: CliId, on: Record<Capability, boolean>): number {
