@@ -2924,6 +2924,7 @@ fn distro_app(root: &std::path::Path, reachable: bool) -> (axum::Router, PathBuf
     .with_claude_settings(settings.clone())
     .with_codex_hooks(project.join("codex-hooks.json"))
     .with_agy_home(project.join("agy-home"))
+    .with_qwen_home(project.join("qwen-windows-home"))
     .with_agent_path(|_| None)
     .with_distro_target(target);
     (router(st), wsl_home, settings)
@@ -3122,6 +3123,51 @@ async fn remove_plan_for_a_distro_targets_its_home() {
 }
 
 #[tokio::test]
+async fn qwen_distro_setup_writes_the_linux_bridge_path() {
+    let e = distro_env(true);
+    let (status, preview) = post(&e.app, "/v1/agents/qwen/hooks/plan", distro_want("Ubuntu")).await;
+    assert_eq!(status, StatusCode::OK, "{preview}");
+    assert_eq!(preview["can_apply"], true, "{preview}");
+    let file = e.wsl_home.join(".qwen").join("settings.json");
+    // Only the distro's settings file: no chain file, no skill, none of the Windows ones.
+    assert_eq!(preview_paths(&preview), std::slice::from_ref(&file), "{preview}");
+    let (status, applied) = post(&e.app, "/v1/config/apply", shown(&preview)).await;
+    assert_eq!(status, StatusCode::OK, "{applied}");
+    let text = std::fs::read_to_string(&file).unwrap();
+    assert!(text.contains(LINUX_BRIDGE), "{text}");
+    assert!(text.contains("--agent qwen"), "{text}");
+    assert!(!e.wsl_home.join(".qwen").join("skills").exists());
+    // The Windows Qwen home (pinned elsewhere) is not the distro's, and is left alone.
+    assert!(!e.settings.parent().unwrap().join("qwen-windows-home").exists());
+    assert!(!e.settings.exists(), "the Windows settings file is not the distro's");
+}
+
+#[tokio::test]
+async fn qwen_distro_remove_restores_the_file() {
+    let e = distro_env(true);
+    let theirs = "\u{feff}{\r\n  // mine\r\n  \"ui\": {\"theme\": \"Qwen Dark\"},\r\n}\r\n";
+    let file = e.wsl_home.join(".qwen").join("settings.json");
+    std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+    std::fs::write(&file, theirs).unwrap();
+
+    let (_, preview) = post(&e.app, "/v1/agents/qwen/hooks/plan", distro_want("Ubuntu")).await;
+    let (status, applied) = post(&e.app, "/v1/config/apply", shown(&preview)).await;
+    assert_eq!(status, StatusCode::OK, "{applied}");
+    let written = std::fs::read_to_string(&file).unwrap();
+    assert!(
+        written.contains(LINUX_BRIDGE) && written.contains("// mine"),
+        "{written}"
+    );
+
+    let (status, removal) = post(&e.app, "/v1/agents/qwen/hooks/remove-plan?distro=Ubuntu", json!({})).await;
+    assert_eq!(status, StatusCode::OK, "{removal}");
+    assert_eq!(preview_paths(&removal["preview"]), std::slice::from_ref(&file));
+    let (status, applied) = post(&e.app, "/v1/config/apply", shown(&removal["preview"])).await;
+    assert_eq!(status, StatusCode::OK, "{applied}");
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), theirs);
+}
+
+#[tokio::test]
 async fn a_codex_plan_in_a_distro_sends_the_person_to_trust_the_hooks_there() {
     let e = distro_env(true);
     let (_, preview) = post(&e.app, "/v1/agents/codex/hooks/plan", distro_want("Ubuntu")).await;
@@ -3137,7 +3183,7 @@ async fn a_codex_plan_in_a_distro_sends_the_person_to_trust_the_hooks_there() {
 #[tokio::test]
 async fn an_unreachable_distro_gets_the_422_copy() {
     let e = distro_env(false);
-    for agent in ["claude", "codex", "antigravity"] {
+    for agent in ["claude", "codex", "antigravity", "qwen"] {
         let (status, bytes) = post_raw(&e.app, &format!("/v1/agents/{agent}/hooks/plan"), distro_want("Ubuntu")).await;
         assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{agent}");
         assert_eq!(

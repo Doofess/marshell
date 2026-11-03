@@ -18,7 +18,7 @@ pub enum Refusal {
 }
 
 /// The folders of a WSL distro's home that hold the agent CLIs' settings: nothing else in the distro is open.
-const DISTRO_AGENT_FOLDERS: [&str; 3] = [".claude", ".codex", ".gemini"];
+const DISTRO_AGENT_FOLDERS: [&str; 4] = [".claude", ".codex", ".gemini", ".qwen"];
 
 /// A WSL distro whose home Marshell has looked up (through `wsl.exe`), as the config service records it.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -65,7 +65,7 @@ impl Guard {
         Self::new(allowed, denied_for_os(), home.to_path_buf())
     }
 
-    /// Also opens `.claude`, `.codex` and `.gemini` in each of these distro homes, and nothing else in the distro.
+    /// Also opens `.claude`, `.codex`, `.gemini` and `.qwen` in each of these distro homes, and nothing else in the distro.
     /// A home that is not under its own distro's share (`\\wsl.localhost\<distro>` or `\\wsl$\<distro>`) opens
     /// nothing, except a pinned one, which a test says is a plain folder.
     pub fn with_distro_homes(mut self, homes: &[DistroHome]) -> Self {
@@ -423,6 +423,32 @@ mod tests {
             "/",
             Path::new(r"\\wsl.localhost\Ubuntu\etc\x")
         ));
+    }
+
+    #[test]
+    fn a_distro_qwen_folder_is_admitted() {
+        let home = "/home/u";
+        for path in [
+            r"\\wsl.localhost\Ubuntu\home\u\.qwen\settings.json",
+            r"\\wsl.localhost\Ubuntu\home\u\.qwen\skills\marshell\SKILL.md",
+            r"\\wsl$\Ubuntu\home\u\.qwen",
+            "//wsl.localhost/Ubuntu/home/u/.qwen/settings.json",
+        ] {
+            assert!(in_agent_folder("Ubuntu", home, Path::new(path)), "{path}");
+        }
+        // Only the folder itself: a look-alike, another case, a nested one and the home's other files stay refused.
+        for path in [
+            r"\\wsl.localhost\Ubuntu\home\u\.qwen.bak\settings.json",
+            r"\\wsl.localhost\Ubuntu\home\u\.Qwen\settings.json",
+            r"\\wsl.localhost\Ubuntu\home\u\qwen\settings.json",
+            r"\\wsl.localhost\Ubuntu\home\u\notes\.qwen\settings.json",
+            r"\\wsl.localhost\Ubuntu\home\u\.qwen\..\.bashrc",
+            r"\\wsl.localhost\Ubuntu\home\u\.config\qwen\settings.json",
+            r"\\wsl.localhost\Ubuntu\home\u\.agents\skills\marshell\SKILL.md",
+            r"\\wsl.localhost\Ubuntu\home\u\.bashrc",
+        ] {
+            assert!(!in_agent_folder("Ubuntu", home, Path::new(path)), "{path}");
+        }
     }
 
     #[test]

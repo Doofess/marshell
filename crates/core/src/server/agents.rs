@@ -177,9 +177,6 @@ struct QwenInputs {
     chain_text: Option<String>,
 }
 
-/// Why Marshell sets nothing up inside a WSL distro for Qwen Code yet.
-const QWEN_NO_WSL: &str = "Setting up Qwen Code inside WSL comes in a later version of Marshell.";
-
 /// The user's home folder, Codex's `hooks.json` and its text.
 struct CodexInputs {
     hooks_path: PathBuf,
@@ -351,9 +348,6 @@ impl AppState {
     /// The plan to set up hooks inside `distro`: the same plan as on Windows, for the files under the distro's own
     /// home and with the bridge named by its Linux path. The Windows overrides of the settings folders do not apply.
     fn distro_install(&self, adapter: Adapter, distro: &str, want: &HookPlanRequest) -> Result<ChangeSet, Fail> {
-        if matches!(adapter, Adapter::Qwen) {
-            return Err((StatusCode::UNPROCESSABLE_ENTITY, QWEN_NO_WSL.to_string()));
-        }
         let target = self.distro_target(distro)?;
         self.ensure_bridge(want)?;
         let bridge = Bridge::Distro {
@@ -385,16 +379,18 @@ impl AppState {
                     want,
                 )
             }
-            Adapter::Qwen => unreachable!("refused above"),
+            // The distro's own `~/.qwen`: a `QWEN_HOME` set inside the distro is not followed.
+            Adapter::Qwen => {
+                let path = home.join(".qwen").join("settings.json");
+                let text = read_text(&path).map_err(|e| refused(&e))?;
+                qwen_hooks::install_plan(&path, &home, text.as_deref(), None, None, &bridge, want)
+            }
         }
         .map_err(|e| refused(&e))
     }
 
     /// The plan to take Marshell's hooks out of `distro`.
     fn distro_remove(&self, adapter: Adapter, distro: &str) -> Result<RemovePreview, Fail> {
-        if matches!(adapter, Adapter::Qwen) {
-            return Err((StatusCode::UNPROCESSABLE_ENTITY, QWEN_NO_WSL.to_string()));
-        }
         let home = self.distro_target(distro)?.home;
         let (changes, statusline_left) = match adapter {
             Adapter::Claude => {
@@ -424,7 +420,13 @@ impl AppState {
                 .map_err(|e| refused(&e))?;
                 (changes, false)
             }
-            Adapter::Qwen => unreachable!("refused above"),
+            Adapter::Qwen => {
+                let path = home.join(".qwen").join("settings.json");
+                let text = read_text(&path).map_err(|e| refused(&e))?;
+                let plan = qwen_hooks::remove_plan(&path, &home, text.as_deref(), None, Some(distro))
+                    .map_err(|e| refused(&e))?;
+                (plan.changes, plan.statusline_left)
+            }
         };
         Ok(RemovePreview {
             preview: self.0.config.preview(changes),
