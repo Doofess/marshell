@@ -65,7 +65,19 @@ pub fn import_roots(env: impl Fn(&str) -> Option<String>, user_home: &Path) -> I
 /// The roots for this machine, from the environment and the user's home folder. None when the home folder
 /// can't be found.
 pub fn system_roots() -> Option<ImportRoots> {
-    Some(import_roots(|k| std::env::var(k).ok(), &dirs::home_dir()?))
+    system_roots_with(|k| std::env::var(k).ok(), dirs::home_dir().as_deref())
+}
+
+/// Qwen Code runs on Node, whose home is `USERPROFILE` (`HOME` off Windows) before the known folder, the same home
+/// the agents routes plan `.qwen/settings.json` under; the other roots keep the known folder.
+fn system_roots_with(env: impl Fn(&str) -> Option<String>, known_home: Option<&Path>) -> Option<ImportRoots> {
+    let var = if cfg!(windows) { "USERPROFILE" } else { "HOME" };
+    let profile = env(var).filter(|v| !v.is_empty()).map(PathBuf::from);
+    let qwen = import_roots(&env, profile.as_deref().or(known_home)?).qwen;
+    Some(ImportRoots {
+        qwen,
+        ..import_roots(&env, known_home?)
+    })
 }
 
 /// How long a file must stay the same size before it is copied, and how often everything is scanned again.
@@ -1100,6 +1112,26 @@ mod tests {
             let roots = import_roots(|k| (k == "QWEN_RUNTIME_DIR").then(|| blank.to_string()), home);
             assert_eq!(roots.qwen, Some(home.join(".qwen").join("projects")), "{blank:?}");
         }
+    }
+
+    #[test]
+    fn the_qwen_root_follows_the_profile_variable_qwen_reads() {
+        let var = if cfg!(windows) { "USERPROFILE" } else { "HOME" };
+        let known = Path::new("known");
+        let roots = system_roots_with(|k| (k == var).then(|| "profile".to_string()), Some(known)).unwrap();
+        assert_eq!(roots.qwen, Some(Path::new("profile").join(".qwen").join("projects")));
+        assert_eq!(
+            roots.claude,
+            Some(known.join(".claude").join("projects")),
+            "the other roots keep the known folder"
+        );
+        let roots = system_roots_with(|k| (k == var).then(String::new), Some(known)).unwrap();
+        assert_eq!(
+            roots.qwen,
+            Some(known.join(".qwen").join("projects")),
+            "a blank variable falls back"
+        );
+        assert!(system_roots_with(|_| None, None).is_none());
     }
 
     #[test]
