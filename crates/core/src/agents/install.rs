@@ -106,16 +106,6 @@ pub fn install_kind(agent: &str, exe: &Path, exists: &dyn Fn(&Path) -> bool) -> 
     }
 }
 
-/// The program's bare name, as the person types it.
-fn bare_name(agent: &str) -> Option<&'static str> {
-    match agent {
-        "claude" => Some("claude"),
-        "codex" => Some("codex"),
-        "antigravity" => Some("agy"),
-        _ => None,
-    }
-}
-
 /// The command that updates the CLI, ready to run: the program and its arguments.
 pub fn update_argv(_agent: &str, kind: &InstallKind, exe: &Path) -> Option<Vec<String>> {
     let words = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
@@ -140,7 +130,8 @@ pub fn update_argv(_agent: &str, kind: &InstallKind, exe: &Path) -> Option<Vec<S
 /// The update command as shown to the person.
 pub fn update_text(agent: &str, kind: &InstallKind) -> Option<String> {
     match kind {
-        InstallKind::Native => bare_name(agent).map(|name| format!("{name} update")),
+        // The program's bare name, as the person types it.
+        InstallKind::Native => crate::profiles::detect::agent_command(agent).map(|name| format!("{name} update")),
         InstallKind::Npm { package } => Some(format!("npm install -g {package}@latest")),
         InstallKind::Winget { id } => Some(format!("winget upgrade --id {id} --exact")),
         InstallKind::Unknown => None,
