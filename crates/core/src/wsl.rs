@@ -2,10 +2,10 @@
 //! It works on strings, so it behaves the same on every host.
 
 use std::path::{Path, PathBuf};
-use std::sync::OnceLock;
+use std::sync::Mutex;
 use std::time::Duration;
 
-use crate::profiles::detect::{decode_wsl_output, run_wsl};
+use crate::profiles::detect::run_wsl;
 
 /// How long `wsl.exe --list` may take.
 const LIST_TIMEOUT: Duration = Duration::from_secs(8);
@@ -27,21 +27,28 @@ pub fn distro_of_argv(argv: &[String]) -> Option<String> {
     None
 }
 
-/// The default distro, from `wsl.exe --list`. Read once per process. None off Windows or when WSL won't say.
+/// The default distro, asked of the default distro itself (`$WSL_DISTRO_NAME`), so it works on any Windows language.
+/// Only a running tab's bare `wsl.exe` asks, so that distro is already running. Remembered once found; a lookup that
+/// fails is tried again next time. None off Windows or when WSL won't say.
 pub fn default_distro() -> Option<String> {
-    static DEFAULT: OnceLock<Option<String>> = OnceLock::new();
-    DEFAULT
-        .get_or_init(|| parse_default_distro(&run_wsl(&["--list"], LIST_TIMEOUT)))
-        .clone()
-}
-
-/// The distro marked `(Default)` in `wsl.exe --list` output.
-fn parse_default_distro(stdout: &[u8]) -> Option<String> {
-    decode_wsl_output(stdout).lines().find_map(|line| {
-        let line = line.trim_matches(|c: char| c == '\0' || c == '\u{feff}' || c.is_whitespace());
-        let name = line.strip_suffix("(Default)")?.trim_end();
+    static DEFAULT: Mutex<Option<String>> = Mutex::new(None);
+    cached_default(&DEFAULT, || {
+        let out = run_wsl(&["--exec", "sh", "-c", r#"printf %s "$WSL_DISTRO_NAME""#], LIST_TIMEOUT);
+        let name = String::from_utf8_lossy(&out);
+        let name = name.trim_matches(|c: char| c == '\0' || c.is_whitespace());
         Some(name.to_string()).filter(|n| !n.is_empty())
     })
+}
+
+/// The remembered default distro, else what `fetch` finds, which is remembered only when it found one. The lock is
+/// not held while `fetch` runs `wsl.exe`.
+fn cached_default(cache: &Mutex<Option<String>>, fetch: impl FnOnce() -> Option<String>) -> Option<String> {
+    if let Some(found) = cache.lock().unwrap_or_else(|e| e.into_inner()).clone() {
+        return Some(found);
+    }
+    let found = fetch()?;
+    *cache.lock().unwrap_or_else(|e| e.into_inner()) = Some(found.clone());
+    Some(found)
 }
 
 /// A distro name that can sit in a UNC path as one component.
@@ -236,16 +243,26 @@ mod tests {
     }
 
     #[test]
-    fn the_default_distro_is_the_one_marked_default() {
-        let utf16 = |text: &str| -> Vec<u8> { text.encode_utf16().flat_map(|u| u.to_le_bytes()).collect() };
-        let list = utf16("\u{feff}Windows Subsystem for Linux Distributions:\r\nMy Distro (Default)\r\nDebian\r\n");
-        assert_eq!(parse_default_distro(&list).as_deref(), Some("My Distro"));
+    fn a_failed_default_lookup_is_tried_again_and_a_found_one_is_kept() {
+        let cache = Mutex::new(None);
+        let calls = std::cell::Cell::new(0);
+        let fetch = |answer: Option<&str>| {
+            calls.set(calls.get() + 1);
+            answer.map(String::from)
+        };
+        assert_eq!(cached_default(&cache, || fetch(None)), None);
+        assert_eq!(cached_default(&cache, || fetch(None)), None);
+        assert_eq!(calls.get(), 2);
         assert_eq!(
-            parse_default_distro(b"Ubuntu (Default)\nDebian\n").as_deref(),
+            cached_default(&cache, || fetch(Some("Ubuntu"))).as_deref(),
             Some("Ubuntu")
         );
-        assert_eq!(parse_default_distro(b"Ubuntu\nDebian\n"), None);
-        assert_eq!(parse_default_distro(b""), None);
+        assert_eq!(calls.get(), 3);
+        assert_eq!(
+            cached_default(&cache, || fetch(Some("Debian"))).as_deref(),
+            Some("Ubuntu")
+        );
+        assert_eq!(calls.get(), 3);
     }
 
     #[test]
