@@ -1,18 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
 import type { AgentSetup } from "../../generated/AgentSetup";
-import { actions, consentProps, consentQueue, DEFAULT_WANT, hooksOffNotice, installRequest, liveStatusOn, rowSetupStart, setupLine, setupWant, startsOpen, wslDistros } from "./agentsState";
+import { actions, consentProps, consentQueue, DEFAULT_WANT, hooksOffNotice, installRequest, liveStatusOn, rowSetupStart, setupLine, setupWant, startsOpen } from "./agentsState";
 import type { ConfigPreview } from "../../generated/ConfigPreview";
 import type { FilePreview } from "../../generated/FilePreview";
 import { AGY_SETUP, CODEX_SETUP, PREVIEW, SETUP } from "./fixtures";
 
 const s = (patch: Partial<AgentSetup>): AgentSetup => ({ ...SETUP, ...patch });
-
-describe("wslDistros", () => {
-  const p = (name: string, command: string[], family: "wsl" | "cmd" = "wsl") => ({ name, command, family });
-  it("takes the distro from the -d argument, else the profile name, and skips other shells and repeats", () => {
-    expect(wslDistros([p("Ubuntu", ["wsl.exe", "-d", "Ubuntu"]), p("My shell", ["wsl.exe", "--distribution", "Debian"]), p("Arch", ["wsl.exe"]), p("cmd", ["cmd.exe"], "cmd"), p("again", ["wsl.exe", "-d", "ubuntu"])])).toEqual(["Ubuntu", "Debian", "Arch"]);
-  });
-});
 
 describe("installRequest for a distro", () => {
   it("sends the distro and no skill, and sends neither key's value otherwise", () => {
@@ -36,6 +29,14 @@ describe("setupLine", () => {
   it("says when Claude Code was not found", () => {
     expect(setupLine(s({ found: false }))).toBe("Claude Code was not found on this computer.");
   });
+  it("says when Marshell's hooks outlive the CLI, naming the hooks file", () => {
+    expect(setupLine(s({ found: false, hooks: "installed" }))).toBe(
+      "Claude Code was not found on this computer, but Marshell's hooks are still in C:/h/.claude/settings.json. Turn them off to remove them.",
+    );
+    expect(setupLine(s({ found: false, hooks: "partial", hooks_path: "C:/h/.gemini/config/hooks.json" }))).toBe(
+      "Claude Code was not found on this computer, but Marshell's hooks are still in C:/h/.gemini/config/hooks.json. Turn them off to remove them.",
+    );
+  });
 });
 
 describe("actions", () => {
@@ -48,6 +49,10 @@ describe("actions", () => {
   it("offers nothing when Claude Code is not found or its file does not parse", () => {
     expect(actions(s({ found: false }))).toEqual([]);
     expect(actions(s({ settings_state: "unparsable" }))).toEqual([]);
+  });
+  it("offers only Hooks off while Marshell's hooks outlive the CLI (#62)", () => {
+    for (const hooks of ["installed", "partial", "orphaned"] as const) expect(actions(s({ found: false, hooks }))).toEqual(["hooksOff"]);
+    expect(actions(s({ found: false, hooks: "installed", settings_state: "unparsable" }))).toEqual([]);
   });
 });
 

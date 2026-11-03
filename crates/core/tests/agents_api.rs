@@ -2486,6 +2486,27 @@ fn preview_paths(preview: &Value) -> Vec<PathBuf> {
 }
 
 #[tokio::test]
+async fn the_wsl_distros_route_lists_the_detected_distros() {
+    let e = distro_env(true);
+    let (status, body) = get(&e.app, "/v1/agents/wsl-distros").await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body, json!({ "distros": ["Ubuntu"] }));
+}
+
+#[tokio::test]
+async fn the_wsl_distros_route_is_refused_without_the_bearer() {
+    let e = distro_env(true);
+    let req = Request::builder()
+        .method("GET")
+        .uri("/v1/agents/wsl-distros")
+        .header(header::HOST, format!("127.0.0.1:{PORT}"))
+        .body(Body::empty())
+        .unwrap();
+    let (status, _) = send(&e.app, req).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
 async fn plan_refuses_an_unknown_distro() {
     let e = distro_env(true);
     // Not a profile, a profile that is not WSL, and names with more or less than the distro in them.

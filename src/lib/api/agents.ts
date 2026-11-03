@@ -6,6 +6,7 @@ import type { ConfigPreview } from "../../generated/ConfigPreview";
 import type { Endpoint } from "../../generated/Endpoint";
 import type { HookPlanRequest } from "../../generated/HookPlanRequest";
 import type { RemovePreview } from "../../generated/RemovePreview";
+import type { WslDistros } from "../../generated/WslDistros";
 import type { ConfigState, Detection } from "../../features/onboarding/types";
 import { api, ApiError } from "./client";
 
@@ -18,6 +19,9 @@ const base = (agent: string) => `/v1/agents/${encodeURIComponent(agent)}`;
 export const getSetup = (ep: Endpoint, agent: HookAgent) => api<AgentSetup>(ep, "GET", `${base(agent)}/setup`);
 
 /** Which agent CLIs are on this machine: Claude, Codex and Antigravity, in that order. */
+/** The WSL distros the core accepts for a hooks setup. */
+export const listWslDistros = (ep: Endpoint) => api<WslDistros>(ep, "GET", "/v1/agents/wsl-distros");
+
 export const listAgents = (ep: Endpoint) => api<AgentFound[]>(ep, "GET", "/v1/agents");
 
 /** The preview of the requested status, approval and status line hooks. A 422 ApiError says why the file is refused. */

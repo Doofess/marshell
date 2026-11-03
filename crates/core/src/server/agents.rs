@@ -24,6 +24,7 @@ use axum::response::{IntoResponse, Response};
 use marshell_protocol::account::{AccountStatus, SignIn};
 use marshell_protocol::agents::{
     AgentFound, AgentSetup, HookInstall, HookPlanRequest, ParseProblem, RemovePreview, SettingsState, SkillInstall,
+    WslDistros,
 };
 use marshell_protocol::config::{
     Applies, ApplyConflict, ApplyRequest, ApplyResult, ChangeSet, ConfigPreview, ConfigScope, EditOp, ExpectedHash,
@@ -64,6 +65,13 @@ fn wsl_version_argv(distro: &str, exe: &str) -> Vec<String> {
 /// The target from what `distro` printed for its `$HOME` and for the bridge's Linux path. None for a home that is
 /// not under the distro's own share (one under `/mnt/c` is a folder of Windows, and a distro's hooks must never
 /// land in the Windows user's files), and for a bridge path that is not absolute.
+/// The distro's home and the bridge's Linux path from `distro_target`'s one call: two lines, each non-empty.
+fn split_home_and_bridge(out: &str) -> Option<(String, String)> {
+    let mut lines = out.lines().map(|line| line.trim_end_matches('\r'));
+    let (home, bridge) = (lines.next()?, lines.next()?);
+    (!home.is_empty() && !bridge.is_empty()).then(|| (home.to_string(), bridge.to_string()))
+}
+
 fn distro_target_of(distro: &str, linux_home: &str, linux_bridge: &str) -> Option<DistroTarget> {
     let home = crate::wsl::to_windows(distro, linux_home).filter(|home| crate::wsl::under_distro(distro, home))?;
     linux_bridge.starts_with('/').then(|| DistroTarget {
@@ -275,16 +283,16 @@ impl AppState {
             self.0.config.record_distro_home(distro, &target.home, true);
             return Ok(target);
         }
-        let text = |argv: &[&str]| {
-            // A Linux program's output through `--exec` is UTF-8.
-            let out = run_wsl(argv, WSL_VERSION_TIMEOUT);
-            String::from_utf8_lossy(&out).trim_end_matches(['\r', '\n']).to_string()
-        };
-        let linux_home = text(&["-d", distro, "--exec", "sh", "-c", r#"printf %s "$HOME""#]);
-        // The path goes as one argument, never through a shell.
+        // The bridge's path goes as an argument ($1), never into the script.
         let bridge_exe = paths::bridge_exe(&self.0.home);
         let bridge_exe = bridge_exe.to_str().ok_or_else(unreachable)?;
-        let bridge = text(&["-d", distro, "--exec", "wslpath", "-u", bridge_exe]);
+        let script = r#"printf '%s\n' "$HOME"; wslpath -u "$1""#;
+        // A Linux program's output through `--exec` is UTF-8.
+        let out = run_wsl(
+            &["-d", distro, "--exec", "sh", "-c", script, "sh", bridge_exe],
+            WSL_VERSION_TIMEOUT,
+        );
+        let (linux_home, bridge) = split_home_and_bridge(&String::from_utf8_lossy(&out)).ok_or_else(unreachable)?;
         let target = distro_target_of(distro, &linux_home, &bridge).ok_or_else(unreachable)?;
         // Its home is under the distro's own share (`distro_target_of` checked), so the guard may open its agent folders.
         self.0.config.record_distro_home(distro, &target.home, false);
@@ -808,6 +816,14 @@ pub async fn setup(State(st): State<AppState>, UrlPath(agent): UrlPath<String>) 
     .await
     .map_err(failed)??;
     Ok(Json(setup))
+}
+
+/// The WSL distros the Agents dialog may offer: the same list a request naming a distro is checked against.
+/// Nothing is started, so this needs no `spawn_blocking`.
+pub async fn wsl_distros(State(st): State<AppState>) -> Json<WslDistros> {
+    Json(WslDistros {
+        distros: super::wsl_distros(&st.profiles_snapshot()),
+    })
 }
 
 /// Which of the agent CLIs Marshell can start are on this machine, in the order claude, codex, antigravity.
@@ -1551,6 +1567,21 @@ mod tests {
             assert!(script.contains(folder), "{folder}");
         }
         assert!(!script.contains("codex"));
+    }
+
+    #[test]
+    fn the_home_and_the_bridge_come_apart_from_one_output() {
+        assert_eq!(
+            split_home_and_bridge("/home/u\n/mnt/c/x/marshell-hook.exe"),
+            Some(("/home/u".into(), "/mnt/c/x/marshell-hook.exe".into()))
+        );
+        assert_eq!(
+            split_home_and_bridge("/home/u\r\n/mnt/c/x/b.exe\r\n"),
+            Some(("/home/u".into(), "/mnt/c/x/b.exe".into()))
+        );
+        for bad in ["", "/home/u", "/home/u\n", "\n/mnt/c/x", "/home/u\n\r\n"] {
+            assert_eq!(split_home_and_bridge(bad), None, "{bad:?}");
+        }
     }
 
     #[test]

@@ -1297,7 +1297,13 @@ pub(super) fn resume_session(st: &AppState, tab: &str, agent: Option<&str>) -> R
     };
     // The row lives in the Marshell home and is checked again before its id reaches a command line or its
     // path a filesystem call. A row that fails counts as unknown.
-    if !crate::history::sidecar_allowed(agent, &meta.transcript_path, &meta.session_id) {
+    // A WSL row's transcript is on its distro's share, which only the distro the sidecar names admits; the index row
+    // doesn't keep it.
+    let distro = crate::history::archive::read_meta(st.home(), agent, &meta.session_id)
+        .ok()
+        .flatten()
+        .and_then(|m| m.distro);
+    if !crate::history::sidecar_allowed_in(agent, &meta.transcript_path, &meta.session_id, distro.as_deref()) {
         return Ok(Resume::Last);
     }
     if std::path::Path::new(&meta.transcript_path).is_file() {
@@ -2092,6 +2098,29 @@ mod tests {
         crate::history::archive::copy_transcript(home.path(), &meta).unwrap();
         std::fs::remove_file(&transcript).unwrap();
         assert_eq!(resume_session(&st, "t1", Some("claude")), Err(NO_CONVERSATION));
+    }
+
+    /// A WSL row's transcript is on the distro's share, which `sidecar_allowed` without the distro refuses, so the
+    /// row fell back to `--continue` and could resume another conversation in the same folder.
+    #[test]
+    fn resume_session_accepts_a_wsl_row() {
+        let home = tempfile::tempdir().unwrap();
+        let st = AppState::new("t".into(), 1, Vec::new(), home.path().to_path_buf(), Vec::new());
+        let body = serde_json::json!({
+            "hook_event_name": "SessionStart",
+            "session_id": "abc-1",
+            "transcript_path": "/home/u/.claude/projects/-home-u-proj/abc-1.jsonl",
+            "cwd": "/home/u/proj",
+        });
+        // A distro that doesn't exist, so the share lookup below fails at once and never starts a real one.
+        st.history()
+            .note_event("claude", "t1", None, &body, 1, Some("NoSuchDistro6k"));
+        assert_eq!(
+            st.history().latest_for_tab("t1").unwrap().transcript_path,
+            r"\\wsl.localhost\NoSuchDistro6k\home\u\.claude\projects\-home-u-proj\abc-1.jsonl"
+        );
+        // The transcript can't be read in a test and there is no archive: a fresh start, not `--continue`.
+        assert_eq!(resume_session(&st, "t1", Some("claude")), Ok(Resume::Fresh));
     }
 
     #[test]

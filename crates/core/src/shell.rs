@@ -541,6 +541,14 @@ mod tests {
         assert!(!std::fs::read(dir.join("marshell-open")).unwrap().contains(&b'\r'));
     }
 
+    /// Windows isn't always on C:, so the opener asks for `%SystemRoot%` before it falls back to `C:\Windows`.
+    #[test]
+    fn the_opener_finds_windows_through_systemroot() {
+        let (_, text) = FILES.iter().find(|(name, _)| *name == "marshell-open").unwrap();
+        assert!(text.contains("%SystemRoot%"));
+        assert!(!text.contains(r"'C:\Windows\System32\rundll32.exe'"));
+    }
+
     #[test]
     fn unknown_shell_reason() {
         let p = profile(&["nu"], ShellFamily::Posix);

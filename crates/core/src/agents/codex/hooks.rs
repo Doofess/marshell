@@ -716,7 +716,8 @@ mod tests {
             assert!(after.starts_with(&format!("{head},")), "{after:?}");
             assert!(after.ends_with(&tail), "{after:?}");
             if text.contains("/* mine */") {
-                assert!(after.contains("}], /* mine */\n    \"SessionStart\""), "{after:?}");
+                // The user's trailing comma and the comment after the array stay.
+                assert!(after.contains("},], /* mine */\n    \"SessionStart\""), "{after:?}");
             }
             // The line endings stay all one kind.
             assert_eq!(
@@ -727,7 +728,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "issue #63: removing a trailing Marshell group leaves a newline before `]` and drops a trailing comma"]
     fn removing_a_trailing_group_restores_the_original_bytes() {
         for text in [plain(), bom(), crlf(), comments()] {
             let home = fake_home();
@@ -748,6 +748,7 @@ mod tests {
             assert_eq!(cs.title, "Turn Codex hooks off");
             let after = apply(&cs, Some(&installed)).unwrap();
             assert_eq!(value(&after), value(&text));
+            assert_eq!(after, text);
             assert!(after.contains(USER_GROUP));
             assert_eq!(after.starts_with('\u{feff}'), text.starts_with('\u{feff}'));
             assert_eq!(after.contains("\r\n"), text.contains("\r\n"));

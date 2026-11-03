@@ -1,7 +1,6 @@
 import type { AgentSetup } from "../../generated/AgentSetup";
 import type { ConfigPreview } from "../../generated/ConfigPreview";
 import type { HookPlanRequest } from "../../generated/HookPlanRequest";
-import type { Profile } from "../../generated/Profile";
 import { deletedFiles, previewDiff, toDetection, type HookAgent } from "../../lib/api/agents";
 import { addsStatusLine, CLI_NAME, consentHeadline, fileName, opensDiff, removalCopy, skillUndo, type Capability, type CliId, type ConsentPlan, type Detection } from "../onboarding/consent";
 
@@ -26,25 +25,6 @@ const ON = onOf(DEFAULT_WANT);
 /** An existing status install needs only the permission hook. */
 export const setupWant = (s: AgentSetup): Want => ({ ...(s.hooks === "installed" ? { status: false, statusline: false, approve: true } : DEFAULT_WANT), skill: s.skill !== "installed" && s.skill !== "unavailable" });
 
-/**
- * The WSL distros the session profiles name, once each. The name is the profile's `-d` / `--distribution` argument in `command`
- * (what the launch passes to wsl.exe), else the profile's own name (which detection sets to the distro). No distro is asked for.
- */
-export function wslDistros(profiles: Pick<Profile, "name" | "command" | "family">[]): string[] {
-  const seen = new Set<string>();
-  const out: string[] = [];
-  for (const p of profiles) {
-    if (p.family !== "wsl") continue;
-    const at = p.command.findIndex((a) => a === "-d" || a === "--distribution");
-    const fromFlag = at >= 0 ? p.command[at + 1] : p.command.find((a) => a.startsWith("--distribution="))?.slice("--distribution=".length);
-    const name = fromFlag?.trim() || p.name.trim();
-    if (name === "" || seen.has(name.toLowerCase())) continue;
-    seen.add(name.toLowerCase());
-    out.push(name);
-  }
-  return out;
-}
-
 /** Where the Agents dialog opens from a session row's "set up" link: on that row's agent's Set up card. */
 export type SetupStart = { setup: HookAgent };
 export const rowSetupStart = (agent: string): SetupStart => ({ setup: agent === "codex" || agent === "antigravity" ? agent : "claude" });
@@ -55,12 +35,16 @@ export const liveStatusOn = (statusOff: string[], agent: string): boolean => !st
 /** The setup's file does not parse: there is nothing to set up or turn off until it is fixed. */
 const refused = (s: AgentSetup) => s.settings_state === "unparsable";
 
+/** The CLI isn't found, but Marshell's entries are still in its files (#62): its section stays, offering only Hooks off. */
+export const leftover = (s: AgentSetup): boolean => !s.found && s.hooks !== "none";
+
 /** The agents whose card the first run offers, in order: each found one that has something to set up. One card each, never a bulk allow. */
 export const consentQueue = (setups: AgentSetup[]): AgentSetup[] => setups.filter((s) => actions(s).includes("setup"));
 
 /** One line on what Marshell's hooks are doing in an agent's settings file (Claude Code's settings, Codex's hooks.json). */
 export function setupLine(s: AgentSetup): string {
   const name = CLI_NAME[s.agent as CliId];
+  if (leftover(s)) return `${name} was not found on this computer, but Marshell's hooks are still in ${s.hooks_path ?? s.settings_path}. Turn them off to remove them.`;
   if (!s.found) return `${name} was not found on this computer.`;
   if (refused(s)) return consentHeadline(toDetection(s), ON);
   // Antigravity keeps its hooks in a file of their own.
@@ -85,7 +69,8 @@ export function setupLine(s: AgentSetup): string {
 
 /** What the person may do about it. Orphaned hooks can be turned off or set up again. */
 export function actions(s: AgentSetup): Array<"setup" | "hooksOff"> {
-  if (!s.found || refused(s)) return [];
+  if (refused(s)) return [];
+  if (!s.found) return leftover(s) ? ["hooksOff"] : [];
   switch (s.hooks) {
     case "none":
       return ["setup"];

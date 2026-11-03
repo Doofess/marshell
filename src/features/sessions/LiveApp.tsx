@@ -89,7 +89,7 @@ import { adoptTarget, fillsEmptyPane, focusedIndex, paneToggle, ratiosOf, roomFo
 import { CloseBar } from "./CloseBar";
 import { PauseBar } from "./PauseBar";
 import { RestartBar } from "./RestartBar";
-import { adminCommandHidden, launcherFromPalette, launcherOpens, type OnboardingShown } from "./launcherOpens";
+import { adminCommandHidden, launcherFromPalette, launcherOpens, passesLauncher, type OnboardingShown } from "./launcherOpens";
 import { REOPEN_AS_ADMIN } from "../../lib/adminCopy";
 import { LiveLauncher } from "./LiveLauncher";
 import { LivePalette } from "./LivePalette";
@@ -1302,7 +1302,21 @@ export function LiveApp() {
 
   useEffect(() => {
     // While the sheet is up it has the keys: Esc, Tab and the lists are its own.
-    if (!os || launcherOpen || overlay !== null || review !== null || closeAsk !== null) return;
+    if (!os || overlay !== null || review !== null || closeAsk !== null) return;
+    if (launcherOpen) {
+      // The launcher keeps its keys, except Reopen closed session: on an empty window the launcher is up by itself. The key types
+      // no text, so it passes even from the launcher's search box.
+      const onLauncherKey = (e: KeyboardEvent) => {
+        const shortcut = sessionShortcut(e, os);
+        if (!shortcut || !passesLauncher(shortcut.kind, (context.current.closed?.length ?? 0) > 0, e.getModifierState("AltGraph"))) return;
+        e.preventDefault();
+        if (e.repeat) return;
+        setLauncherOpen(false);
+        actions.handle(shortcut);
+      };
+      window.addEventListener("keydown", onLauncherKey);
+      return () => window.removeEventListener("keydown", onLauncherKey);
+    }
     const onKey = (e: KeyboardEvent) => {
       const shortcut = sessionShortcut(e, os);
       // Review is read above.

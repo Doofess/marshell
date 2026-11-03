@@ -130,13 +130,21 @@ pub struct DistroTarget {
     pub bridge: String,
 }
 
-/// The distros of the detected WSL profiles, spelt as the profiles name them.
+/// The distros of the detected WSL profiles, each once (compared case-insensitively), spelt as the first profile
+/// that names it spells it.
 fn wsl_distros(doc: &ProfilesDoc) -> Vec<String> {
-    doc.profiles
+    let mut distros: Vec<String> = Vec::new();
+    for distro in doc
+        .profiles
         .iter()
         .filter(|p| matches!(p.family, marshell_protocol::api::ShellFamily::Wsl))
         .filter_map(|p| crate::wsl::distro_of_argv(&p.command))
-        .collect()
+    {
+        if !distros.iter().any(|d| d.to_lowercase() == distro.to_lowercase()) {
+            distros.push(distro);
+        }
+    }
+    distros
 }
 
 struct Inner {
@@ -1085,6 +1093,7 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/snapshots", get(config::snapshots))
         .route("/v1/snapshots/{id}/restore", post(config::restore))
         .route("/v1/agents", get(agents::found))
+        .route("/v1/agents/wsl-distros", get(agents::wsl_distros))
         .route("/v1/agents/catalog", get(catalog::catalog))
         .route("/v1/agents/own", get(catalog::get_own).put(catalog::put_own))
         .route("/v1/tools", get(tools::catalog))
@@ -1388,6 +1397,32 @@ mod tests {
         assert_eq!(longest, Duration::from_secs(580));
         assert!(longest < BRIDGE_PERMISSION_BUDGET);
         assert!(DEFAULT_PERMISSION_HOLD < longest);
+    }
+
+    #[test]
+    fn wsl_distros_lists_each_distro_once_in_the_first_spelling() {
+        use marshell_protocol::api::{Profile, ShellFamily};
+        let profile = |id: &str, command: &[&str]| Profile {
+            id: id.into(),
+            name: id.into(),
+            command: command.iter().map(|s| s.to_string()).collect(),
+            family: ShellFamily::Wsl,
+            cwd: None,
+            env: Vec::new(),
+            shell_integration: true,
+            terminal_theme: None,
+            detected: true,
+        };
+        let doc = ProfilesDoc {
+            profiles: vec![
+                profile("a", &["wsl", "-d", "Ubuntu"]),
+                profile("b", &["wsl", "-d", "ubuntu"]),
+                profile("c", &["wsl.exe"]),
+                profile("d", &["wsl", "--distribution=Debian"]),
+            ],
+            default_id: "a".into(),
+        };
+        assert_eq!(wsl_distros(&doc), ["Ubuntu", "Debian"]);
     }
 
     #[test]

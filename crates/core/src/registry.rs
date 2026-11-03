@@ -711,11 +711,8 @@ impl Registry {
     /// session's SessionEnd was already seen (`clear_hook_agent`), is refused too: it is the agent's last word.
     pub fn mark_hook_agent(&self, tab_id: &str, agent: &str, session_id: Option<&str>) -> bool {
         // The program names of the adapter agents (`ADAPTER_EXES` in the manifest).
-        let program = match agent {
-            "claude" => "claude",
-            "codex" => "codex",
-            "antigravity" => "agy",
-            _ => return false,
+        let Some(program) = crate::profiles::detect::agent_command(agent) else {
+            return false;
         };
         let mut state = self.state.lock().unwrap();
         let Some(entry) = state.open.iter_mut().find(|e| e.info.tab_id == tab_id) else {

@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AgentSetup } from "../../generated/AgentSetup";
 import type { ConfigPreview } from "../../generated/ConfigPreview";
 import type { Endpoint } from "../../generated/Endpoint";
-import { applyPreview, getSetup, planInstall, planRemove, previewDiff, toDetection, toDetections } from "./agents";
+import { applyPreview, getSetup, listWslDistros, planInstall, planRemove, previewDiff, toDetection, toDetections } from "./agents";
 
 const endpoint: Endpoint = { port: 9, token: "t", platform: "windows" };
 const reply = (body: unknown, status = 200) => vi.fn().mockResolvedValue(new Response(typeof body === "string" ? body : JSON.stringify(body), { status }));
@@ -51,6 +51,13 @@ describe("agents api", () => {
     vi.stubGlobal("fetch", r);
     await planRemove(endpoint, "codex");
     expect(call(r)).toMatchObject({ url: "http://127.0.0.1:9/v1/agents/codex/hooks/remove-plan", method: "POST" });
+  });
+
+  it("reads the WSL distros the core accepts", async () => {
+    const g = reply({ distros: ["Ubuntu", "Debian"] });
+    vi.stubGlobal("fetch", g);
+    await expect(listWslDistros(endpoint)).resolves.toEqual({ distros: ["Ubuntu", "Debian"] });
+    expect(call(g)).toMatchObject({ url: "http://127.0.0.1:9/v1/agents/wsl-distros", method: "GET" });
   });
 
   it("reads the setup and plans install and removal", async () => {

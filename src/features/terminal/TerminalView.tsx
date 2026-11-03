@@ -18,6 +18,7 @@ import { jumpFrom, promptTarget, trackPrompts, type Prompt } from "./promptMarks
 import "./PromptMarks.css";
 import { pathLinkProvider } from "./pathLinks";
 import { ReplayGate } from "./replayGate";
+import { sendsFirstSize, shouldFit } from "./fitGate";
 import { registerTerminal } from "./terminals";
 import { loadRenderer, type RendererKind } from "./renderer";
 import { trackColorSchemeMode } from "./colorSchemeMode";
@@ -111,6 +112,22 @@ export function TerminalView({ endpoint, tabId, elevated = false, placeholder, o
   blockedRef.current = onBlockedInput;
   const termRef = useRef<Terminal | null>(null);
   const fitRef = useRef<FitAddon | null>(null);
+  const visibleRef = useRef(visible);
+  visibleRef.current = visible;
+  // A hidden host measures near empty, and fitting to it would resize the program to 10x4 (#65); showing the tab refits.
+  const fitIfShown = () => {
+    const el = host.current;
+    if (el && shouldFit(visibleRef.current, el.clientWidth, el.clientHeight)) fitRef.current?.fit();
+  };
+  // Whether this terminal has told the core its size; a terminal made hidden waits until it is shown.
+  const sizeSentRef = useRef(false);
+  const sendFirstSize = () => {
+    const term = termRef.current;
+    if (!term || !sendsFirstSize(visibleRef.current, sizeSentRef.current)) return;
+    sizeSentRef.current = true;
+    socketRef.current?.resize(term.cols, term.rows);
+    sizeRef.current?.(term.cols, term.rows);
+  };
   const promptsRef = useRef<Prompt[]>([]);
   const jumpRef = useRef(onPromptJump);
   jumpRef.current = onPromptJump;
@@ -238,6 +255,7 @@ export function TerminalView({ endpoint, tabId, elevated = false, placeholder, o
       }),
       term.onBinary((d) => core === "live" && !pausedRef.current && socket.sendBytes(d)),
       term.onResize(({ cols, rows }) => {
+        sizeSentRef.current = true;
         socket.resize(cols, rows);
         sizeRef.current?.(cols, rows);
       }),
@@ -249,12 +267,13 @@ export function TerminalView({ endpoint, tabId, elevated = false, placeholder, o
     let frame = 0;
     const observer = new ResizeObserver(() => {
       cancelAnimationFrame(frame);
-      frame = requestAnimationFrame(() => fit.fit());
+      frame = requestAnimationFrame(fitIfShown);
     });
     observer.observe(el);
-    fit.fit();
-    socket.resize(term.cols, term.rows);
-    sizeRef.current?.(term.cols, term.rows);
+    // A terminal made behind another tab keeps xterm's default grid, and sends no size, until it is shown.
+    sizeSentRef.current = false;
+    fitIfShown();
+    sendFirstSize();
 
     // Capture phase, so an image-only paste is taken before xterm sees it; every other paste reaches xterm unchanged.
     const onPaste = (e: ClipboardEvent) => {
@@ -310,7 +329,7 @@ export function TerminalView({ endpoint, tabId, elevated = false, placeholder, o
       if (!live || !term) return;
       term.options.fontFamily = fontStack(font.family, font.wtFamily);
       term.options.fontSize = font.size;
-      fitRef.current?.fit();
+      fitIfShown();
     });
     return () => {
       live = false;
@@ -332,7 +351,9 @@ export function TerminalView({ endpoint, tabId, elevated = false, placeholder, o
   useEffect(() => {
     if (!visible) return;
     // Shown again after being hidden: the window may have changed size meanwhile, and a hidden host measures as zero.
-    fitRef.current?.fit();
+    fitIfShown();
+    // The fit sent the size if it changed the grid; a grid that already matched is sent here, once.
+    sendFirstSize();
     if (autoFocus) termRef.current?.focus();
   }, [autoFocus, visible, endpoint, tabId, focusToken, fontReady]);
 
