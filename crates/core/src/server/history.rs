@@ -1,5 +1,5 @@
 //! The History view's routes: the list, full-text search, one conversation, its marks, export, Resume and Fork.
-//! Claude Code and Codex conversations are kept; any other agent is a 404. An agent and a session id
+//! Claude Code, Codex and Qwen Code conversations are kept; any other agent is a 404. An agent and a session id
 //! from the URL are checked before anything touches the index or a file. Every call into the history and every
 //! file read runs on a blocking thread.
 
@@ -25,7 +25,7 @@ use serde::Deserialize;
 use std::sync::Arc;
 
 /// The agents whose conversations the History view opens.
-const AGENTS: [&str; 2] = ["claude", "codex"];
+const AGENTS: [&str; 3] = ["claude", "codex", "qwen"];
 
 /// Resume's refusal when a live tab already holds the conversation.
 pub(super) const RUNNING_IN_A_TAB: &str = "This conversation is already running in a tab. Use Go to session.";
@@ -501,10 +501,10 @@ fn answer(result: Result<CreateSessionResponse, Box<Response>>) -> Response {
 
 /// Why a conversation can't be resumed when its source file is gone.
 pub(super) fn gone(agent: &str) -> String {
-    if agent == "codex" {
-        "Codex no longer has this conversation, so it can't be resumed.".into()
-    } else {
-        NO_CONVERSATION.into()
+    match agent {
+        "codex" => "Codex no longer has this conversation, so it can't be resumed.".into(),
+        "qwen" => "Qwen Code no longer has this conversation, so it can't be resumed.".into(),
+        _ => NO_CONVERSATION.into(),
     }
 }
 

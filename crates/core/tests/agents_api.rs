@@ -583,6 +583,7 @@ fn qwen_env() -> QwenEnv {
     )
     .with_claude_settings(project.join("settings.json"))
     .with_qwen_home(user_home.clone())
+    .with_qwen_system_settings(root.join("system-settings.json"))
     .with_qwen_version(Some("0.26.5".into()))
     .with_agent_path(|_| None);
     let bridge = paths::bridge_exe(&home);
@@ -605,7 +606,247 @@ async fn install_qwen(e: &QwenEnv) -> Value {
     preview
 }
 
+#[tokio::test]
+async fn qwen_skill_plan_creates_the_file_under_the_qwen_home() {
+    let e = qwen_env();
+    let path = e
+        .settings
+        .parent()
+        .unwrap()
+        .join("skills")
+        .join("marshell")
+        .join("SKILL.md");
+    let (status, preview) = post(&e.app, "/v1/agents/qwen/skill/plan", json!({})).await;
+    assert_eq!(status, StatusCode::OK, "{preview}");
+    assert_eq!(preview["can_apply"], true, "{preview}");
+    assert!(!path.exists(), "planning must not write the skill");
+    let (status, applied) = post(&e.app, "/v1/config/apply", shown(&preview)).await;
+    assert_eq!(status, StatusCode::OK, "{applied}");
+    assert_eq!(
+        std::fs::read_to_string(&path).unwrap(),
+        marshell_core::agents::skill::SKILL_TEXT
+    );
+    let (_, setup) = get(&e.app, "/v1/agents/qwen/setup").await;
+    assert_eq!(setup["skill"], "installed");
+    assert_eq!(setup["skill_path"], path.to_string_lossy().as_ref());
+}
+
+#[tokio::test]
+async fn qwen_hooks_plan_with_skill_includes_it() {
+    let e = qwen_env();
+    let path = e
+        .settings
+        .parent()
+        .unwrap()
+        .join("skills")
+        .join("marshell")
+        .join("SKILL.md");
+    let mut want = WANT();
+    want["skill"] = json!(true);
+    let (status, preview) = post(&e.app, "/v1/agents/qwen/hooks/plan", want).await;
+    assert_eq!(status, StatusCode::OK, "{preview}");
+    assert_eq!(preview["can_apply"], true, "{preview}");
+    assert!(!path.exists(), "planning must not write the skill");
+    let (status, applied) = post(&e.app, "/v1/config/apply", shown(&preview)).await;
+    assert_eq!(status, StatusCode::OK, "{applied}");
+    assert_eq!(
+        std::fs::read_to_string(&path).unwrap(),
+        marshell_core::agents::skill::SKILL_TEXT
+    );
+    assert!(e.settings.exists());
+}
+
 const QWEN_OWN_LINE: &str = "\u{feff}{\r\n  \"theme\": \"dark\",\r\n  \"ui\": {\"statusLine\": {\"type\": \"command\", \"command\": \"my-line\"}}\r\n}\r\n";
+
+impl QwenEnv {
+    fn write_settings(&self, text: &str) {
+        std::fs::create_dir_all(self.settings.parent().unwrap()).unwrap();
+        std::fs::write(&self.settings, text).unwrap();
+    }
+
+    async fn settings_plan(&self, change: Value) -> (StatusCode, Vec<u8>) {
+        post_raw(
+            &self.app,
+            "/v1/agents/qwen/settings/plan",
+            json!({
+                "expected_hash": hash_at(&self.settings), "change": change
+            }),
+        )
+        .await
+    }
+
+    async fn settings_change(&self, change: Value) -> String {
+        let before = std::fs::read(&self.settings).ok();
+        let (status, bytes) = self.settings_plan(change).await;
+        assert_eq!(status, StatusCode::OK, "{}", text(&bytes));
+        let plan = json_of(&bytes);
+        assert_eq!(plan["preview"]["title"], "Change Qwen Code settings");
+        assert_eq!(plan["preview"]["can_apply"], true, "{plan}");
+        assert_eq!(std::fs::read(&self.settings).ok(), before, "preview does not write");
+        let (status, applied) = post(&self.app, "/v1/config/apply", shown(&plan["preview"])).await;
+        assert_eq!(status, StatusCode::OK, "{applied}");
+        applied["snapshot_id"].as_str().unwrap().to_string()
+    }
+}
+
+#[tokio::test]
+async fn qwen_settings_form_edit_keeps_comments_bom_and_crlf() {
+    let e = qwen_env();
+    let original = "\u{feff}{\r\n  // my formatting\r\n  \"model\": {\"name\": \"old\",},\r\n  \"security\": {\"auth\": {\"apiKey\": \"private-value\"}},\r\n  \"env\": {\"X\": \"private-value\"},\r\n  \"modelProviders\": {\"openai\": [{\"model\": \"private-value\"}]},\r\n  \"mcpServers\": {\"s\": {\"headers\": {\"X-Custom\": \"private-value\"}}},\r\n}\r\n";
+    e.write_settings(original);
+    let change = json!({"kind":"form", "edits":edit("model.name", "\"new\"")});
+    let (status, bytes) = e.settings_plan(change.clone()).await;
+    assert_eq!(status, StatusCode::OK, "{}", text(&bytes));
+    assert!(!text(&bytes).contains("private-value"));
+    assert_eq!(json_of(&bytes)["normalized"], true);
+    let (status, v) = get(&e.app, "/v1/agents/qwen/settings-view").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(v["editable"], true);
+    assert_eq!(v["curated"].as_array().unwrap().len(), 6);
+    assert!(!v.to_string().contains("private-value"));
+    e.settings_change(change).await;
+    assert_eq!(
+        std::fs::read(&e.settings).unwrap(),
+        original.replace("\"old\"", "\"new\"").as_bytes()
+    );
+}
+
+#[tokio::test]
+async fn qwen_raw_edit_saves_the_typed_jsonc() {
+    let e = qwen_env();
+    for bom in [false, true] {
+        e.write_settings(if bom {
+            "\u{feff}{ // original\n}"
+        } else {
+            "{ // original\n}"
+        });
+        let typed = "{\r\n  // keep this exactly\r\n  \"model\" : { \"name\": \"typed\" /* and this */ }\r\n}\r\n";
+        e.settings_change(json!({"kind":"raw", "text":format!("\u{feff}\u{feff}{typed}")}))
+            .await;
+        let expected = if bom { format!("\u{feff}{typed}") } else { typed.into() };
+        assert_eq!(std::fs::read(&e.settings).unwrap(), expected.as_bytes());
+    }
+}
+
+#[tokio::test]
+async fn qwen_raw_edit_that_does_not_parse_is_refused() {
+    let e = qwen_env();
+    let original = "{ // unchanged\n}";
+    e.write_settings(original);
+    for (typed, line) in [
+        ("{\n\"model\": ,\n}", 2),
+        ("[]", 1),
+        ("null", 1),
+        ("1", 1),
+        ("\"text\"", 1),
+    ] {
+        let (status, bytes) = e.settings_plan(json!({"kind":"raw", "text":typed})).await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+        assert_eq!(text(&bytes), format!("The text doesn't parse at line {line}."));
+        assert_eq!(std::fs::read_to_string(&e.settings).unwrap(), original);
+    }
+}
+
+#[tokio::test]
+async fn qwen_raw_edit_refuses_text_qwen_code_cannot_load() {
+    let e = qwen_env();
+    let original = "{ // unchanged\n}";
+    e.write_settings(original);
+    for (typed, line) in [
+        ("{\n  \"model\": {\"name\": \"x\",},\n}", 2),
+        ("", 1),
+        ("{\n  model: 1\n}", 2),
+    ] {
+        let (status, bytes) = e.settings_plan(json!({"kind":"raw", "text":typed})).await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{typed:?}");
+        assert_eq!(text(&bytes), format!("The text doesn't parse at line {line}."));
+        assert_eq!(std::fs::read_to_string(&e.settings).unwrap(), original);
+    }
+}
+
+#[tokio::test]
+async fn qwen_raw_edit_is_refused_while_a_value_is_hidden() {
+    let e = qwen_env();
+    let original = r#"{"mcpServers":{"s":{"headers":{"X-Custom":"private-value"}}}}"#;
+    e.write_settings(original);
+    let (status, bytes) = e.settings_plan(json!({"kind":"raw", "text":"{}"})).await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(
+        text(&bytes),
+        "This file holds secret values, so Marshell doesn't edit it as text."
+    );
+    assert_eq!(std::fs::read_to_string(&e.settings).unwrap(), original);
+}
+
+#[tokio::test]
+async fn qwen_settings_undo_puts_the_file_back() {
+    let e = qwen_env();
+    let original = "\u{feff}{\r\n // mine\r\n \"general\": {\"vimMode\": false},\r\n}\r\n";
+    e.write_settings(original);
+    let snapshot = e
+        .settings_change(json!({"kind":"form", "edits":edit("general.vimMode", "true")}))
+        .await;
+    assert_ne!(std::fs::read(&e.settings).unwrap(), original.as_bytes());
+    let (status, bytes) = post_raw(&e.app, "/v1/agents/qwen/settings/undo", json!({"snapshot_id":snapshot})).await;
+    assert_eq!(status, StatusCode::OK, "{}", text(&bytes));
+    assert_eq!(std::fs::read(&e.settings).unwrap(), original.as_bytes());
+}
+
+#[tokio::test]
+async fn qwen_settings_not_set_removes_the_key() {
+    let e = qwen_env();
+    e.write_settings("{ // mine\n \"general\": {\"vimMode\": true, \"enableAutoUpdate\": false},\n}");
+    e.settings_change(json!({"kind":"form", "edits":[{"key":"general.vimMode", "value":null}]}))
+        .await;
+    let written = std::fs::read_to_string(&e.settings).unwrap();
+    let value = marshell_core::config::jsonc::read_value(&written).unwrap();
+    assert!(value.pointer("/general/vimMode").is_none());
+    assert_eq!(value.pointer("/general/enableAutoUpdate"), Some(&json!(false)));
+    assert!(written.contains("// mine"));
+}
+
+#[tokio::test]
+async fn qwen_raw_edit_with_a_repeated_key_is_refused() {
+    let e = qwen_env();
+    for (original, typed) in [
+        ("{}", r#"{"model":{"name":"first","name":"second"}}"#),
+        (r#"{"model":{"name":"first","name":"second"}}"#, "{}"),
+    ] {
+        e.write_settings(original);
+        let (status, bytes) = e.settings_plan(json!({"kind":"raw", "text":typed})).await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+        assert_eq!(text(&bytes), "Raw editing is off: a key appears twice in this file.");
+        assert_eq!(std::fs::read_to_string(&e.settings).unwrap(), original);
+    }
+}
+
+#[tokio::test]
+async fn qwen_settings_system_row_is_read_only() {
+    let e = qwen_env();
+    e.write_settings(r#"{"model":{"name":"user"},"general":{"vimMode":false}}"#);
+    let system = canonical(e._dir.path()).join("system-settings.json");
+    let system_text = "{ // organization\n \"model\": {\"name\": \"system\"},\n}";
+    std::fs::write(&system, system_text).unwrap();
+    let (status, v) = get(&e.app, "/v1/agents/qwen/settings-view").await;
+    assert_eq!(status, StatusCode::OK);
+    let row = v["curated"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["key"] == "model.name")
+        .unwrap();
+    assert_eq!(row["value"], "system");
+    assert_eq!(row["scope"], "managed");
+    assert_eq!(row["lock"]["path"], system.to_string_lossy().as_ref());
+    let (status, bytes) = e
+        .settings_plan(json!({"kind":"form", "edits":edit("model.name", "\"new\"")}))
+        .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    assert!(text(&bytes).contains("is set by"));
+    e.settings_change(json!({"kind":"form", "edits":edit("general.vimMode", "true")}))
+        .await;
+    assert_eq!(std::fs::read_to_string(&system).unwrap(), system_text);
+}
 
 #[tokio::test]
 async fn qwen_setup_reports_none_then_installed_after_apply() {
@@ -1441,6 +1682,66 @@ async fn account_for_antigravity_is_no_command() {
     assert_eq!(body["agent"], "antigravity");
     assert_eq!(body["sign_in"], "no_command");
     assert_eq!(ANTIGRAVITY_RUNS.load(Ordering::SeqCst), 0, "nothing ran");
+}
+
+#[tokio::test]
+async fn qwen_account_names_the_configured_auth_type() {
+    for (user, system, want) in [
+        (
+            r#"{"security":{"auth":{"selectedType":"openai"}}}"#,
+            "{}",
+            "an OpenAI-compatible API",
+        ),
+        (
+            r#"{"security":{"auth":{"selectedType":"openai"}}}"#,
+            "{ // system wins\n \"security\": {\"auth\": {\"selectedType\": \"gemini\",},},}",
+            "a Gemini API",
+        ),
+        ("{}", r#"{"security":{"auth":{"selectedType":"future"}}}"#, "`future`"),
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        let user_home = dir.path().join("user");
+        std::fs::create_dir_all(user_home.join(".qwen")).unwrap();
+        std::fs::write(user_home.join(".qwen/settings.json"), user).unwrap();
+        let system_path = dir.path().join("system.json");
+        std::fs::write(&system_path, system).unwrap();
+        let st = AppState::new(TOKEN.into(), PORT, vec![], dir.path().join("marshell"), Vec::new())
+            .with_qwen_home(user_home)
+            .with_qwen_system_settings(system_path)
+            .with_agent_path(|_| None)
+            .with_status_runner(|_, _| panic!("Qwen Accounts must run no command"));
+        let (status, body) = get(&router(st), "/v1/agents/qwen/account").await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["sign_in"], "no_command");
+        assert_eq!(body["method"], want);
+        assert!(body["email"].is_null() && body["plan"].is_null());
+    }
+}
+
+#[tokio::test]
+async fn qwen_account_without_a_selected_type_has_no_method() {
+    for text in [
+        None,
+        Some("{}"),
+        Some(r#"{"security":{"auth":{"selectedType":false}}}"#),
+        Some("not json"),
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        let user_home = dir.path().join("user");
+        std::fs::create_dir_all(user_home.join(".qwen")).unwrap();
+        if let Some(text) = text {
+            std::fs::write(user_home.join(".qwen/settings.json"), text).unwrap();
+        }
+        let st = AppState::new(TOKEN.into(), PORT, vec![], dir.path().join("marshell"), Vec::new())
+            .with_qwen_home(user_home)
+            .with_qwen_system_settings(dir.path().join("missing-system.json"))
+            .with_agent_path(|_| None)
+            .with_status_runner(|_, _| panic!("Qwen Accounts must run no command"));
+        let (status, body) = get(&router(st), "/v1/agents/qwen/account").await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["sign_in"], "no_command");
+        assert!(body["method"].is_null());
+    }
 }
 
 #[tokio::test]
@@ -2640,6 +2941,7 @@ fn distro_app(root: &std::path::Path, reachable: bool) -> (axum::Router, PathBuf
     .with_claude_settings(settings.clone())
     .with_codex_hooks(project.join("codex-hooks.json"))
     .with_agy_home(project.join("agy-home"))
+    .with_qwen_home(project.join("qwen-windows-home"))
     .with_agent_path(|_| None)
     .with_distro_target(target);
     (router(st), wsl_home, settings)
@@ -2838,6 +3140,51 @@ async fn remove_plan_for_a_distro_targets_its_home() {
 }
 
 #[tokio::test]
+async fn qwen_distro_setup_writes_the_linux_bridge_path() {
+    let e = distro_env(true);
+    let (status, preview) = post(&e.app, "/v1/agents/qwen/hooks/plan", distro_want("Ubuntu")).await;
+    assert_eq!(status, StatusCode::OK, "{preview}");
+    assert_eq!(preview["can_apply"], true, "{preview}");
+    let file = e.wsl_home.join(".qwen").join("settings.json");
+    // Only the distro's settings file: no chain file, no skill, none of the Windows ones.
+    assert_eq!(preview_paths(&preview), std::slice::from_ref(&file), "{preview}");
+    let (status, applied) = post(&e.app, "/v1/config/apply", shown(&preview)).await;
+    assert_eq!(status, StatusCode::OK, "{applied}");
+    let text = std::fs::read_to_string(&file).unwrap();
+    assert!(text.contains(LINUX_BRIDGE), "{text}");
+    assert!(text.contains("--agent qwen"), "{text}");
+    assert!(!e.wsl_home.join(".qwen").join("skills").exists());
+    // The Windows Qwen home (pinned elsewhere) is not the distro's, and is left alone.
+    assert!(!e.settings.parent().unwrap().join("qwen-windows-home").exists());
+    assert!(!e.settings.exists(), "the Windows settings file is not the distro's");
+}
+
+#[tokio::test]
+async fn qwen_distro_remove_restores_the_file() {
+    let e = distro_env(true);
+    let theirs = "\u{feff}{\r\n  // mine\r\n  \"ui\": {\"theme\": \"Qwen Dark\"},\r\n}\r\n";
+    let file = e.wsl_home.join(".qwen").join("settings.json");
+    std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+    std::fs::write(&file, theirs).unwrap();
+
+    let (_, preview) = post(&e.app, "/v1/agents/qwen/hooks/plan", distro_want("Ubuntu")).await;
+    let (status, applied) = post(&e.app, "/v1/config/apply", shown(&preview)).await;
+    assert_eq!(status, StatusCode::OK, "{applied}");
+    let written = std::fs::read_to_string(&file).unwrap();
+    assert!(
+        written.contains(LINUX_BRIDGE) && written.contains("// mine"),
+        "{written}"
+    );
+
+    let (status, removal) = post(&e.app, "/v1/agents/qwen/hooks/remove-plan?distro=Ubuntu", json!({})).await;
+    assert_eq!(status, StatusCode::OK, "{removal}");
+    assert_eq!(preview_paths(&removal["preview"]), std::slice::from_ref(&file));
+    let (status, applied) = post(&e.app, "/v1/config/apply", shown(&removal["preview"])).await;
+    assert_eq!(status, StatusCode::OK, "{applied}");
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), theirs);
+}
+
+#[tokio::test]
 async fn a_codex_plan_in_a_distro_sends_the_person_to_trust_the_hooks_there() {
     let e = distro_env(true);
     let (_, preview) = post(&e.app, "/v1/agents/codex/hooks/plan", distro_want("Ubuntu")).await;
@@ -2853,7 +3200,7 @@ async fn a_codex_plan_in_a_distro_sends_the_person_to_trust_the_hooks_there() {
 #[tokio::test]
 async fn an_unreachable_distro_gets_the_422_copy() {
     let e = distro_env(false);
-    for agent in ["claude", "codex", "antigravity"] {
+    for agent in ["claude", "codex", "antigravity", "qwen"] {
         let (status, bytes) = post_raw(&e.app, &format!("/v1/agents/{agent}/hooks/plan"), distro_want("Ubuntu")).await;
         assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{agent}");
         assert_eq!(

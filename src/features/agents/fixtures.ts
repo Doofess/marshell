@@ -46,16 +46,14 @@ export const AGY_SETUP: AgentSetup = {
   skill_path: "C:/h/.gemini/config/skills/marshell/SKILL.md",
 };
 
-/** Test input only: what the core sends for a Qwen Code with no hooks of Marshell's yet (its skill comes in slice 6l2, so it is unavailable). */
+/** Test input only: what the core sends for a Qwen Code with no hooks of Marshell's yet. */
 export const QWEN_SETUP: AgentSetup = {
   ...SETUP,
   agent: "qwen",
   version: "0.19.0",
   exe_path: "C:/bin/qwen.cmd",
   settings_path: "C:/h/.qwen/settings.json",
-  skill: "unavailable",
   skill_path: "C:/h/.qwen/skills/marshell/SKILL.md",
-  skill_problem: "The Marshell skill for Qwen Code comes in a later version.",
 };
 
 const file = (path: string, diff: string): FilePreview => ({ path, scope: "user", applies: "newSessions", before_hash: "h0", diff, status: { kind: "changes" } }) as FilePreview;

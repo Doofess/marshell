@@ -2,6 +2,8 @@ import type { CliId } from "../onboarding/types";
 import { launchArgs } from "../modes/sessionModes";
 import type { Mode } from "../sidebar/types";
 import type { SessionInfo } from "../../generated/SessionInfo";
+import type { Endpoint } from "../../generated/Endpoint";
+import { sessions, type SessionCommandPurpose } from "../../lib/api/sessions";
 // The shipped manifests the core reads, so a shipped agent's command can never drift from what the core runs.
 import shipped from "../../../crates/core/src/agents/manifests.json";
 
@@ -39,7 +41,23 @@ export function resumeCommand(agent: string | null, profileName: string, mode?: 
  * The Resume bar's command for a session. The core resumes with the mode it was last started in, so the flags show too.
  * An administrator agent is the exception: Resume uses Manual flags (decision 10); its own setting may still make it Bypass.
  */
-export function sessionResumeCommand(info: Pick<SessionInfo, "agent" | "mode"> & { elevated?: boolean }, profileName: string): string {
+export function sessionResumeCommand(info: Pick<SessionInfo, "agent" | "mode"> & { elevated?: boolean }, profileName: string, command?: string): string {
   const mode = info.elevated === true && info.agent !== null ? "manual" : (info.mode ?? undefined);
-  return resumeCommand(info.agent, profileName, mode);
+  return command ?? resumeCommand(info.agent, profileName, mode);
+}
+
+/** How long a bar waits for the core's command before it opens with the local text. */
+export const SESSION_COMMAND_TIMEOUT_MS = 2000;
+
+/** The core's bare command for a bar. A refusal, a failed request or no answer within `timeoutMs` leaves the local text available. */
+export function fetchSessionCommand(endpoint: Endpoint, tabId: string, purpose: SessionCommandPurpose, request = sessions.resumeCommand, timeoutMs = SESSION_COMMAND_TIMEOUT_MS): Promise<string | undefined> {
+  return new Promise((resolve) => {
+    const settle = (command: string | undefined) => { clearTimeout(timer); resolve(command); };
+    const timer = setTimeout(() => resolve(undefined), timeoutMs);
+    try {
+      request(endpoint, tabId, purpose).then((result) => settle(result.ok ? result.command : undefined), () => settle(undefined));
+    } catch {
+      settle(undefined);
+    }
+  });
 }

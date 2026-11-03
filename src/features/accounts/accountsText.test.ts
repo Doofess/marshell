@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { AccountStatus } from "../../generated/AccountStatus";
-import { accountLine } from "./accountsText";
+import { accountExtraLine, accountLine } from "./accountsText";
 
 const NOW = 1_000_000_000;
 const st = (o: Partial<AccountStatus>): AccountStatus => ({ agent: "claude", sign_in: "signed_in", email: null, plan: null, method: null, checked_ms: NOW, ...o });
@@ -24,5 +24,25 @@ describe("accountLine", () => {
     expect(accountLine(st({ sign_in: "signed_out" }), "Codex", NOW)).toBe("Not signed in, checked just now");
     expect(accountLine(st({ sign_in: "unknown" }), "Codex", NOW)).toBe("Couldn't check the sign-in status, checked just now");
     expect(accountLine(st({ agent: "antigravity", sign_in: "no_command" }), "Antigravity", NOW)).toBe("Antigravity has no sign-in status command, so Marshell can't show one.");
+  });
+});
+
+describe("Qwen Code's account", () => {
+  const q = (o: Partial<AccountStatus> = {}) => st({ agent: "qwen", sign_in: "no_command", ...o });
+  it("Qwen's line says it has no status command and how to sign in", () => {
+    expect(accountLine(q(), "Qwen Code", NOW)).toBe("Qwen Code has no sign-in status command, so Marshell can't show one. Sign in with /auth in a Qwen Code session.");
+    expect(accountExtraLine(q())).toBeNull();
+  });
+  it("Qwen's configured type is named", () => {
+    expect(accountExtraLine(q({ method: "Qwen OAuth" }))).toBe("Its settings choose Qwen OAuth.");
+    expect(accountExtraLine(q({ method: "an OpenAI-compatible API" }))).toBe("Its settings choose an OpenAI-compatible API.");
+  });
+  it("an unknown type shows in backticks", () => {
+    expect(accountExtraLine(q({ method: "`future`" }))).toBe("Its settings choose `future`.");
+  });
+  it("Antigravity's line is unchanged and has no second line", () => {
+    const a = st({ agent: "antigravity", sign_in: "no_command" });
+    expect(accountLine(a, "Antigravity", NOW)).toBe("Antigravity has no sign-in status command, so Marshell can't show one.");
+    expect(accountExtraLine(a)).toBeNull();
   });
 });

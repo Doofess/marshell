@@ -10,7 +10,9 @@ use crate::agents::codex::{self, trust};
 use crate::agents::common::Bridge;
 use crate::agents::install::{codex_newer, install_kind, update_text};
 use crate::agents::qwen::hooks as qwen_hooks;
-use crate::agents::settings_view::{control, has_bom, masked_render, parse_masked, read_managed, text_problem, view};
+use crate::agents::settings_view::{
+    control, has_bom, json_repeats_a_key, masked_render, parse_masked, read_managed, text_problem, view,
+};
 use crate::agents::skill;
 use crate::agents::{parse_any_version, run_version_text};
 use crate::bridge;
@@ -116,8 +118,7 @@ impl Adapter {
             Adapter::Claude => AGENT,
             Adapter::Codex => CODEX,
             Adapter::Antigravity => ANTIGRAVITY,
-            // Qwen Code has no skill until slice 6l2, so the skill table doesn't name it.
-            Adapter::Qwen => return "Qwen Code",
+            Adapter::Qwen => QWEN,
         };
         skill::cli_name(id).unwrap_or(id)
     }
@@ -176,9 +177,6 @@ struct QwenInputs {
     chain_text: Option<String>,
 }
 
-/// Why Marshell sets nothing up inside a WSL distro for Qwen Code yet.
-const QWEN_NO_WSL: &str = "Setting up Qwen Code inside WSL comes in a later version of Marshell.";
-
 /// The user's home folder, Codex's `hooks.json` and its text.
 struct CodexInputs {
     hooks_path: PathBuf,
@@ -218,10 +216,23 @@ impl AppState {
         }
     }
 
+    /// Qwen Code's read-only system settings: the file a test named, else `C:\ProgramData\qwen-code\settings.json`.
+    /// `QWEN_CODE_SYSTEM_SETTINGS_PATH` is not read (slice 6l1 decision 3, 6l2 decision 9).
+    fn qwen_system_settings_path(&self) -> PathBuf {
+        self.0
+            .qwen_system_settings
+            .clone()
+            .unwrap_or_else(|| PathBuf::from(r"C:\ProgramData\qwen-code\settings.json"))
+    }
+
     /// Where `agent`'s `marshell` skill file goes. A skill home named by a test replaces the user's home and the
     /// process environment; otherwise it is the user's home, with `CLAUDE_CONFIG_DIR` from the environment.
     fn skill_file(&self, agent: &str) -> Result<PathBuf, Fail> {
+        // Qwen Code's skill follows its own home (`QWEN_HOME`), which a test names with `with_qwen_home`.
         let path = match &self.0.skill_home {
+            _ if agent == QWEN && self.0.qwen_home.is_some() => {
+                skill::skill_path(agent, &|_| None, self.0.qwen_home.as_deref().unwrap_or(Path::new("")))
+            }
             Some(home) => skill::skill_path(agent, &|_| None, home),
             None => {
                 let home = super::files::home_dir().ok_or_else(|| failed("the user's home folder is not known"))?;
@@ -337,9 +348,6 @@ impl AppState {
     /// The plan to set up hooks inside `distro`: the same plan as on Windows, for the files under the distro's own
     /// home and with the bridge named by its Linux path. The Windows overrides of the settings folders do not apply.
     fn distro_install(&self, adapter: Adapter, distro: &str, want: &HookPlanRequest) -> Result<ChangeSet, Fail> {
-        if matches!(adapter, Adapter::Qwen) {
-            return Err((StatusCode::UNPROCESSABLE_ENTITY, QWEN_NO_WSL.to_string()));
-        }
         let target = self.distro_target(distro)?;
         self.ensure_bridge(want)?;
         let bridge = Bridge::Distro {
@@ -371,16 +379,18 @@ impl AppState {
                     want,
                 )
             }
-            Adapter::Qwen => unreachable!("refused above"),
+            // The distro's own `~/.qwen`: a `QWEN_HOME` set inside the distro is not followed.
+            Adapter::Qwen => {
+                let path = home.join(".qwen").join("settings.json");
+                let text = read_text(&path).map_err(|e| refused(&e))?;
+                qwen_hooks::install_plan(&path, &home, text.as_deref(), None, None, &bridge, want)
+            }
         }
         .map_err(|e| refused(&e))
     }
 
     /// The plan to take Marshell's hooks out of `distro`.
     fn distro_remove(&self, adapter: Adapter, distro: &str) -> Result<RemovePreview, Fail> {
-        if matches!(adapter, Adapter::Qwen) {
-            return Err((StatusCode::UNPROCESSABLE_ENTITY, QWEN_NO_WSL.to_string()));
-        }
         let home = self.distro_target(distro)?.home;
         let (changes, statusline_left) = match adapter {
             Adapter::Claude => {
@@ -410,7 +420,13 @@ impl AppState {
                 .map_err(|e| refused(&e))?;
                 (changes, false)
             }
-            Adapter::Qwen => unreachable!("refused above"),
+            Adapter::Qwen => {
+                let path = home.join(".qwen").join("settings.json");
+                let text = read_text(&path).map_err(|e| refused(&e))?;
+                let plan = qwen_hooks::remove_plan(&path, &home, text.as_deref(), None, Some(distro))
+                    .map_err(|e| refused(&e))?;
+                (plan.changes, plan.statusline_left)
+            }
         };
         Ok(RemovePreview {
             preview: self.0.config.preview(changes),
@@ -908,6 +924,7 @@ pub(crate) fn qwen_setup_of(st: &AppState) -> Result<AgentSetup, Fail> {
     let settings_path = st.qwen_settings_path(&user_home);
     let exe = st.agent_exe_of(QWEN);
     let version = st.agent_version(QWEN, exe.as_deref());
+    let (skill, skill_path, skill_problem) = st.skill_of(QWEN)?;
 
     let mut setup = AgentSetup {
         agent: QWEN.to_string(),
@@ -929,10 +946,9 @@ pub(crate) fn qwen_setup_of(st: &AppState) -> Result<AgentSetup, Fail> {
         trust: None,
         bridge_path: paths::bridge_exe(home).to_string_lossy().into_owned(),
         snapshots_dir: paths::snapshots_dir(home).to_string_lossy().into_owned(),
-        // Qwen Code has no `marshell` skill until slice 6l2.
-        skill: SkillInstall::Unavailable,
-        skill_path: String::new(),
-        skill_problem: Some("The Marshell skill for Qwen Code comes in a later version.".to_string()),
+        skill,
+        skill_path,
+        skill_problem,
     };
 
     let text = match std::fs::read_to_string(&settings_path) {
@@ -1102,8 +1118,22 @@ fn account_of(st: &AppState, agent: &str, kind: Adapter) -> AccountStatus {
     match kind {
         // Antigravity has no status command, so nothing is run.
         Adapter::Antigravity => status.sign_in = SignIn::NoCommand,
-        // Qwen Code's account comes in slice 6l2.
-        Adapter::Qwen => status.sign_in = SignIn::NoCommand,
+        Adapter::Qwen => {
+            status.sign_in = SignIn::NoCommand;
+            let selected = |path: &Path| {
+                let text = std::fs::read_to_string(path).ok()?;
+                if parse_problem(&text).is_some() {
+                    return None;
+                }
+                read_value(&text)
+                    .ok()?
+                    .pointer("/security/auth/selectedType")?
+                    .as_str()
+                    .map(crate::agents::qwen::auth_label)
+            };
+            let system = st.qwen_system_settings_path();
+            status.method = selected(&system).or_else(|| selected(&st.qwen_settings_path(&st.qwen_user_home().ok()?)));
+        }
         Adapter::Claude => {
             if let Some(exe) = st.agent_exe_of(agent)
                 && let Some((code, out)) = (st.0.status_runner)(&exe, &["auth", "status"])
@@ -1138,7 +1168,7 @@ pub async fn settings_view(
     Ok(Json(view))
 }
 
-/// Where an agent's user settings file is, and Claude's managed settings (the first managed file that parses).
+/// Where an agent's user settings file is, and Claude's managed settings or Qwen's system settings.
 fn settings_file(st: &AppState, kind: Adapter) -> Result<(PathBuf, Option<(PathBuf, Value)>), Fail> {
     let no_home = || failed("the user's home folder is not known");
     Ok(match kind {
@@ -1155,7 +1185,10 @@ fn settings_file(st: &AppState, kind: Adapter) -> Result<(PathBuf, Option<(PathB
         }
         Adapter::Codex => (st.codex_dir().ok_or_else(no_home)?.join("config.toml"), None),
         Adapter::Antigravity => (agy::settings_path(&st.agy_user_home()?), None),
-        Adapter::Qwen => (st.qwen_settings_path(&st.qwen_user_home()?), None),
+        Adapter::Qwen => {
+            let system = st.qwen_system_settings_path();
+            (st.qwen_settings_path(&st.qwen_user_home()?), read_managed(&[system]))
+        }
     })
 }
 
@@ -1246,12 +1279,6 @@ fn settings_plan_of(
     kind: Adapter,
     req: SettingsPlanRequest,
 ) -> Result<SettingsPlan, Refusal> {
-    // Qwen Code's settings are shown and not edited until slice 6l2; its hooks go through the hooks routes.
-    if matches!(kind, Adapter::Qwen) {
-        return Err(unprocessable(
-            "Marshell doesn't change Qwen Code's settings yet. Its hooks are set up from the Agents section.",
-        ));
-    }
     let (view, had_bom) = settings_read(st, agent, kind).map_err(Refusal::from)?;
     match view.state {
         ViewState::Unparsable { line } => {
@@ -1276,7 +1303,7 @@ fn settings_plan_of(
         Adapter::Claude => "Change Claude Code settings",
         Adapter::Codex => "Change Codex settings",
         Adapter::Antigravity => "Change Antigravity settings",
-        Adapter::Qwen => unreachable!("refused above"),
+        Adapter::Qwen => "Change Qwen Code settings",
     };
     let cs = ChangeSet {
         title: title.to_string(),
@@ -1423,6 +1450,9 @@ fn raw_op(agent: &str, view: &AgentSettingsView, had_bom: bool, text: &str) -> R
     if let Some(line) = text_problem(agent, body) {
         return Err(unprocessable(format!("The text doesn't parse at line {line}.")));
     }
+    if agent == "qwen" && json_repeats_a_key(body) {
+        return Err(unprocessable("Raw editing is off: a key appears twice in this file."));
+    }
     if agent == "antigravity" {
         let before = view.text.as_deref().and_then(|t| top_value(t, "enableTelemetry"));
         if top_value(body, "enableTelemetry") != before {
@@ -1506,9 +1536,6 @@ pub async fn settings_undo(
 }
 
 fn settings_undo_of(st: &AppState, agent: &str, kind: Adapter, snapshot_id: &str) -> Result<ApplyResult, Refusal> {
-    if matches!(kind, Adapter::Qwen) {
-        return Err(unprocessable("Marshell doesn't change Qwen Code's settings yet."));
-    }
     let (path, _) = settings_file(st, kind).map_err(Refusal::from)?;
     let info = match st.0.config.snapshots().get(snapshot_id) {
         Ok(Some(info)) => info,
@@ -1625,8 +1652,8 @@ pub async fn plan(
             .map_err(|e| refused(&e))?,
         };
         // The skill file is the Windows home's. A distro's skill is not planned here, so a request for one inside a
-        // distro gets the hooks only. Qwen Code has no skill until slice 6l2.
-        if want.skill && distro.is_none() && !matches!(adapter, Adapter::Qwen) {
+        // distro gets the hooks only.
+        if want.skill && distro.is_none() {
             // A skill Marshell can't touch is left out: it must not block the hooks.
             let path = st.skill_file(&agent)?;
             if let Ok(bytes) = st.skill_bytes(&path) {

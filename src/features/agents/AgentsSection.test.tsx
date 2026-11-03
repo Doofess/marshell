@@ -323,16 +323,16 @@ describe("AgentsSectionView errors", () => {
 
 describe("AgentsSectionView WSL group", () => {
   const wsl = (distros: string[] | undefined) =>
-    renderToStaticMarkup(<AgentsSectionView setup={SETUP} codex={CODEX_SETUP} antigravity={AGY_SETUP} panel={{ kind: "list" }} liveStatus={true} wslDistros={distros} {...handlers} />);
+    renderToStaticMarkup(<AgentsSectionView setup={SETUP} codex={CODEX_SETUP} antigravity={AGY_SETUP} qwen={QWEN_SETUP} panel={{ kind: "list" }} liveStatus={true} wslDistros={distros} {...handlers} />);
   it("the_wsl_group_lists_each_distro", () => {
     const h = wsl(["Ubuntu", "Debian"]);
-    for (const agent of ["claude", "codex", "antigravity"]) expect(h).toContain(`data-wsl-group="${agent}"`);
+    for (const agent of ["claude", "codex", "antigravity", "qwen"]) expect(h).toContain(`data-wsl-group="${agent}"`);
     expect(h).toContain("Agents you run inside a WSL distro read their own settings there. Set up writes Marshell&#x27;s hooks into that distro.");
     for (const d of ["Ubuntu", "Debian"]) {
       expect(h).toContain(`>Set up in ${d}</button>`);
       expect(h).toContain(`>Remove from ${d}</button>`);
     }
-    expect(h.match(/>Set up in Ubuntu<\/button>/g)).toHaveLength(3);
+    expect(h.match(/>Set up in Ubuntu<\/button>/g)).toHaveLength(4);
     // Set up comes before Remove, and the group comes after the Windows controls.
     expect(h.indexOf(">Set up in Ubuntu<")).toBeLessThan(h.indexOf(">Remove from Ubuntu<"));
     expect(h.indexOf(">Hooks off<")).toBeLessThan(h.indexOf('data-wsl-group="claude"'));
@@ -361,11 +361,11 @@ describe("AgentsSectionView setup panel heading", () => {
 });
 
 describe("AgentsSectionView with a CLI missing on Windows", () => {
-  const missing = (agent: "codex" | "antigravity", distros: string[] | undefined) => {
-    const props = agent === "codex" ? { codex: { ...CODEX_SETUP, found: false } } : { antigravity: { ...AGY_SETUP, found: false } };
+  const missing = (agent: "codex" | "antigravity" | "qwen", distros: string[] | undefined) => {
+    const props = agent === "codex" ? { codex: { ...CODEX_SETUP, found: false } } : agent === "qwen" ? { qwen: { ...QWEN_SETUP, found: false } } : { antigravity: { ...AGY_SETUP, found: false } };
     return renderToStaticMarkup(<AgentsSectionView setup={SETUP} {...props} panel={{ kind: "list" }} liveStatus={true} wslDistros={distros} {...handlers} />);
   };
-  for (const agent of ["codex", "antigravity"] as const) {
+  for (const agent of ["codex", "antigravity", "qwen"] as const) {
     it(`${agent}_not_found_on_windows_still_offers_its_wsl_group`, () => {
       const h = missing(agent, ["Ubuntu"]);
       const from = h.indexOf(`data-agent-card="${agent}"`);
@@ -379,7 +379,7 @@ describe("AgentsSectionView with a CLI missing on Windows", () => {
     });
     it(`${agent}_not_found_on_windows_keeps_its_live_status_switch`, () => {
       // Live status is Marshell's own setting, and it governs the agent's rows in a distro too.
-      const props = agent === "codex" ? { codex: { ...CODEX_SETUP, found: false }, codexLiveStatus: true } : { antigravity: { ...AGY_SETUP, found: false }, antigravityLiveStatus: true };
+      const props = agent === "codex" ? { codex: { ...CODEX_SETUP, found: false }, codexLiveStatus: true } : agent === "qwen" ? { qwen: { ...QWEN_SETUP, found: false }, qwenLiveStatus: true } : { antigravity: { ...AGY_SETUP, found: false }, antigravityLiveStatus: true };
       const h = renderToStaticMarkup(<AgentsSectionView setup={SETUP} {...props} panel={{ kind: "list" }} liveStatus={true} wslDistros={["Ubuntu"]} {...handlers} />);
       const from = h.indexOf(`data-agent-card="${agent}"`);
       expect(h.slice(from, h.indexOf("</section>", from))).toContain("Live status");
@@ -407,11 +407,11 @@ describe("AgentsSectionView: Qwen Code", () => {
     expect(withQwen({ ...QWEN_SETUP, found: false })).not.toContain('aria-label="Qwen Code"');
     expect(section(withQwen({ ...QWEN_SETUP, hooks: "installed", approve_installed: true }))).toContain("Hooks on in C:/h/.qwen/settings.json.");
   });
-  it("Qwen's skill row says the skill isn't available for Qwen Code yet", () => {
+  it("Qwen's skill row offers Install the marshell skill", () => {
     const h = section(withQwen(QWEN_SETUP, { kind: "list" }, true));
     expect(h).toContain('data-agent-skill="qwen"');
-    expect(h).toContain("The Marshell skill for Qwen Code comes in a later version.");
-    expect(h).not.toContain("Install the marshell skill</button>");
+    expect(h).toContain("Install the marshell skill</button>");
+    expect(h).not.toContain("comes in a later version");
   });
   it("the Hooks off panel is titled for Qwen Code", () => {
     expect(withQwen({ ...QWEN_SETUP, hooks: "installed" }, { kind: "off", agent: "qwen", removal: null, busy: false })).toContain("Turn Qwen Code hooks off");

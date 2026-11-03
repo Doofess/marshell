@@ -5,13 +5,14 @@
 use super::AppState;
 use super::history::{Found, gone, look_up};
 use super::sessions::{
-    Resume, cannot_resume, cannot_start_again, check_agent_installed, resolve_with, resume_session, start_folder,
+    Resume, cannot_resume, cannot_start_again, check_agent_installed, launch_mode, resolve_with, resume_session,
+    start_folder,
 };
 use crate::agents::presets;
 use crate::outside::{ConversationKey, console_env, copy_line, lookup_path};
 use crate::profiles::detect::{Program, agent_command, resume_line, session_base_env};
 use axum::Json;
-use axum::extract::{Path, State};
+use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use marshell_protocol::api::{Profile, ResumeCommand, ResumeForm, SessionInfo, SessionMode, ShellFamily};
@@ -194,12 +195,76 @@ fn answer(result: Result<ResumeCommand, String>) -> Response {
     }
 }
 
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CommandPurpose {
+    Restart,
+    Resume,
+}
+
+#[derive(Default, serde::Deserialize)]
+pub struct CommandQuery {
+    #[serde(rename = "for")]
+    purpose: Option<CommandPurpose>,
+    mode: Option<SessionMode>,
+}
+
 /// `GET /v1/sessions/{tab}/resume-command`: works on every agent session, running or not.
-pub async fn tab_resume_command(State(st): State<AppState>, Path(tab): Path<String>) -> Response {
+/// With `for`, returns the bare command of the in-app start; without it, the copy line stays unchanged.
+pub async fn tab_resume_command(
+    State(st): State<AppState>,
+    Path(tab): Path<String>,
+    Query(query): Query<CommandQuery>,
+) -> Response {
     let Some(info) = st.registry().row(&tab) else {
         return (StatusCode::NOT_FOUND, "No such session.").into_response();
     };
-    answer(tab_plan(&st, &info, Purpose::Copy).and_then(|plan| command_of(&st, &plan)))
+    let Some(purpose) = query.purpose else {
+        return answer(tab_plan(&st, &info, Purpose::Copy).and_then(|plan| command_of(&st, &plan)));
+    };
+    let mode = match purpose {
+        CommandPurpose::Restart => match query.mode {
+            Some(mode) => Some(mode),
+            None => return (StatusCode::BAD_REQUEST, "A restart command needs a mode.").into_response(),
+        },
+        CommandPurpose::Resume => launch_mode(info.elevated, info.agent.as_deref(), info.mode),
+    };
+    // The History index, the archive meta and the transcript are read from disk: off the async workers.
+    let session = {
+        let (st, tab, agent) = (st.clone(), tab.clone(), info.agent.clone());
+        match tokio::task::spawn_blocking(move || resume_session(&st, &tab, agent.as_deref())).await {
+            Ok(Ok(session)) => session,
+            Ok(Err(reason)) => return cannot_resume(reason),
+            Err(err) => return (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()).into_response(),
+        }
+    };
+    // The same resolver as restart_as/resume_as chooses the profile, program, resume arguments and mode flags.
+    let run = match resolve_with(
+        &st,
+        Some(&info.profile_id),
+        info.agent.as_deref(),
+        None,
+        session.target(),
+        mode,
+        info.preset.as_deref(),
+        true,
+        info.elevated,
+    )
+    .await
+    {
+        Ok(run) => run,
+        Err(err) => return err.into_response(),
+    };
+    // The bars show it as the line a person would type: the argv the restart runs keeps PowerShell's `& `.
+    let Some(command) = run.bare_command().map(str::to_string) else {
+        return cannot_resume(NO_AGENT);
+    };
+    let form = match session {
+        Resume::Session(_) => ResumeForm::ById,
+        Resume::Last => ResumeForm::ContinueLast,
+        Resume::Fresh => ResumeForm::Fresh,
+    };
+    Json(ResumeCommand { command, form }).into_response()
 }
 
 /// `GET /v1/history/{agent}/{session_id}/resume-command`.

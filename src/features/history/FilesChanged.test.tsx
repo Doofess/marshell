@@ -61,6 +61,13 @@ describe("FilesChanged", () => {
     expect(out).not.toContain("Claude Code");
   });
 
+  it("names Qwen Code and its edit and write_file tools in a Qwen Code conversation", () => {
+    const out = html({ ...conv([[]]), agent: "qwen" });
+    expect(out).toContain("Only edits made with Qwen Code&#x27;s edit and write_file tools are listed. Changes made through shell commands, such as sed or a code generator, aren&#x27;t.");
+    expect(out).toContain("Qwen Code didn&#x27;t edit any files in this conversation.");
+    expect(out).not.toContain("Claude Code");
+  });
+
   it("renders a path as text", () => {
     const out = html(conv([[card("<img src=x onerror=alert(1)>.ts", 1, 0)]]));
     expect(out).not.toContain("<img");

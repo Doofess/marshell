@@ -2,10 +2,107 @@ import { describe, expect, it, vi } from "vitest";
 import type { Endpoint } from "../../generated/Endpoint";
 import type { SessionInfo } from "../../generated/SessionInfo";
 import { ApiError } from "../../lib/api/client";
+import { fetchSessionCommand, sessionResumeCommand } from "./resumeCommand";
 import { BYPASS_ACK_TEXT, PAUSE_UNAVAILABLE, SessionActions, needsBypassAck, pauseBarStale, pauseBarText, reopenBarText, restartBarStale, restartBarText } from "./sessionActions";
 
 const endpoint = { port: 1, token: "t", platform: "windows" } as Endpoint;
 const info = (tab_id: string): SessionInfo => ({ tab_id, number: 1, name: tab_id, agent: null, profile_id: "pwsh", cwd: "C:/x", project: "C:/x", state: { kind: "running" } }) as SessionInfo;
+
+describe("the core's session command", () => {
+  const row = { ...info("a"), agent: "qwen", mode: "manual" } as SessionInfo;
+  it("the restart bar shows the command it was given", async () => {
+    const resumeCommand = vi.fn().mockResolvedValue({ ok: true, command: "qwen --resume chat-123 --approval-mode plan", form: "by_id" });
+    const actions = new SessionActions({
+      api: { close: vi.fn(), reopen: vi.fn(), rename: vi.fn(), reorder: vi.fn(), resume: vi.fn(), restart: vi.fn(), pause: vi.fn(), cont: vi.fn(), resumeCommand },
+      context: () => ({ endpoint, infos: [row], selectedId: "a" }),
+      select: vi.fn(),
+    });
+    expect(actions.askRestart("a", "plan")).toBe(true);
+    expect(actions.getState().restarting).toBeNull();
+    await vi.waitFor(() => expect(actions.getState().restarting?.command).toBe("qwen --resume chat-123 --approval-mode plan"));
+    expect(resumeCommand).toHaveBeenCalledWith(endpoint, "a", { for: "restart", mode: "plan" });
+    expect(restartBarText(row, "plan", false, false, actions.getState().restarting?.command)).toBe("Restart 1 a in Plan? It ends and runs qwen --resume chat-123 --approval-mode plan.");
+  });
+  it("the resume bar shows the command it was given", async () => {
+    const request = vi.fn().mockResolvedValue({ ok: true, command: "qwen --resume chat-123 --approval-mode default", form: "by_id" });
+    const command = await fetchSessionCommand(endpoint, "a", { for: "resume" }, request);
+    expect(request).toHaveBeenCalledWith(endpoint, "a", { for: "resume" });
+    expect(sessionResumeCommand(row, "PowerShell", command)).toBe("qwen --resume chat-123 --approval-mode default");
+  });
+  it("falls back to the local text", async () => {
+    const request = vi.fn().mockRejectedValue(new Error("offline"));
+    const command = await fetchSessionCommand(endpoint, "a", { for: "resume" }, request);
+    expect(sessionResumeCommand(row, "PowerShell", command)).toBe("qwen --continue --approval-mode default");
+    expect(restartBarText(row, "plan", false, false, command)).toBe("Restart 1 a in Plan? It ends and runs qwen --continue --approval-mode plan.");
+  });
+  it("falls back to the local text when the core does not answer in time", async () => {
+    const request = vi.fn().mockReturnValue(new Promise(() => {}));
+    const command = await fetchSessionCommand(endpoint, "a", { for: "resume" }, request, 20);
+    expect(command).toBeUndefined();
+    expect(sessionResumeCommand(row, "PowerShell", command)).toBe("qwen --continue --approval-mode default");
+  });
+  it("an unanswered fetch still opens the restart bar after two seconds", async () => {
+    vi.useFakeTimers();
+    try {
+      const actions = new SessionActions({
+        api: { close: vi.fn(), reopen: vi.fn(), rename: vi.fn(), reorder: vi.fn(), resume: vi.fn(), restart: vi.fn(), pause: vi.fn(), cont: vi.fn(), resumeCommand: vi.fn().mockReturnValue(new Promise(() => {})) },
+        context: () => ({ endpoint, infos: [row], selectedId: "a" }),
+        select: vi.fn(),
+      });
+      actions.askRestart("a", "plan");
+      await vi.advanceTimersByTimeAsync(1999);
+      expect(actions.getState().restarting).toBeNull();
+      await vi.advanceTimersByTimeAsync(1);
+      expect(actions.getState().restarting).toEqual({ id: "a", mode: "plan", command: undefined });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+  it("a failed fetch still opens the restart bar", async () => {
+    const actions = new SessionActions({
+      api: { close: vi.fn(), reopen: vi.fn(), rename: vi.fn(), reorder: vi.fn(), resume: vi.fn(), restart: vi.fn(), pause: vi.fn(), cont: vi.fn(), resumeCommand: vi.fn().mockRejectedValue(new Error("offline")) },
+      context: () => ({ endpoint, infos: [row], selectedId: "a" }),
+      select: vi.fn(),
+    });
+    actions.askRestart("a", "plan");
+    await vi.waitFor(() => expect(actions.getState().restarting).toEqual({ id: "a", mode: "plan", command: undefined }));
+  });
+  it.each(["cancel", "dispose"])("a %s while the command is loading cannot reopen the restart bar", async (action) => {
+    let finish!: (answer: { ok: true; command: string; form: "by_id" }) => void;
+    const result = new Promise<{ ok: true; command: string; form: "by_id" }>((resolve) => { finish = resolve; });
+    const actions = new SessionActions({
+      api: { close: vi.fn(), reopen: vi.fn(), rename: vi.fn(), reorder: vi.fn(), resume: vi.fn(), restart: vi.fn(), pause: vi.fn(), cont: vi.fn(), resumeCommand: vi.fn().mockReturnValue(result) },
+      context: () => ({ endpoint, infos: [row], selectedId: "a" }),
+      select: vi.fn(),
+    });
+    actions.askRestart("a", "plan");
+    expect(actions.getState().restartLoading).toBe("a");
+    if (action === "cancel") actions.cancelRestart();
+    else actions.dispose();
+    finish({ ok: true, command: "qwen --resume stale", form: "by_id" });
+    await result;
+    await Promise.resolve();
+    expect(actions.getState().restarting).toBeNull();
+    expect(actions.getState().restartLoading).toBeNull();
+  });
+  it("a command from the previous core cannot open the restart bar", async () => {
+    let finish!: (answer: { ok: true; command: string; form: "by_id" }) => void;
+    const result = new Promise<{ ok: true; command: string; form: "by_id" }>((resolve) => { finish = resolve; });
+    let currentEndpoint = endpoint;
+    const actions = new SessionActions({
+      api: { close: vi.fn(), reopen: vi.fn(), rename: vi.fn(), reorder: vi.fn(), resume: vi.fn(), restart: vi.fn(), pause: vi.fn(), cont: vi.fn(), resumeCommand: vi.fn().mockReturnValue(result) },
+      context: () => ({ endpoint: currentEndpoint, infos: [row], selectedId: "a" }),
+      select: vi.fn(),
+    });
+    actions.askRestart("a", "plan");
+    currentEndpoint = { ...endpoint, port: 2 };
+    finish({ ok: true, command: "qwen --resume stale", form: "by_id" });
+    await result;
+    await Promise.resolve();
+    expect(actions.getState().restarting).toBeNull();
+    expect(actions.getState().restartLoading).toBeNull();
+  });
+});
 
 describe("reopenBarText", () => {
   const row = { ...info("closed"), number: 3, name: "billing", agent: "antigravity", elevated: true } as SessionInfo;

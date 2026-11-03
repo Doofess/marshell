@@ -1,5 +1,5 @@
 /** The sections of the Settings page, in the order the nav lists them. */
-export type SettingsSection = "appearance" | "terminal" | "notifications" | "profiles" | "history" | "projects" | "agents" | "accounts" | "claude" | "codex" | "antigravity" | "advanced";
+export type SettingsSection = "appearance" | "terminal" | "notifications" | "profiles" | "history" | "projects" | "agents" | "accounts" | "claude" | "codex" | "antigravity" | "qwen" | "advanced";
 
 export const SETTINGS_SECTIONS: Array<{ id: SettingsSection; label: string }> = [
   { id: "appearance", label: "Appearance" },
@@ -13,16 +13,17 @@ export const SETTINGS_SECTIONS: Array<{ id: SettingsSection; label: string }> = 
   { id: "claude", label: "Claude Code" },
   { id: "codex", label: "Codex" },
   { id: "antigravity", label: "Antigravity" },
+  { id: "qwen", label: "Qwen Code" },
   { id: "advanced", label: "Advanced" },
 ];
 
 /** The agent CLIs that have a section of their own. */
-export type CompanyAgent = "claude" | "codex" | "antigravity";
+export type CompanyAgent = "claude" | "codex" | "antigravity" | "qwen";
 
 /** What the person sees for each company CLI. */
-export const COMPANY_NAMES: Record<CompanyAgent, string> = { claude: "Claude Code", codex: "Codex", antigravity: "Antigravity" };
+export const COMPANY_NAMES: Record<CompanyAgent, string> = { claude: "Claude Code", codex: "Codex", antigravity: "Antigravity", qwen: "Qwen Code" };
 
-const COMPANY: ReadonlySet<SettingsSection> = new Set<SettingsSection>(["claude", "codex", "antigravity"]);
+const COMPANY: ReadonlySet<SettingsSection> = new Set<SettingsSection>(["claude", "codex", "antigravity", "qwen"]);
 
 /** The sections the nav lists: a company section only when its CLI was found, Accounts always. */
 export function shownSections(found: ReadonlySet<CompanyAgent>): Array<{ id: SettingsSection; label: string }> {

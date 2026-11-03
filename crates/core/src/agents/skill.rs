@@ -6,17 +6,18 @@ use marshell_protocol::agents::SkillInstall;
 use marshell_protocol::config::{Applies, ChangeSet, ConfigScope, EditOp, FileEdit};
 use std::path::{Path, PathBuf};
 
-/// The one `SKILL.md` all three CLIs read.
+/// The one `SKILL.md` all the CLIs read.
 pub const SKILL_TEXT: &str = include_str!("skill/SKILL.md");
 
 /// The `hash_bytes` hex of every earlier shipped `SKILL_TEXT`. A release that changes the text adds the old hash.
 pub const PREVIOUS: &[&str] = &[];
 
 /// Every agent with a skill: its id and the CLI's name, as a plan's title says it.
-pub const AGENTS: [(&str, &str); 3] = [
+pub const AGENTS: [(&str, &str); 4] = [
     ("claude", "Claude Code"),
     ("codex", "Codex"),
     ("antigravity", "Antigravity CLI"),
+    ("qwen", "Qwen Code"),
 ];
 
 /// The CLI's name for `agent`'s id.
@@ -34,6 +35,7 @@ pub fn skill_path(agent: &str, env: &dyn Fn(&str) -> Option<String>, user_home: 
         },
         "codex" => user_home.join(".agents"),
         "antigravity" => user_home.join(".gemini").join("config"),
+        "qwen" => crate::agents::qwen::home(env, user_home),
         _ => return None,
     };
     Some(root.join("skills").join("marshell").join("SKILL.md"))
@@ -130,11 +132,17 @@ mod tests {
         assert_eq!(p("claude", &set(" ")), Some(tail("/h/.claude")));
         assert_eq!(p("codex", &no_env), Some(tail("/h/.agents")));
         assert_eq!(p("antigravity", &no_env), Some(tail("/h/.gemini/config")));
+        assert_eq!(p("qwen", &no_env), Some(tail("/h/.qwen")));
+        assert_eq!(
+            p("qwen", &|k| (k == "QWEN_HOME").then(|| "~/q".to_string())),
+            Some(tail("/h/q"))
+        );
         assert_eq!(p("grok", &no_env), None);
     }
 
     #[test]
     fn every_agent_in_the_table_has_a_skill_path_and_a_name() {
+        assert!(AGENTS.contains(&("qwen", "Qwen Code")));
         for (id, name) in AGENTS {
             assert!(skill_path(id, &no_env, Path::new("/h")).is_some(), "{id}");
             assert_eq!(cli_name(id), Some(name));

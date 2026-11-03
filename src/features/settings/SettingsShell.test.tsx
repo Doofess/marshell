@@ -16,15 +16,21 @@ const html = (section: SettingsSection = "terminal") =>
   );
 
 describe("SettingsShell", () => {
-  it("lists the twelve sections in order", () => {
-    expect(SETTINGS_SECTIONS.map((s) => s.label)).toEqual(["Appearance", "Terminal", "Notifications", "Shell profiles", "History", "Projects", "Agents", "Accounts", "Claude Code", "Codex", "Antigravity", "Advanced"]);
-    expect(SETTINGS_SECTIONS.map((s) => s.id)).toEqual(["appearance", "terminal", "notifications", "profiles", "history", "projects", "agents", "accounts", "claude", "codex", "antigravity", "advanced"]);
+  it("lists the thirteen sections in order", () => {
+    expect(SETTINGS_SECTIONS.map((s) => s.label)).toEqual(["Appearance", "Terminal", "Notifications", "Shell profiles", "History", "Projects", "Agents", "Accounts", "Claude Code", "Codex", "Antigravity", "Qwen Code", "Advanced"]);
+    expect(SETTINGS_SECTIONS.map((s) => s.id)).toEqual(["appearance", "terminal", "notifications", "profiles", "history", "projects", "agents", "accounts", "claude", "codex", "antigravity", "qwen", "advanced"]);
   });
   it("lists a company section only when its CLI is found, and Accounts always", () => {
     const ids = (f: Parameters<typeof shownSections>[0]) => shownSections(f).map((s) => s.id);
     expect(ids(new Set())).toEqual(["appearance", "terminal", "notifications", "profiles", "history", "projects", "agents", "accounts", "advanced"]);
     expect(ids(new Set(["codex"]))).toEqual(["appearance", "terminal", "notifications", "profiles", "history", "projects", "agents", "accounts", "codex", "advanced"]);
-    expect(shownSections(new Set(["claude", "codex", "antigravity"]))).toEqual(SETTINGS_SECTIONS);
+    expect(shownSections(new Set(["claude", "codex", "antigravity", "qwen"]))).toEqual(SETTINGS_SECTIONS);
+  });
+  it("the Qwen Code tab shows once Qwen is detected", () => {
+    const ids = (f: Parameters<typeof shownSections>[0]) => shownSections(f).map((s) => s.id);
+    expect(ids(new Set())).not.toContain("qwen");
+    expect(ids(new Set(["qwen"]))).toEqual(["appearance", "terminal", "notifications", "profiles", "history", "projects", "agents", "accounts", "qwen", "advanced"]);
+    expect(shownSections(new Set(["qwen"])).find((s) => s.id === "qwen")?.label).toBe("Qwen Code");
   });
   it("renders only the sections it is given", () => {
     const h = renderToStaticMarkup(
@@ -36,7 +42,7 @@ describe("SettingsShell", () => {
     expect([...nav.matchAll(/<button[^>]*>([^<]*)<\/button>/g)].map((m) => m[1])).toEqual(["Codex", "Advanced"]);
     expect(h).toMatch(/<h2[^>]*>Codex<\/h2>/);
   });
-  it("has a nav of the twelve labels, and only the current one is marked", () => {
+  it("has a nav of the thirteen labels, and only the current one is marked", () => {
     const h = html();
     const nav = h.match(/<nav[^>]*aria-label="Settings sections"[^>]*>[\s\S]*?<\/nav>/)?.[0] ?? "";
     expect(nav).not.toBe("");

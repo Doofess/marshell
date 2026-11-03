@@ -28,6 +28,14 @@ export const COMPANY_FIELDS: Record<CompanyAgent, CompanyField[]> = {
     { key: "verbosity", label: "Verbosity", help: "How much Antigravity says as it works." },
     { key: "enableTelemetry", label: "Telemetry", help: "Whether Antigravity sends usage data to Google." },
   ],
+  qwen: [
+    { key: "model.name", label: "Default model", help: "The model a new Qwen Code session starts with, by the name /model shows." },
+    { key: "tools.approvalMode", label: "Approval mode", help: "The approval mode Qwen Code starts in. Sessions Marshell starts pass their own mode, which wins." },
+    { key: "general.enableAutoUpdate", label: "Update automatically", help: "Qwen Code checks for a newer version when it starts and installs it after the session ends." },
+    { key: "privacy.usageStatisticsEnabled", label: "Usage statistics", help: "Qwen Code sends usage statistics to its developers." },
+    { key: "ui.theme", label: "Theme", help: "The theme's name as /theme lists it, such as Qwen Dark." },
+    { key: "general.vimMode", label: "Vim mode", help: "Vim keys in Qwen Code's prompt." },
+  ],
 };
 
 /** Labels for choice values whose raw spelling reads badly; any other value shows capitalised. */

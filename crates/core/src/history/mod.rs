@@ -163,6 +163,7 @@ pub fn parse_for(agent: &str, text: &str, session_id: &str) -> Option<marshell_p
     match agent {
         "claude" => Some(crate::agents::claude::transcript::parse(text, session_id)),
         "codex" => Some(crate::agents::codex::rollout::parse(text, session_id)),
+        "qwen" => Some(crate::agents::qwen::transcript::parse(text, session_id)),
         _ => None,
     }
 }

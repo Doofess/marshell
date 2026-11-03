@@ -8,8 +8,14 @@ export const CHECKED = "Checked the sign-in status.";
 
 const upperFirst = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 
+/** A second line under the first: Qwen Code's settings name the sign-in type they choose (the core sends its label as `method`). */
+export function accountExtraLine(s: AccountStatus): string | null {
+  return s.agent === "qwen" && s.sign_in === "no_command" && s.method ? `Its settings choose ${s.method}.` : null;
+}
+
 /** One CLI's sign-in line, from what its status command reported. Unknown parts are left out. */
 export function accountLine(s: AccountStatus, name: string, now: number): string {
+  if (s.sign_in === "no_command" && s.agent === "qwen") return `${name} has no sign-in status command, so Marshell can't show one. Sign in with /auth in a Qwen Code session.`;
   if (s.sign_in === "no_command") return `${name} has no sign-in status command, so Marshell can't show one.`;
   const time = relativeTime(now - s.checked_ms);
   switch (s.sign_in) {

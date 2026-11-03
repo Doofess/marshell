@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import type { ComponentProps } from "react";
+import type { SessionInfo } from "../../generated/SessionInfo";
 import { invoke } from "@tauri-apps/api/core";
 import type { CreateSessionRequest } from "../../generated/CreateSessionRequest";
 import type { CreateSessionResponse } from "../../generated/CreateSessionResponse";
@@ -96,7 +98,7 @@ import { LivePalette } from "./LivePalette";
 import { LiveShortcuts } from "./LiveShortcuts";
 import { ResumeBar } from "./ResumeBar";
 import { recordSetupDetection, type SetupDetections } from "./setupDetections";
-import { sessionResumeCommand } from "./resumeCommand";
+import { fetchSessionCommand, sessionResumeCommand } from "./resumeCommand";
 import { holdsResume, offersModeChange, offersResume, resumeBlockedReason, resumeStateOf, sessionRunning } from "./resumeState";
 import { PAUSED_TYPING_TEXT, SessionActions, closeBarText, needsCloseConfirm, pauseBarStale, pauseBarText, reopenBarText, restartBarStale, restartBarText, tabIdOfNumber } from "./sessionActions";
 import { navPanesOf, useNavigation } from "./useNavigation";
@@ -117,6 +119,21 @@ const SIDEBAR_NEEDS_WIDTH = "Widen the window to open the sidebar.";
 const SHELL_PANEL_ELSEWHERE = "The shell panel is in the expanded sidebar.";
 /** What the announcer says when a split is asked for and the window has no room to show another pane. */
 const NO_PANE_ROOM = "No room for another pane.";
+
+/** Wait for the core's command before opening the bar; a failed request still opens it with the local text. */
+function SessionResumeBar({ endpoint, info, profileName, ...props }: Omit<ComponentProps<typeof ResumeBar>, "command" | "folder"> & { endpoint: Endpoint | null; info: SessionInfo; profileName: string }) {
+  const [answer, setAnswer] = useState<{ endpoint: Endpoint | null; command?: string } | null>(null);
+  useEffect(() => {
+    let gone = false;
+    // A shell tab has no agent command to ask for (the core answers 409): its bar uses the profile's own text.
+    const request = endpoint && info.agent !== null ? fetchSessionCommand(endpoint, info.tab_id, { for: "resume" }) : Promise.resolve(undefined);
+    void request.then((command) => {
+      if (!gone) setAnswer({ endpoint, command });
+    });
+    return () => { gone = true; };
+  }, [endpoint, info.tab_id, info.agent]);
+  return answer?.endpoint === endpoint && <ResumeBar {...props} command={sessionResumeCommand(info, profileName, answer.command)} folder={info.cwd} />;
+}
 
 /** The size of the element, kept up to date with a ResizeObserver. Starts at the window's size. */
 function useElementSize() {
@@ -302,7 +319,7 @@ export function LiveApp() {
   const versionBefore = useRef(new Map<string, string | null>());
   const openingTask = useRef(false);
   const [accountsRefresh, setAccountsRefresh] = useState(0);
-  const [companyRefresh, setCompanyRefresh] = useState<Record<CompanyAgent, number>>({ claude: 0, codex: 0, antigravity: 0 });
+  const [companyRefresh, setCompanyRefresh] = useState<Record<CompanyAgent, number>>({ claude: 0, codex: 0, antigravity: 0, qwen: 0 });
   // First run: shown once, when the saved settings say the onboarding was not seen. Nothing shows until that read has answered;
   // a failed read shows none.
   const [onboardingShown, setOnboardingShown] = useState<OnboardingShown>("unknown");
@@ -451,7 +468,7 @@ export function LiveApp() {
     if (settled && loaded && fillsEmptyPane(view.panes, selectedId)) dispatch({ type: "select", tabId: selectedId! });
   }, [settled, loaded, selectedId, view.panes, dispatch]);
   useEffect(() => () => actions.dispose(), [actions]);
-  const { toast, closing, restarting, reopening, pauseBar, renaming, focusToken, resuming, resumed } = useSyncExternalStore(actions.subscribe, actions.getState);
+  const { toast, closing, restarting, restartLoading, reopening, pauseBar, renaming, focusToken, resuming, resumed } = useSyncExternalStore(actions.subscribe, actions.getState);
   // Empty windows open the launcher after onboarding, except while Reopen needs the checkbox and the keyboard.
   useEffect(() => {
     if (reopening) setLauncherOpen(false);
@@ -839,7 +856,7 @@ export function LiveApp() {
   // up together. A session that askRestart or pauseSession is bringing on screen is not focused yet for a render or two (a split
   // waits for the pane count); that is not a move away, as long as the focus has not moved since the question.
   const showingForRestart = useRef<{ id: string; from: string | undefined } | null>(null);
-  const slotId = restarting?.id ?? pauseBar?.id ?? null;
+  const slotId = restarting?.id ?? restartLoading ?? pauseBar?.id ?? null;
   const slotSession = infos.find((i) => i.tab_id === slotId);
   useEffect(() => {
     const pending = showingForRestart.current;
@@ -847,18 +864,18 @@ export function LiveApp() {
     if (slotId === null) return;
     const showing = pending?.id === slotId && focusedId === pending.from ? pending.id : null;
     const ids = infos.map((i) => i.tab_id);
-    if (restarting !== null) {
+    if (restarting !== null || restartLoading !== null) {
       if (restartBarStale({ id: slotId, closing, focusedId, ids, showing })) actions.cancelRestart();
     } else if (pauseBar !== null && pauseBarStale({ id: slotId, closing, focusedId, ids, showing, kind: pauseBar.kind, paused: slotSession?.paused === true })) {
       actions.cancelPause();
     }
-  }, [slotId, restarting, pauseBar, slotSession?.paused, closing, focusedId, infos, actions]);
+  }, [slotId, restarting, restartLoading, pauseBar, slotSession?.paused, closing, focusedId, infos, actions]);
   useEffect(() => {
     // The session went away, or the window shrank to a layout without the sidebar's rows.
     if (renaming !== null && (!sidebarExpanded || !infos.some((i) => i.tab_id === renaming))) actions.cancelRename({ refocus: false });
   }, [renaming, infos, sidebarExpanded, actions]);
   // Escape cancels the bar from anywhere. Captured, so it never reaches the terminal: Escape would interrupt the agent the bar is about.
-  const barOpen = closing !== null || restarting !== null || pauseBar !== null;
+  const barOpen = closing !== null || restarting !== null || restartLoading !== null || pauseBar !== null;
   useEffect(() => {
     if (!barOpen || overlay === "departures" || overlay === "settings") return;
     const onEscape = (e: KeyboardEvent) => {
@@ -1537,7 +1554,7 @@ export function LiveApp() {
   // The tabs of each CLI that are running, not counting the sign-in and update tabs Settings opened (an update would warn about itself).
   const runningTabs = useMemo(() => {
     const others = infos.filter((i) => !pendingTasks.current.has(i.tab_id));
-    return { claude: runningCount(others, "claude"), codex: runningCount(others, "codex"), antigravity: runningCount(others, "antigravity") };
+    return { claude: runningCount(others, "claude"), codex: runningCount(others, "codex"), antigravity: runningCount(others, "antigravity"), qwen: runningCount(others, "qwen") };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- the pending map is a ref; it changes together with the overlay.
   }, [infos, overlay]);
 
@@ -1582,11 +1599,12 @@ export function LiveApp() {
             </div>
           )}
           {bar && info && (
-            <ResumeBar
-              key={bar.id}
+            <SessionResumeBar
+              key={`${bar.id}:${info.agent}:${info.mode}:${info.elevated}:${info.profile_id}:${info.preset}:${info.cwd}:${resumed[bar.id] ?? 0}`}
               row={bar}
-              command={sessionResumeCommand(info, profile?.name ?? info.profile_id)}
-              folder={info.cwd}
+              endpoint={endpoint}
+              info={info}
+              profileName={profile?.name ?? info.profile_id}
               disabledReason={profileGone}
               needsAck={actions.resumeNeedsAck(bar.id)}
               onResume={(acknowledged) => startResume(bar, acknowledged)}
@@ -1709,7 +1727,7 @@ export function LiveApp() {
           renderTerminal={renderTerminal}
           paneBar={
             restartInfo
-              ? { id: restartInfo.tab_id, node: <RestartBar key={`${restartInfo.tab_id}-${restarting!.mode}`} needsAck={actions.restartNeedsAck()} text={restartBarText(restartInfo, restarting!.mode, rows.find((r) => r.id === restartInfo.tab_id)?.status === "working", actions.sessionSkipsAll(restartInfo))} onCancel={actions.cancelRestart.bind(actions)} onRestart={(acknowledged) => void actions.confirmRestart(acknowledged)} /> }
+              ? { id: restartInfo.tab_id, node: <RestartBar key={`${restartInfo.tab_id}-${restarting!.mode}`} needsAck={actions.restartNeedsAck()} text={restartBarText(restartInfo, restarting!.mode, rows.find((r) => r.id === restartInfo.tab_id)?.status === "working", actions.sessionSkipsAll(restartInfo), restarting!.command)} onCancel={actions.cancelRestart.bind(actions)} onRestart={(acknowledged) => void actions.confirmRestart(acknowledged)} /> }
               : pauseInfo && pauseBar
                 ? {
                     id: pauseInfo.tab_id,

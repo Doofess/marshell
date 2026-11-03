@@ -7,8 +7,8 @@ use crate::agents::manifest::mode_label;
 use crate::agents::presets::{self, PresetLaunch};
 use crate::auth;
 use crate::profiles::detect::{
-    PresetArg, Program, ResumeTarget, agent_command, command_on_path, default_shell, launch_argv, launch_argv_resume,
-    line_argv, mangles_double_quotes, mode_args, preset_line,
+    PresetArg, Program, ResumeTarget, agent_command, build_line, command_on_path, default_shell, line_argv,
+    mangles_double_quotes, mode_args, preset_line, resume_args,
 };
 use crate::pty::{FreezeError, Session, SpawnSpec};
 use crate::registry::{Relaunch, ResumeRefusal};
@@ -131,6 +131,8 @@ pub(super) struct Resolved {
     pub(super) profile_name: String,
     pub(super) family: ShellFamily,
     pub(super) argv: Vec<String>,
+    /// The agent's command line before the shell wrapper; the restart and resume bars show `bare_command`.
+    pub(super) command: Option<String>,
     pub(super) env: Vec<(String, String)>,
     /// Variables the child must not inherit, on top of the session markers: a preset's.
     env_remove: Vec<String>,
@@ -141,6 +143,18 @@ pub(super) struct Resolved {
     marks: bool,
     /// The line a tool preset runs first: it holds what the person typed, so it goes to the spawn and nowhere else.
     initial_command: Option<String>,
+}
+
+impl Resolved {
+    /// `command` as a person would type it: PowerShell's call operator is left off before a bare program name, and kept
+    /// before a quoted one, which PowerShell runs only with it.
+    pub(super) fn bare_command(&self) -> Option<&str> {
+        let command = self.command.as_deref()?;
+        match command.strip_prefix("& ") {
+            Some(rest) if self.family == ShellFamily::PowerShell && !rest.starts_with(['\'', '"']) => Some(rest),
+            _ => Some(command),
+        }
+    }
 }
 
 /// Finds the profile (the default when `profile_id` is None) and builds the argv for the agent.
@@ -206,11 +220,17 @@ pub(super) async fn resolve_with(
             let spec = agent
                 .zip(command.as_deref())
                 .map(|(id, c)| (id, Program::of_command(c)));
-            let argv = match resume {
-                Some(target) => launch_argv_resume(&p, &agents, spec, mode, target, no_daemon),
-                None => launch_argv(&p, &agents, spec, prompt, mode, no_daemon),
-            };
-            let mut argv = argv.map_err(|msg| (StatusCode::BAD_REQUEST, msg))?;
+            let command = spec
+                .map(|(id, program)| {
+                    let extra = resume.map_or_else(Vec::new, |target| resume_args(&agents, id, target));
+                    let prompt = if resume.is_some() { None } else { prompt };
+                    build_line(&p, &agents, id, program, prompt, &extra, mode, no_daemon)
+                })
+                .transpose()
+                .map_err(|msg| (StatusCode::BAD_REQUEST, msg))?;
+            let mut argv = command
+                .as_ref()
+                .map_or_else(|| p.command.clone(), |line| line_argv(&p, line.clone()));
             let mut env = p.env.clone();
             let mut env_remove = Vec::new();
             let mut env_strip = None;
@@ -237,6 +257,7 @@ pub(super) async fn resolve_with(
                 profile_name: p.name,
                 family: p.family,
                 argv,
+                command,
                 env,
                 env_remove,
                 env_strip,
@@ -310,6 +331,7 @@ fn custom(argv: Vec<String>) -> Resolved {
         profile_name: "Shell".into(),
         family: ShellFamily::Posix,
         argv,
+        command: None,
         env: Vec::new(),
         env_remove: Vec::new(),
         env_strip: None,
@@ -512,6 +534,7 @@ pub(super) async fn resolve_tool(
         profile_name: p.name,
         family: p.family,
         argv,
+        command: None,
         env,
         env_remove: Vec::new(),
         env_strip: None,
@@ -855,7 +878,7 @@ fn spawn_failure(error: &anyhow::Error) -> ApiError {
 
 /// The mode a session starts in. An agent that runs as administrator always starts in Manual, whatever was asked
 /// (slice 6j2 decision 2); a shell has none; an ordinary start keeps what was asked.
-fn launch_mode(elevated: bool, agent: Option<&str>, requested: Option<SessionMode>) -> Option<SessionMode> {
+pub(super) fn launch_mode(elevated: bool, agent: Option<&str>, requested: Option<SessionMode>) -> Option<SessionMode> {
     if elevated && agent.is_some() {
         Some(SessionMode::Manual)
     } else {
@@ -1639,6 +1662,10 @@ mod tests {
     }
 
     fn resolved_codex_line(version: Option<&str>, resume: Option<ResumeTarget<'_>>) -> String {
+        resolved_codex(version, resume).argv.last().unwrap().clone()
+    }
+
+    fn resolved_codex(version: Option<&str>, resume: Option<ResumeTarget<'_>>) -> Resolved {
         let pwsh = marshell_protocol::api::Profile {
             id: "pwsh".into(),
             name: "pwsh".into(),
@@ -1654,12 +1681,27 @@ mod tests {
         let st = AppState::new("t".into(), 1, Vec::new(), home, vec![pwsh])
             .with_codex_version(version.map(str::to_string))
             .with_agent_path(|_| None);
-        let run = tokio::runtime::Builder::new_current_thread()
+        tokio::runtime::Builder::new_current_thread()
             .build()
             .unwrap()
             .block_on(resolve(&st, Some("pwsh"), Some("codex"), None, resume, None, None))
-            .unwrap();
-        run.argv.last().unwrap().clone()
+            .unwrap()
+    }
+
+    #[test]
+    fn the_bars_command_has_no_call_operator_but_the_argv_keeps_it() {
+        let run = resolved_codex(Some("0.170.2"), Some(ResumeTarget::Last));
+        assert_eq!(run.argv.last().unwrap(), "& codex resume --last --no-daemon");
+        assert_eq!(run.bare_command(), Some("codex resume --last --no-daemon"));
+        // A quoted program needs the operator to run when pasted, so it stays.
+        let mut quoted = run;
+        for line in [
+            r"& 'C:\Program Files\x\codex.exe' resume --last",
+            r#"& "C:\x y\codex.exe""#,
+        ] {
+            quoted.command = Some(line.into());
+            assert_eq!(quoted.bare_command(), Some(line), "{line}");
+        }
     }
 
     #[test]

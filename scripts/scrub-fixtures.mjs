@@ -1,5 +1,5 @@
 // Scrubs recorded CLI fixtures of the home path, user name, ids and e-mail before they are committed.
-// Usage: node scripts/scrub-fixtures.mjs <dir>   (rewrites every .json file under <dir> in place)
+// Usage: node scripts/scrub-fixtures.mjs <dir>   (rewrites every .json and .jsonl file under <dir> in place)
 import { readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, join } from "node:path";
@@ -52,7 +52,7 @@ function jsonFiles(dir) {
   return readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
     const p = join(dir, e.name);
     if (e.isDirectory()) return jsonFiles(p);
-    return e.name.endsWith(".json") ? [p] : [];
+    return /\.jsonl?$/.test(e.name) ? [p] : [];
   });
 }
 

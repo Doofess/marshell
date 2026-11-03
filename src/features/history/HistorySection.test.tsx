@@ -16,7 +16,7 @@ describe("HistorySettingsView", () => {
   it("has the switch and the hint, word for word", () => {
     const h = view(true);
     expect(h).toContain('<span class="switch__text">Copy conversations run outside Marshell</span>');
-    expect(h).toContain("Marshell reads Claude Code&#x27;s and Codex&#x27;s conversation folders and keeps its own copy of each conversation. It never changes their files.");
+    expect(h).toContain("Marshell reads the conversation folders of Claude Code, Codex and Qwen Code and keeps its own copy of each conversation. It never changes their files.");
   });
   it("shows the switch checked or not from the setting", () => {
     expect(view(true)).toMatch(/<input[^>]*role="switch"[^>]*checked=""/);
