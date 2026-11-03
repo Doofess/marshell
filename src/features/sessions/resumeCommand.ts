@@ -2,6 +2,8 @@ import type { CliId } from "../onboarding/types";
 import { launchArgs } from "../modes/sessionModes";
 import type { Mode } from "../sidebar/types";
 import type { SessionInfo } from "../../generated/SessionInfo";
+import type { Endpoint } from "../../generated/Endpoint";
+import { sessions, type SessionCommandPurpose } from "../../lib/api/sessions";
 // The shipped manifests the core reads, so a shipped agent's command can never drift from what the core runs.
 import shipped from "../../../crates/core/src/agents/manifests.json";
 
@@ -39,7 +41,17 @@ export function resumeCommand(agent: string | null, profileName: string, mode?: 
  * The Resume bar's command for a session. The core resumes with the mode it was last started in, so the flags show too.
  * An administrator agent is the exception: Resume uses Manual flags (decision 10); its own setting may still make it Bypass.
  */
-export function sessionResumeCommand(info: Pick<SessionInfo, "agent" | "mode"> & { elevated?: boolean }, profileName: string): string {
+export function sessionResumeCommand(info: Pick<SessionInfo, "agent" | "mode"> & { elevated?: boolean }, profileName: string, command?: string): string {
   const mode = info.elevated === true && info.agent !== null ? "manual" : (info.mode ?? undefined);
-  return resumeCommand(info.agent, profileName, mode);
+  return command ?? resumeCommand(info.agent, profileName, mode);
+}
+
+/** The core's bare command for a bar. A refusal or failed request leaves the local text available. */
+export async function fetchSessionCommand(endpoint: Endpoint, tabId: string, purpose: SessionCommandPurpose, request = sessions.resumeCommand): Promise<string | undefined> {
+  try {
+    const result = await request(endpoint, tabId, purpose);
+    return result.ok ? result.command : undefined;
+  } catch {
+    return undefined;
+  }
 }

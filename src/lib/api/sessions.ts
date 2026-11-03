@@ -41,6 +41,7 @@ export async function refusable(request: () => Promise<unknown>): Promise<Starte
 
 /** What asking for a resume command comes to: the command and its form, or the core's reason for refusing. */
 export type ResumeCommandResult = ({ ok: true } & ResumeCommand) | { ok: false; reason: string };
+export type SessionCommandPurpose = { for: "restart" | "resume"; mode?: SessionMode };
 
 /** Runs a resume-command request: a 409 becomes `{ ok: false, reason }` in the core's words, anything else rejects. */
 export async function resumeCommandOf(request: () => Promise<ResumeCommand>): Promise<ResumeCommandResult> {
@@ -102,8 +103,10 @@ export const sessions = {
   resume: (ep: Endpoint, tabId: string, size: { cols: number; rows: number }): Promise<Started> =>
     refusable(() => api<CreateSessionResponse>(ep, "POST", `${tab(tabId)}/resume`, size)),
   /** The line that starts the session's CLI again, to paste into a terminal. A 409 comes back as `{ ok: false, reason }`; an unknown tab rejects with a 404 ApiError. */
-  resumeCommand: (ep: Endpoint, tabId: string): Promise<ResumeCommandResult> =>
-    resumeCommandOf(() => api<ResumeCommand>(ep, "GET", `${tab(tabId)}/resume-command`)),
+  resumeCommand: (ep: Endpoint, tabId: string, purpose?: SessionCommandPurpose): Promise<ResumeCommandResult> => {
+    const query = purpose ? `?for=${purpose.for}${purpose.mode ? `&mode=${purpose.mode}` : ""}` : "";
+    return resumeCommandOf(() => api<ResumeCommand>(ep, "GET", `${tab(tabId)}/resume-command${query}`));
+  },
   /** Starts the resume command in a system terminal window. A 409 ("End the session first.") comes back as `{ ok: false, reason }`, as for `resume`. */
   openOutside: (ep: Endpoint, tabId: string): Promise<Started> => refusable(() => api<void>(ep, "POST", `${tab(tabId)}/open-outside`)),
   /** Freezes a running session's whole process tree. A 409 comes back as `{ ok: false, reason }`, as for `resume`. */

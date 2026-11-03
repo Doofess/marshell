@@ -630,7 +630,7 @@ fn build_argv(
 /// The line that starts `agent` in a shell of `profile`'s family, before the shell's own wrapper (`line_argv`).
 /// The one place an agent's command line is written: a session runs it, and "Copy resume command" copies it.
 #[allow(clippy::too_many_arguments)]
-fn build_line(
+pub(crate) fn build_line(
     profile: &Profile,
     agents: &Agents,
     agent: &str,

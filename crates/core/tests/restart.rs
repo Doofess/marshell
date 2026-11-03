@@ -38,6 +38,8 @@ fn state_in(home: &Path, agent_on_path: fn(&str) -> bool) -> AppState {
         vec![profile],
     )
     .with_agent_check(agent_on_path)
+    .with_qwen_home(home.to_path_buf())
+    .with_codex_version(Some("9.9.9".into()))
 }
 
 fn api(method: &str, path: &str, body: Option<serde_json::Value>) -> Request<Body> {
@@ -92,6 +94,113 @@ fn stop(state: &AppState, tab: &str) {
     if let Some(session) = state.remove_session(tab) {
         session.force_kill();
     }
+}
+
+fn note_chat(state: &AppState, tab: &str, agent: &str, work: &Path) {
+    let transcript = if agent == "qwen" {
+        work.join("projects/test/chats/12345678-1234-1234-1234-123456789abc.jsonl")
+    } else {
+        work.join("rollout-2026-11-03T00-00-00-12345678-1234-1234-1234-123456789abc.jsonl")
+    };
+    std::fs::create_dir_all(transcript.parent().unwrap()).unwrap();
+    std::fs::write(&transcript, "{}\n").unwrap();
+    let event = serde_json::json!({
+        "hook_event_name": "SessionStart", "session_id": "12345678-1234-1234-1234-123456789abc",
+        "transcript_path": transcript.to_string_lossy(), "cwd": work.to_string_lossy(),
+    });
+    state.history().note_event(agent, tab, None, &event, 1, None);
+    assert!(state.history().latest_for_tab(tab).is_some());
+}
+
+async fn command(app: &axum::Router, tab: &str, query: &str) -> serde_json::Value {
+    let res = app
+        .clone()
+        .oneshot(api("GET", &format!("/v1/sessions/{tab}/resume-command{query}"), None))
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    json_of(res).await
+}
+
+#[tokio::test]
+async fn restart_command_names_resume_by_id_for_a_qwen_tab_with_a_chat() {
+    let home = tempfile::tempdir().unwrap();
+    let work = tempfile::tempdir().unwrap();
+    let state = state_in(home.path(), |_| true);
+    let app = router(state.clone());
+    let tab = create(&app, work.path(), Some("qwen"), Some("manual")).await;
+    note_chat(&state, &tab, "qwen", work.path());
+    let body = command(&app, &tab, "?for=restart&mode=plan").await;
+    assert_eq!(
+        body["command"],
+        "qwen --resume 12345678-1234-1234-1234-123456789abc --approval-mode plan"
+    );
+    assert_eq!(body["form"], "by_id");
+    // Resume retains the original mode rather than the restart bar's requested mode.
+    assert_eq!(
+        command(&app, &tab, "?for=resume").await["command"],
+        "qwen --resume 12345678-1234-1234-1234-123456789abc --approval-mode default"
+    );
+    stop(&state, &tab);
+}
+
+#[tokio::test]
+async fn restart_command_continues_when_no_id_is_known() {
+    let home = tempfile::tempdir().unwrap();
+    let work = tempfile::tempdir().unwrap();
+    let state = state_in(home.path(), |_| true);
+    let app = router(state.clone());
+    let tab = create(&app, work.path(), Some("qwen"), Some("manual")).await;
+    let body = command(&app, &tab, "?for=restart&mode=auto-edit").await;
+    assert_eq!(body["command"], "qwen --continue --approval-mode auto-edit");
+    assert_eq!(body["form"], "continue_last");
+    stop(&state, &tab);
+}
+
+#[tokio::test]
+async fn restart_command_for_codex_names_resume_by_id() {
+    let home = tempfile::tempdir().unwrap();
+    let work = tempfile::tempdir().unwrap();
+    let state = state_in(home.path(), |_| true);
+    let app = router(state.clone());
+    let tab = create(&app, work.path(), Some("codex"), Some("manual")).await;
+    note_chat(&state, &tab, "codex", work.path());
+    let body = command(&app, &tab, "?for=restart&mode=manual").await;
+    assert_eq!(
+        body["command"],
+        "codex resume 12345678-1234-1234-1234-123456789abc --no-daemon --sandbox read-only --ask-for-approval on-request"
+    );
+    assert_eq!(body["form"], "by_id");
+    stop(&state, &tab);
+}
+
+#[tokio::test]
+async fn restart_command_is_refused_without_the_bearer() {
+    let home = tempfile::tempdir().unwrap();
+    let app = router(state_in(home.path(), |_| true));
+    let mut request = api("GET", "/v1/sessions/unknown/resume-command?for=restart&mode=plan", None);
+    request.headers_mut().remove(header::AUTHORIZATION);
+    assert_eq!(app.oneshot(request).await.unwrap().status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn resume_command_without_for_is_unchanged() {
+    let home = tempfile::tempdir().unwrap();
+    let work = tempfile::tempdir().unwrap();
+    let state = state_in(home.path(), |_| true);
+    let app = router(state.clone());
+    let tab = create(&app, work.path(), Some("qwen"), Some("manual")).await;
+    note_chat(&state, &tab, "qwen", work.path());
+    let body = command(&app, &tab, "").await;
+    assert_eq!(
+        body["command"],
+        format!(
+            "cd '{}' && qwen --resume 12345678-1234-1234-1234-123456789abc --approval-mode default",
+            work.path().display()
+        )
+    );
+    assert_eq!(body["form"], "by_id");
+    stop(&state, &tab);
 }
 
 #[tokio::test]

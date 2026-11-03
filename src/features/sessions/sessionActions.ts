@@ -15,7 +15,7 @@ import { moveBy } from "../sidebar/reorder";
 import type { RowModel } from "../sidebar/types";
 import { modeLabel } from "../window/SessionHeader";
 import type { Mode } from "../sidebar/types";
-import { resumeCommand } from "./resumeCommand";
+import { fetchSessionCommand, resumeCommand } from "./resumeCommand";
 import { lastSegment } from "./toRow";
 
 export { BYPASS_ACK_TEXT, PAUSE_UNAVAILABLE };
@@ -48,8 +48,8 @@ export function closeBarText(info: SessionInfo): string {
 }
 
 /** "Restart 3 billing in Bypass? It ends and runs claude --continue --permission-mode bypassPermissions." The command is what the core runs. */
-export function restartBarText(info: SessionInfo, mode: Mode, working: boolean, skipsAll = false): string {
-  const text = `Restart ${info.number} ${info.name} in ${modeLabel(effectiveMode(mode, skipsAll))}? It ends and runs ${resumeCommand(info.agent, info.profile_id, mode)}.`;
+export function restartBarText(info: SessionInfo, mode: Mode, working: boolean, skipsAll = false, command?: string): string {
+  const text = `Restart ${info.number} ${info.name} in ${modeLabel(effectiveMode(mode, skipsAll))}? It ends and runs ${command ?? resumeCommand(info.agent, info.profile_id, mode)}.`;
   return working ? `${text} ${agentLabel(info.agent ?? "")} may be mid-task.` : text;
 }
 
@@ -98,7 +98,9 @@ export type ActionsState = {
   /** The tab whose close bar is up. */
   closing: string | null;
   /** The tab whose restart bar is up, and the mode it would start in. */
-  restarting: { id: string; mode: Mode } | null;
+  restarting: { id: string; mode: Mode; command?: string } | null;
+  /** The tab whose restart command is loading, so Escape and a move away can cancel it before the bar opens. */
+  restartLoading: string | null;
   /** The tab whose Pause bar is up: the first-time question, or the "Paused. Continue to type." bar. Never up with a close or restart question. */
   pauseBar: { id: string; kind: "confirm" | "typing" } | null;
   /** The tab whose name is being edited. */
@@ -114,7 +116,7 @@ export type ActionsState = {
   resumed: Record<string, number>;
 };
 
-type Api = Pick<typeof sessions, "close" | "reopen" | "rename" | "reorder" | "restart" | "resume" | "pause" | "cont">;
+type Api = Pick<typeof sessions, "close" | "reopen" | "rename" | "reorder" | "restart" | "resume" | "pause" | "cont"> & Partial<Pick<typeof sessions, "resumeCommand">>;
 type Context = {
   detections?: Detection[];
   detectionFailed?: ReadonlySet<string>;
@@ -152,12 +154,13 @@ const reason = (e: unknown): string => (e instanceof ApiError ? e.message : Stri
  * core's next snapshot, so nothing here is optimistic. Plain class so it can be tested without a DOM; LiveApp wraps it.
  */
 export class SessionActions {
-  private state: ActionsState = { toast: null, reopening: null, closing: null, restarting: null, pauseBar: null, renaming: null, focusToken: 0, resuming: [], resumed: {} };
+  private state: ActionsState = { toast: null, reopening: null, closing: null, restarting: null, restartLoading: null, pauseBar: null, renaming: null, focusToken: 0, resuming: [], resumed: {} };
   private listeners = new Set<() => void>();
   private timer: ReturnType<typeof setTimeout> | undefined;
   private toastId = 0;
   /** Tabs with a close request in flight. */
   private closingNow = new Set<string>();
+  private restartRequest = 0;
 
   constructor(private deps: Deps) {}
 
@@ -169,6 +172,10 @@ export class SessionActions {
   getState = (): ActionsState => this.state;
 
   private set(patch: Partial<ActionsState>): void {
+    if ((["closing", "reopening", "restarting", "pauseBar"] as const).some((key) => key in patch && patch[key] !== this.state[key])) {
+      this.restartRequest++;
+      patch = { restartLoading: null, ...patch };
+    }
     this.state = { ...this.state, ...patch };
     this.listeners.forEach((l) => l());
   }
@@ -189,6 +196,8 @@ export class SessionActions {
 
   /** Stops the toast timer. Call when the window goes away. */
   dispose(): void {
+    this.restartRequest++;
+    if (this.state.restartLoading !== null) this.set({ restartLoading: null });
     clearTimeout(this.timer);
   }
 
@@ -380,9 +389,25 @@ export class SessionActions {
    * keeps the focus where it is. One question at a time: a new one replaces the one up.
    */
   askRestart(id: string, mode: Mode): boolean {
-    const info = this.deps.context().infos.find((i) => i.tab_id === id);
+    const { endpoint, infos } = this.deps.context();
+    const info = infos.find((i) => i.tab_id === id);
     if (!info || info.agent === null || info.mode === mode) return false;
-    this.set({ restarting: { id, mode }, pauseBar: null, reopening: null });
+    if (endpoint && this.deps.api.resumeCommand) {
+      this.set({ restarting: null, restartLoading: id, closing: null, pauseBar: null, reopening: null });
+      const request = ++this.restartRequest;
+      void fetchSessionCommand(endpoint, id, { for: "restart", mode }, this.deps.api.resumeCommand).then((command) => {
+        // A later question, cancellation or changed tab must never be replaced by an older response.
+        if (request !== this.restartRequest) return;
+        const current = this.deps.context();
+        if (current.endpoint !== endpoint || !current.infos.some((i) => i.tab_id === id && i.mode === info.mode && i.agent === info.agent && i.profile_id === info.profile_id && i.preset === info.preset && i.elevated === info.elevated && i.cwd === info.cwd)) {
+          this.set({ restartLoading: null });
+          return;
+        }
+        this.set({ restarting: { id, mode, command }, pauseBar: null, reopening: null });
+      });
+    } else {
+      this.set({ restarting: { id, mode }, pauseBar: null, reopening: null });
+    }
     return true;
   }
 
@@ -415,7 +440,8 @@ export class SessionActions {
 
   /** Cancel or Escape on the restart bar: nothing is sent, and focus goes back to the session's terminal. */
   cancelRestart(): void {
-    if (this.state.restarting !== null) this.set({ restarting: null, focusToken: this.refocus() });
+    this.restartRequest++;
+    if (this.state.restarting !== null || this.state.restartLoading !== null) this.set({ restarting: null, restartLoading: null, focusToken: this.refocus() });
   }
 
   /**
