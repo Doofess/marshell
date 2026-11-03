@@ -220,6 +220,15 @@ impl AppState {
         }
     }
 
+    /// Qwen Code's read-only system settings: the file a test named, else `C:\ProgramData\qwen-code\settings.json`.
+    /// `QWEN_CODE_SYSTEM_SETTINGS_PATH` is not read (slice 6l1 decision 3, 6l2 decision 9).
+    fn qwen_system_settings_path(&self) -> PathBuf {
+        self.0
+            .qwen_system_settings
+            .clone()
+            .unwrap_or_else(|| PathBuf::from(r"C:\ProgramData\qwen-code\settings.json"))
+    }
+
     /// Where `agent`'s `marshell` skill file goes. A skill home named by a test replaces the user's home and the
     /// process environment; otherwise it is the user's home, with `CLAUDE_CONFIG_DIR` from the environment.
     fn skill_file(&self, agent: &str) -> Result<PathBuf, Fail> {
@@ -1117,10 +1126,7 @@ fn account_of(st: &AppState, agent: &str, kind: Adapter) -> AccountStatus {
                     .as_str()
                     .map(crate::agents::qwen::auth_label)
             };
-            let system =
-                st.0.qwen_system_settings
-                    .clone()
-                    .unwrap_or_else(|| PathBuf::from(r"C:\ProgramData\qwen-code\settings.json"));
+            let system = st.qwen_system_settings_path();
             status.method = selected(&system).or_else(|| selected(&st.qwen_settings_path(&st.qwen_user_home().ok()?)));
         }
         Adapter::Claude => {
@@ -1175,10 +1181,7 @@ fn settings_file(st: &AppState, kind: Adapter) -> Result<(PathBuf, Option<(PathB
         Adapter::Codex => (st.codex_dir().ok_or_else(no_home)?.join("config.toml"), None),
         Adapter::Antigravity => (agy::settings_path(&st.agy_user_home()?), None),
         Adapter::Qwen => {
-            let system =
-                st.0.qwen_system_settings
-                    .clone()
-                    .unwrap_or_else(|| PathBuf::from(r"C:\ProgramData\qwen-code\settings.json"));
+            let system = st.qwen_system_settings_path();
             (st.qwen_settings_path(&st.qwen_user_home()?), read_managed(&[system]))
         }
     })
