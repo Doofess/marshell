@@ -1,7 +1,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { AGY_SETUP, CODEX_SETUP, PREVIEW, SETUP } from "../agents/fixtures";
-import { OnboardingView, type OnboardingState } from "./LiveOnboarding";
+import { AGY_SETUP, CODEX_SETUP, PREVIEW, QWEN_SETUP, SETUP } from "../agents/fixtures";
+import { onboardingQueue, OnboardingView, type OnboardingState } from "./LiveOnboarding";
 
 const none = () => {};
 const handlers = { onContinue: none, onBack: none, onAllow: none, onSkip: none, onReload: none, onToggleDiff: none, onSwitch: none };
@@ -97,5 +97,18 @@ describe("OnboardingView: Codex", () => {
     expect(h).toContain("<code>hooks.json</code> only");
     expect(h).not.toContain("Keep my status line working");
     expect(h).not.toContain("Claude Code");
+  });
+  it("Qwen's consent comes after Antigravity's", () => {
+    const order = onboardingQueue(SETUP, CODEX_SETUP, AGY_SETUP, QWEN_SETUP).map((s) => s.agent);
+    expect(order).toEqual(["claude", "codex", "antigravity", "qwen"]);
+  });
+  it("lists Qwen Code from its own setup, then its card names its settings file and has no bulk allow", () => {
+    const list = view({ kind: "detected", setup: SETUP, found: [{ agent: "qwen", found: true, exe_path: "C:/bin/qwen.cmd" }], qwen: QWEN_SETUP });
+    expect(list).toContain("Qwen Code");
+    expect(list).toContain("version 0.19.0");
+    expect(list).not.toContain("Live status and setup come in a later version.");
+    const h = view({ kind: "consent", setup: QWEN_SETUP, flow: { preview: PREVIEW, open: false, busy: false } });
+    expect(h).toContain('data-agent="qwen"');
+    expect(h).toContain("C:/h/.qwen/settings.json");
   });
 });

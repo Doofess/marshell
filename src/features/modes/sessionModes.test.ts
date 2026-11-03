@@ -179,6 +179,15 @@ describe("Antigravity never starts or switches in a Marshell-held strict mode (s
       expect(launchArgs("antigravity", "bypass", hooksOn), `bypass ${hooksOn}`).toEqual({ args: ["--dangerously-skip-permissions"], native: true });
     }
   });
+  it("Qwen starts each mode with its --approval-mode flag", () => {
+    const flag = { manual: "default", plan: "plan", "auto-edit": "auto-edit", "full-auto": "auto", bypass: "yolo" } as const;
+    for (const hooksOn of [true, false]) {
+      for (const [mode, value] of Object.entries(flag)) expect(launchArgs("qwen", mode as keyof typeof flag, hooksOn), `${mode} ${hooksOn}`).toEqual({ args: ["--approval-mode", value], native: true });
+      expect(launchArgs("qwen", "dont-ask", hooksOn)).toBeNull();
+      expect(switchKind("qwen", "manual", "plan", hooksOn)).toBe("native");
+      expect(switchKind("qwen", "manual", "dont-ask", hooksOn)).toBe("unavailable");
+    }
+  });
   it("every_antigravity_mode_switch_is_native", () => {
     for (const hooksOn of [true, false]) for (const from of MODES) for (const to of MODES) expect(switchKind("antigravity", from, to, hooksOn), `${from} to ${to} ${hooksOn}`).toBe("native");
   });

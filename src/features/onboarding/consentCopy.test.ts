@@ -2,6 +2,9 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { createElement } from "react";
 import { describe, expect, it } from "vitest";
 import { parseUnifiedDiff } from "../../components/DiffView/diff";
+import type { AgentSetup } from "../../generated/AgentSetup";
+import { consentProps } from "../agents/agentsState";
+import { PREVIEW, QWEN_SETUP } from "../agents/fixtures";
 import { ConsentCard } from "./ConsentCard";
 import { Detected } from "./Detected";
 import { canEdit, CAPABILITIES, consentHeadline, entryCount, removalCopy, type Capability, type Detection } from "./consent";
@@ -260,6 +263,39 @@ describe("headline and card wording", () => {
     const h = renderToStaticMarkup(createElement(ConsentCard, { scenario: CONSENT.codex, on: ALL }));
     const trust = /<p class="consent__trust">(.*?)<\/p>/.exec(h)![1]!;
     expect(trust.match(/\/hooks/g)).toHaveLength(1);
+  });
+});
+
+describe("Qwen Code's consent card", () => {
+  const card = (setup: AgentSetup) => {
+    const { allow: _allow, done: _done, ...props } = consentProps(setup, { preview: PREVIEW, open: false, busy: false });
+    return renderToStaticMarkup(createElement(ConsentCard, props));
+  };
+  it('Qwen\'s card is named "Qwen Code" and its removal uses the removal copy', () => {
+    const h = card(QWEN_SETUP);
+    expect(h).toContain('data-agent="qwen"');
+    expect(h).toContain(">Qwen Code</h3>");
+    expect(h).toContain("puts your own status line back from statusline-chain.json");
+    expect(h).toContain("Add 9 hook entries");
+    expect(h).toContain("Keep my status line working");
+    expect(h).not.toContain("Your Qwen Code status line is a preset");
+  });
+  it("a preset status line shows the preset copy", () => {
+    const h = card({ ...QWEN_SETUP, statusline_preset: true });
+    expect(h).toContain("Your Qwen Code status line is a preset, so Marshell leaves it as it is. Rows show context % once per turn.");
+    expect(h).not.toContain("Keep my status line working");
+    expect(h).not.toContain("statusline-chain.json");
+    expect(h).toContain("Add 9 hook entries in");
+    expect(h).not.toMatch(/and a status line|status line it added|chain your status line/);
+  });
+  it("counts 8 status events and 1 permission entry, as the core installs them", () => {
+    expect(entryCount("qwen", ALL)).toBe(9);
+    expect(entryCount("qwen", { ...ALL, status: false })).toBe(1);
+  });
+  it("offers no skill switch and no bulk allow", () => {
+    const h = card(QWEN_SETUP);
+    expect(h).not.toContain("Install the marshell skill");
+    expect(h).not.toContain("Allow all");
   });
 });
 

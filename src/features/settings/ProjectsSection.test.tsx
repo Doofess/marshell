@@ -37,7 +37,7 @@ describe("ProjectsView", () => {
     expect(html(state({ error: "x" }))).not.toMatch(/aria-live|role="status"|role="alert"/);
   });
   it("says which CLIs get references", () => {
-    expect(html(state())).toContain("Claude Code, Codex and Antigravity get references. Other agents don&#x27;t.");
+    expect(html(state())).toContain("Claude Code, Codex, Antigravity and Qwen Code get references. Other agents don&#x27;t.");
   });
   it("shows Discard only while there are unsaved edits, and locks the picker", () => {
     const clean = html(state());

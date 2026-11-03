@@ -39,6 +39,7 @@ const CATALOG = catalogWith([
   adapter("claude", "Claude Code"),
   adapter("codex", "Codex"),
   adapter("antigravity", "Antigravity"),
+  adapter("qwen", "Qwen Code"),
   catalogAgent({ id: "grok", name: "Grok", cli: "Grok Build", modes: ALL_MODES }),
   catalogAgent({ id: "cursor", name: "Cursor", modes: ["plan", "bypass", "manual"] }),
   catalogAgent({ id: "opencode", name: "opencode", modes: [], prompt: { style: "flag", flag: "--prompt" } }),
@@ -52,7 +53,7 @@ describe("livePrograms from the catalog", () => {
   const programs = livePrograms(CATALOG, PROFILES);
   const byId = (id: string) => programs.find((p) => p.id === id)!;
   it("lists the found agents in the catalog's order, then the preset, then the shells; a not-found agent is absent", () => {
-    expect(programs.map((p) => p.id)).toEqual(["claude", "codex", "antigravity", "grok", "cursor", "opencode", "amp", "kimi", "crush", "preset:deepseek", "profile:pwsh", "profile:cmd", "profile:git-bash", "profile:wsl-ubuntu"]);
+    expect(programs.map((p) => p.id)).toEqual(["claude", "codex", "antigravity", "qwen", "grok", "cursor", "opencode", "amp", "kimi", "crush", "preset:deepseek", "profile:pwsh", "profile:cmd", "profile:git-bash", "profile:wsl-ubuntu"]);
     expect(programs.some((p) => p.id === "aider")).toBe(false);
   });
   it("labels a manifest agent by its catalog name and CLI, and keeps the adapters' own labels", () => {
@@ -80,7 +81,7 @@ describe("livePrograms from the catalog", () => {
     expect(own[0]).toMatchObject({ id: "mine", kind: "generic", label: "Mine" });
   });
   it("lists the DeepSeek preset with its problem, started through Claude Code", () => {
-    const p = livePrograms(catalogWith(CATALOG.agents, [{ ...DEEPSEEK, problem: "Set DEEPSEEK_API_KEY, then restart Marshell to start DeepSeek." }]), [])[9]!;
+    const p = livePrograms(catalogWith(CATALOG.agents, [{ ...DEEPSEEK, problem: "Set DEEPSEEK_API_KEY, then restart Marshell to start DeepSeek." }]), [])[10]!;
     expect(p).toMatchObject({ id: "preset:deepseek", label: "DeepSeek", cli: "DeepSeek", kind: "deepseek", group: "Agents", preset: "deepseek", agent: "claude", problem: "Set DEEPSEEK_API_KEY, then restart Marshell to start DeepSeek." });
     expect(byId("preset:deepseek").problem).toBeUndefined();
     expect(byId("preset:deepseek").modes).toEqual(byId("claude").modes);
@@ -90,7 +91,7 @@ describe("livePrograms from the catalog", () => {
     expect(livePrograms(noClaude, []).map((p) => p.id)).not.toContain("preset:deepseek");
     expect(livePrograms(noClaude, []).map((p) => p.id)).not.toContain("claude");
   });
-  it("a catalog that could not be read lists the three adapters as before and claims nothing about the rest", () => {
+  it("a catalog that could not be read lists the three adapters as before (Qwen Code only when the catalog finds it) and claims nothing about the rest", () => {
     const fallback = livePrograms(null, PROFILES);
     expect(fallback.map((p) => p.id)).toEqual(["claude", "codex", "antigravity", "profile:pwsh", "profile:cmd", "profile:git-bash", "profile:wsl-ubuntu"]);
     expect(fallback[0]!.modes).toBeUndefined();

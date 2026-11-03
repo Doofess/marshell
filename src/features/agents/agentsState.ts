@@ -27,7 +27,7 @@ export const setupWant = (s: AgentSetup): Want => ({ ...(s.hooks === "installed"
 
 /** Where the Agents dialog opens from a session row's "set up" link: on that row's agent's Set up card. */
 export type SetupStart = { setup: HookAgent };
-export const rowSetupStart = (agent: string): SetupStart => ({ setup: agent === "codex" || agent === "antigravity" ? agent : "claude" });
+export const rowSetupStart = (agent: string): SetupStart => ({ setup: agent === "codex" || agent === "antigravity" || agent === "qwen" ? agent : "claude" });
 
 /** Whether an agent's live status is on: it is unless the agent is in the settings' `status_off`. */
 export const liveStatusOn = (statusOff: string[], agent: string): boolean => !statusOff.includes(agent);
@@ -131,9 +131,13 @@ export function consentProps(windows: AgentSetup, flow: InstallFlow) {
   const s = flow.distro === undefined ? windows : distroSetup(windows, flow);
   const want = flow.want ?? setupWant(s);
   const cli = s.agent as CliId;
-  const on = onOf(want, cli === "codex" ? "codex" : "claude", flow.distro);
+  const statuslinePreset = Boolean(s.statusline_preset);
+  // A preset status line is left as it is: no status line is added or chained, so the card promises neither.
+  const wanted = onOf(want, cli === "codex" ? "codex" : "claude", flow.distro);
+  const on = statuslinePreset ? { ...wanted, statusline: false } : wanted;
   const files = flow.preview?.files ?? [];
-  const base = toDetection(s);
+  const detected = toDetection(s);
+  const base = statuslinePreset ? { ...detected, hasOwnStatusLine: true } : detected;
   // With a preview, whether hooks.json exists is what the core read: a file with a hash before it.
   const hooksFile = s.hooks_path === undefined || !flow.preview ? undefined : files.find((f) => f.path === s.hooks_path);
   const detection: Detection = base.hooks && flow.preview ? { ...base, hooks: { path: base.hooks.path, exists: hooksFile?.before_hash !== undefined } } : base;
@@ -146,6 +150,7 @@ export function consentProps(windows: AgentSetup, flow: InstallFlow) {
     on,
     configPath: s.settings_path,
     backupPath: s.snapshots_dir,
+    // A preset status line is left as it is, so there is nothing of it to put back.
     removal: removalCopy(cli, on, s.hooks_path === undefined ? undefined : { hooksFile: fileName(s.hooks_path), created: true }, undefined, addsStatusLine(detection, on), skillUndo(on.skill, s.skill)),
     diff: flow.preview ? previewDiff(flow.preview) : "",
     deleted: flow.preview ? deletedFiles(flow.preview) : undefined,
@@ -156,5 +161,5 @@ export function consentProps(windows: AgentSetup, flow: InstallFlow) {
   };
   // Allow is for a preview the core can apply; `done` is the one that has nothing left to change, whose Skip becomes Done.
   const allow = Boolean(flow.preview?.can_apply) && !flow.conflict;
-  return { scenario: { detection, plan }, distro: flow.distro, on, offer: flow.distro !== undefined ? (cli === "codex" ? CODEX_OFFER : OFFER).filter((c) => c !== "skill") : s.hooks === "installed" ? (["approve", "skill"] as Capability[]) : cli === "codex" ? CODEX_OFFER : OFFER, open: flow.open, busy: flow.busy, error: flow.error, allow, done };
+  return { scenario: { detection, plan }, distro: flow.distro, statuslinePreset, on, offer: flow.distro !== undefined ? (cli === "codex" ? CODEX_OFFER : OFFER).filter((c) => c !== "skill") : s.hooks === "installed" ? (["approve", "skill"] as Capability[]) : cli === "codex" ? CODEX_OFFER : OFFER, open: flow.open, busy: flow.busy, error: flow.error, allow, done };
 }

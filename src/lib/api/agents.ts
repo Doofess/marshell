@@ -11,7 +11,7 @@ import type { ConfigState, Detection } from "../../features/onboarding/types";
 import { api, ApiError } from "./client";
 
 /** The agents whose hooks Marshell sets up through `/v1/agents/{agent}/...`. */
-export type HookAgent = "claude" | "codex" | "antigravity";
+export type HookAgent = "claude" | "codex" | "antigravity" | "qwen";
 
 const base = (agent: string) => `/v1/agents/${encodeURIComponent(agent)}`;
 
@@ -114,10 +114,11 @@ export function toDetection(s: AgentSetup): Detection {
  * rest from the found list, which gives no version and no settings and so stays a "later" row. `found` null (the list could not be read)
  * leaves Claude's row alone, and the others' too unless their setups were read. Claude's and unknown entries in `found` are ignored.
  */
-export function toDetections(setup: AgentSetup, found: AgentFound[] | null, codex?: AgentSetup | null, antigravity?: AgentSetup | null): Detection[] {
-  const later = (["codex", "antigravity"] as const).flatMap((cli): Detection[] => {
+export function toDetections(setup: AgentSetup, found: AgentFound[] | null, codex?: AgentSetup | null, antigravity?: AgentSetup | null, qwen?: AgentSetup | null): Detection[] {
+  const later = (["codex", "antigravity", "qwen"] as const).flatMap((cli): Detection[] => {
     if (cli === "codex" && codex) return [toDetection(codex)];
     if (cli === "antigravity" && antigravity) return [toDetection(antigravity)];
+    if (cli === "qwen" && qwen) return [toDetection(qwen)];
     const f = found?.find((x) => x.agent === cli);
     return f ? [{ cli, installed: f.found, exePath: f.exe_path, configPath: "", configState: "ok", later: true }] : [];
   });

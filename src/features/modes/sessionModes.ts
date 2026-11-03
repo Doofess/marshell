@@ -34,8 +34,8 @@ export type Launch = { args: string[]; native: boolean };
 /** What a permission request touches: an edit (inside the project or not), a command, a fetch, an MCP tool. */
 export type Request = { kind: "edit" | "command" | "fetch" | "mcp" | "other"; inProject: boolean };
 
-/** Claude Code, Codex and Antigravity are the agents with an adapter; every other agent is a manifest and has no entry below. */
-const isAdapter = (cli: string): cli is CliId => cli === "claude" || cli === "codex" || cli === "antigravity";
+/** Claude Code, Codex, Antigravity and Qwen Code are the agents with an adapter; every other agent is a manifest and has no entry below. */
+const isAdapter = (cli: string): cli is CliId => cli === "claude" || cli === "codex" || cli === "antigravity" || cli === "qwen";
 
 /**
  * The modes a running session can switch to: the five for an adapter, a manifest agent's mapped ones from the catalog, and none
@@ -52,6 +52,7 @@ const STRICT: Record<CliId, string[]> = {
   claude: ["--permission-mode", "manual"],
   codex: ["--sandbox", "read-only", "--ask-for-approval", "on-request"],
   antigravity: [],
+  qwen: ["--approval-mode", "default"],
 };
 
 /** Each CLI's own flag per mode; null where the CLI has no such mode. `mode_args` in crates/core/src/profiles/detect.rs is what the core really runs: keep the two together. */
@@ -82,6 +83,14 @@ const NATIVE: Record<CliId, Record<Mode, string[] | null>> = {
     bypass: ["--dangerously-skip-permissions"],
     "dont-ask": null,
   },
+  qwen: {
+    manual: STRICT.qwen,
+    plan: ["--approval-mode", "plan"],
+    "auto-edit": ["--approval-mode", "auto-edit"],
+    "full-auto": ["--approval-mode", "auto"],
+    bypass: ["--approval-mode", "yolo"],
+    "dont-ask": null,
+  },
 };
 
 /** A stand-in that needs no hook: Codex's read-only sandbox, where nothing can change, for Plan. */
@@ -99,14 +108,15 @@ export function launchArgs(cli: string, mode: Mode, hooksOn: boolean): Launch | 
   const own = NATIVE[cli][mode];
   const standIn = STAND_IN[cli]?.[mode];
   // Antigravity starts in its own flags with the hooks on or off (slice 6d decision 7: no strict start); the core's policy holds a call only in Bypass.
-  if (cli === "antigravity") return own ? { args: own, native: true } : null;
+  // Qwen Code is the same: the core starts it in its own --approval-mode flag whatever the hooks do.
+  if (cli === "antigravity" || cli === "qwen") return own ? { args: own, native: true } : null;
   if (!hooksOn) return own ? { args: own, native: true } : standIn ? { args: standIn, native: false } : null;
   if (KEEPS_NATIVE.includes(mode)) return own ? { args: own, native: true } : { args: STRICT[cli], native: false };
   return { args: STRICT[cli], native: mode === "manual" };
 }
 
 /** Whether the CLI judges requests itself in this mode (Full auto with a classifier of its own; none is known for Antigravity's `--mode auto`, so Marshell's risk check stands in). */
-const classifies = (cli: CliId, mode: Mode) => mode === "full-auto" && cli !== "antigravity";
+const classifies = (cli: CliId, mode: Mode) => mode === "full-auto" && cli !== "antigravity" && cli !== "qwen";
 
 /** What Marshell's hook answers when a CLI asks: allow, or ask (a card; the CLI's own prompt if approval is off). */
 export function decide(cli: CliId, mode: Mode, request: Request, risky: boolean): "allow" | "ask" {
@@ -134,7 +144,7 @@ export function switchKind(cli: string, from: Mode, to: Mode, hooksOn: boolean, 
   if (!isAdapter(cli)) return offered?.includes(to) ? "native" : "unavailable";
   if (!launchArgs(cli, to, hooksOn)) return "unavailable";
   // Antigravity's mode is its own flag whatever Marshell's hook does, so a switch is never only Marshell's answer.
-  if (!hooksOn || cli === "antigravity") return "native";
+  if (!hooksOn || cli === "antigravity" || cli === "qwen") return "native";
   const a = launchArgs(cli, from, true)!;
   const b = launchArgs(cli, to, true)!;
   return a.args.join(" ") === b.args.join(" ") ? "instant" : "native";

@@ -72,8 +72,8 @@ describe("consentHeadline", () => {
     const off = { status: false, approve: false, statusline: false, skill: true };
     expect(consentHeadline({ ...claude, skill: "none", skillPath: "/s" }, off)).toBe("Add the marshell skill in /s.");
   });
-  it("offers the skill for all three CLIs", () => {
-    for (const c of Object.values(CAPABILITIES)) expect(c.skill).toEqual({ available: true, entries: 0 });
+  it("offers the skill for the three CLIs that have one", () => {
+    for (const [cli, c] of Object.entries(CAPABILITIES)) if (cli !== "qwen") expect(c.skill).toEqual({ available: true, entries: 0 });
   });
   it("fails closed on a file that does not parse, naming the line", () => {
     const d: Detection = { ...claude, configState: "unparsable", parseError: { line: 14, message: "Unexpected token }" } };

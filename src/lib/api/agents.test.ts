@@ -164,6 +164,15 @@ describe("toDetections", () => {
     expect(rows[1]!.later).toBeUndefined();
     expect(rows[2]).toMatchObject({ later: true });
   });
+  it("adds Qwen Code's row after Antigravity's, from the list or from its own setup", () => {
+    const withQwen = [...found, { agent: "qwen", found: true, exe_path: "C:/bin/qwen.cmd" }];
+    const rows = toDetections(setup, withQwen);
+    expect(rows.map((r) => r.cli)).toEqual(["claude", "codex", "antigravity", "qwen"]);
+    expect(rows[3]).toMatchObject({ installed: true, later: true, exePath: "C:/bin/qwen.cmd" });
+    const qwen: AgentSetup = { ...setup, agent: "qwen" };
+    const own = toDetections(setup, withQwen, null, null, qwen);
+    expect(own[3]).toEqual(toDetection(qwen));
+  });
   it("keeps only Claude's row when the list could not be read", () => {
     expect(toDetections(setup, null)).toEqual([toDetection(setup)]);
   });

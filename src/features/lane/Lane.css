@@ -135,6 +135,11 @@
   line-clamp: 1;
   -webkit-line-clamp: 1;
 }
+/* A sentence the person needs whole (why a button is missing), not a path that may be cut. */
+.lane .approve-card__note {
+  line-clamp: 3;
+  -webkit-line-clamp: 3;
+}
 .lane .approve-card__link > span {
   min-inline-size: 0;
   overflow: clip;

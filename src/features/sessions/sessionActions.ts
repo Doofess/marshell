@@ -35,7 +35,7 @@ export const TOAST_MS = 10_000;
 export const needsCloseConfirm = (info: SessionInfo): boolean => info.agent !== null && info.state.kind === "running";
 
 /** The names the close bar uses; the sidebar's own mark names ("OpenAI Codex") are longer than the CLIs are known by. */
-const CLOSE_BAR_NAMES: Record<string, string> = { claude: "Claude Code", codex: "Codex", antigravity: "Antigravity" };
+const CLOSE_BAR_NAMES: Record<string, string> = { claude: "Claude Code", codex: "Codex", antigravity: "Antigravity", qwen: "Qwen Code" };
 
 /** An agent's name in a sentence ("Claude Code"): the only thing about the agent the sheets use. An unknown agent is named by its id. */
 export function agentLabel(agent: string): string {

@@ -32,7 +32,10 @@ export function ConsentCard({
   onToggleDiff,
   onSwitch,
   distro,
+  statuslinePreset = false,
 }: {
+  /** The agent's status line is one of its presets: Marshell leaves it as it is, so the card offers nothing to chain and says so. */
+  statuslinePreset?: boolean;
   /** The WSL distro this card is for; the heading then reads "<CLI> in <distro>". */
   distro?: string;
   scenario: { detection: Detection; plan: ConsentPlan };
@@ -79,7 +82,7 @@ export function ConsentCard({
       {edit.ok ? (
         <>
           <ul className="consent__switches">
-            {offer.filter((c) => (c !== "statusline" || d.hasOwnStatusLine !== false) && (c !== "skill" || d.skill !== "unavailable")).map((c) => (
+            {offer.filter((c) => (c !== "statusline" || (d.hasOwnStatusLine !== false && !statuslinePreset)) && (c !== "skill" || d.skill !== "unavailable")).map((c) => (
               <li key={c}>
                 <Switch label={CAP_LABEL[c]} checked={on[c] && CAPABILITIES[d.cli][c].available} disabled={!CAPABILITIES[d.cli][c].available} reason={CAPABILITIES[d.cli][c].reason} onChange={onSwitch && ((v) => change(c, v))} />
               </li>
@@ -93,6 +96,7 @@ export function ConsentCard({
           {offer.includes("approve") && offer.includes("status") && <p className="consent__meta">Approve from anywhere needs live status to know when a request is answered.</p>}
           {offer.includes("skill") && (d.skill === "unavailable" ? d.skillProblem !== undefined && <p className="consent__meta" dir="auto">{d.skillProblem}</p> : <p className="consent__meta">Teaches {name} the marshell command: list, send, new and focus.</p>)}
           {d.cli === "antigravity" && offer.includes("approve") && <p className="consent__meta">Cards for risky commands in Bypass. In other modes Antigravity asks in its terminal.</p>}
+          {statuslinePreset && <p className="consent__meta">{`Your ${name} status line is a preset, so Marshell leaves it as it is. Rows show context % once per turn.`}</p>}
           {d.skipsAll && (
             <p className="consent__handover">
               {name} is set to skip every permission prompt (<code>{d.skipsAll.setting}</code>), so Marshell can&apos;t ask you about anything. Turning it off lets each
@@ -109,7 +113,7 @@ export function ConsentCard({
               </p>
             ))}
           {open && <DiffView diff={plan.diff} label={`Exact changes to ${listFiles(changedFiles(d, on.skill))}`} />}
-          {plan.chainPath && on.statusline && d.hasOwnStatusLine !== false && CAPABILITIES[d.cli].statusline.available && (
+          {plan.chainPath && on.statusline && !statuslinePreset && d.hasOwnStatusLine !== false && CAPABILITIES[d.cli].statusline.available && (
             <p className="consent__chain">
               Your own status line command is saved in <code>{plan.chainPath}</code> and keeps running: Marshell&apos;s runs first and then yours.
             </p>

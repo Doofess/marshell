@@ -71,6 +71,27 @@ describe("ApproveCard: an Antigravity request", () => {
   });
 });
 
+describe("ApproveCard: a Qwen request", () => {
+  const qwen: ApprovalRequest = { ...APPROVALS.safeBash, session: { ...APPROVALS.safeBash.session, agent: "qwen" } };
+  it("a Qwen card has Allow and Deny and no Always allow", () => {
+    const h = html(qwen);
+    expect(qwen.alwaysRule).toBeDefined();
+    expect(h).toContain('data-agent="qwen"');
+    expect(h).toContain("Allow once");
+    expect(h).toContain("Deny");
+    expect(h).not.toContain("Always allow");
+    expect(h).not.toContain('aria-keyshortcuts="A"');
+    // Its own class, so the lane shows the whole sentence instead of clipping it to one line as it does a path.
+    expect(h).toContain('<p class="approve-card__cwd approve-card__note">Qwen Code can&#x27;t keep an always-allow rule from Marshell. Allow this once instead.</p>');
+    expect(keyAction("a", { risky: false, armed: true, truncated: false, expanded: false, hasAlways: false, noTerminal: false })).not.toBe("always");
+  });
+  it("a released Qwen card says it is asking in its own terminal now", () => {
+    const h = html({ ...qwen, state: { phase: "released", afterMs: 120_000 } });
+    expect(h).toContain("asking in its own terminal now");
+    expect(h).not.toContain("denied it");
+  });
+});
+
 describe("ApproveCard: a Codex request", () => {
   it("a Codex card offers no Always allow", () => {
     const { alwaysRule: _rule, ...rest } = APPROVALS.safeBash;
