@@ -307,6 +307,16 @@ fn end_of(node: &CstNode) -> usize {
     start_of(node) + node.to_string().len()
 }
 
+/// The whitespace (line breaks included) directly in front of an array element, back to the comma, `[` or comment before it.
+fn lead_whitespace(node: &CstNode) -> String {
+    let run: Vec<String> = node
+        .previous_siblings()
+        .map(|s| s.to_string())
+        .take_while(|s| s.trim().is_empty())
+        .collect();
+    run.into_iter().rev().collect()
+}
+
 /// Replaces the tree with the parse of `text`, for the edits made as text splices.
 fn reparse(root: &mut CstRootNode, text: &str) -> Result<(), EditError> {
     *root = CstRootNode::parse(text, &ParseOptions::default())
@@ -367,14 +377,7 @@ fn apply_to_cst(root: &mut CstRootNode, op: &JsonOp) -> Result<bool, EditError> 
                     let before = root.to_string();
                     let end = end_of(tail);
                     // One element per line: the new one gets the line break and indent the last one has.
-                    let lead: String = tail
-                        .previous_siblings()
-                        .map(|s| s.to_string())
-                        .take_while(|s| s.trim().is_empty())
-                        .collect::<Vec<_>>()
-                        .into_iter()
-                        .rev()
-                        .collect();
+                    let lead = lead_whitespace(tail);
                     let sep = if lead.contains('\n') { lead } else { " ".to_string() };
                     let added = arr.append(to_input(value));
                     let text = format!("{},{sep}{}{}", &before[..end], added, &before[end..]);
@@ -416,12 +419,20 @@ fn apply_to_cst(root: &mut CstRootNode, op: &JsonOp) -> Result<bool, EditError> 
                 return Ok(false);
             };
             if i > 0 && i + 1 == elements.len() {
-                // The last element goes with the comma before it; what follows it (a trailing
-                // comma, the whitespace before `]`) stays.
+                // The last element goes with the comma after the element before it and the whitespace in
+                // front of it, which is what an append adds. Comments between them and what follows it (a
+                // trailing comma, the whitespace before `]`) stay.
+                let comma = elements[i - 1]
+                    .next_siblings()
+                    .find(|s| s.to_string() == ",")
+                    .ok_or_else(|| EditError::Internal("no comma before the last array element".to_string()))?;
+                let (comma_start, comma_end) = (start_of(&comma), end_of(&comma));
+                let removed_start = start_of(&elements[i]) - lead_whitespace(&elements[i]).len();
                 let before = root.to_string();
                 let text = format!(
-                    "{}{}",
-                    &before[..end_of(&elements[i - 1])],
+                    "{}{}{}",
+                    &before[..comma_start],
+                    &before[comma_end..removed_start.max(comma_end)],
                     &before[end_of(&elements[i])..]
                 );
                 return reparse(root, &text).map(|()| true);
@@ -701,6 +712,25 @@ mod tests {
         )
         .unwrap();
         assert_eq!(out, "{\n  \"a\": [\n    1,\n    2\n  ]\n}\n");
+    }
+
+    /// Removing a last element takes only the comma after the element before it, the whitespace in front of it
+    /// and the element: the person's comments between them stay.
+    #[test]
+    fn removing_a_last_element_keeps_comments_around_it() {
+        for (input, want) in [
+            (
+                "{\"a\":[\n    1, // keep me\n    2\n  ]}",
+                "{\"a\":[\n    1 // keep me\n  ]}",
+            ),
+            (
+                "{\"a\":[\n    1,\n    // keep me\n    2\n  ]}",
+                "{\"a\":[\n    1\n    // keep me\n  ]}",
+            ),
+        ] {
+            let out = apply_ops(input, &[JsonOp::Remove { pointer: "/a/1" }]).unwrap();
+            assert_eq!(out, want, "{input:?}");
+        }
     }
 
     #[test]
