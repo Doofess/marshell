@@ -10,6 +10,7 @@ pub mod install;
 pub mod manifest;
 pub mod own;
 pub mod presets;
+pub mod qwen;
 pub mod settings_view;
 pub mod skill;
 

@@ -7,11 +7,10 @@
 //! person's own named hooks are never touched. The status line is `statusLine` in
 //! `~/.gemini/antigravity-cli/settings.json`, chained the way Claude Code's is.
 
-use crate::agents::common::{Bridge, PlanError, TAG, is_ours, statusline_left_note};
+use crate::agents::common::{self, Bridge, PlanError, TAG, is_ours, statusline_left_note};
 use crate::config::hash::hash_bytes;
 use crate::config::jsonc::{parse_problem, read_value};
 use crate::paths;
-use crate::profiles::detect::posix_quote;
 use marshell_protocol::agents::{HookInstall, HookPlanRequest};
 use marshell_protocol::config::{Applies, ChangeSet, ConfigScope, EditOp, FileEdit};
 use serde_json::{Map, Value, json};
@@ -30,8 +29,6 @@ const PRE_TOOL: &str = "PreToolUse";
 const HOOK_TIMEOUT: u64 = 5;
 /// The bridge waits 590 s for the person's answer.
 const PERMISSION_TIMEOUT: u64 = 600;
-const REASON_PERCENT_OR_QUOTE: &str = "the path holds a % or a quote";
-const REASON_NO_DRIVE: &str = "the path has no drive letter";
 
 /// `<user home>/.gemini/config/hooks.json`.
 pub fn hooks_path(user_home: &Path) -> PathBuf {
@@ -45,54 +42,12 @@ pub fn settings_path(user_home: &Path) -> PathBuf {
 
 // ---- the command ----
 
-/// The bridge, written so the shell agy runs a hook through reads it as one word.
-///
-/// On Windows agy runs `cmd /c "<command>"` and escapes every `"` inside the command to `\"`, so a
-/// command that starts with a quote fails. What runs, with a space and `& ( ) ; , = ^` in the path, is
-/// the folder in quotes from just after the drive to just before the file name, with forward
-/// slashes: `C:"/Users/Home Office/.marshell/bin"/marshell-hook.exe`. A `%` can't be protected from
-/// cmd, and a `"` is safe only next to a separator, so a path with either is refused, and so is one
-/// with no drive letter (a UNC path). A `\\?\C:\` prefix is dropped, and `\\?\UNC\...` refused as
-/// any other UNC path. Elsewhere the path is single-quoted for `sh`.
-///
-/// In a distro agy runs the command through `sh`, so the Linux path is single-quoted.
 fn bridge_prefix_of(bridge: &Bridge) -> Result<String, PlanError> {
-    let Bridge::Local(exe) = bridge else {
-        return Ok(posix_quote(&bridge.path()));
-    };
-    let forward = bridge.path();
-    if cfg!(windows) {
-        cmd_form(exe, &forward)
-    } else {
-        Ok(posix_quote(&forward))
-    }
+    common::bridge_prefix_of(AGENT_NAME, bridge)
 }
 
 fn bridge_prefix(home: &Path) -> Result<String, PlanError> {
     bridge_prefix_of(&Bridge::local(home))
-}
-
-fn cmd_form(exe: &Path, forward: &str) -> Result<String, PlanError> {
-    let refuse = |reason| PlanError::BridgePath {
-        agent: AGENT_NAME,
-        path: exe.to_path_buf(),
-        reason,
-    };
-    if forward.contains(['%', '"']) {
-        return Err(refuse(REASON_PERCENT_OR_QUOTE));
-    }
-    let path = forward.strip_prefix("//?/").unwrap_or(forward);
-    let bytes = path.as_bytes();
-    if !(bytes.len() > 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':' && bytes[2] == b'/') {
-        return Err(refuse(REASON_NO_DRIVE));
-    }
-    let (drive, tail) = path.split_at(2);
-    let (folder, file) = tail.rsplit_once('/').unwrap_or(("", tail));
-    Ok(if folder.is_empty() {
-        format!("{drive}/{file}")
-    } else {
-        format!("{drive}\"{folder}\"/{file}")
-    })
 }
 
 /// The command string of a hook entry.

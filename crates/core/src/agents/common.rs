@@ -1,5 +1,6 @@
 //! Helpers the agents' conversation parsers share: truncation, paths, card wording and timestamps.
 
+use crate::profiles::detect::posix_quote;
 use marshell_protocol::api::{LiveState, LiveStatus};
 use serde_json::Value;
 use std::fmt;
@@ -153,6 +154,57 @@ impl Bridge {
             Bridge::Distro { name, .. } => Some(name),
         }
     }
+}
+
+const REASON_PERCENT_OR_QUOTE: &str = "the path holds a % or a quote";
+const REASON_NO_DRIVE: &str = "the path has no drive letter";
+
+/// The bridge, written so the shell an agent runs a hook through reads it as one word. `agent` is the CLI's
+/// display name, which an error names.
+///
+/// On Windows these agents run `cmd /c "<command>"` and escape every `"` inside the command to `\"`, so a
+/// command that starts with a quote fails. What runs, with a space and `& ( ) ; , = ^` in the path, is
+/// the folder in quotes from just after the drive to just before the file name, with forward
+/// slashes: `C:"/Users/Home Office/.marshell/bin"/marshell-hook.exe`. A `%` can't be protected from
+/// cmd, and a `"` is safe only next to a separator, so a path with either is refused, and so is one
+/// with no drive letter (a UNC path). A `\?\C:\` prefix is dropped, and `\?\UNC\...` refused as
+/// any other UNC path. Elsewhere the path is single-quoted for `sh`.
+///
+/// In a distro the agent runs the command through `sh`, so the Linux path is single-quoted.
+pub fn bridge_prefix_of(agent: &'static str, bridge: &Bridge) -> Result<String, PlanError> {
+    let Bridge::Local(exe) = bridge else {
+        return Ok(posix_quote(&bridge.path()));
+    };
+    let forward = bridge.path();
+    if cfg!(windows) {
+        cmd_form(agent, exe, &forward)
+    } else {
+        Ok(posix_quote(&forward))
+    }
+}
+
+/// The Windows `cmd` form of a bridge path (see [`bridge_prefix_of`]).
+pub fn cmd_form(agent: &'static str, exe: &Path, forward: &str) -> Result<String, PlanError> {
+    let refuse = |reason| PlanError::BridgePath {
+        agent,
+        path: exe.to_path_buf(),
+        reason,
+    };
+    if forward.contains(['%', '"']) {
+        return Err(refuse(REASON_PERCENT_OR_QUOTE));
+    }
+    let path = forward.strip_prefix("//?/").unwrap_or(forward);
+    let bytes = path.as_bytes();
+    if !(bytes.len() > 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':' && bytes[2] == b'/') {
+        return Err(refuse(REASON_NO_DRIVE));
+    }
+    let (drive, tail) = path.split_at(2);
+    let (folder, file) = tail.rsplit_once('/').unwrap_or(("", tail));
+    Ok(if folder.is_empty() {
+        format!("{drive}/{file}")
+    } else {
+        format!("{drive}\"{folder}\"/{file}")
+    })
 }
 
 /// What a plan says of a status line it leaves in a distro, where there is no chain to keep it in.
