@@ -47,6 +47,12 @@ describe("scrub-fixtures", () => {
     );
   });
 
+  it("replaces the user name in Qwen Code's lowercased project folder name", () => {
+    expect(scrub("projects\\c--users-home-office-appdata-local-temp-proj\\chats", opts)).toBe(
+      "projects\\c--users-user-appdata-local-temp-proj\\chats",
+    );
+  });
+
   it("leaves other text alone", () => {
     const text = '{"type":"Stop","n":3,"path":"/tmp/x"}';
     expect(scrub(text, opts)).toBe(text);

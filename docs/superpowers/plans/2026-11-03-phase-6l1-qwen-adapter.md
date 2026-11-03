@@ -40,6 +40,13 @@
 
 These come from reading the 0.26.5 bundle. Task 1 checks each one against a real Qwen and records the evidence in `docs/research/2026-11-03-qwen-code-hooks.md`. If a finding differs, Task 1 amends this plan (shapes, constants, copy) and commits the change before Task 2 starts.
 
+**Amended after Task 1 (2026-11-03).** The research note has each answer. What changed in the tasks below:
+- Q2: the plain quoted form fails, so Task 3 uses Antigravity's `cmd_form`.
+- Q3: `UserPromptSubmit` also carries `submitted_prompt`, which is taken out with `prompt`. A tool result sent back to the model fires a second `UserPromptSubmit` with `prompt: ""`. `PermissionRequest` carries no tool id. `idle_prompt` also fires mid-turn, 10 to 20 ms after each `PreToolUse`. A "No" in Qwen's own dialog sends no `Stop`.
+- Q7: the status line has no mode. With a model Qwen doesn't know, `context_window_size` is 0, so context % comes from `Stop`.
+- Qwen writes `"$version": 4` into the user `settings.json` on its first run, keeping the rest of the file.
+- Qwen installs a found update when a session exits. A live check runs Qwen with `general.enableAutoUpdate: false`, which `live-check.ps1 -QwenFake` writes.
+
 - **Q1. File and shape.** Qwen reads the hooks from the user settings at `<QWEN_HOME>\settings.json`, where `QWEN_HOME` defaults to `~/.qwen`. The file is JSONC, there's no trust step, and the hooks load at session start.
   - Shape: `{"hooks":{"<Event>":[{"matcher":"<regex>","hooks":[{"type":"command","command":"<string>","timeout":<secs>}]}]}}`. A `timeout` of 1000 or more is read as milliseconds, and the default is 60.
   - The finding also records whether the events without a tool (`SessionStart`, `Stop`) accept a group with no `matcher`.
@@ -174,8 +181,8 @@ git commit -m "docs(research): record Qwen Code's hooks, status line and payload
 - Produces, in `agents::qwen::hooks`:
   - `pub const STATUS_EVENTS: [&str; 8] = ["SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse", "Notification", "Stop", "StopFailure", "SessionEnd"]`, plus `PermissionRequest` as the approve entry.
   - `pub fn settings_path(env: &dyn Fn(&str) -> Option<String>, user_home: &Path) -> PathBuf`: `QWEN_HOME` when it's set and not blank, joined with `settings.json`. Otherwise `<user_home>/.qwen/settings.json`.
-  - `pub fn hook_command(home: &Path, role: &str) -> Result<String, PlanError>`: `"<bridge forward-slash path>" <role> --agent qwen --tag mshl1`. This is Q2's form.
-  - `pub fn statusline_command(home: &Path) -> Result<String, PlanError>`: `… statusline --agent qwen --tag mshl1`.
+  - `pub fn hook_command(home: &Path, role: &str) -> Result<String, PlanError>`: `<cmd_form of the bridge path> <role> --agent qwen --tag mshl1`, with the arguments unquoted. Q2 found that Qwen escapes `"` to `\"` before `cmd /d /s /c`, so `"<path>" …` fails and Antigravity's form works (`C:"/Users/Jane Doe/.marshell/bin"/marshell-hook.exe …`, tried with a space and an `&` in the folder). Move `cmd_form` and its two refusal reasons from `antigravity/hooks.rs` to `common.rs`, taking the CLI's name, so Antigravity's copy reads as before and Qwen's says "Qwen Code".
+  - `pub fn statusline_command(home: &Path) -> Result<String, PlanError>`: `… statusline --agent qwen --tag mshl1`, the same form.
   - `pub struct Found { pub install: HookInstall, pub approve_installed: bool, pub has_own_statusline: bool, pub chained: bool, pub preset_statusline: bool }`
   - `pub fn inspect(settings: &Value, chain: Option<&Value>, home: &Path) -> Found`
   - `pub fn install_plan(...)` and `pub fn remove_plan(...) -> Result<RemovePlan, PlanError>`, with the same parameters and return types as `claude::hooks::install_plan` and `remove_plan`, plus the chain path `paths::statusline_chain(home, "qwen")`.
@@ -210,6 +217,8 @@ The plan's rules:
   - `the_settings_path_follows_qwen_home`
   - `a_blank_qwen_home_is_ignored`
   - `install_into_a_missing_file_writes_every_event`: the exact table above, with `timeout` 600 on `PermissionRequest`.
+  - `the_hook_command_uses_the_cmd_form`, and `a_bridge_path_with_a_quote_or_percent_is_refused_naming_qwen_code`.
+  - `install_keeps_qwens_version_key`: a file holding `"$version": 4` keeps it, byte for byte, on install and removal.
   - `install_keeps_the_persons_own_hooks_and_bytes`: a file with a BOM, CRLF, a comment, their own `PreToolUse` group and `ui.theme`. After the install, every byte outside the new entries is unchanged (compare the text with Marshell's spans cut out).
   - `install_chains_their_command_status_line` and `install_leaves_a_preset_status_line`
   - `reinstall_replaces_entries_in_place`
@@ -250,34 +259,40 @@ The fold follows Claude Code's, from Q3's bodies:
 | Event | Result |
 | --- | --- |
 | `SessionStart` | Idle, with `model` |
-| `UserPromptSubmit` | Working |
+| `UserPromptSubmit` | Working. One with an empty `prompt` is Qwen sending a tool result back, so it continues the turn: Working, and it is not a new prompt. |
 | `PreToolUse` | Working, with the phrase from the tool ("Running <command>" for `run_shell_command`, "Editing <relative file>" for writes and edits, "Reading <relative file>" for reads) |
 | `PostToolUse` | Working |
 | `PermissionRequest` | Needs permission |
 | `Notification` `permission_prompt` | Needs permission. This is a dialog with no card behind it: released, or no hook decision. |
-| `Notification` `idle_prompt` | Idle |
-| `Stop` | Idle (Done, as Claude's), with context % = `context_usage` × 100 when present |
+| `Notification` `idle_prompt` | Idle, except right after a `PreToolUse`: Qwen sends one 10 to 20 ms after each `PreToolUse`, before the tool runs, so while the status is the Working that a `PreToolUse` set, it changes nothing. After a "No" in Qwen's own dialog, no `Stop` comes, and this is what ends the turn. |
+| `Stop` | Idle (Done, as Claude's), with context % = `context_usage` × 100 when present. This is the only reliable context %. |
 | `StopFailure` | Idle, with the error phrase Claude's fold uses |
 | `SessionEnd` | Ended |
 
 - `mode_of` maps `default` to Manual, `plan` to Plan, `auto_edit` and `auto-edit` to AutoEdit, `auto` to FullAuto, and `yolo` to Bypass.
-- The status line sets model (`model.display_name`) and context % (`context_window.used_percentage`). There's no plan meter: no `rate_limits`.
+- The status line sets model (`model.display_name`), and context % (`context_window.used_percentage`) only when `context_window.context_window_size` is above 0. Qwen sends 0 for both with a model it doesn't know, and that is unknown, not 0 %. The status line carries no mode. There's no plan meter: no `rate_limits`.
 - Approvals:
   - Every Qwen `PermissionRequest` from an open tab whose effective agent is `qwen` is held for a card (decision 4). Qwen sends it only when it would ask.
   - Allow gives `{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decision":{"behavior":"allow"}}}`.
   - Deny gives `behavior: "deny"` with `message: common::DENIED_TEXT`.
   - "Always allow" gives `Err` with decision 5's copy.
   - `release_output("qwen", _)` is `None`: no decision, so Qwen shows its dialog.
-  - The card's detail comes from `tool_name` and `tool_input`. An unknown tool shows as other, with its raw arguments flattened by `common::flatten_input`.
+  - The card's detail comes from `tool_name` and `tool_input`. An unknown tool shows as other, with its raw arguments flattened by `common::flatten_input`. The request carries no tool id (Q3), so nothing may key on one.
   - The card's risk line uses the same risky-command rules the Claude card uses.
-- The prompt: for `qwen`, `prompt` is taken out of the body exactly as for Claude and Codex, before anything else sees it. `starts_prompt` is `UserPromptSubmit`, and the context answer is `qwen::context_output`.
+- The prompt: for `qwen`, `prompt` and `submitted_prompt` are both taken out of the body, as `prompt` is for Claude and Codex, before anything else sees it. `starts_prompt` is a `UserPromptSubmit` whose taken-out `prompt` isn't empty, so a tool-result continuation neither gets the note again nor clears the chip. The context answer is `qwen::context_output`.
 
 - [ ] **Step 1: Write the failing tests.**
-  - In `qwen/status.rs`, one test per table row, each fed the Task 1 fixture for that event: `session_start_is_idle_with_its_model`, `a_prompt_is_working`, `a_shell_tool_says_running_its_command`, `a_permission_request_needs_permission`, `a_permission_prompt_notification_needs_permission`, `stop_is_done_with_context_from_its_ratio`, `session_end_ends_it`, `the_status_line_sets_model_and_context`, and `mode_of_reads_both_auto_edit_spellings`.
+  - In `qwen/status.rs`, one test per table row, each fed the Task 1 fixture for that event: `session_start_is_idle_with_its_model`, `a_prompt_is_working`, `a_shell_tool_says_running_its_command`, `a_permission_request_needs_permission`, `a_permission_prompt_notification_needs_permission`, `stop_is_done_with_context_from_its_ratio`, `session_end_ends_it`, `the_status_line_sets_model_and_context`, and `mode_of_reads_both_auto_edit_spellings`. Also:
+    - `an_empty_prompt_continues_the_turn` (fixture `UserPromptSubmit-continuation`).
+    - `idle_prompt_right_after_a_tool_starts_keeps_working`: `PreToolUse-run_shell_command`, then `Notification-idle_prompt`, gives the PreToolUse's Working.
+    - `idle_prompt_after_a_dialog_is_idle`: `Notification-permission_prompt`, then `Notification-idle_prompt`, gives Idle.
+    - `a_status_line_with_no_window_size_leaves_context_unknown` (fixture `statusline/0.26.5/idle.json`).
+    - `mode_of_reads_each_recorded_mode`: the `UserPromptSubmit-<mode>` fixtures.
   - In `qwen/request.rs`: `a_shell_request_shows_its_command`, `a_write_shows_the_file`, `an_unknown_tool_shows_raw_arguments`, `allow_and_deny_answer_in_qwens_shape`, `always_allow_is_refused_with_the_copy`.
   - In `tests/hook.rs`, through the real router with `with_qwen_home(<temp>)` and a fixed version `0.26.5`:
     - `qwen_events_fold_into_the_tabs_live_status`
-    - `a_qwen_prompt_is_never_logged_or_kept`: the hook log and the event ring hold no `prompt` key.
+    - `a_qwen_prompt_is_never_logged_or_kept`: the hook log and the event ring hold no `prompt` and no `submitted_prompt` key.
+    - `a_qwen_continuation_gets_no_note`: an empty-prompt `UserPromptSubmit` answers 204 and leaves the chip.
     - `a_qwen_prompt_naming_an_alias_gets_the_note_as_additional_context`
     - `an_unrecorded_qwen_version_gets_the_note_and_no_status`
     - `qwen_status_off_says_so`
@@ -303,7 +318,7 @@ The fold follows Claude Code's, from Q3's bodies:
     - `agent_command`: `"qwen" => Some("qwen")`.
     - The program-to-agent map: `"qwen" => Some("qwen")`.
     - `mode_args`, `resume_args` and the prompt flag (`-i`): the same flags the manifest had, plus `ResumeTarget::Session(id) => ["--resume", id]` and `_ => ["--continue"]`.
-    - Foreground recognition of a node-run Qwen: the npm package `@qwen-code/qwen-code` and the standalone `qwen-code\lib\cli` path, per Q10.
+    - Foreground recognition of a node-run Qwen: the npm package `@qwen-code/qwen-code` and the standalone install, per Q10. Typed into a shell, the chain is `cmd.exe /c ""%LOCALAPPDATA%\qwen-code\bin\qwen.cmd" <args>"`, then `"%LOCALAPPDATA%\qwen-code\qwen-code\bin\..\node\node.exe"  "%LOCALAPPDATA%\qwen-code\qwen-code\bin\..\lib\cli-entry.js" <args>`, then `"…\qwen-code\qwen-code\node\node.exe" --expose-gc "…\qwen-code\qwen-code\lib\cli.js" <args>` twice.
   - `crates/core/src/agents/install.rs`: the `install_kind` arm for the standalone `qwen-code\bin\qwen.cmd`, plus npm.
   - `crates/core/src/server/agents.rs`:
     - `Adapter::Qwen`, `adapter()`, `cli_name` "Qwen Code".
@@ -335,7 +350,7 @@ The fold follows Claude Code's, from Q3's bodies:
     - `qwen_resumes_by_session_id`: `& qwen --approval-mode default --resume '<uuid>'`.
     - `qwen_continues_without_an_id`
     - The existing `qwen_takes_its_prompt_after_dash_i` stays green.
-    - `a_standalone_qwen_node_is_recognised` (Q10's command line).
+    - `a_standalone_qwen_node_is_recognised`: each of Q10's three node command lines.
   - `history`:
     - `a_qwen_transcript_path_is_allowed`
     - `a_qwen_path_outside_chats_or_with_dotdot_is_refused`

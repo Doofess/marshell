@@ -20,6 +20,10 @@ Nothing here deletes a folder. With -CodexAuth, start copies ~/.codex/auth.json 
        the core's reads and writes of agy's settings.json use the scratch home; CARGO_HOME and RUSTUP_HOME are pinned
        to the real ones first. With -AgyAuth, it also copies ~/.gemini/oauth_creds.json and google_accounts.json into
        <Scratch>\home\.gemini (nothing else), and stop deletes those two copies.
+       With -QwenFake, start also runs fake-openai.mjs (a scripted OpenAI-compatible model on 127.0.0.1:-QwenPort,
+       logging every request to <Scratch>\qwen-fake.jsonl), points OPENAI_BASE_URL, OPENAI_API_KEY and OPENAI_MODEL
+       at it for the app and its tabs, and writes <Scratch>\home\.qwen\settings.json selecting that provider, so
+       Qwen Code starts with no account. stop ends the fake model by its recorded PID.
 
 .EXAMPLE
 pwsh -NoProfile -File live-check.ps1 start -Scratch C:\Users\me\AppData\Local\Temp\lc-5b-1
@@ -41,6 +45,9 @@ param(
     # start only: copies ~/.gemini/oauth_creds.json and google_accounts.json (and nothing else) into the scratch
     # USERPROFILE's .gemini, so a real agy can sign in; stop deletes the two copies.
     [switch]$AgyAuth,
+    # start only: runs the fake model for Qwen Code (slice 6l1 decision 8); stop ends it.
+    [switch]$QwenFake,
+    [int]$QwenPort = 47612,
     # The checkout to run; defaults to the one holding this script.
     [string]$Repo = (Join-Path $PSScriptRoot '..\..\..'),
     [int]$Port = 9333
@@ -56,7 +63,7 @@ if ($CodexHome) {
     $CodexHome = [System.IO.Path]::GetFullPath($CodexHome).TrimEnd('\')
     if ($CodexHome.Length -gt 60) { throw "CodexHome is $($CodexHome.Length) characters; Codex needs at most 60: $CodexHome" }
 }
-foreach ($real in @("$HOME\.marshell", "$HOME\.claude", "$HOME\.codex", "$HOME\.gemini")) {
+foreach ($real in @("$HOME\.marshell", "$HOME\.claude", "$HOME\.codex", "$HOME\.gemini", "$HOME\.qwen")) {
     $r = [System.IO.Path]::GetFullPath($real).TrimEnd('\')
     foreach ($path in @($Scratch, $CodexHome) | Where-Object { $_ }) {
         if ($path -ieq $r -or $path.StartsWith("$r\", 'OrdinalIgnoreCase')) { throw "$path is inside a real config folder: $real" }
@@ -68,14 +75,20 @@ $PidsFile = Join-Path $Scratch 'pids.json'
 function Get-Tree([int]$RootPid) {
     # PIDs 0 and 4 are the idle process and the kernel: every process descends from them.
     if ($RootPid -le 4) { throw "Refusing to walk the tree from PID $RootPid." }
-    $all = Get-CimInstance Win32_Process -Property ProcessId, ParentProcessId, Name, CreationDate
+    $all = Get-CimInstance Win32_Process -Property ProcessId, ParentProcessId, Name, CreationDate, CommandLine
+    $byId = $all | Group-Object ProcessId -AsHashTable -AsString
     $byParent = $all | Group-Object ParentProcessId -AsHashTable -AsString
     $root = $all | Where-Object ProcessId -eq $RootPid
     if (-not $root) { return @() }
     $out = [System.Collections.Generic.List[object]]::new()
     $walk = {
         param($p, $depth)
-        $out.Add([pscustomobject]@{ Depth = $depth; Name = $p.Name; PID = [int]$p.ProcessId; Parent = [int]$p.ParentProcessId })
+        # Qwen Code runs as node.exe (cli-entry.js, then cli.js twice); only the topmost Qwen node counts as the agent.
+        $parent = @($byId["$($p.ParentProcessId)"])[0]
+        $qwen = $p.Name -ieq 'node.exe' -and $p.CommandLine -match 'qwen-code' -and
+            -not ($parent -and $parent.Name -ieq 'node.exe' -and $parent.CommandLine -match 'qwen-code')
+        $agent = ($AgentNames -contains $p.Name.ToLowerInvariant()) -or $qwen
+        $out.Add([pscustomobject]@{ Depth = $depth; Name = $p.Name; PID = [int]$p.ProcessId; Parent = [int]$p.ParentProcessId; Agent = $agent })
         foreach ($c in @($byParent["$($p.ProcessId)"])) {
             # A child created before its parent is a reused parent PID, not a real child.
             if ($c -and $c.ProcessId -ne $p.ProcessId -and $c.CreationDate -ge $p.CreationDate) { & $walk $c ($depth + 1) }
@@ -120,6 +133,18 @@ function Remove-AuthCopy($rec) {
     }
 }
 
+# The fake model runs outside the app's tree: it is stopped by its recorded PID, after checking it is still that process.
+function Stop-QwenFake($rec) {
+    if (-not $rec.qwenFake.pid) { return }
+    $p = Get-CimInstance Win32_Process -Filter "ProcessId = $($rec.qwenFake.pid)" -Property Name, CreationDate, CommandLine
+    if (-not $p) { Write-Output "The fake model (pid $($rec.qwenFake.pid)) is already gone."; return }
+    if ($p.Name -ne 'node.exe' -or $p.CommandLine -notlike '*fake-openai.mjs*') {
+        Write-Output "PID $($rec.qwenFake.pid) is now $($p.Name), not the fake model; not touching it."; return
+    }
+    Stop-Process -Id $rec.qwenFake.pid -Force
+    Write-Output "Stopped the fake model, pid $($rec.qwenFake.pid)."
+}
+
 function Show-Tree($tree) {
     $tree | ForEach-Object { '{0}{1}  pid {2}  parent {3}' -f ('  ' * $_.Depth), $_.Name, $_.PID, $_.Parent } | Write-Output
 }
@@ -161,6 +186,21 @@ switch ($Mode) {
                 Copy-Item -LiteralPath $from -Destination (Join-Path $gemini $name)
             }
         }
+        $fakeRec = $null
+        if ($QwenFake) {
+            $qwenDir = (New-Item -ItemType Directory -Path (Join-Path $agyHome '.qwen')).FullName
+            Set-Content -LiteralPath (Join-Path $qwenDir 'settings.json') -Encoding utf8NoBOM `
+                -Value '{ "security": { "auth": { "selectedType": "openai" } }, "model": { "name": "marshell-fake" }, "general": { "enableAutoUpdate": false } }'
+            # Without enableAutoUpdate false, a Qwen session that found a newer version updates the real install
+            # when it exits. The variable also skips the check, in case a check rewrites the settings file.
+            $env:QWEN_CODE_SKIP_UPDATE_CHECK_ONCE = 'true'
+            $fake = Start-Process -FilePath 'node' -ArgumentList "`"$(Join-Path $PSScriptRoot 'fake-openai.mjs')`"", $QwenPort, "`"$(Join-Path $Scratch 'qwen-fake.jsonl')`"" `
+                -NoNewWindow -PassThru -RedirectStandardOutput (Join-Path $Scratch 'qwen-fake.out.log') -RedirectStandardError (Join-Path $Scratch 'qwen-fake.err.log')
+            $fakeRec = [ordered]@{ pid = $fake.Id; port = $QwenPort }
+            $env:OPENAI_API_KEY = 'marshell-fake'
+            $env:OPENAI_BASE_URL = "http://127.0.0.1:$QwenPort/v1"
+            $env:OPENAI_MODEL = 'marshell-fake'
+        }
         $settings = Join-Path (New-Item -ItemType Directory -Path (Join-Path $Scratch 'proj\.claude')).FullName 'settings.local.json'
         Set-Content -LiteralPath $settings -Value '{}' -Encoding utf8NoBOM
         $repo = (Resolve-Path -LiteralPath $Repo).Path
@@ -180,14 +220,15 @@ switch ($Mode) {
         $created = (Get-CimInstance Win32_Process -Filter "ProcessId = $($proc.Id)" -Property CreationDate).CreationDate
         [ordered]@{
             root = $proc.Id; name = 'cmd.exe'; created = $created.ToUniversalTime().ToString('o')
-            repo = $repo; marshellHome = $mh.FullName; claudeConfigDir = $cc.FullName; codexHome = $cx.FullName; codexAuth = [bool]$CodexAuth; agyAuth = [bool]$AgyAuth; agyHome = $agyHome; claudeSettings = $settings; cdp = "http://127.0.0.1:$Port"
+            repo = $repo; marshellHome = $mh.FullName; claudeConfigDir = $cc.FullName; codexHome = $cx.FullName; codexAuth = [bool]$CodexAuth; agyAuth = [bool]$AgyAuth; agyHome = $agyHome; qwenFake = $fakeRec; claudeSettings = $settings; cdp = "http://127.0.0.1:$Port"
         } | ConvertTo-Json | Set-Content -LiteralPath $PidsFile -Encoding utf8NoBOM
         Write-Output "Started pnpm tauri dev in $repo, root PID $($proc.Id)."
         Write-Output "MARSHELL_HOME=$($mh.FullName)"
         Write-Output "CLAUDE_CONFIG_DIR=$($cc.FullName)"
         Write-Output "CODEX_HOME=$($cx.FullName)"
         Write-Output "MARSHELL_CLAUDE_SETTINGS=$settings"
-        Write-Output "USERPROFILE=$agyHome (agy's scratch home)"
+        Write-Output "USERPROFILE=$agyHome (agy's and Qwen's scratch home)"
+        if ($fakeRec) { Write-Output "Fake model for Qwen: pid $($fakeRec.pid), http://127.0.0.1:$QwenPort/v1, log $Scratch\qwen-fake.jsonl" }
         Write-Output "Logs: $Scratch\dev.out.log, $Scratch\dev.err.log. CDP: http://127.0.0.1:$Port/json/version"
     }
     'tree' {
@@ -198,12 +239,14 @@ switch ($Mode) {
         $rec = Read-Record
         if (-not $rec) {
             # The tree is gone already (stopped some other way), but the sign-in copy may not be.
-            Remove-AuthCopy (Get-Content -LiteralPath $PidsFile -Raw | ConvertFrom-Json)
+            $old = Get-Content -LiteralPath $PidsFile -Raw | ConvertFrom-Json
+            Remove-AuthCopy $old
+            Stop-QwenFake $old
             return
         }
         $tree = @(Get-Tree $rec.root)
         Show-Tree $tree
-        $agents = @($tree | Where-Object { $AgentNames -contains $_.Name.ToLowerInvariant() })
+        $agents = @($tree | Where-Object Agent)
         $unnamed = @($agents | Where-Object { $AlsoStop -notcontains $_.PID })
         if ($unnamed.Count) {
             Write-Output ''
@@ -222,6 +265,7 @@ switch ($Mode) {
         $left = @($tree | Where-Object { Get-Process -Id $_.PID -ErrorAction SilentlyContinue })
         if ($left.Count) { Write-Output "Still running: $(($left | ForEach-Object { "$($_.Name) $($_.PID)" }) -join ', ')"; exit 1 }
         Remove-AuthCopy $rec
+        Stop-QwenFake $rec
         Write-Output "All $($tree.Count) recorded processes are gone. $Scratch was left in place."
     }
 }
