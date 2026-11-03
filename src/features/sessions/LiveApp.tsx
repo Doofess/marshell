@@ -1308,7 +1308,7 @@ export function LiveApp() {
       // no text, so it passes even from the launcher's search box.
       const onLauncherKey = (e: KeyboardEvent) => {
         const shortcut = sessionShortcut(e, os);
-        if (!shortcut || !passesLauncher(shortcut.kind)) return;
+        if (!shortcut || !passesLauncher(shortcut.kind, (context.current.closed?.length ?? 0) > 0, e.getModifierState("AltGraph"))) return;
         e.preventDefault();
         if (e.repeat) return;
         setLauncherOpen(false);

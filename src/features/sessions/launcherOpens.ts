@@ -3,9 +3,12 @@ import type { Os } from "../../lib/keymap";
 
 /**
  * The window shortcuts that still act while the launcher is open, which otherwise holds every key (slice 6k decision 8). On an
- * empty window the launcher opens by itself, so Reopen closed session must get past it.
+ * empty window the launcher opens by itself, so Reopen closed session must get past it. It passes only when a closed session is
+ * there to reopen, so the launcher never closes onto an empty window, and never with AltGr held: AltGr is Ctrl+Alt on Windows, and
+ * AltGr+Shift+T types a character on some layouts.
  */
-export const passesLauncher = (kind: SessionShortcut["kind"]): boolean => kind === "reopen";
+export const passesLauncher = (kind: SessionShortcut["kind"], hasClosed: boolean, altGraph: boolean): boolean =>
+  kind === "reopen" && hasClosed && !altGraph;
 
 /** Whether the first-run onboarding is not known yet (the saved settings haven't answered), shown, or seen and closed. */
 export type OnboardingShown = "unknown" | "showing" | "done";

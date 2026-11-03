@@ -5,8 +5,18 @@ import { LIVE_COMMANDS } from "./LivePalette";
 
 describe("passesLauncher", () => {
   it("lets only Reopen closed session through an open launcher", () => {
-    expect(passesLauncher("reopen")).toBe(true);
-    for (const kind of ["launcher", "palette", "cheatsheet", "close", "goto"] as const) expect(passesLauncher(kind)).toBe(false);
+    expect(passesLauncher("reopen", true, false)).toBe(true);
+    for (const kind of ["launcher", "palette", "cheatsheet", "close", "goto"] as const) expect(passesLauncher(kind, true, false)).toBe(false);
+  });
+
+  // Closing the launcher with nothing to reopen would leave an empty window behind a "Nothing to reopen." toast.
+  it("keeps the launcher when no closed session is there to reopen", () => {
+    expect(passesLauncher("reopen", false, false)).toBe(false);
+  });
+
+  // AltGr is Ctrl+Alt on Windows, so AltGr+Shift+T in the launcher's fields types a character on some layouts.
+  it("leaves AltGr+Shift+T to the launcher's fields", () => {
+    expect(passesLauncher("reopen", true, true)).toBe(false);
   });
 });
 
