@@ -97,8 +97,8 @@ pub struct CoreConfig {
     /// Shared by every core the supervisor starts; neither flag is saved to disk.
     pub notify_paused: Arc<AtomicBool>,
     pub window_hidden: Arc<AtomicBool>,
-    /// The folders of Claude Code's and Codex's conversations, for the importer. None in tests: then no importer
-    /// runs, so nothing reads the real `~/.claude` or `~/.codex`.
+    /// The folders of Claude Code's, Codex's and Qwen Code's conversations, for the importer. None in tests: then no
+    /// importer runs, so nothing reads the real `~/.claude`, `~/.codex` or `~/.qwen`.
     pub import: Option<crate::history::import::ImportRoots>,
 }
 

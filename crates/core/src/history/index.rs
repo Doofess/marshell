@@ -641,7 +641,7 @@ fn insert(conn: &Connection, meta: &SessionMeta) -> anyhow::Result<()> {
 /// Parameters ?1 to ?8 are the query's fields, ?9 the place and ?10 whether headless runs show.
 fn filters() -> String {
     format!(
-        "(?1 IS NULL OR sessions.agent = ?1) AND sessions.agent NOT IN ('antigravity', 'qwen') AND (?2 IS NULL OR cwd = ?2)
+        "(?1 IS NULL OR sessions.agent = ?1) AND sessions.agent <> 'antigravity' AND (?2 IS NULL OR cwd = ?2)
     AND (?3 IS NULL OR branch = ?3) AND (?4 IS NULL OR model = ?4)
     AND (?5 IS NULL OR updated_ms >= ?5)
     AND (?6 IS NULL OR EXISTS (SELECT 1 FROM tags WHERE tags.agent = sessions.agent
@@ -1286,6 +1286,33 @@ mod tests {
             Some("B".into())
         );
         assert_eq!(index.latest_for_tab_of("t1", "antigravity").unwrap(), None);
+    }
+
+    #[test]
+    fn qwen_conversations_are_listed_and_antigravity_ones_are_not() {
+        let (_home, index) = fresh();
+        for (agent, id) in [("claude", "A"), ("qwen", "B"), ("antigravity", "C")] {
+            index
+                .upsert(&SessionMeta {
+                    agent: agent.into(),
+                    ..meta(id, "t1", 10, None)
+                })
+                .unwrap();
+        }
+        let listed = |agent: Option<&str>| -> Vec<String> {
+            index
+                .list(&HistoryQuery {
+                    agent: agent.map(Into::into),
+                    ..HistoryQuery::default()
+                })
+                .unwrap()
+                .into_iter()
+                .map(|e| format!("{}:{}", e.agent, e.session_id))
+                .collect()
+        };
+        assert_eq!(listed(None), ["claude:A", "qwen:B"]);
+        assert_eq!(listed(Some("qwen")), ["qwen:B"]);
+        assert!(listed(Some("antigravity")).is_empty());
     }
 
     #[test]

@@ -1,7 +1,7 @@
-//! Copies the conversations Claude Code and Codex CLI ran outside Marshell into the history archive.
+//! Copies the conversations Claude Code, Codex CLI and Qwen Code ran outside Marshell into the history archive.
 //!
-//! The importer owns one thread. It scans `<claude root>/<folder>/<uuid>.jsonl` and
-//! `<codex root>/YYYY/MM/DD/rollout-*.jsonl[.zst]`, watches the roots with `notify`, and rescans on a timer.
+//! The importer owns one thread. It scans `<claude root>/<folder>/<uuid>.jsonl`,
+//! `<codex root>/YYYY/MM/DD/rollout-*.jsonl[.zst]` and `<qwen root>/<slug>/chats/<uuid>.jsonl`, watches the roots with `notify`, and rescans on a timer.
 //! A file is copied once its size differs from the size last copied and has stayed the same for `settle`;
 //! the size, not the modification time, is the signal. Files are copied one at a time, newest first.
 //! The source folders are only ever read, and links in them are not followed.
@@ -10,6 +10,7 @@ use super::recorder::History;
 use super::{SessionMeta, archive, valid_session_id};
 use crate::agents::codex::rollout;
 use crate::agents::common::rfc3339_ms;
+use crate::agents::qwen;
 use crate::{paths, store};
 use marshell_protocol::history::{Client, ImportStatus};
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
@@ -24,6 +25,7 @@ use std::time::{Duration, Instant, UNIX_EPOCH};
 
 const CLAUDE: &str = "claude";
 const CODEX: &str = "codex";
+const QWEN: &str = "qwen";
 
 /// How much of a file's start is read to learn when it began.
 const HEAD_BYTES: u64 = 64 * 1024;
@@ -33,10 +35,12 @@ const HEAD_BYTES: u64 = 64 * 1024;
 pub struct ImportRoots {
     pub claude: Option<PathBuf>,
     pub codex: Option<PathBuf>,
+    pub qwen: Option<PathBuf>,
 }
 
 /// Claude Code's `projects` folder is `$CLAUDE_CONFIG_DIR/projects`, else `<home>/.claude/projects`; Codex's
-/// `sessions` folder is `$CODEX_HOME/sessions`, else `<home>/.codex/sessions`.
+/// `sessions` folder is `$CODEX_HOME/sessions`, else `<home>/.codex/sessions`; Qwen Code's `projects` folder is
+/// `$QWEN_RUNTIME_DIR/projects` when that is set and not blank, else `<Qwen home>/projects` (`agents::qwen::home`).
 pub fn import_roots(env: impl Fn(&str) -> Option<String>, user_home: &Path) -> ImportRoots {
     let from = |var: &str, default: &str, leaf: &str| {
         match env(var).map(PathBuf::from).filter(|p| !p.as_os_str().is_empty()) {
@@ -48,6 +52,13 @@ pub fn import_roots(env: impl Fn(&str) -> Option<String>, user_home: &Path) -> I
     ImportRoots {
         claude: Some(from("CLAUDE_CONFIG_DIR", ".claude", "projects")),
         codex: Some(from("CODEX_HOME", ".codex", "sessions")),
+        qwen: Some(
+            env("QWEN_RUNTIME_DIR")
+                .map(|dir| dir.trim().to_string())
+                .filter(|dir| !dir.is_empty())
+                .map_or_else(|| crate::agents::qwen::home(&env, user_home), PathBuf::from)
+                .join("projects"),
+        ),
     }
 }
 
@@ -236,6 +247,7 @@ impl Drop for Importer {
 enum Kind {
     Claude,
     Codex,
+    Qwen,
 }
 
 impl Kind {
@@ -243,6 +255,7 @@ impl Kind {
         match self {
             Kind::Claude => CLAUDE,
             Kind::Codex => CODEX,
+            Kind::Qwen => QWEN,
         }
     }
 }
@@ -313,10 +326,11 @@ impl Worker {
         }
     }
 
-    fn roots(&self) -> [(Kind, Option<&Path>); 2] {
+    fn roots(&self) -> [(Kind, Option<&Path>); 3] {
         [
             (Kind::Claude, self.roots.claude.as_deref()),
             (Kind::Codex, self.roots.codex.as_deref()),
+            (Kind::Qwen, self.roots.qwen.as_deref()),
         ]
     }
 
@@ -585,6 +599,11 @@ fn codex_file(name: &str) -> bool {
     name.starts_with("rollout-") && (name.ends_with(".jsonl") || name.ends_with(".jsonl.zst"))
 }
 
+/// A Qwen chat is named by its session's UUID. `<id>.runtime.json` and the like do not end in `.jsonl`.
+fn qwen_file(name: &str) -> bool {
+    name.strip_suffix(".jsonl").is_some_and(is_uuid)
+}
+
 fn digits(name: &str, len: usize) -> bool {
     name.len() == len && name.bytes().all(|b| b.is_ascii_digit())
 }
@@ -604,6 +623,14 @@ fn candidates(kind: Kind, root: &Path) -> Vec<PathBuf> {
                     for day in plain_dirs(&month, |n| digits(n, 2)) {
                         found.extend(plain_files(&day, codex_file));
                     }
+                }
+            }
+        }
+        Kind::Qwen => {
+            // `chats/archive/` is a folder, so it is never listed as a file; subagents live outside `chats/`.
+            for project in plain_dirs(root, |_| true) {
+                for chats in plain_dirs(&project, |n| n == "chats") {
+                    found.extend(plain_files(&chats, qwen_file));
                 }
             }
         }
@@ -653,6 +680,7 @@ fn classify(roots: &ImportRoots, path: &Path) -> Option<Kind> {
         let ok = match (kind, parts.as_slice()) {
             (Kind::Claude, [_, file]) => claude_file(file),
             (Kind::Codex, [y, m, d, file]) => digits(y, 4) && digits(m, 2) && digits(d, 2) && codex_file(file),
+            (Kind::Qwen, [_, chats, file]) => chats == "chats" && qwen_file(file),
             _ => false,
         };
         let Some(root) = root else {
@@ -670,6 +698,8 @@ fn classify(roots: &ImportRoots, path: &Path) -> Option<Kind> {
         Some(Kind::Claude)
     } else if shaped(&roots.codex, Kind::Codex) {
         Some(Kind::Codex)
+    } else if shaped(&roots.qwen, Kind::Qwen) {
+        Some(Kind::Qwen)
     } else {
         None
     }
@@ -714,6 +744,7 @@ fn prepare(kind: Kind, path: &Path, text: &str, md: &std::fs::Metadata) -> Prepa
     match kind {
         Kind::Claude => claude_meta(path, text, md),
         Kind::Codex => codex_meta(path, text, md),
+        Kind::Qwen => qwen_meta(path, text, md),
     }
 }
 
@@ -804,10 +835,48 @@ fn codex_meta(path: &Path, text: &str, md: &std::fs::Metadata) -> Prepared {
     }))
 }
 
+/// A Qwen chat is copied only when its file name is a UUID that its records' `sessionId` repeats. Nothing in a chat
+/// tells a headless run from an interactive one, so the client is `Terminal`; a chat the hooks linked to a tab
+/// keeps its tab and its client (`Marshell`) when the copy is written.
+fn qwen_meta(path: &Path, text: &str, md: &std::fs::Metadata) -> Prepared {
+    let Some(name) = path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .filter(|id| is_uuid(id) && valid_session_id(id))
+    else {
+        return Prepared::Skip(QWEN);
+    };
+    let Some(meta) = qwen::transcript::meta(text).filter(|meta| meta.id == name) else {
+        return Prepared::Skip(QWEN);
+    };
+    let started_ms = if meta.started_ms == 0 {
+        modified_ms(md)
+    } else {
+        meta.started_ms
+    };
+    // The last line may be half written; the last one that parses gives the time.
+    let updated_ms = text.lines().rev().find_map(line_time).unwrap_or(started_ms);
+    Prepared::Copy(Box::new(SessionMeta {
+        agent: QWEN.into(),
+        session_id: meta.id,
+        tab_id: String::new(),
+        cwd: meta.cwd,
+        transcript_path: path.to_string_lossy().into_owned(),
+        started_ms,
+        updated_ms: updated_ms.max(started_ms),
+        previous_in_tab: None,
+        recordings: Vec::new(),
+        client: meta.client,
+        preset: None,
+        distro: None,
+    }))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::history::RecordingLink;
+    use marshell_protocol::history::HistoryQuery;
     use serde_json::json;
     use std::time::SystemTime;
 
@@ -817,6 +886,19 @@ mod tests {
     const CLAUDE_D: &str = "00000000-0000-4000-8000-0000000000a4";
     const CODEX_A: &str = "00000000-0000-4000-8000-0000000000c1";
     const CODEX_SUB: &str = "00000000-0000-4000-8000-0000000000c4";
+    /// Real chats from Qwen Code 0.26.5 (scrubbed); each file is named by the sessionId in its records.
+    const QWEN_A: &str = "00000000-0000-4000-8000-000000000002";
+    const QWEN_B: &str = "00000000-0000-4000-8000-000000000026";
+    const QWEN_C: &str = "00000000-0000-4000-8000-000000000046";
+    const QWEN_D: &str = "00000000-0000-4000-8000-000000000059";
+    const QWEN_CHAT_A: &str =
+        include_str!("../../tests/fixtures/qwen/transcripts/0.26.5/00000000-0000-4000-8000-000000000002.jsonl");
+    const QWEN_CHAT_B: &str =
+        include_str!("../../tests/fixtures/qwen/transcripts/0.26.5/00000000-0000-4000-8000-000000000026.jsonl");
+    const QWEN_CHAT_C: &str =
+        include_str!("../../tests/fixtures/qwen/transcripts/0.26.5/00000000-0000-4000-8000-000000000046.jsonl");
+    const QWEN_CHAT_D: &str =
+        include_str!("../../tests/fixtures/qwen/transcripts/0.26.5/00000000-0000-4000-8000-000000000059.jsonl");
 
     const FAST: Timing = Timing {
         settle: Duration::from_millis(100),
@@ -827,6 +909,7 @@ mod tests {
         home: tempfile::TempDir,
         claude: tempfile::TempDir,
         codex: tempfile::TempDir,
+        qwen: tempfile::TempDir,
         history: Arc<History>,
     }
 
@@ -834,10 +917,13 @@ mod tests {
         let home = tempfile::tempdir().unwrap();
         let history = Arc::new(History::open(home.path()));
         assert!(history.is_on());
+        let qwen = tempfile::tempdir().unwrap();
+        std::fs::create_dir(qwen.path().join("projects")).unwrap();
         Rig {
             home,
             claude: tempfile::tempdir().unwrap(),
             codex: tempfile::tempdir().unwrap(),
+            qwen,
             history,
         }
     }
@@ -847,6 +933,7 @@ mod tests {
             ImportRoots {
                 claude: Some(self.claude.path().to_path_buf()),
                 codex: Some(self.codex.path().to_path_buf()),
+                qwen: Some(self.qwen_root()),
             }
         }
 
@@ -876,6 +963,19 @@ mod tests {
 
         fn claude_path(&self, id: &str) -> PathBuf {
             self.claude.path().join("project-one").join(format!("{id}.jsonl"))
+        }
+
+        /// Where Qwen Code keeps a chat: `<projects>/<slug>/chats/<id>.jsonl`.
+        fn qwen_path(&self, id: &str) -> PathBuf {
+            self.qwen_root()
+                .join("slug-one")
+                .join("chats")
+                .join(format!("{id}.jsonl"))
+        }
+
+        /// The importer's Qwen root, a `projects` folder (the hook path only trusts a transcript under one).
+        fn qwen_root(&self) -> PathBuf {
+            self.qwen.path().join("projects")
         }
     }
 
@@ -962,6 +1062,196 @@ mod tests {
         assert_eq!(set.codex, Some(Path::new("cx").join("sessions")));
         let empty = import_roots(|_| Some(String::new()), home);
         assert_eq!(empty.claude, none.claude);
+    }
+
+    fn write_qwen(rig: &Rig, id: &str, text: &str) -> PathBuf {
+        let path = rig.qwen_path(id);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, text).unwrap();
+        path
+    }
+
+    #[test]
+    fn qwen_root_follows_qwen_runtime_dir_then_qwen_home() {
+        let home = Path::new("home");
+        let root = |pairs: &'static [(&'static str, &'static str)]| {
+            import_roots(
+                move |k| pairs.iter().find(|(name, _)| *name == k).map(|(_, v)| (*v).to_string()),
+                home,
+            )
+            .qwen
+        };
+        assert_eq!(root(&[]), Some(home.join(".qwen").join("projects")));
+        assert_eq!(
+            root(&[("QWEN_HOME", "qh")]),
+            Some(Path::new("qh").join("projects")),
+            "never QWEN_HOME/.qwen"
+        );
+        assert_eq!(
+            root(&[("QWEN_HOME", "~/qwen")]),
+            Some(home.join("qwen").join("projects"))
+        );
+        assert_eq!(
+            root(&[("QWEN_HOME", "qh"), ("QWEN_RUNTIME_DIR", "rt")]),
+            Some(Path::new("rt").join("projects")),
+            "the runtime dir wins"
+        );
+        for blank in ["", "   "] {
+            let roots = import_roots(|k| (k == "QWEN_RUNTIME_DIR").then(|| blank.to_string()), home);
+            assert_eq!(roots.qwen, Some(home.join(".qwen").join("projects")), "{blank:?}");
+        }
+    }
+
+    #[test]
+    fn a_qwen_chat_is_copied_once_settled() {
+        let rig = rig();
+        // The first scan of a first run takes files as it finds them, so it takes another chat first; after that
+        // the importer waits for a file to stop growing.
+        write_qwen(&rig, QWEN_B, QWEN_CHAT_B);
+        let importer = rig.start(
+            true,
+            Timing {
+                settle: Duration::from_millis(400),
+                rescan: Duration::from_millis(100),
+            },
+        );
+        wait_for("the first chat", || rig.archived("qwen", QWEN_B).is_some());
+        let bytes = QWEN_CHAT_A.as_bytes();
+        let path = rig.qwen_path(QWEN_A);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        // Growing faster than it settles, each write cutting a line in two: no copy yet.
+        let steps = 8;
+        for step in 1..steps {
+            std::fs::write(&path, &bytes[..bytes.len() * step / steps - 7]).unwrap();
+            std::thread::sleep(Duration::from_millis(50));
+            assert!(rig.archived("qwen", QWEN_A).is_none(), "copied while still growing");
+        }
+        std::fs::write(&path, bytes).unwrap();
+        wait_for("the copy of the settled chat", || {
+            rig.archived("qwen", QWEN_A).as_deref() == Some(QWEN_CHAT_A)
+        });
+        wait_idle(&importer, 1);
+        let meta = rig.sidecar("qwen", QWEN_A).unwrap();
+        assert_eq!(meta.agent, "qwen");
+        assert_eq!(meta.client, Client::Terminal, "nothing in a chat tells a headless run");
+        assert_eq!(meta.tab_id, "");
+        assert_eq!(meta.started_ms, rfc3339_ms("2026-11-03T16:58:58.724Z").unwrap());
+        assert!(meta.updated_ms > meta.started_ms);
+        assert!(meta.cwd.contains("qwen-6l2-t1"), "{}", meta.cwd);
+        assert_eq!(meta.transcript_path, path.to_string_lossy());
+        let row = rig.history.get("qwen", QWEN_A).unwrap().unwrap();
+        assert_eq!((row.tab_id.as_str(), row.client), ("", Client::Terminal));
+    }
+
+    #[test]
+    fn qwen_archive_runtime_json_and_subagent_files_are_not_copied() {
+        let rig = rig();
+        let chats = rig.qwen_path(QWEN_A).parent().unwrap().to_path_buf();
+        write_qwen(&rig, QWEN_A, QWEN_CHAT_A);
+        // A sidecar next to the chat, and a chat Qwen archived.
+        std::fs::write(chats.join(format!("{QWEN_A}.runtime.json")), "{}").unwrap();
+        std::fs::create_dir_all(chats.join("archive")).unwrap();
+        std::fs::write(chats.join("archive").join(format!("{QWEN_B}.jsonl")), QWEN_CHAT_B).unwrap();
+        // A subagent's files live under the project, not under chats/.
+        let sub = rig.qwen_root().join("slug-one").join("subagents").join(QWEN_C);
+        std::fs::create_dir_all(&sub).unwrap();
+        std::fs::write(sub.join(format!("{QWEN_C}.jsonl")), QWEN_CHAT_C).unwrap();
+        // A chat whose name is a UUID but whose records name another session, and a name that is no UUID.
+        let other = "00000000-0000-4000-8000-0000000000aa";
+        std::fs::write(chats.join(format!("{other}.jsonl")), QWEN_CHAT_D).unwrap();
+        std::fs::write(chats.join("notes.jsonl"), QWEN_CHAT_D).unwrap();
+        // A chat directly under the project, outside chats/.
+        std::fs::write(
+            rig.qwen_root().join("slug-one").join(format!("{QWEN_D}.jsonl")),
+            QWEN_CHAT_D,
+        )
+        .unwrap();
+        let importer = rig.start(true, FAST);
+        // The chat and the one whose records disagree with its name are the only candidates.
+        wait_idle(&importer, 2);
+        std::thread::sleep(FAST.rescan * 2);
+        assert_eq!(rig.archived("qwen", QWEN_A).as_deref(), Some(QWEN_CHAT_A));
+        for id in [QWEN_B, QWEN_C, QWEN_D, other] {
+            assert!(rig.archived("qwen", id).is_none(), "{id}");
+            assert!(rig.history.get("qwen", id).unwrap().is_none(), "{id}");
+        }
+        let state: StateDoc = store::read(&rig.home.path().join("history").join("import.json"))
+            .unwrap()
+            .unwrap();
+        assert_eq!(state.files.len(), 2, "{:?}", state.files.keys().collect::<Vec<_>>());
+        assert!(state.files.values().any(|c| c.session_id.is_empty()));
+    }
+
+    #[test]
+    fn a_qwen_chat_linked_by_hooks_keeps_its_tab_when_imported() {
+        for note_first in [true, false] {
+            let rig = rig();
+            let path = write_qwen(&rig, QWEN_A, QWEN_CHAT_A);
+            let hook = json!({
+                "hook_event_name": "SessionStart", "session_id": QWEN_A, "cwd": "C:/work/demo",
+                "transcript_path": path.to_string_lossy(), "source": "startup",
+            });
+            let note = || {
+                assert!(rig.history.note_event("qwen", "t1", None, &hook, 1000, None).is_none());
+            };
+            if note_first {
+                note();
+            }
+            let importer = rig.start(true, FAST);
+            wait_for("the import", || rig.archived("qwen", QWEN_A).is_some());
+            wait_idle(&importer, 1);
+            if !note_first {
+                note();
+            }
+            let meta = rig.sidecar("qwen", QWEN_A).unwrap();
+            assert_eq!(
+                (meta.tab_id.as_str(), meta.client),
+                ("t1", Client::Marshell),
+                "{note_first}"
+            );
+            let row = rig.history.get("qwen", QWEN_A).unwrap().unwrap();
+            assert_eq!(
+                (row.tab_id.as_str(), row.client),
+                ("t1", Client::Marshell),
+                "{note_first}"
+            );
+            // One row in History, with its tab and the id to resume by.
+            let listed = rig.history.list(&HistoryQuery::default()).unwrap();
+            assert_eq!(listed.len(), 1, "{listed:?}");
+            assert_eq!(
+                (
+                    listed[0].agent.as_str(),
+                    listed[0].session_id.as_str(),
+                    listed[0].tab_id.as_str()
+                ),
+                ("qwen", QWEN_A, "t1")
+            );
+            assert_eq!(listed[0].client, Client::Marshell);
+        }
+    }
+
+    #[test]
+    fn a_deleted_qwen_copy_stays_deleted_until_the_chat_grows() {
+        let rig = rig();
+        let path = write_qwen(&rig, QWEN_A, QWEN_CHAT_A);
+        let importer = rig.start(true, FAST);
+        wait_idle(&importer, 1);
+        assert!(rig.archived("qwen", QWEN_A).is_some());
+        rig.history.delete_copy("qwen", QWEN_A).unwrap();
+        assert!(rig.archived("qwen", QWEN_A).is_none());
+        std::thread::sleep(FAST.rescan * 4);
+        assert!(rig.archived("qwen", QWEN_A).is_none());
+        assert!(rig.history.get("qwen", QWEN_A).unwrap().is_none());
+        // The chat goes on: one more record, and it is copied again.
+        let mut text = QWEN_CHAT_A.to_string();
+        let first = text.lines().next().unwrap().to_string();
+        text.push_str(&first.replace("\"hello\"", "\"and again\""));
+        text.push('\n');
+        std::fs::write(&path, &text).unwrap();
+        wait_for("the copy after growth", || {
+            rig.archived("qwen", QWEN_A) == Some(text.clone())
+        });
+        assert!(rig.history.get("qwen", QWEN_A).unwrap().is_some());
     }
 
     #[test]
@@ -1337,6 +1627,7 @@ mod tests {
         let roots = ImportRoots {
             claude: Some(missing.clone()),
             codex: None,
+            qwen: None,
         };
         let importer = Importer::start_with(rig.history.clone(), roots, true, FAST);
         std::thread::sleep(FAST.rescan * 2);

@@ -1566,6 +1566,7 @@ async fn import_status_route_reports_progress() {
         ImportRoots {
             claude: Some(claude.path().to_path_buf()),
             codex: Some(codex.path().to_path_buf()),
+            qwen: None,
         },
         Timing {
             settle: Duration::from_millis(100),
@@ -1642,6 +1643,103 @@ async fn a_codex_conversation_opens_from_the_archive() {
     assert_eq!(body["agent"], "codex");
     assert_eq!(body["session_id"], CODEX_ID);
     assert!(!body["turns"].as_array().unwrap().is_empty(), "{body}");
+}
+
+const QWEN_ID: &str = "00000000-0000-4000-8000-000000000002";
+const QWEN_CHAT: &str = include_str!("fixtures/qwen/transcripts/0.26.5/00000000-0000-4000-8000-000000000002.jsonl");
+const QWEN_START: &str = include_str!("fixtures/qwen/hooks/0.26.5/SessionStart.json");
+
+/// Where Qwen Code keeps the chat `id` under `dir`: `<dir>/.qwen/projects/<slug>/chats/<id>.jsonl`.
+fn qwen_chat_path(dir: &Path, id: &str) -> PathBuf {
+    dir.join(".qwen")
+        .join("projects")
+        .join("slug")
+        .join("chats")
+        .join(format!("{id}.jsonl"))
+}
+
+/// Copies the recorded Qwen chat into the archive as a conversation run outside Marshell.
+fn seed_qwen(env: &Env, dir: &Path) -> PathBuf {
+    let source = qwen_chat_path(dir, QWEN_ID);
+    std::fs::create_dir_all(source.parent().unwrap()).unwrap();
+    std::fs::write(&source, QWEN_CHAT).unwrap();
+    let meta = marshell_core::history::SessionMeta {
+        agent: "qwen".into(),
+        session_id: QWEN_ID.into(),
+        tab_id: String::new(),
+        cwd: env.work.path().to_string_lossy().into_owned(),
+        transcript_path: source.to_string_lossy().into_owned(),
+        started_ms: 1_000,
+        updated_ms: 2_000,
+        previous_in_tab: None,
+        recordings: Vec::new(),
+        client: marshell_protocol::history::Client::Terminal,
+        preset: None,
+        distro: None,
+    };
+    assert!(env.state.history().import(&meta, &source).unwrap());
+    source
+}
+
+#[tokio::test]
+async fn get_conversation_reads_a_qwen_chat() {
+    let env = env();
+    let dir = tempfile::tempdir().unwrap();
+    seed_qwen(&env, dir.path());
+    let (status, body) = get_json(&env.app, &format!("/v1/history/qwen/{QWEN_ID}")).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["agent"], "qwen");
+    assert_eq!(body["session_id"], QWEN_ID);
+    assert_eq!(body["turns"][0]["prompt"], "hello", "{body}");
+    let (_, list) = get_json(&env.app, "/v1/history").await;
+    assert_eq!(list.as_array().unwrap().len(), 1, "{list}");
+    assert_eq!(
+        (list[0]["agent"].as_str(), list[0]["session_id"].as_str()),
+        (Some("qwen"), Some(QWEN_ID))
+    );
+    let (_, qwen) = get_json(&env.app, "/v1/history?agent=qwen").await;
+    assert_eq!(qwen.as_array().unwrap().len(), 1, "{qwen}");
+}
+
+#[tokio::test]
+async fn a_qwen_row_from_6l1_with_no_copy_shows_as_history_shows_any_uncopied_row() {
+    let env = env();
+    let dir = tempfile::tempdir().unwrap();
+    // 6l1's hooks indexed the session, and Qwen has since deleted the chat (`cleanupPeriodDays`): no file, no copy.
+    let source = qwen_chat_path(dir.path(), QWEN_ID);
+    let mut body: Value = serde_json::from_str(QWEN_START).unwrap();
+    body["session_id"] = json!(QWEN_ID);
+    body["transcript_path"] = json!(source.to_string_lossy());
+    body["cwd"] = json!(env.work.path().to_string_lossy());
+    env.state.history().note_event("qwen", "t1", None, &body, 1000, None);
+    assert!(!source.exists());
+    // It is listed, as an uncopied Codex row is, with no turns to show.
+    let (_, list) = get_json(&env.app, "/v1/history").await;
+    assert_eq!(list.as_array().unwrap().len(), 1, "{list}");
+    assert_eq!(
+        (list[0]["agent"].as_str(), list[0]["turns"].as_u64()),
+        (Some("qwen"), Some(0))
+    );
+    // Opening it answers that Marshell has no copy yet, not a crash or a blank page.
+    let (status, text) = call(&env.app, req("GET", &format!("/v1/history/qwen/{QWEN_ID}"), None)).await;
+    assert_eq!((status, text.as_str()), (StatusCode::NOT_FOUND, NO_COPY));
+    // Resuming it says Qwen Code no longer has it.
+    let (status, text) = call(
+        &env.app,
+        req(
+            "POST",
+            &format!("/v1/history/qwen/{QWEN_ID}/resume"),
+            Some(resume_body()),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{text}");
+    let reason = serde_json::from_str::<Value>(&text).unwrap()["reason"].clone();
+    assert_eq!(
+        reason,
+        "Qwen Code no longer has this conversation, so it can't be resumed."
+    );
+    assert_eq!(env.state.live_session_count(), 0);
 }
 
 #[tokio::test]

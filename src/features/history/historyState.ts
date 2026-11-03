@@ -106,18 +106,18 @@ export function clientMark(c: Client): string | null {
   }
 }
 
-const AGENT_NAMES: Record<string, string> = { claude: "Claude Code", codex: "Codex CLI" };
+const AGENT_NAMES: Record<string, string> = { claude: "Claude Code", codex: "Codex CLI", qwen: "Qwen Code" };
 /** An agent's name in the Agent filter; an agent not named here shows its id. */
 export const historyAgentLabel = (agent: string): string => AGENT_NAMES[agent] ?? agent;
 
 /** The progress line while the import copies files; null when it isn't copying (or not yet known). */
 export const importLine = (s: ImportStatus | null): string | null =>
-  s?.copying ? `Copying conversations from Claude Code and Codex: ${s.done} of ${s.total}.` : null;
+  s?.copying ? `Copying conversations from Claude Code, Codex and Qwen Code: ${s.done} of ${s.total}.` : null;
 
 /** What's spoken when a copy ends: finished, or stopped by the switch with how far it got; null when the status couldn't be read. */
 export const importEndLine = (s: ImportStatus | null): string | null => {
   if (!s) return null;
-  return s.on ? "Finished copying conversations from Claude Code and Codex." : `Stopped copying conversations from Claude Code and Codex: ${s.done} of ${s.total} copied.`;
+  return s.on ? "Finished copying conversations from Claude Code, Codex and Qwen Code." : `Stopped copying conversations from Claude Code, Codex and Qwen Code: ${s.done} of ${s.total} copied.`;
 };
 
 /** What the Bookmarked filter asks the core for: the list's filters, one row per bookmark. */

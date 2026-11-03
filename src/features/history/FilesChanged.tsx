@@ -13,6 +13,10 @@ const COPY: Record<string, { note: string; none: string }> = {
     note: "Only edits made with Codex's apply_patch are listed. Changes made through shell commands, such as sed or a code generator, aren't.",
     none: "Codex didn't edit any files in this conversation.",
   },
+  qwen: {
+    note: "Only edits made with Qwen Code's edit and write_file tools are listed. Changes made through shell commands, such as sed or a code generator, aren't.",
+    none: "Qwen Code didn't edit any files in this conversation.",
+  },
 };
 
 /** `+3 −1`, with an en dash for a count the transcript didn't give. */

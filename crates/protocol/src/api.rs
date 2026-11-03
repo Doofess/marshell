@@ -972,7 +972,7 @@ pub struct Settings {
     pub status_off: Vec<String>,
     /// Which events notify, and how.
     pub notifications: NotifySettings,
-    /// Whether Marshell keeps its own copy of the conversations Claude Code and Codex ran outside it.
+    /// Whether Marshell keeps its own copy of the conversations Claude Code, Codex and Qwen Code ran outside it.
     pub history_import: bool,
     /// Recordings and images are kept up to this many GB (1024-based). None is no size limit.
     pub history_limit_gb: Option<u32>,
