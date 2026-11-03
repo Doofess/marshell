@@ -146,13 +146,13 @@ pub(super) struct Resolved {
 }
 
 impl Resolved {
-    /// `command` as a person would type it: PowerShell's call operator, which only its command line needs, is left off.
+    /// `command` as a person would type it: PowerShell's call operator is left off before a bare program name, and kept
+    /// before a quoted one, which PowerShell runs only with it.
     pub(super) fn bare_command(&self) -> Option<&str> {
         let command = self.command.as_deref()?;
-        if self.family == ShellFamily::PowerShell {
-            Some(command.strip_prefix("& ").unwrap_or(command))
-        } else {
-            Some(command)
+        match command.strip_prefix("& ") {
+            Some(rest) if self.family == ShellFamily::PowerShell && !rest.starts_with(['\'', '"']) => Some(rest),
+            _ => Some(command),
         }
     }
 }
@@ -1693,6 +1693,15 @@ mod tests {
         let run = resolved_codex(Some("0.170.2"), Some(ResumeTarget::Last));
         assert_eq!(run.argv.last().unwrap(), "& codex resume --last --no-daemon");
         assert_eq!(run.bare_command(), Some("codex resume --last --no-daemon"));
+        // A quoted program needs the operator to run when pasted, so it stays.
+        let mut quoted = run;
+        for line in [
+            r"& 'C:\Program Files\x\codex.exe' resume --last",
+            r#"& "C:\x y\codex.exe""#,
+        ] {
+            quoted.command = Some(line.into());
+            assert_eq!(quoted.bare_command(), Some(line), "{line}");
+        }
     }
 
     #[test]
