@@ -229,9 +229,14 @@ pub async fn tab_resume_command(
         },
         CommandPurpose::Resume => launch_mode(info.elevated, info.agent.as_deref(), info.mode),
     };
-    let session = match resume_session(&st, &tab, info.agent.as_deref()) {
-        Ok(session) => session,
-        Err(reason) => return cannot_resume(reason),
+    // The History index, the archive meta and the transcript are read from disk: off the async workers.
+    let session = {
+        let (st, tab, agent) = (st.clone(), tab.clone(), info.agent.clone());
+        match tokio::task::spawn_blocking(move || resume_session(&st, &tab, agent.as_deref())).await {
+            Ok(Ok(session)) => session,
+            Ok(Err(reason)) => return cannot_resume(reason),
+            Err(err) => return (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()).into_response(),
+        }
     };
     // The same resolver as restart_as/resume_as chooses the profile, program, resume arguments and mode flags.
     let run = match resolve_with(
