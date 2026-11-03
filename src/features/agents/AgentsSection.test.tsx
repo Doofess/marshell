@@ -199,6 +199,12 @@ describe("AgentsSectionView: Codex", () => {
     expect(withCodex(null)).not.toContain('aria-label="Codex"');
     expect(withCodex({ ...CODEX_SETUP, found: false })).not.toContain('aria-label="Codex"');
   });
+  it("keeps Codex's section with only Hooks off while Marshell's hooks outlive Codex (#62)", () => {
+    const h = codexSection(withCodex({ ...CODEX_SETUP, found: false, hooks: "installed" }));
+    expect(h).toContain("Codex was not found on this computer, but Marshell&#x27;s hooks are still in C:/h/.codex/hooks.json.");
+    expect(h).toContain(">Hooks off</button>");
+    expect(h).not.toContain(">Set up</button>");
+  });
   it("Codex's trust line for each trust state, and none for null", () => {
     const line = (trust: AgentSetup["trust"]) => codexSection(withCodex({ ...CODEX_SETUP, hooks: "installed", approve_installed: true, trust }));
     expect(line("trusted")).toContain('<p class="agents-dialog__line">Trusted: Codex runs these hooks.</p>');
@@ -243,6 +249,7 @@ describe("AgentsSectionView: Antigravity", () => {
     expect(h).toContain("Live status");
     expect(withAgy(null)).not.toContain('aria-label="Antigravity"');
     expect(withAgy({ ...AGY_SETUP, found: false })).not.toContain('aria-label="Antigravity"');
+    expect(agySection(withAgy({ ...AGY_SETUP, found: false, hooks: "orphaned" }))).toContain(">Hooks off</button>");
     const on = agySection(withAgy({ ...AGY_SETUP, hooks: "installed", approve_installed: true }));
     expect(on).toContain("Hooks on in C:/h/.gemini/config/hooks.json.");
     expect(on).toContain(">Hooks off</button>");

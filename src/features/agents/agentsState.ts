@@ -55,12 +55,16 @@ export const liveStatusOn = (statusOff: string[], agent: string): boolean => !st
 /** The setup's file does not parse: there is nothing to set up or turn off until it is fixed. */
 const refused = (s: AgentSetup) => s.settings_state === "unparsable";
 
+/** The CLI isn't found, but Marshell's entries are still in its files (#62): its section stays, offering only Hooks off. */
+export const leftover = (s: AgentSetup): boolean => !s.found && s.hooks !== "none";
+
 /** The agents whose card the first run offers, in order: each found one that has something to set up. One card each, never a bulk allow. */
 export const consentQueue = (setups: AgentSetup[]): AgentSetup[] => setups.filter((s) => actions(s).includes("setup"));
 
 /** One line on what Marshell's hooks are doing in an agent's settings file (Claude Code's settings, Codex's hooks.json). */
 export function setupLine(s: AgentSetup): string {
   const name = CLI_NAME[s.agent as CliId];
+  if (leftover(s)) return `${name} was not found on this computer, but Marshell's hooks are still in ${s.hooks_path ?? s.settings_path}. Turn them off to remove them.`;
   if (!s.found) return `${name} was not found on this computer.`;
   if (refused(s)) return consentHeadline(toDetection(s), ON);
   // Antigravity keeps its hooks in a file of their own.
@@ -85,7 +89,8 @@ export function setupLine(s: AgentSetup): string {
 
 /** What the person may do about it. Orphaned hooks can be turned off or set up again. */
 export function actions(s: AgentSetup): Array<"setup" | "hooksOff"> {
-  if (!s.found || refused(s)) return [];
+  if (refused(s)) return [];
+  if (!s.found) return leftover(s) ? ["hooksOff"] : [];
   switch (s.hooks) {
     case "none":
       return ["setup"];

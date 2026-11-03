@@ -36,6 +36,14 @@ describe("setupLine", () => {
   it("says when Claude Code was not found", () => {
     expect(setupLine(s({ found: false }))).toBe("Claude Code was not found on this computer.");
   });
+  it("says when Marshell's hooks outlive the CLI, naming the hooks file", () => {
+    expect(setupLine(s({ found: false, hooks: "installed" }))).toBe(
+      "Claude Code was not found on this computer, but Marshell's hooks are still in C:/h/.claude/settings.json. Turn them off to remove them.",
+    );
+    expect(setupLine(s({ found: false, hooks: "partial", hooks_path: "C:/h/.gemini/config/hooks.json" }))).toBe(
+      "Claude Code was not found on this computer, but Marshell's hooks are still in C:/h/.gemini/config/hooks.json. Turn them off to remove them.",
+    );
+  });
 });
 
 describe("actions", () => {
@@ -48,6 +56,10 @@ describe("actions", () => {
   it("offers nothing when Claude Code is not found or its file does not parse", () => {
     expect(actions(s({ found: false }))).toEqual([]);
     expect(actions(s({ settings_state: "unparsable" }))).toEqual([]);
+  });
+  it("offers only Hooks off while Marshell's hooks outlive the CLI (#62)", () => {
+    for (const hooks of ["installed", "partial", "orphaned"] as const) expect(actions(s({ found: false, hooks }))).toEqual(["hooksOff"]);
+    expect(actions(s({ found: false, hooks: "installed", settings_state: "unparsable" }))).toEqual([]);
   });
 });
 

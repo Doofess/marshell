@@ -11,7 +11,7 @@ import { useAnnounceOnce } from "../../lib/useAnnounceOnce";
 import { SettingsReadError, type SettingsSync } from "../appearance/settingsSync";
 import { ConsentCard } from "../onboarding/ConsentCard";
 import { CLI_NAME, type Capability } from "../onboarding/consent";
-import { actions, consentProps, DEFAULT_WANT, hooksOffNotice, liveStatusOn, removalBlock, setupLine, setupWant, wslDistros, type InstallFlow, type SetupStart } from "./agentsState";
+import { actions, consentProps, DEFAULT_WANT, hooksOffNotice, leftover, liveStatusOn, removalBlock, setupLine, setupWant, wslDistros, type InstallFlow, type SetupStart } from "./agentsState";
 import { OwnAgentsSection } from "./OwnAgentsSection";
 import { ToolsSection } from "./ToolsSection";
 import { SkillRow, type SkillRowHandlers } from "./SkillRow";
@@ -118,9 +118,10 @@ export function AgentsSectionView({
       {typeof setup === "object" && panel.kind === "list" && (
         <>
           <AgentList setup={setup} agent="claude" liveStatus={liveStatus} error={liveStatusError} on={on} skill={skills?.claude} distros={distros} />
-          {/* A CLI missing on Windows still gets its section when there are distros: it may be installed inside one. */}
-          {codex && (codex.found || (distros?.length ?? 0) > 0) && <AgentList setup={codex} agent="codex" liveStatus={codexLiveStatus} error={codexLiveStatusError} on={on} skill={skills?.codex} distros={distros} />}
-          {antigravity && (antigravity.found || (distros?.length ?? 0) > 0) && <AgentList setup={antigravity} agent="antigravity" liveStatus={antigravityLiveStatus} error={antigravityLiveStatusError} on={on} skill={skills?.antigravity} distros={distros} />}
+          {/* A CLI missing on Windows still gets its section when there are distros (it may be installed inside one), or while
+              Marshell's hooks are still in its files (#62), so they can be turned off. */}
+          {codex && (codex.found || (distros?.length ?? 0) > 0 || leftover(codex)) && <AgentList setup={codex} agent="codex" liveStatus={codexLiveStatus} error={codexLiveStatusError} on={on} skill={skills?.codex} distros={distros} />}
+          {antigravity && (antigravity.found || (distros?.length ?? 0) > 0 || leftover(antigravity)) && <AgentList setup={antigravity} agent="antigravity" liveStatus={antigravityLiveStatus} error={antigravityLiveStatusError} on={on} skill={skills?.antigravity} distros={distros} />}
           {own}
           {tools}
         </>
