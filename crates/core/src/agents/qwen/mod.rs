@@ -3,6 +3,7 @@
 pub mod hooks;
 pub mod request;
 pub mod status;
+pub mod transcript;
 
 use serde_json::{Value, json};
 use std::path::Path;
