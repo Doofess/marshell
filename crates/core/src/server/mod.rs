@@ -233,8 +233,7 @@ struct Inner {
     /// The user home Antigravity's files are planned under when a test names one; None means the user's home.
     agy_home: Option<PathBuf>,
     /// The user home Qwen Code's `.qwen/settings.json` is planned under when a test names one; None means the user's
-    /// home (and `QWEN_HOME` from the environment). Read by the setup route.
-    #[allow(dead_code)]
+    /// home (and `QWEN_HOME` from the environment).
     qwen_home: Option<PathBuf>,
     /// The user home the `marshell` skill files are planned under when a test names one; None means the user's
     /// home, and `CLAUDE_CONFIG_DIR` from the environment. A named home also stops the environment from being read.

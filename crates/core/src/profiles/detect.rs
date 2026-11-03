@@ -271,6 +271,7 @@ pub fn agent_command(agent: &str) -> Option<&'static str> {
         "claude" => Some("claude"),
         "codex" => Some("codex"),
         "antigravity" => Some("agy"),
+        "qwen" => Some("qwen"),
         _ => None,
     }
 }
@@ -351,6 +352,7 @@ pub(crate) fn adapter_of_exe(name: &str) -> Option<&'static str> {
         "claude" => Some("claude"),
         "codex" => Some("codex"),
         "agy" => Some("antigravity"),
+        "qwen" => Some("qwen"),
         _ if name.starts_with("codex-") => Some("codex"),
         _ => None,
     }
@@ -369,8 +371,46 @@ pub(crate) fn adapter_of_package(name: &str) -> Option<&'static str> {
     match name {
         "@anthropic-ai/claude-code" => Some("claude"),
         "@openai/codex" => Some("codex"),
+        "@qwen-code/qwen-code" => Some("qwen"),
         _ => None,
     }
+}
+
+/// The adapter agent a node-run command line (its words, quotes removed) starts: the program is `node` and one of its
+/// words is a script of Qwen Code. That is the npm package (`...\@qwen-code\qwen-code\...`) or the standalone install
+/// (`...\qwen-code\lib\cli-entry.js` or `...\qwen-code\lib\cli.js`, where the launcher's path may hold `bin\..\`).
+/// A typed `qwen` is named by the program itself; this is for the node processes below it.
+pub(crate) fn agent_of_node_argv(argv: &[String]) -> Option<&'static str> {
+    if program_name(argv.first()?) != "node" {
+        return None;
+    }
+    argv.iter()
+        .skip(1)
+        .filter(|word| !word.starts_with('-'))
+        .any(|script| is_qwen_script(script))
+        .then_some("qwen")
+}
+
+fn is_qwen_script(script: &str) -> bool {
+    let lower = script.to_lowercase();
+    // `bin\..\lib` is `lib`: the launcher spells its script that way.
+    let mut parts: Vec<&str> = Vec::new();
+    for part in lower.split(['/', '\\']).filter(|p| !p.is_empty() && *p != ".") {
+        if part == ".." {
+            parts.pop();
+        } else {
+            parts.push(part);
+        }
+    }
+    let Some((file, folders)) = parts.split_last() else {
+        return false;
+    };
+    // The npm package: its own folder under the scope.
+    if folders.windows(2).any(|w| w == ["@qwen-code", "qwen-code"]) {
+        return matches!(*file, "cli.js" | "cli-entry.js" | "index.js");
+    }
+    // The standalone install: `qwen-code\lib\cli.js` or `cli-entry.js`.
+    matches!(*file, "cli.js" | "cli-entry.js") && folders.ends_with(&["qwen-code", "lib"])
 }
 
 /// The agent a foreground process chain (outermost first) or a typed command line runs, if any.
@@ -379,10 +419,12 @@ pub fn agent_in(agents: &Agents, chain: &[String], command_line: Option<&str>) -
     if let Some(agent) = chain.iter().rev().find_map(|name| agents.agent_of_exe(name)) {
         return Some(agent);
     }
-    let program = program_of(command_line?)?;
+    let command_line = command_line?;
+    let program = program_of(command_line)?;
     agents
         .agent_of_exe(&program)
         .or_else(|| agents.agent_of_package(&program))
+        .or_else(|| agent_of_node_argv(&words(command_line)).map(String::from))
 }
 
 /// Which conversation a resumed agent should pick up.
@@ -390,7 +432,7 @@ pub fn agent_in(agents: &Agents, chain: &[String], command_line: Option<&str>) -
 pub enum ResumeTarget<'a> {
     /// The CLI's own "last conversation in this folder".
     Last,
-    /// One conversation by the CLI's session id. Claude Code, Codex and Antigravity take one.
+    /// One conversation by the CLI's session id. Claude Code, Codex, Antigravity and Qwen Code take one.
     Session(&'a str),
     /// A new conversation that starts from one by the CLI's session id, leaving the original as it is.
     /// Only Claude Code can fork; every other agent continues its last conversation as `Last` does.
@@ -412,6 +454,8 @@ pub fn resume_args(agents: &Agents, agent: &str, target: ResumeTarget) -> Vec<St
         ("codex", _) => vec!["resume", "--last"],
         ("antigravity", ResumeTarget::Session(id)) => vec!["--conversation", id],
         ("antigravity", _) => vec!["--continue"],
+        ("qwen", ResumeTarget::Session(id)) => vec!["--resume", id],
+        ("qwen", _) => vec!["--continue"],
         _ => Vec::new(),
     };
     args.into_iter().map(String::from).collect()
@@ -466,6 +510,12 @@ pub fn mode_args(agents: &Agents, agent: &str, mode: SessionMode) -> Option<Vec<
         ("antigravity", FullAuto) => Some(&["--mode", "auto"]),
         ("antigravity", Bypass) => Some(&["--dangerously-skip-permissions"]),
         ("codex" | "antigravity", _) => Some(&[]),
+        // Qwen Code's own approval modes. No flag for Don't ask: it has no such mode.
+        ("qwen", Manual) => Some(&["--approval-mode", "default"]),
+        ("qwen", Plan) => Some(&["--approval-mode", "plan"]),
+        ("qwen", AutoEdit) => Some(&["--approval-mode", "auto-edit"]),
+        ("qwen", FullAuto) => Some(&["--approval-mode", "auto"]),
+        ("qwen", Bypass) => Some(&["--approval-mode", "yolo"]),
         _ => None,
     };
     if let Some(flags) = adapter {
@@ -595,9 +645,9 @@ fn build_line(
     }
     let manifest = agents.manifest(agent);
     let prompt = prompt.filter(|p| !p.is_empty());
-    // The flag before the first prompt: agy's and a manifest's own, else none (a positional argument).
+    // The flag before the first prompt: agy's, Qwen Code's and a manifest's own, else none (a positional argument).
     let prompt_flag: Option<&str> = match manifest.map(|m| &m.prompt) {
-        None if agent == "antigravity" => Some("-i"),
+        None if matches!(agent, "antigravity" | "qwen") => Some("-i"),
         None | Some(PromptStyle::Positional) => None,
         Some(PromptStyle::Flag { flag }) => Some(flag),
         Some(PromptStyle::None) => {
@@ -1605,6 +1655,87 @@ mod tests {
     fn qwen_takes_its_prompt_after_dash_i() {
         let argv = launch_argv(&pwsh(), Some("qwen"), Some("x"), Some(SessionMode::Plan)).unwrap();
         assert_eq!(argv.last().unwrap(), "& qwen --approval-mode plan -i 'x'");
+    }
+
+    #[test]
+    fn qwen_resumes_by_session_id() {
+        let id = "00000000-0000-4000-8000-000000000001";
+        assert_eq!(resume_args("qwen", ResumeTarget::Session(id)), ["--resume", id]);
+        // The shared builder puts the resume flag before the mode's flags, as it does for Claude Code.
+        let argv = launch_argv_resume(
+            &pwsh(),
+            Some("qwen"),
+            Some(SessionMode::Manual),
+            ResumeTarget::Session(id),
+        )
+        .unwrap();
+        assert_eq!(
+            argv.last().unwrap(),
+            &format!("& qwen --resume {id} --approval-mode default")
+        );
+    }
+
+    #[test]
+    fn qwen_continues_without_an_id() {
+        assert_eq!(resume_args("qwen", ResumeTarget::Last), ["--continue"]);
+        assert_eq!(resume_args("qwen", ResumeTarget::Fork("abc-1")), ["--continue"]);
+        let argv = launch_argv_resume(&pwsh(), Some("qwen"), None, ResumeTarget::Last).unwrap();
+        assert_eq!(argv.last().unwrap(), "& qwen --continue");
+    }
+
+    #[test]
+    fn qwen_is_an_adapter_with_its_mode_flags() {
+        assert_eq!(agent_command("qwen"), Some("qwen"));
+        assert!(Agents::shipped().manifest("qwen").is_none());
+        assert!(Agents::shipped().is_known("qwen"));
+        assert_eq!(
+            mode_args("qwen", SessionMode::Manual).unwrap(),
+            ["--approval-mode", "default"]
+        );
+        assert_eq!(
+            mode_args("qwen", SessionMode::Plan).unwrap(),
+            ["--approval-mode", "plan"]
+        );
+        assert_eq!(
+            mode_args("qwen", SessionMode::AutoEdit).unwrap(),
+            ["--approval-mode", "auto-edit"]
+        );
+        assert_eq!(
+            mode_args("qwen", SessionMode::FullAuto).unwrap(),
+            ["--approval-mode", "auto"]
+        );
+        assert_eq!(
+            mode_args("qwen", SessionMode::Bypass).unwrap(),
+            ["--approval-mode", "yolo"]
+        );
+        assert_eq!(mode_args("qwen", SessionMode::DontAsk), None);
+        assert_eq!(agent_in(&["pwsh".into(), "qwen".into()], None).as_deref(), Some("qwen"));
+        assert_eq!(agent_in(&[], Some("npx @qwen-code/qwen-code")).as_deref(), Some("qwen"));
+    }
+
+    #[test]
+    fn a_standalone_qwen_node_is_recognised() {
+        let lines = [
+            // The launcher's node, then its two children (Q10).
+            r#""C:\Users\u\AppData\Local\qwen-code\qwen-code\bin\..\node\node.exe"  "C:\Users\u\AppData\Local\qwen-code\qwen-code\bin\..\lib\cli-entry.js" --approval-mode default"#,
+            r#""C:\Users\u\AppData\Local\qwen-code\qwen-code\node\node.exe" --expose-gc "C:\Users\u\AppData\Local\qwen-code\qwen-code\lib\cli.js" --resume x"#,
+            // The npm package.
+            r#"node C:\Users\u\AppData\Roaming\npm\node_modules\@qwen-code\qwen-code\cli.js"#,
+        ];
+        for line in lines {
+            assert_eq!(agent_in(&[], Some(line)).as_deref(), Some("qwen"), "{line}");
+            assert_eq!(agent_of_node_argv(&words(line)), Some("qwen"), "{line}");
+        }
+        // Other node programs, and another project's qwen-code folder, are nobody's.
+        for line in [
+            "node server.js",
+            r#"node C:\work\qwen-code\README.js"#,
+            r#"node C:\work\qwen-code\cli.js"#,
+            r#"python C:\work\qwen-code\lib\cli.js"#,
+        ] {
+            assert_eq!(agent_in(&[], Some(line)), None, "{line}");
+            assert_eq!(agent_of_node_argv(&words(line)), None, "{line}");
+        }
     }
 
     #[test]

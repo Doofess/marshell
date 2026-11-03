@@ -101,6 +101,9 @@ pub fn sidecar_allowed_in(agent: &str, path: &str, session_id: &str, distro: Opt
     if agent == "antigravity" {
         return antigravity_transcript_allowed(path, session_id, distro);
     }
+    if agent == "qwen" {
+        return qwen_transcript_allowed(path, session_id, distro);
+    }
     if agent != "codex" {
         return transcript_allowed(path, session_id, distro);
     }
@@ -136,6 +139,22 @@ fn antigravity_transcript_allowed(path: &str, session_id: &str, distro: Option<&
             "logs",
             "transcript_full.jsonl",
         ])
+}
+
+/// True when `path` is absolute, local (or under the `distro`'s share), free of `..`, and ends in Qwen Code's transcript for
+/// this conversation: `projects/<one folder>/chats/<id>.jsonl`, with `/` or `\` between the parts. The id is a UUID.
+/// Makes no filesystem call.
+fn qwen_transcript_allowed(path: &str, session_id: &str, distro: Option<&str>) -> bool {
+    if !is_uuid(session_id) || !readable_place(path, distro) {
+        return false;
+    }
+    let parts: Vec<&str> = path.split(['/', '\\']).collect();
+    let file = format!("{session_id}.jsonl");
+    parts.iter().all(|part| *part != "..")
+        && matches!(
+            parts.as_slice(),
+            [.., "projects", folder, "chats", name] if !folder.is_empty() && *name == file
+        )
 }
 
 /// Reads the conversation in `text`, the decoded transcript of `agent`'s session. None for an agent whose
@@ -318,5 +337,61 @@ mod tests {
         // The hex digits may be in either case.
         let upper = ID.replace('0', "A");
         assert!(sidecar_allowed("antigravity", &agy_path('/', &upper), &upper));
+    }
+
+    fn qwen_path(sep: char, id: &str) -> String {
+        [
+            "C:",
+            "Users",
+            "u",
+            ".qwen",
+            "projects",
+            "c--users-u-proj",
+            "chats",
+            &format!("{id}.jsonl"),
+        ]
+        .join(&sep.to_string())
+    }
+
+    #[test]
+    fn a_qwen_transcript_path_is_allowed() {
+        for sep in ['/', '\\'] {
+            assert!(sidecar_allowed("qwen", &qwen_path(sep, ID), ID), "{sep}");
+        }
+        let upper = ID.replace('0', "A");
+        assert!(sidecar_allowed("qwen", &qwen_path('/', &upper), &upper));
+        let share = format!(r"\\wsl.localhost\Ubuntu\home\u\.qwen\projects\p\chats\{ID}.jsonl");
+        assert!(sidecar_allowed_in("qwen", &share, ID, Some("Ubuntu")));
+        assert!(!sidecar_allowed_in("qwen", &share, ID, None));
+    }
+
+    #[test]
+    fn a_qwen_path_outside_chats_or_with_dotdot_is_refused() {
+        let good = qwen_path('/', ID);
+        let bad = [
+            good.replace("/chats/", "/other/"),
+            good.replace("/projects/", "/project/"),
+            good.replace(".jsonl", ".json"),
+            // The id in the path is another conversation's.
+            qwen_path('/', "00000000-0000-4000-8000-000000000002"),
+            // Two parts where the project folder goes, none, and traversal.
+            good.replace("/c--users-u-proj/", "/a/b/"),
+            good.replace("/projects/c--users-u-proj/", "/projects/"),
+            good.replace("/projects/", "/projects/../projects/"),
+            good.replace("/chats/", "/chats/../chats/"),
+            // A remote path, a relative path and a trailing part.
+            format!("//host/share{}", &good[good.find("/.qwen").unwrap()..]),
+            format!(r"\\?\{}", good.replace('/', r"\")),
+            good[good.find("projects").unwrap()..].to_string(),
+            format!("{good}/more"),
+            String::new(),
+        ];
+        for path in &bad {
+            assert!(!sidecar_allowed("qwen", path, ID), "{path}");
+        }
+        // The id is a UUID.
+        for id in ["", "abc-1", "../x", "x; calc"] {
+            assert!(!sidecar_allowed("qwen", &qwen_path('/', id), id), "{id:?}");
+        }
     }
 }

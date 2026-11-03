@@ -6,6 +6,7 @@
 use marshell_core::agents::antigravity::hooks as agy_hooks;
 use marshell_core::agents::claude::hooks::{remove_plan, settings_path};
 use marshell_core::agents::codex::hooks as codex_hooks;
+use marshell_core::agents::qwen::hooks as qwen_hooks;
 use marshell_core::agents::skill;
 use marshell_core::config::preview::{MAX_CONFIG_BYTES, TOO_LARGE_DETAIL};
 use marshell_core::config::service::{ApplyError, ConfigService};
@@ -189,7 +190,7 @@ pub fn run(
             .map(|changes| (text, changes))
             .map_err(|e| e.to_string())
     });
-    // Codex's or Antigravity's hooks could not be planned, so their entries may still point at the bridge.
+    // Codex's, Antigravity's or Qwen Code's hooks could not be planned, so their entries may still point at the bridge.
     let mut hooks_failed = false;
     // A skill file could not be read: the removal goes on without it, but the exit code says it was left.
     let mut skill_unread = false;
@@ -228,6 +229,28 @@ pub fn run(
                 extras.push(changes);
             } else if text.is_some() {
                 let _ = writeln!(out, "Marshell has no hooks in {}.", agy_file.display());
+            }
+        }
+        Err(e) => {
+            let _ = writeln!(out, "{e}");
+            hooks_failed = true;
+        }
+    }
+    // Qwen Code's user settings.json and its chain, the same way: a problem is reported and the rest goes on.
+    let qwen_file = qwen_hooks::settings_path(env, user_home);
+    let qwen = read_text(&qwen_file).and_then(|text| {
+        let chain_text = read_text(&paths::statusline_chain(home, "qwen"))?;
+        qwen_hooks::remove_plan(&qwen_file, user_home, text.as_deref(), chain_text.as_deref(), None)
+            .map(|plan| (text, plan))
+            .map_err(|e| e.to_string())
+    });
+    match qwen {
+        Ok((text, qwen_plan)) => {
+            plan.statusline_left |= qwen_plan.statusline_left;
+            if !qwen_plan.changes.edits.is_empty() {
+                extras.push(qwen_plan.changes);
+            } else if text.is_some() {
+                let _ = writeln!(out, "Marshell has no hooks in {}.", qwen_file.display());
             }
         }
         Err(e) => {
@@ -302,7 +325,7 @@ pub fn run(
         if hooks_failed && bin.exists() {
             let _ = writeln!(
                 out,
-                "The folder {} was left in place, because Codex's or Antigravity's hooks may still point at it.",
+                "The folder {} was left in place, because Codex's, Antigravity's or Qwen Code's hooks may still point at it.",
                 bin.display()
             );
         }
@@ -730,6 +753,78 @@ mod tests {
         assert!(!marshell_core::paths::bin_dir(&f.home).exists(), "{out}");
     }
 
+    /// Installs Qwen Code's hooks into `<user home>/.qwen/settings.json` through the real plan and config service.
+    fn install_qwen(f: &Fixture, original: &str) -> PathBuf {
+        use marshell_core::agents::qwen::hooks as qh;
+        let path = qh::settings_path(&no_env, &f.user_home);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, original).unwrap();
+        let want = HookPlanRequest {
+            status: true,
+            statusline: true,
+            approve: false,
+            skill: false,
+            distro: None,
+        };
+        let chain = paths::statusline_chain(&f.home, "qwen");
+        let bridge = Bridge::local(&f.home);
+        let changes =
+            qh::install_plan(&path, &f.user_home, Some(original), None, Some(&chain), &bridge, &want).unwrap();
+        let service = ConfigService::new(f.home.clone());
+        let preview = service.preview(changes);
+        assert!(preview.can_apply, "{preview:?}");
+        let request = ApplyRequest {
+            changeset_id: preview.changeset_id.clone(),
+            expected_hashes: preview
+                .files
+                .iter()
+                .map(|f| ExpectedHash {
+                    path: f.path.clone(),
+                    hash: f.before_hash.clone(),
+                })
+                .collect(),
+        };
+        service.apply(&request, 4).unwrap();
+        assert!(std::fs::read_to_string(&path).unwrap().contains("mshl1"));
+        path
+    }
+
+    #[test]
+    fn uninstall_removes_qwens_hooks_and_restores_its_status_line() {
+        let f = installed(ORIGINAL);
+        let mine = "{\n  \"theme\": \"dark\",\n  \"ui\": {\"statusLine\": {\"type\": \"command\", \"command\": \"my-qwen-line\"}}\n}\n";
+        let qwen = install_qwen(&f, mine);
+        let during = std::fs::read_to_string(&qwen).unwrap();
+        assert!(!during.contains("my-qwen-line"), "{during}");
+        let (code, out) = run_with(&f, "y\n", false);
+        assert_eq!(code, 0, "{out}");
+        assert_eq!(out.matches("Apply these changes?").count(), 1, "{out}");
+        assert!(out.contains("settings.json"), "{out}");
+        assert_eq!(std::fs::read_to_string(&qwen).unwrap(), mine);
+        assert_eq!(std::fs::read_to_string(&f.settings).unwrap(), ORIGINAL);
+        assert!(!marshell_core::paths::bin_dir(&f.home).exists(), "{out}");
+    }
+
+    #[test]
+    fn uninstall_goes_on_past_a_qwen_settings_file_that_does_not_parse() {
+        let f = installed(ORIGINAL);
+        let path = marshell_core::agents::qwen::hooks::settings_path(&no_env, &f.user_home);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, "{ \"ui\": [oops\n").unwrap();
+        let (code, out) = run_with(&f, "y\n", false);
+        assert!(
+            out.contains(&*path.to_string_lossy()) && out.contains("does not parse"),
+            "{out}"
+        );
+        assert_eq!(out.matches("Apply these changes?").count(), 1, "{out}");
+        assert_eq!(std::fs::read_to_string(&f.settings).unwrap(), ORIGINAL);
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "{ \"ui\": [oops\n");
+        // Qwen's entries may still run the bridge, so bin stays and the exit says so.
+        assert!(marshell_core::paths::bridge_exe(&f.home).exists());
+        assert!(out.contains("left in place"), "{out}");
+        assert_ne!(code, 0, "{out}");
+    }
+
     #[test]
     fn uninstall_goes_on_past_an_unreadable_hooks_json() {
         let f = installed(ORIGINAL);
@@ -1020,7 +1115,7 @@ mod tests {
         let (code, out) = run_with(&f, "", true);
         assert_eq!(code, 1, "{out}");
         assert!(out.contains(&format!("Couldn't read {}", path.display())), "{out}");
-        assert!(!out.contains("Codex's or Antigravity's"), "{out}");
+        assert!(!out.contains("Codex's, Antigravity's or Qwen Code's"), "{out}");
         assert!(marshell_core::paths::bin_dir(&f.home).exists(), "{out}");
     }
 
@@ -1051,7 +1146,7 @@ mod tests {
         let (path, _) = broken_codex(&f);
         let (code, out) = run_with(&f, "", true);
         assert_eq!(code, 1, "{out}");
-        assert!(out.contains("Codex's or Antigravity's"), "{out}");
+        assert!(out.contains("Codex's, Antigravity's or Qwen Code's"), "{out}");
         assert!(path.exists());
     }
 
