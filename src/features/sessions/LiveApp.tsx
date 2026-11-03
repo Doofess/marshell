@@ -125,12 +125,13 @@ function SessionResumeBar({ endpoint, info, profileName, ...props }: Omit<Compon
   const [answer, setAnswer] = useState<{ endpoint: Endpoint | null; command?: string } | null>(null);
   useEffect(() => {
     let gone = false;
-    const request = endpoint ? fetchSessionCommand(endpoint, info.tab_id, { for: "resume" }) : Promise.resolve(undefined);
+    // A shell tab has no agent command to ask for (the core answers 409): its bar uses the profile's own text.
+    const request = endpoint && info.agent !== null ? fetchSessionCommand(endpoint, info.tab_id, { for: "resume" }) : Promise.resolve(undefined);
     void request.then((command) => {
       if (!gone) setAnswer({ endpoint, command });
     });
     return () => { gone = true; };
-  }, [endpoint, info.tab_id]);
+  }, [endpoint, info.tab_id, info.agent]);
   return answer?.endpoint === endpoint && <ResumeBar {...props} command={sessionResumeCommand(info, profileName, answer.command)} folder={info.cwd} />;
 }
 
