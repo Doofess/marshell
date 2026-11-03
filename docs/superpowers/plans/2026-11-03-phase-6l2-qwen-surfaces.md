@@ -56,6 +56,7 @@
 - `QWEN_CODE_SYSTEM_SETTINGS_PATH` is not read (6l1 decision 3), so a moved system file isn't shown as the source of a read-only row.
 - A distro's Qwen uses `<distro home>/.qwen`. A `QWEN_HOME` set inside the distro isn't followed, as for the other CLIs' overrides there.
 - Claude Code's `removal_pointers` has the same empty-array shape as Qwen's. Only Qwen's is fixed here.
+- A relative `QWEN_HOME` is resolved by Qwen against each session's working folder, so no one folder matches it. Marshell takes it as given (the global constraint), and Review focus 1 holds for `~` and absolute values only.
 
 ---
 
@@ -318,6 +319,7 @@ This task runs in the main thread, not through a worker. It runs Qwen headless f
   - Accounts shows Qwen's line and "Its settings choose an OpenAI-compatible API."
   - The company tab shows the six rows. A form edit and a raw edit with a comment both go through Review, Apply and Undo, and the scratch file is byte-equal after the undo. While a Qwen tab runs, make a form edit, then change the theme with `/theme` in Qwen, and check whether Marshell's edit survives. If it doesn't, add Antigravity's running warning for Qwen in a fix commit.
   - The skill: install it from the Agents section. In a Qwen tab, `/skills` (or the skill listing) shows `marshell`. Then install Codex's skill (scratch `~/.agents`) and record whether Qwen lists it once or twice.
+  - History: compare an interactive Qwen tab's chat file with Task 1's headless ones (record types, `provenance`, subtypes), and record anything that tells them apart.
   - History: a Qwen tab's conversation appears with its turns. A `qwen -p` run from a plain shell with the same scratch env is imported, with the right client.
   - Restart a Qwen tab whose id is known. The bar names `--resume <id>`, and the argv matches.
   - The version row reads 0.26.5. Update is not clicked against the real install. If a scratch copy of the standalone install is put first on the app's PATH, Update may run there, and its outcome is recorded.

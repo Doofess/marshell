@@ -92,7 +92,7 @@ Qwen Code 0.26.5 run headless (`qwen -p`) against the fake model, with `USERPROF
 | `…131` | `WRITE <abs>` | `write_file` creating a file, with a `fileDiff` |
 
 - A headless run writes `projects/<slug>/chats/<sessionId>.jsonl` exactly as an interactive one does. The first line is the first `user` record, carrying `sessionId`, `cwd`, `version` and `executionContext` (`modelId`, `authType`, `approvalMode`).
-- `provenance` doesn't tell headless from interactive: a headless prompt is `real_user`. Nothing else in the file does either (the attribution snapshot's `surface` is `cli` for both). Marshell can't tell a `qwen -p` run from a terminal one by its file.
+- `provenance` doesn't tell headless from interactive: a headless prompt is `real_user`. The source sets it from the record type alone (`createBaseRecord`: `user` → `real_user`, `assistant` → `assistant_output`, and so on), and the attribution snapshot's `surface` is `QWEN_CODE_ENTRYPOINT`, else `cli`, in both modes. So by the source, nothing in the file tells a `qwen -p` run from a terminal one. An interactive file was not recorded here; the live check compares one.
 - No `custom_title` record appears on a headless run.
 - `--resume <id>` appends to the same file; the new prompt's `promptId` counts on (`<id>########2`).
 - A tool call is the assistant's `functionCall {id, name, args}`. Its result is a `tool_result` record whose `functionResponse.id` and `toolCallResult.callId` both equal that id. `toolCallResult.status` is `success` or `error`. A failed call's `functionResponse.response` has `error` in place of `output`.
