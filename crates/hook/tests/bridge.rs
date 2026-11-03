@@ -735,3 +735,53 @@ fn no_chain_is_for_the_status_line_only() {
     assert!(go(home.path(), &[], args, b"{}").is_empty());
     assert_eq!(log_lines(home.path()).len(), 1);
 }
+
+fn qwen(role: &str) -> Vec<String> {
+    [role, "--agent", "qwen", "--tag", "mshl1"]
+        .iter()
+        .map(|s| s.to_string())
+        .collect()
+}
+
+const QWEN_REQUEST: &[u8] = br#"{"hook_event_name":"PermissionRequest","tool_name":"write_file","tool_input":{"file_path":"C:/p/b.txt","content":"x"}}"#;
+
+#[test]
+fn a_qwen_event_with_no_core_prints_nothing() {
+    // Qwen run with Marshell closed: no endpoint, so every role prints nothing and Qwen goes on as with no hook.
+    let home = tempfile::tempdir().unwrap();
+    for role in ["event", "permission", "context"] {
+        let out = go(
+            home.path(),
+            TAB,
+            qwen(role),
+            br#"{"hook_event_name":"UserPromptSubmit"}"#,
+        );
+        assert!(out.is_empty(), "{role}");
+    }
+}
+
+#[test]
+fn a_qwen_permission_answer_from_the_core_is_printed() {
+    for body in [
+        decision(r#"{"behavior":"allow"}"#),
+        decision(r#"{"behavior":"deny","message":"Denied in Marshell."}"#),
+    ] {
+        let home = tempfile::tempdir().unwrap();
+        let fake = serve(Reply::new(200, &body));
+        write_endpoint(home.path(), fake.port, "t");
+        let out = go(home.path(), TAB, qwen("permission"), QWEN_REQUEST);
+        assert_eq!(String::from_utf8(out).unwrap(), body);
+    }
+}
+
+#[test]
+fn a_qwen_permission_answer_with_updated_permissions_is_refused() {
+    // Marshell never keeps an always-allow rule for Qwen (slice 6l1 decision 5), so such an answer is not the core's.
+    let home = tempfile::tempdir().unwrap();
+    let body = decision(
+        r#"{"behavior":"allow","updatedPermissions":[{"type":"addRules","rules":[{"toolName":"write_file"}],"behavior":"allow","destination":"session"}]}"#,
+    );
+    let fake = serve(Reply::new(200, &body));
+    write_endpoint(home.path(), fake.port, "t");
+    assert!(go(home.path(), TAB, qwen("permission"), QWEN_REQUEST).is_empty());
+}
