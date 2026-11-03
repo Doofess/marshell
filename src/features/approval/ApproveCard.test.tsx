@@ -82,7 +82,8 @@ describe("ApproveCard: a Qwen request", () => {
     expect(h).not.toContain("Always allow");
     expect(h).not.toContain('aria-keyshortcuts="A"');
     // Its own class, so the lane shows the whole sentence instead of clipping it to one line as it does a path.
-    expect(h).toContain('<p class="approve-card__cwd approve-card__note">Qwen Code can&#x27;t keep an always-allow rule from Marshell. Allow this once instead.</p>');
+    // A sentence, not a path: it doesn't take the folder line's class (monospace, cut to one line in the lane).
+    expect(h).toContain('<p class="approve-card__note">Qwen Code can&#x27;t keep an always-allow rule from Marshell. Allow this once instead.</p>');
     expect(keyAction("a", { risky: false, armed: true, truncated: false, expanded: false, hasAlways: false, noTerminal: false })).not.toBe("always");
   });
   it("a released Qwen card says it is asking in its own terminal now", () => {

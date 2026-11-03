@@ -18,13 +18,14 @@ const MODE_LABELS: Record<Mode, string> = { manual: "Manual", plan: "Plan", "aut
 export const modeLabel = (mode?: Mode) => (mode ? MODE_LABELS[mode] : DASH);
 /** docs/PLAN.md "Sidebar rows": the header is marked red for bypass and auto, with a tint and a start-edge bar (never a box). */
 /**
- * What the mode chip says. Claude Code reports its mode in every hook event and the row follows it; for another CLI, the mode
- * a session started in is all Marshell knows.
+ * What the mode chip says. Claude Code and Qwen Code report their mode in every hook event and the row follows it; for another
+ * CLI, the mode a session started in is all Marshell knows.
  */
-const modeTitle = (agent: RowModel["agent"], mode: Mode) =>
-  agent === "claude"
-    ? `Mode: ${modeLabel(mode)}, as Claude Code last reported.`
-    : `Started in ${modeLabel(mode)}. A change made inside the CLI isn't shown yet.`;
+const TRACKED_MODE: Partial<Record<RowModel["agent"], string>> = { claude: "Claude Code", qwen: "Qwen Code" };
+const modeTitle = (agent: RowModel["agent"], mode: Mode) => {
+  const tracked = TRACKED_MODE[agent];
+  return tracked ? `Mode: ${modeLabel(mode)}, as ${tracked} last reported.` : `Started in ${modeLabel(mode)}. A change made inside the CLI isn't shown yet.`;
+};
 
 export const headerDanger = (mode?: Mode) => mode === "bypass" || mode === "full-auto";
 

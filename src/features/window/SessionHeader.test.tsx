@@ -82,6 +82,11 @@ describe("SessionHeader", () => {
     expect(h).toContain('aria-label="Mode: Plan, as Claude Code last reported."');
     expect(h).toContain('title="Mode: Plan, as Claude Code last reported."');
   });
+  it("says a Qwen Code session's mode is the one it last reported, since its hooks carry the mode too", () => {
+    const q = renderToStaticMarkup(<SessionHeader row={{ ...row("idle"), agent: "qwen", mode: "full-auto" }} />);
+    expect(q).toContain('aria-label="Mode: Full auto, as Qwen Code last reported."');
+    expect(q).not.toContain("Started in");
+  });
   it("says another agent's mode is the one the session started in, since a change inside that CLI is not tracked", () => {
     const c = renderToStaticMarkup(<SessionHeader row={{ ...row("idle"), mode: "plan" }} />);
     expect(c).toContain('aria-label="Started in Plan. A change made inside the CLI isn&#x27;t shown yet."');

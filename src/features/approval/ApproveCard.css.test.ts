@@ -85,3 +85,10 @@ describe("ApproveCard.css", () => {
     expect(css).not.toMatch(/\b(left|right|top|bottom):/);
   });
 });
+
+describe("ApproveCard.css: a note under the actions reads as a sentence", () => {
+  it("styles the note itself, in the card's text font rather than the folder line's monospace", () => {
+    expect(rule(".approve-card__note")).not.toBe("");
+    expect(rule(".approve-card__note")).not.toContain("--font-mono");
+  });
+});

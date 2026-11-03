@@ -263,7 +263,7 @@ export function ApproveCard({ request, expanded = false, armed = true, holdProgr
         </button>
       )}
       {session.agent === "qwen" && !isQuestion && (
-        <p className="approve-card__cwd approve-card__note">Qwen Code can't keep an always-allow rule from Marshell. Allow this once instead.</p>
+        <p className="approve-card__note">Qwen Code can't keep an always-allow rule from Marshell. Allow this once instead.</p>
       )}
       {!denies && (
         <button type="button" className="approve-card__link" aria-disabled={disabled} aria-keyshortcuts="T" onClick={() => fire("terminal")}>

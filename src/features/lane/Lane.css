@@ -113,7 +113,8 @@
 .lane .approve-card__question,
 .lane .approve-card__what,
 .lane .approve-card__risk > span,
-.lane .approve-card__cwd {
+.lane .approve-card__cwd,
+.lane .approve-card__note {
   display: -webkit-box;
   -webkit-box-orient: vertical;
   overflow: clip;
