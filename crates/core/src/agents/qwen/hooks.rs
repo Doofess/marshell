@@ -43,10 +43,7 @@ const STATUSLINE_POINTER: &str = "/ui/statusLine";
 
 /// `QWEN_HOME` when it is set and not blank, else `<user home>/.qwen`, joined with `settings.json`.
 pub fn settings_path(env: &dyn Fn(&str) -> Option<String>, user_home: &Path) -> PathBuf {
-    match env("QWEN_HOME") {
-        Some(dir) if !dir.trim().is_empty() => PathBuf::from(dir).join("settings.json"),
-        _ => user_home.join(".qwen").join("settings.json"),
-    }
+    super::home(env, user_home).join("settings.json")
 }
 
 // ---- the command ----
@@ -233,7 +230,7 @@ fn removal_pointers(settings: &Value, prune: bool) -> Vec<String> {
                 ops.extend(ours.iter().rev().map(|ei| format!("{event_pointer}/{gi}/hooks/{ei}")));
             }
         }
-        if !found {
+        if !found && !(event == PERMISSION_EVENT && groups.is_empty()) {
             continue;
         }
         if prune && groups_gone == groups.len() {
@@ -416,6 +413,19 @@ pub fn install_plan(
         .map(remove_op)
         .collect();
 
+    // Status arrays stay in place for the appends below. Only an approval array we no longer need is pruned.
+    let permission_pointer = format!("/hooks/{PERMISSION_EVENT}");
+    if !want.approve
+        && removal_pointers(&settings, true)
+            .iter()
+            .any(|p| p == &permission_pointer || p == "/hooks")
+    {
+        ops.retain(|op| !matches!(op, EditOp::JsonRemove { pointer } if pointer.starts_with(&format!("{permission_pointer}/"))));
+        if settings.pointer(&permission_pointer).is_some() {
+            ops.push(remove_op(permission_pointer));
+        }
+    }
+
     let existing = settings.get("hooks").and_then(Value::as_object);
     let events = STATUS_EVENTS
         .into_iter()
@@ -597,6 +607,7 @@ pub fn remove_plan(
     let reason = match (entries.is_empty(), line_note.is_empty()) {
         (false, false) => format!("{entries} and {line_note}."),
         (false, true) => format!("{entries}."),
+        (true, true) => "Removes the empty PermissionRequest hook list left by an earlier Marshell.".to_string(),
         (true, _) => format!("It {line_note}."),
     };
     Ok(RemovePlan {
@@ -927,7 +938,46 @@ mod tests {
         let (_, off) = install(&after, BOTH);
         let off = off.settings_value();
         assert_eq!(ours_count(&off), STATUS_EVENTS.len());
-        assert!(off["hooks"]["PermissionRequest"].as_array().is_none_or(Vec::is_empty));
+        assert!(off.pointer("/hooks/PermissionRequest").is_none());
+    }
+
+    #[test]
+    fn approvals_off_then_hooks_off_leaves_no_empty_permission_request() {
+        let (_, on) = install(&Files::default(), HookPlanRequest { approve: true, ..BOTH });
+        let (_, approvals_off) = install(&on, BOTH);
+        assert!(
+            approvals_off
+                .settings_value()
+                .pointer("/hooks/PermissionRequest")
+                .is_none()
+        );
+        let (_, hooks_off) = remove(&approvals_off);
+        assert!(hooks_off.settings_value().get("hooks").is_none());
+    }
+
+    #[test]
+    fn an_empty_permission_request_left_by_an_older_marshell_is_removed_with_the_hooks() {
+        let before = Files::settings(r#"{"hooks":{"PermissionRequest":[],"Stop":[]}}"#);
+        let (_, after) = remove(&before);
+        let value = after.settings_value();
+        assert!(value.pointer("/hooks/PermissionRequest").is_none());
+        assert_eq!(value.pointer("/hooks/Stop"), Some(&json!([])));
+        let (_, after) = remove(&Files::settings(r#"{"hooks":{"PermissionRequest":[]}}"#));
+        assert!(after.settings_value().get("hooks").is_none());
+    }
+
+    #[test]
+    fn a_persons_non_empty_permission_request_group_stays() {
+        let text = format!(r#"{{"hooks":{{"PermissionRequest":[{USER_GROUP}]}}}}"#);
+        let before = Files::settings(&text);
+        let (_, on) = install(&before, HookPlanRequest { approve: true, ..BOTH });
+        let (_, approvals_off) = install(&on, BOTH);
+        assert_eq!(
+            approvals_off.settings_value()["hooks"]["PermissionRequest"],
+            json!([read_value(USER_GROUP).unwrap()])
+        );
+        let (_, hooks_off) = remove(&approvals_off);
+        assert_eq!(hooks_off.settings_value(), before.settings_value());
     }
 
     #[test]

@@ -583,6 +583,7 @@ fn qwen_env() -> QwenEnv {
     )
     .with_claude_settings(project.join("settings.json"))
     .with_qwen_home(user_home.clone())
+    .with_qwen_system_settings(root.join("system-settings.json"))
     .with_qwen_version(Some("0.26.5".into()))
     .with_agent_path(|_| None);
     let bridge = paths::bridge_exe(&home);
@@ -1441,6 +1442,66 @@ async fn account_for_antigravity_is_no_command() {
     assert_eq!(body["agent"], "antigravity");
     assert_eq!(body["sign_in"], "no_command");
     assert_eq!(ANTIGRAVITY_RUNS.load(Ordering::SeqCst), 0, "nothing ran");
+}
+
+#[tokio::test]
+async fn qwen_account_names_the_configured_auth_type() {
+    for (user, system, want) in [
+        (
+            r#"{"security":{"auth":{"selectedType":"openai"}}}"#,
+            "{}",
+            "an OpenAI-compatible API",
+        ),
+        (
+            r#"{"security":{"auth":{"selectedType":"openai"}}}"#,
+            "{ // system wins\n \"security\": {\"auth\": {\"selectedType\": \"gemini\",},},}",
+            "a Gemini API",
+        ),
+        ("{}", r#"{"security":{"auth":{"selectedType":"future"}}}"#, "`future`"),
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        let user_home = dir.path().join("user");
+        std::fs::create_dir_all(user_home.join(".qwen")).unwrap();
+        std::fs::write(user_home.join(".qwen/settings.json"), user).unwrap();
+        let system_path = dir.path().join("system.json");
+        std::fs::write(&system_path, system).unwrap();
+        let st = AppState::new(TOKEN.into(), PORT, vec![], dir.path().join("marshell"), Vec::new())
+            .with_qwen_home(user_home)
+            .with_qwen_system_settings(system_path)
+            .with_agent_path(|_| None)
+            .with_status_runner(|_, _| panic!("Qwen Accounts must run no command"));
+        let (status, body) = get(&router(st), "/v1/agents/qwen/account").await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["sign_in"], "no_command");
+        assert_eq!(body["method"], want);
+        assert!(body["email"].is_null() && body["plan"].is_null());
+    }
+}
+
+#[tokio::test]
+async fn qwen_account_without_a_selected_type_has_no_method() {
+    for text in [
+        None,
+        Some("{}"),
+        Some(r#"{"security":{"auth":{"selectedType":false}}}"#),
+        Some("not json"),
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        let user_home = dir.path().join("user");
+        std::fs::create_dir_all(user_home.join(".qwen")).unwrap();
+        if let Some(text) = text {
+            std::fs::write(user_home.join(".qwen/settings.json"), text).unwrap();
+        }
+        let st = AppState::new(TOKEN.into(), PORT, vec![], dir.path().join("marshell"), Vec::new())
+            .with_qwen_home(user_home)
+            .with_qwen_system_settings(dir.path().join("missing-system.json"))
+            .with_agent_path(|_| None)
+            .with_status_runner(|_, _| panic!("Qwen Accounts must run no command"));
+        let (status, body) = get(&router(st), "/v1/agents/qwen/account").await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["sign_in"], "no_command");
+        assert!(body["method"].is_null());
+    }
 }
 
 #[tokio::test]

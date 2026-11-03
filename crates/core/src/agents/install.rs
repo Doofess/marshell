@@ -110,11 +110,9 @@ pub fn install_kind(agent: &str, exe: &Path, exists: &dyn Fn(&Path) -> bool) -> 
 }
 
 /// The command that updates the CLI, ready to run: the program and its arguments.
-pub fn update_argv(agent: &str, kind: &InstallKind, exe: &Path) -> Option<Vec<String>> {
+pub fn update_argv(_agent: &str, kind: &InstallKind, exe: &Path) -> Option<Vec<String>> {
     let words = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
     match kind {
-        // Qwen Code's standalone install has no `update` command Marshell knows of (slice 6l2 adds its update).
-        InstallKind::Native if agent == "qwen" => None,
         InstallKind::Native => Some(vec![exe.to_string_lossy().into_owned(), "update".into()]),
         InstallKind::Npm { package } => {
             let mut argv = words(&["cmd.exe", "/d", "/c"]);
@@ -135,7 +133,6 @@ pub fn update_argv(agent: &str, kind: &InstallKind, exe: &Path) -> Option<Vec<St
 /// The update command as shown to the person.
 pub fn update_text(agent: &str, kind: &InstallKind) -> Option<String> {
     match kind {
-        InstallKind::Native if agent == "qwen" => None,
         // The program's bare name, as the person types it.
         InstallKind::Native => crate::profiles::detect::agent_command(agent).map(|name| format!("{name} update")),
         InstallKind::Npm { package } => Some(format!("npm install -g {package}@latest")),
@@ -292,10 +289,19 @@ mod tests {
                 package: "@qwen-code/qwen-code".into()
             }
         );
-        // No update command is shown for the standalone install: Marshell doesn't know one.
+    }
+
+    #[test]
+    fn qwen_standalone_updates_with_qwen_update() {
         let exe = Path::new(r"C:\Users\u\AppData\Local\qwen-code\bin\qwen.cmd");
-        assert_eq!(update_argv("qwen", &InstallKind::Native, exe), None);
-        assert_eq!(update_text("qwen", &InstallKind::Native), None);
+        assert_eq!(
+            update_argv("qwen", &InstallKind::Native, exe),
+            Some(vec![exe.to_string_lossy().into_owned(), "update".into()])
+        );
+        assert_eq!(
+            update_text("qwen", &InstallKind::Native).as_deref(),
+            Some("qwen update")
+        );
     }
 
     #[test]

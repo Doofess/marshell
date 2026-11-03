@@ -235,6 +235,8 @@ struct Inner {
     /// The user home Qwen Code's `.qwen/settings.json` is planned under when a test names one; None means the user's
     /// home (and `QWEN_HOME` from the environment).
     qwen_home: Option<PathBuf>,
+    /// Qwen Code's read-only system settings file when a test names one; otherwise the fixed ProgramData path.
+    qwen_system_settings: Option<PathBuf>,
     /// The user home the `marshell` skill files are planned under when a test names one; None means the user's
     /// home, and `CLAUDE_CONFIG_DIR` from the environment. A named home also stops the environment from being read.
     skill_home: Option<PathBuf>,
@@ -361,6 +363,7 @@ impl AppState {
             codex_hooks: None,
             agy_home: None,
             qwen_home: None,
+            qwen_system_settings: None,
             skill_home: None,
             claude_compact_paths: None,
             programs_dir: None,
@@ -451,6 +454,15 @@ impl AppState {
             .qwen_home = Some(user_home);
         self
     }
+
+    /// Names Qwen Code's read-only system settings file. Call it before the state is cloned.
+    pub fn with_qwen_system_settings(mut self, path: PathBuf) -> Self {
+        Arc::get_mut(&mut self.0)
+            .expect("with_qwen_system_settings runs before the state is shared")
+            .qwen_system_settings = Some(path);
+        self
+    }
+
     /// Names the user home under which the `marshell` skill files of all three CLIs are planned, in place of the
     /// environment. The process environment is not read either, so a `CLAUDE_CONFIG_DIR` of the developer's cannot
     /// move Claude Code's skill out of it. Call it before the state is cloned.

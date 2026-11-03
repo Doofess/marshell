@@ -6,7 +6,35 @@ pub mod status;
 pub mod transcript;
 
 use serde_json::{Value, json};
-use std::path::Path;
+use std::path::{Path, PathBuf};
+
+/// Qwen's home itself, never an extra `.qwen` below `QWEN_HOME`. Relative overrides stay relative.
+pub fn home(env: &dyn Fn(&str) -> Option<String>, user_home: &Path) -> PathBuf {
+    let value = env("QWEN_HOME").unwrap_or_default();
+    let value = value.trim();
+    if value.is_empty() {
+        user_home.join(".qwen")
+    } else if value == "~" {
+        user_home.to_path_buf()
+    } else if let Some(tail) = value.strip_prefix("~/").or_else(|| value.strip_prefix(r"~\")) {
+        user_home.join(tail)
+    } else {
+        PathBuf::from(value)
+    }
+}
+
+/// The auth method chosen in settings, without claiming the person is signed in.
+pub fn auth_label(selected: &str) -> String {
+    match selected {
+        "qwen-oauth" => "Qwen OAuth".into(),
+        "openai" => "an OpenAI-compatible API".into(),
+        "openai-responses" => "the OpenAI Responses API".into(),
+        "anthropic" => "an Anthropic API".into(),
+        "gemini" => "a Gemini API".into(),
+        "vertex-ai" => "Vertex AI".into(),
+        other => format!("`{other}`"),
+    }
+}
 
 pub use super::common::Gate;
 
@@ -16,13 +44,27 @@ pub const FIXTURE_VERSIONS: &[(u32, u32, u32)] = &[(0, 26, 5)];
 
 /// Known: the same minor line as a recorded fixture set, and not older than its oldest patch.
 pub fn version_gate(version: Option<&str>) -> Gate {
-    super::common::version_gate("Qwen Code", FIXTURE_VERSIONS, version)
+    let numeric = version.map(|v| v.split_once('-').map_or(v, |(core, _)| core));
+    match super::common::version_gate("Qwen Code", FIXTURE_VERSIONS, numeric) {
+        Gate::Unknown(note) => match version.zip(numeric) {
+            Some((full, core)) => {
+                Gate::Unknown(note.replacen(&format!("Qwen Code {core} "), &format!("Qwen Code {full} "), 1))
+            }
+            None => Gate::Unknown(note),
+        },
+        known => known,
+    }
 }
 
-/// The version `qwen --version` prints: the bare `0.26.5`. `None` when the output holds no `x.y.z` first word.
+/// The first word `qwen --version` prints: `x.y.z`, optionally followed by a non-empty `-<suffix>`.
 pub fn parse_version(stdout: &str) -> Option<String> {
     let first = stdout.split_whitespace().next()?;
-    let parts: Vec<&str> = first.split('.').collect();
+    let core = match first.split_once('-') {
+        Some((_, "")) => return None,
+        Some((core, _)) => core,
+        None => first,
+    };
+    let parts: Vec<&str> = core.split('.').collect();
     let numeric = |p: &&str| !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit());
     (parts.len() == 3 && parts.iter().all(numeric)).then(|| first.to_string())
 }
@@ -41,6 +83,59 @@ pub fn skips_all(_user_home: &Path) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn home_expands_a_leading_tilde() {
+        let user = Path::new("C:/Users/test user");
+        for value in [r"~\q", "~/q"] {
+            assert_eq!(home(&|_| Some(value.into()), user), user.join("q"));
+        }
+        assert_eq!(home(&|_| Some("~".into()), user), user);
+    }
+
+    #[test]
+    fn home_ignores_a_blank_value_and_takes_others_as_given() {
+        let user = Path::new("C:/Users/test user");
+        assert_eq!(home(&|_| None, user), user.join(".qwen"));
+        for value in ["", " \t "] {
+            assert_eq!(home(&|_| Some(value.into()), user), user.join(".qwen"));
+        }
+        for (value, want) in [
+            (" D:/q/home ", "D:/q/home"),
+            ("relative/q", "relative/q"),
+            ("~other/q", "~other/q"),
+        ] {
+            assert_eq!(home(&|_| Some(value.into()), user), Path::new(want));
+        }
+    }
+
+    #[test]
+    fn a_preview_or_nightly_version_is_read() {
+        for version in ["0.27.0-preview.1", "0.27.0-nightly.20261101.abc"] {
+            assert_eq!(parse_version(version), Some(version.into()));
+            assert_eq!(
+                version_gate(Some(version)),
+                Gate::Unknown(format!("Qwen Code {version} is not one Marshell has recorded yet"))
+            );
+        }
+        assert_eq!(version_gate(Some("0.26.5-preview.1")), Gate::Known);
+        assert_eq!(parse_version("0.27.0-"), None);
+    }
+
+    #[test]
+    fn auth_labels() {
+        for (selected, label) in [
+            ("qwen-oauth", "Qwen OAuth"),
+            ("openai", "an OpenAI-compatible API"),
+            ("openai-responses", "the OpenAI Responses API"),
+            ("anthropic", "an Anthropic API"),
+            ("gemini", "a Gemini API"),
+            ("vertex-ai", "Vertex AI"),
+            ("future", "`future`"),
+        ] {
+            assert_eq!(auth_label(selected), label);
+        }
+    }
 
     #[test]
     fn qwen_0_26_5_is_known() {

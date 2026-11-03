@@ -1102,8 +1102,25 @@ fn account_of(st: &AppState, agent: &str, kind: Adapter) -> AccountStatus {
     match kind {
         // Antigravity has no status command, so nothing is run.
         Adapter::Antigravity => status.sign_in = SignIn::NoCommand,
-        // Qwen Code's account comes in slice 6l2.
-        Adapter::Qwen => status.sign_in = SignIn::NoCommand,
+        Adapter::Qwen => {
+            status.sign_in = SignIn::NoCommand;
+            let selected = |path: &Path| {
+                let text = std::fs::read_to_string(path).ok()?;
+                if parse_problem(&text).is_some() {
+                    return None;
+                }
+                read_value(&text)
+                    .ok()?
+                    .pointer("/security/auth/selectedType")?
+                    .as_str()
+                    .map(crate::agents::qwen::auth_label)
+            };
+            let system =
+                st.0.qwen_system_settings
+                    .clone()
+                    .unwrap_or_else(|| PathBuf::from(r"C:\ProgramData\qwen-code\settings.json"));
+            status.method = selected(&system).or_else(|| selected(&st.qwen_settings_path(&st.qwen_user_home().ok()?)));
+        }
         Adapter::Claude => {
             if let Some(exe) = st.agent_exe_of(agent)
                 && let Some((code, out)) = (st.0.status_runner)(&exe, &["auth", "status"])
