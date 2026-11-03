@@ -203,15 +203,15 @@ The plan's rules:
 | `PermissionRequest` | `".*"` | `permission` | 600 |
 
 - Entries are appended as new groups at the end of each event's array, after the person's own groups. A reinstall replaces Marshell's entries in place.
-- The status line:
-  - Theirs is a command: it is saved whole in the chain file, and `ui.statusLine` becomes `{"type":"command","command":<statusline_command>}`.
+- The status line (amended in Task 3 from the 0.26.5 bundle: a missing `ui.statusLine` shows Qwen's default preset, only `null` shows none, and a command config also keeps `refreshInterval`, `respectUserColors` and `hideContextIndicator`):
+  - Theirs is a command: the chain file holds `{"statusLine": <their whole object>}`, and the install replaces only `ui.statusLine.command` with `statusline_command`, so their other keys stay.
   - It is already Marshell's: nothing is saved.
-  - It is a preset (`type` other than `command`): it is left as it is, no chain is written, and `preset_statusline` is true.
-  - There is no `ui` object: one is added holding only `statusLine`.
+  - It is a preset (`type` other than `command`), or it is missing (no `ui`, or a `ui` with no `statusLine`), which is Qwen's default preset: it is left as it is, no chain is written, and `preset_statusline` is true.
+  - It is `null`: it becomes `{"type":"command","command":<statusline_command>}`, and the chain holds `{"statusLine": null}`.
 - Removal:
   - It takes out Marshell's entries, and drops a group, an event or `hooks` itself only when Marshell's entries were all that was in it (`claude::hooks::removal_pointers` with prune).
-  - It restores the chained status line, or removes `ui.statusLine` if there was none. It drops a `ui` that the install created and that now holds nothing.
-  - If the person changed `ui.statusLine` since the install, it is left as it is, and `RemovePlan.statusline_left` is true.
+  - While `ui.statusLine.command` is still Marshell's, it puts the chain's `command` back in that key, or `null` back as `ui.statusLine` when the chain holds `null`.
+  - If the person changed `ui.statusLine.command` since the install, it is left as it is, and `RemovePlan.statusline_left` is true.
 
 - [ ] **Step 1: Write the failing tests** (inline in `qwen/hooks.rs`, against string fixtures, like `claude/hooks.rs`'s):
   - `the_settings_path_follows_qwen_home`
@@ -220,7 +220,7 @@ The plan's rules:
   - `the_hook_command_uses_the_cmd_form`, and `a_bridge_path_with_a_quote_or_percent_is_refused_naming_qwen_code`.
   - `install_keeps_qwens_version_key`: a file holding `"$version": 4` keeps it, byte for byte, on install and removal.
   - `install_keeps_the_persons_own_hooks_and_bytes`: a file with a BOM, CRLF, a comment, their own `PreToolUse` group and `ui.theme`. After the install, every byte outside the new entries is unchanged (compare the text with Marshell's spans cut out).
-  - `install_chains_their_command_status_line` and `install_leaves_a_preset_status_line`
+  - `install_chains_their_command_status_line` (theirs has `refreshInterval` 5 and `respectUserColors`, which stay), `install_leaves_a_preset_status_line`, `install_leaves_the_default_preset_when_there_is_no_status_line` (no `ui`, and a `ui` with only `theme`), and `install_over_a_null_status_line_restores_null`
   - `reinstall_replaces_entries_in_place`
   - `removal_restores_the_original_bytes`: install then remove gives back the original text exactly, for each of the fixtures above.
   - `removal_leaves_a_status_line_the_person_changed`
