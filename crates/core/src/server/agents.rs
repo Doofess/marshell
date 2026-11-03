@@ -10,7 +10,9 @@ use crate::agents::codex::{self, trust};
 use crate::agents::common::Bridge;
 use crate::agents::install::{codex_newer, install_kind, update_text};
 use crate::agents::qwen::hooks as qwen_hooks;
-use crate::agents::settings_view::{control, has_bom, masked_render, parse_masked, read_managed, text_problem, view};
+use crate::agents::settings_view::{
+    control, has_bom, json_repeats_a_key, masked_render, parse_masked, read_managed, text_problem, view,
+};
 use crate::agents::skill;
 use crate::agents::{parse_any_version, run_version_text};
 use crate::bridge;
@@ -1155,7 +1157,7 @@ pub async fn settings_view(
     Ok(Json(view))
 }
 
-/// Where an agent's user settings file is, and Claude's managed settings (the first managed file that parses).
+/// Where an agent's user settings file is, and Claude's managed settings or Qwen's system settings.
 fn settings_file(st: &AppState, kind: Adapter) -> Result<(PathBuf, Option<(PathBuf, Value)>), Fail> {
     let no_home = || failed("the user's home folder is not known");
     Ok(match kind {
@@ -1172,7 +1174,13 @@ fn settings_file(st: &AppState, kind: Adapter) -> Result<(PathBuf, Option<(PathB
         }
         Adapter::Codex => (st.codex_dir().ok_or_else(no_home)?.join("config.toml"), None),
         Adapter::Antigravity => (agy::settings_path(&st.agy_user_home()?), None),
-        Adapter::Qwen => (st.qwen_settings_path(&st.qwen_user_home()?), None),
+        Adapter::Qwen => {
+            let system =
+                st.0.qwen_system_settings
+                    .clone()
+                    .unwrap_or_else(|| PathBuf::from(r"C:\ProgramData\qwen-code\settings.json"));
+            (st.qwen_settings_path(&st.qwen_user_home()?), read_managed(&[system]))
+        }
     })
 }
 
@@ -1263,12 +1271,6 @@ fn settings_plan_of(
     kind: Adapter,
     req: SettingsPlanRequest,
 ) -> Result<SettingsPlan, Refusal> {
-    // Qwen Code's settings are shown and not edited until slice 6l2; its hooks go through the hooks routes.
-    if matches!(kind, Adapter::Qwen) {
-        return Err(unprocessable(
-            "Marshell doesn't change Qwen Code's settings yet. Its hooks are set up from the Agents section.",
-        ));
-    }
     let (view, had_bom) = settings_read(st, agent, kind).map_err(Refusal::from)?;
     match view.state {
         ViewState::Unparsable { line } => {
@@ -1293,7 +1295,7 @@ fn settings_plan_of(
         Adapter::Claude => "Change Claude Code settings",
         Adapter::Codex => "Change Codex settings",
         Adapter::Antigravity => "Change Antigravity settings",
-        Adapter::Qwen => unreachable!("refused above"),
+        Adapter::Qwen => "Change Qwen Code settings",
     };
     let cs = ChangeSet {
         title: title.to_string(),
@@ -1440,6 +1442,9 @@ fn raw_op(agent: &str, view: &AgentSettingsView, had_bom: bool, text: &str) -> R
     if let Some(line) = text_problem(agent, body) {
         return Err(unprocessable(format!("The text doesn't parse at line {line}.")));
     }
+    if agent == "qwen" && json_repeats_a_key(body) {
+        return Err(unprocessable("Raw editing is off: a key appears twice in this file."));
+    }
     if agent == "antigravity" {
         let before = view.text.as_deref().and_then(|t| top_value(t, "enableTelemetry"));
         if top_value(body, "enableTelemetry") != before {
@@ -1523,9 +1528,6 @@ pub async fn settings_undo(
 }
 
 fn settings_undo_of(st: &AppState, agent: &str, kind: Adapter, snapshot_id: &str) -> Result<ApplyResult, Refusal> {
-    if matches!(kind, Adapter::Qwen) {
-        return Err(unprocessable("Marshell doesn't change Qwen Code's settings yet."));
-    }
     let (path, _) = settings_file(st, kind).map_err(Refusal::from)?;
     let info = match st.0.config.snapshots().get(snapshot_id) {
         Ok(Some(info)) => info,

@@ -46,14 +46,22 @@ pub fn curated(agent: &str) -> &'static [&'static str] {
             "verbosity",
             "enableTelemetry",
         ],
+        "qwen" => &[
+            "model.name",
+            "tools.approvalMode",
+            "general.enableAutoUpdate",
+            "privacy.usageStatisticsEnabled",
+            "ui.theme",
+            "general.vimMode",
+        ],
         _ => &[],
     }
 }
 
 /// The form's control for a curated key, the one place the choices are written down. The values are SchemaStore's
-/// `claude-code-settings.json`, Codex `rust-v0.164.0` and Antigravity's schema
-/// (`antigravity.google/schemas/v1/settings.json`); Codex's `untrusted` is refused at load and `on-failure` is a
-/// deprecated alias, so neither is offered.
+/// `claude-code-settings.json`, Codex `rust-v0.164.0`, Antigravity's schema
+/// (`antigravity.google/schemas/v1/settings.json`) and Qwen Code 0.26.5's schema; Codex's `untrusted` is refused at
+/// load and `on-failure` is a deprecated alias, so neither is offered.
 pub(crate) fn control(agent: &str, key: &str) -> Option<FieldControl> {
     let choice = |values: &[&str]| FieldControl::Choice {
         values: values.iter().map(|v| v.to_string()).collect(),
@@ -95,6 +103,11 @@ pub(crate) fn control(agent: &str, key: &str) -> Option<FieldControl> {
             "tokyo night",
         ]),
         ("antigravity", "verbosity") => choice(&["high", "medium", "low"]),
+        ("qwen", "model.name" | "ui.theme") => FieldControl::Text,
+        ("qwen", "tools.approvalMode") => choice(&["plan", "default", "auto-edit", "auto", "yolo"]),
+        ("qwen", "general.enableAutoUpdate" | "privacy.usageStatisticsEnabled" | "general.vimMode") => {
+            FieldControl::Switch
+        }
         _ => return None,
     })
 }
@@ -165,6 +178,51 @@ pub fn mask(value: &mut Value) {
 /// `mask` for a TOML value.
 pub fn mask_toml(value: &mut toml::Value) {
     mask_tree(value);
+}
+
+/// Qwen's secret containers keep their structure and only string leaves are hidden. In particular, `auth` and
+/// `gitCoAuthor` are objects to walk, while numeric token limits and booleans stay visible.
+fn mask_qwen(value: &mut Value) {
+    fn walk(node: &mut Value, path: &mut Vec<String>, hide: bool) {
+        match node {
+            Value::Object(map) => {
+                for (key, child) in map {
+                    let secret_container = key.eq_ignore_ascii_case("env")
+                        || (path.is_empty() && key == "modelProviders")
+                        || (path.len() == 2 && path[0] == "mcpServers" && key == "headers")
+                        || (path.first().is_some_and(|p| p == "telemetry") && key.to_lowercase().ends_with("headers"));
+                    path.push(key.clone());
+                    walk(child, path, hide || secret_container);
+                    path.pop();
+                }
+            }
+            Value::Array(items) => {
+                if !hide && items.iter().all(Value::is_string) {
+                    let words: Vec<String> = items.iter().filter_map(|v| v.as_str().map(str::to_string)).collect();
+                    let masked = mask_words(&words);
+                    // The shared command scrubber may combine the words. Qwen keeps every array leaf, so hide
+                    // those strings individually when the scrubber cannot return one value per word.
+                    *items = if masked.len() == items.len() {
+                        masked.into_iter().map(Value::String).collect()
+                    } else {
+                        vec![Value::String(HIDDEN.to_string()); items.len()]
+                    };
+                }
+                for child in items {
+                    walk(child, path, hide);
+                }
+            }
+            Value::String(s) => {
+                *s = if hide || path.last().is_some_and(|key| is_secret_key(key)) {
+                    HIDDEN.to_string()
+                } else {
+                    mask_string(s).into_owned()
+                };
+            }
+            _ => {}
+        }
+    }
+    walk(value, &mut Vec::new(), false);
 }
 
 fn mask_tree<T: Tree>(node: &mut T) {
@@ -469,6 +527,11 @@ fn json_hides(body: &str) -> JsonHides {
     }
 }
 
+/// A raw JSONC draft must not introduce repeated keys, even if its parsed tree would keep only the last value.
+pub(crate) fn json_repeats_a_key(text: &str) -> bool {
+    json_hides(text.strip_prefix('\u{feff}').unwrap_or(text)).repeated_key
+}
+
 /// The comments of TOML `text` (each from its `#` to the end of the line), skipping `#` inside any of the four kinds
 /// of string.
 fn toml_comments(text: &str) -> Vec<&str> {
@@ -602,7 +665,11 @@ pub(crate) fn parse_masked(agent: &str, text: &str) -> Result<Parsed, u32> {
             None => read_value(text).map_err(|_| 1u32)?,
         };
         let before = value.clone();
-        mask(&mut value);
+        if agent == "qwen" {
+            mask_qwen(&mut value);
+        } else {
+            mask(&mut value);
+        }
         let body = text.strip_prefix('\u{feff}').unwrap_or(text);
         let hides = json_hides(body);
         // A secret wins over the other reasons: it keeps the text from the page altogether.
@@ -610,7 +677,7 @@ pub(crate) fn parse_masked(agent: &str, text: &str) -> Result<Parsed, u32> {
             Some(RawLock::Hidden)
         } else if hides.repeated_key {
             Some(RawLock::RepeatedKey)
-        } else if !body.trim().is_empty() && serde_json::from_str::<Value>(body).is_err() {
+        } else if agent != "qwen" && !body.trim().is_empty() && serde_json::from_str::<Value>(body).is_err() {
             Some(RawLock::NotPlainJson)
         } else {
             None
@@ -630,8 +697,14 @@ pub(crate) fn masked_render(agent: &str, text: &str) -> Option<String> {
 }
 
 /// The line of the first problem when `text` is not a whole settings file for `agent`: strict JSON with an object at
-/// the top for Claude Code, TOML for Codex.
+/// the top for Claude Code and Antigravity, JSONC for Qwen Code, TOML for Codex.
 pub(crate) fn text_problem(agent: &str, text: &str) -> Option<u32> {
+    if agent == "qwen" {
+        if let Some((line, _)) = parse_problem(text) {
+            return Some(line);
+        }
+        return (!matches!(read_value(text), Ok(Value::Object(_)))).then_some(1);
+    }
     if agent == "codex" {
         return text
             .parse::<toml::Table>()
@@ -646,7 +719,7 @@ pub(crate) fn text_problem(agent: &str, text: &str) -> Option<u32> {
 }
 
 /// The view of `agent`'s settings file at `path`, given what reading it gave. `managed` is Claude's managed settings
-/// (already read, with the path of the file it came from); it is ignored for any other agent.
+/// or Qwen's system settings (already read, with the path of the file it came from).
 pub fn view(
     agent: &str,
     path: &Path,
@@ -665,9 +738,13 @@ pub fn view(
         text: None,
         raw_lock: None,
     };
-    let mut managed = managed.filter(|_| agent == "claude");
+    let mut managed = managed.filter(|_| matches!(agent, "claude" | "qwen"));
     if let Some((_, m)) = managed.as_mut() {
-        mask(m);
+        if agent == "qwen" {
+            mask_qwen(m);
+        } else {
+            mask(m);
+        }
     }
     let hash = text.as_ref().ok().map(|t| hash_bytes(t.as_bytes()));
     // The text itself, kept only when masking changes nothing in the file and no repeated key stands in the way.
@@ -699,7 +776,7 @@ pub fn view(
         }
     };
     out.raw = raw;
-    out.editable = matches!(agent, "claude" | "codex" | "antigravity");
+    out.editable = matches!(agent, "claude" | "codex" | "antigravity" | "qwen");
     out.hash = hash;
     out.text = plain;
     if out.editable && out.state == ViewState::Ok {
@@ -775,6 +852,187 @@ mod tests {
 
     fn value_of<'a>(list: &'a [SettingValue], key: &str) -> Option<&'a SettingValue> {
         list.iter().find(|s| s.key == key)
+    }
+
+    #[test]
+    fn qwen_curated_rows_and_controls() {
+        let v = run("qwen", "{}");
+        assert!(v.editable);
+        assert_eq!(
+            v.curated.iter().map(|r| r.key.as_str()).collect::<Vec<_>>(),
+            [
+                "model.name",
+                "tools.approvalMode",
+                "general.enableAutoUpdate",
+                "privacy.usageStatisticsEnabled",
+                "ui.theme",
+                "general.vimMode"
+            ]
+        );
+        assert_eq!(v.curated[0].control, Some(FieldControl::Text));
+        assert_eq!(
+            v.curated[1].control,
+            Some(FieldControl::Choice {
+                values: ["plan", "default", "auto-edit", "auto", "yolo"]
+                    .map(str::to_string)
+                    .to_vec()
+            })
+        );
+        for i in [2, 3, 5] {
+            assert_eq!(v.curated[i].control, Some(FieldControl::Switch));
+        }
+        assert_eq!(v.curated[4].control, Some(FieldControl::Text));
+    }
+
+    #[test]
+    fn qwen_secrets_are_hidden() {
+        let cases = [
+            (
+                json!({"security": {"auth": {"apiKey": "private-value"}}}),
+                "/security/auth/apiKey",
+            ),
+            (json!({"env": {"DEBUG": "private-value"}}), "/env/DEBUG"),
+            (
+                json!({"modelProviders": {"openai": [{"model": "private-value"}]}}),
+                "/modelProviders/openai/0/model",
+            ),
+            (
+                json!({"mcpServers": {"s": {"env": {"X": "private-value"}}}}),
+                "/mcpServers/s/env/X",
+            ),
+            (
+                json!({"mcpServers": {"s": {"headers": {"X-Custom": "private-value"}}}}),
+                "/mcpServers/s/headers/X-Custom",
+            ),
+            (
+                json!({"hooks": {"Stop": [{"hooks": [{"env": {"X": "private-value"}}]}]}}),
+                "/hooks/Stop/0/hooks/0/env/X",
+            ),
+            (
+                json!({"telemetry": {"otlpHeaders": {"X-Custom": "private-value"}}}),
+                "/telemetry/otlpHeaders/X-Custom",
+            ),
+            (
+                json!({"privateToken": {"name": "visible", "password": "private-value"}}),
+                "/privateToken/password",
+            ),
+            (
+                json!({"custom": {"accessToken": "private-value"}}),
+                "/custom/accessToken",
+            ),
+        ];
+        for (input, pointer) in cases {
+            let v = run("qwen", &input.to_string());
+            let raw: Value = serde_json::from_str(v.raw.as_deref().unwrap()).unwrap();
+            assert_eq!(raw.pointer(pointer), Some(&json!("hidden")), "{pointer}");
+            if let Some(name) = input.pointer("/privateToken/name") {
+                assert_eq!(raw.pointer("/privateToken/name"), Some(name));
+            }
+            let form = v.others.iter().map(|r| r.value.as_deref().unwrap()).collect::<String>();
+            assert!(
+                form.contains("hidden") && !form.contains("private-value"),
+                "{pointer}: {form}"
+            );
+            assert_eq!(v.raw_lock, Some(RawLock::Hidden));
+            assert!(v.text.is_none());
+        }
+    }
+
+    #[test]
+    fn qwen_selected_type_is_shown_and_raw_stays_editable() {
+        let text = "{ // my choice\n \"security\": {\"auth\": {\"selectedType\": \"qwen-oauth\"}},\n}";
+        let v = run("qwen", text);
+        assert!(v.editable);
+        assert_eq!(v.raw_lock, None);
+        assert_eq!(v.text.as_deref(), Some(text));
+        assert!(
+            value_of(&v.others, "security")
+                .unwrap()
+                .value
+                .as_deref()
+                .unwrap()
+                .contains("qwen-oauth")
+        );
+    }
+
+    #[test]
+    fn qwen_masking_preserves_command_array_shape() {
+        let v = run(
+            "qwen",
+            r#"{"args":["docker","login","-u","person","-p","private-value"]}"#,
+        );
+        let raw: Value = serde_json::from_str(v.raw.as_deref().unwrap()).unwrap();
+        assert_eq!(raw["args"].as_array().unwrap().len(), 6);
+        assert!(!v.raw.as_deref().unwrap().contains("private-value"));
+        assert_eq!(v.raw_lock, Some(RawLock::Hidden));
+        assert!(v.text.is_none());
+    }
+
+    #[test]
+    fn git_co_author_and_token_limits_are_not_hidden() {
+        let text = r#"{"general":{"gitCoAuthor":{"commit":true}},"model":{"maxTokens":32768},"env":{"COUNT":3,"ENABLED":false},"tokenLimit":12}"#;
+        let v = run("qwen", text);
+        let raw: Value = serde_json::from_str(v.raw.as_deref().unwrap()).unwrap();
+        assert_eq!(raw.pointer("/general/gitCoAuthor/commit"), Some(&json!(true)));
+        assert_eq!(raw.pointer("/model/maxTokens"), Some(&json!(32768)));
+        assert_eq!(raw.pointer("/env/COUNT"), Some(&json!(3)));
+        assert_eq!(raw.pointer("/env/ENABLED"), Some(&json!(false)));
+        assert_eq!(raw["tokenLimit"], 12);
+        assert_eq!(v.raw_lock, None);
+        assert_eq!(v.text.as_deref(), Some(text));
+    }
+
+    #[test]
+    fn claude_masking_is_unchanged() {
+        let v = run(
+            "claude",
+            r#"{"security":{"auth":{"selectedType":"qwen-oauth"}},"general":{"gitCoAuthor":{"commit":true}},"maxTokens":32768}"#,
+        );
+        let raw: Value = serde_json::from_str(v.raw.as_deref().unwrap()).unwrap();
+        assert_eq!(raw.pointer("/security/auth"), Some(&json!("hidden")));
+        assert_eq!(raw.pointer("/general/gitCoAuthor"), Some(&json!("hidden")));
+        assert_eq!(raw["maxTokens"], "hidden");
+    }
+
+    #[test]
+    fn qwen_system_file_makes_a_row_read_only() {
+        let v = view(
+            "qwen",
+            Path::new("settings.json"),
+            Ok(r#"{"model":{"name":"user"},"general":{"vimMode":true}}"#.into()),
+            Some((
+                PathBuf::from("C:/org/settings.json"),
+                json!({"model":{"name":"system"}}),
+            )),
+        );
+        let row = value_of(&v.curated, "model.name").unwrap();
+        assert_eq!(row.value.as_deref(), Some("system"));
+        assert_eq!(row.scope, ViewScope::Managed);
+        assert_eq!(
+            row.lock,
+            Some(FieldLock::Managed {
+                path: "C:/org/settings.json".into()
+            })
+        );
+        assert_eq!(value_of(&v.curated, "general.vimMode").unwrap().lock, None);
+    }
+
+    #[test]
+    fn a_qwen_file_with_comments_stays_raw_editable() {
+        let text = "{ // mine\n \"model\": {\"name\": \"qwen\",},\n}";
+        let v = run("qwen", text);
+        assert!(v.editable);
+        assert_eq!(v.raw_lock, None);
+        assert_eq!(v.text.as_deref(), Some(text));
+        assert_eq!(text_problem("qwen", text), None);
+    }
+
+    #[test]
+    fn a_qwen_file_with_a_repeated_key_is_raw_read_only() {
+        let v = run("qwen", r#"{"model":{"name":"first","name":"second"}}"#);
+        assert!(v.editable);
+        assert_eq!(v.raw_lock, Some(RawLock::RepeatedKey));
+        assert!(v.text.is_none());
     }
 
     #[test]

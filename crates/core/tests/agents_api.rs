@@ -608,6 +608,179 @@ async fn install_qwen(e: &QwenEnv) -> Value {
 
 const QWEN_OWN_LINE: &str = "\u{feff}{\r\n  \"theme\": \"dark\",\r\n  \"ui\": {\"statusLine\": {\"type\": \"command\", \"command\": \"my-line\"}}\r\n}\r\n";
 
+impl QwenEnv {
+    fn write_settings(&self, text: &str) {
+        std::fs::create_dir_all(self.settings.parent().unwrap()).unwrap();
+        std::fs::write(&self.settings, text).unwrap();
+    }
+
+    async fn settings_plan(&self, change: Value) -> (StatusCode, Vec<u8>) {
+        post_raw(
+            &self.app,
+            "/v1/agents/qwen/settings/plan",
+            json!({
+                "expected_hash": hash_at(&self.settings), "change": change
+            }),
+        )
+        .await
+    }
+
+    async fn settings_change(&self, change: Value) -> String {
+        let before = std::fs::read(&self.settings).ok();
+        let (status, bytes) = self.settings_plan(change).await;
+        assert_eq!(status, StatusCode::OK, "{}", text(&bytes));
+        let plan = json_of(&bytes);
+        assert_eq!(plan["preview"]["title"], "Change Qwen Code settings");
+        assert_eq!(plan["preview"]["can_apply"], true, "{plan}");
+        assert_eq!(std::fs::read(&self.settings).ok(), before, "preview does not write");
+        let (status, applied) = post(&self.app, "/v1/config/apply", shown(&plan["preview"])).await;
+        assert_eq!(status, StatusCode::OK, "{applied}");
+        applied["snapshot_id"].as_str().unwrap().to_string()
+    }
+}
+
+#[tokio::test]
+async fn qwen_settings_form_edit_keeps_comments_bom_and_crlf() {
+    let e = qwen_env();
+    let original = "\u{feff}{\r\n  // my formatting\r\n  \"model\": {\"name\": \"old\",},\r\n  \"security\": {\"auth\": {\"apiKey\": \"private-value\"}},\r\n  \"env\": {\"X\": \"private-value\"},\r\n  \"modelProviders\": {\"openai\": [{\"model\": \"private-value\"}]},\r\n  \"mcpServers\": {\"s\": {\"headers\": {\"X-Custom\": \"private-value\"}}},\r\n}\r\n";
+    e.write_settings(original);
+    let change = json!({"kind":"form", "edits":edit("model.name", "\"new\"")});
+    let (status, bytes) = e.settings_plan(change.clone()).await;
+    assert_eq!(status, StatusCode::OK, "{}", text(&bytes));
+    assert!(!text(&bytes).contains("private-value"));
+    assert_eq!(json_of(&bytes)["normalized"], true);
+    let (status, v) = get(&e.app, "/v1/agents/qwen/settings-view").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(v["editable"], true);
+    assert_eq!(v["curated"].as_array().unwrap().len(), 6);
+    assert!(!v.to_string().contains("private-value"));
+    e.settings_change(change).await;
+    assert_eq!(
+        std::fs::read(&e.settings).unwrap(),
+        original.replace("\"old\"", "\"new\"").as_bytes()
+    );
+}
+
+#[tokio::test]
+async fn qwen_raw_edit_saves_the_typed_jsonc() {
+    let e = qwen_env();
+    for bom in [false, true] {
+        e.write_settings(if bom {
+            "\u{feff}{ // original\n}"
+        } else {
+            "{ // original\n}"
+        });
+        let typed = "{\r\n  // keep this exactly\r\n  \"model\" : { \"name\": \"typed\", },\r\n}\r\n";
+        e.settings_change(json!({"kind":"raw", "text":format!("\u{feff}\u{feff}{typed}")}))
+            .await;
+        let expected = if bom { format!("\u{feff}{typed}") } else { typed.into() };
+        assert_eq!(std::fs::read(&e.settings).unwrap(), expected.as_bytes());
+    }
+}
+
+#[tokio::test]
+async fn qwen_raw_edit_that_does_not_parse_is_refused() {
+    let e = qwen_env();
+    let original = "{ // unchanged\n}";
+    e.write_settings(original);
+    for (typed, line) in [
+        ("{\n\"model\": ,\n}", 2),
+        ("[]", 1),
+        ("null", 1),
+        ("1", 1),
+        ("\"text\"", 1),
+    ] {
+        let (status, bytes) = e.settings_plan(json!({"kind":"raw", "text":typed})).await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+        assert_eq!(text(&bytes), format!("The text doesn't parse at line {line}."));
+        assert_eq!(std::fs::read_to_string(&e.settings).unwrap(), original);
+    }
+}
+
+#[tokio::test]
+async fn qwen_raw_edit_is_refused_while_a_value_is_hidden() {
+    let e = qwen_env();
+    let original = r#"{"mcpServers":{"s":{"headers":{"X-Custom":"private-value"}}}}"#;
+    e.write_settings(original);
+    let (status, bytes) = e.settings_plan(json!({"kind":"raw", "text":"{}"})).await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(
+        text(&bytes),
+        "This file holds secret values, so Marshell doesn't edit it as text."
+    );
+    assert_eq!(std::fs::read_to_string(&e.settings).unwrap(), original);
+}
+
+#[tokio::test]
+async fn qwen_settings_undo_puts_the_file_back() {
+    let e = qwen_env();
+    let original = "\u{feff}{\r\n // mine\r\n \"general\": {\"vimMode\": false},\r\n}\r\n";
+    e.write_settings(original);
+    let snapshot = e
+        .settings_change(json!({"kind":"form", "edits":edit("general.vimMode", "true")}))
+        .await;
+    assert_ne!(std::fs::read(&e.settings).unwrap(), original.as_bytes());
+    let (status, bytes) = post_raw(&e.app, "/v1/agents/qwen/settings/undo", json!({"snapshot_id":snapshot})).await;
+    assert_eq!(status, StatusCode::OK, "{}", text(&bytes));
+    assert_eq!(std::fs::read(&e.settings).unwrap(), original.as_bytes());
+}
+
+#[tokio::test]
+async fn qwen_settings_not_set_removes_the_key() {
+    let e = qwen_env();
+    e.write_settings("{ // mine\n \"general\": {\"vimMode\": true, \"enableAutoUpdate\": false},\n}");
+    e.settings_change(json!({"kind":"form", "edits":[{"key":"general.vimMode", "value":null}]}))
+        .await;
+    let written = std::fs::read_to_string(&e.settings).unwrap();
+    let value = marshell_core::config::jsonc::read_value(&written).unwrap();
+    assert!(value.pointer("/general/vimMode").is_none());
+    assert_eq!(value.pointer("/general/enableAutoUpdate"), Some(&json!(false)));
+    assert!(written.contains("// mine"));
+}
+
+#[tokio::test]
+async fn qwen_raw_edit_with_a_repeated_key_is_refused() {
+    let e = qwen_env();
+    for (original, typed) in [
+        ("{}", r#"{"model":{"name":"first","name":"second"}}"#),
+        (r#"{"model":{"name":"first","name":"second"}}"#, "{}"),
+    ] {
+        e.write_settings(original);
+        let (status, bytes) = e.settings_plan(json!({"kind":"raw", "text":typed})).await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+        assert_eq!(text(&bytes), "Raw editing is off: a key appears twice in this file.");
+        assert_eq!(std::fs::read_to_string(&e.settings).unwrap(), original);
+    }
+}
+
+#[tokio::test]
+async fn qwen_settings_system_row_is_read_only() {
+    let e = qwen_env();
+    e.write_settings(r#"{"model":{"name":"user"},"general":{"vimMode":false}}"#);
+    let system = canonical(e._dir.path()).join("system-settings.json");
+    let system_text = "{ // organization\n \"model\": {\"name\": \"system\"},\n}";
+    std::fs::write(&system, system_text).unwrap();
+    let (status, v) = get(&e.app, "/v1/agents/qwen/settings-view").await;
+    assert_eq!(status, StatusCode::OK);
+    let row = v["curated"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["key"] == "model.name")
+        .unwrap();
+    assert_eq!(row["value"], "system");
+    assert_eq!(row["scope"], "managed");
+    assert_eq!(row["lock"]["path"], system.to_string_lossy().as_ref());
+    let (status, bytes) = e
+        .settings_plan(json!({"kind":"form", "edits":edit("model.name", "\"new\"")}))
+        .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    assert!(text(&bytes).contains("is set by"));
+    e.settings_change(json!({"kind":"form", "edits":edit("general.vimMode", "true")}))
+        .await;
+    assert_eq!(std::fs::read_to_string(&system).unwrap(), system_text);
+}
+
 #[tokio::test]
 async fn qwen_setup_reports_none_then_installed_after_apply() {
     let e = qwen_env();
