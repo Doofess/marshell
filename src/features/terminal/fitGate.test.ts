@@ -1,5 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { shouldFit } from "./fitGate";
+import { sendsFirstSize, shouldFit } from "./fitGate";
+
+describe("sendsFirstSize", () => {
+  it("sends a terminal's first size only once it is shown, and only once", () => {
+    expect(sendsFirstSize(false, false)).toBe(false);
+    expect(sendsFirstSize(true, false)).toBe(true);
+    expect(sendsFirstSize(true, true)).toBe(false);
+  });
+});
 
 describe("shouldFit", () => {
   it("skips a hidden terminal, whatever its host measures", () => {
