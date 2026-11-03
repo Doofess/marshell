@@ -250,7 +250,8 @@ pub async fn tab_resume_command(
         Ok(run) => run,
         Err(err) => return err.into_response(),
     };
-    let Some(command) = run.command else {
+    // The bars show it as the line a person would type: the argv the restart runs keeps PowerShell's `& `.
+    let Some(command) = run.bare_command().map(str::to_string) else {
         return cannot_resume(NO_AGENT);
     };
     let form = match session {

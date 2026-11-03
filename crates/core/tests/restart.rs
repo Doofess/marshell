@@ -30,12 +30,18 @@ fn state_in(home: &Path, agent_on_path: fn(&str) -> bool) -> AppState {
         terminal_theme: None,
         detected: true,
     };
+    // The same program under PowerShell's family: its command lines start with the call operator.
+    let pwsh = Profile {
+        id: "pwsh".into(),
+        family: ShellFamily::PowerShell,
+        ..profile.clone()
+    };
     AppState::new(
         TOKEN.into(),
         PORT,
         vec![ORIGIN.into()],
         home.to_path_buf(),
-        vec![profile],
+        vec![profile, pwsh],
     )
     .with_agent_check(agent_on_path)
     .with_qwen_home(home.to_path_buf())
@@ -69,8 +75,12 @@ async fn sessions(app: &axum::Router) -> serde_json::Value {
 
 /// Starts a session in `cwd`, an agent one when `agent` is given, and returns its tab id.
 async fn create(app: &axum::Router, cwd: &Path, agent: Option<&str>, mode: Option<&str>) -> String {
+    create_on(app, "sleeper", cwd, agent, mode).await
+}
+
+async fn create_on(app: &axum::Router, profile: &str, cwd: &Path, agent: Option<&str>, mode: Option<&str>) -> String {
     let body = serde_json::json!({
-        "cols": 80, "rows": 24, "profile_id": "sleeper", "cwd": cwd.to_string_lossy(),
+        "cols": 80, "rows": 24, "profile_id": profile, "cwd": cwd.to_string_lossy(),
         "agent": agent, "mode": mode,
     });
     let res = app
@@ -171,6 +181,25 @@ async fn restart_command_for_codex_names_resume_by_id() {
         "codex resume 12345678-1234-1234-1234-123456789abc --no-daemon --sandbox read-only --ask-for-approval on-request"
     );
     assert_eq!(body["form"], "by_id");
+    stop(&state, &tab);
+}
+
+#[tokio::test]
+async fn the_bars_name_the_bare_command_on_a_powershell_profile() {
+    let home = tempfile::tempdir().unwrap();
+    let work = tempfile::tempdir().unwrap();
+    let state = state_in(home.path(), |_| true);
+    let app = router(state.clone());
+    let tab = create_on(&app, "pwsh", work.path(), Some("qwen"), Some("manual")).await;
+    note_chat(&state, &tab, "qwen", work.path());
+    assert_eq!(
+        command(&app, &tab, "?for=restart&mode=plan").await["command"],
+        "qwen --resume 12345678-1234-1234-1234-123456789abc --approval-mode plan"
+    );
+    assert_eq!(
+        command(&app, &tab, "?for=resume").await["command"],
+        "qwen --resume 12345678-1234-1234-1234-123456789abc --approval-mode default"
+    );
     stop(&state, &tab);
 }
 

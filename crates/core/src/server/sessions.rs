@@ -131,7 +131,7 @@ pub(super) struct Resolved {
     pub(super) profile_name: String,
     pub(super) family: ShellFamily,
     pub(super) argv: Vec<String>,
-    /// The agent's command before the shell wrapper, also shown by the restart and resume bars.
+    /// The agent's command line before the shell wrapper; the restart and resume bars show `bare_command`.
     pub(super) command: Option<String>,
     pub(super) env: Vec<(String, String)>,
     /// Variables the child must not inherit, on top of the session markers: a preset's.
@@ -143,6 +143,18 @@ pub(super) struct Resolved {
     marks: bool,
     /// The line a tool preset runs first: it holds what the person typed, so it goes to the spawn and nowhere else.
     initial_command: Option<String>,
+}
+
+impl Resolved {
+    /// `command` as a person would type it: PowerShell's call operator, which only its command line needs, is left off.
+    pub(super) fn bare_command(&self) -> Option<&str> {
+        let command = self.command.as_deref()?;
+        if self.family == ShellFamily::PowerShell {
+            Some(command.strip_prefix("& ").unwrap_or(command))
+        } else {
+            Some(command)
+        }
+    }
 }
 
 /// Finds the profile (the default when `profile_id` is None) and builds the argv for the agent.
@@ -1650,6 +1662,10 @@ mod tests {
     }
 
     fn resolved_codex_line(version: Option<&str>, resume: Option<ResumeTarget<'_>>) -> String {
+        resolved_codex(version, resume).argv.last().unwrap().clone()
+    }
+
+    fn resolved_codex(version: Option<&str>, resume: Option<ResumeTarget<'_>>) -> Resolved {
         let pwsh = marshell_protocol::api::Profile {
             id: "pwsh".into(),
             name: "pwsh".into(),
@@ -1665,12 +1681,18 @@ mod tests {
         let st = AppState::new("t".into(), 1, Vec::new(), home, vec![pwsh])
             .with_codex_version(version.map(str::to_string))
             .with_agent_path(|_| None);
-        let run = tokio::runtime::Builder::new_current_thread()
+        tokio::runtime::Builder::new_current_thread()
             .build()
             .unwrap()
             .block_on(resolve(&st, Some("pwsh"), Some("codex"), None, resume, None, None))
-            .unwrap();
-        run.argv.last().unwrap().clone()
+            .unwrap()
+    }
+
+    #[test]
+    fn the_bars_command_has_no_call_operator_but_the_argv_keeps_it() {
+        let run = resolved_codex(Some("0.170.2"), Some(ResumeTarget::Last));
+        assert_eq!(run.argv.last().unwrap(), "& codex resume --last --no-daemon");
+        assert_eq!(run.bare_command(), Some("codex resume --last --no-daemon"));
     }
 
     #[test]
