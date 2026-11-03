@@ -14,7 +14,15 @@ pub fn home(env: &dyn Fn(&str) -> Option<String>, user_home: &Path) -> PathBuf {
     let value = value.trim();
     if value.is_empty() {
         user_home.join(".qwen")
-    } else if value == "~" {
+    } else {
+        expand_home(value, user_home)
+    }
+}
+
+/// A folder from a Qwen variable (`QWEN_HOME`, `QWEN_RUNTIME_DIR`) as Qwen's `Storage.resolvePath` reads it: `~`,
+/// `~/x` and `~\x` are under the home; anything else, a relative path included, is taken as written.
+pub fn expand_home(value: &str, user_home: &Path) -> PathBuf {
+    if value == "~" {
         user_home.to_path_buf()
     } else if let Some(tail) = value.strip_prefix("~/").or_else(|| value.strip_prefix(r"~\")) {
         user_home.join(tail)

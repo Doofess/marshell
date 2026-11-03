@@ -40,7 +40,7 @@ pub struct ImportRoots {
 
 /// Claude Code's `projects` folder is `$CLAUDE_CONFIG_DIR/projects`, else `<home>/.claude/projects`; Codex's
 /// `sessions` folder is `$CODEX_HOME/sessions`, else `<home>/.codex/sessions`; Qwen Code's `projects` folder is
-/// `$QWEN_RUNTIME_DIR/projects` when that is set and not blank, else `<Qwen home>/projects` (`agents::qwen::home`).
+/// `$QWEN_RUNTIME_DIR/projects` when that is set and not blank (a leading `~` is the home), else `<Qwen home>/projects` (`agents::qwen::home`).
 pub fn import_roots(env: impl Fn(&str) -> Option<String>, user_home: &Path) -> ImportRoots {
     let from = |var: &str, default: &str, leaf: &str| {
         match env(var).map(PathBuf::from).filter(|p| !p.as_os_str().is_empty()) {
@@ -56,7 +56,10 @@ pub fn import_roots(env: impl Fn(&str) -> Option<String>, user_home: &Path) -> I
             env("QWEN_RUNTIME_DIR")
                 .map(|dir| dir.trim().to_string())
                 .filter(|dir| !dir.is_empty())
-                .map_or_else(|| crate::agents::qwen::home(&env, user_home), PathBuf::from)
+                .map_or_else(
+                    || crate::agents::qwen::home(&env, user_home),
+                    |dir| crate::agents::qwen::expand_home(&dir, user_home),
+                )
                 .join("projects"),
         ),
     }
@@ -1107,6 +1110,17 @@ mod tests {
             root(&[("QWEN_HOME", "qh"), ("QWEN_RUNTIME_DIR", "rt")]),
             Some(Path::new("rt").join("projects")),
             "the runtime dir wins"
+        );
+        // A leading ~ is the home, for the runtime dir as for QWEN_HOME.
+        assert_eq!(root(&[("QWEN_RUNTIME_DIR", "~")]), Some(home.join("projects")), "~");
+        for tilde in ["~/rt", r"~\rt", "  ~/rt  "] {
+            let roots = import_roots(|k| (k == "QWEN_RUNTIME_DIR").then(|| tilde.to_string()), home);
+            assert_eq!(roots.qwen, Some(home.join("rt").join("projects")), "{tilde:?}");
+        }
+        assert_eq!(
+            root(&[("QWEN_RUNTIME_DIR", "~rt")]),
+            Some(Path::new("~rt").join("projects")),
+            "only ~, ~/ and ~\\ expand"
         );
         for blank in ["", "   "] {
             let roots = import_roots(|k| (k == "QWEN_RUNTIME_DIR").then(|| blank.to_string()), home);
