@@ -1,5 +1,6 @@
 //! What Marshell knows about an agent's hook setup, and the previews that install and remove it.
-//! Only `claude`, `codex` and `antigravity` have an adapter; any other agent is a 404. Applying goes through `/v1/config/apply`.
+//! Only `claude`, `codex`, `antigravity` and `qwen` have an adapter; any other agent is a 404. Applying goes through
+//! `/v1/config/apply`.
 
 use super::{AppState, DistroTarget};
 use crate::agents::account::{claude_status, codex_status};
@@ -8,6 +9,7 @@ use crate::agents::claude::{self, hooks};
 use crate::agents::codex::{self, trust};
 use crate::agents::common::Bridge;
 use crate::agents::install::{codex_newer, install_kind, update_text};
+use crate::agents::qwen::hooks as qwen_hooks;
 use crate::agents::settings_view::{control, has_bom, masked_render, parse_masked, read_managed, text_problem, view};
 use crate::agents::skill;
 use crate::agents::{parse_any_version, run_version_text};
@@ -46,6 +48,7 @@ use std::time::{Duration, SystemTime};
 const AGENT: &str = "claude";
 const CODEX: &str = "codex";
 const ANTIGRAVITY: &str = "antigravity";
+const QWEN: &str = "qwen";
 const VERSION_TIMEOUT: Duration = Duration::from_secs(5);
 const WSL_VERSION_TIMEOUT: Duration = Duration::from_secs(8);
 const WSL_VERSION_TTL: Duration = Duration::from_secs(10 * 60);
@@ -93,6 +96,7 @@ enum Adapter {
     Claude,
     Codex,
     Antigravity,
+    Qwen,
 }
 
 fn adapter(agent: &str) -> Result<Adapter, Fail> {
@@ -100,6 +104,7 @@ fn adapter(agent: &str) -> Result<Adapter, Fail> {
         AGENT => Ok(Adapter::Claude),
         CODEX => Ok(Adapter::Codex),
         ANTIGRAVITY => Ok(Adapter::Antigravity),
+        QWEN => Ok(Adapter::Qwen),
         _ => Err((StatusCode::NOT_FOUND, "no such agent".to_string())),
     }
 }
@@ -111,6 +116,8 @@ impl Adapter {
             Adapter::Claude => AGENT,
             Adapter::Codex => CODEX,
             Adapter::Antigravity => ANTIGRAVITY,
+            // Qwen Code has no skill until slice 6l2, so the skill table doesn't name it.
+            Adapter::Qwen => return "Qwen Code",
         };
         skill::cli_name(id).unwrap_or(id)
     }
@@ -161,6 +168,17 @@ struct AgyInputs {
     chain_text: Option<String>,
 }
 
+/// The user home, Qwen Code's settings file and the chain, as text (`None` for a missing file).
+struct QwenInputs {
+    user_home: PathBuf,
+    settings_path: PathBuf,
+    text: Option<String>,
+    chain_text: Option<String>,
+}
+
+/// Why Marshell sets nothing up inside a WSL distro for Qwen Code yet.
+const QWEN_NO_WSL: &str = "Setting up Qwen Code inside WSL comes in a later version of Marshell.";
+
 /// The user's home folder, Codex's `hooks.json` and its text.
 struct CodexInputs {
     hooks_path: PathBuf,
@@ -180,6 +198,23 @@ impl AppState {
         match &self.0.agy_home {
             Some(home) => Ok(home.clone()),
             None => super::files::home_dir().ok_or_else(|| failed("the user's home folder is not known")),
+        }
+    }
+
+    /// The user home Qwen Code's `.qwen` folder sits under. A home a test named is used as it is.
+    fn qwen_user_home(&self) -> Result<PathBuf, Fail> {
+        match &self.0.qwen_home {
+            Some(home) => Ok(home.clone()),
+            None => super::files::home_dir().ok_or_else(|| failed("the user's home folder is not known")),
+        }
+    }
+
+    /// Qwen Code's user `settings.json`: `QWEN_HOME` from the environment when it is set, else `<home>/.qwen`. A home a
+    /// test named replaces both, and the environment is not read.
+    fn qwen_settings_path(&self, user_home: &Path) -> PathBuf {
+        match &self.0.qwen_home {
+            Some(_) => qwen_hooks::settings_path(&|_| None, user_home),
+            None => qwen_hooks::settings_path(&|k| std::env::var(k).ok(), user_home),
         }
     }
 
@@ -302,6 +337,9 @@ impl AppState {
     /// The plan to set up hooks inside `distro`: the same plan as on Windows, for the files under the distro's own
     /// home and with the bridge named by its Linux path. The Windows overrides of the settings folders do not apply.
     fn distro_install(&self, adapter: Adapter, distro: &str, want: &HookPlanRequest) -> Result<ChangeSet, Fail> {
+        if matches!(adapter, Adapter::Qwen) {
+            return Err((StatusCode::UNPROCESSABLE_ENTITY, QWEN_NO_WSL.to_string()));
+        }
         let target = self.distro_target(distro)?;
         self.ensure_bridge(want)?;
         let bridge = Bridge::Distro {
@@ -333,12 +371,16 @@ impl AppState {
                     want,
                 )
             }
+            Adapter::Qwen => unreachable!("refused above"),
         }
         .map_err(|e| refused(&e))
     }
 
     /// The plan to take Marshell's hooks out of `distro`.
     fn distro_remove(&self, adapter: Adapter, distro: &str) -> Result<RemovePreview, Fail> {
+        if matches!(adapter, Adapter::Qwen) {
+            return Err((StatusCode::UNPROCESSABLE_ENTITY, QWEN_NO_WSL.to_string()));
+        }
         let home = self.distro_target(distro)?.home;
         let (changes, statusline_left) = match adapter {
             Adapter::Claude => {
@@ -368,6 +410,7 @@ impl AppState {
                 .map_err(|e| refused(&e))?;
                 (changes, false)
             }
+            Adapter::Qwen => unreachable!("refused above"),
         };
         Ok(RemovePreview {
             preview: self.0.config.preview(changes),
@@ -389,6 +432,20 @@ impl AppState {
         })
     }
 
+    fn qwen_inputs(&self) -> Result<QwenInputs, Fail> {
+        let user_home = self.qwen_user_home()?;
+        let settings_path = self.qwen_settings_path(&user_home);
+        let text = read_text(&settings_path).map_err(|e| refused(&e))?;
+        // The chain is Marshell's own file; a chain that cannot be read is the same as none.
+        let chain_text = std::fs::read_to_string(paths::statusline_chain(&self.0.home, QWEN)).ok();
+        Ok(QwenInputs {
+            user_home,
+            settings_path,
+            text,
+            chain_text,
+        })
+    }
+
     fn codex_inputs(&self) -> Result<CodexInputs, Fail> {
         let user_home = super::files::home_dir().ok_or_else(|| failed("the user's home folder is not known"))?;
         let hooks_path = self.codex_hooks_path(&user_home);
@@ -401,7 +458,7 @@ impl AppState {
     pub(crate) fn codex_version(&self, exe: Option<&Path>) -> Option<String> {
         match &self.0.codex_version {
             Some(pinned) => pinned.clone(),
-            None => exe.and_then(|exe| self.version_of(exe, parse_any_version)),
+            None => exe.and_then(|exe| self.version_of(exe, parse_any_version, None)),
         }
     }
 
@@ -476,7 +533,7 @@ impl AppState {
     pub(crate) fn claude_version(&self, exe: Option<&Path>) -> Option<String> {
         match &self.0.claude_version {
             Some(pinned) => pinned.clone(),
-            None => exe.and_then(|exe| self.version_of(exe, claude::parse_version)),
+            None => exe.and_then(|exe| self.version_of(exe, claude::parse_version, None)),
         }
     }
 
@@ -490,8 +547,17 @@ impl AppState {
             && let Some(pinned) = &self.0.agy_version
         {
             pinned.clone()
+        } else if agent == "qwen" {
+            // `qwen --version` prints the bare version; a pinned one (tests) replaces asking the executable.
+            match &self.0.qwen_version {
+                Some(pinned) => pinned.clone(),
+                None => exe.and_then(|exe| {
+                    let package = package_dir_of_qwen(exe);
+                    self.version_of(exe, crate::agents::qwen::parse_version, package.as_deref())
+                }),
+            }
         } else {
-            exe.and_then(|exe| self.version_of(exe, parse_any_version))
+            exe.and_then(|exe| self.version_of(exe, parse_any_version, None))
         }
     }
 
@@ -544,28 +610,53 @@ impl AppState {
         self.codex_hooks_path(&user_home).parent().map(Path::to_path_buf)
     }
 
-    /// Cache stdout per executable and modified time; parse on every read so a generic lookup
-    /// cannot make Claude's strict gate accept output it would otherwise reject.
-    fn version_of(&self, exe: &Path, parse: fn(&str) -> Option<String>) -> Option<String> {
-        let modified = std::fs::metadata(exe).and_then(|m| m.modified()).ok();
-        let text = cached_version(&self.0.versions, exe, modified, || {
+    /// Cache stdout per executable and its stamp; parse on every read so a generic lookup
+    /// cannot make Claude's strict gate accept output it would otherwise reject. `package` is the
+    /// folder an update replaces while the launcher stays put, if the agent has one.
+    fn version_of(&self, exe: &Path, parse: fn(&str) -> Option<String>, package: Option<&Path>) -> Option<String> {
+        let stamp = version_stamp(exe, package);
+        let text = cached_version(&self.0.versions, exe, stamp, || {
             run_version_text(exe, VERSION_TIMEOUT).filter(|text| parse(text).is_some())
         })?;
         parse(&text)
     }
 }
 
-/// The version `cache` holds for `exe` at this modified time, else what `ask` reads. A version that
+/// What a remembered version was read at: the executable's modified time and, for an agent whose update
+/// swaps a package folder while its launcher stays as it was, that folder's modified time. A folder is
+/// created fresh by every install or update, which the files inside it (archives keep build-time modified
+/// times, npm tarballs normalise them) do not show.
+pub(super) type VersionStamp = (Option<SystemTime>, Option<SystemTime>);
+
+fn version_stamp(exe: &Path, package: Option<&Path>) -> VersionStamp {
+    let modified = |path: &Path| std::fs::metadata(path).and_then(|m| m.modified()).ok();
+    (modified(exe), package.and_then(modified))
+}
+
+/// The folder Qwen Code's own files sit in, beside its launcher: `..\qwen-code` for the standalone install
+/// (`bin\qwen.cmd` calls `..\qwen-code\bin\qwen.cmd`) and `node_modules\@qwen-code\qwen-code` for an npm
+/// global install. `None` when neither exists.
+fn package_dir_of_qwen(exe: &Path) -> Option<PathBuf> {
+    let dir = exe.parent()?;
+    [
+        dir.join("..").join("qwen-code"),
+        dir.join("node_modules").join("@qwen-code").join("qwen-code"),
+    ]
+    .into_iter()
+    .find(|candidate| candidate.is_dir())
+}
+
+/// The version `cache` holds for `exe` at this stamp, else what `ask` reads. A version that
 /// could not be read is not kept, so the next call tries again. The lock is not held while `ask` runs.
 fn cached_version(
-    cache: &Mutex<HashMap<PathBuf, (Option<SystemTime>, String)>>,
+    cache: &Mutex<HashMap<PathBuf, (VersionStamp, String)>>,
     exe: &Path,
-    modified: Option<SystemTime>,
+    stamp: VersionStamp,
     ask: impl FnOnce() -> Option<String>,
 ) -> Option<String> {
     let known = cache.lock().unwrap().get(exe).cloned();
     if let Some((at, version)) = known
-        && at == modified
+        && at == stamp
     {
         return Some(version);
     }
@@ -573,12 +664,12 @@ fn cached_version(
     cache
         .lock()
         .unwrap()
-        .insert(exe.to_path_buf(), (modified, version.clone()));
+        .insert(exe.to_path_buf(), (stamp, version.clone()));
     Some(version)
 }
 
 /// Drops what `cache` knows of `exe`, so the next read asks the program again.
-fn forget_cached(cache: &Mutex<HashMap<PathBuf, (Option<SystemTime>, String)>>, exe: &Path) {
+fn forget_cached(cache: &Mutex<HashMap<PathBuf, (VersionStamp, String)>>, exe: &Path) {
     cache.lock().unwrap().remove(exe);
 }
 
@@ -606,6 +697,7 @@ pub(crate) fn setup_of(st: &AppState) -> Result<AgentSetup, Fail> {
         approve_installed: false,
         has_own_statusline: false,
         chained: false,
+        statusline_preset: false,
         needs_trust: false,
         trust: None,
         bridge_path: paths::bridge_exe(home).to_string_lossy().into_owned(),
@@ -679,6 +771,7 @@ pub(crate) fn codex_setup_of(st: &AppState) -> Result<AgentSetup, Fail> {
         approve_installed: false,
         has_own_statusline: false,
         chained: false,
+        statusline_preset: false,
         needs_trust: true,
         trust: None,
         bridge_path: paths::bridge_exe(home).to_string_lossy().into_owned(),
@@ -748,6 +841,7 @@ pub(crate) fn agy_setup_of(st: &AppState) -> Result<AgentSetup, Fail> {
         approve_installed: false,
         has_own_statusline: false,
         chained: false,
+        statusline_preset: false,
         needs_trust: false,
         trust: None,
         bridge_path: paths::bridge_exe(home).to_string_lossy().into_owned(),
@@ -806,12 +900,89 @@ pub(crate) fn agy_setup_of(st: &AppState) -> Result<AgentSetup, Fail> {
     Ok(setup)
 }
 
+/// Qwen Code's setup: its user `settings.json`, read and never written here. A missing file reads as Qwen's default
+/// status line, a preset that Marshell leaves as it is.
+pub(crate) fn qwen_setup_of(st: &AppState) -> Result<AgentSetup, Fail> {
+    let home = &st.0.home;
+    let user_home = st.qwen_user_home()?;
+    let settings_path = st.qwen_settings_path(&user_home);
+    let exe = st.agent_exe_of(QWEN);
+    let version = st.agent_version(QWEN, exe.as_deref());
+
+    let mut setup = AgentSetup {
+        agent: QWEN.to_string(),
+        admin_unavailable: None,
+        found: exe.is_some(),
+        version,
+        exe_path: exe.map(|p| p.to_string_lossy().into_owned()),
+        settings_path: settings_path.to_string_lossy().into_owned(),
+        skips_all: crate::agents::qwen::skips_all(&user_home),
+        hooks_path: None,
+        settings_state: SettingsState::Ok,
+        parse_error: None,
+        hooks: HookInstall::None,
+        approve_installed: false,
+        has_own_statusline: false,
+        chained: false,
+        statusline_preset: false,
+        needs_trust: false,
+        trust: None,
+        bridge_path: paths::bridge_exe(home).to_string_lossy().into_owned(),
+        snapshots_dir: paths::snapshots_dir(home).to_string_lossy().into_owned(),
+        // Qwen Code has no `marshell` skill until slice 6l2.
+        skill: SkillInstall::Unavailable,
+        skill_path: String::new(),
+        skill_problem: Some("The Marshell skill for Qwen Code comes in a later version.".to_string()),
+    };
+
+    let text = match std::fs::read_to_string(&settings_path) {
+        Ok(text) => text,
+        Err(e) if e.kind() == ErrorKind::NotFound => {
+            setup.settings_state = SettingsState::Missing;
+            // No file: Qwen shows its default preset status line.
+            setup.statusline_preset = true;
+            return Ok(setup);
+        }
+        Err(e) => {
+            setup.settings_state = SettingsState::Unparsable;
+            setup.parse_error = Some(ParseProblem {
+                line: 1,
+                message: e.to_string(),
+            });
+            return Ok(setup);
+        }
+    };
+    let settings = match (parse_problem(&text), read_value(&text)) {
+        (None, Ok(settings)) => settings,
+        (problem, _) => {
+            let (line, message) = problem.unwrap_or((1, "the file does not parse".to_string()));
+            setup.settings_state = SettingsState::Unparsable;
+            setup.parse_error = Some(ParseProblem { line, message });
+            return Ok(setup);
+        }
+    };
+    if std::fs::metadata(&settings_path).is_ok_and(|m| m.permissions().readonly()) {
+        setup.settings_state = SettingsState::ReadOnly;
+    }
+    let chain = std::fs::read_to_string(paths::statusline_chain(home, QWEN))
+        .ok()
+        .and_then(|t| read_value(&t).ok());
+    let found = qwen_hooks::inspect(&settings, chain.as_ref(), home);
+    setup.hooks = found.install;
+    setup.approve_installed = found.approve_installed;
+    setup.has_own_statusline = found.has_own_statusline;
+    setup.chained = found.chained;
+    setup.statusline_preset = found.preset_statusline;
+    Ok(setup)
+}
+
 pub async fn setup(State(st): State<AppState>, UrlPath(agent): UrlPath<String>) -> Result<Json<AgentSetup>, Fail> {
     let adapter = adapter(&agent)?;
     let setup = tokio::task::spawn_blocking(move || match adapter {
         Adapter::Claude => setup_of(&st),
         Adapter::Codex => codex_setup_of(&st),
         Adapter::Antigravity => agy_setup_of(&st),
+        Adapter::Qwen => qwen_setup_of(&st),
     })
     .await
     .map_err(failed)??;
@@ -826,12 +997,12 @@ pub async fn wsl_distros(State(st): State<AppState>) -> Json<WslDistros> {
     })
 }
 
-/// Which of the agent CLIs Marshell can start are on this machine, in the order claude, codex, antigravity.
+/// Which of the agent CLIs Marshell can start are on this machine, in the order claude, codex, antigravity, qwen.
 pub async fn found(State(st): State<AppState>) -> Result<Json<Vec<AgentFound>>, Fail> {
     let list = tokio::task::spawn_blocking(move || {
         let profiles = st.0.profiles.lock().unwrap().profiles.clone();
         let finder = st.agent_finder(&[]);
-        ["claude", "codex", "antigravity"]
+        ["claude", "codex", "antigravity", "qwen"]
             .into_iter()
             .map(|agent| {
                 let exe = st.adapter_exe(&profiles, agent, &finder);
@@ -931,6 +1102,8 @@ fn account_of(st: &AppState, agent: &str, kind: Adapter) -> AccountStatus {
     match kind {
         // Antigravity has no status command, so nothing is run.
         Adapter::Antigravity => status.sign_in = SignIn::NoCommand,
+        // Qwen Code's account comes in slice 6l2.
+        Adapter::Qwen => status.sign_in = SignIn::NoCommand,
         Adapter::Claude => {
             if let Some(exe) = st.agent_exe_of(agent)
                 && let Some((code, out)) = (st.0.status_runner)(&exe, &["auth", "status"])
@@ -982,6 +1155,7 @@ fn settings_file(st: &AppState, kind: Adapter) -> Result<(PathBuf, Option<(PathB
         }
         Adapter::Codex => (st.codex_dir().ok_or_else(no_home)?.join("config.toml"), None),
         Adapter::Antigravity => (agy::settings_path(&st.agy_user_home()?), None),
+        Adapter::Qwen => (st.qwen_settings_path(&st.qwen_user_home()?), None),
     })
 }
 
@@ -1072,6 +1246,12 @@ fn settings_plan_of(
     kind: Adapter,
     req: SettingsPlanRequest,
 ) -> Result<SettingsPlan, Refusal> {
+    // Qwen Code's settings are shown and not edited until slice 6l2; its hooks go through the hooks routes.
+    if matches!(kind, Adapter::Qwen) {
+        return Err(unprocessable(
+            "Marshell doesn't change Qwen Code's settings yet. Its hooks are set up from the Agents section.",
+        ));
+    }
     let (view, had_bom) = settings_read(st, agent, kind).map_err(Refusal::from)?;
     match view.state {
         ViewState::Unparsable { line } => {
@@ -1096,6 +1276,7 @@ fn settings_plan_of(
         Adapter::Claude => "Change Claude Code settings",
         Adapter::Codex => "Change Codex settings",
         Adapter::Antigravity => "Change Antigravity settings",
+        Adapter::Qwen => unreachable!("refused above"),
     };
     let cs = ChangeSet {
         title: title.to_string(),
@@ -1325,6 +1506,9 @@ pub async fn settings_undo(
 }
 
 fn settings_undo_of(st: &AppState, agent: &str, kind: Adapter, snapshot_id: &str) -> Result<ApplyResult, Refusal> {
+    if matches!(kind, Adapter::Qwen) {
+        return Err(unprocessable("Marshell doesn't change Qwen Code's settings yet."));
+    }
     let (path, _) = settings_file(st, kind).map_err(Refusal::from)?;
     let info = match st.0.config.snapshots().get(snapshot_id) {
         Ok(Some(info)) => info,
@@ -1424,12 +1608,25 @@ pub async fn plan(
                         &want,
                     )
                 }
+                Adapter::Qwen => {
+                    let inputs = st.qwen_inputs()?;
+                    st.ensure_bridge(&want)?;
+                    qwen_hooks::install_plan(
+                        &inputs.settings_path,
+                        &inputs.user_home,
+                        inputs.text.as_deref(),
+                        inputs.chain_text.as_deref(),
+                        Some(&paths::statusline_chain(&st.0.home, QWEN)),
+                        &Bridge::local(&st.0.home),
+                        &want,
+                    )
+                }
             }
             .map_err(|e| refused(&e))?,
         };
         // The skill file is the Windows home's. A distro's skill is not planned here, so a request for one inside a
-        // distro gets the hooks only.
-        if want.skill && distro.is_none() {
+        // distro gets the hooks only. Qwen Code has no skill until slice 6l2.
+        if want.skill && distro.is_none() && !matches!(adapter, Adapter::Qwen) {
             // A skill Marshell can't touch is left out: it must not block the hooks.
             let path = st.skill_file(&agent)?;
             if let Ok(bytes) = st.skill_bytes(&path) {
@@ -1540,6 +1737,21 @@ pub async fn remove_plan(
                 statusline_left: false,
             })
         }
+        (Adapter::Qwen, None) => {
+            let inputs = st.qwen_inputs()?;
+            let plan = qwen_hooks::remove_plan(
+                &inputs.settings_path,
+                &inputs.user_home,
+                inputs.text.as_deref(),
+                inputs.chain_text.as_deref(),
+                None,
+            )
+            .map_err(|e| refused(&e))?;
+            Ok(RemovePreview {
+                preview: st.0.config.preview(plan.changes),
+                statusline_left: plan.statusline_left,
+            })
+        }
     })
     .await
     .map_err(failed)??;
@@ -1606,8 +1818,12 @@ mod tests {
         assert_eq!(st.agent_version_in("Ubuntu", "claude").as_deref(), Some("2.1.302"));
     }
 
-    fn at(secs: u64) -> Option<SystemTime> {
-        Some(SystemTime::UNIX_EPOCH + Duration::from_secs(secs))
+    fn secs(n: u64) -> SystemTime {
+        SystemTime::UNIX_EPOCH + Duration::from_secs(n)
+    }
+
+    fn at(n: u64) -> VersionStamp {
+        (Some(secs(n)), None)
     }
 
     #[test]
@@ -1658,5 +1874,78 @@ mod tests {
         forget_cached(&cache, exe);
         cached_version(&cache, exe, at(10), ask);
         assert_eq!(runs.get(), 2);
+    }
+
+    /// Sets a folder's modified time; Windows opens a directory only with backup semantics.
+    fn set_dir_modified(dir: &Path, when: SystemTime) {
+        let mut options = std::fs::OpenOptions::new();
+        #[cfg(windows)]
+        {
+            use std::os::windows::fs::OpenOptionsExt;
+            options.write(true).custom_flags(0x0200_0000); // FILE_FLAG_BACKUP_SEMANTICS
+        }
+        #[cfg(not(windows))]
+        options.read(true);
+        options.open(dir).unwrap().set_modified(when).unwrap();
+    }
+
+    #[test]
+    fn a_qwen_self_update_that_keeps_the_wrapper_is_read_again() {
+        let tmp = tempfile::tempdir().unwrap();
+        let wrapper = tmp.path().join("bin").join("qwen.cmd");
+        let package = tmp.path().join("qwen-code");
+        std::fs::create_dir_all(wrapper.parent().unwrap()).unwrap();
+        std::fs::write(&wrapper, "@echo off").unwrap();
+        std::fs::create_dir(&package).unwrap();
+        set_dir_modified(&package, secs(1_000_000));
+        std::fs::File::options()
+            .write(true)
+            .open(&wrapper)
+            .unwrap()
+            .set_modified(secs(500_000))
+            .unwrap();
+
+        let cache = Mutex::new(HashMap::new());
+        let runs = Cell::new(0);
+        let read = |version: &'static str| {
+            let package = package_dir_of_qwen(&wrapper);
+            let stamp = version_stamp(&wrapper, package.as_deref());
+            cached_version(&cache, &wrapper, stamp, || {
+                runs.set(runs.get() + 1);
+                Some(version.to_string())
+            })
+        };
+        assert_eq!(read("0.14.0").as_deref(), Some("0.14.0"));
+        assert_eq!(read("0.14.0").as_deref(), Some("0.14.0"));
+        assert_eq!(runs.get(), 1);
+
+        // The self-update swaps the package folder and leaves the wrapper untouched.
+        std::fs::remove_dir(&package).unwrap();
+        std::fs::create_dir(&package).unwrap();
+        set_dir_modified(&package, secs(2_000_000));
+        assert_eq!(read("0.15.0").as_deref(), Some("0.15.0"));
+        assert_eq!(runs.get(), 2);
+        assert_eq!(read("0.15.0").as_deref(), Some("0.15.0"));
+        assert_eq!(runs.get(), 2);
+
+        // An npm global install keeps the package under node_modules next to the shim.
+        let npm = tmp.path().join("global").join("npm");
+        let shim = npm.join("qwen.cmd");
+        let npm_package = npm.join("node_modules").join("@qwen-code").join("qwen-code");
+        std::fs::create_dir_all(&npm_package).unwrap();
+        assert_eq!(package_dir_of_qwen(&shim), Some(npm_package));
+
+        // Another agent has no package folder to look at, so its version stays cached.
+        let other = tmp.path().join("other").join("codex.cmd");
+        std::fs::create_dir_all(other.parent().unwrap()).unwrap();
+        std::fs::write(&other, "").unwrap();
+        let other_runs = Cell::new(0);
+        let ask = || {
+            other_runs.set(other_runs.get() + 1);
+            Some("1.0.0".to_string())
+        };
+        cached_version(&cache, &other, version_stamp(&other, None), ask);
+        cached_version(&cache, &other, version_stamp(&other, None), ask);
+        assert_eq!(other_runs.get(), 1);
     }
 }

@@ -14,7 +14,7 @@ use std::time::{Duration, Instant};
 pub const PREVIEW_TTL: Duration = Duration::from_secs(15 * 60);
 
 /// The agents `about.json` lists, in this order.
-const CLIS: [&str; 3] = ["claude", "codex", "antigravity"];
+const CLIS: [&str; 4] = ["claude", "codex", "antigravity", "qwen"];
 
 const README: &str = "Marshell diagnostics. This holds Marshell's logs and setup only: no transcripts, recordings, prompts or hook events. Keys, tokens, your home folder and user name were replaced before saving. Read the files before you share them.\n";
 
@@ -263,7 +263,7 @@ mod tests {
         let about: serde_json::Value = serde_json::from_str(&text_of(&files, "about.json")).unwrap();
         let clis = about["clis"].as_array().unwrap();
         let agents: Vec<_> = clis.iter().map(|c| c["agent"].clone()).collect();
-        assert_eq!(agents, ["claude", "codex", "antigravity"]);
+        assert_eq!(agents, ["claude", "codex", "antigravity", "qwen"]);
         for cli in clis {
             assert_eq!(cli["found"], false);
             assert!(cli["version"].is_null());

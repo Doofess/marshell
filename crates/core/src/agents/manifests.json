@@ -41,19 +41,6 @@
     }
   },
   {
-    "id": "qwen", "name": "Qwen", "cli": "Qwen Code", "mark": "qwen",
-    "commands": ["qwen"],
-    "exe_names": ["qwen"], "packages": ["@qwen-code/qwen-code"],
-    "prompt": { "style": "flag", "flag": "-i" }, "continue": ["--continue"],
-    "modes": {
-      "manual": ["--approval-mode", "default"],
-      "plan": ["--approval-mode", "plan"],
-      "auto-edit": ["--approval-mode", "auto-edit"],
-      "full-auto": ["--approval-mode", "auto"],
-      "bypass": ["--approval-mode", "yolo"]
-    }
-  },
-  {
     "id": "kimi", "name": "Kimi", "cli": "Kimi Code CLI", "mark": "kimi",
     "commands": ["kimi"],
     "exe_names": ["kimi"],

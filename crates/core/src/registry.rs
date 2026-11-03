@@ -1179,11 +1179,14 @@ impl Registry {
     /// Follows the permission mode Claude Code reports: sets the row's mode and the mode Resume and
     /// the next launch use. Applied only to an open Running Claude row, and only on a change: the
     /// hooks reach any row whose process tree runs `claude`, and another agent's mode isn't theirs.
-    pub fn set_live_mode(&self, tab_id: &str, mode: SessionMode) {
+    pub fn set_live_mode(&self, tab_id: &str, agent: &str, mode: SessionMode) {
         let mut state = self.state.lock().unwrap();
+        // Claude Code's and Qwen Code's hooks carry the mode; each sets only its own agent's row. (Codex's
+        // `mode_of` is not applied yet.)
         if let Some(entry) = state.open.iter_mut().find(|e| e.info.tab_id == tab_id)
             && entry.info.state == SessionState::Running
-            && entry.info.agent.as_deref() == Some("claude")
+            && matches!(agent, "claude" | "qwen")
+            && entry.info.agent.as_deref() == Some(agent)
             && entry.info.mode != Some(mode)
         {
             entry.info.mode = Some(mode);
@@ -1703,7 +1706,7 @@ mod tests {
         let mut rx = reg.subscribe();
         rx.borrow_and_update();
 
-        reg.set_live_mode("c", SessionMode::Plan);
+        reg.set_live_mode("c", "claude", SessionMode::Plan);
         assert!(rx.has_changed().unwrap());
         rx.borrow_and_update();
         let mode_of = |tab: &str| {
@@ -1716,10 +1719,10 @@ mod tests {
         };
         assert_eq!(mode_of("c"), Some(SessionMode::Plan));
         // The same mode again changes nothing and broadcasts nothing.
-        reg.set_live_mode("c", SessionMode::Plan);
+        reg.set_live_mode("c", "claude", SessionMode::Plan);
         assert!(!rx.has_changed().unwrap());
         // A plain shell row has no agent: nothing changes.
-        reg.set_live_mode("s", SessionMode::Plan);
+        reg.set_live_mode("s", "claude", SessionMode::Plan);
         assert_eq!(mode_of("s"), None);
         assert!(!rx.has_changed().unwrap());
         // Claude's hooks reach any row whose process tree runs `claude`; another agent's mode is not Claude's to set.
@@ -1730,20 +1733,53 @@ mod tests {
         };
         reg.reserve("x", codex);
         rx.borrow_and_update();
-        reg.set_live_mode("x", SessionMode::Bypass);
+        reg.set_live_mode("x", "claude", SessionMode::Bypass);
         assert_eq!(mode_of("x"), Some(SessionMode::Manual));
         assert!(!rx.has_changed().unwrap());
-        reg.set_live_mode("nope", SessionMode::Plan);
+        reg.set_live_mode("nope", "claude", SessionMode::Plan);
         assert!(!rx.has_changed().unwrap());
 
         reg.mark_exited("c", generation_of(&reg, "c"), 0);
         rx.borrow_and_update();
         // A row that is not Running keeps its mode.
-        reg.set_live_mode("c", SessionMode::Bypass);
+        reg.set_live_mode("c", "claude", SessionMode::Bypass);
         assert!(!rx.has_changed().unwrap());
         // Resume reads the spec: it reopens in the mode the agent was in.
         let (spec, _, _) = reg.begin_resume("c").unwrap();
         assert_eq!(spec.mode, Some(SessionMode::Plan));
+    }
+
+    /// Qwen Code's hooks carry its mode too (slice 6l1), and set only a Qwen row's, never another agent's.
+    #[test]
+    fn qwens_live_mode_updates_only_a_qwen_row() {
+        let reg = Registry::new();
+        let qwen = Relaunch {
+            agent: Some("qwen".into()),
+            mode: Some(SessionMode::Manual),
+            ..relaunch("Qwen Code")
+        };
+        reg.reserve("q", qwen);
+        let claude = Relaunch {
+            agent: Some("claude".into()),
+            mode: Some(SessionMode::Manual),
+            ..relaunch("Claude")
+        };
+        reg.reserve("c", claude);
+        let mode_of = |tab: &str| {
+            reg.snapshot()
+                .sessions
+                .into_iter()
+                .find(|s| s.tab_id == tab)
+                .unwrap()
+                .mode
+        };
+        reg.set_live_mode("q", "qwen", SessionMode::AutoEdit);
+        assert_eq!(mode_of("q"), Some(SessionMode::AutoEdit));
+        // Another agent's hooks reaching the row set nothing.
+        reg.set_live_mode("q", "claude", SessionMode::Bypass);
+        assert_eq!(mode_of("q"), Some(SessionMode::AutoEdit));
+        reg.set_live_mode("c", "qwen", SessionMode::Bypass);
+        assert_eq!(mode_of("c"), Some(SessionMode::Manual));
     }
 
     #[test]
@@ -2665,6 +2701,7 @@ mod tests {
             seven_day_pct: None,
             subagents: 0,
             subagents_finished: 0,
+            last_turn_event_ms: 0,
         }
     }
 

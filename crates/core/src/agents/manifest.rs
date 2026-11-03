@@ -39,10 +39,10 @@ const TOOL_IDS: &[&str] = &[
 ];
 
 /// Ids of agents that have a Rust adapter.
-const ADAPTER_IDS: &[&str] = &["claude", "codex", "antigravity"];
+const ADAPTER_IDS: &[&str] = &["claude", "codex", "antigravity", "qwen"];
 
 /// Program names of the adapter agents.
-const ADAPTER_EXES: &[&str] = &["claude", "codex", "agy"];
+const ADAPTER_EXES: &[&str] = &["claude", "codex", "agy", "qwen"];
 
 /// Ids and program names an own agent may not take.
 pub struct Reserved {
@@ -73,7 +73,7 @@ impl Reserved {
     }
 }
 
-/// The three adapters' launch data plus the shipped and valid own manifests. Cheap to clone.
+/// The four adapters' launch data plus the shipped and valid own manifests. Cheap to clone.
 #[derive(Clone)]
 pub struct Agents(Arc<Vec<AgentManifest>>);
 
@@ -90,7 +90,7 @@ impl Agents {
         Self(Arc::new(all))
     }
 
-    /// The manifest of a manifest agent. None for the adapters (claude, codex, antigravity) and unknown ids.
+    /// The manifest of a manifest agent. None for the adapters (claude, codex, antigravity, qwen) and unknown ids.
     pub fn manifest(&self, id: &str) -> Option<&AgentManifest> {
         self.0.iter().find(|m| m.id == id)
     }
@@ -225,9 +225,7 @@ mod tests {
         let ids: Vec<&str> = shipped().iter().map(|m| m.id.as_str()).collect();
         assert_eq!(
             ids,
-            [
-                "copilot", "cursor", "opencode", "amp", "grok", "qwen", "kimi", "aider", "crush"
-            ]
+            ["copilot", "cursor", "opencode", "amp", "grok", "kimi", "aider", "crush"]
         );
     }
 
@@ -273,6 +271,21 @@ mod tests {
         assert!(ok.is_empty(), "expected a refusal");
         assert_eq!(problems.len(), 1);
         problems[0].reason.clone()
+    }
+
+    #[test]
+    fn an_own_agent_may_not_take_qwen() {
+        // Qwen Code has a Rust adapter now: its id and its program are taken as Claude's are.
+        assert_eq!(reason_of(own("qwen")), "The id \"qwen\" is taken by a built-in agent.");
+        let mut by_exe = own("my-qwen");
+        by_exe.exe_names = vec!["qwen".into()];
+        assert!(!reason_of(by_exe).is_empty());
+        assert!(Agents::shipped().manifest("qwen").is_none());
+        assert_eq!(Agents::shipped().agent_of_exe("qwen").as_deref(), Some("qwen"));
+        assert_eq!(
+            Agents::shipped().agent_of_package("@qwen-code/qwen-code").as_deref(),
+            Some("qwen")
+        );
     }
 
     #[test]

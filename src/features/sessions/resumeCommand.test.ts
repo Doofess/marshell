@@ -6,6 +6,9 @@ describe("resumeCommand", () => {
     expect(resumeCommand("claude", "PowerShell")).toBe("claude --continue");
     expect(resumeCommand("codex", "PowerShell")).toBe("codex resume --last");
   });
+  it("qwen --continue", () => {
+    expect(resumeCommand("qwen", "pwsh")).toBe("qwen --continue");
+  });
   it("is agy --continue for Antigravity", () => {
     expect(resumeCommand("antigravity", "pwsh")).toBe("agy --continue");
   });

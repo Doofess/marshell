@@ -113,7 +113,8 @@
 .lane .approve-card__question,
 .lane .approve-card__what,
 .lane .approve-card__risk > span,
-.lane .approve-card__cwd {
+.lane .approve-card__cwd,
+.lane .approve-card__note {
   display: -webkit-box;
   -webkit-box-orient: vertical;
   overflow: clip;
@@ -134,6 +135,11 @@
 .lane .approve-card__cwd {
   line-clamp: 1;
   -webkit-line-clamp: 1;
+}
+/* A sentence the person needs whole (why a button is missing), not a path that may be cut. */
+.lane .approve-card__note {
+  line-clamp: 3;
+  -webkit-line-clamp: 3;
 }
 .lane .approve-card__link > span {
   min-inline-size: 0;

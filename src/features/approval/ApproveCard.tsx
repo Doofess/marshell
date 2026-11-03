@@ -111,7 +111,9 @@ export function ApproveCard({ request, expanded = false, armed = true, holdProgr
   const cwd = detail.kind === "bash" && detail.cwd && detail.cwd !== request.sessionCwd ? detail.cwd : null;
   // Antigravity's card is Allow and Deny only: it keeps no always-allow rule, and in Bypass it has no prompt to hand over to, so a request that runs out is denied.
   const denies = session.agent === "antigravity" && !isQuestion;
-  const ctx = { risky, armed, hasAlways: Boolean(request.alwaysRule) && !denies && request.elevated !== true, truncated, expanded, noTerminal: denies };
+  // Qwen Code's card is Allow and Deny too, but a request that runs out goes to Qwen's own terminal, so "Answer in terminal" stays.
+  const noAlways = denies || (session.agent === "qwen" && !isQuestion);
+  const ctx = { risky, armed, hasAlways: Boolean(request.alwaysRule) && !noAlways && request.elevated !== true, truncated, expanded, noTerminal: denies };
 
   const fire = (a: CardAction | `answer:${number}`) => {
     if (!armed && a !== "jump" && a !== "expand") return;
@@ -252,13 +254,16 @@ export function ApproveCard({ request, expanded = false, armed = true, holdProgr
         </div>
       )}
 
-      {!risky && !isQuestion && !denies && request.alwaysRule && request.elevated !== true && (
+      {!risky && !isQuestion && !noAlways && request.alwaysRule && request.elevated !== true && (
         <button type="button" className="approve-card__link" aria-disabled={disabled} aria-keyshortcuts="A" onClick={() => fire(collapsed ? "expand" : "always")}>
           <span>
             Always allow <code>{request.alwaysRule}</code> in this project
           </span>
           <Kbd k="A" />
         </button>
+      )}
+      {session.agent === "qwen" && !isQuestion && (
+        <p className="approve-card__note">Qwen Code can't keep an always-allow rule from Marshell. Allow this once instead.</p>
       )}
       {!denies && (
         <button type="button" className="approve-card__link" aria-disabled={disabled} aria-keyshortcuts="T" onClick={() => fire("terminal")}>

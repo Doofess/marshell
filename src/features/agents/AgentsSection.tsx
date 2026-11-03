@@ -74,6 +74,9 @@ export function AgentsSectionView({
   antigravity,
   antigravityLiveStatus = null,
   antigravityLiveStatusError,
+  qwen,
+  qwenLiveStatus = null,
+  qwenLiveStatusError,
   own,
   tools,
   rootRef,
@@ -92,6 +95,10 @@ export function AgentsSectionView({
   antigravity?: AgentSetup | null;
   antigravityLiveStatus?: boolean | null;
   antigravityLiveStatusError?: string | null;
+  /** Qwen Code's setup; its section shows only when it was read and qwen is found. */
+  qwen?: AgentSetup | null;
+  qwenLiveStatus?: boolean | null;
+  qwenLiveStatusError?: string | null;
   /** The section for the person's own agents, after the hook sections. */
   own?: ReactNode;
   setup: AgentSetup | "loading" | "failed";
@@ -104,7 +111,7 @@ export function AgentsSectionView({
   codexLiveStatusError?: string | null;
 } & AgentsHandlers) {
   // The card and the turn-off panel belong to the agent the person chose.
-  const chosen = panel.kind === "list" ? undefined : panel.agent === "codex" ? codex : panel.agent === "antigravity" ? antigravity : undefined;
+  const chosen = panel.kind === "list" ? undefined : panel.agent === "codex" ? codex : panel.agent === "antigravity" ? antigravity : panel.agent === "qwen" ? qwen : undefined;
   const target = chosen ?? (typeof setup === "object" ? setup : null);
   return (
     <div ref={rootRef} className="agents" onKeyDown={(e) => escapeLeavesPanel(e, panel, on.onBack)}>
@@ -121,6 +128,7 @@ export function AgentsSectionView({
               Marshell's hooks are still in its files (#62), so they can be turned off. */}
           {codex && (codex.found || (distros?.length ?? 0) > 0 || leftover(codex)) && <AgentList setup={codex} agent="codex" liveStatus={codexLiveStatus} error={codexLiveStatusError} on={on} skill={skills?.codex} distros={distros} />}
           {antigravity && (antigravity.found || (distros?.length ?? 0) > 0 || leftover(antigravity)) && <AgentList setup={antigravity} agent="antigravity" liveStatus={antigravityLiveStatus} error={antigravityLiveStatusError} on={on} skill={skills?.antigravity} distros={distros} />}
+          {qwen && (qwen.found || (distros?.length ?? 0) > 0 || leftover(qwen)) && <AgentList setup={qwen} agent="qwen" liveStatus={qwenLiveStatus} error={qwenLiveStatusError} on={on} skill={skills?.qwen} distros={distros} />}
           {own}
           {tools}
         </>
@@ -325,20 +333,21 @@ export function AgentsSection({
   const [setup, setSetup] = useState<AgentSetup | "loading" | "failed">("loading");
   const [codex, setCodex] = useState<AgentSetup | null>(null);
   const [antigravity, setAntigravity] = useState<AgentSetup | null>(null);
+  const [qwen, setQwen] = useState<AgentSetup | null>(null);
   const [mode, setMode] = useState<"list" | "setup" | "off">("list");
   // The agent whose card or turn-off panel is open.
   const [active, setActive] = useState<HookAgent>("claude");
   const [off, setOff] = useState<Extract<Panel, { kind: "off" }>>({ kind: "off", removal: null, busy: false });
 
   // null until the settings have been read.
-  const [liveStatus, setLiveStatus] = useState<Record<HookAgent, boolean | null>>({ claude: null, codex: null, antigravity: null });
+  const [liveStatus, setLiveStatus] = useState<Record<HookAgent, boolean | null>>({ claude: null, codex: null, antigravity: null, qwen: null });
   const [saveError, setSaveError] = useState<{ agent: HookAgent; text: string } | null>(null);
   useEffect(() => {
     let live = true;
     sync?.load().then(
       () => {
         if (!live) return;
-        setLiveStatus({ claude: liveStatusOn(sync.statusOff, "claude"), codex: liveStatusOn(sync.statusOff, "codex"), antigravity: liveStatusOn(sync.statusOff, "antigravity") });
+        setLiveStatus({ claude: liveStatusOn(sync.statusOff, "claude"), codex: liveStatusOn(sync.statusOff, "codex"), antigravity: liveStatusOn(sync.statusOff, "antigravity"), qwen: liveStatusOn(sync.statusOff, "qwen") });
       },
       () => {},
     );
@@ -361,6 +370,7 @@ export function AgentsSection({
     // Codex's section is a bonus: a setup that cannot be read leaves it out and never fails Claude's.
     void getSetup(endpoint, "codex").then(setCodex, () => {});
     void getSetup(endpoint, "antigravity").then(setAntigravity, () => {});
+    void getSetup(endpoint, "qwen").then(setQwen, () => {});
     try {
       const found = await getSetup(endpoint, "claude");
       setSetup(found);
@@ -379,8 +389,9 @@ export function AgentsSection({
   const claudeInstall = useInstallFlow(endpoint, "claude", installed);
   const codexInstall = useInstallFlow(endpoint, "codex", installed);
   const antigravityInstall = useInstallFlow(endpoint, "antigravity", installed);
+  const qwenInstall = useInstallFlow(endpoint, "qwen", installed);
   // The skill rows: after an apply the section reads the setup again, and the announcer says what was done.
-  const setups = { claude: setup, codex, antigravity };
+  const setups = { claude: setup, codex, antigravity, qwen };
   const skillApplied = (agent: HookAgent) => (kind: SkillFlow["kind"]) => {
     const current = setups[agent];
     const updating = typeof current === "object" && current !== null && (current.skill === "outdated" || current.skill === "edited");
@@ -394,7 +405,8 @@ export function AgentsSection({
   const claudeSkill = useSkillFlow(endpoint, "claude", skillApplied("claude"), skillOf(setup), reloadSetups);
   const codexSkill = useSkillFlow(endpoint, "codex", skillApplied("codex"), skillOf(codex), reloadSetups);
   const antigravitySkill = useSkillFlow(endpoint, "antigravity", skillApplied("antigravity"), skillOf(antigravity), reloadSetups);
-  const skillFlows = { claude: claudeSkill, codex: codexSkill, antigravity: antigravitySkill };
+  const qwenSkill = useSkillFlow(endpoint, "qwen", skillApplied("qwen"), skillOf(qwen), reloadSetups);
+  const skillFlows = { claude: claudeSkill, codex: codexSkill, antigravity: antigravitySkill, qwen: qwenSkill };
   const skills = Object.fromEntries(
     (Object.keys(skillFlows) as HookAgent[]).map((a) => {
       const f = skillFlows[a];
@@ -405,18 +417,18 @@ export function AgentsSection({
   useAnnounceOnce(claudeSkill.flow?.conflict ? SKILL_CONFLICT : null, announce);
   useAnnounceOnce(codexSkill.flow?.conflict ? SKILL_CONFLICT : null, announce);
   useAnnounceOnce(antigravitySkill.flow?.conflict ? SKILL_CONFLICT : null, announce);
-  const installs = { claude: claudeInstall, codex: codexInstall, antigravity: antigravityInstall };
+  const installs = { claude: claudeInstall, codex: codexInstall, antigravity: antigravityInstall, qwen: qwenInstall };
   const install = installs[active];
 
   const startSetup = useCallback(
     (agent: HookAgent = "claude", current?: AgentSetup) => {
-      const found = current ?? (agent === "codex" ? codex : agent === "antigravity" ? antigravity : setup);
+      const found = current ?? (agent === "codex" ? codex : agent === "antigravity" ? antigravity : agent === "qwen" ? qwen : setup);
       if (typeof found !== "object" || found === null) return;
       setActive(agent);
       setMode("setup");
-      void (agent === "codex" ? codexInstall : agent === "antigravity" ? antigravityInstall : claudeInstall).plan(setupWant(found), found.skill);
+      void (agent === "codex" ? codexInstall : agent === "antigravity" ? antigravityInstall : agent === "qwen" ? qwenInstall : claudeInstall).plan(setupWant(found), found.skill);
     },
-    [claudeInstall.plan, codexInstall.plan, antigravityInstall.plan, setup, codex, antigravity],
+    [claudeInstall.plan, codexInstall.plan, antigravityInstall.plan, qwenInstall.plan, setup, codex, antigravity, qwen],
   );
   const startOff = useCallback(
     async (agent: HookAgent = "claude", distro?: string) => {
@@ -450,9 +462,9 @@ export function AgentsSection({
       // The hooks the Windows panel would offer by default; the core installs no skill file in a distro.
       setActive(agent);
       setMode("setup");
-      void (agent === "codex" ? codexInstall : agent === "antigravity" ? antigravityInstall : claudeInstall).plan(DEFAULT_WANT, undefined, distro);
+      void (agent === "codex" ? codexInstall : agent === "antigravity" ? antigravityInstall : agent === "qwen" ? qwenInstall : claudeInstall).plan(DEFAULT_WANT, undefined, distro);
     },
-    [claudeInstall.plan, codexInstall.plan, antigravityInstall.plan],
+    [claudeInstall.plan, codexInstall.plan, antigravityInstall.plan, qwenInstall.plan],
   );
 
   const first = useRef(true);
@@ -466,7 +478,7 @@ export function AgentsSection({
         if (found) startSetup("claude", found);
         return;
       }
-      // Codex's or Antigravity's own setup is read here, so its card does not wait on the section's load.
+      // Codex's, Antigravity's or Qwen Code's own setup is read here, so its card does not wait on the section's load.
       const agent = startWith.setup;
       const own = await getSetup(endpoint, agent).catch(() => null);
       if (own) startSetup(agent, own);
@@ -526,6 +538,9 @@ export function AgentsSection({
       antigravity={antigravity}
       antigravityLiveStatus={liveStatus.antigravity}
       antigravityLiveStatusError={saveError?.agent === "antigravity" ? saveError.text : null}
+      qwen={qwen}
+      qwenLiveStatus={liveStatus.qwen}
+      qwenLiveStatusError={saveError?.agent === "qwen" ? saveError.text : null}
       onLiveStatus={(on, agent) => void switchLiveStatus(on, agent)}
       onNotifications={onNotifications}
       wslDistros={distros}

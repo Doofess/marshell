@@ -137,12 +137,12 @@ async fn catalog_lists_adapters_shipped_and_own_with_found_flags() {
             "claude",
             "codex",
             "antigravity",
+            "qwen",
             "copilot",
             "cursor",
             "opencode",
             "amp",
             "grok",
-            "qwen",
             "kimi",
             "aider",
             "crush",
@@ -179,6 +179,22 @@ async fn catalog_lists_adapters_shipped_and_own_with_found_flags() {
         json!({"style": "flag", "flag": "-i"})
     );
 
+    // Qwen Code is an adapter now: the same five modes, `-i` for its first prompt, and it continues.
+    let qwen = entry(&catalog, "qwen");
+    assert_eq!(
+        (
+            qwen["adapter"].clone(),
+            qwen["own"].clone(),
+            qwen["can_continue"].clone()
+        ),
+        (json!(true), json!(false), json!(true))
+    );
+    assert_eq!(qwen["name"], "Qwen");
+    assert_eq!(qwen["cli"], "Qwen Code");
+    assert_eq!(qwen["mark"], "qwen");
+    assert_eq!(qwen["prompt"], json!({"style": "flag", "flag": "-i"}));
+    assert_eq!(qwen["modes"], claude["modes"]);
+
     // A shipped manifest agent: found through its injected command and version.
     let grok = entry(&catalog, "grok");
     assert_eq!(grok["adapter"], false);
@@ -193,7 +209,7 @@ async fn catalog_lists_adapters_shipped_and_own_with_found_flags() {
         grok["modes"],
         json!(["manual", "plan", "auto-edit", "full-auto", "bypass"])
     );
-    for other in ["copilot", "cursor", "opencode", "amp", "qwen", "kimi", "aider", "crush"] {
+    for other in ["copilot", "cursor", "opencode", "amp", "kimi", "aider", "crush"] {
         assert_eq!(entry(&catalog, other)["found"], false, "{other}");
     }
 

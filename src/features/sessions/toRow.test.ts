@@ -59,6 +59,10 @@ describe("toRow", () => {
     const bell = toRow(info({ agent: "claude", live, attention: { message: null, since_ms: 1000 } }), PROFILES);
     expect(bell).toMatchObject({ status: "working" });
   });
+  it("a Qwen row waits for hooks and is not status limited", () => {
+    expect(toRow(info({ agent: "qwen" }), PROFILES)).toMatchObject({ agent: "qwen", status: "limited", phrase: "Status arrives with hooks" });
+    expect(toRow(info({ agent: "qwen" }), PROFILES, { qwen: "none" })).toMatchObject({ phrase: "Status limited · set up", setupLink: true });
+  });
   it("an_antigravity_row_shows_no_plan_meter: only Claude Code's five-hour use makes the ring", () => {
     const live: LiveStatus = { state: "idle", phrase: "", since_ms: 0, recap: null, model: null, effort: null, context_pct: null, five_hour_pct: 80, five_hour_resets_at: null, seven_day_pct: null, subagents: 0 };
     expect(planRing([info({ agent: "antigravity", live })])).toBeUndefined();

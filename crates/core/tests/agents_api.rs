@@ -158,7 +158,7 @@ async fn setup_finds_claude_on_path_without_a_profile() {
 #[tokio::test]
 async fn found_lists_each_agent_by_its_program() {
     let e = env_with(|name| match name {
-        "claude" | "agy" => Some(PathBuf::from(format!("Z:/nowhere/{name}.exe"))),
+        "claude" | "agy" | "qwen" => Some(PathBuf::from(format!("Z:/nowhere/{name}.exe"))),
         _ => None,
     });
     let (status, list) = get(&e.app, "/v1/agents").await;
@@ -169,6 +169,7 @@ async fn found_lists_each_agent_by_its_program() {
             {"agent": "claude", "found": true, "exe_path": "Z:/nowhere/claude.exe"},
             {"agent": "codex", "found": false},
             {"agent": "antigravity", "found": true, "exe_path": "Z:/nowhere/agy.exe"},
+            {"agent": "qwen", "found": true, "exe_path": "Z:/nowhere/qwen.exe"},
         ])
     );
 }
@@ -551,6 +552,179 @@ async fn antigravity_entries_from_another_home_are_orphaned() {
     let (status, applied) = post(&e.app, "/v1/config/apply", shown(&removal["preview"])).await;
     assert_eq!(status, StatusCode::OK, "{applied}");
     assert!(!e.hooks.exists());
+}
+
+// ---- Qwen Code ----
+
+struct QwenEnv {
+    _dir: tempfile::TempDir,
+    app: axum::Router,
+    home: PathBuf,
+    settings: PathBuf,
+}
+
+/// A state whose Qwen user home is a folder inside the recorded project, so the config service may write it. The
+/// bridge file exists, so installs read as installed.
+fn qwen_env() -> QwenEnv {
+    let dir = tempfile::tempdir().unwrap();
+    let root = canonical(dir.path());
+    let home = root.join("home");
+    let project = root.join("project");
+    let user_home = project.join("user");
+    std::fs::create_dir_all(&home).unwrap();
+    std::fs::create_dir_all(&user_home).unwrap();
+    record(&home, &project, 1).unwrap();
+    let st = AppState::new(
+        TOKEN.into(),
+        PORT,
+        vec!["http://tauri.localhost".into()],
+        home.clone(),
+        Vec::new(),
+    )
+    .with_claude_settings(project.join("settings.json"))
+    .with_qwen_home(user_home.clone())
+    .with_qwen_version(Some("0.26.5".into()))
+    .with_agent_path(|_| None);
+    let bridge = paths::bridge_exe(&home);
+    std::fs::create_dir_all(bridge.parent().unwrap()).unwrap();
+    std::fs::write(&bridge, "").unwrap();
+    QwenEnv {
+        _dir: dir,
+        app: router(st),
+        home,
+        settings: user_home.join(".qwen").join("settings.json"),
+    }
+}
+
+async fn install_qwen(e: &QwenEnv) -> Value {
+    let (status, preview) = post(&e.app, "/v1/agents/qwen/hooks/plan", WANT()).await;
+    assert_eq!(status, StatusCode::OK, "{preview}");
+    assert_eq!(preview["can_apply"], true, "{preview}");
+    let (status, applied) = post(&e.app, "/v1/config/apply", shown(&preview)).await;
+    assert_eq!(status, StatusCode::OK, "{applied}");
+    preview
+}
+
+const QWEN_OWN_LINE: &str = "\u{feff}{\r\n  \"theme\": \"dark\",\r\n  \"ui\": {\"statusLine\": {\"type\": \"command\", \"command\": \"my-line\"}}\r\n}\r\n";
+
+#[tokio::test]
+async fn qwen_setup_reports_none_then_installed_after_apply() {
+    let e = qwen_env();
+    let (status, setup) = get(&e.app, "/v1/agents/qwen/setup").await;
+    assert_eq!(status, StatusCode::OK, "{setup}");
+    assert_eq!(setup["agent"], "qwen");
+    assert_eq!(setup["found"], false);
+    assert_eq!(setup["version"], "0.26.5");
+    assert_eq!(setup["settings_state"], "missing");
+    assert_eq!(setup["hooks"], "none");
+    assert_eq!(setup["needs_trust"], false);
+    assert!(
+        setup.get("trust").is_none() && setup.get("hooks_path").is_none(),
+        "{setup}"
+    );
+    assert_eq!(setup["settings_path"], e.settings.to_string_lossy().as_ref());
+    // The other agents never report a preset.
+    let (_, claude) = get(&e.app, "/v1/agents/claude/setup").await;
+    assert_eq!(claude["statusline_preset"], false, "{claude}");
+
+    install_qwen(&e).await;
+    let (_, setup) = get(&e.app, "/v1/agents/qwen/setup").await;
+    assert_eq!(setup["settings_state"], "ok", "{setup}");
+    assert_eq!(setup["hooks"], "installed", "{setup}");
+}
+
+#[tokio::test]
+async fn qwen_plan_shows_the_settings_diff_and_the_chain_file() {
+    let e = qwen_env();
+    std::fs::create_dir_all(e.settings.parent().unwrap()).unwrap();
+    std::fs::write(&e.settings, QWEN_OWN_LINE).unwrap();
+    let (status, preview) = post(&e.app, "/v1/agents/qwen/hooks/plan", WANT()).await;
+    assert_eq!(status, StatusCode::OK, "{preview}");
+    assert_eq!(preview["title"], "Set up Qwen Code hooks", "{preview}");
+    let files = preview["files"].as_array().unwrap();
+    let settings = e.settings.to_string_lossy().replace('\\', "/");
+    let chain = paths::statusline_chain(&e.home, "qwen")
+        .to_string_lossy()
+        .replace('\\', "/");
+    let path_of = |f: &Value| f["path"].as_str().unwrap().replace('\\', "/");
+    let settings_file = files
+        .iter()
+        .find(|f| path_of(f) == settings)
+        .expect("the settings file is in the plan");
+    assert!(files.iter().any(|f| path_of(f) == chain), "{preview}");
+    let diff = settings_file["diff"].as_str().unwrap();
+    assert!(diff.contains("mshl1") && !diff.contains("PermissionRequest"), "{diff}");
+    // Planning writes nothing.
+    assert_eq!(std::fs::read_to_string(&e.settings).unwrap(), QWEN_OWN_LINE);
+    assert!(!paths::statusline_chain(&e.home, "qwen").exists());
+}
+
+#[tokio::test]
+async fn qwen_remove_restores_the_status_line() {
+    let e = qwen_env();
+    std::fs::create_dir_all(e.settings.parent().unwrap()).unwrap();
+    std::fs::write(&e.settings, QWEN_OWN_LINE).unwrap();
+    install_qwen(&e).await;
+    let during = std::fs::read_to_string(&e.settings).unwrap();
+    assert!(during.contains("mshl1") && !during.contains("\"my-line\""), "{during}");
+    let (_, setup) = get(&e.app, "/v1/agents/qwen/setup").await;
+    assert_eq!(setup["chained"], true, "{setup}");
+    assert_eq!(setup["has_own_statusline"], true, "{setup}");
+
+    let (status, removal) = post(&e.app, "/v1/agents/qwen/hooks/remove-plan", json!({})).await;
+    assert_eq!(status, StatusCode::OK, "{removal}");
+    assert_eq!(removal["preview"]["title"], "Turn Qwen Code hooks off", "{removal}");
+    let (status, applied) = post(&e.app, "/v1/config/apply", shown(&removal["preview"])).await;
+    assert_eq!(status, StatusCode::OK, "{applied}");
+    assert_eq!(std::fs::read_to_string(&e.settings).unwrap(), QWEN_OWN_LINE);
+    let (_, setup) = get(&e.app, "/v1/agents/qwen/setup").await;
+    assert_eq!(setup["hooks"], "none", "{setup}");
+}
+
+#[tokio::test]
+async fn qwen_orphaned_entries_are_reported() {
+    let e = qwen_env();
+    install_qwen(&e).await;
+    // The hooks stay while the bridge they run is gone.
+    std::fs::remove_file(paths::bridge_exe(&e.home)).unwrap();
+    let (_, setup) = get(&e.app, "/v1/agents/qwen/setup").await;
+    assert_eq!(setup["hooks"], "orphaned", "{setup}");
+    // The removal is still offered and takes them out.
+    let (status, removal) = post(&e.app, "/v1/agents/qwen/hooks/remove-plan", json!({})).await;
+    assert_eq!(status, StatusCode::OK, "{removal}");
+    let (status, applied) = post(&e.app, "/v1/config/apply", shown(&removal["preview"])).await;
+    assert_eq!(status, StatusCode::OK, "{applied}");
+    let left = std::fs::read_to_string(&e.settings).unwrap_or_default();
+    assert!(!left.contains("mshl1"), "{left}");
+}
+
+#[tokio::test]
+async fn qwen_setup_reports_a_preset_status_line() {
+    let e = qwen_env();
+    std::fs::create_dir_all(e.settings.parent().unwrap()).unwrap();
+    std::fs::write(
+        &e.settings,
+        r#"{"ui":{"statusLine":{"type":"preset","name":"minimal"}}}"#,
+    )
+    .unwrap();
+    let (_, setup) = get(&e.app, "/v1/agents/qwen/setup").await;
+    assert_eq!(setup["statusline_preset"], true, "{setup}");
+    assert_eq!(setup["has_own_statusline"], false, "{setup}");
+    // A command line of the person's own is not a preset.
+    std::fs::write(&e.settings, QWEN_OWN_LINE).unwrap();
+    let (_, setup) = get(&e.app, "/v1/agents/qwen/setup").await;
+    assert_eq!(setup["statusline_preset"], false, "{setup}");
+    assert_eq!(setup["has_own_statusline"], true, "{setup}");
+    // Installing leaves the preset as it is.
+    std::fs::write(
+        &e.settings,
+        r#"{"ui":{"statusLine":{"type":"preset","name":"minimal"}}}"#,
+    )
+    .unwrap();
+    install_qwen(&e).await;
+    let after = std::fs::read_to_string(&e.settings).unwrap();
+    assert!(after.contains(r#""preset""#) && after.contains("mshl1"), "{after}");
+    assert!(!paths::statusline_chain(&e.home, "qwen").exists());
 }
 
 // ---- Codex ----

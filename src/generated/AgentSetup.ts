@@ -42,6 +42,11 @@ has_own_statusline: boolean,
  */
 chained: boolean, 
 /**
+ * The status line is one of the agent's own presets (or its default), so Marshell leaves it as it is and the
+ * rows show the context use once per turn (Qwen Code). False for every other agent.
+ */
+statusline_preset: boolean, 
+/**
  * The person has to trust the hooks inside the agent before it runs them (Codex).
  */
 needs_trust: boolean, 

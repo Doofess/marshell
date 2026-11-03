@@ -331,6 +331,11 @@ pub struct LiveStatus {
     #[serde(skip)]
     #[ts(skip)]
     pub subagents_finished: u32,
+    /// When the last hook event that keeps a turn going came (Qwen's prompt, tool start and tool result), in the
+    /// clock `since_ms` uses. The core only: Qwen's idle_prompt race is measured from it. Never sent.
+    #[serde(skip)]
+    #[ts(skip)]
+    pub last_turn_event_ms: u64,
 }
 
 /// A row's output activity when its hooks say nothing.

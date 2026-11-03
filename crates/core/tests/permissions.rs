@@ -1277,3 +1277,248 @@ async fn a_held_request_view_carries_the_hold_deadline() {
         hook.await.unwrap();
     }
 }
+
+// Qwen Code. Every `PermissionRequest` from an open tab that runs Qwen waits for a card: Qwen sends it only when it
+// would show its own dialog. With no decision (released, timed out, no card) Qwen shows that dialog itself.
+
+/// An app with Qwen tabs `q1` and `q2`, `s1` (a shell tab with no agent) and `tc` (Claude Code). The Qwen version
+/// is pinned and its files would be planned under a scratch home.
+fn qwen_app(hold: Duration, qwen_version: &str) -> (axum::Router, AppState) {
+    let home = tempfile::tempdir().unwrap().keep();
+    let st = AppState::new(
+        TOKEN.into(),
+        PORT,
+        vec!["http://tauri.localhost".into()],
+        home,
+        Vec::new(),
+    )
+    .with_claude_version(Some("2.1.302".into()))
+    .with_codex_version(Some("0.163.0".into()))
+    .with_qwen_home(tempfile::tempdir().unwrap().keep())
+    .with_qwen_version(Some(qwen_version.into()))
+    .with_agent_path(|_| None)
+    .with_permission_hold(hold);
+    for (tab, agent) in [
+        ("q1", Some("qwen")),
+        ("q2", Some("qwen")),
+        ("s1", None),
+        ("tc", Some("claude")),
+    ] {
+        st.registry().reserve(
+            tab,
+            marshell_core::registry::Relaunch {
+                elevated: false,
+                profile_id: "none".into(),
+                agent: agent.map(str::to_owned),
+                cwd: AGY_CWD.into(),
+                mode: None,
+                name: tab.into(),
+                preset: None,
+            },
+        );
+    }
+    (router(st.clone()), st)
+}
+
+/// What the bridge posts for Qwen's `PermissionRequest`: the recorded 0.26.5 body.
+fn qwen_request() -> serde_json::Value {
+    let text = std::fs::read_to_string(format!(
+        "{}/tests/fixtures/qwen/hooks/0.26.5/PermissionRequest-write_file.json",
+        env!("CARGO_MANIFEST_DIR")
+    ))
+    .unwrap();
+    serde_json::from_str(&text).unwrap()
+}
+
+/// The recorded request with `path` as the file it writes.
+fn qwen_write(path: &str) -> serde_json::Value {
+    let mut request = qwen_request();
+    request["tool_input"]["file_path"] = path.into();
+    request
+}
+
+fn qwen_allow() -> serde_json::Value {
+    serde_json::json!({"hookSpecificOutput": {"hookEventName": "PermissionRequest", "decision": {"behavior": "allow"}}})
+}
+
+fn qwen_deny(message: &str) -> serde_json::Value {
+    serde_json::json!({"hookSpecificOutput": {"hookEventName": "PermissionRequest",
+        "decision": {"behavior": "deny", "message": message}}})
+}
+
+#[tokio::test]
+async fn a_qwen_permission_request_is_held_for_a_card() {
+    use marshell_protocol::api::LiveState;
+    let (app, st) = qwen_app(Duration::from_secs(30), "0.26.5");
+    let hook = spawn_agent_hook("qwen", &app, Some("q1"), qwen_request());
+    let entry = wait_one(&app).await;
+    assert_eq!(
+        (entry["agent"].as_str(), entry["tab"].as_str()),
+        (Some("qwen"), Some("q1"))
+    );
+    assert!(!hook.is_finished());
+    let views = st.permission_views();
+    assert_eq!(views.len(), 1);
+    assert_eq!(views[0].always_rule, None);
+    assert!(matches!(
+        &views[0].detail,
+        marshell_protocol::hook::PermissionDetail::Write { path, .. } if path.ends_with("proj6/b.txt")
+    ));
+    let live = live_of(&st, "q1");
+    assert_eq!(live.state, LiveState::NeedsPermission);
+    assert!(live.phrase.starts_with("Wants to edit"), "{}", live.phrase);
+    decide(&app, &rid_of(&entry), r#"{"behavior":"deny"}"#).await;
+    assert_eq!(hook.await.unwrap().0, StatusCode::OK);
+}
+
+#[tokio::test]
+async fn allow_from_the_card_answers_qwen() {
+    let (app, st) = qwen_app(Duration::from_secs(30), "0.26.5");
+    let hook = spawn_agent_hook("qwen", &app, Some("q1"), qwen_request());
+    let rid = rid_of(&wait_one(&app).await);
+    decide(&app, &rid, r#"{"behavior":"allow"}"#).await;
+    let answer = hook.await.unwrap();
+    assert_eq!(answer.0, StatusCode::OK);
+    assert_eq!(answer.1.as_deref(), Some("application/json"));
+    assert_eq!(answer_json(&answer), qwen_allow());
+    assert_eq!(
+        live_of(&st, "q1").state,
+        marshell_protocol::api::LiveState::Working,
+        "the row stops asking at once"
+    );
+
+    // A deny carries the person's words, or Marshell's own text.
+    for (body, message) in [
+        (r#"{"behavior":"deny","message":"Not now"}"#, "Not now"),
+        (r#"{"behavior":"deny"}"#, "Denied in Marshell."),
+    ] {
+        let hook = spawn_agent_hook("qwen", &app, Some("q1"), qwen_request());
+        let rid = rid_of(&wait_one(&app).await);
+        decide(&app, &rid, body).await;
+        assert_eq!(answer_json(&hook.await.unwrap()), qwen_deny(message));
+    }
+}
+
+#[tokio::test]
+async fn always_allow_on_a_qwen_card_is_refused_and_the_card_stays() {
+    let (app, _) = qwen_app(Duration::from_secs(30), "0.26.5");
+    let hook = spawn_agent_hook("qwen", &app, Some("q1"), qwen_request());
+    let rid = rid_of(&wait_one(&app).await);
+    let (status, body) = post_to(
+        &app,
+        &format!("/v1/permissions/{rid}/decision"),
+        r#"{"behavior":"allow","scope":"project"}"#,
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    assert!(body.contains("Qwen Code can't keep an always-allow rule from Marshell. Allow this once instead."));
+    assert_eq!(pending(&app).await.len(), 1);
+    assert!(!hook.is_finished());
+}
+
+#[tokio::test]
+async fn a_released_qwen_card_answers_nothing() {
+    let (app, _) = qwen_app(Duration::from_secs(30), "0.26.5");
+    let hook = spawn_agent_hook("qwen", &app, Some("q1"), qwen_request());
+    let rid = rid_of(&wait_one(&app).await);
+    let (status, _) = post_to(&app, &format!("/v1/permissions/{rid}/release"), "").await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    // 204 with no body: the bridge prints nothing, and Qwen shows its own dialog.
+    let (status, _, body) = hook.await.unwrap();
+    assert_eq!((status, body.is_empty()), (StatusCode::NO_CONTENT, true));
+    assert!(pending(&app).await.is_empty());
+}
+
+#[tokio::test]
+async fn a_qwen_request_from_an_unknown_tab_or_a_tab_running_another_agent_passes() {
+    let (app, st) = qwen_app(Duration::from_secs(30), "0.26.5");
+    // No tab header, a tab the registry never opened, and a tab that runs Claude Code.
+    for tab in [None, Some("unknown-tab"), Some("tc")] {
+        let hook = spawn_agent_hook("qwen", &app, tab, qwen_request());
+        let (status, _, body) = tokio::time::timeout(Duration::from_secs(2), hook)
+            .await
+            .expect("a pass waited")
+            .unwrap();
+        assert_eq!((status, body.is_empty()), (StatusCode::NO_CONTENT, true), "{tab:?}");
+    }
+    assert!(pending(&app).await.is_empty());
+    assert!(st.permission_views().is_empty());
+    // The other agent's row is untouched.
+    assert!(row_of(&st, "tc").live.is_none());
+}
+
+#[tokio::test]
+async fn two_qwen_tabs_get_their_own_answers() {
+    let (app, _) = qwen_app(Duration::from_secs(30), "0.26.5");
+    let first = spawn_agent_hook("qwen", &app, Some("q1"), qwen_write("C:/proj/first.txt"));
+    wait_pending(&app, |p| p.len() == 1).await;
+    let second = spawn_agent_hook("qwen", &app, Some("q2"), qwen_write("C:/proj/second.txt"));
+    let entries = wait_pending(&app, |p| p.len() == 2).await;
+    let entry_for = |tab: &str| entries.iter().find(|e| e["tab"] == tab).unwrap().clone();
+    assert_eq!(
+        entry_for("q1")["request"]["tool_input"]["file_path"],
+        "C:/proj/first.txt"
+    );
+    assert_eq!(
+        entry_for("q2")["request"]["tool_input"]["file_path"],
+        "C:/proj/second.txt"
+    );
+    // Answer the later tab first, with a different decision from the earlier one.
+    decide(
+        &app,
+        &rid_of(&entry_for("q2")),
+        r#"{"behavior":"deny","message":"second only"}"#,
+    )
+    .await;
+    let second = second.await.unwrap();
+    assert_eq!(
+        (second.0, answer_json(&second)),
+        (StatusCode::OK, qwen_deny("second only"))
+    );
+    // The first tab is still waiting, and its request is the only one left.
+    assert!(!first.is_finished());
+    let left = pending(&app).await;
+    assert_eq!((left.len(), left[0]["tab"].as_str()), (1, Some("q1")));
+    decide(&app, &rid_of(&entry_for("q1")), r#"{"behavior":"allow"}"#).await;
+    let first = first.await.unwrap();
+    assert_eq!((first.0, answer_json(&first)), (StatusCode::OK, qwen_allow()));
+}
+
+#[tokio::test]
+async fn a_held_qwen_request_times_out_before_the_bridge() {
+    let (app, _) = qwen_app(Duration::from_secs(1), "0.26.5");
+    let started = Instant::now();
+    let hook = spawn_agent_hook("qwen", &app, Some("q1"), qwen_request());
+    let (status, _, body) = tokio::time::timeout(Duration::from_secs(5), hook)
+        .await
+        .expect("the hold did not expire in 5 s")
+        .unwrap();
+    // No decision at the deadline: 204, so Qwen shows its own dialog and the call never runs unasked.
+    assert!(started.elapsed() >= Duration::from_millis(900));
+    assert_eq!((status, body.is_empty()), (StatusCode::NO_CONTENT, true));
+    assert!(pending(&app).await.is_empty());
+
+    // The core's deadline ends before the bridge's wait (`crates/hook/src/post.rs`, 590 s), and that ends before
+    // the hook entry's `timeout` (`PERMISSION_TIMEOUT` in `agents/qwen/hooks.rs`, 600 s). Change them together.
+    const BRIDGE_WAIT: Duration = Duration::from_secs(590);
+    const ENTRY_TIMEOUT: Duration = Duration::from_secs(600);
+    assert!(marshell_core::server::DEFAULT_PERMISSION_HOLD < BRIDGE_WAIT);
+    assert!(BRIDGE_WAIT < ENTRY_TIMEOUT);
+}
+
+#[tokio::test]
+async fn a_qwen_card_still_works_on_an_unrecorded_version() {
+    let (app, st) = qwen_app(Duration::from_secs(30), "0.27.0");
+    let hook = spawn_agent_hook("qwen", &app, Some("q1"), qwen_request());
+    let entry = wait_one(&app).await;
+    assert_eq!(st.permission_views().len(), 1);
+    // No guessed status: the row carries the note instead.
+    let row = row_of(&st, "q1");
+    assert_eq!(
+        row.status_note.as_deref(),
+        Some("Qwen Code 0.27.0 is not one Marshell has recorded yet")
+    );
+    assert!(row.live.is_none());
+    decide(&app, &rid_of(&entry), r#"{"behavior":"allow"}"#).await;
+    assert_eq!(answer_json(&hook.await.unwrap()), qwen_allow());
+}

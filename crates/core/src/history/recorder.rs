@@ -203,10 +203,11 @@ impl History {
         at_ms: u64,
         distro: Option<&str>,
     ) -> Option<SessionMeta> {
-        // Codex's and Antigravity's sessions are linked by the first event that names them, whatever it is.
+        // Codex's, Antigravity's and Qwen Code's sessions are linked by the first event that names them, whatever it is.
+        // A Qwen body is Claude-shaped, so it reads like Codex's.
         let (codex, antigravity) = match agent {
             "claude" => (false, false),
-            "codex" => (true, false),
+            "codex" | "qwen" => (true, false),
             "antigravity" => (true, true),
             _ => return None,
         };
@@ -308,9 +309,9 @@ impl History {
             distro: distro.map(str::to_string),
         };
         let ends_turn = !codex && matches!(event, "Stop" | "StopFailure" | "SessionEnd");
-        // An event of an agy conversation the tab went back to makes it the tab's latest again (the latest is the
-        // row with the newest `updated_ms`); events of the tab's current one write nothing.
-        let returned = antigravity
+        // An event of an agy conversation or a Qwen chat the tab went back to makes it the tab's latest again (the
+        // latest is the row with the newest `updated_ms`); events of the tab's current one write nothing.
+        let returned = (antigravity || agent == "qwen")
             && !is_new
             && index
                 .latest_for_tab_of(tab_id, agent)
@@ -1442,6 +1443,83 @@ mod tests {
         // Another event of the first one in the same tab makes it the tab's latest again.
         history.note_event("antigravity", "t1", None, &first, 3000, None);
         assert_eq!(history.latest_for_tab_of("t1", "antigravity").unwrap().session_id, ID);
+    }
+
+    const QWEN_STOP: &str = include_str!("../../tests/fixtures/qwen/hooks/0.26.5/Stop.json");
+    const QWEN_START: &str = include_str!("../../tests/fixtures/qwen/hooks/0.26.5/SessionStart.json");
+
+    /// A Qwen fixture pointed at a transcript where Qwen keeps it, under `dir`.
+    fn qwen_body(fixture: &str, dir: &Path, id: &str) -> Value {
+        let mut v: Value = serde_json::from_str(fixture).unwrap();
+        v["session_id"] = json!(id);
+        v["transcript_path"] = json!(
+            dir.join(".qwen")
+                .join("projects")
+                .join("c--work-app")
+                .join("chats")
+                .join(format!("{id}.jsonl"))
+                .to_string_lossy()
+        );
+        v["cwd"] = json!(dir.to_string_lossy());
+        v
+    }
+
+    #[test]
+    fn qwen_is_linked_by_its_first_event() {
+        let home = tempfile::tempdir().unwrap();
+        let history = History::open(home.path());
+        // `Stop` is not a start, and Qwen has no importer: the first event that names the session links it, and no
+        // copy is asked for.
+        let body = qwen_body(QWEN_STOP, home.path(), ID);
+        assert_eq!(
+            history.note_event("qwen", "t1", Some("t1-1000.cast"), &body, 1000, None),
+            None
+        );
+        let row = history.get("qwen", ID).unwrap().unwrap();
+        assert_eq!((row.tab_id.as_str(), row.client), ("t1", Client::Marshell));
+        assert_eq!(row.transcript_path, body["transcript_path"].as_str().unwrap());
+        assert_eq!((row.started_ms, row.updated_ms), (1000, 1000));
+        assert_eq!(history.latest_for_tab_of("t1", "qwen").unwrap().session_id, ID);
+        assert_eq!(history.latest_for_tab_of("t1", "claude"), None);
+        let meta = crate::history::archive::read_meta(home.path(), "qwen", ID)
+            .unwrap()
+            .unwrap();
+        assert_eq!((meta.agent.as_str(), meta.tab_id.as_str()), ("qwen", "t1"));
+        assert_eq!(meta.recordings.len(), 1);
+        // Later events of the same session in the tab change nothing, and never ask for a copy.
+        let later = qwen_body(QWEN_START, home.path(), ID);
+        assert_eq!(history.note_event("qwen", "t1", None, &later, 2000, None), None);
+        assert_eq!(history.get("qwen", ID).unwrap().unwrap().updated_ms, 1000);
+        // A transcript outside `chats`, or with the wrong id, links nothing.
+        let mut hostile = qwen_body(QWEN_START, home.path(), "00000000-0000-4000-8000-000000000002");
+        hostile["transcript_path"] = json!(home.path().join("x.jsonl").to_string_lossy());
+        assert_eq!(history.note_event("qwen", "t1", None, &hostile, 3000, None), None);
+        assert!(
+            history
+                .get("qwen", "00000000-0000-4000-8000-000000000002")
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn a_qwen_session_the_tab_went_back_to_is_its_latest_again() {
+        const B: &str = "00000000-0000-4000-8000-000000000002";
+        let home = tempfile::tempdir().unwrap();
+        let history = History::open(home.path());
+        history.note_event(
+            "qwen",
+            "t1",
+            Some("t1-1000.cast"),
+            &qwen_body(QWEN_STOP, home.path(), ID),
+            1000,
+            None,
+        );
+        history.note_event("qwen", "t1", None, &qwen_body(QWEN_STOP, home.path(), B), 2000, None);
+        assert_eq!(history.latest_for_tab_of("t1", "qwen").unwrap().session_id, B);
+        // The tab goes back to the first chat: its event makes it the latest again.
+        history.note_event("qwen", "t1", None, &qwen_body(QWEN_START, home.path(), ID), 3000, None);
+        assert_eq!(history.latest_for_tab_of("t1", "qwen").unwrap().session_id, ID);
     }
 
     #[test]

@@ -13,7 +13,8 @@ pub fn neutral(_agent: &str) -> &'static [u8] {
 
 /// True when `answer` is one the core gives `agent` for `request` (both as the bridge read them). A bridge
 /// that runs as administrator (`elevated`) passes on no saved rules, so no admin command becomes a standing
-/// rule, whatever answers on the port (slice 6j2 decisions 6 and 12).
+/// rule, whatever answers on the port (slice 6j2 decisions 6 and 12). Marshell keeps no always-allow rule for
+/// Qwen Code (slice 6l1 decision 5), so its allow never carries rules either.
 pub fn accepted(agent: &str, answer: &[u8], request: &[u8], elevated: bool) -> bool {
     let (Ok(answer), Ok(request)) = (
         serde_json::from_slice::<Value>(answer),
@@ -38,7 +39,7 @@ pub fn accepted(agent: &str, answer: &[u8], request: &[u8], elevated: bool) -> b
     };
     match decision.get("behavior").and_then(Value::as_str) {
         Some("deny") => only(decision, "message") && decision.get("message").is_none_or(Value::is_string),
-        Some("allow") if elevated => only(decision, "behavior"),
+        Some("allow") if elevated || agent == "qwen" => only(decision, "behavior"),
         Some("allow") => {
             only(decision, "updatedPermissions")
                 && decision
@@ -117,6 +118,28 @@ mod tests {
         // A Codex request has no suggestions, so a scoped allow is never one the core gives.
         let scoped = r#"{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decision":{"behavior":"allow","updatedPermissions":[{"type":"addRules","rules":[{"toolName":"Bash"}],"behavior":"allow","destination":"session"}]}}}"#;
         assert!(!accepted("codex", scoped.as_bytes(), REQUEST, false));
+    }
+
+    /// Marshell keeps no always-allow rule for Qwen Code (slice 6l1 decision 5), so an allow with rules is never
+    /// the core's, even if a later Qwen sends suggestions to match.
+    #[test]
+    fn a_qwen_allow_never_carries_rules() {
+        let suggested =
+            r#"{"type":"addRules","rules":[{"toolName":"write_file"}],"behavior":"allow","destination":"session"}"#;
+        let request = format!(r#"{{"tool_name":"write_file","permission_suggestions":[{suggested}]}}"#);
+        let with_rule = format!(
+            r#"{{"hookSpecificOutput":{{"hookEventName":"PermissionRequest","decision":{{"behavior":"allow","updatedPermissions":[{suggested}]}}}}}}"#
+        );
+        assert!(!accepted("qwen", with_rule.as_bytes(), request.as_bytes(), false));
+        for answer in [
+            r#"{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decision":{"behavior":"allow"}}}"#,
+            r#"{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decision":{"behavior":"deny","message":"Denied in Marshell."}}}"#,
+        ] {
+            assert!(
+                accepted("qwen", answer.as_bytes(), request.as_bytes(), false),
+                "{answer}"
+            );
+        }
     }
 
     #[test]

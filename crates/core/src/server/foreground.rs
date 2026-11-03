@@ -12,7 +12,7 @@
 use super::AppState;
 use super::shell_panel::{PANEL_GENERATION, take_and_adopt};
 use crate::agents::manifest::Agents;
-use crate::profiles::detect::{agent_in, program_of};
+use crate::profiles::detect::{agent_in, agent_of_node_argv, program_of};
 use crate::pty::Session;
 use crate::tools::{Tools, Watch, watch_for, watch_for_argv};
 use marshell_protocol::api::Foreground;
@@ -243,7 +243,13 @@ fn seen_twice(pending: &mut Option<(String, u64, Instant)>, tab: &str, epoch: u6
 /// The watch is what the processes say the command is; `None` when they could not be read, so the watch stays as it was.
 fn read(agents: &Agents, tools: &Tools, session: &Session) -> (Reading, Option<Watch>) {
     let (chain, argv) = session.foreground_reading();
-    let reading = foreground_of(agents, chain.as_deref(), session.command_line());
+    let mut reading = foreground_of(agents, chain.as_deref(), session.command_line());
+    // A standalone or npm Qwen Code runs as `node`, which names no agent: its script, in the deepest process's words, does.
+    if let Some(Some(fg)) = &mut reading
+        && fg.agent.is_none()
+    {
+        fg.agent = argv.as_deref().and_then(agent_of_node_argv).map(String::from);
+    }
     let watch = match &reading {
         // Nothing runs in front of the shell: a watch set by an earlier reading goes.
         Some(None) if chain.is_some() => Some(Watch::default()),

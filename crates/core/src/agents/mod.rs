@@ -10,6 +10,7 @@ pub mod install;
 pub mod manifest;
 pub mod own;
 pub mod presets;
+pub mod qwen;
 pub mod settings_view;
 pub mod skill;
 
@@ -137,7 +138,7 @@ use serde_json::Value;
 
 /// Whether Marshell can show and answer this agent's permission requests.
 pub fn supports_permissions(agent: &str) -> bool {
-    matches!(agent, "claude" | "codex" | "antigravity")
+    matches!(agent, "claude" | "codex" | "antigravity" | "qwen")
 }
 
 /// A held request's card, when its agent is known and it belongs to a tab.
@@ -150,6 +151,7 @@ pub fn permission_view(p: &PendingPermission) -> Option<PermissionView> {
         "claude" => claude::request::view(p),
         "codex" => codex::request::view(p),
         "antigravity" => antigravity::request::view(p),
+        "qwen" => qwen::request::view(p),
         _ => None,
     }
 }
@@ -160,16 +162,18 @@ pub fn permission_output(agent: &str, decision: &PermissionDecision, request: &V
         "claude" => claude::permission_output(decision, request),
         "codex" => codex::request::permission_output(decision, request),
         "antigravity" => antigravity::request::permission_output(decision, request),
+        "qwen" => qwen::request::permission_output(decision, request),
         _ => Err("This agent can't take a decision yet."),
     }
 }
 
 /// What a released or timed-out hold answers instead of the 204. `None` for an agent whose own prompt takes
-/// over (Claude Code, Codex). Antigravity gets a deny: only a Bypass tab is held, and there agy runs the call
-/// on an empty answer.
+/// over (Claude Code, Codex, Qwen Code: no decision, so Qwen shows its own dialog). Antigravity gets a deny: only a
+/// Bypass tab is held, and there agy runs the call on an empty answer.
 pub fn release_output(agent: &str, _request: &Value) -> Option<Value> {
     match agent {
         "antigravity" => Some(antigravity::request::release_output()),
+        "qwen" => None,
         _ => None,
     }
 }

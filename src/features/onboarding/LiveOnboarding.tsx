@@ -16,7 +16,7 @@ export const SETUP_UNREADABLE = "Couldn't read the setup from Marshell's core. Y
 export type OnboardingState =
   | { kind: "loading" }
   | { kind: "failed" }
-  | { kind: "detected"; setup: AgentSetup; found: AgentFound[] | null; codex?: AgentSetup | null; antigravity?: AgentSetup | null }
+  | { kind: "detected"; setup: AgentSetup; found: AgentFound[] | null; codex?: AgentSetup | null; antigravity?: AgentSetup | null; qwen?: AgentSetup | null }
   /** The card of one agent (`setup` is that agent's): each found agent with hooks gets its own, one after the other. */
   | { kind: "consent"; setup: AgentSetup; flow: InstallFlow };
 
@@ -47,7 +47,7 @@ export function OnboardingView({ state, ...on }: { state: OnboardingState } & On
   if (state.kind === "detected")
     return (
       <OnboardingFrame step="detected" title="Coding agents found" primary="Continue" onPrimary={on.onContinue}>
-        <Detected detections={toDetections(state.setup, state.found, state.codex, state.antigravity)} />
+        <Detected detections={toDetections(state.setup, state.found, state.codex, state.antigravity, state.qwen)} />
       </OnboardingFrame>
     );
   const { flow, setup } = state;
@@ -61,8 +61,12 @@ export function OnboardingView({ state, ...on }: { state: OnboardingState } & On
   );
 }
 
+/** The consent cards, in order: Claude Code's, then Codex's, then Antigravity's, then Qwen Code's, each only when it has something to set up. */
+export const onboardingQueue = (claude: AgentSetup, codex?: AgentSetup | null, antigravity?: AgentSetup | null, qwen?: AgentSetup | null): AgentSetup[] =>
+  consentQueue([claude, ...(codex ? [codex] : []), ...(antigravity ? [antigravity] : []), ...(qwen ? [qwen] : [])]);
+
 /**
- * First run on the core's data: what was found, then one consent card per found agent with hooks (Claude Code's, then Codex's, then Antigravity's), each
+ * First run on the core's data: what was found, then one consent card per found agent with hooks (Claude Code's, then Codex's, then Antigravity's, then Qwen Code's), each
  * on the core's own preview. The state is read once when it opens. `onDone` is called when the last card is allowed or skipped, or the
  * person leaves; the window records that the onboarding was seen. Notifications and the first session are not part of this yet.
  */
@@ -71,12 +75,13 @@ export function LiveOnboarding({ endpoint, onDone }: { endpoint: Endpoint; onDon
   const [found, setFound] = useState<AgentFound[] | null>(null);
   const [codex, setCodex] = useState<AgentSetup | null>(null);
   const [antigravity, setAntigravity] = useState<AgentSetup | null>(null);
+  const [qwen, setQwen] = useState<AgentSetup | null>(null);
   // Which card of the queue is open; null is the Detected screen.
   const [at, setAt] = useState<number | null>(null);
   // One flow per agent: an agent's card plans on its own flow, and the next card never waits on a render.
-  const flows = { claude: useInstallFlow(endpoint, "claude", () => next.current()), codex: useInstallFlow(endpoint, "codex", () => next.current()), antigravity: useInstallFlow(endpoint, "antigravity", () => next.current()) };
+  const flows = { claude: useInstallFlow(endpoint, "claude", () => next.current()), codex: useInstallFlow(endpoint, "codex", () => next.current()), antigravity: useInstallFlow(endpoint, "antigravity", () => next.current()), qwen: useInstallFlow(endpoint, "qwen", () => next.current()) };
 
-  const queue = typeof setup === "object" ? consentQueue([setup, ...(codex ? [codex] : []), ...(antigravity ? [antigravity] : [])]) : [];
+  const queue = typeof setup === "object" ? onboardingQueue(setup, codex, antigravity, qwen) : [];
   const current = at === null ? undefined : queue[at];
   // Allowing or skipping a card opens the next one, and after the last the onboarding ends.
   const go = (i: number) => {
@@ -90,12 +95,13 @@ export function LiveOnboarding({ endpoint, onDone }: { endpoint: Endpoint; onDon
 
   useEffect(() => {
     let live = true;
-    Promise.all([getSetup(endpoint, "claude"), listAgents(endpoint).catch(() => null), getSetup(endpoint, "codex").catch(() => null), getSetup(endpoint, "antigravity").catch(() => null)]).then(
-      ([s, list, c, a]) => {
+    Promise.all([getSetup(endpoint, "claude"), listAgents(endpoint).catch(() => null), getSetup(endpoint, "codex").catch(() => null), getSetup(endpoint, "antigravity").catch(() => null), getSetup(endpoint, "qwen").catch(() => null)]).then(
+      ([s, list, c, a, q]) => {
         if (!live) return;
         setFound(list);
         setCodex(c);
         setAntigravity(a);
+        setQwen(q);
         setSetup(s);
       },
       () => live && setSetup("failed"),
@@ -110,7 +116,7 @@ export function LiveOnboarding({ endpoint, onDone }: { endpoint: Endpoint; onDon
       ? { kind: setup }
       : current
         ? { kind: "consent", setup: current, flow: flows[current.agent as HookAgent].flow ?? { preview: null, open: false, busy: true, want: flows[current.agent as HookAgent].want } }
-        : { kind: "detected", setup, found, codex, antigravity };
+        : { kind: "detected", setup, found, codex, antigravity, qwen };
   const flow = current ? flows[current.agent as HookAgent] : undefined;
 
   return (
@@ -122,6 +128,7 @@ export function LiveOnboarding({ endpoint, onDone }: { endpoint: Endpoint; onDon
         flows.claude.reset();
         flows.codex.reset();
         flows.antigravity.reset();
+        flows.qwen.reset();
         setAt(null);
       }}
       onAllow={() => void flow?.apply()}

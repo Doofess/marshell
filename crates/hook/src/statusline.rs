@@ -73,7 +73,10 @@ pub fn run(home: Option<&Path>, agent: &str, stdin_bytes: &[u8], env: Env, no_ch
             // Running it would start this bridge again, which would read the same chain, and so on.
             Err("the chain names Marshell's own status line, so it was not run".to_string())
         }
-        Ok(Some(command)) => run_original(&command, &shell_for(agent, env), stdin_bytes, env, ORIGINAL_TIMEOUT),
+        Ok(Some(command)) => {
+            let (sh, verbatim) = shell_for(agent, env);
+            run_original(&command, &sh, verbatim, stdin_bytes, env, ORIGINAL_TIMEOUT)
+        }
         Ok(None) => Ok(Vec::new()),
         Err(e) => Err(e),
     };
@@ -108,35 +111,57 @@ pub fn read_chain(home: &Path, agent: &str) -> Result<Option<String>, String> {
         .ok_or_else(|| "the chain file has no statusLine.command".to_string())
 }
 
-/// The shell the agent itself runs a status line with. On Windows agy runs it as `cmd /c "<command>"`
-/// (the 6d research, A2); Claude Code picks its own (`shell::resolve`).
-fn shell_for(agent: &str, env: Env) -> shell::ShellCmd {
+/// The shell the agent itself runs a status line with, and whether the command goes to it verbatim. On
+/// Windows agy runs it as `cmd /c "<command>"` (the 6d research, A2). Qwen Code runs it with Node's `exec`,
+/// which on Windows is `cmd.exe /d /s /c "<command>"` with the command verbatim inside the quotes, so its
+/// quotes reach cmd as the person wrote them (slice 6l1, Task 2). Claude Code picks its own (`shell::resolve`).
+fn shell_for(agent: &str, env: Env) -> (shell::ShellCmd, bool) {
     if cfg!(windows) && agent == "antigravity" {
-        return shell::ShellCmd {
+        let sh = shell::ShellCmd {
             program: PathBuf::from("cmd.exe"),
             args_before_command: vec!["/c".into()],
         };
+        return (sh, false);
+    }
+    if cfg!(windows) && agent == "qwen" {
+        let sh = shell::ShellCmd {
+            program: PathBuf::from("cmd.exe"),
+            args_before_command: vec!["/d".into(), "/s".into(), "/c".into()],
+        };
+        return (sh, true);
     }
     let path_var = env("PATH").or_else(|| env("Path"));
-    shell::resolve(env, &|p| p.is_file(), shell::find_git_on_path(path_var.as_deref()))
+    let sh = shell::resolve(env, &|p| p.is_file(), shell::find_git_on_path(path_var.as_deref()));
+    (sh, false)
 }
 
 /// Runs `command` through `sh` with `stdin_bytes` on its stdin. `Ok` holds its stdout for an exit 0.
 /// After `timeout` the command and everything it started are ended and the result is an error. No
-/// output text and no input appear in an error.
+/// output text and no input appear in an error. With `verbatim` (Windows only) the command goes to the
+/// shell as `"<command>"` with nothing in it escaped, as Node's `exec` passes it.
 fn run_original(
     command: &str,
     sh: &shell::ShellCmd,
+    verbatim: bool,
     stdin_bytes: &[u8],
     env: Env,
     timeout: Duration,
 ) -> Result<Vec<u8>, String> {
     let mut cmd = Command::new(&sh.program);
-    cmd.args(&sh.args_before_command)
-        .arg(command)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null());
+    cmd.args(&sh.args_before_command);
+    #[cfg(windows)]
+    if verbatim {
+        use std::os::windows::process::CommandExt;
+        cmd.raw_arg(format!("\"{command}\""));
+    } else {
+        cmd.arg(command);
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = verbatim;
+        cmd.arg(command);
+    }
+    cmd.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null());
     for var in ["COLUMNS", "LINES"] {
         if let Some(v) = env(var) {
             cmd.env(var, v);
@@ -269,6 +294,27 @@ mod tests {
         assert!(out.trim_end().to_ascii_lowercase().ends_with("cmd.exe"), "{out:?}");
     }
 
+    /// Qwen runs a status line with Node's `exec`: `cmd.exe /d /s /c "<command>"`, with the command verbatim, so
+    /// its quotes reach cmd as written (its hooks, unlike this, get `\"`).
+    #[cfg(windows)]
+    #[test]
+    fn qwen_runs_its_chained_line_through_cmd_on_windows() {
+        let home = tempfile::tempdir().unwrap();
+        let chain = home.path().join("agents").join("qwen");
+        std::fs::create_dir_all(&chain).unwrap();
+        std::fs::write(
+            chain.join("statusline-chain.json"),
+            r#"{"statusLine":{"type":"command","command":"echo \"a b\" %COMSPEC%"}}"#,
+        )
+        .unwrap();
+        let path = std::env::var("PATH").unwrap_or_default();
+        let env = move |k: &str| (k == "PATH").then(|| path.clone());
+        let out = String::from_utf8(run(Some(home.path()), "qwen", b"{}", &env, false)).unwrap();
+        let out = out.trim_end().to_ascii_lowercase();
+        assert!(out.starts_with("\"a b\" "), "{out:?}");
+        assert!(out.ends_with("cmd.exe"), "{out:?}");
+    }
+
     #[test]
     fn a_hung_original_is_cut_off() {
         let path = std::env::var("PATH").unwrap_or_default();
@@ -282,7 +328,8 @@ mod tests {
         let started = Instant::now();
         let result = run_original(
             command,
-            &shell_for("claude", &env),
+            &shell_for("claude", &env).0,
+            false,
             b"{}",
             &env,
             Duration::from_millis(300),
@@ -305,7 +352,8 @@ mod tests {
         assert!(
             run_original(
                 &command,
-                &shell_for("claude", &env),
+                &shell_for("claude", &env).0,
+                false,
                 b"{}",
                 &env,
                 Duration::from_millis(500)

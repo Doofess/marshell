@@ -105,6 +105,9 @@ pub struct AgentSetup {
     pub has_own_statusline: bool,
     /// Ours is in place and the chain holds the user's.
     pub chained: bool,
+    /// The status line is one of the agent's own presets (or its default), so Marshell leaves it as it is and the
+    /// rows show the context use once per turn (Qwen Code). False for every other agent.
+    pub statusline_preset: bool,
     /// The person has to trust the hooks inside the agent before it runs them (Codex).
     pub needs_trust: bool,
     /// What the agent's own config says about Marshell's hook entries; absent when it holds none of ours

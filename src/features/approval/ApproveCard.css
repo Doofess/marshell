@@ -146,6 +146,12 @@
   font-size: var(--text-11);
   overflow-wrap: anywhere;
 }
+/* Why an action is missing (Qwen Code's always-allow): a sentence in the card's own font. */
+.approve-card__note {
+  margin: 0;
+  color: var(--text-2);
+  font-size: var(--text-12);
+}
 
 .approve-card__risk {
   display: flex;

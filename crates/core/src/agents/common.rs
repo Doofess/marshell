@@ -1,6 +1,8 @@
 //! Helpers the agents' conversation parsers share: truncation, paths, card wording and timestamps.
 
+use crate::profiles::detect::posix_quote;
 use marshell_protocol::api::{LiveState, LiveStatus};
+use marshell_protocol::hook::{DiffKind, DiffLine, PermissionDetail};
 use serde_json::Value;
 use std::fmt;
 use std::path::{Path, PathBuf};
@@ -35,6 +37,45 @@ pub fn cap(s: &str, max: usize) -> String {
     match s.char_indices().nth(max) {
         Some((at, _)) => format!("{}…", &s[..at]),
         None => s.to_string(),
+    }
+}
+
+/// An edit's card: the first hunk of the change from `old` to `new`, with the added and removed line counts of all
+/// of it.
+pub fn edit_detail(path: &str, old: &str, new: &str) -> PermissionDetail {
+    let patch = diffy::create_patch(old, new);
+    let mut add = 0_u32;
+    let mut del = 0_u32;
+    for line in patch.hunks().iter().flat_map(|hunk| hunk.lines()) {
+        match line {
+            diffy::Line::Insert(_) => add = add.saturating_add(1),
+            diffy::Line::Delete(_) => del = del.saturating_add(1),
+            diffy::Line::Context(_) => {}
+        }
+    }
+    let hunk = patch
+        .hunks()
+        .first()
+        .into_iter()
+        .flat_map(|hunk| hunk.lines())
+        .map(|line| {
+            let (kind, text) = match line {
+                diffy::Line::Context(text) => (DiffKind::Context, *text),
+                diffy::Line::Insert(text) => (DiffKind::Add, *text),
+                diffy::Line::Delete(text) => (DiffKind::Del, *text),
+            };
+            let text = text.strip_suffix('\n').unwrap_or(text);
+            DiffLine {
+                kind,
+                text: text.strip_suffix('\r').unwrap_or(text).into(),
+            }
+        })
+        .collect();
+    PermissionDetail::Edit {
+        path: path.into(),
+        add,
+        del,
+        hunk,
     }
 }
 
@@ -155,6 +196,57 @@ impl Bridge {
     }
 }
 
+const REASON_PERCENT_OR_QUOTE: &str = "the path holds a % or a quote";
+const REASON_NO_DRIVE: &str = "the path has no drive letter";
+
+/// The bridge, written so the shell an agent runs a hook through reads it as one word. `agent` is the CLI's
+/// display name, which an error names.
+///
+/// On Windows these agents run `cmd /c "<command>"` and escape every `"` inside the command to `\"`, so a
+/// command that starts with a quote fails. What runs, with a space and `& ( ) ; , = ^` in the path, is
+/// the folder in quotes from just after the drive to just before the file name, with forward
+/// slashes: `C:"/Users/Home Office/.marshell/bin"/marshell-hook.exe`. A `%` can't be protected from
+/// cmd, and a `"` is safe only next to a separator, so a path with either is refused, and so is one
+/// with no drive letter (a UNC path). A `\?\C:\` prefix is dropped, and `\?\UNC\...` refused as
+/// any other UNC path. Elsewhere the path is single-quoted for `sh`.
+///
+/// In a distro the agent runs the command through `sh`, so the Linux path is single-quoted.
+pub fn bridge_prefix_of(agent: &'static str, bridge: &Bridge) -> Result<String, PlanError> {
+    let Bridge::Local(exe) = bridge else {
+        return Ok(posix_quote(&bridge.path()));
+    };
+    let forward = bridge.path();
+    if cfg!(windows) {
+        cmd_form(agent, exe, &forward)
+    } else {
+        Ok(posix_quote(&forward))
+    }
+}
+
+/// The Windows `cmd` form of a bridge path (see [`bridge_prefix_of`]).
+pub fn cmd_form(agent: &'static str, exe: &Path, forward: &str) -> Result<String, PlanError> {
+    let refuse = |reason| PlanError::BridgePath {
+        agent,
+        path: exe.to_path_buf(),
+        reason,
+    };
+    if forward.contains(['%', '"']) {
+        return Err(refuse(REASON_PERCENT_OR_QUOTE));
+    }
+    let path = forward.strip_prefix("//?/").unwrap_or(forward);
+    let bytes = path.as_bytes();
+    if !(bytes.len() > 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':' && bytes[2] == b'/') {
+        return Err(refuse(REASON_NO_DRIVE));
+    }
+    let (drive, tail) = path.split_at(2);
+    let (folder, file) = tail.rsplit_once('/').unwrap_or(("", tail));
+    Ok(if folder.is_empty() {
+        format!("{drive}/{file}")
+    } else {
+        format!("{drive}\"{folder}\"/{file}")
+    })
+}
+
 /// What a plan says of a status line it leaves in a distro, where there is no chain to keep it in.
 pub fn statusline_left_note(distro: &str) -> String {
     format!("{distro} already has a status line, so Marshell leaves it. The row won't show the model or context use.")
@@ -231,6 +323,7 @@ pub(crate) fn blank(now_ms: u64) -> LiveStatus {
         seven_day_pct: None,
         subagents: 0,
         subagents_finished: 0,
+        last_turn_event_ms: 0,
     }
 }
 

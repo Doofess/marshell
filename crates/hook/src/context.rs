@@ -9,7 +9,7 @@ pub fn accepted(agent: &str, answer: &[u8]) -> bool {
         return false;
     };
     match agent {
-        "claude" | "codex" => hook_specific_output(&answer),
+        "claude" | "codex" | "qwen" => hook_specific_output(&answer),
         "antigravity" => inject_steps(&answer),
         _ => false,
     }
@@ -83,6 +83,12 @@ mod tests {
         for agent in ["claude", "codex"] {
             assert!(!accepted(agent, AGY), "{agent}");
         }
+    }
+
+    #[test]
+    fn qwen_takes_the_additional_context_shape() {
+        assert!(accepted("qwen", NOTE));
+        assert!(!accepted("qwen", AGY));
     }
 
     #[test]

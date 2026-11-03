@@ -2,7 +2,7 @@ use super::AppState;
 use crate::agents::claude::compact;
 use crate::agents::claude::status::{fold_event, fold_statusline_with_window, mode_of};
 use crate::agents::common::Gate;
-use crate::agents::{antigravity, codex};
+use crate::agents::{antigravity, codex, qwen};
 use crate::history::recorder::schedule_copy;
 use crate::hooks::holds::Outcome;
 use crate::hooks::log::HookEventRecord;
@@ -77,6 +77,17 @@ pub async fn post(
             Some(serde_json::Value::String(text)) => Some(text),
             _ => None,
         };
+    } else if agent == "qwen"
+        && let Some(object) = json.as_object_mut()
+    {
+        // `submitted_prompt` repeats the prompt, and `last_assistant_message` is the model's reply: the core keeps
+        // neither.
+        object.remove("submitted_prompt");
+        object.remove("last_assistant_message");
+        prompt = match object.remove("prompt") {
+            Some(serde_json::Value::String(text)) => Some(text),
+            _ => None,
+        };
     }
     let tab = header(&headers, HEADER_TAB).map(str::to_string);
     // Both come from the sender, so only a short identifier is logged: never free text a payload could carry.
@@ -108,7 +119,7 @@ pub async fn post(
     // mark comes first, so the check below sees it and an event of another agent in that tab is dropped.
     let mut left_wsl = false;
     let session_id = json.get("session_id").and_then(serde_json::Value::as_str);
-    if matches!(agent.as_str(), "claude" | "codex" | "antigravity")
+    if matches!(agent.as_str(), "claude" | "codex" | "antigravity" | "qwen")
         && let Some(tab) = tab.as_deref()
         && in_wsl(&st, tab).await
     {
@@ -160,9 +171,12 @@ pub async fn post(
     // header chip, so a prompt that names nothing clears it. Antigravity has no prompt event: each model call of a
     // prompt is a `PreInvocation`, and the note a call adds stays in the model's context for the rest of the prompt,
     // so only the first call (`invocationNum` 0) is answered and the later ones leave the note and the chip alone.
+    // Qwen sends a second `UserPromptSubmit` with an empty prompt when it sends a tool result back to the model: that
+    // continues the turn and neither takes the note again nor clears the chip.
     let event = json.get("hook_event_name").and_then(serde_json::Value::as_str);
     let starts_prompt = match agent.as_str() {
         "claude" | "codex" => event == Some("UserPromptSubmit"),
+        "qwen" => event == Some("UserPromptSubmit") && prompt.as_deref().is_some_and(|text| !text.is_empty()),
         "antigravity" => {
             event == Some("PreInvocation") && json.get("invocationNum").and_then(serde_json::Value::as_u64) == Some(0)
         }
@@ -177,7 +191,7 @@ pub async fn post(
     // The lookup runs beside the fold and the history (the history's index lock can be held by a search) under what
     // is left of the budget, so a slow fold can't make the answer later than the bridge waits.
     let fold = async {
-        if matches!(agent.as_str(), "claude" | "codex" | "antigravity")
+        if matches!(agent.as_str(), "claude" | "codex" | "antigravity" | "qwen")
             && let Some(tab) = tab.as_deref()
         {
             if !left_wsl {
@@ -203,6 +217,7 @@ pub async fn post(
             let output = match agent.as_str() {
                 "codex" => codex::context_output(&found.note),
                 "antigravity" => antigravity::context_output(&found.note),
+                "qwen" => qwen::context_output(&found.note),
                 _ => crate::agents::claude::context_output(&found.note),
             };
             return Ok(Json(output).into_response());
@@ -297,7 +312,7 @@ async fn record_history(st: &AppState, agent: &str, tab: &str, body: &serde_json
 
 /// Folds what an agent (Claude Code, Codex or Antigravity) reported into the tab's live status. A permission
 /// request counts as an event (it folds to Needs permission). Without a known version, or with the switch off,
-/// the row gets a note saying why and keeps no status. Claude Code and Antigravity send a status line.
+/// the row gets a note saying why and keeps no status. Claude Code, Antigravity and Qwen Code send a status line.
 #[cfg(test)]
 async fn fold_live(st: &AppState, agent: &str, role: HookRole, tab: &str, body: &serde_json::Value, at_ms: u64) {
     fold_live_with(st, agent, role, tab, body, at_ms, false).await;
@@ -314,7 +329,7 @@ async fn fold_live_with(
     held: bool,
 ) {
     if !matches!(role, HookRole::Event | HookRole::Permission | HookRole::Statusline)
-        || (role == HookRole::Statusline && !matches!(agent, "claude" | "antigravity"))
+        || (role == HookRole::Statusline && !matches!(agent, "claude" | "antigravity" | "qwen"))
         || !st.registry().is_open(tab)
     {
         return;
@@ -323,6 +338,7 @@ async fn fold_live_with(
         "claude" => ("Claude Code", crate::agents::claude::version_gate),
         "codex" => ("Codex", codex::version_gate),
         "antigravity" => ("Antigravity", antigravity::version_gate),
+        "qwen" => ("Qwen Code", qwen::version_gate),
         _ => return,
     };
     let off = st.0.settings.lock().unwrap().status_off.iter().any(|a| a == agent);
@@ -352,7 +368,21 @@ async fn fold_live_with(
             st.registry()
                 .update_live(tab, |prev| codex::status::fold_event(prev, body, at_ms));
             if let Some(mode) = codex::status::mode_of(body) {
-                st.registry().set_live_mode(tab, mode);
+                st.registry().set_live_mode(tab, agent, mode);
+            }
+            st.registry().set_status_note(tab, None);
+        }
+        Gate::Known if agent == "qwen" => {
+            // No Done hold, subagent count or stuck check: those follow Claude Code's events.
+            if role == HookRole::Statusline {
+                st.registry()
+                    .update_live(tab, |prev| Some(qwen::status::fold_statusline(prev, body, at_ms)));
+            } else {
+                st.registry()
+                    .update_live(tab, |prev| qwen::status::fold_event(prev, body, at_ms));
+                if let Some(mode) = qwen::status::mode_of(body) {
+                    st.registry().set_live_mode(tab, agent, mode);
+                }
             }
             st.registry().set_status_note(tab, None);
         }
@@ -438,7 +468,7 @@ async fn fold_live_with(
                     });
                 }
                 if let Some(mode) = mode_of(body) {
-                    st.registry().set_live_mode(tab, mode);
+                    st.registry().set_live_mode(tab, agent, mode);
                 }
             }
             st.registry().set_status_note(tab, None);

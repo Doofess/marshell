@@ -9,6 +9,7 @@ pub fn npm_package(agent: &str) -> Option<&'static str> {
     match agent {
         "claude" => Some("@anthropic-ai/claude-code"),
         "codex" => Some("@openai/codex"),
+        "qwen" => Some("@qwen-code/qwen-code"),
         _ => None,
     }
 }
@@ -97,6 +98,8 @@ pub fn install_kind(agent: &str, exe: &Path, exists: &dyn Fn(&Path) -> bool) -> 
                     && folder.last().is_some_and(|d| d == "bin"))
         }
         "antigravity" => file == "agy.exe" && folder.ends_with(&["agy".into(), "bin".into()]),
+        // The standalone install: `%LOCALAPPDATA%\qwen-code\bin\qwen.cmd` calls `qwen-code\qwen-code\bin\qwen.cmd`.
+        "qwen" => file == "qwen.cmd" && folder.ends_with(&["qwen-code".into(), "bin".into()]),
         _ => false,
     };
     if native {
@@ -107,9 +110,11 @@ pub fn install_kind(agent: &str, exe: &Path, exists: &dyn Fn(&Path) -> bool) -> 
 }
 
 /// The command that updates the CLI, ready to run: the program and its arguments.
-pub fn update_argv(_agent: &str, kind: &InstallKind, exe: &Path) -> Option<Vec<String>> {
+pub fn update_argv(agent: &str, kind: &InstallKind, exe: &Path) -> Option<Vec<String>> {
     let words = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
     match kind {
+        // Qwen Code's standalone install has no `update` command Marshell knows of (slice 6l2 adds its update).
+        InstallKind::Native if agent == "qwen" => None,
         InstallKind::Native => Some(vec![exe.to_string_lossy().into_owned(), "update".into()]),
         InstallKind::Npm { package } => {
             let mut argv = words(&["cmd.exe", "/d", "/c"]);
@@ -130,6 +135,7 @@ pub fn update_argv(_agent: &str, kind: &InstallKind, exe: &Path) -> Option<Vec<S
 /// The update command as shown to the person.
 pub fn update_text(agent: &str, kind: &InstallKind) -> Option<String> {
     match kind {
+        InstallKind::Native if agent == "qwen" => None,
         // The program's bare name, as the person types it.
         InstallKind::Native => crate::profiles::detect::agent_command(agent).map(|name| format!("{name} update")),
         InstallKind::Npm { package } => Some(format!("npm install -g {package}@latest")),
@@ -259,6 +265,37 @@ mod tests {
         );
         assert_eq!(kind("claude", r"C:\tools\claude.exe"), InstallKind::Unknown);
         assert_eq!(kind("codex", r"C:\Users\u\.local\bin\claude.exe"), InstallKind::Unknown);
+    }
+
+    #[test]
+    fn qwen_is_native_when_standalone_and_npm_beside_its_package() {
+        for exe in [
+            r"C:\Users\u\AppData\Local\qwen-code\bin\qwen.cmd",
+            r"C:\Users\u\AppData\Local\qwen-code\qwen-code\bin\qwen.cmd",
+        ] {
+            assert_eq!(kind("qwen", exe), InstallKind::Native, "{exe}");
+        }
+        assert_eq!(kind("qwen", r"C:\tools\qwen.cmd"), InstallKind::Unknown);
+        let package: PathBuf = [
+            r"C:\Users\u\AppData\Roaming\npm",
+            "node_modules",
+            "@qwen-code",
+            "qwen-code",
+            "package.json",
+        ]
+        .iter()
+        .collect();
+        assert_eq!(
+            install_kind("qwen", Path::new(r"C:\Users\u\AppData\Roaming\npm\qwen.cmd"), &|p| p
+                == package),
+            InstallKind::Npm {
+                package: "@qwen-code/qwen-code".into()
+            }
+        );
+        // No update command is shown for the standalone install: Marshell doesn't know one.
+        let exe = Path::new(r"C:\Users\u\AppData\Local\qwen-code\bin\qwen.cmd");
+        assert_eq!(update_argv("qwen", &InstallKind::Native, exe), None);
+        assert_eq!(update_text("qwen", &InstallKind::Native), None);
     }
 
     #[test]

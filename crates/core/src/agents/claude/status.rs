@@ -145,7 +145,7 @@ fn wants_phrase(phrase: &str) -> String {
 }
 
 /// Why a turn failed, as the row says it: our line for a known `error`, else Claude's own text.
-fn error_phrase(body: &Value) -> String {
+pub(crate) fn error_phrase(body: &Value) -> String {
     let line = match str_at(body, "/error") {
         Some("rate_limit") => "Rate limit reached",
         Some("overloaded") => "Claude is overloaded",

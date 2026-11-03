@@ -34,6 +34,8 @@ export function scrub(text, { home, user }, state = { uuids: new Map() }) {
     out = replaceAll(out, from, targets[i][0]);
   });
   out = replaceAll(out, user.replace(/ /g, "-"), "user");
+  // Qwen Code names a project folder after its path, lowercased with every other character a hyphen.
+  out = replaceAll(out, `-${user.toLowerCase().replace(/[^a-z0-9]/g, "-")}-`, "-user-");
   out = replaceAll(out, user, "user");
   out = out.replace(UUID, (id) => {
     const key = id.toLowerCase();
