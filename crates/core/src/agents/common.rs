@@ -323,6 +323,7 @@ pub(crate) fn blank(now_ms: u64) -> LiveStatus {
         seven_day_pct: None,
         subagents: 0,
         subagents_finished: 0,
+        last_turn_event_ms: 0,
     }
 }
 

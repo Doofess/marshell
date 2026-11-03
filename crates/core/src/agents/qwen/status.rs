@@ -88,8 +88,9 @@ fn wants_phrase(phrase: &str) -> String {
     "Wants to use a tool".to_string()
 }
 
-/// How long after a permission dialog starts an `idle_prompt` is taken for the one Qwen sent just before it. A "No"
-/// in Qwen's own dialog sends its `idle_prompt` about 8 s later (Task 1's recording).
+/// How long after a permission dialog starts, or after the last turn event while Working, an `idle_prompt` is taken
+/// for the one Qwen sent just around it. A "No" in Qwen's own dialog sends its `idle_prompt` about 8 s later (Task 1's
+/// recording).
 const IDLE_PROMPT_RACE_MS: u64 = 1_000;
 
 /// A whole percentage from a JSON number, clamped to 0..=100. Anything else is unknown.
@@ -101,7 +102,11 @@ fn pct_of(n: f64) -> Option<u8> {
 /// one a tab sees, so `prev` may be None for all of them.
 pub fn fold_event(prev: Option<&LiveStatus>, body: &Value, now_ms: u64) -> Option<LiveStatus> {
     let mut next = prev.cloned().unwrap_or_else(|| blank(now_ms));
-    let (state, phrase) = match body.get("hook_event_name").and_then(Value::as_str)? {
+    let event = body.get("hook_event_name").and_then(Value::as_str)?;
+    if matches!(event, "UserPromptSubmit" | "PreToolUse" | "PostToolUse") {
+        next.last_turn_event_ms = now_ms;
+    }
+    let (state, phrase) = match event {
         "SessionStart" => {
             if let Some(model) = str_at(body, "/model") {
                 next.model = Some(model.to_string());
@@ -120,12 +125,17 @@ pub fn fold_event(prev: Option<&LiveStatus>, body: &Value, now_ms: u64) -> Optio
         "PermissionRequest" => (LiveState::NeedsPermission, permission_phrase(body)),
         "Notification" => match body.get("notification_type").and_then(Value::as_str) {
             // Qwen sends this 10 to 20 ms after every `PreToolUse`, and a fast tool's `PostToolUse` can come
-            // before it, so a turn that is Working is going on. After a "No" in Qwen's own dialog no `Stop`
-            // comes and this is what ends the turn. It fires after `Stop` too: a finished turn stays as it is.
+            // before it, so one within `IDLE_PROMPT_RACE_MS` of the last turn event is that one and the turn goes
+            // on. A later one ends the turn: after a "No" in Qwen's own dialog, or Escape mid-turn ("Request
+            // cancelled."), no `Stop` comes and this is all that says so. It fires after `Stop` too: a finished
+            // turn stays as it is.
             // It also comes about 50 ms before each `PermissionRequest`, through its own bridge process, so one
             // that reaches the core just after the request is that one, not the end of a dialog.
             Some("idle_prompt") => match next.state {
-                LiveState::Working | LiveState::Done | LiveState::Error | LiveState::Idle | LiveState::Ended => {
+                LiveState::Done | LiveState::Error | LiveState::Idle | LiveState::Ended => {
+                    (next.state, next.phrase.clone())
+                }
+                LiveState::Working if now_ms.saturating_sub(next.last_turn_event_ms) < IDLE_PROMPT_RACE_MS => {
                     (next.state, next.phrase.clone())
                 }
                 LiveState::NeedsPermission if now_ms.saturating_sub(next.since_ms) < IDLE_PROMPT_RACE_MS => {
@@ -301,6 +311,34 @@ mod tests {
         let finished = fold(Some(&started), &hook!("PostToolUse"), 6);
         let live = fold(Some(&finished), &hook!("Notification-idle_prompt"), 7);
         assert_eq!(live.state, LiveState::Working);
+    }
+
+    /// Escape mid-turn with no dialog up: Qwen prints "Request cancelled.", sends no Stop, and its idle_prompt is
+    /// what ends the turn.
+    #[test]
+    fn idle_prompt_long_after_a_tool_started_is_idle() {
+        let working = fold(None, &hook!("PreToolUse-run_shell_command"), 5);
+        let live = fold(Some(&working), &hook!("Notification-idle_prompt"), 8_000);
+        assert_eq!((live.state, live.phrase.as_str()), (LiveState::Idle, ""));
+    }
+
+    #[test]
+    fn idle_prompt_long_after_a_prompt_is_idle() {
+        let working = fold(None, &hook!("UserPromptSubmit"), 5);
+        let live = fold(Some(&working), &hook!("Notification-idle_prompt"), 8_000);
+        assert_eq!((live.state, live.phrase.as_str()), (LiveState::Idle, ""));
+    }
+
+    /// The race clock is the last turn event, not the turn's start (`since_ms`).
+    #[test]
+    fn idle_prompt_just_after_a_later_tool_keeps_the_turn() {
+        let prompt = fold(None, &hook!("UserPromptSubmit"), 5);
+        let tool = fold(Some(&prompt), &hook!("PreToolUse-run_shell_command"), 20_000);
+        let live = fold(Some(&tool), &hook!("Notification-idle_prompt"), 20_015);
+        assert_eq!(
+            (live.state, live.phrase.as_str()),
+            (LiveState::Working, "Running `echo marshell`")
+        );
     }
 
     #[test]

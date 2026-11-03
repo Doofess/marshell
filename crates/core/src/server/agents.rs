@@ -458,7 +458,7 @@ impl AppState {
     pub(crate) fn codex_version(&self, exe: Option<&Path>) -> Option<String> {
         match &self.0.codex_version {
             Some(pinned) => pinned.clone(),
-            None => exe.and_then(|exe| self.version_of(exe, parse_any_version)),
+            None => exe.and_then(|exe| self.version_of(exe, parse_any_version, None)),
         }
     }
 
@@ -533,7 +533,7 @@ impl AppState {
     pub(crate) fn claude_version(&self, exe: Option<&Path>) -> Option<String> {
         match &self.0.claude_version {
             Some(pinned) => pinned.clone(),
-            None => exe.and_then(|exe| self.version_of(exe, claude::parse_version)),
+            None => exe.and_then(|exe| self.version_of(exe, claude::parse_version, None)),
         }
     }
 
@@ -551,10 +551,13 @@ impl AppState {
             // `qwen --version` prints the bare version; a pinned one (tests) replaces asking the executable.
             match &self.0.qwen_version {
                 Some(pinned) => pinned.clone(),
-                None => exe.and_then(|exe| self.version_of(exe, crate::agents::qwen::parse_version)),
+                None => exe.and_then(|exe| {
+                    let package = package_dir_of_qwen(exe);
+                    self.version_of(exe, crate::agents::qwen::parse_version, package.as_deref())
+                }),
             }
         } else {
-            exe.and_then(|exe| self.version_of(exe, parse_any_version))
+            exe.and_then(|exe| self.version_of(exe, parse_any_version, None))
         }
     }
 
@@ -607,28 +610,53 @@ impl AppState {
         self.codex_hooks_path(&user_home).parent().map(Path::to_path_buf)
     }
 
-    /// Cache stdout per executable and modified time; parse on every read so a generic lookup
-    /// cannot make Claude's strict gate accept output it would otherwise reject.
-    fn version_of(&self, exe: &Path, parse: fn(&str) -> Option<String>) -> Option<String> {
-        let modified = std::fs::metadata(exe).and_then(|m| m.modified()).ok();
-        let text = cached_version(&self.0.versions, exe, modified, || {
+    /// Cache stdout per executable and its stamp; parse on every read so a generic lookup
+    /// cannot make Claude's strict gate accept output it would otherwise reject. `package` is the
+    /// folder an update replaces while the launcher stays put, if the agent has one.
+    fn version_of(&self, exe: &Path, parse: fn(&str) -> Option<String>, package: Option<&Path>) -> Option<String> {
+        let stamp = version_stamp(exe, package);
+        let text = cached_version(&self.0.versions, exe, stamp, || {
             run_version_text(exe, VERSION_TIMEOUT).filter(|text| parse(text).is_some())
         })?;
         parse(&text)
     }
 }
 
-/// The version `cache` holds for `exe` at this modified time, else what `ask` reads. A version that
+/// What a remembered version was read at: the executable's modified time and, for an agent whose update
+/// swaps a package folder while its launcher stays as it was, that folder's modified time. A folder is
+/// created fresh by every install or update, which the files inside it (archives keep build-time modified
+/// times, npm tarballs normalise them) do not show.
+pub(super) type VersionStamp = (Option<SystemTime>, Option<SystemTime>);
+
+fn version_stamp(exe: &Path, package: Option<&Path>) -> VersionStamp {
+    let modified = |path: &Path| std::fs::metadata(path).and_then(|m| m.modified()).ok();
+    (modified(exe), package.and_then(modified))
+}
+
+/// The folder Qwen Code's own files sit in, beside its launcher: `..\qwen-code` for the standalone install
+/// (`bin\qwen.cmd` calls `..\qwen-code\bin\qwen.cmd`) and `node_modules\@qwen-code\qwen-code` for an npm
+/// global install. `None` when neither exists.
+fn package_dir_of_qwen(exe: &Path) -> Option<PathBuf> {
+    let dir = exe.parent()?;
+    [
+        dir.join("..").join("qwen-code"),
+        dir.join("node_modules").join("@qwen-code").join("qwen-code"),
+    ]
+    .into_iter()
+    .find(|candidate| candidate.is_dir())
+}
+
+/// The version `cache` holds for `exe` at this stamp, else what `ask` reads. A version that
 /// could not be read is not kept, so the next call tries again. The lock is not held while `ask` runs.
 fn cached_version(
-    cache: &Mutex<HashMap<PathBuf, (Option<SystemTime>, String)>>,
+    cache: &Mutex<HashMap<PathBuf, (VersionStamp, String)>>,
     exe: &Path,
-    modified: Option<SystemTime>,
+    stamp: VersionStamp,
     ask: impl FnOnce() -> Option<String>,
 ) -> Option<String> {
     let known = cache.lock().unwrap().get(exe).cloned();
     if let Some((at, version)) = known
-        && at == modified
+        && at == stamp
     {
         return Some(version);
     }
@@ -636,12 +664,12 @@ fn cached_version(
     cache
         .lock()
         .unwrap()
-        .insert(exe.to_path_buf(), (modified, version.clone()));
+        .insert(exe.to_path_buf(), (stamp, version.clone()));
     Some(version)
 }
 
 /// Drops what `cache` knows of `exe`, so the next read asks the program again.
-fn forget_cached(cache: &Mutex<HashMap<PathBuf, (Option<SystemTime>, String)>>, exe: &Path) {
+fn forget_cached(cache: &Mutex<HashMap<PathBuf, (VersionStamp, String)>>, exe: &Path) {
     cache.lock().unwrap().remove(exe);
 }
 
@@ -1790,8 +1818,12 @@ mod tests {
         assert_eq!(st.agent_version_in("Ubuntu", "claude").as_deref(), Some("2.1.302"));
     }
 
-    fn at(secs: u64) -> Option<SystemTime> {
-        Some(SystemTime::UNIX_EPOCH + Duration::from_secs(secs))
+    fn secs(n: u64) -> SystemTime {
+        SystemTime::UNIX_EPOCH + Duration::from_secs(n)
+    }
+
+    fn at(n: u64) -> VersionStamp {
+        (Some(secs(n)), None)
     }
 
     #[test]
@@ -1842,5 +1874,78 @@ mod tests {
         forget_cached(&cache, exe);
         cached_version(&cache, exe, at(10), ask);
         assert_eq!(runs.get(), 2);
+    }
+
+    /// Sets a folder's modified time; Windows opens a directory only with backup semantics.
+    fn set_dir_modified(dir: &Path, when: SystemTime) {
+        let mut options = std::fs::OpenOptions::new();
+        #[cfg(windows)]
+        {
+            use std::os::windows::fs::OpenOptionsExt;
+            options.write(true).custom_flags(0x0200_0000); // FILE_FLAG_BACKUP_SEMANTICS
+        }
+        #[cfg(not(windows))]
+        options.read(true);
+        options.open(dir).unwrap().set_modified(when).unwrap();
+    }
+
+    #[test]
+    fn a_qwen_self_update_that_keeps_the_wrapper_is_read_again() {
+        let tmp = tempfile::tempdir().unwrap();
+        let wrapper = tmp.path().join("bin").join("qwen.cmd");
+        let package = tmp.path().join("qwen-code");
+        std::fs::create_dir_all(wrapper.parent().unwrap()).unwrap();
+        std::fs::write(&wrapper, "@echo off").unwrap();
+        std::fs::create_dir(&package).unwrap();
+        set_dir_modified(&package, secs(1_000_000));
+        std::fs::File::options()
+            .write(true)
+            .open(&wrapper)
+            .unwrap()
+            .set_modified(secs(500_000))
+            .unwrap();
+
+        let cache = Mutex::new(HashMap::new());
+        let runs = Cell::new(0);
+        let read = |version: &'static str| {
+            let package = package_dir_of_qwen(&wrapper);
+            let stamp = version_stamp(&wrapper, package.as_deref());
+            cached_version(&cache, &wrapper, stamp, || {
+                runs.set(runs.get() + 1);
+                Some(version.to_string())
+            })
+        };
+        assert_eq!(read("0.14.0").as_deref(), Some("0.14.0"));
+        assert_eq!(read("0.14.0").as_deref(), Some("0.14.0"));
+        assert_eq!(runs.get(), 1);
+
+        // The self-update swaps the package folder and leaves the wrapper untouched.
+        std::fs::remove_dir(&package).unwrap();
+        std::fs::create_dir(&package).unwrap();
+        set_dir_modified(&package, secs(2_000_000));
+        assert_eq!(read("0.15.0").as_deref(), Some("0.15.0"));
+        assert_eq!(runs.get(), 2);
+        assert_eq!(read("0.15.0").as_deref(), Some("0.15.0"));
+        assert_eq!(runs.get(), 2);
+
+        // An npm global install keeps the package under node_modules next to the shim.
+        let npm = tmp.path().join("global").join("npm");
+        let shim = npm.join("qwen.cmd");
+        let npm_package = npm.join("node_modules").join("@qwen-code").join("qwen-code");
+        std::fs::create_dir_all(&npm_package).unwrap();
+        assert_eq!(package_dir_of_qwen(&shim), Some(npm_package));
+
+        // Another agent has no package folder to look at, so its version stays cached.
+        let other = tmp.path().join("other").join("codex.cmd");
+        std::fs::create_dir_all(other.parent().unwrap()).unwrap();
+        std::fs::write(&other, "").unwrap();
+        let other_runs = Cell::new(0);
+        let ask = || {
+            other_runs.set(other_runs.get() + 1);
+            Some("1.0.0".to_string())
+        };
+        cached_version(&cache, &other, version_stamp(&other, None), ask);
+        cached_version(&cache, &other, version_stamp(&other, None), ask);
+        assert_eq!(other_runs.get(), 1);
     }
 }

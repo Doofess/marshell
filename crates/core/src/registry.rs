@@ -2701,6 +2701,7 @@ mod tests {
             seven_day_pct: None,
             subagents: 0,
             subagents_finished: 0,
+            last_turn_event_ms: 0,
         }
     }
 

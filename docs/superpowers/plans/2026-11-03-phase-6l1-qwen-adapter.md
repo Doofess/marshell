@@ -33,7 +33,7 @@
   - Change titles: "Set up Qwen Code hooks", "Turn Qwen Code hooks off".
   - Status notes: "Live status is off for Qwen Code"; "Qwen Code's version could not be read"; "Qwen Code <v> is older than the versions Marshell knows"; "Qwen Code <v> is not one Marshell has recorded yet". These come from `common::version_gate` with the name "Qwen Code".
   - "Always allow" refused (decision 5): "Qwen Code can't keep an always-allow rule from Marshell. Allow this once instead."
-  - Removal copy: "Marshell removes the hook entries it added and puts your own status line back from statusline-chain.json; the rest of settings.json stays as it is".
+  - Removal copy: "Marshell removes the hook entries it added and puts your own status line back from statusline-chain.json; the rest of the file stays as it is" (the shared wording, per Task 6's ruling).
   - A preset status line: "Your Qwen Code status line is a preset, so Marshell leaves it as it is. Rows show context % once per turn."
 
 ## Assumptions Task 1 confirms or corrects

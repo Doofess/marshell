@@ -309,9 +309,9 @@ impl History {
             distro: distro.map(str::to_string),
         };
         let ends_turn = !codex && matches!(event, "Stop" | "StopFailure" | "SessionEnd");
-        // An event of an agy conversation the tab went back to makes it the tab's latest again (the latest is the
-        // row with the newest `updated_ms`); events of the tab's current one write nothing.
-        let returned = antigravity
+        // An event of an agy conversation or a Qwen chat the tab went back to makes it the tab's latest again (the
+        // latest is the row with the newest `updated_ms`); events of the tab's current one write nothing.
+        let returned = (antigravity || agent == "qwen")
             && !is_new
             && index
                 .latest_for_tab_of(tab_id, agent)
@@ -1500,6 +1500,26 @@ mod tests {
                 .unwrap()
                 .is_none()
         );
+    }
+
+    #[test]
+    fn a_qwen_session_the_tab_went_back_to_is_its_latest_again() {
+        const B: &str = "00000000-0000-4000-8000-000000000002";
+        let home = tempfile::tempdir().unwrap();
+        let history = History::open(home.path());
+        history.note_event(
+            "qwen",
+            "t1",
+            Some("t1-1000.cast"),
+            &qwen_body(QWEN_STOP, home.path(), ID),
+            1000,
+            None,
+        );
+        history.note_event("qwen", "t1", None, &qwen_body(QWEN_STOP, home.path(), B), 2000, None);
+        assert_eq!(history.latest_for_tab_of("t1", "qwen").unwrap().session_id, B);
+        // The tab goes back to the first chat: its event makes it the latest again.
+        history.note_event("qwen", "t1", None, &qwen_body(QWEN_START, home.path(), ID), 3000, None);
+        assert_eq!(history.latest_for_tab_of("t1", "qwen").unwrap().session_id, ID);
     }
 
     #[test]

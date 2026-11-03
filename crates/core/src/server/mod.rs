@@ -242,9 +242,10 @@ struct Inner {
     claude_compact_paths: Option<(PathBuf, Vec<PathBuf>)>,
     /// Where the app's own programs sit, so setting up hooks can put a missing bridge back. None in tests.
     programs_dir: Option<PathBuf>,
-    /// `--version` of each agent executable with the file's modified time it was read at. A different
-    /// time asks again, and a version that could not be read is not kept.
-    versions: Mutex<HashMap<PathBuf, (Option<std::time::SystemTime>, String)>>,
+    /// `--version` of each agent executable with the stamp it was read at (the file's modified time, and its
+    /// package folder's for Qwen Code). A different stamp asks again, and a version that could not be read is
+    /// not kept.
+    versions: Mutex<HashMap<PathBuf, (agents::VersionStamp, String)>>,
     /// A Claude Code version a test pins, in place of asking the executable. `Some(None)` is a
     /// version that cannot be read.
     claude_version: Option<Option<String>>,
