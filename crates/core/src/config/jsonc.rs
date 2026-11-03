@@ -366,8 +366,18 @@ fn apply_to_cst(root: &mut CstRootNode, op: &JsonOp) -> Result<bool, EditError> 
                 if let Some(tail) = arr.elements().last() {
                     let before = root.to_string();
                     let end = end_of(tail);
+                    // One element per line: the new one gets the line break and indent the last one has.
+                    let lead: String = tail
+                        .previous_siblings()
+                        .map(|s| s.to_string())
+                        .take_while(|s| s.trim().is_empty())
+                        .collect::<Vec<_>>()
+                        .into_iter()
+                        .rev()
+                        .collect();
+                    let sep = if lead.contains('\n') { lead } else { " ".to_string() };
                     let added = arr.append(to_input(value));
-                    let text = format!("{}, {}{}", &before[..end], added, &before[end..]);
+                    let text = format!("{},{sep}{}{}", &before[..end], added, &before[end..]);
                     return reparse(root, &text).map(|()| true);
                 }
                 arr.append(to_input(value));
@@ -664,6 +674,7 @@ mod tests {
             ("{\"a\":[\n  {\"x\":1}\n]}", "/a/1"),
             ("{\"a\":[\r\n  {\"x\":1}\r\n]}", "/a/1"),
             ("{\"a\":[]}", "/a/0"),
+            ("{\n  \"a\": [\n    {\n      \"x\": 1\n    }\n  ]\n}\n", "/a/1"),
         ] {
             let appended = apply_ops(
                 input,
@@ -676,6 +687,20 @@ mod tests {
             let restored = apply_ops(&appended, &[JsonOp::Remove { pointer: last }]).unwrap();
             assert_eq!(restored, input, "appended: {appended:?}");
         }
+    }
+
+    /// In an array with one element per line, the new one goes on a line of its own at the same indent.
+    #[test]
+    fn append_puts_the_element_on_its_own_line_in_a_multiline_array() {
+        let out = apply_ops(
+            "{\n  \"a\": [\n    1\n  ]\n}\n",
+            &[JsonOp::Set {
+                pointer: "/a/-",
+                value: &2.into(),
+            }],
+        )
+        .unwrap();
+        assert_eq!(out, "{\n  \"a\": [\n    1,\n    2\n  ]\n}\n");
     }
 
     #[test]
