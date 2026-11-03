@@ -76,3 +76,27 @@
   - `security`: `folderTrust.enabled` (false).
   - Other top-level keys: `disableAllHooks`, `hooks`, `permissions`, `skills`, `mcpServers`, `modelProviders` and `env`.
 - Keys that can hold a secret: `security.auth.apiKey`, everything under `env`, the entries of `modelProviders`, `mcpServers.*.env` and `mcpServers.*.headers`, a hook's `env`, and `telemetry` headers.
+
+## Transcripts seen (2026-11-03, slice 6l2 task 1)
+
+Qwen Code 0.26.5 run headless (`qwen -p`) against the fake model, with `USERPROFILE` and `HOME` in a scratch folder and `QWEN_HOME` unset. The scrubbed files are in `crates/core/tests/fixtures/qwen/transcripts/0.26.5/`, each named after its (scrubbed) `sessionId`:
+
+| File (`00000000-0000-4000-8000-…`) | Prompt | What it holds |
+| --- | --- | --- |
+| `…002` | `hello`, then `--resume <id> -p "hello again"` | Two text turns in one file |
+| `…026` | `WRITE notes.txt` (a relative path) | A tool refused before it ran (`errorType: invalid_tool_params`) |
+| `…046` | `hello from a repo` | A chat in a git repo, `gitBranch: "feature-x"` |
+| `…059` | `RUN mkdir made` | `run_shell_command`, success |
+| `…079` | `READ <abs> ;; EDIT <abs>` | `read_file` then `edit`, both success, with a `fileDiff` |
+| `…107` | `RUN exit 3` | `run_shell_command`, error, `exitCode: 3` |
+| `…131` | `WRITE <abs>` | `write_file` creating a file, with a `fileDiff` |
+
+- A headless run writes `projects/<slug>/chats/<sessionId>.jsonl` exactly as an interactive one does. The first line is the first `user` record, carrying `sessionId`, `cwd`, `version` and `executionContext` (`modelId`, `authType`, `approvalMode`).
+- `provenance` doesn't tell headless from interactive: a headless prompt is `real_user`. Nothing else in the file does either (the attribution snapshot's `surface` is `cli` for both). Marshell can't tell a `qwen -p` run from a terminal one by its file.
+- No `custom_title` record appears on a headless run.
+- `--resume <id>` appends to the same file; the new prompt's `promptId` counts on (`<id>########2`).
+- A tool call is the assistant's `functionCall {id, name, args}`. Its result is a `tool_result` record whose `functionResponse.id` and `toolCallResult.callId` both equal that id. `toolCallResult.status` is `success` or `error`. A failed call's `functionResponse.response` has `error` in place of `output`.
+- `toolCallResult.resultDisplay` is a string for read and refused calls, a `shell_result` object for the shell (`exitCode`, `outcome` `completed` or `failed`), and for `write_file` and `edit` an object with `fileDiff`, `fileName`, `filePath`, `originalContent` and `newContent`.
+- `gitBranch` is absent outside a git repo and on a branch with no commit yet.
+- `system` subtypes seen: `ui_telemetry`, `attribution_snapshot` and `memory_catalog_snapshot` (the last carries a `message` with role `user`, so a reader must key on `type`, not on the role).
+- The tools refuse a relative path, and `edit` refuses a file not read in the same process, even across `--resume`. The recording used a scratch copy of the fake that walks several commands in one prompt (separated by ` ;; `) to get a read and an edit into one run.
