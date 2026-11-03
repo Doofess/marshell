@@ -1,4 +1,11 @@
+import type { SessionShortcut } from "../../lib/appShortcuts";
 import type { Os } from "../../lib/keymap";
+
+/**
+ * The window shortcuts that still act while the launcher is open, which otherwise holds every key (slice 6k decision 8). On an
+ * empty window the launcher opens by itself, so Reopen closed session must get past it.
+ */
+export const passesLauncher = (kind: SessionShortcut["kind"]): boolean => kind === "reopen";
 
 /** Whether the first-run onboarding is not known yet (the saved settings haven't answered), shown, or seen and closed. */
 export type OnboardingShown = "unknown" | "showing" | "done";

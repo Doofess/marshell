@@ -1,7 +1,14 @@
 import { describe, expect, it } from "vitest";
-import { adminCommandHidden, launcherFromPalette, launcherOpens } from "./launcherOpens";
+import { adminCommandHidden, launcherFromPalette, launcherOpens, passesLauncher } from "./launcherOpens";
 import { COMMANDS } from "../../lib/keymap";
 import { LIVE_COMMANDS } from "./LivePalette";
+
+describe("passesLauncher", () => {
+  it("lets only Reopen closed session through an open launcher", () => {
+    expect(passesLauncher("reopen")).toBe(true);
+    for (const kind of ["launcher", "palette", "cheatsheet", "close", "goto"] as const) expect(passesLauncher(kind)).toBe(false);
+  });
+});
 
 describe("launcherOpens", () => {
   it("opens for a core that has no sessions", () => {
