@@ -2,6 +2,7 @@
 
 use crate::profiles::detect::posix_quote;
 use marshell_protocol::api::{LiveState, LiveStatus};
+use marshell_protocol::hook::{DiffKind, DiffLine, PermissionDetail};
 use serde_json::Value;
 use std::fmt;
 use std::path::{Path, PathBuf};
@@ -36,6 +37,45 @@ pub fn cap(s: &str, max: usize) -> String {
     match s.char_indices().nth(max) {
         Some((at, _)) => format!("{}…", &s[..at]),
         None => s.to_string(),
+    }
+}
+
+/// An edit's card: the first hunk of the change from `old` to `new`, with the added and removed line counts of all
+/// of it.
+pub fn edit_detail(path: &str, old: &str, new: &str) -> PermissionDetail {
+    let patch = diffy::create_patch(old, new);
+    let mut add = 0_u32;
+    let mut del = 0_u32;
+    for line in patch.hunks().iter().flat_map(|hunk| hunk.lines()) {
+        match line {
+            diffy::Line::Insert(_) => add = add.saturating_add(1),
+            diffy::Line::Delete(_) => del = del.saturating_add(1),
+            diffy::Line::Context(_) => {}
+        }
+    }
+    let hunk = patch
+        .hunks()
+        .first()
+        .into_iter()
+        .flat_map(|hunk| hunk.lines())
+        .map(|line| {
+            let (kind, text) = match line {
+                diffy::Line::Context(text) => (DiffKind::Context, *text),
+                diffy::Line::Insert(text) => (DiffKind::Add, *text),
+                diffy::Line::Delete(text) => (DiffKind::Del, *text),
+            };
+            let text = text.strip_suffix('\n').unwrap_or(text);
+            DiffLine {
+                kind,
+                text: text.strip_suffix('\r').unwrap_or(text).into(),
+            }
+        })
+        .collect();
+    PermissionDetail::Edit {
+        path: path.into(),
+        add,
+        del,
+        hunk,
     }
 }
 

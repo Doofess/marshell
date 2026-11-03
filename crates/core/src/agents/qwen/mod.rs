@@ -1,6 +1,8 @@
 //! Qwen Code (`qwen`): its hook entries and status line, planned as config changes in its user `settings.json`.
 
 pub mod hooks;
+pub mod request;
+pub mod status;
 
 use serde_json::{Value, json};
 use std::path::Path;

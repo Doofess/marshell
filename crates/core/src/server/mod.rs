@@ -232,6 +232,10 @@ struct Inner {
     codex_hooks: Option<PathBuf>,
     /// The user home Antigravity's files are planned under when a test names one; None means the user's home.
     agy_home: Option<PathBuf>,
+    /// The user home Qwen Code's `.qwen/settings.json` is planned under when a test names one; None means the user's
+    /// home (and `QWEN_HOME` from the environment). Read by the setup route.
+    #[allow(dead_code)]
+    qwen_home: Option<PathBuf>,
     /// The user home the `marshell` skill files are planned under when a test names one; None means the user's
     /// home, and `CLAUDE_CONFIG_DIR` from the environment. A named home also stops the environment from being read.
     skill_home: Option<PathBuf>,
@@ -249,6 +253,8 @@ struct Inner {
     codex_version: Option<Option<String>>,
     /// An Antigravity version a test pins, in place of asking the executable. `Some(None)` cannot be read.
     agy_version: Option<Option<String>>,
+    /// A Qwen Code version a test pins, in place of asking the executable. `Some(None)` cannot be read.
+    qwen_version: Option<Option<String>>,
     /// The version of an agent inside a WSL distro that a test pins, in place of asking `wsl.exe`. `Some(None)` cannot
     /// be read.
     wsl_version: Option<Option<String>>,
@@ -354,6 +360,7 @@ impl AppState {
             claude_settings: None,
             codex_hooks: None,
             agy_home: None,
+            qwen_home: None,
             skill_home: None,
             claude_compact_paths: None,
             programs_dir: None,
@@ -361,6 +368,7 @@ impl AppState {
             claude_version: None,
             codex_version: None,
             agy_version: None,
+            qwen_version: None,
             wsl_version: None,
             wsl_versions: Mutex::new(HashMap::new()),
             distro_target: None,
@@ -435,6 +443,14 @@ impl AppState {
             .agy_home = Some(user_home);
         self
     }
+    /// Names the user home under which Qwen Code's `.qwen/settings.json` is planned, in place of the environment.
+    /// Call it before the state is cloned.
+    pub fn with_qwen_home(mut self, user_home: PathBuf) -> Self {
+        Arc::get_mut(&mut self.0)
+            .expect("with_qwen_home runs before the state is shared")
+            .qwen_home = Some(user_home);
+        self
+    }
     /// Names the user home under which the `marshell` skill files of all three CLIs are planned, in place of the
     /// environment. The process environment is not read either, so a `CLAUDE_CONFIG_DIR` of the developer's cannot
     /// move Claude Code's skill out of it. Call it before the state is cloned.
@@ -480,6 +496,14 @@ impl AppState {
         Arc::get_mut(&mut self.0)
             .expect("with_agy_version runs before the state is shared")
             .agy_version = Some(version);
+        self
+    }
+    /// Pins the Qwen Code version live status sees, so a test never runs a real `qwen`. `None` is a version that
+    /// cannot be read. Call it before the state is cloned.
+    pub fn with_qwen_version(mut self, version: Option<String>) -> Self {
+        Arc::get_mut(&mut self.0)
+            .expect("with_qwen_version runs before the state is shared")
+            .qwen_version = Some(version);
         self
     }
     /// Pins the version of an agent inside a WSL distro that live status sees, so a test never runs `wsl.exe`. `None` is

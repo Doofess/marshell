@@ -490,6 +490,12 @@ impl AppState {
             && let Some(pinned) = &self.0.agy_version
         {
             pinned.clone()
+        } else if agent == "qwen" {
+            // `qwen --version` prints the bare version; a pinned one (tests) replaces asking the executable.
+            match &self.0.qwen_version {
+                Some(pinned) => pinned.clone(),
+                None => exe.and_then(|exe| self.version_of(exe, crate::agents::qwen::parse_version)),
+            }
         } else {
             exe.and_then(|exe| self.version_of(exe, parse_any_version))
         }

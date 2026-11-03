@@ -2,7 +2,7 @@
 
 use crate::agents::common::flatten_input;
 use crate::hooks::{holds::PendingPermission, risk};
-use marshell_protocol::hook::{DiffKind, DiffLine, PermissionDetail, PermissionView};
+use marshell_protocol::hook::{PermissionDetail, PermissionView};
 use serde_json::Value;
 use std::path::Path;
 
@@ -32,38 +32,11 @@ fn known_detail(tool: &str, input: &Value, request: &Value) -> Option<Permission
                 })
                 .map(str::to_owned),
         },
-        "Edit" => {
-            let path = input["file_path"].as_str()?.into();
-            let patch = diffy::create_patch(input["old_string"].as_str()?, input["new_string"].as_str()?);
-            let mut add = 0_u32;
-            let mut del = 0_u32;
-            for line in patch.hunks().iter().flat_map(|hunk| hunk.lines()) {
-                match line {
-                    diffy::Line::Insert(_) => add = add.saturating_add(1),
-                    diffy::Line::Delete(_) => del = del.saturating_add(1),
-                    diffy::Line::Context(_) => {}
-                }
-            }
-            let hunk = patch
-                .hunks()
-                .first()
-                .into_iter()
-                .flat_map(|hunk| hunk.lines())
-                .map(|line| {
-                    let (kind, text) = match line {
-                        diffy::Line::Context(text) => (DiffKind::Context, *text),
-                        diffy::Line::Insert(text) => (DiffKind::Add, *text),
-                        diffy::Line::Delete(text) => (DiffKind::Del, *text),
-                    };
-                    let text = text.strip_suffix('\n').unwrap_or(text);
-                    DiffLine {
-                        kind,
-                        text: text.strip_suffix('\r').unwrap_or(text).into(),
-                    }
-                })
-                .collect();
-            PermissionDetail::Edit { path, add, del, hunk }
-        }
+        "Edit" => crate::agents::common::edit_detail(
+            input["file_path"].as_str()?,
+            input["old_string"].as_str()?,
+            input["new_string"].as_str()?,
+        ),
         "Write" => {
             let path = input["file_path"].as_str()?;
             let content = input["content"].as_str()?;
