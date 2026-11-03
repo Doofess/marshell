@@ -18,6 +18,7 @@ import { jumpFrom, promptTarget, trackPrompts, type Prompt } from "./promptMarks
 import "./PromptMarks.css";
 import { pathLinkProvider } from "./pathLinks";
 import { ReplayGate } from "./replayGate";
+import { shouldFit } from "./fitGate";
 import { registerTerminal } from "./terminals";
 import { loadRenderer, type RendererKind } from "./renderer";
 import { trackColorSchemeMode } from "./colorSchemeMode";
@@ -111,6 +112,13 @@ export function TerminalView({ endpoint, tabId, elevated = false, placeholder, o
   blockedRef.current = onBlockedInput;
   const termRef = useRef<Terminal | null>(null);
   const fitRef = useRef<FitAddon | null>(null);
+  const visibleRef = useRef(visible);
+  visibleRef.current = visible;
+  // A hidden host measures near empty, and fitting to it would resize the program to 10x4 (#65); showing the tab refits.
+  const fitIfShown = () => {
+    const el = host.current;
+    if (el && shouldFit(visibleRef.current, el.clientWidth, el.clientHeight)) fitRef.current?.fit();
+  };
   const promptsRef = useRef<Prompt[]>([]);
   const jumpRef = useRef(onPromptJump);
   jumpRef.current = onPromptJump;
@@ -249,10 +257,11 @@ export function TerminalView({ endpoint, tabId, elevated = false, placeholder, o
     let frame = 0;
     const observer = new ResizeObserver(() => {
       cancelAnimationFrame(frame);
-      frame = requestAnimationFrame(() => fit.fit());
+      frame = requestAnimationFrame(fitIfShown);
     });
     observer.observe(el);
-    fit.fit();
+    // A terminal made behind another tab keeps xterm's default grid until it is shown.
+    fitIfShown();
     socket.resize(term.cols, term.rows);
     sizeRef.current?.(term.cols, term.rows);
 
@@ -310,7 +319,7 @@ export function TerminalView({ endpoint, tabId, elevated = false, placeholder, o
       if (!live || !term) return;
       term.options.fontFamily = fontStack(font.family, font.wtFamily);
       term.options.fontSize = font.size;
-      fitRef.current?.fit();
+      fitIfShown();
     });
     return () => {
       live = false;
@@ -332,7 +341,7 @@ export function TerminalView({ endpoint, tabId, elevated = false, placeholder, o
   useEffect(() => {
     if (!visible) return;
     // Shown again after being hidden: the window may have changed size meanwhile, and a hidden host measures as zero.
-    fitRef.current?.fit();
+    fitIfShown();
     if (autoFocus) termRef.current?.focus();
   }, [autoFocus, visible, endpoint, tabId, focusToken, fontReady]);
 
