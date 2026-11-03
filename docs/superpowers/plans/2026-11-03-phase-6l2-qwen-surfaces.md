@@ -50,6 +50,13 @@
 4. **A conversation linked by hooks and then copied by the importer.** It shows once in History, with its tab, its Resume by id, and the client "Marshell". Test in Task 6.
 5. **Restarting a tab whose chat id the core knows, and one it doesn't.** The bar names `--resume <id>` and `--continue` respectively, and the text matches the argv the core then runs. If the command can't be fetched, the bar still opens with today's text. Tests in Task 8.
 
+## Known limits (planned)
+
+- `advanced.runtimeOutputDir` in Qwen's settings also moves `projects/`. The importer follows only `QWEN_RUNTIME_DIR` and the Qwen home.
+- `QWEN_CODE_SYSTEM_SETTINGS_PATH` is not read (6l1 decision 3), so a moved system file isn't shown as the source of a read-only row.
+- A distro's Qwen uses `<distro home>/.qwen`. A `QWEN_HOME` set inside the distro isn't followed, as for the other CLIs' overrides there.
+- Claude Code's `removal_pointers` has the same empty-array shape as Qwen's. Only Qwen's is fixed here.
+
 ---
 
 ### Task 1: Real transcripts from Qwen against the fake model (main thread)
@@ -60,7 +67,12 @@ This task runs in the main thread, not through a worker. It runs Qwen headless f
 - Create: `crates/core/tests/fixtures/qwen/transcripts/0.26.5/*.jsonl`
 - Modify: `scripts/scrub-fixtures.mjs` (`.jsonl` too), `docs/research/2026-11-03-qwen-code-surfaces.md` (a "Transcripts seen" section), and this plan where a finding differs.
 
-- [ ] **Step 1: Set up the scratch.** Use a fresh literal folder `%TEMP%\qwen-6l2-t1`. Start `fake-openai.mjs` on a free loopback port. Write `<scratch>\qh\settings.json` with `security.auth.selectedType: "openai"`, `model.name: "marshell-fake"`, `general.enableAutoUpdate: false` and `tools.approvalMode: "yolo"`. Set `QWEN_HOME=<scratch>\qh`, `QWEN_CODE_SKIP_UPDATE_CHECK_ONCE=true`, `OPENAI_API_KEY=x`, `OPENAI_BASE_URL=http://127.0.0.1:<port>/v1` and `OPENAI_MODEL=marshell-fake`, and use a project folder `<scratch>\proj`.
+- [ ] **Step 1: Set up the scratch.** Use a fresh literal folder `%TEMP%\qwen-6l2-t1`. Start `fake-openai.mjs` on a free loopback port. Write `<scratch>\home\.qwen\settings.json` with `security.auth.selectedType: "openai"`, `model.name: "marshell-fake"`, `general.enableAutoUpdate: false` and `tools.approvalMode: "yolo"`. Set these variables:
+  - `USERPROFILE` and `HOME` to `<scratch>\home`, so `os.homedir()` moves too and Qwen reads no real `~/.agents/skills` or `~/.claude/settings.json`. `QWEN_HOME` stays unset.
+  - `QWEN_CODE_SKIP_UPDATE_CHECK_ONCE=true`.
+  - `OPENAI_API_KEY=x`, `OPENAI_BASE_URL=http://127.0.0.1:<port>/v1` and `OPENAI_MODEL=marshell-fake`.
+
+  Use a project folder `<scratch>\proj`. If `qwen -p` writes no `chats\*.jsonl`, take the transcripts from an interactive Qwen tab in the dev app (`live-check.ps1 start -QwenFake`), as 6l1's spike did.
 - [ ] **Step 2: Record.** Run `qwen -p` in `proj` once for each of these prompts:
   - "hello", for a text-only reply.
   - `RUN mkdir made`, `WRITE notes.txt`, `EDIT notes.txt` and `READ notes.txt`, for each tool.
@@ -72,7 +84,7 @@ This task runs in the main thread, not through a worker. It runs Qwen headless f
   - `provenance` on a headless run (does it tell headless from interactive? Compare with the 6l1 interactive transcript if one survives, else leave it for the live check);
   - whether a `custom_title` record appears;
   - how a tool call and its result are linked (ids in `parts`).
-- [ ] **Step 3: Scrub and commit the fixtures.** `scripts/scrub-fixtures.mjs` rewrites only `.json` today, so extend its file filter to `.jsonl` (its replacements are plain text) and run `pnpm scrub:fixtures crates/core/tests/fixtures/qwen/transcripts`. Then check that `cargo test -p marshell-core --test fixtures_scrubbed` passes, and stop the fake server by PID. Ask before deleting the scratch folder.
+- [ ] **Step 3: Scrub and commit the fixtures.** `scripts/scrub-fixtures.mjs` rewrites only `.json` today, so extend its file filter to `.jsonl` (its replacements are plain text) and run `pnpm scrub:fixtures crates/core/tests/fixtures/qwen/transcripts`. The scrubber maps each UUID to a placeholder, so rename each fixture to its scrubbed `sessionId` (Task 6 requires the file name to match). Then check that `cargo test -p marshell-core --test fixtures_scrubbed` passes, and stop the fake server by PID. Ask before deleting the scratch folder.
 - [ ] **Step 4: Commit:** `test(history): record Qwen Code 0.26.5 transcripts against the fake model`
 
 ### Task 2: Qwen's home, version, update, Accounts and the empty hooks array (core)
@@ -89,7 +101,7 @@ This task runs in the main thread, not through a worker. It runs Qwen headless f
 - Produces:
   - `pub fn home(env: &dyn Fn(&str) -> Option<String>, user_home: &Path) -> PathBuf` in `agents::qwen`. Tasks 3, 4, 6 and 7 use it.
   - `pub fn auth_label(selected: &str) -> String` in `agents::qwen`.
-  - `GET /v1/agents/qwen/account` answers `sign_in: "no_command"`, with `method: Some(label)` when the user file (or the system file, which wins) sets `security.auth.selectedType`. The system file is `QWEN_CODE_SYSTEM_SETTINGS_PATH` when that is set, else `C:\ProgramData\qwen-code\settings.json`. Tests pin it with a new `AppState::with_qwen_system_settings(<path>)`, which Task 4 uses too.
+  - `GET /v1/agents/qwen/account` answers `sign_in: "no_command"`, with `method: Some(label)` when the user file (or the system file, which wins) sets `security.auth.selectedType`. The system file is `C:\ProgramData\qwen-code\settings.json` only. `QWEN_CODE_SYSTEM_SETTINGS_PATH` is not read (6l1 decision 3, 6l2 decision 9). Tests pin the path with a new `AppState::with_qwen_system_settings(<path>)`, which Task 4 uses too.
 
 - [ ] **Step 1: Write the failing tests.**
   - `qwen/mod.rs`:
@@ -137,7 +149,7 @@ This task runs in the main thread, not through a worker. It runs Qwen headless f
 - Modify:
   - `crates/core/src/agents/settings_view.rs`:
     - `curated("qwen")` and `control` give the six keys and controls from decision 5.
-    - Masking adds the paths `security.auth.apiKey`, `env.*`, `modelProviders.*`, `mcpServers.*.env` and `mcpServers.*.headers`.
+    - Qwen masks leaves only (decision 9), through a Qwen arm, not a change to `is_secret_key` or the shared walk the other CLIs use. It hides `security.auth.apiKey`, everything under `env` and `modelProviders`, `mcpServers.*.env`, `mcpServers.*.headers`, a hook's `env`, `telemetry` headers, and any string leaf whose own key passes `is_secret_key`. It walks into an object with a secret-looking name rather than hiding it whole, and never hides a number or boolean.
     - The system file is read as the managed source.
     - `editable` includes `qwen`.
     - `text_problem` keeps raw editing on for a Qwen file with comments or trailing commas (decision 6), and keeps the repeated-key refusal.
@@ -152,6 +164,9 @@ This task runs in the main thread, not through a worker. It runs Qwen headless f
   - `settings_view.rs`:
     - `qwen_curated_rows_and_controls`: the six keys, with `tools.approvalMode`'s five choices in the decision's order.
     - `qwen_secrets_are_hidden`: each masked path shows "hidden" in the form and in raw.
+    - `qwen_selected_type_is_shown_and_raw_stays_editable`: a file with only `security.auth.selectedType` and a comment.
+    - `git_co_author_and_token_limits_are_not_hidden`: `general.gitCoAuthor.commit: true` and a numeric `…Tokens` key.
+    - `claude_masking_is_unchanged`: one existing Claude masking assertion still holds, as a guard on the shared rule.
     - `qwen_system_file_makes_a_row_read_only`
     - `a_qwen_file_with_comments_stays_raw_editable`
     - `a_qwen_file_with_a_repeated_key_is_raw_read_only`
@@ -192,24 +207,18 @@ This task runs in the main thread, not through a worker. It runs Qwen headless f
 - [ ] **Step 4: Run.** `pnpm test`, then `pnpm build`. Expected: PASS.
 - [ ] **Step 5: Commit.** `feat(ui): Qwen Code gets its company tab, version and Update, and an Accounts line`
 
-### Task 6: Qwen conversations in History, and the importer
+### Task 6a: The Qwen transcript reader
 
 **Files:**
 - Create: `crates/core/src/agents/qwen/transcript.rs`
-- Modify:
-  - `crates/core/src/agents/qwen/mod.rs`: `pub mod transcript`
-  - `crates/core/src/history/mod.rs`: the `parse_for` arm
-  - `crates/core/src/history/import.rs`: `ImportRoots.qwen`, `Kind::Qwen`, `import_roots` (`QWEN_RUNTIME_DIR` when set and not blank, else `qwen::home`, then `projects`), `candidates`, `classify` and `prepare`
-  - `crates/core/src/history/index.rs`: `filters()` excludes only `'antigravity'`
-  - `crates/core/src/server/history.rs`: `AGENTS` gains `"qwen"`
-  - `src/features/history/historyState.ts` (and any agent filter list in `HistoryView.tsx`): Qwen Code in the copy and the filter
-- Test: `transcript.rs` inline (on Task 1's fixtures), `import.rs` inline (the `Rig` gains a Qwen root), `crates/core/tests/history_api.rs` or wherever History's route tests live, and `historyState.test.ts`
+- Modify: `crates/core/src/agents/qwen/mod.rs` (`pub mod transcript`) and `crates/core/src/history/mod.rs` (the `parse_for` arm)
+- Test: `transcript.rs` inline, on Task 1's fixtures
 
 **Interfaces:**
-- Consumes: `qwen::home` (Task 2) and Task 1's fixtures.
+- Consumes: Task 1's fixtures.
 - Produces:
   - `pub fn parse(text: &str, session_id: &str) -> Conversation` in `agents::qwen::transcript`.
-  - `pub fn meta(text: &str) -> Option<QwenMeta>`, where `QwenMeta { id: String, started_ms: u64, cwd: String, branch: Option<String>, version: Option<String>, client: Client }`, taken from the first record that has a `sessionId`.
+  - `pub fn meta(text: &str) -> Option<QwenMeta>`, where `QwenMeta { id: String, started_ms: u64, cwd: String, branch: Option<String>, version: Option<String>, client: Client }`, taken from the first record that has a `sessionId`. Task 6b uses it.
 
 - [ ] **Step 1: Write the failing tests.**
   - `transcript.rs`:
@@ -221,6 +230,29 @@ This task runs in the main thread, not through a worker. It runs Qwen headless f
     - `a_truncated_last_line_is_ignored`
     - `model_and_version_come_from_the_records`
     - `limited_follows_the_version_gate`
+    - `meta_reads_id_cwd_branch_and_start`
+- [ ] **Step 2: Run.** `cargo test -p marshell-core -j 4 transcript`. Expected: FAIL.
+- [ ] **Step 3: Implement.** The parser walks records in file order:
+  - A `user` record whose parts hold text and no function response starts a turn.
+  - `assistant` text parts become `Text`.
+  - A function call plus its matching `tool_result` (or its function response part) becomes a `ToolCard`, named and summarised as Claude Code's are for the same kind of tool.
+- [ ] **Step 4: Run.** `cargo test -p marshell-core -j 4`. Expected: PASS.
+- [ ] **Step 5: Commit.** `cargo fmt --all`, then `feat(history): Marshell reads Qwen Code's chat files into conversations`
+
+### Task 6b: Qwen conversations in History, and the importer
+
+**Files:**
+- Modify:
+  - `crates/core/src/history/import.rs`: `ImportRoots.qwen`, `Kind::Qwen`, `import_roots` (`QWEN_RUNTIME_DIR` when set and not blank, else `qwen::home`, then `projects`), `candidates`, `classify` and `prepare`
+  - `crates/core/src/history/index.rs`: `filters()` excludes only `'antigravity'`
+  - `crates/core/src/server/history.rs`: `AGENTS` gains `"qwen"`
+  - `src/features/history/historyState.ts` (and any agent filter list in `HistoryView.tsx`): Qwen Code in the copy and the filter
+- Test: `import.rs` inline (the `Rig` gains a Qwen root), `crates/core/tests/history_api.rs`, and `historyState.test.ts`
+
+**Interfaces:**
+- Consumes: `qwen::home` (Task 2), and `transcript::meta` and `parse` (Task 6a).
+
+- [ ] **Step 1: Write the failing tests.**
   - `import.rs`:
     - `qwen_root_follows_qwen_runtime_dir_then_qwen_home`
     - `a_qwen_chat_is_copied_once_settled`
@@ -228,11 +260,12 @@ This task runs in the main thread, not through a worker. It runs Qwen headless f
     - `a_qwen_chat_linked_by_hooks_keeps_its_tab_when_imported`
     - `a_deleted_qwen_copy_stays_deleted_until_the_chat_grows`
   - `index.rs`: the test near line 1365 now expects Qwen conversations listed, and Antigravity's still left out.
-  - History route: `get_conversation_reads_a_qwen_chat`
+  - History route:
+    - `get_conversation_reads_a_qwen_chat`
+    - `a_qwen_row_from_6l1_with_no_copy_shows_as_history_shows_any_uncopied_row`: a row 6l1's hooks indexed whose source chat is gone (Qwen's `cleanupPeriodDays`). It behaves as an uncopied Codex row does today (listed or left out, and its open answer), never a crash or a blank page.
   - `historyState.test.ts`: the copy names Qwen Code.
 - [ ] **Step 2: Run.** `cargo test -p marshell-core -j 4 qwen` and `pnpm test src/features/history`. Expected: FAIL.
 - [ ] **Step 3: Implement.**
-  - The parser walks records in file order. A `user` record whose parts hold text and no function response starts a turn. `assistant` text parts become `Text`. A function call plus its matching `tool_result` (or its function response part) becomes a `ToolCard`, named and summarised as Claude Code's are for the same kind of tool.
   - Client: `Marshell` when the copy is linked to a tab by hooks (the sidecar already exists). Otherwise use what Task 1 found tells headless from interactive (`Headless` or `Terminal`), or `Terminal` when nothing does.
   - The file name must be a UUID that matches its records' `sessionId`.
 - [ ] **Step 4: Run.** `cargo test --workspace -j 4`, then `pnpm test`. Expected: PASS.
@@ -253,20 +286,25 @@ This task runs in the main thread, not through a worker. It runs Qwen headless f
 - [ ] **Step 4: Run** both suites. Expected: PASS.
 - [ ] **Step 5: Commit.** `cargo fmt --all`, then `feat(wsl): Qwen Code's hooks are set up inside a WSL distro`
 
-### Task 8: The restart bar names the command the core will run
+### Task 8: The restart and resume bars name the command the core will run
 
 **Files:**
 - Modify:
-  - `crates/core/src/server/sessions.rs` and `server/mod.rs`: a route `GET /v1/sessions/{tab}/restart-command?mode=<mode>`. It answers `RestartCommand { command: String }`, the argv `restart` would run for that tab in that mode, joined for display. Build it with the same function the restart handler uses (`launch_argv_resume` and `resume_args`), so the two can't drift. A tab with no agent gives its profile's command.
-  - `crates/protocol`: `RestartCommand`.
-  - `src/features/sessions/sessionActions.ts` and `LiveApp.tsx`: opening the restart bar fetches the command first. `restartBarText` takes the command as a parameter. On a failed fetch it falls back to today's `resumeCommand` text, so the bar always opens.
+  - `crates/core/src/server/outside.rs` and `server/mod.rs`: `GET /v1/sessions/{tab}/resume-command` (`tab_resume_command`, 6h1's copy route) gains an optional query `?for=restart&mode=<mode>` (or `for=resume`). With `for`, it answers the bare command the restart or resume would run for that tab, in that mode, joined for display: no `cd` line, and the same `tab_plan` and `resume_args` the handlers use, so the two can't drift. Without `for`, it is unchanged. If `tab_plan` doesn't resolve the same target as the restart handler in `server/sessions.rs`, build the answer from the handler's own function, or add a route `/v1/sessions/{tab}/restart-command` that does.
+  - `crates/protocol`: a response type only if the route's answer type doesn't already fit.
+  - `src/features/sessions/sessionActions.ts`, `resumeCommand.ts` and `LiveApp.tsx`: opening the restart bar or the Resume bar fetches the command first. `restartBarText` (and the Resume bar's text) take the command as a parameter. On a failed fetch they fall back to today's `resumeCommand` text, so the bar always opens.
 - Test: route tests in `crates/core/tests/restart.rs`:
   - `restart_command_names_resume_by_id_for_a_qwen_tab_with_a_chat`
   - `restart_command_continues_when_no_id_is_known`
   - `restart_command_for_codex_names_resume_by_id`
   - `restart_command_is_refused_without_the_bearer`
 
-  Plus `sessionActions.test.ts`: `the restart bar shows the command it was given` and `falls back to the local text`.
+  - `resume_command_without_for_is_unchanged`, guarding 6h1's copy line.
+
+  Plus, in `sessionActions.test.ts`:
+  - `the restart bar shows the command it was given`
+  - `the resume bar shows the command it was given`
+  - `falls back to the local text`
 
 - [ ] **Step 1: Write the failing tests.**
 - [ ] **Step 2: Run.** `cargo test -p marshell-core -j 4 restart_command` and `pnpm test src/features/sessions`. Expected: FAIL.
