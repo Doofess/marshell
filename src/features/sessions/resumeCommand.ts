@@ -46,12 +46,18 @@ export function sessionResumeCommand(info: Pick<SessionInfo, "agent" | "mode"> &
   return command ?? resumeCommand(info.agent, profileName, mode);
 }
 
-/** The core's bare command for a bar. A refusal or failed request leaves the local text available. */
-export async function fetchSessionCommand(endpoint: Endpoint, tabId: string, purpose: SessionCommandPurpose, request = sessions.resumeCommand): Promise<string | undefined> {
-  try {
-    const result = await request(endpoint, tabId, purpose);
-    return result.ok ? result.command : undefined;
-  } catch {
-    return undefined;
-  }
+/** How long a bar waits for the core's command before it opens with the local text. */
+export const SESSION_COMMAND_TIMEOUT_MS = 2000;
+
+/** The core's bare command for a bar. A refusal, a failed request or no answer within `timeoutMs` leaves the local text available. */
+export function fetchSessionCommand(endpoint: Endpoint, tabId: string, purpose: SessionCommandPurpose, request = sessions.resumeCommand, timeoutMs = SESSION_COMMAND_TIMEOUT_MS): Promise<string | undefined> {
+  return new Promise((resolve) => {
+    const settle = (command: string | undefined) => { clearTimeout(timer); resolve(command); };
+    const timer = setTimeout(() => resolve(undefined), timeoutMs);
+    try {
+      request(endpoint, tabId, purpose).then((result) => settle(result.ok ? result.command : undefined), () => settle(undefined));
+    } catch {
+      settle(undefined);
+    }
+  });
 }

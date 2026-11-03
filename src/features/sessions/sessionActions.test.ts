@@ -35,6 +35,29 @@ describe("the core's session command", () => {
     expect(sessionResumeCommand(row, "PowerShell", command)).toBe("qwen --continue --approval-mode default");
     expect(restartBarText(row, "plan", false, false, command)).toBe("Restart 1 a in Plan? It ends and runs qwen --continue --approval-mode plan.");
   });
+  it("falls back to the local text when the core does not answer in time", async () => {
+    const request = vi.fn().mockReturnValue(new Promise(() => {}));
+    const command = await fetchSessionCommand(endpoint, "a", { for: "resume" }, request, 20);
+    expect(command).toBeUndefined();
+    expect(sessionResumeCommand(row, "PowerShell", command)).toBe("qwen --continue --approval-mode default");
+  });
+  it("an unanswered fetch still opens the restart bar after two seconds", async () => {
+    vi.useFakeTimers();
+    try {
+      const actions = new SessionActions({
+        api: { close: vi.fn(), reopen: vi.fn(), rename: vi.fn(), reorder: vi.fn(), resume: vi.fn(), restart: vi.fn(), pause: vi.fn(), cont: vi.fn(), resumeCommand: vi.fn().mockReturnValue(new Promise(() => {})) },
+        context: () => ({ endpoint, infos: [row], selectedId: "a" }),
+        select: vi.fn(),
+      });
+      actions.askRestart("a", "plan");
+      await vi.advanceTimersByTimeAsync(1999);
+      expect(actions.getState().restarting).toBeNull();
+      await vi.advanceTimersByTimeAsync(1);
+      expect(actions.getState().restarting).toEqual({ id: "a", mode: "plan", command: undefined });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
   it("a failed fetch still opens the restart bar", async () => {
     const actions = new SessionActions({
       api: { close: vi.fn(), reopen: vi.fn(), rename: vi.fn(), reorder: vi.fn(), resume: vi.fn(), restart: vi.fn(), pause: vi.fn(), cont: vi.fn(), resumeCommand: vi.fn().mockRejectedValue(new Error("offline")) },
