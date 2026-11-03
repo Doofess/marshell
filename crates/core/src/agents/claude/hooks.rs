@@ -1329,6 +1329,28 @@ mod tests {
     }
 
     #[test]
+    fn removing_a_trailing_group_restores_the_original_bytes() {
+        const USER_GROUP: &str = r#"{"hooks":[{"type":"command","command":"echo mine"}]}"#;
+        let plain = format!("{{\n  \"hooks\": {{\n    \"Stop\": [{USER_GROUP}]\n  }}\n}}\n");
+        let comments =
+            format!("{{\n  // my hooks\n  \"hooks\": {{\n    \"Stop\": [{USER_GROUP},], /* mine */\n  }},\n}}\n");
+        for text in [
+            plain.clone(),
+            format!("\u{feff}{plain}"),
+            plain.replace('\n', "\r\n"),
+            comments,
+        ] {
+            let want = HookPlanRequest {
+                statusline: false,
+                ..BOTH
+            };
+            let (_, installed) = install(&Files::settings(&text), want);
+            let (_, removed) = remove(&installed);
+            assert_eq!(removed.settings.as_deref(), Some(text.as_str()));
+        }
+    }
+
+    #[test]
     fn remove_on_a_missing_or_clean_file_has_no_edits() {
         let (plan, _) = remove(&Files::default());
         assert!(plan.changes.edits.is_empty());

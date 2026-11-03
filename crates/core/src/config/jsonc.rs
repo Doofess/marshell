@@ -30,7 +30,7 @@ pub fn apply_ops(text: &str, ops: &[JsonOp]) -> Result<String, EditError> {
         None => (false, text),
     };
     let source = if body.trim().is_empty() { "{}" } else { body };
-    let root =
+    let mut root =
         CstRootNode::parse(source, &ParseOptions::default()).map_err(|e| EditError::DoesNotParse(e.to_string()))?;
 
     // What the ops should produce, computed on plain values.
@@ -38,7 +38,7 @@ pub fn apply_ops(text: &str, ops: &[JsonOp]) -> Result<String, EditError> {
     let mut changed = false;
     for op in ops {
         changed |= apply_to_value(&mut expected, op)?;
-        changed |= apply_to_cst(&root, op)?;
+        changed |= apply_to_cst(&mut root, op)?;
     }
     if !changed {
         return Ok(text.to_string());
@@ -290,14 +290,38 @@ fn root_object(root: &CstRootNode, pointer: &str) -> Result<CstObject, EditError
     }
 }
 
+/// Where the node's text starts in the text of the whole tree, in bytes.
+fn start_of(node: &CstNode) -> usize {
+    let mut offset = 0;
+    let mut cur = node.clone();
+    loop {
+        offset += cur.previous_siblings().map(|s| s.to_string().len()).sum::<usize>();
+        match cur.parent() {
+            Some(parent) => cur = CstNode::Container(parent),
+            None => return offset,
+        }
+    }
+}
+
+fn end_of(node: &CstNode) -> usize {
+    start_of(node) + node.to_string().len()
+}
+
+/// Replaces the tree with the parse of `text`, for the edits made as text splices.
+fn reparse(root: &mut CstRootNode, text: &str) -> Result<(), EditError> {
+    *root = CstRootNode::parse(text, &ParseOptions::default())
+        .map_err(|e| EditError::Internal(format!("the spliced text does not parse: {e}")))?;
+    Ok(())
+}
+
 /// Applies the op to the CST. Returns whether anything changed.
-fn apply_to_cst(root: &CstRootNode, op: &JsonOp) -> Result<bool, EditError> {
+fn apply_to_cst(root: &mut CstRootNode, op: &JsonOp) -> Result<bool, EditError> {
     let pointer = match op {
         JsonOp::Set { pointer, .. } | JsonOp::Remove { pointer } => *pointer,
     };
     let tokens = parse_pointer(pointer)?;
     let (last, parents) = tokens.split_last().expect("a pointer has a token");
-    let mut cur = Cur::Obj(root_object(root, pointer)?);
+    let mut cur = Cur::Obj(root_object(&*root, pointer)?);
 
     for (n, t) in parents.iter().enumerate() {
         let next = match &cur {
@@ -337,6 +361,15 @@ fn apply_to_cst(root: &CstRootNode, op: &JsonOp) -> Result<bool, EditError> {
         }
         (JsonOp::Set { value, .. }, Cur::Arr(arr)) => {
             if last == "-" {
+                // After the last element goes `, <element>`, so what stood between that element
+                // and `]` (whitespace, a trailing comma, comments) stays where it was.
+                if let Some(tail) = arr.elements().last() {
+                    let before = root.to_string();
+                    let end = end_of(tail);
+                    let added = arr.append(to_input(value));
+                    let text = format!("{}, {}{}", &before[..end], added, &before[end..]);
+                    return reparse(root, &text).map(|()| true);
+                }
                 arr.append(to_input(value));
                 return Ok(true);
             }
@@ -368,13 +401,23 @@ fn apply_to_cst(root: &CstRootNode, op: &JsonOp) -> Result<bool, EditError> {
             None => Ok(false),
         },
         (JsonOp::Remove { .. }, Cur::Arr(arr)) => {
-            match array_index(last).and_then(|i| arr.elements().into_iter().nth(i)) {
-                Some(node) => {
-                    node.remove();
-                    Ok(true)
-                }
-                None => Ok(false),
+            let elements = arr.elements();
+            let Some(i) = array_index(last).filter(|i| *i < elements.len()) else {
+                return Ok(false);
+            };
+            if i > 0 && i + 1 == elements.len() {
+                // The last element goes with the comma before it; what follows it (a trailing
+                // comma, the whitespace before `]`) stays.
+                let before = root.to_string();
+                let text = format!(
+                    "{}{}",
+                    &before[..end_of(&elements[i - 1])],
+                    &before[end_of(&elements[i])..]
+                );
+                return reparse(root, &text).map(|()| true);
             }
+            elements[i].clone().remove();
+            Ok(true)
         }
     }
 }
@@ -610,5 +653,42 @@ mod tests {
         )
         .unwrap();
         assert_eq!(read_value(&out).unwrap(), serde_json::json!({"a": 1}));
+    }
+
+    #[test]
+    fn append_then_remove_of_a_last_element_restores_the_bytes() {
+        let element = serde_json::json!({"y": 2});
+        for (input, last) in [
+            ("{\"a\":[{\"x\":1}]}", "/a/1"),
+            ("{\"a\":[{\"x\":1},]}", "/a/1"),
+            ("{\"a\":[\n  {\"x\":1}\n]}", "/a/1"),
+            ("{\"a\":[\r\n  {\"x\":1}\r\n]}", "/a/1"),
+            ("{\"a\":[]}", "/a/0"),
+        ] {
+            let appended = apply_ops(
+                input,
+                &[JsonOp::Set {
+                    pointer: "/a/-",
+                    value: &element,
+                }],
+            )
+            .unwrap();
+            let restored = apply_ops(&appended, &[JsonOp::Remove { pointer: last }]).unwrap();
+            assert_eq!(restored, input, "appended: {appended:?}");
+        }
+    }
+
+    #[test]
+    fn append_keeps_a_trailing_comma() {
+        let out = apply_ops(
+            "{\"a\":[1,]}",
+            &[JsonOp::Set {
+                pointer: "/a/-",
+                value: &2.into(),
+            }],
+        )
+        .unwrap();
+        assert_eq!(read_value(&out).unwrap(), serde_json::json!({"a": [1, 2]}));
+        assert!(out.contains(",]"), "{out:?}");
     }
 }
