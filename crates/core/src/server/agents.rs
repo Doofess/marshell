@@ -24,6 +24,7 @@ use axum::response::{IntoResponse, Response};
 use marshell_protocol::account::{AccountStatus, SignIn};
 use marshell_protocol::agents::{
     AgentFound, AgentSetup, HookInstall, HookPlanRequest, ParseProblem, RemovePreview, SettingsState, SkillInstall,
+    WslDistros,
 };
 use marshell_protocol::config::{
     Applies, ApplyConflict, ApplyRequest, ApplyResult, ChangeSet, ConfigPreview, ConfigScope, EditOp, ExpectedHash,
@@ -808,6 +809,14 @@ pub async fn setup(State(st): State<AppState>, UrlPath(agent): UrlPath<String>) 
     .await
     .map_err(failed)??;
     Ok(Json(setup))
+}
+
+/// The WSL distros the Agents dialog may offer: the same list a request naming a distro is checked against.
+/// Nothing is started, so this needs no `spawn_blocking`.
+pub async fn wsl_distros(State(st): State<AppState>) -> Json<WslDistros> {
+    Json(WslDistros {
+        distros: super::wsl_distros(&st.profiles_snapshot()),
+    })
 }
 
 /// Which of the agent CLIs Marshell can start are on this machine, in the order claude, codex, antigravity.

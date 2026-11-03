@@ -1,7 +1,6 @@
 import type { AgentSetup } from "../../generated/AgentSetup";
 import type { ConfigPreview } from "../../generated/ConfigPreview";
 import type { HookPlanRequest } from "../../generated/HookPlanRequest";
-import type { Profile } from "../../generated/Profile";
 import { deletedFiles, previewDiff, toDetection, type HookAgent } from "../../lib/api/agents";
 import { addsStatusLine, CLI_NAME, consentHeadline, fileName, opensDiff, removalCopy, skillUndo, type Capability, type CliId, type ConsentPlan, type Detection } from "../onboarding/consent";
 
@@ -25,25 +24,6 @@ const ON = onOf(DEFAULT_WANT);
 
 /** An existing status install needs only the permission hook. */
 export const setupWant = (s: AgentSetup): Want => ({ ...(s.hooks === "installed" ? { status: false, statusline: false, approve: true } : DEFAULT_WANT), skill: s.skill !== "installed" && s.skill !== "unavailable" });
-
-/**
- * The WSL distros the session profiles name, once each. The name is the profile's `-d` / `--distribution` argument in `command`
- * (what the launch passes to wsl.exe), else the profile's own name (which detection sets to the distro). No distro is asked for.
- */
-export function wslDistros(profiles: Pick<Profile, "name" | "command" | "family">[]): string[] {
-  const seen = new Set<string>();
-  const out: string[] = [];
-  for (const p of profiles) {
-    if (p.family !== "wsl") continue;
-    const at = p.command.findIndex((a) => a === "-d" || a === "--distribution");
-    const fromFlag = at >= 0 ? p.command[at + 1] : p.command.find((a) => a.startsWith("--distribution="))?.slice("--distribution=".length);
-    const name = fromFlag?.trim() || p.name.trim();
-    if (name === "" || seen.has(name.toLowerCase())) continue;
-    seen.add(name.toLowerCase());
-    out.push(name);
-  }
-  return out;
-}
 
 /** Where the Agents dialog opens from a session row's "set up" link: on that row's agent's Set up card. */
 export type SetupStart = { setup: HookAgent };

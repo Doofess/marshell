@@ -137,6 +137,13 @@ pub struct AgentFound {
     pub exe_path: Option<String>,
 }
 
+/// The WSL distros the Agents dialog may offer a hooks setup in: those of the detected WSL profiles, each once.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct WslDistros {
+    pub distros: Vec<String>,
+}
+
 /// What an install plan should include.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[ts(export)]

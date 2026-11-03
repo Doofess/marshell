@@ -5,13 +5,12 @@ import { DiffView } from "../../components/DiffView/DiffView";
 import type { AgentSetup } from "../../generated/AgentSetup";
 import type { Endpoint } from "../../generated/Endpoint";
 import type { RemovePreview } from "../../generated/RemovePreview";
-import { applyPreview, getSetup, planRemove, previewDiff, type HookAgent } from "../../lib/api/agents";
-import { profiles } from "../../lib/api/profiles";
+import { applyPreview, getSetup, listWslDistros, planRemove, previewDiff, type HookAgent } from "../../lib/api/agents";
 import { useAnnounceOnce } from "../../lib/useAnnounceOnce";
 import { SettingsReadError, type SettingsSync } from "../appearance/settingsSync";
 import { ConsentCard } from "../onboarding/ConsentCard";
 import { CLI_NAME, type Capability } from "../onboarding/consent";
-import { actions, consentProps, DEFAULT_WANT, hooksOffNotice, leftover, liveStatusOn, removalBlock, setupLine, setupWant, wslDistros, type InstallFlow, type SetupStart } from "./agentsState";
+import { actions, consentProps, DEFAULT_WANT, hooksOffNotice, leftover, liveStatusOn, removalBlock, setupLine, setupWant, type InstallFlow, type SetupStart } from "./agentsState";
 import { OwnAgentsSection } from "./OwnAgentsSection";
 import { ToolsSection } from "./ToolsSection";
 import { SkillRow, type SkillRowHandlers } from "./SkillRow";
@@ -82,7 +81,7 @@ export function AgentsSectionView({
   wslDistros: distros,
   ...on
 }: {
-  /** The WSL distros the session profiles name; the WSL group shows only once they are known. */
+  /** The WSL distros the core accepts; the WSL group shows only once they are known. */
   wslDistros?: string[];
   /** Each agent's marshell skill flow and handlers; without it the rows are left out. */
   skills?: Record<HookAgent, { flow: SkillFlow | null; on: SkillRowHandlers }>;
@@ -213,7 +212,7 @@ function AgentList({ setup, agent, liveStatus, error, on, skill, distros }: { se
 }
 
 /**
- * Hook setup inside each WSL distro (slice 6j1). The distros come from the session profiles, so nothing here starts one:
+ * Hook setup inside each WSL distro (slice 6j1). The distros come from the core (no distro is started to list them), so nothing here starts one:
  * a distro is asked about only when one of its buttons is pressed. The skill file is not offered; the core installs none in a distro.
  */
 function WslGroup({ agent, distros, on }: { agent: HookAgent; distros: string[]; on: AgentsHandlers }) {
@@ -432,13 +431,13 @@ export function AgentsSection({
     },
     [endpoint],
   );
-  // The WSL distros come from the session profiles (one GET of the core's stored profiles; no distro is started and nothing polls).
+  // The WSL distros are the ones the core accepts (one GET; no distro is started and nothing polls).
   const [distros, setDistros] = useState<string[] | undefined>(undefined);
   useEffect(() => {
     let live = true;
-    profiles.get(endpoint).then(
-      (doc) => {
-        if (live) setDistros(wslDistros(doc.profiles));
+    listWslDistros(endpoint).then(
+      (list) => {
+        if (live) setDistros(list.distros);
       },
       () => {},
     );
