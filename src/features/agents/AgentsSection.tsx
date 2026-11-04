@@ -174,7 +174,7 @@ function AgentList({ setup, agent, liveStatus, error, on, skill, distros }: { se
       <p className={orphaned ? "agents-dialog__warning" : "agents-dialog__line"} dir="auto">
         {setupLine(setup)}
       </p>
-      {agent === "codex" && setup.found && setup.trust &&<TrustLine trust={setup.trust} />}
+      {agent === "codex" && setup.found && setup.trust && <TrustLine trust={setup.trust} />}
       {skill && setup.found && <SkillRow agent={agent} setup={setup} flow={skill.flow} on={skill.on} />}
       {/* Antigravity's hooks and its status line live in two files; both are named. */}
       {setup.found && setup.hooks_path !== undefined && (
