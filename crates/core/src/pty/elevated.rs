@@ -103,8 +103,9 @@ struct DownPipe {
     /// A second handle to the same pipe. A frame write that waits on a helper which stopped reading holds the `file`
     /// lock, so Close cancels that write through this handle instead of waiting for the lock.
     cancel: Mutex<Option<File>>,
-    /// Set by Close: no new frame starts after it.
-    closing: AtomicBool,
+    /// Set by Close: no new frame starts after it. An `Arc` so the demux thread can read it without owning the pipe:
+    /// a handle held there would keep the helper from seeing EOF when the session is dropped.
+    closing: Arc<AtomicBool>,
 }
 
 type Down = Arc<DownPipe>;
@@ -119,7 +120,7 @@ impl DownPipe {
         Arc::new(Self {
             file: Mutex::new(Some(file)),
             cancel: Mutex::new(cancel),
-            closing: AtomicBool::new(false),
+            closing: Arc::new(AtomicBool::new(false)),
         })
     }
 
@@ -128,7 +129,7 @@ impl DownPipe {
         Arc::new(Self {
             file: Mutex::new(None),
             cancel: Mutex::new(None),
-            closing: AtomicBool::new(false),
+            closing: Arc::new(AtomicBool::new(false)),
         })
     }
 
@@ -276,32 +277,51 @@ impl Read for ChannelReader {
     }
 }
 
+/// Reads the up pipe until the helper is gone: `Output` goes to `tx`, `Exit` is the result, EOF without one is -1.
+/// A full channel holds this loop back, so the helper's output pipe fills and the admin process waits, as a local
+/// session's does. Once `closing` is set, or the reader is gone, a chunk is dropped instead, so Close never waits
+/// on a reader that doesn't drain, and the `Exit` frame still ends the loop.
+#[cfg_attr(not(windows), allow(dead_code))]
+fn demux(mut up: impl Read, tx: mpsc::SyncSender<Vec<u8>>, closing: &AtomicBool) -> i32 {
+    let mut code = -1;
+    loop {
+        match read_from_host(&mut up) {
+            Ok(Some(FromHost::Output(mut bytes))) => loop {
+                if closing.load(Ordering::SeqCst) {
+                    break;
+                }
+                match tx.try_send(bytes) {
+                    Ok(()) => break,
+                    Err(mpsc::TrySendError::Disconnected(_)) => break,
+                    Err(mpsc::TrySendError::Full(back)) => {
+                        bytes = back;
+                        std::thread::sleep(Duration::from_millis(5));
+                    }
+                }
+            },
+            Ok(Some(FromHost::Exit { code: c })) => {
+                code = c;
+                break;
+            }
+            Ok(Some(_)) => {}
+            Ok(None) | Err(_) => break,
+        }
+    }
+    code
+}
+
 /// Builds the session's pieces once the helper has said `Started`. One demux thread reads the up
 /// pipe: `Output` feeds the reader, `Exit` is what `wait` returns, EOF without one makes it -1.
 #[cfg_attr(not(windows), allow(dead_code))]
-fn remote_pty(down: File, mut up: File, pid: u32) -> RemotePty {
+fn remote_pty(down: File, up: File, pid: u32) -> RemotePty {
     let down: Down = DownPipe::new(down);
-    let (tx, rx) = mpsc::channel::<Vec<u8>>();
+    // 64 frames of at most 16 KiB is about the unacknowledged limit a local session holds back at.
+    let (tx, rx) = mpsc::sync_channel::<Vec<u8>>(64);
+    // Only the flag goes to the thread, not the pipe: see `DownPipe::closing`.
+    let closing = Arc::clone(&down.closing);
     let demux = std::thread::Builder::new()
         .name("marshell-host-demux".into())
-        .spawn(move || {
-            let mut code = -1;
-            loop {
-                match read_from_host(&mut up) {
-                    Ok(Some(FromHost::Output(bytes))) => {
-                        // A dropped reader must not stop the loop: the Exit frame still matters.
-                        let _ = tx.send(bytes);
-                    }
-                    Ok(Some(FromHost::Exit { code: c })) => {
-                        code = c;
-                        break;
-                    }
-                    Ok(Some(_)) => {}
-                    Ok(None) | Err(_) => break,
-                }
-            }
-            code
-        })
+        .spawn(move || demux(up, tx, &closing))
         .expect("a thread can be started");
     RemotePty {
         pid,
@@ -965,5 +985,127 @@ pub(crate) mod stuck {
             within_two_seconds(move || c.close()).is_some(),
             "close waited behind the stuck frame"
         );
+    }
+}
+
+#[cfg(test)]
+mod demux_tests {
+    use super::*;
+    use marshell_protocol::host::write_from_host;
+    use std::io::Cursor;
+    use std::sync::atomic::AtomicUsize;
+
+    /// 15 bytes per `Output` frame: the 5-byte header and a 10-byte payload.
+    const FRAME_BYTES: usize = 15;
+
+    /// 200 `Output` frames and an `Exit { code: 7 }`.
+    fn frames() -> Vec<u8> {
+        let mut bytes = Vec::new();
+        for i in 0..200u8 {
+            write_from_host(&mut bytes, &FromHost::Output(vec![i; 10])).unwrap();
+        }
+        write_from_host(&mut bytes, &FromHost::Exit { code: 7 }).unwrap();
+        bytes
+    }
+
+    /// A reader that counts the bytes taken from it.
+    struct Counting {
+        inner: Cursor<Vec<u8>>,
+        taken: Arc<AtomicUsize>,
+    }
+
+    impl Read for Counting {
+        fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+            let n = self.inner.read(buf)?;
+            self.taken.fetch_add(n, Ordering::SeqCst);
+            Ok(n)
+        }
+    }
+
+    struct Stalled {
+        done: mpsc::Receiver<i32>,
+        rx: mpsc::Receiver<Vec<u8>>,
+        taken: Arc<AtomicUsize>,
+        closing: Arc<AtomicBool>,
+    }
+
+    /// Runs `demux` on a thread with a channel of four and nobody reading, and waits until it has stalled.
+    fn stalled() -> Stalled {
+        let taken = Arc::new(AtomicUsize::new(0));
+        let up = Counting {
+            inner: Cursor::new(frames()),
+            taken: Arc::clone(&taken),
+        };
+        let closing = Arc::new(AtomicBool::new(false));
+        let (tx, rx) = mpsc::sync_channel::<Vec<u8>>(4);
+        let (done_tx, done) = mpsc::channel();
+        let flag = Arc::clone(&closing);
+        std::thread::spawn(move || {
+            let _ = done_tx.send(demux(up, tx, &flag));
+        });
+        std::thread::sleep(Duration::from_millis(300));
+        Stalled {
+            done,
+            rx,
+            taken,
+            closing,
+        }
+    }
+
+    #[test]
+    fn a_reader_that_does_not_drain_holds_the_demux_back_at_the_channel_capacity() {
+        let s = stalled();
+        let frames_read = s.taken.load(Ordering::SeqCst) / FRAME_BYTES;
+        assert!(
+            (4..=6).contains(&frames_read),
+            "the demux read {frames_read} frames past a channel of four"
+        );
+        std::thread::sleep(Duration::from_millis(200));
+        assert_eq!(
+            s.taken.load(Ordering::SeqCst) / FRAME_BYTES,
+            frames_read,
+            "the demux kept reading"
+        );
+        assert!(s.done.try_recv().is_err(), "the demux returned while stalled");
+        // Draining lets it finish, and every chunk arrives in order.
+        let mut got = 0usize;
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let code = loop {
+            while let Ok(chunk) = s.rx.try_recv() {
+                assert_eq!(chunk, vec![got as u8; 10]);
+                got += 1;
+            }
+            if let Ok(code) = s.done.try_recv() {
+                break code;
+            }
+            assert!(Instant::now() < deadline, "the demux did not finish after a drain");
+            std::thread::sleep(Duration::from_millis(5));
+        };
+        while let Ok(chunk) = s.rx.try_recv() {
+            assert_eq!(chunk, vec![got as u8; 10]);
+            got += 1;
+        }
+        assert_eq!(code, 7);
+        assert_eq!(got, 200);
+    }
+
+    #[test]
+    fn closing_ends_a_stalled_demux_within_a_second() {
+        let s = stalled();
+        assert!(s.done.try_recv().is_err(), "the demux returned while stalled");
+        s.closing.store(true, Ordering::SeqCst);
+        let code = s
+            .done
+            .recv_timeout(Duration::from_secs(1))
+            .expect("the demux ended after closing");
+        assert_eq!(code, 7);
+    }
+
+    #[test]
+    fn a_dropped_reader_does_not_stop_the_demux_before_the_exit_frame() {
+        let (tx, rx) = mpsc::sync_channel::<Vec<u8>>(4);
+        drop(rx);
+        let closing = AtomicBool::new(false);
+        assert_eq!(demux(Cursor::new(frames()), tx, &closing), 7);
     }
 }

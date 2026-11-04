@@ -227,3 +227,29 @@ fn the_helper_refuses_unelevated_without_the_switch() {
         assert_eq!(status.code(), Some(3));
     }
 }
+
+#[test]
+fn the_helper_drops_variables_the_request_does_not_carry() {
+    // `request()` copies this process's variables, so the env is built here without the helper's switch.
+    let req = SpawnRequest {
+        argv: ["cmd", "/d", "/c", "echo [%MARSHELL_HOST_ALLOW_UNELEVATED%] [%ZZ_KEPT%]"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect(),
+        cwd: None,
+        env: std::env::vars()
+            .filter(|(k, _)| !k.eq_ignore_ascii_case("MARSHELL_HOST_ALLOW_UNELEVATED"))
+            .chain([("ZZ_KEPT".to_string(), "1".to_string())])
+            .collect(),
+        cols: 80,
+        rows: 24,
+    };
+    let pty = connect(&plain(), Path::new(HOST), req).unwrap_or_else(|e| panic!("connect failed: {e}"));
+    let p = play_core(pty);
+    let seen = wait_for(
+        &p.output,
+        "[%MARSHELL_HOST_ALLOW_UNELEVATED%] [1]",
+        Duration::from_secs(5),
+    );
+    assert!(seen.is_ok(), "the helper's own variable leaked; saw {:?}", seen.err());
+}
